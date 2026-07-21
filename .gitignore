@@ -1,0 +1,50 @@
+# Builds e arquivos gerados pelo CMake
+/build/
+/build-*/
+/out/
+/cmake-build-*/
+/CMakeFiles/
+/Testing/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+compile_commands.json
+*.ninja
+.ninja_*
+
+# Artefatos de compilação e diagnóstico
+*.obj
+*.o
+*.pdb
+*.ilk
+*.exe
+*.dll
+*.lib
+*.exp
+*.log
+*.dmp
+*.tmp
+
+# IDEs e configurações pessoais
+/.vs/
+/.vscode/
+/.idea/
+*.user
+*.suo
+CMakeUserPresets.json
+
+# Integrações e variáveis locais
+/.mcp.json
+.env
+.env.*
+!.env.example
+
+# Sistema operacional
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Caches de ferramentas
+/.cache/
+__pycache__/
+*.py[cod]
