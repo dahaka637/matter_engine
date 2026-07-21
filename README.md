@@ -1,3 +1,6 @@
+
+<img width="700" height="525" alt="matter_engine_logo" src="https://github.com/user-attachments/assets/eabc1a75-b191-463f-b542-f15dd1f11165" />
+
 # MatterEngine
 
 Motor 3D experimental em C++20, desenvolvido do zero com foco em física
