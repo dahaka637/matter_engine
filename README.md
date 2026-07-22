@@ -49,3 +49,4 @@ Mais detalhes estão em [Arquitetura](docs/ARCHITECTURE.md),
 [Autoria de assets físicos](docs/PHYSICAL_ASSET_AUTHORING.md).
 
 <img width="400" height="200" alt="image" src="https://github.com/user-attachments/assets/d305083f-a401-4a46-b0ce-09df6d6b3d19" />
+<img width="400" height="200" alt="image" src="https://github.com/user-attachments/assets/7b0168cf-d33a-4970-8f5e-5a07eba869cf" />
