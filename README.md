@@ -47,3 +47,5 @@ ctest --test-dir build-modern -C Debug --output-on-failure
 Mais detalhes estão em [Arquitetura](docs/ARCHITECTURE.md),
 [Roadmap](docs/ROADMAP.md) e
 [Autoria de assets físicos](docs/PHYSICAL_ASSET_AUTHORING.md).
+
+<img width="400" height="200" alt="image" src="https://github.com/user-attachments/assets/d305083f-a401-4a46-b0ce-09df6d6b3d19" />
