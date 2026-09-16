@@ -20,6 +20,11 @@ namespace MatterEngine {
 // compartilhado entre C++ e GLSL neste projeto, ver comentario de
 // SceneUniformGpu).
 constexpr std::uint32_t ShadowCascadeCount = 4;
+// A cascata mais próxima conserva resolução total; as distantes cobrem áreas
+// progressivamente maiores e já são suavizadas por perspectiva/neblina.
+// Quatro mapas de 2048² desperdiçavam fill-rate sem detalhe perceptível.
+constexpr std::array<std::uint32_t, ShadowCascadeCount>
+    ShadowCascadeMapSizes { 2048u, 1536u, 1024u, 512u };
 
 // Backend-neutral submission consumed immediately by Renderer. The same
 // scene can target an editor preview texture or the real full-screen 3D pass.
@@ -33,6 +38,10 @@ struct MeshRender3D {
     RHI::BufferHandle vertexBuffer;
     RHI::BufferHandle indexBuffer;
     std::uint32_t indexCount = 0;
+    // Proxy opcional para depth/shadow. Ele compartilha os mesmos vértices,
+    // mas usa menos índices; vazio reutiliza a geometria principal.
+    RHI::BufferHandle shadowIndexBuffer;
+    std::uint32_t shadowIndexCount = 0;
     Vec3 position;
     Quaternion orientation;
     // Posicao/orientacao deste MESMO objeto no quadro anterior (nao da
@@ -55,8 +64,22 @@ struct MeshRender3D {
     // contrato glTF. Sem mapa, uma textura branca neutra preserva os fatores.
     float metallic = 0.0f;
     float roughness = 1.0f;
+    // Espelhos planos recebem uma renderizacao da camera refletida. SSR
+    // continua responsavel por metais comuns, mas nao consegue enxergar as
+    // faces de objetos viradas para o espelho e ocultas da camera principal.
+    bool planarReflection = false;
     bool selected = false;
     bool outlineGlow = false;
+    // Props físicos podem conservar uma grade mais fina a médias/longas
+    // distâncias no modo Matter Mosaic. O mapa e o viewmodel permanecem na
+    // grade artística principal; esta flag apenas grava uma classe por
+    // pixel no attachment já existente de motion vectors.
+    bool pixelArtHighDetail = false;
+    // Vegetacao/terreno poroso nao deve produzir o reflexo concentrado do
+    // disco solar que faz plastico, verniz e metal parecerem brilhantes.
+    // A flag preserva toda a iluminacao difusa e reduz somente o lobulo
+    // especular no shader.
+    bool matteSurface = false;
     bool visibleInCamera = true;
     bool castsShadow = true;
     // Um bit por Cascaded Shadow Map. O Workbench calcula em quais volumes
@@ -64,6 +87,11 @@ struct MeshRender3D {
     // quando ele so pode afetar uma cascata. Geometria sem culling explicito
     // (como o mapa estatico) conserva o default de todas as cascatas.
     std::uint8_t shadowCascadeMask = 0x0Fu;
+    // World-space deformation matrices (current * inverse bind). Consumed
+    // immediately, copied into fence-protected GPU storage by the backend.
+    std::span<const Mat4> skinMatrices;
+    std::span<const Mat4> previousSkinMatrices;
+    bool flatShaded = false;
 };
 
 enum class LightType3D {
@@ -104,14 +132,86 @@ struct LightRender3D {
 //
 // Defaults calibrados a olho (ver painel de debug do Laboratorio, aba
 // "Gráficos" - o botao "Copiar valores calibrados" gera exatamente esta
-// lista) contra o conjunto de cores/intensidades desta engine (ambientLight
-// ~0.3-0.4, ceu ~0.6-0.8, sol ~1.0), que foram ajustadas a olho para um
+// lista) contra o conjunto de cores/intensidades desta engine
+// (environment.skyIrradiance ~0.3-0.4, ceu ~0.6-0.8, sol ~1.0), que foram
+// ajustadas a olho para um
 // pipeline sem tonemap e sem correcao de gama (a Fase 2 introduziu os dois).
 struct ToneMappingSettings3D {
     float exposure = 0.470f;
     float brightness = 0.007f;
     float contrast = 1.233f;
     float saturation = 1.341f;
+    // A exposição manual acima continua sendo a calibração artística-base.
+    // Quando ativado, este multiplicador automático só compensa mudanças
+    // grandes de luminância (entrar/sair de interiores, futuro dia/noite).
+    // A medição e a adaptação temporal rodam num alvo 1x1, com custo fixo.
+    bool automaticExposureEnabled = false;
+    float automaticExposureMinimum = 0.75f;
+    float automaticExposureMaximum = 2.50f;
+    float automaticExposureMeteringKey = 0.35f;
+    // Mudanças grandes recebem ainda um reforço proporcional no shader.
+    // Estes valores-base rápidos evitam a sensação de a imagem chegar
+    // atrasada quando a câmera alterna entre interior, chão e céu.
+    float brightAdaptationSpeed = 7.00f;
+    float darkAdaptationSpeed = 2.40f;
+};
+
+// Oclusão de ambiente em espaço de tela. O backend calcula em meia
+// resolução e deixa o TAA estabilizar/reamostrar, portanto o custo fica
+// limitado. maxDarkening impede que GTAO vire uma segunda sombra global:
+// mesmo totalmente ocluído, o pixel conserva a fração restante da luz.
+struct AmbientOcclusionSettings3D {
+    bool enabled = false;
+    float radiusMeters = 1.15f;
+    float strength = 0.72f;
+    float maxDarkening = 0.24f;
+    float normalBias = 0.055f;
+    // Escalabilidade real do kernel: direções * 2 lados * passos.
+    std::uint32_t sampleDirectionCount = 6;
+    std::uint32_t sampleStepCount = 2;
+};
+
+// Efeitos solares HDR de custo fixo. O backend reúne glare e ghosts de lente
+// num passe a 1/8 da largura e altura (1/64 dos pixels). Não há bloom geral:
+// só o Sol gera o efeito, e o flare consulta profundidade para desaparecer
+// atrás de paredes/objetos.
+struct OpticalEffectsSettings3D {
+    bool enabled = true;
+    float sunGlareStrength = 0.65f;
+    float lensFlareStrength = 0.35f;
+};
+
+enum class SceneRenderMode3D {
+    Standard,
+    PixelArt
+};
+
+// Identidade visual do modo Matter Mosaic. O mundo continua sendo
+// renderizado em HDR e em 3D; estes controles só entram no último passe,
+// depois da iluminação e antes da apresentação no swapchain.
+struct PixelArtSettings3D {
+    // Escala do HDR/geometry pass. A UI continua sempre na resolução nativa;
+    // 1.0 é o padrão e preserva toda a resolução real.
+    float renderScale = 1.0f;
+    // Altura virtual da grade artística. É independente de renderScale:
+    // reduzir a escala melhora desempenho, enquanto esta grade decide o
+    // tamanho aparente dos pixels desenhados.
+    float pixelGridHeight = 540.0f;
+    // Intensidades independentes. 1.0 representa o máximo artístico e é o
+    // default pedido; zero conserva pixels individuais disponíveis.
+    float worldPixelation = 1.0f;
+    float physicalPropPixelation = 1.0f;
+    // O cenário perde detalhe mais depressa que props físicos, preservando
+    // leitura de bolas/objetos sem parecerem recortes HD de perto.
+    float distanceLodStrength = 0.65f;
+    float distanceLodStartMeters = 12.0f;
+    float distanceLodEndMeters = 110.0f;
+    // Mistura entre a imagem filmic normal e a paleta/iluminação em bandas.
+    float flatteningStrength = 1.0f;
+    float luminanceLevelCount = 12.0f;
+    float chromaLevelCount = 18.0f;
+    float ditherStrength = 0.025f;
+    bool temporalAntiAliasingEnabled = false;
 };
 
 // Neblina atmosferica por distancia (ver scene3d_mesh.frag), so aplicada
@@ -119,17 +219,66 @@ struct ToneMappingSettings3D {
 // metro de distancia da camera; heightFalloff faz o chao a distancia ficar
 // mais coberto que objetos no ar, multiplicando a distancia antes de somar
 // a altura no mundo (mais alto = precisa de mais distancia pra enevoar
-// igual); maxOpacity limita o quanto da cor real da superficie pode ser
-// substituida pela cor da neblina, mesmo a distancias enormes (1.0 deixaria
-// o horizonte inteiro virar uma parede solida da cor da neblina).
+// igual). A transição termina em endDistanceMeters, onde o cenário fica
+// totalmente oculto pela cor atmosférica e o fragment shader pode ignorar
+// toda a iluminação/material distante.
 struct FogSettings3D {
-    float density = 0.000f;
+    // Distancia (em metros) antes da qual NENHUMA neblina e aplicada -
+    // sem isso, a curva exponencial de "density" comeca a esmaecer desde
+    // distancia zero (visivel mesmo em objetos proximos com qualquer
+    // density>0). Ver o uso em scene3d_mesh.frag/ocean_surface.frag:
+    // subtrai esta distancia ANTES de aplicar a curva exponencial, entao
+    // tudo dentro dela fica 100% limpo e a neblina só nasce a partir daqui.
+    float startDistanceMeters = 394.0f;
+    // Ponto em que a neblina se torna uma barreira visual totalmente opaca.
+    float endDistanceMeters = 1250.0f;
+    // Taxa de crescimento por metro APOS startDistanceMeters (nao desde a
+    // camera) - ver comentario acima.
+    float density = 0.0018f;
     float heightFalloff = 0.0223f;
-    float maxOpacity = 0.720f;
+    float maxOpacity = 1.0f;
     Vec3 color { 0.570f, 0.700f, 0.820f };
 };
 
+// Contrato ambiental contínuo consumido pelo renderer. O futuro sistema de
+// horário/clima altera estes valores; nenhum passe precisa conhecer estados
+// discretos como "dia", "noite" ou "chuva". skyIrradiance é a energia
+// indireta vinda do hemisfério do céu. minimumIndirectVisibility impede
+// preto matemático no preenchimento global barato.
+// Os campos de precipitação/umidade já fazem parte do contrato para que a
+// integração climática não exija quebrar a API de cena depois.
+struct EnvironmentLightingState3D {
+    float solarTimeHours = 12.0f;
+    float skyAnimationTime = 0.0f;
+    float skyIrradiance = 0.31f;
+    float minimumIndirectVisibility = 0.18f;
+    // Fração aproximada da energia solar direta que retorna como primeiro
+    // rebote difuso em regiões sombreadas. Mantido discreto para não lavar
+    // materiais enquanto usamos a aproximação global de baixo custo.
+    float sunDiffuseBounce = 0.035f;
+    float cloudCoverage = 0.48f;
+    // Fração da luz solar direta que atravessa a camada de nuvens no ponto
+    // ocupado pelo Sol. É separada de cloudCoverage porque uma camada
+    // parcialmente nublada alterna entre Sol aberto e encoberto conforme o
+    // vento move as nuvens, mesmo sem mudar a cobertura média.
+    float cloudSunTransmittance = 1.0f;
+    float precipitation = 0.0f;
+    float surfaceWetness = 0.0f;
+    Vec2 cloudWindOffset;
+};
+
+struct OceanRender3D {
+    Vec2 center;
+    float meanSeaLevelMeters = 0.0f;
+    float halfExtentMeters = 1500.0f;
+    RHI::BufferHandle vertexBuffer;
+    RHI::BufferHandle indexBuffer;
+    std::uint32_t indexCount = 0;
+};
+
 struct Scene3DFrame {
+    SceneRenderMode3D renderMode = SceneRenderMode3D::Standard;
+    PixelArtSettings3D pixelArt;
     // Sem jitter - usada pra cull em CPU (Frustum3D) e picking de UI em
     // espaco de tela (ver LaboratoryScreen.cpp, projectToScreen do feixe da
     // physgun). Jitterar essa deixaria o picking tremendo visivelmente.
@@ -185,24 +334,25 @@ struct Scene3DFrame {
     Vec3 cameraPosition;
     std::span<const LightRender3D> lights;
     std::span<const MeshRender3D> meshes;
-    float ambientLight = 0.30f;
-    float skyTime = 0.0f;
-    float cloudCoverage = 0.46f;
-    // Deslocamento acumulado do vento nas nuvens, em unidades de ruido do
-    // shader do ceu (nao metros - ver WindSystem/WorkbenchApp para a
-    // conversao). E um deslocamento ja integrado ao longo do tempo, nao a
-    // velocidade instantanea do vento: como a velocidade do vento varia
-    // (rajadas), multiplicar a velocidade atual pelo tempo total produziria
-    // um salto toda vez que ela mudasse - integrar quadro a quadro (
-    // += velocidade * deltaTime) e a unica forma correta de mover as nuvens
-    // de forma continua com um vento que nao e constante. Default zero é
-    // seguro (nuvens paradas) para cenas que nao alimentam vento algum,
-    // como as pre-visualizacoes estaticas do Object Viewer.
-    Vec2 cloudWindOffset;
+    EnvironmentLightingState3D environment;
+    // Um plano refletor por cena mantém o custo previsível: um passe extra
+    // mesmo que existam muitos metais, que continuam usando SSR.
+    bool planarReflectionEnabled = false;
+    Vec3 planarReflectionPoint;
+    Vec3 planarReflectionNormal { 0.0f, 1.0f, 0.0f };
     bool showSky = false;
     bool showShadows = true;
+    // Amostras para cada uma das duas fases do PCSS (busca de bloqueador e
+    // filtro de penumbra). A resolução das quatro cascatas permanece 2048;
+    // este controle reduz apenas o kernel por pixel.
+    std::uint32_t shadowFilterSampleCount = 12;
     ToneMappingSettings3D toneMapping;
+    AmbientOcclusionSettings3D ambientOcclusion;
+    OpticalEffectsSettings3D opticalEffects;
     FogSettings3D fog;
+    bool oceanEnabled = false;
+    OceanRender3D ocean;
+    float oceanSubmersion = 0.0f;
 };
 
 } // namespace MatterEngine

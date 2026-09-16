@@ -12,7 +12,7 @@ layout(set = 0, binding = 0, std140) uniform SceneUniform {
     vec4 cameraPosition;
     vec4 settings;    // x=sombras, y=luzes, z=historico TAA valido, w=ambiente
     vec4 skySettings; // x=mostrar ceu, y=tempo do ceu, z=cobertura de nuvens, w reservado
-    vec4 fogSettings; // x=densidade, y=acoplamento altura-distancia, z=opacidade maxima, w reservado
+    vec4 fogSettings; // x=densidade (por metro apos w), y=acoplamento altura-distancia, z=opacidade maxima, w=distancia de inicio (m)
     vec4 fogColor;    // rgb=cor da neblina, a reservado
     vec4 windOffset;  // xy=deslocamento acumulado do vento nas nuvens, zw reservado
 } scene;
@@ -26,6 +26,18 @@ layout(set = 0, binding = 0, std140) uniform SceneUniform {
 // metallic/roughness through to the fragment shader's analytic sky
 // reflection (see MeshRender3D / VulkanDevice's pushMesh).
 layout(location = 0) in vec3 inPosition;
+layout(location = 13) in uvec4 inJoints;
+layout(location = 14) in vec4 inWeights;
+layout(set = 0, binding = 4, std430) readonly buffer SkinPalette {
+    mat4 matrices[];
+} skin;
+
+mat4 skinTransform(uint base) {
+    return skin.matrices[base + inJoints.x] * inWeights.x
+        + skin.matrices[base + inJoints.y] * inWeights.y
+        + skin.matrices[base + inJoints.z] * inWeights.z
+        + skin.matrices[base + inJoints.w] * inWeights.w;
+}
 layout(location = 1) in vec3 inNormal;
 layout(location = 2) in vec2 inUv;
 layout(location = 3) in vec3 inColor;
@@ -72,22 +84,40 @@ void main() {
     mat3 orientation = mat3(instanceOrientationX.xyz,
         instanceOrientationY.xyz, instanceOrientationZ.xyz);
     float scale = instancePositionScale.w;
+    int materialFlags = int(round(instanceMaterialAndFlags.w));
     worldPosition = instancePositionScale.xyz
         + orientation * (inPosition * scale);
     worldNormal = normalize(orientation * inNormal);
+    if (instanceOrientationX.w > 0.5) {
+        mat4 deform = skinTransform(uint(instanceOrientationX.w));
+        worldPosition = (deform * vec4(inPosition, 1.0)).xyz;
+        worldNormal = normalize(mat3(deform) * inNormal);
+    }
     vertexUv = inUv;
     vertexColor = inColor;
-    objectParameters = ivec4(3, 0,
+    mat3 previousOrientation = mat3(
+        instancePreviousOrientationX.xyz,
+        instancePreviousOrientationY.xyz,
+        instancePreviousOrientationZ.xyz);
+    vec3 previousWorldPosition = instancePreviousPositionScale.xyz
+        + previousOrientation
+            * (inPosition * instancePreviousPositionScale.w);
+    if (instanceOrientationX.w > 0.5) {
+        previousWorldPosition = (skinTransform(uint(instanceOrientationY.w))
+            * vec4(inPosition, 1.0)).xyz;
+    }
+    // x conserva o bitfield completo. O fragment shader usa o bit 2 para
+    // identificar props nítidos no Matter Mosaic e o bit 3 para superfícies
+    // foscas; os demais componentes mantêm o contrato antigo.
+    objectParameters = ivec4(
+        materialFlags,
+        (materialFlags & 2) != 0 ? 1 : 0,
         instanceMaterialAndFlags.z > 0.5 ? 1 : 0,
-        instanceMaterialAndFlags.w > 0.5 ? 1 : 0);
+        (materialFlags & 1) != 0 ? 1 : 0);
     objectMetallicRoughness = instanceMaterialAndFlags.xy;
     gl_Position = scene.cameraViewProjection * vec4(worldPosition, 1.0);
     gl_Position.y = -gl_Position.y;
 
-    mat3 previousOrientation = mat3(instancePreviousOrientationX.xyz,
-        instancePreviousOrientationY.xyz, instancePreviousOrientationZ.xyz);
-    vec3 previousWorldPosition = instancePreviousPositionScale.xyz
-        + previousOrientation * (inPosition * instancePreviousPositionScale.w);
     currentClipPosition = scene.cameraViewProjectionUnjittered
         * vec4(worldPosition, 1.0);
     currentClipPosition.y = -currentClipPosition.y;

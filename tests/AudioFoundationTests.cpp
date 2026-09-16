@@ -2,14 +2,18 @@
 #include "Engine/Audio/AcousticOcclusion3D.hpp"
 #include "Engine/Audio/AudioDevice3D.hpp"
 #include "Engine/Audio/BiquadFilter.hpp"
+#include "Engine/Audio/BodyAcousticEnvelope.hpp"
+#include "Engine/Audio/DragAcoustics.hpp"
 #include "Engine/Audio/Envelope.hpp"
 #include "Engine/Audio/ImpactAcoustics.hpp"
 #include "Engine/Audio/ProceduralNoise.hpp"
 #include "Engine/Audio/Waveform.hpp"
+#include "Engine/Audio/WindAmbienceRamp.hpp"
 #include "Engine/Audio/WindSound.hpp"
 #include "Engine/Materials/MaterialLibrary.hpp"
 #include "Engine/Physics/PhysicsEngine3D.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -17,6 +21,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 
 namespace {
 
@@ -53,6 +58,27 @@ ContactImpactEvent3D makeWoodImpact(float approachSpeed, float energyJoules) {
     impact.characteristicSizeB = 0.5f;
     impact.staticA = false;
     impact.staticB = false;
+    return impact;
+}
+
+ContactImpactEvent3D makeStaticDynamicImpact(float approachSpeed,
+    float dynamicMassKg, std::string_view dynamicMaterial,
+    std::string_view staticMaterial) {
+    ContactImpactEvent3D impact;
+    impact.bodyIdA = 1;
+    impact.bodyIdB = 2;
+    impact.materialA = std::string(dynamicMaterial);
+    impact.materialB = std::string(staticMaterial);
+    impact.approachSpeedMetersPerSecond = approachSpeed;
+    impact.effectiveMassKg = dynamicMassKg;   // um lado estatico: effectiveMass = massA
+    impact.transferredEnergyJoules =
+        0.5f * dynamicMassKg * approachSpeed * approachSpeed;
+    impact.massA = dynamicMassKg;
+    impact.massB = 0.0f;
+    impact.characteristicSizeA = 0.4f;
+    impact.characteristicSizeB = 1.0f;
+    impact.staticA = false;
+    impact.staticB = true;
     return impact;
 }
 
@@ -105,6 +131,249 @@ void testCooldownSuppressesImmediateRepeat() {
         materials, 1.0f / 120.0f);
     require(resolver.commands().empty(),
         "Cooldown nao suprimiu repeticao imediata do mesmo par de corpos");
+}
+
+void testStaticSurfaceAlsoSounds() {
+    // Caixa de madeira (2kg) caindo numa laje de concreto ESTATICA a 1.6 m/s
+    // - um impacto modesto, bem comum no manuseio normal (nao e a velocidade
+    // minima audivel de 0.90 m/s em si, que zera o speedGate e derrubaria os
+    // DOIS lados; 1.6 m/s e o ponto onde o portao final de volume ainda
+    // reprova o lado estatico com o multiplicador antigo mas ja aprova com o
+    // novo - ver StaticBodyEffectiveMassMultiplier). Antes da correcao, so o
+    // lado dinamico (a madeira) soava aqui; a laje de concreto estatica
+    // ficava silenciosa por uma margem pequena no portao de volume.
+    MaterialLibrary materials;
+    ImpactAcousticResolver resolver;
+    const ContactImpactEvent3D hit = makeStaticDynamicImpact(
+        1.60f, 2.0f, "wood", "concrete");
+    resolver.resolve(std::span<const ContactImpactEvent3D>(&hit, 1),
+        materials, 1.0f / 120.0f);
+
+    require(resolver.commands().size() == 2,
+        "Impacto entre corpo dinamico e superficie estatica deveria soar "
+        "dos dois lados");
+    bool sawWood = false;
+    bool sawConcrete = false;
+    for (const ImpactSoundCommand3D& command : resolver.commands()) {
+        if (command.materialId == "wood") sawWood = true;
+        if (command.materialId == "concrete") sawConcrete = true;
+        require(command.volume > 0.0f && command.volume <= 1.0f,
+            "Volume do comando fora do intervalo valido");
+    }
+    require(sawWood, "Lado dinamico (madeira) nao produziu comando");
+    require(sawConcrete,
+        "Lado estatico (concreto) nao produziu comando - "
+        "assimetria estatico/dinamico voltou a silenciar a superficie");
+}
+
+void testVeryLightImpactStillStaysStaticSideQuiet() {
+    // Bola de futebol (0.435kg, mesma massa autorada em soccer_ball.glb)
+    // contra concreto estatico a 1.7 m/s: o lado dinamico (bola) ja soa
+    // confortavelmente (objeto leve e "vivo"), mas o concreto estatico
+    // deveria continuar SEM comando aqui - a correcao do multiplicador nao
+    // deveria fazer qualquer toque leve ecoar numa estrutura gigante, so o
+    // caso de peso moderado (ver testStaticSurfaceAlsoSounds).
+    MaterialLibrary materials;
+    ImpactAcousticResolver resolver;
+    const ContactImpactEvent3D hit = makeStaticDynamicImpact(
+        1.70f, 0.435f, "soccer_ball", "concrete");
+    resolver.resolve(std::span<const ContactImpactEvent3D>(&hit, 1),
+        materials, 1.0f / 120.0f);
+
+    require(resolver.commands().size() == 1,
+        "Toque leve nao deveria fazer a laje de concreto estatica soar");
+    require(resolver.commands()[0].materialId == "soccer_ball",
+        "Unico comando esperado era o da bola (lado dinamico)");
+}
+
+ContactSlideEvent3D makeSlideAgainstStaticFloor(float dynamicMassKg,
+    std::string_view dynamicMaterial, float normalForceNewtons,
+    float tangentialSpeedMetersPerSecond, float deltaTime) {
+    ContactSlideEvent3D slide;
+    slide.bodyIdA = 1;
+    slide.bodyIdB = 2;
+    slide.materialA = std::string(dynamicMaterial);
+    slide.materialB = "concrete";
+    slide.effectiveMassKg = dynamicMassKg;   // um lado estatico: effectiveMass = massA
+    slide.massA = dynamicMassKg;
+    slide.massB = 0.0f;
+    slide.staticA = false;
+    slide.staticB = true;
+    slide.normalImpulseNewtonSeconds = normalForceNewtons * deltaTime;
+    slide.tangentialSpeedMetersPerSecond = tangentialSpeedMetersPerSecond;
+    return slide;
+}
+
+void testDragIntensityScalesWithWeightAndSlip() {
+    // Massas reais ja usadas neste projeto (extras glTF autoradas em
+    // anvil.glb / soccer_ball.glb): bigorna 55kg, bola de futebol 0.435kg.
+    constexpr float deltaTime = 1.0f / 120.0f;
+    constexpr float gravity = 9.81f;
+    MaterialLibrary materials;
+
+    // Bigorna parada, mas com um pouco de deslizamento tangencial (0.3 m/s,
+    // tipo sendo arrastada devagar pela Physgun) - peso proprio (~540N) ja
+    // basta pra passar o portao de forca; mesmo um deslizamento modesto
+    // deveria ficar bem acima do piso minimo de intensidade.
+    {
+        DragAcousticResolver resolver;
+        const ContactSlideEvent3D slide = makeSlideAgainstStaticFloor(
+            55.0f, "steel", 55.0f * gravity, 0.3f, deltaTime);
+        resolver.resolve(std::span<const ContactSlideEvent3D>(&slide, 1),
+            materials, deltaTime);
+        require(resolver.commands().size() == 1,
+            "Bigorna deslizando deveria produzir um comando de arrasto");
+        require(resolver.commands()[0].intensity > 0.1f,
+            "Arrasto da bigorna deveria ficar bem acima do piso minimo de "
+            "intensidade - objeto pesado, deveria ser bem audivel");
+        require(resolver.commands()[0].soundSet == "material.steel.roll",
+            "soundSet de arrasto deveria vir de rollingSoundSet do material");
+    }
+
+    // Bola de futebol ROLANDO (velocidade tangencial quase zero no ponto de
+    // contato - a propria definicao fisica de rolar sem deslizar): mesmo
+    // recebendo alguma forca normal, a rampa de velocidade deveria manter a
+    // intensidade praticamente nula, sem nenhum caso especial "isso e uma
+    // esfera".
+    {
+        DragAcousticResolver resolver;
+        const ContactSlideEvent3D slide = makeSlideAgainstStaticFloor(
+            0.435f, "soccer_ball", 0.435f * gravity, 0.02f, deltaTime);
+        resolver.resolve(std::span<const ContactSlideEvent3D>(&slide, 1),
+            materials, deltaTime);
+        require(resolver.commands().empty(),
+            "Bola rolando (deslizamento quase nulo) deveria ficar em "
+            "silencio");
+    }
+
+    // Bola de futebol ARRASTADA (nao rolando - velocidade tangencial alta
+    // igual a da bigorna): mesmo deslizando bastante, o peso proprio da bola
+    // (~4.3N) fica bem abaixo do piso de forca (15N) - "nao e qualquer
+    // arrasto, precisa ter um pouco de forca".
+    {
+        DragAcousticResolver resolver;
+        const ContactSlideEvent3D slide = makeSlideAgainstStaticFloor(
+            0.435f, "soccer_ball", 0.435f * gravity, 0.3f, deltaTime);
+        resolver.resolve(std::span<const ContactSlideEvent3D>(&slide, 1),
+            materials, deltaTime);
+        require(resolver.commands().empty(),
+            "Bola arrastada com forca de deslizamento continua leve demais "
+            "(peso proprio abaixo do piso de forca) para soar");
+    }
+
+    // Contato parado (repouso, sem deslizamento) nao deveria produzir som,
+    // mesmo com uma superficie pesada - e o "jitter de repouso" que o piso
+    // de velocidade existe pra filtrar.
+    {
+        DragAcousticResolver resolver;
+        const ContactSlideEvent3D slide = makeSlideAgainstStaticFloor(
+            55.0f, "steel", 55.0f * gravity, 0.0f, deltaTime);
+        resolver.resolve(std::span<const ContactSlideEvent3D>(&slide, 1),
+            materials, deltaTime);
+        require(resolver.commands().empty(),
+            "Corpo parado (sem deslizamento) nao deveria produzir arrasto");
+    }
+
+    // Uma superficie ESTATICA sozinha nao "arrasta" - so o lado dinamico
+    // emite (ver DragAcoustics.hpp).
+    {
+        DragAcousticResolver resolver;
+        const ContactSlideEvent3D slide = makeSlideAgainstStaticFloor(
+            55.0f, "steel", 55.0f * gravity, 0.3f, deltaTime);
+        resolver.resolve(std::span<const ContactSlideEvent3D>(&slide, 1),
+            materials, deltaTime);
+        for (const DragSoundCommand3D& command : resolver.commands()) {
+            require(command.materialId != "concrete",
+                "Lado estatico (concreto) nao deveria emitir som de "
+                "arrasto");
+        }
+    }
+}
+
+void testTireLandingIsAudible() {
+    // Pneu real (9kg, material "rubber", mass_kg autorada em car_tire.glb)
+    // pousando numa laje de concreto estatica a ~0.95 m/s - bem perto do
+    // piso minimo audivel (0.90 m/s). Antes de subir acousticEfficiency do
+    // rubber de 0.18 para 0.28 (ver MaterialLibrary.cpp), este pouso NAO
+    // produzia nenhum comando - o pneu so soava em quedas bem mais fortes
+    // que o normal, o que explicava "o som do pneu quase nunca toca". Este
+    // e o unico evento de impacto que a maioria dos pneus recebe na vida
+    // (depois disso viram contato persistente/arrasto, ver
+    // ContactSlideEvent3D) - se ele nao passar aqui, o pneu fica mudo.
+    MaterialLibrary materials;
+    ImpactAcousticResolver resolver;
+    const ContactImpactEvent3D hit = makeStaticDynamicImpact(
+        0.95f, 9.0f, "rubber", "concrete");
+    resolver.resolve(std::span<const ContactImpactEvent3D>(&hit, 1),
+        materials, 1.0f / 120.0f);
+
+    bool sawRubber = false;
+    for (const ImpactSoundCommand3D& command : resolver.commands()) {
+        if (command.materialId == "rubber") sawRubber = true;
+    }
+    require(sawRubber,
+        "Pneu pousando perto da velocidade minima audivel deveria produzir "
+        "som - rubber ficou surdo demais antes do retune de "
+        "acousticEfficiency");
+}
+
+void testBodyAcousticEnvelope() {
+    // applyEnvelopeSpike: eleva o envelope na hora, nunca reduz. Um pico
+    // mais fraco que o volume atual (ainda decaindo de um pico maior) nao
+    // deveria "roubar" a identidade do pico em curso.
+    {
+        BodyAcousticEnvelopeState state;
+        applyEnvelopeSpike(state, 0.6f, 1.2f, 0.1f);
+        require(state.volume == 0.6f && state.peakVolume == 0.6f
+                && state.spikePitch == 1.2f,
+            "Primeiro pico deveria definir volume/pico/pitch");
+        applyEnvelopeSpike(state, 0.2f, 0.5f, 0.9f);
+        require(state.volume == 0.6f,
+            "Pico mais fraco nao deveria reduzir o envelope atual");
+        require(state.spikePitch == 1.2f,
+            "Pico mais fraco nao deveria roubar o timbre do pico em curso");
+        applyEnvelopeSpike(state, 0.9f, 0.7f, 0.2f);
+        require(state.volume == 0.9f && state.peakVolume == 0.9f
+                && state.spikePitch == 0.7f,
+            "Pico mais forte deveria virar a nova referencia");
+    }
+
+    // advanceEnvelope: decai em direcao ao teto de sustain, nunca abaixo
+    // dele - e o "teto gradativo" pedido (arrasto = piso continuo, impacto
+    // = pico temporario por cima).
+    {
+        BodyAcousticEnvelopeState state;
+        applyEnvelopeSpike(state, 1.0f, 1.0f, 0.0f);
+        advanceEnvelope(state, 0.2f, 2.0f, 0.1f); // decai 0.2 em 0.1s
+        require(std::abs(state.volume - 0.8f) < 1.0e-5f,
+            "Envelope deveria decair pela taxa*deltaTime esperada");
+        advanceEnvelope(state, 0.2f, 100.0f, 10.0f); // decaimento exagerado
+        require(std::abs(state.volume - 0.2f) < 1.0e-5f,
+            "Envelope nao deveria decair abaixo do teto de sustain");
+        advanceEnvelope(state, 0.5f, 2.0f, 0.1f); // sustain sobe
+        require(std::abs(state.volume - 0.5f) < 1.0e-5f,
+            "Envelope deveria subir na hora se o teto de sustain subir");
+    }
+
+    // envelopeSpikeFactor: 1 logo apos um pico, tende a 0 conforme decai
+    // ate o sustain, e fica 0 quando nao ha pico de verdade acontecendo.
+    {
+        BodyAcousticEnvelopeState state;
+        applyEnvelopeSpike(state, 1.0f, 1.0f, 0.0f);
+        require(envelopeSpikeFactor(state, 0.0f) > 0.999f,
+            "Logo apos o pico o fator deveria estar no maximo");
+        advanceEnvelope(state, 0.0f, 2.0f, 0.25f); // decai pela metade
+        const float midFactor = envelopeSpikeFactor(state, 0.0f);
+        require(midFactor > 0.01f && midFactor < 0.99f,
+            "No meio do decaimento o fator deveria estar entre 0 e 1");
+        advanceEnvelope(state, 0.0f, 2.0f, 10.0f); // decai ate zero
+        require(envelopeSpikeFactor(state, 0.0f) < 1.0e-3f,
+            "Envelope todo decaido deveria ter fator perto de zero");
+
+        BodyAcousticEnvelopeState noSpike;
+        require(envelopeSpikeFactor(noSpike, 0.3f) == 0.0f,
+            "Sem nenhum pico de verdade, o fator deveria ser exatamente 0");
+    }
 }
 
 PhysicsBodyHandle3D createStaticWallBox(PhysicsScene3D& scene, Vec3 position,
@@ -282,6 +551,56 @@ void testWindSoundGeneration() {
 
     require(generateWindSoundSamples(0.0f, 48000, 1u).empty(),
         "Duracao zero deveria produzir vetor vazio");
+}
+
+void testWindAmbienceVolumeRamp() {
+    // Abaixo do limiar: silencio total, qualquer que seja o expoente.
+    require(windAmbienceVolumeRamp(5.2f, 7.0f, 28.0f, 3.0f) < 1.0e-6f,
+        "Abaixo do limiar deveria ser silencio total");
+
+    // Na velocidade de referencia (fastFlightSpeed=28, ver
+    // CharacterMotorSettings3D) deveria atingir exatamente o volume maximo -
+    // e o ponto central da correcao: antes, a referencia (20.0f) ficava
+    // aquem do teto real de velocidade do personagem (28.0f, fastFlightSpeed)
+    // e a rampa saturava cedo demais.
+    require(windAmbienceVolumeRamp(28.0f, 7.0f, 28.0f, 3.0f) > 0.999f,
+        "Na velocidade de fastFlightSpeed deveria atingir o volume maximo");
+
+    // Alem da referencia nunca deveria ultrapassar 1.0 (clamp).
+    require(windAmbienceVolumeRamp(50.0f, 7.0f, 28.0f, 3.0f) <= 1.0f,
+        "Nao deveria ultrapassar 1.0 alem da velocidade de referencia");
+
+    // Em flightSpeed (12.0, voo padrao/nao-boostado) deveria estar
+    // claramente abaixo do volume maximo - a curva antiga (limiar 7-20,
+    // quadratica) dava ~14.8% aqui, ja soando "quase no talo"; a nova
+    // (limiar 7-28, cubica) deveria ficar bem mais baixa, ainda "comecando".
+    const float flightRamp = windAmbienceVolumeRamp(12.0f, 7.0f, 28.0f, 3.0f);
+    require(flightRamp > 0.005f && flightRamp < 0.05f,
+        "Em flightSpeed padrao deveria estar claramente abaixo do volume "
+        "maximo (bem menor que os ~14.8% da curva antiga)");
+
+    // Prova estrutural da forma da curva (nao so dos valores pontuais): um
+    // expoente maior deveria suprimir mais o meio da faixa que um menor, na
+    // mesma velocidade.
+    require(windAmbienceVolumeRamp(12.0f, 7.0f, 28.0f, 3.0f)
+            < windAmbienceVolumeRamp(12.0f, 7.0f, 28.0f, 1.0f),
+        "Curva cubica deveria ficar abaixo da linear no meio da faixa");
+
+    // Faixa degenerada (limiar == referencia) nao pode travar nem gerar
+    // NaN/infinito.
+    require(std::isfinite(windAmbienceVolumeRamp(10.0f, 10.0f, 10.0f, 3.0f)),
+        "Faixa degenerada nao deveria produzir NaN/infinito");
+
+    // O uivo ambiente (curveExponent=2) precisa continuar bit-a-bit
+    // identico ao calculo antigo (ramp*ramp) - essa voz nao deveria mudar de
+    // comportamento, so o assobio de movimento precisava de uma curva mais
+    // gradual.
+    const float classicRamp =
+        std::clamp((15.0f - 0.8f) / (18.0f - 0.8f), 0.0f, 1.0f);
+    require(std::abs(windAmbienceVolumeRamp(15.0f, 0.8f, 18.0f, 2.0f)
+            - classicRamp * classicRamp) < 1.0e-6f,
+        "Uivo ambiente deveria continuar bit-a-bit identico ao calculo "
+        "antigo");
 }
 
 void testProceduralNoiseGeneration() {
@@ -522,6 +841,11 @@ int main() {
         testRestingContactsStaySilent();
         testRealImpactProducesCommand();
         testCooldownSuppressesImmediateRepeat();
+        testStaticSurfaceAlsoSounds();
+        testVeryLightImpactStillStaysStaticSideQuiet();
+        testDragIntensityScalesWithWeightAndSlip();
+        testTireLandingIsAudible();
+        testBodyAcousticEnvelope();
         testOcclusionSamplingAroundWall();
         testAcousticEnvironmentBlend();
         testAudioDeviceHrtfAndPlayback();
@@ -531,6 +855,7 @@ int main() {
         testEnvelopeAdsr();
         testProceduralNoiseGeneration();
         testWindSoundGeneration();
+        testWindAmbienceVolumeRamp();
         testLoopingVoiceLifecycle();
         std::cout << "MatterEngine audio foundation tests passed\n";
         return 0;

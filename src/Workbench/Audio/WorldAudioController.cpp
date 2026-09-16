@@ -1,6 +1,7 @@
 #include "Workbench/Audio/WorldAudioController.hpp"
 
 #include "Engine/Audio/ProceduralNoise.hpp"
+#include "Engine/Audio/WindAmbienceRamp.hpp"
 #include "Engine/Audio/WindSound.hpp"
 #include "Engine/Core/Log.hpp"
 
@@ -14,6 +15,29 @@ namespace {
 
 constexpr float SpeedOfSoundMetersPerSecond = 343.0f;
 constexpr std::size_t MaximumSimultaneousImpactCommands = 12;
+
+// --- Voz unica por corpo (impacto = pico, arrasto/atrito = teto de
+// sustain - ver BodyAcousticEnvelope.hpp) ---
+// Bem abaixo do pool de vozes do AudioDevice3D (64 fontes) - vozes em loop
+// nunca sao roubadas por outro som (ver AudioDevice3D::findFreeVoice), entao
+// um numero ilimitado de corpos simultaneos esgotaria o pool em silencio;
+// sobra espaco de sobra pra vento/outros sons com esse teto.
+constexpr std::size_t MaximumSimultaneousBodyVoices = 8;
+// Teto de volume do arrasto sobre a intensidade 0..1 do resolver - sempre
+// bem mais baixo que um impacto de verdade ("menor", como pedido), mesmo no
+// caso mais extremo (bigorna arrastando com forca total).
+constexpr float DragMaxVolumeFraction = 0.35f;
+// Mais grave que o clip original - ajuda a diferenciar de uma pancada
+// repetindo quando o mesmo clip sustenta por baixo do arrasto.
+constexpr float DragPitch = 0.75f;
+// Bem abafado - arredonda o ataque transiente do clip de impacto (pensado
+// pra tocar uma vez, nao sustentar), lendo mais como textura continua de
+// raspado do que como "clonk-clonk-clonk".
+constexpr float DragMuffle = 0.65f;
+// Tempo em silencio total (sem pico nem sustain) antes de parar a voz de
+// vez - evita ficar ligando/desligando a voz a cada quadro numa transicao
+// rapida (ex.: arrasto que pausa e retoma quase na hora).
+constexpr float BodyVoiceSilenceGraceSeconds = 0.3f;
 
 // Duracao do ruido de vento gerado (ver ProceduralNoise.hpp). Longo o
 // bastante para o ouvido humano nao prender facilmente o ponto onde o loop
@@ -50,13 +74,27 @@ constexpr std::uint32_t WindNoiseSeed = 0x57494e44u; // ASCII "WIND"
 // ver CharacterMotorSettings3D::sprintSpeed) para que so um deslocamento
 // rapido de verdade dispare o som, nao um passo qualquer.
 constexpr float WindMovementQuietThresholdMetersPerSecond = 7.0f;
-// Velocidade em que o assobio de movimento se aproxima do volume maximo -
-// alem do sprint sozinho, cobre queda rapida/voo veloz (ver
-// CharacterMotorSettings3D::fastFlightSpeed).
-constexpr float WindMovementReferenceSpeedMetersPerSecond = 20.0f;
+// Velocidade em que o assobio de movimento atinge o volume maximo - ancorada
+// exatamente em CharacterMotorSettings3D::fastFlightSpeed (o teto real de
+// velocidade do personagem), nao um numero solto. Antes disto era 20.0f
+// (abaixo de fastFlightSpeed=28.0f): a rampa saturava em 1.0 assim que o
+// jogador excedia 20 m/s, sobrando ~8 m/s de voo veloz sem nenhum aumento
+// audivel de volume - alem disso, com expoente 2 (ver ramp*ramp), a faixa
+// 7-20 ja soava perto do talo bem antes do voo padrao (12 m/s) terminar.
+// Ampliar a referencia pra 28 e trocar o expoente pra 3 (ver
+// WindMovementCurveExponent) resolvem os dois problemas juntos.
+constexpr float WindMovementReferenceSpeedMetersPerSecond = 28.0f;
+// Expoente da rampa de volume (ver windAmbienceVolumeRamp). 3 em vez do
+// quadratico padrao: sobe mais devagar no meio da faixa de velocidades reais
+// do personagem (andar/correr/voo padrao) e acelera mais perto do topo, pra
+// que o voo padrao (12 m/s) va soar claramente "comecando", nao "quase no
+// maximo".
+constexpr float WindMovementCurveExponent = 3.0f;
 // Deslocamento maximo de pitch no movimento mais rapido - sutil de
 // proposito (friccao do ar realmente soa "mais aguda" quanto mais rapido,
-// mas isto e um toque de realismo, nao um efeito chamativo).
+// mas isto e um toque de realismo, nao um efeito chamativo). Continua usando
+// a rampa LINEAR (nao a curva de volume acima) - so o volume precisa do
+// crescimento mais gradual, o pitch nao deveria ficar tao contido assim.
 constexpr float WindMovementMaxPitchBoost = 0.15f;
 // Quase sem filtro - um assobio "colado no ouvido" deveria soar brilhante/
 // proximo, nao abafado.
@@ -73,6 +111,10 @@ constexpr float WindMovementMuffle = 0.05f;
 // bastante pra cobrir do sussurro ao vendaval sem saturar cedo demais.
 constexpr float WindAmbientQuietThresholdMetersPerSecond = 0.8f;
 constexpr float WindAmbientReferenceSpeedMetersPerSecond = 18.0f;
+// Expoente quadratico classico (ver windAmbienceVolumeRamp) - preservado sem
+// mudanca de comportamento; so o assobio de movimento precisava de uma curva
+// mais gradual.
+constexpr float WindAmbientCurveExponent = 2.0f;
 // Bem mais abafado que o assobio de movimento - um uivo distante/ambiente,
 // nao um som proximo do ouvido; a diferenca de timbre ajuda a diferenciar
 // os dois fenomenos mesmo tocando o mesmo buffer de ruido por baixo.
@@ -168,7 +210,12 @@ void WorldAudioController::shutdown() {
     m_windMovementVoiceHandle = -1;
     m_windAmbientVoiceHandle = -1;
     m_windClipId = -1;
-    m_pendingImpacts.clear();
+    for (const auto& [bodyId, state] : m_bodyVoices) {
+        m_audio.stopLooping(state.voiceHandle);
+    }
+    m_bodyVoices.clear();
+    m_pendingSpikes.clear();
+    m_pendingSustain.clear();
     m_impactClips.clear();
     m_audio.shutdown();
     m_initialized = false;
@@ -191,11 +238,75 @@ void WorldAudioController::submitImpacts(
         const ImpactSoundCommand3D& command = commands[index];
         const int clip = clipForMaterial(command.materialId);
         if (clip < 0) continue;
-        // O atraso final é calculado a partir da distância ao ouvinte durante
-        // update(); inicialmente zero permite que fontes próximas toquem no
-        // mesmo passo e evita armazenar uma posição antiga do ouvinte.
-        m_pendingImpacts.push_back({ command, clip, -1.0f });
+        // O atraso final é calculado a partir da distância ao ouvinte
+        // durante update(); inicialmente negativo sinaliza "ainda nao
+        // calculado" (permite fontes próximas tocarem no mesmo passo, ver
+        // update()). O pico so e de fato aplicado na voz do corpo quando o
+        // atraso zerar - nunca cria uma voz propria (ver
+        // findOrCreateBodyVoice).
+        PendingSpike pending;
+        pending.sourceBodyId = command.sourceBodyId;
+        pending.position = command.position;
+        pending.volume = command.volume;
+        pending.pitch = command.pitch;
+        pending.muffle = command.muffle;
+        pending.durationSeconds = command.durationSeconds;
+        pending.clipId = clip;
+        pending.delaySeconds = -1.0f;
+        m_pendingSpikes.push_back(pending);
     }
+}
+
+void WorldAudioController::submitDrags(
+    std::span<const DragSoundCommand3D> commands) {
+    if (!m_initialized) return;
+    // Reconstruido do zero todo quadro - "quem esta arrastando agora" nao
+    // acumula estado proprio, so alimenta update() no mesmo passo (ver
+    // m_pendingSustain).
+    m_pendingSustain.clear();
+    for (const DragSoundCommand3D& command : commands) {
+        // Reaproveita o clip de IMPACTO ja carregado (por materialId, nao
+        // soundSet) como fonte do sustain de arrasto - nenhum asset novo
+        // exige ser autorado agora (ver DragAcoustics.hpp/soundSet
+        // reservado mas ainda sem WAV correspondente).
+        const int clip = clipForMaterial(command.materialId);
+        if (clip < 0) continue;
+        m_pendingSustain[command.sourceBodyId] =
+            { command.position, command.intensity, clip };
+    }
+}
+
+WorldAudioController::BodyVoiceState*
+WorldAudioController::findOrCreateBodyVoice(std::uint64_t sourceBodyId,
+    int clipId, Vec3 position, float incomingLevel) {
+    auto tracked = m_bodyVoices.find(sourceBodyId);
+    if (tracked != m_bodyVoices.end()) return &tracked->second;
+
+    if (m_bodyVoices.size() >= MaximumSimultaneousBodyVoices) {
+        // Pool cheio: so abre espaco se este pedido for mais intenso que o
+        // corpo mais fraco ja tocando agora (pico ou sustain, o que for
+        // maior).
+        auto weakest = m_bodyVoices.begin();
+        auto weakestLevel = [](const BodyVoiceState& state) {
+            return std::max(state.envelope.volume, state.sustainTarget);
+        };
+        for (auto it = m_bodyVoices.begin(); it != m_bodyVoices.end();
+            ++it) {
+            if (weakestLevel(it->second) < weakestLevel(weakest->second)) {
+                weakest = it;
+            }
+        }
+        if (weakestLevel(weakest->second) >= incomingLevel) return nullptr;
+        m_audio.stopLooping(weakest->second.voiceHandle);
+        m_bodyVoices.erase(weakest);
+    }
+
+    BodyVoiceState state;
+    state.voiceHandle = m_audio.playLooping(clipId, position, 0.0f, 1.0f,
+        /*listenerRelative=*/false);
+    if (state.voiceHandle < 0) return nullptr;
+    state.position = position;
+    return &m_bodyVoices.emplace(sourceBodyId, state).first->second;
 }
 
 WorldAudioController::SpatialParameters WorldAudioController::spatialize(
@@ -238,14 +349,16 @@ void WorldAudioController::update(const AudioListenerPose3D& listenerPose,
     m_audio.setListenerPose(listenerPose);
     m_audio.setEnvironment(m_environment.evaluate(listenerPose.position));
 
-    for (auto iterator = m_pendingImpacts.begin();
-        iterator != m_pendingImpacts.end();) {
-        PendingImpact& pending = *iterator;
+    // 1) Impactos pendentes (atraso de propagacao) que ja chegaram viram um
+    // PICO no envelope da voz unica do corpo - nunca uma voz propria (ver
+    // BodyAcousticEnvelope.hpp e o comentario de submitImpacts).
+    for (auto iterator = m_pendingSpikes.begin();
+        iterator != m_pendingSpikes.end();) {
+        PendingSpike& pending = *iterator;
         const float distance =
-            (pending.command.position - listenerPose.position).length();
+            (pending.position - listenerPose.position).length();
         if (pending.delaySeconds < 0.0f) {
-            pending.delaySeconds = distance
-                / SpeedOfSoundMetersPerSecond;
+            pending.delaySeconds = distance / SpeedOfSoundMetersPerSecond;
         }
         pending.delaySeconds -= std::max(0.0f, deltaTime);
         if (pending.delaySeconds > 0.0f) {
@@ -254,23 +367,96 @@ void WorldAudioController::update(const AudioListenerPose3D& listenerPose,
         }
 
         const SpatialParameters spatial = spatialize(
-            pending.command.position, listenerPose.position, physicsScene);
+            pending.position, listenerPose.position, physicsScene);
         const float volume = std::clamp(
-            pending.command.volume * spatial.occlusionGain, 0.0f, 1.0f);
+            pending.volume * spatial.occlusionGain, 0.0f, 1.0f);
         if (volume > 0.002f) {
-            const float clipDuration =
-                m_audio.bufferDurationSeconds(pending.clipId);
-            const float duration = std::min(clipDuration,
-                pending.command.durationSeconds
-                    / std::max(0.05f, pending.command.pitch));
-            m_audio.playTimed(pending.clipId, pending.command.position,
-                std::max(0.035f, duration),
-                std::min(0.055f, duration * 0.35f), volume,
-                pending.command.pitch,
-                std::clamp(pending.command.muffle
-                    + spatial.additionalMuffle, 0.0f, 0.98f));
+            BodyVoiceState* voice = findOrCreateBodyVoice(
+                pending.sourceBodyId, pending.clipId, pending.position,
+                volume);
+            if (voice != nullptr) {
+                const float muffle = std::clamp(
+                    pending.muffle + spatial.additionalMuffle, 0.0f, 0.98f);
+                applyEnvelopeSpike(voice->envelope, volume, pending.pitch,
+                    muffle);
+                // O pico decai de volta pro teto de sustain (ou a zero, se
+                // o corpo nao estiver arrastando) no mesmo tempo que o
+                // impacto duraria sozinho hoje - reaproveita
+                // durationSeconds, ja calibrado por material/tamanho pelo
+                // resolver (ver ImpactAcoustics.cpp), em vez de inventar
+                // uma taxa de decaimento nova.
+                voice->decayPerSecond = voice->envelope.peakVolume
+                    / std::max(0.05f, pending.durationSeconds);
+                voice->position = pending.position;
+            }
         }
-        iterator = m_pendingImpacts.erase(iterator);
+        iterator = m_pendingSpikes.erase(iterator);
+    }
+
+    // 2) Teto de sustain do arrasto (ver DragAcoustics.hpp) - so aplica
+    // oclusao/abafamento por distancia aqui: submitDrags() nao tem acesso a
+    // listenerPose/physicsScene. Antes o arrasto nunca passava por
+    // spatialize() (um corpo arrastando atras de uma parede soava igual a
+    // um em campo aberto) - este redesenho fecha essa lacuna de graca, ja
+    // que agora arrasto e impacto passam pelo mesmo caminho.
+    for (const auto& [sourceBodyId, sustain] : m_pendingSustain) {
+        const SpatialParameters spatial = spatialize(
+            sustain.position, listenerPose.position, physicsScene);
+        const float sustainVolume = std::clamp(sustain.intensity
+            * DragMaxVolumeFraction * spatial.occlusionGain, 0.0f, 1.0f);
+        if (sustainVolume < 0.001f) continue;
+        BodyVoiceState* voice = findOrCreateBodyVoice(sourceBodyId,
+            sustain.clipId, sustain.position, sustainVolume);
+        if (voice == nullptr) continue;
+        voice->position = sustain.position;
+        voice->sustainTarget = sustainVolume;
+        voice->sustainPitch = DragPitch;
+        voice->sustainMuffle = std::clamp(
+            DragMuffle + spatial.additionalMuffle, 0.0f, 0.98f);
+        voice->sustainedThisFrame = true;
+    }
+    m_pendingSustain.clear();
+
+    // 3) Avanca o envelope de cada corpo rastreado e escreve na voz unica.
+    // O "teto gradativo" pedido: enquanto o corpo estiver arrastando,
+    // sustainTarget e o piso continuo que o envelope nunca cruza pra baixo;
+    // um impacto novo so cria um pico temporario por cima, que decai de
+    // volta pra esse piso (nao pra zero, se ainda estiver arrastando).
+    for (auto it = m_bodyVoices.begin(); it != m_bodyVoices.end();) {
+        BodyVoiceState& voice = it->second;
+        const float sustainTarget = voice.sustainedThisFrame
+            ? voice.sustainTarget : 0.0f;
+        advanceEnvelope(voice.envelope, sustainTarget, voice.decayPerSecond,
+            deltaTime);
+
+        if (voice.envelope.volume < 0.001f && sustainTarget < 0.001f) {
+            voice.silentSeconds += std::max(0.0f, deltaTime);
+        } else {
+            voice.silentSeconds = 0.0f;
+        }
+        if (voice.silentSeconds > BodyVoiceSilenceGraceSeconds) {
+            m_audio.stopLooping(voice.voiceHandle);
+            it = m_bodyVoices.erase(it);
+            continue;
+        }
+
+        // Mistura o timbre do pico de impacto com o do teto de arrasto
+        // conforme o envelope decai de um pra outro - sem essa mistura, o
+        // pitch/muffle trocaria de repente assim que o pico terminasse.
+        const float spikeFactor = envelopeSpikeFactor(voice.envelope,
+            sustainTarget);
+        const float pitch = voice.sustainPitch
+            + (voice.envelope.spikePitch - voice.sustainPitch) * spikeFactor;
+        const float muffle = voice.sustainMuffle
+            + (voice.envelope.spikeMuffle - voice.sustainMuffle)
+                * spikeFactor;
+
+        m_audio.setLoopingVolume(voice.voiceHandle, voice.envelope.volume);
+        m_audio.setLoopingPitch(voice.voiceHandle, pitch);
+        m_audio.setLoopingMuffle(voice.voiceHandle, muffle);
+        m_audio.setLoopingPosition(voice.voiceHandle, voice.position);
+        voice.sustainedThisFrame = false;
+        ++it;
     }
 }
 
@@ -285,16 +471,18 @@ void WorldAudioController::updateWindAmbience(
         // constantes WindMovement*/WindAmbient* sobre por que isto nao usa
         // mais o vetor relativo ao vento.
         const float playerSpeed = characterVelocityMetersPerSecond.length();
-        const float ramp = std::clamp(
+        // Pitch continua na rampa linear (ver comentario de
+        // WindMovementCurveExponent) - so o volume usa a curva mais gradual.
+        const float linearRamp = std::clamp(
             (playerSpeed - WindMovementQuietThresholdMetersPerSecond)
                 / (WindMovementReferenceSpeedMetersPerSecond
                     - WindMovementQuietThresholdMetersPerSecond),
             0.0f, 1.0f);
-        // Ruido aerodinamico real cresce mais rapido que linear com a
-        // velocidade (~v^2) - o quadrado da rampa aproxima essa curva sem
-        // simular acustica de verdade.
-        const float volume = ramp * ramp * clampedMasterVolume;
-        const float pitch = 1.0f + ramp * WindMovementMaxPitchBoost;
+        const float volume = windAmbienceVolumeRamp(playerSpeed,
+            WindMovementQuietThresholdMetersPerSecond,
+            WindMovementReferenceSpeedMetersPerSecond,
+            WindMovementCurveExponent) * clampedMasterVolume;
+        const float pitch = 1.0f + linearRamp * WindMovementMaxPitchBoost;
         m_audio.setLoopingVolume(m_windMovementVoiceHandle, volume);
         m_audio.setLoopingPitch(m_windMovementVoiceHandle, pitch);
         m_audio.setLoopingMuffle(m_windMovementVoiceHandle,
@@ -310,7 +498,10 @@ void WorldAudioController::updateWindAmbience(
                 / (WindAmbientReferenceSpeedMetersPerSecond
                     - WindAmbientQuietThresholdMetersPerSecond),
             0.0f, 1.0f);
-        const float volume = ramp * ramp * clampedMasterVolume;
+        const float volume = windAmbienceVolumeRamp(windSpeed,
+            WindAmbientQuietThresholdMetersPerSecond,
+            WindAmbientReferenceSpeedMetersPerSecond,
+            WindAmbientCurveExponent) * clampedMasterVolume;
         const float pitch = 1.0f + ramp * WindAmbientMaxPitchShift;
         m_audio.setLoopingVolume(m_windAmbientVoiceHandle, volume);
         m_audio.setLoopingPitch(m_windAmbientVoiceHandle, pitch);

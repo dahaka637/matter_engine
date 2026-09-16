@@ -1,0 +1,20 @@
+{
+  "schema": "matter-ragdoll-character-1",
+  "id": "crash_test_dummy",
+  "displayName": "Crash Test Dummy",
+  "locomotion": {
+    "idle": "idle_dummy",
+    "run": "run_forward_dummy",
+    "stop": "run_to_stop_dummy"
+  },
+  "physicsProfile": "CrashTestDummyV1.ragdoll.json",
+  "skin": "dummy.skin.json",
+  "albedo": "albedo.png",
+  "flatShaded": false,
+  "thumbnail": "thumbnail.png",
+  "attribution": {
+    "title": "Crash Test Dummy mark1",
+    "license": "CC0-1.0",
+    "source": "https://www.blendswap.com/blends/view/88294"
+  }
+}

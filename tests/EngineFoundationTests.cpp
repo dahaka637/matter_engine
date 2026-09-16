@@ -1,10 +1,17 @@
+#include "Engine/Animation/AnimationClip3D.hpp"
+#include "Engine/Animation/RagdollCharacter3D.hpp"
 #include "Engine/Environment/WindSystem.hpp"
+#include "Engine/Control/AnimatedRagdollController3D.hpp"
+#include "Engine/Control/RagdollImpactTest3D.hpp"
+#include "Engine/Environment/OceanSurface.hpp"
 #include "Engine/Geometry/GltfAcousticZone3D.hpp"
 #include "Engine/Geometry/GltfPhysicsMetadata3D.hpp"
 #include "Engine/Geometry/PhysicalAsset3D.hpp"
 #include "Engine/Materials/MaterialLibrary.hpp"
 #include "Engine/Physics/PhysicalBodyBuilder3D.hpp"
 #include "Engine/Physics/PhysicsScene3D.hpp"
+#include "Engine/Physics/RagdollProfile3D.hpp"
+#include "Engine/Physics/WindShelter3D.hpp"
 #include "Engine/Core/TaskScheduler.hpp"
 #include "Engine/Math/Frustum3D.hpp"
 #include "Engine/Math/Hash.hpp"
@@ -22,9 +29,11 @@
 #include <iostream>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <span>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -33,6 +42,312 @@ using namespace MatterEngine;
 
 void require(bool condition, const char* message) {
     if (!condition) throw std::runtime_error(message);
+}
+
+void testRagdollCharacterSkin() {
+    const auto character=loadRagdollCharacter3D(std::string(MATTERENGINE_TEST_ASSETS_DIR)
+        + "/characters/crash_test_dummy/character.json");
+    require(character.profile.id == "CrashTestDummyV1", "Wrong default humanoid rig");
+    require(character.mesh.indices.size() >= 4500, "Low-poly mesh unexpectedly missing triangles");
+    const auto bind=sampleRagdollAnimationPose3D(character.profile,nullptr,0.0f,false);
+    const auto palette=buildRagdollSkinMatrices3D(character,bind.linkPositions,bind.linkOrientations);
+    for (const auto& vertex : character.mesh.vertices) {
+        require((skinVertexPosition3D(vertex,palette)-vertex.position).length() < 0.00001f,
+            "Skin bind changes the authored surface");
+    }
+    auto moved=bind;
+    const Quaternion rotation=Quaternion::fromAxisAngle({0,0,1},0.72f);
+    const Vec3 translation{3,-2,1};
+    for (std::size_t i=0;i<moved.linkPositions.size();++i) {
+        moved.linkPositions[i]=translation+rotation.rotate(moved.linkPositions[i]);
+        moved.linkOrientations[i]=rotation*moved.linkOrientations[i];
+    }
+    const auto movedPalette=buildRagdollSkinMatrices3D(character,moved.linkPositions,moved.linkOrientations);
+    for (const auto& vertex : character.mesh.vertices) {
+        require((skinVertexPosition3D(vertex,movedPalette)
+            -(translation+rotation.rotate(vertex.position))).length()<0.00001f,
+            "Skin does not follow world rotation/translation of physics");
+    }
+    const auto clip=loadAnimationClip3D(std::string(MATTERENGINE_TEST_ASSETS_DIR)
+        + "/animations/clips/run_forward_dummy.matteranim.json");
+    require(validateAnimationClipForRagdoll3D(clip,character.profile).empty(),
+        "Low-poly running clip violates physical rig");
+    float maximumTravel=0;
+    for (int frame=0;frame<=64;++frame) {
+        const auto pose=sampleRagdollAnimationPose3D(character.profile,&clip,
+            clip.durationSeconds*static_cast<float>(frame)/64.0f,false);
+        const auto matrices=buildRagdollSkinMatrices3D(character,pose.linkPositions,pose.linkOrientations);
+        for (const auto& vertex : character.mesh.vertices) {
+            const auto point=skinVertexPosition3D(vertex,matrices);
+            require(std::isfinite(point.x)&&std::isfinite(point.y)&&std::isfinite(point.z)
+                && point.length()<2.5f,"Running skin exploded or became non-finite");
+            maximumTravel=std::max(maximumTravel,(point-vertex.position).length());
+        }
+        for (std::size_t i=1;i<character.profile.links.size();++i) {
+            const auto& link=character.profile.links[i];
+            const auto parent=static_cast<std::size_t>(link.parentIndex);
+            const auto& parentLink=character.profile.links[parent];
+            const auto anchor=link.inboundJoint.anchorModelPosition;
+            const auto a=pose.linkPositions[parent]+pose.linkOrientations[parent].rotate(
+                parentLink.modelOrientation.conjugate().rotate(anchor-parentLink.modelPosition));
+            const auto b=pose.linkPositions[i]+pose.linkOrientations[i].rotate(
+                link.modelOrientation.conjugate().rotate(anchor-link.modelPosition));
+            require((a-b).length()<0.00001f,"Low-poly animation disconnected physical anchors");
+        }
+    }
+    require(maximumTravel>0.3f,"Skin remained in bind pose during running");
+    auto invalid=character.profile;
+    invalid.links[0].collider.radiusMeters=-1;
+    require(!validateRagdollProfile3D(invalid).empty(),"Negative per-link radius accepted");
+}
+
+void testAnimationClipSampling() {
+    AnimationClip3D clip;
+    clip.id = "test_turn";
+    clip.displayName = "Test turn";
+    clip.targetRigId = "HumanAdultV1";
+    clip.durationSeconds = 1.0f;
+    clip.sourceSampleRateHz = 30.0f;
+    AnimationTrack3D track;
+    track.targetLinkId = "Pelvis";
+    track.space = AnimationTrackSpace3D::Root;
+    track.keyframes = {
+        { 0.0f, {}, {}, {} },
+        { 1.0f, { 2.0f, 0.0f, 0.0f },
+            Quaternion::fromAxisAngle({ 0.0f, 0.0f, 1.0f },
+                3.14159265358979323846f * 0.5f), {} }
+    };
+    clip.tracks.push_back(track);
+
+    require(validateAnimationClip3D(clip).empty(),
+        "Clipe canônico válido foi rejeitado");
+    require(findAnimationTrack3D(clip, "Pelvis") != nullptr,
+        "Canal canônico não foi encontrado pelo link do ragdoll");
+
+    const AnimationTransformSample3D halfway = sampleAnimationTrack3D(
+        clip.tracks.front(), 0.5f, clip.durationSeconds, true);
+    require(std::abs(halfway.translationOffsetMeters.x - 1.0f) < 0.0001f,
+        "Interpolação de translação do clipe está incorreta");
+    const Vec3 halfwayDirection =
+        halfway.rotationDelta.rotate({ 1.0f, 0.0f, 0.0f });
+    constexpr float SquareRootHalf = 0.70710678118f;
+    require(std::abs(halfwayDirection.x - SquareRootHalf) < 0.0002f
+            && std::abs(halfwayDirection.y - SquareRootHalf) < 0.0002f,
+        "Interpolação de rotação do clipe está incorreta");
+
+    const AnimationTransformSample3D looped = sampleAnimationTrack3D(
+        clip.tracks.front(), 1.25f, clip.durationSeconds, true);
+    require(std::abs(looped.translationOffsetMeters.x - 0.5f) < 0.0001f,
+        "Amostragem em loop não voltou ao início do clipe");
+
+    clip.tracks.push_back(track);
+    require(!validateAnimationClip3D(clip).empty(),
+        "Validação aceitou dois canais para o mesmo link");
+
+    const std::string runningPath =
+        std::string(MATTERENGINE_TEST_ASSETS_DIR)
+        + "/animations/clips/run_forward.matteranim.json";
+    const AnimationClip3D running = loadAnimationClip3D(runningPath);
+    require(running.id == "run_forward"
+            && running.displayName == "Correr para frente",
+        "Clipe de corrida canônico não foi carregado corretamente");
+    require(running.targetRigId == "HumanAdultV1"
+            && running.tracks.size() == 18,
+        "Retarget da corrida não cobre os 18 links do ragdoll");
+    require(running.retargetReport.available
+            && running.retargetReport.passed
+            && running.retargetReport.directionRmsDegrees <= 6.0f
+            && running.retargetReport.limbDirectionMaxDegrees <= 8.0f,
+        "Corrida não possui relatório de retarget aprovado");
+    require(std::abs(running.durationSeconds - 0.6333333f) < 0.0001f
+            && std::abs(running.sourceSampleRateHz - 30.0f) < 0.001f,
+        "Metadados temporais da corrida foram alterados");
+    const AnimationTrack3D* runningPelvis =
+        findAnimationTrack3D(running, "Pelvis");
+    require(runningPelvis != nullptr && !runningPelvis->keyframes.empty(),
+        "Retarget da corrida não contém o canal da pelve");
+    const Vec3 rootStart =
+        runningPelvis->keyframes.front().translationOffsetMeters;
+    const Vec3 rootEnd =
+        runningPelvis->keyframes.back().translationOffsetMeters;
+    require((rootEnd - rootStart).length() < 0.00001f,
+        "Corrida importada ainda possui deriva global no fechamento do ciclo");
+
+    const RagdollProfile3D runningRig = loadRagdollProfile3D(
+        std::string(MATTERENGINE_TEST_ASSETS_DIR)
+        + "/physics/ragdolls/HumanAdultV1.ragdoll.json");
+    require(validateAnimationClipForRagdoll3D(running, runningRig).empty(),
+        "Clipe canônico não respeita o perfil físico alvo");
+    const auto linkIndex = [&](std::string_view id) {
+        const auto found = std::find_if(runningRig.links.begin(),
+            runningRig.links.end(), [&](const RagdollLinkDefinition3D& link) {
+                return link.id == id;
+            });
+        require(found != runningRig.links.end(),
+            "Link anatômico esperado não existe no perfil");
+        return static_cast<std::size_t>(found - runningRig.links.begin());
+    };
+    AnimationClip3D elbowFlexion;
+    elbowFlexion.durationSeconds = 1.0f;
+    for (std::string_view id : { "LeftForearm", "RightForearm" }) {
+        AnimationTrack3D elbowTrack;
+        elbowTrack.targetLinkId = id;
+        elbowTrack.space = AnimationTrackSpace3D::Joint;
+        elbowTrack.keyframes.push_back({ 0.0f, {}, {},
+            { 3.14159265358979323846f * 0.5f, 0.0f, 0.0f } });
+        elbowFlexion.tracks.push_back(std::move(elbowTrack));
+    }
+    const RagdollAnimationPose3D flexedPose = sampleRagdollAnimationPose3D(
+        runningRig, &elbowFlexion, 0.0f, false);
+    const auto worldAnchor = [&](std::size_t index) {
+        const RagdollLinkDefinition3D& link = runningRig.links[index];
+        return flexedPose.linkPositions[index]
+            + flexedPose.linkOrientations[index].rotate(
+                link.modelOrientation.conjugate().rotate(
+                    link.inboundJoint.anchorModelPosition
+                        - link.modelPosition));
+    };
+    const Vec3 leftForearmDirection = (worldAnchor(linkIndex("LeftHand"))
+        - worldAnchor(linkIndex("LeftForearm"))).normalized();
+    const Vec3 rightForearmDirection = (worldAnchor(linkIndex("RightHand"))
+        - worldAnchor(linkIndex("RightForearm"))).normalized();
+    require(leftForearmDirection.x > 0.99f
+            && rightForearmDirection.x > 0.99f,
+        "Frames espelhados dos cotovelos não flexionam para a mesma frente");
+    const auto rotationVector = [](Quaternion rotation) {
+        rotation = rotation.normalized();
+        if (rotation.w < 0.0f) {
+            rotation = { -rotation.x, -rotation.y, -rotation.z, -rotation.w };
+        }
+        const Vec3 imaginary { rotation.x, rotation.y, rotation.z };
+        const float length = imaginary.length();
+        if (length < 0.000001f) return Vec3 {};
+        return imaginary * (2.0f * std::atan2(length,
+            std::clamp(rotation.w, 0.0f, 1.0f)) / length);
+    };
+    for (int sampleIndex = 0; sampleIndex <= 64; ++sampleIndex) {
+        const float time = running.durationSeconds
+            * static_cast<float>(sampleIndex) / 64.0f;
+        const RagdollAnimationPose3D pose = sampleRagdollAnimationPose3D(
+            runningRig, &running, time, true);
+        require(pose.linkPositions.size() == runningRig.links.size(),
+            "Pose da corrida não cobre todos os links do ragdoll");
+        for (std::size_t linkIndex = 1;
+                linkIndex < runningRig.links.size(); ++linkIndex) {
+            const RagdollLinkDefinition3D& link =
+                runningRig.links[linkIndex];
+            const std::size_t parentIndex =
+                static_cast<std::size_t>(link.parentIndex);
+            const RagdollLinkDefinition3D& parent =
+                runningRig.links[parentIndex];
+            const Vec3 parentAnchor = pose.linkPositions[parentIndex]
+                + pose.linkOrientations[parentIndex].rotate(
+                    parent.modelOrientation.conjugate().rotate(
+                        link.inboundJoint.anchorModelPosition
+                            - parent.modelPosition));
+            const Vec3 childAnchor = pose.linkPositions[linkIndex]
+                + pose.linkOrientations[linkIndex].rotate(
+                    link.modelOrientation.conjugate().rotate(
+                        link.inboundJoint.anchorModelPosition
+                            - link.modelPosition));
+            require((parentAnchor - childAnchor).length() < 0.00001f,
+                "Pose da corrida separou as âncoras de uma articulação");
+
+            const Quaternion localOrientation =
+                (pose.linkOrientations[parentIndex].conjugate()
+                    * pose.linkOrientations[linkIndex]).normalized();
+            const Quaternion parentFrame =
+                (parent.modelOrientation.conjugate()
+                    * link.inboundJoint.frameModelOrientation).normalized();
+            const Quaternion childFrame =
+                (link.modelOrientation.conjugate()
+                    * link.inboundJoint.frameModelOrientation).normalized();
+            const AnimationTrack3D* sourceTrack =
+                findAnimationTrack3D(running, link.id);
+            require(sourceTrack != nullptr,
+                "Clipe de corrida não cobre um link articulado");
+            const AnimationTransformSample3D sourceSample =
+                sampleAnimationTrack3D(*sourceTrack, time,
+                    running.durationSeconds, true);
+            const Vec3 sourceCoordinates = sourceSample.jointPositionRadians;
+            const Vec3 coordinates = rotationVector(
+                parentFrame.conjugate() * localOrientation * childFrame);
+            const float values[] = {
+                coordinates.x, coordinates.y, coordinates.z
+            };
+            const float sourceValues[] = {
+                sourceCoordinates.x, sourceCoordinates.y, sourceCoordinates.z
+            };
+            for (std::size_t axisIndex = 0; axisIndex < 3; ++axisIndex) {
+                const RagdollAxisDefinition3D& axis =
+                    link.inboundJoint.axes[axisIndex];
+                require(axis.enabled
+                        ? sourceValues[axisIndex]
+                                >= axis.minimumRadians - 0.0001f
+                            && sourceValues[axisIndex]
+                                <= axis.maximumRadians + 0.0001f
+                        : std::abs(sourceValues[axisIndex]) < 0.0001f,
+                    "Clipe canônico contém alvo fora dos limites físicos");
+                require(axis.enabled
+                        ? values[axisIndex] >= axis.minimumRadians - 0.0001f
+                            && values[axisIndex]
+                                <= axis.maximumRadians + 0.0001f
+                        : std::abs(values[axisIndex]) < 0.0001f,
+                    "Pose da corrida excedeu os limites de uma articulação");
+            }
+        }
+    }
+}
+
+void testRagdollImpactGenerator() {
+    RagdollImpactTest3D pulse;
+    pulse.config().forceNewtons = 350.0f;
+    pulse.config().directionDegrees = 90.0f;
+    pulse.config().pulseDurationSeconds = 0.10f;
+    pulse.config().intervalSeconds = 3.0f;
+    pulse.triggerNow();
+    pulse.update(1.0f / 120.0f);
+    require(pulse.output().applying
+            && std::abs(pulse.output().forceNewtons - 350.0f) < 0.01f
+            && std::abs(pulse.output().directionDegrees - 90.0f) < 0.01f,
+        "Gerador de impacto direto nao publicou a rajada configurada");
+    for (int tick = 0; tick < 20; ++tick) {
+        pulse.update(1.0f / 120.0f);
+    }
+    require(!pulse.output().applying && pulse.output().eventCount == 1,
+        "Rajada direta nao terminou de forma deterministica");
+
+    pulse.config().mode = RagdollImpactMode3D::Continuous;
+    pulse.setRunning(true);
+    pulse.update(1.0f / 120.0f);
+    require(pulse.output().applying
+            && pulse.output().secondsRemaining < 0.0f,
+        "Empurrao continuo nao permaneceu ativo");
+    pulse.setRunning(false);
+    pulse.update(1.0f / 120.0f);
+    require(!pulse.output().applying,
+        "Empurrao continuo continuou aplicando forca apos pausa");
+
+    RagdollImpactTest3D randomA;
+    RagdollImpactTest3D randomB;
+    randomA.config().mode = RagdollImpactMode3D::Random;
+    randomB.config().mode = RagdollImpactMode3D::Random;
+    randomA.reset(0x12345678u);
+    randomB.reset(0x12345678u);
+    randomA.config().mode = RagdollImpactMode3D::Random;
+    randomB.config().mode = RagdollImpactMode3D::Random;
+    randomA.triggerNow();
+    randomB.triggerNow();
+    randomA.update(1.0f / 120.0f);
+    randomB.update(1.0f / 120.0f);
+    require(randomA.output().applying && randomB.output().applying
+            && randomA.output().forceNewtons
+                == randomB.output().forceNewtons
+            && randomA.output().directionDegrees
+                == randomB.output().directionDegrees
+            && randomA.output().secondsRemaining
+                == randomB.output().secondsRemaining,
+        "Modo aleatorio do laboratorio nao e reproduzivel por seed");
 }
 
 void testTaskScheduler() {
@@ -51,6 +366,24 @@ void testTaskScheduler() {
         [](const std::atomic<std::uint32_t>& visit) {
             return visit.load(std::memory_order_relaxed) == 1;
         }), "Job system perdeu ou duplicou itens do parallelFor");
+
+    // Reproduz a carga que fazia o benchmark fisico congelar: muitos
+    // parallelFor pequenos (71 props, grain 64) disparados em sequencia. A
+    // antiga janela de notificacao perdida deixava tarefas enfileiradas e
+    // todos os workers dormindo depois de algumas centenas de iteracoes.
+    std::atomic<std::uint64_t> stressVisits { 0 };
+    for (std::uint32_t round = 0; round < 4000; ++round) {
+        scheduler.parallelFor(71, 64,
+            [](std::size_t begin, std::size_t end,
+                void* counterContext) noexcept {
+                auto& counter = *static_cast<std::atomic<std::uint64_t>*>(
+                    counterContext);
+                counter.fetch_add(static_cast<std::uint64_t>(end - begin),
+                    std::memory_order_relaxed);
+            }, &stressVisits);
+    }
+    require(stressVisits.load(std::memory_order_relaxed) == 4000ull * 71ull,
+        "Job system travou ou perdeu trabalho em rajadas pequenas");
 
     // Um worker tambem pode abrir e aguardar trabalho filho. Esta situacao e
     // comum em middlewares e precisa funcionar ate na configuracao minima de
@@ -274,17 +607,60 @@ void testWindSystem() {
         && referenceSpeed <= highSpeed + 1e-5f,
         "Velocidade do vento deveria crescer (ou empatar) com a altura");
 
-    // Marcos explicitos da rampa: na linha do chao (altura 0, o default de
-    // groundHeightMeters) a influencia do vento deveria ser EXATAMENTE zero
-    // - nao so "bem menor", zero de verdade (fisica e audio dependem dessa
-    // garantia para simular abrigo total ao nivel do chao). Acima da altura
-    // de referencia (default 10 m) a rampa satura: 200 m nao deveria soprar
-    // mais forte que exatamente na altura de referencia.
-    const float groundSpeed = windProfile.velocityAtHeight(0.0f).length();
-    require(groundSpeed < 1e-6f,
-        "Vento na linha do chao deveria ter influencia zero");
+    // Acima da altura de referencia (default 10 m) a rampa satura: 200 m nao
+    // deveria soprar mais forte que exatamente na altura de referencia.
     require(std::abs(highSpeed - referenceSpeed) < 1e-5f,
         "Rampa do vento deveria saturar na altura de referencia, nao crescer alem dela");
+
+    // Resquicio raro de rajada forte perto do chao (ver WindSettings3D::
+    // groundGustEventFrequencyHz): substitui a antiga garantia de zero
+    // absoluto no chao - agora o chao pode ocasionalmente deixar passar um
+    // resquicio de rajada forte, entao a garantia vira estatistica (quase
+    // sempre praticamente parado, raramente um pico perceptivel) em vez de
+    // um valor fixo.
+    WindSystem windGround;
+    std::vector<float> groundFractions;
+    bool sawStrongResidue = false;
+    for (int step = 0; step < 5000; ++step) {
+        windGround.advance(10.0f); // 50000s simulados (~13h53min)
+        const float groundSpeed = windGround.velocityAtHeight(0.0f).length();
+        const float fullSpeed = windGround.velocityAtHeight(10.0f).length();
+        require(groundSpeed <= fullSpeed + 1.0e-4f,
+            "Resquicio no chao nao deveria superar a velocidade em altura plena");
+        if (fullSpeed > 1.0e-4f) {
+            const float fraction = groundSpeed / fullSpeed;
+            groundFractions.push_back(fraction);
+            if (fraction > 0.3f) sawStrongResidue = true;
+        }
+    }
+    require(!groundFractions.empty(),
+        "Amostragem do vento no chao nao deveria ficar vazia");
+    std::vector<float> sortedFractions = groundFractions;
+    std::sort(sortedFractions.begin(), sortedFractions.end());
+    const float medianFraction = sortedFractions[sortedFractions.size() / 2];
+    require(medianFraction < 0.05f,
+        "Na mediana, o vento no chao (0-30cm) deveria estar praticamente parado");
+    require(sawStrongResidue,
+        "Deveria existir pelo menos um resquicio de rajada forte perceptivel no chao");
+
+    // Envelope de calmaria/vento forte (ver WindSettings3D::
+    // calmEnvelopeFrequencyHz): ao longo de tempo suficiente, deveria existir
+    // pelo menos um trecho de calmaria clara E um trecho perto do pico
+    // (base+rajada) na altura de referencia - nao so oscilar em torno da
+    // media o tempo todo, que era o comportamento antigo (sem envelope).
+    WindSystem windCalm;
+    float minReferenceSpeed = std::numeric_limits<float>::max();
+    float maxReferenceSpeed = 0.0f;
+    for (int step = 0; step < 5000; ++step) {
+        windCalm.advance(10.0f); // 50000s simulados
+        const float speed = windCalm.velocityAtHeight(10.0f).length();
+        minReferenceSpeed = std::min(minReferenceSpeed, speed);
+        maxReferenceSpeed = std::max(maxReferenceSpeed, speed);
+    }
+    require(minReferenceSpeed < 1.0f,
+        "Deveria existir pelo menos um trecho de calmaria clara");
+    require(maxReferenceSpeed > 3.5f,
+        "Deveria existir pelo menos um trecho de vento proximo do pico");
 
     // Velocidade sempre finita ao longo de uma janela de tempo razoavel -
     // nunca deveria produzir NaN/infinito, mesmo depois de muitos passos.
@@ -295,6 +671,40 @@ void testWindSystem() {
         require(std::isfinite(sample.x) && std::isfinite(sample.y),
             "Velocidade do vento deveria ser sempre finita");
     }
+}
+
+void testOceanSurface() {
+    const std::array<Vec2, 5> positions {{
+        { 0.0f, 0.0f },
+        { 12.5f, -8.0f },
+        { -117.0f, 63.0f },
+        { 480.0f, 205.0f },
+        { -900.0f, -750.0f }
+    }};
+    bool changedOverTime = false;
+    for (const Vec2 position : positions) {
+        const OceanSurfaceSample3D atStart =
+            evaluateOceanSurface(position, 0.0f, 0.0f);
+        const OceanSurfaceSample3D later =
+            evaluateOceanSurface(position, 0.0f, 1.25f);
+        require(std::isfinite(atStart.heightMeters)
+                && std::isfinite(atStart.verticalSpeedMetersPerSecond)
+                && std::isfinite(atStart.normal.x)
+                && std::isfinite(atStart.normal.y)
+                && std::isfinite(atStart.normal.z),
+            "Campo de ondas produziu valor nao finito");
+        require(std::abs(atStart.heightMeters)
+                <= OceanMaximumDisplacementMeters + 1e-5f,
+            "Superficie oceanica ultrapassou seu deslocamento declarado");
+        require(std::abs(atStart.normal.length() - 1.0f) < 1e-5f
+                && atStart.normal.z > 0.98f,
+            "Normal do oceano deveria ser unitaria e suave");
+        changedOverTime = changedOverTime
+            || std::abs(atStart.heightMeters
+                    - later.heightMeters) > 1e-4f;
+    }
+    require(changedOverTime,
+        "Campo de ondas deveria evoluir ao longo do tempo");
 }
 
 void testPerspectiveJittered() {
@@ -610,6 +1020,15 @@ void testRigidBodiesAndEvents(PhysicsEngine3D& engine,
     createStaticGround(engine, *scene);
     const PhysicsBodyHandle3D falling = createBox(*scene,
         { 0.0f, 0.0f, 4.0f }, { 0.35f, 0.35f, 0.35f }, 3.0f);
+    require(scene->overlapsBox({ 0.0f, 0.0f, 4.0f },
+            { 0.40f, 0.40f, 0.40f }),
+        "Consulta de spawn nao detectou corpo dinamico ocupado");
+    require(scene->overlapsBox({ 4.0f, 0.0f, 0.12f },
+            { 0.20f, 0.20f, 0.20f }),
+        "Consulta de spawn nao detectou mundo estatico ocupado");
+    require(!scene->overlapsBox({ 4.0f, 0.0f, 3.0f },
+            { 0.20f, 0.20f, 0.20f }),
+        "Consulta de spawn marcou volume realmente livre");
     bool receivedImpact = false;
     for (int step = 0; step < 720; ++step) {
         scene->simulate(1.0f / 120.0f);
@@ -658,6 +1077,146 @@ void testRigidBodiesAndEvents(PhysicsEngine3D& engine,
     require(replacement.index == falling.index
             && replacement.generation != falling.generation,
         "Slot reutilizado nao incrementou a geracao");
+}
+
+void testOceanPhysicsLifecycle(PhysicsEngine3D& engine,
+    const MaterialLibrary& materials) {
+    auto scene = engine.createScene({}, materials);
+    const OceanVolume3D ocean {
+        { 0.0f, 0.0f },
+        { 10.0f, 10.0f },
+        0.0f,
+        5.0f,
+        1025.0f
+    };
+    scene->setOcean(ocean);
+
+    PhysicsShape3D shape;
+    shape.type = PhysicsShapeType3D::Box;
+    shape.halfExtents = { 0.5f, 0.5f, 0.5f };
+    shape.materialId = "wood";
+    PhysicsBodyDefinition3D body;
+    body.position = { 0.0f, 0.0f, -0.1f };
+    body.massKg = 500.0f;
+    body.bodyVolumeCubicMeters = 1.0f;
+    body.materialId = "wood";
+    body.aerodynamicReferenceAreaSquareMeters = 1.0f;
+    const PhysicsBodyHandle3D floating =
+        scene->createBody(body, std::span<const PhysicsShape3D>(&shape, 1));
+
+    for (int step = 0; step < 24; ++step) {
+        scene->setOceanTimeSeconds(static_cast<float>(step) / 120.0f);
+        scene->simulate(1.0f / 120.0f);
+    }
+    const PhysicsBodyState3D state = scene->bodyState(floating);
+    require(std::isfinite(state.position.x)
+            && std::isfinite(state.position.y)
+            && std::isfinite(state.position.z)
+            && std::isfinite(state.linearVelocity.z),
+        "Flutuacao produziu estado fisico invalido");
+
+    // Regressao do crash original: o vetor de corpos flutuantes guardava um
+    // ponteiro cru depois de destroyBody(), causando use-after-free no passo
+    // seguinte da simulacao.
+    scene->destroyBody(floating);
+    scene->setOceanTimeSeconds(1.0f);
+    scene->simulate(1.0f / 120.0f);
+    require(!scene->contains(floating),
+        "Corpo destruido permaneceu registrado na agua");
+
+    scene->createCharacter({ 2.0f, 0.0f, -1.8f }, {});
+    CharacterMotorCommand3D swimUp;
+    swimUp.moveDirection = { 0.0f, 0.0f, 1.0f };
+    scene->moveCharacter(swimUp, {}, 1.0f / 60.0f);
+    require(scene->characterState().swimming,
+        "Personagem submerso nao entrou no estado de natacao");
+    const float initialSwimmerHeight = scene->characterState().position.z;
+    for (int step = 0; step < 10; ++step) {
+        scene->setOceanTimeSeconds(1.0f
+            + static_cast<float>(step) / 60.0f);
+        scene->moveCharacter(swimUp, {}, 1.0f / 60.0f);
+    }
+    require(scene->characterState().position.z > initialSwimmerHeight,
+        "Comando vertical de natacao nao elevou o personagem");
+}
+
+void testWindShelterExposure(PhysicsEngine3D& engine,
+    const MaterialLibrary& materials) {
+    auto scene = engine.createScene({}, materials);
+    // Parede estatica do lado +X: halfExtents pequeno em X (parede fina) e
+    // generoso em Y/Z (cobre qualquer raio de amostragem sem precisar mirar
+    // exato).
+    createStaticBox(*scene, { 2.0f, 0.0f, 1.0f }, { 0.1f, 3.0f, 3.0f });
+    // Vento soprando em -X, ou seja, vindo do lado +X - de onde a parede
+    // esta. "A barlavento" de uma posicao e o lado de ONDE o vento vem, o
+    // oposto do vetor de velocidade (ver windShelterExposure3D) - por isso o
+    // vetor aponta para -X mesmo a parede estando em +X.
+    const Vec3 windBlowingTowardNegativeX { -3.0f, 0.0f, 0.0f };
+
+    // Bem perto da face da parede (0.2m) - smoothstep(0.2/4=0.05) ~ 0.7%,
+    // bem dentro do limiar apertado abaixo. Mais longe (mas ainda dentro do
+    // alcance de 4m) daria uma exposicao parcial pelo proprio design do
+    // falloff suave, entao o teste precisa ficar perto o bastante da parede
+    // pra provar "quase totalmente abrigado", nao so "existe alguma sombra".
+    const float exposureBehindWall = windShelterExposure3D(*scene,
+        { 1.7f, 0.0f, 1.0f }, windBlowingTowardNegativeX, 4.0f);
+    require(exposureBehindWall < 0.05f,
+        "Posicao encostada numa parede a barlavento deveria estar quase "
+        "totalmente protegida do vento");
+
+    const float exposureOpenAir = windShelterExposure3D(*scene,
+        { -10.0f, 0.0f, 1.0f }, windBlowingTowardNegativeX, 4.0f);
+    require(exposureOpenAir > 0.95f,
+        "Posicao sem geometria a barlavento deveria ter exposicao quase "
+        "total ao vento");
+
+    const float exposureDisabled = windShelterExposure3D(*scene,
+        { 0.0f, 0.0f, 1.0f }, windBlowingTowardNegativeX, 0.0f);
+    require(exposureDisabled > 0.999f,
+        "shelterDistanceMeters=0 deveria desligar a checagem de abrigo");
+
+    const float exposureNoWind = windShelterExposure3D(*scene,
+        { 0.0f, 0.0f, 1.0f }, Vec3 {}, 4.0f);
+    require(exposureNoWind > 0.999f,
+        "Vento com velocidade zero nao deveria disparar nenhum raycast");
+}
+
+void testContactSlideEvents(PhysicsEngine3D& engine,
+    const MaterialLibrary& materials) {
+    // eNOTIFY_TOUCH_PERSISTS (ver PhysXScene3D.cpp) reporta a cada passo
+    // fixo enquanto dois corpos continuam se tocando - diferente de
+    // contactImpacts(), que so dispara no instante em que o toque comeca.
+    // Este teste cobre so a plumbing fisica (popular/esvaziar
+    // contactSlides()); a formula de intensidade forca*velocidade em si e
+    // testada isoladamente em AudioFoundationTests.cpp com eventos
+    // sinteticos, no mesmo espirito de ImpactAcousticResolver.
+    auto scene = engine.createScene({}, materials);
+    createStaticGround(engine, *scene);
+    const PhysicsBodyHandle3D box = createBox(*scene,
+        { 0.0f, 0.0f, 4.0f }, { 0.35f, 0.35f, 0.35f }, 3.0f);
+
+    // So checa ENQUANTO o corpo simula (dentro do loop, mesmo padrao de
+    // "receivedImpact" em testRigidBodiesAndEvents) - depois de assentar,
+    // o corpo entra em sleep (ver esse mesmo teste) e o PhysX para de
+    // reportar TOUCH_PERSISTS para pares dormindo, entao conferir so no
+    // final sempre daria vazio independente da funcionalidade estar certa.
+    bool sawBoxInSlide = false;
+    for (int step = 0; step < 720; ++step) {
+        scene->simulate(1.0f / 120.0f);
+        for (const ContactSlideEvent3D& slide : scene->contactSlides()) {
+            if (slide.bodyA == box.index || slide.bodyB == box.index) {
+                sawBoxInSlide = true;
+            }
+        }
+    }
+    require(sawBoxInSlide,
+        "contactSlides() nunca incluiu o corpo enquanto ele assentava sobre "
+        "geometria estatica");
+
+    scene->destroyBody(box);
+    scene->simulate(1.0f / 120.0f);
+    require(scene->contactSlides().empty(),
+        "contactSlides() deveria esvaziar apos o corpo ser removido");
 }
 
 void testCompoundSupport(PhysicsEngine3D& engine,
@@ -1015,15 +1574,430 @@ void testCascadeFrustumContainsNearbyProp() {
         "pelo frustum ajustado");
 }
 
+void testRagdollProfileAndRuntime(PhysicsEngine3D& engine,
+    const MaterialLibrary& materials) {
+    const std::string path = std::string(MATTERENGINE_TEST_ASSETS_DIR)
+        + "/physics/ragdolls/HumanAdultV1.ragdoll.json";
+    const RagdollProfile3D profile = loadRagdollProfile3D(path);
+    require(profile.links.size() == 18,
+        "HumanAdultV1 deveria conter dezoito links");
+    require(ragdollDegreesOfFreedom3D(profile) == 41,
+        "HumanAdultV1 deveria conter quarenta e um DOFs");
+    require(validateRagdollProfile3D(profile).empty(),
+        "HumanAdultV1 não passou na validação");
+    const auto findLink = [&](std::string_view id) {
+        return std::find_if(profile.links.begin(), profile.links.end(),
+            [&](const RagdollLinkDefinition3D& link) {
+                return link.id == id;
+            });
+    };
+    require(findLink("LeftToes") == profile.links.end()
+            && findLink("RightToes") == profile.links.end(),
+        "Perfil polido não deveria recriar ossos separados nos dedos");
+    const auto leftThigh = findLink("LeftThigh");
+    const auto rightThigh = findLink("RightThigh");
+    require(leftThigh != profile.links.end()
+            && rightThigh != profile.links.end()
+            && leftThigh->modelPosition.y >= 0.089f
+            && rightThigh->modelPosition.y <= -0.089f,
+        "Abertura mínima do quadril foi perdida");
+    for (const RagdollLinkDefinition3D& link : profile.links) {
+        if (link.collider.shape == RagdollColliderShape3D::Capsule) {
+            require(std::abs(link.collider.radiusMeters
+                    - profile.uniformRadiusMeters) < 1.0e-6f,
+                "Uma cápsula do HumanAdultV1 perdeu o raio uniforme");
+        } else {
+            require((link.id == "LeftFoot" || link.id == "RightFoot")
+                    && link.collider.boxHalfExtents.x >= 0.14f
+                    && link.collider.boxHalfExtents.y >= 0.055f
+                    && link.collider.contactSensor,
+                "Collider funcional dos pés não preservou suporte/sensor");
+        }
+    }
+
+    PhysicsSceneSettings3D settings;
+    settings.solverPositionIterations = 4;
+    settings.solverVelocityIterations = 1;
+    auto scene = engine.createScene(settings, materials);
+    RagdollSpawnDefinition3D spawn;
+    spawn.entityId = 9001;
+    spawn.pelvisPosition = { 0.0f, 0.0f, 2.0f };
+    spawn.active = false;
+    const RagdollHandle3D handle = scene->createRagdoll(profile, spawn);
+    require(handle && scene->contains(handle),
+        "Cena não registrou o ragdoll criado");
+    RagdollState3D state = scene->ragdollState(handle);
+    require(state.links.size() == 18,
+        "Snapshot do ragdoll perdeu links");
+
+    PhysicsRagdollRayHit3D ragdollHit;
+    require(scene->raycastRagdoll(
+            { { 0.0f, -2.0f, 2.0f }, { 0.0f, 1.0f, 0.0f } },
+            4.0f, ragdollHit)
+            && ragdollHit.ragdoll == handle,
+        "Raycast dedicado não encontrou um link do ragdoll");
+    require(ragdollHit.linkIndex < state.links.size(),
+        "Raycast publicou índice de link inválido");
+    const PhysicsBodyState3D& grabbedLink =
+        state.links[ragdollHit.linkIndex];
+    const Vec3 localGrabPoint =
+        grabbedLink.orientation.conjugate().rotate(
+            ragdollHit.position - grabbedLink.position);
+    PhysicsGrabTarget3D grabTarget;
+    grabTarget.position = ragdollHit.position;
+    grabTarget.orientation = grabbedLink.orientation;
+    PhysicsHandleSettings3D grabSettings;
+    require(scene->beginRagdollGrab(handle, ragdollHit.linkIndex,
+            localGrabPoint, grabTarget, grabSettings),
+        "D6 da Physgun não foi anexado ao link do ragdoll");
+    require(scene->grabbing() && scene->grabbedRagdoll() == handle
+            && scene->grabbedRagdollLink() == ragdollHit.linkIndex,
+        "Cena não publicou o link de ragdoll agarrado");
+    grabTarget.position.z += 0.20f;
+    scene->updateGrabTarget(grabTarget, grabSettings);
+    scene->simulate(1.0f / 120.0f);
+    scene->endGrab();
+    require(!scene->grabbing(),
+        "D6 da Physgun não foi removido ao soltar o ragdoll");
+
+    state = scene->ragdollState(handle);
+    const float initialPelvisHeight = state.links.front().position.z;
+    for (int step = 0; step < 12; ++step) scene->simulate(1.0f / 120.0f);
+    state = scene->ragdollState(handle);
+    require(state.links.front().position.z < initialPelvisHeight,
+        "Raiz flutuante do ragdoll não respondeu à gravidade");
+
+    scene->setRagdollRigidity(handle, 55.0f);
+    scene->simulate(1.0f / 120.0f);
+    require(std::abs(scene->ragdollState(handle).rigidityPercent - 55.0f)
+            < 0.001f,
+        "Comando seguro não aplicou rigidez ao ragdoll");
+    scene->captureRagdollPose(handle);
+    scene->setRagdollNeutralPose(handle);
+    scene->releaseRagdollDrives(handle);
+    scene->simulate(1.0f / 120.0f);
+    require(scene->ragdollState(handle).rigidityPercent == 0.0f,
+        "Soltar não removeu os drives do ragdoll");
+
+    state = scene->ragdollState(handle);
+    grabTarget.position = state.links.front().position;
+    grabTarget.orientation = state.links.front().orientation;
+    require(scene->beginRagdollGrab(handle, 0, {}, grabTarget,
+            grabSettings),
+        "Não foi possível repetir o grab antes da destruição");
+    scene->destroyRagdoll(handle);
+    require(!scene->contains(handle),
+        "Handle de ragdoll continuou válido após destruição");
+    require(!scene->grabbing(),
+        "Destruir ragdoll não liberou o D6 ativo da Physgun");
+
+    // Contrato de escala mínimo do jogo: os 22 jogadores continuam sendo
+    // articulations completas, em contato com o chão e entre si. Este teste
+    // não usa tolerância de FPS dependente da máquina; ele protege aquilo
+    // que interessa à correção: solver finito, juntas coesas, contatos
+    // reais e nenhum stream acústico desperdiçado nos links dos ragdolls.
+    createStaticGround(engine, *scene);
+    std::vector<RagdollHandle3D> team;
+    team.reserve(22);
+    for (std::size_t index = 0; index < 22; ++index) {
+        const std::size_t column = index % 11;
+        const std::size_t row = index / 11;
+        RagdollSpawnDefinition3D player;
+        player.entityId = 10'000 + index;
+        player.pelvisPosition = {
+            (static_cast<float>(column) - 5.0f) * 0.78f,
+            (static_cast<float>(row) - 0.5f) * 0.78f,
+            profile.standingRootHeightMeters + 0.04f
+        };
+        player.rigidityPercent = 20.0f;
+        player.active = false;
+        team.push_back(scene->createRagdoll(profile, player));
+    }
+
+    std::size_t maximumContacts = 0;
+    float maximumAnchorSeparation = 0.0f;
+    for (int step = 0; step < 240; ++step) {
+        scene->simulate(1.0f / 120.0f);
+        maximumContacts = std::max(maximumContacts,
+            scene->diagnostics().discreteContactPairs);
+        require(scene->diagnostics().reportedContactPairs == 0,
+            "Links de ragdoll voltaram a produzir relatórios acústicos");
+
+        for (RagdollHandle3D player : team) {
+            const RagdollState3D playerState =
+                scene->ragdollState(player);
+            require(playerState.links.size() == profile.links.size(),
+                "Stress de 22 ragdolls perdeu links");
+            for (const PhysicsBodyState3D& link : playerState.links) {
+                require(std::isfinite(link.position.x)
+                        && std::isfinite(link.position.y)
+                        && std::isfinite(link.position.z)
+                        && std::isfinite(link.orientation.x)
+                        && std::isfinite(link.orientation.y)
+                        && std::isfinite(link.orientation.z)
+                        && std::isfinite(link.orientation.w),
+                    "Stress de 22 ragdolls produziu pose não finita");
+            }
+            for (std::size_t linkIndex = 1;
+                    linkIndex < profile.links.size(); ++linkIndex) {
+                const RagdollLinkDefinition3D& childDefinition =
+                    profile.links[linkIndex];
+                const std::size_t parentIndex =
+                    static_cast<std::size_t>(
+                        childDefinition.parentIndex);
+                const RagdollLinkDefinition3D& parentDefinition =
+                    profile.links[parentIndex];
+                const PhysicsBodyState3D& parentState =
+                    playerState.links[parentIndex];
+                const PhysicsBodyState3D& childState =
+                    playerState.links[linkIndex];
+                const Vec3 parentLocalAnchor =
+                    parentDefinition.modelOrientation.conjugate().rotate(
+                        childDefinition.inboundJoint.anchorModelPosition
+                            - parentDefinition.modelPosition);
+                const Vec3 childLocalAnchor =
+                    childDefinition.modelOrientation.conjugate().rotate(
+                        childDefinition.inboundJoint.anchorModelPosition
+                            - childDefinition.modelPosition);
+                const Vec3 parentAnchor = parentState.position
+                    + parentState.orientation.rotate(parentLocalAnchor);
+                const Vec3 childAnchor = childState.position
+                    + childState.orientation.rotate(childLocalAnchor);
+                maximumAnchorSeparation = std::max(
+                    maximumAnchorSeparation,
+                    (parentAnchor - childAnchor).length());
+            }
+        }
+    }
+    require(maximumContacts > 0,
+        "Stress de 22 ragdolls não exerceu contatos");
+    require(maximumAnchorSeparation < 0.015f,
+        "TGS 4/1 não manteve as juntas coesas no stress de 22 ragdolls");
+
+    // Caso adversarial da Physgun: tenta arrastar o centro do braço superior
+    // esquerdo para dentro do peito por um segundo. UpperArm e UpperChest sao
+    // pai/filho e nunca colidem no PhysX; o Chest (avo) precisa impedir a
+    // travessia sem responder com uma explosao de velocidade.
+    auto penetrationScene = engine.createScene(settings, materials);
+    RagdollSpawnDefinition3D penetrationSpawn;
+    penetrationSpawn.entityId = 20'001;
+    penetrationSpawn.pelvisPosition = { 0.0f, 0.0f, 2.0f };
+    penetrationSpawn.active = false;
+    const RagdollHandle3D penetrationRagdoll =
+        penetrationScene->createRagdoll(profile, penetrationSpawn);
+    const std::size_t chestIndex = static_cast<std::size_t>(
+        std::distance(profile.links.begin(), findLink("Chest")));
+    const std::size_t upperArmIndex = static_cast<std::size_t>(
+        std::distance(profile.links.begin(), findLink("LeftUpperArm")));
+    const auto capsuleAxis = [&](const RagdollState3D& ragdollState,
+            std::size_t linkIndex) {
+        const RagdollLinkDefinition3D& definition =
+            profile.links[linkIndex];
+        const PhysicsBodyState3D& state = ragdollState.links[linkIndex];
+        const float halfHeight = std::max(0.0f,
+            definition.collider.lengthMeters * 0.5f
+                - definition.collider.radiusMeters);
+        const Vec3 localAxis = definition.collider.localOrientation.rotate(
+            { halfHeight, 0.0f, 0.0f });
+        const Vec3 center = state.position + state.orientation.rotate(
+            definition.collider.localPosition);
+        const Vec3 worldAxis = state.orientation.rotate(localAxis);
+        return std::pair { center - worldAxis, center + worldAxis };
+    };
+    const auto segmentDistance = [](Vec3 p1, Vec3 q1,
+            Vec3 p2, Vec3 q2) {
+        constexpr float Epsilon = 1.0e-8f;
+        const Vec3 d1 = q1 - p1;
+        const Vec3 d2 = q2 - p2;
+        const Vec3 r = p1 - p2;
+        const float a = dot(d1, d1);
+        const float e = dot(d2, d2);
+        const float f = dot(d2, r);
+        float s = 0.0f;
+        float t = 0.0f;
+        if (a <= Epsilon && e <= Epsilon) return r.length();
+        if (a <= Epsilon) {
+            t = std::clamp(f / e, 0.0f, 1.0f);
+        } else {
+            const float c = dot(d1, r);
+            if (e <= Epsilon) {
+                s = std::clamp(-c / a, 0.0f, 1.0f);
+            } else {
+                const float b = dot(d1, d2);
+                const float denominator = a * e - b * b;
+                if (denominator > Epsilon) {
+                    s = std::clamp((b * f - c * e) / denominator,
+                        0.0f, 1.0f);
+                }
+                t = (b * s + f) / e;
+                if (t < 0.0f) {
+                    t = 0.0f;
+                    s = std::clamp(-c / a, 0.0f, 1.0f);
+                } else if (t > 1.0f) {
+                    t = 1.0f;
+                    s = std::clamp((b - c) / a, 0.0f, 1.0f);
+                }
+            }
+        }
+        return ((p1 + d1 * s) - (p2 + d2 * t)).length();
+    };
+    RagdollState3D penetrationState =
+        penetrationScene->ragdollState(penetrationRagdoll);
+    PhysicsGrabTarget3D penetrationTarget;
+    penetrationTarget.position = penetrationState.links[chestIndex].position;
+    PhysicsHandleSettings3D adversarialGrab;
+    adversarialGrab.maximumForce = 500'000.0f;
+    require(penetrationScene->beginRagdollGrab(penetrationRagdoll,
+            static_cast<std::uint32_t>(upperArmIndex), {},
+            penetrationTarget, adversarialGrab),
+        "Teste de penetracao nao conseguiu agarrar o braco");
+    float maximumLinkSpeed = 0.0f;
+    float maximumLinkAngularSpeed = 0.0f;
+    for (int step = 0; step < 120; ++step) {
+        penetrationState =
+            penetrationScene->ragdollState(penetrationRagdoll);
+        penetrationTarget.position =
+            penetrationState.links[chestIndex].position;
+        penetrationScene->updateGrabTarget(
+            penetrationTarget, adversarialGrab);
+        penetrationScene->simulate(1.0f / 120.0f);
+        penetrationState =
+            penetrationScene->ragdollState(penetrationRagdoll);
+        for (const PhysicsBodyState3D& link : penetrationState.links) {
+            maximumLinkSpeed = std::max(maximumLinkSpeed,
+                link.linearVelocity.length());
+            maximumLinkAngularSpeed = std::max(maximumLinkAngularSpeed,
+                link.angularVelocity.length());
+        }
+    }
+    penetrationScene->endGrab();
+    require(maximumLinkSpeed < 20.0f,
+        "Physgun injetou velocidade linear explosiva no ragdoll");
+    require(maximumLinkAngularSpeed < 30.0f,
+        "Contato interno produziu giro explosivo no ragdoll");
+    require(penetrationScene->diagnostics().discreteContactPairs > 0,
+        "Barreira interna do torax nao produziu contato no teste adversarial");
+    const auto chestAxis = capsuleAxis(penetrationState, chestIndex);
+    const auto upperArmAxis = capsuleAxis(
+        penetrationState, upperArmIndex);
+    const float axisDistance = segmentDistance(chestAxis.first,
+        chestAxis.second, upperArmAxis.first, upperArmAxis.second);
+    const float combinedRadius =
+        profile.links[chestIndex].collider.radiusMeters
+        + profile.links[upperArmIndex].collider.radiusMeters;
+    require(axisDistance >= combinedRadius - 0.012f,
+        "Physgun conseguiu manter o braco penetrado dentro do peito");
+
+}
+
+void testCharacterPhysicalRuntime() {
+    const auto character=loadRagdollCharacter3D(std::string(MATTERENGINE_TEST_ASSETS_DIR)
+        + "/characters/crash_test_dummy/character.json");
+    PhysicsEngine3D engine;
+    MaterialLibrary materials;
+    PhysicsSceneSettings3D settings;
+    auto scene=engine.createScene(settings,materials);
+    createStaticGround(engine,*scene);
+    std::vector<RagdollHandle3D> handles;
+    for (int i=0;i<22;++i) {
+        RagdollSpawnDefinition3D spawn;
+        spawn.entityId=60000+static_cast<std::uint64_t>(i);
+        spawn.active=false;
+        spawn.rigidityPercent=15;
+        spawn.pelvisPosition={static_cast<float>(i%6)*0.8f,
+            static_cast<float>(i/6)*0.8f,character.profile.standingRootHeightMeters+0.08f};
+        spawn.orientation=Quaternion::fromAxisAngle({0,0,1},static_cast<float>(i)*0.31f);
+        handles.push_back(scene->createRagdoll(character.profile,spawn));
+    }
+    float maxSeparation=0;
+    std::size_t contacts=0;
+    for (int step=0;step<240;++step) {
+        scene->simulate(1.0f/120.0f);
+        contacts=std::max(contacts,scene->diagnostics().discreteContactPairs);
+        for (const auto handle : handles) {
+            const auto state=scene->ragdollState(handle);
+            require(state.links.size()==character.profile.links.size(),"New physical rig lost links");
+            std::vector<Vec3> positions;
+            std::vector<Quaternion> orientations;
+            for (const auto& link : state.links) {
+                require(std::isfinite(link.position.x)&&std::isfinite(link.position.y)
+                    && std::isfinite(link.position.z)&&link.position.z>-0.5f
+                    && link.position.z<4.0f,"Low-poly physical body escaped simulation bounds");
+                positions.push_back(link.position); orientations.push_back(link.orientation);
+            }
+            for (std::size_t i=1;i<state.links.size();++i) {
+                const auto& link=character.profile.links[i];
+                const auto parent=static_cast<std::size_t>(link.parentIndex);
+                const auto anchor=link.inboundJoint.anchorModelPosition;
+                const auto a=positions[parent]+orientations[parent].rotate(
+                    character.profile.links[parent].modelOrientation.conjugate().rotate(
+                        anchor-character.profile.links[parent].modelPosition));
+                const auto b=positions[i]+orientations[i].rotate(
+                    link.modelOrientation.conjugate().rotate(anchor-link.modelPosition));
+                maxSeparation=std::max(maxSeparation,(a-b).length());
+            }
+            if (step%60==0) {
+                const auto palette=buildRagdollSkinMatrices3D(character,positions,orientations);
+                for (const auto& vertex : character.mesh.vertices) {
+                    const auto p=skinVertexPosition3D(vertex,palette);
+                    require(std::isfinite(p.x)&&std::isfinite(p.y)&&std::isfinite(p.z),
+                        "Physical pose produced a non-finite surface");
+                }
+            }
+        }
+    }
+    require(contacts>0,"Low-poly crowd test did not exercise collisions");
+    require(maxSeparation<0.015f,"Low-poly crowd disconnected physical joints");
+    std::cout<<"Low-poly 22-body stress: max anchor gap "<<maxSeparation<<" m\n";
+
+    // Exercise the same articulation handle consumed by the Physgun.
+    const auto handle=handles.front();
+    const auto before=scene->ragdollState(handle);
+    const auto& pelvis=before.links.front();
+    PhysicsRagdollRayHit3D hit;
+    require(scene->raycastRagdoll({pelvis.position+Vec3{-2,0,0},{1,0,0}},4,hit)
+        && hit.ragdoll==handle,"Physgun ray did not find the new character");
+    PhysicsGrabTarget3D target;
+    target.position=pelvis.position;
+    target.orientation=pelvis.orientation;
+    PhysicsHandleSettings3D grabSettings;
+    require(scene->beginRagdollGrab(handle,0,{},target,grabSettings),
+        "Physgun could not attach to the new character");
+    target.position.z+=0.3f;
+    scene->updateGrabTarget(target,grabSettings);
+    for (int step=0;step<60;++step) scene->simulate(1.0f/120.0f);
+    require(scene->ragdollState(handle).links.front().position.z>pelvis.position.z+0.1f,
+        "Physgun drive did not lift the new character");
+    scene->endGrab();
+    require(!scene->grabbing(),"Physgun did not release the new character");
+}
+
 } // namespace
 
 int main() {
     try {
+        testAnimationClipSampling();
+        testRagdollCharacterSkin();
+        if (const char* filter=std::getenv("MATTERENGINE_TEST_FILTER");
+            filter && std::string_view(filter)=="character") {
+            testCharacterPhysicalRuntime();
+            std::cout<<"MatterEngine character tests passed\n";
+            return 0;
+        }
+        if (const char* filter = std::getenv("MATTERENGINE_TEST_FILTER");
+            filter != nullptr
+            && std::string_view(filter) == "animation") {
+            std::cout << "MatterEngine animation foundation tests passed\n";
+            return 0;
+        }
+        testRagdollImpactGenerator();
+        testCharacterPhysicalRuntime();
         testTaskScheduler();
         testFrustumCulling();
         testPackSceneLights();
         testHash();
         testWindSystem();
+        testOceanSurface();
         testHaltonJitter();
         testPerspectiveJittered();
         testShadowCascadeSplits();
@@ -1038,10 +2012,14 @@ int main() {
             testDiagnoseHullFit(engine);
             testRealPropCooking(engine, materials);
             testRigidBodiesAndEvents(engine, materials);
+            testOceanPhysicsLifecycle(engine, materials);
+            testWindShelterExposure(engine, materials);
+            testContactSlideEvents(engine, materials);
             testCompoundSupport(engine, materials);
             testPhysGunDrive(engine, materials);
             testCharacterController(engine, materials);
             testThousandSleepingBodies(engine, materials);
+            testRagdollProfileAndRuntime(engine, materials);
         }
         testBackendResourceLifetime();
         std::cout << "MatterEngine PhysX foundation tests passed\n";

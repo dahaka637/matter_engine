@@ -27,6 +27,16 @@ struct FramePerformanceMetrics {
     float cpuAcquireMilliseconds = 0.0f;
     float cpuPresentMilliseconds = 0.0f;
     float gpuFrameMilliseconds = 0.0f;
+    float gpuShadowMilliseconds = 0.0f;
+    float gpuDepthPrepassMilliseconds = 0.0f;
+    float gpuOpaqueMilliseconds = 0.0f;
+    float gpuOceanMilliseconds = 0.0f;
+    float gpuTemporalMilliseconds = 0.0f;
+    float gpuBloomGlareMilliseconds = 0.0f;
+    float gpuExposureMilliseconds = 0.0f;
+    float gpuTonemapMilliseconds = 0.0f;
+    float gpuPostProcessMilliseconds = 0.0f;
+    float gpuUiMilliseconds = 0.0f;
     bool gpuTimingValid = false;
 };
 

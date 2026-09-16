@@ -20,8 +20,38 @@ produção.
 
 ## Compilação
 
-Requisitos: Windows 10/11 x64, Visual Studio 2022 com C++, CMake 3.20+ e
-driver compatível com Vulkan 1.4.
+Requisitos comuns: Git, CMake 3.20+ e driver compatível com Vulkan 1.4. As
+dependências do motor são obtidas pelo CMake durante a primeira configuração.
+
+### Linux
+
+Requisitos adicionais: compilador C++20, Ninja, headers de desenvolvimento do
+sistema gráfico e de áudio. No Arch Linux, a base preparada para o projeto pode
+ser compilada e executada com:
+
+```bash
+./tools/build.sh
+./tools/run.sh
+```
+
+O padrão é `RelWithDebInfo`, adequado para medir desempenho e ainda produzir
+símbolos de diagnóstico. Para uma build com asserts e validações adicionais:
+
+```bash
+./tools/build.sh Debug
+```
+
+Verificação completa da build otimizada:
+
+```bash
+./tools/check-architecture.sh
+./tools/build.sh RelWithDebInfo
+ctest --test-dir build-profile --output-on-failure
+```
+
+### Windows
+
+Requisitos adicionais: Windows 10/11 x64 e Visual Studio 2022 com C++.
 
 ```powershell
 .\tools\build.cmd -Configuration Debug

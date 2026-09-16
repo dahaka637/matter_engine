@@ -1,7 +1,12 @@
 #pragma once
 
+#include "Engine/Animation/AnimationClip3D.hpp"
+#include "Engine/Animation/RagdollCharacter3D.hpp"
 #include "Engine/Core/Application.hpp"
+#include "Engine/Audio/DragAcoustics.hpp"
 #include "Engine/Audio/ImpactAcoustics.hpp"
+#include "Engine/Control/AnimatedRagdollController3D.hpp"
+#include "Engine/Control/RagdollImpactTest3D.hpp"
 #include "Engine/Data/SettingsRepository.hpp"
 #include "Engine/Environment/WindSystem.hpp"
 #include "Engine/Materials/MaterialLibrary.hpp"
@@ -12,8 +17,10 @@
 #include "Workbench/Audio/WorldAudioController.hpp"
 #include "Workbench/Props/PropCatalog.hpp"
 
+#include <array>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -41,6 +48,7 @@ private:
         MainMenu,
         Laboratory,
         ObjectViewer,
+        AnimationViewer,
         Settings
     };
 
@@ -56,8 +64,12 @@ private:
         RHI::BufferHandle indexBuffer;
         RHI::TextureHandle albedoTexture;
         std::uint32_t indexCount = 0;
+        std::vector<GpuMeshLod3D> lods;
         float metallic = 0.0f;
         float roughness = 1.0f;
+        bool matteSurface = false;
+        Vec3 boundsCenter;
+        float boundsRadius = 0.0f;
         std::string name;
         std::string materialId;
     };
@@ -72,6 +84,24 @@ private:
         // ou nenhum entre dois renders. Ver renderLaboratory3D.
         PhysicsBodyState3D previousPhysicsState;
         float freezeFlashSeconds = 0.0f;
+    };
+
+    enum class ArticulatedRigKind {
+        Human
+    };
+
+    struct SpawnedRagdollInstance {
+        std::uint64_t entityId = 0;
+        RagdollHandle3D physicsRagdoll;
+        RagdollState3D physicsState;
+        // Snapshot da última imagem enviada à GPU, equivalente ao histórico
+        // dos props e independente da frequência fixa da simulação.
+        RagdollState3D previousPhysicsState;
+        std::vector<Mat4> skinMatrices;
+        std::vector<Mat4> previousSkinMatrices;
+        AnimatedRagdollController3D animationController;
+        ArticulatedRigKind kind = ArticulatedRigKind::Human;
+        bool active = true;
     };
 
     // Ajuste persistente do viewmodel. A seção recolhível do depurador permite
@@ -93,6 +123,15 @@ private:
         float durationSeconds = 2.35f;
     };
 
+    struct PhysicsBenchmarkSample {
+        float averageFps = 0.0f;
+        float minimumFps = 0.0f;
+        float averagePhysicsMilliseconds = 0.0f;
+        float maximumPhysicsMilliseconds = 0.0f;
+        std::uint32_t propCount = 0;
+        std::uint32_t ragdollCount = 0;
+    };
+
     struct PhysGunFlashlightSettings {
         Vec3 color { 1.0f, 1.0f, 1.0f };
         float coneDegrees = 34.0f;
@@ -104,9 +143,11 @@ private:
     void updateUiScale();
     [[nodiscard]] float ui(float value) const;
     void applyAutostartIfRequested();
+    void loadAnimationCatalog();
 
     void drawMainMenu();
     void drawObjectViewer();
+    void drawAnimationViewer();
     void drawSettings();
     void drawSettingsVideoTab();
     void drawSettingsGeneralTab();
@@ -116,6 +157,7 @@ private:
     void revertVideoSettings();
     void drawVideoConfirmPopup();
     void setHrtfEnabled(bool enabled);
+    void applyLaboratoryGraphicsPreset(int preset);
 
     void enterLaboratory(bool resetCamera = false);
     void updateLaboratory(float deltaTime);
@@ -125,11 +167,31 @@ private:
     void drawSpawnMenu();
     void syncLaboratoryMouseCapture();
     void ensureLaboratoryMapLoaded(Renderer& renderer);
+    void ensureOceanClipmap(Renderer& renderer);
     void ensurePropAssetsLoaded(Renderer& renderer);
+    void ensureRagdollAssetsLoaded(Renderer& renderer);
     void releaseLaboratoryAssets(Renderer& renderer);
     void resetLaboratoryCharacter();
     void removeLatestSpawnedEntity();
     void spawnProp(std::size_t definitionIndex);
+    void spawnHumanRagdoll();
+    [[nodiscard]] bool spawnPropAt(std::size_t definitionIndex,
+        Vec3 position, Quaternion orientation, bool benchmarkEntity);
+    [[nodiscard]] bool spawnHumanRagdollAt(Vec3 pelvisPosition,
+        Quaternion orientation, bool benchmarkEntity);
+    void updateActiveRagdolls(float deltaTime);
+    [[nodiscard]] AnimatedRagdollClips3D animatedRagdollClips() const;
+    [[nodiscard]] float ragdollGroundHeight(Vec3 position) const;
+    void runRagdollsForFiveSeconds();
+    void updateRagdollImpactLab(float deltaTime);
+    [[nodiscard]] std::optional<Vec3> findSafeSpawnPosition(
+        Vec3 requestedPosition, Vec3 halfExtents,
+        Quaternion orientation, float maximumSearchRadiusMeters) const;
+    void beginPhysicsBenchmark();
+    void pausePhysicsBenchmark();
+    void clearPhysicsBenchmark();
+    void updatePhysicsBenchmark(float deltaTime);
+    void updatePhysicsBenchmarkAnalytics(float deltaTime);
     void beginPhysGunGrab();
     void endPhysGunGrab();
     void freezePhysGunObject();
@@ -139,6 +201,7 @@ private:
     [[nodiscard]] UiTexture renderPropPreviewAtlas(Renderer& renderer);
     [[nodiscard]] UiTexture renderObjectViewerPreview(Renderer& renderer,
         std::size_t definitionIndex);
+    [[nodiscard]] UiTexture renderAnimationViewerPreview(Renderer& renderer);
     void ensureObjectViewerFloorLoaded(Renderer& renderer);
 
     Screen m_screen = Screen::MainMenu;
@@ -147,6 +210,7 @@ private:
     UiTexture m_menuLogo;
     UiTexture m_propPreviewAtlas;
     UiTexture m_objectViewerPreview;
+    UiTexture m_animationViewerPreview;
     float m_uiScale = 1.0f;
 
     int m_settingsTab = 0;
@@ -163,6 +227,8 @@ private:
     // checkbox correspondente muda; ver applyAndSaveAudioSettings().
     bool m_hrtfEnabled = true;
     float m_automaticQuitSeconds = -1.0f;
+    float m_automaticBenchmarkDurationSeconds = -1.0f;
+    float m_automaticBenchmarkWarmupSeconds = 0.0f;
 
     Vec3 m_laboratoryCameraPosition { 0.0f, -90.0f, 4.6f };
     float m_laboratoryEyeHeight = 1.68f;
@@ -180,13 +246,33 @@ private:
     // enquanto m_laboratoryDebugVisible tambem esta ligado (o `'` continua
     // sendo o unico controle de captura do mouse).
     bool m_showPhysgunPanel = false;
+    bool m_showRenderPanel = false;
     bool m_showGraphicsPanel = false;
     bool m_showPerformancePanel = false;
+    bool m_showWindPanel = false;
+    bool m_showTimePanel = false;
+    bool m_showRagdollPanel = false;
+    bool m_showPhysicsBenchmarkPanel = false;
+    SceneRenderMode3D m_laboratoryRenderMode =
+        SceneRenderMode3D::Standard;
+    PixelArtSettings3D m_laboratoryPixelArt;
     // Controles de tonemap/correcao de cor (ver Scene3DFrame::toneMapping e
     // tonemap.frag) - ajustaveis ao vivo pelos sliders na aba "Gráficos" do
     // painel de debug, para calibrar a olho contra o conjunto de cores desta
     // engine em vez de adivinhar valores fixos.
     ToneMappingSettings3D m_laboratoryToneMapping;
+    AmbientOcclusionSettings3D m_laboratoryAmbientOcclusion;
+    OpticalEffectsSettings3D m_laboratoryOpticalEffects;
+    // 0=Desempenho, 1=Equilibrado, 2=Alto, 3=Personalizado.
+    int m_laboratoryGraphicsPreset = 0;
+    // Fonte única dos parâmetros ambientais contínuos. O futuro relógio e
+    // sistema meteorológico escreverão aqui; hoje o painel Gráficos permite
+    // validar a fundação de iluminação sem estados discretos de clima.
+    EnvironmentLightingState3D m_laboratoryEnvironment;
+    // O relógio pode ser manipulado manualmente ou avançar em escala de
+    // tempo de jogo. 60x significa um minuto do mundo por segundo real.
+    bool m_laboratoryClockRunning = false;
+    float m_laboratoryClockTimeScale = 60.0f;
     // Neblina atmosferica (ver Scene3DFrame::fog e scene3d_mesh.frag) -
     // mesmo padrao acima: ajustavel ao vivo na aba "Gráficos".
     FogSettings3D m_laboratoryFog;
@@ -203,7 +289,8 @@ private:
     // vento no ouvido do jogador, todos a partir do mesmo estado.
     WindSystem m_windSystem;
     // Deslocamento acumulado (integrado quadro a quadro) enviado ao shader
-    // do ceu como Scene3DFrame::cloudWindOffset - ver o comentario la sobre
+    // do ceu como EnvironmentLightingState3D::cloudWindOffset - ver o
+    // comentario la sobre
     // por que precisa ser uma integral e nao velocidade*tempo_total.
     Vec2 m_cloudWindOffset;
     // Conversao entre metros reais percorridos pelo vento e unidades de
@@ -234,6 +321,27 @@ private:
     GpuModel3D m_physGunVisual;
     bool m_propAssetsLoadFailed = false;
     bool m_physGunVisualLoaded = false;
+    std::optional<RagdollProfile3D> m_humanRagdollProfile;
+    std::optional<RagdollCharacter3D> m_ragdollCharacter;
+    GpuModel3D m_characterVisual;
+    UiTexture m_characterThumbnail;
+    Vec3 m_characterSpawnHalfExtents;
+    Vec3 m_characterSpawnCenter;
+    std::string m_characterAssetPath = "characters/crash_test_dummy/character.json";
+    bool m_animationViewerShowColliders = false;
+    std::vector<GpuModel3D> m_ragdollLinkVisuals;
+    GpuModel3D m_ragdollJointVisual;
+    std::vector<Vec3> m_ragdollJointLocalPositions;
+    std::vector<SpawnedRagdollInstance> m_spawnedRagdolls;
+    bool m_ragdollAssetsLoadFailed = false;
+    bool m_ragdollActive = true;
+    float m_ragdollRigidityPercent = 0.0f;
+    // Explicit bounded physical assistance; the previous balance/WBC is archived.
+    bool m_ragdollUseMagicMode = true;
+    RagdollImpactTest3D m_ragdollImpactLab;
+    // Oculta apenas a apresentação em primeira pessoa; controles, física,
+    // lanterna e manipulação continuam ativos para captura de imagens.
+    bool m_hidePhysGunPresentation = false;
     // Piso do Object Viewer: uma unica mesh real (quad + textura de
     // xadrez assada), carregada uma vez sob demanda. Substitui o antigo
     // plano procedural analitico (ver PropRuntime.cpp) para que 100% do
@@ -243,6 +351,29 @@ private:
     std::vector<SpawnedPropInstance> m_spawnedProps;
     std::unordered_map<std::uint32_t, std::size_t> m_spawnedPropByBodyIndex;
     std::uint64_t m_nextEntityId = 1;
+    int m_physicsBenchmarkRequestedProps = 100;
+    int m_physicsBenchmarkRequestedRagdolls = 10;
+    float m_physicsBenchmarkSpawnRatePerSecond = 30.0f;
+    bool m_physicsBenchmarkRunning = false;
+    bool m_physicsBenchmarkPaused = false;
+    bool m_physicsBenchmarkShowAnalytics = true;
+    float m_physicsBenchmarkSpawnAccumulator = 0.0f;
+    std::uint32_t m_physicsBenchmarkSpawnedProps = 0;
+    std::uint32_t m_physicsBenchmarkSpawnedRagdolls = 0;
+    std::uint32_t m_physicsBenchmarkRandomState = 0x4D415454u;
+    std::vector<std::uint64_t> m_physicsBenchmarkPropEntityIds;
+    std::vector<std::uint64_t> m_physicsBenchmarkRagdollEntityIds;
+    std::vector<PhysicsBenchmarkSample> m_physicsBenchmarkSamples;
+    float m_physicsBenchmarkSampleSeconds = 0.0f;
+    float m_physicsBenchmarkFpsSum = 0.0f;
+    float m_physicsBenchmarkMinimumFps = 0.0f;
+    float m_physicsBenchmarkPhysicsMillisecondsSum = 0.0f;
+    float m_physicsBenchmarkMaximumPhysicsMilliseconds = 0.0f;
+    std::uint32_t m_physicsBenchmarkFrameSamples = 0;
+    float m_physicsBenchmarkBaselineFps = 0.0f;
+    float m_physicsBenchmarkOverallFpsSum = 0.0f;
+    float m_physicsBenchmarkOverallMinimumFps = 0.0f;
+    std::uint64_t m_physicsBenchmarkOverallFrameSamples = 0;
     std::uint64_t m_physGunGrabbedEntityId = 0;
     Vec3 m_physGunLocalGrabPoint;
     Quaternion m_physGunTargetOrientation;
@@ -292,16 +423,41 @@ private:
     float m_lastUnfreezePressSeconds = -10.0f;
     TransientNotification m_notification;
     std::size_t m_objectViewerSelectedIndex = 0;
+    // Biblioteca preenchida no início com clipes canônicos já retargeteados.
+    std::vector<AnimationClip3D> m_animationClips;
+    std::size_t m_animationViewerSelectedIndex = 0;
+    float m_animationViewerPlaybackSeconds = 0.0f;
+    float m_animationViewerPlaybackSpeed = 1.0f;
+    bool m_animationViewerPlaying = true;
+    bool m_animationViewerLoop = true;
+    float m_animationViewerCameraYaw = -0.975f;
+    float m_animationViewerCameraPitch = 0.071f;
+    float m_animationViewerCameraDistance = 4.5f;
 
     ImpactAcousticResolver m_impactAcousticResolver;
+    DragAcousticResolver m_dragAcousticResolver;
     WorldAudioController m_worldAudio;
 
     CharacterMotorSettings3D m_characterSettings;
     std::vector<LaboratoryMapPart> m_laboratoryMapParts;
     std::vector<PhysicsBodyHandle3D> m_laboratoryMapBodies;
     std::vector<RHI::TextureHandle> m_laboratoryMapTextures;
+    OceanVolume3D m_laboratoryOcean;
+    bool m_laboratoryOceanEnabled = false;
+    RHI::BufferHandle m_laboratoryOceanVertexBuffer;
+    RHI::BufferHandle m_laboratoryOceanIndexBuffer;
+    std::uint32_t m_laboratoryOceanIndexCount = 0;
     bool m_laboratoryMapLoaded = false;
     bool m_laboratoryMapLoadFailed = false;
+    bool m_spawnRagdollWhenReady = false;
+    bool m_animationRunTest = false;
+    bool m_animationRunTestStarted = false;
+    float m_animationRunTestSeconds = 0;
+    bool m_spawnAllPropsWhenReady = false;
+    bool m_startPhysicsBenchmarkWhenReady = false;
+    // Automação de benchmark/smoke. Vazio no uso interativo; evita depender
+    // de eventos sintéticos do menu Q para perfilar um prop específico.
+    std::string m_spawnPropWhenReadyId;
     Vec3 m_laboratorySpawnPosition;
     float m_laboratorySpawnYaw = 1.57079632679f;
 };

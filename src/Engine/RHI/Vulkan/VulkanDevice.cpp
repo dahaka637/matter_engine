@@ -2,6 +2,7 @@
 
 #include "Engine/Core/Log.hpp"
 #include "Engine/Core/Version.hpp"
+#include "Engine/Geometry/MeshData3D.hpp"
 #include "Engine/RHI/Vulkan/ScenePassGraph.hpp"
 #include "Engine/Render/SceneLightPacking.hpp"
 #include "imgui.h"
@@ -40,21 +41,149 @@ namespace MatterEngine::RHI::Vulkan {
 
 namespace {
 
+constexpr std::uint32_t FrameTimestampCount = 10;
+
 constexpr std::uint32_t TargetVulkanVersion = VK_API_VERSION_1_4;
-constexpr std::uint32_t FramesInFlight = 2;
+constexpr std::uint32_t FramesInFlight = 3;
 constexpr VkFormat SceneDepthFormat = VK_FORMAT_D32_SFLOAT;
-constexpr std::uint32_t SceneShadowMapSize = 2048;
 // Alvo intermediario do passe opaco (ceu+mesh) - meia precisao de ponto
 // flutuante por canal, para guardar luminancia acima de 1.0 (destaques de sol,
 // especular de metal) sem estourar, ate o passe de tonemap (ver
 // createScene3DResources / tonemap.frag) comprimir de volta para o destino
 // final em UNORM.
 constexpr VkFormat SceneHdrColorFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
+// Um único texel guarda o multiplicador de exposição adaptado. Reusar o
+// formato HDR já validado pelo device evita depender de suporte opcional a
+// R16_SFLOAT como color attachment; o custo extra dos canais num alvo 1x1 é
+// irrelevante.
+constexpr VkFormat SceneAutoExposureFormat = SceneHdrColorFormat;
 // Vetores de movimento por pixel (ver scene3d_mesh.frag) - deslocamento em
 // UV entre este quadro e o passado, tipicamente uma fracao pequena de 1.0;
 // 2 canais de meia precisao de ponto flutuante sobram de folga sem o custo
 // de banda de um formato de 4 canais como o HDR.
 constexpr VkFormat SceneMotionVectorFormat = VK_FORMAT_R16G16_SFLOAT;
+// R = visibilidade da oclusão, G = distância linear à câmera para o
+// upsample bilateral no TAA. Meia resolução, portanto 4 bytes por pixel
+// resultam em apenas 1 byte por pixel de tela.
+constexpr VkFormat SceneAmbientOcclusionFormat =
+    VK_FORMAT_R16G16_SFLOAT;
+// Glare solar e ghosts permanecem em HDR até o tonemap. O alvo roda a 1/8
+// de cada dimensão (1/64 dos pixels); não há bloom geral neste caminho.
+constexpr VkFormat SceneBloomGlareFormat = SceneHdrColorFormat;
+// Normal (codificada em octaedro) + rugosidade + metalico por pixel, ver
+// scene3d_mesh.frag/scene3d_sky.frag - terceiro attachment do MESMO passe
+// opaco MRT, fundacao para um futuro passe de SSR (ainda sem nenhum
+// consumidor). UNORM8 x4 (4 bytes) em vez de um formato de meia precisao de
+// ponto flutuante (8+ bytes): a normal nao precisa de mais que isso para
+// orientar um raio de tela, e a banda de memoria importa no hardware minimo
+// do jogo (GTX 750 e equivalentes).
+constexpr VkFormat SceneNormalRoughnessFormat = VK_FORMAT_R8G8B8A8_UNORM;
+// Peso de reflectancia ambiente por pixel (ver outReflectance em
+// scene3d_mesh.frag/scene3d_sky.frag) - quarto attachment do MESMO passe
+// opaco MRT. UNORM8 pelo mesmo motivo do buffer de normal/rugosidade acima:
+// e so um peso 0..1, sem precisao extra que valha o dobro (ou mais) de
+// banda de um formato de ponto flutuante.
+constexpr VkFormat SceneReflectanceFormat = VK_FORMAT_R8G8B8A8_UNORM;
+// Metais comuns usam reflexão ambiente analítica no próprio mesh shader.
+// O caminho SSR permanece compilável para experimentos futuros, mas não
+// grava command buffers nem consome GPU no runtime atual.
+constexpr bool SceneSsrEnabled = false;
+// Historico de SSR (ver ssr_trace_resolve.frag) - meia resolucao linear
+// (1/4 dos pixels, ver ensureScene3DTarget), entao mesmo em ponto flutuante
+// de meia precisao custa menos banda por quadro que o buffer de vetores de
+// movimento em resolucao cheia acima. Precisa ser float (nao UNORM): a
+// radiancia refletida pode superar 1.0 (brilho do sol refletido).
+constexpr VkFormat SceneSsrHistoryFormat = VK_FORMAT_R16G16B16A16_SFLOAT;
+
+using Matrix4Values = std::array<float, 16>;
+
+[[nodiscard]] float& matrixElement(
+    Matrix4Values& matrix, std::size_t row, std::size_t column) {
+    return matrix[column * 4 + row];
+}
+
+[[nodiscard]] float matrixElement(
+    const Matrix4Values& matrix, std::size_t row, std::size_t column) {
+    return matrix[column * 4 + row];
+}
+
+[[nodiscard]] Matrix4Values identityMatrix() {
+    Matrix4Values result {};
+    for (std::size_t index = 0; index < 4; ++index) {
+        matrixElement(result, index, index) = 1.0f;
+    }
+    return result;
+}
+
+[[nodiscard]] Matrix4Values multiplyMatrices(
+    const Matrix4Values& left, const Matrix4Values& right) {
+    Matrix4Values result {};
+    for (std::size_t row = 0; row < 4; ++row) {
+        for (std::size_t column = 0; column < 4; ++column) {
+            for (std::size_t inner = 0; inner < 4; ++inner) {
+                matrixElement(result, row, column) +=
+                    matrixElement(left, row, inner)
+                    * matrixElement(right, inner, column);
+            }
+        }
+    }
+    return result;
+}
+
+[[nodiscard]] Matrix4Values inverseMatrix(const Matrix4Values& matrix) {
+    float augmented[4][8] {};
+    for (std::size_t row = 0; row < 4; ++row) {
+        for (std::size_t column = 0; column < 4; ++column) {
+            augmented[row][column] =
+                matrixElement(matrix, row, column);
+        }
+        augmented[row][row + 4] = 1.0f;
+    }
+
+    for (std::size_t column = 0; column < 4; ++column) {
+        std::size_t pivotRow = column;
+        for (std::size_t row = column + 1; row < 4; ++row) {
+            if (std::abs(augmented[row][column])
+                > std::abs(augmented[pivotRow][column])) {
+                pivotRow = row;
+            }
+        }
+        if (std::abs(augmented[pivotRow][column]) <= 0.0000001f) {
+            throw std::invalid_argument(
+                "Cannot invert a singular scene matrix");
+        }
+        if (pivotRow != column) {
+            for (std::size_t entry = 0; entry < 8; ++entry) {
+                std::swap(augmented[column][entry],
+                    augmented[pivotRow][entry]);
+            }
+        }
+
+        const float pivot = augmented[column][column];
+        for (float& entry : augmented[column]) {
+            entry /= pivot;
+        }
+        for (std::size_t row = 0; row < 4; ++row) {
+            if (row == column) {
+                continue;
+            }
+            const float factor = augmented[row][column];
+            for (std::size_t entry = 0; entry < 8; ++entry) {
+                augmented[row][entry] -=
+                    factor * augmented[column][entry];
+            }
+        }
+    }
+
+    Matrix4Values result {};
+    for (std::size_t row = 0; row < 4; ++row) {
+        for (std::size_t column = 0; column < 4; ++column) {
+            matrixElement(result, row, column) =
+                augmented[row][column + 4];
+        }
+    }
+    return result;
+}
 
 struct alignas(16) SceneUniformGpu {
     // Jitterada quando a cena usa TAA (Fase 6, ver Scene3DFrame::
@@ -91,21 +220,29 @@ struct alignas(16) SceneUniformGpu {
     // oscilar entre texels mesmo com camera e objeto perfeitamente parados.
     std::array<float, 16> previousCameraViewProjection {};
     std::array<float, 4> cameraPosition {};
-    // x=sombras ligadas, y=quantidade de luzes no SSBO SceneLights,
+    // x=amostras PCSS (zero desliga sombras),
+    // y=quantidade de luzes no SSBO SceneLights,
     // z=historico temporal valido neste quadro, w=luz ambiente.
     std::array<float, 4> settings {};
-    // x=mostrar ceu, y=tempo do ceu, z=cobertura de nuvens, w reservado (era
-    // a intensidade fixa do sol - agora vem de lights[0] no SSBO).
+    // x=mostrar ceu, y=tempo do ceu, z=cobertura de nuvens,
+    // w=transmitância solar local através das nuvens.
     std::array<float, 4> skySettings {};
     // x=densidade (taxa exponencial por metro), y=acoplamento altura-distancia,
-    // z=opacidade maxima, w reservado - ver FogSettings3D/scene3d_mesh.frag.
+    // z=opacidade maxima, w=distancia inicial.
     std::array<float, 4> fogSettings {};
-    // rgb=cor da neblina, a reservado.
+    // rgb=cor dinâmica da neblina, a=distancia de ocultação total.
     std::array<float, 4> fogColor {};
     // xy=deslocamento acumulado do vento nas nuvens (unidades de ruido do
     // shader do ceu, ja integrado no tempo pelo lado CPU - ver
-    // Scene3DFrame::cloudWindOffset/WindSystem), zw reservado.
+    // EnvironmentLightingState3D::cloudWindOffset/WindSystem), zw reservado.
     std::array<float, 4> windOffset {};
+    // x=visibilidade indireta mínima em regiões totalmente ocluídas,
+    // y=força do primeiro rebote solar difuso, z=precipitação,
+    // w=umidade acumulada das superfícies.
+    std::array<float, 4> environmentSettings {};
+    // x=modo Pixel Art, y=tamanho base do pixel artístico,
+    // z=TAA completo opcional, w reservado.
+    std::array<float, 4> renderSettings {};
 };
 
 // Transform e parametros variaveis por instancia. Geometria e texturas iguais
@@ -128,7 +265,7 @@ struct alignas(16) SceneMeshInstanceGpu {
     std::array<float, 4> previousOrientationZ {};
 };
 
-static_assert(sizeof(SceneUniformGpu) == 656);
+static_assert(sizeof(SceneUniformGpu) == 688);
 static_assert(sizeof(SceneMeshInstanceGpu) == 144);
 
 // Espelha o bloco "push_constant" de tonemap.frag campo a campo - ver
@@ -138,9 +275,73 @@ struct TonemapPushConstantsGpu {
     float brightness = 0.0f;
     float contrast = 1.0f;
     float saturation = 1.0f;
+    float oceanSubmersion = 0.0f;
+    float animationTimeSeconds = 0.0f;
+    float pixelArtEnabled = 0.0f;
+    float luminanceLevelCount = 12.0f;
+    float chromaLevelCount = 18.0f;
+    float ditherStrength = 0.025f;
+    // Mantém os offsets do push constant estáveis; o antigo contorno
+    // artificial de silhueta foi removido do Pixel Art.
+    float reservedPixelArt0 = 0.0f;
+    float pixelGridHeight = 540.0f;
+    float worldPixelation = 1.0f;
+    float physicalPropPixelation = 1.0f;
+    float distanceLodStrength = 0.65f;
+    float distanceLodStartMeters = 12.0f;
+    float distanceLodEndMeters = 110.0f;
+    float flatteningStrength = 1.0f;
 };
 
-static_assert(sizeof(TonemapPushConstantsGpu) == 16);
+static_assert(sizeof(TonemapPushConstantsGpu) == 72);
+
+struct AutoExposurePushConstantsGpu {
+    float minimumExposure = 0.75f;
+    float maximumExposure = 2.50f;
+    float meteringKey = 0.35f;
+    float deltaTime = 1.0f / 60.0f;
+    float brightAdaptationSpeed = 7.0f;
+    float darkAdaptationSpeed = 2.4f;
+    float historyValid = 0.0f;
+    float enabled = 0.0f;
+};
+
+static_assert(sizeof(AutoExposurePushConstantsGpu) == 32);
+
+struct GtaoPushConstantsGpu {
+    float radiusMeters = 1.15f;
+    float strength = 0.72f;
+    float maxDarkening = 0.24f;
+    float normalBias = 0.055f;
+    std::uint32_t sampleDirectionCount = 6;
+    std::uint32_t sampleStepCount = 2;
+    std::array<std::uint32_t, 2> reserved {};
+};
+
+static_assert(sizeof(GtaoPushConstantsGpu) == 32);
+
+struct BloomGlarePushConstantsGpu {
+    float glareStrength = 0.24f;
+    float flareStrength = 0.055f;
+    float reserved0 = 0.0f;
+    float reserved1 = 0.0f;
+    std::array<float, 2> sunUv { 0.5f, 0.5f };
+    float sunOnScreen = 0.0f;
+    float enabled = 0.0f;
+};
+
+static_assert(sizeof(BloomGlarePushConstantsGpu) == 32);
+
+struct OceanPushConstantsGpu {
+    std::array<float, 2> meshOrigin { 0.0f, 0.0f };
+    float meanSeaLevel = 0.0f;
+    float timeSeconds = 0.0f;
+    std::array<float, 2> worldCenter { 0.0f, 0.0f };
+    float worldHalfExtent = 1500.0f;
+    float reserved = 0.0f;
+};
+
+static_assert(sizeof(OceanPushConstantsGpu) == 32);
 
 void check(VkResult result, const char* operation) {
     if (result != VK_SUCCESS) {
@@ -286,9 +487,9 @@ public:
         VkCommandPool commandPool = VK_NULL_HANDLE;
         VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
         VkSemaphore imageAvailable = VK_NULL_HANDLE;
-        VkSemaphore renderFinished = VK_NULL_HANDLE;
         VkFence fence = VK_NULL_HANDLE;
         bool timestampWritten = false;
+        bool sceneTimestampsWritten = false;
         FramePerformanceMetrics performance;
     };
 
@@ -414,7 +615,6 @@ public:
         for (Frame& frame : frames) {
             if (frame.fence != VK_NULL_HANDLE) vkDestroyFence(device, frame.fence, nullptr);
             if (frame.imageAvailable != VK_NULL_HANDLE) vkDestroySemaphore(device, frame.imageAvailable, nullptr);
-            if (frame.renderFinished != VK_NULL_HANDLE) vkDestroySemaphore(device, frame.renderFinished, nullptr);
             if (frame.commandPool != VK_NULL_HANDLE) vkDestroyCommandPool(device, frame.commandPool, nullptr);
         }
         frames = {};
@@ -1220,17 +1420,37 @@ public:
         // UI nunca observa um present ainda zerado ou medidas pela metade.
         frameMetrics = frame.performance;
         if (frame.timestampWritten) {
-            std::array<std::uint64_t, 2> timestamps {};
-            const std::uint32_t firstQuery = currentFrame * 2;
+            std::array<std::uint64_t, FrameTimestampCount> timestamps {};
+            const std::uint32_t firstQuery =
+                currentFrame * FrameTimestampCount;
             const VkResult timingResult = vkGetQueryPoolResults(device,
-                frameTimestampQueryPool, firstQuery, 2,
+                frameTimestampQueryPool, firstQuery, FrameTimestampCount,
                 sizeof(timestamps), timestamps.data(),
                 sizeof(std::uint64_t), VK_QUERY_RESULT_64_BIT);
             if (timingResult == VK_SUCCESS
-                && timestamps[1] >= timestamps[0]) {
-                frameMetrics.gpuFrameMilliseconds =
-                    static_cast<float>(timestamps[1] - timestamps[0])
-                    * timestampPeriodNanoseconds / 1'000'000.0f;
+                && std::is_sorted(timestamps.begin(), timestamps.end())) {
+                const auto milliseconds = [&](std::size_t begin,
+                    std::size_t end) {
+                    return static_cast<float>(
+                        timestamps[end] - timestamps[begin])
+                        * timestampPeriodNanoseconds / 1'000'000.0f;
+                };
+                frameMetrics.gpuFrameMilliseconds = milliseconds(0, 9);
+                frameMetrics.gpuShadowMilliseconds = milliseconds(0, 1);
+                frameMetrics.gpuDepthPrepassMilliseconds =
+                    milliseconds(1, 2);
+                frameMetrics.gpuOpaqueMilliseconds = milliseconds(2, 3);
+                frameMetrics.gpuOceanMilliseconds = milliseconds(3, 4);
+                frameMetrics.gpuTemporalMilliseconds = milliseconds(4, 5);
+                frameMetrics.gpuBloomGlareMilliseconds =
+                    milliseconds(5, 6);
+                frameMetrics.gpuExposureMilliseconds =
+                    milliseconds(6, 7);
+                frameMetrics.gpuTonemapMilliseconds =
+                    milliseconds(7, 8);
+                frameMetrics.gpuPostProcessMilliseconds =
+                    milliseconds(5, 8);
+                frameMetrics.gpuUiMilliseconds = milliseconds(8, 9);
                 frameMetrics.gpuTimingValid = true;
             }
         }
@@ -1267,12 +1487,14 @@ public:
         VkCommandBufferBeginInfo beginInfo { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
         beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
         check(vkBeginCommandBuffer(frame.commandBuffer, &beginInfo), "vkBeginCommandBuffer");
-        const std::uint32_t firstQuery = currentFrame * 2;
+        const std::uint32_t firstQuery =
+            currentFrame * FrameTimestampCount;
         vkCmdResetQueryPool(frame.commandBuffer, frameTimestampQueryPool,
-            firstQuery, 2);
+            firstQuery, FrameTimestampCount);
         vkCmdWriteTimestamp2(frame.commandBuffer,
             VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT,
             frameTimestampQueryPool, firstQuery);
+        frame.sceneTimestampsWritten = false;
 
         boundPipeline = {};
         worldSpriteDrawCount = 0;
@@ -1376,7 +1598,7 @@ public:
         std::size_t descriptorSlot) {
         TextureResource& resource = checkedResource(textures, source, "sprite source");
         Frame& frame = frames[currentFrame];
-        VkDescriptorSet descriptorSet = spriteDescriptorSets[descriptorSlot];
+        VkDescriptorSet descriptorSet = spriteDescriptorSets[currentFrame * 4 + descriptorSlot];
 
         VkDescriptorImageInfo imageInfo {};
         imageInfo.sampler = nearestSampler;
@@ -1479,7 +1701,7 @@ public:
         }
         TextureResource& target = checkedResource(textures, activeRenderTarget, "active render target");
         const std::size_t descriptorSlot = 1 + worldSpriteDrawCount;
-        if (descriptorSlot >= spriteDescriptorSets.size()) {
+        if (descriptorSlot >= 4) {
             throw std::runtime_error("Too many world sprites in one frame");
         }
         ++worldSpriteDrawCount;
@@ -1502,6 +1724,13 @@ public:
             ensureScene3DTarget(extent);
         }
         Frame& frame = frames[currentFrame];
+        const auto writeSceneTimestamp = [&](std::uint32_t index) {
+            if (!directToSwapchain) return;
+            vkCmdWriteTimestamp2(frame.commandBuffer,
+                VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT,
+                frameTimestampQueryPool,
+                currentFrame * FrameTimestampCount + index);
+        };
         bool& temporalHistoryValid = directToSwapchain
             ? sceneDirectTaaHistoryValid : sceneTaaHistoryValid;
         const bool useTemporalHistory =
@@ -1520,7 +1749,7 @@ public:
         // com a inversa jitterada deslocaria horizonte/nuvens a cada amostra
         // Halton. A geometria continua usando a VP jitterada acima.
         uniform.inverseCameraViewProjection =
-            scene.cameraViewProjection.inverse().values;
+            inverseMatrix(scene.cameraViewProjection.values);
         for (std::uint32_t cascade = 0; cascade < ShadowCascadeCount; ++cascade) {
             uniform.cascadeViewProjections[cascade] =
                 scene.cascadeViewProjections[cascade].values;
@@ -1534,29 +1763,106 @@ public:
             scene.cameraPosition.x, scene.cameraPosition.y, scene.cameraPosition.z, 1.0f
         };
         uniform.settings = {
-            scene.showShadows ? 1.0f : 0.0f,
+            scene.showShadows
+                ? static_cast<float>(std::clamp(
+                    scene.shadowFilterSampleCount, 4u, 16u))
+                : 0.0f,
             static_cast<float>(scene.lights.size()),
             useTemporalHistory ? 1.0f : 0.0f,
-            scene.ambientLight
+            scene.environment.skyIrradiance
         };
         uniform.skySettings = {
             scene.showSky ? 1.0f : 0.0f,
-            scene.skyTime,
-            scene.cloudCoverage,
-            0.0f
+            scene.environment.skyAnimationTime,
+            scene.environment.cloudCoverage,
+            scene.environment.cloudSunTransmittance
         };
         uniform.fogSettings = {
-            scene.fog.density, scene.fog.heightFalloff, scene.fog.maxOpacity, 0.0f
+            scene.fog.density, scene.fog.heightFalloff, scene.fog.maxOpacity,
+            scene.fog.startDistanceMeters
         };
         uniform.fogColor = {
-            scene.fog.color.x, scene.fog.color.y, scene.fog.color.z, 0.0f
+            scene.fog.color.x, scene.fog.color.y, scene.fog.color.z,
+            std::max(scene.fog.endDistanceMeters,
+                scene.fog.startDistanceMeters + 1.0f)
         };
         uniform.windOffset = {
-            scene.cloudWindOffset.x, scene.cloudWindOffset.y, 0.0f, 0.0f
+            scene.environment.cloudWindOffset.x,
+            scene.environment.cloudWindOffset.y,
+            scene.ambientOcclusion.enabled ? 1.0f : 0.0f, 0.0f
+        };
+        uniform.environmentSettings = {
+            scene.environment.minimumIndirectVisibility,
+            scene.environment.sunDiffuseBounce,
+            scene.environment.precipitation,
+            scene.environment.surfaceWetness
+        };
+        const float artisticPixelSize =
+            scene.renderMode == SceneRenderMode3D::PixelArt
+            ? std::max(std::round(static_cast<float>(extent.height)
+                / std::max(scene.pixelArt.pixelGridHeight, 1.0f)), 1.0f)
+            : 1.0f;
+        uniform.renderSettings = {
+            scene.renderMode == SceneRenderMode3D::PixelArt ? 1.0f : 0.0f,
+            artisticPixelSize,
+            scene.pixelArt.temporalAntiAliasingEnabled ? 1.0f : 0.0f,
+            0.0f
         };
         std::memcpy(sceneUniformMapped[currentFrame], &uniform, sizeof(uniform));
         check(vmaFlushAllocation(allocator, sceneUniformAllocations[currentFrame],
             0, sizeof(uniform)), "vmaFlushAllocation(scene uniform)");
+
+        SceneUniformGpu planarUniform = uniform;
+        if (scene.planarReflectionEnabled
+            && scene.planarReflectionNormal.lengthSquared() > 0.000001f) {
+            const Vec3 normal =
+                scene.planarReflectionNormal.normalized();
+            const float planeDistance =
+                dot(normal, scene.planarReflectionPoint);
+            const std::array<float, 3> n {
+                normal.x, normal.y, normal.z
+            };
+            Matrix4Values reflection = identityMatrix();
+            for (std::size_t row = 0; row < 3; ++row) {
+                for (std::size_t column = 0; column < 3; ++column) {
+                    matrixElement(reflection, row, column) -=
+                        2.0f * n[row] * n[column];
+                }
+                matrixElement(reflection, row, 3) =
+                    2.0f * planeDistance * n[row];
+            }
+            const Matrix4Values reflectedViewProjection =
+                multiplyMatrices(scene.cameraViewProjection.values,
+                    reflection);
+            const Vec3 reflectedCamera = scene.cameraPosition
+                - normal * (2.0f
+                    * (dot(normal, scene.cameraPosition)
+                        - planeDistance));
+            // Sem jitter e sem histórico: o resultado planar já passa pelo
+            // TAA da câmera principal quando é amostrado pelo espelho.
+            planarUniform.cameraViewProjection =
+                reflectedViewProjection;
+            planarUniform.cameraViewProjectionUnjittered =
+                reflectedViewProjection;
+            planarUniform.inverseCameraViewProjection =
+                inverseMatrix(reflectedViewProjection);
+            planarUniform.previousCameraViewProjection =
+                reflectedViewProjection;
+            planarUniform.cameraPosition = {
+                reflectedCamera.x, reflectedCamera.y,
+                reflectedCamera.z, 1.0f
+            };
+            // Os mapas de sombra foram calculados para a câmera principal;
+            // reutilizá-los daqui produziria sombras em cascatas erradas.
+            planarUniform.settings[0] = 0.0f;
+            planarUniform.settings[2] = 0.0f;
+        }
+        std::memcpy(scenePlanarCameraUniformMapped[currentFrame],
+            &planarUniform, sizeof(planarUniform));
+        check(vmaFlushAllocation(allocator,
+            scenePlanarCameraUniformAllocations[currentFrame], 0,
+            sizeof(planarUniform)),
+            "vmaFlushAllocation(scene planar camera uniform)");
 
         // O SSBO de luzes precisa de um buffer valido no descriptor set 0
         // (binding 2) antes de qualquer bind de pipeline que o referencie -
@@ -1596,10 +1902,14 @@ public:
                 mesh->vertexBuffer.index, mesh->vertexBuffer.generation,
                 mesh->indexBuffer.index, mesh->indexBuffer.generation,
                 mesh->indexCount,
+                mesh->shadowIndexBuffer.index,
+                mesh->shadowIndexBuffer.generation,
+                mesh->shadowIndexCount,
                 mesh->albedoTexture.index, mesh->albedoTexture.generation,
                 mesh->metallicRoughnessTexture.index,
                 mesh->metallicRoughnessTexture.generation,
                 mesh->castsShadow, mesh->visibleInCamera,
+                mesh->planarReflection,
                 mesh->shadowCascadeMask
             };
         };
@@ -1613,6 +1923,7 @@ public:
                 return meshKey(left) < meshKey(right);
             });
         std::vector<SceneMeshInstanceGpu> meshInstances;
+        std::vector<Mat4> skinMatrices { Mat4::identity() };
         std::vector<MeshBatch> meshBatches;
         meshInstances.reserve(orderedMeshes.size());
         meshBatches.reserve(orderedMeshes.size());
@@ -1644,9 +1955,24 @@ public:
                 orientationY.z, 0.0f };
             gpuInstance.orientationZ = { orientationZ.x, orientationZ.y,
                 orientationZ.z, 0.0f };
+            if (!mesh->skinMatrices.empty()) {
+                gpuInstance.orientationX[3] = static_cast<float>(skinMatrices.size());
+                skinMatrices.insert(skinMatrices.end(),
+                    mesh->skinMatrices.begin(), mesh->skinMatrices.end());
+                gpuInstance.orientationY[3] = static_cast<float>(skinMatrices.size());
+                const auto previous = mesh->previousSkinMatrices.size()
+                    == mesh->skinMatrices.size()
+                    ? mesh->previousSkinMatrices : mesh->skinMatrices;
+                skinMatrices.insert(skinMatrices.end(), previous.begin(), previous.end());
+            }
+            const float materialFlags =
+                (mesh->outlineGlow ? 1.0f : 0.0f)
+                + (mesh->planarReflection ? 2.0f : 0.0f)
+                + (mesh->pixelArtHighDetail ? 4.0f : 0.0f)
+                + (mesh->matteSurface ? 8.0f : 0.0f)
+                + (mesh->flatShaded ? 16.0f : 0.0f);
             gpuInstance.materialAndFlags = { mesh->metallic, mesh->roughness,
-                mesh->selected ? 1.0f : 0.0f,
-                mesh->outlineGlow ? 1.0f : 0.0f };
+                mesh->selected ? 1.0f : 0.0f, materialFlags };
             // Mesma escala para o passado - nada nesta engine anima escala
             // ao longo do tempo hoje, entao rastrear uma escala anterior
             // separada seria estado sem nenhum consumidor real.
@@ -1661,6 +1987,11 @@ public:
                 previousOrientationZ.y, previousOrientationZ.z, 0.0f };
             meshInstances.push_back(gpuInstance);
         }
+        ensureSceneSkinCapacity(skinMatrices.size());
+        const auto skinBytes = skinMatrices.size() * sizeof(Mat4);
+        std::memcpy(sceneSkinMapped[currentFrame], skinMatrices.data(), skinBytes);
+        check(vmaFlushAllocation(allocator, sceneSkinAllocations[currentFrame],
+            0, skinBytes), "vmaFlushAllocation(scene skin)");
         if (!meshInstances.empty()) {
             ensureSceneMeshInstanceCapacity(meshInstances.size());
             const VkDeviceSize byteCount = meshInstances.size()
@@ -1673,12 +2004,18 @@ public:
         }
 
         const auto pushMeshBatch = [&](const MeshBatch& batch,
-            bool bindMaterial) {
+            bool bindMaterial, bool shadowGeometry = false) {
             const MeshRender3D& meshObject = *batch.prototype;
             BufferResource& vertexBuffer =
                 checkedResource(buffers, meshObject.vertexBuffer, "mesh vertex buffer");
+            const RHI::BufferHandle selectedIndexHandle =
+                shadowGeometry && meshObject.shadowIndexBuffer.valid()
+                    ? meshObject.shadowIndexBuffer : meshObject.indexBuffer;
+            const std::uint32_t selectedIndexCount =
+                shadowGeometry && meshObject.shadowIndexBuffer.valid()
+                    ? meshObject.shadowIndexCount : meshObject.indexCount;
             BufferResource& indexBuffer =
-                checkedResource(buffers, meshObject.indexBuffer, "mesh index buffer");
+                checkedResource(buffers, selectedIndexHandle, "mesh index buffer");
             if (bindMaterial) {
                 const TextureResource& materialTexture = meshObject.albedoTexture.valid()
                     ? checkedResource(textures, meshObject.albedoTexture, "mesh albedo texture")
@@ -1711,7 +2048,7 @@ public:
                 static_cast<std::uint32_t>(vertexBuffers.size()),
                 vertexBuffers.data(), vertexOffsets.data());
             vkCmdBindIndexBuffer(frame.commandBuffer, indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
-            vkCmdDrawIndexed(frame.commandBuffer, meshObject.indexCount,
+            vkCmdDrawIndexed(frame.commandBuffer, selectedIndexCount,
                 batch.instanceCount, 0, 0, 0);
         };
 
@@ -1727,6 +2064,8 @@ public:
         // constant pro vertex shader de sombra escolher
         // scene.cascadeViewProjections[cascadeIndex]).
         for (std::uint32_t cascade = 0; cascade < ShadowCascadeCount; ++cascade) {
+            const std::uint32_t shadowMapSize =
+                ShadowCascadeMapSizes[cascade];
             transitionSceneAttachment(frame.commandBuffer, sceneShadowImages[cascade],
                 VK_IMAGE_ASPECT_DEPTH_BIT, sceneShadowStates[cascade],
                 VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
@@ -1743,11 +2082,13 @@ public:
             shadowDepthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
             shadowDepthAttachment.clearValue = shadowClear;
             VkRenderingInfo shadowRendering { VK_STRUCTURE_TYPE_RENDERING_INFO };
-            shadowRendering.renderArea.extent = { SceneShadowMapSize, SceneShadowMapSize };
+            shadowRendering.renderArea.extent = {
+                shadowMapSize, shadowMapSize
+            };
             shadowRendering.layerCount = 1;
             shadowRendering.pDepthAttachment = &shadowDepthAttachment;
             vkCmdBeginRendering(frame.commandBuffer, &shadowRendering);
-            setViewportAndScissor({ SceneShadowMapSize, SceneShadowMapSize });
+            setViewportAndScissor({ shadowMapSize, shadowMapSize });
             if (!scene.meshes.empty()) {
                 vkCmdBindPipeline(frame.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
                     sceneMeshShadowPipeline);
@@ -1759,7 +2100,7 @@ public:
                     if (batch.prototype->castsShadow
                         && (batch.prototype->shadowCascadeMask
                             & (1u << cascade)) != 0u) {
-                        pushMeshBatch(batch, false);
+                        pushMeshBatch(batch, false, true);
                     }
                 }
             }
@@ -1771,6 +2112,7 @@ public:
                 VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
                 VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
         }
+        writeSceneTimestamp(1);
         }
 
         // Passe opaco (ceu+mesh): escreve no alvo HDR, nao mais direto no
@@ -1800,6 +2142,23 @@ public:
             VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
             VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
 
+        // Recursos legados do experimento de SSR. Não entram mais no MRT
+        // ativo; ficam disponíveis somente no bloco morto SceneSsrEnabled.
+        VkImage normalRoughnessImage = directToSwapchain
+            ? sceneDirectNormalRoughnessImage : sceneNormalRoughnessImage;
+        VkImageView normalRoughnessView = directToSwapchain
+            ? sceneDirectNormalRoughnessView : sceneNormalRoughnessView;
+        SceneAttachmentState3D& normalRoughnessState = directToSwapchain
+            ? sceneDirectNormalRoughnessState : sceneNormalRoughnessState;
+        // Recursos legados mantidos apenas para que o experimento de SSR
+        // continue compilável. Com SceneSsrEnabled=false eles não entram no
+        // MRT nem recebem transições/comandos durante o frame.
+        VkImage reflectanceImage = directToSwapchain
+            ? sceneDirectReflectanceImage : sceneReflectanceImage;
+        VkImageView reflectanceView = directToSwapchain
+            ? sceneDirectReflectanceView : sceneReflectanceView;
+        SceneAttachmentState3D& reflectanceState = directToSwapchain
+            ? sceneDirectReflectanceState : sceneReflectanceState;
         VkImage depthImage = directToSwapchain ? sceneDirectDepthImage : sceneDepthImage;
         VkImageView depthView = directToSwapchain ? sceneDirectDepthView : sceneDepthView;
         SceneAttachmentState3D& depthState = directToSwapchain
@@ -1813,36 +2172,217 @@ public:
             VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT
                 | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
 
-        // Pre-pass de profundidade: resolve o buffer de profundidade inteiro
-        // ANTES do passe de cor opaco, para que este possa so testar (EQUAL)
-        // sem escrever de novo (ver sceneMeshPipeline em
-        // createScene3DResources) - fragmentos ja sabidamente ocluidos nunca
-        // chegam a rodar o fragment shader completo (BRDF + shadow lookup)
-        // do passe de cor.
-        // 0.0f, nao 1.0f: a camera principal usa profundidade INVERTIDA
-        // (Mat4::perspective produz perto=1, longe=0) - o valor de clear
-        // precisa representar "o mais distante possivel", que agora e 0.
+        VkImage planarReflectionImage = directToSwapchain
+            ? sceneDirectPlanarReflectionImage
+            : scenePlanarReflectionImage;
+        VkImageView planarReflectionView = directToSwapchain
+            ? sceneDirectPlanarReflectionView
+            : scenePlanarReflectionView;
+        SceneAttachmentState3D& planarReflectionState =
+            directToSwapchain ? sceneDirectPlanarReflectionState
+                : scenePlanarReflectionState;
+        const VkExtent2D planarExtent {
+            std::max(1u, renderExtent.width / 2),
+            std::max(1u, renderExtent.height / 2)
+        };
+
+        if (scene.planarReflectionEnabled) {
+            transitionSceneAttachment(frame.commandBuffer,
+                planarReflectionImage, VK_IMAGE_ASPECT_COLOR_BIT,
+                planarReflectionState,
+                VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+
+            VkClearValue planarDepthClear {};
+            planarDepthClear.depthStencil.depth = 0.0f;
+            VkRenderingAttachmentInfo planarDepthAttachment {
+                VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO
+            };
+            planarDepthAttachment.imageView = depthView;
+            planarDepthAttachment.imageLayout =
+                VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+            planarDepthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+            planarDepthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+            planarDepthAttachment.clearValue = planarDepthClear;
+            VkRenderingInfo planarDepthRendering {
+                VK_STRUCTURE_TYPE_RENDERING_INFO
+            };
+            planarDepthRendering.renderArea.extent = planarExtent;
+            planarDepthRendering.layerCount = 1;
+            planarDepthRendering.pDepthAttachment =
+                &planarDepthAttachment;
+            vkCmdBeginRendering(frame.commandBuffer,
+                &planarDepthRendering);
+            setViewportAndScissor(planarExtent);
+            if (!scene.meshes.empty()) {
+                vkCmdBindPipeline(frame.commandBuffer,
+                    VK_PIPELINE_BIND_POINT_GRAPHICS,
+                    sceneMeshDepthPrepassPipeline);
+                vkCmdBindDescriptorSets(frame.commandBuffer,
+                    VK_PIPELINE_BIND_POINT_GRAPHICS,
+                    scenePipelineLayout, 0, 1,
+                    &scenePlanarCameraDescriptorSets[currentFrame],
+                    0, nullptr);
+                for (const MeshBatch& batch : meshBatches) {
+                    if (!batch.prototype->planarReflection) {
+                        pushMeshBatch(batch, false);
+                    }
+                }
+            }
+            vkCmdEndRendering(frame.commandBuffer);
+
+            transitionSceneAttachment(frame.commandBuffer, depthImage,
+                VK_IMAGE_ASPECT_DEPTH_BIT, depthState,
+                VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT
+                    | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT
+                    | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+
+            VkClearValue planarColorClear {};
+            planarColorClear.color.float32[0] = 0.025f;
+            planarColorClear.color.float32[1] = 0.040f;
+            planarColorClear.color.float32[2] = 0.055f;
+            planarColorClear.color.float32[3] = 1.0f;
+            VkClearValue planarAuxClear {};
+            std::array<VkRenderingAttachmentInfo, 2>
+                planarColorAttachments {};
+            for (VkRenderingAttachmentInfo& attachment :
+                    planarColorAttachments) {
+                attachment.sType =
+                    VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+                attachment.imageLayout =
+                    VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+                attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+                attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+            }
+            planarColorAttachments[0].imageView =
+                planarReflectionView;
+            planarColorAttachments[0].clearValue =
+                planarColorClear;
+            planarColorAttachments[1].imageView = motionVectorView;
+            planarColorAttachments[1].clearValue = planarAuxClear;
+
+            VkRenderingAttachmentInfo planarColorDepth {
+                VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO
+            };
+            planarColorDepth.imageView = depthView;
+            planarColorDepth.imageLayout =
+                VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+            planarColorDepth.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+            planarColorDepth.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+            VkRenderingInfo planarRendering {
+                VK_STRUCTURE_TYPE_RENDERING_INFO
+            };
+            planarRendering.renderArea.extent = planarExtent;
+            planarRendering.layerCount = 1;
+            planarRendering.colorAttachmentCount =
+                static_cast<std::uint32_t>(
+                    planarColorAttachments.size());
+            planarRendering.pColorAttachments =
+                planarColorAttachments.data();
+            planarRendering.pDepthAttachment = &planarColorDepth;
+            vkCmdBeginRendering(frame.commandBuffer, &planarRendering);
+            setViewportAndScissor(planarExtent);
+            if (scene.showSky) {
+                vkCmdBindPipeline(frame.commandBuffer,
+                    VK_PIPELINE_BIND_POINT_GRAPHICS,
+                    sceneSkyPipeline);
+                vkCmdBindDescriptorSets(frame.commandBuffer,
+                    VK_PIPELINE_BIND_POINT_GRAPHICS,
+                    scenePipelineLayout, 0, 1,
+                    &scenePlanarCameraDescriptorSets[currentFrame],
+                    0, nullptr);
+                vkCmdDraw(frame.commandBuffer, 3, 1, 0, 0);
+            }
+            if (!scene.meshes.empty()) {
+                vkCmdBindPipeline(frame.commandBuffer,
+                    VK_PIPELINE_BIND_POINT_GRAPHICS,
+                    sceneMeshPipeline);
+                vkCmdBindDescriptorSets(frame.commandBuffer,
+                    VK_PIPELINE_BIND_POINT_GRAPHICS,
+                    sceneMeshPipelineLayout, 0, 1,
+                    &scenePlanarCameraDescriptorSets[currentFrame],
+                    0, nullptr);
+                const TextureResource& fallbackReflection =
+                    checkedResource(textures, defaultMaterialTexture,
+                        "default planar reflection texture");
+                vkCmdBindDescriptorSets(frame.commandBuffer,
+                    VK_PIPELINE_BIND_POINT_GRAPHICS,
+                    sceneMeshPipelineLayout, 3, 1,
+                    &fallbackReflection.materialDescriptor,
+                    0, nullptr);
+                for (const MeshBatch& batch : meshBatches) {
+                    if (!batch.prototype->planarReflection) {
+                        pushMeshBatch(batch, true);
+                    }
+                }
+            }
+            vkCmdEndRendering(frame.commandBuffer);
+
+            transitionSceneAttachment(frame.commandBuffer,
+                planarReflectionImage, VK_IMAGE_ASPECT_COLOR_BIT,
+                planarReflectionState,
+                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+
+            // Os attachments auxiliares e o depth serão sobrescritos pela
+            // câmera principal. Barreiras explícitas separam os dois usos,
+            // mesmo mantendo o mesmo layout.
+            transitionSceneAttachment(frame.commandBuffer, depthImage,
+                VK_IMAGE_ASPECT_DEPTH_BIT, depthState,
+                VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
+                VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT
+                    | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
+                VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT
+                    | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+            transitionSceneAttachment(frame.commandBuffer,
+                motionVectorImage, VK_IMAGE_ASPECT_COLOR_BIT,
+                motionVectorState,
+                VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+        } else {
+            transitionSceneAttachment(frame.commandBuffer,
+                planarReflectionImage, VK_IMAGE_ASPECT_COLOR_BIT,
+                planarReflectionState,
+                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+        }
+
+        // Pre-pass de profundidade: resolve o buffer inteiro antes do passe
+        // opaco. O fragment shader principal (BRDF + sombras) roda apenas
+        // para a superficie que realmente ficou visivel.
         VkClearValue depthPrepassClear {};
         depthPrepassClear.depthStencil.depth = 0.0f;
         VkRenderingAttachmentInfo depthPrepassAttachment {
             VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO
         };
         depthPrepassAttachment.imageView = depthView;
-        depthPrepassAttachment.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+        depthPrepassAttachment.imageLayout =
+            VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
         depthPrepassAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
         depthPrepassAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
         depthPrepassAttachment.clearValue = depthPrepassClear;
-        VkRenderingInfo depthPrepassRendering { VK_STRUCTURE_TYPE_RENDERING_INFO };
+        VkRenderingInfo depthPrepassRendering {
+            VK_STRUCTURE_TYPE_RENDERING_INFO
+        };
         depthPrepassRendering.renderArea.extent = renderExtent;
         depthPrepassRendering.layerCount = 1;
         depthPrepassRendering.pDepthAttachment = &depthPrepassAttachment;
         vkCmdBeginRendering(frame.commandBuffer, &depthPrepassRendering);
         setViewportAndScissor(renderExtent);
         if (!scene.meshes.empty()) {
-            vkCmdBindPipeline(frame.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+            vkCmdBindPipeline(frame.commandBuffer,
+                VK_PIPELINE_BIND_POINT_GRAPHICS,
                 sceneMeshDepthPrepassPipeline);
-            vkCmdBindDescriptorSets(frame.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
-                scenePipelineLayout, 0, 1, &sceneDescriptorSets[currentFrame], 0, nullptr);
+            vkCmdBindDescriptorSets(frame.commandBuffer,
+                VK_PIPELINE_BIND_POINT_GRAPHICS,
+                scenePipelineLayout, 0, 1,
+                &sceneDescriptorSets[currentFrame], 0, nullptr);
             for (const MeshBatch& batch : meshBatches) {
                 if (batch.prototype->visibleInCamera) {
                     pushMeshBatch(batch, false);
@@ -1851,11 +2391,8 @@ public:
         }
         vkCmdEndRendering(frame.commandBuffer);
 
-        // Barreira entre os dois passes: mesmo layout dos dois lados
-        // (DEPTH_ATTACHMENT_OPTIMAL), mas vkCmdBeginRendering nao insere
-        // dependencia automatica entre instancias de rendering separadas -
-        // sem isso, o passe de cor poderia testar profundidade antes do
-        // pre-pass realmente terminar de escrever.
+        // Dependencia explicita entre a escrita do pre-pass e os testes do
+        // passe de cor seguinte.
         transitionSceneAttachment(frame.commandBuffer, depthImage,
             VK_IMAGE_ASPECT_DEPTH_BIT, depthState,
             VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL,
@@ -1863,6 +2400,7 @@ public:
                 | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT,
             VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT
                 | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT);
+        writeSceneTimestamp(2);
 
         VkClearValue colorClear {};
         colorClear.color.float32[0] = 0.025f;
@@ -1891,9 +2429,7 @@ public:
         VkRenderingAttachmentInfo depthAttachment { VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
         depthAttachment.imageView = depthView;
         depthAttachment.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
-        // LOAD (nao CLEAR): a profundidade ja foi resolvida pelo pre-pass
-        // acima - limpar de novo aqui apagaria o resultado que o teste
-        // EQUAL do passe de cor depende.
+        // A profundidade ja foi resolvida pelo pre-pass acima.
         depthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
         depthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
         const std::array<VkRenderingAttachmentInfo, 2> opaqueColorAttachments {
@@ -1925,6 +2461,15 @@ public:
             // pipeline diferente.
             vkCmdBindDescriptorSets(frame.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
                 sceneMeshPipelineLayout, 0, 1, &sceneDescriptorSets[currentFrame], 0, nullptr);
+            const VkDescriptorSet planarDescriptorSet =
+                directToSwapchain
+                    ? sceneDirectPlanarReflectionDescriptorSets[
+                        currentFrame]
+                    : scenePlanarReflectionDescriptorSets[currentFrame];
+            vkCmdBindDescriptorSets(frame.commandBuffer,
+                VK_PIPELINE_BIND_POINT_GRAPHICS,
+                sceneMeshPipelineLayout, 3, 1,
+                &planarDescriptorSet, 0, nullptr);
             for (const MeshBatch& batch : meshBatches) {
                 if (batch.prototype->visibleInCamera) {
                     pushMeshBatch(batch, true);
@@ -1932,9 +2477,10 @@ public:
             }
         }
         vkCmdEndRendering(frame.commandBuffer);
+        writeSceneTimestamp(3);
 
         // Fase 6 (TAA): resolve temporal - le a cor HDR recem-preenchida
-        // acima, a profundidade do pre-pass (Fase 5) e o historico resolvido
+        // acima, a profundidade do pre-pass e o historico resolvido
         // do quadro passado, e escreve o resultado num dos 2 slots de
         // historico (indexado por currentFrame, ver comentario em
         // sceneTaaHistoryImage). O tonemap, logo depois, passa a ler esse
@@ -1955,6 +2501,254 @@ public:
             VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
             VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
 
+        // Superfície oceânica procedural: um passe transparente antes do TAA.
+        // A profundidade opaca recorta a costa e fornece espessura óptica.
+        if (scene.oceanEnabled && scene.ocean.vertexBuffer.valid()
+                && scene.ocean.indexBuffer.valid()
+                && scene.ocean.indexCount > 0) {
+            BufferResource& oceanVertexBuffer = checkedResource(buffers,
+                scene.ocean.vertexBuffer, "ocean clipmap vertex buffer");
+            BufferResource& oceanIndexBuffer = checkedResource(buffers,
+                scene.ocean.indexBuffer, "ocean clipmap index buffer");
+
+            transitionSceneAttachment(frame.commandBuffer, hdrColorImage,
+                VK_IMAGE_ASPECT_COLOR_BIT, hdrColorState,
+                VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+            transitionSceneAttachment(frame.commandBuffer,
+                motionVectorImage, VK_IMAGE_ASPECT_COLOR_BIT,
+                motionVectorState,
+                VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+
+            VkRenderingAttachmentInfo oceanColorAttachment {
+                VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO
+            };
+            oceanColorAttachment.imageView = hdrColorView;
+            oceanColorAttachment.imageLayout =
+                VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            oceanColorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+            oceanColorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+            VkRenderingAttachmentInfo oceanMotionAttachment {
+                VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO
+            };
+            oceanMotionAttachment.imageView = motionVectorView;
+            oceanMotionAttachment.imageLayout =
+                VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            oceanMotionAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+            oceanMotionAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+
+            VkRenderingAttachmentInfo oceanDepthAttachment {
+                VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO
+            };
+            oceanDepthAttachment.imageView = depthView;
+            oceanDepthAttachment.imageLayout =
+                VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+            oceanDepthAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+            oceanDepthAttachment.storeOp = VK_ATTACHMENT_STORE_OP_NONE;
+
+            VkRenderingInfo oceanRenderingInfo {
+                VK_STRUCTURE_TYPE_RENDERING_INFO
+            };
+            oceanRenderingInfo.renderArea.extent = renderExtent;
+            oceanRenderingInfo.layerCount = 1;
+            const std::array<VkRenderingAttachmentInfo, 2>
+                oceanColorAttachments {
+                    oceanColorAttachment, oceanMotionAttachment
+                };
+            oceanRenderingInfo.colorAttachmentCount =
+                static_cast<std::uint32_t>(oceanColorAttachments.size());
+            oceanRenderingInfo.pColorAttachments =
+                oceanColorAttachments.data();
+            oceanRenderingInfo.pDepthAttachment = &oceanDepthAttachment;
+            vkCmdBeginRendering(frame.commandBuffer, &oceanRenderingInfo);
+            setViewportAndScissor(renderExtent);
+            vkCmdBindPipeline(frame.commandBuffer,
+                VK_PIPELINE_BIND_POINT_GRAPHICS, sceneOceanPipeline);
+            const VkDescriptorSet oceanDescriptorSet = directToSwapchain
+                ? sceneDirectOceanDescriptorSets[currentFrame]
+                : sceneOceanDescriptorSets[currentFrame];
+            const std::array<VkDescriptorSet, 2> oceanSets {
+                sceneDescriptorSets[currentFrame], oceanDescriptorSet
+            };
+            vkCmdBindDescriptorSets(frame.commandBuffer,
+                VK_PIPELINE_BIND_POINT_GRAPHICS,
+                sceneOceanPipelineLayout, 0,
+                static_cast<std::uint32_t>(oceanSets.size()),
+                oceanSets.data(), 0, nullptr);
+
+            constexpr float FinestOceanCellMeters = 4.0f;
+            OceanPushConstantsGpu oceanPush;
+            oceanPush.meshOrigin = {
+                std::floor(scene.cameraPosition.x / FinestOceanCellMeters)
+                    * FinestOceanCellMeters,
+                std::floor(scene.cameraPosition.y / FinestOceanCellMeters)
+                    * FinestOceanCellMeters
+            };
+            oceanPush.meanSeaLevel = scene.ocean.meanSeaLevelMeters;
+            oceanPush.timeSeconds = scene.environment.skyAnimationTime;
+            oceanPush.worldCenter = {
+                scene.ocean.center.x, scene.ocean.center.y
+            };
+            oceanPush.worldHalfExtent = scene.ocean.halfExtentMeters;
+            vkCmdPushConstants(frame.commandBuffer, sceneOceanPipelineLayout,
+                VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                sizeof(OceanPushConstantsGpu), &oceanPush);
+
+            const VkDeviceSize oceanVertexOffset = 0;
+            vkCmdBindVertexBuffers(frame.commandBuffer, 0, 1,
+                &oceanVertexBuffer.buffer, &oceanVertexOffset);
+            vkCmdBindIndexBuffer(frame.commandBuffer,
+                oceanIndexBuffer.buffer, 0,
+                VK_INDEX_TYPE_UINT32);
+            vkCmdDrawIndexed(frame.commandBuffer,
+                scene.ocean.indexCount, 1, 0, 0, 0);
+            vkCmdEndRendering(frame.commandBuffer);
+
+            transitionSceneAttachment(frame.commandBuffer, hdrColorImage,
+                VK_IMAGE_ASPECT_COLOR_BIT, hdrColorState,
+                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+            transitionSceneAttachment(frame.commandBuffer,
+                motionVectorImage, VK_IMAGE_ASPECT_COLOR_BIT,
+                motionVectorState,
+                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+        }
+        writeSceneTimestamp(4);
+
+        // SSR (reflexos em espaco de tela, ver ssr_trace_resolve.frag) -
+        // traça+acumula em MEIA resolucao, depois soma o resultado de volta
+        // no HDR em resolucao cheia (ssr_composite.frag). Roda entre o passe
+        // opaco e o resolve de TAA: precisa do HDR/profundidade/normal/
+        // reflectancia ja prontos (acima) E precisa terminar de somar no HDR
+        // ANTES do TAA resolver, senao o historico temporal nunca veria o
+        // especular refletido.
+        if (SceneSsrEnabled) {
+        transitionSceneAttachment(frame.commandBuffer,
+            normalRoughnessImage, VK_IMAGE_ASPECT_COLOR_BIT,
+            normalRoughnessState,
+            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+            VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+        transitionSceneAttachment(frame.commandBuffer, reflectanceImage,
+            VK_IMAGE_ASPECT_COLOR_BIT, reflectanceState,
+            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+            VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+        const VkExtent2D ssrExtent {
+            std::max(1u, renderExtent.width / 2),
+            std::max(1u, renderExtent.height / 2)
+        };
+        std::array<VkImage, FramesInFlight>& ssrHistoryImages = directToSwapchain
+            ? sceneDirectSsrHistoryImage : sceneSsrHistoryImage;
+        std::array<VkImageView, FramesInFlight>& ssrHistoryViews = directToSwapchain
+            ? sceneDirectSsrHistoryView : sceneSsrHistoryView;
+        std::array<SceneAttachmentState3D, FramesInFlight>& ssrHistoryStates =
+            directToSwapchain ? sceneDirectSsrHistoryState : sceneSsrHistoryState;
+        const std::uint32_t ssrHistoryReadIndex =
+            (currentFrame + FramesInFlight - 1) % FramesInFlight;
+
+        // Mesmo raciocinio do historico de TAA acima: redundante na maioria
+        // dos quadros, necessario no primeiro uso de cada slot.
+        transitionSceneAttachment(frame.commandBuffer,
+            ssrHistoryImages[ssrHistoryReadIndex], VK_IMAGE_ASPECT_COLOR_BIT,
+            ssrHistoryStates[ssrHistoryReadIndex],
+            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+            VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+
+        const VkDescriptorSet ssrTraceDescriptorSet = directToSwapchain
+            ? sceneDirectSsrDescriptorSets[currentFrame]
+            : sceneSsrDescriptorSets[currentFrame];
+
+        transitionSceneAttachment(frame.commandBuffer,
+            ssrHistoryImages[currentFrame], VK_IMAGE_ASPECT_COLOR_BIT,
+            ssrHistoryStates[currentFrame],
+            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+            VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+
+        VkRenderingAttachmentInfo ssrTraceAttachment { VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
+        ssrTraceAttachment.imageView = ssrHistoryViews[currentFrame];
+        ssrTraceAttachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        ssrTraceAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        ssrTraceAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        VkRenderingInfo ssrTraceRenderingInfo { VK_STRUCTURE_TYPE_RENDERING_INFO };
+        ssrTraceRenderingInfo.renderArea.extent = ssrExtent;
+        ssrTraceRenderingInfo.layerCount = 1;
+        ssrTraceRenderingInfo.colorAttachmentCount = 1;
+        ssrTraceRenderingInfo.pColorAttachments = &ssrTraceAttachment;
+        vkCmdBeginRendering(frame.commandBuffer, &ssrTraceRenderingInfo);
+        setViewportAndScissor(ssrExtent);
+        vkCmdBindPipeline(frame.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+            sceneSsrPipeline);
+        const std::array<VkDescriptorSet, 2> ssrTraceSets {
+            sceneDescriptorSets[currentFrame], ssrTraceDescriptorSet
+        };
+        vkCmdBindDescriptorSets(frame.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+            sceneSsrPipelineLayout, 0,
+            static_cast<std::uint32_t>(ssrTraceSets.size()), ssrTraceSets.data(),
+            0, nullptr);
+        vkCmdDraw(frame.commandBuffer, 3, 1, 0, 0);
+        vkCmdEndRendering(frame.commandBuffer);
+
+        transitionSceneAttachment(frame.commandBuffer,
+            ssrHistoryImages[currentFrame], VK_IMAGE_ASPECT_COLOR_BIT,
+            ssrHistoryStates[currentFrame],
+            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+            VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+
+        // Composicao: soma o resultado acima de volta no HDR em resolucao
+        // cheia (blend ADITIVO, ver sceneSsrCompositePipeline). Precisa
+        // transicionar o HDR de volta pra COLOR_ATTACHMENT_OPTIMAL - ele
+        // acabou de ser lido como fonte pelo traçado acima - e devolve-lo
+        // pra SHADER_READ_ONLY_OPTIMAL depois, porque o resolve de TAA logo
+        // abaixo o le atraves do proprio descriptor set (ja vinculado
+        // naquele layout).
+        const VkDescriptorSet ssrCompositeDescriptorSet = directToSwapchain
+            ? sceneDirectSsrCompositeDescriptorSets[currentFrame]
+            : sceneSsrCompositeDescriptorSets[currentFrame];
+        transitionSceneAttachment(frame.commandBuffer, hdrColorImage,
+            VK_IMAGE_ASPECT_COLOR_BIT, hdrColorState,
+            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+            VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+
+        VkRenderingAttachmentInfo ssrCompositeAttachment { VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO };
+        ssrCompositeAttachment.imageView = hdrColorView;
+        ssrCompositeAttachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        // LOAD (nao CLEAR): soma sobre o que o passe opaco ja escreveu
+        // (difusa+direta, sem especular ambiente - ver scene3d_mesh.frag).
+        ssrCompositeAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+        ssrCompositeAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        VkRenderingInfo ssrCompositeRenderingInfo { VK_STRUCTURE_TYPE_RENDERING_INFO };
+        ssrCompositeRenderingInfo.renderArea.extent = renderExtent;
+        ssrCompositeRenderingInfo.layerCount = 1;
+        ssrCompositeRenderingInfo.colorAttachmentCount = 1;
+        ssrCompositeRenderingInfo.pColorAttachments = &ssrCompositeAttachment;
+        vkCmdBeginRendering(frame.commandBuffer, &ssrCompositeRenderingInfo);
+        setViewportAndScissor(renderExtent);
+        vkCmdBindPipeline(frame.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+            sceneSsrCompositePipeline);
+        vkCmdBindDescriptorSets(frame.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+            sceneSsrCompositePipelineLayout, 0, 1, &ssrCompositeDescriptorSet,
+            0, nullptr);
+        vkCmdDraw(frame.commandBuffer, 3, 1, 0, 0);
+        vkCmdEndRendering(frame.commandBuffer);
+
+        transitionSceneAttachment(frame.commandBuffer, hdrColorImage,
+            VK_IMAGE_ASPECT_COLOR_BIT, hdrColorState,
+            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+            VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+        }
+
         std::array<VkImage, FramesInFlight>& historyImages = directToSwapchain
             ? sceneDirectTaaHistoryImage : sceneTaaHistoryImage;
         std::array<VkImageView, FramesInFlight>& historyViews = directToSwapchain
@@ -1964,6 +2758,7 @@ public:
         const std::uint32_t historyReadIndex =
             (currentFrame + FramesInFlight - 1) % FramesInFlight;
 
+        if (scene.temporalAntiAliasingEnabled) {
         // Redundante na maioria dos quadros (o slot de leitura ja ficou
         // nesse layout desde que o tonemap do quadro passado o leu), mas
         // necessario tambem no primeiro uso de cada slot (estado UNDEFINED
@@ -2011,18 +2806,270 @@ public:
         vkCmdEndRendering(frame.commandBuffer);
         // A imagem escrita neste quadro passa a ser uma semente valida para
         // o proximo. Cenas sem TAA (previews) nunca deixam historico ativo.
-        temporalHistoryValid = scene.temporalAntiAliasingEnabled;
+        temporalHistoryValid = true;
+        } else {
+            // O HDR opaco/oceano já está em SHADER_READ_ONLY. No perfil de
+            // desempenho o tonemap o consome diretamente: sem cópia
+            // fullscreen, histórico, motion-vector lookup ou barreira
+            // adicional. Invalidar aqui garante uma semente limpa se o
+            // usuário voltar a um perfil com TAA.
+            temporalHistoryValid = false;
+        }
+        writeSceneTimestamp(5);
 
         // Passe de tonemap: le o resultado ja resolvido pelo TAA acima (nao
         // mais o HDR cru) e escreve o resultado LDR (exposicao + curva
         // filmica + sRGB, ver tonemap.frag) no destino final de verdade - a
         // imagem do swapchain no caminho direto, ou sceneColorImage
         // (amostrada pelo ImGui) no caminho de preview offscreen.
-        transitionSceneAttachment(frame.commandBuffer, historyImages[currentFrame],
-            VK_IMAGE_ASPECT_COLOR_BIT, historyStates[currentFrame],
+        if (scene.temporalAntiAliasingEnabled) {
+            transitionSceneAttachment(frame.commandBuffer,
+                historyImages[currentFrame],
+                VK_IMAGE_ASPECT_COLOR_BIT, historyStates[currentFrame],
+                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+        }
+
+        // Glare e ghosts solares em um único passe HDR a 1/8 de cada
+        // dimensão. Sem bloom geral: são apenas 2 leituras de textura por
+        // fragmento (HDR+depth na posição do Sol), em 1/64 dos pixels.
+        const VkExtent2D bloomGlareExtent {
+            std::max(1u, renderExtent.width / 8),
+            std::max(1u, renderExtent.height / 8)
+        };
+        std::array<VkImage, FramesInFlight>& bloomGlareImages =
+            directToSwapchain ? sceneDirectBloomGlareImage
+                              : sceneBloomGlareImage;
+        std::array<VkImageView, FramesInFlight>& bloomGlareViews =
+            directToSwapchain ? sceneDirectBloomGlareView
+                              : sceneBloomGlareView;
+        std::array<SceneAttachmentState3D, FramesInFlight>&
+            bloomGlareStates = directToSwapchain
+                ? sceneDirectBloomGlareState : sceneBloomGlareState;
+        const VkDescriptorSet bloomGlareDescriptorSet =
+            directToSwapchain
+                ? sceneDirectBloomGlareDescriptorSets[currentFrame]
+                : sceneBloomGlareDescriptorSets[currentFrame];
+
+        std::array<float, 2> sunUv { 0.5f, 0.5f };
+        float sunOnScreen = 0.0f;
+        if (scene.showSky && !scene.lights.empty()) {
+            const Vec3 sunDirection =
+                scene.lights.front().direction.normalized();
+            const Vec3 sunPoint =
+                scene.cameraPosition + sunDirection * 1000.0f;
+            const Mat4& viewProjection = scene.cameraViewProjection;
+            const float clipX = viewProjection.at(0, 0) * sunPoint.x
+                + viewProjection.at(0, 1) * sunPoint.y
+                + viewProjection.at(0, 2) * sunPoint.z
+                + viewProjection.at(0, 3);
+            const float clipY = viewProjection.at(1, 0) * sunPoint.x
+                + viewProjection.at(1, 1) * sunPoint.y
+                + viewProjection.at(1, 2) * sunPoint.z
+                + viewProjection.at(1, 3);
+            const float clipW = viewProjection.at(3, 0) * sunPoint.x
+                + viewProjection.at(3, 1) * sunPoint.y
+                + viewProjection.at(3, 2) * sunPoint.z
+                + viewProjection.at(3, 3);
+            if (clipW > 0.0001f) {
+                sunUv[0] = clipX / clipW * 0.5f + 0.5f;
+                // A viewport Vulkan inverte Y em relação ao clip calculado
+                // pela matriz usada nos shaders da cena.
+                sunUv[1] = -clipY / clipW * 0.5f + 0.5f;
+                sunOnScreen = sunUv[0] >= 0.0f && sunUv[0] <= 1.0f
+                        && sunUv[1] >= 0.0f && sunUv[1] <= 1.0f
+                    ? 1.0f : 0.0f;
+            }
+        }
+
+        transitionSceneAttachment(frame.commandBuffer,
+            bloomGlareImages[currentFrame], VK_IMAGE_ASPECT_COLOR_BIT,
+            bloomGlareStates[currentFrame],
+            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+            VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+        VkRenderingAttachmentInfo bloomGlareAttachment {
+            VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO
+        };
+        bloomGlareAttachment.imageView = bloomGlareViews[currentFrame];
+        bloomGlareAttachment.imageLayout =
+            VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        bloomGlareAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+        bloomGlareAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        VkRenderingInfo bloomGlareRenderingInfo {
+            VK_STRUCTURE_TYPE_RENDERING_INFO
+        };
+        bloomGlareRenderingInfo.renderArea.extent = bloomGlareExtent;
+        bloomGlareRenderingInfo.layerCount = 1;
+        bloomGlareRenderingInfo.colorAttachmentCount = 1;
+        bloomGlareRenderingInfo.pColorAttachments =
+            &bloomGlareAttachment;
+        vkCmdBeginRendering(frame.commandBuffer,
+            &bloomGlareRenderingInfo);
+        setViewportAndScissor(bloomGlareExtent);
+        vkCmdBindPipeline(frame.commandBuffer,
+            VK_PIPELINE_BIND_POINT_GRAPHICS, sceneBloomGlarePipeline);
+        vkCmdBindDescriptorSets(frame.commandBuffer,
+            VK_PIPELINE_BIND_POINT_GRAPHICS,
+            sceneBloomGlarePipelineLayout, 0, 1,
+            &bloomGlareDescriptorSet, 0, nullptr);
+        const BloomGlarePushConstantsGpu bloomGlarePushData {
+            std::max(scene.opticalEffects.sunGlareStrength, 0.0f),
+            std::max(scene.opticalEffects.lensFlareStrength, 0.0f),
+            0.0f,
+            0.0f,
+            sunUv,
+            sunOnScreen,
+            scene.opticalEffects.enabled ? 1.0f : 0.0f
+        };
+        vkCmdPushConstants(frame.commandBuffer,
+            sceneBloomGlarePipelineLayout,
+            VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+            sizeof(BloomGlarePushConstantsGpu),
+            &bloomGlarePushData);
+        vkCmdDraw(frame.commandBuffer, 3, 1, 0, 0);
+        vkCmdEndRendering(frame.commandBuffer);
+        transitionSceneAttachment(frame.commandBuffer,
+            bloomGlareImages[currentFrame], VK_IMAGE_ASPECT_COLOR_BIT,
+            bloomGlareStates[currentFrame],
             VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
             VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
             VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+        writeSceneTimestamp(6);
+
+        // Exposição automática temporal. O trabalho inteiro acontece em um
+        // único fragmento: ele mede 24 pontos do HDR, lê o multiplicador do
+        // quadro anterior e grava o novo valor num attachment 1x1.
+        std::array<VkImage, FramesInFlight>& exposureImages =
+            directToSwapchain ? sceneDirectAutoExposureImage
+                              : sceneAutoExposureImage;
+        std::array<VkImageView, FramesInFlight>& exposureViews =
+            directToSwapchain ? sceneDirectAutoExposureView
+                              : sceneAutoExposureView;
+        std::array<SceneAttachmentState3D, FramesInFlight>& exposureStates =
+            directToSwapchain ? sceneDirectAutoExposureState
+                              : sceneAutoExposureState;
+        auto& exposureInitialized=directToSwapchain
+            ? sceneDirectAutoExposureInitialized : sceneAutoExposureInitialized;
+        bool& exposureHistoryValid = directToSwapchain
+            ? sceneDirectAutoExposureHistoryValid
+            : sceneAutoExposureHistoryValid;
+        bool& exposureClockValid = directToSwapchain
+            ? sceneDirectAutoExposureClockValid
+            : sceneAutoExposureClockValid;
+        std::chrono::steady_clock::time_point& exposureLastTime =
+            directToSwapchain ? sceneDirectAutoExposureLastTime
+                              : sceneAutoExposureLastTime;
+
+        const auto exposureNow = std::chrono::steady_clock::now();
+        float exposureDeltaTime = 1.0f / 60.0f;
+        if (exposureClockValid) {
+            exposureDeltaTime = std::clamp(
+                std::chrono::duration<float>(
+                    exposureNow - exposureLastTime).count(),
+                0.0f, 0.1f);
+        }
+        exposureLastTime = exposureNow;
+        exposureClockValid = scene.toneMapping.automaticExposureEnabled;
+        const bool useExposureHistory =
+            scene.toneMapping.automaticExposureEnabled
+            && exposureHistoryValid
+            && !scene.resetTemporalHistory;
+
+        const VkDescriptorSet tonemapDescriptorSet =
+            scene.temporalAntiAliasingEnabled
+                ? (directToSwapchain
+                    ? sceneDirectTonemapDescriptorSets[currentFrame]
+                    : sceneTonemapDescriptorSets[currentFrame])
+                : (directToSwapchain
+                    ? sceneDirectTonemapWithoutTaaDescriptorSets[
+                        currentFrame]
+                    : sceneTonemapWithoutTaaDescriptorSets[currentFrame]);
+        const bool initializeNeutralExposure =
+            !exposureInitialized[currentFrame];
+        if (scene.toneMapping.automaticExposureEnabled
+            || initializeNeutralExposure) {
+            // Quando desabilitado, o shader grava 1.0 somente na primeira
+            // utilização de cada slot de frames-in-flight. Reexecutar este
+            // passe 1x1 todo frame criava uma dependência de pipeline que
+            // custava muito mais que o fragmento em si.
+            {
+                // A statically referenced descriptor must have its declared
+                // layout even when the exposure shader skips that branch.
+                transitionSceneAttachment(frame.commandBuffer,
+                    exposureImages[historyReadIndex],
+                    VK_IMAGE_ASPECT_COLOR_BIT,
+                    exposureStates[historyReadIndex],
+                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                    VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                    VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+            }
+            transitionSceneAttachment(frame.commandBuffer,
+                exposureImages[currentFrame], VK_IMAGE_ASPECT_COLOR_BIT,
+                exposureStates[currentFrame],
+                VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+                VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+                VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT);
+
+            VkRenderingAttachmentInfo exposureAttachment {
+                VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO
+            };
+            exposureAttachment.imageView = exposureViews[currentFrame];
+            exposureAttachment.imageLayout =
+                VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            exposureAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+            exposureAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+            VkRenderingInfo exposureRenderingInfo {
+                VK_STRUCTURE_TYPE_RENDERING_INFO
+            };
+            exposureRenderingInfo.renderArea.extent = { 1, 1 };
+            exposureRenderingInfo.layerCount = 1;
+            exposureRenderingInfo.colorAttachmentCount = 1;
+            exposureRenderingInfo.pColorAttachments =
+                &exposureAttachment;
+            vkCmdBeginRendering(frame.commandBuffer,
+                &exposureRenderingInfo);
+            setViewportAndScissor({ 1, 1 });
+            vkCmdBindPipeline(frame.commandBuffer,
+                VK_PIPELINE_BIND_POINT_GRAPHICS,
+                sceneAutoExposurePipeline);
+            vkCmdBindDescriptorSets(frame.commandBuffer,
+                VK_PIPELINE_BIND_POINT_GRAPHICS,
+                sceneAutoExposurePipelineLayout, 0, 1,
+                &tonemapDescriptorSet, 0, nullptr);
+            const float minimumExposure = std::max(
+                scene.toneMapping.automaticExposureMinimum, 0.01f);
+            const AutoExposurePushConstantsGpu exposurePushData {
+                minimumExposure,
+                std::max(scene.toneMapping.automaticExposureMaximum,
+                    minimumExposure),
+                std::max(scene.toneMapping.automaticExposureMeteringKey,
+                    0.001f),
+                exposureDeltaTime,
+                std::max(scene.toneMapping.brightAdaptationSpeed, 0.0f),
+                std::max(scene.toneMapping.darkAdaptationSpeed, 0.0f),
+                useExposureHistory ? 1.0f : 0.0f,
+                scene.toneMapping.automaticExposureEnabled ? 1.0f : 0.0f
+            };
+            vkCmdPushConstants(frame.commandBuffer,
+                sceneAutoExposurePipelineLayout,
+                VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                sizeof(AutoExposurePushConstantsGpu),
+                &exposurePushData);
+            vkCmdDraw(frame.commandBuffer, 3, 1, 0, 0);
+            vkCmdEndRendering(frame.commandBuffer);
+            transitionSceneAttachment(frame.commandBuffer,
+                exposureImages[currentFrame], VK_IMAGE_ASPECT_COLOR_BIT,
+                exposureStates[currentFrame],
+                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+        }
+        exposureHistoryValid =
+            scene.toneMapping.automaticExposureEnabled;
+        exposureInitialized[currentFrame]=true;
+        writeSceneTimestamp(7);
 
         VkImage finalColorImage = directToSwapchain
             ? swapchainImages[currentImage] : sceneColorImage;
@@ -2057,27 +3104,45 @@ public:
         tonemapAttachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
         tonemapAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
         tonemapAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+        // O Pixel Art pode renderizar o mundo abaixo da resolução nativa
+        // para economizar fill-rate. Só o tonemap cobre o swapchain inteiro:
+        // a UI vem depois, já nativa, e o sampler nearest mantém os blocos
+        // deliberados sem introduzir blur.
+        const VkExtent2D presentationExtent = directToSwapchain
+            ? swapchainExtent : renderExtent;
         VkRenderingInfo tonemapRenderingInfo { VK_STRUCTURE_TYPE_RENDERING_INFO };
-        tonemapRenderingInfo.renderArea.extent = renderExtent;
+        tonemapRenderingInfo.renderArea.extent = presentationExtent;
         tonemapRenderingInfo.layerCount = 1;
         tonemapRenderingInfo.colorAttachmentCount = 1;
         tonemapRenderingInfo.pColorAttachments = &tonemapAttachment;
         vkCmdBeginRendering(frame.commandBuffer, &tonemapRenderingInfo);
-        setViewportAndScissor(renderExtent);
+        setViewportAndScissor(presentationExtent);
         vkCmdBindPipeline(frame.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, sceneTonemapPipeline);
-        const VkDescriptorSet tonemapDescriptorSet = directToSwapchain
-            ? sceneDirectTonemapDescriptorSets[currentFrame]
-            : sceneTonemapDescriptorSets[currentFrame];
         vkCmdBindDescriptorSets(frame.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
             sceneTonemapPipelineLayout, 0, 1, &tonemapDescriptorSet, 0, nullptr);
         const TonemapPushConstantsGpu tonemapPushData {
             scene.toneMapping.exposure, scene.toneMapping.brightness,
-            scene.toneMapping.contrast, scene.toneMapping.saturation
+            scene.toneMapping.contrast, scene.toneMapping.saturation,
+            scene.oceanSubmersion,
+            scene.environment.skyAnimationTime,
+            scene.renderMode == SceneRenderMode3D::PixelArt ? 1.0f : 0.0f,
+            scene.pixelArt.luminanceLevelCount,
+            scene.pixelArt.chromaLevelCount,
+            scene.pixelArt.ditherStrength,
+            0.0f,
+            scene.pixelArt.pixelGridHeight,
+            scene.pixelArt.worldPixelation,
+            scene.pixelArt.physicalPropPixelation,
+            scene.pixelArt.distanceLodStrength,
+            scene.pixelArt.distanceLodStartMeters,
+            scene.pixelArt.distanceLodEndMeters,
+            scene.pixelArt.flatteningStrength
         };
         vkCmdPushConstants(frame.commandBuffer, sceneTonemapPipelineLayout,
             VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(TonemapPushConstantsGpu),
             &tonemapPushData);
         vkCmdDraw(frame.commandBuffer, 3, 1, 0, 0);
+        writeSceneTimestamp(8);
 
         if (directToSwapchain) {
             // Este passe de tonemap fica aberto de proposito - o ImGui
@@ -2086,6 +3151,7 @@ public:
             // ausencia de depth attachment aqui batem exatamente com o que
             // o pipeline do proprio ImGui declara (ver initialize()).
             swapchainPassActive = true;
+            frame.sceneTimestampsWritten = true;
             boundPipeline = {};
             return 0;
         }
@@ -2106,8 +3172,18 @@ public:
     }
 
     void renderScene3DToSwapchain(const Scene3DFrame& scene) {
-        renderScene3DInternal(scene,
-            { swapchainExtent.width, swapchainExtent.height }, true);
+        float renderScale = 1.0f;
+        if (scene.renderMode == SceneRenderMode3D::PixelArt) {
+            renderScale = std::clamp(
+                scene.pixelArt.renderScale, 0.25f, 1.0f);
+        }
+        const Extent2D renderExtent {
+            std::max(1u, static_cast<std::uint32_t>(std::lround(
+                static_cast<float>(swapchainExtent.width) * renderScale))),
+            std::max(1u, static_cast<std::uint32_t>(std::lround(
+                static_cast<float>(swapchainExtent.height) * renderScale)))
+        };
+        renderScene3DInternal(scene, renderExtent, true);
     }
 
     void endFrame() {
@@ -2137,9 +3213,23 @@ public:
         dependency.imageMemoryBarrierCount = 1;
         dependency.pImageMemoryBarriers = &toPresent;
         vkCmdPipelineBarrier2(frame.commandBuffer, &dependency);
+        const std::uint32_t firstTimestamp =
+            currentFrame * FrameTimestampCount;
+        if (!frame.sceneTimestampsWritten) {
+            // Menus e previews não passam pelo frame-graph 3D. Inicializa os
+            // marcos intermediários no fim para manter a consulta inteira
+            // válida; nesses frames só o total e UI têm significado.
+            for (std::uint32_t index = 1;
+                    index + 1 < FrameTimestampCount; ++index) {
+                vkCmdWriteTimestamp2(frame.commandBuffer,
+                    VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                    frameTimestampQueryPool, firstTimestamp + index);
+            }
+        }
         vkCmdWriteTimestamp2(frame.commandBuffer,
             VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
-            frameTimestampQueryPool, currentFrame * 2 + 1);
+            frameTimestampQueryPool,
+            firstTimestamp + FrameTimestampCount - 1);
         check(vkEndCommandBuffer(frame.commandBuffer), "vkEndCommandBuffer");
 
         VkSemaphoreSubmitInfo waitInfo { VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO };
@@ -2148,7 +3238,7 @@ public:
         VkCommandBufferSubmitInfo commandInfo { VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO };
         commandInfo.commandBuffer = frame.commandBuffer;
         VkSemaphoreSubmitInfo signalInfo { VK_STRUCTURE_TYPE_SEMAPHORE_SUBMIT_INFO };
-        signalInfo.semaphore = frame.renderFinished;
+        signalInfo.semaphore = swapchainPresentSemaphores[currentImage];
         signalInfo.stageMask = VK_PIPELINE_STAGE_2_ALL_GRAPHICS_BIT;
 
         VkSubmitInfo2 submit { VK_STRUCTURE_TYPE_SUBMIT_INFO_2 };
@@ -2162,7 +3252,7 @@ public:
 
         VkPresentInfoKHR present { VK_STRUCTURE_TYPE_PRESENT_INFO_KHR };
         present.waitSemaphoreCount = 1;
-        present.pWaitSemaphores = &frame.renderFinished;
+        present.pWaitSemaphores = &swapchainPresentSemaphores[currentImage];
         present.swapchainCount = 1;
         present.pSwapchains = &swapchain;
         present.pImageIndices = &currentImage;
@@ -2436,7 +3526,9 @@ public:
             VkPhysicalDeviceFeatures2 features { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
             features.pNext = &features13;
             vkGetPhysicalDeviceFeatures2(candidate, &features);
-            if (features13.dynamicRendering != VK_TRUE || features13.synchronization2 != VK_TRUE) {
+            if (features13.dynamicRendering != VK_TRUE || features13.synchronization2 != VK_TRUE
+                || features13.shaderDemoteToHelperInvocation != VK_TRUE
+                || features.features.independentBlend != VK_TRUE) {
                 continue;
             }
             // Filtragem anisotropica pras texturas de material (ver
@@ -2477,6 +3569,7 @@ public:
         VkPhysicalDeviceVulkan13Features features13 { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES };
         features13.dynamicRendering = VK_TRUE;
         features13.synchronization2 = VK_TRUE;
+        features13.shaderDemoteToHelperInvocation = VK_TRUE;
 
         // samplerAnisotropy (checado em selectPhysicalDevice) precisa ser
         // pedido explicitamente aqui pra virar utilizavel - sem isso,
@@ -2487,6 +3580,7 @@ public:
         // nao a struct base), usar pEnabledFeatures aqui continua valido.
         VkPhysicalDeviceFeatures enabledFeatures {};
         enabledFeatures.samplerAnisotropy = VK_TRUE;
+        enabledFeatures.independentBlend = VK_TRUE;
 
         const char* extension = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
         VkDeviceCreateInfo createInfo { VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
@@ -2530,7 +3624,6 @@ public:
 
             VkSemaphoreCreateInfo semaphoreInfo { VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
             check(vkCreateSemaphore(device, &semaphoreInfo, nullptr, &frame.imageAvailable), "vkCreateSemaphore");
-            check(vkCreateSemaphore(device, &semaphoreInfo, nullptr, &frame.renderFinished), "vkCreateSemaphore");
 
             VkFenceCreateInfo fenceInfo { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
             fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
@@ -2540,7 +3633,7 @@ public:
             VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO
         };
         queryInfo.queryType = VK_QUERY_TYPE_TIMESTAMP;
-        queryInfo.queryCount = FramesInFlight * 2;
+        queryInfo.queryCount = FramesInFlight * FrameTimestampCount;
         check(vkCreateQueryPool(device, &queryInfo, nullptr,
             &frameTimestampQueryPool),
             "vkCreateQueryPool(frame timestamps)");
@@ -2646,7 +3739,11 @@ public:
         swapchainImages.resize(imageCount);
         vkGetSwapchainImagesKHR(device, swapchain, &imageCount, swapchainImages.data());
         swapchainImageViews.resize(imageCount);
+        swapchainPresentSemaphores.resize(imageCount);
         for (std::size_t i = 0; i < swapchainImages.size(); ++i) {
+            VkSemaphoreCreateInfo semaphoreInfo { VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
+            check(vkCreateSemaphore(device, &semaphoreInfo, nullptr,
+                &swapchainPresentSemaphores[i]), "vkCreateSemaphore(present image)");
             VkImageViewCreateInfo viewInfo { VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
             viewInfo.image = swapchainImages[i];
             viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
@@ -2664,6 +3761,9 @@ public:
     }
 
     void destroySwapchain() {
+        for (VkSemaphore semaphore : swapchainPresentSemaphores)
+            vkDestroySemaphore(device, semaphore, nullptr);
+        swapchainPresentSemaphores.clear();
         for (VkImageView view : swapchainImageViews) {
             vkDestroyImageView(device, view, nullptr);
         }
@@ -2687,26 +3787,44 @@ public:
         if (sceneDepthView != VK_NULL_HANDLE) vkDestroyImageView(device, sceneDepthView, nullptr);
         if (sceneHdrColorView != VK_NULL_HANDLE) vkDestroyImageView(device, sceneHdrColorView, nullptr);
         if (sceneMotionVectorView != VK_NULL_HANDLE) vkDestroyImageView(device, sceneMotionVectorView, nullptr);
+        if (sceneNormalRoughnessView != VK_NULL_HANDLE) vkDestroyImageView(device, sceneNormalRoughnessView, nullptr);
+        if (sceneReflectanceView != VK_NULL_HANDLE) vkDestroyImageView(device, sceneReflectanceView, nullptr);
+        if (scenePlanarReflectionView != VK_NULL_HANDLE) vkDestroyImageView(device, scenePlanarReflectionView, nullptr);
         if (sceneColorImage != VK_NULL_HANDLE) vmaDestroyImage(allocator, sceneColorImage, sceneColorAllocation);
         if (sceneDepthImage != VK_NULL_HANDLE) vmaDestroyImage(allocator, sceneDepthImage, sceneDepthAllocation);
         if (sceneHdrColorImage != VK_NULL_HANDLE) vmaDestroyImage(allocator, sceneHdrColorImage, sceneHdrColorAllocation);
         if (sceneMotionVectorImage != VK_NULL_HANDLE) vmaDestroyImage(allocator, sceneMotionVectorImage, sceneMotionVectorAllocation);
+        if (sceneNormalRoughnessImage != VK_NULL_HANDLE) vmaDestroyImage(allocator, sceneNormalRoughnessImage, sceneNormalRoughnessAllocation);
+        if (sceneReflectanceImage != VK_NULL_HANDLE) vmaDestroyImage(allocator, sceneReflectanceImage, sceneReflectanceAllocation);
+        if (scenePlanarReflectionImage != VK_NULL_HANDLE) vmaDestroyImage(allocator, scenePlanarReflectionImage, scenePlanarReflectionAllocation);
         sceneColorImage = VK_NULL_HANDLE;
         sceneDepthImage = VK_NULL_HANDLE;
         sceneHdrColorImage = VK_NULL_HANDLE;
         sceneMotionVectorImage = VK_NULL_HANDLE;
+        sceneNormalRoughnessImage = VK_NULL_HANDLE;
+        sceneReflectanceImage = VK_NULL_HANDLE;
+        scenePlanarReflectionImage = VK_NULL_HANDLE;
         sceneColorAllocation = VK_NULL_HANDLE;
         sceneDepthAllocation = VK_NULL_HANDLE;
         sceneHdrColorAllocation = VK_NULL_HANDLE;
         sceneMotionVectorAllocation = VK_NULL_HANDLE;
+        sceneNormalRoughnessAllocation = VK_NULL_HANDLE;
+        sceneReflectanceAllocation = VK_NULL_HANDLE;
+        scenePlanarReflectionAllocation = VK_NULL_HANDLE;
         sceneColorView = VK_NULL_HANDLE;
         sceneDepthView = VK_NULL_HANDLE;
         sceneHdrColorView = VK_NULL_HANDLE;
         sceneMotionVectorView = VK_NULL_HANDLE;
+        sceneNormalRoughnessView = VK_NULL_HANDLE;
+        sceneReflectanceView = VK_NULL_HANDLE;
+        scenePlanarReflectionView = VK_NULL_HANDLE;
         sceneColorState = {};
         sceneDepthState = {};
         sceneHdrColorState = {};
         sceneMotionVectorState = {};
+        sceneNormalRoughnessState = {};
+        sceneReflectanceState = {};
+        scenePlanarReflectionState = {};
         for (std::size_t index = 0; index < sceneTaaHistoryImage.size(); ++index) {
             if (sceneTaaHistoryView[index] != VK_NULL_HANDLE) {
                 vkDestroyImageView(device, sceneTaaHistoryView[index], nullptr);
@@ -2721,6 +3839,66 @@ public:
             sceneTaaHistoryState[index] = {};
         }
         sceneTaaHistoryValid = false;
+        for (std::size_t index = 0;
+            index < sceneAutoExposureImage.size(); ++index) {
+            if (sceneAutoExposureView[index] != VK_NULL_HANDLE) {
+                vkDestroyImageView(device, sceneAutoExposureView[index],
+                    nullptr);
+            }
+            if (sceneAutoExposureImage[index] != VK_NULL_HANDLE) {
+                vmaDestroyImage(allocator, sceneAutoExposureImage[index],
+                    sceneAutoExposureAllocation[index]);
+            }
+            sceneAutoExposureImage[index] = VK_NULL_HANDLE;
+            sceneAutoExposureAllocation[index] = VK_NULL_HANDLE;
+            sceneAutoExposureView[index] = VK_NULL_HANDLE;
+            sceneAutoExposureState[index] = {};
+            sceneAutoExposureInitialized[index]=false;
+        }
+        sceneAutoExposureHistoryValid = false;
+        sceneAutoExposureClockValid = false;
+        for (std::size_t index = 0;
+            index < sceneGtaoImage.size(); ++index) {
+            if (sceneGtaoView[index] != VK_NULL_HANDLE) {
+                vkDestroyImageView(device, sceneGtaoView[index], nullptr);
+            }
+            if (sceneGtaoImage[index] != VK_NULL_HANDLE) {
+                vmaDestroyImage(allocator, sceneGtaoImage[index],
+                    sceneGtaoAllocation[index]);
+            }
+            sceneGtaoImage[index] = VK_NULL_HANDLE;
+            sceneGtaoAllocation[index] = VK_NULL_HANDLE;
+            sceneGtaoView[index] = VK_NULL_HANDLE;
+            sceneGtaoState[index] = {};
+        }
+        for (std::size_t index = 0;
+            index < sceneBloomGlareImage.size(); ++index) {
+            if (sceneBloomGlareView[index] != VK_NULL_HANDLE) {
+                vkDestroyImageView(device, sceneBloomGlareView[index],
+                    nullptr);
+            }
+            if (sceneBloomGlareImage[index] != VK_NULL_HANDLE) {
+                vmaDestroyImage(allocator, sceneBloomGlareImage[index],
+                    sceneBloomGlareAllocation[index]);
+            }
+            sceneBloomGlareImage[index] = VK_NULL_HANDLE;
+            sceneBloomGlareAllocation[index] = VK_NULL_HANDLE;
+            sceneBloomGlareView[index] = VK_NULL_HANDLE;
+            sceneBloomGlareState[index] = {};
+        }
+        for (std::size_t index = 0; index < sceneSsrHistoryImage.size(); ++index) {
+            if (sceneSsrHistoryView[index] != VK_NULL_HANDLE) {
+                vkDestroyImageView(device, sceneSsrHistoryView[index], nullptr);
+            }
+            if (sceneSsrHistoryImage[index] != VK_NULL_HANDLE) {
+                vmaDestroyImage(allocator, sceneSsrHistoryImage[index],
+                    sceneSsrHistoryAllocation[index]);
+            }
+            sceneSsrHistoryImage[index] = VK_NULL_HANDLE;
+            sceneSsrHistoryAllocation[index] = VK_NULL_HANDLE;
+            sceneSsrHistoryView[index] = VK_NULL_HANDLE;
+            sceneSsrHistoryState[index] = {};
+        }
         sceneTargetExtent = {};
     }
 
@@ -2750,6 +3928,15 @@ public:
         if (sceneDirectMotionVectorView != VK_NULL_HANDLE) {
             vkDestroyImageView(device, sceneDirectMotionVectorView, nullptr);
         }
+        if (sceneDirectNormalRoughnessView != VK_NULL_HANDLE) {
+            vkDestroyImageView(device, sceneDirectNormalRoughnessView, nullptr);
+        }
+        if (sceneDirectReflectanceView != VK_NULL_HANDLE) {
+            vkDestroyImageView(device, sceneDirectReflectanceView, nullptr);
+        }
+        if (sceneDirectPlanarReflectionView != VK_NULL_HANDLE) {
+            vkDestroyImageView(device, sceneDirectPlanarReflectionView, nullptr);
+        }
         if (sceneDirectDepthImage != VK_NULL_HANDLE) {
             vmaDestroyImage(allocator, sceneDirectDepthImage, sceneDirectDepthAllocation);
         }
@@ -2759,18 +3946,40 @@ public:
         if (sceneDirectMotionVectorImage != VK_NULL_HANDLE) {
             vmaDestroyImage(allocator, sceneDirectMotionVectorImage, sceneDirectMotionVectorAllocation);
         }
+        if (sceneDirectNormalRoughnessImage != VK_NULL_HANDLE) {
+            vmaDestroyImage(allocator, sceneDirectNormalRoughnessImage, sceneDirectNormalRoughnessAllocation);
+        }
+        if (sceneDirectReflectanceImage != VK_NULL_HANDLE) {
+            vmaDestroyImage(allocator, sceneDirectReflectanceImage, sceneDirectReflectanceAllocation);
+        }
+        if (sceneDirectPlanarReflectionImage != VK_NULL_HANDLE) {
+            vmaDestroyImage(allocator, sceneDirectPlanarReflectionImage,
+                sceneDirectPlanarReflectionAllocation);
+        }
         sceneDirectDepthImage = VK_NULL_HANDLE;
         sceneDirectHdrColorImage = VK_NULL_HANDLE;
         sceneDirectMotionVectorImage = VK_NULL_HANDLE;
+        sceneDirectNormalRoughnessImage = VK_NULL_HANDLE;
+        sceneDirectReflectanceImage = VK_NULL_HANDLE;
+        sceneDirectPlanarReflectionImage = VK_NULL_HANDLE;
         sceneDirectDepthAllocation = VK_NULL_HANDLE;
         sceneDirectHdrColorAllocation = VK_NULL_HANDLE;
         sceneDirectMotionVectorAllocation = VK_NULL_HANDLE;
+        sceneDirectNormalRoughnessAllocation = VK_NULL_HANDLE;
+        sceneDirectReflectanceAllocation = VK_NULL_HANDLE;
+        sceneDirectPlanarReflectionAllocation = VK_NULL_HANDLE;
         sceneDirectDepthView = VK_NULL_HANDLE;
         sceneDirectHdrColorView = VK_NULL_HANDLE;
         sceneDirectMotionVectorView = VK_NULL_HANDLE;
+        sceneDirectNormalRoughnessView = VK_NULL_HANDLE;
+        sceneDirectReflectanceView = VK_NULL_HANDLE;
+        sceneDirectPlanarReflectionView = VK_NULL_HANDLE;
         sceneDirectDepthState = {};
         sceneDirectHdrColorState = {};
         sceneDirectMotionVectorState = {};
+        sceneDirectNormalRoughnessState = {};
+        sceneDirectReflectanceState = {};
+        sceneDirectPlanarReflectionState = {};
         for (std::size_t index = 0; index < sceneDirectTaaHistoryImage.size(); ++index) {
             if (sceneDirectTaaHistoryView[index] != VK_NULL_HANDLE) {
                 vkDestroyImageView(device, sceneDirectTaaHistoryView[index], nullptr);
@@ -2785,6 +3994,69 @@ public:
             sceneDirectTaaHistoryState[index] = {};
         }
         sceneDirectTaaHistoryValid = false;
+        for (std::size_t index = 0;
+            index < sceneDirectAutoExposureImage.size(); ++index) {
+            if (sceneDirectAutoExposureView[index] != VK_NULL_HANDLE) {
+                vkDestroyImageView(device,
+                    sceneDirectAutoExposureView[index], nullptr);
+            }
+            if (sceneDirectAutoExposureImage[index] != VK_NULL_HANDLE) {
+                vmaDestroyImage(allocator,
+                    sceneDirectAutoExposureImage[index],
+                    sceneDirectAutoExposureAllocation[index]);
+            }
+            sceneDirectAutoExposureImage[index] = VK_NULL_HANDLE;
+            sceneDirectAutoExposureAllocation[index] = VK_NULL_HANDLE;
+            sceneDirectAutoExposureView[index] = VK_NULL_HANDLE;
+            sceneDirectAutoExposureState[index] = {};
+            sceneDirectAutoExposureInitialized[index]=false;
+        }
+        sceneDirectAutoExposureHistoryValid = false;
+        sceneDirectAutoExposureClockValid = false;
+        for (std::size_t index = 0;
+            index < sceneDirectGtaoImage.size(); ++index) {
+            if (sceneDirectGtaoView[index] != VK_NULL_HANDLE) {
+                vkDestroyImageView(device, sceneDirectGtaoView[index],
+                    nullptr);
+            }
+            if (sceneDirectGtaoImage[index] != VK_NULL_HANDLE) {
+                vmaDestroyImage(allocator, sceneDirectGtaoImage[index],
+                    sceneDirectGtaoAllocation[index]);
+            }
+            sceneDirectGtaoImage[index] = VK_NULL_HANDLE;
+            sceneDirectGtaoAllocation[index] = VK_NULL_HANDLE;
+            sceneDirectGtaoView[index] = VK_NULL_HANDLE;
+            sceneDirectGtaoState[index] = {};
+        }
+        for (std::size_t index = 0;
+            index < sceneDirectBloomGlareImage.size(); ++index) {
+            if (sceneDirectBloomGlareView[index] != VK_NULL_HANDLE) {
+                vkDestroyImageView(device,
+                    sceneDirectBloomGlareView[index], nullptr);
+            }
+            if (sceneDirectBloomGlareImage[index] != VK_NULL_HANDLE) {
+                vmaDestroyImage(allocator,
+                    sceneDirectBloomGlareImage[index],
+                    sceneDirectBloomGlareAllocation[index]);
+            }
+            sceneDirectBloomGlareImage[index] = VK_NULL_HANDLE;
+            sceneDirectBloomGlareAllocation[index] = VK_NULL_HANDLE;
+            sceneDirectBloomGlareView[index] = VK_NULL_HANDLE;
+            sceneDirectBloomGlareState[index] = {};
+        }
+        for (std::size_t index = 0; index < sceneDirectSsrHistoryImage.size(); ++index) {
+            if (sceneDirectSsrHistoryView[index] != VK_NULL_HANDLE) {
+                vkDestroyImageView(device, sceneDirectSsrHistoryView[index], nullptr);
+            }
+            if (sceneDirectSsrHistoryImage[index] != VK_NULL_HANDLE) {
+                vmaDestroyImage(allocator, sceneDirectSsrHistoryImage[index],
+                    sceneDirectSsrHistoryAllocation[index]);
+            }
+            sceneDirectSsrHistoryImage[index] = VK_NULL_HANDLE;
+            sceneDirectSsrHistoryAllocation[index] = VK_NULL_HANDLE;
+            sceneDirectSsrHistoryView[index] = VK_NULL_HANDLE;
+            sceneDirectSsrHistoryState[index] = {};
+        }
         sceneDirectExtent = {};
     }
 
@@ -2800,11 +4072,24 @@ public:
         if (sceneMeshShadowPipeline != VK_NULL_HANDLE) vkDestroyPipeline(device, sceneMeshShadowPipeline, nullptr);
         if (sceneMeshDepthPrepassPipeline != VK_NULL_HANDLE) vkDestroyPipeline(device, sceneMeshDepthPrepassPipeline, nullptr);
         if (sceneTonemapPipeline != VK_NULL_HANDLE) vkDestroyPipeline(device, sceneTonemapPipeline, nullptr);
+        if (sceneAutoExposurePipeline != VK_NULL_HANDLE) vkDestroyPipeline(device, sceneAutoExposurePipeline, nullptr);
+        if (sceneGtaoPipeline != VK_NULL_HANDLE) vkDestroyPipeline(device, sceneGtaoPipeline, nullptr);
+        if (sceneBloomGlarePipeline != VK_NULL_HANDLE) vkDestroyPipeline(device, sceneBloomGlarePipeline, nullptr);
         if (sceneTaaResolvePipeline != VK_NULL_HANDLE) vkDestroyPipeline(device, sceneTaaResolvePipeline, nullptr);
+        if (sceneSsrPipeline != VK_NULL_HANDLE) vkDestroyPipeline(device, sceneSsrPipeline, nullptr);
+        if (sceneSsrCompositePipeline != VK_NULL_HANDLE) vkDestroyPipeline(device, sceneSsrCompositePipeline, nullptr);
+        if (sceneOceanPipeline != VK_NULL_HANDLE) vkDestroyPipeline(device, sceneOceanPipeline, nullptr);
         if (sceneMeshPipelineLayout != VK_NULL_HANDLE) vkDestroyPipelineLayout(device, sceneMeshPipelineLayout, nullptr);
         if (sceneTonemapPipelineLayout != VK_NULL_HANDLE) vkDestroyPipelineLayout(device, sceneTonemapPipelineLayout, nullptr);
+        if (sceneAutoExposurePipelineLayout != VK_NULL_HANDLE) vkDestroyPipelineLayout(device, sceneAutoExposurePipelineLayout, nullptr);
+        if (sceneGtaoPipelineLayout != VK_NULL_HANDLE) vkDestroyPipelineLayout(device, sceneGtaoPipelineLayout, nullptr);
+        if (sceneBloomGlarePipelineLayout != VK_NULL_HANDLE) vkDestroyPipelineLayout(device, sceneBloomGlarePipelineLayout, nullptr);
         if (sceneTaaResolvePipelineLayout != VK_NULL_HANDLE) vkDestroyPipelineLayout(device, sceneTaaResolvePipelineLayout, nullptr);
+        if (sceneSsrPipelineLayout != VK_NULL_HANDLE) vkDestroyPipelineLayout(device, sceneSsrPipelineLayout, nullptr);
+        if (sceneSsrCompositePipelineLayout != VK_NULL_HANDLE) vkDestroyPipelineLayout(device, sceneSsrCompositePipelineLayout, nullptr);
+        if (sceneOceanPipelineLayout != VK_NULL_HANDLE) vkDestroyPipelineLayout(device, sceneOceanPipelineLayout, nullptr);
         if (materialDescriptorPool != VK_NULL_HANDLE) vkDestroyDescriptorPool(device, materialDescriptorPool, nullptr);
+        if (scenePlanarReflectionDescriptorPool != VK_NULL_HANDLE) vkDestroyDescriptorPool(device, scenePlanarReflectionDescriptorPool, nullptr);
         if (materialDescriptorSetLayout != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device, materialDescriptorSetLayout, nullptr);
         if (materialSampler != VK_NULL_HANDLE) vkDestroySampler(device, materialSampler, nullptr);
         if (scenePipelineLayout != VK_NULL_HANDLE) vkDestroyPipelineLayout(device, scenePipelineLayout, nullptr);
@@ -2815,6 +4100,16 @@ public:
         if (sceneTonemapSampler != VK_NULL_HANDLE) vkDestroySampler(device, sceneTonemapSampler, nullptr);
         if (sceneTaaResolveDescriptorPool != VK_NULL_HANDLE) vkDestroyDescriptorPool(device, sceneTaaResolveDescriptorPool, nullptr);
         if (sceneTaaResolveDescriptorSetLayout != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device, sceneTaaResolveDescriptorSetLayout, nullptr);
+        if (sceneGtaoDescriptorPool != VK_NULL_HANDLE) vkDestroyDescriptorPool(device, sceneGtaoDescriptorPool, nullptr);
+        if (sceneGtaoDescriptorSetLayout != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device, sceneGtaoDescriptorSetLayout, nullptr);
+        if (sceneBloomGlareDescriptorPool != VK_NULL_HANDLE) vkDestroyDescriptorPool(device, sceneBloomGlareDescriptorPool, nullptr);
+        if (sceneBloomGlareDescriptorSetLayout != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device, sceneBloomGlareDescriptorSetLayout, nullptr);
+        if (sceneSsrDescriptorPool != VK_NULL_HANDLE) vkDestroyDescriptorPool(device, sceneSsrDescriptorPool, nullptr);
+        if (sceneSsrDescriptorSetLayout != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device, sceneSsrDescriptorSetLayout, nullptr);
+        if (sceneSsrCompositeDescriptorPool != VK_NULL_HANDLE) vkDestroyDescriptorPool(device, sceneSsrCompositeDescriptorPool, nullptr);
+        if (sceneSsrCompositeDescriptorSetLayout != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device, sceneSsrCompositeDescriptorSetLayout, nullptr);
+        if (sceneOceanDescriptorPool != VK_NULL_HANDLE) vkDestroyDescriptorPool(device, sceneOceanDescriptorPool, nullptr);
+        if (sceneOceanDescriptorSetLayout != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device, sceneOceanDescriptorSetLayout, nullptr);
         if (sceneDepthSampleSampler != VK_NULL_HANDLE) vkDestroySampler(device, sceneDepthSampleSampler, nullptr);
         if (sceneTaaHistorySampler != VK_NULL_HANDLE) vkDestroySampler(device, sceneTaaHistorySampler, nullptr);
         if (sceneSkyVertexModule != VK_NULL_HANDLE) vkDestroyShaderModule(device, sceneSkyVertexModule, nullptr);
@@ -2825,12 +4120,24 @@ public:
         if (sceneMeshDepthVertexModule != VK_NULL_HANDLE) vkDestroyShaderModule(device, sceneMeshDepthVertexModule, nullptr);
         if (sceneTonemapVertexModule != VK_NULL_HANDLE) vkDestroyShaderModule(device, sceneTonemapVertexModule, nullptr);
         if (sceneTonemapFragmentModule != VK_NULL_HANDLE) vkDestroyShaderModule(device, sceneTonemapFragmentModule, nullptr);
+        if (sceneAutoExposureFragmentModule != VK_NULL_HANDLE) vkDestroyShaderModule(device, sceneAutoExposureFragmentModule, nullptr);
+        if (sceneGtaoFragmentModule != VK_NULL_HANDLE) vkDestroyShaderModule(device, sceneGtaoFragmentModule, nullptr);
+        if (sceneBloomGlareFragmentModule != VK_NULL_HANDLE) vkDestroyShaderModule(device, sceneBloomGlareFragmentModule, nullptr);
         if (sceneTaaResolveFragmentModule != VK_NULL_HANDLE) vkDestroyShaderModule(device, sceneTaaResolveFragmentModule, nullptr);
+        if (sceneSsrFragmentModule != VK_NULL_HANDLE) vkDestroyShaderModule(device, sceneSsrFragmentModule, nullptr);
+        if (sceneSsrCompositeFragmentModule != VK_NULL_HANDLE) vkDestroyShaderModule(device, sceneSsrCompositeFragmentModule, nullptr);
+        if (sceneOceanVertexModule != VK_NULL_HANDLE) vkDestroyShaderModule(device, sceneOceanVertexModule, nullptr);
+        if (sceneOceanFragmentModule != VK_NULL_HANDLE) vkDestroyShaderModule(device, sceneOceanFragmentModule, nullptr);
         if (sceneShadowSampler != VK_NULL_HANDLE) vkDestroySampler(device, sceneShadowSampler, nullptr);
         if (sceneShadowRawSampler != VK_NULL_HANDLE) vkDestroySampler(device, sceneShadowRawSampler, nullptr);
         for (std::size_t index = 0; index < sceneUniformBuffers.size(); ++index) {
             if (sceneUniformBuffers[index] != VK_NULL_HANDLE) {
                 vmaDestroyBuffer(allocator, sceneUniformBuffers[index], sceneUniformAllocations[index]);
+            }
+            if (scenePlanarCameraUniformBuffers[index] != VK_NULL_HANDLE) {
+                vmaDestroyBuffer(allocator,
+                    scenePlanarCameraUniformBuffers[index],
+                    scenePlanarCameraUniformAllocations[index]);
             }
             if (sceneMeshInstanceBuffers[index] != VK_NULL_HANDLE) {
                 vmaDestroyBuffer(allocator, sceneMeshInstanceBuffers[index],
@@ -2840,17 +4147,36 @@ public:
                 vmaDestroyBuffer(allocator, sceneLightBuffers[index],
                     sceneLightAllocations[index]);
             }
+            if (sceneSkinBuffers[index] != VK_NULL_HANDLE) {
+                vmaDestroyBuffer(allocator, sceneSkinBuffers[index],
+                    sceneSkinAllocations[index]);
+            }
         }
         sceneSkyPipeline = VK_NULL_HANDLE;
         sceneMeshPipeline = VK_NULL_HANDLE;
         sceneMeshShadowPipeline = VK_NULL_HANDLE;
         sceneMeshDepthPrepassPipeline = VK_NULL_HANDLE;
         sceneTonemapPipeline = VK_NULL_HANDLE;
+        sceneAutoExposurePipeline = VK_NULL_HANDLE;
+        sceneGtaoPipeline = VK_NULL_HANDLE;
+        sceneBloomGlarePipeline = VK_NULL_HANDLE;
         sceneTaaResolvePipeline = VK_NULL_HANDLE;
+        sceneSsrPipeline = VK_NULL_HANDLE;
+        sceneSsrCompositePipeline = VK_NULL_HANDLE;
+        sceneOceanPipeline = VK_NULL_HANDLE;
         sceneMeshPipelineLayout = VK_NULL_HANDLE;
         sceneTonemapPipelineLayout = VK_NULL_HANDLE;
+        sceneAutoExposurePipelineLayout = VK_NULL_HANDLE;
+        sceneGtaoPipelineLayout = VK_NULL_HANDLE;
+        sceneBloomGlarePipelineLayout = VK_NULL_HANDLE;
         sceneTaaResolvePipelineLayout = VK_NULL_HANDLE;
+        sceneSsrPipelineLayout = VK_NULL_HANDLE;
+        sceneSsrCompositePipelineLayout = VK_NULL_HANDLE;
+        sceneOceanPipelineLayout = VK_NULL_HANDLE;
         materialDescriptorPool = VK_NULL_HANDLE;
+        scenePlanarReflectionDescriptorPool = VK_NULL_HANDLE;
+        scenePlanarReflectionDescriptorSets = {};
+        sceneDirectPlanarReflectionDescriptorSets = {};
         materialDescriptorSetLayout = VK_NULL_HANDLE;
         materialSampler = VK_NULL_HANDLE;
         defaultMaterialTexture = {};
@@ -2861,11 +4187,33 @@ public:
         sceneTonemapDescriptorSetLayout = VK_NULL_HANDLE;
         sceneTonemapDescriptorSets = {};
         sceneDirectTonemapDescriptorSets = {};
+        sceneTonemapWithoutTaaDescriptorSets = {};
+        sceneDirectTonemapWithoutTaaDescriptorSets = {};
         sceneTonemapSampler = VK_NULL_HANDLE;
         sceneTaaResolveDescriptorPool = VK_NULL_HANDLE;
         sceneTaaResolveDescriptorSetLayout = VK_NULL_HANDLE;
         sceneTaaResolveDescriptorSets = {};
         sceneDirectTaaResolveDescriptorSets = {};
+        sceneGtaoDescriptorPool = VK_NULL_HANDLE;
+        sceneGtaoDescriptorSetLayout = VK_NULL_HANDLE;
+        sceneGtaoDescriptorSets = {};
+        sceneDirectGtaoDescriptorSets = {};
+        sceneBloomGlareDescriptorPool = VK_NULL_HANDLE;
+        sceneBloomGlareDescriptorSetLayout = VK_NULL_HANDLE;
+        sceneBloomGlareDescriptorSets = {};
+        sceneDirectBloomGlareDescriptorSets = {};
+        sceneSsrDescriptorPool = VK_NULL_HANDLE;
+        sceneSsrDescriptorSetLayout = VK_NULL_HANDLE;
+        sceneSsrDescriptorSets = {};
+        sceneDirectSsrDescriptorSets = {};
+        sceneSsrCompositeDescriptorPool = VK_NULL_HANDLE;
+        sceneSsrCompositeDescriptorSetLayout = VK_NULL_HANDLE;
+        sceneSsrCompositeDescriptorSets = {};
+        sceneDirectSsrCompositeDescriptorSets = {};
+        sceneOceanDescriptorPool = VK_NULL_HANDLE;
+        sceneOceanDescriptorSetLayout = VK_NULL_HANDLE;
+        sceneOceanDescriptorSets = {};
+        sceneDirectOceanDescriptorSets = {};
         sceneDepthSampleSampler = VK_NULL_HANDLE;
         sceneTaaHistorySampler = VK_NULL_HANDLE;
         sceneSkyVertexModule = VK_NULL_HANDLE;
@@ -2876,12 +4224,22 @@ public:
         sceneMeshDepthVertexModule = VK_NULL_HANDLE;
         sceneTonemapVertexModule = VK_NULL_HANDLE;
         sceneTonemapFragmentModule = VK_NULL_HANDLE;
+        sceneAutoExposureFragmentModule = VK_NULL_HANDLE;
+        sceneGtaoFragmentModule = VK_NULL_HANDLE;
+        sceneBloomGlareFragmentModule = VK_NULL_HANDLE;
         sceneTaaResolveFragmentModule = VK_NULL_HANDLE;
+        sceneSsrFragmentModule = VK_NULL_HANDLE;
+        sceneSsrCompositeFragmentModule = VK_NULL_HANDLE;
+        sceneOceanVertexModule = VK_NULL_HANDLE;
+        sceneOceanFragmentModule = VK_NULL_HANDLE;
         sceneShadowSampler = VK_NULL_HANDLE;
         sceneShadowRawSampler = VK_NULL_HANDLE;
         sceneUniformBuffers = {};
         sceneUniformAllocations = {};
         sceneUniformMapped = {};
+        scenePlanarCameraUniformBuffers = {};
+        scenePlanarCameraUniformAllocations = {};
+        scenePlanarCameraUniformMapped = {};
         sceneMeshInstanceBuffers = {};
         sceneMeshInstanceAllocations = {};
         sceneMeshInstanceMapped = {};
@@ -2890,7 +4248,48 @@ public:
         sceneLightAllocations = {};
         sceneLightMapped = {};
         sceneLightCapacities = {};
+        sceneSkinBuffers = {};
+        sceneSkinAllocations = {};
+        sceneSkinMapped = {};
+        sceneSkinCapacities = {};
         sceneDescriptorSets = {};
+        scenePlanarCameraDescriptorSets = {};
+    }
+
+    void ensureSceneSkinCapacity(std::size_t required) {
+        if (required <= sceneSkinCapacities[currentFrame]) return;
+        const auto capacity = std::max<std::size_t>(1024, std::bit_ceil(required));
+        if (sceneSkinBuffers[currentFrame] != VK_NULL_HANDLE) {
+            vmaDestroyBuffer(allocator, sceneSkinBuffers[currentFrame],
+                sceneSkinAllocations[currentFrame]);
+        }
+        VkBufferCreateInfo info { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
+        info.size = capacity * sizeof(Mat4);
+        info.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+        info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        VmaAllocationCreateInfo allocation {};
+        allocation.usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST;
+        allocation.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT
+            | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+        VmaAllocationInfo mapped {};
+        check(vmaCreateBuffer(allocator, &info, &allocation,
+            &sceneSkinBuffers[currentFrame], &sceneSkinAllocations[currentFrame],
+            &mapped), "vmaCreateBuffer(scene skin)");
+        sceneSkinMapped[currentFrame] = mapped.pMappedData;
+        sceneSkinCapacities[currentFrame] = capacity;
+        VkDescriptorBufferInfo buffer {};
+        buffer.buffer = sceneSkinBuffers[currentFrame];
+        buffer.range = VK_WHOLE_SIZE;
+        std::array<VkWriteDescriptorSet, 2> writes {};
+        writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[0].dstSet = sceneDescriptorSets[currentFrame];
+        writes[0].dstBinding = 4;
+        writes[0].descriptorCount = 1;
+        writes[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        writes[0].pBufferInfo = &buffer;
+        writes[1] = writes[0];
+        writes[1].dstSet = scenePlanarCameraDescriptorSets[currentFrame];
+        vkUpdateDescriptorSets(device, 2, writes.data(), 0, nullptr);
     }
 
     void ensureSceneMeshInstanceCapacity(std::size_t required) {
@@ -2960,13 +4359,19 @@ public:
         VkDescriptorBufferInfo descriptorBuffer {};
         descriptorBuffer.buffer = sceneLightBuffers[currentFrame];
         descriptorBuffer.range = VK_WHOLE_SIZE;
-        VkWriteDescriptorSet write { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
-        write.dstSet = sceneDescriptorSets[currentFrame];
-        write.dstBinding = 2;
-        write.descriptorCount = 1;
-        write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-        write.pBufferInfo = &descriptorBuffer;
-        vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+        std::array<VkWriteDescriptorSet, 2> writes {};
+        writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[0].dstSet = sceneDescriptorSets[currentFrame];
+        writes[0].dstBinding = 2;
+        writes[0].descriptorCount = 1;
+        writes[0].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        writes[0].pBufferInfo = &descriptorBuffer;
+        writes[1] = writes[0];
+        writes[1].dstSet =
+            scenePlanarCameraDescriptorSets[currentFrame];
+        vkUpdateDescriptorSets(device,
+            static_cast<std::uint32_t>(writes.size()), writes.data(),
+            0, nullptr);
     }
 
     void createScene3DResources() {
@@ -3010,7 +4415,7 @@ public:
         check(vkCreateSampler(device, &rawSamplerInfo, nullptr, &sceneShadowRawSampler),
             "vkCreateSampler(scene shadow raw)");
 
-        std::array<VkDescriptorSetLayoutBinding, 4> bindings {};
+        std::array<VkDescriptorSetLayoutBinding, 5> bindings {};
         bindings[0].binding = 0;
         bindings[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         bindings[0].descriptorCount = 1;
@@ -3035,6 +4440,10 @@ public:
         bindings[3].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
         bindings[3].descriptorCount = ShadowCascadeCount;
         bindings[3].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        bindings[4].binding = 4;
+        bindings[4].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        bindings[4].descriptorCount = 1;
+        bindings[4].stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
         VkDescriptorSetLayoutCreateInfo descriptorLayoutInfo {
             VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO
         };
@@ -3043,30 +4452,39 @@ public:
         check(vkCreateDescriptorSetLayout(device, &descriptorLayoutInfo, nullptr,
             &sceneDescriptorSetLayout), "vkCreateDescriptorSetLayout(scene)");
 
+        constexpr std::uint32_t SceneDescriptorSetCount =
+            FramesInFlight * 2;
         const std::array<VkDescriptorPoolSize, 3> poolSizes { {
-            { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, FramesInFlight },
+            { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, SceneDescriptorSetCount },
             // ShadowCascadeCount descritores por set em CADA um dos dois
             // bindings de imagem de sombra (1 = comparacao, 3 = cru pro
             // PCSS, ver bindings[1]/bindings[3] acima) - daí o *2.
             { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                FramesInFlight * ShadowCascadeCount * 2 },
-            { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, FramesInFlight }
+                SceneDescriptorSetCount * ShadowCascadeCount * 2 },
+            { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, SceneDescriptorSetCount * 2 }
         } };
         VkDescriptorPoolCreateInfo poolInfo { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
-        poolInfo.maxSets = FramesInFlight;
+        poolInfo.maxSets = SceneDescriptorSetCount;
         poolInfo.poolSizeCount = static_cast<std::uint32_t>(poolSizes.size());
         poolInfo.pPoolSizes = poolSizes.data();
         check(vkCreateDescriptorPool(device, &poolInfo, nullptr, &sceneDescriptorPool),
             "vkCreateDescriptorPool(scene)");
-        const std::array<VkDescriptorSetLayout, FramesInFlight> layouts {
-            sceneDescriptorSetLayout, sceneDescriptorSetLayout
-        };
+        std::array<VkDescriptorSetLayout, SceneDescriptorSetCount> layouts {};
+        layouts.fill(sceneDescriptorSetLayout);
+        std::array<VkDescriptorSet, SceneDescriptorSetCount>
+            allocatedSceneSets {};
         VkDescriptorSetAllocateInfo allocateInfo { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
         allocateInfo.descriptorPool = sceneDescriptorPool;
-        allocateInfo.descriptorSetCount = FramesInFlight;
+        allocateInfo.descriptorSetCount = SceneDescriptorSetCount;
         allocateInfo.pSetLayouts = layouts.data();
-        check(vkAllocateDescriptorSets(device, &allocateInfo, sceneDescriptorSets.data()),
+        check(vkAllocateDescriptorSets(device, &allocateInfo,
+            allocatedSceneSets.data()),
             "vkAllocateDescriptorSets(scene)");
+        for (std::size_t index = 0; index < FramesInFlight; ++index) {
+            sceneDescriptorSets[index] = allocatedSceneSets[index];
+            scenePlanarCameraDescriptorSets[index] =
+                allocatedSceneSets[FramesInFlight + index];
+        }
 
         for (std::size_t index = 0; index < sceneUniformBuffers.size(); ++index) {
             VkBufferCreateInfo bufferInfo { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
@@ -3083,16 +4501,33 @@ public:
                 "vmaCreateBuffer(scene uniform)");
             sceneUniformMapped[index] = mappedInfo.pMappedData;
 
-            VkDescriptorBufferInfo descriptorBuffer {};
-            descriptorBuffer.buffer = sceneUniformBuffers[index];
-            descriptorBuffer.range = sizeof(SceneUniformGpu);
-            VkWriteDescriptorSet write { VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET };
-            write.dstSet = sceneDescriptorSets[index];
-            write.dstBinding = 0;
-            write.descriptorCount = 1;
-            write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-            write.pBufferInfo = &descriptorBuffer;
-            vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+            VmaAllocationInfo planarMappedInfo {};
+            check(vmaCreateBuffer(allocator, &bufferInfo, &allocationInfo,
+                &scenePlanarCameraUniformBuffers[index],
+                &scenePlanarCameraUniformAllocations[index],
+                &planarMappedInfo),
+                "vmaCreateBuffer(scene planar camera uniform)");
+            scenePlanarCameraUniformMapped[index] =
+                planarMappedInfo.pMappedData;
+
+            const std::array<VkDescriptorBufferInfo, 2> descriptorBuffers { {
+                { sceneUniformBuffers[index], 0, sizeof(SceneUniformGpu) },
+                { scenePlanarCameraUniformBuffers[index], 0,
+                    sizeof(SceneUniformGpu) }
+            } };
+            std::array<VkWriteDescriptorSet, 2> writes {};
+            writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[0].dstSet = sceneDescriptorSets[index];
+            writes[0].dstBinding = 0;
+            writes[0].descriptorCount = 1;
+            writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            writes[0].pBufferInfo = &descriptorBuffers[0];
+            writes[1] = writes[0];
+            writes[1].dstSet = scenePlanarCameraDescriptorSets[index];
+            writes[1].pBufferInfo = &descriptorBuffers[1];
+            vkUpdateDescriptorSets(device,
+                static_cast<std::uint32_t>(writes.size()), writes.data(),
+                0, nullptr);
         }
 
         const std::string shaderDir = MATTERENGINE_SHADER_DIR;
@@ -3112,7 +4547,16 @@ public:
         createModule("scene3d_mesh_depth.vert.spv", sceneMeshDepthVertexModule);
         createModule("tonemap.vert.spv", sceneTonemapVertexModule);
         createModule("tonemap.frag.spv", sceneTonemapFragmentModule);
+        createModule("auto_exposure.frag.spv",
+            sceneAutoExposureFragmentModule);
+        createModule("gtao.frag.spv", sceneGtaoFragmentModule);
+        createModule("bloom_glare.frag.spv",
+            sceneBloomGlareFragmentModule);
         createModule("taa_resolve.frag.spv", sceneTaaResolveFragmentModule);
+        createModule("ssr_trace_resolve.frag.spv", sceneSsrFragmentModule);
+        createModule("ssr_composite.frag.spv", sceneSsrCompositeFragmentModule);
+        createModule("ocean_surface.vert.spv", sceneOceanVertexModule);
+        createModule("ocean_surface.frag.spv", sceneOceanFragmentModule);
 
         // Dados de instancia real vao por vertex buffer (SceneMeshInstanceGpu),
         // nao push constant - a UNICA excecao e este indice de cascata (4
@@ -3182,23 +4626,37 @@ public:
         check(vkCreateSampler(device, &taaHistorySamplerInfo, nullptr, &sceneTaaHistorySampler),
             "vkCreateSampler(taa history)");
 
-        VkDescriptorSetLayoutBinding tonemapBinding {};
-        tonemapBinding.binding = 0;
-        tonemapBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        tonemapBinding.descriptorCount = 1;
-        tonemapBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        // binding 0: HDR resolvido; binding 1: exposição do quadro anterior
+        // (passe 1x1); binding 2: exposição atual (tonemap); binding 3:
+        // bloom/glare HDR reduzido; binding 4: profundidade usada somente
+        // pelo contorno seletivo do Matter Mosaic; binding 5: motion vectors
+        // com a classe de detalhe dos props físicos codificada em X. Um set
+        // por slot mantém os descriptors imutáveis enquanto a GPU os usa.
+        std::array<VkDescriptorSetLayoutBinding, 6> tonemapBindings {};
+        for (std::uint32_t binding = 0;
+            binding < tonemapBindings.size(); ++binding) {
+            tonemapBindings[binding].binding = binding;
+            tonemapBindings[binding].descriptorType =
+                VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            tonemapBindings[binding].descriptorCount = 1;
+            tonemapBindings[binding].stageFlags =
+                VK_SHADER_STAGE_FRAGMENT_BIT;
+        }
         VkDescriptorSetLayoutCreateInfo tonemapLayoutInfo {
             VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO
         };
-        tonemapLayoutInfo.bindingCount = 1;
-        tonemapLayoutInfo.pBindings = &tonemapBinding;
+        tonemapLayoutInfo.bindingCount =
+            static_cast<std::uint32_t>(tonemapBindings.size());
+        tonemapLayoutInfo.pBindings = tonemapBindings.data();
         check(vkCreateDescriptorSetLayout(device, &tonemapLayoutInfo, nullptr,
             &sceneTonemapDescriptorSetLayout), "vkCreateDescriptorSetLayout(tonemap)");
 
         constexpr std::uint32_t TonemapDescriptorSetCount =
-            FramesInFlight * 2;
+            FramesInFlight * 4;
         const VkDescriptorPoolSize tonemapPoolSize {
-            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, TonemapDescriptorSetCount
+            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            TonemapDescriptorSetCount
+                * static_cast<std::uint32_t>(tonemapBindings.size())
         };
         VkDescriptorPoolCreateInfo tonemapPoolInfo { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
         tonemapPoolInfo.maxSets = TonemapDescriptorSetCount;
@@ -3223,6 +4681,10 @@ public:
             sceneTonemapDescriptorSets[index] = tonemapDescriptorSets[index];
             sceneDirectTonemapDescriptorSets[index] =
                 tonemapDescriptorSets[FramesInFlight + index];
+            sceneTonemapWithoutTaaDescriptorSets[index] =
+                tonemapDescriptorSets[FramesInFlight * 2 + index];
+            sceneDirectTonemapWithoutTaaDescriptorSets[index] =
+                tonemapDescriptorSets[FramesInFlight * 3 + index];
         }
 
         // Exposicao/brilho/contraste/saturacao chegam por push constant (nao
@@ -3243,13 +4705,32 @@ public:
         check(vkCreatePipelineLayout(device, &tonemapPipelineLayoutInfo, nullptr,
             &sceneTonemapPipelineLayout), "vkCreatePipelineLayout(tonemap)");
 
-        // Descriptor set do resolve de TAA: 4 bindings, todas amostradas so
+        VkPushConstantRange autoExposurePushConstant {};
+        autoExposurePushConstant.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        autoExposurePushConstant.offset = 0;
+        autoExposurePushConstant.size =
+            sizeof(AutoExposurePushConstantsGpu);
+        VkPipelineLayoutCreateInfo autoExposurePipelineLayoutInfo {
+            VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO
+        };
+        autoExposurePipelineLayoutInfo.setLayoutCount = 1;
+        autoExposurePipelineLayoutInfo.pSetLayouts =
+            &sceneTonemapDescriptorSetLayout;
+        autoExposurePipelineLayoutInfo.pushConstantRangeCount = 1;
+        autoExposurePipelineLayoutInfo.pPushConstantRanges =
+            &autoExposurePushConstant;
+        check(vkCreatePipelineLayout(device,
+            &autoExposurePipelineLayoutInfo, nullptr,
+            &sceneAutoExposurePipelineLayout),
+            "vkCreatePipelineLayout(auto exposure)");
+
+        // Descriptor set do resolve de TAA: 5 bindings, todas amostradas so
         // no fragmento - cor HDR atual, profundidade, vetores de movimento,
-        // historico (ver comentario em sceneTaaResolveDescriptorSetLayout).
+        // historico e GTAO (ver sceneTaaResolveDescriptorSetLayout).
         // Um set por frame em voo e por caminho. Todos os bindings sao
         // escritos apenas quando os attachments sao criados/recriados com o
         // device ocioso; nenhum descriptor em uso e mutado durante o frame.
-        std::array<VkDescriptorSetLayoutBinding, 4> taaResolveBindings {};
+        std::array<VkDescriptorSetLayoutBinding, 5> taaResolveBindings {};
         for (std::uint32_t index = 0; index < taaResolveBindings.size(); ++index) {
             taaResolveBindings[index].binding = index;
             taaResolveBindings[index].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -3311,6 +4792,362 @@ public:
         taaResolvePipelineLayoutInfo.pSetLayouts = taaResolveSetLayoutsForPipeline.data();
         check(vkCreatePipelineLayout(device, &taaResolvePipelineLayoutInfo, nullptr,
             &sceneTaaResolvePipelineLayout), "vkCreatePipelineLayout(taa resolve)");
+
+        // GTAO lê profundidade+normal já finalizadas pelo passe opaco e
+        // escreve um alvo em meia resolução. Há um set imutável por frame
+        // em voo e por caminho, como nos demais passes temporais.
+        std::array<VkDescriptorSetLayoutBinding, 2> gtaoBindings {};
+        for (std::uint32_t binding = 0;
+            binding < gtaoBindings.size(); ++binding) {
+            gtaoBindings[binding].binding = binding;
+            gtaoBindings[binding].descriptorType =
+                VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            gtaoBindings[binding].descriptorCount = 1;
+            gtaoBindings[binding].stageFlags =
+                VK_SHADER_STAGE_FRAGMENT_BIT;
+        }
+        VkDescriptorSetLayoutCreateInfo gtaoLayoutInfo {
+            VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO
+        };
+        gtaoLayoutInfo.bindingCount =
+            static_cast<std::uint32_t>(gtaoBindings.size());
+        gtaoLayoutInfo.pBindings = gtaoBindings.data();
+        check(vkCreateDescriptorSetLayout(device, &gtaoLayoutInfo, nullptr,
+            &sceneGtaoDescriptorSetLayout),
+            "vkCreateDescriptorSetLayout(gtao)");
+
+        constexpr std::uint32_t GtaoDescriptorSetCount =
+            FramesInFlight * 2;
+        const VkDescriptorPoolSize gtaoPoolSize {
+            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            GtaoDescriptorSetCount
+                * static_cast<std::uint32_t>(gtaoBindings.size())
+        };
+        VkDescriptorPoolCreateInfo gtaoPoolInfo {
+            VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO
+        };
+        gtaoPoolInfo.maxSets = GtaoDescriptorSetCount;
+        gtaoPoolInfo.poolSizeCount = 1;
+        gtaoPoolInfo.pPoolSizes = &gtaoPoolSize;
+        check(vkCreateDescriptorPool(device, &gtaoPoolInfo, nullptr,
+            &sceneGtaoDescriptorPool), "vkCreateDescriptorPool(gtao)");
+        std::array<VkDescriptorSetLayout, GtaoDescriptorSetCount>
+            gtaoSetLayouts {};
+        gtaoSetLayouts.fill(sceneGtaoDescriptorSetLayout);
+        std::array<VkDescriptorSet, GtaoDescriptorSetCount>
+            gtaoDescriptorSets {};
+        VkDescriptorSetAllocateInfo gtaoAllocateInfo {
+            VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO
+        };
+        gtaoAllocateInfo.descriptorPool = sceneGtaoDescriptorPool;
+        gtaoAllocateInfo.descriptorSetCount = GtaoDescriptorSetCount;
+        gtaoAllocateInfo.pSetLayouts = gtaoSetLayouts.data();
+        check(vkAllocateDescriptorSets(device, &gtaoAllocateInfo,
+            gtaoDescriptorSets.data()),
+            "vkAllocateDescriptorSets(gtao)");
+        for (std::size_t index = 0; index < FramesInFlight; ++index) {
+            sceneGtaoDescriptorSets[index] = gtaoDescriptorSets[index];
+            sceneDirectGtaoDescriptorSets[index] =
+                gtaoDescriptorSets[FramesInFlight + index];
+        }
+
+        const std::array<VkDescriptorSetLayout, 2>
+            gtaoPipelineSetLayouts {
+                sceneDescriptorSetLayout, sceneGtaoDescriptorSetLayout
+            };
+        VkPushConstantRange gtaoPushConstant {};
+        gtaoPushConstant.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        gtaoPushConstant.size = sizeof(GtaoPushConstantsGpu);
+        VkPipelineLayoutCreateInfo gtaoPipelineLayoutInfo {
+            VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO
+        };
+        gtaoPipelineLayoutInfo.setLayoutCount =
+            static_cast<std::uint32_t>(gtaoPipelineSetLayouts.size());
+        gtaoPipelineLayoutInfo.pSetLayouts =
+            gtaoPipelineSetLayouts.data();
+        gtaoPipelineLayoutInfo.pushConstantRangeCount = 1;
+        gtaoPipelineLayoutInfo.pPushConstantRanges = &gtaoPushConstant;
+        check(vkCreatePipelineLayout(device, &gtaoPipelineLayoutInfo,
+            nullptr, &sceneGtaoPipelineLayout),
+            "vkCreatePipelineLayout(gtao)");
+
+        // Bloom/glare lê o HDR resolvido pelo TAA e a profundidade da cena.
+        // O mesmo passe reduz, filtra realces e desenha os efeitos do Sol.
+        std::array<VkDescriptorSetLayoutBinding, 2>
+            bloomGlareBindings {};
+        for (std::uint32_t binding = 0;
+            binding < bloomGlareBindings.size(); ++binding) {
+            bloomGlareBindings[binding].binding = binding;
+            bloomGlareBindings[binding].descriptorType =
+                VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            bloomGlareBindings[binding].descriptorCount = 1;
+            bloomGlareBindings[binding].stageFlags =
+                VK_SHADER_STAGE_FRAGMENT_BIT;
+        }
+        VkDescriptorSetLayoutCreateInfo bloomGlareLayoutInfo {
+            VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO
+        };
+        bloomGlareLayoutInfo.bindingCount =
+            static_cast<std::uint32_t>(bloomGlareBindings.size());
+        bloomGlareLayoutInfo.pBindings = bloomGlareBindings.data();
+        check(vkCreateDescriptorSetLayout(device, &bloomGlareLayoutInfo,
+            nullptr, &sceneBloomGlareDescriptorSetLayout),
+            "vkCreateDescriptorSetLayout(bloom glare)");
+
+        constexpr std::uint32_t BloomGlareDescriptorSetCount =
+            FramesInFlight * 2;
+        const VkDescriptorPoolSize bloomGlarePoolSize {
+            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            BloomGlareDescriptorSetCount
+                * static_cast<std::uint32_t>(bloomGlareBindings.size())
+        };
+        VkDescriptorPoolCreateInfo bloomGlarePoolInfo {
+            VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO
+        };
+        bloomGlarePoolInfo.maxSets = BloomGlareDescriptorSetCount;
+        bloomGlarePoolInfo.poolSizeCount = 1;
+        bloomGlarePoolInfo.pPoolSizes = &bloomGlarePoolSize;
+        check(vkCreateDescriptorPool(device, &bloomGlarePoolInfo, nullptr,
+            &sceneBloomGlareDescriptorPool),
+            "vkCreateDescriptorPool(bloom glare)");
+        std::array<VkDescriptorSetLayout, BloomGlareDescriptorSetCount>
+            bloomGlareSetLayouts {};
+        bloomGlareSetLayouts.fill(sceneBloomGlareDescriptorSetLayout);
+        std::array<VkDescriptorSet, BloomGlareDescriptorSetCount>
+            bloomGlareDescriptorSets {};
+        VkDescriptorSetAllocateInfo bloomGlareAllocateInfo {
+            VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO
+        };
+        bloomGlareAllocateInfo.descriptorPool =
+            sceneBloomGlareDescriptorPool;
+        bloomGlareAllocateInfo.descriptorSetCount =
+            BloomGlareDescriptorSetCount;
+        bloomGlareAllocateInfo.pSetLayouts =
+            bloomGlareSetLayouts.data();
+        check(vkAllocateDescriptorSets(device, &bloomGlareAllocateInfo,
+            bloomGlareDescriptorSets.data()),
+            "vkAllocateDescriptorSets(bloom glare)");
+        for (std::size_t index = 0; index < FramesInFlight; ++index) {
+            sceneBloomGlareDescriptorSets[index] =
+                bloomGlareDescriptorSets[index];
+            sceneDirectBloomGlareDescriptorSets[index] =
+                bloomGlareDescriptorSets[FramesInFlight + index];
+        }
+
+        VkPushConstantRange bloomGlarePushConstant {};
+        bloomGlarePushConstant.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        bloomGlarePushConstant.size =
+            sizeof(BloomGlarePushConstantsGpu);
+        VkPipelineLayoutCreateInfo bloomGlarePipelineLayoutInfo {
+            VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO
+        };
+        bloomGlarePipelineLayoutInfo.setLayoutCount = 1;
+        bloomGlarePipelineLayoutInfo.pSetLayouts =
+            &sceneBloomGlareDescriptorSetLayout;
+        bloomGlarePipelineLayoutInfo.pushConstantRangeCount = 1;
+        bloomGlarePipelineLayoutInfo.pPushConstantRanges =
+            &bloomGlarePushConstant;
+        check(vkCreatePipelineLayout(device,
+            &bloomGlarePipelineLayoutInfo, nullptr,
+            &sceneBloomGlarePipelineLayout),
+            "vkCreatePipelineLayout(bloom glare)");
+
+        // Descriptor set do traçado+resolve de SSR: 6 bindings, todas
+        // amostradas so no fragmento (ver ssr_trace_resolve.frag) - mesmo
+        // padrao do resolve de TAA acima (um set por frame em voo e por
+        // caminho, escrito so ao criar/recriar attachments).
+        std::array<VkDescriptorSetLayoutBinding, 6> ssrBindings {};
+        for (std::uint32_t index = 0; index < ssrBindings.size(); ++index) {
+            ssrBindings[index].binding = index;
+            ssrBindings[index].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            ssrBindings[index].descriptorCount = 1;
+            ssrBindings[index].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        }
+        VkDescriptorSetLayoutCreateInfo ssrLayoutInfo {
+            VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO
+        };
+        ssrLayoutInfo.bindingCount = static_cast<std::uint32_t>(ssrBindings.size());
+        ssrLayoutInfo.pBindings = ssrBindings.data();
+        check(vkCreateDescriptorSetLayout(device, &ssrLayoutInfo, nullptr,
+            &sceneSsrDescriptorSetLayout), "vkCreateDescriptorSetLayout(ssr)");
+
+        constexpr std::uint32_t SsrDescriptorSetCount = FramesInFlight * 2;
+        const VkDescriptorPoolSize ssrPoolSize {
+            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            SsrDescriptorSetCount * static_cast<std::uint32_t>(ssrBindings.size())
+        };
+        VkDescriptorPoolCreateInfo ssrPoolInfo { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
+        ssrPoolInfo.maxSets = SsrDescriptorSetCount;
+        ssrPoolInfo.poolSizeCount = 1;
+        ssrPoolInfo.pPoolSizes = &ssrPoolSize;
+        check(vkCreateDescriptorPool(device, &ssrPoolInfo, nullptr,
+            &sceneSsrDescriptorPool), "vkCreateDescriptorPool(ssr)");
+
+        std::array<VkDescriptorSetLayout, SsrDescriptorSetCount> ssrSetLayouts {};
+        ssrSetLayouts.fill(sceneSsrDescriptorSetLayout);
+        std::array<VkDescriptorSet, SsrDescriptorSetCount> ssrDescriptorSets {};
+        VkDescriptorSetAllocateInfo ssrAllocateInfo {
+            VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO
+        };
+        ssrAllocateInfo.descriptorPool = sceneSsrDescriptorPool;
+        ssrAllocateInfo.descriptorSetCount = SsrDescriptorSetCount;
+        ssrAllocateInfo.pSetLayouts = ssrSetLayouts.data();
+        check(vkAllocateDescriptorSets(device, &ssrAllocateInfo, ssrDescriptorSets.data()),
+            "vkAllocateDescriptorSets(ssr)");
+        for (std::size_t index = 0; index < FramesInFlight; ++index) {
+            sceneSsrDescriptorSets[index] = ssrDescriptorSets[index];
+            sceneDirectSsrDescriptorSets[index] =
+                ssrDescriptorSets[FramesInFlight + index];
+        }
+
+        // Layout do traçado+resolve: set 0 = UBO da cena + luzes (direcao do
+        // sol, ver reflectionEnvironmentColor em ssr_trace_resolve.frag),
+        // set 1 = as 6 texturas acima.
+        const std::array<VkDescriptorSetLayout, 2> ssrSetLayoutsForPipeline {
+            sceneDescriptorSetLayout, sceneSsrDescriptorSetLayout
+        };
+        VkPipelineLayoutCreateInfo ssrPipelineLayoutInfo {
+            VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO
+        };
+        ssrPipelineLayoutInfo.setLayoutCount =
+            static_cast<std::uint32_t>(ssrSetLayoutsForPipeline.size());
+        ssrPipelineLayoutInfo.pSetLayouts = ssrSetLayoutsForPipeline.data();
+        check(vkCreatePipelineLayout(device, &ssrPipelineLayoutInfo, nullptr,
+            &sceneSsrPipelineLayout), "vkCreatePipelineLayout(ssr)");
+
+        // Descriptor set da composicao de SSR: 2 bindings (reflectancia +
+        // historico de SSR ja resolvido) - um unico set dedicado, sem UBO da
+        // cena (mesmo padrao de sceneTonemapDescriptorSetLayout, que tambem
+        // nao precisa de camera/luzes).
+        std::array<VkDescriptorSetLayoutBinding, 2> ssrCompositeBindings {};
+        for (std::uint32_t index = 0; index < ssrCompositeBindings.size(); ++index) {
+            ssrCompositeBindings[index].binding = index;
+            ssrCompositeBindings[index].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            ssrCompositeBindings[index].descriptorCount = 1;
+            ssrCompositeBindings[index].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        }
+        VkDescriptorSetLayoutCreateInfo ssrCompositeLayoutInfo {
+            VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO
+        };
+        ssrCompositeLayoutInfo.bindingCount =
+            static_cast<std::uint32_t>(ssrCompositeBindings.size());
+        ssrCompositeLayoutInfo.pBindings = ssrCompositeBindings.data();
+        check(vkCreateDescriptorSetLayout(device, &ssrCompositeLayoutInfo, nullptr,
+            &sceneSsrCompositeDescriptorSetLayout), "vkCreateDescriptorSetLayout(ssr composite)");
+
+        constexpr std::uint32_t SsrCompositeDescriptorSetCount = FramesInFlight * 2;
+        const VkDescriptorPoolSize ssrCompositePoolSize {
+            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            SsrCompositeDescriptorSetCount
+                * static_cast<std::uint32_t>(ssrCompositeBindings.size())
+        };
+        VkDescriptorPoolCreateInfo ssrCompositePoolInfo {
+            VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO
+        };
+        ssrCompositePoolInfo.maxSets = SsrCompositeDescriptorSetCount;
+        ssrCompositePoolInfo.poolSizeCount = 1;
+        ssrCompositePoolInfo.pPoolSizes = &ssrCompositePoolSize;
+        check(vkCreateDescriptorPool(device, &ssrCompositePoolInfo, nullptr,
+            &sceneSsrCompositeDescriptorPool), "vkCreateDescriptorPool(ssr composite)");
+
+        std::array<VkDescriptorSetLayout, SsrCompositeDescriptorSetCount>
+            ssrCompositeSetLayouts {};
+        ssrCompositeSetLayouts.fill(sceneSsrCompositeDescriptorSetLayout);
+        std::array<VkDescriptorSet, SsrCompositeDescriptorSetCount>
+            ssrCompositeDescriptorSets {};
+        VkDescriptorSetAllocateInfo ssrCompositeAllocateInfo {
+            VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO
+        };
+        ssrCompositeAllocateInfo.descriptorPool = sceneSsrCompositeDescriptorPool;
+        ssrCompositeAllocateInfo.descriptorSetCount = SsrCompositeDescriptorSetCount;
+        ssrCompositeAllocateInfo.pSetLayouts = ssrCompositeSetLayouts.data();
+        check(vkAllocateDescriptorSets(device, &ssrCompositeAllocateInfo,
+            ssrCompositeDescriptorSets.data()), "vkAllocateDescriptorSets(ssr composite)");
+        for (std::size_t index = 0; index < FramesInFlight; ++index) {
+            sceneSsrCompositeDescriptorSets[index] = ssrCompositeDescriptorSets[index];
+            sceneDirectSsrCompositeDescriptorSets[index] =
+                ssrCompositeDescriptorSets[FramesInFlight + index];
+        }
+        VkPipelineLayoutCreateInfo ssrCompositePipelineLayoutInfo {
+            VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO
+        };
+        ssrCompositePipelineLayoutInfo.setLayoutCount = 1;
+        ssrCompositePipelineLayoutInfo.pSetLayouts = &sceneSsrCompositeDescriptorSetLayout;
+        check(vkCreatePipelineLayout(device, &ssrCompositePipelineLayoutInfo, nullptr,
+            &sceneSsrCompositePipelineLayout), "vkCreatePipelineLayout(ssr composite)");
+
+        std::array<VkDescriptorSetLayoutBinding, 1> oceanBindings {};
+        oceanBindings[0].binding = 0;
+        oceanBindings[0].descriptorType =
+            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        oceanBindings[0].descriptorCount = 1;
+        oceanBindings[0].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        VkDescriptorSetLayoutCreateInfo oceanLayoutInfo {
+            VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO
+        };
+        oceanLayoutInfo.bindingCount =
+            static_cast<std::uint32_t>(oceanBindings.size());
+        oceanLayoutInfo.pBindings = oceanBindings.data();
+        check(vkCreateDescriptorSetLayout(device, &oceanLayoutInfo, nullptr,
+            &sceneOceanDescriptorSetLayout),
+            "vkCreateDescriptorSetLayout(ocean)");
+
+        constexpr std::uint32_t OceanDescriptorSetCount = FramesInFlight * 2;
+        const VkDescriptorPoolSize oceanPoolSize {
+            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            OceanDescriptorSetCount
+                * static_cast<std::uint32_t>(oceanBindings.size())
+        };
+        VkDescriptorPoolCreateInfo oceanPoolInfo {
+            VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO
+        };
+        oceanPoolInfo.maxSets = OceanDescriptorSetCount;
+        oceanPoolInfo.poolSizeCount = 1;
+        oceanPoolInfo.pPoolSizes = &oceanPoolSize;
+        check(vkCreateDescriptorPool(device, &oceanPoolInfo, nullptr,
+            &sceneOceanDescriptorPool), "vkCreateDescriptorPool(ocean)");
+
+        std::array<VkDescriptorSetLayout, OceanDescriptorSetCount>
+            oceanSetLayouts {};
+        oceanSetLayouts.fill(sceneOceanDescriptorSetLayout);
+        std::array<VkDescriptorSet, OceanDescriptorSetCount>
+            oceanDescriptorSets {};
+        VkDescriptorSetAllocateInfo oceanAllocateInfo {
+            VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO
+        };
+        oceanAllocateInfo.descriptorPool = sceneOceanDescriptorPool;
+        oceanAllocateInfo.descriptorSetCount = OceanDescriptorSetCount;
+        oceanAllocateInfo.pSetLayouts = oceanSetLayouts.data();
+        check(vkAllocateDescriptorSets(device, &oceanAllocateInfo,
+            oceanDescriptorSets.data()), "vkAllocateDescriptorSets(ocean)");
+        for (std::size_t index = 0; index < FramesInFlight; ++index) {
+            sceneOceanDescriptorSets[index] = oceanDescriptorSets[index];
+            sceneDirectOceanDescriptorSets[index] =
+                oceanDescriptorSets[FramesInFlight + index];
+        }
+
+        const std::array<VkDescriptorSetLayout, 2>
+            oceanSetLayoutsForPipeline {
+            sceneDescriptorSetLayout, sceneOceanDescriptorSetLayout
+        };
+        VkPushConstantRange oceanPushConstantRange {};
+        oceanPushConstantRange.stageFlags = VK_SHADER_STAGE_VERTEX_BIT
+            | VK_SHADER_STAGE_FRAGMENT_BIT;
+        oceanPushConstantRange.offset = 0;
+        oceanPushConstantRange.size = sizeof(OceanPushConstantsGpu);
+        VkPipelineLayoutCreateInfo oceanPipelineLayoutInfo {
+            VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO
+        };
+        oceanPipelineLayoutInfo.setLayoutCount =
+            static_cast<std::uint32_t>(oceanSetLayoutsForPipeline.size());
+        oceanPipelineLayoutInfo.pSetLayouts =
+            oceanSetLayoutsForPipeline.data();
+        oceanPipelineLayoutInfo.pushConstantRangeCount = 1;
+        oceanPipelineLayoutInfo.pPushConstantRanges =
+            &oceanPushConstantRange;
+        check(vkCreatePipelineLayout(device, &oceanPipelineLayoutInfo,
+            nullptr, &sceneOceanPipelineLayout),
+            "vkCreatePipelineLayout(ocean)");
 
         VkPipelineVertexInputStateCreateInfo vertexInput { VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };
         VkPipelineInputAssemblyStateCreateInfo inputAssembly { VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO };
@@ -3375,10 +5212,9 @@ public:
         sceneRasterizer.cullMode = VK_CULL_MODE_NONE;
         sceneRasterizer.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
         sceneRasterizer.lineWidth = 1.0f;
-        // 2 attachments (MRT): cor HDR + vetores de movimento (ver
-        // scene3d_mesh.vert/frag) - toda pipeline que desenha neste passe
-        // (ceu e mesh) escreve nos dois, mesmo o ceu so preenchendo o
-        // segundo com zero (ver scene3d_sky.frag).
+        // 2 attachments (MRT): cor HDR + vetores de movimento. Normal,
+        // rugosidade e reflectância pertenciam ao SSR/GTAO já retirados do
+        // frame ativo e desperdiçavam banda em todos os pixels.
         VkPipelineColorBlendAttachmentState blendAttachment {};
         blendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT
             | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
@@ -3424,8 +5260,13 @@ public:
         VkPipelineDepthStencilStateCreateInfo skyDepth {
             VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO
         };
-        skyDepth.depthTestEnable = VK_FALSE;
+        // O prepass ja marcou todos os pixels cobertos por geometria. Como o
+        // fullscreen triangle do ceu fica no clear depth (zero no reversed-Z),
+        // EQUAL evita executar nuvens/estrelas atras do mundo sem alterar a
+        // imagem final.
+        skyDepth.depthTestEnable = VK_TRUE;
         skyDepth.depthWriteEnable = VK_FALSE;
+        skyDepth.depthCompareOp = VK_COMPARE_OP_EQUAL;
         VkGraphicsPipelineCreateInfo skyPipelineInfo = scenePipelineInfo;
         skyPipelineInfo.stageCount = static_cast<std::uint32_t>(skyStages.size());
         skyPipelineInfo.pStages = skyStages.data();
@@ -3479,6 +5320,82 @@ public:
         check(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &tonemapPipelineInfo,
             nullptr, &sceneTonemapPipeline), "vkCreateGraphicsPipelines(scene tonemap)");
 
+        // Medição e adaptação de exposição: o mesmo triângulo fullscreen,
+        // mas num attachment 1x1 HDR. Somente 24 amostras são executadas por
+        // quadro, independentemente da resolução da cena.
+        VkPipelineRenderingCreateInfo autoExposureRendering {
+            VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO
+        };
+        autoExposureRendering.colorAttachmentCount = 1;
+        autoExposureRendering.pColorAttachmentFormats =
+            &SceneAutoExposureFormat;
+        std::array<VkPipelineShaderStageCreateInfo, 2> autoExposureStages {};
+        autoExposureStages[0] = tonemapStages[0];
+        autoExposureStages[1].sType =
+            VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        autoExposureStages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+        autoExposureStages[1].module = sceneAutoExposureFragmentModule;
+        autoExposureStages[1].pName = "main";
+        VkGraphicsPipelineCreateInfo autoExposurePipelineInfo =
+            tonemapPipelineInfo;
+        autoExposurePipelineInfo.pNext = &autoExposureRendering;
+        autoExposurePipelineInfo.stageCount =
+            static_cast<std::uint32_t>(autoExposureStages.size());
+        autoExposurePipelineInfo.pStages = autoExposureStages.data();
+        autoExposurePipelineInfo.layout = sceneAutoExposurePipelineLayout;
+        check(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1,
+            &autoExposurePipelineInfo, nullptr, &sceneAutoExposurePipeline),
+            "vkCreateGraphicsPipelines(scene auto exposure)");
+
+        VkPipelineRenderingCreateInfo gtaoRendering {
+            VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO
+        };
+        gtaoRendering.colorAttachmentCount = 1;
+        gtaoRendering.pColorAttachmentFormats =
+            &SceneAmbientOcclusionFormat;
+        std::array<VkPipelineShaderStageCreateInfo, 2> gtaoStages {};
+        gtaoStages[0] = tonemapStages[0];
+        gtaoStages[1].sType =
+            VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        gtaoStages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+        gtaoStages[1].module = sceneGtaoFragmentModule;
+        gtaoStages[1].pName = "main";
+        VkGraphicsPipelineCreateInfo gtaoPipelineInfo =
+            tonemapPipelineInfo;
+        gtaoPipelineInfo.pNext = &gtaoRendering;
+        gtaoPipelineInfo.stageCount =
+            static_cast<std::uint32_t>(gtaoStages.size());
+        gtaoPipelineInfo.pStages = gtaoStages.data();
+        gtaoPipelineInfo.layout = sceneGtaoPipelineLayout;
+        check(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1,
+            &gtaoPipelineInfo, nullptr, &sceneGtaoPipeline),
+            "vkCreateGraphicsPipelines(scene gtao)");
+
+        VkPipelineRenderingCreateInfo bloomGlareRendering {
+            VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO
+        };
+        bloomGlareRendering.colorAttachmentCount = 1;
+        bloomGlareRendering.pColorAttachmentFormats =
+            &SceneBloomGlareFormat;
+        std::array<VkPipelineShaderStageCreateInfo, 2>
+            bloomGlareStages {};
+        bloomGlareStages[0] = tonemapStages[0];
+        bloomGlareStages[1].sType =
+            VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        bloomGlareStages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+        bloomGlareStages[1].module = sceneBloomGlareFragmentModule;
+        bloomGlareStages[1].pName = "main";
+        VkGraphicsPipelineCreateInfo bloomGlarePipelineInfo =
+            tonemapPipelineInfo;
+        bloomGlarePipelineInfo.pNext = &bloomGlareRendering;
+        bloomGlarePipelineInfo.stageCount =
+            static_cast<std::uint32_t>(bloomGlareStages.size());
+        bloomGlarePipelineInfo.pStages = bloomGlareStages.data();
+        bloomGlarePipelineInfo.layout = sceneBloomGlarePipelineLayout;
+        check(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1,
+            &bloomGlarePipelineInfo, nullptr, &sceneBloomGlarePipeline),
+            "vkCreateGraphicsPipelines(scene bloom glare)");
+
         // Pipeline de resolve de TAA: mesmo triangulo cheio de tela
         // (reaproveita sceneTonemapVertexModule), sem depth attachment como
         // o tonemap, mas escrevendo no FORMATO HDR (SceneHdrColorFormat) do
@@ -3510,6 +5427,181 @@ public:
         check(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &taaResolvePipelineInfo,
             nullptr, &sceneTaaResolvePipeline), "vkCreateGraphicsPipelines(scene taa resolve)");
 
+        // Pipeline de traçado+resolve de SSR: mesmo triangulo cheio de tela
+        // (reaproveita sceneTonemapVertexModule), mas escrevendo no formato
+        // do historico de SSR (SceneSsrHistoryFormat), nao no HDR - a
+        // viewport/scissor dinamica deste pipeline usa a MEIA resolucao no
+        // render loop, nao o formato em si (que so declara o layout).
+        VkPipelineRenderingCreateInfo ssrRendering { VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO };
+        ssrRendering.colorAttachmentCount = 1;
+        ssrRendering.pColorAttachmentFormats = &SceneSsrHistoryFormat;
+        VkPipelineDepthStencilStateCreateInfo ssrDepth {
+            VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO
+        };
+        ssrDepth.depthTestEnable = VK_FALSE;
+        ssrDepth.depthWriteEnable = VK_FALSE;
+        std::array<VkPipelineShaderStageCreateInfo, 2> ssrStages {};
+        ssrStages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        ssrStages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+        ssrStages[0].module = sceneTonemapVertexModule;
+        ssrStages[0].pName = "main";
+        ssrStages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        ssrStages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+        ssrStages[1].module = sceneSsrFragmentModule;
+        ssrStages[1].pName = "main";
+        VkGraphicsPipelineCreateInfo ssrPipelineInfo = scenePipelineInfo;
+        ssrPipelineInfo.pNext = &ssrRendering;
+        ssrPipelineInfo.pDepthStencilState = &ssrDepth;
+        ssrPipelineInfo.pColorBlendState = &singleColorBlend;
+        ssrPipelineInfo.stageCount = static_cast<std::uint32_t>(ssrStages.size());
+        ssrPipelineInfo.pStages = ssrStages.data();
+        ssrPipelineInfo.layout = sceneSsrPipelineLayout;
+        check(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &ssrPipelineInfo,
+            nullptr, &sceneSsrPipeline), "vkCreateGraphicsPipelines(scene ssr)");
+
+        // Pipeline de composicao de SSR: soma (nao substitui) no HDR em
+        // resolucao cheia - blend ADITIVO de verdade (srcFactor=dstFactor=UM),
+        // ao contrario de todo outro pipeline de tela cheia deste arquivo
+        // (todos REPLACE). Ver ssr_composite.frag.
+        VkPipelineColorBlendAttachmentState ssrCompositeBlendAttachment {};
+        ssrCompositeBlendAttachment.blendEnable = VK_TRUE;
+        ssrCompositeBlendAttachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
+        ssrCompositeBlendAttachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE;
+        ssrCompositeBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
+        ssrCompositeBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+        ssrCompositeBlendAttachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+        ssrCompositeBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
+        ssrCompositeBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT
+            | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT
+            | VK_COLOR_COMPONENT_A_BIT;
+        VkPipelineColorBlendStateCreateInfo ssrCompositeColorBlend {
+            VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO
+        };
+        ssrCompositeColorBlend.attachmentCount = 1;
+        ssrCompositeColorBlend.pAttachments = &ssrCompositeBlendAttachment;
+        VkPipelineRenderingCreateInfo ssrCompositeRendering {
+            VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO
+        };
+        ssrCompositeRendering.colorAttachmentCount = 1;
+        ssrCompositeRendering.pColorAttachmentFormats = &SceneHdrColorFormat;
+        VkPipelineDepthStencilStateCreateInfo ssrCompositeDepth {
+            VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO
+        };
+        ssrCompositeDepth.depthTestEnable = VK_FALSE;
+        ssrCompositeDepth.depthWriteEnable = VK_FALSE;
+        std::array<VkPipelineShaderStageCreateInfo, 2> ssrCompositeStages {};
+        ssrCompositeStages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        ssrCompositeStages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+        ssrCompositeStages[0].module = sceneTonemapVertexModule;
+        ssrCompositeStages[0].pName = "main";
+        ssrCompositeStages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        ssrCompositeStages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+        ssrCompositeStages[1].module = sceneSsrCompositeFragmentModule;
+        ssrCompositeStages[1].pName = "main";
+        VkGraphicsPipelineCreateInfo ssrCompositePipelineInfo = scenePipelineInfo;
+        ssrCompositePipelineInfo.pNext = &ssrCompositeRendering;
+        ssrCompositePipelineInfo.pDepthStencilState = &ssrCompositeDepth;
+        ssrCompositePipelineInfo.pColorBlendState = &ssrCompositeColorBlend;
+        ssrCompositePipelineInfo.stageCount =
+            static_cast<std::uint32_t>(ssrCompositeStages.size());
+        ssrCompositePipelineInfo.pStages = ssrCompositeStages.data();
+        ssrCompositePipelineInfo.layout = sceneSsrCompositePipelineLayout;
+        check(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &ssrCompositePipelineInfo,
+            nullptr, &sceneSsrCompositePipeline), "vkCreateGraphicsPipelines(scene ssr composite)");
+
+        VkVertexInputBindingDescription oceanVertexBinding {};
+        oceanVertexBinding.binding = 0;
+        oceanVertexBinding.stride = sizeof(float) * 2;
+        oceanVertexBinding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+        VkVertexInputAttributeDescription oceanVertexAttribute {};
+        oceanVertexAttribute.location = 0;
+        oceanVertexAttribute.binding = 0;
+        oceanVertexAttribute.format = VK_FORMAT_R32G32_SFLOAT;
+        oceanVertexAttribute.offset = 0;
+        VkPipelineVertexInputStateCreateInfo oceanVertexInput {
+            VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO
+        };
+        oceanVertexInput.vertexBindingDescriptionCount = 1;
+        oceanVertexInput.pVertexBindingDescriptions = &oceanVertexBinding;
+        oceanVertexInput.vertexAttributeDescriptionCount = 1;
+        oceanVertexInput.pVertexAttributeDescriptions =
+            &oceanVertexAttribute;
+
+        VkPipelineColorBlendAttachmentState oceanBlendAttachment {};
+        oceanBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT
+            | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT
+            | VK_COLOR_COMPONENT_A_BIT;
+        oceanBlendAttachment.blendEnable = VK_TRUE;
+        oceanBlendAttachment.srcColorBlendFactor =
+            VK_BLEND_FACTOR_SRC_ALPHA;
+        oceanBlendAttachment.dstColorBlendFactor =
+            VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+        oceanBlendAttachment.colorBlendOp = VK_BLEND_OP_ADD;
+        oceanBlendAttachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+        oceanBlendAttachment.dstAlphaBlendFactor =
+            VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+        oceanBlendAttachment.alphaBlendOp = VK_BLEND_OP_ADD;
+        VkPipelineColorBlendAttachmentState oceanMotionBlendAttachment {};
+        oceanMotionBlendAttachment.colorWriteMask =
+            VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT;
+        const std::array<VkPipelineColorBlendAttachmentState, 2>
+            oceanBlendAttachments {
+                oceanBlendAttachment, oceanMotionBlendAttachment
+            };
+        VkPipelineColorBlendStateCreateInfo oceanColorBlend {
+            VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO
+        };
+        oceanColorBlend.attachmentCount =
+            static_cast<std::uint32_t>(oceanBlendAttachments.size());
+        oceanColorBlend.pAttachments = oceanBlendAttachments.data();
+
+        VkPipelineRenderingCreateInfo oceanRendering {
+            VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO
+        };
+        const std::array<VkFormat, 2> oceanColorFormats {
+            SceneHdrColorFormat, SceneMotionVectorFormat
+        };
+        oceanRendering.colorAttachmentCount =
+            static_cast<std::uint32_t>(oceanColorFormats.size());
+        oceanRendering.pColorAttachmentFormats = oceanColorFormats.data();
+        oceanRendering.depthAttachmentFormat = SceneDepthFormat;
+
+        VkPipelineDepthStencilStateCreateInfo oceanDepth {
+            VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO
+        };
+        oceanDepth.depthTestEnable = VK_TRUE;
+        oceanDepth.depthWriteEnable = VK_FALSE;
+        oceanDepth.depthCompareOp = VK_COMPARE_OP_GREATER_OR_EQUAL;
+
+        std::array<VkPipelineShaderStageCreateInfo, 2> oceanStages {};
+        oceanStages[0].sType =
+            VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        oceanStages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+        oceanStages[0].module = sceneOceanVertexModule;
+        oceanStages[0].pName = "main";
+        oceanStages[1].sType =
+            VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        oceanStages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+        oceanStages[1].module = sceneOceanFragmentModule;
+        oceanStages[1].pName = "main";
+
+        VkPipelineRasterizationStateCreateInfo oceanRasterizer =
+            sceneRasterizer;
+        oceanRasterizer.cullMode = VK_CULL_MODE_NONE;
+        VkGraphicsPipelineCreateInfo oceanPipelineInfo = scenePipelineInfo;
+        oceanPipelineInfo.pNext = &oceanRendering;
+        oceanPipelineInfo.pVertexInputState = &oceanVertexInput;
+        oceanPipelineInfo.pRasterizationState = &oceanRasterizer;
+        oceanPipelineInfo.pDepthStencilState = &oceanDepth;
+        oceanPipelineInfo.pColorBlendState = &oceanColorBlend;
+        oceanPipelineInfo.stageCount =
+            static_cast<std::uint32_t>(oceanStages.size());
+        oceanPipelineInfo.pStages = oceanStages.data();
+        oceanPipelineInfo.layout = sceneOceanPipelineLayout;
+        check(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1,
+            &oceanPipelineInfo, nullptr, &sceneOceanPipeline),
+            "vkCreateGraphicsPipelines(scene ocean)");
+
         // Material sampler + descriptor set (set=1) sampled by the mesh
         // fragment shader for its albedo map. Each texture gets its own
         // descriptor set allocated on demand in createTexture2D rather than
@@ -3536,7 +5628,13 @@ public:
         materialSamplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
         materialSamplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
         materialSamplerInfo.anisotropyEnable = VK_TRUE;
-        materialSamplerInfo.maxAnisotropy = deviceProperties.limits.maxSamplerAnisotropy;
+        // 16x preserva frequências que já são menores que um pixel em
+        // superfícies muito inclinadas e pode realçar moiré. 8x com um
+        // pequeno bias positivo conserva nitidez próxima e estabiliza chão/
+        // paredes distantes.
+        materialSamplerInfo.maxAnisotropy = std::min(
+            8.0f, deviceProperties.limits.maxSamplerAnisotropy);
+        materialSamplerInfo.mipLodBias = 0.40f;
         materialSamplerInfo.maxLod = VK_LOD_CLAMP_NONE;
         check(vkCreateSampler(device, &materialSamplerInfo, nullptr, &materialSampler),
             "vkCreateSampler(material)");
@@ -3567,12 +5665,49 @@ public:
         check(vkCreateDescriptorPool(device, &materialPoolInfo, nullptr,
             &materialDescriptorPool), "vkCreateDescriptorPool(material)");
 
+        constexpr std::uint32_t PlanarDescriptorSetCount =
+            FramesInFlight * 2;
+        const VkDescriptorPoolSize planarPoolSize {
+            VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            PlanarDescriptorSetCount
+        };
+        VkDescriptorPoolCreateInfo planarPoolInfo {
+            VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO
+        };
+        planarPoolInfo.maxSets = PlanarDescriptorSetCount;
+        planarPoolInfo.poolSizeCount = 1;
+        planarPoolInfo.pPoolSizes = &planarPoolSize;
+        check(vkCreateDescriptorPool(device, &planarPoolInfo, nullptr,
+            &scenePlanarReflectionDescriptorPool),
+            "vkCreateDescriptorPool(planar reflection)");
+        std::array<VkDescriptorSetLayout, PlanarDescriptorSetCount>
+            planarSetLayouts {};
+        planarSetLayouts.fill(materialDescriptorSetLayout);
+        std::array<VkDescriptorSet, PlanarDescriptorSetCount>
+            planarDescriptorSets {};
+        VkDescriptorSetAllocateInfo planarAllocateInfo {
+            VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO
+        };
+        planarAllocateInfo.descriptorPool =
+            scenePlanarReflectionDescriptorPool;
+        planarAllocateInfo.descriptorSetCount = PlanarDescriptorSetCount;
+        planarAllocateInfo.pSetLayouts = planarSetLayouts.data();
+        check(vkAllocateDescriptorSets(device, &planarAllocateInfo,
+            planarDescriptorSets.data()),
+            "vkAllocateDescriptorSets(planar reflection)");
+        for (std::size_t index = 0; index < FramesInFlight; ++index) {
+            scenePlanarReflectionDescriptorSets[index] =
+                planarDescriptorSets[index];
+            sceneDirectPlanarReflectionDescriptorSets[index] =
+                planarDescriptorSets[FramesInFlight + index];
+        }
+
         // Nenhum push constant aqui: dados por instancia (posicao/orientacao/
         // metallic/roughness/flags) ja chegam pelo vertex buffer de instancia
         // (binding 1, ver meshBinding abaixo).
-        const std::array<VkDescriptorSetLayout, 3> meshSetLayouts {
+        const std::array<VkDescriptorSetLayout, 4> meshSetLayouts {
             sceneDescriptorSetLayout, materialDescriptorSetLayout,
-            materialDescriptorSetLayout
+            materialDescriptorSetLayout, materialDescriptorSetLayout
         };
         VkPipelineLayoutCreateInfo meshPipelineLayoutInfo {
             VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO
@@ -3589,7 +5724,7 @@ public:
         // location 0.
         std::array<VkVertexInputBindingDescription, 2> meshBinding {};
         meshBinding[0].binding = 0;
-        meshBinding[0].stride = sizeof(float) * 11;
+        meshBinding[0].stride = sizeof(MeshVertex3D);
         meshBinding[0].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
         meshBinding[1].binding = 1;
         meshBinding[1].stride = sizeof(SceneMeshInstanceGpu);
@@ -3601,7 +5736,7 @@ public:
         // seu shader simplesmente nao declara essas localizacoes, o que e
         // valido no Vulkan (nem todo atributo descrito precisa ser
         // consumido por todo shader que usa o mesmo layout).
-        std::array<VkVertexInputAttributeDescription, 13> meshAttributes { {
+        std::array<VkVertexInputAttributeDescription, 15> meshAttributes { {
             { 0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0 },
             { 1, 0, VK_FORMAT_R32G32B32_SFLOAT, sizeof(float) * 3 },
             { 2, 0, VK_FORMAT_R32G32_SFLOAT, sizeof(float) * 6 },
@@ -3623,7 +5758,9 @@ public:
             { 11, 1, VK_FORMAT_R32G32B32A32_SFLOAT,
                 offsetof(SceneMeshInstanceGpu, previousOrientationY) },
             { 12, 1, VK_FORMAT_R32G32B32A32_SFLOAT,
-                offsetof(SceneMeshInstanceGpu, previousOrientationZ) }
+                offsetof(SceneMeshInstanceGpu, previousOrientationZ) },
+            { 13, 0, VK_FORMAT_R32G32B32A32_UINT, offsetof(MeshVertex3D, joints) },
+            { 14, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshVertex3D, weights) }
         } };
         VkPipelineVertexInputStateCreateInfo meshVertexInput {
             VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO
@@ -3650,14 +5787,11 @@ public:
         const std::array<VkPipelineShaderStageCreateInfo, 2> meshStages {
             meshVertexStage, meshFragmentStage
         };
-        // O passe de cor agora roda depois do pre-pass de profundidade
+        // O passe de cor roda depois do pre-pass de profundidade
         // (sceneMeshDepthPrepassPipeline, logo abaixo) - so testa (EQUAL)
         // sem escrever de novo, pra aproveitar o early-Z ja resolvido pelo
         // pre-pass e nao pagar o fragment shader completo (BRDF + shadow
-        // lookup) em fragmentos que vao ser sobrescritos por outro objeto
-        // mais proximo. Seguro porque os dois passes usam exatamente a
-        // mesma transformacao de vertice (ver scene3d_mesh_depth.vert),
-        // produzindo gl_Position.z identico bit a bit.
+        // lookup) em fragmentos que vao ser sobrescritos por outro objeto.
         VkPipelineDepthStencilStateCreateInfo meshColorDepth {
             VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO
         };
@@ -3765,7 +5899,6 @@ public:
         if (sceneShadowImages[0] != VK_NULL_HANDLE) {
             return;
         }
-        const VkExtent2D shadowExtent { SceneShadowMapSize, SceneShadowMapSize };
         std::array<VkDescriptorImageInfo, ShadowCascadeCount> shadowInfos {};
         // Mesmas N imagens do array acima, mas com o sampler SEM comparacao
         // (binding 3, ver bindings[3] em createScene3DResources) - so pra
@@ -3773,6 +5906,10 @@ public:
         // scene3d_mesh.frag).
         std::array<VkDescriptorImageInfo, ShadowCascadeCount> shadowRawInfos {};
         for (std::uint32_t cascade = 0; cascade < ShadowCascadeCount; ++cascade) {
+            const VkExtent2D shadowExtent {
+                ShadowCascadeMapSizes[cascade],
+                ShadowCascadeMapSizes[cascade]
+            };
             createSceneAttachment(shadowExtent, SceneDepthFormat,
                 VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                 VK_IMAGE_ASPECT_DEPTH_BIT, sceneShadowImages[cascade],
@@ -3791,21 +5928,27 @@ public:
         // Dois WRITEs por descriptor set (bindings 1 e 3), cada um com
         // descriptorCount=ShadowCascadeCount - arrays de sampler no shader
         // (ver scene3d_mesh.frag), nao mais samplers unicos.
-        std::array<VkWriteDescriptorSet, FramesInFlight * 2> writes {};
+        std::array<VkWriteDescriptorSet, FramesInFlight * 4> writes {};
         for (std::size_t index = 0; index < FramesInFlight; ++index) {
-            writes[index * 2].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[index * 2].dstSet = sceneDescriptorSets[index];
-            writes[index * 2].dstBinding = 1;
-            writes[index * 2].descriptorCount = ShadowCascadeCount;
-            writes[index * 2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            writes[index * 2].pImageInfo = shadowInfos.data();
+            const std::size_t base = index * 4;
+            writes[base].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[base].dstSet = sceneDescriptorSets[index];
+            writes[base].dstBinding = 1;
+            writes[base].descriptorCount = ShadowCascadeCount;
+            writes[base].descriptorType =
+                VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[base].pImageInfo = shadowInfos.data();
 
-            writes[index * 2 + 1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[index * 2 + 1].dstSet = sceneDescriptorSets[index];
-            writes[index * 2 + 1].dstBinding = 3;
-            writes[index * 2 + 1].descriptorCount = ShadowCascadeCount;
-            writes[index * 2 + 1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            writes[index * 2 + 1].pImageInfo = shadowRawInfos.data();
+            writes[base + 1] = writes[base];
+            writes[base + 1].dstBinding = 3;
+            writes[base + 1].pImageInfo = shadowRawInfos.data();
+
+            writes[base + 2] = writes[base];
+            writes[base + 2].dstSet =
+                scenePlanarCameraDescriptorSets[index];
+            writes[base + 3] = writes[base + 1];
+            writes[base + 3].dstSet =
+                scenePlanarCameraDescriptorSets[index];
         }
         vkUpdateDescriptorSets(device, static_cast<std::uint32_t>(writes.size()),
             writes.data(), 0, nullptr);
@@ -3814,8 +5957,13 @@ public:
     void updateTemporalDescriptorSets(VkImageView hdrColorView,
         VkImageView depthView, VkImageView motionVectorView,
         const std::array<VkImageView, FramesInFlight>& historyViews,
+        const std::array<VkImageView, FramesInFlight>& exposureViews,
+        const std::array<VkImageView, FramesInFlight>& gtaoViews,
+        const std::array<VkImageView, FramesInFlight>& bloomGlareViews,
         const std::array<VkDescriptorSet, FramesInFlight>& resolveSets,
-        const std::array<VkDescriptorSet, FramesInFlight>& tonemapSets) {
+        const std::array<VkDescriptorSet, FramesInFlight>& tonemapSets,
+        const std::array<VkDescriptorSet, FramesInFlight>&
+            tonemapWithoutTaaSets) {
         // Cada slot referencia de forma imutavel os attachments que usara:
         // resolve[i] le history[i-1] e escreve history[i]; tonemap[i] le o
         // history[i] recem-resolvido. Como os sets nao mudam durante frames
@@ -3824,7 +5972,7 @@ public:
             ++frameIndex) {
             const std::size_t historyReadIndex =
                 (frameIndex + FramesInFlight - 1) % FramesInFlight;
-            std::array<VkDescriptorImageInfo, 5> imageInfos {};
+            std::array<VkDescriptorImageInfo, 9> imageInfos {};
             imageInfos[0] = { sceneTonemapSampler, hdrColorView,
                 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
             imageInfos[1] = { sceneDepthSampleSampler, depthView,
@@ -3834,11 +5982,23 @@ public:
             imageInfos[3] = { sceneTaaHistorySampler,
                 historyViews[historyReadIndex],
                 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
-            imageInfos[4] = { sceneTonemapSampler, historyViews[frameIndex],
+            imageInfos[4] = { sceneTaaHistorySampler,
+                gtaoViews[frameIndex],
+                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+            imageInfos[5] = { sceneTonemapSampler, historyViews[frameIndex],
+                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+            imageInfos[6] = { sceneTonemapSampler,
+                exposureViews[historyReadIndex],
+                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+            imageInfos[7] = { sceneTonemapSampler,
+                exposureViews[frameIndex],
+                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+            imageInfos[8] = { sceneTaaHistorySampler,
+                bloomGlareViews[frameIndex],
                 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
 
-            std::array<VkWriteDescriptorSet, 5> writes {};
-            for (std::size_t binding = 0; binding < 4; ++binding) {
+            std::array<VkWriteDescriptorSet, 17> writes {};
+            for (std::size_t binding = 0; binding < 5; ++binding) {
                 writes[binding].sType =
                     VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
                 writes[binding].dstSet = resolveSets[frameIndex];
@@ -3849,17 +6009,240 @@ public:
                     VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
                 writes[binding].pImageInfo = &imageInfos[binding];
             }
-            writes[4].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            writes[4].dstSet = tonemapSets[frameIndex];
-            writes[4].dstBinding = 0;
-            writes[4].descriptorCount = 1;
-            writes[4].descriptorType =
+            writes[5].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[5].dstSet = tonemapSets[frameIndex];
+            writes[5].dstBinding = 0;
+            writes[5].descriptorCount = 1;
+            writes[5].descriptorType =
                 VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-            writes[4].pImageInfo = &imageInfos[4];
+            writes[5].pImageInfo = &imageInfos[5];
+            for (std::size_t binding = 1; binding < 3; ++binding) {
+                writes[5 + binding].sType =
+                    VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                writes[5 + binding].dstSet = tonemapSets[frameIndex];
+                writes[5 + binding].dstBinding =
+                    static_cast<std::uint32_t>(binding);
+                writes[5 + binding].descriptorCount = 1;
+                writes[5 + binding].descriptorType =
+                    VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                writes[5 + binding].pImageInfo =
+                    &imageInfos[5 + binding];
+            }
+            writes[8].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[8].dstSet = tonemapSets[frameIndex];
+            writes[8].dstBinding = 3;
+            writes[8].descriptorCount = 1;
+            writes[8].descriptorType =
+                VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[8].pImageInfo = &imageInfos[8];
+            writes[9].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[9].dstSet = tonemapSets[frameIndex];
+            writes[9].dstBinding = 4;
+            writes[9].descriptorCount = 1;
+            writes[9].descriptorType =
+                VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[9].pImageInfo = &imageInfos[1];
+            writes[10].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[10].dstSet = tonemapSets[frameIndex];
+            writes[10].dstBinding = 5;
+            writes[10].descriptorCount = 1;
+            writes[10].descriptorType =
+                VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[10].pImageInfo = &imageInfos[2];
+
+            // Variante do mesmo set que lê diretamente o HDR atual. Ela
+            // permite ao perfil Desempenho remover o resolve temporal
+            // inteiro sem reescrever descriptors ainda em uso pela GPU.
+            // Os outros cinco bindings permanecem idênticos.
+            writes[11] = writes[5];
+            writes[11].dstSet = tonemapWithoutTaaSets[frameIndex];
+            writes[11].pImageInfo = &imageInfos[0];
+            for (std::size_t binding = 1; binding < 6; ++binding) {
+                writes[11 + binding] = writes[5 + binding];
+                writes[11 + binding].dstSet =
+                    tonemapWithoutTaaSets[frameIndex];
+            }
             vkUpdateDescriptorSets(device,
                 static_cast<std::uint32_t>(writes.size()), writes.data(),
                 0, nullptr);
         }
+    }
+
+    void updateBloomGlareDescriptorSets(VkImageView depthView,
+        VkImageView hdrColorView,
+        const std::array<VkDescriptorSet, FramesInFlight>& descriptorSets) {
+        for (std::size_t frameIndex = 0; frameIndex < FramesInFlight;
+            ++frameIndex) {
+            const std::array<VkDescriptorImageInfo, 2> imageInfos {{
+                { sceneTaaHistorySampler, hdrColorView,
+                    VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL },
+                { sceneDepthSampleSampler, depthView,
+                    VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL }
+            }};
+            std::array<VkWriteDescriptorSet, 2> writes {};
+            for (std::size_t binding = 0; binding < writes.size();
+                ++binding) {
+                writes[binding].sType =
+                    VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                writes[binding].dstSet = descriptorSets[frameIndex];
+                writes[binding].dstBinding =
+                    static_cast<std::uint32_t>(binding);
+                writes[binding].descriptorCount = 1;
+                writes[binding].descriptorType =
+                    VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                writes[binding].pImageInfo = &imageInfos[binding];
+            }
+            vkUpdateDescriptorSets(device,
+                static_cast<std::uint32_t>(writes.size()), writes.data(),
+                0, nullptr);
+        }
+    }
+
+    void updateGtaoDescriptorSets(VkImageView depthView,
+        VkImageView normalRoughnessView,
+        const std::array<VkDescriptorSet, FramesInFlight>& gtaoSets) {
+        const std::array<VkDescriptorImageInfo, 2> imageInfos { {
+            { sceneDepthSampleSampler, depthView,
+                VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL },
+            { sceneTonemapSampler, normalRoughnessView,
+                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL }
+        } };
+        for (VkDescriptorSet set : gtaoSets) {
+            std::array<VkWriteDescriptorSet, 2> writes {};
+            for (std::uint32_t binding = 0;
+                binding < writes.size(); ++binding) {
+                writes[binding].sType =
+                    VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                writes[binding].dstSet = set;
+                writes[binding].dstBinding = binding;
+                writes[binding].descriptorCount = 1;
+                writes[binding].descriptorType =
+                    VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                writes[binding].pImageInfo = &imageInfos[binding];
+            }
+            vkUpdateDescriptorSets(device,
+                static_cast<std::uint32_t>(writes.size()),
+                writes.data(), 0, nullptr);
+        }
+    }
+
+    // Mesmo raciocinio de updateTemporalDescriptorSets acima, para os dois
+    // passes de SSR (ver ssr_trace_resolve.frag/ssr_composite.frag): sets
+    // pre-vinculados uma vez por slot em voo, nunca reescritos durante um
+    // frame - traceSets[i] le o historico meia-resolucao do slot OPOSTO
+    // (reprojetado) e escreve no slot i; compositeSets[i], executado depois
+    // no MESMO frame real, le o slot i recem-escrito.
+    void updateSsrDescriptorSets(VkImageView hdrColorView, VkImageView depthView,
+        VkImageView normalRoughnessView, VkImageView reflectanceView,
+        VkImageView motionVectorView,
+        const std::array<VkImageView, FramesInFlight>& ssrHistoryViews,
+        const std::array<VkDescriptorSet, FramesInFlight>& ssrTraceSets,
+        const std::array<VkDescriptorSet, FramesInFlight>& ssrCompositeSets) {
+        for (std::size_t frameIndex = 0; frameIndex < FramesInFlight;
+            ++frameIndex) {
+            const std::size_t historyReadIndex =
+                (frameIndex + FramesInFlight - 1) % FramesInFlight;
+            std::array<VkDescriptorImageInfo, 6> traceImageInfos {};
+            traceImageInfos[0] = { sceneTonemapSampler, hdrColorView,
+                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+            traceImageInfos[1] = { sceneDepthSampleSampler, depthView,
+                VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL };
+            traceImageInfos[2] = { sceneTonemapSampler, normalRoughnessView,
+                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+            traceImageInfos[3] = { sceneTonemapSampler, reflectanceView,
+                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+            traceImageInfos[4] = { sceneTonemapSampler, motionVectorView,
+                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+            // Sampler LINEAR (nao sceneTonemapSampler/NEAREST): o historico
+            // e lido em previousTexCoord, resultado de reprojecao por vetor
+            // de movimento, que quase nunca cai exatamente num texel - o
+            // mesmo raciocinio do historico de TAA (ver
+            // sceneTaaHistorySampler acima).
+            traceImageInfos[5] = { sceneTaaHistorySampler,
+                ssrHistoryViews[historyReadIndex],
+                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+            std::array<VkWriteDescriptorSet, 6> traceWrites {};
+            for (std::size_t binding = 0; binding < traceWrites.size(); ++binding) {
+                traceWrites[binding].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                traceWrites[binding].dstSet = ssrTraceSets[frameIndex];
+                traceWrites[binding].dstBinding = static_cast<std::uint32_t>(binding);
+                traceWrites[binding].descriptorCount = 1;
+                traceWrites[binding].descriptorType =
+                    VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                traceWrites[binding].pImageInfo = &traceImageInfos[binding];
+            }
+            vkUpdateDescriptorSets(device,
+                static_cast<std::uint32_t>(traceWrites.size()), traceWrites.data(),
+                0, nullptr);
+
+            std::array<VkDescriptorImageInfo, 2> compositeImageInfos {};
+            compositeImageInfos[0] = { sceneTonemapSampler, reflectanceView,
+                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+            // Sampler LINEAR (nao sceneTonemapSampler/NEAREST): este binding
+            // e o unico neste passe que faz upsample de verdade (MEIA
+            // resolucao para CHEIA, ver sceneSsrHistoryImage) - NEAREST
+            // alargaria cada texel do traçado em blocos 2x2 visiveis no
+            // resultado final, a causa do aspecto "quadriculado/quebrado"
+            // reportado no espelho.
+            compositeImageInfos[1] = { sceneTaaHistorySampler,
+                ssrHistoryViews[frameIndex],
+                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+            std::array<VkWriteDescriptorSet, 2> compositeWrites {};
+            for (std::size_t binding = 0; binding < compositeWrites.size(); ++binding) {
+                compositeWrites[binding].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                compositeWrites[binding].dstSet = ssrCompositeSets[frameIndex];
+                compositeWrites[binding].dstBinding = static_cast<std::uint32_t>(binding);
+                compositeWrites[binding].descriptorCount = 1;
+                compositeWrites[binding].descriptorType =
+                    VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+                compositeWrites[binding].pImageInfo = &compositeImageInfos[binding];
+            }
+            vkUpdateDescriptorSets(device,
+                static_cast<std::uint32_t>(compositeWrites.size()), compositeWrites.data(),
+                0, nullptr);
+        }
+    }
+
+    void updatePlanarReflectionDescriptorSets(VkImageView reflectionView,
+        const std::array<VkDescriptorSet, FramesInFlight>& descriptorSets) {
+        VkDescriptorImageInfo imageInfo {
+            sceneTaaHistorySampler, reflectionView,
+            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+        };
+        std::array<VkWriteDescriptorSet, FramesInFlight> writes {};
+        for (std::size_t index = 0; index < FramesInFlight; ++index) {
+            writes[index].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[index].dstSet = descriptorSets[index];
+            writes[index].dstBinding = 0;
+            writes[index].descriptorCount = 1;
+            writes[index].descriptorType =
+                VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[index].pImageInfo = &imageInfo;
+        }
+        vkUpdateDescriptorSets(device,
+            static_cast<std::uint32_t>(writes.size()), writes.data(),
+            0, nullptr);
+    }
+
+    void updateOceanDescriptorSets(VkImageView depthView,
+        const std::array<VkDescriptorSet, FramesInFlight>& descriptorSets) {
+        VkDescriptorImageInfo imageInfo {
+            sceneDepthSampleSampler, depthView,
+            VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
+        };
+        std::array<VkWriteDescriptorSet, FramesInFlight> writes {};
+        for (std::size_t index = 0; index < FramesInFlight; ++index) {
+            writes[index].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            writes[index].dstSet = descriptorSets[index];
+            writes[index].dstBinding = 0;
+            writes[index].descriptorCount = 1;
+            writes[index].descriptorType =
+                VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[index].pImageInfo = &imageInfo;
+        }
+        vkUpdateDescriptorSets(device,
+            static_cast<std::uint32_t>(writes.size()), writes.data(),
+            0, nullptr);
     }
 
     void ensureSceneDirectDepth(Extent2D requestedExtent) {
@@ -3883,17 +6266,103 @@ public:
             VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
             VK_IMAGE_ASPECT_COLOR_BIT, sceneDirectMotionVectorImage,
             sceneDirectMotionVectorAllocation, sceneDirectMotionVectorView);
+        createSceneAttachment(extent, SceneNormalRoughnessFormat,
+            VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+            VK_IMAGE_ASPECT_COLOR_BIT, sceneDirectNormalRoughnessImage,
+            sceneDirectNormalRoughnessAllocation, sceneDirectNormalRoughnessView);
+        createSceneAttachment(extent, SceneReflectanceFormat,
+            VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+            VK_IMAGE_ASPECT_COLOR_BIT, sceneDirectReflectanceImage,
+            sceneDirectReflectanceAllocation, sceneDirectReflectanceView);
+        const VkExtent2D planarExtent {
+            std::max(1u, extent.width / 2),
+            std::max(1u, extent.height / 2)
+        };
+        createSceneAttachment(planarExtent, SceneHdrColorFormat,
+            VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+            VK_IMAGE_ASPECT_COLOR_BIT, sceneDirectPlanarReflectionImage,
+            sceneDirectPlanarReflectionAllocation,
+            sceneDirectPlanarReflectionView);
         for (std::size_t index = 0; index < sceneDirectTaaHistoryImage.size(); ++index) {
             createSceneAttachment(extent, SceneHdrColorFormat,
                 VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                 VK_IMAGE_ASPECT_COLOR_BIT, sceneDirectTaaHistoryImage[index],
                 sceneDirectTaaHistoryAllocation[index], sceneDirectTaaHistoryView[index]);
         }
+        for (std::size_t index = 0;
+            index < sceneDirectAutoExposureImage.size(); ++index) {
+            createSceneAttachment({ 1, 1 }, SceneAutoExposureFormat,
+                VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT
+                    | VK_IMAGE_USAGE_SAMPLED_BIT,
+                VK_IMAGE_ASPECT_COLOR_BIT,
+                sceneDirectAutoExposureImage[index],
+                sceneDirectAutoExposureAllocation[index],
+                sceneDirectAutoExposureView[index]);
+        }
+        const VkExtent2D gtaoExtent {
+            std::max(1u, extent.width / 2),
+            std::max(1u, extent.height / 2)
+        };
+        for (std::size_t index = 0;
+            index < sceneDirectGtaoImage.size(); ++index) {
+            createSceneAttachment(gtaoExtent,
+                SceneAmbientOcclusionFormat,
+                VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT
+                    | VK_IMAGE_USAGE_SAMPLED_BIT,
+                VK_IMAGE_ASPECT_COLOR_BIT,
+                sceneDirectGtaoImage[index],
+                sceneDirectGtaoAllocation[index],
+                sceneDirectGtaoView[index]);
+        }
+        const VkExtent2D bloomGlareExtent {
+            std::max(1u, extent.width / 8),
+            std::max(1u, extent.height / 8)
+        };
+        for (std::size_t index = 0;
+            index < sceneDirectBloomGlareImage.size(); ++index) {
+            createSceneAttachment(bloomGlareExtent,
+                SceneBloomGlareFormat,
+                VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT
+                    | VK_IMAGE_USAGE_SAMPLED_BIT,
+                VK_IMAGE_ASPECT_COLOR_BIT,
+                sceneDirectBloomGlareImage[index],
+                sceneDirectBloomGlareAllocation[index],
+                sceneDirectBloomGlareView[index]);
+        }
+        // SSR roda em MEIA resolucao linear (1/4 dos pixels, ver
+        // SceneSsrHistoryFormat) - minimo 1x1 pra extents degenerados.
+        const VkExtent2D ssrExtent {
+            std::max(1u, extent.width / 2), std::max(1u, extent.height / 2)
+        };
+        for (std::size_t index = 0; index < sceneDirectSsrHistoryImage.size(); ++index) {
+            createSceneAttachment(ssrExtent, SceneSsrHistoryFormat,
+                VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                VK_IMAGE_ASPECT_COLOR_BIT, sceneDirectSsrHistoryImage[index],
+                sceneDirectSsrHistoryAllocation[index], sceneDirectSsrHistoryView[index]);
+        }
         sceneDirectExtent = extent;
         updateTemporalDescriptorSets(sceneDirectHdrColorView,
             sceneDirectDepthView, sceneDirectMotionVectorView,
-            sceneDirectTaaHistoryView, sceneDirectTaaResolveDescriptorSets,
-            sceneDirectTonemapDescriptorSets);
+            sceneDirectTaaHistoryView, sceneDirectAutoExposureView,
+            sceneDirectGtaoView, sceneDirectBloomGlareView,
+            sceneDirectTaaResolveDescriptorSets,
+            sceneDirectTonemapDescriptorSets,
+            sceneDirectTonemapWithoutTaaDescriptorSets);
+        updateBloomGlareDescriptorSets(sceneDirectDepthView,
+            sceneDirectHdrColorView,
+            sceneDirectBloomGlareDescriptorSets);
+        updateGtaoDescriptorSets(sceneDirectDepthView,
+            sceneDirectNormalRoughnessView,
+            sceneDirectGtaoDescriptorSets);
+        updateSsrDescriptorSets(sceneDirectHdrColorView, sceneDirectDepthView,
+            sceneDirectNormalRoughnessView, sceneDirectReflectanceView,
+            sceneDirectMotionVectorView, sceneDirectSsrHistoryView,
+            sceneDirectSsrDescriptorSets, sceneDirectSsrCompositeDescriptorSets);
+        updatePlanarReflectionDescriptorSets(
+            sceneDirectPlanarReflectionView,
+            sceneDirectPlanarReflectionDescriptorSets);
+        updateOceanDescriptorSets(sceneDirectDepthView,
+            sceneDirectOceanDescriptorSets);
     }
 
     void ensureScene3DTarget(Extent2D requestedExtent) {
@@ -3952,11 +6421,73 @@ public:
             VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
             VK_IMAGE_ASPECT_COLOR_BIT, sceneMotionVectorImage,
             sceneMotionVectorAllocation, sceneMotionVectorView);
+        createImage(extent, SceneNormalRoughnessFormat,
+            VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+            VK_IMAGE_ASPECT_COLOR_BIT, sceneNormalRoughnessImage,
+            sceneNormalRoughnessAllocation, sceneNormalRoughnessView);
+        createImage(extent, SceneReflectanceFormat,
+            VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+            VK_IMAGE_ASPECT_COLOR_BIT, sceneReflectanceImage,
+            sceneReflectanceAllocation, sceneReflectanceView);
+        const VkExtent2D planarExtent {
+            std::max(1u, extent.width / 2),
+            std::max(1u, extent.height / 2)
+        };
+        createImage(planarExtent, SceneHdrColorFormat,
+            VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+            VK_IMAGE_ASPECT_COLOR_BIT, scenePlanarReflectionImage,
+            scenePlanarReflectionAllocation, scenePlanarReflectionView);
         for (std::size_t index = 0; index < sceneTaaHistoryImage.size(); ++index) {
             createImage(extent, SceneHdrColorFormat,
                 VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
                 VK_IMAGE_ASPECT_COLOR_BIT, sceneTaaHistoryImage[index],
                 sceneTaaHistoryAllocation[index], sceneTaaHistoryView[index]);
+        }
+        for (std::size_t index = 0;
+            index < sceneAutoExposureImage.size(); ++index) {
+            createImage({ 1, 1 }, SceneAutoExposureFormat,
+                VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT
+                    | VK_IMAGE_USAGE_SAMPLED_BIT,
+                VK_IMAGE_ASPECT_COLOR_BIT, sceneAutoExposureImage[index],
+                sceneAutoExposureAllocation[index],
+                sceneAutoExposureView[index]);
+        }
+        const VkExtent2D gtaoExtent {
+            std::max(1u, extent.width / 2),
+            std::max(1u, extent.height / 2)
+        };
+        for (std::size_t index = 0;
+            index < sceneGtaoImage.size(); ++index) {
+            createImage(gtaoExtent, SceneAmbientOcclusionFormat,
+                VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT
+                    | VK_IMAGE_USAGE_SAMPLED_BIT,
+                VK_IMAGE_ASPECT_COLOR_BIT, sceneGtaoImage[index],
+                sceneGtaoAllocation[index], sceneGtaoView[index]);
+        }
+        const VkExtent2D bloomGlareExtent {
+            std::max(1u, extent.width / 8),
+            std::max(1u, extent.height / 8)
+        };
+        for (std::size_t index = 0;
+            index < sceneBloomGlareImage.size(); ++index) {
+            createImage(bloomGlareExtent, SceneBloomGlareFormat,
+                VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT
+                    | VK_IMAGE_USAGE_SAMPLED_BIT,
+                VK_IMAGE_ASPECT_COLOR_BIT,
+                sceneBloomGlareImage[index],
+                sceneBloomGlareAllocation[index],
+                sceneBloomGlareView[index]);
+        }
+        // SSR roda em MEIA resolucao linear (ver comentario equivalente em
+        // ensureSceneDirectDepth).
+        const VkExtent2D ssrExtent {
+            std::max(1u, extent.width / 2), std::max(1u, extent.height / 2)
+        };
+        for (std::size_t index = 0; index < sceneSsrHistoryImage.size(); ++index) {
+            createImage(ssrExtent, SceneSsrHistoryFormat,
+                VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                VK_IMAGE_ASPECT_COLOR_BIT, sceneSsrHistoryImage[index],
+                sceneSsrHistoryAllocation[index], sceneSsrHistoryView[index]);
         }
         sceneTargetExtent = extent;
         sceneColorImGuiDescriptor = ImGui_ImplVulkan_AddTexture(
@@ -3967,7 +6498,21 @@ public:
 
         updateTemporalDescriptorSets(sceneHdrColorView, sceneDepthView,
             sceneMotionVectorView, sceneTaaHistoryView,
-            sceneTaaResolveDescriptorSets, sceneTonemapDescriptorSets);
+            sceneAutoExposureView,
+            sceneGtaoView, sceneBloomGlareView,
+            sceneTaaResolveDescriptorSets, sceneTonemapDescriptorSets,
+            sceneTonemapWithoutTaaDescriptorSets);
+        updateBloomGlareDescriptorSets(sceneDepthView,
+            sceneHdrColorView, sceneBloomGlareDescriptorSets);
+        updateGtaoDescriptorSets(sceneDepthView,
+            sceneNormalRoughnessView, sceneGtaoDescriptorSets);
+        updateSsrDescriptorSets(sceneHdrColorView, sceneDepthView,
+            sceneNormalRoughnessView, sceneReflectanceView,
+            sceneMotionVectorView, sceneSsrHistoryView,
+            sceneSsrDescriptorSets, sceneSsrCompositeDescriptorSets);
+        updatePlanarReflectionDescriptorSets(scenePlanarReflectionView,
+            scenePlanarReflectionDescriptorSets);
+        updateOceanDescriptorSets(sceneDepthView, sceneOceanDescriptorSets);
     }
 
     void createSpriteResources() {
@@ -4155,6 +6700,9 @@ public:
     VkExtent2D swapchainExtent {};
     std::uint32_t minImageCount = 2;
     std::vector<VkImage> swapchainImages;
+    // Reacquiring the same image guarantees its previous present wait has
+    // finished; a frame fence alone does not guarantee that.
+    std::vector<VkSemaphore> swapchainPresentSemaphores;
     std::vector<VkImageView> swapchainImageViews;
     std::vector<bool> swapchainInitialized;
     std::vector<VkFence> imageFences;
@@ -4185,7 +6733,7 @@ public:
     VkSampler nearestSampler = VK_NULL_HANDLE;
     VkDescriptorSetLayout spriteDescriptorSetLayout = VK_NULL_HANDLE;
     VkDescriptorPool spriteDescriptorPool = VK_NULL_HANDLE;
-    std::array<VkDescriptorSet, 4> spriteDescriptorSets {};
+    std::array<VkDescriptorSet, 4 * FramesInFlight> spriteDescriptorSets {};
     std::size_t worldSpriteDrawCount = 0;
     VkPipelineLayout spritePipelineLayout = VK_NULL_HANDLE;
     VkPipeline spritePipeline = VK_NULL_HANDLE;
@@ -4205,6 +6753,15 @@ public:
     std::array<VkBuffer, FramesInFlight> sceneUniformBuffers {};
     std::array<VmaAllocation, FramesInFlight> sceneUniformAllocations {};
     std::array<void*, FramesInFlight> sceneUniformMapped {};
+    // A camera planar usa outro UBO/set no mesmo quadro: sobrescrever o UBO
+    // principal faria todos os comandos já gravados enxergarem o último
+    // valor no momento da submissão.
+    std::array<VkDescriptorSet, FramesInFlight>
+        scenePlanarCameraDescriptorSets {};
+    std::array<VkBuffer, FramesInFlight> scenePlanarCameraUniformBuffers {};
+    std::array<VmaAllocation, FramesInFlight>
+        scenePlanarCameraUniformAllocations {};
+    std::array<void*, FramesInFlight> scenePlanarCameraUniformMapped {};
     std::array<VkBuffer, FramesInFlight> sceneMeshInstanceBuffers {};
     std::array<VmaAllocation, FramesInFlight>
         sceneMeshInstanceAllocations {};
@@ -4217,6 +6774,10 @@ public:
     // de cada draw) este e um binding de descriptor set: toda realocacao
     // exige reemitir vkUpdateDescriptorSets, ver ensureSceneLightCapacity.
     std::array<VkBuffer, FramesInFlight> sceneLightBuffers {};
+    std::array<VkBuffer, FramesInFlight> sceneSkinBuffers {};
+    std::array<VmaAllocation, FramesInFlight> sceneSkinAllocations {};
+    std::array<void*, FramesInFlight> sceneSkinMapped {};
+    std::array<std::size_t, FramesInFlight> sceneSkinCapacities {};
     std::array<VmaAllocation, FramesInFlight> sceneLightAllocations {};
     std::array<void*, FramesInFlight> sceneLightMapped {};
     std::array<std::size_t, FramesInFlight> sceneLightCapacities {};
@@ -4247,6 +6808,11 @@ public:
     VkSampler materialSampler = VK_NULL_HANDLE;
     VkDescriptorSetLayout materialDescriptorSetLayout = VK_NULL_HANDLE;
     VkDescriptorPool materialDescriptorPool = VK_NULL_HANDLE;
+    VkDescriptorPool scenePlanarReflectionDescriptorPool = VK_NULL_HANDLE;
+    std::array<VkDescriptorSet, FramesInFlight>
+        scenePlanarReflectionDescriptorSets {};
+    std::array<VkDescriptorSet, FramesInFlight>
+        sceneDirectPlanarReflectionDescriptorSets {};
     // A 1x1 white texture bound whenever a mesh has no real albedo map, so
     // the shader can unconditionally sample set=1 without branching.
     TextureHandle defaultMaterialTexture;
@@ -4259,10 +6825,9 @@ public:
     VmaAllocation sceneDepthAllocation = VK_NULL_HANDLE;
     VkImageView sceneDepthView = VK_NULL_HANDLE;
     SceneAttachmentState3D sceneDepthState;
-    // Um mapa por cascata (ver ShadowCascadeCount) - todos do mesmo tamanho
-    // (SceneShadowMapSize), compartilhados entre o caminho offscreen
-    // (preview) e o direto-pro-swapchain (Laboratorio), igual o unico mapa
-    // fazia antes das cascatas.
+    // Um mapa por cascata, com resolução progressiva definida em
+    // ShadowCascadeMapSizes e compartilhado pelos caminhos offscreen e
+    // direto-pro-swapchain.
     std::array<VkImage, ShadowCascadeCount> sceneShadowImages {};
     std::array<VmaAllocation, ShadowCascadeCount> sceneShadowAllocations {};
     std::array<VkImageView, ShadowCascadeCount> sceneShadowViews {};
@@ -4289,6 +6854,18 @@ public:
     VkImageView sceneDirectHdrColorView = VK_NULL_HANDLE;
     SceneAttachmentState3D sceneDirectHdrColorState;
 
+    // Cor HDR da camera espelhada, em meia resolução. Profundidade e os
+    // outros MRTs são temporariamente reutilizados do caminho principal e
+    // limpos de novo antes da cena normal.
+    VkImage scenePlanarReflectionImage = VK_NULL_HANDLE;
+    VmaAllocation scenePlanarReflectionAllocation = VK_NULL_HANDLE;
+    VkImageView scenePlanarReflectionView = VK_NULL_HANDLE;
+    SceneAttachmentState3D scenePlanarReflectionState;
+    VkImage sceneDirectPlanarReflectionImage = VK_NULL_HANDLE;
+    VmaAllocation sceneDirectPlanarReflectionAllocation = VK_NULL_HANDLE;
+    VkImageView sceneDirectPlanarReflectionView = VK_NULL_HANDLE;
+    SceneAttachmentState3D sceneDirectPlanarReflectionState;
+
     // Vetores de movimento por pixel (ver scene3d_mesh.vert/frag) - segundo
     // attachment de cor do MESMO passe opaco que escreve sceneHdrColorImage/
     // sceneDirectHdrColorImage (MRT - Multiple Render Targets), nao um passe
@@ -4304,6 +6881,33 @@ public:
     VkImageView sceneDirectMotionVectorView = VK_NULL_HANDLE;
     SceneAttachmentState3D sceneDirectMotionVectorState;
 
+    // Normal+rugosidade+metalico por pixel (ver SceneNormalRoughnessFormat)
+    // - terceiro attachment de cor do MESMO passe opaco MRT. Mesmo
+    // raciocinio do vetor de movimento acima: 1 imagem por caminho, nao
+    // FramesInFlight, escrita e (futuramente) lida dentro do MESMO quadro.
+    VkImage sceneNormalRoughnessImage = VK_NULL_HANDLE;
+    VmaAllocation sceneNormalRoughnessAllocation = VK_NULL_HANDLE;
+    VkImageView sceneNormalRoughnessView = VK_NULL_HANDLE;
+    SceneAttachmentState3D sceneNormalRoughnessState;
+    VkImage sceneDirectNormalRoughnessImage = VK_NULL_HANDLE;
+    VmaAllocation sceneDirectNormalRoughnessAllocation = VK_NULL_HANDLE;
+    VkImageView sceneDirectNormalRoughnessView = VK_NULL_HANDLE;
+    SceneAttachmentState3D sceneDirectNormalRoughnessState;
+
+    // Peso de reflectancia ambiente por pixel (ver SceneReflectanceFormat) -
+    // quarto attachment de cor do MESMO passe opaco MRT. Mesmo raciocinio
+    // dos dois attachments acima: 1 imagem por caminho, escrita pelo passe
+    // opaco e lida pelo passe de composicao de SSR dentro do MESMO quadro
+    // (ver ssr_composite.frag).
+    VkImage sceneReflectanceImage = VK_NULL_HANDLE;
+    VmaAllocation sceneReflectanceAllocation = VK_NULL_HANDLE;
+    VkImageView sceneReflectanceView = VK_NULL_HANDLE;
+    SceneAttachmentState3D sceneReflectanceState;
+    VkImage sceneDirectReflectanceImage = VK_NULL_HANDLE;
+    VmaAllocation sceneDirectReflectanceAllocation = VK_NULL_HANDLE;
+    VkImageView sceneDirectReflectanceView = VK_NULL_HANDLE;
+    SceneAttachmentState3D sceneDirectReflectanceState;
+
     // Um descriptor por frame em voo e por caminho. Descriptor sets podem
     // ser lidos pela GPU depois do vkQueueSubmit; reescrever um unico set no
     // quadro seguinte, como fazia a implementacao antiga, era comportamento
@@ -4314,10 +6918,92 @@ public:
     std::array<VkDescriptorSet, FramesInFlight> sceneTonemapDescriptorSets {};
     std::array<VkDescriptorSet, FramesInFlight>
         sceneDirectTonemapDescriptorSets {};
+    std::array<VkDescriptorSet, FramesInFlight>
+        sceneTonemapWithoutTaaDescriptorSets {};
+    std::array<VkDescriptorSet, FramesInFlight>
+        sceneDirectTonemapWithoutTaaDescriptorSets {};
     VkPipelineLayout sceneTonemapPipelineLayout = VK_NULL_HANDLE;
     VkPipeline sceneTonemapPipeline = VK_NULL_HANDLE;
     VkShaderModule sceneTonemapVertexModule = VK_NULL_HANDLE;
     VkShaderModule sceneTonemapFragmentModule = VK_NULL_HANDLE;
+    VkPipelineLayout sceneAutoExposurePipelineLayout = VK_NULL_HANDLE;
+    VkPipeline sceneAutoExposurePipeline = VK_NULL_HANDLE;
+    VkShaderModule sceneAutoExposureFragmentModule = VK_NULL_HANDLE;
+
+    // Dois texels 1x1 por caminho, alternados junto de currentFrame. O passe
+    // atual lê o slot anterior, suaviza em função do tempo e grava no slot
+    // atual; o tonemap lê esse resultado imediatamente no mesmo quadro.
+    std::array<VkImage, FramesInFlight> sceneAutoExposureImage {};
+    std::array<VmaAllocation, FramesInFlight>
+        sceneAutoExposureAllocation {};
+    std::array<VkImageView, FramesInFlight> sceneAutoExposureView {};
+    std::array<SceneAttachmentState3D, FramesInFlight>
+        sceneAutoExposureState {};
+    std::array<VkImage, FramesInFlight> sceneDirectAutoExposureImage {};
+    std::array<VmaAllocation, FramesInFlight>
+        sceneDirectAutoExposureAllocation {};
+    std::array<VkImageView, FramesInFlight>
+        sceneDirectAutoExposureView {};
+    std::array<SceneAttachmentState3D, FramesInFlight>
+        sceneDirectAutoExposureState {};
+    bool sceneAutoExposureHistoryValid = false;
+    std::array<bool, FramesInFlight> sceneAutoExposureInitialized {};
+    std::array<bool, FramesInFlight> sceneDirectAutoExposureInitialized {};
+    bool sceneDirectAutoExposureHistoryValid = false;
+    std::chrono::steady_clock::time_point sceneAutoExposureLastTime {};
+    std::chrono::steady_clock::time_point
+        sceneDirectAutoExposureLastTime {};
+    bool sceneAutoExposureClockValid = false;
+    bool sceneDirectAutoExposureClockValid = false;
+
+    // GTAO em meia resolução. Cada frame em voo tem o próprio alvo para a
+    // GPU nunca ler (no TAA) o mesmo VkImage que outro command buffer já
+    // começou a sobrescrever.
+    std::array<VkImage, FramesInFlight> sceneGtaoImage {};
+    std::array<VmaAllocation, FramesInFlight> sceneGtaoAllocation {};
+    std::array<VkImageView, FramesInFlight> sceneGtaoView {};
+    std::array<SceneAttachmentState3D, FramesInFlight> sceneGtaoState {};
+    std::array<VkImage, FramesInFlight> sceneDirectGtaoImage {};
+    std::array<VmaAllocation, FramesInFlight>
+        sceneDirectGtaoAllocation {};
+    std::array<VkImageView, FramesInFlight> sceneDirectGtaoView {};
+    std::array<SceneAttachmentState3D, FramesInFlight>
+        sceneDirectGtaoState {};
+    VkDescriptorSetLayout sceneGtaoDescriptorSetLayout = VK_NULL_HANDLE;
+    VkDescriptorPool sceneGtaoDescriptorPool = VK_NULL_HANDLE;
+    std::array<VkDescriptorSet, FramesInFlight> sceneGtaoDescriptorSets {};
+    std::array<VkDescriptorSet, FramesInFlight>
+        sceneDirectGtaoDescriptorSets {};
+    VkPipelineLayout sceneGtaoPipelineLayout = VK_NULL_HANDLE;
+    VkPipeline sceneGtaoPipeline = VK_NULL_HANDLE;
+    VkShaderModule sceneGtaoFragmentModule = VK_NULL_HANDLE;
+
+    // Glare/flare HDR em 1/8 de cada dimensão. Há um alvo e um descriptor por
+    // frame em voo e por caminho para nunca sobrescrever uma imagem que o
+    // tonemap de uma submissão anterior ainda possa estar lendo.
+    std::array<VkImage, FramesInFlight> sceneBloomGlareImage {};
+    std::array<VmaAllocation, FramesInFlight>
+        sceneBloomGlareAllocation {};
+    std::array<VkImageView, FramesInFlight> sceneBloomGlareView {};
+    std::array<SceneAttachmentState3D, FramesInFlight>
+        sceneBloomGlareState {};
+    std::array<VkImage, FramesInFlight> sceneDirectBloomGlareImage {};
+    std::array<VmaAllocation, FramesInFlight>
+        sceneDirectBloomGlareAllocation {};
+    std::array<VkImageView, FramesInFlight>
+        sceneDirectBloomGlareView {};
+    std::array<SceneAttachmentState3D, FramesInFlight>
+        sceneDirectBloomGlareState {};
+    VkDescriptorSetLayout sceneBloomGlareDescriptorSetLayout =
+        VK_NULL_HANDLE;
+    VkDescriptorPool sceneBloomGlareDescriptorPool = VK_NULL_HANDLE;
+    std::array<VkDescriptorSet, FramesInFlight>
+        sceneBloomGlareDescriptorSets {};
+    std::array<VkDescriptorSet, FramesInFlight>
+        sceneDirectBloomGlareDescriptorSets {};
+    VkPipelineLayout sceneBloomGlarePipelineLayout = VK_NULL_HANDLE;
+    VkPipeline sceneBloomGlarePipeline = VK_NULL_HANDLE;
+    VkShaderModule sceneBloomGlareFragmentModule = VK_NULL_HANDLE;
 
     // Historico de TAA (Fase 6) - 2 slots por caminho, indexados por
     // currentFrame (nao um ping-pong separado: currentFrame ja alterna em
@@ -4366,6 +7052,64 @@ public:
     VkPipelineLayout sceneTaaResolvePipelineLayout = VK_NULL_HANDLE;
     VkPipeline sceneTaaResolvePipeline = VK_NULL_HANDLE;
     VkShaderModule sceneTaaResolveFragmentModule = VK_NULL_HANDLE;
+
+    // Historico de SSR (ver ssr_trace_resolve.frag) - MEIA resolucao (ver
+    // ensureScene3DTarget), 2 slots por caminho indexados por currentFrame,
+    // exatamente como sceneTaaHistoryImage acima (mesmo raciocinio: nenhum
+    // ping-pong dedicado, currentFrame ja alterna em lockstep com cada
+    // quadro real). history[currentFrame] e escrito agora pelo traçado/
+    // resolve; history[1-currentFrame] tem o resultado do quadro passado,
+    // usado como entrada de historico E como fonte do passe de composicao
+    // (ver sceneSsrCompositeDescriptorSets, que lê o slot currentFrame
+    // apos este passe escreve-lo).
+    std::array<VkImage, FramesInFlight> sceneSsrHistoryImage {};
+    std::array<VmaAllocation, FramesInFlight> sceneSsrHistoryAllocation {};
+    std::array<VkImageView, FramesInFlight> sceneSsrHistoryView {};
+    std::array<SceneAttachmentState3D, FramesInFlight> sceneSsrHistoryState {};
+    std::array<VkImage, FramesInFlight> sceneDirectSsrHistoryImage {};
+    std::array<VmaAllocation, FramesInFlight> sceneDirectSsrHistoryAllocation {};
+    std::array<VkImageView, FramesInFlight> sceneDirectSsrHistoryView {};
+    std::array<SceneAttachmentState3D, FramesInFlight> sceneDirectSsrHistoryState {};
+
+    // Pipeline de traçado+resolve de SSR: mesmo triangulo cheio de tela
+    // (reaproveita sceneTonemapVertexModule), 2 sets como o resolve de TAA:
+    // set 0 = sceneDescriptorSetLayout (UBO da cena + luzes), set 1 = cor
+    // HDR atual, profundidade, normal/rugosidade, reflectancia, vetor de
+    // movimento e historico (6 bindings, ver ssr_trace_resolve.frag). Roda
+    // em MEIA resolucao - viewport/scissor proprios no render loop, nao os
+    // mesmos de sceneTargetExtent/sceneDirectExtent.
+    VkDescriptorSetLayout sceneSsrDescriptorSetLayout = VK_NULL_HANDLE;
+    VkDescriptorPool sceneSsrDescriptorPool = VK_NULL_HANDLE;
+    std::array<VkDescriptorSet, FramesInFlight> sceneSsrDescriptorSets {};
+    std::array<VkDescriptorSet, FramesInFlight> sceneDirectSsrDescriptorSets {};
+    VkPipelineLayout sceneSsrPipelineLayout = VK_NULL_HANDLE;
+    VkPipeline sceneSsrPipeline = VK_NULL_HANDLE;
+    VkShaderModule sceneSsrFragmentModule = VK_NULL_HANDLE;
+
+    // Pipeline de composicao de SSR: soma (blend ADITIVO, ver
+    // createScene3DResources) o historico de SSR recem-resolvido de volta
+    // no HDR em resolucao CHEIA, pesado pela reflectancia por pixel. Um set
+    // dedicado so seu (2 bindings: reflectancia, historico de SSR do slot
+    // currentFrame) - nao precisa do UBO da cena, mesmo padrao de
+    // sceneTonemapDescriptorSetLayout (um unico set, sem set 0
+    // compartilhado).
+    VkDescriptorSetLayout sceneSsrCompositeDescriptorSetLayout = VK_NULL_HANDLE;
+    VkDescriptorPool sceneSsrCompositeDescriptorPool = VK_NULL_HANDLE;
+    std::array<VkDescriptorSet, FramesInFlight> sceneSsrCompositeDescriptorSets {};
+    std::array<VkDescriptorSet, FramesInFlight> sceneDirectSsrCompositeDescriptorSets {};
+    VkPipelineLayout sceneSsrCompositePipelineLayout = VK_NULL_HANDLE;
+    VkPipeline sceneSsrCompositePipeline = VK_NULL_HANDLE;
+    VkShaderModule sceneSsrCompositeFragmentModule = VK_NULL_HANDLE;
+
+    VkDescriptorSetLayout sceneOceanDescriptorSetLayout = VK_NULL_HANDLE;
+    VkDescriptorPool sceneOceanDescriptorPool = VK_NULL_HANDLE;
+    std::array<VkDescriptorSet, FramesInFlight> sceneOceanDescriptorSets {};
+    std::array<VkDescriptorSet, FramesInFlight>
+        sceneDirectOceanDescriptorSets {};
+    VkPipelineLayout sceneOceanPipelineLayout = VK_NULL_HANDLE;
+    VkPipeline sceneOceanPipeline = VK_NULL_HANDLE;
+    VkShaderModule sceneOceanVertexModule = VK_NULL_HANDLE;
+    VkShaderModule sceneOceanFragmentModule = VK_NULL_HANDLE;
 
     bool renderTargetPassActive = false;
     bool swapchainPassActive = false;

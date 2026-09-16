@@ -2,9 +2,11 @@
 #include "Workbench/UiKit.hpp"
 
 #include "Engine/Core/Log.hpp"
+#include "Engine/Environment/OceanSurface.hpp"
 #include "Engine/Geometry/GltfAcousticZone3D.hpp"
 #include "Engine/Geometry/GltfLoader.hpp"
 #include "Engine/Geometry/GltfPhysicsMetadata3D.hpp"
+#include "Engine/Geometry/MeshData3D.hpp"
 #include "Engine/Math/Mat4.hpp"
 #include "Engine/Math/Frustum3D.hpp"
 #include "Engine/Math/JitterSequence.hpp"
@@ -12,6 +14,7 @@
 #include "Engine/RHI/RHITypes.hpp"
 #include "Engine/Render/Scene3D.hpp"
 #include "imgui.h"
+#include <meshoptimizer.h>
 
 #include <algorithm>
 #include <array>
@@ -19,6 +22,7 @@
 #include <cstdio>
 #include <span>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace MatterEngine::Workbench {
@@ -26,6 +30,116 @@ namespace {
 
 constexpr float Pi = 3.14159265358979323846f;
 constexpr float LaboratoryFarPlane = 2000.0f;
+
+float smoothUnit(float edge0, float edge1, float value) {
+    const float t = std::clamp((value - edge0) / (edge1 - edge0),
+        0.0f, 1.0f);
+    return t * t * (3.0f - 2.0f * t);
+}
+
+Vec3 mixColor(Vec3 a, Vec3 b, float amount) {
+    return a * (1.0f - amount) + b * amount;
+}
+
+// O platô principal do mapa fica em Z=0. O nível precisa permanecer abaixo
+// dele inclusive no pico máximo de 0,27 m das ondas, ou as cristas atravessam
+// o terreno e produzem faixas de z-fighting no interior da ilha.
+constexpr float LaboratorySeaLevelMeters = -1.00f;
+constexpr float LaboratoryOceanHalfExtentMeters = 1500.0f;
+constexpr float LaboratoryOceanDepthMeters = 80.0f;
+constexpr float OceanNearExtentMeters = 160.0f;
+constexpr float OceanNearCellMeters = 4.0f;
+constexpr float OceanMidExtentMeters = 480.0f;
+constexpr float OceanMidCellMeters = 16.0f;
+constexpr float OceanFarExtentMeters = 1536.0f;
+constexpr float OceanFarCellMeters = 64.0f;
+
+std::vector<std::vector<std::uint32_t>> buildStaticMapLods(
+    const MeshData3D& mesh) {
+    // Partes pequenas já custam menos que a troca de buffer. O limiar
+    // também impede tentar simplificar quads e detalhes de baixa topologia.
+    if (mesh.vertices.empty() || mesh.indices.size() < 600) return {};
+
+    constexpr std::array<float, 2> TargetRatios { 0.32f, 0.09f };
+    constexpr std::array<float, 2> TargetErrors { 0.008f, 0.035f };
+    constexpr std::array<float, 5> AttributeWeights {
+        0.50f, 0.50f, 0.50f, 0.75f, 0.75f
+    };
+    constexpr unsigned int SimplifyOptions =
+        meshopt_SimplifyLockBorder | meshopt_SimplifyPermissive;
+
+    std::vector<std::vector<std::uint32_t>> lods;
+    lods.reserve(TargetRatios.size());
+    const std::size_t originalCount = mesh.indices.size();
+    const std::vector<std::uint32_t>* source = &mesh.indices;
+    for (std::size_t level = 0; level < TargetRatios.size(); ++level) {
+        std::size_t targetCount = static_cast<std::size_t>(
+            static_cast<double>(originalCount) * TargetRatios[level]);
+        targetCount = std::max<std::size_t>(
+            96, targetCount - targetCount % 3);
+        if (targetCount >= source->size()) continue;
+
+        std::vector<std::uint32_t> simplified(source->size());
+        float resultError = 0.0f;
+        const std::size_t simplifiedCount =
+            meshopt_simplifyWithAttributes(simplified.data(),
+                source->data(), source->size(),
+                &mesh.vertices.front().position.x,
+                mesh.vertices.size(), sizeof(MeshVertex3D),
+                &mesh.vertices.front().normal.x,
+                sizeof(MeshVertex3D), AttributeWeights.data(),
+                AttributeWeights.size(), nullptr, targetCount,
+                TargetErrors[level], SimplifyOptions, &resultError);
+        if (simplifiedCount < 3
+            || simplifiedCount >= source->size()) {
+            continue;
+        }
+        simplified.resize(simplifiedCount);
+        meshopt_optimizeVertexCache(simplified.data(),
+            simplified.data(), simplified.size(), mesh.vertices.size());
+        lods.push_back(std::move(simplified));
+        source = &lods.back();
+    }
+    return lods;
+}
+
+// Órbita solar simples de latitude média: nasce a leste às 06h, culmina
+// alto (sem ficar exatamente vertical) ao meio-dia e se põe a oeste às 18h.
+// A Lua fica no lado oposto da mesma órbita nesta primeira iteração.
+Vec3 solarDirectionForHour(float hour) {
+    const float orbit = (hour - 6.0f) * (2.0f * Pi / 24.0f);
+    return Vec3 {
+        -std::cos(orbit) * 0.88f,
+        -0.34f,
+        std::sin(orbit)
+    }.normalized();
+}
+
+// Aproxima uma nuvem atravessando especificamente o disco solar. A cobertura
+// define a probabilidade/espessura global; ondas de escalas diferentes,
+// transportadas pelo mesmo vento do céu, criam passagens graduais de sombra
+// sem readback da GPU nem um segundo mapa de nuvens.
+float cloudTransmittanceAtSun(float coverage, float animationTime,
+    Vec2 windOffset, Vec3 sunDirection) {
+    coverage = std::clamp(coverage, 0.0f, 1.0f);
+    const float cloudSignal = std::clamp(
+        0.50f
+        + 0.22f * std::sin(sunDirection.x * 5.7f
+            + windOffset.x * 2.1f + animationTime * 0.013f)
+        + 0.16f * std::sin(sunDirection.y * 9.1f
+            - windOffset.y * 1.7f + animationTime * 0.008f)
+        + 0.09f * std::sin((sunDirection.x + sunDirection.y) * 17.0f
+            + animationTime * 0.021f),
+        0.0f, 1.0f);
+    const float threshold = 0.82f - coverage * 0.55f;
+    const float cloudOverSun = smoothUnit(
+        threshold - 0.08f, threshold + 0.12f, cloudSignal);
+    const float overcast = smoothUnit(0.72f, 0.98f, coverage);
+    const float localTransmission = 1.0f
+        - cloudOverSun * (0.30f + coverage * 0.58f);
+    return std::clamp(localTransmission
+        * (1.0f - overcast * 0.58f), 0.10f, 1.0f);
+}
 
 Vec3 cameraForward(float yaw, float pitch) {
     const float planar = std::cos(pitch);
@@ -131,6 +245,15 @@ void WorkbenchApp::syncLaboratoryMouseCapture() {
 
 void WorkbenchApp::updateLaboratory(float deltaTime) {
     m_laboratoryElapsedTime += deltaTime;
+    if (m_laboratoryClockRunning) {
+        m_laboratoryEnvironment.solarTimeHours += deltaTime
+            * m_laboratoryClockTimeScale / 3600.0f;
+        m_laboratoryEnvironment.solarTimeHours = std::fmod(
+            m_laboratoryEnvironment.solarTimeHours, 24.0f);
+        if (m_laboratoryEnvironment.solarTimeHours < 0.0f) {
+            m_laboratoryEnvironment.solarTimeHours += 24.0f;
+        }
+    }
     if (!m_laboratoryCharacterInitialized || !m_laboratoryMapLoaded
         || !m_physicsScene || !m_physicsScene->hasCharacter()) {
         return;
@@ -147,7 +270,9 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
             m_laboratoryCameraPitch);
         // Em coordenadas Z-up, direita é forward × up. No voo, W/S usa
         // viewForward completo para acompanhar exatamente o ponto observado.
-        const Vec3 forward = stateBefore.flying
+        const bool freeVerticalMovement =
+            stateBefore.flying || stateBefore.swimming;
+        const Vec3 forward = freeVerticalMovement
             ? viewForward : planarForward;
         const Vec3 right { planarForward.y, -planarForward.x, 0.0f };
         if (input().keyDown(Key::W)) command.moveDirection += forward;
@@ -158,9 +283,12 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
             || input().keyDown(Key::RightShift);
         const bool control = input().keyDown(Key::LeftControl)
             || input().keyDown(Key::RightControl);
-        if (stateBefore.flying) {
+        if (freeVerticalMovement) {
             if (input().keyDown(Key::Space)) command.moveDirection.z += 1.0f;
-            command.crouch = control;
+            command.crouch = stateBefore.flying && control;
+            if (stateBefore.swimming && control) {
+                command.moveDirection.z -= 1.0f;
+            }
         } else {
             command.crouch = control;
         }
@@ -248,31 +376,43 @@ void WorkbenchApp::ensureLaboratoryMapLoaded(Renderer& activeRenderer) {
             return;
         }
         const std::string& materialId = physicsMetadata.materialId;
-        if (m_materialLibrary.find(materialId) == nullptr) {
+        const SurfaceMaterial* material = m_materialLibrary.find(materialId);
+        if (material == nullptr) {
             Log::error("Material fisico nao registrado no laboratorio: "
                 + materialId + " (node " + part.nodeName + ")");
             m_laboratoryMapLoadFailed = true;
             return;
         }
-        try {
-            const auto triangleMesh =
-                m_physicsEngine.cookStaticTriangleMesh(part.mesh);
-            PhysicsShape3D collisionShape;
-            collisionShape.type = PhysicsShapeType3D::TriangleMesh;
-            collisionShape.mesh = triangleMesh;
-            collisionShape.materialId = materialId;
-            PhysicsBodyDefinition3D staticBody;
-            staticBody.motionType = PhysicsMotionType3D::Static;
-            staticBody.materialId = materialId;
-            staticBody.entityId = m_nextEntityId++;
-            m_laboratoryMapBodies.push_back(
-                m_physicsScene->createBody(staticBody,
-                    std::span<const PhysicsShape3D>(&collisionShape, 1)));
-        } catch (const std::exception& error) {
-            Log::error("Falha no cooking PhysX do node " + part.nodeName
-                + ": " + error.what());
-            m_laboratoryMapLoadFailed = true;
-            return;
+
+        // O mapa antigo contém um objeto chamado Water: é exatamente a placa
+        // plana vista sob o oceano novo. O teste pelo nome é deliberadamente
+        // explícito porque não podemos depender de o material glTF conservar
+        // corretamente a flag isFluid durante a exportação do Blender.
+        if (material->isFluid || part.nodeName == "Water") {
+            continue;
+        }
+
+        if (physicsMetadata.generateCollision) {
+            try {
+                const auto triangleMesh =
+                    m_physicsEngine.cookStaticTriangleMesh(part.mesh);
+                PhysicsShape3D collisionShape;
+                collisionShape.type = PhysicsShapeType3D::TriangleMesh;
+                collisionShape.mesh = triangleMesh;
+                collisionShape.materialId = materialId;
+                PhysicsBodyDefinition3D staticBody;
+                staticBody.motionType = PhysicsMotionType3D::Static;
+                staticBody.materialId = materialId;
+                staticBody.entityId = m_nextEntityId++;
+                m_laboratoryMapBodies.push_back(
+                    m_physicsScene->createBody(staticBody,
+                        std::span<const PhysicsShape3D>(&collisionShape, 1)));
+            } catch (const std::exception& error) {
+                Log::error("Falha no cooking PhysX do node " + part.nodeName
+                    + ": " + error.what());
+                m_laboratoryMapLoadFailed = true;
+                return;
+            }
         }
 
         LaboratoryMapPart gpuPart;
@@ -288,7 +428,28 @@ void WorkbenchApp::ensureLaboratoryMapLoaded(Renderer& activeRenderer) {
             std::as_bytes(std::span(part.mesh.vertices)));
         activeRenderer.writeBuffer(gpuPart.indexBuffer, 0,
             std::as_bytes(std::span(part.mesh.indices)));
-        gpuPart.indexCount = static_cast<std::uint32_t>(part.mesh.indices.size());
+        gpuPart.indexCount =
+            static_cast<std::uint32_t>(part.mesh.indices.size());
+        const std::vector<std::vector<std::uint32_t>> lodIndices =
+            buildStaticMapLods(part.mesh);
+        gpuPart.lods.reserve(lodIndices.size());
+        for (const std::vector<std::uint32_t>& indices : lodIndices) {
+            GpuMeshLod3D lod;
+            lod.indexBuffer = activeRenderer.createBuffer({
+                indices.size() * sizeof(std::uint32_t),
+                RHI::BufferUsage::Index, true,
+                "Laboratory map LOD indices"
+            });
+            activeRenderer.writeBuffer(lod.indexBuffer, 0,
+                std::as_bytes(std::span(indices)));
+            lod.indexCount =
+                static_cast<std::uint32_t>(indices.size());
+            gpuPart.lods.push_back(lod);
+        }
+        gpuPart.boundsCenter =
+            (part.mesh.boundsMin + part.mesh.boundsMax) * 0.5f;
+        gpuPart.boundsRadius =
+            (part.mesh.boundsMax - part.mesh.boundsMin).length() * 0.5f;
         gpuPart.name = part.nodeName;
 
         gpuPart.materialId = materialId;
@@ -296,8 +457,23 @@ void WorkbenchApp::ensureLaboratoryMapLoaded(Renderer& activeRenderer) {
             && static_cast<std::size_t>(part.materialIndex) < model.materials.size()) {
             const LoadedGltfMaterial& material =
                 model.materials[static_cast<std::size_t>(part.materialIndex)];
-            gpuPart.metallic = material.metallicFactor;
-            gpuPart.roughness = material.roughnessFactor;
+            const bool simpleEnvironmentMirror =
+                material.name == "Mirror_Glass_Perfect";
+            const bool matteGrass =
+                material.name.find("Grass") != std::string::npos
+                || material.name.find("grass") != std::string::npos
+                || material.name.find("Grama") != std::string::npos
+                || material.name.find("grama") != std::string::npos;
+            // O espelho planar exigia uma segunda renderização completa e
+            // ficava instável com faces internas/double-sided. O material
+            // agora é um metal muito liso que lê somente o ambiente
+            // analítico já usado pelos demais metais: custo constante, sem
+            // câmera auxiliar e sem artefatos de geometria refletida.
+            gpuPart.metallic = simpleEnvironmentMirror
+                ? 1.0f : material.metallicFactor;
+            gpuPart.roughness = simpleEnvironmentMirror
+                ? 0.075f : material.roughnessFactor;
+            gpuPart.matteSurface = matteGrass;
             if (material.imageIndex >= 0
                 && static_cast<std::size_t>(material.imageIndex)
                     < m_laboratoryMapTextures.size()) {
@@ -307,6 +483,7 @@ void WorkbenchApp::ensureLaboratoryMapLoaded(Renderer& activeRenderer) {
         }
         m_laboratoryMapParts.push_back(std::move(gpuPart));
     }
+
     for (const LoadedGltfEntity& entity : model.entities) {
         const std::string* type = entity.extras.find("entity_type");
         if (type == nullptr || *type != "spawnpoint") {
@@ -321,6 +498,17 @@ void WorkbenchApp::ensureLaboratoryMapLoaded(Renderer& activeRenderer) {
         // (entity_type=acoustic_zone), coletadas logo abaixo.
     }
     m_worldAudio.setAcousticZones(parseAcousticZones(model.entities));
+    m_laboratoryOcean.center = { 0.0f, 0.0f };
+    m_laboratoryOcean.halfExtents = {
+        LaboratoryOceanHalfExtentMeters,
+        LaboratoryOceanHalfExtentMeters
+    };
+    m_laboratoryOcean.meanSeaLevelMeters = LaboratorySeaLevelMeters;
+    m_laboratoryOcean.depthMeters = LaboratoryOceanDepthMeters;
+    m_laboratoryOcean.densityKgPerCubicMeter = 1025.0f;
+    m_physicsScene->setOcean(m_laboratoryOcean);
+    m_laboratoryOceanEnabled = true;
+    ensureOceanClipmap(activeRenderer);
 
     // O mapa só pode publicar o estado "carregado" depois de todos os
     // recursos terem sido criados. Assim, uma exceção nunca deixa uma cena
@@ -334,6 +522,71 @@ void WorkbenchApp::ensureLaboratoryMapLoaded(Renderer& activeRenderer) {
     Log::info("Mapa do laboratorio carregado no PhysX com "
         + std::to_string(triangleCount)
         + " triangulos estaticos em BVH34.");
+}
+
+// Três anéis independentes formam um clipmap centrado na câmera. A densidade
+// cai por fator quatro a cada anel, mantendo detalhe perto sem cobrir o
+// horizonte inteiro com a mesma tesselação.
+void WorkbenchApp::ensureOceanClipmap(Renderer& activeRenderer) {
+    if (m_laboratoryOceanVertexBuffer) {
+        return;
+    }
+
+    std::vector<Vec2> vertices;
+    std::vector<std::uint32_t> indices;
+    auto appendRing = [&vertices, &indices](float extent,
+            float cellSize, float innerExtent) {
+        const std::uint32_t cells = static_cast<std::uint32_t>(
+            std::lround((extent * 2.0f) / cellSize));
+        const std::uint32_t side = cells + 1;
+        const std::uint32_t base =
+            static_cast<std::uint32_t>(vertices.size());
+        for (std::uint32_t row = 0; row < side; ++row) {
+            for (std::uint32_t column = 0; column < side; ++column) {
+                vertices.push_back({
+                    -extent + static_cast<float>(column) * cellSize,
+                    -extent + static_cast<float>(row) * cellSize
+                });
+            }
+        }
+        for (std::uint32_t row = 0; row < cells; ++row) {
+            for (std::uint32_t column = 0; column < cells; ++column) {
+                const float centerX = -extent
+                    + (static_cast<float>(column) + 0.5f) * cellSize;
+                const float centerY = -extent
+                    + (static_cast<float>(row) + 0.5f) * cellSize;
+                if (std::max(std::abs(centerX), std::abs(centerY))
+                        < innerExtent) {
+                    continue;
+                }
+                const std::uint32_t a = base + row * side + column;
+                const std::uint32_t b = a + 1;
+                const std::uint32_t c = a + side;
+                const std::uint32_t d = c + 1;
+                indices.insert(indices.end(), { a, c, b, b, c, d });
+            }
+        }
+    };
+    appendRing(OceanNearExtentMeters, OceanNearCellMeters, 0.0f);
+    appendRing(OceanMidExtentMeters, OceanMidCellMeters,
+        OceanNearExtentMeters);
+    appendRing(OceanFarExtentMeters, OceanFarCellMeters,
+        OceanMidExtentMeters);
+
+    const std::size_t vertexBytes = vertices.size() * sizeof(Vec2);
+    const std::size_t indexBytes = indices.size() * sizeof(std::uint32_t);
+    m_laboratoryOceanVertexBuffer = activeRenderer.createBuffer(
+        { vertexBytes, RHI::BufferUsage::Vertex, true,
+            "Ocean clipmap vertices" });
+    m_laboratoryOceanIndexBuffer = activeRenderer.createBuffer(
+        { indexBytes, RHI::BufferUsage::Index, true,
+            "Ocean clipmap indices" });
+    activeRenderer.writeBuffer(m_laboratoryOceanVertexBuffer, 0,
+        std::as_bytes(std::span(vertices)));
+    activeRenderer.writeBuffer(m_laboratoryOceanIndexBuffer, 0,
+        std::as_bytes(std::span(indices)));
+    m_laboratoryOceanIndexCount =
+        static_cast<std::uint32_t>(indices.size());
 }
 
 void WorkbenchApp::resetLaboratoryCharacter() {
@@ -356,6 +609,9 @@ void WorkbenchApp::resetLaboratoryCharacter() {
 void WorkbenchApp::releaseLaboratoryAssets(Renderer& activeRenderer) {
     endPhysGunGrab();
     if (m_physicsScene) {
+        for (const SpawnedRagdollInstance& instance : m_spawnedRagdolls) {
+            m_physicsScene->destroyRagdoll(instance.physicsRagdoll);
+        }
         for (const SpawnedPropInstance& instance : m_spawnedProps) {
             m_physicsScene->destroyBody(instance.physicsBody);
         }
@@ -364,11 +620,27 @@ void WorkbenchApp::releaseLaboratoryAssets(Renderer& activeRenderer) {
         }
         m_physicsScene->destroyCharacter();
     }
+    m_spawnedRagdolls.clear();
     m_spawnedProps.clear();
     m_spawnedPropByBodyIndex.clear();
+    m_physicsBenchmarkPropEntityIds.clear();
+    m_physicsBenchmarkRagdollEntityIds.clear();
+    m_physicsBenchmarkRunning = false;
+    m_physicsBenchmarkPaused = false;
+    m_physicsBenchmarkSpawnedProps = 0;
+    m_physicsBenchmarkSpawnedRagdolls = 0;
     m_laboratoryMapBodies.clear();
     m_impactAcousticResolver.reset();
     m_propCatalog.release(activeRenderer);
+    releaseGpuModel3D(activeRenderer, m_characterVisual);
+    for (GpuModel3D& visual : m_ragdollLinkVisuals) {
+        releaseGpuModel3D(activeRenderer, visual);
+    }
+    m_ragdollLinkVisuals.clear();
+    releaseGpuModel3D(activeRenderer, m_ragdollJointVisual);
+    m_ragdollJointLocalPositions.clear();
+    m_humanRagdollProfile.reset();
+    m_ragdollAssetsLoadFailed = false;
     releaseGpuModel3D(activeRenderer, m_physGunVisual);
     m_physGunVisualLoaded = false;
     releaseGpuModel3D(activeRenderer, m_objectViewerFloor);
@@ -383,6 +655,14 @@ void WorkbenchApp::releaseLaboratoryAssets(Renderer& activeRenderer) {
             activeRenderer.destroyBuffer(part.indexBuffer);
             part.indexBuffer = {};
         }
+        for (GpuMeshLod3D& lod : part.lods) {
+            if (lod.indexBuffer) {
+                activeRenderer.destroyBuffer(lod.indexBuffer);
+                lod.indexBuffer = {};
+            }
+            lod.indexCount = 0;
+        }
+        part.lods.clear();
     }
     for (RHI::TextureHandle& texture : m_laboratoryMapTextures) {
         if (texture) {
@@ -392,13 +672,106 @@ void WorkbenchApp::releaseLaboratoryAssets(Renderer& activeRenderer) {
     }
     m_laboratoryMapParts.clear();
     m_laboratoryMapTextures.clear();
+    m_laboratoryOceanEnabled = false;
+    if (m_physicsScene) m_physicsScene->clearOcean();
+    if (m_laboratoryOceanVertexBuffer) {
+        activeRenderer.destroyBuffer(m_laboratoryOceanVertexBuffer);
+        m_laboratoryOceanVertexBuffer = {};
+    }
+    if (m_laboratoryOceanIndexBuffer) {
+        activeRenderer.destroyBuffer(m_laboratoryOceanIndexBuffer);
+        m_laboratoryOceanIndexBuffer = {};
+    }
+    m_laboratoryOceanIndexCount = 0;
     m_laboratoryMapLoaded = false;
     m_laboratoryCharacterInitialized = false;
 }
 
 void WorkbenchApp::renderLaboratory3D(Renderer& activeRenderer) {
     ensureLaboratoryMapLoaded(activeRenderer);
-    const bool temporalHistoryValid = m_laboratoryTaaHistoryValid;
+    if (!m_spawnPropWhenReadyId.empty() && m_laboratoryMapLoaded
+        && m_propCatalog.loaded()) {
+        const auto& definitions = m_propCatalog.definitions();
+        const auto found = std::find_if(definitions.begin(),
+            definitions.end(), [&](const PropDefinition3D& definition) {
+                return definition.id == m_spawnPropWhenReadyId;
+            });
+        const std::string requested = std::move(m_spawnPropWhenReadyId);
+        m_spawnPropWhenReadyId.clear();
+        if (found != definitions.end()) {
+            spawnProp(static_cast<std::size_t>(
+                std::distance(definitions.begin(), found)));
+            Log::info("Smoke prop criado: " + requested);
+        } else {
+            Log::error("Smoke prop desconhecido: " + requested);
+        }
+    }
+    if (m_spawnAllPropsWhenReady && m_laboratoryMapLoaded
+        && m_propCatalog.loaded()) {
+        m_spawnAllPropsWhenReady = false;
+        const auto& suiteDefinitions = m_propCatalog.definitions();
+        std::size_t spawned = 0;
+        for (std::size_t index = 0;
+                index < suiteDefinitions.size(); ++index) {
+            // Linha espaçada e integralmente visível à câmera inicial.
+            // Cada definição passa pelas mesmas consultas de overlap do
+            // menu e do benchmark.
+            const float offset = static_cast<float>(index)
+                - (static_cast<float>(suiteDefinitions.size()) - 1.0f)
+                    * 0.5f;
+            const Vec3 requested {
+                offset * 2.2f, -8.0f, 5.0f
+            };
+            const std::optional<Vec3> safe = findSafeSpawnPosition(
+                requested,
+                suiteDefinitions[index].dimensionsMeters * 0.5f,
+                Quaternion {}, 3.0f);
+            if (safe && spawnPropAt(
+                    index, *safe, Quaternion {}, false)) {
+                ++spawned;
+            }
+        }
+        Log::info("Smoke suite de props: "
+            + std::to_string(spawned) + "/"
+            + std::to_string(suiteDefinitions.size())
+            + " tipos criados.");
+    }
+    if (m_spawnRagdollWhenReady && m_laboratoryMapLoaded
+        && m_humanRagdollProfile) {
+        m_spawnRagdollWhenReady = false;
+        spawnHumanRagdoll();
+    }
+    if(m_animationRunTest&&m_laboratoryMapLoaded&&m_humanRagdollProfile&&m_spawnedRagdolls.empty()) {
+        Vec3 position{-30,-45,150};
+        position.z=ragdollGroundHeight(position)+m_characterSpawnHalfExtents.z-m_characterSpawnCenter.z+0.055f;
+        const auto safe=findSafeSpawnPosition(position+m_characterSpawnCenter,
+            m_characterSpawnHalfExtents+Vec3{0.01f,0.01f,0.01f},{},5);
+        if(!safe||!spawnHumanRagdollAt(*safe-m_characterSpawnCenter,{},false)) {
+            m_animationRunTest=false;
+            Log::error("Teste de corrida: não foi possível criar o corpo na pista");
+        }
+    }
+    if(m_animationRunTest&&!m_spawnedRagdolls.empty()&&!m_spawnedRagdolls.front().physicsState.links.empty()) {
+        const Vec3 target=m_spawnedRagdolls.front().physicsState.links.front().position+Vec3{0,0,0.25f};
+        const Vec3 offset{-2.0f,-5.0f,1.0f};
+        m_laboratoryCameraPosition=target+offset;
+        m_laboratoryCameraYaw=std::atan2(-offset.y,-offset.x);
+        m_laboratoryCameraPitch=std::atan2(-offset.z,std::sqrt(offset.x*offset.x+offset.y*offset.y));
+    }
+    const bool pixelArtMode =
+        m_laboratoryRenderMode == SceneRenderMode3D::PixelArt;
+    // O Mosaic conserva histórico somente no céu para estabilizar estrelas.
+    // Geometria continua no caminho instantâneo antigo quando o TAA
+    // experimental está desligado. No modo Normal, o perfil Desempenho
+    // remove o passe fullscreen; Equilibrado/Alto conservam o TAA completo.
+    const bool temporalResolveEnabled = pixelArtMode
+        || m_laboratoryGraphicsPreset != 0;
+    const bool temporalJitterEnabled = temporalResolveEnabled
+        && (!pixelArtMode
+            || m_laboratoryPixelArt.temporalAntiAliasingEnabled);
+    const bool temporalHistoryValid =
+        m_laboratoryTaaHistoryValid
+        && temporalResolveEnabled;
 
     const float aspect = static_cast<float>(std::max(1, activeRenderer.width()))
         / static_cast<float>(std::max(1, activeRenderer.height()));
@@ -414,16 +787,30 @@ void WorkbenchApp::renderLaboratory3D(Renderer& activeRenderer) {
     // deslocamento sub-pixel em espaco NDC (2 unidades de NDC cobrem a tela
     // inteira em cada eixo, entao 1 pixel = 2/extent unidades de NDC) -
     // ver JitterSequence.hpp e Mat4::perspectiveJittered.
-    const Vec2 haltonSample = haltonJitter(m_taaFrameIndex);
-    const Vec2 ndcJitter {
-        (haltonSample.x - 0.5f) * 2.0f
-            / static_cast<float>(std::max(1, activeRenderer.width())),
-        (haltonSample.y - 0.5f) * 2.0f
-            / static_cast<float>(std::max(1, activeRenderer.height()))
-    };
-    const Mat4 jitteredProjection = Mat4::perspectiveJittered(
-        67.0f * Pi / 180.0f, aspect, 0.08f, LaboratoryFarPlane, ndcJitter);
-    const Mat4 cameraViewProjectionJittered = jitteredProjection * view;
+    Mat4 cameraViewProjectionJittered = m_laboratoryViewProjection;
+    if (temporalJitterEnabled) {
+        const float renderScale = pixelArtMode
+            ? std::clamp(m_laboratoryPixelArt.renderScale,
+                0.25f, 1.0f)
+            : 1.0f;
+        const float jitterWidth = static_cast<float>(std::max(1,
+            static_cast<int>(std::lround(
+                static_cast<float>(activeRenderer.width())
+                    * renderScale))));
+        const float jitterHeight = static_cast<float>(std::max(1,
+            static_cast<int>(std::lround(
+                static_cast<float>(activeRenderer.height())
+                    * renderScale))));
+        const Vec2 haltonSample = haltonJitter(m_taaFrameIndex);
+        const Vec2 ndcJitter {
+            (haltonSample.x - 0.5f) * 2.0f / jitterWidth,
+            (haltonSample.y - 0.5f) * 2.0f / jitterHeight
+        };
+        const Mat4 jitteredProjection = Mat4::perspectiveJittered(
+            67.0f * Pi / 180.0f, aspect, 0.08f,
+            LaboratoryFarPlane, ndcJitter);
+        cameraViewProjectionJittered = jitteredProjection * view;
+    }
 
     // Distancia maxima que a sombra precisa cobrir - deliberadamente bem
     // menor que LaboratoryFarPlane (2000m): nevoa/distancia ja escondem
@@ -434,17 +821,66 @@ void WorkbenchApp::renderLaboratory3D(Renderer& activeRenderer) {
     // final gradual antes da neblina dominar, sem gastar cascatas nos 2000m
     // do plano distante usados apenas pelo ceu/horizonte.
     constexpr float ShadowMaxDistanceMeters = 450.0f;
-    // Precisa bater com SceneShadowMapSize em VulkanDevice.cpp - sem header
-    // compartilhado entre este arquivo e o backend Vulkan (mesmo padrao ja
-    // usado pelo bloco SceneUniform espelhado nos shaders).
-    constexpr float ShadowMapResolutionTexels = 2048.0f;
     // Prioriza fortemente resolucao proxima. Lambda 0.5 produzia a primeira
     // fronteira perto de 38m (com far=300), tornando pernas/objetos pequenos
     // borrados mesmo ao lado do jogador.
     constexpr float CascadeSplitLambda = 0.85f;
     constexpr float CascadeBlendFraction = 0.12f;
 
-    const Vec3& sunDirection = m_laboratorySunDirection;
+    const Vec3 sunDirection = solarDirectionForHour(
+        m_laboratoryEnvironment.solarTimeHours);
+    const Vec3 moonDirection = -sunDirection;
+    m_laboratorySunDirection = sunDirection;
+    const float sunElevation = sunDirection.z;
+    const float daylight = smoothUnit(-0.10f, 0.10f, sunElevation);
+    const float directSun = smoothUnit(-0.015f, 0.16f, sunElevation);
+    const float moonlight = smoothUnit(0.02f, 0.22f, moonDirection.z);
+    const float cloudCoverage = std::clamp(
+        m_laboratoryEnvironment.cloudCoverage, 0.0f, 1.0f);
+    const float cloudTransmission = cloudTransmittanceAtSun(
+        cloudCoverage, m_laboratoryElapsedTime, m_cloudWindOffset,
+        sunDirection);
+    m_laboratoryEnvironment.cloudSunTransmittance =
+        cloudTransmission;
+
+    // A neblina precisa desaparecer dentro do próprio horizonte, não formar
+    // uma camada RGB independente. Estes valores são os mesmos horizontes
+    //-base do shader do céu; crepúsculo e cobertura de nuvens fazem a
+    // transição contínua durante todo o ciclo.
+    const float nightFactor =
+        1.0f - smoothUnit(-0.16f, 0.025f, sunElevation);
+    const float twilight = (1.0f
+        - smoothUnit(0.015f, 0.30f, std::abs(sunElevation)))
+        * (1.0f - nightFactor * 0.55f);
+    const Vec3 nightFog { 0.018f, 0.026f, 0.060f };
+    const Vec3 dayFog { 0.610f, 0.750f, 0.880f };
+    Vec3 dynamicFog = mixColor(nightFog, dayFog, daylight);
+    dynamicFog += Vec3 { 0.34f, 0.075f, 0.012f } * twilight;
+    const Vec3 overcastFog = mixColor(
+        { 0.025f, 0.031f, 0.050f },
+        { 0.660f, 0.690f, 0.720f }, daylight);
+    dynamicFog = mixColor(dynamicFog, overcastFog,
+        cloudCoverage * 0.48f);
+    m_laboratoryFog.color = dynamicFog;
+    m_laboratoryFog.endDistanceMeters = std::max(
+        m_laboratoryFog.endDistanceMeters,
+        m_laboratoryFog.startDistanceMeters + 1.0f);
+    m_laboratoryFog.maxOpacity = 1.0f;
+
+    // O céu nublado perde menos energia que o feixe direto: as nuvens
+    // espalham a luz pelo hemisfério em vez de simplesmente apagá-la.
+    const float daytimeSky = 0.31f
+        * (1.0f - 0.26f * cloudCoverage);
+    // Mesmo sem luz artificial, a Lua e o espalhamento atmosférico deixam
+    // informação suficiente para leitura de silhuetas, sem transformar a
+    // noite em dia nem depender de adaptação automática de exposição.
+    const float nighttimeSky = 0.024f + moonlight
+        * (0.020f * (1.0f - 0.55f * cloudCoverage));
+    m_laboratoryEnvironment.skyIrradiance = nighttimeSky
+        + daylight * (daytimeSky - nighttimeSky);
+    m_laboratoryEnvironment.sunDiffuseBounce =
+        0.058f * directSun * (0.72f + cloudCoverage * 0.18f);
+
     const Vec3 cameraForwardVector =
         cameraForward(m_laboratoryCameraYaw, m_laboratoryCameraPitch)
             .normalized();
@@ -473,7 +909,8 @@ void WorkbenchApp::renderLaboratory3D(Renderer& activeRenderer) {
                 - nominalLength * CascadeBlendFraction);
         const FittedShadowCascade fitted = fitCascadeFrustumToCamera(
             cameraFrustumParameters, fittedNear, cascadeFar,
-            sunDirection, ShadowMapResolutionTexels);
+            sunDirection,
+            static_cast<float>(ShadowCascadeMapSizes[cascade]));
         cascadeViewProjections[cascade] = fitted.viewProjection;
         cascadeSplits[cascade] = cascadeFar;
         cascadeTexelWorldSizes[cascade] = fitted.texelWorldSizeMeters;
@@ -546,15 +983,48 @@ void WorkbenchApp::renderLaboratory3D(Renderer& activeRenderer) {
         }
     }
     meshes.reserve(m_laboratoryMapParts.size() + dynamicOffsets.back()
-        + m_physGunVisual.parts.size());
+        + m_physGunVisual.parts.size()
+        + m_spawnedRagdolls.size() * 38u + 64u);
     for (const LaboratoryMapPart& part : m_laboratoryMapParts) {
+        const bool visibleInCamera = cameraFrustum.intersectsSphere(
+            part.boundsCenter, part.boundsRadius);
+        std::uint8_t shadowCascadeMask = 0;
+        for (std::size_t cascade = 0;
+                cascade < lightFrustums.size(); ++cascade) {
+            if (lightFrustums[cascade].intersectsSphere(
+                    part.boundsCenter, part.boundsRadius)) {
+                shadowCascadeMask |= static_cast<std::uint8_t>(
+                    1u << cascade);
+            }
+        }
+        if (!visibleInCamera && shadowCascadeMask == 0) continue;
         MeshRender3D mesh;
         mesh.vertexBuffer = part.vertexBuffer;
         mesh.indexBuffer = part.indexBuffer;
         mesh.indexCount = part.indexCount;
+        if (!part.lods.empty()) {
+            const float relativeDistance =
+                (part.boundsCenter - m_laboratoryCameraPosition).length()
+                / std::max(part.boundsRadius, 0.001f);
+            // Tamanho projetado, não distância absoluta: uma arquibancada
+            // grande conserva detalhe muito além de uma pequena lixeira.
+            if (relativeDistance > 42.0f) {
+                mesh.indexBuffer = part.lods.back().indexBuffer;
+                mesh.indexCount = part.lods.back().indexCount;
+            } else if (relativeDistance > 16.0f) {
+                mesh.indexBuffer = part.lods.front().indexBuffer;
+                mesh.indexCount = part.lods.front().indexCount;
+            }
+            mesh.shadowIndexBuffer = part.lods.back().indexBuffer;
+            mesh.shadowIndexCount = part.lods.back().indexCount;
+        }
         mesh.albedoTexture = part.albedoTexture;
         mesh.metallic = part.metallic;
         mesh.roughness = part.roughness;
+        mesh.matteSurface = part.matteSurface;
+        mesh.visibleInCamera = visibleInCamera;
+        mesh.castsShadow = shadowCascadeMask != 0;
+        mesh.shadowCascadeMask = shadowCascadeMask;
         meshes.push_back(mesh);
     }
 
@@ -568,11 +1038,13 @@ void WorkbenchApp::renderLaboratory3D(Renderer& activeRenderer) {
         std::vector<MeshRender3D>* output = nullptr;
         std::size_t outputBase = 0;
         std::uint64_t heldEntityId = 0;
+        Vec3 cameraPosition;
         bool temporalHistoryValid = false;
     } preparation {
         &m_spawnedProps, &definitions, &dynamicOffsets, &propVisibility,
         &meshes,
-        dynamicBase, m_physGunGrabbedEntityId, temporalHistoryValid
+        dynamicBase, m_physGunGrabbedEntityId, m_laboratoryCameraPosition,
+        temporalHistoryValid
     };
     taskScheduler()->parallelFor(m_spawnedProps.size(), 64,
         [](std::size_t begin, std::size_t end, void* rawContext) noexcept {
@@ -613,13 +1085,130 @@ void WorkbenchApp::renderLaboratory3D(Renderer& activeRenderer) {
                         ? instance.previousPhysicsState.orientation
                         : instance.physicsState.orientation,
                     1.0f,
-                    highlighted, highlighted, castsShadow, destination);
+                    highlighted, highlighted, castsShadow, destination,
+                    (instance.physicsState.position
+                        - context.cameraPosition).length());
                 for (MeshRender3D& mesh : destination) {
                     mesh.visibleInCamera = visibleInCamera;
                     mesh.shadowCascadeMask = shadowCascadeMask;
+                    mesh.pixelArtHighDetail = true;
                 }
             }
         }, &preparation);
+
+    // Characters share a weighted surface and submit only bone palettes.
+    for (SpawnedRagdollInstance& instance : m_spawnedRagdolls) {
+        const bool highlighted =
+            instance.entityId == m_physGunGrabbedEntityId;
+        const auto& linkVisuals = m_ragdollLinkVisuals;
+        const auto& jointLocalPositions = m_ragdollJointLocalPositions;
+        const std::size_t linkCount = std::min(
+            instance.physicsState.links.size(),
+            linkVisuals.size());
+        if (linkCount == 0) continue;
+
+        // Culling grosso uma única vez por articulação. Antes cada segmento
+        // era enviado à câmera e às QUATRO cascatas mesmo quando o ragdoll
+        // inteiro estava fora delas. Além do trabalho desperdiçado, 30
+        // ragdolls multiplicavam mais de mil pequenas instâncias por quatro
+        // passes de sombra. A esfera é conservadora: nunca corta um membro
+        // isolado que ainda esteja visível.
+        Vec3 ragdollCenter {};
+        for (std::size_t linkIndex = 0; linkIndex < linkCount; ++linkIndex) {
+            ragdollCenter +=
+                instance.physicsState.links[linkIndex].position;
+        }
+        ragdollCenter *= 1.0f / static_cast<float>(linkCount);
+        float ragdollRadius = 0.35f;
+        for (std::size_t linkIndex = 0; linkIndex < linkCount; ++linkIndex) {
+            ragdollRadius = std::max(ragdollRadius,
+                (instance.physicsState.links[linkIndex].position
+                    - ragdollCenter).length() + 0.22f);
+        }
+        const bool ragdollVisible =
+            cameraFrustum.intersectsSphere(ragdollCenter, ragdollRadius);
+        std::uint8_t ragdollShadowMask = 0;
+        for (std::size_t cascade = 0;
+                cascade < lightFrustums.size(); ++cascade) {
+            if (lightFrustums[cascade].intersectsSphere(
+                    ragdollCenter, ragdollRadius)) {
+                ragdollShadowMask |= static_cast<std::uint8_t>(
+                    1u << cascade);
+            }
+        }
+        if (!ragdollVisible && ragdollShadowMask == 0) continue;
+        const bool ragdollCastsShadow = ragdollShadowMask != 0;
+
+        const bool previousStateValid = temporalHistoryValid
+            && instance.previousPhysicsState.links.size() >= linkCount;
+        if (instance.kind == ArticulatedRigKind::Human && m_ragdollCharacter) {
+            std::vector<Vec3> positions, previousPositions;
+            std::vector<Quaternion> orientations, previousOrientations;
+            for (std::size_t i=0; i<linkCount; ++i) {
+                const auto& state=instance.physicsState.links[i];
+                const auto& previous=previousStateValid ? instance.previousPhysicsState.links[i] : state;
+                positions.push_back(state.position);
+                orientations.push_back(state.orientation);
+                previousPositions.push_back(previous.position);
+                previousOrientations.push_back(previous.orientation);
+            }
+            instance.skinMatrices=buildRagdollSkinMatrices3D(*m_ragdollCharacter,positions,orientations);
+            instance.previousSkinMatrices=buildRagdollSkinMatrices3D(*m_ragdollCharacter,previousPositions,previousOrientations);
+            const auto first=meshes.size();
+            appendGpuModelRenderables(m_characterVisual, {}, {}, {}, {},
+                1.0f, highlighted, highlighted, ragdollCastsShadow, meshes);
+            for (std::size_t i=first; i<meshes.size(); ++i) {
+                meshes[i].skinMatrices=instance.skinMatrices;
+                meshes[i].previousSkinMatrices=instance.previousSkinMatrices;
+                meshes[i].flatShaded=m_ragdollCharacter->flatShaded;
+                meshes[i].pixelArtHighDetail=true;
+                meshes[i].visibleInCamera=ragdollVisible;
+                meshes[i].shadowCascadeMask=ragdollShadowMask;
+            }
+            continue;
+        }
+        for (std::size_t linkIndex = 0;
+                linkIndex < linkCount; ++linkIndex) {
+            const PhysicsBodyState3D& state =
+                instance.physicsState.links[linkIndex];
+            const PhysicsBodyState3D& previous = previousStateValid
+                ? instance.previousPhysicsState.links[linkIndex] : state;
+            const std::size_t first = meshes.size();
+            appendGpuModelRenderables(linkVisuals[linkIndex],
+                state.position, state.orientation,
+                previous.position, previous.orientation,
+                1.0f, highlighted, highlighted,
+                ragdollCastsShadow, meshes);
+            for (std::size_t part = first; part < meshes.size(); ++part) {
+                meshes[part].pixelArtHighDetail = true;
+                meshes[part].visibleInCamera = ragdollVisible;
+                meshes[part].shadowCascadeMask = ragdollShadowMask;
+            }
+            if (linkIndex > 0
+                && linkIndex < jointLocalPositions.size()
+                && !m_ragdollJointVisual.parts.empty()) {
+                const Vec3 localJoint =
+                    jointLocalPositions[linkIndex];
+                const Vec3 jointPosition = state.position
+                    + state.orientation.rotate(localJoint);
+                const Vec3 previousJointPosition = previous.position
+                    + previous.orientation.rotate(localJoint);
+                const std::size_t jointFirst = meshes.size();
+                appendGpuModelRenderables(m_ragdollJointVisual,
+                    jointPosition, state.orientation,
+                    previousJointPosition, previous.orientation,
+                    0.063f, highlighted, highlighted,
+                    ragdollCastsShadow, meshes);
+                for (std::size_t part = jointFirst;
+                        part < meshes.size(); ++part) {
+                    meshes[part].pixelArtHighDetail = true;
+                    meshes[part].visibleInCamera = ragdollVisible;
+                    meshes[part].shadowCascadeMask =
+                        ragdollShadowMask;
+                }
+            }
+        }
+    }
 
     Vec3 renderedWeaponPosition;
     Quaternion renderedWeaponOrientation;
@@ -654,15 +1243,19 @@ void WorkbenchApp::renderLaboratory3D(Renderer& activeRenderer) {
             + right * localOffset.x + forward * localOffset.y
             + cameraUp * localOffset.z;
         const Quaternion weaponOrientation = viewOrientation * localCalibration;
-        appendGpuModelRenderables(m_physGunVisual, weaponPosition,
-            weaponOrientation,
-            temporalHistoryValid ? m_previousPhysGunWeaponPosition
-                : weaponPosition,
-            temporalHistoryValid ? m_previousPhysGunWeaponOrientation
-                : weaponOrientation,
-            m_physGunViewCalibration.sizeMeters / largest,
-            false, false, false,
-            meshes);
+        if (!m_hidePhysGunPresentation) {
+            appendGpuModelRenderables(m_physGunVisual, weaponPosition,
+                weaponOrientation,
+                temporalHistoryValid ? m_previousPhysGunWeaponPosition
+                    : weaponPosition,
+                temporalHistoryValid ? m_previousPhysGunWeaponOrientation
+                    : weaponOrientation,
+                m_physGunViewCalibration.sizeMeters / largest,
+                false, false, false,
+                meshes);
+        }
+        // Mantém a pose anterior sincronizada mesmo no modo foto, evitando
+        // um vetor de movimento gigante no quadro em que o modelo reaparece.
         renderedWeaponPosition = weaponPosition;
         renderedWeaponOrientation = weaponOrientation;
         renderedWeapon = true;
@@ -675,31 +1268,48 @@ void WorkbenchApp::renderLaboratory3D(Renderer& activeRenderer) {
 
     }
 
-    std::array<LightRender3D, 2> lights;
+    const float warmSun = 1.0f
+        - smoothUnit(0.02f, 0.42f, sunElevation);
+    std::array<LightRender3D, 3> lights;
     lights[0].type = LightType3D::Directional;
     lights[0].direction = sunDirection;
-    lights[0].intensity = 1.08f;
-    lights[0].castsShadow = true;
-    lights[1].type = LightType3D::Spot;
-    lights[1].position = m_physGunBeamStartWorldPosition;
-    lights[1].direction = cameraForward(m_laboratoryCameraYaw,
+    lights[0].color = mixColor(
+        { 1.0f, 0.50f, 0.22f }, { 1.0f, 0.96f, 0.88f }, 1.0f - warmSun);
+    lights[0].intensity = 1.08f * directSun * cloudTransmission;
+    lights[0].castsShadow = directSun > 0.001f;
+    lights[1].type = LightType3D::Directional;
+    lights[1].direction = moonDirection;
+    lights[1].color = { 0.35f, 0.48f, 0.72f };
+    lights[1].intensity = 0.080f * moonlight
+        * (1.0f - 0.68f * cloudCoverage);
+    lights[1].castsShadow = false;
+    lights[2].type = LightType3D::Spot;
+    lights[2].position = m_physGunBeamStartWorldPosition;
+    lights[2].direction = cameraForward(m_laboratoryCameraYaw,
         m_laboratoryCameraPitch).normalized();
-    lights[1].color = m_physGunFlashlight.color;
-    lights[1].range = m_physGunFlashlight.enabled
+    lights[2].color = m_physGunFlashlight.color;
+    lights[2].range = m_physGunFlashlight.enabled
         ? m_physGunFlashlight.rangeMeters : 0.0f;
-    lights[1].intensity = m_physGunFlashlight.enabled
+    lights[2].intensity = m_physGunFlashlight.enabled
         ? m_physGunFlashlight.intensity : 0.0f;
-    lights[1].coneOuterDegrees = m_physGunFlashlight.coneDegrees;
+    lights[2].coneOuterDegrees = m_physGunFlashlight.coneDegrees;
 
     Scene3DFrame scene;
+    scene.renderMode = m_laboratoryRenderMode;
+    scene.pixelArt = m_laboratoryPixelArt;
     scene.cameraViewProjection = m_laboratoryViewProjection;
     scene.cameraViewProjectionJittered = cameraViewProjectionJittered;
     scene.previousCameraViewProjection = temporalHistoryValid
         ? m_previousLaboratoryViewProjection
         : m_laboratoryViewProjection;
     scene.taaFrameIndex = m_taaFrameIndex;
-    scene.temporalAntiAliasingEnabled = true;
-    scene.resetTemporalHistory = !temporalHistoryValid;
+    scene.temporalAntiAliasingEnabled =
+        temporalResolveEnabled;
+    // Mesmo sem TAA, o modo Pixel Art ainda conserva o histórico 1x1 da
+    // exposição automática. Reiniciar o estado todo quadro deixaria a
+    // paleta presa à exposição instantânea e faria a troca claro/escuro
+    // divergir do modo Normal.
+    scene.resetTemporalHistory = !m_laboratoryTaaHistoryValid;
     scene.cascadeViewProjections = cascadeViewProjections;
     scene.cascadeSplits = cascadeSplits;
     scene.cascadeTexelWorldSizes = cascadeTexelWorldSizes;
@@ -707,19 +1317,70 @@ void WorkbenchApp::renderLaboratory3D(Renderer& activeRenderer) {
     scene.cameraPosition = m_laboratoryCameraPosition;
     scene.lights = lights;
     scene.meshes = meshes;
-    scene.ambientLight = 0.31f;
-    scene.skyTime = m_laboratoryElapsedTime;
-    scene.cloudCoverage = 0.48f;
-    scene.showShadows = true;
+    scene.environment = m_laboratoryEnvironment;
+    scene.environment.skyAnimationTime = m_laboratoryElapsedTime;
+    scene.environment.cloudWindOffset = m_cloudWindOffset;
+    scene.showShadows = directSun > 0.001f;
+    scene.shadowFilterSampleCount =
+        m_laboratoryGraphicsPreset == 0 ? 4u
+        : m_laboratoryGraphicsPreset == 1 ? 8u : 12u;
     scene.showSky = true;
     scene.toneMapping = m_laboratoryToneMapping;
+    scene.ambientOcclusion = m_laboratoryAmbientOcclusion;
+    scene.opticalEffects = m_laboratoryOpticalEffects;
+    if (pixelArtMode) {
+        // No Matter Mosaic, a grade já estabiliza bordas. O TAA permanece
+        // desligado por padrão, mas pode ser habilitado experimentalmente
+        // no painel Render. Glare e flare passam pela mesma grade artística
+        // no tonemap, conservando o Sol ardido sem virar uma camada em alta
+        // resolução sobre o Mosaic. Sombras usam o kernel mínimo.
+        scene.ambientOcclusion.enabled = false;
+        scene.shadowFilterSampleCount = 4u;
+    }
     scene.fog = m_laboratoryFog;
-    scene.cloudWindOffset = m_cloudWindOffset;
-    if (activeRenderer.renderScene3DToScreen(scene)) {
+    if (m_laboratoryOceanEnabled) {
+        scene.oceanEnabled = true;
+        scene.ocean.center = m_laboratoryOcean.center;
+        scene.ocean.meanSeaLevelMeters =
+            m_laboratoryOcean.meanSeaLevelMeters;
+        scene.ocean.halfExtentMeters =
+            m_laboratoryOcean.halfExtents.x;
+        scene.ocean.vertexBuffer = m_laboratoryOceanVertexBuffer;
+        scene.ocean.indexBuffer = m_laboratoryOceanIndexBuffer;
+        scene.ocean.indexCount = m_laboratoryOceanIndexCount;
+
+        const Vec2 relative {
+            m_laboratoryCameraPosition.x - m_laboratoryOcean.center.x,
+            m_laboratoryCameraPosition.y - m_laboratoryOcean.center.y
+        };
+        const bool insideDomain =
+            std::abs(relative.x) <= m_laboratoryOcean.halfExtents.x
+            && std::abs(relative.y) <= m_laboratoryOcean.halfExtents.y;
+        const float surface = evaluateOceanSurface({
+                m_laboratoryCameraPosition.x,
+                m_laboratoryCameraPosition.y
+            }, m_laboratoryOcean.meanSeaLevelMeters,
+            m_laboratoryElapsedTime).heightMeters;
+        scene.oceanSubmersion = insideDomain
+            ? 1.0f - smoothUnit(surface - 0.12f, surface + 0.12f,
+                m_laboratoryCameraPosition.z)
+            : 0.0f;
+    }
+    // Os dois modos terminam diretamente no swapchain. O Mosaic agora
+    // pixeliza a amostragem HDR numa grade artística dentro do tonemap, em
+    // vez de reduzir todo o render 3D a uma textura minúscula. Além de
+    // conservar detalhe seletivo, isto deixa o alvo offscreen exclusivamente
+    // para previews persistentes (o atlas do menu Q), evitando que um
+    // descriptor fosse destruído enquanto a UI ainda o utilizava.
+    const bool sceneRendered = activeRenderer.renderScene3DToScreen(scene);
+    if (sceneRendered) {
         // Estado temporal avanca na cadencia de RENDER, nao na cadencia fixa
         // da fisica. Em FPS maior que 120, repetir o mesmo delta de transform
         // em varios quadros geraria vetores de movimento falsos.
         for (SpawnedPropInstance& instance : m_spawnedProps) {
+            instance.previousPhysicsState = instance.physicsState;
+        }
+        for (SpawnedRagdollInstance& instance : m_spawnedRagdolls) {
             instance.previousPhysicsState = instance.physicsState;
         }
         if (renderedWeapon) {
@@ -727,8 +1388,12 @@ void WorkbenchApp::renderLaboratory3D(Renderer& activeRenderer) {
             m_previousPhysGunWeaponOrientation = renderedWeaponOrientation;
         }
         m_previousLaboratoryViewProjection = m_laboratoryViewProjection;
+        // Este sinal também marca que os históricos auxiliares (sobretudo
+        // exposição automática) já receberam uma semente. O backend mantém
+        // o histórico de TAA propriamente dito inválido quando TAA está
+        // desligado, portanto não existe acumulação temporal no Mosaic.
         m_laboratoryTaaHistoryValid = true;
-        ++m_taaFrameIndex;
+        if (temporalJitterEnabled) ++m_taaFrameIndex;
     }
 }
 
@@ -741,15 +1406,14 @@ void WorkbenchApp::drawSpawnMenu() {
         IM_COL32(2, 7, 13, 160));
 
     const float width = std::min(ui(870.0f), io.DisplaySize.x - ui(36.0f));
-    const float height = std::min(ui(600.0f),
+    const float height = std::min(ui(760.0f),
         io.DisplaySize.y - ui(44.0f));
     ImGui::SetNextWindowPos({ (io.DisplaySize.x - width) * 0.5f,
         (io.DisplaySize.y - height) * 0.5f }, ImGuiCond_Always);
     ImGui::SetNextWindowSize({ width, height }, ImGuiCond_Always);
     ImGui::Begin("SpawnMenu", nullptr,
         ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove
-            | ImGuiWindowFlags_NoSavedSettings
-            | ImGuiWindowFlags_NoScrollbar);
+            | ImGuiWindowFlags_NoSavedSettings);
     ImGui::SetWindowFontScale(1.18f);
     ImGui::TextUnformatted("OBJETOS");
     ImGui::SetWindowFontScale(1.0f);
@@ -826,6 +1490,85 @@ void WorkbenchApp::drawSpawnMenu() {
         if (clicked) spawnProp(index);
         ImGui::PopID();
     }
+
+    const std::size_t ragdollCardIndex = definitions.size();
+    if (ragdollCardIndex % Columns != 0) ImGui::SameLine(0.0f, gap);
+    ImGui::PushID("HumanRagdollCard");
+    const ImVec2 cardMin = ImGui::GetCursorScreenPos();
+    ImGui::InvisibleButton("RagdollCard", { cardWidth, cardHeight });
+    const bool hovered = ImGui::IsItemHovered();
+    const bool clicked = ImGui::IsItemClicked(ImGuiMouseButton_Left);
+    const bool available = m_humanRagdollProfile.has_value()
+        && !m_ragdollAssetsLoadFailed;
+    const ImVec2 cardMax {
+        cardMin.x + cardWidth, cardMin.y + cardHeight
+    };
+    drawList->AddRectFilled(cardMin, cardMax,
+        hovered ? IM_COL32(15, 34, 49, 255)
+                : IM_COL32(10, 23, 34, 255), ui(7.0f));
+    drawList->AddRect(cardMin, cardMax,
+        hovered ? UiAccent : UiBorder, ui(7.0f), 0,
+        hovered ? ui(1.5f) : ui(1.0f));
+
+    const ImVec2 center {
+        cardMin.x + cardWidth * 0.5f,
+        cardMin.y + cardHeight * 0.43f
+    };
+    const ImU32 boneColor = available
+        ? IM_COL32(115, 202, 235, 255)
+        : IM_COL32(78, 99, 111, 255);
+    if (m_characterThumbnail) {
+        const float size=std::min(cardWidth-ui(12.0f),cardHeight-ui(36.0f));
+        const ImVec2 corner{cardMin.x+(cardWidth-size)*0.5f,cardMin.y+ui(4.0f)};
+        drawList->AddImage(static_cast<ImTextureID>(m_characterThumbnail.id),corner,
+            {corner.x+size,corner.y+size});
+    } else {
+    const float stroke = ui(5.0f);
+    const auto bone = [&](ImVec2 from, ImVec2 to) {
+        drawList->AddLine(from, to, boneColor, stroke);
+    };
+    drawList->AddCircleFilled(
+        { center.x, center.y - ui(69.0f) }, ui(13.0f), boneColor, 18);
+    bone({ center.x, center.y - ui(52.0f) },
+        { center.x, center.y + ui(23.0f) });
+    bone({ center.x - ui(53.0f), center.y - ui(31.0f) },
+        { center.x + ui(53.0f), center.y - ui(31.0f) });
+    bone({ center.x - ui(53.0f), center.y - ui(31.0f) },
+        { center.x - ui(78.0f), center.y + ui(7.0f) });
+    bone({ center.x + ui(53.0f), center.y - ui(31.0f) },
+        { center.x + ui(78.0f), center.y + ui(7.0f) });
+    bone({ center.x, center.y + ui(23.0f) },
+        { center.x - ui(28.0f), center.y + ui(88.0f) });
+    bone({ center.x, center.y + ui(23.0f) },
+        { center.x + ui(28.0f), center.y + ui(88.0f) });
+    drawList->AddCircleFilled(
+        { center.x, center.y + ui(23.0f) }, ui(7.0f), boneColor, 12);
+    }
+
+    const char* RagdollName = m_ragdollCharacter
+        ? m_ragdollCharacter->displayName.c_str() : "Ragdoll humano";
+    const ImVec2 nameSize = ImGui::CalcTextSize(RagdollName);
+    drawList->AddText(
+        { cardMin.x + (cardWidth - nameSize.x) * 0.5f,
+            cardMax.y - ui(27.0f) },
+        available ? UiText : IM_COL32(112, 130, 141, 255),
+        RagdollName);
+    if (hovered) {
+        ImGui::BeginTooltip();
+        ImGui::TextUnformatted(RagdollName);
+        subtleSeparator();
+        ImGui::TextUnformatted("PhysX Reduced Coordinate Articulation");
+        ImGui::TextUnformatted("18 segmentos | 41 DOFs | 75 kg");
+        ImGui::Text("Rigidez inicial: %.0f%%", m_ragdollRigidityPercent);
+        if (!available) {
+            ImGui::TextColored({ 1.0f, 0.55f, 0.48f, 1.0f },
+                "Perfil indisponivel");
+        }
+        ImGui::EndTooltip();
+    }
+    if (clicked && available) spawnHumanRagdoll();
+    ImGui::PopID();
+
     ImGui::End();
 }
 
@@ -885,6 +1628,7 @@ void WorkbenchApp::drawLaboratoryPauseMenu() {
 void WorkbenchApp::drawLaboratoryUi() {
     const ImGuiIO& io = ImGui::GetIO();
     ImDrawList* foreground = ImGui::GetForegroundDrawList();
+    ImDrawList* background = ImGui::GetBackgroundDrawList();
 
     char headerStatus[32] {};
     if (m_showPerformanceOverlay) {
@@ -899,14 +1643,19 @@ void WorkbenchApp::drawLaboratoryUi() {
     // cabecalho e o cabecalho nao estar no foreground. Isso nao muda nada
     // visualmente pro resto da cena 3D (ja renderizada via Vulkan antes de
     // qualquer coisa do ImGui, background inclusive).
-    drawWorkbenchHeader(ImGui::GetBackgroundDrawList(), io.DisplaySize,
-        m_uiScale, "LABORATÓRIO", headerStatus);
+    drawWorkbenchHeader(background, io.DisplaySize, m_uiScale,
+        "LABORATÓRIO", headerStatus);
+
 
     const ImVec2 center { io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f };
-    foreground->AddLine({ center.x - ui(5.0f), center.y },
-        { center.x + ui(5.0f), center.y }, IM_COL32(190, 222, 245, 205));
-    foreground->AddLine({ center.x, center.y - ui(5.0f) },
-        { center.x, center.y + ui(5.0f) }, IM_COL32(190, 222, 245, 205));
+    if (!m_hidePhysGunPresentation) {
+        foreground->AddLine({ center.x - ui(5.0f), center.y },
+            { center.x + ui(5.0f), center.y },
+            IM_COL32(190, 222, 245, 205));
+        foreground->AddLine({ center.x, center.y - ui(5.0f) },
+            { center.x, center.y + ui(5.0f) },
+            IM_COL32(190, 222, 245, 205));
+    }
 
     if (m_physGunTriggerHeld) {
         ImVec2 beamStartScreen;
@@ -970,6 +1719,90 @@ void WorkbenchApp::drawLaboratoryUi() {
             m_notification.text.c_str());
     }
 
+    if (m_physicsBenchmarkShowAnalytics
+        && (!m_physicsBenchmarkPropEntityIds.empty()
+            || !m_physicsBenchmarkRagdollEntityIds.empty()
+            || m_physicsBenchmarkRunning)) {
+        const float analyticsWidth =
+            std::min(ui(405.0f), io.DisplaySize.x - ui(24.0f));
+        ImGui::SetNextWindowPos({
+            io.DisplaySize.x - analyticsWidth - ui(12.0f),
+            headerHeight(m_uiScale) + ui(10.0f)
+        }, ImGuiCond_Always);
+        ImGui::SetNextWindowSize(
+            { analyticsWidth, ui(342.0f) }, ImGuiCond_Always);
+        ImGui::SetNextWindowBgAlpha(0.91f);
+        ImGui::Begin("PhysicsBenchmarkAnalytics", nullptr,
+            ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove
+                | ImGuiWindowFlags_NoSavedSettings
+                | ImGuiWindowFlags_NoInputs
+                | ImGuiWindowFlags_NoFocusOnAppearing);
+        panelHeader("BENCHMARK FÍSICO — ANALÍTICOS");
+        ImGui::Text("%.0f FPS  |  %zu props  |  %zu ragdolls",
+            io.Framerate,
+            m_physicsBenchmarkPropEntityIds.size(),
+            m_physicsBenchmarkRagdollEntityIds.size());
+        const float overallAverage =
+            m_physicsBenchmarkOverallFrameSamples > 0
+            ? m_physicsBenchmarkOverallFpsSum
+                / static_cast<float>(
+                    m_physicsBenchmarkOverallFrameSamples)
+            : 0.0f;
+        ImGui::Text(
+            "Antes %.0f  |  média %.0f  |  mínimo %.0f FPS",
+            m_physicsBenchmarkBaselineFps, overallAverage,
+            m_physicsBenchmarkOverallMinimumFps);
+        if (m_physicsScene) {
+            const PhysicsStepDiagnostics3D& physics =
+                m_physicsScene->diagnostics();
+            ImGui::Text("PhysX %.3f ms  |  %zu ativos  |  %zu contatos",
+                physics.totalStepMilliseconds,
+                physics.activeDynamicBodyCount,
+                physics.discreteContactPairs);
+            ImGui::Text("Dormindo %zu  |  CCD %zu  |  workers %u",
+                physics.sleepingDynamicBodyCount, physics.ccdPairs,
+                physics.physicsWorkerCount);
+        }
+        ImGui::Dummy({ 1.0f, ui(5.0f) });
+        std::vector<float> fpsHistory;
+        fpsHistory.reserve(m_physicsBenchmarkSamples.size());
+        for (const PhysicsBenchmarkSample& sample :
+                m_physicsBenchmarkSamples) {
+            fpsHistory.push_back(sample.averageFps);
+        }
+        if (fpsHistory.empty()) {
+            ImGui::TextColored(
+                { 0.55f, 0.68f, 0.78f, 1.0f },
+                "Primeiro ponto em %.0f s",
+                std::max(0.0f,
+                    5.0f - m_physicsBenchmarkSampleSeconds));
+            const float liveFps = io.Framerate;
+            ImGui::PlotLines("##BenchmarkFps", &liveFps, 1, 0,
+                "FPS médio / janela de 5 s", 0.0f,
+                std::max(120.0f, liveFps * 1.15f),
+                { -1.0f, ui(92.0f) });
+        } else {
+            const float maximum = *std::max_element(
+                fpsHistory.begin(), fpsHistory.end());
+            ImGui::PlotLines("##BenchmarkFps", fpsHistory.data(),
+                static_cast<int>(fpsHistory.size()), 0,
+                "FPS médio / janela de 5 s", 0.0f,
+                std::max(120.0f, maximum * 1.15f),
+                { -1.0f, ui(92.0f) });
+            const PhysicsBenchmarkSample& last =
+                m_physicsBenchmarkSamples.back();
+            ImGui::Text(
+                "Última janela: %.0f médio / %.0f mínimo",
+                last.averageFps, last.minimumFps);
+            ImGui::Text(
+                "%u props + %u ragdolls  |  PhysX %.3f ms (pico %.3f)",
+                last.propCount, last.ragdollCount,
+                last.averagePhysicsMilliseconds,
+                last.maximumPhysicsMilliseconds);
+        }
+        ImGui::End();
+    }
+
     if (m_laboratoryDebugVisible) {
         // Botoes na MESMA linha do cabecalho "MATTERENGINE | LABORATÓRIO"
         // (nao uma segunda barra abaixo dele) - cada um abre/fecha seu
@@ -1004,29 +1837,371 @@ void WorkbenchApp::drawLaboratoryUi() {
                 | ImGuiWindowFlags_NoSavedSettings
                 | ImGuiWindowFlags_NoFocusOnAppearing
                 | ImGuiWindowFlags_NoBackground);
-        const ImVec2 toolbarButtonSize { ui(130.0f), toolbarButtonHeight };
+        // A barra precisa acomodar também o benchmark em telas de 1366 px.
+        // 130 px por aba fazia o último botão existir, mas ficar recortado
+        // fora da janela transparente da toolbar.
+        const float toolbarGap = ImGui::GetStyle().ItemSpacing.x;
+        const float benchmarkButtonWidth = ui(140.0f);
+        const float regularButtonWidth = std::clamp(
+            (ImGui::GetContentRegionAvail().x - benchmarkButtonWidth
+                - toolbarGap * 8.0f) / 8.0f,
+            ui(82.0f), ui(110.0f));
+        const ImVec2 toolbarButtonSize {
+            regularButtonWidth, toolbarButtonHeight
+        };
+        if (tabButton("RENDER", m_showRenderPanel, toolbarButtonSize)) {
+            m_showRenderPanel = !m_showRenderPanel;
+        }
+        ImGui::SameLine();
         if (tabButton("Physgun", m_showPhysgunPanel, toolbarButtonSize)) {
             m_showPhysgunPanel = !m_showPhysgunPanel;
+        }
+        ImGui::SameLine();
+        if (tabButton("RAGDOLL", m_showRagdollPanel, toolbarButtonSize)) {
+            m_showRagdollPanel = !m_showRagdollPanel;
+        }
+        ImGui::SameLine();
+        if (tabButton("BENCHMARK FÍSICO",
+                m_showPhysicsBenchmarkPanel,
+                { benchmarkButtonWidth, toolbarButtonHeight })) {
+            m_showPhysicsBenchmarkPanel =
+                !m_showPhysicsBenchmarkPanel;
         }
         ImGui::SameLine();
         if (tabButton("Gráficos", m_showGraphicsPanel, toolbarButtonSize)) {
             m_showGraphicsPanel = !m_showGraphicsPanel;
         }
         ImGui::SameLine();
+        if (tabButton("TEMPO", m_showTimePanel, toolbarButtonSize)) {
+            m_showTimePanel = !m_showTimePanel;
+        }
+        ImGui::SameLine();
         if (tabButton("Performance", m_showPerformancePanel,
                 toolbarButtonSize)) {
             m_showPerformancePanel = !m_showPerformancePanel;
         }
+        ImGui::SameLine();
+        if (tabButton("Vento", m_showWindPanel, toolbarButtonSize)) {
+            m_showWindPanel = !m_showWindPanel;
+        }
         ImGui::End();
         ImGui::PopStyleVar();
 
+
         const float panelWidth = ui(390.0f);
         const float panelTop = headerHeight(m_uiScale) + ui(12.0f);
+        if (m_showPhysicsBenchmarkPanel
+            && beginDebugPanel("Benchmark físico",
+                &m_showPhysicsBenchmarkPanel,
+                { ui(12.0f), panelTop + ui(36.0f) },
+                { ui(430.0f), ui(510.0f) },
+                io.DisplaySize, m_uiScale)) {
+            panelHeader("CARGA CONTROLADA");
+            const bool configurationLocked =
+                m_physicsBenchmarkRunning
+                || m_physicsBenchmarkPaused
+                || !m_physicsBenchmarkPropEntityIds.empty()
+                || !m_physicsBenchmarkRagdollEntityIds.empty();
+            ImGui::BeginDisabled(configurationLocked);
+            ImGui::SliderInt("Props aleatórios",
+                &m_physicsBenchmarkRequestedProps, 10, 500);
+            ImGui::SliderInt("Ragdolls",
+                &m_physicsBenchmarkRequestedRagdolls, 1, 100);
+            ImGui::SliderFloat("Spawn por segundo",
+                &m_physicsBenchmarkSpawnRatePerSecond,
+                1.0f, 30.0f, "%.0f/s");
+            ImGui::EndDisabled();
+
+            ImGui::Dummy({ 1.0f, ui(8.0f) });
+            const float buttonGap = ui(7.0f);
+            const float buttonWidth =
+                (ImGui::GetContentRegionAvail().x
+                    - buttonGap * 2.0f) / 3.0f;
+            ImGui::BeginDisabled(m_physicsBenchmarkRunning);
+            if (ImGui::Button(
+                    m_physicsBenchmarkPaused ? "RETOMAR" : "COMEÇAR",
+                    { buttonWidth, ui(38.0f) })) {
+                beginPhysicsBenchmark();
+            }
+            ImGui::EndDisabled();
+            ImGui::SameLine(0.0f, buttonGap);
+            ImGui::BeginDisabled(
+                !m_physicsBenchmarkRunning
+                && !m_physicsBenchmarkPaused);
+            if (ImGui::Button("PAUSAR",
+                    { buttonWidth, ui(38.0f) })) {
+                pausePhysicsBenchmark();
+            }
+            ImGui::EndDisabled();
+            ImGui::SameLine(0.0f, buttonGap);
+            ImGui::BeginDisabled(
+                m_physicsBenchmarkPropEntityIds.empty()
+                && m_physicsBenchmarkRagdollEntityIds.empty());
+            if (ImGui::Button("DELETAR TUDO",
+                    { buttonWidth, ui(38.0f) })) {
+                clearPhysicsBenchmark();
+            }
+            ImGui::EndDisabled();
+
+            ImGui::Dummy({ 1.0f, ui(12.0f) });
+            panelHeader("PROGRESSO");
+            const float propProgress =
+                static_cast<float>(m_physicsBenchmarkSpawnedProps)
+                / static_cast<float>(std::max(
+                    1, m_physicsBenchmarkRequestedProps));
+            const float ragdollProgress =
+                static_cast<float>(m_physicsBenchmarkSpawnedRagdolls)
+                / static_cast<float>(std::max(
+                    1, m_physicsBenchmarkRequestedRagdolls));
+            char progressText[96] {};
+            std::snprintf(progressText, sizeof(progressText),
+                "Props %u / %d",
+                m_physicsBenchmarkSpawnedProps,
+                m_physicsBenchmarkRequestedProps);
+            ImGui::ProgressBar(propProgress,
+                { -1.0f, ui(22.0f) }, progressText);
+            std::snprintf(progressText, sizeof(progressText),
+                "Ragdolls %u / %d",
+                m_physicsBenchmarkSpawnedRagdolls,
+                m_physicsBenchmarkRequestedRagdolls);
+            ImGui::ProgressBar(ragdollProgress,
+                { -1.0f, ui(22.0f) }, progressText);
+            ImGui::TextColored(
+                m_physicsBenchmarkPaused
+                    ? ImVec4 { 1.0f, 0.72f, 0.25f, 1.0f }
+                    : ImVec4 { 0.39f, 0.78f, 1.0f, 1.0f },
+                "%s",
+                m_physicsBenchmarkPaused ? "PAUSADO"
+                : m_physicsBenchmarkRunning ? "SPAWNANDO"
+                : configurationLocked ? "CARGA COMPLETA"
+                : "PRONTO");
+
+            ImGui::Dummy({ 1.0f, ui(12.0f) });
+            panelHeader("TELEMETRIA");
+            ImGui::Checkbox("Mostrar analíticos",
+                &m_physicsBenchmarkShowAnalytics);
+            ImGui::TextWrapped(
+                "O gráfico registra FPS médio e mínimo, custo PhysX e "
+                "contagens em janelas de 5 segundos. As entidades usam "
+                "uma sequência reproduzível para comparações consistentes.");
+            growPanelToFitContent(io.DisplaySize, m_uiScale);
+        }
+        if (m_showPhysicsBenchmarkPanel) ImGui::End();
+
+        if (m_showRenderPanel && beginDebugPanel("Render",
+                &m_showRenderPanel,
+                { io.DisplaySize.x - panelWidth - ui(12.0f), panelTop },
+                { panelWidth, ui(360.0f) }, io.DisplaySize, m_uiScale)) {
+            panelHeader("MODO DE APRESENTAÇÃO");
+            const float modeGap = ui(7.0f);
+            const float modeWidth =
+                (ImGui::GetContentRegionAvail().x - modeGap) * 0.5f;
+            const bool standardMode =
+                m_laboratoryRenderMode == SceneRenderMode3D::Standard;
+            if (tabButton("NORMAL", standardMode,
+                    { modeWidth, ui(42.0f) })
+                && !standardMode) {
+                m_laboratoryRenderMode = SceneRenderMode3D::Standard;
+                m_laboratoryTaaHistoryValid = false;
+            }
+            ImGui::SameLine(0.0f, modeGap);
+            const bool pixelArtMode =
+                m_laboratoryRenderMode == SceneRenderMode3D::PixelArt;
+            if (tabButton("PIXEL ART", pixelArtMode,
+                    { modeWidth, ui(42.0f) })
+                && !pixelArtMode) {
+                m_laboratoryRenderMode = SceneRenderMode3D::PixelArt;
+                m_laboratoryTaaHistoryValid = false;
+                m_taaFrameIndex = 0;
+            }
+
+            ImGui::Dummy({ 1.0f, ui(13.0f) });
+            if (m_laboratoryRenderMode == SceneRenderMode3D::Standard) {
+                ImGui::TextWrapped(
+                    m_laboratoryGraphicsPreset == 0
+                        ? "Pipeline HDR rápido, sem acumulação temporal. "
+                          "Equilibrado e Alto reativam o TAA."
+                        : "Pipeline HDR nativo, com TAA e todos os efeitos "
+                          "configurados no painel Gráficos.");
+            } else {
+                panelHeader("MATTER MOSAIC");
+                ImGui::TextColored({ 0.50f, 0.62f, 0.72f, 1.0f },
+                    "Resolução interna do mundo");
+                int renderScalePercent = static_cast<int>(std::lround(
+                    m_laboratoryPixelArt.renderScale * 100.0f));
+                ImGui::SetNextItemWidth(-1.0f);
+                if (ImGui::SliderInt("##PixelArtRenderScale",
+                        &renderScalePercent, 25, 100, "%d%%",
+                        ImGuiSliderFlags_AlwaysClamp)) {
+                    m_laboratoryPixelArt.renderScale =
+                        static_cast<float>(renderScalePercent) * 0.01f;
+                    m_laboratoryTaaHistoryValid = false;
+                    m_taaFrameIndex = 0;
+                }
+                const int internalWidth = std::max(1,
+                    static_cast<int>(std::lround(
+                        static_cast<float>(renderer().width())
+                            * m_laboratoryPixelArt.renderScale)));
+                const int internalHeight = std::max(1,
+                    static_cast<int>(std::lround(
+                        static_cast<float>(renderer().height())
+                            * m_laboratoryPixelArt.renderScale)));
+                ImGui::TextColored({ 0.38f, 0.82f, 0.62f, 1.0f },
+                    "Mundo %dx%d  |  UI %dx%d",
+                    internalWidth, internalHeight,
+                    renderer().width(), renderer().height());
+
+                ImGui::Dummy({ 1.0f, ui(11.0f) });
+                panelHeader("PIXELIZAÇÃO");
+                int resolutionIndex =
+                    m_laboratoryPixelArt.pixelGridHeight <= 270.0f ? 0
+                    : m_laboratoryPixelArt.pixelGridHeight <= 360.0f ? 1
+                    : m_laboratoryPixelArt.pixelGridHeight <= 540.0f ? 2 : 3;
+                ImGui::TextColored({ 0.50f, 0.62f, 0.72f, 1.0f },
+                    "Tamanho-base dos pixels");
+                ImGui::SetNextItemWidth(-1.0f);
+                if (ImGui::Combo("##PixelArtResolution",
+                        &resolutionIndex,
+                        "270p — Grande\0"
+                        "360p — Marcado\0"
+                        "540p — Fino\0"
+                        "1080p — Somente paleta\0")) {
+                    constexpr std::array<float, 4> GridHeights {
+                        270.0f, 360.0f, 540.0f, 1080.0f
+                    };
+                    m_laboratoryPixelArt.pixelGridHeight =
+                        GridHeights[static_cast<std::size_t>(
+                            std::clamp(resolutionIndex, 0, 3))];
+                    m_laboratoryTaaHistoryValid = false;
+                }
+
+                int worldPixelationPercent =
+                    static_cast<int>(std::lround(
+                        m_laboratoryPixelArt.worldPixelation * 100.0f));
+                ImGui::TextColored({ 0.50f, 0.62f, 0.72f, 1.0f },
+                    "Pixelização do mundo");
+                ImGui::SetNextItemWidth(-1.0f);
+                if (ImGui::SliderInt("##WorldPixelation",
+                        &worldPixelationPercent, 0, 100, "%d%%",
+                        ImGuiSliderFlags_AlwaysClamp)) {
+                    m_laboratoryPixelArt.worldPixelation =
+                        static_cast<float>(worldPixelationPercent) * 0.01f;
+                }
+
+                int propPixelationPercent =
+                    static_cast<int>(std::lround(
+                        m_laboratoryPixelArt.physicalPropPixelation
+                            * 100.0f));
+                ImGui::TextColored({ 0.50f, 0.62f, 0.72f, 1.0f },
+                    "Pixelização dos objetos físicos");
+                ImGui::SetNextItemWidth(-1.0f);
+                if (ImGui::SliderInt("##PropPixelation",
+                        &propPixelationPercent, 0, 100, "%d%%",
+                        ImGuiSliderFlags_AlwaysClamp)) {
+                    m_laboratoryPixelArt.physicalPropPixelation =
+                        static_cast<float>(propPixelationPercent) * 0.01f;
+                }
+
+                ImGui::Dummy({ 1.0f, ui(11.0f) });
+                panelHeader("LOD ARTÍSTICO");
+                int lodStrengthPercent = static_cast<int>(std::lround(
+                    m_laboratoryPixelArt.distanceLodStrength * 100.0f));
+                ImGui::TextColored({ 0.50f, 0.62f, 0.72f, 1.0f },
+                    "Pixelização adicional à distância");
+                ImGui::SetNextItemWidth(-1.0f);
+                if (ImGui::SliderInt("##DistancePixelLodStrength",
+                        &lodStrengthPercent, 0, 100, "%d%%",
+                        ImGuiSliderFlags_AlwaysClamp)) {
+                    m_laboratoryPixelArt.distanceLodStrength =
+                        static_cast<float>(lodStrengthPercent) * 0.01f;
+                }
+                ImGui::TextColored({ 0.50f, 0.62f, 0.72f, 1.0f },
+                    "Início / alcance total do LOD");
+                ImGui::SetNextItemWidth(-1.0f);
+                ImGui::SliderFloat("##DistancePixelLodStart",
+                    &m_laboratoryPixelArt.distanceLodStartMeters,
+                    0.0f, 120.0f, "%.0f m",
+                    ImGuiSliderFlags_AlwaysClamp);
+                m_laboratoryPixelArt.distanceLodEndMeters = std::max(
+                    m_laboratoryPixelArt.distanceLodEndMeters,
+                    m_laboratoryPixelArt.distanceLodStartMeters + 1.0f);
+                ImGui::SetNextItemWidth(-1.0f);
+                ImGui::SliderFloat("##DistancePixelLodEnd",
+                    &m_laboratoryPixelArt.distanceLodEndMeters,
+                    m_laboratoryPixelArt.distanceLodStartMeters + 1.0f,
+                    500.0f, "%.0f m",
+                    ImGuiSliderFlags_AlwaysClamp);
+                ImGui::TextWrapped(
+                    "Props recebem só uma fração do LOD para bolas e "
+                    "objetos continuarem legíveis.");
+
+                ImGui::Dummy({ 1.0f, ui(11.0f) });
+                panelHeader("ACABAMENTO 2D");
+                int flatteningPercent = static_cast<int>(std::lround(
+                    m_laboratoryPixelArt.flatteningStrength * 100.0f));
+                ImGui::TextColored({ 0.50f, 0.62f, 0.72f, 1.0f },
+                    "Achatamento de luz e paleta");
+                ImGui::SetNextItemWidth(-1.0f);
+                if (ImGui::SliderInt("##MosaicFlattening",
+                        &flatteningPercent, 0, 100, "%d%%",
+                        ImGuiSliderFlags_AlwaysClamp)) {
+                    m_laboratoryPixelArt.flatteningStrength =
+                        static_cast<float>(flatteningPercent) * 0.01f;
+                }
+                ImGui::TextColored({ 0.50f, 0.62f, 0.72f, 1.0f },
+                    "Níveis de luz");
+                ImGui::SetNextItemWidth(-1.0f);
+                ImGui::SliderFloat("##MosaicLuminanceLevels",
+                    &m_laboratoryPixelArt.luminanceLevelCount,
+                    4.0f, 24.0f, "%.0f",
+                    ImGuiSliderFlags_AlwaysClamp);
+                ImGui::TextColored({ 0.50f, 0.62f, 0.72f, 1.0f },
+                    "Dithering estável");
+                ImGui::SetNextItemWidth(-1.0f);
+                ImGui::SliderFloat("##MosaicDitherStrength",
+                    &m_laboratoryPixelArt.ditherStrength,
+                    0.0f, 0.30f, "%.3f",
+                    ImGuiSliderFlags_AlwaysClamp);
+                ImGui::Dummy({ 1.0f, ui(11.0f) });
+                panelHeader("ANTIALIASING EXPERIMENTAL");
+                if (ImGui::Checkbox("Ativar TAA no Pixel Art",
+                        &m_laboratoryPixelArt
+                            .temporalAntiAliasingEnabled)) {
+                    m_laboratoryTaaHistoryValid = false;
+                    m_taaFrameIndex = 0;
+                }
+                ImGui::TextWrapped(
+                    "Pode suavizar movimento, mas também arredondar um "
+                    "pouco os pixels. A grade final continua estável.");
+
+                ImGui::Dummy({ 1.0f, ui(11.0f) });
+                if (ImGui::Button("RESTAURAR IDENTIDADE PADRÃO",
+                        { -1.0f, ui(34.0f) })) {
+                    m_laboratoryPixelArt = PixelArtSettings3D {};
+                    m_laboratoryTaaHistoryValid = false;
+                    m_taaFrameIndex = 0;
+                }
+            }
+            growPanelToFitContent(io.DisplaySize, m_uiScale);
+        }
+        if (m_showRenderPanel) ImGui::End();
+
         if (m_showPhysgunPanel && beginDebugPanel("Physgun",
                 &m_showPhysgunPanel,
                 { io.DisplaySize.x - panelWidth - ui(12.0f), panelTop },
                 { panelWidth, ui(430.0f) }, io.DisplaySize, m_uiScale)) {
             {
+                    panelHeader("APRESENTAÇÃO");
+                    if (ImGui::Checkbox(
+                            "Ocultar modelo e mira (modo foto)",
+                            &m_hidePhysGunPresentation)) {
+                        m_laboratoryTaaHistoryValid = false;
+                        m_taaFrameIndex = 0;
+                    }
+                    ImGui::TextWrapped(
+                        "A Physgun continua funcional; apenas o modelo e "
+                        "a mira deixam de aparecer.");
+                    ImGui::Dummy({ 1.0f, ui(12.0f) });
                     panelHeader("FORÇA DE MANIPULAÇÃO");
                     ImGui::Dummy({ 1.0f, ui(8.0f) });
                     ImGui::SetNextItemWidth(-1.0f);
@@ -1160,15 +2335,372 @@ void WorkbenchApp::drawLaboratoryUi() {
         }
         if (m_showPhysgunPanel) ImGui::End();
 
+        if (m_showRagdollPanel && beginDebugPanel("Ragdoll",
+                &m_showRagdollPanel,
+                { io.DisplaySize.x - panelWidth - ui(12.0f), panelTop },
+                { panelWidth, ui(420.0f) }, io.DisplaySize, m_uiScale)) {
+            panelHeader("ARTICULATION PHYSX");
+            const std::size_t humanRagdollCount = static_cast<std::size_t>(
+                std::count_if(m_spawnedRagdolls.begin(),
+                    m_spawnedRagdolls.end(),
+                    [](const SpawnedRagdollInstance& instance) {
+                        return instance.kind == ArticulatedRigKind::Human;
+                    }));
+            ImGui::TextColored({ 0.38f, 0.82f, 0.62f, 1.0f },
+                "%zu ragdoll%s ativo%s",
+                humanRagdollCount,
+                humanRagdollCount == 1 ? "" : "s",
+                humanRagdollCount == 1 ? "" : "s");
+            ImGui::TextWrapped(
+                "18 segmentos, 41 DOFs e limites anatômicos. Todos os "
+                "colisores seguem as proporções do modelo; os pés possuem área de "
+                "contato retangular para equilíbrio físico.");
+            ImGui::Dummy({ 1.0f, ui(12.0f) });
+
+            if (ImGui::BeginTabBar("##RagdollPanelTabs")) {
+            if (ImGui::BeginTabItem("CONTROLE")) {
+            panelHeader("MODO");
+            if (ImGui::Checkbox("Ragdoll ativo", &m_ragdollActive)
+                && m_physicsScene) {
+                for (SpawnedRagdollInstance& instance :
+                        m_spawnedRagdolls) {
+                    if (instance.kind != ArticulatedRigKind::Human) continue;
+                    instance.active = m_ragdollActive;
+                    if (instance.active && m_humanRagdollProfile) {
+                        instance.animationController.reset(*m_humanRagdollProfile,
+                            instance.physicsState, ragdollGroundHeight(instance.physicsState.links.front().position));
+                    }
+                    m_physicsScene->setRagdollActive(
+                        instance.physicsRagdoll, instance.active);
+                }
+            }
+            ImGui::TextWrapped(m_ragdollActive
+                ? "Animação alvo por motores articulares e assistência mágica explícita."
+                : "Passivo: mantém juntas, limites e colisões; não reproduz animações.");
+            ImGui::Checkbox("Assistência corporal residual (X / Y / Z)", &m_ragdollUseMagicMode);
+            ImGui::TextWrapped("Protótipo experimental: equilíbrio e passada ainda em desenvolvimento. A assistência não impede quedas. Sistemas anteriores arquivados.");
+            panelHeader("TESTE IDLE / CORRIDA / FREAR");
+            const bool canRun=m_ragdollActive && humanRagdollCount>0
+                && m_humanRagdollProfile && animatedRagdollClips().compatible(*m_humanRagdollProfile);
+            if(!canRun)ImGui::BeginDisabled();
+            if(ImGui::Button("CORRER POR 5 SEGUNDOS",{-1.0f,ui(40.0f)}))runRagdollsForFiveSeconds();
+            if(!canRun)ImGui::EndDisabled();
+            ImGui::TextWrapped("Segue a frente atual de cada corpo, freia e retorna ao Idle. Repetir o botão durante a corrida não reinicia o comando.");
+            ImGui::Dummy({1.0f,ui(12.0f)});
+
+            panelHeader("RIGIDEZ DOS DRIVES");
+            if (m_ragdollActive) ImGui::BeginDisabled();
+            ImGui::SetNextItemWidth(-1.0f);
+            if (ImGui::SliderFloat("##RagdollRigidity",
+                    &m_ragdollRigidityPercent, 0.0f, 100.0f, "%.0f%%",
+                    ImGuiSliderFlags_AlwaysClamp)) {
+                if (m_physicsScene) {
+                    for (const SpawnedRagdollInstance& instance :
+                            m_spawnedRagdolls) {
+                        if (instance.kind != ArticulatedRigKind::Human) {
+                            continue;
+                        }
+                        m_physicsScene->setRagdollRigidity(
+                            instance.physicsRagdoll,
+                            m_ragdollRigidityPercent);
+                    }
+                }
+            }
+            ImGui::TextWrapped(
+                "0%% solta os motores, mas conserva as juntas e os "
+                "limites. Ao subir a rigidez, a pose física atual é "
+                "capturada sem estalo.");
+            if (m_ragdollActive) ImGui::EndDisabled();
+            ImGui::Dummy({ 1.0f, ui(12.0f) });
+
+            panelHeader("ALVOS");
+            if (m_ragdollActive) ImGui::BeginDisabled();
+            const ImVec2 actionSize {
+                (ImGui::GetContentRegionAvail().x - ui(7.0f)) * 0.5f,
+                ui(38.0f)
+            };
+            if (ImGui::Button("CAPTURAR POSE", actionSize)
+                && m_physicsScene) {
+                for (const SpawnedRagdollInstance& instance :
+                        m_spawnedRagdolls) {
+                    if (instance.kind != ArticulatedRigKind::Human) continue;
+                    m_physicsScene->captureRagdollPose(
+                        instance.physicsRagdoll);
+                }
+            }
+            ImGui::SameLine(0.0f, ui(7.0f));
+            if (ImGui::Button("POSE NEUTRA", actionSize)
+                && m_physicsScene) {
+                for (const SpawnedRagdollInstance& instance :
+                        m_spawnedRagdolls) {
+                    if (instance.kind != ArticulatedRigKind::Human) continue;
+                    m_physicsScene->setRagdollNeutralPose(
+                        instance.physicsRagdoll);
+                }
+            }
+            if (ImGui::Button("SOLTAR DRIVES",
+                    { -1.0f, ui(38.0f) }) && m_physicsScene) {
+                m_ragdollRigidityPercent = 0.0f;
+                for (const SpawnedRagdollInstance& instance :
+                        m_spawnedRagdolls) {
+                    if (instance.kind != ArticulatedRigKind::Human) continue;
+                    m_physicsScene->releaseRagdollDrives(
+                        instance.physicsRagdoll);
+                }
+            }
+            if (m_ragdollActive) ImGui::EndDisabled();
+            const auto latestHuman = std::find_if(
+                m_spawnedRagdolls.rbegin(), m_spawnedRagdolls.rend(),
+                [](const SpawnedRagdollInstance& instance) {
+                    return instance.kind == ArticulatedRigKind::Human
+                        && instance.active;
+                });
+            if (latestHuman != m_spawnedRagdolls.rend()) {
+                const auto& telemetry=latestHuman->animationController.telemetry();
+                const char* phase=telemetry.phase==AnimatedRagdollPhase3D::Idle?"IDLE":
+                    telemetry.phase==AnimatedRagdollPhase3D::Running?"CORRENDO":
+                    telemetry.phase==AnimatedRagdollPhase3D::Stopping?"FREANDO":"CAINDO / CAÍDO";
+                panelHeader("ANIMAÇÃO FÍSICA");
+                ImGui::Text("Estado: %s",phase);
+                ImGui::Text("Corrida restante: %.2f s",telemetry.runSecondsRemaining);
+                ImGui::Text("Velocidade: %.2f m/s | distância: %.2f m",telemetry.speedMetersPerSecond,telemetry.travelledMeters);
+                ImGui::Text("Juntas RMS: %.1f graus | apoio nos pés: %.0f N",telemetry.jointRmsDegrees,telemetry.supportLoadNewtons);
+                ImGui::Text("Auxílio: %.0f N / %.1f N.m | autoridade: %.0f%%",telemetry.assistanceForceNewtons,
+                    telemetry.assistanceTorqueNewtonMeters,100*telemetry.assistanceAuthority);
+                ImGui::TextUnformatted("Limites padrão: 12% do peso / 3,5% peso x altura.");
+                ImGui::Text("Resultante XYZ: %.1f / %.1f / %.1f N",telemetry.assistanceNetForceWorld.x,
+                    telemetry.assistanceNetForceWorld.y,telemetry.assistanceNetForceWorld.z);
+                ImGui::TextUnformatted("Sem alvo posicional mundial ou retorno ao ponto de origem.");
+                if(telemetry.phase==AnimatedRagdollPhase3D::Falling)
+                    ImGui::TextWrapped("Queda: auxílio desligado e motores cedendo. Levante com a Physgun para rearmar; não há recuperação automática.");
+                if(telemetry.blocked)ImGui::TextUnformatted("Interrompido: obstáculo frontal.");
+                if(telemetry.manipulated)ImGui::TextUnformatted("Controle suspenso pela Physgun.");
+            }
+            ImGui::Dummy({ 1.0f, ui(8.0f) });
+            ImGui::TextColored({ 0.50f, 0.62f, 0.72f, 1.0f },
+                "Novos ragdolls herdam a rigidez selecionada.");
+            ImGui::EndTabItem();
+            }
+
+            if (ImGui::BeginTabItem("IMPULSOS")) {
+                RagdollImpactTestConfig3D& impactConfig =
+                    m_ragdollImpactLab.config();
+                const RagdollImpactTestOutput3D& impactOutput =
+                    m_ragdollImpactLab.output();
+                panelHeader("LABORATÓRIO DE EQUILÍBRIO");
+                ImGui::TextWrapped(
+                    "Aplica forças físicas distribuídas na bacia e no "
+                    "tronco. A direção acompanha cada ragdoll: 0° frente, "
+                    "90° esquerda, 180° costas e 270° direita.");
+                ImGui::Dummy({ 1.0f, ui(8.0f) });
+
+                int impactMode = static_cast<int>(impactConfig.mode);
+                const char* impactModes[] = {
+                    "IMPACTO DIRETO", "EMPURRÃO CONTÍNUO", "ALEATÓRIO"
+                };
+                ImGui::SetNextItemWidth(-1.0f);
+                if (ImGui::Combo("##RagdollImpactMode", &impactMode,
+                        impactModes, 3)) {
+                    impactConfig.mode = static_cast<RagdollImpactMode3D>(
+                        impactMode);
+                }
+
+                if (impactConfig.mode != RagdollImpactMode3D::Random) {
+                    ImGui::SetNextItemWidth(-1.0f);
+                    ImGui::SliderFloat("Força",
+                        &impactConfig.forceNewtons,
+                        0.0f, 2'000.0f, "%.0f N",
+                        ImGuiSliderFlags_AlwaysClamp);
+                    ImGui::SetNextItemWidth(-1.0f);
+                    ImGui::SliderFloat("Direção relativa",
+                        &impactConfig.directionDegrees,
+                        0.0f, 360.0f, "%.0f°",
+                        ImGuiSliderFlags_AlwaysClamp);
+                }
+
+                if (impactConfig.mode
+                        == RagdollImpactMode3D::DirectPulse) {
+                    ImGui::SetNextItemWidth(-1.0f);
+                    ImGui::SliderFloat("Intervalo",
+                        &impactConfig.intervalSeconds,
+                        0.25f, 15.0f, "%.2f s",
+                        ImGuiSliderFlags_AlwaysClamp);
+                    ImGui::SetNextItemWidth(-1.0f);
+                    ImGui::SliderFloat("Duração da rajada",
+                        &impactConfig.pulseDurationSeconds,
+                        0.03f, 2.0f, "%.2f s",
+                        ImGuiSliderFlags_AlwaysClamp);
+                } else if (impactConfig.mode
+                        == RagdollImpactMode3D::Random) {
+                    ImGui::SetNextItemWidth(-1.0f);
+                    ImGui::SliderFloat("Força mínima",
+                        &impactConfig.randomMinimumForceNewtons,
+                        0.0f, 2'000.0f, "%.0f N",
+                        ImGuiSliderFlags_AlwaysClamp);
+                    ImGui::SetNextItemWidth(-1.0f);
+                    ImGui::SliderFloat("Força máxima",
+                        &impactConfig.randomMaximumForceNewtons,
+                        0.0f, 2'000.0f, "%.0f N",
+                        ImGuiSliderFlags_AlwaysClamp);
+                    ImGui::SetNextItemWidth(-1.0f);
+                    ImGui::SliderFloat("Intervalo mínimo",
+                        &impactConfig.randomMinimumIntervalSeconds,
+                        0.25f, 15.0f, "%.2f s",
+                        ImGuiSliderFlags_AlwaysClamp);
+                    ImGui::SetNextItemWidth(-1.0f);
+                    ImGui::SliderFloat("Intervalo máximo",
+                        &impactConfig.randomMaximumIntervalSeconds,
+                        0.25f, 15.0f, "%.2f s",
+                        ImGuiSliderFlags_AlwaysClamp);
+                    ImGui::SetNextItemWidth(-1.0f);
+                    ImGui::SliderFloat("Duração mínima",
+                        &impactConfig.randomMinimumDurationSeconds,
+                        0.03f, 4.0f, "%.2f s",
+                        ImGuiSliderFlags_AlwaysClamp);
+                    ImGui::SetNextItemWidth(-1.0f);
+                    ImGui::SliderFloat("Duração máxima",
+                        &impactConfig.randomMaximumDurationSeconds,
+                        0.03f, 4.0f, "%.2f s",
+                        ImGuiSliderFlags_AlwaysClamp);
+                }
+
+                ImGui::Dummy({ 1.0f, ui(8.0f) });
+                const ImVec2 impactActionSize {
+                    (ImGui::GetContentRegionAvail().x - ui(7.0f)) * 0.5f,
+                    ui(38.0f)
+                };
+                if (!m_ragdollImpactLab.running()) {
+                    if (ImGui::Button("INICIAR", impactActionSize)) {
+                        m_ragdollImpactLab.setRunning(true);
+                    }
+                } else if (ImGui::Button("PAUSAR", impactActionSize)) {
+                    m_ragdollImpactLab.setRunning(false);
+                }
+                ImGui::SameLine(0.0f, ui(7.0f));
+                if (ImGui::Button("APLICAR AGORA", impactActionSize)) {
+                    m_ragdollImpactLab.triggerNow();
+                }
+                if (ImGui::Button("PARAR E ZERAR",
+                        { -1.0f, ui(36.0f) })) {
+                    m_ragdollImpactLab.reset();
+                }
+
+                ImGui::Dummy({ 1.0f, ui(8.0f) });
+                ImGui::Text("Estado: %s",
+                    impactOutput.applying ? "APLICANDO FORÇA"
+                    : (m_ragdollImpactLab.running()
+                        ? "AGUARDANDO" : "PARADO"));
+                ImGui::Text("Evento: %llu",
+                    static_cast<unsigned long long>(
+                        impactOutput.eventCount));
+                if (impactOutput.applying) {
+                    ImGui::Text("Força atual: %.0f N a %.0f°",
+                        impactOutput.forceNewtons,
+                        impactOutput.directionDegrees);
+                    if (impactOutput.secondsRemaining >= 0.0f) {
+                        ImGui::Text("Tempo restante: %.2f s",
+                            impactOutput.secondsRemaining);
+                    }
+                } else if (m_ragdollImpactLab.running()
+                        && impactConfig.mode
+                            != RagdollImpactMode3D::Continuous) {
+                    ImGui::Text("Próximo em: %.2f s",
+                        impactOutput.secondsUntilNext);
+                }
+                ImGui::TextWrapped(
+                    "O mesmo gerador determinístico é usado pela suíte "
+                    "automatizada; nenhum link é reposicionado e nenhuma "
+                    "velocidade é injetada diretamente.");
+                ImGui::EndTabItem();
+            }
+            ImGui::EndTabBar();
+            }
+            growPanelToFitContent(io.DisplaySize, m_uiScale);
+        }
+        if (m_showRagdollPanel) ImGui::End();
+
         if (m_showGraphicsPanel && beginDebugPanel("Gráficos",
                 &m_showGraphicsPanel,
                 { io.DisplaySize.x - panelWidth - ui(12.0f),
                     panelTop + ui(24.0f) },
                 { panelWidth, ui(430.0f) }, io.DisplaySize, m_uiScale)) {
             {
+                    panelHeader("PERFIL DE QUALIDADE");
+                    int graphicsPreset =
+                        m_laboratoryGraphicsPreset;
+                    ImGui::SetNextItemWidth(-1.0f);
+                    if (ImGui::Combo("##GraphicsQualityPreset",
+                            &graphicsPreset,
+                            "Desempenho\0Equilibrado\0Alto\0"
+                            "Personalizado\0")) {
+                        if (graphicsPreset < 3) {
+                            applyLaboratoryGraphicsPreset(
+                                graphicsPreset);
+                        } else {
+                            m_laboratoryGraphicsPreset = 3;
+                        }
+                    }
+                    const std::uint32_t shadowSamples =
+                        m_laboratoryGraphicsPreset == 0 ? 4u
+                        : m_laboratoryGraphicsPreset == 1 ? 8u : 12u;
+                    ImGui::TextColored(
+                        { 0.50f, 0.62f, 0.72f, 1.0f },
+                        "PCSS: %u + %u amostras | cascatas 2048 px",
+                        shadowSamples, shadowSamples);
+                    ImGui::Dummy({ 1.0f, ui(12.0f) });
+
+                    panelHeader("ILUMINAÇÃO AMBIENTAL");
+                    ImGui::TextColored({ 0.50f, 0.62f, 0.72f, 1.0f },
+                        "Céu %.3f  |  Rebote solar %.3f",
+                        m_laboratoryEnvironment.skyIrradiance,
+                        m_laboratoryEnvironment.sunDiffuseBounce);
+                    ImGui::Dummy({ 1.0f, ui(7.0f) });
+                    ImGui::TextColored({ 0.50f, 0.62f, 0.72f, 1.0f },
+                        "Luz mínima em oclusão total");
+                    ImGui::SetNextItemWidth(-1.0f);
+                    ImGui::SliderFloat(
+                        "##EnvironmentMinimumIndirectVisibility",
+                        &m_laboratoryEnvironment.minimumIndirectVisibility,
+                        0.0f, 0.25f, "%.3f",
+                        ImGuiSliderFlags_AlwaysClamp);
+                    ImGui::Dummy({ 1.0f, ui(12.0f) });
+
+                    panelHeader("ÓPTICA SOLAR HDR");
+                    if (ImGui::Checkbox("Ativar glare e flare",
+                            &m_laboratoryOpticalEffects.enabled)) {
+                        m_laboratoryGraphicsPreset = 3;
+                    }
+                    if (m_laboratoryOpticalEffects.enabled) {
+                        ImGui::Dummy({ 1.0f, ui(7.0f) });
+                        ImGui::TextColored(
+                            { 0.50f, 0.62f, 0.72f, 1.0f },
+                            "Glare do Sol");
+                        ImGui::SetNextItemWidth(-1.0f);
+                        if (ImGui::SliderFloat("##SunGlareStrength",
+                            &m_laboratoryOpticalEffects
+                                .sunGlareStrength,
+                            0.0f, 0.65f, "%.2f",
+                            ImGuiSliderFlags_AlwaysClamp)) {
+                            m_laboratoryGraphicsPreset = 3;
+                        }
+                        ImGui::Dummy({ 1.0f, ui(7.0f) });
+                        ImGui::TextColored(
+                            { 0.50f, 0.62f, 0.72f, 1.0f },
+                            "Ghosts da lente");
+                        ImGui::SetNextItemWidth(-1.0f);
+                        if (ImGui::SliderFloat("##LensFlareStrength",
+                            &m_laboratoryOpticalEffects
+                                .lensFlareStrength,
+                            0.0f, 0.35f, "%.2f",
+                            ImGuiSliderFlags_AlwaysClamp)) {
+                            m_laboratoryGraphicsPreset = 3;
+                        }
+                    }
+                    ImGui::Dummy({ 1.0f, ui(12.0f) });
+
                     panelHeader("TONEMAP (HDR → LDR)");
                     ImGui::TextColored({ 0.50f, 0.62f, 0.72f, 1.0f },
-                        "Exposição");
+                        "Exposição fixa");
                     ImGui::SetNextItemWidth(-1.0f);
                     ImGui::SliderFloat("##ToneMappingExposure",
                         &m_laboratoryToneMapping.exposure,
@@ -1203,7 +2735,24 @@ void WorkbenchApp::drawLaboratoryUi() {
                     ImGui::Dummy({ 1.0f, ui(12.0f) });
                     panelHeader("NEBLINA");
                     ImGui::TextColored({ 0.50f, 0.62f, 0.72f, 1.0f },
-                        "Densidade (queda por metro)");
+                        "Distância de início (m)");
+                    ImGui::SetNextItemWidth(-1.0f);
+                    ImGui::SliderFloat("##FogStartDistance",
+                        &m_laboratoryFog.startDistanceMeters,
+                        0.0f, 1500.0f, "%.0f",
+                        ImGuiSliderFlags_AlwaysClamp);
+                    ImGui::Dummy({ 1.0f, ui(7.0f) });
+                    ImGui::TextColored({ 0.50f, 0.62f, 0.72f, 1.0f },
+                        "Ocultação total do cenário (m)");
+                    ImGui::SetNextItemWidth(-1.0f);
+                    ImGui::SliderFloat("##FogEndDistance",
+                        &m_laboratoryFog.endDistanceMeters,
+                        m_laboratoryFog.startDistanceMeters + 1.0f,
+                        2000.0f, "%.0f",
+                        ImGuiSliderFlags_AlwaysClamp);
+                    ImGui::Dummy({ 1.0f, ui(7.0f) });
+                    ImGui::TextColored({ 0.50f, 0.62f, 0.72f, 1.0f },
+                        "Densidade (queda por metro após o início)");
                     ImGui::SetNextItemWidth(-1.0f);
                     ImGui::SliderFloat("##FogDensity",
                         &m_laboratoryFog.density,
@@ -1218,34 +2767,38 @@ void WorkbenchApp::drawLaboratoryUi() {
                         0.0f, 0.10f, "%.4f",
                         ImGuiSliderFlags_AlwaysClamp);
                     ImGui::Dummy({ 1.0f, ui(7.0f) });
-                    ImGui::TextColored({ 0.50f, 0.62f, 0.72f, 1.0f },
-                        "Opacidade máxima");
-                    ImGui::SetNextItemWidth(-1.0f);
-                    ImGui::SliderFloat("##FogMaxOpacity",
-                        &m_laboratoryFog.maxOpacity,
-                        0.0f, 1.0f, "%.3f",
-                        ImGuiSliderFlags_AlwaysClamp);
-                    ImGui::Dummy({ 1.0f, ui(7.0f) });
-                    ImGui::TextColored({ 0.50f, 0.62f, 0.72f, 1.0f },
-                        "Cor");
-                    ImGui::SetNextItemWidth(-1.0f);
-                    ImGui::ColorEdit3("##FogColor",
-                        &m_laboratoryFog.color.x,
-                        ImGuiColorEditFlags_NoInputs);
+                    ImGui::TextWrapped(
+                        "A cor acompanha automaticamente o horizonte, "
+                        "a hora do dia e a cobertura de nuvens.");
 
                     ImGui::Dummy({ 1.0f, ui(12.0f) });
                     if (ImGui::Button("Copiar valores calibrados",
                             { -1.0f, ui(36.0f) })) {
-                        char calibration[384] {};
+                        char calibration[640] {};
                         std::snprintf(calibration, sizeof(calibration),
                             "ToneMapping: exposure=%.4ff; brightness=%.4ff; "
-                            "contrast=%.4ff; saturation=%.4ff\n"
-                            "Fog: density=%.4ff; heightFalloff=%.4ff; "
-                            "maxOpacity=%.4ff; color={%.3ff, %.3ff, %.3ff}",
+                            "contrast=%.4ff; saturation=%.4ff; "
+                            "automatic=%s; autoMin=%.3ff; autoMax=%.3ff; "
+                            "meteringKey=%.3ff; brightSpeed=%.3ff; "
+                            "darkSpeed=%.3ff\n"
+                            "Fog: startDistanceMeters=%.1ff; density=%.4ff; "
+                            "heightFalloff=%.4ff; maxOpacity=%.4ff; "
+                            "color={%.3ff, %.3ff, %.3ff}",
                             m_laboratoryToneMapping.exposure,
                             m_laboratoryToneMapping.brightness,
                             m_laboratoryToneMapping.contrast,
                             m_laboratoryToneMapping.saturation,
+                            m_laboratoryToneMapping
+                                .automaticExposureEnabled ? "true" : "false",
+                            m_laboratoryToneMapping
+                                .automaticExposureMinimum,
+                            m_laboratoryToneMapping
+                                .automaticExposureMaximum,
+                            m_laboratoryToneMapping
+                                .automaticExposureMeteringKey,
+                            m_laboratoryToneMapping.brightAdaptationSpeed,
+                            m_laboratoryToneMapping.darkAdaptationSpeed,
+                            m_laboratoryFog.startDistanceMeters,
                             m_laboratoryFog.density,
                             m_laboratoryFog.heightFalloff,
                             m_laboratoryFog.maxOpacity,
@@ -1263,6 +2816,103 @@ void WorkbenchApp::drawLaboratoryUi() {
             growPanelToFitContent(io.DisplaySize, m_uiScale);
         }
         if (m_showGraphicsPanel) ImGui::End();
+
+        if (m_showTimePanel && beginDebugPanel("Tempo e atmosfera",
+                &m_showTimePanel,
+                { io.DisplaySize.x - panelWidth - ui(12.0f),
+                    panelTop + ui(48.0f) },
+                { panelWidth, ui(420.0f) }, io.DisplaySize, m_uiScale)) {
+            {
+                    float hour = std::clamp(
+                        m_laboratoryEnvironment.solarTimeHours,
+                        0.0f, 24.0f);
+                    int totalMinutes = static_cast<int>(
+                        std::round(hour * 60.0f)) % (24 * 60);
+                    const int displayHour = totalMinutes / 60;
+                    const int displayMinute = totalMinutes % 60;
+                    const char* phase = hour < 5.0f ? "Madrugada"
+                        : hour < 7.0f ? "Amanhecer"
+                        : hour < 12.0f ? "Manhã"
+                        : hour < 17.0f ? "Tarde"
+                        : hour < 19.0f ? "Entardecer"
+                        : "Noite";
+
+                    panelHeader("RELÓGIO CELESTE");
+                    ImGui::TextColored({ 0.72f, 0.86f, 0.96f, 1.0f },
+                        "%02d:%02d  —  %s",
+                        displayHour, displayMinute, phase);
+                    ImGui::SetNextItemWidth(-1.0f);
+                    if (ImGui::SliderFloat("##TimeOfDay", &hour,
+                            0.0f, 24.0f, "%.2f h",
+                            ImGuiSliderFlags_AlwaysClamp)) {
+                        m_laboratoryEnvironment.solarTimeHours =
+                            hour >= 24.0f ? 0.0f : hour;
+                        m_laboratoryTaaHistoryValid = false;
+                    }
+                    ImGui::Checkbox("Avançar o tempo",
+                        &m_laboratoryClockRunning);
+                    if (m_laboratoryClockRunning) {
+                        ImGui::TextColored(
+                            { 0.50f, 0.62f, 0.72f, 1.0f },
+                            "Escala temporal");
+                        ImGui::SetNextItemWidth(-1.0f);
+                        ImGui::SliderFloat("##ClockTimeScale",
+                            &m_laboratoryClockTimeScale,
+                            1.0f, 3600.0f, "%.0fx",
+                            ImGuiSliderFlags_Logarithmic
+                                | ImGuiSliderFlags_AlwaysClamp);
+                    }
+
+                    ImGui::Dummy({ 1.0f, ui(12.0f) });
+                    panelHeader("NUVENS E LUZ");
+                    ImGui::TextColored({ 0.50f, 0.62f, 0.72f, 1.0f },
+                        "Cobertura do céu");
+                    float cloudPercentage =
+                        m_laboratoryEnvironment.cloudCoverage * 100.0f;
+                    ImGui::SetNextItemWidth(-1.0f);
+                    ImGui::SliderFloat("##WeatherCloudCoverage",
+                        &cloudPercentage, 0.0f, 100.0f, "%.0f%%",
+                        ImGuiSliderFlags_AlwaysClamp);
+                    m_laboratoryEnvironment.cloudCoverage =
+                        cloudPercentage * 0.01f;
+                    ImGui::TextColored({ 0.50f, 0.62f, 0.72f, 1.0f },
+                        "Sol atravessando nuvens: %.0f%%",
+                        m_laboratoryEnvironment.cloudSunTransmittance
+                            * 100.0f);
+
+                    const float presetGap = ui(5.0f);
+                    const float presetWidth =
+                        (ImGui::GetContentRegionAvail().x
+                            - presetGap * 3.0f) * 0.25f;
+                    if (ImGui::Button("Limpo",
+                            { presetWidth, ui(34.0f) })) {
+                        m_laboratoryEnvironment.cloudCoverage = 0.05f;
+                    }
+                    ImGui::SameLine(0.0f, presetGap);
+                    if (ImGui::Button("Parcial",
+                            { presetWidth, ui(34.0f) })) {
+                        m_laboratoryEnvironment.cloudCoverage = 0.38f;
+                    }
+                    ImGui::SameLine(0.0f, presetGap);
+                    if (ImGui::Button("Nublado",
+                            { presetWidth, ui(34.0f) })) {
+                        m_laboratoryEnvironment.cloudCoverage = 0.72f;
+                    }
+                    ImGui::SameLine(0.0f, presetGap);
+                    if (ImGui::Button("Fechado",
+                            { presetWidth, ui(34.0f) })) {
+                        m_laboratoryEnvironment.cloudCoverage = 0.96f;
+                    }
+
+                    ImGui::Dummy({ 1.0f, ui(10.0f) });
+                    ImGui::TextWrapped(
+                        "O Sol move as sombras; nuvens sobre o disco "
+                        "reduzem a luz direta, enquanto o céu continua "
+                        "espalhando parte da energia pelo ambiente.");
+            }
+            growPanelToFitContent(io.DisplaySize, m_uiScale);
+        }
+        if (m_showTimePanel) ImGui::End();
 
         if (m_showPerformancePanel && beginDebugPanel("Performance",
                 &m_showPerformancePanel,
@@ -1299,22 +2949,166 @@ void WorkbenchApp::drawLaboratoryUi() {
                         panelHeader("PHYSX 120 HZ");
                         ImGui::Text("Passo     %.3f ms",
                             physics.totalStepMilliseconds);
+                        ImGui::Text("Pre       %.3f ms",
+                            physics.preSimulationMilliseconds);
+                        ImGui::Text("Dispatch  %.3f ms",
+                            physics.simulationDispatchMilliseconds);
                         ImGui::Text("Espera    %.3f ms",
                             physics.simulationWaitMilliseconds);
+                        ImGui::Text("Callback  %.3f ms",
+                            physics.contactCallbackMilliseconds);
+                        ImGui::Text("Sync      %.3f ms",
+                            physics.stateSyncMilliseconds);
                         ImGui::Text("Workers   %u",
                             physics.physicsWorkerCount);
+                        ImGui::Text("Tarefas   %zu",
+                            physics.submittedPhysicsTasks);
                         ImGui::Text("Ativos    %zu",
                             physics.activeDynamicBodyCount);
                         ImGui::Text("Dormindo  %zu",
                             physics.sleepingDynamicBodyCount);
                         ImGui::Text("Contatos  %zu",
                             physics.discreteContactPairs);
+                        ImGui::Text("Reportados %zu (%zu pontos)",
+                            physics.reportedContactPairs,
+                            physics.reportedContactPoints);
                         ImGui::Text("CCD       %zu", physics.ccdPairs);
                     }
             }
             growPanelToFitContent(io.DisplaySize, m_uiScale);
         }
         if (m_showPerformancePanel) ImGui::End();
+
+        // Painel TEMPORARIO de calibracao (ver WindSettings3D::
+        // mutableSettings, criado exatamente pra isto e nunca ligado ate
+        // pouco atras) - acompanha e ajusta o vento durante os testes de
+        // calmaria/rajada/abrigo por parede. Nao faz parte da experiencia
+        // final: remover este painel inteiro quando os valores padrao em
+        // WindSystem.hpp estiverem calibrados.
+        if (m_showWindPanel && beginDebugPanel("Vento",
+                &m_showWindPanel,
+                { io.DisplaySize.x - panelWidth - ui(12.0f),
+                    panelTop + ui(72.0f) },
+                { panelWidth, ui(430.0f) }, io.DisplaySize, m_uiScale)) {
+            {
+                    WindSettings3D& wind = m_windSystem.mutableSettings();
+                    const Vec3 currentWind = m_windSystem.velocityAtHeight(
+                        wind.referenceHeightMeters);
+                    const float currentSpeed = currentWind.length();
+                    const float currentHeadingDegrees =
+                        currentSpeed > 1.0e-4f
+                            ? std::atan2(currentWind.y, currentWind.x)
+                                * (180.0f / Pi)
+                            : 0.0f;
+                    panelHeader("VENTO (debug, remover depois dos testes)");
+                    ImGui::TextColored({ 0.50f, 0.62f, 0.72f, 1.0f },
+                        "Direção atual: %.0f°  |  Velocidade: %.2f m/s",
+                        currentHeadingDegrees, currentSpeed);
+
+                    ImGui::Dummy({ 1.0f, ui(7.0f) });
+                    ImGui::TextColored({ 0.50f, 0.62f, 0.72f, 1.0f },
+                        "Velocidade base (m/s)");
+                    ImGui::SetNextItemWidth(-1.0f);
+                    ImGui::SliderFloat("##WindBaseSpeed",
+                        &wind.baseSpeedMetersPerSecond,
+                        0.0f, 15.0f, "%.2f",
+                        ImGuiSliderFlags_AlwaysClamp);
+
+                    ImGui::Dummy({ 1.0f, ui(7.0f) });
+                    ImGui::TextColored({ 0.50f, 0.62f, 0.72f, 1.0f },
+                        "Amplitude de rajada (m/s)");
+                    ImGui::SetNextItemWidth(-1.0f);
+                    ImGui::SliderFloat("##WindGustAmplitude",
+                        &wind.gustAmplitudeMetersPerSecond,
+                        0.0f, 10.0f, "%.2f",
+                        ImGuiSliderFlags_AlwaysClamp);
+
+                    ImGui::Dummy({ 1.0f, ui(7.0f) });
+                    ImGui::TextColored({ 0.50f, 0.62f, 0.72f, 1.0f },
+                        "Frequência de rajada (Hz)");
+                    ImGui::SetNextItemWidth(-1.0f);
+                    ImGui::SliderFloat("##WindGustFrequency",
+                        &wind.gustFrequencyHz,
+                        0.0f, 0.5f, "%.4f",
+                        ImGuiSliderFlags_AlwaysClamp);
+
+                    ImGui::Dummy({ 1.0f, ui(7.0f) });
+                    ImGui::TextColored({ 0.50f, 0.62f, 0.72f, 1.0f },
+                        "Frequência de vagueio de direção (Hz)");
+                    ImGui::SetNextItemWidth(-1.0f);
+                    ImGui::SliderFloat("##WindDirectionWander",
+                        &wind.directionWanderFrequencyHz,
+                        0.0f, 0.2f, "%.4f",
+                        ImGuiSliderFlags_AlwaysClamp);
+
+                    ImGui::Dummy({ 1.0f, ui(12.0f) });
+                    ImGui::TextColored({ 0.45f, 0.55f, 0.65f, 1.0f },
+                        "Envelope de calmaria");
+                    ImGui::Dummy({ 1.0f, ui(4.0f) });
+                    ImGui::TextColored({ 0.50f, 0.62f, 0.72f, 1.0f },
+                        "Frequência do envelope (Hz)");
+                    ImGui::SetNextItemWidth(-1.0f);
+                    ImGui::SliderFloat("##WindCalmEnvelopeFrequency",
+                        &wind.calmEnvelopeFrequencyHz,
+                        0.0001f, 0.02f, "%.5f",
+                        ImGuiSliderFlags_Logarithmic
+                            | ImGuiSliderFlags_AlwaysClamp);
+
+                    ImGui::Dummy({ 1.0f, ui(7.0f) });
+                    ImGui::TextColored({ 0.50f, 0.62f, 0.72f, 1.0f },
+                        "Piso de calmaria (fração do pico)");
+                    ImGui::SetNextItemWidth(-1.0f);
+                    ImGui::SliderFloat("##WindCalmEnvelopeFloor",
+                        &wind.calmEnvelopeFloor,
+                        0.0f, 1.0f, "%.3f",
+                        ImGuiSliderFlags_AlwaysClamp);
+
+                    ImGui::Dummy({ 1.0f, ui(12.0f) });
+                    ImGui::TextColored({ 0.45f, 0.55f, 0.65f, 1.0f },
+                        "Resquício de rajada no chão");
+                    ImGui::Dummy({ 1.0f, ui(4.0f) });
+                    ImGui::TextColored({ 0.50f, 0.62f, 0.72f, 1.0f },
+                        "Frequência do evento (Hz)");
+                    ImGui::SetNextItemWidth(-1.0f);
+                    ImGui::SliderFloat("##WindGroundGustEventFrequency",
+                        &wind.groundGustEventFrequencyHz,
+                        0.0001f, 0.02f, "%.5f",
+                        ImGuiSliderFlags_Logarithmic
+                            | ImGuiSliderFlags_AlwaysClamp);
+
+                    ImGui::Dummy({ 1.0f, ui(7.0f) });
+                    ImGui::TextColored({ 0.50f, 0.62f, 0.72f, 1.0f },
+                        "Nitidez do evento (expoente)");
+                    ImGui::SetNextItemWidth(-1.0f);
+                    ImGui::SliderFloat("##WindGroundGustSharpness",
+                        &wind.groundGustEventSharpness,
+                        1.0f, 20.0f, "%.1f",
+                        ImGuiSliderFlags_AlwaysClamp);
+
+                    ImGui::Dummy({ 1.0f, ui(7.0f) });
+                    ImGui::TextColored({ 0.50f, 0.62f, 0.72f, 1.0f },
+                        "Resquício máximo (fração do pico)");
+                    ImGui::SetNextItemWidth(-1.0f);
+                    ImGui::SliderFloat("##WindGroundGustResidueMax",
+                        &wind.groundGustResidueMaxFraction,
+                        0.0f, 1.0f, "%.3f",
+                        ImGuiSliderFlags_AlwaysClamp);
+
+                    ImGui::Dummy({ 1.0f, ui(12.0f) });
+                    ImGui::TextColored({ 0.45f, 0.55f, 0.65f, 1.0f },
+                        "Abrigo por parede (áudio)");
+                    ImGui::Dummy({ 1.0f, ui(4.0f) });
+                    ImGui::TextColored({ 0.50f, 0.62f, 0.72f, 1.0f },
+                        "Distância do raycast (m)");
+                    ImGui::SetNextItemWidth(-1.0f);
+                    ImGui::SliderFloat("##WindAudioShelterDistance",
+                        &wind.audioShelterDistanceMeters,
+                        0.0f, 20.0f, "%.2f",
+                        ImGuiSliderFlags_AlwaysClamp);
+            }
+            growPanelToFitContent(io.DisplaySize, m_uiScale);
+        }
+        if (m_showWindPanel) ImGui::End();
     }
 
     if (m_spawnMenuOpen) {

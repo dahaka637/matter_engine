@@ -1,0 +1,14 @@
+{
+  "schema": "matter-ragdoll-character-1",
+  "id": "low_poly_human",
+  "displayName": "Humano low-poly",
+  "physicsProfile": "LowPolyHumanV1.ragdoll.json",
+  "skin": "human.skin.json",
+  "flatShaded": true,
+  "thumbnail": "source-inspection.png",
+  "attribution": {
+    "title": "Low poly Character",
+    "author": "favoritelike69",
+    "license": "CC Attribution"
+  }
+}

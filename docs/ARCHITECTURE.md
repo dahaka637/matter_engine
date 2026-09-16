@@ -118,12 +118,32 @@ torque. O corpo agarrado continua dinâmico e precisa obedecer aos contatos.
 
 ### Configuração de desempenho
 
-A cena usa solver TGS, broad phase PABP, dispatcher multithread compartilhado,
-manifolds persistentes do PhysX, CCD seletivo, estabilização, ilhas e sleeping
-nativos. A quantidade de partições entregue à PhysX cresce conforme atores
-ativos e contatos; cenas pequenas usam um worker e cargas grandes usam
-progressivamente o pool. Um scratch buffer alinhado e reutilizado evita
+A cena usa solver TGS em 4/1 iterações, broad phase ABP, manifolds persistentes,
+CCD seletivo, estabilização, ilhas e sleeping nativos. O dispatcher compartilha
+o job system da engine, mas executa a cadeia PhysX diretamente na thread
+chamadora quando a cena é pequena: acordar workers para tarefas minúsculas
+custava mais do que resolvê-las. A quantidade de workers cresce somente com
+DOFs ativos, atores e contatos. Um scratch buffer alinhado e reutilizado evita
 alocações temporárias recorrentes no solver.
+
+Cada humano é uma reduced-coordinate articulation dentro de um `PxAggregate`.
+Assim, seus 18 links ocupam uma entrada coerente no broad phase em vez de 18
+proxies independentes. Self-collision não é integral nem globalmente
+desativada: cada shape carrega uma máscara anatômica imutável. Pai/filho e
+é descartado diretamente no filter shader; todos os demais pares continuam
+ativos. Isso é necessário porque o PhysX sempre elimina contato entre links
+diretamente conectados: o `Chest`, avô do `UpperArm`, torna-se a barreira que
+impede o braço de atravessar o tórax pai `UpperChest`. Membros irmãos e lados
+diferentes também colidem. Colisões entre jogadores, bola, props e mundo
+continuam normais.
+
+Cada link limita a velocidade que o solver pode introduzir para corrigir
+penetração e o impulso máximo de um único contato. Durante manipulação, o D6 da
+Physgun limita força por aceleração proporcional à massa do membro; os limites
+globais altos continuam disponíveis para props pesados, sem serem aplicados a
+um antebraço leve. Speculative CCD nos links antecipa contato pela velocidade
+linear/angular das cápsulas, evitando que membros rápidos atravessem uns aos
+outros entre dois ticks sem impor swept CCD completo ao esqueleto.
 
 CCD completo não é o padrão global. Objetos comuns usam detecção discreta a
 120 Hz; a bola e corpos explicitamente pequenos/rápidos ativam CCD. O filtro
@@ -134,8 +154,10 @@ simulados até contato, força, junta ou ação explícita despertá-los. A engi
 executa um solver paralelo próprio nem reconstrói colisores no spawn. Active
 actors alimentam arrasto e snapshots incrementais, então a renderização não
 consulta novamente todos os corpos adormecidos. Estatísticas
-de corpos ativos, sleeping, pares discretos, CCD e mudanças no broad phase ficam
-disponíveis em `PhysicsStepDiagnostics3D`.
+de corpos ativos, sleeping, pares discretos, CCD, tarefas, callbacks e fases
+do passo ficam disponíveis em `PhysicsStepDiagnostics3D`. Streams detalhados
+de contato são pedidos apenas para corpos que alimentam áudio; links de
+ragdoll não criam strings, extração de pontos ou eventos descartados.
 
 O perfil atual é CPU estático. GPU rigid bodies exigem CUDA, buffers e limites
 de cena diferentes; serão um perfil separado apenas se medições representativas
@@ -166,6 +188,13 @@ erro de importação, nunca degradação silenciosa.
 Assets automáticos podem reduzir o budget por `collision_hulls`. O catálogo usa
 budgets por forma e reserva o padrão de 16 apenas para objetos ainda não
 calibrados. Primitivas analíticas continuam preferidas quando são verdadeiras.
+
+A complexidade visual é independente desse contrato. Props com malhas densas
+geram dois index buffers simplificados no carregamento, compartilhando o mesmo
+vertex buffer e materiais. O render escolhe LOD por distância relativa ao raio
+do objeto, enquanto depth de sombra usa o proxy mais compacto. Isso mantém a
+malha-fonte em close e impede que detalhes subpixel sejam repetidos nas quatro
+cascatas; o frame nunca simplifica geometria.
 
 Essa separação é essencial: triangle mesh dinâmica preserva cada detalhe, mas
 produz narrow phase caro e contatos instáveis. Compounds convexos preservam
@@ -211,12 +240,39 @@ cozidos compartilhados. `Z` remove a última entidade criada. Renderização, á
 Physgun e personagem consultam a mesma `PhysicsScene3D`; não existem mundos de
 colisão paralelos com resultados divergentes.
 
-O antigo solver, o jogo SoccerFall, Footwork, bípede e editor de animação foram
-removidos da árvore ativa e são proibidos pelas verificações arquiteturais.
+O antigo solver, o jogo SoccerFall, o rig Footwork legado, o bípede e o editor
+de animação foram removidos da árvore ativa e são proibidos pelas verificações
+arquiteturais. O módulo atual de footwork é uma implementação nova e neutra de
+backend: produz alvos cinemáticos para os pés, sem conhecer PhysX, Workbench,
+renderizador ou esqueleto.
+
+### Ragdoll ativo e laboratório de equilíbrio
+
+`NaturalBalanceSystem3D` estima polígono de apoio, ponto de captura, urgência e
+direção de recuperação. `FootworkSystem3D` planeja transferência de peso,
+trajetória e replantio; `WholeBodyController3D` resolve os objetivos de centro
+de massa, tronco, solas e contrarrotação em torques articulares. O
+`ActiveRagdollController3D` apenas coordena esses três níveis. Em particular,
+uma passada de recuperação é tratada como locomoção dinâmica mesmo sem comando
+de caminhada, e a escolha lateral usa a velocidade real do corpo para sempre
+priorizar o pé externo em vez de cruzar a base.
+
+Forças auxiliares na raiz e na coluna são opcionais e ficam fora da estratégia
+biomecânica. Com a opção desligada, postura, passos, braços e proteção de queda
+continuam ativos exclusivamente por contatos e torques internos.
+
+`RagdollImpactTest3D` é uma máquina de estados determinística e neutra de
+backend. Ela publica rajadas diretas, vento contínuo ou sequências aleatórias
+como força, direção relativa e duração; não conhece PhysX nem move links. O
+Workbench distribui a força física na bacia e no tronco pelo contrato de
+`PhysicsScene3D`, e os testes de fundação consomem exatamente o mesmo gerador.
 
 ## Benchmarks
 
-`MatterPhysicsBenchmark` instancia 1.000 props com os colliders reais do
-catálogo, executa 600 passos e publica P50/P95/P99, pior passo, corpos ativos,
-sleeping, workers, contatos e pares CCD. Performance deve ser medida em
-`Release` ou `RelWithDebInfo`; `Debug` é destinado a diagnóstico.
+`MatterPhysicsBenchmark` cobre cena vazia, props separados/em contato, 1–3
+ragdolls em colisão e os 22 jogadores dispersos ou comprimidos no campo. Ele
+publica P50/P95/pior passo e decompõe pré-simulação, dispatch, espera do PhysX,
+callbacks, sincronização e estatísticas. O teste de fundação mantém ainda 1.024
+corpos até sleep e um stress de 22 articulations por 240 passos. Performance
+deve ser medida em `Release` ou `RelWithDebInfo`; `Debug` é destinado a
+diagnóstico.

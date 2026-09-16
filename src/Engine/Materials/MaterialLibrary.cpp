@@ -203,7 +203,16 @@ SurfaceMaterial makeRubber() {
     value.structural = { 7.0f, 4200.0f, 1800.0f };
     value.acoustic.minimumImpactEnergyJoules = 0.030f;
     value.acoustic.minimumSpecificImpactEnergyJoulesPerKg = 0.030f;
-    value.acoustic.acousticEfficiency = 0.18f;
+    // 0.18 deixava rubber praticamente o material mais "surdo" do
+    // catalogo: combinado com a penalidade de estrutura Soft (0.58x, ver
+    // defaultAcousticStructure em PhysicalBodyBuilder3D.cpp), um pneu real
+    // (9kg) pousando na velocidade minima audivel (0.90 m/s) nao passava do
+    // portao final de volume - so pousos bem mais fortes que o normal
+    // soavam. 0.28 (ainda bem abaixo de madeira 0.52/aco 0.72, preservando
+    // o carater mais abafado da borracha) faz o mesmo pouso ja passar do
+    // portao, sem exagerar - continua o material mais discreto entre os
+    // "duros", so deixou de ser praticamente mudo.
+    value.acoustic.acousticEfficiency = 0.28f;
     value.acoustic.staticBodyResponse = 0.10f;
     value.acoustic.absorption = 0.65f;
     value.acoustic.internalDamping = 0.76f;
@@ -259,6 +268,19 @@ SurfaceMaterial makeSoil() {
     return value;
 }
 
+// Densidade da agua do mar (1025 kg/m3, ligeiramente acima da agua doce por
+// causa do sal dissolvido) - usada tanto aqui quanto pela flutuacao (ver
+// O importador ignora esta geometria; o oceano procedural é independente.
+// padroes de baseMaterial(): nenhuma malha marcada isFluid gera corpo de
+// colisao rigido (ver ensureLaboratoryMapLoaded), entao um contato PhysX de
+// verdade nunca chega a consultar esses campos - mantidos so para passar em
+// validate().
+SurfaceMaterial makeOcean() {
+    SurfaceMaterial value = baseMaterial("ocean", 1025.0f);
+    value.isFluid = true;
+    return value;
+}
+
 } // namespace
 
 MaterialLibrary::MaterialLibrary() {
@@ -296,6 +318,7 @@ void MaterialLibrary::registerStandardMaterials() {
     // mesma estrutura nova e podem ser refinados junto do catalogo principal.
     registerMaterial(makeGlass());
     registerMaterial(makeSoil());
+    registerMaterial(makeOcean());
 }
 
 } // namespace MatterEngine

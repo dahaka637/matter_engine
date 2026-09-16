@@ -12,7 +12,7 @@ layout(set = 0, binding = 0, std140) uniform SceneUniform {
     vec4 cameraPosition;
     vec4 settings;    // x=sombras, y=luzes, z=historico TAA valido, w=ambiente
     vec4 skySettings; // x=mostrar ceu, y=tempo do ceu, z=cobertura de nuvens, w reservado
-    vec4 fogSettings; // x=densidade, y=acoplamento altura-distancia, z=opacidade maxima, w reservado
+    vec4 fogSettings; // x=densidade (por metro apos w), y=acoplamento altura-distancia, z=opacidade maxima, w=distancia de inicio (m)
     vec4 fogColor;    // rgb=cor da neblina, a reservado
     vec4 windOffset;  // xy=deslocamento acumulado do vento nas nuvens, zw reservado
 } scene;
@@ -28,6 +28,18 @@ layout(push_constant) uniform ShadowCascadePush {
 // mesh pipeline uses (see scene3d_mesh.vert), this pipeline just declares
 // fewer attributes over the same stride.
 layout(location = 0) in vec3 inPosition;
+layout(location = 13) in uvec4 inJoints;
+layout(location = 14) in vec4 inWeights;
+layout(set = 0, binding = 4, std430) readonly buffer SkinPalette {
+    mat4 matrices[];
+} skin;
+
+mat4 skinTransform(uint base) {
+    return skin.matrices[base + inJoints.x] * inWeights.x
+        + skin.matrices[base + inJoints.y] * inWeights.y
+        + skin.matrices[base + inJoints.z] * inWeights.z
+        + skin.matrices[base + inJoints.w] * inWeights.w;
+}
 layout(location = 4) in vec4 instancePositionScale;
 layout(location = 5) in vec4 instanceOrientationX;
 layout(location = 6) in vec4 instanceOrientationY;
@@ -39,6 +51,10 @@ void main() {
     float scale = instancePositionScale.w;
     vec3 worldPosition = instancePositionScale.xyz
         + orientation * (inPosition * scale);
+    if (instanceOrientationX.w > 0.5) {
+        worldPosition = (skinTransform(uint(instanceOrientationX.w))
+            * vec4(inPosition, 1.0)).xyz;
+    }
     gl_Position = scene.cascadeViewProjections[cascadePush.cascadeIndex]
         * vec4(worldPosition, 1.0);
     gl_Position.y = -gl_Position.y;

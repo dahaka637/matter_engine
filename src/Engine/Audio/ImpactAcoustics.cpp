@@ -9,6 +9,18 @@ namespace {
 
 constexpr float MinimumMass = 0.001f;
 constexpr float ReferenceAcousticSizeMeters = 0.50f;
+// Corpos estaticos sempre reportam massa 0 (convencao usada em toda a
+// fisica, ver PhysXScene3D.cpp), entao caem sempre no ramo de massa virtual
+// abaixo. Um multiplicador de 6x deixava o lado estatico com so ~9-11% do
+// orcamento de energia do lado dinamico no MESMO impacto (mobility
+// sqrt(1/6)~0.41 vezes staticResponse 0.08-0.28) - na pratica, silencioso
+// para quase todo impacto normal, so pancadas bem fortes faziam os dois
+// lados soarem. 3x resolve o caso comum (objetos de peso moderado, tipo uma
+// caixa de madeira contra uma laje) sem deixar qualquer toque leve fazer
+// uma estrutura gigante soar - um objeto bem mais leve (ex.: bola de
+// futebol) ainda fica abaixo do limiar do material a velocidade minima
+// audivel.
+constexpr float StaticBodyEffectiveMassMultiplier = 3.0f;
 
 float structureGain(AcousticBodyStructure3D structure) {
     switch (structure) {
@@ -107,7 +119,8 @@ void ImpactAcousticResolver::resolve(
         // conserva sua massa real e recebe excitacao especifica muito menor.
         const float participatingMass = bodyMass > MinimumMass
             ? bodyMass
-            : std::max(MinimumMass, impact.effectiveMassKg * 6.0f);
+            : std::max(MinimumMass, impact.effectiveMassKg
+                * StaticBodyEffectiveMassMultiplier);
         const float specificEnergy = impact.transferredEnergyJoules
             / participatingMass;
         const float mobility = std::clamp(std::sqrt(

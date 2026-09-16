@@ -37,7 +37,8 @@ public:
     AudioDevice3D(const AudioDevice3D&) = delete;
     AudioDevice3D& operator=(const AudioDevice3D&) = delete;
 
-    bool initialize(const Settings& settings = {});
+    bool initialize();
+    bool initialize(const Settings& settings);
     void shutdown();
 
     [[nodiscard]] bool hrtfActive() const;
@@ -101,6 +102,13 @@ public:
         float pitch = 1.0f, bool listenerRelative = false);
     void setLoopingVolume(int voiceHandle, float volume);
     void setLoopingPitch(int voiceHandle, float pitch);
+    // Reposiciona uma voz em loop existente (ex.: som de arrasto seguindo um
+    // objeto sendo empurrado pelo mundo) sem parar/reiniciar o loop - ao
+    // contrario de volume/pitch, isso nunca foi necessario para as vozes de
+    // vento (sempre listenerRelative, coladas no ouvinte). Sem efeito se
+    // listenerRelative foi true em playLooping() (a posicao la e um
+    // deslocamento do ouvinte, nao coordenada de mundo).
+    void setLoopingPosition(int voiceHandle, Vec3 position);
     // Mesmo filtro passa-baixa EFX de play()/playTimed() (0 = sem filtro,
     // 1 = agudos quase totalmente cortados), so que endereçavel por handle
     // de voz em loop em vez de reaplicado a cada chamada de play. Reutiliza

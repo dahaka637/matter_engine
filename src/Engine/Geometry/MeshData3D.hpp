@@ -4,6 +4,7 @@
 #include "Engine/Math/Vec3.hpp"
 
 #include <cstdint>
+#include <array>
 #include <vector>
 
 namespace MatterEngine {
@@ -16,6 +17,9 @@ struct MeshVertex3D {
     Vec3 normal;
     Vec2 uv;
     Vec3 color { 1.0f, 1.0f, 1.0f };
+    // Zero weights keep static meshes on the ordinary render path.
+    std::array<std::uint32_t, 4> joints {};
+    std::array<float, 4> weights {};
 };
 
 struct MeshData3D {

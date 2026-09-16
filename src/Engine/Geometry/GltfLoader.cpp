@@ -262,6 +262,17 @@ void overlayExtras(GltfExtras& destination, const GltfExtras& overlay) {
 
 } // namespace
 
+LoadedGltfImage loadImageRgba3D(const std::string& path) {
+    LoadedGltfImage result;
+    int channels=0;
+    stbi_uc* pixels=stbi_load(path.c_str(),&result.width,&result.height,&channels,4);
+    if (!pixels) throw std::runtime_error("Failed to decode image: "+path);
+    const auto* bytes=reinterpret_cast<const std::byte*>(pixels);
+    result.rgbaPixels.assign(bytes,bytes+static_cast<std::size_t>(result.width)*result.height*4);
+    stbi_image_free(pixels);
+    return result;
+}
+
 LoadedGltfModel loadGltfModel(const std::string& path) {
     cgltf_options options {};
     cgltf_data* rawData = nullptr;

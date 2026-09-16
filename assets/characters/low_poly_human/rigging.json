@@ -1,0 +1,22 @@
+{
+  "id": "LowPolyHumanV1",
+  "displayName": "Humano low-poly",
+  "profileTemplate": "../../physics/ragdolls/HumanAdultV1.ragdoll.json",
+  "core": {
+    "Pelvis": [[0,0,-0.10],[0,0,0.055]],
+    "Abdomen": [[0,0,0.055],[0,0,0.235]],
+    "Chest": [[0,0,0.235],[0,0,0.405]],
+    "UpperChest": [[0,0,0.405],[0,0,0.555]],
+    "Neck": [[0,0,0.555],[0,0,0.635]],
+    "Head": [[0,0,0.635],[0,0,0.88]]
+  },
+  "leftArm": [[0,0.19,0.475],[0,0.415,0.28],[0,0.605,0.06],[0,0.70,-0.045]],
+  "leftLeg": [[0,0.105,-0.07],[0,0.11,-0.46],[0,0.12,-0.83],[0.24,0.12,-0.88]],
+  "relaxedHand": {"bendStartMeters": 0.045, "curlRadiusMeters": 0.065, "fingerSpreadScale": 0.75},
+  "radiusMeters": {
+    "Pelvis": 0.10, "Abdomen": 0.105, "Chest": 0.125,
+    "UpperChest": 0.13, "Neck": 0.041, "Head": 0.085,
+    "UpperArm": 0.048, "Forearm": 0.04, "Hand": 0.032,
+    "Thigh": 0.064, "Shin": 0.045
+  }
+}

@@ -208,6 +208,10 @@ AudioDevice3D::~AudioDevice3D() {
     shutdown();
 }
 
+bool AudioDevice3D::initialize() {
+    return initialize(Settings {});
+}
+
 bool AudioDevice3D::initialize(const Settings& settings) {
     if (m_impl != nullptr && m_impl->context != nullptr) {
         return true;
@@ -553,6 +557,17 @@ void AudioDevice3D::setLoopingPitch(int voiceHandle, float pitch) {
     Impl::Voice& voice = m_impl->voices[static_cast<std::size_t>(voiceHandle)];
     if (!voice.active || !voice.looping) return;
     alSourcef(voice.source, AL_PITCH, std::max(0.01f, pitch));
+}
+
+void AudioDevice3D::setLoopingPosition(int voiceHandle, Vec3 position) {
+    if (!m_impl || voiceHandle < 0
+        || voiceHandle >= static_cast<int>(m_impl->voices.size())) {
+        return;
+    }
+    Impl::Voice& voice = m_impl->voices[static_cast<std::size_t>(voiceHandle)];
+    if (!voice.active || !voice.looping) return;
+    alSource3f(voice.source, AL_POSITION, position.x, position.y,
+        position.z);
 }
 
 void AudioDevice3D::setLoopingMuffle(int voiceHandle, float muffle) {

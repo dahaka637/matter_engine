@@ -89,6 +89,12 @@ struct SurfaceMaterial {
     // pela forma. O coeficiente aerodinamico principal pertence ao corpo.
     float aerodynamicDragScale = 1.0f;
 
+    // Materiais fluidos (agua) nao geram corpo de colisao solido no
+    // carregamento do mapa e alimentam o sistema de flutuacao em vez do
+    // de contato rigido - ver LaboratoryScreen::ensureLaboratoryMapLoaded
+    // e nunca vira uma shape sólida no PhysX.
+    bool isFluid = false;
+
     // Extras ainda nao modelados permanecem preservados para que uma versao
     // nova do importador nao destrua dados autorados em Blender.
     std::vector<std::pair<std::string, std::string>> customProperties;

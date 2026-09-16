@@ -37,6 +37,61 @@ struct WindSettings3D {
     // estacoes meteorologicas reais para medir baseSpeedMetersPerSecond,
     // reaproveitado aqui tambem como o marco superior da rampa chao->ceu.
     float referenceHeightMeters = 10.0f;
+
+    // --- Envelope de calmaria/vento forte ---
+    // Ruido MUITO mais lento que rajada/direcao, que multiplica a velocidade
+    // inteira (ver velocityAtHeight). E o que separa "textura de rajada" (que
+    // ja existia) de "as vezes nao ha vento nenhum, as vezes ha" (que nao
+    // existia): a rajada sozinha nunca chega perto de zero, so oscila em
+    // torno da media. Periodo bem mais longo que os outros dois canais de
+    // ruido de proposito - deve ler como "o clima mudou", nao como "mais uma
+    // rajada".
+    float calmEnvelopeFrequencyHz = 0.0020f;
+    // Piso do envelope (nunca exatamente 0): evita um vetor de vento
+    // degenerado durante calmaria total, e 5% do pico (base+rajada) ja fica
+    // abaixo do limiar de silencio do uivo ambiente (ver
+    // WindAmbientQuietThresholdMetersPerSecond em WorldAudioController.cpp),
+    // entao continua soando como silencio total.
+    float calmEnvelopeFloor = 0.05f;
+
+    // --- Resquicio de rajada forte perto do chao ---
+    // Abaixo de ~30cm a rampa chao->ceu ja entrega uma fracao praticamente
+    // nula sozinha (smoothstep(0.3/10) ~ 0.27%), entao "praticamente nada"
+    // ali ja acontece sem nenhum campo novo. O que falta e a excecao: um
+    // resquicio RARO e ALEATORIO de rajada forte que ocasionalmente vaza ate
+    // o chao, proporcional a intensidade real da rajada acontecendo em
+    // altura (ver velocityAtHeight) - nao um piso constante, que soaria
+    // artificial/previsivel.
+    //
+    // Frequencia do evento de rajada-no-chao: bem mais raro que os outros
+    // canais (periodo de minutos, nao segundos) - de proposito, para nao
+    // virar "mais uma rajada" perceptivel.
+    float groundGustEventFrequencyHz = 0.0009f;
+    // Expoente aplicado ao ruido do evento (ver velocityAtHeight): quanto
+    // maior, mais tempo o valor passa perto de zero e mais breve/pontudo fica
+    // o pico quando acontece - e isso que da a sensacao de evento raro e
+    // aleatorio em vez de uma onda lenta e previsivel.
+    float groundGustEventSharpness = 10.0f;
+    // Fracao maxima (do vento de referencia) que o resquicio pode alcancar
+    // QUANDO o evento raro coincide com uma rajada forte em altura. 0.65 e
+    // deliberadamente alto (bem acima de uma brisa de fundo) - o pedido era
+    // um sopro de verdade ocasional, nao uma brisa constante de baixo volume.
+    float groundGustResidueMaxFraction = 0.65f;
+
+    // --- Abrigo do vento (audio) por geometria ---
+    // Distancia (m) do raycast a barlavento usado para saber se ha uma
+    // parede/obstaculo estatico entre o ouvinte e de onde o vento vem (ver
+    // Engine/Physics/WindShelter3D.hpp). Deliberadamente um campo proprio, e
+    // nao um reaproveitamento de
+    // PhysicsSceneSettings3D::windShelterDistanceMeters (que abriga o
+    // arrasto fisico dos props): PhysicsScene3D nao expoe essa struct
+    // publicamente, e "quao perto de uma parede um prop se sente abrigado"
+    // e "quao grande precisa ser um comodo pra abafar o som" sao tunaveis
+    // conceitualmente diferentes que nao deveriam ficar presos ao mesmo
+    // slider. Mesmo valor padrao (4.0f) para comportamento dia-um
+    // consistente entre os dois sistemas, mesmo sendo tunaveis
+    // independentemente.
+    float audioShelterDistanceMeters = 4.0f;
 };
 
 // Fonte unica de verdade do vento do mundo: uma direcao que vagueia

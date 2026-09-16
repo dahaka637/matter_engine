@@ -19,6 +19,8 @@ struct LoadedGltfImage {
     std::vector<std::byte> rgbaPixels;
 };
 
+[[nodiscard]] LoadedGltfImage loadImageRgba3D(const std::string& path);
+
 // Visao plana do objeto extras de um node ou material glTF. Propriedades
 // personalizadas do Blender chegam por este contrato.
 struct GltfExtras {

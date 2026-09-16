@@ -13,12 +13,18 @@
 
 namespace MatterEngine::Workbench {
 
+struct GpuMeshLod3D {
+    RHI::BufferHandle indexBuffer;
+    std::uint32_t indexCount = 0;
+};
+
 struct GpuModelPart3D {
     RHI::BufferHandle vertexBuffer;
     RHI::BufferHandle indexBuffer;
     RHI::TextureHandle albedoTexture;
     RHI::TextureHandle metallicRoughnessTexture;
     std::uint32_t indexCount = 0;
+    std::vector<GpuMeshLod3D> lods;
     float metallic = 0.0f;
     float roughness = 1.0f;
 };
@@ -75,11 +81,13 @@ void appendGpuModelRenderables(const GpuModel3D& model, Vec3 position,
     Quaternion orientation, Vec3 previousPosition,
     Quaternion previousOrientation, float scale, bool selected,
     bool outlineGlow, bool castsShadow,
-    std::vector<MeshRender3D>& destination);
+    std::vector<MeshRender3D>& destination,
+    float cameraDistanceMeters = 0.0f);
 void writeGpuModelRenderables(const GpuModel3D& model, Vec3 position,
     Quaternion orientation, Vec3 previousPosition,
     Quaternion previousOrientation, float scale, bool selected,
     bool outlineGlow, bool castsShadow,
-    std::span<MeshRender3D> destination) noexcept;
+    std::span<MeshRender3D> destination,
+    float cameraDistanceMeters = 0.0f) noexcept;
 
 } // namespace MatterEngine::Workbench

@@ -102,6 +102,29 @@ FetchContent_Declare(
     GIT_TAG 31c1ad37456438565541f4919958214b6e762fb4
 )
 
+# LODs e otimização de cache usam uma biblioteca especializada, empregada
+# offline/no carregamento; o frame nunca executa simplificação geométrica.
+set(MESHOPT_BUILD_DEMO OFF CACHE BOOL "" FORCE)
+set(MESHOPT_BUILD_GLTFPACK OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+    meshoptimizer
+    GIT_REPOSITORY https://github.com/zeux/meshoptimizer.git
+    GIT_TAG v1.2
+    GIT_SHALLOW TRUE
+)
+
+# Perfis físicos orientados a dados usam JSON completo e validado. A
+# dependência é header-only, fica privada ao módulo de física e está fixada
+# numa release para manter builds reproduzíveis.
+set(JSON_BuildTests OFF CACHE BOOL "" FORCE)
+set(JSON_Install OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+    nlohmann_json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG v3.11.3
+    GIT_SHALLOW TRUE
+)
+
 # PhysX e um detalhe privado do modulo de fisica. Fixamos o commit da versao
 # oficial 5.9.0 para que uma atualizacao remota nunca altere a simulacao de uma
 # build existente. O backend CPU estatico e a configuracao portavel para o
@@ -155,12 +178,17 @@ set(FORCE_STATIC_VCRT OFF CACHE BOOL "" FORCE)
 # aqui precisa deles (consumimos so os headers C AL/ALC/EFX), entao
 # desligamos para nao herdar um eixo de risco de build que nao usamos.
 set(ALSOFT_ENABLE_MODULES OFF CACHE BOOL "" FORCE)
-# So o WASAPI fica ligado: e o backend nativo moderno do Windows, os outros
-# (WinMM/DirectSound) sao apenas fallback legado que nao precisamos exercitar.
-set(ALSOFT_BACKEND_WASAPI ON CACHE BOOL "" FORCE)
-set(ALSOFT_REQUIRE_WASAPI ON CACHE BOOL "" FORCE)
-set(ALSOFT_BACKEND_WINMM OFF CACHE BOOL "" FORCE)
-set(ALSOFT_BACKEND_DSOUND OFF CACHE BOOL "" FORCE)
+# No Windows, usamos apenas o backend nativo moderno WASAPI. Em outras
+# plataformas, deixamos o OpenAL Soft selecionar os backends nativos que ele
+# detectar (PipeWire/PulseAudio/ALSA no Linux, por exemplo).
+if(WIN32)
+    set(ALSOFT_BACKEND_WASAPI ON CACHE BOOL "" FORCE)
+    set(ALSOFT_REQUIRE_WASAPI ON CACHE BOOL "" FORCE)
+    set(ALSOFT_BACKEND_WINMM OFF CACHE BOOL "" FORCE)
+    set(ALSOFT_BACKEND_DSOUND OFF CACHE BOOL "" FORCE)
+else()
+    set(ALSOFT_REQUIRE_WASAPI OFF CACHE BOOL "" FORCE)
+endif()
 FetchContent_Declare(
     openal-soft
     GIT_REPOSITORY https://github.com/kcat/openal-soft.git
@@ -168,7 +196,8 @@ FetchContent_Declare(
 )
 
 FetchContent_MakeAvailable(
-    SDL3 imgui sqlite_amalgamation cgltf stb PhysX vhacd_source openal-soft)
+    SDL3 imgui sqlite_amalgamation cgltf stb meshoptimizer nlohmann_json PhysX
+    vhacd_source openal-soft)
 
 add_library(vhacd INTERFACE)
 target_include_directories(vhacd INTERFACE ${vhacd_source_SOURCE_DIR}/include)
@@ -185,6 +214,21 @@ if(MSVC)
             SimulationController)
         if(TARGET ${physx_target})
             target_compile_options(${physx_target} PRIVATE /wd5054 /wd5055)
+        endif()
+    endforeach()
+elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    # O PhysX 5.9 ainda incrementa um contador volatile no backend Unix. GCC
+    # 16 diagnostica isso como -Wvolatile e o SDK promove todos os avisos a
+    # erro. A supressao fica restrita aos targets de terceiros.
+    foreach(physx_target
+            PhysXFoundation PhysXCommon PhysX PhysXExtensions PhysXCooking
+            PhysXCharacterKinematic PhysXPvdSDK PhysXTask PhysXVehicle
+            LowLevel LowLevelAABB LowLevelDynamics SceneQuery
+            SimulationController)
+        if(TARGET ${physx_target})
+            target_compile_options(${physx_target} PRIVATE
+                -Wno-error
+                -Wno-volatile)
         endif()
     endforeach()
 endif()
@@ -232,8 +276,11 @@ foreach(shader render2d.vert render2d.frag sprite.vert sprite.frag
         scene3d_sky.vert scene3d_sky.frag
         scene3d_mesh.vert scene3d_mesh.frag scene3d_mesh_shadow.vert
         scene3d_mesh_depth.vert
-        tonemap.vert tonemap.frag
-        taa_resolve.frag)
+        tonemap.vert tonemap.frag auto_exposure.frag
+        gtao.frag bloom_glare.frag
+        taa_resolve.frag
+        ssr_trace_resolve.frag ssr_composite.frag
+        ocean_surface.vert ocean_surface.frag)
     set(shader_source "${CMAKE_SOURCE_DIR}/assets/shaders/${shader}")
     set(shader_output "${MATTERENGINE_SHADER_OUTPUT_DIR}/${shader}.spv")
     add_custom_command(
@@ -271,6 +318,8 @@ target_include_directories(MatterRHI INTERFACE src)
 # camada Workbench nem o restante da engine.
 add_library(MatterPhysics STATIC
     src/Engine/Physics/PhysicalBodyBuilder3D.cpp
+    src/Engine/Physics/RagdollProfile3D.cpp
+    src/Engine/Physics/WindShelter3D.cpp
     src/Engine/Physics/PhysX/PhysXEngine3D.cpp
     src/Engine/Physics/PhysX/PhysXCooking3D.cpp
     src/Engine/Physics/PhysX/PhysXScene3D.cpp
@@ -278,7 +327,7 @@ add_library(MatterPhysics STATIC
 target_include_directories(MatterPhysics PUBLIC src)
 target_link_libraries(MatterPhysics
     PUBLIC MatterCore
-    PRIVATE physx_lib vhacd
+    PRIVATE physx_lib vhacd nlohmann_json::nlohmann_json
 )
 target_compile_definitions(MatterPhysics PRIVATE PX_PHYSX_STATIC_LIB)
 if(MSVC)
@@ -290,6 +339,7 @@ else()
 endif()
 
 add_library(MatterVulkan STATIC
+    src/Engine/Render/SceneLightPacking.cpp
     src/Engine/RHI/Vulkan/ScenePassGraph.cpp
     src/Engine/RHI/Vulkan/VulkanDevice.cpp
 )
@@ -311,10 +361,13 @@ add_library(MatterAudio STATIC
     src/Engine/Audio/AcousticOcclusion3D.cpp
     src/Engine/Audio/AudioDevice3D.cpp
     src/Engine/Audio/BiquadFilter.cpp
+    src/Engine/Audio/BodyAcousticEnvelope.cpp
+    src/Engine/Audio/DragAcoustics.cpp
     src/Engine/Audio/Envelope.cpp
     src/Engine/Audio/ImpactAcoustics.cpp
     src/Engine/Audio/ProceduralNoise.cpp
     src/Engine/Audio/Waveform.cpp
+    src/Engine/Audio/WindAmbienceRamp.cpp
     src/Engine/Audio/WindSound.cpp
 )
 target_include_directories(MatterAudio PUBLIC src)
@@ -329,6 +382,11 @@ else()
 endif()
 
 add_library(MatterEngine STATIC
+    src/Engine/Animation/AnimationClip3D.cpp
+    src/Engine/Animation/RagdollCharacter3D.cpp
+    src/Engine/Control/AnimatedRagdollController3D.cpp
+    src/Engine/Control/BodyRelativeRagdollAssist3D.cpp
+    src/Engine/Control/RagdollImpactTest3D.cpp
     src/Engine/Core/Application.cpp
     src/Engine/Input/Input.cpp
     src/Engine/Platform/SDL3/SDLPlatform.cpp
@@ -346,7 +404,6 @@ add_library(MatterEngine STATIC
     src/Engine/Geometry/PhysicalAsset3D.cpp
     src/Engine/Render/Render2D.cpp
     src/Engine/Render/Renderer.cpp
-    src/Engine/Render/SceneLightPacking.cpp
     src/Engine/UI/ImGuiFontLibrary.cpp
     src/Engine/Data/Database.cpp
     src/Engine/Data/SettingsRepository.cpp
@@ -355,7 +412,8 @@ add_library(MatterEngine STATIC
 target_include_directories(MatterEngine PUBLIC src)
 target_link_libraries(MatterEngine
     PUBLIC MatterCore MatterRHI MatterPhysics MatterAudio
-    PRIVATE MatterVulkan SDL3::SDL3-static imgui sqlite3 cgltf stb_image
+    PRIVATE MatterVulkan SDL3::SDL3-static imgui sqlite3
+        cgltf stb_image nlohmann_json::nlohmann_json
 )
 add_dependencies(MatterEngine MatterEngineShaders)
 target_compile_definitions(MatterEngine PRIVATE
@@ -368,17 +426,20 @@ add_library(MatterWorkbench STATIC
     src/Workbench/UiKit.cpp
     src/Workbench/Audio/WorldAudioController.cpp
     src/Workbench/Laboratory/PropRuntime.cpp
+    src/Workbench/Laboratory/RagdollRuntime.cpp
+    src/Workbench/Laboratory/PhysicsBenchmark.cpp
     src/Workbench/Props/PropCatalog.cpp
     src/Workbench/Screens/SettingsScreen.cpp
     src/Workbench/Screens/MainMenuScreen.cpp
     src/Workbench/Screens/LaboratoryScreen.cpp
     src/Workbench/Screens/ObjectViewerScreen.cpp
+    src/Workbench/Screens/AnimationViewerScreen.cpp
 )
 
 target_include_directories(MatterWorkbench PUBLIC src)
 target_link_libraries(MatterWorkbench
     PUBLIC MatterEngine
-    PRIVATE imgui
+    PRIVATE imgui meshoptimizer
 )
 target_compile_definitions(MatterWorkbench PRIVATE MATTERENGINE_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
 
@@ -407,6 +468,15 @@ if(MATTERENGINE_BUILD_TESTS)
     target_compile_definitions(MatterEngineTests PRIVATE
         MATTERENGINE_TEST_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
     add_test(NAME MatterEngine.Foundation COMMAND MatterEngineTests)
+    add_executable(MatterAnimatedRagdollTests tests/AnimatedRagdollTests.cpp tests/BodyRelativeRagdollAssistTests.cpp)
+    target_link_libraries(MatterAnimatedRagdollTests PRIVATE MatterEngine)
+    target_compile_definitions(MatterAnimatedRagdollTests PRIVATE
+        MATTERENGINE_TEST_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
+    add_test(NAME MatterEngine.AnimatedRagdoll COMMAND MatterAnimatedRagdollTests)
+    add_test(NAME MatterEngine.BodyRelativeAssistance COMMAND MatterAnimatedRagdollTests --assistance-contracts)
+    add_test(NAME MatterEngine.Character COMMAND MatterEngineTests)
+    set_tests_properties(MatterEngine.Character PROPERTIES
+        ENVIRONMENT "MATTERENGINE_TEST_FILTER=character")
 
     # Linkado somente contra MatterAudio (nunca MatterEngine/Vulkan/imgui) para
     # provar que o modulo de audio nao vaza dependencia de renderizacao.
@@ -448,7 +518,7 @@ set_target_properties(MatterVulkanSmoke PROPERTIES FOLDER "Tests")
 set_target_properties(MatterPhysicsAssetCooker PROPERTIES FOLDER "Tools")
 set_target_properties(MatterPhysicsBenchmark PROPERTIES FOLDER "Tests")
 if(MATTERENGINE_BUILD_TESTS)
-    set_target_properties(MatterEngineTests MatterAudioTests
+    set_target_properties(MatterEngineTests MatterAudioTests MatterAnimatedRagdollTests
         PROPERTIES FOLDER "Tests")
 endif()
 
@@ -464,6 +534,7 @@ if(MSVC)
     if(MATTERENGINE_BUILD_TESTS)
         target_compile_options(MatterEngineTests PRIVATE /W4 /permissive- /utf-8)
         target_compile_options(MatterAudioTests PRIVATE /W4 /permissive- /utf-8)
+        target_compile_options(MatterAnimatedRagdollTests PRIVATE /W4 /permissive- /utf-8)
     endif()
 else()
     target_compile_options(MatterEngine PRIVATE -Wall -Wextra -Wpedantic)
@@ -477,5 +548,6 @@ else()
     if(MATTERENGINE_BUILD_TESTS)
         target_compile_options(MatterEngineTests PRIVATE -Wall -Wextra -Wpedantic)
         target_compile_options(MatterAudioTests PRIVATE -Wall -Wextra -Wpedantic)
+        target_compile_options(MatterAnimatedRagdollTests PRIVATE -Wall -Wextra -Wpedantic)
     endif()
 endif()

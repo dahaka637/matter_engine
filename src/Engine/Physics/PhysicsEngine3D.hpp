@@ -110,8 +110,11 @@ struct PhysicsSceneSettings3D {
     // checagem (comportamento antigo: vento sempre uniforme na cena).
     float windShelterDistanceMeters = 4.0f;
     std::uint32_t workerThreadCount = 0;
-    std::uint32_t solverPositionIterations = 8;
-    std::uint32_t solverVelocityIterations = 2;
+    // TGS em passo fixo de 120 Hz converge bem com o padrão recomendado
+    // pelo PhysX. Uma ilha usa a maior contagem pedida por qualquer ator;
+    // elevar isto globalmente duplicava o trabalho de todos os ragdolls.
+    std::uint32_t solverPositionIterations = 4;
+    std::uint32_t solverVelocityIterations = 1;
     // Memoria temporaria reutilizada pelo solver. O PhysX exige blocos
     // alinhados e multiplos de 16 KiB; a cena normaliza o valor informado.
     std::uint32_t scratchBufferSizeBytes = 1024u * 1024u;

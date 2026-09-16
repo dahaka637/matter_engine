@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <filesystem>
 #include <string>
 
 namespace MatterEngine::Workbench {
@@ -48,6 +49,28 @@ std::string environmentValue(const char* name) {
 #endif
 }
 
+int environmentInt(const char* name, int fallback,
+    int minimum, int maximum) {
+    const std::string text = environmentValue(name);
+    if (text.empty()) return fallback;
+    char* end = nullptr;
+    const long parsed = std::strtol(text.c_str(), &end, 10);
+    if (end == text.c_str() || *end != '\0') return fallback;
+    return std::clamp(static_cast<int>(parsed), minimum, maximum);
+}
+
+float environmentFloat(const char* name, float fallback,
+    float minimum, float maximum) {
+    const std::string text = environmentValue(name);
+    if (text.empty()) return fallback;
+    char* end = nullptr;
+    const float parsed = std::strtof(text.c_str(), &end);
+    if (end == text.c_str() || *end != '\0' || !std::isfinite(parsed)) {
+        return fallback;
+    }
+    return std::clamp(parsed, minimum, maximum);
+}
+
 ApplicationConfig initialConfiguration() {
     const Data::VideoSettings video =
         Data::SettingsRepository(settingsDatabasePath()).loadVideoSettings();
@@ -70,19 +93,32 @@ ApplicationConfig initialConfiguration() {
 WorkbenchApp::WorkbenchApp()
     : Application(initialConfiguration()),
       m_physicsEngine(taskScheduler()) {
+    // A exposição do Laboratório é fixa: mudar a direção da câmera não deve
+    // clarear ou escurecer a cena com base no conteúdo visível.
+    m_laboratoryToneMapping.automaticExposureEnabled = false;
+    applyLaboratoryGraphicsPreset(0);
+}
+
+void WorkbenchApp::applyLaboratoryGraphicsPreset(int preset) {
+    m_laboratoryGraphicsPreset = std::clamp(preset, 0, 2);
+    // GTAO saiu do frame ativo na varredura de desempenho. O preenchimento
+    // de contato agora vem das sombras e da luz indireta analítica.
+    m_laboratoryAmbientOcclusion.enabled = false;
+    m_laboratoryOpticalEffects.enabled = true;
 }
 
 void WorkbenchApp::onStart() {
     Log::info("MatterEngine Workbench iniciado.");
     PhysicsSceneSettings3D physicsSettings;
-    physicsSettings.solverPositionIterations = 8;
-    physicsSettings.solverVelocityIterations = 2;
+    physicsSettings.solverPositionIterations = 4;
+    physicsSettings.solverVelocityIterations = 1;
     physicsSettings.enableContinuousCollision = true;
     physicsSettings.enableStabilization = true;
     m_physicsScene = m_physicsEngine.createScene(physicsSettings,
         m_materialLibrary);
     m_menuLogo = renderer().loadUiTexture(
         std::string(MATTERENGINE_ASSETS_DIR) + "/ui/matter-engine-logo.png");
+    loadAnimationCatalog();
     m_hrtfEnabled = Data::SettingsRepository(settingsDatabasePath())
         .getInt("audio.hrtf_enabled").value_or(1) != 0;
     static_cast<void>(m_worldAudio.initialize(
@@ -90,26 +126,179 @@ void WorkbenchApp::onStart() {
     applyAutostartIfRequested();
 }
 
+void WorkbenchApp::loadAnimationCatalog() {
+    namespace fs = std::filesystem;
+    m_animationClips.clear();
+    RagdollProfile3D targetProfile;
+    try {
+        const std::string configuredCharacter = environmentValue("MATTERENGINE_CHARACTER");
+        if (!configuredCharacter.empty()) m_characterAssetPath = configuredCharacter;
+        m_ragdollCharacter = loadRagdollCharacter3D(
+            (fs::path(MATTERENGINE_ASSETS_DIR) / m_characterAssetPath).string());
+        targetProfile = m_ragdollCharacter->profile;
+    } catch (const std::exception& exception) {
+        Log::error("Biblioteca de animações sem perfil alvo: "
+            + std::string(exception.what()));
+        return;
+    }
+    const fs::path clipDirectory =
+        fs::path(MATTERENGINE_ASSETS_DIR) / "animations/clips";
+    std::error_code error;
+    if (!fs::is_directory(clipDirectory, error)) {
+        Log::warn("Pasta de clipes de animação não encontrada: "
+            + clipDirectory.string());
+        return;
+    }
+
+    std::vector<fs::path> files;
+    for (fs::directory_iterator iterator(clipDirectory, error), end;
+            !error && iterator != end; iterator.increment(error)) {
+        if (iterator->is_regular_file()
+            && iterator->path().extension() == ".json"
+            && iterator->path().filename().string().ends_with(
+                ".matteranim.json")) {
+            files.push_back(iterator->path());
+        }
+    }
+    std::sort(files.begin(), files.end());
+    for (const fs::path& file : files) {
+        try {
+            AnimationClip3D clip = loadAnimationClip3D(file.string());
+            if (clip.targetRigId != targetProfile.id) continue;
+            const auto rigIssues =
+                validateAnimationClipForRagdoll3D(clip, targetProfile);
+            if (!rigIssues.empty()) {
+                Log::error("Clipe rejeitado pelo perfil físico: "
+                    + file.string() + " (" + rigIssues.front().path + ": "
+                    + rigIssues.front().message + ")");
+                continue;
+            }
+            m_animationClips.push_back(std::move(clip));
+        } catch (const std::exception& exception) {
+            Log::error("Falha ao carregar clipe " + file.string()
+                + ": " + exception.what());
+        }
+    }
+    if (error) {
+        Log::error("Falha ao enumerar clipes de animação: "
+            + error.message());
+    }
+    Log::info("Biblioteca de animações: "
+        + std::to_string(m_animationClips.size()) + " clipe(s).");
+}
+
 void WorkbenchApp::applyAutostartIfRequested() {
     const std::string mode = environmentValue("MATTERENGINE_AUTOSTART");
     if (mode == "laboratory" || mode == "laboratory-debug"
         || mode == "laboratory-smoke"
-        || mode == "laboratory-spawn-smoke") {
+        || mode == "laboratory-pixel"
+        || mode == "laboratory-pixel-smoke"
+        || mode == "laboratory-pixel-scaled-smoke"
+        || mode == "laboratory-pixel-taa-smoke"
+        || mode == "laboratory-pixel-spawn-smoke"
+        || mode == "laboratory-spawn-smoke"
+        || mode == "laboratory-ragdoll-smoke"
+        || mode == "laboratory-animation" || mode == "laboratory-animation-smoke"
+        || mode == "laboratory-prop-smoke"
+        || mode == "laboratory-prop-suite-smoke"
+        || mode == "laboratory-benchmark") {
         enterLaboratory(true);
         m_laboratoryDebugVisible = mode == "laboratory-debug";
-        m_spawnMenuOpen = mode == "laboratory-spawn-smoke";
+        m_spawnMenuOpen = mode == "laboratory-spawn-smoke"
+            || mode == "laboratory-pixel-spawn-smoke";
+        m_spawnRagdollWhenReady = mode == "laboratory-ragdoll-smoke";
+        m_animationRunTest=mode=="laboratory-animation"||mode=="laboratory-animation-smoke";
+        if(m_animationRunTest) {
+            m_laboratoryDebugVisible=true;m_showRagdollPanel=true;
+            m_hidePhysGunPresentation=true;
+            if(mode.ends_with("-smoke"))m_automaticQuitSeconds=11;
+        }
+        m_spawnAllPropsWhenReady =
+            mode == "laboratory-prop-suite-smoke";
+        if (mode == "laboratory-benchmark") {
+            m_physicsBenchmarkRequestedProps = environmentInt(
+                "MATTERENGINE_BENCHMARK_PROPS", 100, 10, 500);
+            m_physicsBenchmarkRequestedRagdolls = environmentInt(
+                "MATTERENGINE_BENCHMARK_RAGDOLLS", 30, 1, 100);
+            m_physicsBenchmarkSpawnRatePerSecond = environmentFloat(
+                "MATTERENGINE_BENCHMARK_RATE", 30.0f, 1.0f, 30.0f);
+            m_automaticBenchmarkDurationSeconds = environmentFloat(
+                "MATTERENGINE_BENCHMARK_SECONDS", 25.0f, 5.0f, 600.0f);
+            m_automaticBenchmarkWarmupSeconds = environmentFloat(
+                "MATTERENGINE_BENCHMARK_WARMUP", 2.0f, 0.0f, 30.0f);
+            m_physicsBenchmarkShowAnalytics = true;
+            m_startPhysicsBenchmarkWhenReady = true;
+        }
+        if (mode == "laboratory-prop-smoke") {
+            m_spawnPropWhenReadyId =
+                environmentValue("MATTERENGINE_AUTOSPAWN_PROP");
+            if (m_spawnPropWhenReadyId.empty()) {
+                m_spawnPropWhenReadyId = "soccer_ball";
+            }
+        }
+        if (mode == "laboratory-pixel"
+            || mode == "laboratory-pixel-smoke"
+            || mode == "laboratory-pixel-scaled-smoke"
+            || mode == "laboratory-pixel-taa-smoke"
+            || mode == "laboratory-pixel-spawn-smoke") {
+            m_laboratoryRenderMode = SceneRenderMode3D::PixelArt;
+            // O smoke com atlas do menu também cobre o caminho de upscale
+            // interno, sem alterar o default interativo de 100%.
+            if (mode == "laboratory-pixel-scaled-smoke"
+                || mode == "laboratory-pixel-spawn-smoke") {
+                m_laboratoryPixelArt.renderScale = 0.75f;
+            }
+            if (mode == "laboratory-pixel-taa-smoke") {
+                m_laboratoryPixelArt.temporalAntiAliasingEnabled = true;
+            }
+            m_laboratoryTaaHistoryValid = false;
+        }
         if (mode == "laboratory-smoke"
-            || mode == "laboratory-spawn-smoke") {
-            m_automaticQuitSeconds = 6.0f;
+            || mode == "laboratory-pixel-smoke"
+            || mode == "laboratory-pixel-scaled-smoke"
+            || mode == "laboratory-pixel-taa-smoke"
+            || mode == "laboratory-pixel-spawn-smoke"
+            || mode == "laboratory-spawn-smoke"
+            || mode == "laboratory-ragdoll-smoke"
+            || mode == "laboratory-prop-smoke"
+            || mode == "laboratory-prop-suite-smoke") {
+            m_automaticQuitSeconds =
+                mode == "laboratory-ragdoll-smoke"
+                    || mode == "laboratory-prop-smoke"
+                    || mode == "laboratory-prop-suite-smoke"
+                    ? 10.0f : 6.0f;
         }
         syncLaboratoryMouseCapture();
     } else if (mode == "object-viewer" || mode == "object-viewer-smoke") {
         m_screen = Screen::ObjectViewer;
         if (mode == "object-viewer-smoke") m_automaticQuitSeconds = 6.0f;
+    } else if (mode == "animation-viewer"
+        || mode == "animation-viewer-smoke") {
+        m_screen = Screen::AnimationViewer;
+        m_animationViewerCameraYaw = environmentFloat("MATTERENGINE_ANIMATION_YAW",
+            m_animationViewerCameraYaw,-6.3f,6.3f);
+        m_animationViewerCameraPitch = environmentFloat("MATTERENGINE_ANIMATION_PITCH",
+            m_animationViewerCameraPitch,-1.22f,1.22f);
+        m_animationViewerCameraDistance = environmentFloat("MATTERENGINE_ANIMATION_DISTANCE",
+            m_animationViewerCameraDistance,2.8f,9.0f);
+        const auto selected=environmentValue("MATTERENGINE_ANIMATION_CLIP");
+        for(std::size_t i=0;i<m_animationClips.size();++i)if(m_animationClips[i].id==selected)m_animationViewerSelectedIndex=i;
+        if(!m_animationClips.empty())m_animationViewerLoop=m_animationClips[m_animationViewerSelectedIndex].loops;
+        if (!environmentValue("MATTERENGINE_ANIMATION_PHASE").empty() && !m_animationClips.empty()) {
+            m_animationViewerPlaybackSeconds = m_animationClips[m_animationViewerSelectedIndex].durationSeconds
+                * environmentFloat("MATTERENGINE_ANIMATION_PHASE",0.0f,0.0f,1.0f);
+            m_animationViewerPlaying=false;
+        }
+        if (mode == "animation-viewer-smoke") {
+            m_automaticQuitSeconds = 6.0f;
+        }
     } else if (mode == "settings") {
         m_settingsReturnScreen = Screen::MainMenu;
         m_screen = Screen::Settings;
     }
+    if (mode.ends_with("-smoke"))
+        m_automaticQuitSeconds=environmentFloat("MATTERENGINE_SMOKE_SECONDS",
+            m_automaticQuitSeconds,1.0f,120.0f);
 }
 
 void WorkbenchApp::onEvent(const Event& event) {
@@ -301,7 +490,8 @@ void WorkbenchApp::onEvent(const Event& event) {
         && event.key == Key::Escape) {
         if (m_screen == Screen::Settings) {
             m_screen = m_settingsReturnScreen;
-        } else if (m_screen == Screen::ObjectViewer) {
+        } else if (m_screen == Screen::ObjectViewer
+            || m_screen == Screen::AnimationViewer) {
             m_screen = Screen::MainMenu;
         }
     }
@@ -311,6 +501,83 @@ void WorkbenchApp::onUpdate(float deltaTime) {
     if (m_automaticQuitSeconds > 0.0f) {
         m_automaticQuitSeconds -= deltaTime;
         if (m_automaticQuitSeconds <= 0.0f) {
+            const ApplicationFrameMetrics& application =
+                applicationFrameMetrics();
+            const RHI::FramePerformanceMetrics graphics =
+                renderer().framePerformanceMetrics();
+            Log::info("Smoke performance: "
+                + std::to_string(ImGui::GetIO().Framerate)
+                + " FPS; GPU "
+                + std::to_string(graphics.gpuFrameMilliseconds)
+                + " ms; frame "
+                + std::to_string(application.totalMilliseconds)
+                + " ms (update "
+                + std::to_string(application.fixedUpdateMilliseconds)
+                + ", render "
+                + std::to_string(application.renderMilliseconds)
+                + ", UI "
+                + std::to_string(application.guiMilliseconds)
+                + "); sync "
+                + std::to_string(graphics.cpuFenceWaitMilliseconds)
+                + "/"
+                + std::to_string(graphics.cpuAcquireMilliseconds)
+                + "/"
+                + std::to_string(graphics.cpuPresentMilliseconds)
+                + " ms.");
+            if (graphics.gpuTimingValid) {
+                Log::info("Smoke GPU passes: shadow "
+                    + std::to_string(graphics.gpuShadowMilliseconds)
+                    + " ms; depth "
+                    + std::to_string(
+                        graphics.gpuDepthPrepassMilliseconds)
+                    + "; opaque "
+                    + std::to_string(graphics.gpuOpaqueMilliseconds)
+                    + "; ocean "
+                    + std::to_string(graphics.gpuOceanMilliseconds)
+                    + "; temporal "
+                    + std::to_string(graphics.gpuTemporalMilliseconds)
+                    + "; glare "
+                    + std::to_string(graphics.gpuBloomGlareMilliseconds)
+                    + "; exposure "
+                    + std::to_string(graphics.gpuExposureMilliseconds)
+                    + "; tonemap "
+                    + std::to_string(graphics.gpuTonemapMilliseconds)
+                    + "; UI "
+                    + std::to_string(graphics.gpuUiMilliseconds)
+                    + " ms.");
+            }
+            if (m_physicsBenchmarkOverallFrameSamples > 0) {
+                const float benchmarkAverage =
+                    m_physicsBenchmarkOverallFpsSum
+                    / static_cast<float>(
+                        m_physicsBenchmarkOverallFrameSamples);
+                Log::info("Benchmark completo: baseline "
+                    + std::to_string(m_physicsBenchmarkBaselineFps)
+                    + " FPS; media "
+                    + std::to_string(benchmarkAverage)
+                    + "; minimo "
+                    + std::to_string(
+                        m_physicsBenchmarkOverallMinimumFps)
+                    + "; props "
+                    + std::to_string(
+                        m_physicsBenchmarkPropEntityIds.size())
+                    + "; ragdolls "
+                    + std::to_string(
+                        m_physicsBenchmarkRagdollEntityIds.size())
+                    + ".");
+            }
+            if (m_physicsScene) {
+                const PhysicsStepDiagnostics3D& physics =
+                    m_physicsScene->diagnostics();
+                Log::info("Smoke PhysX: passo "
+                    + std::to_string(physics.totalStepMilliseconds)
+                    + " ms; contatos "
+                    + std::to_string(physics.discreteContactPairs)
+                    + "; reportados "
+                    + std::to_string(physics.reportedContactPairs)
+                    + "; workers "
+                    + std::to_string(physics.physicsWorkerCount) + ".");
+            }
             requestQuit();
         }
     }
@@ -322,6 +589,27 @@ void WorkbenchApp::onUpdate(float deltaTime) {
     }
     m_notification.secondsRemaining = std::max(0.0f,
         m_notification.secondsRemaining - deltaTime);
+    if (m_startPhysicsBenchmarkWhenReady && m_laboratoryMapLoaded
+        && m_propCatalog.loaded() && m_humanRagdollProfile) {
+        m_automaticBenchmarkWarmupSeconds -= deltaTime;
+        if (m_automaticBenchmarkWarmupSeconds <= 0.0f) {
+            m_startPhysicsBenchmarkWhenReady = false;
+            beginPhysicsBenchmark();
+            if (m_physicsBenchmarkRunning) {
+                m_automaticQuitSeconds =
+                    m_automaticBenchmarkDurationSeconds;
+                Log::info("Benchmark automatico: "
+                    + std::to_string(m_physicsBenchmarkRequestedProps)
+                    + " props, "
+                    + std::to_string(
+                        m_physicsBenchmarkRequestedRagdolls)
+                    + " ragdolls, "
+                    + std::to_string(
+                        m_physicsBenchmarkSpawnRatePerSecond)
+                    + " entidades/s.");
+            }
+        }
+    }
     if (m_screen == Screen::Laboratory) {
         // Mola curta e subamortecida: resposta rapida, um unico retorno suave
         // e nenhum deslocamento permanente do viewmodel.
@@ -345,6 +633,25 @@ void WorkbenchApp::onUpdate(float deltaTime) {
     if (m_screen == Screen::Laboratory && !m_laboratoryPaused) {
         updateLaboratory(deltaTime);
     }
+    if (m_screen == Screen::AnimationViewer && m_animationViewerPlaying
+        && !m_animationClips.empty()) {
+        m_animationViewerSelectedIndex = std::min(
+            m_animationViewerSelectedIndex, m_animationClips.size() - 1);
+        const AnimationClip3D& clip =
+            m_animationClips[m_animationViewerSelectedIndex];
+        m_animationViewerPlaybackSeconds +=
+            deltaTime * m_animationViewerPlaybackSpeed;
+        if (clip.durationSeconds > 0.0f
+            && m_animationViewerPlaybackSeconds > clip.durationSeconds) {
+            if (m_animationViewerLoop && clip.loops) {
+                m_animationViewerPlaybackSeconds = std::fmod(
+                    m_animationViewerPlaybackSeconds, clip.durationSeconds);
+            } else {
+                m_animationViewerPlaybackSeconds = clip.durationSeconds;
+                m_animationViewerPlaying = false;
+            }
+        }
+    }
 }
 
 void WorkbenchApp::onRender(Renderer& activeRenderer) {
@@ -356,6 +663,7 @@ void WorkbenchApp::onRender(Renderer& activeRenderer) {
     }
     if (m_screen == Screen::Laboratory) {
         ensurePropAssetsLoaded(activeRenderer);
+        ensureRagdollAssetsLoaded(activeRenderer);
         if (!m_propPreviewAtlas && m_propCatalog.loaded()) {
             // O renderer 3D usa um snapshot uniforme por frame. O atlas é
             // preparado em um frame próprio e preservado como textura; assim
@@ -376,6 +684,14 @@ void WorkbenchApp::onRender(Renderer& activeRenderer) {
             // renderScene3D reutiliza o alvo offscreen; o atlas será
             // reconstruído ao retornar ao laboratório.
             m_propPreviewAtlas = {};
+        }
+    } else if (m_screen == Screen::AnimationViewer) {
+        ensureRagdollAssetsLoaded(activeRenderer);
+        if (m_humanRagdollProfile && !m_characterVisual.parts.empty()) {
+            m_animationViewerPreview =
+                renderAnimationViewerPreview(activeRenderer);
+            m_propPreviewAtlas = {};
+            m_objectViewerPreview = {};
         }
     }
 }
@@ -410,6 +726,9 @@ void WorkbenchApp::onGui(Renderer& activeRenderer) {
         break;
     case Screen::ObjectViewer:
         drawObjectViewer();
+        break;
+    case Screen::AnimationViewer:
+        drawAnimationViewer();
         break;
     case Screen::Settings:
         drawSettings();

@@ -3,6 +3,7 @@
 #include "Engine/Core/Log.hpp"
 #include "Engine/Geometry/MeshData3D.hpp"
 #include "Engine/Math/Mat4.hpp"
+#include "Engine/Physics/WindShelter3D.hpp"
 #include "Engine/RHI/RHITypes.hpp"
 
 #include <algorithm>
@@ -145,27 +146,64 @@ void WorkbenchApp::spawnProp(std::size_t definitionIndex) {
     }
 
     const PropDefinition3D& definition = definitions[definitionIndex];
-    PhysicsBodyDefinition3D body = definition.bodyTemplate;
-    body.entityId = m_nextEntityId++;
-    body.orientation = {};
-    body.linearVelocity = {};
-    body.angularVelocity = {};
-    body.startAwake = true;
 
     const Vec3 direction = viewForward(m_laboratoryCameraYaw,
         m_laboratoryCameraPitch).normalized();
     const Ray3D ray { m_laboratoryCameraPosition, direction };
     PhysicsRayHit3D hit;
+    Vec3 requestedPosition;
     if (m_physicsScene->raycastStatic(ray,
             MaximumSpawnDistanceMeters, hit)) {
-        body.position = hit.position + hit.normal
+        requestedPosition = hit.position + hit.normal
             * (supportDistance(definition.dimensionsMeters, hit.normal)
                 + 0.035f);
     } else {
-        body.position = ray.origin
+        requestedPosition = ray.origin
             + ray.direction * EmptySpaceSpawnDistanceMeters;
     }
 
+    const Quaternion orientation {};
+    const std::optional<Vec3> safePosition = findSafeSpawnPosition(
+        requestedPosition, definition.dimensionsMeters * 0.5f,
+        orientation, 4.0f);
+    if (!safePosition
+        || !spawnPropAt(definitionIndex, *safePosition,
+            orientation, false)) {
+        m_laboratoryStatus = "Sem espaco seguro para criar o objeto";
+        m_notification = {
+            "Spawn bloqueado: procure uma area livre", 2.2f, 2.2f
+        };
+    }
+}
+
+bool WorkbenchApp::spawnPropAt(std::size_t definitionIndex,
+    Vec3 position, Quaternion orientation, bool benchmarkEntity) {
+    const auto& definitions = m_propCatalog.definitions();
+    if (!m_physicsScene || definitionIndex >= definitions.size()
+        || !m_laboratoryMapLoaded
+        || m_spawnedProps.size() >= MaximumSpawnedProps) {
+        return false;
+    }
+    const PropDefinition3D& definition = definitions[definitionIndex];
+    // Última barreira imediatamente antes de publicar o ator. O benchmark
+    // também passa por aqui; assim uma posição que ficou ocupada entre a
+    // escolha e a criação nunca produz duas entidades interpenetradas.
+    constexpr float SpawnClearanceMeters = 0.025f;
+    if (m_physicsScene->overlapsBox(position,
+            definition.dimensionsMeters * 0.5f
+                + Vec3 { SpawnClearanceMeters, SpawnClearanceMeters,
+                    SpawnClearanceMeters },
+            orientation)) {
+        return false;
+    }
+
+    PhysicsBodyDefinition3D body = definition.bodyTemplate;
+    body.entityId = m_nextEntityId++;
+    body.position = position;
+    body.orientation = orientation.normalized();
+    body.linearVelocity = {};
+    body.angularVelocity = {};
+    body.startAwake = true;
     const PhysicsBodyHandle3D physicsBody = m_physicsScene->createBody(
         body, definition.collisionShapes);
     PhysicsBodyState3D initialState;
@@ -177,13 +215,87 @@ void WorkbenchApp::spawnProp(std::size_t definitionIndex) {
         physicsBody, initialState, initialState, 0.0f });
     m_spawnedPropByBodyIndex.insert_or_assign(physicsBody.index,
         m_spawnedProps.size() - 1);
+    if (benchmarkEntity) {
+        m_physicsBenchmarkPropEntityIds.push_back(body.entityId);
+    }
     m_laboratoryStatus = definition.displayName + " criado";
+    return true;
+}
+
+std::optional<Vec3> WorkbenchApp::findSafeSpawnPosition(
+    Vec3 requestedPosition, Vec3 halfExtents,
+    Quaternion orientation, float maximumSearchRadiusMeters) const {
+    if (!m_physicsScene) return std::nullopt;
+    constexpr float ClearanceMeters = 0.025f;
+    const Vec3 queryHalfExtents = halfExtents
+        + Vec3 { ClearanceMeters, ClearanceMeters, ClearanceMeters };
+    if (!m_physicsScene->overlapsBox(requestedPosition,
+            queryHalfExtents, orientation)) {
+        return requestedPosition;
+    }
+
+    // Busca determinística em anéis de Fibonacci. Ela preenche cada raio
+    // uniformemente, testa primeiro o mesmo nível e só então pequenos
+    // degraus verticais. Não há "teleporte aleatório" imprevisível no menu.
+    constexpr float GoldenAngle = 2.39996322973f;
+    constexpr float RadialStepMeters = 0.32f;
+    const int samples = std::max(1, static_cast<int>(std::ceil(
+        maximumSearchRadiusMeters / RadialStepMeters)));
+    for (int ring = 1; ring <= samples; ++ring) {
+        const float radius = std::min(maximumSearchRadiusMeters,
+            static_cast<float>(ring) * RadialStepMeters);
+        const int points = std::max(8,
+            static_cast<int>(std::ceil(2.0f * Pi * radius
+                / RadialStepMeters)));
+        for (int point = 0; point < points; ++point) {
+            const float angle =
+                static_cast<float>(point) * GoldenAngle;
+            for (int level = 0; level < 3; ++level) {
+                const Vec3 candidate = requestedPosition + Vec3 {
+                    std::cos(angle) * radius,
+                    std::sin(angle) * radius,
+                    static_cast<float>(level) * 0.35f
+                };
+                if (!m_physicsScene->overlapsBox(candidate,
+                        queryHalfExtents, orientation)) {
+                    return candidate;
+                }
+            }
+        }
+    }
+    return std::nullopt;
 }
 
 void WorkbenchApp::removeLatestSpawnedEntity() {
-    if (m_spawnedProps.empty()) {
+    if (m_spawnedProps.empty() && m_spawnedRagdolls.empty()) {
         m_laboratoryStatus.clear();
         m_notification = { "Nenhum objeto para remover", 1.8f, 1.8f };
+        return;
+    }
+    const bool removeRagdoll = !m_spawnedRagdolls.empty()
+        && (m_spawnedProps.empty()
+            || m_spawnedRagdolls.back().entityId
+                > m_spawnedProps.back().entityId);
+    if (removeRagdoll) {
+        const std::uint64_t removedEntityId =
+            m_spawnedRagdolls.back().entityId;
+        const RagdollHandle3D removedHandle =
+            m_spawnedRagdolls.back().physicsRagdoll;
+        if (m_physGunGrabbedEntityId == removedEntityId) endPhysGunGrab();
+        if (m_physicsScene) {
+            m_physicsScene->destroyRagdoll(removedHandle);
+        }
+        m_spawnedRagdolls.pop_back();
+        const auto benchmark = std::find(
+            m_physicsBenchmarkRagdollEntityIds.begin(),
+            m_physicsBenchmarkRagdollEntityIds.end(), removedEntityId);
+        if (benchmark != m_physicsBenchmarkRagdollEntityIds.end()) {
+            m_physicsBenchmarkRagdollEntityIds.erase(benchmark);
+            m_physicsBenchmarkSpawnedRagdolls = static_cast<std::uint32_t>(
+                m_physicsBenchmarkRagdollEntityIds.size());
+        }
+        m_laboratoryStatus.clear();
+        m_notification = { "Ragdoll removido", 2.35f, 2.35f };
         return;
     }
     const SpawnedPropInstance removed = m_spawnedProps.back();
@@ -191,12 +303,23 @@ void WorkbenchApp::removeLatestSpawnedEntity() {
     if (m_physicsScene) m_physicsScene->destroyBody(removed.physicsBody);
     m_spawnedPropByBodyIndex.erase(removed.physicsBody.index);
     m_spawnedProps.pop_back();
+    const auto benchmark = std::find(
+        m_physicsBenchmarkPropEntityIds.begin(),
+        m_physicsBenchmarkPropEntityIds.end(), removed.entityId);
+    if (benchmark != m_physicsBenchmarkPropEntityIds.end()) {
+        m_physicsBenchmarkPropEntityIds.erase(benchmark);
+        m_physicsBenchmarkSpawnedProps = static_cast<std::uint32_t>(
+            m_physicsBenchmarkPropEntityIds.size());
+    }
     m_laboratoryStatus.clear();
     m_notification = { "Objeto removido", 2.35f, 2.35f };
 }
 
 void WorkbenchApp::beginPhysGunGrab() {
-    if (!m_physicsScene || m_spawnedProps.empty()) return;
+    if (!m_physicsScene
+        || (m_spawnedProps.empty() && m_spawnedRagdolls.empty())) {
+        return;
+    }
     const Ray3D ray { m_laboratoryCameraPosition,
         viewForward(m_laboratoryCameraYaw,
             m_laboratoryCameraPitch).normalized() };
@@ -211,28 +334,72 @@ void WorkbenchApp::beginPhysGunGrab() {
             staticBlocker.distance - PhysGunOcclusionMarginMeters);
     }
 
-    PhysicsRayHit3D hit;
-    const bool exactHit = visibleDistance > 0.0f
-        && m_physicsScene->raycastDynamic(ray, visibleDistance, hit)
-        && hit.body;
-    if (!exactHit && (visibleDistance <= 0.0f
-        || !m_physicsScene->sweepSphereDynamic(ray,
-            PhysGunAssistSweepRadiusMeters, visibleDistance, hit)
-        || !hit.body)) {
+    PhysicsRayHit3D propHit;
+    PhysicsRagdollRayHit3D ragdollHit;
+    bool hasPropHit = visibleDistance > 0.0f
+        && m_physicsScene->raycastDynamic(
+            ray, visibleDistance, propHit)
+        && propHit.body;
+    bool hasRagdollHit = visibleDistance > 0.0f
+        && m_physicsScene->raycastRagdoll(
+            ray, visibleDistance, ragdollHit)
+        && ragdollHit.ragdoll;
+    if (!hasPropHit && !hasRagdollHit && visibleDistance > 0.0f) {
+        hasPropHit = m_physicsScene->sweepSphereDynamic(ray,
+                PhysGunAssistSweepRadiusMeters, visibleDistance, propHit)
+            && propHit.body;
+        hasRagdollHit = m_physicsScene->sweepSphereRagdoll(ray,
+                PhysGunAssistSweepRadiusMeters,
+                visibleDistance, ragdollHit)
+            && ragdollHit.ragdoll;
+    }
+    if (!hasPropHit && !hasRagdollHit) {
         return;
     }
-    const auto instance = std::find_if(m_spawnedProps.begin(),
-        m_spawnedProps.end(), [&](const SpawnedPropInstance& candidate) {
-            return candidate.physicsBody == hit.body;
-        });
-    if (instance == m_spawnedProps.end()) return;
-    if (m_physicsScene->bodyFrozen(hit.body)) {
-        m_physicsScene->setBodyFrozen(hit.body, false);
+    const bool grabRagdoll = hasRagdollHit
+        && (!hasPropHit || ragdollHit.distance < propHit.distance);
+    PhysicsBodyState3D state;
+    Vec3 hitPosition;
+    float hitDistance = 0.0f;
+    std::uint64_t entityId = 0;
+    PhysicsBodyHandle3D propBody;
+    RagdollHandle3D ragdoll;
+    std::uint32_t ragdollLink = 0;
+    if (grabRagdoll) {
+        const auto instance = std::find_if(m_spawnedRagdolls.begin(),
+            m_spawnedRagdolls.end(),
+            [&](const SpawnedRagdollInstance& candidate) {
+                return candidate.physicsRagdoll == ragdollHit.ragdoll;
+            });
+        if (instance == m_spawnedRagdolls.end()) return;
+        const RagdollState3D snapshot =
+            m_physicsScene->ragdollState(ragdollHit.ragdoll);
+        if (ragdollHit.linkIndex >= snapshot.links.size()) return;
+        state = snapshot.links[ragdollHit.linkIndex];
+        hitPosition = ragdollHit.position;
+        hitDistance = ragdollHit.distance;
+        entityId = instance->entityId;
+        ragdoll = ragdollHit.ragdoll;
+        ragdollLink = ragdollHit.linkIndex;
+    } else {
+        const auto instance = std::find_if(m_spawnedProps.begin(),
+            m_spawnedProps.end(),
+            [&](const SpawnedPropInstance& candidate) {
+                return candidate.physicsBody == propHit.body;
+            });
+        if (instance == m_spawnedProps.end()) return;
+        if (m_physicsScene->bodyFrozen(propHit.body)) {
+            m_physicsScene->setBodyFrozen(propHit.body, false);
+        }
+        state = m_physicsScene->bodyState(propHit.body);
+        hitPosition = propHit.position;
+        hitDistance = propHit.distance;
+        entityId = instance->entityId;
+        propBody = propHit.body;
     }
 
-    const PhysicsBodyState3D state = m_physicsScene->bodyState(hit.body);
     const Vec3 localHit = state.orientation.conjugate().rotate(
-        hit.position - state.position);
+        hitPosition - state.position);
     const bool fixedPose = m_physGunHoldMode == PhysGunHoldMode::FixedPose;
     m_physGunLocalGrabPoint = fixedPose ? Vec3 {} : localHit;
     m_physGunTargetOrientation = state.orientation;
@@ -245,18 +412,22 @@ void WorkbenchApp::beginPhysGunGrab() {
         state.position - m_laboratoryCameraPosition);
     m_physGunRotationInputDegrees = {};
     m_physGunOrientationLocked = fixedPose;
-    m_physGunHoldDistance = std::max(0.65f, hit.distance);
+    m_physGunHoldDistance = std::max(0.65f, hitDistance);
 
     PhysicsGrabTarget3D target;
-    target.position = fixedPose ? state.position : hit.position;
+    target.position = fixedPose ? state.position : hitPosition;
     target.orientation = state.orientation;
     target.lockOrientation = fixedPose;
-    if (!m_physicsScene->beginGrab(hit.body, m_physGunLocalGrabPoint,
-            target, m_physGunSettings)) {
+    const bool began = grabRagdoll
+        ? m_physicsScene->beginRagdollGrab(ragdoll, ragdollLink,
+            m_physGunLocalGrabPoint, target, m_physGunSettings)
+        : m_physicsScene->beginGrab(propBody, m_physGunLocalGrabPoint,
+            target, m_physGunSettings);
+    if (!began) {
         return;
     }
-    m_physGunBeamTargetWorldPosition = hit.position;
-    m_physGunGrabbedEntityId = instance->entityId;
+    m_physGunBeamTargetWorldPosition = hitPosition;
+    m_physGunGrabbedEntityId = entityId;
 }
 
 void WorkbenchApp::endPhysGunGrab() {
@@ -269,6 +440,14 @@ void WorkbenchApp::endPhysGunGrab() {
 
 void WorkbenchApp::freezePhysGunObject() {
     if (!m_physicsScene || !m_physicsScene->grabbing()) {
+        endPhysGunGrab();
+        return;
+    }
+    if (m_physicsScene->grabbedRagdoll()) {
+        m_notification = {
+            "Use o painel RAGDOLL para controlar a rigidez",
+            2.2f, 2.2f
+        };
         endPhysGunGrab();
         return;
     }
@@ -328,12 +507,21 @@ void WorkbenchApp::updateDynamicProps(float deltaTime) {
         beginPhysGunGrab();
     }
     if (m_physGunGrabbedEntityId != 0) {
-        const auto instance = std::find_if(m_spawnedProps.begin(),
+        const auto propInstance = std::find_if(m_spawnedProps.begin(),
             m_spawnedProps.end(), [&](const SpawnedPropInstance& candidate) {
                 return candidate.entityId == m_physGunGrabbedEntityId;
             });
-        if (instance == m_spawnedProps.end()
-            || !m_physicsScene->contains(instance->physicsBody)) {
+        const auto ragdollInstance = std::find_if(
+            m_spawnedRagdolls.begin(), m_spawnedRagdolls.end(),
+            [&](const SpawnedRagdollInstance& candidate) {
+                return candidate.entityId == m_physGunGrabbedEntityId;
+            });
+        const bool validProp = propInstance != m_spawnedProps.end()
+            && m_physicsScene->contains(propInstance->physicsBody);
+        const bool validRagdoll =
+            ragdollInstance != m_spawnedRagdolls.end()
+            && m_physicsScene->contains(ragdollInstance->physicsRagdoll);
+        if (!validProp && !validRagdoll) {
             endPhysGunGrab();
         } else {
             const Quaternion cameraOrientation = viewOrientation(
@@ -363,10 +551,27 @@ void WorkbenchApp::updateDynamicProps(float deltaTime) {
                 settings.angularDampingRatio = 0.72f + response * 0.38f;
             }
             m_physicsScene->updateGrabTarget(target, settings);
-            const PhysicsBodyState3D state =
-                m_physicsScene->bodyState(instance->physicsBody);
-            m_physGunBeamTargetWorldPosition = state.position
-                + state.orientation.rotate(m_physGunLocalGrabPoint);
+            if (validProp) {
+                const PhysicsBodyState3D state =
+                    m_physicsScene->bodyState(propInstance->physicsBody);
+                m_physGunBeamTargetWorldPosition = state.position
+                    + state.orientation.rotate(m_physGunLocalGrabPoint);
+            } else {
+                const RagdollState3D state =
+                    m_physicsScene->ragdollState(
+                        ragdollInstance->physicsRagdoll);
+                const std::uint32_t linkIndex =
+                    m_physicsScene->grabbedRagdollLink();
+                if (linkIndex >= state.links.size()) {
+                    endPhysGunGrab();
+                } else {
+                    const PhysicsBodyState3D& link =
+                        state.links[linkIndex];
+                    m_physGunBeamTargetWorldPosition = link.position
+                        + link.orientation.rotate(
+                            m_physGunLocalGrabPoint);
+                }
+            }
         }
     }
 
@@ -375,14 +580,20 @@ void WorkbenchApp::updateDynamicProps(float deltaTime) {
     // uma de referencia bem mais alta (nuvens, ver mais abaixo) - mesma
     // direcao/rajada em ambas, so a magnitude muda com a altura.
     m_windSystem.advance(deltaTime);
-    const float playerHeightMeters = m_physicsScene->hasCharacter()
-        ? m_physicsScene->characterState().position.z
-        : m_laboratoryCameraPosition.z;
+    const Vec3 playerPosition = m_physicsScene->hasCharacter()
+        ? m_physicsScene->characterState().position
+        : m_laboratoryCameraPosition;
     const Vec3 windAtPlayerHeight =
-        m_windSystem.velocityAtHeight(playerHeightMeters);
+        m_windSystem.velocityAtHeight(playerPosition.z);
     // So altera o vetor de vento da cena; a formula de arrasto quadratico
     // em si ja existia (ver PhysXScene3D::simulate) e nunca precisou mudar.
+    // Sem abrigo aplicado aqui: cada prop dinamico ja recalcula seu proprio
+    // abrigo por posicao dentro de PhysXScene3D::simulate() (mais preciso
+    // que reusar uma unica checagem na posicao do jogador para props
+    // espalhados pelo cenario). O abrigo do UIVO AMBIENTE (audio) e
+    // calculado separadamente mais abaixo, ver windShelterExposure3D.
     m_physicsScene->setAirVelocity(windAtPlayerHeight);
+    m_physicsScene->setOceanTimeSeconds(m_laboratoryElapsedTime);
 
     // Altitude tipica de base de nuvens cumulus - bem mais alta que
     // qualquer ponto alcancavel no Laboratorio, entao as nuvens sempre leem
@@ -394,6 +605,10 @@ void WorkbenchApp::updateDynamicProps(float deltaTime) {
     m_cloudWindOffset += Vec2 { windAtCloudAltitude.x, windAtCloudAltitude.y }
         * m_cloudWindVisualScale * deltaTime;
 
+    updatePhysicsBenchmark(deltaTime);
+    // O controlador observa exclusivamente o snapshot do passo anterior e
+    // enfileira alvos/torques antes do safe point da próxima simulação.
+    updateActiveRagdolls(deltaTime);
     m_physicsScene->simulate(deltaTime);
     for (const PhysicsBodyStateUpdate3D& update :
         m_physicsScene->activeBodyStates()) {
@@ -412,9 +627,19 @@ void WorkbenchApp::updateDynamicProps(float deltaTime) {
             instance.physicsState = update.state;
         }
     }
+    for (SpawnedRagdollInstance& instance : m_spawnedRagdolls) {
+        if (m_physicsScene->contains(instance.physicsRagdoll)) {
+            instance.physicsState =
+                m_physicsScene->ragdollState(instance.physicsRagdoll);
+        }
+    }
+    updatePhysicsBenchmarkAnalytics(deltaTime);
     m_impactAcousticResolver.resolve(m_physicsScene->contactImpacts(),
         m_materialLibrary, deltaTime);
     m_worldAudio.submitImpacts(m_impactAcousticResolver.commands());
+    m_dragAcousticResolver.resolve(m_physicsScene->contactSlides(),
+        m_materialLibrary, deltaTime);
+    m_worldAudio.submitDrags(m_dragAcousticResolver.commands());
 
     // Pitch completo (nao so o yaw planar) e o que da ao HRTF a pista de
     // elevacao: e o motivo pratico de ligar HRTF, entao a pose enviada ao
@@ -427,7 +652,15 @@ void WorkbenchApp::updateDynamicProps(float deltaTime) {
 
     const Vec3 characterVelocityForAudio = m_physicsScene->hasCharacter()
         ? m_physicsScene->characterState().velocity : Vec3 {};
-    m_worldAudio.updateWindAmbience(windAtPlayerHeight,
+    // Oclusao do uivo ambiente por geometria (ver WindShelter3D.hpp): o
+    // jogador nao deveria ouvir o vento como se estivesse ao ar livre estando
+    // dentro de um comodo fechado. Escopo deliberadamente so audio - nao ha
+    // forca de vento aplicada ao personagem hoje (so props dinamicos sentem
+    // arrasto, ja abrigados individualmente acima).
+    const float windAudioExposure = windShelterExposure3D(*m_physicsScene,
+        playerPosition, windAtPlayerHeight,
+        m_windSystem.settings().audioShelterDistanceMeters);
+    m_worldAudio.updateWindAmbience(windAtPlayerHeight * windAudioExposure,
         characterVelocityForAudio, m_windAudioVolume, deltaTime);
 }
 
@@ -449,7 +682,7 @@ UiTexture WorkbenchApp::renderPropPreviewAtlas(Renderer& activeRenderer) {
         // repetem os mesmos valores (motion vector zero de proposito).
         appendGpuModelRenderables(definitions[index].visual, position,
             previewOrientation(), position, previewOrientation(),
-            1.28f / largest, false, false, true, meshes);
+            1.28f / largest, false, false, true, meshes, 100'000.0f);
     }
     const Mat4 view = Mat4::lookAt({ 0.0f, -8.6f, 0.15f }, {},
         { 0.0f, 0.0f, 1.0f });
@@ -474,7 +707,7 @@ UiTexture WorkbenchApp::renderPropPreviewAtlas(Renderer& activeRenderer) {
     scene.cameraPosition = { 0.0f, -8.6f, 0.15f };
     scene.lights = lights;
     scene.meshes = meshes;
-    scene.ambientLight = 0.38f;
+    scene.environment.skyIrradiance = 0.38f;
     scene.showSky = false;
     scene.showShadows = false;
     return activeRenderer.renderScene3D(scene, 768, 512);
@@ -550,7 +783,7 @@ UiTexture WorkbenchApp::renderObjectViewerPreview(Renderer& activeRenderer,
     scene.cameraPosition = { 0.0f, -6.3f, 1.2f };
     scene.lights = lights;
     scene.meshes = meshes;
-    scene.ambientLight = 0.35f;
+    scene.environment.skyIrradiance = 0.35f;
     scene.showSky = false;
     scene.showShadows = true;
     return activeRenderer.renderScene3D(scene, 900, 700);

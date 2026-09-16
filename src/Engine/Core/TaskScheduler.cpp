@@ -64,7 +64,13 @@ struct TaskScheduler::Impl {
 
     ~Impl() {
         waitIdle();
-        stopping.store(true, std::memory_order_release);
+        {
+            // A mudanca do predicado e a notificacao precisam compartilhar o
+            // mesmo mutex usado pelo wait(). Sem isto, um worker pode observar
+            // "false", preparar-se para dormir e perder o notify_all().
+            std::lock_guard wakeLock(availableMutex);
+            stopping.store(true, std::memory_order_release);
+        }
         available.notify_all();
         for (const std::unique_ptr<Worker>& worker : workers) {
             if (worker->thread.joinable()) worker->thread.join();
@@ -83,26 +89,40 @@ struct TaskScheduler::Impl {
             scheduled.group->remaining.fetch_add(1,
                 std::memory_order_relaxed);
         }
-        // O contador precisa anunciar o trabalho antes que a tarefa se torne
-        // visivel em uma fila. Caso contrario, outro worker poderia rouba-la
-        // entre o push e o incremento e causar underflow em queued.
-        queued.fetch_add(1, std::memory_order_release);
 
         try {
-            if (CurrentScheduler == this) {
-                Worker& local = *workers[CurrentWorker];
-                std::lock_guard lock(local.mutex);
-                local.tasks.push_front(scheduled);
-            } else {
-                std::lock_guard lock(injectedMutex);
-                injected.push_back(scheduled);
+            // Protege a transicao do predicado queued 0->1 com o mesmo mutex
+            // do condition_variable. Antes, o notify podia ocorrer exatamente
+            // entre o teste do predicado e o sono do worker, deixando tarefas
+            // enfileiradas com todos os workers dormindo.
+            std::lock_guard wakeLock(availableMutex);
+            if (stopping.load(std::memory_order_acquire)) {
+                throw std::runtime_error(
+                    "Agendador de tarefas esta encerrando");
+            }
+
+            // O contador precisa anunciar o trabalho antes que a tarefa se
+            // torne visivel. Assim, um worker que roube imediatamente nunca
+            // causa underflow em queued.
+            queued.fetch_add(1, std::memory_order_release);
+            try {
+                if (CurrentScheduler == this) {
+                    Worker& local = *workers[CurrentWorker];
+                    std::lock_guard lock(local.mutex);
+                    local.tasks.push_front(scheduled);
+                } else {
+                    std::lock_guard lock(injectedMutex);
+                    injected.push_back(scheduled);
+                }
+            } catch (...) {
+                queued.fetch_sub(1, std::memory_order_relaxed);
+                throw;
             }
         } catch (...) {
             if (scheduled.group != nullptr) {
                 scheduled.group->remaining.fetch_sub(1,
                     std::memory_order_relaxed);
             }
-            queued.fetch_sub(1, std::memory_order_relaxed);
             outstanding.fetch_sub(1, std::memory_order_relaxed);
             throw;
         }
@@ -156,9 +176,12 @@ struct TaskScheduler::Impl {
         if (scheduled.group != nullptr
             && scheduled.group->remaining.fetch_sub(1,
                 std::memory_order_acq_rel) == 1) {
+            // Fecha a janela de notificacao perdida entre o predicado e wait.
+            std::lock_guard completionLock(scheduled.group->mutex);
             scheduled.group->completed.notify_all();
         }
         if (outstanding.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+            std::lock_guard idleLock(idleMutex);
             idle.notify_all();
         }
     }

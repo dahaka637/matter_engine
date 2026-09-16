@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Engine/Math/Quaternion.hpp"
+#include "Engine/Math/Vec2.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -54,6 +55,15 @@ struct PhysicsBodyDefinition3D {
     Vec3 linearVelocity;
     Vec3 angularVelocity;
     float massKg = 1.0f;
+    // Volume da geometria de colisao usado pra calcular massKg (densidade *
+    // volume, ver SurfaceMaterial::massForVolume) - guardado separado da
+    // massa porque um override de massa (BodyMassMode3D::OverrideKilograms)
+    // muda massKg sem mudar a geometria real. O empuxo (ver
+    // PhysXScene3D::simulate) usa massKg/volume como densidade EFETIVA do
+    // corpo, entao um override de massa automaticamente afeta se ele flutua
+    // ou afunda, do jeito certo. Zero (padrao) desativa flutuacao pra corpos
+    // que nunca passaram por buildDynamicBodyDefinition (ex.: personagem).
+    float bodyVolumeCubicMeters = 0.0f;
     float linearDamping = 0.035f;
     float angularDamping = 0.08f;
     bool aerodynamicDragEnabled = true;
@@ -87,6 +97,16 @@ struct PhysicsBodyState3D {
     bool frozen = false;
 };
 
+// Domínio físico do oceano procedural. Ele nunca cria uma shape de colisão:
+// define apenas onde empuxo, arrasto e natação existem.
+struct OceanVolume3D {
+    Vec2 center;
+    Vec2 halfExtents { 1500.0f, 1500.0f };
+    float meanSeaLevelMeters = 0.0f;
+    float depthMeters = 80.0f;
+    float densityKgPerCubicMeter = 1000.0f;
+};
+
 struct PhysicsRayHit3D {
     PhysicsBodyHandle3D body;
     Vec3 position;
@@ -106,9 +126,16 @@ struct PhysicsStepDiagnostics3D {
     std::size_t broadPhaseRemoves = 0;
     std::size_t discreteContactPairs = 0;
     std::size_t ccdPairs = 0;
-    std::uint32_t physicsWorkerCount = 1;
+    std::size_t reportedContactPairs = 0;
+    std::size_t reportedContactPoints = 0;
+    std::size_t submittedPhysicsTasks = 0;
+    std::uint32_t physicsWorkerCount = 0;
+    float preSimulationMilliseconds = 0.0f;
     float simulationDispatchMilliseconds = 0.0f;
     float simulationWaitMilliseconds = 0.0f;
+    float contactCallbackMilliseconds = 0.0f;
+    float stateSyncMilliseconds = 0.0f;
+    float statisticsMilliseconds = 0.0f;
     float totalStepMilliseconds = 0.0f;
 };
 
@@ -136,7 +163,6 @@ struct ContactImpactEvent3D {
     Vec3 position;
     Vec3 normal { 0.0f, 0.0f, 1.0f };
     float normalImpulseNewtonSeconds = 0.0f;
-    float tangentialImpulseNewtonSeconds = 0.0f;
     float approachSpeedMetersPerSecond = 0.0f;
     float effectiveMassKg = 0.0f;
     float transferredEnergyJoules = 0.0f;
@@ -150,6 +176,37 @@ struct ContactImpactEvent3D {
     float acousticDampingB = 1.0f;
     AcousticBodyStructure3D structureA = AcousticBodyStructure3D::Solid;
     AcousticBodyStructure3D structureB = AcousticBodyStructure3D::Solid;
+    bool staticA = true;
+    bool staticB = true;
+};
+
+// Contato que continua tocando (PxPairFlag::eNOTIFY_TOUCH_PERSISTS) num
+// passo fixo, nao um "acabou de bater" como ContactImpactEvent3D. Existe
+// para som de arrasto/atrito: um objeto encostado deslizando contra uma
+// superficie nao produz eventos de impacto (a velocidade de APROXIMACAO e
+// zero, o objeto ja esta encostado), mas continua exercendo forca normal e
+// deslizando tangencialmente a cada passo - as duas grandezas que a camada
+// acustica de arrasto precisa. So os campos usados por esse calculo:
+// energia/velocidade de aproximacao (conceitos de impacto) ficam de fora de
+// proposito.
+struct ContactSlideEvent3D {
+    std::size_t bodyA = InvalidPhysicsBodyIndex;
+    std::size_t bodyB = InvalidPhysicsBodyIndex;
+    std::uint64_t bodyIdA = 0;
+    std::uint64_t bodyIdB = 0;
+    std::string materialA = "default";
+    std::string materialB = "default";
+    Vec3 position;
+    float normalImpulseNewtonSeconds = 0.0f;
+    // Velocidade tangencial relativa no ponto de contato (m/s) - NAO vem do
+    // impulso do solver (PxContactPairPoint::impulse so reporta o
+    // componente normal, confirmado empiricamente), e sim calculada
+    // diretamente pela cinematica dos dois corpos (velocidade linear +
+    // angular no ponto de contato, ver PhysXScene3D::Impl::onContact).
+    float tangentialSpeedMetersPerSecond = 0.0f;
+    float effectiveMassKg = 0.0f;
+    float massA = 0.0f;
+    float massB = 0.0f;
     bool staticA = true;
     bool staticB = true;
 };

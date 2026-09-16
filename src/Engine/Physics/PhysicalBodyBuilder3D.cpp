@@ -60,6 +60,7 @@ PhysicsBodyDefinition3D buildDynamicBodyDefinition(
         dimensionsMeters.y * dimensionsMeters.z });
     PhysicsBodyDefinition3D definition;
     definition.massKg = mass;
+    definition.bodyVolumeCubicMeters = collisionVolumeCubicMeters;
     definition.materialId = material.id;
     definition.characteristicSizeMeters = largestDimension;
     definition.acousticGain = binding.acousticGain;

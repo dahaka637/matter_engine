@@ -38,7 +38,7 @@ $checks = @(
     },
     @{
         Name = "Identidade antiga e prototipos removidos nao podem retornar"
-        Arguments = @("-n", "SoccerFall|SOCCERFALL|Footwork|PhysicalBiped|AnimatorScreen", "CMakeLists.txt", "src", "tests")
+        Arguments = @("-n", "SoccerFall|SOCCERFALL|LegacyFootworkRig|PhysicalBiped|AnimatorScreen", "CMakeLists.txt", "src", "tests")
     }
 )
 

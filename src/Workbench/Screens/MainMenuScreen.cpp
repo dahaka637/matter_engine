@@ -35,7 +35,9 @@ void WorkbenchApp::drawMainMenu() {
     const std::string laboratory = UI::FontAwesome::label(
         UI::FontAwesome::Play, "Laboratório");
     const std::string viewer = UI::FontAwesome::label(
-        UI::FontAwesome::Cube, "Visualizador");
+        UI::FontAwesome::Cube, "Objetos");
+    const std::string animations = UI::FontAwesome::label(
+        UI::FontAwesome::User, "Animações");
     const std::string settings = UI::FontAwesome::label(
         UI::FontAwesome::Gear, "Configurações");
     const std::string quit = UI::FontAwesome::label(
@@ -48,6 +50,10 @@ void WorkbenchApp::drawMainMenu() {
     if (navigationButton(viewer.c_str(), false,
             { -1.0f, buttonHeight })) {
         m_screen = Screen::ObjectViewer;
+    }
+    if (navigationButton(animations.c_str(), false,
+            { -1.0f, buttonHeight })) {
+        m_screen = Screen::AnimationViewer;
     }
     if (navigationButton(settings.c_str(), false,
             { -1.0f, buttonHeight })) {

@@ -16,9 +16,11 @@ layout(set = 0, binding = 0, std140) uniform SceneUniform {
     vec4 cameraPosition;
     vec4 settings;    // x=sombras, y=luzes, z=historico TAA valido, w=ambiente
     vec4 skySettings; // x=mostrar ceu, y=tempo do ceu, z=cobertura de nuvens, w reservado
-    vec4 fogSettings; // x=densidade, y=acoplamento altura-distancia, z=opacidade maxima, w reservado
+    vec4 fogSettings; // x=densidade (por metro apos w), y=acoplamento altura-distancia, z=opacidade maxima, w=distancia de inicio (m)
     vec4 fogColor;    // rgb=cor da neblina, a reservado
     vec4 windOffset;  // xy=deslocamento acumulado do vento nas nuvens, zw reservado
+    vec4 environmentSettings; // layout compartilhado; não usado aqui
+    vec4 renderSettings; // x=Pixel Art, y=tamanho base, z=TAA completo
 } scene;
 
 layout(set = 1, binding = 0) uniform sampler2D currentColorMap;
@@ -48,6 +50,10 @@ vec3 yCoCgToRgb(vec3 color) {
     return vec3(red, green, blue);
 }
 
+vec2 clipPositionToUv(vec4 clipPosition) {
+    return clipPosition.xy / clipPosition.w * 0.5 + 0.5;
+}
+
 void main() {
     float currentDepth = texture(depthMap, texCoord).r;
     vec3 currentColor = texture(currentColorMap, texCoord).rgb;
@@ -56,17 +62,6 @@ void main() {
     // anterior da MESMA cena, dimensoes e sequencia temporal. Primeiro frame,
     // resize, camera cut e previews entram aqui e semeiam historico limpo.
     if (scene.settings.z < 0.5) {
-        outColor = vec4(currentColor, 1.0);
-        return;
-    }
-
-    // O ceu (fundo) nao escreve profundidade no pre-pass - fica no valor de
-    // clear. Com profundidade INVERTIDA (perto=1, longe=0, ver
-    // Mat4::perspective) o clear agora e 0.0, nao 1.0. O ceu tambem nao
-    // escreve um vetor de movimento util (sempre zero, ver
-    // scene3d_sky.frag) - ele ja e procedural e nao serrilha por si so,
-    // entao so passa a cor atual direto.
-    if (currentDepth <= 0.0001) {
         outColor = vec4(currentColor, 1.0);
         return;
     }
@@ -86,7 +81,49 @@ void main() {
     // reduziu mas nao eliminou. Vetores de movimento reais sao a tecnica
     // usada por engines AAA (Unreal, Frostbite, id Tech) exatamente por
     // nao ter nenhum desses dois problemas.
-    vec2 motionVector = texture(motionVectorMap, texCoord).rg;
+    bool skyPixel = currentDepth <= 0.0001;
+    bool pixelArtMode = scene.renderSettings.x > 0.5;
+    if (skyPixel && !pixelArtMode) {
+        // O modo normal preserva o caminho barato anterior; a cobertura
+        // analítica e o histórico direcional são necessários apenas para a
+        // grade deliberadamente grossa do Mosaic.
+        outColor = vec4(currentColor, 1.0);
+        return;
+    }
+    if (pixelArtMode && !skyPixel && scene.renderSettings.z < 0.5) {
+        // Sem o TAA experimental, somente o céu participa do histórico.
+        // Mundo, arma e props seguem o caminho antigo exatamente, portanto
+        // não podem produzir rastro ou alterar iluminação por acumulação.
+        outColor = vec4(currentColor, 1.0);
+        return;
+    }
+    vec2 motionVector;
+    if (skyPixel) {
+        // O céu está ancorado em direções do mundo e não escreve motion
+        // vectors. Reconstruir o raio atual e projetar um ponto muito
+        // distante com a VP anterior fornece somente a rotação da câmera;
+        // assim estrelas/nuvens encontram seu histórico em vez de piscarem.
+        vec2 clip = texCoord * 2.0 - 1.0;
+        vec4 farPoint = scene.inverseCameraViewProjection
+            * vec4(clip.x, -clip.y, 1.0, 1.0);
+        vec3 worldFar = farPoint.xyz / max(abs(farPoint.w), 0.00001);
+        vec3 direction = normalize(
+            worldFar - scene.cameraPosition.xyz);
+        vec3 distantPoint = scene.cameraPosition.xyz
+            + direction * 100000.0;
+        vec4 previousClip = scene.previousCameraViewProjection
+            * vec4(distantPoint, 1.0);
+        previousClip.y = -previousClip.y;
+        vec2 previousSkyUv = clipPositionToUv(previousClip);
+        motionVector = texCoord - previousSkyUv;
+    } else {
+        motionVector = texture(motionVectorMap, texCoord).rg;
+    }
+    // scene3d_mesh.frag usa +4 em X como classe de detalhe do Mosaic. Isso
+    // fica fora da faixa possível de um deslocamento de tela e é removido
+    // aqui antes da reprojeção, mantendo o modo Normal bit-a-bit compatível
+    // com os vetores reais.
+    if (!skyPixel && motionVector.x > 2.0) motionVector.x -= 4.0;
     vec2 previousTexCoord = texCoord - motionVector;
 
     vec2 texelSize = 1.0 / vec2(textureSize(currentColorMap, 0));
@@ -109,33 +146,51 @@ void main() {
     // (ghosting/desoclusao), mas para de descartar historico bom so porque
     // ele calha de estar perto da borda da caixa larga.
     vec3 currentTemporal = rgbToYCoCg(currentColor);
-    vec3 neighborSum = vec3(0.0);
-    vec3 neighborSumSquared = vec3(0.0);
-    vec3 minNeighbor = currentTemporal;
-    vec3 maxNeighbor = currentTemporal;
-    for (int y = -1; y <= 1; ++y) {
-        for (int x = -1; x <= 1; ++x) {
-            vec3 neighbor = (x == 0 && y == 0) ? currentTemporal
+    vec3 clipMin;
+    vec3 clipMax;
+    if (pixelArtMode && skyPixel) {
+        // Céu procedural não possui desoclusões locais. Uma faixa compacta
+        // basta para conservar estrelas subpixel sem espalhar seu brilho.
+        vec3 temporalAllowance = vec3(
+            max(currentTemporal.x * 0.045, 0.012),
+            0.040, 0.040);
+        clipMin = currentTemporal - temporalAllowance;
+        clipMax = currentTemporal + temporalAllowance;
+    } else {
+        vec3 neighborSum = vec3(0.0);
+        vec3 neighborSumSquared = vec3(0.0);
+        vec3 minNeighbor = currentTemporal;
+        vec3 maxNeighbor = currentTemporal;
+        // Cruz de cinco taps: preserva os extremos horizontal/vertical que
+        // definem silhuetas, mas elimina quatro leituras diagonais por pixel.
+        const vec2 temporalOffsets[5] = vec2[](
+            vec2(0.0), vec2(-1.0, 0.0), vec2(1.0, 0.0),
+            vec2(0.0, -1.0), vec2(0.0, 1.0));
+        for (int sampleIndex = 0; sampleIndex < 5; ++sampleIndex) {
+            vec3 neighbor = sampleIndex == 0 ? currentTemporal
                 : rgbToYCoCg(texture(currentColorMap,
-                    texCoord + vec2(x, y) * texelSize).rgb);
+                    texCoord + temporalOffsets[sampleIndex]
+                        * texelSize).rgb);
             neighborSum += neighbor;
             neighborSumSquared += neighbor * neighbor;
             minNeighbor = min(minNeighbor, neighbor);
             maxNeighbor = max(maxNeighbor, neighbor);
         }
-    }
-    const float sampleCount = 9.0;
-    vec3 neighborMean = neighborSum / sampleCount;
-    vec3 neighborVariance = max(neighborSumSquared / sampleCount
-        - neighborMean * neighborMean, 0.0);
-    vec3 neighborStdDev = sqrt(neighborVariance);
+        const float sampleCount = 5.0;
+        vec3 neighborMean = neighborSum / sampleCount;
+        vec3 neighborVariance = max(neighborSumSquared / sampleCount
+            - neighborMean * neighborMean, 0.0);
+        vec3 neighborStdDev = sqrt(neighborVariance);
 
-    // gamma = largura da caixa em desvios-padrao (1.0 e o valor classico de
-    // Karis). Interseccao com a caixa min/max bruta garante que o clip
-    // nunca aceita uma cor que nem apareceu de verdade na vizinhanca.
-    const float gamma = 1.0;
-    vec3 clipMin = max(minNeighbor, neighborMean - neighborStdDev * gamma);
-    vec3 clipMax = min(maxNeighbor, neighborMean + neighborStdDev * gamma);
+        // gamma = largura da caixa em desvios-padrao (1.0 e o valor
+        // classico de Karis). A interseção nunca aceita uma cor ausente da
+        // vizinhança real.
+        const float gamma = 1.0;
+        clipMin = max(minNeighbor,
+            neighborMean - neighborStdDev * gamma);
+        clipMax = min(maxNeighbor,
+            neighborMean + neighborStdDev * gamma);
+    }
 
     vec3 historyTemporal = rgbToYCoCg(
         texture(historyMap, previousTexCoord).rgb);
@@ -150,7 +205,9 @@ void main() {
         / max(max(currentTemporal.x, clampedHistory.x), 0.08);
     float luminanceReactivity = smoothstep(0.04, 0.45, luminanceDelta);
     float reactivity = max(motionReactivity, luminanceReactivity);
-    float historyWeight = mix(0.94, 0.76, reactivity);
+    float historyWeight = pixelArtMode && skyPixel
+        ? mix(0.95, 0.65, reactivity)
+        : mix(0.94, 0.76, reactivity);
     vec3 resolvedTemporal = mix(currentTemporal, clampedHistory,
         historyWeight);
     vec3 resolved = max(yCoCgToRgb(resolvedTemporal), vec3(0.0));

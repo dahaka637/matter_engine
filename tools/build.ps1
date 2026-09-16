@@ -11,7 +11,7 @@ $build = Join-Path $root "build-modern"
 cmake -S $root -B $build -G "Visual Studio 17 2022" -A x64
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-cmake --build $build --config $Configuration --target MatterEngineApp MatterEngineTests MatterAudioTests -j 8
+cmake --build $build --config $Configuration --target MatterEngineApp MatterEngineTests MatterAudioTests MatterAnimatedRagdollTests -j 8
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 if (-not $SkipTests) {

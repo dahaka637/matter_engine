@@ -1,0 +1,136 @@
+{
+  "id": "FootworkLowerBodyV1",
+  "totalMassKg": 37.95,
+  "uniformRadiusMeters": 0.055,
+  "standingRootHeightMeters": 0.98,
+  "links": [
+    {
+      "id": "Pelvis",
+      "parent": -1,
+      "position": [0.0, 0.0, 0.0],
+      "massFraction": 0.27667984,
+      "capsule": {
+        "orientation": [0.0, 0.0, 0.70710678, 0.70710678],
+        "length": 0.27
+      }
+    },
+    {
+      "id": "LeftThigh",
+      "parent": 0,
+      "position": [0.0, 0.09, -0.255],
+      "massFraction": 0.22727273,
+      "capsule": {
+        "orientation": [0.0, -0.70710678, 0.0, 0.70710678],
+        "length": 0.42
+      },
+      "joint": {
+        "type": "spherical",
+        "anchor": [0.0, 0.09, -0.045],
+        "frameOrientation": [0.0, -0.70710678, 0.0, 0.70710678],
+        "axes": [
+          { "axis": "twist", "minimumDegrees": -45.0, "maximumDegrees": 45.0, "stiffness": 390.0, "damping": 58.0, "maximumTorque": 430.0 },
+          { "axis": "swing1", "minimumDegrees": -120.0, "maximumDegrees": 30.0, "stiffness": 390.0, "damping": 58.0, "maximumTorque": 430.0 },
+          { "axis": "swing2", "minimumDegrees": -42.0, "maximumDegrees": 42.0, "stiffness": 390.0, "damping": 58.0, "maximumTorque": 430.0 }
+        ]
+      }
+    },
+    {
+      "id": "LeftShin",
+      "parent": 1,
+      "position": [0.0, 0.09, -0.665],
+      "massFraction": 0.09288538,
+      "capsule": {
+        "orientation": [0.0, -0.70710678, 0.0, 0.70710678],
+        "length": 0.40
+      },
+      "joint": {
+        "type": "revolute",
+        "anchor": [0.0, 0.09, -0.465],
+        "frameOrientation": [0.0, 0.0, 0.70710678, 0.70710678],
+        "axes": [
+          { "axis": "twist", "minimumDegrees": -2.0, "maximumDegrees": 145.0, "stiffness": 340.0, "damping": 50.0, "maximumTorque": 360.0 }
+        ]
+      }
+    },
+    {
+      "id": "LeftFoot",
+      "parent": 2,
+      "position": [0.105, 0.09, -0.89],
+      "massFraction": 0.04150198,
+      "box": {
+        "position": [-0.025, 0.0, 0.0],
+        "orientation": [0.0, 0.0, 0.0, 1.0],
+        "halfExtents": [0.15, 0.065, 0.045],
+        "contactSensor": true
+      },
+      "joint": {
+        "type": "spherical",
+        "anchor": [0.0, 0.09, -0.865],
+        "frameOrientation": [0.0, 0.0, 0.70710678, 0.70710678],
+        "axes": [
+          { "axis": "twist", "minimumDegrees": -35.0, "maximumDegrees": 55.0, "stiffness": 170.0, "damping": 28.0, "maximumTorque": 180.0 },
+          { "axis": "swing1", "minimumDegrees": -25.0, "maximumDegrees": 25.0, "stiffness": 145.0, "damping": 25.0, "maximumTorque": 155.0 }
+        ]
+      }
+    },
+    {
+      "id": "RightThigh",
+      "parent": 0,
+      "position": [0.0, -0.09, -0.255],
+      "massFraction": 0.22727273,
+      "capsule": {
+        "orientation": [0.0, -0.70710678, 0.0, 0.70710678],
+        "length": 0.42
+      },
+      "joint": {
+        "type": "spherical",
+        "anchor": [0.0, -0.09, -0.045],
+        "frameOrientation": [0.0, -0.70710678, 0.0, 0.70710678],
+        "axes": [
+          { "axis": "twist", "minimumDegrees": -45.0, "maximumDegrees": 45.0, "stiffness": 390.0, "damping": 58.0, "maximumTorque": 430.0 },
+          { "axis": "swing1", "minimumDegrees": -120.0, "maximumDegrees": 30.0, "stiffness": 390.0, "damping": 58.0, "maximumTorque": 430.0 },
+          { "axis": "swing2", "minimumDegrees": -42.0, "maximumDegrees": 42.0, "stiffness": 390.0, "damping": 58.0, "maximumTorque": 430.0 }
+        ]
+      }
+    },
+    {
+      "id": "RightShin",
+      "parent": 4,
+      "position": [0.0, -0.09, -0.665],
+      "massFraction": 0.09288538,
+      "capsule": {
+        "orientation": [0.0, -0.70710678, 0.0, 0.70710678],
+        "length": 0.40
+      },
+      "joint": {
+        "type": "revolute",
+        "anchor": [0.0, -0.09, -0.465],
+        "frameOrientation": [0.0, 0.0, 0.70710678, 0.70710678],
+        "axes": [
+          { "axis": "twist", "minimumDegrees": -2.0, "maximumDegrees": 145.0, "stiffness": 340.0, "damping": 50.0, "maximumTorque": 360.0 }
+        ]
+      }
+    },
+    {
+      "id": "RightFoot",
+      "parent": 5,
+      "position": [0.105, -0.09, -0.89],
+      "massFraction": 0.04150198,
+      "box": {
+        "position": [-0.025, 0.0, 0.0],
+        "orientation": [0.0, 0.0, 0.0, 1.0],
+        "halfExtents": [0.15, 0.065, 0.045],
+        "contactSensor": true
+      },
+      "joint": {
+        "type": "spherical",
+        "anchor": [0.0, -0.09, -0.865],
+        "frameOrientation": [0.0, 0.0, 0.70710678, 0.70710678],
+        "axes": [
+          { "axis": "twist", "minimumDegrees": -35.0, "maximumDegrees": 55.0, "stiffness": 170.0, "damping": 28.0, "maximumTorque": 180.0 },
+          { "axis": "swing1", "minimumDegrees": -25.0, "maximumDegrees": 25.0, "stiffness": 145.0, "damping": 25.0, "maximumTorque": 155.0 }
+        ]
+      }
+    }
+  ]
+}

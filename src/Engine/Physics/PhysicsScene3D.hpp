@@ -2,7 +2,11 @@
 
 #include "Engine/Math/Ray3D.hpp"
 #include "Engine/Physics/PhysicsEngine3D.hpp"
+#include "Engine/Physics/RagdollProfile3D.hpp"
 
+#include <array>
+#include <cstdint>
+#include <limits>
 #include <memory>
 #include <span>
 #include <vector>
@@ -22,6 +26,14 @@ struct PhysicsGrabTarget3D {
     Vec3 position;
     Quaternion orientation;
     bool lockOrientation = false;
+};
+
+struct PhysicsRagdollRayHit3D {
+    RagdollHandle3D ragdoll;
+    std::uint32_t linkIndex = 0;
+    Vec3 position;
+    Vec3 normal { 0.0f, 0.0f, 1.0f };
+    float distance = 0.0f;
 };
 
 struct CharacterMotorCommand3D {
@@ -52,6 +64,9 @@ struct CharacterMotorSettings3D {
     float jumpBufferTime = 0.12f;
     float flightSpeed = 12.0f;
     float fastFlightSpeed = 28.0f;
+    float swimSpeed = 3.4f;
+    float fastSwimSpeed = 5.0f;
+    float swimAcceleration = 9.0f;
     // Velocidade maxima que um esbarrao do personagem pode transferir a um
     // prop dinamico. O impulso aplicado no contato e sempre massa_do_prop *
     // velocidade_desejada (nunca um impulso fixo em kg*m/s): assim um objeto
@@ -71,7 +86,82 @@ struct PhysicsCharacterState3D {
     bool grounded = false;
     bool crouched = false;
     bool flying = false;
+    bool swimming = false;
     bool flightExitBlocked = false;
+};
+
+struct RagdollSpawnDefinition3D {
+    std::uint64_t entityId = 0;
+    Vec3 pelvisPosition;
+    Quaternion orientation;
+    float rigidityPercent = 0.0f;
+    bool active = true;
+};
+
+struct RagdollContactPoint3D {
+    std::uint32_t linkIndex = 0;
+    Vec3 position;
+    // Normal orientada da superfície tocada para o link do ragdoll.
+    Vec3 normal { 0.0f, 0.0f, 1.0f };
+    float normalImpulseNewtonSeconds = 0.0f;
+    float tangentialSpeedMetersPerSecond = 0.0f;
+};
+
+struct RagdollDriveTarget3D {
+    std::uint32_t linkIndex = 0;
+    RagdollAxis3D axis = RagdollAxis3D::Twist;
+    float positionRadians = 0.0f;
+    float velocityRadiansPerSecond = 0.0f;
+    float feedforwardTorqueNewtonMeters = 0.0f;
+    float stiffnessScale = 1.0f;
+    float dampingScale = 1.0f;
+    float maximumTorqueScale = 1.0f;
+};
+
+struct RagdollJointState3D {
+    std::array<float, 3> positionRadians {};
+    std::array<float, 3> velocityRadiansPerSecond {};
+};
+
+struct RagdollState3D {
+    std::vector<PhysicsBodyState3D> links;
+    // Mesmo índice de `links`; a raiz e eixos bloqueados permanecem zerados.
+    std::vector<RagdollJointState3D> joints;
+    // Contatos semânticos do último passo concluído. Apenas links marcados
+    // como contactSensor no perfil geram este stream.
+    std::vector<RagdollContactPoint3D> contacts;
+    float rigidityPercent = 0.0f;
+    bool active = false;
+    bool sleeping = false;
+};
+
+// Snapshot backend-neutral da dinamica reduzida de uma articulation
+// flutuante. O layout generalizado e [raiz linear XYZ, raiz angular XYZ,
+// DOFs articulares]. Matrizes sao row-major. Ele existe para controladores
+// de corpo inteiro; nenhum tipo PhysX atravessa esta fronteira.
+struct RagdollDynamics3D {
+    static constexpr std::uint32_t InvalidIndex =
+        std::numeric_limits<std::uint32_t>::max();
+
+    std::uint32_t jointDofCount = 0;
+    std::uint32_t generalizedDofCount = 0;
+    std::uint32_t jacobianRowCount = 0;
+    std::uint32_t jacobianColumnCount = 0;
+    std::vector<float> massMatrix;
+    std::vector<float> biasForce;
+    std::vector<float> denseJacobian;
+    // h = A(q) * qdot; hdot = A(q) * qddot + bias. As três
+    // primeiras linhas são momento linear e as três últimas, angular.
+    std::vector<float> centroidalMomentumMatrix;
+    std::array<float, 6> centroidalMomentumBias {};
+    std::vector<float> generalizedVelocity;
+    Vec3 centerOfMass;
+    // Índice inicial das seis linhas [vxyz,wxyz] de cada link no Jacobiano.
+    std::vector<std::uint32_t> linkJacobianRow;
+    // Mesmo índice de links/joints do perfil; o valor já inclui os 6 DOFs
+    // livres da raiz. Eixos bloqueados permanecem InvalidIndex.
+    std::vector<std::array<std::uint32_t, 3>> jointGeneralizedDof;
+    bool valid = false;
 };
 
 // Cena autoritativa: atores, consultas, CCT e eventos pertencem ao mesmo
@@ -102,6 +192,46 @@ public:
         Vec3 worldPoint);
     void applyTorque(PhysicsBodyHandle3D body, Vec3 torque);
 
+    // Uma articulation é um recurso único, não vinte rigid bodies expostos.
+    // O handle e os snapshots mantêm PhysX confinado ao backend.
+    [[nodiscard]] RagdollHandle3D createRagdoll(
+        const RagdollProfile3D& profile,
+        const RagdollSpawnDefinition3D& definition);
+    void destroyRagdoll(RagdollHandle3D ragdoll);
+    [[nodiscard]] bool contains(RagdollHandle3D ragdoll) const;
+    [[nodiscard]] RagdollState3D ragdollState(
+        RagdollHandle3D ragdoll) const;
+    [[nodiscard]] RagdollDynamics3D ragdollDynamics(
+        RagdollHandle3D ragdoll);
+    // Alterações de drives são enfileiradas e aplicadas no ponto seguro
+    // anterior ao próximo simulate(), nunca durante o solver.
+    void setRagdollRigidity(RagdollHandle3D ragdoll,
+        float rigidityPercent);
+    void captureRagdollPose(RagdollHandle3D ragdoll);
+    void setRagdollNeutralPose(RagdollHandle3D ragdoll);
+    void releaseRagdollDrives(RagdollHandle3D ragdoll);
+    // Alterna entre controle ativo e o laboratório passivo de rigidez.
+    // O backend só executa os comandos; planejamento e equilíbrio pertencem
+    // ao módulo neutro Engine/Control.
+    void setRagdollActive(RagdollHandle3D ragdoll, bool active);
+    // Substitui, de forma atômica no próximo safe point, todos os alvos de
+    // controle ativo deste ragdoll. A compensação usa somente torques das
+    // juntas; as seis forças da raiz flutuante nunca são aplicadas.
+    void setRagdollActiveDriveTargets(RagdollHandle3D ragdoll,
+        std::span<const RagdollDriveTarget3D> targets,
+        bool gravityCompensationEnabled);
+    // Assistência externa deliberada do controlador de animação física.
+    // Deve ser limitada, explicitamente instrumentada e desligável.
+    // O corpo continua dinâmico: nenhuma assistência escreve transforms.
+    void applyRagdollRootForce(RagdollHandle3D ragdoll,
+        Vec3 forceNewtons, Vec3 torqueNewtonMeters);
+    // Versão distribuída do mesmo contrato para um link específico. Usada
+    // pela assistência residual da coluna: força/torque são aplicados ao
+    // centro de massa do link, no mundo, e nunca alteram sua pose.
+    void applyRagdollLinkForce(RagdollHandle3D ragdoll,
+        std::uint32_t linkIndex, Vec3 forceNewtons,
+        Vec3 torqueNewtonMeters);
+
     [[nodiscard]] bool raycast(const Ray3D& ray, float maximumDistance,
         PhysicsRayHit3D& hit) const;
     // Consulta apenas atores dinamicos gerenciados pela engine. Ferramentas
@@ -123,17 +253,35 @@ public:
     // maxima, preservando paredes sem deixar o piso bloquear a mira assistida.
     [[nodiscard]] bool sweepSphereDynamic(const Ray3D& ray, float radius,
         float maximumDistance, PhysicsRayHit3D& hit) const;
+    // Consultas exclusivas para links de articulation. Mantê-las separadas
+    // evita fingir que cada osso é um rigid body público independente.
+    [[nodiscard]] bool raycastRagdoll(const Ray3D& ray,
+        float maximumDistance, PhysicsRagdollRayHit3D& hit) const;
+    [[nodiscard]] bool sweepSphereRagdoll(const Ray3D& ray, float radius,
+        float maximumDistance, PhysicsRagdollRayHit3D& hit) const;
+    // Consulta conservadora de ocupação usada antes de criar entidades.
+    // O volume ainda não pertence à cena, portanto não existe ator próprio
+    // para ignorar. Retorna true quando qualquer shape estática ou dinâmica
+    // (inclusive links de articulation e o controller) toca a caixa.
+    [[nodiscard]] bool overlapsBox(Vec3 center, Vec3 halfExtents,
+        Quaternion orientation = {}) const;
 
     // A Physgun usa um D6 drive do proprio PhysX. O alvo e cinematico, mas o
     // prop continua dinamico e chega a ele apenas por impulso/forca do solver.
     [[nodiscard]] bool beginGrab(PhysicsBodyHandle3D body,
         Vec3 localGrabPoint, const PhysicsGrabTarget3D& target,
         const PhysicsHandleSettings3D& settings);
+    [[nodiscard]] bool beginRagdollGrab(RagdollHandle3D ragdoll,
+        std::uint32_t linkIndex, Vec3 localGrabPoint,
+        const PhysicsGrabTarget3D& target,
+        const PhysicsHandleSettings3D& settings);
     void updateGrabTarget(const PhysicsGrabTarget3D& target,
         const PhysicsHandleSettings3D& settings);
     void endGrab();
     [[nodiscard]] bool grabbing() const;
     [[nodiscard]] PhysicsBodyHandle3D grabbedBody() const;
+    [[nodiscard]] RagdollHandle3D grabbedRagdoll() const;
+    [[nodiscard]] std::uint32_t grabbedRagdollLink() const;
 
     void createCharacter(Vec3 feetPosition,
         const CharacterMotorSettings3D& settings);
@@ -152,9 +300,20 @@ public:
     // arrasto nova, so o valor de entrada que antes ficava sempre zero.
     void setAirVelocity(Vec3 velocity);
 
+    // Configura o oceano procedural sem adicionar collider sólido ao PhysX.
+    void setOcean(const OceanVolume3D& ocean);
+    void clearOcean();
+    // Mantém a superfície física no mesmo instante da superfície visual.
+    void setOceanTimeSeconds(float timeSeconds);
+
     void simulate(float deltaTime);
     [[nodiscard]] std::span<const ContactImpactEvent3D>
         contactImpacts() const;
+    // Contatos ainda tocando neste passo (ver ContactSlideEvent3D) - usado
+    // pelo som de arrasto/atrito, populado junto de contactImpacts() dentro
+    // de simulate() e limpo a cada passo do mesmo jeito.
+    [[nodiscard]] std::span<const ContactSlideEvent3D>
+        contactSlides() const;
     [[nodiscard]] const PhysicsStepDiagnostics3D& diagnostics() const;
     [[nodiscard]] std::span<const PhysicsBodyStateUpdate3D>
         activeBodyStates() const;
