@@ -53,6 +53,11 @@ layout(location = 9) in vec4 instancePreviousPositionScale;
 layout(location = 10) in vec4 instancePreviousOrientationX;
 layout(location = 11) in vec4 instancePreviousOrientationY;
 layout(location = 12) in vec4 instancePreviousOrientationZ;
+// Per-instance color multiply, applied on top of the material texture and
+// vertex color (see scene3d_mesh.frag) - lets many draws of the exact same
+// mesh/texture (e.g. every spawned ragdoll sharing one white skin) each read
+// as a distinct, faint color instead of all looking identical.
+layout(location = 15) in vec4 instanceTintColor;
 
 layout(location = 0) out vec3 worldPosition;
 layout(location = 1) out vec3 worldNormal;
@@ -79,6 +84,7 @@ layout(location = 6) flat out vec2 objectMetallicRoughness;
 // rastro/ghosting visivel nela.
 layout(location = 7) out vec4 currentClipPosition;
 layout(location = 8) out vec4 previousMotionClipPosition;
+layout(location = 9) flat out vec3 objectTint;
 
 void main() {
     mat3 orientation = mat3(instanceOrientationX.xyz,
@@ -95,6 +101,7 @@ void main() {
     }
     vertexUv = inUv;
     vertexColor = inColor;
+    objectTint = instanceTintColor.rgb;
     mat3 previousOrientation = mat3(
         instancePreviousOrientationX.xyz,
         instancePreviousOrientationY.xyz,

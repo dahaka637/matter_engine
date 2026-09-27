@@ -1,7 +1,7 @@
 # Pipeline de retarget de animações
 
 Este documento define a metodologia obrigatória para inserir animações
-esqueléticas no `HumanAdultV1`. O objetivo é impedir ajustes manuais por clipe,
+esqueléticas no perfil ativo do personagem (hoje, `FootballPlayerV1`). O objetivo é impedir ajustes manuais por clipe,
 poses visualmente enganosas e alvos incompatíveis com a articulation física.
 
 ## Princípios invariantes
@@ -26,7 +26,7 @@ conversão não depende dos flags de eixo escritos pelo exportador.
 
 ### 2. Correspondência semântica
 
-Os 18 links do `HumanAdultV1` são associados a ossos Mixamo conhecidos. Para
+Os 18 links do perfil físico alvo são associados a ossos Mixamo conhecidos. Para
 braços e pernas, o importador usa posições de ombro/cotovelo/punho e
 quadril/joelho/tornozelo. Bone roll não participa do plano de flexão.
 

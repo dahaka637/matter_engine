@@ -38,10 +38,17 @@ struct PhysicsRagdollRayHit3D {
 
 struct CharacterMotorCommand3D {
     Vec3 moveDirection;
+    // Multiplies the selected gait speed without changing acceleration.
+    // Avatar locomotion uses it to keep capsule travel synchronized with
+    // the authored stride in each cardinal direction.
+    float speedScale = 1.0f;
     bool sprint = false;
     bool crouch = false;
     bool jumpPressed = false;
     bool toggleFlight = false;
+    // A controlled character owns both a navigation capsule and a rendered
+    // articulation. The capsule must not sweep against that representation.
+    bool ignoreRagdolls = false;
 };
 
 struct CharacterMotorSettings3D {
@@ -105,6 +112,7 @@ struct RagdollContactPoint3D {
     Vec3 normal { 0.0f, 0.0f, 1.0f };
     float normalImpulseNewtonSeconds = 0.0f;
     float tangentialSpeedMetersPerSecond = 0.0f;
+    bool otherBodyDynamic = false;
 };
 
 struct RagdollDriveTarget3D {
@@ -118,9 +126,72 @@ struct RagdollDriveTarget3D {
     float maximumTorqueScale = 1.0f;
 };
 
+enum class RagdollTraversalMode3D : std::uint8_t {
+    Grounded,
+    Airborne,
+    Jumping,
+    SlidingSteep,
+    PhysicalOverride
+};
+
+struct GroundProbeResult3D {
+    bool hasSurface = false;
+    bool walkable = false;
+    Vec3 pointWorld;
+    Vec3 normalWorld { 0.0f, 0.0f, 1.0f };
+    float distanceMeters = 0.0f;
+    float slopeDegrees = 90.0f;
+    Vec3 supportVelocityWorld;
+};
+
+struct CapsuleTraversalQuery3D {
+    Vec3 centerWorld;
+    Vec3 desiredDisplacementWorld;
+    float radiusMeters = 0.33f;
+    float cylinderHalfHeightMeters = 0.54f;
+    float maximumSlopeDegrees = 48.0f;
+    float stepOffsetMeters = 0.24f;
+    float skinWidthMeters = 0.02f;
+    float groundProbeDistanceMeters = 0.22f;
+    float groundAdhesionDistanceMeters = 0.12f;
+    std::uint32_t maximumIterations = 4;
+};
+
+struct CapsuleTraversalResult3D {
+    Vec3 requestedDisplacementWorld;
+    Vec3 allowedDisplacementWorld;
+    Vec3 slideDisplacementWorld;
+    GroundProbeResult3D ground;
+    RagdollTraversalMode3D mode = RagdollTraversalMode3D::Airborne;
+    bool blocked = false;
+    bool groundAdhesionActive = false;
+};
+
+// Guia de pose para uma articulation flutuante. A pose articular, a translação
+// e a rotação da raiz podem ceder separadamente. Isso permite conservar a
+// trajetória validada pela cápsula enquanto contatos e torque físico resolvem
+// a orientação corporal. Autoridade 1 aplica o canal depois do solver; zero
+// deixa esse canal inteiramente físico.
+struct RagdollAnimationConstraint3D {
+    float poseAuthority = 0.0f;
+    // Translação/velocidade linear e orientação/velocidade angular possuem
+    // autoridades separadas. O avatar físico conserva a trajetória segura da
+    // cápsula sem apagar a resposta angular produzida por contatos e torque.
+    float rootTranslationAuthority = 0.0f;
+    float rootRotationAuthority = 0.0f;
+    bool releaseOnInteraction = false;
+    Vec3 rootPositionWorld;
+    Quaternion rootOrientationWorld;
+    Vec3 rootLinearVelocityWorld;
+    Vec3 rootAngularVelocityWorld;
+};
+
 struct RagdollJointState3D {
     std::array<float, 3> positionRadians {};
     std::array<float, 3> velocityRadiansPerSecond {};
+    // Total transmitted torque in the child joint frame after simulation.
+    // Includes joint-limit reactions; it is NOT just the motor command.
+    std::array<float, 3> transmittedTorqueNewtonMeters {};
 };
 
 struct RagdollState3D {
@@ -131,33 +202,38 @@ struct RagdollState3D {
     // como contactSensor no perfil geram este stream.
     std::vector<RagdollContactPoint3D> contacts;
     float rigidityPercent = 0.0f;
+    float animationAuthority = 0.0f;
+    float externalInterference = 0.0f;
     bool active = false;
     bool sleeping = false;
+    // Pausa de inspeção: a articulation preserva a pose fora do solver até
+    // ser reativada. Não representa sono físico normal.
+    bool frozen = false;
 };
 
-// Snapshot backend-neutral da dinamica reduzida de uma articulation
-// flutuante. O layout generalizado e [raiz linear XYZ, raiz angular XYZ,
-// DOFs articulares]. Matrizes sao row-major. Ele existe para controladores
-// de corpo inteiro; nenhum tipo PhysX atravessa esta fronteira.
+// Snapshot backend-neutral da dinâmica de uma articulação flutuante. O layout
+// generalizado é [raiz linear XYZ, raiz angular XYZ, DOFs articulares]; é por
+// isso que `jointGeneralizedDof` conta a partir de 6.
+//
+// Já houve aqui matriz de massa, Jacobiano denso, matriz de momento centroidal
+// e força de bias — todos vindos de graça do `PxArticulationCache`, porque o
+// PhysX simula a articulação em coordenadas reduzidas. Foram removidos na
+// migração para Jolt, e não por causa dela: uma varredura da árvore mostrou
+// **zero** consumidores fora de `Engine/Physics`. O controlador QP de corpo
+// inteiro que os justificava (Eigen + ProxQP) saiu da árvore antes, e mesmo
+// assim eles continuavam sendo computados por ragdoll, por tick, para serem
+// descartados.
+//
+// Se um controlador de corpo inteiro voltar, a matemática entra em
+// `Engine/Physics/Articulation/` — lado neutro, sem SDK, testável sem cena —,
+// não num campo preenchido por um backend específico.
 struct RagdollDynamics3D {
     static constexpr std::uint32_t InvalidIndex =
         std::numeric_limits<std::uint32_t>::max();
 
-    std::uint32_t jointDofCount = 0;
+    // Inclui os 6 DOFs livres da raiz flutuante.
     std::uint32_t generalizedDofCount = 0;
-    std::uint32_t jacobianRowCount = 0;
-    std::uint32_t jacobianColumnCount = 0;
-    std::vector<float> massMatrix;
-    std::vector<float> biasForce;
-    std::vector<float> denseJacobian;
-    // h = A(q) * qdot; hdot = A(q) * qddot + bias. As três
-    // primeiras linhas são momento linear e as três últimas, angular.
-    std::vector<float> centroidalMomentumMatrix;
-    std::array<float, 6> centroidalMomentumBias {};
-    std::vector<float> generalizedVelocity;
     Vec3 centerOfMass;
-    // Índice inicial das seis linhas [vxyz,wxyz] de cada link no Jacobiano.
-    std::vector<std::uint32_t> linkJacobianRow;
     // Mesmo índice de links/joints do perfil; o valor já inclui os 6 DOFs
     // livres da raiz. Eixos bloqueados permanecem InvalidIndex.
     std::vector<std::array<std::uint32_t, 3>> jointGeneralizedDof;
@@ -201,8 +277,11 @@ public:
     [[nodiscard]] bool contains(RagdollHandle3D ragdoll) const;
     [[nodiscard]] RagdollState3D ragdollState(
         RagdollHandle3D ragdoll) const;
+    // Consulta pura: era nao-const porque o caminho PhysX escrevia no
+    // PxArticulationCache para satisfazer o contrato das rotinas de dinamica
+    // inversa. Sem essas rotinas, nada e mutado.
     [[nodiscard]] RagdollDynamics3D ragdollDynamics(
-        RagdollHandle3D ragdoll);
+        RagdollHandle3D ragdoll) const;
     // Alterações de drives são enfileiradas e aplicadas no ponto seguro
     // anterior ao próximo simulate(), nunca durante o solver.
     void setRagdollRigidity(RagdollHandle3D ragdoll,
@@ -214,16 +293,36 @@ public:
     // O backend só executa os comandos; planejamento e equilíbrio pertencem
     // ao módulo neutro Engine/Control.
     void setRagdollActive(RagdollHandle3D ragdoll, bool active);
+    // Congelamento de diagnóstico. É aplicado no safe point da simulação e
+    // preserva a pose inteira sem converter os links em corpos cinemáticos.
+    void setRagdollFrozen(RagdollHandle3D ragdoll, bool frozen);
     // Substitui, de forma atômica no próximo safe point, todos os alvos de
     // controle ativo deste ragdoll. A compensação usa somente torques das
     // juntas; as seis forças da raiz flutuante nunca são aplicadas.
     void setRagdollActiveDriveTargets(RagdollHandle3D ragdoll,
         std::span<const RagdollDriveTarget3D> targets,
         bool gravityCompensationEnabled);
+    // Staged alongside drive targets; only the backend resolves this constraint.
+    // At 1, joints/root follow the animation exactly in ordinary locomotion.
+    // Contact/interaction releases it before publishing the simulated state.
+    void setRagdollAnimationConstraint(RagdollHandle3D ragdoll,
+        const RagdollAnimationConstraint3D& constraint);
+    // Legacy research query kept for diagnostic tools. Gameplay locomotion
+    // uses the persistent character controller below.
+    [[nodiscard]] CapsuleTraversalResult3D solveCapsuleTraversal(
+        const CapsuleTraversalQuery3D& query) const;
+    [[nodiscard]] GroundProbeResult3D probeGround(
+        Vec3 capsuleCenterWorld, float radiusMeters,
+        float cylinderHalfHeightMeters, float probeDistanceMeters,
+        float maximumSlopeDegrees) const;
     // Assistência externa deliberada do controlador de animação física.
     // Deve ser limitada, explicitamente instrumentada e desligável.
     // O corpo continua dinâmico: nenhuma assistência escreve transforms.
     void applyRagdollRootForce(RagdollHandle3D ragdoll,
+        Vec3 forceNewtons, Vec3 torqueNewtonMeters);
+    // Comando interno do controlador corporal. Não é classificado como
+    // interferência externa, portanto não aciona a liberação por impacto.
+    void applyRagdollControlRootForce(RagdollHandle3D ragdoll,
         Vec3 forceNewtons, Vec3 torqueNewtonMeters);
     // Versão distribuída do mesmo contrato para um link específico. Usada
     // pela assistência residual da coluna: força/torque são aplicados ao

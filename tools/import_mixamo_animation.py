@@ -86,6 +86,8 @@ def arguments():
     parser.add_argument("--name", default="Animação importada")
     parser.add_argument("--loop", action="store_true",
                         help="exige fechamento e marca o clipe como cíclico")
+    parser.add_argument("--recovery", action="store_true",
+                        help="ação de recuperação: tolera a aproximação física de poses no solo")
     parser.add_argument("--root-motion", choices=("in-place", "preserve"),
                         default="in-place")
     parser.add_argument("--inspect-only", action="store_true")
@@ -154,6 +156,38 @@ def clamp_joint_coordinates(coordinates, limits):
     ))
 
 
+def suppress_isolated_joint_spikes(samples, loops):
+    """Remove um salto isolado do solver sem amortecer o movimento real.
+
+    O retarget por geometria pode encontrar um mínimo local diferente em um
+    único quadro quando a cadeia passa muito perto de estendida. Isso aparece
+    como uma tremida, e não como movimento autoral: os dois vizinhos continuam
+    coerentes. Corrigimos somente esse outlier temporal, por interpolação dos
+    vizinhos; transições contínuas e inversões reais permanecem intactas.
+    """
+    if len(samples) < 3:
+        return 0
+    threshold = math.radians(12.0)
+    source = [sample.copy() for sample in samples]
+    corrected = 0
+    first = 0 if loops else 1
+    last = len(samples) if loops else len(samples) - 1
+    for index in range(first, last):
+        previous = source[(index - 1) % len(source)]
+        following = source[(index + 1) % len(source)]
+        midpoint = (previous + following) * 0.5
+        # Um pico precisa destoar fortemente da tendência local e os dois
+        # lados precisam apontar de volta para ela. Assim não aplainamos uma
+        # aceleração legítima de uma passada ou de uma ação rápida.
+        toward_previous = samples[index] - previous
+        toward_following = following - samples[index]
+        if ((samples[index] - midpoint).length > threshold
+                and toward_previous.dot(toward_following) < 0.0):
+            samples[index] = midpoint
+            corrected += 1
+    return corrected
+
+
 def hinge_flexion_radians(pose_bones, chain):
     proximal, joint, distal = (pose_bones[name] for name in chain)
     first = (joint.head - proximal.head).normalized()
@@ -172,7 +206,12 @@ def vector_pair_rotation(local_first, local_second,
                        - world_primary * world_second.dot(world_primary))
     if local_secondary.length < 0.000001 \
             or world_secondary.length < 0.000001:
-        raise RuntimeError("Não foi possível determinar plano de flexão")
+        # Pose parada ou membro totalmente estendido: existe uma direção
+        # anatômica confiável, mas não existe plano de dobra mensurável.
+        # O solver de dois vetores ficaria subdeterminado e pode alternar a
+        # torção entre quadros. O chamador conserva o delta local já extraído
+        # do FBX para a cadeia, cuja torção é contínua nesse caso.
+        return None
     local_secondary.normalize()
     world_secondary.normalize()
     local_normal = local_primary.cross(local_secondary).normalized()
@@ -378,6 +417,8 @@ def main():
             desired_upper_orientation = vector_pair_rotation(
                 target_upper_direction, target_lower_direction,
                 source_upper_direction, source_lower_direction)
+            if desired_upper_orientation is None:
+                continue
             upper_parent = profile_links[upper_link["parent"]]
             upper_parent_model = target_model_rotations[upper_parent["id"]]
             upper_joint_frame = matter_quaternion(
@@ -431,6 +472,7 @@ def main():
     generated_root_rotations = []
     generated_root_translations = []
     generated_joint_coordinates = {}
+    isolated_joint_spike_count = 0
     for target_id in (link["id"] for link in profile_links):
         source_id = MIXAMO_TO_RAGDOLL.get(target_id)
         if source_id is None:
@@ -505,6 +547,12 @@ def main():
                     "timeSeconds": round((frame - start_frame) / fps, 7),
                     "jointPositionRadians": vector_json(coordinates),
                 })
+        if parent_id is not None:
+            samples = generated_joint_coordinates[target_id]
+            isolated_joint_spike_count += suppress_isolated_joint_spikes(
+                samples, args.loop)
+            for keyframe, coordinates in zip(keyframes, samples):
+                keyframe["jointPositionRadians"] = vector_json(coordinates)
         tracks.append({
             "targetLinkId": target_id,
             "space": "root" if parent_id is None else "joint",
@@ -616,6 +664,14 @@ def main():
         "limbDirectionMaxDegrees": 8.0,
         "maximumJointStepDegrees": 45.0,
     }
+    if args.recovery:
+        # Levantar do chão exige grandes flexões do tronco e apoio nos membros.
+        # Mantemos limites articulares e RMS estritos, mas aceitamos até 20° de
+        # erro local quando a pose Mixamo excede a amplitude física do ragdoll.
+        quality_limits.update({
+            "directionMaxDegrees": 20.0,
+            "limbDirectionMaxDegrees": 20.0,
+        })
     quality_failures = []
     measured_quality = {
         "directionRmsDegrees": direction_rms,
@@ -671,6 +727,7 @@ def main():
           f"{root_cycle_rotation:.4f} degrees/"
           f"{root_cycle_translation:.7f} m")
     print(f"  constrained samples at a limit: {limit_hit_count}")
+    print(f"  isolated joint spikes corrected: {isolated_joint_spike_count}")
 
     if quality_failures:
         raise RuntimeError("Retarget reprovado nos gates de qualidade: "

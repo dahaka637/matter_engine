@@ -75,8 +75,12 @@ struct PhysicsBodyDefinition3D {
     PhysicsCollisionMode3D collisionMode = PhysicsCollisionMode3D::Discrete;
     bool allowSleeping = true;
     bool startAwake = true;
-    std::uint32_t collisionLayer = 1u;
-    std::uint32_t collisionMask = 0xFFFFFFFFu;
+    // Ja existiu aqui um par collisionLayer/collisionMask de 32 bits. Nenhum
+    // chamador jamais o definiu - todo corpo usava layer 1 / mask 0xFFFFFFFF -
+    // e a unica distincao real (link de ragdoll) era interna ao backend. Os
+    // papeis de colisao passaram a ser derivados do tipo de movimento e do uso
+    // do corpo; ver JoltObjectLayers no backend. Um filtro configuravel volta
+    // quando existir um caso de gameplay concreto para ele.
 
     // Metadados acusticos ficam junto do ator para que o callback de contato
     // produza eventos objetivos sem consultar objetos da camada de aplicacao.

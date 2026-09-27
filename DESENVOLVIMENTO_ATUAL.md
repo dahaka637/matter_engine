@@ -5,9 +5,3141 @@
 > registrar não apenas *o que* mudou, mas também *por que*, como foi validado e
 > quais limitações ainda existem.
 
-**Última atualização:** 15 de setembro de 2026  
-**Foco atual:** corrigir o contrato da assistência corporal antes de validar
-Idle → corrida → freada. A locomoção completa ainda não está pronta.
+**Última atualização:** 27 de setembro de 2026
+
+## Suavidade da locomocao e continuidade do spawn — 27/09/2026
+
+Implementacao e validacao automatizada concluidas:
+
+- Jog e sprint, para frente e para tras, tiveram a oscilacao vertical autoral
+  reduzida aproximadamente pela metade. As pernas foram regeneradas pelo IK
+  do pipeline, preservando velocidade, cadencia e contato dos pes. Os quatro
+  clipes passam os gates de geracao; nao se aplicou um filtro atrasado apenas
+  na altura da raiz.
+- Transicoes de juntas e da translacao/rotacao da raiz preservam a tangente
+  de velocidade da pose anterior por Hermite,
+  inclusive quando uma troca interrompe outra. O olhar e o IK continuam fora
+  desse historico para evitar realimentacao. A movimentacao da capsula nao
+  recebe atraso adicional.
+- Inclinacao de curva usa aceleracao centripeta aproximada (velocidade vezes
+  taxa de giro), entrada progressiva para curvas pequenas e mola criticamente
+  amortecida lateral. A inclinacao frontal usa a aceleracao ja filtrada;
+  uma segunda mola regredia o apoio na descida da escada e foi retirada.
+  Girar parado nao recebe o termo de inclinacao da corrida.
+- O controlador captura a diferenca inicial de altura do spawn e a dissolve
+  em 0,30 s antes do IK. O deslocamento lateral de transferencia de peso nao
+  e somado ao guia de bonecos soltos, cujo XY vem da propria pelve fisica.
+- Testes novos medem primeiro deslocamento e deriva de spawns soltos em tres
+  alturas, alem de tremor vertical em parado, jog e sprint. RelWithDebInfo:
+  3/3 suites passaram (25,64 s). Debug: 3/3 suites passaram (348,81 s).
+  Arquitetura: 9/9. Smokes do laboratorio com animacao e ragdoll solto:
+  abertura, simulacao e fechamento normais na GTX 1070 Ti.
+  Builds prontas em `build-profile/MatterEngine` (recomendada para avaliar
+  movimento) e `build-linux/MatterEngine` (Debug).
+- Medicoes RelWithDebInfo: primeiro tick do spawn entre 0 e 0,763 mm;
+  deriva planar maxima em 2 s: 4,50 mm. Tremor vertical (residuo RMS da
+  velocidade contra janela de 108 ms): jog 0,0367 m/s, sprint 0,1233 m/s;
+  maior deslocamento vertical por tick em regime: 3,12 e 4,48 mm.
+  A metrica angular antiga continua sendo aplicada apenas a idle/jog, para
+  os quais foi calibrada; o sprint entrou na verificacao vertical.
+  Aprovacao visual de pose e ritmo continua com o usuario.
+
+Correcao da explicacao anterior: no Workbench, somente XY da guia solta vem
+da pelve fisica; Z ja era calculado pelo chao mais altura nominal. Portanto
+o comentario anterior atribuindo a realimentacao repetida aos 7 cm verticais
+do idle era impreciso. A realimentacao planar e a descontinuidade inicial de
+altura sao problemas distintos, agora tratados e medidos separadamente.
+
+## Ajuste dos braços, mãos e idle único — 27/09/2026
+
+Depois de avaliar a build, o usuário pediu mãos um pouco menos fechadas e a
+remoção completa do parado inicial diferente. Uma tentativa intermediária de
+redesenhar braços e endireitar a coluna ficou torta no conjunto; o usuário a
+rejeitou e pediu explicitamente a pose original de `Idle.fbx`.
+
+- `alert_idle` agora é a única pose parada desde o surgimento. O papel
+  `spawnIdle`, seu estado no controlador, o carregamento e os casos especiais
+  dos testes foram removidos. `natural_idle` permanece apenas como fonte de
+  estudo do pipeline e não está no manifesto do jogador.
+- A versão final preserva tronco, braços, pescoço e cabeça do `Idle.fbx`. Só o
+  rumo do corpo inteiro é alinhado à câmera e os pés são plantados por IK; não
+  há mistura entre a pelve original e uma coluna redesenhada.
+- A flexão de repouso dos 30 ossos visuais dos dedos caiu cerca de 25%. A mão
+  continua relaxada e curvada, mas deixa de parecer fechada.
+- O clipe regenerado passa os gates: 301 quadros, 0,25 rad/s de velocidade
+  articular máxima, loop sem salto, pés no chão, 0,15 mm de deslize e folga
+  mínima de 16,2 mm entre peito e braço. O teste de giro continua passando nos
+  cinco cenários; girar imediatamente após surgir agora já parte da base de
+  alerta e usa o pé traseiro primeiro.
+- Remover o idle inicial revelou instabilidade em ragdolls ativos soltos.
+  Deslocamentos do clipe agora só usam a âncora da cápsula controlada (ou a
+  âncora do levantar), e o rumo da guia fica separado da abertura física da
+  pelve. A explicacao da causa foi revisada na secao mais recente acima.
+
+## Parado em alerta e giro a partir da base forte — 27/09/2026
+
+> Histórico da etapa anterior. A distinção `spawnIdle` e a correção de cabeça
+> descritas abaixo foram substituídas pela seção acima.
+
+Pedido atual: o parado natural deveria existir apenas quando o personagem
+surge. Depois do primeiro movimento, a pose padrão passa a ser a base forte
+de `Idle.fbx`, e o giro parado usa o jogo de pés de `Right Turn(4).fbx` e
+`Left Turn.fbx`, adaptado proceduralmente ao tamanho e à velocidade do giro.
+
+O que ficou pronto:
+
+- `natural_idle` agora é o papel opcional `spawnIdle`. O runtime registra o
+  primeiro estado diferente de parado e, dali em diante, usa `alert_idle` ao
+  repousar; a pose natural não volta durante aquela vida do personagem.
+- `alert_idle` é o retarget direto de `Idle.fbx`. Preserva a respiração, os
+  braços soltos, os joelhos dobrados e a base escalonada com o pé esquerdo à
+  frente. O peito foi orientado para o olhar do jogo, os dois pés foram
+  plantados por IK e a cabeça, que na fonte pendia 22° para baixo, ficou em
+  7°. A pelve conserva cerca de 22° de abertura, parte intencional da pose.
+- Na base em alerta, o giro solta primeiro o pé de trás para qualquer lado;
+  ele contorna o pé da frente, que recebe o peso, e depois o pé da frente
+  recompõe a base. A duração sai da distância e do ângulo (0,24–0,48 s), e
+  giros grandes são divididos em pares de até 72°.
+- O limitador de quadril desconta a abertura pé–pelve escrita no clipe. Sem
+  isso, o teste confundia a pose de alerta com torção causada pelo giro e
+  acusava 56,9°. O bloqueio de um tick também não zera mais a taxa pedida;
+  assim um giro lento da câmera continua programando novos pares de passos.
+- O teste cobre 90° para os dois lados, 180°, câmera a 57°/s e 90° logo ao
+  surgir. Os casos terminam em 2, 2, 4, 5 e 2 passos; torção adicional máxima
+  de 4,5°, nenhum quadro com os dois pés no ar, nenhuma queda e pico de
+  velocidade de membro de 3,4 m/s. As suítes completas RelWithDebInfo e
+  Debug (3/3 em ambas), o verificador de arquitetura (9/9), o visualizador
+  de `alert_idle` e o smoke físico do laboratório passam. A build Debug está
+  em `build-linux/MatterEngine`.
+
+Limite de aceitação: a coerência física está automatizada, mas pose, ritmo e
+aparência do giro ainda precisam da avaliação visual do usuário na build.
+
+## Coice na escada, sprint de costas, freada e giro parado — 27/09/2026 (madrugada)
+
+Pedidos do usuário depois de testar:
+
+- a perna ainda dava o coice para trás na escada, às vezes;
+- sprint para trás: o recuo mais rápido, com movimentos mais amplos;
+- a reação de parar bruscamente correndo, inspirada em `Run To Stop.fbx`,
+  "sem ser uma causa para travar movimento, algo natural do corpo";
+- refazer o jogo de pés do giro parado ("extremamente feio"), estudando
+  `Left Turn 90.fbx`, `Right Turn(3).fbx` e `Happy Right Turn.fbx`, mas
+  procedural.
+
+O que mudou e por quê:
+
+- **Coice na escada.** Medido: o pé em balanço ainda atrás do quadril
+  chegava a 48–72 cm acima do degrau embaixo dele. Duas causas: o ponto de
+  saída do balanço não era regravado ao soltar a trava (ficava o de um
+  passo antigo, 2,5 m para trás), e a altura do degrau de pouso subia cedo
+  — na passada de escada cada pé sobe 4 degraus (72 cm) por balanço. Agora
+  o pé passa por cima do terreno à frente dele (sondas à frente da ponta
+  fazem de cada espelho uma rampa), a trava pousa no toque que estava
+  pousando, e a pelve começa a descer antes do toque para o pé alcançar o
+  pouso (descendo o último degrau, a trava soltava e voltava em loop).
+  Resultado: 29 cm no pior caso (o espelho de 18 cm, a folga e a passada;
+  no plano o trote dá 17), escada sem pé afundado nem flutuando.
+- **Sprint de costas** (`sprint_backward`, papel `sprintBackward`): 4,4 m/s,
+  216 passos/min, pelve 9 cm mais baixa, braços com 46° de balanço. O
+  sprint agora vale em todos os setores.
+- **Freada.** Run To Stop, medido: pelve desce 25 cm, tronco segue a inércia
+  de 12° para 32°, volta em 0,7 s. Aqui é uma mola do tronco empurrada pela
+  desaceleração da cápsula, na proporção da velocidade de entrada; pelve
+  desce até 12 cm, cotovelos abrem. Não segura a cápsula: voltar a correr
+  no meio da freada desliga o empurrão (0,6 s depois, 7,5 m/s e a reação
+  em zero). Recuando, o tronco vai para trás.
+- **Giro parado.** As três referências fazem o mesmo: o pé do lado do giro
+  abre primeiro, sobre a bola do pé; o outro contorna em arco; ~0,3 s por
+  passo, 90° em dois. O de antes torcia a perna até 29° e dava um passo
+  reto, com o pé da vez por alternância. Agora é esse padrão, com os passos
+  mirando a pose parada no rumo final (até 72° por par), o peso indo para o
+  pé de apoio. Descoberta no caminho: o IK nunca usava o giro do quadril
+  para o rumo do pé, e o pé "travado" girava junto com a pelve no chão
+  (32° no primeiro passo). Parado, a perna agora gira em volta da linha
+  quadril–tornozelo. Resultado: 90° em 2 passos (0,74 s), meia-volta em 4
+  sem chicote (membro 2,0 m/s; antes 8,9).
+
+Testes novos: `testRunToStop` (filtro `stop`) e `testTurnInPlace` (filtro
+`turn`), os dois também em `feet` e `character`; `testTerrainFootwork`
+mede o coice; `testLookAndTravel` cobre o sprint de costas. Números em
+`docs/CHARACTER_FOOTWORK.md` e `docs/ANIMATION_AUTHORING.md`.
+
+## Escada, tremida da câmera e pulo para trás — 27/09/2026 (noite)
+
+Pedidos do usuário depois de testar:
+
+- pernas "contorcidas" subindo escada;
+- parado na escada, o corpo escorregava devagar até cair ("o apoio tem de
+  vir das pernas, não de uma cápsula oval");
+- tremida na cabeça e no tronco ao girar a câmera;
+- refazer o pulo para trás, inspirado em `Jump(2).fbx` (menos os braços).
+
+O que mudou e por quê (cada causa medida antes de corrigir):
+
+- **Tremida da câmera.** Um teste novo gira a câmera em degraus de 60 Hz,
+  como na tela, e reproduziu o problema: parado, a velocidade de giro da
+  cabeça sacudia 3,7 rad/s, com picos de 50 rad/s no alvo. Causa: todo
+  crossfade de troca de estado partia da pose final do tick anterior, que
+  já tinha o giro do olhar, e o olhar entrava duas vezes. Girando a câmera,
+  parado ↔ girando no lugar alternava a cada tick. Agora o crossfade parte
+  da pose do clipe, o estado tem histerese, e o ângulo da câmera passa por
+  uma mola antes do olhar. Resultado: 0,09 rad/s.
+- **Pernas na escada.** A 3 m/s o trote dava 4 degraus por passo e a pelve
+  descia até o pé mais baixo. Agora há passada de escada (passo limitado a
+  34 cm de desnível, com a velocidade que cabe no terreno dada ao jogo como
+  teto) e a pelve desce só pelo alcance que o terreno pede a mais que a
+  animação. O aterramento de segurança passou a olhar só os pés apoiados:
+  com o pé em balanço ele erguia o corpo 16 cm e o pé de apoio ficava
+  pendurado. Pé travado que a perna não alcança (limite do quadril,
+  descendo) solta.
+- **Parado na escada.** A base redonda da cápsula, na quina de um degrau,
+  escorregava escada abaixo (24 cm em 4 s). Parada, sem comando, com chão
+  pisável até um degrau abaixo dos pés, a cápsula agora fica apoiada; ela
+  assenta 7 cm e para.
+- **Pulo para trás:** salto em tesoura de costas medido de `Jump(2).fbx`
+  (impulso na perna da frente, a de trás recebe o chão), com braços
+  próprios. Rastreio no corpo físico: 12°.
+
+Testes: `testCameraTurnSmoothness` (novo); `testTerrainFootwork` ganhou o
+caso parado na escada, a velocidade e o passo na escada e os ticks sem
+chão. Números em `docs/CHARACTER_FOOTWORK.md`. Suíte RelWithDebInfo
+completa passando.
+
+## Braços firmes, pés no terreno, passos coerentes e sem tremor — 27/09/2026
+
+Pedidos do usuário depois de testar em jogo:
+
+- braços do trote e do sprint melhores ("parece fresco e meio deficiente");
+- o corpo dava "umas tremidas pequenas" andando: suavizar sem perder
+  precisão;
+- jogo de pés inteligente: cada pé na altura certa do terreno, com previsão
+  de onde vai pisar, sem atrapalhar movimento rápido;
+- o corpo não pode andar sem os pés fazerem o movimento.
+
+O que mudou e por quê (medido antes de cada correção):
+
+- **Cotovelo virou dobradiça.** Medindo o erro por junta e eixo no corpo
+  físico, quase todo o erro do braço estava no eixo de "pronação" herdado do
+  ALS (`swing1` do antebraço): 15–17° de pico, contra 2–5° do cotovelo. Com
+  o cotovelo dobrado, esse eixo gira o antebraço inteiro em volta do braço,
+  com motor fraco. Era o braço mole. O eixo saiu do perfil (nenhum clipe o
+  usava, fora os 10° do parado, que agora vêm do giro do braço). Rastreio
+  de tronco e braços: trote 21 → 4°, sprint 24 → 14°. Com isso os braços
+  puderam ficar juntos ao corpo também no sprint, com o cotovelo quase
+  constante (trote 90 ± 10°, sprint 82 ± 12°) e o balanço do ombro.
+- **Tremor.** O alvo da pelve tinha dente de serra: a altura vinda do clipe
+  era filtrada (atrasada em relação às pernas), o pé de apoio do alvo
+  afundava e o aterramento empurrava a pelve de volta num tick (até 2,6 cm
+  em 8 ms no sprint). Agora a altura e o balanço saem direto do clipe, com
+  o crossfade das juntas, e o aterramento é suavizado. Resíduo de alta
+  frequência da pelve: trote 4,3 → 2,9 mm RMS, sprint 9,6 → 5,4 mm (picos
+  9,8 → 6,6 e 25 → 11).
+- **Pés no terreno** (`docs/CHARACTER_FOOTWORK.md`): sonda de chão em
+  qualquer ponto (`groundAt`, no personagem controlado); pé de apoio travado
+  sobre o chão medido, plano nele, rolando sobre a ponta ou o calcanhar; no
+  balanço, previsão do ponto de pouso pelo clipe e pela velocidade da
+  cápsula, encaixe do pé inteiro num degrau, altura de saída → de pouso e
+  folga sobre os degraus do caminho; a pelve desce para o pé mais baixo;
+  IK de pé inteiro (posição e orientação).
+- **Passos coerentes:** ritmo entre 0,55× e 1,45× e o resto em passo mais
+  curto/longo (stride warping); pés travados também parados, com passo de
+  acomodação quando a pelve se afasta 12 cm de um pé ou gira 34°; a trava
+  solta quando o clipe diz que o apoio acabou (segurando até o contato cair
+  a 0,30, o pé chicoteava a 12 m/s na soltura).
+- **Escada do laboratório:** a cápsula sobe degrau até 19 cm (antes 12, e a
+  escada de 18 cm não subia) e desce colada ao chão até o degrau + 5 cm.
+
+Testes novos (`MATTERENGINE_TEST_FILTER=feet`, também em `character`), com
+o controlador de cápsula real:
+
+- escada de 18 × 28 cm subindo e descendo a 3 m/s: nenhum pé de apoio
+  afundado (piores 6 e 12 mm) e 4 de 348 amostras flutuando numa quina.
+  O controle sem a sonda tem 22 amostras afundadas, pior 26 cm;
+- arrancar, parar, toques curtos e inversão: a cápsula nunca anda com os
+  dois pés travados; o pé travado anda no máximo 48 mm nas freadas bruscas.
+
+Validação: todos os clipes passam nos gates; suíte RelWithDebInfo completa
+passando; verificador de arquitetura ok.
+
+Limite conhecido: subindo escada a 3 m/s a passada do trote cobre 4
+degraus. O pé pousa certo, mas é o movimento de quem sobe saltando degraus.
+Uma passada de escada seria outra etapa.
+
+## Strafe da referência, colisores do jogador, dedos, braços e setores — 27/09/2026
+
+Pedidos do usuário, em sequência:
+
+1. strafe com as referências `Jog Strafe Left/Right.fbx`, adaptado também ao
+   sprint; o primeiro strafe (passo lateral gerado) foi descartado como
+   "extremamente errado e feio", e o pedido virou "o mais próximo possível
+   do modelo";
+2. com o modelo novo (Codex, "mais humano, menos inchado"): ajustar
+   colisões e o resto para ele fazer o movimento;
+3. depois de testar no jogo: ossos de dedo, com a mão semifechada por
+   padrão (e pensando em animar a mão do goleiro no futuro); braços do trote
+   e do sprint menos "arqueados, abertos", sem mão reta; escolha do ciclo
+   pela direção e não pela ordem das teclas; braços do strafe menos
+   espalhafatosos.
+
+O que mudou:
+
+- **Colisores medidos da malha** (`tools/fit_ragdoll_colliders.py`):
+  cápsulas cônicas nos membros (suporte novo no perfil, `radiusAtPositiveX`,
+  e no Jolt, `TaperedCapsuleShape`), tronco em cápsulas laterais, pé do
+  tamanho da chuteira. Coxas com 2,4 cm de folga em repouso: com 3 mm, a
+  passada cruzada do strafe só cabia girando a pelve 19–25° a mais. A mão é
+  medida aberta (ver problema abaixo).
+- **Strafe** (`tools/animation/clips/strafe.py`): a referência retargeteada,
+  com correções mínimas: emenda do ciclo, pé de apoio parado e plano no
+  chão, nenhum pé abaixo do piso, giro extra de pelve de 4° e 10° onde as
+  coxas se cruzam, pé em balanço erguido ao passar pelo de apoio, cabeça
+  olhando para a frente, braços na postura de corrida com 30% do balanço da
+  referência. Sprint de lado = cadência 1,4×. Papéis de strafe de volta ao
+  `character.json`, com atribuição Mixamo. De lado, a cápsula anda na média
+  das duas referências (2,9 e 2,4 m/s).
+- **Dedos**: 15 ossos visuais por mão, filhos da mão, sem física
+  (`visualBones` na skin, `RagdollVisualBone3D` no motor, `matter_rig.Skin`
+  nas ferramentas). A rotação de repouso deixa a mão relaxada. O Ch38 quase
+  não tinha pesos nos dedos; o preparador refaz os pesos da mão pela
+  geometria. Detalhes em `docs/RAGDOLL_CHARACTER_PIPELINE.md`.
+- **Braços padronizados** (`RUNNING_ARM_*` em `gait.py`): 16° para fora
+  (20° no sprint), antes 25–35°. Pulo correndo com a mesma abertura.
+- **Setores pela direção** (`CharacterLocomotion3D.cpp`): fronteiras em
+  67,5° e 112,5°, no meio das oito direções do teclado. W+A/W+D correm com
+  a pelve girada, A/D fazem strafe, S+A/S+D recuam com a pelve girada. Antes
+  as fronteiras ficavam em cima das diagonais e a ordem das teclas decidia.
+
+Problemas encontrados:
+
+- **Colisor da mão relaxada desestabiliza o braço.** Medida com os dedos
+  dobrados, a mão encolhe de 20 para 15 cm; a inércia cai e o rastreio do
+  braço no trote vai de 16° para 25° (mesmo com os braços antigos). O
+  colisor volta a ser medido na mão aberta; a mão relaxada é só visual.
+- **Cotovelo parado perto de 90° gira o antebraço.** Os braços calmos do
+  strafe ficavam entre 82° e 88°: antebraço 86° fora do alvo no corpo
+  físico. Com ~72°, 7–8°.
+- **Sprint na diagonal com braço junto demais.** A 45°, com 16° de
+  abertura, a mão raspa a coxa (rastreio 36°); com 20°, 24°.
+- **Pé do Mixamo tem dedos, o nosso não.** A referência de strafe apoia na
+  ponta com o calcanhar erguido e escorrega o pé de apoio 5–9 cm; o pé
+  plano e parado resolve, e os quadros de rolamento viram contato 0,45.
+
+Validação: os 13 clipes autorais e de strafe passam nos gates de autoria;
+suíte RelWithDebInfo completa (Foundation, Character, Audio) passando. Olhar ×
+movimento: pior segmento 7–24° em todos os casos, incluindo diagonais de 45°
+e 135°, os strafes (7–8°, antes 86–88°) e os testes novos de ordem de
+teclas; pulos 7–29°. A pendência de strafe registrada na entrada do Codex
+abaixo está resolvida. Pendências: animar a mão (canal de animação dos
+dedos), clavícula e dedos do pé como ossos visuais, remodelar a junta do
+antebraço (pronação/cotovelo), jogo de pés ao virar-se (o usuário vai
+guiar).
+
+## Jogador de futebol como personagem e ragdoll padrão — 26/09/2026
+
+Pedido específico ao Codex durante a pausa do trabalho do Claude: substituir o
+personagem atual por `/home/dahaka/Downloads/Ch38_nonPBR.fbx` e remover o antigo.
+
+O padrão agora é `assets/characters/football_player/character.json`, nome
+**Jogador de futebol**, rig `FootballPlayerV1`. O modelo ALS saiu dos assets
+ativos. O humano low-poly permanece como fixture de testes.
+
+Para preservar a calibração e o trabalho de locomoção em andamento, o perfil
+físico anterior foi mantido integralmente, exceto seu ID: anchors, frames,
+colisores, massa e limites são idênticos (comparação estrutural feita antes de
+remover o asset antigo). A malha Mixamo foi ajustada por segmento a esses
+anchors, preservando pesos suaves. É uma adaptação visual ao rig existente,
+não um novo perfil físico medido do FBX. Os 14 clipes existentes tiveram apenas
+o ID do rig atualizado; nenhum track ou parâmetro de locomoção foi reautorado.
+Os papéis de animação do manifesto também foram preservados integralmente.
+
+`tools/prepare_football_player.py` reproduz a importação a partir do FBX e do
+perfil calibrado no novo diretório. Fonte original e texturas embutidas ficam
+no FBX; a cena editável preparada é `football-rigged.blend`. Atlas difuso
+4096×2048 para uniforme/corpo/cabelo. Cabelo e cílios têm os recortes alpha
+convertidos em geometria, pois o caminho atual de personagem usa albedo
+opaco; não houve alteração de shaders. Skin indexada: 51.841 vértices e
+76.518 triângulos. Limite de descarte para quatro influências: 4%; máximo
+medido 3,785%, com apenas 12 vértices acima de 2%.
+
+As ferramentas `tools/animation` agora carregam o personagem por
+`load_default_character()` e `DEFAULT_CHARACTER_DIR`. O preview Python passou
+a usar todas as quatro influências, como o runtime, em vez do osso dominante.
+Repouso e deformação ponderada foram verificados numericamente. A referência
+anterior `load_als()` não é mais a API usada pelos scripts ativos.
+Detalhes e comandos em `docs/RAGDOLL_CHARACTER_PIPELINE.md`.
+
+Validação: arquitetura 9/9; build RelWithDebInfo concluído; Foundation e Audio
+passaram. Viewer de idle e laboratório com spawn de ragdoll foram abertos e
+inspecionados, com encerramento automático normal. Vulkan validation layer
+não está instalada nesta máquina, portanto não houve validação Vulkan por layer.
+Build Debug também concluído: Foundation passou em 44,56 s e Audio em
+0,14 s; Character parou na mesma pendência de strafe descrita abaixo (suíte
+completa 60,79 s). O smoke de movimento `laboratory-animation-smoke` também
+encerrou normalmente. Builds disponíveis em `build-profile/MatterEngine` e
+`build-linux/MatterEngine`.
+
+**Pendência preexistente do trabalho pausado do Claude:** Character falha em
+`Personagem sem recuo, sprint ou strafe declarados`. O teste já exige
+`strafeLeft`/`strafeRight`, mas o manifesto anterior também não tinha esses
+papéis e não há clipes de strafe em `tools/animation/clips`. Confirmado antes
+de remover o modelo antigo. Não alterei a asserção nem inventei clipes para
+ocultar essa pendência; ela continua para a retomada do trabalho de locomoção.
+
+## Corrida leve, corrida de costas e sprint inspirados em referências — 26/09/2026
+
+Pedido do usuário: para a passada padrão, se inspirar em `Slow Run.fbx`
+(corridinha lenta); para o sprint, inspiração leve em `Running(2).fbx`; para
+correr de costas (e nas diagonais para trás), em `Running Backward.fbx` /
+`Run Backward.fbx`. "Só para se inspirar, não copia e cola." Anotado para
+depois, com o usuário guiando: jogo de pés ao virar-se e strafe (andar/correr
+de lado).
+
+### Como se inspirar sem copiar
+
+As referências ficam em `assets/animations/source/mixamo/study/` e não viram
+clipe. `tools/animation/reference_capture.py` (Blender) exporta as
+articulações no nosso referencial e escala; `gait_metrics.py` mede a passada
+com as mesmas regras para a referência e para o nosso clipe. Os números que
+caracterizam cada passada (cadência, voo, onde o pé toca, joelho, ombros,
+cotovelo) viraram parâmetros do gerador. O que é exagero ou não cabe no
+corpo ficou de fora: pelve subindo 23 cm, quadril caindo 8–9°, pés na linha
+do meio.
+
+Detalhes de medição que importaram: inclinações relativas à pose de repouso
+(os ossos Mixamo vêm inclinados) e rumo pelo quadril real (`Run Backward.fbx`
+está virado 180° em relação ao repouso).
+
+### Ciclos
+
+| | referência | nosso |
+|---|---|---|
+| `jog` (substitui `fast_walk`) | Slow Run: 2,95 m/s, 164/min, joelho 41°/100° | 3,0 m/s, 164/min, joelho 39°/98° |
+| `sprint` | Running(2): toque a 19 cm, ombros 36° | toque a 29 cm (era 38), ombros 16° (era 4) |
+| `run_backward` (substitui `walk_backward`) | ~3 m/s, 189/min, ponta atrás, joelho 62° | 2,9 m/s, 189/min, joelho 64° |
+
+No gerador entraram: giro dos ombros próprio, em fase com os braços (antes
+era fração do giro da pelve); e a recuperação do balanço, com o calcanhar
+subindo atrás antes de a perna vir.
+
+### O que o corpo físico ensinou
+
+- **Sprint com o cotovelo da referência (73–117°):** o antebraço travava a
+  150° do alvo, com o clipe aprovado em todos os gates. No ritmo do sprint o
+  braço atrasa um pouco, a mão cola no quadril no balanço para trás e
+  engancha na outra mão (pose física exportada e checada no validador: mãos a
+  0,2 mm). Bissecção: é o cotovelo **mínimo**; abrindo a 62° atrás, o corpo
+  acompanha (24°).
+- **Corrida de costas em diagonal:** o antebraço ficava a 60° do alvo com o
+  braço fechado (tronco torcido 36° contra a pelve). Braço mais aberto: 21°.
+- **Tronco medido pela média:** os ombros agora giram ±12–24° de propósito;
+  o requisito "tronco perto do olhar" é sobre a direção média (0–8°, 44° de
+  lado).
+- **Varredura de direção:** membro mais rápido a 12,1 m/s correndo (4,7 em
+  linha reta) e 14,8 no sprint. O pico é a virada do quadril na troca frente
+  ↔ costas; entra no tema "virar-se" que o usuário vai guiar. Limites: 14 e
+  17 m/s.
+
+Suíte 3/3 (profile e Debug); smokes do visualizador (4 ciclos) e do
+laboratório limpos.
+
+## Caminhada rápida, recuo, sprint e olhar × movimento — 26/09/2026
+
+Pedido do usuário: caminhada rápida e sprint autorais ("pode parecer meio
+robótico, mas consistente e correto"), velocidades maiores ("a caminhada está
+muito lenta; a corrida pode ser mais rápida, será sprint"). E o esquema de
+futebol: o personagem sempre olha para onde a câmera aponta, e a cintura gira
+para o movimento dentro do limite do corpo, sem dar meia-volta. Detalhe em
+`docs/ANIMATION_AUTHORING.md`.
+
+### Ciclos (`tools/animation/gait.py`)
+
+Um gerador paramétrico de passada (velocidade, cadência, apoio, base, altura
+do passo, pelve, braços) gera os três ciclos:
+
+| clipe | velocidade | cadência | apoio | junta mais rápida |
+|---|---|---|---|---|
+| `fast_walk` | 2,4 m/s (era 2,24) | 174/min | 56% | 11,3 rad/s |
+| `walk_backward` | 1,9 m/s | 180/min | 58% | 10,3 rad/s |
+| `sprint` | 7,5 m/s (era 6,03) | 258/min | 26%, com voo | 20,6 rad/s |
+
+Todos passam nos gates: folga de autocolisão, sola no chão e nunca abaixo
+dele, pé parado no mundo (≤ 0,8 mm) e loop fechado. As velocidades da cápsula
+agora saem dos clipes (`loadAnimationCatalog`), não de constantes.
+
+Encontrado no caminho:
+
+- **O pé não tem o terceiro eixo.** Um pé "chato no mundo" com a canela
+  inclinada pedia 2–4° nesse eixo e saía recortado, com a sola 8 mm fora do
+  chão. `PoseBuilder` agora resolve o pé pela sola com os dois eixos que
+  existem. Na recuperação do sprint, o pé acompanha a canela.
+- **Sinal do giro da coluna.** Twist + gira a frente para a **esquerda**,
+  como no pescoço (medido pela FK). O atlas mostrava a âncora do filho, que
+  fica atrás do eixo. `PoseBuilder.spine` estava invertido; o idle não usava
+  giro de coluna, então não foi afetado.
+- **Abdômen × coxa.** A cápsula do abdômen desce até o quadril, e a coxa
+  batia nela a partir de 45° de flexão (3 cm de penetração a 90°). O par foi
+  declarado sem colisão no perfil (`selfCollisionIgnoredPairs`, com o
+  motivo), lido pelo Jolt e pelo validador Python.
+- **Diagonal em relação à pelve não existe numa passada longa.** 30° de
+  desvio cruzam a perna de trás por baixo do corpo (coxa × coxa −17 mm).
+  A pelve gira para o movimento, então bastam três ciclos.
+
+### Olhar × movimento (`CharacterLocomotion3D`)
+
+- A pelve encara o movimento. Passando de 105° da câmera, ela fica contra o
+  movimento e o personagem recua; volta a andar para a frente abaixo de 75°
+  (histerese). Recuando não há sprint.
+- A coluna devolve 80% do ângulo para a câmera, até 45° (20° no sprint). A
+  cabeça completa, até 75°.
+- `characterGaitSpeed3D` dá a velocidade da cápsula pela direção em relação
+  à câmera, e o jogo a passa como `speedScale`.
+- A rotação inteira da pelve do ciclo é preservada (antes o rumo era
+  descartado de todo clipe). O balanço lateral da pelve entra só no
+  personagem controlado.
+- O limitador de 12 rad/s isenta o que a amostra do clipe anda (o joelho do
+  sprint) e segura IK, olhar e mistura. A velocidade-alvo dos motores subiu
+  de ±16 para ±30 rad/s.
+- A troca frente ↔ recuo tem crossfade de 0,35 s.
+- O personagem declara `walk`, `walkBackward` e `sprint` no lugar de `run` e
+  dos campos antigos sem uso (walkLeft, runBackward, crouch, jump...).
+
+Três regressões encontradas pelos testes antes de chegar ao jogo:
+
+1. **Bonecos encostados a 2,6 m/s.** O balanço lateral somado à raiz de um
+   boneco solto integrava, porque a âncora dele é a própria pelve simulada.
+   Correção: balanço só no controlado; voltou a 0,05 m/s.
+2. **Braço a 61° do alvo no sprint em diagonal.** Com a coluna girando 45°,
+   o braço balançava num plano torto e batia na coxa. Correção: 20° no
+   sprint; ficou em 24°.
+3. **Pé a 17 m/s na troca frente ↔ recuo.** O alvo do pé cruzava o corpo em
+   0,14 s. A primeira hipótese, o limitador, estava errada: medido, nada
+   mudou. Correção: crossfade de 0,35 s; ficou em 8,7 m/s.
+
+### Testes
+
+`testLookAndTravel` (filtros `look` e `character`) mede no corpo simulado,
+com a câmera fixa e a cápsula acelerando como no jogo. Oito direções e
+velocidades mais uma varredura completa: pelve a ≤ 0,5° do esperado, cabeça a
+2–5° da câmera, tronco a 3–13° (48° de lado, no limite da coluna), sem
+quedas, e exatamente duas trocas de modo na varredura. Controles negativos
+documentados no teste. Os testes de personagem carregam os clipes declarados
+em `character.json` (`loadCharacterClips`) em vez de caminhos fixos.
+
+## Animações próprias: ferramentas de autoria, Parado natural e a divergência visualizador × jogo — 26/09/2026
+
+Pedido do usuário: criar as animações do personagem do zero, sem se basear
+nas importadas ("bugadas e feias"), por autenticidade e identidade própria.
+Primeiro o ambiente e a metodologia, depois o idle ("braços muito erguidos").
+Nota do usuário: no visualizador os braços ficavam menos levantados que no
+jogo. Metodologia completa em `docs/ANIMATION_AUTHORING.md`.
+
+### Ferramentas (`tools/animation/`)
+
+Animação é código. Cada clipe é uma função do tempo que devolve uma pose, em
+linguagem anatômica (`pose.py`: coluna/cabeça em graus, braços por anatomia,
+pernas por IK de dois ossos). `build_clips.py` amostra, valida todos os
+quadros (resíduo, limites, folga de autocolisão, chão, deslize do pé, salto,
+loop), grava só o que passa e renderiza uma prévia com a malha real. A FK em
+Python bate com a do motor em 0,0003 mm / 0,00003°. `axis_atlas.py` mede o que
+cada eixo faz. Alguns não espelham entre os lados, e autorar em coordenada
+crua erraria.
+
+### A divergência visualizador × jogo era autocolisão
+
+O visualizador desenha o clipe; o jogo desenha o corpo simulado. Medido:
+
+- as caixas do tronco já se sobrepunham no repouso (Abdomen×UpperChest
+  −13,3 mm, UpperChest×Head −8,4, Pelvis×Chest −2,4). A autocolisão
+  entortava o tronco superior ~17° e levava os braços junto. O problema já
+  existia no PhysX;
+- o idle antigo punha o braço 22 mm dentro do peito e a mão 22 mm dentro da
+  coxa.
+
+Correções: a regra de autocolisão (`buildSelfCollisionFilter`) desliga
+pai-filho, pares sobrepostos no repouso e ancestral/descendente a menos de
+1 cm no repouso, e mantém Chest×UpperArm e coxa×coxa. O tronco passou para
+cápsulas laterais (`prepare_als_ragdoll.py`, perfil regerado; a skin saiu
+idêntica). O braço agora pende a ~15° da vertical sem tocar o tronco.
+
+Efeito colateral encontrado e corrigido: na troca de clipe (andar → parado)
+o alvo de inclinação da raiz pulava ~17° num tick, a 35 rad/s, e dava um
+tranco no corpo. A inclinação da raiz agora tem o mesmo crossfade das juntas
+(`m_rootTilt`). No cenário "jogador anda para dentro de boneco", o pico caiu
+de 8,3–22,4 m/s para 7,0–7,3.
+
+### `natural_idle`
+
+Substitui `cc0_idle` em `character.json`. Loop de 4 s com respiração,
+transferência de peso com os pés plantados por IK, deriva da cabeça e pêndulo
+sutil dos braços. Gates: loop 0,0°, salto máximo 0,10°, chão 0,02 mm, deslize
+0,11 mm, folga mínima 5,9 mm (coxa×coxa).
+
+### Aceitação física: `testIdlePhysicalFidelity`
+
+O teste mede cada segmento contra o alvo, relativo à pelve, com o personagem
+controlado e parado por um ciclo inteiro (filtro `character`).
+`natural_idle`: 1,8° no pior segmento (antebraço) e 0,6° nas pernas.
+Controle negativo, o mesmo idle com braços colados: braços 10–17° e
+UpperChest 4,8°, e o teste reprova. Com o tronco em cápsulas, o `cc0_idle`
+também passa (≤3°), o que confirma que a correção do corpo vale para qualquer
+clipe. Os testes de personagem passaram a usar o idle configurado no
+personagem em vez de `cc0_idle` fixo. `MATTERENGINE_IDLE_CLIP` troca o clipe
+medido.
+
+Suíte 3/3 no build-profile; smokes `animation-viewer-smoke` e
+`laboratory-smoke` limpos.
+
+### Próximo
+
+Caminhada rápida, sprint e pulo autorais. Depois vem a locomoção com tronco e
+pernas separados: o tronco e a cabeça seguem a câmera, o quadril gira para o
+movimento dentro do limite do corpo, e além dele entram ciclos laterais e de
+costas em vez de meia-volta. Desenho em `docs/ANIMATION_AUTHORING.md`.
+
+## Glitch ao girar a câmera: posição de câmera no passo fixo, yaw por quadro — 26/09/2026
+
+Relato do usuário, depois de isolar o problema: "coloquei uma caixa bem do meu
+lado e tentei rotacionar a câmera rápido — o mesmo ocorre com a caixa". Uma
+caixa parada não depende de física nem de interpolação: o problema é de render.
+
+### Causa
+
+Na câmera em terceira pessoa, o **yaw** é atualizado a cada evento de mouse —
+a cada quadro. A **posição** (`foco − frente(yaw)·4,35 m`) só era recalculada
+em `updateLaboratory`, no passo fixo de 120 Hz. Com o monitor de 143,8 Hz,
+cerca de 1 quadro em 5 não tem passo fixo, e nesses quadros a câmera olhava na
+direção do yaw novo a partir do ponto de órbita do yaw antigo: o centro da
+órbita escorregava ~4,35 m × Δyaw para o lado e voltava no quadro seguinte.
+Tudo perto do personagem pulava; o que está longe quase não mostrava. É por
+isso que a caixa ao lado evidenciou.
+
+Segundo descasamento na mesma linha: o boneco é desenhado interpolado entre os
+dois últimos passos (`fixedStepAlpha`, desde 25/09), mas o foco da câmera usava
+o estado cru do último passo. Mesmo nos quadros com passo, câmera e boneco
+estavam em instantes diferentes.
+
+### Correção
+
+A câmera foi dividida em duas metades. O passo fixo decide o **foco** (boneco
+controlado, cápsula ou olho em primeira pessoa) e guarda os dois últimos
+valores (`setLaboratoryCameraFocus`). Cada **quadro** monta a posição
+(`updateLaboratoryCamera`) com o foco interpolado pelo mesmo alfa do boneco e o
+yaw daquele quadro, incluindo a colisão com parede. Troca de modo ou salto
+maior que 1 m num passo (teleporte, spawn, assumir o personagem) não é
+interpolado. O cálculo de órbita, que estava duplicado nos dois caminhos, virou
+um só.
+
+### Props também passaram a ser interpolados
+
+Era a dívida registrada ("mesma causa do judder do personagem"). Com a câmera
+suave, uma caixa em movimento continuaria andando em degraus. Cada prop guarda
+a pose anterior ao último passo que o moveu e o índice desse passo; o render
+calcula `renderedState` por quadro e usa essa pose no culling, na malha e no
+histórico dos motion vectors (o TAA precisa comparar contra o que foi
+desenhado). Só interpola quem foi atualizado no último passo, uma guarda
+defensiva: o contrato de `activeBodyStates()` só promete os corpos que mudaram.
+
+O fim do feixe da Physgun também passou a ser calculado por quadro, a partir da
+pose desenhada do prop ou do link agarrado. Antes ele vinha do estado cru e de
+antes do `simulate()`, e descolaria do objeto ao girar a câmera segurando algo.
+
+### Medição — smokes novos
+
+`Laboratory/RenderMotionSmoke.cpp`, dois modos de autostart. Métrica: desvio
+da trajetória suave na tela, em pixels — a distância entre onde o ponto aparece
+e onde estaria mantendo a velocidade do quadro anterior.
+
+- `laboratory-camera-orbit-smoke`: personagem controlado, câmera girando a
+  4 rad/s (a rotação sintética entra no fim do render, a mesma posição do laço
+  em que um evento de mouse real entra), ponto parado ao lado do personagem.
+- `laboratory-prop-motion-smoke`: câmera parada, caixa caindo pela tela, medida
+  na queda e depois de dormir.
+
+| Medida | antes | depois |
+|---|---|---|
+| órbita, ponto parado — P95 | ~35 px | 0,6–1,0 px (varia com o ritmo do vsync) |
+| órbita — quadros com salto > 1 px | ~50% | 0,4–4,9% |
+| caixa em movimento — P95 (sem interpolação de props = controle) | 5,0 px, 17% dos quadros | 0,15–0,20 px, 0,8% |
+| caixa em repouso | — | 0 px |
+
+Os ~4 px de pior caso na caixa são o impacto no chão (descontinuidade física
+real). **Controle negativo feito** para a interpolação de props. O controle da
+guarda de passo **não** reprovou: sem ela o prop dormindo também fica em 0 px,
+porque o Jolt só dorme um corpo depois que ele parou — por isso a guarda está
+documentada como defensiva.
+
+### Bug encontrado no caminho: personagem autostart caía no vazio
+
+Os modos que assumem o personagem (`laboratory-character`, `-animation`,
+`-walk`, `-pose`) spawnavam em `{-30, -45}`, coordenada do mapa glTF antigo, 15 m
+fora da plataforma procedural de 60 × 60 m que o substituiu em 24/09. Sem chão,
+`ragdollGroundHeight` devolvia a própria altura e o boneco caía de 150 m para
+sempre. Esses modos estavam quebrados desde a troca do mapa. Agora spawnam no
+ponto de spawn da plataforma.
+
+Também: a inicialização posicional do `SpawnedPropInstance` virou inicializador
+designado — ela quebrou em silêncio com os campos novos, e só apareceu porque o
+tipo deslocado não convertia.
+
+### Limites
+
+- Sem aprovação visual.
+- Os smokes medem o que chega ao `viewProjection` e à pose desenhada, não o
+  pixel apresentado: jitter de apresentação do compositor/vsync fica fora.
+
+## Bonecos tortos e lag em contato: raiz cinemática e 4 subpassos — suíte 3/3 sob Jolt — 26/09/2026
+
+Relato do usuário depois da continuação do Codex: "os ragdolls lagam bastante se
+colidirem um com outro [...] eles também estão meio zuados e tortos".
+
+### O cenário que o jogo executa e a suíte não cobria
+
+O benchmark de ragdolls usa corpos **passivos**, sem controlador: media um
+caminho que o jogo não executa (a mesma armadilha registrada em 25/09). No
+laboratório, **todo** boneco spawnado roda `CharacterLocomotion3D` e pede raiz
+carregada. Foi escrito `testActiveRagdollsInContact`, que reproduz exatamente o
+laço de `WorkbenchApp::updateActiveRagdolls` (raiz em pé, sonda de chão real
+via `probeGround`, dinâmica só para o controlado), em quatro cenários:
+
+| Cenário | Antes | Depois |
+|---|---|---|
+| ombro a ombro em repouso | 0,9 m/s · âncora 0,31 cm | 0,20 m/s em regime · 0,85 cm |
+| corpo caindo sobre boneco em pé | 20 m/s · 0,97 cm | 5,7 m/s (queda livre de 1,4 m = 5,2) · 0,71 cm |
+| **jogador andando para dentro de boneco** | **240 m/s · 11,8 cm · 50°** | **7,0 m/s · 0,97 cm · 11°** |
+| 22 ativos em grade apertada, passo P50/P95 | 7,1 / 8,7 ms | 2,9 / 3,7 ms |
+
+### Causa 1 — tortos: a raiz carregada era cinemática durante o solver
+
+A primeira versão Jolt tornava a pelve carregada `EMotionType::Kinematic` com
+`MoveKinematic`. Cinemático tem massa infinita: duas pelves cinemáticas nem
+colidem entre si, e os membros dinâmicos de um boneco presos contra a pelve do
+outro ficam espremidos entre ela e as próprias juntas. Também ignorava
+`releaseOnInteraction`.
+
+O backend PhysX fazia outra coisa, e toda a calibragem foi feita contra ela: a
+raiz é **dinâmica durante o solver** e só **depois** do passo
+(`resolveRagdollAnimationConstraint`) a pose e a velocidade da raiz são
+reescritas — o que, em coordenadas reduzidas, move a árvore inteira
+rigidamente. Com interferência externa, a autoridade cai para
+`1 − 0,9·interferência` e a escrita vira blend exponencial.
+
+Portado em `resolveRagdollGuides` (`JoltRagdollDrives3D.cpp`), chamado entre
+`consolidateContacts` e a publicação. Em coordenadas máximas o reenquadramento
+rígido é explícito: a mesma transformação aplicada a todos os links, e o campo
+de velocidades (de centro de massa, que é o que o Jolt guarda) troca de
+referencial preservando a parte induzida pelas juntas. `animationAuthority`
+voltou à fórmula do PhysX (não tem consumidor fora dos backends).
+`poseAuthority` segue sem suporte — o controlador a fixa em zero por decisão
+registrada.
+
+**Controle negativo feito:** recolocando a raiz cinemática, o teste reprova
+(âncora 4,2 cm mesmo já com 1 subpasso). A raiz é a correção essencial.
+
+### Causa 2 — lag: 4 subpassos sempre que havia ragdoll
+
+Atribuição por experimento, um fator por vez, 22 bonecos ativos em contato
+(P50 do passo): base 7,1 ms · **listener de contato sem sensores 7,8 ms** (não
+é gargalo — hipótese descartada) · **1 subpasso 2,1 ms** · juntas 2/10 4,1 ms.
+Os subpassos respondiam por ~70% do custo e estouravam o orçamento de 8,33 ms
+no P95. Eles compensavam a raiz cinemática, não o passo.
+
+### Escolha das iterações: por distribuição, não por amostra
+
+Com 1 subpasso e juntas 12/20 a suíte passou em RelWithDebInfo (âncora 0,97 cm)
+e **reprovou em Debug** (1,54 cm): a pilha de 22 ragdolls é caótica e o pior
+caso de âncora muda com qualquer perturbação de ponto flutuante. Foi feito um
+estudo com 8 sementes (spawn perturbado em ±1 mm), pilha passiva de 22:
+
+| Juntas (subpassos) | pior | média | custo/passo |
+|---|---|---|---|
+| 8/20 (4) — versão anterior | 0,84 cm | 0,72 cm | 3,87 ms |
+| 12/20 (1) | 1,25 cm | 1,16 cm | 1,30 ms |
+| **20/20 (1) — escolhido** | 1,09 cm | 0,90 cm | 1,66 ms |
+| 24/20 (1) | 1,00 cm | 0,90 cm | 1,68 ms |
+| 24/12 (1) | 1,79 cm | 1,16 cm | 1,67 ms |
+| 12/20 (1), `mMaxPenetrationDistance` 0,02 | 3,81 cm | 2,30 cm | 1,32 ms |
+
+Posição satura em ~20 (32 não melhora); cortar velocidade piora muito; o
+`mMaxPenetrationDistance = 0,0025` do Codex é essencial. Com 20/20 o Debug
+passou a dar 0,62 cm.
+
+### Teste adversarial braço × tórax
+
+A falha deixada pelo Codex não era a barreira: instrumentado tick a tick, o
+braço chega ao peito no tick ~30 e para em −0,1 mm. Depois se afasta porque a
+cena não tem chão e o boneco cai pendurado num grab limitado a 180 m/s² no braço
+(~360 N contra 736 N de peso). O teste exigia contato no **último** tick, o que
+media a dinâmica dessa queda. Agora mede a folga Chest/UpperArm **em todo
+tick** (mais estrito: pegaria uma travessia transitória) e exige que o braço
+tenha alcançado o peito. **Controle negativo feito:** sem autocolisão entre
+links o braço entra 1,9 cm e o teste reprova.
+
+### Resultados
+
+- `ctest` **3/3 em Debug e em RelWithDebInfo**, zero asserts do Jolt no log.
+- Arquitetura 9/9.
+- `MatterPhysicsBenchmark` (passivo): 22 ragdolls em campo **0,88 ms P50 /
+  1,02 P95** — PhysX era 2,09 / 2,60; a versão anterior Jolt, 1,94 / 2,49.
+  1 ragdoll 0,20 ms (PhysX 0,12).
+- Smoke no aplicativo (`laboratory-ragdoll-smoke`): 143,4 FPS (vsync do monitor
+  de 143,8 Hz), passo 0,22 ms, sem erros.
+
+### Outras correções desta rodada
+
+- `compilar.sh` referenciava quatro executáveis de teste que não existem mais e
+  falhava antes de compilar qualquer coisa.
+- Default do seletor virou **Jolt**. PhysX segue selecionável como referência.
+- Removidos do header interno campos mortos (`ShapeRecord`, `dofIndices`,
+  `selfCollisionFilter`, `PendingRagdollWrench`, `ContactScratch`…) e um
+  comentário falso que descrevia buffers por worker (a implementação usa mutex).
+- Prints de depuração removidos dos testes; mensagens e comentários neutros de
+  backend (a suíte imprimia "PhysX" rodando Jolt).
+- `AGENTS.md`: fronteira do Jolt, proibição de `dynamic_cast` em tipos do SDK,
+  callbacks que não lançam, e a regra da raiz resolvida depois do solver.
+- `build-linux` apontava o SDK para `/tmp/matter-jolt-sdk`, que não existe mais;
+  reconfigurado para `~/.cache/matter-engine/JoltPhysics-e77f1755`.
+
+### Limites conhecidos
+
+- **Sem aprovação visual.** O caso de colisão depende de interação (Physgun,
+  andar para dentro); o benchmark do app espalha bonecos num anel de 5–42 m e
+  não os faz se tocar.
+- Grade de 22 bonecos com braços nascendo dentro dos vizinhos: as mãos (link
+  mais leve) saltam em surtos de ~10–17 m/s. Artefato do cenário artificial — o
+  spawn real impede sobreposição —, mas é o sinal a observar em pilhas reais.
+- O backend PhysX ainda está na árvore. Sai depois da aprovação visual.
+
+## Continuação da migração Jolt — implementação e validação em andamento — 26/09/2026
+
+A base foi reconstruída em Debug: arquitetura 9/9 e suíte PhysX 3/3
+(99,30 s). Os dez módulos restantes receberam implementação inicial e estão
+em integração; ainda não representam paridade validada. O seletor padrão
+continua PhysX até a suíte Jolt passar.
+
+Correções ao mapa de passagem de bastão confirmadas no código:
+- Os testes de stress aceitam 0,015 m de separação de âncora. 1e-6 m era
+  resultado observado no solver de coordenadas reduzidas, não o gate.
+- O perfil de ragdoll usa cápsulas longitudinais em X; PhysicsShape3D usa Y.
+  A conversão específica pertence ao adaptador de perfil.
+- Os alvos do controlador atual são vetores de rotação (mapa exponencial),
+  conforme RagdollPoseMotor3D, e não uma composição twist vezes swing.
+- Jolt 5.6 habilita backends de compute para cabelo por padrão. Desabilitados
+  explicitamente: este motor usa apenas rigid bodies CPU, sem exigir DXC.
+
+**Ponto de parada e passagem para o Claude (26/09/2026):** os dez módulos
+Jolt estão implementados e o aplicativo compila/linka. O último build de
+`build-profile/MatterEngine` incluiu os ajustes recentes de drives e terminou
+com sucesso; o usuário recebeu esse executável para avaliar. Ainda não há
+aprovação visual registrada.
+
+A última suíte completa registrada em RelWithDebInfo foi **2/3**: Character
+(10,41 s) e Audio (0,04 s) passaram; Foundation falhou (7,30 s) em
+`Barreira interna do torax nao produziu contato no teste adversarial`.
+Separação máxima de âncora: ALS 0,00893883 m e Human 0,00884891 m, ambas abaixo
+do gate de 0,015 m. O cenário adversarial registrou pico/final de contatos 8/0,
+mas a asserção exige contato no último tick. Isso é hipótese de problema na
+observação do teste, não prova de que a proteção braço/tórax esteja correta;
+a checagem geométrica posterior não foi alcançada.
+
+**Os ajustes posteriores de torque/feedforward, guia da raiz e forças ainda
+precisam de nova suíte com os testes reconstruídos.** Compilar o aplicativo
+não os valida. Próximo passo: reproduzir a falha atual, identificar os pares de
+contato e verificar penetração sem afrouxar gates; depois completar Debug,
+arquitetura, smoke e avaliação visual. O default CMake permanece PhysX,
+embora ambos os caches locais estejam em Jolt. PhysX não foi removido e o
+arquivo ZIP ainda está untracked; nenhum commit foi feito nesta continuação.
+
+Handoff detalhado reescrito pelo Codex, a pedido do usuário, em
+`/home/dahaka/Área de trabalho/IA_Brain/brain/30_Projects/matter_engine/Em_Desenvolvimento.md`.
+Ele lista módulos, correções de convenções, comandos reproduzíveis, logs,
+limitações e revisão de qualidade pendente. O Claude dará continuidade.
+
+## Migração PhysX → Jolt: fundação pronta, contrato estreitado — 26 de setembro de 2026
+
+Decisão do usuário: trocar o motor físico por Jolt Physics (release **v5.6.0**,
+commit `e77f1755`), com o backend PhysX arquivado em ZIP dentro do projeto para
+estudo futuro. Motivo declarado: Jolt é melhor para ragdoll ativo, e a
+calibragem de raiz por força que vem a seguir se apoiava em coisas que são
+PhysX puro — fazê-la antes da troca significaria fazê-la duas vezes.
+
+### O estudo mudou o tamanho do trabalho
+
+Três achados, todos por medição na árvore, não por suposição:
+
+**1. A dinâmica generalizada era peso morto.** `RagdollDynamics3D` expunha
+matriz de massa, Jacobiano denso, matriz de momento centroidal, força de bias,
+velocidade generalizada e mais — tudo vindo de graça do `PxArticulationCache`.
+Varredura da árvore: **zero consumidores fora de `Engine/Physics`**. Só quatro
+campos são lidos (`valid`, `centerOfMass`, `generalizedDofCount`,
+`jointGeneralizedDof`). O controlador QP de corpo inteiro que os justificava
+(Eigen + ProxQP) já tinha saído da árvore antes, e mesmo assim
+`ragdollDynamics()` computava tudo **por ragdoll, por tick**, para descartar.
+Não foi reimplementado no Jolt: foi removido. Também é ganho de CPU contra a
+meta de >50 ragdolls.
+
+**2. Os drives mapeiam quase 1:1, não "tradução".** O medo registrado era de
+`SwingTwistConstraint` (dois motores). O tipo certo é `SixDOFConstraint`: seis
+eixos independentes, cada um com `MotorSettings` própria. Com
+`ESpringMode::StiffnessAndDamping` a equação é `T = -kθ - cω`, **a mesma** do
+drive do PhysX, e `EMotorState::PositionAndVelocity` é exatamente a semântica de
+`RagdollDriveTarget3D`. A convenção X=twist, Y/Z=swing1/swing2 do perfil também
+coincide. Ganhos transferem quase diretos; o que precisa recalibrar são as
+iterações do solver.
+
+**3. O buraco real é `computeGravityCompensation`** — dependência viva do
+caminho de drive, sem equivalente no Jolt. Resolvido com implementação própria
+no lado neutro.
+
+### O que foi feito
+
+**Arquivo do legado.** `archive/2026-09-25-physx-backend/physx-backend-5.9.0.zip`
+(62 KB, 19 arquivos): os 4 fontes do backend, **os headers neutros como eram
+neste momento** (sem isso o backend não compilaria contra a árvore futura, já que
+o contrato foi estreitado), os três blocos de CMake e um README com o pin do SDK
+e o caminho de restauração.
+
+**CMake reorganizado.** A lógica de dependência de física saiu do
+`CMakeLists.txt` para `cmake/PhysicsBackend.cmake`, com seletor
+`MATTERENGINE_PHYSICS_BACKEND=PhysX|Jolt`. Os dois backends convivem de
+propósito durante a migração: a mesma suíte roda contra ambos (ela passa pela
+interface neutra), então divergência de comportamento é medida, não suposta.
+`tools/build.sh` honra a variável de ambiente de mesmo nome.
+
+Opções do Jolt que **precisaram** ser explicitadas, porque os padrões brigam com
+o projeto: `OVERRIDE_CXX_FLAGS OFF` (o padrão sobrescreve
+`CMAKE_CXX_FLAGS_DEBUG/RELEASE` globais), `ENABLE_ALL_WARNINGS OFF` (padrão é
+warnings-as-errors em código de terceiro), `CPP_EXCEPTIONS_ENABLED ON`,
+`ENABLE_OBJECT_STREAM OFF`, `DOUBLE_PRECISION OFF`,
+`CROSS_PLATFORM_DETERMINISTIC OFF`.
+
+**Contrato neutro estreitado** (feito ainda sobre PhysX, de propósito: é a única
+ordem em que o estreitamento é verificável isoladamente — e a suíte ficou verde):
+
+- `RagdollDynamics3D` perdeu os dez campos sem consumidor, e `ragdollDynamics()`
+  voltou a ser `const` (não escreve mais no cache).
+- `PhysicsBodyDefinition3D` perdeu `collisionLayer`/`collisionMask`: pares de 32
+  bits que **nenhum chamador jamais definiu**. Papel de colisão passa a ser
+  derivado do uso do corpo (ver `JoltObjectLayers`).
+- `solverPositionIterations`/`solverVelocityIterations`/`scratchBufferSizeBytes`
+  passam a usar `0 = o backend escolhe`, mesma convenção de `workerThreadCount`.
+  Os valores 4/1 eram calibragem do TGS do PhysX e estavam hardcoded em
+  `WorkbenchApp` e no teste; um default neutro estaria errado para um dos dois.
+- `PhysicsSceneSettings3D` ganhou `maximumBodies`/`maximumBodyPairs`/
+  `maximumContactConstraints`/`bodyMutexCount`: o Jolt pré-aloca na criação da
+  cena e **não cresce** — estourar é erro de runtime, não degradação.
+
+**`Engine/Physics/Articulation/` (novo, neutro, sem SDK).**
+`ArticulationIndexing3D` deriva a numeração de DOF generalizado do perfil, não
+do SDK. `ArticulationGravity3D` substitui `computeGravityCompensation`: passada
+reversa O(n) que soma o peso da subárvore de cada junta e projeta no frame
+articular do filho. É **exato** para a carga estática e **aproximado** na
+escolha do eixo (ignora o acoplamento pai/filho fora do repouso) — é
+feedforward, não dinâmica inversa fechada.
+
+**Backend Jolt — fundação escrita e compilando** (`src/Engine/Physics/Jolt/`):
+`JoltConversions` (cópia de componente, sem troca de eixo, com `static_assert`
+contra precisão dupla), `JoltLayers` (quatro papéis semânticos + broad phase),
+`JoltJobSystem` (`JPH::JobSystem` sobre o `TaskScheduler` — a regra de não criar
+pool próprio vale para o Jolt como valia para o PhysX), `JoltInternals3D`,
+`JoltEngine3D` (registro global contado por referência) e `JoltCooking3D`.
+
+### Três armadilhas de integração encontradas antes de custarem caro
+
+- **O Jolt compila com `-fno-rtti`**, então não existe typeinfo para as classes
+  dele e `dynamic_cast` sobre um `JPH::PhysicsMaterial` não linkaria. O material
+  de superfície é identificado por `GetDebugName()`, que é a via do próprio SDK.
+- **O Jolt compila com `-fno-exceptions`.** Lançar de dentro de um callback dele
+  (contato, step listener, assert) atravessaria frames sem tabela de unwind.
+  `CPP_EXCEPTIONS_ENABLED` foi ligado **e** o handler de assert deixou de lançar
+  (registra em nível de erro e segue).
+- **Cápsula:** `PxCapsuleGeometry` é longitudinal em X e exigia rotação de 90°;
+  a do Jolt é em Y, igual ao contrato neutro. A correção desaparece.
+- Corrigida uma suposição errada: o cache `.mecollider` **não** é binário cozido
+  de SDK, e sim os pontos dos hulls do V-HACD. O backend Jolt lê os mesmos
+  arquivos; nenhum cache é invalidado.
+
+### Validação
+
+- `ctest --test-dir build-linux` → **3/3 passando** sobre PhysX, com o contrato
+  estreitado.
+- `tools/check-architecture.sh` → **9/9**, incluindo a regra nova
+  `\bJPH::|#include.*<Jolt/` fora de `Engine/Physics/Jolt` (a de PhysX fica como
+  guarda de regressão permanente). Paridade no `.ps1`.
+- Testes novos do módulo neutro: pêndulo de geometria conhecida com resposta
+  analítica (`m·g·L`), soma de subárvore em cadeia de dois links, transporte de
+  momento para o ancoradouro, e cadeia pendurada exigindo torque zero. O
+  primeiro deles **falhou de verdade** na primeira execução — a expectativa
+  estava errada, não o código: uma junta de torção ao longo do braço não
+  sustenta peso nenhum, a carga vai para o pai. Cenário corrigido para cobrir o
+  que se pretendia.
+
+### O que falta, e é o volume
+
+Dez módulos do núcleo de simulação, ~3.500 linhas: `JoltScene3D`,
+`JoltBodies3D`, `JoltQueries3D`, `JoltContacts3D`, `JoltExternalForces3D`,
+`JoltCharacter3D`, `JoltGrab3D`, `JoltRagdoll3D`, `JoltRagdollDrives3D`,
+`JoltRagdollState3D`. O default do seletor continua **PhysX** até a suíte passar
+no Jolt; selecionar Jolt hoje compila a fundação e falha no link nos pontos não
+escritos, que é o sinal correto em vez de simulação silenciosamente incompleta.
+
+Pontos de tradução já mapeados para esses módulos:
+
+- Contatos: `OnContactAdded` → impacto, `OnContactPersisted` → arrasto, com
+  `EstimateCollisionResponse` fornecendo impulso em kg·m/s. Os callbacks rodam
+  em vários jobs em paralelo, com todos os corpos travados: buffer por worker e
+  consolidação determinista depois do passo.
+- Forças externas: `PhysicsStepListener::OnStep` é o ponto em que arrasto
+  aerodinâmico, vento e empuxo entram. O empuxo ganha
+  `Body::ApplyBuoyancyImpulse` nativo, e o solver de cinco amostras sai.
+- Auto-colisão do ragdoll: `CollisionGroup` + `GroupFilterTable` por instância,
+  com `DisableParentChildCollisions(nullptr)` — que desliga **exatamente**
+  pai-filho, preservando a decisão registrada de que avô/neto precisa colidir
+  (foi desligar isso que deixou o braço atravessar o peito). Some também o
+  limite de 32 links do empacotamento em `word3`.
+- Personagem: `CharacterVirtual::ExtendedUpdate` (stick-to-floor + WalkStairs).
+  **Atenção:** os auxiliares de personagem do Jolt assumem "up" = +Y por padrão;
+  `mUp`, `mSupportingVolume` e os vetores de `ExtendedUpdateSettings` precisam
+  ser configurados para Z-up explicitamente.
+- Alvos de drive: os três escalares por eixo precisam ser compostos num
+  quaternion twist·swing para `SetTargetOrientationCS`.
+
+## O harness estava medindo um caminho que o jogo não executa — e o que isso revelou — 25 de setembro de 2026
+
+Usuário, depois da interpolação: "se eu girar bem lentamente fica normal,
+mas conforme acelero ele dá esses glitches conforme a velocidade".
+
+### Erro de método, corrigido
+
+Os cenários de teste nunca preenchiam `CharacterLocomotionInput3D::footGround`.
+Sem sonda, `ground.walkable` é falso, o *foot lock* **nunca engata**, e
+portanto **toda medição anterior de giro foi feita num caminho que o jogo
+não executa**. Foi assim que uma correção de giro mediu "limpa" aqui e
+continuou quebrada na tela.
+
+Corrigido: o harness agora põe um piso plano sob os dois pés. Com isso o
+teste de giro **passou a falhar**, ou seja, passou a reproduzir o problema.
+
+### O que a medição mostrou
+
+Varrendo a velocidade de giro (sem caixote, giro puro), contando ticks em
+que algum link passa de 2 m/s:
+
+| giro | pico | ticks com pico |
+|---|---|---|
+| 0,5 rad/s | 6,0 m/s | 300/899 |
+| 2 rad/s | 5,5 m/s | 563/899 |
+| 8 rad/s | 5,6 m/s | 233/899 |
+
+É contínuo (15–63% dos ticks), não esporádico — coerente com o relato. E a
+0,5 rad/s uma mão a 0,7 m deveria fazer 0,35 m/s; medir 6 m/s é ~16× demais.
+
+Hipóteses testadas e **descartadas por medição**:
+- alvo velho do passo de giro (corrigido antes; não era isto);
+- solto do travamento de pé sem rampa (rampa adicionada; zero efeito);
+- taxa de variação da pose comandada (limitador adicionado: achatou a
+  escala com a velocidade, 7,5 → 5,6 m/s a 8 rad/s, mas não a base);
+- o próprio *foot lock*: **desligá-lo piora** (13 m/s), ou seja ele estava
+  segurando, não causando.
+
+### Conclusão estrutural
+
+A pelve é **cinemática** (autoridade 1: posição e velocidade escritas todo
+tick) e os pés têm atrito no chão. Quando o corpo gira, a raiz infinitamente
+forte arrasta a articulação e o atrito resiste; as pernas são a única coisa
+que pode absorver a diferença, e é isso que aparece como chicote. Nenhum
+ajuste dentro da IK ou do passo resolve isso, porque a contradição está um
+nível acima.
+
+O caminho correto é a raiz também ser **dirigida por força** (um PD forte na
+pelve) em vez de teleportada — que é exatamente o modelo biomecânico. Ou
+seja: "o mesmo boneco físico com movimento perfeito" exige que o controlador
+biomecânico seja bom o bastante para ser o padrão. Isso é uma etapa de
+trabalho, não um ajuste, e **não foi iniciada** sem decisão do usuário.
+
+O limite do teste de giro ficou em 9 m/s: é teto contra regressão do estado
+atual, não meta.
+
+## O glitch da câmera era falta de interpolação no render — 25 de setembro de 2026
+
+O usuário testou a correção do passo de giro: "não mudou nada, a não ser o
+fato dele virar mais lentamente, logo o problema está em outro lugar". Ele
+estava certo — a correção anterior consertava um chicote real e medido, mas
+não era o que ele via.
+
+### Por que os testes não pegavam
+
+Todos os cenários são headless e rodam locomoção e física **em lockstep** a
+120 Hz. O sintoma dele é do lado do render, e nenhuma medição de física
+poderia encontrá-lo.
+
+### Causa
+
+`Application::run` acumula tempo, roda `onUpdate` em passos fixos e chama
+`onRender` **sem nenhum alfa de interpolação**: o resto do acumulador é
+descartado. O personagem é desenhado no último estado simulado.
+
+Medido no hardware dele: monitor a **143,8 Hz**, física a 120 Hz. A razão é
+1,198, ou seja ~0,835 passo por quadro — **cerca de um quadro em cada cinco
+não recebe passo nenhum**. O personagem congela por um quadro e pula no
+seguinte, ~29 vezes por segundo. A geometria estática não sofre com isso
+porque é desenhada pela câmera a cada quadro; por isso o sintoma aparece
+como "só o corpo glitcha, e só quando giro a câmera".
+
+Vale notar que isso nunca foi novo: está lá desde sempre e só ficou visível
+depois que o tremor de escrita de juntas e a briga com o chão saíram da
+frente.
+
+### Correção
+
+- `ApplicationFrameMetrics::fixedStepAlpha` passa a publicar quanto do passo
+  fixo já decorreu no instante do render.
+- `SpawnedRagdollInstance::simulationPreviousState` guarda o estado do passo
+  anterior (distinto de `previousPhysicsState`, que avança na cadência de
+  render e serve a motion vectors).
+- O render interpola posição e orientação de cada link entre os dois passos.
+- Motion vectors passam a comparar contra o que foi **de fato desenhado** no
+  quadro anterior (`renderedPositions/Orientations`), não contra um passo de
+  simulação que ninguém viu — senão a interpolação introduziria erro de
+  reprojeção no TAA.
+
+Props têm exatamente o mesmo problema e **não** foram alterados nesta etapa
+(o usuário não relatou, e a regra é um bug por vez).
+
+**Sem aprovação visual**, mas a hipótese é quantitativa: 143,8 vs 120 Hz
+prevê o sintoma exato que ele descreve.
+
+## Glitch ao girar a câmera: o passo de giro mirava um ponto que ficava para trás — 25 de setembro de 2026
+
+Dois itens, na ordem pedida pelo usuário.
+
+### 1. Forçar mais a pose no modo padrão
+
+Pedido literal: "ele deveria forçar mais a pose no default, para focar na
+perfeição". Implementado como um dial ligado ao `physicsBlend`: em modo
+animação os motores vão ao teto permitido (2× rigidez e torque, damping em
+raiz quadrada para não desestabilizar) e voltam ao nominal do perfil
+conforme a física assume. Medido andando: pior junta 12,9° → 11,6°, RMS
+4,05° → 3,94°. Ganho modesto, mas é exatamente o comportamento pedido e sem
+custo de estabilidade.
+
+Nota de medição: nos cenários de teste o *foot lock* nunca engata (o teste
+não preenche `footGround`, então `ground.walkable` é falso). O desvio de pé
+que o usuário vê em movimento provavelmente vem dele, e isso **não é
+reproduzível no harness atual** — fica registrado como limite.
+
+### 2. O glitch da câmera
+
+Reproduzido numericamente girando `facingYawRadians` a 1,5 rad/s: a raiz
+girava perfeitamente lisa (1,502 rad/s), mas algum membro chegava a
+**23 rad/s e 13,8 m/s**. Desligar só o passo de giro parado derrubava isso
+para 0,95 m/s — isolando a causa sem ambiguidade.
+
+A causa: o passo captura `repositionToWorld` como um **ponto fixo do mundo**
+no instante em que começa, mas o corpo continua girando durante os 0,22 s do
+passo. No referencial do corpo o alvo corre para trás na velocidade inteira
+do giro; a perna chicoteia para alcançá-lo e aterrissa numa posição já
+defasada, o que dispara o passo seguinte imediatamente — realimentando.
+
+Corrigido mirando onde a pose quer o pé **agora** (recalculado a cada tick,
+portanto girando junto com o corpo). O passo continua existindo e fazendo o
+seu trabalho.
+
+| | antes | sem passo (referência) | corrigido |
+|---|---|---|---|
+| vel. máx. de link | 13,8 m/s | 0,95 m/s | **1,2 m/s** |
+| vel. angular máx. | 23 rad/s | 3,2 rad/s | **3,9 rad/s** |
+| RMS de pose | 3,0–4,3 oscilando | 2,64 | **2,65–2,70 estável** |
+
+Teste de regressão: girando a 1,5 rad/s, nenhum link pode passar de 4 m/s.
+Confirmado que falha ao restaurar o alvo fixo ("Girar a camera chicoteou um
+membro") e passa com a correção.
+
+## Pé inclinado enterrava a ponta: 2760 N contra o chão — 25 de setembro de 2026
+
+Bug isolado a pedido do usuário ("vamos corrigir bug por bug"): os pés ainda
+tremiam na base.
+
+### Medição
+
+Primeiro descartei a hipótese óbvia: a altura da raiz corrigida pelo
+aterramento é **lisa** tick a tick, não oscila. O que treme é a
+**velocidade** dos pés (±0,24 m/s) com a posição praticamente parada —
+assinatura de chattering de contato, não de oscilação de controle.
+
+Medindo o contato direto nos pés: o pé direito recebia **22–26 N·s por
+tick**, ou seja ~2760 N — 3,5× o peso do corpo — de forma contínua. O
+esquerdo alternava entre 0 e 0,9 (liga/desliga do contato). O corpo estava
+sendo prensado contra o chão por uma perna.
+
+### Causa
+
+O aterramento da etapa anterior estimava a sola como `halfExtents.z`, ou
+seja, tratava o pé como uma laje plana. Com o tornozelo inclinado ~12° num
+pé de 30 cm, a ponta desce ~3 cm abaixo dessa estimativa. O aterramento
+então "corrigia" para uma altura em que a ponta continuava enterrada.
+
+Corrigido com a função de suporte real do colisor: para a orientação em que
+ele de fato está, o ponto mais baixo de uma caixa é
+`|a.x|·hx + |a.y|·hy + |a.z|·hz`, com `a` sendo o eixo Z do mundo expresso no
+referencial da caixa (cápsulas têm o equivalente com meio-comprimento e
+raio). Vale para qualquer link, não só o pé.
+
+### Resultado medido
+
+| | antes | depois |
+|---|---|---|
+| impulso no pé (regime) | 22–26 N·s | ~0,05 N·s |
+| erro RMS de pose | 5,88° | **3,52°** |
+| pior junta | pé/perna | ombro (12,8°) |
+
+Ou seja: os pés deixaram de brigar com o chão e o corpo passou a seguir a
+pose três vezes melhor — sem tocar em ganho nenhum.
+
+Verificações laterais feitas no caminho: a compensação de gravidade **está**
+funcionando (desligá-la piora o RMS de 5,88 para 6,99), então não era ela.
+
+Teste de regressão: impulso nos pés em regime tem de ficar abaixo de 8 N·s.
+Confirmado que ele falha ao voltar a suposição de pé plano e passa com a
+função de suporte.
+
+## A pose autoral estava enfiando o pé no chão — 25 de setembro de 2026
+
+Usuário: "ele não consegue ficar na pose, as pernas todas tortas". Medido
+junta a junta em vez de deduzir: erros de 23° e 35° nos tornozelos, 12° nos
+joelhos, e assimetria forte entre as pernas.
+
+### Causa
+
+Medindo a pose **autoral** contra o chão: a sola direita era comandada em
+**−3,4 cm**, ou seja, 3,4 cm abaixo do piso. O chão responde empurrando o pé
+de volta e a perna inteira entorta para absorver a diferença. Não era motor
+fraco — era a animação pedindo algo impossível.
+
+Vem de a altura da raiz ter duas fontes que não precisam concordar: a
+cápsula (`standingRootHeightMeters`, medido na pose de bind, pernas retas) e
+o *root track* do clipe (pose de idle, joelhos flexionados).
+
+Correção: antes de qualquer coisa ser dirigida pela pose, ela é **aterrada**
+— calcula-se a sola autoral mais baixa e sobe-se a raiz o suficiente para
+ela encostar exatamente no chão. Nunca abaixa, então quadro de voo não é
+afetado. Resultado imediato: sola direita de −3,4 cm para 0,0, e os erros de
+23°/35° do tornozelo e 12° do joelho sumiram.
+
+Detalhe que quase fez a correção nascer morta: a primeira versão dependia de
+`input.footGround[].hasSurface`, que o cenário de teste não preenche — a
+correção não rodava e o número não mudava nada. Passou a cair no mesmo
+palpite de solo que o resto da função usa.
+
+### Ganhos de drive dimensionados pela carga
+
+Com a penetração removida, a carga real ficou visível e os ganhos foram
+dimensionados por ela (tornozelo segurando o corpo ≈ peso × braço do pé ≈
+63 N·m; a 120 N·m/rad isso dava ~30° de afundamento). Pernas, tronco e
+ombros subiram entre 2× e 3×. Tentativa anterior de 10× no tornozelo
+**desestabilizou** (72° de erro, oscilação contra o contato) — foi descartada;
+o reforço só funciona depois que o pé parou de ser enfiado no chão.
+
+Os valores novos foram propagados para `tools/prepare_als_ragdoll.py` e
+confirmado que o gerador volta a reproduzir o perfil commitado.
+
+### Limite honesto desta etapa
+
+O erro residual ficou em ~9-13° espalhado, em vez de picos de 22-35°. Não é
+zero e não vai ser: com a raiz carregada e os pés no chão a cadeia é
+fechada, e qualquer diferença entre a pose autoral e essa geometria tem de
+ser absorvida por alguma junta. O RMS agregado provou ser um proxy ruim
+(mudar ganho realoca erro entre juntas sem mudar o total), então a decisão
+passou a ser por pico por junta, não por RMS.
+
+## Autoridade parcial eliminada: tremor, deslizamento e levantar explosivo tinham a mesma causa — 25 de setembro de 2026
+
+Quatro sintomas relatados no teste seguinte: tremor constante ("parece que
+está com frio"), deslizar "como se o chão fosse sabão" quando empurrado,
+tremor ao girar a câmera, e levantar que se recontorce e arremessa o corpo
+longe. Todos a mesma causa.
+
+### A causa
+
+`resolveRagdollAnimationConstraint` termina em
+`applyCache(cache, flags, true)` com `ePOSITION|eVELOCITY|eROOT_*`. Ou seja,
+com autoridade **parcial** a articulação tem posições **e velocidades**
+reescritas a cada tick:
+
+- Escrever velocidade toda hora injeta energia → o tremor constante.
+- Escrever posição depois do solver descarta o impulso de atrito que os pés
+  acabaram de acumular → deslizamento de sabão.
+- Com a câmera girando, o alvo da raiz muda rápido e a reescrita vira
+  trepidação.
+- No levantar a raiz estava livre (autoridade 0) **e** as juntas eram
+  escritas — escrever junta com base livre é exatamente como arremessar o
+  corpo.
+
+Autoridade parcial é insustentável por construção: não existe "um pouco de
+teleporte".
+
+### O que passou a valer
+
+- **`poseAuthority` é sempre 0.** Nenhuma junta é escrita, nunca. Só os
+  motores PD movem o personagem.
+- **A raiz é carregada ou livre, nunca no meio**: carregada (autoridade
+  cheia, caminho de atribuição limpa e coerente do backend) enquanto o peso
+  físico está baixo ou durante o `Rising`; livre a partir de 0,35 de peso.
+  Entregar o corpo é um evento físico, não um dial.
+- **Backend só escreve o que a autoridade pede**: quando `poseBlend` é zero,
+  `applyCache` recebe apenas as flags de raiz. Devolver ao solver os próprios
+  valores das juntas é no-op numérico mas reinicia o estado interno da
+  articulação — e isso aparecia como tremor num personagem parado.
+
+### Sobre "movimento perfeito"
+
+Erro RMS de rastreio medido: 10,1°. Mas a quebra por junta mostra que **não
+é moleza de motor**: perna esquerda 4–6°, perna direita 16–20°. A assimetria
+é o *foot lock* movendo o alvo da perna de apoio de propósito — nenhum ganho
+de motor remove isso. Confirmado experimentalmente: subir a rigidez da
+coluna/ombros 2,4× manteve o RMS em 10,0 (só realocou o erro entre juntas),
+e antes disso subir as escalas de drive ao teto moveu 9,7 → 9,0. O ganho
+foi revertido por não entregar nada.
+
+Portanto o teste guarda isso como limite grosseiro (14°) e está documentado
+como "o corpo ainda segue a pose?", não como métrica de fidelidade.
+
+**Sem aprovação visual.** Os quatro sintomas têm causa comum identificada e
+removida na raiz, mas quem confirma é o teste na tela.
+
+## Um corpo físico só: juntas por motor, raiz carregada, auxílio decrescente — 25 de setembro de 2026
+
+O usuário recusou explicitamente o modelo da Unreal ("não queria que fosse
+literalmente como o unreal, onde o boneco não é um boneco físico") e
+apontou o efeito colateral: com a pose vindo da animação, os membros
+atravessavam parede — "acabamos perdendo toda a física do boneco no
+default". Pediu **o mesmo boneco físico**, com movimento perfeito e sem
+teleporte, e a passagem para o biomecânico **reduzindo o auxílio**
+gradualmente.
+
+### O que estava realmente acontecendo
+
+`resolveRagdollAnimationConstraint` **escreve `jointPosition[dof]` direto no
+cache da articulação**. Com `poseAuthority >= 1` é atribuição pura
+(`= q`). Ou seja: os ossos eram literalmente teleportados todo tick, o que
+explica ao pé da letra o que ele descreveu ("como se ele tentasse ir
+teleportando os ossos pra a direção correta") e por que membro atravessava
+parede — posição escrita nunca passa pelo solver.
+
+### O modelo agora
+
+Um caminho só, um corpo só:
+
+- **Juntas: motores.** `poseAuthority` deixou de posar o corpo. Ficou só uma
+  correção de deriva (0,55), que é *blend* por tick, nunca a atribuição
+  dura. As juntas são movidas pelos drives PD do perfil + compensação de
+  gravidade, então colidem de verdade.
+- **Raiz: carregada.** `rootTranslationAuthority` e `rootRotationAuthority`
+  seguem altos. Deixar a rotação da raiz para a física é o que produzia a
+  coluna inclinada — essa combinação (juntas livres + raiz carregada) nunca
+  tinha sido tentada: antes era ou tudo teleportado, ou raiz solta.
+- **Auxílio decrescente.** `physicsBlend` agora reduz autoridade de raiz,
+  rigidez das juntas e libera o assist de equilíbrio (teto de 50%) de forma
+  contínua. Não há mais troca de fonte de render, então também não há o
+  "parece que cria um corpo novo no lugar" que ele relatou.
+- O render voltou a desenhar **sempre o corpo simulado**.
+- `m_physicalCharacterControl` foi **removido**: com um caminho só, o toggle
+  não descrevia mais nada real.
+
+### Medição, não achismo
+
+Erro RMS de rastreio da pose autoral, medido com o teste dirigindo o
+personagem parado por 15 s:
+
+| correção de deriva | erro RMS |
+|---|---|
+| 0,10 | 9,71° |
+| 0,35 | 6,10° |
+| 0,60 | 5,39° |
+
+A curva achata depois de 0,35, então 0,55 é onde segura a pose sem passar
+disso. Subir os ganhos de motor ao teto do clamp moveu de 9,71° para 9,01° —
+ou seja, **não era falta de força**, era ausência de correção posicional.
+O teste agora falha se esse erro passar de 12°.
+
+Contato afrouxa isso sozinho: o guia é enviado com `releaseOnInteraction` e o
+lado PhysX limita toda autoridade por `1 - 0,9*externalInterference`, então
+encostar numa parede devolve aquele membro ao solver em vez de escrevê-lo
+através dela.
+
+**Sem aprovação visual.** Em especial: se o tremor ao girar a câmera some
+(a hipótese é que era exatamente a escrita de juntas por tick) e se 5,4° de
+erro lê como "movimento perfeito" na tela.
+
+## Correções dos três bugs do primeiro teste; o "buraco" do teleporte não existia — 25 de setembro de 2026
+
+O usuário nem chegou a testar locomoção: encostou uma caixa no boneco e ele
+desabou na hora e entrou em loop de cair/levantar/cair. Segurar com a
+PhysGun também ficou quebrado. E cobrou (com razão) o buraco que eu tinha
+deixado registrado sobre teleporte de cápsula.
+
+### 1. Loop de cair/levantar — a causa real
+
+`fallenObservation` lia os **corpos simulados** (contato com chão + tronco
+baixo). Mas agora a animação é dona da pose: logo depois que um levantar
+devolve a pose, os corpos ainda estão deitados por alguns ticks — e isso
+re-disparava outra queda imediatamente, para sempre.
+
+Corrigido condicionando a detecção a `m_physicsBlend > 0.5`: em modo
+animação o personagem **não pode** estar caído, porque a pose autoral diz
+que ele está de pé. Só faz sentido perguntar isso enquanto a física é quem
+segura o corpo.
+
+### 2. Encostar um caixote derrubava
+
+O impacto era medido contra `massa * g * dt` (≈6,5 N·s para 80 kg a 120 Hz)
+— valor que **qualquer contato sustentado** ultrapassa, porque um caixote
+apenas apoiado entrega o próprio peso em impulso todo tick. Qualquer toque
+saturava em física total.
+
+Passou a ser medido contra variação de momento real: zona morta em
+`massa*0,05` (≈0,05 m/s de impulso) e física cheia em `massa*0,45`. Um
+caixote apoiado fica abaixo da zona morta; um empurrão de verdade não.
+
+### 3. PhysGun
+
+Segurar o boneco arrastava os **corpos**, mas o render mostrava a
+**animação** (blend 0) — a mão do jogador não aparecia. Agora
+`input.manipulated` força blend 1: quem está sendo movido é o corpo, então é
+o corpo que tem de ser desenhado.
+
+### 4. O teleporte de cápsula que eu disse não existir
+
+Existe: `PhysicsScene3D::placeCharacter` chama `setFootPosition` do
+`PxController`. A nota anterior no devlog estava **errada** e eu a repeti em
+vez de conferir. Agora, enquanto o personagem está caído ou levantando, a
+cápsula é reposicionada sobre o corpo a cada tick — a câmera segue o corpo e
+no fim da recuperação não há mais puxão de volta.
+
+### Teste de regressão
+
+`testPropContactAndSingleRecovery` cobre exatamente o que ele viu: um
+caixote de 25 kg apoiado não pode derrubar nem tirar a pose da animação, e
+uma pancada forte (140 kg de 4,5 m) pode derrubar **uma vez**, nunca entrar
+em loop. Verificado que o teste falha com o código anterior — removendo só o
+gate de `physicsBlend`, ele acusa "Personagem entrou em loop de cair e
+levantar" — e passa com a correção. Instrumentar o cenário também mostrou
+por que a primeira versão do teste era vazia: contato de repouso contra um
+corpo mantido pelo guia reporta impulso ~0, então o que derrubava era o
+empurrão forte, não o encosto.
+
+`ctest` 3/3, `check-architecture` aprovado, build de produção atualizada.
+
+## Animação passa a ser autoritativa; física entra por peso; levantar vira animação — 25 de setembro de 2026
+
+O usuário apontou que o problema é **conceitual**, não de calibragem: o
+boneco nascia torto, andava com a coluna inclinada, embananava os pés e
+tremia ao mexer a câmera. E identificou o gatilho: o "Controle corporal
+físico" estava ligado. Com ele desligado ficava muito melhor — mas aí
+esbarrão em outro boneco não produzia reação nenhuma, porque voltava ao
+normal no instante em que o contato acabava.
+
+### O que a Unreal faz, e o que estávamos fazendo
+
+Lendo `PhysAnim.cpp` da UE 5.8 (`PerformBlendPhysicsBones`): lá a
+**animação é dona da pose**. Os corpos físicos existem, colidem, mas por
+padrão são cinemáticos; quando se quer física, sobe-se o
+`PhysicsBlendWeight` por corpo e o resultado simulado é **misturado de
+volta** na pose animada. Com peso zero o resultado da física é
+simplesmente descartado.
+
+Aqui era o contrário: o ragdoll era sempre simulado e o render lia a pose
+**dos corpos físicos**, tentando puxá-los para a pose autoral via
+"autoridade". Não existe valor de autoridade em que um corpo simulado seja
+exatamente a pose que mandaram ele segurar — então todo resíduo do solver
+aparecia como postura torta, coluna inclinada e tremor por quadro. Era esse
+o erro de base.
+
+### O modelo agora
+
+Dois modos, como pedido:
+
+1. **Animação (padrão).** `SpawnedRagdollInstance::animationPose` guarda a
+   pose autoral em espaço de mundo e o render desenha a partir dela. Os
+   corpos continuam existindo e colidindo (a autoridade do guia vai a 1, eles
+   seguem a animação e ainda empurram props); eles só não têm voz sobre como
+   o personagem aparece.
+2. **Físico.** `physicsBlend` (0..1) decide quanto do corpo simulado entra
+   na pose. Sobe **proporcional ao impacto** e só por contato com corpo
+   **dinâmico** (`RagdollContactPoint3D::otherBodyDynamic`) — parede, chão e
+   soleira são estáticos e de propósito nunca tiram o personagem da
+   animação. Segura enquanto há contato e depois desce devagar (0,65/s,
+   contra ~9/s na subida), que é o "não volta de cara" pedido. A assistência
+   de equilíbrio ficou limitada a 50% enquanto nesse modo.
+
+`m_physicalCharacterControl` passou a ser `false` por padrão — vira só um
+toggle de depuração.
+
+### Levantar virou animação
+
+O sistema procedural de levantar (9 fases, ~165 linhas de pose à mão, mais
+o wrench de assistência) foi **removido inteiro**. No lugar: duas fases
+(`Settling`, `Rising`) e as duas FBX do usuário importadas como clipes
+(`stand_up_back` = costas no chão, `stand_up_front` = peito no chão), com
+erro de membro de 0,03° e 1,50°.
+
+- `Settling`: corpo largado, `physicsBlend` = 1, nada é comandado. Só sai
+  quando o corpo de fato parou (velocidade máxima de link < 0,45 m/s), porque
+  decidir qual clipe tocar depende de como ele caiu.
+- `Rising`: toca o clipe pelo mesmo caminho de qualquer outro clipe, com
+  `physicsBlend` descendo a zero em 0,3 s (cross-fade da pose física para a
+  do clipe). A raiz é ancorada **onde o corpo caiu**, não onde a cápsula
+  está.
+
+Armadilha encontrada aqui: importar os clipes com `--root-motion in-place`
+apaga a subida do corpo (a remoção de deriva é feita para ciclos de
+locomoção). O pélvis ia de −0,888 e **voltava** para −0,888. Com
+`--root-motion preserve` vai de −0,888 → −0,056, que é o levantar de
+verdade.
+
+### Limitação conhecida
+
+A cápsula não é teleportada (não há API para isso), então se a queda jogar o
+corpo longe de onde a cápsula ficou, ao terminar o levantar há um puxão de
+volta até ela. Com queda agora restrita a contato entre corpos dinâmicos,
+isso deve ser raro, mas continua sendo dívida.
+
+Validação: build Debug limpa, `check-architecture.sh` aprovou, `ctest` 3/3,
+`./compilar.sh RelWithDebInfo` atualizada. **Sem aprovação visual** — o
+efeito principal (pose exata igual à animação) é justamente o que só se
+confirma vendo rodar.
+
+## Personagem trocado pelo manequim ALS; ragdoll inteiro regerado a partir dele — 25 de setembro de 2026
+
+A skin low-poly da etapa anterior ficou ruim e foi descartada. O usuário
+entregou `als-ragdoll.zip`: um manequim segmentado (cada parte do corpo é
+uma peça arredondada própria) sobre o esqueleto padrão do Unreal. Pedido:
+usar esse modelo e **refazer o ragdoll de verdade** — ossos, colisores,
+tudo — porque o anterior estava horrível. Sem cor aleatória desta vez.
+
+### O que mudou de abordagem
+
+A etapa anterior forçava uma malha nova sobre o esqueleto do personagem
+antigo. Aqui é o contrário: o perfil físico é **gerado a partir do
+modelo**. `tools/prepare_als_ragdoll.py` (novo) lê o `.blend` de origem e
+mede tudo:
+
+- Cada um dos 18 links físicos recebe os vértices que o osso realmente
+  possui (a malha tem peso rígido, uma influência por vértice) e o colisor
+  é ajustado a esses vértices no próprio referencial do osso. Torso e pés
+  viraram **caixas** porque é essa a forma das peças; membros, pescoço e
+  cabeça continuam cápsulas. Raio de cápsula = média das duas meias-larguras
+  transversais; extensão por percentil (0,4%–99,6%), não pelo extremo, pra
+  um vértice solto não inflar um membro inteiro.
+- Ossos auxiliares (clavículas, twist bones, dedos, `ball`) não viram corpo
+  físico: são roteados por `physics_link` para o link a que pertencem. As
+  clavículas ficam no torso de propósito — escápula não gira com o úmero.
+- Massas por segmento somam exatamente 1,0 (a validação exige) e os ganhos
+  de drive (stiffness/damping/torque) foram mantidos iguais aos já
+  calibrados: só a geometria é nova.
+
+### Causa raiz que custou duas iterações: bind dobrado
+
+O retarget aplica a flexão **absoluta** de cotovelo/joelho do clipe em cima
+da dobra que a pose de bind já tem. A pose-A original do modelo tem 32° de
+cotovelo, o que virava ~16° de erro de direção em **todo** quadro (as
+pernas, quase retas, davam 3,9°). O importador reprovou nos gates e mostrou
+isso por aresta — braços 15,8–16,1°, pernas 3,9°, coluna 6,2° — que é o
+padrão de um desvio de bind, não de um erro dinâmico.
+
+Correção: endireitar os membros antes de medir (braços ao longo de Y,
+pernas para baixo), transformando cada peça rigidamente junto com seu osso.
+Isso zerou o erro de membro e ainda devolveu a semântica de T-pose que o
+código procedural de pose em `CharacterLocomotion3D` assume.
+
+Segundo efeito colateral, também corrigido: com os membros retos, o eixo de
+dobra que eu derivava do próprio bind virou degenerado (produto vetorial de
+dois vetores colineares) e os antebraços passaram a girar no plano errado
+(26–43°). Cotovelo e joelho agora usam eixo anatômico fixo e explícito.
+
+Resultado do retarget contra o perfil novo (era 4,20/4,79 no personagem
+antigo, no melhor caso):
+
+| clipe | RMS | erro máx. de membro |
+|---|---|---|
+| cc0_idle | 2,54° | 0,03° |
+| mixamo_running | 3,38° | 0,03° |
+| mixamo_sprint | 4,11° | 20,13° (pose extrema, exige `--dynamic-projection`) |
+
+Os três clipes foram regerados contra `AlsRagdollV1`. As velocidades
+autorais mudaram junto (o retarget escala pelo comprimento de perna do
+alvo): corrida 2,30→2,51 m/s, sprint 5,51→6,03 m/s, e
+`m_avatarCharacterSettings` acompanhou pra o pé não patinar.
+
+### Testes
+
+A suíte estava quebrada **desde antes desta etapa** (referenciava clipes
+`*_dummy` e `run_forward` removidos numa etapa anterior). Foi realinhada à
+realidade atual, e no caminho apareceram três coisas que não eram só
+renomeação:
+
+1. O teste amostrava o clipe de corrida contra `HumanAdultV1` enquanto o
+   clipe passou a mirar `AlsRagdollV1` — perfis diferentes, limites
+   diferentes. Agora valida contra o rig do próprio clipe.
+2. "Negative per-link radius accepted" falhava porque `links[0]` (pelve)
+   virou caixa, e raio não significa nada em caixa. Passou a procurar a
+   primeira cápsula.
+3. "Physgun drive did not lift the character" expôs um teste que nunca
+   testou o que dizia: com a rigidez padrão do handle, um puxão de 0,3 m dá
+   ~480 N contra ~785 N de peso — nunca levanta, só endireita um corpo
+   caído no chão. Medi (subia 3,2 cm), e o puxão passou a ir além do ponto
+   de equilíbrio. O teste também deixou de tirar o corpo debaixo de uma
+   pilha de 20 outros, que media a pilha e não o drive.
+
+`ctest` agora passa 3/3 — a primeira vez nesta sessão. Isso cobre
+validação do perfil, bind da skin, os três clipes contra o rig,
+continuidade das âncoras articulares ao longo da animação, estresse de 22
+corpos (folga máxima de âncora 9,6e-7 m) e grab/lift da Physgun.
+
+Verificação extra fora da engine: `prepare_als_ragdoll.py` foi rodado de
+novo a partir do zip original e reproduz o perfil e a skin **idênticos** aos
+commitados, e a cinemática direta do bind reproduz as posições dos links com
+erro de 1e-19. Os colisores foram conferidos visualmente sobrepostos à
+silhueta da malha.
+
+`assets/characters/crash_test_dummy/` foi removido (`git rm`), junto com as
+referências em código, testes e docs.
+
+**Sem aprovação visual ainda** — nada disso foi visto rodando; o que está
+verificado é geometria, retarget e física automatizada.
+
+## Nova skin visual (male_low_poly_human_body) e tingimento aleatório por spawn — 25 de setembro de 2026
+
+Pausa na investigação de queda/tropeço (ver entradas abaixo, ainda sem
+teste do usuário) para trocar a aparência visual do personagem. Pedido:
+usar `male_low_poly_human_body.glb` (baixado pelo usuário) como novo
+visual, mantendo a física igual, e colorir cada boneco spawnado com uma
+cor aleatória bem fraca (amarelo clarinho, azul clarinho etc.) já que a
+malha nova é branca.
+
+### Troca de skin (física inalterada)
+
+`CrashTestDummyV1.ragdoll.json` não mudou — só `dummy.skin.json` (a malha
+visual + pesos de esqueleto) foi trocado, então é reskin puro, não um
+personagem novo. Pipeline (Blender headless, script descartável, não
+commitado):
+
+- A malha original (glb) veio com o transform de verdade preso num Empty
+  pai ("Cube.001"), não no objeto da malha — `transform_apply` sem antes
+  limpar o parent (`parent_clear(type='CLEAR_KEEP_TRANSFORM')`) gravava só
+  o transform quase-identidade do objeto, deixando os vértices 10x maiores
+  que o esperado. Corrigido limpando o parent antes de aplicar.
+- Pose T da fonte tinha os braços no eixo local X e a profundidade no eixo
+  local Y (confirmado projetando os vértices em PNG via PIL, já que o
+  render offline do Blender Workbench em modo headless voltou só cinza
+  uniforme nas duas tentativas — não investigado por que, abandonado em
+  favor da projeção 2D dos vértices, que funcionou de primeira e é mais
+  fácil de conferir de qualquer forma). Rotação de +90° em Z
+  ((x,y,z)→(−y,x,z)) alinha com a convenção do motor (+X frente, +Y
+  esquerda, +Z cima).
+- Escala/posição: ajustada para bater exatamente com a altura real do
+  dummy.skin.json atual (pés em Z=−0,8702 m, topo da cabeça em Z=+0,9298 m
+  — os mesmos números de `standingRootHeightMeters`), não um valor
+  chutado.
+- **Causa real da falha inicial do peso automático** ("Bone Heat
+  Weighting: failed to find solution", vértice sem peso): a malha
+  exportada vinha com ~880 ilhas desconectadas de ~4 vértices cada (cada
+  face com vértices duplicados, sem solda) — o algoritmo de heat diffusion
+  do Blender só se propaga por aresta, então não alcançava quase nada.
+  `bpy.ops.mesh.remove_doubles` (solda por distância, 0,1 mm) reconecta a
+  malha antes de gerar o esqueleto; depois disso os pesos automáticos
+  funcionaram de primeira (`maximumDiscardedWeight: 0.0` no relatório do
+  exportador).
+- Esqueleto construído direto a partir das posições/anchors já existentes
+  em `CrashTestDummyV1.ragdoll.json` (sem inventar landmarks como o script
+  antigo `prepare_low_poly_character.py` fazia — aqui é reskin de um rig
+  já fixo, não um rig novo): cada osso vai do seu `joint.anchor` até
+  `2·position − anchor` (reflexo pelo centro da cápsula), fórmula
+  conferida contra o par UpperArm/Forearm existente antes de generalizar.
+  Conferência visual final (projeção 2D com os anchors sobrepostos) mostra
+  bom alinhamento; as mãos ficam um pouco além da ponta dos dedos desta
+  malha especificamente (proporção de mão um pouco diferente da malha
+  antiga) — cosmético, não deve ser perceptível fora de animação de mão
+  bem próxima.
+- `dummy.skin.json` exportado com `export_ragdoll_skin.py` (o mesmo
+  exportador que o personagem atual já usa), cor de vértice branca fixa
+  (sem textura — a malha não tinha nenhuma, só material branco liso).
+  `character.json` perdeu as chaves `albedo`/`thumbnail` (sem substituto
+  ainda) e ganhou `flatShaded: true` (a malha exporta normais por face,
+  combina com o visual "low poly"). `albedo.png`/`thumbnail.png` antigos
+  removidos (`git rm`, ficariam órfãos). Atribuição em `character.json`
+  deixa claro que a FÍSICA continua vindo da fonte CC0 antiga
+  (blendswap), mas a malha visual agora vem de um arquivo local do
+  usuário sem licença documentada — sinalizado para reconferir antes de
+  distribuir publicamente, não inventei uma licença.
+
+### Tingimento aleatório por spawn
+
+Não existia nenhum canal de cor por instância (o shader só multiplicava
+`albedo × cor-de-vértice`, igual pra todo mundo usando a mesma malha) —
+implementado do zero:
+
+- `MeshRender3D::tintColor` (novo campo, default `{1,1,1}` = sem efeito).
+- `SceneMeshInstanceGpu` (VulkanDevice.cpp) ganhou `tintColor` (vec4,
+  compartilha o MESMO array de atributos de vértice já usado pelo passe
+  de cor e o pre-pass de profundidade/sombra — só precisou de UMA
+  localização nova, 15, em vez de mexer em pipeline por pipeline).
+  `scene3d_mesh.vert` propaga `instanceTintColor` para
+  `objectTint` (flat); `scene3d_mesh.frag` multiplica:
+  `albedo = texture(...) * vertexColor * objectTint`.
+- `SpawnedRagdollInstance::tintColor`, sorteado uma vez no spawn
+  (`WorkbenchApp::spawnHumanRagdollAt`, RagdollRuntime.cpp) com um
+  xorshift32 (mesmo gerador pequeno/reprodutível que
+  `RagdollImpactTest3D` já usa — sem precisar de `<random>`), convertido
+  de HSV pra RGB com matiz aleatório, saturação baixa fixa (0,16) e valor
+  alto fixo (0,97) — sempre uma cor bem próxima do branco, nunca uma
+  "roupa colorida". Aplicado em `LaboratoryScreen.cpp` a cada malha do
+  boneco (`meshes[i].tintColor = instance.tintColor`).
+
+Validação: `./tools/build.sh Debug --skip-tests` limpo (shaders
+compilaram sem erro), `check-architecture.sh` aprovou, `./compilar.sh
+RelWithDebInfo` atualizada. `dummy.skin.json` validado por script (todo
+vértice com peso finito, soma de pesos ≈1, índices de junta dentro do
+intervalo, 0 vértices sem peso). `ctest` rodado: 2 dos 3 testes falham,
+mas por um motivo **anterior a esta etapa e sem relação com ela** —
+`tests/EngineFoundationTests.cpp` ainda referencia
+`assets/animations/clips/run_forward.matteranim.json`, removido numa
+etapa anterior desta mesma sessão (troca das animações antigas pelas
+Mixamo) sem atualizar o teste; confirmado via `git log`/`git status` que
+o arquivo já não existia antes desta etapa. Não corrigido aqui (fora do
+escopo pedido). **Sem aprovação visual** — não consegui renderizar
+preview localmente (ver nota do Blender Workbench acima); a conferência
+que fiz foi geométrica (projeção 2D de vértices + anchors dos ossos), não
+uma imagem real do jogo rodando.
+
+## Segunda força brigando com o Resting; PhysGun não segurava mais durante o levantar — 25 de setembro de 2026
+
+O usuário testou a correção anterior (zerar a força/torque de assistência
+durante `Resting`) e reportou que continuava "a mesma bosta": rodopiando no
+chão, animação errada intercalando, e além disso — sintoma novo — agarrar o
+boneco caído com a PhysGun fazia ele teleportar de volta pra posição
+original.
+
+A correção anterior só fechou uma das DUAS portas. `Resting` (e agora
+também "manipulado pela PhysGun") deixavam de cair no bloco de força de
+levantar (`if (getUpActive && phase != Resting ...)`), mas caíam
+diretamente no `else if (physicalControl && ...)` — o assist de equilíbrio
+mais antigo, de uma etapa anterior, que já existia antes de qualquer
+trabalho de queda desta semana. Esse assist ativa force/torque
+`* assistShare`, e `assistShare = clamp(1 - rootAuthority, 0, 1)` — como
+`rootAuthority` é forçado a 0 durante TODO o `getUpActive` (não só fora do
+Resting), esse assist entrava em força TOTAL (`assistShare = 1.0`)
+exatamente durante o `Resting` e durante qualquer manipulação pela
+PhysGun. É por isso que segurar o boneco com a PhysGun parecia
+teleportá-lo de volta: um torque/força de equilíbrio em força total,
+baseado num "ponto de captura" relativo aos pés, brigando contra a mão do
+jogador o tempo todo.
+
+Corrigido reestruturando os dois blocos pra serem mutuamente exclusivos:
+agora é `if (getUpActive) { ... nada durante Resting/manipulado, wrench de
+levantar nas outras fases ... } else if (physicalControl) { ... assist de
+equilíbrio antigo, só quando NÃO é get-up ... }` — um dono só pra
+força/torque da raiz enquanto `getUpActive`, sem exceção por baixo dos
+panos.
+
+Validação: build Debug limpo, `check-architecture.sh` aprovou,
+`./compilar.sh RelWithDebInfo` atualizada. **Sem aprovação visual ainda.**
+Nota separada, não resolvida aqui: o usuário também relatou o boneco
+"todo torto" ainda DURANTE a queda em si (antes de tocar o chão) — isso é
+provavelmente o assist de equilíbrio antigo brigando parcialmente contra o
+amolecimento de juntas do tropeço (a etapa anterior só reduz
+`rootAuthority` em até 38% pela força de reação, não zera, então o assist
+continua parcialmente ativo enquanto as juntas já estão quase soltas);
+ainda não investigado a fundo.
+
+## Pose de levantar recalibrada com números reais das FBX enviadas — 25 de setembro de 2026
+
+O usuário apontou, com razão, que `Getting Up.fbx`/`Standing Up.fbx` nunca
+tinham sido de fato usadas: o README de `assets/animations/source/mixamo/study/`
+dizia "referência", mas `applyGetUpPose` só reaproveitava ângulos antigos do
+`BiomechanicalBipedExperiment3D` (de semanas atrás, escritos antes dessas
+duas FBX existirem no projeto). Isso nunca tinha sido corrigido de verdade.
+
+Corrigido agora rodando `tools/import_humanoid_animation.py` de verdade
+contra as duas FBX (Blender 5.2, perfil `CrashTestDummyV1.ragdoll.json`,
+`--recovery`): as duas passam nos gates de qualidade do retarget sem
+projeção alguma, então os `jointPositionRadians` extraídos já saem
+limitados aos limites físicos reais da junta (o próprio importador faz o
+clamp na geração, não é algo a reconferir à parte). Um clipe de referência
+temporário foi gerado só para ler os quadros (não commitado — a diretriz de
+nunca tocar esses dois arquivos como clipe jogável continua valendo, só
+mudou COMO a referência foi obtida: números lidos de verdade, não
+inventados).
+
+`applyGetUpPose` foi reescrita fase a fase com âncoras reais (fração do
+clipe → ângulo, simetrizado entre os dois lados porque as fontes puxam com
+um braço só e o jogo não quer floreio unilateral, mesmo motivo do salto):
+`SupineTuck` (Getting Up 0,33–0,40), `SupineSit` (Getting Up 0,50→0,60),
+`ProneBrace` (Standing Up 0,20→0,30), `PronePush` (Standing Up 0,46→0,55),
+`GatherFeet` (média das duas por volta de 0,65–0,70 — convergem para quase
+o mesmo agachamento nas duas fontes). `Rise` parou de usar uma magnitude
+inventada separada: agora escala a própria âncora de `GatherFeet` até zero,
+então a transição para `Stabilize` tem uma origem só, não dois números
+escolhidos à mão que por acaso combinavam. `setSpine` deixou de ser um
+único escalar "bend" distribuído por proporções fixas e passou a receber
+abdômen/peito/peito-superior/pescoço explícitos, porque os dados reais não
+seguem essa proporção fixa que eu tinha inventado. Detalhe encontrado nos
+dados que valida a fonte: o ângulo do cotovelo em `Standing Up.fbx` cai de
+forma coerente ~130°→~114°(brace)→~66°→~38°(push) — exatamente a curva de
+um apoio-e-empurrão real, não ruído.
+
+`assets/animations/source/mixamo/study/README.txt` atualizado com as
+âncoras exatas usadas, para poder reconferir se o perfil físico mudar.
+
+Validação: `./tools/build.sh Debug --skip-tests` limpo, `check-architecture.sh`
+aprovou, `./compilar.sh RelWithDebInfo` (build do atalho) atualizada. **Sem
+aprovação visual** — a fidelidade aos dados de origem está mais alta que
+antes (agora é rastreável a números lidos, não a ângulos inventados), mas
+se a POSE inteira lida bem junto com a força auxiliar de levantar e a
+máquina de fases (que continua a mesma desta etapa) só se confirma vendo
+rodar.
+
+## Causa raiz real de "nunca tropeça/cai": step-offset engolindo os obstáculos — 25 de setembro de 2026
+
+Usuário voltou a pedir exatamente o mesmo (re-colou o pedido original de
+queda/tropeço na íntegra), dizendo que a etapa anterior ("Queda e levantar
+procedurais no híbrido", abaixo) foi ignorada e continua sem funcionar. Não
+foi ignorada — foi implementada, mas o amolecimento por impacto sozinho não
+bastava porque havia uma segunda causa raiz, mais básica, que a etapa
+anterior não cobriu: **o personagem nunca gerava sinal de colisão nenhum ao
+tropeçar em obstáculo baixo**.
+
+### Causa raiz
+
+`m_avatarCharacterSettings.maximumStepHeight` estava em `0,38 m`. O
+controlador de cápsula do PhysX (`PxController`) usa esse valor como
+`stepOffset`: qualquer obstáculo mais baixo que isso é **subido
+automaticamente pela varredura da cápsula, sem gerar nenhuma flag de
+colisão**. As duas soleiras de tropeço construídas na etapa do mapa
+(`TripCurb_20cm`, `TripCurb_30cm`) — feitas exatamente para servir de teste
+de tropeço — estavam as DUAS abaixo desse limiar. Ou seja, o personagem
+literalmente nunca colidia com elas; a cápsula só subia por cima como se
+fossem um degrau normal. `externalInterference` (usado para amolecer as
+juntas) só é alimentado por impulso de contato do RAGDOLL, e tropeço não
+gera contato nenhum no ragdoll — só no controlador de cápsula, que por sua
+vez não tinha nenhum canal ligado a isso. Por isso "tropeço" nunca existiu
+de fato, não por falha do amolecimento em si.
+
+Causa secundária, agravante: mesmo para colisões reais com o ragdoll
+(esbarrão em prop alto, colisão com outro ragdoll), o piso de rigidez
+residual (15%) e a janela de reação curta (até ~0,48 s) provavelmente
+deixavam as juntas recuperarem a força antes de um tombo real completar o
+movimento — o personagem "cambaleava" mas nunca chegava a cair.
+
+### O que foi corrigido
+
+- **Novo sinal de colisão lateral da cápsula**: `PhysicsCharacterState3D`
+  ganhou `collidedSideways`, setado em `PhysXScene3D::moveCharacter` a partir
+  de `PxControllerCollisionFlag::eCOLLISION_SIDES` — a cápsula agora expõe
+  quando a própria varredura foi bloqueada de lado, independente de gerar
+  contato no ragdoll ou não.
+- **`maximumStepHeight` reduzido de 0,38 m para 0,12 m**: as soleiras de
+  20/30 cm passam a ser obstáculos de verdade (não mais subidas
+  automaticamente); frestas/soleiras comuns de piso continuam passando sem
+  problema.
+- **Novo canal até a locomoção**: `CharacterLocomotionInput3D` ganhou
+  `obstructedWhileMoving`, ligado em `RagdollRuntime.cpp` a partir de
+  `character.collidedSideways`. Dentro de `CharacterLocomotion3D::update`, um
+  `stumbleSignal` é sintetizado a partir disso — só conta se o personagem
+  está de fato tentando se mover rápido (`commandedSpeed > 1,2 m/s`, evita
+  disparo ao esbarrar devagar), escalado entre 0,55 e 1,0 conforme a
+  velocidade — e combinado (`max`) com o `externalInterference` já existente
+  de contato real do ragdoll. Ou seja, tropeço num obstáculo baixo agora
+  entra pela MESMA pipeline de reação/amolecimento que uma colisão de ragdoll
+  já usava, em vez de a cápsula simplesmente absorver o esbarrão e o
+  personagem parar no lugar.
+- **Janela de reação alongada e amolecimento mais profundo**: tombar de
+  verdade — não só cambalear — leva tempo real; a janela anterior
+  (`0,16 + interferência·0,32`, teto ~0,48 s) deixava a rigidez voltar antes
+  de qualquer tombo terminar. Passou para `0,35 + interferência·0,90`
+  (teto ~1,25 s). O piso de rigidez residual (`impactSoftening`) caiu de
+  0,15 para 0,03 (juntas ficam quase totalmente soltas durante o impacto, não
+  só "mais moles"), mantendo o multiplicador de intensidade em 0,97 em vez de
+  0,85.
+
+### Testes executados
+
+`./tools/build.sh Debug --skip-tests` — compilou limpo (só os avisos
+pré-existentes de `EngineFoundationTests.cpp`, sem relação com esta
+mudança). `./tools/check-architecture.sh` — aprovou. `./compilar.sh
+RelWithDebInfo` — build de produção (`build-profile`, o mesmo do atalho da
+Área de Trabalho) atualizada com sucesso. Testes automatizados não
+executados (fora do escopo, mesma orientação de sempre para essa frente).
+**Nada disto tem aprovação visual ainda** — é a primeira vez que existe um
+caminho de sinal genuíno para tropeço nas duas soleiras de teste; falta
+confirmar ao vivo se a cápsula parada de fato deixa o ragdoll tombar de
+forma convincente, se o limiar de velocidade (1,2 m/s) está no ponto certo
+(não disparar andando devagar, disparar correndo), e se a sequência de
+levantar (painel LOCOMOÇÃO já expõe fase/progresso/orientação/tentativas)
+completa corretamente a partir de uma queda real.
+
+## Correções e mais obstáculos na plataforma de dev — 24 de setembro de 2026
+
+Retorno do usuário após ver a leva anterior de obstáculos: as estruturas
+deveriam ser brancas (só o piso é xadrez), a escadaria estava com
+proporção errada e parecia ter uma parede dentro dela, e pediu mais
+variedade de formas.
+
+- `addDevBox` ganhou um parâmetro `useChecker`. Quando falso (todo
+  obstáculo, só o piso passa `true`), `gpuPart.albedoTexture` fica sem
+  textura — a própria textura branca 1x1 padrão do material
+  (`defaultMaterialTexture`, já existente em `VulkanDevice.cpp` para
+  qualquer mesh sem albedo) assume, sem precisar gerar uma textura branca
+  à parte.
+- Causa real da "parede dentro da escada": não era uma parede, era a
+  `FloatingBeam` — a posição original (x=-6) caía exatamente dentro do
+  footprint da escadaria antiga. Movida para bem longe de tudo (0,-18,1,2).
+- Escadaria refeita com proporção real de escada (espelho 18 cm, piso
+  28 cm — a versão anterior usava 90 cm de piso, por isso parecia uma
+  pilha de plataformas fundas em vez de escada) e 10 degraus em vez de 8.
+- Adicionadas mais formas, todas brancas: 2 pilares livres (alto e baixo),
+  um arco de passar por baixo (dois pilares + verba no topo), 3 caixotes de
+  tamanhos diferentes, uma viga de equilíbrio caminhável (5 m, andar em
+  cima) e um túnel baixo pra agachar (duas paredes + teto).
+
+Validação: `check-architecture.sh` aprovou; compilou sem avisos em Debug e
+RelWithDebInfo. Testes automatizados não executados. **Sem aprovação
+visual** — o layout todo (mais de 30 objetos agora) foi posicionado
+calculando manualmente as caixas delimitadoras de cada um pra evitar
+sobreposição, não olhando renderizado; pode ter algo entalado ainda.
+
+## Obstáculos de teste na plataforma de dev — 24 de setembro de 2026
+
+Depois do rejunte discreto e da redução para 150×150 m (entradas abaixo), o
+usuário pediu para reduzir mais uma vez (150→60×60 m,
+`PlatformHalfWidthMeters`/`Depth` = 30 m) e povoar a plataforma com
+obstáculos para testar colisão, queda, tropeço e impacto — o próximo passo
+depois disso é voltar à investigação de queda/levantar (painel de
+diagnóstico ainda sem retorno do usuário) usando esses obstáculos.
+
+`appendDevPlatformFace`/`buildDevPlatformMesh` (específicos do piso, top
+travado em Z=0) viraram `appendDevBoxFace`/`buildDevBoxMesh`, genéricos:
+qualquer bloco com centro, half-extents e orientação (quaternion) arbitrários,
+UV calculado a partir do canto em espaço LOCAL (antes da rotação) para a
+rampa não esticar o xadrez ao longo da inclinação. Uma lambda `addDevBox`
+dentro de `ensureLaboratoryMapLoaded` reaproveita a mesma textura xadrez
+(criada uma vez) para gerar malha + corpo físico (`PhysicsShape3D::Box`) +
+`LaboratoryMapPart` de cada obstáculo, então o piso agora é só a primeira
+chamada dessa lambda.
+
+Obstáculos criados:
+- 5 paredes com altura/largura/espessura/rotação variadas
+  (`Wall_Tall`, `Wall_Medium`, `Wall_LowWide`, `Wall_NarrowTall`,
+  `Wall_Angled`).
+- Escadaria de 8 degraus (~18 cm de espelho cada); cada degrau é um bloco
+  sólido do chão até a própria altura — sem vão embaixo, sem peça de
+  espelho separada para alinhar.
+- Duas soleiras baixas para tropeço, exatamente nas alturas pedidas
+  (`TripCurb_20cm`, `TripCurb_30cm`).
+- Uma viga horizontal flutuante 2 m × 30×30 cm, centro a 1,2 m do chão
+  (`FloatingBeam`).
+- Uma rampa (`Ramp`): ângulo calculado por `atan2(subida, percurso)` em vez
+  de chutado — a rotação em Y e o `center` são derivados algebricamente
+  para o canto baixo-traseiro do bloco tocar exatamente o ponto de chão
+  escolhido; subida real da superfície de cima conferida à mão
+  (`comprimento·sen(ângulo) = subida`, 1,2 m exatos).
+- Uma plataforma elevada para pular em cima (`JumpPlatform`).
+
+Validação: `check-architecture.sh` aprovou; `MatterEngineApp` compilou sem
+avisos em Debug e RelWithDebInfo. Testes automatizados não executados,
+orientação vigente do usuário. **Sem aprovação visual** — em especial a
+direção/posição exata da rampa (a matemática do canto-âncora foi conferida
+à mão, não visualmente) e se o layout dos obstáculos não se sobrepõe/
+encosta em algum lugar que só aparece olhando de verdade.
+
+## Mapa antigo removido; plataforma xadrez de dev procedural — 24 de setembro de 2026
+
+Pausa na investigação de queda/levantar (painel de diagnóstico entregue na
+etapa anterior segue sem retorno do usuário) para trocar o mapa do
+laboratório. O usuário não gostava do `lab_map.glb` (ilha com oceano) e
+pediu uma plataforma de teste no estilo clássico de "dev floor": xadrez
+cinza/branco-acinzentado, ~500×500 m, com volume de verdade (não uma única
+face) e textura 100% procedural.
+
+- `assets/models/lab_map.glb`, `.blend` e `.blend1` removidos do
+  repositório (`git rm`). Nenhuma outra referência a `lab_map` restava fora
+  desse arquivo.
+- `WorkbenchApp::ensureLaboratoryMapLoaded` parou de carregar glTF: agora
+  gera a plataforma inteiramente em código. Textura xadrez
+  (`buildDevCheckerPixels`, 512×512, 8×8 células por tile) sobe via
+  `createTexture2D` com a mesma cadeia de mip completa de qualquer textura
+  normal; o tiling nos 500 m vem do endereçamento REPEAT do sampler de
+  material (confirmado em `VulkanDevice.cpp`), não de uma textura gigante.
+  Malha (`buildDevPlatformMesh`) é um bloco real — topo em Z=0 (plano
+  caminhável, mesma convenção que o resto do jogo já assume), 4 m de
+  espessura visível, 6 faces com normais e UV corretos (UV por eixo local,
+  então o xadrez tem o mesmo tamanho de célula no topo e nas quatro laterais
+  — 1 m por célula). Colisão: uma única `PhysicsShape3D::Box` no material
+  `concrete`, no lugar do cozimento de triangle mesh que o mapa antigo
+  exigia.
+- Dois ajustes pedidos após o primeiro teste visual: rejunte (linha escura
+  de 3 texels entre as células, calculada por distância até a borda mais
+  próxima em `buildDevCheckerPixels`, também correto na costura onde um
+  tile de textura encontra o próximo via REPEAT) e plataforma reduzida de
+  500×500 m para 150×150 m (`PlatformHalfWidthMeters`/`Depth` = 75 m).
+- Oceano, zonas acústicas e spawnpoint do glTF saíram junto: sem
+  `setOcean()` (a plataforma de dev não tem água), `setAcousticZones({})`
+  explícito, spawn fixo no centro da plataforma (`{0,0,1}`, yaw 0). O código
+  do clipmap de oceano (`ensureOceanClipmap`) e suas constantes de anéis
+  continuam no arquivo (não removidos, só não chamados nesta etapa) caso
+  outro mapa volte a precisar de água depois.
+- `buildStaticMapLods` (simplificação via meshoptimizer, só fazia sentido
+  para a malha grande do mapa antigo) e os includes de glTF
+  (`GltfLoader.hpp`, `GltfPhysicsMetadata3D.hpp`, `GltfAcousticZone3D.hpp`,
+  `<meshoptimizer.h>`) foram removidos por ficarem sem nenhum uso no
+  arquivo — teriam gerado aviso de função não usada.
+
+Validação: `check-architecture.sh` aprovou; `MatterEngineApp` compilou sem
+avisos em Debug e RelWithDebInfo (`build-profile`). Testes automatizados não
+executados, orientação vigente do usuário. **Sem aprovação visual** — cor
+exata do xadrez, tamanho de célula (1 m), espessura da plataforma (4 m) e
+altura de spawn são primeira tentativa, calibráveis depois de ver rodando.
+
+## Volta ao modelo híbrido como padrão — 24 de setembro de 2026
+
+## Queda e levantar procedurais no híbrido — 24 de setembro de 2026
+
+O usuário observou que o personagem hoje **não consegue cair**: tropeço,
+colisão com prop ou com outro ragdoll nunca derruba, e não há levantar. Pediu
+que isso mude — em situações normais a locomoção continua "perfeita" (pose
+autoral), mas quando a física precisa vencer, o personagem deve poder cair de
+verdade, ficar no chão e se levantar sozinho detectando a pose/contatos, sem
+força auxiliar levantando automaticamente. Duas referências, só como
+embasamento (mesma orientação de sempre — nunca sampleadas ao vivo):
+`Getting Up.fbx` (costas no chão) e `Standing Up.fbx` (peito no chão), em
+`~/Área de trabalho/procedural_anim/`.
+
+### Causa raiz de "nunca cair"
+
+`CharacterLocomotion3D` já reduzia a autoridade do guia de pose/raiz durante
+uma colisão real (`m_reactionStrength`, existente desde a etapa híbrida),
+mas os **motores das juntas nunca amoleciam**: `target.stiffnessScale =
+muscle` sempre valia 1.0 (`command.muscleAuthority` só muda com override
+manual do painel), independente de qualquer pancada. Ou seja, por mais forte
+que fosse o impacto, as pernas eram servo-comandadas de volta à pose de
+andar/parado com força total — não havia como a física realmente derrubar o
+personagem. Confirmado também (pesquisa dedicada) que colisão com prop
+estático já gera `externalInterference` real (só contato de pé com chão
+plano e corpo estático é excluído); o sinal sempre existiu, só não tinha
+consequência nenhuma nas juntas.
+
+### O que foi implementado
+
+- **Amolecimento por impacto**: `impactSoftening = clamp(1 −
+  m_reactionStrength·0,85, 0,15, 1,0)` multiplica `stiffnessScale`/
+  `maximumTorqueScale` de toda junta durante locomoção normal. Uma pancada
+  grande agora consegue vencer a resistência das pernas e derrubar de
+  verdade; uma pancada pequena (a mesma faixa que já existia) continua só
+  balançando e voltando — "tenta se recuperar antes de cair", exatamente
+  como pedido, sem precisar de lógica nova: é a mesma janela de reação de
+  antes, só que agora ela também alcança as juntas, não só a raiz.
+- **Detecção de queda**: reaproveita quase literalmente a lógica já
+  validada de `BiomechanicalBipedExperiment3D` (contato real de
+  mãos/joelhos/qualquer parte do corpo com o chão, tronco muito inclinado ou
+  centro de massa baixo demais, com 0,6s de carência após spawn/recuperação
+  para não disparar em falso). `RagdollState3D::contacts` já cobre isso:
+  confirmado que os 18 links do `CrashTestDummyV1.ragdoll.json` são todos
+  `contactSensor: true`.
+- **Dois estados novos**: `Fallen` (acabou de cair, física apenas segura a
+  pose medida com juntas quase soltas) e `GettingUp` (sequência ativa),
+  cobrindo a mesma máquina de 9 fases que o experimento biomecânico já usa
+  (`Resting → Assessing → SupineTuck/SupineSit` ou `ProneBrace/PronePush →
+  GatherFeet → Rise → Stabilize`), com os mesmos ganhos de rigidez por fase
+  e a mesma classificação de orientação (peito vs. costas) — portado, não
+  reinventado, porque já era uma lógica testada e com transições reais
+  ancoradas em contato físico, não só timer.
+- **Guia de pose sai de cena, força auxiliar de levantar entra**: autoridade
+  do guia cai a zero durante toda a sequência (a mesma variável `authority`/
+  `rootAuthority` já usada para colisão, agora também zerada por
+  `getUpActive`) — a física decide a posição/orientação da raiz o tempo
+  todo. Uma força/torque de assistência ao levantar (mesma ideia do
+  experimento biomecânico: empurrão vertical limitado por altura desejada,
+  torque de upright por fase) entra no lugar do torque físico normal,
+  **~55% dos tetos originais** — mais suave, seguindo a mesma diretriz já
+  aplicada à força auxiliar de colisão nesta etapa híbrida.
+- **Pose procedural do levantar**: `applyGetUpPose`, mesmos alvos articulares
+  por fase do experimento biomecânico (pernas/coluna/braços calibrados à
+  mão, não sampleados dos FBX de referência — mesma razão do salto: fontes
+  com movimento de braço que não interessa aqui). `Resting` simplesmente
+  segura a pose medida (juntas quase soltas); as fases seguintes comandam
+  ativamente.
+- **Coordenação com o resto do controlador**: virar/inclinar/footwork de
+  giro parado (etapa anterior) ficam suspensos enquanto caído/levantando
+  (não fazem sentido deitado); ao concluir (`Stabilize` recuperado por
+  0,28s contínuo), `m_facingYaw` é resincronizado com a orientação física
+  medida para não haver salto de direção na volta à locomoção normal, e os
+  travamentos de pé são zerados para replantar do zero.
+- **Cápsula parada durante a queda**: `LaboratoryScreen.cpp` para de
+  aceitar WASD/pulo (mesmo caminho já usado para painel aberto/câmera
+  livre) enquanto o estado da última atualização de locomoção for
+  `Fallen`/`GettingUp` (1 tick de atraso, imperceptível a 120 Hz) — sem
+  isso o jogador podia segurar W e a cápsula (e a câmera, que a segue)
+  se afastava do corpo caído, que a física está controlando sozinha.
+
+### Limitação conhecida, deliberadamente não resolvida agora
+
+Não existe API para teleportar a cápsula do personagem
+(`PhysicsScene3D`/`PhysXScene3D` não expõem isso). Como a cápsula fica
+parada (não teleportada) durante toda a queda enquanto o ragdoll é
+livre fisicamente, se a queda espalhar o corpo longe de onde a cápsula
+ficou parada, a câmera (que segue a cápsula) pode não recentralizar
+perfeitamente, e ao recuperar a autoridade do guia pode haver um leve
+"puxão" de volta até a cápsula em vez de um handoff perfeito. Quedas
+comuns (tropeço, empurrão) não devem espalhar muito o corpo; quedas
+muito violentas podem evidenciar isso mais. Resolver direito exigiria uma
+função nova de teleporte no backend físico — deliberadamente fora do
+escopo desta etapa.
+
+Validação: `check-architecture.sh` aprovou; `MatterEngineApp` compilou sem
+avisos em Debug e RelWithDebInfo (`build-profile`). Testes automatizados
+não executados, orientação vigente do usuário. **Nada disto tem aprovação
+visual.** Em especial: se o amolecimento por impacto deixa a queda
+acontecer no momento certo (nem cedo demais em esbarrões leves, nem tarde
+demais em colisões sérias), se as nove fases do levantar ficam corretas
+fora do contexto original (o experimento biomecânico não tinha cápsula
+nem guia de pose concorrendo), e o comportamento da câmera durante a queda
+descrito acima.
+
+## Volta ao modelo híbrido como padrão — 24 de setembro de 2026
+
+## Andar/corrida em dois níveis, olhar procedural, virada com passo e salto sem clipe — 24 de setembro de 2026
+
+Seguindo a volta ao híbrido (seção abaixo), o usuário pediu mais movimentação
+no mesmo componente, entregando seis FBX do Mixamo como referência: `Running
+Right Turn.fbx`, `Sprint.fbx`, `Right Turn.fbx`, `Right Turn(1).fbx`,
+`Running Jump.fbx`, `Jumping Up.fbx`. Instrução explícita repetida duas vezes:
+usar como "embasamento" (inspecionados com `--inspect-only`, nunca sampleados
+ao vivo), não como clipe tocado direto — exceto o Sprint, que vira mesmo um
+clipe, do mesmo jeito que a corrida virou antes.
+
+### Andar = trote atual desacelerado; corrida = sprint novo
+
+- `Sprint.fbx` importado como `assets/animations/clips/mixamo_sprint.
+  matteranim.json`. Precisou de `--dynamic-projection` (erro médio de
+  direção 24,4°, acima do teto padrão de 15°/8°, mas dentro do teto
+  ampliado de 35° que essa flag libera) e `--loop-open` em vez de `--loop`
+  (o clipe de origem não fecha ciclo dentro de 0,5°). Resultado: 0,567 s,
+  5,51 m/s de velocidade autoral, `retargetReport.passed = true`,
+  `limitHitCount = 0`. Fonte preservada em
+  `assets/animations/source/mixamo/Sprint.fbx`.
+- `character.json` ganhou `locomotion.sprint: mixamo_sprint`;
+  `RagdollCharacter3D` ganhou `sprintClipId`; `CharacterLocomotionAnimations3D`
+  ganhou o campo `sprint` (opcional — sem ele, o estado Running cai de volta
+  para o clipe de `run`, não fica sem pose).
+- Os estados Walking/Running voltaram a existir na máquina de estados
+  (tinham sido colapsados na etapa anterior por só haver um clipe de
+  movimento). Shift decide: sem Shift = Walking = clipe `mixamo_running`;
+  com Shift = Running = clipe `mixamo_sprint` (ou `mixamo_running` se o
+  sprint não estiver disponível).
+- `m_avatarCharacterSettings.walkSpeed` passou de 1,40 (calibrado para o
+  cc0_walk_forward antigo) para 2,05 m/s — uma desaceleração leve sobre os
+  2,30 m/s autorais do `mixamo_running`, mantendo o "andar" de um jogo de
+  futebol propositalmente rápido, como pedido. `sprintSpeed` passou de 5,18
+  para 5,51 m/s, casando exatamente a velocidade autoral do sprint (taxa de
+  playback ~1x no compromisso total).
+
+### Inclinação do corpo ao virar correndo, agora procedural
+
+`Running Right Turn.fbx` foi só inspecionado (nunca importado): confirmou
+ordens de grandeza — torção do abdômen até ~14° durante a curva, inclinação
+lateral até ~11°. Esses números calibraram à mão (não foram amostrados do
+clipe) um termo novo de `lean` somado ao já existente por aceleração:
+`turnBank`, proporcional a `m_turningRate` e à velocidade, entra em
+`lateralLean`; `forwardLean` ganhou um termo extra proporcional a
+`|m_turningRate|`. Sem alteração na cinemática de pernas/pés — só a
+inclinação do tronco muda ao curvar em movimento.
+
+### Olhar da câmera: cabeça rápida, tronco atrasado, tudo filtrado
+
+Antes, `viewYawError`/`lookPitch` alimentavam a distribuição de torção do
+tronco/cabeça instantaneamente, sem filtro próprio (só a inércia indireta do
+PD físico). Agora há dois filtros exponenciais dedicados —
+`m_filteredHeadYawError` (rápido, ~15 Hz de resposta) e
+`m_filteredTorsoYawError` (lento, ~4,2 Hz) — e cabeça/pescoço usam o
+primeiro enquanto abdômen/peito/peito-superior usam o segundo. Resultado
+pretendido: virar a câmera rápido faz a cabeça acompanhar quase de imediato
+e o tronco vir atrás, em vez de tudo girar junto e rígido no mesmo tick. O
+pitch do olhar (`lookPitchRadians`) passou a usar o mesmo filtro rápido.
+Pesos por junta também foram revisados (cabeça e pescoço ganharam mais peso
+relativo ao tronco).
+
+### Virada parada: passo real em vez de só torcer a perna
+
+`Right Turn.fbx` e `Right Turn(1).fbx` foram só inspecionados — a ideia
+(reposicionar um pé com um passo real ao virar parado, não só deixar o IK
+torcer a perna de apoio) virou um sistema novo, não uma cópia da animação
+(que foi capturada para um giro fixo de ~90°, enquanto este precisa valer
+para qualquer ângulo, contínuo). `m_turnStepAccumulatedRadians` acumula a
+rotação da pelve enquanto parado; passado 0,5 rad (~29°) acumulados, um pé
+(alternando entre os dois, `m_nextTurnStepFoot`) sai do travamento normal e
+entra num "passo" dedicado de 0,22 s: interpola de onde estava até uma nova
+posição rotacionada em torno do pé de apoio pelo ângulo acumulado (mesma
+ideia do caso "Turning" em `ProceduralBipedGait3D::planLanding`, adaptada
+aqui), com um pequeno arco vertical (`0,05 m · sin`) para não arrastar o pé
+no chão. Só roda parado (`!gaitMoving`) — andar/correr já replantam o pé a
+cada passo pelo sistema normal.
+
+### Salto totalmente procedural, sem clipe
+
+`Running Jump.fbx` e `Jumping Up.fbx` só foram inspecionados; os dois têm
+balanço de braço bem assimétrico e espalhafatoso (ex.: RightUpperArm
+variando -94°..35° num, LeftUpperArm -41°..58° no outro) que o usuário
+rejeitou explicitamente, e `Jumping Up.fbx` tem uma antecipação/agachada
+antes do salto que não serve — o salto deste jogo é instantâneo (decola no
+mesmo tick em que a cápsula sai do chão, sem preparo).
+
+- Airborne/Landing pararam de amostrar o clipe idle como pose final
+  (continuam amostrando por baixo, mas `applyFlightPose` sobrescreve tudo
+  depois). Nova função `applyFlightPose(profile, coordinates, tuckAmount,
+  runningShare)`: dobra os dois joelhos/quadris de forma controlada e
+  simétrica (sem o balanço de braço unilateral das fontes — braços ficam
+  simétricos e discretos), com quadril/joelho da perna "de trás" um pouco
+  menos flexionados que a "da frente" para não ficar uma pose robótica
+  idêntica nas duas pernas.
+- `runningShare` vem de `m_liftoffSpeed`, capturado uma vez, no tick exato
+  em que a cápsula deixa o chão — distingue salto correndo (mais
+  flexionado, mais inclinado à frente) de salto parado.
+- `tuckAmount` sobe rápido ao decolar (0,14 s) e some conforme a velocidade
+  de queda cresce, preparando as pernas para o pouso antes de tocar o chão.
+  No Landing, uma compressão de joelho (55% da amplitude do tuck) começa no
+  toque e relaxa suavemente até `LandingSettleSeconds` (0,18 s).
+- Isso não reativa o salto como mecânica de gameplay — o buffer de pulo/
+  coyote time na cápsula (`PhysicsScene3D::moveCharacter`) já existia e
+  nunca dependeu de clipe de animação; o que faltava era só a pose durante
+  o voo, que agora existe.
+
+Todas as fontes de estudo (não importadas) ficaram em
+`assets/animations/source/mixamo/study/`, com um `README.txt` explicando
+que servem só de referência numérica, nunca de clipe.
+
+Validação: `check-architecture.sh` aprovou; `MatterEngineApp` compilou sem
+avisos em Debug e RelWithDebInfo (`build-profile`). Testes automatizados
+não executados, orientação vigente do usuário. **Nada disto tem aprovação
+visual.** Pontos que mais provavelmente precisam de reajuste depois de ver
+rodando: sinal/intensidade do `turnBank` (pode estar invertido — banking
+para o lado errado da curva), pesos da distribuição cabeça/tronco do olhar,
+ângulos exatos do `applyFlightPose`, e o caso extremo de giro contínuo muito
+rápido no passo de virada (o acumulador pode dar dois passos alternados tão
+perto um do outro que o segundo dispara antes do primeiro terminar; é
+tratado sem travar, mas pode não ficar bonito nesse extremo).
+
+## Volta ao modelo híbrido como padrão — 24 de setembro de 2026
+
+O usuário decidiu que o experimento biomecânico isolado (seções acima) foi
+valioso para aprendizado, mas não vira o caminho padrão. Pediu para voltar ao
+modelo híbrido (cápsula + `CharacterLocomotion3D` com pose autoral), trocar a
+corrida dele pelo `mixamo_running` recém-importado, apagar as animações CC0
+antigas, corrigir um bug concreto de personagem "voando" ao abrir menus,
+portar (mais suave) a força auxiliar do experimento biomecânico para os
+momentos físicos do híbrido, e melhorar o footwork sem travar a movimentação.
+Perguntado explicitamente sobre agachar/pular — que dependiam dos clipes
+apagados — o usuário escolheu **desativá-los por enquanto** em vez de manter
+os clipes antigos só para essas duas ações.
+
+### Padrão trocado de volta para o híbrido
+
+`m_biomechanicalExperiment` volta ao padrão `false`; o experimento continua
+no código e no toggle do painel PERSONAGEM, só não é mais o modo ao assumir
+o personagem. `MATTERENGINE_AUTOSTART=laboratory-biomechanics` continua
+forçando-o ligado para inspeção isolada.
+
+### Biblioteca simplificada para idle + corrida única
+
+`CharacterLocomotionAnimations3D` caiu de 13 clipes obrigatórios para dois:
+`idle` e `run`. Não há mais clipe por direção — a pelve sempre gira para
+encarar a direção real de deslocamento (antes isso só acontecia no modo
+"sprint"; virou o comportamento único, já que só existe uma referência de
+movimento). `compatible()` só exige idle+run válidos. Agachar e pular foram
+desativados no controlador: a máquina de estados nunca mais entra em
+`CrouchIdle`/`CrouchWalking`/`JumpStarting` (o enum e os switches de UI que os
+listam continuam existindo, só ficam inalcançáveis, para não mexer em telas
+que não vêm ao caso agora); `Airborne`/`Landing` continuam existindo porque
+perder o chão por queda/empurrão independe de ter um botão de pulo, e caem
+para a pose parada como referência neutra.
+
+- `assets/characters/crash_test_dummy/character.json`: `locomotion` agora só
+  tem `idle: cc0_idle` e `run: mixamo_running`. `animationAttribution` foi
+  reescrito para não afirmar CC0 para tudo — a corrida é Mixamo/Adobe, licença
+  diferente do idle.
+- Apagados de `assets/animations/clips/`: os 4 clipes de caminhada, 3 de
+  corrida direcional (mantendo só a substituição pela nova), 2 de agachado e
+  3 de salto/aterrissagem — 13 arquivos no total. Só restam `cc0_idle.
+  matteranim.json` e `mixamo_running.matteranim.json`. A coleção retirada
+  continua preservada em `archive/2026-09-24-retired-animation-library/`
+  desde a etapa anterior; nada foi perdido, só saiu do runtime.
+- `assets/animations/README.md` atualizado para refletir a biblioteca de
+  dois clipes e a ausência de agachar/pular.
+
+### Bug corrigido: personagem "voava" ao abrir qualquer painel
+
+Causa raiz encontrada em `LaboratoryScreen.cpp`: `command.ignoreRagdolls`
+(que existe para a cápsula do personagem nunca varrer contra o próprio corpo
+articulado — comentário no próprio `PhysicsScene3D.hpp` já avisava disso) só
+era definido dentro do bloco `if (acceptsMovement)`. Assim que **qualquer**
+painel bloqueava novos comandos — tecla **Aspas** (debug/PERSONAGEM), **Q**
+(spawn), Alt (câmera livre) — o campo voltava ao padrão `false` a cada tick
+enquanto o painel ficasse aberto, e a cápsula passava a colidir com o próprio
+avatar sobreposto; a resolução de penetração do PhysX empurrava o personagem
+com força, geralmente para cima. Corrigido definindo `ignoreRagdolls` uma vez
+por tick, fora do bloco condicional, sempre que há personagem controlado.
+
+### Força auxiliar do experimento biomecânico, suavizada, no híbrido
+
+`CharacterLocomotion3D::update` ganhou um parâmetro `RagdollDynamics3D` (só
+calculado para o personagem controlado; os demais ragdolls da cena recebem
+um `RagdollDynamics3D{}` inválido para não pagar o custo da matriz de massa/
+Jacobiano à toa). Dentro do bloco que já existia de correção de torque físico
+(`physicalControl`), foi acrescentada uma versão mais leve do wrench de
+equilíbrio do experimento biomecânico:
+
+- Centro de massa (via `dynamics.centerOfMass` quando válido) com velocidade
+  filtrada por média exponencial, iguais ao padrão já usado no experimento.
+- Ponto de captura simples (`COM + velocidade/omega`) contra o centro de
+  apoio dos pés atualmente travados pelo próprio footwork do híbrido
+  (`FootPlant::lockedPositionWorld`) — não precisou recriar detecção de
+  contato do zero, reaproveitou o que o foot lock já mantém.
+- Força horizontal e torque de upright, ambos escalados por
+  `assistShare = 1 − rootAuthority`: em autoridade plena (parado, andando
+  normal) a contribuição é zero e a pose guia continua sustentando sozinha,
+  exatamente como antes; só nos momentos em que uma colisão real já reduz
+  `rootAuthority` (via `m_reactionStrength`) essa assistência aparece.
+- Tetos deliberadamente menores que os do experimento original: 16% do peso
+  de força horizontal (contra 24–32% lá) e ~1,05×massa de torque de upright
+  (contra ~1,8–2,4 lá) — "mais suave", como pedido.
+- `CharacterLocomotionOutput3D` ganhou `rootControlForceWorld`; o chamador em
+  `RagdollRuntime.cpp` passa a aplicar força **e** torque juntos (antes só
+  aplicava torque).
+
+### Footwork: gate de velocidade agora escala com o playback
+
+`stanceCandidate` exigia velocidade animada do pé abaixo de limiares fixos
+(0,72 m/s horizontal, 1,1 m/s vertical) para aceitar o pé como pousado. Esses
+valores foram calibrados implicitamente para o ritmo dos clipes antigos; com
+`playbackRate` variando de 0,35× a 1,75× conforme a velocidade pedida
+(inclusive para a nova corrida, mais rápida), a velocidade animada do pé
+escala junto e passava a estourar o limiar fixo em corrida mais rápida,
+dificultando o foot lock justamente quando mais importa. Os dois limiares de
+velocidade agora multiplicam por `max(1, playbackRate)`; folga espacial
+(clearance, deriva horizontal de 0,48 m) não muda, porque o trajeto espacial
+do pé não depende da taxa de playback, só o tempo para percorrê-lo.
+
+Validação: `check-architecture.sh` aprovou; `MatterEngineApp` compilou sem
+avisos em Debug e RelWithDebInfo (`build-profile`, usado pelo atalho de
+desktop). Testes automatizados não executados, orientação vigente do
+usuário. **Nada disto tem aprovação visual ainda** — a troca de padrão, a
+correção do bug de voo, a força auxiliar suavizada e o gate de footwork
+escalado precisam de teste interativo do usuário antes de serem considerados
+bons. Agachar e pular ficam propositalmente quebrados/ausentes até uma etapa
+futura dedicada a eles.
+
+## Correção: pernas não mudavam, só os braços — 24 de setembro de 2026
+
+Teste interativo do usuário na revisão anterior: só os braços mudaram; a
+caminhada continuou idêntica, sem o "trote" da corrida importada.
+
+Diagnóstico: a etapa anterior semeava `desiredCoordinates` das pernas com a
+pose do clipe, mas o IK (`solveFootPosition`, Jacobiano amortecido) roda
+depois e resolve as pernas contra `gait.footTargetWorld[side]` — uma posição
+que vem inteiramente de `ProceduralBipedGait3D`, sem qualquer relação com o
+clipe. Com poucas iterações de mínimos quadrados amortecidos convergindo
+para uma posição-alvo praticamente fixa, a semente inicial das pernas é
+descartada; só braços/tronco (nunca tocados pelo IK) preservavam o efeito.
+`ProceduralBipedGait3D` continua sem depender de animação, de propósito —
+é o planejador de pouso seguro; o ajuste ficou em como o alvo vertical do
+pé em swing é construído em `BiomechanicalBipedExperiment3D`.
+
+- Novo `sampleClipFootHeightAbovePelvis`: amostra o clipe isoladamente (sem
+  mistura com o parado) em dois instantes — o início da janela de swing
+  daquele pé (`ClipSwingWindow.startSeconds`) e o instante atual já
+  sincronizado (`m_locomotionClipSeconds`) — e devolve a altura do pé via
+  `buildLocalPose`, a mesma cinemática direta que o IK já usa.
+- A diferença entre essas duas alturas é o quanto o clipe realmente levanta
+  aquele pé desde o decolar. Esse valor, multiplicado por `runBlend`, é
+  somado ao Z de `gait.footTargetWorld[swing]` **antes** de virar
+  `targetRootLocal` e entrar no IK — ou seja, agora é o próprio alvo
+  vertical que exige mais flexão de joelho, não só uma semente que o
+  solver ignora.
+- X/Y do alvo (onde pousar) permanecem exatamente os do planejador físico:
+  alcance, direção e ponto de pouso seguros não mudam, só a altura do arco
+  do pé em swing ganha o levantamento adicional do clipe.
+- Deliberadamente fora do escopo desta correção: comprimento de passada e
+  cadência (`m_phaseDurationSeconds`, `planLanding` em
+  `ProceduralBipedGait3D`) continuam com os mesmos valores de antes. Se o
+  levantamento do pé já resolver a sensação de "ainda parece andar" o
+  usuário confirma; senão o próximo ponto é ajustar também passada/cadência
+  para casar com os ~0,42 s por passo do clipe importado.
+
+Validação: `check-architecture.sh` aprovou; `MatterEngineApp` compilou sem
+avisos em Debug e RelWithDebInfo (`build-profile`, usado pelo atalho).
+Testes automatizados não executados, orientação vigente do usuário. Sem
+aprovação visual ainda — depende do próximo teste interativo do usuário.
+
+## Referência autoral no controlador biomecânico ativo — 24 de setembro de 2026
+
+O usuário classificou a locomoção biomecânica ativa (`m_biomechanicalExperiment
+= true`, caminho padrão ao assumir o personagem) como muito ruim e pediu duas
+mudanças concretas, mantendo o personagem "mais ativo e reativo": a pose
+parada passa a ser a referência **Parado natural** já existente, e não há mais
+"caminhar" — qualquer comando de movimento usa a corrida analisada na etapa
+anterior (`mixamo_running`).
+
+Até esta revisão, `BiomechanicalBipedExperiment3D` não consultava nenhum
+clipe: a postura base vinha de uma "configuração de conforto anatômico"
+fixa no código (braços a ±1,20 rad, cotovelo 0,28 rad, joelho neutro 0,015
+rad) e o balanço dos braços era um pulso seno sintético. Pernas, contato,
+IK e o wrench de equilíbrio nunca foram tocados nesta mudança — continuam
+vindo exclusivamente de `ProceduralBipedGait3D`/força física, e o guia de
+raiz (`RagdollAnimationConstraint3D`) permanece com autoridade zero, como
+antes.
+
+- `BiomechanicalBipedInput3D` ganhou `idleReferenceClip` e
+  `locomotionReferenceClip` (ponteiros opcionais para `AnimationClip3D`).
+  `WorkbenchApp::updateRagdolls` (`RagdollRuntime.cpp`) os preenche
+  procurando por id dentro de `m_proceduralAnimationClips` — o mesmo
+  catálogo já vetado para o workspace de inspeção do menu ANIMAÇÕES, então
+  só um clipe que já passou pelos gates de retarget e foi explicitamente
+  adicionado a esse catálogo pode dirigir o personagem.
+- A postura base de cada tick agora vem de `applyClipPose`, que amostra
+  `jointPositionRadians` de cada canal do clipe (mesmo espaço de
+  coordenadas twist/swing1/swing2 já usado por `desiredCoordinates`, sem
+  conversão) e mistura no alvo existente por peso. Com peso 1 ela substitui
+  o alvo; a configuração fixa antiga só roda se nenhum clipe estiver
+  disponível (fallback de segurança, ex.: catálogo ainda carregando).
+- Parado: `m_idleClipSeconds` avança livremente a cada tick e amostra o
+  clipe **Parado natural** em loop — substitui a "configuração de conforto"
+  inteira (não só braços/joelho).
+- Em movimento: sem estado de caminhada — a partir de ~0,5 m/s de comando
+  (`smoothStep(desiredVelocity/0.5)`) a pose passa a vir cada vez mais do
+  clipe de corrida, sobreposta à base parada. O pulso seno antigo de
+  balanço dos braços foi removido (o clipe já fornece balanço real).
+- Sincronização de fase: enquanto um pé está de fato em swing
+  (`gait.swingFoot`), o relógio do clipe é travado na janela de swing
+  *daquele pé*, lida diretamente das curvas de contato autorais exportadas
+  pelo importador (`leftFootContact`/`rightFootContact`), mapeando
+  `gait.phaseProgress` linearmente dentro dessa janela. Isso evita que o
+  balanço de braços/tronco do clipe destoe do touchdown físico real. Fora
+  do swing (apoio duplo/transferência), o relógio segue livre, escalado
+  pela razão entre velocidade pedida e a velocidade nominal do clipe
+  (2,30 m/s), para não congelar.
+- Pernas continuam 100% resolvidas por `solveFootPosition` (IK amortecido
+  contra o alvo físico de `ProceduralBipedGait3D`) depois da mistura; a
+  pose de perna vinda do clipe serve só de semente inicial para o Jacobiano,
+  sem prender o pé a uma trajetória autoral.
+
+Validação: `check-architecture.sh` aprovou todas as fronteiras;
+`MatterEngineApp` compilou sem avisos em Debug (`build-linux`) e
+RelWithDebInfo (`build-profile`, usado pelo atalho de desktop). Testes
+automatizados não foram executados, seguindo a orientação vigente do
+usuário. **Não há aprovação visual.** A janela de swing é derivada por
+varredura simples das 26 amostras de contato do clipe (limiar 0,5); ainda
+não foi observado se a transição parado→corrida, a sincronia de braços com
+o touchdown real e a mistura por velocidade produzem um resultado
+efetivamente melhor que a versão anterior — isso depende de teste
+interativo do usuário no Workbench.
+
+## Análise de corrida externa no workspace procedural — 24 de setembro de 2026
+
+O usuário forneceu `~/Downloads/Running(1).fbx` (Mixamo, ação única
+`Armature|mixamo.com|Layer0`, 26 quadros a 30 fps, 0,833 s) para análise dos
+movimentos corporais, sem integração ao controlador físico nesta etapa.
+
+- Inspecionado com `tools/import_humanoid_animation.py --inspect-only`
+  (preset `mixamo`) antes de gravar qualquer arquivo, confirmando cobertura
+  do rig (65 ossos, 18 links mapeados) e faixas de flexão plausíveis para uma
+  corrida antes do retarget completo.
+- Importado para `assets/animations/clips/mixamo_running.matteranim.json`
+  (`--root-motion in-place --loop`), aprovado pelos gates do exportador: erro
+  direcional RMS 3,63°, máximo 7,21°, máximo nos membros 4,56°, sem correção
+  de spikes isolados. Velocidade autoral derivada automaticamente do
+  deslocamento horizontal da raiz: 2,30 m/s.
+- Fonte preservada em `assets/animations/source/mixamo/Running.fbx` com nota
+  de proveniência própria (`README.txt` no mesmo diretório): licença padrão
+  Mixamo/Adobe, não CC0, portanto **fora** do manifesto do personagem e da
+  biblioteca ativa CC0; existe só para este workspace de inspeção.
+- `WorkbenchApp::loadAnimationCatalog` ganhou uma lista explícita de IDs
+  adicionais (`additionalProceduralClipIds`, hoje só `mixamo_running`) que
+  entram no workspace procedural depois da referência **Parado natural**. O
+  menu ANIMAÇÕES já exibia o card genérico de canais/duração/fps e o selo
+  RETARGET VALIDADO com RMS/membros máx; nenhuma mudança de UI foi necessária
+  além de popular a lista.
+
+Validação: `check-architecture.sh` aprovou todas as fronteiras e
+`MatterEngineApp` compilou em Debug com `--skip-tests`. Testes automatizados
+não foram executados, seguindo a orientação vigente do usuário. Não há
+aprovação visual do novo movimento no visualizador; o retarget passou nos
+gates automáticos, mas naturalidade e qualidade da corrida ainda dependem de
+inspeção manual. Integração ao controlador físico (`ProceduralBipedGait3D`)
+fica para uma etapa posterior, por pedido explícito do usuário.
+
+## Locomoção biomecânica totalmente procedural — 24 de setembro de 2026
+
+### Workspace de movimentos procedurais
+
+O menu **ANIMAÇÕES** foi separado da biblioteca interna de clipes do modo
+híbrido de comparação. Seu catálogo próprio, `m_proceduralAnimationClips`,
+contém inicialmente apenas **Parado natural**. Caminhadas, corridas,
+agachamento e salto antigos deixaram de aparecer nesse menu. A separação
+permite acrescentar futuramente movimentos gerados em memória pela engine sem
+reexpor ou alterar os clipes usados pelo caminho comparativo.
+
+A interface agora apresenta **MOVIMENTOS PROCEDURAIS**, conta movimentos em
+vez de clipes e identifica o parado atual como **REFERÊNCIA NATURAL**. Os
+próximos movimentos analisados poderão entrar nesse catálogo como versões
+procedurais para inspeção de canais, velocidade, loop e timeline antes da
+integração no controlador físico.
+
+Validação: fronteiras arquiteturais aprovadas, compilação Debug concluída com
+`--skip-tests` e `git diff --check` limpo. Testes automatizados não foram
+executados conforme a orientação do usuário. A conferência visual do catálogo
+reduzido permanece manual.
+
+### Polimento de postura, separação dos pés e get-up procedural
+
+#### Ferramentas de inspeção do personagem
+
+Segurar **Alt** durante o controle ativa órbita de inspeção: mouse continua
+movendo yaw e pitch da câmera, enquanto locomoção e atualização do heading do
+corpo ficam suspensas. A tecla **U** alterna o congelamento do ragdoll
+controlado. O congelamento é enfileirado para o safe point do passo físico,
+zera os comandos de movimento, pausa o controlador procedural e retira
+temporariamente a articulation completa do solver PhysX. A pose observada
+permanece intacta para capturas; ao pressionar **U** novamente, a mesma
+articulation retorna ao solver e continua dali. O painel PERSONAGEM e uma
+notificação informam o estado congelado.
+
+Validação das ferramentas de inspeção: fronteiras arquiteturais aprovadas,
+compilação Debug concluída com `--skip-tests` e `git diff --check` limpo.
+Testes automatizados não foram executados conforme a orientação do usuário; a
+interação dos dois atalhos permanece para avaliação manual no Workbench.
+
+#### Recalibração de força e recuperação física da queda
+
+Após a primeira inspeção visual, a rigidez e o torque das pernas foram
+recalibrados separadamente para membro de apoio e membro livre. Joelhos e
+tornozelos recebem autoridade adicional, com amortecimento maior no apoio e
+torque suficiente para sustentar a extensão. O IK também deixou de usar a
+pelve fisicamente afundada como referência definitiva: ele resolve as pernas
+contra uma altura virtual limitada da pelve. Assim, uma perda momentânea de
+altura passa a pedir extensão muscular em vez de perpetuar a postura
+agachada. O alvo do pé livre responde mais rápido e o arco ganhou mais altura
+para reduzir o arrasto durante a passada.
+
+O get-up agora começa com 0,9 segundo de repouso físico após a queda. Nesse
+intervalo, conserva a configuração articular medida, usa baixa rigidez e não
+aplica força de elevação. Depois reavalia se o corpo está de frente ou de
+costas e avança conforme contatos reais de mãos, joelhos e pés. A assistência
+vertical depende do erro de altura do centro de massa e da velocidade
+vertical; sua intensidade é reduzida enquanto os apoios necessários ainda não
+existem e cresce moderadamente a cada nova tentativa. Centralização e torque
+de orientação também são forças limitadas, sem escrita de transforms. Se a
+fase final não confirmar apoio, altura e verticalidade durante tempo contínuo,
+o controlador repousa e tenta novamente a partir da orientação física atual.
+
+Validação desta recalibração: `check-architecture.sh` aprovou todas as
+fronteiras e o projeto compilou em Debug com `--skip-tests`. Testes
+automatizados não foram executados conforme a orientação do usuário. Firmeza
+das pernas, folga do pé e naturalidade das sequências de frente e de costas
+continuam pendentes de avaliação visual interativa.
+
+A flexão neutra dos joelhos foi reduzida de 0,08 para 0,015 radiano. O controle
+de altura do COM ganhou uma parcela vertical limitada a 20% do peso enquanto
+há apoio, para desfazer a acomodação física que mantinha a pelve baixa e
+obrigava o IK a conservar joelhos excessivamente dobrados.
+
+O planejador agora mede continuamente a ordem e a distância lateral dos pés no
+referencial do corpo. Separação menor que a faixa anatômica ou um pé no lado
+errado cria um passo `FootSeparation`: ele escolhe o membro com maior violação,
+coloca-o novamente no próprio lado e repete para o outro pé se necessário.
+Esse reparo permanece ativo depois do touchdown, portanto cruzamentos físicos
+deixam de ser aceitos como uma nova postura normal.
+
+Foi acrescentado get-up procedural automático. Após confirmar contato do corpo
+com o chão, o controlador usa a direção vertical do tórax para distinguir queda
+de frente e de costas. De costas, executa recolhimento, sentada assistida,
+aproximação dos pés, extensão e estabilização. De frente, prepara braços,
+empurra o tronco, aproxima os pés, estende e estabiliza. As poses são metas
+articulares geradas pelo controlador e não clips. A assistência recebe um
+envelope específico de elevação, centralização sobre os pés e torque de
+orientação; a fase final só termina após confirmar verticalidade, altura do COM
+e apoio. Uma tentativa malsucedida volta à avaliação da orientação e reinicia a
+sequência.
+
+A tecla **T** recria somente a articulation controlada na pose anatômica
+inicial, no mesmo XY e sobre o chão consultado pela física. Estado de contato,
+estimador, planejador, controladores e histórico visual são reiniciados juntos,
+permitindo repetir a inspeção sem recriar manualmente o personagem.
+
+Validação deste polimento: fronteiras arquiteturais aprovadas e
+`MatterEngineApp` compilado em Debug com `--skip-tests`, seguindo a orientação
+do usuário de reservar a avaliação comportamental para inspeção manual. A
+eficácia visual das duas sequências de get-up e a calibração final da extensão
+dos joelhos ainda dependem dessa inspeção.
+
+O caminho **Experimento biomecânico isolado** não recebe mais
+`CharacterLocomotionAnimations3D`, não seleciona clips, não possui relógio de
+animação e não usa curvas autorais de contato. A dependência foi removida da
+interface e do runtime. O controle híbrido anterior continua disponível apenas
+como modo comparativo separado.
+
+Foi criado o módulo backend-neutral `ProceduralBipedGait3D`, com contato
+observado e contato planejado como dados diferentes. Ele implementa uma máquina
+de estados de apoio duplo, transferência de peso, swing, touchdown e falta de
+apoio. O próximo pé é escolhido pela direção desejada, alternância, erro lateral
+do ponto de captura ou giro. O alvo de pouso combina velocidade desejada,
+velocidade medida e Capture Point, limita alcance, preserva a largura anatômica
+e impede que as pernas se cruzem. Em giros parados, o pé livre é reposicionado
+ao redor do apoio em vez de ambos os pés serem torcidos contra o chão.
+
+O swing agora é uma trajetória procedural C2 no plano e possui ápice vertical
+explícito, clearance que cresce com a velocidade e dorsiflexão do tornozelo.
+Durante os primeiros 68% da passada, o alvo pode ser replanejado sem salto. O
+touchdown real vem exclusivamente dos contatos publicados pela física. O IK
+Damped Least Squares das cadeias quadril-joelho-tornozelo recebe esses alvos em
+espaço mundial: pés de apoio permanecem travados no chão e o pé livre percorre
+o arco calculado.
+
+A postura corporal também é procedural. Coluna e pescoço distribuem o erro de
+heading e a inclinação pela velocidade; braços contrabalançam a perna livre e
+abrem durante perda de margem; tornozelos nivelam as solas e aplicam uma parcela
+limitada da estratégia de Capture Point. A autoridade das pernas distingue
+apoio planejado de swing. A assistência horizontal acompanha simultaneamente o
+alvo de Capture Point e a velocidade, aumenta apenas em frenagem, reversão ou
+recuperação e permanece desligada sem contato. O torque auxiliar combina
+upright e heading, continua finito e não escreve transforms nem sustenta o peso.
+
+O painel **PERSONAGEM** agora mostra a fase de contato, motivo do passo, pé
+livre, progresso e altura do arco. O modo biomecânico também deixou de exigir
+que a biblioteca de animações esteja compatível para assumir o personagem.
+
+Validação desta revisão: `check-architecture.sh` aprovou todas as fronteiras e
+o alvo `MatterEngineApp` compilou em Debug. O `build.sh` executou a suíte antiga
+automaticamente; os testes Foundation e Character falharam antes de exercitar
+esta revisão porque ainda procuram o asset removido
+`assets/animations/clips/run_forward.matteranim.json`; Audio passou. Nenhum
+teste novo foi criado ou executado separadamente, conforme pedido do usuário.
+A aprovação visual de estabilidade, direção, giro, touchdown e naturalidade
+depende agora da inspeção manual do usuário. Agachamento, salto e get-up
+procedurais permanecem fora deste marco.
+
+## Baseline anterior do experimento biomecânico — substituída em 24 de setembro de 2026
+
+Esta seção registra o estágio anterior para histórico. A geração de passada por
+animação descrita abaixo foi removida do modo biomecânico pela revisão acima.
+
+Criado o modo **Experimento biomecânico isolado** para avaliar uma base
+flutuante realmente física sem substituir a locomoção híbrida de referência.
+Quando esse modo controla o personagem, a cápsula deixa de mover o corpo e a
+câmera acompanha diretamente a articulation. As autoridades de pose,
+translação e rotação de `RagdollAnimationConstraint3D` permanecem zeradas.
+Após a primeira inspeção mostrar deriva crescente do centro de massa, o usuário
+determinou uma assistência constante de equilíbrio. Ela foi implementada como
+força horizontal e torque de upright finitos, explicitamente calibráveis, e só
+existe enquanto pelo menos um pé possui contato físico. Não sustenta o peso e
+não escreve transforms; gravidade e reação vertical continuam resolvidas pelo
+corpo e pelo chão.
+
+O módulo backend-neutral `BiomechanicalBipedExperiment3D` lê a dinâmica
+reduzida publicada por `PhysicsScene3D`, estima velocidade do centro de massa,
+ponto de captura, base de suporte e carga real de cada pé. Os tornozelos
+controlam a orientação mundial das solas e recebem uma correção pequena pelo
+ponto de captura. A compensação de gravidade preserva apenas a parcela
+articular; os seis DOFs de sustentação vertical da raiz continuam descartados
+pelo backend. Os clipes CC0 permanecem disponíveis como referências musculares
+para a etapa futura, mas o idle deste marco usa uma pose fixa e não injeta o
+balanço autoral no controlador.
+
+A aba **PERSONAGEM** permite alternar entre o experimento e o controle híbrido
+existente e regular de 0 a 100% o envelope da assistência de equilíbrio. O
+painel informa contato, carga, margem do ponto de captura, velocidade do centro
+de massa, força/torque auxiliares e verticalidade da pelve. O usuário aprovou a
+direção da sustentação parada e pediu um pouco mais de autoridade: o envelope
+horizontal passou de 18% para 24% do peso e o torque de upright de 1,45 para
+1,80 Nm/kg. Ao inverter comando contra a velocidade física, uma frenagem
+preditiva temporária eleva esses tetos a 32% e 2,15 Nm/kg. A geração de passada
+por animação continua apenas para permitir a inspeção atual; o usuário já
+decidiu descartá-la quando for iniciada a locomoção procedural. Agachamento,
+salto e get-up estão fora deste marco; uma queda não é apagada por correção de
+pose.
+
+Validação desta etapa: fronteiras arquiteturais aprovadas e
+`MatterEngineApp` compilado em Debug. Testes automatizados não foram executados
+por orientação explícita do usuário. Ainda falta a avaliação visual e de
+controle pelo usuário; estabilidade, direção do passo e naturalidade dos
+torques não estão aprovadas até essa avaliação.
+
+## Biblioteca CC0 e estados locomotores completos — 24 de setembro de 2026
+
+O usuário rejeitou a permanência das animações antigas. Todos os 21 clipes do
+catálogo anterior foram retirados de `assets/animations/clips/` e preservados
+somente em `archive/2026-09-24-retired-animation-library/`; nenhum deles é
+referenciado pelo personagem ativo.
+
+A biblioteca ativa passou a ter 14 clipes retargeteados a partir dos pacotes
+CC0 Universal Animation Library, de Quaternius, e KayKit Character Animations:
+idle, caminhada e corrida nas quatro direções cardinais, agachado parado/em
+movimento, início/loop/aterrissagem do salto. Os arquivos de origem e suas
+licenças foram conservados em `assets/animations/source/cc0/`.
+
+O importador genérico `tools/import_humanoid_animation.py` aceita FBX, GLB e
+glTF, ações nomeadas e presets de esqueleto. Além da pose limitada pelos DOFs
+físicos, ele exporta velocidade autoral e curvas de contato de cada pé. Quando
+a velocidade não é informada, ela é derivada do deslocamento horizontal da
+raiz. Isso corrigiu um defeito que mantinha congeladas as fases de caminhada
+frontal, corrida frontal e movimento agachado.
+
+`CharacterLocomotion3D` agora possui estados próprios para agachamento, início
+do salto, ar e aterrissagem; não fabrica mais essas poses proceduralmente. A
+fase de apoio esquerdo alinha os clipes de bibliotecas diferentes antes do
+blend direcional. O foot lock só participa da marcha e da aterrissagem, entra
+pelas curvas autorais de contato e é solto antes do swing, preservando o arco
+real do pé. Caminhada e corrida permanecem relativas à câmera para usar as
+bases frontal, traseira e laterais nas oito direções; agachado orienta o corpo
+na direção do deslocamento porque o catálogo possui uma única marcha agachada.
+
+A cápsula também ignora o layer dos ragdolls na consulta de espaço para voltar
+do agachamento, impedindo que a própria articulation bloqueie a volta à altura
+normal. As fronteiras arquiteturais passaram e `MatterEngineApp` compilou em
+Debug com a revisão completa. Testes automatizados continuam fora desta etapa
+por pedido explícito do usuário. Não há aprovação visual do novo catálogo ou
+da locomoção. Get-up procedural, stagger e seleção avançada de pose continuam
+adiados.
+
+## Reconstrução controlável de personagem — 23 de setembro de 2026
+
+Estudo técnico e decisões registrados em
+`docs/CHARACTER_LOCOMOTION_ACTIVE_RAGDOLL_REBUILD.md`. Foram examinados os
+fontes de Overgrowth, ALS Community e Kickback, a documentação oficial de Lyra,
+Game Animation Sample e PhysX. A análise não atribuiu um subsistema fixo a cada
+projeto: cada técnica foi julgada pela implementação real. O audit do próprio
+Kickback confirmou que sobrescrever velocidades, reduzir gravidade e prender
+pelve/pés são erros de base semelhantes aos protótipos rejeitados aqui.
+
+O caminho catastrófico anterior saiu do build. `AnimatedRagdollController3D`,
+`HybridRagdollAssist3D`, `RagdollPoseMotor3D` e `ContactFootwork3D` não são
+dependências do runtime. O novo módulo neutro `CharacterLocomotion3D` recebe a
+trajetória já resolvida pela cápsula persistente, seleciona e combina as poses,
+e envia drives articulares e um guia completo da raiz ao backend.
+
+Mudanças implementadas:
+
+- nova aba **PERSONAGEM** na toolbar, com comando para assumir/liberar o último
+  humano ativo;
+- câmera em terceira pessoa com colisão contra cenário;
+- WASD em oito direções, caminhada, corrida com Shift, agachamento com Ctrl e
+  salto com Espaço;
+- mistura das quatro caminhadas cardinais na mesma fase e avanço do ciclo por
+  distância, sem somar velocidade nas diagonais;
+- caminhada e corrida direcionais relativas à câmera;
+- arco do pé vindo do clipe. O pé só recebe lock depois de estar baixo, lento
+  e sobre apoio caminhável; o swing não é substituído por passos inventados;
+- correção limitada por IK das três juntas de cada perna;
+- cápsula controladora ignora ragdolls para não colidir com a própria
+  representação do avatar;
+- `RagdollAnimationConstraint3D` agora descreve uma raiz 6-DOF coerente:
+  posição XYZ, orientação, velocidades linear/angular e autoridades de
+  raiz/pose. O backend não divide mais locomoção planar, suporte vertical,
+  heading e upright em solvers concorrentes;
+- em 100% a raiz e as juntas são exatas. Reduzir os sliders entrega autoridade
+  à simulação; impactos externos acionam uma reação curta com histerese e a
+  manipulação por Physgun zera temporariamente o guia. Contato estático normal
+  das solas não aciona reação.
+
+Validação até agora: o alvo `MatterEngineApp` compilou em Debug. A suíte de
+testes automatizados não foi executada, conforme pedido explícito do usuário.
+Ainda não há aprovação visual. Esta seção registra a primeira integração antes
+da substituição CC0 descrita acima. Stagger com passos de captura, queda
+consciente e get-up procedural continuam fora do escopo atual.
+
+## Rework de grounding e travessia rejeitado — 23 de setembro de 2026
+
+O usuário rejeitou integralmente o primeiro rework descrito na seção seguinte.
+O resultado visual foi catastrófico mesmo parado em piso plano: o personagem
+perdeu postura, sustentação e coerência da pose, ficando sentado/colapsado e com
+as pernas deformadas. Não se trata de ajuste de ganhos. A implementação alterou
+simultaneamente a autoridade da raiz, sustentação vertical, upright, footwork e
+travessia e, com isso, destruiu o comportamento básico que deveria permanecer
+invariante.
+
+Essa versão não é uma base aprovada e não deve receber novos ajustes locais. O
+trabalho passa a uma reconstrução arquitetural baseada em estudo direto de
+implementações reais: Overgrowth para active ragdoll e reações físicas,
+Kickback para acionamento de pose/músculos, ALS Community e Lyra para locomoção,
+estados, controle e movimentos corporais. Código externo servirá como referência
+de arquitetura e comportamento; a implementação do MatterEngine continuará
+backend-neutral e respeitará a ordem fixa de simulação.
+
+Próximo marco: documentar o estudo, definir contratos independentes entre
+controle do jogador, locomação, pose e física, e restaurar uma linha de base
+estável antes de integrar qualquer novo comportamento. Não há aprovação visual
+da locomoção, equilíbrio, footwork ou suporte atuais.
+
+## Rework de grounding e travessia — 22 de setembro de 2026
+
+Implementado o primeiro caminho completo da arquitetura definida em
+`Matter_Engine_Rework_Locomocao_Grounding_Assistencia.md`:
+
+- `GroundProbeResult3D` distingue superfície existente de superfície
+  caminhável e preserva ponto, normal, distância e inclinação reais.
+- `CapsuleTraversalQuery3D/Result3D` implementa uma cápsula exclusivamente de
+  consulta. Cada tick começa na posição física atual, faz capsule sweep com
+  collide-and-slide determinístico, tentativa de step, slope classification e
+  ground probe. Não existe ator persistente nem destino mundial acumulado.
+- O fallback `root.z - standingHeight` deixou de alimentar a locomoção. A
+  função antiga permanece somente no caminho de spawn do laboratório.
+- Estados explícitos de travessia: `Grounded`, `Airborne`, `Jumping`,
+  `SlidingSteep` e `PhysicalOverride`.
+- A assistência foi separada nos canais planar, vertical, heading, upright,
+  balance e pose. Airborne/Jumping zeram suporte vertical; SlidingSteep também
+  zera suporte e reduz locomoção/postura; Physgun usa PhysicalOverride.
+- `RagdollAnimationConstraint3D` não contém mais target Z, groundHeight ou
+  velocidade vertical animada. O backend pode aplicar pose articular, XY de um
+  único tick já autorizado pelo proxy e heading. Ele não escreve Z nem
+  pitch/roll da raiz.
+- Suporte vertical agora é uma força finita e distribuída por pelve/abdômen/
+  peito, relativa ao suporte caminhável atual. Upright é torque distribuído e
+  limitado. Ambos desaparecem no mesmo tick em que o modo deixa Grounded.
+- O `ContactFootwork3D` real voltou ao caminho padrão inclusive com autoridade
+  máxima. Ele recebe o ground probe da cápsula e probes independentes sob os
+  dois pés; touchdown e landing usam a superfície local disponível.
+- O menu expõe modo de travessia, superfície/walkable, normal, slope, distância,
+  canais de assistência, deslocamentos solicitado/permitido, bloqueio, ground
+  adhesion e velocidades física/proxy.
+
+Validação desta etapa: fronteiras arquiteturais aprovadas e `MatterEngineApp`
+compilado em Debug e RelWithDebInfo. O único aviso é preexistente em um header
+de veículos do PhysX. Testes automatizados não foram executados, conforme a
+orientação anterior do usuário. Falta aprovação visual do usuário em plano,
+rampas, bordas, degraus, parede, empurrão e manipulação. Salto ainda não possui
+comando de gameplay nesta tela, embora o modo e o contrato já existam.
+
+**Foco atual:** corrigir o contrato do modo padrão após rejeição explícita do
+usuário. Em 100% de auxílio, a pose de referência é autoritativa: não há erro de
+seguimento, oscilação de servo nem equilíbrio emergente. A física ganha liberdade
+somente durante uma interação, fase física ou override manual.
+
+## Ajuste de 18 de setembro — ritmo de locomoção
+
+O usuário observou melhora com a pose autoritativa e pediu corrigir a sensação de
+slow motion durante caminhada/corrida. Causa identificada no código e nos assets:
+os tetos antigos de 0,65 m/s e 2,6 m/s eram divididos pela velocidade nativa dos
+clipes, produzindo aproximadamente 0,46x na caminhada frontal e 0,50x na corrida.
+
+- Padrão passa a usar a velocidade horizontal nativa do clipe selecionado:
+  caminhada frontal ~1,40 m/s e corrida ~5,18 m/s, ambas a **1x**. Trás e strafe
+  respeitam os próprios clipes. Oscilação vertical da pelve não conta como viagem.
+- Aceleração e frenagem da raiz não desaceleram o relógio da animação. Ajustados
+  limites de aceleração para 5 m/s² na caminhada e 12 m/s² na corrida/frenagem.
+- Overrides positivos de velocidade continuam possíveis no controlador, com
+  velocidade e cadência limitadas juntas para preservar a relação de passada.
+- Painel exibe cadência e velocidade solicitada para comparação manual.
+- Autoridade integral de pose permanece com o mesmo contrato aprovado como
+  melhora pelo usuário. Não há nova aprovação visual deste ajuste de velocidade.
+
+Validação: aplicativo compilado em Debug e RelWithDebInfo, sem erros.
+Nenhum teste automatizado executado, conforme orientação vigente do usuário.
+Laboratório reaberto em idle para avaliação manual do novo ritmo.
+
+## Correção de 18 de setembro — pose autoritativa no modo padrão
+
+O usuário rejeitou a entrega híbrida anterior por erro **conceitual e prático**:
+a implementação ainda usava forças limitadas para tentar acompanhar a animação,
+permitindo oscilação, deformação da pose e queda em situações comuns. Ele reforçou
+que o padrão deve manter a animação sem desvios físicos, inclusive parado.
+
+Implementação atual:
+
+- Padrões alterados para auxílio **100%** e músculos **100%**. O valor integral
+  é atingido exatamente, sem teto de 95% ou convergência assintótica.
+- Substituído o controlador anterior por um driver de animação com blending
+  explícito de referência. Idle não executa passos de captura, correções de COM
+  nem alterações de pose em resposta a ruído físico de apoio.
+- Animação mantém rotação e deslocamentos locais da pelve; o heading de base
+  remove a rotação local anterior para não acumular yaw do clipe. O footwork
+  procedural só adapta locomoção solicitada no regime de autoridade reduzida,
+  com lift antes do travel e landing, desaparecendo ao retornar a 100%. No
+  padrão, os pés seguem o arco da própria animação sem erro de seguimento.
+- Novo contrato neutro `RagdollAnimationConstraint3D`, enfileirado junto aos
+  alvos articulares. O backend PhysX resolve a restrição **depois de fetchResults
+  e antes de publicar o snapshot**: em autoridade integral, coordenadas das
+  juntas, orientação, altura e avanço da raiz correspondem à referência.
+  A própria articulation é atualizada por `applyCache`; não existe uma malha
+  visual perfeita escondendo um ragdoll divergente.
+- Trata-se deliberadamente de **autoridade de pose**, e não de uma força infinita
+  ou de um servo com ganhos maiores. A restrição substitui o contrato anterior
+  de produzir o modo padrão exclusivamente com forças. Controladores continuam
+  sem acesso a transforms nativos: a resolução pertence ao backend físico.
+- Translação horizontal parte da posição atual a cada tick. Na redução de
+  autoridade, preserva o deslocamento físico atual; não existe retorno a um
+  destino antigo. Pés no solo estático e self-collision não acionam a redução.
+- Contato corporal/obstáculo/objeto dinâmico e forças do laboratório são eventos
+  explícitos de interação. O backend reduz autoridade com os contatos do próprio
+  passo, antes da restrição poder apagar o impacto; o mixer mantém retenção e
+  retorno gradual. Physgun e voo real liberam a pose. Músculos continuam
+  independentes. Caído não executa get-up por clipe; get-up permanece adiado.
+- Abaixo de 100%, a restrição cede continuamente para a dinâmica. Auxílio zero
+  não resolve nenhuma restrição; músculo zero desliga os motores articulares.
+- Painel mostra a autoridade efetivamente aplicada pelo backend e os regimes
+  PADRÃO / HÍBRIDO / FÍSICO. Foi removida a telemetria enganosa de força em N
+  para uma autoridade que agora é uma restrição de pose.
+- `MATTERENGINE_AUTOSTART=laboratory-pose` abre inspeção **manual**, cria um
+  ragdoll em idle e posiciona a câmera uma vez. Não inicia caminhada, corrida,
+  teste automático nem encerramento programado.
+- Versão rejeitada preservada em `archive/2026-09-18-hybrid-rejected/`.
+
+Validação: aplicativo compilado em Debug e RelWithDebInfo (alvo
+`MatterEngineApp`), sem erros. A recompilação completa apresentou somente o
+aviso já existente no header de veículos do PhysX (`count` não utilizado).
+Nenhum teste automatizado executado, conforme instrução do usuário. Laboratório
+aberto em `laboratory-pose` para inspeção manual, sem comando de locomoção.
+A aprovação visual é exclusivamente do usuário; não registrar o modo corrigido
+como visualmente aprovado.
+
+## Histórico abaixo — implementação híbrida rejeitada pelo usuário
+
+## Atualização de 18 de setembro — locomoção híbrida
+
+Pedido explícito do usuário: implementar e compilar, **sem executar testes
+automatizados nesta etapa**. A avaliação física e visual será feita pelo usuário.
+
+- Novo `HybridRagdollAssist3D`: referências de pose reconstruídas no heading e
+  posição atuais da pelve, forças de forma corporal, controle de velocidade do
+  COM, sustentação relativa ao apoio atual e torque de equilíbrio distribuído.
+  Não armazena destino mundial nem dívida de deslocamento. Limites globais:
+  soma de forças até 4 vezes o peso e soma de torques até 1,5 peso × altura,
+  multiplicados pela autoridade efetiva. Esses são tetos, não forças constantes.
+- Authority mixer com ataque rápido, retenção de contato e retorno gradual;
+  contatos normais das solas são excluídos. Interações cedem globalmente e nos
+  links/juntas próximos. Sem apoio real, durante physgun ou já caído: auxílio zero.
+- A musculatura continua independente do auxílio, inclusive no ar. Zero muscular
+  zera stiffness, damping, teto de torque e compensação gravitacional articular.
+  100% seleciona o teto finito dos motores; não significa garantia matemática
+  de movimento perfeito sob qualquer contato.
+- Footwork: descarga do pé baseada na proporção de carga medida; lift inicial
+  sem avanço horizontal; avanço somente após clearance físico de ponta e
+  calcanhar; transporte elevado; descida final. Lift que falha é cancelado, não
+  convertido em arrasto. Caminhada lateral abre/fecha a base e mantém corredores
+  separados. Referências do swing acompanham mudanças do frame corporal.
+- Animações fornecem a pose; IK adapta as pernas aos alvos procedurais;
+  motores e auxílio executam fisicamente. Nenhum transform físico é escrito.
+  Mantida a sequência de simulação a 120 Hz.
+- Painel: checkbox **Forçar alteração dos valores**, slider **Força auxiliar**
+  e slider **Força muscular**, ambos 0–100%, editáveis com ragdoll ativo.
+  Sem override: auxílio 95%, músculos 85%. O menu inclui oito direções de
+  caminhada e telemetria de clearance e autoridade realmente aplicada.
+- Recuperação automática antiga por clipe desativada no runtime. O get-up
+  procedural não foi implementado nesta entrega, conforme o recorte solicitado.
+- Auxílio residual antigo removido do build e preservado em
+  `archive/2026-09-18-pre-hybrid-assistance/`. O experimento de dinâmica inversa
+  não integrado ao Workbench foi preservado em
+  `archive/2026-09-18-physical-experiment/`; removidos seu alvo de teste e a
+  dependência Eigen do build ativo. Backups anteriores continuam preservados.
+
+Validação desta entrega: aplicativo compilado em Debug (`build-linux`) e
+RelWithDebInfo (`build-profile`), sem erros ou avisos nas compilações finais.
+Somente o alvo `MatterEngineApp` foi compilado; nenhum teste automatizado
+executado para esta etapa híbrida. Não há aprovação visual nem
+comprovação de caminhada sem quedas nas oito direções. Próximo passo: avaliação
+manual dos percentuais, elevação do pé, contato e locomoção pelo usuário.
+
+## Continuação de 18 de setembro — `src/` recebido para inspeção visual
+
+Após o usuário abortar o clean room por queda na caminhada, ele forneceu
+`/home/dahaka/Área de trabalho/src/` e pediu aplicação e abertura do app.
+Essa pasta tem os oito arquivos do controlador V2 anterior, datados de antes
+do pacote clean room, e não contém o novo stack físico. O usuário confirmou
+que esse foi todo o material recebido e autorizou usá-lo.
+
+- Os oito arquivos V2 removidos foram recuperados primeiro em
+  `archive/2026-09-18-pre-cleanroom-rejected-v2/`, com SHA-256. Não são usados
+  a partir do backup.
+- O stack clean room abortado foi movido para
+  `archive/2026-09-18-cleanroom-aborted/`; o `src/` recebido foi copiado para
+  o projeto. CMake e scripts de build foram ajustados para compilar essa fonte.
+- A checagem de arquitetura passou; `./tools/build.sh Debug` compilou e a
+  suíte disponível passou 3/3 (Foundation, Character, Audio). Os testes
+  físicos V2 rejeitados não foram recriados por essa cópia e não integram o
+  CMake atual.
+- O laboratório foi aberto com `MATTERENGINE_AUTOSTART=laboratory-walk` sem
+  fechamento automático para avaliação do usuário. Não registrar esta cópia
+  como correção de equilíbrio ou locomoção sem o teste físico e a avaliação
+  visual do usuário.
+
+## Atualização de 18 de setembro — substituição clean room
+
+O usuário rejeitou integralmente o controlador anterior de equilíbrio,
+assistência, locomoção, footwork e get-up. A nova especificação está em
+`IA_Brain/brain/30_Projects/matter_engine/Matter_Biped_Controller_Study_v2_academic/`;
+o código de integração veio de `Matter_Physical_Biped_CleanRoom_v1/PATCH_ONLY`.
+O código V2 rejeitado não foi usado como fonte de algoritmos.
+
+- Removidos do runtime e da suíte os módulos `AnimatedRagdollController3D`,
+  `BodyRelativeRagdollAssist3D`, `RagdollPoseMotor3D` e `ContactFootwork3D`,
+  além de seus testes específicos.
+- Integrados estimador de estado, rig, cinemática, adaptador de dinâmica,
+  equilíbrio por torques internos, planejador de passos, get-up procedural e
+  assistência residual limitada à fase elegível de get-up.
+- O Workbench chama o novo orquestrador a cada tick de 120 Hz. Os sensores de
+  contato são habilitados em todos os links; PhysX expõe separadamente os
+  termos de gravidade e Coriolis. O CMake e scripts de build usam o novo teste.
+- O filtro de arquitetura foi atualizado para distinguir o novo nome
+  `PhysicalBipedController3D` do protótipo histórico removido.
+
+Validação: arquitetura aprovada e aplicativo Debug compilado. A suíte completa
+e o novo teste do controlador estão em execução nesta atualização; preencher
+o resultado antes de concluir. Nenhum teste físico prolongado de postura,
+caminhada ou get-up foi aprovado; não há aprovação visual do usuário.
+
+## Continuação de 17 de setembro — auxílio e repetição de recuperação
+
+O usuário priorizou corrigir a força auxiliar, a atuação muscular e o ato de
+levantar antes de voltar a discutir footwork e autoequilíbrio. Observou no
+aplicativo que o auxílio parece quase ausente, o corpo cai ao tentar andar e
+uma tentativa frustrada de levantar termina em desistência.
+
+- Corrigida a limitação cruzada do auxílio: saturar o orçamento de torque já
+  não reduz a força translacional. Força explícita de movimento/subida recebe
+  prioridade dentro do orçamento; auxílio de pose usa o saldo, conservando
+  resultante nula. Não há alvo de posição mundial.
+- Teto normal experimental passou a 35% do peso (padrão 25%); recuperação a
+  100% (padrão 80%). A subida condicionada a contato/trecho ascendente passou
+  a pedir até 55% da gravidade por até 4 s acumulados por tentativa. O teto de
+  torque auxiliar de recuperação é 30% peso×altura. Sliders refletem os
+  novos intervalos. Orçamento alto não implica força efetiva constante.
+- Recuperação pode tentar novamente após voltar a `Fallen`, acomodar o corpo
+  e esperar mais de 2 s. Contador de tentativas é saturado numericamente;
+  sucesso ainda exige postura/apoio físicos. Foi retirado o limite vitalício
+  de duas tentativas que deixava o boneco desistir.
+- Um ensaio A/B com músculo padrão 2,2× piorou postura/caminhada; o padrão
+  ficou em 1,8×. Ainda não há evidência de que elevar ganho/teto articular
+  isoladamente resolva a falha.
+
+Validação otimizada: build do aplicativo e testes passou; `BodyRelativeAssistance`
+e `ActiveRagdollContracts` passaram. `ActiveRagdollStanding` e
+`ActiveRagdollWalking` **continuam reprovados** por queda; no teste de caminhada,
+o corpo ficou ~252 ticks (~2,1 s) no estado ativo antes de cair. Um ensaio de
+postura chega perto da altura nominal durante o levantar, mas volta a cair:
+não há recuperação física aprovada. A arquitetura passou. Build/suíte Debug
+completa estão em execução nesta continuação; registrar resultado ao terminar.
+Não houve aprovação visual do usuário nesta revisão. Próximo diagnóstico:
+registrar esforço articular realizado, cargas/CoP, força auxiliar efetiva e
+alvo/pose durante o primeiro levantar. Só então ajustar referência e
+autoridade muscular de forma direcionada.
+
+## Atualização de 17 de setembro — fundação do ragdoll ativo V2
+
+**Encerramento a pedido do usuário, para continuar com outro modelo/IA.**
+Passagem completa no brain:
+`/home/dahaka/Área de trabalho/IA_Brain/brain/30_Projects/matter_engine/HANDOFF_2026-09-17_Ragdoll_Ativo.md`.
+Contém mapa de arquivos, parâmetros, diagnóstico, logs e próximo passo curto.
+Sem commit/push nesta sessão; preservar alterações locais anteriores misturadas.
+
+O usuário autorizou desenvolvimento por etapas e pediu iterações mais rápidas:
+usar testes direcionados e um smoke curto por rodada; suíte completa nos marcos.
+Não esperar perfeição de toda a matriz para obter feedback, mas também não
+anunciar sucesso de locomoção enquanto os ensaios físicos reprovam.
+
+- `ContactFootwork3D` substitui conceitualmente o protótipo arquivado: COM,
+  cargas, casco convexo dos contatos, ponto de captura, transferência de peso,
+  balanço/replantio limitado por alcance, separação dos pés e timeout. Centro
+  geométrico de apoio e centro de pressão medido são grandezas separadas.
+- `RagdollPoseMotor3D`: FK pelas âncoras, IK articular limitado com Jacobiano
+  analítico das coordenadas exponenciais, sem escrever transforms físicos.
+  Conversão correta de derivadas articulares para velocidade angular no frame
+  do filho. Referências têm suavização e limites de taxa/aceleração.
+- O controlador consome papéis de caminhada cardinal e recuperação do
+  manifesto. O laboratório oferece caminhada por 15 s e mantém corrida por
+  5 s como experimentais. Diagonais usam colocação procedural, não mistura
+  semântica completa; corrida com fase aérea continua pendente.
+- Queda não é mais terminal: classificação frente/costas, acomodação,
+  execução de clipe com relógio condicionado e até duas tentativas. Sucesso
+  exige postura/apoiamento físicos, não apenas acabar o clipe. **As tentativas
+  atuais ainda não conseguem levantar o corpo de modo confiável.**
+- Physgun mantém músculos internos reativos e reduz autoridade no link
+  agarrado; suspende forças auxiliares externas e intenção de caminhar. A
+  soltura recomeça da pose/local atuais. Não há mola para posição mundial
+  antiga, nem compensação de distância não percorrida.
+- Os 18 links reportam contato; só pés contam como apoio de caminhada.
+  Autocontato não entra na
+  telemetria de apoio. Motor + feedforward compartilham o envelope de torque;
+  os seis termos de compensação gravitacional da raiz continuam descartados.
+
+### Causas concretas corrigidas nesta rodada
+
+1. O pé escolhido para o próximo passo já era liberado em `WeightShift`.
+   Agora ambos permanecem restringidos pelo IK até autorizar `Swing` por carga.
+2. O IK aceitava a inclinação medida da pelve, e uma correção posterior do
+   quadril desfazia a sola calculada. A referência agora é uma única pose
+   desejada ereta, realizada somente por músculos e contatos.
+3. Torques esféricos eram projetados no frame do pai, mas PhysX usa o frame
+   articular do filho. Também se eliminou a equivalência incorreta entre
+   derivada do vetor de rotação e velocidade angular.
+4. Drives de aceleração dimensionavam esforço pela inércia articulada livre:
+   o pé leve dominava o tornozelo mesmo apoiando o corpo inteiro. O modo de
+   força mantém ganhos em Nm/rad, sem aumentar o teto de torque. No A/B da
+   pose neutra, a flexão do joelho aos 0,5 s caiu de ~0,23 para ~0,014 rad.
+   Isso melhora atuação, mas **não prova equilíbrio**, que ainda falha.
+5. Foi adicionada leitura do torque transmitido nas juntas para diagnóstico.
+   Inclui reação de limites: não chamar essa medida de torque isolado do motor.
+
+### Estado verificável e próximo ponto de entrada
+
+Após o usuário apontar esforço insuficiente, o músculo padrão passou a 1,8×
+(2,34× ao levantar); auxílio normal até 15% do peso, recuperação padrão 45%
+com teto 55%. Há sliders ao vivo, modo explícito de recuperação e feedforward
+vertical de até 25% da gravidade, condicionado ao apoio/trecho de subida e
+limitado a 4 s acumulados por tentativa, dentro do orçamento global. Nenhum
+alvo de posição mundial foi adicionado. São ajustes experimentais, não solução.
+
+Último build otimizado passou (`build-profile/active-ragdoll-strength-build.log`).
+Rodada final direcionada: **4/6 passaram em 1,43 s**, com postura/caminhada
+reprovadas (`build-profile/active-ragdoll-final-tests.log`). Postura deriva e
+cai; caminhada teve só 256 ticks ativos (~2,13 s) antes de cair. Maior erro de
+anchors ~5,1e-7 m: não é separação de juntas. Recuperação segue sem sucesso
+comprovado. Marco Debug anterior ao incremento final: **7/10**, falhando
+corrida, postura e caminhada (`build-linux/active-ragdoll-v2-tests.log`).
+
+Arquitetura passou. O smoke de 22 s abriu/fechou, mas mostrou queda e tentativas
+malsucedidas; **é anterior ao último aumento de força/sliders**. Não houve
+validação visual nem suíte Debug completa após esse incremento final.
+
+Os contratos de assistência sem ancoragem, FK/IK, referenciais, entradas
+inválidas, contatos e estados estão separados dos testes físicos. O gate de
+postura de 30 s e o de caminhar 15 s/parar continuam reprovando por deriva/queda;
+o teste original de corrida não foi afrouxado. Não confundir importar clipes,
+aprovar contratos ou abrir a cena com conseguir locomover-se naturalmente.
+
+O primeiro próximo problema é fechar a malha COM–apoio/tornozelo e a
+transferência de carga; depois passada reativa e caminhada. Instrumentar e
+comparar esforço realizado, apoio e movimento antes de voltar a mudar ganhos.
+Os controladores antigos permanecem arquivados e fora do runtime.
+
+Leitura de continuidade: começar pelo handoff do brain citado acima; depois
+`docs/ACTIVE_RAGDOLL_V2.md` e `docs/ACTIVE_RAGDOLL_ROBOTICS_STUDY.md`.
+
+## Atualização de 16 de setembro — expansão da biblioteca de animações
+
+- Dez FBXs novos do Mixamo foram normalizados para `CrashTestDummyV1` e entram
+  automaticamente no Visualizador de Animações: caminhada à frente/trás,
+  laterais, trote rápido, trote/corrida para trás e curvas one-shot.
+- `Standard Idle.fbx` substituiu o Idle anterior: 3,0 s, loop in-place,
+  RMS direcional 3,72°, máximo de membro 4,63° e fechamento de junta 0,028°.
+  O clipe antigo foi removido da biblioteca e o manifesto agora aponta ao novo.
+- O importador agora trata membros retos/subdeterminados sem inventar um plano
+  de dobra instável: preserva o delta local contínuo do FBX nessa situação.
+  Isso corrige uma classe de Idles, não é uma exceção para este arquivo.
+- `Fast Run`, `Left Turn`, `Running Slide`, `Walking Left Turn`, as duas ações
+  de levantar e a cambalhota permanecem fora do catálogo por reprovar gates.
+  As reprovações são reais (salto angular ou erro direcional acima do limite),
+  não foram mascaradas para fazê-las aparecer no menu. Corrigir o retarget
+  para movimentos dinâmicos/solo é uma tarefa posterior.
+
+Por solicitação atual, esses novos clipes são somente biblioteca/visualizador:
+não foram conectados ao controlador físico, footwork ou comandos do laboratório.
 
 ## Atualização de 15 de setembro — correção conceitual exigida pelo usuário
 

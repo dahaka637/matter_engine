@@ -36,9 +36,22 @@ RagdollCharacter3D loadRagdollCharacter3D(const std::string& manifestPath) {
     result.displayName = manifest.at("displayName").get<std::string>();
     if(manifest.contains("locomotion")) {
         const auto& motion=manifest.at("locomotion");
-        result.idleClipId=motion.at("idle").get<std::string>();
-        result.runClipId=motion.at("run").get<std::string>();
-        result.stopClipId=motion.at("stop").get<std::string>();
+        result.idleClipId=motion.value("idle", std::string {});
+        result.walkClipId=motion.value("walk", std::string {});
+        result.walkBackwardClipId=motion.value("walkBackward", std::string {});
+        result.sprintClipId=motion.value("sprint", std::string {});
+        result.sprintBackwardClipId=motion.value("sprintBackward", std::string {});
+        result.strafeLeftClipId=motion.value("strafeLeft", std::string {});
+        result.strafeRightClipId=motion.value("strafeRight", std::string {});
+        result.sprintStrafeLeftClipId=motion.value("sprintStrafeLeft", std::string {});
+        result.sprintStrafeRightClipId=motion.value("sprintStrafeRight", std::string {});
+        result.jumpStandingClipId=motion.value("jumpStanding", std::string {});
+        result.jumpForwardClipId=motion.value("jumpForward", std::string {});
+        result.jumpBackwardClipId=motion.value("jumpBackward", std::string {});
+        result.jumpLeftClipId=motion.value("jumpLeft", std::string {});
+        result.jumpRightClipId=motion.value("jumpRight", std::string {});
+        result.standUpFrontClipId=motion.value("standUpFront", std::string {});
+        result.standUpBackClipId=motion.value("standUpBack", std::string {});
     }
     if (manifest.contains("thumbnail"))
         result.thumbnailPath = (path.parent_path()/manifest.at("thumbnail").get<std::string>()).string();
@@ -79,6 +92,53 @@ RagdollCharacter3D loadRagdollCharacter3D(const std::string& manifestPath) {
     }
     if (seen.size() != result.profile.links.size())
         throw std::runtime_error("Character skin must cover every physical link");
+    // Ossos visuais: depois dos fisicos, cada um com o pai ja lido.
+    const auto quaternion = [](const Json& value) {
+        if (!value.is_array() || value.size() != 4)
+            throw std::runtime_error("Invalid visual bone quaternion");
+        const Quaternion q { value.at(0).get<float>(), value.at(1).get<float>(),
+            value.at(2).get<float>(), value.at(3).get<float>() };
+        const float norm = q.x*q.x + q.y*q.y + q.z*q.z + q.w*q.w;
+        if (!std::isfinite(norm) || std::abs(norm-1.0f) > 0.001f)
+            throw std::runtime_error("Visual bone quaternion is not unit length");
+        return q.normalized();
+    };
+    std::vector<std::string> boneNames;
+    std::vector<Vec3> bindPositions;
+    std::vector<Quaternion> bindOrientations;
+    for (const std::size_t link : result.boneLinkIndices) {
+        boneNames.push_back(result.profile.links[link].id);
+        bindPositions.push_back(result.profile.links[link].modelPosition);
+        bindOrientations.push_back(result.profile.links[link].modelOrientation);
+    }
+    if (skin.contains("visualBones")) {
+        for (const auto& bone : skin.at("visualBones")) {
+            RagdollVisualBone3D visual;
+            visual.name = bone.at("name").get<std::string>();
+            const auto parentName = bone.at("parent").get<std::string>();
+            const auto parent = std::find(boneNames.begin(), boneNames.end(), parentName);
+            if (parent == boneNames.end())
+                throw std::runtime_error("Visual bone parent must come first: " + visual.name);
+            if (std::find(boneNames.begin(), boneNames.end(), visual.name) != boneNames.end())
+                throw std::runtime_error("Duplicate skin bone: " + visual.name);
+            visual.parentBone = static_cast<std::size_t>(parent - boneNames.begin());
+            const Vec3 position = vector3(bone.at("bindPosition"));
+            const Quaternion orientation = quaternion(bone.at("bindOrientation"));
+            const Quaternion parentInverse = bindOrientations[visual.parentBone].conjugate();
+            visual.localBindPosition = parentInverse.rotate(
+                position - bindPositions[visual.parentBone]);
+            visual.localBindOrientation = (parentInverse * orientation).normalized();
+            visual.restRotation = bone.contains("restRotation")
+                ? quaternion(bone.at("restRotation")) : Quaternion {};
+            boneNames.push_back(visual.name);
+            bindPositions.push_back(position);
+            bindOrientations.push_back(orientation);
+            result.inverseBindMatrices.push_back(Mat4::rotation(orientation.conjugate())
+                * Mat4::translation(position * -1.0f));
+            result.visualBones.push_back(std::move(visual));
+        }
+    }
+    const std::size_t paletteSize = boneNames.size();
     for (const auto& item : skin.at("vertices")) {
         MeshVertex3D vertex;
         vertex.position = vector3(item.at("position"));
@@ -93,7 +153,7 @@ RagdollCharacter3D loadRagdollCharacter3D(const std::string& manifestPath) {
         vertex.weights = item.at("weights").get<std::array<float,4>>();
         float total = 0.0f;
         for (std::size_t i=0; i<4; ++i) {
-            if (vertex.joints[i] >= result.boneLinkIndices.size()
+            if (vertex.joints[i] >= paletteSize
                 || !std::isfinite(vertex.weights[i]) || vertex.weights[i] < 0.0f)
                 throw std::runtime_error("Invalid skin influence");
             total += vertex.weights[i];
@@ -116,11 +176,27 @@ std::vector<Mat4> buildRagdollSkinMatrices3D(const RagdollCharacter3D& character
     std::span<const Vec3> positions, std::span<const Quaternion> orientations) {
     if (positions.size() != character.profile.links.size() || orientations.size() != positions.size())
         throw std::runtime_error("Skin pose does not match physical profile");
+    const std::size_t physical = character.boneLinkIndices.size();
+    std::vector<Vec3> bonePositions(physical + character.visualBones.size());
+    std::vector<Quaternion> boneOrientations(bonePositions.size());
+    for (std::size_t bone=0; bone<physical; ++bone) {
+        bonePositions[bone] = positions[character.boneLinkIndices[bone]];
+        boneOrientations[bone] = orientations[character.boneLinkIndices[bone]];
+    }
+    // Visuais: o pai (ja calculado) vezes a ligacao local e a rotacao de repouso.
+    for (std::size_t k=0; k<character.visualBones.size(); ++k) {
+        const auto& visual = character.visualBones[k];
+        const Quaternion parent = boneOrientations[visual.parentBone];
+        bonePositions[physical + k] = bonePositions[visual.parentBone]
+            + parent.rotate(visual.localBindPosition);
+        boneOrientations[physical + k] = (parent * visual.localBindOrientation
+            * visual.restRotation).normalized();
+    }
     std::vector<Mat4> result;
-    result.reserve(character.boneLinkIndices.size());
-    for (std::size_t bone=0; bone<character.boneLinkIndices.size(); ++bone) {
-        const auto link = character.boneLinkIndices[bone];
-        result.push_back(Mat4::translation(positions[link]) * Mat4::rotation(orientations[link])
+    result.reserve(bonePositions.size());
+    for (std::size_t bone=0; bone<bonePositions.size(); ++bone) {
+        result.push_back(Mat4::translation(bonePositions[bone])
+            * Mat4::rotation(boneOrientations[bone])
             * character.inverseBindMatrices[bone]);
     }
     return result;

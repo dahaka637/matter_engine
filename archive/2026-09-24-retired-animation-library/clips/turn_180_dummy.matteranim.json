@@ -1,0 +1,4867 @@
+{
+  "schema": "matter-ragdoll-animation-1",
+  "id": "turn_180_dummy",
+  "displayName": "Virar 180 graus",
+  "targetRigId": "CrashTestDummyV1",
+  "sourceAssetPath": "Walking Turn 180.fbx",
+  "durationSeconds": 1.0,
+  "sourceSampleRateHz": 30.0,
+  "loops": false,
+  "sourceRootDisplacementMeters": [
+    -0.102862,
+    0.001417,
+    0.0073053
+  ],
+  "rootMotionPolicy": "preserve",
+  "retargetReport": {
+    "passed": true,
+    "directionRmsDegrees": 3.638832,
+    "directionMaxDegrees": 7.214545,
+    "limbDirectionMaxDegrees": 4.588698,
+    "jointCycleDeltaDegrees": 0.0,
+    "rootCycleRotationDegrees": 179.999999,
+    "rootCycleTranslationMeters": 0.103131,
+    "maximumJointStepDegrees": 14.336789,
+    "limitHitCount": 2,
+    "thresholds": {
+      "directionRmsDegrees": 6.0,
+      "directionMaxDegrees": 15.0,
+      "limbDirectionMaxDegrees": 8.0,
+      "maximumJointStepDegrees": 45.0
+    },
+    "directionEdges": [
+      {
+        "from": "Abdomen",
+        "to": "Chest",
+        "rmsDegrees": 7.214501,
+        "maxDegrees": 7.214545
+      },
+      {
+        "from": "Chest",
+        "to": "UpperChest",
+        "rmsDegrees": 0.871155,
+        "maxDegrees": 0.871497
+      },
+      {
+        "from": "UpperChest",
+        "to": "Neck",
+        "rmsDegrees": 0.871059,
+        "maxDegrees": 0.871299
+      },
+      {
+        "from": "Neck",
+        "to": "Head",
+        "rmsDegrees": 5.412696,
+        "maxDegrees": 5.412768
+      },
+      {
+        "from": "LeftUpperArm",
+        "to": "LeftForearm",
+        "rmsDegrees": 0.013106,
+        "maxDegrees": 0.030487
+      },
+      {
+        "from": "LeftForearm",
+        "to": "LeftHand",
+        "rmsDegrees": 0.013939,
+        "maxDegrees": 0.030637
+      },
+      {
+        "from": "RightUpperArm",
+        "to": "RightForearm",
+        "rmsDegrees": 0.015679,
+        "maxDegrees": 0.028356
+      },
+      {
+        "from": "RightForearm",
+        "to": "RightHand",
+        "rmsDegrees": 0.011063,
+        "maxDegrees": 0.023131
+      },
+      {
+        "from": "LeftThigh",
+        "to": "LeftShin",
+        "rmsDegrees": 4.252588,
+        "maxDegrees": 4.272185
+      },
+      {
+        "from": "LeftShin",
+        "to": "LeftFoot",
+        "rmsDegrees": 4.408695,
+        "maxDegrees": 4.471795
+      },
+      {
+        "from": "RightThigh",
+        "to": "RightShin",
+        "rmsDegrees": 4.412774,
+        "maxDegrees": 4.588698
+      },
+      {
+        "from": "RightShin",
+        "to": "RightFoot",
+        "rmsDegrees": 4.362893,
+        "maxDegrees": 4.500441
+      }
+    ]
+  },
+  "tracks": [
+    {
+      "targetLinkId": "Pelvis",
+      "space": "root",
+      "keyframes": [
+        {
+          "timeSeconds": 0.0,
+          "rootTranslationOffsetMeters": [
+            0.0062842,
+            -0.0013103,
+            -0.014605
+          ],
+          "rootRotationDelta": [
+            -0.01195395,
+            0.00841115,
+            0.0244922,
+            0.9995932
+          ]
+        },
+        {
+          "timeSeconds": 0.0333333,
+          "rootTranslationOffsetMeters": [
+            0.0366185,
+            -0.0015443,
+            -0.0156229
+          ],
+          "rootRotationDelta": [
+            -0.01161267,
+            0.00689995,
+            -0.00116938,
+            0.99990809
+          ]
+        },
+        {
+          "timeSeconds": 0.0666667,
+          "rootTranslationOffsetMeters": [
+            0.0656643,
+            -0.0003391,
+            -0.0188378
+          ],
+          "rootRotationDelta": [
+            -0.0108358,
+            0.00653003,
+            -0.03057736,
+            0.99945241
+          ]
+        },
+        {
+          "timeSeconds": 0.1,
+          "rootTranslationOffsetMeters": [
+            0.0949173,
+            0.0017994,
+            -0.0267481
+          ],
+          "rootRotationDelta": [
+            -0.01053868,
+            0.00312826,
+            -0.06881277,
+            0.99756908
+          ]
+        },
+        {
+          "timeSeconds": 0.1333333,
+          "rootTranslationOffsetMeters": [
+            0.1249625,
+            0.0056614,
+            -0.0412664
+          ],
+          "rootRotationDelta": [
+            -0.00473568,
+            0.00049636,
+            -0.12242517,
+            0.99246639
+          ]
+        },
+        {
+          "timeSeconds": 0.1666667,
+          "rootTranslationOffsetMeters": [
+            0.1520877,
+            0.0122192,
+            -0.0598501
+          ],
+          "rootRotationDelta": [
+            0.0079608,
+            0.00124851,
+            -0.19417791,
+            0.98093325
+          ]
+        },
+        {
+          "timeSeconds": 0.2,
+          "rootTranslationOffsetMeters": [
+            0.1725215,
+            0.0200248,
+            -0.0767657
+          ],
+          "rootRotationDelta": [
+            0.01330477,
+            0.00196251,
+            -0.26933202,
+            0.96295345
+          ]
+        },
+        {
+          "timeSeconds": 0.2333333,
+          "rootTranslationOffsetMeters": [
+            0.1868256,
+            0.0272756,
+            -0.0875003
+          ],
+          "rootRotationDelta": [
+            0.00889729,
+            0.00516602,
+            -0.32714969,
+            0.94491655
+          ]
+        },
+        {
+          "timeSeconds": 0.2666667,
+          "rootTranslationOffsetMeters": [
+            0.198302,
+            0.0335891,
+            -0.0898514
+          ],
+          "rootRotationDelta": [
+            0.00494739,
+            0.01118499,
+            -0.37857032,
+            0.92549169
+          ]
+        },
+        {
+          "timeSeconds": 0.3,
+          "rootTranslationOffsetMeters": [
+            0.2104883,
+            0.0384653,
+            -0.0819988
+          ],
+          "rootRotationDelta": [
+            -0.00145093,
+            0.01288557,
+            -0.44611359,
+            0.89488238
+          ]
+        },
+        {
+          "timeSeconds": 0.3333333,
+          "rootTranslationOffsetMeters": [
+            0.2229902,
+            0.0421313,
+            -0.0680107
+          ],
+          "rootRotationDelta": [
+            -0.01259717,
+            0.0092873,
+            -0.52589148,
+            0.85040766
+          ]
+        },
+        {
+          "timeSeconds": 0.3666667,
+          "rootTranslationOffsetMeters": [
+            0.2341065,
+            0.0440492,
+            -0.0539381
+          ],
+          "rootRotationDelta": [
+            -0.022884,
+            0.00631201,
+            -0.60894263,
+            0.79285902
+          ]
+        },
+        {
+          "timeSeconds": 0.4,
+          "rootTranslationOffsetMeters": [
+            0.2436399,
+            0.0439153,
+            -0.0420999
+          ],
+          "rootRotationDelta": [
+            -0.02870877,
+            0.00585446,
+            -0.68310601,
+            0.72973132
+          ]
+        },
+        {
+          "timeSeconds": 0.4333333,
+          "rootTranslationOffsetMeters": [
+            0.2512812,
+            0.0426157,
+            -0.0338405
+          ],
+          "rootRotationDelta": [
+            -0.03165716,
+            0.00659665,
+            -0.73740268,
+            0.67467892
+          ]
+        },
+        {
+          "timeSeconds": 0.4666667,
+          "rootTranslationOffsetMeters": [
+            0.2557933,
+            0.0401752,
+            -0.0305671
+          ],
+          "rootRotationDelta": [
+            -0.03267554,
+            0.00848895,
+            -0.77516901,
+            0.63085121
+          ]
+        },
+        {
+          "timeSeconds": 0.5,
+          "rootTranslationOffsetMeters": [
+            0.2569709,
+            0.0370502,
+            -0.031694
+          ],
+          "rootRotationDelta": [
+            -0.03235484,
+            0.00859818,
+            -0.80408078,
+            0.59357679
+          ]
+        },
+        {
+          "timeSeconds": 0.5333333,
+          "rootTranslationOffsetMeters": [
+            0.2545325,
+            0.0335521,
+            -0.0350404
+          ],
+          "rootRotationDelta": [
+            -0.03175056,
+            0.00672808,
+            -0.82864159,
+            0.55883777
+          ]
+        },
+        {
+          "timeSeconds": 0.5666667,
+          "rootTranslationOffsetMeters": [
+            0.247598,
+            0.0296055,
+            -0.0388558
+          ],
+          "rootRotationDelta": [
+            -0.03067929,
+            0.00641057,
+            -0.85175925,
+            0.522995
+          ]
+        },
+        {
+          "timeSeconds": 0.6,
+          "rootTranslationOffsetMeters": [
+            0.235303,
+            0.025327,
+            -0.0426181
+          ],
+          "rootRotationDelta": [
+            -0.03027747,
+            0.00878727,
+            -0.87350202,
+            0.4857986
+          ]
+        },
+        {
+          "timeSeconds": 0.6333333,
+          "rootTranslationOffsetMeters": [
+            0.2173514,
+            0.0208478,
+            -0.0451834
+          ],
+          "rootRotationDelta": [
+            -0.03116147,
+            0.01257649,
+            -0.89212412,
+            0.45053908
+          ]
+        },
+        {
+          "timeSeconds": 0.6666667,
+          "rootTranslationOffsetMeters": [
+            0.193442,
+            0.0162756,
+            -0.0455965
+          ],
+          "rootRotationDelta": [
+            -0.03118202,
+            0.01671371,
+            -0.90667617,
+            0.42034113
+          ]
+        },
+        {
+          "timeSeconds": 0.7,
+          "rootTranslationOffsetMeters": [
+            0.1637345,
+            0.0119825,
+            -0.0450321
+          ],
+          "rootRotationDelta": [
+            -0.02862551,
+            0.02038607,
+            -0.91866034,
+            0.39348224
+          ]
+        },
+        {
+          "timeSeconds": 0.7333333,
+          "rootTranslationOffsetMeters": [
+            0.1309461,
+            0.0085114,
+            -0.0446229
+          ],
+          "rootRotationDelta": [
+            -0.02556704,
+            0.02228126,
+            -0.93063045,
+            0.36438549
+          ]
+        },
+        {
+          "timeSeconds": 0.7666667,
+          "rootTranslationOffsetMeters": [
+            0.0990898,
+            0.0062363,
+            -0.044884
+          ],
+          "rootRotationDelta": [
+            -0.02646138,
+            0.02135125,
+            -0.94301689,
+            0.33100334
+          ]
+        },
+        {
+          "timeSeconds": 0.8,
+          "rootTranslationOffsetMeters": [
+            0.0703682,
+            0.0047292,
+            -0.0453581
+          ],
+          "rootRotationDelta": [
+            -0.032095,
+            0.01931134,
+            -0.95546246,
+            0.29272598
+          ]
+        },
+        {
+          "timeSeconds": 0.8333333,
+          "rootTranslationOffsetMeters": [
+            0.0425343,
+            0.0036951,
+            -0.0432786
+          ],
+          "rootRotationDelta": [
+            -0.03999132,
+            0.01694167,
+            -0.96798551,
+            0.24722011
+          ]
+        },
+        {
+          "timeSeconds": 0.8666667,
+          "rootTranslationOffsetMeters": [
+            0.0143185,
+            0.0029877,
+            -0.0377526
+          ],
+          "rootRotationDelta": [
+            -0.04872753,
+            0.01478413,
+            -0.97878659,
+            0.19845362
+          ]
+        },
+        {
+          "timeSeconds": 0.9,
+          "rootTranslationOffsetMeters": [
+            -0.0137225,
+            0.0022428,
+            -0.0304702
+          ],
+          "rootRotationDelta": [
+            -0.05594975,
+            0.01471338,
+            -0.98665476,
+            0.15220243
+          ]
+        },
+        {
+          "timeSeconds": 0.9333333,
+          "rootTranslationOffsetMeters": [
+            -0.0413524,
+            0.0015274,
+            -0.022338
+          ],
+          "rootRotationDelta": [
+            -0.05978469,
+            0.01527783,
+            -0.9923439,
+            0.10698622
+          ]
+        },
+        {
+          "timeSeconds": 0.9666667,
+          "rootTranslationOffsetMeters": [
+            -0.0688304,
+            0.0009205,
+            -0.0141567
+          ],
+          "rootRotationDelta": [
+            -0.06136736,
+            0.01433894,
+            -0.99603796,
+            0.06274502
+          ]
+        },
+        {
+          "timeSeconds": 1.0,
+          "rootTranslationOffsetMeters": [
+            -0.0965777,
+            0.0001067,
+            -0.0072998
+          ],
+          "rootRotationDelta": [
+            -0.06245886,
+            0.01271535,
+            -0.99768764,
+            0.02359158
+          ]
+        }
+      ]
+    },
+    {
+      "targetLinkId": "Abdomen",
+      "space": "joint",
+      "keyframes": [
+        {
+          "timeSeconds": 0.0,
+          "jointPositionRadians": [
+            0.0057759,
+            0.0034464,
+            -0.0056942
+          ]
+        },
+        {
+          "timeSeconds": 0.0333333,
+          "jointPositionRadians": [
+            0.0094204,
+            0.0032292,
+            -0.0027546
+          ]
+        },
+        {
+          "timeSeconds": 0.0666667,
+          "jointPositionRadians": [
+            0.014358,
+            0.0024886,
+            0.0010919
+          ]
+        },
+        {
+          "timeSeconds": 0.1,
+          "jointPositionRadians": [
+            0.0209933,
+            0.0027937,
+            0.0059397
+          ]
+        },
+        {
+          "timeSeconds": 0.1333333,
+          "jointPositionRadians": [
+            0.030878,
+            0.0018296,
+            0.0141286
+          ]
+        },
+        {
+          "timeSeconds": 0.1666667,
+          "jointPositionRadians": [
+            0.0455401,
+            -0.0008355,
+            0.0234576
+          ]
+        },
+        {
+          "timeSeconds": 0.2,
+          "jointPositionRadians": [
+            0.052186,
+            -0.0007567,
+            0.0278048
+          ]
+        },
+        {
+          "timeSeconds": 0.2333333,
+          "jointPositionRadians": [
+            0.0361404,
+            0.0016489,
+            0.0304186
+          ]
+        },
+        {
+          "timeSeconds": 0.2666667,
+          "jointPositionRadians": [
+            0.012398,
+            0.001791,
+            0.0345659
+          ]
+        },
+        {
+          "timeSeconds": 0.3,
+          "jointPositionRadians": [
+            0.0002947,
+            0.0006491,
+            0.035183
+          ]
+        },
+        {
+          "timeSeconds": 0.3333333,
+          "jointPositionRadians": [
+            -0.0045813,
+            0.0007917,
+            0.0311624
+          ]
+        },
+        {
+          "timeSeconds": 0.3666667,
+          "jointPositionRadians": [
+            -0.0069457,
+            0.0003044,
+            0.0257875
+          ]
+        },
+        {
+          "timeSeconds": 0.4,
+          "jointPositionRadians": [
+            -0.0100958,
+            -0.0019551,
+            0.0214284
+          ]
+        },
+        {
+          "timeSeconds": 0.4333333,
+          "jointPositionRadians": [
+            -0.0199273,
+            -0.0045043,
+            0.0181447
+          ]
+        },
+        {
+          "timeSeconds": 0.4666667,
+          "jointPositionRadians": [
+            -0.0336336,
+            -0.007364,
+            0.0147036
+          ]
+        },
+        {
+          "timeSeconds": 0.5,
+          "jointPositionRadians": [
+            -0.0465452,
+            -0.0100205,
+            0.0122719
+          ]
+        },
+        {
+          "timeSeconds": 0.5333333,
+          "jointPositionRadians": [
+            -0.0566647,
+            -0.0116438,
+            0.0116291
+          ]
+        },
+        {
+          "timeSeconds": 0.5666667,
+          "jointPositionRadians": [
+            -0.0607598,
+            -0.0129074,
+            0.0108511
+          ]
+        },
+        {
+          "timeSeconds": 0.6,
+          "jointPositionRadians": [
+            -0.0605432,
+            -0.0133067,
+            0.0085848
+          ]
+        },
+        {
+          "timeSeconds": 0.6333333,
+          "jointPositionRadians": [
+            -0.0619016,
+            -0.0127659,
+            0.0059037
+          ]
+        },
+        {
+          "timeSeconds": 0.6666667,
+          "jointPositionRadians": [
+            -0.0655498,
+            -0.0134366,
+            0.0037777
+          ]
+        },
+        {
+          "timeSeconds": 0.7,
+          "jointPositionRadians": [
+            -0.0689875,
+            -0.0161269,
+            0.002657
+          ]
+        },
+        {
+          "timeSeconds": 0.7333333,
+          "jointPositionRadians": [
+            -0.0695827,
+            -0.0182595,
+            0.0020761
+          ]
+        },
+        {
+          "timeSeconds": 0.7666667,
+          "jointPositionRadians": [
+            -0.0651163,
+            -0.0170367,
+            0.0012402
+          ]
+        },
+        {
+          "timeSeconds": 0.8,
+          "jointPositionRadians": [
+            -0.0556097,
+            -0.0124895,
+            -0.000493
+          ]
+        },
+        {
+          "timeSeconds": 0.8333333,
+          "jointPositionRadians": [
+            -0.0433056,
+            -0.0066735,
+            -0.0023397
+          ]
+        },
+        {
+          "timeSeconds": 0.8666667,
+          "jointPositionRadians": [
+            -0.0318793,
+            -0.001095,
+            -0.0038928
+          ]
+        },
+        {
+          "timeSeconds": 0.9,
+          "jointPositionRadians": [
+            -0.02316,
+            0.0027877,
+            -0.005553
+          ]
+        },
+        {
+          "timeSeconds": 0.9333333,
+          "jointPositionRadians": [
+            -0.0140881,
+            0.0042953,
+            -0.0068323
+          ]
+        },
+        {
+          "timeSeconds": 0.9666667,
+          "jointPositionRadians": [
+            -0.0037906,
+            0.0042374,
+            -0.0067496
+          ]
+        },
+        {
+          "timeSeconds": 1.0,
+          "jointPositionRadians": [
+            0.0057753,
+            0.0034459,
+            -0.0056935
+          ]
+        }
+      ]
+    },
+    {
+      "targetLinkId": "Chest",
+      "space": "joint",
+      "keyframes": [
+        {
+          "timeSeconds": 0.0,
+          "jointPositionRadians": [
+            0.0114079,
+            0.0068982,
+            -0.0094545
+          ]
+        },
+        {
+          "timeSeconds": 0.0333333,
+          "jointPositionRadians": [
+            0.0190701,
+            0.0064683,
+            -0.0035287
+          ]
+        },
+        {
+          "timeSeconds": 0.0666667,
+          "jointPositionRadians": [
+            0.0292636,
+            0.0049772,
+            0.0021608
+          ]
+        },
+        {
+          "timeSeconds": 0.1,
+          "jointPositionRadians": [
+            0.043522,
+            0.0055299,
+            0.0067114
+          ]
+        },
+        {
+          "timeSeconds": 0.1333333,
+          "jointPositionRadians": [
+            0.0648451,
+            0.0034206,
+            0.0139499
+          ]
+        },
+        {
+          "timeSeconds": 0.1666667,
+          "jointPositionRadians": [
+            0.0935873,
+            -0.0022102,
+            0.0243468
+          ]
+        },
+        {
+          "timeSeconds": 0.2,
+          "jointPositionRadians": [
+            0.1049686,
+            -0.0021469,
+            0.0316407
+          ]
+        },
+        {
+          "timeSeconds": 0.2333333,
+          "jointPositionRadians": [
+            0.0720422,
+            0.0029159,
+            0.0395166
+          ]
+        },
+        {
+          "timeSeconds": 0.2666667,
+          "jointPositionRadians": [
+            0.0248071,
+            0.003469,
+            0.050938
+          ]
+        },
+        {
+          "timeSeconds": 0.3,
+          "jointPositionRadians": [
+            0.0007779,
+            0.0012933,
+            0.0571538
+          ]
+        },
+        {
+          "timeSeconds": 0.3333333,
+          "jointPositionRadians": [
+            -0.0091437,
+            0.0016025,
+            0.0538325
+          ]
+        },
+        {
+          "timeSeconds": 0.3666667,
+          "jointPositionRadians": [
+            -0.014136,
+            0.000635,
+            0.0447721
+          ]
+        },
+        {
+          "timeSeconds": 0.4,
+          "jointPositionRadians": [
+            -0.0207075,
+            -0.0038665,
+            0.0351002
+          ]
+        },
+        {
+          "timeSeconds": 0.4333333,
+          "jointPositionRadians": [
+            -0.0406287,
+            -0.0089063,
+            0.0266097
+          ]
+        },
+        {
+          "timeSeconds": 0.4666667,
+          "jointPositionRadians": [
+            -0.0683112,
+            -0.0145301,
+            0.0180087
+          ]
+        },
+        {
+          "timeSeconds": 0.5,
+          "jointPositionRadians": [
+            -0.0944271,
+            -0.0197186,
+            0.0109754
+          ]
+        },
+        {
+          "timeSeconds": 0.5333333,
+          "jointPositionRadians": [
+            -0.1149039,
+            -0.0228037,
+            0.0064401
+          ]
+        },
+        {
+          "timeSeconds": 0.5666667,
+          "jointPositionRadians": [
+            -0.123248,
+            -0.0251898,
+            0.0013698
+          ]
+        },
+        {
+          "timeSeconds": 0.6,
+          "jointPositionRadians": [
+            -0.1231583,
+            -0.0259209,
+            -0.0054659
+          ]
+        },
+        {
+          "timeSeconds": 0.6333333,
+          "jointPositionRadians": [
+            -0.1266599,
+            -0.0247927,
+            -0.0118906
+          ]
+        },
+        {
+          "timeSeconds": 0.6666667,
+          "jointPositionRadians": [
+            -0.1351351,
+            -0.0260759,
+            -0.0166665
+          ]
+        },
+        {
+          "timeSeconds": 0.7,
+          "jointPositionRadians": [
+            -0.1436458,
+            -0.0314237,
+            -0.0187095
+          ]
+        },
+        {
+          "timeSeconds": 0.7333333,
+          "jointPositionRadians": [
+            -0.1467869,
+            -0.0357207,
+            -0.0188229
+          ]
+        },
+        {
+          "timeSeconds": 0.7666667,
+          "jointPositionRadians": [
+            -0.13929,
+            -0.0333561,
+            -0.0196986
+          ]
+        },
+        {
+          "timeSeconds": 0.8,
+          "jointPositionRadians": [
+            -0.1206676,
+            -0.0244427,
+            -0.0207258
+          ]
+        },
+        {
+          "timeSeconds": 0.8333333,
+          "jointPositionRadians": [
+            -0.0947128,
+            -0.0130536,
+            -0.0190694
+          ]
+        },
+        {
+          "timeSeconds": 0.8666667,
+          "jointPositionRadians": [
+            -0.0696105,
+            -0.0020672,
+            -0.0166007
+          ]
+        },
+        {
+          "timeSeconds": 0.9,
+          "jointPositionRadians": [
+            -0.0500931,
+            0.0056151,
+            -0.0157509
+          ]
+        },
+        {
+          "timeSeconds": 0.9333333,
+          "jointPositionRadians": [
+            -0.0301387,
+            0.0085908,
+            -0.0148755
+          ]
+        },
+        {
+          "timeSeconds": 0.9666667,
+          "jointPositionRadians": [
+            -0.0083398,
+            0.0084694,
+            -0.0123999
+          ]
+        },
+        {
+          "timeSeconds": 1.0,
+          "jointPositionRadians": [
+            0.0114062,
+            0.0068972,
+            -0.0094533
+          ]
+        }
+      ]
+    },
+    {
+      "targetLinkId": "UpperChest",
+      "space": "joint",
+      "keyframes": [
+        {
+          "timeSeconds": 0.0,
+          "jointPositionRadians": [
+            0.0114082,
+            0.0068982,
+            -0.0094546
+          ]
+        },
+        {
+          "timeSeconds": 0.0333333,
+          "jointPositionRadians": [
+            0.0190701,
+            0.0064682,
+            -0.0035289
+          ]
+        },
+        {
+          "timeSeconds": 0.0666667,
+          "jointPositionRadians": [
+            0.0292635,
+            0.0049772,
+            0.0021608
+          ]
+        },
+        {
+          "timeSeconds": 0.1,
+          "jointPositionRadians": [
+            0.0435224,
+            0.0055302,
+            0.0067114
+          ]
+        },
+        {
+          "timeSeconds": 0.1333333,
+          "jointPositionRadians": [
+            0.064845,
+            0.0034206,
+            0.0139498
+          ]
+        },
+        {
+          "timeSeconds": 0.1666667,
+          "jointPositionRadians": [
+            0.093587,
+            -0.0022102,
+            0.0243468
+          ]
+        },
+        {
+          "timeSeconds": 0.2,
+          "jointPositionRadians": [
+            0.1049678,
+            -0.0021467,
+            0.0316405
+          ]
+        },
+        {
+          "timeSeconds": 0.2333333,
+          "jointPositionRadians": [
+            0.0720418,
+            0.0029162,
+            0.0395166
+          ]
+        },
+        {
+          "timeSeconds": 0.2666667,
+          "jointPositionRadians": [
+            0.0248072,
+            0.003469,
+            0.050938
+          ]
+        },
+        {
+          "timeSeconds": 0.3,
+          "jointPositionRadians": [
+            0.0007783,
+            0.0012934,
+            0.0571537
+          ]
+        },
+        {
+          "timeSeconds": 0.3333333,
+          "jointPositionRadians": [
+            -0.009143,
+            0.0016025,
+            0.0538325
+          ]
+        },
+        {
+          "timeSeconds": 0.3666667,
+          "jointPositionRadians": [
+            -0.0141353,
+            0.0006351,
+            0.0447722
+          ]
+        },
+        {
+          "timeSeconds": 0.4,
+          "jointPositionRadians": [
+            -0.0207075,
+            -0.0038665,
+            0.0351003
+          ]
+        },
+        {
+          "timeSeconds": 0.4333333,
+          "jointPositionRadians": [
+            -0.0406278,
+            -0.0089057,
+            0.0266097
+          ]
+        },
+        {
+          "timeSeconds": 0.4666667,
+          "jointPositionRadians": [
+            -0.0683113,
+            -0.0145299,
+            0.0180089
+          ]
+        },
+        {
+          "timeSeconds": 0.5,
+          "jointPositionRadians": [
+            -0.0944264,
+            -0.0197186,
+            0.0109754
+          ]
+        },
+        {
+          "timeSeconds": 0.5333333,
+          "jointPositionRadians": [
+            -0.1149042,
+            -0.0228037,
+            0.0064402
+          ]
+        },
+        {
+          "timeSeconds": 0.5666667,
+          "jointPositionRadians": [
+            -0.1232483,
+            -0.0251897,
+            0.0013698
+          ]
+        },
+        {
+          "timeSeconds": 0.6,
+          "jointPositionRadians": [
+            -0.1231588,
+            -0.0259211,
+            -0.0054658
+          ]
+        },
+        {
+          "timeSeconds": 0.6333333,
+          "jointPositionRadians": [
+            -0.12666,
+            -0.0247924,
+            -0.0118905
+          ]
+        },
+        {
+          "timeSeconds": 0.6666667,
+          "jointPositionRadians": [
+            -0.1351357,
+            -0.0260759,
+            -0.0166663
+          ]
+        },
+        {
+          "timeSeconds": 0.7,
+          "jointPositionRadians": [
+            -0.1436464,
+            -0.0314237,
+            -0.0187096
+          ]
+        },
+        {
+          "timeSeconds": 0.7333333,
+          "jointPositionRadians": [
+            -0.146787,
+            -0.0357207,
+            -0.0188229
+          ]
+        },
+        {
+          "timeSeconds": 0.7666667,
+          "jointPositionRadians": [
+            -0.13929,
+            -0.0333559,
+            -0.0196985
+          ]
+        },
+        {
+          "timeSeconds": 0.8,
+          "jointPositionRadians": [
+            -0.1206676,
+            -0.0244425,
+            -0.0207257
+          ]
+        },
+        {
+          "timeSeconds": 0.8333333,
+          "jointPositionRadians": [
+            -0.094713,
+            -0.0130536,
+            -0.0190692
+          ]
+        },
+        {
+          "timeSeconds": 0.8666667,
+          "jointPositionRadians": [
+            -0.0696106,
+            -0.0020672,
+            -0.0166005
+          ]
+        },
+        {
+          "timeSeconds": 0.9,
+          "jointPositionRadians": [
+            -0.0500931,
+            0.0056149,
+            -0.0157508
+          ]
+        },
+        {
+          "timeSeconds": 0.9333333,
+          "jointPositionRadians": [
+            -0.0301387,
+            0.0085907,
+            -0.0148756
+          ]
+        },
+        {
+          "timeSeconds": 0.9666667,
+          "jointPositionRadians": [
+            -0.0083395,
+            0.0084694,
+            -0.0124001
+          ]
+        },
+        {
+          "timeSeconds": 1.0,
+          "jointPositionRadians": [
+            0.0114064,
+            0.0068972,
+            -0.0094532
+          ]
+        }
+      ]
+    },
+    {
+      "targetLinkId": "Neck",
+      "space": "joint",
+      "keyframes": [
+        {
+          "timeSeconds": 0.0,
+          "jointPositionRadians": [
+            -0.0021494,
+            -9.33e-05,
+            0.0072007
+          ]
+        },
+        {
+          "timeSeconds": 0.0333333,
+          "jointPositionRadians": [
+            -0.0010831,
+            0.0014176,
+            0.0067499
+          ]
+        },
+        {
+          "timeSeconds": 0.0666667,
+          "jointPositionRadians": [
+            0.0006658,
+            0.0005283,
+            0.0075095
+          ]
+        },
+        {
+          "timeSeconds": 0.1,
+          "jointPositionRadians": [
+            -0.0044955,
+            -0.0022557,
+            0.0092175
+          ]
+        },
+        {
+          "timeSeconds": 0.1333333,
+          "jointPositionRadians": [
+            -0.0193598,
+            -0.005754,
+            0.0139125
+          ]
+        },
+        {
+          "timeSeconds": 0.1666667,
+          "jointPositionRadians": [
+            -0.0390239,
+            -0.0099649,
+            0.023768
+          ]
+        },
+        {
+          "timeSeconds": 0.2,
+          "jointPositionRadians": [
+            -0.0616193,
+            -0.0163465,
+            0.0324283
+          ]
+        },
+        {
+          "timeSeconds": 0.2333333,
+          "jointPositionRadians": [
+            -0.0822103,
+            -0.0232333,
+            0.0317873
+          ]
+        },
+        {
+          "timeSeconds": 0.2666667,
+          "jointPositionRadians": [
+            -0.0943182,
+            -0.0246715,
+            0.0277197
+          ]
+        },
+        {
+          "timeSeconds": 0.3,
+          "jointPositionRadians": [
+            -0.1012697,
+            -0.0220327,
+            0.0264491
+          ]
+        },
+        {
+          "timeSeconds": 0.3333333,
+          "jointPositionRadians": [
+            -0.1025296,
+            -0.0202046,
+            0.025865
+          ]
+        },
+        {
+          "timeSeconds": 0.3666667,
+          "jointPositionRadians": [
+            -0.0976944,
+            -0.018741,
+            0.0230112
+          ]
+        },
+        {
+          "timeSeconds": 0.4,
+          "jointPositionRadians": [
+            -0.0880322,
+            -0.0157552,
+            0.0179272
+          ]
+        },
+        {
+          "timeSeconds": 0.4333333,
+          "jointPositionRadians": [
+            -0.0757839,
+            -0.0118737,
+            0.0115652
+          ]
+        },
+        {
+          "timeSeconds": 0.4666667,
+          "jointPositionRadians": [
+            -0.0629269,
+            -0.0071325,
+            0.0069761
+          ]
+        },
+        {
+          "timeSeconds": 0.5,
+          "jointPositionRadians": [
+            -0.0503843,
+            -0.002054,
+            0.0045369
+          ]
+        },
+        {
+          "timeSeconds": 0.5333333,
+          "jointPositionRadians": [
+            -0.039398,
+            0.0017943,
+            0.0019725
+          ]
+        },
+        {
+          "timeSeconds": 0.5666667,
+          "jointPositionRadians": [
+            -0.0312015,
+            0.004232,
+            0.000112
+          ]
+        },
+        {
+          "timeSeconds": 0.6,
+          "jointPositionRadians": [
+            -0.0262452,
+            0.0047292,
+            -0.0006005
+          ]
+        },
+        {
+          "timeSeconds": 0.6333333,
+          "jointPositionRadians": [
+            -0.0249283,
+            0.0039551,
+            -0.0019174
+          ]
+        },
+        {
+          "timeSeconds": 0.6666667,
+          "jointPositionRadians": [
+            -0.0242912,
+            0.0035981,
+            -0.0032152
+          ]
+        },
+        {
+          "timeSeconds": 0.7,
+          "jointPositionRadians": [
+            -0.0235655,
+            0.0023398,
+            -0.0035228
+          ]
+        },
+        {
+          "timeSeconds": 0.7333333,
+          "jointPositionRadians": [
+            -0.0221776,
+            -0.0018035,
+            -0.0026377
+          ]
+        },
+        {
+          "timeSeconds": 0.7666667,
+          "jointPositionRadians": [
+            -0.0200818,
+            -0.0069028,
+            0.0008861
+          ]
+        },
+        {
+          "timeSeconds": 0.8,
+          "jointPositionRadians": [
+            -0.0183615,
+            -0.0101628,
+            0.0044742
+          ]
+        },
+        {
+          "timeSeconds": 0.8333333,
+          "jointPositionRadians": [
+            -0.017058,
+            -0.0112188,
+            0.0053983
+          ]
+        },
+        {
+          "timeSeconds": 0.8666667,
+          "jointPositionRadians": [
+            -0.0145155,
+            -0.0106236,
+            0.0059114
+          ]
+        },
+        {
+          "timeSeconds": 0.9,
+          "jointPositionRadians": [
+            -0.0107104,
+            -0.0087493,
+            0.0067317
+          ]
+        },
+        {
+          "timeSeconds": 0.9333333,
+          "jointPositionRadians": [
+            -0.0071578,
+            -0.005889,
+            0.0073424
+          ]
+        },
+        {
+          "timeSeconds": 0.9666667,
+          "jointPositionRadians": [
+            -0.0043987,
+            -0.0027577,
+            0.007338
+          ]
+        },
+        {
+          "timeSeconds": 1.0,
+          "jointPositionRadians": [
+            -0.0021461,
+            -9.23e-05,
+            0.0071943
+          ]
+        }
+      ]
+    },
+    {
+      "targetLinkId": "Head",
+      "space": "joint",
+      "keyframes": [
+        {
+          "timeSeconds": 0.0,
+          "jointPositionRadians": [
+            -0.0021492,
+            -9.29e-05,
+            0.0072008
+          ]
+        },
+        {
+          "timeSeconds": 0.0333333,
+          "jointPositionRadians": [
+            -0.0010833,
+            0.0014178,
+            0.0067499
+          ]
+        },
+        {
+          "timeSeconds": 0.0666667,
+          "jointPositionRadians": [
+            0.0006658,
+            0.0005282,
+            0.0075095
+          ]
+        },
+        {
+          "timeSeconds": 0.1,
+          "jointPositionRadians": [
+            -0.0044956,
+            -0.0022557,
+            0.0092172
+          ]
+        },
+        {
+          "timeSeconds": 0.1333333,
+          "jointPositionRadians": [
+            -0.0193598,
+            -0.005754,
+            0.0139125
+          ]
+        },
+        {
+          "timeSeconds": 0.1666667,
+          "jointPositionRadians": [
+            -0.0390239,
+            -0.0099653,
+            0.0237681
+          ]
+        },
+        {
+          "timeSeconds": 0.2,
+          "jointPositionRadians": [
+            -0.0616193,
+            -0.0163464,
+            0.0324284
+          ]
+        },
+        {
+          "timeSeconds": 0.2333333,
+          "jointPositionRadians": [
+            -0.0822104,
+            -0.023233,
+            0.0317872
+          ]
+        },
+        {
+          "timeSeconds": 0.2666667,
+          "jointPositionRadians": [
+            -0.0943183,
+            -0.0246713,
+            0.0277198
+          ]
+        },
+        {
+          "timeSeconds": 0.3,
+          "jointPositionRadians": [
+            -0.1012695,
+            -0.0220322,
+            0.0264491
+          ]
+        },
+        {
+          "timeSeconds": 0.3333333,
+          "jointPositionRadians": [
+            -0.1025284,
+            -0.0202051,
+            0.0258649
+          ]
+        },
+        {
+          "timeSeconds": 0.3666667,
+          "jointPositionRadians": [
+            -0.0976946,
+            -0.018741,
+            0.023011
+          ]
+        },
+        {
+          "timeSeconds": 0.4,
+          "jointPositionRadians": [
+            -0.088032,
+            -0.015755,
+            0.0179273
+          ]
+        },
+        {
+          "timeSeconds": 0.4333333,
+          "jointPositionRadians": [
+            -0.0757836,
+            -0.0118735,
+            0.0115652
+          ]
+        },
+        {
+          "timeSeconds": 0.4666667,
+          "jointPositionRadians": [
+            -0.0629272,
+            -0.0071322,
+            0.0069764
+          ]
+        },
+        {
+          "timeSeconds": 0.5,
+          "jointPositionRadians": [
+            -0.0503845,
+            -0.0020539,
+            0.004537
+          ]
+        },
+        {
+          "timeSeconds": 0.5333333,
+          "jointPositionRadians": [
+            -0.0393976,
+            0.0017948,
+            0.0019725
+          ]
+        },
+        {
+          "timeSeconds": 0.5666667,
+          "jointPositionRadians": [
+            -0.0312018,
+            0.004232,
+            0.0001119
+          ]
+        },
+        {
+          "timeSeconds": 0.6,
+          "jointPositionRadians": [
+            -0.0262452,
+            0.0047289,
+            -0.0006006
+          ]
+        },
+        {
+          "timeSeconds": 0.6333333,
+          "jointPositionRadians": [
+            -0.0249281,
+            0.0039554,
+            -0.0019172
+          ]
+        },
+        {
+          "timeSeconds": 0.6666667,
+          "jointPositionRadians": [
+            -0.0242912,
+            0.0035981,
+            -0.0032152
+          ]
+        },
+        {
+          "timeSeconds": 0.7,
+          "jointPositionRadians": [
+            -0.0235655,
+            0.0023395,
+            -0.0035229
+          ]
+        },
+        {
+          "timeSeconds": 0.7333333,
+          "jointPositionRadians": [
+            -0.0221776,
+            -0.0018034,
+            -0.0026377
+          ]
+        },
+        {
+          "timeSeconds": 0.7666667,
+          "jointPositionRadians": [
+            -0.0200817,
+            -0.0069027,
+            0.0008861
+          ]
+        },
+        {
+          "timeSeconds": 0.8,
+          "jointPositionRadians": [
+            -0.0183617,
+            -0.0101625,
+            0.0044742
+          ]
+        },
+        {
+          "timeSeconds": 0.8333333,
+          "jointPositionRadians": [
+            -0.0170582,
+            -0.0112188,
+            0.0053984
+          ]
+        },
+        {
+          "timeSeconds": 0.8666667,
+          "jointPositionRadians": [
+            -0.0145154,
+            -0.0106233,
+            0.0059112
+          ]
+        },
+        {
+          "timeSeconds": 0.9,
+          "jointPositionRadians": [
+            -0.0107104,
+            -0.0087496,
+            0.0067314
+          ]
+        },
+        {
+          "timeSeconds": 0.9333333,
+          "jointPositionRadians": [
+            -0.0071576,
+            -0.0058888,
+            0.0073424
+          ]
+        },
+        {
+          "timeSeconds": 0.9666667,
+          "jointPositionRadians": [
+            -0.0043984,
+            -0.0027577,
+            0.0073381
+          ]
+        },
+        {
+          "timeSeconds": 1.0,
+          "jointPositionRadians": [
+            -0.0021463,
+            -9.23e-05,
+            0.0071944
+          ]
+        }
+      ]
+    },
+    {
+      "targetLinkId": "LeftUpperArm",
+      "space": "joint",
+      "keyframes": [
+        {
+          "timeSeconds": 0.0,
+          "jointPositionRadians": [
+            0.4963579,
+            1.1526979,
+            -0.3733129
+          ]
+        },
+        {
+          "timeSeconds": 0.0333333,
+          "jointPositionRadians": [
+            0.4995682,
+            1.1691046,
+            -0.2959401
+          ]
+        },
+        {
+          "timeSeconds": 0.0666667,
+          "jointPositionRadians": [
+            0.5053977,
+            1.1752051,
+            -0.2313308
+          ]
+        },
+        {
+          "timeSeconds": 0.1,
+          "jointPositionRadians": [
+            0.5085832,
+            1.1750571,
+            -0.1789463
+          ]
+        },
+        {
+          "timeSeconds": 0.1333333,
+          "jointPositionRadians": [
+            0.50634,
+            1.1685585,
+            -0.12926
+          ]
+        },
+        {
+          "timeSeconds": 0.1666667,
+          "jointPositionRadians": [
+            0.5218941,
+            1.1650876,
+            -0.117424
+          ]
+        },
+        {
+          "timeSeconds": 0.2,
+          "jointPositionRadians": [
+            0.5822827,
+            1.1834886,
+            -0.1798156
+          ]
+        },
+        {
+          "timeSeconds": 0.2333333,
+          "jointPositionRadians": [
+            0.7331734,
+            1.1935401,
+            -0.3422724
+          ]
+        },
+        {
+          "timeSeconds": 0.2666667,
+          "jointPositionRadians": [
+            0.9571044,
+            1.1308639,
+            -0.5631434
+          ]
+        },
+        {
+          "timeSeconds": 0.3,
+          "jointPositionRadians": [
+            1.0481379,
+            1.0586133,
+            -0.6453375
+          ]
+        },
+        {
+          "timeSeconds": 0.3333333,
+          "jointPositionRadians": [
+            0.9734845,
+            1.0520335,
+            -0.5720032
+          ]
+        },
+        {
+          "timeSeconds": 0.3666667,
+          "jointPositionRadians": [
+            0.858454,
+            1.0853887,
+            -0.4775546
+          ]
+        },
+        {
+          "timeSeconds": 0.4,
+          "jointPositionRadians": [
+            0.7641401,
+            1.1144191,
+            -0.4264047
+          ]
+        },
+        {
+          "timeSeconds": 0.4333333,
+          "jointPositionRadians": [
+            0.7099543,
+            1.1132873,
+            -0.4286827
+          ]
+        },
+        {
+          "timeSeconds": 0.4666667,
+          "jointPositionRadians": [
+            0.6891363,
+            1.0986373,
+            -0.4770071
+          ]
+        },
+        {
+          "timeSeconds": 0.5,
+          "jointPositionRadians": [
+            0.6587623,
+            1.0927197,
+            -0.5222369
+          ]
+        },
+        {
+          "timeSeconds": 0.5333333,
+          "jointPositionRadians": [
+            0.6089928,
+            1.0946997,
+            -0.552362
+          ]
+        },
+        {
+          "timeSeconds": 0.5666667,
+          "jointPositionRadians": [
+            0.5513175,
+            1.0958363,
+            -0.5939516
+          ]
+        },
+        {
+          "timeSeconds": 0.6,
+          "jointPositionRadians": [
+            0.4737093,
+            1.0977576,
+            -0.6310609
+          ]
+        },
+        {
+          "timeSeconds": 0.6333333,
+          "jointPositionRadians": [
+            0.3865394,
+            1.1025082,
+            -0.6401057
+          ]
+        },
+        {
+          "timeSeconds": 0.6666667,
+          "jointPositionRadians": [
+            0.3288619,
+            1.1016359,
+            -0.6367096
+          ]
+        },
+        {
+          "timeSeconds": 0.7,
+          "jointPositionRadians": [
+            0.3087049,
+            1.0964987,
+            -0.6214635
+          ]
+        },
+        {
+          "timeSeconds": 0.7333333,
+          "jointPositionRadians": [
+            0.3084376,
+            1.0988809,
+            -0.5853808
+          ]
+        },
+        {
+          "timeSeconds": 0.7666667,
+          "jointPositionRadians": [
+            0.3191327,
+            1.1073498,
+            -0.554903
+          ]
+        },
+        {
+          "timeSeconds": 0.8,
+          "jointPositionRadians": [
+            0.3356624,
+            1.1098672,
+            -0.5464026
+          ]
+        },
+        {
+          "timeSeconds": 0.8333333,
+          "jointPositionRadians": [
+            0.3560994,
+            1.1084054,
+            -0.5402187
+          ]
+        },
+        {
+          "timeSeconds": 0.8666667,
+          "jointPositionRadians": [
+            0.3816993,
+            1.111223,
+            -0.5243655
+          ]
+        },
+        {
+          "timeSeconds": 0.9,
+          "jointPositionRadians": [
+            0.4124559,
+            1.1168754,
+            -0.4999588
+          ]
+        },
+        {
+          "timeSeconds": 0.9333333,
+          "jointPositionRadians": [
+            0.4469426,
+            1.1237679,
+            -0.4662311
+          ]
+        },
+        {
+          "timeSeconds": 0.9666667,
+          "jointPositionRadians": [
+            0.4756741,
+            1.1357071,
+            -0.4196101
+          ]
+        },
+        {
+          "timeSeconds": 1.0,
+          "jointPositionRadians": [
+            0.4963577,
+            1.1526958,
+            -0.3733064
+          ]
+        }
+      ]
+    },
+    {
+      "targetLinkId": "LeftForearm",
+      "space": "joint",
+      "keyframes": [
+        {
+          "timeSeconds": 0.0,
+          "jointPositionRadians": [
+            0.5637078,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.0333333,
+          "jointPositionRadians": [
+            0.5860944,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.0666667,
+          "jointPositionRadians": [
+            0.6144344,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.1,
+          "jointPositionRadians": [
+            0.6240163,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.1333333,
+          "jointPositionRadians": [
+            0.6081145,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.1666667,
+          "jointPositionRadians": [
+            0.5582097,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.2,
+          "jointPositionRadians": [
+            0.4526088,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.2333333,
+          "jointPositionRadians": [
+            0.3291824,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.2666667,
+          "jointPositionRadians": [
+            0.2584528,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.3,
+          "jointPositionRadians": [
+            0.249246,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.3333333,
+          "jointPositionRadians": [
+            0.2752693,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.3666667,
+          "jointPositionRadians": [
+            0.3088323,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.4,
+          "jointPositionRadians": [
+            0.3459554,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.4333333,
+          "jointPositionRadians": [
+            0.3887933,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.4666667,
+          "jointPositionRadians": [
+            0.4296988,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.5,
+          "jointPositionRadians": [
+            0.4733469,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.5333333,
+          "jointPositionRadians": [
+            0.515515,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.5666667,
+          "jointPositionRadians": [
+            0.551742,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.6,
+          "jointPositionRadians": [
+            0.5883194,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.6333333,
+          "jointPositionRadians": [
+            0.6272486,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.6666667,
+          "jointPositionRadians": [
+            0.6630121,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.7,
+          "jointPositionRadians": [
+            0.6928877,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.7333333,
+          "jointPositionRadians": [
+            0.7134351,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.7666667,
+          "jointPositionRadians": [
+            0.7182168,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.8,
+          "jointPositionRadians": [
+            0.7016988,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.8333333,
+          "jointPositionRadians": [
+            0.6671927,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.8666667,
+          "jointPositionRadians": [
+            0.6283614,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.9,
+          "jointPositionRadians": [
+            0.5965495,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.9333333,
+          "jointPositionRadians": [
+            0.5774835,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.9666667,
+          "jointPositionRadians": [
+            0.5689397,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 1.0,
+          "jointPositionRadians": [
+            0.5637084,
+            0.0,
+            0.0
+          ]
+        }
+      ]
+    },
+    {
+      "targetLinkId": "LeftHand",
+      "space": "joint",
+      "keyframes": [
+        {
+          "timeSeconds": 0.0,
+          "jointPositionRadians": [
+            0.2202194,
+            0.1079805,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.0333333,
+          "jointPositionRadians": [
+            0.2027951,
+            0.114525,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.0666667,
+          "jointPositionRadians": [
+            0.1963886,
+            0.1448155,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.1,
+          "jointPositionRadians": [
+            0.2120715,
+            0.1609152,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.1333333,
+          "jointPositionRadians": [
+            0.220286,
+            0.1472923,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.1666667,
+          "jointPositionRadians": [
+            0.2302542,
+            0.0923177,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.2,
+          "jointPositionRadians": [
+            0.2656686,
+            -0.0305679,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.2333333,
+          "jointPositionRadians": [
+            0.281675,
+            -0.280792,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.2666667,
+          "jointPositionRadians": [
+            0.2264713,
+            -0.5235988,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.3,
+          "jointPositionRadians": [
+            0.1797089,
+            -0.5235988,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.3333333,
+          "jointPositionRadians": [
+            0.159433,
+            -0.4228028,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.3666667,
+          "jointPositionRadians": [
+            0.1154603,
+            -0.2525734,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.4,
+          "jointPositionRadians": [
+            0.081356,
+            -0.1182317,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.4333333,
+          "jointPositionRadians": [
+            0.0795545,
+            -0.016298,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.4666667,
+          "jointPositionRadians": [
+            0.0929495,
+            0.0265438,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.5,
+          "jointPositionRadians": [
+            0.0822934,
+            0.0517868,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.5333333,
+          "jointPositionRadians": [
+            0.0782655,
+            0.1006656,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.5666667,
+          "jointPositionRadians": [
+            0.1187425,
+            0.1460978,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.6,
+          "jointPositionRadians": [
+            0.172913,
+            0.1596635,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.6333333,
+          "jointPositionRadians": [
+            0.2112813,
+            0.1455176,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.6666667,
+          "jointPositionRadians": [
+            0.2416982,
+            0.1277416,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.7,
+          "jointPositionRadians": [
+            0.2709342,
+            0.1305062,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.7333333,
+          "jointPositionRadians": [
+            0.2880659,
+            0.140405,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.7666667,
+          "jointPositionRadians": [
+            0.2901669,
+            0.1410182,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.8,
+          "jointPositionRadians": [
+            0.2900756,
+            0.1378857,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.8333333,
+          "jointPositionRadians": [
+            0.2987038,
+            0.1272162,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.8666667,
+          "jointPositionRadians": [
+            0.3041657,
+            0.1087382,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.9,
+          "jointPositionRadians": [
+            0.2874611,
+            0.094844,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.9333333,
+          "jointPositionRadians": [
+            0.2549475,
+            0.0930772,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.9666667,
+          "jointPositionRadians": [
+            0.2281232,
+            0.1005593,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 1.0,
+          "jointPositionRadians": [
+            0.2202184,
+            0.1079801,
+            0.0
+          ]
+        }
+      ]
+    },
+    {
+      "targetLinkId": "RightUpperArm",
+      "space": "joint",
+      "keyframes": [
+        {
+          "timeSeconds": 0.0,
+          "jointPositionRadians": [
+            0.6089799,
+            -1.2919233,
+            0.1207082
+          ]
+        },
+        {
+          "timeSeconds": 0.0333333,
+          "jointPositionRadians": [
+            0.542249,
+            -1.2811565,
+            0.0902237
+          ]
+        },
+        {
+          "timeSeconds": 0.0666667,
+          "jointPositionRadians": [
+            0.5034277,
+            -1.261917,
+            0.0445924
+          ]
+        },
+        {
+          "timeSeconds": 0.1,
+          "jointPositionRadians": [
+            0.4937871,
+            -1.2431254,
+            0.0120496
+          ]
+        },
+        {
+          "timeSeconds": 0.1333333,
+          "jointPositionRadians": [
+            0.4951915,
+            -1.2324063,
+            0.0128996
+          ]
+        },
+        {
+          "timeSeconds": 0.1666667,
+          "jointPositionRadians": [
+            0.4890703,
+            -1.2268806,
+            0.032755
+          ]
+        },
+        {
+          "timeSeconds": 0.2,
+          "jointPositionRadians": [
+            0.4768025,
+            -1.231021,
+            0.063682
+          ]
+        },
+        {
+          "timeSeconds": 0.2333333,
+          "jointPositionRadians": [
+            0.4694071,
+            -1.2567762,
+            0.116365
+          ]
+        },
+        {
+          "timeSeconds": 0.2666667,
+          "jointPositionRadians": [
+            0.4787636,
+            -1.291838,
+            0.170486
+          ]
+        },
+        {
+          "timeSeconds": 0.3,
+          "jointPositionRadians": [
+            0.5262707,
+            -1.3190953,
+            0.1915466
+          ]
+        },
+        {
+          "timeSeconds": 0.3333333,
+          "jointPositionRadians": [
+            0.5915934,
+            -1.3236502,
+            0.1548279
+          ]
+        },
+        {
+          "timeSeconds": 0.3666667,
+          "jointPositionRadians": [
+            0.637655,
+            -1.29451,
+            0.1027287
+          ]
+        },
+        {
+          "timeSeconds": 0.4,
+          "jointPositionRadians": [
+            0.6456414,
+            -1.2499672,
+            0.0850849
+          ]
+        },
+        {
+          "timeSeconds": 0.4333333,
+          "jointPositionRadians": [
+            0.6022674,
+            -1.2141621,
+            0.0645752
+          ]
+        },
+        {
+          "timeSeconds": 0.4666667,
+          "jointPositionRadians": [
+            0.5337729,
+            -1.1809692,
+            -0.0005732
+          ]
+        },
+        {
+          "timeSeconds": 0.5,
+          "jointPositionRadians": [
+            0.5018321,
+            -1.1416816,
+            -0.0776131
+          ]
+        },
+        {
+          "timeSeconds": 0.5333333,
+          "jointPositionRadians": [
+            0.5167049,
+            -1.1045966,
+            -0.1388303
+          ]
+        },
+        {
+          "timeSeconds": 0.5666667,
+          "jointPositionRadians": [
+            0.5477473,
+            -1.0828609,
+            -0.1813066
+          ]
+        },
+        {
+          "timeSeconds": 0.6,
+          "jointPositionRadians": [
+            0.5757665,
+            -1.0903735,
+            -0.1980168
+          ]
+        },
+        {
+          "timeSeconds": 0.6333333,
+          "jointPositionRadians": [
+            0.6092063,
+            -1.1271527,
+            -0.1929218
+          ]
+        },
+        {
+          "timeSeconds": 0.6666667,
+          "jointPositionRadians": [
+            0.6706712,
+            -1.1750784,
+            -0.1824342
+          ]
+        },
+        {
+          "timeSeconds": 0.7,
+          "jointPositionRadians": [
+            0.7759168,
+            -1.2214609,
+            -0.1609145
+          ]
+        },
+        {
+          "timeSeconds": 0.7333333,
+          "jointPositionRadians": [
+            0.8693108,
+            -1.2566696,
+            -0.1566498
+          ]
+        },
+        {
+          "timeSeconds": 0.7666667,
+          "jointPositionRadians": [
+            0.8834077,
+            -1.2732122,
+            -0.2021214
+          ]
+        },
+        {
+          "timeSeconds": 0.8,
+          "jointPositionRadians": [
+            0.8613213,
+            -1.2825283,
+            -0.2335617
+          ]
+        },
+        {
+          "timeSeconds": 0.8333333,
+          "jointPositionRadians": [
+            0.8514125,
+            -1.2898283,
+            -0.1982006
+          ]
+        },
+        {
+          "timeSeconds": 0.8666667,
+          "jointPositionRadians": [
+            0.7707974,
+            -1.2754253,
+            -0.1723015
+          ]
+        },
+        {
+          "timeSeconds": 0.9,
+          "jointPositionRadians": [
+            0.7067289,
+            -1.2698598,
+            -0.1191974
+          ]
+        },
+        {
+          "timeSeconds": 0.9333333,
+          "jointPositionRadians": [
+            0.6599653,
+            -1.274417,
+            -0.0532114
+          ]
+        },
+        {
+          "timeSeconds": 0.9666667,
+          "jointPositionRadians": [
+            0.6267992,
+            -1.2839184,
+            0.0249188
+          ]
+        },
+        {
+          "timeSeconds": 1.0,
+          "jointPositionRadians": [
+            0.6089838,
+            -1.2919253,
+            0.1207107
+          ]
+        }
+      ]
+    },
+    {
+      "targetLinkId": "RightForearm",
+      "space": "joint",
+      "keyframes": [
+        {
+          "timeSeconds": 0.0,
+          "jointPositionRadians": [
+            0.4699062,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.0333333,
+          "jointPositionRadians": [
+            0.5667312,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.0666667,
+          "jointPositionRadians": [
+            0.7099536,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.1,
+          "jointPositionRadians": [
+            0.8519893,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.1333333,
+          "jointPositionRadians": [
+            0.9460523,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.1666667,
+          "jointPositionRadians": [
+            0.9882175,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.2,
+          "jointPositionRadians": [
+            0.9683086,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.2333333,
+          "jointPositionRadians": [
+            0.8702223,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.2666667,
+          "jointPositionRadians": [
+            0.7446962,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.3,
+          "jointPositionRadians": [
+            0.6714211,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.3333333,
+          "jointPositionRadians": [
+            0.6598224,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.3666667,
+          "jointPositionRadians": [
+            0.6522623,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.4,
+          "jointPositionRadians": [
+            0.6231852,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.4333333,
+          "jointPositionRadians": [
+            0.5962334,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.4666667,
+          "jointPositionRadians": [
+            0.5914104,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.5,
+          "jointPositionRadians": [
+            0.5887833,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.5333333,
+          "jointPositionRadians": [
+            0.5761977,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.5666667,
+          "jointPositionRadians": [
+            0.537461,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.6,
+          "jointPositionRadians": [
+            0.4600441,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.6333333,
+          "jointPositionRadians": [
+            0.3689476,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.6666667,
+          "jointPositionRadians": [
+            0.3026352,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.7,
+          "jointPositionRadians": [
+            0.2745117,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.7333333,
+          "jointPositionRadians": [
+            0.2764464,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.7666667,
+          "jointPositionRadians": [
+            0.2890784,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.8,
+          "jointPositionRadians": [
+            0.2985361,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.8333333,
+          "jointPositionRadians": [
+            0.3070306,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.8666667,
+          "jointPositionRadians": [
+            0.3469998,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.9,
+          "jointPositionRadians": [
+            0.3895344,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.9333333,
+          "jointPositionRadians": [
+            0.4287868,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.9666667,
+          "jointPositionRadians": [
+            0.4576834,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 1.0,
+          "jointPositionRadians": [
+            0.4699061,
+            0.0,
+            0.0
+          ]
+        }
+      ]
+    },
+    {
+      "targetLinkId": "RightHand",
+      "space": "joint",
+      "keyframes": [
+        {
+          "timeSeconds": 0.0,
+          "jointPositionRadians": [
+            -0.1239165,
+            -0.0693879,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.0333333,
+          "jointPositionRadians": [
+            -0.130768,
+            -0.0339201,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.0666667,
+          "jointPositionRadians": [
+            -0.1127205,
+            0.0049905,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.1,
+          "jointPositionRadians": [
+            -0.1099173,
+            0.0108425,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.1333333,
+          "jointPositionRadians": [
+            -0.1347987,
+            -0.033567,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.1666667,
+          "jointPositionRadians": [
+            -0.1961479,
+            -0.0649207,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.2,
+          "jointPositionRadians": [
+            -0.3073206,
+            -0.0551766,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.2333333,
+          "jointPositionRadians": [
+            -0.4508868,
+            -0.0305793,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.2666667,
+          "jointPositionRadians": [
+            -0.5456719,
+            0.0228775,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.3,
+          "jointPositionRadians": [
+            -0.52213,
+            0.089364,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.3333333,
+          "jointPositionRadians": [
+            -0.4345927,
+            0.1189983,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.3666667,
+          "jointPositionRadians": [
+            -0.4023653,
+            0.0927783,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.4,
+          "jointPositionRadians": [
+            -0.403086,
+            0.0487455,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.4333333,
+          "jointPositionRadians": [
+            -0.3555823,
+            0.0159907,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.4666667,
+          "jointPositionRadians": [
+            -0.2960667,
+            0.0069834,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.5,
+          "jointPositionRadians": [
+            -0.2638621,
+            -0.008842,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.5333333,
+          "jointPositionRadians": [
+            -0.2400383,
+            -0.0551308,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.5666667,
+          "jointPositionRadians": [
+            -0.2138939,
+            -0.1075928,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.6,
+          "jointPositionRadians": [
+            -0.19166,
+            -0.1527182,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.6333333,
+          "jointPositionRadians": [
+            -0.1512551,
+            -0.1970082,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.6666667,
+          "jointPositionRadians": [
+            -0.0827966,
+            -0.2486696,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.7,
+          "jointPositionRadians": [
+            -0.013185,
+            -0.3227074,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.7333333,
+          "jointPositionRadians": [
+            0.0320566,
+            -0.3638118,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.7666667,
+          "jointPositionRadians": [
+            0.0554742,
+            -0.3209533,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.8,
+          "jointPositionRadians": [
+            0.0685145,
+            -0.2574353,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.8333333,
+          "jointPositionRadians": [
+            0.0683705,
+            -0.2117015,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.8666667,
+          "jointPositionRadians": [
+            0.0529431,
+            -0.0898911,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.9,
+          "jointPositionRadians": [
+            0.0263533,
+            -0.0270498,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.9333333,
+          "jointPositionRadians": [
+            -0.0300386,
+            -0.0254607,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.9666667,
+          "jointPositionRadians": [
+            -0.098051,
+            -0.0442135,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 1.0,
+          "jointPositionRadians": [
+            -0.1239173,
+            -0.0693873,
+            0.0
+          ]
+        }
+      ]
+    },
+    {
+      "targetLinkId": "LeftThigh",
+      "space": "joint",
+      "keyframes": [
+        {
+          "timeSeconds": 0.0,
+          "jointPositionRadians": [
+            0.1714021,
+            -0.3864972,
+            -0.1808886
+          ]
+        },
+        {
+          "timeSeconds": 0.0333333,
+          "jointPositionRadians": [
+            0.1613207,
+            -0.4578823,
+            -0.1493056
+          ]
+        },
+        {
+          "timeSeconds": 0.0666667,
+          "jointPositionRadians": [
+            0.1023742,
+            -0.5113616,
+            -0.1213521
+          ]
+        },
+        {
+          "timeSeconds": 0.1,
+          "jointPositionRadians": [
+            0.0167139,
+            -0.5491284,
+            -0.120096
+          ]
+        },
+        {
+          "timeSeconds": 0.1333333,
+          "jointPositionRadians": [
+            -0.0629612,
+            -0.5875266,
+            -0.1276978
+          ]
+        },
+        {
+          "timeSeconds": 0.1666667,
+          "jointPositionRadians": [
+            -0.0922223,
+            -0.6023084,
+            -0.1270444
+          ]
+        },
+        {
+          "timeSeconds": 0.2,
+          "jointPositionRadians": [
+            -0.031597,
+            -0.5783544,
+            -0.1279204
+          ]
+        },
+        {
+          "timeSeconds": 0.2333333,
+          "jointPositionRadians": [
+            0.0607479,
+            -0.5707965,
+            -0.1504089
+          ]
+        },
+        {
+          "timeSeconds": 0.2666667,
+          "jointPositionRadians": [
+            0.1563345,
+            -0.5811532,
+            -0.1810269
+          ]
+        },
+        {
+          "timeSeconds": 0.3,
+          "jointPositionRadians": [
+            0.2403527,
+            -0.5415386,
+            -0.2092023
+          ]
+        },
+        {
+          "timeSeconds": 0.3333333,
+          "jointPositionRadians": [
+            0.2624841,
+            -0.4571197,
+            -0.2177012
+          ]
+        },
+        {
+          "timeSeconds": 0.3666667,
+          "jointPositionRadians": [
+            0.2602228,
+            -0.3730862,
+            -0.2119874
+          ]
+        },
+        {
+          "timeSeconds": 0.4,
+          "jointPositionRadians": [
+            0.288487,
+            -0.3051312,
+            -0.2022235
+          ]
+        },
+        {
+          "timeSeconds": 0.4333333,
+          "jointPositionRadians": [
+            0.3294311,
+            -0.2529845,
+            -0.1989818
+          ]
+        },
+        {
+          "timeSeconds": 0.4666667,
+          "jointPositionRadians": [
+            0.3542601,
+            -0.2167036,
+            -0.2086997
+          ]
+        },
+        {
+          "timeSeconds": 0.5,
+          "jointPositionRadians": [
+            0.362856,
+            -0.1872635,
+            -0.2144187
+          ]
+        },
+        {
+          "timeSeconds": 0.5333333,
+          "jointPositionRadians": [
+            0.378953,
+            -0.15783,
+            -0.2155553
+          ]
+        },
+        {
+          "timeSeconds": 0.5666667,
+          "jointPositionRadians": [
+            0.3980193,
+            -0.1311632,
+            -0.2151655
+          ]
+        },
+        {
+          "timeSeconds": 0.6,
+          "jointPositionRadians": [
+            0.4139464,
+            -0.1090487,
+            -0.2204426
+          ]
+        },
+        {
+          "timeSeconds": 0.6333333,
+          "jointPositionRadians": [
+            0.4246325,
+            -0.0885456,
+            -0.2397434
+          ]
+        },
+        {
+          "timeSeconds": 0.6666667,
+          "jointPositionRadians": [
+            0.4227737,
+            -0.0708965,
+            -0.2629566
+          ]
+        },
+        {
+          "timeSeconds": 0.7,
+          "jointPositionRadians": [
+            0.4111878,
+            -0.0612858,
+            -0.2882051
+          ]
+        },
+        {
+          "timeSeconds": 0.7333333,
+          "jointPositionRadians": [
+            0.3930156,
+            -0.0605567,
+            -0.3159851
+          ]
+        },
+        {
+          "timeSeconds": 0.7666667,
+          "jointPositionRadians": [
+            0.3559064,
+            -0.066016,
+            -0.3265401
+          ]
+        },
+        {
+          "timeSeconds": 0.8,
+          "jointPositionRadians": [
+            0.3028983,
+            -0.0762082,
+            -0.3110709
+          ]
+        },
+        {
+          "timeSeconds": 0.8333333,
+          "jointPositionRadians": [
+            0.2582788,
+            -0.0954205,
+            -0.2770517
+          ]
+        },
+        {
+          "timeSeconds": 0.8666667,
+          "jointPositionRadians": [
+            0.2455882,
+            -0.1321691,
+            -0.2451542
+          ]
+        },
+        {
+          "timeSeconds": 0.9,
+          "jointPositionRadians": [
+            0.2442252,
+            -0.1875562,
+            -0.2263366
+          ]
+        },
+        {
+          "timeSeconds": 0.9333333,
+          "jointPositionRadians": [
+            0.2345655,
+            -0.2525373,
+            -0.2113741
+          ]
+        },
+        {
+          "timeSeconds": 0.9666667,
+          "jointPositionRadians": [
+            0.2061655,
+            -0.3195458,
+            -0.1905211
+          ]
+        },
+        {
+          "timeSeconds": 1.0,
+          "jointPositionRadians": [
+            0.1714021,
+            -0.3864973,
+            -0.1808889
+          ]
+        }
+      ]
+    },
+    {
+      "targetLinkId": "LeftShin",
+      "space": "joint",
+      "keyframes": [
+        {
+          "timeSeconds": 0.0,
+          "jointPositionRadians": [
+            1.1370902,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.0333333,
+          "jointPositionRadians": [
+            1.0273035,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.0666667,
+          "jointPositionRadians": [
+            0.8704486,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.1,
+          "jointPositionRadians": [
+            0.7402546,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.1333333,
+          "jointPositionRadians": [
+            0.7102604,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.1666667,
+          "jointPositionRadians": [
+            0.7525458,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.2,
+          "jointPositionRadians": [
+            0.817332,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.2333333,
+          "jointPositionRadians": [
+            0.8774037,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.2666667,
+          "jointPositionRadians": [
+            0.9238851,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.3,
+          "jointPositionRadians": [
+            0.9134741,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.3333333,
+          "jointPositionRadians": [
+            0.8583228,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.3666667,
+          "jointPositionRadians": [
+            0.7985637,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.4,
+          "jointPositionRadians": [
+            0.748791,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.4333333,
+          "jointPositionRadians": [
+            0.7128397,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.4666667,
+          "jointPositionRadians": [
+            0.6996638,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.5,
+          "jointPositionRadians": [
+            0.7028772,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.5333333,
+          "jointPositionRadians": [
+            0.7072861,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.5666667,
+          "jointPositionRadians": [
+            0.7075102,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.6,
+          "jointPositionRadians": [
+            0.7116548,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.6333333,
+          "jointPositionRadians": [
+            0.7207474,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.6666667,
+          "jointPositionRadians": [
+            0.7322253,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.7,
+          "jointPositionRadians": [
+            0.7533143,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.7333333,
+          "jointPositionRadians": [
+            0.7906238,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.7666667,
+          "jointPositionRadians": [
+            0.8507097,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.8,
+          "jointPositionRadians": [
+            0.9383547,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.8333333,
+          "jointPositionRadians": [
+            1.0410993,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.8666667,
+          "jointPositionRadians": [
+            1.1297969,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.9,
+          "jointPositionRadians": [
+            1.1853036,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.9333333,
+          "jointPositionRadians": [
+            1.202922,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.9666667,
+          "jointPositionRadians": [
+            1.1844167,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 1.0,
+          "jointPositionRadians": [
+            1.13709,
+            0.0,
+            0.0
+          ]
+        }
+      ]
+    },
+    {
+      "targetLinkId": "LeftFoot",
+      "space": "joint",
+      "keyframes": [
+        {
+          "timeSeconds": 0.0,
+          "jointPositionRadians": [
+            -0.0976596,
+            0.0323911,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.0333333,
+          "jointPositionRadians": [
+            -0.1471158,
+            0.0683995,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.0666667,
+          "jointPositionRadians": [
+            -0.1437405,
+            0.0925052,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.1,
+          "jointPositionRadians": [
+            -0.0892983,
+            0.1518482,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.1333333,
+          "jointPositionRadians": [
+            0.0064424,
+            0.2236278,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.1666667,
+          "jointPositionRadians": [
+            0.0466048,
+            0.2465766,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.2,
+          "jointPositionRadians": [
+            -0.102873,
+            0.1939037,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.2333333,
+          "jointPositionRadians": [
+            -0.2100274,
+            0.1441003,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.2666667,
+          "jointPositionRadians": [
+            -0.2175675,
+            0.1265781,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.3,
+          "jointPositionRadians": [
+            -0.2083473,
+            0.1243145,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.3333333,
+          "jointPositionRadians": [
+            -0.1966252,
+            0.1342985,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.3666667,
+          "jointPositionRadians": [
+            -0.1634493,
+            0.1576905,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.4,
+          "jointPositionRadians": [
+            -0.1378511,
+            0.1646926,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.4333333,
+          "jointPositionRadians": [
+            -0.1262284,
+            0.1729454,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.4666667,
+          "jointPositionRadians": [
+            -0.1279851,
+            0.1963092,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.5,
+          "jointPositionRadians": [
+            -0.1409531,
+            0.2251555,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.5333333,
+          "jointPositionRadians": [
+            -0.1604665,
+            0.2502379,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.5666667,
+          "jointPositionRadians": [
+            -0.1810685,
+            0.2670279,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.6,
+          "jointPositionRadians": [
+            -0.1918839,
+            0.2789437,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.6333333,
+          "jointPositionRadians": [
+            -0.1777167,
+            0.3002199,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.6666667,
+          "jointPositionRadians": [
+            -0.1338568,
+            0.3369662,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.7,
+          "jointPositionRadians": [
+            -0.0634558,
+            0.3918896,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.7333333,
+          "jointPositionRadians": [
+            0.0479948,
+            0.4259585,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.7666667,
+          "jointPositionRadians": [
+            0.2031661,
+            0.365893,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.8,
+          "jointPositionRadians": [
+            0.3019756,
+            0.2460339,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.8333333,
+          "jointPositionRadians": [
+            0.2433741,
+            0.1618653,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.8666667,
+          "jointPositionRadians": [
+            0.1110755,
+            0.1278059,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.9,
+          "jointPositionRadians": [
+            0.0168681,
+            0.0946274,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.9333333,
+          "jointPositionRadians": [
+            -0.0357491,
+            0.0509318,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.9666667,
+          "jointPositionRadians": [
+            -0.0743605,
+            0.030258,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 1.0,
+          "jointPositionRadians": [
+            -0.0976598,
+            0.0323912,
+            0.0
+          ]
+        }
+      ]
+    },
+    {
+      "targetLinkId": "RightThigh",
+      "space": "joint",
+      "keyframes": [
+        {
+          "timeSeconds": 0.0,
+          "jointPositionRadians": [
+            -0.2853909,
+            -0.1296514,
+            0.0113251
+          ]
+        },
+        {
+          "timeSeconds": 0.0333333,
+          "jointPositionRadians": [
+            -0.2921975,
+            -0.1095001,
+            0.0258412
+          ]
+        },
+        {
+          "timeSeconds": 0.0666667,
+          "jointPositionRadians": [
+            -0.2778939,
+            -0.1176262,
+            0.0465284
+          ]
+        },
+        {
+          "timeSeconds": 0.1,
+          "jointPositionRadians": [
+            -0.2303499,
+            -0.1409489,
+            0.0682947
+          ]
+        },
+        {
+          "timeSeconds": 0.1333333,
+          "jointPositionRadians": [
+            -0.154878,
+            -0.181401,
+            0.102167
+          ]
+        },
+        {
+          "timeSeconds": 0.1666667,
+          "jointPositionRadians": [
+            -0.0688351,
+            -0.2575195,
+            0.1539723
+          ]
+        },
+        {
+          "timeSeconds": 0.2,
+          "jointPositionRadians": [
+            -0.0110362,
+            -0.3312836,
+            0.1976322
+          ]
+        },
+        {
+          "timeSeconds": 0.2333333,
+          "jointPositionRadians": [
+            0.0039325,
+            -0.3831419,
+            0.208333
+          ]
+        },
+        {
+          "timeSeconds": 0.2666667,
+          "jointPositionRadians": [
+            -0.011881,
+            -0.4324403,
+            0.2046288
+          ]
+        },
+        {
+          "timeSeconds": 0.3,
+          "jointPositionRadians": [
+            -0.0657594,
+            -0.4644805,
+            0.1957242
+          ]
+        },
+        {
+          "timeSeconds": 0.3333333,
+          "jointPositionRadians": [
+            -0.1413189,
+            -0.4710234,
+            0.1770055
+          ]
+        },
+        {
+          "timeSeconds": 0.3666667,
+          "jointPositionRadians": [
+            -0.1794123,
+            -0.4814674,
+            0.1583568
+          ]
+        },
+        {
+          "timeSeconds": 0.4,
+          "jointPositionRadians": [
+            -0.1622481,
+            -0.5004671,
+            0.1452323
+          ]
+        },
+        {
+          "timeSeconds": 0.4333333,
+          "jointPositionRadians": [
+            -0.1416105,
+            -0.5142507,
+            0.1511705
+          ]
+        },
+        {
+          "timeSeconds": 0.4666667,
+          "jointPositionRadians": [
+            -0.1156673,
+            -0.5166098,
+            0.1706294
+          ]
+        },
+        {
+          "timeSeconds": 0.5,
+          "jointPositionRadians": [
+            -0.0727429,
+            -0.5057249,
+            0.2075584
+          ]
+        },
+        {
+          "timeSeconds": 0.5333333,
+          "jointPositionRadians": [
+            -0.0189801,
+            -0.4868711,
+            0.2436108
+          ]
+        },
+        {
+          "timeSeconds": 0.5666667,
+          "jointPositionRadians": [
+            0.0381599,
+            -0.4590434,
+            0.269223
+          ]
+        },
+        {
+          "timeSeconds": 0.6,
+          "jointPositionRadians": [
+            0.0854179,
+            -0.4396711,
+            0.2725091
+          ]
+        },
+        {
+          "timeSeconds": 0.6333333,
+          "jointPositionRadians": [
+            0.0933224,
+            -0.4374183,
+            0.2603665
+          ]
+        },
+        {
+          "timeSeconds": 0.6666667,
+          "jointPositionRadians": [
+            0.0697552,
+            -0.4392085,
+            0.2314092
+          ]
+        },
+        {
+          "timeSeconds": 0.7,
+          "jointPositionRadians": [
+            0.0306025,
+            -0.443051,
+            0.1973655
+          ]
+        },
+        {
+          "timeSeconds": 0.7333333,
+          "jointPositionRadians": [
+            -0.0558099,
+            -0.4550037,
+            0.1580784
+          ]
+        },
+        {
+          "timeSeconds": 0.7666667,
+          "jointPositionRadians": [
+            -0.1559736,
+            -0.4696024,
+            0.1231443
+          ]
+        },
+        {
+          "timeSeconds": 0.8,
+          "jointPositionRadians": [
+            -0.2494189,
+            -0.4682086,
+            0.0992371
+          ]
+        },
+        {
+          "timeSeconds": 0.8333333,
+          "jointPositionRadians": [
+            -0.3086949,
+            -0.4399803,
+            0.079066
+          ]
+        },
+        {
+          "timeSeconds": 0.8666667,
+          "jointPositionRadians": [
+            -0.3317143,
+            -0.387911,
+            0.0573804
+          ]
+        },
+        {
+          "timeSeconds": 0.9,
+          "jointPositionRadians": [
+            -0.3353139,
+            -0.3245908,
+            0.0377511
+          ]
+        },
+        {
+          "timeSeconds": 0.9333333,
+          "jointPositionRadians": [
+            -0.3197075,
+            -0.2590628,
+            0.0176544
+          ]
+        },
+        {
+          "timeSeconds": 0.9666667,
+          "jointPositionRadians": [
+            -0.3043461,
+            -0.1933782,
+            0.0103103
+          ]
+        },
+        {
+          "timeSeconds": 1.0,
+          "jointPositionRadians": [
+            -0.2853914,
+            -0.1296511,
+            0.0113248
+          ]
+        }
+      ]
+    },
+    {
+      "targetLinkId": "RightShin",
+      "space": "joint",
+      "keyframes": [
+        {
+          "timeSeconds": 0.0,
+          "jointPositionRadians": [
+            0.3643875,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.0333333,
+          "jointPositionRadians": [
+            0.3957517,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.0666667,
+          "jointPositionRadians": [
+            0.4660239,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.1,
+          "jointPositionRadians": [
+            0.5692049,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.1333333,
+          "jointPositionRadians": [
+            0.6998768,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.1666667,
+          "jointPositionRadians": [
+            0.8447484,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.2,
+          "jointPositionRadians": [
+            0.9533873,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.2333333,
+          "jointPositionRadians": [
+            1.0119467,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.2666667,
+          "jointPositionRadians": [
+            1.0294915,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.3,
+          "jointPositionRadians": [
+            0.9852604,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.3333333,
+          "jointPositionRadians": [
+            0.8862712,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.3666667,
+          "jointPositionRadians": [
+            0.8092473,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.4,
+          "jointPositionRadians": [
+            0.7545605,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.4333333,
+          "jointPositionRadians": [
+            0.7075881,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.4666667,
+          "jointPositionRadians": [
+            0.6558999,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.5,
+          "jointPositionRadians": [
+            0.590574,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.5333333,
+          "jointPositionRadians": [
+            0.5072566,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.5666667,
+          "jointPositionRadians": [
+            0.4099911,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.6,
+          "jointPositionRadians": [
+            0.3359258,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.6333333,
+          "jointPositionRadians": [
+            0.319018,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.6666667,
+          "jointPositionRadians": [
+            0.338939,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.7,
+          "jointPositionRadians": [
+            0.3654407,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.7333333,
+          "jointPositionRadians": [
+            0.4130431,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.7666667,
+          "jointPositionRadians": [
+            0.4894753,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.8,
+          "jointPositionRadians": [
+            0.5526336,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.8333333,
+          "jointPositionRadians": [
+            0.5793493,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.8666667,
+          "jointPositionRadians": [
+            0.5703301,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.9,
+          "jointPositionRadians": [
+            0.5372044,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.9333333,
+          "jointPositionRadians": [
+            0.4859498,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.9666667,
+          "jointPositionRadians": [
+            0.4240553,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 1.0,
+          "jointPositionRadians": [
+            0.3643857,
+            0.0,
+            0.0
+          ]
+        }
+      ]
+    },
+    {
+      "targetLinkId": "RightFoot",
+      "space": "joint",
+      "keyframes": [
+        {
+          "timeSeconds": 0.0,
+          "jointPositionRadians": [
+            -0.2466847,
+            0.0178947,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.0333333,
+          "jointPositionRadians": [
+            -0.2598311,
+            0.0182625,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.0666667,
+          "jointPositionRadians": [
+            -0.2803657,
+            0.0164013,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.1,
+          "jointPositionRadians": [
+            -0.3101999,
+            0.0236961,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.1333333,
+          "jointPositionRadians": [
+            -0.3624846,
+            0.0536084,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.1666667,
+          "jointPositionRadians": [
+            -0.4122987,
+            0.0675711,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.2,
+          "jointPositionRadians": [
+            -0.4472719,
+            0.0698858,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.2333333,
+          "jointPositionRadians": [
+            -0.4825622,
+            0.0901756,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.2666667,
+          "jointPositionRadians": [
+            -0.4700888,
+            0.0814659,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.3,
+          "jointPositionRadians": [
+            -0.4206165,
+            0.0633614,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.3333333,
+          "jointPositionRadians": [
+            -0.3433696,
+            0.0478526,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.3666667,
+          "jointPositionRadians": [
+            -0.3145557,
+            0.0179702,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.4,
+          "jointPositionRadians": [
+            -0.2548434,
+            0.0070699,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.4333333,
+          "jointPositionRadians": [
+            -0.191364,
+            0.0210227,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.4666667,
+          "jointPositionRadians": [
+            -0.1494381,
+            0.0412154,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.5,
+          "jointPositionRadians": [
+            -0.1207017,
+            0.0574951,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.5333333,
+          "jointPositionRadians": [
+            -0.0899073,
+            0.0697074,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.5666667,
+          "jointPositionRadians": [
+            -0.061448,
+            0.0773666,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.6,
+          "jointPositionRadians": [
+            -0.0380758,
+            0.0908152,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.6333333,
+          "jointPositionRadians": [
+            -0.0190493,
+            0.0608511,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.6666667,
+          "jointPositionRadians": [
+            0.0023403,
+            -0.0009291,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.7,
+          "jointPositionRadians": [
+            0.0205616,
+            -0.0588248,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.7333333,
+          "jointPositionRadians": [
+            0.003812,
+            -0.0871791,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.7666667,
+          "jointPositionRadians": [
+            -0.0735324,
+            -0.080361,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.8,
+          "jointPositionRadians": [
+            -0.1421964,
+            -0.0492763,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.8333333,
+          "jointPositionRadians": [
+            -0.1905747,
+            -0.0211162,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.8666667,
+          "jointPositionRadians": [
+            -0.2212806,
+            0.0024018,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.9,
+          "jointPositionRadians": [
+            -0.2387752,
+            0.0164069,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.9333333,
+          "jointPositionRadians": [
+            -0.2457263,
+            0.0252481,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 0.9666667,
+          "jointPositionRadians": [
+            -0.2454278,
+            0.0248376,
+            0.0
+          ]
+        },
+        {
+          "timeSeconds": 1.0,
+          "jointPositionRadians": [
+            -0.2466833,
+            0.0178958,
+            0.0
+          ]
+        }
+      ]
+    }
+  ]
+}

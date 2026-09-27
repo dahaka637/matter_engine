@@ -3,9 +3,6 @@
 
 #include "Engine/Core/Log.hpp"
 #include "Engine/Environment/OceanSurface.hpp"
-#include "Engine/Geometry/GltfAcousticZone3D.hpp"
-#include "Engine/Geometry/GltfLoader.hpp"
-#include "Engine/Geometry/GltfPhysicsMetadata3D.hpp"
 #include "Engine/Geometry/MeshData3D.hpp"
 #include "Engine/Math/Mat4.hpp"
 #include "Engine/Math/Frustum3D.hpp"
@@ -14,7 +11,6 @@
 #include "Engine/RHI/RHITypes.hpp"
 #include "Engine/Render/Scene3D.hpp"
 #include "imgui.h"
-#include <meshoptimizer.h>
 
 #include <algorithm>
 #include <array>
@@ -41,67 +37,16 @@ Vec3 mixColor(Vec3 a, Vec3 b, float amount) {
     return a * (1.0f - amount) + b * amount;
 }
 
-// O platô principal do mapa fica em Z=0. O nível precisa permanecer abaixo
-// dele inclusive no pico máximo de 0,27 m das ondas, ou as cristas atravessam
-// o terreno e produzem faixas de z-fighting no interior da ilha.
-constexpr float LaboratorySeaLevelMeters = -1.00f;
-constexpr float LaboratoryOceanHalfExtentMeters = 1500.0f;
-constexpr float LaboratoryOceanDepthMeters = 80.0f;
+// Retained for ensureOceanClipmap()'s own geometry, even though the current
+// dev-grid platform does not enable an ocean (no setOcean() call in
+// ensureLaboratoryMapLoaded() below) — the sea level/extent constants that
+// only that call used are gone with it.
 constexpr float OceanNearExtentMeters = 160.0f;
 constexpr float OceanNearCellMeters = 4.0f;
 constexpr float OceanMidExtentMeters = 480.0f;
 constexpr float OceanMidCellMeters = 16.0f;
 constexpr float OceanFarExtentMeters = 1536.0f;
 constexpr float OceanFarCellMeters = 64.0f;
-
-std::vector<std::vector<std::uint32_t>> buildStaticMapLods(
-    const MeshData3D& mesh) {
-    // Partes pequenas já custam menos que a troca de buffer. O limiar
-    // também impede tentar simplificar quads e detalhes de baixa topologia.
-    if (mesh.vertices.empty() || mesh.indices.size() < 600) return {};
-
-    constexpr std::array<float, 2> TargetRatios { 0.32f, 0.09f };
-    constexpr std::array<float, 2> TargetErrors { 0.008f, 0.035f };
-    constexpr std::array<float, 5> AttributeWeights {
-        0.50f, 0.50f, 0.50f, 0.75f, 0.75f
-    };
-    constexpr unsigned int SimplifyOptions =
-        meshopt_SimplifyLockBorder | meshopt_SimplifyPermissive;
-
-    std::vector<std::vector<std::uint32_t>> lods;
-    lods.reserve(TargetRatios.size());
-    const std::size_t originalCount = mesh.indices.size();
-    const std::vector<std::uint32_t>* source = &mesh.indices;
-    for (std::size_t level = 0; level < TargetRatios.size(); ++level) {
-        std::size_t targetCount = static_cast<std::size_t>(
-            static_cast<double>(originalCount) * TargetRatios[level]);
-        targetCount = std::max<std::size_t>(
-            96, targetCount - targetCount % 3);
-        if (targetCount >= source->size()) continue;
-
-        std::vector<std::uint32_t> simplified(source->size());
-        float resultError = 0.0f;
-        const std::size_t simplifiedCount =
-            meshopt_simplifyWithAttributes(simplified.data(),
-                source->data(), source->size(),
-                &mesh.vertices.front().position.x,
-                mesh.vertices.size(), sizeof(MeshVertex3D),
-                &mesh.vertices.front().normal.x,
-                sizeof(MeshVertex3D), AttributeWeights.data(),
-                AttributeWeights.size(), nullptr, targetCount,
-                TargetErrors[level], SimplifyOptions, &resultError);
-        if (simplifiedCount < 3
-            || simplifiedCount >= source->size()) {
-            continue;
-        }
-        simplified.resize(simplifiedCount);
-        meshopt_optimizeVertexCache(simplified.data(),
-            simplified.data(), simplified.size(), mesh.vertices.size());
-        lods.push_back(std::move(simplified));
-        source = &lods.back();
-    }
-    return lods;
-}
 
 // Órbita solar simples de latitude média: nasce a leste às 06h, culmina
 // alto (sem ficar exatamente vertical) ao meio-dia e se põe a oeste às 18h.
@@ -139,6 +84,28 @@ float cloudTransmittanceAtSun(float coverage, float animationTime,
         - cloudOverSun * (0.30f + coverage * 0.58f);
     return std::clamp(localTransmission
         * (1.0f - overcast * 0.58f), 0.10f, 1.0f);
+}
+
+// Interpolacao de render entre os dois ultimos passos fixos. A fisica roda a
+// 120 Hz e o quadro segue o monitor; desenhar o ultimo passo cru faz tudo que
+// se move andar em degraus (cerca de um quadro em cada cinco a 143,8 Hz nao
+// recebe passo nenhum).
+Quaternion blendRotation(Quaternion from, Quaternion to, float amount) {
+    if (from.x * to.x + from.y * to.y + from.z * to.z + from.w * to.w < 0.0f) {
+        to = { -to.x, -to.y, -to.z, -to.w };
+    }
+    return Quaternion { from.x + (to.x - from.x) * amount,
+        from.y + (to.y - from.y) * amount,
+        from.z + (to.z - from.z) * amount,
+        from.w + (to.w - from.w) * amount }.normalized();
+}
+
+PhysicsBodyState3D interpolatePose(const PhysicsBodyState3D& from,
+    const PhysicsBodyState3D& to, float amount) {
+    PhysicsBodyState3D pose = to;
+    pose.position = from.position + (to.position - from.position) * amount;
+    pose.orientation = blendRotation(from.orientation, to.orientation, amount);
+    return pose;
 }
 
 Vec3 cameraForward(float yaw, float pitch) {
@@ -206,6 +173,120 @@ void growPanelToFitContent(ImVec2 displaySize, float uiScale) {
     }
 }
 
+// A classic dev-grid checkerboard, generated in memory — no image asset.
+// Baked at cellsPerSide x cellsPerSide so the sampler's own REPEAT
+// addressing (the material sampler; see VulkanDevice's set=1 descriptor)
+// tiles it across the platform, instead of needing one giant texture for a
+// 500 m floor: the full mip chain createTexture2D already builds keeps each
+// tile filtering correctly at any distance.
+std::vector<std::byte> buildDevCheckerPixels(std::uint32_t textureSize,
+    std::uint32_t cellsPerSide, Vec3 lightColor, Vec3 darkColor,
+    Vec3 groutColor, float groutWidthTexels) {
+    std::vector<std::byte> pixels(
+        static_cast<std::size_t>(textureSize) * textureSize * 4);
+    const float cellSize = static_cast<float>(textureSize)
+        / static_cast<float>(cellsPerSide);
+    const float halfGrout = groutWidthTexels * 0.5f;
+    const auto channel = [](float value) {
+        return static_cast<std::byte>(std::clamp(
+            static_cast<int>(value * 255.0f + 0.5f), 0, 255));
+    };
+    for (std::uint32_t y = 0; y < textureSize; ++y) {
+        for (std::uint32_t x = 0; x < textureSize; ++x) {
+            const std::uint32_t cellX =
+                static_cast<std::uint32_t>(static_cast<float>(x) / cellSize);
+            const std::uint32_t cellY =
+                static_cast<std::uint32_t>(static_cast<float>(y) / cellSize);
+            // Distance (in texels) from this pixel to the nearest cell
+            // boundary on each axis. The pattern repeats every cellSize
+            // texels and the texture's own width is an exact multiple of
+            // it, so this also draws the seam at the tile wrap-around
+            // (x=textureSize meeting x=0 of the next REPEAT), with no gap
+            // or double-width line at that edge.
+            const float localX = std::fmod(static_cast<float>(x), cellSize);
+            const float localY = std::fmod(static_cast<float>(y), cellSize);
+            const float edgeDistanceX =
+                std::min(localX, cellSize - localX);
+            const float edgeDistanceY =
+                std::min(localY, cellSize - localY);
+            const bool onGrout = edgeDistanceX < halfGrout
+                || edgeDistanceY < halfGrout;
+            const Vec3& color = onGrout ? groutColor
+                : ((cellX + cellY) % 2 == 0) ? lightColor : darkColor;
+            const std::size_t index =
+                (static_cast<std::size_t>(y) * textureSize + x) * 4;
+            pixels[index + 0] = channel(color.x);
+            pixels[index + 1] = channel(color.y);
+            pixels[index + 2] = channel(color.z);
+            pixels[index + 3] = std::byte { 255 };
+        }
+    }
+    return pixels;
+}
+
+// One rectangular face of a dev-grid box, given in the box's own local
+// space (center at the origin) plus the world transform to place it —
+// UV comes from the LOCAL corner so a rotated box (the ramp) keeps square,
+// undistorted checker cells instead of the pattern smearing along the
+// slope. Winding does not matter: the scene pipeline runs with
+// cullMode=NONE.
+void appendDevBoxFace(MeshData3D& mesh, Vec3 center, Quaternion orientation,
+    const std::array<Vec3, 4>& localCorners, Vec3 localNormal,
+    std::size_t axisU, std::size_t axisV, float metersPerTextureTile) {
+    const auto base = static_cast<std::uint32_t>(mesh.vertices.size());
+    const auto component = [](Vec3 value, std::size_t axis) {
+        return axis == 0 ? value.x : axis == 1 ? value.y : value.z;
+    };
+    const Vec3 worldNormal = orientation.rotate(localNormal);
+    for (Vec3 localCorner : localCorners) {
+        MeshVertex3D vertex;
+        vertex.position = center + orientation.rotate(localCorner);
+        vertex.normal = worldNormal;
+        vertex.uv = {
+            component(localCorner, axisU) / metersPerTextureTile,
+            component(localCorner, axisV) / metersPerTextureTile
+        };
+        mesh.vertices.push_back(vertex);
+    }
+    mesh.indices.insert(mesh.indices.end(), {
+        base, base + 1, base + 2, base, base + 2, base + 3
+    });
+}
+
+// A real block, not a single quad: six faces with correct normals/UV, so
+// every dev-grid prop — the floor, a wall, a ramp, a stair step — reads as
+// an object with edges from any angle, not a cardboard cutout. center/
+// orientation place it in world space; halfExtents are in the box's own
+// local frame (so a rotated ramp's "length" stays halfExtents.x regardless
+// of how it is tilted).
+MeshData3D buildDevBoxMesh(Vec3 center, Vec3 halfExtents,
+    Quaternion orientation, float metersPerTextureTile) {
+    MeshData3D mesh;
+    const float x0 = -halfExtents.x, x1 = halfExtents.x;
+    const float y0 = -halfExtents.y, y1 = halfExtents.y;
+    const float z0 = -halfExtents.z, z1 = halfExtents.z;
+    appendDevBoxFace(mesh, center, orientation, { Vec3 { x0, y0, z1 },
+        { x1, y0, z1 }, { x1, y1, z1 }, { x0, y1, z1 } },
+        { 0.0f, 0.0f, 1.0f }, 0, 1, metersPerTextureTile);
+    appendDevBoxFace(mesh, center, orientation, { Vec3 { x0, y0, z0 },
+        { x0, y1, z0 }, { x1, y1, z0 }, { x1, y0, z0 } },
+        { 0.0f, 0.0f, -1.0f }, 0, 1, metersPerTextureTile);
+    appendDevBoxFace(mesh, center, orientation, { Vec3 { x1, y0, z0 },
+        { x1, y1, z0 }, { x1, y1, z1 }, { x1, y0, z1 } },
+        { 1.0f, 0.0f, 0.0f }, 1, 2, metersPerTextureTile);
+    appendDevBoxFace(mesh, center, orientation, { Vec3 { x0, y0, z0 },
+        { x0, y0, z1 }, { x0, y1, z1 }, { x0, y1, z0 } },
+        { -1.0f, 0.0f, 0.0f }, 1, 2, metersPerTextureTile);
+    appendDevBoxFace(mesh, center, orientation, { Vec3 { x0, y1, z0 },
+        { x0, y1, z1 }, { x1, y1, z1 }, { x1, y1, z0 } },
+        { 0.0f, 1.0f, 0.0f }, 0, 2, metersPerTextureTile);
+    appendDevBoxFace(mesh, center, orientation, { Vec3 { x0, y0, z0 },
+        { x1, y0, z0 }, { x1, y0, z1 }, { x0, y0, z1 } },
+        { 0.0f, -1.0f, 0.0f }, 0, 2, metersPerTextureTile);
+    recomputeBounds(mesh);
+    return mesh;
+}
+
 } // namespace
 
 void WorkbenchApp::enterLaboratory(bool resetCamera) {
@@ -262,8 +343,48 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
     const PhysicsCharacterState3D stateBefore =
         m_physicsScene->characterState();
 
+    bool controllingCharacter = m_controlledCharacterEntityId != 0;
+    bool controlledCharacterFrozen = false;
+    bool controlledCharacterDown = false;
+    if (controllingCharacter) {
+        const auto controlled = std::find_if(m_spawnedRagdolls.begin(),
+            m_spawnedRagdolls.end(), [&](const SpawnedRagdollInstance& item) {
+                return item.entityId == m_controlledCharacterEntityId
+                    && item.active;
+            });
+        if (controlled == m_spawnedRagdolls.end()) {
+            releaseControlledCharacter();
+            controllingCharacter = false;
+        } else {
+            controlledCharacterFrozen = controlled->frozen
+                || controlled->physicsState.frozen;
+            // One tick stale (this frame's locomotion update hasn't run
+            // yet), which is fine at 120 Hz: the point is just to stop
+            // feeding the capsule movement input while the ragdoll is down
+            // or recovering, so it does not wander off and strand the
+            // camera away from a character physics is puppeting on its own.
+            const CharacterLocomotionState3D lastState =
+                controlled->locomotion.telemetry().state;
+            controlledCharacterDown =
+                lastState == CharacterLocomotionState3D::Fallen
+                || lastState == CharacterLocomotionState3D::GettingUp;
+        }
+    }
+
     CharacterMotorCommand3D command;
-    const bool acceptsMovement = !m_laboratoryDebugVisible && !m_spawnMenuOpen;
+    // The capsule must never sweep against the controlled character's own
+    // ragdoll avatar, in or out of a menu: leaving this at its default
+    // false whenever a panel blocked new commands made the capsule collide
+    // with its own overlapping body every tick a menu stayed open, and
+    // PhysX's penetration recovery threw the character violently upward.
+    command.ignoreRagdolls = controllingCharacter;
+    const bool freeLook = controllingCharacter
+        && (input().keyDown(Key::LeftAlt)
+            || input().keyDown(Key::RightAlt));
+    const bool cameraOnly = freeLook || controlledCharacterFrozen
+        || controlledCharacterDown;
+    const bool acceptsMovement = !m_laboratoryDebugVisible
+        && !m_spawnMenuOpen && !cameraOnly;
     if (acceptsMovement) {
         const Vec3 planarForward = cameraForward(m_laboratoryCameraYaw, 0.0f);
         const Vec3 viewForward = cameraForward(m_laboratoryCameraYaw,
@@ -281,6 +402,35 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
         if (input().keyDown(Key::A)) command.moveDirection -= right;
         command.sprint = input().keyDown(Key::LeftShift)
             || input().keyDown(Key::RightShift);
+        // O personagem olha para a câmera e anda em qualquer direção; para
+        // trás ele recua, e recuar tem a velocidade do recuo, não a da
+        // caminhada nem a do sprint (ver characterGaitSpeed3D).
+        if (controllingCharacter && !freeVerticalMovement
+            && command.moveDirection.lengthSquared() > 0.0001f) {
+            const float travelRelative = std::atan2(
+                command.moveDirection.y, command.moveDirection.x)
+                - m_laboratoryCameraYaw;
+            const float wanted = characterGaitSpeed3D(m_avatarGaitSpeeds,
+                travelRelative, command.sprint);
+            const float nominal = command.sprint
+                ? m_avatarCharacterSettings.sprintSpeed
+                : m_avatarCharacterSettings.walkSpeed;
+            if (wanted > 0.0f && nominal > 0.0f) {
+                command.speedScale = wanted / nominal;
+            }
+            // Escada e ladeira: o passo encurta e o corpo desacelera junto
+            // (a locomocao diz quanto da velocidade cabe no terreno a frente).
+            const auto controlled = std::find_if(m_spawnedRagdolls.begin(),
+                m_spawnedRagdolls.end(),
+                [&](const SpawnedRagdollInstance& item) {
+                    return item.entityId == m_controlledCharacterEntityId;
+                });
+            if (controlled != m_spawnedRagdolls.end() && wanted > 0.0f) {
+                const float limit = controlled->locomotion.telemetry()
+                    .terrainSpeedLimit;
+                command.speedScale *= std::clamp(limit / wanted, 0.2f, 1.0f);
+            }
+        }
         const bool control = input().keyDown(Key::LeftControl)
             || input().keyDown(Key::RightControl);
         if (freeVerticalMovement) {
@@ -293,7 +443,8 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
             command.crouch = control;
         }
         command.jumpPressed = m_laboratoryJumpRequested;
-        command.toggleFlight = m_laboratoryFlightToggleRequested;
+        command.toggleFlight = !controllingCharacter
+            && m_laboratoryFlightToggleRequested;
     } else {
         // Um painel aberto bloqueia novos comandos, mas não congela gravidade
         // nem força o personagem agachado a tentar levantar.
@@ -302,7 +453,37 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
     m_laboratoryJumpRequested = false;
     m_laboratoryFlightToggleRequested = false;
 
-    m_physicsScene->moveCharacter(command, m_characterSettings, deltaTime);
+    const CharacterMotorSettings3D& activeSettings = controllingCharacter
+        ? m_avatarCharacterSettings : m_characterSettings;
+    if (controllingCharacter && m_biomechanicalExperiment) {
+        Vec3 requested = command.moveDirection;
+        requested.z = 0.0f;
+        if (requested.lengthSquared() > 1.0f) {
+            requested = requested.normalized();
+        }
+        m_characterDesiredVelocityWorld = requested
+            * (command.sprint ? 1.10f : 0.68f);
+        m_characterSprinting = command.sprint
+            && requested.lengthSquared() > 0.001f;
+        if (!cameraOnly) {
+            m_characterDesiredFacingYaw = m_laboratoryCameraYaw;
+        }
+
+        const auto controlled = std::find_if(m_spawnedRagdolls.begin(),
+            m_spawnedRagdolls.end(), [&](const SpawnedRagdollInstance& item) {
+                return item.entityId == m_controlledCharacterEntityId;
+            });
+        if (controlled != m_spawnedRagdolls.end()
+            && !controlled->physicsState.links.empty()) {
+            setLaboratoryCameraFocus(
+                controlled->physicsState.links.front().position
+                    + Vec3 { 0.0f, 0.0f, 0.36f },
+                LaboratoryCameraMode::ThirdPerson);
+        }
+        updateDynamicProps(deltaTime);
+        return;
+    }
+    m_physicsScene->moveCharacter(command, activeSettings, deltaTime);
     const PhysicsCharacterState3D& character =
         m_physicsScene->characterState();
     if (character.flightExitBlocked) {
@@ -315,20 +496,101 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
     // A câmera lê a cápsula depois da física. Somente a altura dos olhos é
     // interpolada, evitando um salto visual ao agachar sem atrasar colisões.
     const float bodyHeight = character.crouched
-        ? m_characterSettings.crouchedHeight
-        : m_characterSettings.standingHeight;
+        ? activeSettings.crouchedHeight
+        : activeSettings.standingHeight;
     const float targetEyeHeight = character.crouched
         ? 1.02f : 1.68f;
     const float blend = 1.0f - std::exp(-14.0f * deltaTime);
     m_laboratoryEyeHeight +=
         (targetEyeHeight - m_laboratoryEyeHeight) * blend;
     const float feetZ = character.position.z - bodyHeight * 0.5f;
-    m_laboratoryCameraPosition = {
-        character.position.x,
-        character.position.y,
-        feetZ + m_laboratoryEyeHeight
-    };
+    if (controllingCharacter) {
+        m_characterDesiredVelocityWorld = {
+            character.velocity.x, character.velocity.y, 0.0f
+        };
+        m_characterSprinting = command.sprint
+            && m_characterDesiredVelocityWorld.lengthSquared() > 0.01f;
+        if (!cameraOnly && character.crouched
+            && m_characterDesiredVelocityWorld.lengthSquared() > 0.01f) {
+            m_characterDesiredFacingYaw = std::atan2(
+                m_characterDesiredVelocityWorld.y,
+                m_characterDesiredVelocityWorld.x);
+        } else if (!cameraOnly) {
+            m_characterDesiredFacingYaw = m_laboratoryCameraYaw;
+        }
+
+        setLaboratoryCameraFocus({ character.position.x,
+                character.position.y,
+                feetZ + (character.crouched ? 0.98f : 1.28f) },
+            LaboratoryCameraMode::ThirdPerson);
+    } else {
+        m_characterDesiredVelocityWorld = {};
+        m_characterSprinting = false;
+        setLaboratoryCameraFocus({ character.position.x,
+                character.position.y,
+                feetZ + m_laboratoryEyeHeight },
+            LaboratoryCameraMode::FirstPerson);
+    }
     updateDynamicProps(deltaTime);
+}
+
+void WorkbenchApp::setLaboratoryCameraFocus(Vec3 focus,
+    LaboratoryCameraMode mode) {
+    // Troca de modo, ou um deslocamento que nenhum movimento fisico faz num
+    // passo de 1/120 s (teleporte, spawn, assumir o personagem): nao se
+    // interpola - o quadro intermediario desenharia a camera atravessando o
+    // mapa.
+    constexpr float MaximumStepTravelMeters = 1.0f;
+    const bool continuous = mode == m_laboratoryCameraMode
+        && (focus - m_laboratoryCameraFocus).length()
+            <= MaximumStepTravelMeters;
+    m_laboratoryCameraFocusPrevious =
+        continuous ? m_laboratoryCameraFocus : focus;
+    m_laboratoryCameraFocus = focus;
+    m_laboratoryCameraMode = mode;
+}
+
+// A posicao da camera e montada por QUADRO, nao no passo fixo.
+//
+// O yaw muda a cada evento de mouse, ou seja, a cada quadro. A posicao em
+// terceira pessoa (foco - frente(yaw) * distancia) era calculada so no passo
+// fixo de 120 Hz. Num monitor de 143,8 Hz cerca de um quadro em cada cinco nao
+// tem passo fixo, e nesses quadros a camera olhava na direcao do yaw novo a
+// partir do ponto de orbita do yaw antigo: o centro da orbita escorregava
+// ~distancia * delta-yaw para o lado e voltava no quadro seguinte. Tudo perto
+// do personagem pulava na tela ao girar rapido - o sintoma que o usuario
+// isolou com uma caixa parada ao lado dele. Medido pelo smoke
+// laboratory-camera-orbit-smoke: desvio de trajetoria P95 de ~35 px.
+//
+// O foco tambem precisa estar no mesmo instante do boneco desenhado: o render
+// interpola o corpo entre os dois ultimos passos com fixedStepAlpha, entao o
+// foco usa o mesmo alfa. Com o estado cru do ultimo passo, camera e boneco
+// ficavam em instantes diferentes mesmo nos quadros com passo.
+void WorkbenchApp::updateLaboratoryCamera(float fixedStepAlpha) {
+    if (m_laboratoryCameraMode == LaboratoryCameraMode::None) return;
+    const float alpha = std::clamp(fixedStepAlpha, 0.0f, 1.0f);
+    const Vec3 focus = m_laboratoryCameraFocusPrevious
+        + (m_laboratoryCameraFocus - m_laboratoryCameraFocusPrevious) * alpha;
+    if (m_laboratoryCameraMode == LaboratoryCameraMode::FirstPerson) {
+        m_laboratoryCameraPosition = focus;
+        return;
+    }
+
+    constexpr float OrbitDistanceMeters = 4.35f;
+    // Encosta a camera numa parede em vez de atravessa-la, sem nunca colar
+    // no foco.
+    constexpr float MinimumOrbitDistanceMeters = 0.18f;
+    constexpr float WallClearanceMeters = 0.12f;
+    Vec3 cameraOffset = cameraForward(m_laboratoryCameraYaw,
+        m_laboratoryCameraPitch).normalized() * -OrbitDistanceMeters;
+    PhysicsRayHit3D cameraHit;
+    if (m_physicsScene && m_physicsScene->raycastStatic(
+            { focus, cameraOffset / OrbitDistanceMeters },
+            OrbitDistanceMeters, cameraHit)) {
+        cameraOffset *= std::max(MinimumOrbitDistanceMeters,
+            cameraHit.distance - WallClearanceMeters) / OrbitDistanceMeters;
+    }
+    m_laboratoryCameraPosition = focus + cameraOffset;
 }
 
 void WorkbenchApp::ensureLaboratoryMapLoaded(Renderer& activeRenderer) {
@@ -336,192 +598,240 @@ void WorkbenchApp::ensureLaboratoryMapLoaded(Renderer& activeRenderer) {
         return;
     }
 
-    LoadedGltfModel model;
-    try {
-        model = loadGltfModel(std::string(MATTERENGINE_ASSETS_DIR)
-            + "/models/lab_map.glb");
-    } catch (const std::exception& error) {
-        Log::error(std::string("Falha ao carregar lab_map.glb: ")
-            + error.what());
+    // Dev-grid test platform: no map asset, no glTF, no ocean — a plain
+    // checkered slab, generated procedurally (geometry and texture both),
+    // replacing the old lab_map.glb the user asked to drop. A real block
+    // with depth and side faces on purpose, not a single flat quad. A
+    // scatter of static obstacles rides the same generator, for collision/
+    // fall/trip/impact testing: walls of different sizes, a staircase, two
+    // low trip curbs, a floating horizontal beam, a ramp and a platform.
+    constexpr float PlatformHalfWidthMeters = 30.0f;
+    constexpr float PlatformHalfDepthMeters = 30.0f;
+    constexpr float PlatformThicknessMeters = 4.0f;
+    constexpr float CheckerSquareMeters = 1.0f;
+    constexpr std::uint32_t CheckerCellsPerTextureTile = 8;
+    constexpr std::uint32_t CheckerTextureSize = 512;
+    constexpr float MetersPerTextureTile =
+        CheckerSquareMeters * static_cast<float>(CheckerCellsPerTextureTile);
+    const Vec3 lightSquare { 0.80f, 0.80f, 0.82f };
+    const Vec3 darkSquare { 0.58f, 0.58f, 0.60f };
+    // "Rejunte": a thin, subtle seam between squares, in texels of the
+    // 512x512 texture (64 texels/cell). Kept close to 1 texel and not
+    // pure black on purpose — the first pass (3 texels, near-black) read
+    // as a bold grid instead of a discreet line.
+    const Vec3 groutColor { 0.24f, 0.24f, 0.25f };
+    constexpr float GroutWidthTexels = 1.0f;
+
+    const std::string materialId = "concrete";
+    const SurfaceMaterial* material = m_materialLibrary.find(materialId);
+    if (material == nullptr) {
+        Log::error("Material fisico nao registrado no laboratorio: "
+            + materialId);
         m_laboratoryMapLoadFailed = true;
         return;
     }
 
-    m_laboratoryMapTextures.resize(model.images.size());
-    for (std::size_t index = 0; index < model.images.size(); ++index) {
-        const LoadedGltfImage& image = model.images[index];
-        if (image.width <= 0 || image.height <= 0
-            || image.rgbaPixels.empty()) {
-            continue;
-        }
-        m_laboratoryMapTextures[index] = activeRenderer.createTexture2D(
-            { static_cast<std::uint32_t>(image.width),
-                static_cast<std::uint32_t>(image.height) },
-            std::as_bytes(std::span(image.rgbaPixels)));
-    }
+    // Shared by the floor and every obstacle below: one small tiling
+    // texture, not one asset per prop.
+    m_laboratoryMapTextures.push_back(activeRenderer.createTexture2D(
+        { CheckerTextureSize, CheckerTextureSize },
+        buildDevCheckerPixels(CheckerTextureSize, CheckerCellsPerTextureTile,
+            lightSquare, darkSquare, groutColor, GroutWidthTexels)));
+    const RHI::TextureHandle checkerTexture = m_laboratoryMapTextures.back();
 
-    m_laboratoryMapParts.reserve(model.parts.size());
-    for (const LoadedGltfPart& part : model.parts) {
-        if (part.mesh.vertices.empty() || part.mesh.indices.empty()) {
-            continue;
-        }
-
-        GltfPhysicsMetadata3D physicsMetadata;
+    bool obstacleCreationFailed = false;
+    const auto addDevBox = [&](std::string_view name, Vec3 center,
+            Vec3 halfExtents, Quaternion orientation, bool useChecker) {
+        if (obstacleCreationFailed) return;
         try {
-            physicsMetadata = parseGltfPhysicsMetadata(part.extras);
+            PhysicsShape3D collisionShape;
+            collisionShape.type = PhysicsShapeType3D::Box;
+            collisionShape.halfExtents = halfExtents;
+            collisionShape.materialId = materialId;
+            PhysicsBodyDefinition3D staticBody;
+            staticBody.motionType = PhysicsMotionType3D::Static;
+            staticBody.materialId = materialId;
+            staticBody.position = center;
+            staticBody.orientation = orientation;
+            staticBody.entityId = m_nextEntityId++;
+            m_laboratoryMapBodies.push_back(m_physicsScene->createBody(
+                staticBody,
+                std::span<const PhysicsShape3D>(&collisionShape, 1)));
         } catch (const std::exception& error) {
-            Log::error("Metadados fisicos invalidos no node "
-                + part.nodeName + ": " + error.what());
+            Log::error("Falha ao criar colisao de " + std::string(name)
+                + ": " + error.what());
             m_laboratoryMapLoadFailed = true;
-            return;
-        }
-        const std::string& materialId = physicsMetadata.materialId;
-        const SurfaceMaterial* material = m_materialLibrary.find(materialId);
-        if (material == nullptr) {
-            Log::error("Material fisico nao registrado no laboratorio: "
-                + materialId + " (node " + part.nodeName + ")");
-            m_laboratoryMapLoadFailed = true;
+            obstacleCreationFailed = true;
             return;
         }
 
-        // O mapa antigo contém um objeto chamado Water: é exatamente a placa
-        // plana vista sob o oceano novo. O teste pelo nome é deliberadamente
-        // explícito porque não podemos depender de o material glTF conservar
-        // corretamente a flag isFluid durante a exportação do Blender.
-        if (material->isFluid || part.nodeName == "Water") {
-            continue;
-        }
-
-        if (physicsMetadata.generateCollision) {
-            try {
-                const auto triangleMesh =
-                    m_physicsEngine.cookStaticTriangleMesh(part.mesh);
-                PhysicsShape3D collisionShape;
-                collisionShape.type = PhysicsShapeType3D::TriangleMesh;
-                collisionShape.mesh = triangleMesh;
-                collisionShape.materialId = materialId;
-                PhysicsBodyDefinition3D staticBody;
-                staticBody.motionType = PhysicsMotionType3D::Static;
-                staticBody.materialId = materialId;
-                staticBody.entityId = m_nextEntityId++;
-                m_laboratoryMapBodies.push_back(
-                    m_physicsScene->createBody(staticBody,
-                        std::span<const PhysicsShape3D>(&collisionShape, 1)));
-            } catch (const std::exception& error) {
-                Log::error("Falha no cooking PhysX do node " + part.nodeName
-                    + ": " + error.what());
-                m_laboratoryMapLoadFailed = true;
-                return;
-            }
-        }
-
+        const MeshData3D boxMesh = buildDevBoxMesh(center, halfExtents,
+            orientation, MetersPerTextureTile);
         LaboratoryMapPart gpuPart;
-        const std::size_t vertexBytes = part.mesh.vertices.size()
-            * sizeof(MeshVertex3D);
-        const std::size_t indexBytes = part.mesh.indices.size()
-            * sizeof(std::uint32_t);
+        const std::size_t vertexBytes =
+            boxMesh.vertices.size() * sizeof(MeshVertex3D);
+        const std::size_t indexBytes =
+            boxMesh.indices.size() * sizeof(std::uint32_t);
         gpuPart.vertexBuffer = activeRenderer.createBuffer({ vertexBytes,
             RHI::BufferUsage::Vertex, true, "Laboratory map vertices" });
         gpuPart.indexBuffer = activeRenderer.createBuffer({ indexBytes,
             RHI::BufferUsage::Index, true, "Laboratory map indices" });
         activeRenderer.writeBuffer(gpuPart.vertexBuffer, 0,
-            std::as_bytes(std::span(part.mesh.vertices)));
+            std::as_bytes(std::span(boxMesh.vertices)));
         activeRenderer.writeBuffer(gpuPart.indexBuffer, 0,
-            std::as_bytes(std::span(part.mesh.indices)));
+            std::as_bytes(std::span(boxMesh.indices)));
         gpuPart.indexCount =
-            static_cast<std::uint32_t>(part.mesh.indices.size());
-        const std::vector<std::vector<std::uint32_t>> lodIndices =
-            buildStaticMapLods(part.mesh);
-        gpuPart.lods.reserve(lodIndices.size());
-        for (const std::vector<std::uint32_t>& indices : lodIndices) {
-            GpuMeshLod3D lod;
-            lod.indexBuffer = activeRenderer.createBuffer({
-                indices.size() * sizeof(std::uint32_t),
-                RHI::BufferUsage::Index, true,
-                "Laboratory map LOD indices"
-            });
-            activeRenderer.writeBuffer(lod.indexBuffer, 0,
-                std::as_bytes(std::span(indices)));
-            lod.indexCount =
-                static_cast<std::uint32_t>(indices.size());
-            gpuPart.lods.push_back(lod);
-        }
+            static_cast<std::uint32_t>(boxMesh.indices.size());
         gpuPart.boundsCenter =
-            (part.mesh.boundsMin + part.mesh.boundsMax) * 0.5f;
+            (boxMesh.boundsMin + boxMesh.boundsMax) * 0.5f;
         gpuPart.boundsRadius =
-            (part.mesh.boundsMax - part.mesh.boundsMin).length() * 0.5f;
-        gpuPart.name = part.nodeName;
-
+            (boxMesh.boundsMax - boxMesh.boundsMin).length() * 0.5f;
+        gpuPart.name = name;
         gpuPart.materialId = materialId;
-        if (part.materialIndex >= 0
-            && static_cast<std::size_t>(part.materialIndex) < model.materials.size()) {
-            const LoadedGltfMaterial& material =
-                model.materials[static_cast<std::size_t>(part.materialIndex)];
-            const bool simpleEnvironmentMirror =
-                material.name == "Mirror_Glass_Perfect";
-            const bool matteGrass =
-                material.name.find("Grass") != std::string::npos
-                || material.name.find("grass") != std::string::npos
-                || material.name.find("Grama") != std::string::npos
-                || material.name.find("grama") != std::string::npos;
-            // O espelho planar exigia uma segunda renderização completa e
-            // ficava instável com faces internas/double-sided. O material
-            // agora é um metal muito liso que lê somente o ambiente
-            // analítico já usado pelos demais metais: custo constante, sem
-            // câmera auxiliar e sem artefatos de geometria refletida.
-            gpuPart.metallic = simpleEnvironmentMirror
-                ? 1.0f : material.metallicFactor;
-            gpuPart.roughness = simpleEnvironmentMirror
-                ? 0.075f : material.roughnessFactor;
-            gpuPart.matteSurface = matteGrass;
-            if (material.imageIndex >= 0
-                && static_cast<std::size_t>(material.imageIndex)
-                    < m_laboratoryMapTextures.size()) {
-                gpuPart.albedoTexture = m_laboratoryMapTextures[
-                    static_cast<std::size_t>(material.imageIndex)];
-            }
-        }
+        gpuPart.metallic = 0.0f;
+        gpuPart.roughness = 0.88f;
+        gpuPart.matteSurface = true;
+        // Only the floor carries the checker: every built structure is
+        // plain white (no texture bound — the renderer's own 1x1 white
+        // default material texture takes over, see defaultMaterialTexture
+        // in VulkanDevice.cpp), as asked.
+        if (useChecker) gpuPart.albedoTexture = checkerTexture;
         m_laboratoryMapParts.push_back(std::move(gpuPart));
+    };
+
+    addDevBox("DevGridPlatform",
+        { 0.0f, 0.0f, -PlatformThicknessMeters * 0.5f },
+        { PlatformHalfWidthMeters, PlatformHalfDepthMeters,
+            PlatformThicknessMeters * 0.5f },
+        {}, true);
+    if (obstacleCreationFailed) return;
+
+    // Five walls, deliberately varied in height/width/thickness/rotation.
+    addDevBox("Wall_Tall", { 12.0f, 12.0f, 2.0f },
+        { 1.5f, 0.15f, 2.0f }, {}, false);
+    addDevBox("Wall_Medium", { -12.0f, 12.0f, 1.0f },
+        { 2.0f, 0.15f, 1.0f },
+        Quaternion::fromAxisAngle({ 0.0f, 0.0f, 1.0f }, 0.52f), false);
+    addDevBox("Wall_LowWide", { 12.0f, -12.0f, 0.5f },
+        { 3.0f, 0.2f, 0.5f }, {}, false);
+    addDevBox("Wall_NarrowTall", { -12.0f, -12.0f, 1.75f },
+        { 0.6f, 0.15f, 1.75f },
+        Quaternion::fromAxisAngle({ 0.0f, 0.0f, 1.0f }, 1.05f), false);
+    addDevBox("Wall_Angled", { 0.0f, 18.0f, 1.25f },
+        { 1.5f, 0.25f, 1.25f },
+        Quaternion::fromAxisAngle({ 0.0f, 0.0f, 1.0f }, 0.79f), false);
+
+    // Staircase: each step is a solid block from the ground up to its own
+    // height, so there is no gap underneath and no separate riser pieces
+    // to align. Real proportions this time — 18 cm riser, 28 cm tread
+    // (typical stair geometry; the first pass used 0.90 m of tread depth,
+    // which is what made it read as a pile of deep ledges rather than a
+    // normal staircase) — ten steps climbing along +Y.
+    constexpr int StairStepCount = 10;
+    constexpr float StairRiserMeters = 0.18f;
+    constexpr float StairDepthMeters = 0.28f;
+    constexpr float StairHalfWidthMeters = 1.2f;
+    constexpr float StairStartX = -6.0f;
+    constexpr float StairStartY = -3.0f;
+    for (int step = 0; step < StairStepCount; ++step) {
+        const float height = StairRiserMeters * static_cast<float>(step + 1);
+        const float centerY = StairStartY
+            + StairDepthMeters * (static_cast<float>(step) + 0.5f);
+        addDevBox("StairStep_" + std::to_string(step),
+            { StairStartX, centerY, height * 0.5f },
+            { StairHalfWidthMeters, StairDepthMeters * 0.5f, height * 0.5f },
+            {}, false);
     }
 
-    for (const LoadedGltfEntity& entity : model.entities) {
-        const std::string* type = entity.extras.find("entity_type");
-        if (type == nullptr || *type != "spawnpoint") {
-            continue;
-        }
-        m_laboratorySpawnPosition = entity.position;
-        if (entity.hasOrientation) {
-            const Vec3 forward = entity.orientation.rotate({ 1.0f, 0.0f, 0.0f });
-            m_laboratorySpawnYaw = std::atan2(forward.y, forward.x);
-        }
-        // Sem break: o mapa tambem pode conter zonas acusticas
-        // (entity_type=acoustic_zone), coletadas logo abaixo.
-    }
-    m_worldAudio.setAcousticZones(parseAcousticZones(model.entities));
-    m_laboratoryOcean.center = { 0.0f, 0.0f };
-    m_laboratoryOcean.halfExtents = {
-        LaboratoryOceanHalfExtentMeters,
-        LaboratoryOceanHalfExtentMeters
+    // Two low trip curbs, exactly the heights asked for.
+    addDevBox("TripCurb_20cm", { 6.0f, 6.0f, 0.10f },
+        { 1.25f, 0.08f, 0.10f }, {}, false);
+    addDevBox("TripCurb_30cm", { 9.5f, 6.0f, 0.15f },
+        { 1.25f, 0.08f, 0.15f }, {}, false);
+
+    // Floating horizontal beam: 2 m long, 30 cm square cross-section,
+    // centered 1.2 m up — chest height, meant to be run/jumped into. Moved
+    // well clear of the staircase (its first position at x=-6 sat right
+    // inside the stairs' own footprint — that was the "wall inside the
+    // staircase," not a separate object, and also why it was never
+    // visible as its own thing).
+    addDevBox("FloatingBeam", { 0.0f, -18.0f, 1.2f },
+        { 1.0f, 0.15f, 0.15f }, {}, false);
+
+    // Ramp: a tilted slab whose low edge sits on the ground and high edge
+    // reaches rampRiseMeters up, angle computed instead of hand-picked so
+    // the geometry and the incline agree exactly.
+    constexpr float RampRunMeters = 4.0f;
+    constexpr float RampRiseMeters = 1.2f;
+    constexpr float RampHalfWidthMeters = 1.25f;
+    constexpr float RampThicknessMeters = 0.25f;
+    const float rampLength =
+        std::sqrt(RampRunMeters * RampRunMeters + RampRiseMeters * RampRiseMeters);
+    const float rampAngle = std::atan2(RampRiseMeters, RampRunMeters);
+    const Quaternion rampOrientation = Quaternion::fromAxisAngle(
+        { 0.0f, 1.0f, 0.0f }, -rampAngle);
+    const Vec3 rampHalfExtents {
+        rampLength * 0.5f, RampHalfWidthMeters, RampThicknessMeters * 0.5f
     };
-    m_laboratoryOcean.meanSeaLevelMeters = LaboratorySeaLevelMeters;
-    m_laboratoryOcean.depthMeters = LaboratoryOceanDepthMeters;
-    m_laboratoryOcean.densityKgPerCubicMeter = 1025.0f;
-    m_physicsScene->setOcean(m_laboratoryOcean);
-    m_laboratoryOceanEnabled = true;
-    ensureOceanClipmap(activeRenderer);
+    const Vec3 rampLowGroundCorner { 6.0f, -6.0f, 0.0f };
+    const Vec3 rampLowLocalCorner {
+        -rampHalfExtents.x, 0.0f, -rampHalfExtents.z
+    };
+    const Vec3 rampCenter = rampLowGroundCorner
+        - rampOrientation.rotate(rampLowLocalCorner);
+    addDevBox("Ramp", rampCenter, rampHalfExtents, rampOrientation, false);
+
+    // Elevated platform to land/jump onto.
+    addDevBox("JumpPlatform", { -16.0f, -9.0f, 0.5f },
+        { 1.5f, 1.5f, 0.5f }, {}, false);
+
+    // More shapes, as asked: two free-standing pillars, a post-and-lintel
+    // arch to walk through, three stacked crates, a walkable balance beam
+    // and a low tunnel to duck under.
+    addDevBox("Pillar_Tall", { 20.0f, 20.0f, 1.5f },
+        { 0.4f, 0.4f, 1.5f }, {}, false);
+    addDevBox("Pillar_Short", { -20.0f, -20.0f, 0.75f },
+        { 0.5f, 0.5f, 0.75f }, {}, false);
+
+    addDevBox("ArchPost_Left", { -1.2f, -22.0f, 1.25f },
+        { 0.25f, 0.25f, 1.25f }, {}, false);
+    addDevBox("ArchPost_Right", { 1.2f, -22.0f, 1.25f },
+        { 0.25f, 0.25f, 1.25f }, {}, false);
+    addDevBox("ArchLintel", { 0.0f, -22.0f, 2.65f },
+        { 1.45f, 0.25f, 0.15f }, {}, false);
+
+    addDevBox("Crate_Small", { 19.0f, -20.0f, 0.3f },
+        { 0.3f, 0.3f, 0.3f }, {}, false);
+    addDevBox("Crate_Medium", { 20.9f, -20.0f, 0.4f },
+        { 0.4f, 0.4f, 0.4f }, {}, false);
+    addDevBox("Crate_Large", { 19.5f, -21.8f, 0.5f },
+        { 0.5f, 0.5f, 0.5f }, {}, false);
+
+    // Wide enough on top to walk along, low enough on the side to trip on.
+    addDevBox("BalanceBeam", { 0.0f, 24.0f, 0.25f },
+        { 2.5f, 0.4f, 0.25f }, {}, false);
+
+    addDevBox("TunnelWall_Left", { -21.2f, 20.0f, 1.0f },
+        { 0.15f, 1.5f, 1.0f }, {}, false);
+    addDevBox("TunnelWall_Right", { -18.8f, 20.0f, 1.0f },
+        { 0.15f, 1.5f, 1.0f }, {}, false);
+    addDevBox("TunnelRoof", { -20.0f, 20.0f, 2.1f },
+        { 1.35f, 1.5f, 0.1f }, {}, false);
+    if (obstacleCreationFailed) return;
+
+    m_laboratorySpawnPosition = { 0.0f, 0.0f, 1.0f };
+    m_laboratorySpawnYaw = 0.0f;
+    m_worldAudio.setAcousticZones({});
 
     // O mapa só pode publicar o estado "carregado" depois de todos os
     // recursos terem sido criados. Assim, uma exceção nunca deixa uma cena
     // parcialmente utilizável sendo tratada como pronta.
     m_laboratoryMapLoaded = true;
     resetLaboratoryCharacter();
-    std::size_t triangleCount = 0;
-    for (const LoadedGltfPart& part : model.parts) {
-        triangleCount += part.mesh.indices.size() / 3;
-    }
-    Log::info("Mapa do laboratorio carregado no PhysX com "
-        + std::to_string(triangleCount)
-        + " triangulos estaticos em BVH34.");
+    Log::info("Plataforma xadrez de "
+        + std::to_string(static_cast<int>(PlatformHalfWidthMeters * 2.0f))
+        + "x" + std::to_string(static_cast<int>(PlatformHalfDepthMeters * 2.0f))
+        + " m carregada (geometria e textura 100% procedurais).");
 }
 
 // Três anéis independentes formam um clipmap centrado na câmera. A densidade
@@ -591,11 +901,15 @@ void WorkbenchApp::ensureOceanClipmap(Renderer& activeRenderer) {
 
 void WorkbenchApp::resetLaboratoryCharacter() {
     if (!m_physicsScene) return;
+    m_controlledCharacterEntityId = 0;
+    m_characterDesiredVelocityWorld = {};
+    m_characterSprinting = false;
     m_physicsScene->placeCharacter(m_laboratorySpawnPosition,
         m_characterSettings);
     m_laboratoryEyeHeight = 1.68f;
     m_laboratoryCameraPosition = m_laboratorySpawnPosition
         + Vec3 { 0.0f, 0.0f, m_laboratoryEyeHeight };
+    m_laboratoryCameraMode = LaboratoryCameraMode::None;
     m_laboratoryCameraYaw = m_laboratorySpawnYaw;
     m_laboratoryCameraPitch = -0.08f;
     m_laboratoryCharacterInitialized = true;
@@ -689,6 +1003,7 @@ void WorkbenchApp::releaseLaboratoryAssets(Renderer& activeRenderer) {
 
 void WorkbenchApp::renderLaboratory3D(Renderer& activeRenderer) {
     ensureLaboratoryMapLoaded(activeRenderer);
+    updateLaboratoryCamera(applicationFrameMetrics().fixedStepAlpha);
     if (!m_spawnPropWhenReadyId.empty() && m_laboratoryMapLoaded
         && m_propCatalog.loaded()) {
         const auto& definitions = m_propCatalog.definitions();
@@ -741,22 +1056,40 @@ void WorkbenchApp::renderLaboratory3D(Renderer& activeRenderer) {
         m_spawnRagdollWhenReady = false;
         spawnHumanRagdoll();
     }
-    if(m_animationRunTest&&m_laboratoryMapLoaded&&m_humanRagdollProfile&&m_spawnedRagdolls.empty()) {
-        Vec3 position{-30,-45,150};
+    if((m_animationRunTest||m_manualRagdollInspection
+            ||m_takeCharacterControlWhenReady)
+        &&m_laboratoryMapLoaded&&m_humanRagdollProfile
+        &&m_spawnedRagdolls.empty()) {
+        // Ponto de spawn da plataforma de dev. A coordenada fixa anterior,
+        // {-30,-45}, era do mapa glTF antigo e fica 15 m fora da plataforma
+        // procedural de 60x60 m que o substituiu: sem chao embaixo,
+        // ragdollGroundHeight devolvia a propria altura e o personagem caia no
+        // vazio. Todos os modos de autostart que assumem o personagem
+        // (character, animation, walk, pose) estavam quebrados por isso.
+        Vec3 position{m_laboratorySpawnPosition.x, m_laboratorySpawnPosition.y,
+            m_laboratorySpawnPosition.z + 50.0f};
         position.z=ragdollGroundHeight(position)+m_characterSpawnHalfExtents.z-m_characterSpawnCenter.z+0.055f;
         const auto safe=findSafeSpawnPosition(position+m_characterSpawnCenter,
             m_characterSpawnHalfExtents+Vec3{0.01f,0.01f,0.01f},{},5);
         if(!safe||!spawnHumanRagdollAt(*safe-m_characterSpawnCenter,{},false)) {
-            m_animationRunTest=false;
-            Log::error("Teste de corrida: não foi possível criar o corpo na pista");
+            m_animationRunTest=false;m_manualRagdollInspection=false;
+            m_takeCharacterControlWhenReady=false;
+            Log::error("Não foi possível criar o corpo na pista");
         }
     }
-    if(m_animationRunTest&&!m_spawnedRagdolls.empty()&&!m_spawnedRagdolls.front().physicsState.links.empty()) {
+    if(m_takeCharacterControlWhenReady&&!m_spawnedRagdolls.empty()
+        &&!m_spawnedRagdolls.front().physicsState.links.empty()) {
+        m_takeCharacterControlWhenReady=false;
+        takeControlOfLatestCharacter();
+    }
+    if((m_animationRunTest||m_manualRagdollInspection)&&!m_spawnedRagdolls.empty()&&!m_spawnedRagdolls.front().physicsState.links.empty()) {
         const Vec3 target=m_spawnedRagdolls.front().physicsState.links.front().position+Vec3{0,0,0.25f};
         const Vec3 offset{-2.0f,-5.0f,1.0f};
         m_laboratoryCameraPosition=target+offset;
         m_laboratoryCameraYaw=std::atan2(-offset.y,-offset.x);
         m_laboratoryCameraPitch=std::atan2(-offset.z,std::sqrt(offset.x*offset.x+offset.y*offset.y));
+        // Manual inspection positions the camera once; no gait is requested.
+        m_manualRagdollInspection=false;
     }
     const bool pixelArtMode =
         m_laboratoryRenderMode == SceneRenderMode3D::PixelArt;
@@ -924,6 +1257,27 @@ void WorkbenchApp::renderLaboratory3D(Renderer& activeRenderer) {
         Frustum3D::fromViewProjection(m_laboratoryViewProjection,
             /*reversedDepth=*/true);
 
+    // Pose desenhada de cada prop neste quadro, interpolada no mesmo instante
+    // do boneco e da camera. Culling e malha usam esta, nao a do passo cru.
+    const float propAlpha = std::clamp(
+        applicationFrameMetrics().fixedStepAlpha, 0.0f, 1.0f);
+    for (SpawnedPropInstance& instance : m_spawnedProps) {
+        instance.renderedState =
+            instance.updatedAtPhysicsStep == m_laboratoryPhysicsStep
+            ? interpolatePose(instance.simulationPreviousState,
+                instance.physicsState, propAlpha)
+            : instance.physicsState;
+        // O feixe da Physgun termina no ponto agarrado do objeto DESENHADO.
+        // O passo fixo o calcula a partir do estado cru (e antes de simular),
+        // o que descolava o feixe do prop ao girar a camera segurando algo.
+        if (m_physGunGrabbedEntityId != 0
+            && instance.entityId == m_physGunGrabbedEntityId) {
+            m_physGunBeamTargetWorldPosition = instance.renderedState.position
+                + instance.renderedState.orientation.rotate(
+                    m_physGunLocalGrabPoint);
+        }
+    }
+
     std::vector<MeshRender3D> meshes;
     const auto& definitions = m_propCatalog.definitions();
     std::vector<std::uint8_t> propVisibility(m_spawnedProps.size(), 0);
@@ -954,7 +1308,7 @@ void WorkbenchApp::renderLaboratory3D(Renderer& activeRenderer) {
                 const Vec3 dimensions = (*context.definitions)[
                     instance.definitionIndex].dimensionsMeters;
                 const float radius = dimensions.length() * 0.5f;
-                const Vec3 center = instance.physicsState.position;
+                const Vec3 center = instance.renderedState.position;
                 std::uint8_t visibility = 0;
                 if (context.camera->intersectsSphere(center, radius)) {
                     visibility |= 1u;
@@ -1076,17 +1430,17 @@ void WorkbenchApp::renderLaboratory3D(Renderer& activeRenderer) {
                     std::span<MeshRender3D>(*context.output).subspan(
                         first, definition.visual.parts.size());
                 writeGpuModelRenderables(definition.visual,
-                    instance.physicsState.position,
-                    instance.physicsState.orientation,
+                    instance.renderedState.position,
+                    instance.renderedState.orientation,
                     context.temporalHistoryValid
                         ? instance.previousPhysicsState.position
-                        : instance.physicsState.position,
+                        : instance.renderedState.position,
                     context.temporalHistoryValid
                         ? instance.previousPhysicsState.orientation
-                        : instance.physicsState.orientation,
+                        : instance.renderedState.orientation,
                     1.0f,
                     highlighted, highlighted, castsShadow, destination,
-                    (instance.physicsState.position
+                    (instance.renderedState.position
                         - context.cameraPosition).length());
                 for (MeshRender3D& mesh : destination) {
                     mesh.visibleInCamera = visibleInCamera;
@@ -1144,14 +1498,61 @@ void WorkbenchApp::renderLaboratory3D(Renderer& activeRenderer) {
         if (instance.kind == ArticulatedRigKind::Human && m_ragdollCharacter) {
             std::vector<Vec3> positions, previousPositions;
             std::vector<Quaternion> orientations, previousOrientations;
+            // Always the simulated body: there is exactly one character here,
+            // and it is the physical one. Drawing an animated copy over it
+            // (the Unreal PhysicsBlendWeight split) meant limbs went through
+            // walls, because nothing the player saw was ever in the solver.
+            //
+            // Interpolated across the fixed step this frame is sitting in.
+            // Physics runs at 120 Hz and frames follow the display, so a
+            // frame that lands between two steps used to redraw the previous
+            // one unchanged: the world and the camera moved smoothly while
+            // the character advanced in jerks of its own. That reads as the
+            // body glitching whenever the camera turns, and no amount of
+            // work on the simulation side can remove it.
+            const float alpha = std::clamp(
+                applicationFrameMetrics().fixedStepAlpha, 0.0f, 1.0f);
+            const bool interpolate =
+                instance.simulationPreviousState.links.size() >= linkCount;
             for (std::size_t i=0; i<linkCount; ++i) {
                 const auto& state=instance.physicsState.links[i];
-                const auto& previous=previousStateValid ? instance.previousPhysicsState.links[i] : state;
-                positions.push_back(state.position);
-                orientations.push_back(state.orientation);
-                previousPositions.push_back(previous.position);
-                previousOrientations.push_back(previous.orientation);
+                if (interpolate) {
+                    const auto& from =
+                        instance.simulationPreviousState.links[i];
+                    positions.push_back(from.position
+                        + (state.position - from.position) * alpha);
+                    orientations.push_back(blendRotation(from.orientation,
+                        state.orientation, alpha));
+                } else {
+                    positions.push_back(state.position);
+                    orientations.push_back(state.orientation);
+                }
             }
+            // Mesmo motivo do prop: o feixe termina no link desenhado.
+            if (m_physGunGrabbedEntityId != 0
+                && instance.entityId == m_physGunGrabbedEntityId
+                && m_physicsScene && m_physicsScene->grabbing()) {
+                const std::uint32_t grabbedLink =
+                    m_physicsScene->grabbedRagdollLink();
+                if (grabbedLink < positions.size()) {
+                    m_physGunBeamTargetWorldPosition = positions[grabbedLink]
+                        + orientations[grabbedLink].rotate(
+                            m_physGunLocalGrabPoint);
+                }
+            }
+            // Motion vectors compare against what was actually drawn last
+            // frame, not against a simulation step nobody saw.
+            const bool renderedHistoryValid = previousStateValid
+                && instance.renderedPositions.size() == linkCount
+                && instance.renderedOrientations.size() == linkCount;
+            for (std::size_t i=0; i<linkCount; ++i) {
+                previousPositions.push_back(renderedHistoryValid
+                    ? instance.renderedPositions[i] : positions[i]);
+                previousOrientations.push_back(renderedHistoryValid
+                    ? instance.renderedOrientations[i] : orientations[i]);
+            }
+            instance.renderedPositions = positions;
+            instance.renderedOrientations = orientations;
             instance.skinMatrices=buildRagdollSkinMatrices3D(*m_ragdollCharacter,positions,orientations);
             instance.previousSkinMatrices=buildRagdollSkinMatrices3D(*m_ragdollCharacter,previousPositions,previousOrientations);
             const auto first=meshes.size();
@@ -1164,6 +1565,7 @@ void WorkbenchApp::renderLaboratory3D(Renderer& activeRenderer) {
                 meshes[i].pixelArtHighDetail=true;
                 meshes[i].visibleInCamera=ragdollVisible;
                 meshes[i].shadowCascadeMask=ragdollShadowMask;
+                meshes[i].tintColor=instance.tintColor;
             }
             continue;
         }
@@ -1378,7 +1780,9 @@ void WorkbenchApp::renderLaboratory3D(Renderer& activeRenderer) {
         // da fisica. Em FPS maior que 120, repetir o mesmo delta de transform
         // em varios quadros geraria vetores de movimento falsos.
         for (SpawnedPropInstance& instance : m_spawnedProps) {
-            instance.previousPhysicsState = instance.physicsState;
+            // O que foi desenhado, nao o passo simulado: senao a propria
+            // interpolacao viraria erro de reprojecao no TAA.
+            instance.previousPhysicsState = instance.renderedState;
         }
         for (SpawnedRagdollInstance& instance : m_spawnedRagdolls) {
             instance.previousPhysicsState = instance.physicsState;
@@ -1395,6 +1799,11 @@ void WorkbenchApp::renderLaboratory3D(Renderer& activeRenderer) {
         m_laboratoryTaaHistoryValid = true;
         if (temporalJitterEnabled) ++m_taaFrameIndex;
     }
+    // No fim do quadro: a pose desenhada ja existe, e um spawn feito pelo
+    // smoke nao altera vetores que este render ainda estivesse percorrendo.
+    sampleRenderMotionSmoke(static_cast<float>(activeRenderer.width()),
+        static_cast<float>(activeRenderer.height()));
+    advanceRenderMotionSmoke();
 }
 
 void WorkbenchApp::drawSpawnMenu() {
@@ -1861,6 +2270,11 @@ void WorkbenchApp::drawLaboratoryUi() {
             m_showRagdollPanel = !m_showRagdollPanel;
         }
         ImGui::SameLine();
+        if (tabButton("PERSONAGEM", m_showCharacterPanel,
+                toolbarButtonSize)) {
+            m_showCharacterPanel = !m_showCharacterPanel;
+        }
+        ImGui::SameLine();
         if (tabButton("BENCHMARK FÍSICO",
                 m_showPhysicsBenchmarkPanel,
                 { benchmarkButtonWidth, toolbarButtonHeight })) {
@@ -1890,6 +2304,305 @@ void WorkbenchApp::drawLaboratoryUi() {
 
         const float panelWidth = ui(390.0f);
         const float panelTop = headerHeight(m_uiScale) + ui(12.0f);
+        if (m_showCharacterPanel) {
+            const bool drawCharacterPanel = beginDebugPanel("Personagem",
+                &m_showCharacterPanel,
+                { ui(12.0f), panelTop },
+                { panelWidth, ui(560.0f) }, io.DisplaySize, m_uiScale);
+            if (drawCharacterPanel) {
+                panelHeader("CONTROLE EM TERCEIRA PESSOA");
+                const auto controlled = std::find_if(
+                    m_spawnedRagdolls.begin(), m_spawnedRagdolls.end(),
+                    [&](const SpawnedRagdollInstance& instance) {
+                        return instance.entityId
+                            == m_controlledCharacterEntityId;
+                    });
+                const bool isControlling = controlled
+                    != m_spawnedRagdolls.end();
+                const bool hasCandidate = std::any_of(
+                    m_spawnedRagdolls.begin(), m_spawnedRagdolls.end(),
+                    [](const SpawnedRagdollInstance& instance) {
+                        return instance.kind == ArticulatedRigKind::Human
+                            && instance.active
+                            && !instance.physicsState.links.empty();
+                    });
+                ImGui::TextColored(isControlling
+                        ? ImVec4 { 0.38f, 0.82f, 0.62f, 1.0f }
+                        : ImVec4 { 0.72f, 0.76f, 0.82f, 1.0f },
+                    "%s", isControlling
+                        ? "CONTROLE ATIVO" : "CONTROLE LIVRE");
+                ImGui::TextWrapped(m_biomechanicalExperiment
+                    ? "Locomoção procedural de base flutuante. Contato físico, centro de massa, passos, arco dos pés, IK e movimento corporal são resolvidos sem clips de animação."
+                    : "Controle híbrido de referência com cápsula de travessia e articulation PhysX.");
+                ImGui::Dummy({ 1.0f, ui(8.0f) });
+                if (!isControlling && !hasCandidate) ImGui::BeginDisabled();
+                if (ImGui::Button(isControlling
+                        ? "LIBERAR CONTROLE" : "ASSUMIR ÚLTIMO PERSONAGEM",
+                        { -1.0f, ui(42.0f) })) {
+                    if (isControlling) releaseControlledCharacter();
+                    else takeControlOfLatestCharacter();
+                }
+                if (!isControlling && !hasCandidate) ImGui::EndDisabled();
+                if (!hasCandidate) {
+                    ImGui::TextWrapped(
+                        "Crie um Crash Test Dummy ativo pelo menu de spawn.");
+                }
+                bool biomechanical = m_biomechanicalExperiment;
+                if (ImGui::Checkbox("Experimento biomecânico isolado",
+                        &biomechanical)) {
+                    m_biomechanicalExperiment = biomechanical;
+                    m_characterDesiredVelocityWorld = {};
+                    m_characterSprinting = false;
+                    if (isControlling) {
+                        if (biomechanical) {
+                            controlled->biomechanics.reset(
+                                *m_humanRagdollProfile,
+                                controlled->physicsState,
+                                m_physicsScene->ragdollDynamics(
+                                    controlled->physicsRagdoll));
+                        } else if (!controlled->physicsState.links.empty()) {
+                            const Vec3 root =
+                                controlled->physicsState.links.front().position;
+                            m_physicsScene->placeCharacter({ root.x, root.y,
+                                ragdollGroundHeight(root) },
+                                m_avatarCharacterSettings);
+                            controlled->locomotion.reset(
+                                *m_humanRagdollProfile,
+                                controlled->physicsState);
+                        }
+                    }
+                }
+                if (m_biomechanicalExperiment) {
+                    ImGui::SliderFloat("Assistência de equilíbrio",
+                        &m_biomechanicalBalanceAssistPercent,
+                        0.0f, 100.0f, "%.0f%%");
+                }
+                ImGui::TextWrapped(m_biomechanicalExperiment
+                    ? "O contato real decide o apoio; o planejador transfere peso, abre o passo e pousa o pé. A assistência limitada estabiliza e impulsiona o corpo sem escrever transforms."
+                    : "Corpo único e físico: as juntas são movidas por motores e colidem de verdade; a raiz é carregada pela cápsula. O auxílio cai sozinho conforme o impacto (ver PESO FÍSICO).");
+
+                panelHeader("COMANDOS");
+                if (m_biomechanicalExperiment) {
+                    ImGui::TextUnformatted("WASD  passada física experimental");
+                    ImGui::TextUnformatted("Shift  passo mais rápido");
+                } else {
+                    ImGui::TextUnformatted("WASD  mover em 8 direções");
+                    ImGui::TextUnformatted("Shift  correr");
+                    ImGui::TextUnformatted("Ctrl  agachar");
+                    ImGui::TextUnformatted("Espaço  pular");
+                }
+                ImGui::TextUnformatted("Mouse  câmera e direção corporal");
+                if (isControlling) {
+                    ImGui::TextUnformatted("Alt  orbitar sem mover o corpo");
+                    ImGui::TextUnformatted("U  congelar / descongelar ragdoll");
+                    ImGui::TextUnformatted("T  restaurar pose inicial");
+                    if (controlled->frozen
+                        || controlled->physicsState.frozen) {
+                        ImGui::TextColored(
+                            { 0.38f, 0.76f, 1.0f, 1.0f },
+                            "RAGDOLL CONGELADO PARA INSPEÇÃO");
+                    }
+                }
+
+                if (isControlling) {
+                    if (m_biomechanicalExperiment) {
+                        const auto& telemetry =
+                            controlled->biomechanics.telemetry();
+                        const char* phase = "ACOMODANDO PESO";
+                        switch (telemetry.phase) {
+                        case BiomechanicalBipedPhase3D::Settling:
+                            phase = "ACOMODANDO PESO"; break;
+                        case BiomechanicalBipedPhase3D::Standing:
+                            phase = "EQUILÍBRIO"; break;
+                        case BiomechanicalBipedPhase3D::Walking:
+                            phase = "PASSADA FÍSICA"; break;
+                        case BiomechanicalBipedPhase3D::CaptureStep:
+                            phase = "PASSO DE CAPTURA"; break;
+                        case BiomechanicalBipedPhase3D::GettingUp:
+                            phase = "LEVANTANDO PROCEDURALMENTE"; break;
+                        case BiomechanicalBipedPhase3D::Unsupported:
+                            phase = "SEM APOIO"; break;
+                        case BiomechanicalBipedPhase3D::Fallen:
+                            phase = "CAÍDO"; break;
+                        }
+                        panelHeader("BIOMECÂNICA FÍSICA");
+                        ImGui::Text("Estado: %s", phase);
+                        ImGui::Text("Apoio físico E/D: %s / %s",
+                            telemetry.footContact[0] ? "SIM" : "-",
+                            telemetry.footContact[1] ? "SIM" : "-");
+                        const char* contactPhase = "APOIO DUPLO";
+                        switch (telemetry.contactPhase) {
+                        case ProceduralContactPhase3D::DoubleSupport:
+                            contactPhase = "APOIO DUPLO"; break;
+                        case ProceduralContactPhase3D::WeightShift:
+                            contactPhase = "TRANSFERÊNCIA DE PESO"; break;
+                        case ProceduralContactPhase3D::Swing:
+                            contactPhase = "SWING PROCEDURAL"; break;
+                        case ProceduralContactPhase3D::Touchdown:
+                            contactPhase = "POUSO"; break;
+                        case ProceduralContactPhase3D::Unsupported:
+                            contactPhase = "SEM CONTATO"; break;
+                        }
+                        const char* stepReason = "-";
+                        switch (telemetry.stepReason) {
+                        case ProceduralStepReason3D::None:
+                            stepReason = "-"; break;
+                        case ProceduralStepReason3D::Locomotion:
+                            stepReason = "LOCOMOÇÃO"; break;
+                        case ProceduralStepReason3D::Turning:
+                            stepReason = "GIRO"; break;
+                        case ProceduralStepReason3D::FootSeparation:
+                            stepReason = "DESCRUZAR PÉS"; break;
+                        case ProceduralStepReason3D::BalanceRecovery:
+                            stepReason = "RECUPERAÇÃO"; break;
+                        }
+                        ImGui::Text("Contato planejado: %s | motivo: %s",
+                            contactPhase, stepReason);
+                        ImGui::Text("Pé livre: %s | progresso: %.0f%% | arco: %.1f cm",
+                            telemetry.swingFoot == 0 ? "ESQUERDO"
+                                : telemetry.swingFoot == 1 ? "DIREITO" : "-",
+                            telemetry.gaitPhase * 100.0f,
+                            telemetry.swingClearanceMeters * 100.0f);
+                        ImGui::Text("Carga E/D: %.0f / %.0f N",
+                            telemetry.contactLoadNewtons[0],
+                            telemetry.contactLoadNewtons[1]);
+                        ImGui::Text("Margem do ponto de captura: %.1f cm",
+                            telemetry.supportMarginMeters * 100.0f);
+                        ImGui::Text("Velocidade COM: %.2f / %.2f / %.2f m/s",
+                            telemetry.centerOfMassVelocityWorld.x,
+                            telemetry.centerOfMassVelocityWorld.y,
+                            telemetry.centerOfMassVelocityWorld.z);
+                        ImGui::Text("Reação pedida: %.0f / %.0f / %.0f N",
+                            telemetry.requestedGroundReactionNewtons.x,
+                            telemetry.requestedGroundReactionNewtons.y,
+                            telemetry.requestedGroundReactionNewtons.z);
+                        ImGui::Text("Auxílio horizontal: %.1f N | torque: %.1f Nm",
+                            telemetry.balanceForceWorld.length(),
+                            telemetry.balanceTorqueWorld.length());
+                        ImGui::Text("Frenagem preditiva: %s",
+                            telemetry.predictiveBraking ? "ATIVA" : "-");
+                        ImGui::Text("Verticalidade da pelve: %.0f%%",
+                            telemetry.rootUpright * 100.0f);
+                        if (telemetry.getUpPhase
+                            != ProceduralGetUpPhase3D::None) {
+                            const char* getUp = "AVALIANDO QUEDA";
+                            switch (telemetry.getUpPhase) {
+                            case ProceduralGetUpPhase3D::None:
+                                getUp = "-"; break;
+                            case ProceduralGetUpPhase3D::Resting:
+                                getUp = "RECUPERANDO APÓS A QUEDA"; break;
+                            case ProceduralGetUpPhase3D::Assessing:
+                                getUp = "AVALIANDO QUEDA"; break;
+                            case ProceduralGetUpPhase3D::SupineTuck:
+                                getUp = "RECOLHENDO DE COSTAS"; break;
+                            case ProceduralGetUpPhase3D::SupineSit:
+                                getUp = "SENTANDO"; break;
+                            case ProceduralGetUpPhase3D::ProneBrace:
+                                getUp = "APOIANDO BRAÇOS"; break;
+                            case ProceduralGetUpPhase3D::PronePush:
+                                getUp = "EMPURRANDO DO CHÃO"; break;
+                            case ProceduralGetUpPhase3D::GatherFeet:
+                                getUp = "TRAZENDO PÉS AO CORPO"; break;
+                            case ProceduralGetUpPhase3D::Rise:
+                                getUp = "ESTENDENDO O CORPO"; break;
+                            case ProceduralGetUpPhase3D::Stabilize:
+                                getUp = "ESTABILIZANDO"; break;
+                            }
+                            ImGui::Text("Get-up: %s (%.0f%%) | tentativa %u",
+                                getUp, telemetry.getUpProgress * 100.0f,
+                                telemetry.getUpAttempt);
+                            ImGui::Text("Queda detectada: %s",
+                                telemetry.fallOrientation
+                                    == ProceduralFallOrientation3D::FaceDown
+                                    ? "DE FRENTE"
+                                    : telemetry.fallOrientation
+                                        == ProceduralFallOrientation3D::FaceUp
+                                    ? "DE COSTAS" : "AVALIANDO");
+                        }
+                        ImGui::TextUnformatted(telemetry.dynamicsAvailable
+                            ? "Base: dinâmica reduzida PhysX válida"
+                            : "Base: dinâmica reduzida indisponível");
+                    } else {
+                    const auto& telemetry = controlled->locomotion.telemetry();
+                    const char* stateName = "IDLE";
+                    switch (telemetry.state) {
+                    case CharacterLocomotionState3D::Idle:
+                        stateName = "IDLE"; break;
+                    case CharacterLocomotionState3D::Turning:
+                        stateName = "GIRANDO A BASE"; break;
+                    case CharacterLocomotionState3D::Walking:
+                        stateName = "CAMINHANDO"; break;
+                    case CharacterLocomotionState3D::Running:
+                        stateName = "CORRENDO"; break;
+                    case CharacterLocomotionState3D::CrouchIdle:
+                        stateName = "AGACHADO PARADO"; break;
+                    case CharacterLocomotionState3D::CrouchWalking:
+                        stateName = "AGACHADO EM MOVIMENTO"; break;
+                    case CharacterLocomotionState3D::JumpStarting:
+                        stateName = "SALTO"; break;
+                    case CharacterLocomotionState3D::Airborne:
+                        stateName = "NO AR"; break;
+                    case CharacterLocomotionState3D::Landing:
+                        stateName = "ATERRISSANDO"; break;
+                    case CharacterLocomotionState3D::Fallen:
+                        stateName = "CAÍDO"; break;
+                    case CharacterLocomotionState3D::GettingUp:
+                        stateName = "LEVANTANDO"; break;
+                    }
+                    panelHeader("LOCOMOÇÃO");
+                    ImGui::Text("Estado: %s | velocidade %.2f m/s",
+                        stateName, telemetry.speedMetersPerSecond);
+                    ImGui::Text("Fase %.2f | ritmo %.2fx",
+                        telemetry.cyclePhase, telemetry.playbackRate);
+                    ImGui::Text("Blend F/T/E/D: %.0f / %.0f / %.0f / %.0f%%",
+                        telemetry.forwardWeight * 100.0f,
+                        telemetry.backwardWeight * 100.0f,
+                        telemetry.leftWeight * 100.0f,
+                        telemetry.rightWeight * 100.0f);
+                    ImGui::Text("Pés apoiados: %s / %s",
+                        telemetry.footPlanted[0] ? "E" : "-",
+                        telemetry.footPlanted[1] ? "D" : "-");
+                    ImGui::Text("Reação física: %.0f%% | guia raiz: %.0f%%",
+                        telemetry.reactionStrength * 100.0f,
+                        telemetry.rootAuthority * 100.0f);
+                    ImGui::Text("Torção olhar: %.1f° | giro: %.1f°/s",
+                        telemetry.viewYawErrorRadians * 180.0f / Pi,
+                        telemetry.turningRateRadiansPerSecond * 180.0f / Pi);
+                    ImGui::Text("Inclinação frente/lado: %.1f° / %.1f°",
+                        telemetry.forwardLeanRadians * 180.0f / Pi,
+                        telemetry.lateralLeanRadians * 180.0f / Pi);
+                    if (telemetry.state == CharacterLocomotionState3D::Fallen
+                        || telemetry.state
+                            == CharacterLocomotionState3D::GettingUp) {
+                        const char* getUpPhaseName = "-";
+                        switch (telemetry.getUpPhase) {
+                        case CharacterGetUpPhase3D::None:
+                            getUpPhaseName = "-"; break;
+                        case CharacterGetUpPhase3D::Settling:
+                            getUpPhaseName = "ASSENTANDO"; break;
+                        case CharacterGetUpPhase3D::Rising:
+                            getUpPhaseName = "LEVANTANDO"; break;
+                        }
+                        const char* fallOrientationName =
+                            telemetry.fallOrientation
+                                == CharacterFallOrientation3D::FaceDown
+                            ? "DE FRENTE" : telemetry.fallOrientation
+                                == CharacterFallOrientation3D::FaceUp
+                            ? "DE COSTAS" : "AVALIANDO";
+                        ImGui::Text(
+                            "Levantar: %s (%.0f%%) | orientação: %s",
+                            getUpPhaseName, telemetry.getUpProgress * 100.0f,
+                            fallOrientationName);
+                        ImGui::Text(
+                            "Tentativas: %u | vertical do corpo: %.2f",
+                            telemetry.getUpAttempt, telemetry.rootUpright);
+                    }
+                    }
+                }
+                growPanelToFitContent(io.DisplaySize, m_uiScale);
+            }
+            ImGui::End();
+        }
         if (m_showPhysicsBenchmarkPanel
             && beginDebugPanel("Benchmark físico",
                 &m_showPhysicsBenchmarkPanel,
@@ -2367,51 +3080,37 @@ void WorkbenchApp::drawLaboratoryUi() {
                     if (instance.kind != ArticulatedRigKind::Human) continue;
                     instance.active = m_ragdollActive;
                     if (instance.active && m_humanRagdollProfile) {
-                        instance.animationController.reset(*m_humanRagdollProfile,
-                            instance.physicsState, ragdollGroundHeight(instance.physicsState.links.front().position));
+                        instance.locomotion.reset(*m_humanRagdollProfile,
+                            instance.physicsState);
                     }
                     m_physicsScene->setRagdollActive(
                         instance.physicsRagdoll, instance.active);
                 }
             }
             ImGui::TextWrapped(m_ragdollActive
-                ? "Animação alvo por motores articulares e assistência mágica explícita."
+                ? "Controle ativo: o avatar usa músculos, torque corporal e contatos; o guia exato permanece como fallback."
                 : "Passivo: mantém juntas, limites e colisões; não reproduz animações.");
-            ImGui::Checkbox("Assistência corporal residual (X / Y / Z)", &m_ragdollUseMagicMode);
-            ImGui::TextWrapped("Protótipo experimental: equilíbrio e passada ainda em desenvolvimento. A assistência não impede quedas. Sistemas anteriores arquivados.");
-            panelHeader("TESTE IDLE / CORRIDA / FREAR");
-            const bool canRun=m_ragdollActive && humanRagdollCount>0
-                && m_humanRagdollProfile && animatedRagdollClips().compatible(*m_humanRagdollProfile);
-            if(!canRun)ImGui::BeginDisabled();
-            if(ImGui::Button("CORRER POR 5 SEGUNDOS",{-1.0f,ui(40.0f)}))runRagdollsForFiveSeconds();
-            if(!canRun)ImGui::EndDisabled();
-            ImGui::TextWrapped("Segue a frente atual de cada corpo, freia e retorna ao Idle. Repetir o botão durante a corrida não reinicia o comando.");
-            ImGui::Dummy({1.0f,ui(12.0f)});
-
-            panelHeader("RIGIDEZ DOS DRIVES");
-            if (m_ragdollActive) ImGui::BeginDisabled();
+            panelHeader("FORÇA AUXILIAR E MUSCULAR");
+            ImGui::Checkbox("Forçar alteração dos valores", &m_ragdollForceControlOverride);
+            ImGui::BeginDisabled(!m_ragdollForceControlOverride);
+            ImGui::TextUnformatted("Força auxiliar");
             ImGui::SetNextItemWidth(-1.0f);
-            if (ImGui::SliderFloat("##RagdollRigidity",
-                    &m_ragdollRigidityPercent, 0.0f, 100.0f, "%.0f%%",
-                    ImGuiSliderFlags_AlwaysClamp)) {
-                if (m_physicsScene) {
-                    for (const SpawnedRagdollInstance& instance :
-                            m_spawnedRagdolls) {
-                        if (instance.kind != ArticulatedRigKind::Human) {
-                            continue;
-                        }
-                        m_physicsScene->setRagdollRigidity(
-                            instance.physicsRagdoll,
-                            m_ragdollRigidityPercent);
-                    }
-                }
-            }
+            ImGui::SliderFloat("##RagdollAuxiliaryAuthority", &m_ragdollAuxiliaryPercent,
+                0.0f, 100.0f, "%.0f%%", ImGuiSliderFlags_AlwaysClamp);
+            ImGui::TextUnformatted("Força muscular");
+            ImGui::SetNextItemWidth(-1.0f);
+            ImGui::SliderFloat("##RagdollMuscleAuthority", &m_ragdollMusclePercent,
+                0.0f, 100.0f, "%.0f%%", ImGuiSliderFlags_AlwaysClamp);
+            ImGui::EndDisabled();
+            ImGui::TextWrapped(m_ragdollForceControlOverride
+                ? "No controle físico, o auxílio regula trajetória, torque corporal e recentralização lenta; os músculos regulam os drives das juntas. Zero desliga o respectivo canal."
+                : "Padrões físicos: auxílio 100%% e músculos 100%%. Marque a opção acima para alterar os canais durante o movimento.");
+            panelHeader("LOCOMOÇÃO");
             ImGui::TextWrapped(
-                "0%% solta os motores, mas conserva as juntas e os "
-                "limites. Ao subir a rigidez, a pose física atual é "
-                "capturada sem estalo.");
-            if (m_ragdollActive) ImGui::EndDisabled();
-            ImGui::Dummy({ 1.0f, ui(12.0f) });
+                "Use a aba PERSONAGEM para assumir o controle. O protótipo "
+                "temporizado e o footwork procedural anterior saíram do "
+                "caminho ativo.");
+            ImGui::Dummy({1.0f,ui(12.0f)});
 
             panelHeader("ALVOS");
             if (m_ragdollActive) ImGui::BeginDisabled();
@@ -2456,29 +3155,51 @@ void WorkbenchApp::drawLaboratoryUi() {
                         && instance.active;
                 });
             if (latestHuman != m_spawnedRagdolls.rend()) {
-                const auto& telemetry=latestHuman->animationController.telemetry();
-                const char* phase=telemetry.phase==AnimatedRagdollPhase3D::Idle?"IDLE":
-                    telemetry.phase==AnimatedRagdollPhase3D::Running?"CORRENDO":
-                    telemetry.phase==AnimatedRagdollPhase3D::Stopping?"FREANDO":"CAINDO / CAÍDO";
+                const auto& telemetry=latestHuman->locomotion.telemetry();
+                const char* phase="IDLE";
+                switch(telemetry.state) {
+                case CharacterLocomotionState3D::Idle: phase="IDLE";break;
+                case CharacterLocomotionState3D::Turning: phase="GIRANDO";break;
+                case CharacterLocomotionState3D::Walking: phase="CAMINHANDO";break;
+                case CharacterLocomotionState3D::Running: phase="CORRENDO";break;
+                case CharacterLocomotionState3D::CrouchIdle: phase="AGACHADO";break;
+                case CharacterLocomotionState3D::CrouchWalking: phase="AGACHADO ANDANDO";break;
+                case CharacterLocomotionState3D::JumpStarting: phase="SALTO";break;
+                case CharacterLocomotionState3D::Airborne: phase="NO AR";break;
+                case CharacterLocomotionState3D::Landing: phase="ATERRISSANDO";break;
+                case CharacterLocomotionState3D::Fallen: phase="CAÍDO";break;
+                case CharacterLocomotionState3D::GettingUp: phase="LEVANTANDO";break;
+                }
                 panelHeader("ANIMAÇÃO FÍSICA");
                 ImGui::Text("Estado: %s",phase);
-                ImGui::Text("Corrida restante: %.2f s",telemetry.runSecondsRemaining);
-                ImGui::Text("Velocidade: %.2f m/s | distância: %.2f m",telemetry.speedMetersPerSecond,telemetry.travelledMeters);
-                ImGui::Text("Juntas RMS: %.1f graus | apoio nos pés: %.0f N",telemetry.jointRmsDegrees,telemetry.supportLoadNewtons);
-                ImGui::Text("Auxílio: %.0f N / %.1f N.m | autoridade: %.0f%%",telemetry.assistanceForceNewtons,
-                    telemetry.assistanceTorqueNewtonMeters,100*telemetry.assistanceAuthority);
-                ImGui::TextUnformatted("Limites padrão: 12% do peso / 3,5% peso x altura.");
-                ImGui::Text("Resultante XYZ: %.1f / %.1f / %.1f N",telemetry.assistanceNetForceWorld.x,
-                    telemetry.assistanceNetForceWorld.y,telemetry.assistanceNetForceWorld.z);
-                ImGui::TextUnformatted("Sem alvo posicional mundial ou retorno ao ponto de origem.");
-                if(telemetry.phase==AnimatedRagdollPhase3D::Falling)
-                    ImGui::TextWrapped("Queda: auxílio desligado e motores cedendo. Levante com a Physgun para rearmar; não há recuperação automática.");
-                if(telemetry.blocked)ImGui::TextUnformatted("Interrompido: obstáculo frontal.");
-                if(telemetry.manipulated)ImGui::TextUnformatted("Controle suspenso pela Physgun.");
+                ImGui::Text("Velocidade: %.2f m/s | fase: %.2f",
+                    telemetry.speedMetersPerSecond,telemetry.cyclePhase);
+                ImGui::Text("Ritmo da animação: %.2fx",
+                    telemetry.playbackRate);
+                ImGui::Text("Erro articular RMS: %.1f graus",
+                    telemetry.jointErrorRmsDegrees);
+                ImGui::Text("Pés travados E/D: %s / %s",
+                    telemetry.footPlanted[0]?"SIM":"NÃO",
+                    telemetry.footPlanted[1]?"SIM":"NÃO");
+                ImGui::Text("Folga dos pés E/D: %.1f / %.1f cm",
+                    100*telemetry.footClearanceMeters[0],
+                    100*telemetry.footClearanceMeters[1]);
+                ImGui::Text("Músculos: %.0f%% | guia articular: %.0f%%",
+                    telemetry.muscleAuthority*100,
+                    telemetry.poseAuthority*100);
+                ImGui::Text("Translação: %.0f%% | guia angular: %.0f%%",
+                    telemetry.rootAuthority*100,
+                    telemetry.rootRotationAuthority*100);
+                ImGui::Text("Reação: %.0f%% | giro físico: %.1f°/s",
+                    telemetry.reactionStrength*100,
+                    telemetry.turningRateRadiansPerSecond*180.0f/Pi);
+                ImGui::TextWrapped(
+                    "No modo corporal físico, a cápsula conserva a trajetória "
+                    "e o torque da articulation resolve a orientação.");
             }
             ImGui::Dummy({ 1.0f, ui(8.0f) });
             ImGui::TextColored({ 0.50f, 0.62f, 0.72f, 1.0f },
-                "Novos ragdolls herdam a rigidez selecionada.");
+                "Novos ragdolls usam os mesmos valores de controle.");
             ImGui::EndTabItem();
             }
 

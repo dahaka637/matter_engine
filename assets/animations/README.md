@@ -1,46 +1,87 @@
 # Biblioteca de animações
 
-Os clipes normalizados para o rig `HumanAdultV1` ficam em `clips/`. O primeiro
-é `run_forward.matteranim.json`, retargeteado do `Running.fbx` do Mixamo.
+Os clipes ativos, normalizados para `FootballPlayerV1`, ficam em `clips/`.
 
-O runtime não dependerá diretamente de FBX, BVH, glTF ou outro formato de
-origem. Cada importador converte o arquivo para `AnimationClip3D`, cujos canais
-usam os IDs estáveis dos links do perfil físico e guardam translação e rotação
-locais em relação à pose neutra. O caminho do arquivo-fonte permanece registrado
-no clipe para permitir refazer e auditar o mapeamento.
+**Autorais**, criados do zero em código (`tools/animation/`, metodologia em
+`docs/ANIMATION_AUTHORING.md`):
 
-Para importar outro FBX do Mixamo (sem skin, 30 fps), use o Blender:
+- `alert_idle`: única pose parada, baseada diretamente no `Idle.fbx`;
+- `jog`: Corrida leve, a passada padrão (3,0 m/s);
+- `run_backward`: Corrida de costas, o recuo (2,9 m/s);
+- `sprint`: Sprint (7,5 m/s);
+- `jump_standing`, `jump_forward`, `jump_backward`, `jump_left`,
+  `jump_right`: pulos, tocados pela fase do voo.
+
+**Strafe**, a exceção: `jog_strafe_left/right` e `sprint_strafe_left/right`
+são o Jog Strafe Left/Right da Mixamo retargeteado
+(`source/retargeted/`), com as correções mínimas que o corpo exige
+(`tools/animation/clips/strafe.py`), a pedido do usuário.
+
+**Importados:** `stand_up_back` e `stand_up_front` (levantar de costas e de
+frente), que continuam em uso. `cc0_idle` (CC0, Quaternius), `mixamo_running`
+e `mixamo_sprint` (Mixamo/Adobe) ficam como referência antiga; o personagem
+não os usa mais.
+
+`natural_idle` também fica somente como referência/autoria antiga; não é
+declarado pelo personagem nem carregado como pose inicial.
+
+O manifesto do personagem (`locomotion` em `character.json`) diz qual clipe
+cumpre cada papel: `idle`, `walk`, `walkBackward`, `sprint`, os de strafe,
+os de pulo, `standUpBack` e `standUpFront`. O personagem olha para a câmera;
+a direção do movimento em relação a ela escolhe o ciclo (frente e diagonais
+da frente: corrida; lados: strafe; trás e diagonais de trás: recuo). Ver
+"Olhar × movimento" em `docs/ANIMATION_AUTHORING.md`. A coleção CC0 anterior
+(14 clipes) está preservada fora do runtime em
+`archive/2026-09-24-retired-animation-library/`.
+
+O menu **ANIMAÇÕES** não enumera este diretório. Ele mostra os clipes do
+personagem, na ordem em que o jogo os usa: parado, corrida leve (o papel
+`walk`), corrida de costas, sprint, strafes e pulos. As passadas foram
+calibradas medindo referências de estudo (`source/mixamo/study/`, ver o
+README de lá), sem copiar pose.
+
+## Fontes CC0
+
+- `source/cc0/quaternius_ual1/`: Universal Animation Library, de Quaternius;
+- `source/cc0/kaykit_character_animations/`: KayKit Character Animations, de
+  Kay Lousberg.
+
+Cada diretório conserva a licença recebida com o pacote. O runtime não lê FBX,
+GLB ou glTF diretamente: esses arquivos são fontes auditáveis para regenerar o
+formato canônico `matter-ragdoll-animation-1`.
+
+## Importação
+
+O importador humanoide aceita FBX, GLB e glTF, seleciona uma ação nomeada e
+retargeteia seus ossos para os IDs estáveis do perfil físico:
 
 ```sh
 blender --background --factory-startup --python-exit-code 1 \
-  --python tools/import_mixamo_animation.py -- ARQUIVO.fbx \
-  --profile assets/physics/ragdolls/HumanAdultV1.ragdoll.json \
+  --python tools/import_humanoid_animation.py -- ARQUIVO.glb \
+  --source-rig kaykit --action Walking_A \
+  --profile assets/characters/als_ragdoll/AlsRagdollV1.ragdoll.json \
   --output assets/animations/clips/ID.matteranim.json \
-  --id ID --name "Nome exibido" --loop --root-motion in-place
+  --id ID --name "Nome exibido" --loop --loop-open \
+  --root-motion in-place --nominal-speed 1.4
 ```
 
-O importador mapeia os 18 links, converte eixos e escala, transforma rotações
-globais do Mixamo em deltas locais do rig físico, projeta cada alvo nos DOFs e
-limites articulares do perfil e remove a deriva linear da raiz. Assim,
-inclusive animações baixadas com deslocamento são exibidas paradas no centro,
-preservando o movimento interno da passada.
+Presets disponíveis: `mixamo`, `kaykit` e `unreal`. `--loop-open` é usado
+quando o último quadro da ação ainda precede o primeiro; o exportador acrescenta
+o fechamento exato. Para clipes in-place sem deslocamento mensurável, informe
+`--nominal-speed`. Quando há root motion horizontal, a velocidade é calculada
+automaticamente.
 
-O playback reconstrói cada peça pelas âncoras compartilhadas da articulation:
-uma animação nunca pode introduzir distância entre o lado pai e o lado filho
-de uma junta. A projeção de limites também é repetida no runtime depois da
-interpolação, para manter essa garantia entre keyframes.
+O importador converte eixos e escala, resolve as rotações globais como
+coordenadas das juntas físicas, projeta cada amostra nos DOFs e limites do
+perfil e remove a viagem da raiz no modo in-place. Cotovelos e joelhos são
+medidos pela geometria das cadeias, sem depender do bone roll da fonte.
 
-Cotovelo e joelho são tratados como hinges semânticos. A flexão é medida pela
-geometria das cadeias braço–antebraço e coxa–canela no FBX e então escrita no
-eixo `twist` permitido pelo perfil. Isso evita depender do bone roll particular
-do Mixamo, que não coincide com a base local do `HumanAdultV1`.
+Além da pose, o arquivo grava o deslocamento original, a velocidade autoral e
+curvas escalares de contato dos pés derivadas da altura retargeteada. O runtime
+usa essas curvas para liberar o swing antes do arco do passo e permitir foot
+lock somente durante stance.
 
-O formato `matter-ragdoll-animation-1` grava a raiz separadamente e, para cada
-filho, os escalares físicos `twist/swing1/swing2` — não quaternions locais
-livres. O importador executa IK angular limitado e só grava o arquivo se os
-gates de fidelidade, continuidade, cobertura, limites e fechamento passarem.
-Clipes reprovados não entram na biblioteca.
-
-Use `--loop` apenas para ações cíclicas. `--root-motion in-place` remove a
-deriva da raiz para locomover via física; `--root-motion preserve` conserva a
-trajetória original. Para ações não cíclicas, omita `--loop`.
+O exportador só grava um clipe após verificar cobertura do rig, fidelidade das
+direções, continuidade, limites e fechamento. `--dynamic-projection` permite
+projetar poses dinâmicas extremas nos limites anatômicos, mantendo o relatório
+de quantas amostras atingiram esses limites.

@@ -124,6 +124,29 @@ AnimationClip3D loadAnimationClip3D(std::string_view filePath) {
             clip.sourceRootDisplacementMeters=readVec3(root.at("sourceRootDisplacementMeters"),"sourceRootDisplacementMeters");
             if(!finite(clip.sourceRootDisplacementMeters))throw std::runtime_error("Invalid source root displacement");
         }
+        clip.nominalSpeedMetersPerSecond =
+            root.value("nominalSpeedMetersPerSecond", 0.0f);
+        clip.travelDirectionRadians =
+            root.value("travelDirectionDegrees", 0.0f)
+                * (3.14159265358979323846f / 180.0f);
+        if (!std::isfinite(clip.travelDirectionRadians)) {
+            throw std::runtime_error("Invalid travel direction");
+        }
+        if (root.contains("contacts")) {
+            const Json& contacts = root.at("contacts");
+            const auto loadContact = [&](std::string_view name,
+                                         AnimationScalarTrack3D& target) {
+                if (!contacts.contains(name)) return;
+                for (const Json& source : contacts.at(name)) {
+                    target.keyframes.push_back({
+                        source.at("timeSeconds").get<float>(),
+                        source.at("value").get<float>()
+                    });
+                }
+            };
+            loadContact("leftFoot", clip.leftFootContact);
+            loadContact("rightFoot", clip.rightFootContact);
+        }
         if (root.contains("retargetReport")) {
             const Json& report = root.at("retargetReport");
             clip.retargetReport.available = true;
@@ -255,6 +278,32 @@ AnimationTransformSample3D sampleAnimationTrack3D(
     };
 }
 
+float sampleAnimationScalarTrack3D(const AnimationScalarTrack3D& track,
+    float timeSeconds, float clipDurationSeconds, bool loop) {
+    if (track.keyframes.empty()) return 0.0f;
+    if (track.keyframes.size() == 1) return track.keyframes.front().value;
+    float sampleTime = std::max(0.0f, timeSeconds);
+    if (loop && clipDurationSeconds > 0.0f) {
+        sampleTime = std::fmod(sampleTime, clipDurationSeconds);
+    } else {
+        sampleTime = std::min(sampleTime, clipDurationSeconds);
+    }
+    const auto next = std::upper_bound(track.keyframes.begin(),
+        track.keyframes.end(), sampleTime,
+        [](float time, const AnimationScalarKeyframe3D& keyframe) {
+            return time < keyframe.timeSeconds;
+        });
+    if (next == track.keyframes.begin()) return next->value;
+    if (next == track.keyframes.end()) return track.keyframes.back().value;
+    const AnimationScalarKeyframe3D& to = *next;
+    const AnimationScalarKeyframe3D& from = *(next - 1);
+    const float interval = to.timeSeconds - from.timeSeconds;
+    const float amount = interval > 0.000001f
+        ? std::clamp((sampleTime - from.timeSeconds) / interval, 0.0f, 1.0f)
+        : 0.0f;
+    return from.value + (to.value - from.value) * amount;
+}
+
 std::vector<AnimationClipValidationIssue3D> validateAnimationClip3D(
     const AnimationClip3D& clip) {
     std::vector<AnimationClipValidationIssue3D> issues;
@@ -274,6 +323,11 @@ std::vector<AnimationClipValidationIssue3D> validateAnimationClip3D(
         || clip.sourceSampleRateHz < 0.0f) {
         issues.push_back({ "sourceSampleRateHz",
             "Taxa de amostragem deve ser finita e não negativa" });
+    }
+    if (!std::isfinite(clip.nominalSpeedMetersPerSecond)
+        || clip.nominalSpeedMetersPerSecond < 0.0f) {
+        issues.push_back({ "nominalSpeedMetersPerSecond",
+            "Velocidade nominal deve ser finita e não negativa" });
     }
     if (clip.tracks.empty()) {
         issues.push_back({ "tracks", "Clipe não possui canais" });
@@ -325,6 +379,30 @@ std::vector<AnimationClipValidationIssue3D> validateAnimationClip3D(
             previousTime = keyframe.timeSeconds;
         }
     }
+    const auto validateScalar = [&](const AnimationScalarTrack3D& track,
+                                    std::string_view name) {
+        float previousTime = -1.0f;
+        for (std::size_t index = 0; index < track.keyframes.size(); ++index) {
+            const AnimationScalarKeyframe3D& keyframe = track.keyframes[index];
+            const std::string path = std::string(name) + "["
+                + std::to_string(index) + "]";
+            if (!std::isfinite(keyframe.timeSeconds)
+                || keyframe.timeSeconds < 0.0f
+                || keyframe.timeSeconds > clip.durationSeconds
+                || keyframe.timeSeconds <= previousTime) {
+                issues.push_back({ path + ".timeSeconds",
+                    "Tempo de contato inválido" });
+            }
+            if (!std::isfinite(keyframe.value)
+                || keyframe.value < 0.0f || keyframe.value > 1.0f) {
+                issues.push_back({ path + ".value",
+                    "Contato deve estar no intervalo 0..1" });
+            }
+            previousTime = keyframe.timeSeconds;
+        }
+    };
+    validateScalar(clip.leftFootContact, "contacts.leftFoot");
+    validateScalar(clip.rightFootContact, "contacts.rightFoot");
     return issues;
 }
 
@@ -438,8 +516,12 @@ RagdollAnimationPose3D sampleRagdollAnimationPose3D(
         if (clip != nullptr) {
             if (const AnimationTrack3D* track =
                     findAnimationTrack3D(*clip, link.id)) {
+                // Quem chama decide se este playback deve repetir. O
+                // metadado do clipe continua sendo o padrão seguro para
+                // controladores, mas o visualizador pode deliberadamente
+                // inspecionar uma ação one-shot em loop.
                 sample = sampleAnimationTrack3D(*track, timeSeconds,
-                    clip->durationSeconds, loop && clip->loops);
+                    clip->durationSeconds, loop);
             }
         }
 

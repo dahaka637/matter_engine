@@ -31,6 +31,9 @@ check_absent "Tipos Vulkan devem ficar no backend Vulkan" \
 check_absent "Tipos PhysX devem ficar no backend PhysX" \
     '\bphysx::|#include.*(Px|characterkinematic|cooking/)' src \
     -g '!src/Engine/Physics/PhysX/**'
+check_absent "Tipos Jolt devem ficar no backend Jolt" \
+    '\bJPH::|#include.*<Jolt/' src \
+    -g '!src/Engine/Physics/Jolt/**'
 check_absent "O solver fisico removido nao pode retornar" \
     'PhysicsWorld3D|RigidBody3D|StaticCollisionWorld3D|TriangleMeshCollider3D|KinematicCharacter3D|PhysicsHandle3D|JointConstraint3D|CollisionCooking3D|MassProperties3D' \
     CMakeLists.txt src tests
@@ -41,7 +44,7 @@ check_absent "Engine nao pode depender do Workbench" \
 check_absent "Codigo do jogo antigo nao pode voltar ao runtime" \
     '#include.*Game/|src[/\\]Game' CMakeLists.txt src tests
 check_absent "Identidade antiga e prototipos removidos nao podem retornar" \
-    'SoccerFall|SOCCERFALL|LegacyFootworkRig|PhysicalBiped|AnimatorScreen' \
+    'SoccerFall|SOCCERFALL|LegacyFootworkRig|AnimatorScreen' \
     CMakeLists.txt src tests
 
 (( failed == 0 )) || exit 1

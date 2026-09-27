@@ -11,7 +11,16 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
+# The project uses no C++20 modules, so module dependency scanning only adds
+# Ninja dyndep overhead and a known GCC/CMake interaction bug: the scanner's
+# include-translation query chokes on vendored headers that quote-include a
+# "./relative" path (e.g. openal-soft's bundled GSL), aborting the build with
+# "malformed string 'ERROR ... INCLUDE-TRANSLATE ...'" even though no module
+# is involved.
+set(CMAKE_CXX_SCAN_FOR_MODULES OFF CACHE BOOL "" FORCE)
+
 include(FetchContent)
+
 
 # The Vulkan toolchain is fetched explicitly so contributors only need a C++
 # compiler and a Vulkan-capable driver. A system-wide Vulkan SDK remains useful
@@ -125,25 +134,9 @@ FetchContent_Declare(
     GIT_SHALLOW TRUE
 )
 
-# PhysX e um detalhe privado do modulo de fisica. Fixamos o commit da versao
-# oficial 5.9.0 para que uma atualizacao remota nunca altere a simulacao de uma
-# build existente. O backend CPU estatico e a configuracao portavel para o
-# editor; GPU rigid bodies poderao ser habilitados futuramente como outro
-# perfil, depois de medirmos uma cena que realmente amortize o custo do CUDA.
-set(PHYSX_PRESET "" CACHE STRING "" FORCE)
-set(PX_GENERATE_GPU_PROJECTS OFF CACHE BOOL "" FORCE)
-set(PX_GENERATE_STATIC_LIBRARIES ON CACHE BOOL "" FORCE)
-set(PX_GENERATE_GPU_STATIC_LIBRARIES OFF CACHE BOOL "" FORCE)
-set(PX_BUILDSNIPPETS OFF CACHE BOOL "" FORCE)
-set(PX_BUILDPVDRUNTIME OFF CACHE BOOL "" FORCE)
-set(NV_USE_STATIC_WINCRT OFF CACHE BOOL "" FORCE)
-FetchContent_Declare(
-    PhysX
-    GIT_REPOSITORY https://github.com/NVIDIA-Omniverse/PhysX.git
-    # Tag oficial: 110.1-omni-and-physx-5.9.0
-    GIT_TAG 517a0073715120e114ee055b63b26c95e00d9039
-    SOURCE_SUBDIR physx
-)
+# O SDK de fisica (Jolt hoje, PhysX como legado em remocao) e buscado e
+# configurado em cmake/PhysicsBackend.cmake, incluido mais abaixo: depende do
+# target `vhacd`, e manter as duas variantes aqui tornaria este arquivo ilegivel.
 
 # V-HACD transforma uma malha visual concava em um pequeno conjunto de hulls
 # convexos. Esse processamento acontece no carregamento/cooking do asset, nao
@@ -196,42 +189,15 @@ FetchContent_Declare(
 )
 
 FetchContent_MakeAvailable(
-    SDL3 imgui sqlite_amalgamation cgltf stb meshoptimizer nlohmann_json PhysX
+    SDL3 imgui sqlite_amalgamation cgltf stb meshoptimizer nlohmann_json
     vhacd_source openal-soft)
 
 add_library(vhacd INTERFACE)
 target_include_directories(vhacd INTERFACE ${vhacd_source_SOURCE_DIR}/include)
 
-if(MSVC)
-    # MSVC 14.43 passou a emitir C5054/C5055 para operacoes entre enums que o
-    # codigo oficial 5.9.0 ainda usa e o PhysX compila seus fontes com /WX.
-    # Suprimimos apenas esses dois diagnosticos nos targets de terceiros; os
-    # avisos da MatterEngine continuam integralmente ativos.
-    foreach(physx_target
-            PhysXFoundation PhysXCommon PhysX PhysXExtensions PhysXCooking
-            PhysXCharacterKinematic PhysXPvdSDK PhysXTask PhysXVehicle
-            LowLevel LowLevelAABB LowLevelDynamics SceneQuery
-            SimulationController)
-        if(TARGET ${physx_target})
-            target_compile_options(${physx_target} PRIVATE /wd5054 /wd5055)
-        endif()
-    endforeach()
-elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-    # O PhysX 5.9 ainda incrementa um contador volatile no backend Unix. GCC
-    # 16 diagnostica isso como -Wvolatile e o SDK promove todos os avisos a
-    # erro. A supressao fica restrita aos targets de terceiros.
-    foreach(physx_target
-            PhysXFoundation PhysXCommon PhysX PhysXExtensions PhysXCooking
-            PhysXCharacterKinematic PhysXPvdSDK PhysXTask PhysXVehicle
-            LowLevel LowLevelAABB LowLevelDynamics SceneQuery
-            SimulationController)
-        if(TARGET ${physx_target})
-            target_compile_options(${physx_target} PRIVATE
-                -Wno-error
-                -Wno-volatile)
-        endif()
-    endforeach()
-endif()
+# Backend de fisica: busca o SDK escolhido, aplica as supressoes de aviso que
+# ele exigir e publica as fontes/bibliotecas para o target MatterPhysics.
+include(${CMAKE_CURRENT_LIST_DIR}/cmake/PhysicsBackend.cmake)
 
 add_library(sqlite3 STATIC ${sqlite_amalgamation_SOURCE_DIR}/sqlite3.c)
 target_include_directories(sqlite3 PUBLIC ${sqlite_amalgamation_SOURCE_DIR})
@@ -320,16 +286,18 @@ add_library(MatterPhysics STATIC
     src/Engine/Physics/PhysicalBodyBuilder3D.cpp
     src/Engine/Physics/RagdollProfile3D.cpp
     src/Engine/Physics/WindShelter3D.cpp
-    src/Engine/Physics/PhysX/PhysXEngine3D.cpp
-    src/Engine/Physics/PhysX/PhysXCooking3D.cpp
-    src/Engine/Physics/PhysX/PhysXScene3D.cpp
+    src/Engine/Physics/Articulation/ArticulationIndexing3D.cpp
+    src/Engine/Physics/Articulation/ArticulationGravity3D.cpp
+    ${MATTERENGINE_PHYSICS_BACKEND_SOURCES}
 )
 target_include_directories(MatterPhysics PUBLIC src)
 target_link_libraries(MatterPhysics
     PUBLIC MatterCore
-    PRIVATE physx_lib vhacd nlohmann_json::nlohmann_json
+    PRIVATE ${MATTERENGINE_PHYSICS_BACKEND_LIBRARIES} vhacd
+            nlohmann_json::nlohmann_json
 )
-target_compile_definitions(MatterPhysics PRIVATE PX_PHYSX_STATIC_LIB)
+target_compile_definitions(MatterPhysics PRIVATE
+    ${MATTERENGINE_PHYSICS_BACKEND_DEFINITIONS})
 if(MSVC)
     # Dependencias de terceiros sao compiladas com seus proprios perfis. Estas
     # opcoes mantem diagnosticos fortes no adaptador escrito pela MatterEngine.
@@ -384,8 +352,9 @@ endif()
 add_library(MatterEngine STATIC
     src/Engine/Animation/AnimationClip3D.cpp
     src/Engine/Animation/RagdollCharacter3D.cpp
-    src/Engine/Control/AnimatedRagdollController3D.cpp
-    src/Engine/Control/BodyRelativeRagdollAssist3D.cpp
+    src/Engine/Character/BiomechanicalBipedExperiment3D.cpp
+    src/Engine/Character/CharacterLocomotion3D.cpp
+    src/Engine/Character/ProceduralBipedGait3D.cpp
     src/Engine/Control/RagdollImpactTest3D.cpp
     src/Engine/Core/Application.cpp
     src/Engine/Input/Input.cpp
@@ -428,6 +397,7 @@ add_library(MatterWorkbench STATIC
     src/Workbench/Laboratory/PropRuntime.cpp
     src/Workbench/Laboratory/RagdollRuntime.cpp
     src/Workbench/Laboratory/PhysicsBenchmark.cpp
+    src/Workbench/Laboratory/RenderMotionSmoke.cpp
     src/Workbench/Props/PropCatalog.cpp
     src/Workbench/Screens/SettingsScreen.cpp
     src/Workbench/Screens/MainMenuScreen.cpp
@@ -460,6 +430,7 @@ add_custom_command(TARGET MatterEngineApp POST_BUILD
     COMMENT "Copying UI fonts next to MatterEngine"
 )
 
+
 option(MATTERENGINE_BUILD_TESTS "Build MatterEngine tests" ON)
 if(MATTERENGINE_BUILD_TESTS)
     enable_testing()
@@ -468,12 +439,6 @@ if(MATTERENGINE_BUILD_TESTS)
     target_compile_definitions(MatterEngineTests PRIVATE
         MATTERENGINE_TEST_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
     add_test(NAME MatterEngine.Foundation COMMAND MatterEngineTests)
-    add_executable(MatterAnimatedRagdollTests tests/AnimatedRagdollTests.cpp tests/BodyRelativeRagdollAssistTests.cpp)
-    target_link_libraries(MatterAnimatedRagdollTests PRIVATE MatterEngine)
-    target_compile_definitions(MatterAnimatedRagdollTests PRIVATE
-        MATTERENGINE_TEST_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
-    add_test(NAME MatterEngine.AnimatedRagdoll COMMAND MatterAnimatedRagdollTests)
-    add_test(NAME MatterEngine.BodyRelativeAssistance COMMAND MatterAnimatedRagdollTests --assistance-contracts)
     add_test(NAME MatterEngine.Character COMMAND MatterEngineTests)
     set_tests_properties(MatterEngine.Character PROPERTIES
         ENVIRONMENT "MATTERENGINE_TEST_FILTER=character")
@@ -518,7 +483,7 @@ set_target_properties(MatterVulkanSmoke PROPERTIES FOLDER "Tests")
 set_target_properties(MatterPhysicsAssetCooker PROPERTIES FOLDER "Tools")
 set_target_properties(MatterPhysicsBenchmark PROPERTIES FOLDER "Tests")
 if(MATTERENGINE_BUILD_TESTS)
-    set_target_properties(MatterEngineTests MatterAudioTests MatterAnimatedRagdollTests
+    set_target_properties(MatterEngineTests MatterAudioTests
         PROPERTIES FOLDER "Tests")
 endif()
 
@@ -534,7 +499,6 @@ if(MSVC)
     if(MATTERENGINE_BUILD_TESTS)
         target_compile_options(MatterEngineTests PRIVATE /W4 /permissive- /utf-8)
         target_compile_options(MatterAudioTests PRIVATE /W4 /permissive- /utf-8)
-        target_compile_options(MatterAnimatedRagdollTests PRIVATE /W4 /permissive- /utf-8)
     endif()
 else()
     target_compile_options(MatterEngine PRIVATE -Wall -Wextra -Wpedantic)
@@ -548,6 +512,5 @@ else()
     if(MATTERENGINE_BUILD_TESTS)
         target_compile_options(MatterEngineTests PRIVATE -Wall -Wextra -Wpedantic)
         target_compile_options(MatterAudioTests PRIVATE -Wall -Wextra -Wpedantic)
-        target_compile_options(MatterAnimatedRagdollTests PRIVATE -Wall -Wextra -Wpedantic)
     endif()
 endif()

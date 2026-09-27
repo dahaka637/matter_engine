@@ -1,124 +1,114 @@
-# Personagens visuais dirigidos por ragdoll
+# Personagem visual dirigido pelo ragdoll
 
-O personagem principal é `CrashTestDummyV1`, recebido em
-`Crash Test Dummy mark1.zip`. O pacote contém duas versões: Rigify (431 ossos
-de controle/deformação) e Unity/Mecanim (63 ossos). Usamos a segunda, com os
-pesos, UV e topologia do autor. A divisão do peito acrescenta um osso visual:
-64 ossos no Blender, 18 links físicos e 41 graus de liberdade na engine.
+O personagem padrão é o jogador de futebol `Ch38_nonPBR.fbx`, fornecido pelo
+usuário. Manifesto: `assets/characters/football_player/character.json`.
+O jogador é usado tanto no controle do personagem quanto nos ragdolls criados
+no laboratório e no visualizador de animações. O modelo ALS anterior foi removido.
 
-## Contratos
+## Compatibilidade com o trabalho de animação
 
-- `character.json` (`matter-ragdoll-character-1`) escolhe perfil físico,
-  superfície com pesos, albedo, thumbnail, nome e procedência.
-- `CrashTestDummyV1.ragdoll.json` define proporções, anchors, frames, massas,
-  colisores e limites. Raios de cápsulas podem variar por link; o campo legado
-  `uniformRadiusMeters` é somente o valor padrão quando `radius` é omitido.
-- `dummy.skin.json` (`matter-ragdoll-skin-1`) contém vértices, UV, normais,
-  triângulos e quatro influências normalizadas por vértice. Nomes de ossos são
-  resolvidos para IDs físicos durante a exportação.
-- `dummy-rigged.blend` é a fonte editável normalizada. Conserva os ossos de
-  dedos e pés. `dummy-rigged.glb` é a exportação de intercâmbio.
-- `run_forward_dummy.matteranim.json` continua sendo **alvo articular**,
-  validado contra o perfil novo. A malha visual não modifica os limites.
+O perfil `FootballPlayerV1.ragdoll.json` conserva os anchors, frames, massas
+e limites do rig físico anteriormente calibrado. O importador ajusta a malha
+do jogador a esse rig, por segmento e com os pesos suaves do FBX. Isso
+preserva as animações já autoradas. Os tracks dos clipes não foram
+reamostrados: apenas `targetRigId` foi atualizado para o novo nome.
 
-O Workbench carrega `characters/crash_test_dummy/character.json` por padrão.
-Para experimentar outro asset compatível, definir `MATTERENGINE_CHARACTER`
-como caminho de manifesto relativo a `assets` (ou absoluto). Preview e spawn
-usam o mesmo asset; o catálogo seleciona apenas clipes do rig escolhido.
+Uma junta mudou: o **antebraço é uma dobradiça** (27/09). O eixo de
+"pronação" herdado do ALS (`swing1` do antebraço) girava o antebraço inteiro
+em volta do braço com o cotovelo dobrado, e o motor dele era fraco. No corpo
+físico, o braço sacudia. Nenhum clipe usava esse eixo, fora os 10° do parado,
+que agora vêm do giro do braço. Detalhes em `ANIMATION_AUTHORING.md`.
 
-## Preparação desta fonte
+Os **colisores** são medidos da malha do jogador por
+`tools/fit_ragdoll_colliders.py` (cápsulas cônicas nos membros, cápsulas
+laterais no tronco, caixa da chuteira no pé), com as regras e os motivos
+descritos no script e em "Colisores do jogador", em
+`docs/ANIMATION_AUTHORING.md`. Rodar depois do preparador:
+
+```bash
+python3 tools/fit_ragdoll_colliders.py \
+  assets/characters/football_player/FootballPlayerV1.ragdoll.json \
+  assets/characters/football_player/football.skin.json
+```
+
+O ajuste modifica as proporções da malha de origem para casar com o rig;
+não é um novo perfil físico medido do FBX. Se o perfil mudar futuramente,
+será necessário retargetear e validar os clipes, não apenas renomeá-los.
+
+## Arquivos e reprodução
+
+- `Ch38_nonPBR.fbx`: fonte original, incluindo todas as texturas embutidas.
+- `FootballPlayerV1.ragdoll.json`: contrato dos 18 links físicos.
+- `football.skin.json`: skin indexada com até quatro influências por vértice.
+- `albedo.png`: atlas das texturas de corpo/uniforme e cabelo, 4096 × 2048.
+- `football-rigged.blend`: malha ajustada, material e rig físico editáveis.
+- `character.json`: identidade, caminhos, procedência e papéis das animações.
 
 ```bash
 blender --background --factory-startup --disable-autoexec --python-exit-code 1 \
-  --python tools/prepare_crash_dummy.py -- \
-  '/home/dahaka/Área de trabalho/Nova pasta/Crash Test Dummy mark1.zip' \
-  --profile-template assets/physics/ragdolls/HumanAdultV1.ragdoll.json \
-  --output assets/characters/crash_test_dummy
+  --python tools/prepare_football_player.py -- \
+  --source assets/characters/football_player/Ch38_nonPBR.fbx \
+  --output assets/characters/football_player
 ```
 
-O adaptador normaliza altura para 1,80 m, eixo vertical +Z, frente +X e esquerda
-+Y; converte a A-pose autoral em T-pose preservando os comprimentos. Desativa
-o espelhamento de edição do Blender antes de mover os ossos: deixá-lo ligado
-invertia os lados durante o bake e foi detectado pelos gates do retarget.
+O importador usa o perfil calibrado que já está no diretório de saída. Ele
+não precisa dos arquivos do personagem antigo. Frente +X, esquerda +Y, cima +Z.
+Dedos dos pés seguem o pé e clavículas seguem UpperChest. O mapeamento é
+explícito; ossos com pesos sem correspondência causam erro.
 
-Os pesos do autor são preservados no Blender. No formato físico, ossos de
-dedos/palma são associados à mão; dedos/calcanhares do pé são associados ao
-pé. Isso mantém os detalhes e a pose original, sem inventar graus de liberdade
-dinâmicos que ainda não têm consumidor. Pesos de peito são distribuídos entre
-Chest/UpperChest. Após combinar aliases, o máximo descartado para quatro
-influências é 1,274%; o limite explícito deste asset é 2%, com renormalização
-e relatório de exportação. O exportador genérico usa limite padrão de 1%.
+## Dedos: ossos visuais
 
-O pacote inclui sua licença CC0 1.0 em `SOURCE-LICENSE.html`; textura amarela
-original em `albedo.png`. Nenhum script embutido do Rigify precisa executar.
+Os dedos são **ossos visuais**: 3 por dedo (polegar, indicador, médio,
+anelar, mínimo), 15 por mão. São filhos do link da mão e não têm física. Na
+skin, ficam em `visualBones`, depois dos 18 ossos físicos na paleta, cada um
+com o osso pai, a pose de ligação (`bindPosition`, `bindOrientation`: eixo X
+ao longo do dedo, Z para o lado da palma) e a rotação de repouso
+(`restRotation`), que dá a mão relaxada: flexão em cascata do indicador ao
+mínimo, dedos juntos e polegar encostado no indicador. Os ângulos ficam em
+`RELAXED_FLEXION` e `RELAXED_CLOSE`, no preparador.
 
-## Editar e reexportar
+O Ch38 tem os ossos dos dedos, mas quase nenhum peso neles: o dedo inteiro
+segue o osso da mão (só a ponta do anelar usa o osso dele). Por isso o
+preparador refaz os pesos da mão pela geometria: cada vértice vai para os
+segmentos de osso mais próximos (inverso da distância à 8ª potência), a
+palma para a mão (segmentos do punho até cada articulação dos dedos) e cada
+falange para o seu osso, misturando nas juntas.
 
-Depois de editar pesos ou geometria na fonte preparada, exportar em pose
-neutra, com os anchors alinhados ao perfil:
+No motor, `buildRagdollSkinMatrices3D` calcula o osso visual como o pai
+vezes a ligação local vezes a rotação de repouso (`RagdollVisualBone3D`);
+`matter_rig.Skin` faz o mesmo nas ferramentas Python. Animar a mão, para o
+goleiro no futuro, é trocar essas rotações.
 
-```bash
-blender --background --factory-startup --disable-autoexec \
-  assets/characters/crash_test_dummy/dummy-rigged.blend \
-  --python-exit-code 1 --python tools/export_ragdoll_skin.py -- \
-  --mesh CrashTestDummy --armature CrashDummySkeleton \
-  --profile assets/characters/crash_test_dummy/CrashTestDummyV1.ragdoll.json \
-  --output assets/characters/crash_test_dummy/dummy.skin.json
-```
+O runtime de personagem usa um único albedo opaco. Por isso o importador
+compõe as duas texturas difusas em um atlas e converte os recortes alpha de
+cabelo/cílios em geometria. Não altera shaders ou transparência de outros objetos.
+Normal/specular/glossiness originais ficam preservados no FBX, mas não são
+usados pelo material atual do personagem.
 
-O exportador rejeita ossos sem mapeamento, anchors divergentes, vértices sem
-peso, pose não neutra e descarte excessivo de influências. O runtime rejeita
-schema/rig divergentes, bind obsoleto, pesos inválidos e índices fora da malha.
+Após combinar influências (com os dedos), o descarte máximo medido para
+quatro pesos foi 3,785% (12 vértices acima de 2%); o limite do asset é 4%. Pesos restantes são
+renormalizados. Vértices idênticos são compartilhados, preservando costuras UV,
+normais e pesos: 51.841 vértices de runtime e 76.518 triângulos nesta exportação.
 
-Se proporções, posição dos links ou frames físicos mudarem, reexportar a pele
-e reimportar as animações. Não trocar só o ID do rig em um clipe antigo:
+## Edição e verificação
 
-```bash
-blender --background --factory-startup --disable-autoexec --python-exit-code 1 \
-  --python tools/import_mixamo_animation.py -- /home/dahaka/Downloads/Running.fbx \
-  --profile assets/characters/crash_test_dummy/CrashTestDummyV1.ragdoll.json \
-  --output assets/animations/clips/run_forward_dummy.matteranim.json \
-  --id run_forward_dummy --name 'Correr para frente' --loop --root-motion in-place
-```
+Para alterações de geometria, preferir ajustar o importador e regenerar a
+partir do FBX. O Blender preparado permite editar os pesos e reexportar em
+pose neutra com `tools/export_ragdoll_skin.py`, mesh `FootballPlayer`, armature
+`FootballPhysicalRig`. Esse exportador genérico grava triângulos sem compartilhar
+vértices; a etapa final do preparador faz a indexação.
 
-## Render e física
+O exportador valida alinhamento dos anchors e qualidade dos pesos. O loader
+valida bind, índices, pesos, identidade do perfil e ossos visuais (pai antes
+do filho, quaternions unitários). O teste de skin verifica repouso (só os
+dedos saem da malha modelada, até o comprimento de um dedo), transformação
+global e deformação durante animação. As ferramentas
+Python em `tools/animation/matter_rig.py` também fazem blend das quatro
+influências, em vez da aproximação antiga pelo osso dominante.
 
-`RagdollCharacter3D` é independente de Blender, Workbench e Vulkan. Cada
-matriz visual é `transformação física atual × inversa do bind físico`.
-As instâncias compartilham buffers de malha/textura; só as paletas atual e
-anterior mudam. Skinning ocorre na GPU, com o mesmo cálculo nos passes de cor,
-profundidade e sombra. O histórico de ossos alimenta os vetores de movimento.
-Paletas e descritores usam slots protegidos pelos fences dos frames em voo.
+A variável `MATTERENGINE_CHARACTER` pode selecionar outro manifesto relativo
+a `assets` ou absoluto. O personagem low-poly continua como fixture de testes.
 
-O preview amostra alvos limitados e reconstrói anchors coincidentes. O jogo
-usa os transforms **resultantes do PhysX**, depois da simulação; a pele jamais
-escreve transforms no controlador. O envelope de spawn é derivado da malha
-e dos colisores, sem dimensões fixas do boneco antigo.
-
-## Aceitação
-
-- Testes `animation`: bind sem deformação, transformação global, ciclo real,
-  superfície finita e anchors contínuos.
-- Testes `character`: 22 corpos em contato e postura ativa por seis segundos
-  sem assistência de raiz/coluna, raycast e agarrar/erguer/soltar pela Physgun.
-  Disponível também como CTest
-  `MatterEngine.Character`.
-- Inspecionar frente, costas e perfis na timeline, principalmente ombro,
-  cotovelo, virilha, joelho e sola. Aprovação numérica não substitui a visual.
-- Conferir spawn, Physgun, sombra e ciclo de resize/minimize/fullscreen com
-  validação Vulkan ativa.
-
-A corrida do dummy mede RMS de 4,12°, máximo global de 9,96° e máximo nos
-membros de 6,02°. Limitações atuais: um material/albedo por superfície; dedos
-ainda seguem rigidamente seus links físicos; playback da corrida continua
-exclusivo do visualizador. A regressão histórica de recuperação de impacto
-do controlador ativo permanece separada desta integração.
-
-Na entrega, Character/Audio passaram em Debug; Foundation reproduziu a
-falha conhecida de recuperação após rajada esquerda no perfil antigo.
-Smokes de janela/preview/spawn com validação Vulkan não registraram erros.
-A reexportação da fonte preparada reproduziu a pele runtime byte a byte.
-O spawn deriva a altura no chão do envelope real e usa a mesma margem de
-segurança na busca e na checagem final. Spawns aéreos ainda podem cair sem
-recuperação automática: não confundir estabilidade do bind com equilíbrio
-dinâmico ou aprovação visual do usuário.
+Os papéis de locomoção estão em `character.json`, com os de strafe
+(`strafeLeft`/`strafeRight` e os de sprint), que são a referência Jog
+Strafe retargeteada e corrigida (`tools/animation/clips/strafe.py`).

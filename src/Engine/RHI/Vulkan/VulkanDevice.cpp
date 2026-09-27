@@ -263,10 +263,13 @@ struct alignas(16) SceneMeshInstanceGpu {
     std::array<float, 4> previousOrientationX {};
     std::array<float, 4> previousOrientationY {};
     std::array<float, 4> previousOrientationZ {};
+    // Per-instance color multiply - see MeshRender3D::tintColor. w unused,
+    // kept at 1 so the field stays a plain vec4 for the vertex attribute.
+    std::array<float, 4> tintColor { 1.0f, 1.0f, 1.0f, 1.0f };
 };
 
 static_assert(sizeof(SceneUniformGpu) == 688);
-static_assert(sizeof(SceneMeshInstanceGpu) == 144);
+static_assert(sizeof(SceneMeshInstanceGpu) == 160);
 
 // Espelha o bloco "push_constant" de tonemap.frag campo a campo - ver
 // ToneMappingSettings3D (Scene3D.hpp) para o que cada campo faz.
@@ -1985,6 +1988,8 @@ public:
                 previousOrientationY.y, previousOrientationY.z, 0.0f };
             gpuInstance.previousOrientationZ = { previousOrientationZ.x,
                 previousOrientationZ.y, previousOrientationZ.z, 0.0f };
+            gpuInstance.tintColor = { mesh->tintColor.x, mesh->tintColor.y,
+                mesh->tintColor.z, 1.0f };
             meshInstances.push_back(gpuInstance);
         }
         ensureSceneSkinCapacity(skinMatrices.size());
@@ -5736,7 +5741,7 @@ public:
         // seu shader simplesmente nao declara essas localizacoes, o que e
         // valido no Vulkan (nem todo atributo descrito precisa ser
         // consumido por todo shader que usa o mesmo layout).
-        std::array<VkVertexInputAttributeDescription, 15> meshAttributes { {
+        std::array<VkVertexInputAttributeDescription, 16> meshAttributes { {
             { 0, 0, VK_FORMAT_R32G32B32_SFLOAT, 0 },
             { 1, 0, VK_FORMAT_R32G32B32_SFLOAT, sizeof(float) * 3 },
             { 2, 0, VK_FORMAT_R32G32_SFLOAT, sizeof(float) * 6 },
@@ -5760,7 +5765,9 @@ public:
             { 12, 1, VK_FORMAT_R32G32B32A32_SFLOAT,
                 offsetof(SceneMeshInstanceGpu, previousOrientationZ) },
             { 13, 0, VK_FORMAT_R32G32B32A32_UINT, offsetof(MeshVertex3D, joints) },
-            { 14, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshVertex3D, weights) }
+            { 14, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(MeshVertex3D, weights) },
+            { 15, 1, VK_FORMAT_R32G32B32A32_SFLOAT,
+                offsetof(SceneMeshInstanceGpu, tintColor) }
         } };
         VkPipelineVertexInputStateCreateInfo meshVertexInput {
             VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO

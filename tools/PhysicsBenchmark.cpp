@@ -98,7 +98,7 @@ void printSamples(std::string_view name, const BenchmarkSamples& samples) {
         << "  medias: pre " << std::setw(7)
         << mean(samples.preSimulation)
         << " | dispatch " << std::setw(7) << mean(samples.dispatch)
-        << " | PhysX/fetch " << std::setw(7) << mean(samples.wait)
+        << " | solver/wait " << std::setw(7) << mean(samples.wait)
         << " | callback " << std::setw(7) << mean(samples.callbacks)
         << " | sync " << std::setw(7) << mean(samples.stateSync)
         << " | stats " << std::setw(7) << mean(samples.statistics)
@@ -211,7 +211,7 @@ int main() {
                 + "/physics/ragdolls/HumanAdultV1.ragdoll.json");
 
         constexpr int StepCount = 120;
-        std::cout << "MatterEngine PhysX workload benchmark ("
+        std::cout << "MatterEngine physics workload benchmark ("
             << StepCount << " passos @ 120 Hz, build "
 #if defined(NDEBUG)
             << "Release"

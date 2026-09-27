@@ -26,6 +26,12 @@ struct ApplicationFrameMetrics {
     float guiMilliseconds = 0.0f;
     float totalMilliseconds = 0.0f;
     int fixedStepCount = 0;
+    // How far past the last fixed step this frame is drawing, in [0, 1).
+    // Physics advances at fixedUpdateHz while the frame rate follows the
+    // display, so anything drawn straight from the last simulated state
+    // moves in steps of its own while the camera moves smoothly. Whoever
+    // renders simulated bodies is expected to interpolate with this.
+    float fixedStepAlpha = 0.0f;
 };
 
 class Application {

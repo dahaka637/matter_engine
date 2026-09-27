@@ -58,6 +58,12 @@ struct MeshRender3D {
     Vec3 previousPosition;
     Quaternion previousOrientation;
     float scale = 1.0f;
+    // Multiplies the sampled albedo/vertex color per instance (see
+    // scene3d_mesh.frag) - default of {1,1,1} changes nothing, so only
+    // callers that actually want a per-instance variation (a spawned
+    // ragdoll's random pale color, see SpawnedRagdollInstance::tintColor)
+    // need to touch it.
+    Vec3 tintColor { 1.0f, 1.0f, 1.0f };
     RHI::TextureHandle albedoTexture;
     RHI::TextureHandle metallicRoughnessTexture;
     // Fatores multiplicam o mapa metallicRoughness por pixel, como exige o

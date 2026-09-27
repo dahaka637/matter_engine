@@ -17,8 +17,10 @@ import bpy
 from mathutils import Vector
 
 
-def export_skin(obj, rig, profile, output, strict_anchors=True):
-    names=[link['id'] for link in profile['links']]
+def export_skin(obj, rig, profile, output, strict_anchors=True, visual_bones=()):
+    # Visual bones (fingers) come after the physical ones in the palette; they
+    # follow a parent bone and have no physics (see prepare_football_player).
+    names=[link['id'] for link in profile['links']]+[b['name'] for b in visual_bones]
     mapping={bone.name:bone.get('physics_link',bone.name) for bone in rig.data.bones}
     for link in profile['links'][1:]:
         bone=rig.data.bones.get(link['id']) or next((b for b in rig.data.bones if mapping[b.name]==link['id']),None)
@@ -73,8 +75,11 @@ def export_skin(obj, rig, profile, output, strict_anchors=True):
         bones=[dict(link=l['id'],bindPosition=l['position'],
                     bindOrientation=l.get('orientation',[0,0,0,1])) for l in profile['links']],
         vertices=vertices,indices=list(range(len(vertices))))
+    if visual_bones:
+        skin['visualBones']=list(visual_bones)
     Path(output).write_text(json.dumps(skin,separators=(',',':'))+'\n')
-    print('SKIN_EXPORTED',len(vertices)//3,'triangles;',len(names),'physical bones')
+    print('SKIN_EXPORTED',len(vertices)//3,'triangles;',len(profile['links']),'physical bones;',
+          len(visual_bones),'visual bones')
 
 
 if __name__=='__main__':

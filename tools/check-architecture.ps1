@@ -21,6 +21,10 @@ $checks = @(
         Arguments = @("-n", "\bphysx::|#include.*(Px|characterkinematic|cooking/)", "src", "-g", "!src/Engine/Physics/PhysX/**")
     },
     @{
+        Name = "Tipos Jolt devem ficar no backend Jolt"
+        Arguments = @("-n", "\bJPH::|#include.*<Jolt/", "src", "-g", "!src/Engine/Physics/Jolt/**")
+    },
+    @{
         Name = "O solver fisico removido nao pode retornar"
         Arguments = @("-n", "PhysicsWorld3D|RigidBody3D|StaticCollisionWorld3D|TriangleMeshCollider3D|KinematicCharacter3D|PhysicsHandle3D|JointConstraint3D|CollisionCooking3D|MassProperties3D", "CMakeLists.txt", "src", "tests")
     },

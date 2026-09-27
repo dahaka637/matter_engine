@@ -132,6 +132,8 @@ RagdollProfile3D loadRagdollProfile3D(std::string_view filePath) {
                 link.collider.radiusMeters = shape.contains("radius")
                     ? shape.at("radius").get<float>()
                     : profile.uniformRadiusMeters;
+                link.collider.radiusAtPositiveXMeters =
+                    shape.value("radiusAtPositiveX", 0.0f);
             }
             link.collider.materialId = shape.value("material", "default");
             link.collider.contactSensor =
@@ -178,6 +180,20 @@ RagdollProfile3D loadRagdollProfile3D(std::string_view filePath) {
             }
             profile.links.push_back(std::move(link));
         }
+        if (root.contains("selfCollisionIgnoredPairs")) {
+            for (const Json& pair : root.at("selfCollisionIgnoredPairs")) {
+                const Json& ids = pair.at("links");
+                if (!ids.is_array() || ids.size() != 2) {
+                    throw std::runtime_error(
+                        "selfCollisionIgnoredPairs: links precisa ter 2 ids");
+                }
+                profile.selfCollisionIgnoredPairs.push_back({
+                    ids.at(0).get<std::string>(),
+                    ids.at(1).get<std::string>(),
+                    pair.value("reason", std::string {})
+                });
+            }
+        }
     } catch (const Json::exception& error) {
         throw std::runtime_error("Perfil de ragdoll incompleto em "
             + std::string(filePath) + ": " + error.what());
@@ -185,6 +201,17 @@ RagdollProfile3D loadRagdollProfile3D(std::string_view filePath) {
 
     validateRagdollProfileOrThrow3D(profile);
     return profile;
+}
+
+float ragdollCapsuleRadiusAtPositiveX3D(
+    const RagdollCapsuleDefinition3D& capsule) {
+    return capsule.radiusAtPositiveXMeters > 0.0f
+        ? capsule.radiusAtPositiveXMeters : capsule.radiusMeters;
+}
+
+float ragdollCapsuleHalfSegment3D(const RagdollCapsuleDefinition3D& capsule) {
+    return std::max(0.0f, 0.5f * (capsule.lengthMeters - capsule.radiusMeters
+        - ragdollCapsuleRadiusAtPositiveX3D(capsule)));
 }
 
 std::vector<RagdollProfileValidationIssue3D> validateRagdollProfile3D(
@@ -240,11 +267,19 @@ std::vector<RagdollProfileValidationIssue3D> validateRagdollProfile3D(
             massSum += link.massFraction;
         }
         if (link.collider.shape == RagdollColliderShape3D::Capsule) {
+            const float endRadius =
+                ragdollCapsuleRadiusAtPositiveX3D(link.collider);
             if (!std::isfinite(link.collider.lengthMeters)
                 || link.collider.lengthMeters
-                    <= link.collider.radiusMeters * 2.0f) {
+                    <= link.collider.radiusMeters + endRadius) {
                 addIssue(issues, path + ".capsule.length",
-                    "precisa exceder o diâmetro da cápsula");
+                    "precisa exceder a soma dos raios das duas pontas");
+            }
+            if (!std::isfinite(link.collider.radiusAtPositiveXMeters)
+                || (link.collider.radiusAtPositiveXMeters != 0.0f
+                    && link.collider.radiusAtPositiveXMeters < 0.005f)) {
+                addIssue(issues, path + ".capsule.radiusAtPositiveX",
+                    "raio da ponta +X precisa ter ao menos 5 mm");
             }
             if (!std::isfinite(link.collider.radiusMeters)
                 || link.collider.radiusMeters < 0.005f) {
@@ -324,6 +359,18 @@ std::vector<RagdollProfileValidationIssue3D> validateRagdollProfile3D(
         addIssue(issues, "links.massFraction",
             "as frações de massa precisam somar 1,0 (soma atual "
                 + std::to_string(massSum) + ")");
+    }
+    for (std::size_t index = 0;
+            index < profile.selfCollisionIgnoredPairs.size(); ++index) {
+        const auto& pair = profile.selfCollisionIgnoredPairs[index];
+        const std::string path = "selfCollisionIgnoredPairs["
+            + std::to_string(index) + "]";
+        if (!ids.contains(pair.firstLinkId)
+            || !ids.contains(pair.secondLinkId)) {
+            addIssue(issues, path, "link desconhecido");
+        } else if (pair.firstLinkId == pair.secondLinkId) {
+            addIssue(issues, path, "par precisa de dois links diferentes");
+        }
     }
     return issues;
 }

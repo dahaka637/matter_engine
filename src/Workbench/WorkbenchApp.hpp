@@ -5,7 +5,8 @@
 #include "Engine/Core/Application.hpp"
 #include "Engine/Audio/DragAcoustics.hpp"
 #include "Engine/Audio/ImpactAcoustics.hpp"
-#include "Engine/Control/AnimatedRagdollController3D.hpp"
+#include "Engine/Character/BiomechanicalBipedExperiment3D.hpp"
+#include "Engine/Character/CharacterLocomotion3D.hpp"
 #include "Engine/Control/RagdollImpactTest3D.hpp"
 #include "Engine/Data/SettingsRepository.hpp"
 #include "Engine/Environment/WindSystem.hpp"
@@ -18,6 +19,7 @@
 #include "Workbench/Props/PropCatalog.hpp"
 
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -79,9 +81,23 @@ private:
         std::size_t definitionIndex = 0;
         PhysicsBodyHandle3D physicsBody;
         PhysicsBodyState3D physicsState;
-        // Pose observada no ultimo frame realmente gravado pela GPU. Nao e a
-        // pose do fixed step anterior: podem existir varios passos fisicos
-        // ou nenhum entre dois renders. Ver renderLaboratory3D.
+        // Pose antes do ultimo passo que moveu este prop, e o indice desse
+        // passo. So interpola quem foi atualizado no passo mais recente.
+        // Defensivo: o contrato de activeBodyStates() promete apenas os
+        // corpos que mudaram. O backend Jolt continua publicando um corpo ate
+        // ele desativar, e ate la as duas poses ja convergiram: medido, um
+        // prop dormindo fica em 0 px mesmo sem esta guarda; um congelado pela
+        // Physgun vira cinematico parado e segue publicado (lido em
+        // setBodyFrozen, nao medido). Um
+        // backend que parasse de publicar no instante em que o corpo para
+        // deixaria o prop interpolando para sempre entre duas poses velhas.
+        PhysicsBodyState3D simulationPreviousState;
+        std::uint64_t updatedAtPhysicsStep = 0;
+        // Pose efetivamente desenhada neste quadro (interpolada).
+        PhysicsBodyState3D renderedState;
+        // Pose desenhada no quadro anterior, base dos motion vectors. Nao e a
+        // pose do passo fixo anterior: podem existir varios passos fisicos ou
+        // nenhum entre dois renders. Ver renderLaboratory3D.
         PhysicsBodyState3D previousPhysicsState;
         float freezeFlashSeconds = 0.0f;
     };
@@ -97,11 +113,37 @@ private:
         // Snapshot da última imagem enviada à GPU, equivalente ao histórico
         // dos props e independente da frequência fixa da simulação.
         RagdollState3D previousPhysicsState;
+        // Rumo da guia, separado da rotacao fisica da pelve. O idle em
+        // alerta abre a pelve em relacao ao olhar; realimentar essa abertura
+        // como comando acumularia giro em todo tick.
+        float guideFacingYawRadians = 0.0f;
         std::vector<Mat4> skinMatrices;
         std::vector<Mat4> previousSkinMatrices;
-        AnimatedRagdollController3D animationController;
+        CharacterLocomotion3D locomotion;
+        BiomechanicalBipedExperiment3D biomechanics;
+        // What the player actually sees. The authored pose is authoritative
+        // and the simulated one is blended in by physicsBlend, so at zero the
+        // character renders exactly as animated - bodies still collide, they
+        // just do not get to decide how it looks. Same split Unreal makes
+        // with PhysicsBlendWeight.
+        // The state at the PREVIOUS fixed step, kept so the renderer can
+        // interpolate: physics advances at 120 Hz while frames follow the
+        // display, so drawing the last simulated state directly makes the
+        // character move in steps of its own against a smoothly moving
+        // camera. Distinct from previousPhysicsState, which advances at
+        // render cadence and exists for motion vectors.
+        RagdollState3D simulationPreviousState;
+        std::vector<Vec3> renderedPositions;
+        std::vector<Quaternion> renderedOrientations;
+        RagdollAnimationPose3D animationPose;
+        RagdollAnimationPose3D previousAnimationPose;
+        float physicsBlend = 0.0f;
         ArticulatedRigKind kind = ArticulatedRigKind::Human;
         bool active = true;
+        bool frozen = false;
+        // Per-instance color multiply, neutral by default - see
+        // MeshRender3D::tintColor for how it reaches the GPU.
+        Vec3 tintColor { 1.0f, 1.0f, 1.0f };
     };
 
     // Ajuste persistente do viewmodel. A seção recolhível do depurador permite
@@ -162,6 +204,19 @@ private:
     void enterLaboratory(bool resetCamera = false);
     void updateLaboratory(float deltaTime);
     void renderLaboratory3D(Renderer& renderer);
+    // Camera do laboratorio em duas metades: o passo fixo decide o FOCO,
+    // cada quadro monta a posicao. Ver updateLaboratoryCamera.
+    enum class LaboratoryCameraMode : std::uint8_t {
+        None,
+        FirstPerson,
+        ThirdPerson
+    };
+    void setLaboratoryCameraFocus(Vec3 focus, LaboratoryCameraMode mode);
+    void updateLaboratoryCamera(float fixedStepAlpha);
+    // Smokes de suavidade de movimento; ver Laboratory/RenderMotionSmoke.cpp.
+    void sampleRenderMotionSmoke(float viewportWidth, float viewportHeight);
+    void advanceRenderMotionSmoke();
+    void reportRenderMotionSmoke() const;
     void drawLaboratoryUi();
     void drawLaboratoryPauseMenu();
     void drawSpawnMenu();
@@ -180,9 +235,13 @@ private:
     [[nodiscard]] bool spawnHumanRagdollAt(Vec3 pelvisPosition,
         Quaternion orientation, bool benchmarkEntity);
     void updateActiveRagdolls(float deltaTime);
-    [[nodiscard]] AnimatedRagdollClips3D animatedRagdollClips() const;
+    [[nodiscard]] CharacterLocomotionAnimations3D
+        characterLocomotionAnimations() const;
     [[nodiscard]] float ragdollGroundHeight(Vec3 position) const;
-    void runRagdollsForFiveSeconds();
+    void takeControlOfLatestCharacter();
+    void releaseControlledCharacter();
+    void resetControlledCharacterPose();
+    void toggleControlledCharacterFrozen();
     void updateRagdollImpactLab(float deltaTime);
     [[nodiscard]] std::optional<Vec3> findSafeSpawnPosition(
         Vec3 requestedPosition, Vec3 halfExtents,
@@ -252,6 +311,7 @@ private:
     bool m_showWindPanel = false;
     bool m_showTimePanel = false;
     bool m_showRagdollPanel = false;
+    bool m_showCharacterPanel = false;
     bool m_showPhysicsBenchmarkPanel = false;
     SceneRenderMode3D m_laboratoryRenderMode =
         SceneRenderMode3D::Standard;
@@ -327,7 +387,7 @@ private:
     UiTexture m_characterThumbnail;
     Vec3 m_characterSpawnHalfExtents;
     Vec3 m_characterSpawnCenter;
-    std::string m_characterAssetPath = "characters/crash_test_dummy/character.json";
+    std::string m_characterAssetPath = "characters/football_player/character.json";
     bool m_animationViewerShowColliders = false;
     std::vector<GpuModel3D> m_ragdollLinkVisuals;
     GpuModel3D m_ragdollJointVisual;
@@ -337,11 +397,27 @@ private:
     bool m_ragdollActive = true;
     float m_ragdollRigidityPercent = 0.0f;
     // Explicit bounded physical assistance; the previous balance/WBC is archived.
-    bool m_ragdollUseMagicMode = true;
+    bool m_manualRagdollInspection = false;
+    bool m_ragdollForceControlOverride = false;
+    float m_ragdollAuxiliaryPercent = 100.0f;
+    float m_ragdollMusclePercent = 100.0f;
     RagdollImpactTest3D m_ragdollImpactLab;
+    std::uint64_t m_controlledCharacterEntityId = 0;
+    Vec3 m_characterDesiredVelocityWorld;
+    float m_characterDesiredFacingYaw = 0.0f;
+    bool m_characterSprinting = false;
+    // Laboratório de base flutuante: a cápsula deixa de transportar o corpo
+    // e nenhuma autoridade pós-solver ou wrench de raiz participa. Mantido
+    // como experimento isolado, desligado por padrão: o caminho padrão do
+    // personagem voltou a ser o modelo híbrido (cápsula + pose autoral de
+    // CharacterLocomotion3D), com o toggle no painel PERSONAGEM ainda
+    // disponível para comparação.
+    bool m_biomechanicalExperiment = false;
+    float m_biomechanicalBalanceAssistPercent = 100.0f;
     // Oculta apenas a apresentação em primeira pessoa; controles, física,
     // lanterna e manipulação continuam ativos para captura de imagens.
-    bool m_hidePhysGunPresentation = false;
+    // Oculto por padrão.
+    bool m_hidePhysGunPresentation = true;
     // Piso do Object Viewer: uma unica mesh real (quad + textura de
     // xadrez assada), carregada uma vez sob demanda. Substitui o antigo
     // plano procedural analitico (ver PropRuntime.cpp) para que 100% do
@@ -393,7 +469,7 @@ private:
     // Atualizados logo apos appendGpuModelRenderables em renderLaboratory3D.
     Vec3 m_previousPhysGunWeaponPosition;
     Quaternion m_previousPhysGunWeaponOrientation;
-    PhysGunHoldMode m_physGunHoldMode = PhysGunHoldMode::GrabPoint;
+    PhysGunHoldMode m_physGunHoldMode = PhysGunHoldMode::FixedPose;
     bool m_physGunTriggerHeld = false;
     bool m_physGunOrientationLocked = false;
     PhysGunViewCalibration m_physGunViewCalibration;
@@ -425,6 +501,12 @@ private:
     std::size_t m_objectViewerSelectedIndex = 0;
     // Biblioteca preenchida no início com clipes canônicos já retargeteados.
     std::vector<AnimationClip3D> m_animationClips;
+    // Catálogo independente exibido no workspace de animações. Começa apenas
+    // com a referência parada natural e receberá movimentos procedurais
+    // gerados em memória, sem expor a antiga biblioteca de locomoção.
+    std::vector<AnimationClip3D> m_proceduralAnimationClips;
+    // Recomputed only when the validated catalog/profile changes, not in UI frames.
+    bool m_animationLocomotionCompatible = false;
     std::size_t m_animationViewerSelectedIndex = 0;
     float m_animationViewerPlaybackSeconds = 0.0f;
     float m_animationViewerPlaybackSpeed = 1.0f;
@@ -439,6 +521,40 @@ private:
     WorldAudioController m_worldAudio;
 
     CharacterMotorSettings3D m_characterSettings;
+    // Velocidade de cada ciclo do personagem controlado (lidas dos clipes).
+    CharacterGaitSpeeds3D m_avatarGaitSpeeds;
+    CharacterMotorSettings3D m_avatarCharacterSettings {
+        .radius = 0.34f,
+        .standingHeight = 1.83f,
+        .crouchedHeight = 1.22f,
+        // Substituídos em loadAnimationCatalog pelas velocidades dos clipes
+        // (corrida leve 3,0 m/s, sprint 7,5 m/s); ficam só como valor
+        // antes do catálogo carregar.
+        .walkSpeed = 3.0f,
+        .sprintSpeed = 7.5f,
+        .crouchedSpeed = 0.95f,
+        .groundAcceleration = 14.0f,
+        .groundDeceleration = 18.0f,
+        .airAcceleration = 4.5f,
+        .jumpSpeed = 4.6f,
+        .gravityScale = 1.0f,
+        .maximumFallSpeed = 48.0f,
+        .maximumSlopeDegrees = 50.0f,
+        // Sobe os degraus da escada do laboratorio (18 cm) e ainda deixa os
+        // meios-fios de 20/30 cm como obstaculo de verdade. Com 12 cm a
+        // escada nao subia andando.
+        .maximumStepHeight = 0.19f,
+        .skinWidth = 0.018f,
+        .coyoteTime = 0.10f,
+        .jumpBufferTime = 0.12f,
+        .flightSpeed = 12.0f,
+        .fastFlightSpeed = 28.0f,
+        .swimSpeed = 3.4f,
+        .fastSwimSpeed = 5.0f,
+        .swimAcceleration = 9.0f,
+        .maximumPushSpeedMetersPerSecond = 2.2f,
+        .pushSaturationPenetrationMeters = 0.25f
+    };
     std::vector<LaboratoryMapPart> m_laboratoryMapParts;
     std::vector<PhysicsBodyHandle3D> m_laboratoryMapBodies;
     std::vector<RHI::TextureHandle> m_laboratoryMapTextures;
@@ -450,7 +566,37 @@ private:
     bool m_laboratoryMapLoaded = false;
     bool m_laboratoryMapLoadFailed = false;
     bool m_spawnRagdollWhenReady = false;
+    bool m_takeCharacterControlWhenReady = false;
+    // Foco da camera nos dois ultimos passos fixos, para interpolar com o
+    // mesmo alfa usado pelo render do boneco.
+    LaboratoryCameraMode m_laboratoryCameraMode = LaboratoryCameraMode::None;
+    // Passos de simulacao executados, para saber quem se moveu no ultimo.
+    std::uint64_t m_laboratoryPhysicsStep = 0;
+    Vec3 m_laboratoryCameraFocusPrevious;
+    Vec3 m_laboratoryCameraFocus;
+    struct RenderMotionSmoke {
+        enum class Mode : std::uint8_t { Disabled, CameraOrbit, PropMotion };
+        Mode mode = Mode::Disabled;
+        bool started = false;
+        bool finished = false;
+        std::chrono::steady_clock::time_point startTime;
+        bool probePlaced = false;
+        Vec3 probeWorld;
+        std::uint64_t probeEntityId = 0;
+        bool hasPreviousSample = false;
+        std::chrono::steady_clock::time_point previousSampleTime;
+        float previousScreenX = 0.0f;
+        float previousScreenY = 0.0f;
+        bool hasPreviousVelocity = false;
+        float previousVelocityX = 0.0f;
+        float previousVelocityY = 0.0f;
+        bool hasAdvanced = false;
+        std::chrono::steady_clock::time_point previousAdvanceTime;
+        std::vector<float> movingErrors;
+        std::vector<float> restingErrors;
+    } m_renderMotionSmoke;
     bool m_animationRunTest = false;
+    bool m_animationWalkTest = false;
     bool m_animationRunTestStarted = false;
     float m_animationRunTestSeconds = 0;
     bool m_spawnAllPropsWhenReady = false;

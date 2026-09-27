@@ -15,6 +15,8 @@ Key toKey(SDL_Scancode scancode) {
     case SDL_SCANCODE_E: return Key::E;
     case SDL_SCANCODE_Q: return Key::Q;
     case SDL_SCANCODE_R: return Key::R;
+    case SDL_SCANCODE_T: return Key::T;
+    case SDL_SCANCODE_U: return Key::U;
     case SDL_SCANCODE_V: return Key::V;
     case SDL_SCANCODE_Z: return Key::Z;
     case SDL_SCANCODE_ESCAPE: return Key::Escape;
@@ -125,6 +127,8 @@ void SDLInputAdapter::synchronize(InputState& input, SDL_Window* window) {
     input.setKey(Key::E, keys[SDL_SCANCODE_E]);
     input.setKey(Key::Q, keys[SDL_SCANCODE_Q]);
     input.setKey(Key::R, keys[SDL_SCANCODE_R]);
+    input.setKey(Key::T, keys[SDL_SCANCODE_T]);
+    input.setKey(Key::U, keys[SDL_SCANCODE_U]);
     input.setKey(Key::V, keys[SDL_SCANCODE_V]);
     input.setKey(Key::Z, keys[SDL_SCANCODE_Z]);
     input.setKey(Key::Escape, keys[SDL_SCANCODE_ESCAPE]);

@@ -211,8 +211,17 @@ bool WorkbenchApp::spawnPropAt(std::size_t definitionIndex,
     initialState.orientation = body.orientation;
     initialState.linearVelocity = body.linearVelocity;
     initialState.angularVelocity = body.angularVelocity;
-    m_spawnedProps.push_back({ body.entityId, definitionIndex,
-        physicsBody, initialState, initialState, 0.0f });
+    // Campos nomeados: a inicializacao posicional quebrava em silencio a
+    // cada campo novo no meio do struct.
+    m_spawnedProps.push_back({
+        .entityId = body.entityId,
+        .definitionIndex = definitionIndex,
+        .physicsBody = physicsBody,
+        .physicsState = initialState,
+        .simulationPreviousState = initialState,
+        .renderedState = initialState,
+        .previousPhysicsState = initialState,
+    });
     m_spawnedPropByBodyIndex.insert_or_assign(physicsBody.index,
         m_spawnedProps.size() - 1);
     if (benchmarkEntity) {
@@ -282,6 +291,9 @@ void WorkbenchApp::removeLatestSpawnedEntity() {
         const RagdollHandle3D removedHandle =
             m_spawnedRagdolls.back().physicsRagdoll;
         if (m_physGunGrabbedEntityId == removedEntityId) endPhysGunGrab();
+        if (m_controlledCharacterEntityId == removedEntityId) {
+            releaseControlledCharacter();
+        }
         if (m_physicsScene) {
             m_physicsScene->destroyRagdoll(removedHandle);
         }
@@ -610,6 +622,7 @@ void WorkbenchApp::updateDynamicProps(float deltaTime) {
     // enfileira alvos/torques antes do safe point da próxima simulação.
     updateActiveRagdolls(deltaTime);
     m_physicsScene->simulate(deltaTime);
+    ++m_laboratoryPhysicsStep;
     for (const PhysicsBodyStateUpdate3D& update :
         m_physicsScene->activeBodyStates()) {
         const auto found = m_spawnedPropByBodyIndex.find(update.body.index);
@@ -624,11 +637,16 @@ void WorkbenchApp::updateDynamicProps(float deltaTime) {
             // pode executar zero, uma ou varias vezes antes de um render;
             // altera-lo aqui faria o motion vector representar apenas o
             // ultimo subpasso fisico, nao todo o deslocamento visivel.
+            instance.simulationPreviousState = instance.physicsState;
             instance.physicsState = update.state;
+            instance.updatedAtPhysicsStep = m_laboratoryPhysicsStep;
         }
     }
     for (SpawnedRagdollInstance& instance : m_spawnedRagdolls) {
         if (m_physicsScene->contains(instance.physicsRagdoll)) {
+            // Keep the step we are leaving so the renderer can interpolate
+            // across it (see SpawnedRagdollInstance::simulationPreviousState).
+            instance.simulationPreviousState = instance.physicsState;
             instance.physicsState =
                 m_physicsScene->ragdollState(instance.physicsRagdoll);
         }

@@ -1,0 +1,92 @@
+{
+  "schema": "matter-ragdoll-character-1",
+  "id": "football_player",
+  "displayName": "Jogador de futebol",
+  "locomotion": {
+    "idle": "alert_idle",
+    "walk": "jog",
+    "walkBackward": "run_backward",
+    "sprint": "sprint",
+    "sprintBackward": "sprint_backward",
+    "strafeLeft": "jog_strafe_left",
+    "strafeRight": "jog_strafe_right",
+    "sprintStrafeLeft": "sprint_strafe_left",
+    "sprintStrafeRight": "sprint_strafe_right",
+    "jumpStanding": "jump_standing",
+    "jumpForward": "jump_forward",
+    "jumpBackward": "jump_backward",
+    "jumpLeft": "jump_left",
+    "jumpRight": "jump_right",
+    "standUpBack": "stand_up_back",
+    "standUpFront": "stand_up_front"
+  },
+  "physicsProfile": "FootballPlayerV1.ragdoll.json",
+  "skin": "football.skin.json",
+  "flatShaded": false,
+  "attribution": {
+    "title": "Ch38 — jogador de futebol",
+    "sourceFile": "Ch38_nonPBR.fbx",
+    "editableSource": "football-rigged.blend",
+    "note": "FBX fornecido pelo usuario em 26/09/2026. Malha e texturas originais; skin adaptada ao rig fisico calibrado do projeto. Procedencia/licenca nao declaradas no arquivo recebido."
+  },
+  "animationAttribution": {
+    "note": "Corrida leve, corrida de costas, sprint, sprint de costas e pulos sao autorais do projeto (gerados por codigo em tools/animation, sem captura nem biblioteca). As passadas foram calibradas medindo referencias Mixamo de estudo (assets/animations/source/mixamo/study, gait_metrics.py) - numeros como cadencia e altura do joelho, nenhuma pose copiada. O strafe e o parado em alerta sao a excecao, a pedido do usuario: o strafe e o Jog Strafe Left/Right da Mixamo retargeteado, com as correcoes minimas que o corpo exige (tools/animation/clips/strafe.py); o unico parado preserva tronco, bracos e cabeca do Idle da Mixamo, adaptando somente o rumo e o plantio dos pes (tools/animation/clips/alert_idle.py). Os levantar de frente e de costas vem de FBX retargeteados (ver assets/animations/source).",
+    "idle": {
+      "license": "Mixamo (Adobe) - termos de uso da Mixamo",
+      "sources": [
+        "assets/animations/source/mixamo/study/Idle.fbx",
+        "assets/animations/source/retargeted/alert_idle.retarget.json",
+        "tools/animation/clips/alert_idle.py"
+      ]
+    },
+    "walk": {
+      "license": "autoral (MatterEngine)",
+      "sources": [
+        "tools/animation/clips/jog.py",
+        "tools/animation/gait.py"
+      ]
+    },
+    "sprint": {
+      "license": "autoral (MatterEngine)",
+      "sources": [
+        "tools/animation/clips/sprint.py",
+        "tools/animation/gait.py"
+      ]
+    },
+    "walkBackward": {
+      "license": "autoral (MatterEngine)",
+      "sources": [
+        "tools/animation/clips/run_backward.py",
+        "tools/animation/gait.py"
+      ]
+    },
+    "sprintBackward": {
+      "license": "autoral (MatterEngine)",
+      "sources": [
+        "tools/animation/clips/sprint_backward.py",
+        "tools/animation/gait.py"
+      ]
+    },
+    "strafe": {
+      "license": "Mixamo (Adobe) - termos de uso da Mixamo",
+      "sources": [
+        "assets/animations/source/mixamo/study/Jog Strafe Left.fbx",
+        "assets/animations/source/mixamo/study/Jog Strafe Right.fbx",
+        "assets/animations/source/retargeted/jog_strafe_left.retarget.json",
+        "assets/animations/source/retargeted/jog_strafe_right.retarget.json",
+        "tools/animation/clips/strafe.py"
+      ]
+    },
+    "jumps": {
+      "license": "autoral (MatterEngine)",
+      "sources": [
+        "tools/animation/clips/jumps.py",
+        "tools/animation/jump.py"
+      ]
+    }
+  },
+  "albedo": "albedo.png",
+  "rigCompatibility": {
+    "note": "Ancora, frames, colisores, massas e limites preservados do perfil calibrado anterior; somente ID renomeado. As animacoes mantem exatamente os mesmos tracks. A malha visual foi ajustada por segmento aos anchors, preservando pesos suaves."
+  }
+}

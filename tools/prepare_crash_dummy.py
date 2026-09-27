@@ -146,6 +146,9 @@ def main():
             q=Vector((1,0,0)).rotation_difference(direction)
             link['capsule'].update(radius=radius,length=max(direction.length,2*radius+0.002),
                 orientation=[q.x,q.y,q.z,q.w])
+            # Get-up can use forearms/thighs/abdomen too. Only feet count as
+            # walking support; all links report external resting contact.
+            link['capsule']['contactSensor']=True
     profile_path=output/'CrashTestDummyV1.ragdoll.json'
     profile_path.write_text(json.dumps(profile,indent=2)+'\n')
 
@@ -178,7 +181,10 @@ def main():
     load_tool('export_ragdoll_skin').export_skin(obj,rig,profile,output/'dummy.skin.json')
     manifest=dict(schema='matter-ragdoll-character-1',id='crash_test_dummy',displayName='Crash Test Dummy',
         physicsProfile=profile_path.name,skin='dummy.skin.json',albedo='albedo.png',flatShaded=False,
-        thumbnail='thumbnail.png',locomotion=dict(idle='idle_dummy',run='run_forward_dummy',stop='run_to_stop_dummy'),
+        thumbnail='thumbnail.png',locomotion=dict(idle='idle_standard_dummy',run='run_forward_dummy',stop='run_to_stop_dummy',
+            walkForward='walk_forward_dummy',walkBackward='walk_backward_dummy',
+            walkLeft='walk_strafe_left_dummy',walkRight='walk_strafe_right_dummy',runBackward='run_backward_dummy',
+            standUpFront='stand_up_front_dummy',standUpBack='stand_up_back_dummy'),
         attribution=dict(title='Crash Test Dummy mark1',license='CC0-1.0',
         source='https://www.blendswap.com/blends/view/88294'))
     (output/'character.json').write_text(json.dumps(manifest,indent=2)+'\n')

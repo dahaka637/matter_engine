@@ -78,10 +78,11 @@ ApplicationConfig initialConfiguration() {
     config.title = "MatterEngine";
     config.width = std::max(960, video.width);
     config.height = std::max(540, video.height);
-    // Durante o desenvolvimento, renderizar sem limite torna regressões de
-    // desempenho imediatamente visíveis no contador. A simulação permanece
-    // independente e determinística nos 120 Hz definidos abaixo.
-    config.vsync = false;
+    // V-sync ligado: sem limite a GPU renderiza a taxa que conseguir, o que
+    // nesta máquina faz a placa apitar. A simulação permanece independente
+    // e determinística nos 120 Hz definidos abaixo, então isso não muda o
+    // comportamento do jogo — só limita a taxa de apresentação ao monitor.
+    config.vsync = true;
     config.displayMode = video.mode;
     config.fixedUpdateHz = 120.0f;
     config.maxFixedStepsPerFrame = 8;
@@ -110,8 +111,9 @@ void WorkbenchApp::applyLaboratoryGraphicsPreset(int preset) {
 void WorkbenchApp::onStart() {
     Log::info("MatterEngine Workbench iniciado.");
     PhysicsSceneSettings3D physicsSettings;
-    physicsSettings.solverPositionIterations = 4;
-    physicsSettings.solverVelocityIterations = 1;
+    // Iteracoes do solver ficam no default do backend: cada motor tem a sua
+    // propria escala e fixar numeros aqui carregaria a calibragem de um deles
+    // para o outro (ver PhysicsSceneSettings3D).
     physicsSettings.enableContinuousCollision = true;
     physicsSettings.enableStabilization = true;
     m_physicsScene = m_physicsEngine.createScene(physicsSettings,
@@ -129,6 +131,8 @@ void WorkbenchApp::onStart() {
 void WorkbenchApp::loadAnimationCatalog() {
     namespace fs = std::filesystem;
     m_animationClips.clear();
+    m_proceduralAnimationClips.clear();
+    m_animationLocomotionCompatible = false;
     RagdollProfile3D targetProfile;
     try {
         const std::string configuredCharacter = environmentValue("MATTERENGINE_CHARACTER");
@@ -183,13 +187,59 @@ void WorkbenchApp::loadAnimationCatalog() {
         Log::error("Falha ao enumerar clipes de animação: "
             + error.message());
     }
-    Log::info("Biblioteca de animações: "
-        + std::to_string(m_animationClips.size()) + " clipe(s).");
+    m_animationLocomotionCompatible =
+        characterLocomotionAnimations().compatible(targetProfile);
+    // O visualizador mostra os ciclos do próprio personagem, na ordem em
+    // que o jogo os usa: parado em alerta, passada, recuo, sprint, strafe e
+    // pulos.
+    const std::vector<std::string> characterClipIds {
+        m_ragdollCharacter->idleClipId,
+        m_ragdollCharacter->walkClipId,
+        m_ragdollCharacter->walkBackwardClipId,
+        m_ragdollCharacter->sprintClipId,
+        m_ragdollCharacter->sprintBackwardClipId,
+        m_ragdollCharacter->strafeLeftClipId,
+        m_ragdollCharacter->strafeRightClipId,
+        m_ragdollCharacter->sprintStrafeLeftClipId,
+        m_ragdollCharacter->sprintStrafeRightClipId,
+        m_ragdollCharacter->jumpStandingClipId,
+        m_ragdollCharacter->jumpForwardClipId,
+        m_ragdollCharacter->jumpBackwardClipId,
+        m_ragdollCharacter->jumpLeftClipId,
+        m_ragdollCharacter->jumpRightClipId,
+    };
+    for (const std::string& clipId : characterClipIds) {
+        if (clipId.empty()) continue;
+        const auto match = std::find_if(m_animationClips.begin(),
+            m_animationClips.end(), [&](const AnimationClip3D& clip) {
+                return clip.id == clipId;
+            });
+        if (match != m_animationClips.end()) {
+            m_proceduralAnimationClips.push_back(*match);
+        } else {
+            Log::warn("Clipe do personagem não encontrado: " + clipId);
+        }
+    }
+    // A cápsula anda na velocidade que cada ciclo foi feito para andar; os
+    // números saem dos clipes, não de constantes que se desencontram deles.
+    m_avatarGaitSpeeds = characterGaitSpeeds3D(characterLocomotionAnimations());
+    if (m_avatarGaitSpeeds.walk > 0.0f) {
+        m_avatarCharacterSettings.walkSpeed = m_avatarGaitSpeeds.walk;
+        m_avatarCharacterSettings.sprintSpeed = m_avatarGaitSpeeds.sprint;
+    }
+    Log::info("Biblioteca interna de locomoção: "
+        + std::to_string(m_animationClips.size()) + " clipe(s); workspace "
+        "procedural: " + std::to_string(m_proceduralAnimationClips.size())
+        + " movimento(s).");
 }
 
 void WorkbenchApp::applyAutostartIfRequested() {
     const std::string mode = environmentValue("MATTERENGINE_AUTOSTART");
-    if (mode == "laboratory" || mode == "laboratory-debug"
+    if (mode == "laboratory" || mode == "laboratory-debug" || mode == "laboratory-pose"
+        || mode == "laboratory-biomechanics"
+        || mode == "laboratory-character"
+        || mode == "laboratory-camera-orbit-smoke"
+        || mode == "laboratory-prop-motion-smoke"
         || mode == "laboratory-smoke"
         || mode == "laboratory-pixel"
         || mode == "laboratory-pixel-smoke"
@@ -199,19 +249,43 @@ void WorkbenchApp::applyAutostartIfRequested() {
         || mode == "laboratory-spawn-smoke"
         || mode == "laboratory-ragdoll-smoke"
         || mode == "laboratory-animation" || mode == "laboratory-animation-smoke"
+        || mode == "laboratory-walk" || mode == "laboratory-walk-smoke"
         || mode == "laboratory-prop-smoke"
         || mode == "laboratory-prop-suite-smoke"
         || mode == "laboratory-benchmark") {
         enterLaboratory(true);
         m_laboratoryDebugVisible = mode == "laboratory-debug";
+        if (mode == "laboratory-biomechanics") {
+            m_biomechanicalExperiment = true;
+            m_laboratoryDebugVisible = true;
+            m_showCharacterPanel = true;
+        }
+        if(mode=="laboratory-pose") {
+            m_laboratoryDebugVisible=true;
+            m_showRagdollPanel=true;
+            m_manualRagdollInspection=true;
+            m_hidePhysGunPresentation=true;
+        }
         m_spawnMenuOpen = mode == "laboratory-spawn-smoke"
             || mode == "laboratory-pixel-spawn-smoke";
         m_spawnRagdollWhenReady = mode == "laboratory-ragdoll-smoke";
-        m_animationRunTest=mode=="laboratory-animation"||mode=="laboratory-animation-smoke";
+        m_takeCharacterControlWhenReady = mode == "laboratory-character"
+            || mode == "laboratory-biomechanics"
+            || mode == "laboratory-camera-orbit-smoke";
+        if (mode == "laboratory-camera-orbit-smoke"
+            || mode == "laboratory-prop-motion-smoke") {
+            m_renderMotionSmoke.mode = mode == "laboratory-camera-orbit-smoke"
+                ? RenderMotionSmoke::Mode::CameraOrbit
+                : RenderMotionSmoke::Mode::PropMotion;
+            // Teto de seguranca; o proprio smoke encerra ao fim da medicao.
+            m_automaticQuitSeconds = 40.0f;
+        }
+        m_animationWalkTest=mode=="laboratory-walk"||mode=="laboratory-walk-smoke";
+        m_animationRunTest=mode=="laboratory-animation"||mode=="laboratory-animation-smoke"||m_animationWalkTest;
         if(m_animationRunTest) {
             m_laboratoryDebugVisible=true;m_showRagdollPanel=true;
             m_hidePhysGunPresentation=true;
-            if(mode.ends_with("-smoke"))m_automaticQuitSeconds=11;
+            if(mode.ends_with("-smoke"))m_automaticQuitSeconds=m_animationWalkTest?22.0f:11.0f;
         }
         m_spawnAllPropsWhenReady =
             mode == "laboratory-prop-suite-smoke";
@@ -282,10 +356,10 @@ void WorkbenchApp::applyAutostartIfRequested() {
         m_animationViewerCameraDistance = environmentFloat("MATTERENGINE_ANIMATION_DISTANCE",
             m_animationViewerCameraDistance,2.8f,9.0f);
         const auto selected=environmentValue("MATTERENGINE_ANIMATION_CLIP");
-        for(std::size_t i=0;i<m_animationClips.size();++i)if(m_animationClips[i].id==selected)m_animationViewerSelectedIndex=i;
-        if(!m_animationClips.empty())m_animationViewerLoop=m_animationClips[m_animationViewerSelectedIndex].loops;
-        if (!environmentValue("MATTERENGINE_ANIMATION_PHASE").empty() && !m_animationClips.empty()) {
-            m_animationViewerPlaybackSeconds = m_animationClips[m_animationViewerSelectedIndex].durationSeconds
+        for(std::size_t i=0;i<m_proceduralAnimationClips.size();++i)if(m_proceduralAnimationClips[i].id==selected)m_animationViewerSelectedIndex=i;
+        if(!m_proceduralAnimationClips.empty())m_animationViewerLoop=m_proceduralAnimationClips[m_animationViewerSelectedIndex].loops;
+        if (!environmentValue("MATTERENGINE_ANIMATION_PHASE").empty() && !m_proceduralAnimationClips.empty()) {
+            m_animationViewerPlaybackSeconds = m_proceduralAnimationClips[m_animationViewerSelectedIndex].durationSeconds
                 * environmentFloat("MATTERENGINE_ANIMATION_PHASE",0.0f,0.0f,1.0f);
             m_animationViewerPlaying=false;
         }
@@ -333,6 +407,18 @@ void WorkbenchApp::onEvent(const Event& event) {
             if (event.key == Key::Quote && !m_laboratoryPaused) {
                 m_laboratoryDebugVisible = !m_laboratoryDebugVisible;
                 syncLaboratoryMouseCapture();
+                return;
+            }
+            if (event.key == Key::T && !m_laboratoryPaused
+                && !m_spawnMenuOpen
+                && m_controlledCharacterEntityId != 0) {
+                resetControlledCharacterPose();
+                return;
+            }
+            if (event.key == Key::U && !m_laboratoryPaused
+                && !m_spawnMenuOpen
+                && m_controlledCharacterEntityId != 0) {
+                toggleControlledCharacterFrozen();
                 return;
             }
             if (event.key == Key::Space && !m_laboratoryPaused
@@ -388,7 +474,8 @@ void WorkbenchApp::onEvent(const Event& event) {
         if (event.type == EventType::MouseButtonDown
             && event.button == MouseButton::Left
             && renderer().mouseCaptured() && !m_laboratoryPaused
-            && !m_laboratoryDebugVisible && !m_spawnMenuOpen) {
+            && !m_laboratoryDebugVisible && !m_spawnMenuOpen
+            && m_controlledCharacterEntityId == 0) {
             m_physGunTriggerHeld = true;
             // O impulso alimenta um oscilador amortecido atualizado no passo
             // fixo. O viewmodel recua sem afetar a camera nem a simulacao.
@@ -505,6 +592,7 @@ void WorkbenchApp::onUpdate(float deltaTime) {
                 applicationFrameMetrics();
             const RHI::FramePerformanceMetrics graphics =
                 renderer().framePerformanceMetrics();
+            reportRenderMotionSmoke();
             Log::info("Smoke performance: "
                 + std::to_string(ImGui::GetIO().Framerate)
                 + " FPS; GPU "
@@ -569,7 +657,7 @@ void WorkbenchApp::onUpdate(float deltaTime) {
             if (m_physicsScene) {
                 const PhysicsStepDiagnostics3D& physics =
                     m_physicsScene->diagnostics();
-                Log::info("Smoke PhysX: passo "
+                Log::info("Smoke fisica: passo "
                     + std::to_string(physics.totalStepMilliseconds)
                     + " ms; contatos "
                     + std::to_string(physics.discreteContactPairs)
@@ -634,16 +722,17 @@ void WorkbenchApp::onUpdate(float deltaTime) {
         updateLaboratory(deltaTime);
     }
     if (m_screen == Screen::AnimationViewer && m_animationViewerPlaying
-        && !m_animationClips.empty()) {
+        && !m_proceduralAnimationClips.empty()) {
         m_animationViewerSelectedIndex = std::min(
-            m_animationViewerSelectedIndex, m_animationClips.size() - 1);
+            m_animationViewerSelectedIndex,
+            m_proceduralAnimationClips.size() - 1);
         const AnimationClip3D& clip =
-            m_animationClips[m_animationViewerSelectedIndex];
+            m_proceduralAnimationClips[m_animationViewerSelectedIndex];
         m_animationViewerPlaybackSeconds +=
             deltaTime * m_animationViewerPlaybackSpeed;
         if (clip.durationSeconds > 0.0f
             && m_animationViewerPlaybackSeconds > clip.durationSeconds) {
-            if (m_animationViewerLoop && clip.loops) {
+            if (m_animationViewerLoop) {
                 m_animationViewerPlaybackSeconds = std::fmod(
                     m_animationViewerPlaybackSeconds, clip.durationSeconds);
             } else {

@@ -46,6 +46,11 @@ private:
 
     friend class PhysicsEngine3D;
     friend class PhysicsScene3D;
+    // Idioma PIMPL: a propria Impl, definida pelo backend, le o recurso
+    // nativo desta mesh. Sem isso, so metodos de PhysicsEngine3D/
+    // PhysicsScene3D alcancariam m_impl, e a traducao de shapes do backend
+    // precisaria virar membro de cena sem motivo.
+    friend struct Impl;
 };
 
 enum class PhysicsShapeType3D : std::uint8_t {
@@ -63,6 +68,9 @@ struct PhysicsShape3D {
     Vec3 halfExtents { 0.5f, 0.5f, 0.5f };
     float radius = 0.5f;
     float capsuleHalfHeight = 0.5f;
+    // Capsula conica: raio da tampa +Y. Zero = uniforme (radius nas duas);
+    // radius passa a ser o da tampa -Y.
+    float capsuleTopRadius = 0.0f;
     std::shared_ptr<const PhysicsMesh3D> mesh;
     std::string materialId = "default";
 };
@@ -110,14 +118,33 @@ struct PhysicsSceneSettings3D {
     // checagem (comportamento antigo: vento sempre uniforme na cena).
     float windShelterDistanceMeters = 4.0f;
     std::uint32_t workerThreadCount = 0;
-    // TGS em passo fixo de 120 Hz converge bem com o padrão recomendado
-    // pelo PhysX. Uma ilha usa a maior contagem pedida por qualquer ator;
-    // elevar isto globalmente duplicava o trabalho de todos os ragdolls.
-    std::uint32_t solverPositionIterations = 4;
-    std::uint32_t solverVelocityIterations = 1;
-    // Memoria temporaria reutilizada pelo solver. O PhysX exige blocos
-    // alinhados e multiplos de 16 KiB; a cena normaliza o valor informado.
-    std::uint32_t scratchBufferSizeBytes = 1024u * 1024u;
+    // Iteracoes do solver, 0 = o backend usa a propria calibragem.
+    //
+    // Estes numeros NAO sao transferiveis entre backends: 4 posicao / 1
+    // velocidade foi calibrado para o TGS do PhysX, e o Jolt trabalha na faixa
+    // de 2 posicao / 10 velocidade. Um default neutro estaria errado para um
+    // dos dois, entao quem conhece o solver e quem escolhe - mesma convencao de
+    // workerThreadCount abaixo. Sobrescrever aqui e para experimento medido
+    // (criterio: o teste de estresse de 22 corpos), nao para configuracao
+    // rotineira.
+    std::uint32_t solverPositionIterations = 0;
+    std::uint32_t solverVelocityIterations = 0;
+    // Memoria temporaria reutilizada pelo solver a cada passo, 0 = o backend
+    // escolhe. As necessidades diferem em uma ordem de grandeza (o PhysX exige
+    // blocos multiplos de 16 KiB; o Jolt aloca todo o trabalho do passo aqui).
+    std::uint32_t scratchBufferSizeBytes = 0u;
+    // Limites de pre-alocacao. O Jolt dimensiona seus pools uma vez, na
+    // criacao da cena (PhysicsSystem::Init), e nao cresce depois - estourar um
+    // destes e erro de runtime, nao degradacao. O PhysX crescia sozinho e
+    // ignora estes campos.
+    //
+    // Orcamento alvo do projeto: >50 ragdolls de 18 links (900 corpos) + props
+    // + geometria estatica + personagem, com folga para spawn em rajada.
+    std::uint32_t maximumBodies = 16384u;
+    std::uint32_t maximumBodyPairs = 32768u;
+    std::uint32_t maximumContactConstraints = 16384u;
+    // 0 deixa o backend escolher a granularidade de travamento por corpo.
+    std::uint32_t bodyMutexCount = 0u;
     bool enableContinuousCollision = true;
     bool enableStabilization = true;
 };

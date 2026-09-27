@@ -68,6 +68,7 @@ layout(location = 5) flat in ivec4 objectParameters;
 layout(location = 6) flat in vec2 objectMetallicRoughness;
 layout(location = 7) in vec4 currentClipPosition;
 layout(location = 8) in vec4 previousMotionClipPosition;
+layout(location = 9) flat in vec3 objectTint;
 layout(location = 0) out vec4 outColor;
 // Vetor de movimento em espaco de tela (UV, [0,1]) entre a posicao deste
 // pixel na grade estavel e onde o MESMO ponto do objeto estava projetado no
@@ -497,7 +498,7 @@ void main() {
     }
     vec3 viewDirection = normalize(scene.cameraPosition.xyz - worldPosition);
     vec2 materialUv = vertexUv;
-    vec3 albedo = texture(albedoMap, materialUv).rgb * vertexColor;
+    vec3 albedo = texture(albedoMap, materialUv).rgb * vertexColor * objectTint;
     if (objectParameters.z != 0) {
         albedo = mix(albedo, vec3(1.0, 0.62, 0.08), 0.24);
     }

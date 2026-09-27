@@ -27,6 +27,7 @@ Vec3 ragdollViewForward(float yaw, float pitch) {
         std::sin(pitch) };
 }
 
+
 MeshData3D buildCapsuleMesh(
     const RagdollCapsuleDefinition3D& capsule) {
     // A cápsula nativa do PhysX é alinhada ao eixo X. A mesma geometria é
@@ -34,9 +35,11 @@ MeshData3D buildCapsuleMesh(
     // render e colisão permanecem rigorosamente sobrepostos.
     constexpr int RadialSegments = 12;
     constexpr int HemisphereRings = 4;
-    const float radius = capsule.radiusMeters;
-    const float cylinderHalfLength =
-        std::max(0.0f, capsule.lengthMeters * 0.5f - radius);
+    // Cônica: tampa -X de raio radiusMeters, +X de raio do outro lado; o
+    // tronco liga os dois equadores (a mesma forma do TaperedCapsule).
+    const float negativeRadius = capsule.radiusMeters;
+    const float positiveRadius = ragdollCapsuleRadiusAtPositiveX3D(capsule);
+    const float halfSegment = ragdollCapsuleHalfSegment3D(capsule);
 
     struct Ring {
         float x = 0.0f;
@@ -47,25 +50,27 @@ MeshData3D buildCapsuleMesh(
     std::vector<Ring> rings;
     rings.reserve(static_cast<std::size_t>(HemisphereRings * 2 + 3));
     rings.push_back(
-        { -cylinderHalfLength - radius, 0.0f, -1.0f, 0.0f });
+        { -halfSegment - negativeRadius, 0.0f, -1.0f, 0.0f });
     for (int index = 1; index <= HemisphereRings; ++index) {
         const float angle = -Pi * 0.5f
             + Pi * 0.5f
                 * static_cast<float>(index)
                 / static_cast<float>(HemisphereRings);
-        rings.push_back({ -cylinderHalfLength + radius * std::sin(angle),
-            radius * std::cos(angle), std::sin(angle), std::cos(angle) });
+        rings.push_back({ -halfSegment + negativeRadius * std::sin(angle),
+            negativeRadius * std::cos(angle), std::sin(angle),
+            std::cos(angle) });
     }
-    if (cylinderHalfLength > 0.00001f) {
+    if (halfSegment > 0.00001f) {
         rings.push_back(
-            { cylinderHalfLength, radius, 0.0f, 1.0f });
+            { halfSegment, positiveRadius, 0.0f, 1.0f });
     }
     for (int index = 1; index <= HemisphereRings; ++index) {
         const float angle = Pi * 0.5f
             * static_cast<float>(index)
             / static_cast<float>(HemisphereRings);
-        rings.push_back({ cylinderHalfLength + radius * std::sin(angle),
-            radius * std::cos(angle), std::sin(angle), std::cos(angle) });
+        rings.push_back({ halfSegment + positiveRadius * std::sin(angle),
+            positiveRadius * std::cos(angle), std::sin(angle),
+            std::cos(angle) });
     }
 
     MeshData3D mesh;
@@ -385,10 +390,14 @@ bool WorkbenchApp::spawnHumanRagdollAt(Vec3 pelvisPosition,
         instance.physicsRagdoll = handle;
         instance.physicsState = initial;
         instance.previousPhysicsState = initial;
+        const Vec3 spawnForward = orientation.rotate({ 1.0f, 0.0f, 0.0f });
+        instance.guideFacingYawRadians = std::atan2(
+            spawnForward.y, spawnForward.x);
         instance.kind = ArticulatedRigKind::Human;
         instance.active = spawn.active;
-        instance.animationController.reset(*m_humanRagdollProfile, initial,
-            ragdollGroundHeight(spawn.pelvisPosition));
+        instance.locomotion.reset(*m_humanRagdollProfile, initial);
+        instance.biomechanics.reset(*m_humanRagdollProfile, initial,
+            m_physicsScene->ragdollDynamics(handle));
         m_spawnedRagdolls.push_back(std::move(instance));
         if (benchmarkEntity) {
             m_physicsBenchmarkRagdollEntityIds.push_back(spawn.entityId);
@@ -409,13 +418,27 @@ bool WorkbenchApp::spawnHumanRagdollAt(Vec3 pelvisPosition,
     }
 }
 
-AnimatedRagdollClips3D WorkbenchApp::animatedRagdollClips() const {
-    AnimatedRagdollClips3D clips;
+CharacterLocomotionAnimations3D
+WorkbenchApp::characterLocomotionAnimations() const {
+    CharacterLocomotionAnimations3D clips;
     if(!m_ragdollCharacter)return clips;
     for(const auto& clip:m_animationClips) {
         if(clip.id==m_ragdollCharacter->idleClipId)clips.idle=&clip;
-        if(clip.id==m_ragdollCharacter->runClipId)clips.run=&clip;
-        if(clip.id==m_ragdollCharacter->stopClipId)clips.stop=&clip;
+        if(clip.id==m_ragdollCharacter->walkClipId)clips.walk=&clip;
+        if(clip.id==m_ragdollCharacter->walkBackwardClipId)clips.walkBackward=&clip;
+        if(clip.id==m_ragdollCharacter->sprintClipId)clips.sprint=&clip;
+        if(clip.id==m_ragdollCharacter->sprintBackwardClipId)clips.sprintBackward=&clip;
+        if(clip.id==m_ragdollCharacter->strafeLeftClipId)clips.strafeLeft=&clip;
+        if(clip.id==m_ragdollCharacter->strafeRightClipId)clips.strafeRight=&clip;
+        if(clip.id==m_ragdollCharacter->sprintStrafeLeftClipId)clips.sprintStrafeLeft=&clip;
+        if(clip.id==m_ragdollCharacter->sprintStrafeRightClipId)clips.sprintStrafeRight=&clip;
+        if(clip.id==m_ragdollCharacter->jumpStandingClipId)clips.jumpStanding=&clip;
+        if(clip.id==m_ragdollCharacter->jumpForwardClipId)clips.jumpForward=&clip;
+        if(clip.id==m_ragdollCharacter->jumpBackwardClipId)clips.jumpBackward=&clip;
+        if(clip.id==m_ragdollCharacter->jumpLeftClipId)clips.jumpLeft=&clip;
+        if(clip.id==m_ragdollCharacter->jumpRightClipId)clips.jumpRight=&clip;
+        if(clip.id==m_ragdollCharacter->standUpBackClipId)clips.standUpBack=&clip;
+        if(clip.id==m_ragdollCharacter->standUpFrontClipId)clips.standUpFront=&clip;
     }
     return clips;
 }
@@ -428,52 +451,311 @@ float WorkbenchApp::ragdollGroundHeight(Vec3 position) const {
     return position.z-(m_humanRagdollProfile?m_humanRagdollProfile->standingRootHeightMeters:1.0f);
 }
 
-void WorkbenchApp::runRagdollsForFiveSeconds() {
-    if(!m_humanRagdollProfile||!animatedRagdollClips().compatible(*m_humanRagdollProfile)) {
-        m_laboratoryStatus="Clipes Idle/corrida/freada indisponíveis para este rig";return;
+void WorkbenchApp::takeControlOfLatestCharacter() {
+    if (!m_physicsScene || !m_humanRagdollProfile
+        || (!m_biomechanicalExperiment
+            && !m_animationLocomotionCompatible)) {
+        m_laboratoryStatus = "Locomoção do personagem indisponível";
+        return;
     }
-    std::size_t accepted=0;
-    for(auto& instance:m_spawnedRagdolls)if(instance.active)
-        accepted+=instance.animationController.requestRun(instance.physicsState,5.0f);
-    m_laboratoryStatus=accepted>0?"Comando de corrida aceito (protótipo experimental)":
-        "Nenhum ragdoll disponível: caído, em movimento ou sendo manipulado";
+    const auto candidate = std::find_if(m_spawnedRagdolls.rbegin(),
+        m_spawnedRagdolls.rend(), [](const SpawnedRagdollInstance& instance) {
+            return instance.kind == ArticulatedRigKind::Human
+                && instance.active && !instance.physicsState.links.empty();
+        });
+    if (candidate == m_spawnedRagdolls.rend()) {
+        m_laboratoryStatus = "Crie um personagem ativo antes de assumir";
+        return;
+    }
+    endPhysGunGrab();
+    const Vec3 root = candidate->physicsState.links.front().position;
+    const float floor = ragdollGroundHeight(root);
+    m_physicsScene->placeCharacter({ root.x, root.y, floor },
+        m_avatarCharacterSettings);
+    m_controlledCharacterEntityId = candidate->entityId;
+    candidate->locomotion.reset(*m_humanRagdollProfile,
+        candidate->physicsState);
+    candidate->biomechanics.reset(*m_humanRagdollProfile,
+        candidate->physicsState,
+        m_physicsScene->ragdollDynamics(candidate->physicsRagdoll));
+    const Vec3 forward = candidate->physicsState.links.front()
+        .orientation.rotate({ 1.0f, 0.0f, 0.0f });
+    m_characterDesiredFacingYaw = std::atan2(forward.y, forward.x);
+    m_laboratoryCameraYaw = m_characterDesiredFacingYaw;
+    m_laboratoryCameraPitch = -0.20f;
+    m_characterDesiredVelocityWorld = {};
+    m_characterSprinting = false;
+    m_hidePhysGunPresentation = true;
+    m_laboratoryDebugVisible = false;
+    m_showCharacterPanel = false;
+    m_laboratoryStatus = m_biomechanicalExperiment
+        ? "Experimento biomecânico ativo"
+        : "Controle do personagem ativo";
+    m_notification = { m_biomechanicalExperiment
+            ? "WASD: passada física | Alt: câmera livre | U: congelar"
+            : "WASD mover | Alt: câmera livre | U: congelar",
+        4.0f, 4.0f };
+    syncLaboratoryMouseCapture();
+}
+
+void WorkbenchApp::releaseControlledCharacter() {
+    if (m_controlledCharacterEntityId == 0) return;
+    m_controlledCharacterEntityId = 0;
+    m_characterDesiredVelocityWorld = {};
+    m_characterSprinting = false;
+    // O padrão do físgun é oculto; voltar do controle do personagem não
+    // deve reexibi-lo sozinho — quem quiser vê-lo usa o checkbox do painel.
+    m_hidePhysGunPresentation = true;
+    m_laboratoryStatus = "Controle do personagem liberado";
+}
+
+void WorkbenchApp::resetControlledCharacterPose() {
+    if (!m_physicsScene || !m_humanRagdollProfile
+        || m_controlledCharacterEntityId == 0) {
+        return;
+    }
+    const auto controlled = std::find_if(m_spawnedRagdolls.begin(),
+        m_spawnedRagdolls.end(), [&](const SpawnedRagdollInstance& item) {
+            return item.entityId == m_controlledCharacterEntityId
+                && item.active && !item.physicsState.links.empty();
+        });
+    if (controlled == m_spawnedRagdolls.end()) return;
+
+    endPhysGunGrab();
+    const Vec3 oldRoot = controlled->physicsState.links.front().position;
+    const GroundProbeResult3D ground = m_physicsScene->probeGround(
+        oldRoot + Vec3 { 0.0f, 0.0f, 1.5f },
+        0.08f, 0.0f, 4.0f, 60.0f);
+    const float floorHeight = ground.hasSurface
+        ? ground.pointWorld.z
+        : oldRoot.z - m_humanRagdollProfile->standingRootHeightMeters;
+    const Quaternion orientation = Quaternion::fromAxisAngle(
+        { 0.0f, 0.0f, 1.0f }, m_characterDesiredFacingYaw);
+
+    const RagdollHandle3D previousHandle = controlled->physicsRagdoll;
+    m_physicsScene->destroyRagdoll(previousHandle);
+    try {
+        RagdollSpawnDefinition3D spawn;
+        spawn.entityId = controlled->entityId;
+        spawn.pelvisPosition = {
+            oldRoot.x, oldRoot.y,
+            floorHeight + m_humanRagdollProfile->standingRootHeightMeters
+        };
+        spawn.orientation = orientation;
+        spawn.rigidityPercent = m_ragdollRigidityPercent;
+        spawn.active = true;
+        controlled->physicsRagdoll = m_physicsScene->createRagdoll(
+            *m_humanRagdollProfile, spawn);
+        const RagdollState3D initial = m_physicsScene->ragdollState(
+            controlled->physicsRagdoll);
+        controlled->physicsState = initial;
+        controlled->previousPhysicsState = initial;
+        controlled->frozen = false;
+        controlled->skinMatrices.clear();
+        controlled->previousSkinMatrices.clear();
+        controlled->locomotion.reset(*m_humanRagdollProfile, initial);
+        controlled->biomechanics.reset(*m_humanRagdollProfile, initial,
+            m_physicsScene->ragdollDynamics(controlled->physicsRagdoll));
+        m_physicsScene->placeCharacter(
+            { oldRoot.x, oldRoot.y, floorHeight },
+            m_avatarCharacterSettings);
+        m_characterDesiredVelocityWorld = {};
+        m_characterSprinting = false;
+        m_laboratoryTaaHistoryValid = false;
+        m_laboratoryStatus = "Pose inicial restaurada";
+        m_notification = {
+            "Pose física e controlador procedural reiniciados",
+            2.4f, 2.4f
+        };
+    } catch (const std::exception& error) {
+        controlled->active = false;
+        Log::error(std::string("Falha ao restaurar pose do personagem: ")
+            + error.what());
+        releaseControlledCharacter();
+        m_laboratoryStatus = "Falha ao restaurar pose inicial";
+    }
+}
+
+void WorkbenchApp::toggleControlledCharacterFrozen() {
+    if (!m_physicsScene || m_controlledCharacterEntityId == 0) return;
+    const auto controlled = std::find_if(m_spawnedRagdolls.begin(),
+        m_spawnedRagdolls.end(), [&](const SpawnedRagdollInstance& item) {
+            return item.entityId == m_controlledCharacterEntityId
+                && item.active;
+        });
+    if (controlled == m_spawnedRagdolls.end()
+        || !m_physicsScene->contains(controlled->physicsRagdoll)) {
+        return;
+    }
+
+    const bool frozen = !controlled->frozen;
+    controlled->frozen = frozen;
+    controlled->previousPhysicsState = controlled->physicsState;
+    m_physicsScene->setRagdollFrozen(controlled->physicsRagdoll, frozen);
+    m_characterDesiredVelocityWorld = {};
+    m_characterSprinting = false;
+    m_laboratoryTaaHistoryValid = false;
+    m_laboratoryStatus = frozen
+        ? "Ragdoll congelado para inspeção"
+        : "Ragdoll descongelado";
+    m_notification = {
+        frozen ? "RAGDOLL CONGELADO | U para descongelar"
+               : "RAGDOLL DESCONGELADO",
+        2.4f, 2.4f
+    };
 }
 
 void WorkbenchApp::updateActiveRagdolls(float deltaTime) {
     if(!m_physicsScene||!m_humanRagdollProfile)return;
-    const auto clips=animatedRagdollClips();
-    if(m_animationRunTest&&!m_spawnedRagdolls.empty()) {
-        m_animationRunTestSeconds+=deltaTime;
-        if(!m_animationRunTestStarted&&m_animationRunTestSeconds>=2) {
-            runRagdollsForFiveSeconds();m_animationRunTestStarted=true;
-        }
-    }
+    const auto clips=characterLocomotionAnimations();
     for(auto& instance:m_spawnedRagdolls) {
-        if(!instance.active||!m_physicsScene->contains(instance.physicsRagdoll)
+        if(!instance.active||instance.frozen||instance.physicsState.frozen
+            ||!m_physicsScene->contains(instance.physicsRagdoll)
             ||instance.physicsState.links.empty())continue;
         const bool grabbed=m_physicsScene->grabbing()
             &&m_physicsScene->grabbedRagdoll()==instance.physicsRagdoll;
-        auto& controller=instance.animationController;
-        controller.settings().assistanceEnabled=m_ragdollUseMagicMode;
         const auto& root=instance.physicsState.links.front();
-        Vec3 forward=root.orientation.rotate({1,0,0});forward.z=0;forward=forward.normalized();
-        PhysicsRayHit3D hit;
-        const bool obstacle=m_physicsScene->raycastStatic({root.position,forward},0.9f,hit)
-            &&hit.normal.z<0.6f;
-        controller.update(*m_humanRagdollProfile,clips,instance.physicsState,
-            deltaTime,ragdollGroundHeight(root.position),grabbed,obstacle);
-        const auto& output=controller.output();
-        if(m_animationRunTest&&std::fmod(m_animationRunTestSeconds,1.0f)<deltaTime) {
-            const auto& t=controller.telemetry();
-            Log::info("Corrida física: fase="+std::to_string(static_cast<int>(t.phase))
-                +" distância="+std::to_string(t.travelledMeters)+" velocidade="+std::to_string(t.speedMetersPerSecond)
-                +" apoioN="+std::to_string(t.supportLoadNewtons)+" auxílioN="+std::to_string(t.assistanceForceNewtons)
-                +" erroJuntas="+std::to_string(t.jointRmsDegrees));
+        std::array<GroundProbeResult3D,2> footGround;
+        for(std::size_t i=0;i<m_humanRagdollProfile->links.size();++i) {
+            const auto& id=m_humanRagdollProfile->links[i].id;
+            const int foot=id=="LeftFoot"?0:id=="RightFoot"?1:-1;
+            if(foot<0||i>=instance.physicsState.links.size())continue;
+            footGround[foot]=m_physicsScene->probeGround(
+                instance.physicsState.links[i].position+Vec3{0,0,0.10f},
+                0.05f,0.0f,0.40f,48.0f);
         }
-        m_physicsScene->setRagdollActiveDriveTargets(instance.physicsRagdoll,output.driveTargets,output.gravityCompensationEnabled);
-        for(const auto& force:output.assistance)
-            m_physicsScene->applyRagdollLinkForce(instance.physicsRagdoll,force.linkIndex,
-                force.forceNewtons,force.torqueNewtonMeters);
+        CharacterLocomotionInput3D command;
+        command.rootPositionWorld = {
+            root.position.x,
+            root.position.y,
+            ragdollGroundHeight(root.position)
+                + m_humanRagdollProfile->standingRootHeightMeters
+        };
+        command.rootVelocityWorld = root.linearVelocity;
+        command.facingYawRadians = instance.guideFacingYawRadians;
+        command.grounded = true;
+        command.controlled = instance.entityId
+            == m_controlledCharacterEntityId;
+        if (command.controlled && m_physicsScene->hasCharacter()) {
+            const PhysicsCharacterState3D& character =
+                m_physicsScene->characterState();
+            const float bodyHeight = character.crouched
+                ? m_avatarCharacterSettings.crouchedHeight
+                : m_avatarCharacterSettings.standingHeight;
+            const float feetHeight = character.position.z
+                - bodyHeight * 0.5f;
+            command.rootPositionWorld = {
+                character.position.x,
+                character.position.y,
+                feetHeight + m_humanRagdollProfile->standingRootHeightMeters
+            };
+            command.rootVelocityWorld = character.velocity;
+            command.desiredVelocityWorld = m_characterDesiredVelocityWorld;
+            command.facingYawRadians = m_characterDesiredFacingYaw;
+            instance.guideFacingYawRadians = m_characterDesiredFacingYaw;
+            command.lookPitchRadians = m_laboratoryCameraPitch;
+            command.grounded = character.grounded;
+            command.crouched = character.crouched;
+            command.sprinting = m_characterSprinting;
+            // Chao em qualquer ponto: os pes consultam onde estao e onde vao
+            // pisar (so o personagem controlado; os bonecos soltos usam a
+            // sonda embaixo de cada pe).
+            PhysicsScene3D* scene = m_physicsScene.get();
+            command.groundAt = [scene](Vec3 point) {
+                return scene->probeGround(point + Vec3 { 0.0f, 0.0f, 0.55f },
+                    0.03f, 0.0f, 1.5f, 60.0f);
+            };
+        }
+        command.manipulated = grabbed;
+        command.grabbedLink = grabbed
+            ? m_physicsScene->grabbedRagdollLink()
+            : RagdollDynamics3D::InvalidIndex;
+        command.poseAuthority = m_ragdollForceControlOverride
+            ? m_ragdollAuxiliaryPercent * 0.01f : 1.0f;
+        command.muscleAuthority = m_ragdollForceControlOverride
+            ? m_ragdollMusclePercent * 0.01f : 1.0f;
+        command.footGround = footGround;
+        // Only the controlled character pays for the mass matrix/Jacobian;
+        // both the biomechanical path and the hybrid balance assist below
+        // need it, everyone else in the scene stays with an invalid one.
+        const RagdollDynamics3D dynamics = command.controlled
+            ? m_physicsScene->ragdollDynamics(instance.physicsRagdoll)
+            : RagdollDynamics3D {};
+        if (command.controlled && m_biomechanicalExperiment) {
+            BiomechanicalBipedInput3D physicalInput;
+            physicalInput.desiredVelocityWorld =
+                m_characterDesiredVelocityWorld;
+            physicalInput.desiredFacingYawRadians =
+                m_characterDesiredFacingYaw;
+            physicalInput.muscleAuthority = command.muscleAuthority;
+            physicalInput.balanceAssistance =
+                m_biomechanicalBalanceAssistPercent * 0.01f;
+            // Reference poses come only from clips already vetted in the
+            // procedural workspace (see loadAnimationCatalog): the character's
+            // own idle and walk.
+            for (const AnimationClip3D& candidate : m_proceduralAnimationClips) {
+                if (m_ragdollCharacter
+                    && candidate.id == m_ragdollCharacter->idleClipId) {
+                    physicalInput.idleReferenceClip = &candidate;
+                } else if (m_ragdollCharacter
+                    && candidate.id == m_ragdollCharacter->walkClipId) {
+                    physicalInput.locomotionReferenceClip = &candidate;
+                }
+            }
+            instance.biomechanics.update(*m_humanRagdollProfile,
+                instance.physicsState, dynamics, physicalInput, deltaTime);
+            const auto& physicalOutput = instance.biomechanics.output();
+            m_physicsScene->setRagdollActiveDriveTargets(
+                instance.physicsRagdoll, physicalOutput.driveTargets,
+                physicalOutput.gravityCompensationEnabled);
+            m_physicsScene->setRagdollAnimationConstraint(
+                instance.physicsRagdoll, physicalOutput.guide);
+            if (physicalOutput.balanceForceWorld.lengthSquared() > 0.000001f
+                || physicalOutput.balanceTorqueWorld.lengthSquared()
+                    > 0.000001f) {
+                m_physicsScene->applyRagdollControlRootForce(
+                    instance.physicsRagdoll,
+                    physicalOutput.balanceForceWorld,
+                    physicalOutput.balanceTorqueWorld);
+            }
+            continue;
+        }
+        instance.locomotion.update(*m_humanRagdollProfile, clips,
+            instance.physicsState, dynamics, command, deltaTime);
+        const auto& output=instance.locomotion.output();
+        instance.previousAnimationPose =
+            instance.animationPose.linkPositions.empty()
+                ? output.targetPose : instance.animationPose;
+        instance.animationPose = output.targetPose;
+        instance.physicsBlend = output.physicsBlend;
+        // While the body is down, the capsule goes where the body is. It is
+        // what the camera follows, and leaving it standing where the fall
+        // started is what made the character snap back across the floor the
+        // moment a recovery finished. placeCharacter is a real teleport
+        // (PxController::setFootPosition underneath) - the earlier note in
+        // the devlog claiming no such API existed was simply wrong.
+        if (command.controlled && m_physicsScene->hasCharacter()) {
+            const CharacterLocomotionState3D locomotionState =
+                instance.locomotion.telemetry().state;
+            if (locomotionState == CharacterLocomotionState3D::Fallen
+                || locomotionState == CharacterLocomotionState3D::GettingUp) {
+                const Vec3 root = instance.physicsState.links.front().position;
+                m_physicsScene->placeCharacter(
+                    { root.x, root.y, ragdollGroundHeight(root) },
+                    m_avatarCharacterSettings);
+            }
+        }
+        m_physicsScene->setRagdollActiveDriveTargets(
+            instance.physicsRagdoll,output.driveTargets,
+            output.gravityCompensationEnabled);
+        m_physicsScene->setRagdollAnimationConstraint(
+            instance.physicsRagdoll,output.guide);
+        if (output.rootControlTorqueWorld.lengthSquared() > 0.000001f
+            || output.rootControlForceWorld.lengthSquared() > 0.000001f) {
+            m_physicsScene->applyRagdollControlRootForce(
+                instance.physicsRagdoll, output.rootControlForceWorld,
+                output.rootControlTorqueWorld);
+        }
     }
     updateRagdollImpactLab(deltaTime);
 }

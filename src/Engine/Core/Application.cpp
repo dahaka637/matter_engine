@@ -96,6 +96,8 @@ void Application::run() {
                 accumulator = std::fmod(accumulator, fixedDelta);
             }
             const auto updateEnd = Clock::now();
+            m_frameMetrics.fixedStepAlpha = fixedDelta > 0.0f
+                ? std::clamp(accumulator / fixedDelta, 0.0f, 1.0f) : 0.0f;
             m_renderer->beginFrame(Color { 19, 18, 16, 255 });
             onRender(*m_renderer);
             const auto renderEnd = Clock::now();

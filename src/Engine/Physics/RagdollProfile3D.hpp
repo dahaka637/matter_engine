@@ -39,6 +39,14 @@ enum class RagdollColliderShape3D : std::uint8_t {
     Box
 };
 
+struct RagdollCapsuleDefinition3D;
+// Raio da cápsula na ponta +X local (igual ao da -X se for uniforme).
+[[nodiscard]] float ragdollCapsuleRadiusAtPositiveX3D(
+    const RagdollCapsuleDefinition3D& capsule);
+// Meia distância entre os centros das duas esferas das pontas.
+[[nodiscard]] float ragdollCapsuleHalfSegment3D(
+    const RagdollCapsuleDefinition3D& capsule);
+
 struct RagdollAxisDefinition3D {
     bool enabled = false;
     float minimumRadians = 0.0f;
@@ -54,7 +62,11 @@ struct RagdollCapsuleDefinition3D {
     Quaternion localOrientation;
     // Comprimento total, incluindo as duas tampas hemisféricas.
     float lengthMeters = 0.1f;
+    // Raio na ponta -X local. Com radiusAtPositiveXMeters > 0 a cápsula é
+    // cônica (coxa grossa no quadril e fina no joelho, por exemplo): as
+    // tampas são esferas desses dois raios. Zero = cápsula uniforme.
     float radiusMeters = 0.05f;
+    float radiusAtPositiveXMeters = 0.0f;
     // Usado quando shape == Box. Mantemos o mesmo container para não
     // fragmentar o contrato do perfil; cada shape valida apenas seus campos.
     Vec3 boxHalfExtents { 0.05f, 0.05f, 0.05f };
@@ -87,6 +99,16 @@ struct RagdollLinkDefinition3D {
     RagdollJointDefinition3D inboundJoint;
 };
 
+// Par de links que nao colide entre si, alem das regras automaticas do
+// backend (pai-filho, sobrepostos no repouso, mesma cadeia a menos de 1 cm).
+// Existe para contatos falsos que a forma aproximada dos colisores cria
+// dentro da amplitude normal do corpo; o motivo fica gravado no perfil.
+struct RagdollIgnoredCollisionPair3D {
+    std::string firstLinkId;
+    std::string secondLinkId;
+    std::string reason;
+};
+
 struct RagdollProfile3D {
     std::string id;
     float totalMassKg = 75.0f;
@@ -98,6 +120,7 @@ struct RagdollProfile3D {
     // Distância vertical da origem da pelve ao ponto mais baixo na pose neutra.
     float standingRootHeightMeters = 0.98f;
     std::vector<RagdollLinkDefinition3D> links;
+    std::vector<RagdollIgnoredCollisionPair3D> selfCollisionIgnoredPairs;
 };
 
 struct RagdollProfileValidationIssue3D {

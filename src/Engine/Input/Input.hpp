@@ -14,6 +14,8 @@ enum class Key : std::size_t {
     E,
     Q,
     R,
+    T,
+    U,
     V,
     Z,
     Escape,

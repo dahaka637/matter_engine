@@ -38,6 +38,15 @@ struct AnimationTrack3D {
     std::vector<AnimationKeyframe3D> keyframes;
 };
 
+struct AnimationScalarKeyframe3D {
+    float timeSeconds = 0.0f;
+    float value = 0.0f;
+};
+
+struct AnimationScalarTrack3D {
+    std::vector<AnimationScalarKeyframe3D> keyframes;
+};
+
 struct AnimationRetargetReport3D {
     bool available = false;
     bool passed = false;
@@ -60,6 +69,15 @@ struct AnimationClip3D {
     bool loops = true;
     // Original displacement remains available even when the preview is in-place.
     Vec3 sourceRootDisplacementMeters;
+    // In-place libraries can declare their intended travel speed explicitly.
+    float nominalSpeedMetersPerSecond = 0.0f;
+    // Direção em que o ciclo anda em relação à pelve: 0 para a frente, pi
+    // para trás (recuo). Clipes autorais a declaram; importados andam para a
+    // frente.
+    float travelDirectionRadians = 0.0f;
+    // Authored contact phase. Value 1 means stance; 0 means swing.
+    AnimationScalarTrack3D leftFootContact;
+    AnimationScalarTrack3D rightFootContact;
     AnimationRetargetReport3D retargetReport;
     std::vector<AnimationTrack3D> tracks;
 };
@@ -85,6 +103,9 @@ struct AnimationClipValidationIssue3D {
 [[nodiscard]] AnimationClip3D loadAnimationClip3D(std::string_view filePath);
 [[nodiscard]] AnimationTransformSample3D sampleAnimationTrack3D(
     const AnimationTrack3D& track, float timeSeconds,
+    float clipDurationSeconds, bool loop);
+[[nodiscard]] float sampleAnimationScalarTrack3D(
+    const AnimationScalarTrack3D& track, float timeSeconds,
     float clipDurationSeconds, bool loop);
 [[nodiscard]] std::vector<AnimationClipValidationIssue3D>
     validateAnimationClip3D(const AnimationClip3D& clip);

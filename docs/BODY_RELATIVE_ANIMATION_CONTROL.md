@@ -1,6 +1,6 @@
 # Animação alvo e assistência corporal — contrato de controle
 
-Data: 15/09/2026. Substitui as tentativas de ancoragem mundial e de proibir Z.
+Atualizado em 17/09/2026. Substitui as tentativas de ancoragem mundial e de proibir Z.
 Estado: contrato implementado; locomoção física completa ainda não aprovada.
 
 ## Requisito do usuário
@@ -28,9 +28,12 @@ posicional mundial precisa desaparecer do objetivo, não apenas mudar de base.
    antigo nem uma posição anterior. Apoios atuais são contexto físico.
 
 Itens 2–4 compartilham um orçamento de forças/torques, somado sobre todos os
-links. Não se concede o orçamento completo a cada osso. Os valores iniciais
-(12% do peso para soma das forças, 3,5% de peso × altura para soma dos torques)
-são parâmetros provisórios, não leis biomecânicas nem garantias de qualidade.
+links. Não se concede o orçamento completo a cada osso. Na revisão de 17/09,
+o orçamento normal de força chega a 15% do peso, com teto de torque de 5% de
+peso × altura. O modo explícito de recuperação permite força padrão 45%/teto
+55%, torque configurado 15%/teto 20% de peso × altura. São parâmetros
+experimentais, não leis biomecânicas nem garantias de qualidade. Recuperação
+não está fisicamente aprovada; não estender seus tetos ao modo normal.
 
 ## Referencial e derivadas
 
@@ -65,16 +68,23 @@ não recebe um destino posicional, origem de percurso ou altura mundial alvo.
 - Raiz mundial da pose de inspeção = raiz física **deste tick**.
 - `m_commandOrigin` serve exclusivamente para medir distância na interface.
 - Root motion fornece velocidade/cadência; não alimenta uma mola posicional.
-- A freada considera a velocidade física de entrada, não atraso contra trilho.
+- A parada reduz intenção de velocidade e transiciona a pose, sem atraso
+  acumulado contra trilho. Sua realização física ainda não está aprovada.
 - Neste primeiro ensaio, apoio carregado libera o auxílio líquido de
   locomoção. Isso é uma escolha para este teste, não uma proibição geral de
   auxílio em voo. O auxílio de pose continua tridimensional e sem resultante.
-- Queda reduz a autoridade e depois suspende assistência. A Physgun suspende
-  também motores e feedforward interno; a soltura reinicia na pose/local atuais.
+- Queda reduz a autoridade e suspende assistência; uma tentativa de levantar
+  tem fase e orçamento próprios, ainda em desenvolvimento. Desde a V2, a
+  Physgun mantém motores/feedforward internos reativos e limita o membro
+  agarrado; somente propulsão/auxílio externo são suspensos. A soltura
+  reinicia na pose/local atuais. Isso substitui a regra antiga de corpo mole.
 - A compensação gravitacional do backend é **articular**: seus seis termos de
   raiz são descartados. Não equivale à antiga sustentação externa de 90% do peso.
-- Ajustes ad hoc de tronco/tornozelo da tentativa anterior foram retirados.
-  Não restaurar o footwork/WBC arquivado para esconder falhas desta etapa.
+- A V2 tem novos observação de apoios, IK e feedback interno de quadris e
+  tornozelos. Ver `ACTIVE_RAGDOLL_V2.md`; não restaurar o WBC arquivado.
+- Recuperação pode somar aceleração vertical explícita, com contato, trecho
+  de subida e duração limitada; segue no orçamento global. Não recebe altura
+  mundial alvo nem volta à posição anterior à queda.
 
 ## Validação em camadas
 

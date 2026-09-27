@@ -38,10 +38,10 @@ UiTexture WorkbenchApp::renderAnimationViewerPreview(
 
     const RagdollProfile3D& profile = *m_humanRagdollProfile;
     const AnimationClip3D* clip = nullptr;
-    if (!m_animationClips.empty()) {
+    if (!m_proceduralAnimationClips.empty()) {
         m_animationViewerSelectedIndex = std::min(
-            m_animationViewerSelectedIndex, m_animationClips.size() - 1);
-        clip = &m_animationClips[m_animationViewerSelectedIndex];
+            m_animationViewerSelectedIndex, m_proceduralAnimationClips.size() - 1);
+        clip = &m_proceduralAnimationClips[m_animationViewerSelectedIndex];
     }
 
     const RagdollAnimationPose3D pose = sampleRagdollAnimationPose3D(
@@ -133,8 +133,9 @@ void WorkbenchApp::drawAnimationViewer() {
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     drawWorkbenchBackdrop(drawList, io.DisplaySize, m_uiScale);
 
-    const std::string status = std::to_string(m_animationClips.size())
-        + (m_animationClips.size() == 1 ? " CLIPE" : " CLIPES");
+    const std::string status = std::to_string(m_proceduralAnimationClips.size())
+        + (m_proceduralAnimationClips.size() == 1
+            ? " MOVIMENTO" : " MOVIMENTOS");
     drawWorkbenchHeader(drawList, io.DisplaySize, m_uiScale,
         "ANIMAÇÕES", status.c_str());
 
@@ -146,10 +147,10 @@ void WorkbenchApp::drawAnimationViewer() {
     ImGui::SetCursorPos({ margin, top });
     ImGui::BeginChild("AnimationLibrary", { libraryWidth, height }, true,
         ImGuiWindowFlags_NoScrollbar);
-    panelHeader("BIBLIOTECA DE ANIMAÇÕES");
+    panelHeader("MOVIMENTOS PROCEDURAIS");
     ImGui::Dummy({ 1.0f, ui(10.0f) });
 
-    if (m_animationClips.empty()) {
+    if (m_proceduralAnimationClips.empty()) {
         const float cardWidth = ImGui::GetContentRegionAvail().x;
         const ImVec2 cardStart = ImGui::GetCursorScreenPos();
         const float cardHeight = ui(148.0f);
@@ -167,28 +168,28 @@ void WorkbenchApp::drawAnimationViewer() {
             { cardStart.x + ui(14.0f), cardStart.y + ui(48.0f) });
         ImGui::PushTextWrapPos(cardStart.x + cardWidth - ui(14.0f));
         ImGui::TextColored({ 0.52f, 0.61f, 0.69f, 1.0f },
-            "Os clipes importados aparecerão aqui, organizados para "
-            "seleção e reprodução.");
+            "Os movimentos procedurais gerados pela engine aparecerão aqui "
+            "para inspeção, ajuste e reprodução.");
         ImGui::PopTextWrapPos();
         ImGui::SetCursorScreenPos(
             { cardStart.x + ui(14.0f), cardStart.y + ui(112.0f) });
         ImGui::TextColored({ 0.29f, 0.48f, 0.63f, 1.0f },
-            "PRONTA PARA RECEBER CLIPES");
+            "PRONTO PARA RECEBER MOVIMENTOS");
         ImGui::SetCursorScreenPos(
             { cardStart.x, cardStart.y + cardHeight + ui(12.0f) });
     } else {
         m_animationViewerSelectedIndex = std::min(
-            m_animationViewerSelectedIndex, m_animationClips.size() - 1);
+            m_animationViewerSelectedIndex, m_proceduralAnimationClips.size() - 1);
         for (std::size_t index = 0;
-                index < m_animationClips.size(); ++index) {
+                index < m_proceduralAnimationClips.size(); ++index) {
             if (navigationButton(
-                    m_animationClips[index].displayName.c_str(),
+                    m_proceduralAnimationClips[index].displayName.c_str(),
                     index == m_animationViewerSelectedIndex,
                     { -1.0f, ui(42.0f) })) {
                 m_animationViewerSelectedIndex = index;
                 m_animationViewerPlaybackSeconds = 0.0f;
                 m_animationViewerPlaying = true;
-                m_animationViewerLoop = m_animationClips[index].loops;
+                m_animationViewerLoop = m_proceduralAnimationClips[index].loops;
             }
         }
     }
@@ -217,7 +218,7 @@ void WorkbenchApp::drawAnimationViewer() {
         ImGuiWindowFlags_NoScrollbar);
     panelHeader("VISUALIZADOR");
 
-    const bool hasClip = !m_animationClips.empty();
+    const bool hasClip = !m_proceduralAnimationClips.empty();
     const std::string playLabel = UI::FontAwesome::label(
         m_animationViewerPlaying ? UI::FontAwesome::Pause
                                  : UI::FontAwesome::Play,
@@ -284,7 +285,8 @@ void WorkbenchApp::drawAnimationViewer() {
             IM_COL32(7, 14, 21, 218), ui(4.0f));
         viewportDrawList->AddText(
             { imageStart.x + ui(26.0f), imageStart.y + ui(25.0f) },
-            UiAccent, hasClip ? "CLIPE EM REPRODUÇÃO" : "POSE DE REFERÊNCIA");
+            UiAccent, hasClip ? "MOVIMENTO EM REPRODUÇÃO"
+                              : "POSE DE REFERÊNCIA");
         viewportDrawList->AddText(
             { imageStart.x + ui(26.0f), imageStart.y + ui(46.0f) },
             UiMuted, m_ragdollCharacter ? m_ragdollCharacter->profile.id.c_str() : "RIG FÍSICO");
@@ -319,11 +321,14 @@ void WorkbenchApp::drawAnimationViewer() {
     subtleSeparator();
     if (hasClip) {
         const AnimationClip3D& clip =
-            m_animationClips[m_animationViewerSelectedIndex];
+            m_proceduralAnimationClips[m_animationViewerSelectedIndex];
         ImGui::TextUnformatted(clip.displayName.c_str());
         ImGui::SameLine(0.0f, ui(18.0f));
+        const bool naturalIdle = m_ragdollCharacter
+            && clip.id == m_ragdollCharacter->idleClipId;
         ImGui::TextColored({ 0.43f, 0.62f, 0.76f, 1.0f },
-            "%zu canais  |  %.2f s  |  %.1f fps",
+            "%s  |  %zu canais  |  %.2f s  |  %.1f fps",
+            naturalIdle ? "REFERÊNCIA NATURAL" : "PROCEDURAL",
             clip.tracks.size(), clip.durationSeconds,
             clip.sourceSampleRateHz);
         if (clip.retargetReport.available) {
@@ -344,10 +349,10 @@ void WorkbenchApp::drawAnimationViewer() {
             playbackTimeLabel(clip.durationSeconds).c_str());
     } else {
         ImGui::TextColored({ 0.78f, 0.86f, 0.92f, 1.0f },
-            "Nenhuma animação importada");
+            "Nenhum movimento procedural disponível");
         ImGui::TextColored({ 0.43f, 0.53f, 0.61f, 1.0f },
-            "O rig permanece na pose neutra. Ao inserir o primeiro clipe, "
-            "a timeline e os controles de loop serão habilitados.");
+            "O rig permanece na pose neutra. Ao gerar o primeiro movimento, "
+            "a timeline e os controles serão habilitados.");
         ImGui::BeginDisabled();
         float emptyTimeline = 0.0f;
         ImGui::SetNextItemWidth(-1.0f);
