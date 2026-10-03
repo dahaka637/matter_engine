@@ -38,6 +38,13 @@ struct AdaptivePhysicalIntent3D {
     // Velocidade pedida pelo jogador (no plano) - a que as pernas seguem
     // andando no modo em que elas carregam o corpo (E5).
     Vec3 requestedVelocityWorld;
+    // Freada correndo (da locomocao: telemetry().brakeRunVelocityWorld e
+    // brakeRunShare): o corpo ainda corre e a passada de corrida freia. Com
+    // a parcela acima de zero, as pernas seguem a velocidade do perfil de
+    // freada como seguem a pedida andando, e a ajuda vai da de parado
+    // (legsAssistRetained) a de andando (walkingAssistScale) pela parcela.
+    Vec3 brakeRunVelocityWorld;
+    float brakeRunShare = 0.0f;
     // Estado fisico comum deste tick (CharacterStateEstimator3D, publicado
     // pela locomocao). Nulo: calcula o centro de massa sozinho.
     const CharacterPhysicalState3D* physicalState = nullptr;

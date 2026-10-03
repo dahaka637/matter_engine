@@ -8,7 +8,6 @@
 
 namespace MatterEngine {
 namespace {
-
 constexpr float Pi = 3.14159265358979323846f;
 constexpr float TwoPi = Pi * 2.0f;
 
@@ -649,6 +648,69 @@ constexpr float BalancePlacementLimitMeters = 0.15f;
 // Janela do empurrao: a partir desta fracao do balanco do pe que vem.
 constexpr float LocomotionPushWindow = 0.67f;
 
+// Freada (modo fisico): o corpo leva um momento da propria corrida que o
+// jogador nao pede mais (soltou o comando ou pediu o contrario). Calibrada
+// pela varredura de freada (MATTERENGINE_TEST_FILTER=sweepbrake, 64 casos)
+// e medida contra as referencias Run To Stop e Running To Stop.
+// Entra acima desta velocidade do corpo com tanto a mais que o pedido no
+// rumo dele (m/s); sai abaixo desta (ou quando o pedido alcanca o corpo).
+constexpr float BrakeEngageSpeed = 2.0f;
+constexpr float BrakeEngageExcessSpeed = 1.2f;
+constexpr float BrakeReleaseSpeed = 0.5f;
+// Pedindo o sentido contrario, a freada acaba com o corpo abaixo disto (m/s)
+// e a passada ja arranca para o outro lado. Inversao na varredura de marcha
+// (XGAITINVERT): 1,0 levava 0,76/0,44 s (sprint/trote, 1 queda em 8); 2,0,
+// 0,69/0,38 s sem queda; 2,5 e 3,0 mais lentos (a passada inverte mal
+// rapida).
+constexpr float BrakeReverseReleaseSpeed = 2.0f;
+// Freando ha mais que isto (s), termina de qualquer jeito.
+constexpr float BrakeMaximumSeconds = 4.0f;
+// Depois da freada, tanto tempo (s) sem acomodar nem girar os pes.
+constexpr float BrakeSettleHoldSeconds = 1.5f;
+// Perfil de freada da corrida (m/s2) e quanto ele fica abaixo do corpo no
+// maximo (m/s). (6 parava o sprint em ~1,4 s; 12, o mesmo sem quedas, em
+// ~1,1 s - o que freia de fato e o corpo, o perfil so nao segura.)
+constexpr float BrakeDeceleration = 12.0f;
+constexpr float BrakeProfileLeash = 0.8f;
+// Abaixo disto (m/s do corpo) a corrida para e comecam os passos de freada
+// pelas pernas: 2,2 deu 0-3 quedas em 32 sprints; 2,5 e 2,9, 7-22 (o passo
+// de freada a 3 m/s nao alcanca a frente do corpo a tempo); 1,8, nenhuma e
+// menos passos.
+constexpr float BrakeStepSpeed = 1.8f;
+// A troca para os passos espera um pe no chao no maximo isto atras do
+// centro de massa (m), ou ate este tempo (s) abaixo da velocidade dos passos.
+constexpr float BrakePlantedAhead = -0.05f;
+constexpr float BrakeStepWaitSeconds = 0.15f;
+// Os passos de freada nao deixam a pelve subir so com o corpo rapido: o
+// teto some entre estas velocidades (m/s, inicio e faixa).
+constexpr float BrakeCeilingSlowSpeed = 0.5f;
+constexpr float BrakeCeilingSpan = 0.7f;
+// Parado sobre os pes, a base freia o resto da velocidade do corpo nesta
+// desaceleracao (m/s2), presa a ele por esta folga (m). (4 e 8 m/s2 e
+// folga de 5 cm nao mudaram ou pioraram os passos depois da parada.)
+constexpr float StopHoldDeceleration = 2.0f;
+constexpr float StopHoldLeash = 0.10f;
+// A freada some em (s) depois de terminar; a ajuda de corrida, depois de
+// os passos comecarem. (0,1 s nao mudou a resposta ao comando no meio da
+// freada: a diferenca e o corpo ja mais lento.)
+constexpr float BrakeFadeSeconds = 0.30f;
+constexpr float BrakeRunFadeSeconds = 0.15f;
+// Correndo e freando, o ciclo do sprint so acima disto (m/s); abaixo, o
+// trote.
+constexpr float BrakeSprintClipSpeed = 4.6f;
+constexpr float BrakeReactionScale = 1.0f;
+// Coleira da referencia da corrida freando ao corpo (m).
+constexpr float BrakeReferenceLeash = 0.30f;
+// Agachamento dos passos de freada (m), a faixa de velocidade em que ele
+// entra (m/s acima de 0,6) e a mola (rad/s). Nas referencias a pelve desce
+// ~25 cm; 22 cm aqui nao mudou a varredura.
+constexpr float BrakeCrouchMeters = 0.16f;
+constexpr float BrakeCrouchSpeedSpan = 2.4f;
+constexpr float BrakeCrouchOmega = 14.0f;
+// Nos passos de freada a pelve de referencia fica no maximo isto acima da
+// medida (m): a perna de apoio cede ou segura, nunca estende.
+constexpr float BrakeRiseMeters = 0.01f;
+
 float footSoleOffset(const RagdollLinkDefinition3D& link) {
     return link.collider.shape == RagdollColliderShape3D::Box
         ? link.collider.boxHalfExtents.z
@@ -1208,6 +1270,26 @@ void CharacterLocomotion3D::reset(const RagdollProfile3D& profile,
     m_brakeEntrySpeed = 0.0f;
     m_brakeReaction = {};
     m_brakeReactionVelocity = {};
+    m_brakeGaitActive = false;
+    m_brakeGait = 0.0f;
+    m_brakeGaitSpeed = 0.0f;
+    m_brakeGaitDirection = {};
+    m_brakeCrouch = 0.0f;
+    m_brakeCrouchVelocity = 0.0f;
+    m_brakeStepping = false;
+    m_brakeRunShare = 0.0f;
+    m_brakeSeconds = 0.0f;
+    m_sinceRunRequest = 10.0f;
+    m_brakeReferenceValid = false;
+    m_brakeReferencePosition = {};
+    m_wasBrakeStepping = false;
+    m_stopRoot = {};
+    m_stopRootBlend = 0.0f;
+    m_stopVelocity = {};
+    m_stopHolding = false;
+    m_brakeStepWait = 0.0f;
+    m_brakeAnchor = 0.0f;
+    m_sinceBrakeSeconds = 10.0f;
     m_previousGrounded = true;
     m_initialized = !profile.links.empty()
         && state.links.size() == profile.links.size()
@@ -2001,6 +2083,144 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
             desiredPlanarVelocity = desiredPlanarVelocity * gaitVelocityScale;
         }
     }
+    // Freada pela passada (modo fisico). Soltando o comando correndo (ou
+    // pedindo bem menos, ou o sentido contrario), a capsula freia a 18 m/s2
+    // e para em ~0,4 s; o corpo, so pelos pes, freia ~5-6 m/s2. Seguindo a
+    // capsula, a passada encurtava e parava com o corpo ainda a ~5 m/s: o
+    // planejador de parado dava passos de recuperacao curtos e o corpo
+    // passava por cima deles (sprint e para, ajuda parada em 0%: 6 quedas em
+    // 8 direcoes). E o pe que pousava era posto em relacao a capsula, que vem
+    // arrastada ate 0,5-0,7 m atras do corpo: pousava embaixo dele ou atras.
+    // Enquanto o corpo leva um momento que o jogador nao pede, a passada
+    // continua no passo do corpo real, num perfil de freada que ele consegue
+    // cumprir, a referencia fica presa ao corpo (nao a capsula) e o pe pousa
+    // a frente do centro de massa; a pelve desce e o tronco segura atras
+    // (reacao de freada, mais abaixo). Devagar, o planejador de parado assume.
+    Vec3 brakeNavigationVelocity {};
+    {
+        const Vec3 bodyPlanar { m_filteredCenterOfMassVelocity.x,
+            m_filteredCenterOfMassVelocity.y, 0.0f };
+        const float bodySpeed = bodyPlanar.length();
+        const Vec3 requested { input.intent.requestedVelocityWorld.x,
+            input.intent.requestedVelocityWorld.y, 0.0f };
+        const Vec3 direction = bodySpeed > 0.05f
+            ? bodyPlanar * (1.0f / bodySpeed) : m_brakeGaitDirection;
+        const float wantedAlong = dot(requested, direction);
+        // O momento que o jogador nao pede: o que passa da velocidade pedida
+        // no rumo do corpo (pedindo o contrario, tudo).
+        const float unwanted = bodySpeed - std::max(0.0f, wantedAlong);
+        // Para seguir freando o chao da capsula nao conta: arrastada atras do
+        // corpo ela pisca "no ar" e a freada terminava no meio dos passos.
+        const bool continuable = input.forceDrivenRoot && !getUpActive
+            && !input.manipulated && m_fallCommit < 0.5f;
+        const bool eligible = continuable && input.grounded;
+        // So soltando o comando (ou quase) ou pedindo o sentido contrario:
+        // numa curva ou num corte de lado a passada continua e vira com a
+        // capsula, como antes.
+        const float requestedSpeed = requested.length();
+        const bool stopping = requestedSpeed < 0.5f
+            || dot(requested, direction) < -0.5f * requestedSpeed;
+        // E so o momento da propria corrida (o jogador pedia movimento ha
+        // pouco e nada de fora bateu nele): um empurrao forte parado (300
+        // N.s, o corpo a ~4 m/s) e da recuperacao de empurrao - pela freada
+        // ele perdia os passos de recuperacao e caia.
+        m_sinceRunRequest = requestedSpeed > 1.0f ? 0.0f
+            : std::min(10.0f, m_sinceRunRequest + deltaTime);
+        const bool ownMomentum = m_sinceRunRequest < 0.6f
+            && input.externalPerturbation < 0.2f;
+        if (!m_brakeGaitActive) {
+            if (eligible && stopping && ownMomentum && bodySpeed > BrakeEngageSpeed
+                && unwanted > BrakeEngageExcessSpeed) {
+                m_brakeGaitActive = true;
+                m_brakeGaitSpeed = bodySpeed;
+            }
+        } else if (!continuable
+            // A freada nunca prende o comando: pedindo movimento para um lado
+            // qualquer (que nao o contrario) ela acaba na hora e a passada
+            // assume; pedindo o contrario, so ate o corpo ficar devagar.
+            || (requestedSpeed >= 0.5f && (!stopping || bodySpeed < BrakeReverseReleaseSpeed))
+            || (m_brakeStepping && m_footwork.plan().brakeYield)
+            || ((bodySpeed < BrakeReleaseSpeed || unwanted < 0.5f)
+                && (!m_brakeStepping || m_footwork.plan().brakeSettled
+                    || m_brakeSeconds > BrakeMaximumSeconds))) {
+            // Nos passos, so termina com o corpo parando sobre a base (o ponto
+            // de captura entre os pes, a frente do de tras - o planejador
+            // diz): parado com a base toda adiante do corpo, ele escorregava
+            // de volta e os passos de parado, sem ajuda, davam dois ou tres
+            // passos para tras (a "cambaleada").
+            m_brakeGaitActive = false;
+        }
+        m_brakeSeconds = m_brakeGaitActive ? m_brakeSeconds + deltaTime : 0.0f;
+        if (m_brakeGaitActive) {
+            // Quase parado, a direcao da velocidade gira a toa (e ate inverte):
+            // fica a de quando ele ainda andava.
+            if (bodySpeed > 0.8f || m_brakeGaitDirection.lengthSquared() < 0.5f)
+                m_brakeGaitDirection = direction;
+            // Perfil de freada: desce ate o pedido no rumo (ou zero) no ritmo
+            // que os pes conseguem, sem se afastar do corpo real mais do que
+            // uma folga - a passada tem de acompanhar o chao que o corpo anda.
+            const float deceleration = BrakeDeceleration;
+            m_brakeGaitSpeed = std::max(std::max(0.0f, wantedAlong),
+                m_brakeGaitSpeed - deceleration * deltaTime);
+            m_brakeGaitSpeed = std::clamp(m_brakeGaitSpeed,
+                std::max(0.0f, bodySpeed - BrakeProfileLeash), bodySpeed);
+        }
+        // Rapido, a corrida desacelera (a perna de corrida e quem traz o pe a
+        // frente a tempo); devagar, passos de freada sem voo ate parar.
+        // (Pela velocidade do corpo: a do perfil fica abaixo dela e os passos
+        // comecavam com o corpo ainda a 3,7 m/s, os pes atras dele.)
+        const float stepSpeed = BrakeStepSpeed;
+        // A troca espera um pe da passada no chao, a frente do corpo (o
+        // apoio que ja freia - no maximo uma fase de voo): trocando com os
+        // dois no ar, os dois pousavam como passos de freada, um atras do
+        // outro, e a parada tinha sempre dois passos. Assim o pe plantado
+        // freia e so o outro pousa - um passo.
+        // (O apoio fisico do estimador: o "plantado" do clipe nem sempre marca
+        // o pe que ja esta no chao, e a espera ia ate o limite com o corpo
+        // freando a 0,4 m/s ainda na passada.)
+        bool plantedAhead = false;
+        for (const FootSupportEstimate3D& foot : physical.feet) {
+            if (!foot.supporting) continue;
+            plantedAhead = plantedAhead || dot(Vec3 { foot.soleCenterWorld.x - physical.centerOfMassWorld.x,
+                foot.soleCenterWorld.y - physical.centerOfMassWorld.y, 0.0f }, direction) > BrakePlantedAhead;
+        }
+        m_brakeStepWait = m_brakeGaitActive && !m_brakeStepping && bodySpeed < stepSpeed
+            ? m_brakeStepWait + deltaTime : 0.0f;
+        const bool stepReady = plantedAhead || m_brakeStepWait > BrakeStepWaitSeconds;
+        const bool enteringSteps = m_brakeGaitActive && !m_brakeStepping && bodySpeed < stepSpeed && stepReady;
+        m_brakeStepping = m_brakeGaitActive && (m_brakeStepping || (bodySpeed < stepSpeed && stepReady));
+        // Freando ja devagar (do trote), os passos comecam na hora, com a
+        // base no corpo desde o primeiro tick.
+        if (enteringSteps && m_brakeGait <= 0.0f) m_brakeAnchor = 1.0f;
+        m_sinceBrakeSeconds = m_brakeGaitActive ? 0.0f
+            : std::min(10.0f, m_sinceBrakeSeconds + deltaTime);
+        m_brakeGait = m_brakeGaitActive
+            ? std::min(1.0f, m_brakeGait + deltaTime / 0.08f)
+            : std::max(0.0f, m_brakeGait - deltaTime / BrakeFadeSeconds);
+        // Correndo e freando, a corrida ainda e corrida: a ajuda e a de quem
+        // corre (a passada de corrida ainda depende dela), e vai para a de
+        // parado conforme a velocidade cai ate os passos de freada.
+        // A ajuda de corrida fica inteira enquanto a passada de corrida freia
+        // (trotar sem ela ainda nao se sustenta) e sai depressa quando os
+        // passos de freada comecam - como numa freada que ja parte do trote.
+        const bool running = m_brakeGaitActive && !m_brakeStepping;
+        m_brakeRunShare = running
+            ? std::min(1.0f, m_brakeRunShare + deltaTime / 0.08f)
+            : std::max(0.0f, m_brakeRunShare - deltaTime / BrakeRunFadeSeconds);
+        m_telemetry.brakeRunShare = m_brakeRunShare;
+        m_telemetry.brakePhase = !m_brakeGaitActive ? 0 : m_brakeStepping ? 2 : 1;
+        // (Terminada a freada, a navegacao volta direto a capsula: o resto do
+        // perfil fazia o estado virar "andando" por um instante, o clipe de
+        // trote pegava os pes de volta e desmontava a base ja parado.)
+        if (m_brakeGait > 0.0f && m_brakeGaitActive) {
+            brakeNavigationVelocity = m_brakeGaitDirection * m_brakeGaitSpeed;
+            desiredPlanarVelocity += (brakeNavigationVelocity - desiredPlanarVelocity)
+                * m_brakeGait;
+        } else if (m_brakeGait > 0.0f) {
+            brakeNavigationVelocity = desiredPlanarVelocity;
+        }
+        m_telemetry.brakeRunVelocityWorld = brakeNavigationVelocity;
+    }
     const Vec3 rawAcceleration = clampMagnitude(
         (desiredPlanarVelocity - m_previousDesiredVelocity) / deltaTime,
         24.0f);
@@ -2141,8 +2361,11 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
             // A direcao pedida (as teclas), quando ha: a da capsula gira aos
             // poucos e a pelve passava pela diagonal ao trocar de "frente"
             // para "lado" antes de assentar no strafe.
-            const Vec3 intended { input.intent.requestedDirectionWorld.x,
-                input.intent.requestedDirectionWorld.y, 0.0f };
+            // Freando pela passada, o rumo e o do corpo: o pedido (nenhum, ou
+            // o contrario) giraria a pelve no meio da freada.
+            const Vec3 intended = m_brakeGait > 0.5f ? Vec3 {}
+                : Vec3 { input.intent.requestedDirectionWorld.x,
+                    input.intent.requestedDirectionWorld.y, 0.0f };
             const float travelYaw = intended.lengthSquared() > 0.01f
                 ? std::atan2(intended.y, intended.x)
                 : std::atan2(desiredPlanarVelocity.y, desiredPlanarVelocity.x);
@@ -2215,7 +2438,9 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
         // para a camera no primeiro meio segundo, e o giro entra aos poucos
         // ate ~1,5 s. Girando 100 graus logo na troca (taxa cheia), com um pe
         // ainda solto, ele inclinava 20 graus e caia de novo.
-        const float footing = smoothStep((m_sinceGetUpSeconds - 0.5f) / 1.0f);
+        // Recem-freado tambem: primeiro assenta a base da freada.
+        const float footing = smoothStep((m_sinceGetUpSeconds - 0.5f) / 1.0f)
+            * smoothStep((m_sinceBrakeSeconds - 0.3f) / 0.6f);
         // Parado, o giro e rapido (5 rad/s, 30 rad/s^2): a 2,35 rad/s e 10
         // rad/s^2 a pelve fazia ~25 graus no primeiro meio segundo, e o giro
         // parado parecia preso. Quem limita o que passa do apoio e o limite de
@@ -2340,10 +2565,18 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
         // jeito (a pelve cede depois de qualquer toque, mais abaixo).
         && !(input.forceDrivenRoot && moving && speed > 2.5f)) {
         desiredState = CharacterLocomotionState3D::Landing;
+    } else if (m_brakeStepping) {
+        // Freando pelos passos: a passada de corrida para; os pes sao do
+        // planejador (passos de freada) e o corpo fica na pose parada com a
+        // reacao de freada por cima.
+        desiredState = CharacterLocomotionState3D::Idle;
     } else if (moving) {
         // Sprint para a frente e de lado; recuando, so com o sprint de
-        // costas (sem ele, segurar sprint nao corre).
-        desiredState = input.sprinting
+        // costas (sem ele, segurar sprint nao corre). Correndo e freando, o
+        // ciclo e o da velocidade do corpo (o sprint ate ~4,6 m/s).
+        const bool sprintPace = m_brakeGaitActive
+            ? m_brakeGaitSpeed > BrakeSprintClipSpeed : input.sprinting;
+        desiredState = sprintPace
                 && (m_gaitDirection != CharacterGaitDirection3D::Backward
                     || animations.sprintBackward != nullptr)
             ? CharacterLocomotionState3D::Running
@@ -2645,8 +2878,9 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
     float terrainSlope = 0.0f;
     bool terrainIsRamp = false;
     float terrainDemand = 0.0f;
-    const Vec3 planarTravel { input.rootVelocityWorld.x,
+    Vec3 planarTravel { input.rootVelocityWorld.x,
         input.rootVelocityWorld.y, 0.0f };
+    planarTravel += (brakeNavigationVelocity - planarTravel) * m_brakeGait;
     if (input.groundAt && gaitMoving && input.grounded
         && planarTravel.lengthSquared() > 0.01f) {
         const Vec3 ahead = planarTravel.normalized();
@@ -3301,8 +3535,12 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
         const float sprintMomentum = smoothStep(
             (std::min(m_brakeEntrySpeed, physicalMomentum) - 5.5f) / 1.0f);
         const float hardDeceleration = smoothStep((deceleration - 8.0f) / 8.0f);
+        // Freando pela passada: pela velocidade que ainda falta tirar (do
+        // trote, metade; do sprint, inteira).
+        const float gaitBrake = m_brakeGait * BrakeReactionScale
+            * smoothStep((m_brakeGaitSpeed - 1.0f) / 4.5f);
         const float intensity = braceable
-            ? sprintMomentum * hardDeceleration
+            ? std::max(sprintMomentum * hardDeceleration, gaitBrake)
             : 0.0f;
         const Vec3 drive = heading.conjugate().rotate(
             m_brakeDirection * intensity);
@@ -3535,10 +3773,82 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
             * rootTilt).normalized()
         : (heading * accelerationTilt * rootTilt).normalized();
     m_previousTargetUp = targetRootOrientation.rotate({ 0.0f, 0.0f, 1.0f });
+    // Freando, a base da referencia no plano nao e a capsula: ela freia a
+    // 18 m/s2 e vem arrastada ate 0,5-0,7 m atras do corpo, e a referencia
+    // presa a ela fazia o pe pousar embaixo do corpo ou atras.
+    //  - Correndo e freando: uma referencia com estado, que anda no perfil
+    //    de freada e fica presa ao corpo por uma coleira - a capsula de uma
+    //    freada que o corpo consegue cumprir.
+    //  - Nos passos de freada: o proprio corpo (a pelve medida menos o
+    //    balanco do clipe); quem freia sao os pes.
+    Vec3 navigationRoot = input.rootPositionWorld;
+    if (m_brakeGait > 0.0f && !state.links.empty()) {
+        const Vec3 pelvis = state.links.front().position;
+        const Vec3 sway = heading.rotate({ m_rootOffset.x, m_rootOffset.y, 0.0f });
+        const Vec3 body { pelvis.x - sway.x, pelvis.y - sway.y, 0.0f };
+        if (!m_brakeReferenceValid) {
+            m_brakeReferencePosition = { input.rootPositionWorld.x, input.rootPositionWorld.y, 0.0f };
+            m_brakeReferenceValid = true;
+        }
+        m_brakeReferencePosition += Vec3 { brakeNavigationVelocity.x, brakeNavigationVelocity.y, 0.0f }
+            * deltaTime;
+        const Vec3 away = m_brakeReferencePosition - body;
+        const float leash = BrakeReferenceLeash;
+        if (away.length() > leash) m_brakeReferencePosition = body + away * (leash / away.length());
+        m_brakeAnchor = m_brakeStepping ? std::min(1.0f, m_brakeAnchor + deltaTime / 0.15f)
+            : std::max(0.0f, m_brakeAnchor - deltaTime / 0.15f);
+        const Vec3 braking = m_brakeReferencePosition + (body - m_brakeReferencePosition) * m_brakeAnchor;
+        navigationRoot.x += (braking.x - navigationRoot.x) * m_brakeGait;
+        navigationRoot.y += (braking.y - navigationRoot.y) * m_brakeGait;
+    } else {
+        m_brakeReferenceValid = false;
+        m_brakeAnchor = 0.0f;
+    }
+    // Parado depois de uma freada, a base da referencia fica onde o corpo
+    // parou: a capsula vem ate 10 cm atras dele (a folga com que ela segue o
+    // corpo) e, com a referencia voltando para ela, as pernas puxavam o corpo
+    // para tras ate ela - ele escorregava e a recuperacao de parado dava dois
+    // ou tres passos para tras. Com o pedido de movimento (ou depois de um
+    // empurrao) volta para a capsula.
+    if (!state.links.empty()) {
+        const Vec3 pelvis = state.links.front().position;
+        const Vec3 sway = heading.rotate({ m_rootOffset.x, m_rootOffset.y, 0.0f });
+        const Vec3 body { pelvis.x - sway.x, pelvis.y - sway.y, 0.0f };
+        // Com os pes assentados (o planejador diz que o ponto de captura ja
+        // cabe na base), a base passa a frear o resto da velocidade: as
+        // pernas seguram o corpo sobre os pes (tornozelo e quadril), em vez
+        // de deixa-lo seguir a 0,5 m/s ate um passo de recuperacao.
+        const bool settled = m_brakeGaitActive && m_brakeStepping
+            && m_footwork.plan().brakeSettled;
+        const bool leaving = input.intent.requestedDirectionWorld.lengthSquared() > 0.01f
+            || getUpActive || input.externalPerturbation > 0.2f
+            || (m_brakeGaitActive && !settled);
+        if (!leaving && !m_stopHolding
+            && (settled || (m_wasBrakeStepping && !m_brakeGaitActive))) {
+            m_stopRoot = body;
+            m_stopVelocity = { m_filteredCenterOfMassVelocity.x, m_filteredCenterOfMassVelocity.y, 0.0f };
+            m_stopRootBlend = 1.0f;
+            m_stopHolding = true;
+        }
+        if (leaving) m_stopHolding = false;
+        m_wasBrakeStepping = m_brakeGaitActive && m_brakeStepping;
+        m_stopRootBlend = leaving ? std::max(0.0f, m_stopRootBlend - deltaTime / 0.25f) : m_stopRootBlend;
+        if (m_stopRootBlend > 0.0f) {
+            const float speed = m_stopVelocity.length();
+            const float slower = std::max(0.0f, speed - StopHoldDeceleration * deltaTime);
+            m_stopVelocity = speed > 1e-4f ? m_stopVelocity * (slower / speed) : Vec3 {};
+            m_stopRoot += m_stopVelocity * deltaTime;
+            // Presa ao corpo com a mesma folga do proxy.
+            const Vec3 away = m_stopRoot - body;
+            if (away.length() > StopHoldLeash) m_stopRoot = body + away * (StopHoldLeash / away.length());
+            navigationRoot.x += (m_stopRoot.x - navigationRoot.x) * m_stopRootBlend;
+            navigationRoot.y += (m_stopRoot.y - navigationRoot.y) * m_stopRootBlend;
+        }
+    }
     Vec3 targetRootPosition = risingPose
         ? Vec3 { m_getUpAnchorWorld.x, m_getUpAnchorWorld.y,
             input.rootPositionWorld.z }
-        : input.rootPositionWorld;
+        : navigationRoot;
     // Tropecando, abaixa o centro de massa enquanto a perna livre encurta e
     // passa por cima. A referencia estudada faz isso de forma muito grande;
     // aqui usamos apenas o necessario para manter agilidade e alcance.
@@ -3604,9 +3914,23 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
         0.0f });
     targetRootPosition.z += m_rootOffset.z;
     // Freada: a pelve desce com a reacao (as pernas dobram pelo IK dos pes).
+    // Freando pelos passos, o agachamento vem antes do pe de freada pousar:
+    // um pe a 0,4-0,5 m a frente do quadril so alcanca o chao com a pelve
+    // 15-20 cm mais baixa (na referencia Run To Stop ela desce 25 cm). Sem
+    // isso o pe ficava pendurado procurando o chao e pousava tarde e perto.
+    {
+        const float wanted = m_brakeStepping && !getUpActive && !airbornePose
+            ? BrakeCrouchMeters
+                * smoothStep((m_brakeGaitSpeed - 0.6f) / BrakeCrouchSpeedSpan)
+            : 0.0f;
+        const float omega = BrakeCrouchOmega;
+        m_brakeCrouchVelocity += (omega * omega * (wanted - m_brakeCrouch)
+            - 2.0f * omega * m_brakeCrouchVelocity) * deltaTime;
+        m_brakeCrouch = std::max(0.0f, m_brakeCrouch + m_brakeCrouchVelocity * deltaTime);
+    }
     if (!getUpActive && !airbornePose) {
-        targetRootPosition.z -= 0.12f * std::min(1.0f,
-            m_telemetry.brakeReaction);
+        targetRootPosition.z -= std::max(m_brakeCrouch, 0.12f * std::min(1.0f,
+            m_telemetry.brakeReaction));
         // Carregando o pulo: agacha (as pernas dobram pelo IK dos pes).
         m_jumpCrouch += (std::clamp(input.jumpCrouch, 0.0f, 1.0f) - m_jumpCrouch)
             * (1.0f - std::exp(-12.0f * deltaTime));
@@ -3816,6 +4140,7 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
         input.rootVelocityWorld.y, 0.0f } * gaitVelocityScale;
     if (gaitStarting && speed > 0.001f)
         planarVelocity *= gaitCycleSpeed / speed;
+    planarVelocity += (brakeNavigationVelocity - planarVelocity) * m_brakeGait;
 
     struct FootGoal {
         bool active = false;
@@ -3912,6 +4237,17 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
         footInput.planningComVelocityWorld = m_filteredCenterOfMassVelocity;
         footInput.locomoting = movementRequested;
         footInput.desiredVelocityWorld = input.intent.requestedVelocityWorld;
+        footInput.braking = m_brakeStepping && footworkEnabled && onGround;
+        // Recem-freado (a base ainda e a da freada, as vezes com o corpo na
+        // borda de tras dela): acomodar ou girar tirava do chao justo o pe que
+        // segurava o corpo.
+        // (Ate a camera girar de verdade: ai o giro parado volta a valer.)
+        footInput.settleHold = m_sinceBrakeSeconds < BrakeSettleHoldSeconds
+            && std::abs(wrapAngle(m_lookYaw - m_facingYaw)) < 0.55f;
+        footInput.quietStop = (m_brakeGaitActive || m_sinceBrakeSeconds < BrakeSettleHoldSeconds)
+            && input.externalPerturbation < 0.2f;
+        footInput.brakeDirectionWorld = m_brakeGaitDirection;
+        footInput.brakeDecelerationMetersPerSecondSquared = BrakeDeceleration;
         for (std::size_t side = 0; side < m_feet.size(); ++side) {
             const FootPlant& foot = m_feet[side];
             if (!foot.valid) continue;
@@ -3994,7 +4330,7 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
     // freada. A mola precisa ter passado de metade da reacao antes disso:
     // residuos pequenos ficam no tronco e nunca criam a passada projetada.
     const float emergencyBrakeStep = smoothStep(
-        (m_brakeReaction.x - 0.55f) / 0.35f);
+        (m_brakeReaction.x - 0.55f) / 0.35f) * (1.0f - m_brakeGait);
     if (input.forceDrivenRoot && onGround && emergencyBrakeStep > 0.0f)
         balanceShift += m_brakeDirection * (0.14f * emergencyBrakeStep);
     // Recuperacao sem perder velocidade: amplia a passada no rumo do
@@ -4267,7 +4603,7 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
                 Vec3 { std::cos(clipTravel), std::sin(clipTravel), 0.0f });
             footInClip += Vec3 { std::cos(clipTravel), std::sin(clipTravel),
                 0.0f } * ((strideScale - 1.0f) * along);
-            Vec3 landingWorld = input.rootPositionWorld
+            Vec3 landingWorld = navigationRoot
                 + planarVelocity * secondsToTouchdown
                 + heading.rotate(footInClip) + balanceShift;
             // A pelve nao estara no prolongamento reto da velocidade atual:
@@ -4603,6 +4939,22 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
         - 2.0f * PelvisOmega * m_pelvisOffsetVelocity) * deltaTime;
     m_pelvisOffset += m_pelvisOffsetVelocity * deltaTime;
     targetRootPosition.z += m_pelvisOffset;
+    // Freando, as pernas de apoio cedem ou seguram, nunca estendem: a pelve
+    // de referencia nao fica acima da medida. Com o pe de freada a frente a
+    // pelve desce para alcanca-lo; quando o corpo passava por cima dele a
+    // referencia voltava a subir, a perna de apoio estendia (joelho de 90
+    // para 24 graus em 0,1 s) e lancava o corpo como uma vara de salto - 3 m/s
+    // para cima e 0,8 s no ar a 4,6 m/s.
+    // (So com o corpo ainda rapido: devagar, sem a ajuda, a pelve que cedia
+    // um pouco nunca mais subia - a teto vinha junto - e em 0,8 s de passos
+    // de lado o centro de massa descia de 0,98 para 0,77 m e ele desabava.)
+    if (m_brakeAnchor > 0.0f && input.forceDrivenRoot && !getUpActive && !state.links.empty()) {
+        const float ceiling = state.links.front().position.z + BrakeRiseMeters;
+        const float fast = smoothStep((std::hypot(m_filteredCenterOfMassVelocity.x,
+            m_filteredCenterOfMassVelocity.y) - BrakeCeilingSlowSpeed) / BrakeCeilingSpan);
+        if (targetRootPosition.z > ceiling)
+            targetRootPosition.z += (ceiling - targetRootPosition.z) * m_brakeAnchor * m_brakeGait * fast;
+    }
 
     // Pernas por IK ate cada pe (posicao e orientacao), com a pelve final.
     // Mesmo com a raiz livre (forceDrivenRoot), o IK parte da pelve
@@ -5496,6 +5848,9 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
     guide.rootRotationAuthority = rootAuthority;
     guide.releaseOnInteraction = true;
     guide.rootPositionWorld = targetRootPosition;
+    m_output.navigationAnchorWorld = targetRootPosition
+        + Vec3 { input.rootPositionWorld.x - navigationRoot.x,
+            input.rootPositionWorld.y - navigationRoot.y, 0.0f };
     guide.rootOrientationWorld = targetRootOrientation;
     const Vec3 finiteDifferenceVelocity =
         (targetRootPosition - m_previousRootPosition) / deltaTime;

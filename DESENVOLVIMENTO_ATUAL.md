@@ -5,7 +5,62 @@
 > registrar não apenas *o que* mudou, mas também *por que*, como foi validado e
 > quais limitações ainda existem.
 
-**Última atualização:** 2 de outubro de 2026
+**Última atualização:** 3 de outubro de 2026
+
+## Freada sem ajuda parada: imediata, um passo, sem prender o comando (03/10/2026)
+
+Meta de outubro: movimentação natural com o mínimo de ajuda auxiliar. Com a
+ajuda parada em 0%, soltar o comando no trote cambaleava e no sprint quase
+sempre caía de costas (linha de base: 32 de 32 sprints e 12 de 32 trotes no
+chão na varredura `MATTERENGINE_TEST_FILTER=sweepbrake`, 64 casos).
+
+A freada agora é uma máquina de estados própria em `CharacterLocomotion3D`,
+com os passos em `ContactFootwork3D` (`StepReason3D::Brake`):
+
+- **Corrida freando** (acima de 1,8 m/s): a passada de corrida continua num
+  perfil de desaceleração (12 m/s², preso ao corpo por uma folga), com a
+  parcela da ajuda de corrida (`brakeRunVelocityWorld`/`brakeRunShare` no
+  intent). A referência da raiz é presa ao corpo; a cápsula segue o corpo
+  pela âncora `navigationAnchorWorld`.
+- **Passos de freada** (abaixo de 1,8 m/s): só as pernas. A troca espera um pé
+  apoiado (contato físico) no máximo 5 cm atrás do centro de massa, até
+  0,15 s. Esse pé fica onde está e freia; só o outro dá o passo, pousando pelo
+  pêndulo invertido (d = h·a/g, nunca além do ponto de captura). Trocar com os
+  dois pés no ar dava sempre dois passos.
+- **No máximo 2 passos de freada.** Depois deles, ou quando o ponto de captura
+  sai da base para o lado, a freada entrega para o equilíbrio de parado
+  (`brakeYield`). Antes ela esperava o corpo ficar devagar com a recuperação
+  desligada, e um corpo escorregando de lado caía.
+- **O comando nunca fica preso:** qualquer direção que não seja a contrária
+  encerra a freada no mesmo tick. O sentido contrário encerra abaixo de
+  2 m/s. Com 1 m/s, a inversão levava 0,76/0,44 s (sprint/trote, 1 queda em
+  8); com 2 m/s leva 0,69/0,38 s, sem queda.
+- **Parado depois da freada:** a base freia o resto da velocidade do corpo
+  (2 m/s²), em vez de ficar fixa onde a freada terminou, que puxava o corpo
+  para trás. Na decisão de recuperação, por 1,5 s, o pé até 3 cm acima do
+  chão conta como apoio: o balanço tirava um pé do chão por um instante e
+  saía passo à toa. Aplicado a tudo, os empurrões contínuos caíam mais
+  (42 → 45-48 em 216); por isso fica só nessa janela, sem força externa.
+- **O teto da pelve** nos passos (a perna de apoio não estende, contra o
+  "salto com vara") só vale com o corpo rápido: some entre 1,2 e 0,5 m/s.
+  Devagar e sem ajuda, a pelve cedia e nunca mais subia; em 0,8 s de passos de
+  lado o centro de massa desceu de 0,98 para 0,77 m e ele desabou.
+
+**Medição** (laboratório: E5, ajuda parada 0%, andando 100%, variação; 5
+sementes, 320 paradas): 0 quedas. Parada em ~1,1 s do sprint e ~0,7 s do
+trote. Um passo de freada só em 11-16 de 32 sprints e 19-24 de 32 trotes;
+máximo 2. Ainda saem ~1 passo de recuperação e ~0,3 de acomodação por parada
+(mais o giro para a câmera, nos casos em que o rumo difere dela).
+
+**Regressões:** empurrões 42/216 (idêntico); inversão 0/8 e 0/8; marcha 0/8
+e 0/8; câmera balançando 0/8 e 0/8 (sem a freada, 7/8 e 3/8). Retomar no
+meio da freada (`XBRAKERESUME="atraso,graus"` na `sweepbrake`): a resposta a
+1,5 m/s no novo rumo fica em 0,0-0,27 s, quase igual a sem a freada (0,0-0,29 s),
+e sem quedas. O teste `freada` (padrão) passa. Os grupos que já falhavam
+antes continuam falhando: baseline, disturb, fall, lean, polish e "Parado na
+escada, pé fora do degrau".
+
+Aprovação visual com o usuário no laboratório: "está aceitável".
 
 ## Reconstrução da arrancada e correção da corrida agachada (02/10/2026)
 

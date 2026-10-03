@@ -308,6 +308,11 @@ struct Scenario {
     float forceStart = 1.0f;
     float forceSeconds = 1.0e9f;
     Vec3 dragVelocity {};
+    // Resposta ao comando: a partir de probeStart, quando o centro de massa
+    // passa a ir probeSpeed m/s em probeDirection (retomar no meio da freada).
+    float probeStart = -1.0f;
+    Vec3 probeDirection {};
+    float probeSpeed = 1.5f;
     // Outro boneco nascendo deitado: inclinacao (graus, + de bruços, em torno
     // do lado dele), rolagem (de lado) e altura da pelve.
     float npcSpawnPitchDegrees = 0;
@@ -422,6 +427,7 @@ struct ScenarioResult {
     // Inversao (XGAITINVERT): quando o pedido virou de sentido e quando o
     // corpo passou a ir a metade da nova velocidade no novo rumo.
     float gaitReverseAt = -1, gaitReversedAt = -1;
+    float probeReachedAt = -1;
     // Telemetria do motor (XMOTORSUM): por junta (quadril/joelho/tornozelo
     // esquerdo e direito) e papel do pe (apoio / no ar).
     struct MotorSummary { int ticks = 0; int saturatedTicks = 0; float maxSaturation = 0;
@@ -631,7 +637,7 @@ ScenarioResult runScenario(const Scenario& scenario) {
     // posicoes do pe, a carga e as juntas da perna, capturadas em memoria e
     // impressas no fim (janela do primeiro passo de marcha desse pe).
     const int stepTraceSide = std::getenv("XSTEPTRACE") ? std::atoi(std::getenv("XSTEPTRACE")) : -1;
-    if (stepTraceSide >= 0) locomotion.setFootTraceEnabled(true);
+    if (stepTraceSide >= 0 || std::getenv("XBRAKETRACE")) locomotion.setFootTraceEnabled(true);
     struct StepTraceSample {
         float t; int phase; int reason; std::uint32_t stepId; float load; int supporting; int evidence; int memory;
         FootTrace3D trace;
@@ -919,6 +925,8 @@ ScenarioResult runScenario(const Scenario& scenario) {
         intent.footGround = input.footGround;
         intent.followVelocityWorld = follow;
         intent.requestedVelocityWorld = input.intent.requestedVelocityWorld;
+        intent.brakeRunVelocityWorld = locomotion.telemetry().brakeRunVelocityWorld;
+        intent.brakeRunShare = locomotion.telemetry().brakeRunShare;
         intent.physicalState = &locomotion.physicalState();
         intent.contactPlan = &locomotion.contactPlan();
         controller.update(profile, state, output.guide, intent, dt);
@@ -959,7 +967,7 @@ ScenarioResult runScenario(const Scenario& scenario) {
             scene->placeCharacter({root.x, root.y, 0}, settings);
         } else {
             follow = navigationFollowVelocity3D(state.links.front().position,
-                output.guide.rootPositionWorld,
+                output.navigationAnchorWorld,
                 0.10f * (1.0f - std::clamp(physical.perturbation, 0.0f, 1.0f)));
         }
         if (scenario.disturb) scenario.disturb(*scene, t, state);
@@ -1054,6 +1062,8 @@ ScenarioResult runScenario(const Scenario& scenario) {
             npcIntent.followVelocityWorld = npcAnchorVelocity;
             npcIntent.physicalState = &npcLocomotion.physicalState();
             npcIntent.contactPlan = &npcLocomotion.contactPlan();
+            npcIntent.brakeRunVelocityWorld = npcLocomotion.telemetry().brakeRunVelocityWorld;
+            npcIntent.brakeRunShare = npcLocomotion.telemetry().brakeRunShare;
             npcController.update(profile, other, npcOutput.guide, npcIntent, dt);
             applyCharacterControl3D(*scene, npcHandle, npcOutput, &npcController.output(), npcDown);
             npcAnchorVelocity = navigationFollowVelocity3D(pelvis.position,
@@ -1078,6 +1088,73 @@ ScenarioResult runScenario(const Scenario& scenario) {
                 std::hypot(capsule.velocity.x, capsule.velocity.y), locomotion.telemetry().terrainSpeedLimit,
                 locomotion.telemetry().fallReflex, locomotion.telemetry().fallCommit,
                 physical.assistEnvelope);
+        }
+        if (std::getenv("XBRAKETRACE") && tick % (std::getenv("XFINE") ? 1 : 3) == 0 && t > (std::getenv("XFROM") ? std::atof(std::getenv("XFROM")) : 4.8f)
+                && t < (std::getenv("XTO") ? std::atof(std::getenv("XTO")) : 6.5f)) {
+            // Freada: no rumo da velocidade do corpo, a posicao de cada pe e
+            // do ponto de captura contra o centro de massa (m, + a frente),
+            // a inclinacao da pelve e do peito (graus, + para a frente), o
+            // estado, a capsula, a ajuda na pelve e o plano dos pes.
+            const auto& ps = locomotion.physicalState();
+            const auto& plan = locomotion.contactPlan();
+            Vec3 v = ps.centerOfMassVelocityWorld; v.z = 0;
+            const float speedNow = v.length();
+            const Vec3 travel = result.gaitLastRequest.lengthSquared() > 1e-6f
+                ? Vec3{result.gaitLastRequest.x, result.gaitLastRequest.y, 0}.normalized() : Vec3{1, 0, 0};
+            const Vec3 com = ps.centerOfMassWorld;
+            const auto ahead = [&](Vec3 p) { return dot(Vec3{p.x - com.x, p.y - com.y, 0}, travel); };
+            const auto pitchOf = [&](Quaternion q) {
+                const Vec3 up = q.rotate({0, 0, 1});
+                return std::asin(std::clamp(dot(up, travel), -1.0f, 1.0f)) * 57.3f;
+            };
+            const float capture = dot(v, travel) / std::max(0.1f, ps.captureOmega);
+            std::printf("REF %.3f fase-freada %d assentado %d ref-corpo %+.2f %+.2f capsula-corpo %+.2f %+.2f\n", t, locomotion.telemetry().brakePhase, locomotion.contactPlan().brakeSettled ? 1 : 0,
+                output.guide.rootPositionWorld.x - after.links[0].position.x, output.guide.rootPositionWorld.y - after.links[0].position.y,
+                capsule.position.x - after.links[0].position.x, capsule.position.y - after.links[0].position.y);
+            std::printf("FREADA %.3f est %d run %.2f v %.2f along %+.2f | pe %+.2f%s %+.2f%s captura %+.2f | pelve %+5.1f peito %+5.1f | Fpelve %+5.0f req %+5.1f aloc %+5.1f | fase %d%d razao %d%d segue %d%d | brake %.2f bal %.2f com z %.2f\n",
+                t, static_cast<int>(bodyState), locomotion.telemetry().brakeRunShare, speedNow,
+                dot(v, travel),
+                ahead(after.links[feet[0]].position), ps.feet[0].supporting ? "*" : " ",
+                ahead(after.links[feet[1]].position), ps.feet[1].supporting ? "*" : " ",
+                capture, pitchOf(after.links[0].orientation), pitchOf(after.links[chest].orientation),
+                dot(physical.rootForceWorld, travel),
+                dot(physical.requestedComAccelerationWorld, travel), dot(physical.allocatedComAccelerationWorld, travel),
+                static_cast<int>(plan.feet[0].phase), static_cast<int>(plan.feet[1].phase),
+                static_cast<int>(plan.feet[0].reason), static_cast<int>(plan.feet[1].reason),
+                plan.feet[0].followingGait ? 1 : 0, plan.feet[1].followingGait ? 1 : 0,
+                locomotion.telemetry().brakeReaction, locomotion.telemetry().balanceReaction, com.z);
+            if (std::getenv("XBRAKESPINE")) {
+                // Coluna: alvo e medido (flexao, eixo 1) de abdomen, peito e
+                // peito superior, e o quadril (coxa, eixo 1) dos dois lados.
+                std::printf("   coluna");
+                for (const char* id : {"Abdomen", "Chest", "UpperChest", "LeftThigh", "RightThigh", "LeftShin", "RightShin"}) {
+                    for (const auto& target : output.driveTargets) {
+                        if (profile.links[target.linkIndex].id != id) continue;
+                        const int axis = std::string(id).find("Shin") != std::string::npos ? 0 : 1;
+                        if (static_cast<int>(target.axis) != axis) continue;
+                        std::printf(" %s %+.0f/%+.0f", id, target.positionRadians * 57.3f,
+                            state.joints[target.linkIndex].positionRadians[static_cast<std::size_t>(axis)] * 57.3f);
+                    }
+                }
+                for (std::size_t side = 0; side < 2; ++side) {
+                    const auto& trace = locomotion.telemetry().footTrace[side];
+                    if (trace.valid)
+                        std::printf(" | pe%zu alvo %+.2f fis %+.2f %s%s", side, ahead(trace.target), ahead(trace.physical),
+                            locomotion.telemetry().footPlanted[side] ? "T" : "-",
+                            locomotion.telemetry().footworkAnchorUnreachable[side] ? "U" : "");
+                }
+                std::printf(" | lean %+.1f | pelve z %.3f alvo %.3f vz %+.2f com vz %+.2f\n", locomotion.telemetry().forwardLeanRadians * 57.3f,
+                    after.links[0].position.z, output.guide.rootPositionWorld.z, after.links[0].linearVelocity.z,
+                    ps.centerOfMassVelocityWorld.z);
+            }
+            for (std::size_t side = 0; side < 2; ++side) {
+                const auto& foot = plan.feet[side];
+                if (foot.followingGait || (foot.phase != FootPhase3D::Swing && foot.phase != FootPhase3D::TouchdownSearch)) continue;
+                std::printf("   pe %zu razao %d balanco %.2f/%.2f alvo %+.2f agora %+.2f altura %.3f\n", side,
+                    static_cast<int>(foot.reason), foot.swingSeconds, foot.swingDurationSeconds,
+                    ahead(foot.goalWorld), ahead(after.links[feet[side]].position),
+                    after.links[feet[side]].position.z);
+            }
         }
         if (std::getenv("XLEANTRACE") && tick % 6 == 0 && t > (std::getenv("XFROM") ? std::atof(std::getenv("XFROM")) : 1.9f)
                 && t < (std::getenv("XTO") ? std::atof(std::getenv("XTO")) : 3.5f)) {
@@ -1350,6 +1427,10 @@ ScenarioResult runScenario(const Scenario& scenario) {
                 const Vec3 requested = input.intent.requestedVelocityWorld;
                 const float requestedSpeed = std::hypot(requested.x, requested.y);
                 const Vec3 comVelocity = locomotion.physicalState().centerOfMassVelocityWorld;
+                if (scenario.probeStart >= 0.0f && t >= scenario.probeStart && result.probeReachedAt < 0.0f
+                    && comVelocity.x * scenario.probeDirection.x + comVelocity.y * scenario.probeDirection.y
+                        >= scenario.probeSpeed)
+                    result.probeReachedAt = t;
                 if (requestedSpeed > 0.2f) {
                     if (result.gaitMoveStart < 0) result.gaitMoveStart = t;
                     result.gaitMoveEnd = t;
@@ -3972,6 +4053,122 @@ void gaitSweep() {
     }
 }
 
+// Varredura de freada: corre numa das 8 direcoes (trote ou sprint) e solta o
+// comando em 4 momentos diferentes da passada (2,6 a 3,35 s de corrida).
+// Mede queda, tempo ate parar (corpo abaixo de 0,2 m/s), a pior inclinacao e
+// a velocidade quando caiu. Paridade com o laboratorio: E5, ajuda parada e
+// andando como nele (XRETAIN/XWALKASSIST), variacao ligada, sem XLEAD.
+void brakeSweep() {
+    int part = 0, parts = 1;
+    if (const char* p = std::getenv("XSWEEPPART")) std::sscanf(p, "%d/%d", &part, &parts);
+    int index = 0;
+    for (const bool sprint : { false, true }) {
+        for (int heading = 0; heading < 360; heading += 45) {
+            for (const float run : { 2.6f, 2.85f, 3.1f, 3.35f }) {
+                if (index++ % parts != part) continue;
+                const float a = heading * 3.14159265f / 180;
+                const Vec3 direction {std::cos(a), std::sin(a), 0};
+                // Retomar no meio da freada (XBRAKERESUME "atraso,graus"): solto
+                // o comando, depois de `atraso` s pede de novo, girado `graus`
+                // do rumo da corrida, e mede quando o corpo vai a 1,5 m/s nele.
+                float resumeDelay = -1.0f, resumeDegrees = 0.0f;
+                if (const char* v = std::getenv("XBRAKERESUME"))
+                    std::sscanf(v, "%f,%f", &resumeDelay, &resumeDegrees);
+                const float resumeYaw = resumeDegrees * 3.14159265f / 180.0f;
+                const Vec3 resumeDirection = Quaternion::fromAxisAngle({ 0.0f, 0.0f, 1.0f }, resumeYaw).rotate(direction);
+                const float resumeAt = 2.0f + run + resumeDelay;
+                Scenario scenario {"varredura de freada", 2.0f + run + 2.5f, {}, [=](float t) {
+                    ScenarioCommand c;
+                    if (t >= 2.0f && t < 2.0f + run) c.move = direction;
+                    if (resumeDelay >= 0.0f && t >= resumeAt) c.move = resumeDirection;
+                    c.sprint = sprint;
+                    return c;
+                }, {}};
+                if (resumeDelay >= 0.0f) {
+                    scenario.probeStart = resumeAt;
+                    scenario.probeDirection = resumeDirection;
+                }
+                const ScenarioResult r = runScenario(scenario);
+                if (resumeDelay >= 0.0f) {
+                    std::printf("RETOMA %s %3d %.2f quedas %d resposta %.2f\n", sprint ? "sprint" : "trote",
+                        heading, run, r.falls, r.probeReachedAt >= 0.0f ? r.probeReachedAt - resumeAt : -1.0f);
+                    continue;
+                }
+                const float stop = r.gaitStoppedAt >= 0 && r.gaitMoveEnd >= 0 ? r.gaitStoppedAt - r.gaitMoveEnd : -1;
+                int brakeSteps = 0;
+                std::array<int, 10> byReason {};
+                for (const auto& step : r.plannerSteps)
+                    if (step.releasedAt >= r.gaitMoveEnd) {
+                        ++brakeSteps;
+                        ++byReason[std::min<std::size_t>(9, static_cast<std::size_t>(step.reason))];
+                    }
+                std::printf("FREIO %s %3d %.2f quedas %d parou %.2f inclinacao %.1f queda-em %.2f passos %d freada %d recuperacao %d acomodacao %d giro %d outros %d\n",
+                    sprint ? "sprint" : "trote", heading, run, r.falls, stop, r.worstTilt,
+                    r.firstFallSeconds >= 0 && r.gaitMoveEnd >= 0 ? r.firstFallSeconds - r.gaitMoveEnd : -1.0f,
+                    brakeSteps, byReason[static_cast<std::size_t>(StepReason3D::Brake)],
+                    byReason[static_cast<std::size_t>(StepReason3D::Recovery)],
+                    byReason[static_cast<std::size_t>(StepReason3D::Settle)],
+                    byReason[static_cast<std::size_t>(StepReason3D::Turn)],
+                    brakeSteps - byReason[static_cast<std::size_t>(StepReason3D::Brake)]
+                        - byReason[static_cast<std::size_t>(StepReason3D::Recovery)]
+                        - byReason[static_cast<std::size_t>(StepReason3D::Settle)]
+                        - byReason[static_cast<std::size_t>(StepReason3D::Turn)]);
+            }
+        }
+    }
+}
+
+// Regressao da freada (a configuracao do laboratorio: E5, ajuda parada em
+// 0%, andando em 100%, variacao de movimento). Soltando o comando em trote
+// ou sprint nas 8 direcoes, ele para sem cair: antes, com a ajuda parada em
+// 0%, todo sprint caia (32 de 32 na varredura de freada) e 12 de 32 trotes.
+// A ajuda nao arrasta mais a pelve: do sprint ele leva ~1,1 s, do trote
+// ~0,7 s (nas referencias Running To Stop e Run To Stop, 1,6 e 0,55 s), com
+// um passo de freada na maioria das paradas e no maximo dois.
+void brakeChecks() {
+    struct Saved { const char* name; std::string value; bool set; };
+    std::vector<Saved> saved;
+    const std::array<std::pair<const char*, const char*>, 5> lab {{
+        {"XE5ANIM", "1"}, {"XRETAIN", "0"}, {"XWALKASSIST", "1"}, {"XVARIETY", "1"}, {"XNOLEAD", "1"}}};
+    for (const auto& [name, value] : lab) {
+        const char* old = std::getenv(name);
+        saved.push_back({name, old ? old : "", old != nullptr});
+        setenv(name, value, 1);
+    }
+    int falls = 0;
+    float slowestSprint = 0.0f, slowestTrot = 0.0f;
+    bool allStopped = true;
+    int index = 0;
+    const int only = std::getenv("XFREADACASE") ? std::atoi(std::getenv("XFREADACASE")) : -1;
+    for (const bool sprint : { false, true }) {
+        for (int heading = 0; heading < 360; heading += 45) {
+            if (only >= 0 && index++ != only) continue;
+            const float a = heading * 3.14159265f / 180;
+            const Vec3 direction {std::cos(a), std::sin(a), 0};
+            Scenario scenario {"freada", 7.6f, {}, [=](float t) {
+                ScenarioCommand c;
+                if (t >= 2.0f && t < 5.1f) c.move = direction;
+                c.sprint = sprint;
+                return c;
+            }, {}};
+            const ScenarioResult r = runScenario(scenario);
+            const float stop = r.gaitStoppedAt >= 0 && r.gaitMoveEnd >= 0 ? r.gaitStoppedAt - r.gaitMoveEnd : -1;
+            std::printf("FREADA %s %3d quedas %d parou em %.2f s inclinacao %.1f\n",
+                sprint ? "sprint" : "trote", heading, r.falls, stop, r.worstTilt);
+            falls += r.falls;
+            if (stop < 0.0f) allStopped = false;
+            (sprint ? slowestSprint : slowestTrot) = std::max(sprint ? slowestSprint : slowestTrot, stop);
+        }
+    }
+    for (const Saved& entry : saved) {
+        if (entry.set) setenv(entry.name, entry.value.c_str(), 1);
+        else unsetenv(entry.name);
+    }
+    require(falls == 0, "Soltando o comando correndo (ajuda parada em 0%) ele caiu");
+    require(allStopped && slowestSprint < 2.5f && slowestTrot < 1.5f,
+        "A freada nao parou o corpo a tempo");
+}
+
 // Regressao da arrancada física. O FBX Idle To Sprint chegou a comandar a
 // raiz/pernas inteiras também no trote: peito/pelve passavam de 45 graus, os
 // dois pés perdiam o apoio e o corpo caía antes de alcançar a velocidade.
@@ -4048,7 +4245,9 @@ int main() {
         if (which == "sweepstairs") stairsSweep();
         if (which == "sweepforce") continuousForceSweep();
         if (which == "sweepgait") gaitSweep();
+        if (which == "sweepbrake") brakeSweep();
         if (which.empty() || which == "startup") startupGaitChecks();
+        if (which.empty() || which == "freada") brakeChecks();
         if (which == "benchtransfer") transferBench();
         if (which == "sweep") pressureSweep();
         if (which.empty() || which == "fall") fallScenarios();

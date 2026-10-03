@@ -483,9 +483,13 @@ void AdaptivePhysicalCharacter3D::update(const RagdollProfile3D& profile,
             * m_assistEnvelope);
     out.supportAcceleration = 0;
     float legVerticalAcceleration = 0.0f;
-    // As pernas carregando o corpo andando (E5): a referencia anda.
+    // As pernas carregando o corpo andando (E5): a referencia anda. Correndo
+    // e freando, a velocidade e a do perfil de freada.
+    const float brakeRunShare = std::clamp(intent.brakeRunShare, 0.0f, 1.0f);
+    const Vec3 requestedVelocity = brakeRunShare > 0.001f
+        ? planar(intent.brakeRunVelocityWorld) : planar(intent.requestedVelocityWorld);
     const bool legsWalking = m_settings.jointWhileWalking
-        && planar(intent.requestedVelocityWorld).length() > LegWalkingMinimumSpeed;
+        && requestedVelocity.length() > LegWalkingMinimumSpeed;
     bool pelvisSupportInLegsMode = false;
     // Decolagem: a janela de impulso comeca quando a capsula decola com o
     // corpo apoiado e acaba quando ele sobe na velocidade dela.
@@ -598,9 +602,11 @@ void AdaptivePhysicalCharacter3D::update(const RagdollProfile3D& profile,
     const bool legsCarry = weightShare > 0.001f;
     const float discreet = std::clamp(m_settings.walkingAssistScale, 0.0f, 1.0f);
     const float standingAssist = std::clamp(m_settings.legsAssistRetained, 0.0f, 1.0f);
-    const float walkingAssist = legsWalking ? discreet
-        + (1.0f - discreet) * std::clamp(intent.terrainDemand, 0.0f, 1.0f)
-        : standingAssist;
+    const float runningAssist = discreet
+        + (1.0f - discreet) * std::clamp(intent.terrainDemand, 0.0f, 1.0f);
+    const float walkingAssist = !legsWalking ? standingAssist
+        : brakeRunShare > 0.001f ? standingAssist + (runningAssist - standingAssist) * brakeRunShare
+        : runningAssist;
     const float physicalWalkingShare = legsWalking ? 1.0f - walkingAssist : 1.0f;
     // Nas pernas a correcao de posicao e mais lenta (4 Hz, contra 14 na
     // pelve): pelo centro de pressao o corpo so faz o que cabe nos pes; o
@@ -614,7 +620,7 @@ void AdaptivePhysicalCharacter3D::update(const RagdollProfile3D& profile,
     // para a frente na saida) - o lugar do pe faz o resto.
     float walkingDriveRamp = 1.0f;
     if (legsWalking) {
-        const Vec3 wanted = planar(intent.requestedVelocityWorld);
+        const Vec3 wanted = requestedVelocity;
         const float wantedSpeed = wanted.length();
         const float along = wantedSpeed > 0.001f
             ? std::max(0.0f, dot(planar(physical->centerOfMassVelocityWorld),
@@ -627,7 +633,7 @@ void AdaptivePhysicalCharacter3D::update(const RagdollProfile3D& profile,
             * startup * startup * (3.0f - 2.0f * startup);
     }
     const Vec3 legPlanarAcceleration = legsWalking
-        ? limit(planar(intent.requestedVelocityWorld - physical->centerOfMassVelocityWorld)
+        ? limit(planar(requestedVelocity - physical->centerOfMassVelocityWorld)
             * LegWalkingVelocityGain, LegWalkingAcceleration)
                 * (balanceShare * walkingDriveRamp * physicalWalkingShare)
         : intentAcceleration * balanceShare;
@@ -869,7 +875,7 @@ void AdaptivePhysicalCharacter3D::update(const RagdollProfile3D& profile,
             // passo - regime em ~57% do pedido.) Na arrancada (parado) e igual.
             Vec3 dampedVelocity = planar(physical->centerOfMassVelocityWorld);
             if (legsWalking) {
-                const Vec3 wanted = planar(intent.requestedVelocityWorld);
+                const Vec3 wanted = requestedVelocity;
                 const float wantedSpeed = wanted.length();
                 if (wantedSpeed > 0.001f) {
                     const Vec3 direction = wanted * (1.0f / wantedSpeed);

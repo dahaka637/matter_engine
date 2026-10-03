@@ -804,6 +804,11 @@ void WorkbenchApp::updateActiveRagdolls(float deltaTime) {
         // forçado a 1, ignorando completamente o slider "Ajuda andando".
         physicalIntent.requestedVelocityWorld =
             command.intent.requestedVelocityWorld;
+        // Freada correndo: a velocidade do perfil e a parcela da ajuda de
+        // quem corre (da locomocao).
+        physicalIntent.brakeRunVelocityWorld =
+            instance.locomotion.telemetry().brakeRunVelocityWorld;
+        physicalIntent.brakeRunShare = instance.locomotion.telemetry().brakeRunShare;
         physicalIntent.navigationRootWorld = command.rootPositionWorld;
         physicalIntent.airborne = !command.grounded;
         physicalIntent.manipulated = command.manipulated;
@@ -841,7 +846,7 @@ void WorkbenchApp::updateActiveRagdolls(float deltaTime) {
             m_characterFollowVelocity = adaptive && !down
                 ? navigationFollowVelocity3D(
                     instance.physicsState.links.front().position,
-                    output.guide.rootPositionWorld, followSlack)
+                    output.navigationAnchorWorld, followSlack)
                 : Vec3 {};
         }
         instance.previousAnimationPose =

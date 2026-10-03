@@ -10,7 +10,6 @@
 
 namespace MatterEngine {
 namespace {
-
 constexpr float Pi = 3.14159265358979323846f;
 
 // Passo de acomodacao: pe apoiado a mais de 12 cm (ou 34 graus) de onde a
@@ -72,6 +71,68 @@ constexpr float SearchDescentSpeed = 0.30f;
 constexpr float SearchDescentLimit = 0.30f;
 // Esbarrou em algo no caminho: o arco sobe isto a mais.
 constexpr float BlockedExtraClearance = 0.06f;
+
+// Passos de freada (o planejador dono dos pes enquanto o corpo freia):
+// calibrados pela varredura de freada (MATTERENGINE_TEST_FILTER=sweepbrake)
+// e medidos contra Run To Stop / Running To Stop (pe de freada 0,43-0,60 m a
+// frente do centro de massa, sem voo, base final escalonada ate ~0,45 m).
+// Balanco (s): o tempo de um passo de freada (em qualquer velocidade dos
+// passos: a corrida para acima de ~2,2 m/s); assumindo um pe ja no ar, uma
+// fracao dele.
+constexpr float BrakeSwingSeconds = 0.20f;
+constexpr float BrakeTakeoverSwingShare = 0.8f;
+// Distancia do pe de freada a frente do centro de massa no toque: d = h a /
+// g pela desaceleracao (m/s2), entre o minimo e o alcance de cada rumo em
+// relacao ao corpo (m) - a frente o quadril flexiona muito, de lado e para
+// tras bem menos.
+constexpr float BrakePlaceDeceleration = 5.5f;
+constexpr float BrakePlaceMinimum = 0.15f;
+constexpr float BrakePlaceForward = 0.55f;
+constexpr float BrakePlaceBackward = 0.32f;
+constexpr float BrakePlaceSideways = 0.40f;
+// Passos de freada por freada, no maximo (o pedido do usuario: freada
+// imediata, um passo se der, dois se precisar; depois o equilibrio de parado
+// assume).
+constexpr int BrakeMaximumSteps = 2;
+// O pouso devagar fica isto atras do ponto de captura (m), andando para a
+// frente/tras e de lado.
+constexpr float BrakeStraddle = 0.06f;
+constexpr float BrakeStraddleSideways = 0.12f;
+// Base: meia largura de cada pe ao lado da trajetoria, a largura de quadril
+// do passo que fecha de lado, e o alcance a partir do pe de apoio (m).
+constexpr float BrakeHalfWidth = 0.11f;
+constexpr float BrakeHipWidth = 0.22f;
+constexpr float BrakeReach = 1.0f;
+// Arco do balanco (m): sobe com a velocidade (o pe vem de longe atras do
+// corpo e raspava no chao).
+constexpr float BrakeLift = 0.07f;
+constexpr float BrakeLiftPerSpeed = 0.02f;
+constexpr float BrakeLiftMaximum = 0.20f;
+// Tocando o chao a frente do centro de massa (m) depois de metade do passo,
+// pousa ali.
+constexpr float BrakeTouchAhead = 0.10f;
+// Quando sai um passo: o ponto de captura alem do pe da frente (m), ou a
+// base comprida demais ja devagar (m) - so se o ponto de captura nao saiu
+// dela para o lado: entao a freada entrega para a recuperacao; de lado
+// (rumo a mais de ~45 graus do corpo), o pe de dentro fecha alem desta
+// largura (m).
+constexpr float BrakeStepTrigger = 0.08f;
+constexpr float BrakeCloseStance = 0.75f;
+constexpr float BrakeLateral = 0.70f;
+constexpr float BrakeSideClose = 0.38f;
+// Pe assumido da passada que ja estava no chao alem disto atras do centro
+// de massa (m), com o outro no ar: pousa atras do corpo (m), como o apoio de
+// tras do afundo.
+constexpr float BrakeRearPlantAhead = 0.10f;
+constexpr float BrakeRearBehind = 0.15f;
+// Parando de uma freada, o pe ate isto acima do chao (m) conta como apoio na
+// decisao de recuperacao.
+constexpr float RecoveryNearGround = 0.03f;
+// O ponto de captura mais que isto (m) atras do pe de tras: a freada nao
+// terminou - um passo curto para tras.
+constexpr float BrakeSettleMargin = 0.03f;
+// Pe apoiado deslizando mais que isto (m/s): a ancora vai junto.
+constexpr float BrakeSlideSpeed = 0.3f;
 
 // Normal que pode inclinar a sola: piso (ate ~25 graus). Uma quina de degrau
 // devolve a normal da aresta (medido: 40 graus) - pe nenhum pousa assim.
@@ -265,6 +326,9 @@ void ContactFootwork3D::reset(const RagdollProfile3D& profile) {
     m_sinceLocomotionTouchdown = 10.0f;
     m_locomotionPeriod = 0.45f;
     m_benchHolding = {};
+    m_brakeClosing = {};
+    m_brakeRearLanding = {};
+    m_brakeStepsTaken = 0;
     m_supportLost = {};
     m_swingTrajectory = {};
     m_sinceRecoveryLanding = 10.0f;
@@ -728,6 +792,135 @@ Vec3 ContactFootwork3D::captureLanding(const RagdollProfile3D& profile,
     return target;
 }
 
+Vec3 ContactFootwork3D::brakeLanding(const RagdollProfile3D& profile,
+    const ContactFootworkInput3D& input, std::size_t side, Vec3 pose,
+    Quaternion orientation) const {
+    // Passo de freada, pelo pendulo invertido sobre o pe de apoio real: onde
+    // o centro de massa e o ponto de captura estarao no toque. Rapido, o pe
+    // pousa a frente do centro de massa a uma distancia em que a forca do
+    // chao que freia passa por ele (d = h a / g): mais longe o chao gira o
+    // corpo para tras (com o pe a 1 m ele caia de costas), mais perto o pe
+    // nao freia. Mas nunca alem do ponto de captura: devagar (ou com o pe da
+    // frente ja freando), o pouso e o ponto de captura - o corpo para em
+    // cima do pe. Mirando sempre a distancia de freada, os ultimos passos
+    // pousavam a frente de um corpo que ja parava, e ele caia de costas com
+    // os dois pes a frente.
+    const FootPlan3D& foot = m_plan.feet[side];
+    const CharacterPhysicalState3D& physical = *input.physical;
+    const std::size_t other = 1 - side;
+    // O outro pe: apoiado, a sola; no plano em apoio, a ancora; no ar, onde
+    // ele esta de fato (a ancora dele e a do ultimo apoio, as vezes metros
+    // atras - o alcance medido dali puxava o alvo 1,5 m para tras).
+    const bool otherDown = physical.feet[other].supporting || supportsWeight(m_plan.feet[other].phase);
+    const Vec3 support = physical.feet[other].supporting || !otherDown
+        ? physical.feet[other].soleCenterWorld : m_plan.feet[other].anchorWorld;
+    Vec3 direction = input.brakeDirectionWorld;
+    direction.z = 0.0f;
+    if (direction.lengthSquared() < 1e-4f) direction = input.heading.rotate({ 1.0f, 0.0f, 0.0f });
+    direction = direction.normalized();
+    const float remaining = std::max(0.03f, foot.swingDurationSeconds - foot.swingSeconds);
+    const float omega = std::clamp(physical.captureOmega, 1.0f, 6.0f);
+    Vec3 velocity = input.planningComVelocityWorld;
+    velocity.z = 0.0f;
+    // Pendulo sobre o apoio: x(T) = p + (x0 - p) ch + v0/w sh; xi(T) = p +
+    // (xi0 - p) e^(wT). Sem o outro pe no chao (os dois no ar, a troca da
+    // corrida para os passos), o corpo voa ate o toque: balistico. (Pelo
+    // pendulo em volta da ancora velha do pe no ar, metros atras, o alvo
+    // saia 3 m atras do corpo.)
+    const Vec3 p { support.x, support.y, 0.0f };
+    const Vec3 x0 { physical.centerOfMassWorld.x, physical.centerOfMassWorld.y, 0.0f };
+    Vec3 capture = input.capturePointWorld;
+    capture.z = 0.0f;
+    Vec3 comTouchdown, captureTouchdown;
+    if (otherDown) {
+        // Com o pe de apoio freando, pela aceleracao medida do corpo: o
+        // pendulo ideal sobre o pe nao ve a perna cedendo, o atrito e o
+        // equilibrio empurrando - previa o corpo passando do pe (captura a
+        // +0,8 m) quando ele parava antes, o passo mirava longe e vinham
+        // passos de correcao para tras.
+        Vec3 acceleration = physical.centerOfMassAccelerationWorld;
+        acceleration.z = 0.0f;
+        const float alongAcceleration = std::clamp(dot(acceleration, direction), -12.0f, 3.0f);
+        const Vec3 a = direction * alongAcceleration;
+        const float alongSpeed = dot(velocity, direction);
+        // Ate parar no rumo (a aceleracao medida nao segue depois disso).
+        const float t = alongAcceleration < -0.01f
+            ? std::min(remaining, std::max(0.0f, -alongSpeed / alongAcceleration)) : remaining;
+        comTouchdown = x0 + velocity * t + a * (0.5f * t * t);
+        const Vec3 touchdownVelocity = velocity + a * t;
+        captureTouchdown = comTouchdown + touchdownVelocity * (1.0f / omega);
+    } else if (otherDown) {
+        const float c = std::cosh(omega * remaining), sh = std::sinh(omega * remaining);
+        comTouchdown = p + (x0 - p) * c + velocity * (sh / omega);
+        captureTouchdown = p + (capture - p) * std::exp(omega * remaining);
+    } else {
+        comTouchdown = x0 + velocity * remaining;
+        captureTouchdown = comTouchdown + velocity * (1.0f / omega);
+    }
+    // O alcance do pe de freada depende do rumo em relacao ao corpo: a
+    // frente o quadril flexiona muito; de lado (abducao) e para tras
+    // (extensao, ~30 graus) bem menos - para tras, mirando 0,55 m, o pe
+    // subia ate 0,76 m procurando um alvo fora do alcance e o corpo tombava.
+    const Vec3 bodyForward = input.heading.rotate({ 1.0f, 0.0f, 0.0f });
+    const Vec3 bodyLeft = input.heading.rotate({ 0.0f, 1.0f, 0.0f });
+    const float forwardness = dot(direction, bodyForward);
+    const float sideways = dot(direction, bodyLeft);
+    const float sideReach = BrakePlaceSideways;
+    const float placeMax = sideReach + forwardness * forwardness
+        * ((forwardness >= 0.0f ? BrakePlaceForward : BrakePlaceBackward)
+            - sideReach);
+    const float height = std::max(0.4f, physical.centerOfMassWorld.z - support.z);
+    const float braking = std::clamp(height * BrakePlaceDeceleration / 9.81f,
+        BrakePlaceMinimum, placeMax);
+    const float comAlong = dot(comTouchdown, direction);
+    // Um pouco atras do ponto de captura: o corpo para entre os pes, nao na
+    // borda de tras da base (parado ali, com os dois pes a frente, o pendulo
+    // caia para tras).
+    // (De lado mais: o pe de fora segue freando depois do toque do de
+    // dentro e o corpo parava atras dos dois.)
+    const float captureAlong = dot(captureTouchdown, direction)
+        - (BrakeStraddle + (BrakeStraddleSideways - BrakeStraddle) * std::abs(sideways));
+    // De lado, o pe de dentro so fecha a base: vai a uma largura de quadril
+    // do pe de fora, sem cruzar (a passada de quem freia de lado).
+    // (Nem ele alem do ponto de captura: fechando a frente do corpo que ja
+    // parava, a base ficava toda adiante e o corpo escorregava de volta.)
+    float along = m_brakeClosing[side]
+        ? std::min(dot(p, direction) - BrakeHipWidth, captureAlong)
+        : std::min(comAlong + braking, captureAlong);
+    if (m_brakeRearLanding[side]) {
+        // Apoio de tras do afundo: onde o pe ja vai, nunca a frente do corpo.
+        const Vec3 now = physical.feet[side].soleCenterWorld;
+        along = std::min(dot(Vec3 { now.x, now.y, 0.0f }, direction) + 0.05f,
+            comAlong - BrakeRearBehind);
+    }
+    // Atravessado ao rumo: o ponto de captura; cada pe do seu lado do corpo
+    // (andando para a frente ou para tras a base e larga; de lado, o rumo ja
+    // separa os pes).
+    const Vec3 left { -direction.y, direction.x, 0.0f };
+    const Vec3 outwardBody = bodyLeft * (side == 0 ? 1.0f : -1.0f);
+    Vec3 sole = direction * along + left * dot(captureTouchdown, left)
+        + outwardBody * (BrakeHalfWidth * (1.0f - std::abs(sideways)));
+    // Da sola para a origem do link (o que o IK recebe), na orientacao do pouso.
+    const RagdollLinkDefinition3D& link = profile.links[m_feet[side]];
+    const Vec3 half = link.collider.shape == RagdollColliderShape3D::Box
+        ? link.collider.boxHalfExtents : Vec3 {};
+    Vec3 soleOffset = orientation.rotate(link.collider.localPosition
+        + link.collider.localOrientation.rotate({ 0.0f, 0.0f, -half.z }));
+    soleOffset.z = 0.0f;
+    Vec3 target = sole - soleOffset;
+    // Sem cruzar as pernas (no referencial do corpo), e ao alcance a partir
+    // do pe de apoio.
+    const float lateral = dot(target - p, outwardBody);
+    if (lateral < 0.12f) target += outwardBody * (0.12f - lateral);
+    Vec3 fromSupport = target - p;
+    fromSupport.z = 0.0f;
+    const float reach = BrakeReach;
+    if (fromSupport.length() > reach)
+        target = p + fromSupport * (reach / fromSupport.length());
+    target.z = pose.z;
+    return target;
+}
+
 void ContactFootwork3D::executeSwing(const RagdollProfile3D& profile,
     const ContactFootworkInput3D& input, std::size_t side, float deltaTime) {
     FootPlan3D& foot = m_plan.feet[side];
@@ -811,6 +1004,11 @@ void ContactFootwork3D::executeSwing(const RagdollProfile3D& profile,
         }
         m_recoveryTarget[side] = path.committed;
         plannedPosition = m_recoveryTarget[side];
+    } else if (foot.reason == StepReason3D::Brake) {
+        // Freada: o alvo acompanha o corpo ate 70% do passo.
+        if (progress < 0.7f)
+            m_recoveryTarget[side] = brakeLanding(profile, input, side, plannedPosition, plannedOrientation);
+        plannedPosition = m_recoveryTarget[side];
     } else if (foot.reason == StepReason3D::Locomotion) {
         // Andando pelo planejador: onde o corpo mantem a velocidade pedida;
         // o alvo acompanha o corpo ate 70% do passo.
@@ -856,7 +1054,8 @@ void ContactFootwork3D::executeSwing(const RagdollProfile3D& profile,
     float toeDown = 0.0f;
     const bool captureStepLift = (m_settings.recoveryCaptureTargeting
         && foot.reason == StepReason3D::Recovery)
-        || (m_settings.locomotionStepping && foot.reason == StepReason3D::Locomotion);
+        || (m_settings.locomotionStepping && foot.reason == StepReason3D::Locomotion)
+        || foot.reason == StepReason3D::Brake;
     if (foot.path == SwingPath3D::Direct) {
         // Reto e baixo, desviando do pe de apoio se o caminho passa perto:
         // sempre para o lado deste pe (a direcao "do ponto mais perto" virava
@@ -884,8 +1083,16 @@ void ContactFootwork3D::executeSwing(const RagdollProfile3D& profile,
             if (lateral < 0.14f)
                 stepTarget += outward * ((0.14f - std::max(lateral, -0.14f)) * near * arch);
         }
+        float lift = captureStepLift ? 0.08f : 0.045f;
+        if (foot.reason == StepReason3D::Brake) {
+            // Rapido, o pe vem de longe atras do corpo: mais alto, ou raspa.
+            const float speed = std::hypot(input.planningComVelocityWorld.x,
+                input.planningComVelocityWorld.y);
+            lift = std::min(BrakeLiftMaximum,
+                BrakeLift + BrakeLiftPerSpeed * speed);
+        }
         stepTarget.z = from.z + (liveTarget.z - from.z) * eased
-            + ((captureStepLift ? 0.08f : 0.045f) + foot.extraClearance) * arch;
+            + (lift + foot.extraClearance) * arch;
         toeDown = 0.14f * std::sin(Pi * std::min(1.0f, progress * 1.4f));
     } else if (foot.path == SwingPath3D::Pivot) {
         // Abre girando sobre a bola do pe: ela quase nao sai do lugar, o
@@ -979,6 +1186,7 @@ void ContactFootwork3D::executeSwing(const RagdollProfile3D& profile,
     // (Nem na marcha pelo planejador: esperando, o corpo seguia e deixava o
     // outro pe 80 cm para tras, esticado ate sair do chao.)
     const bool draggedDone = foot.reason == StepReason3D::Recovery
+        || foot.reason == StepReason3D::Brake
         || (m_settings.locomotionStepping && foot.reason == StepReason3D::Locomotion)
         || std::hypot(body.position.x - foot.goalWorld.x,
             body.position.y - foot.goalWorld.y) < 0.04f || overtime >= 0.25f;
@@ -991,8 +1199,30 @@ void ContactFootwork3D::executeSwing(const RagdollProfile3D& profile,
     // do balanco ele pousava curto e o corpo passava dos pes.)
     const bool captureStep = (m_settings.recoveryCaptureTargeting
         && foot.reason == StepReason3D::Recovery)
-        || (m_settings.locomotionStepping && foot.reason == StepReason3D::Locomotion);
+        || (m_settings.locomotionStepping && foot.reason == StepReason3D::Locomotion)
+        || foot.reason == StepReason3D::Brake;
     const bool earlyAllowed = !captureStep || toGoal < 0.08f || progress >= 0.9f;
+    // Freada: tocando o chao depois de metade do passo ja a frente do centro
+    // de massa, pousa onde tocou (o pe a frente ja freia; esperando o alvo
+    // exato o corpo passava dele). Atras dele, raspando, nao: pousado ali o
+    // pe nao freia nada.
+    bool brakeTouch = false;
+    if (foot.reason == StepReason3D::Brake && progress >= 0.5f) {
+        Vec3 direction = input.brakeDirectionWorld;
+        direction.z = 0.0f;
+        const float ahead = direction.lengthSquared() > 1e-4f
+            ? dot(Vec3 { measured.soleCenterWorld.x - input.physical->centerOfMassWorld.x,
+                measured.soleCenterWorld.y - input.physical->centerOfMassWorld.y, 0.0f }, direction.normalized())
+            : 1.0f;
+        // (So se o alvo ainda estava mais a frente: tocando adiante do alvo
+        // - o passo que fecha a base atras do ponto de captura -, o pe segue
+        // ate ele; pousado ali, o corpo parava atras dos dois pes.)
+        const float shortOfGoal = direction.lengthSquared() > 1e-4f
+            ? dot(Vec3 { foot.goalWorld.x - measured.soleCenterWorld.x,
+                foot.goalWorld.y - measured.soleCenterWorld.y, 0.0f }, direction.normalized())
+            : 1.0f;
+        brakeTouch = (ahead > BrakeTouchAhead && shortOfGoal > -0.03f) || progress >= 0.9f;
+    }
     // O pivo (giro sobre a bola do pe) quase nao sai do chao por construcao:
     // ele pousa pelo contato no fim do passo como os outros. Esperando o pe
     // "sair do chao", ele so terminava 0,25 s depois do tempo, contado como
@@ -1000,6 +1230,7 @@ void ContactFootwork3D::executeSwing(const RagdollProfile3D& profile,
     // passo de giro levava ~0,6 s.
     const bool lifted = m_liftedOff[side] || foot.path == SwingPath3D::Pivot;
     if (contact && level && ((searching && (lifted || draggedDone))
+            || (lifted && brakeTouch)
             || (lifted && earlyAllowed && (progress >= LateTouchdownProgress
                 || (progress >= EarlyTouchdownProgress && planarSpeed < TouchdownPlanarSpeed))))) {
         land(profile, input, side);
@@ -1098,7 +1329,7 @@ void ContactFootwork3D::update(const RagdollProfile3D& profile,
             || foot.reason == StepReason3D::ReestablishSupport;
         const bool stepInFlight = !foot.followingGait && foot.phase != FootPhase3D::Stance
             && foot.phase != FootPhase3D::Unloading && !handoverLanding;
-        const bool own = input.allowSteps && (input.standing || stepInFlight
+        const bool own = input.allowSteps && (input.standing || input.braking || stepInFlight
             || (m_settings.locomotionStepping && input.locomoting));
         if (!own) {
             const GaitFootState3D& gait = input.gait[side];
@@ -1124,6 +1355,40 @@ void ContactFootwork3D::update(const RagdollProfile3D& profile,
             foot.anchorWorld = gait.lockedWorld;
             foot.anchorOrientationWorld = gait.lockedOrientationWorld;
             foot.surface = gait.surface;
+        } else if (!input.seedFromBody && input.braking && contactSupport(physical.feet[side])
+            && std::hypot(physical.feet[side].soleVelocityWorld.x, physical.feet[side].soleVelocityWorld.y) <= 0.50f) {
+            // Freando, o pe que ja apoia de fato (o contato - o clipe nem
+            // sempre o marca plantado) fica onde esta: e o apoio que freia.
+            // Assumido como "no ar", ele tambem dava um passo de freada e a
+            // parada tinha sempre dois.
+            seedFoot(profile, input, side);
+        } else if (!input.seedFromBody && input.braking) {
+            // Freando: o pe da passada que esta no ar ja vai para o pouso de
+            // freada, de onde esta. (Como "refazer a base" - 0,34 s ate a pose
+            // parada - nenhum passo de freada saia antes de ele pousar, e o
+            // corpo passava dos dois pes.)
+            startStep(profile, input, side, StepReason3D::Brake, SwingPath3D::Direct, 1.0f);
+            release(profile, input, side, ReleaseReason3D::Recovery);
+            m_brakeClosing[side] = false;
+            ++m_brakeStepsTaken;
+            // Se o outro pe ja esta plantado a frente do corpo freando, este
+            // desce logo atras do corpo, como o apoio de tras do afundo (a
+            // referencia Run To Stop: um pe planta e freia, o outro fica). Ir
+            // tambem a frente deixava os dois adiante, ele freava demais,
+            // parava antes dos pes e vinham passos de correcao.
+            {
+                Vec3 direction = input.brakeDirectionWorld;
+                direction.z = 0.0f;
+                const std::size_t other = 1 - side;
+                const FootSupportEstimate3D& seen = physical.feet[other];
+                m_brakeRearLanding[side] = direction.lengthSquared() > 1e-4f && seen.supporting
+                    && dot(Vec3 { seen.soleCenterWorld.x - physical.centerOfMassWorld.x,
+                        seen.soleCenterWorld.y - physical.centerOfMassWorld.y, 0.0f },
+                        direction.normalized()) > BrakeRearPlantAhead;
+            }
+            m_liftedOff[side] = true;
+            foot.swingDurationSeconds = BrakeTakeoverSwingShare * BrakeSwingSeconds;
+            m_recoveryTarget[side] = foot.liftoffWorld;
         } else if (!input.seedFromBody) {
             seedFoot(profile, input, side);
         }
@@ -1139,7 +1404,7 @@ void ContactFootwork3D::update(const RagdollProfile3D& profile,
 
     const bool locomotionPlanning = m_settings.locomotionStepping && input.locomoting
         && !input.standing;
-    const bool planning = (input.standing || locomotionPlanning) && input.allowSteps
+    const bool planning = (input.standing || locomotionPlanning || input.braking) && input.allowSteps
         && !plan.feet[0].followingGait && !plan.feet[1].followingGait;
     if (!input.standing) m_pendingTurnFoot = -1;
 
@@ -1149,7 +1414,9 @@ void ContactFootwork3D::update(const RagdollProfile3D& profile,
     // da queda (de lado), ou o de tras em relacao a ela (frente/tras), da o
     // passo.
     // (Andando pelo planejador, o proprio lugar do pouso e a recuperacao.)
-    if (planning && !locomotionPlanning && input.allowRecovery) {
+    // O ponto de captura fora do apoio PLANEJADO: os pes no chao onde estao
+    // e o pe em passo onde vai pousar.
+    const auto plannedCaptureOutside = [&]() {
         std::vector<std::array<float, 2>> planned;
         for (std::size_t side = 0; side < 2; ++side) {
             const FootPlan3D& foot = plan.feet[side];
@@ -1170,8 +1437,10 @@ void ContactFootwork3D::update(const RagdollProfile3D& profile,
                 }
             }
         }
-        plan.plannedOutsideMeters = planarDistanceOutsideHull3D(planned,
-            input.capturePointWorld.x, input.capturePointWorld.y);
+        return planarDistanceOutsideHull3D(planned, input.capturePointWorld.x, input.capturePointWorld.y);
+    };
+    if (planning && !locomotionPlanning && !input.braking && input.allowRecovery) {
+        plan.plannedOutsideMeters = plannedCaptureOutside();
         // Com um pe no ar, vale o apoio planejado; com os dois no chao, tambem
         // o medido (a perna nem sempre alcanca o alvo travado, e o planejado
         // escondia isso).
@@ -1183,9 +1452,30 @@ void ContactFootwork3D::update(const RagdollProfile3D& profile,
         // medido vale tambem, com a folga normal de um pe so, 12 cm.)
         const float measuredWhileStepping = m_settings.recoveryCaptureTargeting
             ? input.captureOutsideMeters - 0.12f : 0.0f;
+        // Parando de uma freada (sem nada empurrando), com os dois pes no
+        // plano de apoio, o apoio medido conta tambem o pe rente ao chao (a
+        // sola ate 3 cm acima dele) sem contato: o corpo balancando sobre um
+        // pe tira o outro do chao por um instante, a base medida virava um pe
+        // so e saia um passo sem queda nenhuma (um ou dois a cada parada).
+        // (Para tudo, os empurroes continuos de 0,6-1 m/s caiam mais: 42 ->
+        // 45-48 quedas em 216.)
+        float measuredOutside = input.captureOutsideMeters;
+        if (!stepping && input.quietStop && RecoveryNearGround > 0.0f
+            && physical.externalForceWorld.length() < RecoveryForceTrigger) {
+            std::vector<std::array<float, 2>> near;
+            for (std::size_t side = 0; side < 2; ++side) {
+                const FootSupportEstimate3D& foot = physical.feet[side];
+                if (!foot.supporting && foot.soleLowestHeight
+                        > plan.feet[side].surface.height + RecoveryNearGround) continue;
+                for (const Vec3& corner : foot.soleCornersWorld) near.push_back({ corner.x, corner.y });
+            }
+            if (!near.empty())
+                measuredOutside = planarDistanceOutsideHull3D(near,
+                    input.capturePointWorld.x, input.capturePointWorld.y);
+        }
         const float outside = stepping
             ? std::max(plan.plannedOutsideMeters, measuredWhileStepping)
-            : std::max(plan.plannedOutsideMeters, input.captureOutsideMeters);
+            : std::max(plan.plannedOutsideMeters, measuredOutside);
 
         // So com o corpo indo para fora do apoio (ou sob forca externa):
         // parado com o centro de massa um pouco fora de uma base estreita (o
@@ -1294,7 +1584,112 @@ void ContactFootwork3D::update(const RagdollProfile3D& profile,
             m_benchHolding[side] = true;
         }
     }
-    if (planning && !locomotionPlanning && m_settings.benchTransferFoot < 0) {
+    // Freada: um passo de cada vez, sem voo - o pe de tras sai assim que o
+    // outro apoia, e so enquanto o ponto de captura ainda passa do pe da
+    // frente (senao o corpo ja para sobre a base que tem).
+    plan.brakeSettled = false;
+    plan.brakeYield = false;
+    if (!input.braking) m_brakeStepsTaken = 0;
+    // No maximo BrakeMaximumSteps passos por freada (o pedido do usuario:
+    // freada imediata, 1-2 passos se precisar): depois deles a freada acaba e
+    // o equilibrio de parado cuida do resto. (De lado, sem limite, o
+    // arrasta-pe chegava a 12 passos.)
+    if (planning && input.braking && m_brakeStepsTaken >= BrakeMaximumSteps) {
+        bool busy = false;
+        for (const FootPlan3D& foot : plan.feet)
+            busy = busy || airborne(foot.phase) || foot.phase == FootPhase3D::Unloading;
+        plan.brakeSettled = !busy;
+        // (E entrega na hora, ainda que o corpo nao tenha parado: esperando
+        // ele ficar devagar, com a recuperacao desligada, um corpo
+        // escorregando de lado nunca ficava e caia.)
+        plan.brakeYield = !busy;
+    } else if (planning && input.braking) {
+        bool busy = false;
+        for (const FootPlan3D& foot : plan.feet)
+            busy = busy || airborne(foot.phase) || foot.phase == FootPhase3D::Unloading;
+        Vec3 direction = input.brakeDirectionWorld;
+        direction.z = 0.0f;
+        if (!busy && direction.lengthSquared() > 1e-4f) {
+            direction = direction.normalized();
+            const std::size_t trailing = dot(plan.feet[0].anchorWorld, direction)
+                < dot(plan.feet[1].anchorWorld, direction) ? 0 : 1;
+            const std::size_t leading = 1 - trailing;
+            const Vec3 front = physical.feet[leading].supporting ? physical.feet[leading].soleCenterWorld
+                : plan.feet[leading].anchorWorld;
+            const float captureAhead = dot(Vec3 { input.capturePointWorld.x - front.x,
+                input.capturePointWorld.y - front.y, 0.0f }, direction);
+            // Passo de fechamento: o corpo ja para sobre o pe da frente, mas a
+            // base ficou comprida (o de tras 40 cm ou mais atras) - o de tras
+            // vem para perto do da frente antes de assentar. Parado assim, o
+            // primeiro giro ou acomodacao tirava o pe de tras com o peso nele.
+            const Vec3 rear = physical.feet[trailing].supporting ? physical.feet[trailing].soleCenterWorld
+                : plan.feet[trailing].anchorWorld;
+            const float stance = dot(Vec3 { front.x - rear.x, front.y - rear.y, 0.0f }, direction);
+            const float speed = std::hypot(input.planningComVelocityWorld.x, input.planningComVelocityWorld.y);
+            const bool closing = stance > BrakeCloseStance && speed < 1.5f;
+            // O ponto de captura atras do pe de tras (o corpo parando antes dos
+            // pes, os dois adiante dele): sem passo ele cai para tras e a
+            // recuperacao de parado dava dois ou tres passos para tras depois;
+            // aqui sai um so, logo, para tras do ponto de captura.
+            const float overRear = dot(Vec3 { input.capturePointWorld.x - rear.x,
+                input.capturePointWorld.y - rear.y, 0.0f }, direction);
+            // (So atras de fato: com uma margem a frente do pe, o mesmo pe dava
+            // cinco passos para o mesmo lugar, cada um desequilibrando o corpo.)
+            const bool behind = overRear < -BrakeSettleMargin && captureAhead < 0.0f;
+            plan.brakeSettled = !behind && captureAhead <= BrakeStepTrigger && !closing;
+            // O ponto de captura saiu da base para o lado do rumo (o corpo
+            // escorrega de lado enquanto freia): a freada nao tem passo para
+            // isso e a recuperacao, desligada enquanto ela dura, nao agia - o
+            // corpo derivava a 0,5-0,8 m/s de lado e caia. Ela entrega.
+            const float outsideBase = plannedCaptureOutside();
+            const float sideways = dot(direction, input.heading.rotate({ 0.0f, 1.0f, 0.0f }));
+            if (std::abs(sideways) > BrakeLateral) {
+                // De lado: o pe do lado do movimento abre (o passo de freada) e
+                // o outro so fecha a base, sem cruzar - mandar o de tras por
+                // cima do da frente cruzava as pernas e ficava sem alcance.
+                const std::size_t outer = sideways > 0.0f ? 0 : 1;
+                const std::size_t inner = 1 - outer;
+                const Vec3 outerAt = physical.feet[outer].supporting ? physical.feet[outer].soleCenterWorld
+                    : plan.feet[outer].anchorWorld;
+                const Vec3 innerAt = physical.feet[inner].supporting ? physical.feet[inner].soleCenterWorld
+                    : plan.feet[inner].anchorWorld;
+                const float beyond = dot(Vec3 { input.capturePointWorld.x - outerAt.x,
+                    input.capturePointWorld.y - outerAt.y, 0.0f }, direction);
+                const float width = dot(Vec3 { outerAt.x - innerAt.x, outerAt.y - innerAt.y, 0.0f }, direction);
+                int stepping = -1;
+                const bool fallingOff = outsideBase > RecoveryOutsideTrigger
+                    && beyond <= BrakeStepTrigger && !behind;
+                if (width > BrakeSideClose && !fallingOff) {
+                    stepping = static_cast<int>(inner);
+                    m_brakeClosing[inner] = true;
+                } else if (beyond > BrakeStepTrigger) {
+                    stepping = static_cast<int>(outer);
+                    m_brakeClosing[outer] = false;
+                } else if (behind) {
+                    stepping = static_cast<int>(inner);
+                    m_brakeClosing[inner] = false;
+                }
+                plan.brakeYield = stepping < 0 && outsideBase > RecoveryOutsideTrigger;
+                if (stepping >= 0) {
+                    const std::size_t side = static_cast<std::size_t>(stepping);
+                    m_brakeRearLanding[side] = false;
+                    ++m_brakeStepsTaken;
+                    startStep(profile, input, side, StepReason3D::Brake, SwingPath3D::Direct, 1.0f);
+                    plan.feet[side].swingDurationSeconds = BrakeSwingSeconds;
+                }
+            } else if (captureAhead > BrakeStepTrigger || behind
+                || (closing && outsideBase <= RecoveryOutsideTrigger)) {
+                m_brakeClosing[trailing] = false;
+                m_brakeRearLanding[trailing] = false;
+                ++m_brakeStepsTaken;
+                startStep(profile, input, trailing, StepReason3D::Brake, SwingPath3D::Direct, 1.0f);
+                plan.feet[trailing].swingDurationSeconds = BrakeSwingSeconds;
+            } else {
+                plan.brakeYield = outsideBase > RecoveryOutsideTrigger;
+            }
+        }
+    }
+    if (planning && !locomotionPlanning && !input.braking && m_settings.benchTransferFoot < 0) {
         const bool bothStance = plan.feet[0].phase == FootPhase3D::Stance
             && plan.feet[1].phase == FootPhase3D::Stance;
         // Um passo de acomodacao ou de giro em andamento vira de recuperacao
@@ -1339,7 +1734,7 @@ void ContactFootwork3D::update(const RagdollProfile3D& profile,
             m_pendingTurnFoot = -1;
             startStep(profile, input, static_cast<std::size_t>(plan.recoverySide),
                 StepReason3D::Recovery, SwingPath3D::Direct, plan.recoveryUrgency);
-        } else if (bothStance && (!plan.recovering || turnPending)) {
+        } else if (bothStance && !input.settleHold && (!plan.recovering || turnPending)) {
             int unreachable = -1;
             for (std::size_t side = 0; side < 2; ++side)
                 if (input.anchorUnreachable[side] && ready(side)) unreachable = static_cast<int>(side);
@@ -1473,6 +1868,18 @@ void ContactFootwork3D::update(const RagdollProfile3D& profile,
             if (lost && !m_supportLost[side]) ++m_plan.supportLostEvents;
             m_supportLost[side] = lost;
         }
+        // Freando, o pe apoiado que derrapa leva a ancora junto: o corpo freia
+        // pelo atrito com a perna firme. (Parada no mundo com o pe
+        // escorregando, a perna puxava o pe de volta e lancava o corpo.)
+        if (input.braking && supportsWeight(foot.phase)) {
+            const FootSupportEstimate3D& seen = physical.feet[side];
+            const float slide = std::hypot(seen.soleVelocityWorld.x, seen.soleVelocityWorld.y);
+            if (seen.contactObserved && slide > BrakeSlideSpeed) {
+                const Vec3 at = input.state->links[m_feet[side]].position;
+                foot.anchorWorld.x = at.x;
+                foot.anchorWorld.y = at.y;
+            }
+        }
         switch (foot.phase) {
         case FootPhase3D::Stance:
             foot.targetWorld = foot.anchorWorld;
@@ -1486,7 +1893,8 @@ void ContactFootwork3D::update(const RagdollProfile3D& profile,
             // tentar). Na recuperacao sai logo de qualquer jeito (quanto mais
             // urgente, menos espera: liberar um pe cedo vale mais que uma
             // troca de peso perfeita).
-            const bool recovery = foot.reason == StepReason3D::Recovery;
+            const bool recovery = foot.reason == StepReason3D::Recovery
+                || foot.reason == StepReason3D::Brake;
             const bool otherOnGround = supportsWeight(plan.feet[1 - side].phase);
             const bool byLoad = otherOnGround && plan.loadShare[side] < UnloadedShare;
             const bool byPartialLoad = otherOnGround && foot.phaseSeconds >= PartialUnloadSeconds
@@ -1553,7 +1961,8 @@ void ContactFootwork3D::update(const RagdollProfile3D& profile,
             // solta logo; um desequilibrio lento (arrastado pela PhysGun)
             // espera ate 0,15 s o peso passar - solto carregado, o pe so
             // arrastava no chao e o corpo tombava.
-            const float waitLimit = recovery
+            const float waitLimit = foot.reason == StepReason3D::Brake ? 0.0f
+                : recovery
                 ? (m_settings.recoveryCaptureTargeting ? RecoveryCaptureUnloadSeconds * (1.0f - foot.urgency)
                     : RecoveryUnloadMaximumSeconds * (1.0f - foot.urgency))
                 : foot.reason == StepReason3D::Locomotion ? LocomotionUnloadSeconds
@@ -1630,7 +2039,8 @@ void ContactFootwork3D::update(const RagdollProfile3D& profile,
         const FootPlan3D& foot = plan.feet[side];
         if (foot.followingGait || foot.phase != FootPhase3D::Unloading) continue;
         if (!supportsWeight(plan.feet[1 - side].phase)) continue;
-        const float ramp = foot.reason == StepReason3D::Recovery ? 0.08f
+        const float ramp = foot.reason == StepReason3D::Recovery
+            || foot.reason == StepReason3D::Brake ? 0.08f
             : foot.reason == StepReason3D::Locomotion ? 0.12f : 0.20f;
         plan.supportTransfer.outgoingFoot = static_cast<int>(side);
         plan.supportTransfer.incomingFoot = static_cast<int>(1 - side);
@@ -1647,6 +2057,7 @@ void ContactFootwork3D::update(const RagdollProfile3D& profile,
         const FootPlan3D& foot = plan.feet[side];
         const FootPlan3D& support = plan.feet[1 - side];
         if (foot.followingGait || foot.reason == StepReason3D::Recovery
+            || foot.reason == StepReason3D::Brake
             || support.phase != FootPhase3D::Stance) continue;
         float fraction = 0.0f, limit = 0.0f;
         if (foot.phase == FootPhase3D::Unloading) {

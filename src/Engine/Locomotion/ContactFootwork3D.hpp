@@ -205,6 +205,19 @@ struct ContactFootworkInput3D {
     // O jogador pede movimento, e a velocidade pedida (no plano).
     bool locomoting = false;
     Vec3 desiredVelocityWorld;
+    // Freada (modo fisico): o corpo leva um momento que o jogador nao pede
+    // (soltou o comando correndo, pediu bem menos ou o contrario). O
+    // planejador e o dono dos pes e da os passos de freada no rumo do corpo,
+    // na desaceleracao pedida (m/s2).
+    bool braking = false;
+    Vec3 brakeDirectionWorld;
+    float brakeDecelerationMetersPerSecondSquared = 6.0f;
+    // Recem-freado: sem passos de acomodacao nem de giro (so recuperacao)
+    // enquanto a base da freada assenta.
+    bool settleHold = false;
+    // Parando pelo proprio impulso (freada recente, nada de fora empurrando):
+    // o pe rente ao chao conta como apoio na decisao de recuperacao.
+    bool quietStop = false;
     // A perna nao alcanca a ancora deste pe (o IK ficou longe no tick
     // anterior ou o quadril esta alem do comprimento da perna).
     std::array<bool, 2> anchorUnreachable {};
@@ -223,6 +236,12 @@ struct CharacterContactPlan3D {
     // A agenda observada pelo contato estrito (R1): o solver decide se ha
     // apoio; o plano so diz qual deseja.
     SupportSchedule3D observedSchedule = SupportSchedule3D::DoubleSupport;
+    // Freando: o corpo ja para sobre a base (os dois pes no chao e o ponto
+    // de captura entre eles, a frente do de tras) - a freada pode terminar.
+    bool brakeSettled = false;
+    // Freando: o ponto de captura saiu da base para o lado (nenhum passo de
+    // freada cobre) - a freada entrega para a recuperacao.
+    bool brakeYield = false;
     // Deslocamento pedido a pelve (mundo) para o peso ir ao pe de apoio
     // durante um passo de acomodacao/giro. O controle das pernas o produz.
     Vec3 supportShiftWorld;
@@ -368,6 +387,8 @@ private:
         std::size_t side, Vec3 pose, Quaternion orientation, const Vec3* committed) const;
     Vec3 captureLanding(const RagdollProfile3D& profile, const ContactFootworkInput3D& input,
         std::size_t side, Vec3 pose, Quaternion orientation) const;
+    Vec3 brakeLanding(const RagdollProfile3D& profile, const ContactFootworkInput3D& input,
+        std::size_t side, Vec3 pose, Quaternion orientation) const;
     float stanceYaw(const RagdollProfile3D& profile, const ContactFootworkInput3D& input) const;
 
     ContactFootworkSettings3D m_settings;
@@ -398,6 +419,14 @@ private:
     float m_locomotionPeriod = 0.45f;
     // Bancada C: o pe que a bancada esta segurando na descarga.
     std::array<bool, 2> m_benchHolding {};
+    // Freada de lado: este passo so fecha a base (o pe de dentro vai ate uma
+    // largura de quadril do de fora).
+    std::array<bool, 2> m_brakeClosing {};
+    // Freada: este pe (assumido no ar) e o apoio de tras do afundo - desce
+    // atras do corpo, o outro ja freia a frente.
+    std::array<bool, 2> m_brakeRearLanding {};
+    // Passos dados nesta freada.
+    int m_brakeStepsTaken = 0;
     // Apoio perdido no tick anterior, por pe (R1: evento na borda).
     std::array<bool, 2> m_supportLost {};
     // Balanco da marcha (E5, fase 10): a referencia do pe no plano como

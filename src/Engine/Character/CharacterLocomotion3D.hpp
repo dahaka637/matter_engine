@@ -225,6 +225,13 @@ struct CharacterLocomotionInput3D {
 struct CharacterLocomotionOutput3D {
     std::vector<RagdollDriveTarget3D> driveTargets;
     RagdollAnimationConstraint3D guide;
+    // Onde a pelve de referencia estaria presa ao proxy de navegacao (a
+    // capsula), sem a freada: e contra ela que o proxy segue o corpo. Fora
+    // da freada e a propria guide.rootPositionWorld; freando, a referencia e
+    // o corpo (ou o perfil de freada) e, comparado com ela, o proxy parava de
+    // seguir o corpo e ficava ate ~0,9 m para tras - no fim da freada a
+    // referencia voltava para ele e as pernas puxavam o corpo de costas.
+    Vec3 navigationAnchorWorld;
     RagdollAnimationPose3D targetPose;
     Vec3 rootControlTorqueWorld;
     // A soft, capture-point-style push toward the support center, active
@@ -327,6 +334,14 @@ struct CharacterLocomotionTelemetry3D {
     // inercia leva o tronco, no referencial da pelve (x frente, y esquerda).
     float brakeReaction = 0.0f;
     float brakeReactionForward = 0.0f;
+    // Freada correndo (o corpo ainda rapido, a passada de corrida freando):
+    // a velocidade do perfil de freada e quanto a ajuda e ainda a de quem
+    // corre (0..1; 0 parado ou nos passos de freada). O controlador fisico
+    // os recebe pela intencao (AdaptivePhysicalIntent3D).
+    Vec3 brakeRunVelocityWorld;
+    float brakeRunShare = 0.0f;
+    // Fase da freada: 0 nenhuma, 1 correndo e freando, 2 passos de freada.
+    int brakePhase = 0;
     float forwardWeight = 0.0f;
     float backwardWeight = 0.0f;
     float leftWeight = 0.0f;
@@ -630,6 +645,48 @@ private:
     float m_brakeEntrySpeed = 0.0f;
     Vec3 m_brakeReaction;
     Vec3 m_brakeReactionVelocity;
+    // Freada pela passada (modo fisico): o corpo ainda leva um momento que o
+    // jogador nao pede. Ligada/desligada (com histerese), o peso dela na
+    // passada (0..1), a velocidade do perfil de freada no rumo do corpo e
+    // esse rumo (mundo, no plano).
+    bool m_brakeGaitActive = false;
+    float m_brakeGait = 0.0f;
+    float m_brakeGaitSpeed = 0.0f;
+    Vec3 m_brakeGaitDirection;
+    // Agachamento da freada (m, >= 0) e a velocidade dele: o pe de freada so
+    // alcanca o chao a frente com a pelve mais baixa.
+    float m_brakeCrouch = 0.0f;
+    float m_brakeCrouchVelocity = 0.0f;
+    // A freada ja esta nos passos (devagar o bastante): a corrida que
+    // desacelerava parou de vez ate a freada acabar.
+    bool m_brakeStepping = false;
+    // Parcela da ajuda de corrida na freada (0..1; sobe correndo e freando,
+    // sai depressa nos passos de freada).
+    float m_brakeRunShare = 0.0f;
+    // Ha quanto tempo esta freando (s).
+    float m_brakeSeconds = 0.0f;
+    // Desde o ultimo tick em que o jogador pedia correr (> 1 m/s).
+    float m_sinceRunRequest = 10.0f;
+    // Referencia da corrida freando (no plano, presa ao corpo por uma
+    // coleira) e quanto a base ja passou para o corpo (passos de freada).
+    bool m_brakeReferenceValid = false;
+    Vec3 m_brakeReferencePosition;
+    float m_brakeAnchor = 0.0f;
+    // Parado depois de uma freada: a base da referencia onde o corpo parou
+    // (no plano) e quanto ela vale (volta para a capsula com o pedido de
+    // movimento).
+    bool m_wasBrakeStepping = false;
+    Vec3 m_stopRoot;
+    float m_stopRootBlend = 0.0f;
+    // A base de parado anda com o resto da velocidade do corpo e freia (as
+    // pernas seguram o corpo sobre os pes, sem passo); ativa ate o pedido de
+    // movimento.
+    Vec3 m_stopVelocity;
+    bool m_stopHolding = false;
+    // Abaixo da velocidade dos passos, esperando um pe da passada pousar (s).
+    float m_brakeStepWait = 0.0f;
+    // Desde o fim da ultima freada (s).
+    float m_sinceBrakeSeconds = 10.0f;
     Vec3 m_previousCenterOfMass;
     Vec3 m_filteredCenterOfMassVelocity;
     // Olhar: giro da coluna (tronco em relacao a pelve) e da cabeca (em

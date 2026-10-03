@@ -14,10 +14,10 @@
   Vulkan, Volk, VMA, or native platform headers.
 - Vulkan types and calls belong only in `src/Engine/RHI/Vulkan`.
 - Jolt headers, types and calls belong only in `src/Engine/Physics/Jolt`
-  (the active backend). PhysX headers, types and calls belong only in
-  `src/Engine/Physics/PhysX`, which stays selectable as a behavior reference
-  until the migration is visually approved; a study copy lives in
-  `archive/2026-09-25-physx-backend/`.
+  (the only backend). PhysX was removed on 2026-10-02 after the Jolt
+  migration; the final backend lives only as a study copy in
+  `archive/2026-10-02-physx-backend-final/` and must not come back into
+  `src`, CMake or the tools.
 - Never `dynamic_cast` a Jolt type: the SDK is built without RTTI. Callbacks the
   SDK calls back into (contact/step listeners, trace/assert, jobs) must not
   throw.
@@ -70,7 +70,7 @@ These searches should remain empty:
 ```powershell
 rg "#include <SDL|SDL_[A-Za-z]|SDL_Event" src/Workbench
 rg "\\bVk[A-Z]|<volk|<vulkan|vk_mem" src -g "!src/Engine/RHI/Vulkan/**"
-rg "\\bphysx::|#include.*(Px|characterkinematic|cooking/)" src -g "!src/Engine/Physics/PhysX/**"
+rg "\\bphysx::|#include.*(Px|characterkinematic|cooking/)" src
 rg "\\bJPH::|#include.*<Jolt/" src -g "!src/Engine/Physics/Jolt/**"
 rg "PhysicsWorld3D|RigidBody3D|StaticCollisionWorld3D|TriangleMeshCollider3D|KinematicCharacter3D|PhysicsHandle3D|JointConstraint3D" CMakeLists.txt src tests
 rg "SDL_opengl|\\bgl(Begin|End|Vertex|Color|LineWidth)|opengl32" src CMakeLists.txt
