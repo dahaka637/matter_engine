@@ -1,5 +1,6 @@
 #include "Engine/Physics/Jolt/JoltInternals3D.hpp"
 #include "Engine/Physics/Jolt/JoltShapes3D.hpp"
+#include "Engine/Physics/RagdollInteractions3D.hpp"
 #include <Jolt/Physics/Collision/EstimateCollisionResponse.h>
 #include <algorithm>
 #include <tuple>
@@ -19,8 +20,11 @@ void PhysicsScene3D::Impl::recordContact(const JPH::Body& a, const JPH::Body& b,
     const auto ia = JoltDetail::unpackBodyIdentity(a.GetUserData());
     const auto ib = JoltDetail::unpackBodyIdentity(b.GetUserData());
     const bool characterPair = ia.kind == JoltDetail::BodyKind::Character || ib.kind == JoltDetail::BodyKind::Character;
-    if (characterPair && (characterState.flying || (characterIgnoreRagdolls
-        && (ia.kind == JoltDetail::BodyKind::RagdollLink || ib.kind == JoltDetail::BodyKind::RagdollLink)))) {
+    // Capsula de navegacao pura: o corpo interno nao toca nada que se move.
+    const bool proxyPair = characterPair && characterNavigationProxy
+        && (!a.IsStatic() && !b.IsStatic());
+    if (proxyPair || (characterPair && (characterState.flying || (characterIgnoreRagdolls
+        && (ia.kind == JoltDetail::BodyKind::RagdollLink || ib.kind == JoltDetail::BodyKind::RagdollLink))))) {
         contact.mIsSensor = true;
         return;
     }
@@ -33,23 +37,27 @@ void PhysicsScene3D::Impl::recordContact(const JPH::Body& a, const JPH::Body& b,
     const auto record = [&](JoltDetail::BodyIdentity id) -> const BodyRecord* {
         return id.kind == JoltDetail::BodyKind::Body && id.slotIndex < bodySlots.size() ? bodySlots[id.slotIndex].record.get() : nullptr;
     };
-    const auto sensor = [&](JoltDetail::BodyIdentity id) -> RagdollRecord* {
+    const auto ragdoll = [&](JoltDetail::BodyIdentity id) -> RagdollRecord* {
         if (id.kind != JoltDetail::BodyKind::RagdollLink || id.slotIndex >= ragdollSlots.size()) return nullptr;
         auto* r = ragdollSlots[id.slotIndex].record.get();
-        return r && id.linkIndex < r->profile.links.size() && r->profile.links[id.linkIndex].collider.contactSensor ? r : nullptr;
+        return r && id.linkIndex < r->profile.links.size() ? r : nullptr;
     };
     const auto* ra = record(ia);
     const auto* rb = record(ib);
-    auto* sa = sensor(ia);
-    auto* sb = sensor(ib);
+    auto* interactionA = ragdoll(ia);
+    auto* interactionB = ragdoll(ib);
+    auto* sa = interactionA && interactionA->profile.links[ia.linkIndex].collider.contactSensor ? interactionA : nullptr;
+    auto* sb = interactionB && interactionB->profile.links[ib.linkIndex].collider.contactSensor ? interactionB : nullptr;
     // Own limbs still collide, but are not external support/impacts. Otherwise
     // bending a knee raises physicsBlend and repeatedly triggers recovery.
     if (ia.kind == JoltDetail::BodyKind::RagdollLink && ib.kind == ia.kind
-        && ia.slotIndex == ib.slotIndex) { sa = nullptr; sb = nullptr; }
+        && ia.slotIndex == ib.slotIndex) {
+        sa = nullptr; sb = nullptr; interactionA = nullptr; interactionB = nullptr;
+    }
     // Ragdolls never feed prop acoustics, even on contact with the floor.
     const bool acoustic = ia.kind != JoltDetail::BodyKind::RagdollLink && ib.kind != JoltDetail::BodyKind::RagdollLink
         && ((ra && a.IsDynamic()) || (rb && b.IsDynamic()));
-    if (!acoustic && !sa && !sb) return;
+    if (!acoustic && !interactionA && !interactionB) return;
     JPH::CollisionEstimationResult response;
     JPH::EstimateCollisionResponse(a,b,manifold,response,contact.mCombinedFriction,contact.mCombinedRestitution);
     const auto mass = [](const JPH::Body& body) {
@@ -67,8 +75,21 @@ void PhysicsScene3D::Impl::recordContact(const JPH::Body& a, const JPH::Body& b,
         const float approach = std::max(0.0f, relative.Dot(normal));
         const float tangential = (relative - normal * relative.Dot(normal)).Length();
         const float impulse = i < response.mContactImpulse.size() ? response.mContactImpulse[i] : 0;
-        if (sa) sa->stepContacts.push_back({ia.linkIndex, fromJolt(point), fromJolt(-normal), impulse, tangential, b.IsDynamic()});
-        if (sb) sb->stepContacts.push_back({ib.linkIndex, fromJolt(point), fromJolt(normal), impulse, tangential, a.IsDynamic()});
+        const auto motion = [](const JPH::Body& body) {
+            return body.IsDynamic() ? RagdollContactMotion3D::Dynamic
+                : body.IsKinematic() ? RagdollContactMotion3D::Kinematic
+                : RagdollContactMotion3D::Static;
+        };
+        if (interactionA) accumulateRagdollInteraction3D(interactionA->stepInteractions,
+            ia.linkIndex, motion(b), fromJolt(point), fromJolt(-normal),
+            fromJolt(relative), impulse, true, true);
+        if (interactionB) accumulateRagdollInteraction3D(interactionB->stepInteractions,
+            ib.linkIndex, motion(a), fromJolt(point), fromJolt(normal),
+            fromJolt(-relative), impulse, true, true);
+        if (sa) sa->stepContacts.push_back({ia.linkIndex, fromJolt(point), fromJolt(-normal), impulse, tangential,
+            b.IsDynamic(), motion(b), true});
+        if (sb) sb->stepContacts.push_back({ib.linkIndex, fromJolt(point), fromJolt(normal), impulse, tangential,
+            a.IsDynamic(), motion(a), true});
         if (!acoustic) continue;
         if (added) {
             ContactImpactEvent3D e;

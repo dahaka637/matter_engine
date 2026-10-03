@@ -131,6 +131,12 @@ struct PhysicsScene3D::Impl final : public JPH::ContactListener,
         // zerados. O modo ativo usa stagedActiveTargets. A numeracao de DOF
         // vem de RagdollRecord::indexing, derivada do perfil.
         std::array<float, 3> targets {};
+        // O que os motores receberam neste tick (telemetria): alvos efetivos,
+        // feedforward aplicado e limite nominal de torque, por eixo.
+        std::array<float, 3> appliedTargets {};
+        std::array<float, 3> appliedTargetVelocities {};
+        std::array<float, 3> appliedFeedforward {};
+        std::array<float, 3> appliedTorqueLimit {};
     };
 
     struct RagdollRecord {
@@ -150,6 +156,7 @@ struct PhysicsScene3D::Impl final : public JPH::ContactListener,
         std::vector<ArticulationLinkPose3D> gravityPoses;
         RagdollState3D state;
         std::vector<RagdollContactPoint3D> stepContacts;
+        std::vector<RagdollInteraction3D> stepInteractions;
         std::vector<RagdollDriveTarget3D> stagedActiveTargets;
         // Guia de animacao do tick, consumido depois do solver por
         // resolveRagdollGuides.
@@ -244,8 +251,11 @@ struct PhysicsScene3D::Impl final : public JPH::ContactListener,
     // quina de escada o Jolt a da como "em chao ingreme").
     bool characterSupported = false;
     float jumpBufferRemaining = 0.0f;
+    // Carga do pulo pedido (guardada com o buffer de pulo).
+    float jumpChargeSeconds = 0.0f;
     Vec3 characterMoveVelocity;
     bool characterIgnoreRagdolls = false;
+    bool characterNavigationProxy = false;
 
     void OnContactAdded(const JPH::CharacterVirtual*, const JPH::CharacterContact&,
         JPH::CharacterContactSettings&) override;

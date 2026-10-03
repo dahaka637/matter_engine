@@ -14,9 +14,13 @@ Vec3 moveToward(Vec3 value,Vec3 target,float distance) {
 }
 class CharacterLayers final : public JPH::ObjectLayerFilter {
 public:
-    explicit CharacterLayers(bool ignore) : ignore(ignore) {}
-    bool ShouldCollide(JPH::ObjectLayer layer) const override { return layer != JoltObjectLayers::Character && (!ignore || layer != JoltObjectLayers::Ragdoll); }
+    explicit CharacterLayers(bool ignore, bool proxy = false) : ignore(ignore), proxy(proxy) {}
+    bool ShouldCollide(JPH::ObjectLayer layer) const override {
+        if (proxy) return layer == JoltObjectLayers::NonMoving;
+        return layer != JoltObjectLayers::Character && (!ignore || layer != JoltObjectLayers::Ragdoll);
+    }
     bool ignore;
+    bool proxy;
 };
 JPH::RefConst<JPH::Shape> capsule(float height,float radius) {
     PhysicsShape3D shape;
@@ -182,6 +186,7 @@ void PhysicsScene3D::moveCharacter(const CharacterMotorCommand3D& command,
             : std::max(0.0f, m_impl->coyoteRemaining - deltaTime);
         if (command.jumpPressed) {
             m_impl->jumpBufferRemaining = settings.jumpBufferTime;
+            m_impl->jumpChargeSeconds = command.jumpChargeSeconds;
         } else {
             m_impl->jumpBufferRemaining = std::max(0.0f,
                 m_impl->jumpBufferRemaining - deltaTime);
@@ -190,7 +195,8 @@ void PhysicsScene3D::moveCharacter(const CharacterMotorCommand3D& command,
             && planar.lengthSquared() < 0.000001f;
         if (m_impl->jumpBufferRemaining > 0.0f
             && m_impl->coyoteRemaining > 0.0f) {
-            state.velocity.z = settings.jumpSpeed;
+            state.velocity.z = characterJumpSpeed3D(settings,
+                m_impl->jumpChargeSeconds);
             state.grounded = false;
             m_impl->jumpBufferRemaining = 0.0f;
             m_impl->coyoteRemaining = 0.0f;
@@ -209,12 +215,16 @@ void PhysicsScene3D::moveCharacter(const CharacterMotorCommand3D& command,
     m_impl->characterMoveVelocity = state.velocity;
     m_impl->characterDeltaTime = deltaTime;
     m_impl->characterIgnoreRagdolls = command.ignoreRagdolls;
+    m_impl->characterNavigationProxy = command.navigationProxy;
     m_impl->callbackFailed = false;
     auto& character=*m_impl->character;
     if (state.flying) {
         character.SetPosition(character.GetPosition()+toJolt(state.velocity*deltaTime));
     } else {
-        character.SetLinearVelocity(toJolt(state.velocity));
+        const Vec3 follow { command.followVelocity.x,
+            command.followVelocity.y, 0.0f };
+        const Vec3 intended = state.velocity;
+        character.SetLinearVelocity(toJolt(state.velocity + follow));
         JPH::CharacterVirtual::ExtendedUpdateSettings update;
         // Descendo escada, a capsula fica colada no chao ate um degrau (e
         // um pouco): com 15 cm fixos, cada degrau de 18 cm virava um instante
@@ -222,8 +232,16 @@ void PhysicsScene3D::moveCharacter(const CharacterMotorCommand3D& command,
         update.mStickToFloorStepDown={0,0,state.velocity.z>0?0.0f
             :-std::max(0.15f,settings.maximumStepHeight+0.05f)};
         update.mWalkStairsStepUp={0,0,settings.maximumStepHeight};
-        character.ExtendedUpdate(deltaTime,toJolt(m_impl->settings.gravity),update,{},CharacterLayers(command.ignoreRagdolls),{},{},*m_impl->tempAllocator);
+        character.ExtendedUpdate(deltaTime,toJolt(m_impl->settings.gravity),update,{},CharacterLayers(command.ignoreRagdolls,command.navigationProxy),{},{},*m_impl->tempAllocator);
         state.velocity=fromJolt(character.GetLinearVelocity());
+        if (follow.lengthSquared() > 0.0f) {
+            // A inercia do controlador fica sem o seguimento; bater numa
+            // parede enquanto segue o corpo nunca inverte o movimento.
+            state.velocity.x -= follow.x;
+            state.velocity.y -= follow.y;
+            if (state.velocity.x * intended.x < 0.0f) state.velocity.x = 0.0f;
+            if (state.velocity.y * intended.y < 0.0f) state.velocity.y = 0.0f;
+        }
     }
     if (m_impl->callbackFailed) throw std::runtime_error("Jolt: character contact failed");
     state.grounded=!state.flying&&!state.swimming&&character.GetGroundState()==JPH::CharacterBase::EGroundState::OnGround;

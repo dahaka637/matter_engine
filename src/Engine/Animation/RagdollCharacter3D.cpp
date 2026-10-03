@@ -40,6 +40,10 @@ RagdollCharacter3D loadRagdollCharacter3D(const std::string& manifestPath) {
         result.walkClipId=motion.value("walk", std::string {});
         result.walkBackwardClipId=motion.value("walkBackward", std::string {});
         result.sprintClipId=motion.value("sprint", std::string {});
+        result.idleToSprintClipId=motion.value("idleToSprint", std::string {});
+        result.runForwardArcLeftClipId=motion.value("runForwardArcLeft", std::string {});
+        result.runForwardArcRightClipId=motion.value("runForwardArcRight", std::string {});
+        result.runBackwardArcRightClipId=motion.value("runBackwardArcRight", std::string {});
         result.sprintBackwardClipId=motion.value("sprintBackward", std::string {});
         result.strafeLeftClipId=motion.value("strafeLeft", std::string {});
         result.strafeRightClipId=motion.value("strafeRight", std::string {});

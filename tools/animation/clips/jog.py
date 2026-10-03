@@ -42,14 +42,17 @@ JOG = GaitSpec(
     toe_off_pitch=25.0,
     landing_dorsiflex=4.0,
     toe_out=4.0,
-    pelvis_drop=0.103,        # preserva altura no apoio ao reduzir o bob
-    pelvis_bob=-0.022,        # 4,4 cm de oscilacao; pernas refeitas por IK
+    # A versao anterior baixava a pelve mais de 10 cm e mantinha o joelho de
+    # apoio entre 51 e 61 graus: parecia uma corrida agachada. O jogador de
+    # futebol trota alto, com flexao suficiente para absorver sem sentar.
+    pelvis_drop=0.055,
+    pelvis_bob=-0.016,
     pelvis_sway=0.012,
     pelvis_yaw=4.0,
     pelvis_list=4.0,
-    lean_forward=8.0,
-    lean_travel=3.0,
-    spine_flexion=8.0,        # tronco ~15 graus a frente
+    lean_forward=4.0,
+    lean_travel=2.0,
+    spine_flexion=3.0,
     shoulder_turn=16.0,
     head_nod=2.0,
     arm_lowered=RUNNING_ARM_LOWERED,

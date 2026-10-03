@@ -8,6 +8,7 @@
 #include "Engine/Character/BiomechanicalBipedExperiment3D.hpp"
 #include "Engine/Character/CharacterLocomotion3D.hpp"
 #include "Engine/Control/RagdollImpactTest3D.hpp"
+#include "Engine/Control/AdaptivePhysicalCharacter3D.hpp"
 #include "Engine/Data/SettingsRepository.hpp"
 #include "Engine/Environment/WindSystem.hpp"
 #include "Engine/Materials/MaterialLibrary.hpp"
@@ -120,12 +121,17 @@ private:
         std::vector<Mat4> skinMatrices;
         std::vector<Mat4> previousSkinMatrices;
         CharacterLocomotion3D locomotion;
+        AdaptivePhysicalCharacter3D adaptivePhysics;
+        // Fisica adaptativa nos bonecos nao controlados: uma capsula virtual
+        // (so posicao no plano) que segue o corpo como a do jogador - e para
+        // onde a correcao do corpo puxa.
+        Vec3 navigationAnchor;
+        Vec3 navigationAnchorVelocity;
+        bool navigationAnchorValid = false;
         BiomechanicalBipedExperiment3D biomechanics;
-        // What the player actually sees. The authored pose is authoritative
-        // and the simulated one is blended in by physicsBlend, so at zero the
-        // character renders exactly as animated - bodies still collide, they
-        // just do not get to decide how it looks. Same split Unreal makes
-        // with PhysicsBlendWeight.
+        // Rendering uses the simulated links. animationPose is a reference
+        // for control/debug; physicsBlend is legacy control policy, not a
+        // visual blend weight between two different bodies.
         // The state at the PREVIOUS fixed step, kept so the renderer can
         // interpolate: physics advances at 120 Hz while frames follow the
         // display, so drawing the last simulated state directly makes the
@@ -212,6 +218,7 @@ private:
         ThirdPerson
     };
     void setLaboratoryCameraFocus(Vec3 focus, LaboratoryCameraMode mode);
+    bool updateControlledPhysicalCameraFocus();
     void updateLaboratoryCamera(float fixedStepAlpha);
     // Smokes de suavidade de movimento; ver Laboratory/RenderMotionSmoke.cpp.
     void sampleRenderMotionSmoke(float viewportWidth, float viewportHeight);
@@ -403,17 +410,58 @@ private:
     float m_ragdollMusclePercent = 100.0f;
     RagdollImpactTest3D m_ragdollImpactLab;
     std::uint64_t m_controlledCharacterEntityId = 0;
-    Vec3 m_characterDesiredVelocityWorld;
+    // Velocidade da capsula (proxy de navegacao) neste tick - nao o pedido.
+    Vec3 m_characterProxyVelocityWorld;
+    // O pedido do jogador, puro: coletado inclusive caido/levantando.
+    CharacterIntent3D m_characterIntent;
+    // Experimento biomecanico: a velocidade pedida na faixa lenta dele.
+    Vec3 m_biomechanicalRequestedVelocity;
     float m_characterDesiredFacingYaw = 0.0f;
     bool m_characterSprinting = false;
-    // Laboratório de base flutuante: a cápsula deixa de transportar o corpo
-    // e nenhuma autoridade pós-solver ou wrench de raiz participa. Mantido
-    // como experimento isolado, desligado por padrão: o caminho padrão do
-    // personagem voltou a ser o modelo híbrido (cápsula + pose autoral de
-    // CharacterLocomotion3D), com o toggle no painel PERSONAGEM ainda
-    // disponível para comparação.
+    // Mantido internamente para compatibilidade com os modos de diagnóstico
+    // antigos; não é mais exposto no painel do personagem.
     bool m_biomechanicalExperiment = false;
     float m_biomechanicalBalanceAssistPercent = 100.0f;
+    // Fisica adaptativa (habilitada por padrao): a pelve do
+    // personagem controlado deixa de ser carregada pela capsula e vai a
+    // pose por forca limitada, que so existe com apoio real dos pes; a
+    // capsula segue o corpo quando ele e empurrado, tropeca ou cai. Ver
+    // IA_Brain .../Atualizacao_de_Locomocao_e_Fisica_do_Ragdoll.md.
+    bool m_adaptivePhysics = true;
+    // Etapa E4 (experimental): parado, o corpo e sustentado e equilibrado so
+    // pelas pernas (torque de contato nas juntas, forca zero na pelve), e o
+    // passo de recuperacao mira o ponto de captura. Andando, nada muda.
+    bool m_legsOnlyStanding = true;
+    bool m_legsPostureStanding = true;
+    // Etapa E5 (decisao de 30/09, noite): a animacao anda e corre, os pes
+    // corrigem o pouso pelo equilibrio, a ajuda da pelve fica presente e
+    // discreta; parado, a E4 pelas pernas com parte da ajuda. (A marcha so
+    // pelas pernas, pelo planejador, foi abandonada.) Harness: XE5ANIM=1.
+    bool m_legsWalkingE5 = true;
+    // Quanto da ajuda da pelve fica: parado, com as pernas carregando (%), e
+    // andando pela passada (correcao de posicao e postura, %). Pe consciente
+    // (o pouso da passada corrigido pelo equilibrio).
+    float m_e5StandingAssistPercent = 0.0f;
+    // Enquanto a marcha hibrida e polida, o jogo abre na referencia estavel.
+    // Reduzir este valor continua disponivel como diagnostico no painel, mas
+    // 10% ainda nao sustenta a passada atual e nao pode ser apresentado como
+    // experiencia padrao ao jogador.
+    float m_e5WalkingAssistPercent = 100.0f;
+    bool m_e5FootPlacement = true;
+    // Variacao de movimento (vida): cada boneco com o seu jeito.
+    bool m_motionVariety = true;
+    float m_motionVarietyPercent = 100.0f;
+    // Pe com mola e tornozelo contra a queda (modo fisico).
+    bool m_footSpring = true;
+    bool m_ankleBalance = true;
+    // Pulo com altura controlada: sai ao soltar o espaco; o tempo segurado
+    // decide a altura. Carga do ultimo pulo (0..1) para o corpo, e o
+    // agachar de preparacao enquanto segura.
+    bool m_laboratoryJumpCharging = false;
+    float m_laboratoryJumpChargeSeconds = 0.0f;
+    float m_laboratoryJumpCharge = 0.0f;
+    float m_laboratoryJumpCrouch = 0.0f;
+    Vec3 m_characterFollowVelocity;
     // Oculta apenas a apresentação em primeira pessoa; controles, física,
     // lanterna e manipulação continuam ativos para captura de imagens.
     // Oculto por padrão.

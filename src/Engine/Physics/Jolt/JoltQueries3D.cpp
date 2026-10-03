@@ -73,13 +73,13 @@ bool ragdollQuery(const PhysicsScene3D::Impl& impl, const Ray3D& ray, float dist
     return true;
 }
 bool sweepCapsule(const PhysicsScene3D::Impl& impl, Vec3 center, float radius,
-    float halfHeight, Vec3 displacement, Hit& out) {
+    float halfHeight, Vec3 displacement, Hit& out, unsigned mask = 1) {
     if (displacement.lengthSquared() < 1e-12f) return false;
     JPH::CapsuleShape shape(std::max(halfHeight, 0.001f), radius);
     JPH::RShapeCast query(&shape, JPH::Vec3::sReplicate(1),
         JPH::RMat44::sRotationTranslation(JPH::Quat::sRotation(JPH::Vec3::sAxisX(), JPH::JPH_PI * 0.5f), toJolt(center)), toJolt(displacement));
     JPH::ClosestHitCollisionCollector<JPH::CastShapeCollector> collector;
-    impl.system->GetNarrowPhaseQuery().CastShape(query, {}, JPH::RVec3::sZero(), collector, {}, Layers(1));
+    impl.system->GetNarrowPhaseQuery().CastShape(query, {}, JPH::RVec3::sZero(), collector, {}, Layers(mask));
     if (!collector.HadHit()) return false;
     const auto& h = collector.mHit;
     out = {h.mBodyID2, h.mSubShapeID2, fromJolt(h.mContactPointOn2),
@@ -106,6 +106,22 @@ GroundProbeResult3D PhysicsScene3D::probeGround(Vec3 center, float radius,
     GroundProbeResult3D result;
     Hit hit;
     if (radius <= 0 || halfHeight < 0 || distance <= 0 || !sweepCapsule(*m_impl, center, radius, halfHeight, {0,0,-distance}, hit)) return result;
+    result.hasSurface = true;
+    result.pointWorld = hit.point;
+    result.normalWorld = hit.normal;
+    result.distanceMeters = hit.distance;
+    result.slopeDegrees = std::acos(std::clamp(hit.normal.z, -1.0f, 1.0f)) * 180 / std::numbers::pi_v<float>;
+    result.walkable = result.slopeDegrees <= slope;
+    return result;
+}
+GroundProbeResult3D PhysicsScene3D::probeTerrain(Vec3 center, float radius,
+    float halfHeight, float distance, float slope) const {
+    // Estatico (NonMoving) e dinamico (Moving); nunca Ragdoll nem a capsula.
+    GroundProbeResult3D result;
+    Hit hit;
+    if (radius <= 0 || halfHeight < 0 || distance <= 0
+        || !sweepCapsule(*m_impl, center, radius, halfHeight, {0,0,-distance}, hit,
+            (1u << JoltObjectLayers::NonMoving) | (1u << JoltObjectLayers::Moving))) return result;
     result.hasSurface = true;
     result.pointWorld = hit.point;
     result.normalWorld = hit.normal;

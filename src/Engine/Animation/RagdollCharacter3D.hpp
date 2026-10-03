@@ -31,6 +31,9 @@ struct RagdollCharacter3D {
     // gira para o movimento e não há sprint. sprintBackward (opcional) é o
     // recuo com sprint; sem ele, recuando, segurar sprint não corre.
     std::string idleClipId, walkClipId, walkBackwardClipId, sprintClipId;
+    std::string idleToSprintClipId;
+    std::string runForwardArcLeftClipId, runForwardArcRightClipId;
+    std::string runBackwardArcRightClipId;
     std::string sprintBackwardClipId;
     // Strafe (opcionais): correr de lado de frente para a camera.
     std::string strafeLeftClipId, strafeRightClipId;

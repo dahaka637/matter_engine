@@ -1,4 +1,5 @@
 #include "Engine/Physics/PhysicsScene3D.hpp"
+#include "Engine/Physics/RagdollInteractions3D.hpp"
 
 #include "Engine/Environment/OceanSurface.hpp"
 #include "Engine/Materials/MaterialLibrary.hpp"
@@ -152,11 +153,8 @@ physx::PxFilterFlags simulationFilterShader(
     const bool wantsContactReports =
         ((filterData0.word2 | filterData1.word2)
             & FilterFlagContactReports) != 0;
-    const bool wantsRagdollSensorReports = containsRagdoll
-        && ((filterData0.word3 | filterData1.word3)
-            & RagdollContactSensorFlag) != 0;
     if ((wantsContactReports && !containsRagdoll)
-        || wantsRagdollSensorReports) {
+        || containsRagdoll) {
         pairFlags |= physx::PxPairFlag::eNOTIFY_TOUCH_FOUND
             // Contato que continua tocando passo a passo (nao so o instante
             // em que comecou) alimenta o som de arrasto/atrito.
@@ -314,6 +312,7 @@ struct PhysicsScene3D::Impl final
         std::vector<RagdollJointRuntime> joints;
         RagdollState3D state;
         std::vector<RagdollContactPoint3D> stepContacts;
+        std::vector<RagdollInteraction3D> stepInteractions;
         std::vector<RagdollDriveTarget3D> stagedActiveTargets;
         RagdollAnimationConstraint3D animationConstraint;
         physx::PxVec3 animationStepOrigin{0.0f};
@@ -387,6 +386,7 @@ struct PhysicsScene3D::Impl final
     PhysicsCharacterState3D characterState;
     float coyoteRemaining = 0.0f;
     float jumpBufferRemaining = 0.0f;
+    float jumpChargeSeconds = 0.0f;
     Vec3 characterMoveVelocity;
     // Copiados de CharacterMotorSettings3D a cada moveCharacter(), para que o
     // callback onShapeHit (que so recebe o hit da PhysX, sem settings) saiba
@@ -676,7 +676,7 @@ struct PhysicsScene3D::Impl final
             const bool sensorB = ragdollB != nullptr
                 && (filterB.word3 & RagdollContactSensorFlag) != 0;
             if (recordA == nullptr && recordB == nullptr
-                && !sensorA && !sensorB) {
+                && !ragdollA && !ragdollB) {
                 continue;
             }
             // "Acabou de tocar" (impacto, ContactImpactEvent3D) e "continua
@@ -737,6 +737,15 @@ struct PhysicsScene3D::Impl final
                     contact.linkIndex = linkIndex;
                     const auto* otherActor=header.actors[firstShape?1:0];
                     contact.otherBodyDynamic=otherActor && !otherActor->is<physx::PxRigidStatic>();
+                    contact.otherMotion = !contact.otherBodyDynamic
+                        ? RagdollContactMotion3D::Static
+                        : otherActor->is<physx::PxRigidDynamic>()
+                            && otherActor->is<physx::PxRigidDynamic>()->getRigidBodyFlags()
+                                .isSet(physx::PxRigidBodyFlag::eKINEMATIC)
+                            ? RagdollContactMotion3D::Kinematic
+                            : RagdollContactMotion3D::Dynamic;
+                    // Impulso do relatorio de contato: depois do solver.
+                    contact.impulseEstimated = false;
                     contact.position = fromPhysX(point.position);
                     contact.normal = fromPhysX(outwardNormal).normalized();
                     contact.normalImpulseNewtonSeconds =
@@ -754,9 +763,29 @@ struct PhysicsScene3D::Impl final
             if (sensorB && ragdollA != ragdollB) {
                 appendSensorPoints(*ragdollB, ragdollLinkB, false);
             }
+            const auto appendInteractions = [&](RagdollRecord* ragdoll,
+                std::uint32_t link, bool first) {
+                if (!ragdoll || ragdollA == ragdollB) return;
+                const auto* actor = header.actors[first ? 1 : 0];
+                const auto* dynamic = actor ? actor->is<physx::PxRigidDynamic>() : nullptr;
+                const auto motion = dynamic && dynamic->getRigidBodyFlags().isSet(physx::PxRigidBodyFlag::eKINEMATIC)
+                    ? RagdollContactMotion3D::Kinematic
+                    : actor && !actor->is<physx::PxRigidStatic>()
+                        ? RagdollContactMotion3D::Dynamic : RagdollContactMotion3D::Static;
+                for (physx::PxU32 i = 0; i < extracted; ++i) {
+                    const auto& p = points[i];
+                    const auto velocity = actorPointVelocity(header.actors[first ? 0 : 1], p.position)
+                        - actorPointVelocity(actor, p.position);
+                    accumulateRagdollInteraction3D(ragdoll->stepInteractions, link, motion,
+                        fromPhysX(p.position), fromPhysX(first ? p.normal : -p.normal),
+                        fromPhysX(velocity), std::abs(p.impulse.dot(p.normal)), false, false);
+                }
+            };
+            appendInteractions(ragdollA, ragdollLinkA, true);
+            appendInteractions(ragdollB, ragdollLinkB, false);
             // Sensores biomecânicos não atravessam a resolução acústica.
             // Isso preserva o custo e o significado do stream de áudio.
-            if (sensorA || sensorB) continue;
+            if (ragdollA || ragdollB) continue;
 
             physx::PxVec3 totalImpulse(0.0f);
             const physx::PxContactPairPoint* representative = &points[0];
@@ -1209,6 +1238,11 @@ void applyActiveRagdollFeedforward(
                 .inboundJoint.axes[axisIndexValue];
         const float torqueLimit = definition.maximumTorque
             * std::clamp(target.maximumTorqueScale, 0.0f, 3.0f);
+        if (record.gravityCompensationEnabled
+            && std::isfinite(target.gravityCompensationScale)) {
+            record.cache->jointForce[dof] *= std::clamp(
+                target.gravityCompensationScale, 0.0f, 1.0f);
+        }
         record.cache->jointForce[dof] += std::clamp(
             target.feedforwardTorqueNewtonMeters,
             -torqueLimit, torqueLimit);
@@ -1323,6 +1357,7 @@ void updateRagdollState(
     record.state.active = record.active;
     record.state.frozen = record.frozen;
     record.state.contacts = record.stepContacts;
+    publishRagdollInteractions3D(record.stepInteractions, record.state.interactions);
     if (record.state.links.size() != record.links.size()) {
         record.state.links.resize(record.links.size());
     }
@@ -1617,6 +1652,8 @@ RagdollHandle3D PhysicsScene3D::createRagdoll(
     record->passiveRigidityPercent = std::clamp(
         definition.rigidityPercent, 0.0f, 100.0f);
     record->stepContacts.reserve(24);
+    record->stepInteractions.resize(profile.links.size() * 6);
+    record->state.interactions.reserve(profile.links.size() * 6);
     record->stagedActiveTargets.reserve(
         ragdollDegreesOfFreedom3D(profile));
     record->articulation =
@@ -2075,6 +2112,23 @@ void PhysicsScene3D::applyRagdollControlRootForce(RagdollHandle3D handle,
         physx::PxForceMode::eFORCE, true);
 }
 
+void PhysicsScene3D::applyRagdollControlLinkForce(RagdollHandle3D handle,
+    std::uint32_t linkIndex, Vec3 forceNewtons,
+    Vec3 torqueNewtonMeters) {
+    // Como applyRagdollLinkForce, sem contar como interferencia externa.
+    Impl::RagdollRecord* record = m_impl->ragdoll(handle);
+    if (record == nullptr || record->frozen
+        || linkIndex >= record->links.size()
+        || record->links[linkIndex] == nullptr) {
+        return;
+    }
+    if (record->articulation != nullptr) record->articulation->wakeUp();
+    record->links[linkIndex]->addForce(toPhysX(forceNewtons),
+        physx::PxForceMode::eFORCE, true);
+    record->links[linkIndex]->addTorque(toPhysX(torqueNewtonMeters),
+        physx::PxForceMode::eFORCE, true);
+}
+
 void PhysicsScene3D::applyRagdollLinkForce(RagdollHandle3D handle,
     std::uint32_t linkIndex, Vec3 forceNewtons,
     Vec3 torqueNewtonMeters) {
@@ -2142,7 +2196,10 @@ void PhysicsScene3D::clear() {
     m_impl->contactImpacts.clear();
     m_impl->contactSlides.clear();
     for (Impl::RagdollSlot& slot : m_impl->ragdollSlots) {
-        if (slot.record) slot.record->stepContacts.clear();
+        if (slot.record) {
+            slot.record->stepContacts.clear();
+            std::fill(slot.record->stepInteractions.begin(), slot.record->stepInteractions.end(), RagdollInteraction3D {});
+        }
     }
     m_impl->activeAerodynamicBodies.clear();
     m_impl->activeOceanBodies.clear();
@@ -2392,6 +2449,14 @@ GroundProbeResult3D PhysicsScene3D::probeGround(Vec3 capsuleCenterWorld,
     float probeDistanceMeters, float maximumSlopeDegrees) const {
     return probeTraversalGround(*m_impl, capsuleCenterWorld, radiusMeters,
         cylinderHalfHeightMeters, probeDistanceMeters, maximumSlopeDegrees);
+}
+
+// (PhysX nao e o backend de jogo: o terreno ve so o estatico, como o chao.)
+GroundProbeResult3D PhysicsScene3D::probeTerrain(Vec3 capsuleCenterWorld,
+    float radiusMeters, float cylinderHalfHeightMeters,
+    float probeDistanceMeters, float maximumSlopeDegrees) const {
+    return probeGround(capsuleCenterWorld, radiusMeters, cylinderHalfHeightMeters,
+        probeDistanceMeters, maximumSlopeDegrees);
 }
 
 CapsuleTraversalResult3D PhysicsScene3D::solveCapsuleTraversal(
@@ -2925,13 +2990,15 @@ void PhysicsScene3D::moveCharacter(const CharacterMotorCommand3D& command,
             : std::max(0.0f, m_impl->coyoteRemaining - deltaTime);
         if (command.jumpPressed) {
             m_impl->jumpBufferRemaining = settings.jumpBufferTime;
+            m_impl->jumpChargeSeconds = command.jumpChargeSeconds;
         } else {
             m_impl->jumpBufferRemaining = std::max(0.0f,
                 m_impl->jumpBufferRemaining - deltaTime);
         }
         if (m_impl->jumpBufferRemaining > 0.0f
             && m_impl->coyoteRemaining > 0.0f) {
-            state.velocity.z = settings.jumpSpeed;
+            state.velocity.z = characterJumpSpeed3D(settings,
+                m_impl->jumpChargeSeconds);
             state.grounded = false;
             m_impl->jumpBufferRemaining = 0.0f;
             m_impl->coyoteRemaining = 0.0f;
@@ -2962,7 +3029,9 @@ void PhysicsScene3D::moveCharacter(const CharacterMotorCommand3D& command,
     CharacterQueryFilter queryFilter(m_impl->character->getActor());
     const physx::PxControllerFilters filters(&collisionFilter, &queryFilter);
     const physx::PxControllerCollisionFlags flags =
-        m_impl->character->move(toPhysX(state.velocity * deltaTime),
+        m_impl->character->move(toPhysX((state.velocity + Vec3 {
+                command.followVelocity.x, command.followVelocity.y, 0.0f })
+                * deltaTime),
             0.0001f, deltaTime, filters);
     state.grounded = !state.flying && !state.swimming
         && flags.isSet(physx::PxControllerCollisionFlag::eCOLLISION_DOWN);
@@ -3020,7 +3089,10 @@ void PhysicsScene3D::simulate(float deltaTime) {
     m_impl->contactImpacts.clear();
     m_impl->contactSlides.clear();
     for (Impl::RagdollSlot& slot : m_impl->ragdollSlots) {
-        if (slot.record) slot.record->stepContacts.clear();
+        if (slot.record) {
+            slot.record->stepContacts.clear();
+            std::fill(slot.record->stepInteractions.begin(), slot.record->stepInteractions.end(), RagdollInteraction3D {});
+        }
     }
 
     // Safe point da articulation: o passo anterior já terminou em

@@ -32,7 +32,7 @@ fi
 cmake -S "$root" -B "$build" -G Ninja \
     -DCMAKE_BUILD_TYPE="$configuration" "${physics_backend_arg[@]+"${physics_backend_arg[@]}"}"
 cmake --build "$build" --parallel "${CMAKE_BUILD_PARALLEL_LEVEL:-6}" \
-    --target MatterEngineApp MatterEngineTests MatterAudioTests
+    --target MatterEngineApp MatterEngineTests MatterAudioTests MatterAdaptiveTests
 
 if [[ "$skip_tests" != "--skip-tests" ]]; then
     ctest --test-dir "$build" --output-on-failure

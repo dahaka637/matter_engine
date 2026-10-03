@@ -1,4 +1,5 @@
 #include "Engine/Physics/Jolt/JoltInternals3D.hpp"
+#include "Engine/Physics/RagdollInteractions3D.hpp"
 #include <cmath>
 #include <algorithm>
 namespace MatterEngine {
@@ -22,14 +23,28 @@ void PhysicsScene3D::Impl::publishRagdoll(RagdollRecord& r) {
         const Quaternion frame = state.orientation * link.modelOrientation.conjugate() * link.inboundJoint.frameModelOrientation;
         const auto velocity = toJolt(frame.conjugate().rotate(state.angularVelocity - r.state.links[parent].angularVelocity));
         // Solver lambdas are impulses. Convert to torque; these include limits and motors.
-        const auto torque = (r.joints[i].constraint->GetTotalLambdaRotation() + r.joints[i].constraint->GetTotalLambdaMotorRotation()) / (stepDeltaTime / static_cast<float>(collisionSteps));
+        // (Os lambdas sao do ultimo sub-passo de colisao; divididos pela duracao dele.)
+        const float substep = stepDeltaTime / static_cast<float>(collisionSteps);
+        const auto constraintTorque = r.joints[i].constraint->GetTotalLambdaRotation() / substep;
+        const auto motorTorque = r.joints[i].constraint->GetTotalLambdaMotorRotation() / substep;
+        const auto torque = constraintTorque + motorTorque;
+        const auto& runtime = r.joints[i];
         for (int a = 0; a < 3; ++a) {
-            joint.positionRadians[a] = link.inboundJoint.axes[a].enabled ? rotation[a] : 0;
-            joint.velocityRadiansPerSecond[a] = link.inboundJoint.axes[a].enabled ? velocity[a] : 0;
+            const bool enabled = link.inboundJoint.axes[a].enabled;
+            const auto axis = static_cast<std::size_t>(a);
+            joint.positionRadians[a] = enabled ? rotation[a] : 0;
+            joint.velocityRadiansPerSecond[a] = enabled ? velocity[a] : 0;
             joint.transmittedTorqueNewtonMeters[a] = torque[a];
+            joint.motorTorqueNewtonMeters[a] = enabled ? motorTorque[a] : 0;
+            joint.constraintTorqueNewtonMeters[a] = enabled ? constraintTorque[a] : 0;
+            joint.feedforwardTorqueNewtonMeters[a] = enabled ? runtime.appliedFeedforward[axis] : 0;
+            joint.motorTorqueLimitNewtonMeters[a] = enabled ? runtime.appliedTorqueLimit[axis] : 0;
+            joint.targetPositionRadians[a] = enabled ? runtime.appliedTargets[axis] : 0;
+            joint.targetVelocityRadiansPerSecond[a] = enabled ? runtime.appliedTargetVelocities[axis] : 0;
         }
     }
     r.state.contacts = r.stepContacts;
+    publishRagdollInteractions3D(r.stepInteractions, r.state.interactions);
     r.state.active = r.active;
     r.state.frozen = r.frozen;
     r.state.rigidityPercent = r.rigidityPercent;

@@ -311,6 +311,10 @@ void WorkbenchApp::enterLaboratory(bool resetCamera) {
     m_laboratoryTaaHistoryValid = false;
     m_taaFrameIndex = 0;
     m_discardNextMouseDelta = true;
+    // A entrada normal no laboratório já prepara o personagem padrão. O
+    // spawn é executado quando o mapa e os assets terminarem de carregar;
+    // assim o controle começa no primeiro ragdoll válido, sem exigir menu.
+    m_takeCharacterControlWhenReady = m_controlledCharacterEntityId == 0;
     syncLaboratoryMouseCapture();
 }
 
@@ -381,13 +385,18 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
     const bool freeLook = controllingCharacter
         && (input().keyDown(Key::LeftAlt)
             || input().keyDown(Key::RightAlt));
-    const bool cameraOnly = freeLook || controlledCharacterFrozen
-        || controlledCharacterDown;
+    // Alt desacopla o olhar do corpo, mas nao suspende a locomocao. Enquanto
+    // ele esta pressionado, WASD permanece no referencial do rumo que o
+    // personagem ja tinha; assim orbitar a camera nao curva a trajetoria nem
+    // zera o input no meio de uma passada.
+    const bool cameraOnly = controlledCharacterFrozen || controlledCharacterDown;
+    const float movementReferenceYaw = freeLook
+        ? m_characterDesiredFacingYaw : m_laboratoryCameraYaw;
     const bool acceptsMovement = !m_laboratoryDebugVisible
         && !m_spawnMenuOpen && !cameraOnly;
     if (acceptsMovement) {
-        const Vec3 planarForward = cameraForward(m_laboratoryCameraYaw, 0.0f);
-        const Vec3 viewForward = cameraForward(m_laboratoryCameraYaw,
+        const Vec3 planarForward = cameraForward(movementReferenceYaw, 0.0f);
+        const Vec3 viewForward = cameraForward(movementReferenceYaw,
             m_laboratoryCameraPitch);
         // Em coordenadas Z-up, direita é forward × up. No voo, W/S usa
         // viewForward completo para acompanhar exatamente o ponto observado.
@@ -409,7 +418,7 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
             && command.moveDirection.lengthSquared() > 0.0001f) {
             const float travelRelative = std::atan2(
                 command.moveDirection.y, command.moveDirection.x)
-                - m_laboratoryCameraYaw;
+                - movementReferenceYaw;
             const float wanted = characterGaitSpeed3D(m_avatarGaitSpeeds,
                 travelRelative, command.sprint);
             const float nominal = command.sprint
@@ -439,49 +448,113 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
             if (stateBefore.swimming && control) {
                 command.moveDirection.z -= 1.0f;
             }
+            m_laboratoryJumpCharging = false;
         } else {
             command.crouch = control;
         }
+        // Pulo ao soltar o espaco: o tempo segurado decide a altura (um
+        // toque e o pulo padrao; ver characterJumpSpeed3D).
+        if (m_laboratoryJumpCharging) {
+            if (input().keyDown(Key::Space)) {
+                m_laboratoryJumpChargeSeconds += deltaTime;
+            } else {
+                m_laboratoryJumpCharging = false;
+                m_laboratoryJumpRequested = true;
+            }
+        }
         command.jumpPressed = m_laboratoryJumpRequested;
+        command.jumpChargeSeconds = m_laboratoryJumpChargeSeconds;
         command.toggleFlight = !controllingCharacter
             && m_laboratoryFlightToggleRequested;
     } else {
         // Um painel aberto bloqueia novos comandos, mas não congela gravidade
         // nem força o personagem agachado a tentar levantar.
         command.crouch = stateBefore.crouched;
+        m_laboratoryJumpCharging = false;
     }
     m_laboratoryJumpRequested = false;
     m_laboratoryFlightToggleRequested = false;
+    // Intencao do jogador, pura: coletada tambem caido ou levantando (so
+    // menus, o olhar livre e o congelado a bloqueiam). O corpo pode nao
+    // conseguir executar, mas o pedido continua existindo - o proximo passo,
+    // a protecao e o levantar vao usa-lo. A capsula segue parada nesses
+    // estados (acceptsMovement acima).
+    m_characterIntent = {};
+    if (controllingCharacter) {
+        m_characterIntent.requestedFacingYawRadians = freeLook
+            ? m_characterDesiredFacingYaw : m_laboratoryCameraYaw;
+        m_characterIntent.lookPitchRadians = m_laboratoryCameraPitch;
+        const bool intentBlocked = m_laboratoryDebugVisible || m_spawnMenuOpen
+            || controlledCharacterFrozen;
+        if (!intentBlocked && !stateBefore.flying && !stateBefore.swimming) {
+            const Vec3 planarForward = cameraForward(movementReferenceYaw, 0.0f);
+            const Vec3 right { planarForward.y, -planarForward.x, 0.0f };
+            Vec3 direction {};
+            if (input().keyDown(Key::W)) direction += planarForward;
+            if (input().keyDown(Key::S)) direction -= planarForward;
+            if (input().keyDown(Key::D)) direction += right;
+            if (input().keyDown(Key::A)) direction -= right;
+            const bool sprint = input().keyDown(Key::LeftShift)
+                || input().keyDown(Key::RightShift);
+            m_characterIntent.effort = sprint ? 1.0f : 0.0f;
+            m_characterIntent.crouch = input().keyDown(Key::LeftControl)
+                || input().keyDown(Key::RightControl);
+            direction.z = 0.0f;
+            if (direction.lengthSquared() > 0.0001f) {
+                direction = direction.normalized();
+                float speed = characterGaitSpeed3D(m_avatarGaitSpeeds,
+                    std::atan2(direction.y, direction.x) - movementReferenceYaw, sprint);
+                const auto controlled = std::find_if(m_spawnedRagdolls.begin(),
+                    m_spawnedRagdolls.end(), [&](const SpawnedRagdollInstance& item) {
+                        return item.entityId == m_controlledCharacterEntityId;
+                    });
+                if (controlled != m_spawnedRagdolls.end()) {
+                    speed = std::min(speed, controlled->locomotion.telemetry().terrainSpeedLimit);
+                }
+                m_characterIntent.requestedDirectionWorld = direction;
+                m_characterIntent.requestedVelocityWorld = direction * speed;
+            }
+        }
+    }
 
-    const CharacterMotorSettings3D& activeSettings = controllingCharacter
+    CharacterMotorSettings3D activeSettings = controllingCharacter
         ? m_avatarCharacterSettings : m_characterSettings;
+    if (controllingCharacter && m_adaptivePhysics) {
+        activeSettings = adaptiveCharacterMotorSettings3D(activeSettings, stateBefore, command);
+    }
+    // Carga do pulo: o agachar de preparacao enquanto segura e, no pulo, a
+    // carga que o corpo usa para o impulso.
+    m_laboratoryJumpCrouch = m_laboratoryJumpCharging && stateBefore.grounded
+        ? characterJumpCharge3D(activeSettings, m_laboratoryJumpChargeSeconds) : 0.0f;
+    if (command.jumpPressed) {
+        m_laboratoryJumpCharge = characterJumpCharge3D(activeSettings,
+            command.jumpChargeSeconds);
+    }
     if (controllingCharacter && m_biomechanicalExperiment) {
         Vec3 requested = command.moveDirection;
         requested.z = 0.0f;
         if (requested.lengthSquared() > 1.0f) {
             requested = requested.normalized();
         }
-        m_characterDesiredVelocityWorld = requested
+        m_biomechanicalRequestedVelocity = requested
             * (command.sprint ? 1.10f : 0.68f);
         m_characterSprinting = command.sprint
             && requested.lengthSquared() > 0.001f;
-        if (!cameraOnly) {
+        if (!cameraOnly && !freeLook) {
             m_characterDesiredFacingYaw = m_laboratoryCameraYaw;
         }
 
-        const auto controlled = std::find_if(m_spawnedRagdolls.begin(),
-            m_spawnedRagdolls.end(), [&](const SpawnedRagdollInstance& item) {
-                return item.entityId == m_controlledCharacterEntityId;
-            });
-        if (controlled != m_spawnedRagdolls.end()
-            && !controlled->physicsState.links.empty()) {
-            setLaboratoryCameraFocus(
-                controlled->physicsState.links.front().position
-                    + Vec3 { 0.0f, 0.0f, 0.36f },
-                LaboratoryCameraMode::ThirdPerson);
-        }
         updateDynamicProps(deltaTime);
+        // Depois da simulacao: camera e malha leem exatamente o mesmo par
+        // de snapshots fisicos neste quadro.
+        updateControlledPhysicalCameraFocus();
         return;
+    }
+    // Fisica adaptativa: a capsula vai atras do corpo (calculado no tick
+    // anterior, em updateActiveRagdolls).
+    if (controllingCharacter && m_adaptivePhysics) {
+        command.followVelocity = m_characterFollowVelocity;
+        command.navigationProxy = true;
     }
     m_physicsScene->moveCharacter(command, activeSettings, deltaTime);
     const PhysicsCharacterState3D& character =
@@ -493,8 +566,9 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
         m_laboratoryStatus.clear();
     }
 
-    // A câmera lê a cápsula depois da física. Somente a altura dos olhos é
-    // interpolada, evitando um salto visual ao agachar sem atrasar colisões.
+    // A altura dos olhos da primeira pessoa continua vindo da capsula. No
+    // controle em terceira pessoa, o foco e substituido abaixo pelo torax
+    // fisico do ragdoll.
     const float bodyHeight = character.crouched
         ? activeSettings.crouchedHeight
         : activeSettings.standingHeight;
@@ -505,26 +579,22 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
         (targetEyeHeight - m_laboratoryEyeHeight) * blend;
     const float feetZ = character.position.z - bodyHeight * 0.5f;
     if (controllingCharacter) {
-        m_characterDesiredVelocityWorld = {
+        m_characterProxyVelocityWorld = {
             character.velocity.x, character.velocity.y, 0.0f
         };
         m_characterSprinting = command.sprint
-            && m_characterDesiredVelocityWorld.lengthSquared() > 0.01f;
-        if (!cameraOnly && character.crouched
-            && m_characterDesiredVelocityWorld.lengthSquared() > 0.01f) {
+            && m_characterProxyVelocityWorld.lengthSquared() > 0.01f;
+        if (!cameraOnly && !freeLook && character.crouched
+            && m_characterProxyVelocityWorld.lengthSquared() > 0.01f) {
             m_characterDesiredFacingYaw = std::atan2(
-                m_characterDesiredVelocityWorld.y,
-                m_characterDesiredVelocityWorld.x);
-        } else if (!cameraOnly) {
+                m_characterProxyVelocityWorld.y,
+                m_characterProxyVelocityWorld.x);
+        } else if (!cameraOnly && !freeLook) {
             m_characterDesiredFacingYaw = m_laboratoryCameraYaw;
         }
 
-        setLaboratoryCameraFocus({ character.position.x,
-                character.position.y,
-                feetZ + (character.crouched ? 0.98f : 1.28f) },
-            LaboratoryCameraMode::ThirdPerson);
     } else {
-        m_characterDesiredVelocityWorld = {};
+        m_characterProxyVelocityWorld = {};
         m_characterSprinting = false;
         setLaboratoryCameraFocus({ character.position.x,
                 character.position.y,
@@ -532,6 +602,47 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
             LaboratoryCameraMode::FirstPerson);
     }
     updateDynamicProps(deltaTime);
+    if (controllingCharacter) {
+        // updateDynamicProps acabou de buscar o estado novo do ragdoll.
+        updateControlledPhysicalCameraFocus();
+    }
+}
+
+bool WorkbenchApp::updateControlledPhysicalCameraFocus() {
+    if (!m_humanRagdollProfile || m_controlledCharacterEntityId == 0) {
+        return false;
+    }
+    const auto controlled = std::find_if(m_spawnedRagdolls.begin(),
+        m_spawnedRagdolls.end(), [&](const SpawnedRagdollInstance& item) {
+            return item.entityId == m_controlledCharacterEntityId
+                && item.active && !item.physicsState.links.empty();
+        });
+    if (controlled == m_spawnedRagdolls.end()) {
+        return false;
+    }
+
+    // A capsula e apenas uma referencia de navegacao. O alvo e o centro do
+    // corpo rigido UpperChest que acabou de sair do solver e que tambem sera
+    // usado para desenhar a malha neste quadro.
+    const auto linkPosition = [&](const char* id, Vec3& position) {
+        for (std::size_t i = 0;
+            i < m_humanRagdollProfile->links.size()
+                && i < controlled->physicsState.links.size(); ++i) {
+            if (m_humanRagdollProfile->links[i].id == id) {
+                position = controlled->physicsState.links[i].position;
+                return true;
+            }
+        }
+        return false;
+    };
+    Vec3 physicalFocus;
+    const bool hasUpperChest = linkPosition("UpperChest", physicalFocus);
+    if (!hasUpperChest) {
+        physicalFocus = controlled->physicsState.links.front().position;
+    }
+    setLaboratoryCameraFocus(physicalFocus,
+        LaboratoryCameraMode::ThirdPerson);
+    return true;
 }
 
 void WorkbenchApp::setLaboratoryCameraFocus(Vec3 focus,
@@ -902,7 +1013,7 @@ void WorkbenchApp::ensureOceanClipmap(Renderer& activeRenderer) {
 void WorkbenchApp::resetLaboratoryCharacter() {
     if (!m_physicsScene) return;
     m_controlledCharacterEntityId = 0;
-    m_characterDesiredVelocityWorld = {};
+    m_characterProxyVelocityWorld = {};
     m_characterSprinting = false;
     m_physicsScene->placeCharacter(m_laboratorySpawnPosition,
         m_characterSettings);
@@ -2333,7 +2444,7 @@ void WorkbenchApp::drawLaboratoryUi() {
                         ? "CONTROLE ATIVO" : "CONTROLE LIVRE");
                 ImGui::TextWrapped(m_biomechanicalExperiment
                     ? "Locomoção procedural de base flutuante. Contato físico, centro de massa, passos, arco dos pés, IK e movimento corporal são resolvidos sem clips de animação."
-                    : "Controle híbrido de referência com cápsula de travessia e articulation PhysX.");
+                    : "Personagem físico com animação, apoio dos pés e recuperação de equilíbrio.");
                 ImGui::Dummy({ 1.0f, ui(8.0f) });
                 if (!isControlling && !hasCandidate) ImGui::BeginDisabled();
                 if (ImGui::Button(isControlling
@@ -2347,28 +2458,55 @@ void WorkbenchApp::drawLaboratoryUi() {
                     ImGui::TextWrapped(
                         "Crie um Crash Test Dummy ativo pelo menu de spawn.");
                 }
-                bool biomechanical = m_biomechanicalExperiment;
-                if (ImGui::Checkbox("Experimento biomecânico isolado",
-                        &biomechanical)) {
-                    m_biomechanicalExperiment = biomechanical;
-                    m_characterDesiredVelocityWorld = {};
-                    m_characterSprinting = false;
-                    if (isControlling) {
-                        if (biomechanical) {
-                            controlled->biomechanics.reset(
-                                *m_humanRagdollProfile,
-                                controlled->physicsState,
-                                m_physicsScene->ragdollDynamics(
-                                    controlled->physicsRagdoll));
-                        } else if (!controlled->physicsState.links.empty()) {
-                            const Vec3 root =
-                                controlled->physicsState.links.front().position;
-                            m_physicsScene->placeCharacter({ root.x, root.y,
-                                ragdollGroundHeight(root) },
-                                m_avatarCharacterSettings);
-                            controlled->locomotion.reset(
-                                *m_humanRagdollProfile,
-                                controlled->physicsState);
+                if (!m_biomechanicalExperiment) {
+                    // Explicacoes so ao passar o mouse (o painel ficava tomado
+                    // de texto).
+                    const auto hint = [](const char* text) {
+                        if (!ImGui::IsItemHovered()) return;
+                        ImGui::BeginTooltip();
+                        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 24.0f);
+                        ImGui::TextUnformatted(text);
+                        ImGui::PopTextWrapPos();
+                        ImGui::EndTooltip();
+                    };
+                    ImGui::Checkbox("Variação de movimento", &m_motionVariety);
+                    hint("Braços, tronco e cabeça variam um pouco a cada passada; parado, ele respira e às vezes desvia o olhar. Cada boneco tem o seu jeito.");
+                    if (m_motionVariety) {
+                        ImGui::SliderFloat("##variacao", &m_motionVarietyPercent, 0.0f, 200.0f, "Intensidade %.0f%%");
+                        hint("Intensidade da variação de movimento.");
+                    }
+                    ImGui::Checkbox("Pé com mola", &m_footSpring);
+                    hint("No ar o pé acompanha a passada e chega paralelo ao chão onde vai pisar; no toque o tornozelo cede e amortece.");
+                    if (m_footSpring) {
+                        ImGui::Checkbox("Tornozelo contra a queda", &m_ankleBalance);
+                        hint("O pé de apoio pressiona a ponta, o calcanhar ou a borda contra o lado para onde o corpo está caindo.");
+                    }
+                    bool adaptive = m_adaptivePhysics;
+                    if (ImGui::Checkbox("Física adaptativa",
+                            &adaptive)) {
+                        m_adaptivePhysics = adaptive;
+                        m_characterFollowVelocity = {};
+                        if (isControlling) {
+                            controlled->adaptivePhysics.reset(
+                                *m_humanRagdollProfile);
+                        }
+                    }
+                    hint("A pelve vai à pose por força limitada, só com os pés apoiados; empurrões e batidas agem no corpo de verdade. Vale para todos os bonecos.");
+                    if (m_adaptivePhysics) {
+                        ImGui::Checkbox("Animação + pés + ajuda discreta (E5)", &m_legsWalkingE5);
+                        hint("Andando, a animação decide a passada e o percentual regula junto propulsão, correção e postura auxiliares; parado, as pernas equilibram com a parcela escolhida.");
+                        if (m_legsWalkingE5) {
+                            ImGui::SliderFloat("Ajuda da pelve parado", &m_e5StandingAssistPercent, 0.0f, 100.0f, "%.0f%%");
+                            hint("Parcela auxiliar aplicada diretamente na pelve. Em 0%, a pelve nao recebe sustentacao, correcao nem postura externas; motores musculares, compensacao de gravidade e equilibrio fisico pelas pernas continuam ativos.");
+                            ImGui::SliderFloat("Ajuda andando", &m_e5WalkingAssistPercent, 0.0f, 100.0f, "%.0f%%");
+                            ImGui::Checkbox("Pé consciente", &m_e5FootPlacement);
+                            hint("O pé em balanço corrige onde pousa quando o corpo sai da velocidade pedida (empurrão, tropeço).");
+                        }
+                        ImGui::Checkbox("Parado só pelas pernas (E4)", &m_legsOnlyStanding);
+                        hint("Parado, sem sustentação nem correção na pelve: o chão sustenta e equilibra o corpo pelos pés. (Com a E5 ligada, a E5 decide.)");
+                        if (m_legsOnlyStanding) {
+                            ImGui::Checkbox("Postura também pelas pernas (E4)", &m_legsPostureStanding);
+                            hint("Sem torque na pelve: a postura do tronco vem do chão pelos pés. (Com a E5 ligada, a E5 decide.)");
                         }
                     }
                 }
@@ -2377,9 +2515,18 @@ void WorkbenchApp::drawLaboratoryUi() {
                         &m_biomechanicalBalanceAssistPercent,
                         0.0f, 100.0f, "%.0f%%");
                 }
-                ImGui::TextWrapped(m_biomechanicalExperiment
-                    ? "O contato real decide o apoio; o planejador transfere peso, abre o passo e pousa o pé. A assistência limitada estabiliza e impulsiona o corpo sem escrever transforms."
-                    : "Corpo único e físico: as juntas são movidas por motores e colidem de verdade; a raiz é carregada pela cápsula. O auxílio cai sozinho conforme o impacto (ver PESO FÍSICO).");
+                ImGui::TextDisabled("(?) Sobre o corpo");
+                if (ImGui::IsItemHovered()) {
+                    ImGui::BeginTooltip();
+                    ImGui::PushTextWrapPos(ImGui::GetFontSize() * 24.0f);
+                    ImGui::TextUnformatted(m_biomechanicalExperiment
+                        ? "O contato real decide o apoio; o planejador transfere peso, abre o passo e pousa o pé. A assistência limitada estabiliza e impulsiona o corpo sem escrever transforms."
+                        : m_adaptivePhysics
+                        ? "Corpo único e físico: as juntas são movidas por motores e colidem de verdade. Caído, os músculos cedem e recobram o tônus aos poucos; o levantar é feito pelos motores, com uma ajuda discreta."
+                        : "Corpo único e físico: as juntas são movidas por motores e colidem de verdade; a raiz é carregada pela cápsula. O auxílio cai sozinho conforme o impacto (ver PESO FÍSICO).");
+                    ImGui::PopTextWrapPos();
+                    ImGui::EndTooltip();
+                }
 
                 panelHeader("COMANDOS");
                 if (m_biomechanicalExperiment) {
@@ -2389,11 +2536,34 @@ void WorkbenchApp::drawLaboratoryUi() {
                     ImGui::TextUnformatted("WASD  mover em 8 direções");
                     ImGui::TextUnformatted("Shift  correr");
                     ImGui::TextUnformatted("Ctrl  agachar");
-                    ImGui::TextUnformatted("Espaço  pular");
+                    ImGui::TextUnformatted("Espaço  pular (segure para pular mais alto)");
                 }
                 ImGui::TextUnformatted("Mouse  câmera e direção corporal");
                 if (isControlling) {
-                    ImGui::TextUnformatted("Alt  orbitar sem mover o corpo");
+                    if (ImGui::TreeNode(m_adaptivePhysics
+                            ? "Diagnóstico físico" : "Diagnóstico físico (só medição)")) {
+                        const auto& physical = controlled->adaptivePhysics.output();
+                        ImGui::Text("Apoio dos pés: %.2f (sem contato há %.2f s)",
+                            physical.supportAuthority,
+                            physical.secondsWithoutFootContact);
+                        ImGui::Text("Inclinação além da pose: %.1f° | ajuda restante: %.2f",
+                            physical.tiltErrorDegrees,
+                            physical.uprightAuthorityShare);
+                        ImGui::Text("Contato externo recente: %.2f | alavanca: %.0f Nm",
+                            physical.perturbation,
+                            physical.correctionLeverWorld.length());
+                        ImGui::Text("Força na pelve: %.0f N | postura: %.0f Nm",
+                            physical.rootForceWorld.length(), physical.rootTorqueWorld.length());
+                        ImGui::Text("Erro corpo/navegacao: %.3f m", physical.proxyErrorMeters);
+                        if (physical.strongestInteractionLink < m_humanRagdollProfile->links.size()) {
+                            ImGui::Text("Contato: %s | %.3f Ns%s",
+                                m_humanRagdollProfile->links[physical.strongestInteractionLink].id.c_str(),
+                                physical.strongestImpulse,
+                                physical.interactionImpulseEstimated ? " (estimado)" : "");
+                        }
+                        ImGui::TreePop();
+                    }
+                    ImGui::TextUnformatted("Alt  olhar livre (continua andando)");
                     ImGui::TextUnformatted("U  congelar / descongelar ragdoll");
                     ImGui::TextUnformatted("T  restaurar pose inicial");
                     if (controlled->frozen
@@ -2571,6 +2741,21 @@ void WorkbenchApp::drawLaboratoryUi() {
                     ImGui::Text("Inclinação frente/lado: %.1f° / %.1f°",
                         telemetry.forwardLeanRadians * 180.0f / Pi,
                         telemetry.lateralLeanRadians * 180.0f / Pi);
+                    const char* curveName = telemetry.authoredCurveKind == 1
+                        ? "FBX frente esquerda"
+                        : telemetry.authoredCurveKind == 2
+                        ? "FBX frente direita"
+                        : telemetry.authoredCurveKind == 3
+                        ? "FBX costas direita" : "nenhuma";
+                    ImGui::Text("Movimento autoral: partida %s | curva %s %.0f%%",
+                        telemetry.authoredStartActive ? "FBX ATIVO" : "-",
+                        curveName, telemetry.authoredCurveBlend * 100.0f);
+                    if (std::abs(telemetry.landingBraceForwardRadians) > 0.001f
+                        || std::abs(telemetry.landingBraceLateralRadians) > 0.001f) {
+                        ImGui::Text("Preparação do pouso: frente %.1f° | lado %.1f°",
+                            telemetry.landingBraceForwardRadians * 180.0f / Pi,
+                            telemetry.landingBraceLateralRadians * 180.0f / Pi);
+                    }
                     if (telemetry.state == CharacterLocomotionState3D::Fallen
                         || telemetry.state
                             == CharacterLocomotionState3D::GettingUp) {

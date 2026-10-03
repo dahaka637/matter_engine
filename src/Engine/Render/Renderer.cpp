@@ -102,6 +102,10 @@ void Renderer::initialize(const std::string& title, int width, int height, bool 
     m_vulkan->initializeImGui(m_window);
     m_render2D.initialize(*m_vulkan);
     applyVideoSettings(width, height, mode);
+    if (mode == DisplayMode::Windowed) {
+        SDL_MaximizeWindow(m_window);
+        SDL_SyncWindow(m_window);
+    }
     SDL_GetWindowSizeInPixels(m_window, &m_width, &m_height);
     Log::info(std::string("SDL3, ") + m_vulkan->backendName() + " and Dear ImGui initialized.");
 }

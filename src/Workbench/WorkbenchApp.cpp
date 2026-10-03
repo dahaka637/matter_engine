@@ -194,6 +194,10 @@ void WorkbenchApp::loadAnimationCatalog() {
     // pulos.
     const std::vector<std::string> characterClipIds {
         m_ragdollCharacter->idleClipId,
+        m_ragdollCharacter->idleToSprintClipId,
+        m_ragdollCharacter->runForwardArcLeftClipId,
+        m_ragdollCharacter->runForwardArcRightClipId,
+        m_ragdollCharacter->runBackwardArcRightClipId,
         m_ragdollCharacter->walkClipId,
         m_ragdollCharacter->walkBackwardClipId,
         m_ragdollCharacter->sprintClipId,
@@ -270,6 +274,7 @@ void WorkbenchApp::applyAutostartIfRequested() {
             || mode == "laboratory-pixel-spawn-smoke";
         m_spawnRagdollWhenReady = mode == "laboratory-ragdoll-smoke";
         m_takeCharacterControlWhenReady = mode == "laboratory-character"
+            || mode == "laboratory" || mode == "laboratory-debug"
             || mode == "laboratory-biomechanics"
             || mode == "laboratory-camera-orbit-smoke";
         if (mode == "laboratory-camera-orbit-smoke"
@@ -382,6 +387,7 @@ void WorkbenchApp::onEvent(const Event& event) {
             endPhysGunGrab();
             m_spawnMenuOpen = false;
             m_laboratoryJumpRequested = false;
+            m_laboratoryJumpCharging = false;
             m_laboratoryFlightToggleRequested = false;
             renderer().setMouseCaptured(false);
             return;
@@ -423,7 +429,10 @@ void WorkbenchApp::onEvent(const Event& event) {
             }
             if (event.key == Key::Space && !m_laboratoryPaused
                 && !m_laboratoryDebugVisible && !m_spawnMenuOpen) {
-                m_laboratoryJumpRequested = true;
+                // O pulo sai ao soltar (ver updateLaboratory): aqui so comeca
+                // a carregar.
+                m_laboratoryJumpCharging = true;
+                m_laboratoryJumpChargeSeconds = 0.0f;
                 return;
             }
             if (event.key == Key::V && !m_laboratoryPaused

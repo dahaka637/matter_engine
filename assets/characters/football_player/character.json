@@ -4,6 +4,10 @@
   "displayName": "Jogador de futebol",
   "locomotion": {
     "idle": "alert_idle",
+    "idleToSprint": "idle_to_sprint",
+    "runForwardArcLeft": "run_forward_arc_left",
+    "runForwardArcRight": "run_forward_arc_right",
+    "runBackwardArcRight": "run_backward_arc_right",
     "walk": "jog",
     "walkBackward": "run_backward",
     "sprint": "sprint",
@@ -37,6 +41,13 @@
         "assets/animations/source/mixamo/study/Idle.fbx",
         "assets/animations/source/retargeted/alert_idle.retarget.json",
         "tools/animation/clips/alert_idle.py"
+      ]
+    },
+    "idleToSprint": {
+      "license": "arquivo FBX fornecido pelo usuario; procedencia nao declarada",
+      "sources": [
+        "/home/dahaka/Downloads/Idle To Sprint.fbx",
+        "assets/animations/source/retargeted/idle_to_sprint.retarget.json"
       ]
     },
     "walk": {
@@ -82,6 +93,17 @@
       "sources": [
         "tools/animation/clips/jumps.py",
         "tools/animation/jump.py"
+      ]
+    },
+    "runningArcs": {
+      "license": "arquivos FBX fornecidos pelo usuario; procedencia nao declarada",
+      "sources": [
+        "/home/dahaka/Downloads/Run Forward Arc Right.fbx",
+        "/home/dahaka/Downloads/Run Forward Arc Left.fbx",
+        "/home/dahaka/Downloads/Run Backward Arc Right.fbx",
+        "assets/animations/source/retargeted/run_forward_arc_right.retarget.json",
+        "assets/animations/source/retargeted/run_forward_arc_left.retarget.json",
+        "assets/animations/source/retargeted/run_backward_arc_right.retarget.json"
       ]
     }
   },

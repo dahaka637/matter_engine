@@ -84,7 +84,10 @@ void PhysicsScene3D::simulate(float dt) {
     impl.collisionSteps = 1;
     impl.contactImpacts.clear();
     impl.contactSlides.clear();
-    for (auto& slot : impl.ragdollSlots) if (slot.record) slot.record->stepContacts.clear();
+    for (auto& slot : impl.ragdollSlots) if (slot.record) {
+        slot.record->stepContacts.clear();
+        std::fill(slot.record->stepInteractions.begin(), slot.record->stepInteractions.end(), RagdollInteraction3D {});
+    }
     impl.reportedContactPairs = 0;
     impl.reportedContactPoints = 0;
     impl.allContactPairs = 0;

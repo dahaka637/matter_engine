@@ -4,6 +4,7 @@
 #include "Engine/Physics/PhysicsEngine3D.hpp"
 #include "Engine/Physics/RagdollProfile3D.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <limits>
@@ -45,10 +46,23 @@ struct CharacterMotorCommand3D {
     bool sprint = false;
     bool crouch = false;
     bool jumpPressed = false;
+    // Pulo ao soltar: quanto tempo o botao ficou segurado antes deste pulo
+    // (s). Um toque e o pulo padrao; segurando mais, mais alto (ver
+    // characterJumpSpeed3D).
+    float jumpChargeSeconds = 0.0f;
     bool toggleFlight = false;
     // A controlled character owns both a navigation capsule and a rendered
     // articulation. The capsule must not sweep against that representation.
     bool ignoreRagdolls = false;
+    // Velocidade plana extra so neste passo, com colisao: a capsula de
+    // navegacao indo atras do corpo fisico quando ele e empurrado, tropeca
+    // ou cai. Nao entra na inercia do controlador (state.velocity).
+    Vec3 followVelocity;
+    // A capsula e so navegacao: nao empurra nem e empurrada por corpos
+    // dinamicos nem por ragdolls, e o corpo interno dela nao bloqueia nada
+    // alem do cenario estatico. Quem colide com o mundo movel e o corpo
+    // fisico do personagem (modo fisico adaptativo). Hoje so no Jolt.
+    bool navigationProxy = false;
 };
 
 struct CharacterMotorSettings3D {
@@ -62,6 +76,12 @@ struct CharacterMotorSettings3D {
     float groundDeceleration = 38.0f;
     float airAcceleration = 8.0f;
     float jumpSpeed = 3.8f;
+    // Pulo com altura controlada (o pulo sai ao soltar o botao): ate
+    // jumpTapSeconds segurado e o pulo padrao; em jumpFullChargeSeconds chega
+    // a jumpChargedSpeedScale da velocidade (1,16 ~ +35% de altura).
+    float jumpTapSeconds = 0.15f;
+    float jumpFullChargeSeconds = 0.60f;
+    float jumpChargedSpeedScale = 1.16f;
     float gravityScale = 1.0f;
     float maximumFallSpeed = 48.0f;
     float maximumSlopeDegrees = 50.0f;
@@ -87,6 +107,22 @@ struct CharacterMotorSettings3D {
     float pushSaturationPenetrationMeters = 0.25f;
 };
 
+// Carga do pulo (0 = toque, 1 = cheia) pelo tempo segurado, e a velocidade
+// de saida correspondente.
+inline float characterJumpCharge3D(const CharacterMotorSettings3D& settings,
+    float heldSeconds) {
+    const float span = std::max(0.01f,
+        settings.jumpFullChargeSeconds - settings.jumpTapSeconds);
+    const float x = std::clamp((heldSeconds - settings.jumpTapSeconds) / span, 0.0f, 1.0f);
+    return x * x * (3.0f - 2.0f * x);
+}
+
+inline float characterJumpSpeed3D(const CharacterMotorSettings3D& settings,
+    float heldSeconds) {
+    return settings.jumpSpeed * (1.0f + (settings.jumpChargedSpeedScale - 1.0f)
+        * characterJumpCharge3D(settings, heldSeconds));
+}
+
 struct PhysicsCharacterState3D {
     Vec3 position;
     Vec3 velocity;
@@ -105,6 +141,8 @@ struct RagdollSpawnDefinition3D {
     bool active = true;
 };
 
+enum class RagdollContactMotion3D : std::uint8_t { Static, Dynamic, Kinematic };
+
 struct RagdollContactPoint3D {
     std::uint32_t linkIndex = 0;
     Vec3 position;
@@ -113,6 +151,30 @@ struct RagdollContactPoint3D {
     float normalImpulseNewtonSeconds = 0.0f;
     float tangentialSpeedMetersPerSecond = 0.0f;
     bool otherBodyDynamic = false;
+    // Tipo de movimento do corpo tocado.
+    RagdollContactMotion3D otherMotion = RagdollContactMotion3D::Static;
+    // O impulso foi estimado antes do solver (Jolt: EstimateCollisionResponse
+    // no callback) em vez de lido depois dele. Não é carga medida.
+    bool impulseEstimated = false;
+};
+
+// External contacts for ALL links, independent of contactSensor and audio.
+// At most six aggregates per link: three motion types, upward/other normals.
+// Dominant point data is not a center of pressure. Normal impulses are summed
+// within this completed tick only; Jolt estimates them before solving.
+struct RagdollInteraction3D {
+    std::uint32_t linkIndex = 0;
+    RagdollContactMotion3D otherMotion = RagdollContactMotion3D::Static;
+    std::uint32_t pointCount = 0;
+    Vec3 positionWorld;
+    Vec3 normalWorld;
+    // Velocity of this link's contact point minus the other body's point.
+    Vec3 relativeVelocityWorld;
+    Vec3 normalImpulseWorld;
+    float normalImpulseNewtonSeconds = 0.0f;
+    float strongestNormalImpulseNewtonSeconds = 0.0f;
+    bool impulseEstimated = false;
+    bool velocityBeforeSolve = false;
 };
 
 struct RagdollDriveTarget3D {
@@ -124,6 +186,9 @@ struct RagdollDriveTarget3D {
     float stiffnessScale = 1.0f;
     float dampingScale = 1.0f;
     float maximumTorqueScale = 1.0f;
+    // Quanto da compensacao de gravidade (com ela ligada) vale nesta junta:
+    // 1 sustenta o peso do membro; menos, ele pesa (um corpo largado).
+    float gravityCompensationScale = 1.0f;
 };
 
 enum class RagdollTraversalMode3D : std::uint8_t {
@@ -192,6 +257,20 @@ struct RagdollJointState3D {
     // Total transmitted torque in the child joint frame after simulation.
     // Includes joint-limit reactions; it is NOT just the motor command.
     std::array<float, 3> transmittedTorqueNewtonMeters {};
+    // Telemetria do motor (E5), por eixo da junta, do ultimo passo: o torque
+    // medio do motor (impulso do motor / dt), o da restricao angular sem o
+    // motor (limites e eixos travados), o torque de antecipacao aplicado
+    // (inclui a compensacao de gravidade), o limite nominal do motor e os
+    // alvos efetivos (depois do limite da junta). Positivo = torque sobre o
+    // filho no sentido do eixo. O feedforward consome o mesmo orcamento: o
+    // motor so tem [-limite - ff, limite - ff]. Hoje so o backend Jolt
+    // preenche (PhysX deixa zero).
+    std::array<float, 3> motorTorqueNewtonMeters {};
+    std::array<float, 3> constraintTorqueNewtonMeters {};
+    std::array<float, 3> feedforwardTorqueNewtonMeters {};
+    std::array<float, 3> motorTorqueLimitNewtonMeters {};
+    std::array<float, 3> targetPositionRadians {};
+    std::array<float, 3> targetVelocityRadiansPerSecond {};
 };
 
 struct RagdollState3D {
@@ -201,6 +280,7 @@ struct RagdollState3D {
     // Contatos semânticos do último passo concluído. Apenas links marcados
     // como contactSensor no perfil geram este stream.
     std::vector<RagdollContactPoint3D> contacts;
+    std::vector<RagdollInteraction3D> interactions;
     float rigidityPercent = 0.0f;
     float animationAuthority = 0.0f;
     float externalInterference = 0.0f;
@@ -315,6 +395,13 @@ public:
         Vec3 capsuleCenterWorld, float radiusMeters,
         float cylinderHalfHeightMeters, float probeDistanceMeters,
         float maximumSlopeDegrees) const;
+    // Como probeGround, mas ve tambem os corpos dinamicos (props, caixas):
+    // o terreno que os pes pisam e por onde o passo passa. Nunca ve os
+    // personagens (articulados) nem a capsula.
+    [[nodiscard]] GroundProbeResult3D probeTerrain(
+        Vec3 capsuleCenterWorld, float radiusMeters,
+        float cylinderHalfHeightMeters, float probeDistanceMeters,
+        float maximumSlopeDegrees) const;
     // Assistência externa deliberada do controlador de animação física.
     // Deve ser limitada, explicitamente instrumentada e desligável.
     // O corpo continua dinâmico: nenhuma assistência escreve transforms.
@@ -328,6 +415,11 @@ public:
     // pela assistência residual da coluna: força/torque são aplicados ao
     // centro de massa do link, no mundo, e nunca alteram sua pose.
     void applyRagdollLinkForce(RagdollHandle3D ragdoll,
+        std::uint32_t linkIndex, Vec3 forceNewtons,
+        Vec3 torqueNewtonMeters);
+    // Comando interno do controlador (como applyRagdollControlRootForce), num
+    // link qualquer: nao conta como interferencia externa.
+    void applyRagdollControlLinkForce(RagdollHandle3D ragdoll,
         std::uint32_t linkIndex, Vec3 forceNewtons,
         Vec3 torqueNewtonMeters);
 

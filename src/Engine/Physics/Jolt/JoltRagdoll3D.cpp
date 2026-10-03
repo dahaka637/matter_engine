@@ -136,6 +136,8 @@ RagdollHandle3D PhysicsScene3D::createRagdoll(const RagdollProfile3D& profile, c
     const auto index = m_impl->freeRagdollSlots.empty() ? static_cast<std::uint32_t>(m_impl->ragdollSlots.size()) : m_impl->freeRagdollSlots.back();
     auto record = std::make_unique<Impl::RagdollRecord>();
     record->profile = profile;
+    record->stepInteractions.resize(profile.links.size() * 6);
+    record->state.interactions.reserve(profile.links.size() * 6);
     record->entityId = spawn.entityId;
     record->active = spawn.active;
     record->rigidityPercent = record->passiveRigidityPercent = std::clamp(spawn.rigidityPercent, 0.0f, 100.0f);

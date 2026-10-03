@@ -84,6 +84,8 @@ int main() {
         std::cout << "[SMOKE] startup" << std::endl;
         require(renderer.window() != nullptr, "window creation failed");
         drawFrames(renderer, 6);
+        require((SDL_GetWindowFlags(renderer.window()) & SDL_WINDOW_MAXIMIZED) != 0,
+            "window did not start maximized");
 
         renderer.applyVideoSettings(1180, 720,
             MatterEngine::DisplayMode::Windowed);

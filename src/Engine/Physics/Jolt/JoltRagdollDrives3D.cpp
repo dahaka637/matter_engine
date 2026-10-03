@@ -22,7 +22,8 @@ void PhysicsScene3D::setRagdollActiveDriveTargets(RagdollHandle3D h, std::span<c
         if (!target.linkIndex || target.linkIndex >= r->links.size() || static_cast<unsigned>(target.axis) >= 3
             || !std::isfinite(target.positionRadians) || !std::isfinite(target.velocityRadiansPerSecond)
             || !std::isfinite(target.feedforwardTorqueNewtonMeters) || !std::isfinite(target.stiffnessScale)
-            || !std::isfinite(target.dampingScale) || !std::isfinite(target.maximumTorqueScale)) continue;
+            || !std::isfinite(target.dampingScale) || !std::isfinite(target.maximumTorqueScale)
+            || !std::isfinite(target.gravityCompensationScale)) continue;
         r->stagedActiveTargets.push_back(target);
     }
     r->gravityCompensationEnabled = gravity;
@@ -115,9 +116,16 @@ void PhysicsScene3D::Impl::applyRagdollDrives() {
                 const float maximum = limit.maximumTorque * std::clamp(target.maximumTorqueScale,0.0f,3.0f);
                 motor.SetTorqueLimit(maximum);
                 constraint.SetMotorState(axis, maximum > 0 ? JPH::EMotorState::PositionAndVelocity : JPH::EMotorState::Off);
-                const float gravity = r.gravityCompensationEnabled ? r.gravityCompensator.jointTorques()[i][a] : 0;
+                const float gravity = r.gravityCompensationEnabled
+                    ? r.gravityCompensator.jointTorques()[i][a]
+                        * std::clamp(target.gravityCompensationScale, 0.0f, 1.0f)
+                    : 0;
                 const float ff = std::clamp(target.feedforwardTorqueNewtonMeters + gravity, -maximum, maximum);
                 feedforward.SetComponent(a, ff);
+                runtime.appliedTargets[static_cast<std::size_t>(a)] = angles[a];
+                runtime.appliedTargetVelocities[static_cast<std::size_t>(a)] = target.velocityRadiansPerSecond;
+                runtime.appliedFeedforward[static_cast<std::size_t>(a)] = ff;
+                runtime.appliedTorqueLimit[static_cast<std::size_t>(a)] = maximum;
                 // Feedforward consumes the same muscle budget as the implicit motor.
                 motor.mMinTorqueLimit = -maximum - ff;
                 motor.mMaxTorqueLimit = maximum - ff;
@@ -285,6 +293,11 @@ void PhysicsScene3D::applyRagdollControlRootForce(RagdollHandle3D h, Vec3 force,
     auto* r = m_impl->ragdoll(h);
     if (r && !r->frozen && finite(force) && finite(torque))
         m_impl->pendingBodyWrenches.push_back({r->links.front(), force, torque});
+}
+void PhysicsScene3D::applyRagdollControlLinkForce(RagdollHandle3D h, std::uint32_t link, Vec3 force, Vec3 torque) {
+    auto* r = m_impl->ragdoll(h);
+    if (r && !r->frozen && link < r->links.size() && finite(force) && finite(torque))
+        m_impl->pendingBodyWrenches.push_back({r->links[link], force, torque});
 }
 void PhysicsScene3D::applyRagdollLinkForce(RagdollHandle3D h, std::uint32_t link, Vec3 force, Vec3 torque) {
     auto* r = m_impl->ragdoll(h);

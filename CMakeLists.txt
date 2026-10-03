@@ -353,9 +353,14 @@ add_library(MatterEngine STATIC
     src/Engine/Animation/AnimationClip3D.cpp
     src/Engine/Animation/RagdollCharacter3D.cpp
     src/Engine/Character/BiomechanicalBipedExperiment3D.cpp
+    src/Engine/Character/CharacterControlApplication3D.cpp
     src/Engine/Character/CharacterLocomotion3D.cpp
+    src/Engine/Character/CharacterStateEstimator3D.cpp
+    src/Engine/Control/CharacterWholeBody3D.cpp
     src/Engine/Character/ProceduralBipedGait3D.cpp
     src/Engine/Control/RagdollImpactTest3D.cpp
+    src/Engine/Control/AdaptivePhysicalCharacter3D.cpp
+    src/Engine/Locomotion/ContactFootwork3D.cpp
     src/Engine/Core/Application.cpp
     src/Engine/Input/Input.cpp
     src/Engine/Platform/SDL3/SDLPlatform.cpp
@@ -435,6 +440,9 @@ option(MATTERENGINE_BUILD_TESTS "Build MatterEngine tests" ON)
 if(MATTERENGINE_BUILD_TESTS)
     enable_testing()
     add_executable(MatterEngineTests tests/EngineFoundationTests.cpp)
+    add_executable(MatterAdaptiveTests tests/AdaptivePhysicalCharacterTests.cpp)
+    target_link_libraries(MatterAdaptiveTests PRIVATE MatterEngine)
+    target_compile_definitions(MatterAdaptiveTests PRIVATE MATTERENGINE_TEST_ASSETS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets")
     target_link_libraries(MatterEngineTests PRIVATE MatterEngine)
     target_compile_definitions(MatterEngineTests PRIVATE
         MATTERENGINE_TEST_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
@@ -450,6 +458,9 @@ if(MATTERENGINE_BUILD_TESTS)
     target_compile_definitions(MatterAudioTests PRIVATE
         MATTERENGINE_TEST_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
     add_test(NAME MatterEngine.Audio COMMAND MatterAudioTests)
+    # Modo fisico adaptativo (experimental): movimento normal no laco do jogo
+    # sem a raiz carregada, e o contrato de que perturbacoes agem no corpo.
+    add_test(NAME MatterEngine.AdaptivePhysics COMMAND MatterAdaptiveTests)
 endif()
 
 # Smoke test manual: abre uma janela real e percorre resize, minimizar/restaurar
