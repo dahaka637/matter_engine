@@ -18,6 +18,8 @@ precisa, renderização moderna, arquitetura modular e alto desempenho.
 O projeto ainda está em desenvolvimento e não é considerado pronto para
 produção.
 
+<img width="1403" height="759" alt="image" src="https://github.com/user-attachments/assets/c230494d-3666-4e34-98e4-5d8bea7ec0a3" />
+
 ## Compilação
 
 Requisitos comuns: Git, CMake 3.20+ e driver compatível com Vulkan 1.4. As
