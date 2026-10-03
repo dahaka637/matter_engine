@@ -28,9 +28,8 @@ check_absent "Workbench nao pode acessar SDL diretamente" \
     '#include <SDL|SDL_[A-Za-z]|SDL_Event' src/Workbench
 check_absent "Tipos Vulkan devem ficar no backend Vulkan" \
     '\bVk[A-Z]|<volk|<vulkan|vk_mem' src -g '!src/Engine/RHI/Vulkan/**'
-check_absent "Tipos PhysX devem ficar no backend PhysX" \
-    '\bphysx::|#include.*(Px|characterkinematic|cooking/)' src \
-    -g '!src/Engine/Physics/PhysX/**'
+check_absent "O backend PhysX removido nao pode retornar" \
+    '\bphysx::|#include.*(Px|characterkinematic|cooking/)' src
 check_absent "Tipos Jolt devem ficar no backend Jolt" \
     '\bJPH::|#include.*<Jolt/' src \
     -g '!src/Engine/Physics/Jolt/**'

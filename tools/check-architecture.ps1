@@ -17,8 +17,8 @@ $checks = @(
         Arguments = @("-n", "\bVk[A-Z]|<volk|<vulkan|vk_mem", "src", "-g", "!src/Engine/RHI/Vulkan/**")
     },
     @{
-        Name = "Tipos PhysX devem ficar no backend PhysX"
-        Arguments = @("-n", "\bphysx::|#include.*(Px|characterkinematic|cooking/)", "src", "-g", "!src/Engine/Physics/PhysX/**")
+        Name = "O backend PhysX removido nao pode retornar"
+        Arguments = @("-n", "\bphysx::|#include.*(Px|characterkinematic|cooking/)", "src")
     },
     @{
         Name = "Tipos Jolt devem ficar no backend Jolt"

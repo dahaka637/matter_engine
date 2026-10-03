@@ -134,9 +134,8 @@ FetchContent_Declare(
     GIT_SHALLOW TRUE
 )
 
-# O SDK de fisica (Jolt hoje, PhysX como legado em remocao) e buscado e
-# configurado em cmake/PhysicsBackend.cmake, incluido mais abaixo: depende do
-# target `vhacd`, e manter as duas variantes aqui tornaria este arquivo ilegivel.
+# O SDK de fisica (Jolt) e buscado e configurado em cmake/PhysicsBackend.cmake,
+# incluido mais abaixo: depende do target `vhacd`.
 
 # V-HACD transforma uma malha visual concava em um pequeno conjunto de hulls
 # convexos. Esse processamento acontece no carregamento/cooking do asset, nao
@@ -163,9 +162,8 @@ set(ALSOFT_INSTALL_AMBDEC_PRESETS OFF CACHE BOOL "" FORCE)
 set(ALSOFT_INSTALL_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(ALSOFT_INSTALL_UTILS OFF CACHE BOOL "" FORCE)
 set(ALSOFT_EMBED_HRTF_DATA ON CACHE BOOL "" FORCE)
-# Sem isso o CRT do OpenAL Soft ficaria em /MT enquanto o resto do projeto (e
-# o PhysX, via NV_USE_STATIC_WINCRT OFF acima) usa /MD - o mesmo tipo de
-# divergencia de runtime que precisou ser resolvido explicitamente pro PhysX.
+# Sem isso o CRT do OpenAL Soft ficaria em /MT enquanto o resto do projeto usa
+# /MD - divergencia de runtime que quebra o link no MSVC.
 set(FORCE_STATIC_VCRT OFF CACHE BOOL "" FORCE)
 # Modulos C++20 sao um caminho de build experimental e recente na lib; nada
 # aqui precisa deles (consumimos so os headers C AL/ALC/EFX), entao
@@ -279,7 +277,7 @@ target_include_directories(MatterCore PUBLIC src)
 add_library(MatterRHI INTERFACE)
 target_include_directories(MatterRHI INTERFACE src)
 
-# API publica neutra + backend PhysX privado. Nenhum consumidor recebe os
+# API publica neutra + backend Jolt privado. Nenhum consumidor recebe os
 # includes ou tipos nativos do SDK; trocar/configurar o backend nao contamina a
 # camada Workbench nem o restante da engine.
 add_library(MatterPhysics STATIC

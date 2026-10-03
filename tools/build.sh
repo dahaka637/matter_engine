@@ -19,18 +19,8 @@ case "$configuration" in
     Release) build="$root/build-release" ;;
 esac
 
-# Backend de fisica: durante a migracao PhysX -> Jolt os dois convivem, e a
-# mesma suite roda contra ambos. Sem a variavel, vale o default do CMake
-# (cmake/PhysicsBackend.cmake). Uma vez configurado, o valor fica no cache do
-# diretorio de build - exportar a variavel troca de backend no lugar.
-physics_backend_arg=()
-if [[ -n "${MATTERENGINE_PHYSICS_BACKEND:-}" ]]; then
-    physics_backend_arg=(
-        "-DMATTERENGINE_PHYSICS_BACKEND=${MATTERENGINE_PHYSICS_BACKEND}")
-fi
-
 cmake -S "$root" -B "$build" -G Ninja \
-    -DCMAKE_BUILD_TYPE="$configuration" "${physics_backend_arg[@]+"${physics_backend_arg[@]}"}"
+    -DCMAKE_BUILD_TYPE="$configuration"
 cmake --build "$build" --parallel "${CMAKE_BUILD_PARALLEL_LEVEL:-6}" \
     --target MatterEngineApp MatterEngineTests MatterAudioTests MatterAdaptiveTests
 
