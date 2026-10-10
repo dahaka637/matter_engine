@@ -535,6 +535,7 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
             if (wanted > 0.0f && nominal > 0.0f) {
                 command.speedScale = wanted / nominal;
             }
+            if (m_controlledAnimated) command.speedScale *= m_controlledSpeedScale;
             // Escada, ladeira e curva fechada: o passo encurta e o corpo
             // desacelera junto (a locomocao diz quanto da velocidade cabe no
             // terreno a frente e na curva pedida).

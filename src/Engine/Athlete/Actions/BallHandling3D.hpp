@@ -60,6 +60,41 @@ struct BallHandlingSettings3D {
     // Depois do pouso do pe (preso pelas pegadas), a perna do gesto sai neste
     // tempo (s).
     float handOverSeconds = 0.12f;
+    // Andando: o balanco do pe que joga pode esticar ate swingStretch dele, o
+    // apoio fica preso so ate o contato e o corpo do gesto pesa
+    // (1 - runningBodyShare x andando): a corrida manda nele.
+    float swingStretch = 1.25f;
+    float runningBodyShare = 0.8f;
+    // O apoio do chute correndo pode ficar no chao ate isto (s) alem do fim
+    // natural dele - a passada de apoio, com o corpo freando sobre ele -, e
+    // o corpo anda no maximo supportHoldReach (m) com ele preso (mais, a
+    // perna nao alcanca).
+    float supportHoldSeconds = 0.18f;
+    float supportHoldReach = 0.12f;
+    // O polo do joelho do gesto sai do joelho da pose nesta mistura (s).
+    float kneeBlendSeconds = 0.10f;
+    // O chute correndo freia o corpo (0..1 da velocidade, pela forca) do
+    // pedido ao fim do acompanhamento, nesta mola (s): a passada fica mais
+    // lenta e o apoio mais longo, como na corrida para o chute.
+    float runningShotSlowdown = 0.55f;
+    // (Correndo, o chute tem este prazo a mais (s) para achar o apoio: a
+    // passada se ajusta ao freio.)
+    float runningShotAcquireExtra = 0.30f;
+    float slowdownSeconds = 0.12f;
+};
+
+// O ritmo da passada (do estilo, no tick anterior): andando, quanto falta
+// para cada pe sair (apoiado) ou pousar (no ar) e quanto dura o balanco (s).
+struct BallHandlingGait3D {
+    bool cycling = false;
+    float movingShare = 0.0f;
+    std::array<bool, 2> planted { true, true };
+    std::array<float, 2> secondsToLiftoff { -1.0f, -1.0f };
+    std::array<float, 2> secondsToTouchdown { -1.0f, -1.0f };
+    std::array<float, 2> swingSeconds { -1.0f, -1.0f };
+    // Os pes do estilo antes do gesto (o toque no balanco vai com eles).
+    std::array<Vec3, 2> styleFoot {};
+    std::array<Quaternion, 2> styleFootOrientation {};
 };
 
 // A bola-alvo neste tick (o estado publicado no passo anterior).
@@ -83,6 +118,7 @@ struct BallHandlingInput3D {
     // targetBallKey()).
     BallHandlingBall3D ball;
     BallPlannerBody3D body;
+    BallHandlingGait3D gait;
     // A velocidade do corpo agora e a que ele vai ter (o toque leva a maior
     // no rumo dele) e o centro de massa da pose anterior (o equilibrio).
     Vec3 bodyVelocity;
@@ -109,6 +145,8 @@ struct BallHandlingOutput3D {
     Vec3 linearImpulse;
     Vec3 angularImpulse;
     Vec3 outcomeVelocity;
+    // A escala da velocidade pedida ao corpo (o chute correndo freia).
+    float speedScale = 1.0f;
     // Interagindo (o pedido ou o gesto): vira o dono da bola.
     bool interacting = false;
     std::uint64_t interactingBallKey = 0;
@@ -155,6 +193,24 @@ private:
     SmoothSpring3D<float> m_armSwing;
     std::array<SmoothSpring3D<Vec3>, 2> m_wrist {};
     SmoothSpring3D<Vec3> m_look;
+    SmoothSpring3D<float> m_lookWeight;
+    SmoothSpring3D<float> m_slow;
+    // O gesto em andamento e de corrida (o apoio solta no contato, o pe volta
+    // as pegadas no ar).
+    bool m_gestureMoving = false;
+    // Os pes do estilo no tick anterior (a velocidade deles) e o joelho do
+    // pe que joga no comeco do gesto (o polo sai dele aos poucos).
+    std::array<Vec3, 2> m_styleFootPrevious {};
+    std::array<Vec3, 2> m_styleFootVelocity {};
+    bool m_styleFootKnown = false;
+    // Onde o pe do estilo pousou da ultima vez, em relacao a pelve (x a
+    // frente, y para fora, z acima do chao), e a velocidade do corpo entao: a
+    // corrida e periodica, o proximo pouso e parecido.
+    Vec3 m_landLead;
+    float m_landLeadSpeed = 0.0f;
+    bool m_landLeadKnown = false;
+    std::array<bool, 2> m_stylePlantedPrevious { true, true };
+    Vec3 m_kneeStart { 1.0f, 0.0f, 0.0f };
     Vec3 m_appliedShift;
     float m_appliedDrop = 0.0f;
     // A perna do gesto saindo depois do pouso: o pe, a orientacao e o joelho

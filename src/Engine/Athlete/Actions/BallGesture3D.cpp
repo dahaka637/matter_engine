@@ -83,35 +83,54 @@ float flatHeight(const BallFootBox3D& box, int side, Quaternion orientation) {
 
 } // namespace
 
-void BallGesture3D::start(const BallPlan3D& plan, BallActionKind3D kind, float power, float lift, Vec3 bodyVelocity,
-    Vec3 footPosition, Quaternion footOrientation, float groundHeight, const BallFootBox3D& box, Vec3 hip,
-    Vec3 ankleInFoot, float legLength, const BallGestureSettings3D& s) {
+void BallGesture3D::start(const BallGestureStart3D& in, const BallFootBox3D& box, const BallGestureSettings3D& s) {
+    const BallPlan3D& plan = in.plan;
+    const float power = in.power, lift = in.lift, groundHeight = in.groundHeight, legLength = in.legLength;
+    const Vec3 footPosition = in.foot, hip = in.hip, ankleInFoot = in.ankleInFoot;
+    const Quaternion footOrientation = in.footOrientation;
+    m_frameKind = in.frame;
+    m_moving = in.frame != BallGestureFrame3D::World;
+    const bool swing = in.frame == BallGestureFrame3D::StyleFoot;
     m_hip = hip;
-    m_bodyVelocity = { bodyVelocity.x, bodyVelocity.y, 0.0f };
+    m_bodyVelocity = planar(in.bodyVelocity);
     m_legLength = legLength * s.legReach;
     m_landReach = legLength * s.landReach;
     m_ankleInFoot = ankleInFoot;
     m_restHip = hip;
-    const bool shot = kind == BallActionKind3D::Shot;
+    const bool shot = in.kind == BallActionKind3D::Shot;
     m_shot = shot;
     const float p = std::clamp(power, 0.0f, 1.0f);
     m_side = plan.side;
     m_push = planar(plan.push).lengthSquared() > 1e-6f ? planar(plan.push).normalized() : Vec3 { 1.0f, 0.0f, 0.0f };
     m_time = 0.0f;
     m_contactAt = plan.contactTime;
-    m_windupAt = std::max(0.02f, plan.contactTime - plan.strikeSeconds);
+    // (No balanco nao ha armado: o pe vem da passada direto ao contato e
+    // volta a ela ate o pouso dela.)
+    m_windupAt = swing ? 0.0f : std::max(0.02f, plan.contactTime - plan.strikeSeconds);
     m_followAt = m_contactAt + (shot ? s.shotFollowSeconds : s.touchFollowSeconds) * (0.8f + 0.4f * p);
+    if (swing) m_followAt = std::max(m_contactAt + s.swingMinimumFollow, in.styleTouchdown + s.swingSettleSeconds);
     m_returnAt = m_followAt + s.returnSeconds + s.returnSecondsPower * p;
     m_position = footPosition;
-    m_velocity = {};
     m_orientation = footOrientation;
     m_contact = plan.footPosition;
     m_contactOrientation = plan.footOrientation;
+    // O referencial do gesto: andando, ele vai com o corpo (o armado, a
+    // batida e o acompanhamento do toque sao nele - parado no mundo, o pe
+    // ficava para tras do corpo correndo e a batida tinha de cobrir quase 1 m);
+    // parado, fica parado.
+    m_frame = {};
+    m_styleStart = in.styleFoot;
+    m_styleOrientation = footOrientation;
+    m_frameVelocity = swing ? in.styleFootVelocity : m_moving ? m_bodyVelocity : Vec3 {};
+    // (O pe parte da velocidade dele: no balanco da corrida ele anda mais
+    // rapido que o corpo.)
+    m_velocity = m_moving ? in.footVelocity : Vec3 {};
+    const Vec3 contact = m_contact - m_frameVelocity * m_contactAt;
     const Vec3 up { 0.0f, 0.0f, 1.0f };
-    // A velocidade do pe no contato: no rumo pedido, mais a do corpo.
+    // A velocidade do pe no contato (no referencial): no rumo pedido.
     const float strike = shot ? s.shotStrikeSpeed + s.shotStrikeSpeedPower * p
         : s.touchStrikeSpeed + s.touchStrikeSpeedPower * p;
-    m_contactVelocity = m_push * (strike + std::max(0.0f, dot(planar(bodyVelocity), m_push))) + up * 0.0f;
+    m_contactVelocity = m_push * (strike * (swing ? s.swingStrikeShare : 1.0f));
     // O armado: para tras do contato e para cima, nunca abaixo do chao. Com
     // o pe ja mais para tras que isso (no rumo do toque), ele so sobe - nao
     // vem para a frente antes da batida.
@@ -121,9 +140,10 @@ void BallGesture3D::start(const BallPlan3D& plan, BallActionKind3D kind, float p
         * (sole ? s.soleBackShare : 1.0f);
     const float rise = std::max(shot ? s.shotUp + s.shotUpPower * p : s.touchUp + s.touchUpPower * p,
         sole ? s.soleUp : 0.0f);
-    const float along = std::min(dot(planar(footPosition - m_contact), m_push), -back);
-    m_windup = m_contact + m_push * along + up * rise;
-    m_windup.z = std::max(m_windup.z, std::max(m_contact.z, footPosition.z) + 0.5f * rise);
+    const float along = std::min(dot(planar(footPosition - contact), m_push), -back);
+    Vec3 windup = contact + m_push * along + up * rise;
+    windup.z = std::max(windup.z, std::max(contact.z, footPosition.z) + 0.5f * rise);
+    m_windupOffset = windup - contact;
     // (No chute de peito do pe, a ponta mais para baixo no armado.)
     const float extraPitch = plan.surface == BallTouchSurface3D::Laces ? 0.35f : 0.1f;
     const Vec3 lateral = cross(up, m_push);
@@ -131,13 +151,12 @@ void BallGesture3D::start(const BallPlan3D& plan, BallActionKind3D kind, float p
     // O armado ao alcance da perna: o tornozelo ate windupReach dela do
     // quadril (mais longe, o IK esticava a perna de uma vez no meio do
     // armado). A pelve anda no armado (o equilibrio): refeito a cada tick.
-    m_windupWanted = m_windup;
     m_windupReach = legLength * s.windupReach;
-    reachableWindup();
+    const Vec3 reachableAtStart = reachableWindup(contact);
     // A velocidade no contato cabe no percurso da batida: um cubico que parte
     // parado do armado so chega sem recuar ate 3 D / T (com folga, 2,5).
     {
-        const float distance = (m_contact - m_windup).length();
+        const float distance = (contact - reachableAtStart).length();
         const float span = std::max(0.03f, m_contactAt - m_windupAt);
         const float most = 2.5f * distance / span;
         const float speed = m_contactVelocity.length();
@@ -154,13 +173,18 @@ void BallGesture3D::start(const BallPlan3D& plan, BallActionKind3D kind, float p
     const float followDistance = shot ? s.shotFollow + s.shotFollowPower * p
         : std::max(s.touchFollow + s.touchFollowPower * p,
             0.4f * dot(m_contactVelocity, m_push) * (m_followAt - m_contactAt));
-    m_follow = m_contact + m_push * followDistance
+    m_followOffset = m_push * followDistance
         + up * (shot ? s.shotFollowUp * p * (1.0f + std::max(0.0f, lift)) : 0.02f);
     const Vec3 contactToe = planar(m_contactOrientation.rotate({ 1.0f, 0.0f, 0.0f }));
     m_landOrientation = yawOnly(contactToe.lengthSquared() > 1e-6f ? contactToe : m_push);
+    const float flat = groundHeight + flatHeight(box, m_side, m_landOrientation);
+    // (O toque correndo acaba com o pe pousado e plano: ele vira o proximo
+    // apoio e as pegadas o prendem ali, no ritmo da passada.)
+    if (m_moving && !shot) m_followOffset.z = flat - contact.z;
+    m_follow = m_contact + m_followOffset;
     m_land = (m_contact + m_follow) * 0.5f;
-    m_land.z = groundHeight + flatHeight(box, m_side, m_landOrientation);
-    enter(BallGesturePhase3D::Windup);
+    m_land.z = flat;
+    enter(swing ? BallGesturePhase3D::Strike : BallGesturePhase3D::Windup);
 }
 
 void BallGesture3D::retarget(Vec3 footPosition, Quaternion footOrientation, float deltaTime,
@@ -170,7 +194,6 @@ void BallGesture3D::retarget(Vec3 footPosition, Quaternion footOrientation, floa
     const float most = s.correctionSpeed * std::max(deltaTime, 1e-4f);
     if (change.length() > most) change = change * (most / change.length());
     m_contact += change;
-    m_windupWanted += change;
     m_follow += change;
     m_land += Vec3 { change.x, change.y, 0.0f };
     m_contactOrientation = slerp(m_contactOrientation, footOrientation, 0.2f);
@@ -234,10 +257,12 @@ Vec3 BallGesture3D::arcAnkle() const {
         + up * (m_arcRadius * std::sin(m_arcAngle));
 }
 
-void BallGesture3D::reachableWindup() {
-    m_windup = m_windupWanted;
-    const Vec3 reach = m_windup + m_windupOrientation.rotate(m_ankleInFoot) - m_hip;
-    if (reach.length() > m_windupReach) m_windup = m_windup - reach * (1.0f - m_windupReach / reach.length());
+Vec3 BallGesture3D::reachableWindup(Vec3 contact) const {
+    // (No referencial do gesto: o quadril vai com ele.)
+    Vec3 windup = contact + m_windupOffset;
+    const Vec3 reach = windup + m_windupOrientation.rotate(m_ankleInFoot) - (m_hip - m_frame);
+    if (reach.length() > m_windupReach) windup = windup - reach * (1.0f - m_windupReach / reach.length());
+    return windup;
 }
 
 void BallGesture3D::reachableLand() {
@@ -250,12 +275,33 @@ void BallGesture3D::reachableLand() {
     if (offset.length() > most && offset.length() > 1e-5f) m_land = m_land - offset * (1.0f - most / offset.length());
 }
 
-void BallGesture3D::update(float deltaTime, Vec3 hip, Vec3 restHip, const BallGestureSettings3D& s) {
+void BallGesture3D::update(float deltaTime, const BallGestureLive3D& live, const BallGestureSettings3D& s) {
     (void)s;
     if (m_phase == BallGesturePhase3D::Idle) return;
-    m_hip = hip;
-    m_restHip = restHip;
+    m_hip = live.hip;
+    m_restHip = live.restHip;
+    m_styleOrientation = live.styleFootOrientation;
     const float dt = std::max(deltaTime, 1e-4f);
+    // O pe no referencial do gesto: andando, ele vai com o corpo (o chute) ou
+    // com o pe do estilo (o toque no balanco); o pe guarda a velocidade dele
+    // no mundo quando o referencial muda a dele.
+    switch (m_frameKind) {
+    case BallGestureFrame3D::World:
+        m_frameVelocity = {};
+        break;
+    case BallGestureFrame3D::Body:
+        m_frameVelocity = planar(live.bodyVelocity);
+        break;
+    case BallGestureFrame3D::StyleFoot:
+        m_frame = live.styleFoot - m_styleStart;
+        m_frameVelocity = live.styleFootVelocity;
+        break;
+    }
+    Vec3 p = m_position - m_frame;
+    Vec3 v = m_velocity - m_frameVelocity;
+    // O contato no referencial (onde ele estara quando o pe chegar).
+    const Vec3 contact = m_contact - (m_frame + m_frameVelocity * (m_contactAt - m_time));
+    bool relative = false;
     m_time += dt;
     const auto orient = [&](Quaternion target, float end) {
         const float span = std::max(1e-3f, end - m_phaseStart);
@@ -263,19 +309,20 @@ void BallGesture3D::update(float deltaTime, Vec3 hip, Vec3 restHip, const BallGe
     };
     switch (m_phase) {
     case BallGesturePhase3D::Windup:
-        reachableWindup();
-        hermiteStep(m_position, m_velocity, m_windup, {}, m_windupAt - (m_time - dt), dt);
+        hermiteStep(p, v, reachableWindup(contact), {}, m_windupAt - (m_time - dt), dt);
+        relative = true;
         orient(m_windupOrientation, m_windupAt);
-        if (m_time >= m_windupAt) enter(BallGesturePhase3D::Strike);
         break;
     case BallGesturePhase3D::Strike:
-        hermiteStep(m_position, m_velocity, m_contact, m_contactVelocity, m_contactAt - (m_time - dt), dt);
+        hermiteStep(p, v, contact, m_contactVelocity, m_contactAt - (m_time - dt), dt);
+        relative = true;
         orient(m_contactOrientation, m_contactAt);
-        if (m_time >= m_contactAt) enter(BallGesturePhase3D::Follow);
         break;
     case BallGesturePhase3D::Follow: {
         const Vec3 previous = m_position;
-        orient(m_contactOrientation, m_followAt);
+        orient(m_frameKind == BallGestureFrame3D::StyleFoot ? m_styleOrientation
+                : m_moving && !m_shot ? m_landOrientation : m_contactOrientation,
+            m_followAt);
         if (m_shot) {
             // O arco: o angulo num Hermite de 1 dimensao ate o fim, parado.
             hermiteStep1(m_arcAngle, m_arcRate, m_arcEnd, m_followAt - (m_time - dt), dt);
@@ -292,23 +339,19 @@ void BallGesture3D::update(float deltaTime, Vec3 hip, Vec3 restHip, const BallGe
                 }
             }
             m_velocity = (m_position - previous) * (1.0f / dt);
+        } else if (m_frameKind == BallGestureFrame3D::StyleFoot) {
+            // O toque no balanco: o pe volta ao do estilo (parado nele) ate o
+            // pouso dele.
+            hermiteStep(p, v, m_styleStart, {}, m_followAt - (m_time - dt), dt);
+            relative = true;
         } else {
-            // O toque: o pe segue baixo no rumo e para (ao alcance).
-            Vec3 follow = m_follow;
-            const Vec3 reach = follow + m_orientation.rotate(m_ankleInFoot) - m_hip;
+            // O toque: o pe segue baixo no rumo e para (ao alcance; no
+            // referencial do gesto).
+            Vec3 follow = contact + m_followOffset;
+            const Vec3 reach = follow + m_orientation.rotate(m_ankleInFoot) - (m_hip - m_frame);
             if (reach.length() > m_legLength) follow = follow - reach * (1.0f - m_legLength / reach.length());
-            hermiteStep(m_position, m_velocity, follow, {}, m_followAt - (m_time - dt), dt);
-        }
-        if (m_time >= m_followAt) {
-            m_follow = m_position;
-            // O pouso: embaixo do fim do acompanhamento, ao alcance da perna
-            // esticada no chao a partir do quadril de repouso (parado o corpo
-            // nao vai junto; a 0,77 m a frente a perna nao chegava ao chao, o
-            // pe ficava no ar e as pegadas nao o travavam).
-            m_landWanted = Vec3 { m_position.x, m_position.y, m_land.z };
-            reachableLand();
-            if (m_shot) m_arcRadius = m_arcRadiusEnd;
-            enter(BallGesturePhase3D::Return);
+            hermiteStep(p, v, follow, {}, m_followAt - (m_time - dt), dt);
+            relative = true;
         }
         break;
     }
@@ -340,6 +383,31 @@ void BallGesture3D::update(float deltaTime, Vec3 hip, Vec3 restHip, const BallGe
     }
     case BallGesturePhase3D::Idle:
         break;
+    }
+    m_frame += m_frameVelocity * dt;
+    if (relative) {
+        m_position = p + m_frame;
+        m_velocity = v + m_frameVelocity;
+    }
+    if (m_phase == BallGesturePhase3D::Windup && m_time >= m_windupAt) {
+        enter(BallGesturePhase3D::Strike);
+    } else if (m_phase == BallGesturePhase3D::Strike && m_time >= m_contactAt) {
+        enter(BallGesturePhase3D::Follow);
+    } else if (m_phase == BallGesturePhase3D::Follow && m_time >= m_followAt) {
+        m_follow = m_position;
+        if (m_moving) {
+            // Andando: o pe volta as pegadas no ar (elas o pousam no ritmo).
+            m_phase = BallGesturePhase3D::Idle;
+        } else {
+            // O pouso: embaixo do fim do acompanhamento, ao alcance da perna
+            // esticada no chao a partir do quadril de repouso (parado o corpo
+            // nao vai junto; a 0,77 m a frente a perna nao chegava ao chao, o
+            // pe ficava no ar e as pegadas nao o travavam).
+            m_landWanted = Vec3 { m_position.x, m_position.y, m_land.z };
+            reachableLand();
+            if (m_shot) m_arcRadius = m_arcRadiusEnd;
+            enter(BallGesturePhase3D::Return);
+        }
     }
 }
 

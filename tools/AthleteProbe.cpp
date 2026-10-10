@@ -162,6 +162,16 @@ std::vector<Scenario> scenarios() {
         s.autoKind = BallActionKind3D::Shot;
         list.push_back(s);
     }
+    {
+        // (O chute carregado antes: o pedido com a bola a 1,8 m, a tempo de a
+        // passada e o freio acertarem o apoio.)
+        Scenario s { "chute_corre_cedo", 3.5f, [](float t) { Keys k; k.forward = t > 0.3f ? 1.0f : 0.0f; return k; } };
+        s.ball = true;
+        s.ballStart = { 3.6f, -0.12f, 0.11f };
+        s.autoDistance = 1.8f;
+        s.autoKind = BallActionKind3D::Shot;
+        list.push_back(s);
+    }
     // A bola parada a 0,5 m em oito angulos em volta (0 a frente, 90 a
     // esquerda), o toque pedido para a frente; a bola vindo de frente.
     for (int k = 0; k < 8; ++k) {
@@ -375,6 +385,7 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
     AthleteRuntime3D runtime;
     Vec3 followVelocity {};
     bool controlledAnimated = !startPhysical;
+    float capsuleSpeedScale = 1.0f;
     Vec3 capsuleMoved {};
     float wallImpact = 0.0f;
     Metrics metrics;
@@ -429,6 +440,7 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
                 : characterGaitSpeed3D(gaitSpeeds, travelRelative, keys.sprint);
             const float nominal = keys.sprint ? avatar.sprintSpeed : avatar.walkSpeed;
             if (wanted > 0.0f && nominal > 0.0f) command.speedScale = wanted / nominal;
+            if (controlledAnimated) command.speedScale *= capsuleSpeedScale;
             if (!controlledAnimated && wanted > 0.0f)
                 command.speedScale *= std::clamp(legacy.locomotion.telemetry().terrainSpeedLimit / wanted, 0.2f, 1.0f);
             intent.requestedDirectionWorld = direction;
@@ -512,6 +524,7 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
             control, Dt, output);
         if (output.followVelocitySet) followVelocity = output.followVelocityWorld;
         if (output.controlledAnimatedSet) controlledAnimated = output.controlledAnimated;
+        capsuleSpeedScale = output.controlledSpeedScale;
         if (legacy.ballLastOutput.touched) {
             ++metrics.touches;
             if (dump != nullptr) std::fprintf(dump, "T\n");
@@ -597,6 +610,16 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
                     o.feet[1].soleCenter.x - mid.x, o.feet[1].soleCenter.y - mid.y, o.feet[1].supporting ? "*" : "-", o.feet[1].loadNewtons,
                     cap.x - mid.x, cap.y - mid.y);
             }
+        }
+        if (std::getenv("XMARCHA")) {
+            const DefaultLocomotionOutput3D& o = legacy.defaultLocomotion.output();
+            std::printf("  t %.3f marcha %d mov %.2f | E %c sai %.3f pousa %.3f balanco %.3f | D %c sai %.3f pousa %.3f balanco %.3f | pedido %d\n",
+                t, o.cycling ? 1 : 0, o.movingShare, o.cyclePlanted[0] ? 'A' : 'B', o.secondsToLiftoff[0],
+                o.cycleSecondsToTouchdown[0], o.swingSeconds[0], o.cyclePlanted[1] ? 'A' : 'B', o.secondsToLiftoff[1],
+                o.cycleSecondsToTouchdown[1], o.swingSeconds[1], athlete.ballHandling.queue().active() != nullptr ? 1 : 0);
+            std::printf("      estilo D %.3f %.3f %.3f | alvo D %.3f %.3f %.3f\n", o.styleFootPosition[1].x,
+                o.styleFootPosition[1].y, o.styleFootPosition[1].z, athlete.footTargets[1].position.x,
+                athlete.footTargets[1].position.y, athlete.footTargets[1].position.z);
         }
         if (std::getenv("XGESTO") && athlete.ballHandling.gesture().active()) {
             const BallGesture3D& g = athlete.ballHandling.gesture();
@@ -858,6 +881,22 @@ int runChecks(const ProbeContext& context) {
         std::snprintf(what, sizeof(what), "manejo novo, %s: sem cruzar (%d), apoio parado (%.2f m/s)", name, m.crossings,
             percentile(m.plantedSlide, 1.0f));
         expect(m.crossings == 0 && percentile(m.plantedSlide, 1.0f) < 0.5f, what, m);
+    }
+    // Correndo, o toque vai no balanco da passada: a passada fica como a da
+    // corrida sem bola (a mesma correcao na saida do apoio e o mesmo alcance).
+    {
+        const Metrics base = run("toque_corre", footsteps, false);
+        const Metrics m = run("toque_corre", handling, false);
+        char what[192];
+        std::snprintf(what, sizeof(what), "manejo novo, correndo: um toque no ritmo (%s, %.3f s)", m.outcomes.c_str(),
+            m.worstLatency);
+        expect(m.touches == 1 && m.outcomes == "tocou" && m.worstLatency <= 2.5f * Dt, what, m);
+        std::snprintf(what, sizeof(what),
+            "manejo novo, correndo: a passada como sem o gesto (saida %.3f/%.3f m, pernas %.0f m/s2, apoio %.2f m/s)",
+            m.worstLiftCorrection, base.worstLiftCorrection, m.peakLegAcceleration, percentile(m.plantedSlide, 1.0f));
+        expect(m.worstLiftCorrection <= base.worstLiftCorrection + 0.02f && m.peakLegAcceleration < 800.0f
+                && m.peakUpperAcceleration < 200.0f && percentile(m.plantedSlide, 1.0f) < 0.5f && m.crossings == 0,
+            what, m);
     }
     std::printf(failures == 0 ? "atleta: tudo certo\n" : "atleta: %d falha(s)\n", failures);
     return failures == 0 ? 0 : 1;

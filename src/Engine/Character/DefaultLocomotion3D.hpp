@@ -401,6 +401,10 @@ struct DefaultLocomotionOutput3D {
     std::array<float, 2> secondsToLiftoff { -1.0f, -1.0f };
     std::array<float, 2> cycleSecondsToTouchdown { -1.0f, -1.0f };
     std::array<float, 2> swingSeconds { -1.0f, -1.0f };
+    // Os pes do estilo antes do gesto da bola, no mundo (o manejo novo,
+    // correndo, toca a bola no balanco deles).
+    std::array<Vec3, 2> styleFootPosition {};
+    std::array<Quaternion, 2> styleFootOrientation {};
     // Inclinacao aplicada (rad: x para a esquerda, y para a frente).
     Vec3 lean;
     // Carrinho: em andamento (a pelve vai pelo clipe; a capsula vai embaixo

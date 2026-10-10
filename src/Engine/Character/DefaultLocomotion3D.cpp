@@ -1742,6 +1742,14 @@ void DefaultLocomotion3D::update(const RagdollProfile3D& profile,
     // locomocao o pos), tronco, bracos e cabeca, e a perna que joga pelo IK
     // analitico (armada com o joelho dobrado, desdobrando ate a bola).
     int ballSide = -1;
+    if (m_feet[0] != 0 && m_feet[1] != 0) {
+        RagdollAnimationPose3D style;
+        defaultLocomotionPose3D(profile, rootPosition, rootOrientation, m_coordinates, style);
+        for (std::size_t side = 0; side < 2; ++side) {
+            m_output.styleFootPosition[side] = style.linkPositions[m_feet[side]];
+            m_output.styleFootOrientation[side] = style.linkOrientations[m_feet[side]];
+        }
+    }
     if (input.ballGesture.active && m_gestureLegs.valid) {
         applyBallGesturePose3D(profile, m_gestureLegs, input.ballGesture, m_coordinates, rootPosition,
             rootOrientation, true, true);

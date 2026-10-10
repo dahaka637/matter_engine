@@ -728,6 +728,7 @@ void WorkbenchApp::updateActiveRagdolls(float deltaTime) {
         output);
     if (output.followVelocitySet) m_characterFollowVelocity = output.followVelocityWorld;
     if (output.controlledAnimatedSet) m_controlledAnimated = output.controlledAnimated;
+    m_controlledSpeedScale = output.controlledSpeedScale;
     if (output.ballRequestConsumed) m_ballRequest = BallActionKind3D::None;
     updateRagdollImpactLab(deltaTime);
 }

@@ -34,10 +34,28 @@ struct BallPlannerBody3D {
     std::array<Vec3, 2> hip {};
     std::array<Vec3, 2> foot {};
     std::array<Quaternion, 2> footOrientation {};
-    // Ate quando (s a partir de agora) cada pe segue apoiado e a partir de
-    // quando ele pode sair (s): parado, os dois apoiados sempre (1e9 / 0).
+    // A velocidade de cada pe agora (o gesto parte dela) e para onde o
+    // joelho aponta (o polo do gesto sai dele aos poucos).
+    std::array<Vec3, 2> footVelocity {};
+    std::array<Vec3, 2> knee { Vec3 { 1.0f, 0.0f, 0.0f }, Vec3 { 1.0f, 0.0f, 0.0f } };
+    // Correndo, o toque vai no balanco do pe do estilo: onde ele esta e a
+    // velocidade dele, quando sai do chao (0 se ja no ar), onde e quando pousa
+    // (s; swingLandTime < 0: sem previsao, o toque nao vai no balanco).
+    std::array<Vec3, 2> swingFoot {};
+    std::array<Vec3, 2> swingVelocity {};
+    std::array<float, 2> swingLift {};
+    std::array<Vec3, 2> swingLand {};
+    std::array<float, 2> swingLandTime { -1.0f, -1.0f };
+    // As janelas de cada pe (s a partir de agora): apoiado de plantedFrom a
+    // plantedUntil e livre (no balanco) de freeFrom a freeUntil. Parado, os
+    // dois apoiados sempre e livres ja (0 / 1e9).
+    std::array<float, 2> plantedFrom {};
     std::array<float, 2> plantedUntil { 1e9f, 1e9f };
+    // O fim natural do apoio (a passada; plantedUntil pode ir alem, segurando
+    // o pe - com custo).
+    std::array<float, 2> plantedNatural { 1e9f, 1e9f };
     std::array<float, 2> freeFrom {};
+    std::array<float, 2> freeUntil { 1e9f, 1e9f };
     float groundHeight = 0.0f;
     bool moving = false;
 };
@@ -60,7 +78,10 @@ struct BallPlannerSettings3D {
     float shotStrike = 0.08f, shotStrikePower = 0.04f;
     // O pe vai de onde esta ate o contato a no maximo esta velocidade media
     // (m/s) no armado: longe, o armado cresce (0,75 m em 0,1 s era um tranco).
+    // Andando, o pe ja sai do chao atras do corpo: o armado minimo encolhe
+    // para esta parte.
     float windupTravelSpeed = 2.5f;
+    float movingWindupShare = 0.5f;
     // Os pesos do custo: o tempo, o alcance alem de 85% da perna, a perna do
     // outro lado da bola, a pelve indo buscar e a troca de pe.
     float costTime = 1.0f;
@@ -68,6 +89,12 @@ struct BallPlannerSettings3D {
     float costOtherSide = 0.35f;
     float costPelvis = 2.0f;
     float costSwitch = 0.25f;
+    // Segurar o apoio alem do fim natural dele: custo por 0,05 s.
+    float costHold = 1.0f;
+    // O toque no balanco: o pe do contato longe de onde o balanco do estilo
+    // passaria (custo por (d / 0,15 m)^2; acima de swingDeviation, nao).
+    float costSwingPath = 1.0f;
+    float swingDeviation = 0.30f;
     // O pe que joga nunca cruza a linha do de apoio: fica pelo menos isto do
     // lado dele (m).
     float sideGap = 0.12f;

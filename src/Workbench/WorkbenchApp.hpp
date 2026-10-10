@@ -578,6 +578,8 @@ private:
     bool m_defaultTrunkMotion = true;
     float m_defaultTrunkMotionPercent = 100.0f;
     bool m_controlledAnimated = false;
+    // A escala da capsula pedida pelo runtime (o chute correndo freia).
+    float m_controlledSpeedScale = 1.0f;
     // A capsula do controlado bateu em algo neste tick: quanto perdeu de
     // velocidade (m/s, no plano) alem do que a frenagem dela tira - parede,
     // degrau alto. No padrao, a batida forte passa ao modo fisico.

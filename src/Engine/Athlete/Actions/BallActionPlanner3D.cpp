@@ -41,6 +41,21 @@ float groundDeficit(const BallFootBox3D& box, int side, Vec3 position, Quaternio
     return std::max(0.0f, groundHeight + clearance - low);
 }
 
+// Onde o pe da passada estara em t (s): parado ate sair do chao, depois um
+// Hermite ate o pouso (quase parado nele, como o pe que pousa).
+Vec3 predictSwingFoot(const BallPlannerBody3D& body, std::size_t side, float t) {
+    const float lift = std::max(0.0f, body.swingLift[side]);
+    const float land = body.swingLandTime[side];
+    const Vec3 from = body.swingFoot[side];
+    if (t <= lift) return from;
+    const Vec3 v0 = lift > 0.0f ? Vec3 {} : body.swingVelocity[side];
+    const float T = std::max(0.02f, land - lift);
+    const float u = std::clamp((t - lift) / T, 0.0f, 1.0f);
+    const float u2 = u * u, u3 = u2 * u;
+    return from * (2.0f * u3 - 3.0f * u2 + 1.0f) + v0 * (T * (u3 - 2.0f * u2 + u))
+        + body.swingLand[side] * (-2.0f * u3 + 3.0f * u2);
+}
+
 } // namespace
 
 BallFootBox3D resolveBallFootBox3D(const RagdollProfile3D& profile, const AthleteLegs3D& legs) {
@@ -199,8 +214,8 @@ BallPlan3D planBallAction3D(const BallOutcomeRequest3D& intent, const BallPlanne
     const Vec3 push = shot ? Vec3 { std::cos(intent.aimYawRadians), std::sin(intent.aimYawRadians), 0.0f }
         : (planar(intent.direction).lengthSquared() > 1e-6f ? planar(intent.direction).normalized() : forward);
     const float power = std::clamp(intent.power, 0.0f, 1.0f);
-    const float baseWindup = shot ? settings.shotWindup + settings.shotWindupPower * power
-        : settings.touchWindup + settings.touchWindupPower * power;
+    const float baseWindup = (shot ? settings.shotWindup + settings.shotWindupPower * power
+        : settings.touchWindup + settings.touchWindupPower * power) * (body.moving ? settings.movingWindupShare : 1.0f);
     const float strike = shot ? settings.shotStrike + settings.shotStrikePower * power
         : settings.touchStrike + settings.touchStrikePower * power;
     const float horizon = shot ? settings.shotHorizon : settings.touchHorizon;
@@ -208,23 +223,44 @@ BallPlan3D planBallAction3D(const BallOutcomeRequest3D& intent, const BallPlanne
     const float ballSide = dot(planar(table.front().position - body.pelvis), left);
     const int preferred = ballSide >= 0.0f ? 0 : 1;
     best.cost = 1e9f;
+    // Por que os candidatos caem (o motivo do desfecho quando nenhum serve).
+    enum Cut { CutHigh, CutSwing, CutSupport, CutBehind, CutTime, CutCross, CutReach, CutPath, CutCount };
+    std::array<int, CutCount> cuts {};
+    static constexpr const char* CutReason[CutCount] = { "a bola acima da cintura",
+        "o contato fora do balanco do pe", "o apoio no ar no contato", "a bola atras do corpo no chute",
+        "sem tempo para o armado", "cruzaria as pernas", "fora do alcance da perna",
+        "longe do caminho do pe na passada" };
     for (std::size_t k = 0; k < table.size(); ++k) {
         const float t = static_cast<float>(k) * tableInterval;
         if (t > horizon + 1e-4f) break;
         const BallPrediction3D& ball = table[k];
         // A bola no alcance de uma perna (a cintura, no maximo).
-        if (ball.position.z - body.groundHeight > 0.75f) continue;
+        if (ball.position.z - body.groundHeight > 0.75f) {
+            ++cuts[CutHigh];
+            continue;
+        }
         for (int side = 0; side < 2; ++side) {
             const std::size_t s = static_cast<std::size_t>(side);
             const int support = 1 - side;
-            // O apoio fica no chao ate o contato.
-            if (body.plantedUntil[static_cast<std::size_t>(support)] < t + 0.03f) continue;
+            // O pe que joga no balanco dele no contato; o apoio no chao.
+            if (t > body.freeUntil[s] + 1e-4f) {
+                ++cuts[CutSwing];
+                continue;
+            }
+            if (body.plantedUntil[static_cast<std::size_t>(support)] < t + 0.03f
+                || body.plantedFrom[static_cast<std::size_t>(support)] > t + 1e-4f) {
+                ++cuts[CutSupport];
+                continue;
+            }
             const Vec3 pelvisThen = body.pelvis + Vec3 { body.velocity.x, body.velocity.y, 0.0f } * t;
             const Vec3 relative = planar(ball.position - pelvisThen);
             const bool behind = dot(relative, forward) < -0.06f;
             const BallTouchSurface3D surface = chooseBallSurface3D(side, push, forward, intent.kind, body.moving,
                 behind, intent.curve);
-            if (shot && behind) continue;
+            if (shot && behind) {
+                ++cuts[CutBehind];
+                continue;
+            }
             Vec3 footPosition;
             Quaternion footOrientation;
             ballContactFootPose3D(box, side, surface, ball.position, ballRadius, push, forward, power, intent.lift,
@@ -232,33 +268,61 @@ BallPlan3D planBallAction3D(const BallOutcomeRequest3D& intent, const BallPlanne
             // O tempo da perna: do momento em que o pe pode sair ate o contato
             // cabe o armado (mais longo com o pe longe do contato) e a batida
             // (um armado curto, nunca zero).
+            // (No toque no balanco nao ha armado: o pe so desvia da passada,
+            // e o tempo e o do desvio.)
+            const bool swingTouch = !shot && body.swingLandTime[s] > 0.0f;
+            float swingPath = 0.0f;
+            if (swingTouch) {
+                const Vec3 path = predictSwingFoot(body, s, t);
+                swingPath = std::hypot(footPosition.x - path.x, footPosition.y - path.y);
+                if (swingPath > settings.swingDeviation) {
+                    ++cuts[CutPath];
+                    continue;
+                }
+            }
             const Vec3 footThen = body.foot[s] + Vec3 { body.velocity.x, body.velocity.y, 0.0f } * (body.moving ? t : 0.0f);
-            const float windup = std::max(baseWindup,
-                (footPosition - footThen).length() / std::max(0.5f, settings.windupTravelSpeed) - strike);
+            const float travelSpeed = std::max(0.5f, settings.windupTravelSpeed);
+            const float windup = swingTouch ? 0.0f
+                                            : std::max(baseWindup, (footPosition - footThen).length() / travelSpeed - strike);
             const float lead = t - std::max(0.0f, body.freeFrom[s]);
-            if (lead < 0.6f * windup + strike) continue;
+            // (Correndo, o chute arma no proprio balanco da passada: o pe sai
+            // do chao atras do corpo.)
+            const float needed = swingTouch ? std::max(0.5f * strike, swingPath / travelSpeed)
+                : (body.moving ? 0.3f : 0.6f) * windup + strike;
+            if (lead < needed) {
+                ++cuts[CutTime];
+                continue;
+            }
             // Sem cruzar: o pe que joga fica do lado dele do de apoio.
             const Vec3 supportFoot = body.foot[static_cast<std::size_t>(support)]
                 + Vec3 { body.velocity.x, body.velocity.y, 0.0f } * (body.moving ? t : 0.0f);
             const float lateral = dot(planar(footPosition - supportFoot), left) * (side == 0 ? 1.0f : -1.0f);
-            if (lateral < settings.sideGap * 0.5f) continue;
+            if (lateral < settings.sideGap * 0.5f) {
+                ++cuts[CutCross];
+                continue;
+            }
             // O alcance: do quadril ao tornozelo.
             const Vec3 hip = body.hip[s] + Vec3 { body.velocity.x, body.velocity.y, 0.0f } * t;
             const Vec3 ankle = footPosition + footOrientation.rotate(legs.ankleInFoot[s]);
             const float length = legs.thighLength[s] + legs.shinLength[s];
             const float distance = (ankle - hip).length();
             const float need = std::max(0.0f, distance - settings.reachLimit * length);
-            if (need > settings.pelvisReach || distance < settings.minimumReach) continue;
+            if (need > settings.pelvisReach || distance < settings.minimumReach) {
+                ++cuts[CutReach];
+                continue;
+            }
             const float reach = distance / length;
             // O tempo: apressar abaixo da duracao natural do gesto custa caro;
             // esperar, pouco.
-            const float natural = windup + strike + std::max(0.0f, body.freeFrom[s]);
+            const float natural = (swingTouch ? needed : windup + strike) + std::max(0.0f, body.freeFrom[s]);
             float cost = settings.costTime * (2.0f * std::max(0.0f, natural - t) / std::max(0.05f, natural)
                     + 0.3f * t / std::max(0.05f, horizon))
                 + settings.costReach * std::pow(std::max(0.0f, reach - 0.85f), 2.0f)
                 + settings.costPelvis * need / std::max(0.01f, settings.pelvisReach)
                 + (side != preferred ? settings.costOtherSide : 0.0f)
-                + (previousSide >= 0 && side != previousSide ? settings.costSwitch : 0.0f);
+                + (previousSide >= 0 && side != previousSide ? settings.costSwitch : 0.0f)
+                + settings.costHold * std::max(0.0f, t - body.plantedNatural[static_cast<std::size_t>(support)]) / 0.05f
+                + settings.costSwingPath * (swingPath / 0.15f) * (swingPath / 0.15f);
             if (cost < best.cost) {
                 best.valid = true;
                 best.reason = "";
@@ -269,13 +333,22 @@ BallPlan3D planBallAction3D(const BallOutcomeRequest3D& intent, const BallPlanne
                 best.push = push;
                 best.footPosition = footPosition;
                 best.footOrientation = footOrientation;
-                best.windupSeconds = std::min(windup, lead - strike);
-                best.strikeSeconds = strike;
+                // (O toque no balanco sai ja: o desvio da passada se espalha
+                // ate o contato.)
+                best.windupSeconds = swingTouch ? 0.0f : std::min(windup, lead - strike);
+                best.strikeSeconds = swingTouch ? t : strike;
                 best.reach = reach;
                 best.pelvisNeed = need;
                 best.cost = cost;
             }
         }
+    }
+    if (!best.valid) {
+        int worst = -1;
+        for (int k = 0; k < CutCount; ++k)
+            if (cuts[static_cast<std::size_t>(k)] > 0 && (worst < 0 || cuts[static_cast<std::size_t>(k)] > cuts[static_cast<std::size_t>(worst)]))
+                worst = k;
+        if (worst >= 0) best.reason = CutReason[worst];
     }
     return best;
 }

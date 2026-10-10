@@ -102,6 +102,18 @@ void FootstepPlanner3D::startOffset(int side, FootMode3D mode, const FootstepSty
     }
 }
 
+void FootstepPlanner3D::startFree(int side, const FootstepStyle3D& style) {
+    startOffset(side, FootMode3D::Free, style);
+    // (O gesto da bola parte do pe daqui, com a velocidade dele: o estilo ja
+    // e ele, sem mistura - a diferenca de um tick segurava o pe parado.)
+    if (side == style.actingSide) {
+        Foot& foot = m_feet[static_cast<std::size_t>(side)];
+        foot.offset = {};
+        foot.offsetYaw = 0.0f;
+        foot.progress = 1.0f;
+    }
+}
+
 void FootstepPlanner3D::startStep(int side, float seconds, float height) {
     Foot& foot = m_feet[static_cast<std::size_t>(side)];
     foot.mode = FootMode3D::Step;
@@ -172,9 +184,12 @@ std::array<FootTarget3D, 2> FootstepPlanner3D::plan(const FootstepStyle3D& style
     if (m_previousActing >= 0 && style.actingSide != m_previousActing) {
         Foot& foot = m_feet[static_cast<std::size_t>(m_previousActing)];
         if (foot.mode == FootMode3D::Free) {
-            if (onGround(m_previousActing, foot.position, foot.orientation)) lock(m_previousActing, foot.position,
-                foot.orientation);
-            else startOffset(m_previousActing, FootMode3D::Free, style);
+            if (onGround(m_previousActing, foot.position, foot.orientation)) {
+                lock(m_previousActing, foot.position, foot.orientation);
+                foot.releaseWait = settings.releaseWaitSeconds;
+            } else {
+                startOffset(m_previousActing, FootMode3D::Free, style);
+            }
         }
     }
     m_previousActing = style.actingSide;
@@ -187,10 +202,14 @@ std::array<FootTarget3D, 2> FootstepPlanner3D::plan(const FootstepStyle3D& style
         const bool reserved = side == style.reservedSide;
         switch (foot.mode) {
         case FootMode3D::Stance:
+            if (style.planted[s]) foot.releaseWait = 0.0f;
             if (free) {
-                startOffset(side, FootMode3D::Free, style);
+                startFree(side, style);
             } else if (reserved) {
                 // (O apoio do gesto: fica.)
+            } else if (foot.releaseWait > 0.0f) {
+                // (Pousado pelo gesto antes do estilo: espera o dele.)
+                foot.releaseWait = std::max(0.0f, foot.releaseWait - dt);
             } else if (!style.planted[s]) {
                 startOffset(side, FootMode3D::Swing, style);
             } else if (moving && style.secondsToLiftoff[s] >= 0.0f && reach(side, style) > settings.reachLimit) {
@@ -200,11 +219,11 @@ std::array<FootTarget3D, 2> FootstepPlanner3D::plan(const FootstepStyle3D& style
             }
             break;
         case FootMode3D::Step:
-            if (free) startOffset(side, FootMode3D::Free, style);
+            if (free) startFree(side, style);
             else if (!style.planted[s]) startOffset(side, FootMode3D::Swing, style);
             break;
         case FootMode3D::Swing:
-            if (free) startOffset(side, FootMode3D::Free, style);
+            if (free) startFree(side, style);
             break;
         case FootMode3D::Free:
             if (foot.progress < 0.0f) startOffset(side, FootMode3D::Free, style);

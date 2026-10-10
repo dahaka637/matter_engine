@@ -82,6 +82,10 @@ struct FootstepSettings3D {
     // O pe que sai do apoio para o estilo livre (pulo, gesto, carrinho) chega
     // nele nesta mistura (s).
     float freeBlendSeconds = 0.15f;
+    // O pe que o gesto pousou fica preso esperando o estilo pousar o dele ate
+    // isto (s): correndo, o toque pousa o pe antes do clipe e ele subia de
+    // novo para pousar com o clipe.
+    float releaseWaitSeconds = 0.25f;
     // A sola: os dedos dobram a esta distancia da ponta (m) e a diferenca de
     // altura (m) entre o calcanhar e a base dos dedos que troca o ponto em
     // que o pe rola.
@@ -183,9 +187,13 @@ private:
         float stepHeight = 0.05f;
         Vec3 stepFrom;
         Quaternion stepFromOrientation;
+        // Preso pela soltura do gesto: o tempo que ainda espera o estilo
+        // pousar o pe (s; 0 nada).
+        float releaseWait = 0.0f;
     };
     void lock(int side, Vec3 position, Quaternion orientation);
     void startOffset(int side, FootMode3D mode, const FootstepStyle3D& style);
+    void startFree(int side, const FootstepStyle3D& style);
     void startStep(int side, float seconds, float height);
     [[nodiscard]] float lowestSole(int side, Vec3 position, Quaternion orientation) const;
     [[nodiscard]] float reach(int side, const FootstepStyle3D& style) const;

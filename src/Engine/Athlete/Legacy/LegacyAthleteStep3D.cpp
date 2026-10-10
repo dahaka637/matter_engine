@@ -665,6 +665,12 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                     in.body.foot[side] = body.links[foot].position;
                     in.body.footOrientation[side] = body.links[foot].orientation;
                 }
+                in.body.footVelocity[side] = body.links[foot].linearVelocity;
+                if (havePose) {
+                    const std::size_t thigh = legs.thigh[side];
+                    in.body.knee[side] = (last.linkOrientations[thigh] * profile.links[thigh].modelOrientation.conjugate())
+                                             .rotate({ 1.0f, 0.0f, 0.0f });
+                }
                 in.footLinks[side] = static_cast<std::uint32_t>(foot);
             }
         }
@@ -680,6 +686,18 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             in.centerOfMass = mass > 0.0f ? sum * (1.0f / mass) : in.body.pelvis;
         } else {
             in.centerOfMass = pelvis;
+        }
+        // O ritmo da passada (o estilo do tick anterior).
+        {
+            const DefaultLocomotionOutput3D& style = state.defaultLocomotion.output();
+            in.gait.cycling = style.valid && style.cycling && !style.airborne;
+            in.gait.movingShare = style.valid ? style.movingShare : 0.0f;
+            in.gait.planted = style.cyclePlanted;
+            in.gait.secondsToLiftoff = style.secondsToLiftoff;
+            in.gait.secondsToTouchdown = style.cycleSecondsToTouchdown;
+            in.gait.swingSeconds = style.swingSeconds;
+            in.gait.styleFoot = style.styleFootPosition;
+            in.gait.styleFootOrientation = style.styleFootOrientation;
         }
         in.bodyVelocity = in.body.velocity;
         in.aheadVelocity = { command.intent.requestedVelocityWorld.x, command.intent.requestedVelocityWorld.y, 0.0f };
@@ -706,7 +724,8 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         command.ballGesture = legacyBallGesture3D(out.body);
         state.ballLastOutput = {};
         state.ballLastOutput.touched = out.touched;
-        state.ballSpeedScale = 1.0f;
+        state.ballSpeedScale = out.speedScale;
+        output.controlledSpeedScale = out.speedScale;
         state.ballStability = 0.0f;
     } else if (command.controlled && !body.links.empty()) {
         // (Manejo V3.)

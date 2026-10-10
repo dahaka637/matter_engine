@@ -85,6 +85,9 @@ struct AthleteRuntimeOutput3D {
     // O controlado esta no modo animado (o padrao).
     bool controlledAnimatedSet = false;
     bool controlledAnimated = false;
+    // A escala da velocidade da capsula do controlado no proximo movimento
+    // dela (o chute correndo do manejo novo freia o corpo de verdade).
+    float controlledSpeedScale = 1.0f;
     // O pedido de bola deste tick foi consumido.
     bool ballRequestConsumed = false;
 };

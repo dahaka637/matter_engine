@@ -52,6 +52,13 @@ struct BallGestureSettings3D {
     // Do contato ao arco: a velocidade do pe que o arco nao tem (a parte
     // radial, a do corpo) some neste tempo (s), sem o tranco de um tick.
     float followBlendSeconds = 0.08f;
+    // O toque no balanco (correndo): a batida soma esta parte da do toque
+    // parado ao pe do estilo, e o pe volta a ele em pelo menos isto (s),
+    // ficando ate isto (s) depois do pouso dele (o pe do estilo ja parado no
+    // chao, as pegadas travam o do gesto em cima dele).
+    float swingStrikeShare = 0.5f;
+    float swingMinimumFollow = 0.05f;
+    float swingSettleSeconds = 0.05f;
     // As correcoes do contato depois do compromisso (m/s no maximo).
     float correctionSpeed = 2.0f;
     // A janela do contato: o pe pode encostar ate isto (s) depois do instante
@@ -59,20 +66,58 @@ struct BallGestureSettings3D {
     float contactLate = 0.08f;
 };
 
+// O referencial do gesto: parado, o mundo. Correndo, o chute vai com o corpo
+// e o toque com o pe do estilo no balanco dele (o pe segue a passada,
+// desviado so o bastante para encontrar a bola, e volta a ela antes de
+// pousar com ela). Andando, o gesto acaba no fim do acompanhamento e as
+// pegadas pousam o pe no ritmo da passada.
+enum class BallGestureFrame3D : std::uint8_t { World, Body, StyleFoot };
+
+// O comeco de um gesto.
+struct BallGestureStart3D {
+    BallPlan3D plan;
+    BallActionKind3D kind = BallActionKind3D::Dribble;
+    float power = 0.5f;
+    float lift = 0.0f;
+    Vec3 bodyVelocity;
+    // O pe que joga agora e o chao.
+    Vec3 foot;
+    Vec3 footVelocity;
+    Quaternion footOrientation;
+    float groundHeight = 0.0f;
+    // O quadril da perna, o tornozelo no link do pe e o comprimento da perna
+    // (coxa + canela): o acompanhamento e um arco em volta dele e o pouso
+    // fica ao alcance.
+    Vec3 hip;
+    Vec3 ankleInFoot;
+    float legLength = 0.83f;
+    BallGestureFrame3D frame = BallGestureFrame3D::World;
+    // No referencial do pe do estilo: onde ele esta, a velocidade dele e
+    // quando ele pousa (s a partir de agora).
+    Vec3 styleFoot;
+    Vec3 styleFootVelocity;
+    float styleTouchdown = -1.0f;
+};
+
+// O que o gesto le a cada tick.
+struct BallGestureLive3D {
+    // O quadril da perna (o centro do arco; a pelve desliza e abaixa no
+    // gesto) e onde ele fica quando o corpo sai do gesto (o pouso fica ao
+    // alcance dele).
+    Vec3 hip;
+    Vec3 restHip;
+    Vec3 bodyVelocity;
+    Vec3 styleFoot;
+    Vec3 styleFootVelocity;
+    Quaternion styleFootOrientation;
+};
+
 class BallGesture3D {
 public:
-    // hip: o quadril da perna que joga agora (a pose do corpo), o tornozelo
-    // no link do pe e o comprimento da perna (coxa + canela): o
-    // acompanhamento e um arco em volta dele e o pouso fica ao alcance.
-    void start(const BallPlan3D& plan, BallActionKind3D kind, float power, float lift, Vec3 bodyVelocity,
-        Vec3 footPosition, Quaternion footOrientation, float groundHeight, const BallFootBox3D& box, Vec3 hip,
-        Vec3 ankleInFoot, float legLength, const BallGestureSettings3D& settings);
+    void start(const BallGestureStart3D& in, const BallFootBox3D& box, const BallGestureSettings3D& settings);
     // A bola mudou um pouco: o contato acompanha (limitado por tick).
     void retarget(Vec3 footPosition, Quaternion footOrientation, float deltaTime, const BallGestureSettings3D& settings);
-    // hip: o quadril da perna que joga neste tick (o centro do arco do
-    // acompanhamento; a pelve desliza e abaixa no gesto); restHip: onde ele
-    // fica quando o corpo sai do gesto (o pouso fica ao alcance dele).
-    void update(float deltaTime, Vec3 hip, Vec3 restHip, const BallGestureSettings3D& settings);
+    void update(float deltaTime, const BallGestureLive3D& live, const BallGestureSettings3D& settings);
     void stop() { m_phase = BallGesturePhase3D::Idle; }
     [[nodiscard]] bool active() const { return m_phase != BallGesturePhase3D::Idle; }
     [[nodiscard]] BallGesturePhase3D phase() const { return m_phase; }
@@ -95,20 +140,31 @@ public:
 private:
     void enter(BallGesturePhase3D phase);
     void reachableLand();
-    void reachableWindup();
+    [[nodiscard]] Vec3 reachableWindup(Vec3 contact) const;
     [[nodiscard]] Vec3 arcAnkle() const;
 
     BallGesturePhase3D m_phase = BallGesturePhase3D::Idle;
     bool m_shot = false;
+    bool m_moving = false;
+    BallGestureFrame3D m_frameKind = BallGestureFrame3D::World;
+    // O pe do estilo no comeco (o referencial dele) e a orientacao dele agora.
+    Vec3 m_styleStart;
+    Quaternion m_styleOrientation;
     int m_side = 0;
     float m_time = 0.0f;
     float m_windupAt = 0.0f, m_contactAt = 0.0f, m_followAt = 0.0f, m_returnAt = 0.0f;
     Vec3 m_position, m_velocity;
     Quaternion m_orientation;
     Vec3 m_push { 1.0f, 0.0f, 0.0f };
-    // Os alvos: armado, contato (e a velocidade nele), acompanhamento e
-    // pouso; as orientacoes.
-    Vec3 m_windup, m_contact, m_contactVelocity, m_follow, m_land;
+    // Os alvos: o contato no mundo (e a velocidade do pe nele, no
+    // referencial do gesto), o armado e o acompanhamento do toque em relacao
+    // ao contato (no referencial), o fim do acompanhamento e o pouso; as
+    // orientacoes.
+    Vec3 m_contact, m_contactVelocity, m_windupOffset, m_followOffset, m_follow, m_land;
+    // O referencial do gesto: o quanto andou desde o comeco e a velocidade
+    // dele (a do corpo andando; parado, zero).
+    Vec3 m_frame;
+    Vec3 m_frameVelocity;
     Quaternion m_windupOrientation, m_contactOrientation, m_landOrientation;
     // A orientacao no comeco da fase e o tempo dela.
     Quaternion m_phaseOrientation;
@@ -124,7 +180,6 @@ private:
     // armado pedido e o alcance dele.
     Vec3 m_landWanted;
     Vec3 m_restHip;
-    Vec3 m_windupWanted;
     float m_windupReach = 0.79f;
     float m_arcLateral = 0.0f;
     float m_arcRadius = 0.8f;

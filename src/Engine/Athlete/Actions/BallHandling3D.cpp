@@ -17,6 +17,19 @@ Vec3 clampLength(Vec3 v, float maximum) {
     return length > maximum && length > 1e-9f ? v * (maximum / length) : v;
 }
 
+// Quando o pe do estilo pousa (s a partir de agora): no ar, o que falta; no
+// apoio, a saida mais o balanco.
+float styleTouchdown(const BallHandlingGait3D& gait, std::size_t side) {
+    const float swing = std::max(0.1f, gait.swingSeconds[side]);
+    return gait.planted[side] ? std::max(0.0f, gait.secondsToLiftoff[side]) + swing
+                              : std::max(0.0f, gait.secondsToTouchdown[side]);
+}
+
+// O quanto o chute correndo freia o corpo (0..1 da velocidade), pela forca.
+float shotSlowdown(const BallOutcomeRequest3D& intent, const BallHandlingSettings3D& settings) {
+    return std::clamp(settings.runningShotSlowdown, 0.0f, 0.9f) * (0.6f + 0.4f * std::clamp(intent.power, 0.0f, 1.0f));
+}
+
 // Para onde aponta o joelho: perpendicular a perna (quadril -> tornozelo), no
 // plano dela com o vertical, do lado da frente - a perna para baixo, para a
 // frente; esticada a frente, para cima - e girado no eixo da perna o quanto a
@@ -47,11 +60,14 @@ void BallHandling3D::reset(const RagdollProfile3D& profile) {
     m_appliedShift = {};
     m_appliedDrop = 0.0f;
     m_settleLeft = 0.0f;
+    m_slow.reset(0.0f);
+    m_gestureMoving = false;
 }
 
 std::uint64_t BallHandling3D::targetBallKey() const {
     if (const BallActionRecord3D* record = m_queue.active()) return record->ballKey;
-    return m_gesture.active() ? m_gestureBall : 0;
+    // (Enquanto o corpo sai do gesto, o olhar ainda segue a bola dele.)
+    return m_gesture.active() || m_bodyLive ? m_gestureBall : 0;
 }
 
 void BallHandling3D::update(const BallHandlingInput3D& input, const BallOutcomeSettings3D& outcome,
@@ -63,6 +79,24 @@ void BallHandling3D::update(const BallHandlingInput3D& input, const BallOutcomeS
     const Vec3 forward { std::cos(body.facingYaw), std::sin(body.facingYaw), 0.0f };
     const Vec3 left { -forward.y, forward.x, 0.0f };
     const Vec3 up { 0.0f, 0.0f, 1.0f };
+    // Os pes do estilo andam: a velocidade deles (o toque no balanco vai com
+    // eles).
+    for (std::size_t s = 0; s < 2; ++s) {
+        m_styleFootVelocity[s] = m_styleFootKnown
+            ? (input.gait.styleFoot[s] - m_styleFootPrevious[s]) * (1.0f / dt) : Vec3 {};
+        m_styleFootPrevious[s] = input.gait.styleFoot[s];
+        // (O pouso do pe do estilo, em relacao a pelve: o ultimo de qualquer
+        // pe, com o lado sem sinal, e a velocidade dele.)
+        if (input.gait.cycling && input.gait.planted[s] && !m_stylePlantedPrevious[s]) {
+            const Vec3 rel = input.gait.styleFoot[s] - body.pelvis;
+            m_landLead = { dot(planar(rel), forward), std::abs(dot(planar(rel), left)),
+                input.gait.styleFoot[s].z - body.groundHeight };
+            m_landLeadSpeed = planar(body.velocity).length();
+            m_landLeadKnown = true;
+        }
+        m_stylePlantedPrevious[s] = input.gait.planted[s];
+    }
+    m_styleFootKnown = true;
 
     // 1) O contato: o primeiro encosto do pe que joga na bola, na janela da
     // batida, vira o evento unico do pedido - o resultado aprovado, pela
@@ -106,12 +140,84 @@ void BallHandling3D::update(const BallHandlingInput3D& input, const BallOutcomeS
             predictBallTable3D(input.ball.position, input.ball.velocity, body.groundHeight, input.ball.radius,
                 settings.planner.interval, horizon, settings.predictor, m_table);
             BallPlannerBody3D planned = body;
-            // (Parado ou andando, o gesto toma o pe que joga e reserva o de
-            // apoio: o planejador de pegadas o deixa no chao.)
-            planned.freeFrom = { 0.0f, 0.0f };
-            planned.plantedUntil = { 1e9f, 1e9f };
+            planned.moving = input.gait.cycling;
+            if (input.gait.cycling) {
+                // Andando: o contato cabe no balanco do pe que joga (esticado
+                // ate swingStretch), com o outro apoiado ate ele - a passada
+                // manda. O chute correndo freia o corpo.
+                // (O apoio de um pe pela passada: o balanco menos os dois voos
+                // - com um pe no chao e o outro no ar, o voo e do sair de um
+                // ao pousar do outro.)
+                float stance = 0.6f * std::max(0.1f, input.gait.swingSeconds[0]);
+                for (std::size_t s = 0; s < 2; ++s) {
+                    const std::size_t o = 1 - s;
+                    if (input.gait.planted[s] && !input.gait.planted[o] && input.gait.secondsToLiftoff[s] >= 0.0f
+                        && input.gait.secondsToTouchdown[o] >= 0.0f) {
+                        const float flight = input.gait.secondsToTouchdown[o] - input.gait.secondsToLiftoff[s];
+                        stance = std::clamp(std::max(0.1f, input.gait.swingSeconds[o]) - 2.0f * flight, 0.08f, 0.6f);
+                    }
+                }
+                // (A espera do apoio pelo alcance: com o corpo freado.)
+                const float braked = planar(body.velocity).length() * (shot ? 1.0f - shotSlowdown(record->intent, settings) : 1.0f);
+                const float hold = std::min(settings.supportHoldSeconds, settings.supportHoldReach / std::max(0.5f, braked));
+                for (std::size_t s = 0; s < 2; ++s) {
+                    const float swing = std::max(0.1f, input.gait.swingSeconds[s]);
+                    // (O toque vai no balanco do pe do estilo e volta a ele
+                    // antes do pouso; o chute pode esticar o balanco.)
+                    const float touchdown = styleTouchdown(input.gait, s);
+                    if (input.gait.planted[s]) {
+                        const float lift = std::max(0.0f, input.gait.secondsToLiftoff[s]);
+                        planned.freeFrom[s] = lift;
+                        planned.freeUntil[s] = shot ? lift + swing * settings.swingStretch
+                                                    : touchdown - settings.gesture.swingMinimumFollow;
+                        planned.plantedFrom[s] = 0.0f;
+                        planned.plantedNatural[s] = lift;
+                    } else {
+                        const float land = std::max(0.0f, input.gait.secondsToTouchdown[s]);
+                        planned.freeFrom[s] = 0.0f;
+                        planned.freeUntil[s] = shot ? land + swing * (settings.swingStretch - 1.0f)
+                                                    : touchdown - settings.gesture.swingMinimumFollow;
+                        planned.plantedFrom[s] = land;
+                        planned.plantedNatural[s] = land + stance;
+                    }
+                    planned.plantedUntil[s] = planned.plantedNatural[s] + hold + 0.03f;
+                    // (O toque correndo nao precisa do apoio no chao: sai
+                    // tambem na fase de voo, como no jogo.)
+                    if (!shot) {
+                        planned.plantedFrom[s] = 0.0f;
+                        planned.plantedUntil[s] = 1e9f;
+                        planned.plantedNatural[s] = 1e9f;
+                    }
+                }
+                if (shot) planned.velocity = body.velocity * (1.0f - shotSlowdown(record->intent, settings));
+                // O toque no balanco: onde o pe da passada vai passar (do
+                // pe de agora ao pouso, no lugar do ultimo pouso dele).
+                // (O avanco do pouso cresce com a velocidade.)
+                const float speed = planar(body.velocity).length();
+                const float leadScale = std::clamp(speed / std::max(0.5f, m_landLeadSpeed), 0.5f, 2.0f);
+                for (std::size_t s = 0; s < 2 && !shot && m_landLeadKnown; ++s) {
+                    const float land = styleTouchdown(input.gait, s);
+                    const Vec3 pelvisThen = body.pelvis + planar(body.velocity) * land;
+                    planned.swingFoot[s] = input.gait.styleFoot[s];
+                    planned.swingVelocity[s] = m_styleFootVelocity[s];
+                    planned.swingLift[s] = input.gait.planted[s] ? std::max(0.0f, input.gait.secondsToLiftoff[s]) : 0.0f;
+                    planned.swingLand[s] = Vec3 { pelvisThen.x, pelvisThen.y, body.groundHeight }
+                        + forward * (m_landLead.x * leadScale) + left * (m_landLead.y * (s == 0 ? 1.0f : -1.0f))
+                        + up * m_landLead.z;
+                    planned.swingLandTime[s] = land;
+                }
+            } else {
+                // Parado: o gesto toma o pe que joga e reserva o de apoio (o
+                // planejador de pegadas o deixa no chao).
+                planned.freeFrom = { 0.0f, 0.0f };
+                planned.freeUntil = { 1e9f, 1e9f };
+                planned.plantedFrom = { 0.0f, 0.0f };
+                planned.plantedUntil = { 1e9f, 1e9f };
+                planned.plantedNatural = { 1e9f, 1e9f };
+            }
             const BallPlan3D plan = planBallAction3D(record->intent, planned, m_table, settings.planner.interval,
                 m_legs, m_box, input.ball.radius, m_previousSide, settings.planner);
+
             m_plan = plan;
             if (plan.valid) {
                 m_prepareSide = plan.side;
@@ -120,10 +226,27 @@ void BallHandling3D::update(const BallHandlingInput3D& input, const BallOutcomeS
                 const float start = plan.contactTime - plan.windupSeconds - plan.strikeSeconds;
                 if (start <= settings.planner.interval + 1e-4f) {
                     const std::size_t s = static_cast<std::size_t>(plan.side);
-                    m_gesture.start(plan, record->intent.kind, record->intent.power, record->intent.lift,
-                        input.bodyVelocity, body.foot[s], body.footOrientation[s], body.groundHeight, m_box,
-                        body.hip[s], m_legs.ankleInFoot[s], m_legs.thighLength[s] + m_legs.shinLength[s],
-                        settings.gesture);
+                    BallGestureStart3D begin;
+                    begin.plan = plan;
+                    begin.kind = record->intent.kind;
+                    begin.power = record->intent.power;
+                    begin.lift = record->intent.lift;
+                    begin.bodyVelocity = input.bodyVelocity;
+                    begin.foot = body.foot[s];
+                    begin.footVelocity = body.footVelocity[s];
+                    begin.footOrientation = body.footOrientation[s];
+                    begin.groundHeight = body.groundHeight;
+                    begin.hip = body.hip[s];
+                    begin.ankleInFoot = m_legs.ankleInFoot[s];
+                    begin.legLength = m_legs.thighLength[s] + m_legs.shinLength[s];
+                    begin.frame = !input.gait.cycling ? BallGestureFrame3D::World
+                        : shot ? BallGestureFrame3D::Body : BallGestureFrame3D::StyleFoot;
+                    begin.styleFoot = input.gait.styleFoot[s];
+                    begin.styleFootVelocity = m_styleFootVelocity[s];
+                    begin.styleTouchdown = styleTouchdown(input.gait, s);
+                    m_gesture.start(begin, m_box, settings.gesture);
+                    m_gestureMoving = input.gait.cycling;
+                    m_kneeStart = body.knee[s];
                     m_gestureIntent = record->intent;
                     m_gestureBall = record->ballKey;
                     m_gestureTouched = false;
@@ -132,7 +255,7 @@ void BallHandling3D::update(const BallHandlingInput3D& input, const BallOutcomeS
                     record->stage = BallActionStage3D::Committed;
                     record->latency = record->age;
                 }
-            } else if (record->age > settings.acquireSeconds) {
+            } else if (record->age > settings.acquireSeconds + (shot && input.gait.cycling ? settings.runningShotAcquireExtra : 0.0f)) {
                 m_queue.finish(BallActionOutcome3D::Unreachable, plan.reason);
             }
         }
@@ -158,8 +281,15 @@ void BallHandling3D::update(const BallHandlingInput3D& input, const BallOutcomeS
         }
         // (O quadril de repouso: sem a descida e o deslocamento que o corpo
         // do gesto pos na pose.)
-        const Vec3 hip = body.hip[static_cast<std::size_t>(m_gesture.side())];
-        m_gesture.update(dt, hip, hip - m_appliedShift + up * m_appliedDrop, settings.gesture);
+        const std::size_t s = static_cast<std::size_t>(m_gesture.side());
+        BallGestureLive3D live;
+        live.hip = body.hip[s];
+        live.restHip = live.hip - m_appliedShift + up * m_appliedDrop;
+        live.bodyVelocity = input.bodyVelocity;
+        live.styleFoot = input.gait.styleFoot[s];
+        live.styleFootVelocity = m_styleFootVelocity[s];
+        live.styleFootOrientation = input.gait.styleFootOrientation[s];
+        m_gesture.update(dt, live, settings.gesture);
         if (!m_gestureTouched && !m_gestureResolved && m_gesture.active()
             && !m_gesture.inContactWindow(settings.gesture) && m_gesture.phase() != BallGesturePhase3D::Windup) {
             m_queue.finish(BallActionOutcome3D::Missed, "a janela do contato passou sem encosto");
@@ -169,6 +299,20 @@ void BallHandling3D::update(const BallHandlingInput3D& input, const BallOutcomeS
             m_queue.finish(BallActionOutcome3D::Missed, "o gesto acabou sem encosto");
             m_gestureResolved = true;
         }
+    }
+
+    // O chute correndo freia o corpo, do pedido ao fim do acompanhamento.
+    {
+        const BallActionRecord3D* pending = m_queue.active();
+        const bool seekingShot = pending != nullptr && pending->stage == BallActionStage3D::Seeking
+            && pending->intent.kind == BallActionKind3D::Shot;
+        const bool shooting = m_gesture.active() && m_gestureIntent.kind == BallActionKind3D::Shot
+            && m_gesture.phase() != BallGesturePhase3D::Return;
+        float slow = 0.0f;
+        if (input.gait.cycling && seekingShot) slow = shotSlowdown(pending->intent, settings);
+        else if (m_gestureMoving && shooting) slow = shotSlowdown(m_gestureIntent, settings);
+        m_slow.step(slow, settings.slowdownSeconds, dt);
+        output.speedScale = std::clamp(1.0f - m_slow.value(), 0.1f, 1.0f);
     }
 
     // 5) O corpo: prepara desde o pedido (olhar, peso no apoio) e segue o
@@ -186,7 +330,12 @@ void BallHandling3D::update(const BallHandlingInput3D& input, const BallOutcomeS
     // gesto sai aos poucos com ele preso (sem o estalo do joelho voltando de
     // uma vez ao do clipe).
     const bool settlingLeg = !acting && m_settleLeft > 0.0f;
-    if (settlingLeg) m_settleLeft = std::max(0.0f, m_settleLeft - dt);
+    if (settlingLeg) {
+        m_settleLeft = std::max(0.0f, m_settleLeft - dt);
+        // (Andando, o pe solto no ar vai com o corpo enquanto a perna do
+        // gesto sai: parado no mundo, ele ficava para tras.)
+        if (m_gestureMoving) m_lastAnkle += planar(input.bodyVelocity) * dt;
+    }
     const int side = acting ? m_gesture.side() : settlingLeg ? m_lastSide : m_prepareSide;
     const int support = 1 - side;
     output.interacting = now != nullptr || acting;
@@ -244,6 +393,7 @@ void BallHandling3D::update(const BallHandlingInput3D& input, const BallOutcomeS
         m_wrist[0].reset(wrist[0]);
         m_wrist[1].reset(wrist[1]);
         m_look.reset(look);
+        m_lookWeight.reset(input.ball.valid ? 0.85f : 0.0f);
     }
     m_weight.step(wantedWeight, settings.prepareSeconds, dt);
     m_shift.step(shift, settings.targetSeconds, dt);
@@ -255,6 +405,7 @@ void BallHandling3D::update(const BallHandlingInput3D& input, const BallOutcomeS
     m_wrist[0].step(wrist[0], settings.targetSeconds, dt);
     m_wrist[1].step(wrist[1], settings.targetSeconds, dt);
     m_look.step(look, settings.lookSeconds, dt);
+    m_lookWeight.step(input.ball.valid ? 0.85f : 0.0f, settings.lookSeconds, dt);
     const float weight = std::clamp(m_weight.value(), 0.0f, 1.0f);
     if (weight <= 0.001f && wantedWeight <= 0.0f && !acting && !settlingLeg) {
         m_bodyLive = false;
@@ -280,9 +431,23 @@ void BallHandling3D::update(const BallHandlingInput3D& input, const BallOutcomeS
         t.foot = m_gesture.orientation();
         t.knee = kneeDirection(t.ankle - body.hip[s], forward,
             planar(m_gesture.orientation().rotate({ 1.0f, 0.0f, 0.0f })));
+        {
+            // (O polo sai do joelho da pose aos poucos: no balanco da corrida
+            // ele apontava diferente e a canela saltava no primeiro tick.)
+            const float u = std::clamp(m_gesture.time() / std::max(0.01f, settings.kneeBlendSeconds), 0.0f, 1.0f);
+            const Vec3 blended = m_kneeStart + (t.knee - m_kneeStart) * (u * u * (3.0f - 2.0f * u));
+            if (blended.lengthSquared() > 1e-6f) t.knee = blended.normalized();
+        }
         t.legWeight = 1.0f;
         output.actingSide = side;
-        output.reservedSide = m_gesture.phase() == BallGesturePhase3D::Return ? -1 : support;
+        // (O apoio preso: parado, ate a volta; andando, so ate o contato - a
+        // passada segue e ele sai quando o estilo pedir.)
+        // (Correndo, o toque nao prende o apoio.)
+        const bool beforeContact = m_gesture.phase() == BallGesturePhase3D::Windup
+            || m_gesture.phase() == BallGesturePhase3D::Strike;
+        const bool hold = m_gestureMoving ? beforeContact && m_gestureIntent.kind == BallActionKind3D::Shot
+                                          : m_gesture.phase() != BallGesturePhase3D::Return;
+        output.reservedSide = hold ? support : -1;
         m_lastAnkle = t.ankle;
         m_lastFoot = t.foot;
         m_lastKnee = t.knee;
@@ -295,18 +460,20 @@ void BallHandling3D::update(const BallHandlingInput3D& input, const BallOutcomeS
             output.sensorMargin = settings.sensorMargin;
         }
     }
-    t.pelvisShift = m_shift.value();
-    t.pelvisDrop = m_drop.value();
-    t.pelvisYaw = m_yaw.value();
-    t.trunkTwist = -0.7f * m_yaw.value();
-    t.trunkSide = m_trunkSide.value();
-    t.trunkBend = m_trunkBend.value();
+    // (Andando, a corrida manda no corpo: o do gesto pesa menos.)
+    const float share = 1.0f - settings.runningBodyShare * std::clamp(input.gait.movingShare, 0.0f, 1.0f);
+    t.pelvisShift = m_shift.value() * share;
+    t.pelvisDrop = m_drop.value() * share;
+    t.pelvisYaw = m_yaw.value() * share;
+    t.trunkTwist = -0.7f * m_yaw.value() * share;
+    t.trunkSide = m_trunkSide.value() * share;
+    t.trunkBend = m_trunkBend.value() * share;
     t.wrist = { m_wrist[0].value(), m_wrist[1].value() };
-    t.armWeight = { 1.0f, 1.0f };
+    t.armWeight = { share, share };
     t.look = m_look.value();
-    // (Sem a bola - o pedido acabou e o runtime parou de busca-la - o olhar
-    // fica no ultimo ponto e sai com o peso.)
-    t.lookWeight = 0.85f;
+    // (Sem a bola, o olhar sai numa mola: parado no ultimo ponto, a cabeca
+    // virava para ele com o corpo passando por cima.)
+    t.lookWeight = std::clamp(m_lookWeight.value(), 0.0f, 1.0f);
     // As pernas nunca se cruzam.
     t.separateGap = settings.planner.sideGap;
     t.separateForward = forward;

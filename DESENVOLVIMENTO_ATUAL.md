@@ -96,6 +96,39 @@ apoiados, que somam zero.
   - Numa base aberta, a volta ao padrão espera 1,2 s, e a inércia leva os pés
     ao lugar do clipe (alguns centímetros em 0,4 s).
 
+## Novo controle do atleta: Etapa 5, parte 2 — o toque correndo no ritmo da passada (10/10/2026)
+
+- **Janelas da passada no planejador:** quando cada pé sai do chão e
+  pousa, vindas do estilo. O contato cai no balanço do pé que joga; o apoio
+  é estimado pela fase de voo.
+- **Toque no balanço:** o gesto correndo vai no referencial do pé do
+  estilo. `DefaultLocomotionOutput3D::styleFootPosition/Orientation` dão os
+  pés do clipe antes do gesto.
+  - O pé desvia do balanço só o bastante para encontrar a bola e volta a
+    ele até pousar com a passada.
+  - O planejador prevê o balanço (um Hermite até o último pouso, escalado
+    pela velocidade) e escolhe o instante em que o pé passa pela bola.
+  - Não há armado nem reserva do apoio; o toque sai até na fase de voo.
+- **O gesto ganhou três referenciais:** mundo, corpo e pé do estilo
+  (`BallGestureStart3D`, `BallGestureLive3D`).
+  - Parte da velocidade real do pé.
+  - O polo do joelho sai do da pose em 0,10 s.
+- **Pegadas:**
+  - o pé da ação passa ao gesto sem mistura;
+  - o pé que o gesto pousou espera o estilo pousar o dele.
+- **Freio do chute correndo:** chega à cápsula
+  (`AthleteRuntimeOutput3D::controlledSpeedScale`, na sonda e no
+  laboratório; só no manejo novo).
+- **O "inalcançável" diz o motivo** (o corte mais comum no planejador).
+- **Medida:** o `toque_corre` com o manejo novo deixa a passada idêntica à
+  corrida sem bola (correção 0,149 m, alcance 0,075 m, pernas 723 m/s²,
+  tronco 97 m/s²). Antes desta parte: 0,985 m, 0,510 m e 1117 m/s². Conferido
+  em folha de quadros.
+- **Pendente:** o chute correndo. Precisa da passada de apoio negociada com
+  as pegadas; por ora o pedido sai "inalcançável" com o motivo.
+- `--teste` com os contratos do toque correndo, tudo passa. CTest 12/14
+  como antes; `check-architecture` passa.
+
 ## Novo controle do atleta: Etapa 5 (v1) — manejo de bola procedural (10/10/2026)
 
 Atrás da chave **"Manejo novo"** (aba Geral, BOLA; só com "Locomoção por
