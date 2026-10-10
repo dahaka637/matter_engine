@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Engine/Athlete/Actions/BallHandling3D.hpp"
+#include "Engine/Athlete/Actions/BallPlay3D.hpp"
 #include "Engine/Athlete/Body/ActiveBodyController3D.hpp"
 #include "Engine/Athlete/Body/ActiveStance3D.hpp"
 #include "Engine/Athlete/Planning/FootstepPlanner3D.hpp"
@@ -100,17 +101,17 @@ struct AthleteRuntimeSettings3D {
     // usuario aprovar (a chave A/B do laboratorio).
     bool footstepLocomotion = false;
     FootstepSettings3D footsteps;
-    // Manejo novo (Etapa 5): pedido com desfecho, planejador, gesto pelo
-    // estado, sensor do pe e o resultado aprovado como impulso. Desligado ate
-    // o usuario aprovar (a chave A/B "Manejo novo"). So vale com a locomocao
-    // por pegadas: e ela que reserva o apoio e trava o pe onde o gesto o
-    // pousou (sem ela o pe escorregava de volta ao lugar do clipe).
+    // Manejo novo (a chave A/B "Manejo novo"): desde o plano v2 (fase C), o
+    // BallPlay3D - a acao pela bola na area, a forca pela regua do tempo ate o
+    // contato, o gesto so visual. Com ou sem as pegadas. (O manejo da Etapa
+    // 5, BallHandling3D, fica no codigo ate a limpeza, fora do caminho.)
     bool newBallHandling = false;
-    // No Ativo, o manejo novo so age com o centro de massa a menos disto
-    // (m/s) da velocidade da capsula: desequilibrado, o pedido espera.
+    // No Ativo, o manejo da Etapa 5 so agia com o centro de massa a menos
+    // disto (m/s) da velocidade da capsula.
     float ballActiveReadySpeed = 0.35f;
-    [[nodiscard]] bool newBallHandlingActive() const { return newBallHandling && footstepLocomotion; }
+    [[nodiscard]] bool newBallHandlingActive() const { return newBallHandling; }
     BallHandlingSettings3D ballHandling;
+    BallPlaySettings3D ballPlay;
     // Manejo de bola.
     float ballContactTiming = 1.0f;
     bool ballHitboxContact = true;

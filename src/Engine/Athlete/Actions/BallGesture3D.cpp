@@ -137,6 +137,13 @@ void BallGesture3D::start(const BallGestureStart3D& in, const BallFootBox3D& box
     if (swing) {
         const float behind = dot(planar(contact - footPosition), m_push);
         m_contactVelocity = m_contactVelocity * std::clamp(behind / 0.15f, 0.0f, 1.0f);
+        // (O pe passa pelo contato ja indo para onde volta - o pe do estilo -:
+        // parando nele e voltando, o pe fazia um V em dois ticks, no corte
+        // de fora para dentro.)
+        if (in.passThrough) {
+            const float span = std::max(0.05f, m_followAt - m_contactAt);
+            m_contactVelocity = m_contactVelocity + (m_styleStart - contact) * (1.0f / span);
+        }
     }
     // O armado: para tras do contato e para cima, nunca abaixo do chao. Com
     // o pe ja mais para tras que isso (no rumo do toque), ele so sobe - nao
@@ -147,7 +154,7 @@ void BallGesture3D::start(const BallGestureStart3D& in, const BallFootBox3D& box
         * (sole ? s.soleBackShare : 1.0f);
     const float rise = std::max(shot ? s.shotUp + s.shotUpPower * p : s.touchUp + s.touchUpPower * p,
         sole ? s.soleUp : 0.0f);
-    const float along = std::min(dot(planar(footPosition - contact), m_push), -back);
+    const float along = in.windupAhead ? -back : std::min(dot(planar(footPosition - contact), m_push), -back);
     Vec3 windup = contact + m_push * along + up * rise;
     windup.z = std::max(windup.z, std::max(contact.z, footPosition.z) + 0.5f * rise);
     m_windupOffset = windup - contact;

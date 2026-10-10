@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Engine/Athlete/Actions/BallHandling3D.hpp"
+#include "Engine/Athlete/Actions/BallPlay3D.hpp"
 #include "Engine/Athlete/Body/ActiveBodyController3D.hpp"
 #include "Engine/Athlete/Body/ActiveStance3D.hpp"
 #include "Engine/Athlete/Legacy/LegacyAthleteState3D.hpp"
@@ -27,9 +28,10 @@ struct AthleteState3D {
     FootstepPlanner3D footsteps;
     std::array<FootTarget3D, 2> footTargets {};
     LegSynthesisResult3D legSynthesis;
-    // Manejo novo (Etapa 5): o coordenador dos pedidos de bola e a ultima
-    // saida dele (o pe que joga, o de apoio reservado, telemetria).
+    // Manejo novo: o v2 (BallPlay3D, plano v2) e a ultima saida dele (o pe
+    // que joga, telemetria). (O da Etapa 5 fica ate a limpeza.)
     BallHandling3D ballHandling;
+    BallPlay3D ballPlay;
     BallHandlingOutput3D ballOutput;
 };
 

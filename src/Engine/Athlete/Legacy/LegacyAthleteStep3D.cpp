@@ -596,7 +596,7 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
     // e o sensor do pe na bola da o evento unico - o resultado aprovado como
     // impulso, sem impor a velocidade nem segurar a bola.
     if (command.controlled && !body.links.empty() && settings.newBallHandlingActive()) {
-        BallHandling3D& handling = athlete.ballHandling;
+        BallPlay3D& handling = athlete.ballPlay;
         if (!handling.ready()) handling.reset(profile);
         const Vec3 pelvis = body.links.front().position;
         // A bola do pedido em andamento; para um pedido novo, a mais perto
@@ -721,7 +721,9 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         }
         in.deltaTime = deltaTime;
         BallHandlingOutput3D& out = athlete.ballOutput;
-        handling.update(in, settings.ballForce, settings.ballHandling, out);
+        BallPlaySettings3D play = settings.ballPlay;
+        play.contactTiming = std::clamp(settings.ballContactTiming, 0.0f, 1.0f);
+        handling.update(in, settings.ballForce, play, out);
         // A fisica: o impulso do toque, o sensor do pe (so na bola-alvo) e o
         // dono (quem interage atravessa a bola com as pernas).
         for (AthleteBall3D& ball : balls) {

@@ -478,6 +478,7 @@ add_library(MatterEngine STATIC
     src/Engine/Athlete/Actions/BallActionPlanner3D.cpp
     src/Engine/Athlete/Actions/BallGesture3D.cpp
     src/Engine/Athlete/Actions/BallHandling3D.cpp
+    src/Engine/Athlete/Actions/BallPlay3D.cpp
     src/Engine/Athlete/Ball/BallOutcome3D.cpp
     src/Engine/Athlete/Intent/ActionQueue3D.cpp
     src/Engine/Athlete/Sensing/BallPredictor3D.cpp

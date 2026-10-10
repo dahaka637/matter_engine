@@ -66,7 +66,7 @@ struct Throw {
 };
 
 struct Scenario {
-    const char* name;
+    std::string name;
     float seconds;
     std::function<Keys(float)> keys;
     bool ball = false;
@@ -79,6 +79,13 @@ struct Scenario {
     BallActionKind3D autoKind = BallActionKind3D::Dribble;
     // O rumo pedido vira isto (rad, + esquerda) a partir do pedido automatico.
     float autoTurn = 0.0f;
+    // Manejo v2: a bola posta em relacao a pelve no instante placeAt (x a
+    // frente, y a esquerda no rumo do corpo; z a altura do centro), andando
+    // junto com o corpo; o pedido sai na mesma hora (pelas teclas). E o
+    // instante em que o movimento pedido muda depois dele (-1 nenhum).
+    float placeAt = -1.0f;
+    Vec3 placeOffset;
+    float changeAt = -1.0f;
 };
 
 std::vector<Scenario> scenarios() {
@@ -278,6 +285,87 @@ std::vector<Scenario> scenarios() {
         s.ballStart = { 0.45f, -0.12f, 0.11f };
         list.push_back(s);
     }
+    // Manejo v2 (plano v2, fase C): os casos do teste do usuario. A bola fora
+    // do lugar (a 0,35, 0,65 e 0,9 m da pelve, em oito angulos) parado,
+    // andando e correndo, o toque pedido no instante em que ela e posta; o
+    // chute nos oito angulos parado e correndo; o pedido em varias fases da
+    // passada; e o movimento mudando logo depois do pedido.
+    {
+        struct Gait { const char* key; float forward; float placeAt; };
+        static const Gait gaits[3] = { { "parado", 0.0f, 0.6f }, { "anda", 0.33f, 1.6f }, { "corre", 1.0f, 1.6f } };
+        const auto request = [](float placeAt, float forward, BallActionKind3D kind, float power) {
+            return [=](float t) {
+                Keys k;
+                k.forward = t > 0.3f ? forward : 0.0f;
+                if (t >= placeAt && t < placeAt + Dt) { k.ball = kind; k.power = power; }
+                return k;
+            };
+        };
+        for (const Gait& gait : gaits) {
+            for (const int centimeters : { 35, 65, 90 }) {
+                for (int k = 0; k < 8; ++k) {
+                    char name[64];
+                    std::snprintf(name, sizeof(name), "v2_%s_%02d_%03d", gait.key, centimeters, k * 45);
+                    Scenario s { name, gait.placeAt + 1.2f, request(gait.placeAt, gait.forward, BallActionKind3D::Dribble, 0.45f) };
+                    const float angle = static_cast<float>(k) * Pi * 0.25f;
+                    const float d = 0.01f * static_cast<float>(centimeters);
+                    s.ball = true;
+                    s.ballStart = { 0.0f, 8.0f, 0.11f };
+                    s.placeAt = gait.placeAt;
+                    s.placeOffset = { d * std::cos(angle), d * std::sin(angle), 0.11f };
+                    list.push_back(s);
+                }
+            }
+            if (std::string(gait.key) == "anda") continue;
+            for (int k = 0; k < 8; ++k) {
+                char name[64];
+                std::snprintf(name, sizeof(name), "v2_chute_%s_%03d", gait.key, k * 45);
+                Scenario s { name, gait.placeAt + 1.4f, request(gait.placeAt, gait.forward, BallActionKind3D::Shot, 0.8f) };
+                const float angle = static_cast<float>(k) * Pi * 0.25f;
+                s.ball = true;
+                s.ballStart = { 0.0f, 8.0f, 0.11f };
+                s.placeAt = gait.placeAt;
+                s.placeOffset = { 0.5f * std::cos(angle), 0.5f * std::sin(angle), 0.11f };
+                list.push_back(s);
+            }
+        }
+        // O pedido em oito fases da passada (correndo, a bola a frente e a
+        // direita).
+        for (int k = 0; k < 8; ++k) {
+            char name[64];
+            std::snprintf(name, sizeof(name), "v2_fase_%d", k);
+            const float at = 1.5f + 0.05f * static_cast<float>(k);
+            Scenario s { name, at + 1.2f, request(at, 1.0f, BallActionKind3D::Dribble, 0.45f) };
+            s.ball = true;
+            s.ballStart = { 0.0f, 8.0f, 0.11f };
+            s.placeAt = at;
+            s.placeOffset = { 0.6f, -0.12f, 0.11f };
+            list.push_back(s);
+        }
+        // O movimento muda 0,05 s depois do pedido: arranca (de parado),
+        // para, vira 90 graus e inverte (correndo).
+        struct Change { const char* key; float placeAt; float before; float after; float leftAfter; };
+        static const Change changes[5] = { { "arranca", 0.6f, 0.0f, 1.0f, 0.0f }, { "para", 1.6f, 1.0f, 0.0f, 0.0f },
+            { "vira", 1.6f, 1.0f, 0.0f, 1.0f }, { "inverte", 1.6f, 1.0f, -1.0f, 0.0f }, { "anda_para", 1.6f, 0.33f, 0.0f, 0.0f } };
+        for (const Change& change : changes) {
+            char name[64];
+            std::snprintf(name, sizeof(name), "v2_muda_%s", change.key);
+            const Change c = change;
+            Scenario s { name, c.placeAt + 1.4f, [c](float t) {
+                Keys k;
+                const bool after = t >= c.placeAt + 0.05f;
+                k.forward = t > 0.3f ? (after ? c.after : c.before) : 0.0f;
+                k.left = after ? c.leftAfter : 0.0f;
+                if (t >= c.placeAt && t < c.placeAt + Dt) { k.ball = BallActionKind3D::Dribble; k.power = 0.45f; }
+                return k; } };
+            s.ball = true;
+            s.ballStart = { 0.0f, 8.0f, 0.11f };
+            s.placeAt = c.placeAt;
+            s.placeOffset = { 0.55f, -0.14f, 0.11f };
+            s.changeAt = c.placeAt + 0.05f;
+            list.push_back(s);
+        }
+    }
     {
         // Os casos do teste do usuario (10/10, noite): a caixa forte derruba,
         // ele levanta - parado, e com as teclas apertadas no fim do levantar
@@ -376,6 +464,18 @@ struct Metrics {
     float peakKneeExtension = 0.0f;
     float peakKneeExtensionTarget = 0.0f;
     float peakKneeAcceleration = 0.0f;
+    // Manejo v2: o pedido, o aceite e a forca (s; -1 nao houve), a forca
+    // planejada pela regua (do aceite) e o contato estimado, o gesto na bola
+    // imaginada, o tempo ate a perna sair do gesto depois de mudar o
+    // movimento (s; -1 nao medido) e o caminho da capsula.
+    float requestTime = -1.0f;
+    float acceptTime = -1.0f;
+    float forceTime = -1.0f;
+    float forceAt = -1.0f;
+    float estimatedContact = -1.0f;
+    bool imagined = false;
+    float legReturn = -1.0f;
+    std::vector<Vec3> capsulePath;
     // O quanto a pelve andou no plano (m), e as idas ao fisico depois de ja
     // ter voltado uma vez ao padrao (a recaida).
     float travel = 0.0f;
@@ -431,7 +531,7 @@ struct ProbeContext {
 
 // Um cenario do comeco ao fim (a cena nova, o boneco, as teclas, as medidas).
 Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const AthleteRuntimeSettings3D& settings,
-    bool startPhysical, FILE* dump, int every) {
+    bool startPhysical, FILE* dump, int every, bool suppressRequests = false) {
     const RagdollProfile3D& profile = *context.profile;
     const AthleteFootGeometry3D footGeometry = resolveAthleteFootGeometry3D(profile, resolveAthleteLegs3D(profile), 0.08f);
     const CharacterGaitSpeeds3D& gaitSpeeds = context.gaitSpeeds;
@@ -494,7 +594,7 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
     InflatedBallHandle3D ballHandle;
     InflatedBallState3D ballState;
     BallOwnership3D ownership;
-    if (dump != nullptr) std::fprintf(dump, "S %s\n", scenario.name);
+    if (dump != nullptr) std::fprintf(dump, "S %s\n", scenario.name.c_str());
 
     AthleteRuntime3D runtime;
     Vec3 followVelocity {};
@@ -525,7 +625,21 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
     warmSettings.footstepLocomotion = false;
     for (int step = -warmTicks; step < ticks; ++step) {
         const float t = static_cast<float>(step) * Dt;
-        const Keys keys = step < 0 ? Keys {} : scenario.keys(t);
+        Keys keys = step < 0 ? Keys {} : scenario.keys(t);
+        if (suppressRequests) keys.ball = BallActionKind3D::None;
+        // (Manejo v2: a bola posta em relacao a pelve, andando com o corpo.)
+        if (step >= 0 && scenario.ball && scenario.placeAt >= 0.0f && t >= scenario.placeAt && t < scenario.placeAt + Dt
+            && !bodyState.links.empty()) {
+            const Vec3 pelvis = bodyState.links.front().position;
+            const Vec3 forward { std::cos(keys.cameraYaw), std::sin(keys.cameraYaw), 0.0f };
+            const Vec3 left { -forward.y, forward.x, 0.0f };
+            const Vec3 position = Vec3 { pelvis.x, pelvis.y, scenario.placeOffset.z } + forward * scenario.placeOffset.x
+                + left * scenario.placeOffset.y;
+            const Vec3 velocity { scene->characterState().velocity.x, scene->characterState().velocity.y, 0.0f };
+            const float radius = scene->inflatedBallProfile(ballHandle).radiusMeters;
+            scene->setInflatedBallMotion(ballHandle, position, velocity, cross(Vec3 { 0.0f, 0.0f, 1.0f }, velocity) * (1.0f / radius));
+            ballState = scene->inflatedBallState(ballHandle);
+        }
         if (step == 0 && scenario.ball) {
             InflatedBallDefinition3D definition;
             definition.position = scenario.ballStart;
@@ -567,7 +681,9 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
             if (!controlledAnimated && wanted > 0.0f)
                 command.speedScale *= std::clamp(legacy.locomotion.telemetry().terrainSpeedLimit / wanted, 0.2f, 1.0f);
             intent.requestedDirectionWorld = direction;
-            float speed = wanted;
+            // (O analogico pela metade pede metade da velocidade, como a
+            // capsula anda.)
+            float speed = wanted * std::min(1.0f, wantedDirection.length());
             if (!controlledAnimated) speed = std::min(speed, legacy.locomotion.telemetry().terrainSpeedLimit);
             intent.requestedVelocityWorld = direction * speed;
         }
@@ -620,7 +736,8 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
             const Vec3 pelvis = bodyState.links.front().position;
             const Vec3 offset = ballState.position - pelvis;
             if (std::hypot(offset.x, offset.y) < scenario.autoDistance) {
-                control.ballRequest = scenario.autoKind;
+                // (Sem pedido: so a virada do rumo, para comparar.)
+                if (!suppressRequests) control.ballRequest = scenario.autoKind;
                 control.ballRequestPower = scenario.autoKind == BallActionKind3D::Shot ? 0.8f : 0.45f;
                 autoCooldown = 10.0f;
                 if (scenario.autoTurn != 0.0f) {
@@ -630,7 +747,10 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
                 }
             }
         }
-        if (control.ballRequest != BallActionKind3D::None) ++metrics.requests;
+        if (control.ballRequest != BallActionKind3D::None) {
+            ++metrics.requests;
+            if (metrics.requestTime < 0.0f) metrics.requestTime = t;
+        }
         if (std::getenv("XPAREDE")) {
             float wallImpulse = 0.0f;
             // (XPAREDE=2: tambem o que se move - a caixa, outro boneco.)
@@ -658,6 +778,27 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
         if (legacy.ballLastOutput.touched) {
             ++metrics.touches;
             if (dump != nullptr) std::fprintf(dump, "T\n");
+            if (metrics.forceTime < 0.0f && settings.newBallHandling) {
+                metrics.forceTime = t;
+                metrics.forceAt = athlete.ballPlay.forceAt();
+                metrics.estimatedContact = athlete.ballPlay.estimatedContact();
+                metrics.imagined = athlete.ballPlay.imagined();
+            }
+        }
+        if (step >= 0) metrics.capsulePath.push_back(scene->characterState().position);
+        if (std::getenv("XV2") && settings.newBallHandling && (athlete.ballOutput.body.active || athlete.ballPlay.acting()))
+            std::printf("  t %.3f v2 acao %d gesto %d fase %d t %.3f contato %.3f perna %.2f peso %.2f lado %d agindo %d interrompe %d pedido %.2f %.2f\n",
+                t, athlete.ballPlay.acting() ? 1 : 0, athlete.ballPlay.gesture().active() ? 1 : 0,
+                static_cast<int>(athlete.ballPlay.gesture().phase()), athlete.ballPlay.gesture().time(),
+                athlete.ballPlay.gesture().contactTime(), athlete.ballOutput.body.legWeight, athlete.ballOutput.body.weight,
+                athlete.ballOutput.body.side, athlete.ballOutput.actingSide, athlete.ballPlay.interrupting() ? 1 : 0,
+                control.intent.requestedVelocityWorld.x, control.intent.requestedVelocityWorld.y);
+        // (A perna sai do gesto depois da mudanca de movimento - contada da
+        // mudanca ou da forca, o que vier depois.)
+        if (scenario.changeAt >= 0.0f && metrics.legReturn < 0.0f && metrics.forceTime >= 0.0f) {
+            const float from = std::max(scenario.changeAt, metrics.forceTime);
+            const BallBodyTargets3D& body = athlete.ballOutput.body;
+            if (t >= from && (!body.active || body.legWeight <= 0.01f)) metrics.legReturn = t - from;
         }
         for (const Throw& item : scenario.throws)
             if (t >= item.at && t < item.at + Dt) {
@@ -746,13 +887,13 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
             std::printf("  t %.3f marcha %d mov %.2f | E %c sai %.3f pousa %.3f balanco %.3f | D %c sai %.3f pousa %.3f balanco %.3f | pedido %d\n",
                 t, o.cycling ? 1 : 0, o.movingShare, o.cyclePlanted[0] ? 'A' : 'B', o.secondsToLiftoff[0],
                 o.cycleSecondsToTouchdown[0], o.swingSeconds[0], o.cyclePlanted[1] ? 'A' : 'B', o.secondsToLiftoff[1],
-                o.cycleSecondsToTouchdown[1], o.swingSeconds[1], athlete.ballHandling.queue().active() != nullptr ? 1 : 0);
+                o.cycleSecondsToTouchdown[1], o.swingSeconds[1], athlete.ballPlay.queue().active() != nullptr ? 1 : 0);
             std::printf("      estilo D %.3f %.3f %.3f | alvo D %.3f %.3f %.3f\n", o.styleFootPosition[1].x,
                 o.styleFootPosition[1].y, o.styleFootPosition[1].z, athlete.footTargets[1].position.x,
                 athlete.footTargets[1].position.y, athlete.footTargets[1].position.z);
         }
-        if (std::getenv("XGESTO") && athlete.ballHandling.gesture().active()) {
-            const BallGesture3D& g = athlete.ballHandling.gesture();
+        if (std::getenv("XGESTO") && athlete.ballPlay.gesture().active()) {
+            const BallGesture3D& g = athlete.ballPlay.gesture();
             const Vec3 p = g.position();
             {
                 const BallBodyTargets3D& bt = athlete.ballOutput.body;
@@ -834,9 +975,9 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
         }
         // Manejo novo: as pernas nunca se cruzam no gesto (o pe que joga do
         // outro lado do de apoio, com os dois lado a lado).
-        if (settings.newBallHandling && athlete.ballHandling.gesture().active() && leftFoot < bodyState.links.size()
+        if (settings.newBallHandling && athlete.ballPlay.gesture().active() && leftFoot < bodyState.links.size()
             && rightFoot < bodyState.links.size()) {
-            const int kick = athlete.ballHandling.gesture().side();
+            const int kick = athlete.ballPlay.gesture().side();
             const float yaw = legacy.defaultLocomotion.output().facingYawRadians;
             const Vec3 forward { std::cos(yaw), std::sin(yaw), 0.0f };
             const Vec3 leftward { -forward.y, forward.x, 0.0f };
@@ -928,7 +1069,9 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
     metrics.finalMode = legacy.bodyMode;
     if (!bodyState.links.empty())
         metrics.travel = std::hypot(bodyState.links.front().position.x, bodyState.links.front().position.y);
-    for (const BallActionRecord3D& record : athlete.ballHandling.queue().history()) {
+    for (const BallActionRecord3D& record : athlete.ballPlay.queue().history()) {
+        if (metrics.acceptTime < 0.0f && record.latency >= 0.0f && metrics.requestTime >= 0.0f)
+            metrics.acceptTime = metrics.requestTime + record.latency;
         metrics.outcomes += std::string(metrics.outcomes.empty() ? "" : ", ") + ballActionOutcomeName3D(record.outcome);
         if (record.outcome != BallActionOutcome3D::Touched) metrics.outcomes += std::string(" (") + record.reason + ")";
         if (record.latency >= 0.0f) metrics.worstLatency = std::max(metrics.worstLatency, record.latency);
@@ -943,7 +1086,7 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
 
 void printMetrics(const Scenario& scenario, const Metrics& metrics, bool footsteps) {
     std::printf("%-18s | %5.2f / %5.2f / %5.2f | %7.1f / %7.1f m/s2 | %5.3f m | %d; %.1f/%.1f/%.1f/%.1f; %.0f | %s%d pedidos, %d toques, bola max %.1f m/s\n",
-        scenario.name, percentile(metrics.footSlide, 0.5f), percentile(metrics.footSlide, 0.95f),
+        scenario.name.c_str(), percentile(metrics.footSlide, 0.5f), percentile(metrics.footSlide, 0.95f),
         percentile(metrics.footSlide, 1.0f), metrics.peakUpperAcceleration, metrics.peakLegAcceleration,
         metrics.worstPoseJump, metrics.modeSwitches, metrics.animatedSeconds, metrics.activeSeconds,
         metrics.physicalSeconds, metrics.returningSeconds, metrics.assistImpulse, metrics.fell ? "CAIU, " : "",
@@ -957,6 +1100,10 @@ void printMetrics(const Scenario& scenario, const Metrics& metrics, bool footste
     if (!metrics.outcomes.empty())
         std::printf("%-18s   manejo novo: %s | atraso ate o gesto max %.3f s\n", "", metrics.outcomes.c_str(),
             metrics.worstLatency);
+    if (metrics.forceTime >= 0.0f)
+        std::printf("%-18s   v2: pedido %.3f aceite %.3f forca %.3f (planejada %.3f, contato estimado %.3f)%s, perna volta %.3f s, cruzou %d\n",
+            "", metrics.requestTime, metrics.acceptTime, metrics.forceTime, metrics.acceptTime + metrics.forceAt,
+            metrics.estimatedContact, metrics.imagined ? " imaginada" : "", metrics.legReturn, metrics.crossings);
     if (footsteps)
         std::printf(" | saida do apoio max %.3f m | alcance max %.3f m | arranca %d, acomoda %d, antes %d, no ar %d\n",
             metrics.worstLiftCorrection, metrics.worstReach, metrics.startSteps, metrics.settleSteps, metrics.earlyLifts,
@@ -969,7 +1116,7 @@ int runChecks(const ProbeContext& context) {
     int failures = 0;
     const auto run = [&](const char* name, const AthleteRuntimeSettings3D& settings, bool startPhysical) {
         for (const Scenario& scenario : scenarios())
-            if (std::string(scenario.name) == name) {
+            if (scenario.name == name) {
                 const Metrics metrics = runScenario(context, scenario, settings, startPhysical, nullptr, 1);
                 printMetrics(scenario, metrics, settings.footstepLocomotion);
                 return metrics;
@@ -1071,82 +1218,86 @@ int runChecks(const ProbeContext& context) {
         std::snprintf(what, sizeof(what), "pegadas, %s: a bola sai", name);
         expect(m.touches == 1 && m.ballSpeedAfter > 1.0f, what, m);
     }
-    // Manejo novo (Etapa 5): todo pedido ao alcance toca uma vez, com o gesto
-    // saindo em ate 2 ticks (a bola vindo espera por ela), sem salto de pose
-    // nem tranco, sem cruzar as pernas e sem o pe de apoio escorregar.
-    AthleteRuntimeSettings3D handling = footsteps;
+    // Manejo v2 (plano v2, fase C): com a bola na area, toda acao sai; as
+    // pernas nunca se cruzam; sem tranco; mudando o movimento, a perna sai do
+    // gesto em ate ~0,15 s; a forca na fracao da regua; e a capsula faz o
+    // mesmo caminho que sem o pedido (o manejo nao mexe no movimento). Sem e
+    // com as pegadas.
+    AthleteRuntimeSettings3D handling;
     handling.newBallHandling = true;
-    for (const char* name : { "bola_000", "bola_045", "bola_090", "bola_135", "bola_180", "bola_225", "bola_270",
-             "bola_315", "toque_parado", "toque_lado", "chute_parado", "chute_lado", "bola_vindo", "atras_fora",
-             "atras_tras", "bola_alta", "bola_quadril" }) {
-        const Metrics m = run(name, handling, false);
-        // (A bola chegando: o gesto espera por ela.)
-        const bool waits = std::string(name) == "bola_vindo" || std::string(name) == "bola_alta"
-            || std::string(name) == "bola_quadril";
-        char what[192];
-        std::snprintf(what, sizeof(what), "manejo novo, %s: um toque por pedido (%s)", name, m.outcomes.c_str());
-        expect(m.requests == 1 && m.touches == 1 && m.outcomes == "tocou", what, m);
-        std::snprintf(what, sizeof(what), "manejo novo, %s: o gesto sai a tempo (%.3f s)", name, m.worstLatency);
-        expect(m.worstLatency <= (waits ? 0.35f : 2.5f * Dt), what, m);
-        std::snprintf(what, sizeof(what), "manejo novo, %s: suave (pernas %.0f, tronco %.0f m/s2, salto %.3f m)", name,
-            m.peakLegAcceleration, m.peakUpperAcceleration, m.worstPoseJump);
-        expect(m.worstPoseJump < 0.03f && m.peakLegAcceleration < 700.0f && m.peakUpperAcceleration < 200.0f, what, m);
-        std::snprintf(what, sizeof(what), "manejo novo, %s: sem cruzar (%d), apoio parado (%.2f m/s)", name, m.crossings,
-            percentile(m.plantedSlide, 1.0f));
-        expect(m.crossings == 0 && percentile(m.plantedSlide, 1.0f) < 0.5f, what, m);
-    }
-    // Correndo, o toque vai no balanco da passada: a passada fica como a da
-    // corrida sem bola (a mesma correcao na saida do apoio e o mesmo alcance).
+    AthleteRuntimeSettings3D handlingSteps = handling;
+    handlingSteps.footstepLocomotion = true;
     {
-        const Metrics base = run("toque_corre", footsteps, false);
-        const Metrics m = run("toque_corre", handling, false);
-        char what[192];
-        std::snprintf(what, sizeof(what), "manejo novo, correndo: um toque no ritmo (%s, %.3f s)", m.outcomes.c_str(),
-            m.worstLatency);
-        expect(m.touches == 1 && m.outcomes == "tocou" && m.worstLatency <= 2.5f * Dt, what, m);
-        std::snprintf(what, sizeof(what),
-            "manejo novo, correndo: a passada como sem o gesto (saida %.3f/%.3f m, pernas %.0f m/s2, apoio %.2f m/s)",
-            m.worstLiftCorrection, base.worstLiftCorrection, m.peakLegAcceleration, percentile(m.plantedSlide, 1.0f));
-        expect(m.worstLiftCorrection <= base.worstLiftCorrection + 0.02f && m.peakLegAcceleration < 800.0f
-                && m.peakUpperAcceleration < 200.0f && percentile(m.plantedSlide, 1.0f) < 0.5f && m.crossings == 0,
-            what, m);
+        int total = 0, failed = 0;
+        for (const Scenario& scenario : scenarios()) {
+            const std::string& name = scenario.name;
+            const bool old = name == "toque_parado" || name == "toque_lado" || name == "chute_parado" || name == "chute_lado"
+                || name == "bola_vindo" || name == "bola_alta" || name == "bola_quadril" || name == "atras_fora"
+                || name == "atras_tras" || name == "toque_corre" || name == "chute_corre" || name == "chute_corre_cedo"
+                || name == "corte_corre" || name.rfind("bola_", 0) == 0;
+            if (name.rfind("v2_", 0) != 0 && !old) continue;
+            for (const AthleteRuntimeSettings3D* config : { &handling, &handlingSteps }) {
+                const Metrics m = runScenario(context, scenario, *config, false, nullptr, 1);
+                ++total;
+                const bool steps = config->footstepLocomotion;
+                const bool shot = name.find("chute") != std::string::npos;
+                std::vector<std::string> problems;
+                if (m.requests != 1 || m.touches != 1 || m.outcomes != "tocou")
+                    problems.push_back("acao (" + m.outcomes + ")");
+                if (m.crossings != 0) problems.push_back("cruzou " + std::to_string(m.crossings));
+                if (m.worstPoseJump >= 0.03f) problems.push_back("salto " + std::to_string(m.worstPoseJump));
+                if (m.peakUpperAcceleration >= 320.0f) problems.push_back("tronco " + std::to_string(m.peakUpperAcceleration));
+                if (m.peakLegAcceleration >= (shot ? 950.0f : 1050.0f)) problems.push_back("pernas " + std::to_string(m.peakLegAcceleration));
+                if (steps && percentile(m.plantedSlide, 1.0f) >= 0.6f)
+                    problems.push_back("apoio escorrega " + std::to_string(percentile(m.plantedSlide, 1.0f)));
+                if (scenario.changeAt >= 0.0f && (m.legReturn < 0.0f || m.legReturn > 0.15f + 2.0f * Dt))
+                    problems.push_back("perna volta " + std::to_string(m.legReturn));
+                if (!problems.empty()) {
+                    ++failed;
+                    std::string text;
+                    for (const std::string& problem : problems) text += (text.empty() ? "" : ", ") + problem;
+                    std::printf("  FALHOU manejo v2%s, %s: %s\n", steps ? " (pegadas)" : "", name.c_str(), text.c_str());
+                }
+            }
+        }
+        char what[160];
+        std::snprintf(what, sizeof(what), "manejo v2: %d de %d cenarios (sem e com pegadas) com acao, sem cruzar, sem tranco",
+            total - failed, total);
+        Metrics none;
+        none.trail = "manejo v2";
+        expect(failed == 0, what, none);
     }
-    // No Ativo (logo depois de uma pancada leve): o pedido espera o corpo
-    // assentar e o peso passar ao apoio, toca e nao vai ao fisico pleno.
-    {
-        AthleteRuntimeSettings3D handlingActive = handling;
-        handlingActive.activeBody = true;
-        const Metrics m = run("toque_ativo", handlingActive, false);
-        char what[192];
-        std::snprintf(what, sizeof(what), "manejo novo, no Ativo: espera assentar e toca (%s, %.3f s)", m.outcomes.c_str(),
-            m.worstLatency);
-        expect(m.touches == 1 && m.outcomes == "tocou" && m.worstLatency < 0.6f, what, m);
-        expect(!has(m, "fisico"), "manejo novo, no Ativo: sem fisico pleno", m);
+    // A forca na fracao da regua do tempo ate o contato estimado (a bola indo
+    // sair da area pode adiantar).
+    for (const float timing : { 0.0f, 0.5f, 1.0f }) {
+        AthleteRuntimeSettings3D timed = handling;
+        timed.ballContactTiming = timing;
+        for (const char* name : { "v2_parado_35_000", "v2_parado_35_270", "v2_anda_35_045", "v2_corre_35_000", "v2_chute_parado_000" }) {
+            const Metrics m = run(name, timed, false);
+            const float planned = m.acceptTime + timing * m.estimatedContact;
+            char what[192];
+            std::snprintf(what, sizeof(what), "manejo v2, regua %.1f, %s: a forca em %.3f (planejada %.3f)", timing, name,
+                m.forceTime, planned);
+            expect(m.forceTime >= 0.0f && m.forceTime <= planned + 1.5f * Dt
+                    && (m.forceTime >= planned - 1.5f * Dt || m.forceAt < timing * m.estimatedContact - 1e-3f),
+                what, m);
+        }
     }
-    // O corte correndo: o toque sai para o lado, no balanco do pe do
-    // estilo, sem tranco (o pe do estilo gira com a pelve na virada).
-    {
-        const Metrics m = run("corte_corre", handling, false);
-        char what[192];
-        std::snprintf(what, sizeof(what), "manejo novo, corte correndo: toca e segue (%s, pernas %.0f m/s2, salto %.3f m)",
-            m.outcomes.c_str(), m.peakLegAcceleration, m.worstPoseJump);
-        expect(m.touches == 1 && m.outcomes == "tocou" && m.peakLegAcceleration < 900.0f && m.worstPoseJump < 0.03f
-                && percentile(m.plantedSlide, 1.0f) < 0.5f,
-            what, m);
-    }
-    // O chute correndo pela passada de apoio: com o pedido perto (1,0 m) e
-    // longe (1,8 m) da bola, sai, sem tranco e sem o apoio escorregar.
-    for (const char* name : { "chute_corre", "chute_corre_cedo" }) {
-        const Metrics m = run(name, handling, false);
-        char what[192];
-        std::snprintf(what, sizeof(what), "manejo novo, %s: chuta pela passada de apoio (%s, bola %.1f m/s)", name,
-            m.outcomes.c_str(), m.ballSpeedAfter);
-        expect(m.touches == 1 && m.outcomes == "tocou" && m.ballSpeedAfter > 15.0f, what, m);
-        std::snprintf(what, sizeof(what), "manejo novo, %s: suave (pernas %.0f, tronco %.0f m/s2, apoio %.2f m/s)", name,
-            m.peakLegAcceleration, m.peakUpperAcceleration, percentile(m.plantedSlide, 1.0f));
-        expect(m.peakLegAcceleration < 850.0f && m.peakUpperAcceleration < 200.0f && percentile(m.plantedSlide, 1.0f) < 0.8f
-                && m.worstPoseJump < 0.03f,
-            what, m);
+    // A capsula com o pedido faz o mesmo caminho que sem ele.
+    for (const char* name : { "v2_anda_35_045", "v2_anda_65_270", "v2_corre_35_000", "v2_corre_35_270", "v2_corre_90_180",
+             "v2_fase_3", "v2_chute_corre_000", "v2_chute_corre_090" }) {
+        for (const Scenario& scenario : scenarios()) {
+            if (scenario.name != name) continue;
+            const Metrics with = runScenario(context, scenario, handling, false, nullptr, 1);
+            const Metrics without = runScenario(context, scenario, handling, false, nullptr, 1, true);
+            float worst = 0.0f;
+            for (std::size_t i = 0; i < with.capsulePath.size() && i < without.capsulePath.size(); ++i)
+                worst = std::max(worst, std::hypot(with.capsulePath[i].x - without.capsulePath[i].x,
+                                            with.capsulePath[i].y - without.capsulePath[i].y));
+            char what[160];
+            std::snprintf(what, sizeof(what), "manejo v2, %s: a capsula faz o mesmo caminho (desvio max %.4f m)", name, worst);
+            expect(worst < 0.01f, what, with);
+        }
     }
     std::printf(failures == 0 ? "atleta: tudo certo\n" : "atleta: %d falha(s)\n", failures);
     return failures == 0 ? 0 : 1;
@@ -1164,6 +1315,7 @@ int main(int argc, char** argv) {
     bool checks = false;
     float response = AthleteRuntimeSettings3D {}.capsuleResponsePercent;
     bool newBall = false;
+    bool noRequests = false;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         const auto need = [&]() -> const char* { return i + 1 < argc ? argv[++i] : ""; };
@@ -1176,9 +1328,10 @@ int main(int argc, char** argv) {
         else if (arg == "--passos") balanceSteps = std::atoi(need()) != 0;
         else if (arg == "--resposta") response = static_cast<float>(std::atof(need()));
         else if (arg == "--manejo") newBall = std::atoi(need()) != 0;
+        else if (arg == "--sem-pedido") noRequests = true;
         else if (arg == "--teste") checks = true;
         else if (arg == "--lista") {
-            for (const Scenario& scenario : scenarios()) std::printf("%s\n", scenario.name);
+            for (const Scenario& scenario : scenarios()) std::printf("%s\n", scenario.name.c_str());
             return 0;
         } else {
             std::fprintf(stderr, "argumento desconhecido: %s\n", arg.c_str());
@@ -1220,7 +1373,8 @@ int main(int argc, char** argv) {
     std::printf("cenario            | deslize pe no chao med/p95/max m/s | pico acel tronco+bracos / pernas | salto pose | modos (trocas; animado/ativo/fisico/volta s; ajuda N.s) | bola\n");
     for (const Scenario& scenario : scenarios()) {
         if (!only.empty() && scenario.name != only) continue;
-        printMetrics(scenario, runScenario(context, scenario, settings, startPhysical, dump, every), settings.footstepLocomotion);
+        printMetrics(scenario, runScenario(context, scenario, settings, startPhysical, dump, every, noRequests),
+            settings.footstepLocomotion);
     }
     if (dump != nullptr) std::fclose(dump);
     return 0;

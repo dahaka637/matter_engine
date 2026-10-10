@@ -101,6 +101,13 @@ struct BallGestureStart3D {
     Vec3 styleFoot;
     Vec3 styleFootVelocity;
     float styleTouchdown = -1.0f;
+    // O armado logo atras do contato mesmo com o pe mais para tras (o toque
+    // do manejo v2: o pe vem a frente armando e a batida e curta). Falso: com
+    // o pe mais para tras, ele so sobe (o chute: o balanco inteiro na batida).
+    bool windupAhead = false;
+    // No balanco, o pe passa pelo contato ja indo para o pe do estilo (o
+    // manejo v2: o contato e so o visual).
+    bool passThrough = false;
 };
 
 // O que o gesto le a cada tick.

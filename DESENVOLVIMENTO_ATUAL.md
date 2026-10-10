@@ -96,6 +96,40 @@ apoiados, que somam zero.
   - Numa base aberta, a volta ao padrão espera 1,2 s, e a inércia leva os pés
     ao lugar do clipe (alguns centímetros em 0,4 s).
 
+## Novo controle, plano v2 — Fase C: manejo v2 (10/10/2026, noite)
+
+- **`Actions/BallPlay3D`** (o "Manejo novo"): a ação depende só de a bola
+  estar na área (V3: cintura à base dos pés, raio 0,95 m). O pedido é
+  guardado 0,25 s, sai sempre com a bola na área, e a força
+  (`BallOutcome3D`) sai na fração da régua do tempo até o contato visual
+  (ou antes, com a bola saindo da área).
+- **O gesto (`BallGesture3D`) é só o visual:**
+  - a bola de verdade quando alcança; senão, uma imaginada na direção dela,
+    no alcance da perna;
+  - no balanço do pé andando;
+  - interrompido em 0,1 s se o movimento muda.
+  - Nada de freio, passada de apoio, pé reservado ou sensor; não depende das
+    pegadas.
+- **`BallHandlingIO3D.hpp`:** as entradas e saídas comuns (o
+  `BallHandling3D` da Etapa 5 fica fora do caminho até a limpeza).
+- **`BallGesture3D`:** `windupAhead` (o toque arma logo atrás do contato) e
+  `passThrough` (no balanço, o pé passa pelo contato indo de volta ao pé do
+  estilo).
+- **`FootstepPlanner3D`:** o pé solto pelo gesto com o estilo no balanço
+  entra no balanço (antes, preso no chão até 0,25 s, a perna esticava além
+  do alcance).
+- **Laboratório:** o "Manejo novo" sem exigir pegadas; a régua "Tempo
+  estimado até o contato" vale para ele.
+- **Sonda:**
+  - cenários `v2_*` (101) e `--sem-pedido`;
+  - medidas da força contra a régua, da volta da perna, da cápsula com e sem
+    pedido; `XV2`;
+  - os nomes dos cenários são `std::string`;
+  - a intenção do analógico parcial na velocidade dele.
+- **Validação:** 244/244 rodadas com ação, sem cruzar, sem tranco; força na
+  régua; cápsula igual sem o pedido; folhas conferidas; arquitetura ok;
+  CTest 12/14.
+
 ## Novo controle, plano v2 — Fase B: o joelho no fim da pisada (10/10/2026, noite)
 
 - **A origem (medida na sonda, `XJOELHO`):** com as pegadas, o joelho

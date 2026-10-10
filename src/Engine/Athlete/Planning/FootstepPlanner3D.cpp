@@ -185,12 +185,18 @@ std::array<FootTarget3D, 2> FootstepPlanner3D::plan(const FootstepStyle3D& style
     }
     const std::array<Vec3, 2> before { m_feet[0].position, m_feet[1].position };
 
-    // O pe que o gesto soltou: no chao, trava onde pousou (o estilo sem o
-    // gesto o poria em outro lugar); no ar, a mistura curta ate o estilo.
+    // O pe que o gesto soltou: com o estilo apoiado e o pe no chao, trava
+    // onde pousou (o estilo sem o gesto o poria em outro lugar); com o estilo
+    // no balanco, entra no balanco dele (preso no chao, a perna esticava
+    // alem do alcance e o pe era arrastado - plano v2); no ar com o estilo
+    // apoiado, a mistura curta ate ele.
     if (m_previousActing >= 0 && style.actingSide != m_previousActing) {
-        Foot& foot = m_feet[static_cast<std::size_t>(m_previousActing)];
+        const std::size_t released = static_cast<std::size_t>(m_previousActing);
+        Foot& foot = m_feet[released];
         if (foot.mode == FootMode3D::Free) {
-            if (onGround(m_previousActing, foot.position, foot.orientation)) {
+            if (!style.planted[released] && style.grounded && !style.scripted) {
+                startOffset(m_previousActing, FootMode3D::Swing, style);
+            } else if (onGround(m_previousActing, foot.position, foot.orientation)) {
                 lock(m_previousActing, foot.position, foot.orientation);
                 foot.releaseWait = settings.releaseWaitSeconds;
             } else {
