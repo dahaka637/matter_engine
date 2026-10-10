@@ -177,8 +177,7 @@ void ActiveBodyController3D::update(const RagdollProfile3D& profile, const Ragdo
     // Ajuda de jogo: o que o chao nao deu, no plano, ate o teto, com pe apoiado
     // e so com o plano andando (a resposta da corrida): parado nao ha ajuda -
     // o corpo empurrado fica onde foi e a pose vai ate ele.
-    const float travel = std::clamp(horizontal(rootVelocity).length() / std::max(0.1f, settings.assistFullSpeed),
-        0.0f, 1.0f);
+    const float travel = std::clamp(target.intendedSpeed / std::max(0.1f, settings.assistFullSpeed), 0.0f, 1.0f);
     const float assistCap = std::max(settings.gameplayAssistAcceleration * travel,
         settings.handoverAssistAcceleration * handover);
     if (observation.supportCount > 0 && assistCap > 0.0f) {

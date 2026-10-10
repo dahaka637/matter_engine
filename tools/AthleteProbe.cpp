@@ -507,7 +507,7 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
             const ActiveBodyOutput3D& a = athlete.activeOutput;
             std::printf("  t %.2f captura fora %.3f | raiz %.3f m giro %.3f rad link %.3f m | apoio %d complac %.2f | base %.3f%s | pedido %.0f/%.0f/%.0f entregue %.0f/%.0f/%.0f ajuda %.0f/%.0f%s%s\n",
                 t, athlete.stance.captureOutside(), a.rootError, a.orientationError, a.linkError, a.supportCount, a.compliance,
-                athlete.stance.mismatch(), athlete.stance.settling() ? (athlete.stance.recovering() ? " RECUPERA" : " PASSO") : "", a.requestedForce.x,
+                athlete.stance.mismatch(), athlete.stance.stepping() ? " PASSO" : "", a.requestedForce.x,
                 a.requestedForce.y, a.requestedForce.z, a.deliveredForce.x, a.deliveredForce.y, a.deliveredForce.z,
                 a.assistForce.x, a.assistForce.y, a.knockout ? " NOCAUTE" : "", a.readyToAnimate ? " PRONTO" : "");
             if (std::getenv("XGEO")) {
@@ -736,6 +736,7 @@ int main(int argc, char** argv) {
     bool startPhysical = false;
     bool activeBody = true;
     bool footsteps = false;
+    bool balanceSteps = AthleteRuntimeSettings3D {}.activeStanceSettings.balanceSteps;
     bool checks = false;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
@@ -746,6 +747,7 @@ int main(int argc, char** argv) {
         else if (arg == "--fisico") startPhysical = true;
         else if (arg == "--ativo") activeBody = std::atoi(need()) != 0;
         else if (arg == "--pegadas") footsteps = std::atoi(need()) != 0;
+        else if (arg == "--passos") balanceSteps = std::atoi(need()) != 0;
         else if (arg == "--teste") checks = true;
         else if (arg == "--lista") {
             for (const Scenario& scenario : scenarios()) std::printf("%s\n", scenario.name);
@@ -773,6 +775,7 @@ int main(int argc, char** argv) {
     AthleteRuntimeSettings3D settings;
     settings.activeBody = activeBody;
     settings.footstepLocomotion = footsteps;
+    settings.activeStanceSettings.balanceSteps = balanceSteps;
     ProbeContext context;
     context.profile = &profile;
     context.gaitSpeeds = gaitSpeeds;

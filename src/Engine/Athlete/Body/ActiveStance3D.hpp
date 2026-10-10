@@ -8,60 +8,63 @@
 
 namespace MatterEngine {
 
-// A base do Corpo Ativo (Etapa 2): a pose-alvo vem do modo padrao, que poe os
-// pes onde o clipe quer, mas no corpo fisico os pes ficam onde estao no chao
-// (uma pancada os tira do lugar). Sem isto os musculos brigam com o chao, o
-// corpo fica torto e nunca cola na pose.
+// A base do Corpo Ativo (Etapas 2 e 3): a pose-alvo vem do modo padrao, que
+// poe os pes onde o clipe quer, mas no corpo fisico os pes ficam onde estao
+// no chao (uma pancada os tira do lugar). Sem isto os musculos brigam com o
+// chao, o corpo fica torto e nunca cola na pose.
 //  - Pe apoiado (o clipe diz apoio e o pe toca o chao): fica preso onde
-//    esta; a perna vai a ele por IK a partir da pelve do plano.
+//    esta; a perna vai a ele por IK.
 //  - Pe no balanco do clipe: solta do lugar e volta a pose do clipe numa
 //    mistura curta.
-//  - Parado com um pe fora do lugar do clipe: um passo de acomodacao - o peso
-//    vai para o outro pe, o pe sai num arco e pousa onde a pose quer, o peso
-//    volta. Assim o corpo volta a base do clipe e o padrao pode assumir sem
-//    os pes escorregarem.
+//  - Parado, a raiz-alvo fica sobre os pes de verdade como a do clipe fica
+//    sobre os dele (filtrada: a base muda quando um pe sai ou pousa).
+//  - Passo de equilibrio: o ponto de captura do centro de massa (x + v/w0)
+//    saiu da base. O pe mais longe dele sai e pousa alem dele - o alvo segue
+//    a captura durante o balanco, a perna vai pela pelve de verdade (com o
+//    corpo inclinado, a do plano poria o pe longe de onde ele precisa) e o
+//    pouso e o contato. No passo a raiz-alvo segue a pelve (o passo e quem
+//    equilibra; o servo nao briga com a queda).
+// (A acomodacao de volta a base do clipe e das pegadas do modo padrao, na
+// volta ao animado.)
 struct ActiveStanceSettings3D {
-    // A acomodacao (ligada) e o pe mais longe que isto (m) do lugar do clipe,
-    // parado. (Desligada por padrao ate a Etapa 3: passar o peso de um pe
-    // para o outro pela fisica ainda falha nas bases largas; o planejador de
-    // pegadas faz isso direito.)
-    bool settleSteps = false;
-    float settleDistance = 0.05f;
-    // A acomodacao: o peso vai ao outro pe, o pe no arco, o peso volta (s), a
-    // altura do arco (m) e quanto a pelve vai para o pe de apoio (fracao).
-    float shiftSeconds = 0.55f;
-    float swingSeconds = 0.26f;
-    float settleHeight = 0.06f;
-    float shiftShare = 0.92f;
-    float maximumShift = 0.30f;
-    // O pe so sai com a captura dentro da sola do pe que fica (mais esta
-    // folga, m); sem isso ate shiftTimeout (s) depois do comeco, a acomodacao
-    // desiste.
-    float liftMargin = 0.03f;
-    float shiftTimeout = 1.1f;
-    // Abaixo desta velocidade da pose (m/s) a base pode se acomodar.
+    // Parado (a pose abaixo de stillSpeed m/s), a raiz sobre a base real,
+    // entrando e saindo nesta mistura (s); o salto quando muda o conjunto de
+    // pes presos some neste tempo (s).
+    bool anchorRootToBase = true;
     float stillSpeed = 0.35f;
+    float baseAnchorSeconds = 0.25f;
+    float baseFilterSeconds = 0.15f;
     // O pe que sai do apoio volta a pose do clipe nesta mistura (s).
     float releaseSeconds = 0.12f;
-    // Parado, a raiz-alvo fica sobre os pes que estao no chao (como a do
-    // clipe sobre os dela), entrando e saindo nesta mistura (s).
-    bool anchorRootToBase = true;
-    float baseAnchorSeconds = 0.25f;
-    // Passo de recuperacao (equilibrio): o ponto de captura do centro de massa
-    // (x + v/w0) mais que recoveryMargin (m) fora da base dos pes apoiados -> o
-    // pe mais longe dele (o descarregado) sai rapido e pousa recoveryOvershoot
-    // (m) alem da captura, entre recoveryMinimumWidth e recoveryMaximumReach
-    // (m) do pe que fica. O balanco (s) e a altura do arco (m).
-    // (Desligado por padrao ate a Etapa 3: o passo de equilibrio de verdade
-    // vem do planejador de pegadas; hoje a pancada que pede passo vai ao
-    // fisico pleno, que tem os passos de recuperacao.)
-    bool recoverySteps = false;
-    float recoveryMargin = 0.03f;
-    float recoveryOvershoot = 0.07f;
-    float recoveryMinimumWidth = 0.16f;
-    float recoveryMaximumReach = 0.75f;
-    float recoverySwingSeconds = 0.22f;
-    float recoveryHeight = 0.05f;
+    // Passos de equilibrio: a captura mais que stepMargin (m) fora da base. O
+    // pe pousa stepOvershoot (m) alem dela, entre stepMinimumWidth e
+    // stepMaximumReach (m) do pe que fica; o balanco (s) e o arco (m). O
+    // contato pousa o pe depois de stepTouchShare do balanco; em
+    // stepTimeoutShare dele o passo acaba de qualquer jeito. No passo, a
+    // raiz-alvo vai stepRelax do caminho ate a pelve de verdade, e volta em
+    // stepRelaxSeconds depois. No maximo maximumSteps seguidos.
+    bool balanceSteps = false;
+    float stepMargin = 0.03f;
+    float stepOvershoot = 0.08f;
+    float stepMinimumWidth = 0.18f;
+    float stepMaximumReach = 0.75f;
+    float stepSeconds = 0.20f;
+    float stepHeight = 0.06f;
+    // A escolha do pe: a captura fora da base nova (o pe que fica mais o
+    // pouso) pesa stepCatchWeight vezes o caminho do pe. O fim do balanco
+    // mira stepPress (m) abaixo do chao.
+    float stepCatchWeight = 4.0f;
+    float stepPress = 0.01f;
+    // O pe do passo nunca cruza a linha do outro: fica pelo menos isto (m)
+    // do lado dele. E o passo so sai com a captura fora por stepTriggerTicks
+    // ticks seguidos (no tranco da pancada o contato pisca).
+    float stepSideGap = 0.10f;
+    int stepTriggerTicks = 3;
+    float stepTouchShare = 0.55f;
+    float stepTimeoutShare = 1.5f;
+    float stepRelax = 0.7f;
+    float stepRelaxSeconds = 0.3f;
+    int maximumSteps = 5;
 };
 
 class ActiveStance3D {
@@ -71,19 +74,17 @@ public:
     void enter();
     // Ajusta a pose-alvo (raiz, coordenadas e a pose no mundo) aos pes que
     // estao no chao. clipPlanted: o clipe diz que o pe esta apoiado.
-    // allowSettle: a acomodacao pode comecar (nao durante a inercia da volta,
-    // quando a pose ainda esta indo do corpo ate a do clipe).
     void adapt(const RagdollProfile3D& profile, const RagdollState3D& body, const BodyObservation3D& observation,
-        std::array<bool, 2> clipPlanted, float targetSpeed, bool allowSettle, const ActiveStanceSettings3D& settings,
-        float deltaTime, Vec3& rootPosition, Quaternion rootOrientation, std::vector<Vec3>& coordinates,
-        RagdollAnimationPose3D& pose);
+        std::array<bool, 2> clipPlanted, float targetSpeed, const ActiveStanceSettings3D& settings, float deltaTime,
+        Vec3& rootPosition, Quaternion rootOrientation, std::vector<Vec3>& coordinates, RagdollAnimationPose3D& pose);
     // A maior distancia (m) de um pe preso ao lugar do clipe (sem a
     // ancoragem da raiz: onde o animado o pora).
     [[nodiscard]] float mismatch() const { return m_mismatch; }
-    [[nodiscard]] bool settling() const { return m_settleSide >= 0; }
-    // O passo em andamento e de recuperacao (equilibrio), nao de acomodacao.
-    [[nodiscard]] bool recovering() const { return m_settleSide >= 0 && m_recovery; }
-    // Quanto o ponto de captura esta fora da base (m; 0 dentro).
+    // Um passo de equilibrio em andamento e quantos ja foram seguidos.
+    [[nodiscard]] bool stepping() const { return m_step.side >= 0; }
+    [[nodiscard]] int stepsTaken() const { return m_stepsTaken; }
+    // Quanto o ponto de captura esta fora da base (m; 0 dentro). No passo, a
+    // base e o pe que fica mais o lugar do pouso.
     [[nodiscard]] float captureOutside() const { return m_captureOutside; }
     // O quanto a raiz-alvo andou (no plano) para ficar sobre a base real (a
     // capsula vai atras disso).
@@ -99,35 +100,39 @@ private:
         Vec3 releasePosition;
         Quaternion releaseOrientation;
     };
+    struct Step {
+        int side = -1;
+        float time = 0.0f;
+        // De onde sai (a origem do link) e para onde vai (filtrado), a
+        // orientacao e a altura do chao.
+        Vec3 from;
+        Vec3 target;
+        Quaternion orientation;
+        float ground = 0.0f;
+    };
+    void anchor(int side, const RagdollProfile3D& profile, const RagdollState3D& body,
+        const FootObservation3D& seen);
+    [[nodiscard]] Vec3 stepTarget(int side, Vec3 capture, Vec3 left, const ActiveStanceSettings3D& settings) const;
+
     AthleteLegs3D m_legs;
     std::array<float, 2> m_soleToOrigin {};
     bool m_ready = false;
     std::array<Foot, 2> m_feet {};
-    // A acomodacao em andamento: o pe (-1 nenhuma), o tempo, de onde e para
-    // onde (a origem do link do pe e a orientacao), e o lado da pelve.
-    int m_settleSide = -1;
-    float m_settleTime = 0.0f;
-    Vec3 m_settleFrom;
-    Vec3 m_settleTo;
-    Quaternion m_settleFromOrientation;
-    Quaternion m_settleToOrientation;
-    Vec3 m_settleShift;
-    // O passo em andamento e de recuperacao: sem a ida do peso, balanco curto.
-    bool m_recovery = false;
-    // A acomodacao: o pe ja saiu (o peso chegou no outro) e quando (s).
-    bool m_lifted = false;
-    float m_liftAt = 0.0f;
-    // Quanto do peso ja foi ao pe que fica (0..1, continuo: sobe na ida,
-    // segura no balanco, desce na volta).
-    float m_shiftLevel = 0.0f;
-    float m_shiftAtLift = 1.0f;
+    Step m_step;
+    int m_stepsTaken = 0;
+    int m_outsideTicks = 0;
+    float m_relax = 0.0f;
     float m_captureOutside = 0.0f;
     float m_mismatch = 0.0f;
-    // A raiz sobre a base: o peso da ancoragem (0..1), o deslocamento cheio e
-    // o aplicado.
+    // A raiz sobre a base: o peso da ancoragem (0..1), o deslocamento cheio
+    // (filtrado) e o aplicado.
     float m_baseWeight = 0.0f;
     Vec3 m_baseTarget;
     Vec3 m_baseShift;
+    // O salto da troca dos pes presos (some no tempo) e quais estao presos.
+    Vec3 m_baseBias;
+    int m_baseMask = 0;
+    bool m_baseFresh = true;
 };
 
 } // namespace MatterEngine

@@ -96,6 +96,23 @@ apoiados, que somam zero.
   - Numa base aberta, a volta ao padrão espera 1,2 s, e a inércia leva os pés
     ao lugar do clipe (alguns centímetros em 0,4 s).
 
+## Novo controle do atleta: Etapa 3, parte 2 — passos de equilíbrio do Ativo (10/10/2026, noite)
+
+- **`ActiveStance3D` reescrito:** passo de equilíbrio pelo ponto de captura.
+  - O alvo segue a captura no balanço, a perna vai pela pelve medida e o
+    pouso é o contato.
+  - O pé escolhido é o que deixa a captura mais dentro da base nova; nunca
+    cruza a linha do outro.
+  - **Desligado por padrão** (`activeStanceSettings.balanceSteps`;
+    `MatterAthleteProbe --passos 1`): ainda não converge sempre (pulinhos
+    com os dois pés fora do chão, pelve girando). Volta na Etapa 4, com o
+    equilíbrio de corpo inteiro.
+- **Correções do Ativo:**
+  - o deslocamento da base acompanha o clipe na hora e só suaviza a troca
+    de pés presos;
+  - o roteador dos pares pelve↔pés usa o centro de massa do corpo inteiro;
+  - a ajuda de jogo escala com a velocidade pedida pelo jogador.
+
 ## Novo controle do atleta: Etapa 3, parte 1 — pegadas no modo padrão (10/10/2026, noite)
 
 Chave "Locomoção por pegadas" no laboratório (aba Geral), desligada por

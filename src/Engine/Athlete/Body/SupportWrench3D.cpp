@@ -93,16 +93,19 @@ SupportWrenchResult3D routeSupportWrench3D(const SupportWrenchRequest3D& request
     const float twistLimit = normal * settings.friction * settings.torsionRadius * static_cast<float>(observation.supportCount);
     torque.z = std::clamp(torque.z, -twistLimit, twistLimit);
     // O centro de pressao que o pedido exige: com a reacao inteira do chao
-    // (peso + forca) passando por ele, o momento em volta do corpo e o pedido.
-    // Fora da base, a parte de lado da forca e o torque de inclinacao encolhem
-    // juntos ate ele caber (sem o centro do corpo sobre a base, nada cabe: o
-    // corpo precisa de um passo).
-    const float height = std::max(0.2f, bodyCenter.z - ground);
+    // (peso + forca) passando por ele, o momento em volta do centro de massa
+    // do corpo inteiro e o pedido (pela pelve, numa base escalonada com a
+    // pelve fora do poligono dos pes e o centro de massa dentro, nada
+    // passava). Fora da base, a parte de lado da forca e o torque de
+    // inclinacao encolhem juntos ate ele caber (sem o centro de massa sobre a
+    // base, nada cabe: o corpo precisa de um passo).
+    const Vec3 mass = observation.centerOfMass;
+    const float height = std::max(0.2f, mass.z - ground);
     const auto pressureFor = [&](float scale, float& x, float& y) {
         const float fx = force.x * scale, fy = force.y * scale;
         const float tx = torque.x * scale, ty = torque.y * scale;
-        x = bodyCenter.x + (-ty - height * fx) / normal;
-        y = bodyCenter.y + (tx - height * fy) / normal;
+        x = mass.x + (-ty - height * fx) / normal;
+        y = mass.y + (tx - height * fy) / normal;
     };
     float scale = 1.0f;
     float px = 0.0f, py = 0.0f;

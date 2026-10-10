@@ -11,6 +11,11 @@ float smooth(float t) {
     return t * t * (3.0f - 2.0f * t);
 }
 
+float minimumJerk(float s) {
+    s = std::clamp(s, 0.0f, 1.0f);
+    return s * s * s * (10.0f - 15.0f * s + 6.0f * s * s);
+}
+
 Quaternion nlerp(Quaternion a, Quaternion b, float t) {
     if (a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w < 0.0f) b = { -b.x, -b.y, -b.z, -b.w };
     return Quaternion { a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t, a.w + (b.w - a.w) * t }
@@ -80,19 +85,54 @@ void ActiveStance3D::reset(const RagdollProfile3D& profile) {
 
 void ActiveStance3D::enter() {
     m_feet = {};
-    m_settleSide = -1;
-    m_settleTime = 0.0f;
-    m_settleShift = {};
+    m_step = {};
+    m_stepsTaken = 0;
+    m_outsideTicks = 0;
+    m_relax = 0.0f;
     m_mismatch = 0.0f;
     // (Entra ancorada: os pes estao no chao e a pose-alvo parte da do corpo;
     // andando, solta na mistura.)
     m_baseWeight = 1.0f;
     m_baseTarget = {};
     m_baseShift = {};
+    m_baseBias = {};
+    m_baseMask = 0;
+    m_baseFresh = true;
+}
+
+void ActiveStance3D::anchor(int side, const RagdollProfile3D& profile, const RagdollState3D& body,
+    const FootObservation3D& seen) {
+    // Preso plano no chao, no rumo em que esta (um pe que caiu de lado nao
+    // entorta a perna e o corpo junto).
+    Foot& foot = m_feet[static_cast<std::size_t>(side)];
+    const std::size_t footLink = m_legs.foot[static_cast<std::size_t>(side)];
+    const RagdollLinkDefinition3D& definition = profile.links[footLink];
+    const float yaw = std::atan2(seen.forward.y, seen.forward.x);
+    foot.anchored = true;
+    foot.orientation = (Quaternion::fromAxisAngle({ 0.0f, 0.0f, 1.0f }, yaw) * definition.modelOrientation).normalized();
+    foot.position = body.links[footLink].position;
+    foot.position.z = seen.soleHeight + m_soleToOrigin[static_cast<std::size_t>(side)];
+    foot.release = 0.0f;
+}
+
+Vec3 ActiveStance3D::stepTarget(int side, Vec3 capture, Vec3 left, const ActiveStanceSettings3D& settings) const {
+    // Do pe que fica ate alem da captura (no plano), no alcance, sem cruzar
+    // a linha dele: o pe esquerdo fica pelo menos stepSideGap a esquerda do
+    // direito, no rumo da pelve (a captura do outro lado e do proximo passo).
+    const Foot& stance = m_feet[static_cast<std::size_t>(1 - side)];
+    Vec3 away { capture.x - stance.position.x, capture.y - stance.position.y, 0.0f };
+    float reach = away.length();
+    const Vec3 direction = reach > 1e-4f ? away * (1.0f / reach) : left * (side == 0 ? 1.0f : -1.0f);
+    reach = std::clamp(reach + settings.stepOvershoot, settings.stepMinimumWidth, settings.stepMaximumReach);
+    Vec3 offset = direction * reach;
+    const float sign = side == 0 ? 1.0f : -1.0f;
+    const float lateral = offset.x * left.x + offset.y * left.y;
+    if (lateral * sign < settings.stepSideGap) offset += left * (sign * settings.stepSideGap - lateral);
+    return { stance.position.x + offset.x, stance.position.y + offset.y, 0.0f };
 }
 
 void ActiveStance3D::adapt(const RagdollProfile3D& profile, const RagdollState3D& body,
-    const BodyObservation3D& observation, std::array<bool, 2> clipPlanted, float targetSpeed, bool allowSettle,
+    const BodyObservation3D& observation, std::array<bool, 2> clipPlanted, float targetSpeed,
     const ActiveStanceSettings3D& settings, float deltaTime, Vec3& rootPosition, Quaternion rootOrientation,
     std::vector<Vec3>& coordinates, RagdollAnimationPose3D& pose) {
     if (!m_ready) reset(profile);
@@ -136,147 +176,14 @@ void ActiveStance3D::adapt(const RagdollProfile3D& profile, const RagdollState3D
         }
         m_captureOutside = corners.empty() ? 0.0f : outsideHull(corners, capture.x, capture.y);
     }
-    // Passo de recuperacao: a captura saiu da base. O pe mais longe dela (o
-    // descarregado) sai ja e pousa alem dela; o outro segura (cruzando, se for
-    // o caso). Interrompe uma acomodacao.
-    if (settings.recoverySteps && (m_settleSide < 0 || !m_recovery) && m_captureOutside > settings.recoveryMargin
-        && (m_feet[0].anchored || m_feet[1].anchored)) {
-        int swing = -1;
-        float farthest = -1.0f;
-        for (int side = 0; side < 2; ++side) {
-            const int stance = 1 - side;
-            if (!m_feet[static_cast<std::size_t>(stance)].anchored
-                || !observation.feet[static_cast<std::size_t>(stance)].supporting)
-                continue;
-            const float distance = planarDistance(body.links[m_legs.foot[static_cast<std::size_t>(side)]].position, capture);
-            if (distance > farthest) {
-                farthest = distance;
-                swing = side;
-            }
-        }
-        if (swing >= 0) {
-            const Foot& stanceFoot = m_feet[static_cast<std::size_t>(1 - swing)];
-            Vec3 away { capture.x - stanceFoot.position.x, capture.y - stanceFoot.position.y, 0.0f };
-            float reach = away.length();
-            const Vec3 direction = reach > 1e-4f ? away * (1.0f / reach)
-                : cross(Vec3 { 0.0f, 0.0f, 1.0f }, observation.feet[static_cast<std::size_t>(1 - swing)].forward)
-                    * (swing == 0 ? 1.0f : -1.0f);
-            reach = std::clamp(reach + settings.recoveryOvershoot, settings.recoveryMinimumWidth, settings.recoveryMaximumReach);
-            const std::size_t swingLink = m_legs.foot[static_cast<std::size_t>(swing)];
-            m_settleSide = swing;
-            m_recovery = true;
-            m_lifted = true;
-            m_settleTime = settings.shiftSeconds; // (sem a ida do peso)
-            m_settleFrom = body.links[swingLink].position;
-            m_settleFromOrientation = m_feet[static_cast<std::size_t>(swing)].anchored
-                ? m_feet[static_cast<std::size_t>(swing)].orientation : body.links[swingLink].orientation;
-            m_settleTo = stanceFoot.position + direction * reach;
-            m_settleTo.z = stanceFoot.position.z;
-            m_settleToOrientation = m_settleFromOrientation;
-            m_settleShift = {};
-            m_feet[static_cast<std::size_t>(swing)].anchored = false;
-        }
-    }
-    // A acomodacao: o pe fora do lugar, parado, com os dois apoiados.
-    const bool still = settings.settleSteps && allowSettle && targetSpeed < settings.stillSpeed && clipPlanted[0]
-        && clipPlanted[1];
-    if (m_settleSide < 0 && still && m_feet[0].anchored && m_feet[1].anchored && observation.feet[0].supporting
-        && observation.feet[1].supporting) {
-        int worst = -1;
-        float worstDistance = settings.settleDistance;
-        for (int side = 0; side < 2; ++side) {
-            const float distance = planarDistance(m_feet[side].position, clipFoot[side]);
-            if (distance > worstDistance) {
-                worst = side;
-                worstDistance = distance;
-            }
-        }
-        if (worst >= 0 && m_captureOutside <= 0.0f) {
-            m_settleSide = worst;
-            m_recovery = false;
-            m_lifted = false;
-            m_shiftLevel = 0.0f;
-            m_settleTime = 0.0f;
-            m_settleFrom = m_feet[worst].position;
-            m_settleFromOrientation = m_feet[worst].orientation;
-            // O pe pousa onde o clipe o quer, na altura do chao em que ele esta.
-            m_settleTo = { clipFoot[worst].x, clipFoot[worst].y, m_feet[worst].position.z };
-            m_settleToOrientation = clipOrientation[worst];
-            // A pelve vai para o pe que fica (o peso nele antes de levantar).
-            const Vec3 stance = m_feet[1 - worst].position;
-            m_settleShift = Vec3 { stance.x - rootPosition.x, stance.y - rootPosition.y, 0.0f } * settings.shiftShare;
-            const float shiftLength = m_settleShift.length();
-            if (shiftLength > settings.maximumShift) m_settleShift = m_settleShift * (settings.maximumShift / shiftLength);
-        }
-    }
-    const float swingSeconds = m_recovery ? settings.recoverySwingSeconds : settings.swingSeconds;
-    if (m_settleSide >= 0) {
-        m_settleTime += dt;
-        if (m_recovery) {
-            m_lifted = true;
-            m_liftAt = settings.shiftSeconds;
-        } else if (!m_lifted) {
-            // O peso vai ao pe que fica; o outro so sai com a captura sobre ele.
-            const int stance = 1 - m_settleSide;
-            const FootObservation3D& seen = observation.feet[static_cast<std::size_t>(stance)];
-            const Vec3 lateral = cross(Vec3 { 0.0f, 0.0f, 1.0f }, seen.forward);
-            const Vec3 offset { capture.x - seen.soleCenter.x, capture.y - seen.soleCenter.y, 0.0f };
-            const float along = std::abs(dot(offset, seen.forward));
-            const float across = std::abs(dot(offset, lateral));
-            const bool overStance = seen.supporting && along < 0.12f + settings.liftMargin
-                && across < 0.045f + settings.liftMargin;
-            if (overStance && m_settleTime > 0.25f * settings.shiftSeconds) {
-                m_lifted = true;
-                m_liftAt = m_settleTime;
-                m_shiftAtLift = m_shiftLevel;
-            } else if (m_settleTime > settings.shiftTimeout) {
-                // Nao deu para pesar no outro pe: desiste, o pe fica onde esta.
-                m_settleSide = -1;
-            }
-        }
-    }
-    if (m_settleSide >= 0) {
-        const float t = m_settleTime;
-        const float swingEnd = m_liftAt + swingSeconds;
-        const float total = m_recovery ? swingEnd : swingEnd + settings.shiftSeconds * m_shiftAtLift;
-        // O peso: sobe (a ida) ate o pe sair, segura no balanco, desce depois.
-        const float rate = dt / std::max(0.05f, settings.shiftSeconds);
-        if (!m_lifted) m_shiftLevel = std::min(1.0f, m_shiftLevel + rate);
-        else if (t >= swingEnd) m_shiftLevel = std::max(0.0f, m_shiftLevel - rate);
-        rootPosition += m_settleShift * smooth(m_shiftLevel);
-        if (m_lifted && t >= total) {
-            m_shiftLevel = 0.0f;
-            // O pe pousou (ou vai pousar): prende onde tocar o chao.
-            Foot& foot = m_feet[static_cast<std::size_t>(m_settleSide)];
-            foot.anchored = false;
-            foot.release = 0.0f;
-            m_settleSide = -1;
-            m_recovery = false;
-        }
-    }
 
     // Os pes: presos onde tocam o chao (o clipe diz apoio), soltos no balanco.
     for (int side = 0; side < 2; ++side) {
-        if (side == m_settleSide) continue;
+        if (side == m_step.side) continue;
         Foot& foot = m_feet[static_cast<std::size_t>(side)];
-        const std::size_t footLink = m_legs.foot[static_cast<std::size_t>(side)];
         const FootObservation3D& seen = observation.feet[static_cast<std::size_t>(side)];
         if (clipPlanted[side]) {
-            if (!foot.anchored && seen.supporting) {
-                // Preso plano no chao, no rumo em que esta (um pe que caiu de
-                // lado nao entorta a perna e o corpo junto).
-                const RagdollLinkDefinition3D& definition = profile.links[footLink];
-                Vec3 modelForward = definition.modelOrientation.conjugate().rotate({ 1.0f, 0.0f, 0.0f });
-                modelForward = definition.modelOrientation.rotate(modelForward);
-                const float modelYaw = std::atan2(modelForward.y, modelForward.x);
-                const float yaw = std::atan2(seen.forward.y, seen.forward.x);
-                foot.anchored = true;
-                foot.orientation = (Quaternion::fromAxisAngle({ 0.0f, 0.0f, 1.0f }, yaw - modelYaw)
-                    * definition.modelOrientation).normalized();
-                foot.position = body.links[footLink].position;
-                foot.position.z = seen.soleHeight + m_soleToOrigin[static_cast<std::size_t>(side)];
-                foot.release = 0.0f;
-            }
+            if (!foot.anchored && seen.supporting) anchor(side, profile, body, seen);
         } else if (foot.anchored) {
             foot.anchored = false;
             foot.release = 1.0f;
@@ -285,28 +192,119 @@ void ActiveStance3D::adapt(const RagdollProfile3D& profile, const RagdollState3D
         }
     }
 
-    // A raiz sobre a base de verdade: parado, a pose fica em cima dos pes que
-    // estao no chao como a do clipe fica em cima dos dela (a pelve, e com ela
-    // o centro de massa, onde o clipe a poe em relacao aos pes). Sem isto a
-    // raiz-alvo segue a capsula e a pose fica fora da base - o corpo tomba
-    // segurando a pose. Andando, a raiz volta a do plano (a capsula ja foi
-    // atras da base pela navegacao).
+    // Passo de equilibrio: a captura saiu da base. Para cada pe, a base nova
+    // (o que fica mais o lugar do pouso, sem cruzar): sai o que deixa a
+    // captura mais para dentro dela (o caminho do pe desempata); o outro
+    // precisa estar preso e apoiado.
+    const Vec3 left = [&] {
+        const Vec3 axis = rootOrientation.rotate({ 0.0f, 1.0f, 0.0f });
+        const Vec3 flat { axis.x, axis.y, 0.0f };
+        return flat.lengthSquared() > 1e-6f ? flat.normalized() : Vec3 { 0.0f, 1.0f, 0.0f };
+    }();
+    m_outsideTicks = m_captureOutside > settings.stepMargin ? m_outsideTicks + 1 : 0;
+    const auto soleCorners = [](std::vector<std::array<float, 2>>& corners, Vec3 center, Vec3 forward) {
+        const Vec3 lateral = cross(Vec3 { 0.0f, 0.0f, 1.0f }, forward);
+        for (const float along : { -0.11f, 0.13f })
+            for (const float across : { -0.045f, 0.045f }) {
+                const Vec3 corner = center + forward * along + lateral * across;
+                corners.push_back({ corner.x, corner.y });
+            }
+    };
+    if (m_step.side < 0 && settings.balanceSteps && m_outsideTicks >= settings.stepTriggerTicks
+        && m_stepsTaken < settings.maximumSteps) {
+        int swing = -1;
+        float cheapest = 1e9f;
+        for (int side = 0; side < 2; ++side) {
+            const int stance = 1 - side;
+            const FootObservation3D& stanceSeen = observation.feet[static_cast<std::size_t>(stance)];
+            if (!m_feet[static_cast<std::size_t>(stance)].anchored || !stanceSeen.supporting) continue;
+            const Vec3 now = body.links[m_legs.foot[static_cast<std::size_t>(side)]].position;
+            const Vec3 target = stepTarget(side, capture, left, settings);
+            std::vector<std::array<float, 2>> corners;
+            soleCorners(corners, stanceSeen.soleCenter, stanceSeen.forward);
+            soleCorners(corners, target, observation.feet[static_cast<std::size_t>(side)].forward);
+            const float cost = outsideHull(corners, capture.x, capture.y) * settings.stepCatchWeight
+                + planarDistance(now, target);
+            if (cost < cheapest) {
+                cheapest = cost;
+                swing = side;
+            }
+        }
+        if (swing >= 0) {
+            const std::size_t swingLink = m_legs.foot[static_cast<std::size_t>(swing)];
+            Foot& foot = m_feet[static_cast<std::size_t>(swing)];
+            m_step = {};
+            m_step.side = swing;
+            m_step.from = body.links[swingLink].position;
+            m_step.target = stepTarget(swing, capture, left, settings);
+            m_step.orientation = foot.anchored ? foot.orientation : body.links[swingLink].orientation;
+            m_step.ground = m_feet[static_cast<std::size_t>(1 - swing)].position.z;
+            foot.anchored = false;
+            foot.release = 0.0f;
+        }
+    }
+    if (m_step.side >= 0) {
+        // O balanco: o alvo segue a captura; o pe pousa no contato.
+        m_step.time += dt;
+        const float s = m_step.time / std::max(0.05f, settings.stepSeconds);
+        const Vec3 wanted = stepTarget(m_step.side, capture, left, settings);
+        m_step.target += (wanted - m_step.target) * std::min(1.0f, dt / 0.05f);
+        // No passo a base e o pe que fica mais o lugar do pouso: e contra ela
+        // que a captura conta (com um pe so, ela esta sempre fora).
+        {
+            std::vector<std::array<float, 2>> corners;
+            const FootObservation3D& stance = observation.feet[static_cast<std::size_t>(1 - m_step.side)];
+            if (stance.supporting) soleCorners(corners, stance.soleCenter, stance.forward);
+            soleCorners(corners, m_step.target, observation.feet[static_cast<std::size_t>(m_step.side)].forward);
+            m_captureOutside = outsideHull(corners, capture.x, capture.y);
+        }
+        const FootObservation3D& seen = observation.feet[static_cast<std::size_t>(m_step.side)];
+        if ((s >= settings.stepTouchShare && seen.supporting) || s >= settings.stepTimeoutShare) {
+            if (seen.supporting) anchor(m_step.side, profile, body, seen);
+            m_step = {};
+            ++m_stepsTaken;
+        }
+    }
+    if (m_step.side < 0 && m_captureOutside <= 0.0f && m_relax <= 0.0f) m_stepsTaken = 0;
+
+    // A raiz sobre a base de verdade (filtrada); no passo, a raiz vai ate a
+    // pelve de verdade (o passo equilibra; o servo nao briga com a queda).
     {
+        // O deslocamento acompanha o clipe na hora (e so a pose dele em
+        // relacao aos pes); quando muda o conjunto de pes presos (um sai,
+        // outro pousa), o salto vira um vies que some em baseFilterSeconds.
         Vec3 shift;
         int count = 0;
+        int mask = 0;
         for (int side = 0; side < 2; ++side) {
             const Foot& foot = m_feet[static_cast<std::size_t>(side)];
-            if (side == m_settleSide || !foot.anchored) continue;
+            if (side == m_step.side || !foot.anchored) continue;
             shift += Vec3 { foot.position.x - clipFoot[side].x, foot.position.y - clipFoot[side].y, 0.0f };
             ++count;
+            mask |= 1 << side;
         }
         const bool standing = settings.anchorRootToBase && count > 0 && targetSpeed < settings.stillSpeed
             && clipPlanted[0] && clipPlanted[1];
         const float rate = dt / std::max(0.02f, settings.baseAnchorSeconds);
         m_baseWeight = standing ? std::min(1.0f, m_baseWeight + rate) : std::max(0.0f, m_baseWeight - rate);
-        if (count > 0) m_baseTarget = shift * (1.0f / static_cast<float>(count));
+        if (count > 0) {
+            const Vec3 raw = shift * (1.0f / static_cast<float>(count));
+            if (m_baseFresh) m_baseBias = {};
+            else if (mask != m_baseMask) m_baseBias += m_baseTarget - raw;
+            m_baseBias *= 1.0f - std::min(1.0f, dt / std::max(dt, settings.baseFilterSeconds));
+            m_baseTarget = raw + m_baseBias;
+            m_baseMask = mask;
+            m_baseFresh = false;
+        }
         m_baseShift = m_baseTarget * smooth(m_baseWeight);
         rootPosition += m_baseShift;
+        m_relax = m_step.side >= 0 ? settings.stepRelax
+            : std::max(0.0f, m_relax - dt * settings.stepRelax / std::max(0.05f, settings.stepRelaxSeconds));
+        if (m_relax > 0.0f) {
+            const Vec3 pelvis = body.links.front().position;
+            rootPosition.x += (pelvis.x - rootPosition.x) * m_relax;
+            rootPosition.y += (pelvis.y - rootPosition.y) * m_relax;
+        }
     }
 
     float mismatch = 0.0f;
@@ -315,15 +313,19 @@ void ActiveStance3D::adapt(const RagdollProfile3D& profile, const RagdollState3D
         Vec3 targetPosition = clipFoot[side] + m_baseShift;
         Quaternion targetOrientation = clipOrientation[side];
         bool solve = m_baseWeight > 0.0f;
-        if (side == m_settleSide) {
-            // O pe da acomodacao: parado ate o peso ir, no arco, parado depois.
-            const float swing = m_lifted ? std::clamp((m_settleTime - m_liftAt) / swingSeconds, 0.0f, 1.0f) : 0.0f;
-            const float u = smooth(swing);
-            const float height = m_recovery ? settings.recoveryHeight : settings.settleHeight;
-            targetPosition = m_settleFrom + (m_settleTo - m_settleFrom) * u
-                + Vec3 { 0.0f, 0.0f, height * std::sin(3.14159265f * swing) };
-            targetOrientation = nlerp(m_settleFromOrientation, m_settleToOrientation, u);
+        bool fromPelvis = false;
+        if (side == m_step.side) {
+            // O pe do passo: jerk minimo ate o alvo, no arco.
+            const float s = std::clamp(m_step.time / std::max(0.05f, settings.stepSeconds), 0.0f, 1.0f);
+            const float u = minimumJerk(s);
+            // (No fim, um pouco abaixo do chao: o motor aperta o pe nele.)
+            const float ground = m_step.ground - settings.stepPress;
+            targetPosition = { m_step.from.x + (m_step.target.x - m_step.from.x) * u,
+                m_step.from.y + (m_step.target.y - m_step.from.y) * u,
+                m_step.from.z + (ground - m_step.from.z) * u + settings.stepHeight * std::sin(3.14159265f * s) };
+            targetOrientation = m_step.orientation;
             solve = true;
+            fromPelvis = true;
         } else if (foot.anchored) {
             targetPosition = foot.position;
             targetOrientation = foot.orientation;
@@ -339,10 +341,10 @@ void ActiveStance3D::adapt(const RagdollProfile3D& profile, const RagdollState3D
         }
         if (!solve) continue;
         const Vec3 ankle = targetPosition + targetOrientation.rotate(m_legs.ankleInFoot[static_cast<std::size_t>(side)]);
-        if (side == m_settleSide && m_recovery) {
-            // O passo de recuperacao sai da pelve de verdade: com o corpo
-            // inclinado, os angulos tirados da pelve do plano poriam o pe
-            // longe de onde ele precisa pousar no mundo.
+        if (fromPelvis) {
+            // O passo sai da pelve de verdade: com o corpo inclinado, os
+            // angulos tirados da pelve do plano poriam o pe longe de onde ele
+            // precisa pousar no mundo.
             solveAthleteLeg3D(profile, m_legs, side, coordinates, body.links.front().position,
                 (body.links.front().orientation * profile.links.front().modelOrientation.conjugate()).normalized(),
                 ankle, clipKnee[side], targetOrientation);
@@ -351,7 +353,7 @@ void ActiveStance3D::adapt(const RagdollProfile3D& profile, const RagdollState3D
                 targetOrientation);
         }
     }
-    if (m_settleSide >= 0) mismatch = std::max(mismatch, settings.settleDistance);
+    if (m_step.side >= 0) mismatch = std::max(mismatch, 0.1f);
     m_mismatch = mismatch;
     athleteWorldPose3D(profile, coordinates, rootPosition, rootOrientation, pose);
 }

@@ -77,12 +77,11 @@ struct AthleteRuntimeSettings3D {
     float activeEnterImpulse = 1.0f;
     float fullPhysicalImpulse = 25.0f;
     float fullPhysicalWallImpact = 5.0f;
-    // No Ativo, o ponto de captura mais que isto fora da base (m: a pancada
-    // pede passo) leva ao fisico pleno, que da os passos de recuperacao.
+    // No Ativo, o ponto de captura mais que isto fora da base (m) leva ao
+    // fisico pleno: sem os passos de equilibrio (ActiveStanceSettings3D), a
+    // pancada que pede passo; com eles, a que um passo nao segura.
     float activeHandoverCapture = 0.06f;
-    // (Num passo de acomodacao a base e um pe so, de proposito: so uma saida
-    // grande conta.)
-    float activeHandoverCaptureStepping = 0.15f;
+    float activeHandoverCaptureStepping = 0.20f;
     // No Ativo andando, a capsula vai atras do corpo com esta folga (m);
     // parado, ela vai para onde a base real quer a raiz (ActiveStance3D). E a
     // volta ao padrao com os pes ainda fora do lugar do clipe acontece depois

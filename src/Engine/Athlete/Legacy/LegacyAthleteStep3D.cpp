@@ -21,6 +21,16 @@ constexpr float GetUpHandoffSeconds = 0.65f;
 // pose do clipe.
 constexpr float ActiveExitHalfLife = 0.10f;
 constexpr float ActiveExitSeconds = 0.40f;
+
+// No Ativo, o ponto de captura alem disto (m) fora da base leva ao fisico
+// pleno: sem os passos de equilibrio, a pancada que pede passo; com eles, so
+// a que um passo nao segura (ou depois dos passos que cabem).
+float activeCaptureLimit(const AthleteRuntimeSettings3D& settings, const ActiveStance3D& stance) {
+    if (!settings.activeStanceSettings.balanceSteps) return settings.activeHandoverCapture;
+    if (!stance.stepping() && stance.stepsTaken() >= settings.activeStanceSettings.maximumSteps)
+        return settings.activeHandoverCapture;
+    return settings.activeHandoverCaptureStepping;
+}
 } // namespace
 
 void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& assets,
@@ -779,13 +789,15 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             // Os pes onde estao no chao (e a acomodacao de volta a base).
             const Vec3 capsuleVelocity = scene.characterState().velocity;
             athlete.stance.adapt(profile, body, observation, out.footPlanted,
-                std::hypot(capsuleVelocity.x, capsuleVelocity.y), !state.returnInertia.active(),
-                settings.activeStanceSettings, deltaTime, rootPosition, rootOrientation, coordinates, pose);
+                std::hypot(capsuleVelocity.x, capsuleVelocity.y), settings.activeStanceSettings, deltaTime,
+                rootPosition, rootOrientation, coordinates, pose);
             ActiveBodyTarget3D target;
             target.pose = &pose;
             target.coordinates = &coordinates;
             target.rootPosition = rootPosition;
             target.rootOrientation = rootOrientation;
+            target.intendedSpeed = std::hypot(command.intent.requestedVelocityWorld.x,
+                command.intent.requestedVelocityWorld.y);
             athlete.active.update(profile, body, observation, target, settings.activeBodySettings, deltaTime,
                 athlete.activeOutput);
             const ActiveBodyOutput3D& activeOutput = athlete.activeOutput;
@@ -808,12 +820,11 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                 : navigationFollowVelocity3D(body.links.front().position, rootPosition, settings.activeFollowSlack);
             if (activeOutput.knockout) {
                 toPhysical(("nocaute: " + activeOutput.knockoutReason).c_str());
-            } else if (!settings.activeStanceSettings.recoverySteps && !athlete.active.handingOver()
-                && athlete.stance.captureOutside()
-                    > (athlete.stance.settling() ? settings.activeHandoverCaptureStepping : settings.activeHandoverCapture)) {
+            } else if (!athlete.active.handingOver()
+                && athlete.stance.captureOutside() > activeCaptureLimit(settings, athlete.stance)) {
                 toPhysical(("passo de equilibrio, captura " + std::to_string(athlete.stance.captureOutside()) + " m fora"
-                    + (athlete.stance.settling() ? " no passo" : "")).c_str());
-            } else if (activeOutput.readyToAnimate && !athlete.stance.settling() && !state.returnInertia.active()
+                    + (athlete.stance.stepping() ? " no passo" : "")).c_str());
+            } else if (activeOutput.readyToAnimate && !athlete.stance.stepping() && !state.returnInertia.active()
                 && athlete.stance.baseShift().length() < 0.02f
                 && (athlete.stance.mismatch() < 0.04f || athlete.active.secondsActive() > settings.activeReturnTimeout)) {
                 // O guiado parte do corpo de agora (juntas e pelve) e vai a

@@ -48,8 +48,8 @@ struct ActiveBodySettings3D {
     // Ajuda de jogo: aceleracao maxima no plano que o que o chao nao deu pode
     // receber de fora (m/s2), so com pe apoiado. 0 desliga.
     float gameplayAssistAcceleration = 4.0f;
-    // A ajuda de jogo cresce com a velocidade do plano ate esta (m/s);
-    // parado ela e zero.
+    // A ajuda de jogo cresce com a velocidade pedida pelo jogador ate esta
+    // (m/s); parado ela e zero.
     float assistFullSpeed = 4.0f;
     // Vindo do fisico pleno (que segurava o corpo com a ajuda na pelve): uma
     // ajuda de passagem no plano que comeca neste teto (m/s2) e some no tempo
@@ -94,6 +94,9 @@ struct ActiveBodyTarget3D {
     const std::vector<Vec3>* coordinates = nullptr;
     Vec3 rootPosition;
     Quaternion rootOrientation;
+    // A velocidade que o jogador pede (m/s, no plano): a ajuda de jogo cresce
+    // com ela (a capsula indo atras da base nao conta como andar).
+    float intendedSpeed = 0.0f;
 };
 
 struct ActiveBodyOutput3D {
