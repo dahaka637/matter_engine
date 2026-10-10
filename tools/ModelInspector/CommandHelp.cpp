@@ -47,6 +47,10 @@ COMANDOS
               --clipes a,b  --amostras 24 (folha de lado: postura.png)
   pesos       os pesos do skin dos vertices perto de um ponto (na ligacao): --perto x,y,z
               --raio 0.02 --parte calcao, ou --triangulos T2174 (os vertices dos triangulos que o "avesso" mostra)
+  quadros     uma gravacao do jogo desenhada com o jogador de verdade (folha de quadros):
+              --dump <arquivo> (MatterLocomotionProbe --dump, harness XPOSEDUMP, MatterAthleteProbe)
+              --cenario <nome|indice>  --instantes t0,t1 | --de A --ate B --quadros K
+              --seguir 0|1  --distancia <m>  --colunas C  (bola amarela; vermelha no toque)
   exportar-jogo  o jogador para o jogo (o personagem do laboratorio): o perfil fisico
               medido no corpo novo (ancoras, links e colisores), a pele e o atlas
               --destino <pasta> (assets/characters/football_player troca o do jogo)

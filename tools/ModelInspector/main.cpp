@@ -41,6 +41,7 @@ int main(int argc, char** argv) {
     if (command == "uniforme") return runUniform(*context, line);
     if (command == "postura") return runPosture(*context, line);
     if (command == "pesos") return runWeights(*context, line);
+    if (command == "quadros") return runFrames(*context, line);
     std::cerr << "comando desconhecido: " << command << " (MatterModelInspector ajuda)\n";
     return 2;
 }

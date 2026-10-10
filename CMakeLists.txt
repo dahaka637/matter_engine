@@ -723,6 +723,7 @@ add_executable(MatterModelInspector
     tools/ModelInspector/CommandPaint.cpp
     tools/ModelInspector/CommandExport.cpp
     tools/ModelInspector/CommandHelp.cpp
+    tools/ModelInspector/CommandFrames.cpp
 )
 target_link_libraries(MatterModelInspector PRIVATE MatterModelingRig)
 

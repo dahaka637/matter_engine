@@ -480,6 +480,16 @@ SkeletonPose sampleGameRigPose(const RagdollCharacter3D& character, const GameRi
             if (character.visualBones[v].kind != RagdollVisualBone3D::Kind::Finger)
                 visualRotation[v] = character.visualBones[v].restRotation;
     }
+    return gameRigPoseFromLinks(character, rig, links, visualRotation, inPlace);
+}
+
+SkeletonPose gameRigPoseFromLinks(const RagdollCharacter3D& character, const GameRig& rig,
+    const RagdollAnimationPose3D& links, std::span<const Quaternion> visualRotationIn, bool inPlace) {
+    std::vector<Quaternion> visualRotation(visualRotationIn.begin(), visualRotationIn.end());
+    if (visualRotation.size() != character.visualBones.size()) {
+        visualRotation.resize(character.visualBones.size());
+        for (std::size_t v = 0; v < visualRotation.size(); ++v) visualRotation[v] = character.visualBones[v].restRotation;
+    }
     const Skeleton& skeleton = rig.skeleton;
     SkeletonPose pose;
     pose.joints.resize(skeleton.joints.size());

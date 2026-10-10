@@ -44,5 +44,6 @@ int runExport(const ModelContext& context, const CommandLine& line);
 int runUniform(const ModelContext& context, const CommandLine& line);
 int runPosture(const ModelContext& context, const CommandLine& line);
 int runWeights(const ModelContext& context, const CommandLine& line);
+int runFrames(const ModelContext& context, const CommandLine& line);
 
 } // namespace MatterEngine::ModelInspector

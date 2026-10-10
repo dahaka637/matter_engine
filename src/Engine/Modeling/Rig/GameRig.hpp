@@ -95,6 +95,12 @@ enum class RigHandPose : std::uint8_t { Bind, Relaxed, Open, Fist };
 // O mesmo com a mao pedida (as duas maos).
 [[nodiscard]] SkeletonPose sampleGameRigPose(const RagdollCharacter3D& character, const GameRig& rig,
     const AnimationClip3D* clip, float timeSeconds, RigHandPose hand, bool inPlace = true);
+// A pose a partir dos links fisicos ja postos (no espaco do modelo do jogo: a
+// pelve do repouso na origem, o chao em -standingRootHeightMeters) e do giro
+// de cada osso visual desde a ligacao (vazio = o repouso do jogo). E o que
+// as folhas de quadros usam para desenhar uma gravacao do jogo.
+[[nodiscard]] SkeletonPose gameRigPoseFromLinks(const RagdollCharacter3D& character, const GameRig& rig,
+    const RagdollAnimationPose3D& links, std::span<const Quaternion> visualRotation, bool inPlace = false);
 
 // Uma pose com os dedos (polegar incluido) da mao do jogo: o giro de cada um
 // na mao, como no jogo; o resto fica como esta (os testes de dobra partem da
