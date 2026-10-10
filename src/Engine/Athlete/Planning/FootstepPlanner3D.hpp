@@ -68,6 +68,15 @@ struct FootstepSettings3D {
     // A saida do apoio: o balanco parte com a velocidade que o pe tinha (o do
     // estilo ja anda) e a diferenca some neste tempo (s).
     float liftBlendSeconds = 0.10f;
+    // O alcance macio no comeco do balanco (fracoes do comprimento da perna;
+    // ver athleteSoftReach3D): o clipe estica a perna inteira logo depois de
+    // sair do chao, e o pe que sai um pouco atras dele travava o joelho reto
+    // num tick so. Do alcance da saida (ou de swingSoftReachStart, o maior) a
+    // perna chega no maximo perto de swingSoftReachEnd; a ajuda some na
+    // metade do balanco (o pouso fica como o estilo).
+    bool swingSoftReach = true;
+    float swingSoftReachStart = 0.96f;
+    float swingSoftReachEnd = 0.99f;
     // O pouso macio: perto dele o pe anda no plano no maximo a
     // landingDeceleration (m/s2) vezes o tempo que falta (nunca menos que
     // landingMinimumSpeed m/s).
@@ -186,6 +195,8 @@ private:
         Vec3 styleVelocity;
         bool haveHistory = false;
         Vec3 liftVelocity;
+        // O alcance da perna na saida do apoio (fracao do comprimento).
+        float liftReach = 0.0f;
         // Passo (acomodacao, arrancada, pouso no ar): o tempo, a duracao, a
         // altura do arco e de onde.
         float stepTime = 0.0f;

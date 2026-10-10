@@ -63,6 +63,11 @@ Vec3 solveAthleteLeg3D(const RagdollProfile3D& profile, const AthleteLegs3D& leg
     std::vector<Vec3>& coordinates, Vec3 rootPosition, Quaternion rootOrientation, Vec3 ankleWorld, Vec3 kneeWorld,
     Quaternion footWorld);
 
+// O alcance macio (soft IK), em fracoes do comprimento da perna: ate `start`
+// a distancia do quadril ao tornozelo fica; dai ela se aproxima de `end` sem
+// nunca passar, numa curva sem quina (o joelho nao estala reto).
+[[nodiscard]] float athleteSoftReach3D(float reach, float start, float end);
+
 // Onde a perna esta: tornozelo, para onde o joelho aponta e o pe (mundo).
 void athleteLegState3D(const RagdollProfile3D& profile, const AthleteLegs3D& legs, int side,
     const std::vector<Vec3>& coordinates, Vec3 rootPosition, Quaternion rootOrientation, Vec3& ankle, Vec3& knee,

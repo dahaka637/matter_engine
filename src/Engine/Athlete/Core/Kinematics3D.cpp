@@ -375,6 +375,13 @@ Vec3 solveAthleteLeg3D(const RagdollProfile3D& profile, const AthleteLegs3D& leg
     return pose.linkPositions[footIndex] + pose.linkOrientations[footIndex].rotate(legs.ankleInFoot[s]);
 }
 
+float athleteSoftReach3D(float reach, float start, float end) {
+    if (end <= start) return std::min(reach, end);
+    if (reach <= start) return reach;
+    const float width = end - start;
+    return start + width * (1.0f - std::exp(-(reach - start) / width));
+}
+
 void athleteLegState3D(const RagdollProfile3D& profile, const AthleteLegs3D& legs, int side,
     const std::vector<Vec3>& coordinates, Vec3 rootPosition, Quaternion rootOrientation, Vec3& ankle, Vec3& knee,
     Quaternion& foot) {

@@ -89,7 +89,11 @@ void FootstepPlanner3D::lock(int side, Vec3 position, Quaternion orientation) {
 void FootstepPlanner3D::startOffset(int side, FootMode3D mode, const FootstepStyle3D& style) {
     Foot& foot = m_feet[static_cast<std::size_t>(side)];
     const std::size_t s = static_cast<std::size_t>(side);
-    foot.offset = foot.position - style.position[s];
+    // (A diferenca para o estilo de antes deste tick: o pe ainda nao andou
+    // neste tick e o estilo ja - medindo do estilo de agora, o primeiro tick
+    // perdia o passo do estilo e o pe ficava para tras de uma vez.)
+    foot.offset = foot.position - (foot.haveHistory ? foot.stylePrevious : style.position[s]);
+    foot.liftReach = reach(side, style);
     foot.offsetYaw = athleteWrapAngle3D(athleteFootYaw3D(m_geometry, side, foot.orientation)
         - athleteFootYaw3D(m_geometry, side, style.orientation[s]));
     foot.progress = 0.0f;
@@ -323,6 +327,27 @@ std::array<FootTarget3D, 2> FootstepPlanner3D::plan(const FootstepStyle3D& style
                 foot.position = { foot.position.x + step.x, foot.position.y + step.y, wanted.z };
             }
             foot.orientation = (athleteYawRotation3D(foot.offsetYaw * keep) * style.orientation[s]).normalized();
+            if (settings.swingSoftReach) {
+                // O alcance macio na perna que ficou para tras (no rumo do
+                // movimento): o tornozelo vem para o quadril, numa curva sem
+                // quina, o que passar do alcance. Na frente do quadril (o
+                // pouso) nada muda.
+                const Vec3 hip = style.rootPosition + style.rootOrientation.rotate(m_legs.hipInPelvis[s]);
+                const float length = std::max(0.1f, m_legs.thighLength[s] + m_legs.shinLength[s]);
+                const Vec3 ankle = foot.position + foot.orientation.rotate(m_legs.ankleInFoot[s]);
+                const float distance = (ankle - hip).length();
+                const float end = settings.swingSoftReachEnd;
+                const float start = std::min(std::max(settings.swingSoftReachStart, foot.liftReach), end - 0.004f);
+                const float soft = athleteSoftReach3D(distance / length, start, end) * length;
+                if (distance > soft + 1e-5f) {
+                    Vec3 travel { style.velocity.x, style.velocity.y, 0.0f };
+                    if (travel.lengthSquared() < 0.25f) travel = style.rootOrientation.rotate({ 1.0f, 0.0f, 0.0f });
+                    travel.z = 0.0f;
+                    const float behind = -dot(ankle - hip, travel.normalized());
+                    const float weight = smooth(behind / 0.15f);
+                    foot.position = foot.position + (ankle - hip) * ((soft / distance - 1.0f) * weight);
+                }
+            }
             out[s] = { FootMode3D::Swing, foot.position, foot.orientation };
             if (style.planted[s] && (foot.styleSwung || remaining < 0.0f) && (foot.progress >= 1.0f || !foot.styleSwung)) {
                 // O pouso do estilo (ou ele parou de andar com o pe no ar).

@@ -96,6 +96,25 @@ apoiados, que somam zero.
   - Numa base aberta, a volta ao padrão espera 1,2 s, e a inércia leva os pés
     ao lugar do clipe (alguns centímetros em 0,4 s).
 
+## Novo controle, plano v2 — Fase B: o joelho no fim da pisada (10/10/2026, noite)
+
+- **A origem (medida na sonda, `XJOELHO`):** com as pegadas, o joelho
+  travava reto no primeiro tick do balanço (27° → 3,6° num tick, 2788 graus/s
+  correndo contra 927 do clipe) e ficava reto ~0,08 s. O balanço perdia o
+  passo do estilo no primeiro tick, e o clipe estica a perna inteira logo
+  depois de sair do chão; o pé um pouco atrás dele passava do alcance.
+- **`FootstepPlanner3D`:** a diferença para o estilo na saída é medida do
+  estilo do tick anterior; o alcance macio na perna que ficou para trás
+  (`swingSoftReach`, de 0,96 ou do alcance da saída até 0,99, só com o pé
+  atrás do quadril no rumo do movimento). `athleteSoftReach3D` no
+  `Core/Kinematics3D`.
+- **Resultado:** pico de esticar com as pegadas: andando 376, trotando 527,
+  correndo 1198, sprint 1332 graus/s (antes 622/904/2788/3284; o clipe
+  421/400/927/1124). O pé apoiado continua firme. Conferido em folhas de
+  lado, antes e depois.
+- **Sonda:** a medida do joelho no resumo, cenários `anda` e `trota`, e os
+  contratos do joelho (até 1,4× o clipe).
+
 ## Novo controle, plano v2 — Fase A: o Ativo fora do padrão (10/10/2026, noite)
 
 Depois do teste do usuário no laboratório (quase tudo piorou), o rumo é o

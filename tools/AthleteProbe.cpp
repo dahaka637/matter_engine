@@ -18,6 +18,7 @@
 #include "Engine/Physics/PhysicsEngine3D.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -84,6 +85,9 @@ std::vector<Scenario> scenarios() {
     std::vector<Scenario> list;
     list.push_back({ "parado", 3.0f, [](float) { return Keys {}; } });
     list.push_back({ "arranca", 3.0f, [](float t) { Keys k; k.forward = t > 0.3f ? 1.0f : 0.0f; return k; } });
+    // (O analogico pela metade e por um terco: o trote e o andar.)
+    list.push_back({ "anda", 3.5f, [](float t) { Keys k; k.forward = t > 0.3f ? 0.33f : 0.0f; return k; } });
+    list.push_back({ "trota", 3.5f, [](float t) { Keys k; k.forward = t > 0.3f ? 0.5f : 0.0f; return k; } });
     list.push_back({ "sprint", 4.0f, [](float t) { Keys k; k.forward = t > 0.3f ? 1.0f : 0.0f; k.sprint = true; return k; } });
     list.push_back({ "inverte", 4.0f, [](float t) {
         Keys k;
@@ -366,6 +370,12 @@ struct Metrics {
     int crossings = 0;
     // Os modos por onde passou ("animado>ativo>volta>animado") e o do fim.
     std::string trail;
+    // O joelho: a maior velocidade de esticar (graus/s) no modo padrao, no
+    // corpo e no alvo (a pose), e a maior aceleracao angular dele (graus/s2)
+    // no corpo - o estalo da perna que estica de uma vez.
+    float peakKneeExtension = 0.0f;
+    float peakKneeExtensionTarget = 0.0f;
+    float peakKneeAcceleration = 0.0f;
     // O quanto a pelve andou no plano (m), e as idas ao fisico depois de ja
     // ter voltado uma vez ao padrao (a recaida).
     float travel = 0.0f;
@@ -449,10 +459,25 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
     const RagdollHandle3D handle = scene->createRagdoll(profile, spawn);
     RagdollState3D bodyState = scene->ragdollState(handle);
     std::size_t leftFoot = profile.links.size(), rightFoot = profile.links.size();
+    std::array<std::size_t, 2> thighs { profile.links.size(), profile.links.size() };
+    std::array<std::size_t, 2> shins { profile.links.size(), profile.links.size() };
     for (std::size_t i = 0; i < profile.links.size(); ++i) {
         if (profile.links[i].id == "LeftFoot") leftFoot = i;
         if (profile.links[i].id == "RightFoot") rightFoot = i;
+        if (profile.links[i].id == "LeftThigh") thighs[0] = i;
+        if (profile.links[i].id == "RightThigh") thighs[1] = i;
+        if (profile.links[i].id == "LeftShin") shins[0] = i;
+        if (profile.links[i].id == "RightShin") shins[1] = i;
     }
+    // A dobra do joelho (graus): o giro da canela em relacao a coxa, a partir
+    // da pose de ligacao (pernas retas).
+    const auto kneeFlexion = [&](std::size_t side, Quaternion thigh, Quaternion shin) {
+        const Quaternion a = (thigh * profile.links[thighs[side]].modelOrientation.conjugate()).normalized();
+        const Quaternion b = (shin * profile.links[shins[side]].modelOrientation.conjugate()).normalized();
+        const Quaternion relative = (a.conjugate() * b).normalized();
+        return 2.0f * std::acos(std::clamp(std::abs(relative.w), 0.0f, 1.0f)) * 57.29578f;
+    };
+    std::array<float, 2> kneeBefore { -1.0f, -1.0f }, kneeTargetBefore { -1.0f, -1.0f }, kneeRateBefore {};
     AthleteState3D athlete;
     LegacyAthleteState3D& legacy = athlete.legacy;
     legacy.guideFacingYawRadians = 0.0f;
@@ -758,6 +783,55 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
             std::printf("\n");
         }
         // Medidas.
+        // O joelho no modo padrao (no corpo e no alvo).
+        if (thighs[0] < bodyState.links.size() && thighs[1] < bodyState.links.size()) {
+            const bool animatedMode = legacy.bodyMode == LegacyBodyMode3D::Animated;
+            for (std::size_t side = 0; side < 2; ++side) {
+                const float flexion = kneeFlexion(side, bodyState.links[thighs[side]].orientation,
+                    bodyState.links[shins[side]].orientation);
+                const bool havePose = legacy.animationPose.linkOrientations.size() == profile.links.size();
+                const float target = havePose ? kneeFlexion(side, legacy.animationPose.linkOrientations[thighs[side]],
+                    legacy.animationPose.linkOrientations[shins[side]]) : -1.0f;
+                const float rate = kneeBefore[side] >= 0.0f ? (flexion - kneeBefore[side]) / Dt : 0.0f;
+                const float targetRate = kneeTargetBefore[side] >= 0.0f && target >= 0.0f
+                    ? (target - kneeTargetBefore[side]) / Dt : 0.0f;
+                const float acceleration = (rate - kneeRateBefore[side]) / Dt;
+                if (animatedMode && t > 0.5f && kneeBefore[side] >= 0.0f) {
+                    metrics.peakKneeExtension = std::max(metrics.peakKneeExtension, -rate);
+                    metrics.peakKneeExtensionTarget = std::max(metrics.peakKneeExtensionTarget, -targetRate);
+                    metrics.peakKneeAcceleration = std::max(metrics.peakKneeAcceleration, std::abs(acceleration));
+                }
+                if (std::getenv("XJOELHO") && animatedMode && (std::string(std::getenv("XJOELHO")) == "todos"
+                        || -rate > std::atof(std::getenv("XJOELHO")) || -targetRate > std::atof(std::getenv("XJOELHO")))) {
+                    const DefaultLocomotionOutput3D& o = legacy.defaultLocomotion.output();
+                    const float reachNow = athlete.legSynthesis.reachError[side];
+                    // (O alcance do alvo do pe e o do pe do estilo: quadril ao
+                    // tornozelo / comprimento da perna.)
+                    float reachTarget = 0.0f, reachStyle = 0.0f, behind = 0.0f;
+                    const AthleteLegs3D& legs = athlete.footsteps.legs();
+                    if (legs.valid && !o.pose.linkPositions.empty()) {
+                        const Vec3 hip = o.rootPosition + o.rootOrientation.rotate(legs.hipInPelvis[side]);
+                        const float length = legs.thighLength[side] + legs.shinLength[side];
+                        const Vec3 ankleTarget = athlete.footTargets[side].position
+                            + athlete.footTargets[side].orientation.rotate(legs.ankleInFoot[side]);
+                        const Vec3 ankleStyle = o.pose.linkPositions[legs.foot[side]]
+                            + o.pose.linkOrientations[legs.foot[side]].rotate(legs.ankleInFoot[side]);
+                        reachTarget = (ankleTarget - hip).length() / length;
+                        reachStyle = (ankleStyle - hip).length() / length;
+                        const Vec3 forward = o.rootOrientation.rotate({ 1.0f, 0.0f, 0.0f });
+                        behind = (ankleStyle.x - ankleTarget.x) * forward.x + (ankleStyle.y - ankleTarget.y) * forward.y;
+                    }
+                    std::printf("  t %.3f %c %c%s joelho %.1f alvo %.1f | vel %.0f alvo %.0f graus/s | sai %.3f pousa %.3f | erro %.3f | alcance alvo %.3f estilo %.3f | atras do estilo %.3f\n",
+                        t, side == 0 ? 'E' : 'D', settings.footstepLocomotion
+                            ? "FLSP"[static_cast<int>(athlete.footTargets[side].mode)] : (o.footPlanted[side] ? 'A' : 'B'),
+                        o.footPlanted[side] ? "*" : " ", flexion, target, rate, targetRate, o.secondsToLiftoff[side],
+                        o.secondsToTouchdown[side], reachNow, reachTarget, reachStyle, behind);
+                }
+                kneeRateBefore[side] = kneeBefore[side] >= 0.0f ? rate : 0.0f;
+                kneeBefore[side] = flexion;
+                kneeTargetBefore[side] = target;
+            }
+        }
         // Manejo novo: as pernas nunca se cruzam no gesto (o pe que joga do
         // outro lado do de apoio, com os dois lado a lado).
         if (settings.newBallHandling && athlete.ballHandling.gesture().active() && leftFoot < bodyState.links.size()
@@ -876,6 +950,8 @@ void printMetrics(const Scenario& scenario, const Metrics& metrics, bool footste
         metrics.requests, metrics.touches, metrics.ballSpeedAfter);
     std::printf("%-18s   andou %.2f m, recaidas %d, fim %s (%s)\n", "", metrics.travel, metrics.relapses,
         modeName(metrics.finalMode), metrics.trail.c_str());
+    std::printf("%-18s   joelho esticando max %.0f graus/s (alvo %.0f), acel max %.0f graus/s2\n", "",
+        metrics.peakKneeExtension, metrics.peakKneeExtensionTarget, metrics.peakKneeAcceleration);
     std::printf("%-18s   apoio %5.2f / %5.2f / %5.2f m/s%s", "", percentile(metrics.plantedSlide, 0.5f),
         percentile(metrics.plantedSlide, 0.95f), percentile(metrics.plantedSlide, 1.0f), footsteps ? "" : "\n");
     if (!metrics.outcomes.empty())
@@ -968,6 +1044,17 @@ int runChecks(const ProbeContext& context) {
         expect(percentile(m.plantedSlide, 0.95f) < 0.4f && percentile(m.plantedSlide, 1.0f) < 1.0f, what, m);
         std::snprintf(what, sizeof(what), "pegadas, %s: sem salto de pose (%.3f m)", name, m.worstPoseJump);
         expect(m.worstPoseJump < 0.03f, what, m);
+    }
+    // O joelho no fim da pisada (plano v2, fase B): com as pegadas, a perna
+    // que sai do chao estica no ritmo do clipe - nada de travar reta num tick
+    // (antes: 2788 graus/s correndo contra 927 do clipe).
+    for (const char* name : { "anda", "trota", "arranca", "sprint" }) {
+        const Metrics clip = run(name, settings, false);
+        const Metrics m = run(name, footsteps, false);
+        char what[192];
+        std::snprintf(what, sizeof(what), "pegadas, %s: o joelho estica como no clipe (%.0f contra %.0f graus/s)", name,
+            m.peakKneeExtension, clip.peakKneeExtension);
+        expect(m.peakKneeExtension < 1.4f * clip.peakKneeExtension + 50.0f, what, m);
     }
     {
         const Metrics m = run("zigue", footsteps, false);
