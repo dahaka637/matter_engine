@@ -196,6 +196,26 @@ std::vector<Scenario> scenarios() {
         list.push_back(s);
     }
     {
+        // A bola atras e a direita, tocada para a direita (o lado de fora, a
+        // perna para tras e para fora) e atras, tocada para tras (calcanhar).
+        Scenario s { "atras_fora", 2.2f, [](float t) {
+            Keys k;
+            if (t >= 0.6f && t < 0.6f + Dt) { k.ball = BallActionKind3D::Dribble; k.power = 0.4f; k.left = -1.0f; }
+            return k; } };
+        s.ball = true;
+        s.ballStart = { -0.34f, -0.38f, 0.11f };
+        list.push_back(s);
+    }
+    {
+        Scenario s { "atras_tras", 2.2f, [](float t) {
+            Keys k;
+            if (t >= 0.6f && t < 0.6f + Dt) { k.ball = BallActionKind3D::Dribble; k.power = 0.4f; k.forward = -1.0f; }
+            return k; } };
+        s.ball = true;
+        s.ballStart = { -0.50f, -0.08f, 0.11f };
+        list.push_back(s);
+    }
+    {
         Scenario s { "chute_lado", 2.5f, [](float t) {
             Keys k;
             if (t >= 0.6f && t < 0.6f + Dt) { k.ball = BallActionKind3D::Shot; k.power = 0.7f; }
@@ -867,7 +887,8 @@ int runChecks(const ProbeContext& context) {
     AthleteRuntimeSettings3D handling = footsteps;
     handling.newBallHandling = true;
     for (const char* name : { "bola_000", "bola_045", "bola_090", "bola_135", "bola_180", "bola_225", "bola_270",
-             "bola_315", "toque_parado", "toque_lado", "chute_parado", "chute_lado", "bola_vindo" }) {
+             "bola_315", "toque_parado", "toque_lado", "chute_parado", "chute_lado", "bola_vindo", "atras_fora",
+             "atras_tras" }) {
         const Metrics m = run(name, handling, false);
         const bool waits = std::string(name) == "bola_vindo";
         char what[192];

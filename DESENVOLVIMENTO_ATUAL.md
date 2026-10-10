@@ -96,6 +96,14 @@ apoiados, que somam zero.
   - Numa base aberta, a volta ao padrão espera 1,2 s, e a inércia leva os pés
     ao lugar do clipe (alguns centímetros em 0,4 s).
 
+## Novo controle do atleta: Etapa 5, parte 3 — bola atrás (10/10/2026)
+
+- **Superfícies com a bola atrás:** para trás, o calcanhar; para o lado de
+  fora da perna, o lado de fora do pé (perna para trás e para fora); para a
+  frente ou para dentro, a sola puxando.
+- **Cenários `atras_fora` e `atras_tras`:** tocam em 1 tick, pernas ~100
+  m/s². Entram nos contratos do `--teste`, tudo passa.
+
 ## Novo controle do atleta: Etapa 5, parte 2 — o toque correndo no ritmo da passada (10/10/2026)
 
 - **Janelas da passada no planejador:** quando cada pé sai do chão e

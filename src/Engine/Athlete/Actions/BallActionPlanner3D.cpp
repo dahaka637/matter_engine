@@ -115,9 +115,15 @@ BallTouchSurface3D chooseBallSurface3D(int side, Vec3 push, Vec3 bodyForward, Ba
     // O angulo do empurrao no corpo, + para fora da perna que joga.
     const float out = side == 0 ? 1.0f : -1.0f;
     const float angle = signedAngle(bodyForward, push) * out;
-    // A bola atras do corpo: para tras, de calcanhar; para a frente, a sola
-    // por cima dela, trazendo-a.
-    if (ballBehind) return std::abs(angle) > 2.0f ? BallTouchSurface3D::Heel : BallTouchSurface3D::Sole;
+    // A bola atras do corpo: para tras, de calcanhar; para a frente (ou para
+    // dentro), a sola por cima dela, trazendo-a.
+    // (Para o lado de fora da perna, o lado de fora do pe: a perna vai para
+    // tras e para fora.)
+    if (ballBehind) {
+        if (std::abs(angle) > 2.0f) return BallTouchSurface3D::Heel;
+        if (angle > 0.6f) return BallTouchSurface3D::Outside;
+        return BallTouchSurface3D::Sole;
+    }
     if (kind == BallActionKind3D::Shot) {
         // Com efeito: curva para o lado de dentro do pe, a parte de dentro;
         // para o de fora, a trivela.
