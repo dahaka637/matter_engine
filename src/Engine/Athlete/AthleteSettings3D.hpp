@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Engine/Athlete/Body/ActiveBodyController3D.hpp"
+#include "Engine/Athlete/Body/ActiveStance3D.hpp"
 #include "Engine/Character/BallControl3D.hpp"
 
 namespace MatterEngine {
@@ -63,6 +65,29 @@ struct AthleteRuntimeSettings3D {
     float defaultSprintForwardSpeed = 7.8f;
     float defaultSprintSideSpeed = 5.2f;
     float defaultSprintBackwardSpeed = 5.2f;
+    // Corpo Ativo (o estado intermediario, Etapa 2 do rework): ligado, as
+    // pancadas leves, a parede e o membro no mundo levam ao Ativo (e nao ao
+    // fisico pleno) e a volta do fisico passa por ele. Impulso (N.s) de algo
+    // que se move a partir do qual o corpo vai ao Ativo e a partir do qual vai
+    // direto ao fisico pleno; a batida da capsula (m/s) que vai ao fisico.
+    bool activeBody = true;
+    ActiveBodySettings3D activeBodySettings;
+    ActiveStanceSettings3D activeStanceSettings;
+    float activeEnterImpulse = 1.0f;
+    float fullPhysicalImpulse = 25.0f;
+    float fullPhysicalWallImpact = 5.0f;
+    // No Ativo, o ponto de captura mais que isto fora da base (m: a pancada
+    // pede passo) leva ao fisico pleno, que da os passos de recuperacao.
+    float activeHandoverCapture = 0.06f;
+    // (Num passo de acomodacao a base e um pe so, de proposito: so uma saida
+    // grande conta.)
+    float activeHandoverCaptureStepping = 0.15f;
+    // No Ativo andando, a capsula vai atras do corpo com esta folga (m);
+    // parado, ela vai para onde a base real quer a raiz (ActiveStance3D). E a
+    // volta ao padrao com os pes ainda fora do lugar do clipe acontece depois
+    // deste tempo calmo (s): a inercia da volta os leva.
+    float activeFollowSlack = 0.10f;
+    float activeReturnTimeout = 1.2f;
     // Manejo de bola.
     float ballContactTiming = 1.0f;
     bool ballHitboxContact = true;

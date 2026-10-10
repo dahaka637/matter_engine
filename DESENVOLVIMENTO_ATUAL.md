@@ -7,6 +7,95 @@
 
 **Última atualização:** 10 de outubro de 2026
 
+## Novo controle do atleta: Etapas 0 a 2 (10/10/2026, noite)
+
+O rework segue o plano do vault (`30_Projects/matter_engine/Novo_Controle/
+Plano_Claude.md`); o diário detalhado de cada etapa fica em
+`Execucao_Claude.md`, ao lado dele.
+
+### Etapa 0: ferramentas e linha de base
+
+- **`MatterModelInspector quadros --dump <arquivo>`:** uma gravação do jogo
+  desenhada com o jogador de verdade (pele, bola, dedos do pé no chão) numa
+  folha de quadros. Lê o dump da `MatterLocomotionProbe`, do harness
+  (`XPOSEDUMP`) e da `MatterAthleteProbe`.
+- **`Modeling::gameRigPoseFromLinks`:** a pose do esqueleto a partir dos
+  links já postos (o `sampleGameRigPose` passou a usá-la, mesmo resultado).
+
+### Etapa 1: o runtime dos atletas sai do Workbench
+
+- **`src/Engine/Athlete/`:** `AthleteRuntime3D` (a API por tick),
+  `AthleteState3D`, `AthleteSettings3D` (os ajustes do laboratório num struct
+  só) e `AthleteAssets3D`.
+- **`Legacy/LegacyAthleteStep3D`:** o antigo
+  `WorkbenchApp::updateActiveRagdolls`, portado sem mudar a lógica. O
+  Workbench agora só monta o mundo e o input, chama o runtime e aplica a
+  saída.
+- **`MatterAthleteProbe`:** o mesmo runtime com o Jolt, sem janela, em
+  cenários de teclas, bola, caixas arremessadas e empurrões. Mede deslize do
+  pé, picos de aceleração, saltos de pose, modos e ajuda; grava o dump das
+  folhas. `--fisico` começa no físico, `--ativo 0|1` liga o Corpo Ativo,
+  `--teste` roda os contratos.
+- **`check-architecture`:** `Engine/Athlete` não inclui render, interface,
+  áudio, plataforma nem entrada; só o legado e a casca de migração incluem
+  os controladores antigos.
+
+### Etapa 2: Corpo Ativo (o estado físico intermediário)
+
+O corpo fica físico de verdade (gravidade, juntas, chão, colisões), com os
+músculos seguindo a pose do padrão e só os pés no chão como apoio. Nenhum
+guindaste invisível: a raiz vai ao plano por pares de força pelve↔pés
+apoiados, que somam zero.
+
+- **Módulos novos:**
+  - `Sensing/BodyObservation3D`: centro de massa, pelve, peito, pés apoiados
+    (carga, sola), pancadas de fora;
+  - `Core/Kinematics3D`: cinemática das juntas e IK analítica da perna;
+  - `Body/SupportWrench3D`: os pares pelve↔pés, cortados pelo atrito, pela
+    torção e pelo centro de pressão dentro da base dos pés;
+  - `Body/ActiveStance3D`: os pés presos onde estão no chão (IK das pernas
+    até eles). Parado, a raiz-alvo fica sobre a base real como a do clipe
+    sobre os pés dele. Mede o ponto de captura;
+  - `Body/ActiveBodyController3D`: músculos (pose e velocidade das juntas,
+    tônus por região), o servo da raiz pelos pés, a complacência na pancada,
+    o nocaute e o "pronto para voltar".
+- **Regimes:**
+  - **Animado → Ativo:** pancada de algo que se move acima de 1 N·s, parede,
+    membro no mundo (antes iam direto ao físico).
+  - **Ativo → físico total:** agarrado, carrinho, voadora, pancada acima de
+    25 N·s, ponto de captura mais de 6 cm fora da base (a pancada pede um
+    passo) ou nocaute (postura, corpo baixo, pancada acima de 32 N·s).
+  - **Físico total → Ativo:** a volta passa por ele, com uma ajuda de
+    passagem que some em 0,5 s.
+  - **Ativo → animado:** calmo e colado à pose; o guiado parte do corpo e
+    mistura até o clipe em 0,4 s (sem estalo nos pés).
+- **Laboratório** (aba Geral, LOCOMOÇÃO): "Estado intermediário (Ativo)"
+  (chave A/B), "Pancada para o físico total" e "Ajuda de jogo no Ativo",
+  só com tooltip.
+- **Medido na `MatterAthleteProbe`:**
+
+  | Cenário | Antes | Agora |
+  |---|---|---|
+  | Caixa leve (6 kg a 5 m/s) | físico 1,2 s e volta | Ativo 0,5 s → volta 0,4 s → padrão; ajuda 1 N·s; pico nas pernas 76 m/s² |
+  | Caixa média (20 kg) | físico | Ativo → físico (pede passo) → Ativo |
+  | Caixa forte (60 kg a 6 m/s) | físico | Ativo → físico → Ativo → volta |
+  | Volta do físico, parado | mistura de poses | Ativo 1,2 s → volta 0,4 s → padrão; pico nas pernas 135 m/s² |
+  | Todos os outros | — | sem mudança |
+
+- **Conferido em folhas de quadros** (caixa leve, caixa média, volta do
+  físico): sem deformação nem estalo.
+- **Teste novo:** `MatterEngine.Athlete` (os contratos acima). ctest 12 de
+  14; as duas falhas são as antigas.
+- **Limitações (próximas etapas):**
+  - Os passos de equilíbrio e de acomodação no Ativo existem mas estão
+    desligados: passar o peso de um pé ao outro pela física ainda falha em
+    base larga. Por isso a pancada que pede passo vai ao físico total. Volta
+    na Etapa 3, com o planejador de pegadas.
+  - Correndo, o Ativo segue a raiz do plano com a ajuda de jogo; ainda não
+    tem pegadas próprias (Etapa 3).
+  - Numa base aberta, a volta ao padrão espera 1,2 s, e a inércia leva os pés
+    ao lugar do clipe (alguns centímetros em 0,4 s).
+
 ## Ponto de partida: rework da locomoção e do manejo de bola (10/10/2026)
 
 Estado commitado como base antes do rework completo do sistema de locomoção

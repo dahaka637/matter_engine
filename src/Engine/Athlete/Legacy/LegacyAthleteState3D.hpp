@@ -23,7 +23,9 @@ namespace MatterEngine {
 // fisico (CharacterLocomotion3D + AdaptivePhysicalCharacter3D, com os
 // motores) entra numa pancada, num pouso ou agarrado; quando o corpo assenta
 // ele volta ao padrao (Returning: a pose fisica levada ate a animada).
-enum class LegacyBodyMode3D : std::uint8_t { Animated, Physical, Returning };
+// Active (Etapa 2 do rework): o Corpo Ativo - fisico de verdade seguindo a
+// pose do modo padrao, com a ajuda so pelos pes apoiados.
+enum class LegacyBodyMode3D : std::uint8_t { Animated, Physical, Returning, Active };
 
 struct LegacyAthleteState3D {
     // Rumo da guia, separado da rotacao fisica da pelve. O idle em alerta

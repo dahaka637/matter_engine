@@ -15,6 +15,10 @@ namespace {
 // (s) - o corpo agachado vai a pose de andar enquanto ja anda.
 constexpr float GetUpHandoffHalfLife = 0.16f;
 constexpr float GetUpHandoffSeconds = 0.65f;
+// Do Ativo ao padrao: a meia-vida e a duracao da inercia (s) do corpo ate a
+// pose do clipe.
+constexpr float ActiveExitHalfLife = 0.10f;
+constexpr float ActiveExitSeconds = 0.40f;
 } // namespace
 
 void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& assets,
@@ -25,7 +29,9 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
     const CharacterLocomotionAnimations3D& clips = *assets.clips;
     const CharacterLocomotionAnimations3D& defaultClips = *assets.defaultClips;
     const RagdollState3D& body = *slot.state;
-    LegacyAthleteState3D& state = slot.athlete->legacy;
+    AthleteState3D& athlete = *slot.athlete;
+    LegacyAthleteState3D& state = athlete.legacy;
+    if (!athlete.observer.ready()) athlete.observer.prepare(profile);
     const auto groundHeight = [&](Vec3 position) { return athleteGroundHeight3D(scene, profile, position); };
     {
         // Levou carrinho: pancada de algo que se move e uma perna de quem
@@ -254,8 +260,7 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
     // Locomocao padrao: o modo do corpo do personagem controlado.
     using BodyMode = LegacyBodyMode3D;
     const bool defaultMode = settings.defaultLocomotion && command.controlled && adaptive && scene.hasCharacter();
-    {
-        const auto toPhysical = [&](const char* why) {
+    const auto toPhysical = [&](const char* why) {
             if (state.bodyMode != BodyMode::Physical) Log::info(std::string("corpo: modo fisico (") + why + ")");
             if (state.guided) {
                 // O corpo guiado ja e o fisico: so as juntas, a gravidade
@@ -311,6 +316,24 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             state.bodyModeSeconds = 0.0f;
             state.calmSeconds = 0.0f;
         };
+    // O Corpo Ativo (Etapa 2): o corpo fica fisico (gravidade, limites,
+    // chao) seguindo a pose do padrao, que continua rodando; os links saem
+    // do guiado com a velocidade da animacao.
+    const auto toActive = [&](const char* why) {
+        if (state.bodyMode != BodyMode::Active) Log::info(std::string("corpo: ativo (") + why + ")");
+        if (state.guided) {
+            scene.setRagdollGuided(slot.handle, false);
+            state.guided = false;
+        }
+        state.guidedExitLeft = 0.0f;
+        state.returnInertia.stop();
+        athlete.active.enter();
+        athlete.stance.enter();
+        state.bodyMode = BodyMode::Active;
+        state.bodyModeSeconds = 0.0f;
+        state.calmSeconds = 0.0f;
+    };
+    {
         if (!defaultMode) {
             toPhysical("padrao desligado");
         } else {
@@ -451,10 +474,31 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                     } else {
                         state.returnInertia.stop();
                     }
-                    scene.setRagdollGuided(slot.handle, true);
-                    state.guided = true;
+                    if (settings.activeBody) {
+                        // A volta pelo Corpo Ativo: o corpo fisico vai a pose
+                        // do padrao pelos musculos e pelos pes (sem mistura de
+                        // poses); quando colar nela, o guiado assume.
+                        athlete.active.enter(true);
+                        athlete.stance.enter();
+                        state.bodyMode = BodyMode::Active;
+                        // A capsula no meio dos pes: a pose do padrao poe o
+                        // centro de massa sobre a base de verdade (o fisico o
+                        // segurava com a ajuda na pelve; a capsula e so
+                        // navegacao).
+                        Vec3 base = pelvis.position;
+                        {
+                            const std::uint32_t left = athlete.observer.footLink(0);
+                            const std::uint32_t right = athlete.observer.footLink(1);
+                            if (left > 0 && right > 0 && left < body.links.size() && right < body.links.size())
+                                base = (body.links[left].position + body.links[right].position) * 0.5f;
+                        }
+                        scene.placeCharacter({ base.x, base.y, groundHeight(pelvis.position) }, assets.avatarSettings);
+                    } else {
+                        scene.setRagdollGuided(slot.handle, true);
+                        state.guided = true;
+                        state.bodyMode = BodyMode::Returning;
+                    }
                     state.guidedExitLeft = 0.0f;
-                    state.bodyMode = BodyMode::Returning;
                     state.bodyModeSeconds = 0.0f;
                     state.airSeconds = 0.0f;
                     if (handoff) {
@@ -504,16 +548,34 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                     && ((!capsule.grounded && capsule.velocity.z > 1.0f && state.airSeconds >= JumpTakeoffSeconds)
                         || (capsule.grounded && state.airSeconds > 0.25f));
                 if (capsule.grounded) state.airSeconds = 0.0f;
-                if (hit || tackleHit || airTackle || wall || wallHit || penetrating || jumped)
-                    toPhysical(grabbed ? "agarrado" : airTackle ? "voadora" : hit || tackleHit ? "pancada"
-                        : wall || wallHit ? "parede" : penetrating ? "membro no mundo" : jumped ? "pulo" : "pancada");
+                if (!settings.activeBody) {
+                    if (hit || tackleHit || airTackle || wall || wallHit || penetrating || jumped)
+                        toPhysical(grabbed ? "agarrado" : airTackle ? "voadora" : hit || tackleHit ? "pancada"
+                            : wall || wallHit ? "parede" : penetrating ? "membro no mundo" : jumped ? "pulo" : "pancada");
+                } else if (state.bodyMode == BodyMode::Active) {
+                    // No Ativo o corpo ja e fisico (encostar na parede e
+                    // contato de verdade): so o que derruba leva ao pleno.
+                    if (grabbed || tackleHit || airTackle || hitImpulse > settings.fullPhysicalImpulse)
+                        toPhysical(grabbed ? "agarrado" : airTackle ? "voadora" : "pancada forte");
+                } else if (grabbed || tackleHit || airTackle || jumped || hitImpulse > settings.fullPhysicalImpulse
+                    || control.capsuleWallImpact > settings.fullPhysicalWallImpact) {
+                    toPhysical(grabbed ? "agarrado" : airTackle ? "voadora" : tackleHit ? "pancada"
+                        : jumped ? "pulo" : hitImpulse > settings.fullPhysicalImpulse ? "pancada forte" : "parede");
+                } else if (hitImpulse > settings.activeEnterImpulse || wall || wallHit || penetrating) {
+                    toActive(hitImpulse > settings.activeEnterImpulse ? "encostao"
+                        : penetrating ? "membro no mundo" : "parede");
+                }
             }
         }
     }
-    const bool animated = defaultMode && state.bodyMode != BodyMode::Physical;
+    const bool animated = defaultMode
+        && (state.bodyMode == BodyMode::Animated || state.bodyMode == BodyMode::Returning);
+    const bool active = defaultMode && state.bodyMode == BodyMode::Active;
     if (command.controlled) {
+        // (No Ativo a capsula segue como no padrao: a mesma tabela de
+        // velocidades; ela vai atras do corpo quando ele se afasta.)
         output.controlledAnimatedSet = true;
-        output.controlledAnimated = animated;
+        output.controlledAnimated = animated || active;
     }
     // Manejo de bola (o personagem controlado): a bola mais perto, ate
     // 3 m. O pedido (mouse) sai uma vez; o drible vai para as teclas (sem
@@ -567,14 +629,14 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         // capsula vai a frente do corpo que atrasa, e o gesto nao mexe
         // nela).
         ballInput.bodyVelocity = { command.rootVelocityWorld.x, command.rootVelocityWorld.y, 0.0f };
-        ballInput.bodyVelocityValid = animated;
+        ballInput.bodyVelocityValid = animated || active;
         ballInput.contactTimingFactor = std::clamp(settings.ballContactTiming, 0.0f, 1.0f);
         ballInput.hitboxContact = settings.ballHitboxContact;
         ballInput.force = &settings.ballForce;
         ballInput.forceOnly = settings.ballForceOnly;
         ballInput.bodyYawValid = true;
-        ballInput.animatedBody = animated;
-        if (animated) {
+        ballInput.animatedBody = animated || active;
+        if (animated || active) {
             // Os pes pela animacao do modo padrao.
             const DefaultLocomotionOutput3D& feet = state.defaultLocomotion.output();
             ballInput.bodyYawRadians = feet.facingYawRadians;
@@ -687,6 +749,92 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         // (No fim, de novo sem o giro em volta da vertical: a pose ainda
         // o dava - no ar, o voo girava ate 60 graus.)
         if (state.guidedExitLeft <= 0.0f) scene.removeRagdollVerticalSpin(slot.handle);
+    }
+    if (active) {
+        // Corpo Ativo: a pose do padrao (a mesma do animado; vinda do fisico,
+        // com a inercia da volta) executada pelo corpo fisico.
+        const DefaultLocomotionInput3D input = defaultLocomotionInput();
+        state.defaultLocomotion.update(profile, defaultClips, input);
+        const DefaultLocomotionOutput3D& out = state.defaultLocomotion.output();
+        if (out.rootScripted) {
+            scene.placeCharacter({ out.tackleRootWorld.x, out.tackleRootWorld.y,
+                groundHeight(out.tackleRootWorld) }, assets.avatarSettings);
+        }
+        if (out.tackleEnded) scene.setCharacterVelocity({ out.tackleVelocity.x, out.tackleVelocity.y, 0.0f });
+        state.defaultTackling = out.tackling;
+        if (out.valid) {
+            RagdollAnimationPose3D pose = out.pose;
+            std::vector<Vec3> coordinates = out.coordinates;
+            Vec3 rootPosition = out.rootPosition;
+            Quaternion rootOrientation = out.rootOrientation;
+            if (state.returnInertia.active()) {
+                state.returnInertia.apply(coordinates, rootPosition, rootOrientation, deltaTime);
+                defaultLocomotionPose3D(profile, rootPosition, rootOrientation, coordinates, pose);
+            }
+            const Vec3 plannedRoot = rootPosition;
+            const BodyObservation3D observation = athlete.observer.observe(profile, body, deltaTime);
+            // Os pes onde estao no chao (e a acomodacao de volta a base).
+            const Vec3 capsuleVelocity = scene.characterState().velocity;
+            athlete.stance.adapt(profile, body, observation, out.footPlanted,
+                std::hypot(capsuleVelocity.x, capsuleVelocity.y), !state.returnInertia.active(),
+                settings.activeStanceSettings, deltaTime, rootPosition, rootOrientation, coordinates, pose);
+            ActiveBodyTarget3D target;
+            target.pose = &pose;
+            target.coordinates = &coordinates;
+            target.rootPosition = rootPosition;
+            target.rootOrientation = rootOrientation;
+            athlete.active.update(profile, body, observation, target, settings.activeBodySettings, deltaTime,
+                athlete.activeOutput);
+            const ActiveBodyOutput3D& activeOutput = athlete.activeOutput;
+            scene.setRagdollActiveDriveTargets(slot.handle, activeOutput.drives, true);
+            scene.setRagdollFrictionScale(slot.handle, 1.0f);
+            for (const LinkWrench3D& wrench : activeOutput.wrenches)
+                scene.applyRagdollControlLinkForce(slot.handle, wrench.link, wrench.force, wrench.torque);
+            if (activeOutput.assistForce.lengthSquared() > 1e-6f)
+                scene.applyRagdollControlRootForce(slot.handle, activeOutput.assistForce, {});
+            state.previousAnimationPose = state.animationPose.linkPositions.empty() ? pose : state.animationPose;
+            state.animationPose = pose;
+            state.physicsBlend = 1.0f;
+            // A capsula vai atras do corpo quando ele se afasta da pose do
+            // plano (pancada, parede): a pose ancora onde o corpo esta.
+            // Parado, a raiz-alvo fica sobre os pes (ActiveStance3D): a
+            // capsula vai para onde a base real a quer.
+            output.followVelocitySet = true;
+            output.followVelocityWorld = athlete.stance.baseShift().lengthSquared() > 1e-8f
+                ? navigationFollowVelocity3D(rootPosition, plannedRoot, 0.0f)
+                : navigationFollowVelocity3D(body.links.front().position, rootPosition, settings.activeFollowSlack);
+            if (activeOutput.knockout) {
+                toPhysical(("nocaute: " + activeOutput.knockoutReason).c_str());
+            } else if (!settings.activeStanceSettings.recoverySteps && !athlete.active.handingOver()
+                && athlete.stance.captureOutside()
+                    > (athlete.stance.settling() ? settings.activeHandoverCaptureStepping : settings.activeHandoverCapture)) {
+                toPhysical(("passo de equilibrio, captura " + std::to_string(athlete.stance.captureOutside()) + " m fora"
+                    + (athlete.stance.settling() ? " no passo" : "")).c_str());
+            } else if (activeOutput.readyToAnimate && !athlete.stance.settling() && !state.returnInertia.active()
+                && athlete.stance.baseShift().length() < 0.02f
+                && (athlete.stance.mismatch() < 0.04f || athlete.active.secondsActive() > settings.activeReturnTimeout)) {
+                // O guiado parte do corpo de agora (juntas e pelve) e vai a
+                // pose do padrao pela inercia da volta: sem estalo nos pes
+                // (a base do Ativo nao e a do clipe).
+                const PhysicsBodyState3D& pelvis = body.links.front();
+                state.returnCoordinates.assign(profile.links.size(), {});
+                std::vector<Vec3> velocities(profile.links.size());
+                for (std::size_t i = 1; i < profile.links.size() && i < body.joints.size(); ++i) {
+                    const auto& joint = body.joints[i].positionRadians;
+                    const auto& rate = body.joints[i].velocityRadiansPerSecond;
+                    state.returnCoordinates[i] = { joint[0], joint[1], joint[2] };
+                    velocities[i] = { rate[0], rate[1], rate[2] };
+                }
+                state.returnInertia.start(state.returnCoordinates, velocities, pelvis.position, pelvis.orientation,
+                    pelvis.linearVelocity, pelvis.angularVelocity, ActiveExitHalfLife, ActiveExitSeconds);
+                scene.setRagdollGuided(slot.handle, true);
+                state.guided = true;
+                state.bodyMode = BodyMode::Returning;
+                state.bodyModeSeconds = 0.0f;
+                Log::info("corpo: ativo -> padrao");
+            }
+        }
+        return;
     }
     if (animated) {
         // Modo padrao: a pose da animacao sobre a capsula (o corpo guiado

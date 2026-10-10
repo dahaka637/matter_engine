@@ -506,6 +506,12 @@ private:
     // fisico (comparacao). m_controlledAnimated: o controlado esta no padrao
     // neste tick (a capsula usa a aceleracao dele).
     bool m_defaultLocomotion = true;
+    // Corpo Ativo (10/10, rework Etapa 2): o estado intermediario - os
+    // encostoes, a parede e a volta do fisico passam por ele. A pancada (N.s)
+    // que vai direto ao fisico total e a ajuda de jogo dele (m/s2).
+    bool m_activeBody = true;
+    float m_fullPhysicalImpulse = 25.0f;
+    float m_activeAssistAcceleration = 4.0f;
     // Transicoes adaptativas da locomocao padrao (05/10): giro da pelve com
     // aceleracao limitada, clipes misturados pelo movimento real e amostragem
     // suave. Desligada: o modo de antes (comparacao).

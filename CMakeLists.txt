@@ -475,6 +475,11 @@ add_library(MatterEngine STATIC
     src/Engine/Animation/RagdollVisualPose3D.cpp
     src/Engine/Athlete/AthleteAssets3D.cpp
     src/Engine/Athlete/AthleteRuntime3D.cpp
+    src/Engine/Athlete/Body/ActiveBodyController3D.cpp
+    src/Engine/Athlete/Body/ActiveStance3D.cpp
+    src/Engine/Athlete/Core/Kinematics3D.cpp
+    src/Engine/Athlete/Body/SupportWrench3D.cpp
+    src/Engine/Athlete/Sensing/BodyObservation3D.cpp
     src/Engine/Athlete/Legacy/LegacyAthleteStep3D.cpp
     src/Engine/Character/BiomechanicalBipedExperiment3D.cpp
     src/Engine/Character/CharacterControlApplication3D.cpp
@@ -737,6 +742,10 @@ target_link_libraries(MatterAthleteProbe PRIVATE MatterEngine)
 target_compile_definitions(MatterAthleteProbe PRIVATE
     MATTERENGINE_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets"
 )
+if(MATTERENGINE_BUILD_TESTS)
+    # Os contratos do runtime dos atletas (Corpo Ativo, volta do fisico...).
+    add_test(NAME MatterEngine.Athlete COMMAND MatterAthleteProbe --teste)
+endif()
 
 add_executable(MatterBallPreview tools/BallTouchPreview.cpp)
 target_link_libraries(MatterBallPreview PRIVATE MatterEngine)

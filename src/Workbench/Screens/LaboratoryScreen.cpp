@@ -2837,6 +2837,22 @@ void WorkbenchApp::drawLaboratoryUi() {
                             ImGui::SetNextItemWidth(-1.0f);
                             if (ImGui::Combo("##LocomotionMode", &mode, modes, 2)) m_defaultLocomotion = mode == 0;
                             hint("Padrão: o corpo segue a animação (com massa) e vai ao físico numa pancada, parede ou queda, voltando quando assenta. Físico total: sempre pelos músculos e pelas ajudas.");
+                            ImGui::BeginDisabled(!m_defaultLocomotion);
+                            ImGui::Checkbox("Estado intermediário (Ativo)", &m_activeBody);
+                            hint("Encostões, parede e a volta do físico passam por um corpo físico de verdade, com os músculos seguindo a animação e só os pés no chão como apoio; só o que derruba vai ao físico total. Desligado: direto ao físico, como antes.");
+                            ImGui::BeginDisabled(!m_activeBody);
+                            ImGui::TextUnformatted("Pancada para o físico total");
+                            ImGui::SetNextItemWidth(-1.0f);
+                            ImGui::SliderFloat("##FullPhysicalImpulse", &m_fullPhysicalImpulse, 5.0f, 60.0f, "%.0f N.s",
+                                ImGuiSliderFlags_AlwaysClamp);
+                            hint("Uma pancada acima disto vai direto ao físico total. Abaixo, o Ativo segura; se ela pedir um passo, ele passa ao físico total.");
+                            ImGui::TextUnformatted("Ajuda de jogo no Ativo");
+                            ImGui::SetNextItemWidth(-1.0f);
+                            ImGui::SliderFloat("##ActiveAssist", &m_activeAssistAcceleration, 0.0f, 10.0f, "%.1f m/s2",
+                                ImGuiSliderFlags_AlwaysClamp);
+                            hint("Correndo no Ativo, o que o chão não deu para seguir a animação pode vir de fora, até esta aceleração (parado, nada). 0: só os pés.");
+                            ImGui::EndDisabled();
+                            ImGui::EndDisabled();
                             // (A locomocao fisica v2 e o "tentar se manter em pe no
                             // impacto" viraram o padrao - as caixas sairam, pedido do
                             // usuario, 06/10.)
