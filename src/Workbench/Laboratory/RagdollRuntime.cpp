@@ -668,6 +668,7 @@ AthleteRuntimeSettings3D WorkbenchApp::athleteRuntimeSettings() const {
     settings.activeBody = m_activeBody;
     settings.fullPhysicalImpulse = m_fullPhysicalImpulse;
     settings.activeBodySettings.gameplayAssistAcceleration = m_activeAssistAcceleration;
+    settings.footstepLocomotion = m_footstepLocomotion;
     return settings;
 }
 

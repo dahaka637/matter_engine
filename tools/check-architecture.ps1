@@ -59,6 +59,11 @@ $checks = @(
             "-g", "!src/Engine/Athlete/AthleteSettings3D.hpp", "-g", "!src/Engine/Athlete/AthleteAssets3D.*")
     }
     @{
+        Name = "Atletas: planejamento e sintese trabalham com dados (sem a cena fisica nem o Jolt)"
+        Arguments = @("-n", '#include "Engine/Physics/(PhysicsScene3D|PhysicsEngine3D)|Jolt', "src/Engine/Athlete/Planning",
+            "src/Engine/Athlete/Synthesis")
+    }
+    @{
         Name = "Identidade antiga e prototipos removidos nao podem retornar"
         Arguments = @("-n", "SoccerFall|SOCCERFALL|LegacyFootworkRig|PhysicalBiped|AnimatorScreen", "CMakeLists.txt", "src", "tests")
     }

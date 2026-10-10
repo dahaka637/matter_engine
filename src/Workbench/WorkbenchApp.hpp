@@ -512,6 +512,10 @@ private:
     bool m_activeBody = true;
     float m_fullPhysicalImpulse = 25.0f;
     float m_activeAssistAcceleration = 4.0f;
+    // Locomocao por pegadas (10/10, Etapa 3): no modo padrao os pes apoiados
+    // ficam onde pousaram (o clipe vira estilo). Desligada ate o usuario
+    // aprovar (a chave A/B).
+    bool m_footstepLocomotion = false;
     // Transicoes adaptativas da locomocao padrao (05/10): giro da pelve com
     // aceleracao limitada, clipes misturados pelo movimento real e amostragem
     // suave. Desligada: o modo de antes (comparacao).

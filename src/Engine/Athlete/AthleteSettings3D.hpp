@@ -2,6 +2,7 @@
 
 #include "Engine/Athlete/Body/ActiveBodyController3D.hpp"
 #include "Engine/Athlete/Body/ActiveStance3D.hpp"
+#include "Engine/Athlete/Planning/FootstepPlanner3D.hpp"
 #include "Engine/Character/BallControl3D.hpp"
 
 namespace MatterEngine {
@@ -88,6 +89,11 @@ struct AthleteRuntimeSettings3D {
     // deste tempo calmo (s): a inercia da volta os leva.
     float activeFollowSlack = 0.10f;
     float activeReturnTimeout = 1.2f;
+    // Locomocao por pegadas (Etapa 3): no modo padrao o clipe vira estilo e os
+    // pes apoiados ficam onde pousaram (FootstepPlanner3D). Desligada ate o
+    // usuario aprovar (a chave A/B do laboratorio).
+    bool footstepLocomotion = false;
+    FootstepSettings3D footsteps;
     // Manejo de bola.
     float ballContactTiming = 1.0f;
     bool ballHitboxContact = true;

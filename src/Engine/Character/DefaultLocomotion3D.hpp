@@ -392,6 +392,15 @@ struct DefaultLocomotionOutput3D {
     std::array<bool, 2> footPlanted { true, true };
     std::array<float, 2> swingProgress { -1.0f, -1.0f };
     std::array<float, 2> secondsToTouchdown { -1.0f, -1.0f };
+    // As pegadas (Athlete/FootstepPlanner3D): andando (no ciclo), o apoio de
+    // cada pe pela fase da marcha dominante (o footPlanted vem do contato
+    // misturado com o parado e discorda dela nas misturas), quanto falta para
+    // sair e para pousar (s; -1 fora do ciclo) e quanto dura o balanco (s).
+    bool cycling = false;
+    std::array<bool, 2> cyclePlanted { true, true };
+    std::array<float, 2> secondsToLiftoff { -1.0f, -1.0f };
+    std::array<float, 2> cycleSecondsToTouchdown { -1.0f, -1.0f };
+    std::array<float, 2> swingSeconds { -1.0f, -1.0f };
     // Inclinacao aplicada (rad: x para a esquerda, y para a frente).
     Vec3 lean;
     // Carrinho: em andamento (a pelve vai pelo clipe; a capsula vai embaixo

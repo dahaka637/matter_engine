@@ -2838,6 +2838,8 @@ void WorkbenchApp::drawLaboratoryUi() {
                             if (ImGui::Combo("##LocomotionMode", &mode, modes, 2)) m_defaultLocomotion = mode == 0;
                             hint("Padrão: o corpo segue a animação (com massa) e vai ao físico numa pancada, parede ou queda, voltando quando assenta. Físico total: sempre pelos músculos e pelas ajudas.");
                             ImGui::BeginDisabled(!m_defaultLocomotion);
+                            ImGui::Checkbox("Locomoção por pegadas", &m_footstepLocomotion);
+                            hint("Os pés apoiados ficam onde pousaram (sem escorregar): a animação vira só o estilo do movimento, e cada pé sai do chão, voa e pousa sozinho. Parado, um pé fora do lugar dá um passo curto. Desligado: os pés seguem a animação, como antes.");
                             ImGui::Checkbox("Estado intermediário (Ativo)", &m_activeBody);
                             hint("Encostões, parede e a volta do físico passam por um corpo físico de verdade, com os músculos seguindo a animação e só os pés no chão como apoio; só o que derruba vai ao físico total. Desligado: direto ao físico, como antes.");
                             ImGui::BeginDisabled(!m_activeBody);

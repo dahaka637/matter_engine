@@ -307,7 +307,6 @@ void ActiveStance3D::adapt(const RagdollProfile3D& profile, const RagdollState3D
         if (count > 0) m_baseTarget = shift * (1.0f / static_cast<float>(count));
         m_baseShift = m_baseTarget * smooth(m_baseWeight);
         rootPosition += m_baseShift;
-        for (Vec3& knee : clipKnee) knee += m_baseShift;
     }
 
     float mismatch = 0.0f;

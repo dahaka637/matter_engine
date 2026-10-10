@@ -477,9 +477,12 @@ add_library(MatterEngine STATIC
     src/Engine/Athlete/AthleteRuntime3D.cpp
     src/Engine/Athlete/Body/ActiveBodyController3D.cpp
     src/Engine/Athlete/Body/ActiveStance3D.cpp
-    src/Engine/Athlete/Core/Kinematics3D.cpp
     src/Engine/Athlete/Body/SupportWrench3D.cpp
+    src/Engine/Athlete/Core/FootGeometry3D.cpp
+    src/Engine/Athlete/Core/Kinematics3D.cpp
+    src/Engine/Athlete/Planning/FootstepPlanner3D.cpp
     src/Engine/Athlete/Sensing/BodyObservation3D.cpp
+    src/Engine/Athlete/Synthesis/LegSynthesis3D.cpp
     src/Engine/Athlete/Legacy/LegacyAthleteStep3D.cpp
     src/Engine/Character/BiomechanicalBipedExperiment3D.cpp
     src/Engine/Character/CharacterControlApplication3D.cpp

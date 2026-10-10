@@ -939,6 +939,11 @@ void DefaultLocomotion3D::update(const RagdollProfile3D& profile,
         m_output.footPlanted = { true, true };
         m_output.swingProgress = { -1.0f, -1.0f };
         m_output.secondsToTouchdown = { -1.0f, -1.0f };
+        m_output.cycling = false;
+        m_output.cyclePlanted = { true, true };
+        m_output.secondsToLiftoff = { -1.0f, -1.0f };
+        m_output.cycleSecondsToTouchdown = { -1.0f, -1.0f };
+        m_output.swingSeconds = { -1.0f, -1.0f };
         m_output.valid = true;
         // Os pes do clipe (a arrancada termina passando para a passada).
         std::array<Vec3, 2> clipFeet {};
@@ -2090,13 +2095,20 @@ void DefaultLocomotion3D::update(const RagdollProfile3D& profile,
         m_output.footContact[side] = std::clamp(contact[side], 0.0f, 1.0f);
         const bool swinging = input.grounded && total > 0.3f && m_output.footContact[side] < 0.5f;
         m_output.footPlanted[side] = !swinging && input.grounded;
+        const Gait& gait = m_gaits[dominant];
+        const float span = std::max(0.05f, fraction(gait.land[side] - gait.liftOff[side]));
+        const bool cycling = input.grounded && total > 0.3f && rate > 1e-3f;
+        const bool inSwing = fraction(m_phase - gait.liftOff[side]) < span;
+        m_output.cycling = cycling;
+        m_output.cyclePlanted[side] = !cycling || !inSwing;
+        m_output.swingSeconds[side] = cycling ? span / rate : -1.0f;
+        m_output.secondsToLiftoff[side] = cycling && !inSwing ? fraction(gait.liftOff[side] - m_phase) / rate : -1.0f;
+        m_output.cycleSecondsToTouchdown[side] = cycling && inSwing ? fraction(gait.land[side] - m_phase) / rate : -1.0f;
         if (!swinging || rate <= 1e-3f) {
             m_output.swingProgress[side] = -1.0f;
             m_output.secondsToTouchdown[side] = -1.0f;
             continue;
         }
-        const Gait& gait = m_gaits[dominant];
-        const float span = std::max(0.05f, fraction(gait.land[side] - gait.liftOff[side]));
         m_output.swingProgress[side] = std::clamp(fraction(m_phase - gait.liftOff[side]) / span, 0.0f, 1.0f);
         m_output.secondsToTouchdown[side] = fraction(gait.land[side] - m_phase) / rate;
     }

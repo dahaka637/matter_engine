@@ -65,6 +65,8 @@ check_absent "Atletas: so o legado e a casca de migracao incluem os controladore
     '#include "Engine/(Character|Control|Locomotion)/' src/Engine/Athlete \
     -g '!src/Engine/Athlete/Legacy/**' -g '!src/Engine/Athlete/AthleteRuntime3D.*' \
     -g '!src/Engine/Athlete/AthleteSettings3D.hpp' -g '!src/Engine/Athlete/AthleteAssets3D.*'
+check_absent "Atletas: planejamento e sintese trabalham com dados (sem a cena fisica nem o Jolt)" \
+    '#include "Engine/Physics/(PhysicsScene3D|PhysicsEngine3D)|Jolt' src/Engine/Athlete/Planning src/Engine/Athlete/Synthesis
 check_absent "Identidade antiga e prototipos removidos nao podem retornar" \
     'SoccerFall|SOCCERFALL|LegacyFootworkRig|AnimatorScreen' \
     CMakeLists.txt src tests

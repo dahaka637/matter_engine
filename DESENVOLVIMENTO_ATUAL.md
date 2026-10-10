@@ -96,6 +96,37 @@ apoiados, que somam zero.
   - Numa base aberta, a volta ao padrão espera 1,2 s, e a inércia leva os pés
     ao lugar do clipe (alguns centímetros em 0,4 s).
 
+## Novo controle do atleta: Etapa 3, parte 1 — pegadas no modo padrão (10/10/2026, noite)
+
+Chave "Locomoção por pegadas" no laboratório (aba Geral), desligada por
+padrão até a aprovação. Ligada, o clipe vira o estilo: ele diz quando cada
+pé apoia e a forma do movimento, e os pés do corpo não escorregam.
+
+- **Módulos novos:** `Athlete/Core/FootGeometry3D` (a sola: calcanhar e base
+  dos dedos), `Athlete/Planning/FootstepPlanner3D` (o dono dos pés) e
+  `Athlete/Synthesis/LegSynthesis3D` (as pernas do estilo levadas aos pés,
+  por IK).
+- **Apoio:** o pé fica onde pousou e rola no calcanhar e na base dos dedos;
+  sai antes do clipe se a perna chegar ao fim do alcance.
+- **Balanço:** sai com a velocidade do pé, a diferença para o clipe some no
+  balanço todo e o pouso desacelera.
+- **Passos próprios:** arrancada (o clipe demora a sair do parado),
+  acomodação parado (fim de corrida, giro, volta do físico) e pouso no ar.
+- **`DefaultLocomotion3D`:** só saídas novas (o apoio pela fase da marcha e
+  os tempos de saída, pouso e balanço).
+- **Medido na sonda** (deslize do ponto que toca o chão, p95, m/s):
+  - sprint 3,56 → 0,28; corte 5,12 → 0,23; zigue-zague 6,59 → 1,12;
+  - diagonal 4,33 → 0,18; de costas 3,35 → 0,11; parada do sprint
+    2,67 → 0,06.
+  - Toques e chutes iguais. Picos de aceleração nas pernas maiores
+    (~700–1100 contra ~350–570 m/s²), sem salto de pose; as folhas de
+    quadros não mostram defeito.
+- **Sonda:** aquecimento de 0,1 s, cenários `para`, `para_sprint`,
+  `diagonal`, `costas`, `--pegadas 0|1`. O teste `MatterEngine.Athlete`
+  ganhou 21 contratos.
+- **Arquitetura:** planejamento e síntese dos atletas não incluem a cena
+  física (regra nova no `check-architecture`).
+
 ## Ponto de partida: rework da locomoção e do manejo de bola (10/10/2026)
 
 Estado commitado como base antes do rework completo do sistema de locomoção

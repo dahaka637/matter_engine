@@ -1,5 +1,7 @@
 #include "Engine/Athlete/Legacy/LegacyAthleteStep3D.hpp"
 
+#include "Engine/Athlete/Synthesis/LegSynthesis3D.hpp"
+
 #include "Engine/Character/CharacterControlApplication3D.hpp"
 #include "Engine/Core/Log.hpp"
 
@@ -750,6 +752,7 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         // o dava - no ar, o voo girava ate 60 graus.)
         if (state.guidedExitLeft <= 0.0f) scene.removeRagdollVerticalSpin(slot.handle);
     }
+    if (!animated) athlete.footsteps.clear();
     if (active) {
         // Corpo Ativo: a pose do padrao (a mesma do animado; vinda do fisico,
         // com a inercia da volta) executada pelo corpo fisico.
@@ -858,10 +861,10 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         state.defaultTackling = out.tackling;
         if (out.valid) {
             RagdollAnimationPose3D pose = out.pose;
+            std::vector<Vec3> coordinates = out.coordinates;
+            Vec3 rootPosition = out.rootPosition;
+            Quaternion rootOrientation = out.rootOrientation;
             if (state.bodyMode == BodyMode::Returning && state.returnInertia.active()) {
-                std::vector<Vec3> coordinates = out.coordinates;
-                Vec3 rootPosition = out.rootPosition;
-                Quaternion rootOrientation = out.rootOrientation;
                 state.returnInertia.apply(coordinates, rootPosition, rootOrientation, deltaTime);
                 defaultLocomotionPose3D(profile, rootPosition, rootOrientation, coordinates, pose);
                 if (!state.returnInertia.active()) {
@@ -872,7 +875,6 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                 constexpr float ReturnSeconds = 0.35f;
                 const float x = std::clamp(state.bodyModeSeconds / ReturnSeconds, 0.0f, 1.0f);
                 const float share = x * x * (3.0f - 2.0f * x);
-                std::vector<Vec3> coordinates = out.coordinates;
                 for (std::size_t i = 0; i < coordinates.size() && i < state.returnCoordinates.size(); ++i)
                     coordinates[i] = state.returnCoordinates[i]
                         + (coordinates[i] - state.returnCoordinates[i]) * share;
@@ -882,17 +884,61 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                 if (fromOrientation.x * to.x + fromOrientation.y * to.y + fromOrientation.z * to.z
                         + fromOrientation.w * to.w < 0.0f)
                     fromOrientation = { -fromOrientation.x, -fromOrientation.y, -fromOrientation.z, -fromOrientation.w };
-                const Quaternion rootOrientation = Quaternion {
+                rootOrientation = Quaternion {
                     fromOrientation.x + (to.x - fromOrientation.x) * share,
                     fromOrientation.y + (to.y - fromOrientation.y) * share,
                     fromOrientation.z + (to.z - fromOrientation.z) * share,
                     fromOrientation.w + (to.w - fromOrientation.w) * share }.normalized();
-                defaultLocomotionPose3D(profile, from + (out.rootPosition - from) * share,
-                    rootOrientation, coordinates, pose);
+                rootPosition = from + (out.rootPosition - from) * share;
+                defaultLocomotionPose3D(profile, rootPosition, rootOrientation, coordinates, pose);
                 if (x >= 1.0f) {
                     state.bodyMode = BodyMode::Animated;
                     state.bodyModeSeconds = 0.0f;
                 }
+            }
+            if (settings.footstepLocomotion) {
+                // Locomocao por pegadas (Etapa 3): o clipe e o estilo; os pes
+                // apoiados do corpo nao escorregam.
+                FootstepPlanner3D& footsteps = athlete.footsteps;
+                if (!footsteps.ready()) footsteps.reset(profile, settings.footsteps);
+                const AthleteLegs3D& legs = footsteps.legs();
+                if (legs.valid && !footsteps.live()) {
+                    // Comecando do corpo (a volta do fisico ou do Ativo).
+                    std::array<Vec3, 2> position {};
+                    std::array<Quaternion, 2> orientation {};
+                    std::array<bool, 2> grounded {};
+                    for (std::size_t side = 0; side < 2; ++side) {
+                        const PhysicsBodyState3D& link = body.links[legs.foot[side]];
+                        position[side] = link.position;
+                        orientation[side] = link.orientation;
+                        grounded[side] = footsteps.soleHeight(static_cast<int>(side), link.position, link.orientation)
+                            < groundHeight(link.position) + 0.03f;
+                    }
+                    footsteps.seed(position, orientation, grounded);
+                }
+                if (legs.valid) {
+                    FootstepStyle3D style;
+                    for (std::size_t side = 0; side < 2; ++side) {
+                        style.position[side] = pose.linkPositions[legs.foot[side]];
+                        style.orientation[side] = pose.linkOrientations[legs.foot[side]];
+                        style.planted[side] = out.cycling ? out.cyclePlanted[side] : out.footPlanted[side];
+                        style.secondsToTouchdown[side] = out.cycleSecondsToTouchdown[side];
+                        style.secondsToLiftoff[side] = out.secondsToLiftoff[side];
+                        style.swingSeconds[side] = out.swingSeconds[side];
+                    }
+                    style.rootPosition = rootPosition;
+                    style.rootOrientation = rootOrientation;
+                    style.velocity = scene.characterState().velocity;
+                    style.grounded = !out.airborne;
+                    style.scripted = out.rootScripted || out.tackling || out.airTackle || out.crouchStarting;
+                    style.actingSide = input.ballGesture.legWeight > 0.3f ? input.ballGesture.side : -1;
+                    style.movingShare = out.movingShare;
+                    athlete.footTargets = footsteps.plan(style, settings.footsteps, deltaTime);
+                    athlete.legSynthesis = synthesizeAthleteLegs3D(profile, legs, footsteps.geometry(),
+                        athlete.footTargets, rootPosition, rootOrientation, coordinates, pose);
+                }
+            } else {
+                athlete.footsteps.clear();
             }
             scene.setRagdollGuidePose(slot.handle, pose.linkPositions, pose.linkOrientations);
             state.previousAnimationPose = state.animationPose.linkPositions.empty() ? pose : state.animationPose;
