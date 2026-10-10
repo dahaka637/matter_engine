@@ -88,8 +88,13 @@ void BallHandling3D::update(const BallHandlingInput3D& input, const BallOutcomeS
     // Os pes do estilo andam: a velocidade deles (o toque no balanco vai com
     // eles).
     for (std::size_t s = 0; s < 2; ++s) {
+        // (Filtrada: no corte o pe do estilo gira com a pelve e a velocidade
+        // de um tick para o outro jogava o alvo do toque de um lado para o
+        // outro.)
+        const Vec3 raw = m_styleFootKnown ? (input.gait.styleFoot[s] - m_styleFootPrevious[s]) * (1.0f / dt) : Vec3 {};
         m_styleFootVelocity[s] = m_styleFootKnown
-            ? (input.gait.styleFoot[s] - m_styleFootPrevious[s]) * (1.0f / dt) : Vec3 {};
+            ? m_styleFootVelocity[s] + (raw - m_styleFootVelocity[s]) * std::min(1.0f, dt / settings.styleVelocitySeconds)
+            : raw;
         m_styleFootPrevious[s] = input.gait.styleFoot[s];
         // (O pouso do pe do estilo, em relacao a pelve: o ultimo de qualquer
         // pe, com o lado sem sinal, e a velocidade dele.)
@@ -316,6 +321,7 @@ void BallHandling3D::update(const BallHandlingInput3D& input, const BallOutcomeS
                     begin.hip = body.hip[s];
                     begin.ankleInFoot = m_legs.ankleInFoot[s];
                     begin.legLength = m_legs.thighLength[s] + m_legs.shinLength[s];
+                    begin.moving = input.gait.cycling;
                     begin.frame = !input.gait.cycling ? BallGestureFrame3D::World
                         : shot ? BallGestureFrame3D::Body : BallGestureFrame3D::StyleFoot;
                     begin.styleFoot = input.gait.styleFoot[s];

@@ -76,6 +76,8 @@ struct Scenario {
     // Pedido automatico com a bola a menos disto da pelve (no plano).
     float autoDistance = 0.0f;
     BallActionKind3D autoKind = BallActionKind3D::Dribble;
+    // O rumo pedido vira isto (rad, + esquerda) a partir do pedido automatico.
+    float autoTurn = 0.0f;
 };
 
 std::vector<Scenario> scenarios() {
@@ -143,6 +145,19 @@ std::vector<Scenario> scenarios() {
         s.ball = true;
         s.ballStart = { 3.0f, -0.1f, 0.11f };
         s.autoDistance = 0.9f;
+        list.push_back(s);
+    }
+    {
+        // O corte correndo: no pedido as teclas viram 50 graus para a direita
+        // (o toque sai para la, de lado de fora do pe direito) e seguem.
+        Scenario s { "corte_corre", 4.0f, [](float t) {
+            Keys k;
+            k.forward = t > 0.3f ? 1.0f : 0.0f;
+            return k; } };
+        s.ball = true;
+        s.ballStart = { 3.0f, -0.1f, 0.11f };
+        s.autoDistance = 0.9f;
+        s.autoTurn = -0.87f;
         list.push_back(s);
     }
     {
@@ -446,6 +461,12 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
     bool previousJump = false;
     float jumpHeld = 0.0f;
     float autoCooldown = 0.0f;
+    // O rumo pedido virado depois do pedido automatico (o corte).
+    float headingTurn = 0.0f;
+    const auto turned = [](Vec3 v, float angle) {
+        const float c = std::cos(angle), s = std::sin(angle);
+        return Vec3 { c * v.x - s * v.y, s * v.x + c * v.y, v.z };
+    };
     const int ticks = static_cast<int>(scenario.seconds / Dt);
     // Aquecimento (0,1 s antes do roteiro, sem teclas e sem pegadas): o corpo
     // nasce na pose de ligacao e assenta na do parado - com as pegadas, os
@@ -476,7 +497,7 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
                 || lastState == CharacterLocomotionState3D::Tackling;
         CharacterMotorCommand3D command;
         command.ignoreRagdolls = true;
-        if (!down) command.moveDirection = forward * keys.forward - right * keys.left;
+        if (!down) command.moveDirection = turned(forward * keys.forward - right * keys.left, headingTurn);
         command.sprint = keys.sprint;
         CharacterIntent3D intent;
         intent.requestedFacingYawRadians = keys.cameraYaw;
@@ -550,6 +571,11 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
                 control.ballRequest = scenario.autoKind;
                 control.ballRequestPower = scenario.autoKind == BallActionKind3D::Shot ? 0.8f : 0.45f;
                 autoCooldown = 10.0f;
+                if (scenario.autoTurn != 0.0f) {
+                    headingTurn = scenario.autoTurn;
+                    control.intent.requestedDirectionWorld = turned(control.intent.requestedDirectionWorld, headingTurn);
+                    control.intent.requestedVelocityWorld = turned(control.intent.requestedVelocityWorld, headingTurn);
+                }
             }
         }
         if (control.ballRequest != BallActionKind3D::None) ++metrics.requests;
@@ -960,6 +986,17 @@ int runChecks(const ProbeContext& context) {
             m.worstLatency);
         expect(m.touches == 1 && m.outcomes == "tocou" && m.worstLatency < 0.6f, what, m);
         expect(!has(m, "fisico"), "manejo novo, no Ativo: sem fisico pleno", m);
+    }
+    // O corte correndo: o toque sai para o lado, no balanco do pe do
+    // estilo, sem tranco (o pe do estilo gira com a pelve na virada).
+    {
+        const Metrics m = run("corte_corre", handling, false);
+        char what[192];
+        std::snprintf(what, sizeof(what), "manejo novo, corte correndo: toca e segue (%s, pernas %.0f m/s2, salto %.3f m)",
+            m.outcomes.c_str(), m.peakLegAcceleration, m.worstPoseJump);
+        expect(m.touches == 1 && m.outcomes == "tocou" && m.peakLegAcceleration < 900.0f && m.worstPoseJump < 0.03f
+                && percentile(m.plantedSlide, 1.0f) < 0.5f,
+            what, m);
     }
     // O chute correndo pela passada de apoio: com o pedido perto (1,0 m) e
     // longe (1,8 m) da bola, sai, sem tranco e sem o apoio escorregar.

@@ -73,6 +73,9 @@ struct BallHandlingSettings3D {
     float supportHoldReach = 0.12f;
     // O polo do joelho do gesto sai do joelho da pose nesta mistura (s).
     float kneeBlendSeconds = 0.10f;
+    // A velocidade do pe do estilo (o referencial do toque no balanco) vem
+    // filtrada neste tempo (s).
+    float styleVelocitySeconds = 0.03f;
     // No corpo fisico, o gesto so comeca com o preparo (o peso no apoio)
     // acima disto.
     float physicalPrepare = 0.75f;

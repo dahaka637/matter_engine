@@ -92,6 +92,10 @@ struct BallGestureStart3D {
     Vec3 ankleInFoot;
     float legLength = 0.83f;
     BallGestureFrame3D frame = BallGestureFrame3D::World;
+    // Andando: o gesto acaba no fim do acompanhamento, com o pe no ar (as
+    // pegadas o pousam no ritmo da passada) - em qualquer referencial (o
+    // corte correndo vai no do mundo).
+    bool moving = false;
     // No referencial do pe do estilo: onde ele esta, a velocidade dele e
     // quando ele pousa (s a partir de agora).
     Vec3 styleFoot;

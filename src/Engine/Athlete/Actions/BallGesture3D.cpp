@@ -89,7 +89,7 @@ void BallGesture3D::start(const BallGestureStart3D& in, const BallFootBox3D& box
     const Vec3 footPosition = in.foot, hip = in.hip, ankleInFoot = in.ankleInFoot;
     const Quaternion footOrientation = in.footOrientation;
     m_frameKind = in.frame;
-    m_moving = in.frame != BallGestureFrame3D::World;
+    m_moving = in.moving || in.frame != BallGestureFrame3D::World;
     const bool swing = in.frame == BallGestureFrame3D::StyleFoot;
     m_hip = hip;
     m_bodyVelocity = planar(in.bodyVelocity);
@@ -131,6 +131,13 @@ void BallGesture3D::start(const BallGestureStart3D& in, const BallFootBox3D& box
     const float strike = shot ? s.shotStrikeSpeed + s.shotStrikeSpeedPower * p
         : s.touchStrikeSpeed + s.touchStrikeSpeedPower * p;
     m_contactVelocity = m_push * (strike * (swing ? s.swingStrikeShare : 1.0f));
+    // (No balanco, a batida extra so com o pe vindo de tras do contato no rumo
+    // do toque: do outro lado - o corte com o lado de fora vindo de dentro -
+    // ela fazia um S e o pe invertia no ultimo tick.)
+    if (swing) {
+        const float behind = dot(planar(contact - footPosition), m_push);
+        m_contactVelocity = m_contactVelocity * std::clamp(behind / 0.15f, 0.0f, 1.0f);
+    }
     // O armado: para tras do contato e para cima, nunca abaixo do chao. Com
     // o pe ja mais para tras que isso (no rumo do toque), ele so sobe - nao
     // vem para a frente antes da batida.

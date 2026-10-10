@@ -96,6 +96,15 @@ apoiados, que somam zero.
   - Numa base aberta, a volta ao padrão espera 1,2 s, e a inércia leva os pés
     ao lugar do clipe (alguns centímetros em 0,4 s).
 
+## Novo controle do atleta: Etapa 6, parte 1 — o corte correndo (10/10/2026)
+
+- **Cenário `corte_corre`:** o rumo pedido vira 50° no toque.
+- **A correção:** a velocidade do pé do estilo usada no referencial do
+  toque no balanço vem filtrada. Na virada, o pé gira com a pelve e o alvo
+  pulava.
+- **Medida:** pernas 1277 → 821 m/s², salto 0,027 → 0,012 m, pegadas na
+  linha de base. Conferido em folha; contrato no `--teste`.
+
 ## Novo controle do atleta: Etapa 5, partes 5 e 6 — bola no ar e o toque no Ativo (10/10/2026)
 
 - **Bola no ar:** cenários `bola_alta`/`bola_quadril` (a bola chega a
