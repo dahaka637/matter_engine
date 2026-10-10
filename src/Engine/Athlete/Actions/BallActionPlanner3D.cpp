@@ -230,12 +230,12 @@ BallPlan3D planBallAction3D(const BallOutcomeRequest3D& intent, const BallPlanne
     const int preferred = ballSide >= 0.0f ? 0 : 1;
     best.cost = 1e9f;
     // Por que os candidatos caem (o motivo do desfecho quando nenhum serve).
-    enum Cut { CutHigh, CutSwing, CutSupport, CutBehind, CutTime, CutCross, CutReach, CutPath, CutCount };
+    enum Cut { CutHigh, CutSwing, CutSupport, CutBehind, CutTime, CutCross, CutReach, CutPath, CutPlant, CutCount };
     std::array<int, CutCount> cuts {};
     static constexpr const char* CutReason[CutCount] = { "a bola acima da cintura",
         "o contato fora do balanco do pe", "o apoio no ar no contato", "a bola atras do corpo no chute",
         "sem tempo para o armado", "cruzaria as pernas", "fora do alcance da perna",
-        "longe do caminho do pe na passada" };
+        "longe do caminho do pe na passada", "o pe de apoio nao chega ao lado da bola" };
     for (std::size_t k = 0; k < table.size(); ++k) {
         const float t = static_cast<float>(k) * tableInterval;
         if (t > horizon + 1e-4f) break;
@@ -245,20 +245,54 @@ BallPlan3D planBallAction3D(const BallOutcomeRequest3D& intent, const BallPlanne
             ++cuts[CutHigh];
             continue;
         }
-        for (int side = 0; side < 2; ++side) {
+        // (Correndo, o chute vai pelas opcoes de passada de apoio; senao,
+        // cada pe.)
+        const bool plantMode = shot && body.plantStep && body.plantOptionCount > 0;
+        const int candidates = plantMode ? body.plantOptionCount : 2;
+        for (int c = 0; c < candidates; ++c) {
+            const BallPlantOption3D* option = plantMode ? &body.plantOptions[static_cast<std::size_t>(c)] : nullptr;
+            const int side = option != nullptr ? 1 - option->side : c;
             const std::size_t s = static_cast<std::size_t>(side);
             const int support = 1 - side;
+            const std::size_t sup = static_cast<std::size_t>(support);
+            const float freeFrom = option != nullptr ? option->kickFrom : body.freeFrom[s];
+            const float freeUntil = option != nullptr ? option->kickUntil : body.freeUntil[s];
             // O pe que joga no balanco dele no contato; o apoio no chao.
-            if (t > body.freeUntil[s] + 1e-4f) {
+            if (t > freeUntil + 1e-4f) {
                 ++cuts[CutSwing];
                 continue;
             }
-            if (body.plantedUntil[static_cast<std::size_t>(support)] < t + 0.03f
-                || body.plantedFrom[static_cast<std::size_t>(support)] > t + 1e-4f) {
+            // (A passada de apoio: o apoio pousa antes da batida, sem ficar
+            // preso demais.)
+            const bool plant = option != nullptr;
+            if (plant ? t < option->landTime + settings.plantLeadMin || t > option->landTime + settings.plantLeadMax
+                      : body.plantedUntil[sup] < t + 0.03f || body.plantedFrom[sup] > t + 1e-4f) {
                 ++cuts[CutSupport];
                 continue;
             }
-            const Vec3 pelvisThen = body.pelvis + Vec3 { body.velocity.x, body.velocity.y, 0.0f } * t;
+            // A passada de apoio ainda por pousar: a corrida que poe a pelve
+            // no pouso natural atras do apoio (ao lado da bola), e o pouso do
+            // estilo nessa corrida; no apoio, o corpo freia.
+            float runSpeed = -1.0f;
+            Vec3 plantLand;
+            Vec3 pelvisThen = body.pelvis + Vec3 { body.velocity.x, body.velocity.y, 0.0f } * t;
+            const Vec3 runDirection = planar(body.velocity).lengthSquared() > 0.01f ? planar(body.velocity).normalized()
+                                                                                     : forward;
+            const Vec3 plantOutward = left * (support == 0 ? 1.0f : -1.0f);
+            if (plant && !option->landed) {
+                const Vec3 beside = Vec3 { ball.position.x, ball.position.y, 0.0f } + plantOutward * settings.plantSideGap
+                    - push * settings.plantBehind;
+                const float distance = dot(beside - planar(body.pelvis), runDirection);
+                const float leadPerSpeed = body.landLead.x / std::max(0.5f, body.landLeadSpeed);
+                runSpeed = distance / std::max(0.05f, option->landTime + leadPerSpeed);
+                runSpeed = std::clamp(runSpeed, settings.plantSpeedMin * body.runSpeed, settings.plantSpeedMax * body.runSpeed);
+                const float lead = body.landLead.x * std::clamp(runSpeed / std::max(0.5f, body.landLeadSpeed), 0.5f, 2.0f);
+                plantLand = planar(body.pelvis) + runDirection * (runSpeed * option->landTime + lead)
+                    + plantOutward * body.landLead.y + Vec3 { 0.0f, 0.0f, body.groundHeight + body.landLead.z };
+                const float travel = runSpeed * std::min(t, option->landTime)
+                    + runSpeed * settings.plantBrake * std::max(0.0f, t - option->landTime);
+                pelvisThen = body.pelvis + runDirection * travel;
+            }
             const Vec3 relative = planar(ball.position - pelvisThen);
             const bool behind = dot(relative, forward) < -0.06f;
             const BallTouchSurface3D surface = chooseBallSurface3D(side, push, forward, intent.kind, body.moving,
@@ -290,7 +324,7 @@ BallPlan3D planBallAction3D(const BallOutcomeRequest3D& intent, const BallPlanne
             const float travelSpeed = std::max(0.5f, settings.windupTravelSpeed);
             const float windup = swingTouch ? 0.0f
                                             : std::max(baseWindup, (footPosition - footThen).length() / travelSpeed - strike);
-            const float lead = t - std::max(0.0f, body.freeFrom[s]);
+            const float lead = t - std::max(0.0f, freeFrom);
             // (Correndo, o chute arma no proprio balanco da passada: o pe sai
             // do chao atras do corpo.)
             const float needed = swingTouch ? std::max(0.5f * strike, swingPath / travelSpeed)
@@ -299,16 +333,34 @@ BallPlan3D planBallAction3D(const BallOutcomeRequest3D& intent, const BallPlanne
                 ++cuts[CutTime];
                 continue;
             }
+            // A passada de apoio: o pe de apoio ao lado da bola, perto de onde
+            // o estilo o pousaria.
+            Vec3 plantTarget;
+            float plantShift = 0.0f;
+            if (plant && option->landed) {
+                // (Ja pousado: fica onde esta.)
+                plantTarget = option->landPosition;
+            } else if (plant) {
+                plantTarget = Vec3 { ball.position.x, ball.position.y, plantLand.z }
+                    + plantOutward * settings.plantSideGap - push * settings.plantBehind;
+                plantShift = std::hypot(plantTarget.x - plantLand.x, plantTarget.y - plantLand.y);
+                const float stretch = dot(planar(plantTarget - plantLand), runDirection);
+                if (plantShift > settings.plantShift || stretch > settings.plantStretch) {
+                    ++cuts[CutPlant];
+                    continue;
+                }
+            }
             // Sem cruzar: o pe que joga fica do lado dele do de apoio.
-            const Vec3 supportFoot = body.foot[static_cast<std::size_t>(support)]
-                + Vec3 { body.velocity.x, body.velocity.y, 0.0f } * (body.moving ? t : 0.0f);
+            const Vec3 supportFoot = plant ? plantTarget
+                : body.foot[static_cast<std::size_t>(support)]
+                    + Vec3 { body.velocity.x, body.velocity.y, 0.0f } * (body.moving ? t : 0.0f);
             const float lateral = dot(planar(footPosition - supportFoot), left) * (side == 0 ? 1.0f : -1.0f);
             if (lateral < settings.sideGap * 0.5f) {
                 ++cuts[CutCross];
                 continue;
             }
             // O alcance: do quadril ao tornozelo.
-            const Vec3 hip = body.hip[s] + Vec3 { body.velocity.x, body.velocity.y, 0.0f } * t;
+            const Vec3 hip = body.hip[s] + (pelvisThen - body.pelvis);
             const Vec3 ankle = footPosition + footOrientation.rotate(legs.ankleInFoot[s]);
             const float length = legs.thighLength[s] + legs.shinLength[s];
             const float distance = (ankle - hip).length();
@@ -320,7 +372,7 @@ BallPlan3D planBallAction3D(const BallOutcomeRequest3D& intent, const BallPlanne
             const float reach = distance / length;
             // O tempo: apressar abaixo da duracao natural do gesto custa caro;
             // esperar, pouco.
-            const float natural = (swingTouch ? needed : windup + strike) + std::max(0.0f, body.freeFrom[s]);
+            const float natural = (swingTouch ? needed : windup + strike) + std::max(0.0f, freeFrom);
             float cost = settings.costTime * (2.0f * std::max(0.0f, natural - t) / std::max(0.05f, natural)
                     + 0.3f * t / std::max(0.05f, horizon))
                 + settings.costReach * std::pow(std::max(0.0f, reach - 0.85f), 2.0f)
@@ -328,7 +380,8 @@ BallPlan3D planBallAction3D(const BallOutcomeRequest3D& intent, const BallPlanne
                 + (side != preferred ? settings.costOtherSide : 0.0f)
                 + (previousSide >= 0 && side != previousSide ? settings.costSwitch : 0.0f)
                 + settings.costHold * std::max(0.0f, t - body.plantedNatural[static_cast<std::size_t>(support)]) / 0.05f
-                + settings.costSwingPath * (swingPath / 0.15f) * (swingPath / 0.15f);
+                + settings.costSwingPath * (swingPath / 0.15f) * (swingPath / 0.15f)
+                + settings.costPlant * (plantShift / 0.2f) * (plantShift / 0.2f);
             if (cost < best.cost) {
                 best.valid = true;
                 best.reason = "";
@@ -346,6 +399,13 @@ BallPlan3D planBallAction3D(const BallOutcomeRequest3D& intent, const BallPlanne
                 best.reach = reach;
                 best.pelvisNeed = need;
                 best.cost = cost;
+                best.plantSide = plant ? support : -1;
+                best.plantTime = plant ? option->landTime : 0.0f;
+                best.plantTarget = plantTarget;
+                best.plantShift = plant && !option->landed
+                    ? Vec3 { plantTarget.x - plantLand.x, plantTarget.y - plantLand.y, 0.0f }
+                    : Vec3 {};
+                best.runSpeed = runSpeed;
             }
         }
     }

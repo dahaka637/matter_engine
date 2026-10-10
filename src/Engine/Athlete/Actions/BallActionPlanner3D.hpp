@@ -26,6 +26,18 @@ struct BallFootBox3D {
 void ballFootSurface3D(const BallFootBox3D& box, int side, BallTouchSurface3D surface, Vec3& point, Vec3& normal);
 
 // O corpo para o planejador (o do tick: a pose que o corpo segue).
+// Uma opcao de passada de apoio (chute correndo): o pe que pousa, quando
+// (s; negativo: ja pousou ha tanto) e onde o estilo o pousaria (ou onde ja
+// esta), e o balanco do outro pe, o do chute, que acompanha esse pouso.
+struct BallPlantOption3D {
+    int side = -1;
+    float landTime = 0.0f;
+    Vec3 landPosition;
+    bool landed = false;
+    float kickFrom = 0.0f;
+    float kickUntil = 0.0f;
+};
+
 struct BallPlannerBody3D {
     Vec3 pelvis;
     // O rumo do corpo (rad) e a velocidade dele no plano (a da capsula).
@@ -46,6 +58,19 @@ struct BallPlannerBody3D {
     std::array<float, 2> swingLift {};
     std::array<Vec3, 2> swingLand {};
     std::array<float, 2> swingLandTime { -1.0f, -1.0f };
+    // Correndo, o chute pela passada de apoio: as opcoes de pouso do apoio
+    // (o proximo e o seguinte de cada pe), cada uma podendo pousar ao lado
+    // da bola com o outro pe chutando no balanco dele.
+    bool plantStep = false;
+    std::array<BallPlantOption3D, 4> plantOptions {};
+    int plantOptionCount = 0;
+    // A passada de apoio ajusta a corrida: a velocidade de agora (a pedida,
+    // sem freio) e o pouso natural em relacao a pelve (a frente, para o lado
+    // de cada pe, acima do chao), medido a landLeadSpeed (o avanco cresce
+    // com a velocidade).
+    float runSpeed = 0.0f;
+    Vec3 landLead { 0.37f, 0.09f, 0.10f };
+    float landLeadSpeed = 4.5f;
     // As janelas de cada pe (s a partir de agora): apoiado de plantedFrom a
     // plantedUntil e livre (no balanco) de freeFrom a freeUntil. Parado, os
     // dois apoiados sempre e livres ja (0 / 1e9).
@@ -95,6 +120,25 @@ struct BallPlannerSettings3D {
     // passaria (custo por (d / 0,15 m)^2; acima de swingDeviation, nao).
     float costSwingPath = 1.0f;
     float swingDeviation = 0.30f;
+    // A passada de apoio do chute correndo: o pe de apoio pousa ao lado da
+    // bola (plantSideGap do centro dela, plantBehind atras no rumo do chute),
+    // no maximo plantShift (m) do pouso do estilo (custo por (d / 0,2)^2), e
+    // a batida sai entre plantLeadMin e plantLeadMax (s) depois do pouso.
+    float plantSideGap = 0.24f;
+    float plantBehind = 0.06f;
+    float plantShift = 0.40f;
+    // (O passo de apoio pode encurtar e ir para o lado, mas esticar para a
+    // frente so ate isto (m): alem, a perna nao alcanca o chao.)
+    float plantStretch = 0.10f;
+    float costPlant = 1.0f;
+    float plantLeadMin = 0.08f;
+    float plantLeadMax = 0.28f;
+    // A corrida para o chute: entre plantSpeedMin e plantSpeedMax da de agora,
+    // para a pelve chegar ao pouso natural atras do apoio; com o apoio no
+    // chao, o corpo freia a plantBrake dela.
+    float plantSpeedMin = 0.45f;
+    float plantSpeedMax = 1.05f;
+    float plantBrake = 0.6f;
     // O pe que joga nunca cruza a linha do de apoio: fica pelo menos isto do
     // lado dele (m).
     float sideGap = 0.12f;
@@ -118,6 +162,14 @@ struct BallPlan3D {
     float reach = 0.0f;
     float pelvisNeed = 0.0f;
     float cost = 0.0f;
+    // A passada de apoio (chute correndo): o pe de apoio, onde ele pousa e o
+    // quanto isso desvia do pouso do estilo (plantSide < 0: nenhuma).
+    int plantSide = -1;
+    float plantTime = 0.0f;
+    Vec3 plantTarget;
+    Vec3 plantShift;
+    // A velocidade da corrida ate o pouso do apoio (m/s; < 0: a de agora).
+    float runSpeed = -1.0f;
 };
 
 // A superficie pela direcao do empurrao em relacao ao corpo (a do V3,

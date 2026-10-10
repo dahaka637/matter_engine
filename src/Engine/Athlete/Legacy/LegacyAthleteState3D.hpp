@@ -38,6 +38,9 @@ struct LegacyAthleteState3D {
     // velocidade que ele pede (o chute correndo freia um pouco).
     BallControl3D ballControl;
     float ballSpeedScale = 1.0f;
+    // A velocidade pedida pelo jogador neste tick, antes das escalas (o
+    // manejo novo ajusta a corrida para o chute a partir dela).
+    Vec3 requestedVelocityRaw;
     // A ultima saida do manejo (o desenho de depuracao) e o reforco de
     // estabilidade do gesto (modo fisico, V3).
     BallControlOutput3D ballLastOutput;

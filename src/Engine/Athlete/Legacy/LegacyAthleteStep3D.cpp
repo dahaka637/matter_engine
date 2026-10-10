@@ -223,6 +223,7 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
     {
         // (So no fisico: no padrao a locomocao fisica nao roda e o valor
         // ficaria parado no ultimo.)
+        state.requestedVelocityRaw = command.intent.requestedVelocityWorld;
         const float stagger = state.bodyMode == LegacyBodyMode3D::Physical
             ? state.locomotion.telemetry().stagger : 0.0f;
         // (A ajuda nao cai mais pelo cambaleio: cai pelo impacto, acima.)
@@ -701,6 +702,7 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         }
         in.bodyVelocity = in.body.velocity;
         in.aheadVelocity = { command.intent.requestedVelocityWorld.x, command.intent.requestedVelocityWorld.y, 0.0f };
+        in.requestedSpeed = std::hypot(state.requestedVelocityRaw.x, state.requestedVelocityRaw.y);
         in.deltaTime = deltaTime;
         BallHandlingOutput3D& out = athlete.ballOutput;
         handling.update(in, settings.ballForce, settings.ballHandling, out);
@@ -1081,6 +1083,8 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                     if (settings.newBallHandlingActive() && command.controlled) {
                         style.actingSide = athlete.ballOutput.actingSide;
                         style.reservedSide = athlete.ballOutput.reservedSide;
+                        style.landingSide = athlete.ballOutput.landingSide;
+                        style.landingShift = athlete.ballOutput.landingShift;
                     } else {
                         style.actingSide = input.ballGesture.legWeight > 0.3f ? input.ballGesture.side : -1;
                     }

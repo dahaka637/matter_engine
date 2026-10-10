@@ -919,6 +919,20 @@ int runChecks(const ProbeContext& context) {
                 && m.peakUpperAcceleration < 200.0f && percentile(m.plantedSlide, 1.0f) < 0.5f && m.crossings == 0,
             what, m);
     }
+    // O chute correndo pela passada de apoio: com o pedido perto (1,0 m) e
+    // longe (1,8 m) da bola, sai, sem tranco e sem o apoio escorregar.
+    for (const char* name : { "chute_corre", "chute_corre_cedo" }) {
+        const Metrics m = run(name, handling, false);
+        char what[192];
+        std::snprintf(what, sizeof(what), "manejo novo, %s: chuta pela passada de apoio (%s, bola %.1f m/s)", name,
+            m.outcomes.c_str(), m.ballSpeedAfter);
+        expect(m.touches == 1 && m.outcomes == "tocou" && m.ballSpeedAfter > 15.0f, what, m);
+        std::snprintf(what, sizeof(what), "manejo novo, %s: suave (pernas %.0f, tronco %.0f m/s2, apoio %.2f m/s)", name,
+            m.peakLegAcceleration, m.peakUpperAcceleration, percentile(m.plantedSlide, 1.0f));
+        expect(m.peakLegAcceleration < 850.0f && m.peakUpperAcceleration < 200.0f && percentile(m.plantedSlide, 1.0f) < 0.8f
+                && m.worstPoseJump < 0.03f,
+            what, m);
+    }
     std::printf(failures == 0 ? "atleta: tudo certo\n" : "atleta: %d falha(s)\n", failures);
     return failures == 0 ? 0 : 1;
 }

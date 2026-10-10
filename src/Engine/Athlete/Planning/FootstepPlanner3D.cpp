@@ -73,6 +73,8 @@ void FootstepPlanner3D::seed(const std::array<Vec3, 2>& position, const std::arr
 void FootstepPlanner3D::lock(int side, Vec3 position, Quaternion orientation) {
     Foot& foot = m_feet[static_cast<std::size_t>(side)];
     foot.mode = FootMode3D::Stance;
+    // (O desvio da passada de apoio ja esta no lugar travado.)
+    foot.landingShift.reset({});
     foot.position = position;
     foot.orientation = orientation;
     foot.yaw = athleteFootYaw3D(m_geometry, side, orientation);
@@ -300,6 +302,13 @@ std::array<FootTarget3D, 2> FootstepPlanner3D::plan(const FootstepStyle3D& style
                 // landingDeceleration vezes o que falta): o clipe pousa com
                 // o pe andando - ate 10 m/s nas trocas de direcao.
                 Vec3 wanted = style.position[s] + foot.offset * keep;
+                {
+                    // A passada de apoio: o desvio do pouso entra ate ele.
+                    const Vec3 shift = side == style.landingSide ? style.landingShift : Vec3 {};
+                    const float until = remaining >= 0.0f ? remaining : settings.minimumSwingSeconds;
+                    foot.landingShift.step(shift, std::max(0.06f, 0.8f * until), dt);
+                    wanted += foot.landingShift.value();
+                }
                 if (foot.elapsed < settings.liftBlendSeconds) {
                     // (Hermite: comeca com a velocidade do pe e some parado.)
                     const float t = foot.elapsed;

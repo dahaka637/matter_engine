@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Engine/Athlete/Core/CriticalSpring3D.hpp"
 #include "Engine/Athlete/Core/FootGeometry3D.hpp"
 #include "Engine/Math/Quaternion.hpp"
 #include "Engine/Math/Vec3.hpp"
@@ -36,6 +37,11 @@ struct FootstepStyle3D {
     // soltar, mesmo com o estilo pedindo o balanco.
     int actingSide = -1;
     int reservedSide = -1;
+    // A passada de apoio do gesto: o pe (-1 nenhum) que pousa desviado do
+    // pouso do estilo por landingShift (no plano; o desvio entra no balanco
+    // ate o pouso).
+    int landingSide = -1;
+    Vec3 landingShift;
     // 0 parado ... 1 andando.
     float movingShare = 0.0f;
 };
@@ -190,6 +196,8 @@ private:
         // Preso pela soltura do gesto: o tempo que ainda espera o estilo
         // pousar o pe (s; 0 nada).
         float releaseWait = 0.0f;
+        // O desvio do pouso aplicado no balanco (a passada de apoio).
+        SmoothSpring3D<Vec3> landingShift;
     };
     void lock(int side, Vec3 position, Quaternion orientation);
     void startOffset(int side, FootMode3D mode, const FootstepStyle3D& style);

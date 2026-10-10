@@ -76,10 +76,15 @@ struct BallHandlingSettings3D {
     // O chute correndo freia o corpo (0..1 da velocidade, pela forca) do
     // pedido ao fim do acompanhamento, nesta mola (s): a passada fica mais
     // lenta e o apoio mais longo, como na corrida para o chute.
-    float runningShotSlowdown = 0.55f;
+    float runningShotSlowdown = 0.35f;
     // (Correndo, o chute tem este prazo a mais (s) para achar o apoio: a
     // passada se ajusta ao freio.)
-    float runningShotAcquireExtra = 0.30f;
+    float runningShotAcquireExtra = 0.60f;
+    // Depois do chute correndo, o corpo segue freado por isto (s) e volta a
+    // corrida nesta mola (s): acelerando de uma vez, o pe do chute ainda
+    // preso no chao ficava para tras.
+    float shotRecoverySeconds = 0.25f;
+    float shotRecoverySpring = 0.35f;
     float slowdownSeconds = 0.12f;
 };
 
@@ -124,6 +129,9 @@ struct BallHandlingInput3D {
     Vec3 bodyVelocity;
     Vec3 aheadVelocity;
     Vec3 centerOfMass;
+    // A velocidade que o jogador pede (m/s, sem as escalas do manejo): a
+    // corrida para o chute e ajustada a partir dela.
+    float requestedSpeed = 0.0f;
     // O link do pe de cada lado (o sensor).
     std::array<std::uint32_t, 2> footLinks {};
     float deltaTime = 1.0f / 120.0f;
@@ -147,6 +155,10 @@ struct BallHandlingOutput3D {
     Vec3 outcomeVelocity;
     // A escala da velocidade pedida ao corpo (o chute correndo freia).
     float speedScale = 1.0f;
+    // A passada de apoio do chute correndo: o pe (-1 nenhum) que pousa
+    // desviado do pouso do estilo por landingShift.
+    int landingSide = -1;
+    Vec3 landingShift;
     // Interagindo (o pedido ou o gesto): vira o dono da bola.
     bool interacting = false;
     std::uint64_t interactingBallKey = 0;
@@ -210,6 +222,18 @@ private:
     float m_landLeadSpeed = 0.0f;
     bool m_landLeadKnown = false;
     std::array<bool, 2> m_stylePlantedPrevious { true, true };
+    // A passada de apoio: o pe dela no plano anterior, se ja pousou e ha
+    // quanto tempo (s).
+    int m_plantSide = -1;
+    bool m_plantLanded = false;
+    float m_plantLandedAge = 0.0f;
+    // A corrida do plano ate o pouso do apoio (m/s; < 0 nenhuma) e o freio
+    // que ainda fica depois do chute correndo (s).
+    float m_approachSpeed = -1.0f;
+    float m_recoverLeft = 0.0f;
+    float m_recoverSlow = 0.0f;
+    // O apoio da passada pousou: o corpo freia ate o fim do gesto.
+    bool m_shotBraking = false;
     Vec3 m_kneeStart { 1.0f, 0.0f, 0.0f };
     Vec3 m_appliedShift;
     float m_appliedDrop = 0.0f;

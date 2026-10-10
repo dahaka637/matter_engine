@@ -96,6 +96,30 @@ apoiados, que somam zero.
   - Numa base aberta, a volta ao padrão espera 1,2 s, e a inércia leva os pés
     ao lugar do clipe (alguns centímetros em 0,4 s).
 
+## Novo controle do atleta: Etapa 5, parte 4 — o chute correndo pela passada de apoio (10/10/2026)
+
+- **Opções de apoio no planejador** (`BallPlantOption3D`): o próximo pouso
+  e o seguinte de cada pé, com o balanço do pé do chute que acompanha cada
+  um.
+  - O apoio pousa ao lado da bola, desviado até 0,40 m do pouso do estilo
+    (só 0,10 m para a frente).
+  - A batida sai de 0,08 a 0,28 s depois do pouso.
+  - O planejador escolhe a velocidade da corrida que põe a pelve no avanço
+    natural de pouso atrás do apoio (45–105% da pedida); com o apoio no
+    chão, freia a 60%.
+- **Pegadas:**
+  - "desvio do pouso" no balanço do pé de apoio (`FootstepStyle3D::landingSide/landingShift`);
+  - o apoio pousado fica reservado até a batida.
+- **Freio:** só depois de achar o plano, até o fim do gesto. Fica 0,25 s
+  depois e sai numa mola de 0,35 s.
+- **Olhar:** com a bola perto do corpo, até 0,8 m à frente no rumo do
+  toque.
+- **Medida:** `chute_corre` (pedido a 1,0 m) e `chute_corre_cedo` (1,8 m)
+  chutam a 26,9 m/s. Pernas 635–723 m/s² e tronco ~92–96 m/s², como a
+  corrida sem bola; apoio ≤ 0,55 m/s. Conferido em folhas.
+- **Pendente:** o acompanhamento longo correndo.
+- Contratos no `--teste`, tudo passa. CTest 12/14 como antes.
+
 ## Novo controle do atleta: Etapa 5, parte 3 — bola atrás (10/10/2026)
 
 - **Superfícies com a bola atrás:** para trás, o calcanhar; para o lado de
