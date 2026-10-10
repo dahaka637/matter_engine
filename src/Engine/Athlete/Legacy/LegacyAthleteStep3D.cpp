@@ -703,6 +703,22 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         in.bodyVelocity = in.body.velocity;
         in.aheadVelocity = { command.intent.requestedVelocityWorld.x, command.intent.requestedVelocityWorld.y, 0.0f };
         in.requestedSpeed = std::hypot(state.requestedVelocityRaw.x, state.requestedVelocityRaw.y);
+        // (No Ativo, so com o corpo assentado: o centro de massa andando como
+        // o jogador pede. E o peso passa ao apoio antes do pe sair do chao:
+        // no corpo fisico isso importa.)
+        in.physicalBody = state.bodyMode == BodyMode::Active;
+        if (state.bodyMode == BodyMode::Active) {
+            Vec3 momentum;
+            float mass = 0.0f;
+            for (std::size_t i = 0; i < profile.links.size() && i < body.links.size(); ++i) {
+                const float m = std::max(0.0f, profile.links[i].massFraction);
+                momentum += body.links[i].linearVelocity * m;
+                mass += m;
+            }
+            const Vec3 com = mass > 0.0f ? momentum * (1.0f / mass) : Vec3 {};
+            in.bodyReady = std::hypot(com.x - state.requestedVelocityRaw.x, com.y - state.requestedVelocityRaw.y)
+                < settings.ballActiveReadySpeed;
+        }
         in.deltaTime = deltaTime;
         BallHandlingOutput3D& out = athlete.ballOutput;
         handling.update(in, settings.ballForce, settings.ballHandling, out);
@@ -926,7 +942,12 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             const BodyObservation3D observation = athlete.observer.observe(profile, body, deltaTime);
             // Os pes onde estao no chao (e a acomodacao de volta a base).
             const Vec3 capsuleVelocity = scene.characterState().velocity;
-            athlete.stance.adapt(profile, body, observation, out.footPlanted,
+            // (O pe do gesto da bola sai do apoio: o clipe parado o dava
+            // apoiado e o Ativo o prendia no chao, brigando com o gesto.)
+            std::array<bool, 2> planted = out.footPlanted;
+            if (settings.newBallHandlingActive() && command.controlled && athlete.ballOutput.actingSide >= 0)
+                planted[static_cast<std::size_t>(athlete.ballOutput.actingSide)] = false;
+            athlete.stance.adapt(profile, body, observation, planted,
                 std::hypot(capsuleVelocity.x, capsuleVelocity.y), settings.activeStanceSettings, deltaTime,
                 rootPosition, rootOrientation, coordinates, pose);
             ActiveBodyTarget3D target;

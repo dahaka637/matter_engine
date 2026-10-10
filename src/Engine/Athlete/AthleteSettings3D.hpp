@@ -103,6 +103,9 @@ struct AthleteRuntimeSettings3D {
     // por pegadas: e ela que reserva o apoio e trava o pe onde o gesto o
     // pousou (sem ela o pe escorregava de volta ao lugar do clipe).
     bool newBallHandling = false;
+    // No Ativo, o manejo novo so age com o centro de massa a menos disto
+    // (m/s) da velocidade da capsula: desequilibrado, o pedido espera.
+    float ballActiveReadySpeed = 0.35f;
     [[nodiscard]] bool newBallHandlingActive() const { return newBallHandling && footstepLocomotion; }
     BallHandlingSettings3D ballHandling;
     // Manejo de bola.

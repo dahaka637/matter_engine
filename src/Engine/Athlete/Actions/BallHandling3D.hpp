@@ -73,6 +73,13 @@ struct BallHandlingSettings3D {
     float supportHoldReach = 0.12f;
     // O polo do joelho do gesto sai do joelho da pose nesta mistura (s).
     float kneeBlendSeconds = 0.10f;
+    // No corpo fisico, o gesto so comeca com o preparo (o peso no apoio)
+    // acima disto.
+    float physicalPrepare = 0.75f;
+    // No corpo fisico, a transferencia do peso e menor (esta parte do
+    // deslocamento da pelve) e mais lenta (o preparo vezes isto).
+    float physicalShiftShare = 0.5f;
+    float physicalPrepareStretch = 2.0f;
     // O chute correndo freia o corpo (0..1 da velocidade, pela forca) do
     // pedido ao fim do acompanhamento, nesta mola (s): a passada fica mais
     // lenta e o apoio mais longo, como na corrida para o chute.
@@ -132,6 +139,13 @@ struct BallHandlingInput3D {
     // A velocidade que o jogador pede (m/s, sem as escalas do manejo): a
     // corrida para o chute e ajustada a partir dela.
     float requestedSpeed = 0.0f;
+    // O corpo pode agir: fora do Ativo, ou ja assentado nele. Desequilibrado
+    // (o embalo de uma pancada), o pedido espera - levantando o pe, a base
+    // virava um pe so e ele caia.
+    bool bodyReady = true;
+    // O corpo e fisico (o Ativo): o pe so sai do chao com o peso ja no apoio
+    // (o preparo do corpo acima de physicalPrepare).
+    bool physicalBody = false;
     // O link do pe de cada lado (o sensor).
     std::array<std::uint32_t, 2> footLinks {};
     float deltaTime = 1.0f / 120.0f;
@@ -227,6 +241,10 @@ private:
     int m_plantSide = -1;
     bool m_plantLanded = false;
     float m_plantLandedAge = 0.0f;
+    // O tempo que o pedido em andamento esperou o corpo assentar (nao conta
+    // nos prazos dele).
+    float m_balanceWait = 0.0f;
+    std::uint32_t m_balanceRecord = 0;
     // A corrida do plano ate o pouso do apoio (m/s; < 0 nenhuma) e o freio
     // que ainda fica depois do chute correndo (s).
     float m_approachSpeed = -1.0f;

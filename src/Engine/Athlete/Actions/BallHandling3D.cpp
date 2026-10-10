@@ -137,6 +137,11 @@ void BallHandling3D::update(const BallHandlingInput3D& input, const BallOutcomeS
     // 2) O pedido novo (a bola mais perto, travada).
     if (input.request) m_queue.push(input.intent, input.requestBallKey);
     m_queue.advance(dt);
+    // (A espera pelo equilibrio e do pedido em andamento.)
+    if (const BallActionRecord3D* active = m_queue.active(); active == nullptr || active->id != m_balanceRecord) {
+        m_balanceWait = 0.0f;
+        m_balanceRecord = active != nullptr ? active->id : 0;
+    }
 
     // 3) O pedido em andamento, sem gesto: busca o plano; comeca o gesto
     // quando o armado precisa sair. Nada some: prazo, alvo e alcance dao o
@@ -290,7 +295,13 @@ void BallHandling3D::update(const BallHandlingInput3D& input, const BallOutcomeS
                 // (A tabela anda a 1/30 s: dentro de um intervalo, comeca ja e o
                 // armado absorve a diferenca.)
                 const float start = plan.contactTime - plan.windupSeconds - plan.strikeSeconds;
-                if (start <= settings.planner.interval + 1e-4f) {
+                // (No corpo fisico, o peso no apoio antes do pe sair.)
+                const bool weightReady = !input.physicalBody || m_weight.value() >= settings.physicalPrepare;
+                if (!input.bodyReady || (!weightReady && start <= settings.planner.interval + 1e-4f)) {
+                    // (Desequilibrado ou com o peso ainda nos dois pes: espera;
+                    // o prazo para.)
+                    m_balanceWait += dt;
+                } else if (start <= settings.planner.interval + 1e-4f) {
                     const std::size_t s = static_cast<std::size_t>(plan.side);
                     BallGestureStart3D begin;
                     begin.plan = plan;
@@ -321,12 +332,15 @@ void BallHandling3D::update(const BallHandlingInput3D& input, const BallOutcomeS
                     record->stage = BallActionStage3D::Committed;
                     record->latency = record->age;
                 }
-            } else if (record->age > settings.acquireSeconds + (shot && input.gait.cycling ? settings.runningShotAcquireExtra : 0.0f)) {
+            } else if (!input.bodyReady) {
+                m_balanceWait += dt;
+            } else if (record->age - m_balanceWait
+                > settings.acquireSeconds + (shot && input.gait.cycling ? settings.runningShotAcquireExtra : 0.0f)) {
                 m_queue.finish(BallActionOutcome3D::Unreachable, plan.reason);
             }
         }
         if (record = m_queue.active(); record != nullptr && record->stage == BallActionStage3D::Seeking
-            && record->age > horizon + settings.acquireSeconds)
+            && record->age - m_balanceWait > horizon + settings.acquireSeconds)
             m_queue.finish(BallActionOutcome3D::Expired, "passou o prazo sem gesto");
     }
 
@@ -466,8 +480,11 @@ void BallHandling3D::update(const BallHandlingInput3D& input, const BallOutcomeS
     // massa); tirado ele, o que poe o centro sobre o apoio.
     const std::size_t sup = static_cast<std::size_t>(support);
     const Vec3 base = input.centerOfMass - m_appliedShift * settings.pelvisMassShare;
+    // (No corpo fisico, menor: o servo da raiz empurra o centro de massa de
+    // verdade, e o embalo tirava a captura da base.)
     const Vec3 shift = clampLength(planar(body.foot[sup] - base) * (1.0f / std::max(0.3f, settings.pelvisMassShare)),
-        settings.maximumPelvisShift);
+                           settings.maximumPelvisShift)
+        * (input.physicalBody ? settings.physicalShiftShare : 1.0f);
     // O joelho de apoio dobra com o alcance (o corpo abaixa).
     const float reachDemand = std::clamp((m_plan.reach - 0.80f) / 0.15f, 0.0f, 1.0f);
     const float drop = 0.02f + 0.06f * reachDemand + 0.4f * m_plan.pelvisNeed;
@@ -514,7 +531,7 @@ void BallHandling3D::update(const BallHandlingInput3D& input, const BallOutcomeS
         m_look.reset(look);
         m_lookWeight.reset(input.ball.valid ? 0.85f : 0.0f);
     }
-    m_weight.step(wantedWeight, settings.prepareSeconds, dt);
+    m_weight.step(wantedWeight, settings.prepareSeconds * (input.physicalBody ? settings.physicalPrepareStretch : 1.0f), dt);
     m_shift.step(shift, settings.targetSeconds, dt);
     m_drop.step(drop, settings.targetSeconds, dt);
     m_yaw.step(yaw, settings.targetSeconds, dt);

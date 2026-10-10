@@ -196,6 +196,24 @@ std::vector<Scenario> scenarios() {
         list.push_back(s);
     }
     {
+        // A bola vindo pelo ar e chegando na altura da cintura (~0,6 m).
+        Scenario s { "bola_alta", 2.5f, [](float) { return Keys {}; } };
+        s.ball = true;
+        s.ballStart = { 3.6f, -0.15f, 0.5f };
+        s.ballVelocity = { -4.5f, 0.0f, 3.6f };
+        s.autoDistance = 1.2f;
+        list.push_back(s);
+    }
+    {
+        // (Mais alta: chegando perto do quadril.)
+        Scenario s { "bola_quadril", 2.5f, [](float) { return Keys {}; } };
+        s.ball = true;
+        s.ballStart = { 3.6f, -0.15f, 0.5f };
+        s.ballVelocity = { -4.5f, 0.0f, 3.95f };
+        s.autoDistance = 1.2f;
+        list.push_back(s);
+    }
+    {
         // A bola atras e a direita, tocada para a direita (o lado de fora, a
         // perna para tras e para fora) e atras, tocada para tras (calcanhar).
         Scenario s { "atras_fora", 2.2f, [](float t) {
@@ -227,6 +245,18 @@ std::vector<Scenario> scenarios() {
     {
         Scenario s { "caixa_leve", 3.0f, [](float) { return Keys {}; } };
         s.throws.push_back({ 1.0f, 6.0f, { 0.15f, 0.15f, 0.15f }, { 0.0f, 1.2f, 1.2f }, { 0.0f, -5.0f, 0.0f } });
+        list.push_back(s);
+    }
+    {
+        // O toque no Ativo: a caixa leve bate e o toque e pedido logo depois,
+        // com o corpo ainda no Ativo.
+        Scenario s { "toque_ativo", 3.0f, [](float t) {
+            Keys k;
+            if (t >= 1.30f && t < 1.30f + Dt) { k.ball = BallActionKind3D::Dribble; k.power = 0.4f; }
+            return k; } };
+        s.throws.push_back({ 1.0f, 6.0f, { 0.15f, 0.15f, 0.15f }, { 0.0f, 1.2f, 1.2f }, { 0.0f, -5.0f, 0.0f } });
+        s.ball = true;
+        s.ballStart = { 0.45f, -0.12f, 0.11f };
         list.push_back(s);
     }
     {
@@ -888,9 +918,11 @@ int runChecks(const ProbeContext& context) {
     handling.newBallHandling = true;
     for (const char* name : { "bola_000", "bola_045", "bola_090", "bola_135", "bola_180", "bola_225", "bola_270",
              "bola_315", "toque_parado", "toque_lado", "chute_parado", "chute_lado", "bola_vindo", "atras_fora",
-             "atras_tras" }) {
+             "atras_tras", "bola_alta", "bola_quadril" }) {
         const Metrics m = run(name, handling, false);
-        const bool waits = std::string(name) == "bola_vindo";
+        // (A bola chegando: o gesto espera por ela.)
+        const bool waits = std::string(name) == "bola_vindo" || std::string(name) == "bola_alta"
+            || std::string(name) == "bola_quadril";
         char what[192];
         std::snprintf(what, sizeof(what), "manejo novo, %s: um toque por pedido (%s)", name, m.outcomes.c_str());
         expect(m.requests == 1 && m.touches == 1 && m.outcomes == "tocou", what, m);
@@ -918,6 +950,16 @@ int runChecks(const ProbeContext& context) {
         expect(m.worstLiftCorrection <= base.worstLiftCorrection + 0.02f && m.peakLegAcceleration < 800.0f
                 && m.peakUpperAcceleration < 200.0f && percentile(m.plantedSlide, 1.0f) < 0.5f && m.crossings == 0,
             what, m);
+    }
+    // No Ativo (logo depois de uma pancada leve): o pedido espera o corpo
+    // assentar e o peso passar ao apoio, toca e nao vai ao fisico pleno.
+    {
+        const Metrics m = run("toque_ativo", handling, false);
+        char what[192];
+        std::snprintf(what, sizeof(what), "manejo novo, no Ativo: espera assentar e toca (%s, %.3f s)", m.outcomes.c_str(),
+            m.worstLatency);
+        expect(m.touches == 1 && m.outcomes == "tocou" && m.worstLatency < 0.6f, what, m);
+        expect(!has(m, "fisico"), "manejo novo, no Ativo: sem fisico pleno", m);
     }
     // O chute correndo pela passada de apoio: com o pedido perto (1,0 m) e
     // longe (1,8 m) da bola, sai, sem tranco e sem o apoio escorregar.

@@ -96,6 +96,21 @@ apoiados, que somam zero.
   - Numa base aberta, a volta ao padrão espera 1,2 s, e a inércia leva os pés
     ao lugar do clipe (alguns centímetros em 0,4 s).
 
+## Novo controle do atleta: Etapa 5, partes 5 e 6 — bola no ar e o toque no Ativo (10/10/2026)
+
+- **Bola no ar:** cenários `bola_alta`/`bola_quadril` (a bola chega a
+  ~0,35–0,45 m). Tocam com a coxa subindo e o pé amortecendo; pernas
+  ~215–232 m/s².
+- **No Ativo:**
+  - o pé do gesto sai do apoio do Ativo;
+  - o pedido espera o corpo assentar (centro de massa a menos de 0,35 m/s
+    da velocidade pedida; o prazo para);
+  - no corpo físico, o peso passa ao apoio antes de o pé sair (preparo ≥
+    75%, deslocamento da pelve pela metade, preparo duas vezes mais lento).
+  - `toque_ativo` toca sem ir ao físico pleno.
+- Contratos no `--teste`, tudo passa. CTest 12/14 como antes.
+- A ordem interna da Etapa 5 do plano está percorrida.
+
 ## Novo controle do atleta: Etapa 5, parte 4 — o chute correndo pela passada de apoio (10/10/2026)
 
 - **Opções de apoio no planejador** (`BallPlantOption3D`): o próximo pouso
