@@ -509,7 +509,7 @@ private:
     // Corpo Ativo (10/10, rework Etapa 2): o estado intermediario - os
     // encostoes, a parede e a volta do fisico passam por ele. A pancada (N.s)
     // que vai direto ao fisico total e a ajuda de jogo dele (m/s2).
-    bool m_activeBody = true;
+    bool m_activeBody = false;
     float m_fullPhysicalImpulse = 25.0f;
     float m_activeAssistAcceleration = 4.0f;
     // Locomocao por pegadas (10/10, Etapa 3): no modo padrao os pes apoiados

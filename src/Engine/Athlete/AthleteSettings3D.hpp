@@ -75,7 +75,10 @@ struct AthleteRuntimeSettings3D {
     // fisico pleno) e a volta do fisico passa por ele. Impulso (N.s) de algo
     // que se move a partir do qual o corpo vai ao Ativo e a partir do qual vai
     // direto ao fisico pleno; a batida da capsula (m/s) que vai ao fisico.
-    bool activeBody = true;
+    // Desligado desde o teste do usuario (10/10, noite): andando ou correndo
+    // depois do levantar e no encostao ele derrubava o jogador de novo (a
+    // ponte fisico -> padrao do Plano_Claude_v2 o substitui).
+    bool activeBody = false;
     ActiveBodySettings3D activeBodySettings;
     ActiveStanceSettings3D activeStanceSettings;
     float activeEnterImpulse = 1.0f;

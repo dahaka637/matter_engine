@@ -96,6 +96,26 @@ apoiados, que somam zero.
   - Numa base aberta, a volta ao padrão espera 1,2 s, e a inércia leva os pés
     ao lugar do clipe (alguns centímetros em 0,4 s).
 
+## Novo controle, plano v2 — Fase A: o Ativo fora do padrão (10/10/2026, noite)
+
+Depois do teste do usuário no laboratório (quase tudo piorou), o rumo é o
+`Novo_Controle/Plano_Claude_v2.md` do vault, nas fases A a E.
+
+- **O Ativo desligado por padrão** (`AthleteSettings3D::activeBody` e o
+  laboratório). Andando ou correndo depois do levantar, e no encostão, ele
+  derrubava o jogador de novo: sem passos de verdade, o ponto de captura
+  saía da base. A chave continua; a ponte físico → padrão (fase D) o
+  substitui.
+- **Sonda:** caído e levantando, ela não mandava a intenção ao corpo (o
+  laboratório manda; o levantar e a volta a usam). Corrigido. Ganhou a
+  distância andada, as recaídas e o caminho dos modos no resumo, e
+  `XPAREDE=2` (também os contatos com o que se move).
+- **Cenários dos casos do usuário:** `queda_levanta` (parado, `_anda`,
+  `_corre`) e `encostao_andando`/`encostao_correndo`, com contratos: volta
+  ao padrão sem recaída e sem queda nova.
+- **Validação:** `--teste` 111 contratos; arquitetura ok; CTest 12/14 (as
+  falhas antigas de Character e AdaptivePhysics).
+
 ## Novo controle do atleta: Etapa 6, parte 1 — o corte correndo (10/10/2026)
 
 - **Cenário `corte_corre`:** o rumo pedido vira 50° no toque.
