@@ -1,4 +1,6 @@
 # Builds e arquivos gerados pelo CMake
+# Saidas das ferramentas de modelagem (imagens, capturas da tela de inspecao)
+/inspecao/
 /build/
 /build-*/
 /out/

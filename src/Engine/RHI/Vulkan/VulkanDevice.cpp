@@ -1042,6 +1042,135 @@ public:
         }
     }
 
+    // A textura de UI cujo descritor do ImGui e o id (nulo se nao existe).
+    TextureResource* imguiTextureResource(std::uint64_t textureId) {
+        const auto descriptor = reinterpret_cast<VkDescriptorSet>(static_cast<std::uintptr_t>(textureId));
+        for (TextureResource& resource : textures)
+            if (resource.alive && resource.imguiDescriptor == descriptor) return &resource;
+        return nullptr;
+    }
+
+    // Troca os pixels de uma textura de UI do mesmo tamanho sem recriar o
+    // descritor (a imagem gerada na CPU pelo inspetor de jogador). A barreira
+    // de entrada espera os quadros ja enviados que ainda leem a textura; o
+    // envio e sincrono, como na criacao.
+    void updateImGuiTexture(std::uint64_t textureId, std::span<const std::byte> rgbaPixels) {
+        TextureResource* resource = imguiTextureResource(textureId);
+        if (resource == nullptr) throw std::runtime_error("updateImGuiTexture: unknown UI texture");
+        const std::size_t expectedSize = static_cast<std::size_t>(resource->extent.width)
+            * static_cast<std::size_t>(resource->extent.height) * 4;
+        if (rgbaPixels.size() != expectedSize)
+            throw std::runtime_error("updateImGuiTexture: data does not match the texture extent");
+
+        VkBuffer stagingBuffer = VK_NULL_HANDLE;
+        VmaAllocation stagingAllocation = VK_NULL_HANDLE;
+        VkCommandPool commandPool = VK_NULL_HANDLE;
+        VkFence uploadFence = VK_NULL_HANDLE;
+        const auto cleanup = [&] {
+            if (uploadFence != VK_NULL_HANDLE) vkDestroyFence(device, uploadFence, nullptr);
+            if (commandPool != VK_NULL_HANDLE) vkDestroyCommandPool(device, commandPool, nullptr);
+            if (stagingBuffer != VK_NULL_HANDLE) vmaDestroyBuffer(allocator, stagingBuffer, stagingAllocation);
+        };
+        try {
+            VkBufferCreateInfo stagingInfo { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
+            stagingInfo.size = expectedSize;
+            stagingInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+            stagingInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+            VmaAllocationCreateInfo stagingAllocationInfo {};
+            stagingAllocationInfo.usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST;
+            stagingAllocationInfo.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT
+                | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+            VmaAllocationInfo mappedInfo {};
+            check(vmaCreateBuffer(allocator, &stagingInfo, &stagingAllocationInfo,
+                &stagingBuffer, &stagingAllocation, &mappedInfo), "vmaCreateBuffer(UI update staging)");
+            std::memcpy(mappedInfo.pMappedData, rgbaPixels.data(), expectedSize);
+            check(vmaFlushAllocation(allocator, stagingAllocation, 0, expectedSize),
+                "vmaFlushAllocation(UI update staging)");
+
+            VkCommandPoolCreateInfo poolInfo { VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
+            poolInfo.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+            poolInfo.queueFamilyIndex = queueFamilies.graphics;
+            check(vkCreateCommandPool(device, &poolInfo, nullptr, &commandPool), "vkCreateCommandPool(UI update)");
+            VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
+            VkCommandBufferAllocateInfo commandInfo { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+            commandInfo.commandPool = commandPool;
+            commandInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+            commandInfo.commandBufferCount = 1;
+            check(vkAllocateCommandBuffers(device, &commandInfo, &commandBuffer),
+                "vkAllocateCommandBuffers(UI update)");
+            VkCommandBufferBeginInfo beginInfo { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+            beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+            check(vkBeginCommandBuffer(commandBuffer, &beginInfo), "vkBeginCommandBuffer(UI update)");
+
+            VkImageMemoryBarrier2 toTransfer { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2 };
+            toTransfer.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+            toTransfer.srcAccessMask = VK_ACCESS_2_NONE;
+            toTransfer.dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
+            toTransfer.dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+            toTransfer.oldLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            toTransfer.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            toTransfer.image = resource->image;
+            toTransfer.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            toTransfer.subresourceRange.levelCount = 1;
+            toTransfer.subresourceRange.layerCount = 1;
+            VkDependencyInfo dependency { VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
+            dependency.imageMemoryBarrierCount = 1;
+            dependency.pImageMemoryBarriers = &toTransfer;
+            vkCmdPipelineBarrier2(commandBuffer, &dependency);
+
+            VkBufferImageCopy copy {};
+            copy.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            copy.imageSubresource.layerCount = 1;
+            copy.imageExtent = { resource->extent.width, resource->extent.height, 1 };
+            vkCmdCopyBufferToImage(commandBuffer, stagingBuffer, resource->image,
+                VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+
+            VkImageMemoryBarrier2 toShaderRead { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2 };
+            toShaderRead.srcStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
+            toShaderRead.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+            toShaderRead.dstStageMask = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+            toShaderRead.dstAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT;
+            toShaderRead.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+            toShaderRead.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            toShaderRead.image = resource->image;
+            toShaderRead.subresourceRange = toTransfer.subresourceRange;
+            dependency.pImageMemoryBarriers = &toShaderRead;
+            vkCmdPipelineBarrier2(commandBuffer, &dependency);
+            check(vkEndCommandBuffer(commandBuffer), "vkEndCommandBuffer(UI update)");
+
+            VkFenceCreateInfo fenceInfo { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
+            check(vkCreateFence(device, &fenceInfo, nullptr, &uploadFence), "vkCreateFence(UI update)");
+            VkCommandBufferSubmitInfo commandSubmit { VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO };
+            commandSubmit.commandBuffer = commandBuffer;
+            VkSubmitInfo2 submit { VK_STRUCTURE_TYPE_SUBMIT_INFO_2 };
+            submit.commandBufferInfoCount = 1;
+            submit.pCommandBufferInfos = &commandSubmit;
+            check(vkQueueSubmit2(graphicsQueue, 1, &submit, uploadFence), "vkQueueSubmit2(UI update)");
+            check(vkWaitForFences(device, 1, &uploadFence, VK_TRUE, UINT64_MAX), "vkWaitForFences(UI update)");
+            cleanup();
+        } catch (...) {
+            cleanup();
+            throw;
+        }
+    }
+
+    // Libera uma textura de UI (espera a GPU: so na troca de tamanho e ao
+    // sair da tela).
+    void destroyImGuiTexture(std::uint64_t textureId) {
+        TextureResource* resource = imguiTextureResource(textureId);
+        if (resource == nullptr) return;
+        vkDeviceWaitIdle(device);
+        if (imguiInitialized) ImGui_ImplVulkan_RemoveTexture(resource->imguiDescriptor);
+        resource->imguiDescriptor = VK_NULL_HANDLE;
+        vkDestroyImageView(device, resource->view, nullptr);
+        vmaDestroyImage(allocator, resource->image, resource->allocation);
+        resource->image = VK_NULL_HANDLE;
+        resource->allocation = VK_NULL_HANDLE;
+        resource->view = VK_NULL_HANDLE;
+        resource->alive = false;
+        ++resource->generation;
+    }
+
     // A real sampled asset texture: staging-buffer upload identical in
     // shape to createImGuiTexture above, but registers a set=1 material
     // descriptor (see createScene3DResources) instead of an ImGui one, so
@@ -1968,12 +2097,15 @@ public:
                     ? mesh->previousSkinMatrices : mesh->skinMatrices;
                 skinMatrices.insert(skinMatrices.end(), previous.begin(), previous.end());
             }
+            // A mistura do facetado vai nos bits 5 a 12 (0 a 255).
+            const float facet = mesh->flatShaded ? 1.0f : std::clamp(mesh->facet, 0.0f, 1.0f);
             const float materialFlags =
                 (mesh->outlineGlow ? 1.0f : 0.0f)
                 + (mesh->planarReflection ? 2.0f : 0.0f)
                 + (mesh->pixelArtHighDetail ? 4.0f : 0.0f)
                 + (mesh->matteSurface ? 8.0f : 0.0f)
-                + (mesh->flatShaded ? 16.0f : 0.0f);
+                + (mesh->flatShaded ? 16.0f : 0.0f)
+                + 32.0f * std::round(facet * 255.0f);
             gpuInstance.materialAndFlags = { mesh->metallic, mesh->roughness,
                 mesh->selected ? 1.0f : 0.0f, materialFlags };
             // Mesma escala para o passado - nada nesta engine anima escala
@@ -7175,6 +7307,12 @@ void VulkanDevice::beginImGuiFrame() { m_impl->beginImGuiFrame(); }
 void VulkanDevice::renderImGui(ImDrawData* drawData) { m_impl->renderImGui(drawData); }
 std::uint64_t VulkanDevice::createImGuiTexture(Extent2D extent, std::span<const std::byte> rgbaPixels) {
     return m_impl->createImGuiTexture(extent, rgbaPixels);
+}
+void VulkanDevice::updateImGuiTexture(std::uint64_t textureId, std::span<const std::byte> rgbaPixels) {
+    m_impl->updateImGuiTexture(textureId, rgbaPixels);
+}
+void VulkanDevice::destroyImGuiTexture(std::uint64_t textureId) {
+    m_impl->destroyImGuiTexture(textureId);
 }
 std::uint64_t VulkanDevice::renderScene3D(const Scene3DFrame& scene, Extent2D extent) {
     return m_impl->renderScene3D(scene, extent);

@@ -1,0 +1,64 @@
+{
+  "schema": "matter.player_model.v1",
+  "id": "jogador",
+  "displayName": "Jogador",
+  "character": "../football_player/character.json",
+  "regions": "regions.json",
+  "skeleton": {
+    "comment": "O esqueleto do jogo levado ao corpo novo: as juntas medidas na malha base (esqueleto.json, so o lado direito e o meio; o esquerdo e o espelho). Os dedos da esquerda tambem sao o espelho exato dos da direita. O chao do espaco do modelo (ground) e fixo: as pecas, a pintura e os ajustes do rosto foram postos nele (o perfil do jogo tem a pelve na origem).",
+    "fit": "esqueleto.json",
+    "mirrorFingersFrom": "Right",
+    "ground": -0.9775526
+  },
+  "mesh": {
+    "source": "montagem",
+    "assembly": "montagem.json"
+  },
+  "references": [
+    {
+      "view": "frente",
+      "image": "referencias/frente.png",
+      "label": "Corpo de frente (pose T)"
+    },
+    {
+      "view": "costas",
+      "image": "referencias/costas.png",
+      "label": "Corpo de costas"
+    },
+    {
+      "view": "direita",
+      "image": "referencias/lado.png",
+      "label": "Corpo de lado"
+    },
+    {
+      "view": "detalhe",
+      "image": "referencias/rosto.png",
+      "label": "Cabeça: frente, lado e cima"
+    },
+    {
+      "view": "detalhe",
+      "image": "referencias/maos.png",
+      "label": "Antebraço e mão: frente e costas"
+    },
+    {
+      "view": "detalhe",
+      "image": "referencias/braço_e_mao.png",
+      "label": "Braço e mão em 3/4"
+    },
+    {
+      "view": "detalhe",
+      "image": "referencias/calção.png",
+      "label": "Calção: frente, lado e costas"
+    },
+    {
+      "view": "detalhe",
+      "image": "referencias/canela_chuteira.png",
+      "label": "Meião e chuteira"
+    },
+    {
+      "view": "detalhe",
+      "image": "referencias/chuteira_01.png",
+      "label": "Chuteira"
+    }
+  ]
+}

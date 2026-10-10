@@ -94,6 +94,38 @@ bool PhysicsScene3D::sweepSphere(const Ray3D& ray, float r, float d, PhysicsRayH
 bool PhysicsScene3D::sweepSphereDynamic(const Ray3D& ray, float r, float d, PhysicsRayHit3D& hit) const { return ordinary(*m_impl, ray, d, r, 2, hit); }
 bool PhysicsScene3D::raycastRagdoll(const Ray3D& ray, float d, PhysicsRagdollRayHit3D& hit) const { return ragdollQuery(*m_impl, ray, d, 0, hit); }
 bool PhysicsScene3D::sweepSphereRagdoll(const Ray3D& ray, float r, float d, PhysicsRagdollRayHit3D& hit) const { return ragdollQuery(*m_impl, ray, d, r, hit); }
+std::vector<RagdollWorldContact3D> PhysicsScene3D::ragdollPoseWorldContacts(RagdollHandle3D h,
+    std::span<const Vec3> positions, std::span<const Quaternion> orientations, float minimumDepth) const {
+    std::vector<RagdollWorldContact3D> contacts;
+    const auto* r = m_impl->ragdoll(h);
+    if (!r || positions.size() != r->links.size() || orientations.size() != r->links.size()) return contacts;
+    const auto& bi = m_impl->system->GetBodyInterface();
+    JPH::CollideShapeSettings settings;
+    settings.mActiveEdgeMode = JPH::EActiveEdgeMode::CollideOnlyWithActive;
+    for (std::size_t i = 0; i < r->links.size(); ++i) {
+        const JPH::RefConst<JPH::Shape> shape = bi.GetShape(r->links[i]);
+        if (shape == nullptr) continue;
+        const JPH::RMat44 world = JPH::RMat44::sRotationTranslation(
+            toJolt(orientations[i]).Normalized(), toJolt(positions[i]));
+        JPH::AllHitCollisionCollector<JPH::CollideShapeCollector> collector;
+        m_impl->system->GetNarrowPhaseQuery().CollideShape(shape, JPH::Vec3::sReplicate(1),
+            world.PreTranslated(shape->GetCenterOfMass()), settings, JPH::RVec3::sZero(), collector, {},
+            Layers(1u << JoltObjectLayers::NonMoving));
+        RagdollWorldContact3D deepest;
+        deepest.depthMeters = -1.0f;
+        for (const auto& hit : collector.mHits) {
+            if (hit.mPenetrationDepth <= deepest.depthMeters) continue;
+            deepest.linkIndex = static_cast<std::uint32_t>(i);
+            deepest.depthMeters = hit.mPenetrationDepth;
+            // (O eixo leva o corpo 2 - o estatico - para fora; a normal da
+            // superficie aponta para o link.)
+            deepest.normalWorld = fromJolt(-hit.mPenetrationAxis.NormalizedOr(JPH::Vec3::sAxisZ()));
+            deepest.pointWorld = fromJolt(hit.mContactPointOn2);
+        }
+        if (deepest.depthMeters >= minimumDepth) contacts.push_back(deepest);
+    }
+    return contacts;
+}
 bool PhysicsScene3D::overlapsBox(Vec3 center, Vec3 halfExtents, Quaternion orientation) const {
     JPH::BoxShape shape(toJolt(halfExtents), 0);
     JPH::AnyHitCollisionCollector<JPH::CollideShapeCollector> collector;

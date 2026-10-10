@@ -190,6 +190,21 @@ def measure(capture: dict) -> dict:
     head_rest = _pitch(R["HeadTop"] - R["Head"])
     head = _pitch(P["HeadTop"][body] - P["Head"][body]) - head_rest
     result["cabeca inclinada (graus)"] = float(head.mean())
+    # Tronco e cabeca vistos de frente e de cima: o quanto o tronco tomba
+    # para os lados (+ esquerda) e gira contra a pelve, e o quanto a cabeca
+    # balanca, tomba e sobe e desce.
+    trunk_vector = P["Neck"][body] - mid_hip[body]
+    trunk_roll = np.degrees(np.arctan2(trunk_vector[:, 1], trunk_vector[:, 2]))
+    result["tronco de lado medio (graus, + esquerda)"] = float(trunk_roll.mean())
+    result["tronco de lado balanca (graus)"] = _amplitude(trunk_roll)
+    twist = shoulder_yaw - pelvis_yaw
+    twist = (twist + 180.0) % 360.0 - 180.0
+    result["ombros contra pelve (graus)"] = _amplitude(twist)
+    result["cabeca balanca (graus)"] = _amplitude(head)
+    head_vector = P["HeadTop"][body] - P["Head"][body]
+    head_roll = np.degrees(np.arctan2(head_vector[:, 1], head_vector[:, 2]))
+    result["cabeca de lado balanca (graus)"] = _amplitude(head_roll)
+    result["cabeca sobe-desce (cm)"] = 100.0 * _amplitude(P["Head"][body, 2])
 
     stance_width, touch, lift, knee_max, knee_touch, knee_stance = \
         [], [], [], [], [], []
@@ -202,6 +217,10 @@ def measure(capture: dict) -> dict:
         ankle = P[f"{side}Ankle"][body]
         ball = P[f"{side}Ball"][body]
         c = contact[side]
+        if not c.any():
+            # (Apoio curto demais para a regra - um quadro so: o mais baixo.)
+            c = np.zeros_like(c)
+            c[int(np.argmin(ankle[:, 2]))] = True
         flexion = 180.0 - _angle(hip - knee, ankle - knee)
         relative = ankle - mid_hip[body]
         stance_width.append(np.abs(relative[c, 1]).mean())

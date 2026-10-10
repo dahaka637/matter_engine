@@ -19,7 +19,7 @@ from mathutils import Vector
 
 def export_skin(obj, rig, profile, output, strict_anchors=True, visual_bones=()):
     # Visual bones (fingers) come after the physical ones in the palette; they
-    # follow a parent bone and have no physics (see prepare_football_player).
+    # follow a parent bone and have no physics (the football player is now exported by MatterModelInspector exportar-jogo).
     names=[link['id'] for link in profile['links']]+[b['name'] for b in visual_bones]
     mapping={bone.name:bone.get('physics_link',bone.name) for bone in rig.data.bones}
     for link in profile['links'][1:]:

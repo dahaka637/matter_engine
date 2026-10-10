@@ -5,6 +5,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <limits>
 #include <vector>
 
@@ -23,6 +25,9 @@ constexpr float SettleStepYaw = 0.60f;
 // limite de torcao do quadril esperando os pes.)
 constexpr float TurnTwistTrigger = 0.21f;
 constexpr float TurnEarlyRemaining = 0.21f;
+// TEMPTUNE: com a ajuda cheia, abaixo desta torcao (rad) a base se acerta por
+// acomodacao, nao por giro.
+const float HeldTurnTwist = [] { const char* v = std::getenv("T_HeldTurnTwist"); return v ? static_cast<float>(std::atof(v)) : 0.6f; }();
 // Passo de giro: descarga curta e balanco rapido (o pe so abre sobre a bola
 // e gira); uma recuperacao leve (urgencia abaixo disto) nao cancela o giro -
 // o proprio passo de giro refaz a base.
@@ -31,10 +36,35 @@ constexpr float TurnRecoveryUrgency = 0.25f;
 // Ate 72 graus por par de passos: o pe pousa girado em relacao a pelve, que
 // ainda esta a caminho, e o quadril so gira 45 graus. Mirando 115 de uma vez
 // (meia-volta), o pe pousava onde a perna nao chega.
-constexpr float TurnStepLimit = 1.25f;
+const float TurnStepLimit = [] { const char* v = std::getenv("T_TurnStepLimit"); return v ? static_cast<float>(std::atof(v)) : 1.25f; }();
+// TEMPTUNE: base compacta do giro parado (ajuda cheia) - meia largura (m, do
+// centro ao tornozelo), o esquerdo um pouco a frente (m) e quanto cada pe
+// abre para fora (rad); 0 na largura = a pose parada girada. O modo vale com
+// o giro pedido acima de TurnModeEnter (rad) ou a pelve girando acima de
+// TurnModeRate (rad/s; a 0,6 a pose de alerta entrando depois de uma freada -
+// a pelve roda 22 graus - ligava o modo sem giro nenhum), e TurnModeHold (s)
+// depois.
+const float TurnStanceHalfWidth = [] { const char* v = std::getenv("T_TurnHalfWidth"); return v ? static_cast<float>(std::atof(v)) : 0.0f; }();
+const float TurnStanceStagger = [] { const char* v = std::getenv("T_TurnStagger"); return v ? static_cast<float>(std::atof(v)) : 0.0f; }();
+const float TurnStanceToeOut = [] { const char* v = std::getenv("T_TurnToeOut"); return v ? static_cast<float>(std::atof(v)) : 0.15f; }();
+const float TurnModeEnter = [] { const char* v = std::getenv("T_TurnModeEnter"); return v ? static_cast<float>(std::atof(v)) : 0.20f; }();
+const float TurnModeRate = [] { const char* v = std::getenv("T_TurnModeRate"); return v ? static_cast<float>(std::atof(v)) : 1.5f; }();
+const float TurnModeHold = [] { const char* v = std::getenv("T_TurnModeHold"); return v ? static_cast<float>(std::atof(v)) : 0.5f; }();
+const float TurnStanceScale = [] { const char* v = std::getenv("T_TurnStanceScale"); return v ? static_cast<float>(std::atof(v)) : 1.0f; }();
+const float HeldTurnStepLimit = [] { const char* v = std::getenv("T_HeldTurnStep"); return v ? static_cast<float>(std::atof(v)) : 1.6f; }();
+const float TurnModeDrift = [] { const char* v = std::getenv("T_TurnModeDrift"); return v ? static_cast<float>(std::atof(v)) : 0.25f; }();
+// TEMPTUNE: passos de giro com a ajuda cheia (o equilibrio e dela): sai na
+// hora (fracao do tempo de descarga) e o balanco curto, mais curto quanto mais
+// rapido o giro (s: o mais lento e o mais rapido).
+const float HeldTurnUnloadShare = [] { const char* v = std::getenv("T_HeldTurnUnload"); return v ? static_cast<float>(std::atof(v)) : 0.15f; }();
+const float HeldTurnSwingSlow = [] { const char* v = std::getenv("T_HeldTurnSwingSlow"); return v ? static_cast<float>(std::atof(v)) : 0.17f; }();
+const float HeldTurnSwingFast = [] { const char* v = std::getenv("T_HeldTurnSwingFast"); return v ? static_cast<float>(std::atof(v)) : 0.10f; }();
 // Recuperacao: o ponto de captura fora do apoio planejado alem disto, e o
 // corpo indo para fora (ou sob forca externa).
 constexpr float RecoveryOutsideTrigger = 0.045f;
+// TEMPTUNE: com a ajuda cheia segurando, quanto a mais a captura precisa
+// sair da base (m) para um passo de recuperacao sem forca de fora.
+const float AssistHoldMargin = [] { const char* v = std::getenv("T_AssistHoldMargin"); return v ? static_cast<float>(std::atof(v)) : 2.0f; }();
 constexpr float RecoveryOutsideFull = 0.20f;
 constexpr float RecoveryLeavingSpeed = 0.10f;
 constexpr float RecoveryForceTrigger = 60.0f;
@@ -42,6 +72,9 @@ constexpr float RecoveryCaptureUnloadSeconds = 0.15f;
 constexpr float CaptureTargetSlowSpeed = 0.30f;
 constexpr float CaptureTargetFastSpeed = 0.60f;
 constexpr float RecoveryMemorySeconds = 0.45f;
+// Girando parado sem forca de fora: a captura pode sair isto a mais da base
+// antes de virar recuperacao (m). TEMPTUNE
+const float TurnRecoveryMargin = [] { const char* v = std::getenv("T_TurnRecoveryMargin"); return v ? static_cast<float>(std::atof(v)) : 0.15f; }();
 // Descarga antes de soltar o pe: sai quando a carga medida dele cai abaixo
 // da fracao, ou no tempo maximo (passo comum), ou logo na emergencia.
 constexpr float UnloadedShare = 0.30f;
@@ -133,6 +166,24 @@ constexpr float RecoveryNearGround = 0.03f;
 constexpr float BrakeSettleMargin = 0.03f;
 // Pe apoiado deslizando mais que isto (m/s): a ancora vai junto.
 constexpr float BrakeSlideSpeed = 0.3f;
+inline float tuneTempFootwork(const char* name, float fallback) {  // TEMPTUNE
+    const char* value = std::getenv(name);
+    return value != nullptr ? std::strtof(value, nullptr) : fallback;
+}
+// Assumindo os dois pes no ar freando, so o mais alto da passo de freada.
+const bool BrakeSingleTakeoverStep = tuneTempFootwork("T_BrakeSingle", 1.0f) > 0.5f;  // TEMPTUNE
+// Recem-freado, o pe fora do alcance (sem apoio) volta para a base.
+const bool UnreachableDuringSettleHold = tuneTempFootwork("T_UnreachHold", 1.0f) > 0.5f;  // TEMPTUNE
+// Freando de lado, o pe de dentro assumido no ar so pousa (o de fora abre).
+const bool SidewaysInnerLands = tuneTempFootwork("T_SideInner", 0.0f) > 0.5f;  // TEMPTUNE
+// Freando de lado: o ponto de captura alem disto (m) do pe de fora, ele abre
+// antes de o de dentro fechar.
+const bool SideOpenFirst = tuneTempFootwork("T_SideOpen", 0.0f) > 0.5f;  // TEMPTUNE
+const float SideOpenFirstBeyond = tuneTempFootwork("T_SideOpenBeyond", 0.20f);  // TEMPTUNE
+// Recuperacao: so o pe escolhido muda de passo no ar.
+const bool RecoverOnlyChosenFoot = tuneTempFootwork("T_RecoverChosen", 0.0f) > 0.5f;  // TEMPTUNE
+// Recem-freado, base mais estreita que isto (m; negativa = cruzada) acomoda.
+const float SettleHoldNarrowBase = tuneTempFootwork("T_NarrowBase", 0.06f);  // TEMPTUNE
 
 // Normal que pode inclinar a sola: piso (ate ~25 graus). Uma quina de degrau
 // devolve a normal da aresta (medido: 40 graus) - pe nenhum pousa assim.
@@ -290,6 +341,9 @@ void advanceQuintic(Vec3& p, Vec3& v, Vec3& a, Vec3 target, Vec3 aEnd, float T, 
 // do apoio (o corpo "caia" para o pe de apoio). (Crescer isso ate a carga
 // passar, sem a assistencia, so derrubava o corpo para o lado - a troca de
 // peso de verdade e da atuacao das juntas, etapa E4.)
+// Pe roteirizado com peso no apoio: ate onde a pelve vai (m).
+constexpr float ScriptedShiftLimit = 0.16f;
+
 void unloadShift(float seconds, bool staggered, float& fraction, float& limit) {
     const float ramp = smoothStep(seconds / 0.20f);
     fraction = ramp * (staggered ? 0.45f : 0.25f);
@@ -329,6 +383,8 @@ void ContactFootwork3D::reset(const RagdollProfile3D& profile) {
     m_brakeClosing = {};
     m_brakeRearLanding = {};
     m_brakeStepsTaken = 0;
+    m_stumbleStep = {};
+    m_stumbleStepsTaken = 0;
     m_supportLost = {};
     m_swingTrajectory = {};
     m_sinceRecoveryLanding = 10.0f;
@@ -340,6 +396,8 @@ Vec3 ContactFootwork3D::wantedLanding(const ContactFootworkInput3D& input,
     const FootPlan3D& foot = m_plan.feet[side];
     const FootReference3D& reference = input.reference[side];
     orientation = reference.poseOrientationWorld;
+    if (foot.reason == StepReason3D::Settle && input.standing && input.assistHold > 0.5f)
+        return pairStanceTarget(input, side);
     if (foot.reason != StepReason3D::Turn || !input.standing) return reference.poseWorld;
     // Giro: a pose parada ja no rumo final da pelve, ate o limite por par a
     // partir do rumo em que o passo comecou - no sentido em que o passo
@@ -354,6 +412,15 @@ Vec3 ContactFootwork3D::wantedLanding(const ContactFootworkInput3D& input,
         wrapAngle(finalYaw - input.facingYawRadians));
     orientation = (spin * reference.poseOrientationWorld).normalized();
     return input.referenceRootWorld + spin.rotate(reference.poseWorld - input.referenceRootWorld);
+}
+
+Vec3 ContactFootwork3D::pairStanceTarget(const ContactFootworkInput3D& input, std::size_t side) const {
+    // Onde a pose parada quer este pe em relacao ao outro (apoiado).
+    const std::size_t other = 1 - side;
+    Vec3 target = m_plan.feet[other].anchorWorld
+        + (input.reference[side].poseWorld - input.reference[other].poseWorld);
+    target.z = input.reference[side].poseWorld.z;
+    return target;
 }
 
 float ContactFootwork3D::stanceYaw(const RagdollProfile3D& profile,
@@ -376,6 +443,13 @@ void ContactFootwork3D::startStep(const RagdollProfile3D& profile,
     const ContactFootworkInput3D& input, std::size_t side, StepReason3D reason,
     SwingPath3D path, float urgency) {
     FootPlan3D& foot = m_plan.feet[side];
+    // Comeco de um giro (o outro pe nao esta girando nem espera o segundo
+    // passo): o centro em volta do qual a base gira.
+    if (reason == StepReason3D::Turn && m_pendingTurnFoot < 0
+        && m_plan.feet[1 - side].reason != StepReason3D::Turn) {
+        m_turnCenter = (m_plan.feet[0].anchorWorld + m_plan.feet[1].anchorWorld) * 0.5f;
+        m_turnCenterValid = true;
+    }
     foot.phase = FootPhase3D::Unloading;
     foot.reason = reason;
     foot.path = path;
@@ -408,6 +482,12 @@ void ContactFootwork3D::startStep(const RagdollProfile3D& profile,
             - footYaw3D(link, foot.anchorOrientationWorld)));
         foot.swingDurationSeconds = reason == StepReason3D::Turn
             ? turnStepSeconds(distance, yaw) : ordinaryStepSeconds(distance, yaw);
+        // Ajuda cheia: o passo de giro na velocidade do giro pedido.
+        if (reason == StepReason3D::Turn && input.assistHold > 0.5f) {
+            const float need = std::clamp(std::abs(input.standingTurnRateRadiansPerSecond) / 6.0f
+                + std::abs(wrapAngle(input.standingTurnTargetYawRadians - input.facingYawRadians)) / 1.5f, 0.0f, 1.0f);
+            foot.swingDurationSeconds = HeldTurnSwingSlow + (HeldTurnSwingFast - HeldTurnSwingSlow) * need;
+        }
     }
     ++m_plan.stepsStarted;
 }
@@ -814,7 +894,7 @@ Vec3 ContactFootwork3D::brakeLanding(const RagdollProfile3D& profile,
     const bool otherDown = physical.feet[other].supporting || supportsWeight(m_plan.feet[other].phase);
     const Vec3 support = physical.feet[other].supporting || !otherDown
         ? physical.feet[other].soleCenterWorld : m_plan.feet[other].anchorWorld;
-    Vec3 direction = input.brakeDirectionWorld;
+    Vec3 direction = m_stumbleStep[side] ? input.stumbleDirectionWorld : input.brakeDirectionWorld;
     direction.z = 0.0f;
     if (direction.lengthSquared() < 1e-4f) direction = input.heading.rotate({ 1.0f, 0.0f, 0.0f });
     direction = direction.normalized();
@@ -887,6 +967,9 @@ Vec3 ContactFootwork3D::brakeLanding(const RagdollProfile3D& profile,
     float along = m_brakeClosing[side]
         ? std::min(dot(p, direction) - BrakeHipWidth, captureAlong)
         : std::min(comAlong + braking, captureAlong);
+    // Quase-queda: um pouco a frente de onde o corpo vai estar no toque - o
+    // pe pega o corpo que cai para a frente sem freia-lo (ele segue correndo).
+    if (m_stumbleStep[side]) along = comAlong + input.stumbleAheadMeters;
     if (m_brakeRearLanding[side]) {
         // Apoio de tras do afundo: onde o pe ja vai, nunca a frente do corpo.
         const Vec3 now = physical.feet[side].soleCenterWorld;
@@ -915,7 +998,9 @@ Vec3 ContactFootwork3D::brakeLanding(const RagdollProfile3D& profile,
     Vec3 fromSupport = target - p;
     fromSupport.z = 0.0f;
     const float reach = BrakeReach;
-    if (fromSupport.length() > reach)
+    // (O passo de quase-queda e medido do corpo, nao do outro pe: os dois
+    // podem estar atras dele.)
+    if (fromSupport.length() > reach && !m_stumbleStep[side])
         target = p + fromSupport * (reach / fromSupport.length());
     target.z = pose.z;
     return target;
@@ -1090,6 +1175,7 @@ void ContactFootwork3D::executeSwing(const RagdollProfile3D& profile,
                 input.planningComVelocityWorld.y);
             lift = std::min(BrakeLiftMaximum,
                 BrakeLift + BrakeLiftPerSpeed * speed);
+            if (m_stumbleStep[side]) lift = std::max(lift, input.stumbleLiftMeters);
         }
         stepTarget.z = from.z + (liveTarget.z - from.z) * eased
             + (lift + foot.extraClearance) * arch;
@@ -1208,7 +1294,7 @@ void ContactFootwork3D::executeSwing(const RagdollProfile3D& profile,
     // pe nao freia nada.
     bool brakeTouch = false;
     if (foot.reason == StepReason3D::Brake && progress >= 0.5f) {
-        Vec3 direction = input.brakeDirectionWorld;
+        Vec3 direction = m_stumbleStep[side] ? input.stumbleDirectionWorld : input.brakeDirectionWorld;
         direction.z = 0.0f;
         const float ahead = direction.lengthSquared() > 1e-4f
             ? dot(Vec3 { measured.soleCenterWorld.x - input.physical->centerOfMassWorld.x,
@@ -1245,8 +1331,86 @@ void ContactFootwork3D::executeSwing(const RagdollProfile3D& profile,
 }
 
 void ContactFootwork3D::update(const RagdollProfile3D& profile,
-    const ContactFootworkInput3D& input, float deltaTime) {
+    const ContactFootworkInput3D& rawInput, float deltaTime) {
     if (!m_initialized || m_linkCount != profile.links.size()) reset(profile);
+    // Giro parado com a ajuda cheia: enquanto gira (e um instante depois) a
+    // base de referencia e a compacta - pes lado a lado na largura do
+    // quadril, pouco abertos, no olhar. Pela pose parada em alerta (rodada
+    // ~22 graus, escalonada, o pe de tras ~0,6 m e 46 graus aberto), cada
+    // passo de giro varria um arco enorme e virava afundo, pernas abertas e
+    // joelhos tortos. Tudo no planejador (torcao da base, alvos, acomodacao)
+    // usa a mesma base.
+    ContactFootworkInput3D input = rawInput;
+    // Pes roteirizados: nenhum passo do planejador (o clipe decide).
+    if (rawInput.scripted[0].active || rawInput.scripted[1].active) input.allowSteps = false;
+    {
+        const float ahead = std::abs(wrapAngle(rawInput.standingTurnTargetYawRadians - rawInput.facingYawRadians));
+        bool turningFeet = false;
+        for (const FootPlan3D& foot : m_plan.feet)
+            turningFeet = turningFeet || (foot.reason == StepReason3D::Turn && !foot.followingGait
+                && foot.phase != FootPhase3D::Stance);
+        // (Tambem quando o rumo se afastou de onde a base assentou: a camera
+        // girando devagar acumula o giro sem pedir nada de uma vez.)
+        const float drift = std::abs(wrapAngle(rawInput.facingYawRadians - m_stanceFacing));
+        const bool active = rawInput.standing && (ahead > TurnModeEnter || drift > TurnModeDrift
+            || std::abs(rawInput.standingTurnRateRadiansPerSecond) > TurnModeRate || turningFeet);
+        if (std::getenv("XTURNMODEDBG") && active && m_turnModeSeconds > 0.2f)
+            std::printf("TURNMODE on | ahead %.2f drift %.2f rate %.2f feet %d standing %d\n", ahead, drift,
+                rawInput.standingTurnRateRadiansPerSecond, turningFeet ? 1 : 0, rawInput.standing ? 1 : 0);
+        m_turnModeSeconds = active ? 0.0f : std::min(10.0f, m_turnModeSeconds + deltaTime);
+        m_turnMode = rawInput.assistHold > 0.5f && m_turnModeSeconds < TurnModeHold;
+        // Giro parado pedido ou em andamento, com qualquer ajuda.
+        m_turnRequested = active;
+        // Depois de um giro a base compacta fica ate ele andar: voltar para
+        // a pose parada em alerta era um passo largo para tras (~0,6 m) 1-2 s
+        // depois, parecendo afundo.
+        // A base quadrada vale so girando (e o instante depois); parado, a
+        // base em alerta volta com uma acomodacao.
+        m_compactStance = m_turnMode && TurnStanceHalfWidth > 0.0f;
+        // A base assenta no rumo de quem anda ou gira; parado, fica.
+        if (!rawInput.standing || m_turnMode) m_stanceFacing = rawInput.facingYawRadians;
+        // Cada giro libera de novo uma acomodacao (a volta para a base parada).
+        if (m_turnMode) m_heldSettles = 0;
+        if (m_turnMode && TurnStanceScale < 0.999f && m_feet[0] < profile.links.size() && m_feet[1] < profile.links.size()) {
+            // Girando: a base de alerta encurtada em volta do centro dela -
+            // firme e escalonada, sem o pe de tras 0,5 m atras varrendo o
+            // chao (afundo). Ao parar de girar, uma acomodacao curta devolve a
+            // base inteira.
+            const Vec3 center = (rawInput.reference[0].poseWorld + rawInput.reference[1].poseWorld) * 0.5f;
+            for (std::size_t side = 0; side < 2; ++side) {
+                FootReference3D& reference = input.reference[side];
+                const float z = reference.poseWorld.z;
+                reference.poseWorld = center + (rawInput.reference[side].poseWorld - center) * TurnStanceScale;
+                reference.poseWorld.z = z;
+            }
+        }
+        if (m_compactStance && m_feet[0] < profile.links.size() && m_feet[1] < profile.links.size()) {
+            // A base do giro alinhada com a pelve (a pose em alerta a roda ~22
+            // graus do olhar): de frente para o olhar, a perna ja comecava
+            // torcida e chegava a ~75 graus girando para a direita.
+            const float stanceYawNow = rawInput.facingYawRadians + rawInput.pelvisYawOffsetRadians;
+            const Vec3 forward { std::cos(stanceYawNow), std::sin(stanceYawNow), 0.0f };
+            const Vec3 left { -forward.y, forward.x, 0.0f };
+            float along = 0.0f;
+            for (std::size_t side = 0; side < 2; ++side)
+                along += 0.5f * dot(rawInput.reference[side].poseWorld - rawInput.referenceRootWorld, forward);
+            const Vec3 center = Vec3 { rawInput.referenceRootWorld.x, rawInput.referenceRootWorld.y, 0.0f }
+                + forward * along;
+            for (std::size_t side = 0; side < 2; ++side) {
+                const float outward = side == 0 ? 1.0f : -1.0f;
+                FootReference3D& reference = input.reference[side];
+                const float z = reference.poseWorld.z;
+                reference.poseWorld = center + left * (outward * TurnStanceHalfWidth)
+                    + forward * (outward * TurnStanceStagger);
+                reference.poseWorld.z = z;
+                const float yaw = stanceYawNow + outward * TurnStanceToeOut;
+                const float current = footYaw3D(profile.links[m_feet[side]], reference.poseOrientationWorld);
+                reference.poseOrientationWorld = (Quaternion::fromAxisAngle({ 0.0f, 0.0f, 1.0f },
+                    wrapAngle(yaw - current)) * reference.poseOrientationWorld).normalized();
+            }
+        }
+        m_plan.turnStance = m_compactStance;
+    }
     CharacterContactPlan3D& plan = m_plan;
     plan.valid = false;
     plan.supportShiftWorld = {};
@@ -1315,6 +1479,25 @@ void ContactFootwork3D::update(const RagdollProfile3D& profile,
         }
     }
 
+    // Freando com os dois pes da passada no ar (a troca caiu no fim de um
+    // balanco, o outro pe ja descendo): so um da o passo de freada - o mais
+    // alto; o que ja ia tocar o chao pousa onde ia. Os dois em passo de
+    // freada deixavam o corpo sem apoio por ~0,15 s e a ajuda o erguia
+    // (saltinho e queda parando de um strafe a 3 m/s).
+    int brakeLandingSide = -1;
+    if (BrakeSingleTakeoverStep && input.braking && input.allowSteps && !input.seedFromBody
+        && plan.feet[0].followingGait && plan.feet[1].followingGait) {
+        std::array<bool, 2> loose {};
+        std::array<float, 2> height {};
+        for (std::size_t side = 0; side < 2; ++side) {
+            const FootSupportEstimate3D& seen = physical.feet[side];
+            loose[side] = !input.gait[side].planted && !(contactSupport(seen)
+                && std::hypot(seen.soleVelocityWorld.x, seen.soleVelocityWorld.y) <= 0.50f);
+            height[side] = seen.soleLowestHeight - (input.gait[side].surface.valid
+                ? input.gait[side].surface.height : plan.feet[side].surface.height);
+        }
+        if (loose[0] && loose[1]) brakeLandingSide = height[0] <= height[1] ? 0 : 1;
+    }
     // Quem decide cada pe: parado (ou num passo daqui em andamento), o
     // planejador; andando, no ar, caindo ou levantando, a passada/os
     // reflexos, e o plano so acompanha.
@@ -1329,7 +1512,7 @@ void ContactFootwork3D::update(const RagdollProfile3D& profile,
             || foot.reason == StepReason3D::ReestablishSupport;
         const bool stepInFlight = !foot.followingGait && foot.phase != FootPhase3D::Stance
             && foot.phase != FootPhase3D::Unloading && !handoverLanding;
-        const bool own = input.allowSteps && (input.standing || input.braking || stepInFlight
+        const bool own = input.allowSteps && (input.standing || input.braking || input.stumbling || stepInFlight
             || (m_settings.locomotionStepping && input.locomoting));
         if (!own) {
             const GaitFootState3D& gait = input.gait[side];
@@ -1355,12 +1538,55 @@ void ContactFootwork3D::update(const RagdollProfile3D& profile,
             foot.anchorWorld = gait.lockedWorld;
             foot.anchorOrientationWorld = gait.lockedOrientationWorld;
             foot.surface = gait.surface;
+        } else if (!input.seedFromBody && input.stumbling && !input.braking) {
+            // Quase-queda: o pe da passada no chao (de fato) fica; dos que
+            // estao no ar, so o mais a frente no rumo da o passo que pega o
+            // corpo (o outro desce onde esta). Com os dois em passo, o de tras
+            // mirava a frente a partir do outro, tambem atras, e o alvo ficava
+            // atras do corpo.
+            const std::size_t other = 1 - side;
+            Vec3 direction = input.stumbleDirectionWorld;
+            direction.z = 0.0f;
+            const bool otherAir = !(contactSupport(physical.feet[other]) && physical.feet[other].soleLowestHeight < 0.04f)
+                && !input.gait[other].planted;
+            const bool otherAhead = otherAir && direction.lengthSquared() > 1e-4f
+                && dot(physical.feet[other].soleCenterWorld - physical.feet[side].soleCenterWorld, direction) > 0.0f;
+            if ((contactSupport(physical.feet[side]) && physical.feet[side].soleLowestHeight < 0.04f)
+                || otherAhead || m_stumbleStepsTaken > 0) {
+                seedFoot(profile, input, side);
+            } else {
+                m_stumbleStep[side] = true;
+                startStep(profile, input, side, StepReason3D::Brake, SwingPath3D::Direct, 1.0f);
+                release(profile, input, side, ReleaseReason3D::Recovery);
+                m_brakeClosing[side] = false;
+                m_brakeRearLanding[side] = false;
+                m_liftedOff[side] = true;
+                foot.swingDurationSeconds = input.stumbleSwingSeconds;
+                m_recoveryTarget[side] = foot.liftoffWorld;
+                ++m_stumbleStepsTaken;
+            }
         } else if (!input.seedFromBody && input.braking && contactSupport(physical.feet[side])
             && std::hypot(physical.feet[side].soleVelocityWorld.x, physical.feet[side].soleVelocityWorld.y) <= 0.50f) {
             // Freando, o pe que ja apoia de fato (o contato - o clipe nem
             // sempre o marca plantado) fica onde esta: e o apoio que freia.
             // Assumido como "no ar", ele tambem dava um passo de freada e a
             // parada tinha sempre dois.
+            seedFoot(profile, input, side);
+        } else if (!input.seedFromBody && input.braking && static_cast<int>(side) == brakeLandingSide) {
+            seedFoot(profile, input, side);
+        } else if (!input.seedFromBody && input.braking && SidewaysInnerLands && [&] {
+                // Freando de lado, o pe de dentro (o oposto ao rumo) no ar so
+                // toca onde esta - o passo de freada e do de fora, que abre.
+                // Como passo de freada ele nao podia cruzar e pousava longe,
+                // do lado oposto a queda; o de fora so abria depois, com o
+                // corpo ja alem dele (parando de um strafe a 5%: 14 em 16).
+                Vec3 direction = input.brakeDirectionWorld;
+                direction.z = 0.0f;
+                if (direction.lengthSquared() < 1e-4f) return false;
+                const float sideways = dot(direction.normalized(), input.heading.rotate({ 0.0f, 1.0f, 0.0f }));
+                if (std::abs(sideways) <= BrakeLateral) return false;
+                return side == (sideways > 0.0f ? 1u : 0u);
+            }()) {
             seedFoot(profile, input, side);
         } else if (!input.seedFromBody && input.braking) {
             // Freando: o pe da passada que esta no ar ja vai para o pouso de
@@ -1404,8 +1630,15 @@ void ContactFootwork3D::update(const RagdollProfile3D& profile,
 
     const bool locomotionPlanning = m_settings.locomotionStepping && input.locomoting
         && !input.standing;
-    const bool planning = (input.standing || locomotionPlanning || input.braking) && input.allowSteps
+    const bool planning = (input.standing || locomotionPlanning || input.braking || input.stumbling) && input.allowSteps
         && !plan.feet[0].followingGait && !plan.feet[1].followingGait;
+    if (!input.stumbling) {
+        m_stumbleStepsTaken = 0;
+        m_stumbleStep = {};
+        m_stumbleSeconds = 0.0f;
+    } else {
+        m_stumbleSeconds += deltaTime;
+    }
     if (!input.standing) m_pendingTurnFoot = -1;
 
     // Precisa de passo: o ponto de captura fora do apoio PLANEJADO - os pes
@@ -1439,7 +1672,7 @@ void ContactFootwork3D::update(const RagdollProfile3D& profile,
         }
         return planarDistanceOutsideHull3D(planned, input.capturePointWorld.x, input.capturePointWorld.y);
     };
-    if (planning && !locomotionPlanning && !input.braking && input.allowRecovery) {
+    if (planning && !locomotionPlanning && !input.braking && !input.stumbling && input.allowRecovery) {
         plan.plannedOutsideMeters = plannedCaptureOutside();
         // Com um pe no ar, vale o apoio planejado; com os dois no chao, tambem
         // o medido (a perna nem sempre alcanca o alvo travado, e o planejado
@@ -1485,7 +1718,24 @@ void ContactFootwork3D::update(const RagdollProfile3D& profile,
         const float forceSize = physical.externalForceWorld.length();
         const bool leaving = dot(bodyVelocity, input.captureDirectionWorld) > RecoveryLeavingSpeed
             || forceSize > RecoveryForceTrigger;
-        if (outside > RecoveryOutsideTrigger && leaving) {
+        // Ajuda cheia segurando: so com forca de fora ou um desvio grande
+        // (depois de parar, o corpo segurado ainda deixava a captura fora
+        // da base: 2-4 passos de recuperacao a cada parada, sem queda
+        // nenhuma por perto).
+        // Girando parado (passos de giro em andamento ou o modo de giro),
+        // sem forca de fora: um pe no ar tira a captura da base sem queda
+        // nenhuma - virava recuperacao, transformava o passo de giro e
+        // segurava os seguintes 0,45 s (180 graus levavam 2-3 s, a pelve
+        // presa no limite de torcao esperando).
+        bool turning = m_turnMode || m_turnRequested;
+        for (const FootPlan3D& foot : plan.feet)
+            turning = turning || (foot.reason == StepReason3D::Turn && !foot.followingGait
+                && foot.phase != FootPhase3D::Stance);
+        turning = turning || m_pendingTurnFoot >= 0;
+        const float holdMargin = forceSize > RecoveryForceTrigger ? 0.0f
+            : std::max(AssistHoldMargin * std::clamp(input.assistHold, 0.0f, 1.0f),
+                turning ? TurnRecoveryMargin : 0.0f);
+        if (outside > RecoveryOutsideTrigger + holdMargin && leaving) {
             plan.recoveryUrgency = smoothStep((outside - RecoveryOutsideTrigger) / RecoveryOutsideFull);
             Vec3 fall = input.captureDirectionWorld;
             if (fall.lengthSquared() < 1e-4f && forceSize > 1.0f)
@@ -1527,6 +1777,7 @@ void ContactFootwork3D::update(const RagdollProfile3D& profile,
             }
         }
     }
+    if (!input.standing || input.assistHold <= 0.5f) m_heldSettles = 0;
     m_sinceRecoveryNeeded = plan.recoverySide >= 0 ? 0.0f
         : std::min(10.0f, m_sinceRecoveryNeeded + deltaTime);
     plan.recovering = m_sinceRecoveryNeeded < RecoveryMemorySeconds;
@@ -1659,7 +1910,13 @@ void ContactFootwork3D::update(const RagdollProfile3D& profile,
                 int stepping = -1;
                 const bool fallingOff = outsideBase > RecoveryOutsideTrigger
                     && beyond <= BrakeStepTrigger && !behind;
-                if (width > BrakeSideClose && !fallingOff) {
+                // (O ponto de captura ja alem do pe de fora: ele abre antes de
+                // o de dentro fechar - fechando primeiro com o corpo a 1,5 m/s
+                // de lado, o corpo passava do pe de fora e caia.)
+                if (SideOpenFirst && beyond > SideOpenFirstBeyond) {
+                    stepping = static_cast<int>(outer);
+                    m_brakeClosing[outer] = false;
+                } else if (width > BrakeSideClose && !fallingOff) {
                     stepping = static_cast<int>(inner);
                     m_brakeClosing[inner] = true;
                 } else if (beyond > BrakeStepTrigger) {
@@ -1689,7 +1946,52 @@ void ContactFootwork3D::update(const RagdollProfile3D& profile,
             }
         }
     }
-    if (planning && !locomotionPlanning && !input.braking && m_settings.benchTransferFoot < 0) {
+    // Segundo passo: o primeiro pousou (apoia) e o outro pe sai na hora - a
+    // passada assume com ele no ar (o ciclo de corrida nao tem apoio duplo:
+    // devolvendo com os dois no chao, um deles era arrastado).
+    if (planning && input.stumbling && !input.braking && m_stumbleStepsTaken == 1) {
+        for (std::size_t side = 0; side < 2; ++side) {
+            const std::size_t other = 1 - side;
+            if (!m_stumbleStep[other] || m_stumbleStep[side]) continue;
+            const FootPlan3D& first = plan.feet[other];
+            if (first.phase != FootPhase3D::Stance && first.phase != FootPhase3D::Loading) continue;
+            if (plan.feet[side].phase != FootPhase3D::Stance) continue;
+            m_stumbleStep[side] = true;
+            m_brakeClosing[side] = false;
+            m_brakeRearLanding[side] = false;
+            ++m_stumbleStepsTaken;
+            startStep(profile, input, side, StepReason3D::Brake, SwingPath3D::Direct, 1.0f);
+            plan.feet[side].swingDurationSeconds = input.stumbleSwingSeconds;
+            break;
+        }
+    }
+    // Quase-queda com os dois pes no chao na troca: sai o de tras (no rumo).
+    if (planning && input.stumbling && !input.braking && m_stumbleStepsTaken == 0
+        && m_stumbleSeconds >= input.stumbleStepDelaySeconds) {
+        bool busy = false;
+        for (const FootPlan3D& foot : plan.feet)
+            busy = busy || airborne(foot.phase) || foot.phase == FootPhase3D::Unloading;
+        Vec3 direction = input.stumbleDirectionWorld;
+        direction.z = 0.0f;
+        if (!busy && direction.lengthSquared() > 1e-4f) {
+            direction = direction.normalized();
+            const std::size_t trailing = dot(plan.feet[0].anchorWorld, direction)
+                < dot(plan.feet[1].anchorWorld, direction) ? 0 : 1;
+            m_stumbleStep[trailing] = true;
+            m_brakeClosing[trailing] = false;
+            m_brakeRearLanding[trailing] = false;
+            ++m_stumbleStepsTaken;
+            startStep(profile, input, trailing, StepReason3D::Brake, SwingPath3D::Direct, 1.0f);
+            plan.feet[trailing].swingDurationSeconds = input.stumbleSwingSeconds;
+        }
+    }
+    if (std::getenv("XTURNDBG") && input.standing)
+        std::printf("TURNDBG planning %d standing %d steps %d gait %d%d | fases %d %d | cooldown %.2f %.2f | recovering %d lado %d urg %.2f | pending %d | alvo %+.1f rumo %+.1f\n",
+            planning ? 1 : 0, input.standing ? 1 : 0, input.allowSteps ? 1 : 0, plan.feet[0].followingGait ? 1 : 0,
+            plan.feet[1].followingGait ? 1 : 0, static_cast<int>(plan.feet[0].phase), static_cast<int>(plan.feet[1].phase),
+            m_stepCooldown[0], m_stepCooldown[1], plan.recovering ? 1 : 0, plan.recoverySide, plan.recoveryUrgency,
+            m_pendingTurnFoot, input.standingTurnTargetYawRadians * 57.2958f, input.facingYawRadians * 57.2958f);
+    if (planning && !locomotionPlanning && !input.braking && !input.stumbling && m_settings.benchTransferFoot < 0) {
         const bool bothStance = plan.feet[0].phase == FootPhase3D::Stance
             && plan.feet[1].phase == FootPhase3D::Stance;
         // Um passo de acomodacao ou de giro em andamento vira de recuperacao
@@ -1697,6 +1999,14 @@ void ContactFootwork3D::update(const RagdollProfile3D& profile,
         if (plan.recoverySide >= 0 && plan.recoveryUrgency > 0.25f) {
             for (std::size_t side = 0; side < 2; ++side) {
                 const FootPlan3D& foot = plan.feet[side];
+                // (So o pe escolhido: caindo de lado, o de dentro no ar virava
+                // recuperacao e, sem poder cruzar, mirava para FORA da queda -
+                // parando de um strafe a esquerda a 5%, 14 quedas em 16. Ele
+                // termina o pouso dele e o de fora abre em seguida.)
+                if (RecoverOnlyChosenFoot && static_cast<int>(side) != plan.recoverySide
+                    && foot.reason != StepReason3D::Settle && foot.reason != StepReason3D::Turn) continue;
+                // (O pe roteirizado - toque parado na bola - segue o roteiro.)
+                if (input.scripted[side].active) continue;
                 if (foot.phase == FootPhase3D::Unloading || airborne(foot.phase)) {
                     makeRecovery(input, side, plan.recoveryUrgency);
                     m_pendingTurnFoot = -1;
@@ -1734,16 +2044,49 @@ void ContactFootwork3D::update(const RagdollProfile3D& profile,
             m_pendingTurnFoot = -1;
             startStep(profile, input, static_cast<std::size_t>(plan.recoverySide),
                 StepReason3D::Recovery, SwingPath3D::Direct, plan.recoveryUrgency);
-        } else if (bothStance && !input.settleHold && (!plan.recovering || turnPending)) {
+        } else if (bothStance && (!input.settleHold || UnreachableDuringSettleHold)
+            && (!plan.recovering || turnPending || (m_turnRequested && plan.recoverySide < 0))) {
             int unreachable = -1;
+            // (Recem-freado, so o pe que nao apoia de fato: o que ficou longe,
+            // pendurado, nao segura nada - esperando a acomodacao, ele ficava
+            // 0,8 m a frente do corpo, no ar, por 1,5 s.)
             for (std::size_t side = 0; side < 2; ++side)
-                if (input.anchorUnreachable[side] && ready(side)) unreachable = static_cast<int>(side);
+                if (input.anchorUnreachable[side] && ready(side)
+                    && (!input.settleHold || !contactSupport(physical.feet[side])))
+                    unreachable = static_cast<int>(side);
+            // Ajuda cheia: o segundo passo do giro vem antes (a acomodacao do pe
+            // que acabou de girar, "fora do alcance" com o corpo ainda girando,
+            // cancelava o giro: 90 graus levavam 0,85 s em vez de 0,26).
+            // (Com qualquer ajuda: o pe fora de alcance, logo depois do
+            // primeiro passo do giro, dava um passo de acomodacao que quebrava
+            // o par e o giro recomecava 0,8 s depois.)
+            if (m_pendingTurnFoot >= 0) unreachable = -1;
             if (unreachable >= 0) {
                 // A perna nao alcanca mais o pe apoiado (o corpo se afastou):
                 // ele da o passo ate a base.
                 startStep(profile, input, static_cast<std::size_t>(unreachable),
                     StepReason3D::Settle, SwingPath3D::AroundSupport, 0.0f);
                 m_pendingTurnFoot = -1;
+            } else if (input.settleHold) {
+                // Recem-freado: nenhuma acomodacao nem giro ainda - salvo a
+                // base cruzada ou em linha (de lado a freada termina as vezes
+                // com um pe na frente do outro, 4 cm cruzados: ficava assim
+                // 1,5 s, feio e sem base de lado). Sai o pe mais longe da pose.
+                const Vec3 leftAxis = input.heading.rotate({ 0.0f, 1.0f, 0.0f });
+                const float width = dot(plan.feet[0].anchorWorld - plan.feet[1].anchorWorld, leftAxis);
+                if (SettleHoldNarrowBase > 0.0f && width < SettleHoldNarrowBase && ready(0) && ready(1)) {
+                    int worst = -1;
+                    float worstDrift = 0.0f;
+                    for (std::size_t side = 0; side < 2; ++side) {
+                        const Vec3 pose = input.reference[side].poseWorld;
+                        const float drift = std::hypot(pose.x - plan.feet[side].anchorWorld.x,
+                            pose.y - plan.feet[side].anchorWorld.y);
+                        if (drift > worstDrift) { worstDrift = drift; worst = static_cast<int>(side); }
+                    }
+                    if (worst >= 0 && worstDrift > 0.06f)
+                        startStep(profile, input, static_cast<std::size_t>(worst),
+                            StepReason3D::Settle, SwingPath3D::AroundSupport, 0.0f);
+                }
             } else if (m_pendingTurnFoot >= 0) {
                 // Segundo passo do giro, logo depois do primeiro: se o pe
                 // ainda esta fora da base nova, contorna o de apoio ate ela
@@ -1777,7 +2120,21 @@ void ContactFootwork3D::update(const RagdollProfile3D& profile,
                 plan.standingStanceYaw = stance;
                 plan.standingTwist = twist;
                 plan.standingTurnRemaining = remaining;
-                if (std::abs(twist) > TurnTwistTrigger || std::abs(remaining) > TurnEarlyRemaining) {
+                // Ajuda cheia segurando, sem a camera girar de verdade: a base
+                // torta (a freada termina com o ultimo pe da passada reto e a
+                // pose parada e rodada ~21 graus) se acerta com um passo de
+                // acomodacao do pe mais fora da pose - eram dois passos de
+                // giro 1,5 s depois de parar.
+                // (So logo depois de uma freada e sem giro pedido - a torcao
+                // e do tipo de base, nao do olhar. Com o giro pedido, o giro
+                // normal: segurado, o corpo girava com os pes presos e as
+                // pernas torciam.)
+                const bool heldStance = input.assistHold > 0.5f && input.quietStop
+                    && std::abs(input.standingTurnRateRadiansPerSecond) < 0.3f
+                    && std::abs(wrapAngle(input.standingTurnTargetYawRadians - input.facingYawRadians)) < 0.1f
+                    && std::abs(twist) < HeldTurnTwist && std::abs(remaining) < HeldTurnTwist;
+                const bool turnNeeded = std::abs(twist) > TurnTwistTrigger || std::abs(remaining) > TurnEarlyRemaining;
+                if (!heldStance && turnNeeded) {
                     // Base lado a lado: o pe do lado do giro primeiro, abrindo
                     // sobre a bola do pe. Base escalonada: para qualquer lado,
                     // o pe de TRAS primeiro, contornando o da frente com o
@@ -1806,10 +2163,10 @@ void ContactFootwork3D::update(const RagdollProfile3D& profile,
                     // corpo num pe so saia 30 cm da base: la sempre o do lado
                     // do giro, abrindo sobre a bola do pe.)
                     const bool rearFirst = staggered && !m_settings.recoveryCaptureTargeting;
-                    const std::size_t first = std::abs(behind[0] - behind[1]) > 0.17f
+                    std::size_t first = std::abs(behind[0] - behind[1]) > 0.17f
                         ? (behind[0] > behind[1] ? 0 : 1)
                         : rearFirst ? (leftAhead > 0.0f ? 1 : 0) : (remaining > 0.0f ? 0 : 1);
-                    const bool rearAround = rearFirst && first == (leftAhead > 0.0f ? 1u : 0u);
+                    bool rearAround = rearFirst && first == (leftAhead > 0.0f ? 1u : 0u);
                     if (ready(first)) {
                         startStep(profile, input, first, StepReason3D::Turn,
                             rearAround ? SwingPath3D::AroundSupport : SwingPath3D::Pivot, 0.0f);
@@ -1818,7 +2175,56 @@ void ContactFootwork3D::update(const RagdollProfile3D& profile,
                 } else {
                     int worst = -1;
                     float worstScore = 0.0f;
-                    for (std::size_t side = 0; side < 2; ++side) {
+                    // Ajuda cheia: a base e a geometria entre os pes (o corpo
+                    // se assenta sobre ela): cada pe contra onde a pose parada o
+                    // quer em relacao ao outro, e quem sai e o mais longe do
+                    // corpo (o de menos peso). Contra a pose presa a raiz, o pe
+                    // da freada nunca estava "no lugar" e saiam 2-3 passos.
+                    const bool pairStance = input.assistHold > 0.5f;
+                    // (Girando, quem acerta a base sao os passos de giro; ao
+                    // terminar, uma acomodacao devolve a base parada inteira.)
+                    if (pairStance && !m_turnMode) {
+                        std::array<float, 2> score {};
+                        for (std::size_t side = 0; side < 2; ++side) {
+                            const RagdollLinkDefinition3D& link = profile.links[m_feet[side]];
+                            const Vec3 target = pairStanceTarget(input, side);
+                            const float drift = std::hypot(target.x - plan.feet[side].anchorWorld.x,
+                                target.y - plan.feet[side].anchorWorld.y);
+                            const float yaw = std::abs(wrapAngle(footYaw3D(link, input.reference[side].poseOrientationWorld)
+                                - footYaw3D(link, plan.feet[side].anchorOrientationWorld)));
+                            // (Logo depois de um giro, a volta para a base inteira
+                            // sai com menos: a base encurtada do giro fica ~15 cm
+                            // fora.)
+                            const float distanceLimit = m_turnModeSeconds < 2.0f
+                                && (TurnStanceScale < 0.999f || TurnStanceHalfWidth > 0.0f)
+                                ? SettleStepDistance * 0.5f : SettleStepDistance;
+                            score[side] = std::max(drift / distanceLimit, yaw / SettleStepYaw);
+                        }
+                        if (std::getenv("XSETTLEDBG") && std::max(score[0], score[1]) > 1.0f)
+                            for (std::size_t side = 0; side < 2; ++side) {
+                                const RagdollLinkDefinition3D& link = profile.links[m_feet[side]];
+                                const Vec3 target = pairStanceTarget(input, side);
+                                std::printf("SETTLE pe %zu score %.2f | alvo (%.2f %.2f) ancora (%.2f %.2f) | yaw ref %.1f ancora %.1f\n",
+                                    side, score[side], target.x, target.y, plan.feet[side].anchorWorld.x, plan.feet[side].anchorWorld.y,
+                                    footYaw3D(link, input.reference[side].poseOrientationWorld) * 57.2958f,
+                                    footYaw3D(link, plan.feet[side].anchorOrientationWorld) * 57.2958f);
+                            }
+                        // Uma acomodacao por parada: a pose parada em alerta abre o
+                        // pe de tras ~0,6 m e 46 graus; com o corpo ainda se
+                        // assentando a perna nao chegava (~19 cm curta) e o passo
+                        // se repetia a cada 0,27 s no mesmo lugar.
+                        if (std::max(score[0], score[1]) > 1.0f && m_heldSettles < 1) {
+                            ++m_heldSettles;
+                            const auto load = [&](std::size_t side) {
+                                return -std::hypot(plan.feet[side].anchorWorld.x - physical.centerOfMassWorld.x,
+                                    plan.feet[side].anchorWorld.y - physical.centerOfMassWorld.y);
+                            };
+                            const std::size_t mover = load(0) < load(1) ? 0 : 1;
+                            if (ready(mover))
+                                startStep(profile, input, mover, StepReason3D::Settle, SwingPath3D::AroundSupport, 0.0f);
+                        }
+                    }
+                    for (std::size_t side = 0; side < 2 && !pairStance; ++side) {
                         const FootPlan3D& foot = plan.feet[side];
                         const RagdollLinkDefinition3D& link = profile.links[m_feet[side]];
                         const FootReference3D& wanted = input.reference[side];
@@ -1966,7 +2372,9 @@ void ContactFootwork3D::update(const RagdollProfile3D& profile,
                 ? (m_settings.recoveryCaptureTargeting ? RecoveryCaptureUnloadSeconds * (1.0f - foot.urgency)
                     : RecoveryUnloadMaximumSeconds * (1.0f - foot.urgency))
                 : foot.reason == StepReason3D::Locomotion ? LocomotionUnloadSeconds
-                : foot.reason == StepReason3D::Turn ? TurnUnloadSeconds : UnloadMaximumSeconds;
+                : foot.reason == StepReason3D::Turn
+                    ? TurnUnloadSeconds * (input.assistHold > 0.5f ? HeldTurnUnloadShare : 1.0f)
+                    : UnloadMaximumSeconds;
             // Bancada C: descarrega sem soltar; desligada, o pe volta a apoiar.
             if (m_settings.benchTransferFoot >= 0 || m_benchHolding[side]) {
                 if (m_settings.benchTransferFoot != static_cast<int>(side)) {
@@ -2056,6 +2464,17 @@ void ContactFootwork3D::update(const RagdollProfile3D& profile,
     for (std::size_t side = 0; side < 2; ++side) {
         const FootPlan3D& foot = plan.feet[side];
         const FootPlan3D& support = plan.feet[1 - side];
+        // Pe roteirizado com peso no apoio (toque parado na bola): a pelve vai
+        // a fracao pedida do caminho ate o outro pe, enquanto ele apoia.
+        const ScriptedFoot3D& script = rawInput.scripted[side];
+        if (script.active && script.supportShift > 0.0f && supportsWeight(support.phase)) {
+            const Vec3 lean { support.anchorWorld.x - input.referenceRootWorld.x,
+                support.anchorWorld.y - input.referenceRootWorld.y, 0.0f };
+            Vec3 shift = clampMagnitude(lean * std::min(script.supportShift, 1.0f), ScriptedShiftLimit);
+            shift.z = -0.015f;
+            requested = shift;
+            continue;
+        }
         if (foot.followingGait || foot.reason == StepReason3D::Recovery
             || foot.reason == StepReason3D::Brake
             || support.phase != FootPhase3D::Stance) continue;
@@ -2081,6 +2500,83 @@ void ContactFootwork3D::update(const RagdollProfile3D& profile,
     // ~50 ms, nunca num tick (medido: 1,5 cm de pulo da pelve).
     m_residualShift += (requested - m_residualShift) * (1.0f - std::exp(-deltaTime / 0.05f));
     plan.supportShiftWorld = m_residualShift;
+
+    // Pes roteirizados (giro parado pelo clipe): no ar o pe segue o do clipe;
+    // pousando, trava no plano onde o clipe o pos, na altura da trava antiga
+    // e so com o rumo do clipe (sola plana).
+    for (std::size_t side = 0; side < 2; ++side) {
+        const ScriptedFoot3D& script = rawInput.scripted[side];
+        FootPlan3D& foot = plan.feet[side];
+        if (!script.active || m_feet[side] >= profile.links.size()) {
+            m_scriptedLast[side] = false;
+            continue;
+        }
+        const RagdollLinkDefinition3D& link = profile.links[m_feet[side]];
+        const bool down = supportsWeight(foot.phase);
+        foot.followingGait = false;
+        if (script.swing) {
+            if (down || !m_scriptedLast[side] || foot.phase != FootPhase3D::Swing) {
+                foot.liftoffWorld = foot.anchorWorld;
+                foot.liftoffOrientationWorld = foot.anchorOrientationWorld;
+                foot.liftoffGroundHeight = foot.surface.valid ? foot.surface.height : foot.anchorWorld.z;
+                foot.stepId = m_nextStepId++;
+                foot.reason = StepReason3D::Turn;
+                foot.path = SwingPath3D::Direct;
+                foot.phaseSeconds = 0.0f;
+                foot.swingSeconds = 0.0f;
+                ++m_plan.stepsStarted;
+            }
+            foot.phase = FootPhase3D::Swing;
+            foot.swingSeconds += deltaTime;
+            foot.targetWorld = script.positionWorld;
+            foot.targetOrientationWorld = script.orientationWorld;
+            foot.goalWorld = script.positionWorld;
+            foot.goalOrientationWorld = script.orientationWorld;
+            foot.goalSurface = foot.surface;
+        } else if (!down) {
+            // O clipe pousou o pe: ele vai ao chao no ponto do clipe e procura
+            // o contato; so tocando de fato entra em carga (o contrato do pe)
+            // e depois em apoio. No tempo acelerado o pe fisico chega uns
+            // centimetros depois do clipe.
+            // Procurando o chao, o alvo desce aos poucos (ate 4 cm): no toque
+            // parado na bola o pe ficava 1-2 cm acima, sem contato, ate o prazo.
+            const float search = foot.phase == FootPhase3D::TouchdownSearch
+                ? std::min(0.04f, foot.phaseSeconds * 0.25f) : 0.0f;
+            // Na altura de onde saiu ou na dada, a mais baixa (o pe de tras da
+            // base em alerta sai com o calcanhar alto: pousando nessa altura,
+            // plano, ficava 2 cm acima do chao).
+            const Vec3 landing { script.positionWorld.x, script.positionWorld.y,
+                std::min(foot.liftoffWorld.z, script.positionWorld.z) - search };
+            const Quaternion flat = (Quaternion::fromAxisAngle({ 0.0f, 0.0f, 1.0f },
+                wrapAngle(footYaw3D(link, script.orientationWorld) - footYaw3D(link, foot.liftoffOrientationWorld)))
+                * foot.liftoffOrientationWorld).normalized();
+            if (foot.phase != FootPhase3D::TouchdownSearch) foot.phaseSeconds = 0.0f;
+            const bool touching = physical.feet[side].touching || physical.feet[side].supporting;
+            if (std::getenv("XSCRIPTDBG"))
+                std::printf("SCRIPT lado %zu fase %d t %.3f toca %d alvo z %.3f liftoff z %.3f\n", side,
+                    static_cast<int>(foot.phase), foot.phaseSeconds, touching ? 1 : 0, landing.z, foot.liftoffWorld.z);
+            if (touching || (foot.phase == FootPhase3D::TouchdownSearch && foot.phaseSeconds > 0.2f)) {
+                foot.anchorWorld = landing;
+                foot.anchorOrientationWorld = flat;
+                foot.phase = FootPhase3D::Loading;
+                foot.phaseSeconds = 0.0f;
+                foot.targetWorld = landing;
+                foot.targetOrientationWorld = flat;
+            } else {
+                foot.phase = FootPhase3D::TouchdownSearch;
+                foot.phaseSeconds += deltaTime;
+                foot.targetWorld = landing;
+                foot.targetOrientationWorld = flat;
+                foot.goalWorld = landing;
+                foot.goalOrientationWorld = flat;
+            }
+        } else {
+            foot.phase = FootPhase3D::Stance;
+            foot.targetWorld = foot.anchorWorld;
+            foot.targetOrientationWorld = foot.anchorOrientationWorld;
+        }
+        m_scriptedLast[side] = true;
+    }
 
     // Agenda de apoio.
     const bool leftDown = supportsWeight(plan.feet[0].phase);

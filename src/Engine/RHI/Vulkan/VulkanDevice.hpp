@@ -55,6 +55,9 @@ public:
     void beginImGuiFrame();
     void renderImGui(ImDrawData* drawData);
     [[nodiscard]] std::uint64_t createImGuiTexture(Extent2D extent, std::span<const std::byte> rgbaPixels);
+    // Pixels novos numa textura de UI do mesmo tamanho / a liberar.
+    void updateImGuiTexture(std::uint64_t textureId, std::span<const std::byte> rgbaPixels);
+    void destroyImGuiTexture(std::uint64_t textureId);
 
     // Records a depth-only light pass followed by a depth-tested color pass.
     // Vulkan resources stay private to this backend; Renderer exposes only

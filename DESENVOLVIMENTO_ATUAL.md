@@ -5,7 +5,493 @@
 > registrar não apenas *o que* mudou, mas também *por que*, como foi validado e
 > quais limitações ainda existem.
 
-**Última atualização:** 3 de outubro de 2026
+**Última atualização:** 10 de outubro de 2026
+
+## Ponto de partida: rework da locomoção e do manejo de bola (10/10/2026)
+
+Estado commitado como base antes do rework completo do sistema de locomoção
+e do manejo de bola (próximo trabalho, em chat novo):
+
+- **Modelo do jogador** aprovado no quadril (referência CORRETO): ver
+  `docs/MODELAGEM_DO_PERSONAGEM.md` e as seções abaixo. O personagem do jogo
+  está exportado e em dia (68 ossos, 5816 triângulos).
+- **Locomoção atual:** corpo animado guiado pela cápsula
+  (`DefaultLocomotion3D`), modo físico no contato, pulo, carrinho e voadora,
+  levantar por clipes Kimodo.
+- **Manejo de bola atual:** `BallControl3D`, `BallGesturePose3D`,
+  `BallOwnership3D` (força pelo contato da hitbox, posse, gestos). É o que
+  o rework vai substituir ou reescrever.
+- **Testes:** 11 de 13 passam. `Character` (tremor ao girar a câmera) e
+  `AdaptivePhysics` ("Floating baseline is not ready") já falhavam antes e
+  entram no escopo do rework.
+
+## Pescoço reto e o calção dobrando como tecido (09/10/2026, fim da noite)
+
+Pedidos do usuário:
+
+- O pescoço reto, em postura ergonômica, parado e correndo (na corrida só a
+  coluna inclina um pouco para a frente, não o pescoço).
+- A dobra do calção quando a perna vai à frente: deformar como tecido.
+
+### Postura
+
+- **A causa:** as âncoras da coluna no perfil eram as do corpo antigo, ~1 cm
+  à frente das juntas medidas (a da cabeça, 1,4 cm). Em toda animação o
+  pescoço saía 11 a 14° para a frente.
+- **A coluna nas juntas medidas:** as âncoras e os links do abdômen à cabeça.
+  Os detalhes estão em `docs/RAGDOLL_CHARACTER_PIPELINE.md`.
+- **O parado e os giros** (`alert_idle`, `turn_in_place`): a curva do alto
+  das costas desce para o abdômen (`pose.ergonomic_posture`); o pescoço e a
+  cabeça levantam um pouco.
+- **Medido com `MatterModelInspector postura`** (pescoço sobre o tronco):
+
+  | Clipe | Pescoço (da vertical) | Pescoço sobre o tronco |
+  |---|---|---|
+  | Parado | 31° → 5,9° | 1,0° |
+  | Trote | 7,9° | 2,2° |
+  | Sprint (tronco a +6,5°) | 11,5° | 0,8° |
+
+  No parado, a cabeça à frente da base do pescoço caiu de 10,7 para 1,2 cm,
+  e o olhar foi para o horizonte.
+- **Sem mudança:** as arrancadas (`idle_to_sprint`, `crouched_to_sprint`), o
+  pulo parado e o `trot_forward` (fora de uso).
+
+### Calção
+
+- **A faixa do quadril** (`shortsHipBandAbove` 0,06, `shortsHipBandBelow`
+  0,20): o peso passa pelve → auxiliar do quadril → coxa ao longo de 26 cm
+  do calção. A listra do lado curva em vez de quebrar, e a frente faz uma
+  prega larga. Nas 11 poses de quadril:
+
+  | | Antes | Agora |
+  |---|---|---|
+  | amassados | 31 | 5 |
+  | autointerseções | 41 | 0 |
+  | pregas | 20 | 0 |
+  | camisa × calção | 20 | 0 |
+
+  A faixa é calculada nos vértices finais do pano. Calculada antes de o pano
+  tomar forma, ela virava a barra do avesso.
+- **O gancho:** `crotchPin` 0,3 e `crotchBand` 1,8 cm, escolhidos com o
+  `avesso`.
+- **A gola no peito** (`shirtNeckWeight` 0,5): com o pescoço reto, a gola de
+  trás virava do avesso de bruços. Agora metade do peso do pescoço na camisa
+  vai para o alto do peito.
+- **Ferramenta nova:** `MatterModelInspector pesos` mostra os pesos dos
+  vértices perto de um ponto ou dos triângulos que o `avesso` aponta.
+
+### Calção, segunda e terceira rodadas (10/10, madrugada)
+
+O usuário viu no jogo e na inspeção e reprovou duas vezes:
+- "olha como tá": liberou mais polígonos no uniforme e perguntou se o osso
+  do quadril estava baixo ("curvatura no meio do começo da perna");
+- "parece que afunda a perna dele";
+- e deu o rumo: "o problema é tentar deformar a malha toda, para uma dobra
+  que está errada, deveria era não ter deformação alguma ali".
+
+**Agora:**
+- **A perna do calção rígida:** na frente, no lado de fora e atrás, o
+  calção fica com os pesos da pele. A perna anda inteira com a coxa (a
+  listra faz um "L" no quadril), o alto anda com a pelve e a dobra fica só na
+  junta.
+- **O gancho:** a faixa longa ficou só no lado de dentro e só no calção
+  (`shortsHipBandInnerAbove` 0,06, `shortsHipBandInnerBelow` 0,20). Assim o
+  gancho não vira no agachamento fundo nem no trote de lado.
+- **A malha densa:** `shortsSubdivision` 2, com o módulo novo
+  `Mesh/MeshSubdivision` (adaptativo, sem rachadura). Cada triângulo do
+  calção pronto vira 16, sem mudar a forma parada. O gancho
+  (`shortsCoarseCrotch` 6 cm) e o alto sob a barra da camisa
+  (`shortsCoarseTop` 6 cm) ficam com a malha base; a camisa também.
+- **5904 triângulos** (eram 4668); o limite do teste subiu de 6000 para
+  6500.
+
+**O que foi tentado e saiu**, tudo medido:
+- **Faixa longa em volta toda:** o calção encurvava ao longo da coxa, como
+  banana.
+- **Lado de fora curto com a frente longa:** com a coxa a 90°, o alto da
+  coxa afundava num entalhe.
+- **Um osso auxiliar que empurrava a frente da dobra para fora** (na
+  bissetriz, proporcional à flexão): fabricava a dobra deformando o pano e
+  cruzava a camisa. Saiu do código.
+- **Dobradiça curta em volta toda:** virava o gancho e a barra de trás da
+  camisa.
+- **A junta do quadril, medida:** 9,0 cm acima do gancho (0,911 m), dentro
+  do anatômico. Com ela 3 cm mais alta, a curva continuava.
+
+### Calção, quarta rodada (10/10): o quadril definitivo
+
+O usuário reprovou o "L" com entalhe ("essa curva ali não pode existir"),
+mandou a referência ERRADO × CORRETO e pediu o caminho dos modelos de
+verdade: topologia de deformação, pesos por anel com os auxiliares do
+quadril e um corretivo se ainda precisasse. Na CORRETO: a perna do calção
+reta e rígida, a listra num arco curto em volta do quadril, o glúteo redondo
+e compacto, a dobra da frente fechada.
+
+**Aplicado** (`MODELAGEM_DO_PERSONAGEM.md`, "o quadril"):
+- **A passagem pelve → coxa numa volta em torno da coxa**, com centro e
+  largura por direção (`hipCrease*`). Fora dela, só a pelve ou só a coxa.
+  - Frente: a linha da virilha desenhada pelo usuário, 3,5 cm.
+  - Lado de fora: na junta, 14 cm (a listra faz o arco curto).
+  - Atrás: na dobra do glúteo (9 cm abaixo), 7 cm e direta. O glúteo fica
+    na pelve e o pano estica reto até a coxa. Com os anéis girando em volta
+    da junta, o glúteo descia junto e virava um saco 5 cm abaixo da perna.
+  - Dentro: no gancho, 12 cm.
+- **Auxiliares do quadril** em 1/4, 1/2 e 3/4 do giro (os anéis) e a
+  **`HipLift`**: 45% só da flexão. É um osso auxiliar com eixo
+  (`derivedAxis`, a decomposição balanço e torção) na modelagem, no
+  exportador, no jogo (`RagdollCharacter3D`, `"axis"` na pele) e no
+  `matter_rig` Python. Com a perna rígida, o topo dela a 90° sobe ~8 cm
+  acima da junta e atravessava a barra da camisa (a 3,8 cm). Acima da linha,
+  a cintura do calção e a barra da camisa vão juntas para a `HipLift`
+  (`hipLift*`): a coxa que sobe dobra o pano para trás, e a barra fica em
+  cima da perna. Com a fração do giro inteiro, a coxa abrindo de lado no
+  trote lateral virava a barra.
+- **`shirtBackThighWeight` 0** e o ponto do gancho de volta no
+  `weightRelax`.
+- **A subdivisão sem agulhas:** do segundo nível em diante só refina o
+  filho de um refinado com os vizinhos também assim; o da borda com duas
+  arestas partidas vira três. Antes, uma metade de metade de 11 cm na
+  cintura virava do avesso em 436 das 2112 poses.
+- **Ferramentas:** o `corte` corta na pose (`--pose`), um contorno por
+  parte (`--partes`) e enquadra num ponto (`--alvo`); o JSON do `analisar`
+  traz os índices dos triângulos de cada achado.
+- **68 ossos** (18 auxiliares), 5816 triângulos.
+
+**O que saiu:**
+- os pesos da pele na frente ("C", amassado);
+- a faixa larga atrás (o saco);
+- os anéis de arestas imprimidos na volta (lascas no gancho);
+- a dobra binária na linha.
+
+### Exportação
+
+- **Cápsula com cilindro mínimo de 2 mm:** a do pescoço era duas esferas
+  (comprimento = 2 × raio) e só passava no perfil pelo arredondamento. Com os
+  pesos novos, o perfil saiu inválido.
+- **Colisores medidos de novo:** como os pontos são divididos pelos pesos,
+  mudaram um pouco:
+  - pelve: raio 11,8 → 12,5 cm;
+  - alto do peito: raio 10,8 → 11,1 cm, centro 1 cm acima;
+  - coxas: raio no alto 8,0 → 8,2 cm.
+
+  A pelve no repouso (0,9689 m) e as folgas nas animações não mudaram.
+
+### Validação
+
+- **`avesso`:** 0 nas 528 poses do jogo.
+- **Com 24 instantes por animação (2112 poses):** o calção não vira nada.
+  Sobram só as 2 lascas antigas da axila esquerda da camisa, no
+  `stand_up_front_crouch`.
+- **`analisar`:** 1 superfície, 0 erros, 0 avisos e 0 cruzamentos.
+- **Dobras do teste:** nada se cruza nem vira.
+- **Poses de quadril:** nada vira. Só 2 pares camisa × calção por dentro da
+  barra no `tackle_slide`, sem aparecer (eram 18 na versão com os pesos da
+  pele na frente).
+- **Visual:** a pose da referência no ângulo da CORRETO, a frente de 6
+  ângulos, as 8 vistas, o sprint e o trote na câmera do jogo e o
+  agachamento, todos com os braços levantados.
+- **`ctest`:** 11 de 13 passam, com o `PlayerModel` (o avesso das animações,
+  a exportação em dia, a pele do jogo igual à modelagem e a `HipLift` girando
+  só a flexão). `Character` ("cabeça ou tronco tremendo ao girar a câmera")
+  e `AdaptivePhysics` ("Floating baseline is not ready") já falhavam, com as
+  mesmas mensagens.
+- **`check-architecture`:** ok.
+
+**Limitações:**
+
+- No `sprint@0.25`, os dedos da mão direita roçam o lado do calção no
+  balanço do braço; afundam um pouco mais que antes (5 → 18 pares).
+- Com o queixo no peito (pescoço 40° e cabeça 30°), a cabeça cruza a gola um
+  pouco mais (27 → 31 pares).
+- Ao regenerar o `alert_idle` com o perfil novo, as pernas mudaram até 3°.
+
+## Objetos procedurais, menus limpos, animações na inspeção e uniforme justo (09/10/2026, noite)
+
+Pedidos do usuário:
+
+- O manejo da bola com os valores dele.
+- O uniforme mais justo e os ombros como os do corpo de referência.
+- Só uma caixa de madeira procedural no lugar dos objetos GLB.
+- Um inspetor de objetos profissional, com teste de física.
+- Sem os sons, só o vento.
+- O menu de animações dentro da inspeção de jogador.
+- Menos texto repetido nos menus.
+- Sem a maciez.
+
+### Manejo da bola
+
+- **Valores do usuário:** os do "Força na bola" viraram os padrões, com
+  `T_ShotMin` em 6.
+- **Contato pela hitbox do pé** (a caixa do pé com 7 cm de folga, ×1,6 no
+  físico):
+  - a força só sai quando ela encosta na bola, varrida entre os ticks e
+    vindo para a bola;
+  - o rumo é sempre o pedido (as teclas no toque, a mira no chute), nunca o
+    do pé.
+- **Câmera ao carregar o chute:** a sensibilidade cai para 0,6, com
+  transição.
+
+### Objetos procedurais
+
+Os GLB saíram: cadeira, bigorna, barril, caixa e pneu, os caches e o
+cozinhador V-HACD. O spawn tem agora a caixa de madeira procedural, a bola e
+o boneco. Tudo está em `docs/OBJETOS_PROCEDURAIS.md`.
+
+- **Núcleo** (`Modeling/Objects`): a receita, os tipos com parâmetros, a
+  pixel art e a caixa (um cubo com textura em pixel art).
+- **Ponte com o jogo** (`Engine/Objects`): a malha da GPU, o corpo do Jolt e
+  o laboratório de física (queda, arremesso, rampa, pilha e bola, com as
+  medidas).
+- **Tela "Objetos"** (`Workbench/ObjectInspector`): o catálogo; as
+  propriedades editáveis ao vivo, com salvar e desfazer; o teste físico com
+  as medidas e uma sombra no chão; e o mesmo visualizador da inspeção de
+  jogador, com vistas, modos, colisor, textura e capturas.
+- **Para os próximos tipos:** a estrutura já está pronta para a trave e a
+  rede.
+
+### Sons
+
+Os WAV e os sistemas de impacto, arrasto e oclusão saíram. O
+`WorldAudioController` só toca o vento procedural. O som será refeito por
+receita.
+
+### Inspeção de jogador
+
+- **Abas na lateral:** "Partes do corpo" e "Animações". O tocador (tocar,
+  do início, repetir, velocidade e linha do tempo) aparece embaixo do
+  viewport.
+- **A tela "Animações" saiu do menu principal.**
+- **Textos tirados:**
+  - o guia do mouse no viewport;
+  - o título e as notas na imagem ("Visão geral · Sólido" e o nome do
+    modelo);
+  - a legenda dos eixos;
+  - as frases do rodapé ("Malha carregada...");
+  - o nome do modelo no cabeçalho.
+
+  O `displayName` do modelo é só "Jogador".
+- **Outros menus:** os parágrafos explicativos do laboratório saíram. Os que
+  explicavam um controle viraram dica ao passar o mouse. O mesmo valeu para o
+  visualizador de toque na bola.
+
+### Uniforme justo
+
+Medido com o comando novo `MatterModelInspector uniforme`, que compara o
+uniforme com a mesma montagem sem ele (o corpo da referência). Ele mostra a
+folga do pano até a pele por região, as larguras, a linha do ombro, as
+silhuetas e os cortes.
+
+**Antes:** a camisa caía reta da axila e das omoplatas até a barra. O ombro
+inteiro ficava 1,3 cm acima do corpo (2,5 na ponta do deltoide) e
+arredondado pelo Taubin, e a manga era um tubo largo.
+
+**Agora:**
+
+- **Ombro:** fica com a forma do corpo (`shoulderRelax` 0,3).
+- **Arredondamento:** só a axila e a nuca arredondam (`relaxWeight`, com
+  `clothRelax` 1 e `clothSmoothing` 1).
+- **Queda:** a camisa segue a lombar (`clothHang` 0,6) e o calção cai do
+  glúteo (`shortsHang` 0,35).
+- **Folgas:**
+
+  | Parte | Folga |
+  |---|---|
+  | camisa | 6 mm (barra 14) |
+  | manga | 8 mm |
+  | axila (`armpitLoose`) | 14 mm |
+  | gola | 10 mm |
+  | calção | 14 mm (alto 2) |
+
+- **Medido** (folga média, antes → agora):
+
+  | Região | Antes | Agora |
+  |---|---|---|
+  | ombro | 12,4 mm | 7,5 mm |
+  | lombar | 21,5 mm | 12,2 mm |
+  | manga | 14,1 mm | 10,2 mm |
+  | barra do calção | 24,9 mm | 12,9 mm |
+  | deltoide a deltoide (sobre o corpo) | +2,2 cm | +1,3 cm |
+
+Cada folga mínima saiu de uma checagem que falhava sem ela:
+
+- a manga a 6 mm virava 15 triângulos do avesso nas poses: daí a folga da
+  axila;
+- a gola a 5 mm virava a nuca;
+- a camisa a 5 mm virava o V da gola com o pescoço girando 95°;
+- a barra a 12 mm deixava o calção atravessar a camisa com o abdômen
+  dobrado 30°;
+- um ponto novo de `weightRelax` resolve o gancho na largada e no carrinho.
+
+O jogador foi reexportado para o jogo. Os colisores do tronco ficaram 3 a 6
+mm mais finos, acompanhando o pano.
+
+### Maciez removida
+
+O módulo, o export, os ossos macios, os toques da bola e o menu saíram (ver
+a entrada seguinte, que fica como histórico).
+
+### Validação
+
+- **Testes que passam:**
+
+  | Teste | Resultado |
+  |---|---|
+  | `MatterModelingTests` | 935 checagens |
+  | `MatterModelingPartsTests` | 19.648 |
+  | `MatterModelingPaintTests` | 103 |
+  | `MatterModelingAssemblyTests` | 185.923 |
+  | `MatterObjectModelingTests` | 191 |
+  | `MatterObjectPhysicsTests` | 189 |
+  | `MatterObjectInspectorTests` | 38 |
+  | `MatterPlayerModelTests` | 11.572 |
+  | `MatterEngineTests` | passa |
+  | `MatterAudioTests` | passa |
+  | `MatterBallTests` | passa |
+  | `check-architecture` | passa |
+
+- **Malha:** `analisar` não acha nenhum cruzamento e mostra uma superfície
+  só, fechada; o `avesso` dá 0 nas 528 poses.
+- **Telas:** conferidas pelas fotos sem janela (`MATTERENGINE_UI_SNAPSHOT`).
+
+**Falhas que já existiam:** `MatterEngine.Character` ("tremor ao girar a
+câmera": o peito a 0,557 rad/s contra o limite de 0,5) e
+`MatterEngine.AdaptivePhysics` ("Floating baseline is not ready"). As duas
+aparecem no histórico desde 03/10 e falham igual com o uniforme antigo
+reexportado. Não vêm desta etapa.
+
+**Para o usuário conferir na janela:**
+
+- a caixa no laboratório (o spawn e a física no mundo);
+- a câmera mais lenta ao carregar o chute;
+- o uniforme no jogo.
+
+## Maciez do jogador: carne e tecido (09/10/2026)
+
+> Removida na mesma noite, a pedido do usuário (entrada acima). Fica como
+> histórico.
+
+Pedido: a carne e a roupa do jogador com um pouco de maciez (os impactos
+influenciando a física e a sensação), com limites bem definidos e custo
+baixo, num módulo separado, fácil de desligar e de remover.
+
+- **Módulo** `src/Engine/Softness` (alvo `MatterSoftness`): só o Workbench e
+  o teste dele dependem dele (regra nova no `check-architecture`). O formato,
+  a pele, as molas, os limites e como tirar estão em
+  `docs/RAGDOLL_CHARACTER_PIPELINE.md` ("Maciez").
+- **Como funciona:** 14 regiões medidas no corpo pelo `exportar-jogo` (carne:
+  barriga, peito, glúteos, coxas, panturrilhas, tríceps; tecido: barra da
+  camisa, mangas, barras do calção), cada uma uma mola de 3 eixos na CPU. A
+  pele ganha 54 cópias de ossos deslocadas pelas molas, e cada vértice passa
+  para elas a parte dele: sem deslocamento a malha é exatamente a de antes.
+- **O que se vê** (sondas offline): parado, no máximo 1,6 mm; no trote, a
+  carne 2 a 3 mm e o tecido 3,5 a 7 mm em média; no sprint, a carne 2,5 a
+  5 mm e o tecido 6,5 a 10 mm, com o limite nos pousos; uma bola de 4 N s na
+  barriga amassa ~4 mm e volta em ~0,1 s.
+- **Física:** os materiais `flesh` (abdômen, pelve, coxas) e `head` nos
+  bonecos criados com a maciez ligada; os toques da bola publicados pelo
+  solver dela (`InflatedBallState3D::ragdollTouches`), fora de `interactions`
+  - a locomoção não muda.
+- **Laboratório:** menu MACIEZ (ligar e desligar na hora, intensidade de 0 a
+  2); longe da câmera (mais de 30 m), rígido; `MATTERENGINE_SEM_MACIEZ=1` não
+  carrega nada. Custo: ~2,8 µs por boneco por quadro.
+
+Correções no caminho:
+
+- A primeira versão tirava a parte só do osso pai da região e só de vértice
+  com espaço livre: a barriga e o peito não andavam nada (vértices com 4
+  ossos; a barriga é quase toda da pelve) e os glúteos quase nada (são da
+  coxa). Agora há uma cópia por osso, e os ossos inteiros trocam no lugar.
+- A gravidade relativa ao repouso deixava a manga 8 mm fora do lugar com o
+  boneco parado (o repouso do braço é a pose T): sem gravidade no braço.
+- As barras do calção e as mangas viviam no limite no sprint (o membro
+  balança a 20-30 m/s²): 8 e 9 Hz.
+- O quadro via só os contatos do último passo da física (com 2 passos por
+  quadro perdia impactos, com 0 contava duas vezes): coleta a cada passo.
+
+Validação: `MatterSoftTissueTests` (5.966 checagens), `MatterPlayerModelTests`
+(a maciez do jogo em dia com o modelo), `MatterEngineTests`
+(`testBallTouchesRagdoll`: uma bola a 15 m/s dá 11,7 N s em 2 toques, igual a
+m·(v ida + v volta)), `MatterBallTests` e o `check-architecture` passam.
+Renders offline (rígido, macio e a diferença) do sprint no quadril e no
+tronco, do impacto na barriga e das máscaras das regiões: sem rasgo, dobra ou
+camisa entrando no calção.
+
+Limitações: o efeito é sutil por desenho (milímetros) e a conferência no
+laboratório (a janela) é do usuário; os materiais valem para os bonecos
+criados depois de ligar; o corpo low-poly tem poucos vértices na barriga, que
+anda em bloco.
+
+## Troca do personagem: o jogador montado no lugar do Ch38 (09/10/2026)
+
+O personagem do jogo (laboratório, visualizadores, controle) agora é o
+jogador montado pela engine em `assets/characters/player_model`, exportado
+por `MatterModelInspector exportar-jogo --destino
+assets/characters/football_player`. Os arquivos do Ch38 (FBX, .blend, pele e
+albedo) e as ferramentas que o preparavam (`tools/prepare_football_player.py`,
+`tools/fit_ragdoll_colliders.py`) foram removidos. Detalhes do formato e das
+regras em `docs/RAGDOLL_CHARACTER_PIPELINE.md`.
+
+- **Exportador** (`src/Engine/Modeling/Rig/GameCharacterExport.cpp`): o perfil
+  físico com o rig calibrado (juntas, eixos, limites, motores e massas do
+  perfil anterior) e as âncoras, os links e os colisores medidos no corpo
+  novo na pose T dele; a pele versão 2; o atlas. Exportar de novo dá os mesmos
+  arquivos.
+- **Motor:** pele `matter-ragdoll-skin-2` (repouso e ligação por osso, a
+  malha na pose A dela) com ossos auxiliares (joelho, quadril, tornozelo,
+  ombro, cotovelo, pulso) em `RagdollCharacter3D`; sombreamento `facet` no
+  manifesto e no shader (`scene3d_mesh.frag`: a normal lisa misturada com a
+  da face; padrão 0,5 com quinas de 45°, o mesmo da inspeção).
+- **Espaços:** o jogo tem a pelve na origem (o chão em
+  `-standingRootHeightMeters` = 0,9684 m, como a locomoção conta); a
+  modelagem fixa o chão dela em `model.json` (`skeleton.ground`) e o repouso
+  do esqueleto medido fica em pé nele (`GameRig::rootRestLift`). O movimento
+  da raiz das animações não é escalado (a pelve do repouso é 1,5% mais baixa
+  que a do Ch38); a modelagem passa a usar a escala 1.
+- **Colisores:** medidos por pontos espalhados na superfície, só a pele que é
+  de cada link; o tronco em faixas de altura entre as juntas; os membros de
+  junta a junta; a folga do braço (0,4 cm) e das coxas (0,8 cm) nas 902 poses
+  das animações de locomoção. Os 133 pares do corpo que colidem são os mesmos
+  do perfil anterior (o alto do peito × cabeça fica declarado como antes).
+- **Constantes do corpo antigo:** a altura do tornozelo no levantar (0,135 m
+  fixo) sai do perfil; `T_TackleAttitude` 1,0 → 1,5 (na saída do carrinho o
+  centro de massa do corpo novo fica mais à frente dos pés e o tronco
+  assentava a ~36°, além do limite de 35°: os 5 carrinhos em sprint viravam
+  queda; com 1,5, nenhum, o deslize no chão igual, e a troca para o físico no
+  meio do carrinho termina de pé em 10 de 10, antes 7).
+
+Validação (linha de base medida com o Ch38 antes da troca):
+
+- A pele do jogo e a malha posada da modelagem: média 0,002 mm, pior
+  0,024 mm em dez poses; a modelagem depois da troca igual à de antes (os
+  dedos giram no máximo 0,125°; só a escala da raiz passa de 0,985 para 1).
+- `MatterEngineTests` passa; `MatterBallTests` passa; os testes da modelagem
+  passam (`MatterPlayerModelTests` com o teste novo de exportação: o
+  personagem do jogo em dia com o modelo e a pele igual à da modelagem).
+- Filtro `character`: a mesma falha de antes ("Cabeça ou tronco tremendo ao
+  girar a câmera", números quase iguais); o idle físico reproduz a pose como
+  antes (braços 0,04 a 0,25°). Os filtros `variety`, `crowd`,
+  `interactions` e `activecontact` passam (o `crowd` falhava com o Ch38);
+  `feet` passa a escada (o Ch38 falhava nela) e falha em "pé travado
+  escorregou" com 62,9 mm - o Ch38, no mesmo teste, dava 62,4 mm.
+- `MatterAdaptiveTests`: a mesma falha de antes ("Floating baseline is not
+  ready"), com a pelve mais perto da referência (32,8 contra 42,0 mm).
+- Varreduras: passada (sprint e trote sem quedas, regime 48/59% contra
+  49/61%), empurrões (15 quedas contra 14), levantar (14 de 20 como antes),
+  de bruços (5 de 7 como antes), quedas (cabeça mais lenta: 0,31 contra
+  0,46 m/s), carrinho (0 quedas em 5 com a atitude 1,5; 1 com o Ch38).
+- Sonda do modo padrão: os toques na bola idênticos (garantia: todos os
+  pedidos tocados, nenhuma falha).
+
+Limitações conhecidas:
+
+- No **modo físico**, a varredura de manejo de bola erra mais toques por
+  distância (5 contra 2 em 30 pedidos; o drible para a direita toca 1 de 4).
+  Não é o pé (a caixa antiga dá o mesmo): é a passada do corpo físico com as
+  proporções novas. No modo padrão os toques são iguais.
+- O desvio lateral médio do trote na varredura de passada subiu de 0,07 para
+  0,13 m/s.
+- A conferência visual no laboratório (o sombreamento 0,5 e o atlas no
+  jogo) não foi feita aqui - a janela é do usuário.
 
 ## Freada sem ajuda parada: imediata, um passo, sem prender o comando (03/10/2026)
 

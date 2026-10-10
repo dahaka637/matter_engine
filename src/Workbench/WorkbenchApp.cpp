@@ -14,6 +14,8 @@ namespace MatterEngine::Workbench {
 namespace {
 
 constexpr float Pi = 3.14159265358979323846f;
+// Camera do laboratorio: radianos por pixel do mouse.
+constexpr float LaboratoryLookSensitivity = 0.0022f;
 
 Vec3 laboratoryViewForward(float yaw, float pitch) {
     const float planar = std::cos(pitch);
@@ -100,6 +102,12 @@ WorkbenchApp::WorkbenchApp()
     applyLaboratoryGraphicsPreset(0);
 }
 
+float WorkbenchApp::ballFlickShape(float pixels) {
+    constexpr float FlickDead = 25.0f, FlickFull = 180.0f;
+    const float amount = std::clamp((std::abs(pixels) - FlickDead) / (FlickFull - FlickDead), 0.0f, 1.0f);
+    return std::copysign(amount, pixels);
+}
+
 void WorkbenchApp::applyLaboratoryGraphicsPreset(int preset) {
     m_laboratoryGraphicsPreset = std::clamp(preset, 0, 2);
     // GTAO saiu do frame ativo na varredura de desempenho. O preenchimento
@@ -123,15 +131,13 @@ void WorkbenchApp::onStart() {
     loadAnimationCatalog();
     m_hrtfEnabled = Data::SettingsRepository(settingsDatabasePath())
         .getInt("audio.hrtf_enabled").value_or(1) != 0;
-    static_cast<void>(m_worldAudio.initialize(
-        MATTERENGINE_ASSETS_DIR, m_hrtfEnabled));
+    static_cast<void>(m_worldAudio.initialize(m_hrtfEnabled));
     applyAutostartIfRequested();
 }
 
 void WorkbenchApp::loadAnimationCatalog() {
     namespace fs = std::filesystem;
     m_animationClips.clear();
-    m_proceduralAnimationClips.clear();
     m_animationLocomotionCompatible = false;
     RagdollProfile3D targetProfile;
     try {
@@ -189,41 +195,6 @@ void WorkbenchApp::loadAnimationCatalog() {
     }
     m_animationLocomotionCompatible =
         characterLocomotionAnimations().compatible(targetProfile);
-    // O visualizador mostra os ciclos do próprio personagem, na ordem em
-    // que o jogo os usa: parado em alerta, passada, recuo, sprint, strafe e
-    // pulos.
-    const std::vector<std::string> characterClipIds {
-        m_ragdollCharacter->idleClipId,
-        m_ragdollCharacter->idleToSprintClipId,
-        m_ragdollCharacter->runForwardArcLeftClipId,
-        m_ragdollCharacter->runForwardArcRightClipId,
-        m_ragdollCharacter->runBackwardArcRightClipId,
-        m_ragdollCharacter->walkClipId,
-        m_ragdollCharacter->walkBackwardClipId,
-        m_ragdollCharacter->sprintClipId,
-        m_ragdollCharacter->sprintBackwardClipId,
-        m_ragdollCharacter->strafeLeftClipId,
-        m_ragdollCharacter->strafeRightClipId,
-        m_ragdollCharacter->sprintStrafeLeftClipId,
-        m_ragdollCharacter->sprintStrafeRightClipId,
-        m_ragdollCharacter->jumpStandingClipId,
-        m_ragdollCharacter->jumpForwardClipId,
-        m_ragdollCharacter->jumpBackwardClipId,
-        m_ragdollCharacter->jumpLeftClipId,
-        m_ragdollCharacter->jumpRightClipId,
-    };
-    for (const std::string& clipId : characterClipIds) {
-        if (clipId.empty()) continue;
-        const auto match = std::find_if(m_animationClips.begin(),
-            m_animationClips.end(), [&](const AnimationClip3D& clip) {
-                return clip.id == clipId;
-            });
-        if (match != m_animationClips.end()) {
-            m_proceduralAnimationClips.push_back(*match);
-        } else {
-            Log::warn("Clipe do personagem não encontrado: " + clipId);
-        }
-    }
     // A cápsula anda na velocidade que cada ciclo foi feito para andar; os
     // números saem dos clipes, não de constantes que se desencontram deles.
     m_avatarGaitSpeeds = characterGaitSpeeds3D(characterLocomotionAnimations());
@@ -232,9 +203,7 @@ void WorkbenchApp::loadAnimationCatalog() {
         m_avatarCharacterSettings.sprintSpeed = m_avatarGaitSpeeds.sprint;
     }
     Log::info("Biblioteca interna de locomoção: "
-        + std::to_string(m_animationClips.size()) + " clipe(s); workspace "
-        "procedural: " + std::to_string(m_proceduralAnimationClips.size())
-        + " movimento(s).");
+        + std::to_string(m_animationClips.size()) + " clipe(s).");
 }
 
 void WorkbenchApp::applyAutostartIfRequested() {
@@ -256,8 +225,18 @@ void WorkbenchApp::applyAutostartIfRequested() {
         || mode == "laboratory-walk" || mode == "laboratory-walk-smoke"
         || mode == "laboratory-prop-smoke"
         || mode == "laboratory-prop-suite-smoke"
-        || mode == "laboratory-benchmark") {
+        || mode == "laboratory-benchmark"
+        || mode == "laboratory-ball-stress") {
         enterLaboratory(true);
+        if (mode == "laboratory-ball-stress") {
+            m_ballStress = true;
+            m_ballFootTouch = true;
+            m_takeCharacterControlWhenReady = true;
+            m_spawnPropWhenReadyId = "soccer_ball";
+            m_automaticQuitSeconds = environmentFloat("MATTERENGINE_STRESS_SECONDS", 90.0f, 5.0f, 3600.0f);
+            if (const std::string seed = environmentValue("MATTERENGINE_STRESS_SEED"); !seed.empty())
+                m_ballStressState = 2463534242u ^ static_cast<std::uint32_t>(std::stoul(seed) * 2654435761u);
+        }
         m_laboratoryDebugVisible = mode == "laboratory-debug";
         if (mode == "laboratory-biomechanics") {
             m_biomechanicalExperiment = true;
@@ -274,6 +253,7 @@ void WorkbenchApp::applyAutostartIfRequested() {
             || mode == "laboratory-pixel-spawn-smoke";
         m_spawnRagdollWhenReady = mode == "laboratory-ragdoll-smoke";
         m_takeCharacterControlWhenReady = mode == "laboratory-character"
+            || mode == "laboratory-ball-stress"
             || mode == "laboratory" || mode == "laboratory-debug"
             || mode == "laboratory-biomechanics"
             || mode == "laboratory-camera-orbit-smoke";
@@ -349,28 +329,26 @@ void WorkbenchApp::applyAutostartIfRequested() {
         }
         syncLaboratoryMouseCapture();
     } else if (mode == "object-viewer" || mode == "object-viewer-smoke") {
-        m_screen = Screen::ObjectViewer;
+        m_screen = Screen::ObjectInspector;
         if (mode == "object-viewer-smoke") m_automaticQuitSeconds = 6.0f;
-    } else if (mode == "animation-viewer"
-        || mode == "animation-viewer-smoke") {
-        m_screen = Screen::AnimationViewer;
-        m_animationViewerCameraYaw = environmentFloat("MATTERENGINE_ANIMATION_YAW",
-            m_animationViewerCameraYaw,-6.3f,6.3f);
-        m_animationViewerCameraPitch = environmentFloat("MATTERENGINE_ANIMATION_PITCH",
-            m_animationViewerCameraPitch,-1.22f,1.22f);
-        m_animationViewerCameraDistance = environmentFloat("MATTERENGINE_ANIMATION_DISTANCE",
-            m_animationViewerCameraDistance,2.8f,9.0f);
-        const auto selected=environmentValue("MATTERENGINE_ANIMATION_CLIP");
-        for(std::size_t i=0;i<m_proceduralAnimationClips.size();++i)if(m_proceduralAnimationClips[i].id==selected)m_animationViewerSelectedIndex=i;
-        if(!m_proceduralAnimationClips.empty())m_animationViewerLoop=m_proceduralAnimationClips[m_animationViewerSelectedIndex].loops;
-        if (!environmentValue("MATTERENGINE_ANIMATION_PHASE").empty() && !m_proceduralAnimationClips.empty()) {
-            m_animationViewerPlaybackSeconds = m_proceduralAnimationClips[m_animationViewerSelectedIndex].durationSeconds
-                * environmentFloat("MATTERENGINE_ANIMATION_PHASE",0.0f,0.0f,1.0f);
-            m_animationViewerPlaying=false;
+    } else if (mode == "ball-viewer" || mode == "ball-viewer-smoke") {
+        m_screen = Screen::BallTouchViewer;
+        // Inspecao automatica: parado num instante (s em relacao ao pedido),
+        // de uma vista (yaw/pitch em radianos).
+        if (!environmentValue("MATTERENGINE_BALL_TIME").empty()) {
+            m_ballViewerPlaying = false;
+            m_ballViewerPlaybackSeconds = environmentFloat("MATTERENGINE_BALL_TIME", 0.0f, -2.0f, 4.0f);
         }
-        if (mode == "animation-viewer-smoke") {
-            m_automaticQuitSeconds = 6.0f;
-        }
+        m_ballViewerCameraYaw = environmentFloat("MATTERENGINE_BALL_YAW", m_ballViewerCameraYaw, -6.3f, 6.3f);
+        m_ballViewerCameraPitch = environmentFloat("MATTERENGINE_BALL_PITCH", m_ballViewerCameraPitch, -0.2f, 1.45f);
+        if (!environmentValue("MATTERENGINE_BALL_DIRECTION").empty())
+            m_ballViewerSettings.directionDegrees = environmentFloat("MATTERENGINE_BALL_DIRECTION", 0.0f, -180.0f, 180.0f);
+        if (environmentValue("MATTERENGINE_BALL_ACTION") == "chute")
+            m_ballViewerSettings.kind = BallActionKind3D::Shot;
+        if (mode == "ball-viewer-smoke") m_automaticQuitSeconds = 6.0f;
+    } else if (mode == "player-inspector" || mode == "player-inspector-smoke") {
+        m_screen = Screen::PlayerInspector;
+        if (mode == "player-inspector-smoke") m_automaticQuitSeconds = 6.0f;
     } else if (mode == "settings") {
         m_settingsReturnScreen = Screen::MainMenu;
         m_screen = Screen::Settings;
@@ -480,6 +458,34 @@ void WorkbenchApp::onEvent(const Event& event) {
                 return;
             }
         }
+        // Manejo de bola, com o personagem controlado: segurar carrega,
+        // soltar pede (esquerdo o chute, direito o drible).
+        if (m_controlledCharacterEntityId != 0 && renderer().mouseCaptured()
+            && !m_laboratoryPaused && !m_laboratoryDebugVisible && !m_spawnMenuOpen
+            && (event.type == EventType::MouseButtonDown || event.type == EventType::MouseButtonUp)
+            && (event.button == MouseButton::Left || event.button == MouseButton::Right)) {
+            const bool shot = event.button == MouseButton::Left;
+            if (event.type == EventType::MouseButtonDown) {
+                if (!m_ballShotHeld && !m_ballDribbleHeld) m_ballCharge = 0.0f;
+                (shot ? m_ballShotHeld : m_ballDribbleHeld) = true;
+                m_ballBarShot = shot;
+            } else if (shot ? m_ballShotHeld : m_ballDribbleHeld) {
+                (shot ? m_ballShotHeld : m_ballDribbleHeld) = false;
+                m_ballRequest = shot ? BallActionKind3D::Shot : BallActionKind3D::Dribble;
+                m_ballRequestPower = m_ballCharge;
+                m_ballBarSeconds = 0.6f;
+                // O gesto: para cima (y negativo) bola alta, para os lados o
+                // efeito.
+                m_ballRequestLift = shot ? ballFlickShape(-m_ballFlick.y) : 0.0f;
+                m_ballRequestCurve = shot ? ballFlickShape(m_ballFlick.x) : 0.0f;
+                // A mira do chute e a camera (pedido do usuario, 04/10): a
+                // camera ja girou com o puxao do mouse; somar o gesto de novo
+                // (com o sinal trocado) deixava a bola atras de onde ela
+                // apontava. O gesto so da a altura e o efeito.
+                m_ballRequestAimYaw = m_laboratoryCameraYaw;
+            }
+            return;
+        }
         if (event.type == EventType::MouseButtonDown
             && event.button == MouseButton::Left
             && renderer().mouseCaptured() && !m_laboratoryPaused
@@ -573,7 +579,13 @@ void WorkbenchApp::onEvent(const Event& event) {
                         * m_physGunTargetOrientation).normalized();
                 return;
             }
-            constexpr float Sensitivity = 0.0022f;
+            // Carregando o chute, a camera gira menos (mirar ajustando a
+            // altura e o efeito; entra e sai suave). O puxao do mouse e o
+            // gesto, inteiro (a sensibilidade nao muda o gesto).
+            const float slow = m_shotCameraSlow * m_shotCameraSlow * (3.0f - 2.0f * m_shotCameraSlow);
+            const float Sensitivity = LaboratoryLookSensitivity
+                * (1.0f - (1.0f - std::clamp(m_shotCameraSensitivity, 0.1f, 1.0f)) * slow);
+            if (m_ballShotHeld) m_ballFlick = m_ballFlick + event.mouseDelta;
             m_laboratoryCameraYaw -= event.mouseDelta.x * Sensitivity;
             m_laboratoryCameraPitch = std::clamp(
                 m_laboratoryCameraPitch - event.mouseDelta.y * Sensitivity,
@@ -586,8 +598,9 @@ void WorkbenchApp::onEvent(const Event& event) {
         && event.key == Key::Escape) {
         if (m_screen == Screen::Settings) {
             m_screen = m_settingsReturnScreen;
-        } else if (m_screen == Screen::ObjectViewer
-            || m_screen == Screen::AnimationViewer) {
+        } else if (m_screen == Screen::ObjectInspector
+            || m_screen == Screen::BallTouchViewer
+            || m_screen == Screen::PlayerInspector) {
             m_screen = Screen::MainMenu;
         }
     }
@@ -730,25 +743,14 @@ void WorkbenchApp::onUpdate(float deltaTime) {
     if (m_screen == Screen::Laboratory && !m_laboratoryPaused) {
         updateLaboratory(deltaTime);
     }
-    if (m_screen == Screen::AnimationViewer && m_animationViewerPlaying
-        && !m_proceduralAnimationClips.empty()) {
-        m_animationViewerSelectedIndex = std::min(
-            m_animationViewerSelectedIndex,
-            m_proceduralAnimationClips.size() - 1);
-        const AnimationClip3D& clip =
-            m_proceduralAnimationClips[m_animationViewerSelectedIndex];
-        m_animationViewerPlaybackSeconds +=
-            deltaTime * m_animationViewerPlaybackSpeed;
-        if (clip.durationSeconds > 0.0f
-            && m_animationViewerPlaybackSeconds > clip.durationSeconds) {
-            if (m_animationViewerLoop) {
-                m_animationViewerPlaybackSeconds = std::fmod(
-                    m_animationViewerPlaybackSeconds, clip.durationSeconds);
-            } else {
-                m_animationViewerPlaybackSeconds = clip.durationSeconds;
-                m_animationViewerPlaying = false;
-            }
-        }
+    if (m_screen == Screen::BallTouchViewer) {
+        updateBallTouchViewer(deltaTime);
+    }
+    if (m_screen == Screen::PlayerInspector && m_playerInspector) {
+        m_playerInspector->update(deltaTime);
+    }
+    if (m_screen == Screen::ObjectInspector && m_objectInspector) {
+        m_objectInspector->update(deltaTime);
     }
 }
 
@@ -768,28 +770,15 @@ void WorkbenchApp::onRender(Renderer& activeRenderer) {
             // a câmera do laboratório não sobrescreve a câmera dos previews
             // antes de a GPU executar os comandos.
             m_propPreviewAtlas = renderPropPreviewAtlas(activeRenderer);
-            m_objectViewerPreview = {};
             return;
         }
         renderLaboratory3D(activeRenderer);
-    } else if (m_screen == Screen::ObjectViewer) {
-        ensurePropAssetsLoaded(activeRenderer);
-        if (m_propCatalog.loaded()
-            && m_objectViewerSelectedIndex
-                < m_propCatalog.definitions().size()) {
-            m_objectViewerPreview = renderObjectViewerPreview(
-                activeRenderer, m_objectViewerSelectedIndex);
-            // renderScene3D reutiliza o alvo offscreen; o atlas será
-            // reconstruído ao retornar ao laboratório.
-            m_propPreviewAtlas = {};
-        }
-    } else if (m_screen == Screen::AnimationViewer) {
+    } else if (m_screen == Screen::BallTouchViewer) {
         ensureRagdollAssetsLoaded(activeRenderer);
+        ensureSoccerBallVisual(activeRenderer);
         if (m_humanRagdollProfile && !m_characterVisual.parts.empty()) {
-            m_animationViewerPreview =
-                renderAnimationViewerPreview(activeRenderer);
+            m_ballViewerPreview = renderBallTouchViewerPreview(activeRenderer);
             m_propPreviewAtlas = {};
-            m_objectViewerPreview = {};
         }
     }
 }
@@ -822,15 +811,26 @@ void WorkbenchApp::onGui(Renderer& activeRenderer) {
     case Screen::Laboratory:
         drawLaboratoryUi();
         break;
-    case Screen::ObjectViewer:
-        drawObjectViewer();
+    case Screen::ObjectInspector:
+        drawObjectInspector(activeRenderer);
         break;
-    case Screen::AnimationViewer:
-        drawAnimationViewer();
+    case Screen::BallTouchViewer:
+        drawBallTouchViewer();
+        break;
+    case Screen::PlayerInspector:
+        drawPlayerInspector(activeRenderer);
         break;
     case Screen::Settings:
         drawSettings();
         break;
+    }
+
+    // Fora da inspecao, a textura dela nao precisa ficar na GPU.
+    if (m_screen != Screen::PlayerInspector && m_playerInspectorCanvas) {
+        m_playerInspectorCanvas->release();
+    }
+    if (m_screen != Screen::ObjectInspector && m_objectInspectorCanvas) {
+        m_objectInspectorCanvas->release();
     }
 
     if (m_videoConfirm.active) {
@@ -839,6 +839,7 @@ void WorkbenchApp::onGui(Renderer& activeRenderer) {
 }
 
 void WorkbenchApp::onStop() {
+    stopBallTouchSimulation();
     renderer().setMouseCaptured(false);
     m_worldAudio.shutdown();
     releaseLaboratoryAssets(renderer());

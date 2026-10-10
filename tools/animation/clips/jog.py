@@ -39,14 +39,15 @@ JOG = GaitSpec(
     swing_ankle_follow=0.6,
     swing_recovery=0.25,      # o calcanhar sobe atras antes de a perna vir
     roll_fraction=0.35,
-    toe_off_pitch=25.0,
+    contact_through_roll=True,
+    toe_off_pitch=22.0,      # a perna sai mais estendida no empurrao
     landing_dorsiflex=4.0,
     toe_out=4.0,
     # A versao anterior baixava a pelve mais de 10 cm e mantinha o joelho de
     # apoio entre 51 e 61 graus: parecia uma corrida agachada. O jogador de
     # futebol trota alto, com flexao suficiente para absorver sem sentar.
-    pelvis_drop=0.055,
-    pelvis_bob=-0.016,
+    pelvis_drop=0.032,
+    pelvis_bob=-0.030,
     pelvis_sway=0.012,
     pelvis_yaw=4.0,
     pelvis_list=4.0,

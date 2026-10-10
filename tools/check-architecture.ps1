@@ -41,6 +41,14 @@ $checks = @(
         Arguments = @("-n", "#include.*Game/|src[/\\]Game", "CMakeLists.txt", "src", "tests")
     },
     @{
+        Name = "Nucleo da modelagem nao depende da engine nem da interface"
+        Arguments = @("-n", '#include "Engine/(Animation|Audio|Character|Control|Data|Environment|Geometry|Input|Locomotion|Physics|Platform|Render|RHI|UI)/|#include .imgui|#include <SDL', "src/Engine/Modeling", "-g", "!src/Engine/Modeling/Rig/**")
+    },
+    @{
+        Name = "Tela de inspecao fala com a GPU so pelo CanvasTarget"
+        Arguments = @("-n", '#include "Engine/(Render|RHI)/', "src/Workbench/PlayerInspector", "-g", "!src/Workbench/PlayerInspector/UiCanvasTexture.*")
+    },
+    @{
         Name = "Identidade antiga e prototipos removidos nao podem retornar"
         Arguments = @("-n", "SoccerFall|SOCCERFALL|LegacyFootworkRig|PhysicalBiped|AnimatorScreen", "CMakeLists.txt", "src", "tests")
     }

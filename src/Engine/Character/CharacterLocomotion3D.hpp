@@ -1,6 +1,8 @@
 #pragma once
 
 #include "Engine/Animation/AnimationClip3D.hpp"
+#include "Engine/Character/BallControl3D.hpp"
+#include "Engine/Character/BodilyGetUp3D.hpp"
 #include "Engine/Character/CharacterStateEstimator3D.hpp"
 #include "Engine/Locomotion/ContactFootwork3D.hpp"
 #include "Engine/Physics/PhysicsScene3D.hpp"
@@ -30,7 +32,12 @@ enum class CharacterLocomotionState3D : std::uint8_t {
     // covers every procedural recovery phase after that (see
     // CharacterGetUpPhase3D).
     Fallen,
-    GettingUp
+    GettingUp,
+    // Carrinho: da corrida ao chao deslizando (um dos clipes de carrinho) e
+    // de volta em pe ou correndo. O corpo segue o clipe como no levantar; o
+    // deslize e o embalo da corrida e o atrito, com uma ajuda que acompanha
+    // o perfil de velocidade do clipe.
+    Tackling
 };
 
 // Distinguishes which procedural recovery sequence applies: face down needs
@@ -87,6 +94,8 @@ struct CharacterLocomotionAnimations3D {
     const AnimationClip3D* walk = nullptr;
     // One-shot de transferencia de peso entre o idle e a primeira passada.
     const AnimationClip3D* idleToSprint = nullptr;
+    // Arrancada agachada (o levantar com pressa no modo padrao).
+    const AnimationClip3D* crouchToSprint = nullptr;
     // Referencias de corrida em curva. Sao misturadas na coluna e nas pernas;
     // rumo e translacao continuam sob o controlador fisico.
     const AnimationClip3D* runForwardArcLeft = nullptr;
@@ -105,16 +114,38 @@ struct CharacterLocomotionAnimations3D {
     const AnimationClip3D* strafeRight = nullptr;
     const AnimationClip3D* sprintStrafeLeft = nullptr;
     const AnimationClip3D* sprintStrafeRight = nullptr;
+    // Opcionais, so da locomocao padrao: as diagonais (trote e sprint, para a
+    // frente e de costas). Sem elas a diagonal usa o clipe da frente ou o de
+    // costas com a pelve girada para o movimento.
+    const AnimationClip3D* walkForwardLeft = nullptr;
+    const AnimationClip3D* walkForwardRight = nullptr;
+    const AnimationClip3D* walkBackwardLeft = nullptr;
+    const AnimationClip3D* walkBackwardRight = nullptr;
+    const AnimationClip3D* sprintForwardLeft = nullptr;
+    const AnimationClip3D* sprintForwardRight = nullptr;
+    const AnimationClip3D* sprintBackwardLeft = nullptr;
+    const AnimationClip3D* sprintBackwardRight = nullptr;
     // Pulos (opcionais): o voo, da decolagem (inicio do clipe) ao toque no
     // chao (fim), tocado pela fase do voo. Sem eles, o voo e procedural.
     const AnimationClip3D* jumpStanding = nullptr;
     const AnimationClip3D* jumpForward = nullptr;
+    // Preparo do pulo parado: o agachamento antes do impulso, percorrido pela
+    // carga.
+    const AnimationClip3D* jumpPrep = nullptr;
     const AnimationClip3D* jumpBackward = nullptr;
     const AnimationClip3D* jumpLeft = nullptr;
     const AnimationClip3D* jumpRight = nullptr;
     // One-shot recoveries, picked by which way the body ended up facing.
     const AnimationClip3D* standUpBack = nullptr;   // spine on the floor
     const AnimationClip3D* standUpFront = nullptr;  // chest on the floor
+    // Giro parado (opcionais, ajuda cheia): ~86 graus da base parada a base
+    // parada girada, tocados na velocidade do giro pedido (pernas e pes).
+    const AnimationClip3D* turnLeft = nullptr;
+    const AnimationClip3D* turnRight = nullptr;
+    // Carrinho (opcionais): da corrida ao chao deslizando e de volta em pe
+    // (ou correndo). Cada um comeca firmando um pe (o motor le no primeiro
+    // quadro); o pe que vai pousar quando o jogador pede escolhe qual.
+    std::array<const AnimationClip3D*, 2> tackles {};
 
     [[nodiscard]] bool compatible(const RagdollProfile3D& profile) const;
 };
@@ -139,6 +170,22 @@ struct CharacterGaitSpeeds3D {
 // olha): a do ciclo do setor - frente (passada ou sprint), lado (strafe ou
 // sprint de lado), costas (recuo ou sprint de costas). Na faixa de histerese entre
 // dois setores a velocidade passa de uma para a outra.
+// O corpo do chute (bracos e tronco pela forca) e a "vida" do movimento
+// (variacao de passada a passada; parado, a respiracao e o acomodar) sobre
+// coordenadas de junta - os mesmos do modo fisico, para a locomocao padrao.
+// O pe (origem e orientacao, referencial da raiz) aonde se pede, com o rumo
+// dele pela coxa quando holdYaw: a perna inteira gira em volta da linha
+// quadril-tornozelo ate o pe apontar para onde deve (o tornozelo nao tem o
+// giro vertical) - o mesmo do modo fisico.
+void characterSolveFootPose3D(const RagdollProfile3D& profile, std::vector<Vec3>& coordinates,
+    std::size_t footIndex, Vec3 targetPosition, Quaternion targetOrientation, float weight, bool holdYaw);
+void characterKickPose3D(const RagdollProfile3D& profile, const RagdollState3D& state,
+    std::vector<Vec3>& coordinates, std::array<std::size_t, 2> hands, const BallKickPose3D& kick);
+void characterGaitVariety3D(const RagdollProfile3D& profile, const AnimationClip3D& clip, float cyclePhase,
+    float armPhase, float strides, std::uint32_t seed, float amount, std::vector<Vec3>& coordinates);
+void characterIdleVariety3D(const RagdollProfile3D& profile, float seconds, std::uint32_t seed, float amount,
+    std::vector<Vec3>& coordinates);
+
 [[nodiscard]] float characterGaitSpeed3D(const CharacterGaitSpeeds3D& speeds,
     float travelRelativeToLookRadians, bool sprinting);
 
@@ -147,6 +194,35 @@ struct CharacterGaitSpeeds3D {
 struct CharacterLocomotionInput3D {
     Vec3 rootPositionWorld;
     Vec3 rootVelocityWorld;
+    // Locomocao fisica v2 (06/10/2026): a postura dada como perdida na
+    // passada pelo pe apoiado e pela pelve tombada (nao pelo meio dos pes, com
+    // um deles no ar longe), a arrancada so saindo de parado, o ciclo
+    // recomecando no pe que pousou de um pulo, e a perna de apoio da corrida
+    // estendendo no maximo 6 cm por vez (com o amortecimento vertical sempre).
+    bool physicalV2 = false;
+    // Quanto da ajuda andando (forca na pelve) o corpo tem, 0..1. Com pouca
+    // ajuda a passada fica presa ao corpo e os passos pousam pelo ponto de
+    // captura (com a ajuda cheia, quem leva o corpo e a pelve).
+    float walkingAssist = 1.0f;
+    // E a ajuda parado (0..1): com ela alta o giro parado e quase imediato
+    // (a pelve tem forca para girar; os pes pivotam no chao).
+    float standingAssist = 1.0f;
+    // Ajuda para levantar do chao (0..1): escala as forcas de fora do
+    // levantar - a subida na pelve e no peito e o torque de endireitar. 1 e o
+    // levantar atual; 0, nenhuma (so os musculos).
+    float getUpAssist = 1.0f;
+    // Rigidez dos musculos no levantar (0..1+): 1 e a de antes (rigida);
+    // menos, mais relaxado (a forca maxima nao muda).
+    float getUpStiffness = 1.0f;
+    // Forca dos musculos ao levantar (o torque maximo; 1 a de antes).
+    float getUpStrength = 1.0f;
+    // Pressa para levantar alem das teclas de andar (no laboratorio, o
+    // espaco segurado): o levantar acelera.
+    bool getUpHurry = false;
+    // Cambaleio (pedido do usuario, 05/10 noite): um choque forte amolece o
+    // corpo, mas de pe ele tenta se manter - o tonus volta em ~1,5 s, os
+    // passos de equilibrio seguem e so vai ao chao se cair de fato.
+    bool staggerRecovery = false;
     // Velocidade que o proxy de navegacao (capsula do jogador, ancora do
     // boneco solto) teve neste tick. NAO e o pedido do jogador: e o que a
     // capsula conseguiu andar. A passada ainda acompanha a capsula ate a
@@ -209,6 +285,33 @@ struct CharacterLocomotionInput3D {
     bool ankleBalance = true;
     // Carregando o pulo (0..1, o pulo sai ao soltar): ele agacha, preparando.
     float jumpCrouch = 0.0f;
+    // Carrinho: correndo, agachar (intent.crouch, a borda) da o carrinho
+    // para onde ele olha (intent.requestedFacingYawRadians).
+    bool tackleEnabled = true;
+    // Carrinho no ar (a voadora): no ar, Ctrl com Shift + W (intent.crouch,
+    // effort e a direcao pedida para a frente do olhar), uma por voo.
+    bool airTackleEnabled = true;
+    // Manejo de bola (BallControl3D): o alvo do pe que vai a bola, por cima
+    // do alvo da passada desse pe enquanto ele esta no ar.
+    BallFootGoal3D ballFoot;
+    // E o desvio dos pes que nao tocam (somado ao alvo do pe no ar).
+    std::array<Vec3, 2> ballAvoid {};
+    // Chute: o pe de apoio pousa ao lado da bola (o pouso previsto dele vai
+    // ate o ponto, ate um limite), o ritmo do ciclo (abaixo de 1 durante o
+    // chute: o apoio fica no chao enquanto a outra perna arma, bate e
+    // acompanha) e a pose de cima (bracos e tronco).
+    BallPlant3D ballPlant;
+    float ballGaitRate = 1.0f;
+    BallKickPose3D ballKick;
+    // O gesto do corpo inteiro (rework de 06/10): aqui so tronco, bracos e
+    // cabeca (os pes vao pelo ballFoot/ballScript no planejador).
+    BallGesturePose3D ballGesture;
+    // Toque parado: o pe dirigido pelo manejo (o planejador o segue) e a
+    // pelve indo com o passo de apoio (fora da ancora: a capsula segue).
+    BallFootScript3D ballScript;
+    BallBodyGoal3D ballBody;
+    // A bola repele o alvo dos pes no ar (pe e canela nao colidem com ela).
+    BallRepulsion3D ballRepel;
     bool manipulated = false;
     std::uint32_t grabbedLink = RagdollDynamics3D::InvalidIndex;
     float poseAuthority = 1.0f;
@@ -252,6 +355,9 @@ struct CharacterLocomotionOutput3D {
     std::vector<std::uint32_t> assistReactionLinks;
     std::vector<Vec3> assistReactionTorquesWorld;
     bool gravityCompensationEnabled = false;
+    // Escala do atrito do corpo com o chao (1 = o do material). No deslize do
+    // carrinho ele escorrega: o comprimento vem do embalo e do atrito.
+    float bodyFrictionScale = 1.0f;
     // 0 = the renderer should show the authored pose untouched; 1 = show the
     // simulated body. Anything between is the blend, and it is the only
     // thing that decides how much physics the player ever sees.
@@ -307,7 +413,8 @@ struct CharacterLocomotionTelemetry3D {
     // seletor desligado tem de ficar em zero).
     std::uint32_t bodyReferenceTicks = 0;
     // Terreno a frente pedindo cuidado (0..1): degrau ou desnivel de 6 cm ou
-    // mais nas sondas, ou ladeira; solta em ~0,6 s depois de passar.
+    // mais nas sondas, ou ladeira; solta em ~0,6 s depois de passar. So
+    // diagnostico: nao muda a ajuda (ela e sempre a escolhida).
     float terrainDemand = 0.0f;
     Vec3 localVelocity;
     float speedMetersPerSecond = 0.0f;
@@ -318,6 +425,12 @@ struct CharacterLocomotionTelemetry3D {
     float lateralLeanRadians = 0.0f;
     float authoredCurveBlend = 0.0f;
     int authoredCurveKind = 0; // 0 nenhum, 1 frente E, 2 frente D, 3 costas D
+    // Quanto cada regra baixou (+) a pelve alvo neste tick (m): inclinacao
+    // da curva, agachamento da freada, alcance das pernas e pouso.
+    float pelvisDropCurveMeters = 0.0f;
+    float pelvisDropBrakeMeters = 0.0f;
+    float pelvisDropReachMeters = 0.0f;
+    float pelvisDropLandingMeters = 0.0f;
     bool authoredStartActive = false;
     float landingBraceForwardRadians = 0.0f;
     float landingBraceLateralRadians = 0.0f;
@@ -363,6 +476,16 @@ struct CharacterLocomotionTelemetry3D {
     std::array<bool, 2> footPlanted {};
     // Progresso do balanco do clipe (0..1; -1 com o pe travado no chao).
     std::array<float, 2> footSwingProgress { -1.0f, -1.0f };
+    // Onde e daqui a quanto o pe no ar vai pousar (o pouso natural, antes do
+    // desvio do chute; -1 sem pouso previsto).
+    std::array<Vec3, 2> footLandingWorld {};
+    std::array<float, 2> footSecondsToTouchdown { -1.0f, -1.0f };
+    // Contato de cada pe no clipe, na fase atual (1 apoio, 0 balanco).
+    std::array<float, 2> clipFootContact {};
+    // Quanto o ciclo ja esperou o pe tocar o chao neste apoio (s).
+    float touchdownWaitSeconds = 0.0f;
+    std::array<float, 2> legPhaseLead {};
+    float thrustOffsetMeters = 0.0f;
     // Diagnostico: inclinacao do alvo do pe no mundo (graus, + ponta para
     // baixo) - a do clipe e a pedida ao IK.
     std::array<float, 2> footClipPitch {};
@@ -384,10 +507,20 @@ struct CharacterLocomotionTelemetry3D {
     // as pernas param de dar passos, cedem e o corpo amolece. Antes disso,
     // desequilibrado, ele continua andando e respondendo aos comandos.
     float fallCommit = 0.0f;
+    // Cambaleio: o quanto ele esta amolecido pelo choque (0..1; cai na hora
+    // com o choque e volta com o tonus) e o choque deste tick (N.s, a soma
+    // dos contatos fora o apoio dos pes).
+    float stagger = 0.0f;
+    float staggerImpulse = 0.0f;
     // Levantar biomecanico: ritmo do clipe (1 = no tempo dele; menos quando o
     // corpo fica para tras), a forca auxiliar na pelve e o "esforco" (sobe
     // enquanto o corpo emperra, e com ele o teto da ajuda).
     float getUpRate = 0.0f;
+    // Levantar pelo corpo (BodilyGetUp3D): etapa, progresso nela e erro da
+    // pelve contra a planejada.
+    BodilyGetUpStage3D bodilyStage = BodilyGetUpStage3D::None;
+    float bodilyStageProgress = 0.0f;
+    float bodilyRootError = 0.0f;
     float getUpAssistNewtons = 0.0f;
     float getUpStruggle = 0.0f;
     // Caido: o tonus dos musculos (cai quando o corpo para de vez, volta aos
@@ -400,13 +533,55 @@ struct CharacterLocomotionTelemetry3D {
     // Levantando: quanto a pelve esta alem da inclinacao do clipe (graus) e
     // o torque de endireitar aplicado (N.m) - a ajuda "segurando" o corpo.
     float getUpTiltExcessDegrees = 0.0f;
+    // A inclinacao da pelve e do peito no clipe do levantar agora (graus).
+    float getUpExpectedTiltDegrees = 0.0f;
+    float getUpExpectedChestTiltDegrees = 0.0f;
     float getUpUprightTorque = 0.0f;
     // Levantando: 1 = centro de massa sobre os apoios; a ajuda cai a 0 fora.
     float getUpOverSupport = 1.0f;
+    // Rolando para ficar de bruços; levantando de bruços, os pes do
+    // equilibrio (ligados, passos dados, maos esperando, quanto o centro de
+    // massa passa da ponta dos pes em m).
+    bool getUpRolling = false;
+    // Carrinho: ativo, a variacao (indice em tackles), a velocidade de
+    // entrada (m/s, na direcao do carrinho), o ritmo do clipe e quanto a
+    // pelve andou desde o comeco (m).
+    bool tackling = false;
+    // Armado: esperando o pouso do pe para mergulhar (o preparo).
+    bool tacklePending = false;
+    int tackleVariant = -1;
+    float tackleEntrySpeed = 0.0f;
+    float tackleRate = 1.0f;
+    float tackleTravel = 0.0f;
+    bool getUpFootwork = false;
+    int getUpBalanceSteps = 0;
+    bool getUpBalanceHold = false;
+    // Mao de apoio (0 livre, 1 indo ao chao, 2 apoiada, 3 voltando).
+    std::array<int, 2> getUpHandStage {};
+    float getUpBalanceExcess = 0.0f;
     // "Vida" no ragdoll: espernear no ar (0..1).
     float lifeFlail = 0.0f;
     // Perdendo o equilibrio (0..1): bracos em moinho, tronco contra a queda.
     float balanceReaction = 0.0f;
+    // Postura perdida: o pendulo (centro de massa contra o meio dos pes) da
+    // vertical e contra o da pose pedida, o peito da vertical (rad) e a queda
+    // decidida (o controlador tira a ajuda).
+    float postureDeviation = 0.0f;
+    float postureChestTilt = 0.0f;
+    float posturePendulum = 0.0f;
+    bool postureLost = false;
+    // v2: apoiado no alto (mureta, parede) e tentando se recompor - nem
+    // postura perdida nem queda enquanto dura.
+    bool braceRecovering = false;
+    // Levantou com pressa (as teclas) ha pouco (< 2 s).
+    bool getUpHurried = false;
+    // Levantando com pressa e ja sobre os pes: a locomocao padrao pode
+    // assumir (andando para onde as teclas pedem).
+    bool getUpHandoffReady = false;
+    // Tropeco/quase-queda em movimento (0..1).
+    float tripRecovery = 0.0f;
+    float stumbleExcess = 0.0f, stumbleRate = 0.0f, stumbleDecel = 0.0f, stumbleRisk = 0.0f;
+    bool stumbleStepping = false;
     // Pes reagindo a empurrao/pressao: 1 enquanto se recupera com passos (e
     // ~0,45 s depois) e o ponto de captura fora do apoio real (m).
     float reactiveShare = 0.0f;
@@ -427,10 +602,27 @@ struct CharacterLocomotionTelemetry3D {
     Vec3 externalForceWorld;
 };
 
+// De onde o corpo esta ao passar do modo padrao (animado) para este: se ja
+// anda. Sem isso, o fisico comecava como numa arrancada parada (gesto de
+// arrancada, ciclo pelo pe de tras).
+struct CharacterLocomotionSeed3D {
+    bool moving = false;
+    // No meio de um carrinho do modo padrao: ele continua daqui (o clipe, o
+    // tempo nele, o ritmo, a escala e a origem do caminho, o rumo e a
+    // velocidade de entrada) - a pancada nao o interrompe.
+    const AnimationClip3D* tackleClip = nullptr;
+    float tackleTime = 0.0f, tackleRate = 1.0f, tackleScale = 1.0f, tackleYaw = 0.0f, tackleEntrySpeed = 0.0f;
+    Vec3 tackleStart;
+};
+
 class CharacterLocomotion3D final {
 public:
     void reset(const RagdollProfile3D& profile,
         const RagdollState3D& state);
+    // Depois do reset (vindo do modo padrao): a marcha continua - fase
+    // casada com os pes do corpo -, e a pose parte das juntas dele.
+    void seedMotion(const RagdollProfile3D& profile, const RagdollState3D& state,
+        const CharacterLocomotionSeed3D& seed);
     void update(const RagdollProfile3D& profile,
         const CharacterLocomotionAnimations3D& animations,
         const RagdollState3D& state,
@@ -441,6 +633,8 @@ public:
     [[nodiscard]] const CharacterLocomotionOutput3D& output() const {
         return m_output;
     }
+    // Diagnostico do levantar pelo corpo (a pose que ele pede).
+    [[nodiscard]] const BodilyGetUp3D& bodilyGetUp() const { return m_bodilyGetUp; }
     [[nodiscard]] const CharacterLocomotionTelemetry3D& telemetry() const {
         return m_telemetry;
     }
@@ -453,17 +647,38 @@ public:
     [[nodiscard]] const CharacterContactPlan3D& contactPlan() const {
         return m_footwork.plan();
     }
+    // Teste: comeca cambaleando (como logo depois de um choque).
+    void debugSetStagger(float stagger) { m_stagger = stagger; m_staggerHold = 0.25f * stagger; }
     void setFootTraceEnabled(bool enabled) { m_footTraceEnabled = enabled; }
     [[nodiscard]] ContactFootworkSettings3D& footworkSettings() {
         return m_footwork.settings();
     }
 
 private:
+    // Alvo do pe no balanco antes da correcao pela malha do pe (diagnostico).
+    std::array<Vec3, 2> m_trackedSwingGoal {};
+    std::array<bool, 2> m_trackedSwingGoalValid {};
     struct FootPlant {
         std::size_t linkIndex = 0;
         bool valid = false;
         bool planted = false;
+        // Giro do pe para dentro da curva (rad): vai ao alvo durante o
+        // balanco e fica no apoio.
+        float curveYaw = 0.0f;
         Vec3 lockedPositionWorld;
+        // Travado antes de o pe fisico tocar: a trava ainda vai para onde ele
+        // tocar (ate este prazo, s).
+        float lockFollowTouch = 0.0f;
+        // Quanto o pe ja esperou para sair carregado (s, ver LiftAfterUnload).
+        float liftHoldSeconds = 0.0f;
+        float touchHoldSeconds = 0.0f;
+        // Devolvido pelo planejador apoiado (fim do passo de arrancada): fica
+        // travado ate o clipe chegar ao apoio dele, no maximo este tempo (s).
+        float handbackHoldSeconds = 0.0f;
+        // Primeiro toque fisico neste balanco (o pe pode tocar antes do apoio
+        // do clipe e escorregar ate ele): e ali que a trava vai.
+        bool firstTouchValid = false;
+        Vec3 firstTouchWorld;
         Vec3 previousAnimatedPositionWorld;
         bool previousAnimatedPositionValid = false;
         // A deliberate turn-in-place repositioning step, distinct from the
@@ -596,6 +811,70 @@ private:
     // dele (mola), e o degrau da capsula entra suavizado.
     float m_terrainSlope = 0.0f;
     float m_pelvisOffset = 0.0f;
+    // Postura mais ereta: o quanto a pelve-alvo esta acima da do clipe (m).
+    float m_postureLift = 0.0f;
+    float m_touchdownWaitSeconds = 0.0f;
+    // Passada pelo contato: quanto cada perna esta adiantada em relacao ao
+    // ciclo (fracao), se o pe ja tocou no apoio atual do clipe, e de que lado
+    // e cada link de perna (-1 nao e perna).
+    std::array<float, 2> m_legPhaseLead {};
+    std::array<bool, 2> m_legTouchedInStance {};
+    std::vector<int> m_legSideOfLink;
+    int m_waitingLeg = -1;
+    bool m_contactSteady = false;
+    // Altura do voo regulada (Raibert): topo do corpo e da referencia no voo
+    // atual, o erro do ultimo voo e o ajuste da perna de apoio.
+    bool m_inFlight = false;
+    float m_flightBodyApex = 0.0f;
+    float m_flightGuideApex = 0.0f;
+    float m_flightApexError = 0.0f;
+    float m_thrustOffset = 0.0f;
+    float m_stanceDampingOffset = 0.0f;
+    float m_stanceDampingGuideZ = 0.0f;
+    bool m_stanceDampingValid = false;
+    std::array<float, 2> m_landingReach {};
+    // Pe que espera o toque: quanto ja deslizou para tras (mundo).
+    std::array<Vec3, 2> m_waitPawShift {};
+    // Chute: o desvio do pouso do pe de apoio (ao lado da bola), suavizado.
+    std::array<Vec3, 2> m_ballPlantShift {};
+    // As pernas e bracos para o gesto com a bola (BallGesturePose3D).
+    BallGestureLegs3D m_gestureLegs;
+    // A pelve do toque parado (planar, suavizada ~0,1 s).
+    Vec3 m_ballBodyDelta;
+    // O centro dos pes na pose (referencial da raiz, tick anterior): parado
+    // com a ajuda cheia, o corpo se assenta sobre a base real.
+    // Giro parado pelo clipe (ajuda cheia): o ciclo atual (clipe, tempo,
+    // sentido, quanto gira, rumo no comeco), o peso das pernas do clipe na
+    // pose e o deslocamento da raiz que o clipe faz.
+    struct ClipTurn {
+        bool active = false;
+        const AnimationClip3D* clip = nullptr;
+        float time = 0.0f;
+        float sign = 1.0f;
+        float total = 0.0f;
+        float span = 1.5f;
+        float startYaw = 0.0f;
+        float startPelvisYaw = 0.0f;
+    };
+    ClipTurn m_clipTurn;
+    float m_clipTurnWeight = 0.0f;
+    Vec3 m_clipTurnRootOffset;
+    // Continuidade do alvo do pe na troca de dono (planejador <-> passada).
+    std::array<bool, 2> m_goalPlannerOwned {};
+    std::array<bool, 2> m_goalOwnerValid {};
+    std::array<float, 2> m_goalHandoff {};
+    std::array<Vec3, 2> m_goalHandoffPosition {};
+    std::array<Quaternion, 2> m_goalHandoffOrientation {};
+    std::array<Vec3, 2> m_lastFootGoalPosition {};
+    std::array<Quaternion, 2> m_lastFootGoalOrientation {};
+    Vec3 m_poseFeetCenterLocal;
+    bool m_poseFeetCenterValid = false;
+    // Ritmo do ciclo suavizado (fracao do ritmo do clipe) e a fase propria
+    // dos bracos.
+    float m_phaseRateScale = 1.0f;
+    float m_armPhase = 0.0f;
+    float m_armPhaseRate = 0.0f;
+    bool m_armPhaseValid = false;
     float m_pelvisOffsetVelocity = 0.0f;
     float m_baseStepOffset = 0.0f;
     float m_previousBaseGround = 0.0f;
@@ -616,6 +895,12 @@ private:
     Vec3 m_previousGuideAngularVelocity;
     float m_stateSeconds = 0.0f;
     float m_transitionSeconds = 0.0f;
+    // Troca de movimento em curso (0..1): troca de setor/ciclo, freada ou o
+    // pedido longe da velocidade do corpo. Sobe na hora, cai em ~0,3 s.
+    float m_gaitChange = 0.0f;
+    std::array<bool, 2> m_gaitSwingLatched {};
+    std::array<float, 2> m_gaitSwingCeiling {};
+    float m_sinceGaitFlip = 10.0f;
     float m_transitionDurationSeconds = 0.14f;
     float m_cyclePhase = 0.0f;
     bool m_startClipActive = false;
@@ -631,6 +916,78 @@ private:
     float m_idleSeconds = 0.0f;
     float m_facingYaw = 0.0f;
     float m_turningRate = 0.0f;
+    // Inclinacao do corpo inteiro na curva (rad, + para a esquerda): atan da
+    // aceleracao centripeta do caminho sobre g.
+    float m_spineCurveRoll = 0.0f;
+    // Levantar (04/10): rolar para ficar de bruços antes de levantar
+    // (arrumando-se deitado) e, levantando de bruços, os pes do equilibrio a
+    // partir dos quatro apoios - presos no chao pelo IK e dando passos para
+    // baixo do centro de massa; as maos so soltam com ele sobre os pes.
+    bool m_getUpRolling = false;
+    float m_getUpRollSeconds = 0.0f;
+    float m_getUpRollSign = 0.0f;
+    int m_getUpRollTop = -1;
+    bool m_getUpRollDone = false;
+    bool m_getUpFootwork = false;
+    Vec3 m_getUpFootworkForward { 1.0f, 0.0f, 0.0f };
+    std::array<Vec3, 2> m_getUpFootWorld {};
+    int m_getUpStepSide = -1;
+    float m_getUpStepSeconds = 0.0f;
+    Vec3 m_getUpStepFrom {};
+    Vec3 m_getUpStepTo {};
+    bool m_getUpBalanceHold = false;
+    // Mao de apoio no levantar (04/10, ideia do usuario): quando o clipe pede
+    // a mao no chao, ela vai a um ponto ao lado e a frente do ombro (nunca
+    // para dentro, embaixo do peito), fica presa ali com a palma no chao e
+    // solta quando o clipe a levanta ou o braco nao alcanca.
+    struct GetUpHand {
+        int stage = 0;          // 0 livre, 1 indo ao chao, 2 apoiada, 3 voltando ao clipe
+        float seconds = 0.0f;
+        float weight = 0.0f;
+        float clipUpSeconds = 0.0f;
+        Vec3 from {};
+        Vec3 spot {};
+    };
+    std::array<GetUpHand, 2> m_getUpHands {};
+    // Carrinho (ver Tackling): o clipe sorteado, o rumo (para onde olhava),
+    // a ancora (onde o caminho do clipe comeca, no mundo), ritmo e escala do
+    // percurso pela velocidade de entrada.
+    bool m_tackling = false;
+    const AnimationClip3D* m_tackleClip = nullptr;
+    int m_tackleVariant = -1;
+    int m_tackleLastVariant = -1;
+    std::uint32_t m_tackleCount = 0;
+    float m_tackleYaw = 0.0f;
+    Vec3 m_tackleStart {};
+    float m_tackleRate = 1.0f;
+    float m_tackleDistanceScale = 1.0f;
+    float m_tackleEntrySpeed = 0.0f;
+    float m_tackleCooldown = 0.0f;
+    float m_tackleBehindSeconds = 0.0f;
+    float m_tackleHoldSeconds = 0.0f;
+    float m_tackleExpectedHeight = 1.0f;
+    float m_tackleExpectedRise = 0.0f;
+    // Velocidade no plano quando a pelve chegou ao chao (-1 antes).
+    float m_tackleLandSpeed = -1.0f;
+    bool m_previousCrouchIntent = false;
+    // Preparo: armado (esperando o pouso do pe com que o clipe comeca
+    // apoiado), ha quanto tempo, que pe e o ultimo estado dos pes.
+    bool m_tacklePending = false;
+    float m_tacklePendingSeconds = 0.0f;
+    int m_tackleStartSide = 0;
+    std::array<bool, 2> m_tacklePreviousFoot {};
+    float m_sinceTackleSeconds = 10.0f;
+    float m_getUpBalanceHoldSeconds = 0.0f;
+    int m_getUpBalanceSteps = 0;
+    float m_curveSprintShare = 0.0f;
+    float m_bodyCurveLean = 0.0f;
+    // Curva real do corpo: rumo da velocidade do centro de massa, a taxa de
+    // giro dele filtrada (rad/s) e a aceleracao centripeta (m/s2, + para a
+    // esquerda).
+    float m_bodyHeading = 0.0f;
+    bool m_bodyHeadingValid = false;
+    float m_bodyTurnRate = 0.0f;
+    float m_bodyCurveAcceleration = 0.0f;
     float m_reactionStrength = 0.0f;
     float m_physicsBlend = 0.0f;
     float m_physicsHoldSeconds = 0.0f;
@@ -660,6 +1017,10 @@ private:
     // A freada ja esta nos passos (devagar o bastante): a corrida que
     // desacelerava parou de vez ate a freada acabar.
     bool m_brakeStepping = false;
+    // Freando para inverter (o pedido e o sentido contrario): a virada.
+    bool m_brakeReversing = false;
+    // Lado do pivo da virada (+1 esquerda, -1 direita, 0 nao escolhido).
+    float m_pivotSign = 0.0f;
     // Parcela da ajuda de corrida na freada (0..1; sobe correndo e freando,
     // sai depressa nos passos de freada).
     float m_brakeRunShare = 0.0f;
@@ -727,16 +1088,40 @@ private:
     float m_sinceTouchdownSeconds = 10.0f;
     CharacterJumpKind3D m_jumpKind = CharacterJumpKind3D::None;
     const AnimationClip3D* m_jumpClip = nullptr;
+    // v2: salto correndo - o ciclo de passada, do ponto da decolagem
+    // (m_leapFrom, fracao do clipe) ao toque seguinte (m_leapSpan a frente).
+    const AnimationClip3D* m_leapClip = nullptr;
+    float m_leapFrom = 0.0f;
+    float m_leapSpan = 0.0f;
     float m_flightPhase = 0.0f;
     // Fall/get-up: link indices cached once for the contact scan that
     // decides whether the character is actually down (a hand/knee/torso
     // touching the ground), independent of the authored-clip foot contact
     // weights the normal locomotion foot lock above already uses.
     std::array<std::size_t, 2> m_handLinks {};
+    // Caindo: ha quanto tempo cada mao segura o chao (s; 0 sem contato).
+    std::array<float, 2> m_handCatchSeconds {};
+    // Caindo e no chao: alvos das juntas suavizados (sem saltos de alvo) e
+    // quanto da posicao fetal vale (0..1).
+    std::vector<Vec3> m_fallSmoothCoordinates;
+    float m_fetal = 0.0f;
+    // No ar, caindo: quanto da pose de equilibrio no ar vale (0..1).
+    float m_airBalance = 0.0f;
+    // Descendo de um voo: quanto do preparo do pouso vale (0..1).
+    float m_landingPrep = 0.0f;
+    // Postura ereta de pescoco e cabeca parado (0..1, suavizada).
+    float m_postureUpright = 0.0f;
+    // Rolagem da pelve filtrada (~0,35 s): a parte lenta (inclinacao de
+    // proposito, curva) separada da passada.
+    float m_pelvisSideSlow = 0.0f;
     std::array<std::size_t, 2> m_shinLinks {};
     std::size_t m_chestLink = 0;
     float m_elapsedSeconds = 0.0f;
     CharacterGetUpPhase3D m_getUpPhase = CharacterGetUpPhase3D::None;
+    // Levantar pelo corpo: com ele o Rising nao toca o clipe nem usa ajuda.
+    BodilyGetUp3D m_bodilyGetUp;
+    BodilyGetUpOutput3D m_bodilyPose;
+    bool m_bodilyRising = false;
     CharacterFallOrientation3D m_fallOrientation =
         CharacterFallOrientation3D::None;
     float m_getUpPhaseSeconds = 0.0f;
@@ -751,6 +1136,11 @@ private:
     // Reflexos de queda e levantar biomecanico (ver update()).
     float m_fallReflex = 0.0f;
     float m_fallCommit = 0.0f;
+    // Cambaleio (0..1) e a classe de cada link para o tonus dele (0 perna,
+    // 1 tronco, 2 braco).
+    float m_stagger = 0.0f;
+    float m_staggerHold = 0.0f;
+    std::vector<std::uint8_t> m_staggerLimb;
     float m_previousTilt = 0.0f;
     Vec3 m_fallDirection { 1.0f, 0.0f, 0.0f };
     // Tropeco durante uma passada: contato inesperado do pe no meio do
@@ -758,6 +1148,78 @@ private:
     // sobe e continua; tarde, ele pousa e o passo seguinte amplia a base.
     float m_tripRecovery = 0.0f;
     float m_tripRecoverySeconds = 0.0f;
+    // Postura perdida (ver PostureLossFall): ha quanto tempo o corpo esta
+    // segurado fora dos pes, o pendulo da pose pedida (centro de massa menos
+    // o meio dos pes, mundo, do tick anterior) e a queda decidida.
+    float m_postureHeldSeconds = 0.0f;
+    Vec3 m_referencePendulum {};
+    bool m_referencePendulumValid = false;
+    // Os pes da pose alvo (no mundo, do tick anterior): o pendulo da
+    // referencia pelos mesmos pes apoiados que o do corpo (v2).
+    std::array<Vec3, 2> m_referenceFeetWorld {};
+    // A passada atual comecou de parado (arrancada; ver gaitStarting).
+    bool m_gaitStartFromRest = false;
+    // Pouso de um pulo direto na passada: o pe que tocou primeiro (o ciclo
+    // recomeca no toque dele; -1 nada).
+    int m_landingResyncFoot = -1;
+    // v2: a inclinacao a mais pela aceleracao que as pernas precisam fazer
+    // (x para a frente, y para a esquerda, rad; filtrada).
+    Vec3 m_leanNeed {};
+    // v2, recuperacao apoiada (ver o bloco no update).
+    float m_bracedMemory = 0.0f;
+    float m_braceAttemptSeconds = 0.0f;
+    float m_braceStallSeconds = 0.0f;
+    float m_braceBestTilt = 0.0f;
+    bool m_braceRecovering = false;
+    Vec3 m_referenceCenterOfMassWorld {};
+    bool m_postureLost = false;
+    // Quase-queda em movimento: inclinacao da pelve para a frente no rumo
+    // (rad), a taxa dela, a de regime, e a freada do corpo alem da pedida.
+    bool m_stumbleValid = false;
+    float m_stumblePitch = 0.0f;
+    float m_stumblePitchRate = 0.0f;
+    float m_stumbleBaseline = 0.0f;
+    float m_stumbleAlong = 0.0f;
+    float m_stumbleDecel = 0.0f;
+    float m_stumbleRisk = 0.0f;
+    // A reacao da quase-queda (0..1): os bracos abrem e a pelve desce.
+    float m_stumbleReaction = 0.0f;
+    // Passo de quase-queda pelo planejador em andamento, ha quanto tempo, e
+    // desde o ultimo (s).
+    bool m_stumbleStepping = false;
+    float m_stumbleStepSeconds = 0.0f;
+    float m_sinceStumbleStep = 10.0f;
+    Vec3 m_stumbleStepDirection { 1.0f, 0.0f, 0.0f };
+    // O mesmo passo do planejador na arrancada (o primeiro passo, do pe de
+    // tras): pedido ao entrar na passada, e se o passo atual e de arrancada.
+    bool m_startStepRequested = false;
+    // A semente (seedMotion), aplicada no proximo update: as juntas do corpo,
+    // os pes e as velocidades deles em relacao a pelve, no rumo dela, e a
+    // velocidade dele.
+    // Levantar: o ritmo do clipe agora (vezes o dele) e se a ultima saida foi
+    // com pressa (as teclas - a volta ao modo padrao vem mais rapido).
+    float m_getUpSpeedNow = 1.0f;
+    bool m_getUpHurriedExit = false;
+    bool m_getUpHandoffReady = false;
+    bool m_motionSeedPending = false;
+    // O giro da camera (rad/s, filtrado) e se o carrinho pedido ja foi
+    // escolhido pela camera/corrida (nao troca pelo pe).
+    float m_viewTurnRate = 0.0f;
+    float m_previousViewYaw = 0.0f;
+    bool m_previousViewValid = false;
+    bool m_tackleChosen = false;
+    // Uma voadora por voo (no modo fisico).
+    bool m_airTackleSpent = false;
+    std::vector<Vec3> m_seedJoints;
+    std::array<Vec3, 2> m_seedFeet {}, m_seedFeetVelocity {};
+    float m_seedSpeed = 0.0f;
+    bool m_startStepActive = false;
+    // Arrancada com a ajuda dosada: o teto de velocidade que cresce desde a
+    // entrada na passada (m/s; alto = sem teto).
+    float m_startDoseCap = 1000.0f;
+    // Corpo parado (centro de massa a menos de 0,3 m/s) ha quanto tempo (s).
+    float m_bodyRestSeconds = 0.0f;
+    Vec3 m_stumbleDirection { 1.0f, 0.0f, 0.0f };
     int m_tripFoot = -1;
     bool m_tripElevating = false;
     Vec3 m_tripDirection { 1.0f, 0.0f, 0.0f };
@@ -799,6 +1261,9 @@ private:
     // Por pe, quanto o IK da perna parte da pelve MEDIDA (0 a 1): o pe que o
     // planejador tem no ar vai ao alvo no mundo mesmo com o corpo inclinado.
     std::array<float, 2> m_swingFromMeasuredPelvis {};
+    // Com pouca ajuda: o ciclo de sprint ja pode tocar (a passada rapida o
+    // bastante para ele; abaixo, o de trote).
+    bool m_sprintClipAllowed = true;
     // Comprimentos quadril-tornozelo do tick anterior (fisico, alvo) para a
     // extensao axial (R3); negativo = sem medida.
     std::array<std::array<float, 2>, 2> m_previousLegLength { { { -1.0f, -1.0f }, { -1.0f, -1.0f } } };
@@ -822,6 +1287,16 @@ private:
     float m_terrainRampHold = 0.0f;
     // Teto de velocidade do terreno publicado (sobe aos poucos, desce na hora).
     float m_terrainSpeedCap = 9.0f;
+    // Curva fechada: o rumo pedido girando (rad/s, filtrado) e o teto de
+    // velocidade que cabe nessa curva.
+    float m_requestYaw = 0.0f;
+    bool m_requestYawValid = false;
+    float m_requestTurnRate = 0.0f;
+    float m_curveSpeedCap = 1000.0f;
+    // Perna da passada no ar pela altura da pelve de verdade quando ela esta
+    // abaixo da de referencia (peso por pe, entra no balanco, sai no apoio).
+    std::array<float, 2> m_swingLowWeight {};
+    std::array<float, 2> m_swingLowLanding { 1.0f, 1.0f };
     // O corpo sobre a escada ou rampa (pes em alturas diferentes ou chao
     // inclinado embaixo deles), retido por 0,6 s.
     float m_onInclineHold = 0.0f;

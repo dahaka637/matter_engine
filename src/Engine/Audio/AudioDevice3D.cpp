@@ -14,7 +14,6 @@
 #include <AL/efx-presets.h>
 #include <AL/efx.h>
 
-#include <SDL3/SDL.h>
 
 #include <algorithm>
 #include <array>
@@ -328,48 +327,6 @@ bool AudioDevice3D::hrtfActive() const {
 
 bool AudioDevice3D::efxAvailable() const {
     return m_impl != nullptr && m_impl->efxIsAvailable;
-}
-
-int AudioDevice3D::loadBuffer(const std::string& path) {
-    if (!m_impl) return -1;
-
-    SDL_AudioSpec sourceSpec {};
-    Uint8* sourceBuffer = nullptr;
-    Uint32 sourceLength = 0;
-    if (!SDL_LoadWAV(path.c_str(), &sourceSpec, &sourceBuffer,
-            &sourceLength)) {
-        Log::warn("Falha ao carregar som '" + path + "': " + SDL_GetError());
-        return -1;
-    }
-
-    const SDL_AudioSpec targetSpec { SDL_AUDIO_S16, 1, MixSampleRateHz };
-    Uint8* convertedBuffer = nullptr;
-    int convertedBytes = 0;
-    const bool converted = SDL_ConvertAudioSamples(&sourceSpec, sourceBuffer,
-        static_cast<int>(sourceLength), &targetSpec, &convertedBuffer,
-        &convertedBytes);
-    SDL_free(sourceBuffer);
-    if (!converted) {
-        Log::warn("Falha ao converter som '" + path + "': " + SDL_GetError());
-        return -1;
-    }
-
-    ALuint handle = 0;
-    alGenBuffers(1, &handle);
-    alBufferData(handle, AL_FORMAT_MONO16, convertedBuffer, convertedBytes,
-        MixSampleRateHz);
-    SDL_free(convertedBuffer);
-    logAlErrors("loadBuffer");
-    if (handle == 0) return -1;
-
-    const std::size_t frameCount = static_cast<std::size_t>(convertedBytes)
-        / sizeof(std::int16_t);
-    Impl::BufferEntry entry;
-    entry.handle = handle;
-    entry.durationSeconds = static_cast<float>(frameCount)
-        / static_cast<float>(MixSampleRateHz);
-    m_impl->buffers.push_back(entry);
-    return static_cast<int>(m_impl->buffers.size()) - 1;
 }
 
 int AudioDevice3D::loadProceduralBuffer(

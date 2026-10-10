@@ -42,6 +42,23 @@ check_absent "Engine nao pode depender do Workbench" \
     '#include.*Workbench/' src/Engine
 check_absent "Codigo do jogo antigo nao pode voltar ao runtime" \
     '#include.*Game/|src[/\\]Game' CMakeLists.txt src tests
+check_absent "Nucleo da modelagem nao depende da engine nem da interface" \
+    '#include "Engine/(Animation|Audio|Character|Control|Data|Environment|Geometry|Input|Locomotion|Physics|Platform|Render|RHI|UI)/|#include .imgui|#include <SDL' \
+    src/Engine/Modeling -g '!src/Engine/Modeling/Rig/**'
+check_absent "Camadas de baixo da modelagem nao dependem da montagem, das pecas, do rig nem da inspecao" \
+    '#include "Engine/Modeling/(Assembly|Rig|Parts|Inspection)/' \
+    src/Engine/Modeling/Mesh src/Engine/Modeling/Skin src/Engine/Modeling/Import src/Engine/Modeling/Texture \
+    src/Engine/Modeling/Paint src/Engine/Modeling/Geometry src/Engine/Modeling/Raster src/Engine/Modeling/Skeleton \
+    src/Engine/Modeling/Analysis
+check_absent "A montagem do jogador nao depende do rig do jogo nem da inspecao" \
+    '#include "Engine/Modeling/(Rig|Inspection)/' src/Engine/Modeling/Assembly
+check_absent "Tela de inspecao fala com a GPU so pelo CanvasTarget" \
+    '#include "Engine/(Render|RHI)/' \
+    src/Workbench/PlayerInspector -g '!src/Workbench/PlayerInspector/UiCanvasTexture.*'
+check_absent "Tela de objetos fala com a GPU so pelo CanvasTarget" \
+    '#include "Engine/(Render|RHI)/' src/Workbench/ObjectInspector
+check_absent "Objetos procedurais (modelagem) nao dependem da montagem, das pecas, do rig nem da inspecao" \
+    '#include "Engine/Modeling/(Assembly|Rig|Parts|Inspection)/' src/Engine/Modeling/Objects
 check_absent "Identidade antiga e prototipos removidos nao podem retornar" \
     'SoccerFall|SOCCERFALL|LegacyFootworkRig|AnimatorScreen' \
     CMakeLists.txt src tests

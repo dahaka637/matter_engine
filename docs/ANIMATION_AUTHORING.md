@@ -170,8 +170,24 @@ ao manifesto do jogador e não toca no runtime.
 ### `alert_idle` (Parado em alerta)
 
 Única pose parada do personagem, ativa desde o surgimento. É um retarget
-direto de `Idle.fbx`, preservando a respiração, o tronco inclinado, a cabeça,
-os braços, os joelhos dobrados e a base escalonada com o pé esquerdo à frente.
+direto de `Idle.fbx`, preservando a respiração, os braços, os joelhos
+dobrados e a base escalonada com o pé esquerdo à frente.
+
+**Postura ergonômica** (09/10/2026, pedido do usuário: "o pescoço reto,
+tipo postura ergonômica"). O Idle da Mixamo curva o alto das costas (o peito
+e o alto do peito dobrados ~11° cada) e baixa a cabeça 20°. A correção
+`pose.ergonomic_posture` move a curva para baixo: −9° no peito e no alto do
+peito, +5° no abdômen (o tronco fica no lugar). O pescoço e a cabeça
+levantam 2° e 4°. Medido com `MatterModelInspector postura`:
+
+| | Antes | Depois |
+|---|---|---|
+| Pescoço (da vertical) | 31° | 6° |
+| Cabeça à frente da base do pescoço | 10,7 cm | 1,2 cm |
+| Olhar | 20° para baixo | no horizonte |
+
+Os giros parados (`turn_in_place.py`, da Mixamo, com a mesma curva) usam a
+mesma correção.
 O clipe inteiro é girado rigidamente para o peito olhar para a câmera; por isso
 a pelve conserva cerca de 22° de abertura. Os dois pés ficam planos e
 plantados no mundo por IK, a única correção interna necessária para o contato
@@ -388,20 +404,26 @@ colisão no perfil (`selfCollisionIgnoredPairs`, com o motivo), gerado por
 
 ## Colisores do jogador
 
-Os colisores do `FootballPlayerV1` são medidos da malha dele
-(`tools/fit_ragdoll_colliders.py`), e não herdados do manequim ALS:
-cápsulas cônicas nos membros (`radiusAtPositiveX`, `TaperedCapsuleShape` no
-Jolt), cápsulas laterais no tronco e caixa do tamanho da chuteira no pé.
-Âncoras, limites e massas não mudam.
+Os colisores do `FootballPlayerV1` são medidos da malha do jogador montado
+pelo exportador (`MatterModelInspector exportar-jogo`, 09/10; as regras em
+`RAGDOLL_CHARACTER_PIPELINE.md`), e não herdados do manequim ALS: cápsulas
+cônicas nos membros (`radiusAtPositiveX`, `TaperedCapsuleShape` no Jolt),
+cápsulas laterais no tronco e caixa do tamanho da chuteira no pé. Limites e
+massas não mudam; as âncoras são as do corpo medido.
 
 - **Coxas:** o raio de cima é limitado para as duas ficarem a 2,4 cm uma da
   outra em repouso. A carne da parte interna da coxa cede, e o colisor é o
   núcleo dela, não a malha do short. Com 3 mm, repetir a passada cruzada do
   strafe pedia girar a pelve 19–25° a mais.
-- **Mão:** medida na mão **aberta**, como modelada (20 cm). Medida na mão
-  relaxada ela encolhe para 15 cm, a inércia cai e o antebraço deixa de
-  acompanhar o alvo: rastreio do braço no trote de 16° para 25°. Os ganhos
-  do braço foram calibrados com a mão maior.
+- **Mão:** medida na mão **aberta**, como modelada (24 cm no jogador
+  montado, 20 cm no anterior). Medida na mão relaxada ela encolhia para 15 cm,
+  a inércia caía e o antebraço deixava de acompanhar o alvo: rastreio do braço
+  no trote de 16° para 25°. Os ganhos do braço foram calibrados com a mão
+  maior.
+- **Braço × tronco e coxa × coxa nas animações:** o braço solto não encosta
+  no tronco (0,4 cm) e as coxas não se cruzam no strafe (0,8 cm) nas poses
+  das animações de locomoção; o exportador estreita o tronco e depois o
+  membro até a folga.
 
 ## Mãos
 

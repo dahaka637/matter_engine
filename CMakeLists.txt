@@ -258,19 +258,19 @@ foreach(shader render2d.vert render2d.frag sprite.vert sprite.frag
 endforeach()
 add_custom_target(MatterEngineShaders DEPENDS ${MATTERENGINE_SHADER_OUTPUTS})
 
-# MaterialLibrary, Vec3 e Quaternion vivem aqui (a base da hierarquia) porque
-# tanto MatterPhysics quanto MatterAudio dependem deles (fisica precisa de
-# atrito/densidade/orientacao, acustica precisa da resposta a impacto do
-# mesmo material e da amostragem de oclusao em Vec3) e nenhum dos dois pode
-# depender do outro. Vec2/Mat4/Frustum3D continuam em MatterEngine: nada
-# abaixo dela usa camera, projecao ou culling.
+# MaterialLibrary e a matematica basica (Vec2, Vec3, Quaternion, Mat4) vivem
+# aqui (a base da hierarquia) porque MatterPhysics, MatterAudio e o backend
+# MatterVulkan dependem deles e nenhum pode depender da MatterEngine.
+# Frustum3D continua em MatterEngine: nada abaixo dela usa culling.
 add_library(MatterCore STATIC
     src/Engine/Core/Log.cpp
     src/Engine/Core/TaskScheduler.cpp
     src/Engine/Materials/MaterialLibrary.cpp
     src/Engine/Math/Hash.cpp
+    src/Engine/Math/Vec2.cpp
     src/Engine/Math/Vec3.cpp
     src/Engine/Math/Quaternion.cpp
+    src/Engine/Math/Mat4.cpp
 )
 target_include_directories(MatterCore PUBLIC src)
 
@@ -282,6 +282,7 @@ target_include_directories(MatterRHI INTERFACE src)
 # camada Workbench nem o restante da engine.
 add_library(MatterPhysics STATIC
     src/Engine/Physics/PhysicalBodyBuilder3D.cpp
+    src/Engine/Physics/InflatedBall3D.cpp
     src/Engine/Physics/RagdollProfile3D.cpp
     src/Engine/Physics/WindShelter3D.cpp
     src/Engine/Physics/Articulation/ArticulationIndexing3D.cpp
@@ -317,20 +318,16 @@ target_link_libraries(MatterVulkan
 )
 add_dependencies(MatterVulkan MatterEngineShaders)
 
-# Modulo de audio isolado: nenhum consumidor precisa enxergar o backend de
-# mixagem (OpenAL Soft) para depender de deteccao/resolucao acustica de
-# impactos. Mantem a mesma logica de fronteira de MatterPhysics (API neutra
-# publica, biblioteca de terceiros privada) - nenhum header AL/ALC/EFX
-# atravessa AudioDevice3D.hpp.
+# Modulo de audio isolado: nenhum consumidor enxerga o backend de mixagem
+# (OpenAL Soft). Mesma fronteira de MatterPhysics (API neutra publica,
+# biblioteca de terceiros privada) - nenhum header AL/ALC/EFX atravessa
+# AudioDevice3D.hpp. Sem arquivos de audio: o som e gerado por codigo (por
+# enquanto so o vento; o sistema de som sera refeito por receita).
 add_library(MatterAudio STATIC
     src/Engine/Audio/AcousticEnvironmentSystem3D.cpp
-    src/Engine/Audio/AcousticOcclusion3D.cpp
     src/Engine/Audio/AudioDevice3D.cpp
     src/Engine/Audio/BiquadFilter.cpp
-    src/Engine/Audio/BodyAcousticEnvelope.cpp
-    src/Engine/Audio/DragAcoustics.cpp
     src/Engine/Audio/Envelope.cpp
-    src/Engine/Audio/ImpactAcoustics.cpp
     src/Engine/Audio/ProceduralNoise.cpp
     src/Engine/Audio/Waveform.cpp
     src/Engine/Audio/WindAmbienceRamp.cpp
@@ -338,8 +335,8 @@ add_library(MatterAudio STATIC
 )
 target_include_directories(MatterAudio PUBLIC src)
 target_link_libraries(MatterAudio
-    PUBLIC MatterCore MatterPhysics
-    PRIVATE SDL3::SDL3-static OpenAL
+    PUBLIC MatterCore
+    PRIVATE OpenAL
 )
 if(MSVC)
     target_compile_options(MatterAudio PRIVATE /W4 /permissive- /utf-8)
@@ -347,29 +344,163 @@ else()
     target_compile_options(MatterAudio PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
+# Modelagem do personagem (07/10): malha e kit de modelagem, esqueleto e
+# regioes do corpo, analise da malha e o renderizador por software das
+# ferramentas de inspecao. So depende do nucleo: roda sem janela (a
+# ferramenta MatterModelInspector) e gera a mesma imagem que a tela
+# "Inspecao de jogador" mostra.
+set(MATTERMODELING_SOURCES
+    src/Engine/Modeling/Geometry/ModelGeometry.cpp
+    src/Engine/Modeling/Geometry/Parallel.cpp
+    src/Engine/Modeling/Geometry/Triangulation2D.cpp
+    src/Engine/Modeling/Raster/Image.cpp
+    src/Engine/Modeling/Raster/ImageIO.cpp
+    src/Engine/Modeling/Raster/Camera.cpp
+    src/Engine/Modeling/Raster/Rasterizer.cpp
+    src/Engine/Modeling/Raster/TextRenderer.cpp
+    src/Engine/Modeling/Raster/StbModelingImpl.cpp
+    src/Engine/Modeling/Skeleton/Skeleton.cpp
+    src/Engine/Modeling/Skeleton/BodyRegions.cpp
+    src/Engine/Modeling/Mesh/Mesh.cpp
+    src/Engine/Modeling/Mesh/MeshBuilder.cpp
+    src/Engine/Modeling/Mesh/MeshSkinning.cpp
+    src/Engine/Modeling/Mesh/ShadingNormals.cpp
+    src/Engine/Modeling/Mesh/TriangleBvh.cpp
+    src/Engine/Modeling/Mesh/MeshTopology.cpp
+    src/Engine/Modeling/Mesh/MeshStitch.cpp
+    src/Engine/Modeling/Mesh/MeshImprint.cpp
+    src/Engine/Modeling/Mesh/MeshRelief.cpp
+    src/Engine/Modeling/Mesh/MeshRepair.cpp
+    src/Engine/Modeling/Mesh/MeshCut.cpp
+    src/Engine/Modeling/Mesh/MeshSubdivision.cpp
+    src/Engine/Modeling/Mesh/MeshSculpt.cpp
+    src/Engine/Modeling/Mesh/SurfaceFit.cpp
+    src/Engine/Modeling/Import/GltfImport.cpp
+    src/Engine/Modeling/Analysis/Report.cpp
+    src/Engine/Modeling/Analysis/TopologyCheck.cpp
+    src/Engine/Modeling/Analysis/ConnectivityCheck.cpp
+    src/Engine/Modeling/Analysis/IntersectionCheck.cpp
+    src/Engine/Modeling/Analysis/SymmetryCheck.cpp
+    src/Engine/Modeling/Analysis/SkinCheck.cpp
+    src/Engine/Modeling/Analysis/CrossSection.cpp
+    src/Engine/Modeling/Analysis/DeformationCheck.cpp
+    src/Engine/Modeling/Analysis/ModelValidator.cpp
+    src/Engine/Modeling/Inspection/InspectionRenderer.cpp
+    src/Engine/Modeling/Inspection/ViewFraming.cpp
+    src/Engine/Modeling/Inspection/InspectionSession.cpp
+    src/Engine/Modeling/Inspection/ContactSheet.cpp
+    src/Engine/Modeling/Inspection/ReferenceComparison.cpp
+    src/Engine/Modeling/Parts/ProfileCurve.cpp
+    src/Engine/Modeling/Parts/RecipeJson.cpp
+    src/Engine/Modeling/Parts/BootRecipe.cpp
+    src/Engine/Modeling/Parts/BootShape.cpp
+    src/Engine/Modeling/Parts/SurfaceDrape.cpp
+    src/Engine/Modeling/Parts/BootLaces.cpp
+    src/Engine/Modeling/Parts/BootSole.cpp
+    src/Engine/Modeling/Parts/BootTongue.cpp
+    src/Engine/Modeling/Parts/BootGenerator.cpp
+    src/Engine/Modeling/Parts/LegRecipe.cpp
+    src/Engine/Modeling/Parts/LegGenerator.cpp
+    src/Engine/Modeling/Parts/ShortsRecipe.cpp
+    src/Engine/Modeling/Parts/ShortsGenerator.cpp
+    src/Engine/Modeling/Parts/ShapeField.cpp
+    src/Engine/Modeling/Parts/NumberGlyphs.cpp
+    src/Engine/Modeling/Parts/ShirtRecipe.cpp
+    src/Engine/Modeling/Parts/ShirtGenerator.cpp
+    src/Engine/Modeling/Parts/ArmRecipe.cpp
+    src/Engine/Modeling/Parts/ArmGenerator.cpp
+    src/Engine/Modeling/Parts/HandRecipe.cpp
+    src/Engine/Modeling/Parts/HandGenerator.cpp
+    src/Engine/Modeling/Parts/NeckRecipe.cpp
+    src/Engine/Modeling/Parts/NeckGenerator.cpp
+    src/Engine/Modeling/Parts/HeadRecipe.cpp
+    src/Engine/Modeling/Parts/HeadFace.cpp
+    src/Engine/Modeling/Parts/HeadEye.cpp
+    src/Engine/Modeling/Parts/HeadBrow.cpp
+    src/Engine/Modeling/Parts/HeadEar.cpp
+    src/Engine/Modeling/Parts/HeadGenerator.cpp
+    src/Engine/Modeling/Parts/PartLibrary.cpp
+    src/Engine/Modeling/Assembly/AssemblyRecipe.cpp
+    src/Engine/Modeling/Assembly/MeshEdit.cpp
+    src/Engine/Modeling/Assembly/NeckJoin.cpp
+    src/Engine/Modeling/Assembly/EyeSocket.cpp
+    src/Engine/Modeling/Assembly/Garment.cpp
+    src/Engine/Modeling/Assembly/PlayerAssembly.cpp
+    src/Engine/Modeling/Assembly/Uniform.cpp
+    src/Engine/Modeling/Assembly/NeckShortening.cpp
+    src/Engine/Modeling/Assembly/NeckBand.cpp
+    src/Engine/Modeling/Assembly/ReferenceFit.cpp
+    src/Engine/Modeling/Assembly/PlayerPaint.cpp
+    src/Engine/Modeling/Assembly/FacePaint.cpp
+    src/Engine/Modeling/Assembly/PlayerPaintSpaces.cpp
+    src/Engine/Modeling/Texture/IslandPacking.cpp
+    src/Engine/Modeling/Texture/UvAtlas.cpp
+    src/Engine/Modeling/Texture/TextureBake.cpp
+    src/Engine/Modeling/Objects/ObjectMesh.cpp
+    src/Engine/Modeling/Objects/ObjectRecipe.cpp
+    src/Engine/Modeling/Objects/PixelCanvas.cpp
+    src/Engine/Modeling/Objects/ProceduralObject.cpp
+    src/Engine/Modeling/Objects/WoodCrate.cpp
+    src/Engine/Modeling/Paint/Shape2D.cpp
+    src/Engine/Modeling/Paint/SvgPath.cpp
+    src/Engine/Modeling/Paint/PaintFont.cpp
+    src/Engine/Modeling/Paint/PaintImage.cpp
+    src/Engine/Modeling/Paint/PaintLayer.cpp
+    src/Engine/Modeling/Paint/PaintSpace.cpp
+    src/Engine/Modeling/Paint/PaintDesign.cpp
+    src/Engine/Modeling/Skin/BoneHeatSkin.cpp
+    src/Engine/Modeling/Skin/SkinSmoothing.cpp
+)
+add_library(MatterModeling STATIC ${MATTERMODELING_SOURCES})
+target_include_directories(MatterModeling PUBLIC src)
+find_package(Threads REQUIRED)
+target_link_libraries(MatterModeling
+    PUBLIC MatterCore Threads::Threads
+    PRIVATE nlohmann_json::nlohmann_json stb_image cgltf
+)
+target_compile_definitions(MatterModeling PRIVATE
+    MATTERMODELING_FONT_PATH="${CMAKE_SOURCE_DIR}/assets/fonts/roboto/Roboto-Medium.ttf")
+# O codigo do stb (PNG e TrueType) compila sem os avisos do projeto.
+if(MSVC)
+    set_source_files_properties(src/Engine/Modeling/Raster/StbModelingImpl.cpp
+        PROPERTIES COMPILE_OPTIONS "/w")
+else()
+    set_source_files_properties(src/Engine/Modeling/Raster/StbModelingImpl.cpp
+        PROPERTIES COMPILE_OPTIONS "-w")
+endif()
+
 add_library(MatterEngine STATIC
     src/Engine/Animation/AnimationClip3D.cpp
     src/Engine/Animation/RagdollCharacter3D.cpp
+    src/Engine/Animation/RagdollVisualPose3D.cpp
     src/Engine/Character/BiomechanicalBipedExperiment3D.cpp
     src/Engine/Character/CharacterControlApplication3D.cpp
     src/Engine/Character/CharacterLocomotion3D.cpp
+    src/Engine/Character/RagdollPoseKinematics3D.cpp
+    src/Engine/Character/BodilyGetUp3D.cpp
+    src/Engine/Character/BallControl3D.cpp
+    src/Engine/Character/BallGesturePose3D.cpp
+    src/Engine/Character/BallOwnership3D.cpp
+    src/Engine/Character/BallTouchPreview3D.cpp
+    src/Engine/Character/DefaultLocomotion3D.cpp
+    src/Engine/Character/PoseInertializer3D.cpp
     src/Engine/Character/CharacterStateEstimator3D.cpp
     src/Engine/Control/CharacterWholeBody3D.cpp
     src/Engine/Character/ProceduralBipedGait3D.cpp
     src/Engine/Control/RagdollImpactTest3D.cpp
     src/Engine/Control/AdaptivePhysicalCharacter3D.cpp
+    src/Engine/Control/ImpactAssist3D.cpp
     src/Engine/Locomotion/ContactFootwork3D.cpp
     src/Engine/Core/Application.cpp
     src/Engine/Input/Input.cpp
     src/Engine/Platform/SDL3/SDLPlatform.cpp
     src/Engine/Platform/SDL3/SDLInputAdapter.cpp
-    src/Engine/Math/Vec2.cpp
-    src/Engine/Math/Mat4.cpp
     src/Engine/Math/Frustum3D.cpp
     src/Engine/Math/JitterSequence.cpp
     src/Engine/Math/ShadowCascade.cpp
     src/Engine/Environment/WindSystem.cpp
     src/Engine/Geometry/MeshData3D.cpp
+    src/Engine/Geometry/ProceduralSoccerBall3D.cpp
     src/Engine/Geometry/GltfLoader.cpp
     src/Engine/Geometry/GltfPhysicsMetadata3D.cpp
     src/Engine/Geometry/GltfAcousticZone3D.cpp
@@ -377,6 +508,7 @@ add_library(MatterEngine STATIC
     src/Engine/Render/Render2D.cpp
     src/Engine/Render/Renderer.cpp
     src/Engine/UI/ImGuiFontLibrary.cpp
+    src/Engine/UI/ImGuiTheme.cpp
     src/Engine/Data/Database.cpp
     src/Engine/Data/SettingsRepository.cpp
 )
@@ -393,11 +525,37 @@ target_compile_definitions(MatterEngine PRIVATE
     MATTERENGINE_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets"
 )
 
+# A ponte entre o personagem do jogo e a modelagem: o esqueleto (links
+# fisicos e dedos), as poses das animacoes, o manifesto do jogador e a
+# exportacao do jogador para o jogo. Unica parte da modelagem que conhece a
+# engine.
+# Os objetos procedurais no jogo (a ponte do nucleo Modeling/Objects com a
+# engine): a malha da GPU, o corpo fisico e o laboratorio de fisica deles.
+add_library(MatterObjects STATIC
+    src/Engine/Objects/ObjectAsset3D.cpp
+    src/Engine/Objects/ObjectPhysicsLab3D.cpp
+)
+target_include_directories(MatterObjects PUBLIC src)
+target_link_libraries(MatterObjects PUBLIC MatterEngine MatterModeling)
+
+add_library(MatterModelingRig STATIC
+    src/Engine/Modeling/Rig/GameRig.cpp
+    src/Engine/Modeling/Rig/GameCharacterExport.cpp
+    src/Engine/Modeling/Rig/PlayerModelAsset.cpp
+)
+target_include_directories(MatterModelingRig PUBLIC src)
+target_link_libraries(MatterModelingRig
+    PUBLIC MatterModeling MatterEngine
+    PRIVATE nlohmann_json::nlohmann_json
+)
+target_compile_definitions(MatterModelingRig PRIVATE MATTERENGINE_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
+
 add_library(MatterWorkbench STATIC
     src/Workbench/WorkbenchApp.cpp
     src/Workbench/UiKit.cpp
     src/Workbench/Audio/WorldAudioController.cpp
     src/Workbench/Laboratory/PropRuntime.cpp
+    src/Workbench/Laboratory/BallRuntime.cpp
     src/Workbench/Laboratory/RagdollRuntime.cpp
     src/Workbench/Laboratory/PhysicsBenchmark.cpp
     src/Workbench/Laboratory/RenderMotionSmoke.cpp
@@ -405,13 +563,18 @@ add_library(MatterWorkbench STATIC
     src/Workbench/Screens/SettingsScreen.cpp
     src/Workbench/Screens/MainMenuScreen.cpp
     src/Workbench/Screens/LaboratoryScreen.cpp
-    src/Workbench/Screens/ObjectViewerScreen.cpp
-    src/Workbench/Screens/AnimationViewerScreen.cpp
+    src/Workbench/Screens/ObjectInspectorHost.cpp
+    src/Workbench/ObjectInspector/ObjectInspectorScreen.cpp
+    src/Workbench/Screens/BallTouchViewerScreen.cpp
+    src/Workbench/Screens/PlayerInspectorHost.cpp
+    src/Workbench/PlayerInspector/PlayerInspectorScreen.cpp
+    src/Workbench/PlayerInspector/PlayerAnimations.cpp
+    src/Workbench/PlayerInspector/UiCanvasTexture.cpp
 )
 
 target_include_directories(MatterWorkbench PUBLIC src)
 target_link_libraries(MatterWorkbench
-    PUBLIC MatterEngine
+    PUBLIC MatterEngine MatterModelingRig MatterObjects
     PRIVATE imgui meshoptimizer
 )
 target_compile_definitions(MatterWorkbench PRIVATE MATTERENGINE_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
@@ -453,12 +616,62 @@ if(MATTERENGINE_BUILD_TESTS)
     # provar que o modulo de audio nao vaza dependencia de renderizacao.
     add_executable(MatterAudioTests tests/AudioFoundationTests.cpp)
     target_link_libraries(MatterAudioTests PRIVATE MatterAudio)
-    target_compile_definitions(MatterAudioTests PRIVATE
-        MATTERENGINE_TEST_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
     add_test(NAME MatterEngine.Audio COMMAND MatterAudioTests)
     # Modo fisico adaptativo (experimental): movimento normal no laco do jogo
     # sem a raiz carregada, e o contrato de que perturbacoes agem no corpo.
     add_test(NAME MatterEngine.AdaptivePhysics COMMAND MatterAdaptiveTests)
+    # Bola inflada (a bola de futebol): modelo e cena contra a FIFA.
+    add_executable(MatterBallTests tests/InflatedBallTests.cpp)
+    target_link_libraries(MatterBallTests PRIVATE MatterEngine)
+    add_test(NAME MatterEngine.Ball COMMAND MatterBallTests)
+    # Modelagem do personagem: o nucleo (linkado so contra MatterModeling,
+    # provando que ele nao depende da engine) e a ponte com o jogo, com a tela
+    # "Inspecao de jogador" rodando sem janela.
+    add_executable(MatterModelingTests tests/Modeling/ModelingTests.cpp)
+    target_link_libraries(MatterModelingTests PRIVATE MatterModeling)
+    add_test(NAME MatterEngine.Modeling COMMAND MatterModelingTests)
+    add_executable(MatterModelingPartsTests tests/Modeling/PartsTests.cpp)
+    target_link_libraries(MatterModelingPartsTests PRIVATE MatterModeling)
+    target_compile_definitions(MatterModelingPartsTests PRIVATE
+        MATTERMODELING_RECIPE_PATH="${CMAKE_SOURCE_DIR}/assets/characters/player_model/partes/chuteira.json"
+        MATTERMODELING_PARTS_DIR="${CMAKE_SOURCE_DIR}/assets/characters/player_model/partes")
+    add_test(NAME MatterEngine.ModelingParts COMMAND MatterModelingPartsTests)
+    # Os objetos procedurais (o nucleo: receitas, geradores, pixel art) - so
+    # contra MatterModeling, como os outros testes do nucleo.
+    add_executable(MatterObjectModelingTests tests/Modeling/ObjectModelingTests.cpp)
+    target_link_libraries(MatterObjectModelingTests PRIVATE MatterModeling)
+    target_compile_definitions(MatterObjectModelingTests PRIVATE
+        MATTERENGINE_TEST_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
+    add_test(NAME MatterEngine.ObjectModeling COMMAND MatterObjectModelingTests)
+    add_executable(MatterObjectPhysicsTests tests/ObjectPhysicsTests.cpp)
+    target_link_libraries(MatterObjectPhysicsTests PRIVATE MatterObjects)
+    target_compile_definitions(MatterObjectPhysicsTests PRIVATE
+        MATTERENGINE_TEST_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
+    add_test(NAME MatterEngine.ObjectPhysics COMMAND MatterObjectPhysicsTests)
+    add_executable(MatterModelingPaintTests tests/Modeling/PaintTests.cpp)
+    target_link_libraries(MatterModelingPaintTests PRIVATE MatterModeling)
+    target_compile_definitions(MatterModelingPaintTests PRIVATE
+        MATTERPAINT_FONT_PATH="${CMAKE_SOURCE_DIR}/assets/fonts/roboto/Roboto-Medium.ttf")
+    add_test(NAME MatterEngine.ModelingPaint COMMAND MatterModelingPaintTests)
+    add_executable(MatterModelingAssemblyTests tests/Modeling/AssemblyTests.cpp)
+    target_link_libraries(MatterModelingAssemblyTests PRIVATE MatterModeling)
+    target_compile_definitions(MatterModelingAssemblyTests PRIVATE
+        MATTERMODELING_BASE_DIR="${CMAKE_SOURCE_DIR}/assets/characters/player_model/base")
+    add_test(NAME MatterEngine.ModelingAssembly COMMAND MatterModelingAssemblyTests)
+    # As telas do Workbench sem janela nos testes: o contexto ImGui com a fonte
+    # e o tema, o canvas falso e a foto da tela (MATTERENGINE_UI_SNAPSHOT).
+    add_library(MatterTestHeadlessUi STATIC tests/Support/HeadlessUi.cpp)
+    target_include_directories(MatterTestHeadlessUi PUBLIC tests)
+    target_link_libraries(MatterTestHeadlessUi PUBLIC MatterWorkbench imgui)
+    add_executable(MatterPlayerModelTests tests/Modeling/PlayerModelTests.cpp)
+    target_link_libraries(MatterPlayerModelTests PRIVATE MatterTestHeadlessUi MatterModelingRig)
+    add_test(NAME MatterEngine.PlayerModel COMMAND MatterPlayerModelTests)
+    # A tela "Objetos" sem janela (a receita numa copia temporaria).
+    add_executable(MatterObjectInspectorTests tests/ObjectInspectorTests.cpp)
+    target_link_libraries(MatterObjectInspectorTests PRIVATE MatterTestHeadlessUi)
+    target_compile_definitions(MatterObjectInspectorTests PRIVATE
+        MATTERENGINE_TEST_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
+    add_test(NAME MatterEngine.ObjectInspector COMMAND MatterObjectInspectorTests)
 endif()
 
 # Smoke test manual: abre uma janela real e percorre resize, minimizar/restaurar
@@ -466,30 +679,63 @@ endif()
 add_executable(MatterVulkanSmoke EXCLUDE_FROM_ALL tools/VulkanSmoke.cpp)
 target_link_libraries(MatterVulkanSmoke PRIVATE MatterEngine SDL3::SDL3-static)
 
-# Ferramenta offline: gera caches V-HACD versionados ao lado dos GLBs. Ela nao
-# faz parte do build padrao nem do runtime e evita cooking pesado na abertura
-# do Workbench.
-add_executable(MatterPhysicsAssetCooker EXCLUDE_FROM_ALL
-    tools/PhysicsAssetCooker.cpp)
-target_link_libraries(MatterPhysicsAssetCooker PRIVATE MatterEngine)
-target_compile_definitions(MatterPhysicsAssetCooker PRIVATE
-    MATTERENGINE_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
-
-# Benchmark manual e reproduzivel da carga-alvo atual. Usa os colliders reais
-# dos seis props e publica percentis; nao entra no CTest porque desempenho e
-# dependente do hardware e da configuracao da build.
+# Benchmark manual e reproduzivel da carga-alvo atual. Publica percentis; nao
+# entra no CTest porque desempenho e dependente do hardware e da configuracao
+# da build.
 add_executable(MatterPhysicsBenchmark EXCLUDE_FROM_ALL
     tools/PhysicsBenchmark.cpp)
 target_link_libraries(MatterPhysicsBenchmark PRIVATE MatterEngine)
 target_compile_definitions(MatterPhysicsBenchmark PRIVATE
     MATTERENGINE_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
 
+# Visualizador de toque na bola na linha de comando (a mesma simulacao da
+# tela "Toque na bola" do Workbench; os desenhos saem de
+# tools/analysis/ball_touch_preview.py).
+# Sonda da locomocao padrao (o boneco pela capsula, sem fisica): roteiros
+# de teclas, medidas e quadros para os desenhos.
+add_executable(MatterLocomotionProbe tools/DefaultLocomotionProbe.cpp)
+target_link_libraries(MatterLocomotionProbe PRIVATE MatterEngine)
+target_compile_definitions(MatterLocomotionProbe PRIVATE
+    MATTERENGINE_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
+
+# Ferramentas de modelagem do personagem na linha de comando (renderizar,
+# analisar, medir, cortar, comparar com as referencias, poses): o que o
+# Claude e o Codex usam para modelar. Mesmo codigo da tela "Inspecao de
+# jogador".
+add_executable(MatterModelInspector
+    tools/ModelInspector/main.cpp
+    tools/ModelInspector/CommandLine.cpp
+    tools/ModelInspector/ModelContext.cpp
+    tools/ModelInspector/ViewOptions.cpp
+    tools/ModelInspector/CommandInfo.cpp
+    tools/ModelInspector/CommandRender.cpp
+    tools/ModelInspector/CommandCheck.cpp
+    tools/ModelInspector/CommandMeasure.cpp
+    tools/ModelInspector/CommandUniform.cpp
+    tools/ModelInspector/CommandPosture.cpp
+    tools/ModelInspector/CommandWeights.cpp
+    tools/ModelInspector/CommandSection.cpp
+    tools/ModelInspector/CommandCompare.cpp
+    tools/ModelInspector/CommandPoses.cpp
+    tools/ModelInspector/CommandTexture.cpp
+    tools/ModelInspector/CommandMold.cpp
+    tools/ModelInspector/CommandInverted.cpp
+    tools/ModelInspector/CommandPaint.cpp
+    tools/ModelInspector/CommandExport.cpp
+    tools/ModelInspector/CommandHelp.cpp
+)
+target_link_libraries(MatterModelInspector PRIVATE MatterModelingRig)
+
+add_executable(MatterBallPreview tools/BallTouchPreview.cpp)
+target_link_libraries(MatterBallPreview PRIVATE MatterEngine)
+target_compile_definitions(MatterBallPreview PRIVATE
+    MATTERENGINE_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
+
 set_target_properties(MatterCore MatterRHI MatterPhysics MatterAudio MatterVulkan
-    MatterEngine MatterEngineShaders PROPERTIES FOLDER "MatterEngine")
+    MatterEngine MatterEngineShaders MatterModeling PROPERTIES FOLDER "MatterEngine")
 set_target_properties(MatterWorkbench MatterEngineApp
     PROPERTIES FOLDER "MatterEngine Workbench")
 set_target_properties(MatterVulkanSmoke PROPERTIES FOLDER "Tests")
-set_target_properties(MatterPhysicsAssetCooker PROPERTIES FOLDER "Tools")
 set_target_properties(MatterPhysicsBenchmark PROPERTIES FOLDER "Tests")
 if(MATTERENGINE_BUILD_TESTS)
     set_target_properties(MatterEngineTests MatterAudioTests
@@ -500,10 +746,11 @@ if(MSVC)
     target_compile_options(MatterEngine PRIVATE /W4 /permissive- /utf-8)
     target_compile_options(MatterVulkan PRIVATE /W4 /permissive- /utf-8)
     target_compile_options(MatterCore PRIVATE /W4 /permissive- /utf-8)
+    target_compile_options(MatterModeling PRIVATE /W4 /permissive- /utf-8)
+    target_compile_options(MatterModelingRig PRIVATE /W4 /permissive- /utf-8)
     target_compile_options(MatterWorkbench PRIVATE /W4 /permissive- /utf-8)
     target_compile_options(MatterEngineApp PRIVATE /W4 /permissive- /utf-8)
     target_compile_options(MatterVulkanSmoke PRIVATE /W4 /permissive- /utf-8)
-    target_compile_options(MatterPhysicsAssetCooker PRIVATE /W4 /permissive- /utf-8)
     target_compile_options(MatterPhysicsBenchmark PRIVATE /W4 /permissive- /utf-8)
     if(MATTERENGINE_BUILD_TESTS)
         target_compile_options(MatterEngineTests PRIVATE /W4 /permissive- /utf-8)
@@ -513,10 +760,11 @@ else()
     target_compile_options(MatterEngine PRIVATE -Wall -Wextra -Wpedantic)
     target_compile_options(MatterVulkan PRIVATE -Wall -Wextra -Wpedantic)
     target_compile_options(MatterCore PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(MatterModeling PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(MatterModelingRig PRIVATE -Wall -Wextra -Wpedantic)
     target_compile_options(MatterWorkbench PRIVATE -Wall -Wextra -Wpedantic)
     target_compile_options(MatterEngineApp PRIVATE -Wall -Wextra -Wpedantic)
     target_compile_options(MatterVulkanSmoke PRIVATE -Wall -Wextra -Wpedantic)
-    target_compile_options(MatterPhysicsAssetCooker PRIVATE -Wall -Wextra -Wpedantic)
     target_compile_options(MatterPhysicsBenchmark PRIVATE -Wall -Wextra -Wpedantic)
     if(MATTERENGINE_BUILD_TESTS)
         target_compile_options(MatterEngineTests PRIVATE -Wall -Wextra -Wpedantic)

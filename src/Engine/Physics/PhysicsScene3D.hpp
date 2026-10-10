@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Engine/Math/Ray3D.hpp"
+#include "Engine/Physics/InflatedBall3D.hpp"
 #include "Engine/Physics/PhysicsEngine3D.hpp"
 #include "Engine/Physics/RagdollProfile3D.hpp"
 
@@ -74,13 +75,24 @@ struct CharacterMotorSettings3D {
     float crouchedSpeed = 2.8f;
     float groundAcceleration = 32.0f;
     float groundDeceleration = 38.0f;
+    // Rumo e velocidade separados (locomocao padrao, 04/10; 0 desliga): no
+    // chao a direcao da velocidade gira ate a pedida a esta taxa (rad/s) e o
+    // modulo vai a pedida com groundAcceleration/groundDeceleration - a troca
+    // de direcao e rapida e a de velocidade progressiva. Pedindo o sentido
+    // contrario (mais que groundReverseDegrees), freia com
+    // groundBrakeDeceleration antes de sair para o outro lado.
+    float groundTurnRate = 0.0f;
+    float groundReverseDegrees = 120.0f;
+    float groundBrakeDeceleration = 30.0f;
     float airAcceleration = 8.0f;
     float jumpSpeed = 3.8f;
     // Pulo com altura controlada (o pulo sai ao soltar o botao): ate
-    // jumpTapSeconds segurado e o pulo padrao; em jumpFullChargeSeconds chega
-    // a jumpChargedSpeedScale da velocidade (1,16 ~ +35% de altura).
+    // jumpTapSeconds segurado e o toque, com jumpTapSpeedScale da velocidade;
+    // em jumpFullChargeSeconds chega a jumpChargedSpeedScale (1,16 ~ +35% de
+    // altura).
     float jumpTapSeconds = 0.15f;
     float jumpFullChargeSeconds = 0.60f;
+    float jumpTapSpeedScale = 1.0f;
     float jumpChargedSpeedScale = 1.16f;
     float gravityScale = 1.0f;
     float maximumFallSpeed = 48.0f;
@@ -119,7 +131,8 @@ inline float characterJumpCharge3D(const CharacterMotorSettings3D& settings,
 
 inline float characterJumpSpeed3D(const CharacterMotorSettings3D& settings,
     float heldSeconds) {
-    return settings.jumpSpeed * (1.0f + (settings.jumpChargedSpeedScale - 1.0f)
+    return settings.jumpSpeed * (settings.jumpTapSpeedScale
+        + (settings.jumpChargedSpeedScale - settings.jumpTapSpeedScale)
         * characterJumpCharge3D(settings, heldSeconds));
 }
 
@@ -175,6 +188,15 @@ struct RagdollInteraction3D {
     float strongestNormalImpulseNewtonSeconds = 0.0f;
     bool impulseEstimated = false;
     bool velocityBeforeSolve = false;
+};
+
+// Um link do boneco entrando no mundo estatico (consulta de pose): quanto
+// (m), a normal da superficie (para fora dela, no mundo) e o ponto.
+struct RagdollWorldContact3D {
+    std::uint32_t linkIndex = 0;
+    float depthMeters = 0.0f;
+    Vec3 normalWorld { 0.0f, 0.0f, 1.0f };
+    Vec3 pointWorld;
 };
 
 struct RagdollDriveTarget3D {
@@ -249,6 +271,10 @@ struct RagdollAnimationConstraint3D {
     Quaternion rootOrientationWorld;
     Vec3 rootLinearVelocityWorld;
     Vec3 rootAngularVelocityWorld;
+    // Quanto da aceleracao da raiz e intencao (antecipada pela ajuda): zero
+    // com a raiz presa ao proprio corpo (nos passos de freada), onde ela so
+    // repete a aceleracao do corpo.
+    float rootFeedforwardShare = 1.0f;
 };
 
 struct RagdollJointState3D {
@@ -289,6 +315,14 @@ struct RagdollState3D {
     // Pausa de inspeção: a articulation preserva a pose fora do solver até
     // ser reativada. Não representa sono físico normal.
     bool frozen = false;
+    // Modo animado: os links sao cinematicos e seguem a pose dada
+    // (setRagdollKinematicPose).
+    bool kinematic = false;
+    // Corpo guiado (setRagdollGuided) e o quanto os links ficaram longe da
+    // pose pedida no fim do ultimo passo (m, o maior; antes da correcao final
+    // - com algo dinamico encostando, e a reacao do corpo).
+    bool guided = false;
+    float guideErrorMeters = 0.0f;
 };
 
 // Snapshot backend-neutral da dinâmica de uma articulação flutuante. O layout
@@ -348,6 +382,40 @@ public:
         Vec3 worldPoint);
     void applyTorque(PhysicsBodyHandle3D body, Vec3 torque);
 
+    // Bola inflada (a bola de futebol): corpo deformavel de parametros
+    // concentrados, integrado em subpassos dentro do passo (ver
+    // InflatedBall3D.hpp). Ela empurra os corpos que toca (impulso de reacao
+    // aplicado antes do passo seguinte) e nao e um corpo do broad phase: as
+    // consultas a encontram por raycastInflatedBall.
+    [[nodiscard]] InflatedBallHandle3D createInflatedBall(
+        const InflatedBallDefinition3D& definition);
+    void destroyInflatedBall(InflatedBallHandle3D ball);
+    [[nodiscard]] bool contains(InflatedBallHandle3D ball) const;
+    [[nodiscard]] InflatedBallState3D inflatedBallState(
+        InflatedBallHandle3D ball) const;
+    // Dono da bola (ver BallOwnership3D): o quadril e as pernas dele
+    // atravessam esta bola; tronco, cabeca e bracos so a repelem se ela entrar
+    // neles (mola macia, sem atrito). Os outros bonecos colidem com ela. Sem
+    // dono (handle invalido), todos colidem.
+    void setInflatedBallOwner(InflatedBallHandle3D ball, RagdollHandle3D owner);
+    [[nodiscard]] RagdollHandle3D inflatedBallOwner(InflatedBallHandle3D ball) const;
+    // Teleporta/lanca (ferramentas, reposicionar): posicao e velocidades.
+    void setInflatedBallMotion(InflatedBallHandle3D ball, Vec3 position,
+        Vec3 linearVelocity, Vec3 angularVelocity);
+    // Impulso num ponto da superficie (N.s): muda velocidade e giro.
+    void applyInflatedBallImpulse(InflatedBallHandle3D ball, Vec3 impulse,
+        Vec3 worldPoint);
+    void setInflatedBallFrozen(InflatedBallHandle3D ball, bool frozen);
+    // Propriedades de uma bola existente (pressao, atrito...); o movimento
+    // continua de onde estava.
+    [[nodiscard]] InflatedBallProfile3D inflatedBallProfile(
+        InflatedBallHandle3D ball) const;
+    void setInflatedBallProfile(InflatedBallHandle3D ball,
+        const InflatedBallProfile3D& profile);
+    [[nodiscard]] bool raycastInflatedBall(const Ray3D& ray,
+        float maximumDistance, InflatedBallHandle3D& outBall,
+        float& outDistance) const;
+
     // Uma articulation é um recurso único, não vinte rigid bodies expostos.
     // O handle e os snapshots mantêm PhysX confinado ao backend.
     [[nodiscard]] RagdollHandle3D createRagdoll(
@@ -376,6 +444,47 @@ public:
     // Congelamento de diagnóstico. É aplicado no safe point da simulação e
     // preserva a pose inteira sem converter os links em corpos cinemáticos.
     void setRagdollFrozen(RagdollHandle3D ragdoll, bool frozen);
+    // Modo animado (locomocao padrao, 04/10): os links viram cinematicos e
+    // seguem a pose dada - empurram o que e dinamico (bola, props, outros
+    // bonecos) e nao sofrem nada; as juntas e os motores ficam parados.
+    // false devolve os links ao solver, dinamicos, com a velocidade que
+    // tinham (o modo fisico continua do movimento da animacao).
+    void setRagdollKinematic(RagdollHandle3D ragdoll, bool kinematic);
+    // Tira do boneco o giro em volta da vertical (o momento angular dele no
+    // centro de massa, como uma rotacao rigida), mantendo o resto do
+    // movimento. Saindo do modo animado, os links herdam o giro que a
+    // animacao dava a pelve; no ar nada o freia e o corpo girava o voo todo.
+    void removeRagdollVerticalSpin(RagdollHandle3D ragdoll);
+    // A pose (origem e orientacao de cada link, no mundo) que os links
+    // cinematicos alcancam no fim do proximo passo; vale por um passo.
+    void setRagdollKinematicPose(RagdollHandle3D ragdoll,
+        std::span<const Vec3> positions, std::span<const Quaternion> orientations);
+    // Corpo guiado (locomocao padrao, 05/10 noite - a alternativa ao cinematico): os
+    // links continuam dinamicos, com massa, e a cada passo recebem a
+    // velocidade que os leva a pose pedida no fim dele (setRagdollGuidePose).
+    // Livre, o corpo segue a animacao como o cinematico; encostando em algo
+    // que se move (outro boneco, objeto, bola), os dois se empurram com as
+    // massas de verdade - o boneco inteiro, pelas juntas. No modo guiado as
+    // juntas so prendem o ponto (giram soltas: a pose da animacao manda), os
+    // motores ficam desligados, sem gravidade, e os links nao colidem com o
+    // chao (superficie parada com a normal para cima) nem entre si; com
+    // parede, meio-fio e frente de mureta batem de verdade. false devolve juntas,
+    // limites, gravidade e colisoes ao modo fisico, com o movimento que ele
+    // tinha.
+    void setRagdollGuided(RagdollHandle3D ragdoll, bool guided);
+    // A pose (origem e orientacao de cada link, no mundo) do fim do proximo
+    // passo e a autoridade de cada link (1: chega nela; 0: solto; vazio: 1).
+    // Vale por um passo, tambem fora do modo guiado: a saida dele, com a
+    // autoridade descendo enquanto os motores do modo fisico assumem.
+    void setRagdollGuidePose(RagdollHandle3D ragdoll, std::span<const Vec3> positions,
+        std::span<const Quaternion> orientations, std::span<const float> authority = {});
+    // Os colisores do boneco numa pose (origem e orientacao de cada link, no
+    // mundo) contra o mundo estatico (paredes, degraus, meio-fio): cada link
+    // que entra mais que minimumDepth, com a normal da superficie. Os links
+    // cinematicos nao colidem com o estatico; o modo animado pergunta aqui.
+    [[nodiscard]] std::vector<RagdollWorldContact3D> ragdollPoseWorldContacts(RagdollHandle3D ragdoll,
+        std::span<const Vec3> positions, std::span<const Quaternion> orientations,
+        float minimumDepthMeters) const;
     // Substitui, de forma atômica no próximo safe point, todos os alvos de
     // controle ativo deste ragdoll. A compensação usa somente torques das
     // juntas; as seis forças da raiz flutuante nunca são aplicadas.
@@ -479,6 +588,12 @@ public:
     void destroyCharacter();
     void placeCharacter(Vec3 feetPosition,
         const CharacterMotorSettings3D& settings);
+    // Escala do atrito de todos os corpos de um ragdoll (1 = o do material).
+    // Carrinho: deslizando, o corpo escorrega na grama.
+    void setRagdollFrictionScale(RagdollHandle3D ragdoll, float scale);
+    // A velocidade da capsula (ao sair de um estado em que ela foi levada
+    // pelo corpo, como o carrinho: sai com o embalo dele).
+    void setCharacterVelocity(Vec3 velocity);
     void moveCharacter(const CharacterMotorCommand3D& command,
         const CharacterMotorSettings3D& settings, float deltaTime);
     [[nodiscard]] bool hasCharacter() const;

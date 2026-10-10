@@ -492,9 +492,13 @@ void main() {
     }
 
     vec3 normal = normalize(worldNormal);
-    if ((objectParameters.x & 16) != 0) {
+    // O facetado (bits 5 a 12: 0 liso, 255 a face): a normal da face pelas
+    // derivadas, virada para o lado da malha, misturada com a lisa.
+    float facet = float((objectParameters.x >> 5) & 255) / 255.0;
+    if (facet > 0.0) {
         vec3 faceNormal = normalize(cross(dFdx(worldPosition), dFdy(worldPosition)));
-        normal = dot(faceNormal, normal) < 0.0 ? -faceNormal : faceNormal;
+        faceNormal = dot(faceNormal, normal) < 0.0 ? -faceNormal : faceNormal;
+        normal = facet >= 1.0 ? faceNormal : normalize(mix(normal, faceNormal, facet));
     }
     vec3 viewDirection = normalize(scene.cameraPosition.xyz - worldPosition);
     vec2 materialUv = vertexUv;

@@ -1,0 +1,82 @@
+{
+  "schema": "matter.pintura.v1",
+  "comment": "A pintura do jogador (PaintDesign): as camadas nos espacos das pecas (PlayerPaintSpaces), de baixo para cima. Metros; alturas do chao; ancoras dos espacos com deslocamento. Medidas das referencias (frente.png, costas.png, lado.png).",
+  "colors": {
+    "branco": [236, 236, 236],
+    "preto": [30, 30, 33],
+    "meiao": [238, 238, 238]
+  },
+  "base": {
+    "camisa": "branco",
+    "calcao": "branco"
+  },
+  "layers": [
+    {
+      "name": "faixa do lado da camisa",
+      "comment": "10 cm em volta do lado (lado.png), 1 cm mais para tras, da barra ate a axila, reta em cima.",
+      "space": "tronco",
+      "shape": { "type": "rectangle", "from": [-0.06, "barra-0.06"], "to": [0.04, "axila"] },
+      "color": "preto"
+    },
+    {
+      "name": "gola",
+      "space": "gola",
+      "shape": { "type": "rectangle", "from": [-1.0, -0.2], "to": [1.0, 0.018] },
+      "color": "preto"
+    },
+    {
+      "name": "punho da manga",
+      "space": "manga",
+      "shape": { "type": "rectangle", "from": [-1.0, -0.2], "to": [1.0, 0.026] },
+      "color": "preto"
+    },
+    {
+      "name": "numero da frente",
+      "space": "frente",
+      "shape": { "type": "text", "text": "10", "font": "block", "height": 0.097, "at": [0.0, "gola_frente-0.1443"], "spacing": 0.072 },
+      "color": "preto"
+    },
+    {
+      "name": "numero das costas",
+      "space": "costas",
+      "shape": { "type": "text", "text": "10", "font": "block", "height": 0.165, "at": [0.0, "gola_costas-0.2003"], "spacing": 0.072 },
+      "color": "preto"
+    },
+    {
+      "name": "faixa do lado do calcao",
+      "comment": "7 cm centrados na costura de fora (lado.png).",
+      "space": "calcao",
+      "shape": { "type": "rectangle", "from": [-0.035, "inicio-0.1"], "to": [0.035, "fim+0.1"] },
+      "color": "preto"
+    },
+    {
+      "name": "numero do calcao",
+      "comment": "Na perna esquerda, mais estreito e inclinado com a perna (frente.png).",
+      "space": "calcao_frente",
+      "shape": { "type": "text", "text": "10", "font": "block", "height": 0.083, "at": [0.145, "barra+0.0643"], "spacing": 0.072, "stretch": 0.82, "rotate": 5.0 },
+      "color": "preto",
+      "sides": "left"
+    },
+    {
+      "name": "orelha",
+      "comment": "O buraco (a concha e o canal) do desenho do usuario, levado a placa medida na malha pela normalizacao afim dos momentos de area das duas placas (o centro, os eixos e as escalas): o contorno do buraco do desenho (64 raios no meio-tom da beira) e o canal (o mais escuro). O escuro: o degrade ajustado aos tons do desenho por minimos quadrados (o centro do canal, os raios, 0,64 da pele no fundo e 0,876 na beira, erro rms 0,029): a beira e um degrau nitido. Nos dois lados.",
+      "space": "orelha",
+      "shape": { "type": "polygon", "points": [[0.768, 0.4817], [0.7691, 0.466], [0.77, 0.4499], [0.7703, 0.4333], [0.771, 0.4155], [0.7727, 0.3958], [0.7746, 0.3737], [0.7796, 0.3466], [0.7835, 0.3151], [0.7841, 0.2788], [0.7667, 0.2498], [0.7404, 0.2243], [0.7109, 0.1968], [0.6637, 0.1942], [0.6194, 0.1896], [0.5746, 0.1906], [0.5307, 0.2085], [0.4916, 0.2193], [0.4576, 0.2392], [0.4317, 0.2661], [0.411, 0.2905], [0.3957, 0.3142], [0.3838, 0.3353], [0.3714, 0.3518], [0.3594, 0.3663], [0.3523, 0.3822], [0.3416, 0.395], [0.3353, 0.409], [0.326, 0.4214], [0.3185, 0.4344], [0.3121, 0.4477], [0.301, 0.4609], [0.2885, 0.4752], [0.2818, 0.4907], [0.2775, 0.5071], [0.2731, 0.5247], [0.275, 0.5423], [0.2721, 0.5627], [0.2655, 0.5872], [0.2621, 0.6143], [0.2606, 0.6453], [0.2721, 0.6731], [0.2923, 0.6982], [0.3154, 0.7253], [0.3468, 0.7479], [0.3898, 0.7549], [0.4312, 0.7648], [0.4747, 0.7691], [0.5182, 0.7817], [0.5617, 0.7649], [0.5986, 0.7407], [0.632, 0.7224], [0.6612, 0.7033], [0.6877, 0.6856], [0.7116, 0.6678], [0.7358, 0.6525], [0.7482, 0.6298], [0.7505, 0.6041], [0.7518, 0.5817], [0.7533, 0.5621], [0.7615, 0.5462], [0.7639, 0.5293], [0.7652, 0.5131], [0.7668, 0.4973]] },
+      "gradient": { "type": "radial", "center": [0.6863, 0.4586], "radius": [0.3388, 0.3195], "stops": [[0.0, [168, 162, 158]], [1.0, [229, 222, 219]]] },
+      "blend": "multiply"
+    },
+    {
+      "name": "meiao",
+      "comment": "O alto abaixo da dobra do joelho (a faixa nao dobra com ele).",
+      "space": "perna",
+      "shape": { "type": "rectangle", "from": [-1.0, -1.0], "to": [1.0, "joelho-0.0506"] },
+      "color": "meiao"
+    },
+    {
+      "name": "faixa do meiao",
+      "space": "perna",
+      "shape": { "type": "rectangle", "from": [-1.0, "joelho-0.1063"], "to": [1.0, "joelho-0.0506"] },
+      "color": "preto"
+    }
+  ]
+}

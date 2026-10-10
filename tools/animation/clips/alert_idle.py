@@ -16,9 +16,21 @@ que o corpo e o jogo pedem:
   - PES: a referencia tem um pe 0,8 cm dentro do chao e o outro 2 cm acima.
     Os dois ficam planos, parados no mundo (a media da referencia), na sola;
     os joelhos absorvem o balanco da respiracao.
+  - ALTURA (03/10, pedido do usuario: postura mais elegante, nao "sempre
+    semi-agachado"): a pelve sobe 3 cm e vai 5,5 cm para o pe de tras, com os
+    pes no mesmo lugar. Os joelhos passam de 41/28 graus para ~17/15 - a
+    base continua larga e escalonada, so menos agachada. (Subir sem deslocar
+    estica a perna de tras de vez; mais alto, ~9/10 graus, a perna de tras
+    trava reta em parte da respiracao.)
+
+  - POSTURA (09/10, pedido do usuario: "o pescoco reto, tipo postura
+    ergonomica"): o Idle.fbx curva o alto das costas e baixa a cabeca 20
+    graus; a correcao e a de pose.ergonomic_posture (a mesma dos giros): o
+    pescoco reto sobre o tronco e o olhar no horizonte. A respiracao e o
+    resto continuam por cima.
 
 O resto e da referencia: a respiracao e o peso mudando de lado em 10 s, os
-bracos soltos com os cotovelos dobrados, o tronco inclinado para a frente.
+bracos soltos com os cotovelos dobrados.
 """
 
 from __future__ import annotations
@@ -31,7 +43,7 @@ from authoring import ClipDefinition
 from matter_clip import load_clip
 from matter_rig import REPO_ROOT, Rig, qconj, qfrom_axis_angle, qmul, qrotate
 from matter_rig import qnormalize
-from pose import LegSpec, Pose, PoseBuilder
+from pose import LegSpec, Pose, PoseBuilder, ergonomic_posture
 from validate import lowest_point
 
 ID = "alert_idle"
@@ -39,6 +51,8 @@ DISPLAY_NAME = "Parado em alerta"
 SOURCE = (REPO_ROOT / "assets" / "animations" / "source" / "retargeted"
           / "alert_idle.retarget.json")
 SIDES = ("Left", "Right")
+PELVIS_RISE = 0.03
+PELVIS_TOWARD_REAR_FOOT = 0.055
 
 
 def _rz(degrees: float) -> np.ndarray:
@@ -81,6 +95,13 @@ class AlertIdle:
                                                  self.coordinates[f])
                           for f in range(self.frames)]
         self.feet = {side: self._planted(side) for side in SIDES}
+        # Postura mais alta: a pelve sobe e vai para o pe de tras (o direito),
+        # com os pes plantados onde estavam.
+        rear = self.feet["Right"][0] - self.feet["Left"][0]
+        rear[2] = 0.0
+        rear /= np.linalg.norm(rear)
+        self.offsets = self.offsets + rear * PELVIS_TOWARD_REAR_FOOT \
+            + np.array([0.0, 0.0, PELVIS_RISE])
 
     def _yaw(self, orientation, index) -> float:
         delta = qmul(orientation, qconj(self.bind[index]))
@@ -117,6 +138,8 @@ class AlertIdle:
         builder.root_offset = np.array(offset, dtype=float)
         builder.root_rotation = np.array(rotation, dtype=float)
         builder.coordinates = self.coordinates[f].copy()
+        # A postura ergonomica (ver o topo).
+        ergonomic_posture(self.rig, builder.coordinates)
         for side in SIDES:
             hip = self.anchor(positions, orientations, f"{side}Thigh")
             knee = self.anchor(positions, orientations, f"{side}Shin")

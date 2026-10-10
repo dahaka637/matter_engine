@@ -1,5 +1,12 @@
 # Autoria física de assets
 
+> **Estado em 09/10/2026:** os props GLB do laboratório (cadeira, bigorna,
+> barril, caixa e pneu) foram removidos, junto com o cozinhador V-HACD
+> (`MatterPhysicsAssetCooker` e `tools/cook-physics-assets`). Os objetos
+> físicos agora são procedurais, gerados por receita: veja
+> `docs/OBJETOS_PROCEDURAIS.md`. Este contrato continua valendo para os GLB
+> que forem autorados de novo (a physgun ainda é um GLB).
+
 Este documento define o contrato entre Blender, glTF e a MatterEngine. As
 unidades são metros, quilogramas e segundos. O exportador precisa incluir
 `extras` para que custom properties sejam preservadas no GLB.
@@ -88,21 +95,14 @@ collision_mode = auto
 ```
 
 A malha visual é a fonte do cooking V-HACD. O resultado padrão possui no máximo
-16 hulls, 64 vértices por hull e resolução de 200.000 voxels. O processamento é
-preparado pela ferramenta offline e todos os spawns reutilizam os mesmos recursos
-PhysX imutáveis.
+16 hulls, 64 vértices por hull e resolução de 200.000 voxels. Todos os spawns
+reutilizam os mesmos recursos físicos imutáveis.
 
-Depois de alterar um GLB ou os parâmetros de decomposição, execute:
-
-```powershell
-.\tools\cook-physics-assets.cmd -Configuration Release
-```
-
-A ferramenta grava `<asset>.glb.mecollider` ao lado do modelo. O arquivo possui
-versão, marcador de endianness e hash da geometria/parâmetros. Cache ausente,
-antigo ou corrompido é ignorado e reconstruído; nunca é usado para outra revisão
-do asset. O runtime ainda sabe reconstruir como fallback de desenvolvimento,
-mas builds distribuídas devem incluir os caches aprovados.
+O cache fica em `<asset>.glb.mecollider`, ao lado do modelo. O cozinhador
+offline que gravava esse cache saiu junto com os props; agora o runtime o
+reconstrói sozinho. O arquivo tem versão, marcador de endianness e hash da
+geometria e dos parâmetros. Um cache ausente, antigo ou corrompido é
+ignorado e reconstruído; nunca é usado para outra revisão do asset.
 
 O modo automático é uma aproximação de produção, não uma promessa de reproduzir
 cada triângulo artístico. Ele deve preservar volumes, apoios, vãos e assentos

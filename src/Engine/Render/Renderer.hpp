@@ -78,6 +78,12 @@ public:
         framePerformanceMetrics() const;
     [[nodiscard]] std::vector<std::pair<int, int>> availableFullscreenResolutions() const;
     [[nodiscard]] UiTexture loadUiTexture(const std::string& path);
+    // Texturas de UI a partir de pixels RGBA da CPU (o inspetor de jogador
+    // renderiza em software): criar, trocar os pixels (mesmo tamanho) e
+    // liberar (espera a GPU).
+    [[nodiscard]] UiTexture createUiTexture(int width, int height, std::span<const std::byte> rgbaPixels);
+    void updateUiTexture(const UiTexture& texture, std::span<const std::byte> rgbaPixels);
+    void destroyUiTexture(UiTexture& texture);
     [[nodiscard]] UiTexture renderScene3D(const Scene3DFrame& scene, int width, int height);
     // Retorna true somente quando os comandos da cena foram realmente
     // gravados. Estado temporal do chamador nao deve avancar em frames

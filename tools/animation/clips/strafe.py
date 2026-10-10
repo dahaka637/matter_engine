@@ -37,6 +37,13 @@ lado de tras (-20 e -13 graus em media no strafe para a esquerda, +9 e -7 no
 para a direita). E o estilo do Jog Strafe - a perna de tras cruza por tras
 da outra, e o quadril dela vai junto.
 
+ESPELHO (MIRROR_RIGHT): o strafe para a direita e o da esquerda espelhado.
+O Jog Strafe Right da referencia e outro movimento: o pe esquerdo so apoia
+13% do ciclo (o direito 32%; no da esquerda, 29% e 29%), na ponta do pe e
+mais lento (2,4 contra 2,95 m/s) - um galope. Com pouca ajuda o corpo girava
+nele e a passada de lado para a direita virava curva (a 5%: 50 graus de
+giro, contra 30 na esquerda).
+
 As correcoes sao suavizadas no ciclo. O sprint de lado (pedido do usuario:
 "correr rapido andando para o lado") e o mesmo movimento com cadencia maior.
 """
@@ -70,6 +77,7 @@ MAXIMUM_STANCE_PITCH = 15.0   # pe parado na ponta, no maximo
 ROLLING_CONTACT = 0.45
 REACH_MARGIN = 0.01           # joelho de apoio nunca travado reto
 SPRINT_CADENCE = 1.4          # sprint de lado: a mesma passada, mais rapida
+MIRROR_RIGHT = True           # direita = esquerda espelhada (ver ESPELHO)
 # Giro extra da pelve devolvido pela coluna: fracao que cada segmento ainda
 # carrega (o peito superior volta a orientacao da referencia).
 SPINE = (("Abdomen", 0.70), ("Chest", 0.35), ("UpperChest", 0.0))
@@ -232,6 +240,12 @@ class Strafe:
         return float(np.linalg.norm(ankle - self._hip(side, f))
                      - self.leg_length[side])
 
+    def _plant_place(self, targets, side: str, core: list[int], dt: float):
+        """Onde o pe fica parado no apoio: onde a referencia o pos em media."""
+        n = self.frames
+        return np.median([targets[u % n][side].ankle + self.velocity * u * dt
+                          for u in core], axis=0)
+
     def _plant(self):
         """Alvos por quadro e contatos: a referencia, e no apoio o pe parado
         no mundo, sem rolar, com a sola no chao.
@@ -243,10 +257,15 @@ class Strafe:
         travou, mas nao trava nele). O pe parado fica no rumo e na inclinacao
         medianos da referencia (a da direita corre na ponta do pe, ~12
         graus), sem rolamento lateral, e onde ela o pos em media. Fora do
-        apoio a diferenca para a referencia some em BLEND_FRAMES quadros.
+        apoio a diferenca para a referencia some em blend_frames quadros.
         """
         n = self.frames
         dt = self.period / n
+        # (Uma passada pode pedir uma volta mais longa - ver blend_frames.)
+        blend_frames = getattr(self, "blend_frames", BLEND_FRAMES)
+        reach_margin = getattr(self, "reach_margin", REACH_MARGIN)
+        stance_pitch = getattr(self, "stance_pitch", STANCE_PITCH)
+        maximum_stance_pitch = getattr(self, "maximum_stance_pitch", MAXIMUM_STANCE_PITCH)
         targets = [{s: self.reference_targets(f, s) for s in SIDES}
                    for f in range(n)]
         contacts = {s: self.contacts[s].copy() for s in SIDES}
@@ -257,7 +276,7 @@ class Strafe:
                 angles = [self._angles(targets[u % n][side].foot, side)
                           for u in window]
                 core = [u for u, a in zip(window, angles)
-                        if a[1] <= STANCE_PITCH]
+                        if a[1] <= stance_pitch]
                 if not core:
                     core = [window[int(np.argmin([a[1] for a in angles]))]]
                 core = list(range(core[0], core[-1] + 1))
@@ -265,12 +284,10 @@ class Strafe:
                     chosen = [a for u, a in zip(window, angles) if u in core]
                     yaw = float(np.median([a[0] for a in chosen]))
                     pitch = min(max(float(np.median([a[1] for a in chosen])),
-                                    0.0), MAXIMUM_STANCE_PITCH)
+                                    0.0), maximum_stance_pitch)
                     foot = qnormalize(qmul(qmul(_rz(yaw), qfrom_axis_angle(
                         [0.0, 1.0, 0.0], math.radians(pitch))), bind))
-                    place = np.median([targets[u % n][side].ankle
-                                       + self.velocity * u * dt for u in core],
-                                      axis=0)
+                    place = self._plant_place(targets, side, core, dt)
                     place[2] = self.floor + self._sole_depth(side, foot)
                     # A referencia deixa o pe escorregar junto com o corpo;
                     # parado no meio, ele pode ficar fora do alcance da perna
@@ -278,7 +295,7 @@ class Strafe:
                     # sai do chao um quadro antes, ou toca um depois).
                     ends = [u for u in (core[0], core[-1]) if self._reach(
                         side, u % n, place - self.velocity * u * dt)
-                        > -REACH_MARGIN]
+                        > -reach_margin]
                     if not ends or len(core) <= 2:
                         break
                     core = [u for u in core if u != ends[0]]
@@ -290,15 +307,15 @@ class Strafe:
                     contacts[side][u % n] = 1.0 if u in core else min(
                         contacts[side][u % n], ROLLING_CONTACT)
                 reference = {u: self.reference_targets(u % n, side)
-                             for u in range(core[0] - BLEND_FRAMES,
-                                            core[-1] + BLEND_FRAMES + 1)}
+                             for u in range(core[0] - blend_frames,
+                                            core[-1] + blend_frames + 1)}
                 for u, ref in reference.items():
                     if core[0] <= u <= core[-1]:
                         targets[u % n][side] = Targets(planted(u), ref.pole,
                                                        foot)
                         continue
                     edge = core[0] if u < core[0] else core[-1]
-                    w = 1.0 - abs(u - edge) / (BLEND_FRAMES + 1)
+                    w = 1.0 - abs(u - edge) / (blend_frames + 1)
                     w = w * w * (3 - 2 * w)
                     turn = _slerp(identity, qmul(foot, qconj(
                         reference[edge].foot)), w)
@@ -539,8 +556,62 @@ def corrections(strafe: Strafe):
 LAST_CORRECTIONS: dict = {}
 
 
+def _mirror_quaternion(q: np.ndarray) -> np.ndarray:
+    """Rotacao refletida no plano sagital (y -> -y): M R M."""
+    return qnormalize(np.array([-q[0], q[1], -q[2], q[3]]))
+
+
+def _mirror_name(link_id: str) -> str:
+    if link_id.startswith("Left"):
+        return "Right" + link_id[4:]
+    if link_id.startswith("Right"):
+        return "Left" + link_id[5:]
+    return link_id
+
+
+def mirror_pose(rig: Rig, offset, rotation, coordinates):
+    """A pose espelhada no plano sagital: cada osso vai para o do outro
+    lado com a orientacao de mundo refletida, e volta a coordenada de junta
+    pela inversa da junta (a mesma cinematica do motor)."""
+    _, orientations = rig.forward_kinematics(np.asarray(offset, dtype=float),
+                                             np.asarray(rotation, dtype=float),
+                                             np.asarray(coordinates, dtype=float))
+    index = {link.id: i for i, link in enumerate(rig.links)}
+    mirrored = np.zeros_like(orientations)
+    for i, link in enumerate(rig.links):
+        mirrored[i] = _mirror_quaternion(orientations[index[_mirror_name(link.id)]])
+    root = rig.links[0]
+    new_rotation = qnormalize(qmul(qconj(root.model_orientation), mirrored[0]))
+    new_offset = np.array([offset[0], -offset[1], offset[2]], dtype=float)
+    new_coordinates = np.zeros_like(np.asarray(coordinates, dtype=float))
+    for i, link in enumerate(rig.links):
+        if link.parent < 0:
+            continue
+        new_coordinates[i] = rig.clamp(i, rig.coordinates_for(
+            i, mirrored[link.parent], mirrored[i]))
+    return new_offset, new_rotation, new_coordinates
+
+
+class MirroredStrafe(Strafe):
+    """O strafe da esquerda espelhado: cada pose e a da esquerda refletida,
+    e as correcoes de autocolisao (giro, pe erguido, braco aberto) sao
+    procuradas ja na pose espelhada - os colisores do rig nao sao simetricos
+    ao milimetro (as coxas espelhadas se tocavam, -2,2 mm)."""
+
+    def __init__(self, rig: Rig):
+        super().__init__(rig, "Left")
+        self.contacts = {"Left": self.contacts["Right"],
+                         "Right": self.contacts["Left"]}
+
+    def pose(self, f: int, twist: float = 0.0, lift=None, arms=None):
+        lift = {_mirror_name(k): v for k, v in (lift or {}).items()}
+        arms = {_mirror_name(k): v for k, v in (arms or {}).items()}
+        return mirror_pose(self.rig, *Strafe.pose(self, f, -twist, lift, arms))
+
+
 def _definitions(rig: Rig, side: str) -> list[ClipDefinition]:
-    strafe = Strafe(rig, side)
+    strafe = (MirroredStrafe(rig) if side == "Right" and MIRROR_RIGHT
+              else Strafe(rig, side))
     twist, lift, arms = corrections(strafe)
     LAST_CORRECTIONS[side] = (strafe, twist, lift, arms)
     n = strafe.frames

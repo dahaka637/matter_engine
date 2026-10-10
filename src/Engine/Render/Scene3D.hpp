@@ -98,6 +98,9 @@ struct MeshRender3D {
     std::span<const Mat4> skinMatrices;
     std::span<const Mat4> previousSkinMatrices;
     bool flatShaded = false;
+    // O quanto a luz segue a face em vez das normais da malha (0 liso, 1 o
+    // mesmo que flatShaded; no meio, a mistura): o lowpoly suave do jogador.
+    float facet = 0.0f;
 };
 
 enum class LightType3D {

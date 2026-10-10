@@ -1,13 +1,13 @@
 #include "Engine/Animation/AnimationClip3D.hpp"
 #include "Engine/Character/CharacterLocomotion3D.hpp"
 #include "Engine/Animation/RagdollCharacter3D.hpp"
+#include "Engine/Animation/RagdollVisualPose3D.hpp"
 #include "Engine/Control/RagdollImpactTest3D.hpp"
 #include "Engine/Core/TaskScheduler.hpp"
 #include "Engine/Environment/OceanSurface.hpp"
 #include "Engine/Environment/WindSystem.hpp"
 #include "Engine/Geometry/GltfAcousticZone3D.hpp"
 #include "Engine/Geometry/GltfPhysicsMetadata3D.hpp"
-#include "Engine/Geometry/PhysicalAsset3D.hpp"
 #include "Engine/Materials/MaterialLibrary.hpp"
 #include "Engine/Math/Frustum3D.hpp"
 #include "Engine/Math/Hash.hpp"
@@ -47,6 +47,98 @@ void require(bool condition, const char *message) {
     throw std::runtime_error(message);
 }
 
+// A pose dos ossos visuais (07/10): a mao relaxada e a exportada e muda com
+// transicao; os dedos do pe ficam retos com o pe no ar ou apoiado na pose de
+// ligacao e dobram o tanto que o pe gira na base deles (calcanhar subindo).
+void testRagdollVisualPose() {
+  const auto character =
+      loadRagdollCharacter3D(std::string(MATTERENGINE_TEST_ASSETS_DIR) +
+                             "/characters/football_player/character.json");
+  const auto bind =
+      sampleRagdollAnimationPose3D(character.profile, nullptr, 0.0f, false);
+  const float ground = -character.profile.standingRootHeightMeters;
+  const auto angleBetween = [](Quaternion a, Quaternion b) {
+    const float d = std::abs(a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w);
+    return 2.0f * std::acos(std::min(1.0f, d));
+  };
+  RagdollVisualPoseInput3D input;
+  input.linkPositions = bind.linkPositions;
+  input.linkOrientations = bind.linkOrientations;
+  input.groundHeight = {ground, ground};
+  input.handPose = {RagdollHandPose3D::Relaxed, RagdollHandPose3D::Relaxed};
+  RagdollVisualPose3D pose;
+  const auto &relaxed = pose.update(character, input);
+  require(relaxed.size() == character.visualBones.size(),
+          "Pose visual sem um osso");
+  for (std::size_t k = 0; k < relaxed.size(); ++k) {
+    const auto &visual = character.visualBones[k];
+    if (visual.kind == RagdollVisualBone3D::Kind::Finger)
+      require(angleBetween(relaxed[k], visual.restRotation) < 0.001f,
+              "Mao relaxada diferente da exportada");
+  }
+  require(pose.toeBend(0) < 0.01f && pose.toeBend(1) < 0.01f,
+          "Dedos do pe dobrados parado na pose de ligacao");
+
+  // A mao abrindo: a transicao (0,12 s) e nao um salto.
+  input.handPose = {RagdollHandPose3D::Open, RagdollHandPose3D::Fist};
+  input.deltaTime = 1.0f / 60.0f;
+  pose.update(character, input);
+  require(pose.handOpen(0) > 0.05f && pose.handOpen(0) < 0.3f &&
+              pose.handFist(1) > 0.05f && pose.handFist(1) < 0.3f,
+          "Mao sem transicao");
+  for (int step = 0; step < 60; ++step)
+    pose.update(character, input);
+  require(pose.handOpen(0) > 0.99f && pose.handFist(1) > 0.99f,
+          "Mao nao chegou a pose pedida");
+
+  // O pe no ar: nada dobra.
+  RagdollVisualPose3D air;
+  input.groundHeight = {ground - 0.3f, ground - 0.3f};
+  air.update(character, input);
+  require(air.toeBend(0) < 0.001f && air.toeBend(1) < 0.001f,
+          "Dedos do pe dobraram no ar");
+
+  // O pe esquerdo girando 25 graus na base dos dedos (o calcanhar sobe): os
+  // dedos dobram ~25 graus; o direito, parado, nao.
+  int toe = -1;
+  for (std::size_t k = 0; k < character.visualBones.size(); ++k)
+    if (character.visualBones[k].kind == RagdollVisualBone3D::Kind::Toe &&
+        character.visualBones[k].side == 0)
+      toe = static_cast<int>(k);
+  require(toe >= 0, "Sem o osso dos dedos do pe esquerdo");
+  const auto &toeBone = character.visualBones[static_cast<std::size_t>(toe)];
+  const std::size_t foot = character.boneLinkIndices[toeBone.parentBone];
+  auto rolled = bind;
+  const Vec3 joint =
+      bind.linkPositions[foot] +
+      bind.linkOrientations[foot].rotate(toeBone.localBindPosition);
+  const Vec3 along =
+      (bind.linkOrientations[foot] * toeBone.localBindOrientation)
+          .normalized()
+          .rotate({1.0f, 0.0f, 0.0f});
+  const Vec3 axis = cross(Vec3{0.0f, 0.0f, 1.0f},
+                          Vec3{along.x, along.y, 0.0f}.normalized())
+                        .normalized();
+  const float roll = 25.0f * 3.14159265f / 180.0f;
+  const Quaternion heelUp = Quaternion::fromAxisAngle(axis, roll);
+  rolled.linkOrientations[foot] =
+      (heelUp * bind.linkOrientations[foot]).normalized();
+  rolled.linkPositions[foot] =
+      joint + heelUp.rotate(bind.linkPositions[foot] - joint);
+  RagdollVisualPose3D rolling;
+  input.linkPositions = rolled.linkPositions;
+  input.linkOrientations = rolled.linkOrientations;
+  input.groundHeight = {ground, ground};
+  rolling.update(character, input);
+  require(std::abs(rolling.toeBend(0) - roll) < 0.04f,
+          "Dedos do pe nao acompanharam o pe girando na base deles");
+  require(rolling.toeBend(1) < 0.01f, "O pe parado dobrou os dedos");
+  input.toesFollowGround = false;
+  RagdollVisualPose3D off;
+  off.update(character, input);
+  require(off.toeBend(0) < 0.001f, "Dedos do pe dobraram desligados");
+}
+
 void testRagdollCharacterSkin() {
   const auto character =
       loadRagdollCharacter3D(std::string(MATTERENGINE_TEST_ASSETS_DIR) +
@@ -59,33 +151,71 @@ void testRagdollCharacterSkin() {
       sampleRagdollAnimationPose3D(character.profile, nullptr, 0.0f, false);
   const auto palette = buildRagdollSkinMatrices3D(character, bind.linkPositions,
                                                   bind.linkOrientations);
-  // Dedos: ossos visuais depois dos fisicos, com a mao relaxada no repouso.
-  // Na pose de ligacao so eles mudam a malha modelada (a mao aberta do FBX):
-  // a ponta do dedo anda para a palma (medido: 11 cm, o arco de um dedo de
-  // ~9 cm dobrado ~100 graus), nunca mais que o comprimento de um dedo.
-  require(character.visualBones.size() == 30,
-          "Mao sem os quinze ossos de dedo de cada lado");
-  require(palette.size() ==
-              character.boneLinkIndices.size() + character.visualBones.size(),
-          "Paleta sem os ossos visuais");
+  // Dedos: ossos visuais depois dos fisicos, com a mao relaxada no repouso;
+  // os dedos do pe (07/10): um osso por pe, na base dos dedos, reto no
+  // repouso. A pele e a versao 2 (09/10, o jogador montado): a malha fica na
+  // pose A dela e cada osso guarda o repouso (a pose T do perfil) e a
+  // ligacao da malha; os auxiliares (joelho, cotovelo, pulso...) vem depois
+  // dos visuais na paleta.
+  std::size_t fingerBones = 0;
+  std::size_t toeBones = 0;
+  for (const auto &visual : character.visualBones) {
+    fingerBones += visual.kind == RagdollVisualBone3D::Kind::Finger ? 1 : 0;
+    toeBones += visual.kind == RagdollVisualBone3D::Kind::Toe ? 1 : 0;
+  }
+  require(fingerBones == 30, "Mao sem os quinze ossos de dedo de cada lado");
+  require(toeBones == 2, "Pe sem o osso dos dedos");
+  require(character.visualBones.size() == fingerBones + toeBones,
+          "Osso visual sem tipo");
+  // No quadril, quatro (1/4, 1/2 e 3/4 do giro e a da dobra da frente, so
+  // a flexao): 18 no total.
+  require(character.helperBones.size() == 18,
+          "Pele sem os auxiliares do joelho, quadril (quatro), tornozelo, "
+          "ombro, cotovelo e pulso");
+  require(palette.size() == character.boneLinkIndices.size() +
+                                character.visualBones.size() +
+                                character.helperBones.size(),
+          "Paleta sem os ossos visuais e os auxiliares");
+  // A mao relaxada so mexe nos dedos: a ponta anda para a palma (um dedo de
+  // ~9 cm dobrado), nunca mais que o comprimento de um dedo.
+  std::vector<Quaternion> straight(character.visualBones.size());
+  const auto straightPalette = buildRagdollSkinMatrices3D(
+      character, bind.linkPositions, bind.linkOrientations, straight);
   std::vector<Vec3> bindSurface;
   float fingerTravel = 0.0f;
+  float lowest = 1e9f, widest = 0.0f;
   for (const auto &vertex : character.mesh.vertices) {
     const Vec3 point = skinVertexPosition3D(vertex, palette);
+    const Vec3 open = skinVertexPosition3D(vertex, straightPalette);
     bindSurface.push_back(point);
+    lowest = std::min(lowest, open.z);
+    widest = std::max(widest, std::abs(open.y));
     bool finger = false;
-    for (std::size_t i = 0; i < 4; ++i)
-      finger = finger || (vertex.weights[i] > 0.0f &&
-                          vertex.joints[i] >= character.boneLinkIndices.size());
-    const float travel = (point - vertex.position).length();
+    for (std::size_t i = 0; i < 4; ++i) {
+      const std::size_t joint = vertex.joints[i];
+      const std::size_t visual = joint - character.boneLinkIndices.size();
+      finger = finger ||
+               (vertex.weights[i] > 0.0f &&
+                joint >= character.boneLinkIndices.size() &&
+                visual < character.visualBones.size() &&
+                character.visualBones[visual].kind ==
+                    RagdollVisualBone3D::Kind::Finger);
+    }
+    const float travel = (point - open).length();
     if (finger) {
       fingerTravel = std::max(fingerTravel, travel);
       continue;
     }
-    require(travel < 0.00001f, "Skin bind changes the authored surface");
+    require(travel < 0.00001f, "A mao relaxada mexeu fora dos dedos");
   }
   require(fingerTravel > 0.03f && fingerTravel < 0.13f,
           "Mao relaxada nao dobrou os dedos (ou dobrou demais)");
+  // O repouso e a pose T em pe: a sola (as travas) no chao do perfil, os
+  // bracos abertos.
+  require(std::abs(lowest + character.profile.standingRootHeightMeters) <
+              0.003f,
+          "A sola fora do chao no repouso");
+  require(widest > 0.7f, "O repouso nao abre os bracos (pose T)");
   auto moved = bind;
   const Quaternion rotation = Quaternion::fromAxisAngle({0, 0, 1}, 0.72f);
   const Vec3 translation{3, -2, 1};
@@ -1179,73 +1309,6 @@ void testCookingConvexo(PhysicsEngine3D &engine) {
   require(cached.shapes.size() == cooked.shapes.size(),
           "Cache alterou o numero de hulls do collider");
   std::filesystem::remove(cachePath, fileError);
-}
-
-void testDiagnoseHullFit(PhysicsEngine3D &engine) {
-  // Diagnostico opcional, sem efeito nas execucoes normais (so age se a
-  // variavel de ambiente estiver definida): mede o volume do casco de
-  // colisao cozido contra o volume da caixa delimitadora da malha visual,
-  // para UM prop e UM valor de shrinkWrap por vez. Cada chamada roda
-  // isolada (um processo por combinacao), porque um shrinkWrap problematico
-  // pode falhar de um jeito nativo do V-HACD que nao e uma excecao C++
-  // capturavel — testar tudo num processo so esconderia justamente o prop
-  // culpado atras dos que rodaram antes dele.
-  const char *fileName = std::getenv("MATTERENGINE_DIAGNOSE_PROP");
-  if (fileName == nullptr)
-    return;
-  const bool shrinkWrap =
-      std::getenv("MATTERENGINE_DIAGNOSE_SHRINKWRAP") != nullptr;
-
-  const std::string path = std::string(MATTERENGINE_TEST_ASSETS_DIR) +
-                           "/models/props/" + std::string(fileName);
-  const LoadedGltfModel model = loadGltfModel(path);
-  MeshData3D mesh;
-  for (const LoadedGltfPart &part : model.parts) {
-    const std::uint32_t base = static_cast<std::uint32_t>(mesh.vertices.size());
-    mesh.vertices.insert(mesh.vertices.end(), part.mesh.vertices.begin(),
-                         part.mesh.vertices.end());
-    for (const std::uint32_t index : part.mesh.indices) {
-      mesh.indices.push_back(base + index);
-    }
-  }
-  recomputeBounds(mesh);
-  const Vec3 dimensions = mesh.boundsMax - mesh.boundsMin;
-  const float boundingBoxVolume = dimensions.x * dimensions.y * dimensions.z;
-
-  ConvexDecompositionSettings3D settings;
-  settings.shrinkWrap = shrinkWrap;
-  const CookedDynamicCollision3D cooked =
-      engine.cookDynamicCollision(mesh, settings);
-
-  std::cout << "[DIAGNOSTICO] prop=" << fileName
-            << " shrinkWrap=" << (shrinkWrap ? "true" : "false")
-            << " hulls=" << cooked.hullCount
-            << " volumeCasco=" << cooked.volumeCubicMeters
-            << " volumeCaixaVisual=" << boundingBoxVolume << " razao="
-            << (boundingBoxVolume > 0.0f
-                    ? cooked.volumeCubicMeters / boundingBoxVolume
-                    : 0.0f)
-            << '\n';
-}
-
-void testRealPropCooking(PhysicsEngine3D &engine,
-                         const MaterialLibrary &materials) {
-  // Regressao: cada prop publicado em assets/models/props/ (o catalogo real
-  // que o Laboratorio cozinha ao abrir, via PropCatalog::load) precisa
-  // decompor sua colisao dinamica sem excecao nem falha nativa do V-HACD.
-  // Uma falha nativa nao e capturavel por try/catch em C++ e antes so
-  // aparecia como a engine inteira travando em jogo, silenciosamente; este
-  // teste roda o mesmo cozimento fora do jogo para pegar isso mais cedo.
-  const std::vector<std::string> propFiles{
-      "wood_chair.glb",  "anvil.glb",      "plastic_barrel.glb",
-      "soccer_ball.glb", "wood_crate.glb", "car_tire.glb"};
-  for (const std::string &fileName : propFiles) {
-    const std::string path =
-        std::string(MATTERENGINE_TEST_ASSETS_DIR) + "/models/props/" + fileName;
-    const PhysicalAsset3D asset = loadPhysicalAsset3D(path, materials, engine);
-    require(!asset.collision.shapes.empty(),
-            ("Prop sem forma de colisao valida: " + fileName).c_str());
-  }
 }
 
 void testRigidBodiesAndEvents(PhysicsEngine3D &engine,
@@ -4736,6 +4799,7 @@ int main() {
     }
     testAnimationClipSampling();
     testRagdollCharacterSkin();
+    testRagdollVisualPose();
     testAnimationCatalog();
     testArticulationIndexing();
     testArticulationGravityCompensation();
@@ -4847,8 +4911,6 @@ int main() {
       MaterialLibrary materials;
       PhysicsEngine3D engine;
       testCookingConvexo(engine);
-      testDiagnoseHullFit(engine);
-      testRealPropCooking(engine, materials);
       testRigidBodiesAndEvents(engine, materials);
       testOceanPhysicsLifecycle(engine, materials);
       testWindShelterExposure(engine, materials);

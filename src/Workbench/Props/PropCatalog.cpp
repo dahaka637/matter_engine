@@ -3,7 +3,9 @@
 #include "Engine/Core/Log.hpp"
 #include "Engine/Geometry/GltfLoader.hpp"
 #include "Engine/Geometry/MeshData3D.hpp"
-#include "Engine/Geometry/PhysicalAsset3D.hpp"
+#include "Engine/Modeling/Objects/ProceduralObject.hpp"
+#include "Engine/Objects/ObjectAsset3D.hpp"
+#include "Engine/Physics/InflatedBall3D.hpp"
 #include "Engine/RHI/RHITypes.hpp"
 
 #include <meshoptimizer.h>
@@ -15,25 +17,12 @@
 #include <limits>
 #include <span>
 #include <stdexcept>
+#include <filesystem>
+#include <optional>
 #include <utility>
 
 namespace MatterEngine::Workbench {
 namespace {
-
-struct CatalogEntry {
-    std::string_view id;
-    std::string_view displayName;
-    std::string_view fileName;
-};
-
-constexpr std::array CatalogEntries {
-    CatalogEntry { "wood_chair", "Cadeira de madeira", "wood_chair.glb" },
-    CatalogEntry { "steel_anvil", "Bigorna de aço", "anvil.glb" },
-    CatalogEntry { "plastic_barrel", "Barril de plástico", "plastic_barrel.glb" },
-    CatalogEntry { "soccer_ball", "Bola de futebol", "soccer_ball.glb" },
-    CatalogEntry { "wood_crate", "Caixa de madeira", "wood_crate.glb" },
-    CatalogEntry { "car_tire", "Pneu de carro", "car_tire.glb" }
-};
 
 struct Bounds3D {
     Vec3 minimum {
@@ -214,61 +203,79 @@ GpuModel3D uploadModel(Renderer& renderer, LoadedGltfModel& model,
     return result;
 }
 
+
+// Um objeto procedural na GPU: um pedaco so, com a textura dele.
+GpuModel3D uploadProceduralObject(Renderer& renderer, const ObjectRenderData3D& data) {
+    GpuModel3D result;
+    result.dimensionsMeters = data.mesh.boundsMax - data.mesh.boundsMin;
+    try {
+        GpuModelPart3D part;
+        if (!data.rgba.empty()) {
+            result.textures.push_back(renderer.createTexture2D({ data.width, data.height }, data.rgba));
+            part.albedoTexture = result.textures.back();
+        }
+        part.vertexBuffer = renderer.createBuffer({ data.mesh.vertices.size() * sizeof(MeshVertex3D), RHI::BufferUsage::Vertex,
+            true, "Objeto procedural: vertices" });
+        part.indexBuffer = renderer.createBuffer({ data.mesh.indices.size() * sizeof(std::uint32_t), RHI::BufferUsage::Index, true,
+            "Objeto procedural: indices" });
+        renderer.writeBuffer(part.vertexBuffer, 0, std::as_bytes(std::span(data.mesh.vertices)));
+        renderer.writeBuffer(part.indexBuffer, 0, std::as_bytes(std::span(data.mesh.indices)));
+        part.indexCount = static_cast<std::uint32_t>(data.mesh.indices.size());
+        part.metallic = 0.0f;
+        part.roughness = 0.85f;
+        result.parts.push_back(part);
+    } catch (...) {
+        releaseGpuModel3D(renderer, result);
+        throw;
+    }
+    return result;
+}
+
 } // namespace
 
-void PropCatalog::load(Renderer& renderer, const MaterialLibrary& materials,
-    PhysicsEngine3D& physics, std::string_view assetsDirectory) {
+void PropCatalog::load(Renderer& renderer, const MaterialLibrary& materials, std::string_view assetsDirectory) {
     if (m_loaded) return;
     std::vector<PropDefinition3D> loaded;
-    loaded.reserve(CatalogEntries.size());
     try {
-        for (const CatalogEntry& entry : CatalogEntries) {
-            const std::string path = std::string(assetsDirectory)
-                + "/models/props/" + std::string(entry.fileName);
-            PhysicalAsset3D physical = loadPhysicalAsset3D(path, materials,
-                physics);
-
-            PropDefinition3D definition;
-            definition.id = entry.id;
-            definition.displayName = entry.displayName;
-            definition.materialId = physical.metadata.materialId;
-            definition.dimensionsMeters = physical.dimensionsMeters;
-            definition.massKg = physical.bodyTemplate.massKg;
-            definition.bodyTemplate = std::move(physical.bodyTemplate);
-            definition.collisionShapes =
-                std::move(physical.collision.shapes);
-            // O importador físico já recentrou a malha no centro do collider.
-            definition.visual = uploadModel(renderer, physical.model, false);
-            std::uint64_t visualTriangles = 0;
-            std::uint64_t shadowTriangles = 0;
-            for (const GpuModelPart3D& part : definition.visual.parts) {
-                visualTriangles += part.indexCount / 3u;
-                shadowTriangles += (part.lods.empty()
-                    ? part.indexCount : part.lods.back().indexCount) / 3u;
+        // Os objetos procedurais (assets/objects): gerados pela receita.
+        for (const std::filesystem::path& file : Modeling::objectRecipeFiles(std::filesystem::path(assetsDirectory) / "objects")) {
+            std::string error;
+            const std::optional<Modeling::ObjectRecipe> recipe = Modeling::readObjectRecipe(file, &error);
+            const std::optional<Modeling::ProceduralObject> object = recipe ? Modeling::generateObject(*recipe, &error) : std::nullopt;
+            if (!object) {
+                Log::error("Objeto procedural: " + error);
+                continue;
             }
-            Log::info("Prop " + definition.id + ": material="
-                + definition.materialId + ", massa="
-                + std::to_string(definition.massKg) + " kg, dimensões="
-                + std::to_string(definition.dimensionsMeters.x) + " x "
-                + std::to_string(definition.dimensionsMeters.y) + " x "
-                + std::to_string(definition.dimensionsMeters.z)
-                + " m, colisores="
-                + std::to_string(definition.collisionShapes.size())
-                + ", visual=" + std::to_string(visualTriangles)
-                + " tri, proxy de sombra="
-                + std::to_string(shadowTriangles) + " tri.");
+            const ObjectBodyData3D body = objectBodyData3D(*object, materials);
+            PropDefinition3D definition;
+            definition.id = object->id;
+            definition.displayName = object->displayName;
+            definition.materialId = body.body.materialId;
+            definition.dimensionsMeters = body.dimensions;
+            definition.massKg = body.body.massKg;
+            definition.bodyTemplate = body.body;
+            definition.collisionShapes = body.shapes;
+            definition.visual = uploadProceduralObject(renderer, objectRenderData3D(*object));
             loaded.push_back(std::move(definition));
         }
+        // A bola de futebol: a inflada (fisica e malha proprias, ver
+        // BallRuntime) - a entrada so leva o cartao e o tamanho.
+        const InflatedBallProfile3D ball;
+        PropDefinition3D definition;
+        definition.id = "soccer_ball";
+        definition.displayName = "Bola de futebol";
+        definition.materialId = "soccer_ball";
+        definition.dimensionsMeters = Vec3 { 1.0f, 1.0f, 1.0f } * (2.0f * ball.radiusMeters);
+        definition.massKg = ball.massKg;
+        definition.inflatedBall = true;
+        loaded.push_back(std::move(definition));
     } catch (...) {
-        for (PropDefinition3D& definition : loaded) {
-            releaseGpuModel3D(renderer, definition.visual);
-        }
+        for (PropDefinition3D& definition : loaded) releaseGpuModel3D(renderer, definition.visual);
         throw;
     }
     m_definitions = std::move(loaded);
     m_loaded = true;
-    Log::info("Catálogo de props carregado com "
-        + std::to_string(m_definitions.size()) + " objetos.");
+    Log::info("Catalogo de objetos: " + std::to_string(m_definitions.size()) + " (procedurais e a bola).");
 }
 
 void PropCatalog::release(Renderer& renderer) {

@@ -1,11 +1,45 @@
 #include "Engine/Physics/Jolt/JoltInternals3D.hpp"
 #include "Engine/Physics/Jolt/JoltShapes3D.hpp"
 #include "Engine/Physics/RagdollInteractions3D.hpp"
+#include <Jolt/Physics/Collision/CollideShape.h>
 #include <Jolt/Physics/Collision/EstimateCollisionResponse.h>
 #include <algorithm>
 #include <tuple>
 
 namespace MatterEngine {
+// O corpo guiado nao colide com os proprios links (a pose da animacao cruza
+// bracos e coxas), nem com a capsula, nem com o chao: superficie que nao e
+// dinamica com a normal para cima (piso, topo de degrau e de mureta) - a pose
+// atravessa o chao alguns milimetros e os pes deslizam. Com parede, meio-fio
+// e a frente de uma mureta ele bate de verdade (pedido do usuario, 05/10
+// noite: no padrao o corpo entrava na parede e so virava fisico ja dentro
+// dela, sem o choque). normalAB: de a para b.
+bool PhysicsScene3D::Impl::guidedIgnores(const JPH::Body& a, const JPH::Body& b, JPH::Vec3Arg normalAB) const {
+    const auto ia = JoltDetail::unpackBodyIdentity(a.GetUserData());
+    const auto ib = JoltDetail::unpackBodyIdentity(b.GetUserData());
+    const auto guided = [&](const JoltDetail::BodyIdentity& id) {
+        if (id.kind != JoltDetail::BodyKind::RagdollLink || id.slotIndex >= ragdollSlots.size()) return false;
+        const auto* r = ragdollSlots[id.slotIndex].record.get();
+        return r != nullptr && r->guided;
+    };
+    const bool ga = guided(ia), gb = guided(ib);
+    if (!ga && !gb) return false;
+    if (ia.kind == JoltDetail::BodyKind::RagdollLink && ib.kind == ia.kind && ia.slotIndex == ib.slotIndex) return true;
+    const JPH::Body& other = ga ? b : a;
+    const auto otherKind = (ga ? ib : ia).kind;
+    if (otherKind == JoltDetail::BodyKind::Character) return true;
+    if (other.IsDynamic()) return false;
+    // A normal da superficie do outro, apontando para o link guiado.
+    const float length = normalAB.Length();
+    if (length < 1e-6f) return true;
+    const JPH::Vec3 surface = (ga ? -normalAB : normalAB) / length;
+    return surface.GetZ() > GuidedFloorNormal;
+}
+JPH::ValidateResult PhysicsScene3D::Impl::OnContactValidate(const JPH::Body& a, const JPH::Body& b,
+    JPH::RVec3Arg, const JPH::CollideShapeResult& collision) {
+    return guidedIgnores(a, b, collision.mPenetrationAxis) ? JPH::ValidateResult::RejectContact
+        : JPH::ValidateResult::AcceptAllContactsForThisBodyPair;
+}
 void PhysicsScene3D::Impl::OnContactAdded(const JPH::Body& a, const JPH::Body& b,
     const JPH::ContactManifold& manifold, JPH::ContactSettings& settings) {
     try { recordContact(a,b,manifold,settings,true); } catch (...) { callbackFailed = true; }
@@ -17,6 +51,11 @@ void PhysicsScene3D::Impl::OnContactPersisted(const JPH::Body& a, const JPH::Bod
 void PhysicsScene3D::Impl::recordContact(const JPH::Body& a, const JPH::Body& b,
     const JPH::ContactManifold& manifold, JPH::ContactSettings& contact, bool added) {
     ++allContactPairs;
+    // (Um contato guardado de antes de o corpo virar guiado.)
+    if (guidedIgnores(a, b, manifold.mWorldSpaceNormal)) {
+        contact.mIsSensor = true;
+        return;
+    }
     const auto ia = JoltDetail::unpackBodyIdentity(a.GetUserData());
     const auto ib = JoltDetail::unpackBodyIdentity(b.GetUserData());
     const bool characterPair = ia.kind == JoltDetail::BodyKind::Character || ib.kind == JoltDetail::BodyKind::Character;
@@ -33,6 +72,15 @@ void PhysicsScene3D::Impl::recordContact(const JPH::Body& a, const JPH::Body& b,
     const auto& materialA = contactMaterial(ma);
     const auto& materialB = contactMaterial(mb);
     contact.mCombinedFriction = (materialA.dynamicFriction + materialB.dynamicFriction) * 0.5f;
+    // Escala de atrito do ragdoll (setRagdollFrictionScale: o carrinho
+    // escorrega na grama). O atrito do contato e o dos materiais - o do corpo
+    // no Jolt nao conta aqui.
+    const auto frictionScale = [&](JoltDetail::BodyIdentity id) {
+        if (id.kind != JoltDetail::BodyKind::RagdollLink || id.slotIndex >= ragdollSlots.size()) return 1.0f;
+        const auto* r = ragdollSlots[id.slotIndex].record.get();
+        return r != nullptr ? r->frictionScale : 1.0f;
+    };
+    contact.mCombinedFriction *= frictionScale(ia) * frictionScale(ib);
     contact.mCombinedRestitution = std::max(materialA.restitution, materialB.restitution);
     const auto record = [&](JoltDetail::BodyIdentity id) -> const BodyRecord* {
         return id.kind == JoltDetail::BodyKind::Body && id.slotIndex < bodySlots.size() ? bodySlots[id.slotIndex].record.get() : nullptr;
@@ -67,6 +115,9 @@ void PhysicsScene3D::Impl::recordContact(const JPH::Body& a, const JPH::Body& b,
     const float effective = massA > 0 && massB > 0 ? massA*massB/(massA+massB) : std::max(massA,massB);
     // Only event storage is serialized. Never lock a Jolt body from its callback.
     const std::lock_guard lock(contactMutex);
+    // O corpo guiado encostou em algo de fora (o passo nao termina na pose).
+    if (interactionA != nullptr && interactionA->guided) interactionA->guideTouched = true;
+    if (interactionB != nullptr && interactionB->guided) interactionB->guideTouched = true;
     if (acoustic) { ++reportedContactPairs; reportedContactPoints += manifold.mRelativeContactPointsOn1.size(); }
     for (JPH::uint i = 0; i < manifold.mRelativeContactPointsOn1.size(); ++i) {
         const auto point = manifold.GetWorldSpaceContactPointOn1(i);

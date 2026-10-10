@@ -1,1188 +1,1223 @@
 {
-  "id": "FootballPlayerV1",
-  "totalMassKg": 80.0,
-  "uniformRadiusMeters": 0.055,
-  "standingRootHeightMeters": 0.9775526,
-  "links": [
-    {
-      "id": "Pelvis",
-      "parent": -1,
-      "position": [
-        -0.0044972,
-        1.88e-05,
-        0.0050898
-      ],
-      "massFraction": 0.142,
-      "capsule": {
-        "orientation": [
-          -0.4538376,
-          -0.54774284,
-          -0.5422467,
-          0.44718891
-        ],
-        "length": 0.29728,
-        "radius": 0.14264,
-        "contactSensor": true,
-        "position": [
-          0.00042,
-          -0.00013,
-          8.2e-05
-        ]
-      },
-      "orientation": [
-        0,
-        0,
-        0,
-        1
-      ]
-    },
-    {
-      "id": "Abdomen",
-      "parent": 0,
-      "position": [
-        0.0053359,
-        1.86e-05,
-        0.151786
-      ],
-      "massFraction": 0.102,
-      "capsule": {
-        "orientation": [
-          -0.02481517,
-          -0.0248155,
-          0.70667118,
-          0.70667124
-        ],
-        "length": 0.254052,
-        "radius": 0.093064,
-        "contactSensor": true,
-        "position": [
-          -0.006287,
-          0.0,
-          0.021528
-        ]
-      },
-      "joint": {
-        "type": "spherical",
-        "anchor": [
-          0.00891,
-          -1e-07,
-          0.1080568
-        ],
-        "frameOrientation": [
-          0.0,
-          -0.70710678,
-          0.0,
-          0.70710678
-        ],
-        "axes": [
-          {
-            "axis": "twist",
-            "minimumDegrees": -25.0,
-            "maximumDegrees": 25.0,
-            "stiffness": 440.0,
-            "damping": 49.5,
-            "maximumTorque": 520.0
-          },
-          {
-            "axis": "swing1",
-            "minimumDegrees": -35.0,
-            "maximumDegrees": 45.0,
-            "stiffness": 440.0,
-            "damping": 49.5,
-            "maximumTorque": 520.0
-          },
-          {
-            "axis": "swing2",
-            "minimumDegrees": -20.0,
-            "maximumDegrees": 20.0,
-            "stiffness": 440.0,
-            "damping": 49.5,
-            "maximumTorque": 520.0
-          }
-        ]
-      },
-      "orientation": [
-        0,
-        0,
-        0,
-        1
-      ]
-    },
-    {
-      "id": "Chest",
-      "parent": 1,
-      "position": [
-        -0.0023939,
-        1.86e-05,
-        0.3001111
-      ],
-      "massFraction": 0.124,
-      "capsule": {
-        "orientation": [
-          -0.05237853,
-          -0.05237874,
-          0.70516413,
-          0.70516419
-        ],
-        "length": 0.283352,
-        "radius": 0.10143,
-        "contactSensor": true,
-        "position": [
-          -0.015056,
-          0.0,
-          0.054396
-        ]
-      },
-      "joint": {
-        "type": "spherical",
-        "anchor": [
-          -0.0045959,
-          -2e-07,
-          0.3001255
-        ],
-        "frameOrientation": [
-          0.0,
-          -0.70710678,
-          0.0,
-          0.70710678
-        ],
-        "axes": [
-          {
-            "axis": "twist",
-            "minimumDegrees": -22.0,
-            "maximumDegrees": 22.0,
-            "stiffness": 440.0,
-            "damping": 49.5,
-            "maximumTorque": 520.0
-          },
-          {
-            "axis": "swing1",
-            "minimumDegrees": -28.0,
-            "maximumDegrees": 38.0,
-            "stiffness": 440.0,
-            "damping": 49.5,
-            "maximumTorque": 520.0
-          },
-          {
-            "axis": "swing2",
-            "minimumDegrees": -18.0,
-            "maximumDegrees": 18.0,
-            "stiffness": 440.0,
-            "damping": 49.5,
-            "maximumTorque": 520.0
-          }
-        ]
-      },
-      "orientation": [
-        0,
-        0,
-        0,
-        1
-      ]
-    },
-    {
-      "id": "UpperChest",
-      "parent": 2,
-      "position": [
-        -0.0375119,
-        1.88e-05,
-        0.4359334
-      ],
-      "massFraction": 0.086,
-      "capsule": {
-        "orientation": [
-          -0.05086369,
-          -0.0508639,
-          0.70527506,
-          0.705275
-        ],
-        "length": 0.345347,
-        "radius": 0.110986,
-        "contactSensor": true,
-        "position": [
-          -0.002408,
-          0.0,
-          0.099876
-        ]
-      },
-      "joint": {
-        "type": "spherical",
-        "anchor": [
-          -0.0244139,
-          -2e-07,
-          0.4327927
-        ],
-        "frameOrientation": [
-          0.0,
-          -0.70710678,
-          0.0,
-          0.70710678
-        ],
-        "axes": [
-          {
-            "axis": "twist",
-            "minimumDegrees": -20.0,
-            "maximumDegrees": 20.0,
-            "stiffness": 440.0,
-            "damping": 49.5,
-            "maximumTorque": 520.0
-          },
-          {
-            "axis": "swing1",
-            "minimumDegrees": -25.0,
-            "maximumDegrees": 35.0,
-            "stiffness": 440.0,
-            "damping": 49.5,
-            "maximumTorque": 520.0
-          },
-          {
-            "axis": "swing2",
-            "minimumDegrees": -18.0,
-            "maximumDegrees": 18.0,
-            "stiffness": 440.0,
-            "damping": 49.5,
-            "maximumTorque": 520.0
-          }
-        ]
-      },
-      "orientation": [
-        0,
-        0,
-        0,
-        1
-      ]
-    },
-    {
-      "id": "Neck",
-      "parent": 3,
-      "position": [
-        -0.0414811,
-        1.85e-05,
-        0.623722
-      ],
-      "massFraction": 0.02,
-      "capsule": {
-        "orientation": [
-          -0.77595037,
-          3.3e-07,
-          -0.63079399,
-          4.1e-07
-        ],
-        "length": 0.178704,
-        "radius": 0.066464,
-        "contactSensor": true
-      },
-      "joint": {
-        "type": "spherical",
-        "anchor": [
-          -0.0481799,
-          -3e-07,
-          0.5967048
-        ],
-        "frameOrientation": [
-          0.0,
-          -0.70710678,
-          0.0,
-          0.70710678
-        ],
-        "axes": [
-          {
-            "axis": "twist",
-            "minimumDegrees": -30.0,
-            "maximumDegrees": 30.0,
-            "stiffness": 82.0,
-            "damping": 14.0,
-            "maximumTorque": 62.0
-          },
-          {
-            "axis": "swing1",
-            "minimumDegrees": -18.0,
-            "maximumDegrees": 22.0,
-            "stiffness": 82.0,
-            "damping": 14.0,
-            "maximumTorque": 62.0
-          },
-          {
-            "axis": "swing2",
-            "minimumDegrees": -22.0,
-            "maximumDegrees": 22.0,
-            "stiffness": 82.0,
-            "damping": 14.0,
-            "maximumTorque": 62.0
-          }
-        ]
-      },
-      "orientation": [
-        0,
-        0,
-        0,
-        1
-      ]
-    },
-    {
-      "id": "Head",
-      "parent": 4,
-      "position": [
-        -0.0015369,
-        1.83e-05,
-        0.7333833
-      ],
-      "massFraction": 0.081,
-      "capsule": {
-        "orientation": [
-          0.70710683,
-          0.0,
-          0.70710683,
-          0.0
-        ],
-        "length": 0.261066,
-        "radius": 0.104624,
-        "contactSensor": true
-      },
-      "joint": {
-        "type": "spherical",
-        "anchor": [
-          -0.0292084,
-          -4e-07,
-          0.6876547
-        ],
-        "frameOrientation": [
-          0.0,
-          -0.70710678,
-          0.0,
-          0.70710678
-        ],
-        "axes": [
-          {
-            "axis": "twist",
-            "minimumDegrees": -45.0,
-            "maximumDegrees": 45.0,
-            "stiffness": 76.0,
-            "damping": 13.0,
-            "maximumTorque": 58.0
-          },
-          {
-            "axis": "swing1",
-            "minimumDegrees": -28.0,
-            "maximumDegrees": 34.0,
-            "stiffness": 76.0,
-            "damping": 13.0,
-            "maximumTorque": 58.0
-          },
-          {
-            "axis": "swing2",
-            "minimumDegrees": -28.0,
-            "maximumDegrees": 28.0,
-            "stiffness": 76.0,
-            "damping": 13.0,
-            "maximumTorque": 58.0
-          }
-        ]
-      },
-      "orientation": [
-        0,
-        0,
-        0,
-        1
-      ]
-    },
-    {
-      "id": "LeftUpperArm",
-      "parent": 3,
-      "position": [
-        -0.0865906,
-        0.3223051,
-        0.5278022
-      ],
-      "massFraction": 0.027,
-      "capsule": {
-        "orientation": [
-          0.0,
-          0.0,
-          0.7071068,
-          0.7071068
-        ],
-        "length": 0.309284,
-        "radius": 0.065121,
-        "contactSensor": true,
-        "position": [
-          0.001274,
-          0.029307,
-          -0.008799
-        ],
-        "radiusAtPositiveX": 0.050588
-      },
-      "joint": {
-        "type": "spherical",
-        "anchor": [
-          -0.0865432,
-          0.177002,
-          0.5277974
-        ],
-        "frameOrientation": [
-          0.0,
-          0.0,
-          0.70710683,
-          0.70710683
-        ],
-        "axes": [
-          {
-            "axis": "twist",
-            "minimumDegrees": -80.0,
-            "maximumDegrees": 80.0,
-            "stiffness": 240.0,
-            "damping": 25.5,
-            "maximumTorque": 300.0
-          },
-          {
-            "axis": "swing1",
-            "minimumDegrees": -115.0,
-            "maximumDegrees": 115.0,
-            "stiffness": 240.0,
-            "damping": 25.5,
-            "maximumTorque": 300.0
-          },
-          {
-            "axis": "swing2",
-            "minimumDegrees": -95.0,
-            "maximumDegrees": 95.0,
-            "stiffness": 240.0,
-            "damping": 25.5,
-            "maximumTorque": 300.0
-          }
-        ]
-      },
-      "orientation": [
-        0,
-        0,
-        0,
-        1
-      ]
-    },
-    {
-      "id": "LeftForearm",
-      "parent": 6,
-      "position": [
-        -0.0865935,
-        0.5982152,
-        0.5277996
-      ],
-      "massFraction": 0.016,
-      "capsule": {
-        "orientation": [
-          0.0,
-          0.0,
-          0.7071068,
-          0.7071068
-        ],
-        "length": 0.249515,
-        "radius": 0.044456,
-        "contactSensor": true,
-        "position": [
-          -0.005086,
-          0.047473,
-          -0.001093
-        ],
-        "radiusAtPositiveX": 0.033097
-      },
-      "joint": {
-        "type": "spherical",
-        "anchor": [
-          -0.0865432,
-          0.4804012,
-          0.5277974
-        ],
-        "frameOrientation": [
-          0.0,
-          0.70710678,
-          0.0,
-          0.70710678
-        ],
-        "axes": [
-          {
-            "axis": "twist",
-            "minimumDegrees": -5.0,
-            "maximumDegrees": 145.0,
-            "stiffness": 90.0,
-            "damping": 14.0,
-            "maximumTorque": 100.0
-          }
-        ]
-      },
-      "orientation": [
-        0,
-        0,
-        0,
-        1
-      ]
-    },
-    {
-      "id": "LeftHand",
-      "parent": 7,
-      "position": [
-        -0.0904934,
-        0.8526022,
-        0.4828134
-      ],
-      "massFraction": 0.006,
-      "capsule": {
-        "orientation": [
-          -0.0,
-          0.1016119,
-          0.716721,
-          0.6899174
-        ],
-        "length": 0.204575,
-        "radius": 0.052346,
-        "contactSensor": true,
-        "position": [
-          0.01734,
-          0.006882,
-          0.027379
-        ]
-      },
-      "joint": {
-        "type": "spherical",
-        "anchor": [
-          -0.0865432,
-          0.7501528,
-          0.5277974
-        ],
-        "frameOrientation": [
-          -0.05088475,
-          0.04847355,
-          0.72226328,
-          0.68803835
-        ],
-        "axes": [
-          {
-            "axis": "twist",
-            "minimumDegrees": -70.0,
-            "maximumDegrees": 70.0,
-            "stiffness": 32.0,
-            "damping": 6.0,
-            "maximumTorque": 35.0
-          },
-          {
-            "axis": "swing1",
-            "minimumDegrees": -35.0,
-            "maximumDegrees": 35.0,
-            "stiffness": 32.0,
-            "damping": 6.0,
-            "maximumTorque": 35.0
-          }
-        ]
-      },
-      "orientation": [
-        0,
-        0,
-        0,
-        1
-      ]
-    },
-    {
-      "id": "RightUpperArm",
-      "parent": 3,
-      "position": [
-        -0.0865946,
-        -0.322282,
-        0.5277743
-      ],
-      "massFraction": 0.027,
-      "capsule": {
-        "orientation": [
-          0.0,
-          0.0,
-          -0.7071068,
-          0.7071068
-        ],
-        "length": 0.30564,
-        "radius": 0.062871,
-        "contactSensor": true,
-        "position": [
-          0.001838,
-          -0.026952,
-          -0.012902
-        ],
-        "radiusAtPositiveX": 0.053116
-      },
-      "joint": {
-        "type": "spherical",
-        "anchor": [
-          -0.0865438,
-          -0.1770018,
-          0.5277986
-        ],
-        "frameOrientation": [
-          -0.0,
-          0.0,
-          -0.70710683,
-          0.70710683
-        ],
-        "axes": [
-          {
-            "axis": "twist",
-            "minimumDegrees": -80.0,
-            "maximumDegrees": 80.0,
-            "stiffness": 240.0,
-            "damping": 25.5,
-            "maximumTorque": 300.0
-          },
-          {
-            "axis": "swing1",
-            "minimumDegrees": -115.0,
-            "maximumDegrees": 115.0,
-            "stiffness": 240.0,
-            "damping": 25.5,
-            "maximumTorque": 300.0
-          },
-          {
-            "axis": "swing2",
-            "minimumDegrees": -95.0,
-            "maximumDegrees": 95.0,
-            "stiffness": 240.0,
-            "damping": 25.5,
-            "maximumTorque": 300.0
-          }
-        ]
-      },
-      "orientation": [
-        0,
-        0,
-        0,
-        1
-      ]
-    },
-    {
-      "id": "RightForearm",
-      "parent": 9,
-      "position": [
-        -0.0865841,
-        -0.5981888,
-        0.5277769
-      ],
-      "massFraction": 0.016,
-      "capsule": {
-        "orientation": [
-          0.0,
-          0.0,
-          -0.7071068,
-          0.7071068
-        ],
-        "length": 0.243881,
-        "radius": 0.044979,
-        "contactSensor": true,
-        "position": [
-          -0.004133,
-          -0.054404,
-          -0.000267
-        ],
-        "radiusAtPositiveX": 0.033049
-      },
-      "joint": {
-        "type": "spherical",
-        "anchor": [
-          -0.0865438,
-          -0.4804024,
-          0.5277986
-        ],
-        "frameOrientation": [
-          0.0,
-          -0.70710678,
-          0.0,
-          0.70710678
-        ],
-        "axes": [
-          {
-            "axis": "twist",
-            "minimumDegrees": -5.0,
-            "maximumDegrees": 145.0,
-            "stiffness": 90.0,
-            "damping": 14.0,
-            "maximumTorque": 100.0
-          }
-        ]
-      },
-      "orientation": [
-        0,
-        0,
-        0,
-        1
-      ]
-    },
-    {
-      "id": "RightHand",
-      "parent": 10,
-      "position": [
-        -0.0904846,
-        -0.8525758,
-        0.4827906
-      ],
-      "massFraction": 0.006,
-      "capsule": {
-        "orientation": [
-          0.0,
-          0.1016199,
-          -0.7167201,
-          0.6899171
-        ],
-        "length": 0.208857,
-        "radius": 0.05288,
-        "contactSensor": true,
-        "position": [
-          0.020414,
-          -0.004875,
-          0.026371
-        ]
-      },
-      "joint": {
-        "type": "spherical",
-        "anchor": [
-          -0.0865438,
-          -0.7501548,
-          0.5277986
-        ],
-        "frameOrientation": [
-          0.05088875,
-          0.0484773,
-          -0.72226334,
-          0.68803781
-        ],
-        "axes": [
-          {
-            "axis": "twist",
-            "minimumDegrees": -70.0,
-            "maximumDegrees": 70.0,
-            "stiffness": 32.0,
-            "damping": 6.0,
-            "maximumTorque": 35.0
-          },
-          {
-            "axis": "swing1",
-            "minimumDegrees": -35.0,
-            "maximumDegrees": 35.0,
-            "stiffness": 32.0,
-            "damping": 6.0,
-            "maximumTorque": 35.0
-          }
-        ]
-      },
-      "orientation": [
-        0,
-        0,
-        0,
-        1
-      ]
-    },
-    {
-      "id": "LeftThigh",
-      "parent": 0,
-      "position": [
-        0.0052322,
-        0.090064,
-        -0.2249464
-      ],
-      "massFraction": 0.112,
-      "capsule": {
-        "orientation": [
-          -0.0,
-          0.7071068,
-          0.0,
-          0.7071068
-        ],
-        "length": 0.388612,
-        "radius": 0.068295,
-        "contactSensor": true,
-        "position": [
-          0.014826,
-          -0.010292,
-          -0.034622
-        ],
-        "radiusAtPositiveX": 0.063894
-      },
-      "joint": {
-        "type": "spherical",
-        "anchor": [
-          0.0052613,
-          0.0900581,
-          -0.0145076
-        ],
-        "frameOrientation": [
-          0.0,
-          -0.70710678,
-          0.0,
-          0.70710678
-        ],
-        "axes": [
-          {
-            "axis": "twist",
-            "minimumDegrees": -45.0,
-            "maximumDegrees": 45.0,
-            "stiffness": 750.0,
-            "damping": 71.2,
-            "maximumTorque": 875.0
-          },
-          {
-            "axis": "swing1",
-            "minimumDegrees": -120.0,
-            "maximumDegrees": 30.0,
-            "stiffness": 750.0,
-            "damping": 71.2,
-            "maximumTorque": 875.0
-          },
-          {
-            "axis": "swing2",
-            "minimumDegrees": -42.0,
-            "maximumDegrees": 42.0,
-            "stiffness": 750.0,
-            "damping": 71.2,
-            "maximumTorque": 875.0
-          }
-        ]
-      },
-      "orientation": [
-        0,
-        0,
-        0,
-        1
-      ]
-    },
-    {
-      "id": "LeftShin",
-      "parent": 12,
-      "position": [
-        0.0049986,
-        0.0950381,
-        -0.6361268
-      ],
-      "massFraction": 0.047,
-      "capsule": {
-        "orientation": [
-          -0.0,
-          0.7071068,
-          0.0,
-          0.7071068
-        ],
-        "length": 0.372906,
-        "radius": 0.057634,
-        "contactSensor": true,
-        "position": [
-          -0.024089,
-          -0.002294,
-          -0.032728
-        ],
-        "radiusAtPositiveX": 0.03944
-      },
-      "joint": {
-        "type": "spherical",
-        "anchor": [
-          0.0052613,
-          0.0900581,
-          -0.4402282
-        ],
-        "frameOrientation": [
-          0.0,
-          0.0,
-          0.70710678,
-          0.70710678
-        ],
-        "axes": [
-          {
-            "axis": "twist",
-            "minimumDegrees": -5.0,
-            "maximumDegrees": 145.0,
-            "stiffness": 650.0,
-            "damping": 60.1,
-            "maximumTorque": 750.0
-          }
-        ]
-      },
-      "orientation": [
-        0,
-        0,
-        0,
-        1
-      ]
-    },
-    {
-      "id": "LeftFoot",
-      "parent": 13,
-      "position": [
-        0.0873306,
-        0.100072,
-        -0.9124583
-      ],
-      "massFraction": 0.0145,
-      "box": {
-        "orientation": [
-          0.0,
-          0.0,
-          0.02530915,
-          0.99967968
-        ],
-        "halfExtents": [
-          0.140584,
-          0.052488,
-          0.065094
-        ],
-        "position": [
-          -0.003363,
-          0.006759,
-          0.0
-        ],
-        "contactSensor": true
-      },
-      "joint": {
-        "type": "spherical",
-        "anchor": [
-          0.0052613,
-          0.0900581,
-          -0.8421952
-        ],
-        "frameOrientation": [
-          0.0,
-          0.0,
-          0.70710678,
-          0.70710678
-        ],
-        "axes": [
-          {
-            "axis": "twist",
-            "minimumDegrees": -50.0,
-            "maximumDegrees": 65.0,
-            "stiffness": 360.0,
-            "damping": 34.6,
-            "maximumTorque": 420.0
-          },
-          {
-            "axis": "swing1",
-            "minimumDegrees": -35.0,
-            "maximumDegrees": 35.0,
-            "stiffness": 360.0,
-            "damping": 34.6,
-            "maximumTorque": 420.0
-          }
-        ]
-      },
-      "orientation": [
-        0,
-        0,
-        0,
-        1
-      ]
-    },
-    {
-      "id": "RightThigh",
-      "parent": 0,
-      "position": [
-        0.0052315,
-        -0.0900265,
-        -0.2249418
-      ],
-      "massFraction": 0.112,
-      "capsule": {
-        "orientation": [
-          -0.0,
-          0.7071068,
-          0.0,
-          0.7071068
-        ],
-        "length": 0.38686,
-        "radius": 0.067003,
-        "contactSensor": true,
-        "position": [
-          0.00818,
-          0.009645,
-          -0.031876
-        ],
-        "radiusAtPositiveX": 0.066243
-      },
-      "joint": {
-        "type": "spherical",
-        "anchor": [
-          0.005261,
-          -0.090058,
-          -0.0145059
-        ],
-        "frameOrientation": [
-          0.0,
-          -0.70710678,
-          0.0,
-          0.70710678
-        ],
-        "axes": [
-          {
-            "axis": "twist",
-            "minimumDegrees": -45.0,
-            "maximumDegrees": 45.0,
-            "stiffness": 750.0,
-            "damping": 71.2,
-            "maximumTorque": 875.0
-          },
-          {
-            "axis": "swing1",
-            "minimumDegrees": -120.0,
-            "maximumDegrees": 30.0,
-            "stiffness": 750.0,
-            "damping": 71.2,
-            "maximumTorque": 875.0
-          },
-          {
-            "axis": "swing2",
-            "minimumDegrees": -42.0,
-            "maximumDegrees": 42.0,
-            "stiffness": 750.0,
-            "damping": 71.2,
-            "maximumTorque": 875.0
-          }
-        ]
-      },
-      "orientation": [
-        0,
-        0,
-        0,
-        1
-      ]
-    },
-    {
-      "id": "RightShin",
-      "parent": 15,
-      "position": [
-        0.0049972,
-        -0.0950003,
-        -0.6361243
-      ],
-      "massFraction": 0.047,
-      "capsule": {
-        "orientation": [
-          -0.0,
-          0.7071068,
-          0.0,
-          0.7071068
-        ],
-        "length": 0.373068,
-        "radius": 0.057761,
-        "contactSensor": true,
-        "position": [
-          -0.022147,
-          0.002313,
-          -0.032596
-        ],
-        "radiusAtPositiveX": 0.039621
-      },
-      "joint": {
-        "type": "spherical",
-        "anchor": [
-          0.005261,
-          -0.090058,
-          -0.4402284
-        ],
-        "frameOrientation": [
-          0.0,
-          0.0,
-          0.70710678,
-          0.70710678
-        ],
-        "axes": [
-          {
-            "axis": "twist",
-            "minimumDegrees": -5.0,
-            "maximumDegrees": 145.0,
-            "stiffness": 650.0,
-            "damping": 60.1,
-            "maximumTorque": 750.0
-          }
-        ]
-      },
-      "orientation": [
-        0,
-        0,
-        0,
-        1
-      ]
-    },
-    {
-      "id": "RightFoot",
-      "parent": 16,
-      "position": [
-        0.0873299,
-        -0.1000345,
-        -0.9124584
-      ],
-      "massFraction": 0.0145,
-      "box": {
-        "orientation": [
-          -0.0,
-          0.0,
-          -0.02531078,
-          0.99967963
-        ],
-        "halfExtents": [
-          0.140558,
-          0.052475,
-          0.065094
-        ],
-        "position": [
-          0.000265,
-          -0.00679,
-          0.0
-        ],
-        "contactSensor": true
-      },
-      "joint": {
-        "type": "spherical",
-        "anchor": [
-          0.005261,
-          -0.090058,
-          -0.8421966
-        ],
-        "frameOrientation": [
-          0.0,
-          0.0,
-          0.70710678,
-          0.70710678
-        ],
-        "axes": [
-          {
-            "axis": "twist",
-            "minimumDegrees": -50.0,
-            "maximumDegrees": 65.0,
-            "stiffness": 360.0,
-            "damping": 34.6,
-            "maximumTorque": 420.0
-          },
-          {
-            "axis": "swing1",
-            "minimumDegrees": -35.0,
-            "maximumDegrees": 35.0,
-            "stiffness": 360.0,
-            "damping": 34.6,
-            "maximumTorque": 420.0
-          }
-        ]
-      },
-      "orientation": [
-        0,
-        0,
-        0,
-        1
-      ]
-    }
-  ],
-  "selfCollisionIgnoredPairs": [
-    {
-      "links": [
-        "Abdomen",
-        "LeftThigh"
-      ],
-      "reason": "capsula do abdomen desce ate o quadril; contato falso a partir de 45 graus de flexao do quadril"
-    },
-    {
-      "links": [
-        "Abdomen",
-        "RightThigh"
-      ],
-      "reason": "capsula do abdomen desce ate o quadril; contato falso a partir de 45 graus de flexao do quadril"
-    }
-  ]
+ "id": "FootballPlayerV1",
+ "links": [
+  {
+   "capsule": {
+    "contactSensor": true,
+    "length": 0.2625589966773987,
+    "material": "body",
+    "orientation": [
+     -0.4538376033306122,
+     -0.5477429032325745,
+     -0.5422466993331909,
+     0.44718891382217407
+    ],
+    "position": [
+     0.0013689999468624592,
+     -0.0006629999843426049,
+     0.00027099999715574086
+    ],
+    "radius": 0.1252799928188324
+   },
+   "id": "Pelvis",
+   "massFraction": 0.142,
+   "orientation": [
+    0,
+    0,
+    0,
+    1
+   ],
+   "parent": -1,
+   "position": [
+    -0.004999999888241291,
+    0.0,
+    0.0
+   ]
+  },
+  {
+   "capsule": {
+    "contactSensor": true,
+    "length": 0.3419190049171448,
+    "material": "body",
+    "orientation": [
+     -0.02481519989669323,
+     -0.024815499782562256,
+     0.7066712975502014,
+     0.7066712975502014
+    ],
+    "position": [
+     -0.001787999994121492,
+     0.0,
+     0.048190999776124954
+    ],
+    "radius": 0.09768400341272354
+   },
+   "id": "Abdomen",
+   "joint": {
+    "anchor": [
+     1.2000000424450263e-05,
+     -1.8000000636675395e-05,
+     0.10123199969530106
+    ],
+    "axes": [
+     {
+      "axis": "twist",
+      "damping": 49.5,
+      "maximumDegrees": 25.0,
+      "maximumTorque": 520.0,
+      "minimumDegrees": -25.0,
+      "stiffness": 440.0
+     },
+     {
+      "axis": "swing1",
+      "damping": 49.5,
+      "maximumDegrees": 45.0,
+      "maximumTorque": 520.0,
+      "minimumDegrees": -35.0,
+      "stiffness": 440.0
+     },
+     {
+      "axis": "swing2",
+      "damping": 49.5,
+      "maximumDegrees": 20.0,
+      "maximumTorque": 520.0,
+      "minimumDegrees": -20.0,
+      "stiffness": 440.0
+     }
+    ],
+    "frameOrientation": [
+     0.0,
+     -0.70710678,
+     0.0,
+     0.70710678
+    ],
+    "type": "spherical"
+   },
+   "massFraction": 0.102,
+   "orientation": [
+    0,
+    0,
+    0,
+    1
+   ],
+   "parent": 0,
+   "position": [
+    -0.0031969998963177204,
+    -1.9999999949504854e-06,
+    0.14048700034618378
+   ]
+  },
+  {
+   "capsule": {
+    "contactSensor": true,
+    "length": 0.26917099952697754,
+    "material": "body",
+    "orientation": [
+     -0.05237850174307823,
+     -0.05237869918346405,
+     0.7051641941070557,
+     0.7051641941070557
+    ],
+    "position": [
+     -0.02142699994146824,
+     -0.0,
+     0.06458800286054611
+    ],
+    "radius": 0.1011430025100708
+   },
+   "id": "Chest",
+   "joint": {
+    "anchor": [
+     -0.014996999874711037,
+     -1.8999999156221747e-05,
+     0.2733269929885864
+    ],
+    "axes": [
+     {
+      "axis": "twist",
+      "damping": 49.5,
+      "maximumDegrees": 22.0,
+      "maximumTorque": 520.0,
+      "minimumDegrees": -22.0,
+      "stiffness": 440.0
+     },
+     {
+      "axis": "swing1",
+      "damping": 49.5,
+      "maximumDegrees": 38.0,
+      "maximumTorque": 520.0,
+      "minimumDegrees": -28.0,
+      "stiffness": 440.0
+     },
+     {
+      "axis": "swing2",
+      "damping": 49.5,
+      "maximumDegrees": 18.0,
+      "maximumTorque": 520.0,
+      "minimumDegrees": -18.0,
+      "stiffness": 440.0
+     }
+    ],
+    "frameOrientation": [
+     0.0,
+     -0.70710678,
+     0.0,
+     0.70710678
+    ],
+    "type": "spherical"
+   },
+   "massFraction": 0.124,
+   "orientation": [
+    0,
+    0,
+    0,
+    1
+   ],
+   "parent": 1,
+   "position": [
+    -0.01281800027936697,
+    -0.0,
+    0.2733129858970642
+   ]
+  },
+  {
+   "capsule": {
+    "contactSensor": true,
+    "length": 0.33143800497055054,
+    "material": "body",
+    "orientation": [
+     -0.05086370185017586,
+     -0.050863899290561676,
+     0.7052751183509827,
+     0.7052749991416931
+    ],
+    "position": [
+     -0.014032999984920025,
+     0.0,
+     0.09076999872922897
+    ],
+    "radius": 0.11101999878883362
+   },
+   "id": "UpperChest",
+   "joint": {
+    "anchor": [
+     -0.03493800014257431,
+     -1.8999999156221747e-05,
+     0.4049389958381653
+    ],
+    "axes": [
+     {
+      "axis": "twist",
+      "damping": 49.5,
+      "maximumDegrees": 20.0,
+      "maximumTorque": 520.0,
+      "minimumDegrees": -20.0,
+      "stiffness": 440.0
+     },
+     {
+      "axis": "swing1",
+      "damping": 49.5,
+      "maximumDegrees": 35.0,
+      "maximumTorque": 520.0,
+      "minimumDegrees": -25.0,
+      "stiffness": 440.0
+     },
+     {
+      "axis": "swing2",
+      "damping": 49.5,
+      "maximumDegrees": 18.0,
+      "maximumTorque": 520.0,
+      "minimumDegrees": -18.0,
+      "stiffness": 440.0
+     }
+    ],
+    "frameOrientation": [
+     0.0,
+     -0.70710678,
+     0.0,
+     0.70710678
+    ],
+    "type": "spherical"
+   },
+   "massFraction": 0.086,
+   "orientation": [
+    0,
+    0,
+    0,
+    1
+   ],
+   "parent": 2,
+   "position": [
+    -0.048402998596429825,
+    9.999999974752427e-07,
+    0.4081679880619049
+   ]
+  },
+  {
+   "capsule": {
+    "contactSensor": true,
+    "length": 0.1263200044631958,
+    "material": "body",
+    "orientation": [
+     0.0,
+     -0.7030780911445618,
+     0.0,
+     0.7111127972602844
+    ],
+    "position": [
+     0.003031000029295683,
+     -1.8000000636675395e-05,
+     0.018254000693559647
+    ],
+    "radius": 0.06216000020503998
+   },
+   "id": "Neck",
+   "joint": {
+    "anchor": [
+     -0.044936999678611755,
+     -1.8999999156221747e-05,
+     0.5749220252037048
+    ],
+    "axes": [
+     {
+      "axis": "twist",
+      "damping": 14.0,
+      "maximumDegrees": 30.0,
+      "maximumTorque": 62.0,
+      "minimumDegrees": -30.0,
+      "stiffness": 82.0
+     },
+     {
+      "axis": "swing1",
+      "damping": 14.0,
+      "maximumDegrees": 22.0,
+      "maximumTorque": 62.0,
+      "minimumDegrees": -18.0,
+      "stiffness": 82.0
+     },
+     {
+      "axis": "swing2",
+      "damping": 14.0,
+      "maximumDegrees": 22.0,
+      "maximumTorque": 62.0,
+      "minimumDegrees": -22.0,
+      "stiffness": 82.0
+     }
+    ],
+    "frameOrientation": [
+     0.0,
+     -0.70710678,
+     0.0,
+     0.70710678
+    ],
+    "type": "spherical"
+   },
+   "massFraction": 0.02,
+   "orientation": [
+    0,
+    0,
+    0,
+    1
+   ],
+   "parent": 3,
+   "position": [
+    -0.03850200027227402,
+    -9.999999974752427e-07,
+    0.600875973701477
+   ]
+  },
+  {
+   "capsule": {
+    "contactSensor": true,
+    "length": 0.22814999520778656,
+    "material": "body",
+    "orientation": [
+     0.0,
+     -0.7071068286895752,
+     -0.0,
+     0.7071068286895752
+    ],
+    "position": [
+     -0.004414999857544899,
+     -2.099999983329326e-05,
+     0.030945999547839165
+    ],
+    "radius": 0.09060300141572952
+   },
+   "id": "Head",
+   "joint": {
+    "anchor": [
+     -0.04393000155687332,
+     -1.8999999156221747e-05,
+     0.6635419726371765
+    ],
+    "axes": [
+     {
+      "axis": "twist",
+      "damping": 13.0,
+      "maximumDegrees": 45.0,
+      "maximumTorque": 58.0,
+      "minimumDegrees": -45.0,
+      "stiffness": 76.0
+     },
+     {
+      "axis": "swing1",
+      "damping": 13.0,
+      "maximumDegrees": 34.0,
+      "maximumTorque": 58.0,
+      "minimumDegrees": -28.0,
+      "stiffness": 76.0
+     },
+     {
+      "axis": "swing2",
+      "damping": 13.0,
+      "maximumDegrees": 28.0,
+      "maximumTorque": 58.0,
+      "minimumDegrees": -28.0,
+      "stiffness": 76.0
+     }
+    ],
+    "frameOrientation": [
+     0.0,
+     -0.70710678,
+     0.0,
+     0.70710678
+    ],
+    "type": "spherical"
+   },
+   "massFraction": 0.081,
+   "orientation": [
+    0,
+    0,
+    0,
+    1
+   ],
+   "parent": 4,
+   "position": [
+    -0.013446000404655933,
+    1.9999999949504854e-06,
+    0.7139260172843933
+   ]
+  },
+  {
+   "capsule": {
+    "contactSensor": true,
+    "length": 0.2529720067977905,
+    "material": "body",
+    "orientation": [
+     0.0,
+     0.0,
+     0.7071068286895752,
+     0.7071067094802856
+    ],
+    "position": [
+     -0.009290000423789024,
+     0.019345000386238098,
+     -0.018084999173879623
+    ],
+    "radius": 0.06005199998617172,
+    "radiusAtPositiveX": 0.05979900062084198
+   },
+   "id": "LeftUpperArm",
+   "joint": {
+    "anchor": [
+     -0.06793799996376038,
+     0.18998099863529205,
+     0.4859260022640228
+    ],
+    "axes": [
+     {
+      "axis": "twist",
+      "damping": 25.5,
+      "maximumDegrees": 80.0,
+      "maximumTorque": 300.0,
+      "minimumDegrees": -80.0,
+      "stiffness": 240.0
+     },
+     {
+      "axis": "swing1",
+      "damping": 25.5,
+      "maximumDegrees": 115.0,
+      "maximumTorque": 300.0,
+      "minimumDegrees": -115.0,
+      "stiffness": 240.0
+     },
+     {
+      "axis": "swing2",
+      "damping": 25.5,
+      "maximumDegrees": 95.0,
+      "maximumTorque": 300.0,
+      "minimumDegrees": -95.0,
+      "stiffness": 240.0
+     }
+    ],
+    "frameOrientation": [
+     0.0,
+     0.0,
+     0.70710683,
+     0.70710683
+    ],
+    "type": "spherical"
+   },
+   "massFraction": 0.027,
+   "orientation": [
+    0,
+    0,
+    0,
+    1
+   ],
+   "parent": 3,
+   "position": [
+    -0.06797999888658524,
+    0.3170819878578186,
+    0.4859299957752228
+   ]
+  },
+  {
+   "capsule": {
+    "contactSensor": true,
+    "length": 0.28716999292373657,
+    "material": "body",
+    "orientation": [
+     0.0,
+     0.0,
+     0.7071068286895752,
+     0.7071068286895752
+    ],
+    "position": [
+     -0.002566999988630414,
+     0.027542999014258385,
+     0.0027260000351816416
+    ],
+    "radius": 0.048636000603437424,
+    "radiusAtPositiveX": 0.029877999797463417
+   },
+   "id": "LeftForearm",
+   "joint": {
+    "anchor": [
+     -0.06793799996376038,
+     0.45537298917770386,
+     0.4859260022640228
+    ],
+    "axes": [
+     {
+      "axis": "twist",
+      "damping": 14.0,
+      "maximumDegrees": 145.0,
+      "maximumTorque": 100.0,
+      "minimumDegrees": -5.0,
+      "stiffness": 90.0
+     }
+    ],
+    "frameOrientation": [
+     0.0,
+     0.70710678,
+     0.0,
+     0.70710678
+    ],
+    "type": "spherical"
+   },
+   "massFraction": 0.016,
+   "orientation": [
+    0,
+    0,
+    0,
+    1
+   ],
+   "parent": 6,
+   "position": [
+    -0.06799200177192688,
+    0.5807939767837524,
+    0.4859279990196228
+   ]
+  },
+  {
+   "capsule": {
+    "contactSensor": true,
+    "length": 0.24257899820804596,
+    "material": "body",
+    "orientation": [
+     0.0,
+     0.046207498759031296,
+     0.7192243933677673,
+     0.6932396292686462
+    ],
+    "position": [
+     0.008848000317811966,
+     -0.0033650000113993883,
+     0.038715001195669174
+    ],
+    "radius": 0.04297799989581108
+   },
+   "id": "LeftHand",
+   "joint": {
+    "anchor": [
+     -0.06793799996376038,
+     0.7425429821014404,
+     0.4859260022640228
+    ],
+    "axes": [
+     {
+      "axis": "twist",
+      "damping": 6.0,
+      "maximumDegrees": 70.0,
+      "maximumTorque": 35.0,
+      "minimumDegrees": -70.0,
+      "stiffness": 32.0
+     },
+     {
+      "axis": "swing1",
+      "damping": 6.0,
+      "maximumDegrees": 35.0,
+      "maximumTorque": 35.0,
+      "minimumDegrees": -35.0,
+      "stiffness": 32.0
+     }
+    ],
+    "frameOrientation": [
+     -0.05088475,
+     0.04847355,
+     0.72226328,
+     0.68803835
+    ],
+    "type": "spherical"
+   },
+   "massFraction": 0.006,
+   "orientation": [
+    0,
+    0,
+    0,
+    1
+   ],
+   "parent": 7,
+   "position": [
+    -0.07203300297260284,
+    0.8487409949302673,
+    0.43929600715637207
+   ]
+  },
+  {
+   "capsule": {
+    "contactSensor": true,
+    "length": 0.2529720067977905,
+    "material": "body",
+    "orientation": [
+     0.0,
+     -0.0,
+     -0.7071068286895752,
+     0.7071067094802856
+    ],
+    "position": [
+     -0.00928799994289875,
+     -0.019365999847650528,
+     -0.018060000613331795
+    ],
+    "radius": 0.06005199998617172,
+    "radiusAtPositiveX": 0.05979900062084198
+   },
+   "id": "RightUpperArm",
+   "joint": {
+    "anchor": [
+     -0.06793799996376038,
+     -0.19001899659633636,
+     0.4859260022640228
+    ],
+    "axes": [
+     {
+      "axis": "twist",
+      "damping": 25.5,
+      "maximumDegrees": 80.0,
+      "maximumTorque": 300.0,
+      "minimumDegrees": -80.0,
+      "stiffness": 240.0
+     },
+     {
+      "axis": "swing1",
+      "damping": 25.5,
+      "maximumDegrees": 115.0,
+      "maximumTorque": 300.0,
+      "minimumDegrees": -115.0,
+      "stiffness": 240.0
+     },
+     {
+      "axis": "swing2",
+      "damping": 25.5,
+      "maximumDegrees": 95.0,
+      "maximumTorque": 300.0,
+      "minimumDegrees": -95.0,
+      "stiffness": 240.0
+     }
+    ],
+    "frameOrientation": [
+     -0.0,
+     0.0,
+     -0.70710683,
+     0.70710683
+    ],
+    "type": "spherical"
+   },
+   "massFraction": 0.027,
+   "orientation": [
+    0,
+    0,
+    0,
+    1
+   ],
+   "parent": 3,
+   "position": [
+    -0.06798200309276581,
+    -0.317099004983902,
+    0.4859049916267395
+   ]
+  },
+  {
+   "capsule": {
+    "contactSensor": true,
+    "length": 0.28716999292373657,
+    "material": "body",
+    "orientation": [
+     0.0,
+     0.0,
+     -0.7071068286895752,
+     0.7071068286895752
+    ],
+    "position": [
+     -0.002578000072389841,
+     -0.02757200039923191,
+     0.002750999992713332
+    ],
+    "radius": 0.048636000603437424,
+    "radiusAtPositiveX": 0.029877999797463417
+   },
+   "id": "RightForearm",
+   "joint": {
+    "anchor": [
+     -0.06793799996376038,
+     -0.45541098713874817,
+     0.4859260022640228
+    ],
+    "axes": [
+     {
+      "axis": "twist",
+      "damping": 14.0,
+      "maximumDegrees": 145.0,
+      "maximumTorque": 100.0,
+      "minimumDegrees": -5.0,
+      "stiffness": 90.0
+     }
+    ],
+    "frameOrientation": [
+     0.0,
+     -0.70710678,
+     0.0,
+     0.70710678
+    ],
+    "type": "spherical"
+   },
+   "massFraction": 0.016,
+   "orientation": [
+    0,
+    0,
+    0,
+    1
+   ],
+   "parent": 9,
+   "position": [
+    -0.06798099726438522,
+    -0.5808029770851135,
+    0.4859029948711395
+   ]
+  },
+  {
+   "capsule": {
+    "contactSensor": true,
+    "length": 0.24257899820804596,
+    "material": "body",
+    "orientation": [
+     0.0,
+     0.046207498759031296,
+     -0.7192243933677673,
+     0.6932396292686462
+    ],
+    "position": [
+     0.008914999663829803,
+     0.00533400010317564,
+     0.03961800038814545
+    ],
+    "radius": 0.04297799989581108
+   },
+   "id": "RightHand",
+   "joint": {
+    "anchor": [
+     -0.06793799996376038,
+     -0.7425810098648071,
+     0.4859260022640228
+    ],
+    "axes": [
+     {
+      "axis": "twist",
+      "damping": 6.0,
+      "maximumDegrees": 70.0,
+      "maximumTorque": 35.0,
+      "minimumDegrees": -70.0,
+      "stiffness": 32.0
+     },
+     {
+      "axis": "swing1",
+      "damping": 6.0,
+      "maximumDegrees": 35.0,
+      "maximumTorque": 35.0,
+      "minimumDegrees": -35.0,
+      "stiffness": 32.0
+     }
+    ],
+    "frameOrientation": [
+     0.05088875,
+     0.0484773,
+     -0.72226334,
+     0.68803781
+    ],
+    "type": "spherical"
+   },
+   "massFraction": 0.006,
+   "orientation": [
+    0,
+    0,
+    0,
+    1
+   ],
+   "parent": 10,
+   "position": [
+    -0.07209999859333038,
+    -0.8507480025291443,
+    0.4383929967880249
+   ]
+  },
+  {
+   "capsule": {
+    "contactSensor": true,
+    "length": 0.4077779948711395,
+    "material": "body",
+    "orientation": [
+     0.0,
+     0.7071068286895752,
+     -0.0,
+     0.7071068286895752
+    ],
+    "position": [
+     0.003011999884620309,
+     0.01115499995648861,
+     -0.01747800037264824
+    ],
+    "radius": 0.08237499743700027,
+    "radiusAtPositiveX": 0.062045998871326447
+   },
+   "id": "LeftThigh",
+   "joint": {
+    "anchor": [
+     -0.011003999970853329,
+     0.09100499749183655,
+     -0.0303530003875494
+    ],
+    "axes": [
+     {
+      "axis": "twist",
+      "damping": 71.2,
+      "maximumDegrees": 45.0,
+      "maximumTorque": 875.0,
+      "minimumDegrees": -45.0,
+      "stiffness": 750.0
+     },
+     {
+      "axis": "swing1",
+      "damping": 71.2,
+      "maximumDegrees": 30.0,
+      "maximumTorque": 875.0,
+      "minimumDegrees": -120.0,
+      "stiffness": 750.0
+     },
+     {
+      "axis": "swing2",
+      "damping": 71.2,
+      "maximumDegrees": 42.0,
+      "maximumTorque": 875.0,
+      "minimumDegrees": -42.0,
+      "stiffness": 750.0
+     }
+    ],
+    "frameOrientation": [
+     0.0,
+     -0.70710678,
+     0.0,
+     0.70710678
+    ],
+    "type": "spherical"
+   },
+   "massFraction": 0.112,
+   "orientation": [
+    0,
+    0,
+    0,
+    1
+   ],
+   "parent": 0,
+   "position": [
+    -0.011032000184059143,
+    0.09101100265979767,
+    -0.2368049919605255
+   ]
+  },
+  {
+   "capsule": {
+    "contactSensor": true,
+    "length": 0.41379600763320923,
+    "material": "body",
+    "orientation": [
+     0.0,
+     0.7071077227592468,
+     -1.8000000636675395e-06,
+     0.7071059942245483
+    ],
+    "position": [
+     -0.01311499997973442,
+     -0.004263999871909618,
+     -0.01650499925017357
+    ],
+    "radius": 0.05720899999141693,
+    "radiusAtPositiveX": 0.034669000655412674
+   },
+   "id": "LeftShin",
+   "joint": {
+    "anchor": [
+     -0.011003999970853329,
+     0.09100499749183655,
+     -0.4480080008506775
+    ],
+    "axes": [
+     {
+      "axis": "twist",
+      "damping": 60.1,
+      "maximumDegrees": 145.0,
+      "maximumTorque": 750.0,
+      "minimumDegrees": -5.0,
+      "stiffness": 650.0
+     }
+    ],
+    "frameOrientation": [
+     0.0,
+     0.0,
+     0.70710678,
+     0.70710678
+    ],
+    "type": "spherical"
+   },
+   "massFraction": 0.047,
+   "orientation": [
+    0,
+    0,
+    0,
+    1
+   ],
+   "parent": 12,
+   "position": [
+    -0.011273999698460102,
+    0.09613200277090073,
+    -0.6496710181236267
+   ]
+  },
+  {
+   "box": {
+    "contactSensor": true,
+    "halfExtents": [
+     0.13431000709533691,
+     0.0478300005197525,
+     0.0650940015912056
+    ],
+    "material": "shoe_sole",
+    "orientation": [
+     0.0,
+     0.0,
+     0.07309810072183609,
+     0.9973248243331909
+    ],
+    "position": [
+     -0.004751000087708235,
+     0.003705000039190054,
+     0.01948699913918972
+    ]
+   },
+   "id": "LeftFoot",
+   "joint": {
+    "anchor": [
+     -0.011005000211298466,
+     0.09100399911403656,
+     -0.8618040084838867
+    ],
+    "axes": [
+     {
+      "axis": "twist",
+      "damping": 34.6,
+      "maximumDegrees": 65.0,
+      "maximumTorque": 420.0,
+      "minimumDegrees": -50.0,
+      "stiffness": 360.0
+     },
+     {
+      "axis": "swing1",
+      "damping": 34.6,
+      "maximumDegrees": 35.0,
+      "maximumTorque": 420.0,
+      "minimumDegrees": -35.0,
+      "stiffness": 360.0
+     }
+    ],
+    "frameOrientation": [
+     0.0,
+     0.0,
+     0.70710678,
+     0.70710678
+    ],
+    "type": "spherical"
+   },
+   "massFraction": 0.0145,
+   "orientation": [
+    0,
+    0,
+    0,
+    1
+   ],
+   "parent": 13,
+   "position": [
+    0.060864001512527466,
+    0.09977400302886963,
+    -0.9233329892158508
+   ]
+  },
+  {
+   "capsule": {
+    "contactSensor": true,
+    "length": 0.4077700078487396,
+    "material": "body",
+    "orientation": [
+     0.0,
+     0.7071068286895752,
+     0.0,
+     0.7071068286895752
+    ],
+    "position": [
+     0.003010000102221966,
+     -0.011194000020623207,
+     -0.017486000433564186
+    ],
+    "radius": 0.08237499743700027,
+    "radiusAtPositiveX": 0.06204700097441673
+   },
+   "id": "RightThigh",
+   "joint": {
+    "anchor": [
+     -0.011003999970853329,
+     -0.09099499881267548,
+     -0.030385000631213188
+    ],
+    "axes": [
+     {
+      "axis": "twist",
+      "damping": 71.2,
+      "maximumDegrees": 45.0,
+      "maximumTorque": 875.0,
+      "minimumDegrees": -45.0,
+      "stiffness": 750.0
+     },
+     {
+      "axis": "swing1",
+      "damping": 71.2,
+      "maximumDegrees": 30.0,
+      "maximumTorque": 875.0,
+      "minimumDegrees": -120.0,
+      "stiffness": 750.0
+     },
+     {
+      "axis": "swing2",
+      "damping": 71.2,
+      "maximumDegrees": 42.0,
+      "maximumTorque": 875.0,
+      "minimumDegrees": -42.0,
+      "stiffness": 750.0
+     }
+    ],
+    "frameOrientation": [
+     0.0,
+     -0.70710678,
+     0.0,
+     0.70710678
+    ],
+    "type": "spherical"
+   },
+   "massFraction": 0.112,
+   "orientation": [
+    0,
+    0,
+    0,
+    1
+   ],
+   "parent": 0,
+   "position": [
+    -0.01103300042450428,
+    -0.09096399694681168,
+    -0.23683300614356995
+   ]
+  },
+  {
+   "capsule": {
+    "contactSensor": true,
+    "length": 0.41379600763320923,
+    "material": "body",
+    "orientation": [
+     0.0,
+     0.7071077227592468,
+     1.8000000636675395e-06,
+     0.7071059942245483
+    ],
+    "position": [
+     -0.013113999739289284,
+     0.004224000032991171,
+     -0.01650799997150898
+    ],
+    "radius": 0.05720899999141693,
+    "radiusAtPositiveX": 0.034669000655412674
+   },
+   "id": "RightShin",
+   "joint": {
+    "anchor": [
+     -0.011003999970853329,
+     -0.09099499881267548,
+     -0.4480400085449219
+    ],
+    "axes": [
+     {
+      "axis": "twist",
+      "damping": 60.1,
+      "maximumDegrees": 145.0,
+      "maximumTorque": 750.0,
+      "minimumDegrees": -5.0,
+      "stiffness": 650.0
+     }
+    ],
+    "frameOrientation": [
+     0.0,
+     0.0,
+     0.70710678,
+     0.70710678
+    ],
+    "type": "spherical"
+   },
+   "massFraction": 0.047,
+   "orientation": [
+    0,
+    0,
+    0,
+    1
+   ],
+   "parent": 15,
+   "position": [
+    -0.011274999938905239,
+    -0.09608200192451477,
+    -0.6496999859809875
+   ]
+  },
+  {
+   "box": {
+    "contactSensor": true,
+    "halfExtents": [
+     0.13431300222873688,
+     0.047814998775720596,
+     0.0650940015912056
+    ],
+    "material": "shoe_sole",
+    "orientation": [
+     0.0,
+     0.0,
+     -0.07324620336294174,
+     0.997313916683197
+    ],
+    "position": [
+     -0.003470999887213111,
+     -0.003898999886587262,
+     0.018418999388813972
+    ]
+   },
+   "id": "RightFoot",
+   "joint": {
+    "anchor": [
+     -0.011005000211298466,
+     -0.09099400043487549,
+     -0.8618360161781311
+    ],
+    "axes": [
+     {
+      "axis": "twist",
+      "damping": 34.6,
+      "maximumDegrees": 65.0,
+      "maximumTorque": 420.0,
+      "minimumDegrees": -50.0,
+      "stiffness": 360.0
+     },
+     {
+      "axis": "swing1",
+      "damping": 34.6,
+      "maximumDegrees": 35.0,
+      "maximumTorque": 420.0,
+      "minimumDegrees": -35.0,
+      "stiffness": 360.0
+     }
+    ],
+    "frameOrientation": [
+     0.0,
+     0.0,
+     0.70710678,
+     0.70710678
+    ],
+    "type": "spherical"
+   },
+   "massFraction": 0.0145,
+   "orientation": [
+    0,
+    0,
+    0,
+    1
+   ],
+   "parent": 16,
+   "position": [
+    0.05958300083875656,
+    -0.0995739996433258,
+    -0.9222649931907654
+   ]
+  }
+ ],
+ "selfCollisionIgnoredPairs": [
+  {
+   "links": [
+    "Abdomen",
+    "LeftThigh"
+   ],
+   "reason": "capsula do abdomen desce ate o quadril; contato falso a partir de 45 graus de flexao do quadril"
+  },
+  {
+   "links": [
+    "Abdomen",
+    "RightThigh"
+   ],
+   "reason": "capsula do abdomen desce ate o quadril; contato falso a partir de 45 graus de flexao do quadril"
+  },
+  {
+   "links": [
+    "UpperChest",
+    "Head"
+   ],
+   "reason": "desligado no perfil anterior (sobreposto em repouso); no corpo novo os colisores se afastam, e colidindo o par seria um batente (o queixo no alto do peito ao olhar a bola)"
+  }
+ ],
+ "standingRootHeightMeters": 0.968940019607544,
+ "totalMassKg": 80.0,
+ "uniformRadiusMeters": 0.055
 }

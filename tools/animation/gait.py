@@ -80,6 +80,11 @@ class GaitSpec:
     # Rolagem no inicio do apoio (recuo: a ponta toca e o calcanhar desce) em
     # vez do fim (frente: o calcanhar sobe e a ponta sai por ultimo).
     roll_at_touchdown: bool = False
+    # Contato ate a ponta sair do chao (inclusive na rolagem): o runtime
+    # rola o pe travado sobre a ponta, e o empurrao vai ate o fim com a perna
+    # de apoio - soltando no comeco da rolagem, a perna ja entrava no
+    # balanco (joelho dobrando) com o pe ainda empurrando o chao.
+    contact_through_roll: bool = False
     # Passo lateral (strafe), sem cruzar: cada pe fica do seu lado do corpo e
     # anda ao longo da propria passada. stance_width vira a distancia de cada
     # pe ao centro NO SENTIDO DO MOVIMENTO; os pes nunca chegam mais perto que
@@ -101,6 +106,17 @@ class GaitSpec:
     # Pelve.
     pelvis_drop: float = 0.03       # m abaixo do bind, em media
     pelvis_bob: float = 0.015       # + sobe no meio do apoio (andar), - desce (corrida)
+    # Adianta o ponto mais baixo da pelve (fracao do ciclo): com ele antes
+    # do meio do apoio, a pelve ja sobe no fim do apoio - o empurrao estende a
+    # perna em vez de dobra-la na rolagem sobre a ponta.
+    pelvis_bob_lead: float = 0.0
+    # Corrida (com voo): a altura da pelve pela fisica do passo, vezes este
+    # fator (0 desliga e vale pelvis_bob). No voo, uma parabola balistica -
+    # sai do chao subindo e volta a mesma altura; no apoio (com a rolagem
+    # sobre a ponta), um mergulho que casa a velocidade das duas pontas. A
+    # pelve fica alta no toque e na saida do pe (pernas estendidas) e baixa
+    # so no meio do apoio.
+    pelvis_flight_bob: float = 0.0
     pelvis_sway: float = 0.012      # m para o lado do pe de apoio
     pelvis_yaw: float = 5.0         # graus, pico
     pelvis_list: float = 2.0        # graus, quadril sem apoio cai
@@ -226,7 +242,29 @@ class Gait:
                      - self._foot_state("Right", t)[0]) @ self.phase_axis)
                    for t in np.linspace(0, spec.cycle, 60, endpoint=False)]
         self._spread_mean = float(np.mean(spreads))
+        self._flight_bob_mean = 0.0
+        if spec.pelvis_flight_bob > 0.0:
+            self._flight_bob_mean = float(np.mean([
+                self._flight_bob(t) for t in np.linspace(0, spec.cycle, 240, endpoint=False)]))
         self._spread_norm = max(abs(v - self._spread_mean) for v in spreads)
+
+    def _flight_bob(self, time: float) -> float:
+        """Altura da pelve no passo (m, sem a media): mergulho no apoio,
+        parabola no voo."""
+        spec = self.spec
+        step = spec.cycle / 2.0
+        stance = min(spec.stance_time, step - 1e-3)
+        flight = step - stance
+        g = 9.81
+        v0 = g * flight / 2.0                      # sai do chao subindo
+        dip = v0 * stance / math.pi                # mergulho com a mesma velocidade
+        s = time % step
+        if s < stance:
+            z = -dip * math.sin(math.pi * s / stance)
+        else:
+            t = s - stance
+            z = v0 * t - 0.5 * g * t * t
+        return spec.pelvis_flight_bob * z
 
     # --- pes ----------------------------------------------------------------
     def _foot_rotation(self, side: str, pitch_degrees: float) -> np.ndarray:
@@ -289,7 +327,7 @@ class Gait:
         phase = (time / spec.cycle + offset) % 1.0
         tau = phase * spec.cycle
         if tau < spec.stance_time:
-            contact = 0.0 if self._rolling(tau) else 1.0
+            contact = 0.0 if self._rolling(tau) and not spec.contact_through_roll else 1.0
             return self._stance_ankle(side, tau), self._stance_pitch(tau), contact
         swing_time = spec.cycle - spec.stance_time
         u = (tau - spec.stance_time) / swing_time
@@ -341,7 +379,9 @@ class Gait:
             - spec.lean_travel * math.sin(a)
         pitch = spec.lean_forward + spec.lean_travel * math.cos(a) \
             * (1.0 if abs(a) <= math.pi / 2 else 0.0)
-        bob = spec.pelvis_bob * math.cos(2.0 * mid)
+        bob = spec.pelvis_bob * math.cos(2.0 * (mid + 2.0 * math.pi * spec.pelvis_bob_lead))
+        if spec.pelvis_flight_bob > 0.0:
+            bob = self._flight_bob(time) - self._flight_bob_mean
         sway = spec.pelvis_sway * math.cos(mid)
 
         b = PoseBuilder(self.rig)

@@ -83,7 +83,7 @@ void Application::run() {
             const float deltaTime = std::min(std::chrono::duration<float>(current - previous).count(), 0.25f);
             previous = current;
 
-            accumulator += deltaTime;
+            accumulator += deltaTime * m_timeScale;
             int fixedSteps = 0;
             while (accumulator >= fixedDelta && fixedSteps < std::max(1, m_config.maxFixedStepsPerFrame)) {
                 onUpdate(fixedDelta);

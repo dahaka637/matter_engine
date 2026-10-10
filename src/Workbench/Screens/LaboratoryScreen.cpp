@@ -24,6 +24,16 @@
 namespace MatterEngine::Workbench {
 namespace {
 
+// Locomocao padrao (pedido do usuario, 05/10: as trocas de marcha estavam
+// bruscas, sem deslocamento progressivo): o rumo da capsula gira rapido
+// (rad/s) e a velocidade vai aos poucos (m/s2) - do parado ao trote em
+// ~0,2 s, ao sprint em ~0,5 s, do sprint a zero em ~0,35 s; invertendo,
+// freia antes.
+constexpr float DefaultLocomotionGroundAcceleration = 16.0f;
+constexpr float DefaultLocomotionGroundDeceleration = 22.0f;
+constexpr float DefaultLocomotionTurnRate = 10.0f;
+constexpr float DefaultLocomotionBrake = 30.0f;
+
 constexpr float Pi = 3.14159265358979323846f;
 constexpr float LaboratoryFarPlane = 2000.0f;
 
@@ -350,6 +360,11 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
     bool controllingCharacter = m_controlledCharacterEntityId != 0;
     bool controlledCharacterFrozen = false;
     bool controlledCharacterDown = false;
+    // Correndo (rapido o bastante para o carrinho), com o carrinho armado ou
+    // em curso, o Ctrl e o carrinho: a capsula nao agacha (agachada ela
+    // freava para 2,8 m/s e puxava o corpo para tras - ele reagia como num
+    // tropeco antes do mergulho).
+    bool controlRunningTackle = false;
     if (controllingCharacter) {
         const auto controlled = std::find_if(m_spawnedRagdolls.begin(),
             m_spawnedRagdolls.end(), [&](const SpawnedRagdollInstance& item) {
@@ -371,7 +386,87 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
                 controlled->locomotion.telemetry().state;
             controlledCharacterDown =
                 lastState == CharacterLocomotionState3D::Fallen
-                || lastState == CharacterLocomotionState3D::GettingUp;
+                || lastState == CharacterLocomotionState3D::GettingUp
+                || lastState == CharacterLocomotionState3D::Tackling;
+            const auto& telemetry = controlled->locomotion.telemetry();
+            // (No ar o Ctrl e a voadora, tambem no fisico - 06/10.)
+            controlRunningTackle = m_tackleEnabled
+                && (telemetry.tacklePending || telemetry.tackling
+                    || ((lastState == CharacterLocomotionState3D::Running
+                            || lastState == CharacterLocomotionState3D::Walking)
+                        && telemetry.speedMetersPerSecond > 2.0f)
+                    || (!stateBefore.grounded && m_defaultAirTackle));
+            // Locomocao padrao: o estado e o dela (o carrinho dela; correndo,
+            // o Ctrl e o carrinho).
+            if (m_controlledAnimated) {
+                const bool tackling = controlled->defaultLocomotion.output().tackling;
+                controlledCharacterDown = tackling;
+                const Vec3 v = stateBefore.velocity;
+                // (No ar o Ctrl e o carrinho aereo - a voadora - mesmo parado.)
+                controlRunningTackle = m_tackleEnabled && (tackling || std::hypot(v.x, v.y) > 2.0f
+                    || (!stateBefore.grounded && m_defaultAirTackle));
+            }
+        }
+    }
+
+    // Estresse da bola: o "jogador" automatico (rumo, sprint, olhar, bola
+    // reposta perto e pedidos de toque e chute).
+    if (m_ballStress && controllingCharacter && !m_spawnedRagdolls.empty()) {
+        m_ballStressTime += deltaTime;
+        const auto next = [&]() {
+            m_ballStressState ^= m_ballStressState << 13;
+            m_ballStressState ^= m_ballStressState >> 17;
+            m_ballStressState ^= m_ballStressState << 5;
+            return static_cast<float>(m_ballStressState % 10000u) / 10000.0f;
+        };
+        const auto controlled = std::find_if(m_spawnedRagdolls.begin(), m_spawnedRagdolls.end(),
+            [&](const SpawnedRagdollInstance& item) { return item.entityId == m_controlledCharacterEntityId; });
+        if (m_ballStressTime >= m_ballStressSegmentEnd) {
+            m_ballStressSegmentEnd = m_ballStressTime + 0.3f + 1.0f * next();
+            const float yaw = next() * 6.2831853f;
+            m_ballStressMove = next() < 0.2f ? Vec3 {} : Vec3 { std::cos(yaw), std::sin(yaw), 0.0f };
+            m_ballStressSprint = next() < 0.3f;
+            if (next() < 0.5f) m_laboratoryCameraYaw = next() * 6.2831853f;
+            // (Pulos: o pouso passa ao modo fisico e ele volta ao padrao.
+            // Ctrl curto correndo: o carrinho.)
+            if (next() < 0.2f) m_laboratoryJumpRequested = true;
+            else if (m_ballStressSprint && m_ballStressMove.lengthSquared() > 0.5f && next() < 0.3f) {
+                // (O carrinho e para a frente do olhar: a camera no rumo, e o
+                // Ctrl depois de embalar.)
+                m_laboratoryCameraYaw = std::atan2(m_ballStressMove.y, m_ballStressMove.x);
+                m_ballStressCrouchDelay = 0.6f;
+            }
+        }
+        if (controlled != m_spawnedRagdolls.end() && !controlled->physicsState.links.empty()
+            && m_ballStressTime >= m_ballStressNextPlace && !m_inflatedBalls.empty()) {
+            m_ballStressNextPlace = m_ballStressTime + 0.8f + 1.2f * next();
+            const Vec3 pelvis = controlled->physicsState.links.front().position;
+            const float a = next() * 6.2831853f, d = 0.4f + 2.4f * next();
+            const auto& ball = m_inflatedBalls.front();
+            const float speed = next() < 0.4f ? 3.0f * next() : 0.0f;
+            const float va = next() * 6.2831853f;
+            const Vec3 velocity { speed * std::cos(va), speed * std::sin(va), 0.0f };
+            // (No raio da bola do menu - o tamanho escolhido.)
+            const float radius = m_soccerBallProfile.radiusMeters;
+            const Vec3 spin = cross(Vec3 { 0.0f, 0.0f, 1.0f }, velocity) * (1.0f / radius);
+            m_physicsScene->setInflatedBallMotion(ball.physicsBall,
+                { pelvis.x + d * std::cos(a), pelvis.y + d * std::sin(a), ragdollGroundHeight(pelvis) + radius + 0.005f },
+                velocity, spin);
+        }
+        if (m_ballStressTime >= m_ballStressNextRequest) {
+            m_ballStressNextRequest = m_ballStressTime + 0.15f + 0.6f * next();
+            const float roll = next();
+            {
+                m_ballRequest = roll < 0.55f ? BallActionKind3D::Shot : BallActionKind3D::Dribble;
+                m_ballRequestPower = next();
+                m_ballRequestAimYaw = m_laboratoryCameraYaw + (next() - 0.5f);
+                m_ballRequestLift = next() * 2.0f - 1.0f;
+                m_ballRequestCurve = next() < 0.3f ? next() * 2.0f - 1.0f : 0.0f;
+            }
+            ++m_ballStressRequests;
+            if (m_ballStressRequests % 50 == 0)
+                Log::info("estresse da bola: " + std::to_string(m_ballStressRequests) + " pedidos em "
+                    + std::to_string(m_ballStressTime) + " s");
         }
     }
 
@@ -411,37 +506,75 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
         if (input().keyDown(Key::A)) command.moveDirection -= right;
         command.sprint = input().keyDown(Key::LeftShift)
             || input().keyDown(Key::RightShift);
+        if (m_ballStress && controllingCharacter) {
+            command.moveDirection = m_ballStressMove;
+            command.sprint = m_ballStressSprint;
+        }
         // O personagem olha para a câmera e anda em qualquer direção; para
         // trás ele recua, e recuar tem a velocidade do recuo, não a da
         // caminhada nem a do sprint (ver characterGaitSpeed3D).
+        if (command.moveDirection.lengthSquared() <= 0.0001f) {
+            m_v2RequestValid = false;
+            m_v2RequestTurnRate = 0.0f;
+        }
         if (controllingCharacter && !freeVerticalMovement
             && command.moveDirection.lengthSquared() > 0.0001f) {
             const float travelRelative = std::atan2(
                 command.moveDirection.y, command.moveDirection.x)
                 - movementReferenceYaw;
-            const float wanted = characterGaitSpeed3D(m_avatarGaitSpeeds,
-                travelRelative, command.sprint);
+            const auto controlled = std::find_if(m_spawnedRagdolls.begin(),
+                m_spawnedRagdolls.end(),
+                [&](const SpawnedRagdollInstance& item) {
+                    return item.entityId == m_controlledCharacterEntityId;
+                });
+            // No modo padrao, a tabela dele (oito rumos; de costas na
+            // diagonal perde menos).
+            const float wanted = m_controlledAnimated && controlled != m_spawnedRagdolls.end()
+                ? defaultLocomotionSpeed3D(controlled->defaultLocomotion.settings(),
+                    travelRelative, command.sprint)
+                : characterGaitSpeed3D(m_avatarGaitSpeeds, travelRelative, command.sprint);
             const float nominal = command.sprint
                 ? m_avatarCharacterSettings.sprintSpeed
                 : m_avatarCharacterSettings.walkSpeed;
             if (wanted > 0.0f && nominal > 0.0f) {
                 command.speedScale = wanted / nominal;
             }
-            // Escada e ladeira: o passo encurta e o corpo desacelera junto
-            // (a locomocao diz quanto da velocidade cabe no terreno a frente).
-            const auto controlled = std::find_if(m_spawnedRagdolls.begin(),
-                m_spawnedRagdolls.end(),
-                [&](const SpawnedRagdollInstance& item) {
-                    return item.entityId == m_controlledCharacterEntityId;
-                });
-            if (controlled != m_spawnedRagdolls.end() && wanted > 0.0f) {
+            // Escada, ladeira e curva fechada: o passo encurta e o corpo
+            // desacelera junto (a locomocao diz quanto da velocidade cabe no
+            // terreno a frente e na curva pedida).
+            // (So no modo fisico: no padrao a locomocao fisica nao roda e o
+            // limite ficava parado no ultimo valor - o freio da arrancada
+            // dela deixava o jogador lento ate a proxima ida ao fisico.)
+            if (controlled != m_spawnedRagdolls.end() && wanted > 0.0f && !m_controlledAnimated) {
                 const float limit = controlled->locomotion.telemetry()
                     .terrainSpeedLimit;
                 command.speedScale *= std::clamp(limit / wanted, 0.2f, 1.0f);
             }
+            // Locomocao fisica v2: virando forte a velocidade cai como a de
+            // quem corre cortando, e com pouca ajuda a capsula fica presa a
+            // velocidade do corpo (no chao, so ganhando velocidade).
+            {
+                const Vec3 direction = Vec3 { command.moveDirection.x, command.moveDirection.y, 0.0f }.normalized();
+                const float rate = m_v2RequestValid
+                    ? std::acos(std::clamp(dot(m_v2RequestDirection, direction), -1.0f, 1.0f)) / std::max(deltaTime, 1e-4f)
+                    : 0.0f;
+                m_v2RequestTurnRate += (rate - m_v2RequestTurnRate) * (1.0f - std::exp(-deltaTime / 0.25f));
+                m_v2RequestDirection = direction;
+                m_v2RequestValid = true;
+            }
+            if (controlled != m_spawnedRagdolls.end() && wanted > 0.0f && !m_controlledAnimated
+                && m_adaptivePhysics && m_physicalLocomotionV2 && stateBefore.grounded)
+                command.speedScale *= physicalNavigationTurnScale3D(stateBefore.velocity, command.moveDirection,
+                    m_v2RequestTurnRate, controlled->adaptivePhysics.settings().walkingAssistScale);
+            if (controlled != m_spawnedRagdolls.end() && wanted > 0.0f && !m_controlledAnimated
+                && m_adaptivePhysics && m_physicalLocomotionV2 && stateBefore.grounded) {
+                command.speedScale = physicalNavigationSpeedScale3D(command.moveDirection, command.speedScale,
+                    nominal, controlled->locomotion.physicalState().centerOfMassVelocityWorld,
+                    physicalNavigationLead3D(controlled->adaptivePhysics.settings().walkingAssistScale));
+            }
         }
         const bool control = input().keyDown(Key::LeftControl)
-            || input().keyDown(Key::RightControl);
+            || input().keyDown(Key::RightControl) || m_ballStressCrouchSeconds > 0.0f;
         if (freeVerticalMovement) {
             if (input().keyDown(Key::Space)) command.moveDirection.z += 1.0f;
             command.crouch = stateBefore.flying && control;
@@ -450,10 +583,12 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
             }
             m_laboratoryJumpCharging = false;
         } else {
-            command.crouch = control;
+            command.crouch = control && !controlRunningTackle;
         }
         // Pulo ao soltar o espaco: o tempo segurado decide a altura (um
-        // toque e o pulo padrao; ver characterJumpSpeed3D).
+        // toque e o pulo baixo; ver characterJumpSpeed3D), parado ou em
+        // movimento (pedido do usuario, 05/10 noite). O agachar de preparo
+        // so parado (04/10: agachado correndo, as pernas ficavam travadas).
         if (m_laboratoryJumpCharging) {
             if (input().keyDown(Key::Space)) {
                 m_laboratoryJumpChargeSeconds += deltaTime;
@@ -464,6 +599,18 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
         }
         command.jumpPressed = m_laboratoryJumpRequested;
         command.jumpChargeSeconds = m_laboratoryJumpChargeSeconds;
+        // Carga do manejo de bola: o chute enche em ~1 s, o drible em ~0,6 s (a
+        // aba "Força na bola" muda os dois).
+        if (m_ballShotHeld || m_ballDribbleHeld)
+            m_ballCharge = std::min(1.0f, m_ballCharge
+                + deltaTime / std::max(0.05f, m_ballShotHeld ? m_ballShotChargeSeconds : m_ballTouchChargeSeconds));
+        // O gesto do chute esquece o puxao antigo (~0,15 s): vale o de logo
+        // antes de soltar.
+        m_ballFlick = m_ballShotHeld ? m_ballFlick * std::exp(-deltaTime / 0.15f) : Vec2 {};
+        // A camera mais lenta carregando o chute: entra em ~0,15 s e sai em
+        // ~0,25 s depois de soltar.
+        m_shotCameraSlow = std::clamp(m_shotCameraSlow + (m_ballShotHeld ? deltaTime / 0.15f : -deltaTime / 0.25f),
+            0.0f, 1.0f);
         command.toggleFlight = !controllingCharacter
             && m_laboratoryFlightToggleRequested;
     } else {
@@ -480,6 +627,7 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
     // a protecao e o levantar vao usa-lo. A capsula segue parada nesses
     // estados (acceptsMovement acima).
     m_characterIntent = {};
+    m_characterSpaceHeld = false;
     if (controllingCharacter) {
         m_characterIntent.requestedFacingYawRadians = freeLook
             ? m_characterDesiredFacingYaw : m_laboratoryCameraYaw;
@@ -494,21 +642,33 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
             if (input().keyDown(Key::S)) direction -= planarForward;
             if (input().keyDown(Key::D)) direction += right;
             if (input().keyDown(Key::A)) direction -= right;
-            const bool sprint = input().keyDown(Key::LeftShift)
+            bool sprint = input().keyDown(Key::LeftShift)
                 || input().keyDown(Key::RightShift);
+            if (m_ballStress) {
+                direction = m_ballStressMove;
+                sprint = m_ballStressSprint;
+            }
             m_characterIntent.effort = sprint ? 1.0f : 0.0f;
+            m_characterSpaceHeld = input().keyDown(Key::Space);
             m_characterIntent.crouch = input().keyDown(Key::LeftControl)
-                || input().keyDown(Key::RightControl);
+                || input().keyDown(Key::RightControl) || m_ballStressCrouchSeconds > 0.0f;
+            m_ballStressCrouchSeconds = std::max(0.0f, m_ballStressCrouchSeconds - deltaTime);
+            if (m_ballStressCrouchDelay > 0.0f) {
+                m_ballStressCrouchDelay -= deltaTime;
+                if (m_ballStressCrouchDelay <= 0.0f) m_ballStressCrouchSeconds = 0.1f;
+            }
             direction.z = 0.0f;
             if (direction.lengthSquared() > 0.0001f) {
                 direction = direction.normalized();
-                float speed = characterGaitSpeed3D(m_avatarGaitSpeeds,
-                    std::atan2(direction.y, direction.x) - movementReferenceYaw, sprint);
                 const auto controlled = std::find_if(m_spawnedRagdolls.begin(),
                     m_spawnedRagdolls.end(), [&](const SpawnedRagdollInstance& item) {
                         return item.entityId == m_controlledCharacterEntityId;
                     });
-                if (controlled != m_spawnedRagdolls.end()) {
+                const float relative = std::atan2(direction.y, direction.x) - movementReferenceYaw;
+                float speed = m_controlledAnimated && controlled != m_spawnedRagdolls.end()
+                    ? defaultLocomotionSpeed3D(controlled->defaultLocomotion.settings(), relative, sprint)
+                    : characterGaitSpeed3D(m_avatarGaitSpeeds, relative, sprint);
+                if (controlled != m_spawnedRagdolls.end() && !m_controlledAnimated) {
                     speed = std::min(speed, controlled->locomotion.telemetry().terrainSpeedLimit);
                 }
                 m_characterIntent.requestedDirectionWorld = direction;
@@ -519,12 +679,23 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
 
     CharacterMotorSettings3D activeSettings = controllingCharacter
         ? m_avatarCharacterSettings : m_characterSettings;
-    if (controllingCharacter && m_adaptivePhysics) {
-        activeSettings = adaptiveCharacterMotorSettings3D(activeSettings, stateBefore, command);
+    if (controllingCharacter && m_adaptivePhysics && m_controlledAnimated) {
+        // Locomocao padrao: a capsula chega na velocidade definida quase na
+        // hora e troca de direcao do mesmo jeito (como na Unreal) - o corpo e
+        // so a animacao em cima dela.
+        activeSettings.groundAcceleration = DefaultLocomotionGroundAcceleration;
+        activeSettings.groundDeceleration = DefaultLocomotionGroundDeceleration;
+        activeSettings.groundTurnRate = DefaultLocomotionTurnRate;
+        activeSettings.groundBrakeDeceleration = DefaultLocomotionBrake;
+    } else if (controllingCharacter && m_adaptivePhysics) {
+        activeSettings = adaptiveCharacterMotorSettings3D(activeSettings, stateBefore, command,
+            m_physicalLocomotionV2 ? physicalNavigationAcceleration3D(m_e5WalkingAssistPercent * 0.01f) : 0.0f);
     }
     // Carga do pulo: o agachar de preparacao enquanto segura e, no pulo, a
     // carga que o corpo usa para o impulso.
     m_laboratoryJumpCrouch = m_laboratoryJumpCharging && stateBefore.grounded
+        && command.moveDirection.lengthSquared() <= 0.0001f
+        && std::hypot(stateBefore.velocity.x, stateBefore.velocity.y) <= 1.0f
         ? characterJumpCharge3D(activeSettings, m_laboratoryJumpChargeSeconds) : 0.0f;
     if (command.jumpPressed) {
         m_laboratoryJumpCharge = characterJumpCharge3D(activeSettings,
@@ -556,9 +727,42 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
         command.followVelocity = m_characterFollowVelocity;
         command.navigationProxy = true;
     }
+    // A voadora animada no ar (o padrao, ate encostar em algo): a capsula
+    // segue no embalo do pulo. Com o carrinho em andamento o jogador conta como
+    // caido e a capsula fica sem teclas - no ar ela freava ~2 m/s num voo de
+    // meio segundo e o deslize saia lento.
+    if (controllingCharacter && m_adaptivePhysics && m_controlledAnimated && !stateBefore.grounded) {
+        const auto controlled = std::find_if(m_spawnedRagdolls.begin(), m_spawnedRagdolls.end(),
+            [&](const SpawnedRagdollInstance& item) { return item.entityId == m_controlledCharacterEntityId; });
+        if (controlled != m_spawnedRagdolls.end() && controlled->defaultLocomotion.output().airTackle) {
+            const Vec3 flat { stateBefore.velocity.x, stateBefore.velocity.y, 0.0f };
+            const float speed = flat.length();
+            if (speed > 0.05f && activeSettings.sprintSpeed > 0.1f) {
+                command.moveDirection = flat * (1.0f / speed);
+                command.sprint = true;
+                command.speedScale = speed / activeSettings.sprintSpeed;
+            }
+        }
+    }
     m_physicsScene->moveCharacter(command, activeSettings, deltaTime);
     const PhysicsCharacterState3D& character =
         m_physicsScene->characterState();
+    // Batida da capsula: a velocidade no plano caiu, no rumo que tinha, mais
+    // do que a frenagem dela tira num tick (parede no caminho). Pelo quanto
+    // ela andou de fato: a velocidade dela e a pedida, e travada numa parede
+    // seguia dizendo 3 m/s parada no lugar - a batida nunca contava e o corpo
+    // do padrao corria parado ate um pe encostar (sem embalo nenhum).
+    {
+        const Vec3 moved { (character.position.x - stateBefore.position.x) / std::max(deltaTime, 1e-4f),
+            (character.position.y - stateBefore.position.y) / std::max(deltaTime, 1e-4f), 0.0f };
+        const Vec3 before = m_capsuleMovedVelocity;
+        const float speed = before.length();
+        const float braking = std::max({ activeSettings.groundAcceleration, activeSettings.groundDeceleration,
+            activeSettings.groundBrakeDeceleration }) * deltaTime;
+        m_controlledWallImpact = controllingCharacter && speed > 0.5f && character.grounded
+            ? std::max(0.0f, dot(before - moved, before * (1.0f / speed)) - braking) : 0.0f;
+        m_capsuleMovedVelocity = moved;
+    }
     if (character.flightExitBlocked) {
         m_laboratoryStatus = "Saia da geometria para desativar o voo";
     } else if (m_laboratoryStatus
@@ -1033,12 +1237,17 @@ void WorkbenchApp::resetLaboratoryCharacter() {
 
 void WorkbenchApp::releaseLaboratoryAssets(Renderer& activeRenderer) {
     endPhysGunGrab();
+    // A camera lenta e do laboratorio: fora dele, tempo real.
+    setTimeScale(1.0f);
     if (m_physicsScene) {
         for (const SpawnedRagdollInstance& instance : m_spawnedRagdolls) {
             m_physicsScene->destroyRagdoll(instance.physicsRagdoll);
         }
         for (const SpawnedPropInstance& instance : m_spawnedProps) {
             m_physicsScene->destroyBody(instance.physicsBody);
+        }
+        for (const SpawnedInflatedBallInstance& ball : m_inflatedBalls) {
+            m_physicsScene->destroyInflatedBall(ball.physicsBall);
         }
         for (const PhysicsBodyHandle3D body : m_laboratoryMapBodies) {
             m_physicsScene->destroyBody(body);
@@ -1048,6 +1257,7 @@ void WorkbenchApp::releaseLaboratoryAssets(Renderer& activeRenderer) {
     m_spawnedRagdolls.clear();
     m_spawnedProps.clear();
     m_spawnedPropByBodyIndex.clear();
+    m_inflatedBalls.clear();
     m_physicsBenchmarkPropEntityIds.clear();
     m_physicsBenchmarkRagdollEntityIds.clear();
     m_physicsBenchmarkRunning = false;
@@ -1055,8 +1265,9 @@ void WorkbenchApp::releaseLaboratoryAssets(Renderer& activeRenderer) {
     m_physicsBenchmarkSpawnedProps = 0;
     m_physicsBenchmarkSpawnedRagdolls = 0;
     m_laboratoryMapBodies.clear();
-    m_impactAcousticResolver.reset();
     m_propCatalog.release(activeRenderer);
+    releaseGpuModel3D(activeRenderer, m_soccerBallVisual);
+    m_soccerBallCage.clear();
     releaseGpuModel3D(activeRenderer, m_characterVisual);
     for (GpuModel3D& visual : m_ragdollLinkVisuals) {
         releaseGpuModel3D(activeRenderer, visual);
@@ -1068,8 +1279,8 @@ void WorkbenchApp::releaseLaboratoryAssets(Renderer& activeRenderer) {
     m_ragdollAssetsLoadFailed = false;
     releaseGpuModel3D(activeRenderer, m_physGunVisual);
     m_physGunVisualLoaded = false;
-    releaseGpuModel3D(activeRenderer, m_objectViewerFloor);
-    m_objectViewerFloorLoaded = false;
+    releaseGpuModel3D(activeRenderer, m_viewerFloor);
+    m_viewerFloorLoaded = false;
     m_propAssetsLoadFailed = false;
     for (LaboratoryMapPart& part : m_laboratoryMapParts) {
         if (part.vertexBuffer) {
@@ -1114,6 +1325,15 @@ void WorkbenchApp::releaseLaboratoryAssets(Renderer& activeRenderer) {
 
 void WorkbenchApp::renderLaboratory3D(Renderer& activeRenderer) {
     ensureLaboratoryMapLoaded(activeRenderer);
+    // O tamanho da bola mudou: a malha dela no raio novo (antes de montar o
+    // quadro - nada desenhado ainda usa a antiga).
+    if (m_soccerBallVisualDirty) {
+        m_soccerBallVisualDirty = false;
+        releaseGpuModel3D(activeRenderer, m_soccerBallVisual);
+        m_soccerBallVisual = {};
+        ensureSoccerBallVisual(activeRenderer);
+        m_propPreviewAtlas = {};
+    }
     updateLaboratoryCamera(applicationFrameMetrics().fixedStepAlpha);
     if (!m_spawnPropWhenReadyId.empty() && m_laboratoryMapLoaded
         && m_propCatalog.loaded()) {
@@ -1664,8 +1884,34 @@ void WorkbenchApp::renderLaboratory3D(Renderer& activeRenderer) {
             }
             instance.renderedPositions = positions;
             instance.renderedOrientations = orientations;
-            instance.skinMatrices=buildRagdollSkinMatrices3D(*m_ragdollCharacter,positions,orientations);
-            instance.previousSkinMatrices=buildRagdollSkinMatrices3D(*m_ragdollCharacter,previousPositions,previousOrientations);
+            // Os ossos visuais (07/10): os dedos do pe no chao embaixo de cada
+            // pe e a pose das maos (com transicao no tempo do quadro).
+            const double now = ImGui::GetTime();
+            const float poseDt = instance.visualPoseTime >= 0.0
+                ? static_cast<float>(std::clamp(now - instance.visualPoseTime, 0.0, 0.1)) : 0.0f;
+            instance.visualPoseTime = now;
+            {
+                RagdollVisualPoseInput3D visualInput;
+                visualInput.linkPositions = positions;
+                visualInput.linkOrientations = orientations;
+                for (std::size_t side = 0; side < 2; ++side) {
+                    const char* id = side == 0 ? "LeftFoot" : "RightFoot";
+                    for (std::size_t link = 0; link < m_ragdollCharacter->profile.links.size(); ++link)
+                        if (link < positions.size() && m_ragdollCharacter->profile.links[link].id == id)
+                            visualInput.groundHeight[side] = ragdollGroundHeight(positions[link]);
+                }
+                visualInput.handPose = { m_handPose, m_handPose };
+                visualInput.toesFollowGround = m_toeRoll;
+                visualInput.deltaTime = poseDt;
+                instance.previousVisualRotations = instance.visualRotations;
+                instance.visualRotations = instance.visualPose.update(*m_ragdollCharacter, visualInput);
+                if (instance.previousVisualRotations.size() != instance.visualRotations.size())
+                    instance.previousVisualRotations = instance.visualRotations;
+            }
+            instance.skinMatrices=buildRagdollSkinMatrices3D(*m_ragdollCharacter,positions,orientations,
+                instance.visualRotations);
+            instance.previousSkinMatrices=buildRagdollSkinMatrices3D(*m_ragdollCharacter,previousPositions,
+                previousOrientations,instance.previousVisualRotations);
             const auto first=meshes.size();
             appendGpuModelRenderables(m_characterVisual, {}, {}, {}, {},
                 1.0f, highlighted, highlighted, ragdollCastsShadow, meshes);
@@ -1673,6 +1919,7 @@ void WorkbenchApp::renderLaboratory3D(Renderer& activeRenderer) {
                 meshes[i].skinMatrices=instance.skinMatrices;
                 meshes[i].previousSkinMatrices=instance.previousSkinMatrices;
                 meshes[i].flatShaded=m_ragdollCharacter->flatShaded;
+                meshes[i].facet=m_ragdollCharacter->facet;
                 meshes[i].pixelArtHighDetail=true;
                 meshes[i].visibleInCamera=ragdollVisible;
                 meshes[i].shadowCascadeMask=ragdollShadowMask;
@@ -1722,6 +1969,9 @@ void WorkbenchApp::renderLaboratory3D(Renderer& activeRenderer) {
             }
         }
     }
+
+    appendInflatedBallRenderables(meshes, cameraFrustum, lightFrustums,
+        temporalHistoryValid);
 
     Vec3 renderedWeaponPosition;
     Quaternion renderedWeaponOrientation;
@@ -1898,6 +2148,7 @@ void WorkbenchApp::renderLaboratory3D(Renderer& activeRenderer) {
         for (SpawnedRagdollInstance& instance : m_spawnedRagdolls) {
             instance.previousPhysicsState = instance.physicsState;
         }
+        finishInflatedBallFrame();
         if (renderedWeapon) {
             m_previousPhysGunWeaponPosition = renderedWeaponPosition;
             m_previousPhysGunWeaponOrientation = renderedWeaponOrientation;
@@ -2166,6 +2417,108 @@ void WorkbenchApp::drawLaboratoryUi() {
     drawWorkbenchHeader(background, io.DisplaySize, m_uiScale,
         "LABORATÓRIO", headerStatus);
 
+
+    // Barra de forca do manejo de bola: centro, embaixo; vermelha no chute,
+    // azul no drible. Aparece carregando e um instante depois de soltar.
+    if (m_controlledCharacterEntityId != 0) {
+        m_ballBarSeconds = std::max(0.0f, m_ballBarSeconds - io.DeltaTime);
+        const bool charging = m_ballShotHeld || m_ballDribbleHeld;
+        if (charging || m_ballBarSeconds > 0.0f) {
+            const float width = ui(360.0f), height = ui(14.0f);
+            const ImVec2 from { io.DisplaySize.x * 0.5f - width * 0.5f, io.DisplaySize.y - ui(58.0f) };
+            const ImVec2 to { from.x + width, from.y + height };
+            const float alpha = charging ? 1.0f : std::clamp(m_ballBarSeconds / 0.3f, 0.0f, 1.0f);
+            const auto a = [&](int value) { return static_cast<int>(value * alpha); };
+            foreground->AddRectFilled({ from.x - ui(3.0f), from.y - ui(3.0f) }, { to.x + ui(3.0f), to.y + ui(3.0f) },
+                IM_COL32(10, 14, 20, a(190)), ui(4.0f));
+            const float level = charging ? m_ballCharge : m_ballRequestPower;
+            const ImU32 fill = m_ballBarShot ? IM_COL32(222, 52, 46, a(240)) : IM_COL32(52, 128, 232, a(240));
+            if (level > 0.001f)
+                foreground->AddRectFilled(from, { from.x + width * level, to.y }, fill, ui(3.0f));
+            foreground->AddRect(from, to, IM_COL32(220, 230, 240, a(150)), ui(3.0f));
+            const char* label = m_ballBarShot ? "CHUTE" : "DRIBLE";
+            foreground->AddText({ from.x, from.y - ui(20.0f) }, IM_COL32(230, 236, 244, a(220)), label);
+            // Chute: o gesto (quadradinho a direita) - o ponto sobe para bola
+            // alta, desce para rasteira, vai ao lado do efeito.
+            if (m_ballBarShot) {
+                const float lift = charging ? ballFlickShape(-m_ballFlick.y) : m_ballRequestLift;
+                const float curve = charging ? ballFlickShape(m_ballFlick.x) : m_ballRequestCurve;
+                const float half = ui(17.0f);
+                const ImVec2 middle { to.x + ui(14.0f) + half, (from.y + to.y) * 0.5f - ui(6.0f) };
+                foreground->AddRectFilled({ middle.x - half, middle.y - half }, { middle.x + half, middle.y + half },
+                    IM_COL32(10, 14, 20, a(190)), ui(4.0f));
+                foreground->AddLine({ middle.x - half, middle.y }, { middle.x + half, middle.y }, IM_COL32(220, 230, 240, a(60)));
+                foreground->AddLine({ middle.x, middle.y - half }, { middle.x, middle.y + half }, IM_COL32(220, 230, 240, a(60)));
+                foreground->AddCircleFilled({ middle.x + curve * (half - ui(4.0f)), middle.y - lift * (half - ui(4.0f)) },
+                    ui(3.5f), IM_COL32(250, 210, 80, a(240)));
+            }
+        }
+    }
+
+    // A area do manejo de bola e o contato previsto (opcao do menu do
+    // personagem, V3): o circulo no chao e na cintura, o ponto onde o pe vai
+    // encontrar a bola (laranja ate a forca sair) e o pedido guardado.
+    if (m_showBallReach && m_controlledCharacterEntityId != 0) {
+        for (const SpawnedRagdollInstance& instance : m_spawnedRagdolls) {
+            if (instance.entityId != m_controlledCharacterEntityId || instance.physicsState.links.empty()) continue;
+            const BallReachZone3D& zone = instance.ballControl.reachZone();
+            const BallControlOutput3D& last = instance.ballLastOutput;
+            const Vec3 pelvis = instance.physicsState.links.front().position;
+            float ground = pelvis.z;
+            for (const auto& link : instance.physicsState.links) ground = std::min(ground, link.position.z - 0.07f);
+            const float waist = pelvis.z + zone.waistAbovePelvis;
+            // (Mais forte com o pedido guardado esperando a bola.)
+            const ImU32 zoneColor = last.pending ? IM_COL32(255, 200, 90, 190) : IM_COL32(90, 200, 255, 150);
+            const auto line3 = [&](Vec3 a, Vec3 b, ImU32 color, float thickness) {
+                ImVec2 sa, sb;
+                if (projectToScreen(m_laboratoryViewProjection, a, io.DisplaySize, sa)
+                    && projectToScreen(m_laboratoryViewProjection, b, io.DisplaySize, sb))
+                    background->AddLine(sa, sb, color, thickness);
+            };
+            constexpr int Segments = 40;
+            for (int k = 0; k < Segments; ++k) {
+                const float a0 = 6.2831853f * k / Segments, a1 = 6.2831853f * (k + 1) / Segments;
+                const Vec3 d0 { std::cos(a0) * zone.radius, std::sin(a0) * zone.radius, 0.0f };
+                const Vec3 d1 { std::cos(a1) * zone.radius, std::sin(a1) * zone.radius, 0.0f };
+                line3({ pelvis.x + d0.x, pelvis.y + d0.y, ground }, { pelvis.x + d1.x, pelvis.y + d1.y, ground },
+                    zoneColor, ui(1.6f));
+                line3({ pelvis.x + d0.x, pelvis.y + d0.y, waist }, { pelvis.x + d1.x, pelvis.y + d1.y, waist },
+                    IM_COL32(90, 200, 255, 80), ui(1.0f));
+                if (k % 10 == 0)
+                    line3({ pelvis.x + d0.x, pelvis.y + d0.y, ground }, { pelvis.x + d0.x, pelvis.y + d0.y, waist },
+                        IM_COL32(90, 200, 255, 60), ui(1.0f));
+            }
+            // A hitbox de cada pe (a caixa dele aumentada da folga): amarela no
+            // pe que joga.
+            if (last.hitboxMargin > 0.0f) {
+                for (int side = 0; side < 2; ++side) {
+                    Vec3 center, half;
+                    Quaternion orientation;
+                    if (!instance.ballControl.footBox(instance.physicsState, side, center, orientation, half)) continue;
+                    half += Vec3 { last.hitboxMargin, last.hitboxMargin, last.hitboxMargin };
+                    Vec3 corners[8];
+                    for (int k = 0; k < 8; ++k)
+                        corners[k] = center + orientation.rotate({ (k & 1) ? half.x : -half.x, (k & 2) ? half.y : -half.y,
+                            (k & 4) ? half.z : -half.z });
+                    const ImU32 boxColor = side == last.side ? IM_COL32(255, 220, 70, 220) : IM_COL32(90, 200, 255, 120);
+                    for (int a = 0; a < 8; ++a)
+                        for (int bit = 1; bit < 8; bit <<= 1)
+                            if (!(a & bit)) line3(corners[a], corners[a | bit], boxColor, ui(1.3f));
+                }
+            }
+            if (last.contactValid) {
+                // O contato previsto: uma cruz no ponto e a linha ate o chao.
+                const Vec3 p = last.contactPoint;
+                const float r = 0.11f;
+                const ImU32 contactColor = last.secondsToForce >= 0.0f ? IM_COL32(255, 150, 50, 230)
+                    : IM_COL32(120, 255, 140, 200);
+                line3({ p.x - r, p.y, p.z }, { p.x + r, p.y, p.z }, contactColor, ui(2.0f));
+                line3({ p.x, p.y - r, p.z }, { p.x, p.y + r, p.z }, contactColor, ui(2.0f));
+                line3({ p.x, p.y, p.z - r }, { p.x, p.y, p.z + r }, contactColor, ui(2.0f));
+                line3({ p.x, p.y, ground }, { p.x, p.y, p.z }, IM_COL32(255, 150, 50, 90), ui(1.0f));
+            }
+        }
+    }
 
     const ImVec2 center { io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f };
     if (!m_hidePhysGunPresentation) {
@@ -2442,9 +2795,6 @@ void WorkbenchApp::drawLaboratoryUi() {
                         : ImVec4 { 0.72f, 0.76f, 0.82f, 1.0f },
                     "%s", isControlling
                         ? "CONTROLE ATIVO" : "CONTROLE LIVRE");
-                ImGui::TextWrapped(m_biomechanicalExperiment
-                    ? "Locomoção procedural de base flutuante. Contato físico, centro de massa, passos, arco dos pés, IK e movimento corporal são resolvidos sem clips de animação."
-                    : "Personagem físico com animação, apoio dos pés e recuperação de equilíbrio.");
                 ImGui::Dummy({ 1.0f, ui(8.0f) });
                 if (!isControlling && !hasCandidate) ImGui::BeginDisabled();
                 if (ImGui::Button(isControlling
@@ -2458,331 +2808,293 @@ void WorkbenchApp::drawLaboratoryUi() {
                     ImGui::TextWrapped(
                         "Crie um Crash Test Dummy ativo pelo menu de spawn.");
                 }
-                if (!m_biomechanicalExperiment) {
-                    // Explicacoes so ao passar o mouse (o painel ficava tomado
-                    // de texto).
-                    const auto hint = [](const char* text) {
-                        if (!ImGui::IsItemHovered()) return;
-                        ImGui::BeginTooltip();
-                        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 24.0f);
-                        ImGui::TextUnformatted(text);
-                        ImGui::PopTextWrapPos();
-                        ImGui::EndTooltip();
-                    };
-                    ImGui::Checkbox("Variação de movimento", &m_motionVariety);
-                    hint("Braços, tronco e cabeça variam um pouco a cada passada; parado, ele respira e às vezes desvia o olhar. Cada boneco tem o seu jeito.");
-                    if (m_motionVariety) {
-                        ImGui::SliderFloat("##variacao", &m_motionVarietyPercent, 0.0f, 200.0f, "Intensidade %.0f%%");
-                        hint("Intensidade da variação de movimento.");
-                    }
-                    ImGui::Checkbox("Pé com mola", &m_footSpring);
-                    hint("No ar o pé acompanha a passada e chega paralelo ao chão onde vai pisar; no toque o tornozelo cede e amortece.");
-                    if (m_footSpring) {
-                        ImGui::Checkbox("Tornozelo contra a queda", &m_ankleBalance);
-                        hint("O pé de apoio pressiona a ponta, o calcanhar ou a borda contra o lado para onde o corpo está caindo.");
-                    }
-                    bool adaptive = m_adaptivePhysics;
-                    if (ImGui::Checkbox("Física adaptativa",
-                            &adaptive)) {
-                        m_adaptivePhysics = adaptive;
-                        m_characterFollowVelocity = {};
-                        if (isControlling) {
-                            controlled->adaptivePhysics.reset(
-                                *m_humanRagdollProfile);
-                        }
-                    }
-                    hint("A pelve vai à pose por força limitada, só com os pés apoiados; empurrões e batidas agem no corpo de verdade. Vale para todos os bonecos.");
-                    if (m_adaptivePhysics) {
-                        ImGui::Checkbox("Animação + pés + ajuda discreta (E5)", &m_legsWalkingE5);
-                        hint("Andando, a animação decide a passada e o percentual regula junto propulsão, correção e postura auxiliares; parado, as pernas equilibram com a parcela escolhida.");
-                        if (m_legsWalkingE5) {
-                            ImGui::SliderFloat("Ajuda da pelve parado", &m_e5StandingAssistPercent, 0.0f, 100.0f, "%.0f%%");
-                            hint("Parcela auxiliar aplicada diretamente na pelve. Em 0%, a pelve nao recebe sustentacao, correcao nem postura externas; motores musculares, compensacao de gravidade e equilibrio fisico pelas pernas continuam ativos.");
-                            ImGui::SliderFloat("Ajuda andando", &m_e5WalkingAssistPercent, 0.0f, 100.0f, "%.0f%%");
-                            ImGui::Checkbox("Pé consciente", &m_e5FootPlacement);
-                            hint("O pé em balanço corrige onde pousa quando o corpo sai da velocidade pedida (empurrão, tropeço).");
-                        }
-                        ImGui::Checkbox("Parado só pelas pernas (E4)", &m_legsOnlyStanding);
-                        hint("Parado, sem sustentação nem correção na pelve: o chão sustenta e equilibra o corpo pelos pés. (Com a E5 ligada, a E5 decide.)");
-                        if (m_legsOnlyStanding) {
-                            ImGui::Checkbox("Postura também pelas pernas (E4)", &m_legsPostureStanding);
-                            hint("Sem torque na pelve: a postura do tronco vem do chão pelos pés. (Com a E5 ligada, a E5 decide.)");
-                        }
-                    }
-                }
-                if (m_biomechanicalExperiment) {
-                    ImGui::SliderFloat("Assistência de equilíbrio",
-                        &m_biomechanicalBalanceAssistPercent,
-                        0.0f, 100.0f, "%.0f%%");
-                }
-                ImGui::TextDisabled("(?) Sobre o corpo");
-                if (ImGui::IsItemHovered()) {
+                // So o que ainda se ajusta (pedido do usuario, 05/10 noite: o
+                // resto ja esta consolidado e fica nos padroes); explicacoes
+                // so ao passar o mouse.
+                const auto hint = [](const char* text) {
+                    if (!ImGui::IsItemHovered()) return;
                     ImGui::BeginTooltip();
                     ImGui::PushTextWrapPos(ImGui::GetFontSize() * 24.0f);
-                    ImGui::TextUnformatted(m_biomechanicalExperiment
-                        ? "O contato real decide o apoio; o planejador transfere peso, abre o passo e pousa o pé. A assistência limitada estabiliza e impulsiona o corpo sem escrever transforms."
-                        : m_adaptivePhysics
-                        ? "Corpo único e físico: as juntas são movidas por motores e colidem de verdade. Caído, os músculos cedem e recobram o tônus aos poucos; o levantar é feito pelos motores, com uma ajuda discreta."
-                        : "Corpo único e físico: as juntas são movidas por motores e colidem de verdade; a raiz é carregada pela cápsula. O auxílio cai sozinho conforme o impacto (ver PESO FÍSICO).");
+                    ImGui::TextUnformatted(text);
                     ImGui::PopTextWrapPos();
                     ImGui::EndTooltip();
-                }
-
-                panelHeader("COMANDOS");
-                if (m_biomechanicalExperiment) {
-                    ImGui::TextUnformatted("WASD  passada física experimental");
-                    ImGui::TextUnformatted("Shift  passo mais rápido");
-                } else {
-                    ImGui::TextUnformatted("WASD  mover em 8 direções");
-                    ImGui::TextUnformatted("Shift  correr");
-                    ImGui::TextUnformatted("Ctrl  agachar");
-                    ImGui::TextUnformatted("Espaço  pular (segure para pular mais alto)");
-                }
-                ImGui::TextUnformatted("Mouse  câmera e direção corporal");
-                if (isControlling) {
-                    if (ImGui::TreeNode(m_adaptivePhysics
-                            ? "Diagnóstico físico" : "Diagnóstico físico (só medição)")) {
-                        const auto& physical = controlled->adaptivePhysics.output();
-                        ImGui::Text("Apoio dos pés: %.2f (sem contato há %.2f s)",
-                            physical.supportAuthority,
-                            physical.secondsWithoutFootContact);
-                        ImGui::Text("Inclinação além da pose: %.1f° | ajuda restante: %.2f",
-                            physical.tiltErrorDegrees,
-                            physical.uprightAuthorityShare);
-                        ImGui::Text("Contato externo recente: %.2f | alavanca: %.0f Nm",
-                            physical.perturbation,
-                            physical.correctionLeverWorld.length());
-                        ImGui::Text("Força na pelve: %.0f N | postura: %.0f Nm",
-                            physical.rootForceWorld.length(), physical.rootTorqueWorld.length());
-                        ImGui::Text("Erro corpo/navegacao: %.3f m", physical.proxyErrorMeters);
-                        if (physical.strongestInteractionLink < m_humanRagdollProfile->links.size()) {
-                            ImGui::Text("Contato: %s | %.3f Ns%s",
-                                m_humanRagdollProfile->links[physical.strongestInteractionLink].id.c_str(),
-                                physical.strongestImpulse,
-                                physical.interactionImpulseEstimated ? " (estimado)" : "");
+                };
+                const auto percent = [&](const char* label, const char* id, float* value,
+                        float minimum, float maximum, const char* text) {
+                    ImGui::TextUnformatted(label);
+                    ImGui::SetNextItemWidth(-1.0f);
+                    ImGui::SliderFloat(id, value, minimum, maximum, "%.0f%%", ImGuiSliderFlags_AlwaysClamp);
+                    hint(text);
+                };
+                // Abas (06/10): o geral, a forca na bola (07/10) e as velocidades do
+                // modo padrao.
+                if (ImGui::BeginTabBar("##CharacterTabs")) {
+                    if (ImGui::BeginTabItem("Geral")) {
+                        panelHeader("LOCOMOÇÃO");
+                        {
+                            const char* modes[] = { "Padrão", "Físico total" };
+                            int mode = m_defaultLocomotion ? 0 : 1;
+                            ImGui::SetNextItemWidth(-1.0f);
+                            if (ImGui::Combo("##LocomotionMode", &mode, modes, 2)) m_defaultLocomotion = mode == 0;
+                            hint("Padrão: o corpo segue a animação (com massa) e vai ao físico numa pancada, parede ou queda, voltando quando assenta. Físico total: sempre pelos músculos e pelas ajudas.");
+                            // (A locomocao fisica v2 e o "tentar se manter em pe no
+                            // impacto" viraram o padrao - as caixas sairam, pedido do
+                            // usuario, 06/10.)
                         }
-                        ImGui::TreePop();
-                    }
-                    ImGui::TextUnformatted("Alt  olhar livre (continua andando)");
-                    ImGui::TextUnformatted("U  congelar / descongelar ragdoll");
-                    ImGui::TextUnformatted("T  restaurar pose inicial");
-                    if (controlled->frozen
-                        || controlled->physicsState.frozen) {
-                        ImGui::TextColored(
-                            { 0.38f, 0.76f, 1.0f, 1.0f },
-                            "RAGDOLL CONGELADO PARA INSPEÇÃO");
-                    }
-                }
-
-                if (isControlling) {
-                    if (m_biomechanicalExperiment) {
-                        const auto& telemetry =
-                            controlled->biomechanics.telemetry();
-                        const char* phase = "ACOMODANDO PESO";
-                        switch (telemetry.phase) {
-                        case BiomechanicalBipedPhase3D::Settling:
-                            phase = "ACOMODANDO PESO"; break;
-                        case BiomechanicalBipedPhase3D::Standing:
-                            phase = "EQUILÍBRIO"; break;
-                        case BiomechanicalBipedPhase3D::Walking:
-                            phase = "PASSADA FÍSICA"; break;
-                        case BiomechanicalBipedPhase3D::CaptureStep:
-                            phase = "PASSO DE CAPTURA"; break;
-                        case BiomechanicalBipedPhase3D::GettingUp:
-                            phase = "LEVANTANDO PROCEDURALMENTE"; break;
-                        case BiomechanicalBipedPhase3D::Unsupported:
-                            phase = "SEM APOIO"; break;
-                        case BiomechanicalBipedPhase3D::Fallen:
-                            phase = "CAÍDO"; break;
+                        panelHeader("AJUDAS");
+                        percent("Ajuda parado", "##AssistStanding", &m_e5StandingAssistPercent, 0.0f, 100.0f,
+                            "Força auxiliar na pelve parado (no físico).");
+                        percent("Ajuda andando", "##AssistWalking", &m_e5WalkingAssistPercent, 0.0f, 100.0f,
+                            "Força auxiliar andando e correndo (no físico).");
+                        percent("Ajuda ao levantar", "##AssistGetUp", &m_getUpAssistPercent, 0.0f, 200.0f,
+                            "Forças de fora no levantar do chão; 0%: só os músculos.");
+                        panelHeader("MÚSCULOS");
+                        percent("Rigidez muscular geral", "##MuscleStiffness", &m_characterMusclePercent, 0.0f, 100.0f,
+                            "Rigidez e força de todos os músculos no físico (100% é a calibrada).");
+                        percent("Rigidez ao levantar", "##GetUpStiffness", &m_getUpStiffnessPercent, 20.0f, 150.0f,
+                            "Rigidez dos músculos enquanto ele levanta; menos, mais relaxado.");
+                        panelHeader("MÃOS E PÉS");
+                        {
+                            const char* hands[] = { "Automática", "Relaxada", "Aberta", "Fechada" };
+                            int hand = static_cast<int>(m_handPose);
+                            ImGui::TextUnformatted("Pose das mãos");
+                            ImGui::SetNextItemWidth(-1.0f);
+                            if (ImGui::Combo("##HandPose", &hand, hands, 4))
+                                m_handPose = static_cast<RagdollHandPose3D>(hand);
+                            hint("Os dedos das mãos: automática (abre com o braço esticado - o equilíbrio, a queda - e relaxa com ele dobrado), relaxada, aberta (a palma, como a do goleiro) ou fechada. Só o visual por enquanto: a colisão da mão é a mesma (a cápsula dela já cobre a mão aberta).");
                         }
-                        panelHeader("BIOMECÂNICA FÍSICA");
-                        ImGui::Text("Estado: %s", phase);
-                        ImGui::Text("Apoio físico E/D: %s / %s",
-                            telemetry.footContact[0] ? "SIM" : "-",
-                            telemetry.footContact[1] ? "SIM" : "-");
-                        const char* contactPhase = "APOIO DUPLO";
-                        switch (telemetry.contactPhase) {
-                        case ProceduralContactPhase3D::DoubleSupport:
-                            contactPhase = "APOIO DUPLO"; break;
-                        case ProceduralContactPhase3D::WeightShift:
-                            contactPhase = "TRANSFERÊNCIA DE PESO"; break;
-                        case ProceduralContactPhase3D::Swing:
-                            contactPhase = "SWING PROCEDURAL"; break;
-                        case ProceduralContactPhase3D::Touchdown:
-                            contactPhase = "POUSO"; break;
-                        case ProceduralContactPhase3D::Unsupported:
-                            contactPhase = "SEM CONTATO"; break;
-                        }
-                        const char* stepReason = "-";
-                        switch (telemetry.stepReason) {
-                        case ProceduralStepReason3D::None:
-                            stepReason = "-"; break;
-                        case ProceduralStepReason3D::Locomotion:
-                            stepReason = "LOCOMOÇÃO"; break;
-                        case ProceduralStepReason3D::Turning:
-                            stepReason = "GIRO"; break;
-                        case ProceduralStepReason3D::FootSeparation:
-                            stepReason = "DESCRUZAR PÉS"; break;
-                        case ProceduralStepReason3D::BalanceRecovery:
-                            stepReason = "RECUPERAÇÃO"; break;
-                        }
-                        ImGui::Text("Contato planejado: %s | motivo: %s",
-                            contactPhase, stepReason);
-                        ImGui::Text("Pé livre: %s | progresso: %.0f%% | arco: %.1f cm",
-                            telemetry.swingFoot == 0 ? "ESQUERDO"
-                                : telemetry.swingFoot == 1 ? "DIREITO" : "-",
-                            telemetry.gaitPhase * 100.0f,
-                            telemetry.swingClearanceMeters * 100.0f);
-                        ImGui::Text("Carga E/D: %.0f / %.0f N",
-                            telemetry.contactLoadNewtons[0],
-                            telemetry.contactLoadNewtons[1]);
-                        ImGui::Text("Margem do ponto de captura: %.1f cm",
-                            telemetry.supportMarginMeters * 100.0f);
-                        ImGui::Text("Velocidade COM: %.2f / %.2f / %.2f m/s",
-                            telemetry.centerOfMassVelocityWorld.x,
-                            telemetry.centerOfMassVelocityWorld.y,
-                            telemetry.centerOfMassVelocityWorld.z);
-                        ImGui::Text("Reação pedida: %.0f / %.0f / %.0f N",
-                            telemetry.requestedGroundReactionNewtons.x,
-                            telemetry.requestedGroundReactionNewtons.y,
-                            telemetry.requestedGroundReactionNewtons.z);
-                        ImGui::Text("Auxílio horizontal: %.1f N | torque: %.1f Nm",
-                            telemetry.balanceForceWorld.length(),
-                            telemetry.balanceTorqueWorld.length());
-                        ImGui::Text("Frenagem preditiva: %s",
-                            telemetry.predictiveBraking ? "ATIVA" : "-");
-                        ImGui::Text("Verticalidade da pelve: %.0f%%",
-                            telemetry.rootUpright * 100.0f);
-                        if (telemetry.getUpPhase
-                            != ProceduralGetUpPhase3D::None) {
-                            const char* getUp = "AVALIANDO QUEDA";
-                            switch (telemetry.getUpPhase) {
-                            case ProceduralGetUpPhase3D::None:
-                                getUp = "-"; break;
-                            case ProceduralGetUpPhase3D::Resting:
-                                getUp = "RECUPERANDO APÓS A QUEDA"; break;
-                            case ProceduralGetUpPhase3D::Assessing:
-                                getUp = "AVALIANDO QUEDA"; break;
-                            case ProceduralGetUpPhase3D::SupineTuck:
-                                getUp = "RECOLHENDO DE COSTAS"; break;
-                            case ProceduralGetUpPhase3D::SupineSit:
-                                getUp = "SENTANDO"; break;
-                            case ProceduralGetUpPhase3D::ProneBrace:
-                                getUp = "APOIANDO BRAÇOS"; break;
-                            case ProceduralGetUpPhase3D::PronePush:
-                                getUp = "EMPURRANDO DO CHÃO"; break;
-                            case ProceduralGetUpPhase3D::GatherFeet:
-                                getUp = "TRAZENDO PÉS AO CORPO"; break;
-                            case ProceduralGetUpPhase3D::Rise:
-                                getUp = "ESTENDENDO O CORPO"; break;
-                            case ProceduralGetUpPhase3D::Stabilize:
-                                getUp = "ESTABILIZANDO"; break;
-                            }
-                            ImGui::Text("Get-up: %s (%.0f%%) | tentativa %u",
-                                getUp, telemetry.getUpProgress * 100.0f,
-                                telemetry.getUpAttempt);
-                            ImGui::Text("Queda detectada: %s",
-                                telemetry.fallOrientation
-                                    == ProceduralFallOrientation3D::FaceDown
-                                    ? "DE FRENTE"
-                                    : telemetry.fallOrientation
-                                        == ProceduralFallOrientation3D::FaceUp
-                                    ? "DE COSTAS" : "AVALIANDO");
-                        }
-                        ImGui::TextUnformatted(telemetry.dynamicsAvailable
-                            ? "Base: dinâmica reduzida PhysX válida"
-                            : "Base: dinâmica reduzida indisponível");
-                    } else {
-                    const auto& telemetry = controlled->locomotion.telemetry();
-                    const char* stateName = "IDLE";
-                    switch (telemetry.state) {
-                    case CharacterLocomotionState3D::Idle:
-                        stateName = "IDLE"; break;
-                    case CharacterLocomotionState3D::Turning:
-                        stateName = "GIRANDO A BASE"; break;
-                    case CharacterLocomotionState3D::Walking:
-                        stateName = "CAMINHANDO"; break;
-                    case CharacterLocomotionState3D::Running:
-                        stateName = "CORRENDO"; break;
-                    case CharacterLocomotionState3D::CrouchIdle:
-                        stateName = "AGACHADO PARADO"; break;
-                    case CharacterLocomotionState3D::CrouchWalking:
-                        stateName = "AGACHADO EM MOVIMENTO"; break;
-                    case CharacterLocomotionState3D::JumpStarting:
-                        stateName = "SALTO"; break;
-                    case CharacterLocomotionState3D::Airborne:
-                        stateName = "NO AR"; break;
-                    case CharacterLocomotionState3D::Landing:
-                        stateName = "ATERRISSANDO"; break;
-                    case CharacterLocomotionState3D::Fallen:
-                        stateName = "CAÍDO"; break;
-                    case CharacterLocomotionState3D::GettingUp:
-                        stateName = "LEVANTANDO"; break;
+                        ImGui::Checkbox("Dedos do pé dobram no chão", &m_toeRoll);
+                        hint("No fim do apoio o pé gira na base dos dedos, que ficam deitados no chão enquanto o calcanhar sobe (no modo padrão; no físico o pé é o bloco dele). Desligado, o pé gira na ponta, como antes.");
+                        panelHeader("BOLA");
+                        ImGui::Checkbox("Contato pela hitbox do pé", &m_ballHitboxContact);
+                        hint("A força só sai quando a hitbox do pé (a caixa dele um pouco maior, para ajudar - a folga fica na aba \"Força na bola\") encosta na bola durante o gesto, vindo para ela. O rumo da bola é sempre o que você pediu (as teclas no toque, a mira no chute), nunca o do pé. Pedido sem gesto que alcance a bola em 0,25 s é descartado. Desligado: a força sai pelo tempo (abaixo), com a garantia do pedido com a bola na área.");
+                        ImGui::BeginDisabled(m_ballHitboxContact);
+                        ImGui::TextUnformatted("Tempo da força no toque e no chute (sem a hitbox)");
+                        ImGui::SetNextItemWidth(-1.0f);
+                        ImGui::SliderFloat("##BallContactTiming", &m_ballContactTiming, 0.0f, 1.0f, "%.2f",
+                            ImGuiSliderFlags_AlwaysClamp);
+                        ImGui::EndDisabled();
+                        hint("Só com o contato pela hitbox desligado: a fração do tempo que o pé leva até a bola (pelo movimento planejado) em que a força sai: 0 na hora do pedido, 1 só no contato visual. A força só sai com a bola dentro da área (fora dela, quando entrar); se a bola fosse sair da área antes, a força vem antes, até na hora.");
+                        ImGui::Checkbox("Reforço de estabilidade no gesto (físico)", &m_ballStabilityAssist);
+                        hint("No modo físico, durante o toque ou o chute a ajuda sobe e a postura aguenta mais, para ele não cair só pelo próprio movimento. Não vale encostando em outro jogador ou objeto, nem logo depois de um impacto.");
+                        ImGui::Checkbox("Mostrar área, hitbox dos pés e contato previsto", &m_showBallReach);
+                        const auto reachHint = m_ballHitboxContact
+                            ? "Desenha a área do manejo (da cintura à base dos pés, num raio de uma perna), a hitbox de cada pé (amarela no pé que joga) e onde o pé vai encontrar a bola. O pedido fica guardado até 0,25 s esperando um gesto que alcance a bola; a força sai quando a hitbox encosta nela."
+                            : "Desenha a área do manejo (da cintura à base dos pés, num raio de uma perna) e onde o pé vai encontrar a bola. Com a bola dentro da área, o pedido sempre sai, correndo ou fazendo o que for (sem movimento possível até ela, o gesto usa uma bola imaginada à frente). Fora dela, fica guardado até 0,25 s esperando a bola entrar; depois disso, é descartado.";
+                        hint(reachHint);
+                        ImGui::Checkbox("Sem gesto com a bola (só a força)", &m_ballForceOnly);
+                        hint("Para testar a força isolada: o toque e o chute só aplicam a força na bola, na hora do pedido (com a bola dentro da área; fora dela, quando entrar em até 0,25 s), sem movimento de perna, sem esperar o pé e sem o gesto do chute.");
+                        ImGui::EndTabItem();
                     }
-                    panelHeader("LOCOMOÇÃO");
-                    ImGui::Text("Estado: %s | velocidade %.2f m/s",
-                        stateName, telemetry.speedMetersPerSecond);
-                    ImGui::Text("Fase %.2f | ritmo %.2fx",
-                        telemetry.cyclePhase, telemetry.playbackRate);
-                    ImGui::Text("Blend F/T/E/D: %.0f / %.0f / %.0f / %.0f%%",
-                        telemetry.forwardWeight * 100.0f,
-                        telemetry.backwardWeight * 100.0f,
-                        telemetry.leftWeight * 100.0f,
-                        telemetry.rightWeight * 100.0f);
-                    ImGui::Text("Pés apoiados: %s / %s",
-                        telemetry.footPlanted[0] ? "E" : "-",
-                        telemetry.footPlanted[1] ? "D" : "-");
-                    ImGui::Text("Reação física: %.0f%% | guia raiz: %.0f%%",
-                        telemetry.reactionStrength * 100.0f,
-                        telemetry.rootAuthority * 100.0f);
-                    ImGui::Text("Torção olhar: %.1f° | giro: %.1f°/s",
-                        telemetry.viewYawErrorRadians * 180.0f / Pi,
-                        telemetry.turningRateRadiansPerSecond * 180.0f / Pi);
-                    ImGui::Text("Inclinação frente/lado: %.1f° / %.1f°",
-                        telemetry.forwardLeanRadians * 180.0f / Pi,
-                        telemetry.lateralLeanRadians * 180.0f / Pi);
-                    const char* curveName = telemetry.authoredCurveKind == 1
-                        ? "FBX frente esquerda"
-                        : telemetry.authoredCurveKind == 2
-                        ? "FBX frente direita"
-                        : telemetry.authoredCurveKind == 3
-                        ? "FBX costas direita" : "nenhuma";
-                    ImGui::Text("Movimento autoral: partida %s | curva %s %.0f%%",
-                        telemetry.authoredStartActive ? "FBX ATIVO" : "-",
-                        curveName, telemetry.authoredCurveBlend * 100.0f);
-                    if (std::abs(telemetry.landingBraceForwardRadians) > 0.001f
-                        || std::abs(telemetry.landingBraceLateralRadians) > 0.001f) {
-                        ImGui::Text("Preparação do pouso: frente %.1f° | lado %.1f°",
-                            telemetry.landingBraceForwardRadians * 180.0f / Pi,
-                            telemetry.landingBraceLateralRadians * 180.0f / Pi);
-                    }
-                    if (telemetry.state == CharacterLocomotionState3D::Fallen
-                        || telemetry.state
-                            == CharacterLocomotionState3D::GettingUp) {
-                        const char* getUpPhaseName = "-";
-                        switch (telemetry.getUpPhase) {
-                        case CharacterGetUpPhase3D::None:
-                            getUpPhaseName = "-"; break;
-                        case CharacterGetUpPhase3D::Settling:
-                            getUpPhaseName = "ASSENTANDO"; break;
-                        case CharacterGetUpPhase3D::Rising:
-                            getUpPhaseName = "LEVANTANDO"; break;
+                    // A forca na bola (07/10, pedido do usuario: "uma tab no menu do
+                    // personagem para configuracoes da forca na bola, a de manejo e de
+                    // chute ... e um botao de copiar parametros").
+                    if (ImGui::BeginTabItem("Força na bola")) {
+                        BallForceSettings3D& f = m_ballForce;
+                        const auto value = [&](const char* label, const char* id, float* v, float minimum,
+                                float maximum, const char* format, const char* text) {
+                            ImGui::TextUnformatted(label);
+                            ImGui::SetNextItemWidth(-1.0f);
+                            ImGui::SliderFloat(id, v, minimum, maximum, format, ImGuiSliderFlags_AlwaysClamp);
+                            hint(text);
+                        };
+                        // A velocidade (m/s) que a barra da, de vazia a cheia (parado).
+                        const auto curve = [&](const char* id, float minimum, float power, float exponent) {
+                            float samples[33];
+                            for (int k = 0; k <= 32; ++k)
+                                samples[k] = minimum + power * std::pow(static_cast<float>(k) / 32.0f,
+                                    std::max(0.05f, exponent));
+                            char overlay[96];
+                            std::snprintf(overlay, sizeof(overlay), "25%%: %.1f  50%%: %.1f  100%%: %.1f m/s", samples[8],
+                                samples[16], samples[32]);
+                            ImGui::PlotLines(id, samples, 33, 0, overlay, 0.0f, std::max(1.0f, samples[32]) * 1.1f,
+                                { -1.0f, ui(52.0f) });
+                            hint("A velocidade que a barra dá à bola, de vazia (esquerda) a cheia (direita), parado. Correndo, a bola ainda leva a velocidade do jogador no rumo do toque e o empurrão da corrida.");
+                        };
+                        panelHeader("TOQUE (MANEJO)");
+                        value("Mínimo do toque", "##ForceTouchMinimum", &f.touchMinimum, 0.0f, 3.0f, "%.2f m/s",
+                            "A velocidade que o toque dá à bola com a barra vazia (o clique rápido), parado.");
+                        value("Força da barra cheia", "##ForceTouchPower", &f.touchPower, 0.0f, 30.0f, "%.1f m/s",
+                            "Quanto a barra cheia soma ao mínimo (o passe forte).");
+                        value("Curva da barra", "##ForceTouchCurve", &f.touchCurve, 0.5f, 5.0f, "%.2f",
+                            "O formato da barra: acima de 1, fraca embaixo e forte em cima (mais controle nos toques curtos); 1, reta; abaixo de 1, forte já no começo.");
+                        curve("##ForceTouchPlot", f.touchMinimum, f.touchPower, f.touchCurve);
+                        value("Tempo para encher a barra", "##ForceTouchCharge", &m_ballTouchChargeSeconds, 0.2f, 2.0f,
+                            "%.2f s", "Quanto tempo segurando o botão direito leva para a barra do toque encher.");
+                        panelHeader("SOLA (PUXAR E ROLAR)");
+                        value("Mínimo da sola", "##ForceSoleMinimum", &f.soleMinimum, 0.0f, 3.0f, "%.2f m/s",
+                            "A sola puxando ou rolando a bola (o toque para trás com a bola à frente), com a barra vazia.");
+                        value("Força da barra cheia", "##ForceSolePower", &f.solePower, 0.0f, 15.0f, "%.1f m/s",
+                            "Quanto a barra cheia soma ao mínimo da sola.");
+                        value("Curva da barra", "##ForceSoleCurve", &f.soleCurve, 0.5f, 5.0f, "%.2f",
+                            "O formato da barra na sola (como no toque).");
+                        curve("##ForceSolePlot", f.soleMinimum, f.solePower, f.soleCurve);
+                        panelHeader("VELOCIDADE DO JOGADOR NO TOQUE");
+                        value("Velocidade levada no rumo do toque", "##ForceCarry", &f.carry, 0.0f, 1.5f, "%.2f",
+                            "A fração da velocidade do jogador no rumo do toque que a bola leva (1: ela acompanha a corrida; menos, fica para trás).");
+                        value("Antecipação da velocidade", "##ForceCarryAhead", &f.carryAhead, 0.0f, 1.0f, "%.2f s",
+                            "A bola leva a velocidade que o jogador vai ter daqui a este tempo, indo para a que as teclas pedem: arrancando ou mudando de rumo, ele não passa por ela. 0: só a de agora. (Só no corpo animado.)");
+                        value("Toque mais forte correndo", "##ForceSpeedPush", &f.speedPush, 0.0f, 0.4f, "%.2f",
+                            "Quanto o toque empurra a bola a mais por m/s da velocidade do jogador (somado à força da barra): correndo, o mesmo clique leva a bola mais à frente.");
+                        value("Força para inverter o rumo", "##ForceReverse", &f.reverseBoost, 0.0f, 1.0f, "%.2f",
+                            "Tocando contra o movimento (indo para a frente e mandando a bola para trás): a fração da velocidade do jogador e da bola no rumo contrário que volta na bola. Parado, é o quique da bola que vem contra o pé.");
+                        panelHeader("ATRITO DO TOQUE");
+                        value("Movimento de lado que fica", "##ForceTouchSide", &f.touchSideKeep, 0.0f, 1.0f, "%.2f",
+                            "Do movimento da bola de lado em relação ao toque (o que ela anda em relação ao jogador), quanto fica depois dele: 0, ela vai limpa no rumo do toque; 1, guarda tudo.");
+                        value("Excesso no rumo que fica", "##ForceTouchAhead", &f.touchAheadKeep, 0.0f, 1.0f, "%.2f",
+                            "A bola já indo no rumo do toque mais rápido que ele: quanto do excesso fica.");
+                        panelHeader("CHUTE");
+                        value("Mínimo do chute", "##ForceShotMinimum", &f.shotMinimum, 0.0f, 20.0f, "%.1f m/s",
+                            "A velocidade do chute com a barra vazia.");
+                        value("Força da barra cheia", "##ForceShotPower", &f.shotPower, 0.0f, 40.0f, "%.1f m/s",
+                            "Quanto a barra cheia soma ao mínimo do chute.");
+                        value("Curva da barra", "##ForceShotCurve", &f.shotCurve, 0.5f, 4.0f, "%.2f",
+                            "O formato da barra do chute: 1, reta; acima de 1, fraca embaixo e forte em cima; abaixo de 1, forte já no começo.");
+                        curve("##ForceShotPlot", f.shotMinimum, f.shotPower, f.shotCurve);
+                        value("Tempo para encher a barra", "##ForceShotCharge", &m_ballShotChargeSeconds, 0.2f, 3.0f,
+                            "%.2f s", "Quanto tempo segurando o botão esquerdo leva para a barra do chute encher.");
+                        value("Sensibilidade da câmera carregando o chute", "##ShotCameraSensitivity",
+                            &m_shotCameraSensitivity, 0.3f, 1.0f, "%.2f",
+                            "Segurando o chute, a câmera gira esta fração da sensibilidade normal (1: igual), para mirar com calma enquanto o gesto do mouse ajusta a altura e o efeito. Entra e sai suave; o gesto não muda.");
+                        panelHeader("ALTURA DO CHUTE");
+                        value("Altura com a barra vazia", "##ForceShotElevationMinimum", &f.shotElevationMinimum, 0.0f,
+                            30.0f, "%.1f°", "O ângulo de saída do chute fraco, sem gesto do mouse.");
+                        value("Altura a mais com a barra cheia", "##ForceShotElevationPower", &f.shotElevationPower, 0.0f,
+                            30.0f, "%.1f°", "Quanto o ângulo sobe do chute fraco ao cheio, sem gesto do mouse.");
+                        value("Bola alta (gesto para cima)", "##ForceShotHigh", &f.shotHighElevation, 10.0f, 70.0f, "%.1f°",
+                            "O ângulo com o gesto do mouse todo para cima.");
+                        value("Rasteira (gesto para baixo)", "##ForceShotLow", &f.shotLowElevation, 0.0f, 10.0f, "%.1f°",
+                            "O ângulo com o gesto do mouse todo para baixo.");
+                        panelHeader("EFEITO DO CHUTE");
+                        value("Giro de lado (efeito)", "##ForceShotCurveSpin", &f.shotCurveSpin, 0.0f, 120.0f, "%.0f rad/s",
+                            "O giro com o gesto do mouse todo para o lado: quanto a bola curva.");
+                        value("Saída para fora da mira", "##ForceShotCurveLaunch", &f.shotCurveLaunch, 0.0f, 15.0f, "%.1f°",
+                            "Com efeito, a bola sai este tanto para o lado contrário da curva, para voltar na mira.");
+                        value("Giro para trás na bola alta", "##ForceShotBackSpin", &f.shotBackSpin, 0.0f, 60.0f,
+                            "%.0f rad/s", "O giro para trás com o gesto todo para cima (a bola alta flutua).");
+                        value("Giro por cima na rasteira", "##ForceShotTopSpin", &f.shotTopSpin, 0.0f, 60.0f, "%.0f rad/s",
+                            "O giro por cima com o gesto todo para baixo (a rasteira desce e corre).");
+                        panelHeader("ATRITO DO CHUTE E CORRIDA");
+                        value("Movimento de lado que fica", "##ForceShotSide", &f.shotSideKeep, 0.0f, 1.0f, "%.2f",
+                            "Do movimento da bola de lado em relação ao chute, quanto fica depois dele.");
+                        value("Quique contra o chute", "##ForceShotBounce", &f.shotBounce, 0.0f, 1.0f, "%.2f",
+                            "A bola vindo contra o chute: quanto da velocidade dela volta somada.");
+                        value("Excesso no rumo que fica", "##ForceShotAhead", &f.shotAheadKeep, 0.0f, 1.0f, "%.2f",
+                            "A bola já indo no rumo do chute mais rápido que ele: quanto do excesso fica.");
+                        value("Freada do corpo no chute correndo", "##ForceKickSlowdown", &f.kickRunSlowdown, 0.0f, 0.8f,
+                            "%.2f", "Chutando correndo, o quanto da velocidade o corpo perde durante o chute (no chute cheio).");
+                        panelHeader("GERAL");
+                        value("Bola presa na velocidade do toque", "##ForceHold", &f.holdSeconds, 0.0f, 0.3f, "%.2f s",
+                            "Logo depois do toque ou do chute, por este tempo o pé que ainda encosta não muda a bola.");
+                        value("Hitbox do pé (folga)", "##ForceHitbox", &f.hitboxMargin, 0.0f, 0.2f, "%.3f m",
+                            "O quanto a hitbox do pé passa do pé em cada lado (no modo físico, 1,6 vezes: o pé de verdade atrasa). Maior, mais fácil acertar a bola; 0, só o pé. Vale com o contato pela hitbox (aba Geral).");
+                        ImGui::Dummy({ 1.0f, ui(6.0f) });
+                        if (ImGui::Button("COPIAR PARÂMETROS##BallForce", { -1.0f, ui(36.0f) })) {
+                            std::string text = "Força na bola (laboratório, MatterEngine)\n";
+                            const auto line = [&](const char* name, const char* label, float v, const char* unit) {
+                                char buffer[160];
+                                std::snprintf(buffer, sizeof(buffer), "%s = %.3f   # %s%s%s\n", name, v, label,
+                                    unit[0] != '\0' ? " " : "", unit);
+                                text += buffer;
+                            };
+                            text += "[toque]\n";
+                            line("T_BallBase", "mínimo do toque", f.touchMinimum, "m/s");
+                            line("T_BallPower", "força da barra cheia", f.touchPower, "m/s");
+                            line("T_BallCurve", "curva da barra", f.touchCurve, "");
+                            line("barra_toque_s", "tempo para encher a barra", m_ballTouchChargeSeconds, "s");
+                            text += "[sola]\n";
+                            line("T_BallSoleBase", "mínimo da sola", f.soleMinimum, "m/s");
+                            line("T_BallSolePower", "força da barra cheia", f.solePower, "m/s");
+                            line("T_BallSoleCurve", "curva da barra", f.soleCurve, "");
+                            text += "[velocidade do jogador]\n";
+                            line("T_BallCarry", "velocidade levada no rumo do toque", f.carry, "");
+                            line("T_BallCarryAhead", "antecipação da velocidade", f.carryAhead, "s");
+                            line("T_BallSpeedPush", "toque mais forte correndo", f.speedPush, "");
+                            line("T_BallReverseBoost", "força para inverter o rumo", f.reverseBoost, "");
+                            text += "[atrito do toque]\n";
+                            line("T_BallKeepSide", "movimento de lado que fica", f.touchSideKeep, "");
+                            line("T_BallKeepAhead", "excesso no rumo que fica", f.touchAheadKeep, "");
+                            text += "[chute]\n";
+                            line("T_ShotMin", "mínimo do chute", f.shotMinimum, "m/s");
+                            line("T_ShotPower", "força da barra cheia", f.shotPower, "m/s");
+                            line("T_ShotCurve", "curva da barra", f.shotCurve, "");
+                            line("barra_chute_s", "tempo para encher a barra", m_ballShotChargeSeconds, "s");
+                            line("camera_chute", "sensibilidade da câmera carregando o chute", m_shotCameraSensitivity, "");
+                            line("T_ShotElevMin", "altura com a barra vazia", f.shotElevationMinimum, "graus");
+                            line("T_ShotElev", "altura a mais com a barra cheia", f.shotElevationPower, "graus");
+                            line("T_ShotHigh", "bola alta (gesto para cima)", f.shotHighElevation, "graus");
+                            line("T_ShotLow", "rasteira (gesto para baixo)", f.shotLowElevation, "graus");
+                            line("T_ShotCurveSpin", "giro de lado (efeito)", f.shotCurveSpin, "rad/s");
+                            line("T_ShotCurveLaunch", "saída para fora da mira", f.shotCurveLaunch, "graus");
+                            line("T_ShotBackSpin", "giro para trás na bola alta", f.shotBackSpin, "rad/s");
+                            line("T_ShotTopSpin", "giro por cima na rasteira", f.shotTopSpin, "rad/s");
+                            line("T_ShotKeepSide", "atrito do chute: movimento de lado que fica", f.shotSideKeep, "");
+                            line("T_BallKeepBounce", "atrito do chute: quique contra o chute", f.shotBounce, "");
+                            line("T_ShotKeepAhead", "atrito do chute: excesso no rumo que fica", f.shotAheadKeep, "");
+                            line("T_KickRunSlowdown", "freada do corpo no chute correndo", f.kickRunSlowdown, "");
+                            text += "[geral]\n";
+                            line("T_BallHold", "bola presa na velocidade do toque", f.holdSeconds, "s");
+                            line("T_BallHitbox", "hitbox do pé (folga)", f.hitboxMargin, "m");
+                            line("contato_hitbox", "contato pela hitbox do pé (1 ligado, aba Geral)",
+                                m_ballHitboxContact ? 1.0f : 0.0f, "");
+                            line("T_BallContactTiming", "tempo da força sem a hitbox (aba Geral)",
+                                m_ballContactTiming, "");
+                            ImGui::SetClipboardText(text.c_str());
+                            m_ballForceCopiedTime = ImGui::GetTime();
                         }
-                        const char* fallOrientationName =
-                            telemetry.fallOrientation
-                                == CharacterFallOrientation3D::FaceDown
-                            ? "DE FRENTE" : telemetry.fallOrientation
-                                == CharacterFallOrientation3D::FaceUp
-                            ? "DE COSTAS" : "AVALIANDO";
-                        ImGui::Text(
-                            "Levantar: %s (%.0f%%) | orientação: %s",
-                            getUpPhaseName, telemetry.getUpProgress * 100.0f,
-                            fallOrientationName);
-                        ImGui::Text(
-                            "Tentativas: %u | vertical do corpo: %.2f",
-                            telemetry.getUpAttempt, telemetry.rootUpright);
+                        if (ImGui::GetTime() - m_ballForceCopiedTime < 2.0)
+                            ImGui::TextColored({ 0.38f, 0.82f, 0.62f, 1.0f }, "Copiado para a área de transferência.");
+                        if (ImGui::Button("RESTAURAR PADRÕES##BallForce", { -1.0f, ui(30.0f) })) {
+                            m_ballForce = defaultBallForceSettings3D();
+                            m_ballTouchChargeSeconds = 0.6f;
+                            m_ballShotChargeSeconds = 1.0f;
+                            m_shotCameraSensitivity = 0.6f;
+                        }
+                        ImGui::EndTabItem();
                     }
+                    if (ImGui::BeginTabItem("Velocidades")) {
+                        panelHeader("VELOCIDADES DO MODO PADRÃO");
+                        const auto speed = [&](const char* label, const char* id, float* value,
+                                float minimum, float maximum, const char* text) {
+                            ImGui::TextUnformatted(label);
+                            ImGui::SetNextItemWidth(-1.0f);
+                            ImGui::SliderFloat(id, value, minimum, maximum, "%.2f m/s", ImGuiSliderFlags_AlwaysClamp);
+                            hint(text);
+                        };
+                        speed("Trote", "##SpeedTrot", &m_defaultTrotSpeed, 1.5f, 6.0f,
+                            "O trote em todos os rumos (frente, lados, costas e diagonais).");
+                        speed("Corrida para a frente", "##SpeedSprintForward", &m_defaultSprintForwardSpeed, 3.0f, 10.0f,
+                            "A corrida (Shift) para a frente; vale também para as diagonais da frente.");
+                        speed("Corrida de lado", "##SpeedSprintSide", &m_defaultSprintSideSpeed, 2.0f, 9.0f,
+                            "A corrida para a esquerda e para a direita.");
+                        speed("Corrida de costas", "##SpeedSprintBackward", &m_defaultSprintBackwardSpeed, 2.0f, 9.0f,
+                            "A corrida para trás; vale também para as diagonais de costas.");
+                        ImGui::Dummy({ 1.0f, ui(6.0f) });
+                        if (ImGui::Button("COPIAR PARÂMETROS", { -1.0f, ui(36.0f) })) {
+                            char text[512];
+                            std::snprintf(text, sizeof(text),
+                                "Velocidades do modo padrão (m/s)\n"
+                                "Trote (todos os rumos): %.2f\n"
+                                "Corrida para a frente (e diagonais da frente): %.2f\n"
+                                "Corrida de lado: %.2f\n"
+                                "Corrida de costas (e diagonais de costas): %.2f\n",
+                                m_defaultTrotSpeed, m_defaultSprintForwardSpeed, m_defaultSprintSideSpeed,
+                                m_defaultSprintBackwardSpeed);
+                            ImGui::SetClipboardText(text);
+                            m_defaultSpeedsCopiedTime = ImGui::GetTime();
+                        }
+                        if (ImGui::GetTime() - m_defaultSpeedsCopiedTime < 2.0)
+                            ImGui::TextColored({ 0.38f, 0.82f, 0.62f, 1.0f }, "Copiado para a área de transferência.");
+                        if (ImGui::Button("RESTAURAR PADRÕES", { -1.0f, ui(30.0f) })) {
+                            const DefaultLocomotionSettings3D defaults;
+                            m_defaultTrotSpeed = defaults.trotSpeeds[0];
+                            m_defaultSprintForwardSpeed = defaults.sprintSpeeds[0];
+                            m_defaultSprintSideSpeed = defaults.sprintSpeeds[2];
+                            m_defaultSprintBackwardSpeed = defaults.sprintSpeeds[4];
+                        }
+                        ImGui::EndTabItem();
                     }
+                    ImGui::EndTabBar();
                 }
                 growPanelToFitContent(io.DisplaySize, m_uiScale);
             }
@@ -2878,10 +3190,6 @@ void WorkbenchApp::drawLaboratoryUi() {
             panelHeader("TELEMETRIA");
             ImGui::Checkbox("Mostrar analíticos",
                 &m_physicsBenchmarkShowAnalytics);
-            ImGui::TextWrapped(
-                "O gráfico registra FPS médio e mínimo, custo PhysX e "
-                "contagens em janelas de 5 segundos. As entidades usam "
-                "uma sequência reproduzível para comparações consistentes.");
             growPanelToFitContent(io.DisplaySize, m_uiScale);
         }
         if (m_showPhysicsBenchmarkPanel) ImGui::End();
@@ -2913,15 +3221,8 @@ void WorkbenchApp::drawLaboratoryUi() {
                 m_taaFrameIndex = 0;
             }
 
-            ImGui::Dummy({ 1.0f, ui(13.0f) });
-            if (m_laboratoryRenderMode == SceneRenderMode3D::Standard) {
-                ImGui::TextWrapped(
-                    m_laboratoryGraphicsPreset == 0
-                        ? "Pipeline HDR rápido, sem acumulação temporal. "
-                          "Equilibrado e Alto reativam o TAA."
-                        : "Pipeline HDR nativo, com TAA e todos os efeitos "
-                          "configurados no painel Gráficos.");
-            } else {
+            if (m_laboratoryRenderMode != SceneRenderMode3D::Standard) {
+                ImGui::Dummy({ 1.0f, ui(13.0f) });
                 panelHeader("MATTER MOSAIC");
                 ImGui::TextColored({ 0.50f, 0.62f, 0.72f, 1.0f },
                     "Resolução interna do mundo");
@@ -3029,9 +3330,7 @@ void WorkbenchApp::drawLaboratoryUi() {
                     m_laboratoryPixelArt.distanceLodStartMeters + 1.0f,
                     500.0f, "%.0f m",
                     ImGuiSliderFlags_AlwaysClamp);
-                ImGui::TextWrapped(
-                    "Props recebem só uma fração do LOD para bolas e "
-                    "objetos continuarem legíveis.");
+                ImGui::SetItemTooltip("Os objetos recebem só uma fração do LOD (bolas e objetos continuam legíveis).");
 
                 ImGui::Dummy({ 1.0f, ui(11.0f) });
                 panelHeader("ACABAMENTO 2D");
@@ -3068,9 +3367,7 @@ void WorkbenchApp::drawLaboratoryUi() {
                     m_laboratoryTaaHistoryValid = false;
                     m_taaFrameIndex = 0;
                 }
-                ImGui::TextWrapped(
-                    "Pode suavizar movimento, mas também arredondar um "
-                    "pouco os pixels. A grade final continua estável.");
+                ImGui::SetItemTooltip("Suaviza o movimento, mas arredonda um pouco os pixels.");
 
                 ImGui::Dummy({ 1.0f, ui(11.0f) });
                 if (ImGui::Button("RESTAURAR IDENTIDADE PADRÃO",
@@ -3096,9 +3393,7 @@ void WorkbenchApp::drawLaboratoryUi() {
                         m_laboratoryTaaHistoryValid = false;
                         m_taaFrameIndex = 0;
                     }
-                    ImGui::TextWrapped(
-                        "A Physgun continua funcional; apenas o modelo e "
-                        "a mira deixam de aparecer.");
+                    ImGui::SetItemTooltip("A Physgun continua funcionando; só o modelo e a mira somem.");
                     ImGui::Dummy({ 1.0f, ui(12.0f) });
                     panelHeader("FORÇA DE MANIPULAÇÃO");
                     ImGui::Dummy({ 1.0f, ui(8.0f) });
@@ -3228,6 +3523,8 @@ void WorkbenchApp::drawLaboratoryUi() {
                             0.1f, 20.0f, "%.2f",
                             ImGuiSliderFlags_Logarithmic);
                     }
+                    ImGui::Dummy({ 1.0f, ui(10.0f) });
+                    drawInflatedBallPanel();
             }
             growPanelToFitContent(io.DisplaySize, m_uiScale);
         }
@@ -3249,10 +3546,6 @@ void WorkbenchApp::drawLaboratoryUi() {
                 humanRagdollCount,
                 humanRagdollCount == 1 ? "" : "s",
                 humanRagdollCount == 1 ? "" : "s");
-            ImGui::TextWrapped(
-                "18 segmentos, 41 DOFs e limites anatômicos. Todos os "
-                "colisores seguem as proporções do modelo; os pés possuem área de "
-                "contato retangular para equilíbrio físico.");
             ImGui::Dummy({ 1.0f, ui(12.0f) });
 
             if (ImGui::BeginTabBar("##RagdollPanelTabs")) {
@@ -3272,9 +3565,7 @@ void WorkbenchApp::drawLaboratoryUi() {
                         instance.physicsRagdoll, instance.active);
                 }
             }
-            ImGui::TextWrapped(m_ragdollActive
-                ? "Controle ativo: o avatar usa músculos, torque corporal e contatos; o guia exato permanece como fallback."
-                : "Passivo: mantém juntas, limites e colisões; não reproduz animações.");
+            ImGui::SetItemTooltip("Ativo: músculos, torque corporal e contatos. Passivo: só juntas, limites e colisões.");
             panelHeader("FORÇA AUXILIAR E MUSCULAR");
             ImGui::Checkbox("Forçar alteração dos valores", &m_ragdollForceControlOverride);
             ImGui::BeginDisabled(!m_ragdollForceControlOverride);
@@ -3287,14 +3578,6 @@ void WorkbenchApp::drawLaboratoryUi() {
             ImGui::SliderFloat("##RagdollMuscleAuthority", &m_ragdollMusclePercent,
                 0.0f, 100.0f, "%.0f%%", ImGuiSliderFlags_AlwaysClamp);
             ImGui::EndDisabled();
-            ImGui::TextWrapped(m_ragdollForceControlOverride
-                ? "No controle físico, o auxílio regula trajetória, torque corporal e recentralização lenta; os músculos regulam os drives das juntas. Zero desliga o respectivo canal."
-                : "Padrões físicos: auxílio 100%% e músculos 100%%. Marque a opção acima para alterar os canais durante o movimento.");
-            panelHeader("LOCOMOÇÃO");
-            ImGui::TextWrapped(
-                "Use a aba PERSONAGEM para assumir o controle. O protótipo "
-                "temporizado e o footwork procedural anterior saíram do "
-                "caminho ativo.");
             ImGui::Dummy({1.0f,ui(12.0f)});
 
             panelHeader("ALVOS");
@@ -3354,6 +3637,7 @@ void WorkbenchApp::drawLaboratoryUi() {
                 case CharacterLocomotionState3D::Landing: phase="ATERRISSANDO";break;
                 case CharacterLocomotionState3D::Fallen: phase="CAÍDO";break;
                 case CharacterLocomotionState3D::GettingUp: phase="LEVANTANDO";break;
+                case CharacterLocomotionState3D::Tackling: phase="CARRINHO";break;
                 }
                 panelHeader("ANIMAÇÃO FÍSICA");
                 ImGui::Text("Estado: %s",phase);
@@ -3378,13 +3662,7 @@ void WorkbenchApp::drawLaboratoryUi() {
                 ImGui::Text("Reação: %.0f%% | giro físico: %.1f°/s",
                     telemetry.reactionStrength*100,
                     telemetry.turningRateRadiansPerSecond*180.0f/Pi);
-                ImGui::TextWrapped(
-                    "No modo corporal físico, a cápsula conserva a trajetória "
-                    "e o torque da articulation resolve a orientação.");
             }
-            ImGui::Dummy({ 1.0f, ui(8.0f) });
-            ImGui::TextColored({ 0.50f, 0.62f, 0.72f, 1.0f },
-                "Novos ragdolls usam os mesmos valores de controle.");
             ImGui::EndTabItem();
             }
 
@@ -3394,10 +3672,6 @@ void WorkbenchApp::drawLaboratoryUi() {
                 const RagdollImpactTestOutput3D& impactOutput =
                     m_ragdollImpactLab.output();
                 panelHeader("LABORATÓRIO DE EQUILÍBRIO");
-                ImGui::TextWrapped(
-                    "Aplica forças físicas distribuídas na bacia e no "
-                    "tronco. A direção acompanha cada ragdoll: 0° frente, "
-                    "90° esquerda, 180° costas e 270° direita.");
                 ImGui::Dummy({ 1.0f, ui(8.0f) });
 
                 int impactMode = static_cast<int>(impactConfig.mode);
@@ -3422,6 +3696,7 @@ void WorkbenchApp::drawLaboratoryUi() {
                         &impactConfig.directionDegrees,
                         0.0f, 360.0f, "%.0f°",
                         ImGuiSliderFlags_AlwaysClamp);
+                    ImGui::SetItemTooltip("0° frente, 90° esquerda, 180° costas, 270° direita (de cada boneco).");
                 }
 
                 if (impactConfig.mode
@@ -3513,10 +3788,6 @@ void WorkbenchApp::drawLaboratoryUi() {
                     ImGui::Text("Próximo em: %.2f s",
                         impactOutput.secondsUntilNext);
                 }
-                ImGui::TextWrapped(
-                    "O mesmo gerador determinístico é usado pela suíte "
-                    "automatizada; nenhum link é reposicionado e nenhuma "
-                    "velocidade é injetada diretamente.");
                 ImGui::EndTabItem();
             }
             ImGui::EndTabBar();
@@ -3672,11 +3943,6 @@ void WorkbenchApp::drawLaboratoryUi() {
                         &m_laboratoryFog.heightFalloff,
                         0.0f, 0.10f, "%.4f",
                         ImGuiSliderFlags_AlwaysClamp);
-                    ImGui::Dummy({ 1.0f, ui(7.0f) });
-                    ImGui::TextWrapped(
-                        "A cor acompanha automaticamente o horizonte, "
-                        "a hora do dia e a cobertura de nuvens.");
-
                     ImGui::Dummy({ 1.0f, ui(12.0f) });
                     if (ImGui::Button("Copiar valores calibrados",
                             { -1.0f, ui(36.0f) })) {
@@ -3810,11 +4076,6 @@ void WorkbenchApp::drawLaboratoryUi() {
                         m_laboratoryEnvironment.cloudCoverage = 0.96f;
                     }
 
-                    ImGui::Dummy({ 1.0f, ui(10.0f) });
-                    ImGui::TextWrapped(
-                        "O Sol move as sombras; nuvens sobre o disco "
-                        "reduzem a luz direta, enquanto o céu continua "
-                        "espalhando parte da energia pelo ambiente.");
             }
             growPanelToFitContent(io.DisplaySize, m_uiScale);
         }

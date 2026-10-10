@@ -146,6 +146,10 @@ AnimationClip3D loadAnimationClip3D(std::string_view filePath) {
             };
             loadContact("leftFoot", clip.leftFootContact);
             loadContact("rightFoot", clip.rightFootContact);
+            loadContact("leftHand", clip.leftHandContact);
+            loadContact("rightHand", clip.rightHandContact);
+            loadContact("leftKnee", clip.leftKneeContact);
+            loadContact("rightKnee", clip.rightKneeContact);
         }
         if (root.contains("retargetReport")) {
             const Json& report = root.at("retargetReport");
@@ -278,6 +282,55 @@ AnimationTransformSample3D sampleAnimationTrack3D(
     };
 }
 
+AnimationTransformSample3D sampleAnimationTrackSmooth3D(
+    const AnimationTrack3D& track, float timeSeconds,
+    float clipDurationSeconds, bool loop) {
+    const auto& keys = track.keyframes;
+    if (keys.size() < 3) return sampleAnimationTrack3D(track, timeSeconds, clipDurationSeconds, loop);
+    float sampleTime = std::max(0.0f, timeSeconds);
+    if (loop && clipDurationSeconds > 0.0f) sampleTime = std::fmod(sampleTime, clipDurationSeconds);
+    else sampleTime = std::min(sampleTime, clipDurationSeconds);
+    const auto next = std::upper_bound(keys.begin(), keys.end(), sampleTime,
+        [](float time, const AnimationKeyframe3D& keyframe) { return time < keyframe.timeSeconds; });
+    if (next == keys.begin() || next == keys.end())
+        return sampleAnimationTrack3D(track, timeSeconds, clipDurationSeconds, loop);
+    const std::ptrdiff_t count = static_cast<std::ptrdiff_t>(keys.size());
+    const std::ptrdiff_t i1 = (next - keys.begin()) - 1, i2 = i1 + 1;
+    // Os vizinhos: em ciclo a ultima chave repete a primeira, entao a volta
+    // pula uma; fora de ciclo, a ponta se repete.
+    const auto neighbor = [&](std::ptrdiff_t i) -> const AnimationKeyframe3D& {
+        if (i < 0) return keys[static_cast<std::size_t>(loop ? count - 2 : 0)];
+        if (i >= count) return keys[static_cast<std::size_t>(loop ? 1 : count - 1)];
+        return keys[static_cast<std::size_t>(i)];
+    };
+    const AnimationKeyframe3D& k0 = neighbor(i1 - 1);
+    const AnimationKeyframe3D& k1 = keys[static_cast<std::size_t>(i1)];
+    const AnimationKeyframe3D& k2 = keys[static_cast<std::size_t>(i2)];
+    const AnimationKeyframe3D& k3 = neighbor(i2 + 1);
+    const float interval = k2.timeSeconds - k1.timeSeconds;
+    const float t = interval > 0.000001f ? std::clamp((sampleTime - k1.timeSeconds) / interval, 0.0f, 1.0f) : 0.0f;
+    const float t2 = t * t, t3 = t2 * t;
+    // Pesos da Catmull-Rom uniforme.
+    const float w0 = 0.5f * (-t3 + 2.0f * t2 - t);
+    const float w1 = 0.5f * (3.0f * t3 - 5.0f * t2 + 2.0f);
+    const float w2 = 0.5f * (-3.0f * t3 + 4.0f * t2 + t);
+    const float w3 = 0.5f * (t3 - t2);
+    const auto curve = [&](Vec3 a, Vec3 b, Vec3 c, Vec3 d) { return a * w0 + b * w1 + c * w2 + d * w3; };
+    const auto aligned = [&](Quaternion q) {
+        const Quaternion& r = k1.rotationDelta;
+        return q.x * r.x + q.y * r.y + q.z * r.z + q.w * r.w < 0.0f ? Quaternion { -q.x, -q.y, -q.z, -q.w } : q;
+    };
+    const Quaternion q0 = aligned(k0.rotationDelta), q1 = k1.rotationDelta, q2 = aligned(k2.rotationDelta),
+        q3 = aligned(k3.rotationDelta);
+    const Quaternion rotation = Quaternion { q0.x * w0 + q1.x * w1 + q2.x * w2 + q3.x * w3,
+        q0.y * w0 + q1.y * w1 + q2.y * w2 + q3.y * w3, q0.z * w0 + q1.z * w1 + q2.z * w2 + q3.z * w3,
+        q0.w * w0 + q1.w * w1 + q2.w * w2 + q3.w * w3 }.normalized();
+    return { curve(k0.translationOffsetMeters, k1.translationOffsetMeters, k2.translationOffsetMeters,
+                 k3.translationOffsetMeters),
+        rotation,
+        curve(k0.jointPositionRadians, k1.jointPositionRadians, k2.jointPositionRadians, k3.jointPositionRadians) };
+}
+
 float sampleAnimationScalarTrack3D(const AnimationScalarTrack3D& track,
     float timeSeconds, float clipDurationSeconds, bool loop) {
     if (track.keyframes.empty()) return 0.0f;
@@ -403,6 +456,10 @@ std::vector<AnimationClipValidationIssue3D> validateAnimationClip3D(
     };
     validateScalar(clip.leftFootContact, "contacts.leftFoot");
     validateScalar(clip.rightFootContact, "contacts.rightFoot");
+    validateScalar(clip.leftHandContact, "contacts.leftHand");
+    validateScalar(clip.rightHandContact, "contacts.rightHand");
+    validateScalar(clip.leftKneeContact, "contacts.leftKnee");
+    validateScalar(clip.rightKneeContact, "contacts.rightKnee");
     return issues;
 }
 

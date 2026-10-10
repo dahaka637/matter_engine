@@ -46,15 +46,16 @@ struct PropDefinition3D {
     PhysicsBodyDefinition3D bodyTemplate;
     std::vector<PhysicsShape3D> collisionShapes;
     GpuModel3D visual;
+    // A bola de futebol inflada: criada pela fisica da bola (sem forma de
+    // colisao nem malha aqui).
+    bool inflatedBall = false;
 };
 
-// Catálogo da aplicação de desenvolvimento. Ele conhece quais assets devem
-// aparecer nas ferramentas, enquanto importação glTF e regras físicas ficam
-// na engine e continuam reutilizáveis por futuros jogos.
+// Os objetos que o laboratorio cria: os procedurais (assets/objects, as
+// receitas de Modeling/Objects) e a bola de futebol inflada.
 class PropCatalog final {
 public:
-    void load(Renderer& renderer, const MaterialLibrary& materials,
-        PhysicsEngine3D& physics, std::string_view assetsDirectory);
+    void load(Renderer& renderer, const MaterialLibrary& materials, std::string_view assetsDirectory);
     void release(Renderer& renderer);
 
     [[nodiscard]] bool loaded() const { return m_loaded; }

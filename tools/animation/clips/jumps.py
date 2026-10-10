@@ -144,7 +144,7 @@ def _mirror(keys: list[JumpKey]) -> list[JumpKey]:
 
 def definitions(rig: Rig):
     return [
-        jump_definition(rig, "jump_standing", "Pulo parado", STANDING),
+        # (O pulo parado vem das referencias: clips/jump_reference.py.)
         jump_definition(rig, "jump_forward", "Pulo correndo", FORWARD),
         jump_definition(rig, "jump_backward", "Pulo para tras", BACKWARD,
                         direction_degrees=180.0),

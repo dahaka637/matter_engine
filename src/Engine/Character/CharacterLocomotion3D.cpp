@@ -1,13 +1,479 @@
 #include "Engine/Character/CharacterLocomotion3D.hpp"
+#include "Engine/Character/DefaultLocomotion3D.hpp"
 #include "Engine/Character/CharacterFootGeometry3D.hpp"
+#include "Engine/Character/RagdollPoseKinematics3D.hpp"
 
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdlib> // TEMPTUNE
 #include <limits>
 
 namespace MatterEngine {
 namespace {
+// TEMPTUNE (remover): leitura de ambiente para a calibragem.
+inline float tuneTemp(const char* name, float fallback) {
+    const char* value = std::getenv(name);
+    return value != nullptr ? std::strtof(value, nullptr) : fallback;
+}
+const float PelvisCurveLeadSeconds = tuneTemp("T_PelvisLead", 0.25f);  // TEMPTUNE
+const float PelvisCurveLeadMaximum = tuneTemp("T_PelvisLeadMax", 0.35f);  // TEMPTUNE
+const float PelvisCurveFeedForward = tuneTemp("T_PelvisFF", 1.0f);  // TEMPTUNE
+// Curva fechada: correndo para a frente, a pelve segue o caminho do corpo e
+// so se adianta para o pedido ate este angulo (rad), devagar e no sprint.
+const float PathLeadSlow = tuneTemp("T_PathLeadSlow", 1.2f);  // TEMPTUNE
+// Levantar: escala das ajudas externas (pelve, peito, endireitar) e teto da
+// forca dos musculos (multiplo da nominal do perfil).
+const float GetUpAssistScale = tuneTemp("T_GetUpAssist", 1.0f);  // TEMPTUNE
+// Levantar mais rapido (pedido do usuario, 05/10 noite): o clipe anda ate
+// GetUpSpeed vezes o ritmo dele (o corpo ainda o segura se ficar para tras)
+// e deitado ele espera no minimo GetUpSettleSeconds. Com as teclas de
+// andar, mais rapido ainda (GetUpHurrySpeed; com Shift, GetUpSprintSpeed),
+// espera menos e sai andando/correndo para onde elas pedem, em qualquer
+// direcao: termina o clipe antes (quase em pe) ja com o rumo pedido e a
+// arrancada da locomocao.
+// Fase final do levantar (de pe, o clipe quase reto): teto (vezes a massa)
+// e ganho a mais na ajuda que ergue o peito.
+const float GetUpChestLateCap = tuneTemp("T_GetUpChestCap", 5.0f);  // TEMPTUNE
+const float GetUpLateHeight = tuneTemp("T_GetUpLateHeight", 0.75f);  // TEMPTUNE (m)
+// Fim do levantar: o quanto a coluna endireita (0..1) e a parte da flexao
+// do clipe que fica.
+const float GetUpEndStraighten = tuneTemp("T_GetUpStraighten", 1.0f);  // TEMPTUNE
+// E o teto (vezes a massa) a mais na ajuda que endireita a pelve ali.
+const float GetUpPelvisLateCap = tuneTemp("T_GetUpPelvisCap", 6.0f);  // TEMPTUNE
+const float GetUpPelvisLateGain = tuneTemp("T_GetUpPelvisGain", 2.0f);  // TEMPTUNE
+// Perto da altura de pe, a ajuda de subida tambem freia (fracao do teto).
+const float GetUpLiftBrake = tuneTemp("T_GetUpLiftBrake", 1.0f);  // TEMPTUNE
+const float GetUpEndSpineShare = tuneTemp("T_GetUpSpineShare", 0.25f);  // TEMPTUNE
+const float GetUpChestLateGain = tuneTemp("T_GetUpChestGain", 1.5f);  // TEMPTUNE
+const bool GetUpHurryEnabled = tuneTemp("T_GetUpHurryOn", 1.0f) > 0.5f;  // TEMPTUNE
+// Carrinho fisico: o clipe pela camera/corrida e o mesmo deslize (05/10).
+const bool TackleChoiceByView = tuneTemp("T_TackleChoice", 1.0f) > 0.5f;  // TEMPTUNE
+const float GetUpSpeed = tuneTemp("T_GetUpSpeed", 1.0f);  // TEMPTUNE
+const float GetUpHurrySpeed = tuneTemp("T_GetUpHurry", 3.5f);  // TEMPTUNE
+const float GetUpSprintSpeed = tuneTemp("T_GetUpSprint", 3.5f);  // TEMPTUNE
+const float GetUpSettleSeconds = tuneTemp("T_GetUpSettle", 0.55f);  // TEMPTUNE
+// Deitado: o quanto o corpo precisa estar parado para comecar (vezes os
+// limites de velocidade do centro e do membro mais rapido).
+const float GetUpCalmScale = tuneTemp("T_GetUpCalm", 1.6f);  // TEMPTUNE
+// A subida da pelve no clipe acelerado fica no maximo nisto (m/s).
+const float GetUpMaxRise = tuneTemp("T_GetUpMaxRise", 0.9f);  // TEMPTUNE
+// E as juntas das pernas no clipe acelerado, no maximo nisto (rad/s).
+const float GetUpMaxLegSpeed = tuneTemp("T_GetUpMaxLeg", 5.0f);  // TEMPTUNE
+const float GetUpHurrySettleSeconds = tuneTemp("T_GetUpHurrySettle", 0.25f);  // TEMPTUNE
+// Saindo com pressa: o clipe termina a partir desta fracao, com o corpo
+// quase em pe (pelve endireitada alem de GetUpHurryUpright).
+const float GetUpHurryExit = tuneTemp("T_GetUpHurryExit", 0.85f);  // TEMPTUNE
+const float GetUpHurryUpright = tuneTemp("T_GetUpHurryUpright", 0.85f);  // TEMPTUNE
+// Com pressa e o modo padrao (laboratorio): a partir de quando o corpo esta
+// sobre os pes (fracao do clipe, altura da pelve, inclinacao dela em rad) a
+// locomocao padrao pode assumir ja andando - telemetry.getUpHandoffReady.
+const float GetUpHandoffProgress = tuneTemp("T_GetUpHandoffProg", 0.35f);  // TEMPTUNE
+const float GetUpHandoffHeight = tuneTemp("T_GetUpHandoffHeight", 0.50f);  // TEMPTUNE
+const float GetUpHandoffTilt = tuneTemp("T_GetUpHandoffTilt", 1.05f);  // TEMPTUNE
+const float GetUpHandoffChestTilt = tuneTemp("T_GetUpHandoffChest", 1.66f);  // TEMPTUNE
+// (Os pes a no maximo isto a frente/atras da pelve, m: de bruços o levantar
+// passa por um afundo, um pe bem a frente.)
+const float GetUpHandoffFeet = tuneTemp("T_GetUpHandoffFeet", 0.70f);  // TEMPTUNE
+const float GetUpTorqueCap = tuneTemp("T_GetUpTorqueCap", 3.0f);  // TEMPTUNE
+// Carrinho (04/10). TEMPTUNE: liga; velocidade minima na direcao do olhar
+// (m/s); crossfade da corrida para o clipe (s); preparo (quanto a pelve
+// baixa esperando o pouso, m; prazo maximo do preparo, s); deslize (o atrito
+// do corpo no chao enquanto desliza, x o do material; a pelve do clipe abaixo
+// disto e deslize, m; a pose do deslize fica enquanto ele anda mais rapido
+// que isto, m/s); e a volta para a locomocao (pelve do clipe acima desta
+// parte da altura de pe, depois do deslize, com o corpo de pe).
+const bool TackleEnabled = tuneTemp("T_Tackle", 1.0f) > 0.5f;
+const float TackleMinSpeed = tuneTemp("T_TackleMin", 2.5f);
+const float TackleTransition = tuneTemp("T_TackleBlend", 0.12f);
+const float TackleGatherDrop = tuneTemp("T_TackleGather", 0.08f);
+// Preparo: o passo de pouso um pouco mais longo (firmar o pe a frente) e
+// quanto do tronco, bracos e cabeca ja vai para a pose do comeco do clipe.
+const float TacklePlantStride = tuneTemp("T_TacklePlantStride", 0.10f);
+// TEMPTUNE: troca de dono do pe no ar (planejador <-> passada): o alvo novo
+// entra misturado a partir do ultimo neste tempo (s; 0 desliga).
+const float GoalHandoffSeconds = tuneTemp("T_GoalHandoff", 0.12f);
+// Repulsao do pe pela bola: folga entre a caixa do pe e a bola (m).
+const float BallRepelMargin = tuneTemp("T_BallRepelMargin", 0.025f);
+// TEMPTUNE: giro parado pelo clipe (ajuda cheia; pedido do usuario, 04/10):
+// liga com o giro pedido acima de ClipTurnEnter (rad); o ciclo do clipe dura o
+// giro sobre ClipTurnSpeed (rad/s), no minimo ClipTurnMinSeconds e no maximo a
+// duracao do clipe; as pernas entram/saem em ClipTurnBlendIn/Out (s).
+const bool ClipTurnEnabled = tuneTemp("T_ClipTurn", 0.0f) > 0.5f;
+const float ClipTurnEnter = tuneTemp("T_ClipTurnEnter", 0.30f);
+const float ClipTurnSpeed = tuneTemp("T_ClipTurnSpeed", 6.0f);
+const float ClipTurnMinSeconds = tuneTemp("T_ClipTurnMin", 0.24f);
+const float ClipTurnBlendIn = tuneTemp("T_ClipTurnBlendIn", 0.03f);
+const float ClipTurnBlendOut = tuneTemp("T_ClipTurnBlendOut", 0.12f);
+// TEMPTUNE: corpo do chute (rad no chute cheio): giro do tronco, para tras no
+// armado, por cima da bola batendo, para o lado do apoio.
+const float KickTrunkTwist = tuneTemp("T_KickTwist", 0.30f);
+const float KickTrunkBack = tuneTemp("T_KickTrunkBack", 0.12f);
+const float KickTrunkOver = tuneTemp("T_KickTrunkOver", 0.12f);
+const float KickTrunkSide = tuneTemp("T_KickTrunkSide", 0.14f);
+// Bracos do chute pela forca (04/10): abaixo de KickArmFloor nao entram, em
+// KickArmFull o desenho inteiro.
+const float KickArmFloor = tuneTemp("T_KickArmFloor", 0.25f);
+const float KickArmFull = tuneTemp("T_KickArmFull", 0.95f);
+const float TacklePreBlend = tuneTemp("T_TacklePreBlend", 0.6f);
+const float TacklePrepMax = tuneTemp("T_TacklePrep", 0.40f);
+// Forca do carrinho pela velocidade: no chao ele desliza D = a * v^p (v a
+// velocidade ao tocar o chao; trote ~1,1 m, sprint ~4 m) - o atrito do corpo
+// e o que da essa distancia (mu = v^2 / (2 g D), sobre o atrito de base do
+// corpo na grama, ~0,93 medido).
+const float TackleSlideA = tuneTemp("T_TackleSlideA", 0.30f);
+const float TackleSlideP = tuneTemp("T_TackleSlideP", 1.3f);
+const float TackleBaseFriction = tuneTemp("T_TackleBaseMu", 0.93f);
+// Impulso: na saida para o mergulho, com o pe de apoio no chao, a perna
+// empurra o corpo na direcao do carrinho ate esta parte da velocidade de
+// entrada (o teto da forca, x peso).
+const float TackleImpulseShare = tuneTemp("T_TackleImpulse", 1.15f);
+const float TackleImpulseForce = tuneTemp("T_TackleImpulseForce", 0.8f);
+const float TackleSlideHeight = tuneTemp("T_TackleSlideH", 0.55f);
+const float TackleSlideRelease = tuneTemp("T_TackleSlideV", 2.2f);
+const float TackleHandoffHeight = tuneTemp("T_TackleHandoff", 0.74f);
+// Atitude da pelve no carrinho (torque para a inclinacao do clipe; 0 sem).
+// 1,5 desde o jogador montado (09/10): na saida do deslize o centro de massa
+// fica mais a frente dos pes que no corpo antigo, e o tronco assentava onde
+// o torque iguala o tombamento - ~36 graus com 1,0, alem do limite de "de
+// pe" (35): os 5 carrinhos em sprint viravam queda (o antigo assentava em
+// ~30). Com 1,5, nenhum; o deslize no chao fica o mesmo.
+const float TackleAttitude = tuneTemp("T_TackleAttitude", 1.5f);
+// Ajuda para levantar do deslize (altura, para cima; propria do carrinho).
+const float TackleRecoveryAssist = tuneTemp("T_TackleRecovery", 1.0f);
+// Levantar (04/10): rolar para ficar de bruços antes de levantar, e os pes do
+// equilibrio no levantar de bruços. TEMPTUNE.
+const bool GetUpRollEnabled = tuneTemp("T_GetUpRoll", 1.0f) > 0.5f;
+const bool GetUpRollFromBack = tuneTemp("T_GetUpRollBack", 0.0f) > 0.5f;
+// De lado: o "para a frente" do peito a menos disto da horizontal (|z|).
+const float GetUpRollSideFacing = tuneTemp("T_GetUpRollSide", 0.55f);
+// Ajuda do rolar (N.m por kg, vezes o slider da ajuda para levantar).
+const float GetUpRollTorque = tuneTemp("T_GetUpRollTorque", 2.5f);
+const float GetUpRollTimeout = tuneTemp("T_GetUpRollTime", 3.0f);
+const bool GetUpFootworkEnabled = tuneTemp("T_GetUpFeet", 0.0f) > 0.5f;
+// Progresso do clipe de bruços: pes do equilibrio (quatro apoios) e o ponto
+// em que as maos soltam (o clipe espera ali com o corpo a frente dos pes).
+const float GetUpFootworkFrom = tuneTemp("T_GetUpFeetFrom", 0.36f);
+const float GetUpHandRelease = tuneTemp("T_GetUpHandRelease", 0.46f);
+// Do tornozelo a ponta do pe (0,22 m no modelo), com folga.
+const float GetUpToeAhead = tuneTemp("T_GetUpToe", 0.18f);
+const float GetUpStepMargin = tuneTemp("T_GetUpStepMargin", 0.04f);
+// O tornozelo pousa atras do centro de massa (o pe fica embaixo dele).
+const float GetUpStepAhead = tuneTemp("T_GetUpStepAhead", -0.06f);
+const float GetUpStepWidth = tuneTemp("T_GetUpStepWidth", 0.11f);
+const float GetUpStepSeconds = tuneTemp("T_GetUpStepSec", 0.35f);
+const float GetUpStepLift = tuneTemp("T_GetUpStepLift", 0.10f);
+const float GetUpStepMax = tuneTemp("T_GetUpStepMax", 0.45f);
+const float GetUpHoldMax = tuneTemp("T_GetUpHoldMax", 3.0f);
+// A pelve do IK das pernas presas se adianta para a do clipe ate isto
+// (altura, m; giro, rad): o descompasso e o empurrao das pernas.
+const float GetUpRootLead = tuneTemp("T_GetUpLead", 0.12f);
+const float GetUpTurnLead = tuneTemp("T_GetUpTurn", 0.12f);
+// Mao de apoio: o clipe pede a mao no chao (punho abaixo disto do chao); o
+// ponto e a frente e para fora do ombro; ida ao chao e volta ao clipe (s).
+const bool GetUpHandsEnabled = tuneTemp("T_GetUpHands", 0.0f) > 0.5f;
+const float GetUpHandClipDown = tuneTemp("T_GetUpHandDown", 0.10f);
+const float GetUpHandForward = tuneTemp("T_GetUpHandFwd", 0.12f);
+const float GetUpHandOutward = tuneTemp("T_GetUpHandOut", 0.08f);
+const float GetUpHandWristHeight = 0.05f;
+const float GetUpHandReachSeconds = tuneTemp("T_GetUpHandReach", 0.30f);
+const float GetUpHandReleaseSeconds = tuneTemp("T_GetUpHandRelease", 0.25f);
+// Levantar pelo corpo (BodilyGetUp3D) no lugar do clipe com ajuda.
+const bool GetUpBodily = tuneTemp("T_GetUpBodily", 0.0f) > 0.5f;  // TEMPTUNE
+// Postura mais ereta: o quanto a pelve-alvo sobe (m) parado, trotando e no
+// sprint - com os pes travados no chao, o IK estica os joelhos.
+const float PostureLiftIdle = tuneTemp("T_LiftIdle", 0.0f);  // TEMPTUNE
+const float PostureLiftRun = tuneTemp("T_LiftRun", 0.0f);  // TEMPTUNE
+const float PostureLiftSprint = tuneTemp("T_LiftSprint", 0.0f);  // TEMPTUNE
+const float StanceLegStiffness = tuneTemp("T_StanceStiff", 0.55f);  // TEMPTUNE
+const float ReachComfort = tuneTemp("T_ReachComfort", 0.985f);  // TEMPTUNE
+const bool ContactPhase = tuneTemp("T_ContactPhase", 1.0f) > 0.5f;  // TEMPTUNE
+const float ContactWaitSeconds = tuneTemp("T_ContactWait", 0.08f);  // TEMPTUNE
+const float ContactTrailCap = tuneTemp("T_ContactTrail", 0.55f);  // TEMPTUNE
+const float ContactMaxLead = tuneTemp("T_ContactLead", 0.25f);  // TEMPTUNE
+const float ContactCatchUp = tuneTemp("T_ContactCatchUp", 0.5f);  // TEMPTUNE
+const float ContactEarlyProgress = tuneTemp("T_ContactEarly", 0.8f);  // TEMPTUNE
+const float ContactEarlyBoost = tuneTemp("T_ContactEarlyBoost", 1.6f);  // TEMPTUNE
+const bool ContactLandReach = tuneTemp("T_ContactReach", 1.0f) > 0.5f;  // TEMPTUNE
+const bool ContactPaw = tuneTemp("T_ContactPaw", 0.0f) > 0.5f;  // TEMPTUNE
+// v2: salto correndo pela passada aberta do ciclo (ver a decolagem).
+const bool RunLeap = tuneTemp("T_RunLeap", 1.0f) > 0.5f;  // TEMPTUNE
+const float RunLeapMinimumSpeed = tuneTemp("T_RunLeapSpeed", 4.0f);  // TEMPTUNE
+const float RunLeapMinimumAssist = tuneTemp("T_RunLeapAssist", 0.45f);  // TEMPTUNE
+const float RunLeapMaximumAssist = tuneTemp("T_RunLeapAssistMax", 0.85f);  // TEMPTUNE
+const float RunLeapHold = tuneTemp("T_RunLeapHold", 0.3f);  // TEMPTUNE
+const float ContactLandOffset = tuneTemp("T_ContactLand", 0.0f);  // TEMPTUNE
+const bool ContactRateSmooth = tuneTemp("T_RateSmooth", 1.0f) > 0.5f;  // TEMPTUNE
+const float ContactRateDownSeconds = tuneTemp("T_RateDown", 0.015f);  // TEMPTUNE
+const float ContactRateUpSeconds = tuneTemp("T_RateUp", 0.06f);  // TEMPTUNE
+const float ArmPhaseSmoothSeconds = tuneTemp("T_ArmPhase", 0.08f);  // TEMPTUNE
+const float ArmPhaseLockSeconds = tuneTemp("T_ArmLock", 0.25f);  // TEMPTUNE
+const float ContactPawMaximum = tuneTemp("T_ContactPawMax", 0.35f);  // TEMPTUNE
+const float ContactLandRelease = tuneTemp("T_ContactReachRelease", 0.12f);  // TEMPTUNE
+const float ContactLandReachMax = tuneTemp("T_ContactReachMax", 0.02f);  // TEMPTUNE
+const float TouchHoldSeconds = tuneTemp("T_TouchHold", 0.12f);  // TEMPTUNE
+const float TouchMinStanceSeconds = tuneTemp("T_TouchMinStance", 0.08f);  // TEMPTUNE
+const bool TouchHoldSteadyOnly = tuneTemp("T_TouchSteady", 1.0f) > 0.5f;  // TEMPTUNE
+const bool ReleaseBySoleClearance = tuneTemp("T_SoleRelease", 1.0f) > 0.5f;  // TEMPTUNE
+const float PushStiffness = tuneTemp("T_PushStiff", 2.0f);  // TEMPTUNE
+const float PushAfterLandingSeconds = tuneTemp("T_PushLand", 1.0f);  // TEMPTUNE
+const float LandingLegTone = tuneTemp("T_LandTone", 1.0f);  // TEMPTUNE
+const float LandRunYield = tuneTemp("T_LandRunYield", 1.0f);  // TEMPTUNE (x agachamento previsto; 0 desliga)
+const float LandRunDepth = tuneTemp("T_LandRunDepth", 0.5f);  // TEMPTUNE
+const float LandingLegToneSeconds = tuneTemp("T_LandToneSec", 0.6f);  // TEMPTUNE
+const float ThrustGain = tuneTemp("T_Thrust", 0.0f);  // TEMPTUNE
+const float ThrustMaximum = tuneTemp("T_ThrustMax", 0.15f);  // TEMPTUNE
+const float ThrustApexMargin = tuneTemp("T_ThrustMargin", 0.0f);  // TEMPTUNE
+const float StanceVerticalDamping = tuneTemp("T_StanceDamp", 0.1f);  // TEMPTUNE
+const bool StanceDampFree = tuneTemp("T_StanceDampFree", 1.0f) > 0.5f;  // TEMPTUNE
+const float StanceDampCurveSpanEnv = tuneTemp("T_StanceDampCurve", 0.2f);  // TEMPTUNE (rad; 0 = sempre)
+const float StanceRootBandEnv = tuneTemp("T_StanceBand", 0.0f);  // TEMPTUNE (m; 0 desliga)
+const bool TouchPlantInCurves = tuneTemp("T_TouchPlantCurve", 0.0f) > 0.5f;  // TEMPTUNE
+const float CurveNarrow = tuneTemp("T_CurveNarrow", 0.0f);  // TEMPTUNE
+const float CurveSpineShare = tuneTemp("T_CurveSpine", 0.45f);  // TEMPTUNE
+const bool VarietyAdditive = tuneTemp("T_VarietyAdd", 0.0f) > 0.5f;  // TEMPTUNE
+const float CurveSpineSign = tuneTemp("T_CurveSpineSign", 1.0f);  // TEMPTUNE
+const float PushBehindMeters = tuneTemp("T_PushBehind", 0.05f);  // TEMPTUNE
+const bool PushVelocity = tuneTemp("T_PushVel", 0.0f) > 0.5f;  // TEMPTUNE
+const bool PushRamp = tuneTemp("T_PushRamp", 1.0f) > 0.5f;  // TEMPTUNE
+const float ReachAnticipateScale = tuneTemp("T_ReachAnticipate", 1.0f);  // TEMPTUNE
+const float ReachPelvisOmega = tuneTemp("T_ReachOmega", 18.0f);  // TEMPTUNE
+const float SwingReachFlatCap = tuneTemp("T_SwingReachCap", -1.0f);  // TEMPTUNE (m; <0 desliga)
+const float PathLeadFast = tuneTemp("T_PathLeadFast", 0.45f);  // TEMPTUNE
+const float PathLeadFastSpeed = tuneTemp("T_PathLeadFastSpeed", 6.5f);  // TEMPTUNE
+// Curva fechada: teto de velocidade a(lateral)/taxa de giro do pedido.
+const float CurveSpeedAcceleration = tuneTemp("T_CurveSpeedAc", 10.0f);  // TEMPTUNE
+const float CurveSpeedAccelerationLow = tuneTemp("T_CurveSpeedAcLow", 7.0f);  // TEMPTUNE
+// A pelve limitada ao caminho depois do adiantamento da curva (o total).
+const bool PathLeadAfterCurve = tuneTemp("T_PathLeadAfter", 1.0f) > 0.5f;  // TEMPTUNE
+const float CurveSpeedMinimum = tuneTemp("T_CurveSpeedMin", 2.5f);  // TEMPTUNE
+const float CurveSpeedRecovery = tuneTemp("T_CurveSpeedRec", 6.0f);  // TEMPTUNE
+const float RequestTurnFilterSeconds = tuneTemp("T_ReqTurnFilter", 0.25f);  // TEMPTUNE
+const float RequestTurnRateClamp = tuneTemp("T_ReqTurnClamp", 6.0f);  // TEMPTUNE
+// Correndo, o pe apoiado segura o rumo do pouso (a pelve gira por cima dele
+// pelo quadril) em vez de girar com ela no chao.
+const bool GaitStanceHoldYaw = tuneTemp("T_StanceHoldYaw", 0.0f) > 0.5f;  // TEMPTUNE
+// Quase-queda em movimento: deteccao (inclinacao para a frente alem da de
+// regime, subindo; freada do corpo alem da pedida) e a resposta.
+// Arrancada: o ciclo comeca com o pe de tras saindo do chao (fase do clipe
+// em que o contato dele cai), nao na fase 0.
+const bool StartFromRearFoot = tuneTemp("T_StartRear", 0.0f) > 0.5f;  // TEMPTUNE
+// Perna da passada no ar pela altura da pelve de verdade quando ela esta
+// abaixo da de referencia (fracao; 0 desliga).
+const float SwingFromLowBody = tuneTemp("T_SwingLow", 0.7f);  // TEMPTUNE
+const float SwingFromLowBodyRelease = tuneTemp("T_SwingLowRelease", 0.15f);  // TEMPTUNE
+// ... e pela inclinacao de verdade da pelve (so a inclinacao, sem o rumo).
+const float SwingFromBodyTilt = tuneTemp("T_SwingTilt", 0.0f);  // TEMPTUNE
+const float SwingLowLandingStart = tuneTemp("T_SwingLowLand", 0.65f);  // TEMPTUNE
+const float SwingLowLandingSpan = tuneTemp("T_SwingLowLandSpan", 0.3f);  // TEMPTUNE
+// O pe da passada que o clipe solta ainda carregando o corpo (o outro sem
+// apoio) espera descarregar, ate este tempo (s).
+const float LiftAfterUnloadSeconds = tuneTemp("T_LiftUnload", 0.0f);  // TEMPTUNE
+const float LiftAfterUnloadShare = tuneTemp("T_LiftUnloadShare", 0.25f);  // TEMPTUNE
+// Folga minima e ponta recolhida do trote tambem no sprint em curva (pela
+// aceleracao lateral real do corpo, m/s2, de onde comeca e em quanto chega).
+const float SprintCurveClearStart = tuneTemp("T_SprintClear", 2.0f);  // TEMPTUNE
+const float SprintCurveClearSpan = tuneTemp("T_SprintClearSpan", 4.0f);  // TEMPTUNE
+const float CurveClearEarly = tuneTemp("T_ClearEarly", 0.14f);  // TEMPTUNE
+const float StartPhaseLead = tuneTemp("T_StartLead", 0.0f);  // TEMPTUNE
+// Arrancada: o pe que o ciclo ja quer no ar, mas que ainda carrega o corpo,
+// so sai quando descarrega (ate este tempo, s).
+const float StartLoadHoldSeconds = tuneTemp("T_StartHold", 0.0f);  // TEMPTUNE
+const float StartLoadHoldShare = tuneTemp("T_StartHoldShare", 0.30f);  // TEMPTUNE
+const bool StumbleDetection = tuneTemp("T_Stumble", 1.0f) > 0.5f;  // TEMPTUNE
+const bool StumbleAgainstReference = tuneTemp("T_StumbleRef", 1.0f) > 0.5f;  // TEMPTUNE
+const bool StumbleFullResponse = tuneTemp("T_StumbleFull", 0.0f) > 0.5f;  // TEMPTUNE
+// Passo de quase-queda pelo planejador: risco que dispara, quanto a frente do
+// corpo no toque o pe pousa (m), duracao do balanco (s), quanto a pelve desce
+// (m) e o intervalo minimo entre dois (s).
+const float StumbleStepTrigger = tuneTemp("T_StumbleStep", 0.0f);  // TEMPTUNE
+const float StumbleStepAhead = tuneTemp("T_StumbleAhead", 0.20f);  // TEMPTUNE
+const float StumbleStepSwing = tuneTemp("T_StumbleStepSwing", 0.22f);  // TEMPTUNE
+const float StumbleStepDrop = tuneTemp("T_StumbleStepDrop", 0.10f);  // TEMPTUNE
+const float StumbleStepCooldown = tuneTemp("T_StumbleCooldown", 0.5f);  // TEMPTUNE
+// Arrancada: o primeiro passo e do planejador (pe de tras, pousando a frente
+// do corpo), com a pelve descendo e a ajuda dosada (teto de velocidade que
+// cresce: StartSpeedBase + StartSpeedRate t, ate o passo pousar).
+const bool StartStepEnabled = tuneTemp("T_StartStep", 0.0f) > 0.5f;  // TEMPTUNE
+const float StartStepAhead = tuneTemp("T_StartAhead", 0.20f);  // TEMPTUNE
+const float StartStepSwing = tuneTemp("T_StartSwing", 0.28f);  // TEMPTUNE
+const float StartStepDrop = tuneTemp("T_StartDrop", 0.06f);  // TEMPTUNE
+const float StartSpeedBase = tuneTemp("T_StartSpeedBase", 0.8f);  // TEMPTUNE
+const float StartSpeedRate = tuneTemp("T_StartSpeedRate", 6.0f);  // TEMPTUNE
+const float StartPushSeconds = tuneTemp("T_StartPush", 0.12f);  // TEMPTUNE
+// Arrancada pelo ciclo, com a ajuda dosada nos primeiros instantes (s; 0
+// desliga): o teto StartSpeedBase + StartSpeedRate t.
+const float StartDoseSeconds = tuneTemp("T_StartDose", 0.30f);  // TEMPTUNE
+const float StartStepLift = tuneTemp("T_StartLift", 0.14f);  // TEMPTUNE
+const float StumblePitchStart = tuneTemp("T_StumblePitch", 0.15f);  // TEMPTUNE
+const float StumblePitchSpan = tuneTemp("T_StumblePitchSpan", 0.15f);  // TEMPTUNE
+const float StumbleRateStart = tuneTemp("T_StumbleRate", 1.0f);  // TEMPTUNE
+const float StumbleRateSpan = tuneTemp("T_StumbleRateSpan", 1.0f);  // TEMPTUNE
+const float StumbleDeepStart = tuneTemp("T_StumbleDeep", 0.35f);  // TEMPTUNE
+const float StumbleDecelStart = tuneTemp("T_StumbleDecel", 15.0f);  // TEMPTUNE
+const float StumbleDecelSpan = tuneTemp("T_StumbleDecelSpan", 10.0f);  // TEMPTUNE
+const float StumbleBaselineSeconds = tuneTemp("T_StumbleBase", 1.0f);  // TEMPTUNE
+const float StumbleSwingMeasured = tuneTemp("T_StumbleSwing", 1.0f);  // TEMPTUNE
+const float StumbleCadence = tuneTemp("T_StumbleCadence", 0.0f);  // TEMPTUNE
+const float StumblePlacement = tuneTemp("T_StumblePlace", 0.0f);  // TEMPTUNE
+const float StumblePlacementLimit = tuneTemp("T_StumblePlaceMax", 0.6f);  // TEMPTUNE
+const float StumbleDrop = tuneTemp("T_StumbleDrop", 0.065f);  // TEMPTUNE
+const float StumbleTrunkScale = tuneTemp("T_StumbleTrunk", 1.0f);  // TEMPTUNE
+const float StumbleShiftScale = tuneTemp("T_StumbleShift", 1.0f);  // TEMPTUNE
+const float StumbleArmsScale = tuneTemp("T_StumbleArms", 0.75f);  // TEMPTUNE
+const float CurveLeanMaximum = tuneTemp("T_CurveLeanMax", 0.45f);  // TEMPTUNE
+const float CurveRootShare = tuneTemp("T_CurveRoot", 0.6f);  // TEMPTUNE
+const float CurveRootSprint = tuneTemp("T_CurveRootSprint", 0.15f);  // TEMPTUNE
+const float CurveRootSprintFrom = tuneTemp("T_CurveRootFrom", 3.5f);  // TEMPTUNE (m/s)
+const float CurveRootSprintSpan = tuneTemp("T_CurveRootSpan", 2.5f);  // TEMPTUNE (m/s)
+const float CurveFootShare = tuneTemp("T_CurveFoot", 1.0f);  // TEMPTUNE
+const float CurveDropShare = tuneTemp("T_CurveDrop", 0.6f);  // TEMPTUNE
+const float CurveLeanHeight = tuneTemp("T_CurveHeight", 0.70f);  // TEMPTUNE
+const bool CurveNew = tuneTemp("T_CurveNew", 1.0f) > 0.5f;  // TEMPTUNE
+const float CurveFootYawMaximum = tuneTemp("T_FootYawMax", 0.25f);  // TEMPTUNE
+const float CurveFootYawStart = tuneTemp("T_FootYawStart", 4.0f);  // TEMPTUNE
+const float CurveFootYawSpan = tuneTemp("T_FootYawSpan", 6.0f);  // TEMPTUNE
+const float CurveFootYawOuterShare = tuneTemp("T_FootYawOut", 0.2f);  // TEMPTUNE
+const float BodyTurnFilterSeconds = tuneTemp("T_BodyTurnFilter", 0.2f);  // TEMPTUNE
+const float CurveFootYawRate = tuneTemp("T_FootYawRate", 10.0f);  // TEMPTUNE
+const bool CurveFootHoldYaw = tuneTemp("T_FootHold", 1.0f) > 0.5f;  // TEMPTUNE
+const bool BrakeFootingStandingOnly = tuneTemp("T_FootingFix", 1.0f) > 0.5f;  // TEMPTUNE
+const float PivotSpeed = tuneTemp("T_PivotSpeed", 9.0f);  // TEMPTUNE
+const float PivotFullRateBelow = tuneTemp("T_PivotFull", 5.0f);  // TEMPTUNE
+const float ReverseDeceleration = tuneTemp("T_RevDecel", 16.0f);  // TEMPTUNE
+const float SettleToneRise = tuneTemp("T_ToneRise", 1.6f);  // TEMPTUNE
+const float FallSmoothSeconds = tuneTemp("T_FallSmooth", 0.12f);  // TEMPTUNE
+const bool FetalEnabled = tuneTemp("T_Fetal", 1.0f) > 0.5f;  // TEMPTUNE
+const float FetalHip = tuneTemp("T_FetalHip", 1.35f);  // TEMPTUNE
+const float FetalKnee = tuneTemp("T_FetalKnee", 1.85f);  // TEMPTUNE
+const bool AirBalanceNew = tuneTemp("T_AirBalance", 1.0f) > 0.5f;  // TEMPTUNE
+const float AirArmOpen = tuneTemp("T_AirArmOpen", 0.60f);  // TEMPTUNE
+const float FallAirTone = tuneTemp("T_AirTone", 0.90f);  // TEMPTUNE
+const float AirWindmill = tuneTemp("T_Windmill", 0.55f);  // TEMPTUNE
+const float AirWindmillRate = tuneTemp("T_WindmillRate", 0.9f);  // TEMPTUNE
+const float AirPedalRate = tuneTemp("T_PedalRate", 0.8f);  // TEMPTUNE
+const float GroundLife = tuneTemp("T_GroundLife", 1.0f);  // TEMPTUNE
+const float GroundLifeRate = tuneTemp("T_GroundLifeRate", 0.55f);  // TEMPTUNE
+const float FallLife = tuneTemp("T_FallLife", 1.0f);  // TEMPTUNE
+const bool LandingPrepEnabled = tuneTemp("T_LandPrep", 1.0f) > 0.5f;  // TEMPTUNE
+const float LandingAlign = tuneTemp("T_LandAlign", 0.7f);  // TEMPTUNE
+const float LandingMaxAngle = tuneTemp("T_LandMax", 0.60f);  // TEMPTUNE
+const float LandingLegShare = tuneTemp("T_LandLeg", 0.90f);  // TEMPTUNE
+const float LandingLeadSeconds = tuneTemp("T_LandLead", 0.25f);  // TEMPTUNE
+const float LandingTrunkAlign = tuneTemp("T_LandTrunk", 0.5f);  // TEMPTUNE
+const float LandingRollSign = tuneTemp("T_LandRollSign", -1.0f);  // TEMPTUNE
+const float LandingTrunkSide = tuneTemp("T_LandTrunkSide", 0.2f);  // TEMPTUNE
+const bool LandRunLead = tuneTemp("T_LandRunLead", 1.0f) > 0.5f;  // TEMPTUNE
+const float LandRunMaxAngle = tuneTemp("T_LandRunMax", 0.35f);  // TEMPTUNE (rad)
+const float IdleNeckExtension = tuneTemp("T_NeckExt", 0.20f);  // TEMPTUNE
+const float IdleHeadExtension = tuneTemp("T_HeadExt", 0.07f);  // TEMPTUNE
+const float IdleChestExtension = tuneTemp("T_ChestExt", 0.08f);  // TEMPTUNE
+const float IdlePostureMovingShare = tuneTemp("T_PostureMoving", 0.0f);  // TEMPTUNE
+const bool BalanceArmFix = tuneTemp("T_BalArmFix", 0.0f) > 0.5f;  // TEMPTUNE
+const float BalanceTrunkPitch = tuneTemp("T_BalTrunk", -0.13f);  // TEMPTUNE
+const float BalanceTrunkRoll = tuneTemp("T_BalTrunkRoll", -0.08f);  // TEMPTUNE
+const float SpineRollGainSlow = tuneTemp("T_SpineRollSlow", 1.0f);  // TEMPTUNE
+const float SpineRollGainFast = tuneTemp("T_SpineRollFast", 1.0f);  // TEMPTUNE
+const float SpineImpactFlex = tuneTemp("T_SpineImpact", 0.05f);  // TEMPTUNE
+const float SpineRollLimit = tuneTemp("T_SpineRollLimit", 0.42f);  // TEMPTUNE
+const bool GaitLeashEnabled = tuneTemp("T_GaitLeash", 1.0f) > 0.5f;  // TEMPTUNE
+const float GaitLeashMeters = tuneTemp("T_GaitLeashM", 0.10f);  // TEMPTUNE
+const bool CapturePlacement = tuneTemp("T_CapPlace", 1.0f) > 0.5f;  // TEMPTUNE
+// O pouso pelo ponto de captura inteiro tambem com a ajuda alta (fracao).
+const float CapturePlacementAllAssist = tuneTemp("T_CapPlaceAll", 0.0f);  // TEMPTUNE
+const float CapturePlacementGain = tuneTemp("T_CapGain", 1.0f);  // TEMPTUNE
+const float CapturePlacementLimit = tuneTemp("T_CapLimit", 0.30f);  // TEMPTUNE
+const float BalanceGaitShare = tuneTemp("T_BalGait", 1.0f);  // TEMPTUNE
+const bool BalanceGaitNoLegs = tuneTemp("T_BalGaitNoLegs", 1.0f) > 0.5f;  // TEMPTUNE
+const bool TripDetection = tuneTemp("T_Trip", 1.0f) > 0.5f;  // TEMPTUNE
+const float GaitHoldYaw = tuneTemp("T_GaitHoldYaw", 0.0f);  // TEMPTUNE
+const float StandingTurnRateHigh = tuneTemp("T_TurnRateHigh", 12.0f);  // TEMPTUNE
+const float StandingTurnAccelerationHigh = tuneTemp("T_TurnAccHigh", 120.0f);  // TEMPTUNE
+// (Giro parado, 04/10: a pelve espera os pes - torcao ate 0,45 rad sobre a
+// base e o pe apoiado nunca gira no chao. Com 0,9 e o pe girando junto, a
+// pelve seguia a camera a ate 12 rad/s arrastando os pes: esfregando,
+// cruzando - 11,6 ticks/caso, 55 a 180 graus/s - e uma queda a 360 graus/s.)
+const float StandingHipTwistHigh = tuneTemp("T_HipTwistHigh", 0.45f);  // TEMPTUNE
+const float StandingFootPivot = tuneTemp("T_FootPivot", 0.0f);  // TEMPTUNE
+const float StandingTurnGainHigh = tuneTemp("T_TurnGainHigh", 18.0f);  // TEMPTUNE
+const float GaitHoldYawFrom = tuneTemp("T_GaitHoldYawFrom", 0.5f);  // TEMPTUNE
+const float JumpCrouchDepth = tuneTemp("T_JumpCrouch", 0.22f);  // TEMPTUNE
+const float JumpPrepTrunkShare = tuneTemp("T_JumpPrepTrunk", 0.2f);  // TEMPTUNE
+const float LowAssistTurnCentripetal = tuneTemp("T_LowTurnAc", 100.0f);  // TEMPTUNE
+const float LowAssistTurnMinimum = tuneTemp("T_LowTurnMin", 1.2f);  // TEMPTUNE
+const float CutBrakeCosine = tuneTemp("T_CutCos", -0.5f);  // TEMPTUNE
+const float CutBrakeMinimumSpeed = tuneTemp("T_CutSpeed", 2.5f);  // TEMPTUNE
+const float CapturePullBackShare = tuneTemp("T_CapBack", 1.0f);  // TEMPTUNE
+const float CaptureBackDeadZone = tuneTemp("T_CapBackDead", 0.25f);  // TEMPTUNE (m, v2)
+const float StanceStiffness = tuneTemp("T_StanceStiffness", 2.5f);  // TEMPTUNE (v2)
+const float GaitLeadSpeed = tuneTemp("T_GaitLeadSpeed", 0.0f);  // TEMPTUNE
+const float SprintClipSpeed = tuneTemp("T_SprintClip", 0.0f);  // TEMPTUNE
+const bool SprintClipAllAssist = tuneTemp("T_SprintClipAll", 0.0f) > 0.5f;  // TEMPTUNE
+// Piso de ritmo do ciclo de sprint em qualquer ajuda (o corpo abaixo da
+// velocidade do clipe: curva fechada, arrancada).
+const float SprintRateFloor = tuneTemp("T_SprintRateFloor", 0.55f);  // TEMPTUNE
+const float LowAssistBrakeDeceleration = tuneTemp("T_LowBrakeDec", 12.0f);  // TEMPTUNE
+const float LowAssistBrakeLeash = tuneTemp("T_LowBrakeLeash", 0.8f);  // TEMPTUNE
+const bool BrakeAnchorNoFeedforward = tuneTemp("T_BrakeNoFF", 1.0f) > 0.5f;  // TEMPTUNE
+const bool SectorHoldWhileBraking = tuneTemp("T_SectorHold", 1.0f) > 0.5f;  // TEMPTUNE
+const float StrafeBrakeEngageSpeed = tuneTemp("T_StrafeBrake", 2.0f);  // TEMPTUNE
+const bool LockAtTouch = tuneTemp("T_LockTouch", 1.0f) > 0.5f;  // TEMPTUNE
+const float LockTouchWaitSeconds = tuneTemp("T_LockTouchWait", 0.10f);  // TEMPTUNE
+const float StanceRiseLimit = tuneTemp("T_StanceRise", 0.03f);  // TEMPTUNE
+const bool GaitSwingMeasuredPelvis = tuneTemp("T_GaitSwingMeasured", 0.0f) > 0.5f;  // TEMPTUNE
+const bool LockAtFirstTouch = tuneTemp("T_FirstTouch", 1.0f) > 0.5f;  // TEMPTUNE
+const float LockTouchPull = tuneTemp("T_LockPull", 0.08f);  // TEMPTUNE
+const float GaitSwingReleaseSeconds = tuneTemp("T_GaitSwingRelease", 0.15f);  // TEMPTUNE
+// 0 posicao e orientacao medidas; 1 so a posicao; 2 so a orientacao; 3 o
+// plano e a orientacao; 4 so o plano.
+const int GaitSwingMeasuredMode = static_cast<int>(tuneTemp("T_GaitSwingMode", 0.0f));  // TEMPTUNE
+const bool GaitSwingOnlyInChange = tuneTemp("T_GaitSwingChange", 1.0f) > 0.5f;  // TEMPTUNE
+const bool GaitSwingLatch = tuneTemp("T_GaitSwingLatch", 1.0f) > 0.5f;  // TEMPTUNE
+const bool LockTouchOnlyInChange = tuneTemp("T_LockTouchChange", 1.0f) > 0.5f;  // TEMPTUNE
+const float GaitChangeVelocityError = tuneTemp("T_GaitChangeError", 1.0f);  // TEMPTUNE
+const float SwingTrackGain = tuneTemp("T_SwingTrack", 0.0f);  // TEMPTUNE
+const float SwingTrackMaximum = tuneTemp("T_SwingTrackMax", 0.15f);  // TEMPTUNE
+const float LowAssistBrakeReferenceLeash = tuneTemp("T_LowBrakeRef", 0.30f);  // TEMPTUNE
+const bool CaptureInBrakeRun = tuneTemp("T_CapBrake", 0.0f) > 0.5f;  // TEMPTUNE
+const float LowAssistBrakeStepSpeed = tuneTemp("T_LowBrakeStep", 1.8f);  // TEMPTUNE
+const float GaitLeadMinimumRequest = tuneTemp("T_GaitLeadMin", 3.5f);  // TEMPTUNE
+const float LowAssistRateFloor = tuneTemp("T_LowRateFloor", 0.55f);  // TEMPTUNE
+const float ReachLiftPerMeter = tuneTemp("T_ReachLift", 0.0f);  // TEMPTUNE
+const float ReachLiftStart = tuneTemp("T_ReachLiftStart", 0.10f);  // TEMPTUNE
+const float ReachLiftMaximum = tuneTemp("T_ReachLiftMax", 0.15f);  // TEMPTUNE
+const bool ReachLiftBrakeOnly = tuneTemp("T_ReachLiftBrake", 0.0f) > 0.5f;  // TEMPTUNE
+const float SwingLowAssistStiffness = tuneTemp("T_SwingStiff", 1.0f);  // TEMPTUNE
+const float CrossGuardWidth = tuneTemp("T_CrossGuard", 0.0f);  // TEMPTUNE
+const bool PlannerSwingLowAssist = tuneTemp("T_PlannerSwing", 0.0f) > 0.5f;  // TEMPTUNE
+const float SwingLowAssistTorque = tuneTemp("T_SwingTorque", 1.0f);  // TEMPTUNE
+const bool LowAssistRateFloorInBrake = tuneTemp("T_LowRateBrake", 1.0f) > 0.5f;  // TEMPTUNE
+const bool GroundAlive = tuneTemp("T_GroundAlive", 1.0f) > 0.5f;  // TEMPTUNE
+const bool FallProtectNew = tuneTemp("T_FallNew", 1.0f) > 0.5f;  // TEMPTUNE
+const bool FallLegsNew = tuneTemp("T_FallLegs", 1.0f) > 0.5f;  // TEMPTUNE
+const bool FallArmsNew = tuneTemp("T_FallArms", 1.0f) > 0.5f;  // TEMPTUNE
+const float FallKneeForward = tuneTemp("T_KneeFwd", 1.10f);  // TEMPTUNE
+const float FallKneeBackward = tuneTemp("T_KneeBack", 1.30f);  // TEMPTUNE
+const float FallKneeSide = tuneTemp("T_KneeSide", 0.90f);  // TEMPTUNE
+const float FallHipForward = tuneTemp("T_HipFwd", 0.55f);  // TEMPTUNE
+const float FallHipBackward = tuneTemp("T_HipBack", 1.10f);  // TEMPTUNE
+const float FallHipSide = tuneTemp("T_HipSide", 0.50f);  // TEMPTUNE
+const float FallLegTone = tuneTemp("T_FallLegTone", 0.50f);  // TEMPTUNE
+const float FallTrunkTone = tuneTemp("T_FallTrunkTone", 0.40f);  // TEMPTUNE
+const float FallElbowReach = tuneTemp("T_ElbowReach", 0.35f);  // TEMPTUNE
+const float FallElbowAbsorb = tuneTemp("T_ElbowAbsorb", 0.90f);  // TEMPTUNE
+const float FallAbsorbSeconds = tuneTemp("T_AbsorbSeconds", 0.50f);  // TEMPTUNE
+const float FallCatchTone = tuneTemp("T_CatchTone", 1.10f);  // TEMPTUNE
+const float FallArmExtension = tuneTemp("T_ArmExt", 0.98f);  // TEMPTUNE
+const float FallArmForward = tuneTemp("T_ArmFwd", 0.75f);  // TEMPTUNE
+const float FallArmIterations = tuneTemp("T_ArmIter", 12.0f);  // TEMPTUNE
+const float FallArmReadyForward = tuneTemp("T_ArmReadyFwd", 0.30f);  // TEMPTUNE
+const float FallArmReadyDrop = tuneTemp("T_ArmReadyDrop", 0.20f);  // TEMPTUNE
+const float FallArmNearHeight = tuneTemp("T_ArmNear", 0.0f);  // TEMPTUNE
+const float FallArmSideReach = tuneTemp("T_ArmSide", 0.30f);  // TEMPTUNE
+const float FallArmBackReach = tuneTemp("T_ArmBack", 0.20f);  // TEMPTUNE
+const float FallFarArmShare = tuneTemp("T_FarArm", 0.7f);  // TEMPTUNE
+const float FallTwistRadians = tuneTemp("T_FallTwist", 0.55f);  // TEMPTUNE
+const float PivotCrouchMeters = tuneTemp("T_PivotCrouch", 0.12f);  // TEMPTUNE
 constexpr float Pi = 3.14159265358979323846f;
 constexpr float TwoPi = Pi * 2.0f;
 
@@ -85,15 +551,82 @@ constexpr float GaitFlipTransitionSeconds = 0.35f;
 constexpr float UprightMuscleTone = 1.3f;
 // Modo fisico: altura minima do pe no meio de um passo (m, acima do chao).
 constexpr float SwingMinimumClearance = 0.13f;
-constexpr float SettleRestingTone = 0.25f;
+const float SettleRestingTone = tuneTemp("T_RestTone", 0.40f);  // TEMPTUNE
 // Caido e parado, quanto tempo fica largado antes de se arrumar para levantar.
-constexpr float SettleRestBeforeGather = 1.20f;
+const float SettleRestBeforeGather = tuneTemp("T_SettleRest", 0.20f);  // TEMPTUNE
 // Numa nova tentativa de levantar (a anterior falhou), quanto espera.
-constexpr float RetryRestBeforeGather = 0.90f;
+const float RetryRestBeforeGather = tuneTemp("T_RetryRest", 0.10f);  // TEMPTUNE
 // Caindo: tonus dos bracos/pescoco (reflexo) e do resto (queda sem volta).
 // O corpo (era 0,38) cai solto; os bracos protegem - com 0,65 a mao que ia
 // ao chao cedia no tombo e a cabeca batia antes (queda de lado).
-constexpr float FallReflexLimbTone = 0.85f;
+const float FallReflexLimbTone = tuneTemp("T_ReflexTone", 0.85f);  // TEMPTUNE
+// Reflexo das maos ao chao caindo (os bracos prontos a frente e depois
+// estendidos ate o chao): tirado a pedido do usuario (05/10).
+const bool FallArmsReflex = tuneTemp("T_FallArms", 0.0f) > 0.5f;  // TEMPTUNE
+// Postura perdida (pedido do usuario, 05/10): perdendo a postura, a ajuda
+// segurava o corpo torto por ate 1,5 s - o corpo a 45-74 graus fora dos pes,
+// os pes batendo no chao, as maos paradas - e o puxava de volta. Chegando a
+// esse ponto, agora ele cai: a ajuda sai e as pernas cedem no mesmo tick.
+// (Um resgate - passo rapido no rumo da queda e a coluna para tras - foi
+// tentado e descartado pelo usuario.)
+const bool PostureLossFall = tuneTemp("T_PostureLoss", 1.0f) > 0.5f;  // TEMPTUNE
+// A postura e o pendulo: o centro de massa contra o meio dos pes (rad da
+// vertical). Trotando e correndo ele nao passa de 15-17 graus; os tropecos
+// que se salvam sozinhos, de ~30 graus por 0,2-0,3 s. Alem de PostureLostTilt
+// e queda; alem de PostureHeldTilt por mais de PostureHeldSeconds tambem
+// (segurado a 31-40 graus por 0,5-0,7 s) - desde que fora da pose pedida
+// (PostureHeldDeviation, pelo mesmo pendulo nela): no impulso do sprint os
+// dois pes ficam atras e ele passa de 25 graus de proposito.
+const float PostureLostTilt = tuneTemp("T_PostureLost", 0.73f);  // TEMPTUNE (rad)
+const float PostureHeldTilt = tuneTemp("T_PostureHeld", 0.44f);  // TEMPTUNE (rad)
+const float PostureHeldDeviation = tuneTemp("T_PostureHeldDev", 0.35f);  // TEMPTUNE (rad)
+const float PostureHeldSeconds = tuneTemp("T_PostureHeldSec", 0.30f);  // TEMPTUNE (s)
+// O peito tombado alem disto (rad, da vertical) tambem e queda.
+const float PostureChestLost = tuneTemp("T_PostureChest", 0.96f);  // TEMPTUNE (rad)
+// Cambaleio (pedido do usuario, 05/10 noite: "mesmo ragdolizado, tentar
+// manter a postura e se recobrar"): o choque deste tick (soma dos contatos
+// fora o apoio dos pes, N.s) de Min a Full amolece o corpo de 0 a 1 na hora;
+// o tonus volta a RecoverPerSecond (mais rapido em pe). Amolecido, cada junta
+// fica com o seu piso de tonus (pernas seguram um pouco o corpo; tronco e
+// bracos soltam) e os limites da postura perdida e da queda sem volta ganham
+// TiltRelief (rad) - os passos de equilibrio seguem tentando; so o chao (o
+// corpo tombado ou baixo tocando-o) decide a queda.
+const float StaggerImpulseMin = tuneTemp("T_StaggerMin", 8.0f);  // TEMPTUNE (N.s)
+const float StaggerImpulseFull = tuneTemp("T_StaggerFull", 45.0f);  // TEMPTUNE (N.s)
+const float StaggerRecoverPerSecond = tuneTemp("T_StaggerRecover", 0.75f);  // TEMPTUNE (1/s)
+const float StaggerLegTone = tuneTemp("T_StaggerLeg", 0.20f);  // TEMPTUNE
+const float StaggerTorsoTone = tuneTemp("T_StaggerTorso", 0.10f);  // TEMPTUNE
+const float StaggerArmTone = tuneTemp("T_StaggerArm", 0.04f);  // TEMPTUNE
+// No choque o corpo fica solto por este tempo (s, vezes o tamanho dele)
+// antes de o tonus comecar a voltar; tronco e bracos perdem ate esta fracao
+// da compensacao de gravidade.
+const float StaggerHoldSeconds = tuneTemp("T_StaggerHold", 0.25f);  // TEMPTUNE
+const float StaggerGravityDrop = tuneTemp("T_StaggerGravity", 0.9f);  // TEMPTUNE
+// E o quanto mais tombado (no cosseno da pelve) ele ainda nao conta como
+// caido com um pe no chao.
+const float StaggerFallenRelief = tuneTemp("T_StaggerFallen", 0.25f);  // TEMPTUNE
+const float StaggerTiltRelief = tuneTemp("T_StaggerTilt", 0.35f);  // TEMPTUNE (rad)
+// Volta a valer (o corpo de pe de novo) abaixo disto.
+const float PostureRegainedTilt = tuneTemp("T_PostureOk", 0.21f);  // TEMPTUNE (rad)
+// v2: o pendulo da postura contra os pes apoiados (ver o bloco da postura).
+// Locomocao fisica v2 (CharacterLocomotionInput3D::physicalV2; as variaveis
+// so para experimento, com o v1): ver cada bloco.
+const bool PostureSupportPendulumEnv = tuneTemp("T_PostureSupport", 0.0f) > 0.5f;  // TEMPTUNE
+const bool StartOnlyFromRestEnv = tuneTemp("T_StartFromRest", 0.0f) > 0.5f;  // TEMPTUNE
+const bool LandingResyncEnv = tuneTemp("T_LandResync", 0.0f) > 0.5f;  // TEMPTUNE
+const float PostureGaitPelvisLost = tuneTemp("T_PostureGaitPelvis", 0.87f);  // TEMPTUNE (rad)
+// v2: a perna de apoio da corrida pede no maximo 6 cm acima (ou abaixo) da
+// pelve de verdade, e o amortecimento vertical vale fora das curvas tambem
+// (os saltinhos de quem pousa fundo e estica a perna de uma vez).
+constexpr float StanceRootBandV2 = 0.06f;
+// v2, recuperacao apoiada: altura minima do apoio acima do chao (m), memoria
+// do contato (s), tempo maximo da tentativa e sem progresso (s), inclinacao
+// maxima da pelve (cos: ~80 graus).
+const float BraceMinimumHeight = tuneTemp("T_BraceHeight", 0.40f);  // TEMPTUNE
+const float BraceMemorySeconds = tuneTemp("T_BraceMemory", 0.30f);  // TEMPTUNE
+const float BraceAttemptSeconds = tuneTemp("T_BraceAttempt", 4.0f);  // TEMPTUNE
+const float BraceStallSeconds = tuneTemp("T_BraceStall", 1.5f);  // TEMPTUNE
+const float BraceMinimumUpright = tuneTemp("T_BraceUpright", 0.17f);  // TEMPTUNE
 constexpr float FallBodyTone = 0.25f;
 // Largado (caindo sem volta, deitado): quanto da compensacao de gravidade
 // resta - os membros pesam. Bracos protegendo a queda seguram mais.
@@ -101,7 +634,7 @@ constexpr float FallBodyGravity = 0.25f;
 constexpr float FallLimbGravity = 0.80f;
 constexpr float LyingGravity = 0.10f;
 // Tonus ao bater no chao (cai dele ate SettleRestingTone em ~0,1 s).
-constexpr float SettleImpactTone = 0.50f;
+const float SettleImpactTone = tuneTemp("T_ImpactTone", 0.60f);  // TEMPTUNE
 constexpr float RisingArmStiffness = 2.0f;
 constexpr float RisingTorsoStiffness = 1.3f;
 constexpr float RisingLegStiffness = 1.6f;
@@ -165,23 +698,11 @@ Vec3 uprightOrientationError(Quaternion current, float desiredYaw,
 }
 
 Quaternion exponentialRotation(Vec3 coordinates) {
-    const float angle = coordinates.length();
-    return angle > 0.000001f
-        ? Quaternion::fromAxisAngle(coordinates / angle, angle)
-        : Quaternion {};
+    return ragdollJointRotation3D(coordinates);
 }
 
 Vec3 exponentialJacobian(Vec3 coordinates, Vec3 velocity) {
-    const float squared = coordinates.lengthSquared();
-    const float angle = std::sqrt(squared);
-    const float first = squared < 0.0001f
-        ? 0.5f - squared / 24.0f
-        : (1.0f - std::cos(angle)) / squared;
-    const float second = squared < 0.0001f
-        ? 1.0f / 6.0f - squared / 120.0f
-        : (angle - std::sin(angle)) / (squared * angle);
-    return velocity + cross(coordinates, velocity) * first
-        + cross(coordinates, cross(coordinates, velocity)) * second;
+    return ragdollJointJacobian3D(coordinates, velocity);
 }
 
 Vec3 jointAngularVelocity(Vec3 target, Vec3 coordinateVelocity,
@@ -193,41 +714,23 @@ Vec3 jointAngularVelocity(Vec3 target, Vec3 coordinateVelocity,
         exponentialJacobian(target, coordinateVelocity));
 }
 
+// O pendulo do corpo: centro de massa (pelas fracoes de massa) menos o meio
+// dos dois pes.
+template <typename Position>
+Vec3 pendulumArm(const RagdollProfile3D& profile, std::size_t leftFoot, std::size_t rightFoot, Position position) {
+    Vec3 center {};
+    float mass = 0.0f;
+    for (std::size_t i = 0; i < profile.links.size(); ++i) {
+        center = center + position(i) * profile.links[i].massFraction;
+        mass += profile.links[i].massFraction;
+    }
+    center = center * (1.0f / std::max(1e-4f, mass));
+    return center - (position(leftFoot) + position(rightFoot)) * 0.5f;
+}
+
 void buildLocalPose(const RagdollProfile3D& profile,
     const std::vector<Vec3>& coordinates, RagdollAnimationPose3D& pose) {
-    pose.linkPositions.assign(profile.links.size(), {});
-    pose.linkOrientations.assign(profile.links.size(), {});
-    for (std::size_t index = 1; index < profile.links.size(); ++index) {
-        const RagdollLinkDefinition3D& link = profile.links[index];
-        if (link.parentIndex < 0) continue;
-        const std::size_t parent = static_cast<std::size_t>(link.parentIndex);
-        const RagdollLinkDefinition3D& parentLink = profile.links[parent];
-        Vec3 angles = index < coordinates.size()
-            ? coordinates[index] : Vec3 {};
-        for (std::size_t axis = 0; axis < 3; ++axis) {
-            const RagdollAxisDefinition3D& limit =
-                link.inboundJoint.axes[axis];
-            setComponent(angles, axis, limit.enabled
-                ? std::clamp(component(angles, axis),
-                    limit.minimumRadians, limit.maximumRadians)
-                : 0.0f);
-        }
-        const Quaternion frame = link.inboundJoint.frameModelOrientation;
-        pose.linkOrientations[index] =
-            (pose.linkOrientations[parent]
-                * parentLink.modelOrientation.conjugate()
-                * frame * exponentialRotation(angles)
-                * (link.modelOrientation.conjugate() * frame).conjugate())
-                    .normalized();
-        const Vec3 anchor = link.inboundJoint.anchorModelPosition;
-        pose.linkPositions[index] = pose.linkPositions[parent]
-            + pose.linkOrientations[parent].rotate(
-                parentLink.modelOrientation.conjugate().rotate(
-                    anchor - parentLink.modelPosition))
-            - pose.linkOrientations[index].rotate(
-                link.modelOrientation.conjugate().rotate(
-                    anchor - link.modelPosition));
-    }
+    buildRagdollLocalPose3D(profile, coordinates, pose);
 }
 
 // Position-only damped least squares: brings a point fixed to endIndex
@@ -235,125 +738,9 @@ void buildLocalPose(const RagdollProfile3D& profile,
 // endIndex and its ancestors up to `depth` links, within their limits.
 void solveChainPoint(const RagdollProfile3D& profile,
     std::vector<Vec3>& coordinates, std::size_t footIndex, Vec3 pointInEnd,
-    int depth, Vec3 targetRootLocal, float weight) {
-    if (footIndex == 0 || footIndex >= profile.links.size()
-        || coordinates.size() != profile.links.size()
-        || !finite(targetRootLocal) || weight <= 0.0f) {
-        return;
-    }
-    struct DegreeOfFreedom {
-        std::size_t link = 0;
-        std::size_t axis = 0;
-    };
-    std::array<DegreeOfFreedom, 9> degrees;
-    std::size_t count = 0;
-    int linkIndex = static_cast<int>(footIndex);
-    for (int level = 0; level < depth && linkIndex > 0; ++level) {
-        const auto& joint = profile.links[static_cast<std::size_t>(linkIndex)]
-            .inboundJoint;
-        for (std::size_t axis = 0; axis < 3; ++axis) {
-            if (joint.axes[axis].enabled && count < degrees.size()) {
-                degrees[count++] = {
-                    static_cast<std::size_t>(linkIndex), axis
-                };
-            }
-        }
-        linkIndex = profile.links[static_cast<std::size_t>(linkIndex)]
-            .parentIndex;
-    }
-    if (count == 0) return;
-
-    const std::vector<Vec3> original = coordinates;
-    RagdollAnimationPose3D pose;
-    for (int iteration = 0; iteration < 7; ++iteration) {
-        buildLocalPose(profile, coordinates, pose);
-        const Vec3 endPoint = pose.linkPositions[footIndex]
-            + pose.linkOrientations[footIndex].rotate(pointInEnd);
-        const Vec3 error = targetRootLocal - endPoint;
-        if (error.lengthSquared() < 0.00000025f) break;
-
-        float jacobian[3][9] {};
-        for (std::size_t column = 0; column < count; ++column) {
-            const DegreeOfFreedom degree = degrees[column];
-            const RagdollLinkDefinition3D& link = profile.links[degree.link];
-            const std::size_t parent = static_cast<std::size_t>(
-                link.parentIndex);
-            const RagdollLinkDefinition3D& parentLink = profile.links[parent];
-            const Quaternion parentModelFrame = pose.linkOrientations[parent]
-                * parentLink.modelOrientation.conjugate();
-            const Vec3 basis = degree.axis == 0 ? Vec3 { 1.0f, 0.0f, 0.0f }
-                : degree.axis == 1 ? Vec3 { 0.0f, 1.0f, 0.0f }
-                : Vec3 { 0.0f, 0.0f, 1.0f };
-            const Vec3 angular = (parentModelFrame
-                * link.inboundJoint.frameModelOrientation).rotate(
-                    exponentialJacobian(coordinates[degree.link], basis));
-            const Vec3 anchor = pose.linkPositions[parent]
-                + parentModelFrame.rotate(
-                    link.inboundJoint.anchorModelPosition
-                        - parentLink.modelPosition);
-            const Vec3 linear = cross(angular, endPoint - anchor);
-            jacobian[0][column] = linear.x;
-            jacobian[1][column] = linear.y;
-            jacobian[2][column] = linear.z;
-        }
-
-        float system[9][10] {};
-        for (std::size_t row = 0; row < count; ++row) {
-            for (std::size_t column = 0; column < count; ++column) {
-                for (std::size_t dimension = 0; dimension < 3; ++dimension) {
-                    system[row][column] += jacobian[dimension][row]
-                        * jacobian[dimension][column];
-                }
-                if (row == column) system[row][column] += 0.025f;
-            }
-            system[row][count] = jacobian[0][row] * error.x
-                + jacobian[1][row] * error.y
-                + jacobian[2][row] * error.z;
-        }
-        for (std::size_t pivot = 0; pivot < count; ++pivot) {
-            std::size_t best = pivot;
-            for (std::size_t row = pivot + 1; row < count; ++row) {
-                if (std::abs(system[row][pivot])
-                    > std::abs(system[best][pivot])) best = row;
-            }
-            if (best != pivot) {
-                for (std::size_t column = pivot; column <= count; ++column) {
-                    std::swap(system[pivot][column], system[best][column]);
-                }
-            }
-            const float divisor = system[pivot][pivot];
-            if (std::abs(divisor) < 0.000001f) continue;
-            for (std::size_t column = pivot; column <= count; ++column) {
-                system[pivot][column] /= divisor;
-            }
-            for (std::size_t row = 0; row < count; ++row) {
-                if (row == pivot) continue;
-                const float factor = system[row][pivot];
-                for (std::size_t column = pivot; column <= count; ++column) {
-                    system[row][column] -= factor * system[pivot][column];
-                }
-            }
-        }
-        for (std::size_t degreeIndex = 0;
-                degreeIndex < count; ++degreeIndex) {
-            const DegreeOfFreedom degree = degrees[degreeIndex];
-            const RagdollAxisDefinition3D& limit = profile.links[degree.link]
-                .inboundJoint.axes[degree.axis];
-            const float next = component(coordinates[degree.link], degree.axis)
-                + std::clamp(system[degreeIndex][count], -0.13f, 0.13f);
-            setComponent(coordinates[degree.link], degree.axis,
-                std::clamp(next, limit.minimumRadians, limit.maximumRadians));
-        }
-    }
-
-    weight = std::clamp(weight, 0.0f, 1.0f);
-    for (std::size_t degreeIndex = 0; degreeIndex < count; ++degreeIndex) {
-        const DegreeOfFreedom degree = degrees[degreeIndex];
-        const float result = component(coordinates[degree.link], degree.axis);
-        const float before = component(original[degree.link], degree.axis);
-        setComponent(coordinates[degree.link], degree.axis,
-            before + (result - before) * weight);
-    }
+    int depth, Vec3 targetRootLocal, float weight, int iterations = 7) {
+    solveRagdollChainPoint3D(profile, coordinates, footIndex, pointInEnd,
+        depth, targetRootLocal, weight, iterations);
 }
 
 // Keeps the foot link on a support point (stance lock, turn steps).
@@ -407,10 +794,14 @@ Quaternion slerpQuaternion(Quaternion from, Quaternion to, float t) {
 // com o chao) e a ponta em segundo.
 Vec3 rotationVector(Quaternion value);
 
+// TEMPTUNE: iteracoes do IK do pe guiado pela bola (o resto, 7).
+const int BallFootIterations = static_cast<int>(std::getenv("T_BallIkIterations")
+    ? std::strtof(std::getenv("T_BallIkIterations"), nullptr) : 24.0f);
+
 void solveFootPose(const RagdollProfile3D& profile,
     std::vector<Vec3>& coordinates, std::size_t footIndex,
     Vec3 targetPosition, Quaternion targetOrientation, float weight,
-    bool holdYaw) {
+    bool holdYaw, int iterations = 7) {
     if (footIndex == 0 || footIndex >= profile.links.size()
         || coordinates.size() != profile.links.size() || weight <= 0.0f
         || !finite(targetPosition)) {
@@ -429,7 +820,7 @@ void solveFootPose(const RagdollProfile3D& profile,
     const Vec3 ankleTarget = targetPosition
         + targetOrientation.rotate(anchorInFoot);
     solveChainPoint(profile, coordinates, shinIndex, anchorInShin, 2,
-        ankleTarget, 1.0f);
+        ankleTarget, 1.0f, iterations);
 
     RagdollAnimationPose3D pose;
     // Rumo do pe pelo quadril. O tornozelo so tem flexao e inversao: o rumo
@@ -494,7 +885,7 @@ void solveFootPose(const RagdollProfile3D& profile,
                 coordinates[thighIndex] = local;
                 // No limite do quadril o tornozelo sai do lugar: de volta.
                 solveChainPoint(profile, coordinates, shinIndex, anchorInShin,
-                    2, ankleTarget, 1.0f);
+                    2, ankleTarget, 1.0f, iterations);
             }
         }
     }
@@ -609,6 +1000,24 @@ float authoredHorizontalSpeed(const AnimationClip3D& clip) {
     return clip.durationSeconds > 0.0f
         ? std::hypot(displacement.x, displacement.y) / clip.durationSeconds
         : 0.0f;
+}
+
+// Giro parado pelo clipe: o giro (rad, relativo ao comeco) e o deslocamento
+// no plano da raiz do clipe no tempo t (a raiz do turn_in_place.py e so isso).
+float clipRootYaw(const AnimationClip3D& clip, const RagdollProfile3D& profile, float time) {
+    const AnimationTrack3D* root = findAnimationTrack3D(clip, profile.links.front().id);
+    if (root == nullptr) return 0.0f;
+    const Quaternion q = sampleAnimationTrack3D(*root, std::clamp(time, 0.0f, clip.durationSeconds),
+        clip.durationSeconds, false).rotationDelta;
+    return 2.0f * std::atan2(q.z, q.w);
+}
+
+Vec3 clipRootPlanar(const AnimationClip3D& clip, const RagdollProfile3D& profile, float time) {
+    const AnimationTrack3D* root = findAnimationTrack3D(clip, profile.links.front().id);
+    if (root == nullptr) return {};
+    const Vec3 t = sampleAnimationTrack3D(*root, std::clamp(time, 0.0f, clip.durationSeconds),
+        clip.durationSeconds, false).translationOffsetMeters;
+    return { t.x, t.y, 0.0f };
 }
 
 float stanceAlignedPhase(const AnimationClip3D& clip, float cyclePhase) {
@@ -750,6 +1159,18 @@ Vec3 rotationVector(Quaternion value) {
     return imaginary * (angle / length);
 }
 
+// Raiz de um clipe num instante (deslocamento e rotacao, referencial do
+// clipe).
+AnimationTransformSample3D clipRootAt(const RagdollProfile3D& profile,
+    const AnimationClip3D& clip, float time) {
+    AnimationTransformSample3D sample;
+    if (const AnimationTrack3D* track = findAnimationTrack3D(clip, profile.links.front().id)) {
+        sample = sampleAnimationTrack3D(*track, std::clamp(time, 0.0f, clip.durationSeconds),
+            clip.durationSeconds, false);
+    }
+    return sample;
+}
+
 Vec3 clampMagnitude(Vec3 value, float maximumLength) {
     const float squared = value.lengthSquared();
     if (squared <= maximumLength * maximumLength || squared < 0.000001f) {
@@ -791,6 +1212,8 @@ void blendJointCoordinate(const RagdollProfile3D& profile,
         limit.minimumRadians, limit.maximumRadians));
 }
 
+float varietyNoise(std::uint32_t seed, std::uint32_t channel, float position);
+
 // Reflexos de quem esta caindo, so alvos de junta (os motores fazem o
 // resto; nada e escrito no corpo): as maos vao ao chao no rumo da queda, a
 // cabeca se protege (queixo no peito caindo de costas, erguida caindo de
@@ -799,7 +1222,8 @@ void blendJointCoordinate(const RagdollProfile3D& profile,
 void applyFallReflexPose(const RagdollProfile3D& profile,
     const RagdollState3D& state, std::vector<Vec3>& coordinates,
     std::array<std::size_t, 2> hands, std::size_t chest, Vec3 fallDirection,
-    float groundHeight, float amount, float legAmount) {
+    float groundHeight, float amount, float legAmount,
+    std::array<float, 2> catchSeconds, float time, std::uint32_t seed) {
     if (amount <= 0.001f || state.links.size() != profile.links.size()
         || chest >= state.links.size()) return;
     const auto indexOf = [&](std::string_view id) {
@@ -834,37 +1258,273 @@ void applyFallReflexPose(const RagdollProfile3D& profile,
         blendJointCoordinate(profile, coordinates, indexOf(id), 1, 0.14f * backward, amount);
         blendJointCoordinate(profile, coordinates, indexOf(id), 2, -0.10f * aside, amount);
     }
+    // Tenta girar o corpo para o lado da queda, virando o peito e as maos
+    // para o chao: de costas ele cai de lado (quadril e mao), nao chapado;
+    // de lado vira o peito para o chao; de frente, pouco. Caindo reto para
+    // tras, gira para a esquerda.
+    if (FallProtectNew && FallTwistRadians > 0.0f) {
+        const float side = std::clamp(std::abs(aside), 0.0f, 1.0f);
+        const float turn = (aside >= 0.0f ? 1.0f : -1.0f) * FallTwistRadians
+            * std::clamp(backward + 0.6f * side + 0.25f * forward, 0.0f, 1.0f) / 3.0f;
+        // (So com a queda sem volta: no desequilibrio o tronco torcido
+        // atrapalhava o passo que ainda salvava.)
+        for (const char* id : { "Abdomen", "Chest", "UpperChest" })
+            blendJointCoordinate(profile, coordinates, indexOf(id), 0, turn, legAmount);
+    }
     // Pernas cedendo (quadril: swing1 - flexiona; joelho: twist + flexiona),
     // so com a queda sem volta: antes elas ainda estao dando passos.
+    // Pelo rumo: de frente ajoelha (cai nos joelhos e nas maos, como na
+    // referencia Tripping), de costas senta (cai sentado, nao de costas
+    // retas), de lado os joelhos cedem - menos altura para cair.
+    if (FallProtectNew && FallLegsNew) {
+        const float side = std::clamp(std::abs(aside), 0.0f, 1.0f);
+        const float knee = FallKneeForward * forward + FallKneeBackward * backward + FallKneeSide * side;
+        const float hip = FallHipForward * forward + FallHipBackward * backward + FallHipSide * side;
+        // Cada perna se ajeita no seu ritmo (procurando apoio), nao parada.
+        const char* thighs[2] = { "LeftThigh", "RightThigh" };
+        const char* shins[2] = { "LeftShin", "RightShin" };
+        for (std::size_t leg = 0; leg < 2; ++leg) {
+            // (So com a queda ja certa: parcialmente entregue, as pernas ainda
+            // dao o passo que salva - mexendo, custavam 2 quedas em 216.)
+            const float drift = FallLife * smoothStep((legAmount - 0.7f) / 0.3f)
+                * varietyNoise(seed, 60 + static_cast<std::uint32_t>(leg), time * 0.9f + 2.3f * leg);
+            blendJointCoordinate(profile, coordinates, indexOf(thighs[leg]), 1, -hip + 0.30f * drift, legAmount);
+            blendJointCoordinate(profile, coordinates, indexOf(shins[leg]), 0, knee + 0.40f * drift, legAmount);
+        }
+    } else {
     for (const char* id : { "LeftThigh", "RightThigh" })
         blendJointCoordinate(profile, coordinates, indexOf(id), 1, -0.35f, legAmount * 0.7f);
     for (const char* id : { "LeftShin", "RightShin" })
         blendJointCoordinate(profile, coordinates, indexOf(id), 0, 0.55f, legAmount * 0.7f);
+    }
     // Bracos: a mao vai para o chao no rumo da queda, cada uma do seu lado,
-    // ate onde o braco alcanca.
+    // ate onde o braco alcanca (desligado: ver FallArmsReflex).
     const auto& root = state.links.front();
     const Quaternion rootInverse = root.orientation.conjugate();
-    for (std::size_t side = 0; side < 2; ++side) {
+    for (std::size_t side = 0; side < 2 && FallArmsReflex; ++side) {
         const std::size_t hand = hands[side];
         if (hand == 0 || hand >= profile.links.size()) continue;
         const int forearm = profile.links[hand].parentIndex;
         const int upper = forearm > 0
             ? profile.links[static_cast<std::size_t>(forearm)].parentIndex : -1;
         if (upper <= 0) continue;
-        const Vec3 shoulder = state.links[static_cast<std::size_t>(upper)].position;
+        // O braco tenta: estende ate o chao no rumo da queda (de lado e de
+        // costas tambem - nao precisa segurar o corpo, so tentar).
+        const bool extendArm = FallProtectNew && FallArmsNew;
+        Vec3 shoulder = state.links[static_cast<std::size_t>(upper)].position;
+        float armReach = 0.52f;
         const float s = side == 0 ? 1.0f : -1.0f;
-        Vec3 target = shoulder + fall * 0.32f + chestLeft * (s * 0.16f);
+        if (extendArm) {
+            // Do ombro de verdade (a articulacao, nao o meio do braco) e com o
+            // braco quase todo estendido: medido do link, o alvo ficava perto
+            // e o cotovelo ia a ~95 graus antes de tocar, a mao na altura do
+            // quadril (na referencia, ~50 graus e a mao bem a frente).
+            const RagdollLinkDefinition3D& upperLink = profile.links[static_cast<std::size_t>(upper)];
+            const RagdollLinkDefinition3D& forearmLink = profile.links[static_cast<std::size_t>(forearm)];
+            const RagdollLinkDefinition3D& handLink = profile.links[hand];
+            const PhysicsBodyState3D& upperBody = state.links[static_cast<std::size_t>(upper)];
+            shoulder = upperBody.position + upperBody.orientation.rotate(upperLink.modelOrientation.conjugate()
+                .rotate(upperLink.inboundJoint.anchorModelPosition - upperLink.modelPosition));
+            armReach = FallArmExtension * ((forearmLink.inboundJoint.anchorModelPosition
+                    - upperLink.inboundJoint.anchorModelPosition).length()
+                + (handLink.inboundJoint.anchorModelPosition - forearmLink.inboundJoint.anchorModelPosition).length());
+        }
+        // Quanto a mao vai no rumo da queda: de frente longe (as maos bem a
+        // frente, como na referencia); de lado e para tras perto, embaixo do
+        // ombro (o braco vira coluna; esticado 0,7 m para fora, o ombro e a
+        // cabeca passavam dele e a cabeca batia a 2,5 m/s). O braco do lado
+        // de cima, numa queda de lado, so acompanha.
+        float fallReach = 0.32f;
+        if (extendArm) {
+            const float sideAmount = std::clamp(std::abs(aside), 0.0f, 1.0f);
+            fallReach = FallArmForward * forward + FallArmSideReach * sideAmount + FallArmBackReach * backward;
+            const bool farArm = aside * s < 0.0f;
+            if (farArm) fallReach *= 1.0f - FallFarArmShare * sideAmount;
+        }
+        Vec3 target = shoulder + fall * fallReach + chestLeft * (s * 0.16f)
+            // A mao procura o chao: o ponto anda um pouco (ruido lento).
+            + (fall * varietyNoise(seed, 62 + static_cast<std::uint32_t>(side), time * 1.1f)
+                + chestLeft * varietyNoise(seed, 64 + static_cast<std::uint32_t>(side), time * 1.1f + 5.0f))
+                * (0.12f * FallLife * legAmount);
         target.z = groundHeight + 0.06f;
+        if (extendArm) {
+            // Em duas etapas, como na referencia Tripping: no desequilibrio
+            // os bracos sobem a frente, dobrados, prontos (a mao na frente do
+            // peito); so com a queda sem volta (legAmount) estendem ate o
+            // chao. Esticados ao chao logo no comeco, eles levavam o centro
+            // de massa para o lado da queda e o passo nao salvava mais
+            // (empurroes: 42 -> 46 quedas em 216).
+            // (Caindo de costas, prontos a frente do peito, nao no rumo da
+            // queda: os bracos para tras levavam o centro de massa junto e um
+            // empurrao de 300 N.s que os passos salvavam o derrubava; a frente
+            // eles contrabalancam, como quem cai de costas faz.)
+            Vec3 readyDirection = fall * (1.0f - backward) + chestForward * backward;
+            readyDirection.z = 0.0f;
+            readyDirection = readyDirection.lengthSquared() > 1e-4f ? readyDirection.normalized() : chestForward;
+            Vec3 ready = shoulder + readyDirection * FallArmReadyForward + chestLeft * (s * 0.10f);
+            // Prontos, mas buscando o equilibrio: sobem e descem, abrem e
+            // fecham devagar.
+            // (So com a queda certa: antes, ainda dando para se salvar com os
+            // passos, os bracos mexendo custavam 2 quedas em 216 empurroes.)
+            const float lifeNow = FallLife * legAmount;
+            ready += chestLeft * (s * 0.12f * lifeNow * varietyNoise(seed, 66 + static_cast<std::uint32_t>(side), time * 1.2f));
+            ready.z = shoulder.z - FallArmReadyDrop
+                + 0.14f * lifeNow * varietyNoise(seed, 68 + static_cast<std::uint32_t>(side), time * 1.2f + 3.0f);
+            // (Ou com o ombro ja perto do chao: num empurrao forte a mao
+            // tocava antes de a queda ser dada como certa, ainda dobrada na
+            // pose pronta - cotovelo a ~80 graus.)
+            const float near = smoothStep((FallArmNearHeight - (shoulder.z - groundHeight)) / 0.40f);
+            const float ground = std::max(smoothStep(legAmount), near);
+            target = ready + (target - ready) * ground;
+        }
         Vec3 reach = target - shoulder;
-        constexpr float ArmReach = 0.52f;
-        if (reach.length() > ArmReach) target = shoulder + reach * (ArmReach / reach.length());
-        solveChainPoint(profile, coordinates, hand, {}, 2,
-            rootInverse.rotate(target - root.position), amount);
+        if (reach.length() > armReach) target = shoulder + reach * (armReach / reach.length());
+        if (extendArm) {
+            // O punho ate o alvo movendo cotovelo e ombro (a partir do
+            // antebraco). Pela mao com profundidade 2 o IK mexia o punho e o
+            // cotovelo - nunca o ombro: o braco nao apontava para o chao e a
+            // mao so chegava perto dobrando o cotovelo a ~95-125 graus.
+            const RagdollLinkDefinition3D& forearmLink = profile.links[static_cast<std::size_t>(forearm)];
+            const Vec3 wristInForearm = forearmLink.modelOrientation.conjugate().rotate(
+                profile.links[hand].inboundJoint.anchorModelPosition - forearmLink.modelPosition);
+            solveChainPoint(profile, coordinates, static_cast<std::size_t>(forearm), wristInForearm, 2,
+                rootInverse.rotate(target - root.position), amount, static_cast<int>(FallArmIterations));
+        } else {
+            solveChainPoint(profile, coordinates, hand, {}, 2,
+                rootInverse.rotate(target - root.position), amount);
+        }
         // Cotovelo nunca travado reto: cede no impacto.
         const float elbow = component(coordinates[static_cast<std::size_t>(forearm)], 0);
-        if (elbow < 0.30f)
-            blendJointCoordinate(profile, coordinates, static_cast<std::size_t>(forearm), 0, 0.30f, amount);
+        if (!FallProtectNew) {
+            if (elbow < 0.30f)
+                blendJointCoordinate(profile, coordinates, static_cast<std::size_t>(forearm), 0, 0.30f, amount);
+        } else {
+            // Estende para o chao (pouco dobrado) e, depois que a mao toca,
+            // cede aos poucos: o braco amortece a descida e a cabeca chega
+            // devagar (na referencia o cotovelo vai de ~55 a ~85 graus).
+            const float absorb = smoothStep(catchSeconds[side] / FallAbsorbSeconds);
+            const float wanted = FallElbowReach + FallElbowAbsorb * absorb;
+            if (elbow < wanted)
+                blendJointCoordinate(profile, coordinates, static_cast<std::size_t>(forearm), 0, wanted, amount);
+        }
     }
+}
+
+// No chao, rolando ou parado depois de cair (o "fetal" do Euphoria): se
+// fecha - joelhos ao peito, coluna enrolada, queixo no peito e as maos na
+// frente do rosto protegendo a cabeca. Pose estavel, sem depender do rumo
+// da queda: os reflexos, que miram o rumo, no chao faziam os alvos pularem.
+void applyFetalPose(const RagdollProfile3D& profile,
+    const RagdollState3D& state, std::vector<Vec3>& coordinates,
+    std::array<std::size_t, 2> hands, std::size_t chest, float amount,
+    float time, std::uint32_t seed, float struggle) {
+    if (amount <= 0.001f || state.links.size() != profile.links.size()
+        || chest >= state.links.size()) return;
+    const auto indexOf = [&](std::string_view id) {
+        for (std::size_t i = 1; i < profile.links.size(); ++i)
+            if (profile.links[i].id == id) return i;
+        return std::size_t { 0 };
+    };
+    // Nao fica parado: cada perna no seu ritmo (ruido lento, ~0,5 Hz) - um
+    // joelho sobe ao peito enquanto o outro estica e empurra o chao -, a
+    // cabeca vira e o tronco torce um pouco. Mais forte enquanto ainda rola.
+    const float life = GroundLife * (0.6f + 0.4f * struggle);
+    const float pace = time * GroundLifeRate;
+    const char* thighs[2] = { "LeftThigh", "RightThigh" };
+    const char* shins[2] = { "LeftShin", "RightShin" };
+    for (std::size_t side = 0; side < 2; ++side) {
+        const float drift = varietyNoise(seed, 40 + static_cast<std::uint32_t>(side), pace + 3.7f * side);
+        blendJointCoordinate(profile, coordinates, indexOf(thighs[side]), 1,
+            -FetalHip + 0.70f * life * drift, amount);
+        blendJointCoordinate(profile, coordinates, indexOf(shins[side]), 0,
+            FetalKnee + 0.85f * life * drift + 0.25f * life * varietyNoise(seed, 42 + static_cast<std::uint32_t>(side), pace * 1.3f), amount);
+    }
+    for (const char* id : { "Abdomen", "Chest", "UpperChest" })
+        blendJointCoordinate(profile, coordinates, indexOf(id), 0,
+            0.12f * life * varietyNoise(seed, 44, pace * 0.7f), amount);
+    blendJointCoordinate(profile, coordinates, indexOf("Head"), 0,
+        0.45f * life * varietyNoise(seed, 45, pace * 0.6f), amount);
+    blendJointCoordinate(profile, coordinates, indexOf("Abdomen"), 1, 0.40f, amount);
+    blendJointCoordinate(profile, coordinates, indexOf("Chest"), 1, 0.35f, amount);
+    blendJointCoordinate(profile, coordinates, indexOf("UpperChest"), 1, 0.30f, amount);
+    blendJointCoordinate(profile, coordinates, indexOf("Neck"), 1, 0.28f, amount);
+    blendJointCoordinate(profile, coordinates, indexOf("Head"), 1, 0.40f, amount);
+    // Maos na frente do rosto, cotovelos dobrados junto ao peito.
+    const std::size_t head = indexOf("Head");
+    if (head == 0) return;
+    const auto& root = state.links.front();
+    const Quaternion rootInverse = root.orientation.conjugate();
+    const Quaternion chestOrientation = state.links[chest].orientation;
+    const Vec3 forward = chestOrientation.rotate({ 1.0f, 0.0f, 0.0f });
+    const Vec3 left = chestOrientation.rotate({ 0.0f, 1.0f, 0.0f });
+    const Vec3 up = chestOrientation.rotate({ 0.0f, 0.0f, 1.0f });
+    for (std::size_t side = 0; side < 2; ++side) {
+        const std::size_t hand = hands[side];
+        if (hand == 0 || hand >= profile.links.size()) continue;
+        const int forearm = profile.links[hand].parentIndex;
+        if (forearm <= 0) continue;
+        const float s = side == 0 ? 1.0f : -1.0f;
+        // As maos rondam a cabeca e de vez em quando vao ao chao empurrar.
+        const float reach = varietyNoise(seed, 46 + static_cast<std::uint32_t>(side), pace * 0.8f + 1.9f * side);
+        const Vec3 target = state.links[head].position + forward * (0.14f + 0.16f * life * reach)
+            + left * (s * (0.09f + 0.12f * life * varietyNoise(seed, 48 + static_cast<std::uint32_t>(side), pace)))
+            - up * (0.06f + 0.22f * life * std::max(0.0f, reach));
+        const RagdollLinkDefinition3D& forearmLink = profile.links[static_cast<std::size_t>(forearm)];
+        const Vec3 wristInForearm = forearmLink.modelOrientation.conjugate().rotate(
+            profile.links[hand].inboundJoint.anchorModelPosition - forearmLink.modelPosition);
+        solveChainPoint(profile, coordinates, static_cast<std::size_t>(forearm), wristInForearm, 2,
+            rootInverse.rotate(target - root.position), amount, 12);
+    }
+}
+
+// No ar, caindo sem tocar nada: tenta manter uma pose e se equilibrar, como
+// os bonecos do GTA (Euphoria) - bracos abertos para os lados um pouco abaixo
+// da horizontal, cotovelos meio dobrados, uma perna com o joelho erguido e a
+// outra estendida, trocando devagar; movimento pequeno e lento, firme. (O
+// espernear antigo, rapido e em fases soltas, parecia convulsao.)
+void applyAirBalance(const RagdollProfile3D& profile,
+    std::vector<Vec3>& coordinates, float time, float amount, float spin) {
+    if (amount <= 0.0f) return;
+    const auto indexOf = [&](std::string_view id) {
+        for (std::size_t i = 1; i < profile.links.size(); ++i)
+            if (profile.links[i].id == id) return i;
+        return std::size_t { 0 };
+    };
+    constexpr float Turn = 2.0f * Pi;
+    // Bracos: abertos (eixo 1 ~+35 graus; pendurados sao ~+70), um pouco a
+    // frente, balancando pouco e devagar, em oposicao.
+    // Tentando se equilibrar: os bracos giram em moinho (circulos, um meio
+    // ciclo atras do outro) no sentido do giro do corpo - quanto mais ele
+    // gira, maior o circulo.
+    const float struggle = std::clamp(std::abs(spin) / 3.0f, 0.0f, 1.0f);
+    const float radius = AirWindmill * (0.5f + 0.5f * struggle);
+    const float phase = (spin >= 0.0f ? 1.0f : -1.0f) * Turn * AirWindmillRate * time;
+    blendJointCoordinate(profile, coordinates, indexOf("LeftUpperArm"), 1, AirArmOpen + radius * std::sin(phase), amount);
+    blendJointCoordinate(profile, coordinates, indexOf("RightUpperArm"), 1, AirArmOpen + radius * std::sin(phase + Pi), amount);
+    blendJointCoordinate(profile, coordinates, indexOf("LeftUpperArm"), 2, 0.20f + radius * std::cos(phase), amount);
+    blendJointCoordinate(profile, coordinates, indexOf("RightUpperArm"), 2, 0.20f + radius * std::cos(phase + Pi), amount);
+    blendJointCoordinate(profile, coordinates, indexOf("LeftUpperArm"), 0, 0.0f, amount);
+    blendJointCoordinate(profile, coordinates, indexOf("RightUpperArm"), 0, 0.0f, amount);
+    blendJointCoordinate(profile, coordinates, indexOf("LeftForearm"), 0, 0.55f, amount);
+    blendJointCoordinate(profile, coordinates, indexOf("RightForearm"), 0, 0.55f, amount);
+    // Pernas pedalando (uma sobe enquanto a outra desce e estica), mais
+    // largas quanto mais ele gira.
+    const float pedal = Turn * AirPedalRate * time;
+    const float stride = 0.6f + 0.4f * struggle;
+    const auto leg = [&](const char* thigh, const char* shin, float offset) {
+        const float cycle = pedal + offset;
+        blendJointCoordinate(profile, coordinates, indexOf(thigh), 1,
+            -(0.55f + 0.40f * stride * std::sin(cycle)), amount);
+        blendJointCoordinate(profile, coordinates, indexOf(shin), 0,
+            0.95f + 0.55f * stride * std::sin(cycle + 1.2f), amount);
+    };
+    leg("LeftThigh", "LeftShin", 0.0f);
+    leg("RightThigh", "RightShin", Pi);
+    // Tronco e cabeca: retos, olhando um pouco para baixo (para o chao).
+    for (const char* id : { "Abdomen", "Chest", "UpperChest" })
+        blendJointCoordinate(profile, coordinates, indexOf(id), 1, 0.05f, amount);
+    blendJointCoordinate(profile, coordinates, indexOf("Neck"), 1, 0.10f, amount);
+    blendJointCoordinate(profile, coordinates, indexOf("Head"), 1, 0.15f, amount);
 }
 
 void setJointCoordinate(const RagdollProfile3D& profile,
@@ -891,7 +1551,7 @@ void setJointCoordinate(const RagdollProfile3D& profile,
 void applyBalanceReaction(const RagdollProfile3D& profile,
     const RagdollState3D& state, std::vector<Vec3>& coordinates,
     std::array<std::size_t, 2> hands, std::size_t chest, Vec3 fallDirection,
-    float amount, float time, std::array<bool, 2> braced) {
+    float amount, float time, std::array<bool, 2> braced, float legAmount) {
     if (amount <= 0.001f || state.links.size() != profile.links.size()
         || chest >= state.links.size()) return;
     const auto planarUnit = [](Vec3 v, Vec3 fallback) {
@@ -909,18 +1569,21 @@ void applyBalanceReaction(const RagdollProfile3D& profile,
     // Tronco contra a queda (flexao + para a frente; lateral + para a
     // esquerda): caindo para a frente, estende; para tras, dobra.
     for (const char* id : { "Abdomen", "Chest", "UpperChest" }) {
-        addJointCoordinate(profile, coordinates, id, 1, -0.13f * ahead * amount);
-        addJointCoordinate(profile, coordinates, id, 2, -0.08f * aside * amount);
+        addJointCoordinate(profile, coordinates, id, 1, BalanceTrunkPitch * ahead * amount);
+        addJointCoordinate(profile, coordinates, id, 2, BalanceTrunkRoll * aside * amount);
     }
     // Cabeca olha para onde vai e baixa um pouco (procura o chao).
     addJointCoordinate(profile, coordinates, "Neck", 0, 0.20f * aside * amount);
     addJointCoordinate(profile, coordinates, "Head", 0, 0.25f * aside * amount);
     addJointCoordinate(profile, coordinates, "Head", 1, 0.12f * amount);
     // Joelhos e quadril cedem: baixa o centro de massa.
+    // (So de pe: na passada as pernas sao dela - correndo com pouca ajuda, o
+    // joelho cedendo encurtava as pernas, os pes nao alcancavam o chao por
+    // 0,5 s e ele caia de joelhos.)
     for (const char* id : { "LeftThigh", "RightThigh" })
-        addJointCoordinate(profile, coordinates, id, 1, -0.16f * amount);
+        addJointCoordinate(profile, coordinates, id, 1, -0.16f * legAmount);
     for (const char* id : { "LeftShin", "RightShin" })
-        addJointCoordinate(profile, coordinates, id, 0, 0.28f * amount);
+        addJointCoordinate(profile, coordinates, id, 0, 0.28f * legAmount);
     // Bracos: abertos, erguidos e contra a queda, girando em moinho (um fora
     // de fase do outro).
     const auto& root = state.links.front();
@@ -950,8 +1613,146 @@ void applyBalanceReaction(const RagdollProfile3D& profile,
         const Vec3 reach = target - shoulder;
         constexpr float ArmReach = 0.55f;
         if (reach.length() > ArmReach) target = shoulder + reach * (ArmReach / reach.length());
-        solveChainPoint(profile, coordinates, hand, {}, 2,
-            rootInverse.rotate(target - root.position), 0.85f * amount);
+        if (BalanceArmFix) {
+            // Do antebraco (cotovelo e ombro): pela mao com profundidade 2 o
+            // IK so mexia punho e cotovelo - o ombro nunca girava e o moinho
+            // quase nao acontecia.
+            const RagdollLinkDefinition3D& forearmLink = profile.links[static_cast<std::size_t>(forearm)];
+            const Vec3 wristInForearm = forearmLink.modelOrientation.conjugate().rotate(
+                profile.links[hand].inboundJoint.anchorModelPosition - forearmLink.modelPosition);
+            solveChainPoint(profile, coordinates, static_cast<std::size_t>(forearm), wristInForearm, 2,
+                rootInverse.rotate(target - root.position), 0.85f * amount, 12);
+        } else {
+            solveChainPoint(profile, coordinates, hand, {}, 2,
+                rootInverse.rotate(target - root.position), 0.85f * amount);
+        }
+    }
+}
+
+// Chute (04/10): o corpo do chute por cima da passada, pela forca. O braco
+// do lado do apoio abre para fora e para a frente (equilibrio) enquanto a
+// perna arma e varre para tras no acompanhamento; o do lado do chute vai para
+// tras no armado e vem para a frente depois. O tronco gira abrindo o ombro do
+// chute no armado e fecha batendo; inclina para o lado do apoio, para tras na
+// bola alta e por cima dela na rasteira. A cabeca olha a bola.
+// Repulsao do pe pela bola (04/10): quanto mover, no plano, o alvo do pe
+// (origem do link, com a orientacao dele) para a caixa do pe ficar fora da
+// bola com uma folga. So no plano: por cima ele pisaria nela.
+Vec3 footBallPushOut(const RagdollLinkDefinition3D& link, Vec3 position, Quaternion orientation,
+    Vec3 ball, float radius, float margin) {
+    const RagdollCapsuleDefinition3D& collider = link.collider;
+    if (collider.shape != RagdollColliderShape3D::Box) return {};
+    const Vec3 half = collider.boxHalfExtents;
+    const Quaternion box = (orientation * collider.localOrientation).normalized();
+    Vec3 total {};
+    for (int pass = 0; pass < 3; ++pass) {
+        const Vec3 center = position + total + orientation.rotate(collider.localPosition);
+        const Vec3 local = box.conjugate().rotate(ball - center);
+        const Vec3 clamped { std::clamp(local.x, -half.x, half.x), std::clamp(local.y, -half.y, half.y),
+            std::clamp(local.z, -half.z, half.z) };
+        const Vec3 closest = center + box.rotate(clamped);
+        const float deficit = radius + margin - (closest - ball).length();
+        if (deficit <= 0.0f) break;
+        Vec3 away { closest.x - ball.x, closest.y - ball.y, 0.0f };
+        if (away.lengthSquared() < 1e-6f) away = { center.x - ball.x, center.y - ball.y, 0.0f };
+        if (away.lengthSquared() < 1e-6f) away = { 1.0f, 0.0f, 0.0f };
+        total += away.normalized() * deficit;
+    }
+    return total;
+}
+
+void applyKickPose(const RagdollProfile3D& profile, const RagdollState3D& state,
+    std::vector<Vec3>& coordinates, std::array<std::size_t, 2> hands, const BallKickPose3D& kick) {
+    if (!kick.active || kick.weight <= 0.001f || state.links.size() != profile.links.size()) return;
+    const float w = std::clamp(kick.weight, 0.0f, 1.0f);
+    const float p = std::clamp(kick.power, 0.0f, 1.0f);
+    const float stage = kick.stage;
+    const float windup = stage < 1.0f ? smoothStep(stage) : stage < 2.0f ? 1.0f - smoothStep(stage - 1.0f) : 0.0f;
+    const float strike = stage < 1.0f ? 0.0f : stage < 2.0f ? smoothStep(stage - 1.0f) : 1.0f - smoothStep(stage - 2.0f);
+    const float follow = stage < 2.0f ? 0.0f : smoothStep((stage - 2.0f) / 0.6f);
+    const float open = stage < 1.0f ? smoothStep(stage) : stage < 2.0f ? 1.0f : 1.0f - 0.5f * smoothStep(stage - 2.0f);
+    const float k = kick.side == 0 ? 1.0f : -1.0f;  // lado do chute, + esquerda
+    const float high = std::max(0.0f, kick.lift), low = std::max(0.0f, -kick.lift);
+    // Tronco (twist + gira para a esquerda; swing1 + flexiona; swing2 +
+    // inclina para a esquerda), repartido nas tres juntas.
+    const float twist = (KickTrunkTwist * windup - KickTrunkTwist * 0.8f * follow) * k * (0.3f + 0.7f * p);
+    const float bend = (-KickTrunkBack * windup + (KickTrunkOver * (1.0f + low) - KickTrunkOver * 2.5f * high) * strike)
+        * (0.3f + 0.7f * p);
+    const float lateral = -k * KickTrunkSide * open * (0.3f + 0.7f * p);
+    for (const char* id : { "Abdomen", "Chest", "UpperChest" }) {
+        addJointCoordinate(profile, coordinates, id, 0, twist / 3.0f * w);
+        addJointCoordinate(profile, coordinates, id, 1, bend / 3.0f * w);
+        addJointCoordinate(profile, coordinates, id, 2, lateral / 3.0f * w);
+    }
+    addJointCoordinate(profile, coordinates, "Head", 1, 0.18f * (windup + strike) * w);
+    // Bracos.
+    const auto& root = state.links.front();
+    const Quaternion rootInverse = root.orientation.conjugate();
+    const Vec3 up { 0.0f, 0.0f, 1.0f };
+    Vec3 aim { kick.aim.x, kick.aim.y, 0.0f };
+    aim = aim.lengthSquared() > 1e-4f ? aim.normalized() : Vec3 { 1.0f, 0.0f, 0.0f };
+    const Vec3 left = cross(up, aim);
+    for (std::size_t side = 0; side < 2; ++side) {
+        const std::size_t hand = hands[side];
+        if (hand == 0 || hand >= profile.links.size()) continue;
+        const int forearm = profile.links[hand].parentIndex;
+        const int upper = forearm > 0 ? profile.links[static_cast<std::size_t>(forearm)].parentIndex : -1;
+        if (upper <= 0) continue;
+        const Vec3 shoulder = state.links[static_cast<std::size_t>(upper)].position;
+        const float s = side == 0 ? 1.0f : -1.0f;
+        // Bracos (04/10): o desenho da referencia (Goalkeeper Drop Kick - o
+        // do apoio abre para o lado armando, vem para a frente na batida e
+        // cruza acompanhando; o do chute vai para tras), mais contido e pela
+        // forca, a pedido do usuario: chute fraco quase nada (abaixo de
+        // KickArmFloor nem entra), so o forte abre de verdade; o rapido, menos.
+        // O punho em relacao ao ombro, na mira: frente, para fora, cima.
+        struct ArmKey { float forward; float out; float up; };
+        const bool supportArm = static_cast<int>(side) != kick.side;
+        const std::array<ArmKey, 4> support { ArmKey { 0.02f, 0.14f, -0.50f }, ArmKey { -0.12f, 0.34f, -0.12f },
+            ArmKey { 0.26f, 0.22f, -0.28f }, ArmKey { 0.28f, -0.06f, -0.30f } };
+        const std::array<ArmKey, 4> kicking { ArmKey { 0.02f, 0.14f, -0.50f }, ArmKey { -0.02f, 0.28f, -0.30f },
+            ArmKey { -0.26f, 0.20f, -0.36f }, ArmKey { -0.30f, 0.06f, -0.38f } };
+        const std::array<ArmKey, 4>& arm = supportArm ? support : kicking;
+        // No tempo do gesto (0..1 armando, 1..2 batendo, 2..2,6 acompanhando),
+        // por Catmull-Rom: o braco anda continuo, sem parar em cada quadro.
+        const float times[4] = { 0.0f, 1.0f, 2.0f, 2.6f };
+        const float at = std::clamp(stage, 0.0f, 2.6f);
+        int segment = at < 1.0f ? 0 : at < 2.0f ? 1 : 2;
+        const float h = times[segment + 1] - times[segment];
+        const float u = (at - times[segment]) / h;
+        const auto value = [&](int k, int which) {
+            const ArmKey& a = arm[static_cast<std::size_t>(k)];
+            return which == 0 ? a.forward : which == 1 ? a.out : a.up;
+        };
+        const auto tangent = [&](int k, int which) {
+            if (k <= 0 || k >= 3) return 0.0f;
+            return (value(k + 1, which) - value(k - 1, which)) / (times[k + 1] - times[k - 1]);
+        };
+        const float u2 = u * u, u3 = u2 * u;
+        float curve[3];
+        for (int which = 0; which < 3; ++which)
+            curve[which] = (2.0f * u3 - 3.0f * u2 + 1.0f) * value(segment, which)
+                + (u3 - 2.0f * u2 + u) * h * tangent(segment, which)
+                + (-2.0f * u3 + 3.0f * u2) * value(segment + 1, which)
+                + (u3 - u2) * h * tangent(segment + 1, which);
+        // Quanto do desenho: pela forca (e menos no rapido; no toque parado,
+        // quase nada).
+        float share = smoothStep((p - KickArmFloor) / (KickArmFull - KickArmFloor));
+        if (kick.quick) share *= 0.6f;
+        if (!kick.shot) share *= 0.35f;
+        const ArmKey rest = arm[0];
+        const ArmKey key { rest.forward + (curve[0] - rest.forward) * share, rest.out + (curve[1] - rest.out) * share,
+            rest.up + (curve[2] - rest.up) * share };
+        Vec3 target = shoulder + aim * key.forward + left * (s * key.out) + up * key.up;
+        const float amount = share;
+        const Vec3 reach = target - shoulder;
+        constexpr float ArmReach = 0.55f;
+        if (reach.length() > ArmReach) target = shoulder + reach * (ArmReach / reach.length());
+        const RagdollLinkDefinition3D& forearmLink = profile.links[static_cast<std::size_t>(forearm)];
+        const Vec3 wristInForearm = forearmLink.modelOrientation.conjugate().rotate(
+            profile.links[hand].inboundJoint.anchorModelPosition - forearmLink.modelPosition);
+        solveChainPoint(profile, coordinates, static_cast<std::size_t>(forearm), wristInForearm, 2,
+            rootInverse.rotate(target - root.position), std::clamp(amount * w, 0.0f, 1.0f), 10);
     }
 }
 
@@ -1054,26 +1855,34 @@ float varietyNoise(std::uint32_t seed, std::uint32_t channel, float position) {
 // dobra mais ou menos, o tronco gira um pouco mais ou menos e a cabeca nao
 // fica cravada. So bracos, coluna e cabeca: pernas e pelve seguem o clipe
 // (os pes, a passada e o equilibrio nao mudam).
+// additive: soma a diferenca (senao substitui a pose pela do clipe);
+// clipPhase: as fases ja sao do clipe (senao, do ciclo alinhado ao apoio).
 void applyGaitVariety(const RagdollProfile3D& profile,
-    const AnimationClip3D& clip, float cyclePhase, float strides,
-    std::uint32_t seed, float amount, std::vector<Vec3>& sampled) {
+    const AnimationClip3D& clip, float cyclePhase, float armPhase, float strides,
+    std::uint32_t seed, float amount, std::vector<Vec3>& sampled,
+    bool additive = VarietyAdditive, bool clipPhase = false) {
     const auto at = [&](std::string_view id, float phase) {
         const AnimationTrack3D* track = findAnimationTrack3D(clip, id);
         if (track == nullptr) return Vec3 {};
         const float wrapped = phase - std::floor(phase);
         return sampleAnimationTrack3D(*track,
-            stanceAlignedPhase(clip, wrapped) * clip.durationSeconds,
+            (clipPhase ? wrapped : stanceAlignedPhase(clip, wrapped)) * clip.durationSeconds,
             clip.durationSeconds, clip.loops).jointPositionRadians;
     };
     // Amostra no ciclo (deslocado) e realca ou abranda o que se inverte em
     // meio ciclo: s(t) + k * (s(t) - s(t + 1/2)) / 2.
-    const auto vary = [&](std::string_view id, float phase, float gain) {
+    // (Somando a diferenca para a amostra do ciclo, nao substituindo: a
+    // substituicao apagava tudo o que veio antes - a inclinacao da coluna do
+    // clipe de curva, o tronco da curva.)
+    const auto vary = [&](std::string_view id, float phase, float gain, float basePhase) {
         const std::size_t link = findLink(profile, id);
         if (link == 0 || link >= sampled.size()
             || findAnimationTrack3D(clip, id) == nullptr) return;
         const Vec3 now = at(id, phase);
         const Vec3 opposite = at(id, phase + 0.5f);
-        sampled[link] = now + (now - opposite) * (0.5f * (gain - 1.0f));
+        const Vec3 varied = now + (now - opposite) * (0.5f * (gain - 1.0f));
+        if (additive) sampled[link] += varied - at(id, basePhase);
+        else sampled[link] = varied;
     };
     constexpr std::array<std::string_view, 3> LeftArm {
         "LeftUpperArm", "LeftForearm", "LeftHand" };
@@ -1089,7 +1898,7 @@ void applyGaitVariety(const RagdollProfile3D& profile,
         const float lead = amount * (traitLead
             + 0.015f * varietyNoise(seed, 14 + side, strides * 0.7f));
         for (std::string_view id : side == 0 ? LeftArm : RightArm)
-            vary(id, cyclePhase + lead, gain);
+            vary(id, armPhase + lead, gain, armPhase);
         const std::size_t forearm = findLink(profile, side == 0
             ? "LeftForearm" : "RightForearm");
         if (forearm < sampled.size())
@@ -1099,7 +1908,7 @@ void applyGaitVariety(const RagdollProfile3D& profile,
     const float torsoGain = 1.0f + amount * (0.06f * varietyValue(seed, 4, 0)
         + 0.10f * varietyNoise(seed, 20, strides * 0.8f));
     for (std::string_view id : { "Abdomen", "Chest", "UpperChest" })
-        vary(id, cyclePhase, torsoGain);
+        vary(id, cyclePhase, torsoGain, cyclePhase);
     const std::size_t head = findLink(profile, "Head");
     if (head < sampled.size()) {
         sampled[head].x += amount * 0.03f * varietyNoise(seed, 22, strides * 0.9f);
@@ -1239,6 +2048,11 @@ void CharacterLocomotion3D::reset(const RagdollProfile3D& profile,
     m_groundLift = 0.0f;
     m_terrainSlope = 0.0f;
     m_terrainSpeedCap = 9.0f;
+    m_requestYaw = 0.0f;
+    m_requestYawValid = false;
+    m_requestTurnRate = 0.0f;
+    m_curveSpeedCap = 1000.0f;
+    m_swingLowWeight = {};
     m_onInclineHold = 0.0f;
     m_pelvisOffset = 0.0f;
     m_pelvisOffsetVelocity = 0.0f;
@@ -1261,6 +2075,13 @@ void CharacterLocomotion3D::reset(const RagdollProfile3D& profile,
     m_varietyStrides = 0.0f;
     m_ankleBalanceShift = {};
     m_turningRate = 0.0f;
+    m_bodyCurveLean = 0.0f;
+    m_spineCurveRoll = 0.0f;
+    m_curveSprintShare = 0.0f;
+    m_bodyHeading = 0.0f;
+    m_bodyHeadingValid = false;
+    m_bodyTurnRate = 0.0f;
+    m_bodyCurveAcceleration = 0.0f;
     m_reactionStrength = 0.0f;
     m_physicsBlend = 0.0f;
     m_physicsHoldSeconds = 0.0f;
@@ -1277,6 +2098,8 @@ void CharacterLocomotion3D::reset(const RagdollProfile3D& profile,
     m_brakeCrouch = 0.0f;
     m_brakeCrouchVelocity = 0.0f;
     m_brakeStepping = false;
+    m_brakeReversing = false;
+    m_pivotSign = 0.0f;
     m_brakeRunShare = 0.0f;
     m_brakeSeconds = 0.0f;
     m_sinceRunRequest = 10.0f;
@@ -1317,17 +2140,50 @@ void CharacterLocomotion3D::reset(const RagdollProfile3D& profile,
     m_sinceTouchdownSeconds = 10.0f;
     m_jumpKind = CharacterJumpKind3D::None;
     m_jumpClip = nullptr;
+    m_leapClip = nullptr;
     m_flightPhase = 0.0f;
     m_elapsedSeconds = 0.0f;
     m_getUpPhase = CharacterGetUpPhase3D::None;
+    m_tackling = false;
+    m_tackleClip = nullptr;
+    m_tackleCooldown = 0.0f;
+    m_previousCrouchIntent = false;
+    m_tacklePending = false;
+    m_tacklePendingSeconds = 0.0f;
+    m_tacklePreviousFoot = {};
+    m_sinceTackleSeconds = 10.0f;
     m_fallOrientation = CharacterFallOrientation3D::None;
     m_getUpPhaseSeconds = 0.0f;
     m_recoveredStandingSeconds = 0.0f;
     m_getUpAttempt = 0;
     m_fallReflex = 0.0f;
+    m_handCatchSeconds = {};
+    m_fallSmoothCoordinates.clear();
+    m_fetal = 0.0f;
+    m_airBalance = 0.0f;
     m_fallCommit = 0.0f;
     m_tripRecovery = 0.0f;
+    m_bracedMemory = m_braceAttemptSeconds = m_braceStallSeconds = 0.0f;
+    m_braceRecovering = false;
+    m_postureHeldSeconds = 0.0f;
+    m_motionSeedPending = false;
+    m_postureLost = false;
+    m_stagger = 0.0f;
+    m_staggerHold = 0.0f;
     m_tripRecoverySeconds = 0.0f;
+    m_stumbleValid = false;
+    m_stumblePitch = m_stumblePitchRate = m_stumbleBaseline = 0.0f;
+    m_stumbleAlong = m_stumbleDecel = m_stumbleRisk = 0.0f;
+    m_stumbleReaction = 0.0f;
+    m_stumbleDirection = { 1.0f, 0.0f, 0.0f };
+    m_stumbleStepping = false;
+    m_stumbleStepSeconds = 0.0f;
+    m_sinceStumbleStep = 10.0f;
+    m_stumbleStepDirection = { 1.0f, 0.0f, 0.0f };
+    m_startStepRequested = false;
+    m_startStepActive = false;
+    m_startDoseCap = 1000.0f;
+    m_bodyRestSeconds = 0.0f;
     m_tripFoot = -1;
     m_tripElevating = false;
     m_tripDirection = { 1.0f, 0.0f, 0.0f };
@@ -1346,6 +2202,7 @@ void CharacterLocomotion3D::reset(const RagdollProfile3D& profile,
     m_captureDirection = {};
     m_footwork.reset(profile);
     m_swingFromMeasuredPelvis = {};
+    m_sprintClipAllowed = true;
     m_legRootFromMeasured = 0.0f;
     m_bodyRefValid = false;
     m_bodyRefHeight = 0.0f;
@@ -1381,6 +2238,79 @@ void CharacterLocomotion3D::reset(const RagdollProfile3D& profile,
     const Vec3 forward = state.links.front().orientation.rotate(
         { 1.0f, 0.0f, 0.0f });
     m_facingYaw = std::atan2(forward.y, forward.x);
+}
+
+void CharacterLocomotion3D::seedMotion(const RagdollProfile3D& profile, const RagdollState3D& state,
+    const CharacterLocomotionSeed3D& seed) {
+    if (!m_initialized || state.links.empty()) return;
+    m_motionSeedPending = true;
+    m_seedJoints.assign(profile.links.size(), {});
+    for (std::size_t i = 1; i < profile.links.size() && i < state.joints.size(); ++i) {
+        const auto& joint = state.joints[i].positionRadians;
+        m_seedJoints[i] = { joint[0], joint[1], joint[2] };
+    }
+    // Ja andando: sem a arrancada (o estado anterior nao e o parado).
+    if (seed.moving) m_telemetry.state = CharacterLocomotionState3D::Walking;
+    if (seed.tackleClip != nullptr && seed.tackleClip->durationSeconds > 0.0f) {
+        // No meio do carrinho do padrao: o carrinho fisico continua do mesmo
+        // ponto (como o comeco dele, abaixo em update, mas no tempo dado).
+        m_motionSeedPending = false;
+        ++m_tackleCount;
+        m_tackleClip = seed.tackleClip;
+        m_tackleRate = seed.tackleRate;
+        m_tackleDistanceScale = seed.tackleScale;
+        m_tackleEntrySpeed = seed.tackleEntrySpeed;
+        m_tackleYaw = seed.tackleYaw;
+        m_tackleStart = { seed.tackleStart.x, seed.tackleStart.y, state.links.front().position.z };
+        m_tackling = true;
+        m_tacklePending = false;
+        m_tackleLandSpeed = -1.0f;
+        m_tackleBehindSeconds = 0.0f;
+        m_tackleHoldSeconds = 0.0f;
+        // (Como enterGetUpPhase em update.)
+        m_getUpPhase = CharacterGetUpPhase3D::Rising;
+        m_getUpPhaseSeconds = 0.0f;
+        m_getUpFootwork = false;
+        m_getUpStepSide = -1;
+        m_getUpBalanceHold = false;
+        m_getUpBalanceHoldSeconds = 0.0f;
+        m_getUpBalanceSteps = 0;
+        m_getUpClipSeconds = std::clamp(seed.tackleTime, 0.0f, seed.tackleClip->durationSeconds);
+        m_getUpAnchorWorld = m_tackleStart;
+        m_getUpAnchorYaw = seed.tackleYaw;
+        m_fallOrientation = CharacterFallOrientation3D::None;
+        m_settleGather = 1.0f;
+        m_settleTone = 1.0f;
+        m_getUpRate = m_tackleRate;
+        m_getUpAttempt = 0;
+        m_getUpExpectedValid = false;
+        m_getUpStruggle = 0.0f;
+        m_getUpStallSeconds = 0.0f;
+        m_getUpHoldSeconds = 0.0f;
+        m_bodilyRising = false;
+        m_risingFromMeasured.assign(state.joints.size(), Vec3 {});
+        for (std::size_t link = 1; link < state.joints.size(); ++link)
+            m_risingFromMeasured[link] = { state.joints[link].positionRadians[0],
+                state.joints[link].positionRadians[1], state.joints[link].positionRadians[2] };
+        for (FootPlant& foot : m_feet) {
+            foot.planted = false;
+            foot.repositioning = false;
+            foot.recoveryStep = false;
+        }
+        m_telemetry.state = CharacterLocomotionState3D::Tackling;
+        return;
+    }
+    const PhysicsBodyState3D& pelvis = state.links.front();
+    const Vec3 forward = (pelvis.orientation * profile.links.front().modelOrientation.conjugate())
+        .rotate({ 1.0f, 0.0f, 0.0f });
+    const Quaternion unyaw = Quaternion::fromAxisAngle({ 0.0f, 0.0f, 1.0f }, -std::atan2(forward.y, forward.x));
+    m_seedSpeed = std::hypot(pelvis.linearVelocity.x, pelvis.linearVelocity.y);
+    for (std::size_t side = 0; side < 2; ++side) {
+        if (!m_feet[side].valid || m_feet[side].linkIndex >= state.links.size()) continue;
+        const PhysicsBodyState3D& foot = state.links[m_feet[side].linkIndex];
+        m_seedFeet[side] = unyaw.rotate(foot.position - pelvis.position);
+        m_seedFeetVelocity[side] = unyaw.rotate(foot.linearVelocity - pelvis.linearVelocity);
+    }
 }
 
 const CharacterLocomotion3D::ClipFootEvents&
@@ -1490,6 +2420,10 @@ void CharacterLocomotion3D::enterState(CharacterLocomotionState3D state) {
         || state == CharacterLocomotionState3D::GettingUp) {
         m_transitionDurationSeconds = 0.40f;
     }
+    // Carrinho: da corrida direto para o mergulho.
+    if (state == CharacterLocomotionState3D::Tackling) {
+        m_transitionDurationSeconds = TackleTransition;
+    }
     if (state == CharacterLocomotionState3D::Idle) {
         m_cyclePhase = 0.0f;
     }
@@ -1511,6 +2445,13 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
     const CharacterLocomotionInput3D& input,
     float deltaTime) {
     m_output = {};
+    // Locomocao fisica v2 (ver input.physicalV2).
+    const bool PostureSupportPendulum = input.physicalV2 || PostureSupportPendulumEnv;
+    const bool StartOnlyFromRest = input.physicalV2 || StartOnlyFromRestEnv;
+    const bool LandingResync = input.physicalV2 || LandingResyncEnv;
+    static const float stanceBandV2Env = tuneTemp("T_StanceBandV2", StanceRootBandV2);  // TEMPTUNE
+    const float StanceRootBand = input.physicalV2 ? stanceBandV2Env : StanceRootBandEnv;
+    const float StanceDampCurveSpan = input.physicalV2 ? 0.0f : StanceDampCurveSpanEnv;
     if (!std::isfinite(deltaTime) || deltaTime <= 0.0f
         || !animations.compatible(profile)
         || state.links.size() != profile.links.size()
@@ -1544,8 +2485,30 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
     const float comVelocityBlend = 1.0f - std::exp(-16.0f * deltaTime);
     m_filteredCenterOfMassVelocity += (measuredComVelocity
         - m_filteredCenterOfMassVelocity) * comVelocityBlend;
+    // Curva real do corpo (nao a pedida): o rumo da velocidade do centro de
+    // massa girando, filtrado em ~0,2 s (tira o balanco de cada passada).
+    {
+        const float bodySpeed = std::hypot(m_filteredCenterOfMassVelocity.x,
+            m_filteredCenterOfMassVelocity.y);
+        const float bodyHeading = std::atan2(m_filteredCenterOfMassVelocity.y,
+            m_filteredCenterOfMassVelocity.x);
+        const float rate = bodySpeed > 1.0f && m_bodyHeadingValid
+            ? wrapAngle(bodyHeading - m_bodyHeading) / deltaTime : 0.0f;
+        m_bodyHeading = bodyHeading;
+        m_bodyHeadingValid = bodySpeed > 1.0f;
+        m_bodyTurnRate += (rate - m_bodyTurnRate) * (1.0f - std::exp(-deltaTime / BodyTurnFilterSeconds));
+        m_bodyCurveAcceleration = bodySpeed * m_bodyTurnRate;
+    }
     m_previousCenterOfMass = centerOfMass;
     m_elapsedSeconds += deltaTime;
+    // O giro da camera (o carrinho vira o corpo para o lado dele).
+    {
+        const float rate = m_previousViewValid ? wrapAngle(input.facingYawRadians - m_previousViewYaw)
+            / std::max(deltaTime, 1e-4f) : 0.0f;
+        m_viewTurnRate += (std::clamp(rate, -12.0f, 12.0f) - m_viewTurnRate) * (1.0f - std::exp(-deltaTime / 0.12f));
+        m_previousViewYaw = input.facingYawRadians;
+        m_previousViewValid = true;
+    }
 
     // Fall detection: a real trip/collision this controller could not
     // absorb through the reaction/interference softening below. Contacts
@@ -1558,6 +2521,8 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
     std::array<bool, 2> kneeGroundContact {};
     std::array<bool, 2> feetGroundContact {};
     float contactFloor = std::numeric_limits<float>::infinity();
+    float lowerBodyFloor = std::numeric_limits<float>::infinity();
+    float nonFootFloorHeight = std::numeric_limits<float>::infinity();
     bool touchingAnything = false;
     for (const RagdollContactPoint3D& contact : state.contacts) {
         if (contact.normalImpulseNewtonSeconds > 0.00001f) touchingAnything = true;
@@ -1569,6 +2534,18 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
         }
         anyGroundContact = true;
         contactFloor = std::min(contactFloor, contact.position.z);
+        // (v2: o chao de verdade e o da metade de baixo do corpo - pelve,
+        // coxas, canelas, pes. O tronco ou os bracos apoiados no alto de uma
+        // mureta nao sao chao: medido contra o topo dela, o corpo debrucado
+        // parecia deitado - "caido" com o centro de massa a 0,9 m do chao.)
+        if (contact.linkIndex < profile.links.size()) {
+            const std::string& id = profile.links[contact.linkIndex].id;
+            const bool foot = id.find("Foot") != std::string::npos;
+            if (contact.linkIndex == 0 || id.find("Thigh") != std::string::npos
+                || id.find("Shin") != std::string::npos || foot)
+                lowerBodyFloor = std::min(lowerBodyFloor, contact.position.z);
+            if (!foot) nonFootFloorHeight = std::min(nonFootFloorHeight, contact.position.z);
+        }
         for (std::size_t side = 0; side < 2; ++side) {
             if (contact.linkIndex == m_handLinks[side]) {
                 handGroundContact[side] = true;
@@ -1586,6 +2563,11 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
             && foot.evidence != ContactEvidence3D::Geometric && !foot.onDynamicBody;
     }
 
+    // Caindo, ha quanto tempo cada mao segura o chao.
+    for (std::size_t side = 0; side < 2; ++side)
+        m_handCatchSeconds[side] = handGroundContact[side] && m_fallReflex > 0.3f
+            ? std::min(2.0f, m_handCatchSeconds[side] + deltaTime)
+            : m_fallReflex > 0.3f ? m_handCatchSeconds[side] : 0.0f;
     // Sem tocar nada (no ar): para o espernear da queda.
     m_noGroundSeconds = touchingAnything ? 0.0f
         : std::min(10.0f, m_noGroundSeconds + deltaTime);
@@ -1602,9 +2584,15 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
     // No modo fisico, contra a superficie que o corpo toca de fato: a
     // capsula decola antes no pulo, e medido contra ela o corpo no ar (o pe
     // ainda empurrando o chao) parecia "caido" - queda falsa na decolagem.
+    // (v2: o mais baixo entre os contatos da metade de baixo, o apoio dos pes
+    // e o chao da capsula - um pe no topo da mureta, com o outro no chao,
+    // nao faz do topo o chao: em pe, 6 graus, ele era dado como caido.)
+    const float fallenFloor = input.physicalV2
+        ? std::min({ lowerBodyFloor, physical.supported ? physical.supportHeight
+            : std::numeric_limits<float>::infinity(), groundHeightGuess }) : contactFloor;
     const float measuredComHeight = std::max(0.08f, centerOfMass.z
-        - (input.forceDrivenRoot && std::isfinite(contactFloor)
-            ? contactFloor : groundHeightGuess));
+        - (input.forceDrivenRoot && std::isfinite(fallenFloor)
+            ? fallenFloor : groundHeightGuess));
     // Only meaningful while physics is the one holding the body up. In
     // animation mode the authored pose says the character is standing, so
     // "fallen" is not a state it can observe - and reading the simulated
@@ -1614,14 +2602,85 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
     // Com a raiz livre (forceDrivenRoot) o corpo e sempre o fisico: a queda
     // e reconhecida pelo estado dele, sem depender de um impacto antes.
     const bool physicsOwnsBody = input.forceDrivenRoot || m_physicsBlend > 0.5f;
-    const bool fallenObservation = physicsOwnsBody
+    // v2 - recuperacao apoiada (pedido do usuario, 06/10): o tronco, os bracos
+    // ou as maos apoiados numa superficie parada no alto (o topo de uma
+    // mureta, uma parede, um objeto), com um pe no chao. Debrucado assim,
+    // ele ainda pode se recompor - pes para baixo do corpo, quadril e
+    // joelhos estendendo, o tronco e os bracos empurrando o apoio (o par de
+    // postura, interno: sem forca de fora). Enquanto tenta (BraceAttemptSeconds,
+    // e progredindo), a postura nao e dada como perdida e nao e queda; antes,
+    // a postura perdida amolecia as pernas na hora e ele ficava pendurado na
+    // mureta (o estado de caido espera o corpo deitado).
+    {
+        bool bracedNow = false;
+        if (input.physicalV2 && physicsOwnsBody && (feetGroundContact[0] || feetGroundContact[1])) {
+            const float floor = std::isfinite(lowerBodyFloor) ? lowerBodyFloor : groundHeightGuess;
+            for (const RagdollContactPoint3D& contact : state.contacts) {
+                if (contact.otherBodyDynamic || contact.normalImpulseNewtonSeconds <= 0.00001f
+                    || contact.normal.z < -0.3f || contact.linkIndex >= profile.links.size()
+                    || contact.linkIndex == 0) continue;
+                const std::string& id = profile.links[contact.linkIndex].id;
+                if (id.find("Thigh") != std::string::npos || id.find("Shin") != std::string::npos
+                    || id.find("Foot") != std::string::npos) continue;
+                if (contact.position.z < floor + BraceMinimumHeight) continue;
+                bracedNow = true;
+                break;
+            }
+        }
+        m_bracedMemory = bracedNow ? BraceMemorySeconds : std::max(0.0f, m_bracedMemory - deltaTime);
+        const float tilt = std::acos(std::clamp(rootUpright, -1.0f, 1.0f));
+        if (m_bracedMemory > 0.0f) {
+            m_braceAttemptSeconds += deltaTime;
+            // Progresso: a inclinacao caindo. Sem melhorar por
+            // BraceStallSeconds, desiste (cai de verdade).
+            if (tilt < m_braceBestTilt - 0.03f) {
+                m_braceBestTilt = tilt;
+                m_braceStallSeconds = 0.0f;
+            } else {
+                m_braceStallSeconds += deltaTime;
+            }
+        } else if (rootUpright > 0.85f || !(feetGroundContact[0] || feetGroundContact[1])) {
+            m_braceAttemptSeconds = 0.0f;
+            m_braceStallSeconds = 0.0f;
+            m_braceBestTilt = tilt;
+        }
+        m_braceRecovering = m_bracedMemory > 0.0f && m_getUpPhase == CharacterGetUpPhase3D::None
+            && m_braceAttemptSeconds < BraceAttemptSeconds && m_braceStallSeconds < BraceStallSeconds
+            && rootUpright > BraceMinimumUpright && measuredComHeight > 0.40f;
+        m_telemetry.braceRecovering = m_braceRecovering;
+    }
+    // (Logo depois do carrinho ele ainda vem baixo, com a mao ou o joelho
+    // tocando o chao: ai so conta como queda tombado de verdade.)
+    // (Cambaleando com um pe no chao - meio apoiado numa mureta, num boneco -
+    // ainda nao e queda: ele tenta se endireitar ate StaggerFallenRelief a
+    // mais de inclinacao, enquanto o cambaleio dura.)
+    const float fallenUpright = 0.45f - StaggerFallenRelief * m_stagger
+        * (feetGroundContact[0] || feetGroundContact[1] ? 1.0f : 0.0f);
+    // (v2: baixo, mas agachado sobre os pes - tronco ate ~53 graus, nada alem
+    // dos pes tocando o chao - nao e queda: dali ele ainda levanta. Amolecido
+    // por um choque, sem ajuda, ele descia num agachamento fundo e era dado
+    // como caido com os pes no chao.)
+    const bool squattingOnFeet = input.physicalV2 && (feetGroundContact[0] || feetGroundContact[1])
+        && rootUpright > 0.6f && !(nonFootFloorHeight < fallenFloor + 0.30f) && measuredComHeight > 0.30f;
+    const bool fallenObservation = physicsOwnsBody && !m_braceRecovering
         && m_elapsedSeconds > 0.6f
         && anyGroundContact
-        && (rootUpright < 0.45f || measuredComHeight < 0.52f);
+        && (rootUpright < fallenUpright || (measuredComHeight < 0.52f && !squattingOnFeet))
+        && (m_sinceTackleSeconds > 0.8f || rootUpright < 0.30f);
 
     const auto enterGetUpPhase = [&](CharacterGetUpPhase3D phase) {
         m_getUpPhase = phase;
         m_getUpPhaseSeconds = 0.0f;
+        m_getUpFootwork = false;
+        m_getUpStepSide = -1;
+        m_getUpBalanceHold = false;
+        m_getUpBalanceHoldSeconds = 0.0f;
+        m_getUpBalanceSteps = 0;
+        if (phase == CharacterGetUpPhase3D::Settling) {
+            m_getUpRolling = false;
+            m_getUpRollDone = false;
+            m_getUpRollSeconds = 0.0f;
+        }
     };
     const auto classifyFallOrientation = [&]() {
         const std::size_t reference = m_chestLink < state.links.size()
@@ -1632,8 +2691,244 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
             ? CharacterFallOrientation3D::FaceDown
             : CharacterFallOrientation3D::FaceUp;
     };
+    // Carrinho: correndo, agachar (a borda do pedido) arma o carrinho para
+    // onde ele olha: mais devagar o de lado (Soccer Tackle), mais rapido o
+    // sentado (Running Slide, que desliza mais). O preparo: ele segue
+    // correndo, a pelve baixa um pouco, e o mergulho comeca no POUSO do pe
+    // com que o clipe comeca apoiado - a passada encaixa no clipe (antes
+    // comecava em qualquer ponto da passada, com o pe errado no chao). So no
+    // chao, de pe, indo para a frente do olhar com embalo - parado, recuando
+    // ou de lado o Ctrl so agacha.
+    {
+        const bool crouchPressed = input.intent.crouch && !m_previousCrouchIntent;
+        m_previousCrouchIntent = input.intent.crouch;
+        m_tackleCooldown = std::max(0.0f, m_tackleCooldown - deltaTime);
+        m_sinceTackleSeconds = m_tackling ? 0.0f : std::min(10.0f, m_sinceTackleSeconds + deltaTime);
+        const float yaw = input.facingYawRadians;
+        const Vec3 direction { std::cos(yaw), std::sin(yaw), 0.0f };
+        const float along = dot(Vec3 { m_filteredCenterOfMassVelocity.x,
+            m_filteredCenterOfMassVelocity.y, 0.0f }, direction);
+        const bool moving = m_telemetry.state == CharacterLocomotionState3D::Walking
+            || m_telemetry.state == CharacterLocomotionState3D::Running;
+        const bool haveClip = animations.tackles[0] != nullptr || animations.tackles[1] != nullptr;
+        const bool canTackle = TackleEnabled && input.tackleEnabled && haveClip
+            && m_getUpPhase == CharacterGetUpPhase3D::None && !m_tackling
+            && input.grounded && moving && along >= TackleMinSpeed * (m_tacklePending ? 0.8f : 1.0f)
+            && m_fallCommit < 0.3f && !state.links.empty();
+        // O pe com que cada clipe comeca apoiado (o mais baixo no comeco):
+        // o de lado firma o esquerdo e da o bote com a direita; o sentado
+        // firma o direito e estica a esquerda.
+        const auto clipStartSide = [&](const AnimationClip3D* clip) {
+            if (clip == nullptr) return -1;
+            const RagdollAnimationPose3D first = sampleRagdollAnimationPose3D(profile, clip, 0.0f, false);
+            if (m_feet[0].linkIndex >= first.linkPositions.size()
+                || m_feet[1].linkIndex >= first.linkPositions.size()) return -1;
+            return first.linkPositions[m_feet[0].linkIndex].z
+                < first.linkPositions[m_feet[1].linkIndex].z ? 0 : 1;
+        };
+        const auto clipForSide = [&](int side) {
+            for (const AnimationClip3D* clip : animations.tackles)
+                if (clip != nullptr && clipStartSide(clip) == side) return clip;
+            return animations.tackles[0] != nullptr ? animations.tackles[0] : animations.tackles[1];
+        };
+        if (crouchPressed && canTackle && m_tackleCooldown <= 0.0f && !m_tacklePending) {
+            m_tacklePending = true;
+            m_tacklePendingSeconds = 0.0f;
+            // A situacao decide: o pe que vai pousar no proximo passo (o que
+            // esta no ar; no voo, o da frente) escolhe o carrinho que comeca
+            // firmando ele - o mergulho sai nesse pouso, sem esperar outro.
+            int next = 0;
+            if (feetGroundContact[0] != feetGroundContact[1]) {
+                next = feetGroundContact[0] ? 1 : 0;
+            } else if (m_feet[0].linkIndex < state.links.size() && m_feet[1].linkIndex < state.links.size()) {
+                next = dot(state.links[m_feet[0].linkIndex].position, direction)
+                    > dot(state.links[m_feet[1].linkIndex].position, direction) ? 0 : 1;
+            }
+            m_tackleStartSide = next;
+            m_tackleClip = clipForSide(next);
+            // Qual (pedido do usuario, 05/10 noite; como no padrao): o que
+            // vira o corpo para o lado do giro da camera; parada, para o lado
+            // da corrida; senao, ao acaso. Fica esse (sem trocar pelo pe).
+            if (TackleChoiceByView) {
+                std::array<TackleClipShape3D, 2> shapes {};
+                for (std::size_t k = 0; k < shapes.size(); ++k)
+                    if (animations.tackles[k] != nullptr) shapes[k] = tackleClipShape3D(profile, *animations.tackles[k]);
+                const Vec3 travel { input.intent.requestedVelocityWorld.x, input.intent.requestedVelocityWorld.y, 0.0f };
+                const float lateral = travel.lengthSquared() > 1e-4f
+                    ? std::sin(wrapAngle(std::atan2(travel.y, travel.x) - input.facingYawRadians)) : 0.0f;
+                const int chosen = chooseTackleClip3D(animations.tackles, shapes, m_viewTurnRate, lateral,
+                    (input.varietySeed * 2654435761u) ^ (m_tackleCount * 40503u) ^ static_cast<std::uint32_t>(m_elapsedSeconds * 1000.0f));
+                if (chosen >= 0) {
+                    m_tackleClip = animations.tackles[static_cast<std::size_t>(chosen)];
+                    m_tackleStartSide = clipStartSide(m_tackleClip);
+                    m_tackleChosen = true;
+                }
+            }
+            m_tackleVariant = m_tackleClip == animations.tackles[1] ? 1 : 0;
+        }
+        if (m_tacklePending && !canTackle) {
+            m_tacklePending = false;
+            m_tackleClip = nullptr;
+        }
+        // A voadora no modo fisico (pedido do usuario, 06/10; no padrao ela ja
+        // existia): no ar, Ctrl com Shift + W, uma por voo. O carrinho entra ja
+        // na pose do mergulho (a perna esticada, do mesmo ponto em que o
+        // fisico continua a voadora do padrao) e a segura ate o corpo descer;
+        // ele nao empurra nem freia o corpo, entao o voo e o embalo do pulo.
+        if (input.grounded) m_airTackleSpent = false;
+        bool airStart = false;
+        float startClipTime = 0.0f, startSpeed = along, startYaw = yaw;
+        {
+            const Vec3 keys = input.intent.requestedDirectionWorld;
+            const bool combo = input.intent.crouch && input.intent.effort > 0.5f
+                && keys.x * direction.x + keys.y * direction.y > 0.7f;
+            const bool flying = !input.grounded && m_telemetry.state == CharacterLocomotionState3D::Airborne
+                && m_stateSeconds > 0.05f;
+            if (combo && flying && input.airTackleEnabled && !m_airTackleSpent && TackleEnabled && input.tackleEnabled
+                && haveClip && m_getUpPhase == CharacterGetUpPhase3D::None && !m_tackling && !m_tacklePending
+                && m_tackleCooldown <= 0.0f && m_fallCommit < 0.3f && !state.links.empty()) {
+                m_airTackleSpent = true;
+                std::array<TackleClipShape3D, 2> shapes {};
+                for (std::size_t k = 0; k < shapes.size(); ++k)
+                    if (animations.tackles[k] != nullptr) shapes[k] = tackleClipShape3D(profile, *animations.tackles[k]);
+                const Vec3 flat { m_filteredCenterOfMassVelocity.x, m_filteredCenterOfMassVelocity.y, 0.0f };
+                const float flatSpeed = flat.length();
+                const float lateral = flatSpeed > 0.01f
+                    ? std::sin(wrapAngle(std::atan2(flat.y, flat.x) - input.facingYawRadians)) : 0.0f;
+                int chosen = chooseTackleClip3D(animations.tackles, shapes, m_viewTurnRate, lateral,
+                    (input.varietySeed * 2654435761u) ^ (m_tackleCount * 40503u)
+                        ^ static_cast<std::uint32_t>(m_elapsedSeconds * 1000.0f));
+                if (chosen < 0) chosen = animations.tackles[0] != nullptr ? 0 : 1;
+                const std::size_t k = static_cast<std::size_t>(chosen);
+                m_tackleClip = animations.tackles[k];
+                m_tackleStartSide = clipStartSide(m_tackleClip);
+                m_tackleVariant = static_cast<int>(k);
+                // (Do fim do mergulho, como o do padrao: do comeco dele, o
+                // corpo ficava em pe no ar com uma perna a frente e pousava
+                // sentado.)
+                startClipTime = std::clamp(std::max(shapes[k].diveStart, shapes[k].lowStart - 0.02f),
+                    0.0f, m_tackleClip->durationSeconds);
+                startSpeed = std::max(2.0f, flatSpeed);
+                startYaw = flatSpeed > 1.0f ? std::atan2(flat.y, flat.x) : input.facingYawRadians;
+                airStart = true;
+            }
+        }
+        const std::array<bool, 2> touchdown { feetGroundContact[0] && !m_tacklePreviousFoot[0],
+            feetGroundContact[1] && !m_tacklePreviousFoot[1] };
+        m_tacklePreviousFoot = { feetGroundContact[0], feetGroundContact[1] };
+        bool start = false;
+        if (m_tacklePending) {
+            m_tacklePendingSeconds += deltaTime;
+            // Pousou um pe: o carrinho dele (se pousou o outro antes do
+            // previsto, troca para o dele). Passando do prazo, o pe que esta
+            // no chao.
+            int side = -1;
+            if (touchdown[0] != touchdown[1]) side = touchdown[0] ? 0 : 1;
+            else if (touchdown[0]) side = m_tackleStartSide;
+            else if (m_tacklePendingSeconds > TacklePrepMax)
+                side = feetGroundContact[0] != feetGroundContact[1] ? (feetGroundContact[0] ? 0 : 1)
+                    : m_tackleStartSide;
+            if (side >= 0) {
+                if (side != m_tackleStartSide && !m_tackleChosen) {
+                    m_tackleStartSide = side;
+                    m_tackleClip = clipForSide(side);
+                    m_tackleVariant = m_tackleClip == animations.tackles[1] ? 1 : 0;
+                }
+                start = true;
+            }
+        }
+        if (airStart) start = true;
+        if (start && m_tackleClip != nullptr) {
+            m_tacklePending = false;
+            ++m_tackleCount;
+            // Ritmo e percurso pela velocidade de entrada contra a da
+            // corrida do comeco do clipe: mais devagar, o clipe toca um
+            // pouco mais lento e o caminho encurta (as duas pela raiz).
+            const AnimationTransformSample3D r0 = clipRootAt(profile, *m_tackleClip, 0.0f);
+            const AnimationTransformSample3D r1 = clipRootAt(profile, *m_tackleClip, 0.2f);
+            const float clipSpeed = std::max(1.0f, std::hypot(
+                r1.translationOffsetMeters.x - r0.translationOffsetMeters.x,
+                r1.translationOffsetMeters.y - r0.translationOffsetMeters.y) / 0.2f);
+            const float ratio = std::clamp(startSpeed / clipSpeed, 0.4f, 1.3f);
+            m_tackleRate = std::clamp(std::sqrt(ratio), 0.75f, 1.12f);
+            m_tackleDistanceScale = ratio / m_tackleRate;
+            m_tackleChosen = false;
+            // Os dois deslizam o mesmo: o caminho de cada um vai a fase
+            // deitada media deles.
+            {
+                float sum = 0.0f;
+                int count = 0;
+                TackleClipShape3D mine {};
+                for (const AnimationClip3D* other : animations.tackles) {
+                    if (other == nullptr) continue;
+                    const TackleClipShape3D shape = tackleClipShape3D(profile, *other);
+                    if (other == m_tackleClip) mine = shape;
+                    if (shape.lowMeters > 0.3f) { sum += shape.lowMeters; ++count; }
+                }
+                if (count > 0 && mine.lowMeters > 0.3f && TackleChoiceByView)
+                    m_tackleDistanceScale *= (sum / static_cast<float>(count)) / mine.lowMeters;
+            }
+            m_tackleEntrySpeed = startSpeed;
+            m_tackleYaw = startYaw;
+            // O caminho do clipe comeca onde a pelve esta (no ar, no ponto do
+            // mergulho).
+            const Vec3 pelvis = state.links.front().position;
+            const AnimationTransformSample3D rStart = airStart ? clipRootAt(profile, *m_tackleClip, startClipTime) : r0;
+            const Vec3 first = Quaternion::fromAxisAngle({ 0.0f, 0.0f, 1.0f }, startYaw).rotate({
+                rStart.translationOffsetMeters.x * m_tackleDistanceScale,
+                rStart.translationOffsetMeters.y * m_tackleDistanceScale, 0.0f });
+            m_tackleStart = { pelvis.x - first.x, pelvis.y - first.y, pelvis.z };
+            m_tackling = true;
+            m_tackleLandSpeed = -1.0f;
+            m_tackleBehindSeconds = 0.0f;
+            m_tackleHoldSeconds = 0.0f;
+            enterGetUpPhase(CharacterGetUpPhase3D::Rising);
+            m_getUpClipSeconds = startClipTime;
+            m_getUpAnchorWorld = m_tackleStart;
+            m_getUpAnchorYaw = startYaw;
+            m_fallOrientation = CharacterFallOrientation3D::None;
+            m_settleGather = 1.0f;
+            m_settleTone = 1.0f;
+            m_getUpRate = m_tackleRate;
+            m_getUpAttempt = 0;
+            m_getUpExpectedValid = false;
+            m_getUpStruggle = 0.0f;
+            m_getUpStallSeconds = 0.0f;
+            m_getUpHoldSeconds = 0.0f;
+            m_bodilyRising = false;
+            m_risingFromMeasured.assign(state.joints.size(), Vec3 {});
+            for (std::size_t link = 1; link < state.joints.size(); ++link) {
+                m_risingFromMeasured[link] = { state.joints[link].positionRadians[0],
+                    state.joints[link].positionRadians[1],
+                    state.joints[link].positionRadians[2] };
+            }
+            for (FootPlant& foot : m_feet) {
+                foot.planted = false;
+                foot.repositioning = false;
+                foot.recoveryStep = false;
+            }
+        }
+    }
+    // Pressa para levantar (as teclas de andar; com Shift, correndo): ver
+    // GetUpSpeed.
+    const bool getUpKeys = input.intent.requestedVelocityWorld.x * input.intent.requestedVelocityWorld.x
+        + input.intent.requestedVelocityWorld.y * input.intent.requestedVelocityWorld.y > 0.01f;
+    // (O Shift pela intencao: caido, a capsula esta parada e input.sprinting
+    // - que so liga com ela andando - nao o via.)
+    // Sem pressa, o levantar no ritmo dele, detalhado (pedido do usuario,
+    // 05/10 noite); com as teclas de andar ou o espaco, rapido; andando com
+    // Shift, correndo.
+    const int getUpHurry = !GetUpHurryEnabled || (!getUpKeys && !input.getUpHurry) ? 0
+        : getUpKeys && (input.sprinting || input.intent.effort > 0.5f) ? 2 : 1;
+    const float getUpSpeed = getUpHurry == 2 ? GetUpSprintSpeed : getUpHurry == 1 ? GetUpHurrySpeed : GetUpSpeed;
+    m_getUpSpeedNow = getUpSpeed;
+    if (m_getUpPhase != CharacterGetUpPhase3D::Rising) m_getUpHandoffReady = false;
     if (m_getUpPhase == CharacterGetUpPhase3D::None) {
+        if (fallenObservation && std::getenv("XQUEDADBG"))
+            std::printf("QUEDA t %.2f upright %.2f (limite %.2f) com %.2f chao %.2f contato %d\n", m_elapsedSeconds,
+                rootUpright, fallenUpright, measuredComHeight, contactFloor, anyGroundContact ? 1 : 0);
         if (fallenObservation) {
+            m_getUpHurriedExit = false;
             classifyFallOrientation();
             enterGetUpPhase(CharacterGetUpPhase3D::Settling);
             ++m_getUpAttempt;
@@ -1651,7 +2946,112 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
         // Being held by the PhysGun freezes recovery instead of fighting the
         // player back toward a stand-up target.
         m_getUpPhaseSeconds += deltaTime;
-        if (m_getUpPhase == CharacterGetUpPhase3D::Settling) {
+        if (m_tackling) {
+            // Carrinho: o clipe anda no tempo (o mergulho e o deslize sao o
+            // embalo, nao esperam o corpo), no ritmo da entrada.
+            const AnimationClip3D* clip = m_tackleClip;
+            const float duration = clip != nullptr ? clip->durationSeconds : 1.0f;
+            const float height = state.links.front().position.z - groundHeightGuess;
+            // Deslizando (a pelve do clipe e a do corpo baixas, o clipe sem
+            // subir ainda), a pose do deslize fica enquanto o corpo anda: o
+            // comprimento do deslize e o do embalo e do atrito, nao o do
+            // clipe. Devagar, o clipe segue para o levantar.
+            const float bodySpeed = std::hypot(state.links.front().linearVelocity.x,
+                state.links.front().linearVelocity.y);
+            const bool sliding = m_tackleExpectedHeight < TackleSlideHeight
+                && height < TackleSlideHeight + 0.10f && m_tackleExpectedRise < 0.4f;
+            const float slideRate = sliding ? std::clamp(1.0f - (bodySpeed - TackleSlideRelease) / 1.5f,
+                0.12f, 1.0f) : 1.0f;
+            // Descendo, o clipe espera o corpo: o ator se joga ao chao mais
+            // rapido que a queda livre (0,6 m em 0,15 s; caindo, 0,35 s) - o
+            // clipe chegava a pose de deslize com o corpo ainda no alto, as
+            // pernas iam a frente no ar e, quando ele tocava o chao, o clipe
+            // ja estava levantando (quase nao deslizava).
+            const float dropRate = m_tackleExpectedRise < 0.0f
+                ? std::clamp(1.0f - (height - m_tackleExpectedHeight - 0.10f) / 0.20f, 0.20f, 1.0f) : 1.0f;
+            const float paceShare = std::min(slideRate, dropRate);
+            m_getUpClipSeconds = std::min(duration, m_getUpClipSeconds + deltaTime * m_tackleRate * paceShare);
+            m_getUpRate = m_tackleRate * paceShare;
+            const float expected = clip != nullptr ? profile.standingRootHeightMeters
+                + clipRootAt(profile, *clip, m_getUpClipSeconds).translationOffsetMeters.z
+                : profile.standingRootHeightMeters;
+            // A altura da pelve no clipe e quanto ela sobe (m/s, no ritmo):
+            // os musculos e a ajuda leem as fases (descendo, subindo).
+            if (clip != nullptr) {
+                const float ahead = std::min(duration, m_getUpClipSeconds + 1.0f / 30.0f);
+                const float rise = profile.standingRootHeightMeters
+                    + clipRootAt(profile, *clip, ahead).translationOffsetMeters.z - expected;
+                m_tackleExpectedRise = ahead > m_getUpClipSeconds
+                    ? rise * 30.0f * m_tackleRate : 0.0f;
+            }
+            m_tackleExpectedHeight = expected;
+            // Na volta (da metade do clipe em diante) a pelve muito abaixo de
+            // onde o clipe ja subiu, ou o fim sem estar de pe: nao deu - vira
+            // queda e ele levanta pelo levantar normal.
+            const bool recovering = m_getUpClipSeconds > 0.5f * duration;
+            m_tackleBehindSeconds = recovering && height < expected - 0.40f
+                ? m_tackleBehindSeconds + deltaTime
+                : std::max(0.0f, m_tackleBehindSeconds - deltaTime);
+            // De pe o bastante para a locomocao assumir: ela segura o peso e
+            // termina de endireitar (no carrinho a ajuda de postura dela fica
+            // suspensa - exigindo o corpo ereto, ele ficava meio agachado e
+            // inclinado ~40 graus, sem forca para subir, ate virar queda).
+            // (Ele termina de se endireitar ainda no carrinho - a ajuda de
+            // levantar dele vale ate o corpo chegar a altura do clipe;
+            // demorando, aceita mais inclinado em vez de virar queda.)
+            const bool upright = (rootUpright > 0.82f
+                    && height > profile.standingRootHeightMeters * 0.70f)
+                || (m_tackleHoldSeconds > 0.4f && rootUpright > 0.65f
+                    && height > profile.standingRootHeightMeters * 0.60f);
+            // De volta em pe no clipe (passou do deslize e a pelve do clipe ja
+            // na altura de pe) e no corpo: a corrida volta a ser da
+            // locomocao - os passos e o equilibrio dela seguram a saida
+            // correndo; presa ao fim do clipe, a 7 m/s o corpo pendia ~45
+            // graus para a frente.
+            // (Logo que ele levanta do deslize, antes da passada de saida do
+            // clipe: ela nao se adapta - o pe pousava atras do centro de massa
+            // e ele tombava para a frente. A locomocao poe o pe pelo ponto de
+            // captura.)
+            const bool clipStanding = m_getUpClipSeconds > 0.6f * duration
+                && m_tackleExpectedHeight > profile.standingRootHeightMeters * TackleHandoffHeight;
+            if (m_getUpClipSeconds >= duration && !upright) m_tackleHoldSeconds += deltaTime;
+            if (m_tackleBehindSeconds > 1.0f || m_tackleHoldSeconds > 1.0f) {
+                m_tackling = false;
+                m_tackleClip = nullptr;
+                classifyFallOrientation();
+                enterGetUpPhase(CharacterGetUpPhase3D::Settling);
+                ++m_getUpAttempt;
+                m_recoveredStandingSeconds = 0.0f;
+                m_settleTone = SettleImpactTone;
+                m_settleRestSeconds = 0.0f;
+                m_settlePoseValid = false;
+                for (FootPlant& foot : m_feet) {
+                    foot.planted = false;
+                    foot.repositioning = false;
+                    foot.recoveryStep = false;
+                }
+            } else if ((m_getUpClipSeconds >= duration || clipStanding) && upright) {
+                m_tackling = false;
+                m_tackleClip = nullptr;
+                m_getUpPhase = CharacterGetUpPhase3D::None;
+                m_fallOrientation = CharacterFallOrientation3D::None;
+                m_getUpPhaseSeconds = 0.0f;
+                m_getUpClipSeconds = 0.0f;
+                m_recoveredStandingSeconds = 0.0f;
+                m_getUpAttempt = 0;
+                m_getUpExpectedValid = false;
+                m_tackleCooldown = 0.35f;
+                // Segue para onde o corpo terminou virado; os pes ficam onde
+                // estao (os passos refazem a base), o olhar volta aos poucos.
+                const Vec3 forward = state.links.front().orientation.rotate({ 1.0f, 0.0f, 0.0f });
+                m_facingYaw = std::hypot(forward.x, forward.y) > 0.2f
+                    ? std::atan2(forward.y, forward.x) - m_clipPelvisYaw : m_tackleYaw;
+                m_turningRate = 0.0f;
+                m_plantFeetFromBody = true;
+                m_torsoTwist = 0.0f;
+                m_headTurn = 0.0f;
+            }
+        } else if (m_getUpPhase == CharacterGetUpPhase3D::Settling) {
             // Deitado: se rolou, a pose deitada (e o levantar) troca - com
             // folga, para nao ficar trocando de lado.
             if (m_chestLink < state.links.size()) {
@@ -1706,8 +3106,50 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
             m_settleRestSeconds = coreSpeed < restLimit
                 ? m_settleRestSeconds + deltaTime : 0.0f;
             m_settleTone = m_settleRestSeconds > restBeforeGather
-                ? std::min(1.0f, m_settleTone + deltaTime * 1.0f)
+                ? std::min(1.0f, m_settleTone + deltaTime * SettleToneRise * getUpSpeed)
                 : std::max(SettleRestingTone, m_settleTone - deltaTime * 2.5f);
+            // Rolar antes de levantar (TEMPTUNE GetUpRoll): de lado (ou de
+            // costas, com GetUpRollFromBack), arrumando-se, ele rola ate
+            // ficar de bruços - o levantar de bruços parte de uma pose
+            // boa. Como no Prone Roll de referencia: a perna e o braco de
+            // cima cruzam por cima para o lado da barriga e o quadril puxa o
+            // tronco (uns 20 graus a frente dos ombros).
+            if (GetUpRollEnabled && m_chestLink < state.links.size()) {
+                const Vec3 chestForward = state.links[m_chestLink].orientation.rotate({ 1.0f, 0.0f, 0.0f });
+                const Vec3 spine = (state.links[m_chestLink].position - state.links.front().position).normalized();
+                if (!m_getUpRolling && !m_getUpRollDone && recovering && m_settleTone > 0.6f
+                    && (std::abs(chestForward.z) < GetUpRollSideFacing
+                        || (GetUpRollFromBack && chestForward.z > 0.0f))) {
+                    // Gira em torno da coluna no sentido que leva a barriga
+                    // para o chao: d(frente.z)/d(angulo) = (coluna x frente).z.
+                    const float lean = cross(spine, chestForward).z;
+                    m_getUpRollSign = lean > 0.0f ? -1.0f : 1.0f;
+                    // O lado de cima: o quadril que sobe com o giro.
+                    const std::size_t thighs[2] = { findLink(profile, "LeftThigh"), findLink(profile, "RightThigh") };
+                    m_getUpRollTop = -1;
+                    float best = -1e9f;
+                    for (int side = 0; side < 2; ++side) {
+                        if (thighs[side] == 0 || thighs[side] >= state.links.size()) continue;
+                        const Vec3 hip = state.links[thighs[side]].position - state.links.front().position;
+                        const float rise = cross(spine * m_getUpRollSign, hip).z;
+                        if (rise > best) { best = rise; m_getUpRollTop = side; }
+                    }
+                    m_getUpRolling = m_getUpRollTop >= 0;
+                    m_getUpRollSeconds = 0.0f;
+                }
+                if (m_getUpRolling) {
+                    m_getUpRollSeconds += deltaTime;
+                    const bool prone = chestForward.z < -0.6f;
+                    if (prone || m_getUpRollSeconds > GetUpRollTimeout) {
+                        m_getUpRolling = false;
+                        m_getUpRollDone = true;
+                        if (prone) m_fallOrientation = CharacterFallOrientation3D::FaceDown;
+                        else classifyFallOrientation();
+                        // Arruma-se de novo a partir de onde rolou.
+                        m_settlePoseValid = false;
+                    }
+                }
+            }
             // Levantar so com o corpo deitado: invertido (pernas por cima da
             // cabeca, pelve alem de ~125 graus) o clipe comecava de uma pose
             // que o corpo nao tinha e ele rolava de novo.
@@ -1715,15 +3157,18 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
             // E com o corpo ja na pose de levantar (se arrumou): um braco
             // preso embaixo do corpo nao chegava, e ao levantar os ganhos
             // o arrancavam de la (mao a 14 m/s).
-            const bool settled = m_getUpPhaseSeconds > 0.55f
-                && coreSpeed < 0.35f && fastestLink < 1.0f
+            const bool settled = m_getUpPhaseSeconds > (getUpHurry > 0 ? GetUpHurrySettleSeconds : GetUpSettleSeconds)
+                && !m_getUpRolling
+                && coreSpeed < 0.35f * (getUpHurry > 0 ? GetUpCalmScale : 1.0f)
+                && fastestLink < 1.0f * (getUpHurry > 0 ? GetUpCalmScale : 1.0f)
                 && m_settleTone > 0.97f && settledTilt < 2.2f
                 && m_telemetry.jointErrorRmsDegrees < 12.0f;
             // No modo fisico o corpo cai com mais energia e desliza mais:
             // comecar o levantar com ele ainda andando (o limite de 2 s)
             // puxava a raiz de uma vez para o clipe - membros a 77 m/s.
             const float settleLimit = input.forceDrivenRoot ? 4.0f : 2.0f;
-            if (settled || m_getUpPhaseSeconds > settleLimit) {
+            if ((settled || m_getUpPhaseSeconds > settleLimit + (m_getUpRollDone ? 2.0f : 0.0f))
+                && !m_getUpRolling) {
                 // O lado (costas/bruços) e o do deitado, que ja tem folga:
                 // reclassificar aqui, de lado (peito na vertical), trocava o
                 // levantar para o outro clipe com o corpo arrumado para este
@@ -1752,6 +3197,38 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
                         state.joints[link].positionRadians[2] };
                 }
                 enterGetUpPhase(CharacterGetUpPhase3D::Rising);
+                m_bodilyRising = GetUpBodily;
+                if (m_bodilyRising) {
+                    m_bodilyGetUp.begin(profile, state, std::isfinite(contactFloor)
+                        ? contactFloor : groundHeightGuess);
+                }
+            }
+        } else if (m_getUpPhase == CharacterGetUpPhase3D::Rising && m_bodilyRising) {
+            // Levantar pelo corpo: as etapas decidem; nada carrega o corpo.
+            const bool standing = m_bodilyGetUp.update(profile, state, std::isfinite(contactFloor)
+                ? contactFloor : groundHeightGuess, deltaTime, m_bodilyPose);
+            if (m_bodilyGetUp.failed()) {
+                classifyFallOrientation();
+                enterGetUpPhase(CharacterGetUpPhase3D::Settling);
+                ++m_getUpAttempt;
+                m_settleRestSeconds = 0.0f;
+                m_settlePoseValid = false;
+                m_bodilyRising = false;
+            } else if (standing) {
+                m_getUpPhase = CharacterGetUpPhase3D::None;
+                m_fallOrientation = CharacterFallOrientation3D::None;
+                m_getUpPhaseSeconds = 0.0f;
+                m_getUpClipSeconds = 0.0f;
+                m_recoveredStandingSeconds = 0.0f;
+                m_getUpAttempt = 0;
+                m_bodilyRising = false;
+                const Vec3 forward = state.links.front().orientation.rotate({ 1.0f, 0.0f, 0.0f });
+                m_facingYaw = std::hypot(forward.x, forward.y) > 0.2f
+                    ? std::atan2(forward.y, forward.x) - m_clipPelvisYaw : m_facingYaw;
+                m_turningRate = 0.0f;
+                m_plantFeetFromBody = true;
+                m_torsoTwist = 0.0f;
+                m_headTurn = 0.0f;
             }
         } else if (m_getUpPhase == CharacterGetUpPhase3D::Rising) {
             // Levantar biomecanico: o clipe e o roteiro das juntas; quem
@@ -1773,7 +3250,13 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
                 // clipe seguia e ele subia como uma prancha inclinada.
                 const bool finalPhase = m_getUpExpectedTilt < 0.8f
                     && height > 0.55f;
-                const float tiltRate = finalPhase
+                // (Ja na altura de pe - pelve acima de GetUpLateHeight - o
+                // clipe nao espera mais a inclinacao: esperando, os alvos do
+                // quadril e da coluna ficavam dobrados e o corpo, de pe e
+                // inclinado, ~0,55 s ate a ajuda o erguer. Seguindo, eles vao
+                // a pose reta e erguem o tronco.)
+                const float tiltRate = finalPhase && height > GetUpLateHeight ? 1.0f
+                    : finalPhase
                     ? 1.0f - (tiltedBy - 0.12f) / 0.25f
                     : 1.0f - (tiltedBy - 0.21f) / 0.44f;
                 // As pernas tambem: se coxas e canelas estao longe da pose
@@ -1804,8 +3287,38 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
                     chestRate = 1.0f
                         - (m_getUpExpectedChestHeight - chest - 0.08f) / 0.15f;
                 }
+                // O ritmo acelerado (getUpSpeed) so onde o clipe nao sobe
+                // rapido: onde a pelve dele sobe, no maximo GetUpMaxRise m/s
+                // (pedido do usuario, 05/10 noite: a 1,9x o empurrao dos
+                // bracos e o ficar de pe pediam ~2,1 m/s e o corpo saltava,
+                // ~0,25 s fora do chao em cada um).
+                float speedHere = getUpSpeed;
+                {
+                    const AnimationClip3D* riseClip = m_fallOrientation == CharacterFallOrientation3D::FaceDown
+                        ? animations.standUpFront : animations.standUpBack;
+                    if (riseClip != nullptr && riseClip->durationSeconds > 0.1f) {
+                        const float now = std::min(m_getUpClipSeconds, riseClip->durationSeconds - 0.06f);
+                        const float rise = (clipRootAt(profile, *riseClip, now + 0.06f).translationOffsetMeters.z
+                            - clipRootAt(profile, *riseClip, now).translationOffsetMeters.z) / 0.06f;
+                        if (rise > 1e-3f) speedHere = std::clamp(GetUpMaxRise / rise, 1.0f, getUpSpeed);
+                        // E as pernas: esticando o joelho e o quadril rapido o
+                        // corpo saltava (no fim, de pe, a 2,5x - a pelve a
+                        // 1,05 m), mesmo com a pelve do clipe quase parada.
+                        float legSpeed = 0.0f;
+                        for (std::size_t index = 1; index < profile.links.size(); ++index) {
+                            const std::string& id = profile.links[index].id;
+                            if (id.find("Thigh") == std::string::npos && id.find("Shin") == std::string::npos) continue;
+                            if (const AnimationTrack3D* track = findAnimationTrack3D(*riseClip, id)) {
+                                const Vec3 a = sampleAnimationTrack3D(*track, now, riseClip->durationSeconds, false).jointPositionRadians;
+                                const Vec3 b = sampleAnimationTrack3D(*track, now + 0.06f, riseClip->durationSeconds, false).jointPositionRadians;
+                                legSpeed = std::max(legSpeed, (b - a).length() / 0.06f);
+                            }
+                        }
+                        if (legSpeed > 1e-3f) speedHere = std::min(speedHere, std::max(1.0f, GetUpMaxLegSpeed / legSpeed));
+                    }
+                }
                 m_getUpRate = std::clamp(std::min({ heightRate, tiltRate,
-                    legsRate, chestRate }), 0.1f, 1.0f);
+                    legsRate, chestRate }), 0.1f, 1.0f) * speedHere;
             } else {
                 m_getUpRate = 1.0f;
             }
@@ -1828,7 +3341,17 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
             m_getUpStallSeconds = m_getUpRate <= 0.2f && !progressing
                 ? m_getUpStallSeconds + deltaTime : std::max(0.0f,
                     m_getUpStallSeconds - (progressing ? deltaTime : 3.0f));
-            m_getUpClipSeconds += deltaTime * m_getUpRate;
+            {
+                const AnimationClip3D* frontClip = animations.standUpFront;
+                const float release = GetUpHandRelease * (frontClip && frontClip->durationSeconds > 0.05f
+                    ? frontClip->durationSeconds : 1.6f);
+                const float before = m_getUpClipSeconds;
+                m_getUpClipSeconds += deltaTime * m_getUpRate;
+                // Os pes do equilibrio pedem: as maos so soltam com o corpo
+                // sobre os pes (o clipe espera antes de solta-las).
+                if (m_getUpBalanceHold && m_fallOrientation == CharacterFallOrientation3D::FaceDown)
+                    m_getUpClipSeconds = std::max(before, std::min(m_getUpClipSeconds, release));
+            }
             const AnimationClip3D* clip = m_fallOrientation
                     == CharacterFallOrientation3D::FaceDown
                 ? animations.standUpFront : animations.standUpBack;
@@ -1840,6 +3363,37 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
                 && state.links.front().position.z
                     - (input.rootPositionWorld.z - profile.standingRootHeightMeters)
                     > profile.standingRootHeightMeters * 0.80f;
+            // Perto da pose agachada do comeco da arrancada (Crouched To
+            // Sprinting: pelve a 0,55 m e 45 graus, peito a 66, os pes no chao
+            // embaixo da pelve): o padrao pode assumir com ela.
+            m_getUpHandoffReady = false;
+            if (getUpHurry > 0 && m_getUpClipSeconds >= GetUpHandoffProgress * duration && !state.links.empty()) {
+                const float ground = input.rootPositionWorld.z - profile.standingRootHeightMeters;
+                const Vec3 pelvisPosition = state.links.front().position;
+                float chestTilt = 0.0f;
+                if (m_chestLink < state.links.size()) {
+                    const Vec3 chestUp = (state.links[m_chestLink].orientation
+                        * profile.links[m_chestLink].modelOrientation.conjugate()).rotate({ 0.0f, 0.0f, 1.0f });
+                    chestTilt = std::acos(std::clamp(chestUp.z, -1.0f, 1.0f));
+                }
+                const Vec3 forward { std::cos(m_getUpAnchorYaw), std::sin(m_getUpAnchorYaw), 0.0f };
+                bool feetUnder = true;
+                for (const FootPlant& foot : m_feet) {
+                    if (!foot.valid || foot.linkIndex >= state.links.size()) { feetUnder = false; continue; }
+                    const Vec3 at = state.links[foot.linkIndex].position;
+                    feetUnder = feetUnder && at.z - ground < 0.22f
+                        && std::abs(dot(Vec3 { at.x - pelvisPosition.x, at.y - pelvisPosition.y, 0.0f }, forward)) < GetUpHandoffFeet;
+                }
+                m_getUpHandoffReady = pelvisPosition.z - ground > GetUpHandoffHeight
+                    && rootUpright > std::cos(GetUpHandoffTilt) && chestTilt < GetUpHandoffChestTilt && feetUnder;
+            }
+            // Com pressa: quase em pe ja sai (o resto do clipe e endireitar
+            // parado, que a arrancada faz andando).
+            const bool hurryExit = getUpHurry > 0 && m_getUpClipSeconds >= GetUpHurryExit * duration
+                && rootUpright > GetUpHurryUpright && !state.links.empty()
+                && state.links.front().position.z
+                    - (input.rootPositionWorld.z - profile.standingRootHeightMeters)
+                    > profile.standingRootHeightMeters * 0.75f;
             if (m_getUpClipSeconds >= duration && !upright) {
                 m_getUpClipSeconds = duration;
                 m_getUpHoldSeconds += deltaTime;
@@ -1857,7 +3411,7 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
                 m_getUpStallSeconds = 0.0f;
                 m_getUpHoldSeconds = 0.0f;
                 m_getUpStruggle = 0.0f;
-            } else if (m_getUpClipSeconds >= duration && upright) {
+            } else if ((m_getUpClipSeconds >= duration && upright) || hurryExit) {
                 m_getUpPhase = CharacterGetUpPhase3D::None;
                 m_fallOrientation = CharacterFallOrientation3D::None;
                 m_getUpPhaseSeconds = 0.0f;
@@ -1876,6 +3430,7 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
                         ? std::atan2(forward.y, forward.x) - m_clipPelvisYaw
                         : m_getUpAnchorYaw;
                 }
+                m_getUpHurriedExit = getUpHurry > 0;
                 m_turningRate = 0.0f;
                 // Os pes ficam onde estao, travados no chao (abaixo, onde a
                 // sonda do chao existe). Soltos, o IK levava os dois de uma vez
@@ -1891,6 +3446,38 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
     const bool getUpActive = m_getUpPhase != CharacterGetUpPhase3D::None;
     m_sinceGetUpSeconds = getUpActive ? 0.0f
         : std::min(10.0f, m_sinceGetUpSeconds + deltaTime);
+    // Cambaleio (ver StaggerImpulseMin): o choque deste tick e o tonus.
+    {
+        float impulse = 0.0f;
+        if (input.staggerRecovery && physicsOwnsBody && !getUpActive)
+            for (const RagdollInteraction3D& contact : state.interactions) {
+                if (contact.linkIndex >= profile.links.size()) continue;
+                const std::string& id = profile.links[contact.linkIndex].id;
+                if ((id == "LeftFoot" || id == "RightFoot") && contact.normalWorld.z > 0.62f) continue;
+                // (O chao logo depois de levantar ou do carrinho nao e choque.)
+                if (contact.normalWorld.z > 0.62f && (m_sinceGetUpSeconds < 1.0f || m_sinceTackleSeconds < 0.8f))
+                    continue;
+                impulse += contact.normalImpulseNewtonSeconds;
+            }
+        if (!input.staggerRecovery || getUpActive) {
+            m_stagger = 0.0f;
+        } else {
+            const float hit = std::clamp((impulse - StaggerImpulseMin)
+                / std::max(1.0f, StaggerImpulseFull - StaggerImpulseMin), 0.0f, 1.0f);
+            if (hit > m_stagger) {
+                m_stagger = hit;
+                m_staggerHold = StaggerHoldSeconds * hit;
+            }
+            const float upright = smoothStep((rootUpright - 0.60f) / 0.35f);
+            if (m_staggerHold > 0.0f) m_staggerHold -= deltaTime;
+            else m_stagger = std::max(0.0f, m_stagger - deltaTime * StaggerRecoverPerSecond * (0.35f + 0.65f * upright));
+        }
+        m_telemetry.stagger = m_stagger;
+        m_telemetry.staggerImpulse = impulse;
+    }
+    // (Os limites da postura e da queda sem volta, mais tolerantes enquanto
+    // ele esta amolecido: ele tenta se manter.)
+    const float staggerRelief = StaggerTiltRelief * m_stagger;
 
     // Reflexos de queda: com o corpo tombando de verdade (pelve alem de ~40
     // graus da vertical; no modo antigo, a partir de 25 graus depois de uma
@@ -1924,23 +3511,25 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
         // moles tirava a chance de o passo salvar o equilibrio e o comando do
         // jogador parava de valer no meio do tropeco.
         const float committing = input.forceDrivenRoot
-            ? std::max(smoothStep((tilt - 0.87f) / 0.22f)
+            ? std::max(smoothStep((tilt - 0.87f - staggerRelief) / 0.22f)
                     * smoothStep((tiltRate + 0.3f) / 0.6f),
-                smoothStep((tilt - 0.70f) / 0.26f)
+                smoothStep((tilt - 0.70f - staggerRelief) / 0.26f)
                     * smoothStep((tiltRate - 2.5f) / 1.0f))
             : tipping;
         const float commitWanted = m_getUpPhase == CharacterGetUpPhase3D::Settling
             ? 1.0f : m_getUpPhase == CharacterGetUpPhase3D::Rising ? 0.0f
             : std::max(committing, input.forceDrivenRoot && m_fallCommit > 0.5f
-                ? smoothStep((tilt - 0.70f) / 0.26f) : 0.0f);
+                ? smoothStep((tilt - 0.70f - staggerRelief) / 0.26f) : 0.0f);
         // De volta em pe (tronco a menos de ~25 graus), as pernas voltam logo
         // ao passo e ao tonus: com a volta lenta ele se empurrava de cima de
         // uma caixa, ficava reto, e caia de costas de pernas ainda moles.
         const float commitRelease = m_getUpPhase == CharacterGetUpPhase3D::None
             && tilt < 0.44f && (feetGroundContact[0] || feetGroundContact[1])
             ? 10.0f : 3.0f;
-        m_fallCommit += (commitWanted - m_fallCommit) * std::clamp(
-            deltaTime * (commitWanted > m_fallCommit ? 18.0f : commitRelease),
+        // (Apoiado tentando se recompor: as pernas ficam com o tonus de pe.)
+        const float commitTarget = m_braceRecovering ? 0.0f : commitWanted;
+        m_fallCommit += (commitTarget - m_fallCommit) * std::clamp(
+            deltaTime * (commitTarget > m_fallCommit ? 18.0f : (m_braceRecovering ? 10.0f : commitRelease)),
             0.0f, 1.0f);
         // Rumo da queda: para onde o centro de massa vai; devagar, para onde
         // o corpo tomba.
@@ -1957,6 +3546,117 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
             if (m_fallDirection.lengthSquared() > 1e-6f)
                 m_fallDirection = m_fallDirection.normalized();
         }
+        // Postura perdida (ver PostureLossFall): com o corpo fisico, de pe
+        // (sem levantar, carrinho nem pulo).
+        const CharacterLocomotionState3D previousState = m_telemetry.state;
+        const bool postureStanding = PostureLossFall && physicsOwnsBody && input.forceDrivenRoot
+            && m_getUpPhase == CharacterGetUpPhase3D::None
+            && previousState != CharacterLocomotionState3D::Tackling
+            && previousState != CharacterLocomotionState3D::Fallen
+            && previousState != CharacterLocomotionState3D::GettingUp
+            && previousState != CharacterLocomotionState3D::Airborne
+            && previousState != CharacterLocomotionState3D::JumpStarting
+            && previousState != CharacterLocomotionState3D::Landing;
+        // O pendulo (centro de massa contra o meio dos pes) da vertical e
+        // contra o da pose pedida; e o peito da vertical.
+        float deviation = 0.0f, pendulum = 0.0f, chestTilt = 0.0f;
+        bool supportedPendulum = false;
+        if (m_feet.size() >= 2 && m_feet[0].valid && m_feet[1].valid
+            && m_feet[0].linkIndex < state.links.size() && m_feet[1].linkIndex < state.links.size()) {
+            const Vec3 arm = pendulumArm(profile, m_feet[0].linkIndex, m_feet[1].linkIndex,
+                [&](std::size_t i) { return state.links[i].position; });
+            const Vec3 wanted = m_referencePendulumValid ? m_referencePendulum : Vec3 { 0.0f, 0.0f, 1.0f };
+            const Vec3 armUnit = arm * (1.0f / std::max(1e-3f, arm.length()));
+            const Vec3 wantedUnit = wanted * (1.0f / std::max(1e-3f, wanted.length()));
+            deviation = std::acos(std::clamp(dot(armUnit, wantedUnit), -1.0f, 1.0f));
+            pendulum = std::acos(std::clamp(armUnit.z, -1.0f, 1.0f));
+            // v2 (T_PostureSupport): o pendulo e contra os pes APOIADOS (o do
+            // alvo, contra os mesmos pes da pose alvo). Pelo meio dos dois,
+            // correndo, o pe no ar - a 0,7 m para o lado no zigue-zague - o
+            // inflava: a postura era dada como perdida com o corpo a 34 graus
+            // e a ajuda saia de vez (a 100%, 15 de 174 rodadas caiam assim).
+            // Sem pe apoiado (o voo da passada), o tempo segurado nao conta.
+            // (So na passada - andando ou correndo, sem os passos de freada:
+            // nos passos do planejador, parado, o pe no ar e o que vai segurar
+            // o corpo - empurrado para tras, contra o pe apoiado, ele "perdia
+            // a postura" no meio do passo que salvava.)
+            const bool inGait = (previousState == CharacterLocomotionState3D::Walking
+                || previousState == CharacterLocomotionState3D::Running) && !m_brakeStepping;
+            if (PostureSupportPendulum && inGait) {
+                const bool left = feetGroundContact[0], right = feetGroundContact[1];
+                if (left || right) {
+                    float total = 0.0f;
+                    Vec3 center {}, wantedCenter {};
+                    for (std::size_t i = 0; i < profile.links.size(); ++i) {
+                        center = center + state.links[i].position * profile.links[i].massFraction;
+                        total += profile.links[i].massFraction;
+                    }
+                    center = center * (1.0f / std::max(1e-4f, total));
+                    const Vec3 support = left && right
+                        ? (state.links[m_feet[0].linkIndex].position + state.links[m_feet[1].linkIndex].position) * 0.5f
+                        : state.links[m_feet[left ? 0 : 1].linkIndex].position;
+                    const Vec3 wantedSupport = left && right
+                        ? (m_referenceFeetWorld[0] + m_referenceFeetWorld[1]) * 0.5f
+                        : m_referenceFeetWorld[left ? 0 : 1];
+                    const Vec3 supportArm = center - support;
+                    const Vec3 wantedArm = m_referencePendulumValid ? m_referenceCenterOfMassWorld - wantedSupport
+                        : Vec3 { 0.0f, 0.0f, 1.0f };
+                    const Vec3 supportUnit = supportArm * (1.0f / std::max(1e-3f, supportArm.length()));
+                    const Vec3 wantedSupportUnit = wantedArm * (1.0f / std::max(1e-3f, wantedArm.length()));
+                    deviation = std::acos(std::clamp(dot(supportUnit, wantedSupportUnit), -1.0f, 1.0f));
+                    pendulum = std::acos(std::clamp(supportUnit.z, -1.0f, 1.0f));
+                    supportedPendulum = true;
+                }
+            }
+        }
+        if (m_chestLink != 0 && m_chestLink < state.links.size()) {
+            const Quaternion bind = profile.links[m_chestLink].modelOrientation.conjugate();
+            const Vec3 chestUp = (state.links[m_chestLink].orientation * bind).rotate({ 0.0f, 0.0f, 1.0f });
+            chestTilt = std::acos(std::clamp(chestUp.z, -1.0f, 1.0f));
+        }
+        // O tempo segurado vaza devagar em vez de zerar: segurado em dois
+        // lobos de ~0,3 s (39 graus, o peito a 48, sem pe no chao), com um
+        // vale de 0,1 s entre eles, ele nunca contava.
+        const bool pendulumCounts = !PostureSupportPendulum || supportedPendulum
+            || !((previousState == CharacterLocomotionState3D::Walking
+                || previousState == CharacterLocomotionState3D::Running) && !m_brakeStepping);
+        if (!postureStanding) m_postureHeldSeconds = 0.0f;
+        else if (!pendulumCounts) {}
+        else if (pendulum > PostureHeldTilt + staggerRelief && deviation > PostureHeldDeviation + staggerRelief)
+            m_postureHeldSeconds += deltaTime;
+        else m_postureHeldSeconds = std::max(0.0f, m_postureHeldSeconds - deltaTime);
+        if (m_braceRecovering) {
+            // Apoiado e tentando se recompor: nao e postura perdida.
+            m_postureLost = false;
+            m_postureHeldSeconds = 0.0f;
+        } else if (m_postureLost) {
+            // Caiu de vez: ate ir ao chao (o levantar comeca) ou se, mesmo
+            // assim, ficar de pe.
+            if (m_getUpPhase != CharacterGetUpPhase3D::None || (pendulumCounts && pendulum < PostureRegainedTilt))
+                m_postureLost = false;
+        } else if (postureStanding && ((pendulumCounts && pendulum > PostureLostTilt + staggerRelief
+                && !(PostureSupportPendulum && supportedPendulum))
+            // (Na passada, pelo pendulo so o sustentado - abaixo: na hora,
+            // um pe pousando longe a frente numa freada dava 43 graus com o
+            // corpo indo para cima dele. Na hora vale a pelve tombada.)
+            || (PostureSupportPendulum && supportedPendulum
+                && std::acos(std::clamp(rootUpright, -1.0f, 1.0f)) > PostureGaitPelvisLost + staggerRelief)
+            || chestTilt > PostureChestLost + staggerRelief
+            || m_postureHeldSeconds > PostureHeldSeconds + 0.4f * m_stagger)) {
+            m_postureLost = true;
+        }
+        if (m_postureLost) {
+            // As pernas cedem e os reflexos entram ja (a ajuda sai pelo
+            // controlador: telemetry.postureLost).
+            m_fallCommit = 1.0f;
+            m_fallReflex = 1.0f;
+        }
+        m_telemetry.postureDeviation = deviation;
+        m_telemetry.posturePendulum = pendulum;
+        m_telemetry.postureChestTilt = chestTilt;
+        m_telemetry.postureLost = m_postureLost;
+        m_telemetry.getUpHurried = m_getUpHurriedExit && m_sinceGetUpSeconds < 2.0f;
+        m_telemetry.getUpHandoffReady = m_getUpHandoffReady && m_getUpPhase == CharacterGetUpPhase3D::Rising;
     }
 
     // How much of the simulated body the player actually sees. Zero is the
@@ -2050,6 +3750,25 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
 
     Vec3 desiredPlanarVelocity { input.proxyVelocityWorld.x,
         input.proxyVelocityWorld.y, 0.0f };
+    // Com pouca ajuda a passada acompanha a inercia do corpo: no maximo
+    // GaitLeadSpeed acima do que ele anda no rumo pedido. A capsula corre no
+    // pedido desde o primeiro tick; no passo dela, o sprint inteiro (7,5 m/s)
+    // saia com o corpo a 0,5 m/s - o pe pousava 0,8 m a frente e ele caia de
+    // costas. Assim a cadencia e o passo crescem com o corpo.
+    if (GaitLeadSpeed > 0.0f && input.forceDrivenRoot && !getUpActive && m_brakeGait <= 0.0f) {
+        const float lowAssistLead = smoothStep((0.5f - std::clamp(input.walkingAssist, 0.0f, 1.0f)) / 0.4f);
+        const float proxySpeed = std::hypot(desiredPlanarVelocity.x, desiredPlanarVelocity.y);
+        // So correndo (pedido acima do trote): no trote a folga freava o
+        // corpo (2,0 -> 1,8 m/s e paradas caindo).
+        const float requestedSpeed = std::hypot(input.intent.requestedVelocityWorld.x, input.intent.requestedVelocityWorld.y);
+        if (lowAssistLead > 0.0f && proxySpeed > 0.3f && requestedSpeed > GaitLeadMinimumRequest) {
+            const Vec3 direction = desiredPlanarVelocity * (1.0f / proxySpeed);
+            const float along = std::max(0.0f, dot(Vec3 { m_filteredCenterOfMassVelocity.x,
+                m_filteredCenterOfMassVelocity.y, 0.0f }, direction));
+            const float led = std::min(proxySpeed, along + GaitLeadSpeed);
+            desiredPlanarVelocity *= 1.0f + (led / proxySpeed - 1.0f) * lowAssistLead;
+        }
+    }
     float gaitVelocityScale = 1.0f;
     // Depois de uma pancada ou desequilibrio, as pernas continuam no rumo
     // pedido, mas no passo do corpo: o que ele anda de verdade naquele rumo
@@ -2118,8 +3837,17 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
         // numa curva ou num corte de lado a passada continua e vira com a
         // capsula, como antes.
         const float requestedSpeed = requested.length();
+        // Com pouca ajuda, um corte forte (60 graus ou mais) com o corpo rapido
+        // tambem e freada: quem leva o corpo para o novo rumo sao os pes, e a
+        // 6 m/s eles curvam ~1 rad/s - virando com a capsula, a passada ia
+        // para o rumo novo com o corpo seguindo reto, as pernas cruzavam e
+        // ele mergulhava (corte de 90 graus a 30%: 6-8 quedas em 8). Freia
+        // plantando o pe, pivota e sai no rumo novo (como na inversao).
+        const float cutAssist = smoothStep((0.6f - std::clamp(input.walkingAssist, 0.0f, 1.0f)) / 0.5f);
+        const bool cutting = cutAssist > 0.3f && bodySpeed > CutBrakeMinimumSpeed
+            && dot(requested, direction) < CutBrakeCosine * requestedSpeed;
         const bool stopping = requestedSpeed < 0.5f
-            || dot(requested, direction) < -0.5f * requestedSpeed;
+            || dot(requested, direction) < -0.5f * requestedSpeed || cutting;
         // E so o momento da propria corrida (o jogador pedia movimento ha
         // pouco e nada de fora bateu nele): um empurrao forte parado (300
         // N.s, o corpo a ~4 m/s) e da recuperacao de empurrao - pela freada
@@ -2129,8 +3857,17 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
         const bool ownMomentum = m_sinceRunRequest < 0.6f
             && input.externalPerturbation < 0.2f;
         if (!m_brakeGaitActive) {
-            if (eligible && stopping && ownMomentum && bodySpeed > BrakeEngageSpeed
-                && unwanted > BrakeEngageExcessSpeed) {
+            // De lado (strafe), a freada pela passada entra mais devagar: o
+            // strafe tem passo cruzado e, parando sem ela a 1,6 m/s, os
+            // passos de parado herdavam os pes cruzados com o corpo indo para
+            // o lado - a 5%, 14 quedas em 16 parando de um strafe.
+            const bool sideways = m_gaitDirection == CharacterGaitDirection3D::Left
+                || m_gaitDirection == CharacterGaitDirection3D::Right;
+            const float engageSpeed = sideways ? StrafeBrakeEngageSpeed : BrakeEngageSpeed;
+            const float engageExcess = sideways ? std::min(BrakeEngageExcessSpeed, StrafeBrakeEngageSpeed * 0.6f)
+                : BrakeEngageExcessSpeed;
+            if (eligible && stopping && ownMomentum && bodySpeed > engageSpeed
+                && unwanted > engageExcess) {
                 m_brakeGaitActive = true;
                 m_brakeGaitSpeed = bodySpeed;
             }
@@ -2151,6 +3888,7 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
             m_brakeGaitActive = false;
         }
         m_brakeSeconds = m_brakeGaitActive ? m_brakeSeconds + deltaTime : 0.0f;
+        m_brakeReversing = m_brakeGaitActive && requestedSpeed >= 0.5f;
         if (m_brakeGaitActive) {
             // Quase parado, a direcao da velocidade gira a toa (e ate inverte):
             // fica a de quando ele ainda andava.
@@ -2159,17 +3897,29 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
             // Perfil de freada: desce ate o pedido no rumo (ou zero) no ritmo
             // que os pes conseguem, sem se afastar do corpo real mais do que
             // uma folga - a passada tem de acompanhar o chao que o corpo anda.
-            const float deceleration = BrakeDeceleration;
+            // Com pouca ajuda quem freia sao so as pernas (~2-4 m/s2): a
+            // passada no perfil de 12 m/s2, ate 0,8 m/s abaixo do corpo, ficava
+            // curta e lenta para o corpo que seguia rapido - os pes ficavam
+            // atras dele e ele mergulhava. Ela fica perto do corpo.
+            const float lowAssistBrake = smoothStep((0.5f - std::clamp(input.walkingAssist, 0.0f, 1.0f)) / 0.4f);
+            const float deceleration = (m_brakeReversing ? ReverseDeceleration : BrakeDeceleration)
+                + (LowAssistBrakeDeceleration - (m_brakeReversing ? ReverseDeceleration : BrakeDeceleration)) * lowAssistBrake;
+            const float profileLeash = BrakeProfileLeash + (LowAssistBrakeLeash - BrakeProfileLeash) * lowAssistBrake;
             m_brakeGaitSpeed = std::max(std::max(0.0f, wantedAlong),
                 m_brakeGaitSpeed - deceleration * deltaTime);
             m_brakeGaitSpeed = std::clamp(m_brakeGaitSpeed,
-                std::max(0.0f, bodySpeed - BrakeProfileLeash), bodySpeed);
+                std::max(0.0f, bodySpeed - profileLeash), bodySpeed);
         }
         // Rapido, a corrida desacelera (a perna de corrida e quem traz o pe a
         // frente a tempo); devagar, passos de freada sem voo ate parar.
         // (Pela velocidade do corpo: a do perfil fica abaixo dela e os passos
         // comecavam com o corpo ainda a 3,7 m/s, os pes atras dele.)
-        const float stepSpeed = BrakeStepSpeed;
+        // Com pouca ajuda (TEMPTUNE: em teste) os passos de freada podem
+        // comecar mais cedo: a corrida freando depende do tempo do clipe (18%
+        // de apoio por pe), e o corpo, sem ajuda, fica mais tempo no chao -
+        // o pe que o clipe queria levar a frente ainda carregava o corpo.
+        const float lowAssistSteps = smoothStep((0.5f - std::clamp(input.walkingAssist, 0.0f, 1.0f)) / 0.4f);
+        const float stepSpeed = BrakeStepSpeed + (LowAssistBrakeStepSpeed - BrakeStepSpeed) * lowAssistSteps;
         // A troca espera um pe da passada no chao, a frente do corpo (o
         // apoio que ja freia - no maximo uma fase de voo): trocando com os
         // dois no ar, os dois pousavam como passos de freada, um atras do
@@ -2188,7 +3938,8 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
             ? m_brakeStepWait + deltaTime : 0.0f;
         const bool stepReady = plantedAhead || m_brakeStepWait > BrakeStepWaitSeconds;
         const bool enteringSteps = m_brakeGaitActive && !m_brakeStepping && bodySpeed < stepSpeed && stepReady;
-        m_brakeStepping = m_brakeGaitActive && (m_brakeStepping || (bodySpeed < stepSpeed && stepReady));
+        m_brakeStepping = m_brakeGaitActive
+            && (m_brakeStepping || (bodySpeed < stepSpeed && stepReady));
         // Freando ja devagar (do trote), os passos comecam na hora, com a
         // base no corpo desde o primeiro tick.
         if (enteringSteps && m_brakeGait <= 0.0f) m_brakeAnchor = 1.0f;
@@ -2288,7 +4039,7 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
     // passo) nem com o pe de apoio. A fase e a do tick anterior, suficiente
     // para classificar cedo/meio contra tarde sem antecipar o solver.
     bool trippedThisTick = false;
-    if (input.forceDrivenRoot && moving && input.grounded && !getUpActive
+    if (TripDetection && input.forceDrivenRoot && moving && input.grounded && !getUpActive
         && speed > 1.5f) {
         for (std::size_t side = 0; side < m_feet.size(); ++side) {
             const float phase = m_telemetry.footSwingProgress[side];
@@ -2316,6 +4067,77 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
             m_tripRecovery - deltaTime / 0.48f);
         if (m_tripRecovery <= 0.001f) m_tripFoot = -1;
     }
+    // Quase-queda em movimento: sem esperar o pe raspar no meio do balanco.
+    // O corpo girando para a frente alem da corrida (a pelve inclinando mais
+    // que a de regime e ainda subindo) ou freado de repente alem do que a
+    // passada pede (o pe bateu em algo) entra na mesma recuperacao do
+    // tropeco: pelve baixa, passada longa e rapida no rumo, bracos abertos.
+    // Medido no tropeco num obstaculo a 3 m/s: o pe pegou aos 2,62 s, a pelve
+    // foi de 6 a 45 graus em 0,33 s, e o tropeco so era visto aos 2,98 s -
+    // com os dois pes 0,7 m atras do corpo, tarde demais.
+    m_stumbleRisk = 0.0f;
+    if (StumbleDetection && input.forceDrivenRoot && moving && input.grounded && !getUpActive
+        && !state.links.empty() && m_brakeGait <= 0.0f) {
+        const Vec3 bodyPlanar { m_filteredCenterOfMassVelocity.x, m_filteredCenterOfMassVelocity.y, 0.0f };
+        const float bodySpeed = bodyPlanar.length();
+        const Vec3 travel = bodySpeed > 0.8f ? bodyPlanar * (1.0f / bodySpeed)
+            : speed > 0.1f ? desiredPlanarVelocity * (1.0f / speed) : Vec3 {};
+        if (travel.lengthSquared() > 0.5f) {
+            const Vec3 upModel = profile.links.front().modelOrientation.conjugate().rotate({ 0.0f, 0.0f, 1.0f });
+            const Vec3 up = state.links.front().orientation.rotate(upModel);
+            // Contra a pelve de referencia do tick anterior: a inclinacao que a
+            // passada pede (a arrancada inclina de proposito) nao e susto.
+            const Vec3 referenceUp = m_output.guide.rootOrientationWorld.rotate(upModel);
+            const float pitch = std::asin(std::clamp(dot(up, travel), -1.0f, 1.0f))
+                - (StumbleAgainstReference ? std::asin(std::clamp(dot(referenceUp, travel), -1.0f, 1.0f)) : 0.0f);
+            const float along = dot(bodyPlanar, travel);
+            const float rawRate = m_stumbleValid ? (pitch - m_stumblePitch) / deltaTime : 0.0f;
+            // Freada do corpo alem da da referencia (a capsula freando numa
+            // curva ou parada nao conta).
+            const float rawDecel = m_stumbleValid
+                ? (m_stumbleAlong - along) / deltaTime + dot(m_smoothedAcceleration, travel) : 0.0f;
+            if (!m_stumbleValid) m_stumbleBaseline = pitch;
+            m_stumblePitch = pitch;
+            m_stumbleAlong = along;
+            m_stumblePitchRate += (rawRate - m_stumblePitchRate) * (1.0f - std::exp(-deltaTime / 0.03f));
+            m_stumbleDecel += (rawDecel - m_stumbleDecel) * (1.0f - std::exp(-deltaTime / 0.06f));
+            m_stumbleValid = true;
+            const float excess = pitch - m_stumbleBaseline;
+            // (So ja correndo: na arrancada a pelve inclina mais que a de
+            // referencia enquanto o corpo ganha velocidade.)
+            // Nem acelerando: arrancando, a pelve inclina ~18 graus alem da de
+            // referencia enquanto a capsula acelera a 14 m/s2.
+            const float running = smoothStep((bodySpeed - 1.3f) / 0.7f)
+                * (1.0f - smoothStep((dot(m_smoothedAcceleration, travel) - 3.0f) / 3.0f));
+            const float pitchRisk = smoothStep((excess - StumblePitchStart) / StumblePitchSpan)
+                * smoothStep((m_stumblePitchRate - StumbleRateStart) / StumbleRateSpan) * running;
+            const float deepRisk = smoothStep((excess - StumbleDeepStart) / 0.15f) * running;
+            const Vec3 requested { input.intent.requestedVelocityWorld.x, input.intent.requestedVelocityWorld.y, 0.0f };
+            const float wantsOn = smoothStep((dot(requested, travel) - 0.5f * bodySpeed) / 0.5f);
+            const float decelRisk = smoothStep((m_stumbleDecel - StumbleDecelStart) / StumbleDecelSpan)
+                * smoothStep((bodySpeed - 1.5f) / 1.0f) * wantsOn;
+            m_stumbleRisk = std::max(std::max(pitchRisk, deepRisk), decelRisk);
+            // A de regime acompanha a corrida devagar (~1 s), sempre: o susto e
+            // rapido (0,2-0,3 s) e quase nao entra nela. (So fora do susto ela
+            // congelava na arrancada e o alarme se realimentava.)
+            m_stumbleBaseline += (pitch - m_stumbleBaseline)
+                * (1.0f - std::exp(-deltaTime / std::max(0.05f, StumbleBaselineSeconds)));
+            if (m_stumbleRisk > m_stumbleReaction) m_stumbleDirection = travel;
+            // A recuperacao completa do tropeco (pelve baixa, pouso adiantado,
+            // tronco) so com StumbleFullResponse: medido no pe enganchado em
+            // sprint, ela derrubava mais (26 -> 36-50 em 128).
+            if (StumbleFullResponse && m_stumbleRisk > m_tripRecovery) {
+                m_tripRecovery = m_stumbleRisk;
+                m_tripRecoverySeconds = 0.0f;
+                m_tripDirection = travel;
+            }
+        }
+    } else {
+        m_stumbleValid = false;
+        m_stumblePitchRate = 0.0f;
+        m_stumbleDecel = 0.0f;
+    }
+    m_stumbleReaction = std::max(m_stumbleRisk, m_stumbleReaction - deltaTime / 0.5f);
     const float viewYaw = input.facingYawRadians;
     // O angulo da camera chega em degraus: muda uma vez por quadro da tela, e
     // a fisica roda a 120 Hz. Para o olhar (cabeca, tronco, pelve girando no
@@ -2348,6 +4170,20 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
     if (!moving || getUpActive) {
         m_gaitDirection = CharacterGaitDirection3D::Forward;
     }
+    // Taxa de giro do caminho (rad/s): a velocidade de navegacao girando
+    // pela aceleracao filtrada (lateral / velocidade).
+    const float pathSpeed = std::hypot(desiredPlanarVelocity.x, desiredPlanarVelocity.y);
+    // So com o jogador pedindo movimento: parando (sem pedido), a
+    // desaceleracao da navegacao um pouco desalinhada parecia curva e ele
+    // inclinava e virava a pelve na parada. Freando pela passada, tambem nao
+    // (o perfil de freada nao e curva).
+    const float curveIntent = smoothStep(std::hypot(input.intent.requestedDirectionWorld.x,
+        input.intent.requestedDirectionWorld.y) / 0.5f) * (1.0f - m_brakeGait);
+    const float pathTurnRate = pathSpeed > 0.8f
+        ? (desiredPlanarVelocity.x * m_smoothedAcceleration.y
+            - desiredPlanarVelocity.y * m_smoothedAcceleration.x) / (pathSpeed * pathSpeed) * curveIntent
+        : 0.0f;
+    bool pivoting = false;
     if (!getUpActive) {
         const float viewErrorBeforeTurn = wrapAngle(lookYaw - m_facingYaw);
         float targetPelvisYaw = m_facingYaw;
@@ -2363,7 +4199,18 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
             // para "lado" antes de assentar no strafe.
             // Freando pela passada, o rumo e o do corpo: o pedido (nenhum, ou
             // o contrario) giraria a pelve no meio da freada.
-            const Vec3 intended = m_brakeGait > 0.5f ? Vec3 {}
+            // Invertendo, abaixo da velocidade de pivo a pelve ja gira para o
+            // rumo novo (na referencia Running Turn 180 ela gira desde a
+            // freada: 37 graus ate 1,2 m/s, 100 no meio da troca).
+            pivoting = m_brakeReversing && m_brakeGaitActive
+                && std::hypot(m_filteredCenterOfMassVelocity.x, m_filteredCenterOfMassVelocity.y) < PivotSpeed;
+            // (So enquanto a freada dura: no fim dela, com a mistura ainda
+            // acima de meio, o rumo voltava a ser o da capsula - ainda o da
+            // corrida - e o setor piscava frente/costas/frente numa inversao,
+            // cada troca recomecando o clipe e soltando o pe que freava.)
+            const bool brakeTravel = m_brakeGait > 0.5f && !pivoting
+                && (!SectorHoldWhileBraking || m_brakeGaitActive);
+            const Vec3 intended = brakeTravel ? Vec3 {}
                 : Vec3 { input.intent.requestedDirectionWorld.x,
                     input.intent.requestedDirectionWorld.y, 0.0f };
             const float travelYaw = intended.lengthSquared() > 0.01f
@@ -2394,9 +4241,14 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
             // "corria de costas" a 7 m/s e caia. Ele freia de frente e vira
             // quando estiver devagar. So no modo fisico (no antigo a pose nao
             // carrega o corpo).
-            const bool hardBraking = input.forceDrivenRoot && speed > 1.8f
+            const bool hardBraking = !pivoting && input.forceDrivenRoot && speed > 1.8f
                 && dot(m_smoothedAcceleration, desiredPlanarVelocity) < -3.0f * speed;
-            if (!hardBraking && (!available(m_gaitDirection)
+            // Freando, o setor fica o da corrida ate a freada acabar: o corpo
+            // freia de frente para onde vinha (entrando na freada, a mistura
+            // ainda abaixo de meio pegava o rumo pedido e trocava o ciclo).
+            const bool brakeHold = SectorHoldWhileBraking && m_brakeGaitActive && !pivoting
+                && available(m_gaitDirection);
+            if (!hardBraking && !brakeHold && (!available(m_gaitDirection)
                 || overrun(m_gaitDirection) > hysteresis)) {
                 // O setor que contem a direcao (sem recuo, o mais proximo).
                 float best = std::numeric_limits<float>::infinity();
@@ -2422,6 +4274,37 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
             // pelve: a pelve fica no movimento menos esse centro.
             targetPelvisYaw = wrapAngle(travelYaw
                 - gaitSectorCenter(m_gaitDirection));
+            // Correndo para a frente, a pelve vai no caminho do corpo: no
+            // maximo um adiantamento para o pedido, menor quanto mais rapido.
+            // Seguindo o pedido (a camera girando a 180-300 graus/s no
+            // sprint), ela ficava 80-90 graus a frente do rumo real, o ciclo
+            // de sprint punha os pes de lado para o movimento e ele tombava
+            // para fora da curva; e o pe de apoio girava junto com ela no chao.
+            const auto boundToPath = [&](float yaw) {
+                const float bodySpeed = std::hypot(m_filteredCenterOfMassVelocity.x,
+                    m_filteredCenterOfMassVelocity.y);
+                const float share = smoothStep((bodySpeed - 1.0f) / 1.0f);
+                if (share <= 0.0f) return yaw;
+                const float pathYaw = std::atan2(m_filteredCenterOfMassVelocity.y,
+                    m_filteredCenterOfMassVelocity.x);
+                const float lead = PathLeadSlow + (PathLeadFast - PathLeadSlow)
+                    * smoothStep((bodySpeed - 2.0f) / std::max(0.5f, PathLeadFastSpeed - 2.0f));
+                const float offset = wrapAngle(yaw - pathYaw);
+                const float bounded = std::clamp(offset, -lead, lead);
+                return wrapAngle(yaw + (bounded - offset) * share);
+            };
+            const bool pathBound = PathLeadSlow < 3.0f && input.forceDrivenRoot && !pivoting
+                && m_gaitDirection == CharacterGaitDirection3D::Forward;
+            if (pathBound && !PathLeadAfterCurve) {
+                targetPelvisYaw = boundToPath(targetPelvisYaw);
+            }
+            // Correndo em curva a pelve vai a frente do rumo, para dentro
+            // (na referencia Sprint Turn, ~13 graus a 43 graus/s): o quadril
+            // ja aponta para onde o caminho vai.
+            if (m_gaitDirection == CharacterGaitDirection3D::Forward)
+                targetPelvisYaw = wrapAngle(targetPelvisYaw + std::clamp(PelvisCurveLeadSeconds * pathTurnRate,
+                    -PelvisCurveLeadMaximum, PelvisCurveLeadMaximum) * smoothStep((speed - 1.5f) / 1.5f));
+            if (pathBound && PathLeadAfterCurve) targetPelvisYaw = boundToPath(targetPelvisYaw);
         } else if (std::abs(viewErrorBeforeTurn) > 0.55f
             || (std::abs(m_turningRate) > 0.05f
                 && std::abs(viewErrorBeforeTurn) > 0.32f)) {
@@ -2433,25 +4316,140 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
             targetPelvisYaw = lookYaw - std::copysign(0.31f,
                 viewErrorBeforeTurn);
         }
-        const float pelvisYawError = wrapAngle(targetPelvisYaw - m_facingYaw);
+        float pelvisYawError = wrapAngle(targetPelvisYaw - m_facingYaw);
+        // Giro parado pelo clipe (ajuda cheia; pedido do usuario, 04/10): no
+        // lugar dos passos de giro do planejador, o Left/Right Turn tocado na
+        // velocidade do giro pedido - a pelve segue o giro do clipe (escalado
+        // ao que falta, ate ~86 graus por ciclo; mais que isso, outro ciclo) e
+        // as pernas e os pes sao os do clipe.
+        bool clipTurnControl = false;
+        {
+            // (O giro pelo clipe so existia com a ajuda cheia, removida em
+            // 04/10: o modo fisico gira pelos passos do planejador.)
+            const bool allowed = false;
+            if (!allowed) m_clipTurn.active = false;
+            const auto begin = [&](float error) {
+                m_clipTurn.active = true;
+                m_clipTurn.sign = error >= 0.0f ? 1.0f : -1.0f;
+                m_clipTurn.clip = error >= 0.0f ? animations.turnLeft : animations.turnRight;
+                m_clipTurn.span = std::max(0.3f, std::abs(clipRootYaw(*m_clipTurn.clip, profile,
+                    m_clipTurn.clip->durationSeconds)));
+                m_clipTurn.total = std::min(std::abs(error), m_clipTurn.span);
+                m_clipTurn.time = 0.0f;
+                m_clipTurn.startYaw = m_facingYaw;
+                m_clipTurn.startPelvisYaw = m_facingYaw + m_clipPelvisYaw;
+            };
+            if (allowed && !m_clipTurn.active && std::abs(pelvisYawError) > ClipTurnEnter)
+                begin(pelvisYawError);
+            if (m_clipTurn.active) {
+                clipTurnControl = true;
+                const AnimationClip3D& clip = *m_clipTurn.clip;
+                const float duration = std::max(0.05f, clip.durationSeconds);
+                // A camera seguiu girando no comeco do ciclo: ele gira mais
+                // (nunca menos, nem para o outro lado).
+                if (m_clipTurn.time < 0.5f * duration) {
+                    const float wanted = wrapAngle(targetPelvisYaw - m_clipTurn.startYaw) * m_clipTurn.sign;
+                    m_clipTurn.total = std::clamp(wanted, m_clipTurn.total, m_clipTurn.span);
+                }
+                const float cycleSeconds = std::clamp(m_clipTurn.total / std::max(0.5f, ClipTurnSpeed),
+                    ClipTurnMinSeconds, duration);
+                m_clipTurn.time = std::min(duration, m_clipTurn.time + deltaTime * duration / cycleSeconds);
+                const float progress = std::clamp(std::abs(clipRootYaw(clip, profile, m_clipTurn.time))
+                    / m_clipTurn.span, 0.0f, 1.0f);
+                const float yaw = wrapAngle(m_clipTurn.startYaw + m_clipTurn.sign * m_clipTurn.total * progress);
+                m_turningRate = wrapAngle(yaw - m_facingYaw) / deltaTime;
+                m_facingYaw = yaw;
+                // O deslocamento da raiz do clipe (no rumo da pelve no comeco),
+                // na mesma escala do giro.
+                const Vec3 planarOffset = clipRootPlanar(clip, profile, m_clipTurn.time) * (m_clipTurn.total / m_clipTurn.span);
+                const float c = std::cos(m_clipTurn.startPelvisYaw), sn = std::sin(m_clipTurn.startPelvisYaw);
+                m_clipTurnRootOffset = { planarOffset.x * c - planarOffset.y * sn, planarOffset.x * sn + planarOffset.y * c, 0.0f };
+                if (m_clipTurn.time >= duration - 1e-4f) {
+                    m_clipTurn.active = false;
+                    m_clipTurnRootOffset = {};
+                    // Falta giro: o proximo ciclo (a base no fim e a do comeco,
+                    // girada).
+                    const float rest = wrapAngle(targetPelvisYaw - m_facingYaw);
+                    if (allowed && std::abs(rest) > ClipTurnEnter) begin(rest);
+                }
+                pelvisYawError = wrapAngle(targetPelvisYaw - m_facingYaw);
+            } else {
+                m_clipTurnRootOffset = {};
+            }
+            const float wantedWeight = m_clipTurn.active ? 1.0f : 0.0f;
+            m_clipTurnWeight = wantedWeight > m_clipTurnWeight
+                ? std::min(1.0f, m_clipTurnWeight + deltaTime / std::max(0.01f, ClipTurnBlendIn))
+                : std::max(0.0f, m_clipTurnWeight - deltaTime / std::max(0.01f, ClipTurnBlendOut));
+        }
+        if (!clipTurnControl) {
+        // Virada (pivo): o lado e escolhido uma vez - o do pe apoiado (na
+        // referencia o direito planta e ele gira para a direita) - e mantido:
+        // a 180 graus o erro alternava entre +180 e -180 e o giro trocava de
+        // sentido sem sair do lugar.
+        if (!pivoting) {
+            m_pivotSign = 0.0f;
+        } else {
+            if (m_pivotSign == 0.0f) {
+                const auto& feetNow = physical.feet;
+                m_pivotSign = std::abs(pelvisYawError) < 2.6f ? (pelvisYawError >= 0.0f ? 1.0f : -1.0f)
+                    : feetNow[0].supporting != feetNow[1].supporting ? (feetNow[0].supporting ? 1.0f : -1.0f)
+                    : m_turningRate >= 0.0f ? 1.0f : -1.0f;
+            }
+            if (pelvisYawError * m_pivotSign < 0.0f && std::abs(pelvisYawError) > 2.0f)
+                pelvisYawError += m_pivotSign * 2.0f * Pi;
+        }
         // Recem-levantado, o corpo primeiro firma a base: parado, nao gira
         // para a camera no primeiro meio segundo, e o giro entra aos poucos
         // ate ~1,5 s. Girando 100 graus logo na troca (taxa cheia), com um pe
         // ainda solto, ele inclinava 20 graus e caia de novo.
         // Recem-freado tambem: primeiro assenta a base da freada.
+        // (So parado: pedindo movimento, logo depois de uma inversao pela
+        // freada, o giro a 35% deixava a pelve para tras e ele saia correndo
+        // de costas. Sem pedido, terminando a parada, ele ainda conta como
+        // andando por um instante - ali o giro fica contido.)
+        const bool requestingMove = std::hypot(input.intent.requestedDirectionWorld.x,
+            input.intent.requestedDirectionWorld.y) > 0.1f;
         const float footing = smoothStep((m_sinceGetUpSeconds - 0.5f) / 1.0f)
-            * smoothStep((m_sinceBrakeSeconds - 0.3f) / 0.6f);
+            * (moving && requestingMove && BrakeFootingStandingOnly ? 1.0f
+                : smoothStep((m_sinceBrakeSeconds - 0.3f) / 0.6f));
         // Parado, o giro e rapido (5 rad/s, 30 rad/s^2): a 2,35 rad/s e 10
         // rad/s^2 a pelve fazia ~25 graus no primeiro meio segundo, e o giro
         // parado parecia preso. Quem limita o que passa do apoio e o limite de
         // torcao do quadril (abaixo) e os passos de giro.
-        const float maximumTurnRate = (input.sprinting ? 4.8f
-            : moving ? 3.8f : 5.0f)
-            * (moving ? 0.35f + 0.65f * footing : footing);
+        // Pivo ainda rapido: o giro vai entrando conforme o corpo freia.
+        const float pivotRate = pivoting ? 0.3f + 0.7f * smoothStep((PivotFullRateBelow
+            - std::hypot(m_filteredCenterOfMassVelocity.x, m_filteredCenterOfMassVelocity.y)) / 3.0f) : 1.0f;
+        // Com a ajuda parado alta, o giro parado e quase imediato: a pelve tem
+        // forca para girar e os pes acompanham pivotando (abaixo).
+        const float turnAssist = std::clamp(input.standingAssist, 0.0f, 1.0f);
+        const float standingTurnRate = 5.0f + (StandingTurnRateHigh - 5.0f) * turnAssist;
+        // Andando com pouca ajuda, a pelve gira no ritmo em que os pes
+        // conseguem curvar o corpo: a aceleracao centripeta que o chao da
+        // (~atrito x g) sobre a velocidade - a 5,5 m/s, ~1 rad/s, contra os 4,8
+        // do pedido. Mais rapido que isso o corpo nao acompanhava, a pelve
+        // passava da referencia e ele caia (zigue-zague a 30%).
+        const float movingTurnAssist = smoothStep((0.6f - std::clamp(input.walkingAssist, 0.0f, 1.0f)) / 0.5f);
+        const float bodyPlanarSpeed = std::hypot(m_filteredCenterOfMassVelocity.x, m_filteredCenterOfMassVelocity.y);
+        const float physicalTurnRate = std::max(LowAssistTurnMinimum,
+            LowAssistTurnCentripetal / std::max(0.5f, bodyPlanarSpeed));
+        const float movingTurnRate = (input.sprinting ? 4.8f : 3.8f);
+        const float maximumTurnRate = (moving
+                ? movingTurnRate + (std::min(movingTurnRate, physicalTurnRate) - movingTurnRate) * movingTurnAssist
+                : standingTurnRate)
+            * (moving ? 0.35f + 0.65f * footing : footing) * pivotRate;
+        // Correndo para a frente, a pelve gira junto com o caminho (a taxa
+        // dele entra direto) e o ganho so corrige o resto: so pelo ganho ela
+        // ficava atrasada taxa/7 numa curva (16 graus a 90 graus/s, apontando
+        // para fora) e os pes pousavam virados para fora. (Nos outros setores
+        // nao: trocando da frente para o strafe o caminho gira mas a pelve
+        // fica, e ela ia para a diagonal.)
         const float wantedTurnRate = std::clamp(
-            pelvisYawError * (moving ? 7.0f : 10.0f),
+            pelvisYawError * (moving ? 7.0f : 10.0f + (StandingTurnGainHigh - 10.0f) * turnAssist)
+                + (moving && m_gaitDirection == CharacterGaitDirection3D::Forward
+                    ? PelvisCurveFeedForward * pathTurnRate : 0.0f),
             -maximumTurnRate, maximumTurnRate);
-        const float maximumTurnAcceleration = moving ? 18.0f : 30.0f;
+        const float maximumTurnAcceleration = moving ? 18.0f
+            : 30.0f + (StandingTurnAccelerationHigh - 30.0f) * turnAssist;
         m_turningRate += std::clamp(wantedTurnRate - m_turningRate,
             -maximumTurnAcceleration * deltaTime,
             maximumTurnAcceleration * deltaTime);
@@ -2472,7 +4470,7 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
             // pelve e pes. Este limite e para o giro ADICIONAL que ainda
             // cabe sobre o apoio; 28 + 18 mantem a perna abaixo do gate
             // anatomico de 50 graus enquanto o outro pe contorna a base.
-            constexpr float HipTwistLimit = 0.48f;
+            const float HipTwistLimit = 0.48f + (StandingHipTwistHigh - 0.48f) * turnAssist;
             for (std::size_t side = 0; side < m_feet.size(); ++side) {
                 const FootPlant& foot = m_feet[side];
                 if (!foot.valid || !foot.planted || foot.repositioning) {
@@ -2487,8 +4485,13 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
                 if (std::abs(twist) > HipTwistLimit && twist * yawStep > 0.0f) {
                     const float excess = std::min(std::abs(yawStep),
                         std::abs(twist) - HipTwistLimit);
+                    // Com a ajuda parado alta o pe gira junto, pivotando no
+                    // chao: o giro nao espera os passos.
+                    const float pivot = excess * std::clamp(StandingFootPivot * turnAssist, 0.0f, 1.0f);
+                    if (pivot > 0.0f && m_footwork.owns(side))
+                        m_footwork.pivotAnchor(profile, side, std::copysign(pivot, twist));
                     m_facingYaw = wrapAngle(m_facingYaw
-                        - std::copysign(excess, twist));
+                        - std::copysign(excess - pivot, twist));
                     // O pe bloqueou o deslocamento deste tick, mas o giro
                     // continua solicitado. Preservar a taxa mantem a
                     // histerese de giro ativa e permite que o planejador
@@ -2497,8 +4500,9 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
                 }
             }
         }
+        }
         if (std::abs(pelvisYawError) < 0.001f
-            && std::abs(m_turningRate) < 0.02f) {
+            && std::abs(m_turningRate) < 0.02f && !clipTurnControl) {
             m_turningRate = 0.0f;
         }
         // Com histerese: sem ela, girando devagar o estado alternava entre
@@ -2551,7 +4555,8 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
     }
     CharacterLocomotionState3D desiredState = CharacterLocomotionState3D::Idle;
     if (getUpActive) {
-        desiredState = m_getUpPhase == CharacterGetUpPhase3D::Settling
+        desiredState = m_tackling ? CharacterLocomotionState3D::Tackling
+            : m_getUpPhase == CharacterGetUpPhase3D::Settling
             ? CharacterLocomotionState3D::Fallen
             : CharacterLocomotionState3D::GettingUp;
     } else if (!grounded) {
@@ -2622,6 +4627,40 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
         if (!picked) {
             pick(CharacterJumpKind3D::Standing, animations.jumpStanding);
         }
+        // v2: correndo para a frente, o voo e a passada aberta do proprio
+        // ciclo - do ponto da decolagem ao toque seguinte -, esticada no tempo
+        // do pulo: a perna de tras sai estendida, a da frente chega para o
+        // pouso e a corrida segue. Com o pulo para a frente (pernas juntas
+        // e dobradas, bracos a frente) o pulo correndo parecia o de quem
+        // pula parado e pousava nos dois pes.
+        m_leapClip = nullptr;
+        // (No sprint e com ajuda: no trote, pulos seguidos giravam a pelve
+        // ate ~45 graus no ar; com pouca ajuda, pousando num pe so de um pulo
+        // alto, a perna cedia - pulo em sprint e vira a 30%, 0 -> 11 em 12.
+        // Com a ajuda cheia ela leva o voo a ~7,6 m/s e, pousando num pe so
+        // com um corte pedido, ele tombava - sequencia mista, 0 -> 2 em 12.)
+        if (RunLeap && input.physicalV2 && m_jumpKind == CharacterJumpKind3D::Forward
+            && speed > RunLeapMinimumSpeed && input.walkingAssist >= RunLeapMinimumAssist
+            && input.walkingAssist <= RunLeapMaximumAssist
+            && (m_telemetry.state == CharacterLocomotionState3D::Running
+                || m_telemetry.state == CharacterLocomotionState3D::Walking)
+            && m_previousClip != nullptr && m_previousClip != animations.idle
+            && m_previousClip->loops && m_previousClip->durationSeconds > 0.05f) {
+            const ClipFootEvents& events = footEventsFor(profile, *m_previousClip);
+            const float duration = m_previousClip->durationSeconds;
+            const float from = stanceAlignedPhase(*m_previousClip, m_cyclePhase);
+            float best = 2.0f;
+            for (std::size_t side = 0; side < 2; ++side)
+                for (const FootTouchdown& touchdown : events.touchdowns[side]) {
+                    const float ahead = std::fmod(touchdown.touchdown / duration - from + 2.0f, 1.0f);
+                    if (ahead > 0.03f && ahead < best) best = ahead;
+                }
+            if (best <= 1.0f) {
+                m_leapClip = m_previousClip;
+                m_leapFrom = from;
+                m_leapSpan = best;
+            }
+        }
     }
     // Fase do voo pela velocidade vertical: 0 na decolagem, 0,5 no apice, 1
     // ao voltar a altura de onde saiu. Vale para qualquer altura de pulo. Sem
@@ -2641,12 +4680,32 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
     } else if (desiredState != CharacterLocomotionState3D::Landing) {
         m_jumpKind = CharacterJumpKind3D::None;
         m_jumpClip = nullptr;
+        m_leapClip = nullptr;
     }
     // Toque no chao depois de um voo (com ou sem o estado de pouso).
     const bool enteringLanding = m_telemetry.state
             == CharacterLocomotionState3D::Airborne
         && desiredState != CharacterLocomotionState3D::Airborne
         && !getUpActive;
+    // v2 (T_LandResync): pousando de um pulo direto na passada, o ciclo
+    // recomeca no toque do pe que chegou primeiro - ele em apoio, o outro ja
+    // no balanco para o passo seguinte. Sem isso o ciclo voltava na fase da
+    // decolagem: o clipe pedia o outro pe no chao, os dois ficavam plantados
+    // e o corpo, a 7 m/s, girava para a frente por cima deles.
+    if (LandingResync && enteringLanding && input.forceDrivenRoot
+        && (desiredState == CharacterLocomotionState3D::Walking || desiredState == CharacterLocomotionState3D::Running)) {
+        int first = -1;
+        if (feetGroundContact[0] != feetGroundContact[1]) first = feetGroundContact[0] ? 0 : 1;
+        else if (m_feet[0].valid && m_feet[1].valid && !state.links.empty()) {
+            // Os dois (ou nenhum): o mais a frente no rumo do corpo, ou o
+            // mais baixo.
+            const Vec3 velocity { m_filteredCenterOfMassVelocity.x, m_filteredCenterOfMassVelocity.y, 0.0f };
+            const Vec3 a = state.links[m_feet[0].linkIndex].position, b = state.links[m_feet[1].linkIndex].position;
+            first = feetGroundContact[0] && velocity.lengthSquared() > 0.25f
+                ? (dot(a - b, velocity) > 0.0f ? 0 : 1) : (a.z < b.z ? 0 : 1);
+        }
+        m_landingResyncFoot = first;
+    }
     const CharacterLocomotionState3D previousState = m_telemetry.state;
     enterState(desiredState);
     const bool enteredForwardGait = (previousState == CharacterLocomotionState3D::Idle
@@ -2655,11 +4714,65 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
             || desiredState == CharacterLocomotionState3D::Running)
         && m_gaitDirection == CharacterGaitDirection3D::Forward
         && animations.idleToSprint != nullptr;
+    if (enteredForwardGait && StartStepEnabled) m_startStepRequested = true;
+    // Ajuda dosada na arrancada parada: o teto comeca baixo e cresce sem
+    // parar (sem janela: terminando de uma vez, o pedido saltava de ~3,5 para
+    // 7,5 m/s no meio do sprint).
+    // (Armado ja parado: o jogo le o teto do tick anterior, e armando so na
+    // entrada da passada o primeiro tick saia com o pedido inteiro.)
+    const bool idleLike = desiredState == CharacterLocomotionState3D::Idle
+        || desiredState == CharacterLocomotionState3D::Turning;
+    // (So com o corpo parado de fato: armado nas paradas curtas no meio de uma
+    // troca - inversao, giro - ele atrasava a mudanca de direcao.)
+    m_bodyRestSeconds = std::hypot(m_filteredCenterOfMassVelocity.x, m_filteredCenterOfMassVelocity.y) < 0.3f
+        ? std::min(10.0f, m_bodyRestSeconds + deltaTime) : 0.0f;
+    if (StartDoseSeconds > 0.0f && input.forceDrivenRoot && !getUpActive && idleLike && m_bodyRestSeconds > 0.3f)
+        m_startDoseCap = StartSpeedBase;
+    else if (m_startDoseCap < 100.0f)
+        // Dosada so no comeco (StartDoseSeconds): depois o teto sobe rapido
+        // ate sumir - devagar ate o fim, o sprint levava 0,93 s a 80%.
+        m_startDoseCap += (m_startDoseCap < StartSpeedBase + StartSpeedRate * StartDoseSeconds
+            ? StartSpeedRate : 30.0f) * deltaTime;
+
     if (enteredForwardGait) {
         m_startClipActive = true;
         m_startClipSprint = desiredState == CharacterLocomotionState3D::Running;
         m_startClipSeconds = 0.0f;
         m_cyclePhase = 0.0f;
+        // O primeiro passo e do pe de tras (no rumo pedido), como na
+        // referencia Idle To Sprint: o ciclo comeca quando o contato dele cai
+        // no clipe. Na fase 0 o direito ja estava a 42% do balanco - o alvo o
+        // queria no ar com o pe ainda carregado no chao, e ele saia
+        // arrastado; com o direito na frente, o pe da frente dava o passo.
+        const AnimationClip3D* startClip = desiredState == CharacterLocomotionState3D::Running
+            && animations.sprint != nullptr && m_sprintClipAllowed ? animations.sprint : animations.walk;
+        const Vec3 wanted { input.intent.requestedDirectionWorld.x, input.intent.requestedDirectionWorld.y, 0.0f };
+        if (StartFromRearFoot && input.forceDrivenRoot && startClip != nullptr && startClip->durationSeconds > 0.0f
+            && wanted.lengthSquared() > 0.01f && physical.valid) {
+            const Vec3 direction = wanted.normalized();
+            const float back[2] = {
+                dot(physical.feet[0].soleCenterWorld - physical.centerOfMassWorld, direction),
+                dot(physical.feet[1].soleCenterWorld - physical.centerOfMassWorld, direction) };
+            // Quase lado a lado: sai o menos carregado.
+            const int rear = std::abs(back[0] - back[1]) > 0.05f ? (back[0] < back[1] ? 0 : 1)
+                : (physical.feet[0].loadNewtons < physical.feet[1].loadNewtons ? 0 : 1);
+            const AnimationScalarTrack3D& contact = rear == 0 ? startClip->leftFootContact : startClip->rightFootContact;
+            const float duration = startClip->durationSeconds;
+            constexpr int Samples = 240;
+            float liftoff = -1.0f;
+            float previous = sampleAnimationScalarTrack3D(contact, duration * (Samples - 1) / Samples, duration, true);
+            for (int i = 0; i < Samples; ++i) {
+                const float now = sampleAnimationScalarTrack3D(contact, duration * i / Samples, duration, true);
+                if (previous >= 0.5f && now < 0.5f) { liftoff = static_cast<float>(i) / Samples; break; }
+                previous = now;
+            }
+            if (liftoff >= 0.0f) {
+                // Fase do ciclo (a do clipe menos o deslocamento do apoio do
+                // esquerdo - ver stanceAlignedPhase).
+                const float offset = stanceAlignedPhase(*startClip, 0.0f);
+                m_cyclePhase = std::fmod(liftoff - offset - StartPhaseLead + 2.0f, 1.0f);
+            }
+        }
     } else if (desiredState != CharacterLocomotionState3D::Walking
         && desiredState != CharacterLocomotionState3D::Running) {
         m_startClipActive = false;
@@ -2726,7 +4839,14 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
     const float startupBodySpeed = startupWantedSpeed > 0.001f
         ? std::max(0.0f, dot(Vec3 { m_filteredCenterOfMassVelocity.x,
             m_filteredCenterOfMassVelocity.y, 0.0f }, startupDirection)) : 0.0f;
+    // v2 (T_StartFromRest): a arrancada so vale saindo de parado. Pousando
+    // de um pulo em sprint o estado tambem recomeca (Airborne -> Running) com
+    // o corpo abaixo de 85% do pedido, e ele corria o comeco do ciclo como
+    // quem sai parado.
+    if (enteredForwardGait) m_gaitStartFromRest = true;
+    else if (desiredState != previousState) m_gaitStartFromRest = false;
     const bool gaitStarting = input.forceDrivenRoot && gaitMoving
+        && (!StartOnlyFromRest || m_gaitStartFromRest)
         && m_stateSeconds < 0.65f && startupWantedSpeed > 1.0f
         && startupBodySpeed < 0.85f * startupWantedSpeed;
     const float startupTime = gaitStarting
@@ -2765,11 +4885,27 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
     // other clip: sampled joint by joint, with the clip's own root track.
     const AnimationClip3D* standUpClip =
         m_getUpPhase == CharacterGetUpPhase3D::Rising
-            ? (m_fallOrientation == CharacterFallOrientation3D::FaceDown
+            ? (m_tackling ? m_tackleClip
+                : m_fallOrientation == CharacterFallOrientation3D::FaceDown
                 ? animations.standUpFront : animations.standUpBack)
             : nullptr;
+    // Com pouca ajuda o clipe de sprint (feito para ~7,5 m/s) so entra com a
+    // passada rapida: limitada pela inercia do corpo (2-4 m/s na arrancada),
+    // ele tocava a 0,55 do ritmo - a cadencia lentissima nao trazia o pe a
+    // frente a tempo e, soltando o comando, os dois pes ficavam atras do
+    // corpo. Abaixo disso corre no ciclo de trote, no ritmo dele.
+    {
+        const float lowAssistClip = smoothStep((0.5f - std::clamp(input.walkingAssist, 0.0f, 1.0f)) / 0.4f);
+        if (SprintClipSpeed <= 0.0f || (lowAssistClip < 0.5f && !SprintClipAllAssist)
+            || desiredState != CharacterLocomotionState3D::Running)
+            m_sprintClipAllowed = true;
+        else if (speed > SprintClipSpeed + 0.3f)
+            m_sprintClipAllowed = true;
+        else if (speed < SprintClipSpeed - 0.3f)
+            m_sprintClipAllowed = false;
+    }
     const bool sprintingGait =
-        desiredState == CharacterLocomotionState3D::Running;
+        desiredState == CharacterLocomotionState3D::Running && m_sprintClipAllowed;
     const AnimationClip3D* gaitClip = animations.walk;
     switch (m_gaitDirection) {
     case CharacterGaitDirection3D::Backward:
@@ -2785,12 +4921,21 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
             ? animations.sprintStrafeRight : animations.strafeRight;
         break;
     default:
-        gaitClip = sprintTier ? animations.sprint : animations.walk;
+        gaitClip = sprintTier && m_sprintClipAllowed ? animations.sprint : animations.walk;
         break;
     }
     const bool jumpPose = m_jumpClip != nullptr
         && (desiredState == CharacterLocomotionState3D::Airborne
             || desiredState == CharacterLocomotionState3D::Landing);
+    const bool leapPose = jumpPose && m_leapClip != nullptr;
+    // (Com RunLeapHold: vai a meia passada no comeco do voo, segura e so
+    // completa ate o toque no fim - as pernas balancando no ar inteiro giravam
+    // a pelve ate ~45 graus na descida.)
+    const auto leapProgress = [](float phase) {
+        if (RunLeapHold <= 0.0f) return phase;
+        return RunLeapHold * smoothStep(phase / 0.3f)
+            + (1.0f - RunLeapHold) * smoothStep((phase - 0.7f) / 0.3f);
+    };
     const AnimationClip3D* idleClip = animations.idle;
     const bool authoredStartActive = m_startClipActive
         && animations.idleToSprint != nullptr && gaitMoving;
@@ -2833,7 +4978,7 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
         ? animations.runForwardArcRight : authoredCurveKind == 3
         ? animations.runBackwardArcRight : nullptr;
     const AnimationClip3D* selectedClip = standUpClip != nullptr ? standUpClip
-        : jumpPose ? m_jumpClip
+        : jumpPose ? (leapPose ? m_leapClip : m_jumpClip)
         : !gaitMoving ? idleClip : gaitClip;
     // Trocar de ciclo sem trocar de estado (troca de setor, passada <->
     // sprint) precisa do mesmo crossfade que a troca de estado faz em
@@ -2860,6 +5005,7 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
                     - m_previousClip->travelDirectionRadians)) > 0.1f;
             m_transitionDurationSeconds = gaitFlip
                 ? GaitFlipTransitionSeconds : DefaultTransitionSeconds;
+            if (gaitFlip) m_sinceGaitFlip = 0.0f;
         }
         m_previousClip = selectedClip;
     }
@@ -2997,6 +5143,15 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
         if (!m_terrainIsRamp)
             terrainSpeedLimit = std::min(terrainSpeedLimit, std::max(0.85f, 0.48f / m_terrainSlope));
     }
+    // Parado (sem passada), as pernas voltam ao mesmo ciclo.
+    if (!gaitMoving) {
+        m_armPhaseValid = false;
+        m_phaseRateScale = 1.0f;
+        m_contactSteady = false;
+        m_legPhaseLead = {};
+        m_waitingLeg = -1;
+        m_touchdownWaitSeconds = 0.0f;
+    }
     if (gaitMoving && selectedClip != nullptr) {
         const float authoredSpeed = authoredHorizontalSpeed(*selectedClip);
         if (authoredSpeed > 0.05f) {
@@ -3008,18 +5163,160 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
                 ? std::clamp(StepRiseLimit / (m_terrainSlope * authoredStep),
                     0.25f, 1.0f)
                 : 1.35f;
+            // Com pouca ajuda o corpo acelera devagar e a passada fica bem
+            // abaixo do clipe: com o ritmo caindo ate 0,55 a cadencia ficava
+            // lentissima com a passada inteira (o pe nao chegava a frente a
+            // tempo). Quem arranca da passos rapidos e curtos: o ritmo fica
+            // alto e a passada encurta.
+            const float lowAssistRate = smoothStep((0.5f - std::clamp(input.walkingAssist, 0.0f, 1.0f)) / 0.4f);
+            // So correndo (pedido acima do trote, como a folga da passada): no
+            // trote, parando, o ritmo alto derrubava (5 -> 10-21 quedas em 32).
+            const bool runRequest = std::hypot(input.intent.requestedVelocityWorld.x,
+                input.intent.requestedVelocityWorld.y) > GaitLeadMinimumRequest;
+            const float rateFloor = 0.55f + (std::max(0.55f, LowAssistRateFloor) - 0.55f) * lowAssistRate
+                * (runRequest ? 1.0f : 0.0f) * (LowAssistRateFloorInBrake ? 1.0f : 1.0f - m_brakeGait);
+            const float sprintFloor = selectedClip == animations.sprint
+                ? SprintRateFloor * (1.0f - m_brakeGait) + 0.55f * m_brakeGait : 0.55f;
             playbackRate = std::clamp(ratio / std::min(1.0f, strideCap),
-                0.55f, 1.45f);
+                std::max(rateFloor, sprintFloor), 1.45f);
+            // Quase-queda: o passo seguinte sai e pousa mais cedo (passada
+            // rapida); o comprimento fica o do pouso deslocado.
+            if (StumbleDetection && m_tripRecovery > 0.0f)
+                playbackRate *= 1.0f + StumbleCadence * m_tripRecovery;
             strideScale = std::clamp(ratio / playbackRate, 0.0f, strideCap);
+            // Preparo do carrinho: o passo que pousa e o de firmar o pe.
+            if (m_tacklePending)
+                strideScale *= 1.0f + TacklePlantStride * smoothStep(m_tacklePendingSeconds / 0.10f);
             // Velocidade que cabe no terreno com o passo limitado e o ritmo
             // ate 15% acima do clipe; o jogo a usa como teto da capsula.
             if (strideCap < 1.0f) {
                 terrainSpeedLimit = std::min(terrainSpeedLimit,
                     authoredSpeed * strideCap * 1.15f);
             }
-            m_cyclePhase = std::fmod(m_cyclePhase + deltaTime * playbackRate
+            // TEMPTUNE: passada pelo contato (pedido do usuario, 04/10). Correndo,
+            // a sequencia segue os pes, nao o relogio do clipe:
+            //  - o pe que vai pousar (o clipe ja o poe no apoio) e ainda esta
+            //    no ar, com o outro tambem fora do chao, ESPERA o toque: o
+            //    ciclo para nesse ponto, a perna estendida para o chao;
+            //  - a perna de tras continua recolhendo no seu ritmo (adianta-se
+            //    ao ciclo, ate o meio do balanco). Congelar o ciclo inteiro a
+            //    deixava baixa, atras, enquanto o corpo andava ~0,5 m: pegava
+            //    a barra do tropeco (7 -> 36 quedas em 96);
+            //  - tocou, o ciclo recupera a diferenca (a perna da frente anda
+            //    mais rapido no apoio ate as duas casarem de novo);
+            //  - o pe que encosta no fim do balanco, antes do toque do clipe,
+            //    adianta o ciclo ate o apoio (em vez de arrastar a ponta).
+            // A espera vai ate ContactWaitSeconds (0,08 s, o voo normal do
+            // sprint): mais longa, depois de bater numa barra o ciclo ficava
+            // esperando o equivalente a ~1-2 m de corrida e o pe descia em
+            // cima dela (tropeco do sprint: 0 -> 17 quedas em 64 com 0,12 s).
+            // So correndo para a frente, estabelecido: nada disso na freada,
+            // na arrancada, no tropeco, em degrau ou trocando de passada.
+            float phaseRate = playbackRate;
+            const float cycleSeconds = std::max(0.1f, selectedClip->durationSeconds);
+            const bool stumbling = m_tripRecovery > 0.001f || m_stumbleRisk > 0.2f
+                || m_stumbleStepping || m_footwork.plan().recovering;
+            // (No movimento livre tambem: a espera nao sustenta o corpo, so nao
+            // deixa a perna esticar com o pe ainda chegando - sem ela a pelve
+            // subia ate 12 cm acima da referencia no sprint, contra 6.)
+            const bool contactSteady = ContactPhase && input.forceDrivenRoot && physical.feet.size() >= 2
+                && m_feet.size() >= 2 && !stumbling
+                && m_gaitDirection == CharacterGaitDirection3D::Forward
+                && m_brakeGait <= 0.0f && !m_brakeStepping && !m_startClipActive && m_gaitChange <= 0.0f
+                && m_terrainSlope < 0.05f
+                && std::hypot(input.intent.requestedVelocityWorld.x, input.intent.requestedVelocityWorld.y) > 1.0f;
+            int waitingLeg = -1;
+            bool earlyTouch = false;
+            for (std::size_t side = 0; side < 2 && side < physical.feet.size(); ++side) {
+                const FootSupportEstimate3D& foot = physical.feet[side];
+                const bool down = foot.touching || foot.supporting;
+                const bool clipStance = m_telemetry.clipFootContact[side] > 0.55f;
+                if (!clipStance) m_legTouchedInStance[side] = false;
+                else if (down) m_legTouchedInStance[side] = true;
+                if (!contactSteady) continue;
+                if (clipStance && !m_legTouchedInStance[side] && !physical.feet[1 - side].supporting)
+                    waitingLeg = static_cast<int>(side);
+                if (!clipStance && m_telemetry.footSwingProgress[side] >= ContactEarlyProgress && down)
+                    earlyTouch = true;
+            }
+            m_contactSteady = contactSteady;
+            m_waitingLeg = waitingLeg >= 0 && m_touchdownWaitSeconds < ContactWaitSeconds ? waitingLeg : -1;
+            if (waitingLeg >= 0 && m_touchdownWaitSeconds < ContactWaitSeconds) {
+                m_touchdownWaitSeconds += deltaTime;
+                // A perna de tras segue recolhendo, ate o meio do balanco.
+                const std::size_t trailing = static_cast<std::size_t>(1 - waitingLeg);
+                if (m_telemetry.footSwingProgress[trailing] >= 0.0f
+                    && m_telemetry.footSwingProgress[trailing] < ContactTrailCap)
+                    m_legPhaseLead[trailing] = std::min(ContactMaxLead,
+                        m_legPhaseLead[trailing] + deltaTime * playbackRate / cycleSeconds);
+                phaseRate = 0.0f;
+            } else {
+                if (waitingLeg < 0) m_touchdownWaitSeconds = 0.0f;
+                if (earlyTouch) phaseRate *= ContactEarlyBoost;
+            }
+            const float phaseBefore = m_cyclePhase;
+            // O ciclo recupera a diferenca das pernas: a parte comum vai para
+            // ele de uma vez (nenhuma perna muda), o resto aos poucos.
+            {
+                const float common = std::min(m_legPhaseLead[0], m_legPhaseLead[1]);
+                m_legPhaseLead[0] -= common;
+                m_legPhaseLead[1] -= common;
+                float extra = common;
+                if (phaseRate > 0.0f) {
+                    // (Fora da corrida estabelecida - freando, por exemplo - a
+                    // diferenca sai mais rapido, mas continua: zerada de uma
+                    // vez, a perna que pousava saltava de pose no comeco da
+                    // freada.)
+                    const float rate = ContactCatchUp * (contactSteady ? 1.0f : 3.0f);
+                    for (std::size_t side = 0; side < 2; ++side) {
+                        const float absorb = std::min(m_legPhaseLead[side],
+                            deltaTime * std::max(playbackRate, 0.5f) / cycleSeconds * rate);
+                        m_legPhaseLead[side] -= absorb;
+                        extra += absorb;
+                    }
+                }
+                m_cyclePhase = std::fmod(m_cyclePhase + extra + 1.0f, 1.0f);
+            }
+            m_telemetry.touchdownWaitSeconds = m_touchdownWaitSeconds;
+            m_telemetry.legPhaseLead = m_legPhaseLead;
+            // TEMPTUNE: o ritmo do ciclo muda aos poucos - freia rapido (a
+            // perna da frente para na pose de toque) e retoma devagar. Em
+            // degraus (parar, voltar, 3x no toque adiantado) braco e perna
+            // davam trancos: aceleracao dos alvos do braco 4x maior no sprint.
+            // (No tropeco e na quase-queda nao: ali o passo rapido que salva
+            // precisa do ciclo na hora, e os bracos presos a ele - suavizados,
+            // o sprint na barra escondida caia muito mais.)
+            if (ContactRateSmooth && stumbling) {
+                m_phaseRateScale = playbackRate > 1e-4f ? phaseRate / playbackRate : 1.0f;
+            } else if (ContactRateSmooth) {
+                const float wanted = playbackRate > 1e-4f ? phaseRate / playbackRate : 1.0f;
+                const float tau = wanted < m_phaseRateScale ? ContactRateDownSeconds : ContactRateUpSeconds;
+                m_phaseRateScale += (wanted - m_phaseRateScale) * (1.0f - std::exp(-deltaTime / std::max(0.005f, tau)));
+                phaseRate = playbackRate * m_phaseRateScale;
+            }
+            // Chute: o ciclo mais devagar (o apoio no chao durante o golpe).
+            phaseRate *= std::clamp(input.ballGaitRate, 0.2f, 1.0f);
+            m_cyclePhase = std::fmod(m_cyclePhase + deltaTime * phaseRate
                 / std::max(0.1f, selectedClip->durationSeconds), 1.0f);
-            m_varietyStrides += deltaTime * playbackRate
+            // TEMPTUNE: os bracos andam numa fase propria, suave: seguem o
+            // ritmo medio do ciclo e se prendem a ele devagar. Esperando o
+            // toque o ciclo para, mas o corredor nao congela os bracos no ar.
+            {
+                float advanced = m_cyclePhase - phaseBefore;
+                if (advanced < -0.5f) advanced += 1.0f;
+                const float globalRate = advanced / std::max(1e-4f, deltaTime);
+                if (!m_armPhaseValid || ArmPhaseSmoothSeconds <= 0.0f || stumbling) {
+                    m_armPhase = m_cyclePhase;
+                    m_armPhaseRate = globalRate;
+                    m_armPhaseValid = ArmPhaseSmoothSeconds > 0.0f;
+                } else {
+                    m_armPhaseRate += (globalRate - m_armPhaseRate) * (1.0f - std::exp(-deltaTime / ArmPhaseSmoothSeconds));
+                    float error = m_cyclePhase - m_armPhase;
+                    error -= std::round(error);
+                    m_armPhase = std::fmod(m_armPhase + (m_armPhaseRate + error / ArmPhaseLockSeconds) * deltaTime + 1.0f, 1.0f);
+                }
+            }
+            m_varietyStrides += deltaTime * phaseRate
                 / std::max(0.1f, selectedClip->durationSeconds);
         }
     }
@@ -3060,6 +5357,8 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
     Vec3 rootTranslation;
     std::array<float, 2> contactWeights {};
     float clipSampleTime = 0.0f;
+    std::array<float, 2> legSampleTime {};
+    float armSampleTime = 0.0f;
     // Variacao de movimento (vida), por cima do clipe e antes do crossfade:
     // a troca de estado a mistura como mistura o clipe.
     const float variety = std::clamp(input.motionVariety, 0.0f, 2.0f);
@@ -3070,6 +5369,79 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
     const bool idleVariety = varietyActive && !gaitMoving
         && (desiredState == CharacterLocomotionState3D::Idle
             || desiredState == CharacterLocomotionState3D::Turning);
+    if (m_landingResyncFoot >= 0) {
+        if (gaitMoving && selectedClip != nullptr && selectedClip->durationSeconds > 0.0f && !jumpPose) {
+            const AnimationScalarTrack3D& contact = m_landingResyncFoot == 0
+                ? selectedClip->leftFootContact : selectedClip->rightFootContact;
+            constexpr int Samples = 240;
+            const float duration = selectedClip->durationSeconds;
+            float touchdown = -1.0f;
+            float previous = sampleAnimationScalarTrack3D(contact, duration * (Samples - 1) / Samples, duration, true);
+            for (int i = 0; i < Samples; ++i) {
+                const float now = sampleAnimationScalarTrack3D(contact, duration * i / Samples, duration, true);
+                if (previous < 0.5f && now >= 0.5f) { touchdown = static_cast<float>(i) / Samples; break; }
+                previous = now;
+            }
+            if (touchdown >= 0.0f) {
+                m_cyclePhase = std::fmod(touchdown + 0.02f - stanceAlignedPhase(*selectedClip, 0.0f) + 2.0f, 1.0f);
+                m_legPhaseLead = {};
+            }
+        }
+        m_landingResyncFoot = -1;
+    }
+    if (m_motionSeedPending) {
+        // Vindo do padrao (seedMotion): a fase em que os pes do clipe, em
+        // relacao a pelve e no rumo dela, mais se parecem com os do corpo -
+        // onde estao e para onde vao -, sem a arrancada; e a pose sai das
+        // juntas do corpo com a velocidade delas.
+        m_motionSeedPending = false;
+        if (gaitMoving && selectedClip != nullptr && standUpClip == nullptr && !jumpPose
+            && m_feet[0].valid && m_feet[1].valid && selectedClip->durationSeconds > 0.0f) {
+            const AnimationClip3D& clip = *selectedClip;
+            const auto clipFeet = [&](float fraction) {
+                const RagdollAnimationPose3D pose = sampleRagdollAnimationPose3D(profile, &clip,
+                    std::fmod(fraction + 1.0f, 1.0f) * clip.durationSeconds, true);
+                const Vec3 pelvisForward = (pose.linkOrientations.front() * profile.links.front().modelOrientation
+                    .conjugate()).rotate({ 1.0f, 0.0f, 0.0f });
+                const Quaternion back = Quaternion::fromAxisAngle({ 0.0f, 0.0f, 1.0f },
+                    -std::atan2(pelvisForward.y, pelvisForward.x));
+                std::array<Vec3, 2> out;
+                for (std::size_t side = 0; side < 2; ++side)
+                    out[side] = back.rotate(pose.linkPositions[m_feet[side].linkIndex] - pose.linkPositions.front());
+                return out;
+            };
+            const float rate = std::clamp(m_seedSpeed / std::max(0.5f, clip.nominalSpeedMetersPerSecond), 0.5f, 2.0f)
+                / clip.durationSeconds;
+            constexpr int Samples = 48;
+            constexpr float Step = 1.0f / 96.0f;
+            constexpr float VelocityWeight = 0.08f;
+            float best = 1e9f, bestFraction = 0.0f;
+            for (int k = 0; k < Samples; ++k) {
+                const float fraction = static_cast<float>(k) / static_cast<float>(Samples);
+                const auto now = clipFeet(fraction);
+                const auto next = clipFeet(fraction + Step);
+                float error = 0.0f;
+                for (std::size_t side = 0; side < 2; ++side)
+                    error += (now[side] - m_seedFeet[side]).lengthSquared()
+                        + ((next[side] - now[side]) * (rate / Step) - m_seedFeetVelocity[side]).lengthSquared()
+                            * VelocityWeight * VelocityWeight;
+                if (error < best) { best = error; bestFraction = fraction; }
+            }
+            m_cyclePhase = std::fmod(bestFraction - stanceAlignedPhase(clip, 0.0f) + 2.0f, 1.0f);
+            m_startClipActive = false;
+            m_startStepRequested = false;
+        }
+        if (m_seedJoints.size() == m_transitionFrom.size()) {
+            // O crossfade sai das juntas do corpo, sem a tangente: ela estende
+            // a velocidade das juntas por toda a troca (a 20 rad/s no sprint,
+            // ~0,9 rad alem) e o sprint caia mais (5 em 8, contra 2). Pela
+            // inercia (a da volta ao padrao) a inclinacao e o deslocamento da
+            // raiz ficavam sem mistura (o alvo nascia a 18 graus do corpo no
+            // trote de lado).
+            m_transitionFrom = m_seedJoints;
+            m_transitionVelocity.assign(m_transitionFrom.size(), {});
+        }
+    }
     if (selectedClip != nullptr) {
         const bool loopingState = desiredState == CharacterLocomotionState3D::Idle
             || desiredState == CharacterLocomotionState3D::Turning
@@ -3078,6 +5450,9 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
         // de toque (o fim do clipe).
         const float sampleTime = standUpClip != nullptr
             ? std::min(m_getUpClipSeconds, selectedClip->durationSeconds)
+            : leapPose
+            ? std::fmod(m_leapFrom + m_leapSpan * (desiredState == CharacterLocomotionState3D::Landing
+                ? 1.0f : leapProgress(m_flightPhase)), 1.0f) * selectedClip->durationSeconds
             : jumpPose
             ? (desiredState == CharacterLocomotionState3D::Landing ? 1.0f
                 : m_flightPhase) * selectedClip->durationSeconds
@@ -3093,11 +5468,34 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
                 ? std::fmod(m_stateSeconds, selectedClip->durationSeconds)
                 : std::min(m_stateSeconds, selectedClip->durationSeconds);
         clipSampleTime = sampleTime;
+        // Cada perna no seu tempo (passada pelo contato: a de tras pode estar
+        // adiantada enquanto a da frente espera o toque).
+        armSampleTime = gaitMoving && standUpClip == nullptr && !jumpPose && m_armPhaseValid
+            ? stanceAlignedPhase(*selectedClip, m_armPhase) * selectedClip->durationSeconds : sampleTime;
+        for (std::size_t side = 0; side < 2; ++side)
+            legSampleTime[side] = gaitMoving && standUpClip == nullptr && !jumpPose
+                ? std::fmod(sampleTime + m_legPhaseLead[side] * selectedClip->durationSeconds,
+                    std::max(0.05f, selectedClip->durationSeconds))
+                : sampleTime;
+        if (m_legSideOfLink.size() != profile.links.size()) {
+            m_legSideOfLink.assign(profile.links.size(), -1);
+            for (std::size_t index = 1; index < profile.links.size(); ++index) {
+                const std::string& id = profile.links[index].id;
+                const bool legLink = id.find("Thigh") != std::string::npos
+                    || id.find("Shin") != std::string::npos || id.find("Foot") != std::string::npos;
+                if (legLink) m_legSideOfLink[index] = id.rfind("Left", 0) == 0 ? 0 : id.rfind("Right", 0) == 0 ? 1 : -1;
+                else if (id.find("Arm") != std::string::npos || id.find("Forearm") != std::string::npos
+                    || id.find("Hand") != std::string::npos) m_legSideOfLink[index] = -2;
+            }
+        }
         for (std::size_t index = 1; index < profile.links.size(); ++index) {
             const AnimationTrack3D* track = findAnimationTrack3D(
                 *selectedClip, profile.links[index].id);
             if (track == nullptr) continue;
-            sampled[index] = sampleAnimationTrack3D(*track, sampleTime,
+            const int legSide = m_legSideOfLink[index];
+            sampled[index] = sampleAnimationTrack3D(*track,
+                legSide >= 0 ? legSampleTime[static_cast<std::size_t>(legSide)]
+                    : legSide == -2 ? armSampleTime : sampleTime,
                 selectedClip->durationSeconds, selectedClip->loops)
                     .jointPositionRadians;
         }
@@ -3111,11 +5509,55 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
             rootRotation = rootSample.rotationDelta;
         }
         contactWeights[0] = sampleAnimationScalarTrack3D(
-            selectedClip->leftFootContact, sampleTime,
+            selectedClip->leftFootContact, legSampleTime[0],
             selectedClip->durationSeconds, selectedClip->loops);
         contactWeights[1] = sampleAnimationScalarTrack3D(
-            selectedClip->rightFootContact, sampleTime,
+            selectedClip->rightFootContact, legSampleTime[1],
             selectedClip->durationSeconds, selectedClip->loops);
+    }
+    // Pulo parado: no chao, segurando o pulo, o preparo - o agachamento da
+    // referencia (bracos para tras, tronco a frente), mais fundo com a carga.
+    {
+        const auto blendClip = [&](const AnimationClip3D& clip, float time, float weight, float trunkShare) {
+            for (std::size_t index = 1; index < profile.links.size(); ++index) {
+                const AnimationTrack3D* track = findAnimationTrack3D(clip, profile.links[index].id);
+                if (track == nullptr) continue;
+                const Vec3 pose = sampleAnimationTrack3D(*track, time, clip.durationSeconds, false).jointPositionRadians;
+                const std::string& id = profile.links[index].id;
+                const bool trunk = id == "Abdomen" || id == "Chest" || id == "UpperChest" || id == "Neck" || id == "Head";
+                sampled[index] += (pose - sampled[index]) * weight * (trunk ? trunkShare : 1.0f);
+            }
+            if (const AnimationTrack3D* root = findAnimationTrack3D(clip, profile.links.front().id)) {
+                const Quaternion tilt = sampleAnimationTrack3D(*root, time, clip.durationSeconds, false).rotationDelta;
+                rootRotation = slerpQuaternion(rootRotation, tilt, weight).normalized();
+            }
+        };
+        // Giro parado pelo clipe: as pernas sao as do clipe (o tronco fica com
+        // a pose parada e o olhar).
+        if (m_clipTurnWeight > 0.001f && m_clipTurn.clip != nullptr && !gaitMoving && !jumpPose
+                && !getUpActive && standUpClip == nullptr) {
+            const AnimationClip3D& clip = *m_clipTurn.clip;
+            for (std::size_t index = 1; index < profile.links.size(); ++index) {
+                const std::string& id = profile.links[index].id;
+                const bool leg = id.find("Thigh") != std::string::npos || id.find("Shin") != std::string::npos
+                    || id.find("Foot") != std::string::npos;
+                if (!leg) continue;
+                const AnimationTrack3D* track = findAnimationTrack3D(clip, id);
+                if (track == nullptr) continue;
+                const Vec3 pose = sampleAnimationTrack3D(*track, m_clipTurn.time, clip.durationSeconds, false)
+                    .jointPositionRadians;
+                sampled[index] += (pose - sampled[index]) * m_clipTurnWeight;
+            }
+        }
+        if (!jumpPose && !getUpActive && standUpClip == nullptr && m_jumpCrouch > 0.001f
+                && animations.jumpPrep != nullptr) {
+            const float weight = smoothStep(m_jumpCrouch / 0.15f);
+            const float depth = std::clamp(m_jumpCrouch, 0.0f, 1.0f);
+            // O tronco so com parte da flexao da referencia: o impulso sai
+            // pela pelve, e com o tronco dobrado 50 graus a frente (o centro de
+            // massa a frente dela) ele saia girando de costas e caia deitado.
+            blendClip(*animations.jumpPrep, depth * animations.jumpPrep->durationSeconds, weight, JumpPrepTrunkShare);
+        }
     }
     // A arrancada capturada participa como DELTA de gesto, por cima do ciclo
     // de trote/sprint que continua dono das pernas, dos contatos e da raiz.
@@ -3200,10 +5642,27 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
     }
     if (varietyActive && gaitMoving) {
         applyGaitVariety(profile, *selectedClip, m_cyclePhase,
+            m_armPhaseValid ? m_armPhase : m_cyclePhase,
             m_varietyStrides, input.varietySeed, variety, sampled);
     } else if (idleVariety) {
         applyIdleVariety(profile, m_elapsedSeconds, input.varietySeed,
             variety, sampled);
+    }
+    // TEMPTUNE CurveSpine: na curva o tronco inclina para dentro pela coluna
+    // (a parte da inclinacao que a pelve nao rola; depois da variedade, que
+    // reamostra o tronco do clipe). Rolando a pelve, o
+    // quadril de fora subia e a perna de fora nao alcancava o chao: a de
+    // dentro fazia 70% dos apoios, galopando - os saltinhos da curva.
+    {
+        const float wanted = gaitMoving ? CurveSpineShare * m_curveSprintShare * m_bodyCurveLean : 0.0f;
+        m_spineCurveRoll += (wanted - m_spineCurveRoll) * (1.0f - std::exp(-deltaTime / 0.08f));
+        if (std::abs(m_spineCurveRoll) > 1e-4f) {
+            for (std::size_t index = 1; index < profile.links.size(); ++index) {
+                const std::string& id = profile.links[index].id;
+                if (id == "Abdomen" || id == "Chest" || id == "UpperChest")
+                    sampled[index].z += CurveSpineSign * m_spineCurveRoll / 3.0f;
+            }
+        }
     }
     // Fim do levantar: coluna, pescoco e bracos vao aos poucos para a
     // postura parada (o primeiro quadro do idle, que e onde ele comeca). O
@@ -3211,7 +5670,7 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
     // juntos) e o idle tem o tronco a ~25 graus para a frente: depois da
     // troca o corpo ficava torto "encaixando" a diferenca. As pernas seguem
     // o clipe (os pes ficam onde estao e os passos refazem a base).
-    if (standUpClip != nullptr && animations.idle != nullptr) {
+    if (standUpClip != nullptr && !m_tackling && animations.idle != nullptr) {
         const float duration = standUpClip->durationSeconds > 0.05f
             ? standUpClip->durationSeconds : 1.6f;
         const float toStance = smoothStep(
@@ -3231,6 +5690,23 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
                         .jointPositionRadians;
                 sampled[index] += (stance - sampled[index]) * toStance;
             }
+        }
+    }
+
+    // Preparo do carrinho: armado, tronco, bracos e cabeca ja vao para a
+    // pose do comeco do clipe escolhido - no pouso a troca e pequena e o
+    // mergulho sai da passada, fluido. As pernas seguem a passada.
+    if (m_tacklePending && m_tackleClip != nullptr && standUpClip == nullptr) {
+        const float w = TacklePreBlend * smoothStep(m_tacklePendingSeconds / 0.12f);
+        for (std::size_t index = 1; index < profile.links.size() && index < sampled.size(); ++index) {
+            const std::string& id = profile.links[index].id;
+            if (id.find("Thigh") != std::string::npos || id.find("Shin") != std::string::npos
+                || id.find("Foot") != std::string::npos) continue;
+            const AnimationTrack3D* track = findAnimationTrack3D(*m_tackleClip, id);
+            if (track == nullptr) continue;
+            const Vec3 first = sampleAnimationTrack3D(*track, 0.0f, m_tackleClip->durationSeconds, false)
+                .jointPositionRadians;
+            sampled[index] += (first - sampled[index]) * w;
         }
     }
 
@@ -3311,7 +5787,9 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
                 state.joints[link].positionRadians[1],
                 state.joints[link].positionRadians[2] };
             m_settlePose[link] += (measured - m_settlePose[link]) * follow;
-            const AnimationTrack3D* track = lying != nullptr
+            // (Pelo corpo, deitado ele so recupera o tonus onde esta: quem
+            // arruma a pose e o levantar.)
+            const AnimationTrack3D* track = lying != nullptr && !GetUpBodily
                 ? findAnimationTrack3D(*lying, profile.links[link].id) : nullptr;
             const Vec3 start = track != nullptr
                 ? sampleAnimationTrack3D(*track, 0.0f, lying->durationSeconds,
@@ -3319,6 +5797,49 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
                 : measured;
             sampled[link] = m_settlePose[link]
                 + (start - m_settlePose[link]) * gather;
+        }
+        // Rolando (TEMPTUNE GetUpRoll): sobre a pose deitada, a perna de
+        // cima dobra e cruza para o lado da barriga e o braco de cima alcanca
+        // o chao por cima do peito - o peso vai para a frente e o corpo vira.
+        // (No referencial da pelve: +x barriga, +y esquerda, +z cabeca.)
+        if (m_getUpRolling && m_getUpRollTop >= 0) {
+            const float weight = smoothStep(m_getUpRollSeconds / 0.4f);
+            const int top = m_getUpRollTop;
+            const float across = top == 0 ? -1.0f : 1.0f;  // para o outro lado
+            const char* thighId = top == 0 ? "LeftThigh" : "RightThigh";
+            const char* shinId = top == 0 ? "LeftShin" : "RightShin";
+            const char* upperId = top == 0 ? "LeftUpperArm" : "RightUpperArm";
+            const char* foreId = top == 0 ? "LeftForearm" : "RightForearm";
+            const char* handId = top == 0 ? "LeftHand" : "RightHand";
+            const std::size_t thigh = findLink(profile, thighId), shin = findLink(profile, shinId);
+            const std::size_t upper = findLink(profile, upperId), fore = findLink(profile, foreId);
+            const std::size_t hand = findLink(profile, handId);
+            const auto anchorIn = [&](std::size_t child) {
+                const RagdollLinkDefinition3D& link = profile.links[child];
+                const RagdollLinkDefinition3D& parent = profile.links[static_cast<std::size_t>(link.parentIndex)];
+                return parent.modelOrientation.conjugate().rotate(link.inboundJoint.anchorModelPosition - parent.modelPosition);
+            };
+            if (thigh > 0 && shin > 0 && upper > 0 && fore > 0 && hand > 0) {
+                std::vector<Vec3> roll = sampled;
+                RagdollAnimationPose3D frame;
+                buildRagdollLocalPose3D(profile, roll, frame);
+                // Joelho de cima a frente e para o outro lado.
+                const Vec3 hip = frame.linkPositions[thigh]
+                    + frame.linkOrientations[thigh].rotate(profile.links[thigh].modelOrientation.conjugate().rotate(
+                        profile.links[thigh].inboundJoint.anchorModelPosition - profile.links[thigh].modelPosition));
+                const Vec3 knee = hip + Vec3 { 0.28f, across * 0.12f, -0.27f };
+                solveRagdollChainPoint3D(profile, roll, thigh, anchorIn(shin), 1, knee, 1.0f, 10);
+                setComponent(roll[shin], 0, std::clamp(1.3f,
+                    profile.links[shin].inboundJoint.axes[0].minimumRadians,
+                    profile.links[shin].inboundJoint.axes[0].maximumRadians));
+                // Mao de cima no chao, a frente do peito, do outro lado.
+                buildRagdollLocalPose3D(profile, roll, frame);
+                const Vec3 shoulder = frame.linkPositions[upper];
+                const Vec3 reach = shoulder + Vec3 { 0.40f, across * 0.30f, -0.05f };
+                solveRagdollChainPoint3D(profile, roll, fore, anchorIn(hand), 2, reach, 1.0f, 10);
+                for (const std::size_t link : { thigh, shin, upper, fore })
+                    sampled[link] += (roll[link] - sampled[link]) * weight;
+            }
         }
     }
 
@@ -3362,6 +5883,27 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
         }
     }
 
+    // Fim do levantar (pedido do usuario, 05/10 noite): os clipes terminam
+    // com a coluna curvada (de bruços, ~28 graus somando abdomen, peito e
+    // peito alto, a pose de alerta) e as pernas ja esticadas - de pe e
+    // dobrado, ate a postura de pe entrar so no fim, de uma vez. Ja de pe
+    // (a pelve alta e o clipe quase reto), a coluna vai a GetUpEndSpineShare
+    // da flexao do clipe e o pescoco e a cabeca a extensao da postura de pe.
+    if (m_getUpPhase == CharacterGetUpPhase3D::Rising && !m_tackling && !state.links.empty()) {
+        const float ground = input.rootPositionWorld.z - profile.standingRootHeightMeters;
+        const float height = state.links.front().position.z - ground;
+        const float upright = smoothStep((0.8f - m_getUpExpectedTilt) / 0.4f)
+            * smoothStep((height - 0.55f) / 0.25f) * GetUpEndStraighten;
+        if (upright > 0.0f) {
+            for (const char* id : { "Abdomen", "Chest", "UpperChest" }) {
+                const std::size_t index = findLink(profile, id);
+                if (index == 0 || index >= sampled.size()) continue;
+                sampled[index].y *= 1.0f - (1.0f - GetUpEndSpineShare) * upright;
+            }
+            addJointCoordinate(profile, sampled, "Neck", 1, -IdleNeckExtension * upright);
+            addJointCoordinate(profile, sampled, "Head", 1, -IdleHeadExtension * upright);
+        }
+    }
     const float transition = smoothStep(
         m_transitionSeconds / m_transitionDurationSeconds);
     const float transitionTime = std::clamp(
@@ -3410,7 +5952,8 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
         -(TorsoTwistLimitRadians + HeadTurnLimitRadians),
         TorsoTwistLimitRadians + HeadTurnLimitRadians);
     const float headLookBlend = 1.0f - std::exp(-15.0f * deltaTime);
-    const float torsoLookBlend = 1.0f - std::exp(-4.2f * deltaTime);
+    const float torsoLookRate = 4.2f;
+    const float torsoLookBlend = 1.0f - std::exp(-torsoLookRate * deltaTime);
     const float torsoLimit = desiredState == CharacterLocomotionState3D::Running
         ? SprintTorsoTwistLimitRadians : TorsoTwistLimitRadians;
     const float torsoTarget = std::clamp(viewYawError * TorsoLookShare,
@@ -3438,6 +5981,23 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
             m_headTurn * 0.40f);
         addJointCoordinate(profile, m_coordinates, "Head", 0,
             m_headTurn * 0.60f);
+        // Postura parado: a pose em alerta curva o peito superior ~23 graus e
+        // o pescoco e a cabeca continuavam essa linha - a cabeca 7 cm a
+        // frente da base do pescoco, corcunda. O pescoco e a cabeca estendem
+        // (pescoco ~8 graus, cabeca quase reta, olhos na horizontal) e o
+        // peito superior curva um pouco menos. Andando, metade.
+        {
+            const CharacterLocomotionState3D postureState = m_telemetry.state;
+            const float uprightShare = postureState == CharacterLocomotionState3D::Idle
+                    || postureState == CharacterLocomotionState3D::Turning ? 1.0f
+                : postureState == CharacterLocomotionState3D::Walking
+                    || postureState == CharacterLocomotionState3D::Running ? IdlePostureMovingShare : 0.0f;
+            m_postureUpright += (uprightShare - m_postureUpright) * (1.0f - std::exp(-deltaTime / 0.3f));
+            addJointCoordinate(profile, m_coordinates, "Neck", 1, -IdleNeckExtension * m_postureUpright);
+            addJointCoordinate(profile, m_coordinates, "Head", 1, -IdleHeadExtension * m_postureUpright);
+            addJointCoordinate(profile, m_coordinates, "UpperChest", 1, -IdleChestExtension * m_postureUpright);
+            addJointCoordinate(profile, m_coordinates, "Chest", 1, -0.5f * IdleChestExtension * m_postureUpright);
+        }
         addJointCoordinate(profile, m_coordinates, "UpperChest", 1,
             -m_filteredLookPitch * 0.14f);
         addJointCoordinate(profile, m_coordinates, "Neck", 1,
@@ -3464,6 +6024,27 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
             spineTarget.x = std::clamp(-0.62f * pelvisForward, -0.24f, 0.24f)
                 * startupProgress;
             spineTarget.y = std::clamp(-0.48f * pelvisSide, -0.20f, 0.20f);
+            // Coluna viva na passada: os ombros inclinam ao contrario da pelve
+            // (o tronco vai sobre a perna de apoio) e o tronco cede um pouco a
+            // cada pisada, como mola. Os ciclos autorais tem a coluna quase
+            // parada de lado (+-1 grau por segmento): medido correndo, ombros
+            // x quadris inclinavam +-4,5 graus, contra +-8 (trote) e +-17
+            // (sprint) nas referencias - parecia um bloco so.
+            // So a parte rapida da rolagem da pelve (a da passada, ~2 Hz): a
+            // lenta e a inclinacao de proposito (curva), que a coluna nao
+            // pode desfazer - com ela toda o tronco da curva caia de 12 para
+            // 2-7 graus.
+            m_pelvisSideSlow += (pelvisSide - m_pelvisSideSlow) * (1.0f - std::exp(-deltaTime / 0.35f));
+            if (gaitMoving) {
+                const float pace = smoothStep((speed - 3.0f) / 3.5f);
+                const float rollGain = SpineRollGainSlow + (SpineRollGainFast - SpineRollGainSlow) * pace;
+                spineTarget.y = std::clamp(-0.48f * m_pelvisSideSlow
+                    - rollGain * (pelvisSide - m_pelvisSideSlow), -SpineRollLimit, SpineRollLimit);
+                // Na pisada a pelve freia para baixo (aceleracao para cima):
+                // o tronco flexiona um pouco e volta.
+                const float impact = std::max(0.0f, m_estimator.state().centerOfMassAccelerationWorld.z) / 9.81f;
+                spineTarget.x += std::min(SpineImpactFlex * impact, 0.12f);
+            }
         }
         const Vec3 spineError = m_spineBalance - spineTarget;
         const Vec3 spineImpulse = m_spineBalanceVelocity + spineError * 12.0f;
@@ -3487,7 +6068,7 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
         // a pelve baixa e que o capturam, nao uma extensao instantanea.
         const float startupChest = startupChestAmount;
         const Vec3 tripLocal = heading.conjugate().rotate(m_tripDirection);
-        const float tripForward = 0.12f * m_tripRecovery * tripLocal.x;
+        const float tripForward = 0.12f * StumbleTrunkScale * m_tripRecovery * tripLocal.x;
         const float tripSide = -0.10f * m_tripRecovery * tripLocal.y;
         addJointCoordinate(profile, m_coordinates, "Abdomen", 1,
             (startupChest + tripForward) * 0.30f);
@@ -3591,19 +6172,50 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
         float reflex = m_fallReflex;
         float legReflex = std::min(m_fallReflex, m_fallCommit);
         if (m_getUpPhase == CharacterGetUpPhase3D::Settling) {
-            reflex *= 1.0f - smoothStep(m_getUpPhaseSeconds / 0.6f);
+            // No chao os reflexos da queda (que miram o rumo dela, sem
+            // sentido rolando no chao - os alvos pulavam e ele parecia
+            // convulsionar) saem em 0,3 s; quem assume e a posicao fetal
+            // (abaixo).
+            reflex *= GroundAlive ? 1.0f - smoothStep(m_getUpPhaseSeconds / 0.3f)
+                : 1.0f - smoothStep(m_getUpPhaseSeconds / 0.6f);
             legReflex = reflex;
         } else if (m_getUpPhase == CharacterGetUpPhase3D::Rising) {
             reflex = 0.0f;
             legReflex = 0.0f;
         }
         applyFallReflexPose(profile, state, m_coordinates, m_handLinks,
-            m_chestLink, m_fallDirection, groundHeightGuess, reflex, legReflex);
+            m_chestLink, m_fallDirection, groundHeightGuess, reflex, legReflex,
+            m_handCatchSeconds, m_elapsedSeconds, input.varietySeed);
         // Vida: esperneando no ar caindo (sem tocar nada ha ~0,1 s).
         const float flail = m_getUpPhase == CharacterGetUpPhase3D::None
             ? m_fallReflex * smoothStep((m_noGroundSeconds - 0.10f) / 0.20f)
             : 0.0f;
-        applyAirborneFlail(profile, m_coordinates, m_elapsedSeconds, flail);
+        m_airBalance = AirBalanceNew ? flail : 0.0f;
+        // O giro do corpo (no eixo de lado do peito): sentido e forca do moinho.
+        float bodySpin = 0.0f;
+        if (m_chestLink < state.links.size()) {
+            const Vec3 chestLeft = state.links[m_chestLink].orientation.rotate({ 0.0f, 1.0f, 0.0f });
+            bodySpin = dot(state.links[m_chestLink].angularVelocity, chestLeft);
+        }
+        if (AirBalanceNew) applyAirBalance(profile, m_coordinates, m_elapsedSeconds, flail, bodySpin);
+        else applyAirborneFlail(profile, m_coordinates, m_elapsedSeconds, flail);
+        // No chao: posicao fetal enquanto ainda nao se arruma para levantar
+        // (entra em ~0,3 s e da lugar a pose de levantar quando ele se
+        // arruma).
+        // (De costas ou de lado; de bruços ele nao se enrola sobre a barriga
+        // - protege a cabeca com os bracos e apoia as maos, que ja e a pose de
+        // onde o levantar de bruços parte. Enrolado de bruços, o levantar
+        // tinha de desmontar a pose e levava 8,6 s em vez de ~5.)
+        const float fetalWanted = FetalEnabled && m_getUpPhase == CharacterGetUpPhase3D::Settling
+                && m_fallOrientation == CharacterFallOrientation3D::FaceUp
+            ? 1.0f - m_settleGather : 0.0f;
+        m_fetal += (fetalWanted - m_fetal) * (1.0f - std::exp(-deltaTime / 0.12f));
+        {
+            float coreSpeedNow = state.links.empty() ? 0.0f : state.links.front().linearVelocity.length();
+            applyFetalPose(profile, state, m_coordinates, m_handLinks, m_chestLink,
+                smoothStep(m_fetal) * (m_getUpPhase == CharacterGetUpPhase3D::Settling ? 1.0f : 0.0f),
+                m_elapsedSeconds, input.varietySeed, std::clamp(coreSpeedNow / 1.5f, 0.0f, 1.0f));
+        }
         m_telemetry.lifeFlail = flail;
         // Perdendo o equilibrio, de pe: inclinado alem da pose (a partir de
         // ~12 graus) ou atingido (contato externo recente, o corpo indo para
@@ -3646,6 +6258,13 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
                     0.75f * m_tripRecovery) * (1.0f - m_fallReflex);
                 balanceDirection = m_tripDirection;
             }
+            // Quase-queda em movimento: os bracos abrem para administrar o
+            // momento (referencia Jogging Stumble: mao a altura do ombro, 37
+            // cm para o lado).
+            if (StumbleArmsScale * m_stumbleReaction > balanceWanted) {
+                balanceWanted = StumbleArmsScale * m_stumbleReaction * (1.0f - m_fallReflex);
+                balanceDirection = m_stumbleDirection;
+            }
         }
         m_balanceReaction += (balanceWanted - m_balanceReaction) * (1.0f
             - std::exp(-deltaTime * (balanceWanted > m_balanceReaction ? 12.0f : 3.0f)));
@@ -3664,10 +6283,22 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
                         == profile.links[hand].parentIndex) braced[side] = true;
             }
         }
+        const float gaitReaction = gaitMoving ? BalanceGaitShare : 1.0f;
         applyBalanceReaction(profile, state, m_coordinates, m_handLinks,
-            m_chestLink, m_balanceDirection, m_balanceReaction, m_elapsedSeconds,
-            braced);
+            m_chestLink, m_balanceDirection, m_balanceReaction * gaitReaction, m_elapsedSeconds,
+            braced, m_balanceReaction * (gaitMoving && BalanceGaitNoLegs ? 0.0f : gaitReaction));
         m_telemetry.balanceReaction = m_balanceReaction;
+    }
+    // Chute: bracos e tronco do chute por cima.
+    applyKickPose(profile, state, m_coordinates, m_handLinks, input.ballKick);
+    // Manejo de bola (rework de 06/10): tronco, bracos e cabeca do gesto por
+    // cima (os pes vao pelo planejador: ballFoot/ballScript).
+    if (input.ballGesture.active && !state.links.empty()) {
+        if (!m_gestureLegs.valid) m_gestureLegs = resolveBallGestureLegs3D(profile);
+        Vec3 rootPosition = state.links.front().position;
+        Quaternion rootOrientation = state.links.front().orientation;
+        applyBallGesturePose3D(profile, m_gestureLegs, input.ballGesture, m_coordinates, rootPosition,
+            rootOrientation, false, false);
     }
 
     // Banking into a turn: a runner carving a curve leans into it and
@@ -3703,7 +6334,28 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
     // pouco; so correndo rapido a inclinacao inteira (ate ~11 graus, era 15
     // em qualquer velocidade: mexendo a camera andando ele tombava de lado).
     const float bankSpeedShare = 0.25f + 0.75f * smoothStep((speed - 2.5f) / 4.0f);
-    const float wantedLateralLean = std::clamp(
+    // Curva: o corpo inteiro inclina para dentro como a fisica pede, theta =
+    // atan(a_c/g) pela aceleracao centripeta do caminho (na referencia
+    // Sprint Turn, do pe de apoio ao quadril: 24 graus a 4,1 m/s2 - atan
+    // 23). O pe pousa para fora (bloco do pouso), a pelve rola uma parte
+    // (11-19 graus la) e o tronco vai junto com ela. Andando devagar quase
+    // nada: girando a camera andando ele tombava de lado.
+    // (Pela taxa do caminho, que so existe com pedido e sem freada: a
+    // desaceleracao forte, um pouco desalinhada da velocidade, parecia curva
+    // - 5 graus de 12 m/s2 sao ~1 m/s2 de lado - e ele inclinava e jogava o
+    // pe para fora nos passos de freada.)
+    m_bodyCurveLean = CurveNew ? std::clamp(std::atan(pathSpeed * pathTurnRate / 9.81f),
+        -CurveLeanMaximum, CurveLeanMaximum) * smoothStep((speed - 1.2f) / 1.6f) : 0.0f;
+    // (A pelve rola menos no sprint, TEMPTUNE CurveRootSprint: rolando, o
+    // quadril de fora subia e a perna de fora nao alcancava o chao - a de
+    // dentro fazia 70% dos apoios, galopando. A parte que a pelve deixa vai
+    // pela coluna (bloco do tronco). No trote ela rola inteira: menos, o
+    // joelho de apoio dobrava 7 graus a mais na curva.)
+    m_curveSprintShare = smoothStep((speed - CurveRootSprintFrom) / std::max(0.1f, CurveRootSprintSpan));
+    const float curveRootShare = CurveRootShare + (CurveRootSprint - CurveRootShare) * m_curveSprintShare;
+    const float wantedLateralLean = CurveNew
+        ? std::clamp(curveRootShare * m_bodyCurveLean, -0.30f, 0.30f)
+        : std::clamp(
         (std::atan(localAcceleration.y / 9.81f) * 0.18f + turnBank) * bankSpeedShare,
         -0.19f, 0.19f);
     // Exact critically damped spring: continuous lean velocity on turn
@@ -3716,18 +6368,64 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
     m_leanVelocity = (m_leanVelocity - leanImpulse * (22.0f * deltaTime)) * leanDecay;
     // Longitudinal acceleration is already filtered upstream. A second
     // lag here moves the hip behind the foot plan when descending steps.
-    const float forwardLean = wantedForwardLean;
-    const float lateralLean = m_lean.y;
+    float forwardLean = wantedForwardLean;
+    float lateralLean = m_lean.y;
+    // v2 (T_LeanNeed): com pouca ajuda quem acelera o corpo sao as pernas, e
+    // o chao so empurra para a frente sem girar o corpo com o centro de massa
+    // a frente do apoio (a inclinacao atan(a/g)). A referencia inclinava so
+    // pela aceleracao da capsula (22% dela) - presa ao corpo, quase nada: o
+    // tronco ficava reto e o corpo nao passava de ~1,5 m/s sem ajuda. Inclina
+    // pela aceleracao que falta (o pedido menos o corpo, no que as pernas
+    // conseguem), na parte das pernas (1 - ajuda andando).
+    {
+        static const float leanNeedGain = tuneTemp("T_LeanNeed", 0.0f);  // TEMPTUNE
+        static const float leanNeedRate = tuneTemp("T_LeanNeedRate", 1.5f);  // TEMPTUNE (1/s)
+        static const float leanNeedMaximum = tuneTemp("T_LeanNeedMax", 5.0f);  // TEMPTUNE (m/s2)
+        static const float leanNeedPower = tuneTemp("T_LeanNeedPower", 18.0f);  // TEMPTUNE (W/kg)
+        const bool gaitNow = desiredState == CharacterLocomotionState3D::Walking
+            || desiredState == CharacterLocomotionState3D::Running;
+        Vec3 wanted {};
+        if (leanNeedGain > 0.0f && input.forceDrivenRoot && gaitNow && !getUpActive) {
+            const Vec3 requested { input.intent.requestedVelocityWorld.x, input.intent.requestedVelocityWorld.y, 0.0f };
+            const Vec3 body { m_filteredCenterOfMassVelocity.x, m_filteredCenterOfMassVelocity.y, 0.0f };
+            Vec3 need = clampMagnitude((requested - body) * leanNeedRate, leanNeedMaximum);
+            // Ganhar velocidade correndo rapido custa mais (a potencia): ~3
+            // m/s2 a 6 m/s.
+            const float speed = body.length();
+            if (speed > 0.5f) {
+                const Vec3 unit = body * (1.0f / speed);
+                const float along = dot(need, unit);
+                if (along > 0.0f) {
+                    const float limit = leanNeedPower / std::max(1.0f, speed);
+                    if (along > limit) need -= unit * (along - limit);
+                }
+            }
+            const float legs = 1.0f - std::clamp(input.walkingAssist, 0.0f, 1.0f);
+            const Vec3 local = heading.conjugate().rotate(need) * (legs * leanNeedGain);
+            wanted = { std::atan(local.x / 9.81f), std::atan(local.y / 9.81f), 0.0f };
+        }
+        m_leanNeed += (wanted - m_leanNeed) * (1.0f - std::exp(-deltaTime / 0.12f));
+        forwardLean = std::clamp(forwardLean + m_leanNeed.x, -0.30f, 0.45f);
+        lateralLean = std::clamp(lateralLean + m_leanNeed.y, -0.35f, 0.35f);
+    }
 
     // A direcao vem do referencial da locomocao. Dos ciclos (autorais, que
     // olham para +X) fica a rotacao inteira da pelve - inclinacao, queda do
     // quadril e o giro de ate 8 graus que acompanha a perna que avanca. Do
     // levantar (importado, com rumo arbitrario) sai o rumo da fonte e fica
     // so a inclinacao.
+    // Rumo da fonte estavel deitado: frente + cima * (-frente.z). Em pe e a
+    // frente; de bruços (frente para o chao) e de costas (frente para o
+    // ceu) a frente no plano some e, passando de 90 graus, virava 180 graus
+    // de um quadro para o outro - o cima completa (de costas, para os pes).
     const Vec3 sourceForward = rootRotation.rotate({ 1.0f, 0.0f, 0.0f });
+    const Vec3 sourceUp = rootRotation.rotate({ 0.0f, 0.0f, 1.0f });
     const Quaternion sourceHeading = Quaternion::fromAxisAngle(
-        { 0.0f, 0.0f, 1.0f }, std::atan2(sourceForward.y, sourceForward.x));
-    const Quaternion clipRootTilt = standUpClip != nullptr
+        { 0.0f, 0.0f, 1.0f }, std::atan2(sourceForward.y - sourceUp.y * sourceForward.z,
+            sourceForward.x - sourceUp.x * sourceForward.z));
+    // (No carrinho o giro do clipe fica: ele desliza de lado em relacao a
+    // direcao do carrinho, e o clipe ja vem no rumo do comeco.)
+    const Quaternion clipRootTilt = standUpClip != nullptr && !m_tackling
         ? (sourceHeading.conjugate() * rootRotation).normalized()
         : rootRotation.normalized();
     // Mesmo crossfade das juntas (ver `transition` acima). Trocar de clipe
@@ -3793,7 +6491,11 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
         m_brakeReferencePosition += Vec3 { brakeNavigationVelocity.x, brakeNavigationVelocity.y, 0.0f }
             * deltaTime;
         const Vec3 away = m_brakeReferencePosition - body;
-        const float leash = BrakeReferenceLeash;
+        // Com pouca ajuda o corpo nao volta para a referencia (ninguem o
+        // freia na pelve): 30 cm atras dele, todos os alvos dos pes ficavam
+        // atras e ele mergulhava por cima deles. Fica presa ao corpo.
+        const float lowAssistReference = smoothStep((0.5f - std::clamp(input.walkingAssist, 0.0f, 1.0f)) / 0.4f);
+        const float leash = BrakeReferenceLeash + (LowAssistBrakeReferenceLeash - BrakeReferenceLeash) * lowAssistReference;
         if (away.length() > leash) m_brakeReferencePosition = body + away * (leash / away.length());
         m_brakeAnchor = m_brakeStepping ? std::min(1.0f, m_brakeAnchor + deltaTime / 0.15f)
             : std::max(0.0f, m_brakeAnchor - deltaTime / 0.15f);
@@ -3803,6 +6505,25 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
     } else {
         m_brakeReferenceValid = false;
         m_brakeAnchor = 0.0f;
+    }
+    // Andando, a referencia da passada fica presa ao corpo com uma folga
+    // curta no rumo do movimento: com pouca ajuda o corpo ficava para tras e
+    // a capsula corria ~0,3 m a frente - cada pe pousava (a partir dela) 0,3
+    // m longe demais, freava o corpo, ele inclinava para tras e caia. A
+    // folga e o que a perna de apoio empurra.
+    // (Cresce conforme a ajuda cai: com a ajuda cheia a pelve leva o corpo
+    // ate a capsula e nada muda.)
+    const float lowAssist = smoothStep((0.5f - std::clamp(input.walkingAssist, 0.0f, 1.0f)) / 0.4f);
+    if (GaitLeashEnabled && lowAssist > 0.0f && input.forceDrivenRoot && gaitMoving && m_brakeGait <= 0.0f
+        && !getUpActive && !state.links.empty()) {
+        const Vec3 pelvis = state.links.front().position;
+        const Vec3 sway = heading.rotate({ m_rootOffset.x, m_rootOffset.y, 0.0f });
+        const Vec3 body { pelvis.x - sway.x, pelvis.y - sway.y, 0.0f };
+        const Vec3 lead { navigationRoot.x - body.x, navigationRoot.y - body.y, 0.0f };
+        Vec3 leashed = lead;
+        if (leashed.length() > GaitLeashMeters) leashed = leashed * (GaitLeashMeters / leashed.length());
+        navigationRoot.x = body.x + lead.x + (leashed.x - lead.x) * lowAssist;
+        navigationRoot.y = body.y + lead.y + (leashed.y - lead.y) * lowAssist;
     }
     // Parado depois de uma freada, a base da referencia fica onde o corpo
     // parou: a capsula vem ate 10 cm atras dele (a folga com que ela segue o
@@ -3845,6 +6566,8 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
             navigationRoot.y += (m_stopRoot.y - navigationRoot.y) * m_stopRootBlend;
         }
     }
+    // Giro parado pelo clipe: a raiz anda o que a do clipe anda.
+    navigationRoot += m_clipTurnRootOffset * m_clipTurnWeight;
     Vec3 targetRootPosition = risingPose
         ? Vec3 { m_getUpAnchorWorld.x, m_getUpAnchorWorld.y,
             input.rootPositionWorld.z }
@@ -3853,12 +6576,23 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
     // passa por cima. A referencia estudada faz isso de forma muito grande;
     // aqui usamos apenas o necessario para manter agilidade e alcance.
     if (!risingPose) {
-        targetRootPosition.z -= 0.065f * m_tripRecovery;
+        targetRootPosition.z -= (StumbleDetection ? StumbleDrop : 0.065f) * m_tripRecovery;
+        // Passo de quase-queda: a pelve desce (referencia Jogging Stumble:
+        // o quadril ~30 cm mais baixo no passo que salva).
+        if (StumbleStepTrigger > 0.0f && !m_startStepActive)
+            targetRootPosition.z -= StumbleStepDrop * (m_stumbleStepping ? std::max(0.5f, m_stumbleReaction) : 0.0f);
+        // Arrancada pelo passo: agacha enquanto o pe de tras vem (referencia
+        // Idle To Sprint: o quadril 13 cm mais baixo nos primeiros passos).
+        if (m_startStepActive)
+            targetRootPosition.z -= StartStepDrop * smoothStep(m_stumbleStepSeconds / 0.12f);
         // A compressao precede a arrancada: joelhos/quadris recebem carga
         // antes da extensao, como na referencia, em vez de o peito saltar
         // imediatamente para a inclinacao final. O trote usa menos da metade
         // da descida observada; o sprint ainda fica abaixo dos ~17 cm medidos.
         targetRootPosition.z -= startupPelvisDrop;
+        // Preparo do carrinho: armado, ele baixa um pouco antes de mergulhar.
+        if (m_tacklePending)
+            targetRootPosition.z -= TackleGatherDrop * smoothStep(m_tacklePendingSeconds / 0.15f);
     }
     // Rebase: a base da raiz troca de referencial (levantar comeca/termina)
     // ou salta num tick (teletransporte, ancora refeita). A diferenca entre
@@ -3913,30 +6647,80 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
     targetRootPosition += heading.rotate({ m_rootOffset.x, m_rootOffset.y,
         0.0f });
     targetRootPosition.z += m_rootOffset.z;
+    // Carrinho: no plano, o caminho do clipe (na escala da entrada) a partir
+    // da ancora, no rumo do carrinho.
+    if (m_tackling && standUpClip != nullptr) {
+        const Vec3 path = Quaternion::fromAxisAngle({ 0.0f, 0.0f, 1.0f }, m_tackleYaw).rotate({
+            rootTranslation.x * m_tackleDistanceScale, rootTranslation.y * m_tackleDistanceScale, 0.0f });
+        targetRootPosition.x = m_tackleStart.x + path.x;
+        targetRootPosition.y = m_tackleStart.y + path.y;
+    }
+    // Postura mais ereta (pedido do usuario, 03/10): os clipes e o controle
+    // deixavam a pelve 7-10 cm abaixo da de pe, "sempre semi-agachado". A
+    // pelve-alvo sobe; os pes estao travados, entao o IK estica os joelhos.
+    // So de pe e andando/correndo (agachado, no ar, aterrissando e
+    // levantando, nao).
+    // Preparo do pulo (agachar segurando o espaco): so parado. Em movimento
+    // (passada ou movimento pedido) nada - correndo, o agachamento travava
+    // as pernas; ao soltar, o pulo sai no padrao.
+    const bool movingForJump = gaitMoving
+        || std::hypot(input.intent.requestedDirectionWorld.x, input.intent.requestedDirectionWorld.y) > 0.1f;
+    const float jumpCrouchInput = movingForJump ? 0.0f : std::clamp(input.jumpCrouch, 0.0f, 1.0f);
+    {
+        const float bodySpeed = std::hypot(m_filteredCenterOfMassVelocity.x,
+            m_filteredCenterOfMassVelocity.y);
+        const float running = smoothStep((bodySpeed - 0.6f) / 1.6f);
+        const float sprinting = smoothStep((bodySpeed - 4.0f) / 2.0f);
+        const bool upright = !getUpActive && !airbornePose
+            && (desiredState == CharacterLocomotionState3D::Idle
+                || desiredState == CharacterLocomotionState3D::Turning
+                || desiredState == CharacterLocomotionState3D::Walking
+                || desiredState == CharacterLocomotionState3D::Running);
+        const float wanted = upright
+            ? (PostureLiftIdle + (PostureLiftRun - PostureLiftIdle) * running
+                + (PostureLiftSprint - PostureLiftRun) * sprinting)
+                * (1.0f - jumpCrouchInput)
+            : 0.0f;
+        m_postureLift += (wanted - m_postureLift) * (1.0f - std::exp(-deltaTime / 0.25f));
+        targetRootPosition.z += m_postureLift;
+    }
     // Freada: a pelve desce com a reacao (as pernas dobram pelo IK dos pes).
     // Freando pelos passos, o agachamento vem antes do pe de freada pousar:
     // um pe a 0,4-0,5 m a frente do quadril so alcanca o chao com a pelve
     // 15-20 cm mais baixa (na referencia Run To Stop ela desce 25 cm). Sem
     // isso o pe ficava pendurado procurando o chao e pousava tarde e perto.
     {
-        const float wanted = m_brakeStepping && !getUpActive && !airbornePose
+        float wanted = m_brakeStepping && !getUpActive && !airbornePose
             ? BrakeCrouchMeters
                 * smoothStep((m_brakeGaitSpeed - 0.6f) / BrakeCrouchSpeedSpan)
             : 0.0f;
+        // Invertendo, ele agacha para frear e girar sobre o pe, ate a
+        // arrancada para o outro lado (na referencia a pelve desce 33 cm e
+        // fica embaixo enquanto a velocidade troca de sentido).
+        if (m_brakeReversing && !getUpActive && !airbornePose)
+            wanted = std::max(wanted, PivotCrouchMeters);
         const float omega = BrakeCrouchOmega;
         m_brakeCrouchVelocity += (omega * omega * (wanted - m_brakeCrouch)
             - 2.0f * omega * m_brakeCrouchVelocity) * deltaTime;
         m_brakeCrouch = std::max(0.0f, m_brakeCrouch + m_brakeCrouchVelocity * deltaTime);
     }
     if (!getUpActive && !airbornePose) {
-        targetRootPosition.z -= std::max(m_brakeCrouch, 0.12f * std::min(1.0f,
+        // Inclinado na curva, o quadril fica mais perto do chao.
+        m_telemetry.pelvisDropCurveMeters = CurveDropShare * CurveLeanHeight * (1.0f - std::cos(m_bodyCurveLean));
+        m_telemetry.pelvisDropBrakeMeters = std::max(m_brakeCrouch, 0.12f * std::min(1.0f,
             m_telemetry.brakeReaction));
-        // Carregando o pulo: agacha (as pernas dobram pelo IK dos pes).
-        m_jumpCrouch += (std::clamp(input.jumpCrouch, 0.0f, 1.0f) - m_jumpCrouch)
+        targetRootPosition.z -= m_telemetry.pelvisDropCurveMeters;
+        targetRootPosition.z -= m_telemetry.pelvisDropBrakeMeters;
+        // Carregando o pulo: agacha (as pernas dobram pelo IK dos pes). So
+        // parado: em movimento nao ha preparo (o pulo sai no padrao).
+        m_jumpCrouch += (jumpCrouchInput - m_jumpCrouch)
             * (1.0f - std::exp(-12.0f * deltaTime));
-        targetRootPosition.z -= 0.10f * m_jumpCrouch;
+        // (Mais fundo carregado: as referencias descem 19 cm no pulo normal e
+        // 45 no forte.)
+        targetRootPosition.z -= JumpCrouchDepth * m_jumpCrouch;
     } else {
         m_jumpCrouch = 0.0f;
+        m_telemetry.pelvisDropCurveMeters = m_telemetry.pelvisDropBrakeMeters = 0.0f;
     }
     // Pouso no modo fisico: a pelve de referencia cede junto com o corpo no
     // toque (nunca fica acima dele empurrando - era isso que o fazia quicar:
@@ -3948,22 +6732,40 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
         && !state.links.empty()) {
         const float settle = std::clamp(m_sinceTouchdownSeconds
             / m_landingSettleSeconds, 0.0f, 1.0f);
+        // TEMPTUNE LandRun: pousando correndo (o jogador segue pedindo a
+        // corrida), as pernas sao mola - agacham o previsto, menos, e nao
+        // acompanham o corpo que afunda (a pelve alvo descendo com ele, nada
+        // segurava: 30 cm abaixo, joelho a 130 graus, e o tronco tombava).
+        const float runningLanding = LandRunYield > 0.0f ? smoothStep((std::hypot(
+            m_filteredCenterOfMassVelocity.x, m_filteredCenterOfMassVelocity.y) - 2.5f) / 2.0f)
+            * smoothStep(std::hypot(input.intent.requestedVelocityWorld.x,
+                input.intent.requestedVelocityWorld.y) / 1.5f) : 0.0f;
         const float planned = std::clamp(0.035f * m_landingImpactSpeed,
-            0.04f, 0.22f);
-        const float yielded = std::clamp(targetRootPosition.z
-            - state.links.front().position.z, 0.0f, 0.25f);
+            0.04f, 0.22f) * (1.0f - (1.0f - LandRunDepth) * runningLanding);
+        const float yielded = std::min(std::clamp(targetRootPosition.z
+            - state.links.front().position.z, 0.0f, 0.25f),
+            0.25f + (planned * LandRunYield - 0.25f) * runningLanding);
         if (settle < 0.45f) {
             m_landingSinkPeak = std::max({ m_landingSinkPeak, yielded,
                 planned * smoothStep(settle / 0.15f) });
         }
-        targetRootPosition.z -= m_landingSinkPeak
+        m_telemetry.pelvisDropLandingMeters = m_landingSinkPeak
             * (1.0f - smoothStep((settle - 0.45f) / 0.55f));
+        targetRootPosition.z -= m_telemetry.pelvisDropLandingMeters;
     } else {
         m_landingSinkPeak = 0.0f;
+        m_telemetry.pelvisDropLandingMeters = 0.0f;
     }
 
     RagdollAnimationPose3D localPose;
     buildLocalPose(profile, m_coordinates, localPose);
+    if (m_feet.size() >= 2 && m_feet[0].valid && m_feet[1].valid
+        && m_feet[0].linkIndex < localPose.linkPositions.size()
+        && m_feet[1].linkIndex < localPose.linkPositions.size()) {
+        m_poseFeetCenterLocal = (localPose.linkPositions[m_feet[0].linkIndex]
+            + localPose.linkPositions[m_feet[1].linkIndex]) * 0.5f;
+        m_poseFeetCenterValid = true;
+    }
     for (std::size_t side = 0; side < m_feet.size(); ++side) {
         const FootPlant& foot = m_feet[side];
         if (!foot.valid
@@ -4164,6 +6966,9 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
         Vec3 hipTravel;
         float authoredLandingHorizontal = 0.0f;
         float authoredLandingVertical = 0.0f;
+        // Teto da descida que este pe pede (m): o pe no ar, correndo no
+        // plano, pede pouco.
+        float dropCap = std::numeric_limits<float>::infinity();
     };
     std::array<FootGoal, 2> goals {};
 
@@ -4210,6 +7015,40 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
         && input.grounded
         && desiredState != CharacterLocomotionState3D::Landing
         && !airbornePose;
+    // Quase-queda correndo: o planejador da um passo rapido que pega o corpo
+    // e devolve os pes a passada (ver ContactFootworkInput3D::stumbling).
+    // Pelo ciclo do clipe nao dava: pelve baixa, pouso adiantado, cadencia
+    // ou a perna mirando pela pelve de verdade, todos derrubavam mais no pe
+    // enganchado em sprint (26 -> 36-50 em 128) - o passo do clipe tem o
+    // tempo e o tamanho da corrida, nao o de quem se salva.
+    m_sinceStumbleStep = std::min(10.0f, m_sinceStumbleStep + deltaTime);
+    {
+        const float bodySpeed = std::hypot(m_filteredCenterOfMassVelocity.x, m_filteredCenterOfMassVelocity.y);
+        const bool allowed = StumbleStepTrigger > 0.0f && footworkEnabled && onGround && gaitMoving
+            && input.forceDrivenRoot && !getUpActive && m_fallCommit < 0.5f
+            && m_brakeGait <= 0.0f && !m_brakeGaitActive;
+        const Vec3 requestedDirection { input.intent.requestedDirectionWorld.x, input.intent.requestedDirectionWorld.y, 0.0f };
+        const bool startAllowed = StartStepEnabled && footworkEnabled && onGround && gaitMoving
+            && input.forceDrivenRoot && !getUpActive && m_fallCommit < 0.5f && !m_brakeGaitActive
+            && m_gaitDirection == CharacterGaitDirection3D::Forward && requestedDirection.lengthSquared() > 0.01f;
+        if (m_startStepRequested && !m_stumbleStepping && startAllowed && bodySpeed < 1.0f) {
+            m_stumbleStepping = true;
+            m_startStepActive = true;
+            m_stumbleStepSeconds = 0.0f;
+            m_stumbleStepDirection = requestedDirection.normalized();
+        } else if (!m_stumbleStepping && allowed && m_stumbleRisk >= StumbleStepTrigger && bodySpeed > 1.5f
+            && m_sinceStumbleStep > StumbleStepCooldown) {
+            m_stumbleStepping = true;
+            m_startStepActive = false;
+            m_stumbleStepSeconds = 0.0f;
+            m_stumbleStepDirection = m_stumbleDirection;
+        } else if (m_stumbleStepping && !(m_startStepActive ? startAllowed : allowed)) {
+            m_stumbleStepping = false;
+        }
+        m_startStepRequested = false;
+        if (!m_stumbleStepping) m_startStepActive = false;
+        if (m_stumbleStepping) m_stumbleStepSeconds += deltaTime;
+    }
     {
         ContactFootworkInput3D footInput;
         footInput.physical = &physical;
@@ -4229,6 +7068,8 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
         footInput.seedFromBody = m_plantFeetFromBody && onGround && footworkEnabled;
         footInput.facingYawRadians = m_facingYaw;
         footInput.standingTurnTargetYawRadians = m_standingTurnTarget;
+        footInput.standingTurnRateRadiansPerSecond = m_turningRate;
+        footInput.pelvisYawOffsetRadians = m_clipPelvisYaw;
         footInput.heading = heading;
         footInput.referenceRootWorld = targetRootPosition;
         footInput.capturePointWorld = m_capturePoint;
@@ -4242,12 +7083,25 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
         // borda de tras dela): acomodar ou girar tirava do chao justo o pe que
         // segurava o corpo.
         // (Ate a camera girar de verdade: ai o giro parado volta a valer.)
+        // Ajuda cheia segurando (sem perturbacao de fora): o equilibrio e dela.
+        footInput.assistHold = 0.0f;
+        // (Com ela, a base se fecha logo depois da freada: a espera existia
+        // porque o corpo podia estar na borda de tras da base.)
         footInput.settleHold = m_sinceBrakeSeconds < BrakeSettleHoldSeconds
-            && std::abs(wrapAngle(m_lookYaw - m_facingYaw)) < 0.55f;
+            && std::abs(wrapAngle(m_lookYaw - m_facingYaw)) < 0.55f
+            && footInput.assistHold < 0.5f;
         footInput.quietStop = (m_brakeGaitActive || m_sinceBrakeSeconds < BrakeSettleHoldSeconds)
             && input.externalPerturbation < 0.2f;
         footInput.brakeDirectionWorld = m_brakeGaitDirection;
         footInput.brakeDecelerationMetersPerSecondSquared = BrakeDeceleration;
+        footInput.stumbling = m_stumbleStepping && !footInput.braking;
+        footInput.stumbleDirectionWorld = m_stumbleStepDirection;
+        footInput.stumbleAheadMeters = m_startStepActive ? StartStepAhead
+            : StumbleStepAhead;
+        footInput.stumbleSwingSeconds = m_startStepActive ? StartStepSwing
+            : StumbleStepSwing;
+        footInput.stumbleStepDelaySeconds = m_startStepActive ? StartPushSeconds : 0.0f;
+        footInput.stumbleLiftMeters = m_startStepActive ? StartStepLift : 0.0f;
         for (std::size_t side = 0; side < m_feet.size(); ++side) {
             const FootPlant& foot = m_feet[side];
             if (!foot.valid) continue;
@@ -4262,6 +7116,31 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
             footInput.gait[side].lockedOrientationWorld = foot.lockedOrientationWorld;
             footInput.gait[side].surface = { true, foot.groundHeight, foot.groundNormal };
         }
+        // Giro parado pelo clipe: os pes sao do clipe (a pose de referencia ja
+        // tem as pernas dele) - no ar pelo contato do clipe, no chao travados.
+        if (m_clipTurn.active && m_clipTurn.clip != nullptr && m_clipTurnWeight > 0.5f) {
+            const AnimationClip3D& clip = *m_clipTurn.clip;
+            for (std::size_t side = 0; side < 2 && side < m_feet.size(); ++side) {
+                if (!m_feet[side].valid) continue;
+                const float contact = sampleAnimationScalarTrack3D(side == 0 ? clip.leftFootContact : clip.rightFootContact,
+                    m_clipTurn.time, clip.durationSeconds, false);
+                ScriptedFoot3D& script = footInput.scripted[side];
+                script.active = true;
+                script.swing = contact < 0.5f;
+                script.positionWorld = footInput.reference[side].poseWorld;
+                script.orientationWorld = footInput.reference[side].poseOrientationWorld;
+            }
+        }
+        // Toque parado na bola: o pe dirigido pelo manejo.
+        if (input.ballScript.active && input.ballScript.side >= 0 && input.ballScript.side < 2
+            && m_feet[static_cast<std::size_t>(input.ballScript.side)].valid) {
+            ScriptedFoot3D& script = footInput.scripted[static_cast<std::size_t>(input.ballScript.side)];
+            script.active = true;
+            script.swing = input.ballScript.swing;
+            script.positionWorld = input.ballScript.position;
+            script.orientationWorld = input.ballScript.orientation;
+            script.supportShift = input.ballScript.supportShift;
+        }
         footInput.surfaceAt = [&](std::size_t side, Vec3 at, Vec3 forward) {
             const GroundSample ground = groundUnder(side, at, forward);
             return FootSurface3D { ground.valid, ground.height, ground.normal };
@@ -4269,6 +7148,51 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
         footInput.fitOnLevel = [&](Vec3 at, Vec3 forward) { return fitFoot(at, forward); };
         m_footwork.update(profile, footInput, deltaTime);
         if (footInput.seedFromBody) m_plantFeetFromBody = false;
+        // Devolucao a passada: com o segundo passo no ar e o primeiro ja
+        // apoiando, no ponto do balanco em que o clipe tem esse mesmo pe
+        // quando o outro acaba de tocar o chao - o ciclo vai a fase desse
+        // toque e os dois pes casam com o clipe (no sprint cada pe apoia so
+        // ~18% do ciclo: em qualquer outro ponto um deles estaria "no ar" no
+        // clipe, apoiado de fato, e era arrastado).
+        if (footInput.stumbling) {
+            const CharacterContactPlan3D& plan = m_footwork.plan();
+            const AnimationClip3D* clip = m_previousClip;
+            const auto crossings = [&](const AnimationScalarTrack3D& contact, float& liftoff, float& touchdown) {
+                constexpr int Samples = 240;
+                liftoff = touchdown = -1.0f;
+                float previous = sampleAnimationScalarTrack3D(contact,
+                    clip->durationSeconds * (Samples - 1) / Samples, clip->durationSeconds, true);
+                for (int i = 0; i < Samples; ++i) {
+                    const float now = sampleAnimationScalarTrack3D(contact,
+                        clip->durationSeconds * i / Samples, clip->durationSeconds, true);
+                    if (previous >= 0.5f && now < 0.5f) liftoff = static_cast<float>(i) / Samples;
+                    if (previous < 0.5f && now >= 0.5f) touchdown = static_cast<float>(i) / Samples;
+                    previous = now;
+                }
+            };
+            bool handed = false;
+            for (std::size_t side = 0; side < 2 && clip != nullptr && clip->durationSeconds > 0.0f; ++side) {
+                const FootPlan3D& foot = plan.feet[side];
+                const FootPlan3D& other = plan.feet[1 - side];
+                const bool otherDown = other.phase == FootPhase3D::Stance || other.phase == FootPhase3D::Loading;
+                if (foot.phase != FootPhase3D::Swing || !otherDown || m_footwork.stumbleStepsTaken() < 2) continue;
+                float swingLift, swingTouch, stanceLift, stanceTouch;
+                crossings(side == 0 ? clip->leftFootContact : clip->rightFootContact, swingLift, swingTouch);
+                crossings(side == 0 ? clip->rightFootContact : clip->leftFootContact, stanceLift, stanceTouch);
+                if (swingLift < 0.0f || swingTouch < 0.0f || stanceTouch < 0.0f) continue;
+                const float span = std::max(0.05f, std::fmod(swingTouch - swingLift + 1.0f, 1.0f));
+                const float handback = std::fmod(stanceTouch - swingLift + 1.0f, 1.0f) / span;
+                const float progress = foot.swingSeconds / std::max(0.05f, foot.swingDurationSeconds);
+                if (progress < handback) continue;
+                const float offset = stanceAlignedPhase(*clip, 0.0f);
+                m_cyclePhase = std::fmod(stanceTouch + 0.01f - offset + 2.0f, 1.0f);
+                handed = true;
+            }
+            if (handed || m_stumbleStepSeconds > 1.0f) {
+                m_stumbleStepping = false;
+                m_sinceStumbleStep = 0.0f;
+            }
+        }
     }
     const CharacterContactPlan3D& contactPlan = m_footwork.plan();
     const bool recovering = contactPlan.recovering;
@@ -4337,15 +7261,69 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
     // movimento. Se o obstaculo pegou cedo, o proprio pe continua por cima;
     // se pegou tarde, este deslocamento permanece para o passo seguinte.
     if (input.forceDrivenRoot && onGround && m_tripRecovery > 0.0f)
-        balanceShift += m_tripDirection * (0.26f * m_tripRecovery);
+        balanceShift += m_tripDirection * (0.26f * StumbleShiftScale * m_tripRecovery);
     if (input.balanceFootPlacement && input.forceDrivenRoot && onGround) {
         const float omega = std::clamp(m_estimator.state().captureOmega, 1.0f, 6.0f);
         const PhysicsBodyState3D& pelvis = state.links.front();
         const Vec3 velocityError { pelvis.linearVelocity.x - planarVelocity.x,
             pelvis.linearVelocity.y - planarVelocity.y, 0.0f };
         Vec3 wanted = velocityError * (BalancePlacementGain / omega);
-        if (wanted.length() > BalancePlacementLimitMeters)
-            wanted = wanted * (BalancePlacementLimitMeters / wanted.length());
+        float placementLimit = BalancePlacementLimitMeters;
+        float captureShare = CapturePlacement && (m_brakeGait <= 0.0f || (CaptureInBrakeRun && !m_brakeStepping))
+            ? std::max(CapturePlacementAllAssist, smoothStep((0.5f - std::clamp(input.walkingAssist, 0.0f, 1.0f)) / 0.4f)) : 0.0f;
+        // Experimento v2 (T_CapConsistent): o pe corrige a parte que a ajuda
+        // nao corrige (1 - ajuda).
+        static const float captureConsistent = tuneTemp("T_CapConsistent", 0.0f);  // TEMPTUNE
+        if (captureConsistent > 0.0f && CapturePlacement && (m_brakeGait <= 0.0f || (CaptureInBrakeRun && !m_brakeStepping)))
+            captureShare = std::max(captureShare, captureConsistent * (1.0f - std::clamp(input.walkingAssist, 0.0f, 1.0f)));
+        // Na quase-queda, em qualquer ajuda: o pe vai ao ponto de captura,
+        // mais longe que o limite comum.
+        float stumbleShare = 0.0f;
+        if (StumbleDetection && m_brakeGait <= 0.0f) {
+            stumbleShare = std::clamp(StumblePlacement * m_tripRecovery, 0.0f, 1.0f);
+            captureShare = std::max(captureShare, stumbleShare);
+        }
+        if (captureShare > 0.0f) {
+            // Pelo ponto de captura inteiro (posicao do centro de massa mais
+            // velocidade/omega) contra o da referencia da passada: com pouca
+            // ajuda a capsula acompanha o corpo e so a diferenca de
+            // velocidade sumia - o corpo mergulhava para a frente com o ponto
+            // de captura 0,5 m a frente e o pe pousava embaixo dele. (Fora da
+            // freada: ela tem o proprio pouso, e os dois brigavam.)
+            const Vec3 com = m_estimator.state().centerOfMassWorld;
+            const Vec3 comVelocity = m_filteredCenterOfMassVelocity;
+            const Vec3 capture { com.x + comVelocity.x / omega, com.y + comVelocity.y / omega, 0.0f };
+            const Vec3 referenceCapture { navigationRoot.x + planarVelocity.x / omega,
+                navigationRoot.y + planarVelocity.y / omega, 0.0f };
+            // Para tras (o corpo mais lento que a passada) so uma parte: o pe
+            // puxado para baixo do corpo nao levava a perna a frente e o corpo
+            // nao acelerava (quanto mais puxava, mais lento: 1,0 -> 1,6 m/s,
+            // 0,5 -> 2,0 a 5%); de lado ao corpo, no strafe, girava a pelve.
+            // Para a frente (mais rapido que a passada, caindo para a frente)
+            // e atravessado, inteiro.
+            Vec3 shift = (capture - referenceCapture) * CapturePlacementGain;
+            const float planarSpeed = std::hypot(planarVelocity.x, planarVelocity.y);
+            if (planarSpeed > 0.3f && m_gaitDirection == CharacterGaitDirection3D::Forward) {
+                const Vec3 travel { planarVelocity.x / planarSpeed, planarVelocity.y / planarSpeed, 0.0f };
+                float along = dot(shift, travel);
+                // v2: so o atraso alem do da coleira puxa o pe. Com pouca ajuda
+                // a capsula anda de proposito ~1 m/s e ~16 cm a frente do corpo
+                // (physicalNavigationLead3D), e o ponto de captura lia isso como
+                // corpo atrasado: o pe ia os 30 cm inteiros para tras o tempo
+                // todo e as pernas corriam atras do corpo (o usuario viu a 0%).
+                if (along < 0.0f && input.physicalV2 && CaptureBackDeadZone > 0.0f) {
+                    const float kept = std::min(0.0f, along + CaptureBackDeadZone);
+                    shift -= travel * (along - kept);
+                    along = kept;
+                }
+                if (along < 0.0f) shift -= travel * (along * (1.0f - CapturePullBackShare));
+            }
+            wanted += (shift - wanted) * captureShare;
+            placementLimit += (CapturePlacementLimit - placementLimit) * captureShare;
+            placementLimit = std::max(placementLimit, StumblePlacementLimit * stumbleShare);
+        }
+        if (wanted.length() > placementLimit)
+            wanted = wanted * (placementLimit / wanted.length());
         m_balancePlacementShift += (wanted - m_balancePlacementShift)
             * (1.0f - std::exp(-deltaTime / 0.05f));
         balanceShift += m_balancePlacementShift;
@@ -4381,8 +7359,34 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
         }
         const Vec3 animatedWorld = targetRootPosition
             + targetRootOrientation.rotate(footLocal);
-        const Quaternion animatedOrientation =
+        Quaternion animatedOrientation =
             clipFootOrientation(foot.linkIndex);
+        // Na curva o pe pousa girado para dentro dela, o de dentro mais: ele
+        // ajuda a virar em vez de apontar reto. Pela necessidade real - a
+        // aceleracao centripeta que o corpo faz de fato -, nao pelo pedido:
+        // pela curva pedida o pe ja girava ~30 graus ao comecar a virar a
+        // camera, com o corpo ainda reto, e numa curva suave. Nas
+        // referencias: Sprint Turn, 4,1 m/s2, o de dentro ~27 graus alem da
+        // abertura da corrida reta; Running Right Turn, 3,2 m/s2, quase nada.
+        // Gira durante o balanco e fica assim no apoio (a trava do pouso
+        // guarda a orientacao).
+        {
+            const bool inner = (m_bodyCurveAcceleration > 0.0f) == (side == 0);
+            const float need = smoothStep((std::abs(m_bodyCurveAcceleration) - CurveFootYawStart)
+                / CurveFootYawSpan);
+            const float footLead = std::copysign(CurveFootYawMaximum * need
+                    * (inner ? 1.0f : CurveFootYawOuterShare), m_bodyCurveAcceleration)
+                * smoothStep((speed - 1.5f) / 1.5f);
+            // Freando ou parado nao ha curva: o giro sai (preso num pe, ele
+            // ligava o giro da coxa nos passos de freada).
+            if (!gaitMoving || m_brakeGaitActive || curveIntent < 0.5f)
+                foot.curveYaw *= std::exp(-CurveFootYawRate * deltaTime);
+            else if (!foot.planted)
+                foot.curveYaw += (footLead - foot.curveYaw) * (1.0f - std::exp(-CurveFootYawRate * deltaTime));
+            if (std::abs(foot.curveYaw) > 1e-4f)
+                animatedOrientation = (Quaternion::fromAxisAngle({ 0.0f, 0.0f, 1.0f }, foot.curveYaw)
+                    * animatedOrientation).normalized();
+        }
         goal.animatedPosition = animatedWorld;
         goal.animatedOrientation = animatedOrientation;
         const Vec3 animatedForward = forwardOf(foot, animatedOrientation);
@@ -4416,12 +7420,36 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
             // A velocidade do pe animado escala com o ritmo (a mesma passada em
             // menos tempo); o portao tambem, para a trava valer em toda a faixa.
             const float velocityGateScale = std::max(1.0f, playbackRate);
+            // Passada pelo contato: o pe que o clipe ja poe no apoio e tocou o
+            // chao de verdade trava ali, mesmo com o pe animado andando - com o
+            // ciclo parado esperando o toque, ele anda com o corpo, e pelo
+            // portao de velocidade o pe nunca travava (sprint: nenhum apoio).
+            // (TEMPTUNE TouchPlantInCurves: tambem fora da corrida estabelecida
+            // - na curva o pedido gira a frente do corpo e conta como troca de
+            // passada; o pe apoiado sem trava seguia o balanco e o quadril
+            // estendia de -79 a +27 graus com o pe no chao, chutando o corpo
+            // para cima - os saltinhos da curva. So nao na freada.)
+            const bool touchedInStance = ContactPhase && input.forceDrivenRoot && gaitMoving
+                && (m_contactSteady || (TouchPlantInCurves && m_brakeGait <= 0.0f && !m_brakeStepping))
+                && side < physical.feet.size()
+                && (physical.feet[side].touching || physical.feet[side].supporting);
             const bool stanceCandidate = authoredStance
                 && clearance < 0.105f && clearance > -0.065f
-                && std::hypot(animatedVelocity.x, animatedVelocity.y)
+                && ((std::hypot(animatedVelocity.x, animatedVelocity.y)
                     < 0.72f * velocityGateScale
-                && std::abs(animatedVelocity.z) < 1.1f * velocityGateScale;
+                && std::abs(animatedVelocity.z) < 1.1f * velocityGateScale) || touchedInStance);
             foot.replantDelay = std::max(0.0f, foot.replantDelay - deltaTime);
+            // O primeiro toque do pe fisico neste balanco (descendo, perto do
+            // fim dele).
+            if (!foot.planted && input.forceDrivenRoot && side < physical.feet.size()) {
+                const FootSupportEstimate3D& touch = physical.feet[side];
+                if (!(touch.touching || touch.supporting)) {
+                    if (clearance > 0.03f) foot.firstTouchValid = false;
+                } else if (!foot.firstTouchValid && LockAtFirstTouch) {
+                    foot.firstTouchValid = true;
+                    foot.firstTouchWorld = state.links[foot.linkIndex].position;
+                }
+            }
             if (!foot.planted && stanceCandidate && foot.replantDelay <= 0.0f) {
                 // Encaixe de novo no toque: a previsao erra alguns centimetros
                 // quando a capsula muda de velocidade (cada degrau subido a
@@ -4440,6 +7468,39 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
                 foot.planted = true;
                 foot.lockedOrientationWorld = orientation;
                 foot.lockedPositionWorld = animatedWorld + foot.activeShift;
+                // Trava onde o pe fisico tocou (como o pouso do planejador):
+                // o balanco nao acompanha o recuo do pe no fim do balanco e o
+                // pe tocava ate 16 cm a frente da pose - travado na pose, a
+                // perna arrastava o corpo ate a diferenca (com a sola que
+                // agarra, empurrando-o para cima: o "saltinho"). Ainda no ar,
+                // a trava espera o toque um instante.
+                foot.lockFollowTouch = 0.0f;
+                if (LockAtTouch && input.forceDrivenRoot && side < physical.feet.size()
+                    && (!LockTouchOnlyInChange || m_gaitChange > 0.0f)) {
+                    const FootSupportEstimate3D& touch = physical.feet[side];
+                    if (touch.touching || touch.supporting) {
+                        // (So no mesmo nivel: tocando a quina de outro degrau
+                        // vale o encaixe de cima.)
+                        const Vec3 at = foot.firstTouchValid ? foot.firstTouchWorld
+                            : state.links[foot.linkIndex].position;
+                        const GroundSample there = groundUnder(side, at, animatedForward);
+                        if (there.valid && std::abs(there.height - ground.height) < 0.03f
+                            && std::hypot(at.x - foot.lockedPositionWorld.x, at.y - foot.lockedPositionWorld.y) < 0.30f) {
+                            // A pose fica ate LockTouchPull do toque: a perna
+                            // ainda "puxa o chao" (o pe que pousa indo para a
+                            // frente nao escorrega - no sprint, 2 cm por apoio
+                            // contra 12-16 travando no toque), sem a diferenca
+                            // inteira que virava vara.
+                            const Vec3 pull = clampMagnitude(Vec3 { foot.lockedPositionWorld.x - at.x,
+                                foot.lockedPositionWorld.y - at.y, 0.0f }, LockTouchPull);
+                            foot.lockedPositionWorld.x = at.x + pull.x;
+                            foot.lockedPositionWorld.y = at.y + pull.y;
+                        }
+                    } else {
+                        foot.lockFollowTouch = LockTouchWaitSeconds;
+                    }
+                }
+                foot.firstTouchValid = false;
                 foot.activeShift = {};
                 foot.fitValid = false;
                 // O proximo balanco sai daqui (gravado ao soltar a trava).
@@ -4451,6 +7512,24 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
                 foot.plantedGoalPosition = foot.lockedPositionWorld;
                 foot.plantedGoalOrientation = orientation;
             } else if (foot.planted) {
+                if (foot.lockFollowTouch > 0.0f) {
+                    foot.lockFollowTouch = std::max(0.0f, foot.lockFollowTouch - deltaTime);
+                    const FootSupportEstimate3D& touch = physical.feet[side];
+                    if (touch.touching || touch.supporting) {
+                        const Vec3 at = state.links[foot.linkIndex].position;
+                        const GroundSample there = groundUnder(side, at, animatedForward);
+                        if (there.valid && std::abs(there.height - foot.groundHeight) < 0.03f
+                            && std::hypot(at.x - foot.lockedPositionWorld.x, at.y - foot.lockedPositionWorld.y) < 0.30f) {
+                            const Vec3 pull = clampMagnitude(Vec3 { foot.lockedPositionWorld.x - at.x,
+                                foot.lockedPositionWorld.y - at.y, 0.0f }, LockTouchPull);
+                            foot.lockedPositionWorld.x = at.x + pull.x;
+                            foot.lockedPositionWorld.y = at.y + pull.y;
+                            foot.plantedGoalPosition.x = foot.lockedPositionWorld.x;
+                            foot.plantedGoalPosition.y = foot.lockedPositionWorld.y;
+                        }
+                        foot.lockFollowTouch = 0.0f;
+                    }
+                }
                 const float horizontalDrift = std::hypot(
                     animatedWorld.x - foot.lockedPositionWorld.x,
                     animatedWorld.y - foot.lockedPositionWorld.y);
@@ -4462,9 +7541,68 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
                 // 12 m/s no sprint de lado, com o corpo a 3,7).
                 // (Parado, quem decide os pes e o planejador de passos - a
                 // passada nao espera mais a marca de recuperacao dele.)
-                const bool releaseByGait = contactWeights[side] < 0.55f
-                    || outOfReach || (!stanceCandidate && clearance > 0.055f)
+                // Arrancando, o pe que ainda carrega o corpo empurra ate
+                // descarregar: o ciclo comeca com o de tras a 42% do balanco, e
+                // ele saia arrastado no chao.
+                const bool startHold = StartLoadHoldSeconds > 0.0f && m_startClipActive
+                    && m_startClipSeconds < StartLoadHoldSeconds && input.forceDrivenRoot
+                    && side < physical.feet.size() && physical.feet[side].supporting
+                    && physical.feet[side].loadNewtons > StartLoadHoldShare * profile.totalMassKg * 9.81f
+                    && !outOfReach;
+                // Correndo, o pe que o clipe solta mas que ainda carrega o corpo
+                // (sem o outro no chao) empurra mais um pouco: soltando na hora,
+                // a ponta dele era arrastada no chao (na curva fechada, com o
+                // corpo baixo, 1-3 m/s por 0,05-0,1 s - a "bicuda" na saida).
+                const std::size_t other = 1 - side;
+                const bool liftHold = LiftAfterUnloadSeconds > 0.0f && input.forceDrivenRoot && gaitMoving
+                    && contactWeights[side] < 0.55f && !outOfReach && side < physical.feet.size()
+                    && physical.feet[side].supporting
+                    && physical.feet[side].loadNewtons > LiftAfterUnloadShare * profile.totalMassKg * 9.81f
+                    && !physical.feet[other].supporting
+                    && foot.liftHoldSeconds < LiftAfterUnloadSeconds;
+                foot.liftHoldSeconds = liftHold ? foot.liftHoldSeconds + deltaTime
+                    : contactWeights[side] >= 0.55f ? 0.0f : foot.liftHoldSeconds;
+                // TEMPTUNE: correndo, o pe que pousou atrasado (ou ainda nem
+                // encostou) fica no apoio ate cumprir um apoio minimo - o
+                // clipe solta pelo relogio, e o pe que mal tocava (ou nem
+                // tocava) ja era levado para o passo seguinte. So este pe
+                // espera: o ciclo segue, a outra perna balanca normal (parar
+                // o ciclo congelava a perna de tras baixa enquanto o corpo
+                // andava ~0,5 m, e ela pegava a barra do tropeco).
+                // Folga pela ponta da sola (o ponto mais baixo do pe animado):
+                // rolando sobre a ponta no fim do apoio, o centro do pe sobe
+                // varios cm com a ponta ainda no chao - pelo centro, o pe era
+                // solto no meio do empurrao.
+                const float soleClearance = animatedWorld.z
+                    - lockHeight(foot, baseGround, animatedOrientation);
+                const bool wouldRelease = contactWeights[side] < 0.55f || outOfReach
+                    || (!stanceCandidate && (ReleaseBySoleClearance ? soleClearance : clearance) > 0.055f)
                     || horizontalDrift > 0.48f;
+                const bool touchHold = TouchHoldSeconds > 0.0f && input.forceDrivenRoot && gaitMoving
+                    && wouldRelease && !outOfReach && side < physical.feet.size()
+                    && physical.feet[side].supportingSeconds < TouchMinStanceSeconds
+                    && foot.touchHoldSeconds < TouchHoldSeconds
+                    && m_tripRecovery <= 0.001f && !m_stumbleStepping
+                    && (!TouchHoldSteadyOnly || (m_brakeGait <= 0.0f && !m_brakeStepping && !m_startClipActive
+                        && m_gaitChange <= 0.0f && m_terrainSlope < 0.05f
+                        && std::hypot(input.intent.requestedVelocityWorld.x,
+                            input.intent.requestedVelocityWorld.y) > 1.0f));
+                foot.touchHoldSeconds = touchHold ? foot.touchHoldSeconds + deltaTime
+                    : !wouldRelease ? 0.0f : TouchHoldSeconds;
+                // Devolvido apoiado pelo planejador: espera o clipe chegar ao
+                // apoio dele (o ciclo de corrida tem voo entre a saida de um pe
+                // e o pouso do outro).
+                foot.handbackHoldSeconds = contactWeights[side] >= 0.55f ? 0.0f
+                    : std::max(0.0f, foot.handbackHoldSeconds - deltaTime);
+                const bool handbackHold = foot.handbackHoldSeconds > 0.0f && side < physical.feet.size()
+                    && physical.feet[side].supporting && !outOfReach;
+                const bool releaseByGait = !startHold && !liftHold && !handbackHold && !touchHold && wouldRelease;
+                if (std::getenv("XHANDDBG") && (releaseByGait || !input.grounded) && (foot.handbackHoldSeconds > 0.0f
+                        || (m_startClipActive && m_startClipSeconds < 0.3f)))
+                    std::printf("HANDBACK release side %zu hold %.2f start %.2f contact %.2f sup %d load %.0f out %d drift %.2f cand %d clr %.3f grounded %d starthold %d\n", side,
+                        foot.handbackHoldSeconds, m_startClipSeconds, contactWeights[side], physical.feet[side].supporting ? 1 : 0,
+                        physical.feet[side].loadNewtons, outOfReach ? 1 : 0,
+                        horizontalDrift, stanceCandidate ? 1 : 0, clearance, input.grounded ? 1 : 0, startHold ? 1 : 0);
                 if (releaseByGait || !input.grounded) {
                     foot.planted = false;
                     // Solto porque a perna nao alcanca: nao trava de novo no tick
@@ -4539,6 +7677,7 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
             goal.pelvisGround = foot.groundHeight;
             goal.reach = 1.0f;
             m_telemetry.footPlanted[side] = true;
+            m_telemetry.footSecondsToTouchdown[side] = -1.0f;
             continue;
         }
 
@@ -4559,7 +7698,7 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
             float best = std::numeric_limits<float>::infinity();
             for (const FootTouchdown& candidate : events->touchdowns[side]) {
                 const float ahead = std::fmod(candidate.touchdown
-                    - clipSampleTime + duration * 2.0f, duration);
+                    - legSampleTime[side] + duration * 2.0f, duration);
                 if (ahead < best) {
                     best = ahead;
                     next = &candidate;
@@ -4573,7 +7712,7 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
             for (const FootTouchdown& candidate : events->touchdowns[side]) {
                 const float swing = std::fmod(candidate.touchdown
                     - candidate.liftoff + duration * 2.0f, duration);
-                const float since = std::fmod(clipSampleTime
+                const float since = std::fmod(legSampleTime[side]
                     - candidate.touchdown + duration * 2.0f, duration);
                 if (since < 0.5f * (duration - swing)) {
                     next = &candidate;
@@ -4587,7 +7726,7 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
             } else if (next != nullptr) {
                 const float swing = std::fmod(next->touchdown - next->liftoff
                     + duration * 2.0f, duration);
-                const float elapsed = std::fmod(clipSampleTime - next->liftoff
+                const float elapsed = std::fmod(legSampleTime[side] - next->liftoff
                     + duration * 2.0f, duration);
                 progress = swing > 0.001f && elapsed <= swing
                     ? std::clamp(elapsed / swing, 0.0f, 1.0f) : 0.0f;
@@ -4603,6 +7742,18 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
                 Vec3 { std::cos(clipTravel), std::sin(clipTravel), 0.0f });
             footInClip += Vec3 { std::cos(clipTravel), std::sin(clipTravel),
                 0.0f } * ((strideScale - 1.0f) * along);
+            // TEMPTUNE CurveNarrow: na curva os dois pes pousam na mesma linha
+            // para fora do corpo (o apoio passa pelo centro de massa
+            // inclinado). Com a largura de passo do clipe o pe de fora caia
+            // 0,4-0,6 m para fora e o de dentro quase embaixo do corpo: a
+            // perna de dentro, vertical, mandava a forca toda para cima - o
+            // galope na perna de dentro (70% dos apoios), os saltinhos.
+            if (CurveNarrow > 0.0f && CurveLeanMaximum > 0.0f) {
+                const Vec3 across { -std::sin(clipTravel), std::cos(clipTravel), 0.0f };
+                const float lateral = dot(footInClip, across);
+                const float share = std::min(1.0f, CurveNarrow * std::abs(m_bodyCurveLean) / CurveLeanMaximum);
+                footInClip -= across * (lateral * share);
+            }
             Vec3 landingWorld = navigationRoot
                 + planarVelocity * secondsToTouchdown
                 + heading.rotate(footInClip) + balanceShift;
@@ -4615,6 +7766,32 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
                 * signedCurveAcceleration * secondsToTouchdown
                 * secondsToTouchdown, -0.22f, 0.22f);
             landingWorld += heading.rotate({0.0f, arcOffset, 0.0f});
+            // Inclinado na curva, a perna gira em volta do pe: ele pousa
+            // para fora do quadril h sen(theta) e o quadril desce h (1 -
+            // cos(theta)) (bloco da altura) - a forca do chao passa pelo
+            // corpo inclinado.
+            landingWorld += heading.rotate({ 0.0f,
+                -CurveLeanHeight * std::sin(CurveFootShare * m_bodyCurveLean), 0.0f });
+            // Chute: o pouso natural (telemetria, para o manejo planejar) e o
+            // pe de apoio indo para o lado da bola, ate um limite.
+            m_telemetry.footLandingWorld[side] = landingWorld;
+            m_telemetry.footSecondsToTouchdown[side] = secondsToTouchdown;
+            {
+                Vec3 wanted;
+                if (input.ballPlant.active && input.ballPlant.side == static_cast<int>(side)) {
+                    const Vec3 ahead = heading.rotate({ 1.0f, 0.0f, 0.0f });
+                    const Vec3 aside = heading.rotate({ 0.0f, 1.0f, 0.0f });
+                    const Vec3 offset { input.ballPlant.position.x - landingWorld.x,
+                        input.ballPlant.position.y - landingWorld.y, 0.0f };
+                    wanted = (ahead * std::clamp(dot(offset, ahead), -0.35f, 0.30f)
+                        + aside * std::clamp(dot(offset, aside), -0.25f, 0.25f))
+                        * std::clamp(input.ballPlant.weight, 0.0f, 1.0f);
+                }
+                Vec3& plantShift = m_ballPlantShift[side];
+                const float tau = wanted.lengthSquared() > 1e-6f ? 0.05f : 0.15f;
+                plantShift += (wanted - plantShift) * (1.0f - std::exp(-deltaTime / tau));
+                landingWorld += plantShift;
+            }
             const Quaternion touchdownTurn = Quaternion::fromAxisAngle(
                 {0.0f, 0.0f, 1.0f}, m_turningRate * secondsToTouchdown);
             Vec3 landingForward = touchdownTurn.rotate(
@@ -4717,6 +7894,60 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
         // O deslocamento do equilibrio entra ao longo do passo (sem salto na
         // saida); a trava do pouso o inclui (activeShift), o pe nao escorrega.
         if (next != nullptr) shift += balanceShift * smoothStep(progress / 0.6f);
+        if (next != nullptr) shift += m_ballPlantShift[side];
+        // TEMPTUNE: passada pelo contato - o pe que espera o toque desce no
+        // lugar: desliza para tras em relacao ao corpo na velocidade dele (no
+        // chao, quase parado), como o corredor puxa o pe no fim do balanco.
+        // Parado em relacao a pelve (o ciclo esperando), ele chegava ao chao a
+        // ~7 m/s para a frente e cravava como vara: a velocidade para a frente
+        // virava salto (sprint: de -0,3 a +1,05 m/s para cima em 25 ms, perdendo
+        // 1 m/s para a frente).
+        // TEMPTUNE (ContactLandOffset > 0, no lugar do anterior): o pe que
+        // espera vai para uma distancia fixa a frente do centro de massa e a
+        // mantem ate tocar. Ancorado no ponto de pouso planejado, quanto mais o
+        // voo durava mais o corpo passava por cima dele: depois de um voo longo
+        // o pe tocava embaixo do corpo (12 cm), depois de um curto, longe (33
+        // cm) - e cravava e lancava o corpo, alongando o voo seguinte: o sprint
+        // mancava (um passo alto, um baixo).
+        {
+            Vec3& paw = m_waitPawShift[side];
+            if (ContactLandOffset > 0.0f && m_waitingLeg == static_cast<int>(side) && !foot.planted) {
+                const Vec3 body { physical.centerOfMassVelocityWorld.x, physical.centerOfMassVelocityWorld.y, 0.0f };
+                const float bodySpeed = body.length();
+                if (bodySpeed > 0.5f) {
+                    const Vec3 direction = body * (1.0f / bodySpeed);
+                    const Vec3 target = animatedWorld + shift + paw;
+                    const float ahead = dot(Vec3 { target.x - physical.centerOfMassWorld.x,
+                        target.y - physical.centerOfMassWorld.y, 0.0f }, direction);
+                    paw += direction * ((ContactLandOffset - ahead) * (1.0f - std::exp(-deltaTime / 0.03f)));
+                }
+            } else if (ContactPaw && m_waitingLeg == static_cast<int>(side) && !foot.planted) {
+                const Vec3 body { physical.centerOfMassVelocityWorld.x, physical.centerOfMassVelocityWorld.y, 0.0f };
+                paw -= body * deltaTime;
+                if (paw.length() > ContactPawMaximum) paw = paw * (ContactPawMaximum / paw.length());
+            } else if (foot.planted) {
+                paw = {};
+            } else {
+                paw = paw * std::exp(-deltaTime / 0.08f);
+            }
+            shift += paw;
+        }
+        // Sem cruzar as pernas (com pouca ajuda, correndo para a frente ou
+        // para tras): o pe em balanco nao passa para o outro lado do pe de
+        // apoio. O ponto de captura empurrava o pe esquerdo para a direita do
+        // direito (0,4 m), as pernas cruzavam e ele caia na arrancada. (No
+        // strafe a perna de tras cruza de proposito.)
+        if (next != nullptr && lowAssist > 0.0f && CrossGuardWidth > 0.0f
+            && (m_gaitDirection == CharacterGaitDirection3D::Forward
+                || m_gaitDirection == CharacterGaitDirection3D::Backward)
+            && m_feet[1 - side].valid && m_feet[1 - side].linkIndex < state.links.size()) {
+            const Vec3 left = heading.rotate({ 0.0f, 1.0f, 0.0f });
+            const Vec3 other = state.links[m_feet[1 - side].linkIndex].position;
+            const float outward = side == 0 ? 1.0f : -1.0f;
+            const Vec3 target = animatedWorld + shift;
+            const float width = outward * dot(Vec3 { target.x - other.x, target.y - other.y, 0.0f }, left);
+            if (width < CrossGuardWidth) shift += left * (outward * (CrossGuardWidth - width) * lowAssist);
+        }
         foot.activeShift = shift;
         Vec3 swingTarget = animatedWorld + shift;
         // Chao embaixo do pe agora (os degraus do caminho).
@@ -4809,13 +8040,20 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
         // adicional e pequena e progressiva; evita que o atraso fisico do
         // tornozelo transforme a passada em uma bicuda no piso. Num tropeco
         // cedo, a estrategia de elevacao ergue o mesmo pe e continua o passo.
+        // No sprint em curva tambem: o corpo inclinado e mais baixo, e a ponta
+        // do pe de dentro raspava o chao saindo do apoio (~1,6 vez por curva
+        // fechada).
+        const float sprintCurveClear = SprintCurveClearStart > 0.0f && input.sprinting
+            ? smoothStep((std::abs(m_bodyCurveAcceleration) - SprintCurveClearStart) / SprintCurveClearSpan) : 0.0f;
         const bool forwardJog = input.forceDrivenRoot && next != nullptr
             && onGround && m_gaitDirection == CharacterGaitDirection3D::Forward
-            && !input.sprinting;
+            && (!input.sprinting || sprintCurveClear > 0.0f);
         if (forwardJog) {
             const float p = std::clamp(progress, 0.0f, 1.0f);
-            const float arch = smoothStep(p / 0.24f)
-                * (1.0f - smoothStep((p - 0.66f) / 0.27f));
+            const float curveShare = input.sprinting ? sprintCurveClear : 1.0f;
+            const float early = std::abs(m_bodyCurveAcceleration) > 2.0f ? CurveClearEarly : 0.24f;
+            const float arch = smoothStep(p / early)
+                * (1.0f - smoothStep((p - 0.66f) / 0.27f)) * curveShare;
             const float clearance = swingTarget.z - (swingGround + flatHeight);
             float wanted = 0.18f * arch;
             if (m_tripElevating && m_tripFoot == static_cast<int>(side))
@@ -4827,6 +8065,26 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
             const Vec3 lateral = swingOrientation.rotate({ 0.0f, 1.0f, 0.0f });
             swingOrientation = (Quaternion::fromAxisAngle(lateral,
                 -0.12f * arch) * swingOrientation).normalized();
+        }
+        // Com pouca ajuda o pe fisico fica para tras do alvo (a perna nao
+        // acompanha o corpo que vem rapido, e na freada o alvo salta para a
+        // frente): pelo tempo do clipe ele ja descia e tocava o chao 0,3-0,5 m
+        // antes do pouso, atras do corpo - e o corpo tropecava nele. Enquanto
+        // falta caminho, o alvo fica no alto: o pe "tenta" chegar e so desce
+        // perto de onde vai pousar.
+        if (ReachLiftPerMeter > 0.0f && input.forceDrivenRoot && next != nullptr && onGround
+            && foot.linkIndex < state.links.size() && m_gaitDirection == CharacterGaitDirection3D::Forward) {
+            const float lowAssistReach = smoothStep((0.5f - std::clamp(input.walkingAssist, 0.0f, 1.0f)) / 0.4f);
+            const Vec3 physicalFoot = state.links[foot.linkIndex].position;
+            const Vec3 direction = foot.swingDirection.lengthSquared() > 0.5f
+                ? foot.swingDirection : animatedForward;
+            const float behind = dot(Vec3 { swingTarget.x - physicalFoot.x, swingTarget.y - physicalFoot.y, 0.0f },
+                Vec3 { direction.x, direction.y, 0.0f });
+            const float wanted = std::min(ReachLiftMaximum,
+                ReachLiftPerMeter * std::max(0.0f, behind - ReachLiftStart)) * lowAssistReach
+                * (ReachLiftBrakeOnly ? m_brakeGait : 1.0f);
+            const float clearance = swingTarget.z - (swingGround + flatHeight);
+            if (wanted > 0.0f && clearance < wanted) swingTarget.z += wanted - clearance;
         }
         // Nenhum pe do alvo abaixo do chao que esta passando por baixo dele.
         const float lowestAllowed = lockHeight(foot, floorNow,
@@ -4850,6 +8108,15 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
         m_telemetry.footGoalPitch[side] = -std::asin(std::clamp(
             swingOrientation.rotate({ 1.0f, 0.0f, 0.0f }).z, -1.0f, 1.0f)) * 57.2958f;
         goal.pelvisGround = pelvisGround;
+        // TEMPTUNE: correndo no plano (o pouso na altura de onde o pe saiu),
+        // o pe no ar baixa a pelve no maximo SwingReachFlatCap. Na curva o
+        // pouso mira longe para fora, e a pelve alvo descia ate 12 cm no voo
+        // para a perna alcanca-lo; no apoio seguinte a perna levava o corpo
+        // de volta para cima e ele decolava (saltinhos da curva). A regra e
+        // para alcancar degrau mais baixo - em degrau ela continua inteira.
+        if (SwingReachFlatCap >= 0.0f && next != nullptr && gaitMoving
+            && std::abs(swingGround - baseGround) < 0.02f && std::abs(pelvisGround - baseGround) < 0.02f)
+            goal.dropCap = SwingReachFlatCap;
         goal.reach = !onGround ? 0.0f
             : next != nullptr ? smoothStep((progress - 0.4f) / 0.5f)
             : 1.0f;
@@ -4859,6 +8126,19 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
     // feeding the support shift back into it would integrate a displacement.
     if (!input.controlled) standingShift.x = standingShift.y = 0.0f;
     targetRootPosition += standingShift;
+    // Toque parado na bola com passo de apoio: a pelve vai junto (absoluto,
+    // com peso, suavizado). A ancora da capsula nao inclui isto: a capsula
+    // segue o corpo ate la.
+    {
+        Vec3 wanted {};
+        if (input.controlled && input.ballBody.active && input.ballBody.weight > 0.0f) {
+            const float w = std::clamp(input.ballBody.weight, 0.0f, 1.0f);
+            wanted = { (input.ballBody.position.x - targetRootPosition.x) * w,
+                (input.ballBody.position.y - targetRootPosition.y) * w, 0.0f };
+        }
+        m_ballBodyDelta += (wanted - m_ballBodyDelta) * (1.0f - std::exp(-deltaTime / 0.10f));
+        targetRootPosition += m_ballBodyDelta;
+    }
 
     // Pelve pelo alcance das pernas: desce o que for preciso para o quadril
     // alcancar cada pe apoiado (ou pousando) com a perna a 94% de esticada -
@@ -4898,7 +8178,7 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
         const Vec3 anchorInFoot = footLink.modelOrientation.conjugate()
             .rotate(footLink.inboundJoint.anchorModelPosition
                 - footLink.modelPosition);
-        const float comfortable = legLength * 0.94f;
+        const float comfortable = legLength * ReachComfort;
         const auto needAt = [&](float horizontal, float vertical) {
             return horizontal >= comfortable ? vertical
                 : vertical - std::sqrt(comfortable * comfortable
@@ -4912,8 +8192,8 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
             + goal.orientation.rotate(anchorInFoot));
         const float authored = needFor(goal.animatedPosition
             + goal.animatedOrientation.rotate(anchorInFoot));
-        drop = std::max(drop, std::max(0.0f, need - std::max(0.0f, authored))
-            * goal.reach);
+        drop = std::max(drop, std::min(goal.dropCap, std::max(0.0f, need - std::max(0.0f, authored))
+            * goal.reach));
         if (goal.anticipate > 0.0f) {
             const Vec3 hipThen = hip + goal.hipTravel;
             const Vec3 ankle = goal.landingPosition
@@ -4922,8 +8202,8 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
                 hipThen.y - ankle.y), hipThen.z - ankle.z);
             const float authoredThen = needAt(goal.authoredLandingHorizontal,
                 goal.authoredLandingVertical);
-            drop = std::max(drop, std::max(0.0f,
-                needThen - std::max(0.0f, authoredThen)) * goal.anticipate);
+            drop = std::max(drop, std::min(goal.dropCap, std::max(0.0f,
+                needThen - std::max(0.0f, authoredThen)) * goal.anticipate * ReachAnticipateScale));
         }
         const float above = goal.pelvisGround - baseGround;
         if (goal.reach < 0.999f || above <= 0.0f) bothAbove = false;
@@ -4933,12 +8213,13 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
     if (bothAbove && std::isfinite(raise)) pelvisTarget += raise;
     if (!onGround || !footworkEnabled) pelvisTarget = 0.0f;
     pelvisTarget = std::clamp(pelvisTarget, -0.35f, 0.25f);
-    constexpr float PelvisOmega = 18.0f;
+    const float PelvisOmega = ReachPelvisOmega;
     m_pelvisOffsetVelocity += (PelvisOmega * PelvisOmega
             * (pelvisTarget - m_pelvisOffset)
         - 2.0f * PelvisOmega * m_pelvisOffsetVelocity) * deltaTime;
     m_pelvisOffset += m_pelvisOffsetVelocity * deltaTime;
     targetRootPosition.z += m_pelvisOffset;
+    m_telemetry.pelvisDropReachMeters = -m_pelvisOffset;
     // Freando, as pernas de apoio cedem ou seguram, nunca estendem: a pelve
     // de referencia nao fica acima da medida. Com o pe de freada a frente a
     // pelve desce para alcanca-lo; quando o corpo passava por cima dele a
@@ -4969,13 +8250,57 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
     // "procurando o chao" ate o corpo cair. A troca e gradual (a perna nao
     // salta quando o passo comeca nem quando pousa).
     const PhysicsBodyState3D& measuredPelvis = state.links.front();
+    {
+        m_sinceGaitFlip = std::min(10.0f, m_sinceGaitFlip + deltaTime);
+        const Vec3 requested { input.intent.requestedVelocityWorld.x, input.intent.requestedVelocityWorld.y, 0.0f };
+        const Vec3 body { m_filteredCenterOfMassVelocity.x, m_filteredCenterOfMassVelocity.y, 0.0f };
+        const bool changing = (requested - body).length() > GaitChangeVelocityError
+            || m_brakeGait > 0.0f || m_sinceGaitFlip < 0.4f;
+        m_gaitChange = changing ? 1.0f : std::max(0.0f, m_gaitChange - deltaTime / 0.3f);
+    }
     for (std::size_t side = 0; side < m_feet.size(); ++side) {
         const FootPhase3D phase = m_footwork.plan().feet[side].phase;
-        const bool swinging = input.forceDrivenRoot && footworkEnabled && m_footwork.owns(side)
-            && (phase == FootPhase3D::Swing || phase == FootPhase3D::TouchdownSearch);
+        // O balanco da passada tambem (TEMPTUNE): pela pelve de referencia o
+        // pe tocava em media 9 cm (trote) e 15 cm (sprint) a frente do alvo -
+        // a pelve fisica inclinada alguns graus diferente da de referencia
+        // leva o pe junto - e a trava, no alvo, ficava atras do pe real.
+        const bool gaitSwing = GaitSwingMeasuredPelvis && input.forceDrivenRoot && footworkEnabled
+            && !m_footwork.owns(side) && gaitMoving && m_feet[side].valid && !m_feet[side].planted
+            && desiredState != CharacterLocomotionState3D::Airborne;
+        const bool swinging = (input.forceDrivenRoot && footworkEnabled && m_footwork.owns(side)
+            && (phase == FootPhase3D::Swing || phase == FootPhase3D::TouchdownSearch)) || gaitSwing;
         float& weight = m_swingFromMeasuredPelvis[side];
-        weight = swinging ? std::min(1.0f, weight + deltaTime / 0.06f)
-                          : std::max(0.0f, weight - deltaTime / 0.15f);
+        // (O da passada so com a ajuda andando alta: com pouca, a referencia
+        // nao acompanha o corpo e o pe ia ao alvo dela, fora de baixo do
+        // corpo - a 5%, 0 -> 9 quedas em 32 andando.)
+        // (E so nas trocas de movimento: correndo estavel, pela altura medida a
+        // perna pousava esticada com o corpo acima da referencia e o pe sem
+        // carga escorregava - 2 -> 10-12 cm por apoio no sprint.)
+        // (Decidido na saida do pe e mantido no balanco inteiro: ligando no
+        // meio dele, a base do IK trocava com o pe no ar e o corte de 90
+        // graus em sprint caia 3 em 8.)
+        const bool gaitLegNow = !(input.forceDrivenRoot && footworkEnabled && m_footwork.owns(side));
+        if (gaitSwing && gaitLegNow && !m_gaitSwingLatched[side]) {
+            m_gaitSwingLatched[side] = true;
+            m_gaitSwingCeiling[side] = smoothStep((std::clamp(input.walkingAssist, 0.0f, 1.0f) - 0.5f) / 0.4f)
+                * (GaitSwingOnlyInChange ? m_gaitChange : 1.0f);
+        }
+        if (!gaitSwing) m_gaitSwingLatched[side] = false;
+        const float ceiling = gaitSwing && gaitLegNow
+            ? (GaitSwingLatch ? m_gaitSwingCeiling[side]
+                : smoothStep((std::clamp(input.walkingAssist, 0.0f, 1.0f) - 0.5f) / 0.4f)
+                    * (GaitSwingOnlyInChange ? m_gaitChange : 1.0f)) : 1.0f;
+        // (A perna da passada que acabou de pousar sai da pelve medida no
+        // ritmo GaitSwingRelease: em 0,15 s o apoio inteiro do sprint, ~0,1
+        // s, era a troca de base, e a perna re-mirada empurrava o pe para a
+        // frente - 12 cm de deslize por apoio.)
+        const bool gaitPlanted = !(input.forceDrivenRoot && footworkEnabled && m_footwork.owns(side))
+            && m_feet[side].valid && m_feet[side].planted;
+        weight = swinging ? std::min(ceiling, weight + deltaTime / 0.06f)
+            : gaitPlanted ? (GaitSwingReleaseSeconds <= 0.0f ? 0.0f
+                : GaitSwingReleaseSeconds >= 9.0f ? weight
+                : std::max(0.0f, weight - deltaTime / GaitSwingReleaseSeconds))
+            : std::max(0.0f, weight - deltaTime / 0.15f);
     }
     // E5 (passos pelo planejador, andando): a capsula so segue o corpo e
     // fica para tras dele - as pernas de apoio resolvidas pela pelve
@@ -5242,20 +8567,391 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
     }
     std::array<Vec3, 2> ikRootPosition { legRootPosition, legRootPosition };
     std::array<Quaternion, 2> ikRootOrientation { targetRootOrientation, targetRootOrientation };
+    // Preparo do pouso: descendo, a perna aponta para onde o corpo vai bater
+    // - na linha da velocidade (uma fracao do angulo dela com a vertical),
+    // com o joelho um pouco dobrado para a mola. Com o pe embaixo do quadril
+    // e o corpo ainda indo para a frente, ele girava sobre o pe e era jogado
+    // para a frente (o peito ate 52 graus no pulo em sprint); alinhada, a
+    // forca do chao passa pelo centro de massa. No referencial da pelve
+    // fisica: no ar e a orientacao dela que vale.
+    m_landingPrep = 0.0f;
+    if (LandingPrepEnabled && input.forceDrivenRoot && desiredState == CharacterLocomotionState3D::Airborne
+        && !state.links.empty()) {
+        const Vec3 velocity = m_filteredCenterOfMassVelocity;
+        const float horizontalSpeed = std::hypot(velocity.x, velocity.y);
+        // So perto do toque (~0,25 s antes): no ar, levar as pernas a frente
+        // gira o tronco para tras (o momento angular se conserva) - feito
+        // cedo, numa queda de 1 m ele girava ate cair de costas.
+        float soleHeight = std::numeric_limits<float>::infinity();
+        for (std::size_t side = 0; side < m_feet.size(); ++side) {
+            const PhysicsBodyState3D& footBody = state.links[m_feet[side].linkIndex];
+            const RagdollLinkDefinition3D& footLink = profile.links[m_feet[side].linkIndex];
+            const GroundSample ground = groundUnder(side, footBody.position,
+                footForwardWorld3D(footLink, footBody.orientation));
+            if (ground.valid) soleHeight = std::min(soleHeight, footBody.position.z - ground.height);
+        }
+        const float fall = std::max(0.0f, -velocity.z);
+        const float touchdown = std::isfinite(soleHeight)
+            ? (-fall + std::sqrt(fall * fall + 2.0f * 9.81f * std::max(0.0f, soleHeight))) / 9.81f : 0.0f;
+        const float prep = smoothStep((-velocity.z - 0.3f) / 1.2f)
+            * smoothStep((LandingLeadSeconds - touchdown) / 0.15f);
+        if (prep > 0.0f && horizontalSpeed > 0.3f) {
+            m_landingPrep = prep;
+            const Vec3 direction { velocity.x / horizontalSpeed, velocity.y / horizontalSpeed, 0.0f };
+            const float alpha = std::atan2(horizontalSpeed, std::max(0.05f, -velocity.z));
+            // TEMPTUNE LandRunLead: pousando para seguir correndo, so a perna
+            // mais baixa (a da frente da tesoura do pulo) vai ao chao, menos
+            // inclinada; a de tras fica atras, pronta para o passo seguinte.
+            // As duas a frente, na linha da velocidade, ele pousava sentado
+            // (coxas a -100 graus), freava e o tronco tombava para a frente.
+            const float runningOn = LandRunLead
+                ? smoothStep((horizontalSpeed - 2.5f) / 1.5f)
+                    * smoothStep(std::hypot(input.intent.requestedVelocityWorld.x,
+                        input.intent.requestedVelocityWorld.y) / 1.5f) : 0.0f;
+            const float beta = std::min(LandingAlign * alpha,
+                LandingMaxAngle + (LandRunMaxAngle - LandingMaxAngle) * runningOn);
+            int leadSide = -1;
+            if (runningOn > 0.5f) {
+                float lowest = std::numeric_limits<float>::infinity();
+                for (std::size_t side = 0; side < m_feet.size(); ++side) {
+                    const float z = state.links[m_feet[side].linkIndex].position.z;
+                    if (z < lowest) { lowest = z; leadSide = static_cast<int>(side); }
+                }
+            }
+            const Vec3 legWorld = direction * std::sin(beta) + Vec3 { 0.0f, 0.0f, -std::cos(beta) };
+            const Quaternion pelvisInverse = state.links.front().orientation.conjugate();
+            const RagdollLinkDefinition3D& pelvisLink = profile.links[0];
+            // A coluna na mesma linha: o tronco inclina para tras uma parte do
+            // angulo da perna (o centro de massa fica sobre a linha do pe ao
+            // longo da velocidade - a mola trabalha nela, sem girar o corpo).
+            // Pela inclinacao real da pelve: a coluna e relativa a ela.
+            if (LandingTrunkAlign > 0.0f) {
+                const Vec3 pelvisUp = state.links.front().orientation.rotate({ 0.0f, 0.0f, 1.0f });
+                const float pelvisAngle = std::atan2(dot(pelvisUp, direction), pelvisUp.z);
+                // (De lado menos: o quadril abre menos do que flexiona e a perna
+                // alinha menos - inclinado o mesmo, de lado ele caia de costas.)
+                const Vec3 pelvisForward = state.links.front().orientation.rotate({ 1.0f, 0.0f, 0.0f });
+                const float forwardness = std::abs(dot(Vec3 { pelvisForward.x, pelvisForward.y, 0.0f }.normalized(), direction));
+                const float wanted = -LandingTrunkAlign * beta
+                    * (LandingTrunkSide + (1.0f - LandingTrunkSide) * forwardness);
+                const float correction = std::clamp(wanted - pelvisAngle, -0.7f, 0.4f);
+                // Rotacao em torno do eixo a esquerda do rumo, levada para a
+                // pelve: arfagem (eixo 1 da coluna) e rolagem (eixo 2).
+                const Vec3 axisLocal = pelvisInverse.rotate({ -direction.y, direction.x, 0.0f });
+                const float pitch = correction * axisLocal.y;
+                const float roll = LandingRollSign * correction * axisLocal.x;
+                const float shares[3] = { 0.30f, 0.35f, 0.35f };
+                const char* spine[3] = { "Abdomen", "Chest", "UpperChest" };
+                for (std::size_t i = 0; i < 3; ++i) {
+                    for (std::size_t index = 1; index < profile.links.size(); ++index) {
+                        if (profile.links[index].id != spine[i]) continue;
+                        blendJointCoordinate(profile, m_coordinates, index, 1, pitch * shares[i], prep);
+                        blendJointCoordinate(profile, m_coordinates, index, 2, roll * shares[i], prep);
+                    }
+                }
+            }
+            for (std::size_t side = 0; side < m_feet.size(); ++side) {
+                if (!goals[side].active) continue;
+                if (leadSide >= 0 && static_cast<int>(side) != leadSide) continue;
+                const RagdollLinkDefinition3D& footLink = profile.links[m_feet[side].linkIndex];
+                const int shin = footLink.parentIndex;
+                const int thigh = shin > 0 ? profile.links[static_cast<std::size_t>(shin)].parentIndex : -1;
+                if (thigh <= 0) continue;
+                const Vec3 hipModel = profile.links[static_cast<std::size_t>(thigh)].inboundJoint.anchorModelPosition;
+                const Vec3 hipLocal = pelvisLink.modelOrientation.conjugate().rotate(hipModel - pelvisLink.modelPosition);
+                const float legLength = LandingLegShare * (hipModel - footLink.inboundJoint.anchorModelPosition).length();
+                const Vec3 wantedLocal = hipLocal + pelvisInverse.rotate(legWorld * legLength);
+                const Vec3 currentLocal = ikRootOrientation[side].conjugate().rotate(goals[side].position - ikRootPosition[side]);
+                goals[side].position = ikRootPosition[side] + ikRootOrientation[side].rotate(
+                    currentLocal + (wantedLocal - currentLocal) * prep);
+            }
+        }
+    }
+    // TEMPTUNE: altura do voo regulada passo a passo (Raibert). Correndo, o
+    // corpo e uma massa numa mola: sem regulagem, o empurrao de cada apoio
+    // dependia de quando o pe tocou no ciclo, e uns passos lancavam o dobro
+    // de outros (sprint: voos +-5 cm, pior +9; em curva +-11). Cada voo e
+    // comparado com o da referencia (a pelve guia no mesmo voo): subiu
+    // demais, no apoio seguinte a perna de apoio estende menos (o alvo da
+    // pelve dela desce); ficou baixo, estende mais. So pela perna - nenhuma
+    // forca de fora.
+    {
+        const auto& feetNow = m_estimator.state().feet;
+        const bool anySupport = feetNow.size() >= 2 && (feetNow[0].supporting || feetNow[1].supporting);
+        if (ThrustGain > 0.0f && gaitMoving && input.forceDrivenRoot && !getUpActive) {
+            if (!anySupport) {
+                m_flightBodyApex = m_inFlight ? std::max(m_flightBodyApex, measuredPelvis.position.z) : measuredPelvis.position.z;
+                m_flightGuideApex = m_inFlight ? std::max(m_flightGuideApex, targetRootPosition.z) : targetRootPosition.z;
+                m_inFlight = true;
+            } else if (m_inFlight) {
+                m_inFlight = false;
+                m_flightApexError = m_flightBodyApex - m_flightGuideApex;
+            }
+            const float wanted = anySupport
+                ? std::clamp(-ThrustGain * (m_flightApexError - ThrustApexMargin), -ThrustMaximum, ThrustMaximum) : 0.0f;
+            m_thrustOffset += (wanted - m_thrustOffset) * (1.0f - std::exp(-deltaTime / 0.03f));
+        } else if (ThrustGain <= 0.0f) {
+            m_thrustOffset = 0.0f;
+        }
+        // TEMPTUNE: amortecimento vertical pela perna de apoio. Subindo mais
+        // rapido que a referencia, a perna estende menos (o alvo da pelve dela
+        // desce); descendo mais rapido (o pouso), segura mais. Sem ele, na
+        // curva de sprint a perna seguia estendendo com o corpo ja subindo e
+        // ele decolava 15-20 cm acima da referencia, caia o voo inteiro e
+        // pousava 15 cm abaixo: o corpo oscilava 40 cm (pelve de 0,69 a 1,08 m).
+        {
+            const float guideRate = m_stanceDampingValid
+                ? (targetRootPosition.z - m_stanceDampingGuideZ) / std::max(1e-4f, deltaTime) : 0.0f;
+            m_stanceDampingGuideZ = targetRootPosition.z;
+            m_stanceDampingValid = true;
+            float wanted = 0.0f;
+            // (So na corrida livre: no tropeco o corpo cai e a perna, segurando
+            // mais, o empurrava contra a barra - sprint na barra de 26 cm, 13 ->
+            // 38 quedas em 96; freando, idem.)
+            const bool stumblingNow = m_tripRecovery > 0.001f || m_stumbleRisk > 0.2f
+                || m_stumbleStepping || m_footwork.plan().recovering;
+            const bool brakingNow = m_brakeGait > 0.0f || m_brakeStepping;
+            if (StanceVerticalDamping > 0.0f && anySupport && gaitMoving && input.forceDrivenRoot && !getUpActive
+                && !(StanceDampFree && (stumblingNow || brakingNow)))
+                wanted = std::clamp(-StanceVerticalDamping * (measuredPelvis.linearVelocity.z - guideRate),
+                    -ThrustMaximum, ThrustMaximum)
+                    // (So na curva, pela inclinacao: na reta a corrida ja nao
+                    // saltava e, achatada, o pe passava mais baixo e enganchava
+                    // mais na barra escondida - 13 -> 30 quedas em 192.)
+                    * (StanceDampCurveSpan > 0.0f
+                        ? smoothStep(std::abs(m_bodyCurveLean) / StanceDampCurveSpan) : 1.0f);
+            m_stanceDampingOffset += (wanted - m_stanceDampingOffset) * (1.0f - std::exp(-deltaTime / 0.02f));
+            m_thrustOffset = (ThrustGain > 0.0f ? m_thrustOffset : 0.0f) + m_stanceDampingOffset;
+        }
+        m_telemetry.thrustOffsetMeters = m_thrustOffset;
+    }
     for (std::size_t side = 0; side < m_feet.size(); ++side) {
+        if (m_thrustOffset != 0.0f && side < m_estimator.state().feet.size()
+            && m_estimator.state().feet[side].supporting && !m_footwork.owns(side))
+            ikRootPosition[side].z += m_thrustOffset;
+        // TEMPTUNE: correndo, a perna de apoio pede no maximo StanceRootBand
+        // acima (ou abaixo) da altura de verdade da pelve. Servo rigido da
+        // referencia, depois de um pouso 20 cm abaixo dela a perna estendia os
+        // 20 cm de uma vez (3 g) e passava do ponto: o voo seguinte ia 30 cm
+        // acima, o pouso seguinte mais fundo - a curva de sprint oscilava
+        // 50 cm. Assim ela devolve o corpo a altura em alguns passos.
+        // Experimento v2 (T_StanceMeasured): com pouca ajuda a perna de apoio
+        // da passada e resolvida pela pelve de VERDADE no plano (a altura e a
+        // orientacao seguem as da referencia). Pela de referencia o motor da
+        // perna e uma mola que prende o corpo nela: o impulso (o esforco das
+        // pernas, por J^T) era anulado assim que o corpo saia dela, e sem
+        // ajuda o corpo nao passava de ~2 m/s.
+        {
+            static const float stanceMeasured = tuneTemp("T_StanceMeasured", 0.0f);  // TEMPTUNE
+            static const float stanceMeasuredFrom = tuneTemp("T_StanceMeasuredFrom", 0.2f);  // TEMPTUNE
+            static const float stanceMeasuredSpan = tuneTemp("T_StanceMeasuredSpan", 0.4f);  // TEMPTUNE
+            if (stanceMeasured > 0.0f && gaitMoving && input.forceDrivenRoot && !getUpActive
+                && side < m_estimator.state().feet.size() && m_estimator.state().feet[side].supporting
+                && !m_footwork.owns(side) && m_feet[side].planted) {
+                const float w = stanceMeasured * (1.0f - smoothStep((std::clamp(input.walkingAssist, 0.0f, 1.0f)
+                    - stanceMeasuredFrom) / std::max(0.01f, stanceMeasuredSpan)));
+                ikRootPosition[side].x += (measuredPelvis.position.x - ikRootPosition[side].x) * w;
+                ikRootPosition[side].y += (measuredPelvis.position.y - ikRootPosition[side].y) * w;
+            }
+        }
+        if (StanceRootBand > 0.0f && gaitMoving && input.forceDrivenRoot && !getUpActive
+            && side < m_estimator.state().feet.size() && m_estimator.state().feet[side].supporting
+            && !m_footwork.owns(side)) {
+            ikRootPosition[side].z = std::clamp(ikRootPosition[side].z,
+                measuredPelvis.position.z - StanceRootBand, measuredPelvis.position.z + StanceRootBand);
+        }
         const float measured = m_swingFromMeasuredPelvis[side];
         if (measured > 0.0f) {
-            ikRootPosition[side] = legRootPosition
-                + (measuredPelvis.position - legRootPosition) * measured;
-            ikRootOrientation[side] = slerpQuaternion(targetRootOrientation,
-                measuredPelvis.orientation, measured);
+            // Da passada (modos 3 e 4): so no plano - a altura fica a da
+            // referencia. Pela altura medida, com o corpo acima dela a perna
+            // alcancava o chao esticada, pousava como vara e o devolvia para
+            // cima a cada passada (sprint: pelve 8,5 cm acima da referencia
+            // no toque, o pe quase sem carga escorregava 10 cm).
+            const bool gaitLeg = !m_footwork.owns(side);
+            const int mode = gaitLeg ? GaitSwingMeasuredMode : 0;
+            if (mode != 2) {
+                ikRootPosition[side] = legRootPosition
+                    + (measuredPelvis.position - legRootPosition) * measured;
+                if (mode == 3 || mode == 4) ikRootPosition[side].z = legRootPosition.z;
+                // (Modo 5: medida, mas nunca acima da referencia - com o corpo
+                // alto a perna nao estica ate o chao.)
+                if (mode == 5) ikRootPosition[side].z = std::min(ikRootPosition[side].z, legRootPosition.z);
+            }
+            if (mode != 1 && mode != 4)
+                ikRootOrientation[side] = slerpQuaternion(targetRootOrientation,
+                    measuredPelvis.orientation, measured);
+        }
+        // Corpo mais baixo que a referencia (curva inclinada, freada, pouso):
+        // a perna da passada no ar parte da altura de verdade da pelve. Pela
+        // de referencia, o pe no fim do balanco ficava 10-15 cm abaixo do alvo
+        // e batia a ponta no chao a 5-9 m/s ("bicuda") - na curva fechada, o
+        // pe de dentro tocava o chao no meio do balanco ~2 vezes por curva.
+        // Acima da referencia nada muda (a perna nao estica ate o chao).
+        {
+            const bool gaitSwingLeg = SwingFromLowBody > 0.0f && input.forceDrivenRoot && gaitMoving
+                && !m_footwork.owns(side) && m_feet[side].valid && !m_feet[side].planted
+                && desiredState != CharacterLocomotionState3D::Airborne;
+            // (So com a ajuda andando alta: com pouca, a passada inteira mudava
+            // - a 5% andava a 2,3 m/s em vez de 1,6 e caia parando 11 em 32.)
+            const float lowCeiling = SwingFromLowBody
+                * smoothStep((std::clamp(input.walkingAssist, 0.0f, 1.0f) - 0.5f) / 0.4f);
+            float& low = m_swingLowWeight[side];
+            low = gaitSwingLeg ? std::min(lowCeiling, low + deltaTime / 0.06f)
+                : std::max(0.0f, low - deltaTime / std::max(0.01f, SwingFromLowBodyRelease));
+            // TEMPTUNE: so na subida e no meio do balanco (a folga do pe); no
+            // fim dele a perna volta a altura da referencia e pousa estendida.
+            // Pela altura de verdade ate o toque, com o corpo baixo na curva a
+            // perna pousava dobrada (quadril a 45, joelho a 50) e, apoiada, ainda
+            // partia da pelve baixa por SwingFromLowBodyRelease - nada levava o
+            // corpo de volta para cima: a curva inteira agachada.
+            // TEMPTUNE: passada pelo contato - a perna que espera o toque busca
+            // o chao a partir da altura de verdade do corpo (estende para
+            // alcancar). Pela referencia, ~5 cm abaixo do corpo no voo do
+            // sprint, ela esperava dobrada (joelho a 45) e, no toque, o apoio
+            // puxava o corpo para baixo (joelho pedido 58). Depois do toque a
+            // referencia volta aos poucos e a perna amortece.
+            {
+                float& reach = m_landingReach[side];
+                reach = m_waitingLeg == static_cast<int>(side)
+                    ? std::min(1.0f, reach + deltaTime / 0.05f)
+                    : std::max(0.0f, reach - deltaTime / std::max(0.01f, ContactLandRelease));
+                if (reach > 0.0f && ContactLandReach) {
+                    // (Ate ContactLandReachMax acima da referencia: alcancando de
+                    // qualquer altura, pousava esticada como vara e o devolvia
+                    // mais alto a cada passo - sprint com a pelve a 1,01 m,
+                    // acima da de pe.)
+                    const float above = std::clamp(measuredPelvis.position.z - ikRootPosition[side].z,
+                        0.0f, ContactLandReachMax);
+                    ikRootPosition[side].z += above * reach;
+                }
+            }
+            float& landing = m_swingLowLanding[side];
+            {
+                const float progress = m_telemetry.footSwingProgress[side];
+                const float wanted = SwingLowLandingStart >= 1.0f ? 1.0f
+                    : m_feet[side].planted || progress < 0.0f ? 0.0f
+                    : 1.0f - smoothStep((progress - SwingLowLandingStart) / SwingLowLandingSpan);
+                landing += (wanted - landing) * (1.0f - std::exp(-deltaTime / 0.04f));
+            }
+            if (low > 0.0f && measured <= 0.0f) {
+                const float below = std::min(0.0f, measuredPelvis.position.z - ikRootPosition[side].z);
+                ikRootPosition[side].z += below * low * landing;
+                if (SwingFromBodyTilt > 0.0f) {
+                    // O quanto a pelve de verdade esta inclinada alem da de
+                    // referencia (sem o giro em torno da vertical).
+                    const Vec3 upLocal = profile.links.front().modelOrientation.conjugate().rotate({ 0.0f, 0.0f, 1.0f });
+                    const Vec3 upReference = ikRootOrientation[side].rotate(upLocal);
+                    const Vec3 upMeasured = measuredPelvis.orientation.rotate(upLocal);
+                    const Quaternion tilt = rotationBetween(upReference, upMeasured);
+                    const Quaternion partial = slerpQuaternion(Quaternion {}, tilt,
+                        std::clamp(SwingFromBodyTilt * low / std::max(0.01f, SwingFromLowBody), 0.0f, 1.0f));
+                    ikRootOrientation[side] = (partial * ikRootOrientation[side]).normalized();
+                }
+            }
+        }
+        // Quase-queda: a perna da passada no ar mira pela pelve de verdade
+        // (so a orientacao). Com o tronco caindo 30-45 graus para a frente,
+        // pela pelve de referencia (reta) o mesmo angulo de quadril deixava o
+        // pe 0,7 m atras do corpo e ele nao vinha a frente.
+        if (StumbleDetection && StumbleSwingMeasured > 0.0f && m_tripRecovery > 0.0f && input.forceDrivenRoot
+            && gaitMoving && !m_footwork.owns(side) && m_feet[side].valid && !m_feet[side].planted) {
+            const float w = std::clamp(StumbleSwingMeasured * m_tripRecovery, 0.0f, 1.0f);
+            if (w > measured)
+                ikRootOrientation[side] = slerpQuaternion(targetRootOrientation, measuredPelvis.orientation, w);
         }
         if (!goals[side].active) continue;
+        // Balanco da passada em malha fechada no pe (TEMPTUNE): a perna no ar
+        // e macia e, no fim do balanco, a canela seguia por inercia quando o
+        // alvo freava e recuava - o joelho passava ~7 graus da extensao e o pe
+        // tocava ate 6-15 cm a frente do alvo. O alvo do IK vai alem do alvo
+        // de verdade o quanto o pe passou dele (o que um musculo faria
+        // puxando a canela de volta), com limite.
+        if (SwingTrackGain > 0.0f && input.forceDrivenRoot && gaitMoving && !m_feet[side].planted
+            && !m_footwork.owns(side) && m_telemetry.footSwingProgress[side] >= 0.0f
+            && desiredState != CharacterLocomotionState3D::Airborne) {
+            const float late = smoothStep((m_telemetry.footSwingProgress[side] - 0.35f) / 0.30f);
+            if (late > 0.0f) {
+                m_trackedSwingGoal[side] = goals[side].position;
+                m_trackedSwingGoalValid[side] = true;
+                const Vec3 physicalFoot = state.links[m_feet[side].linkIndex].position;
+                const Vec3 error = goals[side].position - physicalFoot;
+                goals[side].position += clampMagnitude(error * (SwingTrackGain * late), SwingTrackMaximum);
+            }
+        }
+        // Perna de apoio da passada complacente: ela nunca e mandada a
+        // erguer a pelve mais que isto acima de onde a pelve esta. Pousando
+        // com o corpo 6-7 cm abaixo da referencia (fim do voo da corrida, ou
+        // o agachamento da freada), a perna resolvida pela pelve de
+        // referencia pedia o pe 6 cm dentro do chao - os motores a esticavam
+        // de uma vez e o corpo saltava (ate 11 cm acima da referencia,
+        // invertendo a 3 m/s). Acima da referencia nada muda: a perna cede.
+        if (StanceRiseLimit < 1.0f && input.forceDrivenRoot && gaitMoving && m_feet[side].planted
+            && !m_footwork.owns(side) && measured <= 0.0f && physical.feet[side].supporting)
+            ikRootPosition[side].z = std::min(ikRootPosition[side].z, measuredPelvis.position.z + StanceRiseLimit);
+        // Manejo de bola: o pe no ar vai a bola (o alvo do toque por cima do
+        // da passada, com o peso do toque).
+        if (!m_feet[side].planted && input.ballAvoid[side].lengthSquared() > 1e-8f)
+            goals[side].position += input.ballAvoid[side];
+        if (input.ballFoot.active && input.ballFoot.side == static_cast<int>(side)
+            && input.ballFoot.weight > 0.0f && !m_feet[side].planted
+            && !(input.ballScript.active && input.ballScript.side == static_cast<int>(side))) {
+            const float w = std::clamp(input.ballFoot.weight, 0.0f, 1.0f);
+            goals[side].position += (input.ballFoot.position - goals[side].position) * w;
+            goals[side].orientation = slerpQuaternion(goals[side].orientation, input.ballFoot.orientation, w);
+        }
+        // O pe no ar nunca entra na bola nem pousa nela (ela nao colide com o
+        // pe): o alvo sai dela no plano. O pe que vai tocar fica de fora.
+        if (input.ballRepel.active && !m_feet[side].planted && input.ballRepel.exemptSide != static_cast<int>(side))
+            goals[side].position += footBallPushOut(profile.links[m_feet[side].linkIndex], goals[side].position,
+                goals[side].orientation, input.ballRepel.position, input.ballRepel.radius, BallRepelMargin);
+        // Continuidade do alvo: na troca de dono do pe no ar (o planejador
+        // parado -> a passada, na arrancada) o alvo saltava ate 15 cm num
+        // tick (18 m/s): o pe era jogado para o clipe e raspava. O alvo novo
+        // entra misturado a partir do ultimo em GoalHandoffSeconds.
+        {
+            const bool plannerOwned = m_footwork.owns(side);
+            if (GoalHandoffSeconds > 0.0f && m_goalOwnerValid[side] && m_goalPlannerOwned[side] != plannerOwned
+                && !m_feet[side].planted) {
+                m_goalHandoff[side] = 1.0f;
+                m_goalHandoffPosition[side] = m_lastFootGoalPosition[side];
+                m_goalHandoffOrientation[side] = m_lastFootGoalOrientation[side];
+            }
+            m_goalPlannerOwned[side] = plannerOwned;
+            m_goalOwnerValid[side] = true;
+            if (m_feet[side].planted) m_goalHandoff[side] = 0.0f;
+            if (m_goalHandoff[side] > 0.0f) {
+                const float hold = smoothStep(m_goalHandoff[side]);
+                goals[side].position += (m_goalHandoffPosition[side] - goals[side].position) * hold;
+                goals[side].orientation = slerpQuaternion(goals[side].orientation, m_goalHandoffOrientation[side], hold);
+                m_goalHandoff[side] = std::max(0.0f, m_goalHandoff[side] - deltaTime / GoalHandoffSeconds);
+            }
+            m_lastFootGoalPosition[side] = goals[side].position;
+            m_lastFootGoalOrientation[side] = goals[side].orientation;
+        }
         const Quaternion rootInverse = ikRootOrientation[side].conjugate();
+        // O pe da bola (toque e chute) sai longe da pose do clipe: o IK
+        // limitado a ~52 graus por tick (7 iteracoes de 0,13 rad) deixava o
+        // joelho do chute sem dobrar no armado e o pe 6-25 cm aquem do alvo.
+        // So no chute: no drible as 7 de sempre (com mais, o pe chegava
+        // diferente e 3 de 32 toques no trote se perdiam).
+        const bool ballDriven = input.ballKick.active && input.ballKick.shot && input.ballKick.side == static_cast<int>(side)
+            && ((input.ballScript.active && input.ballScript.side == static_cast<int>(side))
+                || (input.ballFoot.active && input.ballFoot.side == static_cast<int>(side) && input.ballFoot.weight > 0.0f));
         solveFootPose(profile, m_coordinates, m_feet[side].linkIndex,
             rootInverse.rotate(goals[side].position - ikRootPosition[side]),
             (rootInverse * goals[side].orientation).normalized(), 1.0f,
-            !gaitMoving);
+            // Andando, o rumo do pe so vem da coxa quando ha giro de curva
+            // nele (reto, o pe segue a pelve: ver solveFootPose).
+            // Com pouca ajuda, o pe de apoio segura o rumo da trava (o da
+            // referencia): seguindo a pelve, nada a trazia de volta ao rumo
+            // pedido e ela ia girando (de lado a 5%: 30-50 graus, e a passada
+            // de lado virava curva). Pela coxa, o quadril de apoio a gira de
+            // volta.
+            !gaitMoving || (CurveFootHoldYaw && std::abs(m_feet[side].curveYaw) > 0.03f)
+                || (GaitStanceHoldYaw && m_feet[side].planted)
+                || (GaitHoldYaw > 0.5f && lowAssist > GaitHoldYawFrom
+                    && (m_feet[side].planted || GaitHoldYaw > 1.5f)),
+            ballDriven ? BallFootIterations : 7);
     }
     // Alcance das pernas com o pe no chao (R3): quadril pela pelve (fisica
     // e do IK), tornozelo pelo pe (fisico e alvo).
@@ -5313,7 +9009,8 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
         const GroundSample ground = groundUnder(side, body.position,
             forwardOf(m_feet[side], body.orientation));
         trace.groundHeight = ground.valid ? ground.height : 0.0f;
-        trace.target = goals[side].position;
+        trace.target = m_trackedSwingGoalValid[side] ? m_trackedSwingGoal[side] : goals[side].position;
+        m_trackedSwingGoalValid[side] = false;
         trace.targetClearance = footClearance(side, goals[side].position, goals[side].orientation, trace.groundHeight);
         RagdollAnimationPose3D ikPose;
         buildLocalPose(profile, m_coordinates, ikPose);
@@ -5387,6 +9084,310 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
         }
     }
     m_previousClipCoordinates = sampled;
+
+    // Levantar de bruços: a partir dos quatro apoios os pes sao do
+    // equilibrio, nao do clipe (TEMPTUNE GetUpFootwork). Ficam presos no chao
+    // onde estao - IK a partir da pelve medida, adiantada um pouco para a do
+    // clipe (o descompasso e o empurrao das pernas) - e, quando o centro de
+    // massa passa da ponta do pe mais a frente, o pe de tras da um passo para
+    // baixo dele. As maos so soltam (o clipe espera) com o corpo sobre os
+    // pes. Sem isso, sem ajuda, ele soltava as maos com o centro de massa
+    // 0,4-0,6 m a frente dos pes e caia de cabeca.
+    m_telemetry.getUpBalanceExcess = 0.0f;
+    if (GetUpFootworkEnabled && getUpActive && m_getUpPhase == CharacterGetUpPhase3D::Rising
+        && !m_bodilyRising && m_fallOrientation == CharacterFallOrientation3D::FaceDown
+        && input.forceDrivenRoot && animations.standUpFront != nullptr && !state.links.empty()) {
+        const float duration = std::max(0.05f, animations.standUpFront->durationSeconds);
+        const float progress = m_getUpClipSeconds / duration;
+        const char* footIds[2] = { "LeftFoot", "RightFoot" };
+        const char* shinIds[2] = { "LeftShin", "RightShin" };
+        std::size_t foot[2] {}, shin[2] {};
+        bool linksOk = true;
+        for (std::size_t side = 0; side < 2; ++side) {
+            foot[side] = findLink(profile, footIds[side]);
+            shin[side] = findLink(profile, shinIds[side]);
+            linksOk = linksOk && foot[side] > 0 && shin[side] > 0
+                && foot[side] < state.links.size() && shin[side] < state.links.size();
+        }
+        if (linksOk && progress >= GetUpFootworkFrom) {
+            const PhysicsBodyState3D& pelvis = state.links.front();
+            const auto ankleInShin = [&](std::size_t side) {
+                const RagdollLinkDefinition3D& link = profile.links[foot[side]];
+                const RagdollLinkDefinition3D& parent = profile.links[shin[side]];
+                return parent.modelOrientation.conjugate().rotate(
+                    link.inboundJoint.anchorModelPosition - parent.modelPosition);
+            };
+            const auto ankleWorld = [&](std::size_t side) {
+                return state.links[shin[side]].position
+                    + state.links[shin[side]].orientation.rotate(ankleInShin(side));
+            };
+            const float ground = input.rootPositionWorld.z - profile.standingRootHeightMeters;
+            // O tornozelo acima da sola com o pe no chao: a ancora do pe no
+            // repouso do perfil (13,5 cm no corpo antigo, 10,7 no montado).
+            const float ankleHeight = profile.links[foot[0]].inboundJoint.anchorModelPosition.z + profile.standingRootHeightMeters;
+            if (!m_getUpFootwork) {
+                m_getUpFootwork = true;
+                for (std::size_t side = 0; side < 2; ++side) m_getUpFootWorld[side] = ankleWorld(side);
+                m_getUpStepSide = -1;
+                // A frente do levantar: dos pes para as maos (de bruços a
+                // frente da pelve aponta para o chao).
+                const std::size_t hands[2] = { findLink(profile, "LeftHand"), findLink(profile, "RightHand") };
+                Vec3 handMid {}, footMid = (m_getUpFootWorld[0] + m_getUpFootWorld[1]) * 0.5f;
+                int handCount = 0;
+                for (const std::size_t hand : hands)
+                    if (hand > 0 && hand < state.links.size()) { handMid += state.links[hand].position; ++handCount; }
+                Vec3 toHands = handCount > 0 ? handMid * (1.0f / static_cast<float>(handCount)) - footMid : Vec3 {};
+                toHands.z = 0.0f;
+                m_getUpFootworkForward = toHands.length() > 0.1f ? toHands.normalized()
+                    : Vec3 { std::cos(m_getUpAnchorYaw), std::sin(m_getUpAnchorYaw), 0.0f };
+                // Um pe ja no ar (o passo do clipe) continua como passo nosso.
+                for (std::size_t side = 0; side < 2; ++side) {
+                    if (m_getUpFootWorld[side].z > ground + ankleHeight + 0.12f && m_getUpStepSide < 0) {
+                        m_getUpStepSide = static_cast<int>(side);
+                        m_getUpStepSeconds = GetUpStepSeconds * 0.5f;
+                        m_getUpStepFrom = m_getUpFootWorld[side];
+                        m_getUpStepFrom.z = ground + ankleHeight;
+                        const Vec3 comNow = m_estimator.state().centerOfMassWorld;
+                        const float sideSign = side == 0 ? 1.0f : -1.0f;
+                        Vec3 to = comNow + m_getUpFootworkForward * GetUpStepAhead
+                            + Vec3 { -m_getUpFootworkForward.y, m_getUpFootworkForward.x, 0.0f } * (sideSign * GetUpStepWidth);
+                        to.z = ground + ankleHeight;
+                        m_getUpStepTo = to;
+                        ++m_getUpBalanceSteps;
+                    }
+                }
+            }
+            const Vec3 forward = m_getUpFootworkForward;
+            const Vec3 leftDirection { -forward.y, forward.x, 0.0f };
+            const Vec3 com = m_estimator.state().centerOfMassWorld;
+            // Quanto o centro de massa passa da ponta do pe mais a frente (so
+            // os pes no chao).
+            float front = -1e9f;
+            for (std::size_t side = 0; side < 2; ++side) {
+                if (static_cast<int>(side) == m_getUpStepSide) continue;
+                front = std::max(front, dot(m_getUpFootWorld[side] - com, forward));
+            }
+            const float excess = -(front + GetUpToeAhead);
+            m_telemetry.getUpBalanceExcess = excess;
+            if (m_getUpStepSide < 0 && excess > -GetUpStepMargin && m_getUpBalanceSteps < 6) {
+                // O pe de tras vai para baixo do centro de massa, do seu lado.
+                const int rear = dot(m_getUpFootWorld[0] - com, forward)
+                    < dot(m_getUpFootWorld[1] - com, forward) ? 0 : 1;
+                m_getUpStepSide = rear;
+                m_getUpStepSeconds = 0.0f;
+                m_getUpStepFrom = m_getUpFootWorld[rear];
+                const float sideSign = rear == 0 ? 1.0f : -1.0f;
+                Vec3 to = com + forward * GetUpStepAhead + leftDirection * (sideSign * GetUpStepWidth);
+                to.z = ground + ankleHeight;
+                Vec3 move = to - m_getUpStepFrom;
+                const float planar = std::hypot(move.x, move.y);
+                if (planar > GetUpStepMax) {
+                    move.x *= GetUpStepMax / planar;
+                    move.y *= GetUpStepMax / planar;
+                }
+                m_getUpStepTo = m_getUpStepFrom + move;
+                ++m_getUpBalanceSteps;
+            }
+            if (m_getUpStepSide >= 0) {
+                m_getUpStepSeconds += deltaTime;
+                const float s = std::clamp(m_getUpStepSeconds / std::max(0.05f, GetUpStepSeconds), 0.0f, 1.0f);
+                Vec3 position = m_getUpStepFrom + (m_getUpStepTo - m_getUpStepFrom) * smoothStep(s);
+                position.z += GetUpStepLift * std::sin(Pi * s);
+                m_getUpFootWorld[static_cast<std::size_t>(m_getUpStepSide)] = position;
+                if (s >= 1.0f) {
+                    m_getUpFootWorld[static_cast<std::size_t>(m_getUpStepSide)] = m_getUpStepTo;
+                    m_getUpStepSide = -1;
+                }
+            }
+            const bool needHold = m_getUpStepSide >= 0 || excess > -GetUpStepMargin;
+            m_getUpBalanceHoldSeconds = needHold ? m_getUpBalanceHoldSeconds + deltaTime : 0.0f;
+            m_getUpBalanceHold = needHold && m_getUpBalanceHoldSeconds < GetUpHoldMax;
+            // Pelve do IK: a medida, adiantada para a do clipe (limitado).
+            Vec3 rootPosition = pelvis.position;
+            rootPosition.z += std::clamp(targetRootPosition.z - pelvis.position.z, -GetUpRootLead, GetUpRootLead);
+            Quaternion rootOrientation = pelvis.orientation;
+            {
+                const Vec3 turn = rotationVector((targetRootOrientation * pelvis.orientation.conjugate()).normalized());
+                const float angle = turn.length();
+                if (angle > 1e-4f)
+                    rootOrientation = (exponentialRotation(turn * (std::min(angle, GetUpTurnLead) / angle))
+                        * pelvis.orientation).normalized();
+            }
+            const Quaternion rootInverse = rootOrientation.conjugate();
+            const Vec3 upInRoot = rootInverse.rotate({ 0.0f, 0.0f, 1.0f });
+            for (std::size_t side = 0; side < 2; ++side) {
+                const Vec3 target = rootInverse.rotate(m_getUpFootWorld[side] - rootPosition);
+                solveRagdollChainPoint3D(profile, m_coordinates, shin[side], ankleInShin(side), 2, target, 1.0f, 12);
+                // O pe que deu passo pousa com a sola no chao; o que ainda nao
+                // saiu do lugar fica como o clipe (na ponta dos pes).
+                const bool stepped = m_getUpBalanceSteps > 0
+                    && (static_cast<int>(side) == m_getUpStepSide
+                        || std::abs(m_getUpFootWorld[side].z - (ground + ankleHeight)) < 0.02f);
+                if (!stepped) continue;
+                const RagdollLinkDefinition3D& link = profile.links[foot[side]];
+                float best = -2.0f;
+                Vec3 bestAngles = m_coordinates[foot[side]];
+                RagdollAnimationPose3D frame;
+                for (int i = 0; i <= 12; ++i) {
+                    Vec3 angles = m_coordinates[foot[side]];
+                    setComponent(angles, 0, std::clamp(-0.85f + 1.85f * static_cast<float>(i) / 12.0f,
+                        link.inboundJoint.axes[0].minimumRadians, link.inboundJoint.axes[0].maximumRadians));
+                    m_coordinates[foot[side]] = angles;
+                    buildRagdollLocalPose3D(profile, m_coordinates, frame);
+                    const float alignment = dot(frame.linkOrientations[foot[side]].rotate({ 0.0f, 0.0f, 1.0f }), upInRoot);
+                    if (alignment > best) {
+                        best = alignment;
+                        bestAngles = angles;
+                    }
+                }
+                m_coordinates[foot[side]] = bestAngles;
+            }
+        }
+    }
+    // Mao de apoio no levantar de bruços (TEMPTUNE GetUpHands, ideia do
+    // usuario 04/10). So pelas juntas, o clipe dizia onde a mao fica em
+    // relacao ao corpo do clipe; com o corpo fisico um pouco diferente a mao
+    // de apoio ia parar para dentro, embaixo do peito, e nao sustentava -
+    // ele caia de lado. Aqui, quando o clipe pede a mao no chao, ela vai a um
+    // ponto do chao ao lado e a frente do ombro (no mundo), com a palma para
+    // baixo, e fica presa ali (IK a partir da pelve e da coluna medidas)
+    // enquanto pes e joelhos vem para a frente. Solta quando o clipe levanta
+    // a mao ou o braco nao alcanca mais, voltando ao clipe aos poucos.
+    if (GetUpHandsEnabled && getUpActive && m_getUpPhase == CharacterGetUpPhase3D::Rising
+        && !m_bodilyRising && m_fallOrientation == CharacterFallOrientation3D::FaceDown
+        && input.forceDrivenRoot && !state.links.empty()
+        && state.joints.size() == m_coordinates.size()) {
+        const char* upperIds[2] = { "LeftUpperArm", "RightUpperArm" };
+        const char* foreIds[2] = { "LeftForearm", "RightForearm" };
+        const char* handIds[2] = { "LeftHand", "RightHand" };
+        const auto anchorIn = [&](std::size_t child) {
+            const RagdollLinkDefinition3D& link = profile.links[child];
+            const RagdollLinkDefinition3D& parent = profile.links[static_cast<std::size_t>(link.parentIndex)];
+            return parent.modelOrientation.conjugate().rotate(link.inboundJoint.anchorModelPosition - parent.modelPosition);
+        };
+        const PhysicsBodyState3D& pelvis = state.links.front();
+        const float ground = input.rootPositionWorld.z - profile.standingRootHeightMeters;
+        // Rumo do corpo: frente + cima da pelve no plano (estavel de bruços,
+        // quando a frente aponta para o chao, e de pe).
+        Vec3 heading = pelvis.orientation.rotate({ 1.0f, 0.0f, 0.0f })
+            + pelvis.orientation.rotate({ 0.0f, 0.0f, 1.0f });
+        heading.z = 0.0f;
+        heading = heading.length() > 0.1f ? heading.normalized() : Vec3 { 1.0f, 0.0f, 0.0f };
+        const Vec3 leftward { -heading.y, heading.x, 0.0f };
+        // A pose do clipe (alvos das juntas) no referencial da pelve: onde o
+        // clipe quer a mao (altura do chao do clipe).
+        RagdollAnimationPose3D clipFrame;
+        buildRagdollLocalPose3D(profile, m_coordinates, clipFrame);
+        // Para o IK, a coluna medida (o ombro de verdade).
+        std::vector<Vec3> measuredSpine = m_coordinates;
+        for (const char* id : { "Abdomen", "Chest", "UpperChest" }) {
+            const std::size_t i = findLink(profile, id);
+            if (i > 0 && i < state.joints.size())
+                measuredSpine[i] = { state.joints[i].positionRadians[0], state.joints[i].positionRadians[1],
+                    state.joints[i].positionRadians[2] };
+        }
+        for (std::size_t side = 0; side < 2; ++side) {
+            GetUpHand& hand = m_getUpHands[side];
+            const std::size_t upper = findLink(profile, upperIds[side]);
+            const std::size_t fore = findLink(profile, foreIds[side]);
+            const std::size_t palm = findLink(profile, handIds[side]);
+            if (upper == 0 || fore == 0 || palm == 0 || palm >= state.links.size()) continue;
+            const Vec3 wristInFore = anchorIn(palm);
+            const float sideSign = side == 0 ? 1.0f : -1.0f;
+            // Mao do clipe: altura do punho acima do chao do clipe.
+            const Vec3 clipWristLocal = clipFrame.linkPositions[fore] + clipFrame.linkOrientations[fore].rotate(wristInFore);
+            const float clipWrist = m_getUpExpectedHeight + targetRootOrientation.rotate(clipWristLocal).z;
+            const bool clipDown = m_getUpExpectedValid && clipWrist < GetUpHandClipDown;
+            const Vec3 wristNow = state.links[fore].position + state.links[fore].orientation.rotate(wristInFore);
+            const std::size_t chest = static_cast<std::size_t>(profile.links[upper].parentIndex);
+            const Vec3 shoulder = state.links[chest].position + state.links[chest].orientation.rotate(anchorIn(upper));
+            const float armLength = (profile.links[fore].inboundJoint.anchorModelPosition
+                    - profile.links[upper].inboundJoint.anchorModelPosition).length()
+                + (profile.links[palm].inboundJoint.anchorModelPosition
+                    - profile.links[fore].inboundJoint.anchorModelPosition).length();
+            hand.clipUpSeconds = clipDown ? 0.0f : hand.clipUpSeconds + deltaTime;
+            if (hand.stage == 0 && clipDown) {
+                hand.stage = 1;
+                hand.seconds = 0.0f;
+                hand.from = wristNow;
+                Vec3 spot = shoulder + heading * GetUpHandForward + leftward * (sideSign * GetUpHandOutward);
+                spot.z = ground + GetUpHandWristHeight;
+                hand.spot = spot;
+            }
+            if (hand.stage == 1 || hand.stage == 2) {
+                hand.seconds += deltaTime;
+                const float out = (hand.spot - shoulder).length();
+                if (hand.clipUpSeconds > 0.1f || out > 0.98f * armLength) {
+                    hand.stage = 3;
+                    hand.seconds = 0.0f;
+                }
+            }
+            if (hand.stage == 1 && hand.seconds >= GetUpHandReachSeconds) hand.stage = 2;
+            // Encostou antes no chao, num lugar bom (para fora do ombro): fica ali.
+            if (hand.stage == 1 && wristNow.z < ground + GetUpHandWristHeight + 0.03f
+                && dot(wristNow - shoulder, leftward) * sideSign > 0.02f) {
+                hand.stage = 2;
+                hand.spot = { wristNow.x, wristNow.y, ground + GetUpHandWristHeight };
+            }
+            const float wanted = hand.stage == 1 || hand.stage == 2 ? 1.0f : 0.0f;
+            hand.weight += std::clamp(wanted - hand.weight, -deltaTime / GetUpHandReleaseSeconds,
+                deltaTime / 0.12f);
+            if (hand.stage == 3 && hand.weight <= 0.0f) hand.stage = 0;
+            if (hand.weight <= 0.0f) continue;
+            Vec3 target = hand.spot;
+            if (hand.stage == 1) {
+                const float s = std::clamp(hand.seconds / GetUpHandReachSeconds, 0.0f, 1.0f);
+                target = hand.from + (hand.spot - hand.from) * smoothStep(s);
+                target.z += 0.08f * std::sin(Pi * s);
+            }
+            std::vector<Vec3> ik = measuredSpine;
+            const Vec3 local = pelvis.orientation.conjugate().rotate(target - pelvis.position);
+            solveRagdollChainPoint3D(profile, ik, fore, wristInFore, 2, local, 1.0f, 12);
+            // Palma para baixo: procura nos dois eixos do punho.
+            const Vec3 upInRoot = pelvis.orientation.conjugate().rotate({ 0.0f, 0.0f, 1.0f });
+            const RagdollLinkDefinition3D& link = profile.links[palm];
+            float best = -2.0f;
+            Vec3 bestAngles = ik[palm];
+            RagdollAnimationPose3D frame;
+            for (int i = -3; i <= 3; ++i) {
+                for (int j = -2; j <= 2; ++j) {
+                    Vec3 angles = ik[palm];
+                    if (link.inboundJoint.axes[0].enabled)
+                        setComponent(angles, 0, std::clamp(0.35f * static_cast<float>(i),
+                            link.inboundJoint.axes[0].minimumRadians, link.inboundJoint.axes[0].maximumRadians));
+                    if (link.inboundJoint.axes[1].enabled)
+                        setComponent(angles, 1, std::clamp(0.25f * static_cast<float>(j),
+                            link.inboundJoint.axes[1].minimumRadians, link.inboundJoint.axes[1].maximumRadians));
+                    ik[palm] = angles;
+                    buildRagdollLocalPose3D(profile, ik, frame);
+                    const float alignment = dot(frame.linkOrientations[palm].rotate({ 0.0f, 0.0f, 1.0f }), upInRoot);
+                    if (alignment > best) {
+                        best = alignment;
+                        bestAngles = angles;
+                    }
+                }
+            }
+            ik[palm] = bestAngles;
+            const float w = smoothStep(hand.weight);
+            for (const std::size_t i : { upper, fore, palm })
+                m_coordinates[i] += (ik[i] - m_coordinates[i]) * w;
+        }
+    } else {
+        for (GetUpHand& hand : m_getUpHands) hand = {};
+    }
+    for (std::size_t side = 0; side < 2; ++side) m_telemetry.getUpHandStage[side] = m_getUpHands[side].stage;
+    m_telemetry.getUpFootwork = m_getUpFootwork;
+    m_telemetry.getUpBalanceSteps = m_getUpBalanceSteps;
+    m_telemetry.getUpBalanceHold = m_getUpBalanceHold;
+    m_telemetry.getUpRolling = m_getUpRolling;
+    m_telemetry.tackling = m_tackling;
+    m_telemetry.tacklePending = m_tacklePending;
+    m_telemetry.tackleVariant = m_tackling ? m_tackleVariant : -1;
+    m_telemetry.tackleEntrySpeed = m_tackleEntrySpeed;
+    m_telemetry.tackleRate = m_tackleRate;
+    m_telemetry.tackleTravel = m_tackling && !state.links.empty()
+        ? std::hypot(state.links.front().position.x - m_tackleStart.x,
+            state.links.front().position.y - m_tackleStart.y) : 0.0f;
     m_previousSampledClip = selectedClip;
 
     buildLocalPose(profile, m_coordinates, localPose);
@@ -5476,6 +9477,22 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
             (targetRootOrientation * localPose.linkOrientations[index])
                 .normalized();
     }
+    m_referencePendulumValid = m_feet.size() >= 2 && m_feet[0].valid && m_feet[1].valid
+        && m_feet[0].linkIndex < localPose.linkPositions.size() && m_feet[1].linkIndex < localPose.linkPositions.size();
+    if (m_referencePendulumValid) {
+        m_referencePendulum = targetRootOrientation.rotate(
+            pendulumArm(profile, m_feet[0].linkIndex, m_feet[1].linkIndex,
+                [&](std::size_t i) { return localPose.linkPositions[i]; }));
+        float total = 0.0f;
+        Vec3 center {};
+        for (std::size_t i = 0; i < profile.links.size(); ++i) {
+            center = center + m_output.targetPose.linkPositions[i] * profile.links[i].massFraction;
+            total += profile.links[i].massFraction;
+        }
+        m_referenceCenterOfMassWorld = center * (1.0f / std::max(1e-4f, total));
+        m_referenceFeetWorld = { m_output.targetPose.linkPositions[m_feet[0].linkIndex],
+            m_output.targetPose.linkPositions[m_feet[1].linkIndex] };
+    }
 
     const float muscle = std::clamp(input.muscleAuthority, 0.0f, 1.0f);
     // A real hit lets the joints actually give, not just the root guide
@@ -5529,6 +9546,49 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
                 - lockHeight(foot, ground.height, body.orientation);
             touchdownShare[side] = smoothStep((0.12f - clearance) / 0.12f);
         }
+    }
+    // Caindo e no chao, os alvos das juntas sao suavizados (~0,12 s): as
+    // poses de queda trocam de alvo de repente (rumo da queda, mao tocando,
+    // fetal, arrumar) e, sem isso, os membros davam trancos - parecia
+    // convulsao. Sai aos poucos no comeco do levantar.
+    {
+        const float rising = m_getUpPhase == CharacterGetUpPhase3D::Rising
+            ? 1.0f - smoothStep(m_getUpPhaseSeconds / 0.4f) : 0.0f;
+        // (Pernas e tronco so com a queda sem volta: no desequilibrio os
+        // passos que ainda salvam nao podem atrasar. Bracos e pescoco ja com
+        // o reflexo.)
+        // (Deitado o filtro sai conforme ele se arruma: o levantar parte dos
+        // alvos exatos da pose de partida.)
+        const float lying = std::max(m_getUpPhase == CharacterGetUpPhase3D::Settling
+            ? 1.0f - m_settleGather : 0.0f, rising);
+        if (m_fallSmoothCoordinates.size() != m_coordinates.size())
+            m_fallSmoothCoordinates = m_coordinates;
+        const float blend = 1.0f - std::exp(-deltaTime / std::max(FallSmoothSeconds, 1e-3f));
+        for (std::size_t index = 1; index < m_coordinates.size(); ++index) {
+            const std::string& id = profile.links[index].id;
+            const bool reflexLimb = id.find("Arm") != std::string::npos
+                || id.find("Forearm") != std::string::npos || id.find("Hand") != std::string::npos
+                || id == "Neck" || id == "Head";
+            // (Levantando, so a transicao do comeco: o resto do reflexo, que
+            // leva ~1 s para sair, atrasava o clipe de levantar e o corpo
+            // brigava com ele - de bruços ficava ~2 s sem sair do chao.)
+            const float smoothing = FallSmoothSeconds <= 0.0f ? 0.0f
+                : m_getUpPhase == CharacterGetUpPhase3D::Rising ? rising
+                : std::max(lying, reflexLimb ? m_fallReflex : m_fallCommit);
+            m_fallSmoothCoordinates[index] += (m_coordinates[index] - m_fallSmoothCoordinates[index]) * blend;
+            if (smoothing > 0.0f)
+                m_coordinates[index] += (m_fallSmoothCoordinates[index] - m_coordinates[index]) * smoothing;
+            else
+                m_fallSmoothCoordinates[index] = m_coordinates[index];
+        }
+    }
+    // Levantar pelo corpo: as juntas sao as dele (BodilyGetUp3D).
+    const bool bodilyRising = m_bodilyRising
+        && m_getUpPhase == CharacterGetUpPhase3D::Rising
+        && m_bodilyPose.coordinates.size() == m_coordinates.size();
+    if (bodilyRising) {
+        for (std::size_t index = 1; index < m_coordinates.size(); ++index)
+            m_coordinates[index] = m_bodilyPose.coordinates[index];
     }
     for (std::size_t index = 1; index < profile.links.size(); ++index) {
         m_coordinateVelocities[index] =
@@ -5606,8 +9666,44 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
         // (So na passada: caindo de um pulo o joelho chega macio - rigido,
         // o pouso quicava, rebote 1,07 -> 1,31 m/s.)
         const bool agileKnee = footInAir && gaitMoving && linkId.find("Shin") != std::string::npos;
+        // TEMPTUNE: empurrao - o pe apoiado ja atras do corpo (a segunda
+        // metade do apoio, ate a ponta sair). A perna estende com mais forca
+        // e segue a velocidade do alvo: mole e freada (velocidade-alvo zero),
+        // ela ficava 15-20 graus atras do pedido e saia do chao dobrada (o
+        // joelho a ~34 graus no trote). O pouso continua macio: rigida nele,
+        // a perna quicava nas curvas.
+        bool pushPhase = false;
+        float pushWeight = 0.0f;
+        // (So na corrida estabelecida, com o jogador pedindo para correr:
+        // freando, a perna de tras rigida empurrava o corpo por cima do pe
+        // de freada - 5 -> 14 quedas em 256 paradas.)
+        // (Nem logo depois do pouso de um pulo: o pe freia, o corpo gira
+        // para a frente sobre ele e a perna rigida empurrando por tras o
+        // jogava de cara no chao - pulo em sprint, 0 -> 5 quedas em 12.)
+        const bool steadyRun = m_brakeGait <= 0.0f && !m_brakeStepping && !m_startClipActive
+            && m_gaitChange <= 0.0f && m_tripRecovery <= 0.001f && !m_stumbleStepping
+            && m_sinceTouchdownSeconds > PushAfterLandingSeconds
+            && std::hypot(input.intent.requestedVelocityWorld.x, input.intent.requestedVelocityWorld.y) > 1.0f;
+        if (leg && gaitMoving && input.forceDrivenRoot && !getUpActive && footEstimate.supporting
+            && PushStiffness != 1.0f && steadyRun) {
+            const CharacterPhysicalState3D& body = m_estimator.state();
+            const Vec3 velocity { body.centerOfMassVelocityWorld.x, body.centerOfMassVelocityWorld.y, 0.0f };
+            const float speedNow = velocity.length();
+            if (speedNow > 1.0f) {
+                const float behind = -dot(Vec3 { footEstimate.soleCenterWorld.x - body.centerOfMassWorld.x,
+                    footEstimate.soleCenterWorld.y - body.centerOfMassWorld.y, 0.0f },
+                    velocity * (1.0f / speedNow));
+                pushPhase = behind > PushBehindMeters;
+                // TEMPTUNE: em rampa (do pe embaixo do corpo ate 10 cm atras
+                // do limite), nao num degrau: ligada de uma vez, a rigidez
+                // dobrava num tick e a perna dava um tranco.
+                pushWeight = PushRamp ? smoothStep((behind - (PushBehindMeters - 0.05f)) / 0.10f)
+                    : (pushPhase ? 1.0f : 0.0f);
+                pushPhase = pushWeight > 0.0f;
+            }
+        }
         const float velocityShare = input.forceDrivenRoot && !getUpActive && leg
-            ? (agileAnkle || agileKnee ? transition
+            ? (agileAnkle || agileKnee || (pushPhase && PushVelocity) ? transition
                 : physicalSupport[side] && !plannedSwing && !propulsive ? 0.0f
                 : transition * (propulsive ? 1.0f : 1.0f - touchdownShare[side])) : 1.0f;
         // Same per-category get-up gains as
@@ -5633,8 +9729,21 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
                 || id == "Neck" || id == "Head";
             // Tronco e pernas amolecem so com a queda sem volta; os bracos
             // e o pescoco ja com o reflexo.
-            poseHold += ((reflexLimb ? FallReflexLimbTone : FallBodyTone)
-                - poseHold) * (reflexLimb ? m_fallReflex : m_fallCommit);
+            const bool legLink = id.find("Thigh") != std::string::npos
+                || id.find("Shin") != std::string::npos || id.find("Foot") != std::string::npos;
+            const bool armLink = id.find("Arm") != std::string::npos || id.find("Forearm") != std::string::npos;
+            // A mao do lado segurando o chao: o braco firma um pouco para
+            // amortecer (cede pelo alvo do cotovelo, nao mole).
+            const bool catching = FallProtectNew && armLink
+                && m_handCatchSeconds[id.rfind("Left", 0) == 0 ? 0 : 1] > 0.0f;
+            const float fallTone = !FallProtectNew ? (reflexLimb ? FallReflexLimbTone : FallBodyTone)
+                : catching ? FallCatchTone : reflexLimb ? FallReflexLimbTone
+                : legLink ? (FallLegsNew ? FallLegTone : FallBodyTone) : FallTrunkTone;
+            poseHold += (fallTone - poseHold) * (reflexLimb ? m_fallReflex : m_fallCommit);
+            // No ar a pose e firme (os membros nao carregam peso): bracos e
+            // pernas seguram a pose de equilibrio, sem chacoalhar.
+            if ((armLink || legLink) && m_airBalance > 0.0f)
+                poseHold += (std::max(poseHold, FallAirTone) - poseHold) * m_airBalance;
         }
         float stiffnessMultiplier = poseHold;
         float dampingMultiplier = std::sqrt(poseHold);
@@ -5653,7 +9762,20 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
         if (input.forceDrivenRoot && !getUpActive && leg) {
             // Changing a stride can ask for an incompatible extension on a
             // loaded leg. Let it yield while the new support is established.
-            const float transfer = 0.35f + 0.65f * transition;
+            // (Caindo sem volta, a perna tem o tonus da queda, sem o
+            // amolecer da passada: com os dois, ~14%, ela nem dobrava e ele
+            // caia reto como uma tabua.)
+            // TEMPTUNE LandingLegTone: no pouso de um pulo a troca de clipe
+            // (pulo -> pouso -> corrida) recomecava a mistura e as pernas iam
+            // a 35% da forca justo no impacto - o joelho ia a 130 graus, a
+            // pelve afundava 30 cm e, agachado a 7,5 m/s, o tronco tombava para
+            // a frente (correndo inclinado, segurado pela ajuda).
+            const float transitionTone = std::max(transition,
+                LandingLegTone > 0.0f && m_sinceTouchdownSeconds < LandingLegToneSeconds
+                    && footEstimate.supporting ? LandingLegTone : 0.0f);
+            const float transfer = FallProtectNew && FallLegsNew
+                ? 0.35f + 0.65f * transitionTone + (1.0f / 0.55f - 0.35f - 0.65f * transitionTone) * m_fallCommit
+                : 0.35f + 0.65f * transitionTone;
             if (agileAnkle) {
                 // No ar: mola cheia e menos freio (ver agileAnkle).
                 dampingMultiplier *= AnkleAirDamping;
@@ -5662,12 +9784,33 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
                 stiffnessMultiplier *= transfer * 0.55f;
                 torqueMultiplier *= transfer * 0.75f;
             } else {
-                stiffnessMultiplier *= transfer * 0.55f;
+                // (Perna no chao: StanceLegStiffness - era 0,55 sempre, e o
+                // joelho de apoio cedia 5-15 graus alem do pedido: "sempre
+                // semi-agachado".)
+                stiffnessMultiplier *= transfer * (footEstimate.supporting ? StanceLegStiffness : 0.55f);
                 torqueMultiplier *= transfer * 0.75f;
+                if (pushPhase) {
+                    stiffnessMultiplier *= 1.0f + (PushStiffness - 1.0f) * pushWeight;
+                    torqueMultiplier *= 1.0f + (std::max(1.0f, PushStiffness * 0.75f) - 1.0f) * pushWeight;
+                }
                 // Prepare compliance before impact, while the descending sole
                 // approaches its measured surface. Retain damping through touch.
                 stiffnessMultiplier *= 1.0f - 0.30f * touchdownShare[side];
                 dampingMultiplier *= 1.0f + 0.30f * touchdownShare[side];
+            }
+            // Com pouca ajuda a perna no ar tem de chegar onde o pe vai pousar
+            // (ninguem leva o corpo ate ela): amolecida como quando a pelve
+            // levava o corpo, ela ficava 15-20 graus atras do alvo e o pe
+            // tocava o chao antes, atras do corpo (TEMPTUNE: em teste).
+            // (Tambem nos passos do planejador - freada, recuperacao: parado,
+            // o passo de freada a 5% ficava 0,5 s no ar, e o corpo caia de
+            // lado sobre o outro pe.)
+            const bool plannerStepInAir = PlannerSwingLowAssist && footInAir && !legPlan.followingGait
+                && (legPlan.phase == FootPhase3D::Swing || legPlan.phase == FootPhase3D::TouchdownSearch);
+            if (lowAssist > 0.0f && ((footInAir && gaitMoving
+                    && m_gaitDirection == CharacterGaitDirection3D::Forward) || plannerStepInAir)) {
+                stiffnessMultiplier *= 1.0f + (SwingLowAssistStiffness - 1.0f) * lowAssist;
+                torqueMultiplier *= 1.0f + (SwingLowAssistTorque - 1.0f) * lowAssist;
             }
             // O tornozelo apoiado continua sendo uma mola, nao uma junta
             // soldada: cede para a sola adaptar-se e devolve energia na
@@ -5741,7 +9884,8 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
                 // Levantar: os bracos sao o apoio (a flexao de bracos de quem
                 // levanta de bruços). Entra a partir do tonus deitado em
                 // ~0,5 s, nao de uma vez.
-                const float rising = smoothStep(m_getUpPhaseSeconds / 0.5f);
+                // (No carrinho ele vem correndo, firme: sem a rampa do deitado.)
+                const float rising = m_tackling ? 1.0f : smoothStep(m_getUpPhaseSeconds / 0.5f);
                 stiffnessMultiplier = lyingStiffness + ((isArm ? RisingArmStiffness
                     : isTorso ? RisingTorsoStiffness : RisingLegStiffness)
                     - lyingStiffness) * rising;
@@ -5750,7 +9894,39 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
                 torqueMultiplier = lyingTorque + ((isArm ? RisingArmTorque
                     : isTorso ? RisingTorsoTorque : RisingLegTorque)
                     - lyingTorque) * rising;
+                // Rigidez ao levantar (slider do laboratorio): mais relaxado,
+                // a mola cede mais; o freio acompanha pela raiz (mesma
+                // proporcao de amortecimento) e a forca maxima fica.
+                const float tone = m_tackling ? 1.0f : std::clamp(input.getUpStiffness, 0.2f, 1.5f);
+                stiffnessMultiplier *= 1.0f + (tone - 1.0f) * rising;
+                dampingMultiplier *= 1.0f + (std::sqrt(tone) - 1.0f) * rising;
+                // E a forca (slider do laboratorio, pedido do usuario, 05/10
+                // noite: no comeco do levantar ele fazia movimentos tao
+                // fortes que pulava no chao).
+                const float strength = m_tackling ? 1.0f : std::clamp(input.getUpStrength, 0.2f, 1.5f);
+                torqueMultiplier *= 1.0f + (strength - 1.0f) * rising;
+                // Carrinho: musculos de quem corre, nao os do levantar (com
+                // eles a passada de entrada e a de saida viravam saltos - a
+                // perna apoiada lancava o corpo por cima dela). Descendo para
+                // o chao as pernas cedem (deixar-se cair no deslize); subindo
+                // do chao elas ganham forca.
+                if (m_tackling) {
+                    const bool isLeg = !isArm && !isTorso;
+                    const float drop = smoothStep((-m_tackleExpectedRise - 0.4f) / 0.8f);
+                    const float push = smoothStep((m_tackleExpectedRise - 0.2f) / 0.6f)
+                        * smoothStep((0.80f - m_tackleExpectedHeight) / 0.25f);
+                    const float legShare = isLeg ? (1.0f - 0.75f * drop) * (1.0f + 0.5f * push) : 1.0f;
+                    stiffnessMultiplier = (isArm ? 1.0f : isTorso ? 1.2f : 1.0f) * legShare;
+                    dampingMultiplier = isTorso ? 1.2f : 1.1f;
+                    torqueMultiplier = (isArm ? 1.0f : isTorso ? 1.3f : 1.1f) * legShare;
+                }
             }
+            if (bodilyRising && index < m_bodilyPose.stiffness.size()) {
+                stiffnessMultiplier = m_bodilyPose.stiffness[index];
+                dampingMultiplier = m_bodilyPose.damping[index];
+                torqueMultiplier = m_bodilyPose.torque[index];
+            }
+            torqueMultiplier = std::min(torqueMultiplier, GetUpTorqueCap);
         }
         // Largado, os membros pesam. Com a gravidade compensada inteira eles
         // ficavam onde estavam, sem peso: o corpo caia e deitava "posado", de
@@ -5765,6 +9941,8 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
                 || id == "Neck" || id == "Head";
             if (m_getUpPhase == CharacterGetUpPhase3D::Settling) {
                 gravityScale = LyingGravity + (1.0f - LyingGravity) * m_settleGather;
+            } else if (m_getUpPhase == CharacterGetUpPhase3D::Rising && m_tackling) {
+                gravityScale = 1.0f;
             } else if (m_getUpPhase == CharacterGetUpPhase3D::Rising) {
                 const float from = LyingGravity + (1.0f - LyingGravity) * m_settleGather;
                 gravityScale = from + (1.0f - from)
@@ -5782,10 +9960,13 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
             target.axis = static_cast<RagdollAxis3D>(axis);
             target.positionRadians = component(m_coordinates[index], axis);
             // Folga acima do joelho do sprint (~21 rad/s de pico).
-            const float recoveryVelocityShare = m_getUpPhase == CharacterGetUpPhase3D::Settling
+            const float recoveryVelocityShare = m_tackling ? 1.0f
+                : m_getUpPhase == CharacterGetUpPhase3D::Settling
                 ? 0.0f : m_getUpPhase == CharacterGetUpPhase3D::Rising
                     ? smoothStep(m_getUpPhaseSeconds / 0.5f) : 1.0f;
-            const float velocityLimit = getUpActive ? 6.0f : 30.0f;
+            // (O mergulho do carrinho e rapido: o limite do levantar o
+            // atrasava.)
+            const float velocityLimit = getUpActive && !m_tackling ? 6.0f : 30.0f;
             target.velocityRadiansPerSecond = std::clamp(
                 component(velocity, axis) * velocityShare * recoveryVelocityShare,
                 -velocityLimit, velocityLimit);
@@ -5795,13 +9976,80 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
             const float yielding = !getUpActive
                     && index < input.jointStrength.size()
                 ? std::clamp(input.jointStrength[index], 0.05f, 1.0f) : 1.0f;
+            // Cambaleio: o tonus de cada junta vai ao piso dela (pernas
+            // seguram um pouco; tronco e bracos soltam, com menos gravidade
+            // compensada) e volta com ele.
+            float staggerTone = 1.0f, staggerGravity = 1.0f;
+            if (m_stagger > 0.0f && !getUpActive) {
+                if (m_staggerLimb.size() != profile.links.size()) {
+                    m_staggerLimb.assign(profile.links.size(), 0);
+                    for (std::size_t link = 0; link < profile.links.size(); ++link) {
+                        const std::string& id = profile.links[link].id;
+                        m_staggerLimb[link] = id.find("Arm") != std::string::npos || id.find("Forearm") != std::string::npos
+                                || id.find("Hand") != std::string::npos ? 2
+                            : id == "Abdomen" || id == "Chest" || id == "UpperChest" || id == "Neck" || id == "Head" ? 1 : 0;
+                    }
+                }
+                const std::uint8_t limb = m_staggerLimb[index];
+                // (v2: o piso das pernas sobe com menos ajuda - sem ela quem
+                // segura o corpo amolecido sao as pernas, e a 20% de tonus
+                // nao saia o passo que salva: empurrado parado a 0%, ele
+                // sentava para tras com os dois pes plantados.)
+                const float legFloor = input.physicalV2
+                    ? StaggerLegTone + (0.6f - StaggerLegTone) * (1.0f - std::clamp(input.walkingAssist, 0.0f, 1.0f))
+                    : StaggerLegTone;
+                // (O tronco tambem: a 10% de tonus, sem ajuda o peito tombava
+                // ~75 graus de lado num empurrao correndo.)
+                // (Perto de 0% de ajuda, nao: la o tronco mole absorve o
+                // empurrao parado - firme, o choque ia ao corpo inteiro e ele
+                // caia mais.)
+                static const float torsoLowAssist = tuneTemp("T_StaggerTorsoLow", 0.30f);  // TEMPTUNE
+                const float walkAssist = std::clamp(input.walkingAssist, 0.0f, 1.0f);
+                const float torsoShare = (1.0f - walkAssist) * smoothStep((walkAssist - 0.1f) / 0.15f);
+                const float torsoFloor = input.physicalV2
+                    ? StaggerTorsoTone + (torsoLowAssist - StaggerTorsoTone) * torsoShare
+                    : StaggerTorsoTone;
+                const float floor = limb == 2 ? StaggerArmTone : limb == 1 ? torsoFloor : legFloor;
+                staggerTone = 1.0f - m_stagger * (1.0f - floor);
+                if (limb != 0) staggerGravity = 1.0f - StaggerGravityDrop * m_stagger;
+            }
+            // v2: com pouca ajuda, a perna de apoio da passada para a frente
+            // segura a pose com mais rigidez - ate StanceStiffness vezes perto
+            // de 0% (1 - ajuda), sumindo de 30% a 50% (a 70%, 1,45x dobrava as
+            // quedas do tropeco na barra escondida, 6 -> 12 em 128). E a mola da pose
+            // que leva o corpo na passada (o esforco por J^T mudava pouco); com
+            // a rigidez normal o corpo nao passava de ~4 m/s a 20% e o pe
+            // escorregava para tras. Mais macia, mais lento; 4x ou mais
+            // derrubava mais nas manobras rapidas (mais velocidade nelas). Fora
+            // da passada para a frente (de lado, de costas, freando, tropecando
+            // ou cambaleando) fica a normal: saindo do passo de lado para a
+            // corrida, a perna rigida chutava o corpo.
+            float stanceStiffnessScale = 1.0f;
+            if (StanceStiffness != 1.0f && input.physicalV2 && input.forceDrivenRoot && !getUpActive
+                && (m_telemetry.state == CharacterLocomotionState3D::Walking
+                    || m_telemetry.state == CharacterLocomotionState3D::Running)
+                && m_gaitDirection == CharacterGaitDirection3D::Forward
+                && m_brakeGait <= 0.0f && !m_brakeStepping && m_tripRecovery < 0.05f
+                && m_stagger < 0.05f) {
+                for (std::size_t leg = 0; leg < m_feet.size(); ++leg) {
+                    if (!m_feet[leg].valid || !m_feet[leg].planted) continue;
+                    const int foot = static_cast<int>(m_feet[leg].linkIndex);
+                    const int shin = profile.links[static_cast<std::size_t>(foot)].parentIndex;
+                    const int thigh = shin > 0 ? profile.links[static_cast<std::size_t>(shin)].parentIndex : -1;
+                    const int link = static_cast<int>(index);
+                    const float assist = std::clamp(input.walkingAssist, 0.0f, 1.0f);
+                    if (link == foot || link == shin || link == thigh)
+                        stanceStiffnessScale = 1.0f + (StanceStiffness - 1.0f)
+                            * (1.0f - assist) * smoothStep((0.5f - assist) / 0.2f);
+                }
+            }
             target.stiffnessScale =
-                muscle * stiffnessMultiplier * impactSoftening * yielding;
+                muscle * stiffnessMultiplier * impactSoftening * yielding * staggerTone * stanceStiffnessScale;
             target.dampingScale =
-                std::sqrt(muscle) * dampingMultiplier;
+                std::sqrt(muscle) * dampingMultiplier * std::sqrt(staggerTone);
             target.maximumTorqueScale =
-                muscle * torqueMultiplier * impactSoftening * yielding;
-            target.gravityCompensationScale = gravityScale;
+                muscle * torqueMultiplier * impactSoftening * yielding * staggerTone;
+            target.gravityCompensationScale = gravityScale * staggerGravity;
             if (input.manipulated && index == input.grabbedLink) {
                 target.stiffnessScale *= 0.20f;
                 target.dampingScale *= 0.45f;
@@ -5848,7 +10096,7 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
     guide.rootRotationAuthority = rootAuthority;
     guide.releaseOnInteraction = true;
     guide.rootPositionWorld = targetRootPosition;
-    m_output.navigationAnchorWorld = targetRootPosition
+    m_output.navigationAnchorWorld = targetRootPosition - m_ballBodyDelta
         + Vec3 { input.rootPositionWorld.x - navigationRoot.x,
             input.rootPositionWorld.y - navigationRoot.y, 0.0f };
     guide.rootOrientationWorld = targetRootOrientation;
@@ -5856,6 +10104,11 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
         (targetRootPosition - m_previousRootPosition) / deltaTime;
     guide.rootLinearVelocityWorld = finite(finiteDifferenceVelocity)
         ? finiteDifferenceVelocity : input.rootVelocityWorld;
+    // Nos passos de freada a raiz e o proprio corpo: a aceleracao dela e a
+    // dele, e antecipada pela ajuda empurrava o corpo para onde ele ja ia -
+    // freando sobre o pe da frente, ate 2700 N para tras, e ele voltava a
+    // 1,2 m/s de costas depois de parar.
+    guide.rootFeedforwardShare = BrakeAnchorNoFeedforward ? 1.0f - m_brakeGait * m_brakeAnchor : 1.0f;
     const Vec3 targetAngularVelocity = rotationVector(targetRootOrientation
         * m_previousRootOrientation.conjugate()) / deltaTime;
     guide.rootAngularVelocityWorld = targetAngularVelocity;
@@ -5869,7 +10122,65 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
     m_telemetry.getUpUprightTorque = 0.0f;
     if (getUpActive && !state.links.empty()) {
         m_telemetry.getUpAssistNewtons = 0.0f;
-        if (m_getUpPhase == CharacterGetUpPhase3D::Rising) {
+        if (m_tackling && m_tackleClip != nullptr) {
+            // Carrinho: nada empurra o corpo pelo espaco - o mergulho e o
+            // deslize sao o embalo e o atrito (a ajuda que acompanhava o
+            // caminho do clipe encurtava e "arrastava" o deslize). Fica so a
+            // atitude: a pelve gira para a inclinacao do clipe (sem ela o
+            // embalo capotava o corpo por cima do pe apoiado). E no levantar
+            // do deslize, uma ajuda para cima.
+            const float mass = std::max(1.0f, profile.totalMassKg);
+            const auto& pelvis = state.links.front();
+            const float duration = m_tackleClip->durationSeconds;
+            constexpr float Step = 1.0f / 30.0f;
+            const float t0 = std::min(m_getUpClipSeconds, duration);
+            const float t1 = std::min(t0 + Step, duration);
+            const AnimationTransformSample3D now = clipRootAt(profile, *m_tackleClip, t0);
+            const AnimationTransformSample3D next = clipRootAt(profile, *m_tackleClip, t1);
+            const Quaternion turn = Quaternion::fromAxisAngle({ 0.0f, 0.0f, 1.0f }, m_tackleYaw);
+            const Quaternion wanted = (turn * now.rotationDelta).normalized();
+            const Quaternion wantedNext = (turn * next.rotationDelta).normalized();
+            const float rate = t1 > t0 ? m_getUpRate / Step : 0.0f;
+            const Vec3 wantedSpin = rotationVector(wantedNext * wanted.conjugate()) * rate;
+            const Vec3 orientationError = rotationVector(wanted * pelvis.orientation.conjugate());
+            m_output.rootControlTorqueWorld = clampMagnitude(orientationError * (mass * 9.0f)
+                + (wantedSpin - pelvis.angularVelocity) * (mass * 1.2f), mass * 8.0f) * TackleAttitude;
+            // O impulso do mergulho: o pe de apoio ainda no chao, o corpo no
+            // alto e o clipe descendo (a saida), a perna empurra na direcao
+            // do carrinho - sem ele o corpo chegava ao chao com metade da
+            // velocidade de entrada (o carrinho lento e curto).
+            {
+                const std::size_t plant = static_cast<std::size_t>(m_tackleStartSide);
+                const float bodyHeight = pelvis.position.z - groundHeightGuess;
+                const bool takeoff = feetGroundContact[plant] && bodyHeight > 0.40f
+                    && m_getUpClipSeconds < 0.45f * duration && m_tackleExpectedRise < 0.2f;
+                if (takeoff) {
+                    const Vec3 direction { std::cos(m_tackleYaw), std::sin(m_tackleYaw), 0.0f };
+                    const float along = dot(Vec3 { pelvis.linearVelocity.x, pelvis.linearVelocity.y, 0.0f }, direction);
+                    const float wanted = m_tackleEntrySpeed * TackleImpulseShare;
+                    const float push = std::clamp((wanted - along) * 8.0f, 0.0f, 9.81f * TackleImpulseForce);
+                    m_output.rootControlForceWorld += direction * (push * mass);
+                    m_telemetry.getUpAssistNewtons = m_output.rootControlForceWorld.length();
+                }
+            }
+            const float standing = profile.standingRootHeightMeters;
+            const float height = pelvis.position.z - groundHeightGuess;
+            // Levantando do deslize (o clipe subindo) e, da metade em diante,
+            // o corpo ainda abaixo da altura do clipe (ele termina de subir).
+            const float late = m_getUpClipSeconds > 0.5f * duration
+                ? smoothStep((m_tackleExpectedHeight - height - 0.04f) / 0.10f) : 0.0f;
+            const float recovering = std::max(late, smoothStep((m_tackleExpectedRise - 0.05f) / 0.25f)
+                * smoothStep((standing * 0.92f - m_tackleExpectedHeight) / 0.10f));
+            if (recovering > 0.0f) {
+                const float lift = std::clamp(36.0f * (m_tackleExpectedHeight - height)
+                    + 12.0f * (m_tackleExpectedRise - pelvis.linearVelocity.z), 0.0f, 9.81f * 0.5f);
+                // (Propria do carrinho, nao a do slider de levantar: com ela em
+                // 0, 43% dos carrinhos nao levantavam do deslize.)
+                const float assist = recovering * TackleRecoveryAssist;
+                m_output.rootControlForceWorld = Vec3 { 0.0f, 0.0f, lift * mass } * assist;
+                m_telemetry.getUpAssistNewtons = m_output.rootControlForceWorld.length();
+            }
+        } else if (m_getUpPhase == CharacterGetUpPhase3D::Rising && !m_bodilyRising) {
             // Ajuda discreta do levantar: quem levanta e o corpo (os motores
             // levando as juntas ao clipe, maos/joelhos/pes empurrando o
             // chao). A pelve so recebe o que falta para acompanhar o clipe -
@@ -5933,15 +10244,19 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
             // dobro na terceira).
             // A ajuda entra aos poucos (~1 s): o corpo comeca sozinho e ela
             // vai chegando, em vez de pegar o corpo no primeiro tick.
-            m_getUpAssistRamp = smoothStep(m_getUpPhaseSeconds / 1.0f);
+            m_getUpAssistRamp = smoothStep(m_getUpPhaseSeconds * m_getUpSpeedNow / 1.0f);
             const float effort = std::min(2.0f, 1.0f
                 + 0.5f * static_cast<float>(m_getUpAttempt > 0 ? m_getUpAttempt - 1 : 0))
                 * m_getUpAssistRamp;
             const float liftCap = 9.81f * (0.30f + 0.35f * m_getUpStruggle) * effort;
+            // (Perto da altura de pe ela tambem freia: com o clipe mais
+            // rapido, o embalo da subida e as pernas esticando lancavam o
+            // corpo - a pelve a 1,17 m, um pulinho no fim do levantar.)
+            const float brakeShare = GetUpLiftBrake * smoothStep((height - 0.70f) / 0.15f);
             const float lift = std::clamp(
                 LiftOmega * LiftOmega * (expectedHeight - height)
                     + 2.0f * LiftOmega * (expectedRise - pelvis.linearVelocity.z),
-                0.0f, liftCap) * supportShare;
+                -liftCap * brakeShare, liftCap) * supportShare;
             // Endireitar: gira a pelve no sentido de ficar em pe, ate a
             // inclinacao que o clipe tem agora.
             const Vec3 up = pelvis.orientation.rotate({ 0.0f, 0.0f, 1.0f });
@@ -5961,10 +10276,12 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
                 const float late = smoothStep((0.8f - expectedTilt) / 0.4f)
                     * smoothStep((height - 0.55f) / 0.15f);
                 const float cap = mass * (1.5f + 1.5f * m_getUpStruggle
-                    + 3.0f * late) * effort;
-                torque = axis * std::clamp((excess * 22.0f - spin * 4.5f) * mass,
+                    + GetUpPelvisLateCap * late) * effort;
+                torque = axis * std::clamp((excess * 22.0f * (1.0f + GetUpPelvisLateGain * late)
+                    - spin * 4.5f * (1.0f + 0.5f * GetUpPelvisLateGain * late)) * mass,
                     -cap, cap) * supportShare;
                 m_telemetry.getUpTiltExcessDegrees = excess * 57.2958f;
+                m_telemetry.getUpExpectedTiltDegrees = expectedTilt * 57.2958f;
             }
             // O peito tambem: a altura dele no clipe agora (cinematica direta
             // da pose do clipe), com o mesmo teto dividido.
@@ -5986,6 +10303,7 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
                     const Vec3 clipChestUp = clipChest.rotate({ 0.0f, 0.0f, 1.0f });
                     const float expectedChestTilt = std::acos(
                         std::clamp(clipChestUp.z, -1.0f, 1.0f));
+                    m_telemetry.getUpExpectedChestTiltDegrees = expectedChestTilt * 57.2958f;
                     const auto& chestBody = state.links[m_chestLink];
                     const Vec3 chestUp = chestBody.orientation.rotate({ 0.0f, 0.0f, 1.0f });
                     Vec3 chestAxis = cross(chestUp, { 0.0f, 0.0f, 1.0f });
@@ -5994,9 +10312,16 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
                         const float excess = std::max(0.0f, std::acos(
                             std::clamp(chestUp.z, -1.0f, 1.0f)) - expectedChestTilt);
                         const float spin = dot(chestBody.angularVelocity, chestAxis);
-                        const float cap = mass * (0.8f + 0.8f * m_getUpStruggle) * effort;
+                        // (Na fase final, de pe, mais forca: o peito ficava ~25
+                        // graus caido alem do clipe e o corpo, de pe e
+                        // dobrado no quadril, ~0,55 s ate a ajuda o erguer -
+                        // o levantar de bruços. Pedido do usuario, 05/10.)
+                        const float chestLate = smoothStep((0.8f - expectedTilt) / 0.4f)
+                            * smoothStep((height - 0.55f) / 0.15f);
+                        const float cap = mass * (0.8f + 0.8f * m_getUpStruggle + GetUpChestLateCap * chestLate) * effort;
                         m_output.chestAssistTorqueWorld = chestAxis * std::clamp(
-                            (excess * 14.0f - spin * 3.0f) * mass, -cap, cap) * supportShare;
+                            (excess * 14.0f * (1.0f + GetUpChestLateGain * chestLate) - spin * 3.0f) * mass, -cap, cap)
+                            * supportShare;
                     }
                 }
                 chestLift = std::clamp(
@@ -6075,6 +10400,31 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
             m_output.rootControlTorqueWorld = torque;
             m_telemetry.getUpUprightTorque = torque.length();
             m_telemetry.getUpAssistNewtons = total * scale * mass;
+            // A ajuda para levantar (slider do laboratorio, 0 = nenhuma; o
+            // TEMPTUNE multiplica, para diagnostico).
+            const float getUpAssistScale = GetUpAssistScale * std::clamp(input.getUpAssist, 0.0f, 2.0f);
+            if (getUpAssistScale != 1.0f) {
+                m_output.rootControlForceWorld *= getUpAssistScale;
+                m_output.rootControlTorqueWorld *= getUpAssistScale;
+                m_output.chestAssistForceWorld *= getUpAssistScale;
+                m_output.chestAssistTorqueWorld *= getUpAssistScale;
+                for (Vec3& reaction : m_output.assistReactionTorquesWorld) reaction *= getUpAssistScale;
+                m_telemetry.getUpAssistNewtons *= getUpAssistScale;
+            }
+        }
+        // Rolando: a ajuda gira o corpo em torno da coluna, no sentido da
+        // barriga para o chao (vezes o slider da ajuda para levantar; a 0% so
+        // a perna e o braco de cima rolam o corpo).
+        if (m_getUpPhase == CharacterGetUpPhase3D::Settling && m_getUpRolling
+            && m_chestLink < state.links.size()) {
+            const float mass = std::max(1.0f, profile.totalMassKg);
+            const Vec3 spine = (state.links[m_chestLink].position - state.links.front().position).normalized();
+            const float spin = dot(state.links.front().angularVelocity, spine) * m_getUpRollSign;
+            const float wanted = 2.0f;  // rad/s em torno da coluna
+            const float ramp = smoothStep(m_getUpRollSeconds / 0.3f);
+            const float torque = std::clamp((wanted - spin) * 0.6f, 0.0f, 1.0f) * GetUpRollTorque * mass * ramp
+                * GetUpAssistScale * std::clamp(input.getUpAssist, 0.0f, 2.0f);
+            m_output.rootControlTorqueWorld = spine * (m_getUpRollSign * torque);
         }
     } else if (!state.links.empty()) {
         // One path now: the body is always the physical one, so it always
@@ -6135,6 +10485,25 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
     m_previousRootOrientation = targetRootOrientation;
     m_output.gravityCompensationEnabled = muscle > 0.0001f;
     m_output.physicsBlend = m_physicsBlend;
+    // Carrinho: com o corpo baixo no clipe (mergulho e deslize) ele escorrega
+    // na grama; subindo do chao, o atrito volta (pes e maos empurram).
+    m_output.bodyFrictionScale = 1.0f;
+    if (m_tackling && !state.links.empty()) {
+        // A velocidade ao tocar o chao (a pelve chegando baixo); antes disso
+        // (o joelho pode tocar antes), a de entrada com o impulso.
+        const auto& pelvis = state.links.front();
+        const float bodyHeight = pelvis.position.z - groundHeightGuess;
+        if (m_tackleLandSpeed < 0.0f && bodyHeight < TackleSlideHeight)
+            m_tackleLandSpeed = std::hypot(pelvis.linearVelocity.x, pelvis.linearVelocity.y);
+        const float speed = std::max(0.5f, m_tackleLandSpeed >= 0.0f ? m_tackleLandSpeed
+            : m_tackleEntrySpeed * TackleImpulseShare);
+        const float distance = TackleSlideA * std::pow(speed, TackleSlideP);
+        const float mu = speed * speed / (2.0f * 9.81f * std::max(0.1f, distance));
+        const float slideScale = std::clamp(mu / TackleBaseFriction, 0.10f, 1.0f);
+        const float slide = smoothStep((0.70f - m_tackleExpectedHeight) / 0.15f)
+            * (1.0f - smoothStep((m_tackleExpectedRise - 0.10f) / 0.20f));
+        m_output.bodyFrictionScale = 1.0f - (1.0f - slideScale) * slide;
+    }
 
     m_telemetry.localVelocity = localVelocity;
     m_telemetry.speedMetersPerSecond = speed;
@@ -6149,6 +10518,7 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
     m_telemetry.forwardLeanRadians = forwardLean;
     m_telemetry.lateralLeanRadians = lateralLean;
     m_telemetry.authoredCurveBlend = authoredCurveBlend;
+    m_telemetry.clipFootContact = contactWeights;
     m_telemetry.authoredCurveKind = authoredCurveKind;
     m_telemetry.authoredStartActive = authoredStartActive;
     m_telemetry.landingBraceForwardRadians = landingBraceForward;
@@ -6157,7 +10527,50 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
     m_telemetry.playbackRate = playbackRate;
     m_telemetry.strideScale = strideScale;
     m_telemetry.terrainSlope = m_terrainSlope;
+    // Curva fechada: o teto de velocidade que cabe na curva pedida - a
+    // aceleracao lateral que as pernas fazem sobre a taxa com que o pedido
+    // gira (a camera girando com o comando para a frente). A 7,5 m/s, virar a
+    // 180 graus/s pede 2,4 g: a ajuda puxava o corpo para o rumo novo, os pes
+    // nao acompanhavam (o de dentro era arrastado no chao) e ele caia. Quem
+    // corre de verdade desacelera para fechar a curva. O jogo corta o pedido
+    // por este teto (o mesmo do terreno); ao sair da curva ele sobe no ritmo
+    // de uma arrancada. Um degrau no pedido (troca de tecla) nao e curva: a
+    // taxa crua e limitada antes do filtro.
+    {
+        const Vec3 request { input.intent.requestedDirectionWorld.x,
+            input.intent.requestedDirectionWorld.y, 0.0f };
+        const bool requesting = request.lengthSquared() > 0.01f;
+        const float yaw = requesting ? std::atan2(request.y, request.x) : m_requestYaw;
+        const float rate = requesting && m_requestYawValid
+            ? std::clamp(wrapAngle(yaw - m_requestYaw) / std::max(1e-4f, deltaTime),
+                -RequestTurnRateClamp, RequestTurnRateClamp) : 0.0f;
+        m_requestYaw = yaw;
+        m_requestYawValid = requesting;
+        m_requestTurnRate += (rate - m_requestTurnRate)
+            * (1.0f - std::exp(-deltaTime / std::max(0.01f, RequestTurnFilterSeconds)));
+        float curveLimit = 1000.0f;
+        const float lateral = CurveSpeedAccelerationLow + (CurveSpeedAcceleration - CurveSpeedAccelerationLow)
+            * std::clamp(input.walkingAssist, 0.0f, 1.0f);
+        if (CurveSpeedAcceleration > 0.0f && input.forceDrivenRoot && !getUpActive
+            && std::abs(m_requestTurnRate) > 0.3f)
+            curveLimit = std::max(CurveSpeedMinimum, lateral / std::abs(m_requestTurnRate));
+        m_curveSpeedCap = curveLimit < m_curveSpeedCap ? curveLimit
+            : std::min(curveLimit, m_curveSpeedCap + CurveSpeedRecovery * deltaTime);
+        if (m_curveSpeedCap < 100.0f) terrainSpeedLimit = std::min(terrainSpeedLimit, m_curveSpeedCap);
+    }
+    // Arrancada pelo passo: a ajuda dosada - a capsula (e o pedido) sobe no
+    // ritmo de quem arranca (referencia: 2,2 m/s aos 0,37 s), nao a 14 m/s2.
+    if (m_startStepActive)
+        terrainSpeedLimit = std::min(terrainSpeedLimit, StartSpeedBase + StartSpeedRate * m_stumbleStepSeconds);
+    else if (m_startDoseCap < 100.0f)
+        terrainSpeedLimit = std::min(terrainSpeedLimit, m_startDoseCap);
     m_telemetry.terrainSpeedLimit = terrainSpeedLimit;
+    m_telemetry.tripRecovery = m_tripRecovery;
+    m_telemetry.stumbleExcess = m_stumblePitch - m_stumbleBaseline;
+    m_telemetry.stumbleRate = m_stumblePitchRate;
+    m_telemetry.stumbleDecel = m_stumbleDecel;
+    m_telemetry.stumbleRisk = m_stumbleRisk;
+    m_telemetry.stumbleStepping = m_stumbleStepping;
     const float longitudinal = std::abs(localVelocity.x);
     const float lateral = std::abs(localVelocity.y);
     const float total = std::max(0.0001f, longitudinal + lateral);
@@ -6197,6 +10610,35 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
         ? m_getUpAssistRamp : 0.0f;
     m_telemetry.settleGather = m_getUpPhase == CharacterGetUpPhase3D::Settling
         ? m_settleGather : m_getUpPhase == CharacterGetUpPhase3D::Rising ? 1.0f : 0.0f;
+    const bool bodilyTelemetry = m_bodilyRising && m_getUpPhase == CharacterGetUpPhase3D::Rising;
+    m_telemetry.bodilyStage = bodilyTelemetry ? m_bodilyGetUp.telemetry().stage : BodilyGetUpStage3D::None;
+    m_telemetry.bodilyStageProgress = bodilyTelemetry ? m_bodilyGetUp.telemetry().stageProgress : 0.0f;
+    m_telemetry.bodilyRootError = bodilyTelemetry ? m_bodilyGetUp.telemetry().rootError : 0.0f;
+}
+
+// Para a locomocao padrao (DefaultLocomotion3D, 04/10): o corpo do chute e a
+// "vida" do modo fisico sobre as mesmas coordenadas de junta.
+void characterSolveFootPose3D(const RagdollProfile3D& profile, std::vector<Vec3>& coordinates,
+    std::size_t footIndex, Vec3 targetPosition, Quaternion targetOrientation, float weight, bool holdYaw) {
+    solveFootPose(profile, coordinates, footIndex, targetPosition, targetOrientation, weight, holdYaw);
+}
+
+void characterKickPose3D(const RagdollProfile3D& profile, const RagdollState3D& state,
+    std::vector<Vec3>& coordinates, std::array<std::size_t, 2> hands, const BallKickPose3D& kick) {
+    applyKickPose(profile, state, coordinates, hands, kick);
+}
+
+void characterGaitVariety3D(const RagdollProfile3D& profile, const AnimationClip3D& clip, float cyclePhase,
+    float armPhase, float strides, std::uint32_t seed, float amount, std::vector<Vec3>& coordinates) {
+    // (Locomocao padrao: somada, nas fases do clipe - substituindo, o tronco e
+    // os bracos saltavam inteiros para a pose de outro clipe quando o
+    // dominante mudava.)
+    applyGaitVariety(profile, clip, cyclePhase, armPhase, strides, seed, amount, coordinates, true, true);
+}
+
+void characterIdleVariety3D(const RagdollProfile3D& profile, float seconds, std::uint32_t seed, float amount,
+    std::vector<Vec3>& coordinates) {
+    applyIdleVariety(profile, seconds, seed, amount, coordinates);
 }
 
 } // namespace MatterEngine

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Converte uma ação de um rig humanoide conhecido para AnimationClip3D.
 
-O arquivo pode ser FBX ou glTF/GLB e pode conter várias ações. O preset do rig
+O arquivo pode ser FBX, glTF/GLB ou BVH e pode conter várias ações. O preset do rig
 define apenas nomes de ossos; o retarget continua sendo geométrico e limitado
 pelo perfil físico do personagem.
 
@@ -45,6 +45,17 @@ SOURCE_RIGS = {
         "LeftThigh": "upperleg.l", "LeftShin": "lowerleg.l",
         "LeftFoot": "foot.l", "RightThigh": "upperleg.r",
         "RightShin": "lowerleg.r", "RightFoot": "foot.r",
+    },
+    # SOMA (Kimodo, NVIDIA): BVH exportado pelo gerador do Kimodo.
+    "soma": {
+        "Pelvis": "Hips", "Abdomen": "Spine1", "Chest": "Spine2",
+        "UpperChest": "Chest", "Neck": "Neck1", "Head": "Head",
+        "LeftUpperArm": "LeftArm", "LeftForearm": "LeftForeArm",
+        "LeftHand": "LeftHand", "RightUpperArm": "RightArm",
+        "RightForearm": "RightForeArm", "RightHand": "RightHand",
+        "LeftThigh": "LeftLeg", "LeftShin": "LeftShin",
+        "LeftFoot": "LeftFoot", "RightThigh": "RightLeg",
+        "RightShin": "RightShin", "RightFoot": "RightFoot",
     },
     "unreal": {
         "Pelvis": "pelvis", "Abdomen": "spine_01", "Chest": "spine_02",
@@ -129,6 +140,9 @@ def arguments():
                               "quando omitida, usa o deslocamento horizontal "
                               "da raiz dividido pela duração"))
     parser.add_argument("--inspect-only", action="store_true")
+    parser.add_argument("--reference-only", action="store_true",
+                        help=("fonte de estudo/autoria (não clipe final): grava "
+                              "mesmo reprovado nos gates de qualidade, com aviso"))
     return parser.parse_args(sys.argv[sys.argv.index("--") + 1 :])
 
 
@@ -351,6 +365,12 @@ def main():
         bpy.ops.import_scene.fbx(filepath=str(input_path))
     elif input_path.suffix.lower() in (".glb", ".gltf"):
         bpy.ops.import_scene.gltf(filepath=str(input_path))
+    elif input_path.suffix.lower() == ".bvh":
+        # BVH do Kimodo: centimetros, Y para cima.
+        bpy.ops.import_anim.bvh(filepath=str(input_path), global_scale=0.01,
+                                axis_forward="-Z", axis_up="Y",
+                                update_scene_fps=True,
+                                update_scene_duration=True)
     else:
         raise RuntimeError("Formato de animação não suportado: "
                            + input_path.suffix)
@@ -863,7 +883,10 @@ def main():
                 f"{math.degrees(minimum):.1f}..{math.degrees(maximum):.1f}")
         print(f"    {target_id}: " + ", ".join(ranges))
 
-    if quality_failures:
+    if quality_failures and args.reference_only:
+        print("  AVISO (so referencia): reprovado nos gates de qualidade: "
+              + "; ".join(quality_failures))
+    elif quality_failures:
         raise RuntimeError("Retarget reprovado nos gates de qualidade: "
                            + "; ".join(quality_failures))
 

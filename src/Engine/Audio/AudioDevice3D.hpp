@@ -47,18 +47,10 @@ public:
     // para decidir se vale a pena calcular oclusao continua.
     [[nodiscard]] bool efxAvailable() const;
 
-    // Carrega um WAV e converte para mono (fontes 3D do OpenAL so
-    // espacializam/aplicam HRTF a buffers de um unico canal). Retorna um id
-    // de buffer para passar a play()/playTimed(), ou -1 em falha.
-    int loadBuffer(const std::string& path);
-
-    // Contraparte de loadBuffer() para audio gerado por codigo em vez de
-    // carregado de arquivo (ver Engine/Audio/ProceduralNoise.hpp) - recebe
-    // PCM mono de 16 bits ja pronto, na taxa de mixSampleRateHz(), e cria um
-    // buffer OpenAL diretamente a partir dele (sem passar pelo SDL_LoadWAV/
-    // SDL_ConvertAudioSamples que loadBuffer() usa). Compartilha o mesmo
-    // espaco de ids de loadBuffer() - os dois podem ser usados de forma
-    // intercambiavel em qualquer play*(). Retorna -1 em falha.
+    // O som e gerado por codigo (ver Engine/Audio/ProceduralNoise.hpp; nao ha
+    // arquivos de audio): recebe PCM mono de 16 bits ja pronto, na taxa de
+    // mixSampleRateHz() (fontes 3D do OpenAL so espacializam/aplicam HRTF a
+    // buffers de um canal), e devolve o id para play*(), ou -1 em falha.
     int loadProceduralBuffer(std::span<const std::int16_t> monoSamples);
 
     [[nodiscard]] float bufferDurationSeconds(int bufferId) const;

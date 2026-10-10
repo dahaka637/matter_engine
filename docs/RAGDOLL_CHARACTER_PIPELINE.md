@@ -1,114 +1,198 @@
 # Personagem visual dirigido pelo ragdoll
 
-O personagem padrão é o jogador de futebol `Ch38_nonPBR.fbx`, fornecido pelo
-usuário. Manifesto: `assets/characters/football_player/character.json`.
-O jogador é usado tanto no controle do personagem quanto nos ragdolls criados
-no laboratório e no visualizador de animações. O modelo ALS anterior foi removido.
+O personagem padrão é o **jogador montado pela própria engine**
+(`assets/characters/player_model`, ver `MODELAGEM_DO_PERSONAGEM.md`),
+exportado para o jogo em `assets/characters/football_player` (09/10/2026).
+Manifesto: `assets/characters/football_player/character.json`. O jogador é
+usado no controle do personagem, nos ragdolls do laboratório, no visualizador
+de animações e no de toque na bola. O Ch38 (o FBX fornecido em 26/09), os
+arquivos dele e as ferramentas que o preparavam
+(`tools/prepare_football_player.py`, `tools/fit_ragdoll_colliders.py`) foram
+removidos; o ALS anterior também.
 
-## Compatibilidade com o trabalho de animação
-
-O perfil `FootballPlayerV1.ragdoll.json` conserva os anchors, frames, massas
-e limites do rig físico anteriormente calibrado. O importador ajusta a malha
-do jogador a esse rig, por segmento e com os pesos suaves do FBX. Isso
-preserva as animações já autoradas. Os tracks dos clipes não foram
-reamostrados: apenas `targetRigId` foi atualizado para o novo nome.
-
-Uma junta mudou: o **antebraço é uma dobradiça** (27/09). O eixo de
-"pronação" herdado do ALS (`swing1` do antebraço) girava o antebraço inteiro
-em volta do braço com o cotovelo dobrado, e o motor dele era fraco. No corpo
-físico, o braço sacudia. Nenhum clipe usava esse eixo, fora os 10° do parado,
-que agora vêm do giro do braço. Detalhes em `ANIMATION_AUTHORING.md`.
-
-Os **colisores** são medidos da malha do jogador por
-`tools/fit_ragdoll_colliders.py` (cápsulas cônicas nos membros, cápsulas
-laterais no tronco, caixa da chuteira no pé), com as regras e os motivos
-descritos no script e em "Colisores do jogador", em
-`docs/ANIMATION_AUTHORING.md`. Rodar depois do preparador:
+## Exportar
 
 ```bash
-python3 tools/fit_ragdoll_colliders.py \
-  assets/characters/football_player/FootballPlayerV1.ragdoll.json \
-  assets/characters/football_player/football.skin.json
+build-profile/MatterModelInspector exportar-jogo --destino assets/characters/football_player
+# opcional: --quinas 45 (graus) --facetado 0.5
 ```
 
-O ajuste modifica as proporções da malha de origem para casar com o rig;
-não é um novo perfil físico medido do FBX. Se o perfil mudar futuramente,
-será necessário retargetear e validar os clipes, não apenas renomeá-los.
+Lê o modelo montado (o mesmo da tela "Inspeção de jogador"), mede o corpo e
+grava quatro arquivos:
 
-## Arquivos e reprodução
+- `character.json`: identidade, papéis das animações, procedência e o
+  sombreamento (`flatShaded` falso, `facet` 0,5);
+- `FootballPlayerV1.ragdoll.json`: o perfil físico (18 links);
+- `jogador.skin.json`: a pele (versão 2);
+- `jogador_atlas.png`: o atlas da montagem (2048 px).
 
-- `Ch38_nonPBR.fbx`: fonte original, incluindo todas as texturas embutidas.
-- `FootballPlayerV1.ragdoll.json`: contrato dos 18 links físicos.
-- `football.skin.json`: skin indexada com até quatro influências por vértice.
-- `albedo.png`: atlas das texturas de corpo/uniforme e cabelo, 4096 × 2048.
-- `football-rigged.blend`: malha ajustada, material e rig físico editáveis.
-- `character.json`: identidade, caminhos, procedência e papéis das animações.
+O código é `src/Engine/Modeling/Rig/GameCharacterExport.cpp`. Exportar de
+novo no mesmo corpo dá os mesmos arquivos (ponto fixo); o teste
+`MatterPlayerModelTests` falha se o modelo mudou e o personagem do jogo ficou
+para trás ("o personagem do jogo está desatualizado"). Depois de mudar o
+modelo, exporte de novo.
 
-```bash
-blender --background --factory-startup --disable-autoexec --python-exit-code 1 \
-  --python tools/prepare_football_player.py -- \
-  --source assets/characters/football_player/Ch38_nonPBR.fbx \
-  --output assets/characters/football_player
-```
+## Compatibilidade com as animações
 
-O importador usa o perfil calibrado que já está no diretório de saída. Ele
-não precisa dos arquivos do personagem antigo. Frente +X, esquerda +Y, cima +Z.
-Dedos dos pés seguem o pé e clavículas seguem UpperChest. O mapeamento é
-explícito; ossos com pesos sem correspondência causam erro.
+O rig continua o calibrado: as juntas (os frames, os eixos twist/swing, os
+limites, as rigidezes, os amortecimentos e os torques) e as massas são os do
+perfil anterior. Só mudam as âncoras, as posições dos links e os colisores,
+medidos no corpo novo na **pose T dele** - a pose de repouso do jogo com as
+medidas do esqueleto medido (`esqueleto.json`). Os clipes guardam os giros
+das juntas, então continuam valendo sem reamostrar.
 
-## Dedos: ossos visuais
+- **A pelve na origem.** O espaço do jogo tem a pelve em z = 0 e o chão em
+  `-standingRootHeightMeters` (0,9684 m), como o código da locomoção conta
+  (`rootPositionWorld.z - standingRootHeightMeters` é o chão). O espaço da
+  modelagem é outro (o chão fixo em `model.json`, `skeleton.ground`); o
+  exportador sobe tudo a altura que a pelve tem abaixo da origem.
+- **O repouso em pé.** Na pose T do jogo as pernas ficam retas e verticais (na
+  pose A da malha elas abrem e inclinam): o rig da modelagem sobe a pelve até
+  a sola tocar o chão (`GameRig::rootRestLift`, 2,7 cm), e a altura de pé é a
+  da pelve nesse repouso.
+- **O movimento da raiz não é escalado.** A pelve do repouso fica 1,5% abaixo
+  da do corpo antigo (0,9684 contra 0,9826 m); as animações ficam como
+  estão. A modelagem passa a usar a escala 1 (a mesma pose do jogo).
+- **Os links** ficam no mesmo lugar relativo do perfil anterior, na escala de
+  cada osso (da junta até a do filho; na mão e no pé, até o dedo médio e os
+  dedos do pé; na cabeça, a do pescoço). No Jolt o centro de massa de cada
+  link é a origem dele.
+- **A coluna nas juntas medidas** (09/10/2026, a postura reta pedida pelo
+  usuário). No repouso, cada osso da malha vai da direção medida no corpo
+  para a do osso do jogo (de âncora a âncora). As âncoras da coluna vinham
+  do corpo antigo, ~1 cm à frente das juntas medidas, e a da cabeça 1,4 cm:
+  em toda animação o pescoço saía 11–14° para a frente e o alto do peito
+  ~5° para trás. As âncoras e os links do abdômen, do peito, do alto do
+  peito, do pescoço e da cabeça foram para as juntas medidas, a partir da
+  pelve. Com isso o repouso do jogo é a ligação da malha e o olhar não muda
+  (a orientação dos links é a mesma). O `exportar-jogo` mantém essas âncoras
+  (ponto fixo). Os clipes não mudam. O comando `MatterModelInspector
+  postura` mede o tronco, o pescoço e o olhar em cada clipe.
+- **Pares do corpo que colidem:** os mesmos 133 do perfil anterior. O par
+  que era desligado (sobreposto em repouso) e passaria a colidir fica
+  declarado em `selfCollisionIgnoredPairs` (alto do peito × cabeça: o queixo
+  no peito ao olhar a bola).
+- **Constantes do corpo antigo no código:** a altura do tornozelo no levantar
+  (era 0,135 m fixo) agora sai do perfil; o torque de atitude da pelve no
+  carrinho (`T_TackleAttitude`) passou de 1,0 para 1,5 - na saída do deslize o
+  centro de massa do corpo novo fica mais à frente dos pés e o tronco
+  assentava a ~36° (o limite de "de pé" é 35°): os 5 carrinhos em sprint da
+  varredura viravam queda; com 1,5, nenhum, e o deslize no chão fica o mesmo.
 
-Os dedos são **ossos visuais**: 3 por dedo (polegar, indicador, médio,
-anelar, mínimo), 15 por mão. São filhos do link da mão e não têm física. Na
-skin, ficam em `visualBones`, depois dos 18 ossos físicos na paleta, cada um
-com o osso pai, a pose de ligação (`bindPosition`, `bindOrientation`: eixo X
-ao longo do dedo, Z para o lado da palma) e a rotação de repouso
-(`restRotation`), que dá a mão relaxada: flexão em cascata do indicador ao
-mínimo, dedos juntos e polegar encostado no indicador. Os ângulos ficam em
-`RELAXED_FLEXION` e `RELAXED_CLOSE`, no preparador.
+Uma junta mudou em 27/09 e continua assim: o **antebraço é uma dobradiça** (o
+eixo de "pronação" herdado do ALS girava o antebraço inteiro em volta do
+braço). Detalhes em `ANIMATION_AUTHORING.md`.
 
-O Ch38 tem os ossos dos dedos, mas quase nenhum peso neles: o dedo inteiro
-segue o osso da mão (só a ponta do anelar usa o osso dele). Por isso o
-preparador refaz os pesos da mão pela geometria: cada vértice vai para os
-segmentos de osso mais próximos (inverso da distância à 8ª potência), a
-palma para a mão (segmentos do punho até cada articulação dos dedos) e cada
-falange para o seu osso, misturando nas juntas.
+## Colisores
 
-No motor, `buildRagdollSkinMatrices3D` calcula o osso visual como o pai
-vezes a ligação local vezes a rotação de repouso (`RagdollVisualBone3D`);
-`matter_rig.Skin` faz o mesmo nas ferramentas Python. Animar a mão, para o
-goleiro no futuro, é trocar essas rotações.
+Medidos na malha em repouso por pontos espalhados por igual na superfície (a
+malha low poly tem poucos vértices: o tronco é uma volta na cintura e outra
+no peito). Cada ponto é do link que mais pesa nele quando o peso passa de 0,6;
+a pele de transição (axila, virilha, ponta do ombro) fica com os dois
+vizinhos e com nenhum colisor.
 
-O runtime de personagem usa um único albedo opaco. Por isso o importador
-compõe as duas texturas difusas em um atlas e converte os recortes alpha de
-cabelo/cílios em geometria. Não altera shaders ou transparência de outros objetos.
-Normal/specular/glossiness originais ficam preservados no FBX, mas não são
-usados pelo material atual do personagem.
+- **Membros** (braço, antebraço, coxa, canela): cápsula cônica no eixo do
+  osso, deslocado pelo centro da malha no meio do segmento; o raio de cima
+  (15 a 35% do osso) e o de baixo (75 a 92%; na coxa, 90 a 99%, o joelho
+  depois da barra do calção) - mediana nas pernas, percentil 70 nos braços.
+  As tampas vão até as pontas da malha e pelo menos de uma junta à outra
+  (sem isso sobrava um vão no joelho).
+- **Mão, pescoço e cabeça:** cápsula uniforme (percentil 70; a mão aberta,
+  até a ponta do dedo médio; a cabeça, até o alto). Toda cápsula tem pelo
+  menos 2 mm de cilindro: o osso do pescoço é mais curto que o diâmetro
+  dele, e as duas esferas sozinhas o perfil recusa (o comprimento tem de
+  passar a soma dos raios). Antes era o arredondamento do arquivo que
+  decidia, e em 09/10/2026 o perfil exportado saiu inválido.
+- **Tronco** (pelve, abdômen, peito, alto do peito): cápsulas deitadas (o x
+  local é o lado), em faixas de altura entre as juntas (o skin do tronco
+  espalha o peso: nenhum ponto é do peito); raio a média da meia
+  profundidade e da meia altura, mas nunca mais que a meia profundidade (na
+  pelve a média passava 3 cm do glúteo); comprimento a largura.
+- **Pé:** caixa no rumo da chuteira (o eixo maior visto de cima: 8,4° para
+  fora; a antiga tinha 2,9°), comprimento e largura pelos percentis 1 e 99, a
+  altura do perfil (13 cm) com o fundo no chão do repouso.
+- **Coxas:** 2,4 cm uma da outra em repouso (só o raio de cima encolhe).
+- **Folga nas animações de locomoção** (as do manifesto, fora levantar,
+  carrinho e arrancada agachada; 902 poses): o braço solto não encosta no
+  tronco (0,4 cm) e as coxas não se cruzam na passada de lado (0,8 cm). Na
+  malha o braço encosta no tronco (axila, latíssimo); o colisor é o núcleo.
+  Estreita primeiro o tronco (até 70% da largura medida: o peito fica com
+  27,7 cm, a largura das costelas) e depois o membro na ponta do contato
+  (até 70% do raio), igual dos dois lados. Sem isso a cápsula do braço
+  entrava 5 a 7 cm na do peito e o corpo físico parado abria os braços 35 a
+  41°.
 
-Após combinar influências (com os dedos), o descarte máximo medido para
-quatro pesos foi 3,785% (12 vértices acima de 2%); o limite do asset é 4%. Pesos restantes são
-renormalizados. Vértices idênticos são compartilhados, preservando costuras UV,
-normais e pesos: 51.841 vértices de runtime e 76.518 triângulos nesta exportação.
+Os números de cada colisor (o novo e o anterior, lado a lado) saem no
+relatório do `exportar-jogo`.
 
-## Edição e verificação
+Como os pontos são divididos pelos pesos do skin, mexer nos pesos do
+uniforme muda os colisores. Em 09-10/10/2026, o quadril (`hipCrease`,
+`hipLift`), a gola no peito e o calção subdividido
+(`MODELAGEM_DO_PERSONAGEM.md`) mudaram estes:
 
-Para alterações de geometria, preferir ajustar o importador e regenerar a
-partir do FBX. O Blender preparado permite editar os pesos e reexportar em
-pose neutra com `tools/export_ragdoll_skin.py`, mesh `FootballPlayer`, armature
-`FootballPhysicalRig`. Esse exportador genérico grava triângulos sem compartilhar
-vértices; a etapa final do preparador faz a indexação.
+| Link | Raio | Comprimento |
+|---|---|---|
+| Pelve | 11,8 → 12,5 cm | 24,8 → 26,3 cm |
+| Alto do peito | 10,8 → 11,1 cm | 33,8 → 33,1 cm (centro 1 cm acima) |
+| Coxas (no alto) | 8,0 → 8,2 cm | 40,3 → 40,8 cm |
 
-O exportador valida alinhamento dos anchors e qualidade dos pesos. O loader
-valida bind, índices, pesos, identidade do perfil e ossos visuais (pai antes
-do filho, quaternions unitários). O teste de skin verifica repouso (só os
-dedos saem da malha modelada, até o comprimento de um dedo), transformação
-global e deformação durante animação. As ferramentas
-Python em `tools/animation/matter_rig.py` também fazem blend das quatro
-influências, em vez da aproximação antiga pelo osso dominante.
+A pelve no repouso e as folgas nas animações não mudaram.
 
-A variável `MATTERENGINE_CHARACTER` pode selecionar outro manifesto relativo
-a `assets` ou absoluto. O personagem low-poly continua como fixture de testes.
+## Pele (versão 2)
 
-Os papéis de locomoção estão em `character.json`, com os de strafe
-(`strafeLeft`/`strafeRight` e os de sprint), que são a referência Jog
-Strafe retargeteada e corrigida (`tools/animation/clips/strafe.py`).
+`matter-ragdoll-skin-2`: cada osso guarda o **repouso** (`restPosition`,
+`restOrientation`: o link do perfil; os ossos visuais se prendem ao pai por
+ele) e a **ligação da malha** (`bindPosition`, `bindOrientation`). A malha
+fica na pose A dela e deforma direto dessa pose: a ligação de um osso físico
+é `A T⁻¹ L` (A a junta na pose A, T a mesma junta no repouso, L o link). O
+loader confere o repouso contra o perfil (pele velha é erro).
+
+- **Ossos visuais:** os 30 dedos e os 2 dedos do pé, com os dados da mão
+  relaxada e do punho aprovados (`flexion`, `close`, `closeAngle`,
+  `restRotation`) - os mesmos do personagem anterior; o comprimento dos dedos
+  do pé medido no corpo novo.
+- **Auxiliares** (`helperBones`, depois dos visuais na paleta), 9 de cada
+  lado: joelho, quadril (1/4, 1/2 e 3/4 do giro, e a `HipLift`), tornozelo,
+  ombro, cotovelo e pulso. Giram a fração (`fraction`; 0,5 nas juntas) do
+  giro do osso de baixo em relação ao de cima, em volta do pivô de verdade
+  desse giro (com giro quase nulo, o `pivot` gravado) - a quina não perde
+  volume. Com `"axis"` (no espaço da malha), só a parte do giro em volta do
+  eixo (balanço e torção): a `HipLift` gira 45% só da flexão do quadril (o
+  eixo de lado), e a coxa que abre de lado ou torce não mexe nela - a cintura
+  do calção e a barra da camisa dobram para trás quando a coxa sobe. Sem
+  física nem animação: `buildRagdollSkinMatrices3D` os tira dos dois ossos a
+  cada pose (`twistAbout`, o mesmo da modelagem).
+- **Vértices:** um por (vértice, grupo do sombreamento, coordenada do
+  atlas): a quina (mais de 45° entre as faces) e a costura do atlas separam,
+  o resto é liso; a normal é a lisa do grupo (`ShadingNormals`). 5.464
+  vértices, 5.816 triângulos, 68 ossos (18 físicos, 32 dedos, 18
+  auxiliares).
+- **Sombreamento:** `facet` no manifesto (0 liso, 1 facetado); o shader
+  mistura a normal lisa com a da face (`scene3d_mesh.frag`, bits 5 a 12 das
+  flags do material). O padrão é 0,5 com quinas de 45° - o mesmo da tela de
+  inspeção.
+
+`matter_rig.Skin` (ferramentas Python) lê as duas versões, com os auxiliares;
+confere com o motor a 0,0003 mm.
+
+## Maciez (removida em 09/10/2026)
+
+A maciez visual (as molas de carne e tecido no `src/Engine/Softness`) foi
+testada e retirada a pedido do usuário. Saíram:
+
+- o módulo e o alvo `MatterSoftness`;
+- o `Rig/SoftTissueExport` e o arquivo `jogador.maciez.json` (com a chave
+  `softTissue` do manifesto);
+- os ossos macios da paleta e os toques da bola no estado dela
+  (`ragdollTouches`);
+- o menu MACIEZ do laboratório.
+
+`buildRagdollSkinMatrices3D` voltou a ser só os ossos do jogo.
+
+## Verificação
+
+- `MatterPlayerModelTests`: exporta para uma pasta temporária, compara com o
+  personagem do jogo (em dia) e compara a pele do jogo
+  com a malha posada da modelagem em cinco poses (repouso, parado, sprint,
+  carrinho, levantar: menos de 0,5 mm; medido 0,02 mm), e a sola no chão do
+  perfil.

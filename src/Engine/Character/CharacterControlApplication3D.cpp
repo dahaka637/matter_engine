@@ -24,6 +24,7 @@ void applyCharacterControl3D(PhysicsScene3D& scene, RagdollHandle3D ragdoll,
             locomotion.gravityCompensationEnabled);
     }
     scene.setRagdollAnimationConstraint(ragdoll, locomotion.guide);
+    scene.setRagdollFrictionScale(ragdoll, locomotion.bodyFrictionScale);
     if (adaptive != nullptr && !down) {
         if (adaptive->valid) {
             scene.applyRagdollControlRootForce(ragdoll, adaptive->rootForceWorld,
@@ -32,6 +33,12 @@ void applyCharacterControl3D(PhysicsScene3D& scene, RagdollHandle3D ragdoll,
                 if (adaptive->footLinkIndex[side] == RagdollDynamics3D::InvalidIndex) continue;
                 scene.applyRagdollControlLinkForce(ragdoll, adaptive->footLinkIndex[side],
                     adaptive->footForceWorld[side], adaptive->footTorqueWorld[side]);
+            }
+            // Ajuda em todos os ossos.
+            for (std::size_t i = 0; i < adaptive->linkTorqueWorld.size(); ++i) {
+                if (adaptive->linkTorqueWorld[i].lengthSquared() < 1e-8f) continue;
+                scene.applyRagdollControlLinkForce(ragdoll, static_cast<std::uint32_t>(i), {},
+                    adaptive->linkTorqueWorld[i]);
             }
             // Mao apoiada num obstaculo: a reacao da postura (empurra).
             for (std::size_t side = 0; side < 2; ++side) {

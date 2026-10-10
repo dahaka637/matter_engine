@@ -64,6 +64,10 @@ void PhysicsScene3D::destroyCharacter() { m_impl->releaseCharacter(); }
 void PhysicsScene3D::placeCharacter(Vec3 feet,const CharacterMotorSettings3D& settings) {
     createCharacter(feet,settings);
 }
+void PhysicsScene3D::setCharacterVelocity(Vec3 velocity) {
+    m_impl->characterState.velocity=velocity;
+    if(m_impl->character)m_impl->character->SetLinearVelocity(toJolt(velocity));
+}
 void PhysicsScene3D::moveCharacter(const CharacterMotorCommand3D& command,
     const CharacterMotorSettings3D& settings, float deltaTime) {
     if (m_impl->character == nullptr || deltaTime <= 0.0f) return;
@@ -176,8 +180,36 @@ void PhysicsScene3D::moveCharacter(const CharacterMotorCommand3D& command,
             ? (desired.lengthSquared() > 0.0f
                 ? settings.groundAcceleration : settings.groundDeceleration)
             : settings.airAcceleration;
-        const Vec3 planar = moveToward(currentPlanar, desired,
+        Vec3 planar = moveToward(currentPlanar, desired,
             acceleration * deltaTime);
+        if (state.grounded && settings.groundTurnRate > 0.0f) {
+            // Rumo e velocidade separados: a direcao gira ate a pedida, o
+            // modulo vai a pedida aos poucos; o sentido contrario freia antes.
+            const float current = currentPlanar.length();
+            const float wanted = desired.length();
+            if (wanted < 1e-4f) {
+                planar = current > 1e-4f ? currentPlanar
+                    * (std::max(0.0f, current - settings.groundDeceleration * deltaTime) / current) : Vec3 {};
+            } else if (current < 0.3f) {
+                planar = moveToward(currentPlanar, desired, settings.groundAcceleration * deltaTime);
+            } else {
+                const Vec3 from = currentPlanar * (1.0f / current);
+                const Vec3 to = desired * (1.0f / wanted);
+                const float angle = std::atan2(from.x * to.y - from.y * to.x, from.x * to.x + from.y * to.y);
+                if (std::abs(angle) > settings.groundReverseDegrees * 3.14159265f / 180.0f) {
+                    planar = currentPlanar * (std::max(0.0f, current - settings.groundBrakeDeceleration * deltaTime)
+                        / current);
+                } else {
+                    const float turn = std::clamp(angle, -settings.groundTurnRate * deltaTime,
+                        settings.groundTurnRate * deltaTime);
+                    const float c = std::cos(turn), s = std::sin(turn);
+                    const Vec3 direction { from.x * c - from.y * s, from.x * s + from.y * c, 0.0f };
+                    const float rate = wanted > current ? settings.groundAcceleration : settings.groundDeceleration;
+                    const float speed = current + std::clamp(wanted - current, -rate * deltaTime, rate * deltaTime);
+                    planar = direction * speed;
+                }
+            }
+        }
         state.velocity.x = planar.x;
         state.velocity.y = planar.y;
 

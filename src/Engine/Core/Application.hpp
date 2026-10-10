@@ -57,6 +57,11 @@ protected:
     }
     [[nodiscard]] const ApplicationFrameMetrics&
         applicationFrameMetrics() const { return m_frameMetrics; }
+    // Camera lenta: o passo fixo continua o mesmo (a simulacao e identica),
+    // so roda menos passos por segundo de relogio; o render interpola entre
+    // eles. 1 = tempo real.
+    void setTimeScale(float scale) { m_timeScale = scale > 0.0f ? scale : 1.0f; }
+    [[nodiscard]] float timeScale() const { return m_timeScale; }
 
 private:
     ApplicationConfig m_config;
@@ -64,6 +69,7 @@ private:
     std::unique_ptr<Renderer> m_renderer;
     InputState m_input;
     ApplicationFrameMetrics m_frameMetrics;
+    float m_timeScale = 1.0f;
     bool m_running = true;
 };
 

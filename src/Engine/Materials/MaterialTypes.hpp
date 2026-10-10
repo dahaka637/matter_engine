@@ -66,6 +66,21 @@ struct DeformationMaterialProperties {
     float internalPressureKiloPascals = 0.0f;
 };
 
+// Como a superficie responde a uma bola inflada (a de futebol). A bola tem a
+// propria histerese; aqui fica so o que e da superficie (o teste da FIFA de
+// gramado usa uma bola calibrada no concreto, e a mesma bola quica 1,35 m
+// nele e 0,6-1,0 m num gramado excelente):
+//  - dissipacao normal extra (razao de amortecimento somada a da bola);
+//  - resistencia ao rolar: braco do momento resistente (m) mais uma parte
+//    que cresce com a velocidade (s) - na grama, as laminas freiam mais a
+//    bola rapida (rampa FIFA de 1 m: 4-10 m de rolagem em gramado
+//    natural, 4-8 m no sintetico).
+struct BallSurfaceProperties {
+    float normalDampingRatio = 0.0f;
+    float rollingResistanceMeters = 0.0f;
+    float rollingResistancePerSpeed = 0.0f;
+};
+
 enum class MaterialClass : std::uint8_t {
     Homogeneous,
     Granular,
@@ -84,6 +99,7 @@ struct SurfaceMaterial {
     StructuralMaterialProperties structural;
     AcousticMaterialProperties acoustic;
     DeformationMaterialProperties deformation;
+    BallSurfaceProperties ballSurface;
 
     // Ajuste pequeno da rugosidade superficial sobre o arrasto calculado
     // pela forma. O coeficiente aerodinamico principal pertence ao corpo.

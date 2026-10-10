@@ -86,6 +86,7 @@ set(MATTERENGINE_PHYSICS_BACKEND_SOURCES
     src/Engine/Physics/Jolt/JoltQueries3D.cpp
     src/Engine/Physics/Jolt/JoltContacts3D.cpp
     src/Engine/Physics/Jolt/JoltExternalForces3D.cpp
+    src/Engine/Physics/Jolt/JoltInflatedBalls3D.cpp
     src/Engine/Physics/Jolt/JoltCharacter3D.cpp
     src/Engine/Physics/Jolt/JoltGrab3D.cpp
     src/Engine/Physics/Jolt/JoltRagdoll3D.cpp

@@ -28,6 +28,23 @@ from matter_rig import (Rig, qconj, qfrom_axis_angle, qmul, qnormalize, qrotate,
 
 SIDES = ("Left", "Right")
 
+# A postura ergonomica dos parados (09/10, pedido do usuario: "o pescoco
+# reto, tipo postura ergonomica"). Os parados da Mixamo (o Idle e os giros)
+# curvam o alto das costas (o peito e o alto do peito dobrados ~11 graus
+# cada) e baixam a cabeca ~20 graus. A curva vai para baixo (menos no peito e
+# no alto do peito, um pouco mais no abdomen: o tronco fica no lugar) e o
+# pescoco e a cabeca levantam: o pescoco reto sobre o tronco e o olhar no
+# horizonte. Graus somados a flexao (+ para a frente, o eixo 1).
+ERGONOMIC_POSTURE = {"Abdomen": 5.0, "Chest": -9.0, "UpperChest": -9.0, "Neck": -2.0, "Head": -4.0}
+
+
+def ergonomic_posture(rig, coordinates):
+    """Soma a correcao da postura (ERGONOMIC_POSTURE) nas coordenadas (N, 3)
+    de um quadro, em radianos, e devolve elas."""
+    for link, degrees in ERGONOMIC_POSTURE.items():
+        coordinates[rig.index(link)][1] += math.radians(degrees)
+    return coordinates
+
 
 def _sign(side: str) -> float:
     """+1 para o lado esquerdo (+Y), -1 para o direito."""

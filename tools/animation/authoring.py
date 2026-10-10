@@ -27,7 +27,8 @@ import numpy as np
 from matter_clip import Clip, save_clip
 from matter_rig import REPO_ROOT, Rig, qangle_degrees
 from pose import Pose
-from validate import (limit_violations, lowest_point, self_collision_gaps)
+from validate import (_box_axes, limit_violations, lowest_point,
+                      self_collision_gaps, world_colliders)
 
 CLIP_DIRECTORY = REPO_ROOT / "assets" / "animations" / "clips"
 FOOT_LINKS = ("LeftFoot", "RightFoot")
@@ -66,6 +67,14 @@ class BuildResult:
     clip: Clip
     report: dict
     frames: list[tuple[float, np.ndarray, np.ndarray]]  # (t, posicoes, orientacoes)
+
+
+def _toe_point(rig: Rig, positions: np.ndarray, orientations: np.ndarray,
+               foot: str) -> np.ndarray:
+    """Meio da aresta inferior da frente da caixa do pe (mundo)."""
+    c = world_colliders(rig, positions, orientations)[rig.index(foot)]
+    axes = _box_axes(c)
+    return c.center + axes[0] * c.half_extents[0] - axes[2] * c.half_extents[2]
 
 
 def build_clip(rig: Rig, definition: ClipDefinition) -> BuildResult:
@@ -118,8 +127,12 @@ def build_clip(rig: Rig, definition: ClipDefinition) -> BuildResult:
                 plant_positions[foot] = []
                 continue
             ground_error = max(ground_error, abs(sole - definition.floor_z))
-            # Posicao no mundo: o clipe e in-place, o corpo anda.
-            anchor = positions[rig.index(foot)] + travel_velocity * t
+            # Posicao no mundo: o clipe e in-place, o corpo anda. Mede a ponta
+            # da sola (meio da aresta de baixo da frente): parada com o pe
+            # chato e na rolagem sobre a ponta - o centro do pe sobe e anda
+            # quando o calcanhar levanta, sem o pe escorregar.
+            anchor = _toe_point(rig, positions, orientations, foot) \
+                + travel_velocity * t
             plant_positions[foot].append(anchor.copy())
             first = plant_positions[foot][0]
             worst_slide = max(worst_slide,

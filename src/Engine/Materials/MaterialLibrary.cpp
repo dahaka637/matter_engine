@@ -89,6 +89,18 @@ SurfaceMaterial makeDefault() {
     return baseMaterial("default", 1000.0f);
 }
 
+// Corpo (pele, musculo e roupa): o mesmo contato do "default" (o boneco
+// desliza e cai como antes), mas macio para a bola - num dominio de peito ou
+// de coxa ela morre no corpo (restituicao ~0,35).
+SurfaceMaterial makeBody() {
+    SurfaceMaterial value = baseMaterial("body", 1000.0f, MaterialClass::Organic);
+    value.acoustic.absorption = 0.6f;
+    value.acoustic.internalDamping = 0.7f;
+    value.acoustic.softImpactMuffle = 0.8f;
+    value.ballSurface = { 0.3f, 0.0f, 0.0f };
+    return value;
+}
+
 SurfaceMaterial makeSand() {
     SurfaceMaterial value = baseMaterial(
         "sand", 1600.0f, MaterialClass::Granular);
@@ -103,6 +115,8 @@ SurfaceMaterial makeSand() {
     value.acoustic.referencePitch = 0.76f;
     value.acoustic.softImpactMuffle = 0.92f;
     value.aerodynamicDragScale = 1.05f;
+    // Bola (calibracao 04/10): de 2 m quica ~9 cm e quase nao rola.
+    value.ballSurface = { 0.6f, 0.048f, 0.012f };
     return value;
 }
 
@@ -117,6 +131,9 @@ SurfaceMaterial makeConcrete() {
     value.acoustic.absorption = 0.08f;
     value.acoustic.internalDamping = 0.38f;
     value.acoustic.referencePitch = 0.82f;
+    // Bola: rigido - a perda e da bola (2 m -> 1,39 m, o alvo da FIFA de
+    // 1,35-1,45 m em base rigida).
+    value.ballSurface = { 0.0f, 0.0f, 0.0f };
     return value;
 }
 
@@ -134,6 +151,10 @@ SurfaceMaterial makeGrass() {
     value.acoustic.referencePitch = 0.84f;
     value.acoustic.softImpactMuffle = 0.88f;
     value.aerodynamicDragScale = 1.10f;
+    // Bola: gramado natural profissional (FIFA, faixa "excelente"): de 2 m
+    // quica 0,80 m (0,60-1,00) e a rampa de 1 m rola 7,4 m (4-10). A
+    // grama freia mais a bola rapida (passe a 10 m/s: ~31 m).
+    value.ballSurface = { 0.10f, 0.006f, 0.0015f };
     return value;
 }
 
@@ -179,6 +200,8 @@ SurfaceMaterial makeWood() {
     value.acoustic.internalDamping = 0.40f;
     value.acoustic.referencePitch = 0.94f;
     value.acoustic.sizePitchExponent = 0.24f;
+    // Bola: piso de madeira, um pouco menos vivo que o concreto (1,31 m).
+    value.ballSurface = { 0.01f, 0.0f, 0.0f };
     return value;
 }
 
@@ -218,6 +241,26 @@ SurfaceMaterial makeRubber() {
     value.acoustic.internalDamping = 0.76f;
     value.acoustic.referencePitch = 0.78f;
     value.acoustic.softImpactMuffle = 0.78f;
+    // Bola: piso de borracha absorve um pouco (1,24 m).
+    value.ballSurface = { 0.02f, 0.002f, 0.0f };
+    return value;
+}
+
+// Sola de calcado (chuteira/tenis): borracha com cravos, aderencia alta e
+// quase sem quique. O pe do personagem era "default" (atrito 0,48): com o
+// concreto (0,58), 0,53 combinado - o pe escorregava na arrancada, na freada e
+// nas trocas de rumo, e o empurrao da perna se perdia.
+SurfaceMaterial makeShoeSole() {
+    SurfaceMaterial value = baseMaterial("shoe_sole", 1150.0f);
+    value.contact = { 0.95f, 0.8f, 0.03f, 0.05f };
+    value.structural = { 7.0f, 4200.0f, 1800.0f };
+    value.acoustic.minimumImpactEnergyJoules = 0.030f;
+    value.acoustic.minimumSpecificImpactEnergyJoulesPerKg = 0.030f;
+    value.acoustic.acousticEfficiency = 0.28f;
+    // Bola: o pe nao e rigido - pe, tornozelo e calcado cedem no chute (a
+    // restituicao pe-bola medida em chutes e ~0,5). Pelo pe rigido a bola saia
+    // como de uma parede (0,86) e qualquer toque a mandava longe.
+    value.ballSurface = { 0.15f, 0.0f, 0.0f };
     return value;
 }
 
@@ -265,6 +308,9 @@ SurfaceMaterial makeSoil() {
     value.acoustic.absorption = 0.72f;
     value.acoustic.internalDamping = 0.84f;
     value.acoustic.referencePitch = 0.78f;
+    // Bola: terra batida absorve mais que grama: de 2 m quica ~0,56 m e
+    // rola ~4 m na rampa da FIFA.
+    value.ballSurface = { 0.17f, 0.013f, 0.0033f };
     return value;
 }
 
@@ -304,6 +350,7 @@ const SurfaceMaterial* MaterialLibrary::find(const std::string& id) const {
 
 void MaterialLibrary::registerStandardMaterials() {
     registerMaterial(makeDefault());
+    registerMaterial(makeBody());
     registerMaterial(makeSand());
     registerMaterial(makeConcrete());
     registerMaterial(makeGrass());
@@ -312,6 +359,7 @@ void MaterialLibrary::registerStandardMaterials() {
     registerMaterial(makeWood());
     registerMaterial(makeSteel());
     registerMaterial(makeRubber());
+    registerMaterial(makeShoeSole());
     registerMaterial(makeSoccerBall());
 
     // Mantidos por compatibilidade com assets existentes. Eles seguem a

@@ -1,0 +1,103 @@
+{
+  "schema": "matter.player_model.v1",
+  "id": "jogador_procedural_antigo",
+  "displayName": "Jogador (corpo procedural antigo, guardado para reaproveitar)",
+  "character": "../football_player/character.json",
+  "regions": "regions.json",
+  "skeleton": {
+    "comment": "Ajustes do modelo novo sobre o esqueleto do jogo: os bracos 3,5 cm a frente (no meio do braco das referencias) e os dedos da mao esquerda como o espelho exato dos da direita (a malha e espelhada; no jogo eles diferem uns milimetros). O perfil fisico e os ossos dos dedos do jogo vao seguir quando o modelo entrar no jogo.",
+    "mirrorFingersFrom": "Right",
+    "linkShift": {
+      "RightUpperArm": [
+        0.035,
+        0.0,
+        0.0
+      ],
+      "RightForearm": [
+        0.035,
+        0.0,
+        0.0
+      ],
+      "RightHand": [
+        0.035,
+        0.0,
+        0.0
+      ],
+      "LeftUpperArm": [
+        0.035,
+        0.0,
+        0.0
+      ],
+      "LeftForearm": [
+        0.035,
+        0.0,
+        0.0
+      ],
+      "LeftHand": [
+        0.035,
+        0.0,
+        0.0
+      ]
+    }
+  },
+  "mesh": {
+    "source": "procedural",
+    "parts": [
+      "partes/chuteira.json",
+      "partes/perna.json",
+      "partes/calcao.json",
+      "partes/camisa.json",
+      "partes/braco.json",
+      "partes/mao.json",
+      "partes/pescoco.json",
+      "partes/cabeca.json"
+    ]
+  },
+  "references": [
+    {
+      "view": "frente",
+      "image": "referencias/frente.png",
+      "label": "Corpo de frente (pose T)"
+    },
+    {
+      "view": "costas",
+      "image": "referencias/costas.png",
+      "label": "Corpo de costas"
+    },
+    {
+      "view": "direita",
+      "image": "referencias/lado.png",
+      "label": "Corpo de lado"
+    },
+    {
+      "view": "detalhe",
+      "image": "referencias/rosto.png",
+      "label": "Cabeça: frente, lado e cima"
+    },
+    {
+      "view": "detalhe",
+      "image": "referencias/maos.png",
+      "label": "Antebraço e mão: frente e costas"
+    },
+    {
+      "view": "detalhe",
+      "image": "referencias/braço_e_mao.png",
+      "label": "Braço e mão em 3/4"
+    },
+    {
+      "view": "detalhe",
+      "image": "referencias/calção.png",
+      "label": "Calção: frente, lado e costas"
+    },
+    {
+      "view": "detalhe",
+      "image": "referencias/canela_chuteira.png",
+      "label": "Meião e chuteira"
+    },
+    {
+      "view": "detalhe",
+      "image": "referencias/chuteira_01.png",
+      "label": "Chuteira"
+    }
+  ]
+}

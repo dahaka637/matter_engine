@@ -1,114 +1,169 @@
 {
-  "schema": "matter-ragdoll-character-1",
-  "id": "football_player",
-  "displayName": "Jogador de futebol",
-  "locomotion": {
-    "idle": "alert_idle",
-    "idleToSprint": "idle_to_sprint",
-    "runForwardArcLeft": "run_forward_arc_left",
-    "runForwardArcRight": "run_forward_arc_right",
-    "runBackwardArcRight": "run_backward_arc_right",
-    "walk": "jog",
-    "walkBackward": "run_backward",
-    "sprint": "sprint",
-    "sprintBackward": "sprint_backward",
-    "strafeLeft": "jog_strafe_left",
-    "strafeRight": "jog_strafe_right",
-    "sprintStrafeLeft": "sprint_strafe_left",
-    "sprintStrafeRight": "sprint_strafe_right",
-    "jumpStanding": "jump_standing",
-    "jumpForward": "jump_forward",
-    "jumpBackward": "jump_backward",
-    "jumpLeft": "jump_left",
-    "jumpRight": "jump_right",
-    "standUpBack": "stand_up_back",
-    "standUpFront": "stand_up_front"
+ "albedo": "jogador_atlas.png",
+ "animationAttribution": {
+  "crouchToSprint": {
+   "license": "arquivo FBX fornecido pelo usuario; procedencia nao declarada",
+   "sources": [
+    "/home/dahaka/Downloads/Crouched To Sprinting.fbx",
+    "assets/animations/source/retargeted/crouched_to_sprint.retarget.json",
+    "tools/animation/clips/crouch_to_sprint.py"
+   ]
   },
-  "physicsProfile": "FootballPlayerV1.ragdoll.json",
-  "skin": "football.skin.json",
-  "flatShaded": false,
-  "attribution": {
-    "title": "Ch38 — jogador de futebol",
-    "sourceFile": "Ch38_nonPBR.fbx",
-    "editableSource": "football-rigged.blend",
-    "note": "FBX fornecido pelo usuario em 26/09/2026. Malha e texturas originais; skin adaptada ao rig fisico calibrado do projeto. Procedencia/licenca nao declaradas no arquivo recebido."
+  "defaultLocomotion": {
+   "license": "autoral (MatterEngine)",
+   "note": "Modo padrao (05/10): o sprint de costas longo e ereto (desenho medido no Sprint Backward.fbx fornecido pelo usuario, sem copiar a pose).",
+   "sources": [
+    "tools/animation/clips/sprint_backward_long.py",
+    "tools/animation/gait.py"
+   ]
   },
-  "animationAttribution": {
-    "note": "Corrida leve, corrida de costas, sprint, sprint de costas e pulos sao autorais do projeto (gerados por codigo em tools/animation, sem captura nem biblioteca). As passadas foram calibradas medindo referencias Mixamo de estudo (assets/animations/source/mixamo/study, gait_metrics.py) - numeros como cadencia e altura do joelho, nenhuma pose copiada. O strafe e o parado em alerta sao a excecao, a pedido do usuario: o strafe e o Jog Strafe Left/Right da Mixamo retargeteado, com as correcoes minimas que o corpo exige (tools/animation/clips/strafe.py); o unico parado preserva tronco, bracos e cabeca do Idle da Mixamo, adaptando somente o rumo e o plantio dos pes (tools/animation/clips/alert_idle.py). Os levantar de frente e de costas vem de FBX retargeteados (ver assets/animations/source).",
-    "idle": {
-      "license": "Mixamo (Adobe) - termos de uso da Mixamo",
-      "sources": [
-        "assets/animations/source/mixamo/study/Idle.fbx",
-        "assets/animations/source/retargeted/alert_idle.retarget.json",
-        "tools/animation/clips/alert_idle.py"
-      ]
-    },
-    "idleToSprint": {
-      "license": "arquivo FBX fornecido pelo usuario; procedencia nao declarada",
-      "sources": [
-        "/home/dahaka/Downloads/Idle To Sprint.fbx",
-        "assets/animations/source/retargeted/idle_to_sprint.retarget.json"
-      ]
-    },
-    "walk": {
-      "license": "autoral (MatterEngine)",
-      "sources": [
-        "tools/animation/clips/jog.py",
-        "tools/animation/gait.py"
-      ]
-    },
-    "sprint": {
-      "license": "autoral (MatterEngine)",
-      "sources": [
-        "tools/animation/clips/sprint.py",
-        "tools/animation/gait.py"
-      ]
-    },
-    "walkBackward": {
-      "license": "autoral (MatterEngine)",
-      "sources": [
-        "tools/animation/clips/run_backward.py",
-        "tools/animation/gait.py"
-      ]
-    },
-    "sprintBackward": {
-      "license": "autoral (MatterEngine)",
-      "sources": [
-        "tools/animation/clips/sprint_backward.py",
-        "tools/animation/gait.py"
-      ]
-    },
-    "strafe": {
-      "license": "Mixamo (Adobe) - termos de uso da Mixamo",
-      "sources": [
-        "assets/animations/source/mixamo/study/Jog Strafe Left.fbx",
-        "assets/animations/source/mixamo/study/Jog Strafe Right.fbx",
-        "assets/animations/source/retargeted/jog_strafe_left.retarget.json",
-        "assets/animations/source/retargeted/jog_strafe_right.retarget.json",
-        "tools/animation/clips/strafe.py"
-      ]
-    },
-    "jumps": {
-      "license": "autoral (MatterEngine)",
-      "sources": [
-        "tools/animation/clips/jumps.py",
-        "tools/animation/jump.py"
-      ]
-    },
-    "runningArcs": {
-      "license": "arquivos FBX fornecidos pelo usuario; procedencia nao declarada",
-      "sources": [
-        "/home/dahaka/Downloads/Run Forward Arc Right.fbx",
-        "/home/dahaka/Downloads/Run Forward Arc Left.fbx",
-        "/home/dahaka/Downloads/Run Backward Arc Right.fbx",
-        "assets/animations/source/retargeted/run_forward_arc_right.retarget.json",
-        "assets/animations/source/retargeted/run_forward_arc_left.retarget.json",
-        "assets/animations/source/retargeted/run_backward_arc_right.retarget.json"
-      ]
-    }
+  "idle": {
+   "license": "Mixamo (Adobe) - termos de uso da Mixamo",
+   "sources": [
+    "assets/animations/source/mixamo/study/Idle.fbx",
+    "assets/animations/source/retargeted/alert_idle.retarget.json",
+    "tools/animation/clips/alert_idle.py"
+   ]
   },
-  "albedo": "albedo.png",
-  "rigCompatibility": {
-    "note": "Ancora, frames, colisores, massas e limites preservados do perfil calibrado anterior; somente ID renomeado. As animacoes mantem exatamente os mesmos tracks. A malha visual foi ajustada por segmento aos anchors, preservando pesos suaves."
+  "idleToSprint": {
+   "license": "arquivo FBX fornecido pelo usuario; procedencia nao declarada",
+   "sources": [
+    "/home/dahaka/Downloads/Idle To Sprint.fbx",
+    "assets/animations/source/retargeted/idle_to_sprint.retarget.json"
+   ]
+  },
+  "jumps": {
+   "license": "autoral (MatterEngine)",
+   "sources": [
+    "tools/animation/clips/jumps.py",
+    "tools/animation/jump.py"
+   ]
+  },
+  "note": "Corrida leve, corrida de costas, sprint, sprint de costas e pulos sao autorais do projeto (gerados por codigo em tools/animation, sem captura nem biblioteca). As passadas foram calibradas medindo referencias Mixamo de estudo (assets/animations/source/mixamo/study, gait_metrics.py) - numeros como cadencia e altura do joelho, nenhuma pose copiada. O strafe e o parado em alerta sao a excecao, a pedido do usuario: o strafe e o Jog Strafe Left/Right da Mixamo retargeteado, com as correcoes minimas que o corpo exige (tools/animation/clips/strafe.py); o unico parado preserva tronco, bracos e cabeca do Idle da Mixamo, adaptando somente o rumo e o plantio dos pes (tools/animation/clips/alert_idle.py). Os levantar de frente e de costas vem de FBX retargeteados (ver assets/animations/source).",
+  "runningArcs": {
+   "license": "arquivos FBX fornecidos pelo usuario; procedencia nao declarada",
+   "sources": [
+    "/home/dahaka/Downloads/Run Forward Arc Right.fbx",
+    "/home/dahaka/Downloads/Run Forward Arc Left.fbx",
+    "/home/dahaka/Downloads/Run Backward Arc Right.fbx",
+    "assets/animations/source/retargeted/run_forward_arc_right.retarget.json",
+    "assets/animations/source/retargeted/run_forward_arc_left.retarget.json",
+    "assets/animations/source/retargeted/run_backward_arc_right.retarget.json"
+   ]
+  },
+  "sprint": {
+   "license": "autoral (MatterEngine)",
+   "sources": [
+    "tools/animation/clips/sprint.py",
+    "tools/animation/gait.py"
+   ]
+  },
+  "sprintBackward": {
+   "license": "autoral (MatterEngine)",
+   "sources": [
+    "tools/animation/clips/sprint_backward.py",
+    "tools/animation/gait.py"
+   ]
+  },
+  "standingJumps": {
+   "license": "arquivos FBX fornecidos pelo usuario (Mixamo); procedencia nao declarada",
+   "sources": [
+    "assets/animations/source/retargeted/jump_standing_reference.retarget.json",
+    "tools/animation/clips/jump_reference.py"
+   ]
+  },
+  "strafe": {
+   "license": "Mixamo (Adobe) - termos de uso da Mixamo",
+   "sources": [
+    "assets/animations/source/mixamo/study/Jog Strafe Left.fbx",
+    "assets/animations/source/mixamo/study/Jog Strafe Right.fbx",
+    "assets/animations/source/retargeted/jog_strafe_left.retarget.json",
+    "assets/animations/source/retargeted/jog_strafe_right.retarget.json",
+    "tools/animation/clips/strafe.py"
+   ]
+  },
+  "tackles": {
+   "license": "arquivos FBX fornecidos pelo usuario (Mixamo); procedencia nao declarada",
+   "sources": [
+    "/home/dahaka/Downloads/Soccer Tackle.fbx",
+    "/home/dahaka/Downloads/Running Slide.fbx",
+    "assets/animations/source/retargeted/soccer_tackle.retarget.json",
+    "assets/animations/source/retargeted/running_slide.retarget.json",
+    "tools/animation/clips/tackle.py"
+   ]
+  },
+  "turnInPlace": {
+   "note": "Left Turn e Right Turn da Mixamo (fornecidos pelo usuario em 04/10/2026), retargeteados; o giro parado com a ajuda cheia toca as pernas deles na velocidade do giro pedido.",
+   "sources": [
+    "assets/animations/source/mixamo/LeftTurn.fbx",
+    "assets/animations/source/mixamo/RightTurn.fbx",
+    "assets/animations/source/retargeted/turn_left.retarget.json",
+    "assets/animations/source/retargeted/turn_right.retarget.json",
+    "tools/animation/clips/turn_in_place.py"
+   ]
+  },
+  "walk": {
+   "license": "autoral (MatterEngine)",
+   "sources": [
+    "tools/animation/clips/jog.py",
+    "tools/animation/gait.py"
+   ]
+  },
+  "walkBackward": {
+   "license": "autoral (MatterEngine)",
+   "sources": [
+    "tools/animation/clips/run_backward.py",
+    "tools/animation/gait.py"
+   ]
   }
+ },
+ "attribution": {
+  "note": "Exportado de assets/characters/player_model (MatterModelInspector exportar-jogo). Corpo \"Male Lowpoly Base Mesh\" (CarvMad) e cabeca \"lowpoly man's head\" (Jelveh 3D), CC BY 4.0, com o molde \"Zbrush head base\" (hexmeff, CC BY 4.0) so na forma do queixo; creditos e alteracoes em player_model/base/CREDITOS.md.",
+  "sourceFile": "../player_model/model.json",
+  "title": "Jogador montado pela engine"
+ },
+ "creaseDegrees": 45.000003814697266,
+ "defaultLocomotion": {
+  "sprintBackward": "sprint_backward_long"
+ },
+ "displayName": "Jogador",
+ "facet": 0.5,
+ "flatShaded": false,
+ "id": "football_player",
+ "locomotion": {
+  "crouchToSprint": "crouched_to_sprint",
+  "idle": "alert_idle",
+  "idleToSprint": "idle_to_sprint",
+  "jumpBackward": "jump_backward",
+  "jumpForward": "jump_forward",
+  "jumpLeft": "jump_left",
+  "jumpPrep": "jump_prep",
+  "jumpRight": "jump_right",
+  "jumpStanding": "jump_standing",
+  "runBackwardArcRight": "run_backward_arc_right",
+  "runForwardArcLeft": "run_forward_arc_left",
+  "runForwardArcRight": "run_forward_arc_right",
+  "sprint": "sprint",
+  "sprintBackward": "sprint_backward",
+  "sprintStrafeLeft": "sprint_strafe_left",
+  "sprintStrafeRight": "sprint_strafe_right",
+  "standUpBack": "stand_up_back_kimodo",
+  "standUpFront": "stand_up_front_kimodo",
+  "strafeLeft": "jog_strafe_left",
+  "strafeRight": "jog_strafe_right",
+  "tackles": [
+   "tackle_soccer",
+   "tackle_slide"
+  ],
+  "turnLeft": "turn_left",
+  "turnRight": "turn_right",
+  "walk": "jog",
+  "walkBackward": "run_backward"
+ },
+ "physicsProfile": "FootballPlayerV1.ragdoll.json",
+ "rigCompatibility": {
+  "note": "O rig e o do perfil calibrado (as juntas, os eixos, os limites, os motores e as massas); as ancoras, os links e os colisores foram medidos no corpo novo na pose T dele, com a pelve na origem. As animacoes mantem os mesmos tracks (o movimento da raiz como esta: a pelve do repouso fica 1,5% mais baixa que a do corpo anterior)."
+ },
+ "schema": "matter-ragdoll-character-1",
+ "skin": "jogador.skin.json"
 }

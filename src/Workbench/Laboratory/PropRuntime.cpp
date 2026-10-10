@@ -63,20 +63,20 @@ float supportDistance(Vec3 dimensions, Vec3 direction) {
 // vez de recalculadas por pixel a cada quadro. Assar em vez de manter o
 // desenho analitico converge 100% do conteudo visual real para o pipeline
 // de mesh/material (relevante para a reforma de PBR planejada a seguir).
-constexpr float ObjectViewerFloorHalfExtentMeters = 5.0f;
-constexpr int ObjectViewerFloorTileCount = 10;
-constexpr int ObjectViewerFloorTexelsPerTile = 8;
+constexpr float ViewerFloorHalfExtentMeters = 5.0f;
+constexpr int ViewerFloorTileCount = 10;
+constexpr int ViewerFloorTexelsPerTile = 8;
 
 std::vector<std::byte> buildFloorCheckerboardPixels() {
-    constexpr int size = ObjectViewerFloorTileCount * ObjectViewerFloorTexelsPerTile;
+    constexpr int size = ViewerFloorTileCount * ViewerFloorTexelsPerTile;
     constexpr std::array<std::uint8_t, 3> lightColor { 194, 201, 207 };
     constexpr std::array<std::uint8_t, 3> darkColor { 102, 110, 115 };
     std::vector<std::byte> pixels(
         static_cast<std::size_t>(size) * static_cast<std::size_t>(size) * 4);
     for (int y = 0; y < size; ++y) {
-        const int tileY = y / ObjectViewerFloorTexelsPerTile;
+        const int tileY = y / ViewerFloorTexelsPerTile;
         for (int x = 0; x < size; ++x) {
-            const int tileX = x / ObjectViewerFloorTexelsPerTile;
+            const int tileX = x / ViewerFloorTexelsPerTile;
             const bool light = ((tileX + tileY) & 1) == 0;
             const std::array<std::uint8_t, 3>& color =
                 light ? lightColor : darkColor;
@@ -96,7 +96,7 @@ std::vector<std::byte> buildFloorCheckerboardPixels() {
 // em scene3d.vert), so que como uma malha real com UV 0..1 cobrindo o
 // quadrado inteiro em vez de calculado a partir de worldPosition.
 MeshData3D buildFloorQuadMesh() {
-    const float half = ObjectViewerFloorHalfExtentMeters;
+    const float half = ViewerFloorHalfExtentMeters;
     const Vec3 up { 0.0f, 0.0f, 1.0f };
     MeshData3D mesh;
     mesh.vertices = {
@@ -116,17 +116,18 @@ void WorkbenchApp::ensurePropAssetsLoaded(Renderer& activeRenderer) {
     if (m_propCatalog.loaded() || m_propAssetsLoadFailed
         || !m_physicsScene) return;
     try {
-        m_propCatalog.load(activeRenderer, m_materialLibrary,
-            m_physicsEngine, MATTERENGINE_ASSETS_DIR);
+        m_propCatalog.load(activeRenderer, m_materialLibrary, MATTERENGINE_ASSETS_DIR);
         m_physGunVisual = loadGpuModel3D(activeRenderer,
             std::string(MATTERENGINE_ASSETS_DIR)
                 + "/models/weapons/phys_gun.glb");
         m_physGunVisualLoaded = true;
+        ensureSoccerBallVisual(activeRenderer);
     } catch (const std::exception& error) {
         Log::error(std::string("Falha ao carregar catalogo de props: ")
             + error.what());
         m_propCatalog.release(activeRenderer);
         releaseGpuModel3D(activeRenderer, m_physGunVisual);
+        releaseGpuModel3D(activeRenderer, m_soccerBallVisual);
         m_physGunVisualLoaded = false;
         m_propAssetsLoadFailed = true;
         m_laboratoryStatus = "Falha ao carregar objetos";
@@ -146,6 +147,13 @@ void WorkbenchApp::spawnProp(std::size_t definitionIndex) {
     }
 
     const PropDefinition3D& definition = definitions[definitionIndex];
+    // A bola de futebol do menu e a bola inflada (fisica e malha proprias).
+    const bool inflatedBall = definition.inflatedBall;
+    // A inflada nasce no tamanho escolhido no menu da bola, nao no do GLB
+    // (maior, nascia na altura da oficial e a checagem dela via o chao).
+    const Vec3 dimensions = inflatedBall
+        ? Vec3 { 1.0f, 1.0f, 1.0f } * (2.0f * m_soccerBallProfile.radiusMeters)
+        : definition.dimensionsMeters;
 
     const Vec3 direction = viewForward(m_laboratoryCameraYaw,
         m_laboratoryCameraPitch).normalized();
@@ -155,7 +163,7 @@ void WorkbenchApp::spawnProp(std::size_t definitionIndex) {
     if (m_physicsScene->raycastStatic(ray,
             MaximumSpawnDistanceMeters, hit)) {
         requestedPosition = hit.position + hit.normal
-            * (supportDistance(definition.dimensionsMeters, hit.normal)
+            * (supportDistance(dimensions, hit.normal)
                 + 0.035f);
     } else {
         requestedPosition = ray.origin
@@ -164,11 +172,13 @@ void WorkbenchApp::spawnProp(std::size_t definitionIndex) {
 
     const Quaternion orientation {};
     const std::optional<Vec3> safePosition = findSafeSpawnPosition(
-        requestedPosition, definition.dimensionsMeters * 0.5f,
+        requestedPosition, dimensions * 0.5f,
         orientation, 4.0f);
-    if (!safePosition
-        || !spawnPropAt(definitionIndex, *safePosition,
-            orientation, false)) {
+    const bool spawned = safePosition
+        && (inflatedBall ? spawnInflatedBallAt(*safePosition)
+                         : spawnPropAt(definitionIndex, *safePosition,
+                               orientation, false));
+    if (!spawned) {
         m_laboratoryStatus = "Sem espaco seguro para criar o objeto";
         m_notification = {
             "Spawn bloqueado: procure uma area livre", 2.2f, 2.2f
@@ -185,6 +195,8 @@ bool WorkbenchApp::spawnPropAt(std::size_t definitionIndex,
         return false;
     }
     const PropDefinition3D& definition = definitions[definitionIndex];
+    // (A bola inflada tem a fisica dela.)
+    if (definition.inflatedBall) return spawnInflatedBallAt(position);
     // Última barreira imediatamente antes de publicar o ator. O benchmark
     // também passa por aqui; assim uma posição que ficou ocupada entre a
     // escolha e a criação nunca produz duas entidades interpenetradas.
@@ -276,15 +288,30 @@ std::optional<Vec3> WorkbenchApp::findSafeSpawnPosition(
 }
 
 void WorkbenchApp::removeLatestSpawnedEntity() {
-    if (m_spawnedProps.empty() && m_spawnedRagdolls.empty()) {
+    if (m_spawnedProps.empty() && m_spawnedRagdolls.empty()
+        && m_inflatedBalls.empty()) {
         m_laboratoryStatus.clear();
         m_notification = { "Nenhum objeto para remover", 1.8f, 1.8f };
         return;
     }
-    const bool removeRagdoll = !m_spawnedRagdolls.empty()
-        && (m_spawnedProps.empty()
-            || m_spawnedRagdolls.back().entityId
-                > m_spawnedProps.back().entityId);
+    const std::uint64_t latestProp =
+        m_spawnedProps.empty() ? 0 : m_spawnedProps.back().entityId;
+    const std::uint64_t latestRagdoll =
+        m_spawnedRagdolls.empty() ? 0 : m_spawnedRagdolls.back().entityId;
+    const std::uint64_t latestBall =
+        m_inflatedBalls.empty() ? 0 : m_inflatedBalls.back().entityId;
+    if (latestBall > latestProp && latestBall > latestRagdoll) {
+        if (m_physGunGrabbedEntityId == latestBall) endPhysGunGrab();
+        if (m_physicsScene) {
+            m_physicsScene->destroyInflatedBall(
+                m_inflatedBalls.back().physicsBall);
+        }
+        m_inflatedBalls.pop_back();
+        m_laboratoryStatus.clear();
+        m_notification = { "Bola removida", 2.35f, 2.35f };
+        return;
+    }
+    const bool removeRagdoll = latestRagdoll > latestProp;
     if (removeRagdoll) {
         const std::uint64_t removedEntityId =
             m_spawnedRagdolls.back().entityId;
@@ -329,7 +356,8 @@ void WorkbenchApp::removeLatestSpawnedEntity() {
 
 void WorkbenchApp::beginPhysGunGrab() {
     if (!m_physicsScene
-        || (m_spawnedProps.empty() && m_spawnedRagdolls.empty())) {
+        || (m_spawnedProps.empty() && m_spawnedRagdolls.empty()
+            && m_inflatedBalls.empty())) {
         return;
     }
     const Ray3D ray { m_laboratoryCameraPosition,
@@ -346,6 +374,27 @@ void WorkbenchApp::beginPhysGunGrab() {
             staticBlocker.distance - PhysGunOcclusionMarginMeters);
     }
 
+    // As bolas infladas nao estao no broad phase: o raio e testado contra a
+    // esfera de cada uma (com a mesma folga da assistencia, se preciso).
+    float ballDistance = visibleDistance;
+    std::size_t ballIndex = m_inflatedBalls.size();
+    const auto findBall = [&](float extraRadius) {
+        for (std::size_t index = 0; index < m_inflatedBalls.size(); ++index) {
+            const Vec3 center = m_inflatedBalls[index].physicsState.position;
+            const float radius = m_soccerBallRadius + extraRadius;
+            const Vec3 toCenter = center - ray.origin;
+            const float along = dot(toCenter, ray.direction);
+            const float closestSquared = toCenter.lengthSquared() - along * along;
+            if (closestSquared > radius * radius) continue;
+            const float distance = along
+                - std::sqrt(radius * radius - closestSquared);
+            if (distance < 0.0f || distance >= ballDistance) continue;
+            ballDistance = distance;
+            ballIndex = index;
+        }
+    };
+    if (visibleDistance > 0.0f) findBall(0.0f);
+
     PhysicsRayHit3D propHit;
     PhysicsRagdollRayHit3D ragdollHit;
     bool hasPropHit = visibleDistance > 0.0f
@@ -356,7 +405,8 @@ void WorkbenchApp::beginPhysGunGrab() {
         && m_physicsScene->raycastRagdoll(
             ray, visibleDistance, ragdollHit)
         && ragdollHit.ragdoll;
-    if (!hasPropHit && !hasRagdollHit && visibleDistance > 0.0f) {
+    if (!hasPropHit && !hasRagdollHit && ballIndex == m_inflatedBalls.size()
+        && visibleDistance > 0.0f) {
         hasPropHit = m_physicsScene->sweepSphereDynamic(ray,
                 PhysGunAssistSweepRadiusMeters, visibleDistance, propHit)
             && propHit.body;
@@ -364,6 +414,37 @@ void WorkbenchApp::beginPhysGunGrab() {
                 PhysGunAssistSweepRadiusMeters,
                 visibleDistance, ragdollHit)
             && ragdollHit.ragdoll;
+        findBall(PhysGunAssistSweepRadiusMeters);
+    }
+    const bool hasBallHit = ballIndex < m_inflatedBalls.size()
+        && (!hasPropHit || ballDistance < propHit.distance)
+        && (!hasRagdollHit || ballDistance < ragdollHit.distance);
+    if (hasBallHit) {
+        // A bola e segurada pelo centro: girar a mira nao a faz pender.
+        SpawnedInflatedBallInstance& ball = m_inflatedBalls[ballIndex];
+        const InflatedBallState3D ballState =
+            m_physicsScene->inflatedBallState(ball.physicsBall);
+        if (ballState.frozen) {
+            m_physicsScene->setInflatedBallFrozen(ball.physicsBall, false);
+        }
+        const Quaternion cameraOrientation = viewOrientation(
+            m_laboratoryCameraYaw, m_laboratoryCameraPitch);
+        m_physGunLocalGrabPoint = {};
+        m_physGunTargetOrientation = ballState.orientation;
+        m_physGunRotationStartOrientation = ballState.orientation;
+        m_physGunRelativeOrientation = (cameraOrientation.conjugate()
+            * ballState.orientation).normalized();
+        m_physGunFixedCenterCameraLocal = cameraOrientation.conjugate().rotate(
+            ballState.position - m_laboratoryCameraPosition);
+        m_physGunRotationInputDegrees = {};
+        m_physGunOrientationLocked =
+            m_physGunHoldMode == PhysGunHoldMode::FixedPose;
+        m_physGunHoldDistance = std::max(0.65f,
+            (ballState.position - m_laboratoryCameraPosition).length());
+        m_physGunBeamTargetWorldPosition = ballState.position;
+        m_physGunGrabbedEntityId = ball.entityId;
+        m_physGunGrabbedBall = ball.physicsBall;
+        return;
     }
     if (!hasPropHit && !hasRagdollHit) {
         return;
@@ -445,12 +526,24 @@ void WorkbenchApp::beginPhysGunGrab() {
 void WorkbenchApp::endPhysGunGrab() {
     if (m_physicsScene) m_physicsScene->endGrab();
     m_physGunGrabbedEntityId = 0;
+    m_physGunGrabbedBall = {};
     m_physGunLocalGrabPoint = {};
     m_physGunOrientationLocked = false;
     m_physGunTriggerHeld = false;
 }
 
 void WorkbenchApp::freezePhysGunObject() {
+    if (m_physicsScene && m_physGunGrabbedBall) {
+        m_physicsScene->setInflatedBallFrozen(m_physGunGrabbedBall, true);
+        for (SpawnedInflatedBallInstance& ball : m_inflatedBalls) {
+            if (ball.physicsBall == m_physGunGrabbedBall) {
+                ball.freezeFlashSeconds = 0.34f;
+            }
+        }
+        m_notification = { "Objeto congelado", 1.55f, 1.55f };
+        endPhysGunGrab();
+        return;
+    }
     if (!m_physicsScene || !m_physicsScene->grabbing()) {
         endPhysGunGrab();
         return;
@@ -485,9 +578,19 @@ void WorkbenchApp::unfreezeLookedAtObject() {
         viewForward(m_laboratoryCameraYaw,
             m_laboratoryCameraPitch).normalized() };
     PhysicsRayHit3D hit;
-    if (!m_physicsScene->raycast(ray,
-            MaximumPhysGunQueryDistanceMeters, hit)
-        || !hit.body || !m_physicsScene->bodyFrozen(hit.body)) {
+    const bool bodyHit = m_physicsScene->raycast(ray,
+        MaximumPhysGunQueryDistanceMeters, hit);
+    InflatedBallHandle3D ball;
+    float ballDistance = 0.0f;
+    if (m_physicsScene->raycastInflatedBall(ray,
+            bodyHit ? hit.distance : MaximumPhysGunQueryDistanceMeters,
+            ball, ballDistance)) {
+        if (!m_physicsScene->inflatedBallState(ball).frozen) return;
+        m_physicsScene->setInflatedBallFrozen(ball, false);
+        m_notification = { "Objeto descongelado", 1.55f, 1.55f };
+        return;
+    }
+    if (!bodyHit || !hit.body || !m_physicsScene->bodyFrozen(hit.body)) {
         return;
     }
     m_physicsScene->setBodyFrozen(hit.body, false);
@@ -502,6 +605,11 @@ void WorkbenchApp::unfreezeAllObjects() {
         m_physicsScene->setBodyFrozen(instance.physicsBody, false);
         ++count;
     }
+    for (const SpawnedInflatedBallInstance& ball : m_inflatedBalls) {
+        if (!m_physicsScene->inflatedBallState(ball.physicsBall).frozen) continue;
+        m_physicsScene->setInflatedBallFrozen(ball.physicsBall, false);
+        ++count;
+    }
     if (count > 0) {
         m_notification = { "Objetos descongelados", 1.7f, 1.7f };
     }
@@ -513,12 +621,18 @@ void WorkbenchApp::updateDynamicProps(float deltaTime) {
         instance.freezeFlashSeconds = std::max(0.0f,
             instance.freezeFlashSeconds - deltaTime);
     }
+    for (SpawnedInflatedBallInstance& ball : m_inflatedBalls) {
+        ball.freezeFlashSeconds = std::max(0.0f,
+            ball.freezeFlashSeconds - deltaTime);
+    }
     const Vec3 forward = viewForward(m_laboratoryCameraYaw,
         m_laboratoryCameraPitch).normalized();
     if (m_physGunGrabbedEntityId == 0 && m_physGunTriggerHeld) {
         beginPhysGunGrab();
     }
-    if (m_physGunGrabbedEntityId != 0) {
+    if (m_physGunGrabbedEntityId != 0 && m_physGunGrabbedBall) {
+        updateInflatedBallGrab(deltaTime);
+    } else if (m_physGunGrabbedEntityId != 0) {
         const auto propInstance = std::find_if(m_spawnedProps.begin(),
             m_spawnedProps.end(), [&](const SpawnedPropInstance& candidate) {
                 return candidate.entityId == m_physGunGrabbedEntityId;
@@ -623,6 +737,7 @@ void WorkbenchApp::updateDynamicProps(float deltaTime) {
     updateActiveRagdolls(deltaTime);
     m_physicsScene->simulate(deltaTime);
     ++m_laboratoryPhysicsStep;
+    readInflatedBallStates(deltaTime);
     for (const PhysicsBodyStateUpdate3D& update :
         m_physicsScene->activeBodyStates()) {
         const auto found = m_spawnedPropByBodyIndex.find(update.body.index);
@@ -652,12 +767,6 @@ void WorkbenchApp::updateDynamicProps(float deltaTime) {
         }
     }
     updatePhysicsBenchmarkAnalytics(deltaTime);
-    m_impactAcousticResolver.resolve(m_physicsScene->contactImpacts(),
-        m_materialLibrary, deltaTime);
-    m_worldAudio.submitImpacts(m_impactAcousticResolver.commands());
-    m_dragAcousticResolver.resolve(m_physicsScene->contactSlides(),
-        m_materialLibrary, deltaTime);
-    m_worldAudio.submitDrags(m_dragAcousticResolver.commands());
 
     // Pitch completo (nao so o yaw planar) e o que da ao HRTF a pista de
     // elevacao: e o motivo pratico de ligar HRTF, entao a pose enviada ao
@@ -666,7 +775,7 @@ void WorkbenchApp::updateDynamicProps(float deltaTime) {
     listenerPose.position = m_laboratoryCameraPosition;
     listenerPose.forward = viewForward(m_laboratoryCameraYaw,
         m_laboratoryCameraPitch).normalized();
-    m_worldAudio.update(listenerPose, m_physicsScene.get(), deltaTime);
+    m_worldAudio.update(listenerPose);
 
     const Vec3 characterVelocityForAudio = m_physicsScene->hasCharacter()
         ? m_physicsScene->characterState().velocity : Vec3 {};
@@ -679,7 +788,41 @@ void WorkbenchApp::updateDynamicProps(float deltaTime) {
         playerPosition, windAtPlayerHeight,
         m_windSystem.settings().audioShelterDistanceMeters);
     m_worldAudio.updateWindAmbience(windAtPlayerHeight * windAudioExposure,
-        characterVelocityForAudio, m_windAudioVolume, deltaTime);
+        characterVelocityForAudio, m_windAudioVolume);
+}
+
+// Physgun na bola: mola criticamente amortecida no centro, com aceleracao
+// limitada. A bola segue a mira, achata no que encontrar pelo caminho e,
+// solta, sai com a velocidade que tinha (o arremesso).
+void WorkbenchApp::updateInflatedBallGrab(float deltaTime) {
+    if (!m_physicsScene->contains(m_physGunGrabbedBall)) {
+        endPhysGunGrab();
+        return;
+    }
+    const Quaternion cameraOrientation = viewOrientation(
+        m_laboratoryCameraYaw, m_laboratoryCameraPitch);
+    const Vec3 forward = viewForward(m_laboratoryCameraYaw,
+        m_laboratoryCameraPitch).normalized();
+    const Vec3 target = m_physGunHoldMode == PhysGunHoldMode::FixedPose
+        ? m_laboratoryCameraPosition
+            + cameraOrientation.rotate(m_physGunFixedCenterCameraLocal)
+        : m_laboratoryCameraPosition + forward * m_physGunHoldDistance;
+    const InflatedBallState3D state =
+        m_physicsScene->inflatedBallState(m_physGunGrabbedBall);
+    constexpr float AngularFrequency = 2.0f * Pi * 5.0f;
+    constexpr float MaximumAcceleration = 250.0f;
+    Vec3 acceleration = (target - state.position)
+            * (AngularFrequency * AngularFrequency)
+        - state.linearVelocity * (2.0f * AngularFrequency)
+        + Vec3 { 0.0f, 0.0f, 9.81f };
+    const float magnitude = acceleration.length();
+    if (magnitude > MaximumAcceleration) {
+        acceleration *= MaximumAcceleration / magnitude;
+    }
+    m_physicsScene->setInflatedBallMotion(m_physGunGrabbedBall,
+        state.position, state.linearVelocity + acceleration * deltaTime,
+        state.angularVelocity * std::exp(-4.0f * deltaTime));
+    m_physGunBeamTargetWorldPosition = state.position;
 }
 
 UiTexture WorkbenchApp::renderPropPreviewAtlas(Renderer& activeRenderer) {
@@ -696,9 +839,12 @@ UiTexture WorkbenchApp::renderPropPreviewAtlas(Renderer& activeRenderer) {
             (static_cast<float>(column) - 1.0f) * 2.25f, 0.0f,
             (0.5f - static_cast<float>(row)) * 2.15f
         };
+        // A bola do menu e a procedural (a mesma que o card cria).
+        const GpuModel3D& visual = definitions[index].inflatedBall && !m_soccerBallVisual.parts.empty()
+            ? m_soccerBallVisual : definitions[index].visual;
         // Camera estatica, objeto parado - previousPosition/Orientation
         // repetem os mesmos valores (motion vector zero de proposito).
-        appendGpuModelRenderables(definitions[index].visual, position,
+        appendGpuModelRenderables(visual, position,
             previewOrientation(), position, previewOrientation(),
             1.28f / largest, false, false, true, meshes, 100'000.0f);
     }
@@ -731,80 +877,35 @@ UiTexture WorkbenchApp::renderPropPreviewAtlas(Renderer& activeRenderer) {
     return activeRenderer.renderScene3D(scene, 768, 512);
 }
 
-void WorkbenchApp::ensureObjectViewerFloorLoaded(Renderer& activeRenderer) {
-    if (m_objectViewerFloorLoaded) return;
+void WorkbenchApp::ensureViewerFloorLoaded(Renderer& activeRenderer) {
+    if (m_viewerFloorLoaded) return;
     const std::vector<std::byte> pixels = buildFloorCheckerboardPixels();
     const MeshData3D mesh = buildFloorQuadMesh();
     constexpr std::uint32_t textureSize = static_cast<std::uint32_t>(
-        ObjectViewerFloorTileCount * ObjectViewerFloorTexelsPerTile);
+        ViewerFloorTileCount * ViewerFloorTexelsPerTile);
 
     GpuModelPart3D floorPart;
     floorPart.albedoTexture = activeRenderer.createTexture2D(
         { textureSize, textureSize }, pixels);
     floorPart.vertexBuffer = activeRenderer.createBuffer({
         mesh.vertices.size() * sizeof(MeshVertex3D),
-        RHI::BufferUsage::Vertex, true, "Object viewer floor vertices" });
+        RHI::BufferUsage::Vertex, true, "Viewer floor vertices" });
     floorPart.indexBuffer = activeRenderer.createBuffer({
         mesh.indices.size() * sizeof(std::uint32_t),
-        RHI::BufferUsage::Index, true, "Object viewer floor indices" });
+        RHI::BufferUsage::Index, true, "Viewer floor indices" });
     activeRenderer.writeBuffer(floorPart.vertexBuffer, 0,
         std::as_bytes(std::span(mesh.vertices)));
     activeRenderer.writeBuffer(floorPart.indexBuffer, 0,
         std::as_bytes(std::span(mesh.indices)));
     floorPart.indexCount = static_cast<std::uint32_t>(mesh.indices.size());
 
-    m_objectViewerFloor.parts = { floorPart };
-    m_objectViewerFloor.textures = { floorPart.albedoTexture };
-    m_objectViewerFloor.dimensionsMeters = {
-        ObjectViewerFloorHalfExtentMeters * 2.0f,
-        ObjectViewerFloorHalfExtentMeters * 2.0f, 0.0f
+    m_viewerFloor.parts = { floorPart };
+    m_viewerFloor.textures = { floorPart.albedoTexture };
+    m_viewerFloor.dimensionsMeters = {
+        ViewerFloorHalfExtentMeters * 2.0f,
+        ViewerFloorHalfExtentMeters * 2.0f, 0.0f
     };
-    m_objectViewerFloorLoaded = true;
-}
-
-UiTexture WorkbenchApp::renderObjectViewerPreview(Renderer& activeRenderer,
-    std::size_t definitionIndex) {
-    const auto& definitions = m_propCatalog.definitions();
-    if (definitionIndex >= definitions.size()) return {};
-    ensureObjectViewerFloorLoaded(activeRenderer);
-    const PropDefinition3D& definition = definitions[definitionIndex];
-    const float largest = std::max({ definition.dimensionsMeters.x,
-        definition.dimensionsMeters.y, definition.dimensionsMeters.z,
-        0.001f });
-    std::vector<MeshRender3D> meshes;
-    // Camera estatica, objetos parados - previousPosition/Orientation
-    // repetem os mesmos valores (motion vector zero de proposito).
-    appendGpuModelRenderables(definition.visual, {}, previewOrientation(),
-        {}, previewOrientation(), 2.4f / largest, false, false, true,
-        meshes);
-    // Chao real (ver ensureObjectViewerFloorLoaded) na mesma altura do
-    // antigo plano procedural (groundPlaneZ=-1.5).
-    appendGpuModelRenderables(m_objectViewerFloor,
-        { 0.0f, 0.0f, -1.5f }, {}, { 0.0f, 0.0f, -1.5f }, {}, 1.0f, false,
-        false, true, meshes);
-    const Mat4 view = Mat4::lookAt({ 0.0f, -6.3f, 1.2f }, {},
-        { 0.0f, 0.0f, 1.0f });
-    const Mat4 projection = Mat4::perspective(
-        39.0f * Pi / 180.0f, 1.30f, 0.05f, 30.0f);
-    std::array<LightRender3D, 1> lights;
-    lights[0].type = LightType3D::Point;
-    lights[0].position = { -3.5f, -3.8f, 6.5f };
-    lights[0].intensity = 1.14f;
-    lights[0].castsShadow = true;
-
-    Scene3DFrame scene;
-    scene.cameraViewProjection = projection * view;
-    // Sem TAA nesta preview - ver comentario equivalente em
-    // renderPropPreviewAtlas.
-    scene.cameraViewProjectionJittered = scene.cameraViewProjection;
-    scene.previousCameraViewProjection = scene.cameraViewProjection;
-    scene.cameraPosition = { 0.0f, -6.3f, 1.2f };
-    scene.lights = lights;
-    scene.meshes = meshes;
-    scene.environment.skyIrradiance = 0.35f;
-    scene.showSky = false;
-    scene.showShadows = true;
-    return activeRenderer.renderScene3D(scene, 900, 700);
+    m_viewerFloorLoaded = true;
 }
 
 } // namespace MatterEngine::Workbench

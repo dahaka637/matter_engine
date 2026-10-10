@@ -2,28 +2,38 @@
 
 #include "Engine/Animation/AnimationClip3D.hpp"
 #include "Engine/Animation/RagdollCharacter3D.hpp"
+#include "Engine/Animation/RagdollVisualPose3D.hpp"
 #include "Engine/Core/Application.hpp"
-#include "Engine/Audio/DragAcoustics.hpp"
-#include "Engine/Audio/ImpactAcoustics.hpp"
+#include "Engine/Character/BallOwnership3D.hpp"
+#include "Engine/Character/BallTouchPreview3D.hpp"
 #include "Engine/Character/BiomechanicalBipedExperiment3D.hpp"
 #include "Engine/Character/CharacterLocomotion3D.hpp"
+#include "Engine/Character/DefaultLocomotion3D.hpp"
 #include "Engine/Control/RagdollImpactTest3D.hpp"
 #include "Engine/Control/AdaptivePhysicalCharacter3D.hpp"
+#include "Engine/Control/ImpactAssist3D.hpp"
 #include "Engine/Data/SettingsRepository.hpp"
 #include "Engine/Environment/WindSystem.hpp"
 #include "Engine/Materials/MaterialLibrary.hpp"
+#include "Engine/Math/Frustum3D.hpp"
 #include "Engine/Math/Quaternion.hpp"
 #include "Engine/Physics/PhysicsScene3D.hpp"
 #include "Engine/RHI/RHIHandles.hpp"
 #include "Engine/Render/Scene3D.hpp"
 #include "Workbench/Audio/WorldAudioController.hpp"
+#include "Workbench/ObjectInspector/ObjectInspectorScreen.hpp"
+#include "Workbench/PlayerInspector/PlayerInspectorScreen.hpp"
+#include "Workbench/PlayerInspector/UiCanvasTexture.hpp"
 #include "Workbench/Props/PropCatalog.hpp"
 
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <future>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -50,8 +60,9 @@ private:
     enum class Screen {
         MainMenu,
         Laboratory,
-        ObjectViewer,
-        AnimationViewer,
+        ObjectInspector,
+        BallTouchViewer,
+        PlayerInspector,
         Settings
     };
 
@@ -103,6 +114,33 @@ private:
         float freezeFlashSeconds = 0.0f;
     };
 
+    // A bola de futebol (bola inflada, InflatedBall3D.hpp): fisica propria,
+    // malha procedural e deformacao por skinning (ProceduralSoccerBall3D).
+    struct SpawnedInflatedBallInstance {
+        std::uint64_t entityId = 0;
+        InflatedBallHandle3D physicsBall;
+        // O boneco que a maneja (nao colide com ela; ver BallOwnership3D).
+        BallOwnership3D ownership;
+        // Estado do ultimo passo fixo e o do passo antes dele (interpolacao).
+        InflatedBallState3D physicsState;
+        InflatedBallState3D simulationPreviousState;
+        // Pose desenhada neste quadro e no anterior (motion vectors).
+        Vec3 renderedPosition;
+        Quaternion renderedOrientation;
+        Vec3 previousRenderedPosition;
+        Quaternion previousRenderedOrientation;
+        // Paleta da gaiola quando achatada; vazia = desenhada rigida.
+        std::vector<Mat4> skinMatrices;
+        std::vector<Mat4> previousSkinMatrices;
+        bool previousSkinned = false;
+        float freezeFlashSeconds = 0.0f;
+        // Leitura do painel: maior achatamento e maior velocidade recentes
+        // (um chute dura um ou dois passos; o pico fica visivel um tempo).
+        float recentPeakCompressionMeters = 0.0f;
+        float recentPeakSpeed = 0.0f;
+        float recentPeakAgeSeconds = 0.0f;
+    };
+
     enum class ArticulatedRigKind {
         Human
     };
@@ -120,8 +158,69 @@ private:
         float guideFacingYawRadians = 0.0f;
         std::vector<Mat4> skinMatrices;
         std::vector<Mat4> previousSkinMatrices;
+        // Os ossos visuais (07/10): os dedos do pe no chao e a pose das maos;
+        // as rotacoes deste quadro e as do anterior (os vetores de movimento).
+        RagdollVisualPose3D visualPose;
+        std::vector<Quaternion> visualRotations;
+        std::vector<Quaternion> previousVisualRotations;
+        double visualPoseTime = -1.0;
         CharacterLocomotion3D locomotion;
         AdaptivePhysicalCharacter3D adaptivePhysics;
+        // Manejo de bola (so o personagem controlado usa) e a escala da
+        // velocidade que ele pede (o chute correndo freia um pouco).
+        BallControl3D ballControl;
+        float ballSpeedScale = 1.0f;
+        // A ultima saida do manejo (o desenho de depuracao) e o reforco de
+        // estabilidade do gesto (modo fisico, V3).
+        BallControlOutput3D ballLastOutput;
+        float ballStability = 0.0f;
+        // Locomocao padrao (pedido do usuario, 04/10): o boneco controlado
+        // anda pela capsula, sem fisica - os links sao cinematicos e seguem a
+        // animacao (defaultLocomotion). O modo fisico (locomotion +
+        // adaptivePhysics, com os motores) entra numa pancada, num pouso ou
+        // agarrado, e quando o corpo assenta ele volta ao padrao (Returning:
+        // a pose fisica misturada ate a animada).
+        enum class BodyMode : std::uint8_t { Animated, Physical, Returning };
+        DefaultLocomotion3D defaultLocomotion;
+        BodyMode bodyMode = BodyMode::Physical;
+        // Tempo no modo atual e, no fisico, tempo assentado (sem pancada, de
+        // pe, no chao).
+        float bodyModeSeconds = 0.0f;
+        float calmSeconds = 0.0f;
+        // Animado: tempo no ar. Fisico: entrou por um pulo (volta logo depois
+        // do pouso).
+        float airSeconds = 0.0f;
+        bool physicalFromJump = false;
+        // Fisico, ja assentado para voltar: a ajuda sobe aos poucos (0..1)
+        // ate a cheia e so entao o corpo volta ao padrao.
+        float returnBoost = 0.0f;
+        // Fisico por um pulo: tempo no chao desde o pouso.
+        float landedSeconds = 0.0f;
+        // Os links estao guiados (o corpo do modo padrao) e, saindo dele para
+        // o fisico sem pancada, quanto falta (s) da autoridade descendo e o
+        // total.
+        bool guided = false;
+        float guidedExitLeft = 0.0f;
+        float guidedExitSeconds = 0.0f;
+        // O agachar do tick anterior (a borda pede o carrinho) e o carrinho do
+        // modo padrao no tick anterior.
+        bool crouchHeld = false;
+        bool defaultTackling = false;
+        // A volta: a pose fisica do comeco - a raiz (em relacao a base da
+        // capsula) e as juntas.
+        Vec3 returnRootOffset;
+        Quaternion returnRootOrientation;
+        std::vector<Vec3> returnCoordinates;
+        // A volta pela inercia ("Volta do fisico acompanhando o corpo").
+        PoseInertializer3D returnInertia;
+        // Levou carrinho: 0 no golpe, 1 com a ajuda de volta (so o aviso no
+        // log; a ajuda e a do impactAssist).
+        float tackledRecovery = 1.0f;
+        // A ajuda depois de um impacto (06/10): cai pela forca do choque (ate
+        // 50%; num carrinho levado, ate 20%) e volta aos poucos.
+        ImpactAssist3D impactAssist;
+        // Pancada enquanto levanta: 0 no golpe, 1 com a ajuda de volta.
+        float getUpHitRecovery = 1.0f;
         // Fisica adaptativa nos bonecos nao controlados: uma capsula virtual
         // (so posicao no plano) que segue o corpo como a do jogador - e para
         // onde a correcao do corpo puxa.
@@ -194,8 +293,14 @@ private:
     void loadAnimationCatalog();
 
     void drawMainMenu();
-    void drawObjectViewer();
-    void drawAnimationViewer();
+    // A tela "Objetos" (Workbench/ObjectInspector).
+    void drawObjectInspector(Renderer& activeRenderer);
+    // Visualizador de toque na bola (menu inicial): BallTouchViewerScreen.cpp.
+    void drawBallTouchViewer();
+    // A tela "Inspecao de jogador" (Workbench/PlayerInspector).
+    void drawPlayerInspector(Renderer& activeRenderer);
+    void updateBallTouchViewer(float deltaTime);
+    void stopBallTouchSimulation();
     void drawSettings();
     void drawSettingsVideoTab();
     void drawSettingsGeneralTab();
@@ -239,6 +344,16 @@ private:
     void spawnHumanRagdoll();
     [[nodiscard]] bool spawnPropAt(std::size_t definitionIndex,
         Vec3 position, Quaternion orientation, bool benchmarkEntity);
+    void ensureSoccerBallVisual(Renderer& renderer);
+    [[nodiscard]] bool spawnInflatedBallAt(Vec3 position);
+    void updateInflatedBallGrab(float deltaTime);
+    void readInflatedBallStates(float deltaTime);
+    void appendInflatedBallRenderables(std::vector<MeshRender3D>& meshes,
+        const Frustum3D& cameraFrustum,
+        std::span<const Frustum3D> lightFrustums, bool temporalHistoryValid);
+    void finishInflatedBallFrame();
+    void drawInflatedBallPanel();
+    void applySoccerBallSize();
     [[nodiscard]] bool spawnHumanRagdollAt(Vec3 pelvisPosition,
         Quaternion orientation, bool benchmarkEntity);
     void updateActiveRagdolls(float deltaTime);
@@ -265,18 +380,14 @@ private:
     void unfreezeAllObjects();
     void updateDynamicProps(float deltaTime);
     [[nodiscard]] UiTexture renderPropPreviewAtlas(Renderer& renderer);
-    [[nodiscard]] UiTexture renderObjectViewerPreview(Renderer& renderer,
-        std::size_t definitionIndex);
-    [[nodiscard]] UiTexture renderAnimationViewerPreview(Renderer& renderer);
-    void ensureObjectViewerFloorLoaded(Renderer& renderer);
+    [[nodiscard]] UiTexture renderBallTouchViewerPreview(Renderer& renderer);
+    void ensureViewerFloorLoaded(Renderer& renderer);
 
     Screen m_screen = Screen::MainMenu;
     Screen m_settingsReturnScreen = Screen::MainMenu;
     Renderer* m_renderer = nullptr;
     UiTexture m_menuLogo;
     UiTexture m_propPreviewAtlas;
-    UiTexture m_objectViewerPreview;
-    UiTexture m_animationViewerPreview;
     float m_uiScale = 1.0f;
 
     int m_settingsTab = 0;
@@ -395,7 +506,6 @@ private:
     Vec3 m_characterSpawnHalfExtents;
     Vec3 m_characterSpawnCenter;
     std::string m_characterAssetPath = "characters/football_player/character.json";
-    bool m_animationViewerShowColliders = false;
     std::vector<GpuModel3D> m_ragdollLinkVisuals;
     GpuModel3D m_ragdollJointVisual;
     std::vector<Vec3> m_ragdollJointLocalPositions;
@@ -408,6 +518,22 @@ private:
     bool m_ragdollForceControlOverride = false;
     float m_ragdollAuxiliaryPercent = 100.0f;
     float m_ragdollMusclePercent = 100.0f;
+    // Rigidez muscular geral (menu do personagem): rigidez e forca de todos
+    // os musculos no modo fisico (100% e a calibrada).
+    float m_characterMusclePercent = 100.0f;
+    // Cambaleio (05/10 noite): depois de um choque forte o corpo amolece mas
+    // tenta se manter em pe (CharacterLocomotionInput3D::staggerRecovery).
+    // Sempre ligado (06/10: a caixa saiu).
+    bool m_staggerRecovery = true;
+    // Locomocao fisica v2 (06/10/2026): equilibrio e locomocao do modo fisico
+    // (CharacterLocomotionInput3D::physicalV2, AdaptivePhysicalSettings3D::v2
+    // e o limite de aceleracao da capsula). Sempre ligada (a caixa saiu).
+    bool m_physicalLocomotionV2 = true;
+    // (v2: o rumo pedido no tick anterior e a taxa de giro dele, filtrada -
+    // physicalNavigationTurnScale3D.)
+    Vec3 m_v2RequestDirection {};
+    bool m_v2RequestValid = false;
+    float m_v2RequestTurnRate = 0.0f;
     RagdollImpactTest3D m_ragdollImpactLab;
     std::uint64_t m_controlledCharacterEntityId = 0;
     // Velocidade da capsula (proxy de navegacao) neste tick - nao o pedido.
@@ -438,15 +564,131 @@ private:
     // discreta; parado, a E4 pelas pernas com parte da ajuda. (A marcha so
     // pelas pernas, pelo planejador, foi abandonada.) Harness: XE5ANIM=1.
     bool m_legsWalkingE5 = true;
+    // Locomocao padrao (04/10, pedido do usuario): o boneco controlado pela
+    // capsula, sem fisica, como na maioria dos jogos; o modo fisico so em
+    // momentos especificos (pancada, pouso, agarrado). Desligada: sempre o
+    // fisico (comparacao). m_controlledAnimated: o controlado esta no padrao
+    // neste tick (a capsula usa a aceleracao dele).
+    bool m_defaultLocomotion = true;
+    // Transicoes adaptativas da locomocao padrao (05/10): giro da pelve com
+    // aceleracao limitada, clipes misturados pelo movimento real e amostragem
+    // suave. Desligada: o modo de antes (comparacao).
+    bool m_defaultAdaptiveTransitions = true;
+    // Volta do fisico ao padrao comecando de onde o corpo esta (05/10).
+    bool m_defaultSeedFromBody = true;
+    // Pulo no fisico (voo e pouso; 05/10). Desligado: o pulo e animado e so
+    // um esbarrao no ar o leva ao fisico.
+    bool m_defaultPhysicalJump = false;
+    // Aterrissagem amortecida pela altura (05/10, Falling To Landing).
+    bool m_defaultLandingAbsorb = true;
+    // A partir de quanto (m/s2 de aceleracao lateral) ele inclina na curva.
+    float m_defaultCurveLeanDeadZone = 3.5f;
+    // O corpo do modo padrao e o guiado (aprovado pelo usuario, 05/10 noite;
+    // o cinematico saiu do laboratorio): dinamico, levado a pose da animacao
+    // pela velocidade de cada link - livre e o mesmo movimento; nas
+    // trombadas tem massa; a ida ao fisico nao troca de corpo.
+    // A saida dele para o fisico sem contato (pulo fisico, padrao
+    // desligado): a autoridade da pose desce nesse tempo (s) enquanto os
+    // motores assumem. Num choque (pancada, parede, carrinho) e seca:
+    // segurando a pose, o corpo seguia empurrando o que ele acertou.
+    float m_defaultGuidedExitSeconds = 0.12f;
+    // Carrinho no ar (a voadora; 05/10 noite) e o quanto ele deita para tras
+    // no voo (graus).
+    bool m_defaultAirTackle = true;
+    float m_defaultAirTacklePitch = 30.0f;
+    // A voadora so vai ao fisico no contato - um boneco, um objeto, uma
+    // parede (pedido do usuario, 06/10: mais fluido). Desligada, ela vai ao
+    // fisico ja no comeco (o de 05/10 noite).
+    bool m_defaultVoadoraContactOnly = true;
+    // Velocidades do modo padrao (m/s; aba "Velocidades" do menu do
+    // personagem, 06/10): o trote em todos os rumos; a corrida para a frente
+    // (vale para as diagonais da frente), de lado e de costas (vale para as
+    // diagonais de costas). Os padroes sao os de DefaultLocomotionSettings3D.
+    float m_defaultTrotSpeed = 4.5f;
+    float m_defaultSprintForwardSpeed = 7.8f;
+    float m_defaultSprintSideSpeed = 5.2f;
+    float m_defaultSprintBackwardSpeed = 5.2f;
+    // Quando os parametros foram copiados (ImGui::GetTime; o aviso some em 2 s).
+    double m_defaultSpeedsCopiedTime = -10.0;
+    // Levantar com pressa ja andando no padrao (05/10).
+    bool m_defaultGetUpHandoff = true;
+    // Quem leva carrinho fica com a ajuda baixa (05/10; desde 06/10 pelo
+    // ImpactAssist3D: ate 20%, voltando num tempo pela forca do carrinho).
+    bool m_tackledAssistLow = true;
+    float m_tackledRecoverSeconds = 2.5f;
+    // Pancada enquanto levanta (05/10): a ajuda do levantar cai a isto (%)
+    // e volta neste tempo (s).
+    bool m_getUpHitWeakens = true;
+    float m_getUpHitAssistPercent = 25.0f;
+    float m_getUpHitRecoverSeconds = 1.5f;
+    // Vida do tronco e da cabeca no padrao (05/10): sobe-e-desce, inclinacao e
+    // balanco calibrados pelas referencias; a intensidade escala tudo.
+    bool m_defaultTrunkMotion = true;
+    float m_defaultTrunkMotionPercent = 100.0f;
+    bool m_controlledAnimated = false;
+    // A capsula do controlado bateu em algo neste tick: quanto perdeu de
+    // velocidade (m/s, no plano) alem do que a frenagem dela tira - parede,
+    // degrau alto. No padrao, a batida forte passa ao modo fisico.
+    float m_controlledWallImpact = 0.0f;
+    // A velocidade no plano que a capsula andou de fato no tick anterior.
+    Vec3 m_capsuleMovedVelocity;
+    // Manejo de bola pelo pe (o toque de verdade) em vez da area em volta do
+    // jogador (o padrao por enquanto).
+    bool m_ballFootTouch = false;
+    // Desenho da area do manejo de bola e do contato previsto (menu do
+    // personagem).
+    bool m_showBallReach = false;
+    // Manejo V3 (06/10 noite): a forca na bola sai nesta fracao do tempo
+    // estimado ate o pe chegar nela (0 na hora, 1 no contato visual) e o
+    // reforco de estabilidade do modo fisico durante o gesto.
+    float m_ballContactTiming = 1.0f;
+    bool m_ballStabilityAssist = true;
+    // A forca na bola (aba "Forca na bola", 07/10: o toque e o chute para o
+    // usuario ajustar tudo) e o tempo para encher a barra (s) de cada um.
+    BallForceSettings3D m_ballForce = defaultBallForceSettings3D();
+    float m_ballTouchChargeSeconds = 0.6f;
+    // Sem gesto com a bola (07/10, para testar a forca isolada): o pedido so
+    // aplica a forca, sem perna nem chute.
+    bool m_ballForceOnly = false;
+    // Maos e pes (07/10): a pose dos dedos das maos (so o visual) e os dedos do
+    // pe dobrando no chao (o pe gira na base deles no fim do apoio).
+    RagdollHandPose3D m_handPose = RagdollHandPose3D::Automatic;
+    bool m_toeRoll = true;
+    float m_ballShotChargeSeconds = 1.0f;
+    double m_ballForceCopiedTime = -10.0;
+    // O contato pela hitbox do pe (09/10, padrao; desligado, pelo tempo da
+    // V3). Carregando o chute, a camera gira menos (09/10, pedido do usuario:
+    // mirar enquanto ajusta a altura e o efeito, "sem exagero"): a fracao da
+    // sensibilidade e o quanto ela ja entrou (0..1, suave).
+    bool m_ballHitboxContact = true;
+    float m_shotCameraSensitivity = 0.6f;
+    float m_shotCameraSlow = 0.0f;
     // Quanto da ajuda da pelve fica: parado, com as pernas carregando (%), e
     // andando pela passada (correcao de posicao e postura, %). Pe consciente
     // (o pouso da passada corrigido pelo equilibrio).
-    float m_e5StandingAssistPercent = 0.0f;
+    // (100% por padrao desde 06/10, pedido do usuario: no fisico a ajuda
+    // comeca inteira e cai pelo impacto - ImpactAssist3D.)
+    float m_e5StandingAssistPercent = 100.0f;
     // Enquanto a marcha hibrida e polida, o jogo abre na referencia estavel.
     // Reduzir este valor continua disponivel como diagnostico no painel, mas
     // 10% ainda nao sustenta a passada atual e nao pode ser apresentado como
     // experiencia padrao ao jogador.
     float m_e5WalkingAssistPercent = 100.0f;
+    // Ajuda para levantar do chao (%): a subida na pelve e no peito e o torque
+    // de endireitar do levantar. 100% e o levantar atual; 0%, so os musculos.
+    float m_getUpAssistPercent = 130.0f;
+    // Rigidez dos musculos ao levantar (%): 100% e a de antes (rigida);
+    // menos, mais relaxado (a forca maxima fica).
+    float m_getUpStiffnessPercent = 55.0f;
+    // Forca dos musculos ao levantar (05/10 noite).
+    float m_getUpStrengthPercent = 70.0f;
+    // Levantar de bruços: 0 o do Kimodo (padrao do personagem), 1 o antigo
+    // (stand_up_front) - para comparar.
+    int m_getUpFrontClip = 0;
+    // Levantar de costas: 0 o do Kimodo, 1 o antigo (stand_up_back).
+    int m_getUpBackClip = 0;
+    // Carrinho: correndo, Ctrl da o carrinho (desligado, Ctrl so agacha).
+    bool m_tackleEnabled = true;
     bool m_e5FootPlacement = true;
     // Variacao de movimento (vida): cada boneco com o seu jeito.
     bool m_motionVariety = true;
@@ -458,7 +700,43 @@ private:
     // decide a altura. Carga do ultimo pulo (0..1) para o corpo, e o
     // agachar de preparacao enquanto segura.
     bool m_laboratoryJumpCharging = false;
+    // O espaco segurado agora (pressa para levantar).
+    bool m_characterSpaceHeld = false;
     float m_laboratoryJumpChargeSeconds = 0.0f;
+    // Manejo de bola (personagem controlado): mouse esquerdo segurado carrega
+    // o chute, o direito o drible; soltar faz o pedido com a carga (0..1). A
+    // barra (centro, embaixo) mostra a carga e fica um instante depois.
+    bool m_ballShotHeld = false;
+    bool m_ballDribbleHeld = false;
+    float m_ballCharge = 0.0f;
+    BallActionKind3D m_ballRequest = BallActionKind3D::None;
+    // Estresse da bola no laboratorio (autostart laboratory-ball-stress, 04/10:
+    // achar o crash ao chutar): corre em rumos aleatorios, repoe a bola perto e
+    // pede toques e chutes sem parar.
+    bool m_ballStress = false;
+    float m_ballStressTime = 0.0f;
+    std::uint32_t m_ballStressState = 2463534242u;
+    float m_ballStressNextRequest = 1.5f;
+    float m_ballStressNextPlace = 1.0f;
+    float m_ballStressSegmentEnd = 0.0f;
+    Vec3 m_ballStressMove;
+    bool m_ballStressSprint = false;
+    // (Ctrl curto no sprint: o carrinho.)
+    float m_ballStressCrouchSeconds = 0.0f;
+    float m_ballStressCrouchDelay = 0.0f;
+    std::uint32_t m_ballStressRequests = 0;
+    float m_ballRequestPower = 0.0f;
+    float m_ballBarSeconds = 0.0f;
+    bool m_ballBarShot = false;
+    // Gesto do chute: o puxao do mouse logo antes de soltar (pixels, esquece
+    // em ~0,15 s). Para cima/baixo a altura, para os lados o efeito; a mira e
+    // o olhar de antes do puxao (ele tambem gira a camera).
+    Vec2 m_ballFlick;
+    // Pixels do puxao -> -1..1 (abaixo de ~25 px e so mira; cheio em ~180).
+    static float ballFlickShape(float pixels);
+    float m_ballRequestLift = 0.0f;
+    float m_ballRequestCurve = 0.0f;
+    float m_ballRequestAimYaw = 0.0f;
     float m_laboratoryJumpCharge = 0.0f;
     float m_laboratoryJumpCrouch = 0.0f;
     Vec3 m_characterFollowVelocity;
@@ -466,14 +744,26 @@ private:
     // lanterna e manipulação continuam ativos para captura de imagens.
     // Oculto por padrão.
     bool m_hidePhysGunPresentation = true;
-    // Piso do Object Viewer: uma unica mesh real (quad + textura de
-    // xadrez assada), carregada uma vez sob demanda. Substitui o antigo
-    // plano procedural analitico (ver PropRuntime.cpp) para que 100% do
-    // conteudo visual passe pelo mesmo pipeline de mesh/material.
-    GpuModel3D m_objectViewerFloor;
-    bool m_objectViewerFloorLoaded = false;
+    // Piso das previas na GPU (o visualizador de toque na bola): uma mesh
+    // real (quad + textura de xadrez assada), carregada uma vez sob demanda.
+    GpuModel3D m_viewerFloor;
+    bool m_viewerFloorLoaded = false;
     std::vector<SpawnedPropInstance> m_spawnedProps;
     std::unordered_map<std::uint32_t, std::size_t> m_spawnedPropByBodyIndex;
+    std::vector<SpawnedInflatedBallInstance> m_inflatedBalls;
+    GpuModel3D m_soccerBallVisual;
+    std::vector<Vec3> m_soccerBallCage;
+    float m_soccerBallRadius = 0.1098f;
+    // Propriedades das bolas novas e das existentes (painel Physgun).
+    InflatedBallProfile3D m_soccerBallProfile;
+    // Tamanho da bola de futebol (07/10, pedido do usuario): 0 a oficial
+    // (22 cm), 1 com 28 cm (o topo um pouco acima do comeco da canela). O peso,
+    // a pressao e o rolar acompanham (applySoccerBallSize); a pressao do menu
+    // e a da bola oficial, a efetiva cai com o tamanho.
+    float m_soccerBallSize = 0.0f;
+    float m_soccerBallBaseGaugeBar = 0.8f;
+    bool m_soccerBallVisualDirty = false;
+    InflatedBallHandle3D m_physGunGrabbedBall;
     std::uint64_t m_nextEntityId = 1;
     int m_physicsBenchmarkRequestedProps = 100;
     int m_physicsBenchmarkRequestedRagdolls = 10;
@@ -546,26 +836,52 @@ private:
     PhysGunFlashlightSettings m_physGunFlashlight;
     float m_lastUnfreezePressSeconds = -10.0f;
     TransientNotification m_notification;
-    std::size_t m_objectViewerSelectedIndex = 0;
     // Biblioteca preenchida no início com clipes canônicos já retargeteados.
     std::vector<AnimationClip3D> m_animationClips;
-    // Catálogo independente exibido no workspace de animações. Começa apenas
-    // com a referência parada natural e receberá movimentos procedurais
-    // gerados em memória, sem expor a antiga biblioteca de locomoção.
-    std::vector<AnimationClip3D> m_proceduralAnimationClips;
     // Recomputed only when the validated catalog/profile changes, not in UI frames.
     bool m_animationLocomotionCompatible = false;
-    std::size_t m_animationViewerSelectedIndex = 0;
-    float m_animationViewerPlaybackSeconds = 0.0f;
-    float m_animationViewerPlaybackSpeed = 1.0f;
-    bool m_animationViewerPlaying = true;
-    bool m_animationViewerLoop = true;
-    float m_animationViewerCameraYaw = -0.975f;
-    float m_animationViewerCameraPitch = 0.071f;
-    float m_animationViewerCameraDistance = 4.5f;
 
-    ImpactAcousticResolver m_impactAcousticResolver;
-    DragAcousticResolver m_dragAcousticResolver;
+    // Visualizador de toque na bola: a simulacao do jogo isolada
+    // (BallTouchPreview3D) roda numa thread; cada mudanca de parametro pede
+    // outra. Os quadros gravados tocam em loop ou pelo scrubber.
+    std::unique_ptr<BallTouchPreview3D> m_ballViewer;
+    // Inspecao de jogador (07/10): a tela e a textura da imagem dela.
+    std::unique_ptr<PlayerInspectorScreen> m_playerInspector;
+    std::unique_ptr<UiCanvasTexture> m_playerInspectorCanvas;
+    // Objetos procedurais (09/10): a tela e a textura da imagem dela.
+    std::unique_ptr<ObjectInspectorScreen> m_objectInspector;
+    std::unique_ptr<UiCanvasTexture> m_objectInspectorCanvas;
+    std::future<BallTouchPreviewResult3D> m_ballViewerJob;
+    std::atomic<bool> m_ballViewerCancel { false };
+    std::atomic<float> m_ballViewerProgress { 0.0f };
+    BallTouchPreviewSettings3D m_ballViewerSettings;
+    BallTouchPreviewResult3D m_ballViewerResult;
+    // Os ossos visuais de cada quadro (07/10): os dedos do pe no chao da cena
+    // (o pe da locomocao gira na base deles) e as maos na automatica, na
+    // ordem dos quadros (a transicao e a do jogo).
+    std::vector<std::vector<Quaternion>> m_ballViewerVisualRotations;
+    // Parametros mudaram: simula de novo (com uma pequena espera enquanto o
+    // slider anda).
+    bool m_ballViewerDirty = true;
+    float m_ballViewerDirtySeconds = 0.0f;
+    int m_ballViewerClipFrame = 0;
+    // Arrastando no mapa de cima: 0 nada, 1 a bola, 2 a seta da direcao.
+    int m_ballViewerMapDrag = 0;
+    float m_ballViewerPlaybackSeconds = 0.0f;
+    float m_ballViewerPlaybackSpeed = 0.5f;
+    bool m_ballViewerPlaying = true;
+    bool m_ballViewerLoop = true;
+    bool m_ballViewerFollowCamera = true;
+    bool m_ballViewerShowColliders = false;
+    bool m_ballViewerShowTrails = true;
+    float m_ballViewerCameraYaw = -1.15f;
+    float m_ballViewerCameraPitch = 0.32f;
+    float m_ballViewerCameraDistance = 4.2f;
+    // A camera da ultima imagem (para desenhar os rastros por cima).
+    Mat4 m_ballViewerViewProjection;
+    UiTexture m_ballViewerPreview;
+    std::string m_ballViewerError;
+
     WorldAudioController m_worldAudio;
 
     CharacterMotorSettings3D m_characterSettings;
@@ -585,6 +901,14 @@ private:
         .groundDeceleration = 18.0f,
         .airAcceleration = 4.5f,
         .jumpSpeed = 4.6f,
+        // O toque rapido e um pulo baixo (pedido do usuario, 05/10 noite:
+        // controlar a altura pelo tempo segurado): 0,72 da velocidade (~0,56
+        // m de subida, contra 1,08 do padrao); segurando, sobe ate o padrao
+        // em ~0,35 s e ate 1,16 (~1,45 m) em 0,55 s.
+        .jumpTapSeconds = 0.06f,
+        .jumpFullChargeSeconds = 0.55f,
+        .jumpTapSpeedScale = 0.72f,
+        .jumpChargedSpeedScale = 1.16f,
         .gravityScale = 1.0f,
         .maximumFallSpeed = 48.0f,
         .maximumSlopeDegrees = 50.0f,

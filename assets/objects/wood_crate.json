@@ -1,0 +1,26 @@
+{
+  "schema": "matter.object.v1",
+  "id": "wood_crate",
+  "displayName": "Caixa de madeira",
+  "type": "caixa",
+  "material": "wood",
+  "parameters": {
+    "altura": 0.6,
+    "largura": 0.6,
+    "massa": 14,
+    "moldura": 4,
+    "pixels": 32,
+    "pregos": 1,
+    "profundidade": 0.6,
+    "reforco": 1,
+    "semente": 7,
+    "tabuas": 4,
+    "variacao": 0.08,
+    "veios": 0.5,
+    "cor_madeira": "#d98e3a",
+    "cor_moldura": "#e9a84c",
+    "cor_prego": "#564e48",
+    "cor_realce": "#f8cc78",
+    "cor_sombra": "#6e3816"
+  }
+}

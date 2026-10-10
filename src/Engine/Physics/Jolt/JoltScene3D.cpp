@@ -31,7 +31,7 @@ PhysicsScene3D::PhysicsScene3D(PhysicsEngine3D& engine,
     impl.system->SetPhysicsSettings(tuning);
     for (const auto& [id, material] : materials.all()) {
         impl.materials.emplace(id, Impl::SurfaceContact { material.contact.staticFriction,
-            material.contact.dynamicFriction, material.contact.restitution });
+            material.contact.dynamicFriction, material.contact.restitution, material.ballSurface });
     }
     impl.system->SetContactListener(&impl);
     impl.system->AddStepListener(&impl);
@@ -54,6 +54,8 @@ void PhysicsScene3D::clear() {
         if (slot.record) destroyRagdoll(slot.record->handle);
     for (auto& slot : m_impl->bodySlots)
         if (slot.record) destroyBody(slot.record->handle);
+    for (auto& slot : m_impl->inflatedBallSlots)
+        if (slot.record) destroyInflatedBall(slot.record->handle);
     m_impl->pendingRagdollCommands.clear();
     m_impl->pendingBodyWrenches.clear();
     m_impl->contactImpacts.clear();
@@ -95,6 +97,8 @@ void PhysicsScene3D::simulate(float dt) {
     impl.jobSystem->resetStepCounters();
     impl.applyPendingRagdollCommands();
     impl.applyRagdollDrives();
+    impl.applyRagdollKinematics(dt);
+    impl.applyRagdollGuidePoses(dt);
     // Wake commanded bodies before Update: its step listener is skipped for an empty active set.
     auto& bodies = impl.system->GetBodyInterface();
     for (const auto& wrench : impl.pendingBodyWrenches) bodies.ActivateBody(wrench.body);
@@ -105,7 +109,13 @@ void PhysicsScene3D::simulate(float dt) {
     impl.engine->scheduler->waitIdle();
     if (error != JPH::EPhysicsUpdateError::None || impl.callbackFailed)
         throw std::runtime_error("Jolt: simulation capacity exceeded or callback failed");
+    // (Antes da bola: ela ve o corpo guiado na pose.)
+    impl.finishRagdollGuidePoses();
     const auto sync = Clock::now();
+    // A bola inflada anda sobre as poses do fim deste passo (recuadas pela
+    // velocidade dentro dos subpassos); a reacao dela vai aos corpos no
+    // proximo passo.
+    impl.stepInflatedBalls(dt);
     impl.consolidateContacts();
     // Precisa dos contatos do passo (interferencia externa) e precisa vir
     // antes da publicacao, para que o estado lido pelo controlador no proximo

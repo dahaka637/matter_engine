@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Engine/Animation/AnimationClip3D.hpp"
 #include "Engine/Character/CharacterControlTypes3D.hpp"
 #include "Engine/Control/CharacterWholeBody3D.hpp"
 #include "Engine/Locomotion/ContactFootwork3D.hpp"
@@ -8,9 +9,36 @@ namespace MatterEngine {
 
 // Brake into a sharp direction change before accelerating the new stride.
 // Shared by the application and physics scenario tests.
+// accelerationLimit (m/s2, 0 = sem): a capsula acelera, freia e vira no
+// maximo isto (locomocao fisica v2: 10, o que o corpo consegue pelo chao - a
+// 14-18 o zigue-zague pedia ~2 g de lado e a ajuda arrastava o corpo).
 CharacterMotorSettings3D adaptiveCharacterMotorSettings3D(
     const CharacterMotorSettings3D& settings, const PhysicsCharacterState3D& state,
-    const CharacterMotorCommand3D& command);
+    const CharacterMotorCommand3D& command, float accelerationLimit = 0.0f);
+// Locomocao fisica v2: o limite de aceleracao da capsula (ver acima).
+constexpr float PhysicalV2NavigationAcceleration = 10.0f;
+// ... pela ajuda andando: o que o corpo consegue depende de quem o leva (com
+// pouca ajuda, as pernas): 4 m/s2 sem ajuda, 10 com ela inteira (4 + 6 x
+// ajuda). A 30%, com os 10, o zigue-zague e o para-e-arranca caiam.
+float physicalNavigationAcceleration3D(float walkingAssist);
+
+// Locomocao fisica v2: a velocidade pedida a capsula no rumo pedido fica no
+// maximo `lead` acima da do corpo nesse rumo (so ganhar velocidade: frear e
+// virar seguem livres), no chao. Com pouca ajuda quem leva o corpo sao as
+// pernas: a capsula a 7,5 m/s com o corpo a 1 m/s ia metros a frente, a
+// passada do sprint pedia a perna esticada para uma pelve que nao existia e
+// ele caia. A folga cresce com a ajuda andando (com ajuda alta a pelve leva o
+// corpo junto e quase nunca chega a ela). Devolve o speedScale.
+float physicalNavigationLead3D(float walkingAssist);
+float physicalNavigationSpeedScale3D(Vec3 moveDirection, float speedScale, float nominalSpeed,
+    Vec3 bodyVelocity, float lead);
+// Locomocao fisica v2: virando forte, a velocidade cai como a de quem corre
+// cortando - pedindo um rumo longe do atual, ate ~35% para cortar, e numa
+// curva continua a/omega (a aceleracao de lado que o corpo consegue pela taxa
+// de giro pedida). Pela parte das pernas (1 - ajuda): com ajuda alta a pelve
+// leva o corpo na velocidade inteira. Devolve o fator (0..1).
+float physicalNavigationTurnScale3D(Vec3 currentVelocity, Vec3 moveDirection, float turnRate,
+    float walkingAssist);
 
 enum class PhysicalControlPhase3D { Stable, Perturbed, Recovering, Airborne, Falling };
 
@@ -23,13 +51,16 @@ struct AdaptivePhysicalIntent3D {
     // Caido ou levantando: o levantar e um clipe com trilha de raiz; nada
     // desta assistencia age.
     bool suspended = false;
+    // Postura perdida sem volta (da locomocao: telemetry().postureLost): cai
+    // de vez - a ajuda sai neste tick, em vez de segurar o corpo torto.
+    bool postureLost = false;
+    // v2: apoiado no alto (mureta, parede) tentando se recompor (da
+    // locomocao: telemetry().braceRecovering) - o tronco apoiado nao e
+    // "caido" nem "sem volta".
+    bool braceRecovering = false;
     // Carga do pulo em curso (0 = toque, 1 = cheia): a janela de impulso na
     // decolagem se estende com ela (a capsula sai mais rapido).
     float jumpCharge = 0.0f;
-    // Terreno a frente pedindo cuidado (degrau, meio-fio, ladeira, escada;
-    // 0..1, da locomocao): andando, a ajuda discreta volta inteira enquanto
-    // passa o obstaculo.
-    float terrainDemand = 0.0f;
     std::array<GroundProbeResult3D, 2> footGround;
     // Velocidade que a capsula (ou ancora) recebeu neste tick para ir atras
     // do corpo. Nao e intencao do jogador: fica fora da aceleracao
@@ -51,6 +82,19 @@ struct AdaptivePhysicalIntent3D {
     // Plano oficial dos pes (ContactFootwork3D, publicado pela locomocao):
     // quais pes estao em apoio para carregar o peso pelas juntas.
     const CharacterContactPlan3D* contactPlan = nullptr;
+    // Pose alvo da locomocao (no mundo, CharacterLocomotionOutput3D::
+    // targetPose): a ajuda em todos os ossos segue as orientacoes dela.
+    const RagdollAnimationPose3D* targetPose = nullptr;
+    // Pe plantado pela locomocao (telemetry().footPlanted; sem o dado,
+    // vale o contato): o pe da passada no ar, mesmo raspando o chao, recebe
+    // a ajuda do pe.
+    bool footPlantedValid = false;
+    std::array<bool, 2> footPlanted {};
+    // Reforco de estabilidade de um gesto proprio (o toque e o chute na bola,
+    // V3 de 06/10 noite): 0..1, com entrada e saida suaves. So vale sem
+    // contato de fora recente (outro jogador, objeto, parede) - os impactos
+    // mandam - e nao segura uma queda que ja comecou.
+    float actionStability = 0.0f;
 };
 
 struct AdaptivePhysicalSettings3D {
@@ -82,6 +126,16 @@ struct AdaptivePhysicalSettings3D {
     // inclinacao e mais torque, e o reforco diminui aos poucos nestes
     // segundos - a ajuda do levantar nao some de uma vez.
     float recoveryBoostSeconds = 2.0f;
+    // O reforco do gesto proprio (actionStability, V3): o torque de postura
+    // cresce (vezes 1 + actionTorqueBoost) e a faixa de inclinacao aguentada
+    // se estende como no movimento proprio - ele nao fica rigido (a postura e
+    // a mesma, so com mais folga). actionAssist: a ajuda de parado e andando
+    // sobe ate ela (0 desligado: subir a ajuda no meio do gesto - 30% a 100%
+    // em 0,06 s - mexia na forca planar da pelve e derrubava mais, medido no
+    // sweepmanejo). Sem contato de fora ha actionQuietSeconds (s).
+    float actionAssist = 0.0f;
+    float actionTorqueBoost = 1.0f;
+    float actionQuietSeconds = 0.3f;
     // Envelope da ajuda: um contato externo tira ate assistContactDrop dela
     // na hora; volta a assistRecoveryPerSecond (por segundo, de 0 a 1).
     float assistContactDrop = 0.5f;
@@ -155,6 +209,17 @@ struct AdaptivePhysicalSettings3D {
     float maximumAirTorquePerKg = 1.0f;
     float proxyFollowRate = 8.0f;
     float maximumProxyFollowSpeed = 4.0f;
+    // Locomocao fisica v2 (06/10/2026): o voo de um pulo fica fora da fracao
+    // em contato (o reforco da ajuda no apoio ia ao maximo no pouso: ~4 g na
+    // pelve com os pes plantados) e o torque de postura (par pelve x pes, um
+    // esforco interno - quadril e tornozelo) vai a v2TiltTorquePerKg: com 4
+    // o tronco nao segurava a aceleracao e o corpo mergulhava para a frente
+    // com os pes atras (a 70%: 12 -> 3 rodadas com queda em 174).
+    // Andando, o par de postura tambem nao encolhe com a ajuda (e esforco
+    // interno): escalado por ela, a 0% ninguem segurava o tronco - na
+    // bateria, 30/15/0%: 16/28/83 -> 5/8/9 rodadas com queda.
+    bool v2 = false;
+    float v2TiltTorquePerKg = 8.0f;
 };
 
 struct AdaptivePhysicalOutput3D {
@@ -204,6 +269,9 @@ struct AdaptivePhysicalOutput3D {
     float assistEnvelope = 1.0f;
     // Reforco de recem-levantado (1 na troca, 0 depois de recoveryBoostSeconds).
     float recoveryBoost = 0.0f;
+    // O reforco do gesto proprio que valeu neste tick (0..1; ver
+    // AdaptivePhysicalIntent3D::actionStability).
+    float actionStability = 0.0f;
     float secondsWithoutFootContact = 0.0f;
     float proxyErrorMeters = 0.0f;
     int supportCount = 0;
@@ -215,6 +283,9 @@ struct AdaptivePhysicalOutput3D {
     // leva o esforco de contato desejado dos pes ate a pelve, e esse esforco
     // (chao sobre o pe) em cada pe de apoio.
     std::vector<std::array<float, 3>> jointFeedforward;
+    // Ajuda em todos os ossos: torque (mundo) por link, no indice do perfil
+    // (aplicar com applyRagdollControlLinkForce).
+    std::vector<Vec3> linkTorqueWorld;
     std::array<ContactWrench3D, 2> contactWrench {};
     float jointSupportNewtons = 0.0f;
     // Ha torque de antecipacao nas juntas para aplicar (apoio ou, no ar, a
@@ -260,14 +331,36 @@ private:
     float m_legShare = 0.0f;
     float m_balanceShare = 0.0f;
     float m_postureShare = 0.0f;
+    // Andando: quanto da postura a perna de apoio segura (o resto da ajuda).
+    float m_walkingPostureShare = 0.0f;
+    float m_apcDebugGate = 1.0f;
+    // Andando: a parte do peso que as pernas carregam sempre (o piso).
+    float m_walkCarryShare = 0.0f;
+    // Andando: o quanto a ajuda no plano vale agora (pulsa com as pernas).
+    float m_legPulse = 1.0f;
+    // Andando: algum pe no chao agora (suavizado) - a ajuda age com ele.
+    float m_contactGate = 1.0f;
+    float m_contactDuty = 1.0f;
+    float m_contactTurning = 0.0f;
     std::vector<float> m_compliance;
+    // Ajuda em todos os ossos: a pose alvo do tick anterior (velocidade
+    // angular do alvo) e a inercia aproximada de cada link.
+    // Ajuda cheia: a integral do erro de altura (m.s).
     float m_failureSeconds = 0.0f;
     float m_falling = 0.0f;
     bool m_wasSuspended = false;
+    float m_sinceAirborne = 10.0f;
     bool m_wasAirborne = false;
     // 1 = inclinacao so do proprio movimento (sem contato externo recente,
     // jogador se movendo): a postura aguenta mais.
     float m_selfMotionCalm = 0.0f;
+    // Desde o ultimo contato de fora qualquer (encostar num jogador, num
+    // objeto, numa parede; s): o reforco do gesto proprio so vale sem ele.
+    float m_sinceExternalTouch = 10.0f;
+public:
+    // Diagnostico: o movimento proprio (0..1) do ultimo tick.
+    float selfMotionCalm() const { return m_selfMotionCalm; }
+private:
     float m_assistEnvelope = 1.0f;
     // Desde o ultimo contato externo de verdade (s): depois de uma batida, a
     // fisica decide o tropeco por um tempo (sem endireitar no ar nem postura

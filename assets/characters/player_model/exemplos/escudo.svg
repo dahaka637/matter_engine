@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 120">
+  <path id="escudo" d="M50 2 L96 16 C96 64 82 96 50 118 C18 96 4 64 4 16 Z"/>
+  <path id="borda" d="M50 2 L96 16 C96 64 82 96 50 118 C18 96 4 64 4 16 Z M50 10 L12 22 C13 63 25 89 50 108 C75 89 87 63 88 22 Z"/>
+  <path id="estrela" d="M50 30 L57 50 L78 50 L61 62 L67 82 L50 70 L33 82 L39 62 L22 50 L43 50 Z"/>
+</svg>

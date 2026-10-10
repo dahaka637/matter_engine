@@ -227,8 +227,7 @@ void WorkbenchApp::setHrtfEnabled(bool enabled) {
     // dispositivo é a única forma de aplicar a troca imediatamente, sem
     // exigir reiniciar o Workbench inteiro.
     m_worldAudio.shutdown();
-    static_cast<void>(m_worldAudio.initialize(
-        MATTERENGINE_ASSETS_DIR, m_hrtfEnabled));
+    static_cast<void>(m_worldAudio.initialize(m_hrtfEnabled));
 }
 
 void WorkbenchApp::drawVideoConfirmPopup() {

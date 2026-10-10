@@ -142,6 +142,14 @@ RagdollHandle3D PhysicsScene3D::createRagdoll(const RagdollProfile3D& profile, c
     record->active = spawn.active;
     record->rigidityPercent = record->passiveRigidityPercent = std::clamp(spawn.rigidityPercent, 0.0f, 100.0f);
     record->indexing = buildArticulationIndexing3D(profile);
+    // (O dono de uma bola: so tronco, cabeca e bracos a repelem.)
+    for (std::size_t i = 0; i < profile.links.size() && i < 64; ++i) {
+        const std::string& id = profile.links[i].id;
+        if (id == "Abdomen" || id == "Chest" || id == "UpperChest" || id == "Neck" || id == "Head"
+            || id.find("Arm") != std::string::npos || id.find("Forearm") != std::string::npos
+            || id.find("Hand") != std::string::npos || id.find("Shoulder") != std::string::npos)
+            record->ballUpperBodyLinks |= std::uint64_t { 1 } << i;
+    }
     record->gravityCompensator.prepare(profile);
     record->gravityPoses.resize(profile.links.size());
     record->joints.resize(profile.links.size());
@@ -179,6 +187,8 @@ RagdollHandle3D PhysicsScene3D::createRagdoll(const RagdollProfile3D& profile, c
         part.mPosition = toJolt(spawn.pelvisPosition + orientation.rotate(link.modelPosition));
         part.mRotation = toJolt(orientation * link.modelOrientation);
         part.mMotionType = JPH::EMotionType::Dynamic;
+        // O modo animado troca os links para cinematicos (setRagdollKinematic).
+        part.mAllowDynamicOrKinematic = true;
         part.mObjectLayer = JoltObjectLayers::Ragdoll;
         part.mLinearDamping = 0.04f;
         part.mAngularDamping = 0.16f;

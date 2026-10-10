@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Engine/Character/CharacterFootGeometry3D.hpp"
+
 #include "Engine/Character/CharacterControlTypes3D.hpp"
 
 #include <array>
@@ -173,6 +175,18 @@ struct GaitFootState3D {
     FootSurface3D surface;
 };
 
+// Pe roteirizado (giro parado pelo clipe; toque parado na bola): no ar ele
+// segue o ponto dado; sem swing, pousa nele e trava. supportShift leva a
+// pelve essa fracao do caminho ate o outro pe enquanto este esta roteirizado
+// (o peso no apoio; 0 nao mexe).
+struct ScriptedFoot3D {
+    bool active = false;
+    bool swing = false;
+    Vec3 positionWorld;
+    Quaternion orientationWorld;
+    float supportShift = 0.0f;
+};
+
 struct ContactFootworkInput3D {
     const CharacterPhysicalState3D* physical = nullptr;
     const RagdollState3D* state = nullptr;
@@ -211,6 +225,18 @@ struct ContactFootworkInput3D {
     // na desaceleracao pedida (m/s2).
     bool braking = false;
     Vec3 brakeDirectionWorld;
+    // Quase-queda correndo: o planejador assume os pes por um passo rapido
+    // (o pe no ar, ou o de tras) que pousa um pouco a frente de onde o
+    // centro de massa vai estar no toque - pega o corpo sem frear - e devolve
+    // os pes a passada.
+    bool stumbling = false;
+    Vec3 stumbleDirectionWorld;
+    float stumbleAheadMeters = 0.20f;
+    float stumbleSwingSeconds = 0.22f;
+    // Quanto esperar com os dois pes no chao antes do passo (arrancada: o
+    // empurrao dos dois pes) e o arco minimo do passo (m).
+    float stumbleStepDelaySeconds = 0.0f;
+    float stumbleLiftMeters = 0.0f;
     float brakeDecelerationMetersPerSecondSquared = 6.0f;
     // Recem-freado: sem passos de acomodacao nem de giro (so recuperacao)
     // enquanto a base da freada assenta.
@@ -218,6 +244,18 @@ struct ContactFootworkInput3D {
     // Parando pelo proprio impulso (freada recente, nada de fora empurrando):
     // o pe rente ao chao conta como apoio na decisao de recuperacao.
     bool quietStop = false;
+    // Ajuda cheia segurando o corpo (0..1, sem perturbacao de fora): o ponto
+    // de captura nao vale (quem leva o corpo e a ajuda, na referencia) e o
+    // passo de recuperacao so sai com forca de fora ou um desvio grande.
+    float assistHold = 0.0f;
+    // Parado: quanto a pelve esta girando agora (rad/s) - o giro parado com a
+    // ajuda cheia usa a base compacta e passos no ritmo dele.
+    float standingTurnRateRadiansPerSecond = 0.0f;
+    // Rumo da pelve da pose parada em relacao ao olhar (rad; a pose em
+    // alerta: ~-22 graus): a base do giro alinha com a pelve.
+    float pelvisYawOffsetRadians = 0.0f;
+    // Pes roteirizados (o planejador nao da passos proprios enquanto houver).
+    std::array<ScriptedFoot3D, 2> scripted {};
     // A perna nao alcanca a ancora deste pe (o IK ficou longe no tick
     // anterior ou o quadril esta alem do comprimento da perna).
     std::array<bool, 2> anchorUnreachable {};
@@ -230,6 +268,8 @@ struct ContactFootworkInput3D {
 };
 
 struct CharacterContactPlan3D {
+    // Giro parado com a ajuda cheia: a base de referencia e a compacta.
+    bool turnStance = false;
     bool valid = false;
     std::array<FootPlan3D, 2> feet {};
     SupportSchedule3D schedule = SupportSchedule3D::DoubleSupport;
@@ -362,6 +402,20 @@ public:
     [[nodiscard]] bool owns(std::size_t side) const {
         return side < 2 && !m_plan.feet[side].followingGait;
     }
+    // Pe apoiado pivotando no chao (giro parado com ajuda alta): o pe gira
+    // em volta da vertical sobre a bola do pe (ela fica; o calcanhar roda) -
+    // girando em volta do tornozelo, a ponta e o calcanhar varriam o chao.
+    void pivotAnchor(const RagdollProfile3D& profile, std::size_t side, float yawRadians) {
+        if (side >= 2 || m_plan.feet[side].followingGait || m_feet[side] >= profile.links.size()) return;
+        FootPlan3D& foot = m_plan.feet[side];
+        const Vec3 ballLocal = footBallLocal3D(profile.links[m_feet[side]]);
+        const Vec3 ball = foot.anchorWorld + foot.anchorOrientationWorld.rotate(ballLocal);
+        foot.anchorOrientationWorld = (Quaternion::fromAxisAngle(
+            { 0.0f, 0.0f, 1.0f }, yawRadians) * foot.anchorOrientationWorld).normalized();
+        const Vec3 moved = ball - foot.anchorOrientationWorld.rotate(ballLocal);
+        foot.anchorWorld.x = moved.x;
+        foot.anchorWorld.y = moved.y;
+    }
 
 private:
     void startStep(const RagdollProfile3D& profile, const ContactFootworkInput3D& input,
@@ -390,6 +444,25 @@ private:
     Vec3 brakeLanding(const RagdollProfile3D& profile, const ContactFootworkInput3D& input,
         std::size_t side, Vec3 pose, Quaternion orientation) const;
     float stanceYaw(const RagdollProfile3D& profile, const ContactFootworkInput3D& input) const;
+    // Ajuda cheia: onde a pose parada quer este pe em relacao ao outro.
+    [[nodiscard]] Vec3 pairStanceTarget(const ContactFootworkInput3D& input, std::size_t side) const;
+    // Acomodacoes ja dadas nesta parada (ajuda cheia: no maximo uma).
+    int m_heldSettles = 0;
+    // Pe roteirizado no tick anterior.
+    std::array<bool, 2> m_scriptedLast {};
+    // Giro parado com a ajuda cheia: a base compacta vale (e ha quanto tempo
+    // o giro parou).
+    bool m_turnMode = false;
+    // Giro parado pedido ou em andamento (com qualquer ajuda).
+    bool m_turnRequested = false;
+    // A base compacta vale (do giro ate ele andar).
+    bool m_compactStance = false;
+    float m_turnModeSeconds = 10.0f;
+    // Rumo em que a base assentou (parado fora do giro, fica).
+    float m_stanceFacing = 0.0f;
+    // Centro em volta do qual a base gira (do comeco do giro).
+    Vec3 m_turnCenter;
+    bool m_turnCenterValid = false;
 
     ContactFootworkSettings3D m_settings;
     CharacterContactPlan3D m_plan;
@@ -425,6 +498,16 @@ private:
     // Freada: este pe (assumido no ar) e o apoio de tras do afundo - desce
     // atras do corpo, o outro ja freia a frente.
     std::array<bool, 2> m_brakeRearLanding {};
+    // Passo de quase-queda (pela mecanica do passo de freada, com o pouso a
+    // frente do corpo).
+    std::array<bool, 2> m_stumbleStep {};
+    int m_stumbleStepsTaken = 0;
+    float m_stumbleSeconds = 0.0f;
+public:
+    // Passos de quase-queda dados desde que ela comecou (o dono pergunta para
+    // saber quando devolver os pes a passada).
+    int stumbleStepsTaken() const { return m_stumbleStepsTaken; }
+private:
     // Passos dados nesta freada.
     int m_brakeStepsTaken = 0;
     // Apoio perdido no tick anterior, por pe (R1: evento na borda).

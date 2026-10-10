@@ -36,8 +36,10 @@ void WorkbenchApp::drawMainMenu() {
         UI::FontAwesome::Play, "Laboratório");
     const std::string viewer = UI::FontAwesome::label(
         UI::FontAwesome::Cube, "Objetos");
-    const std::string animations = UI::FontAwesome::label(
-        UI::FontAwesome::User, "Animações");
+    const std::string ballTouch = UI::FontAwesome::label(
+        UI::FontAwesome::Futbol, "Toque na bola");
+    const std::string playerInspector = UI::FontAwesome::label(
+        UI::FontAwesome::MagnifyingGlass, "Inspeção de jogador");
     const std::string settings = UI::FontAwesome::label(
         UI::FontAwesome::Gear, "Configurações");
     const std::string quit = UI::FontAwesome::label(
@@ -49,11 +51,15 @@ void WorkbenchApp::drawMainMenu() {
     }
     if (navigationButton(viewer.c_str(), false,
             { -1.0f, buttonHeight })) {
-        m_screen = Screen::ObjectViewer;
+        m_screen = Screen::ObjectInspector;
     }
-    if (navigationButton(animations.c_str(), false,
+    if (navigationButton(ballTouch.c_str(), false,
             { -1.0f, buttonHeight })) {
-        m_screen = Screen::AnimationViewer;
+        m_screen = Screen::BallTouchViewer;
+    }
+    if (navigationButton(playerInspector.c_str(), false,
+            { -1.0f, buttonHeight })) {
+        m_screen = Screen::PlayerInspector;
     }
     if (navigationButton(settings.c_str(), false,
             { -1.0f, buttonHeight })) {

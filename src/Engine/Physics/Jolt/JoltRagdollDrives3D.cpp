@@ -1,6 +1,7 @@
 #include "Engine/Physics/Jolt/JoltInternals3D.hpp"
 #include <algorithm>
 #include <cmath>
+#include <vector>
 
 namespace MatterEngine {
 namespace {
@@ -13,7 +14,34 @@ void PhysicsScene3D::captureRagdollPose(RagdollHandle3D h) { m_impl->pendingRagd
 void PhysicsScene3D::setRagdollNeutralPose(RagdollHandle3D h) { m_impl->pendingRagdollCommands.push_back({h, Impl::RagdollCommandType::NeutralPose, 0}); }
 void PhysicsScene3D::releaseRagdollDrives(RagdollHandle3D h) { m_impl->pendingRagdollCommands.push_back({h, Impl::RagdollCommandType::Release, 0}); }
 void PhysicsScene3D::setRagdollActive(RagdollHandle3D h, bool v) { m_impl->pendingRagdollCommands.push_back({h, Impl::RagdollCommandType::SetActive, v ? 1.0f : 0.0f}); }
+void PhysicsScene3D::setRagdollFrictionScale(RagdollHandle3D h, float v) { if (std::isfinite(v)) m_impl->pendingRagdollCommands.push_back({h, Impl::RagdollCommandType::SetFrictionScale, std::clamp(v,0.0f,2.0f)}); }
 void PhysicsScene3D::setRagdollFrozen(RagdollHandle3D h, bool v) { m_impl->pendingRagdollCommands.push_back({h, Impl::RagdollCommandType::SetFrozen, v ? 1.0f : 0.0f}); }
+void PhysicsScene3D::setRagdollKinematic(RagdollHandle3D h, bool v) { m_impl->pendingRagdollCommands.push_back({h, Impl::RagdollCommandType::SetKinematic, v ? 1.0f : 0.0f}); }
+void PhysicsScene3D::removeRagdollVerticalSpin(RagdollHandle3D h) { m_impl->pendingRagdollCommands.push_back({h, Impl::RagdollCommandType::RemoveVerticalSpin, 0.0f}); }
+void PhysicsScene3D::setRagdollGuided(RagdollHandle3D h, bool v) { m_impl->pendingRagdollCommands.push_back({h, Impl::RagdollCommandType::SetGuided, v ? 1.0f : 0.0f}); }
+void PhysicsScene3D::setRagdollGuidePose(RagdollHandle3D h, std::span<const Vec3> positions,
+    std::span<const Quaternion> orientations, std::span<const float> authority) {
+    auto* r = m_impl->ragdoll(h);
+    if (!r || positions.size() != r->links.size() || orientations.size() != r->links.size()
+        || (!authority.empty() && authority.size() != r->links.size())) return;
+    for (std::size_t i = 0; i < positions.size(); ++i)
+        if (!finite(positions[i]) || !finite(orientations[i]) || (!authority.empty() && !std::isfinite(authority[i]))) return;
+    r->guidePositions.assign(positions.begin(), positions.end());
+    r->guideOrientations.assign(orientations.begin(), orientations.end());
+    r->guideAuthority.assign(r->links.size(), 1.0f);
+    for (std::size_t i = 0; i < authority.size(); ++i) r->guideAuthority[i] = std::clamp(authority[i], 0.0f, 1.0f);
+    r->guidePoseStaged = true;
+}
+void PhysicsScene3D::setRagdollKinematicPose(RagdollHandle3D h, std::span<const Vec3> positions,
+    std::span<const Quaternion> orientations) {
+    auto* r = m_impl->ragdoll(h);
+    if (!r || positions.size() != r->links.size() || orientations.size() != r->links.size()) return;
+    for (std::size_t i = 0; i < positions.size(); ++i)
+        if (!finite(positions[i]) || !finite(orientations[i])) return;
+    r->kinematicPositions.assign(positions.begin(), positions.end());
+    r->kinematicOrientations.assign(orientations.begin(), orientations.end());
+    r->kinematicPoseStaged = true;
+}
 void PhysicsScene3D::setRagdollActiveDriveTargets(RagdollHandle3D h, std::span<const RagdollDriveTarget3D> targets, bool gravity) {
     auto* r = m_impl->ragdoll(h);
     if (!r) return;
@@ -39,10 +67,50 @@ void PhysicsScene3D::setRagdollAnimationConstraint(RagdollHandle3D h, const Ragd
     r->animationConstraint = constraint;
     r->animationConstraintStaged = true;
 }
+namespace {
+// Giro maximo dos links guiados (rad/s): o do perfil (24) cortava o chute e o
+// carrinho - o link ficava para tras da pose.
+constexpr float GuidedMaxAngularVelocity = 120.0f;
+constexpr float PhysicalMaxAngularVelocity = 24.0f;
+}
+// O modo guiado liga/desliga: gravidade, giro maximo, limites das juntas (so
+// o ponto preso; na volta, os do perfil) e motores (desligados; o modo fisico
+// os religa em applyRagdollDrives).
+static void setRagdollGuidedState(PhysicsScene3D::Impl& impl, PhysicsScene3D::Impl::RagdollRecord& r, bool guided) {
+    if (guided == r.guided) return;
+    auto& bi = impl.system->GetBodyInterface();
+    for (const JPH::BodyID id : r.links) {
+        bi.SetGravityFactor(id, guided ? 0.0f : 1.0f);
+        bi.SetMaxAngularVelocity(id, guided ? GuidedMaxAngularVelocity : PhysicalMaxAngularVelocity);
+    }
+    if (guided)
+        for (auto id : r.links) std::erase_if(impl.pendingBodyWrenches, [id](const auto& w) { return w.body == id; });
+    for (std::size_t i = 1; i < r.joints.size(); ++i) {
+        auto& constraint = *r.joints[i].constraint;
+        const auto& link = r.profile.links[i];
+        JPH::Vec3 low = JPH::Vec3::sZero(), high = JPH::Vec3::sZero();
+        for (int a = 0; a < 3; ++a) {
+            const auto& limit = link.inboundJoint.axes[a];
+            low.SetComponent(a, guided ? -JPH::JPH_PI : limit.enabled ? limit.minimumRadians : 0.0f);
+            high.SetComponent(a, guided ? JPH::JPH_PI : limit.enabled ? limit.maximumRadians : 0.0f);
+            if (guided) constraint.SetMotorState(static_cast<JPH::SixDOFConstraint::EAxis>(a + 3), JPH::EMotorState::Off);
+        }
+        constraint.SetRotationLimits(low, high);
+    }
+    r.guided = guided;
+    r.state.guided = guided;
+    r.guideTouched = false;
+}
 void PhysicsScene3D::Impl::applyPendingRagdollCommands() {
     for (const auto& command : pendingRagdollCommands) {
         auto* r = ragdoll(command.handle);
         if (!r) continue;
+        // (A escala entra no atrito de cada contato do ragdoll, no listener
+        // de contatos - ver recordContact.)
+        if (command.type == RagdollCommandType::SetFrictionScale) {
+            r->frictionScale = command.value;
+            continue;
+        }
         switch (command.type) {
         case RagdollCommandType::SetRigidity:
             r->rigidityPercent = r->passiveRigidityPercent = command.value;
@@ -60,6 +128,79 @@ void PhysicsScene3D::Impl::applyPendingRagdollCommands() {
             r->gravityCompensationEnabled = false;
             break;
         case RagdollCommandType::SetActive: r->active = command.value != 0; break;
+        case RagdollCommandType::SetKinematic: {
+            const bool kinematic = command.value != 0;
+            if (kinematic == r->kinematic || r->frozen) break;
+            if (kinematic) setRagdollGuidedState(*this, *r, false);
+            auto& bi = system->GetBodyInterface();
+            for (const JPH::BodyID id : r->links)
+                bi.SetMotionType(id, kinematic ? JPH::EMotionType::Kinematic : JPH::EMotionType::Dynamic,
+                    JPH::EActivation::Activate);
+            // (Cinematico: forcas pendentes nao valem; a pose antiga tambem nao.)
+            if (kinematic)
+                for (auto id : r->links) std::erase_if(pendingBodyWrenches, [id](const auto& w) { return w.body == id; });
+            r->kinematic = kinematic;
+            r->kinematicPoseStaged = false;
+            r->state.kinematic = kinematic;
+            break;
+        }
+        case RagdollCommandType::RemoveVerticalSpin: {
+            if (r->kinematic || r->frozen) break;
+            auto& bi = system->GetBodyInterface();
+            struct Link { JPH::BodyID id; JPH::Vec3 position, velocity, angular; float mass; JPH::Mat44 inertia; };
+            std::vector<Link> links;
+            JPH::Vec3 center = JPH::Vec3::sZero(), momentum = JPH::Vec3::sZero();
+            float total = 0.0f;
+            for (const JPH::BodyID id : r->links) {
+                JPH::BodyLockRead lock(system->GetBodyLockInterface(), id);
+                if (!lock.Succeeded() || !lock.GetBody().IsDynamic()) continue;
+                const JPH::Body& body = lock.GetBody();
+                const float mass = 1.0f / std::max(1e-6f, body.GetMotionProperties()->GetInverseMass());
+                const JPH::Mat44 inverse = body.GetInverseInertia();
+                links.push_back({ id, JPH::Vec3(body.GetCenterOfMassPosition()), body.GetLinearVelocity(),
+                    body.GetAngularVelocity(), mass, inverse.Inversed3x3() });
+                center += links.back().position * mass;
+                momentum += links.back().velocity * mass;
+                total += mass;
+            }
+            if (links.empty() || total <= 0.0f) break;
+            center /= total;
+            const JPH::Vec3 drift = momentum / total;
+            // Momento angular vertical no centro de massa e a inercia do
+            // corpo inteiro em volta da vertical.
+            float spin = 0.0f, inertia = 0.0f;
+            for (const Link& link : links) {
+                const JPH::Vec3 arm = link.position - center;
+                const JPH::Vec3 relative = link.velocity - drift;
+                spin += link.mass * (arm.GetX() * relative.GetY() - arm.GetY() * relative.GetX())
+                    + (link.inertia * link.angular).GetZ();
+                inertia += link.mass * (arm.GetX() * arm.GetX() + arm.GetY() * arm.GetY())
+                    + (link.inertia * JPH::Vec3(0.0f, 0.0f, 1.0f)).GetZ();
+            }
+            if (inertia <= 1e-6f) break;
+            const float omega = spin / inertia;
+            for (const Link& link : links) {
+                const JPH::Vec3 arm = link.position - center;
+                bi.SetLinearVelocity(link.id, link.velocity - JPH::Vec3(-arm.GetY() * omega, arm.GetX() * omega, 0.0f));
+                bi.SetAngularVelocity(link.id, link.angular - JPH::Vec3(0.0f, 0.0f, omega));
+            }
+            break;
+        }
+        case RagdollCommandType::SetGuided: {
+            const bool guided = command.value != 0;
+            if (guided == r->guided || r->frozen) break;
+            if (guided && r->kinematic) {
+                // (Do cinematico: dinamico com a velocidade que ele tinha.)
+                auto& bi = system->GetBodyInterface();
+                for (const JPH::BodyID id : r->links)
+                    bi.SetMotionType(id, JPH::EMotionType::Dynamic, JPH::EActivation::Activate);
+                r->kinematic = false;
+                r->kinematicPoseStaged = false;
+                r->state.kinematic = false;
+            }
+            setRagdollGuidedState(*this, *r, guided);
+            break;
+        }
         case RagdollCommandType::SetFrozen: {
             const bool freeze = command.value != 0;
             if (freeze == r->frozen || (freeze && grabRagdoll == r->handle)) break;
@@ -79,7 +220,8 @@ void PhysicsScene3D::Impl::applyPendingRagdollCommands() {
 void PhysicsScene3D::Impl::applyRagdollDrives() {
     auto& bi = system->GetBodyInterface();
     for (auto& slot : ragdollSlots) {
-        if (!slot.record || slot.record->frozen) continue;
+        // (Guiado: os motores ficam desligados - a pose vem das velocidades.)
+        if (!slot.record || slot.record->frozen || slot.record->kinematic || slot.record->guided) continue;
         auto& r = *slot.record;
         // A raiz NAO e cinematica aqui. Ela participa do solver como qualquer
         // outro link, com massa finita, e o guia de animacao e resolvido
@@ -206,7 +348,7 @@ void PhysicsScene3D::Impl::resolveRagdollGuides() {
 
         const bool staged = r.animationConstraintStaged;
         r.animationConstraintStaged = false;
-        if (r.frozen || !r.active || !staged || grabRagdoll == r.handle) {
+        if (r.frozen || r.kinematic || !r.active || !staged || grabRagdoll == r.handle) {
             continue;
         }
 
@@ -284,6 +426,99 @@ void PhysicsScene3D::Impl::resolveRagdollGuides() {
                     + delta * jointLinear,
                 newAngular + delta * jointAngular);
         }
+    }
+}
+// Modo animado: cada link cinematico vai a pose do tick no fim do passo (o
+// Jolt da a velocidade que chega la - os contatos com o que e dinamico usam
+// essa velocidade). Sem pose nova, o link para onde esta.
+void PhysicsScene3D::Impl::applyRagdollKinematics(float dt) {
+    auto& bi = system->GetBodyInterface();
+    for (auto& slot : ragdollSlots) {
+        if (!slot.record || slot.record->frozen || !slot.record->kinematic) continue;
+        RagdollRecord& r = *slot.record;
+        if (!r.kinematicPoseStaged) {
+            for (const JPH::BodyID id : r.links) {
+                bi.SetLinearVelocity(id, JPH::Vec3::sZero());
+                bi.SetAngularVelocity(id, JPH::Vec3::sZero());
+            }
+            continue;
+        }
+        r.kinematicPoseStaged = false;
+        for (std::size_t i = 0; i < r.links.size(); ++i)
+            bi.MoveKinematic(r.links[i], toJolt(r.kinematicPositions[i]),
+                toJolt(r.kinematicOrientations[i]).Normalized(), dt);
+    }
+}
+namespace {
+// Vetor de rotacao (eixo * angulo) de um quaternion.
+JPH::Vec3 rotationVector(JPH::Quat q) {
+    q = q.Normalized();
+    if (q.GetW() < 0.0f) q = -q;
+    const JPH::Vec3 v = q.GetXYZ();
+    const float n = v.Length();
+    return n < 1e-7f ? JPH::Vec3::sZero() : v * (2.0f * std::atan2(n, q.GetW()) / n);
+}
+} // namespace
+// Corpo guiado, antes do passo: cada link recebe a velocidade (do centro de
+// massa e de giro) que o leva a pose pedida no fim do passo - com autoridade
+// 1 exatamente (o MoveKinematic do Jolt, mas com o corpo dinamico); abaixo
+// disso, a fracao do caminho de guideBlend (a mesma curva do guia da raiz).
+// Fora do modo guiado a gravidade do passo e descontada.
+void PhysicsScene3D::Impl::applyRagdollGuidePoses(float dt) {
+    auto& bi = system->GetBodyInterface();
+    const JPH::Vec3 gravity = system->GetGravity();
+    for (auto& slot : ragdollSlots) {
+        if (!slot.record) continue;
+        RagdollRecord& r = *slot.record;
+        const bool staged = r.guidePoseStaged;
+        r.guidePoseStaged = false;
+        r.guidePoseApplied = false;
+        r.guideTouched = false;
+        if (!staged || r.frozen || r.kinematic || grabRagdoll == r.handle) continue;
+        r.guidePoseApplied = true;
+        for (std::size_t i = 0; i < r.links.size(); ++i) {
+            const float authority = r.guideAuthority[i];
+            if (authority <= 0.0f) continue;
+            const JPH::BodyID id = r.links[i];
+            JPH::RVec3 position;
+            JPH::Quat rotation;
+            bi.GetPositionAndRotation(id, position, rotation);
+            const JPH::Vec3 center = bi.GetCenterOfMassPosition(id);
+            const JPH::Vec3 local = rotation.Conjugated() * (center - position);
+            const JPH::Quat targetRotation = toJolt(r.guideOrientations[i]).Normalized();
+            const JPH::Vec3 targetCenter = toJolt(r.guidePositions[i]) + targetRotation * local;
+            JPH::Vec3 linear = (targetCenter - center) / dt;
+            if (!r.guided) linear -= gravity * dt;
+            const JPH::Vec3 angular = rotationVector(targetRotation * rotation.Conjugated()) / dt;
+            const float blend = guideBlend(authority, dt);
+            const JPH::Vec3 v = bi.GetLinearVelocity(id);
+            const JPH::Vec3 w = bi.GetAngularVelocity(id);
+            bi.SetLinearAndAngularVelocity(id, v + (linear - v) * blend, w + (angular - w) * blend);
+        }
+        r.ragdoll->Activate();
+    }
+}
+// Corpo guiado, depois do passo: o quanto os links ficaram da pose e, no modo
+// guiado sem nada de fora encostando (nem forca externa), a pose exata - a
+// integracao do giro e o solver deixam milimetros, e livre o corpo tem de ser
+// o da animacao. Encostando, o que o passo deu fica: e a reacao dele.
+void PhysicsScene3D::Impl::finishRagdollGuidePoses() {
+    auto& bi = system->GetBodyInterface();
+    for (auto& slot : ragdollSlots) {
+        if (!slot.record) continue;
+        RagdollRecord& r = *slot.record;
+        r.state.guideErrorMeters = 0.0f;
+        if (!r.guidePoseApplied || r.frozen) continue;
+        float error = 0.0f;
+        for (std::size_t i = 0; i < r.links.size(); ++i)
+            if (r.guideAuthority[i] > 0.0f)
+                error = std::max(error, (fromJolt(bi.GetPosition(r.links[i])) - r.guidePositions[i]).length());
+        r.state.guideErrorMeters = error;
+        if (!r.guided || r.guideTouched || r.externalForceMagnitude > 0.0f || error > 0.05f) continue;
+        for (std::size_t i = 0; i < r.links.size(); ++i)
+            if (r.guideAuthority[i] >= 0.999f)
+                bi.SetPositionAndRotation(r.links[i], toJolt(r.guidePositions[i]),
+                    toJolt(r.guideOrientations[i]).Normalized(), JPH::EActivation::DontActivate);
     }
 }
 void PhysicsScene3D::applyRagdollRootForce(RagdollHandle3D h, Vec3 force, Vec3 torque) {

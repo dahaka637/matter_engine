@@ -18,6 +18,7 @@ inline constexpr char32_t Camera = 0xF030;
 inline constexpr char32_t Crosshairs = 0xF05B;
 inline constexpr char32_t Play = 0xF04B;
 inline constexpr char32_t Pause = 0xF04C;
+inline constexpr char32_t Stop = 0xF04D;
 inline constexpr char32_t ArrowLeft = 0xF060;
 inline constexpr char32_t Users = 0xF0C0;
 inline constexpr char32_t FloppyDisk = 0xF0C7;
@@ -30,6 +31,7 @@ inline constexpr char32_t Futbol = 0xF1E3;
 inline constexpr char32_t Hand = 0xF256;
 inline constexpr char32_t DoorOpen = 0xF52B;
 inline constexpr char32_t HandFist = 0xF6DE;
+inline constexpr char32_t RotateLeft = 0xF2EA;
 
 [[nodiscard]] inline std::string icon(char32_t codepoint) {
     std::string result;

@@ -5,6 +5,7 @@
 #include "Engine/Physics/Articulation/ArticulationIndexing3D.hpp"
 #include "Engine/Physics/Jolt/JoltConversions.hpp"
 #include "Engine/Physics/Jolt/JoltJobSystem.hpp"
+#include "Engine/Materials/MaterialTypes.hpp"
 #include "Engine/Physics/Jolt/JoltLayers.hpp"
 #include "Engine/Physics/PhysicsEngine3D.hpp"
 #include "Engine/Physics/PhysicsScene3D.hpp"
@@ -147,6 +148,12 @@ struct PhysicsScene3D::Impl final : public JPH::ContactListener,
         // A auto-colisao (GroupFilterTable) vive dentro das settings.
         JPH::Ref<JPH::Ragdoll> ragdoll;
         std::vector<JPH::BodyID> links;
+        // Escala do atrito dos contatos do ragdoll (carrinho: o corpo desliza
+        // na grama).
+        float frictionScale = 1.0f;
+        // Links (bit = indice) de cima - tronco, cabeca e bracos: sendo o
+        // dono de uma bola, so eles a repelem (o resto a atravessa).
+        std::uint64_t ballUpperBodyLinks = 0;
         // Alinhado com profile.links; o elemento zero nao possui inbound joint.
         std::vector<RagdollJointRuntime> joints;
         // Numeracao de DOF generalizado derivada do perfil, nao do SDK.
@@ -169,6 +176,21 @@ struct PhysicsScene3D::Impl final : public JPH::ContactListener,
         bool frozen = false;
         bool stagedActiveTargetsDirty = false;
         bool gravityCompensationEnabled = false;
+        // Modo animado: links cinematicos e a pose do proximo passo.
+        bool kinematic = false;
+        bool kinematicPoseStaged = false;
+        std::vector<Vec3> kinematicPositions;
+        std::vector<Quaternion> kinematicOrientations;
+        // Corpo guiado (setRagdollGuided/setRagdollGuidePose): o modo, a pose
+        // do proximo passo e a autoridade por link; se ela foi aplicada neste
+        // passo e se algo de fora (dinamico) encostou nele.
+        bool guided = false;
+        bool guidePoseStaged = false;
+        bool guidePoseApplied = false;
+        bool guideTouched = false;
+        std::vector<Vec3> guidePositions;
+        std::vector<Quaternion> guideOrientations;
+        std::vector<float> guideAuthority;
     };
 
     struct RagdollSlot {
@@ -182,7 +204,11 @@ struct PhysicsScene3D::Impl final : public JPH::ContactListener,
         NeutralPose,
         Release,
         SetActive,
-        SetFrozen
+        SetFrozen,
+        SetFrictionScale,
+        SetKinematic,
+        RemoveVerticalSpin,
+        SetGuided
     };
 
     struct RagdollCommand {
@@ -206,6 +232,7 @@ struct PhysicsScene3D::Impl final : public JPH::ContactListener,
         float staticFriction = 0.5f;
         float dynamicFriction = 0.5f;
         float restitution = 0.0f;
+        BallSurfaceProperties ball;
     };
     std::unordered_map<std::string, SurfaceContact> materials;
 
@@ -213,6 +240,28 @@ struct PhysicsScene3D::Impl final : public JPH::ContactListener,
     std::vector<std::uint32_t> freeBodySlots;
     std::vector<RagdollSlot> ragdollSlots;
     std::vector<std::uint32_t> freeRagdollSlots;
+
+    // Bolas infladas (ver JoltInflatedBalls3D.cpp).
+    struct InflatedBallRecord {
+        InflatedBallHandle3D handle;
+        InflatedBallDefinition3D definition;
+        InflatedBallState3D state;
+        // O boneco que a maneja (setInflatedBallOwner).
+        RagdollHandle3D owner;
+        // Contato por corpo e por outra bola (slot) no tick anterior (para
+        // eventos de impacto).
+        std::vector<JPH::BodyID> previousContactBodies;
+        std::vector<std::uint32_t> previousContactBalls;
+    };
+    struct InflatedBallSlot {
+        std::uint32_t generation = 1;
+        std::unique_ptr<InflatedBallRecord> record;
+    };
+    std::vector<InflatedBallSlot> inflatedBallSlots;
+    std::vector<std::uint32_t> freeInflatedBallSlots;
+    [[nodiscard]] InflatedBallRecord* inflatedBall(InflatedBallHandle3D handle);
+    [[nodiscard]] const InflatedBallRecord* inflatedBall(InflatedBallHandle3D handle) const;
+    void stepInflatedBalls(float deltaTime);
     std::vector<RagdollCommand> pendingRagdollCommands;
 
     std::vector<ContactImpactEvent3D> contactImpacts;
@@ -291,6 +340,12 @@ struct PhysicsScene3D::Impl final : public JPH::ContactListener,
         const std::string& materialId) const;
 
     // --- JPH::ContactListener ----------------------------------------------
+    // O corpo guiado nao colide com o chao (normal para cima) nem consigo
+    // mesmo; com paredes e com o que se move, sim.
+    static constexpr float GuidedFloorNormal = 0.6f;
+    JPH::ValidateResult OnContactValidate(const JPH::Body& first, const JPH::Body& second,
+        JPH::RVec3Arg baseOffset, const JPH::CollideShapeResult& collision) override;
+    [[nodiscard]] bool guidedIgnores(const JPH::Body& first, const JPH::Body& second, JPH::Vec3Arg normalAB) const;
     void OnContactAdded(const JPH::Body& first, const JPH::Body& second,
         const JPH::ContactManifold& manifold,
         JPH::ContactSettings& settings) override;
@@ -309,6 +364,11 @@ struct PhysicsScene3D::Impl final : public JPH::ContactListener,
     void applyAerodynamicDrag(float deltaTime);
     void applyBuoyancy(float deltaTime);
     void applyRagdollDrives();
+    void applyRagdollKinematics(float dt);
+    // Corpo guiado: as velocidades ate a pose (antes do passo) e, depois, a
+    // pose exata quando nada de fora encostou.
+    void applyRagdollGuidePoses(float dt);
+    void finishRagdollGuidePoses();
     // Guia de animacao da raiz, depois do solver (semantica do PhysX).
     void resolveRagdollGuides();
     void applyPendingWrenches();

@@ -78,6 +78,11 @@ struct AnimationClip3D {
     // Authored contact phase. Value 1 means stance; 0 means swing.
     AnimationScalarTrack3D leftFootContact;
     AnimationScalarTrack3D rightFootContact;
+    // Apoios de maos e joelhos (levantar do chao; opcionais). 1 apoiando.
+    AnimationScalarTrack3D leftHandContact;
+    AnimationScalarTrack3D rightHandContact;
+    AnimationScalarTrack3D leftKneeContact;
+    AnimationScalarTrack3D rightKneeContact;
     AnimationRetargetReport3D retargetReport;
     std::vector<AnimationTrack3D> tracks;
 };
@@ -102,6 +107,12 @@ struct AnimationClipValidationIssue3D {
 // JSON, schema ou validação são comunicados por std::runtime_error.
 [[nodiscard]] AnimationClip3D loadAnimationClip3D(std::string_view filePath);
 [[nodiscard]] AnimationTransformSample3D sampleAnimationTrack3D(
+    const AnimationTrack3D& track, float timeSeconds,
+    float clipDurationSeconds, bool loop);
+// O mesmo, numa curva Catmull-Rom entre as chaves (em ciclo, os vizinhos
+// dao a volta): a velocidade nao quebra em cada chave. Para clipes de 30
+// quadros/s tocados a 120 Hz, a reta deixava uma tremida a cada 33 ms.
+[[nodiscard]] AnimationTransformSample3D sampleAnimationTrackSmooth3D(
     const AnimationTrack3D& track, float timeSeconds,
     float clipDurationSeconds, bool loop);
 [[nodiscard]] float sampleAnimationScalarTrack3D(

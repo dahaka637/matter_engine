@@ -276,13 +276,24 @@ class Skin:
 
     Ossos: primeiro um por link fisico, depois os visuais (dedos), que seguem
     um osso pai e nao tem fisica. Cada osso visual tem uma rotacao de
-    repouso (a mao relaxada); pose(..., rest=False) desenha a malha como
-    modelada (dedos abertos)."""
+    repouso (a mao relaxada); pose(..., rest=False) desenha a malha com os
+    dedos retos.
+
+    Versao 2 (matter-ragdoll-skin-2, o jogador montado): cada osso guarda o
+    repouso (o do perfil; os visuais se prendem ao pai por ele) e a ligacao da
+    malha (a malha fica na pose A dela), e os auxiliares (joelho, quadril,
+    tornozelo, ombro, cotovelo, pulso) vem depois dos visuais - giram a fracao
+    do giro do osso de baixo em relacao ao de cima, em volta do pivo de
+    verdade desse giro (buildRagdollSkinMatrices3D)."""
 
     def __init__(self, skin_path: Path | str, rig: Rig):
         data = json.loads(Path(skin_path).read_text(encoding="utf-8"))
+        self.version = 2 if data["schema"] == "matter-ragdoll-skin-2" else 1
+        rest_position = "restPosition" if self.version == 2 else "bindPosition"
+        rest_orientation = "restOrientation" if self.version == 2 else "bindOrientation"
         bones = data["bones"]
         visual = data.get("visualBones", [])
+        helpers = data.get("helperBones", []) if self.version == 2 else []
         names = [b["link"] for b in bones] + [b["name"] for b in visual]
         # Link fisico de cada osso (o visual herda o do ancestral fisico).
         links = [rig.index(b["link"]) for b in bones]
@@ -291,9 +302,11 @@ class Skin:
             parent = names.index(b["parent"])
             self.visual_parent.append(parent)
             links.append(links[parent])
-        self.bone_link = np.array(links)
         self.physical_count = len(bones)
-        self.bone_names = names
+        self.rest_position = np.array(
+            [b[rest_position] for b in bones + visual], dtype=np.float64)
+        self.rest_orientation = np.array(
+            [b[rest_orientation] for b in bones + visual], dtype=np.float64)
         self.bind_position = np.array(
             [b["bindPosition"] for b in bones + visual], dtype=np.float64)
         self.bind_orientation = np.array(
@@ -301,6 +314,19 @@ class Skin:
         self.rest_rotation = np.array(
             [b.get("restRotation", [0.0, 0.0, 0.0, 1.0]) for b in visual],
             dtype=np.float64).reshape(-1, 4)
+        # Os auxiliares: os dois ossos, a fracao, o pivo e o eixo (so a parte
+        # do giro em volta dele; sem, o giro inteiro). O link e o do de baixo,
+        # para os diagnosticos.
+        self.helper_upper = [names.index(h["upper"]) for h in helpers]
+        self.helper_lower = [names.index(h["lower"]) for h in helpers]
+        self.helper_fraction = [float(h.get("fraction", 0.5)) for h in helpers]
+        self.helper_pivot = [np.array(h["pivot"], dtype=np.float64) for h in helpers]
+        self.helper_axis = [np.array(h.get("axis", [0.0, 0.0, 0.0]), dtype=np.float64) for h in helpers]
+        for h, lower in zip(helpers, self.helper_lower):
+            names.append(h["name"])
+            links.append(links[lower])
+        self.bone_link = np.array(links)
+        self.bone_names = names
         vertices = data["vertices"]
         self.positions = np.array([v["position"] for v in vertices],
                                   dtype=np.float64)
@@ -312,10 +338,11 @@ class Skin:
         self.indices = np.array(data["indices"], dtype=np.int64).reshape(-1, 3)
 
     def bone_transforms(self, positions: np.ndarray, orientations: np.ndarray,
-                        rest: bool = True):
-        """Posicao e orientacao no mundo de cada osso (fisicos e visuais),
-        como buildRagdollSkinMatrices3D."""
-        count = len(self.bone_link)
+                        rest: bool = True, visual: np.ndarray | None = None):
+        """Posicao e orientacao no mundo de cada osso fisico e visual, como
+        buildRagdollSkinMatrices3D. visual: a rotacao de cada osso visual no
+        lugar da de repouso (a pose dos dedos e dos dedos do pe)."""
+        count = self.physical_count + len(self.visual_parent)
         world_p = np.zeros((count, 3))
         world_q = np.zeros((count, 4))
         for bone in range(self.physical_count):
@@ -323,33 +350,101 @@ class Skin:
             world_q[bone] = orientations[self.bone_link[bone]]
         for k, parent in enumerate(self.visual_parent):
             bone = self.physical_count + k
-            inverse = qconj(self.bind_orientation[parent])
-            local_p = qrotate(inverse, self.bind_position[bone]
-                              - self.bind_position[parent])
-            local_q = qmul(inverse, self.bind_orientation[bone])
-            if rest:
+            inverse = qconj(self.rest_orientation[parent])
+            local_p = qrotate(inverse, self.rest_position[bone]
+                              - self.rest_position[parent])
+            local_q = qmul(inverse, self.rest_orientation[bone])
+            if visual is not None and k < len(visual):
+                local_q = qmul(local_q, np.asarray(visual[k], dtype=np.float64))
+            elif rest:
                 local_q = qmul(local_q, self.rest_rotation[k])
             world_p[bone] = world_p[parent] + qrotate(world_q[parent], local_p)
             world_q[bone] = qnormalize(qmul(world_q[parent], local_q))
         return world_p, world_q
 
+    def skin_transforms(self, positions: np.ndarray, orientations: np.ndarray,
+                        rest: bool = True, visual: np.ndarray | None = None):
+        """O skin de cada osso da paleta (translacao, rotacao): o mundo vezes
+        o inverso da ligacao da malha; os auxiliares saem dos dois ossos."""
+        world_p, world_q = self.bone_transforms(positions, orientations, rest, visual)
+        skin_q = [qnormalize(qmul(world_q[b], qconj(self.bind_orientation[b])))
+                  for b in range(len(world_p))]
+        skin_p = [world_p[b] - qrotate(skin_q[b], self.bind_position[b])
+                  for b in range(len(world_p))]
+        for upper, lower, fraction, pivot_hint, axis in zip(
+                self.helper_upper, self.helper_lower, self.helper_fraction,
+                self.helper_pivot, self.helper_axis):
+            uq, up = skin_q[upper], skin_p[upper]
+            relative_q = qnormalize(qmul(qconj(uq), skin_q[lower]))
+            relative_p = qrotate(qconj(uq), skin_p[lower] - up)
+            part = _partial_rotation(_twist_about(relative_q, axis), fraction)
+            pivot = _rotation_pivot(relative_q, relative_p, pivot_hint)
+            skin_q.append(qnormalize(qmul(uq, part)))
+            skin_p.append(up + qrotate(uq, pivot - qrotate(part, pivot)))
+        return np.array(skin_p), np.array(skin_q)
+
     def pose(self, positions: np.ndarray, orientations: np.ndarray,
-             rest: bool = True) -> np.ndarray:
+             rest: bool = True, visual: np.ndarray | None = None) -> np.ndarray:
         """Vertices no mundo para uma pose de links."""
-        world_p, world_q = self.bone_transforms(positions, orientations, rest)
+        skin_p, skin_q = self.skin_transforms(positions, orientations, rest, visual)
         result = np.zeros_like(self.positions)
-        for bone in range(len(self.bone_link)):
+        for bone in range(len(skin_p)):
             weight = np.sum(np.where(self.joints == bone, self.weights, 0), axis=1)
             mask = weight > 0
             if not np.any(mask):
                 continue
-            local = qrotate(qconj(self.bind_orientation[bone]),
-                            self.positions[mask] - self.bind_position[bone])
-            transformed = world_p[bone] + qrotate(world_q[bone], local)
+            transformed = skin_p[bone] + qrotate(skin_q[bone], self.positions[mask])
             result[mask] += transformed * weight[mask, None]
         return result
 
 
+def _partial_rotation(q: np.ndarray, fraction: float) -> np.ndarray:
+    """A fracao do giro q (o mesmo eixo, pelo caminho mais curto)."""
+    q = qnormalize(q)
+    if q[3] < 0:
+        q = -q
+    half = math.acos(min(1.0, max(-1.0, float(q[3]))))
+    s = math.sin(half)
+    if s < 1e-9:
+        return quat()
+    axis = q[:3] / s
+    h = half * fraction
+    return np.array([*(axis * math.sin(h)), math.cos(h)])
+
+
+def _twist_about(q: np.ndarray, axis: np.ndarray) -> np.ndarray:
+    """A parte do giro q em volta do eixo (balanco e torcao); sem eixo, o giro
+    inteiro (twistAbout no motor e na modelagem)."""
+    length = float(np.linalg.norm(axis))
+    if length < 1e-6:
+        return q
+    a = axis / length
+    along = float(np.dot(q[:3], a))
+    twist = np.array([*(a * along), q[3]])
+    norm = float(np.linalg.norm(twist))
+    if norm < 1e-6:
+        return quat()
+    return twist / norm
+
+
+def _rotation_pivot(q: np.ndarray, t: np.ndarray, fallback: np.ndarray) -> np.ndarray:
+    """O ponto que o giro relativo (q, t) deixa parado; quase sem giro, o da
+    ligacao (rotationPivot em Skeleton.cpp e no motor)."""
+    q = qnormalize(q)
+    if q[3] < 0:
+        q = -q
+    half = math.acos(min(1.0, max(-1.0, float(q[3]))))
+    s = math.sin(half)
+    if s < 0.004:
+        return fallback
+    axis = q[:3] / s
+    across_t = t - axis * float(np.dot(t, axis))
+    across = (across_t + np.cross(axis, across_t) * (math.cos(half) / s)) * 0.5
+    return across + axis * float(np.dot(fallback, axis))
+
+
 def load_default_character() -> tuple[Rig, Skin]:
-    rig = Rig(DEFAULT_CHARACTER_DIR / "FootballPlayerV1.ragdoll.json")
-    return rig, Skin(DEFAULT_CHARACTER_DIR / "football.skin.json", rig)
+    """O personagem do laboratorio: o perfil e a pele do manifesto."""
+    manifest = json.loads((DEFAULT_CHARACTER_DIR / "character.json").read_text(encoding="utf-8"))
+    rig = Rig(DEFAULT_CHARACTER_DIR / manifest["physicsProfile"])
+    return rig, Skin(DEFAULT_CHARACTER_DIR / manifest["skin"], rig)

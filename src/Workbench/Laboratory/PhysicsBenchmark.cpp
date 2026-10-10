@@ -228,11 +228,17 @@ void WorkbenchApp::updatePhysicsBenchmark(float deltaTime) {
             }
             if (spawned) ++m_physicsBenchmarkSpawnedRagdolls;
         } else if (!definitions.empty()) {
-            const std::size_t definitionIndex = std::min(
-                definitions.size() - 1,
+            // Os objetos rigidos do catalogo (a bola inflada tem a fisica
+            // dela e fica fora da medida).
+            std::vector<std::size_t> rigid;
+            for (std::size_t index = 0; index < definitions.size(); ++index)
+                if (!definitions[index].inflatedBall) rigid.push_back(index);
+            if (rigid.empty()) break;
+            const std::size_t definitionIndex = rigid[std::min(
+                rigid.size() - 1,
                 static_cast<std::size_t>(
                     nextRandomUnit(m_physicsBenchmarkRandomState)
-                        * static_cast<float>(definitions.size())));
+                        * static_cast<float>(rigid.size())))];
             const PropDefinition3D& definition =
                 definitions[definitionIndex];
             const Quaternion orientation = Quaternion::fromAxisAngle(
