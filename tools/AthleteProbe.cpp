@@ -7,10 +7,12 @@
 // uso: MatterAthleteProbe [--cenario nome] [--dump arquivo] [--cada N] [--lista]
 //      [--fisico] (comeca no modo fisico, como ao assumir no laboratorio)
 //      [--ativo 0|1] (o Corpo Ativo; 1 padrao)  [--pegadas 0|1] (locomocao por
-//      pegadas; 0 padrao)  [--teste] (os contratos, ctest)
+//      pegadas; 0 padrao)  [--passos 0|1] (passos de equilibrio no Ativo)
+//      [--resposta %] (a resposta da capsula no padrao)  [--teste] (os contratos)
 // Sem --cenario roda todos.
 #include "Engine/Athlete/AthleteAssets3D.hpp"
 #include "Engine/Athlete/AthleteRuntime3D.hpp"
+#include "Engine/Athlete/Planning/MotionPlanner3D.hpp"
 #include "Engine/Control/AdaptivePhysicalCharacter3D.hpp"
 #include "Engine/Materials/MaterialLibrary.hpp"
 #include "Engine/Physics/PhysicsEngine3D.hpp"
@@ -381,7 +383,7 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
             const Vec3 direction = command.moveDirection.normalized();
             const float travelRelative = std::atan2(direction.y, direction.x) - keys.cameraYaw;
             const float wanted = controlledAnimated
-                ? defaultLocomotionSpeed3D(legacy.defaultLocomotion.settings(), travelRelative, keys.sprint)
+                ? athleteDefaultTravelSpeed3D(settings, travelRelative, keys.sprint)
                 : characterGaitSpeed3D(gaitSpeeds, travelRelative, keys.sprint);
             const float nominal = keys.sprint ? avatar.sprintSpeed : avatar.walkSpeed;
             if (wanted > 0.0f && nominal > 0.0f) command.speedScale = wanted / nominal;
@@ -400,10 +402,11 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
         previousJump = keys.jump;
         CharacterMotorSettings3D active = avatar;
         if (controlledAnimated) {
-            active.groundAcceleration = 16.0f;
-            active.groundDeceleration = 22.0f;
-            active.groundTurnRate = 10.0f;
-            active.groundBrakeDeceleration = 30.0f;
+            const AthleteCapsuleResponse3D response = athleteCapsuleResponse3D(settings.capsuleResponsePercent);
+            active.groundAcceleration = response.acceleration;
+            active.groundDeceleration = response.deceleration;
+            active.groundTurnRate = response.turnRate;
+            active.groundBrakeDeceleration = response.brake;
         } else {
             active = adaptiveCharacterMotorSettings3D(active, before, command,
                 physicalNavigationAcceleration3D(settings.e5WalkingAssistPercent * 0.01f));
@@ -738,6 +741,7 @@ int main(int argc, char** argv) {
     bool footsteps = false;
     bool balanceSteps = AthleteRuntimeSettings3D {}.activeStanceSettings.balanceSteps;
     bool checks = false;
+    float response = AthleteRuntimeSettings3D {}.capsuleResponsePercent;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         const auto need = [&]() -> const char* { return i + 1 < argc ? argv[++i] : ""; };
@@ -748,6 +752,7 @@ int main(int argc, char** argv) {
         else if (arg == "--ativo") activeBody = std::atoi(need()) != 0;
         else if (arg == "--pegadas") footsteps = std::atoi(need()) != 0;
         else if (arg == "--passos") balanceSteps = std::atoi(need()) != 0;
+        else if (arg == "--resposta") response = static_cast<float>(std::atof(need()));
         else if (arg == "--teste") checks = true;
         else if (arg == "--lista") {
             for (const Scenario& scenario : scenarios()) std::printf("%s\n", scenario.name);
@@ -776,6 +781,7 @@ int main(int argc, char** argv) {
     settings.activeBody = activeBody;
     settings.footstepLocomotion = footsteps;
     settings.activeStanceSettings.balanceSteps = balanceSteps;
+    settings.capsuleResponsePercent = response;
     ProbeContext context;
     context.profile = &profile;
     context.gaitSpeeds = gaitSpeeds;

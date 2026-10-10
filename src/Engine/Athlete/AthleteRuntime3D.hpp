@@ -106,4 +106,10 @@ public:
 // perfil abaixo dele).
 [[nodiscard]] float athleteGroundHeight3D(const PhysicsScene3D& scene, const RagdollProfile3D& profile, Vec3 position);
 
+// A velocidade da capsula no modo padrao para um rumo em relacao ao olhar,
+// pela tabela dos ajustes (a aba "Velocidades": o trote em todos os rumos, a
+// corrida a frente, de lado e de costas).
+[[nodiscard]] float athleteDefaultTravelSpeed3D(const AthleteRuntimeSettings3D& settings,
+    float travelRelativeToLookRadians, bool sprinting);
+
 } // namespace MatterEngine

@@ -1,5 +1,7 @@
 #include "Engine/Athlete/AthleteRuntime3D.hpp"
 
+#include "Engine/Athlete/Planning/MotionPlanner3D.hpp"
+
 #include "Engine/Athlete/Legacy/LegacyAthleteStep3D.hpp"
 
 #include <string>
@@ -62,6 +64,15 @@ void AthleteRuntime3D::update(PhysicsScene3D& scene, const AthleteRuntimeAssets3
             continue;
         stepLegacyAthlete3D(scene, assets, settings, tickControl, slot, balls, tacklerLegs, deltaTime, output);
     }
+}
+
+float athleteDefaultTravelSpeed3D(const AthleteRuntimeSettings3D& settings, float travelRelativeToLookRadians,
+    bool sprinting) {
+    const float t = settings.defaultTrotSpeed;
+    const std::array<float, 5> trot { t, t, t, t, t };
+    const std::array<float, 5> sprint { settings.defaultSprintForwardSpeed, settings.defaultSprintForwardSpeed,
+        settings.defaultSprintSideSpeed, settings.defaultSprintBackwardSpeed, settings.defaultSprintBackwardSpeed };
+    return athleteTravelSpeed3D(trot, sprint, travelRelativeToLookRadians, sprinting);
 }
 
 } // namespace MatterEngine

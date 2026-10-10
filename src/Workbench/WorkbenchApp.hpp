@@ -516,6 +516,9 @@ private:
     // ficam onde pousaram (o clipe vira estilo). Desligada ate o usuario
     // aprovar (a chave A/B).
     bool m_footstepLocomotion = false;
+    // A regua "Resposta" da capsula no modo padrao (%; 100 = 16 / 22 / 30 m/s2
+    // e 10 rad/s, os aprovados).
+    float m_capsuleResponsePercent = 100.0f;
     // Transicoes adaptativas da locomocao padrao (05/10): giro da pelve com
     // aceleracao limitada, clipes misturados pelo movimento real e amostragem
     // suave. Desligada: o modo de antes (comparacao).

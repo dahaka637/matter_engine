@@ -66,6 +66,9 @@ struct AthleteRuntimeSettings3D {
     float defaultSprintForwardSpeed = 7.8f;
     float defaultSprintSideSpeed = 5.2f;
     float defaultSprintBackwardSpeed = 5.2f;
+    // A regua "Resposta" da capsula no modo padrao (%; ver
+    // athleteCapsuleResponse3D): 100 e o aprovado (16 / 22 / 30 m/s2, 10 rad/s).
+    float capsuleResponsePercent = 100.0f;
     // Corpo Ativo (o estado intermediario, Etapa 2 do rework): ligado, as
     // pancadas leves, a parede e o membro no mundo levam ao Ativo (e nao ao
     // fisico pleno) e a volta do fisico passa por ele. Impulso (N.s) de algo

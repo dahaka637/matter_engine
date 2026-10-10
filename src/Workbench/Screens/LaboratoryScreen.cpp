@@ -1,3 +1,4 @@
+#include "Engine/Athlete/Planning/MotionPlanner3D.hpp"
 #include "Workbench/WorkbenchApp.hpp"
 #include "Workbench/UiKit.hpp"
 
@@ -29,10 +30,6 @@ namespace {
 // (rad/s) e a velocidade vai aos poucos (m/s2) - do parado ao trote em
 // ~0,2 s, ao sprint em ~0,5 s, do sprint a zero em ~0,35 s; invertendo,
 // freia antes.
-constexpr float DefaultLocomotionGroundAcceleration = 16.0f;
-constexpr float DefaultLocomotionGroundDeceleration = 22.0f;
-constexpr float DefaultLocomotionTurnRate = 10.0f;
-constexpr float DefaultLocomotionBrake = 30.0f;
 
 constexpr float Pi = 3.14159265358979323846f;
 constexpr float LaboratoryFarPlane = 2000.0f;
@@ -530,8 +527,7 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
             // No modo padrao, a tabela dele (oito rumos; de costas na
             // diagonal perde menos).
             const float wanted = m_controlledAnimated && controlled != m_spawnedRagdolls.end()
-                ? defaultLocomotionSpeed3D(controlled->athlete.legacy.defaultLocomotion.settings(),
-                    travelRelative, command.sprint)
+                ? athleteDefaultTravelSpeed3D(athleteRuntimeSettings(), travelRelative, command.sprint)
                 : characterGaitSpeed3D(m_avatarGaitSpeeds, travelRelative, command.sprint);
             const float nominal = command.sprint
                 ? m_avatarCharacterSettings.sprintSpeed
@@ -666,7 +662,7 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
                     });
                 const float relative = std::atan2(direction.y, direction.x) - movementReferenceYaw;
                 float speed = m_controlledAnimated && controlled != m_spawnedRagdolls.end()
-                    ? defaultLocomotionSpeed3D(controlled->athlete.legacy.defaultLocomotion.settings(), relative, sprint)
+                    ? athleteDefaultTravelSpeed3D(athleteRuntimeSettings(), relative, sprint)
                     : characterGaitSpeed3D(m_avatarGaitSpeeds, relative, sprint);
                 if (controlled != m_spawnedRagdolls.end() && !m_controlledAnimated) {
                     speed = std::min(speed, controlled->athlete.legacy.locomotion.telemetry().terrainSpeedLimit);
@@ -683,10 +679,11 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
         // Locomocao padrao: a capsula chega na velocidade definida quase na
         // hora e troca de direcao do mesmo jeito (como na Unreal) - o corpo e
         // so a animacao em cima dela.
-        activeSettings.groundAcceleration = DefaultLocomotionGroundAcceleration;
-        activeSettings.groundDeceleration = DefaultLocomotionGroundDeceleration;
-        activeSettings.groundTurnRate = DefaultLocomotionTurnRate;
-        activeSettings.groundBrakeDeceleration = DefaultLocomotionBrake;
+        const AthleteCapsuleResponse3D response = athleteCapsuleResponse3D(m_capsuleResponsePercent);
+        activeSettings.groundAcceleration = response.acceleration;
+        activeSettings.groundDeceleration = response.deceleration;
+        activeSettings.groundTurnRate = response.turnRate;
+        activeSettings.groundBrakeDeceleration = response.brake;
     } else if (controllingCharacter && m_adaptivePhysics) {
         activeSettings = adaptiveCharacterMotorSettings3D(activeSettings, stateBefore, command,
             m_physicalLocomotionV2 ? physicalNavigationAcceleration3D(m_e5WalkingAssistPercent * 0.01f) : 0.0f);
@@ -3087,6 +3084,11 @@ void WorkbenchApp::drawLaboratoryUi() {
                             "A corrida para a esquerda e para a direita.");
                         speed("Corrida de costas", "##SpeedSprintBackward", &m_defaultSprintBackwardSpeed, 2.0f, 9.0f,
                             "A corrida para trás; vale também para as diagonais de costas.");
+                        ImGui::TextUnformatted("Resposta");
+                        ImGui::SetNextItemWidth(-1.0f);
+                        ImGui::SliderFloat("##CapsuleResponse", &m_capsuleResponsePercent, 30.0f, 150.0f, "%.0f%%",
+                            ImGuiSliderFlags_AlwaysClamp);
+                        hint("O quanto o jogador acelera, freia e vira no modo padrão. 100%: 16 m/s² de aceleração, 22 de desaceleração, 30 de freada e 10 rad/s de giro. Menos, mais pesado e realista (perto de 40%); mais, mais arcade.");
                         ImGui::Dummy({ 1.0f, ui(6.0f) });
                         if (ImGui::Button("COPIAR PARÂMETROS", { -1.0f, ui(36.0f) })) {
                             char text[512];
@@ -3095,9 +3097,10 @@ void WorkbenchApp::drawLaboratoryUi() {
                                 "Trote (todos os rumos): %.2f\n"
                                 "Corrida para a frente (e diagonais da frente): %.2f\n"
                                 "Corrida de lado: %.2f\n"
-                                "Corrida de costas (e diagonais de costas): %.2f\n",
+                                "Corrida de costas (e diagonais de costas): %.2f\n"
+                                "Resposta: %.0f%%\n",
                                 m_defaultTrotSpeed, m_defaultSprintForwardSpeed, m_defaultSprintSideSpeed,
-                                m_defaultSprintBackwardSpeed);
+                                m_defaultSprintBackwardSpeed, m_capsuleResponsePercent);
                             ImGui::SetClipboardText(text);
                             m_defaultSpeedsCopiedTime = ImGui::GetTime();
                         }
@@ -3105,6 +3108,7 @@ void WorkbenchApp::drawLaboratoryUi() {
                             ImGui::TextColored({ 0.38f, 0.82f, 0.62f, 1.0f }, "Copiado para a área de transferência.");
                         if (ImGui::Button("RESTAURAR PADRÕES", { -1.0f, ui(30.0f) })) {
                             const DefaultLocomotionSettings3D defaults;
+                            m_capsuleResponsePercent = AthleteRuntimeSettings3D {}.capsuleResponsePercent;
                             m_defaultTrotSpeed = defaults.trotSpeeds[0];
                             m_defaultSprintForwardSpeed = defaults.sprintSpeeds[0];
                             m_defaultSprintSideSpeed = defaults.sprintSpeeds[2];

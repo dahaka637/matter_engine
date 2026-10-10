@@ -96,6 +96,15 @@ apoiados, que somam zero.
   - Numa base aberta, a volta ao padrão espera 1,2 s, e a inércia leva os pés
     ao lugar do clipe (alguns centímetros em 0,4 s).
 
+## Novo controle do atleta: Etapa 3, parte 3 — o movimento pedido na engine (10/10/2026, noite)
+
+- **`Athlete/Planning/MotionPlanner3D`:** a velocidade da cápsula pela
+  tabela de rumos e a resposta dela no modo padrão. O laboratório e a sonda
+  pedem aqui; antes o laboratório lia a tabela de dentro do estado do modo
+  padrão e tinha as constantes 16/22/30/10.
+- **Régua "Resposta"** (aba Velocidades): escala aceleração, desaceleração,
+  freada e giro da cápsula (100% = o aprovado).
+
 ## Novo controle do atleta: Etapa 3, parte 2 — passos de equilíbrio do Ativo (10/10/2026, noite)
 
 - **`ActiveStance3D` reescrito:** passo de equilíbrio pelo ponto de captura.
