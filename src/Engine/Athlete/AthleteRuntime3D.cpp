@@ -1,0 +1,67 @@
+#include "Engine/Athlete/AthleteRuntime3D.hpp"
+
+#include "Engine/Athlete/Legacy/LegacyAthleteStep3D.hpp"
+
+#include <string>
+#include <vector>
+
+namespace MatterEngine {
+
+float athleteGroundHeight3D(const PhysicsScene3D& scene, const RagdollProfile3D& profile, Vec3 position) {
+    PhysicsRayHit3D hit;
+    if (scene.raycastStatic({ position + Vec3 { 0, 0, 0.3f }, { 0, 0, -1 } }, 2000, hit) && hit.normal.z > 0.7f)
+        return hit.position.z;
+    return position.z - profile.standingRootHeightMeters;
+}
+
+void AthleteRuntime3D::update(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& assets,
+    std::span<AthleteSlot3D> athletes, std::span<AthleteBall3D> balls, const AthleteRuntimeSettings3D& settings,
+    const AthleteControlInput3D& control, float deltaTime, AthleteRuntimeOutput3D& output) {
+    output = {};
+    if (assets.profile == nullptr || assets.clips == nullptr || assets.defaultClips == nullptr) return;
+    const RagdollProfile3D& profile = *assets.profile;
+    // Dono de cada bola (pedido do usuario, 05/10 noite; BallOwnership3D):
+    // quem ela tocou por ultimo (fora o dono, que nao a toca) passa a ser o
+    // dono; a 5 m dele por 3 s (ou ele sumido), ela volta a colidir com
+    // todos. A interacao do jogador o torna dono no manejo.
+    for (AthleteBall3D& ball : balls) {
+        if (!scene.contains(ball.handle) || ball.state == nullptr || ball.ownership == nullptr) continue;
+        const AthleteSlot3D* owner = nullptr;
+        for (const AthleteSlot3D& slot : athletes)
+            if (slot.entityId == ball.ownership->owner() && slot.active && slot.state != nullptr
+                && !slot.state->links.empty() && scene.contains(slot.handle))
+                owner = &slot;
+        const Vec3 pelvis = owner != nullptr ? owner->state->links.front().position : Vec3 {};
+        ball.ownership->update(*ball.state, owner != nullptr ? &pelvis : nullptr, deltaTime);
+        RagdollHandle3D handle {};
+        for (const AthleteSlot3D& slot : athletes)
+            if (slot.entityId == ball.ownership->owner() && slot.active) handle = slot.handle;
+        scene.setInflatedBallOwner(ball.handle, handle);
+    }
+    // Quem esta dando carrinho (pedido do usuario, 05/10 noite): as pernas
+    // dele neste tick. Um boneco com pancada de algo que se move perto delas
+    // levou o carrinho - a ajuda dele cai (ImpactAssist3D, ate 20%) e volta.
+    std::vector<std::pair<std::uint64_t, Vec3>> tacklerLegs;
+    for (const AthleteSlot3D& other : athletes) {
+        if (!other.active || other.state == nullptr || other.state->links.empty() || other.athlete == nullptr) continue;
+        const LegacyAthleteState3D& legacy = other.athlete->legacy;
+        const bool tackling = legacy.defaultTackling
+            || legacy.locomotion.telemetry().state == CharacterLocomotionState3D::Tackling;
+        if (!tackling) continue;
+        for (std::size_t i = 0; i < profile.links.size() && i < other.state->links.size(); ++i) {
+            const std::string& id = profile.links[i].id;
+            if (id.find("Shin") != std::string::npos || id.find("Foot") != std::string::npos
+                || id.find("Thigh") != std::string::npos)
+                tacklerLegs.push_back({ other.entityId, other.state->links[i].position });
+        }
+    }
+    AthleteControlInput3D tickControl = control;
+    for (AthleteSlot3D& slot : athletes) {
+        if (!slot.active || slot.frozen || slot.state == nullptr || slot.athlete == nullptr || slot.state->frozen
+            || !scene.contains(slot.handle) || slot.state->links.empty())
+            continue;
+        stepLegacyAthlete3D(scene, assets, settings, tickControl, slot, balls, tacklerLegs, deltaTime, output);
+    }
+}
+
+} // namespace MatterEngine

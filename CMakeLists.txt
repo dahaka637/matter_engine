@@ -473,6 +473,9 @@ add_library(MatterEngine STATIC
     src/Engine/Animation/AnimationClip3D.cpp
     src/Engine/Animation/RagdollCharacter3D.cpp
     src/Engine/Animation/RagdollVisualPose3D.cpp
+    src/Engine/Athlete/AthleteAssets3D.cpp
+    src/Engine/Athlete/AthleteRuntime3D.cpp
+    src/Engine/Athlete/Legacy/LegacyAthleteStep3D.cpp
     src/Engine/Character/BiomechanicalBipedExperiment3D.cpp
     src/Engine/Character/CharacterControlApplication3D.cpp
     src/Engine/Character/CharacterLocomotion3D.cpp
@@ -726,6 +729,14 @@ add_executable(MatterModelInspector
     tools/ModelInspector/CommandFrames.cpp
 )
 target_link_libraries(MatterModelInspector PRIVATE MatterModelingRig)
+
+# Sonda dos atletas (rework de 10/10/2026): o mesmo runtime do laboratorio
+# com a fisica de verdade, sem janela; o dump vai para MatterModelInspector quadros.
+add_executable(MatterAthleteProbe tools/AthleteProbe.cpp)
+target_link_libraries(MatterAthleteProbe PRIVATE MatterEngine)
+target_compile_definitions(MatterAthleteProbe PRIVATE
+    MATTERENGINE_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets"
+)
 
 add_executable(MatterBallPreview tools/BallTouchPreview.cpp)
 target_link_libraries(MatterBallPreview PRIVATE MatterEngine)

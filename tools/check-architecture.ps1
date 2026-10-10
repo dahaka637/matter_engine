@@ -49,6 +49,16 @@ $checks = @(
         Arguments = @("-n", '#include "Engine/(Render|RHI)/', "src/Workbench/PlayerInspector", "-g", "!src/Workbench/PlayerInspector/UiCanvasTexture.*")
     },
     @{
+        Name = "Atletas (Engine/Athlete) nao dependem de render, interface, audio, plataforma nem entrada"
+        Arguments = @("-n", '#include "Engine/(Render|RHI|UI|Audio|Platform|Input)/|#include .imgui|#include <SDL', "src/Engine/Athlete")
+    }
+    @{
+        Name = "Atletas: so o legado e a casca de migracao incluem os controladores antigos"
+        Arguments = @("-n", '#include "Engine/(Character|Control|Locomotion)/', "src/Engine/Athlete",
+            "-g", "!src/Engine/Athlete/Legacy/**", "-g", "!src/Engine/Athlete/AthleteRuntime3D.*",
+            "-g", "!src/Engine/Athlete/AthleteSettings3D.hpp", "-g", "!src/Engine/Athlete/AthleteAssets3D.*")
+    }
+    @{
         Name = "Identidade antiga e prototipos removidos nao podem retornar"
         Arguments = @("-n", "SoccerFall|SOCCERFALL|LegacyFootworkRig|PhysicalBiped|AnimatorScreen", "CMakeLists.txt", "src", "tests")
     }

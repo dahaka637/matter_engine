@@ -383,12 +383,12 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
             // or recovering, so it does not wander off and strand the
             // camera away from a character physics is puppeting on its own.
             const CharacterLocomotionState3D lastState =
-                controlled->locomotion.telemetry().state;
+                controlled->athlete.legacy.locomotion.telemetry().state;
             controlledCharacterDown =
                 lastState == CharacterLocomotionState3D::Fallen
                 || lastState == CharacterLocomotionState3D::GettingUp
                 || lastState == CharacterLocomotionState3D::Tackling;
-            const auto& telemetry = controlled->locomotion.telemetry();
+            const auto& telemetry = controlled->athlete.legacy.locomotion.telemetry();
             // (No ar o Ctrl e a voadora, tambem no fisico - 06/10.)
             controlRunningTackle = m_tackleEnabled
                 && (telemetry.tacklePending || telemetry.tackling
@@ -399,7 +399,7 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
             // Locomocao padrao: o estado e o dela (o carrinho dela; correndo,
             // o Ctrl e o carrinho).
             if (m_controlledAnimated) {
-                const bool tackling = controlled->defaultLocomotion.output().tackling;
+                const bool tackling = controlled->athlete.legacy.defaultLocomotion.output().tackling;
                 controlledCharacterDown = tackling;
                 const Vec3 v = stateBefore.velocity;
                 // (No ar o Ctrl e o carrinho aereo - a voadora - mesmo parado.)
@@ -530,7 +530,7 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
             // No modo padrao, a tabela dele (oito rumos; de costas na
             // diagonal perde menos).
             const float wanted = m_controlledAnimated && controlled != m_spawnedRagdolls.end()
-                ? defaultLocomotionSpeed3D(controlled->defaultLocomotion.settings(),
+                ? defaultLocomotionSpeed3D(controlled->athlete.legacy.defaultLocomotion.settings(),
                     travelRelative, command.sprint)
                 : characterGaitSpeed3D(m_avatarGaitSpeeds, travelRelative, command.sprint);
             const float nominal = command.sprint
@@ -546,7 +546,7 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
             // limite ficava parado no ultimo valor - o freio da arrancada
             // dela deixava o jogador lento ate a proxima ida ao fisico.)
             if (controlled != m_spawnedRagdolls.end() && wanted > 0.0f && !m_controlledAnimated) {
-                const float limit = controlled->locomotion.telemetry()
+                const float limit = controlled->athlete.legacy.locomotion.telemetry()
                     .terrainSpeedLimit;
                 command.speedScale *= std::clamp(limit / wanted, 0.2f, 1.0f);
             }
@@ -565,12 +565,12 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
             if (controlled != m_spawnedRagdolls.end() && wanted > 0.0f && !m_controlledAnimated
                 && m_adaptivePhysics && m_physicalLocomotionV2 && stateBefore.grounded)
                 command.speedScale *= physicalNavigationTurnScale3D(stateBefore.velocity, command.moveDirection,
-                    m_v2RequestTurnRate, controlled->adaptivePhysics.settings().walkingAssistScale);
+                    m_v2RequestTurnRate, controlled->athlete.legacy.adaptivePhysics.settings().walkingAssistScale);
             if (controlled != m_spawnedRagdolls.end() && wanted > 0.0f && !m_controlledAnimated
                 && m_adaptivePhysics && m_physicalLocomotionV2 && stateBefore.grounded) {
                 command.speedScale = physicalNavigationSpeedScale3D(command.moveDirection, command.speedScale,
-                    nominal, controlled->locomotion.physicalState().centerOfMassVelocityWorld,
-                    physicalNavigationLead3D(controlled->adaptivePhysics.settings().walkingAssistScale));
+                    nominal, controlled->athlete.legacy.locomotion.physicalState().centerOfMassVelocityWorld,
+                    physicalNavigationLead3D(controlled->athlete.legacy.adaptivePhysics.settings().walkingAssistScale));
             }
         }
         const bool control = input().keyDown(Key::LeftControl)
@@ -666,10 +666,10 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
                     });
                 const float relative = std::atan2(direction.y, direction.x) - movementReferenceYaw;
                 float speed = m_controlledAnimated && controlled != m_spawnedRagdolls.end()
-                    ? defaultLocomotionSpeed3D(controlled->defaultLocomotion.settings(), relative, sprint)
+                    ? defaultLocomotionSpeed3D(controlled->athlete.legacy.defaultLocomotion.settings(), relative, sprint)
                     : characterGaitSpeed3D(m_avatarGaitSpeeds, relative, sprint);
                 if (controlled != m_spawnedRagdolls.end() && !m_controlledAnimated) {
-                    speed = std::min(speed, controlled->locomotion.telemetry().terrainSpeedLimit);
+                    speed = std::min(speed, controlled->athlete.legacy.locomotion.telemetry().terrainSpeedLimit);
                 }
                 m_characterIntent.requestedDirectionWorld = direction;
                 m_characterIntent.requestedVelocityWorld = direction * speed;
@@ -734,7 +734,7 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
     if (controllingCharacter && m_adaptivePhysics && m_controlledAnimated && !stateBefore.grounded) {
         const auto controlled = std::find_if(m_spawnedRagdolls.begin(), m_spawnedRagdolls.end(),
             [&](const SpawnedRagdollInstance& item) { return item.entityId == m_controlledCharacterEntityId; });
-        if (controlled != m_spawnedRagdolls.end() && controlled->defaultLocomotion.output().airTackle) {
+        if (controlled != m_spawnedRagdolls.end() && controlled->athlete.legacy.defaultLocomotion.output().airTackle) {
             const Vec3 flat { stateBefore.velocity.x, stateBefore.velocity.y, 0.0f };
             const float speed = flat.length();
             if (speed > 0.05f && activeSettings.sprintSpeed > 0.1f) {
@@ -2461,8 +2461,8 @@ void WorkbenchApp::drawLaboratoryUi() {
     if (m_showBallReach && m_controlledCharacterEntityId != 0) {
         for (const SpawnedRagdollInstance& instance : m_spawnedRagdolls) {
             if (instance.entityId != m_controlledCharacterEntityId || instance.physicsState.links.empty()) continue;
-            const BallReachZone3D& zone = instance.ballControl.reachZone();
-            const BallControlOutput3D& last = instance.ballLastOutput;
+            const BallReachZone3D& zone = instance.athlete.legacy.ballControl.reachZone();
+            const BallControlOutput3D& last = instance.athlete.legacy.ballLastOutput;
             const Vec3 pelvis = instance.physicsState.links.front().position;
             float ground = pelvis.z;
             for (const auto& link : instance.physicsState.links) ground = std::min(ground, link.position.z - 0.07f);
@@ -2494,7 +2494,7 @@ void WorkbenchApp::drawLaboratoryUi() {
                 for (int side = 0; side < 2; ++side) {
                     Vec3 center, half;
                     Quaternion orientation;
-                    if (!instance.ballControl.footBox(instance.physicsState, side, center, orientation, half)) continue;
+                    if (!instance.athlete.legacy.ballControl.footBox(instance.physicsState, side, center, orientation, half)) continue;
                     half += Vec3 { last.hitboxMargin, last.hitboxMargin, last.hitboxMargin };
                     Vec3 corners[8];
                     for (int k = 0; k < 8; ++k)
@@ -3558,7 +3558,7 @@ void WorkbenchApp::drawLaboratoryUi() {
                     if (instance.kind != ArticulatedRigKind::Human) continue;
                     instance.active = m_ragdollActive;
                     if (instance.active && m_humanRagdollProfile) {
-                        instance.locomotion.reset(*m_humanRagdollProfile,
+                        instance.athlete.legacy.locomotion.reset(*m_humanRagdollProfile,
                             instance.physicsState);
                     }
                     m_physicsScene->setRagdollActive(
@@ -3623,7 +3623,7 @@ void WorkbenchApp::drawLaboratoryUi() {
                         && instance.active;
                 });
             if (latestHuman != m_spawnedRagdolls.rend()) {
-                const auto& telemetry=latestHuman->locomotion.telemetry();
+                const auto& telemetry=latestHuman->athlete.legacy.locomotion.telemetry();
                 const char* phase="IDLE";
                 switch(telemetry.state) {
                 case CharacterLocomotionState3D::Idle: phase="IDLE";break;

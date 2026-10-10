@@ -59,6 +59,12 @@ check_absent "Tela de objetos fala com a GPU so pelo CanvasTarget" \
     '#include "Engine/(Render|RHI)/' src/Workbench/ObjectInspector
 check_absent "Objetos procedurais (modelagem) nao dependem da montagem, das pecas, do rig nem da inspecao" \
     '#include "Engine/Modeling/(Assembly|Rig|Parts|Inspection)/' src/Engine/Modeling/Objects
+check_absent "Atletas (Engine/Athlete) nao dependem de render, interface, audio, plataforma nem entrada" \
+    '#include "Engine/(Render|RHI|UI|Audio|Platform|Input)/|#include .imgui|#include <SDL' src/Engine/Athlete
+check_absent "Atletas: so o legado e a casca de migracao incluem os controladores antigos" \
+    '#include "Engine/(Character|Control|Locomotion)/' src/Engine/Athlete \
+    -g '!src/Engine/Athlete/Legacy/**' -g '!src/Engine/Athlete/AthleteRuntime3D.*' \
+    -g '!src/Engine/Athlete/AthleteSettings3D.hpp' -g '!src/Engine/Athlete/AthleteAssets3D.*'
 check_absent "Identidade antiga e prototipos removidos nao podem retornar" \
     'SoccerFall|SOCCERFALL|LegacyFootworkRig|AnimatorScreen' \
     CMakeLists.txt src tests

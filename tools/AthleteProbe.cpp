@@ -1,0 +1,538 @@
+// Sonda dos atletas (rework de 10/10/2026): o MESMO runtime do laboratorio
+// (AthleteRuntime3D) com a fisica de verdade (Jolt), sem janela. Roteiros de
+// teclas, bola e empurroes; mede o que importa para o novo controle e grava o
+// dump que o MatterModelInspector desenha com o jogador de verdade:
+//   MatterModelInspector quadros --dump <arquivo> --cenario <nome>
+//
+// uso: MatterAthleteProbe [--cenario nome] [--dump arquivo] [--cada N] [--lista]
+//      [--fisico] (comeca no modo fisico, como ao assumir no laboratorio)
+// Sem --cenario roda todos.
+#include "Engine/Athlete/AthleteAssets3D.hpp"
+#include "Engine/Athlete/AthleteRuntime3D.hpp"
+#include "Engine/Control/AdaptivePhysicalCharacter3D.hpp"
+#include "Engine/Materials/MaterialLibrary.hpp"
+#include "Engine/Physics/PhysicsEngine3D.hpp"
+
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <functional>
+#include <string>
+#include <vector>
+
+using namespace MatterEngine;
+
+namespace {
+
+constexpr float Pi = 3.14159265358979323846f;
+constexpr float Dt = 1.0f / 120.0f;
+
+// O que o "jogador" faz num instante: teclas no referencial da camera (x
+// frente, y esquerda), o olhar e os pedidos.
+struct Keys {
+    float forward = 0.0f;
+    float left = 0.0f;
+    bool sprint = false;
+    float cameraYaw = 0.0f;
+    bool jump = false;
+    bool crouch = false;
+    BallActionKind3D ball = BallActionKind3D::None;
+    float power = 0.5f;
+};
+
+// Empurrao: forca (N, no mundo) por um tempo, repartida em pelve, peito e
+// alto do peito como o teste de impacto do laboratorio.
+struct Push {
+    float at = 0.0f;
+    float seconds = 0.1f;
+    Vec3 force;
+};
+
+// Um objeto arremessado no atleta (a pancada de verdade: contato, nao
+// forca): caixa de massa e meia-dimensao dadas, saindo de `start` (em
+// relacao aos pes) com `velocity` no instante `at`.
+struct Throw {
+    float at = 0.0f;
+    float massKg = 20.0f;
+    Vec3 halfExtents { 0.2f, 0.2f, 0.2f };
+    Vec3 start;
+    Vec3 velocity;
+};
+
+struct Scenario {
+    const char* name;
+    float seconds;
+    std::function<Keys(float)> keys;
+    bool ball = false;
+    Vec3 ballStart;     // em relacao aos pes, no referencial inicial
+    Vec3 ballVelocity;
+    std::vector<Push> pushes;
+    std::vector<Throw> throws;
+    // Pedido automatico com a bola a menos disto da pelve (no plano).
+    float autoDistance = 0.0f;
+    BallActionKind3D autoKind = BallActionKind3D::Dribble;
+};
+
+std::vector<Scenario> scenarios() {
+    std::vector<Scenario> list;
+    list.push_back({ "parado", 3.0f, [](float) { return Keys {}; } });
+    list.push_back({ "arranca", 3.0f, [](float t) { Keys k; k.forward = t > 0.3f ? 1.0f : 0.0f; return k; } });
+    list.push_back({ "sprint", 4.0f, [](float t) { Keys k; k.forward = t > 0.3f ? 1.0f : 0.0f; k.sprint = true; return k; } });
+    list.push_back({ "inverte", 4.0f, [](float t) {
+        Keys k;
+        k.forward = t < 0.3f ? 0.0f : t < 2.0f ? 1.0f : -1.0f;
+        return k; } });
+    list.push_back({ "zigue", 4.5f, [](float t) {
+        Keys k;
+        k.forward = t > 0.3f ? 1.0f : 0.0f;
+        k.left = t < 0.3f ? 0.0f : std::fmod(t, 1.0f) < 0.5f ? 1.0f : -1.0f;
+        k.sprint = true;
+        return k; } });
+    list.push_back({ "lados", 4.0f, [](float t) { Keys k; k.left = t < 0.3f ? 0.0f : t < 2.0f ? 1.0f : -1.0f; return k; } });
+    list.push_back({ "corte", 4.0f, [](float t) {
+        Keys k;
+        k.forward = t > 0.3f ? 1.0f : 0.0f;
+        k.sprint = true;
+        if (t > 2.0f) { k.forward = 0.0f; k.left = 1.0f; }
+        return k; } });
+    list.push_back({ "gira", 3.0f, [](float t) { Keys k; k.cameraYaw = std::min(1.0f, std::max(0.0f, t - 0.5f)) * Pi * 0.75f; return k; } });
+    list.push_back({ "pulo", 3.0f, [](float t) { Keys k; k.forward = t > 0.3f ? 1.0f : 0.0f; k.jump = t > 1.2f && t < 1.22f; return k; } });
+    list.push_back({ "carrinho", 3.5f, [](float t) {
+        Keys k;
+        k.forward = t > 0.3f ? 1.0f : 0.0f;
+        k.sprint = true;
+        k.crouch = t > 1.6f && t < 1.7f;
+        return k; } });
+    {
+        Scenario s { "toque_parado", 2.5f, [](float t) {
+            Keys k;
+            if (t >= 0.6f && t < 0.6f + Dt) { k.ball = BallActionKind3D::Dribble; k.power = 0.4f; }
+            return k; } };
+        s.ball = true;
+        s.ballStart = { 0.45f, -0.12f, 0.11f };
+        list.push_back(s);
+    }
+    {
+        Scenario s { "toque_lado", 2.5f, [](float t) {
+            Keys k;
+            if (t >= 0.6f && t < 0.6f + Dt) { k.ball = BallActionKind3D::Dribble; k.power = 0.4f; }
+            return k; } };
+        s.ball = true;
+        s.ballStart = { 0.15f, -0.45f, 0.11f };
+        list.push_back(s);
+    }
+    {
+        Scenario s { "toque_corre", 4.0f, [](float t) { Keys k; k.forward = t > 0.3f ? 1.0f : 0.0f; return k; } };
+        s.ball = true;
+        s.ballStart = { 3.0f, -0.1f, 0.11f };
+        s.autoDistance = 0.9f;
+        list.push_back(s);
+    }
+    {
+        Scenario s { "chute_parado", 2.5f, [](float t) {
+            Keys k;
+            if (t >= 0.6f && t < 0.6f + Dt) { k.ball = BallActionKind3D::Shot; k.power = 0.8f; }
+            return k; } };
+        s.ball = true;
+        s.ballStart = { 0.55f, -0.15f, 0.11f };
+        list.push_back(s);
+    }
+    {
+        Scenario s { "chute_corre", 3.5f, [](float t) { Keys k; k.forward = t > 0.3f ? 1.0f : 0.0f; return k; } };
+        s.ball = true;
+        s.ballStart = { 3.2f, -0.12f, 0.11f };
+        s.autoDistance = 1.0f;
+        s.autoKind = BallActionKind3D::Shot;
+        list.push_back(s);
+    }
+    {
+        Scenario s { "caixa_leve", 3.0f, [](float) { return Keys {}; } };
+        s.throws.push_back({ 1.0f, 6.0f, { 0.15f, 0.15f, 0.15f }, { 0.0f, 1.2f, 1.2f }, { 0.0f, -5.0f, 0.0f } });
+        list.push_back(s);
+    }
+    {
+        Scenario s { "caixa_media", 3.0f, [](float) { return Keys {}; } };
+        s.throws.push_back({ 1.0f, 20.0f, { 0.2f, 0.2f, 0.2f }, { 0.0f, 1.3f, 1.1f }, { 0.0f, -5.0f, 0.0f } });
+        list.push_back(s);
+    }
+    {
+        Scenario s { "caixa_forte", 3.5f, [](float) { return Keys {}; } };
+        s.throws.push_back({ 1.0f, 60.0f, { 0.25f, 0.25f, 0.25f }, { 0.0f, 1.4f, 1.1f }, { 0.0f, -6.0f, 0.0f } });
+        list.push_back(s);
+    }
+    {
+        Scenario s { "caixa_correndo", 3.5f, [](float t) { Keys k; k.forward = t > 0.3f ? 1.0f : 0.0f; return k; } };
+        s.throws.push_back({ 1.5f, 15.0f, { 0.2f, 0.2f, 0.2f }, { 5.5f, 1.3f, 1.1f }, { 0.0f, -5.0f, 0.0f } });
+        list.push_back(s);
+    }
+    {
+        Scenario s { "empurrao_leve", 3.0f, [](float) { return Keys {}; } };
+        s.pushes.push_back({ 1.0f, 0.1f, { 0.0f, 350.0f, 0.0f } });
+        list.push_back(s);
+    }
+    {
+        Scenario s { "empurrao_medio", 3.0f, [](float) { return Keys {}; } };
+        s.pushes.push_back({ 1.0f, 0.1f, { 0.0f, 900.0f, 0.0f } });
+        list.push_back(s);
+    }
+    {
+        Scenario s { "empurrao_forte", 3.5f, [](float) { return Keys {}; } };
+        s.pushes.push_back({ 1.0f, 0.12f, { 0.0f, 2200.0f, 0.0f } });
+        list.push_back(s);
+    }
+    {
+        Scenario s { "empurrao_correndo", 3.5f, [](float t) { Keys k; k.forward = t > 0.3f ? 1.0f : 0.0f; return k; } };
+        s.pushes.push_back({ 1.6f, 0.1f, { 0.0f, 500.0f, 0.0f } });
+        list.push_back(s);
+    }
+    return list;
+}
+
+struct Metrics {
+    std::vector<float> footSlide;
+    float peakUpperAcceleration = 0.0f;
+    float peakLegAcceleration = 0.0f;
+    float worstPoseJump = 0.0f;
+    int modeSwitches = 0;
+    float animatedSeconds = 0.0f;
+    float physicalSeconds = 0.0f;
+    float returningSeconds = 0.0f;
+    int requests = 0;
+    int touches = 0;
+    bool fell = false;
+    float lowestPelvis = 10.0f;
+    float ballSpeedAfter = 0.0f;
+};
+
+float percentile(std::vector<float> values, float q) {
+    if (values.empty()) return 0.0f;
+    std::sort(values.begin(), values.end());
+    const std::size_t index = std::min(values.size() - 1, static_cast<std::size_t>(q * static_cast<float>(values.size() - 1)));
+    return values[index];
+}
+
+void dumpFrame(FILE* file, const RagdollProfile3D& profile, const RagdollState3D& state, float t, int mode) {
+    std::fprintf(file, "F %.4f %d 0\n", t, mode);
+    for (std::size_t i = 0; i < profile.links.size() && i < state.links.size(); ++i) {
+        const auto& collider = profile.links[i].collider;
+        const Vec3 center = state.links[i].position + state.links[i].orientation.rotate(collider.localPosition);
+        const Quaternion q = (state.links[i].orientation * collider.localOrientation).normalized();
+        if (collider.shape == RagdollColliderShape3D::Box) {
+            std::fprintf(file, "B %s %.4f %.4f %.4f %.5f %.5f %.5f %.5f %.4f %.4f %.4f\n", profile.links[i].id.c_str(),
+                center.x, center.y, center.z, q.x, q.y, q.z, q.w, collider.boxHalfExtents.x, collider.boxHalfExtents.y,
+                collider.boxHalfExtents.z);
+        } else {
+            std::fprintf(file, "C %s %.4f %.4f %.4f %.5f %.5f %.5f %.5f %.4f %.4f %.4f\n", profile.links[i].id.c_str(),
+                center.x, center.y, center.z, q.x, q.y, q.z, q.w, ragdollCapsuleHalfSegment3D(collider),
+                collider.radiusMeters, ragdollCapsuleRadiusAtPositiveX3D(collider));
+        }
+    }
+}
+
+const char* modeName(LegacyBodyMode3D mode) {
+    switch (mode) {
+    case LegacyBodyMode3D::Animated: return "animado";
+    case LegacyBodyMode3D::Physical: return "fisico";
+    case LegacyBodyMode3D::Returning: return "volta";
+    }
+    return "?";
+}
+
+} // namespace
+
+int main(int argc, char** argv) {
+    std::string only, dumpPath;
+    int every = 3;
+    bool startPhysical = false;
+    for (int i = 1; i < argc; ++i) {
+        const std::string arg = argv[i];
+        const auto need = [&]() -> const char* { return i + 1 < argc ? argv[++i] : ""; };
+        if (arg == "--cenario") only = need();
+        else if (arg == "--dump") dumpPath = need();
+        else if (arg == "--cada") every = std::max(1, std::atoi(need()));
+        else if (arg == "--fisico") startPhysical = true;
+        else if (arg == "--lista") {
+            for (const Scenario& scenario : scenarios()) std::printf("%s\n", scenario.name);
+            return 0;
+        } else {
+            std::fprintf(stderr, "argumento desconhecido: %s\n", arg.c_str());
+            return 2;
+        }
+    }
+    const std::string assets = MATTERENGINE_ASSETS_DIR;
+    const RagdollCharacter3D character = loadRagdollCharacter3D(assets + "/characters/football_player/character.json");
+    const RagdollProfile3D& profile = character.profile;
+    std::vector<std::string> clipErrors;
+    const std::vector<AnimationClip3D> clipLibrary =
+        loadAthleteClipLibrary3D(assets + "/animations/clips", profile, &clipErrors);
+    const CharacterLocomotionAnimations3D clips = athleteLocomotionClips3D(character, clipLibrary);
+    const CharacterLocomotionAnimations3D defaultClips =
+        defaultLocomotionAnimations3D(clips, character.defaultLocomotionClipIds, clipLibrary);
+    const CharacterGaitSpeeds3D gaitSpeeds = characterGaitSpeeds3D(clips);
+    CharacterMotorSettings3D avatar = athleteAvatarMotorSettings3D();
+    if (gaitSpeeds.walk > 0.0f) {
+        avatar.walkSpeed = gaitSpeeds.walk;
+        avatar.sprintSpeed = gaitSpeeds.sprint;
+    }
+    const AthleteRuntimeSettings3D settings;
+    AthleteRuntimeAssets3D runtimeAssets;
+    runtimeAssets.profile = &profile;
+    runtimeAssets.clips = &clips;
+    runtimeAssets.defaultClips = &defaultClips;
+    runtimeAssets.avatarSettings = avatar;
+
+    FILE* dump = dumpPath.empty() ? nullptr : std::fopen(dumpPath.c_str(), "w");
+    std::printf("cenario            | deslize pe no chao med/p95/max m/s | pico acel tronco+bracos / pernas | salto pose | modos (trocas; animado/fisico/volta s) | bola\n");
+    for (const Scenario& scenario : scenarios()) {
+        if (!only.empty() && scenario.name != only) continue;
+        PhysicsEngine3D engine;
+        MaterialLibrary materials;
+        auto scene = engine.createScene({}, materials);
+        {
+            PhysicsShape3D shape;
+            shape.type = PhysicsShapeType3D::Box;
+            shape.halfExtents = { 60.0f, 60.0f, 0.1f };
+            shape.materialId = "concrete";
+            PhysicsBodyDefinition3D ground;
+            ground.motionType = PhysicsMotionType3D::Static;
+            ground.position = { 0.0f, 0.0f, -0.1f };
+            ground.materialId = "concrete";
+            (void)scene->createBody(ground, std::span<const PhysicsShape3D>(&shape, 1));
+        }
+        scene->createCharacter({ 0.0f, 0.0f, 0.0f }, avatar);
+        RagdollSpawnDefinition3D spawn;
+        spawn.entityId = 1;
+        spawn.active = true;
+        spawn.pelvisPosition = { 0.0f, 0.0f, profile.standingRootHeightMeters };
+        const RagdollHandle3D handle = scene->createRagdoll(profile, spawn);
+        RagdollState3D bodyState = scene->ragdollState(handle);
+        AthleteState3D athlete;
+        LegacyAthleteState3D& legacy = athlete.legacy;
+        legacy.guideFacingYawRadians = 0.0f;
+        legacy.locomotion.reset(profile, bodyState);
+        legacy.adaptivePhysics.reset(profile);
+        // Como "Restaurar pose" do laboratorio: ja no modo padrao. (--fisico:
+        // como ao assumir o boneco, no fisico ate ele assentar.)
+        if (!startPhysical) {
+            legacy.defaultLocomotion.reset(0.0f);
+            legacy.guided = true;
+            legacy.bodyMode = LegacyBodyMode3D::Animated;
+            scene->setRagdollGuided(handle, true);
+        }
+        InflatedBallHandle3D ballHandle;
+        InflatedBallState3D ballState;
+        BallOwnership3D ownership;
+        if (scenario.ball) {
+            InflatedBallDefinition3D definition;
+            definition.position = scenario.ballStart;
+            definition.linearVelocity = scenario.ballVelocity;
+            definition.entityId = 2;
+            ballHandle = scene->createInflatedBall(definition);
+            ballState = scene->inflatedBallState(ballHandle);
+        }
+        if (dump != nullptr) std::fprintf(dump, "S %s\n", scenario.name);
+
+        AthleteRuntime3D runtime;
+        Vec3 followVelocity {};
+        bool controlledAnimated = !startPhysical;
+        Vec3 capsuleMoved {};
+        float wallImpact = 0.0f;
+        Metrics metrics;
+        LegacyBodyMode3D previousMode = legacy.bodyMode;
+        std::vector<PhysicsBodyState3D> previousLinks = bodyState.links;
+        std::vector<Vec3> previousVelocities(bodyState.links.size());
+        bool previousJump = false;
+        float jumpHeld = 0.0f;
+        float autoCooldown = 0.0f;
+        const int ticks = static_cast<int>(scenario.seconds / Dt);
+        for (int step = 0; step < ticks; ++step) {
+            const float t = static_cast<float>(step) * Dt;
+            const Keys keys = scenario.keys(t);
+            // A capsula como no laboratorio (o personagem controlado no chao).
+            const PhysicsCharacterState3D before = scene->characterState();
+            const Vec3 forward { std::cos(keys.cameraYaw), std::sin(keys.cameraYaw), 0.0f };
+            const Vec3 right { forward.y, -forward.x, 0.0f };
+            // Caido, levantando ou no carrinho, a capsula fica sem teclas (como no
+            // laboratorio: o corpo e quem a leva).
+            const CharacterLocomotionState3D lastState = legacy.locomotion.telemetry().state;
+            const bool down = controlledAnimated ? legacy.defaultLocomotion.output().tackling
+                : lastState == CharacterLocomotionState3D::Fallen || lastState == CharacterLocomotionState3D::GettingUp
+                    || lastState == CharacterLocomotionState3D::Tackling;
+            CharacterMotorCommand3D command;
+            command.ignoreRagdolls = true;
+            if (!down) command.moveDirection = forward * keys.forward - right * keys.left;
+            command.sprint = keys.sprint;
+            CharacterIntent3D intent;
+            intent.requestedFacingYawRadians = keys.cameraYaw;
+            intent.effort = keys.sprint ? 1.0f : 0.0f;
+            intent.crouch = keys.crouch;
+            if (command.moveDirection.lengthSquared() > 1e-4f) {
+                const Vec3 direction = command.moveDirection.normalized();
+                const float travelRelative = std::atan2(direction.y, direction.x) - keys.cameraYaw;
+                const float wanted = controlledAnimated
+                    ? defaultLocomotionSpeed3D(legacy.defaultLocomotion.settings(), travelRelative, keys.sprint)
+                    : characterGaitSpeed3D(gaitSpeeds, travelRelative, keys.sprint);
+                const float nominal = keys.sprint ? avatar.sprintSpeed : avatar.walkSpeed;
+                if (wanted > 0.0f && nominal > 0.0f) command.speedScale = wanted / nominal;
+                if (!controlledAnimated && wanted > 0.0f)
+                    command.speedScale *= std::clamp(legacy.locomotion.telemetry().terrainSpeedLimit / wanted, 0.2f, 1.0f);
+                intent.requestedDirectionWorld = direction;
+                float speed = wanted;
+                if (!controlledAnimated) speed = std::min(speed, legacy.locomotion.telemetry().terrainSpeedLimit);
+                intent.requestedVelocityWorld = direction * speed;
+            }
+            // Pulo ao soltar: segurar o espaco carrega.
+            if (keys.jump) jumpHeld += Dt;
+            command.jumpPressed = previousJump && !keys.jump;
+            command.jumpChargeSeconds = jumpHeld;
+            if (!keys.jump && previousJump) jumpHeld = 0.0f;
+            previousJump = keys.jump;
+            CharacterMotorSettings3D active = avatar;
+            if (controlledAnimated) {
+                active.groundAcceleration = 16.0f;
+                active.groundDeceleration = 22.0f;
+                active.groundTurnRate = 10.0f;
+                active.groundBrakeDeceleration = 30.0f;
+            } else {
+                active = adaptiveCharacterMotorSettings3D(active, before, command,
+                    physicalNavigationAcceleration3D(settings.e5WalkingAssistPercent * 0.01f));
+            }
+            command.followVelocity = followVelocity;
+            command.navigationProxy = true;
+            scene->moveCharacter(command, active, Dt);
+            const PhysicsCharacterState3D& capsule = scene->characterState();
+            {
+                const Vec3 moved { (capsule.position.x - before.position.x) / Dt,
+                    (capsule.position.y - before.position.y) / Dt, 0.0f };
+                const float speed = capsuleMoved.length();
+                const float braking = std::max({ active.groundAcceleration, active.groundDeceleration,
+                    active.groundBrakeDeceleration }) * Dt;
+                wallImpact = speed > 0.5f && capsule.grounded
+                    ? std::max(0.0f, dot(capsuleMoved - moved, capsuleMoved * (1.0f / speed)) - braking) : 0.0f;
+                capsuleMoved = moved;
+            }
+            AthleteControlInput3D control;
+            control.controlledEntityId = 1;
+            control.intent = intent;
+            control.facingYawRadians = keys.cameraYaw;
+            control.lookPitchRadians = -0.2f;
+            control.sprinting = keys.sprint && Vec3 { capsule.velocity.x, capsule.velocity.y, 0.0f }.lengthSquared() > 0.01f;
+            control.proxyVelocityWorld = { capsule.velocity.x, capsule.velocity.y, 0.0f };
+            control.capsuleWallImpact = wallImpact;
+            control.capsuleFollowVelocityWorld = followVelocity;
+            control.jumpCharge = characterJumpCharge3D(active, command.jumpChargeSeconds);
+            control.ballRequest = keys.ball;
+            control.ballRequestPower = keys.power;
+            control.ballRequestAimYaw = keys.cameraYaw;
+            autoCooldown -= Dt;
+            if (scenario.autoDistance > 0.0f && scenario.ball && autoCooldown <= 0.0f && !bodyState.links.empty()) {
+                const Vec3 pelvis = bodyState.links.front().position;
+                const Vec3 offset = ballState.position - pelvis;
+                if (std::hypot(offset.x, offset.y) < scenario.autoDistance) {
+                    control.ballRequest = scenario.autoKind;
+                    control.ballRequestPower = scenario.autoKind == BallActionKind3D::Shot ? 0.8f : 0.45f;
+                    autoCooldown = 10.0f;
+                }
+            }
+            if (control.ballRequest != BallActionKind3D::None) ++metrics.requests;
+            if (std::getenv("XPAREDE")) {
+                float wallImpulse = 0.0f;
+                for (const RagdollInteraction3D& contact : bodyState.interactions)
+                    if (contact.otherMotion != RagdollContactMotion3D::Dynamic && contact.normalWorld.z < 0.6f) {
+                        wallImpulse += contact.normalImpulseNewtonSeconds;
+                        if (contact.normalImpulseNewtonSeconds > 0.2f)
+                            std::printf("  t %.3f link %s motion %d normal %.2f %.2f %.2f impulso %.2f\n", t,
+                                profile.links[contact.linkIndex].id.c_str(), static_cast<int>(contact.otherMotion),
+                                contact.normalWorld.x, contact.normalWorld.y, contact.normalWorld.z,
+                                contact.normalImpulseNewtonSeconds);
+                    }
+                if (wallImpact > 1.0f) std::printf("  t %.3f capsula bateu %.2f\n", t, wallImpact);
+            }
+            AthleteSlot3D slot { 1, handle, &bodyState, true, false, &athlete };
+            std::vector<AthleteBall3D> balls;
+            if (scenario.ball) balls.push_back({ ballHandle, &ballState, &ownership });
+            AthleteRuntimeOutput3D output;
+            runtime.update(*scene, runtimeAssets, std::span<AthleteSlot3D>(&slot, 1), balls, settings, control, Dt, output);
+            if (output.followVelocitySet) followVelocity = output.followVelocityWorld;
+            if (output.controlledAnimatedSet) controlledAnimated = output.controlledAnimated;
+            if (legacy.ballLastOutput.touched) {
+                ++metrics.touches;
+                if (dump != nullptr) std::fprintf(dump, "T\n");
+            }
+            for (const Throw& item : scenario.throws)
+                if (t >= item.at && t < item.at + Dt) {
+                    PhysicsShape3D shape;
+                    shape.type = PhysicsShapeType3D::Box;
+                    shape.halfExtents = item.halfExtents;
+                    shape.materialId = "wood";
+                    PhysicsBodyDefinition3D box;
+                    box.position = item.start;
+                    box.linearVelocity = item.velocity;
+                    box.massKg = item.massKg;
+                    box.materialId = "wood";
+                    box.characteristicSizeMeters = 2.0f * std::max({ item.halfExtents.x, item.halfExtents.y, item.halfExtents.z });
+                    (void)scene->createBody(box, std::span<const PhysicsShape3D>(&shape, 1));
+                    if (dump != nullptr) std::fprintf(dump, "E caixa\n");
+                }
+            for (const Push& push : scenario.pushes)
+                if (t >= push.at && t < push.at + push.seconds) {
+                    scene->applyRagdollLinkForce(handle, 0, push.force * 0.20f, {});
+                    scene->applyRagdollLinkForce(handle, 2, push.force * 0.32f, {});
+                    scene->applyRagdollLinkForce(handle, 3, push.force * 0.48f, {});
+                }
+            scene->simulate(Dt);
+            bodyState = scene->ragdollState(handle);
+            if (scenario.ball) ballState = scene->inflatedBallState(ballHandle);
+
+            // Medidas.
+            if (legacy.bodyMode != previousMode) {
+                ++metrics.modeSwitches;
+                if (dump != nullptr) std::fprintf(dump, "E %s\n", modeName(legacy.bodyMode));
+            }
+            previousMode = legacy.bodyMode;
+            (legacy.bodyMode == LegacyBodyMode3D::Animated ? metrics.animatedSeconds
+                : legacy.bodyMode == LegacyBodyMode3D::Physical ? metrics.physicalSeconds : metrics.returningSeconds) += Dt;
+            for (std::size_t i = 0; i < bodyState.links.size() && i < profile.links.size(); ++i) {
+                const PhysicsBodyState3D& link = bodyState.links[i];
+                const std::string& id = profile.links[i].id;
+                const Vec3 acceleration = (link.linearVelocity - previousVelocities[i]) * (1.0f / Dt);
+                if (t > 0.35f) {
+                    const bool leg = id.find("Thigh") != std::string::npos || id.find("Shin") != std::string::npos
+                        || id.find("Foot") != std::string::npos;
+                    (leg ? metrics.peakLegAcceleration : metrics.peakUpperAcceleration) = std::max(
+                        leg ? metrics.peakLegAcceleration : metrics.peakUpperAcceleration, acceleration.length());
+                    // Salto de pose: o link andou mais do que a velocidade dele explica.
+                    const Vec3 expected = previousLinks[i].position + link.linearVelocity * Dt;
+                    metrics.worstPoseJump = std::max(metrics.worstPoseJump, (link.position - expected).length());
+                }
+                previousVelocities[i] = link.linearVelocity;
+                if (id == "LeftFoot" || id == "RightFoot") {
+                    const auto& collider = profile.links[i].collider;
+                    const Vec3 center = link.position + link.orientation.rotate(collider.localPosition);
+                    if (t > 0.35f && center.z < collider.boxHalfExtents.z + 0.03f)
+                        metrics.footSlide.push_back(std::hypot(link.linearVelocity.x, link.linearVelocity.y));
+                }
+            }
+            previousLinks = bodyState.links;
+            metrics.lowestPelvis = std::min(metrics.lowestPelvis, bodyState.links.front().position.z);
+            if (bodyState.links.front().position.z < 0.5f) metrics.fell = true;
+            if (scenario.ball) metrics.ballSpeedAfter = std::max(metrics.ballSpeedAfter, ballState.linearVelocity.length());
+            if (dump != nullptr && step % every == 0) {
+                dumpFrame(dump, profile, bodyState, t, static_cast<int>(legacy.bodyMode));
+                if (scenario.ball)
+                    std::fprintf(dump, "K %.4f %.4f %.4f %.3f %.3f %.3f\n", ballState.position.x, ballState.position.y,
+                        ballState.position.z, ballState.linearVelocity.x, ballState.linearVelocity.y,
+                        ballState.linearVelocity.z);
+            }
+        }
+        std::printf("%-18s | %5.2f / %5.2f / %5.2f | %7.1f / %7.1f m/s2 | %5.3f m | %d; %.1f/%.1f/%.1f | %s%d pedidos, %d toques, bola max %.1f m/s\n",
+            scenario.name, percentile(metrics.footSlide, 0.5f), percentile(metrics.footSlide, 0.95f),
+            percentile(metrics.footSlide, 1.0f), metrics.peakUpperAcceleration, metrics.peakLegAcceleration,
+            metrics.worstPoseJump, metrics.modeSwitches, metrics.animatedSeconds, metrics.physicalSeconds,
+            metrics.returningSeconds, metrics.fell ? "CAIU, " : "", metrics.requests, metrics.touches,
+            metrics.ballSpeedAfter);
+    }
+    if (dump != nullptr) std::fclose(dump);
+    return 0;
+}
