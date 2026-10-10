@@ -96,6 +96,56 @@ apoiados, que somam zero.
   - Numa base aberta, a volta ao padrão espera 1,2 s, e a inércia leva os pés
     ao lugar do clipe (alguns centímetros em 0,4 s).
 
+## Novo controle do atleta: Etapa 5 (v1) — manejo de bola procedural (10/10/2026)
+
+Atrás da chave **"Manejo novo"** (aba Geral, BOLA; só com "Locomoção por
+pegadas"). Desligada, o manejo V3 segue como antes. O toque continua sendo
+só força: o resultado é o do modelo V3 aprovado, aplicado como impulso
+quando o pé encosta na bola.
+
+- **Módulos novos (`src/Engine/Athlete/`):**
+  - `Intent/ActionQueue3D`: o pedido com desfecho (tocou, errou, fora do
+    alcance, expirou, substituído, interrompido, alvo inválido) e o motivo;
+    histórico dos últimos 32;
+  - `Sensing/BallPredictor3D`: a bola prevista (rolando com a desaceleração
+    medida, no ar com arrasto), em tabela de 1/30 s;
+  - `Actions/BallActionPlanner3D`: candidatos pé × instante; superfície
+    pelas regras do V3; pose do pé no contato; alcance; sem cruzar; o armado
+    cresce com o caminho do pé (2,5 m/s de média);
+  - `Actions/BallGesture3D`: o gesto pelo estado (armado, batida, acompanhamento,
+    volta), Hermites online. No chute, o acompanhamento é o arco do tornozelo em
+    volta do quadril com a perna estendendo, e a volta é o pêndulo dela. No toque,
+    segue baixo no rumo. O pouso fica ao alcance do quadril de repouso;
+  - `Actions/BallHandling3D`: junta tudo; o corpo prepara desde o pedido
+    (pelve sobre o apoio, tronco, braços pelo esforço, olhar na bola) por
+    molas críticas em série (`Core/CriticalSpring3D`);
+  - `Ball/BallOutcome3D`: o modelo V3 (toque e chute com efeito) como função
+    pura;
+  - `Legacy/LegacyBallBridge3D`: os alvos do corpo viram o `BallGesturePose3D`
+    que o modo padrão aplica.
+- **Física:** sensor do pé na bola (`setInflatedBallSensor`, folga de 7 cm,
+  o primeiro encosto do tick) e `applyInflatedBallImpulses`.
+- **Medidas** (`MatterAthleteProbe --pegadas 1 --manejo 1`, 13 cenários):
+  - todos tocam, um toque por pedido;
+  - o gesto sai em 1 tick (a bola vindo espera por ela: 0,17 s);
+  - pico das pernas 163–523 m/s² (V3: 209–830), tronco e braços 58–101
+    m/s² (V3: 40–704), salto de pose ≤ 0,008 m;
+  - pernas nunca cruzam; o pé de apoio fica parado (≤ 0,21 m/s).
+- **Conferido em folhas de 5 quadros** (2 antes, contato, 2 depois) contra o
+  V3 em toque parado, toque de lado, bola de lado, bola atrás, bola vindo,
+  chute parado e chute de lado.
+- **Correções no caminho:**
+  - O polo do joelho vinha da ponta do pé projetada e virava de cima para
+    baixo quando o tornozelo passava a altura do quadril (salto de 4 cm).
+    Agora é perpendicular à perna, no plano dela com o vertical.
+  - O pouso do chute ficava fora do alcance, e o pé ficava no ar sem travar.
+  - O armado da sola saía de trás da bola, fora do alcance.
+  - O olhar saltava ~2 m depois do toque.
+- **Contratos:** o `--teste` ganhou 52 verificações do manejo novo (todas
+  passam). O `check-architecture` estende a regra "só dados, sem a cena
+  física" a Actions, Intent, Ball e Core.
+- **CTest:** 12/14. `Character` e `AdaptivePhysics` falham como antes.
+
 ## Novo controle do atleta: Etapa 3, parte 3 — o movimento pedido na engine (10/10/2026, noite)
 
 - **`Athlete/Planning/MotionPlanner3D`:** a velocidade da cápsula pela

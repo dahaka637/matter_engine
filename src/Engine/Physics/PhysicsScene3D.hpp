@@ -405,6 +405,16 @@ public:
     // Impulso num ponto da superficie (N.s): muda velocidade e giro.
     void applyInflatedBallImpulse(InflatedBallHandle3D ball, Vec3 impulse,
         Vec3 worldPoint);
+    // Impulso linear (N.s) e angular (N.m.s) no centro: a mudanca exata de
+    // velocidade e de giro que o manejo pede (o resultado do toque).
+    void applyInflatedBallImpulses(InflatedBallHandle3D ball, Vec3 linearImpulse, Vec3 angularImpulse);
+    // Sensor (rework do manejo, 10/10/2026): nos subpassos da bola, os links
+    // de linkMask (bit i = link i) do boneco sao testados contra ela com esta
+    // folga (m), sem forca - tambem os do dono, que a atravessam. O primeiro
+    // encosto de cada tick sai em InflatedBallState3D::sensorTouch. Mascara 0
+    // desliga.
+    void setInflatedBallSensor(InflatedBallHandle3D ball, RagdollHandle3D ragdoll, std::uint64_t linkMask,
+        float marginMeters);
     void setInflatedBallFrozen(InflatedBallHandle3D ball, bool frozen);
     // Propriedades de uma bola existente (pressao, atrito...); o movimento
     // continua de onde estava.

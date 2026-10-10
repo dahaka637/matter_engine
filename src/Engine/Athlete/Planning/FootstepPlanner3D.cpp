@@ -33,6 +33,7 @@ void FootstepPlanner3D::reset(const RagdollProfile3D& profile, const FootstepSet
     m_feet = {};
     m_live = false;
     m_sinceLanding = 0.0f;
+    m_previousActing = -1;
     m_telemetry = {};
 }
 
@@ -166,15 +167,30 @@ std::array<FootTarget3D, 2> FootstepPlanner3D::plan(const FootstepStyle3D& style
     }
     const std::array<Vec3, 2> before { m_feet[0].position, m_feet[1].position };
 
+    // O pe que o gesto soltou: no chao, trava onde pousou (o estilo sem o
+    // gesto o poria em outro lugar); no ar, a mistura curta ate o estilo.
+    if (m_previousActing >= 0 && style.actingSide != m_previousActing) {
+        Foot& foot = m_feet[static_cast<std::size_t>(m_previousActing)];
+        if (foot.mode == FootMode3D::Free) {
+            if (onGround(m_previousActing, foot.position, foot.orientation)) lock(m_previousActing, foot.position,
+                foot.orientation);
+            else startOffset(m_previousActing, FootMode3D::Free, style);
+        }
+    }
+    m_previousActing = style.actingSide;
+
     // As trocas de modo pelo que o estilo diz (e pelo alcance da perna).
     for (int side = 0; side < 2; ++side) {
         Foot& foot = m_feet[static_cast<std::size_t>(side)];
         const std::size_t s = static_cast<std::size_t>(side);
         const bool free = style.scripted || !style.grounded || side == style.actingSide;
+        const bool reserved = side == style.reservedSide;
         switch (foot.mode) {
         case FootMode3D::Stance:
             if (free) {
                 startOffset(side, FootMode3D::Free, style);
+            } else if (reserved) {
+                // (O apoio do gesto: fica.)
             } else if (!style.planted[s]) {
                 startOffset(side, FootMode3D::Swing, style);
             } else if (moving && style.secondsToLiftoff[s] >= 0.0f && reach(side, style) > settings.reachLimit) {

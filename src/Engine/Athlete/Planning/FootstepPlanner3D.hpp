@@ -31,8 +31,11 @@ struct FootstepStyle3D {
     // (carrinho, arrancada agachada): sem isso, os pes seguem o estilo.
     bool grounded = true;
     bool scripted = false;
-    // A perna que o gesto da bola leva (-1 nenhuma): segue o estilo.
+    // A perna que o gesto da bola leva (-1 nenhuma): segue o estilo. E o pe
+    // de apoio reservado pelo gesto (-1 nenhum): fica no chao ate o gesto o
+    // soltar, mesmo com o estilo pedindo o balanco.
     int actingSide = -1;
+    int reservedSide = -1;
     // 0 parado ... 1 andando.
     float movingShare = 0.0f;
 };
@@ -139,7 +142,10 @@ public:
     void seed(const std::array<Vec3, 2>& position, const std::array<Quaternion, 2>& orientation,
         const std::array<bool, 2>& grounded);
     // Fora do modo padrao: o proximo plano comeca do corpo.
-    void clear() { m_live = false; }
+    void clear() {
+        m_live = false;
+        m_previousActing = -1;
+    }
     [[nodiscard]] std::array<FootTarget3D, 2> plan(const FootstepStyle3D& style, const FootstepSettings3D& settings,
         float deltaTime);
     [[nodiscard]] const FootstepTelemetry3D& telemetry() const { return m_telemetry; }
@@ -191,6 +197,9 @@ private:
     std::array<Foot, 2> m_feet {};
     bool m_live = false;
     float m_sinceLanding = 0.0f;
+    // A perna do gesto no tick anterior (a soltura dela trava o pe onde ele
+    // pousou).
+    int m_previousActing = -1;
     FootstepTelemetry3D m_telemetry;
 };
 

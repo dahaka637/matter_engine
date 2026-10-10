@@ -59,9 +59,10 @@ $checks = @(
             "-g", "!src/Engine/Athlete/AthleteSettings3D.hpp", "-g", "!src/Engine/Athlete/AthleteAssets3D.*")
     }
     @{
-        Name = "Atletas: planejamento e sintese trabalham com dados (sem a cena fisica nem o Jolt)"
+        Name = "Atletas: planejamento, sintese, acoes, pedidos e bola trabalham com dados (sem a cena fisica nem o Jolt; so os sentidos leem a fisica)"
         Arguments = @("-n", '#include "Engine/Physics/(PhysicsScene3D|PhysicsEngine3D)|Jolt', "src/Engine/Athlete/Planning",
-            "src/Engine/Athlete/Synthesis")
+            "src/Engine/Athlete/Synthesis", "src/Engine/Athlete/Actions", "src/Engine/Athlete/Intent",
+            "src/Engine/Athlete/Ball", "src/Engine/Athlete/Core")
     }
     @{
         Name = "Identidade antiga e prototipos removidos nao podem retornar"

@@ -516,6 +516,9 @@ private:
     // ficam onde pousaram (o clipe vira estilo). Desligada ate o usuario
     // aprovar (a chave A/B).
     bool m_footstepLocomotion = false;
+    // Manejo novo (10/10, Etapa 5): pedido com desfecho, gesto planejado e o
+    // sensor do pe; so com as pegadas. Desligado ate o usuario aprovar.
+    bool m_newBallHandling = false;
     // A regua "Resposta" da capsula no modo padrao (%; 100 = 16 / 22 / 30 m/s2
     // e 10 rad/s, os aprovados).
     float m_capsuleResponsePercent = 100.0f;

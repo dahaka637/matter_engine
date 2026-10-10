@@ -475,6 +475,13 @@ add_library(MatterEngine STATIC
     src/Engine/Animation/RagdollVisualPose3D.cpp
     src/Engine/Athlete/AthleteAssets3D.cpp
     src/Engine/Athlete/AthleteRuntime3D.cpp
+    src/Engine/Athlete/Actions/BallActionPlanner3D.cpp
+    src/Engine/Athlete/Actions/BallGesture3D.cpp
+    src/Engine/Athlete/Actions/BallHandling3D.cpp
+    src/Engine/Athlete/Ball/BallOutcome3D.cpp
+    src/Engine/Athlete/Intent/ActionQueue3D.cpp
+    src/Engine/Athlete/Sensing/BallPredictor3D.cpp
+    src/Engine/Athlete/Legacy/LegacyBallBridge3D.cpp
     src/Engine/Athlete/Body/ActiveBodyController3D.cpp
     src/Engine/Athlete/Body/ActiveStance3D.cpp
     src/Engine/Athlete/Body/SupportWrench3D.cpp

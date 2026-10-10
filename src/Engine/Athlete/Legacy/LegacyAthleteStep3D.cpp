@@ -1,5 +1,6 @@
 #include "Engine/Athlete/Legacy/LegacyAthleteStep3D.hpp"
 
+#include "Engine/Athlete/Legacy/LegacyBallBridge3D.hpp"
 #include "Engine/Athlete/Synthesis/LegSynthesis3D.hpp"
 
 #include "Engine/Character/CharacterControlApplication3D.hpp"
@@ -589,10 +590,126 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         output.controlledAnimatedSet = true;
         output.controlledAnimated = animated || active;
     }
-    // Manejo de bola (o personagem controlado): a bola mais perto, ate
-    // 3 m. O pedido (mouse) sai uma vez; o drible vai para as teclas (sem
-    // tecla, para onde olha), o chute para onde a camera olha.
-    if (command.controlled && !body.links.empty()) {
+    // Manejo novo (rework de 10/10/2026, Etapa 5): o pedido trava a bola, o
+    // planejador escolhe pe, superficie e instante, o gesto leva o pe ate la
+    // e o sensor do pe na bola da o evento unico - o resultado aprovado como
+    // impulso, sem impor a velocidade nem segurar a bola.
+    if (command.controlled && !body.links.empty() && settings.newBallHandlingActive()) {
+        BallHandling3D& handling = athlete.ballHandling;
+        if (!handling.ready()) handling.reset(profile);
+        const Vec3 pelvis = body.links.front().position;
+        // A bola do pedido em andamento; para um pedido novo, a mais perto
+        // (ate 3 m).
+        const std::uint64_t locked = handling.targetBallKey();
+        AthleteBall3D* target = nullptr;
+        AthleteBall3D* nearest = nullptr;
+        float best = 3.0f;
+        for (AthleteBall3D& ball : balls) {
+            if (!scene.contains(ball.handle) || ball.state == nullptr) continue;
+            if (locked != 0 && athleteBallKey3D(ball.handle) == locked) target = &ball;
+            const float distance = (ball.state->position - pelvis).length();
+            if (distance < best) { best = distance; nearest = &ball; }
+        }
+        BallHandlingInput3D in;
+        in.request = control.ballRequest != BallActionKind3D::None && nearest != nullptr;
+        if (in.request) {
+            const float look = command.facingYawRadians;
+            const Vec3 keys = command.intent.requestedDirectionWorld;
+            in.intent.kind = control.ballRequest;
+            in.intent.power = control.ballRequestPower;
+            in.intent.direction = keys.lengthSquared() > 1e-4f ? keys : Vec3 { std::cos(look), std::sin(look), 0.0f };
+            in.intent.aimYawRadians = control.ballRequest == BallActionKind3D::Shot ? control.ballRequestAimYaw : look;
+            in.intent.lift = control.ballRequestLift;
+            in.intent.curve = control.ballRequestCurve;
+            in.requestBallKey = athleteBallKey3D(nearest->handle);
+            if (target == nullptr && locked == 0) target = nearest;
+        }
+        control.ballRequest = BallActionKind3D::None;
+        output.ballRequestConsumed = true;
+        if (target == nullptr && in.request) target = nearest;
+        if (target != nullptr) {
+            const InflatedBallProfile3D ballProfile = scene.inflatedBallProfile(target->handle);
+            in.ball.valid = true;
+            in.ball.key = athleteBallKey3D(target->handle);
+            in.ball.position = target->state->position;
+            in.ball.velocity = target->state->linearVelocity;
+            in.ball.spin = target->state->angularVelocity;
+            in.ball.radius = ballProfile.radiusMeters;
+            in.ball.mass = ballProfile.massKg;
+            in.ball.sensor = target->state->sensorTouch;
+        }
+        // O corpo: a pose do tick anterior (a que o corpo seguiu), os pes
+        // onde as pegadas os puseram.
+        const RagdollAnimationPose3D& last = state.animationPose;
+        const AthleteLegs3D& legs = athlete.footsteps.ready() ? athlete.footsteps.legs() : resolveAthleteLegs3D(profile);
+        const bool havePose = last.linkPositions.size() == profile.links.size() && legs.valid;
+        const Vec3 capsuleVelocity = scene.characterState().velocity;
+        in.body.pelvis = havePose ? last.linkPositions.front() : pelvis;
+        in.body.facingYaw = state.defaultLocomotion.output().valid ? state.defaultLocomotion.output().facingYawRadians
+            : control.facingYawRadians;
+        in.body.velocity = { capsuleVelocity.x, capsuleVelocity.y, 0.0f };
+        in.body.groundHeight = groundHeight(pelvis);
+        in.body.moving = std::hypot(capsuleVelocity.x, capsuleVelocity.y) > 0.5f;
+        if (legs.valid) {
+            const Quaternion pelvisOrientation = havePose ? last.linkOrientations.front() : body.links.front().orientation;
+            for (std::size_t side = 0; side < 2; ++side) {
+                in.body.hip[side] = in.body.pelvis + pelvisOrientation.rotate(legs.hipInPelvis[side]);
+                const std::size_t foot = legs.foot[side];
+                if (athlete.footsteps.live()) {
+                    in.body.foot[side] = athlete.footTargets[side].position;
+                    in.body.footOrientation[side] = athlete.footTargets[side].orientation;
+                } else if (havePose) {
+                    in.body.foot[side] = last.linkPositions[foot];
+                    in.body.footOrientation[side] = last.linkOrientations[foot];
+                } else {
+                    in.body.foot[side] = body.links[foot].position;
+                    in.body.footOrientation[side] = body.links[foot].orientation;
+                }
+                in.footLinks[side] = static_cast<std::uint32_t>(foot);
+            }
+        }
+        // O centro de massa da pose anterior (o equilibrio no apoio).
+        if (havePose) {
+            Vec3 sum;
+            float mass = 0.0f;
+            for (std::size_t i = 0; i < profile.links.size(); ++i) {
+                const float m = std::max(0.0f, profile.links[i].massFraction);
+                sum += (last.linkPositions[i] + last.linkOrientations[i].rotate(profile.links[i].centerOfMassLocal)) * m;
+                mass += m;
+            }
+            in.centerOfMass = mass > 0.0f ? sum * (1.0f / mass) : in.body.pelvis;
+        } else {
+            in.centerOfMass = pelvis;
+        }
+        in.bodyVelocity = in.body.velocity;
+        in.aheadVelocity = { command.intent.requestedVelocityWorld.x, command.intent.requestedVelocityWorld.y, 0.0f };
+        in.deltaTime = deltaTime;
+        BallHandlingOutput3D& out = athlete.ballOutput;
+        handling.update(in, settings.ballForce, settings.ballHandling, out);
+        // A fisica: o impulso do toque, o sensor do pe (so na bola-alvo) e o
+        // dono (quem interage atravessa a bola com as pernas).
+        for (AthleteBall3D& ball : balls) {
+            if (!scene.contains(ball.handle)) continue;
+            const std::uint64_t key = athleteBallKey3D(ball.handle);
+            if (out.impulse && key == out.impulseBallKey)
+                scene.applyInflatedBallImpulses(ball.handle, out.linearImpulse, out.angularImpulse);
+            if (out.sensorActive && key == out.sensorBallKey)
+                scene.setInflatedBallSensor(ball.handle, slot.handle, 1ull << out.sensorLink, out.sensorMargin);
+            else
+                scene.setInflatedBallSensor(ball.handle, {}, 0, 0.0f);
+            if ((out.interacting && key == out.interactingBallKey)
+                || ((control.ballShotHeld || control.ballDribbleHeld) && nearest == &ball)) {
+                if (ball.ownership != nullptr) ball.ownership->interact(slot.entityId);
+                scene.setInflatedBallOwner(ball.handle, slot.handle);
+            }
+        }
+        command.ballGesture = legacyBallGesture3D(out.body);
+        state.ballLastOutput = {};
+        state.ballLastOutput.touched = out.touched;
+        state.ballSpeedScale = 1.0f;
+        state.ballStability = 0.0f;
+    } else if (command.controlled && !body.links.empty()) {
+        // (Manejo V3.)
         const Vec3 pelvis = body.links.front().position;
         AthleteBall3D* nearest = nullptr;
         float best = 3.0f;
@@ -942,7 +1059,12 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                     style.velocity = scene.characterState().velocity;
                     style.grounded = !out.airborne;
                     style.scripted = out.rootScripted || out.tackling || out.airTackle || out.crouchStarting;
-                    style.actingSide = input.ballGesture.legWeight > 0.3f ? input.ballGesture.side : -1;
+                    if (settings.newBallHandlingActive() && command.controlled) {
+                        style.actingSide = athlete.ballOutput.actingSide;
+                        style.reservedSide = athlete.ballOutput.reservedSide;
+                    } else {
+                        style.actingSide = input.ballGesture.legWeight > 0.3f ? input.ballGesture.side : -1;
+                    }
                     style.movingShare = out.movingShare;
                     athlete.footTargets = footsteps.plan(style, settings.footsteps, deltaTime);
                     athlete.legSynthesis = synthesizeAthleteLegs3D(profile, legs, footsteps.geometry(),

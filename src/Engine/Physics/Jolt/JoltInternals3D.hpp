@@ -248,6 +248,10 @@ struct PhysicsScene3D::Impl final : public JPH::ContactListener,
         InflatedBallState3D state;
         // O boneco que a maneja (setInflatedBallOwner).
         RagdollHandle3D owner;
+        // O sensor (setInflatedBallSensor): o boneco, os links e a folga.
+        RagdollHandle3D sensorRagdoll;
+        std::uint64_t sensorLinks = 0;
+        float sensorMargin = 0.0f;
         // Contato por corpo e por outra bola (slot) no tick anterior (para
         // eventos de impacto).
         std::vector<JPH::BodyID> previousContactBodies;

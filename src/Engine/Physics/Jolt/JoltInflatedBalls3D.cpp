@@ -69,6 +69,8 @@ struct BallCandidate {
     // so a repulsao macia.
     bool ragdoll = false;
     bool soft = false;
+    // Sensor (setInflatedBallSensor): so mede o encosto, sem forca.
+    bool sensor = false;
     std::uint64_t entityId = 0;
     std::uint32_t link = 0;
     // Dentro do tick: o que a reacao da bola mudou na velocidade e na posicao
@@ -175,6 +177,23 @@ void PhysicsScene3D::applyInflatedBallImpulse(InflatedBallHandle3D handle, Vec3 
         * (1.0f / InflatedBallModel3D::shellInertia(profile));
 }
 
+void PhysicsScene3D::applyInflatedBallImpulses(InflatedBallHandle3D handle, Vec3 linearImpulse, Vec3 angularImpulse) {
+    auto* record = m_impl->inflatedBall(handle);
+    if (!record) return;
+    const auto& profile = record->definition.profile;
+    record->state.linearVelocity += linearImpulse * (1.0f / profile.massKg);
+    record->state.angularVelocity += angularImpulse * (1.0f / InflatedBallModel3D::shellInertia(profile));
+}
+
+void PhysicsScene3D::setInflatedBallSensor(InflatedBallHandle3D handle, RagdollHandle3D ragdoll, std::uint64_t linkMask,
+    float marginMeters) {
+    auto* record = m_impl->inflatedBall(handle);
+    if (!record) return;
+    record->sensorRagdoll = ragdoll;
+    record->sensorLinks = linkMask;
+    record->sensorMargin = std::max(0.0f, marginMeters);
+}
+
 void PhysicsScene3D::setInflatedBallFrozen(InflatedBallHandle3D handle, bool frozen) {
     auto* record = m_impl->inflatedBall(handle);
     if (!record) return;
@@ -272,6 +291,7 @@ void PhysicsScene3D::Impl::stepInflatedBalls(float deltaTime) {
         const auto& profile = ball.record->definition.profile;
         state.compressionMeters = 0.0f;
         state.contactCount = 0;
+        state.sensorTouch = {};
         ball.restVolume = InflatedBallModel3D::restVolume(profile);
         ball.volume = ball.restVolume;
         ball.inertia = InflatedBallModel3D::shellInertia(profile);
@@ -305,9 +325,15 @@ void PhysicsScene3D::Impl::stepInflatedBalls(float deltaTime) {
                     const RagdollRecord* owner = ragdollSlots[identity.slotIndex].record.get();
                     if (owner != nullptr) {
                         guidedLink = owner->guided;
+                        // O sensor: o link pedido so mede (tambem o do dono).
+                        const bool sensed = ball.record->sensorLinks != 0
+                            && owner->handle == ball.record->sensorRagdoll && identity.linkIndex < 64
+                            && (ball.record->sensorLinks >> identity.linkIndex & 1u) != 0;
+                        if (sensed) {
+                            candidate.sensor = true;
                         // O dono da bola: quadril e pernas a atravessam; os
                         // links de cima so a repelem.
-                        if (owner->handle == ball.record->owner) {
+                        } else if (owner->handle == ball.record->owner) {
                             const bool upper = identity.linkIndex < 64
                                 && (owner->ballUpperBodyLinks >> identity.linkIndex & 1u) != 0;
                             if (!upper) continue;
@@ -358,12 +384,39 @@ void PhysicsScene3D::Impl::stepInflatedBalls(float deltaTime) {
                 transform.SetTranslation(transform.GetTranslation()
                     - toJolt(candidate.linearVelocity * remaining) + toJolt(candidate.displacement));
                 JPH::CollideShapeSettings collide;
-                collide.mMaxSeparationDistance = candidate.soft ? SoftMargin : 0.0f;
+                collide.mMaxSeparationDistance = candidate.sensor ? ball.record->sensorMargin
+                    : candidate.soft ? SoftMargin : 0.0f;
                 JPH::AllHitCollisionCollector<JPH::CollideShapeCollector> collector;
                 JPH::SubShapeIDCreator first, second;
                 JPH::CollisionDispatch::sCollideShapeVsShape(ball.sphere, candidate.shape,
                     JPH::Vec3::sOne(), JPH::Vec3::sOne(), JPH::Mat44::sTranslation(toJolt(state.position)),
                     JPH::Mat44(transform), first, second, collide, collector);
+                if (candidate.sensor) {
+                    // O sensor: o primeiro encosto do tick, sem forca.
+                    auto& touch = ball.record->state.sensorTouch;
+                    if (touch.touched) continue;
+                    for (const auto& result : collector.mHits) {
+                        const JPH::Vec3 axis = result.mPenetrationAxis;
+                        if (axis.LengthSq() < 1e-12f) continue;
+                        const float gap = -result.mPenetrationDepth;
+                        if (gap > ball.record->sensorMargin) continue;
+                        const Vec3 normal = fromJolt(axis.Normalized());
+                        const Vec3 point = state.position + normal * radius;
+                        const Vec3 centerNow = candidate.centerOfMassEnd - candidate.linearVelocity * remaining
+                            + candidate.displacement;
+                        const Vec3 linkVelocity = candidate.linearVelocity
+                            + cross(candidate.angularVelocity, point - centerNow);
+                        touch.touched = true;
+                        touch.timeSeconds = static_cast<float>(step + 1) * h;
+                        touch.pointWorld = point;
+                        touch.normalWorld = normal;
+                        touch.relativeVelocity = linkVelocity - state.linearVelocity;
+                        touch.link = candidate.link;
+                        touch.gapMeters = std::max(0.0f, gap);
+                        break;
+                    }
+                    continue;
+                }
                 if (candidate.soft) {
                     // Repulsao macia: o mais fundo do link.
                     BallSoftContact deepest;

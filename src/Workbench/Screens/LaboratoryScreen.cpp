@@ -2881,6 +2881,12 @@ void WorkbenchApp::drawLaboratoryUi() {
                         ImGui::Checkbox("Dedos do pé dobram no chão", &m_toeRoll);
                         hint("No fim do apoio o pé gira na base dos dedos, que ficam deitados no chão enquanto o calcanhar sobe (no modo padrão; no físico o pé é o bloco dele). Desligado, o pé gira na ponta, como antes.");
                         panelHeader("BOLA");
+                        ImGui::BeginDisabled(!m_defaultLocomotion || !m_footstepLocomotion);
+                        ImGui::Checkbox("Manejo novo", &m_newBallHandling);
+                        ImGui::EndDisabled();
+                        hint("O toque e o chute pelo planejador: escolhe o pé, a superfície e o instante do contato pela bola prevista, o gesto sai de onde o pé está (armado, batida, acompanhamento, pouso), o corpo prepara junto (pelve sobre o apoio, tronco, braços, olhar) e a força sai quando o pé encosta na bola. Todo pedido tem um desfecho (tocou, errou, fora do alcance, expirou). Só com a locomoção por pegadas. Desligado: o manejo de antes (as opções abaixo).");
+                        const bool newHandling = m_newBallHandling && m_defaultLocomotion && m_footstepLocomotion;
+                        ImGui::BeginDisabled(newHandling);
                         ImGui::Checkbox("Contato pela hitbox do pé", &m_ballHitboxContact);
                         hint("A força só sai quando a hitbox do pé (a caixa dele um pouco maior, para ajudar - a folga fica na aba \"Força na bola\") encosta na bola durante o gesto, vindo para ela. O rumo da bola é sempre o que você pediu (as teclas no toque, a mira no chute), nunca o do pé. Pedido sem gesto que alcance a bola em 0,25 s é descartado. Desligado: a força sai pelo tempo (abaixo), com a garantia do pedido com a bola na área.");
                         ImGui::BeginDisabled(m_ballHitboxContact);
@@ -2899,6 +2905,7 @@ void WorkbenchApp::drawLaboratoryUi() {
                         hint(reachHint);
                         ImGui::Checkbox("Sem gesto com a bola (só a força)", &m_ballForceOnly);
                         hint("Para testar a força isolada: o toque e o chute só aplicam a força na bola, na hora do pedido (com a bola dentro da área; fora dela, quando entrar em até 0,25 s), sem movimento de perna, sem esperar o pé e sem o gesto do chute.");
+                        ImGui::EndDisabled();
                         ImGui::EndTabItem();
                     }
                     // A forca na bola (07/10, pedido do usuario: "uma tab no menu do

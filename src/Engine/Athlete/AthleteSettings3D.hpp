@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Engine/Athlete/Actions/BallHandling3D.hpp"
 #include "Engine/Athlete/Body/ActiveBodyController3D.hpp"
 #include "Engine/Athlete/Body/ActiveStance3D.hpp"
 #include "Engine/Athlete/Planning/FootstepPlanner3D.hpp"
@@ -96,6 +97,14 @@ struct AthleteRuntimeSettings3D {
     // usuario aprovar (a chave A/B do laboratorio).
     bool footstepLocomotion = false;
     FootstepSettings3D footsteps;
+    // Manejo novo (Etapa 5): pedido com desfecho, planejador, gesto pelo
+    // estado, sensor do pe e o resultado aprovado como impulso. Desligado ate
+    // o usuario aprovar (a chave A/B "Manejo novo"). So vale com a locomocao
+    // por pegadas: e ela que reserva o apoio e trava o pe onde o gesto o
+    // pousou (sem ela o pe escorregava de volta ao lugar do clipe).
+    bool newBallHandling = false;
+    [[nodiscard]] bool newBallHandlingActive() const { return newBallHandling && footstepLocomotion; }
+    BallHandlingSettings3D ballHandling;
     // Manejo de bola.
     float ballContactTiming = 1.0f;
     bool ballHitboxContact = true;

@@ -130,6 +130,21 @@ struct InflatedBallContact3D {
     std::uint32_t otherRagdollLink = 0;
 };
 
+// O sensor da bola (setInflatedBallSensor): o primeiro encosto, no tick, de
+// um link pedido de um boneco - sem forca nenhuma. O instante (s desde o
+// comeco do tick, no subpasso), o ponto e a normal (da bola para o link), a
+// velocidade do link em relacao a bola no ponto, qual link e a folga que
+// sobrava (m; 0 encostado).
+struct InflatedBallSensorTouch3D {
+    bool touched = false;
+    float timeSeconds = 0.0f;
+    Vec3 pointWorld;
+    Vec3 normalWorld { 1.0f, 0.0f, 0.0f };
+    Vec3 relativeVelocity;
+    std::uint32_t link = 0;
+    float gapMeters = 0.0f;
+};
+
 struct InflatedBallState3D {
     Vec3 position;
     Quaternion orientation;
@@ -143,6 +158,8 @@ struct InflatedBallState3D {
     std::uint32_t contactCount = 0;
     static constexpr std::uint32_t MaximumContacts = 8;
     std::array<InflatedBallContact3D, MaximumContacts> contacts {};
+    // O encosto do sensor neste tick (ver InflatedBallSensorTouch3D).
+    InflatedBallSensorTouch3D sensorTouch;
     bool frozen = false;
 };
 
