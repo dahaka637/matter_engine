@@ -196,7 +196,8 @@ void SwingTouch3D::update(float now, const SwingLive3D& live, const ContactFeet3
             // a diferenca leva a velocidade da batida ~0,2 v T adiante - com
             // uma volta longa, 20 cm e a perna travada reta.)
             const float through = 0.2f * m_offsetVelocity.length() * m_followSpan;
-            if (through > s.followThrough) m_offsetVelocity = m_offsetVelocity * (s.followThrough / through);
+            const float most = m_plan.shot ? s.shotFollowThrough : s.followThrough;
+            if (through > most) m_offsetVelocity = m_offsetVelocity * (most / through);
         }
     }
     if (m_contacted) m_time += left;
@@ -209,6 +210,12 @@ void SwingTouch3D::update(float now, const SwingLive3D& live, const ContactFeet3
         const float u = std::clamp((m_time - m_start) / std::max(1e-3f, m_plan.contact - m_start), 0.0f, 1.0f);
         const float bump = m_lift * 16.0f * u * u * (1.0f - u) * (1.0f - u);
         ankle = m_position + Vec3 { 0.0f, 0.0f, bump };
+        // O armado do chute parado: o pe vai para tras e para cima no
+        // primeiro terco da ida (some no contato sem mudar a velocidade dele).
+        if (m_plan.shot && m_plan.step) {
+            const float windup = 6.75f * u * (1.0f - u) * (1.0f - u);
+            ankle += m_plan.push * (-s.shotWindupBack * windup) + Vec3 { 0.0f, 0.0f, s.shotWindupLift * windup };
+        }
         m_orientation = slerp(m_startOrientation, m_contactOrientation, smoother(u));
         weight = smooth((m_time - m_start) / BlendSeconds);
         progress = smoother(u);

@@ -59,8 +59,10 @@ public:
     [[nodiscard]] float startTime() const { return m_start; }
     [[nodiscard]] int side() const { return m_plan.side; }
     [[nodiscard]] const TouchPlan3D& plan() const { return m_plan; }
-    // O tornozelo no mundo agora (o ultimo alvo).
+    // O tornozelo no mundo agora (o ultimo alvo) e o da ida sem o arco nem o
+    // armado (a quintica: de onde o pe "vem" para o plano refeito).
     [[nodiscard]] Vec3 ankle() const { return m_ankle; }
+    [[nodiscard]] Vec3 approachAnkle() const { return m_contacted ? m_ankle : m_position; }
     [[nodiscard]] Quaternion orientation() const { return m_orientation; }
 
 private:

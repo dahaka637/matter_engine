@@ -149,7 +149,17 @@ struct DribbleSettings3D {
     float stepSpeed = 2.5f;
     float stepMinimum = 0.10f;
     float stepFollow = 0.14f;
-    float shotFollow = 0.20f;
+    float shotFollow = 0.30f;
+    // O chute: parado, o armado leva shotWindupMinimum..Maximum (s, pela
+    // forca) - o pe vai shotWindupBack (m) para tras e shotWindupLift para
+    // cima no primeiro terco da ida -; depois da batida o pe passa da bola ate
+    // shotFollowThrough (m) e volta em ate shotFollowMaximum (s).
+    float shotWindupMinimum = 0.15f;
+    float shotWindupMaximum = 0.27f;
+    float shotWindupBack = 0.22f;
+    float shotWindupLift = 0.12f;
+    float shotFollowThrough = 0.30f;
+    float shotFollowMaximum = 0.35f;
     // A batida: a velocidade do pe no contato, em relacao ao corpo, no rumo
     // do empurrao (m/s; mais a parte pela forca).
     // O preparo do chute com a bola atras: a sola a traz para a frente nesta

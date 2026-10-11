@@ -195,7 +195,7 @@ TouchPlan3D planTouch3D(const TouchPlanInput3D& in) {
                 // clipe, na ida e na volta: no sprint o pe saia do chute de
                 // calcanhar e chegava na bola em 0,1 s, a perna a 35 rad/s.)
                 const float extra = std::max(deviation / std::max(0.03f, t - startTime),
-                    deviation / std::max(0.03f, std::min(windowEnd, t + s.followMaximum) - t));
+                    deviation / std::max(0.03f, std::min(windowEnd, t + (shot ? s.shotFollowMaximum : s.followMaximum)) - t));
                 cost += s.deviationRateWeight * std::max(0.0f, extra - s.deviationRateFree);
             }
             clipFootAt(in, side, startTime, startFoot);
@@ -228,7 +228,7 @@ TouchPlan3D planTouch3D(const TouchPlanInput3D& in) {
             Vec3 landing = in.footNow[sd];
             float landingTime = t + (shot ? s.shotFollow : s.stepFollow);
             if (!step) {
-                landingTime = std::min(windowEnd, t + s.followMaximum);
+                landingTime = std::min(windowEnd, t + (shot ? s.shotFollowMaximum : s.followMaximum));
                 clipFootAt(in, side, landingTime, landing);
             }
             const float back = (in.body->toBody(landing, landingTime) - contactBody).length()
@@ -242,8 +242,12 @@ TouchPlan3D planTouch3D(const TouchPlanInput3D& in) {
         if (step) {
             // (Parado o passo comeca a tempo: o pe anda ate o contato. Refeito,
             // o resto do caminho no mesmo passo.)
-            const float natural = std::max(retarget ? 0.0f : s.stepMinimum,
+            float natural = std::max(retarget ? 0.0f : s.stepMinimum,
                 (contactBody - startBody).length() / std::max(0.5f, s.stepSpeed));
+            // (O chute parado arma: o pe vai para tras antes de vir.)
+            if (shot && !retarget)
+                natural = std::max(natural, s.shotWindupMinimum
+                    + (s.shotWindupMaximum - s.shotWindupMinimum) * std::clamp(in.intent.power, 0.0f, 1.0f));
             if (retarget) {
                 // (Refeito, o tempo do passo ja foi decidido no compromisso: o
                 // "resto natural" medido do pe que mal saiu empurrava o
@@ -268,7 +272,7 @@ TouchPlan3D planTouch3D(const TouchPlanInput3D& in) {
             float approach = std::max(0.03f, t - startTime);
             float follow = shot ? s.shotFollow : s.stepFollow;
             if (!step) {
-                const float followEnd = std::min(windowEnd, t + s.followMaximum);
+                const float followEnd = std::min(windowEnd, t + (shot ? s.shotFollowMaximum : s.followMaximum));
                 clipFootYawAt(in, side, startTime, startYaw);
                 clipFootYawAt(in, side, followEnd, endYaw);
                 follow = followEnd - t;
@@ -309,7 +313,7 @@ TouchPlan3D planTouch3D(const TouchPlanInput3D& in) {
         best.start = in.now + windowStart;
         best.contact = in.now + t;
         best.end = in.now + (step ? t + (shot ? s.shotFollow : s.stepFollow) : windowEnd);
-        best.followEnd = step ? best.end : in.now + std::min(windowEnd, t + s.followMaximum);
+        best.followEnd = step ? best.end : in.now + std::min(windowEnd, t + (shot ? s.shotFollowMaximum : s.followMaximum));
         best.surface = surface;
         best.style = style;
         best.push = push;

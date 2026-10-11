@@ -353,7 +353,7 @@ void Dribble3D::update(const BallHandlingInput3D& input, const DribbleGaitForeca
                 in.onlyWindowEnd = swing.plan().step ? -1.0f : swing.plan().end;
                 in.committedContact = swing.plan().contact;
                 in.committedStart = swing.plan().start;
-                in.swingFoot = swing.ankle() - swing.orientation().rotate(m_feet.legs.ankleInFoot[s]);
+                in.swingFoot = swing.approachAnkle() - swing.orientation().rotate(m_feet.legs.ankleInFoot[s]);
                 in.swingFootYaw = athleteFootHeading3D(m_feet.geometry, static_cast<int>(s), swing.orientation());
                 in.committedStyle = swing.plan().style;
                 in.committedSurface = swing.plan().surface;
@@ -371,7 +371,7 @@ void Dribble3D::update(const BallHandlingInput3D& input, const DribbleGaitForeca
             // (Nao coube mais - antes ou depois da trava: desiste.)
             if (swing.active() && swing.request() == request.id && !swing.contacted()) {
                 TouchPlanInput3D in = planInput(request, chain);
-                in.swingFoot = swing.ankle() - swing.orientation().rotate(m_feet.legs.ankleInFoot[s]);
+                in.swingFoot = swing.approachAnkle() - swing.orientation().rotate(m_feet.legs.ankleInFoot[s]);
                 if (!touchPlanFeasible3D(in, swing.plan(), settings.abortPaceShare)) {
                     if (std::getenv("XDRIBBLE"))
                         std::printf("  t %.3f DESISTE perna %zu | contato em %+.3f fim %+.3f\n", m_clock, s,
