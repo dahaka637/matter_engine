@@ -776,9 +776,8 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         }
         in.deltaTime = deltaTime;
         BallHandlingOutput3D& out = athlete.ballOutput;
-        BallPlaySettings3D play = settings.ballPlay;
-        play.contactTiming = std::clamp(settings.ballContactTiming, 0.0f, 1.0f);
-        handling.update(in, settings.ballForce, play, out);
+        in.footsteps = settings.footstepLocomotion && athlete.footsteps.live();
+        handling.update(in, settings.ballForce, settings.ballPlay, out);
         // A fisica: o impulso do toque, o sensor do pe (so na bola-alvo) e o
         // dono (quem interage atravessa a bola com as pernas).
         for (AthleteBall3D& ball : balls) {
@@ -938,6 +937,9 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         input.ballKick = command.ballKick;
         input.motionVariety = command.motionVariety;
         input.varietySeed = command.varietySeed;
+        // (O gesto com a bola entra na passada.)
+        input.phaseRateScale = settings.newBallHandlingActive() && command.controlled
+            ? athlete.ballOutput.gaitRateScale : 1.0f;
         DefaultLocomotionSettings3D& defaults = state.defaultLocomotion.settings();
         defaults.adaptiveTransitions = settings.defaultAdaptiveTransitions;
         defaults.toeRoll = settings.toeRoll;
@@ -1192,6 +1194,7 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                         style.reservedSide = athlete.ballOutput.reservedSide;
                         style.landingSide = athlete.ballOutput.landingSide;
                         style.landingShift = athlete.ballOutput.landingShift;
+                        style.quickPlantSide = athlete.ballOutput.quickPlantSide;
                     } else {
                         style.actingSide = input.ballGesture.legWeight > 0.3f ? input.ballGesture.side : -1;
                     }

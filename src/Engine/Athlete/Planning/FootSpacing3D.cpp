@@ -96,6 +96,10 @@ Vec3 footSpacingPush3D(const FootSole3D& moving, const FootSole3D& fixed, int si
 
 Vec3 footSpacingStep3D(Vec3 applied, Vec3 wanted, float deltaTime, const FootSpacingSettings3D& settings) {
     const float dt = std::max(deltaTime, 1e-4f);
+    // Precisando de mais, entra na hora (o pe so encosta na fronteira, que ja
+    // anda sem salto: com a mola, os dois pes no ar se aproximando depressa
+    // passavam da folga e cruzavam). Soltando, a mola.
+    if (wanted.lengthSquared() > applied.lengthSquared() + 1e-8f && dot(wanted, applied) >= 0.0f) return wanted;
     Vec3 change = (wanted - applied) * std::min(1.0f, dt / std::max(0.005f, settings.pushSeconds));
     const float most = settings.maximumPushSpeed * dt;
     const float length = change.length();

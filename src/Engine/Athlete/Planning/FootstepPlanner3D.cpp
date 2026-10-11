@@ -85,6 +85,7 @@ void FootstepPlanner3D::lock(int side, Vec3 position, Quaternion orientation) {
     foot.spacing = {};
     foot.quick = false;
     foot.pivoting = false;
+    foot.styleTilt = 1.0f;
     foot.position = position;
     foot.orientation = orientation;
     foot.yaw = athleteFootYaw3D(m_geometry, side, orientation);
@@ -102,7 +103,10 @@ void FootstepPlanner3D::startOffset(int side, FootMode3D mode, const FootstepSty
     // (A diferenca para o estilo de antes deste tick: o pe ainda nao andou
     // neste tick e o estilo ja - medindo do estilo de agora, o primeiro tick
     // perdia o passo do estilo e o pe ficava para tras de uma vez.)
-    foot.offset = foot.position - (foot.haveHistory ? foot.stylePrevious : style.position[s]);
+    // (No tick da soltura do gesto, o estilo de antes era o gesto: a diferenca
+    // vai contra o de agora.)
+    const bool fresh = !foot.haveHistory || side == m_releasedSide;
+    foot.offset = foot.position - (fresh ? style.position[s] : foot.stylePrevious);
     foot.liftReach = reach(side, style);
     foot.offsetYaw = athleteWrapAngle3D(athleteFootYaw3D(m_geometry, side, foot.orientation)
         - athleteFootYaw3D(m_geometry, side, style.orientation[s]));
@@ -209,8 +213,24 @@ FootstepPlanner3D::Tread FootstepPlanner3D::treadUnder(int side, Vec3 position, 
 bool FootstepPlanner3D::plant(int side, const FootstepStyle3D& style, const FootstepSettings3D& settings, bool quick) {
     Foot& foot = m_feet[static_cast<std::size_t>(side)];
     const std::size_t s = static_cast<std::size_t>(side);
-    const Vec3 base = foot.position + foot.spacing;
-    const Quaternion orientation = foot.orientation;
+    Vec3 base = foot.position + foot.spacing;
+    if (quick && m_hipKnown) {
+        // O pouso rapido vai para baixo do quadril, um pouco a frente no rumo
+        // do movimento (onde um passo pousaria): embaixo de onde o pe esta no
+        // ar - muitas vezes atras do corpo - a perna esticava e o pe era
+        // arrastado.
+        const Vec3 velocity = planar(style.velocity);
+        const Vec3 under = planar(m_hip[s]) + velocity * settings.quickPlantLead;
+        base = { under.x, under.y, base.z };
+    }
+    // (Com o estilo no balanco - o pouso rapido, o gesto que pousa antes -, o
+    // pe vai plano ao chao, no rumo que tem: ele fica segurado plano.)
+    const bool styleAir = !style.planted[s];
+    const Quaternion orientation = styleAir
+        ? (athleteYawRotation3D(athleteWrapAngle3D(athleteFootYaw3D(m_geometry, side, foot.orientation)
+                                    - athleteFootYaw3D(m_geometry, side, m_geometry.flat[s])))
+              * m_geometry.flat[s]).normalized()
+        : foot.orientation;
     // (Sem o chao de verdade, o do estilo - os bonecos sem a sonda.)
     const auto styleRule = [&]() {
         if (m_styleGround < 1e8f && lowestSole(side, base, orientation) >= m_styleGround + settings.landingHeight)
@@ -267,12 +287,14 @@ bool FootstepPlanner3D::plant(int side, const FootstepStyle3D& style, const Foot
     const float travel = (target - base).length();
     if (!quick && travel <= settings.lockSnap) {
         lock(side, target, orientation);
+        if (styleAir) foot.styleTilt = 0.0f;
         return true;
     }
     const float seconds = quick ? settings.quickPlantSeconds
         : std::clamp(travel / std::max(0.1f, settings.landSpeed), settings.landMinimumSeconds, settings.landMaximumSeconds);
     startLand(side, target, orientation, seconds, style.position[s]);
     foot.quick = quick;
+    foot.landFlat = styleAir;
     foot.landFollow = !quick && gap > settings.landFollowHeight;
     if (quick) ++m_telemetry.quickPlants;
     return true;
@@ -289,7 +311,7 @@ FootTarget3D FootstepPlanner3D::stance(int side, const FootstepStyle3D& style, c
         // O giro brusco: o estilo quer o pe virado muito alem do travado - ele
         // gira no ponto que toca o chao (a ponta ou o calcanhar), sem torcer a
         // perna.
-        const float difference = athleteWrapAngle3D(styleYaw - foot.yaw);
+        const float difference = style.planted[s] ? athleteWrapAngle3D(styleYaw - foot.yaw) : 0.0f;
         const bool turn = std::abs(difference) > settings.pivotStartRadians
             || (foot.pivoting && std::abs(difference) > settings.pivotStopRadians);
         if (turn && !foot.pivoting) ++m_telemetry.pivots;
@@ -299,8 +321,20 @@ FootTarget3D FootstepPlanner3D::stance(int side, const FootstepStyle3D& style, c
             foot.yaw = athleteWrapAngle3D(foot.yaw + std::clamp(difference, -most, most));
         }
     }
-    const Quaternion orientation = (athleteYawRotation3D(athleteWrapAngle3D(foot.yaw - styleYaw))
-        * style.orientation[s]).normalized();
+    // (Segurado no chao com o estilo no balanco - o pouso do gesto antes do
+    // clipe -, o pe fica plano: com a inclinacao do pe do clipe no ar, ele
+    // rolava na ponta e a origem andava de uma vez. A troca e uma mistura.)
+    {
+        const float wanted = style.planted[s] ? 1.0f : 0.0f;
+        const float step = std::max(deltaTime, 1e-4f) / std::max(0.01f, settings.tiltBlendSeconds);
+        foot.styleTilt = std::clamp(foot.styleTilt + std::clamp(wanted - foot.styleTilt, -step, step), 0.0f, 1.0f);
+    }
+    const Quaternion withStyle = (athleteYawRotation3D(athleteWrapAngle3D(foot.yaw - styleYaw)) * style.orientation[s])
+        .normalized();
+    const Quaternion flat = (athleteYawRotation3D(athleteWrapAngle3D(foot.yaw
+                                 - athleteFootYaw3D(m_geometry, side, m_geometry.flat[s])))
+        * m_geometry.flat[s]).normalized();
+    const Quaternion orientation = nlerp(flat, withStyle, smooth(foot.styleTilt));
     const Vec3 heel = orientation.rotate(m_geometry.heel[s]);
     const Vec3 toe = orientation.rotate(m_geometry.toeBase[s]);
     bool toePivot = foot.toePivot;
@@ -331,6 +365,8 @@ std::array<FootTarget3D, 2> FootstepPlanner3D::plan(const FootstepStyle3D& style
             { ground && style.planted[0] && style.actingSide != 0, ground && style.planted[1] && style.actingSide != 1 });
     }
     m_sinceLanding += dt;
+    // O pe que o gesto solta neste tick (o estilo dele salta do gesto ao clipe).
+    m_releasedSide = m_previousActing >= 0 && style.actingSide != m_previousActing ? m_previousActing : -1;
     // O corpo no chao ha quanto tempo: depois do ar, nada trava antes de
     // groundedSettleSeconds (a capsula que raspa uma borda num tick).
     m_groundedTime = style.grounded && !style.scripted ? m_groundedTime + dt : 0.0f;
@@ -345,7 +381,12 @@ std::array<FootTarget3D, 2> FootstepPlanner3D::plan(const FootstepStyle3D& style
     const bool moving = style.movingShare >= settings.settleMovingShare;
     for (std::size_t side = 0; side < 2; ++side) {
         Foot& foot = m_feet[side];
-        if (foot.haveHistory) foot.styleVelocity = (style.position[side] - foot.stylePrevious) * (1.0f / dt);
+        // (No tick em que o gesto solta o pe, o estilo dele salta do gesto para
+        // o clipe: essa diferenca nao e velocidade - medida, o pe saia do apoio
+        // a dezenas de m/s.)
+        const bool releasedNow = m_releasedSide == static_cast<int>(side);
+        if (foot.haveHistory && !releasedNow) foot.styleVelocity = (style.position[side] - foot.stylePrevious) * (1.0f / dt);
+        else if (releasedNow) foot.styleVelocity = {};
         // (Os quadris do estilo: a canela de cada pe para o espaco entre eles.)
         m_hip[side] = style.rootPosition + style.rootOrientation.rotate(m_legs.hipInPelvis[side]);
     }
@@ -361,12 +402,25 @@ std::array<FootTarget3D, 2> FootstepPlanner3D::plan(const FootstepStyle3D& style
         const std::size_t released = static_cast<std::size_t>(m_previousActing);
         Foot& foot = m_feet[released];
         if (foot.mode == FootMode3D::Free) {
-            if (!style.planted[released] && style.grounded && !style.scripted) {
+            const float touchdown = style.secondsToTouchdown[released];
+            if (!style.planted[released] && style.grounded && !style.scripted && settled
+                && plant(m_previousActing, style, settings)) {
+                // (O gesto pousou o pe antes do clipe: ele fica no chao - um
+                // passo de verdade - esperando o pouso do clipe ate
+                // releaseWaitSeconds, ou a perna no fim do alcance; levantar de
+                // novo na hora dava o tranco.)
+                foot.releaseWait = touchdown >= 0.0f ? std::clamp(touchdown + 0.02f, 0.05f, settings.releaseWaitSeconds)
+                                                     : settings.releaseWaitSeconds;
+            } else if (!style.planted[released] && style.grounded && !style.scripted) {
                 startOffset(m_previousActing, FootMode3D::Swing, style);
+                // (Contra o estilo de agora: o do tick anterior ainda tinha o
+                // gesto, e o pe saltava de uma vez para o clipe.)
+                foot.offset = foot.position - style.position[released];
+                foot.liftVelocity = {};
             } else if (style.grounded && !style.scripted && settled && plant(m_previousActing, style, settings)) {
                 foot.releaseWait = settings.releaseWaitSeconds;
             } else {
-                startOffset(m_previousActing, FootMode3D::Free, style);
+                startFree(m_previousActing, style);
             }
         }
     }
@@ -389,9 +443,14 @@ std::array<FootTarget3D, 2> FootstepPlanner3D::plan(const FootstepStyle3D& style
                 startFree(side, style);
             } else if (reserved) {
                 // (O apoio do gesto: fica.)
-            } else if (foot.releaseWait > 0.0f) {
-                // (Pousado pelo gesto antes do estilo: espera o dele.)
+            } else if (foot.releaseWait > 0.0f && !(moving && reach(side, style) > settings.reachLimit)) {
+                // (Pousado pelo gesto antes do estilo: espera o dele - ou a
+                // perna no fim do alcance.)
                 foot.releaseWait = std::max(0.0f, foot.releaseWait - dt);
+            } else if (foot.releaseWait > 0.0f) {
+                foot.releaseWait = 0.0f;
+                startOffset(side, FootMode3D::Swing, style);
+                ++m_telemetry.earlyLifts;
             } else if (!style.planted[s]) {
                 startOffset(side, FootMode3D::Swing, style);
             } else if (moving && style.secondsToLiftoff[s] >= 0.0f && reach(side, style) > settings.reachLimit) {
@@ -636,7 +695,9 @@ std::array<FootTarget3D, 2> FootstepPlanner3D::plan(const FootstepStyle3D& style
                     foot.orientation = foot.landOrientation;
                     if (!plant(side, style, settings)) startOffset(side, FootMode3D::Free, style);
                 } else {
+                    const bool flatLanding = foot.landFlat;
                     lock(side, at, foot.landOrientation);
+                    if (flatLanding && !style.planted[s]) foot.styleTilt = 0.0f;
                     // (O pouso rapido espera o estilo pousar o dele.)
                     if (quick) foot.releaseWait = settings.releaseWaitSeconds;
                 }

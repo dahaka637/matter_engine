@@ -1332,6 +1332,9 @@ void DefaultLocomotion3D::update(const RagdollProfile3D& profile,
         }
     }
     {
+        // (O gesto com a bola acelera ou freia a passada; os tempos dos pes na
+        // saida vem neste ritmo.)
+        rate *= std::clamp(input.phaseRateScale, 0.3f, 3.0f);
         const float before = m_phase;
         m_phase = fraction(m_phase + rate * dt);
         m_strides += m_phase < before ? 1.0f : 0.0f;

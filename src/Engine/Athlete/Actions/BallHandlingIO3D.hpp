@@ -91,6 +91,9 @@ struct BallHandlingInput3D {
     // O corpo segue a animacao (o padrao): a velocidade "a frente" do toque e
     // a dele prevista (no fisico, a de agora - como no manejo V3).
     bool animatedBody = true;
+    // As pegadas ligadas: o pe que pousa do movimento fica preso por elas (a
+    // perna sai dele sem mistura).
+    bool footsteps = false;
     // O link do pe de cada lado (o sensor).
     std::array<std::uint32_t, 2> footLinks {};
     float deltaTime = 1.0f / 120.0f;
@@ -118,6 +121,11 @@ struct BallHandlingOutput3D {
     // desviado do pouso do estilo por landingShift.
     int landingSide = -1;
     Vec3 landingShift;
+    // O ritmo da passada (o movimento padronizado entra nela: o clipe pousa o
+    // pe do toque quando o movimento pousa) e o pe de apoio que pousa ja (-1
+    // nenhum).
+    float gaitRateScale = 1.0f;
+    int quickPlantSide = -1;
     // Interagindo (o pedido ou o gesto): vira o dono da bola.
     bool interacting = false;
     std::uint64_t interactingBallKey = 0;

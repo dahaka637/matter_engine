@@ -127,6 +127,8 @@ struct FootstepSettings3D {
     // que o pe rola.
     float toeRollMeters = 0.08f;
     float pivotSwitchHeight = 0.004f;
+    // A troca entre o pe plano e a inclinacao do estilo no apoio (s).
+    float tiltBlendSeconds = 0.08f;
     // O chao de verdade (plano v3): o pe so trava com a sola ate lockHeight
     // (m) do chao embaixo dele; mais alto (ate landMaxGap m), ele desce ate o
     // chao numa curva curta (a landSpeed m/s, entre landMinimumSeconds e
@@ -167,8 +169,10 @@ struct FootstepSettings3D {
     float pivotStartRadians = 0.8f;
     float pivotStopRadians = 0.5f;
     float pivotRate = 6.0f;
-    // O pouso rapido do gesto (s).
-    float quickPlantSeconds = 0.07f;
+    // O pouso rapido do gesto (s): embaixo do quadril, a frente no rumo do
+    // movimento a velocidade vezes quickPlantLead (s).
+    float quickPlantSeconds = 0.09f;
+    float quickPlantLead = 0.06f;
     // O espaco entre os pes (cada um do seu lado, o que anda contorna o outro).
     FootSpacingSettings3D spacing;
 };
@@ -299,6 +303,8 @@ private:
         // fica no lugar.
         Vec3 landShift;
         bool landFollow = false;
+        // A descida vai ao pe plano (o estilo no balanco).
+        bool landFlat = false;
         // O tempo descendo, somadas as descidas refeitas (s): passou de
         // landGiveUpSeconds, o pe desiste e segue o estilo (a borda que nao da
         // lugar enquanto o corpo vai embora).
@@ -310,6 +316,9 @@ private:
         // Do lado errado do outro pe no tick anterior (so assim ele pode
         // ficar la, contornando).
         bool crossed = false;
+        // Apoiado: o quanto vale a inclinacao do pe do estilo (1) contra o pe
+        // plano (0, segurado no chao com o estilo no balanco), numa mistura.
+        float styleTilt = 1.0f;
     };
     // O pe vai ao chao de verdade embaixo dele: trava ja (perto), desce
     // (acima) ou nada (longe do chao; devolve falso).
@@ -354,6 +363,7 @@ private:
     // A perna do gesto no tick anterior (a soltura dela trava o pe onde ele
     // pousou).
     int m_previousActing = -1;
+    int m_releasedSide = -1;
     FootstepTelemetry3D m_telemetry;
 };
 
