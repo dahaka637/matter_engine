@@ -1,8 +1,6 @@
 #include "Engine/Athlete/Actions/BallMove3D.hpp"
 
 #include <cmath>
-#include <cstdio>
-#include <cstdlib>
 
 namespace MatterEngine {
 namespace {
@@ -288,9 +286,6 @@ void BallMove3D::beginLand(const BallMoveLive3D& live, const BallMoveSettings3D&
         if (lateral < s.landGap) target.y = support.y + s.landGap * out;
     }
     target.z = m_ankleHeight;
-    if (std::getenv("XPOUSO"))
-        std::printf("  pouso: quadril local %.3f %.3f %.3f altura %.3f perna %.3f lado %.3f max %.3f | alvo local %.3f %.3f | v %.2f T %.3f\n",
-            hipLocal.x, hipLocal.y, hipLocal.z, height, leg, across, most, target.x, target.y, speed, landSeconds);
     // (O corpo anda ate o pouso: o alvo vai com ele.)
     m_landTarget = live.pelvisGround + planar(live.bodyVelocity) * landSeconds + toWorld(target, live.facingYaw);
     m_phase = BallMovePhase3D::Land;
