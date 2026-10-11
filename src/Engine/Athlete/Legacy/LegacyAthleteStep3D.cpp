@@ -1196,6 +1196,23 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                         style.actingSide = input.ballGesture.legWeight > 0.3f ? input.ballGesture.side : -1;
                     }
                     style.movingShare = out.movingShare;
+                    // (Plano v3: o lado de cada pe pelo rumo do corpo e o chao de
+                    // verdade para travar.)
+                    {
+                        // (O rumo do quadril do estilo: no strafe a pelve gira
+                        // para o lado do movimento.)
+                        const Vec3 hips = (rootOrientation * profile.links.front().modelOrientation.conjugate())
+                                              .rotate({ 1.0f, 0.0f, 0.0f });
+                        style.facingYaw = hips.x * hips.x + hips.y * hips.y > 1e-6f ? std::atan2(hips.y, hips.x)
+                                                                                     : out.facingYawRadians;
+                    }
+                    if (input.groundAt) {
+                        const auto probe = input.groundAt;
+                        style.groundAt = [probe](Vec3 point) {
+                            const GroundProbeResult3D hit = probe(point);
+                            return FootGround3D { hit.hasSurface, hit.pointWorld.z };
+                        };
+                    }
                     athlete.footTargets = footsteps.plan(style, settings.footsteps, deltaTime);
                     athlete.legSynthesis = synthesizeAthleteLegs3D(profile, legs, footsteps.geometry(),
                         athlete.footTargets, rootPosition, rootOrientation, coordinates, pose);

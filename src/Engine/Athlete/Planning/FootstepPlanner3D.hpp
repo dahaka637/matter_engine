@@ -2,14 +2,23 @@
 
 #include "Engine/Athlete/Core/CriticalSpring3D.hpp"
 #include "Engine/Athlete/Core/FootGeometry3D.hpp"
+#include "Engine/Athlete/Planning/FootSpacing3D.hpp"
 #include "Engine/Math/Quaternion.hpp"
 #include "Engine/Math/Vec3.hpp"
 #include "Engine/Physics/RagdollProfile3D.hpp"
 
 #include <array>
 #include <cstdint>
+#include <functional>
 
 namespace MatterEngine {
+
+// O chao de verdade num ponto (o runtime le da cena; o planejador so ve o
+// dado): ha chao embaixo e a altura dele.
+struct FootGround3D {
+    bool known = false;
+    float height = 0.0f;
+};
 
 // O que o estilo (hoje o modo padrao, pelos clipes) diz dos pes neste tick:
 // onde poria cada um (a origem do link e a orientacao, no mundo), quem esta
@@ -44,6 +53,14 @@ struct FootstepStyle3D {
     Vec3 landingShift;
     // 0 parado ... 1 andando.
     float movingShare = 0.0f;
+    // Para onde o quadril do estilo olha (rad): o lado de cada pe.
+    float facingYaw = 0.0f;
+    // O chao de verdade num ponto (o pe so trava nele; sem, o do estilo).
+    std::function<FootGround3D(Vec3)> groundAt;
+    // O pouso rapido (o gesto da bola que troca o apoio): este pe (-1 nenhum)
+    // vai ao chao ja, embaixo de onde esta, e fica apoiado enquanto o gesto
+    // o reserva.
+    int quickPlantSide = -1;
 };
 
 struct FootstepSettings3D {
@@ -65,6 +82,10 @@ struct FootstepSettings3D {
     // fracao do comprimento (do quadril ao tornozelo): um pe nao fica no
     // chao alem do alcance.
     float reachLimit = 0.985f;
+    // Andando, o estilo levando o pe apoiado para mais longe que isto do
+    // lugar travado (m; o pouso numa plataforma, a troca de marcha): o pe sai
+    // e da o passo ate ele, em vez de ficar preso para tras.
+    float driftRelease = 0.25f;
     // A saida do apoio: o balanco parte com a velocidade que o pe tinha (o do
     // estilo ja anda) e a diferenca some neste tempo (s).
     float liftBlendSeconds = 0.10f;
@@ -106,11 +127,56 @@ struct FootstepSettings3D {
     // que o pe rola.
     float toeRollMeters = 0.08f;
     float pivotSwitchHeight = 0.004f;
+    // O chao de verdade (plano v3): o pe so trava com a sola ate lockHeight
+    // (m) do chao embaixo dele; mais alto (ate landMaxGap m), ele desce ate o
+    // chao numa curva curta (a landSpeed m/s, entre landMinimumSeconds e
+    // landMaximumSeconds); mais alto que isso (a borda de uma plataforma),
+    // segue o estilo. No degrau o pe vai para onde a sola inteira cabe numa
+    // altura so (ate treadSearch m para a frente ou para tras; a diferenca de
+    // treadTolerance m entre calcanhar e dedos e uma quina).
+    float lockHeight = 0.025f;
+    // A correcao que a trava faz de uma vez (m); mais que isso, a descida
+    // curta (de uma vez o alvo saltava e o pe do corpo escorregava).
+    float lockSnap = 0.006f;
+    // No fim do balanco (a menos disto do pouso, s) o pe ja vai para onde a
+    // sola cabe no degrau (o desvio entra numa mola de treadShiftSeconds s).
+    float treadLookahead = 0.22f;
+    float treadShiftSeconds = 0.06f;
+    // A descida acompanha o estilo no plano so com o pe mais alto que isto
+    // acima do chao (m; o pouso de um pulo), no maximo a landFollowSpeed m/s
+    // (o pe "apoiado" do clipe desliza nas misturas de marcha).
+    float landFollowHeight = 0.05f;
+    float landFollowSpeed = 8.0f;
+    float landGiveUpSeconds = 0.15f;
+    float landMaxGap = 0.45f;
+    float landSpeed = 1.6f;
+    float landMinimumSeconds = 0.04f;
+    float landMaximumSeconds = 0.12f;
+    float treadSearch = 0.16f;
+    float treadTolerance = 0.025f;
+    // Uma diferenca maior que esta (m) sob a sola e uma borda: sem lugar plano
+    // perto, o pe nao apoia ali.
+    float edgeHeight = 0.08f;
+    // Depois do ar (pulo, queda, a capsula raspando uma borda), o corpo fica
+    // no chao por isto (s) antes de qualquer pe travar: a capsula que encosta
+    // um tick na borda de uma plataforma nao prende o pe la.
+    float groundedSettleSeconds = 0.06f;
+    // O pe apoiado gira na ponta (ou no calcanhar) quando o estilo o quer
+    // virado mais que pivotStartRadians: ate pivotStopRadians, no maximo a
+    // pivotRate rad/s (o giro brusco sem torcer a perna).
+    float pivotStartRadians = 0.8f;
+    float pivotStopRadians = 0.5f;
+    float pivotRate = 6.0f;
+    // O pouso rapido do gesto (s).
+    float quickPlantSeconds = 0.07f;
+    // O espaco entre os pes (cada um do seu lado, o que anda contorna o outro).
+    FootSpacingSettings3D spacing;
 };
 
 // O pe para a sintese: travado no apoio, no balanco, num passo de
 // acomodacao, ou livre (o do estilo).
-enum class FootMode3D : std::uint8_t { Free, Stance, Swing, Step };
+// (Land: descendo ate o chao de verdade para travar.)
+enum class FootMode3D : std::uint8_t { Free, Stance, Swing, Step, Land };
 
 struct FootTarget3D {
     FootMode3D mode = FootMode3D::Free;
@@ -128,10 +194,21 @@ struct FootstepTelemetry3D {
     int settleSteps = 0;
     int catchSteps = 0;
     int startSteps = 0;
+    // Plano v3: as descidas ao chao, os giros do pe apoiado, a maior
+    // correcao do espaco entre os pes (m) e os pousos rapidos.
+    int lands = 0;
+    int pivots = 0;
+    float worstSpacingPush = 0.0f;
+    int quickPlants = 0;
 };
 
-// O dono dos pes no modo padrao (Etapa 3, v1): o estilo diz quando cada pe
-// apoia e a forma do balanco; os pes do corpo nao escorregam.
+// O dono dos pes no modo padrao (Etapa 3, refeito no plano v3): o estilo diz
+// quando cada pe apoia e a forma do balanco; os pes do corpo nao escorregam.
+//  - Trava so no chao de verdade (style.groundAt), com o corpo no chao ha um
+//    tempo: no ar nada trava, e o pe que encostou numa plataforma nao fica
+//    preso la. Acima do chao, ele desce ate la; no degrau, onde a sola cabe.
+//  - Cada pe do seu lado e o que anda contorna o outro (FootSpacing3D); o pe
+//    apoiado gira na ponta no giro brusco.
 //  - Apoio: o pe fica onde pousou, no rumo em que pousou. Ele rola no
 //    calcanhar (no comeco) e na base dos dedos (no fim) como o estilo o
 //    inclina: o ponto que toca o chao nao sai do lugar. Andando, sai antes
@@ -209,14 +286,57 @@ private:
         float releaseWait = 0.0f;
         // O desvio do pouso aplicado no balanco (a passada de apoio).
         SmoothSpring3D<Vec3> landingShift;
+        // A correcao do espaco entre os pes aplicada (fora da posicao: ela
+        // entra na saida e, no travar, no lugar travado).
+        Vec3 spacing;
+        // A descida (Land) e o pouso rapido: para onde e a orientacao.
+        Vec3 landTo;
+        Quaternion landOrientation;
+        bool quick = false;
+        // A descida acompanha o estilo no plano (o pouso de um pulo: o pe do
+        // clipe ainda anda com o corpo), com este desvio dele (no degrau, a
+        // sola inteira numa altura; o espaco entre os pes); o pouso rapido
+        // fica no lugar.
+        Vec3 landShift;
+        bool landFollow = false;
+        // O tempo descendo, somadas as descidas refeitas (s): passou de
+        // landGiveUpSeconds, o pe desiste e segue o estilo (a borda que nao da
+        // lugar enquanto o corpo vai embora).
+        float landTotal = 0.0f;
+        // O desvio do balanco para o degrau (a sola inteira numa altura).
+        SmoothSpring3D<Vec3> treadShift;
+        // Apoiado: girando na ponta (o giro brusco).
+        bool pivoting = false;
+        // Do lado errado do outro pe no tick anterior (so assim ele pode
+        // ficar la, contornando).
+        bool crossed = false;
     };
+    // O pe vai ao chao de verdade embaixo dele: trava ja (perto), desce
+    // (acima) ou nada (longe do chao; devolve falso).
+    bool plant(int side, const FootstepStyle3D& style, const FootstepSettings3D& settings, bool quick = false);
+    // A altura do chao embaixo da sola (calcanhar e dedos) e se e uma altura
+    // so; sem chao conhecido, conhecido = falso.
+    struct Tread {
+        bool known = false;
+        bool level = true;
+        // Uma borda alta: alturas que diferem mais que edgeHeight (ou sem chao
+        // embaixo de parte da sola).
+        bool edge = false;
+        float height = 0.0f;
+    };
+    [[nodiscard]] Tread treadUnder(int side, Vec3 position, Quaternion orientation, const FootstepStyle3D& style,
+        const FootstepSettings3D& settings) const;
+    void startLand(int side, Vec3 to, Quaternion orientation, float seconds, Vec3 styleNow);
+    [[nodiscard]] FootSole3D soleOf(int side, Vec3 position, Quaternion orientation,
+        const FootstepSettings3D& settings) const;
     void lock(int side, Vec3 position, Quaternion orientation);
     void startOffset(int side, FootMode3D mode, const FootstepStyle3D& style);
     void startFree(int side, const FootstepStyle3D& style);
     void startStep(int side, float seconds, float height);
     [[nodiscard]] float lowestSole(int side, Vec3 position, Quaternion orientation) const;
     [[nodiscard]] float reach(int side, const FootstepStyle3D& style) const;
-    [[nodiscard]] FootTarget3D stance(int side, const FootstepStyle3D& style, const FootstepSettings3D& settings);
+    [[nodiscard]] FootTarget3D stance(int side, const FootstepStyle3D& style, const FootstepSettings3D& settings,
+        float deltaTime);
 
     bool m_ready = false;
     AthleteLegs3D m_legs;
@@ -224,6 +344,13 @@ private:
     std::array<Foot, 2> m_feet {};
     bool m_live = false;
     float m_sinceLanding = 0.0f;
+    // Ha quanto tempo o corpo esta no chao (s; grande sem ar recente).
+    float m_groundedTime = 10.0f;
+    // A altura do chao pelo estilo neste tick (sem o chao de verdade).
+    float m_styleGround = 1e9f;
+    // Os quadris do estilo neste tick.
+    std::array<Vec3, 2> m_hip {};
+    bool m_hipKnown = false;
     // A perna do gesto no tick anterior (a soltura dela trava o pe onde ele
     // pousou).
     int m_previousActing = -1;

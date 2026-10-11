@@ -489,6 +489,7 @@ add_library(MatterEngine STATIC
     src/Engine/Athlete/Body/SupportWrench3D.cpp
     src/Engine/Athlete/Core/FootGeometry3D.cpp
     src/Engine/Athlete/Core/Kinematics3D.cpp
+    src/Engine/Athlete/Planning/FootSpacing3D.cpp
     src/Engine/Athlete/Planning/FootstepPlanner3D.cpp
     src/Engine/Athlete/Planning/MotionPlanner3D.cpp
     src/Engine/Athlete/Sensing/BodyObservation3D.cpp
