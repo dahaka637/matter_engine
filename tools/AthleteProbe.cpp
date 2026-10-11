@@ -1326,6 +1326,10 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
             metrics.abortedTouches += athlete.dribbleOutput.aborted;
             metrics.missedTouches += athlete.dribbleOutput.missed;
             metrics.mergedRequests += athlete.dribbleOutput.merged;
+            // (O clique juntado - o pendente mais novo que virou o clique novo -
+            // sai da fila do atraso: sem isso o toque pareava com ele.)
+            for (int k = 0; k < athlete.dribbleOutput.merged && metrics.pendingRequests.size() >= 2; ++k)
+                metrics.pendingRequests.erase(metrics.pendingRequests.end() - 2);
         }
         if (control.ballRequest != BallActionKind3D::None) {
             ++metrics.requests;

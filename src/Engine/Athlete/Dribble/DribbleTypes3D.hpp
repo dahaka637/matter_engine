@@ -134,7 +134,7 @@ struct DribbleSettings3D {
     // aceitando mais que ela, o pe parava 5 cm antes da bola.)
     float reach = 0.93f;
     float dropMoving = 0.05f;
-    float dropStanding = 0.10f;
+    float dropStanding = 0.18f;
     // O compromisso: andando, a janela comecando (ou a atual, com o contato a
     // menos de commitLead s); o ponto e o instante do contato ainda se
     // ajustam ate lockLead s antes dele.
