@@ -704,6 +704,18 @@ private:
     // Giro dos pes na curva e a descida da pelve no terreno.
     std::array<float, 2> m_footYaw {};
     float m_terrainDrop = 0.0f;
+    // Os degraus da capsula (ela sobe e desce o degrau de uma vez, no chao):
+    // a parte do salto que a pelve ainda nao seguiu (m) e a velocidade dela,
+    // numa mola - sem ela, o corpo guiado subia a ~8 m/s num tick e, indo ao
+    // fisico ali, voava (plano v2, fase E). E a base do tick anterior.
+    float m_stepOffset = 0.0f;
+    float m_stepOffsetRate = 0.0f;
+    // O pe no balanco por cima do degrau a frente: o quanto a sola sobe (m) e
+    // a velocidade disso, por pe.
+    std::array<float, 2> m_stepClear {};
+    std::array<float, 2> m_stepClearRate {};
+    float m_previousBase = 0.0f;
+    bool m_previousBaseKnown = false;
     // No ar: o tempo, a velocidade vertical na saida e o peso do pulo.
     float m_airTime = 0.0f;
     float m_takeoffSpeed = 0.0f;

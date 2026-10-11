@@ -378,9 +378,23 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             // verdade (contato com o que nao se move e nao e chao) e, acima
             // de WallHitImpulse, vai ao fisico na hora com o choque (pedido
             // do usuario, 05/10 noite: como no modo fisico).
+            // (O pe no terreno baixo - a quina de um degrau, uma rampa, o espelho
+            // de um degrau, dois degraus da escada ou meio-fio (o contato ate
+            // StepTerrainHeight acima da base dela) - nao e parede: o corpo
+            // guiado bate de verdade e o pe sobe por ele; contado, subir escada
+            // ia ao fisico a cada degrau (plano v2, fase E). O pe num obstaculo
+            // mais alto conta.)
+            constexpr float StepTerrainHeight = 0.40f;
+            const AthleteLegs3D& stepLegs = athlete.footsteps.ready() ? athlete.footsteps.legs() : resolveAthleteLegs3D(profile);
+            const float stepBase = capsule.position.z - profile.standingRootHeightMeters;
+            const auto footOnStep = [&](std::uint32_t link, Vec3 normal, Vec3 point) {
+                return stepLegs.valid && (link == stepLegs.foot[0] || link == stepLegs.foot[1])
+                    && (normal.z > 0.2f || point.z < stepBase + StepTerrainHeight);
+            };
             float wallImpulse = 0.0f;
             for (const RagdollInteraction3D& contact : body.interactions)
-                if (contact.otherMotion != RagdollContactMotion3D::Dynamic && contact.normalWorld.z < 0.6f)
+                if (contact.otherMotion != RagdollContactMotion3D::Dynamic && contact.normalWorld.z < 0.6f
+                    && !footOnStep(contact.linkIndex, contact.normalWorld, contact.positionWorld))
                     wallImpulse += contact.normalImpulseNewtonSeconds;
             constexpr float WallHitImpulse = 2.5f;
             const bool wallHit = state.bodyMode != BodyMode::Physical
@@ -560,6 +574,7 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                 constexpr float WallImpact = 1.5f;
                 const bool wall = control.capsuleWallImpact > WallImpact;
                 bool penetrating = false;
+                std::string penetratingLink;
                 {
                     std::vector<Vec3> positions(body.links.size());
                     std::vector<Quaternion> orientations(body.links.size());
@@ -571,8 +586,13 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                     const float PenetrationDepth = defaultTackling ? 0.005f : 0.015f;
                     for (const RagdollWorldContact3D& contact : scene.ragdollPoseWorldContacts(
                             slot.handle, positions, orientations, PenetrationDepth))
-                        // (O chao - normal para cima - nao conta.)
-                        if (contact.normalWorld.z < 0.6f) penetrating = true;
+                        // (O chao - normal para cima - nao conta, nem o pe na
+                        // quina do degrau.)
+                        if (contact.normalWorld.z < 0.6f
+                            && !footOnStep(contact.linkIndex, contact.normalWorld, contact.pointWorld)) {
+                            penetrating = true;
+                            if (contact.linkIndex < profile.links.size()) penetratingLink = profile.links[contact.linkIndex].id;
+                        }
                 }
                 // Pulo: o voo e o pouso no fisico so com "Pulo fisico" no
                 // laboratorio (o padrao e o pulo animado - pedido do usuario,
@@ -590,7 +610,8 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                 if (!settings.activeBody && !state.bridge) {
                     if (hit || tackleHit || airTackle || wall || wallHit || penetrating || jumped)
                         toPhysical(grabbed ? "agarrado" : airTackle ? "voadora" : hit || tackleHit ? "pancada"
-                            : wall || wallHit ? "parede" : penetrating ? "membro no mundo" : jumped ? "pulo" : "pancada");
+                            : wall || wallHit ? "parede" : penetrating ? ("membro no mundo: " + penetratingLink).c_str()
+                            : jumped ? "pulo" : "pancada");
                 } else if (state.bodyMode == BodyMode::Active) {
                     // No Ativo (e na ponte) o corpo ja e fisico (encostar na
                     // parede e contato de verdade): so o que derruba leva ao

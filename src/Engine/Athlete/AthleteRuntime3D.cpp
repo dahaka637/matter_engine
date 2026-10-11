@@ -66,6 +66,14 @@ void AthleteRuntime3D::update(PhysicsScene3D& scene, const AthleteRuntimeAssets3
     }
 }
 
+float athleteCapsuleWallImpact3D(Vec3 previousMoved, Vec3 moved, float braking, bool grounded, float rose) {
+    const Vec3 before { previousMoved.x, previousMoved.y, 0.0f };
+    const float speed = before.length();
+    if (!grounded || speed <= 0.5f || rose > 0.01f) return 0.0f;
+    const Vec3 now { moved.x, moved.y, 0.0f };
+    return std::max(0.0f, dot(before - now, before * (1.0f / speed)) - braking);
+}
+
 float athleteDefaultTravelSpeed3D(const AthleteRuntimeSettings3D& settings, float travelRelativeToLookRadians,
     bool sprinting) {
     const float t = settings.defaultTrotSpeed;

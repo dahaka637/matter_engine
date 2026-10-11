@@ -753,12 +753,15 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
     {
         const Vec3 moved { (character.position.x - stateBefore.position.x) / std::max(deltaTime, 1e-4f),
             (character.position.y - stateBefore.position.y) / std::max(deltaTime, 1e-4f), 0.0f };
-        const Vec3 before = m_capsuleMovedVelocity;
-        const float speed = before.length();
         const float braking = std::max({ activeSettings.groundAcceleration, activeSettings.groundDeceleration,
             activeSettings.groundBrakeDeceleration }) * deltaTime;
-        m_controlledWallImpact = controllingCharacter && speed > 0.5f && character.grounded
-            ? std::max(0.0f, dot(before - moved, before * (1.0f / speed)) - braking) : 0.0f;
+        // (Subindo um degrau nao e parede.)
+        const float rise = character.position.z - stateBefore.position.z;
+        m_controlledWallImpact = controllingCharacter
+            ? athleteCapsuleWallImpact3D(m_capsuleMovedVelocity, moved, braking, character.grounded,
+                std::max(rise, m_capsuleRose))
+            : 0.0f;
+        m_capsuleRose = rise;
         m_capsuleMovedVelocity = moved;
     }
     if (character.flightExitBlocked) {

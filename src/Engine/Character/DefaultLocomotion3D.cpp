@@ -374,6 +374,11 @@ void DefaultLocomotion3D::reset(float facingYawRadians) {
     m_arcBlend = 0.0f;
     m_footYaw = {};
     m_terrainDrop = 0.0f;
+    m_stepOffset = 0.0f;
+    m_stepOffsetRate = 0.0f;
+    m_previousBaseKnown = false;
+    m_stepClear = {};
+    m_stepClearRate = {};
     m_airTime = 0.0f;
     m_takeoffSpeed = 0.0f;
     m_airWeight = 0.0f;
@@ -1708,8 +1713,28 @@ void DefaultLocomotion3D::update(const RagdollProfile3D& profile,
     // origem do modelo e a pelve), girada pelo rumo, mais o que o clipe move
     // a pelve; descida do terreno; inclinacao em volta dos pes.
     const Vec3 feet = input.feetPositionWorld;
+    {
+        // O degrau da capsula: no chao, a base salta de uma vez (mais que 1 cm
+        // num tick - a rampa anda menos que isso); a pelve segue o salto numa
+        // mola critica de ~0,15 s.
+        if (m_previousBaseKnown && input.grounded) {
+            const float jump = feet.z - m_previousBase;
+            if (std::abs(jump) > 0.01f && std::abs(jump) < 0.6f) m_stepOffset += jump;
+        } else if (!input.grounded) {
+            m_stepOffset = 0.0f;
+            m_stepOffsetRate = 0.0f;
+        }
+        m_previousBase = feet.z;
+        m_previousBaseKnown = true;
+        constexpr float StepSeconds = 0.15f;
+        const float omega = 4.0f / StepSeconds;
+        const float slope = m_stepOffsetRate + m_stepOffset * omega;
+        const float decay = std::exp(-omega * dt);
+        m_stepOffset = (m_stepOffset + slope * dt) * decay;
+        m_stepOffsetRate = (m_stepOffsetRate - slope * omega * dt) * decay;
+    }
     Quaternion rootOrientation = (yaw * rootLink.modelOrientation * clipRootRotation).normalized();
-    Vec3 rootPosition = feet + Vec3 { 0.0f, 0.0f, profile.standingRootHeightMeters - m_terrainDrop + m_dip
+    Vec3 rootPosition = feet + Vec3 { 0.0f, 0.0f, profile.standingRootHeightMeters - m_terrainDrop - m_stepOffset + m_dip
         + m_trunkHeight - (m_landTime >= 0.0f ? m_landPrepCarry : s.landingPrep ? m_landingPrep * s.landingPelvisDrop : 0.0f)
         - m_landingSink }
         + yaw.rotate(rootLink.modelPosition + rootOffset);
@@ -1969,6 +1994,31 @@ void DefaultLocomotion3D::update(const RagdollProfile3D& profile,
             // (Com os dedos dobrando no chao, a sola so ate a base deles.)
             const float sole = soleHeight(link, shifted, orientation, s.toeRoll ? s.toeRollMeters : 0.0f);
             float lift = std::max(0.0f, groundZ - sole);
+            {
+                // O pe no balanco passa por cima do degrau a frente (os dedos
+                // e um pouco alem, no rumo do movimento): a sola sobe ate o
+                // chao mais alto dali com folga, numa mola - com o chao so
+                // embaixo do pe, os dedos batiam no espelho do degrau e subir
+                // escada ia ao fisico (plano v2, fase E).
+                float wanted = 0.0f;
+                if (footContact < 0.5f && input.groundAt && ground > 0.5f) {
+                    Vec3 travel = planar(velocity);
+                    travel = travel.length() > 0.3f ? travel.normalized()
+                                                    : planar(orientation.rotate({ 1.0f, 0.0f, 0.0f })).normalized();
+                    // (Correndo o pe anda mais por balanco: a busca vai mais
+                    // longe.)
+                    const float reachScale = std::clamp(planar(velocity).length() / 2.5f, 1.0f, 2.2f);
+                    float ahead = groundZ;
+                    for (const float d : { 0.12f, 0.24f, 0.36f }) {
+                        const GroundProbeResult3D probe = input.groundAt(shifted + travel * (d * reachScale));
+                        if (probe.hasSurface && probe.pointWorld.z - feet.z < 0.45f && probe.pointWorld.z - feet.z > -0.6f)
+                            ahead = std::max(ahead, probe.pointWorld.z);
+                    }
+                    if (ahead > groundZ + 0.02f) wanted = std::max(0.0f, ahead + 0.03f - sole);
+                }
+                spring(m_stepClear[side], m_stepClearRate[side], wanted, 0.08f, dt);
+                lift = std::max(lift, m_stepClear[side]);
+            }
             if (m_landPull > 0.0f && groundZ < sole) {
                 // Aterrissando: o pe no ar vai ao chao.
                 const float pull = m_landPull * (m_landLeadSide < 0 || static_cast<int>(side) == m_landLeadSide

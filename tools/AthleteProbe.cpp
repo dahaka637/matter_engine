@@ -54,6 +54,14 @@ struct Push {
     Vec3 force;
 };
 
+// Uma caixa parada no mundo (parede, degrau, rampa): centro, meia-dimensao e
+// orientacao.
+struct StaticBox {
+    Vec3 center;
+    Vec3 half;
+    Quaternion orientation;
+};
+
 // Um objeto arremessado no atleta (a pancada de verdade: contato, nao
 // forca): caixa de massa e meia-dimensao dadas, saindo de `start` (em
 // relacao aos pes) com `velocity` no instante `at`.
@@ -88,9 +96,11 @@ struct Scenario {
     float changeAt = -1.0f;
     // Comeca no fisico (o empurrao so age no corpo fisico).
     bool startPhysical = false;
-    // Uma parede parada (centro e meia-dimensao; sem parede, meia-dimensao 0).
+    // Uma parede parada (centro e meia-dimensao; sem parede, meia-dimensao 0)
+    // e o terreno parado (degraus, escada, rampa).
     Vec3 wallCenter;
     Vec3 wallHalf;
+    std::vector<StaticBox> statics;
 };
 
 std::vector<Scenario> scenarios() {
@@ -409,6 +419,48 @@ std::vector<Scenario> scenarios() {
                     at + from * 1.4f + Vec3 { 0.0f, 0.0f, 1.0f }, from * -9.0f });
                 list.push_back(q);
             }
+        // Terreno (plano v2, fase E): um degrau de 10, 18, 25 e 35 cm (uma
+        // plataforma a partir de x = 3 m), a escada (8 degraus de 17 por 30
+        // cm) e a rampa de 12 graus, andando e correndo.
+        {
+            struct Gait { const char* key; float forward; };
+            static const Gait gaits[2] = { { "anda", 0.5f }, { "corre", 1.0f } };
+            for (const Gait& gait : gaits) {
+                const float forward = gait.forward;
+                const auto walk = [forward](float t) { Keys k; k.forward = t > 0.3f ? forward : 0.0f; return k; };
+                for (const int centimeters : { 10, 18, 25, 35 }) {
+                    char name[48];
+                    std::snprintf(name, sizeof(name), "degrau_%02d_%s", centimeters, gait.key);
+                    Scenario step { name, 4.0f, walk };
+                    const float h = 0.01f * static_cast<float>(centimeters);
+                    step.statics.push_back({ { 13.0f, 0.0f, 0.5f * h }, { 10.0f, 3.0f, 0.5f * h }, {} });
+                    list.push_back(step);
+                }
+                {
+                    char name[48];
+                    std::snprintf(name, sizeof(name), "escada_%s", gait.key);
+                    Scenario stairs { name, 5.0f, walk };
+                    for (int k = 0; k < 8; ++k) {
+                        const float from = 3.0f + 0.30f * static_cast<float>(k);
+                        stairs.statics.push_back({ { 0.5f * (from + 23.0f), 0.0f, 0.17f * static_cast<float>(k) + 0.085f },
+                            { 0.5f * (23.0f - from), 3.0f, 0.085f }, {} });
+                    }
+                    list.push_back(stairs);
+                }
+                {
+                    char name[48];
+                    std::snprintf(name, sizeof(name), "rampa_%s", gait.key);
+                    Scenario ramp { name, 5.0f, walk };
+                    const float angle = 12.0f * Pi / 180.0f, length = 40.0f, half = 0.25f;
+                    const Vec3 along { std::cos(angle), 0.0f, std::sin(angle) };
+                    const Vec3 normal { -std::sin(angle), 0.0f, std::cos(angle) };
+                    const Vec3 top = Vec3 { 3.0f, 0.0f, 0.0f } + along * (0.5f * length);
+                    ramp.statics.push_back({ top - normal * half, { 0.5f * length, 3.0f, half },
+                        Quaternion::fromAxisAngle({ 0.0f, 1.0f, 0.0f }, -angle) });
+                    list.push_back(ramp);
+                }
+            }
+        }
         // A parede: correndo contra ela, e pulando contra ela (cair de pe e
         // recobrar a postura).
         Scenario paredeCorre { "parede_corre", 5.0f, [](float t) { Keys k; k.forward = t > 0.3f && t < 2.5f ? 1.0f : 0.0f; return k; } };
@@ -533,6 +585,11 @@ struct Metrics {
     // O levantar: no comeco (o primeiro Rising) a frente do peito e a da
     // pelve (z: + de costas, - de brucos) e o lado escolhido; quando acabou
     // de pe (s; -1 nao levantou).
+    // O terreno: a maior velocidade para cima da capsula e da pelve (m/s) - o
+    // lancamento - e a altura maxima da pelve sobre a capsula (m).
+    float capsuleUp = 0.0f;
+    float pelvisUp = 0.0f;
+    float pelvisOverCapsule = 0.0f;
     float riseAt = -1.0f;
     float riseChest = 0.0f;
     float risePelvis = 0.0f;
@@ -614,16 +671,21 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
         ground.materialId = "concrete";
         (void)scene->createBody(ground, std::span<const PhysicsShape3D>(&shape, 1));
     }
-    if (scenario.wallHalf.lengthSquared() > 0.0f) {
-        PhysicsShape3D shape;
-        shape.type = PhysicsShapeType3D::Box;
-        shape.halfExtents = scenario.wallHalf;
-        shape.materialId = "concrete";
-        PhysicsBodyDefinition3D wall;
-        wall.motionType = PhysicsMotionType3D::Static;
-        wall.position = scenario.wallCenter;
-        wall.materialId = "concrete";
-        (void)scene->createBody(wall, std::span<const PhysicsShape3D>(&shape, 1));
+    {
+        std::vector<StaticBox> statics = scenario.statics;
+        if (scenario.wallHalf.lengthSquared() > 0.0f) statics.push_back({ scenario.wallCenter, scenario.wallHalf, {} });
+        for (const StaticBox& box : statics) {
+            PhysicsShape3D shape;
+            shape.type = PhysicsShapeType3D::Box;
+            shape.halfExtents = box.half;
+            shape.materialId = "concrete";
+            PhysicsBodyDefinition3D body;
+            body.motionType = PhysicsMotionType3D::Static;
+            body.position = box.center;
+            body.orientation = box.orientation;
+            body.materialId = "concrete";
+            (void)scene->createBody(body, std::span<const PhysicsShape3D>(&shape, 1));
+        }
     }
     scene->createCharacter({ 0.0f, 0.0f, 0.0f }, avatar);
     RagdollSpawnDefinition3D spawn;
@@ -675,6 +737,7 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
     bool controlledAnimated = !startPhysical;
     float capsuleSpeedScale = 1.0f;
     Vec3 capsuleMoved {};
+    float capsuleRose = 0.0f;
     float wallImpact = 0.0f;
     Metrics metrics;
     // (O modo Ativo por dentro da ponte fisico -> padrao: "ponte".)
@@ -789,11 +852,12 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
         {
             const Vec3 moved { (capsule.position.x - before.position.x) / Dt,
                 (capsule.position.y - before.position.y) / Dt, 0.0f };
-            const float speed = capsuleMoved.length();
             const float braking = std::max({ active.groundAcceleration, active.groundDeceleration,
                 active.groundBrakeDeceleration }) * Dt;
-            wallImpact = speed > 0.5f && capsule.grounded
-                ? std::max(0.0f, dot(capsuleMoved - moved, capsuleMoved * (1.0f / speed)) - braking) : 0.0f;
+            const float rise = capsule.position.z - before.position.z;
+            wallImpact = athleteCapsuleWallImpact3D(capsuleMoved, moved, braking, capsule.grounded,
+                std::max(rise, capsuleRose));
+            capsuleRose = rise;
             capsuleMoved = moved;
         }
         AthleteControlInput3D control;
@@ -864,6 +928,17 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
             }
         }
         if (step >= 0) metrics.capsulePath.push_back(scene->characterState().position);
+        if (step >= 0 && t > 0.35f && !bodyState.links.empty()) {
+            metrics.capsuleUp = std::max(metrics.capsuleUp, scene->characterState().velocity.z);
+            metrics.pelvisUp = std::max(metrics.pelvisUp, bodyState.links.front().linearVelocity.z);
+            metrics.pelvisOverCapsule = std::max(metrics.pelvisOverCapsule,
+                bodyState.links.front().position.z - scene->characterState().position.z);
+            if (std::getenv("XTERRENO") && step % 6 == 0)
+                std::printf("  t %.3f capsula %.2f %.3f vz %.2f | pelve %.3f vz %.2f | modo %s\n", t,
+                    scene->characterState().position.x, scene->characterState().position.z,
+                    scene->characterState().velocity.z, bodyState.links.front().position.z,
+                    bodyState.links.front().linearVelocity.z, modeOf());
+        }
         if (legacy.bodyMode == LegacyBodyMode3D::Physical && !bodyState.links.empty()) {
             const auto& telemetry = legacy.locomotion.telemetry();
             if (metrics.riseAt < 0.0f && telemetry.getUpPhase == CharacterGetUpPhase3D::Rising) {
@@ -1210,6 +1285,9 @@ void printMetrics(const Scenario& scenario, const Metrics& metrics, bool footste
     if (!metrics.outcomes.empty())
         std::printf("%-18s   manejo novo: %s | atraso ate o gesto max %.3f s\n", "", metrics.outcomes.c_str(),
             metrics.worstLatency);
+    if (metrics.capsuleUp > 0.0f || metrics.pelvisUp > 0.0f)
+        std::printf("%-18s   subida max: capsula %.2f m/s, pelve %.2f m/s, pelve sobre a capsula %.2f m\n", "",
+            metrics.capsuleUp, metrics.pelvisUp, metrics.pelvisOverCapsule);
     if (metrics.riseAt >= 0.0f)
         std::printf("%-18s   levantar: comeca %.2f s (peito %+.2f pelve %+.2f, %s), de pe em %.2f s\n", "", metrics.riseAt,
             metrics.riseChest, metrics.risePelvis, metrics.riseSide == 1 ? "de costas" : metrics.riseSide == 2 ? "de brucos" : "?",
@@ -1293,6 +1371,37 @@ int runChecks(const ProbeContext& context) {
         const Metrics m = run("caixa_leve", activeOn, false);
         expect(has(m, "ativo") && !has(m, "fisico"), "Ativo ligado, caixa leve: segura sem fisico pleno", m);
         expect(m.finalMode == LegacyBodyMode3D::Animated, "Ativo ligado, caixa leve: volta ao padrao", m);
+    }
+    // O terreno (plano v2, fase E): degrau baixo, escada e rampa sem ir ao
+    // fisico e sem o lancamento (a pelve longe acima da capsula), andando ate o
+    // fim; o degrau alto (35 cm, parede para a capsula) pode ir ao fisico, sem
+    // lancamento; encostado na parede volta ao padrao. Sem e com as pegadas.
+    AthleteRuntimeSettings3D terrainSteps;
+    terrainSteps.footstepLocomotion = true;
+    const AthleteRuntimeSettings3D& terrainFlat = settings;
+    for (const AthleteRuntimeSettings3D* config : { &terrainFlat, static_cast<const AthleteRuntimeSettings3D*>(&terrainSteps) }) {
+        const bool steps = config->footstepLocomotion;
+        for (const char* name : { "degrau_10_anda", "degrau_18_anda", "degrau_25_anda", "degrau_10_corre", "degrau_18_corre",
+                 "escada_anda", "escada_corre", "rampa_anda", "rampa_corre" }) {
+            const Metrics m = run(name, *config, false);
+            const bool running = std::string(name).find("corre") != std::string::npos;
+            const float travel = running ? 12.0f : std::string(name).find("escada") != std::string::npos ? 5.0f : 6.0f;
+            char what[200];
+            std::snprintf(what, sizeof(what), "terreno%s, %s: sem fisico, sem lancamento (pelve %.2f m sobre a capsula), andou %.1f m",
+                steps ? " (pegadas)" : "", name, m.pelvisOverCapsule, m.travel);
+            expect(!has(m, "fisico") && m.pelvisOverCapsule < 0.15f && m.travel >= travel && !m.fell, what, m);
+        }
+        for (const char* name : { "degrau_35_anda", "degrau_35_corre" }) {
+            const Metrics m = run(name, *config, false);
+            char what[160];
+            std::snprintf(what, sizeof(what), "terreno%s, %s: sem lancamento (pelve %.2f m sobre a capsula)",
+                steps ? " (pegadas)" : "", name, m.pelvisOverCapsule);
+            expect(m.pelvisOverCapsule < 0.3f, what, m);
+        }
+    }
+    {
+        const Metrics m = run("parede_corre", settings, false);
+        expect(m.finalMode != LegacyBodyMode3D::Physical, "terreno, parede_corre: encostado na parede volta ao padrao", m);
     }
     // A ponte fisico -> padrao (plano v2, fase D): toda volta do fisico passa
     // por ela e acaba no padrao, sem salto nos pes na troca; o levantar comeca

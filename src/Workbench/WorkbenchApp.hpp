@@ -587,6 +587,7 @@ private:
     float m_controlledWallImpact = 0.0f;
     // A velocidade no plano que a capsula andou de fato no tick anterior.
     Vec3 m_capsuleMovedVelocity;
+    float m_capsuleRose = 0.0f;
     // Manejo de bola pelo pe (o toque de verdade) em vez da area em volta do
     // jogador (o padrao por enquanto).
     bool m_ballFootTouch = false;

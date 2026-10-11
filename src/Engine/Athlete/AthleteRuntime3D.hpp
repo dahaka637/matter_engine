@@ -115,4 +115,14 @@ public:
 [[nodiscard]] float athleteDefaultTravelSpeed3D(const AthleteRuntimeSettings3D& settings,
     float travelRelativeToLookRadians, bool sprinting);
 
+// A batida da capsula (m/s; AthleteControlInput3D::capsuleWallImpact): o
+// quanto a velocidade no plano caiu, no rumo que tinha, alem da frenagem dela
+// num tick (parede no caminho). Pelo quanto ela andou de fato (travada numa
+// parede, a velocidade dela seguia dizendo a pedida). Subindo um degrau
+// (rose: a capsula subiu neste tick ou no anterior, m) a queda da velocidade e
+// a subida, nao parede - contada como parede, o corpo ia ao fisico no instante
+// do salto da pelve e voava (plano v2, fase E).
+[[nodiscard]] float athleteCapsuleWallImpact3D(Vec3 previousMoved, Vec3 moved, float braking, bool grounded,
+    float rose);
+
 } // namespace MatterEngine

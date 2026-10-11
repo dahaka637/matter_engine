@@ -96,6 +96,30 @@ apoiados, que somam zero.
   - Numa base aberta, a volta ao padrão espera 1,2 s, e a inércia leva os pés
     ao lugar do clipe (alguns centímetros em 0,4 s).
 
+## Novo controle, plano v2 — Fase E: terreno (10/10/2026, noite)
+
+- **O degrau que lançava o jogador** (correndo, 18 cm: a pelve 1,32 m acima
+  da cápsula): a raiz da pose ia junto com o salto da cápsula no degrau, e
+  a subida contava como batida na parede, indo ao físico com o corpo subindo
+  a ~8 m/s.
+- **`DefaultLocomotion3D`:**
+  - a pelve segue o degrau da cápsula numa mola de 0,15 s (só no chão e
+    saltos de mais de 1 cm num tick);
+  - o pé no balanço passa pelo degrau à frente com folga (três pontos à
+    frente, mais longe correndo).
+- **`athleteCapsuleWallImpact3D`** (no motor; a sonda e o laboratório usam o
+  mesmo): a subida de degrau não é batida.
+- **`LegacyAthleteStep3D`:** o pé no terreno baixo (normal com z > 0,2, ou o
+  contato até 40 cm acima da base da cápsula) não conta como parede nem como
+  "membro no mundo". O log diz o link.
+- **Sonda:** terreno estático (`StaticBox`), cenários `degrau_*`, `escada_*`,
+  `rampa_*`; a pelve sobre a cápsula; `XTERRENO`.
+- **Resultado:** degraus até 25 cm, escada e rampa, andando e correndo, sem
+  e com pegadas, sem ir ao físico e sem lançamento. O degrau de 35 cm vai ao
+  físico sem lançar. Encostado na parede, volta ao padrão.
+- **Validação:** `--teste` tudo certo; arquitetura ok; CTest 12/14 (as
+  falhas antigas, mesmas mensagens).
+
 ## Novo controle, plano v2 — Fase D: a ponte físico → padrão (10/10/2026, noite)
 
 - **`physicalBridge`** (laboratório: "Ponte físico → padrão", ligada): saindo
