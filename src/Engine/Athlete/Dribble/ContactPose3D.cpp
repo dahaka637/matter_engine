@@ -28,8 +28,12 @@ float signedAngle(Vec3 from, Vec3 to) {
 // + para fora da perna.)
 constexpr float LacesPitch = 0.80f;
 constexpr float LacesPitchPower = 0.15f;
-constexpr float InsideTurnMaximum = 1.25f;
-constexpr float OutsideTurnMaximum = 0.80f;
+// (Os giros que a perna do boneco faz de fato - o tornozelo nao gira de lado
+// e a coxa gira +-45 graus: medidos nos toques da sonda, o pe chegava ate
+// ~50 graus; pedir mais deixava a beira do pe longe da bola e a perna girava
+// rapido demais na volta.)
+constexpr float InsideTurnMaximum = 0.75f;
+constexpr float OutsideTurnMaximum = 0.60f;
 
 } // namespace
 

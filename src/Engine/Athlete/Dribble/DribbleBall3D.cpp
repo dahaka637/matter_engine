@@ -7,7 +7,7 @@ namespace MatterEngine {
 
 void DribbleBallPath3D::build(Vec3 position, Vec3 velocity, float groundHeight, float radius, float start,
     float horizon, const BallPredictorSettings3D& settings) {
-    m_start = std::max(0.0f, start);
+    m_start = start;
     std::vector<BallPrediction3D> table;
     predictBallTable3D(position, velocity, groundHeight, radius, m_step, std::max(m_step, horizon), settings, table);
     m_positions.clear();

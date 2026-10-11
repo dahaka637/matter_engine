@@ -371,8 +371,12 @@ void applyBallGesturePose3D(const RagdollProfile3D& profile, const BallGestureLe
             const float pitchError = std::clamp(std::asin(std::clamp(d.z, -1.0f, 1.0f))
                 - std::asin(std::clamp(face.z, -1.0f, 1.0f)), -0.7f, 0.3f);
             // O alvo atras da cabeca nao vale (o pescoco nao gira tanto e o
-            // lado do giro trocava num tick); perto disso, o peso sai.
-            const float behind = smooth((std::abs(yawError) - 1.2f) / 0.8f);
+            // lado do giro trocava num tick); perto disso, o peso sai. (Quase
+            // na vertical o "atras" tambem nao vale e entra pela distancia: a
+            // bola passando por baixo da cabeca virava o atras de uma vez e a
+            // cabeca estalava, 860 m/s2.)
+            const float flat = std::hypot(toward.x, toward.y);
+            const float behind = smooth((std::abs(yawError) - 1.2f) / 0.8f) * smooth((flat - 0.06f) / 0.30f);
             yawError = std::clamp(yawError, -1.0f, 1.0f);
             // (O alvo quase na vertical da cabeca: o rumo dele nao vale - um
             // centimetro para tras virava a cabeca 30 graus num tick.)
@@ -391,6 +395,12 @@ void applyBallGesturePose3D(const RagdollProfile3D& profile, const BallGestureLe
         for (int side = 0; side < 2; ++side) {
             const BallGesturePose3D::Leg& leg = gesture.legs[static_cast<std::size_t>(side)];
             const float weight = std::clamp(leg.weight, 0.0f, 1.0f);
+            // (Presa primeiro e o toque por cima dela: sem peso a perna e a
+            // presa, e o peso chegando a zero chega nela - antes ele chegava na
+            // da locomocao e a presa entrava de uma vez, 2000 m/s2.)
+            if (gesture.holdSupport && w > 0.001f)
+                solveBallGestureLeg3D(profile, legs, side, coordinates, rootPosition, rootOrientation, baseAnkle[side],
+                    baseKnee[side], baseFoot[side]);
             if (weight > 0.001f) {
                 const Vec3 ankle = baseAnkle[side] + (leg.ankle - baseAnkle[side]) * weight;
                 Vec3 knee = baseKnee[side] + (leg.knee - baseKnee[side]) * weight;
@@ -398,17 +408,14 @@ void applyBallGesturePose3D(const RagdollProfile3D& profile, const BallGestureLe
                 const std::vector<Vec3> before = coordinates;
                 solveBallGestureLeg3D(profile, legs, side, coordinates, rootPosition, rootOrientation, ankle,
                     knee.normalized(), nlerpQuat(baseFoot[side], leg.foot, weight));
-                // (Bem no comeco e no fim, a perna da locomocao: o IK da mesma
-                // pose nao e identico a ela.)
+                // (Bem no comeco e no fim, a perna de antes: o IK da mesma pose
+                // nao e identico a ela.)
                 const float keep = smooth(weight * 5.0f);
                 if (keep < 1.0f) {
                     const std::size_t s = static_cast<std::size_t>(side);
                     for (const std::size_t index : { legs.thigh[s], legs.shin[s], legs.foot[s] })
                         coordinates[index] = before[index] + (coordinates[index] - before[index]) * keep;
                 }
-            } else if (gesture.holdSupport && w > 0.001f) {
-                solveBallGestureLeg3D(profile, legs, side, coordinates, rootPosition, rootOrientation, baseAnkle[side],
-                    baseKnee[side], baseFoot[side]);
             }
         }
         return;

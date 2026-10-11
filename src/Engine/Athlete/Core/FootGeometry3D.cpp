@@ -49,6 +49,12 @@ float athleteFootYaw3D(const AthleteFootGeometry3D& geometry, int side, Quaterni
     return std::atan2(forward.y, forward.x);
 }
 
+float athleteFootHeading3D(const AthleteFootGeometry3D& geometry, int side, Quaternion orientation) {
+    const Quaternion flat = geometry.flat[side == 0 ? 0 : 1];
+    const Vec3 left = (orientation * flat.conjugate()).rotate({ 0.0f, 1.0f, 0.0f });
+    return std::atan2(-left.x, left.y);
+}
+
 Quaternion athleteYawRotation3D(float yawRadians) {
     return Quaternion::fromAxisAngle({ 0.0f, 0.0f, 1.0f }, yawRadians);
 }

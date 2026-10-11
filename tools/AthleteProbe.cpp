@@ -920,6 +920,11 @@ struct Metrics {
     // rad/s; e com o joelho virando de lado mais de 60 graus num tick) e o
     // maior voo (os dois pes no ar, s).
     std::vector<float> contactGaps;
+    // (Os toques da garantia - a forca sem o pe chegar - a parte.)
+    std::vector<float> guaranteedGaps;
+    int lostRequests = 0;
+    int abortedTouches = 0;
+    int missedTouches = 0;
     std::vector<float> latencies;
     std::vector<float> pendingRequests;
     int crazyLegTicks = 0;
@@ -1310,6 +1315,10 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
                 }
             }
         }
+        if (settings.dribbleV5) {
+            metrics.abortedTouches += athlete.dribbleOutput.aborted;
+            metrics.missedTouches += athlete.dribbleOutput.missed;
+        }
         if (control.ballRequest != BallActionKind3D::None) {
             ++metrics.requests;
             if (metrics.requestTime < 0.0f) metrics.requestTime = t;
@@ -1350,7 +1359,19 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
                     scene->characterState().velocity.y, ballState.linearVelocity.x, ballState.linearVelocity.y);
             ++metrics.touches;
             if (dump != nullptr) std::fprintf(dump, "T\n");
+            if (std::getenv("XV5") && settings.dribbleV5)
+                std::printf("  t %.3f TOQUE v5 perna %d superficie %d garantia %d pendentes %d | bola %.2f %.2f %.2f a %.2f m da pelve\n", t,
+                    athlete.dribbleOutput.touchSide, static_cast<int>(athlete.dribbleOutput.touchSurface),
+                    athlete.dribbleOutput.touchGuaranteed ? 1 : 0, athlete.dribbleOutput.pending, ballState.position.x,
+                    ballState.position.y, ballState.position.z,
+                    std::hypot(ballState.position.x - bodyState.links.front().position.x, ballState.position.y - bodyState.links.front().position.y));
             // (Plano v5: o atraso do pedido mais antigo e a folga pe-bola.)
+            // (Os pedidos de mais de 1,2 s ja venceram: sem eles o atraso
+            // pareava o toque com um clique perdido.)
+            while (!metrics.pendingRequests.empty() && t - metrics.pendingRequests.front() > 1.2f) {
+                metrics.pendingRequests.erase(metrics.pendingRequests.begin());
+                ++metrics.lostRequests;
+            }
             if (!metrics.pendingRequests.empty()) {
                 metrics.latencies.push_back(t - metrics.pendingRequests.front());
                 metrics.pendingRequests.erase(metrics.pendingRequests.begin());
@@ -1373,7 +1394,18 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
                         std::clamp(local.z, -h.z, h.z) };
                     gap = std::min(gap, (local - nearest).length() - radius);
                 }
-                metrics.contactGaps.push_back(std::max(0.0f, gap));
+                (settings.dribbleV5 && athlete.dribbleOutput.touchGuaranteed ? metrics.guaranteedGaps : metrics.contactGaps)
+                    .push_back(std::max(0.0f, gap));
+                if (std::getenv("XV5") && settings.dribbleV5)
+                    std::printf("  t %.3f folga do toque %.3f m | bola contra a prevista %.3f m\n", t, std::max(0.0f, gap),
+                        athlete.dribbleOutput.touchMiss);
+                if (std::getenv("XV5") && settings.dribbleV5 && legs.valid && athlete.dribbleOutput.touchSide >= 0) {
+                    const std::size_t side = static_cast<std::size_t>(athlete.dribbleOutput.touchSide);
+                    const PhysicsBodyState3D& foot = bodyState.links[legs.foot[side]];
+                    const Vec3 ankle = foot.position + foot.orientation.rotate(legs.ankleInFoot[side]);
+                    std::printf("  t %.3f pe real tornozelo %.3f %.3f %.3f | rumo %.1f graus\n", t, ankle.x, ankle.y, ankle.z,
+                        athleteFootYaw3D(footGeometry, static_cast<int>(side), foot.orientation) * 57.2958f);
+                }
             }
             if (metrics.forceTime < 0.0f && settings.newBallHandling) {
                 metrics.forceTime = t;
@@ -1922,6 +1954,10 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
             if (t > 0.35f) {
                 const bool leg = id.find("Thigh") != std::string::npos || id.find("Shin") != std::string::npos
                     || id.find("Foot") != std::string::npos;
+                if (std::getenv("XLINK") && id == std::getenv("XLINK"))
+                    std::printf("  t %.3f %s pos %.4f %.4f %.4f vel %.3f %.3f %.3f acel %.0f\n", t, id.c_str(), link.position.x,
+                        link.position.y, link.position.z, link.linearVelocity.x, link.linearVelocity.y, link.linearVelocity.z,
+                        acceleration.length());
                 if (std::getenv("XPICOTODOS") && acceleration.length() > std::atof(std::getenv("XPICOTODOS")))
                     std::printf("  t %.3f %s acel %.0f salto %.3f\n", t, id.c_str(), acceleration.length(),
                         (link.position - (previousLinks[i].position + link.linearVelocity * Dt)).length());
@@ -2030,7 +2066,7 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
         // Plano v5 (E0): a "perna louca" (coxa ou canela girando a mais de 30
         // rad/s; o joelho virando de lado mais de 60 graus num tick) e o voo
         // (os dois pes no ar).
-        if (t > 0.35f && scenario.ball && legacy.bodyMode == LegacyBodyMode3D::Animated) {
+        if (t > 0.35f && (scenario.ball || std::getenv("XLOUCA")) && legacy.bodyMode == LegacyBodyMode3D::Animated) {
             const AthleteLegs3D legs = resolveAthleteLegs3D(profile);
             if (legs.valid) {
                 bool crazy = false, flipped = false;
@@ -2056,6 +2092,26 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
                     };
                     Vec3 before, now;
                     if (pole(previousLinks, before) && pole(bodyState.links, now) && dot(before, now) < 0.5f) flipped = true;
+                    if (std::getenv("XLOUCA")) {
+                        // (Os giros da coxa e da canela e o joelho deste lado.)
+                        float spin[2] {};
+                        int k = 0;
+                        for (const std::size_t link : { legs.thigh[side], legs.shin[side] }) {
+                            const Quaternion change = (previousLinks[link].orientation.conjugate() * bodyState.links[link].orientation).normalized();
+                            spin[k++] = 2.0f * std::acos(std::clamp(std::abs(change.w), 0.0f, 1.0f)) / Dt;
+                        }
+                        if (spin[0] > std::atof(std::getenv("XLOUCA")) || spin[1] > std::atof(std::getenv("XLOUCA"))) {
+                            const Vec3 hip = bodyState.links.front().position + bodyState.links.front().orientation.rotate(legs.hipInPelvis[side]);
+                            const Vec3 knee = bodyState.links[legs.shin[side]].position;
+                            const Vec3 ankle = bodyState.links[legs.foot[side]].position
+                                + bodyState.links[legs.foot[side]].orientation.rotate(legs.ankleInFoot[side]);
+                            const float a = (knee - hip).length(), b = (ankle - knee).length(), c = (ankle - hip).length();
+                            const float bend = std::acos(std::clamp((a * a + b * b - c * c) / (2.0f * a * b), -1.0f, 1.0f));
+                            std::printf("  t %.3f LOUCA %c coxa %.1f canela %.1f rad/s | joelho %.0f graus alcance %.3f | polo %.2f %.2f %.2f | tornozelo %.3f %.3f %.3f\n",
+                                t, side == 0 ? 'E' : 'D', spin[0], spin[1], 180.0f - bend * 57.2958f, c / (a + b), now.x, now.y, now.z,
+                                ankle.x, ankle.y, ankle.z);
+                        }
+                    }
                 }
                 if (crazy) ++metrics.crazyLegTicks;
                 if (flipped) ++metrics.kneeFlipTicks;
@@ -2121,10 +2177,13 @@ void printMetrics(const Scenario& scenario, const Metrics& metrics, bool footste
             latencySum += value;
             latencyMax = std::max(latencyMax, value);
         }
-        std::printf("%-18s   v5: pedidos %d toques %d | folga pe-bola na forca med %.3f max %.3f m | atraso med %.3f max %.3f s | perna louca %d joelho virando %d giro max %.1f rad/s | voo max %.3f s\n",
+        std::printf("%-18s   v5: pedidos %d toques %d | folga pe-bola na forca med %.3f max %.3f m | atraso med %.3f max %.3f s | perna louca %d joelho virando %d giro max %.1f rad/s | voo max %.3f s | garantia %zu folga med %.3f | perdidos %d | desistiu %d errou %d\n",
             "", metrics.requests, metrics.touches, percentile(metrics.contactGaps, 0.5f), percentile(metrics.contactGaps, 1.0f),
             metrics.latencies.empty() ? 0.0f : latencySum / static_cast<float>(metrics.latencies.size()), latencyMax,
-            metrics.crazyLegTicks, metrics.kneeFlipTicks, metrics.legSpinMax, metrics.longestFlight);
+            metrics.crazyLegTicks, metrics.kneeFlipTicks, metrics.legSpinMax, metrics.longestFlight,
+            metrics.guaranteedGaps.size(), percentile(metrics.guaranteedGaps, 0.5f),
+            metrics.lostRequests + static_cast<int>(metrics.pendingRequests.size()), metrics.abortedTouches,
+            metrics.missedTouches);
     }
     if (!metrics.bodyForecastErrors.empty())
         std::printf("%-18s   previsao do corpo (0,3 s antes): %zu | med %.3f p95 %.3f max %.3f m\n", "",
@@ -2509,6 +2568,7 @@ int writeContactPoses(const RagdollProfile3D& profile, const std::string& path) 
 
 int main(int argc, char** argv) {
     std::string only, dumpPath, contactPoses;
+    bool dribbleV5 = false;
     int every = 3;
     bool startPhysical = false;
     bool activeBody = AthleteRuntimeSettings3D {}.activeBody;
@@ -2543,6 +2603,7 @@ int main(int argc, char** argv) {
         else if (arg == "--ponte") bridge = std::atoi(need()) != 0;
         else if (arg == "--teste") checks = true;
         else if (arg == "--poses-contato") contactPoses = need();
+        else if (arg == "--v5") dribbleV5 = std::atoi(need()) != 0;
         else if (arg == "--total") totalPhysical = true;
         else if (arg == "--pes") feetAssist = static_cast<float>(std::atof(need()));
         else if (arg == "--guia") boneGuide = static_cast<float>(std::atof(need()));
@@ -2579,6 +2640,7 @@ int main(int argc, char** argv) {
     settings.activeStanceSettings.balanceSteps = balanceSteps;
     settings.capsuleResponsePercent = response;
     settings.newBallHandling = newBall;
+    settings.dribbleV5 = dribbleV5;
     settings.physicalBridge = bridge;
     settings.physicalFeetAssistPercent = feetAssist;
     settings.physicalBoneGuidePercent = boneGuide;

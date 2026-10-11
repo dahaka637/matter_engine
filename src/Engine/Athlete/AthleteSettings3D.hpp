@@ -3,6 +3,7 @@
 #include "Engine/Athlete/Synthesis/LegClearance3D.hpp"
 #include "Engine/Athlete/Actions/BallHandling3D.hpp"
 #include "Engine/Athlete/Actions/BallPlay3D.hpp"
+#include "Engine/Athlete/Dribble/DribbleTypes3D.hpp"
 #include "Engine/Athlete/Body/ActiveBodyController3D.hpp"
 #include "Engine/Athlete/Body/ActiveStance3D.hpp"
 #include "Engine/Athlete/Body/PhysicalFeetAssist3D.hpp"
@@ -147,6 +148,11 @@ struct AthleteRuntimeSettings3D {
     [[nodiscard]] bool newBallHandlingActive() const { return newBallHandling; }
     BallHandlingSettings3D ballHandling;
     BallPlaySettings3D ballPlay;
+    // Plano v5 (11/10 noite): o manejo refeito do zero (Athlete/Dribble) - o
+    // pe vai ate a bola dentro de um balanco da perna, a forca no contato,
+    // manejo continuo e intercalado. Com o manejo novo ligado.
+    bool dribbleV5 = false;
+    DribbleSettings3D dribble;
     // As pernas nunca se atravessam na pose do padrao (plano v4).
     LegClearanceSettings3D legClearance;
     // Manejo de bola.

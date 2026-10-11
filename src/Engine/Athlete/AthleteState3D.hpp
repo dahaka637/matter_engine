@@ -2,6 +2,7 @@
 
 #include "Engine/Athlete/Actions/BallHandling3D.hpp"
 #include "Engine/Athlete/Actions/BallPlay3D.hpp"
+#include "Engine/Athlete/Dribble/Dribble3D.hpp"
 #include "Engine/Athlete/Body/ActiveBodyController3D.hpp"
 #include "Engine/Athlete/Body/ActiveStance3D.hpp"
 #include "Engine/Athlete/Body/PhysicalFeetAssist3D.hpp"
@@ -38,6 +39,9 @@ struct AthleteState3D {
     // que joga, telemetria). (O da Etapa 5 fica ate a limpeza.)
     BallHandling3D ballHandling;
     BallPlay3D ballPlay;
+    // Plano v5: o manejo refeito e a ultima saida dele.
+    Dribble3D dribble;
+    DribbleOutput3D dribbleOutput;
     BallHandlingOutput3D ballOutput;
 };
 

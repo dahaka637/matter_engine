@@ -29,6 +29,10 @@ struct AthleteFootGeometry3D {
 
 // Para onde o pe aponta no plano (rad) e a rotacao em volta da vertical.
 [[nodiscard]] float athleteFootYaw3D(const AthleteFootGeometry3D& geometry, int side, Quaternion orientation);
+// O rumo do pe pelo eixo de lado dele (rad): firme com o pe muito inclinado -
+// o calcanhar chutando para tras, a ponta para baixo -, onde o rumo da ponta
+// gira a toa.
+[[nodiscard]] float athleteFootHeading3D(const AthleteFootGeometry3D& geometry, int side, Quaternion orientation);
 [[nodiscard]] Quaternion athleteYawRotation3D(float yawRadians);
 [[nodiscard]] float athleteWrapAngle3D(float radians);
 

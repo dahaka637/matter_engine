@@ -1,6 +1,7 @@
 #include "Engine/Athlete/Legacy/LegacyAthleteStep3D.hpp"
 
 #include "Engine/Athlete/Legacy/LegacyBallBridge3D.hpp"
+#include "Engine/Athlete/Planning/MotionPlanner3D.hpp"
 #include "Engine/Athlete/Synthesis/LegSynthesis3D.hpp"
 
 #include "Engine/Character/CharacterControlApplication3D.hpp"
@@ -691,10 +692,13 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
     if (command.controlled && !body.links.empty() && settings.newBallHandlingActive()) {
         BallPlay3D& handling = athlete.ballPlay;
         if (!handling.ready()) handling.reset(profile);
+        // (Plano v5: o manejo refeito.)
+        const bool dribble = settings.dribbleV5;
+        if (dribble && !athlete.dribble.ready()) athlete.dribble.reset(profile);
         const Vec3 pelvis = body.links.front().position;
         // A bola do pedido em andamento; para um pedido novo, a mais perto
         // (ate 3 m).
-        const std::uint64_t locked = handling.targetBallKey();
+        const std::uint64_t locked = dribble ? athlete.dribble.targetBallKey() : handling.targetBallKey();
         AthleteBall3D* target = nullptr;
         AthleteBall3D* nearest = nullptr;
         float best = 3.0f;
@@ -829,7 +833,43 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         }
         in.deltaTime = deltaTime;
         BallHandlingOutput3D& out = athlete.ballOutput;
-        handling.update(in, settings.ballForce, settings.ballPlay, out);
+        if (dribble) {
+            // Plano v5: a passada da locomocao como o manejo a ve (as janelas,
+            // o ciclo e o pe no futuro) e a resposta da capsula.
+            const DefaultLocomotionOutput3D& style = state.defaultLocomotion.output();
+            DribbleGaitForecast3D forecast;
+            forecast.valid = style.valid && style.cycling && style.cycleSeconds > 0.0f;
+            forecast.cycleSeconds = style.cycleSeconds;
+            forecast.forecastStep = style.forecastStep;
+            for (std::size_t side = 0; side < 2; ++side) {
+                for (std::size_t k = 0; k < DribbleGaitForecast3D::WindowCount; ++k)
+                    forecast.windows[side][k] = { style.swingWindows[side][k].start, style.swingWindows[side][k].end };
+                for (std::size_t k = 0; k < DribbleGaitForecast3D::ForecastCount; ++k) {
+                    forecast.foot[side][k] = style.footForecast[side][k];
+                    forecast.footTurn[side][k] = style.footForecastOrientation[side][k];
+                }
+            }
+            const AthleteCapsuleResponse3D response = athleteCapsuleResponse3D(settings.capsuleResponsePercent);
+            DribbleCapsule3D capsule;
+            capsule.acceleration = response.acceleration;
+            capsule.deceleration = response.deceleration;
+            capsule.brake = response.brake;
+            capsule.turnRate = response.turnRate;
+            DribbleOutput3D& result = athlete.dribbleOutput;
+            athlete.dribble.update(in, forecast, capsule, settings.ballForce, settings.dribble, result);
+            out = {};
+            out.impulse = result.impulse;
+            out.impulseBallKey = result.impulseBallKey;
+            out.linearImpulse = result.linearImpulse;
+            out.angularImpulse = result.angularImpulse;
+            out.outcomeVelocity = result.outcomeVelocity;
+            out.touched = result.touched;
+            out.interacting = result.interacting;
+            out.interactingBallKey = result.interactingBallKey;
+            out.gaitRateScale = result.gaitRateScale;
+        } else {
+            handling.update(in, settings.ballForce, settings.ballPlay, out);
+        }
         // A fisica: o impulso do toque, o sensor do pe (so na bola-alvo) e o
         // dono (quem interage atravessa a bola com as pernas).
         for (AthleteBall3D& ball : balls) {
@@ -847,7 +887,7 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                 scene.setInflatedBallOwner(ball.handle, slot.handle);
             }
         }
-        command.ballGesture = legacyBallGesture3D(out.body);
+        command.ballGesture = dribble ? legacyDribbleGesture3D(athlete.dribbleOutput) : legacyBallGesture3D(out.body);
         state.ballLastOutput = {};
         state.ballLastOutput.touched = out.touched;
         state.ballSpeedScale = out.speedScale;
@@ -992,6 +1032,8 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         // (O gesto com a bola entra na passada.)
         input.phaseRateScale = settings.newBallHandlingActive() && command.controlled
             ? athlete.ballOutput.gaitRateScale : 1.0f;
+        input.dribbleStyle = settings.newBallHandlingActive() && settings.dribbleV5 && command.controlled
+            ? athlete.dribbleOutput.dribbleStyle : 0.0f;
         DefaultLocomotionSettings3D& defaults = state.defaultLocomotion.settings();
         defaults.adaptiveTransitions = settings.defaultAdaptiveTransitions;
         defaults.toeRoll = settings.toeRoll;
