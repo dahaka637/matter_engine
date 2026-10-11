@@ -59,7 +59,9 @@ struct DribbleSettings3D {
     // alcancar, a forca saindo antes da bola sair da area ou, com a bola longe
     // do pe sem sair, em guaranteeLife (s). Entre dois contatos, pelo menos
     // touchGap (s).
-    int queueSize = 3;
+    // (2: o proximo toque e o seguinte, para o encadeamento; com 3, cliques
+    // mais rapidos que os pes viravam toques de quase 2 s atras.)
+    int queueSize = 2;
     float requestLife = 0.6f;
     float guaranteeLife = 1.5f;
     float touchGap = 0.12f;
@@ -165,9 +167,16 @@ struct DribbleSettings3D {
     // (o que for maior), cedendo na faixa reachBand (fracoes da perna).
     float swingReach = 0.96f;
     float reachBand = 0.03f;
-    // O corpo do gesto (pela forca): a pelve desce ate bodyDrop (m) mais o
-    // que o alcance pediu; o olhar na bola.
-    float bodyDrop = 0.03f;
+    // A passada de conducao: com pedido ou toque em andamento e ate
+    // dribbleLinger (s) depois do ultimo toque.
+    float dribbleLinger = 0.8f;
+    // O corpo do gesto (TouchBody3D, as chaves do V3): correndo pesa
+    // bodyRunningShare (a corrida manda; inteiro ate 1 m/s, essa parte a
+    // 4 m/s) e some bodyFade (s) depois da volta do pe; o olhar na bola.
+    float bodyRunningShare = 0.15f;
+    float bodyFade = 0.15f;
+    // A mola de cada canal do corpo (s, criticamente amortecida).
+    float bodySpringSeconds = 0.05f;
     float lookWeight = 0.8f;
     float bodySeconds = 0.10f;
     // (O olhar entra e sai mais devagar: de uma vez, a cabeca dava 780 m/s2.)
@@ -225,6 +234,8 @@ struct DribbleOutput3D {
     float touchMiss = 0.0f;
     int aborted = 0;
     int missed = 0;
+    // Cliques juntados ao pendente mais novo (a fila cheia) neste tick.
+    int merged = 0;
     int pending = 0;
 };
 

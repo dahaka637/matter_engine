@@ -190,6 +190,15 @@ struct DefaultLocomotionSettings3D {
     float sprintAmplitudeSide = 1.0f;
     // A amplitude muda no maximo neste tempo (s, filtro).
     float gaitAmplitudeSeconds = 0.25f;
+    // Plano v5: a passada de conducao (entrada dribbleStyle). A cadencia sobe
+    // ate os pousos alternados ficarem a dribbleHalfCycle (s) - no maximo
+    // dribbleCadenceMaximum vezes - e a amplitude divide pelo mesmo: passos
+    // curtos e rapidos, sem o pe escorregar (andando a 1 m/s o trote pousava a
+    // cada 0,63 s e cada perna so tocava a bola uma vez por 1,3 s). Muda no
+    // maximo em dribbleCadenceSeconds.
+    float dribbleHalfCycle = 0.30f;
+    float dribbleCadenceMaximum = 2.2f;
+    float dribbleCadenceSeconds = 0.25f;
     // Mistura das marchas (s, molas criticamente amortecidas): a forma do
     // ciclo (setor, trote/sprint) e o parado <-> andando.
     float gaitBlendSeconds = 0.12f;
@@ -582,6 +591,8 @@ private:
     // e da corrida.
     std::vector<float> m_amplitudeShare;
     std::array<float, 2> m_gaitAmplitude { 1.0f, 1.0f };
+    // A cadencia da passada de conducao (1: a normal).
+    float m_dribbleCadence = 1.0f;
     void prepare(const RagdollProfile3D& profile, const CharacterLocomotionAnimations3D& animations);
 
     DefaultLocomotionSettings3D m_settings;

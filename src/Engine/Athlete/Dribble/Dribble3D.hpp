@@ -6,6 +6,7 @@
 #include "Engine/Athlete/Dribble/DribbleBall3D.hpp"
 #include "Engine/Athlete/Dribble/DribbleTypes3D.hpp"
 #include "Engine/Athlete/Dribble/SwingTouch3D.hpp"
+#include "Engine/Athlete/Dribble/TouchBody3D.hpp"
 #include "Engine/Athlete/Dribble/TouchPlanner3D.hpp"
 
 #include <array>
@@ -75,9 +76,16 @@ private:
     bool m_yawKnown = false;
     // A previsao do corpo deste tick.
     BodyForecast3D m_forecast;
-    // O corpo do gesto (na mola).
+    // Desde o ultimo toque (s): a passada de conducao fica ate dribbleLinger.
+    float m_sinceTouch = 10.0f;
+    // O corpo do gesto: o de cada toque (ate esmaecer) e o peso na mola.
+    std::array<TouchBodyPlan3D, 2> m_bodyPlans {};
     float m_bodyWeight = 0.0f;
-    float m_bodyDrop = 0.0f;
+    // As molas do corpo (valores e velocidades: os planos mudando de uma vez -
+    // desistindo, trocando de perna - nao saltam; toques seguidos partem dos
+    // valores de agora).
+    DribbleBody3D m_bodyValue;
+    DribbleBody3D m_bodyRate;
     float m_lookWeight = 0.0f;
     Vec3 m_look;
     bool m_lookKnown = false;

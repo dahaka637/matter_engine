@@ -521,6 +521,10 @@ private:
     // Manejo novo (10/10, Etapa 5): pedido com desfecho, gesto planejado e o
     // sensor do pe; so com as pegadas. Desligado ate o usuario aprovar.
     bool m_newBallHandling = true;
+    // Plano v5 (12/10): o manejo refeito - o pe vai ate a bola num balanco da
+    // perna, manejo continuo e intercalado com a passada de conducao. O ponto
+    // de teste do usuario (o antigo sai so depois dele aprovar).
+    bool m_dribbleV5 = true;
     // A regua "Resposta" da capsula no modo padrao (%; 100 = 16 / 22 / 30 m/s2
     // e 10 rad/s, os aprovados).
     float m_capsuleResponsePercent = 100.0f;

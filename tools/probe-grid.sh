@@ -16,7 +16,7 @@ def g(p,d=\"?\"):
 pico=g(r\"\|\s+[0-9.]+\s+/\s+([0-9.]+) m/s2\"); tronco=g(r\"\|\s+([0-9.]+)\s+/\s+[0-9.]+ m/s2\"); salto=g(r\"\| ([0-9.]+) m \|\")
 v5=re.search(r\"v5: pedidos (\d+) toques (\d+) \| folga pe-bola na forca med ([0-9.]+) max ([0-9.]+) m \| atraso med ([0-9.]+) max ([0-9.]+) s \| perna louca (\d+) joelho virando (\d+) giro max ([0-9.]+) rad/s \| voo max ([0-9.]+) s\",txt)
 v5s=\" \".join(v5.groups()) if v5 else \"- - - - - - - - - -\"
-gar=re.search(r\"garantia (\d+) folga med ([0-9.]+) \| perdidos (\d+)\",txt)
+gar=re.search(r\"garantia (\d+) folga med ([0-9.]+) \| perdidos (\d+) \| desistiu (\d+) errou (\d+) juntados (\d+)\",txt)
 v5s+=\" | garantia \"+\" \".join(gar.groups()) if gar else \"\"
 cruz=g(r\"cruzou (\d+)\"); sobg=g(r\"no gesto ([0-9.]+)\"); caiu=\"CAIU\" if \"CAIU\" in txt else \"\"
 print(f\"{c:26s} tronco {tronco} pernas {pico} salto {salto} cruzou {cruz} sobg {sobg} {caiu} | v5 {v5s}\")

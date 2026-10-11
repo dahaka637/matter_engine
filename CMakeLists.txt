@@ -486,6 +486,7 @@ add_library(MatterEngine STATIC
     src/Engine/Athlete/Dribble/DribbleBall3D.cpp
     src/Engine/Athlete/Dribble/Dribble3D.cpp
     src/Engine/Athlete/Dribble/SwingTouch3D.cpp
+    src/Engine/Athlete/Dribble/TouchBody3D.cpp
     src/Engine/Athlete/Dribble/TouchPlanner3D.cpp
     src/Engine/Athlete/Intent/ActionQueue3D.cpp
     src/Engine/Athlete/Sensing/BallPredictor3D.cpp

@@ -231,10 +231,9 @@ TouchPlan3D planTouch3D(const TouchPlanInput3D& in) {
             const float natural = std::max(retarget ? 0.0f : s.stepMinimum,
                 (contactBody - startBody).length() / std::max(0.5f, s.stepSpeed));
             if (retarget) {
-                if (t < natural - 1e-4f) {
-                    ++rejected[5];
-                    return;
-                }
+                // (Refeito, o tempo do passo ja foi decidido no compromisso: o
+                // "resto natural" medido do pe que mal saiu empurrava o
+                // contato para depois a cada tick e o chute nunca saia.)
             } else {
                 if (t - natural < windowStart - 1e-4f) {
                     ++rejected[5];

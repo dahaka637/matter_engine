@@ -17,6 +17,22 @@ Vec3 rotateZ(Vec3 v, float angle) {
 
 float wrap(float angle) { return std::remainder(angle, 6.2831853f); }
 
+// Um passo da mola criticamente amortecida (o tempo dela em seconds).
+void spring(float& value, float& rate, float target, float seconds, float dt) {
+    const float omega = 1.0f / std::max(0.005f, seconds);
+    const float x = value - target;
+    const float e = std::exp(-omega * dt);
+    const float temp = (rate + omega * x) * dt;
+    rate = (rate - omega * temp) * e;
+    value = target + (x + temp) * e;
+}
+
+void spring(Vec3& value, Vec3& rate, Vec3 target, float seconds, float dt) {
+    spring(value.x, rate.x, target.x, seconds, dt);
+    spring(value.y, rate.y, target.y, seconds, dt);
+    spring(value.z, rate.z, target.z, seconds, dt);
+}
+
 } // namespace
 
 void Dribble3D::reset(const RagdollProfile3D& profile) {
@@ -28,9 +44,12 @@ void Dribble3D::reset(const RagdollProfile3D& profile) {
     m_yawKnown = false;
     m_yawRate = 0.0f;
     m_bodyWeight = 0.0f;
-    m_bodyDrop = 0.0f;
+    m_bodyPlans = {};
+    m_bodyValue = {};
+    m_bodyRate = {};
     m_lookKnown = false;
     m_ballKey = 0;
+    m_sinceTouch = 10.0f;
 }
 
 SwingLive3D Dribble3D::live(const BallHandlingInput3D& input, int side) const {
@@ -141,8 +160,12 @@ void Dribble3D::update(const BallHandlingInput3D& input, const DribbleGaitForeca
         for (const Request& r : m_requests) waiting += !r.committed && !r.done ? 1 : 0;
         if (waiting >= std::max(1, settings.queueSize)) {
             for (auto it = m_requests.rbegin(); it != m_requests.rend(); ++it)
-                if (!it->committed && !it->done) {
+                if (!it->committed && !it->done && !it->armed) {
+                    // (O pendente mais novo vira o clique de agora: a intencao
+                    // mais recente; ele ja tinha visto a bola.)
+                    request.sawBall = request.sawBall || it->sawBall;
                     *it = request;
+                    ++output.merged;
                     break;
                 }
         } else {
@@ -434,11 +457,17 @@ void Dribble3D::update(const BallHandlingInput3D& input, const DribbleGaitForeca
                 r.plan.rejected[3], r.plan.rejected[4], r.plan.rejected[5], r.plan.rejected[6], r.plan.rejected[7],
                 r.plan.rejected[8]);
     }
-    // 8) O corpo, o dono da bola e a telemetria.
+    // 8) O corpo, a passada de conducao, o dono da bola e a telemetria.
     bodyLayer(input, settings, output);
+    m_sinceTouch = output.touched ? 0.0f : m_sinceTouch + dt;
+    output.dribbleStyle = !m_requests.empty() || anySwing() || m_sinceTouch < settings.dribbleLinger ? 1.0f : 0.0f;
     if (std::getenv("XCORPO"))
-        std::printf("  t %.3f corpo peso %.3f desce %.3f | olhar %.3f %.3f %.3f peso %.3f\n", m_clock, output.body.weight,
-            output.body.pelvisDrop, output.body.look.x, output.body.look.y, output.body.look.z, output.body.lookWeight);
+        std::printf("  t %.3f corpo peso %.3f desce %.3f | olhar %.3f %.3f %.3f peso %.3f | bracos %.3f %.3f punho %.2f %.2f %.2f / %.2f %.2f %.2f | tronco %.3f %.3f %.3f pelve %.3f %.3f %.3f\n", m_clock, output.body.weight,
+            output.body.pelvisDrop, output.body.look.x, output.body.look.y, output.body.look.z, output.body.lookWeight,
+            output.body.armWeight[0], output.body.armWeight[1], output.body.wrist[0].x, output.body.wrist[0].y,
+            output.body.wrist[0].z, output.body.wrist[1].x, output.body.wrist[1].y, output.body.wrist[1].z,
+            output.body.trunkTwist, output.body.trunkBend, output.body.trunkSide, output.body.pelvisYaw,
+            output.body.pelvisPitch, output.body.pelvisRoll);
     output.interacting = !m_requests.empty() || anySwing();
     output.interactingBallKey = m_ballKey;
     for (const Request& r : m_requests) output.pending += r.done ? 0 : 1;
@@ -446,19 +475,55 @@ void Dribble3D::update(const BallHandlingInput3D& input, const DribbleGaitForeca
 
 void Dribble3D::bodyLayer(const BallHandlingInput3D& input, const DribbleSettings3D& settings, DribbleOutput3D& output) {
     const float dt = std::max(input.deltaTime, 1e-4f);
-    // O corpo do gesto (o minimo ate o E7): a pelve desce pela forca e pelo
-    // que o alcance pediu; o olhar na bola.
-    float wantedDrop = 0.0f;
-    bool acting = false;
-    for (const SwingTouch3D& swing : m_swings) {
-        if (!swing.active()) continue;
-        acting = true;
-        wantedDrop = std::max(wantedDrop, settings.bodyDrop * (0.5f + 0.5f * swing.plan().power) + swing.plan().drop);
+    // O corpo de cada toque (o plano dele refeito a cada tick enquanto o
+    // balanco anda; depois, ate esmaecer).
+    const float speed = planar(input.bodyVelocity).length();
+    for (std::size_t s = 0; s < 2; ++s)
+        if (m_swings[s].active())
+            m_bodyPlans[s] = touchBodyPlan3D(m_swings[s].plan(), speed > 0.6f,
+                static_cast<std::uint32_t>(m_swings[s].request()), settings.bodyFade);
+    const float share = 1.0f - (1.0f - std::clamp(settings.bodyRunningShare, 0.0f, 1.0f))
+        * std::clamp((speed - 1.0f) / 3.0f, 0.0f, 1.0f);
+    const Vec3 forward { std::cos(input.body.facingYaw), std::sin(input.body.facingYaw), 0.0f };
+    DribbleBody3D keys;
+    float arms = 0.0f;
+    bool keyed = false;
+    for (std::size_t s = 0; s < 2; ++s) {
+        TouchBodyPlan3D& body = m_bodyPlans[s];
+        if (!body.valid) continue;
+        if (m_clock >= body.times[4]) {
+            body.valid = false;
+            continue;
+        }
+        keyed = true;
+        arms = std::max(arms, touchBodyPose3D(body, m_clock, share, forward,
+            m_clipAnkle[1 - s] - input.body.pelvis, keys));
+    }
+    // (Pelas molas.)
+    {
+        const float k = settings.bodySpringSeconds;
+        spring(m_bodyValue.pelvisDrop, m_bodyRate.pelvisDrop, keys.pelvisDrop, k, dt);
+        spring(m_bodyValue.pelvisShift, m_bodyRate.pelvisShift, keys.pelvisShift, k, dt);
+        spring(m_bodyValue.pelvisYaw, m_bodyRate.pelvisYaw, keys.pelvisYaw, k, dt);
+        spring(m_bodyValue.pelvisPitch, m_bodyRate.pelvisPitch, keys.pelvisPitch, k, dt);
+        spring(m_bodyValue.pelvisRoll, m_bodyRate.pelvisRoll, keys.pelvisRoll, k, dt);
+        spring(m_bodyValue.trunkTwist, m_bodyRate.trunkTwist, keys.trunkTwist, k, dt);
+        spring(m_bodyValue.trunkBend, m_bodyRate.trunkBend, keys.trunkBend, k, dt);
+        spring(m_bodyValue.trunkSide, m_bodyRate.trunkSide, keys.trunkSide, k, dt);
+        // (Os punhos so andam com o braco no gesto: sem ele, ficam onde
+        // estao - o peso do braco faz a mistura.)
+        for (std::size_t s = 0; s < 2; ++s)
+            if (arms > 0.0f) spring(m_bodyValue.wrist[s], m_bodyRate.wrist[s], keys.wrist[s], k, dt);
+        spring(m_bodyValue.armWeight[0], m_bodyRate.armWeight[0], arms, k, dt);
+        m_bodyValue.armWeight[0] = std::clamp(m_bodyValue.armWeight[0], 0.0f, 1.0f);
+        keys = m_bodyValue;
+        arms = m_bodyValue.armWeight[0];
+        keyed = keyed || std::abs(arms) > 1e-3f || std::abs(keys.pelvisDrop) > 1e-4f || std::abs(keys.trunkSide) > 1e-4f
+            || std::abs(keys.trunkTwist) > 1e-4f || std::abs(keys.pelvisYaw) > 1e-4f;
     }
     const float blend = std::min(1.0f, dt / std::max(0.01f, settings.bodySeconds));
-    const bool live = acting || !m_requests.empty();
+    const bool live = keyed || anySwing() || !m_requests.empty();
     m_bodyWeight += ((live ? 1.0f : 0.0f) - m_bodyWeight) * blend;
-    m_bodyDrop += (wantedDrop - m_bodyDrop) * blend;
     m_lookWeight += ((live && input.ball.valid ? settings.lookWeight : 0.0f) - m_lookWeight)
         * std::min(1.0f, dt / std::max(0.01f, settings.lookSeconds));
     if (input.ball.valid) {
@@ -467,10 +532,21 @@ void Dribble3D::bodyLayer(const BallHandlingInput3D& input, const DribbleSetting
         m_lookKnown = true;
     }
     if (m_bodyWeight < 0.001f && m_lookWeight < 0.001f) return;
-    // (A camada multiplica pelo peso: o olhar vem com o dele.)
+    // (A camada multiplica pelo peso: os valores vem divididos por ele - e
+    // com o peso ainda baixo, ele so nao amplifica.)
     const float weight = std::max(m_bodyWeight, 0.001f);
+    const float inverse = 1.0f / std::max(weight, 0.3f);
+    output.body = keys;
     output.body.weight = weight;
-    output.body.pelvisDrop = m_bodyDrop / std::max(0.05f, weight);
+    output.body.pelvisDrop = keys.pelvisDrop * inverse;
+    output.body.pelvisShift = keys.pelvisShift * inverse;
+    output.body.pelvisYaw = keys.pelvisYaw * inverse;
+    output.body.pelvisPitch = keys.pelvisPitch * inverse;
+    output.body.pelvisRoll = keys.pelvisRoll * inverse;
+    output.body.trunkTwist = keys.trunkTwist * inverse;
+    output.body.trunkBend = keys.trunkBend * inverse;
+    output.body.trunkSide = keys.trunkSide * inverse;
+    output.body.armWeight = { std::min(1.0f, arms * inverse), std::min(1.0f, arms * inverse) };
     output.body.look = m_look;
     output.body.lookWeight = std::min(1.0f, m_lookWeight / weight);
 }

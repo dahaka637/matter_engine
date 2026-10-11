@@ -925,6 +925,7 @@ struct Metrics {
     int lostRequests = 0;
     int abortedTouches = 0;
     int missedTouches = 0;
+    int mergedRequests = 0;
     std::vector<float> latencies;
     std::vector<float> pendingRequests;
     int crazyLegTicks = 0;
@@ -1318,6 +1319,7 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
         if (settings.dribbleV5) {
             metrics.abortedTouches += athlete.dribbleOutput.aborted;
             metrics.missedTouches += athlete.dribbleOutput.missed;
+            metrics.mergedRequests += athlete.dribbleOutput.merged;
         }
         if (control.ballRequest != BallActionKind3D::None) {
             ++metrics.requests;
@@ -2177,13 +2179,13 @@ void printMetrics(const Scenario& scenario, const Metrics& metrics, bool footste
             latencySum += value;
             latencyMax = std::max(latencyMax, value);
         }
-        std::printf("%-18s   v5: pedidos %d toques %d | folga pe-bola na forca med %.3f max %.3f m | atraso med %.3f max %.3f s | perna louca %d joelho virando %d giro max %.1f rad/s | voo max %.3f s | garantia %zu folga med %.3f | perdidos %d | desistiu %d errou %d\n",
+        std::printf("%-18s   v5: pedidos %d toques %d | folga pe-bola na forca med %.3f max %.3f m | atraso med %.3f max %.3f s | perna louca %d joelho virando %d giro max %.1f rad/s | voo max %.3f s | garantia %zu folga med %.3f | perdidos %d | desistiu %d errou %d juntados %d\n",
             "", metrics.requests, metrics.touches, percentile(metrics.contactGaps, 0.5f), percentile(metrics.contactGaps, 1.0f),
             metrics.latencies.empty() ? 0.0f : latencySum / static_cast<float>(metrics.latencies.size()), latencyMax,
             metrics.crazyLegTicks, metrics.kneeFlipTicks, metrics.legSpinMax, metrics.longestFlight,
             metrics.guaranteedGaps.size(), percentile(metrics.guaranteedGaps, 0.5f),
             metrics.lostRequests + static_cast<int>(metrics.pendingRequests.size()), metrics.abortedTouches,
-            metrics.missedTouches);
+            metrics.missedTouches, metrics.mergedRequests);
     }
     if (!metrics.bodyForecastErrors.empty())
         std::printf("%-18s   previsao do corpo (0,3 s antes): %zu | med %.3f p95 %.3f max %.3f m\n", "",

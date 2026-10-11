@@ -327,6 +327,7 @@ void defaultLocomotionPose3D(const RagdollProfile3D& profile, Vec3 rootPosition,
 
 void DefaultLocomotion3D::reset(float facingYawRadians) {
     m_sector = 0;
+    m_dribbleCadence = 1.0f;
     m_weights.fill(0.0f);
     m_shape.fill(0.0f);
     m_shapeRates.fill(0.0f);
@@ -1233,7 +1234,7 @@ void DefaultLocomotion3D::update(const RagdollProfile3D& profile,
         const bool sprint = g >= Directions;
         const std::size_t d = g % Directions;
         const float share = d == 2 || d == 6 ? (sprint ? s.sprintAmplitudeSide : s.trotAmplitudeSide) : 1.0f;
-        return 1.0f + (m_gaitAmplitude[sprint ? 1 : 0] - 1.0f) * share;
+        return (1.0f + (m_gaitAmplitude[sprint ? 1 : 0] - 1.0f) * share) / std::max(1.0f, m_dribbleCadence);
     };
     float rate = 0.0f, strideScale = 1.0f;
     if (total > 1e-3f) {
@@ -1271,8 +1272,25 @@ void DefaultLocomotion3D::update(const RagdollProfile3D& profile,
         for (std::size_t g = 0; g < GaitCount; ++g)
             amplitudeShare += m_weights[g] * (gaitAmplitude(g) - 1.0f);
         amplitudeShare = 1.0f + amplitudeShare / total;
-        const float playRate = std::clamp(ratio / (strideScale * amplitudeShare), s.minimumPlayRate, s.maximumPlayRate);
-        rate = frequency * playRate;
+        // (A passada de conducao fora do limite do ritmo: a amplitude ja vem
+        // dividida pela cadencia, que multiplica o ritmo depois do limite.)
+        const float cadence = std::max(1.0f, m_dribbleCadence);
+        const float playRate = std::clamp(ratio / (strideScale * amplitudeShare * cadence), s.minimumPlayRate,
+            s.maximumPlayRate);
+        rate = frequency * playRate * cadence;
+        // Plano v5: a passada de conducao - a cadencia ate os pousos
+        // alternados a dribbleHalfCycle (o ritmo de agora sem ela: meio ciclo
+        // em 0,5 / ritmo).
+        float wanted = 1.0f;
+        const float style = std::clamp(input.dribbleStyle, 0.0f, 1.0f);
+        if (style > 0.0f && frequency * playRate > 1e-3f) {
+            const float half = 0.5f / (frequency * playRate);
+            wanted = 1.0f + style * (std::clamp(half / std::max(0.1f, s.dribbleHalfCycle), 1.0f,
+                std::max(1.0f, s.dribbleCadenceMaximum)) - 1.0f);
+        }
+        m_dribbleCadence += (wanted - m_dribbleCadence) * (1.0f - std::exp(-dt / std::max(0.01f, s.dribbleCadenceSeconds)));
+    } else {
+        m_dribbleCadence = 1.0f;
     }
     // Parando: o passo termina no proximo cruzamento das pernas, freando (o pe
     // apoiado fica travado; o de tras vem para baixo do corpo).
