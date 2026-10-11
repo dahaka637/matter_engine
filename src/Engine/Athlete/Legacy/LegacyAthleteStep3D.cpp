@@ -326,6 +326,8 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             }
             state.returnBoost = 0.0f;
             state.landedSeconds = 0.0f;
+            state.bridge = false;
+            state.getUpSeen = false;
             state.bodyMode = BodyMode::Physical;
             state.bodyModeSeconds = 0.0f;
             state.calmSeconds = 0.0f;
@@ -343,6 +345,7 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         state.returnInertia.stop();
         athlete.active.enter();
         athlete.stance.enter();
+        state.bridge = false;
         state.bodyMode = BodyMode::Active;
         state.bodyModeSeconds = 0.0f;
         state.calmSeconds = 0.0f;
@@ -402,7 +405,11 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                 const Vec3 pelvisUp = (pelvis.orientation
                     * profile.links.front().modelOrientation.conjugate()).rotate({ 0.0f, 0.0f, 1.0f });
                 const bool upright = pelvisUp.z > 0.85f;
-                const bool calm = standingState && upright && capsule.grounded && !hit && !againstWall
+                // (Com a ponte, encostado na parede tambem volta: ela e fisica
+                // e o encosto e de verdade - sem ela, ele ficava no fisico
+                // para sempre encostado.)
+                const bool calm = standingState && upright && capsule.grounded && !hit
+                    && (!againstWall || settings.physicalBridge)
                     && state.locomotion.telemetry().stagger < 0.1f
                     && state.adaptivePhysics.output().perturbation < (state.physicalFromJump ? 0.6f : 0.25f);
                 state.calmSeconds = calm ? state.calmSeconds + deltaTime : 0.0f;
@@ -410,8 +417,12 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                 // usuario, 05/10 -, contado do toque, nao da decolagem.)
                 state.landedSeconds = capsule.grounded ? state.landedSeconds + deltaTime : 0.0f;
                 // (Levantou com pressa - as teclas: volta logo, ele sai
-                // andando/correndo no padrao.)
-                const bool hurried = state.locomotion.telemetry().getUpHurried;
+                // andando/correndo no padrao. Com a ponte, todo fim de
+                // levantar volta logo: ela segura o corpo ate o padrao - de pe
+                // no fisico ele esperava ~1 s, com a cabeca para tras.)
+                if (now == CharacterLocomotionState3D::GettingUp) state.getUpSeen = true;
+                const bool hurried = state.locomotion.telemetry().getUpHurried
+                    || (settings.physicalBridge && state.getUpSeen);
                 const float minimumSeconds = state.physicalFromJump || hurried ? 0.0f : 0.8f;
                 const float calmSeconds = hurried ? 0.08f : state.physicalFromJump ? 0.15f : 0.4f;
                 const bool landedLongEnough = !state.physicalFromJump || state.landedSeconds > 1.0f;
@@ -507,6 +518,20 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                                 base = (body.links[left].position + body.links[right].position) * 0.5f;
                         }
                         scene.placeCharacter({ base.x, base.y, groundHeight(pelvis.position) }, assets.avatarSettings);
+                    } else if (settings.physicalBridge) {
+                        // A ponte fisico -> padrao (plano v2, fase D): o corpo
+                        // segue fisico (gravidade, juntas, chao) por um tempo
+                        // curto - os musculos indo a pose do padrao (que ja
+                        // roda: anda e corre desde o primeiro tick), a ajuda de
+                        // passagem e o guiamento dos ossos subindo de fraco a
+                        // cheio -; no fim, o guiado.
+                        athlete.active.enter(true);
+                        athlete.stance.enter();
+                        state.bodyMode = BodyMode::Active;
+                        state.bridge = true;
+                        state.bridgeSeconds = 0.0f;
+                        const bool moving = handoff || command.intent.requestedVelocityWorld.lengthSquared() > 0.25f;
+                        state.bridgeDuration = moving ? settings.bridgeMovingSeconds : settings.bridgeSeconds;
                     } else {
                         scene.setRagdollGuided(slot.handle, true);
                         state.guided = true;
@@ -562,13 +587,14 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                     && ((!capsule.grounded && capsule.velocity.z > 1.0f && state.airSeconds >= JumpTakeoffSeconds)
                         || (capsule.grounded && state.airSeconds > 0.25f));
                 if (capsule.grounded) state.airSeconds = 0.0f;
-                if (!settings.activeBody) {
+                if (!settings.activeBody && !state.bridge) {
                     if (hit || tackleHit || airTackle || wall || wallHit || penetrating || jumped)
                         toPhysical(grabbed ? "agarrado" : airTackle ? "voadora" : hit || tackleHit ? "pancada"
                             : wall || wallHit ? "parede" : penetrating ? "membro no mundo" : jumped ? "pulo" : "pancada");
                 } else if (state.bodyMode == BodyMode::Active) {
-                    // No Ativo o corpo ja e fisico (encostar na parede e
-                    // contato de verdade): so o que derruba leva ao pleno.
+                    // No Ativo (e na ponte) o corpo ja e fisico (encostar na
+                    // parede e contato de verdade): so o que derruba leva ao
+                    // pleno.
                     if (grabbed || tackleHit || airTackle || hitImpulse > settings.fullPhysicalImpulse)
                         toPhysical(grabbed ? "agarrado" : airTackle ? "voadora" : "pancada forte");
                 } else if (grabbed || tackleHit || airTackle || jumped || hitImpulse > settings.fullPhysicalImpulse
@@ -949,9 +975,19 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             std::array<bool, 2> planted = out.footPlanted;
             if (settings.newBallHandlingActive() && command.controlled && athlete.ballOutput.actingSide >= 0)
                 planted[static_cast<std::size_t>(athlete.ballOutput.actingSide)] = false;
-            athlete.stance.adapt(profile, body, observation, planted,
-                std::hypot(capsuleVelocity.x, capsuleVelocity.y), settings.activeStanceSettings, deltaTime,
-                rootPosition, rootOrientation, coordinates, pose);
+            // (Na ponte parado tambem: o pe apoiado fica onde esta no chao - a
+            // pose do padrao o arrastava ate o lugar do clipe, o atrito nao
+            // deixava e no guiado ele saltava. Andando, os pes vao com a
+            // passada do padrao: presos, na troca para o guiado o pe corria
+            // ate o lugar do clipe.)
+            const bool bridgeMoving = state.bridge
+                && (std::hypot(command.intent.requestedVelocityWorld.x, command.intent.requestedVelocityWorld.y) > 0.5f
+                    || std::hypot(capsuleVelocity.x, capsuleVelocity.y) > 0.5f);
+            state.bridgeStance = state.bridge && !bridgeMoving;
+            if (!bridgeMoving)
+                athlete.stance.adapt(profile, body, observation, planted,
+                    std::hypot(capsuleVelocity.x, capsuleVelocity.y), settings.activeStanceSettings, deltaTime,
+                    rootPosition, rootOrientation, coordinates, pose);
             ActiveBodyTarget3D target;
             target.pose = &pose;
             target.coordinates = &coordinates;
@@ -968,6 +1004,17 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                 scene.applyRagdollControlLinkForce(slot.handle, wrench.link, wrench.force, wrench.torque);
             if (activeOutput.assistForce.lengthSquared() > 1e-6f)
                 scene.applyRagdollControlRootForce(slot.handle, activeOutput.assistForce, {});
+            // A ponte: o guiamento dos ossos ate a pose, a autoridade subindo
+            // de bridgeAuthorityStart a cheia no tempo dela.
+            float bridgeShare = 0.0f;
+            if (state.bridge) {
+                state.bridgeSeconds += deltaTime;
+                bridgeShare = std::clamp(state.bridgeSeconds / std::max(0.05f, state.bridgeDuration), 0.0f, 1.0f);
+                const float start = std::clamp(settings.bridgeAuthorityStart, 0.0f, 1.0f);
+                const float authority = start + (1.0f - start) * bridgeShare * bridgeShare * (3.0f - 2.0f * bridgeShare);
+                const std::vector<float> authorities(profile.links.size(), authority);
+                scene.setRagdollGuidePose(slot.handle, pose.linkPositions, pose.linkOrientations, authorities);
+            }
             state.previousAnimationPose = state.animationPose.linkPositions.empty() ? pose : state.animationPose;
             state.animationPose = pose;
             state.physicsBlend = 1.0f;
@@ -981,32 +1028,40 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                 : navigationFollowVelocity3D(body.links.front().position, rootPosition, settings.activeFollowSlack);
             if (activeOutput.knockout) {
                 toPhysical(("nocaute: " + activeOutput.knockoutReason).c_str());
-            } else if (!athlete.active.handingOver()
+            } else if (!state.bridge && !athlete.active.handingOver()
                 && athlete.stance.captureOutside() > activeCaptureLimit(settings, athlete.stance)) {
                 toPhysical(("passo de equilibrio, captura " + std::to_string(athlete.stance.captureOutside()) + " m fora"
                     + (athlete.stance.stepping() ? " no passo" : "")).c_str());
-            } else if (activeOutput.readyToAnimate && !athlete.stance.stepping() && !state.returnInertia.active()
-                && athlete.stance.baseShift().length() < 0.02f
-                && (athlete.stance.mismatch() < 0.04f || athlete.active.secondsActive() > settings.activeReturnTimeout)) {
+            } else if ((state.bridge && bridgeShare >= 1.0f)
+                || (!state.bridge && activeOutput.readyToAnimate && !athlete.stance.stepping()
+                    && !state.returnInertia.active() && athlete.stance.baseShift().length() < 0.02f
+                    && (athlete.stance.mismatch() < 0.04f
+                        || athlete.active.secondsActive() > settings.activeReturnTimeout))) {
                 // O guiado parte do corpo de agora (juntas e pelve) e vai a
                 // pose do padrao pela inercia da volta: sem estalo nos pes
-                // (a base do Ativo nao e a do clipe).
-                const PhysicsBodyState3D& pelvis = body.links.front();
-                state.returnCoordinates.assign(profile.links.size(), {});
-                std::vector<Vec3> velocities(profile.links.size());
-                for (std::size_t i = 1; i < profile.links.size() && i < body.joints.size(); ++i) {
-                    const auto& joint = body.joints[i].positionRadians;
-                    const auto& rate = body.joints[i].velocityRadiansPerSecond;
-                    state.returnCoordinates[i] = { joint[0], joint[1], joint[2] };
-                    velocities[i] = { rate[0], rate[1], rate[2] };
+                // (a base do Ativo nao e a do clipe). Da ponte, o corpo ja
+                // esta na pose-alvo (a autoridade cheia no fim): o guiado
+                // segue a mesma pose, com a inercia que ela ja tinha
+                // (recomecada do corpo andando, a pelve voltava um quadro).
+                if (!state.bridge || state.bridgeStance) {
+                    const PhysicsBodyState3D& pelvis = body.links.front();
+                    state.returnCoordinates.assign(profile.links.size(), {});
+                    std::vector<Vec3> velocities(profile.links.size());
+                    for (std::size_t i = 1; i < profile.links.size() && i < body.joints.size(); ++i) {
+                        const auto& joint = body.joints[i].positionRadians;
+                        const auto& rate = body.joints[i].velocityRadiansPerSecond;
+                        state.returnCoordinates[i] = { joint[0], joint[1], joint[2] };
+                        velocities[i] = { rate[0], rate[1], rate[2] };
+                    }
+                    state.returnInertia.start(state.returnCoordinates, velocities, pelvis.position, pelvis.orientation,
+                        pelvis.linearVelocity, pelvis.angularVelocity, ActiveExitHalfLife, ActiveExitSeconds);
                 }
-                state.returnInertia.start(state.returnCoordinates, velocities, pelvis.position, pelvis.orientation,
-                    pelvis.linearVelocity, pelvis.angularVelocity, ActiveExitHalfLife, ActiveExitSeconds);
                 scene.setRagdollGuided(slot.handle, true);
                 state.guided = true;
-                state.bodyMode = BodyMode::Returning;
+                state.bodyMode = !state.returnInertia.active() ? BodyMode::Animated : BodyMode::Returning;
                 state.bodyModeSeconds = 0.0f;
-                Log::info("corpo: ativo -> padrao");
+                Log::info(state.bridge ? "corpo: ponte -> padrao" : "corpo: ativo -> padrao");
+                state.bridge = false;
             }
         }
         return;

@@ -80,6 +80,16 @@ struct AthleteRuntimeSettings3D {
     // depois do levantar e no encostao ele derrubava o jogador de novo (a
     // ponte fisico -> padrao do Plano_Claude_v2 o substitui).
     bool activeBody = false;
+    // A ponte fisico -> padrao (plano v2, fase D): saindo do fisico (o fim
+    // do levantar, o pouso de pe), o corpo segue fisico por bridgeSeconds
+    // (bridgeMovingSeconds com as teclas) - os musculos do Ativo indo a pose
+    // do padrao, que ja roda, a ajuda de passagem e o guiamento dos ossos
+    // subindo de bridgeAuthorityStart a cheio - e entao o guiado. Contato
+    // no padrao nao entra nela.
+    bool physicalBridge = true;
+    float bridgeSeconds = 0.45f;
+    float bridgeMovingSeconds = 0.30f;
+    float bridgeAuthorityStart = 0.15f;
     ActiveBodySettings3D activeBodySettings;
     ActiveStanceSettings3D activeStanceSettings;
     float activeEnterImpulse = 1.0f;

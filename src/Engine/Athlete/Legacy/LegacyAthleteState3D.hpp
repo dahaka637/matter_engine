@@ -76,6 +76,17 @@ struct LegacyAthleteState3D {
     std::vector<Vec3> returnCoordinates;
     // A volta pela inercia ("Volta do fisico acompanhando o corpo").
     PoseInertializer3D returnInertia;
+    // A ponte fisico -> padrao (plano v2, fase D; o modo Ativo por dentro):
+    // o tempo nela e quanto ela dura (s).
+    bool bridge = false;
+    float bridgeSeconds = 0.0f;
+    float bridgeDuration = 0.45f;
+    // Neste fisico ele ja esteve levantando (o fim do levantar vai direto a
+    // ponte).
+    bool getUpSeen = false;
+    // A ponte no ultimo tick segurou os pes onde estavam (parado): a pose dela
+    // nao e a do padrao, e a saida recomeca a inercia do corpo.
+    bool bridgeStance = false;
     // Levou carrinho: 0 no golpe, 1 com a ajuda de volta (so o aviso no log;
     // a ajuda e a do impactAssist).
     float tackledRecovery = 1.0f;

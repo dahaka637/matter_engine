@@ -96,6 +96,37 @@ apoiados, que somam zero.
   - Numa base aberta, a volta ao padrão espera 1,2 s, e a inércia leva os pés
     ao lugar do clipe (alguns centímetros em 0,4 s).
 
+## Novo controle, plano v2 — Fase D: a ponte físico → padrão (10/10/2026, noite)
+
+- **`physicalBridge`** (laboratório: "Ponte físico → padrão", ligada): saindo
+  do físico, o corpo segue físico por 0,45 s parado (0,3 s andando). Os
+  músculos do Ativo vão à pose do padrão, que já roda; entra a ajuda de
+  passagem; o guiamento dos ossos sobe de 0,15 a cheio
+  (`setRagdollGuidePose` com autoridade). Depois, o guiado.
+- Por dentro é o modo Ativo com `state.bridge`. Sem os passos de equilíbrio;
+  só pancada forte volta ao físico.
+- **Parado**, o pé apoiado fica onde está (`ActiveStance3D`) e a saída
+  recomeça a inércia do corpo. **Andando**, os pés vão com a passada e a
+  saída segue a mesma pose (recomeçar a inércia do corpo correndo fazia a
+  pelve recuar um quadro).
+- **Levantar** (`CharacterLocomotion3D`): só começa com o tronco alinhado ao
+  lado do clipe. Pronto mas de lado ou torcido, ele rola de bruços antes.
+  Todo fim de levantar vai direto à ponte (antes esperava ~1 s de pé no
+  físico).
+- **Parede:** com a ponte, encostado também volta ao padrão. O pé da frente
+  encostando nela ainda conta como "membro no mundo" (fase E).
+- **Sonda:**
+  - `--ponte`, o modo "ponte" no caminho dos modos;
+  - cenários de queda (oito direções parado e correndo, de frente, de costas,
+    de lado, caindo e correndo) e de parede (`parede_corre`, `parede_pulo`),
+    com parede estática opcional;
+  - medidas do começo do levantar (peito, pelve, lado) e do tempo até de pé;
+    `XQUEDA`;
+  - contratos da ponte e do levantar. A física não é determinística entre
+    rodadas, e os contratos aceitam o tropeço sem queda.
+- **Validação:** `--teste` verde quatro vezes seguidas; arquitetura ok;
+  CTest 12/14.
+
 ## Novo controle, plano v2 — Fase C: manejo v2 (10/10/2026, noite)
 
 - **`Actions/BallPlay3D`** (o "Manejo novo"): a ação depende só de a bola

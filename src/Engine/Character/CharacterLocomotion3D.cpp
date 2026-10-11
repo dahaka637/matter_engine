@@ -3114,11 +3114,29 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
             // boa. Como no Prone Roll de referencia: a perna e o braco de
             // cima cruzam por cima para o lado da barriga e o quadril puxa o
             // tronco (uns 20 graus a frente dos ombros).
+            // O tronco alinhado com o lado do levantar (peito e pelve de
+            // costas para cima ou de brucos para baixo): de lado ou torcido
+            // (o peito para cima e a pelve de lado), o clipe puxava um corpo
+            // na postura errada (plano v2, fase D) - ele rola de brucos
+            // antes, como de lado.
+            bool trunkAligned = true;
+            if (m_chestLink < state.links.size() && !state.links.empty()) {
+                const float chestFacing = state.links[m_chestLink].orientation.rotate({ 1.0f, 0.0f, 0.0f }).z;
+                const float pelvisFacing = (state.links.front().orientation
+                    * profile.links.front().modelOrientation.conjugate()).rotate({ 1.0f, 0.0f, 0.0f }).z;
+                trunkAligned = m_fallOrientation == CharacterFallOrientation3D::FaceDown
+                    ? chestFacing < -0.5f && pelvisFacing < -0.35f
+                    : chestFacing > 0.5f && pelvisFacing > 0.35f;
+            }
             if (GetUpRollEnabled && m_chestLink < state.links.size()) {
                 const Vec3 chestForward = state.links[m_chestLink].orientation.rotate({ 1.0f, 0.0f, 0.0f });
                 const Vec3 spine = (state.links[m_chestLink].position - state.links.front().position).normalized();
+                // (Desalinhado so conta com o corpo ja pronto para levantar:
+                // no meio do assentar ele ainda se arruma.)
+                const bool readyButTwisted = !trunkAligned && m_getUpPhaseSeconds > GetUpSettleSeconds
+                    && coreSpeed < 0.35f && m_settleTone > 0.97f;
                 if (!m_getUpRolling && !m_getUpRollDone && recovering && m_settleTone > 0.6f
-                    && (std::abs(chestForward.z) < GetUpRollSideFacing
+                    && (std::abs(chestForward.z) < GetUpRollSideFacing || readyButTwisted
                         || (GetUpRollFromBack && chestForward.z > 0.0f))) {
                     // Gira em torno da coluna no sentido que leva a barriga
                     // para o chao: d(frente.z)/d(angulo) = (coluna x frente).z.
@@ -3157,8 +3175,9 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
             // E com o corpo ja na pose de levantar (se arrumou): um braco
             // preso embaixo do corpo nao chegava, e ao levantar os ganhos
             // o arrancavam de la (mao a 14 m/s).
+            // (Desalinhado e ainda sem ter rolado, espera a rolagem.)
             const bool settled = m_getUpPhaseSeconds > (getUpHurry > 0 ? GetUpHurrySettleSeconds : GetUpSettleSeconds)
-                && !m_getUpRolling
+                && !m_getUpRolling && (trunkAligned || m_getUpRollDone || !GetUpRollEnabled)
                 && coreSpeed < 0.35f * (getUpHurry > 0 ? GetUpCalmScale : 1.0f)
                 && fastestLink < 1.0f * (getUpHurry > 0 ? GetUpCalmScale : 1.0f)
                 && m_settleTone > 0.97f && settledTilt < 2.2f
