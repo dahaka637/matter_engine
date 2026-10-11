@@ -132,6 +132,9 @@ struct BallHandlingOutput3D {
     Vec3 landingShift;
     // O pe de apoio que pousa ja (-1 nenhum; as pegadas).
     int quickPlantSide = -1;
+    // O ritmo da passada (o gesto entra nela: o clipe pousa o pe do toque
+    // quando o gesto volta; so acelera, pouco).
+    float gaitRateScale = 1.0f;
     // Interagindo (o pedido ou o gesto): vira o dono da bola.
     bool interacting = false;
     std::uint64_t interactingBallKey = 0;

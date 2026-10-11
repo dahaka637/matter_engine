@@ -22,9 +22,12 @@ namespace MatterEngine {
 // demais para tentar fazer o pe/perna voltar ao movimento da locomocao, e nao
 // tenta adaptar ambos para ser harmonico a volta"): o movimento termina
 // inteiro e o pe se junta ao pe do clipe - a diferenca entre os dois some aos
-// poucos, com o pe andando junto com o do clipe. O pe do clipe atras dele
-// (andando, ainda apoiado la atras ou vindo no balanco), ele pousa a frente
-// e espera ali, apoiado, ate o do clipe chegar - nunca volta para tras.
+// poucos, com o pe andando junto com o do clipe. A passada acelera um pouco
+// para o pe do clipe chegar no balanco ao fim do gesto (BallPlay3D); com ele
+// ainda apoiado la atras, o pe pousa a frente (o passo) e sai do chao junto
+// com ele - voltar a ele dava o "chicote" para tras, e esperar o do clipe
+// passar deixava a perna esticada com o corpo indo embora (usuario, 11/10).
+// Sem o pe do clipe (no fisico), o pe pousa parado.
 //
 // Quem faz cada toque (a regra do usuario: a perna daquele lado):
 //  - para a direita, frente-direita e tras-direita: a perna direita (fora,
@@ -53,18 +56,49 @@ struct BallMoveChoice3D {
 struct BallMoveSettings3D {
     // Os tempos (s): ate a passagem pela bola, o acompanhamento e o pouso; no
     // chute, a batida e o acompanhamento crescem com a intensidade.
-    // (Plano v4: um pouco mais longos - curtos, o gesto era um tranco.)
-    float touchStrikeSeconds = 0.12f;
-    float touchFollowSeconds = 0.08f;
-    float touchLandSeconds = 0.14f;
-    float shotStrikeSeconds = 0.09f;
-    float shotFollowSeconds = 0.12f, shotFollowSecondsPower = 0.08f;
-    float shotLandSeconds = 0.15f;
+    // (Plano v4: perto dos da V3 - curtos e na cubica, eram um tranco; bem
+    // mais longos, o gesto ficou mole, usuario 11/10. A quintica tira o
+    // tranco.)
+    float touchStrikeSeconds = 0.10f;
+    float touchFollowSeconds = 0.07f;
+    float touchLandSeconds = 0.11f;
+    float shotStrikeSeconds = 0.08f;
+    float shotFollowSeconds = 0.11f, shotFollowSecondsPower = 0.08f;
+    float shotLandSeconds = 0.13f;
     // A volta ao pe do clipe (s): a diferenca some neste tempo; com o pe do
-    // clipe no ar, ate o pouso dele, no maximo rejoinMaximumSeconds.
-    float touchRejoinSeconds = 0.18f;
-    float shotRejoinSeconds = 0.22f;
-    float rejoinMaximumSeconds = 0.35f;
+    // clipe no balanco, ate o pouso dele, no maximo rejoinMaximumSeconds.
+    float touchRejoinSeconds = 0.14f;
+    float shotRejoinSeconds = 0.16f;
+    float rejoinMaximumSeconds = 0.30f;
+    // Com o pe do clipe apoiado, a volta vai direto a ele so com ele a
+    // frente (ou no maximo rejoinBehind atras, m) de onde o pe do gesto para
+    // naturalmente (indo, ele para adiante: a velocidade dele vezes metade do
+    // tempo da volta); senao, se ele so sai do chao depois do pouso do gesto
+    // (o tempo dele vezes leavingShare, pela passada que acelera), o pe pousa
+    // e fica apoiado ate o do clipe sair do chao - pelo menos
+    // plantMinimumSeconds (s) e no maximo plantMaximumSeconds (s), ou a perna
+    // esticando alem de plantReach; saindo antes, a volta vai pelo ar ao
+    // balanco dele (pousando para sair logo, o pe pisava embaixo do corpo com
+    // a perna reta).
+    float rejoinBehind = 0.06f;
+    float leavingShare = 1.5f;
+    // (Sendo o pe do clipe o unico apoio, a volta so vai pelo ar ao balanco
+    // dele saindo do chao em ate flightLeavingSeconds (s): mais tarde, o pe
+    // pulava o apoio dele e o corpo flutuava sem pe no chao.)
+    float flightLeavingSeconds = 0.06f;
+    float plantMinimumSeconds = 0.03f;
+    float plantMaximumSeconds = 0.35f;
+    float plantReach = 0.97f;
+    // Na volta, a perna no maximo tao esticada quanto a do clipe ou esta
+    // fracao (o que for maior); a aceleracao da diferenca no comeco, no
+    // maximo isto (m/s2).
+    float rejoinReach = 0.95f;
+    float rejoinAccelerationMaximum = 60.0f;
+    // Apoiado atras do quadril, o calcanhar sobe em volta da base dos dedos
+    // (a saida do passo) para a perna nao passar de plantReach: ate
+    // plantRollMaximum (rad), no maximo a plantRollRate (rad/s).
+    float plantRollMaximum = 0.9f;
+    float plantRollRate = 10.0f;
     // A velocidade do pe na passagem (m/s, no referencial do corpo): o toque
     // e o chute, mais a parte pela intensidade.
     float touchStrikeSpeed = 1.8f, touchStrikeSpeedPower = 1.6f;
@@ -81,7 +115,13 @@ struct BallMoveSettings3D {
     // O pe ate a passagem anda no maximo isto em media (m/s, no referencial
     // do corpo): saindo de longe, a passagem demora mais. E sobe ate isto
     // acima do tornozelo plano no meio do caminho (m).
-    float touchTravelSpeed = 2.8f;
+    float touchTravelSpeed = 3.5f;
+    // Andando, com o pe do clipe no balanco, o gesto (ate o fim do
+    // acompanhamento) termina ate fitTolerance (s) depois do pouso dele - o
+    // tempo todo na mesma proporcao, nunca menos que fitMinimumSeconds (s):
+    // mais longo, o pe pulava o apoio dele e o corpo flutuava (o chute nao).
+    float fitTolerance = 0.03f;
+    float fitMinimumSeconds = 0.13f;
     // O pe ja indo no rumo do toque mais depressa que a passagem: ela vai
     // adiante o que ele anda freando nisto (m/s2) e chega antes, ate
     // strikeMinimumSeconds (s).
@@ -90,7 +130,7 @@ struct BallMoveSettings3D {
     // A velocidade do pe contra o corpo no comeco entra nesta parte (o pe
     // apoiado anda para tras na velocidade do corpo).
     float startVelocityShare = 0.3f;
-    float shotTravelSpeed = 4.5f;
+    float shotTravelSpeed = 5.5f;
     float liftHeight = 0.10f;
     // Andando, o pouso vai a frente no rumo do movimento: este tempo vezes a
     // velocidade (s), ate landLeadMaximum (m); e nunca mais longe do quadril
@@ -109,6 +149,8 @@ struct BallMoveSettings3D {
     float moveGap = 0.15f;
     float moveGapZone = 0.18f;
     float moveGapFade = 0.15f;
+    // (Entrando nesta parte do tempo ate a passagem.)
+    float moveGapEntry = 0.6f;
     // O chute sai do chao subindo pelo menos a isto (m/s).
     float shotLiftSpeed = 1.2f;
     // O fim do acompanhamento ja anda esta parte da velocidade media ate o
@@ -125,20 +167,6 @@ struct BallMoveSettings3D {
     // O pouso: o tornozelo no chao a no maximo esta fracao da perna do
     // quadril (a altura dele decide o quanto vai para o lado).
     float landLegReach = 0.97f;
-    // A volta so vai ao pe do clipe com ele (onde estara no fim dela) no
-    // maximo isto atras do pe do gesto no rumo do movimento (m); senao o pe
-    // pousa e espera. Apoiado esperando, o pe sai assim mesmo com mais que
-    // holdBehindMaximum atras do quadril (m), sem alcancar nem rolando na
-    // ponta ou depois de holdMaximumSeconds.
-    float rejoinBehind = 0.05f;
-    float holdBehindMaximum = 0.30f;
-    float holdMaximumSeconds = 0.6f;
-    // Esperando, a perna esticando alem desta fracao, o pe rola na ponta (ate
-    // holdRollMaximum rad, no maximo a holdRollRate rad/s); nem assim, ele
-    // sai.
-    float holdReach = 0.97f;
-    float holdRollMaximum = 0.9f;
-    float holdRollRate = 10.0f;
 };
 
 // O comeco de um movimento: a escolha, a intensidade, o pe agora (origem do
@@ -168,6 +196,9 @@ struct BallMoveStart3D {
     // O comprimento da perna (coxa + canela): o tornozelo nunca alem de
     // BallMoveSettings3D::reach dela do quadril.
     float legLength = 0.86f;
+    // Andando, o pe do clipe daquele lado no balanco: quanto falta para ele
+    // pousar (s; -1 apoiado ou parado).
+    float clipTouchdownSeconds = -1.0f;
 };
 
 // O que o movimento le a cada tick: o corpo agora, o pe de apoio (o pouso
@@ -190,13 +221,16 @@ struct BallMoveLive3D {
     Quaternion clipOrientation;
     bool clipPlanted = true;
     float clipSecondsToTouchdown = -1.0f;
-    // A locomocao no ciclo da passada (parado, a volta vai direto ao pe do
-    // clipe) e o outro pe apoiado nela.
+    // Apoiado, quanto falta para ele sair do chao e o tempo do balanco (s);
+    // e o outro pe do clipe apoiado (sem ele, este e o unico apoio).
+    float clipSecondsToLiftoff = -1.0f;
+    float clipSwingSeconds = -1.0f;
+    bool otherPlanted = true;
+    // A locomocao no ciclo da passada.
     bool cycling = false;
-    bool supportPlanted = true;
 };
 
-enum class BallMovePhase3D : std::uint8_t { Idle, Strike, Follow, Land, Hold, Rejoin };
+enum class BallMovePhase3D : std::uint8_t { Idle, Strike, Follow, Land, Plant, Rejoin };
 
 class BallMove3D {
 public:
@@ -231,6 +265,13 @@ public:
     }
     // Na volta: o quanto ja foi (0..1).
     [[nodiscard]] float rejoinProgress() const;
+    // O que falta do acompanhamento (s; fora do gesto, 0) e se o pe pousa ou
+    // esta apoiado esperando o do clipe sair do chao.
+    [[nodiscard]] float followTimeLeft() const { return gesturing() ? std::max(0.0f, m_followAt - m_time) : 0.0f; }
+    [[nodiscard]] bool planting() const
+    {
+        return m_plantAfterLand && (m_phase == BallMovePhase3D::Land || m_phase == BallMovePhase3D::Plant);
+    }
     // O rumo do toque no mundo (no plano).
     [[nodiscard]] Vec3 push() const { return m_push; }
     // Acabou neste tick: parado no pouso (sem o pe do clipe) ou ja junto do
@@ -241,11 +282,15 @@ public:
 private:
     // As trocas de fase: ahead e o que falta do tick (live e o fim dele).
     void beginReturn(const BallMoveLive3D& live, const BallMoveSettings3D& settings, float ahead);
+    // O tempo da volta: o de sempre; com o pe do clipe no balanco (ou saindo
+    // do chao antes do pouso do gesto), ate o pouso dele.
+    [[nodiscard]] float rejoinSpan(const BallMoveLive3D& live, const BallMoveSettings3D& settings) const;
+    // O pe do clipe apoiado sai do chao antes do pouso do gesto.
+    [[nodiscard]] bool clipLeavingSoon(const BallMoveLive3D& live, const BallMoveSettings3D& settings) const;
+    // O pouso ao alcance do quadril de agora (previsto para o fim dele).
+    void clampLandTarget(const BallMoveLive3D& live, const BallMoveSettings3D& settings, float remaining);
     void beginLand(const BallMoveLive3D& live, const BallMoveSettings3D& settings, float ahead);
     void beginRejoin(const BallMoveLive3D& live, const BallMoveSettings3D& settings, float ahead);
-    // A volta pode comecar com o pe em from (grounded: apoiado esperando).
-    [[nodiscard]] bool rejoinReady(const BallMoveLive3D& live, Vec3 from, bool grounded,
-        const BallMoveSettings3D& settings) const;
     // O tornozelo e a velocidade no mundo pelo estado no referencial do corpo
     // (com o chao e o alcance); a orientacao do pe na fase de agora.
     void worldState(const BallMoveLive3D& live, const BallMoveSettings3D& settings, Quaternion orientation,
@@ -280,23 +325,23 @@ private:
     // para ele).
     Vec3 m_worldAnkle, m_worldVelocity, m_worldAcceleration, m_landTarget;
     Vec3 m_landLocal;
-    // A volta: depois do pouso ela espera o pe do clipe (o pouso tinha o
-    // pe do clipe), desde quando, e o tempo dela.
-    bool m_waitForClip = false;
-    // O movimento pedido mudou: a volta nao espera o pouso do pe do clipe.
-    bool m_hurried = false;
-    float m_holdStart = 0.0f;
-    // Apoiado esperando: o tornozelo e o pe planos do pouso (o pe rola na
-    // ponta a partir deles).
-    Vec3 m_holdAnkle;
-    Quaternion m_holdOrientation;
-    float m_holdRoll = 0.0f;
-    // O outro pe ja saiu do chao durante a espera.
-    bool m_supportLifted = false;
+    // A volta: a diferenca para o pe do clipe (posicao, velocidade e
+    // aceleracao no comeco) e o tempo dela.
     Vec3 m_offset, m_offsetVelocity, m_offsetAcceleration;
-    float m_rejoinSpan = 0.18f;
-    // A altura do arco da volta saindo do chao para um pe do clipe apoiado.
+    float m_rejoinSpan = 0.14f;
+    // O limite do alcance no comeco da volta (fracao da perna) e a altura do
+    // arco dela (do chao a um pe do clipe tambem no chao).
+    float m_rejoinLimitStart = 0.95f;
     float m_rejoinLift = 0.0f;
+    // O movimento pedido mudou: a volta vai direto, no tempo dela.
+    bool m_hurried = false;
+    // O pouso fica apoiado ate o pe do clipe sair do chao; desde quando, o
+    // tornozelo e o pe planos do pouso e o quanto o pe rolou na ponta.
+    bool m_plantAfterLand = false;
+    float m_plantStart = 0.0f;
+    Vec3 m_plantAnkle;
+    Quaternion m_plantOrientation;
+    float m_plantRoll = 0.0f;
     // As orientacoes do pe (no referencial do corpo: guinada, arfagem e
     // rolagem) na passagem e no pouso, e a do comeco da fase.
     std::array<float, 3> m_strikeAngles {}, m_landAngles {};

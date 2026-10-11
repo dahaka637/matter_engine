@@ -47,6 +47,13 @@ Vec3 moveKnee(const BallMove3D& move, Vec3 hip, Vec3 forward, Vec3 clipKnee) {
     return knee;
 }
 
+// Quanto falta para o clipe pousar o pe (s; no ritmo aplicado).
+float clipTouchdown(const BallHandlingGait3D& gait, std::size_t side) {
+    const float swing = std::max(0.05f, gait.swingSeconds[side]);
+    return gait.planted[side] ? std::max(0.0f, gait.secondsToLiftoff[side]) + swing
+                              : std::max(0.0f, gait.secondsToTouchdown[side]);
+}
+
 } // namespace
 
 bool BallPlay3D::inArea(Vec3 ball, float radius, Vec3 pelvis, const BallPlaySettings3D& settings, Vec3 velocity) {
@@ -83,7 +90,7 @@ void BallPlay3D::reset(const RagdollProfile3D& profile) {
     m_busyRecord = 0;
     m_interrupting = false;
     m_support = -1;
-    m_speedScale = 1.0f;
+    m_gaitRate = 1.0f;
     m_bodyLive = false;
     m_appliedShift = {};
     m_appliedDrop = 0.0f;
@@ -128,8 +135,10 @@ BallMoveLive3D BallPlay3D::live(const BallHandlingInput3D& input, int side) cons
     now.clipOrientation = input.gait.clipFootOrientation[s];
     now.clipPlanted = !input.gait.cycling || input.gait.planted[s];
     now.clipSecondsToTouchdown = input.gait.secondsToTouchdown[s];
+    now.clipSecondsToLiftoff = input.gait.secondsToLiftoff[s];
+    now.clipSwingSeconds = input.gait.swingSeconds[s];
+    now.otherPlanted = !input.gait.cycling || input.gait.planted[1 - s];
     now.cycling = input.gait.cycling;
-    now.supportPlanted = !input.gait.cycling || input.gait.planted[1 - s];
     return now;
 }
 
@@ -163,7 +172,9 @@ void BallPlay3D::startMove(const BallHandlingInput3D& input, const BallPlaySetti
         begin.foot = from->foot();
         begin.footOrientation = from->orientation();
         begin.footVelocity = from->velocity();
-        begin.footPlanted = from->phase() == BallMovePhase3D::Hold;
+        // (Quase parado no mundo - a volta ja junto do pe do clipe apoiado -:
+        // como o pe apoiado.)
+        begin.footPlanted = planar(from->velocity()).length() < 0.3f;
     } else {
         begin.foot = body.foot[s];
         begin.footOrientation = body.footOrientation[s];
@@ -182,6 +193,7 @@ void BallPlay3D::startMove(const BallHandlingInput3D& input, const BallPlaySetti
     begin.heel = m_geometry.heel[s];
     begin.toe = m_geometry.toeBase[s];
     begin.legLength = m_legs.thighLength[s] + m_legs.shinLength[s];
+    begin.clipTouchdownSeconds = gait.cycling && !gait.planted[s] ? gait.secondsToTouchdown[s] : -1.0f;
     // O movimento corrente na outra perna segue a volta dele (vira o
     // anterior); o que estava nesta perna da lugar ao novo.
     if (m_move.active() && m_move.side() != choice.side) {
@@ -341,13 +353,26 @@ void BallPlay3D::update(const BallHandlingInput3D& input, const BallOutcomeSetti
         if (m_move.landed() || m_move.joined()) settle(m_move, settings);
     }
 
-    // 4) O corpo desacelera um pouco durante o gesto (ate o pouso).
+    // 4) A passada entra no gesto: o clipe pousa o pe do toque quando o gesto
+    // volta (a outra perna pisa um pouco mais rapido). (Com o pe pousado
+    // esperando o do clipe sair do chao, no ritmo normal: acelerando ali, a
+    // passada encurtava e o outro pe pousava atras do quadril - as duas
+    // pernas retas para tras.)
     {
-        const bool gesture = m_move.active() && (m_move.gesturing() || m_move.phase() == BallMovePhase3D::Land);
-        const bool shot = m_move.choice().touch == BallMoveTouch3D::Shot;
-        const float wanted = gesture ? (shot ? settings.shotSpeedScale : settings.touchSpeedScale) : 1.0f;
-        m_speedScale += (wanted - m_speedScale) * std::min(1.0f, dt / std::max(0.01f, settings.speedScaleSeconds));
-        output.speedScale = m_speedScale;
+        float wanted = 1.0f;
+        if (input.gait.cycling && m_move.active()) {
+            const std::size_t s = static_cast<std::size_t>(std::clamp(m_move.side(), 0, 1));
+            if (m_move.gesturing()) {
+                // (O tempo do clipe vem no ritmo aplicado: no normal, vezes ele.)
+                const float clip = clipTouchdown(input.gait, s) * m_gaitRate;
+                const bool shot = m_move.choice().touch == BallMoveTouch3D::Shot;
+                const float remaining = m_move.followTimeLeft()
+                    + (shot ? settings.move.shotRejoinSeconds : settings.move.touchRejoinSeconds);
+                wanted = std::clamp(clip / std::max(0.02f, remaining), settings.gaitRateMinimum, settings.gaitRateMaximum);
+            }
+        }
+        m_gaitRate += (wanted - m_gaitRate) * std::min(1.0f, dt / std::max(0.005f, settings.gaitRateSeconds));
+        output.gaitRateScale = m_gaitRate;
     }
 
     bodyTargets(input, settings, output);
@@ -364,7 +389,7 @@ void BallPlay3D::bodyTargets(const BallHandlingInput3D& input, const BallPlaySet
     const Vec3 up { 0.0f, 0.0f, 1.0f };
     const bool acting = m_move.active();
     // O corpo do gesto (pelve, tronco, bracos, olhar) so ate o pouso: na
-    // espera e na volta ele ja sai.
+    // volta ele ja sai.
     const bool bodyActing = acting && (m_move.gesturing() || m_move.phase() == BallMovePhase3D::Land);
     // A perna saindo do fim de um movimento, aos poucos.
     if (m_settleLeft > 0.0f) m_settleLeft = std::max(0.0f, m_settleLeft - dt);

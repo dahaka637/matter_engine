@@ -20,10 +20,12 @@ namespace MatterEngine {
 //    ele sai; com a bola na area, sai sempre (a garantia).
 //  - O movimento: o da situacao (o rumo do toque contra a frente do corpo; a
 //    perna daquele lado), no referencial do corpo.
-//  - Plano v4: a passada nao corre mais atras do gesto - o gesto termina
-//    inteiro e o pe volta ao do clipe andando com ele (BallMove3D); o corpo
-//    desacelera um pouco durante o gesto; o corpo do gesto (pelve, tronco,
-//    bracos e olhar) pela intensidade, com um jeito diferente a cada toque.
+//  - Plano v4: o gesto termina inteiro e o pe volta ao do clipe andando com
+//    ele (BallMove3D); a passada entra no gesto, pouco (o clipe pousa o pe do
+//    toque quando o gesto volta - a outra perna pisa um pouco mais rapido);
+//    o corpo do gesto (pelve, tronco, bracos e olhar) pela intensidade, com
+//    um jeito diferente a cada toque. (O corpo nao desacelera mais no gesto:
+//    usuario, 11/10.)
 struct BallPlaySettings3D {
     // A area: a base da bola ate isto acima da pelve (m) e, no plano, ate
     // areaRadius dela (m). Andando, o centro dela vai a frente no rumo do
@@ -50,11 +52,15 @@ struct BallPlaySettings3D {
     // do clipe) e ja junto do pe do clipe (os dois no mesmo lugar).
     float handOverSeconds = 0.12f;
     float joinedHandOverSeconds = 0.05f;
-    // A velocidade pedida ao corpo durante o gesto (o toque e o chute), numa
-    // mola de speedScaleSeconds (s).
-    float touchSpeedScale = 0.9f;
-    float shotSpeedScale = 0.85f;
-    float speedScaleSeconds = 0.1f;
+    // A passada no gesto: o ritmo do clipe para o pe do toque pousar nele no
+    // fim do acompanhamento mais a volta, entre estes fatores, numa mola de
+    // gaitRateSeconds (s). (So acelera: freando, o pe de apoio ficava
+    // plantado demais e a perna esticava para tras - e no v3 a outra perna
+    // ficava no ar. Mais de 1,4: os bracos no ritmo passavam do pico do
+    // tronco.)
+    float gaitRateMinimum = 1.0f;
+    float gaitRateMaximum = 1.4f;
+    float gaitRateSeconds = 0.06f;
     // O corpo: o preparo, os alvos, o olhar e os bracos nestas molas (s); a
     // pelve sobre o apoio ate maximumPelvisShift (m); andando, o corpo do
     // gesto pesa (1 - runningBodyShare x andando).
@@ -143,6 +149,8 @@ private:
     bool m_interrupting = false;
     // O apoio do movimento (o outro pe).
     int m_support = -1;
+    // O ritmo da passada aplicado (na mola).
+    float m_gaitRate = 1.0f;
     // Os pes do clipe (o tornozelo) e os da pose de fato: a velocidade deles,
     // filtrada.
     std::array<Vec3, 2> m_clipAnkle {};
@@ -151,8 +159,6 @@ private:
     std::array<Vec3, 2> m_poseFootPrevious {};
     std::array<Vec3, 2> m_poseFootVelocity {};
     bool m_feetKnown = false;
-    // A escala da velocidade pedida ao corpo (na mola).
-    float m_speedScale = 1.0f;
     // O jeito do corpo neste toque e o sorteio dele.
     BodyStyle m_style;
     std::uint32_t m_seed = 0x2545F491u;

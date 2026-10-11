@@ -989,6 +989,9 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         input.ballKick = command.ballKick;
         input.motionVariety = command.motionVariety;
         input.varietySeed = command.varietySeed;
+        // (O gesto com a bola entra na passada.)
+        input.phaseRateScale = settings.newBallHandlingActive() && command.controlled
+            ? athlete.ballOutput.gaitRateScale : 1.0f;
         DefaultLocomotionSettings3D& defaults = state.defaultLocomotion.settings();
         defaults.adaptiveTransitions = settings.defaultAdaptiveTransitions;
         defaults.toeRoll = settings.toeRoll;
@@ -1275,8 +1278,7 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                 // As pernas nunca se atravessam (plano v4: sem as pegadas, os
                 // clipes cruzavam uma perna por dentro da outra nas trocas de
                 // rumo).
-                // (O pe no balanco contorna: o do clipe; o do gesto, no ar fora
-                // da espera apoiada.)
+                // (O pe no balanco contorna: o do clipe; o do gesto, no ar.)
                 std::array<bool, 2> swinging {};
                 for (std::size_t side = 0; side < 2; ++side)
                     swinging[side] = out.cycling ? !out.cyclePlanted[side] : !out.footPlanted[side];
@@ -1286,7 +1288,7 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                     for (const BallMove3D* move : { &athlete.ballPlay.previous(), &athlete.ballPlay.move() }) {
                         if (!move->active()) continue;
                         const std::size_t side = static_cast<std::size_t>(move->side());
-                        swinging[side] = move->phase() != BallMovePhase3D::Hold && !swinging[1 - side];
+                        swinging[side] = !swinging[1 - side];
                     }
                 }
                 if (!athlete.legClearance.ready()) athlete.legClearance.reset(profile);

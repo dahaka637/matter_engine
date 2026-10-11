@@ -1332,6 +1332,10 @@ void DefaultLocomotion3D::update(const RagdollProfile3D& profile,
         }
     }
     {
+        // (O gesto com a bola acelera um pouco a passada: o pe do toque pousa
+        // no clipe quando o gesto volta - plano v4; os tempos dos pes na
+        // saida vem neste ritmo.)
+        rate *= std::clamp(input.phaseRateScale, 0.3f, 3.0f);
         const float before = m_phase;
         m_phase = fraction(m_phase + rate * dt);
         m_strides += m_phase < before ? 1.0f : 0.0f;
@@ -1936,7 +1940,12 @@ void DefaultLocomotion3D::update(const RagdollProfile3D& profile,
                 return result;
             };
             const Vec3 shift = ballFoot ? Vec3 {} : strideShift(position);
-            if (ballFoot) {
+            // (A perna ainda saindo do gesto anterior tambem: a pose ja traz o
+            // pe dela - lido dali, o "pe do clipe" era o proprio pe e a volta
+            // corria atras de si mesma, ate 1 m de altura.)
+            const bool releaseFoot = !ballFoot && input.ballGesture.active && input.ballGesture.releaseWeight > 0.0f
+                && static_cast<int>(side) == input.ballGesture.releaseSide;
+            if (ballFoot || releaseFoot) {
                 // O pe do gesto: onde a locomocao o poria sem ele (o do estilo
                 // com a passada e o chao) - o gesto volta para ele.
                 const Vec3 style = m_output.styleFootPosition[side];
@@ -2053,7 +2062,7 @@ void DefaultLocomotion3D::update(const RagdollProfile3D& profile,
                 lift = (groundZ - sole) * pull;
             }
             const Vec3 target = shifted + Vec3 { 0.0f, 0.0f, lift };
-            if (!ballFoot) {
+            if (!ballFoot && !releaseFoot) {
                 m_output.locomotionFootPosition[side] = target;
                 m_output.locomotionFootOrientation[side] = orientation;
             }

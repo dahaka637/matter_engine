@@ -820,7 +820,15 @@ struct Metrics {
     // arrastando no chao (a sola a menos de 2 cm do chao, andando mais que 1
     // m/s no plano, antes do pouso).
     float moveReach = 0.0f;
-    float holdReach = 0.0f;
+    // Por fase do movimento (0 parado .. 5 a volta): o alcance maximo da
+    // perna e os ticks com ela quase reta (> 0,95).
+    std::array<float, 6> phaseReach {};
+    std::array<int, 6> phaseStraightTicks {};
+    // (E os ticks com ela mais reta que a do clipe no mesmo quadril.)
+    std::array<int, 6> phaseBeyondClipTicks {};
+    // O pe do gesto andando para tras no mundo com o corpo andando (m/s; na
+    // passada o pe nunca volta - o "chicote").
+    std::array<float, 6> phaseBackSpeed {};
     int moveDragTicks = 0;
     int stanceTremor = 0;
     int bodyTremor = 0;
@@ -1295,12 +1303,12 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
                 bodyState.links.front().position.z);
         }
         if (std::getenv("XV2") && settings.newBallHandling && (athlete.ballOutput.body.active || athlete.ballPlay.move().active()))
-            std::printf("  t %.3f v3 movimento %d fase %d t %.3f pouso em %.3f volta %.2f perna %.2f peso %.2f lado %d agindo %d solta %d %.2f escala %.2f interrompe %d pedido %.2f %.2f\n",
+            std::printf("  t %.3f v3 movimento %d fase %d t %.3f pouso em %.3f volta %.2f perna %.2f peso %.2f lado %d agindo %d solta %d %.2f passada %.2f interrompe %d pedido %.2f %.2f\n",
                 t, athlete.ballPlay.move().active() ? 1 : 0, static_cast<int>(athlete.ballPlay.move().phase()),
                 athlete.ballPlay.move().time(), athlete.ballPlay.move().timeToLanding(),
                 athlete.ballPlay.move().rejoinProgress(), athlete.ballOutput.body.legWeight,
                 athlete.ballOutput.body.weight, athlete.ballOutput.body.side, athlete.ballOutput.actingSide,
-                athlete.ballOutput.body.releaseSide, athlete.ballOutput.body.releaseWeight, athlete.ballOutput.speedScale,
+                athlete.ballOutput.body.releaseSide, athlete.ballOutput.body.releaseWeight, athlete.ballOutput.gaitRateScale,
                 athlete.ballPlay.interrupting() ? 1 : 0, control.intent.requestedVelocityWorld.x,
                 control.intent.requestedVelocityWorld.y);
         // (A perna sai do gesto depois da mudanca de movimento - contada da
@@ -1508,6 +1516,29 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
                 kneeTargetBefore[side] = target;
             }
         }
+        // (O movimento anterior voltando na outra perna.)
+        if (std::getenv("XPREV") && settings.newBallHandling && thighs[0] < bodyState.links.size()
+            && (athlete.ballPlay.previous().active() || athlete.ballOutput.body.releaseSide >= 0)) {
+            const AthleteLegs3D legs = resolveAthleteLegs3D(profile);
+            const int r = athlete.ballOutput.body.releaseSide;
+            if (r >= 0) {
+                const std::size_t side = static_cast<std::size_t>(r);
+                const PhysicsBodyState3D& pelvisLink = bodyState.links.front();
+                const PhysicsBodyState3D& footLink = bodyState.links[legs.foot[side]];
+                const Vec3 hip = pelvisLink.position + pelvisLink.orientation.rotate(legs.hipInPelvis[side]);
+                const Vec3 ankle = footLink.position + footLink.orientation.rotate(legs.ankleInFoot[side]);
+                const Vec3 target = athlete.ballOutput.body.releaseAnkle;
+                const float length = legs.thighLength[side] + legs.shinLength[side];
+                const DefaultLocomotionOutput3D& styleNow = legacy.defaultLocomotion.output();
+                const Vec3 clipNow = styleNow.locomotionFootPosition[side]
+                    + styleNow.locomotionFootOrientation[side].rotate(legs.ankleInFoot[side]);
+                std::printf("  t %.3f anterior %d fase %d peso %.2f | alvo %.3f %.3f %.3f | corpo %.3f %.3f %.3f alcance %.2f | clipe %.3f %.3f %.3f | joelho %.2f %.2f %.2f\n",
+                    t, athlete.ballPlay.previous().active() ? 1 : 0, static_cast<int>(athlete.ballPlay.previous().phase()),
+                    athlete.ballOutput.body.releaseWeight, target.x, target.y, target.z, ankle.x, ankle.y, ankle.z,
+                    (ankle - hip).length() / length, clipNow.x, clipNow.y, clipNow.z, athlete.ballOutput.body.releaseKnee.x,
+                    athlete.ballOutput.body.releaseKnee.y, athlete.ballOutput.body.releaseKnee.z);
+            }
+        }
         // O movimento com a bola: a perna esticada e o pe arrastando.
         if (settings.newBallHandling && athlete.ballPlay.move().active() && thighs[0] < bodyState.links.size()
             && leftFoot < bodyState.links.size() && footGeometry.valid) {
@@ -1526,9 +1557,34 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
             // (Depois do comeco: a perna do clipe ja vinha esticada atras.)
             if (athlete.ballPlay.move().gesturing() && athlete.ballPlay.move().time() > 0.06f)
                 metrics.moveReach = std::max(metrics.moveReach, reachNow);
-            if (athlete.ballPlay.move().phase() == BallMovePhase3D::Hold)
-                metrics.holdReach = std::max(metrics.holdReach, reachNow);
+            {
+                // (Por fase: o alcance maximo e os ticks com a perna quase
+                // reta - a "perna esticada" do usuario, 11/10 -, e com ela mais
+                // reta que a do clipe no mesmo quadril.)
+                const std::size_t phase = static_cast<std::size_t>(athlete.ballPlay.move().phase());
+                const DefaultLocomotionOutput3D& style = legacy.defaultLocomotion.output();
+                const Vec3 clipAnkle = style.locomotionFootPosition[side]
+                    + style.locomotionFootOrientation[side].rotate(legs.ankleInFoot[side]);
+                const float clipReach = (clipAnkle - hip).length() / length;
+                if (phase < metrics.phaseReach.size()) {
+                    metrics.phaseReach[phase] = std::max(metrics.phaseReach[phase], reachNow);
+                    if (reachNow > 0.95f) ++metrics.phaseStraightTicks[phase];
+                    if (reachNow > 0.95f && reachNow > clipReach + 0.02f) ++metrics.phaseBeyondClipTicks[phase];
+                    const Vec3 travel { pelvisLink.linearVelocity.x, pelvisLink.linearVelocity.y, 0.0f };
+                    if (travel.length() > 0.8f) {
+                        const float back = -dot(Vec3 { footLink.linearVelocity.x, footLink.linearVelocity.y, 0.0f },
+                            travel * (1.0f / travel.length()));
+                        metrics.phaseBackSpeed[phase] = std::max(metrics.phaseBackSpeed[phase], back);
+                    }
+                }
+            }
             if (std::getenv("XMOV")) {
+                static bool lengthShown = false;
+                if (!lengthShown) {
+                    lengthShown = true;
+                    std::printf("  perna: coxa %.3f canela %.3f (soma %.3f), quadril no chao %.3f\n", legs.thighLength[side],
+                        legs.shinLength[side], length, hip.z);
+                }
                 const Vec3 target = athlete.ballPlay.move().ankle();
                 const Vec3 targetHip = legacy.animationPose.linkPositions.empty() ? hip
                     : legacy.animationPose.linkPositions.front()
@@ -1537,11 +1593,16 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
                 const Vec3 toeNow = footLink.position + footLink.orientation.rotate(footGeometry.toeBase[side]);
                 const float yaw = legacy.defaultLocomotion.output().facingYawRadians;
                 const Vec3 rel = target - pelvisLink.position;
-                std::printf("  t %.3f fase %d | local frente %+.3f lado %+.3f | alvo %.3f %.3f %.3f alcance %.2f | corpo %.3f %.3f %.3f alcance %.2f | sola %.3f v %.2f\n",
+                const DefaultLocomotionOutput3D& styleNow = legacy.defaultLocomotion.output();
+                const Vec3 clipNow = styleNow.locomotionFootPosition[side]
+                    + styleNow.locomotionFootOrientation[side].rotate(legs.ankleInFoot[side]);
+                std::printf("  t %.3f fase %d | local frente %+.3f lado %+.3f | alvo %.3f %.3f %.3f alcance %.2f | corpo %.3f %.3f %.3f alcance %.2f | sola %.3f v %.2f | clipe %.3f %.3f %.3f alcance %.2f %s\n",
                     t, static_cast<int>(athlete.ballPlay.move().phase()), rel.x * std::cos(yaw) + rel.y * std::sin(yaw),
                     -rel.x * std::sin(yaw) + rel.y * std::cos(yaw), target.x, target.y, target.z,
                     (target - targetHip).length() / length, ankle.x, ankle.y, ankle.z, (ankle - hip).length() / length,
-                    std::min(heelNow.z, toeNow.z), std::hypot(footLink.linearVelocity.x, footLink.linearVelocity.y));
+                    std::min(heelNow.z, toeNow.z), std::hypot(footLink.linearVelocity.x, footLink.linearVelocity.y),
+                    clipNow.x, clipNow.y, clipNow.z, (clipNow - targetHip).length() / length,
+                    styleNow.cyclePlanted[side] ? "apoiado" : "balanco");
             }
             const Vec3 heel = footLink.position + footLink.orientation.rotate(footGeometry.heel[side]);
             const Vec3 toe = footLink.position + footLink.orientation.rotate(footGeometry.toeBase[side]);
@@ -1834,14 +1895,24 @@ void printMetrics(const Scenario& scenario, const Metrics& metrics, bool footste
         std::printf(" | saida do apoio max %.3f m | alcance max %.3f m | arranca %d, acomoda %d, antes %d, no ar %d\n",
             metrics.worstLiftCorrection, metrics.worstReach, metrics.startSteps, metrics.settleSteps, metrics.earlyLifts,
             metrics.catchSteps);
+    if (metrics.phaseReach[1] > 0.0f)
+        std::printf("%-18s   perna no movimento por fase (alcance / ticks reta / alem do clipe): passagem %.2f/%d/%d acompanhamento %.2f/%d/%d pouso %.2f/%d/%d apoiado %.2f/%d/%d volta %.2f/%d/%d\n",
+            "", metrics.phaseReach[1], metrics.phaseStraightTicks[1], metrics.phaseBeyondClipTicks[1],
+            metrics.phaseReach[2], metrics.phaseStraightTicks[2], metrics.phaseBeyondClipTicks[2],
+            metrics.phaseReach[3], metrics.phaseStraightTicks[3], metrics.phaseBeyondClipTicks[3],
+            metrics.phaseReach[4], metrics.phaseStraightTicks[4], metrics.phaseBeyondClipTicks[4],
+            metrics.phaseReach[5], metrics.phaseStraightTicks[5], metrics.phaseBeyondClipTicks[5]);
+    if (metrics.phaseReach[1] > 0.0f)
+        std::printf("%-18s   pe do gesto para tras no mundo max (m/s): passagem %.2f acompanhamento %.2f pouso %.2f apoiado %.2f volta %.2f\n",
+            "", metrics.phaseBackSpeed[1], metrics.phaseBackSpeed[2], metrics.phaseBackSpeed[3], metrics.phaseBackSpeed[4],
+            metrics.phaseBackSpeed[5]);
     if (metrics.transitionPeak > 0.0f)
         std::printf("%-18s   troca fisico>padrao: pelve max %.2f m/s, pelve x capsula max %.2f m/s, pico %.0f m/s2, peito %.3f em 0,1 s\n",
             "", metrics.transitionSpeedMax, metrics.transitionSpeedGap, metrics.transitionPeak, metrics.transitionTrunkRate);
     std::printf("%-18s   pernas: cruzadas %d ticks, sobreposicao %.3f m (no gesto %.3f)", "", metrics.legCrossTicks,
         metrics.legOverlap, metrics.gestureOverlap);
     if (metrics.moveSide >= 0)
-        std::printf(" | movimento: perna esticada %.2f (esperando %.2f), pe arrastando %d", metrics.moveReach,
-            metrics.holdReach, metrics.moveDragTicks);
+        std::printf(" | movimento: perna esticada %.2f, pe arrastando %d", metrics.moveReach, metrics.moveDragTicks);
     if (footsteps)
         std::printf(" | apoio tremendo %d (corpo %d) | trava longe do chao %+.3f m | no ar longe do estilo %.3f m",
             metrics.stanceTremor, metrics.bodyTremor, metrics.lockGap, metrics.airPull);
@@ -2008,7 +2079,6 @@ int runChecks(const ProbeContext& context) {
                 if (crossed != 0) problems.push_back("cruzou " + std::to_string(crossed));
                 if (m.gestureOverlap >= 0.02f) problems.push_back("atravessou no gesto " + std::to_string(m.gestureOverlap));
                 if (m.moveReach > 0.95f) problems.push_back("perna esticada " + std::to_string(m.moveReach));
-                if (m.holdReach > 1.0f) problems.push_back("perna esticada esperando " + std::to_string(m.holdReach));
                 // (O chute sai do chao: ate dois ticks com a ponta rente.)
                 const bool shot = name.find("chute") != std::string::npos;
                 if (m.moveDragTicks > (shot ? 2 : 1)) problems.push_back("pe arrastando " + std::to_string(m.moveDragTicks));
@@ -2047,9 +2117,21 @@ int runChecks(const ProbeContext& context) {
         std::snprintf(what, sizeof(what), "manejo, %s: a forca no aceite (%.3f, aceite %.3f)", name, m.forceTime, m.acceptTime);
         expect(m.forceTime >= 0.0f && std::abs(m.forceTime - m.acceptTime) <= 1.5f * Dt, what, m);
     }
-    // A capsula com o pedido faz o mesmo caminho que sem ele - de lado nada
-    // muda; no caminho ela so atrasa um pouco (plano v4: o corpo desacelera
-    // um pouco durante o gesto, pedido do usuario).
+    // Conduzindo (toques seguidos, a perna do toque anterior ainda voltando
+    // enquanto a outra toca): sem salto de pose nem tranco nas pernas. (Ate
+    // 11/10 a volta da perna anterior corria atras do proprio pe - o "pe do
+    // clipe" dela vinha da pose com o gesto: 36 cm de salto andando.)
+    for (const Scenario& scenario : scenarios()) {
+        if (scenario.name.rfind("conduz_", 0) != 0) continue;
+        const Metrics m = runScenario(context, scenario, handling, false, nullptr, 1);
+        char what[192];
+        std::snprintf(what, sizeof(what), "conduzir, %s: %d toques, pernas max %.0f m/s2, salto %.3f m",
+            scenario.name.c_str(), m.touches, m.peakLegAcceleration, m.worstPoseJump);
+        expect(m.touches >= 3 && m.peakLegAcceleration < 2200.0f && m.worstPoseJump < 0.035f, what, m);
+    }
+    // A capsula com o pedido faz o mesmo caminho que sem ele - o gesto nao
+    // mexe no caminho nem atrasa o corpo (o corpo nao desacelera mais no
+    // gesto: usuario, 11/10).
     for (const char* name : { "v2_anda_35_045", "v2_anda_65_270", "v2_corre_35_000", "v2_corre_35_270", "v2_corre_90_180",
              "v2_fase_3", "v2_chute_corre_000", "v2_chute_corre_090" }) {
         for (const Scenario& scenario : scenarios()) {
@@ -2074,7 +2156,7 @@ int runChecks(const ProbeContext& context) {
             char what[192];
             std::snprintf(what, sizeof(what),
                 "manejo v2, %s: a capsula faz o mesmo caminho (de lado %.4f m, atraso max %.3f m)", name, side, behind);
-            expect(side < 0.01f && behind < 0.35f, what, with);
+            expect(side < 0.01f && behind < 0.05f, what, with);
         }
     }
     std::printf(failures == 0 ? "atleta: tudo certo\n" : "atleta: %d falha(s)\n", failures);

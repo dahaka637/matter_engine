@@ -366,6 +366,9 @@ struct DefaultLocomotionInput3D {
     // "Vida" (0..2; 0 desliga) e a semente do jeito de cada um.
     float motionVariety = 0.0f;
     std::uint32_t varietySeed = 0;
+    // O ritmo da passada vezes isto (o gesto com a bola entra na passada: o
+    // pe do toque pousa no clipe quando o gesto volta). 1: o normal.
+    float phaseRateScale = 1.0f;
 };
 
 struct DefaultLocomotionOutput3D {
