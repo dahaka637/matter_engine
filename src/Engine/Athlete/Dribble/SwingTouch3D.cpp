@@ -138,11 +138,14 @@ void SwingTouch3D::retarget(const TouchPlan3D& plan) {
     m_plan.end = plan.end;
     m_plan.followEnd = plan.followEnd;
     m_plan.ball = plan.ball;
+    m_plan.ballAfter = plan.ballAfter;
+    m_plan.ballAfterKnown = plan.ballAfterKnown;
     m_plan.pose = plan.pose;
     m_plan.push = plan.push;
     m_plan.surface = plan.surface;
     m_plan.style = plan.style;
     m_plan.drop = plan.drop;
+    m_plan.noShift = plan.noShift;
     m_plan.inArea = plan.inArea;
     m_contactOrientation = plan.pose.orientation;
 }
@@ -179,7 +182,11 @@ void SwingTouch3D::update(float now, const SwingLive3D& live, const ContactFeet3
         const float speed = m_plan.shot ? s.shotStrikeSpeed + s.shotStrikeSpeedPower * m_plan.power
                                         : s.strikeSpeed + s.strikeSpeedPower * m_plan.power;
         const Vec3 body = live.forecast != nullptr ? live.forecast->velocity(ahead) : live.bodyVelocity;
-        const Vec3 strike = planar(body) + m_plan.push * speed;
+        // (Nunca mais rapido que a bola depois do toque, no rumo dele: no
+        // acompanhamento o pe entrava ate 11 cm na bola.)
+        const float ballAhead = dot(planar(m_plan.ballAfter) - planar(body), m_plan.push);
+        const float pushSpeed = m_plan.ballAfterKnown ? std::min(speed, std::max(0.3f, ballAhead - 0.1f)) : speed;
+        const Vec3 strike = planar(body) + m_plan.push * pushSpeed;
         const float step = std::min(left, T);
         quinticStep(m_position, m_velocity, m_acceleration, m_plan.pose.ankle, strike, T, step);
         m_time += step;
@@ -188,6 +195,12 @@ void SwingTouch3D::update(float now, const SwingLive3D& live, const ContactFeet3
             m_contacted = true;
             m_contactedNow = true;
             // A diferenca para o pe do clipe no contato: ela some ate o pouso.
+            // (No acompanhamento o pe nao passa da bola: o que ele tem a mais
+            // que ela no rumo do toque sai.)
+            if (m_plan.ballAfterKnown) {
+                const float excess = dot(planar(m_velocity) - planar(m_plan.ballAfter), m_plan.push);
+                if (excess > 0.0f) m_velocity -= m_plan.push * excess;
+            }
             m_offset = m_position - live.clipAnkle;
             m_offsetVelocity = m_velocity - live.clipVelocity;
             m_offsetAcceleration = clampLength(m_acceleration - live.clipAcceleration, AccelerationMaximum);

@@ -170,8 +170,38 @@ ContactPose3D contactPose3D(const ContactFeet3D& feet, const ContactRequest3D& r
         contact = r.ball - unitPlanar(normal, push) * r.radius;
     }
     pose.foot = contact - point;
+    // A caixa do pe inteira fora da bola: o ponto da superficie encosta, mas
+    // com o pe inclinado (o peito do pe a ~48 graus) a ponta entrava por baixo
+    // dela ate 11 cm - o pe sai pela normal da separacao.
+    for (int pass = 0; pass < 3; ++pass) {
+        const Quaternion box = (pose.orientation * feet.boxOrientation[s]).normalized();
+        const Vec3 center = pose.foot + pose.orientation.rotate(feet.boxCenter[s]);
+        const Vec3 local = box.conjugate().rotate(r.ball - center);
+        const Vec3 h = feet.boxHalf[s];
+        const Vec3 nearest { std::clamp(local.x, -h.x, h.x), std::clamp(local.y, -h.y, h.y), std::clamp(local.z, -h.z, h.z) };
+        const Vec3 away = local - nearest;
+        const float distance = away.length();
+        const float inside = r.radius - distance;
+        if (inside <= 0.002f) break;
+        pose.foot -= distance > 1e-4f ? box.rotate(away * (1.0f / distance)) * (inside + 0.002f) : push * (r.radius + 0.002f);
+    }
     // A caixa do pe nunca dentro do chao: o pe sobe (o contato sobe na bola).
     pose.foot.z += contactGroundDeficit3D(feet, r.side, pose.foot, pose.orientation, r.groundHeight, 0.008f);
+    // (Subindo, a ponta do pe inclinado voltava para dentro da bola: de novo
+    // fora dela, agora so no plano - para tras no rumo do toque.)
+    for (int pass = 0; pass < 4; ++pass) {
+        const Quaternion box = (pose.orientation * feet.boxOrientation[s]).normalized();
+        const Vec3 center = pose.foot + pose.orientation.rotate(feet.boxCenter[s]);
+        const Vec3 local = box.conjugate().rotate(r.ball - center);
+        const Vec3 h = feet.boxHalf[s];
+        const Vec3 nearest { std::clamp(local.x, -h.x, h.x), std::clamp(local.y, -h.y, h.y), std::clamp(local.z, -h.z, h.z) };
+        const float inside = r.radius - (local - nearest).length();
+        if (inside <= 0.002f) break;
+        Vec3 away = r.ball - (center + box.rotate(nearest));
+        away.z = 0.0f;
+        away = away.lengthSquared() > 1e-8f ? away.normalized() : push;
+        pose.foot -= away * (inside + 0.002f);
+    }
     pose.ankle = pose.foot + pose.orientation.rotate(feet.legs.ankleInFoot[s]);
     pose.surfacePoint = pose.foot + point;
     pose.surfaceNormal = normal;

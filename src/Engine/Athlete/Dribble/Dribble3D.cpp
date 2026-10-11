@@ -83,6 +83,11 @@ SwingLive3D Dribble3D::live(const BallHandlingInput3D& input, int side) const {
     live.clipKnee = input.gait.clipKnee[s];
     live.forecast = &m_forecast;
     live.groundHeight = input.body.groundHeight;
+    if (input.ball.valid) {
+        live.ballValid = true;
+        live.ball = input.ball.position + input.ball.velocity * dt;
+        live.ballRadius = input.ball.radius;
+    }
     return live;
 }
 
@@ -219,6 +224,8 @@ void Dribble3D::update(const BallHandlingInput3D& input, const DribbleGaitForeca
         in.settings = &settings;
         in.intent = request.intent;
         in.ballRadius = radius;
+        in.outcome = &outcome;
+        in.aheadVelocity = planar(input.aheadVelocity);
         in.now = m_clock;
         in.earliest = m_clock + dt;
         in.tick = dt;
@@ -413,6 +420,19 @@ void Dribble3D::update(const BallHandlingInput3D& input, const DribbleGaitForeca
                 m_clock, s, p.x, p.y, p.z, a.x, a.y, a.z, (p - a).length(), swing.plan().ball.x, swing.plan().ball.y,
                 swing.plan().ball.z, static_cast<int>(swing.plan().surface), static_cast<int>(swing.plan().style));
             const Quaternion q = swing.plan().pose.orientation;
+            {
+                const Vec3 f = (q * m_feet.geometry.flat[s].conjugate()).rotate({ 1.0f, 0.0f, 0.0f });
+                const Vec3 o = (output.legs[s].foot * m_feet.geometry.flat[s].conjugate()).rotate({ 1.0f, 0.0f, 0.0f });
+                const ContactPose3D& pp = swing.plan().pose;
+                const Quaternion box = (pp.orientation * m_feet.boxOrientation[s]).normalized();
+                const Vec3 center = pp.foot + pp.orientation.rotate(m_feet.boxCenter[s]);
+                const Vec3 local = box.conjugate().rotate(swing.plan().ball - center);
+                const Vec3 h = m_feet.boxHalf[s];
+                const Vec3 nearest { std::clamp(local.x, -h.x, h.x), std::clamp(local.y, -h.y, h.y), std::clamp(local.z, -h.z, h.z) };
+                std::printf("  t %.3f CONTATO inclinacao plano %.1f saida %.1f graus | folga do plano com sinal %.3f\n", m_clock,
+                    std::asin(std::clamp(f.z, -1.0f, 1.0f)) * 57.2958f, std::asin(std::clamp(o.z, -1.0f, 1.0f)) * 57.2958f,
+                    (local - nearest).length() - radius);
+            }
             std::printf("  t %.3f CONTATO pe plano rumo %.1f graus (pe do clipe %.1f, corpo %.1f) | joelho %.2f %.2f\n", m_clock,
                 athleteFootYaw3D(m_feet.geometry, static_cast<int>(s), q) * 57.2958f,
                 athleteFootYaw3D(m_feet.geometry, static_cast<int>(s), input.gait.clipFootOrientation[s]) * 57.2958f,

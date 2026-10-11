@@ -24,6 +24,10 @@ struct SwingLive3D {
     Vec3 clipKnee { 1.0f, 0.0f, 0.0f };
     const BodyForecast3D* forecast = nullptr;
     float groundHeight = 0.0f;
+    // A bola quando a pose aparece (o pe nunca entra nela).
+    bool ballValid = false;
+    Vec3 ball;
+    float ballRadius = 0.11f;
 };
 
 // Um balanco com toque (plano v5): o pe parte do pe do clipe (no comeco do

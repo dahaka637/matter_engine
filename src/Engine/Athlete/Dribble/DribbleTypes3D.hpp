@@ -109,6 +109,17 @@ struct DribbleSettings3D {
     // da linha do meio do corpo.
     float footGap = 0.12f;
     float midlineSlack = 0.04f;
+    // A bola depois do toque a menos de landingClearance (m) de um pouso dos
+    // proximos landingHorizon (s) - o pe pisava na bola - custa ate
+    // landingWeight.
+    float landingClearance = 0.20f;
+    float landingHorizon = 0.7f;
+    float landingWeight = 0.8f;
+    // No contato, a bola (o centro) a menos de supportBallInside (m) do meio
+    // do pe de apoio nunca; ate supportBallClear custa ate supportBallWeight.
+    float supportBallInside = 0.13f;
+    float supportBallClear = 0.24f;
+    float supportBallWeight = 1.5f;
     // O giro da perna (o rumo do pe, do pe do clipe no comeco do balanco ate o
     // contato e dele ate o pouso), em media: ate legTurnFree (rad/s) de graca,
     // custando legTurnWeight por rad/s acima, nunca mais que legTurnMaximum

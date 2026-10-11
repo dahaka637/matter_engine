@@ -26,11 +26,16 @@ struct TouchPlan3D {
     BallTouchSurface3D surface = BallTouchSurface3D::Inside;
     ContactStyle3D style = ContactStyle3D::Front;
     Vec3 push { 1.0f, 0.0f, 0.0f };
-    // A bola prevista no contato e o pe nele.
+    // A bola prevista no contato, a velocidade dela depois do toque (o modelo
+    // da forca) e o pe no contato.
     Vec3 ball;
+    Vec3 ballAfter;
+    bool ballAfterKnown = false;
     ContactPose3D pose;
-    // O quanto a pelve precisa descer para o pe alcancar (m).
+    // O quanto a pelve precisa descer para o pe alcancar (m) e se ela fica
+    // sem ir para o apoio (so assim o pe alcanca: a bola longe do lado).
     float drop = 0.0f;
+    bool noShift = false;
     // A bola dentro da area no contato.
     bool inArea = false;
     // A forca do pedido (0..1) e se e o chute.
@@ -55,6 +60,10 @@ struct TouchPlanInput3D {
     const DribbleSettings3D* settings = nullptr;
     BallOutcomeRequest3D intent;
     float ballRadius = 0.11f;
+    // O modelo da forca (a bola depois do toque: ela nao pode ficar embaixo
+    // dos proximos pousos) e a velocidade "a frente" do corpo.
+    const BallOutcomeSettings3D* outcome = nullptr;
+    Vec3 aheadVelocity;
     // O relogio agora e o primeiro contato permitido (relogio). Os contatos
     // caem na grade dos ticks (tick s): entre dois ticks, a pose do contato
     // saia no tick seguinte, com a bola ja 3 cm adiante.

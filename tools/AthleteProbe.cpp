@@ -926,6 +926,12 @@ struct Metrics {
     int abortedTouches = 0;
     int missedTouches = 0;
     int mergedRequests = 0;
+    // Ticks com um pe apoiado em cima da bola (o centro dela a menos de 0,15 m
+    // do pe no chao).
+    int footOnBallTicks = 0;
+    int swingFootOnBallTicks = 0;
+    // O quanto o pe esta dentro da bola na forca (m, o pior).
+    float contactInside = 0.0f;
     std::vector<float> latencies;
     std::vector<float> pendingRequests;
     int crazyLegTicks = 0;
@@ -1395,9 +1401,12 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
                     const Vec3 nearest { std::clamp(local.x, -h.x, h.x), std::clamp(local.y, -h.y, h.y),
                         std::clamp(local.z, -h.z, h.z) };
                     gap = std::min(gap, (local - nearest).length() - radius);
+                    if (std::getenv("XV5") && settings.dribbleV5)
+                        std::printf("  t %.3f pe %c folga com sinal %.3f m\n", t, side == 0 ? 'E' : 'D', (local - nearest).length() - radius);
                 }
                 (settings.dribbleV5 && athlete.dribbleOutput.touchGuaranteed ? metrics.guaranteedGaps : metrics.contactGaps)
                     .push_back(std::max(0.0f, gap));
+                if (!athlete.dribbleOutput.touchGuaranteed) metrics.contactInside = std::max(metrics.contactInside, -gap);
                 if (std::getenv("XV5") && settings.dribbleV5)
                     std::printf("  t %.3f folga do toque %.3f m | bola contra a prevista %.3f m\n", t, std::max(0.0f, gap),
                         athlete.dribbleOutput.touchMiss);
@@ -1405,8 +1414,10 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
                     const std::size_t side = static_cast<std::size_t>(athlete.dribbleOutput.touchSide);
                     const PhysicsBodyState3D& foot = bodyState.links[legs.foot[side]];
                     const Vec3 ankle = foot.position + foot.orientation.rotate(legs.ankleInFoot[side]);
-                    std::printf("  t %.3f pe real tornozelo %.3f %.3f %.3f | rumo %.1f graus\n", t, ankle.x, ankle.y, ankle.z,
-                        athleteFootYaw3D(footGeometry, static_cast<int>(side), foot.orientation) * 57.2958f);
+                    const Vec3 forward = (foot.orientation * footGeometry.flat[side].conjugate()).rotate({ 1.0f, 0.0f, 0.0f });
+                    std::printf("  t %.3f pe real tornozelo %.3f %.3f %.3f | rumo %.1f graus inclinacao %.1f\n", t, ankle.x, ankle.y,
+                        ankle.z, athleteFootYaw3D(footGeometry, static_cast<int>(side), foot.orientation) * 57.2958f,
+                        std::asin(std::clamp(forward.z, -1.0f, 1.0f)) * 57.2958f);
                 }
             }
             if (metrics.forceTime < 0.0f && settings.newBallHandling) {
@@ -2117,6 +2128,28 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
                 }
                 if (crazy) ++metrics.crazyLegTicks;
                 if (flipped) ++metrics.kneeFlipTicks;
+                if (scenario.ball)
+                    for (std::size_t side = 0; side < 2; ++side) {
+                        // (A caixa do pe entrando mais de 2 cm na bola.)
+                        const std::size_t link = legs.foot[side];
+                        const RagdollCapsuleDefinition3D& collider = profile.links[link].collider;
+                        if (collider.shape != RagdollColliderShape3D::Box) continue;
+                        const PhysicsBodyState3D& foot = bodyState.links[link];
+                        const Quaternion q = (foot.orientation * collider.localOrientation).normalized();
+                        const Vec3 center = foot.position + foot.orientation.rotate(collider.localPosition);
+                        const Vec3 local = q.conjugate().rotate(ballState.position - center);
+                        const Vec3 h = collider.boxHalfExtents;
+                        const Vec3 nearest { std::clamp(local.x, -h.x, h.x), std::clamp(local.y, -h.y, h.y),
+                            std::clamp(local.z, -h.z, h.z) };
+                        const float radius = scene->inflatedBallProfile(ballHandle).radiusMeters;
+                        if ((local - nearest).length() - radius < -0.02f) {
+                            ++metrics.footOnBallTicks;
+                            if (settings.dribbleV5 && athlete.dribbleOutput.legs[side].weight > 0.0f) ++metrics.swingFootOnBallTicks;
+                            if (std::getenv("XPEBOLA"))
+                                std::printf("  t %.3f PE NA BOLA %c entra %.3f m | balanco %.2f | pe z %.3f\n", t, side == 0 ? 'E' : 'D',
+                                    radius - (local - nearest).length(), athlete.dribbleOutput.legs[side].weight, foot.position.z);
+                        }
+                    }
                 const float left = bodyState.links[legs.foot[0]].position.z, right = bodyState.links[legs.foot[1]].position.z;
                 metrics.flightRun = left > 0.10f && right > 0.10f ? metrics.flightRun + Dt : 0.0f;
                 metrics.longestFlight = std::max(metrics.longestFlight, metrics.flightRun);
@@ -2179,13 +2212,14 @@ void printMetrics(const Scenario& scenario, const Metrics& metrics, bool footste
             latencySum += value;
             latencyMax = std::max(latencyMax, value);
         }
-        std::printf("%-18s   v5: pedidos %d toques %d | folga pe-bola na forca med %.3f max %.3f m | atraso med %.3f max %.3f s | perna louca %d joelho virando %d giro max %.1f rad/s | voo max %.3f s | garantia %zu folga med %.3f | perdidos %d | desistiu %d errou %d juntados %d\n",
+        std::printf("%-18s   v5: pedidos %d toques %d | folga pe-bola na forca med %.3f max %.3f m | atraso med %.3f max %.3f s | perna louca %d joelho virando %d giro max %.1f rad/s | voo max %.3f s | garantia %zu folga med %.3f | perdidos %d | desistiu %d errou %d juntados %d | pe na bola %d (balanco %d) | dentro na forca %.3f\n",
             "", metrics.requests, metrics.touches, percentile(metrics.contactGaps, 0.5f), percentile(metrics.contactGaps, 1.0f),
             metrics.latencies.empty() ? 0.0f : latencySum / static_cast<float>(metrics.latencies.size()), latencyMax,
             metrics.crazyLegTicks, metrics.kneeFlipTicks, metrics.legSpinMax, metrics.longestFlight,
             metrics.guaranteedGaps.size(), percentile(metrics.guaranteedGaps, 0.5f),
             metrics.lostRequests + static_cast<int>(metrics.pendingRequests.size()), metrics.abortedTouches,
-            metrics.missedTouches, metrics.mergedRequests);
+            metrics.missedTouches, metrics.mergedRequests, metrics.footOnBallTicks, metrics.swingFootOnBallTicks,
+            metrics.contactInside);
     }
     if (!metrics.bodyForecastErrors.empty())
         std::printf("%-18s   previsao do corpo (0,3 s antes): %zu | med %.3f p95 %.3f max %.3f m\n", "",

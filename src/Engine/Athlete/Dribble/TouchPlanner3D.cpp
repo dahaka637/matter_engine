@@ -127,7 +127,8 @@ TouchPlan3D planTouch3D(const TouchPlanInput3D& in) {
         // O alcance (a pelve pode descer um pouco). O quadril com o corpo do
         // gesto: a pelve vai para o pe de apoio (TouchBody3D) - sem contar,
         // o quadril do toque se afastava ~5 cm da bola e o pe parava antes.
-        Vec3 hip = in.body->hip(side, t);
+        const Vec3 hipBase = in.body->hip(side, t);
+        Vec3 shift;
         {
             Vec3 support = in.footNow[1 - sd];
             if (!step) clipFootAt(in, 1 - side, t, support);
@@ -135,25 +136,31 @@ TouchPlan3D planTouch3D(const TouchPlanInput3D& in) {
             const float amount = shot ? 0.35f + 0.65f * p : 0.45f + 0.55f * p;
             const float share = 1.0f - (1.0f - std::clamp(s.bodyRunningShare, 0.0f, 1.0f))
                 * std::clamp((bodySpeed - 1.0f) / 3.0f, 0.0f, 1.0f);
-            hip += planar(support - pelvisGround) * (s.bodyShiftShare * amount * share);
+            shift = planar(support - pelvisGround) * (s.bodyShiftShare * amount * share);
         }
         const float legReach = s.reach * in.feet->legLength[sd];
-        const Vec3 fromHip = pose.ankle - hip;
-        float drop = 0.0f;
-        if (fromHip.length() > legReach) {
+        // (A descida que o alcance pede do quadril dado; < 0: nao alcanca.)
+        const auto reachDrop = [&](Vec3 hip) {
+            const Vec3 fromHip = pose.ankle - hip;
+            if (fromHip.length() <= legReach) return 0.0f;
             const float flat = planar(fromHip).length();
-            if (flat >= legReach) {
-                ++rejected[1];
+            if (flat >= legReach) return -1.0f;
+            return std::max(0.0f, (hip.z - pose.ankle.z) - std::sqrt(legReach * legReach - flat * flat));
+        };
+        const float dropMaximum = step ? s.dropStanding : s.dropMoving;
+        float drop = reachDrop(hipBase + shift);
+        bool noShift = false;
+        if (drop < 0.0f || drop > dropMaximum) {
+            // (So sem a pelve ir para o apoio: a bola longe do lado.)
+            const float bare = reachDrop(hipBase);
+            if (bare < 0.0f || bare > dropMaximum) {
+                ++rejected[drop < 0.0f ? 1 : 2];
                 return;
             }
-            const float height = std::sqrt(legReach * legReach - flat * flat);
-            drop = (hip.z - pose.ankle.z) - height;
-            if (drop > (step ? s.dropStanding : s.dropMoving)) {
-                ++rejected[2];
-                return;
-            }
-            drop = std::max(0.0f, drop);
+            drop = bare;
+            noShift = true;
         }
+        const Vec3 hip = noShift ? hipBase : hipBase + shift;
         float cost = s.waitWeight * t + 0.3f * drop;
         // (A bola atras tocada para a frente com a sola - o toque do V3 - so se
         // nao houver jeito melhor.)
@@ -168,6 +175,17 @@ TouchPlan3D planTouch3D(const TouchPlanInput3D& in) {
             if (lateral < -s.midlineSlack) cost += 10.0f;
             Vec3 support = in.footNow[1 - sd];
             if (!step) clipFootAt(in, 1 - side, t, support);
+            // (A bola em cima do pe de apoio no contato: o dono passa pela bola
+            // e o pe de apoio ficava dentro dela, ate 11 cm - nunca dentro,
+            // e perto custa.)
+            {
+                const float near = planar(ball - support - forward * 0.07f).length();
+                if (near < s.supportBallInside) {
+                    ++rejected[6];
+                    return;
+                }
+                if (near < s.supportBallClear) cost += s.supportBallWeight * (1.0f - near / s.supportBallClear);
+            }
             const float apart = dot(planar(pose.foot - support), left) * out;
             const float along = std::abs(dot(planar(pose.foot - support), forward));
             // (So lado a lado: um a frente do outro, de lado tanto faz.)
@@ -264,6 +282,33 @@ TouchPlan3D planTouch3D(const TouchPlanInput3D& in) {
         } else {
             cost += 0.1f * std::max(0.0f, pace - limit);
         }
+        // A bola depois do toque fora dos proximos pousos dos dois pes (andando):
+        // no caminho dela - a forca do modelo, rolando - perto de um pe que pousa,
+        // o pe pisava na bola (o dono passa por ela).
+        Vec3 ballAfter;
+        if (in.outcome != nullptr) {
+            BallOutcomeRequest3D predicted = in.intent;
+            predicted.surface = surface;
+            ballAfter = dribbleTouchVelocity3D(predicted, in.ball->velocity(t), velocity, in.aheadVelocity, in.ballRadius,
+                *in.outcome);
+        }
+        if (!step && !shot && in.outcome != nullptr && in.gait != nullptr && in.gait->valid) {
+            const Vec3 after = planar(ballAfter);
+            const float speed = after.length();
+            const Vec3 heading = speed > 1e-3f ? after * (1.0f / speed) : Vec3 {};
+            const float slow = 0.45f + 0.06f * speed;
+            const float stop = speed / std::max(0.1f, slow);
+            for (int leg = 0; leg < 2; ++leg)
+                for (const DribbleWindow3D& window : in.gait->windows[static_cast<std::size_t>(leg)]) {
+                    if (window.end <= t + 0.05f || window.end > t + s.landingHorizon) continue;
+                    Vec3 foot;
+                    if (!clipFootAt(in, leg, window.end, foot)) continue;
+                    const float tau = std::min(window.end - t, stop);
+                    const Vec3 rolled = ball + heading * (speed * tau - 0.5f * slow * tau * tau);
+                    const float near = planar(rolled - foot).length();
+                    if (near < s.landingClearance) cost += s.landingWeight * (1.0f - near / s.landingClearance);
+                }
+        }
         // O giro da perna: o rumo do pe do comeco do balanco ate o contato e
         // dele ate o pouso, em media.
         {
@@ -318,8 +363,11 @@ TouchPlan3D planTouch3D(const TouchPlanInput3D& in) {
         best.style = style;
         best.push = push;
         best.ball = ball;
+        best.ballAfter = ballAfter;
+        best.ballAfterKnown = in.outcome != nullptr;
         best.pose = pose;
         best.drop = drop;
+        best.noShift = noShift;
         best.inArea = inside;
         best.power = request.power;
         best.shot = shot;

@@ -131,6 +131,8 @@ TouchBodyPlan3D touchBodyPlan3D(const TouchPlan3D& plan, bool moving, std::uint3
     }
     // (A descida que o alcance pediu vem a parte, direto - pela mola ela
     // chegava atrasada e o pe parava antes da bola.)
+    // (Sem a pelve ir para o apoio quando so assim o pe alcanca a bola.)
+    if (plan.noShift) bw.pelvisToSupport = bc.pelvisToSupport = bf.pelvisToSupport = 0.0f;
     const float follow = std::max(0.04f, plan.followEnd - plan.contact);
     b.times[0] = plan.start;
     b.times[1] = plan.start + 0.4f * std::max(0.02f, plan.contact - plan.start);
