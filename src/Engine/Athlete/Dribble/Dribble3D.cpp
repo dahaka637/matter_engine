@@ -47,9 +47,22 @@ void Dribble3D::reset(const RagdollProfile3D& profile) {
     m_bodyPlans = {};
     m_bodyValue = {};
     m_bodyRate = {};
+    m_reachDrop = 0.0f;
+    m_reachDropRate = 0.0f;
     m_lookKnown = false;
     m_ballKey = 0;
     m_sinceTouch = 10.0f;
+}
+
+BallOutcomeRequest3D Dribble3D::intentOf(const Request& request, const DribbleSettings3D& settings) const {
+    if (!request.plan.setup) return request.intent;
+    BallOutcomeRequest3D setup = request.intent;
+    setup.kind = BallActionKind3D::Dribble;
+    setup.power = settings.setupPower;
+    setup.lift = 0.0f;
+    setup.curve = 0.0f;
+    setup.direction = Vec3 { std::cos(request.intent.aimYawRadians), std::sin(request.intent.aimYawRadians), 0.0f };
+    return setup;
 }
 
 SwingLive3D Dribble3D::live(const BallHandlingInput3D& input, int side) const {
@@ -244,11 +257,20 @@ void Dribble3D::update(const BallHandlingInput3D& input, const DribbleGaitForeca
             continue;
         }
         if (impulseUsed) continue;
-        applyForce(request, request.plan.surface, input, outcome, settings, output);
-        request.done = true;
+        Request touch = request;
+        touch.intent = intentOf(request, settings);
+        applyForce(touch, request.plan.surface, input, outcome, settings, output);
         impulseUsed = true;
         output.touchSide = request.plan.side;
         output.touchMiss = (input.ball.position - request.plan.ball).length();
+        if (request.plan.setup) {
+            // (O preparo: o chute vem depois, no mesmo pedido.)
+            request.setupDone = true;
+            request.committed = false;
+            request.plan = {};
+        } else {
+            request.done = true;
+        }
     }
 
     // 3) Os pedidos em ordem: cada um planejado na bola que o anterior vai
@@ -268,7 +290,7 @@ void Dribble3D::update(const BallHandlingInput3D& input, const DribbleGaitForeca
             if (request.committed) {
                 earliest = std::max(earliest, request.plan.contact + settings.touchGap);
                 DribbleBallPath3D next;
-                chainAfter(request.plan, request.intent, chain, next);
+                chainAfter(request.plan, intentOf(request, settings), chain, next);
                 chain = next;
                 continue;
             }
@@ -277,13 +299,23 @@ void Dribble3D::update(const BallHandlingInput3D& input, const DribbleGaitForeca
             in.busyUntil = busy;
             in.usedWindowEnd = used;
             request.plan = planTouch3D(in);
+            // (O chute sem jeito com a bola onde esta - atras do corpo -: antes
+            // a sola a traz para a frente.)
+            if (!request.plan.valid && request.intent.kind == BallActionKind3D::Shot && !request.setupDone
+                && request.plan.candidates > 0 && request.plan.rejected[0] == request.plan.candidates) {
+                Request setup = request;
+                setup.plan.setup = true;
+                in.intent = intentOf(setup, settings);
+                request.plan = planTouch3D(in);
+                request.plan.setup = request.plan.valid;
+            }
             if (!request.plan.valid) break;
             const std::size_t s = static_cast<std::size_t>(request.plan.side);
             earliest = request.plan.contact + settings.touchGap;
             busy[s] = std::max(busy[s], request.plan.end);
             if (!request.plan.step) used[s] = request.plan.end;
             DribbleBallPath3D next;
-            chainAfter(request.plan, request.intent, chain, next);
+            chainAfter(request.plan, intentOf(request, settings), chain, next);
             chain = next;
         }
     }
@@ -315,6 +347,7 @@ void Dribble3D::update(const BallHandlingInput3D& input, const DribbleGaitForeca
             if (swing.active() && swing.request() == request.id && !swing.contacted()
                 && swing.plan().contact - m_clock > settings.lockLead) {
                 TouchPlanInput3D in = planInput(request, chain);
+                in.intent = intentOf(request, settings);
                 in.earliest = earliest;
                 in.onlySide = static_cast<int>(s);
                 in.onlyWindowEnd = swing.plan().step ? -1.0f : swing.plan().end;
@@ -327,6 +360,7 @@ void Dribble3D::update(const BallHandlingInput3D& input, const DribbleGaitForeca
                 const TouchPlan3D again = planTouch3D(in);
                 if (again.valid) {
                     TouchPlan3D kept = again;
+                    kept.setup = swing.plan().setup;
                     kept.start = swing.plan().start;
                     kept.end = swing.plan().step ? again.end : swing.plan().end;
                     kept.followEnd = std::min(kept.end, again.followEnd);
@@ -351,7 +385,7 @@ void Dribble3D::update(const BallHandlingInput3D& input, const DribbleGaitForeca
             }
             earliest = request.plan.contact + settings.touchGap;
             DribbleBallPath3D next;
-            chainAfter(request.plan, request.intent, chain, next);
+            chainAfter(request.plan, intentOf(request, settings), chain, next);
             chain = next;
         }
     }
@@ -536,9 +570,25 @@ void Dribble3D::bodyLayer(const BallHandlingInput3D& input, const DribbleSetting
     // com o peso ainda baixo, ele so nao amplifica.)
     const float weight = std::max(m_bodyWeight, 0.001f);
     const float inverse = 1.0f / std::max(weight, 0.3f);
+    // A descida que o alcance pediu, direto pelo tempo do balanco: inteira no
+    // contato, entrando na ida e saindo na volta.
+    // (Do comeco de fato do balanco - a janela podia ja ter comecado - e numa
+    // mola curta: o plano refeito mudava a descida a cada tick.)
+    float reachDrop = 0.0f;
+    for (const SwingTouch3D& swing : m_swings) {
+        if (!swing.active()) continue;
+        const TouchPlan3D& plan = swing.plan();
+        const float start = swing.startTime();
+        const float in = (m_clock - start) / std::max(0.02f, plan.contact - start);
+        const float out = (m_clock - plan.contact) / std::max(0.02f, plan.followEnd - plan.contact);
+        const float u = m_clock < plan.contact ? std::clamp(in, 0.0f, 1.0f) : 1.0f - std::clamp(out, 0.0f, 1.0f);
+        reachDrop = std::max(reachDrop, plan.drop * u * u * (3.0f - 2.0f * u));
+    }
+    spring(m_reachDrop, m_reachDropRate, reachDrop, 0.03f, dt);
+    reachDrop = std::max(0.0f, m_reachDrop);
     output.body = keys;
     output.body.weight = weight;
-    output.body.pelvisDrop = keys.pelvisDrop * inverse;
+    output.body.pelvisDrop = (keys.pelvisDrop + reachDrop) * inverse;
     output.body.pelvisShift = keys.pelvisShift * inverse;
     output.body.pelvisYaw = keys.pelvisYaw * inverse;
     output.body.pelvisPitch = keys.pelvisPitch * inverse;

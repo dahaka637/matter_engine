@@ -55,6 +55,8 @@ public:
     // O contato aconteceu neste update (a forca sai agora).
     [[nodiscard]] bool contactedNow() const { return m_contactedNow; }
     [[nodiscard]] int request() const { return m_request; }
+    // O instante (relogio) em que o balanco comecou de fato (o compromisso).
+    [[nodiscard]] float startTime() const { return m_start; }
     [[nodiscard]] int side() const { return m_plan.side; }
     [[nodiscard]] const TouchPlan3D& plan() const { return m_plan; }
     // O tornozelo no mundo agora (o ultimo alvo).

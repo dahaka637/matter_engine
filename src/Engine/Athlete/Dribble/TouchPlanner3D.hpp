@@ -36,12 +36,15 @@ struct TouchPlan3D {
     // A forca do pedido (0..1) e se e o chute.
     float power = 0.5f;
     bool shot = false;
+    // O toque de preparo do chute (a bola atras: a sola a traz para a frente;
+    // o chute sai depois, no mesmo pedido).
+    bool setup = false;
     float cost = 1e9f;
     // Diagnostico: os candidatos avaliados e os recusados por motivo (sem
     // estilo, alcance, descida, aproximacao, ritmo, passo, cruzando, fora da
-    // area, giro da perna).
+    // area, giro da perna, apoio no ar no chute).
     int candidates = 0;
-    std::array<int, 9> rejected {};
+    std::array<int, 10> rejected {};
 };
 
 struct TouchPlanInput3D {

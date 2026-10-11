@@ -376,8 +376,11 @@ void applyBallGesturePose3D(const RagdollProfile3D& profile, const BallGestureLe
             // bola passando por baixo da cabeca virava o atras de uma vez e a
             // cabeca estalava, 860 m/s2.)
             const float flat = std::hypot(toward.x, toward.y);
-            const float behind = smooth((std::abs(yawError) - 1.2f) / 0.8f) * smooth((flat - 0.06f) / 0.30f);
-            yawError = std::clamp(yawError, -1.0f, 1.0f);
+            const float turnedAway = smooth((std::abs(yawError) - 1.2f) / 0.8f);
+            const float behind = turnedAway * smooth((flat - 0.06f) / 0.30f);
+            // (O giro some antes de chegar atras: travado em +-1 ele trocava de
+            // lado com a bola logo atras da cabeca e ela tremia, 570 m/s2.)
+            yawError = std::clamp(yawError, -1.0f, 1.0f) * (1.0f - turnedAway);
             // (O alvo quase na vertical da cabeca: o rumo dele nao vale - um
             // centimetro para tras virava a cabeca 30 graus num tick.)
             yawError *= smooth((std::sqrt(d.x * d.x + d.y * d.y) - 0.06f) / 0.10f);

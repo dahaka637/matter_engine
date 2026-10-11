@@ -50,10 +50,14 @@ private:
         // O pe chegou na bola (a pose do contato sai neste tick): a forca no
         // proximo, quando a pose aparece - a bola sai quando o pe encosta.
         bool armed = false;
+        // O chute com a bola atras ja teve o toque de preparo.
+        bool setupDone = false;
         TouchPlan3D plan;
     };
 
     [[nodiscard]] bool anySwing() const { return m_swings[0].active() || m_swings[1].active(); }
+    // A intencao do toque planejado (o preparo do chute: um toque de sola).
+    [[nodiscard]] BallOutcomeRequest3D intentOf(const Request& request, const DribbleSettings3D& settings) const;
     [[nodiscard]] SwingLive3D live(const BallHandlingInput3D& input, int side) const;
     void applyForce(const Request& request, BallTouchSurface3D surface, const BallHandlingInput3D& input,
         const BallOutcomeSettings3D& outcome, const DribbleSettings3D& settings, DribbleOutput3D& output);
@@ -86,6 +90,9 @@ private:
     // valores de agora).
     DribbleBody3D m_bodyValue;
     DribbleBody3D m_bodyRate;
+    // A descida do alcance (na sua mola curta).
+    float m_reachDrop = 0.0f;
+    float m_reachDropRate = 0.0f;
     float m_lookWeight = 0.0f;
     Vec3 m_look;
     bool m_lookKnown = false;

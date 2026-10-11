@@ -152,6 +152,9 @@ struct DribbleSettings3D {
     float shotFollow = 0.20f;
     // A batida: a velocidade do pe no contato, em relacao ao corpo, no rumo
     // do empurrao (m/s; mais a parte pela forca).
+    // O preparo do chute com a bola atras: a sola a traz para a frente nesta
+    // forca (0..1), no rumo da mira.
+    float setupPower = 0.25f;
     float strikeSpeed = 1.0f;
     float strikeSpeedPower = 2.0f;
     float shotStrikeSpeed = 5.0f;
@@ -175,6 +178,9 @@ struct DribbleSettings3D {
     // 4 m/s) e some bodyFade (s) depois da volta do pe; o olhar na bola.
     float bodyRunningShare = 0.15f;
     float bodyFade = 0.15f;
+    // A pelve vai para o pe de apoio no contato essa parte do caminho (a
+    // chave do V3) - o planejador conta com ela no quadril previsto.
+    float bodyShiftShare = 0.5f;
     // A mola de cada canal do corpo (s, criticamente amortecida).
     float bodySpringSeconds = 0.05f;
     float lookWeight = 0.8f;

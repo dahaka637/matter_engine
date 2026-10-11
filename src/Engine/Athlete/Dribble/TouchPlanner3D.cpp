@@ -74,9 +74,12 @@ TouchPlan3D planTouch3D(const TouchPlanInput3D& in) {
     // Um candidato: a perna `side` encostando na bola em t (s a partir de
     // agora), no balanco que comeca em windowStart e pousa em windowEnd.
     int candidates = 0;
-    std::array<int, 9> rejected {};
+    std::array<int, 10> rejected {};
     const float tick = std::max(1.0f / 1000.0f, in.tick);
-    const float dt = tick * std::max(1.0f, std::round(s.candidateStep / tick));
+    // (Refeito, na grade do tick: o instante comprometido e um candidato - na
+    // de 1/60 a grade deslizava contra o relogio e o contato alternava um tick
+    // para cada lado.)
+    const float dt = retarget ? tick : tick * std::max(1.0f, std::round(s.candidateStep / tick));
     // (O primeiro candidato na grade: o tick seguinte a `from`.)
     const auto onGrid = [&](float from) { return std::ceil(from / tick - 1e-3f) * tick; };
     const auto evaluate = [&](int side, float t, float windowStart, float windowEnd, bool step) {
@@ -121,8 +124,19 @@ TouchPlan3D planTouch3D(const TouchPlanInput3D& in) {
         request.lift = in.intent.lift;
         request.groundHeight = pelvisGround.z;
         const ContactPose3D pose = contactPose3D(*in.feet, request);
-        // O alcance (a pelve pode descer um pouco).
-        const Vec3 hip = in.body->hip(side, t);
+        // O alcance (a pelve pode descer um pouco). O quadril com o corpo do
+        // gesto: a pelve vai para o pe de apoio (TouchBody3D) - sem contar,
+        // o quadril do toque se afastava ~5 cm da bola e o pe parava antes.
+        Vec3 hip = in.body->hip(side, t);
+        {
+            Vec3 support = in.footNow[1 - sd];
+            if (!step) clipFootAt(in, 1 - side, t, support);
+            const float p = std::clamp(in.intent.power, 0.0f, 1.0f);
+            const float amount = shot ? 0.35f + 0.65f * p : 0.45f + 0.55f * p;
+            const float share = 1.0f - (1.0f - std::clamp(s.bodyRunningShare, 0.0f, 1.0f))
+                * std::clamp((bodySpeed - 1.0f) / 3.0f, 0.0f, 1.0f);
+            hip += planar(support - pelvisGround) * (s.bodyShiftShare * amount * share);
+        }
         const float legReach = s.reach * in.feet->legLength[sd];
         const Vec3 fromHip = pose.ankle - hip;
         float drop = 0.0f;
@@ -275,6 +289,15 @@ TouchPlan3D planTouch3D(const TouchPlanInput3D& in) {
                 return;
             }
             cost += s.legTurnWeight * std::max(0.0f, rate - s.legTurnFree);
+        }
+        // O chute com o pe de apoio no chao no contato (andando: a outra
+        // perna fora das janelas de balanco dela).
+        if (shot && !step && in.gait != nullptr && in.gait->valid) {
+            for (const DribbleWindow3D& window : in.gait->windows[1 - sd])
+                if (window.end > window.start && t > window.start - 0.02f && t < window.end + 0.02f) {
+                    ++rejected[9];
+                    return;
+                }
         }
         const bool inside = dribbleInArea3D(ball, in.ballRadius, pelvis, velocity, s);
         if (!inside) cost += 10.0f;

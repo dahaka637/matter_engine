@@ -129,10 +129,8 @@ TouchBodyPlan3D touchBodyPlan3D(const TouchPlan3D& plan, bool moving, std::uint3
             channel += 3;
         }
     }
-    // A descida que o alcance pediu entra inteira no contato.
-    bc.pelvisDrop += plan.drop;
-    bw.pelvisDrop += 0.5f * plan.drop;
-    bf.pelvisDrop += 0.5f * plan.drop;
+    // (A descida que o alcance pediu vem a parte, direto - pela mola ela
+    // chegava atrasada e o pe parava antes da bola.)
     const float follow = std::max(0.04f, plan.followEnd - plan.contact);
     b.times[0] = plan.start;
     b.times[1] = plan.start + 0.4f * std::max(0.02f, plan.contact - plan.start);
