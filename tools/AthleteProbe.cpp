@@ -9,7 +9,8 @@
 //      [--ativo 0|1] (o Corpo Ativo; 1 padrao)  [--pegadas 0|1] (locomocao por
 //      pegadas; 0 padrao)  [--passos 0|1] (passos de equilibrio no Ativo)
 //      [--resposta %] (a resposta da capsula no padrao)  [--teste] (os contratos)
-//      [--total] (o modo Fisico total)  [--pes %] (a ajuda nos pes dele)
+//      [--total] (o modo Fisico total)  [--pes %] (a ajuda nos pes)  [--guia %] (a guiagem
+//      de ossos do Fisico total)
 //      [--ajuda-parado %] [--ajuda-andando %]
 // Sem --cenario roda todos.
 #include "Engine/Athlete/AthleteAssets3D.hpp"
@@ -1823,11 +1824,9 @@ int runChecks(const ProbeContext& context) {
     // O terreno (plano v2, fase E): degrau baixo, escada e rampa sem ir ao
     // fisico e sem o lancamento (a pelve longe acima da capsula), andando ate o
     // fim; o degrau alto (35 cm, parede para a capsula) pode ir ao fisico, sem
-    // lancamento; encostado na parede volta ao padrao. Sem e com as pegadas.
-    AthleteRuntimeSettings3D terrainSteps;
-    terrainSteps.footstepLocomotion = true;
-    const AthleteRuntimeSettings3D& terrainFlat = settings;
-    for (const AthleteRuntimeSettings3D* config : { &terrainFlat, static_cast<const AthleteRuntimeSettings3D*>(&terrainSteps) }) {
+    // lancamento; encostado na parede volta ao padrao. (As pegadas sairam do
+    // jogo em 11/10.)
+    for (const AthleteRuntimeSettings3D* config : { &settings }) {
         const bool steps = config->footstepLocomotion;
         for (const char* name : { "degrau_10_anda", "degrau_18_anda", "degrau_25_anda", "degrau_10_corre", "degrau_18_corre",
                  "escada_anda", "escada_corre", "rampa_anda", "rampa_corre" }) {
@@ -1878,75 +1877,14 @@ int runChecks(const ProbeContext& context) {
         expect((rose || (!m.fell && m.riseAt < 0.0f)) && has(m, "ponte") && m.finalMode != LegacyBodyMode3D::Physical,
             what, m);
     }
-    // Locomocao por pegadas (Etapa 3): o pe apoiado nao escorrega, sem
-    // estalo, e as acoes com bola continuam saindo.
-    AthleteRuntimeSettings3D footsteps;
-    footsteps.footstepLocomotion = true;
-    for (const char* name : { "arranca", "sprint", "inverte", "lados", "corte", "para_sprint", "diagonal", "costas" }) {
-        const Metrics m = run(name, footsteps, false);
-        char what[128];
-        std::snprintf(what, sizeof(what), "pegadas, %s: o pe apoiado nao escorrega (p95 %.2f m/s)", name,
-            percentile(m.plantedSlide, 0.95f));
-        expect(percentile(m.plantedSlide, 0.95f) < 0.4f && percentile(m.plantedSlide, 1.0f) < 1.0f, what, m);
-        std::snprintf(what, sizeof(what), "pegadas, %s: sem salto de pose (%.3f m)", name, m.worstPoseJump);
-        expect(m.worstPoseJump < 0.03f, what, m);
-    }
-    // Pegadas novas (plano v3, etapa 2; o teste do usuario de 10/10 noite): o
-    // pe so trava no chao de verdade - o pulo que encosta numa plataforma e
-    // sai, a escada -, o apoio nao treme, e as pernas nunca se cruzam nem se
-    // atravessam (giros bruscos, corte, de lado, a volta de 180 graus).
-    for (const char* name : { "pulo_plataforma", "pulo_raspa", "pulo_alta", "escada_anda", "escada_corre", "escada_para",
-             "escada_volta" }) {
-        const Metrics m = run(name, footsteps, false);
-        char what[200];
-        std::snprintf(what, sizeof(what), "pegadas, %s: trava so no chao (folga %+.3f m), sem tremer (%d/%d), sem fisico", name,
-            m.lockGap, m.stanceTremor, m.bodyTremor);
-        expect(std::abs(m.lockGap) < 0.03f && m.stanceTremor == 0 && m.bodyTremor <= 2 && !has(m, "fisico"), what, m);
-    }
-    for (const char* name : { "gira_rapido", "anda_gira", "corre_gira", "sprint_gira", "lado_gira", "diagonal_gira",
-             "corre_vira180", "anda_vira180", "inverte", "zigue", "corte", "lados", "diagonal", "costas" }) {
-        const Metrics m = run(name, footsteps, false);
-        char what[200];
-        std::snprintf(what, sizeof(what), "pegadas, %s: as pernas nao se cruzam (%d ticks) nem se atravessam (%.3f m)", name,
-            m.legCrossTicks, m.legOverlap);
-        expect(m.legCrossTicks == 0 && m.legOverlap < 0.02f, what, m);
-    }
-    // O joelho no fim da pisada (plano v2, fase B): com as pegadas, a perna
-    // que sai do chao estica no ritmo do clipe - nada de travar reta num tick
-    // (antes: 2788 graus/s correndo contra 927 do clipe).
-    for (const char* name : { "anda", "trota", "arranca", "sprint" }) {
-        const Metrics clip = run(name, settings, false);
-        const Metrics m = run(name, footsteps, false);
-        char what[192];
-        std::snprintf(what, sizeof(what), "pegadas, %s: o joelho estica como no clipe (%.0f contra %.0f graus/s)", name,
-            m.peakKneeExtension, clip.peakKneeExtension);
-        expect(m.peakKneeExtension < 1.4f * clip.peakKneeExtension + 50.0f, what, m);
-    }
-    {
-        const Metrics m = run("zigue", footsteps, false);
-        expect(percentile(m.plantedSlide, 0.95f) < 1.5f && m.worstPoseJump < 0.03f,
-            "pegadas, zigue-zague: pouco deslize, sem salto de pose", m);
-    }
-    {
-        const Metrics m = run("parado", footsteps, false);
-        expect(m.settleSteps == 0 && percentile(m.plantedSlide, 1.0f) < 0.01f, "pegadas, parado: quieto", m);
-    }
-    for (const char* name : { "toque_parado", "chute_parado", "toque_corre" }) {
-        const Metrics m = run(name, footsteps, false);
-        char what[96];
-        std::snprintf(what, sizeof(what), "pegadas, %s: a bola sai", name);
-        expect(m.touches == 1 && m.ballSpeedAfter > 1.0f, what, m);
-    }
     // O manejo (plano v3): com a bola na area, toda acao sai, na hora; o
     // movimento padronizado nunca cruza nem atravessa as pernas, nao estica a
     // perna no ar, nao arrasta o pe, sem salto de pose e sem tranco; mudando o
     // movimento, a perna sai dele logo. Os casos do plano v2 e as combinacoes
-    // (parado e as 8 direcoes andando e correndo, vezes os 8 toques), sem e
-    // com as pegadas (as combinacoes, so com elas: o padrao do jogo).
+    // (parado e as 8 direcoes andando e correndo, vezes os 8 toques), no jogo
+    // de hoje (sem as pegadas, fora desde 11/10).
     AthleteRuntimeSettings3D handling;
     handling.newBallHandling = true;
-    AthleteRuntimeSettings3D handlingSteps = handling;
-    handlingSteps.footstepLocomotion = true;
     {
         int total = 0, failed = 0;
         float worstLegs = 0.0f, worstSlide = 0.0f, worstReach = 0.0f;
@@ -1958,8 +1896,7 @@ int runChecks(const ProbeContext& context) {
                 || name == "corte_corre" || name.rfind("bola_", 0) == 0;
             const bool grid = name.rfind("mov_", 0) == 0;
             if (name.rfind("v2_", 0) != 0 && !old && !grid) continue;
-            for (const AthleteRuntimeSettings3D* config : { &handling, &handlingSteps }) {
-                if (grid && !config->footstepLocomotion) continue;
+            for (const AthleteRuntimeSettings3D* config : { &handling }) {
                 const Metrics m = runScenario(context, scenario, *config, false, nullptr, 1);
                 ++total;
                 const bool steps = config->footstepLocomotion;
@@ -2049,6 +1986,7 @@ int main(int argc, char** argv) {
     // O modo Fisico total (sempre pelo fisico) e as ajudas dele (%).
     bool totalPhysical = false;
     float feetAssist = AthleteRuntimeSettings3D {}.physicalFeetAssistPercent;
+    float boneGuide = AthleteRuntimeSettings3D {}.physicalBoneGuidePercent;
     float standingAssist = AthleteRuntimeSettings3D {}.e5StandingAssistPercent;
     float walkingAssist = AthleteRuntimeSettings3D {}.e5WalkingAssistPercent;
     for (int i = 1; i < argc; ++i) {
@@ -2068,6 +2006,7 @@ int main(int argc, char** argv) {
         else if (arg == "--teste") checks = true;
         else if (arg == "--total") totalPhysical = true;
         else if (arg == "--pes") feetAssist = static_cast<float>(std::atof(need()));
+        else if (arg == "--guia") boneGuide = static_cast<float>(std::atof(need()));
         else if (arg == "--ajuda-parado") standingAssist = static_cast<float>(std::atof(need()));
         else if (arg == "--ajuda-andando") walkingAssist = static_cast<float>(std::atof(need()));
         else if (arg == "--lista") {
@@ -2101,6 +2040,7 @@ int main(int argc, char** argv) {
     settings.newBallHandling = newBall;
     settings.physicalBridge = bridge;
     settings.physicalFeetAssistPercent = feetAssist;
+    settings.physicalBoneGuidePercent = boneGuide;
     settings.e5StandingAssistPercent = standingAssist;
     settings.e5WalkingAssistPercent = walkingAssist;
     if (totalPhysical) {

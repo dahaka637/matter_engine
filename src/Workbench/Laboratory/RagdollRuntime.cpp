@@ -668,9 +668,9 @@ AthleteRuntimeSettings3D WorkbenchApp::athleteRuntimeSettings() const {
     settings.activeBody = m_activeBody;
     settings.physicalBridge = m_physicalBridge;
     settings.physicalFeetAssistPercent = m_physicalFeetAssistPercent;
+    settings.physicalBoneGuidePercent = m_physicalBoneGuidePercent;
     settings.fullPhysicalImpulse = m_fullPhysicalImpulse;
     settings.activeBodySettings.gameplayAssistAcceleration = m_activeAssistAcceleration;
-    settings.footstepLocomotion = m_footstepLocomotion;
     settings.newBallHandling = m_newBallHandling;
     settings.capsuleResponsePercent = m_capsuleResponsePercent;
     return settings;

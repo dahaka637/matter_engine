@@ -2841,23 +2841,21 @@ void WorkbenchApp::drawLaboratoryUi() {
                             // (A locomocao fisica v2 e o "tentar se manter em pe no
                             // impacto" viraram o padrao - as caixas sairam, pedido do
                             // usuario, 06/10.)
-                            // As pegadas voltam como chave, ligadas (pedido do
-                            // usuario, 10/10 noite).
-                            if (m_defaultLocomotion) {
-                                ImGui::Checkbox("Locomoção por pegadas", &m_footstepLocomotion);
-                                hint("Os pés apoiados ficam onde pousaram (a animação vira o estilo dos passos). Desligada: os pés seguem a animação.");
-                            }
+                            // (As pegadas sairam de vez: pedido do usuario, 11/10.)
+                            // A guiagem de ossos (experimento do usuario, 11/10).
+                            if (!m_defaultLocomotion)
+                                percent("Guiagem de ossos", "##BoneGuide", &m_physicalBoneGuidePercent, 0.0f, 100.0f,
+                                    "Os ossos vão até a pose do modo padrão nesta fração: 0% é a locomoção física de sempre, 100% é como o padrão.");
                         }
                         panelHeader("AJUDAS");
                         percent("Ajuda parado", "##AssistStanding", &m_e5StandingAssistPercent, 0.0f, 100.0f,
                             "Força auxiliar na pelve parado (no físico).");
                         percent("Ajuda andando", "##AssistWalking", &m_e5WalkingAssistPercent, 0.0f, 100.0f,
                             "Força auxiliar andando e correndo (no físico).");
-                        // A ajuda nos pes (pedido do usuario, 10/10 noite): so no
-                        // Fisico total.
-                        if (!m_defaultLocomotion)
-                            percent("Ajuda nos pés", "##AssistFeet", &m_physicalFeetAssistPercent, 0.0f, 100.0f,
-                                "A força que leva o corpo ao movimento passa pelos pés apoiados (o pé empurra o chão, até o atrito), como no estado intermediário. Soma com a ajuda na pelve, só no que ela não deu.");
+                        // A ajuda nos pes (aprovada pelo usuario, 11/10): no corpo
+                        // fisico todo.
+                        percent("Ajuda nos pés", "##AssistFeet", &m_physicalFeetAssistPercent, 0.0f, 100.0f,
+                            "No físico, a força que leva o corpo ao movimento passa pelos pés apoiados (o pé empurra o chão, até o atrito). Soma com a ajuda na pelve, só no que ela não deu, e cai com o impacto como ela.");
                         percent("Ajuda ao levantar", "##AssistGetUp", &m_getUpAssistPercent, 0.0f, 200.0f,
                             "Forças de fora no levantar do chão; 0%: só os músculos.");
                         panelHeader("MÚSCULOS");

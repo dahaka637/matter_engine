@@ -107,14 +107,22 @@ struct AthleteRuntimeSettings3D {
     // deste tempo calmo (s): a inercia da volta os leva.
     float activeFollowSlack = 0.10f;
     float activeReturnTimeout = 1.2f;
-    // A ajuda nos pes do Fisico total (%; pedido do usuario, 10/10 noite): a
-    // forca que leva o corpo a referencia passa pelos pes apoiados, no que a
-    // ajuda da pelve nao deu (PhysicalFeetAssist3D). 0 desliga.
-    float physicalFeetAssistPercent = 0.0f;
+    // A ajuda nos pes do corpo fisico (%; pedida em 10/10 noite, aprovada
+    // pelo usuario em 11/10): a forca que leva o corpo a referencia passa
+    // pelos pes apoiados, no que a ajuda da pelve nao deu
+    // (PhysicalFeetAssist3D). Cai com o impacto e volta como a ajuda andando e
+    // parado. 0 desliga.
+    float physicalFeetAssistPercent = 100.0f;
     PhysicalFeetAssistSettings3D physicalFeetAssist;
-    // Locomocao por pegadas (Etapa 3): no modo padrao o clipe vira estilo e os
-    // pes apoiados ficam onde pousaram (FootstepPlanner3D). Desligada ate o
-    // usuario aprovar (a chave A/B do laboratorio).
+    // A guiagem de ossos do Fisico total (%; experimento do usuario, 11/10): a
+    // pose do modo padrao roda junto e os ossos vao ate ela nesta fracao - 0 e
+    // a locomocao fisica de hoje, 100 e como o padrao. Caido, levantando e no
+    // carrinho, nada.
+    float physicalBoneGuidePercent = 0.0f;
+    // Locomocao por pegadas (Etapa 3; refeita no plano v3): no modo padrao o
+    // clipe vira estilo e os pes apoiados ficam onde pousaram
+    // (FootstepPlanner3D). Fora do jogo desde 11/10 (o usuario: "causa
+    // movimentos roboticos e ruins") - so a sonda ainda a liga.
     bool footstepLocomotion = false;
     FootstepSettings3D footsteps;
     // Manejo novo (a chave A/B "Manejo novo"): desde o plano v2 (fase C), o

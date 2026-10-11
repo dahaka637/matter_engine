@@ -1317,17 +1317,38 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             }
         }
     }
+    // A guiagem de ossos (experimento do usuario, 11/10): no Fisico total, a
+    // pose do modo padrao roda junto e os ossos vao ate ela nesta fracao (0: o
+    // fisico de hoje; 100: como o padrao). Caido, levantando e no carrinho,
+    // nada.
+    if (command.controlled && !settings.defaultLocomotion && settings.physicalBoneGuidePercent > 0.0f && !down) {
+        const DefaultLocomotionInput3D input = defaultLocomotionInput();
+        state.defaultLocomotion.update(profile, defaultClips, input);
+        const DefaultLocomotionOutput3D& out = state.defaultLocomotion.output();
+        if (out.valid && out.pose.linkPositions.size() == profile.links.size()) {
+            const std::vector<float> authority(profile.links.size(),
+                std::clamp(settings.physicalBoneGuidePercent * 0.01f, 0.0f, 1.0f));
+            scene.setRagdollGuidePose(slot.handle, out.pose.linkPositions, out.pose.linkOrientations, authority);
+        }
+    }
     applyCharacterControl3D(scene, slot.handle, locomotionOutput, adaptive ? &state.adaptivePhysics.output() : nullptr,
         down);
-    // A ajuda nos pes do Fisico total (PhysicalFeetAssist3D): a forca que leva
+    // A ajuda nos pes do corpo fisico (PhysicalFeetAssist3D): a forca que leva
     // o corpo a referencia passa pelos pes apoiados, no que a pelve nao deu.
+    // Ela acompanha a ajuda andando e parado: cai com o impacto (o nivel do
+    // ImpactAssist3D e o envelope de contato da fisica) e sobe na volta.
     athlete.feetAssistOutput = {};
-    if (command.controlled && adaptive && !down && !settings.defaultLocomotion
-        && settings.physicalFeetAssistPercent > 0.0f && state.adaptivePhysics.output().valid) {
+    if (command.controlled && adaptive && !down && settings.physicalFeetAssistPercent > 0.0f
+        && state.adaptivePhysics.output().valid) {
         const AdaptivePhysicalOutput3D& assist = state.adaptivePhysics.output();
         const RagdollAnimationConstraint3D& reference = locomotionOutput.guide;
         PhysicalFeetAssistInput3D feet;
-        feet.share = settings.physicalFeetAssistPercent * 0.01f;
+        float share = std::clamp(settings.physicalFeetAssistPercent * 0.01f, 0.0f, 1.0f) * state.impactAssist.level();
+        if (state.returnBoost > 0.0f) {
+            const float boost = state.returnBoost * state.returnBoost * (3.0f - 2.0f * state.returnBoost);
+            share += (1.0f - share) * boost;
+        }
+        feet.share = share * std::clamp(assist.assistEnvelope, 0.0f, 1.0f);
         feet.referencePosition = reference.rootPositionWorld;
         feet.referenceOrientation = reference.rootOrientationWorld;
         feet.referenceVelocity = reference.rootLinearVelocityWorld;

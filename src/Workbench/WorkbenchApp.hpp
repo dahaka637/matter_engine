@@ -511,15 +511,13 @@ private:
     // que vai direto ao fisico total e a ajuda de jogo dele (m/s2).
     bool m_activeBody = false;
     bool m_physicalBridge = true;
-    // A ajuda nos pes do Fisico total (%; 10/10 noite): a forca que leva o
-    // corpo passa pelos pes apoiados, no que a ajuda da pelve nao deu.
-    float m_physicalFeetAssistPercent = 0.0f;
+    // A ajuda nos pes do corpo fisico (%; aprovada em 11/10): a forca que leva
+    // o corpo passa pelos pes apoiados, no que a ajuda da pelve nao deu. E a
+    // guiagem de ossos do Fisico total (%; experimento de 11/10).
+    float m_physicalFeetAssistPercent = 100.0f;
+    float m_physicalBoneGuidePercent = 0.0f;
     float m_fullPhysicalImpulse = 25.0f;
     float m_activeAssistAcceleration = 4.0f;
-    // Locomocao por pegadas (10/10, Etapa 3): no modo padrao os pes apoiados
-    // ficam onde pousaram (o clipe vira estilo). Ligada por padrao, com a chave
-    // no menu do personagem (pedido do usuario, 10/10 noite).
-    bool m_footstepLocomotion = true;
     // Manejo novo (10/10, Etapa 5): pedido com desfecho, gesto planejado e o
     // sensor do pe; so com as pegadas. Desligado ate o usuario aprovar.
     bool m_newBallHandling = true;
