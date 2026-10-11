@@ -20,10 +20,10 @@ namespace MatterEngine {
 //    ele sai; com a bola na area, sai sempre (a garantia).
 //  - O movimento: o da situacao (o rumo do toque contra a frente do corpo; a
 //    perna daquele lado), no referencial do corpo.
-//  - Andando, o movimento entra na passada: o ritmo do clipe acelera ou
-//    freia (gaitRateScale) para o pe do toque pousar no clipe quando o
-//    movimento pousa; com a perna do toque apoiada e a outra no ar, a outra
-//    pousa ja (o pouso rapido das pegadas) e fica de apoio.
+//  - Plano v4: a passada nao corre mais atras do gesto - o gesto termina
+//    inteiro e o pe volta ao do clipe andando com ele (BallMove3D); o corpo
+//    desacelera um pouco durante o gesto; o corpo do gesto (pelve, tronco,
+//    bracos e olhar) pela intensidade, com um jeito diferente a cada toque.
 struct BallPlaySettings3D {
     // A area: a base da bola ate isto acima da pelve (m) e, no plano, ate
     // areaRadius dela (m). Andando, o centro dela vai a frente no rumo do
@@ -43,26 +43,18 @@ struct BallPlaySettings3D {
     float carryAcceleration = 16.0f;
     // Depois da forca, o movimento pedido mudando (o rumo mais que
     // interruptTurn rad, ou a velocidade pedida mais que interruptSpeed m/s
-    // diferente da de entao): o movimento vai direto ao pouso.
+    // diferente da de entao): o movimento vai direto a volta.
     float interruptTurn = 0.6f;
     float interruptSpeed = 0.8f;
-    // O ritmo da passada durante o movimento: entre estes fatores, numa mola
-    // de gaitRateSeconds (s); depois do pouso do movimento, ainda ate
-    // gaitTailSeconds (s) esperando o pouso do clipe.
-    // (Nunca mais devagar que o normal: freando a passada, a outra perna
-    // ficava no ar e o corpo flutuava parado na pose.)
-    float gaitRateMinimum = 1.0f;
-    float gaitRateMaximum = 2.0f;
-    float gaitRateSeconds = 0.08f;
-    float gaitTailSeconds = 0.3f;
-    // Andando, o movimento dura o tempo ate o pouso do pe dele no clipe,
-    // entre estes (s).
-    float moveMinimumSeconds = 0.18f;
-    float moveMaximumSeconds = 0.30f;
-    // Sem as pegadas, a perna sai do movimento nesta mistura depois do pouso
-    // (s); com elas, as pegadas a prendem onde pousou, sem mistura.
+    // A perna sai do movimento nesta mistura (s): parado no pouso (sem o pe
+    // do clipe) e ja junto do pe do clipe (os dois no mesmo lugar).
     float handOverSeconds = 0.12f;
-    float handOverStepsSeconds = 0.08f;
+    float joinedHandOverSeconds = 0.05f;
+    // A velocidade pedida ao corpo durante o gesto (o toque e o chute), numa
+    // mola de speedScaleSeconds (s).
+    float touchSpeedScale = 0.9f;
+    float shotSpeedScale = 0.85f;
+    float speedScaleSeconds = 0.1f;
     // O corpo: o preparo, os alvos, o olhar e os bracos nestas molas (s); a
     // pelve sobre o apoio ate maximumPelvisShift (m); andando, o corpo do
     // gesto pesa (1 - runningBodyShare x andando).
@@ -73,9 +65,17 @@ struct BallPlaySettings3D {
     float maximumPelvisShift = 0.10f;
     float pelvisMassShare = 0.85f;
     float runningBodyShare = 0.85f;
+    // O corpo do gesto pela intensidade: bodyPowerFloor dele no toque mais
+    // fraco, inteiro no mais forte; no corpo fisico, vezes physicalBodyShare
+    // (o fisico ja reage com o corpo dele). A cada toque cada parte varia ate
+    // bodyVariation (fracao) e os punhos ate wristVariation (m).
+    float bodyPowerFloor = 0.35f;
+    float physicalBodyShare = 0.6f;
+    float bodyVariation = 0.3f;
+    float wristVariation = 0.05f;
     // O polo do joelho sai do joelho da pose nesta mistura (s).
     float kneeBlendSeconds = 0.06f;
-    // A velocidade do pe do estilo vem filtrada neste tempo (s).
+    // A velocidade dos pes (do clipe e da pose) vem filtrada neste tempo (s).
     float styleVelocitySeconds = 0.03f;
     BallMoveSettings3D move;
 };
@@ -89,11 +89,11 @@ public:
     [[nodiscard]] std::uint64_t targetBallKey() const;
     [[nodiscard]] const ActionQueue3D& queue() const { return m_queue; }
     [[nodiscard]] const BallMove3D& move() const { return m_move; }
+    [[nodiscard]] const BallMove3D& previous() const { return m_previous; }
     [[nodiscard]] bool ready() const { return m_ready; }
-    // O movimento indo direto ao pouso (a mudanca de movimento depois da
-    // forca) e o ritmo da passada pedido agora.
+    // O movimento indo direto a volta (a mudanca de movimento depois da
+    // forca).
     [[nodiscard]] bool interrupting() const { return m_interrupting; }
-    [[nodiscard]] float gaitRateScale() const { return m_gaitRate; }
 
     // A bola na area em volta da pelve dada (andando a velocity, ela vai a
     // frente).
@@ -101,19 +101,33 @@ public:
         Vec3 velocity = {});
 
 private:
+    // O jeito do corpo neste toque: o tanto (pela intensidade) e quanto cada
+    // parte varia.
+    struct BodyStyle {
+        float amount = 1.0f;
+        float shift = 1.0f, drop = 1.0f, yaw = 1.0f, side = 1.0f, bend = 1.0f, arms = 1.0f, look = 1.0f;
+        float pace = 1.0f;
+        std::array<Vec3, 2> wrist {};
+    };
+
     void startMove(const BallHandlingInput3D& input, const BallPlaySettings3D& settings);
     void applyForce(const BallHandlingInput3D& input, const BallOutcomeSettings3D& outcome,
         const BallPlaySettings3D& settings, BallHandlingOutput3D& output);
     void bodyTargets(const BallHandlingInput3D& input, const BallPlaySettings3D& settings,
         BallHandlingOutput3D& output);
+    void settle(const BallMove3D& move, const BallPlaySettings3D& settings);
     [[nodiscard]] BallMoveLive3D live(const BallHandlingInput3D& input, int side) const;
+    [[nodiscard]] float random();
 
     bool m_ready = false;
     AthleteLegs3D m_legs;
     AthleteFootGeometry3D m_geometry;
     std::array<float, 2> m_ankleHeight { 0.08f, 0.08f };
     ActionQueue3D m_queue;
+    // O movimento em curso e o anterior ainda voltando na outra perna (um
+    // toque novo com a outra perna nao corta a volta dele).
     BallMove3D m_move;
+    BallMove3D m_previous;
     // O pedido aceito e a bola dele (o movimento em curso).
     BallOutcomeRequest3D m_intent;
     std::uint64_t m_ballKey = 0;
@@ -127,25 +141,27 @@ private:
     // A mudanca de movimento depois da forca.
     Vec3 m_requestedAtAccept;
     bool m_interrupting = false;
-    // O ritmo da passada: o fator, se o clipe ja levou o pe do toque ao
-    // balanco (e se ja o pousou), o tempo depois do pouso do movimento.
-    float m_gaitRate = 1.0f;
-    float m_gaitRateWanted = 1.0f;
-    bool m_gaitCoupled = false;
-    bool m_clipSwung = false;
-    float m_tail = 0.0f;
-    // O apoio do movimento (o outro pe) e se ele pousa rapido.
+    // O apoio do movimento (o outro pe).
     int m_support = -1;
-    bool m_quickPlant = false;
-    // Os pes do estilo (a velocidade deles, filtrada).
-    std::array<Vec3, 2> m_styleFootPrevious {};
-    std::array<Vec3, 2> m_styleFootVelocity {};
-    bool m_styleFootKnown = false;
+    // Os pes do clipe (o tornozelo) e os da pose de fato: a velocidade deles,
+    // filtrada.
+    std::array<Vec3, 2> m_clipAnkle {};
+    std::array<Vec3, 2> m_clipAnkleVelocity {};
+    std::array<Vec3, 2> m_clipAnkleAcceleration {};
+    std::array<Vec3, 2> m_poseFootPrevious {};
+    std::array<Vec3, 2> m_poseFootVelocity {};
+    bool m_feetKnown = false;
+    // A escala da velocidade pedida ao corpo (na mola).
+    float m_speedScale = 1.0f;
+    // O jeito do corpo neste toque e o sorteio dele.
+    BodyStyle m_style;
+    std::uint32_t m_seed = 0x2545F491u;
     // O corpo: o peso e os alvos nas molas; o deslocamento e a descida da
     // pelve aplicados no tick anterior (ja estao na pose).
     bool m_bodyLive = false;
     int m_bodySide = 0;
     Vec3 m_kneeStart { 1.0f, 0.0f, 0.0f };
+    Vec3 m_previousKnee { 1.0f, 0.0f, 0.0f };
     SmoothSpring3D<float> m_weight;
     SmoothSpring3D<Vec3> m_shift;
     SmoothSpring3D<float> m_drop;
@@ -158,12 +174,14 @@ private:
     SmoothSpring3D<float> m_lookWeight;
     Vec3 m_appliedShift;
     float m_appliedDrop = 0.0f;
-    // Sem as pegadas: a perna saindo do movimento depois do pouso (o
-    // tornozelo, o pe e o joelho do pouso, o que falta da mistura).
+    // A perna saindo do movimento depois do fim dele: o tornozelo, o pe e o
+    // joelho do fim (junto do clipe, eles vao com o pe do clipe), o lado e o
+    // que falta da mistura.
     Vec3 m_lastAnkle;
     Quaternion m_lastFoot;
     Vec3 m_lastKnee { 1.0f, 0.0f, 0.0f };
     int m_lastSide = 0;
+    bool m_lastJoined = false;
     float m_settleLeft = 0.0f;
     float m_settleSpan = 0.12f;
 };

@@ -31,21 +31,49 @@ Quaternion slerp(Quaternion a, Quaternion b, float t) {
         .normalized();
 }
 
-// Um passo do Hermite cubico de (p, v) ate (target, targetVelocity) em T s.
-void hermiteStep(Vec3& p, Vec3& v, Vec3 target, Vec3 targetVelocity, float T, float dt) {
-    if (T <= dt + 1e-5f) {
+// Um passo da quintica (o minimo tranco) de (p, v, a) ate (target,
+// targetVelocity, aceleracao zero) em T s: refeita a cada tick, a aceleracao
+// segue continua entre as fases (a cubica dava saltos nela - o tranco que o
+// usuario via, plano v4).
+void quinticStep(Vec3& p, Vec3& v, Vec3& a, Vec3 target, Vec3 targetVelocity, float T, float dt) {
+    if (T <= 1e-5f || dt >= T - 1e-6f) {
         p = target;
         v = targetVelocity;
+        a = {};
         return;
     }
+    const Vec3 d = target - p;
+    const Vec3 v0 = v * T, v1 = targetVelocity * T, a0 = a * (T * T);
+    const Vec3 c3 = d * 10.0f - v0 * 6.0f - v1 * 4.0f - a0 * 1.5f;
+    const Vec3 c4 = d * -15.0f + v0 * 8.0f + v1 * 7.0f + a0 * 1.5f;
+    const Vec3 c5 = d * 6.0f - v0 * 3.0f - v1 * 3.0f - a0 * 0.5f;
     const float s = dt / T;
-    const float s2 = s * s, s3 = s2 * s;
-    const Vec3 nextP = p * (2.0f * s3 - 3.0f * s2 + 1.0f) + v * (T * (s3 - 2.0f * s2 + s))
-        + target * (-2.0f * s3 + 3.0f * s2) + targetVelocity * (T * (s3 - s2));
-    const Vec3 nextV = p * ((6.0f * s2 - 6.0f * s) / T) + v * (3.0f * s2 - 4.0f * s + 1.0f)
-        + target * ((-6.0f * s2 + 6.0f * s) / T) + targetVelocity * (3.0f * s2 - 2.0f * s);
+    const float s2 = s * s, s3 = s2 * s, s4 = s3 * s, s5 = s4 * s;
+    const Vec3 nextP = p + v0 * s + a0 * (0.5f * s2) + c3 * s3 + c4 * s4 + c5 * s5;
+    const Vec3 nextV = (v0 + a0 * s + c3 * (3.0f * s2) + c4 * (4.0f * s3) + c5 * (5.0f * s4)) * (1.0f / T);
+    const Vec3 nextA = (a0 + c3 * (6.0f * s) + c4 * (12.0f * s2) + c5 * (20.0f * s3)) * (1.0f / (T * T));
     p = nextP;
     v = nextV;
+    a = nextA;
+}
+
+// A quintica que leva uma diferenca (posicao, velocidade e aceleracao no
+// comeco) a zero em T s, no instante u (0..1): o valor e a velocidade.
+void quinticDecay(Vec3 offset, Vec3 velocity, Vec3 acceleration, float T, float u, Vec3& value, Vec3& rate) {
+    u = std::clamp(u, 0.0f, 1.0f);
+    const Vec3 v0 = velocity * T, a0 = acceleration * (T * T);
+    const Vec3 c3 = offset * -10.0f - v0 * 6.0f - a0 * 1.5f;
+    const Vec3 c4 = offset * 15.0f + v0 * 8.0f + a0 * 1.5f;
+    const Vec3 c5 = offset * -6.0f - v0 * 3.0f - a0 * 0.5f;
+    const float u2 = u * u, u3 = u2 * u, u4 = u3 * u, u5 = u4 * u;
+    value = offset + v0 * u + a0 * (0.5f * u2) + c3 * u3 + c4 * u4 + c5 * u5;
+    rate = (v0 + a0 * u + c3 * (3.0f * u2) + c4 * (4.0f * u3) + c5 * (5.0f * u4)) * (1.0f / std::max(1e-3f, T));
+}
+
+// A mistura suave de quinto grau (velocidade e aceleracao zero nas pontas).
+float smoother(float t) {
+    t = std::clamp(t, 0.0f, 1.0f);
+    return t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
 }
 
 // Do referencial do corpo (x frente, y esquerda) ao mundo, e de volta.
@@ -160,12 +188,17 @@ void BallMove3D::start(const BallMoveStart3D& in, const BallMoveSettings3D& s) {
     m_power = std::clamp(in.power, 0.0f, 1.0f);
     m_flat = in.flatFoot;
     m_ankleInFoot = in.ankleInFoot;
+    m_heel = in.heel;
+    m_toe = in.toe;
     m_ankleHeight = in.ankleHeight;
     m_legLength = in.legLength;
     m_facing = in.facingYaw;
     m_time = 0.0f;
     m_phaseStart = 0.0f;
     m_landed = false;
+    m_joined = false;
+    m_waitForClip = false;
+    m_hurried = false;
     const bool shot = m_choice.touch == BallMoveTouch3D::Shot;
     const float p = m_power;
     Shape shape = shapeOf(m_choice.touch);
@@ -210,32 +243,64 @@ void BallMove3D::start(const BallMoveStart3D& in, const BallMoveSettings3D& s) {
     m_localVelocity = toLocal(planar(in.footVelocity - in.bodyVelocity) * (in.footPlanted ? s.startVelocityShare : 1.0f)
             + Vec3 { 0.0f, 0.0f, in.footVelocity.z },
         m_facing);
+    m_localAcceleration = {};
+    m_startLocal = m_local;
+    m_startReach = (ankle - in.hip).length() / std::max(0.1f, m_legLength);
     // (O chute sai do chao subindo: rente, o pe raspava no comeco.)
     if (shot) m_localVelocity.z = std::max(m_localVelocity.z, s.shotLiftSpeed);
-    // O pe saindo de longe (atras do corpo, do outro lado) leva um pouco mais
-    // ate a passagem: sem isso ele disparava rente ao chao.
+    // O pe ja indo depressa no rumo do toque e alem da passagem (correndo, o
+    // pe do clipe no fim do balanco, la na frente): a passagem vai adiante o
+    // que ele ainda anda ate parar - voltando para ela, o pe freava de uma vez
+    // e dava a volta.
+    float coming = 0.0f, passing = 0.0f;
     {
-        const Vec3 way { m_strike.x - m_local.x, m_strike.y - m_local.y, 0.0f };
-        const float most = shot ? s.shotTravelSpeed : s.touchTravelSpeed;
-        const float extra = std::max(0.0f, way.length() / std::max(0.5f, most) - m_strikeAt);
-        m_strikeAt += extra;
-        m_followAt += extra;
-        m_landAt += extra;
+        const Vec3 along { direction.x, direction.y, 0.0f };
+        const float length = along.length();
+        if (length > 0.3f) {
+            const Vec3 unit = along * (1.0f / length);
+            coming = std::max(0.0f, dot(planar(m_localVelocity), unit));
+            passing = std::max(0.0f, dot(planar(m_strikeVelocity), unit));
+            // (O que ele anda ate cair da velocidade dele para a da passagem,
+            // freando em strikeBrake.)
+            const float coast = coming > passing
+                ? (coming * coming - passing * passing) / (2.0f * std::max(1.0f, s.strikeBrake)) : 0.0f;
+            const float beyond = dot(planar(m_local - m_strike), unit) + coast;
+            if (beyond > 0.0f) {
+                m_strike += unit * beyond;
+                m_follow += unit * beyond;
+            }
+        }
     }
-    // Andando, a duracao e a da passada (o pe do toque pousa quando o clipe o
-    // pousaria): os tempos todos na mesma proporcao.
-    if (in.totalSeconds > 0.0f && m_landAt > 1e-3f) {
-        const float scale = in.totalSeconds / m_landAt;
-        m_strikeAt *= scale;
-        m_followAt *= scale;
-        m_landAt *= scale;
+    // O tempo ate a passagem: saindo de longe (atras do corpo, do outro lado),
+    // o pe leva mais (sem isso ele disparava rente ao chao); ja vindo depressa
+    // no rumo dela, ele chega antes (no ritmo dele - esperando o tempo
+    // inteiro, freava e acelerava de novo).
+    // (Nos toques de sola o caminho passa pelo alto, por cima da bola.)
+    const float overWay = m_over ? (m_overPoint - m_local).length() : 0.0f;
+    {
+        const float way = m_over ? overWay + (m_strike - m_overPoint).length() : planar(m_strike - m_local).length();
+        const float most = std::max(0.5f, shot ? s.shotTravelSpeed : s.touchTravelSpeed);
+        const float average = 0.5f * (coming + passing);
+        float strikeAt = std::max(m_strikeAt, way / most);
+        if (average > most)
+            strikeAt = std::clamp(way / average, std::min(s.strikeMinimumSeconds, m_strikeAt), strikeAt);
+        const float change = strikeAt - m_strikeAt;
+        m_strikeAt += change;
+        m_followAt += change;
+        m_landAt += change;
     }
     // O pe sobe antes da passagem (um arco, nao rente ao chao): no meio do
-    // caminho, mais alto; nos toques de sola, por cima da bola.
+    // caminho, mais alto; nos toques de sola, por cima da bola (o tempo de
+    // cada trecho pelo tamanho dele).
     m_overAt = 0.45f * m_strikeAt;
+    if (m_over) {
+        const float total = overWay + (m_strike - m_overPoint).length();
+        if (total > 1e-3f) m_overAt = std::clamp(overWay / total, 0.3f, 0.8f) * m_strikeAt;
+    }
     // (O chute nao sobe antes: o pe passa baixo pela bola e sobe na
     // finalizacao - subindo antes, era um joelho levantando.)
-    if (!m_over && !shot) {
+    // (So com o pe abaixo dele: o pe ja no alto do balanco mergulhava ate ele.)
+    if (!m_over && !shot && m_local.z < std::max(m_strike.z, m_ankleHeight + s.liftHeight) - 0.02f) {
         m_over = true;
         // (Subindo primeiro: o alto a 30% do caminho no plano - mais longe, o
         // pe andava rente ao chao no comeco.)
@@ -246,16 +311,129 @@ void BallMove3D::start(const BallMoveStart3D& in, const BallMoveSettings3D& s) {
     m_phaseOrientation = in.footOrientation;
     m_foot = in.foot;
     m_velocity = in.footVelocity;
+    m_worldAcceleration = {};
     m_phase = BallMovePhase3D::Strike;
 }
 
-void BallMove3D::beginLand(const BallMoveLive3D& live, const BallMoveSettings3D& s) {
+float BallMove3D::rejoinProgress() const {
+    if (m_phase == BallMovePhase3D::Rejoin)
+        return std::clamp((m_time - m_phaseStart) / std::max(1e-3f, m_rejoinSpan), 0.0f, 1.0f);
+    return m_joined ? 1.0f : 0.0f;
+}
+
+bool BallMove3D::rejoinReady(const BallMoveLive3D& live, Vec3 from, bool grounded, const BallMoveSettings3D& s) const {
+    if (!live.clipKnown) return false;
+    // Parado, o pe volta direto ao do clipe (o lugar dele em pe).
+    const Vec3 travel = planar(live.bodyVelocity);
+    const float speed = travel.length();
+    if (!live.cycling || speed < 0.3f) return true;
+    // Andando: so com o pe do clipe a frente, ou quase, do pe do gesto no
+    // rumo do movimento - atras, o pe voltava correndo para ele (o "volta
+    // cedo demais" do usuario). No ar, onde ele estara no fim da volta (pela
+    // velocidade dele ate pousar); apoiado esperando, so ele no ar e ja ao
+    // lado (pela previsao, o pe saia antes e ia rente ao chao, arrastando).
+    Vec3 predicted = live.clipAnkle;
+    if (grounded) {
+        if (live.clipPlanted) return false;
+    } else if (!live.clipPlanted) {
+        const float span = m_choice.touch == BallMoveTouch3D::Shot ? s.shotRejoinSeconds : s.touchRejoinSeconds;
+        predicted += planar(live.clipVelocity) * std::clamp(live.clipSecondsToTouchdown, 0.0f, span);
+    }
+    return dot(planar(predicted - from), travel * (1.0f / speed)) >= -s.rejoinBehind;
+}
+
+float BallMove3D::soleLift(Vec3 ankle, Quaternion orientation, float ground, const BallMoveSettings3D& s) const {
+    // O que falta para a sola (o calcanhar e a base dos dedos) ficar a
+    // soleClearance do chao.
+    const Vec3 foot = ankle - orientation.rotate(m_ankleInFoot);
+    const float lowest = std::min((foot + orientation.rotate(m_heel)).z, (foot + orientation.rotate(m_toe)).z);
+    return std::max(0.0f, ground + s.soleClearance - lowest);
+}
+
+void BallMove3D::worldState(const BallMoveLive3D& live, const BallMoveSettings3D& s, Quaternion orientation,
+    Vec3& position, Vec3& velocity) const {
+    // Do referencial do corpo ao mundo, com o chao e o alcance do quadril.
+    position = live.pelvisGround + toWorld(m_local, live.facingYaw);
+    velocity = planar(live.bodyVelocity) + toWorld(m_localVelocity, live.facingYaw);
+    // (A sola nunca raspa o chao no gesto: com a ponta para baixo e o pe
+    // indo depressa, os dedos arrastavam.)
+    position.z += soleLift(position, orientation, live.pelvisGround.z, s);
+    // Ao alcance do quadril: perto do limite o tornozelo vai cedendo para o
+    // quadril, sem passar dele (cortado de uma vez, o pe dava um tranco ao
+    // chegar no limite).
+    // (O limite parte do alcance que o pe ja tinha - o pe do clipe atras, com
+    // a perna esticada, subia de uma vez no primeiro tick - e desce ate o de
+    // reach na passagem.)
+    const Vec3 fromHip = position - live.hip;
+    const float distance = fromHip.length();
+    const float reach = s.reach
+        + std::max(0.0f, m_startReach - s.reach) * (1.0f - smooth(m_time / std::max(0.02f, m_strikeAt)));
+    const float most = reach * m_legLength;
+    const float band = std::max(1e-3f, s.reachBand * m_legLength);
+    const float start = most - band;
+    if (distance > start && distance > 1e-6f)
+        position = live.hip + fromHip * ((start + band * (1.0f - std::exp(-(distance - start) / band))) / distance);
+    // Do lado dele contra o pe de apoio (as pernas nunca se cruzam): perto
+    // dele no rumo do corpo, pelo menos moveGap de lado - andando de lado, o
+    // corpo passa por cima do apoio plantado e o desenho, no referencial do
+    // corpo, ia por cima dele. (Por ultimo: o alcance puxava o pe para dentro.)
+    if (live.supportKnown) {
+        const Vec3 local = toLocal(position - live.pelvisGround, live.facingYaw);
+        const Vec3 support = toLocal(live.support - live.pelvisGround, live.facingYaw);
+        const float out = m_choice.side == 0 ? 1.0f : -1.0f;
+        const float near = 1.0f - smooth((std::abs(local.x - support.x) - s.moveGapZone) / std::max(0.01f, s.moveGapFade));
+        const float need = s.moveGap * near - (local.y - support.y) * out;
+        if (need > 0.0f) position += toWorld(Vec3 { 0.0f, need * out, 0.0f }, live.facingYaw);
+    }
+}
+
+Quaternion BallMove3D::orientationNow(const BallMoveLive3D& live) const {
+    // A orientacao do pe na fase, pelo tempo dentro dela.
+    const auto toward = [&](std::array<float, 3> angles, float end) {
+        const float span = std::max(1e-3f, end - m_phaseStart);
+        return slerp(m_phaseOrientation, localOrientation(angles[0], angles[1], angles[2]),
+            smooth((m_time - m_phaseStart) / span));
+    };
+    switch (m_phase) {
+    case BallMovePhase3D::Strike: return toward(m_strikeAngles, m_strikeAt);
+    case BallMovePhase3D::Follow: return toward(m_strikeAngles, m_followAt);
+    case BallMovePhase3D::Land:
+        // (O pe fica plano antes de chegar ao chao.)
+        return toward(m_landAngles, m_phaseStart + 0.6f * (m_landAt - m_phaseStart));
+    case BallMovePhase3D::Rejoin:
+        return slerp(m_phaseOrientation, live.clipOrientation,
+            smoother((m_time - m_phaseStart) / std::max(1e-3f, m_rejoinSpan)));
+    case BallMovePhase3D::Hold:
+    case BallMovePhase3D::Idle: break;
+    }
+    return m_orientation;
+}
+
+void BallMove3D::beginReturn(const BallMoveLive3D& live, const BallMoveSettings3D& s, float ahead) {
+    // Com o pe do clipe: a volta vai a ele (ja, ou depois de pousar e esperar
+    // por ele); sem ele, o pouso parado de sempre.
+    m_waitForClip = live.clipKnown;
+    Vec3 position, velocity;
+    worldState(live, s, orientationNow(live), position, velocity);
+    if (rejoinReady(live, position - planar(live.bodyVelocity) * ahead, false, s)) {
+        beginRejoin(live, s, ahead);
+        return;
+    }
+    beginLand(live, s, ahead);
+}
+
+void BallMove3D::beginLand(const BallMoveLive3D& live, const BallMoveSettings3D& s, float ahead) {
     // O pouso no mundo: parte de onde o pe esta (com a velocidade dele) e para
     // no chao, onde a passada continua.
-    // (De onde o pe estava de fato - com o alcance aplicado -, nao do estado
+    // (De onde o pe esta de fato - com o alcance aplicado -, nao do estado
     // por dentro: dele, o alvo saltava ate 9 cm na troca.)
-    m_worldAnkle = ankle();
-    m_worldVelocity = m_velocity;
+    // (O corpo de live e o do fim do tick: a troca no meio dele volta o que
+    // falta - ahead s.)
+    const Vec3 back = planar(live.bodyVelocity) * ahead;
+    if (m_phase == BallMovePhase3D::Strike || m_phase == BallMovePhase3D::Follow) {
+        worldState(live, s, orientationNow(live), m_worldAnkle, m_worldVelocity);
+        m_worldAnkle -= back;
+    }
     const float landSeconds = std::max(0.02f, m_landAt - m_time);
     Vec3 target = m_landTarget;
     // Andando: a frente no rumo do movimento.
@@ -287,135 +465,277 @@ void BallMove3D::beginLand(const BallMoveLive3D& live, const BallMoveSettings3D&
     }
     target.z = m_ankleHeight;
     // (O corpo anda ate o pouso: o alvo vai com ele.)
-    m_landTarget = live.pelvisGround + planar(live.bodyVelocity) * landSeconds + toWorld(target, live.facingYaw);
+    m_landTarget = live.pelvisGround - back + planar(live.bodyVelocity) * landSeconds + toWorld(target, live.facingYaw);
+    m_orientation = orientationNow(live);
     m_phase = BallMovePhase3D::Land;
     m_phaseStart = m_time;
     m_phaseOrientation = m_orientation;
 }
 
-void BallMove3D::hurry(const BallMoveLive3D& live, const BallMoveSettings3D& s) {
+void BallMove3D::beginRejoin(const BallMoveLive3D& live, const BallMoveSettings3D& s, float ahead) {
+    // A diferenca do pe do gesto para o do clipe (de onde o pe esta de fato,
+    // com a velocidade e a aceleracao dele) some numa quintica: o pe anda com
+    // o do clipe e chega nele andando como ele - os dois juntos (perseguindo o
+    // pe do clipe, o fim dava o tranco com ele rapido no balanco). No ar, a
+    // volta vai ate o pouso do pe do clipe (ate rejoinMaximumSeconds).
+    // (O corpo e o pe do clipe de live sao os do fim do tick: a troca no meio
+    // dele volta o que falta - ahead s; sem isso o pe andava para tras no
+    // primeiro tick.)
+    if (m_phase == BallMovePhase3D::Strike || m_phase == BallMovePhase3D::Follow) {
+        worldState(live, s, orientationNow(live), m_worldAnkle, m_worldVelocity);
+        m_worldAnkle -= planar(live.bodyVelocity) * ahead;
+    }
+    m_orientation = orientationNow(live);
+    m_offset = m_worldAnkle - (live.clipAnkle - live.clipVelocity * ahead);
+    m_offsetVelocity = m_worldVelocity - live.clipVelocity;
+    m_offsetAcceleration = m_worldAcceleration - live.clipAcceleration;
+    m_rejoinSpan = m_choice.touch == BallMoveTouch3D::Shot ? s.shotRejoinSeconds : s.touchRejoinSeconds;
+    // (Com o movimento mudando - parar, virar -, a perna sai no tempo dela.)
+    if (!m_hurried && !live.clipPlanted && live.clipSecondsToTouchdown > m_rejoinSpan)
+        m_rejoinSpan = std::min(live.clipSecondsToTouchdown, std::max(m_rejoinSpan, s.rejoinMaximumSeconds));
+    // Apoiado indo a um pe do clipe tambem apoiado e longe: um passo (o arco).
+    m_rejoinLift = 0.0f;
+    if (m_phase == BallMovePhase3D::Hold && live.clipPlanted && planar(m_offset).length() > 0.05f)
+        m_rejoinLift = s.liftHeight * std::min(1.0f, planar(m_offset).length() / 0.2f);
+    m_phase = BallMovePhase3D::Rejoin;
+    m_phaseStart = m_time;
+    m_phaseOrientation = m_orientation;
+}
+
+void BallMove3D::hurry(float deltaTime, const BallMoveLive3D& live, const BallMoveSettings3D& s) {
     if (m_phase != BallMovePhase3D::Strike && m_phase != BallMovePhase3D::Follow) return;
-    // (O pouso no tempo dele a partir de agora.)
+    // (O pouso no tempo dele a partir de agora; o tick inteiro ainda vem.)
     const bool shot = m_choice.touch == BallMoveTouch3D::Shot;
     m_landAt = m_time + (shot ? s.shotLandSeconds : s.touchLandSeconds);
-    beginLand(live, s);
+    m_hurried = true;
+    beginReturn(live, s, std::max(deltaTime, 0.0f));
 }
 
 void BallMove3D::update(float deltaTime, const BallMoveLive3D& live, const BallMoveSettings3D& s) {
     m_landed = false;
+    m_joined = false;
     if (m_phase == BallMovePhase3D::Idle) return;
-    const float dt = std::max(deltaTime, 1e-4f);
     m_facing = live.facingYaw;
-    const float before = m_time;
-    m_time += dt;
-    const auto orient = [&](std::array<float, 3> angles, float end) {
-        const float span = std::max(1e-3f, end - m_phaseStart);
-        m_orientation = slerp(m_phaseOrientation, localOrientation(angles[0], angles[1], angles[2]),
-            smooth((m_time - m_phaseStart) / span));
-    };
-    switch (m_phase) {
-    case BallMovePhase3D::Strike:
-        if (m_over && before < m_overAt) {
-            // A sola sobe por cima da bola antes de puxar.
-            const Vec3 toward = (m_strike - m_overPoint) * (0.5f / std::max(0.02f, m_strikeAt - m_overAt));
-            hermiteStep(m_local, m_localVelocity, m_overPoint, toward, m_overAt - before, dt);
-        } else {
-            hermiteStep(m_local, m_localVelocity, m_strike, m_strikeVelocity, m_strikeAt - before, dt);
-        }
-        orient(m_strikeAngles, m_strikeAt);
-        if (m_time >= m_strikeAt) {
-            m_phase = BallMovePhase3D::Follow;
-            m_phaseStart = m_time;
-            m_phaseOrientation = m_orientation;
-        }
-        break;
-    case BallMovePhase3D::Follow:
-        if (m_choice.touch == BallMoveTouch3D::Shot) {
-            // O chute: a finalizacao e um arco da perna quase estendida em
-            // volta do quadril (em linha reta, a linha passava perto do quadril
-            // e o joelho dobrava - era um joelho levantando).
-            const Vec3 hip = toLocal(live.hip - live.pelvisGround, live.facingYaw);
-            if (!m_arcLive) {
-                const Vec3 from = m_local - hip;
-                m_arcSide = from.y;
-                m_arcRadius = std::max(0.3f, std::sqrt(from.x * from.x + from.z * from.z));
-                m_arcAngle = std::atan2(from.x, -from.z);
-                // (A velocidade do angulo: a do pe no rumo do arco.)
-                const Vec3 tangent { std::cos(m_arcAngle), 0.0f, std::sin(m_arcAngle) };
-                m_arcRate = std::max(0.0f, dot(m_localVelocity, tangent)) / m_arcRadius;
-                m_arcLive = true;
+    // O tick inteiro passa pelas fases: o que sobra de uma entra na proxima
+    // (parando na ponta da fase, o pe andava menos naquele tick - um tranco).
+    float left = std::max(deltaTime, 1e-4f);
+    for (int guard = 0; guard < 8 && left > 1e-6f; ++guard) {
+        const float clock = m_time;
+        if (m_phase == BallMovePhase3D::Strike) {
+            if (m_over && clock < m_overAt) {
+                // A sola sobe por cima da bola antes de puxar. (No alto, a
+                // velocidade media dos dois trechos, deitada: com menos, o pe
+                // parava ali e disparava depois.)
+                Vec3 toward = ((m_overPoint - m_startLocal) * (1.0f / std::max(0.02f, m_overAt))
+                                  + (m_strike - m_overPoint) * (1.0f / std::max(0.02f, m_strikeAt - m_overAt)))
+                    * 0.5f;
+                toward.z = 0.0f;
+                const float step = std::min(left, m_overAt - clock);
+                quinticStep(m_local, m_localVelocity, m_localAcceleration, m_overPoint, toward, m_overAt - clock, step);
+                m_time += step;
+                left -= step;
+                continue;
             }
-            const float radiusEnd = s.shotArcReach * m_legLength;
-            const float span = std::max(0.03f, m_followAt - m_strikeAt);
-            const float u = smooth((m_time - m_strikeAt) / span);
-            const float radius = m_arcRadius + (radiusEnd - m_arcRadius) * u;
-            float rate = m_arcRate;
-            float angle = m_arcAngle;
-            // (O angulo num Hermite de 1 dimensao ate o fim, parado.)
-            {
-                const float T = m_followAt - before;
-                if (T <= dt + 1e-5f) {
-                    angle = m_arcEnd;
-                    rate = 0.0f;
+            const float step = std::min(left, std::max(0.0f, m_strikeAt - clock));
+            quinticStep(m_local, m_localVelocity, m_localAcceleration, m_strike, m_strikeVelocity, m_strikeAt - clock,
+                step);
+            m_time += step;
+            left -= step;
+            if (m_time >= m_strikeAt - 1e-6f) {
+                m_orientation = orientationNow(live);
+                m_phase = BallMovePhase3D::Follow;
+                m_phaseStart = m_time;
+                m_phaseOrientation = m_orientation;
+            }
+            continue;
+        }
+        if (m_phase == BallMovePhase3D::Follow) {
+            const float T = std::max(0.0f, m_followAt - clock);
+            const float step = std::min(left, T);
+            if (m_choice.touch == BallMoveTouch3D::Shot) {
+                // O chute: a finalizacao e um arco da perna quase estendida em
+                // volta do quadril (em linha reta, a linha passava perto do
+                // quadril e o joelho dobrava - era um joelho levantando).
+                const Vec3 hip = toLocal(live.hip - live.pelvisGround, live.facingYaw);
+                if (!m_arcLive) {
+                    const Vec3 from = m_local - hip;
+                    m_arcSide = from.y;
+                    m_arcRadius = std::max(0.3f, std::sqrt(from.x * from.x + from.z * from.z));
+                    m_arcAngle = std::atan2(from.x, -from.z);
+                    // (A velocidade do angulo: a do pe no rumo do arco.)
+                    const Vec3 tangent { std::cos(m_arcAngle), 0.0f, std::sin(m_arcAngle) };
+                    m_arcRate = std::max(0.0f, dot(m_localVelocity, tangent)) / m_arcRadius;
+                    m_arcLive = true;
+                }
+                const float radiusEnd = s.shotArcReach * m_legLength;
+                const float span = std::max(0.03f, m_followAt - m_strikeAt);
+                const float u = smooth((clock + step - m_strikeAt) / span);
+                const float radius = m_arcRadius + (radiusEnd - m_arcRadius) * u;
+                // (O angulo num Hermite de 1 dimensao ate o fim, parado.)
+                if (T <= step + 1e-6f) {
+                    m_arcAngle = m_arcEnd;
+                    m_arcRate = 0.0f;
                 } else {
-                    const float s1 = dt / T, s2 = s1 * s1, s3 = s2 * s1;
-                    const float next = angle * (2.0f * s3 - 3.0f * s2 + 1.0f) + rate * (T * (s3 - 2.0f * s2 + s1))
-                        + m_arcEnd * (-2.0f * s3 + 3.0f * s2);
-                    rate = angle * ((6.0f * s2 - 6.0f * s1) / T) + rate * (3.0f * s2 - 4.0f * s1 + 1.0f)
+                    const float s1 = step / T, s2 = s1 * s1, s3 = s2 * s1;
+                    const float next = m_arcAngle * (2.0f * s3 - 3.0f * s2 + 1.0f)
+                        + m_arcRate * (T * (s3 - 2.0f * s2 + s1)) + m_arcEnd * (-2.0f * s3 + 3.0f * s2);
+                    m_arcRate = m_arcAngle * ((6.0f * s2 - 6.0f * s1) / T) + m_arcRate * (3.0f * s2 - 4.0f * s1 + 1.0f)
                         + m_arcEnd * ((-6.0f * s2 + 6.0f * s1) / T);
-                    angle = next;
+                    m_arcAngle = next;
+                }
+                const Vec3 previous = m_local;
+                const Vec3 previousVelocity = m_localVelocity;
+                m_local = hip + Vec3 { radius * std::sin(m_arcAngle), m_arcSide, -radius * std::cos(m_arcAngle) };
+                if (step > 1e-5f) {
+                    m_localVelocity = (m_local - previous) * (1.0f / step);
+                    m_localAcceleration = (m_localVelocity - previousVelocity) * (1.0f / step);
+                }
+            } else {
+                // (O acompanhamento acaba ja indo para o pouso: parando nele e
+                // voltando, o pe dava o tranco na troca.)
+                const float landSeconds = std::max(0.03f, m_landAt - m_followAt);
+                const Vec3 toward { (m_landLocal.x - m_follow.x) / landSeconds * s.followIntoLand,
+                    (m_landLocal.y - m_follow.y) / landSeconds * s.followIntoLand, 0.0f };
+                quinticStep(m_local, m_localVelocity, m_localAcceleration, m_follow, toward, T, step);
+            }
+            m_time += step;
+            left -= step;
+            if (m_time >= m_followAt - 1e-6f) {
+                m_worldAcceleration = toWorld(m_localAcceleration, live.facingYaw);
+                beginReturn(live, s, left);
+            }
+            continue;
+        }
+        if (m_phase == BallMovePhase3D::Land) {
+            const float step = std::min(left, std::max(0.0f, m_landAt - clock));
+            quinticStep(m_worldAnkle, m_worldVelocity, m_worldAcceleration, m_landTarget, {}, m_landAt - clock, step);
+            m_time += step;
+            left -= step;
+            if (m_time >= m_landAt - 1e-6f) {
+                m_orientation = orientationNow(live);
+                m_worldAnkle = m_landTarget;
+                m_worldVelocity = {};
+                m_worldAcceleration = {};
+                if (m_waitForClip) {
+                    // Apoiado, esperando o pe do clipe chegar.
+                    m_phase = BallMovePhase3D::Hold;
+                    m_holdStart = m_time;
+                    m_holdAnkle = m_worldAnkle;
+                    m_holdOrientation = m_orientation;
+                    m_holdRoll = 0.0f;
+                    m_supportLifted = false;
+                } else {
+                    m_landed = true;
+                    m_phase = BallMovePhase3D::Idle;
+                    break;
                 }
             }
-            m_arcAngle = angle;
-            m_arcRate = rate;
-            const Vec3 previous = m_local;
-            m_local = hip + Vec3 { radius * std::sin(angle), m_arcSide, -radius * std::cos(angle) };
-            m_localVelocity = (m_local - previous) * (1.0f / dt);
-        } else {
-            // (O acompanhamento acaba ja indo para o pouso: parando nele e
-            // voltando, o pe dava o tranco na troca.)
-            const float landSeconds = std::max(0.03f, m_landAt - m_followAt);
-            const Vec3 toward { (m_landLocal.x - m_follow.x) / landSeconds * s.followIntoLand,
-                (m_landLocal.y - m_follow.y) / landSeconds * s.followIntoLand, 0.0f };
-            hermiteStep(m_local, m_localVelocity, m_follow, toward, m_followAt - before, dt);
+            continue;
         }
-        orient(m_strikeAngles, m_followAt);
-        if (m_time >= m_followAt) beginLand(live, s);
-        break;
-    case BallMovePhase3D::Land: {
-        hermiteStep(m_worldAnkle, m_worldVelocity, m_landTarget, {}, m_landAt - before, dt);
-        orient(m_landAngles, m_landAt);
-        // (O tornozelo nunca abaixo do pe plano no chao.)
-        if (m_time >= m_landAt) {
-            m_worldAnkle = m_landTarget;
-            m_worldVelocity = {};
-            m_landed = true;
-            m_phase = BallMovePhase3D::Idle;
+        if (m_phase == BallMovePhase3D::Hold) {
+            // O pe parado no chao. Sem alcancar plano (o corpo passando, a
+            // pelve alta no voo da corrida), ele rola na ponta: o calcanhar
+            // sobe em volta da base dos dedos, como na saida do passo.
+            const float dt = left;
+            const Vec3 before = m_worldAnkle;
+            const float limit = s.holdReach * m_legLength;
+            const Vec3 travel = planar(live.bodyVelocity);
+            const Vec3 travelDirection = travel.length() > 0.3f ? travel.normalized() : Vec3 {};
+            bool reachable = true;
+            {
+                const Vec3 forward = planar((m_holdOrientation * m_flat.conjugate()).rotate({ 1.0f, 0.0f, 0.0f }));
+                const Vec3 axis = forward.lengthSquared() > 1e-6f ? Vec3 { -forward.y, forward.x, 0.0f }.normalized()
+                                                                 : Vec3 { 0.0f, 1.0f, 0.0f };
+                const Vec3 foot = m_holdAnkle - m_holdOrientation.rotate(m_ankleInFoot);
+                const Vec3 toe = foot + m_holdOrientation.rotate(m_toe);
+                const auto rolled = [&](float angle) {
+                    return toe + Quaternion::fromAxisAngle(axis, angle).rotate(m_holdAnkle - toe);
+                };
+                // (So com o pe embaixo ou atras do quadril: a frente, rolar
+                // afasta o tornozelo, e o corpo vem para cima dele.)
+                float wanted = 0.0f;
+                const bool under = dot(planar(m_holdAnkle - live.hip), travelDirection) < 0.05f;
+                if (under && (m_holdAnkle - live.hip).length() > limit) {
+                    if ((rolled(s.holdRollMaximum) - live.hip).length() > limit) {
+                        reachable = false;
+                        wanted = s.holdRollMaximum;
+                    } else {
+                        float low = 0.0f, high = s.holdRollMaximum;
+                        for (int i = 0; i < 10; ++i) {
+                            const float middle = 0.5f * (low + high);
+                            ((rolled(middle) - live.hip).length() > limit ? low : high) = middle;
+                        }
+                        wanted = high;
+                    }
+                }
+                const float most = s.holdRollRate * dt;
+                m_holdRoll += std::clamp(wanted - m_holdRoll, -most, most);
+                m_worldAnkle = rolled(m_holdRoll);
+                m_orientation = (Quaternion::fromAxisAngle(axis, m_holdRoll) * m_holdOrientation).normalized();
+            }
+            m_worldVelocity = dt > 1e-5f ? (m_worldAnkle - before) * (1.0f / dt) : Vec3 {};
+            // Sai quando o do clipe chega ou quando o outro pe pousa de novo (os
+            // apoios se alternam: esperando mais, correndo ficavam os dois pes
+            // no chao, picando); ou com o corpo ja longe, a perna sem alcancar
+            // nem rolada na ponta, ou o tempo acabando.
+            if (!live.supportPlanted) m_supportLifted = true;
+            bool leave = (!reachable && m_holdRoll >= s.holdRollMaximum - 1e-3f)
+                || rejoinReady(live, m_worldAnkle, true, s) || (m_supportLifted && live.supportPlanted)
+                || m_time - m_holdStart > s.holdMaximumSeconds;
+            if (!leave) leave = dot(planar(m_worldAnkle - live.hip), travelDirection) < -s.holdBehindMaximum;
+            if (leave) {
+                beginRejoin(live, s, left);
+                continue;
+            }
+            m_time += left;
+            left = 0.0f;
+            continue;
         }
-        m_local = toLocal(m_worldAnkle - live.pelvisGround, live.facingYaw);
+        if (m_phase == BallMovePhase3D::Rejoin) {
+            // O pe do clipe mais a diferenca sumindo: o pe anda com ele.
+            m_time += left;
+            left = 0.0f;
+            const float u = std::clamp((m_time - m_phaseStart) / std::max(1e-3f, m_rejoinSpan), 0.0f, 1.0f);
+            Vec3 offset, offsetRate;
+            quinticDecay(m_offset, m_offsetVelocity, m_offsetAcceleration, m_rejoinSpan, u, offset, offsetRate);
+            // (Do chao para um pe do clipe tambem no chao: o pe sobe num arco
+            // em vez de deslizar.)
+            if (m_rejoinLift > 0.0f) {
+                offset.z += m_rejoinLift * 16.0f * u * u * (1.0f - u) * (1.0f - u);
+                offsetRate.z += m_rejoinLift * 32.0f * u * (1.0f - u) * (1.0f - 2.0f * u) / std::max(1e-3f, m_rejoinSpan);
+            }
+            m_worldAnkle = live.clipAnkle + offset;
+            m_worldVelocity = live.clipVelocity + offsetRate;
+            if (u >= 1.0f) {
+                m_worldAnkle = live.clipAnkle;
+                m_worldVelocity = live.clipVelocity;
+                m_orientation = live.clipOrientation;
+                m_joined = true;
+                m_phase = BallMovePhase3D::Idle;
+                break;
+            }
+            continue;
+        }
         break;
     }
-    case BallMovePhase3D::Idle:
-        break;
-    }
+    if (m_phase != BallMovePhase3D::Idle) m_orientation = orientationNow(live);
     // O tornozelo e o pe no mundo.
+    const bool inWorld = m_phase == BallMovePhase3D::Land || m_phase == BallMovePhase3D::Hold
+        || m_phase == BallMovePhase3D::Rejoin || m_landed || m_joined;
     Vec3 ankleWorld;
     Vec3 ankleVelocity;
-    if (m_phase == BallMovePhase3D::Land || m_landed) {
+    if (inWorld) {
         ankleWorld = m_worldAnkle;
         ankleVelocity = m_worldVelocity;
+        m_local = toLocal(m_worldAnkle - live.pelvisGround, live.facingYaw);
+        // (No pouso, a sola longe do chao ate perto do fim: o pe ja plano.)
+        if (m_phase == BallMovePhase3D::Land) {
+            const float u = (m_time - m_phaseStart) / std::max(1e-3f, m_landAt - m_phaseStart);
+            ankleWorld.z += soleLift(ankleWorld, m_orientation, live.pelvisGround.z, s) * (1.0f - smooth((u - 0.55f) / 0.35f));
+        }
     } else {
-        ankleWorld = live.pelvisGround + toWorld(m_local, live.facingYaw);
-        ankleVelocity = planar(live.bodyVelocity) + toWorld(m_localVelocity, live.facingYaw);
-    }
-    ankleWorld.z = std::max(ankleWorld.z, live.pelvisGround.z + 0.8f * m_ankleHeight);
-    {
-        // Ao alcance do quadril (no ar; o pouso ja fica nele): o tornozelo vem
-        // para o quadril o que passar.
-        const Vec3 fromHip = ankleWorld - live.hip;
-        const float most = s.reach * m_legLength;
-        if (m_phase != BallMovePhase3D::Land && !m_landed && fromHip.length() > most)
-            ankleWorld = live.hip + fromHip * (most / fromHip.length());
+        worldState(live, s, m_orientation, ankleWorld, ankleVelocity);
+        m_worldAcceleration = toWorld(m_localAcceleration, live.facingYaw);
     }
     m_foot = ankleWorld - m_orientation.rotate(m_ankleInFoot);
     m_velocity = ankleVelocity;

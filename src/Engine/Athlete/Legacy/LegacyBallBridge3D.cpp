@@ -28,6 +28,11 @@ BallGesturePose3D legacyBallGesture3D(const BallBodyTargets3D& t) {
     g.separateGap = t.separateGap;
     g.separateForward = t.separateForward;
     g.separateWeight = t.separateWeight;
+    g.releaseSide = t.releaseSide;
+    g.releaseAnkle = t.releaseAnkle;
+    g.releaseKnee = t.releaseKnee;
+    g.releaseFoot = t.releaseFoot;
+    g.releaseWeight = t.releaseWeight;
     return g;
 }
 

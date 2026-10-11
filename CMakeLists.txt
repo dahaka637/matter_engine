@@ -494,6 +494,7 @@ add_library(MatterEngine STATIC
     src/Engine/Athlete/Planning/FootstepPlanner3D.cpp
     src/Engine/Athlete/Planning/MotionPlanner3D.cpp
     src/Engine/Athlete/Sensing/BodyObservation3D.cpp
+    src/Engine/Athlete/Synthesis/LegClearance3D.cpp
     src/Engine/Athlete/Synthesis/LegSynthesis3D.cpp
     src/Engine/Athlete/Legacy/LegacyAthleteStep3D.cpp
     src/Engine/Character/BiomechanicalBipedExperiment3D.cpp

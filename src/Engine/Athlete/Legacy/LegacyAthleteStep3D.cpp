@@ -750,6 +750,17 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             in.gait.swingSeconds = style.swingSeconds;
             in.gait.styleFoot = style.styleFootPosition;
             in.gait.styleFootOrientation = style.styleFootOrientation;
+            in.gait.clipFoot = style.locomotionFootPosition;
+            in.gait.clipFootOrientation = style.locomotionFootOrientation;
+            in.gait.clipKnee = style.styleKneeDirection;
+            // (No fisico o padrao nao roda: o quanto anda vem do corpo - com o
+            // do padrao parado em zero, o gesto mexia o corpo inteiro.)
+            if (state.bodyMode == BodyMode::Physical && !body.links.empty()) {
+                const Vec3 v = body.links.front().linearVelocity;
+                const float share = std::clamp((std::hypot(v.x, v.y) - 0.3f) / 1.5f, 0.0f, 1.0f);
+                in.gait.movingShare = share * share * (3.0f - 2.0f * share);
+                in.gait.cycling = false;
+            }
         }
         // (No fisico, a velocidade do corpo e a da pelve - a capsula vai a
         // frente do corpo que atrasa -, como no manejo V3.)
@@ -776,7 +787,6 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         }
         in.deltaTime = deltaTime;
         BallHandlingOutput3D& out = athlete.ballOutput;
-        in.footsteps = settings.footstepLocomotion && athlete.footsteps.live();
         handling.update(in, settings.ballForce, settings.ballPlay, out);
         // A fisica: o impulso do toque, o sensor do pe (so na bola-alvo) e o
         // dono (quem interage atravessa a bola com as pernas).
@@ -937,9 +947,6 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         input.ballKick = command.ballKick;
         input.motionVariety = command.motionVariety;
         input.varietySeed = command.varietySeed;
-        // (O gesto com a bola entra na passada.)
-        input.phaseRateScale = settings.newBallHandlingActive() && command.controlled
-            ? athlete.ballOutput.gaitRateScale : 1.0f;
         DefaultLocomotionSettings3D& defaults = state.defaultLocomotion.settings();
         defaults.adaptiveTransitions = settings.defaultAdaptiveTransitions;
         defaults.toeRoll = settings.toeRoll;
@@ -1222,6 +1229,27 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                 }
             } else {
                 athlete.footsteps.clear();
+                // As pernas nunca se atravessam (plano v4: sem as pegadas, os
+                // clipes cruzavam uma perna por dentro da outra nas trocas de
+                // rumo).
+                // (O pe no balanco contorna: o do clipe; o do gesto, no ar fora
+                // da espera apoiada.)
+                std::array<bool, 2> swinging {};
+                for (std::size_t side = 0; side < 2; ++side)
+                    swinging[side] = out.cycling ? !out.cyclePlanted[side] : !out.footPlanted[side];
+                // (Os dois no balanco: o do gesto fica no desenho dele; quem
+                // contorna e o do clipe.)
+                if (settings.newBallHandlingActive() && command.controlled) {
+                    for (const BallMove3D* move : { &athlete.ballPlay.previous(), &athlete.ballPlay.move() }) {
+                        if (!move->active()) continue;
+                        const std::size_t side = static_cast<std::size_t>(move->side());
+                        swinging[side] = move->phase() != BallMovePhase3D::Hold && !swinging[1 - side];
+                    }
+                }
+                if (!athlete.legClearance.ready()) athlete.legClearance.reset(profile);
+                if (settings.legClearance.enabled)
+                    athlete.legClearance.apply(profile, coordinates, rootPosition, rootOrientation, pose, swinging,
+                        deltaTime, settings.legClearance);
             }
             scene.setRagdollGuidePose(slot.handle, pose.linkPositions, pose.linkOrientations);
             state.previousAnimationPose = state.animationPose.linkPositions.empty() ? pose : state.animationPose;

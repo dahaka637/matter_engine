@@ -8,6 +8,7 @@
 #include "Engine/Athlete/Legacy/LegacyAthleteState3D.hpp"
 #include "Engine/Athlete/Planning/FootstepPlanner3D.hpp"
 #include "Engine/Athlete/Sensing/BodyObservation3D.hpp"
+#include "Engine/Athlete/Synthesis/LegClearance3D.hpp"
 #include "Engine/Athlete/Synthesis/LegSynthesis3D.hpp"
 
 namespace MatterEngine {
@@ -31,6 +32,8 @@ struct AthleteState3D {
     FootstepPlanner3D footsteps;
     std::array<FootTarget3D, 2> footTargets {};
     LegSynthesisResult3D legSynthesis;
+    // As pernas nunca se atravessam na pose do padrao (plano v4).
+    LegClearance3D legClearance;
     // Manejo novo: o v2 (BallPlay3D, plano v2) e a ultima saida dele (o pe
     // que joga, telemetria). (O da Etapa 5 fica ate a limpeza.)
     BallHandling3D ballHandling;

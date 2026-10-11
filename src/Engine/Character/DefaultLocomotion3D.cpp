@@ -1332,9 +1332,6 @@ void DefaultLocomotion3D::update(const RagdollProfile3D& profile,
         }
     }
     {
-        // (O gesto com a bola acelera ou freia a passada; os tempos dos pes na
-        // saida vem neste ritmo.)
-        rate *= std::clamp(input.phaseRateScale, 0.3f, 3.0f);
         const float before = m_phase;
         m_phase = fraction(m_phase + rate * dt);
         m_strides += m_phase < before ? 1.0f : 0.0f;
@@ -1776,6 +1773,13 @@ void DefaultLocomotion3D::update(const RagdollProfile3D& profile,
         for (std::size_t side = 0; side < 2; ++side) {
             m_output.styleFootPosition[side] = style.linkPositions[m_feet[side]];
             m_output.styleFootOrientation[side] = style.linkOrientations[m_feet[side]];
+            m_output.locomotionFootPosition[side] = m_output.styleFootPosition[side];
+            m_output.locomotionFootOrientation[side] = m_output.styleFootOrientation[side];
+            if (m_gestureLegs.valid) {
+                const std::size_t thigh = m_gestureLegs.thigh[side];
+                m_output.styleKneeDirection[side] = (style.linkOrientations[thigh]
+                    * profile.links[thigh].modelOrientation.conjugate()).rotate({ 1.0f, 0.0f, 0.0f });
+            }
         }
     }
     if (input.ballGesture.active && m_gestureLegs.valid) {
@@ -1918,16 +1922,36 @@ void DefaultLocomotion3D::update(const RagdollProfile3D& profile,
             Quaternion orientation = (rootOrientation * local.linkOrientations[index]).normalized();
             const float footContact = std::clamp(contact[side], 0.0f, 1.0f);
             const bool ballFoot = static_cast<int>(side) == ballSide;
-            Vec3 shift {};
-            if (!ballFoot && std::abs(strideAmount) > 1e-4f) {
+            const auto strideShift = [&](Vec3 at) {
+                Vec3 result {};
+                if (std::abs(strideAmount) <= 1e-4f) return result;
                 for (std::size_t g = 0; g < GaitCount; ++g) {
                     const float share = m_shape[g] / shapeTotal;
                     if (share <= 1e-3f) continue;
                     const float axisYaw = m_yaw + m_gaits[g].heading;
                     const Vec3 axis { std::cos(axisYaw), std::sin(axisYaw), 0.0f };
-                    const float along = dot(planar(position - rootPosition), axis);
-                    shift += axis * (along * strideAmount * share);
+                    const float along = dot(planar(at - rootPosition), axis);
+                    result += axis * (along * strideAmount * share);
                 }
+                return result;
+            };
+            const Vec3 shift = ballFoot ? Vec3 {} : strideShift(position);
+            if (ballFoot) {
+                // O pe do gesto: onde a locomocao o poria sem ele (o do estilo
+                // com a passada e o chao) - o gesto volta para ele.
+                const Vec3 style = m_output.styleFootPosition[side];
+                const Quaternion styleOrientation = m_output.styleFootOrientation[side];
+                Vec3 clip = style + strideShift(style);
+                clip.z -= (m_trunkHeight - m_landingSink) * std::clamp(m_plantWeight[side], 0.0f, 1.0f);
+                float clipGround = feet.z;
+                if (input.groundAt) {
+                    const GroundProbeResult3D probe = input.groundAt(clip);
+                    if (probe.hasSurface && std::abs(probe.pointWorld.z - feet.z) < 0.6f) clipGround = probe.pointWorld.z;
+                }
+                clip.z += std::max(0.0f,
+                    clipGround - soleHeight(link, clip, styleOrientation, s.toeRoll ? s.toeRollMeters : 0.0f));
+                m_output.locomotionFootPosition[side] = clip;
+                m_output.locomotionFootOrientation[side] = styleOrientation;
             }
             // Na curva o pe pousa girado para dentro dela, o de dentro mais,
             // pela curva que o corpo faz de fato (como no fisico): gira no
@@ -2029,6 +2053,10 @@ void DefaultLocomotion3D::update(const RagdollProfile3D& profile,
                 lift = (groundZ - sole) * pull;
             }
             const Vec3 target = shifted + Vec3 { 0.0f, 0.0f, lift };
+            if (!ballFoot) {
+                m_output.locomotionFootPosition[side] = target;
+                m_output.locomotionFootOrientation[side] = orientation;
+            }
             if ((target - position).lengthSquared() < 1e-8f && std::abs(m_footYaw[side]) < 1e-4f) continue;
             // (Com giro de curva o rumo do pe vem da coxa; o tornozelo sozinho
             // nao gira o pe em volta da vertical e cortava quase todo o giro.)

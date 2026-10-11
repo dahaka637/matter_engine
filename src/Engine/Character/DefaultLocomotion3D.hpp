@@ -366,9 +366,6 @@ struct DefaultLocomotionInput3D {
     // "Vida" (0..2; 0 desliga) e a semente do jeito de cada um.
     float motionVariety = 0.0f;
     std::uint32_t varietySeed = 0;
-    // O ritmo da passada vezes isto (o gesto com a bola entra na passada: o
-    // pe do toque pousa no clipe quando o gesto pousa). 1: o normal.
-    float phaseRateScale = 1.0f;
 };
 
 struct DefaultLocomotionOutput3D {
@@ -408,6 +405,12 @@ struct DefaultLocomotionOutput3D {
     // correndo, toca a bola no balanco deles).
     std::array<Vec3, 2> styleFootPosition {};
     std::array<Quaternion, 2> styleFootOrientation {};
+    // Cada pe como a locomocao o poria sem o gesto (o do estilo com a passada
+    // e o chao) e para onde o joelho do estilo aponta (mundo): o gesto volta a
+    // eles (plano v4).
+    std::array<Vec3, 2> locomotionFootPosition {};
+    std::array<Quaternion, 2> locomotionFootOrientation {};
+    std::array<Vec3, 2> styleKneeDirection { Vec3 { 1.0f, 0.0f, 0.0f }, Vec3 { 1.0f, 0.0f, 0.0f } };
     // Inclinacao aplicada (rad: x para a esquerda, y para a frente).
     Vec3 lean;
     // Carrinho: em andamento (a pelve vai pelo clipe; a capsula vai embaixo

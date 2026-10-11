@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Engine/Athlete/Synthesis/LegClearance3D.hpp"
 #include "Engine/Athlete/Actions/BallHandling3D.hpp"
 #include "Engine/Athlete/Actions/BallPlay3D.hpp"
 #include "Engine/Athlete/Body/ActiveBodyController3D.hpp"
@@ -136,6 +137,8 @@ struct AthleteRuntimeSettings3D {
     [[nodiscard]] bool newBallHandlingActive() const { return newBallHandling; }
     BallHandlingSettings3D ballHandling;
     BallPlaySettings3D ballPlay;
+    // As pernas nunca se atravessam na pose do padrao (plano v4).
+    LegClearanceSettings3D legClearance;
     // Manejo de bola.
     float ballContactTiming = 0.0f;
     bool ballHitboxContact = true;

@@ -35,6 +35,13 @@ struct BallBodyTargets3D {
     float separateGap = 0.0f;
     Vec3 separateForward { 1.0f, 0.0f, 0.0f };
     float separateWeight = 0.0f;
+    // A outra perna ainda saindo do gesto anterior (cortado por este): o
+    // tornozelo, o joelho e o pe dela no mundo, com peso (-1 nenhuma).
+    int releaseSide = -1;
+    Vec3 releaseAnkle;
+    Vec3 releaseKnee { 1.0f, 0.0f, 0.0f };
+    Quaternion releaseFoot;
+    float releaseWeight = 0.0f;
 };
 
 // O ritmo da passada (do estilo, no tick anterior): andando, quanto falta
@@ -49,6 +56,11 @@ struct BallHandlingGait3D {
     // Os pes do estilo antes do gesto (o toque no balanco vai com eles).
     std::array<Vec3, 2> styleFoot {};
     std::array<Quaternion, 2> styleFootOrientation {};
+    // Os pes como a locomocao os poria sem o gesto e o joelho do estilo
+    // (mundo): a volta do gesto vai a eles.
+    std::array<Vec3, 2> clipFoot {};
+    std::array<Quaternion, 2> clipFootOrientation {};
+    std::array<Vec3, 2> clipKnee { Vec3 { 1.0f, 0.0f, 0.0f }, Vec3 { 1.0f, 0.0f, 0.0f } };
 };
 
 // A bola-alvo neste tick (o estado publicado no passo anterior).
@@ -91,9 +103,6 @@ struct BallHandlingInput3D {
     // O corpo segue a animacao (o padrao): a velocidade "a frente" do toque e
     // a dele prevista (no fisico, a de agora - como no manejo V3).
     bool animatedBody = true;
-    // As pegadas ligadas: o pe que pousa do movimento fica preso por elas (a
-    // perna sai dele sem mistura).
-    bool footsteps = false;
     // O link do pe de cada lado (o sensor).
     std::array<std::uint32_t, 2> footLinks {};
     float deltaTime = 1.0f / 120.0f;
@@ -121,10 +130,7 @@ struct BallHandlingOutput3D {
     // desviado do pouso do estilo por landingShift.
     int landingSide = -1;
     Vec3 landingShift;
-    // O ritmo da passada (o movimento padronizado entra nela: o clipe pousa o
-    // pe do toque quando o movimento pousa) e o pe de apoio que pousa ja (-1
-    // nenhum).
-    float gaitRateScale = 1.0f;
+    // O pe de apoio que pousa ja (-1 nenhum; as pegadas).
     int quickPlantSide = -1;
     // Interagindo (o pedido ou o gesto): vira o dono da bola.
     bool interacting = false;
