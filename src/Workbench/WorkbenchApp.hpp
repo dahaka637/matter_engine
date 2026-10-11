@@ -516,10 +516,10 @@ private:
     // Locomocao por pegadas (10/10, Etapa 3): no modo padrao os pes apoiados
     // ficam onde pousaram (o clipe vira estilo). Desligada ate o usuario
     // aprovar (a chave A/B).
-    bool m_footstepLocomotion = false;
+    bool m_footstepLocomotion = true;
     // Manejo novo (10/10, Etapa 5): pedido com desfecho, gesto planejado e o
     // sensor do pe; so com as pegadas. Desligado ate o usuario aprovar.
-    bool m_newBallHandling = false;
+    bool m_newBallHandling = true;
     // A regua "Resposta" da capsula no modo padrao (%; 100 = 16 / 22 / 30 m/s2
     // e 10 rad/s, os aprovados).
     float m_capsuleResponsePercent = 100.0f;
@@ -597,8 +597,8 @@ private:
     // Manejo V3 (06/10 noite): a forca na bola sai nesta fracao do tempo
     // estimado ate o pe chegar nela (0 na hora, 1 no contato visual) e o
     // reforco de estabilidade do modo fisico durante o gesto.
-    float m_ballContactTiming = 1.0f;
-    bool m_ballStabilityAssist = true;
+    float m_ballContactTiming = 0.0f;
+    bool m_ballStabilityAssist = false;
     // A forca na bola (aba "Forca na bola", 07/10: o toque e o chute para o
     // usuario ajustar tudo) e o tempo para encher a barra (s) de cada um.
     BallForceSettings3D m_ballForce = defaultBallForceSettings3D();
@@ -616,7 +616,7 @@ private:
     // V3). Carregando o chute, a camera gira menos (09/10, pedido do usuario:
     // mirar enquanto ajusta a altura e o efeito, "sem exagero"): a fracao da
     // sensibilidade e o quanto ela ja entrou (0..1, suave).
-    bool m_ballHitboxContact = true;
+    bool m_ballHitboxContact = false;
     float m_shotCameraSensitivity = 0.6f;
     float m_shotCameraSlow = 0.0f;
     // Quanto da ajuda da pelve fica: parado, com as pernas carregando (%), e

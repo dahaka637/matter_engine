@@ -88,6 +88,9 @@ struct BallHandlingInput3D {
     // O corpo e fisico (o Ativo): o pe so sai do chao com o peso ja no apoio
     // (o preparo do corpo acima de physicalPrepare).
     bool physicalBody = false;
+    // O corpo segue a animacao (o padrao): a velocidade "a frente" do toque e
+    // a dele prevista (no fisico, a de agora - como no manejo V3).
+    bool animatedBody = true;
     // O link do pe de cada lado (o sensor).
     std::array<std::uint32_t, 2> footLinks {};
     float deltaTime = 1.0f / 120.0f;

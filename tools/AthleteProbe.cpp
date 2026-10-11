@@ -87,6 +87,11 @@ struct Scenario {
     BallActionKind3D autoKind = BallActionKind3D::Dribble;
     // O rumo pedido vira isto (rad, + esquerda) a partir do pedido automatico.
     float autoTurn = 0.0f;
+    // Conduzir (o jogador que toca de novo sempre que a bola chega perto): o
+    // intervalo minimo entre os pedidos automaticos (s) e a forca deles (<0:
+    // a padrao do tipo).
+    float autoCooldown = 10.0f;
+    float autoPower = -1.0f;
     // Manejo v2: a bola posta em relacao a pelve no instante placeAt (x a
     // frente, y a esquerda no rumo do corpo; z a altura do centro), andando
     // junto com o corpo; o pedido sai na mesma hora (pelas teclas). E o
@@ -299,6 +304,71 @@ std::vector<Scenario> scenarios() {
         s.ball = true;
         s.ballStart = { 0.45f, -0.12f, 0.11f };
         list.push_back(s);
+    }
+    // Conduzir (o teste do usuario, 11/10): andando, correndo, no sprint, de
+    // lado e na diagonal, o jogador toca de novo (clique rapido: forca baixa)
+    // sempre que a bola esta a ate 1,1 m, com 0,3 s entre os cliques.
+    {
+        struct Drive { const char* key; float forward; float left; bool sprint; Vec3 ball; };
+        static const Drive drives[6] = { { "conduz_anda", 0.5f, 0.0f, false, { 0.55f, 0.0f, 0.11f } },
+            { "conduz_corre", 1.0f, 0.0f, false, { 0.55f, 0.0f, 0.11f } },
+            { "conduz_sprint", 1.0f, 0.0f, true, { 0.55f, 0.0f, 0.11f } },
+            { "conduz_lado", 0.0f, 1.0f, false, { 0.0f, 0.55f, 0.11f } },
+            { "conduz_lado_anda", 0.0f, 0.5f, false, { 0.0f, 0.55f, 0.11f } },
+            { "conduz_diagonal", 0.71f, 0.71f, false, { 0.4f, 0.4f, 0.11f } } };
+        // (Com troca de rumo: zigue-zague, o corte de 90 graus e parar.)
+        {
+            const auto add = [&list](const char* name, std::function<Keys(float)> keys) {
+                Scenario s { name, 8.0f, std::move(keys) };
+                s.ball = true;
+                s.ballStart = { 0.55f, 0.0f, 0.11f };
+                s.autoDistance = 1.1f;
+                s.autoKind = BallActionKind3D::Dribble;
+                s.autoCooldown = 0.3f;
+                s.autoPower = 0.15f;
+                list.push_back(s);
+            };
+            add("conduz_zigue", [](float t) {
+                Keys k;
+                if (t > 0.3f) {
+                    k.forward = 0.8f;
+                    k.left = std::fmod(t, 2.0f) < 1.0f ? 0.6f : -0.6f;
+                }
+                return k; });
+            add("conduz_corte", [](float t) {
+                Keys k;
+                if (t > 0.3f) {
+                    k.forward = t < 3.0f ? 1.0f : 0.0f;
+                    k.left = t < 3.0f ? 0.0f : 1.0f;
+                }
+                return k; });
+            add("conduz_inverte", [](float t) {
+                Keys k;
+                k.forward = t > 0.3f ? (t < 3.0f ? 1.0f : -1.0f) : 0.0f;
+                return k; });
+            add("conduz_para", [](float t) {
+                Keys k;
+                k.forward = t > 0.3f && t < 3.5f ? 1.0f : t >= 5.0f ? 1.0f : 0.0f;
+                return k; });
+        }
+        for (const Drive& d : drives) {
+            const Drive drive = d;
+            Scenario s { drive.key, 8.0f, [drive](float t) {
+                Keys k;
+                if (t > 0.3f) {
+                    k.forward = drive.forward;
+                    k.left = drive.left;
+                    k.sprint = drive.sprint;
+                }
+                return k; } };
+            s.ball = true;
+            s.ballStart = drive.ball;
+            s.autoDistance = 1.1f;
+            s.autoKind = BallActionKind3D::Dribble;
+            s.autoCooldown = 0.3f;
+            s.autoPower = 0.15f;
+            list.push_back(s);
+        }
     }
     // Manejo v2 (plano v2, fase C): os casos do teste do usuario. A bola fora
     // do lugar (a 0,35, 0,65 e 0,9 m da pelve, em oito angulos) parado,
@@ -596,6 +666,11 @@ struct Metrics {
     // O levantar: no comeco (o primeiro Rising) a frente do peito e a da
     // pelve (z: + de costas, - de brucos) e o lado escolhido; quando acabou
     // de pe (s; -1 nao levantou).
+    // Conduzir: a bola longe do corpo (mais de 2,5 m no plano) por quanto
+    // tempo (s) e a distancia media dela (m).
+    float ballFarSeconds = 0.0f;
+    float ballDistanceSum = 0.0f;
+    int ballDistanceCount = 0;
     // O terreno: a maior velocidade para cima da capsula e da pelve (m/s) - o
     // lancamento - e a altura maxima da pelve sobre a capsula (m).
     float capsuleUp = 0.0f;
@@ -762,6 +837,10 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
     bool previousJump = false;
     float jumpHeld = 0.0f;
     float autoCooldown = 0.0f;
+    // Conduzindo: o rumo pedido do tick anterior e o tempo que ainda vale a
+    // virada (o toque da virada).
+    Vec3 autoLastDirection {};
+    float autoTurnLeft = 0.0f;
     // O rumo pedido virado depois do pedido automatico (o corte).
     float headingTurn = 0.0f;
     const auto turned = [](Vec3 v, float angle) {
@@ -885,14 +964,28 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
         control.ballRequestPower = keys.power;
         control.ballRequestAimYaw = keys.cameraYaw;
         autoCooldown -= Dt;
+        // (Conduzindo, o jogador toca tambem na virada e na parada: o rumo
+        // pedido mudando mais de 30 graus, ou as teclas soltas, com a bola ate
+        // 1,6 m.)
+        if (scenario.autoCooldown < 5.0f) {
+            const Vec3 now = wantedDirection;
+            const bool moving = now.lengthSquared() > 0.04f, wasMoving = autoLastDirection.lengthSquared() > 0.04f;
+            if ((moving && wasMoving && dot(now.normalized(), autoLastDirection.normalized()) < 0.87f) || (wasMoving && !moving))
+                autoTurnLeft = 0.3f;
+            autoLastDirection = now;
+            autoTurnLeft -= Dt;
+        }
         if (step >= 0 && scenario.autoDistance > 0.0f && scenario.ball && autoCooldown <= 0.0f && !bodyState.links.empty()) {
             const Vec3 pelvis = bodyState.links.front().position;
             const Vec3 offset = ballState.position - pelvis;
-            if (std::hypot(offset.x, offset.y) < scenario.autoDistance) {
+            const float reach = autoTurnLeft > 0.0f ? std::max(scenario.autoDistance, 1.6f) : scenario.autoDistance;
+            if (std::hypot(offset.x, offset.y) < reach) {
+                autoTurnLeft = 0.0f;
                 // (Sem pedido: so a virada do rumo, para comparar.)
                 if (!suppressRequests) control.ballRequest = scenario.autoKind;
-                control.ballRequestPower = scenario.autoKind == BallActionKind3D::Shot ? 0.8f : 0.45f;
-                autoCooldown = 10.0f;
+                control.ballRequestPower = scenario.autoPower >= 0.0f ? scenario.autoPower
+                    : scenario.autoKind == BallActionKind3D::Shot ? 0.8f : 0.45f;
+                autoCooldown = scenario.autoCooldown;
                 if (scenario.autoTurn != 0.0f) {
                     headingTurn = scenario.autoTurn;
                     control.intent.requestedDirectionWorld = turned(control.intent.requestedDirectionWorld, headingTurn);
@@ -929,6 +1022,12 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
         if (output.controlledAnimatedSet) controlledAnimated = output.controlledAnimated;
         capsuleSpeedScale = output.controlledSpeedScale;
         if (legacy.ballLastOutput.touched) {
+            if (std::getenv("XCONDUZ") && settings.newBallHandling)
+                std::printf("  t %.3f TOQUE resultado %.2f %.2f %.2f | pedido %.2f %.2f | corpo %.2f %.2f | bola antes %.2f %.2f\n", t,
+                    athlete.ballOutput.outcomeVelocity.x, athlete.ballOutput.outcomeVelocity.y,
+                    athlete.ballOutput.outcomeVelocity.z, control.intent.requestedVelocityWorld.x,
+                    control.intent.requestedVelocityWorld.y, scene->characterState().velocity.x,
+                    scene->characterState().velocity.y, ballState.linearVelocity.x, ballState.linearVelocity.y);
             ++metrics.touches;
             if (dump != nullptr) std::fprintf(dump, "T\n");
             if (metrics.forceTime < 0.0f && settings.newBallHandling) {
@@ -939,6 +1038,17 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
             }
         }
         if (step >= 0) metrics.capsulePath.push_back(scene->characterState().position);
+        if (step >= 0 && scenario.ball && scenario.autoCooldown < 5.0f && t > 0.3f && !bodyState.links.empty()) {
+            const Vec3 offset = ballState.position - bodyState.links.front().position;
+            const float distance = std::hypot(offset.x, offset.y);
+            if (distance > 2.5f) metrics.ballFarSeconds += Dt;
+            metrics.ballDistanceSum += distance;
+            ++metrics.ballDistanceCount;
+            if (std::getenv("XCONDUZ") && step % 12 == 0)
+                std::printf("  t %.2f bola a %.2f m (x %+.2f y %+.2f) v bola %.2f %.2f corpo %.2f %.2f\n", t, distance,
+                    offset.x, offset.y, ballState.linearVelocity.x, ballState.linearVelocity.y,
+                    scene->characterState().velocity.x, scene->characterState().velocity.y);
+        }
         if (step >= 0 && t > 0.35f && !bodyState.links.empty()) {
             metrics.capsuleUp = std::max(metrics.capsuleUp, scene->characterState().velocity.z);
             metrics.pelvisUp = std::max(metrics.pelvisUp, bodyState.links.front().linearVelocity.z);
@@ -1296,6 +1406,9 @@ void printMetrics(const Scenario& scenario, const Metrics& metrics, bool footste
     if (!metrics.outcomes.empty())
         std::printf("%-18s   manejo novo: %s | atraso ate o gesto max %.3f s\n", "", metrics.outcomes.c_str(),
             metrics.worstLatency);
+    if (metrics.ballDistanceCount > 0)
+        std::printf("%-18s   conduzir: bola longe (>2,5 m) %.2f s, distancia media %.2f m\n", "", metrics.ballFarSeconds,
+            metrics.ballDistanceSum / static_cast<float>(metrics.ballDistanceCount));
     if (metrics.capsuleUp > 0.0f || metrics.pelvisUp > 0.0f)
         std::printf("%-18s   subida max: capsula %.2f m/s, pelve %.2f m/s, pelve sobre a capsula %.2f m\n", "",
             metrics.capsuleUp, metrics.pelvisUp, metrics.pelvisOverCapsule);

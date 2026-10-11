@@ -62,9 +62,17 @@ BallPlaySettings3D::BallPlaySettings3D() {
     gesture.swingStrikeShare = 0.1f;
 }
 
-bool BallPlay3D::inArea(Vec3 ball, float radius, Vec3 pelvis, const BallPlaySettings3D& settings) {
+bool BallPlay3D::inArea(Vec3 ball, float radius, Vec3 pelvis, const BallPlaySettings3D& settings, Vec3 velocity) {
     if (ball.z - radius > pelvis.z + settings.waistAbovePelvis) return false;
-    return std::hypot(ball.x - pelvis.x, ball.y - pelvis.y) <= settings.areaRadius;
+    // (Andando, a area tambem vai a frente no rumo do movimento - a de sempre
+    // mais a parte a frente: correndo, a bola um pouco a frente, a do toque
+    // anterior, ainda vale; atras nada se perde.)
+    if (std::hypot(ball.x - pelvis.x, ball.y - pelvis.y) <= settings.areaRadius) return true;
+    const Vec3 flat { velocity.x, velocity.y, 0.0f };
+    const float speed = flat.length();
+    if (speed <= 0.3f) return false;
+    const Vec3 lead = flat * (settings.areaLead * std::min(1.0f, speed / std::max(0.5f, settings.areaLeadSpeed)) / speed);
+    return std::hypot(ball.x - pelvis.x - lead.x, ball.y - pelvis.y - lead.y) <= settings.areaRadius;
 }
 
 void BallPlay3D::reset(const RagdollProfile3D& profile) {
@@ -104,7 +112,7 @@ float BallPlay3D::areaExit(const BallHandlingInput3D& input, float horizon, cons
         const BallPrediction3D ball = predictBall3D(input.ball.position, input.ball.velocity, input.body.groundHeight,
             input.ball.radius, at, settings.predictor);
         const Vec3 pelvis = pelvisAhead(input.body.pelvis, input.bodyVelocity, input.aheadVelocity, at);
-        if (!inArea(ball.position, input.ball.radius, pelvis, settings)) return at;
+        if (!inArea(ball.position, input.ball.radius, pelvis, settings, input.bodyVelocity)) return at;
     }
     return -1.0f;
 }
@@ -148,7 +156,11 @@ BallPlayGesturePlan3D BallPlay3D::planGesture(const BallHandlingInput3D& input, 
         Candidate c;
         c.available = true;
         c.frame = !moving ? BallGestureFrame3D::World : shot ? BallGestureFrame3D::Body : BallGestureFrame3D::StyleFoot;
-        if (moving && !startNow) {
+        // (Continuando o gesto anterior na mesma perna, ela ja esta no ar: o
+        // novo sai ja, do estado dela, sem armado - pelo reserva, o armado
+        // dava o tranco.)
+        const bool continuing = forcedSide >= 0 && m_gesture.active() && m_gesture.side() == side;
+        if (moving && !startNow && !continuing) {
             // Andando, o gesto vai no balanco: o pe no ar com tempo ate pousar
             // faz ja; o apoiado que sai logo espera sair.
             if (!gait.planted[s]) {
@@ -303,14 +315,19 @@ void BallPlay3D::startGesture(const BallHandlingInput3D& input, const BallPlayGe
     begin.power = m_intent.power;
     begin.lift = m_intent.lift;
     begin.bodyVelocity = input.bodyVelocity;
-    // (O gesto anterior ainda no ar na mesma perna: o novo parte dele.)
-    if (m_gesture.active() && m_gesture.side() == side) {
+    // (O gesto anterior ainda no ar na mesma perna: o novo parte dele, com o
+    // peso que a perna ja tinha nele. Senao, do pe da pose - no balanco, com a
+    // velocidade do pe do estilo: a do pe fisico atrasa a pose, e o alvo dava
+    // o tranco no primeiro tick.)
+    const bool continuing = m_gesture.active() && m_gesture.side() == side;
+    m_legStart = continuing ? m_lastLeg : 0.0f;
+    if (continuing) {
         begin.foot = m_gesture.position();
         begin.footVelocity = m_gesture.velocity();
         begin.footOrientation = m_gesture.orientation();
     } else {
         begin.foot = body.foot[s];
-        begin.footVelocity = body.footVelocity[s];
+        begin.footVelocity = plan.frame == BallGestureFrame3D::StyleFoot ? m_styleFootVelocity[s] : body.footVelocity[s];
         begin.footOrientation = body.footOrientation[s];
     }
     begin.groundHeight = body.groundHeight;
@@ -341,11 +358,27 @@ void BallPlay3D::startGesture(const BallHandlingInput3D& input, const BallPlayGe
 }
 
 void BallPlay3D::applyForce(const BallHandlingInput3D& input, const BallOutcomeSettings3D& outcome,
-    BallHandlingOutput3D& output) {
+    const BallPlaySettings3D& settings, BallHandlingOutput3D& output) {
     BallOutcomeRequest3D intent = m_intent;
     intent.surface = m_plan.surface;
-    const BallOutcome3D result = computeBallOutcome3D(intent, input.ball.velocity, input.bodyVelocity,
-        input.aheadVelocity, input.ball.radius, outcome);
+    // O toque vai para onde o jogador vai agora (as teclas na hora da forca):
+    // o rumo do clique ficava velho - clicando ao arrancar, ou com o pedido
+    // guardado esperando, a bola saia para o rumo de antes (correndo de lado,
+    // para tras dele).
+    if (intent.kind != BallActionKind3D::Shot && planar(input.aheadVelocity).length() > 0.3f)
+        intent.direction = planar(input.aheadVelocity).normalized();
+    // A velocidade "a frente" e a do corpo daqui a carryAhead, como no manejo
+    // V3 (onde a forca foi calibrada): com a pedida crua, tocar contra o rumo
+    // com a tecla para tras devolvia a bola com a corrida inteira para tras.
+    Vec3 carry = planar(input.bodyVelocity);
+    if (input.animatedBody) {
+        const Vec3 change = planar(input.aheadVelocity) - carry;
+        const float amount = change.length();
+        if (amount > 1e-3f)
+            carry += change * std::min(1.0f, settings.carryAcceleration * std::max(0.0f, outcome.carryAhead) / amount);
+    }
+    const BallOutcome3D result = computeBallOutcome3D(intent, input.ball.velocity, input.bodyVelocity, carry,
+        input.ball.radius, outcome);
     const float inertia = (2.0f / 3.0f) * input.ball.mass * input.ball.radius * input.ball.radius;
     output.impulse = true;
     output.impulseBallKey = m_ballKey;
@@ -381,7 +414,8 @@ void BallPlay3D::update(const BallHandlingInput3D& input, const BallOutcomeSetti
     m_styleFootKnown = true;
     m_cooldown = std::max(0.0f, m_cooldown - dt);
     const bool ballValid = input.ball.valid;
-    const bool inside = ballValid && inArea(input.ball.position, input.ball.radius, input.body.pelvis, settings);
+    const bool inside = ballValid && inArea(input.ball.position, input.ball.radius, input.body.pelvis, settings,
+        input.bodyVelocity);
     m_sinceInArea = inside ? 0.0f : m_sinceInArea + dt;
     const bool reachable = ballValid && (inside || m_sinceInArea <= settings.guaranteeGrace);
 
@@ -453,7 +487,7 @@ void BallPlay3D::update(const BallHandlingInput3D& input, const BallOutcomeSetti
         } else {
             const bool leaving = !inside || areaExit(input, 2.0f * dt, settings) >= 0.0f;
             if (m_actionClock >= m_forceAt - 1e-5f || (leaving && reachable)) {
-                applyForce(input, outcome, output);
+                applyForce(input, outcome, settings, output);
                 m_action = false;
                 m_cooldown = settings.cooldown;
                 if (BallActionRecord3D* record = m_queue.active();
@@ -462,7 +496,7 @@ void BallPlay3D::update(const BallHandlingInput3D& input, const BallOutcomeSetti
             } else if (!reachable) {
                 // (A bola saiu entre um tick e outro, sem previsao: a forca
                 // nela ainda perto.)
-                applyForce(input, outcome, output);
+                applyForce(input, outcome, settings, output);
                 m_action = false;
                 m_cooldown = settings.cooldown;
                 if (BallActionRecord3D* record = m_queue.active();
@@ -518,11 +552,11 @@ void BallPlay3D::update(const BallHandlingInput3D& input, const BallOutcomeSetti
         live.styleFootOrientation = input.gait.styleFootOrientation[s];
         m_gesture.update(dt, live, settings.gesture);
     }
-    // Depois da forca (e do contato visual), o movimento pedido mudando
-    // (arrancar, parar, virar, inverter): a perna sai do gesto - ou da volta
-    // dele - numa mistura curta.
-    if (m_forced && !m_interrupting && ((m_gesture.active() && m_gesture.time() >= m_gesture.contactTime())
-            || (!m_gesture.active() && m_settleLeft > 0.0f))) {
+    // Depois da forca, o movimento pedido mudando (arrancar, parar, virar,
+    // inverter): a perna sai do gesto - ou da volta dele - numa mistura curta.
+    // (Sem esperar o contato visual: com a forca na hora, a bola ja foi, e o
+    // pe seguia para onde ela estava, puxando para o rumo de antes.)
+    if (m_forced && !m_interrupting && (m_gesture.active() || m_settleLeft > 0.0f)) {
         // (Comparado com o movimento de quando o pedido foi aceito: a mudanca
         // pode vir antes da forca.)
         const Vec3 now = planar(input.aheadVelocity);
@@ -560,7 +594,7 @@ void BallPlay3D::bodyTargets(const BallHandlingInput3D& input, const BallPlaySet
     // do clipe; no balanco o gesto ja parte do pe do estilo, com a
     // velocidade dele.)
     const float blendIn = m_gestureFrame == BallGestureFrame3D::StyleFoot ? 1.0f
-        : smooth(m_gesture.time() / std::max(0.01f, settings.legBlendSeconds));
+        : m_legStart + (1.0f - m_legStart) * smooth(m_gesture.time() / std::max(0.01f, settings.legBlendSeconds));
     // (A saida pela interrupcao numa curva sem quina.)
     const float leg = acting ? (m_gesture.phase() == BallGesturePhase3D::Return ? m_gesture.weight() : 1.0f) * smooth(m_exit)
             * blendIn
@@ -699,10 +733,13 @@ void BallPlay3D::bodyTargets(const BallHandlingInput3D& input, const BallPlaySet
     t.armWeight = { share, share };
     t.look = m_look.value();
     t.lookWeight = std::clamp(m_lookWeight.value(), 0.0f, 1.0f);
-    // As pernas nunca se cruzam.
+    // As pernas nunca se cruzam - a regra entra e sai com o corpo do gesto
+    // (fixa em 1, a perna de apoio era empurrada para o lado num tick quando o
+    // gesto comecava e voltava num tick quando ele acabava: correndo de lado,
+    // as pernas da passada se aproximam).
     t.separateGap = settings.sideGap;
     t.separateForward = forward;
-    t.separateWeight = 1.0f;
+    t.separateWeight = 0.0f;
     m_appliedShift = planar(t.pelvisShift) * weight;
     m_appliedDrop = t.pelvisDrop * weight;
 }

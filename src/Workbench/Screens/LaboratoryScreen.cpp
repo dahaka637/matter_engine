@@ -2838,26 +2838,6 @@ void WorkbenchApp::drawLaboratoryUi() {
                             ImGui::SetNextItemWidth(-1.0f);
                             if (ImGui::Combo("##LocomotionMode", &mode, modes, 2)) m_defaultLocomotion = mode == 0;
                             hint("Padrão: o corpo segue a animação (com massa) e vai ao físico numa pancada, parede ou queda, voltando quando assenta. Físico total: sempre pelos músculos e pelas ajudas.");
-                            ImGui::BeginDisabled(!m_defaultLocomotion);
-                            ImGui::Checkbox("Locomoção por pegadas", &m_footstepLocomotion);
-                            hint("Os pés apoiados ficam onde pousaram (sem escorregar): a animação vira só o estilo do movimento, e cada pé sai do chão, voa e pousa sozinho. Parado, um pé fora do lugar dá um passo curto. Desligado: os pés seguem a animação, como antes.");
-                            ImGui::Checkbox("Ponte físico → padrão", &m_physicalBridge);
-                            hint("Saindo do físico (o fim do levantar, o pouso de pé), o corpo segue físico por um instante (0,45 s parado, 0,3 s andando): os músculos vão à pose da animação, que já roda (anda e corre desde o primeiro instante), com um pouco da ajuda do físico e o guiamento dos ossos subindo de fraco a cheio; só então o modo padrão. Uma pancada forte no meio leva de volta ao físico. Desligado: a volta direta de antes.");
-                            ImGui::Checkbox("Estado intermediário (Ativo)", &m_activeBody);
-                            hint("Encostões, parede e a volta do físico passam por um corpo físico de verdade, com os músculos seguindo a animação e só os pés no chão como apoio; só o que derruba vai ao físico total. Desligado: direto ao físico, como antes.");
-                            ImGui::BeginDisabled(!m_activeBody);
-                            ImGui::TextUnformatted("Pancada para o físico total");
-                            ImGui::SetNextItemWidth(-1.0f);
-                            ImGui::SliderFloat("##FullPhysicalImpulse", &m_fullPhysicalImpulse, 5.0f, 60.0f, "%.0f N.s",
-                                ImGuiSliderFlags_AlwaysClamp);
-                            hint("Uma pancada acima disto vai direto ao físico total. Abaixo, o Ativo segura; se ela pedir um passo, ele passa ao físico total.");
-                            ImGui::TextUnformatted("Ajuda de jogo no Ativo");
-                            ImGui::SetNextItemWidth(-1.0f);
-                            ImGui::SliderFloat("##ActiveAssist", &m_activeAssistAcceleration, 0.0f, 10.0f, "%.1f m/s2",
-                                ImGuiSliderFlags_AlwaysClamp);
-                            hint("Correndo no Ativo, o que o chão não deu para seguir a animação pode vir de fora, até esta aceleração (parado, nada). 0: só os pés.");
-                            ImGui::EndDisabled();
-                            ImGui::EndDisabled();
                             // (A locomocao fisica v2 e o "tentar se manter em pe no
                             // impacto" viraram o padrao - as caixas sairam, pedido do
                             // usuario, 06/10.)
@@ -2874,44 +2854,12 @@ void WorkbenchApp::drawLaboratoryUi() {
                             "Rigidez e força de todos os músculos no físico (100% é a calibrada).");
                         percent("Rigidez ao levantar", "##GetUpStiffness", &m_getUpStiffnessPercent, 20.0f, 150.0f,
                             "Rigidez dos músculos enquanto ele levanta; menos, mais relaxado.");
-                        panelHeader("MÃOS E PÉS");
-                        {
-                            const char* hands[] = { "Automática", "Relaxada", "Aberta", "Fechada" };
-                            int hand = static_cast<int>(m_handPose);
-                            ImGui::TextUnformatted("Pose das mãos");
-                            ImGui::SetNextItemWidth(-1.0f);
-                            if (ImGui::Combo("##HandPose", &hand, hands, 4))
-                                m_handPose = static_cast<RagdollHandPose3D>(hand);
-                            hint("Os dedos das mãos: automática (abre com o braço esticado - o equilíbrio, a queda - e relaxa com ele dobrado), relaxada, aberta (a palma, como a do goleiro) ou fechada. Só o visual por enquanto: a colisão da mão é a mesma (a cápsula dela já cobre a mão aberta).");
-                        }
-                        ImGui::Checkbox("Dedos do pé dobram no chão", &m_toeRoll);
-                        hint("No fim do apoio o pé gira na base dos dedos, que ficam deitados no chão enquanto o calcanhar sobe (no modo padrão; no físico o pé é o bloco dele). Desligado, o pé gira na ponta, como antes.");
                         panelHeader("BOLA");
-                        ImGui::BeginDisabled(!m_defaultLocomotion);
-                        ImGui::Checkbox("Manejo novo", &m_newBallHandling);
-                        ImGui::EndDisabled();
-                        hint("A ação depende só de a bola estar na área do jogador (da cintura à base dos pés, num raio de uma perna): com ela lá, o toque e o chute sempre saem; fora, o pedido espera até 0,25 s ela entrar. O pé indo até a bola é só o visual, com todas as variações (dentro, fora, peito do pé, sola, calcanhar), sem mexer na corrida nem no rumo; sem como começar o gesto na bola (atrás no chute, longe), ele vai a uma bola imaginada na direção dela. Mudando o movimento depois da força, a perna sai do gesto na hora. Com ou sem as pegadas. Desligado: o manejo de antes (as opções abaixo).");
-                        const bool newHandling = m_newBallHandling && m_defaultLocomotion;
-                        ImGui::BeginDisabled(!newHandling && m_ballHitboxContact);
                         ImGui::TextUnformatted("Tempo estimado até o contato");
                         ImGui::SetNextItemWidth(-1.0f);
                         ImGui::SliderFloat("##BallContactTiming", &m_ballContactTiming, 0.0f, 1.0f, "%.2f",
                             ImGuiSliderFlags_AlwaysClamp);
-                        ImGui::EndDisabled();
-                        hint("A fração do tempo que o pé levaria até a bola (pelo gesto planejado) em que a força sai: 0 na hora do pedido, 1 no contato visual. A força só sai com a bola dentro da área; se ela fosse sair da área antes, a força vem antes. No manejo de antes, só com o contato pela hitbox desligado.");
-                        ImGui::BeginDisabled(newHandling);
-                        ImGui::Checkbox("Contato pela hitbox do pé", &m_ballHitboxContact);
-                        hint("A força só sai quando a hitbox do pé (a caixa dele um pouco maior, para ajudar - a folga fica na aba \"Força na bola\") encosta na bola durante o gesto, vindo para ela. O rumo da bola é sempre o que você pediu (as teclas no toque, a mira no chute), nunca o do pé. Pedido sem gesto que alcance a bola em 0,25 s é descartado. Desligado: a força sai pelo tempo (acima), com a garantia do pedido com a bola na área.");
-                        ImGui::Checkbox("Reforço de estabilidade no gesto (físico)", &m_ballStabilityAssist);
-                        hint("No modo físico, durante o toque ou o chute a ajuda sobe e a postura aguenta mais, para ele não cair só pelo próprio movimento. Não vale encostando em outro jogador ou objeto, nem logo depois de um impacto.");
-                        ImGui::Checkbox("Mostrar área, hitbox dos pés e contato previsto", &m_showBallReach);
-                        const auto reachHint = m_ballHitboxContact
-                            ? "Desenha a área do manejo (da cintura à base dos pés, num raio de uma perna), a hitbox de cada pé (amarela no pé que joga) e onde o pé vai encontrar a bola. O pedido fica guardado até 0,25 s esperando um gesto que alcance a bola; a força sai quando a hitbox encosta nela."
-                            : "Desenha a área do manejo (da cintura à base dos pés, num raio de uma perna) e onde o pé vai encontrar a bola. Com a bola dentro da área, o pedido sempre sai, correndo ou fazendo o que for (sem movimento possível até ela, o gesto usa uma bola imaginada à frente). Fora dela, fica guardado até 0,25 s esperando a bola entrar; depois disso, é descartado.";
-                        hint(reachHint);
-                        ImGui::Checkbox("Sem gesto com a bola (só a força)", &m_ballForceOnly);
-                        hint("Para testar a força isolada: o toque e o chute só aplicam a força na bola, na hora do pedido (com a bola dentro da área; fora dela, quando entrar em até 0,25 s), sem movimento de perna, sem esperar o pé e sem o gesto do chute.");
-                        ImGui::EndDisabled();
+                        hint("Quando a força sai, na fração do tempo que o pé levaria até a bola: 0 na hora do pedido, 1 no contato visual.");
                         ImGui::EndTabItem();
                     }
                     // A forca na bola (07/10, pedido do usuario: "uma tab no menu do

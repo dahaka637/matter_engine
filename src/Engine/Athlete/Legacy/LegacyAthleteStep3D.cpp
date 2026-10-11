@@ -751,7 +751,11 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             in.gait.styleFoot = style.styleFootPosition;
             in.gait.styleFootOrientation = style.styleFootOrientation;
         }
-        in.bodyVelocity = in.body.velocity;
+        // (No fisico, a velocidade do corpo e a da pelve - a capsula vai a
+        // frente do corpo que atrasa -, como no manejo V3.)
+        in.animatedBody = state.bodyMode == BodyMode::Animated || state.bodyMode == BodyMode::Returning;
+        in.bodyVelocity = in.animatedBody ? in.body.velocity
+                                          : Vec3 { body.links.front().linearVelocity.x, body.links.front().linearVelocity.y, 0.0f };
         in.aheadVelocity = { command.intent.requestedVelocityWorld.x, command.intent.requestedVelocityWorld.y, 0.0f };
         in.requestedSpeed = std::hypot(state.requestedVelocityRaw.x, state.requestedVelocityRaw.y);
         // (No Ativo, so com o corpo assentado: o centro de massa andando como

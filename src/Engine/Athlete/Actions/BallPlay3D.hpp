@@ -36,13 +36,22 @@ struct BallPlaySettings3D {
     // areaRadius dela (m).
     float areaRadius = 0.95f;
     float waistAbovePelvis = 0.05f;
+    // Andando, o centro da area vai a frente no rumo do movimento: ate
+    // areaLead (m), cheio a areaLeadSpeed (m/s).
+    float areaLead = 0.45f;
+    float areaLeadSpeed = 4.5f;
     // O pedido guardado (s); a bola que esteve na area ate guaranteeGrace
     // atras ainda vale (s); o intervalo depois de cada forca (s).
     float requestBuffer = 0.25f;
     float guaranteeGrace = 0.06f;
     float cooldown = 0.25f;
-    // A regua: a forca nesta fracao do tempo ate o contato visual.
-    float contactTiming = 1.0f;
+    // A regua: a forca nesta fracao do tempo ate o contato visual (0: na
+    // hora do pedido).
+    float contactTiming = 0.0f;
+    // A velocidade "a frente" do toque: a do corpo daqui a carryAhead (da aba
+    // "Forca na bola"), indo a pedida nesta aceleracao (m/s2) - a do manejo V3,
+    // onde a forca foi calibrada.
+    float carryAcceleration = 16.0f;
     // O gesto: armado e batida (s, mais a parte pela forca); no balanco da
     // passada nao ha armado, so a batida (s). O pe longe do contato: o armado
     // cresce para ele andar no maximo windupTravelSpeed (m/s).
@@ -132,8 +141,10 @@ public:
     // A perna saindo do gesto (a mudanca de movimento depois da forca).
     [[nodiscard]] bool interrupting() const { return m_interrupting; }
 
-    // A bola na area em volta da pelve dada.
-    [[nodiscard]] static bool inArea(Vec3 ball, float radius, Vec3 pelvis, const BallPlaySettings3D& settings);
+    // A bola na area em volta da pelve dada (andando a velocity, ela vai a
+    // frente).
+    [[nodiscard]] static bool inArea(Vec3 ball, float radius, Vec3 pelvis, const BallPlaySettings3D& settings,
+        Vec3 velocity = {});
 
 private:
     // O gesto para a bola (posicao e velocidade agora): o pe, quando, onde.
@@ -146,7 +157,7 @@ private:
     [[nodiscard]] float areaExit(const BallHandlingInput3D& input, float horizon,
         const BallPlaySettings3D& settings) const;
     void applyForce(const BallHandlingInput3D& input, const BallOutcomeSettings3D& outcome,
-        BallHandlingOutput3D& output);
+        const BallPlaySettings3D& settings, BallHandlingOutput3D& output);
     void bodyTargets(const BallHandlingInput3D& input, const BallPlaySettings3D& settings,
         BallHandlingOutput3D& output);
 
@@ -221,6 +232,8 @@ private:
     Quaternion m_lastFoot;
     Vec3 m_lastKnee { 1.0f, 0.0f, 0.0f };
     float m_lastLeg = 0.0f;
+    // O peso da perna no comeco do gesto (o anterior cortado na mesma perna).
+    float m_legStart = 0.0f;
     int m_lastSide = 0;
     float m_settleLeft = 0.0f;
 };

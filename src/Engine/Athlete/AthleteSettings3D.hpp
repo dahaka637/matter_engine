@@ -123,7 +123,7 @@ struct AthleteRuntimeSettings3D {
     BallHandlingSettings3D ballHandling;
     BallPlaySettings3D ballPlay;
     // Manejo de bola.
-    float ballContactTiming = 1.0f;
+    float ballContactTiming = 0.0f;
     bool ballHitboxContact = true;
     BallForceSettings3D ballForce = defaultBallForceSettings3D();
     bool ballForceOnly = false;
