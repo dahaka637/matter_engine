@@ -119,6 +119,12 @@ apoiados, que somam zero.
   físico sem lançar. Encostado na parede, volta ao padrão.
 - **Validação:** `--teste` tudo certo; arquitetura ok; CTest 12/14 (as
   falhas antigas, mesmas mensagens).
+- **Volta mais cedo com a ponte:** a espera pela calma depois de pancada
+  encurtou: mínimo 0,5 s, calma 0,25 s, ajuda subindo em 0,25 s. Antes eram
+  0,8 / 0,4 / 0,4 s; andar no físico mais de 1 s depois de um encostão era
+  onde o tombo acontecia. No encostão andando, o físico caiu de 1,2 para
+  0,7 s, sem recaída. Cenários `pancada_anda`/`pancada_corre` (as teclas
+  logo depois da pancada).
 
 ## Novo controle, plano v2 — Fase D: a ponte físico → padrão (10/10/2026, noite)
 

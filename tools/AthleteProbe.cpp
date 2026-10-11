@@ -479,6 +479,17 @@ std::vector<Scenario> scenarios() {
         Scenario frenteCorre { "queda_frente_corre", 11.0f, [](float t) { Keys k; k.forward = t > 3.5f ? 1.0f : 0.0f; return k; } };
         frenteCorre.throws.push_back({ 1.0f, 140.0f, { 0.3f, 0.3f, 0.3f }, { -1.5f, 0.0f, 1.1f }, { 9.0f, 0.0f, 0.0f } });
         list.push_back(frenteCorre);
+        // A pancada e as teclas logo depois (andando e correndo): quanto tempo
+        // ele anda no fisico antes de voltar ao padrao.
+        for (int k = 0; k < 2; ++k) {
+            const float forward = k == 0 ? 0.5f : 1.0f;
+            Scenario hitMove { k == 0 ? "pancada_anda" : "pancada_corre", 5.0f, [forward](float t) {
+                Keys keys;
+                keys.forward = t > 1.25f ? forward : 0.0f;
+                return keys; } };
+            hitMove.throws.push_back({ 1.0f, 40.0f, { 0.25f, 0.25f, 0.25f }, { 0.0f, 1.4f, 1.1f }, { 0.0f, -7.0f, 0.0f } });
+            list.push_back(hitMove);
+        }
         Scenario frente { "queda_frente", 11.0f, [](float) { return Keys {}; } };
         frente.throws.push_back({ 1.0f, 140.0f, { 0.3f, 0.3f, 0.3f }, { -1.5f, 0.0f, 1.1f }, { 9.0f, 0.0f, 0.0f } });
         list.push_back(frente);

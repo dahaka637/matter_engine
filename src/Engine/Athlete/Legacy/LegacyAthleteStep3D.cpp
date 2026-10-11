@@ -437,13 +437,17 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                 if (now == CharacterLocomotionState3D::GettingUp) state.getUpSeen = true;
                 const bool hurried = state.locomotion.telemetry().getUpHurried
                     || (settings.physicalBridge && state.getUpSeen);
-                const float minimumSeconds = state.physicalFromJump || hurried ? 0.0f : 0.8f;
-                const float calmSeconds = hurried ? 0.08f : state.physicalFromJump ? 0.15f : 0.4f;
+                // (Com a ponte segurando a passagem, a espera pela calma e mais
+                // curta: depois de um encostao, andar no fisico mais de 1 s era
+                // onde o tombo acontecia.)
+                const bool bridged = settings.physicalBridge;
+                const float minimumSeconds = state.physicalFromJump || hurried ? 0.0f : bridged ? 0.5f : 0.8f;
+                const float calmSeconds = hurried ? 0.08f : state.physicalFromJump ? 0.15f : bridged ? 0.25f : 0.4f;
                 const bool landedLongEnough = !state.physicalFromJump || state.landedSeconds > 1.0f;
                 // Pronto para voltar: a ajuda sobe ate a cheia em
                 // ReturnBoostSeconds e so entao ele volta (se deixar de
                 // estar assentado no meio, a ajuda desce de novo).
-                const float ReturnBoostSeconds = hurried ? 0.15f : 0.4f;
+                const float ReturnBoostSeconds = hurried ? 0.15f : bridged ? 0.25f : 0.4f;
                 // (E com a ajuda de volta inteira depois do impacto - 06/10.)
                 const bool ready = state.bodyModeSeconds > minimumSeconds
                     && state.calmSeconds > calmSeconds && landedLongEnough
