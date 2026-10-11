@@ -2841,12 +2841,23 @@ void WorkbenchApp::drawLaboratoryUi() {
                             // (A locomocao fisica v2 e o "tentar se manter em pe no
                             // impacto" viraram o padrao - as caixas sairam, pedido do
                             // usuario, 06/10.)
+                            // As pegadas voltam como chave, ligadas (pedido do
+                            // usuario, 10/10 noite).
+                            if (m_defaultLocomotion) {
+                                ImGui::Checkbox("Locomoção por pegadas", &m_footstepLocomotion);
+                                hint("Os pés apoiados ficam onde pousaram (a animação vira o estilo dos passos). Desligada: os pés seguem a animação.");
+                            }
                         }
                         panelHeader("AJUDAS");
                         percent("Ajuda parado", "##AssistStanding", &m_e5StandingAssistPercent, 0.0f, 100.0f,
                             "Força auxiliar na pelve parado (no físico).");
                         percent("Ajuda andando", "##AssistWalking", &m_e5WalkingAssistPercent, 0.0f, 100.0f,
                             "Força auxiliar andando e correndo (no físico).");
+                        // A ajuda nos pes (pedido do usuario, 10/10 noite): so no
+                        // Fisico total.
+                        if (!m_defaultLocomotion)
+                            percent("Ajuda nos pés", "##AssistFeet", &m_physicalFeetAssistPercent, 0.0f, 100.0f,
+                                "A força que leva o corpo ao movimento passa pelos pés apoiados (o pé empurra o chão, até o atrito), como no estado intermediário. Soma com a ajuda na pelve, só no que ela não deu.");
                         percent("Ajuda ao levantar", "##AssistGetUp", &m_getUpAssistPercent, 0.0f, 200.0f,
                             "Forças de fora no levantar do chão; 0%: só os músculos.");
                         panelHeader("MÚSCULOS");
@@ -2854,12 +2865,8 @@ void WorkbenchApp::drawLaboratoryUi() {
                             "Rigidez e força de todos os músculos no físico (100% é a calibrada).");
                         percent("Rigidez ao levantar", "##GetUpStiffness", &m_getUpStiffnessPercent, 20.0f, 150.0f,
                             "Rigidez dos músculos enquanto ele levanta; menos, mais relaxado.");
-                        panelHeader("BOLA");
-                        ImGui::TextUnformatted("Tempo estimado até o contato");
-                        ImGui::SetNextItemWidth(-1.0f);
-                        ImGui::SliderFloat("##BallContactTiming", &m_ballContactTiming, 0.0f, 1.0f, "%.2f",
-                            ImGuiSliderFlags_AlwaysClamp);
-                        hint("Quando a força sai, na fração do tempo que o pé levaria até a bola: 0 na hora do pedido, 1 no contato visual.");
+                        // (A regua do tempo ate o contato saiu: a forca sai sempre
+                        // na hora do clique - pedido do usuario, 10/10 noite.)
                         ImGui::EndTabItem();
                     }
                     // A forca na bola (07/10, pedido do usuario: "uma tab no menu do
@@ -2959,11 +2966,8 @@ void WorkbenchApp::drawLaboratoryUi() {
                             "A bola já indo no rumo do chute mais rápido que ele: quanto do excesso fica.");
                         value("Freada do corpo no chute correndo", "##ForceKickSlowdown", &f.kickRunSlowdown, 0.0f, 0.8f,
                             "%.2f", "Chutando correndo, o quanto da velocidade o corpo perde durante o chute (no chute cheio).");
-                        panelHeader("GERAL");
-                        value("Bola presa na velocidade do toque", "##ForceHold", &f.holdSeconds, 0.0f, 0.3f, "%.2f s",
-                            "Logo depois do toque ou do chute, por este tempo o pé que ainda encosta não muda a bola.");
-                        value("Hitbox do pé (folga)", "##ForceHitbox", &f.hitboxMargin, 0.0f, 0.2f, "%.3f m",
-                            "O quanto a hitbox do pé passa do pé em cada lado (no modo físico, 1,6 vezes: o pé de verdade atrasa). Maior, mais fácil acertar a bola; 0, só o pé. Vale com o contato pela hitbox (aba Geral).");
+                        // (A bola presa e a hitbox do pe eram do manejo V3: sairam com
+                        // ele.)
                         ImGui::Dummy({ 1.0f, ui(6.0f) });
                         if (ImGui::Button("COPIAR PARÂMETROS##BallForce", { -1.0f, ui(36.0f) })) {
                             std::string text = "Força na bola (laboratório, MatterEngine)\n";
@@ -3008,13 +3012,6 @@ void WorkbenchApp::drawLaboratoryUi() {
                             line("T_BallKeepBounce", "atrito do chute: quique contra o chute", f.shotBounce, "");
                             line("T_ShotKeepAhead", "atrito do chute: excesso no rumo que fica", f.shotAheadKeep, "");
                             line("T_KickRunSlowdown", "freada do corpo no chute correndo", f.kickRunSlowdown, "");
-                            text += "[geral]\n";
-                            line("T_BallHold", "bola presa na velocidade do toque", f.holdSeconds, "s");
-                            line("T_BallHitbox", "hitbox do pé (folga)", f.hitboxMargin, "m");
-                            line("contato_hitbox", "contato pela hitbox do pé (1 ligado, aba Geral)",
-                                m_ballHitboxContact ? 1.0f : 0.0f, "");
-                            line("T_BallContactTiming", "tempo da força sem a hitbox (aba Geral)",
-                                m_ballContactTiming, "");
                             ImGui::SetClipboardText(text.c_str());
                             m_ballForceCopiedTime = ImGui::GetTime();
                         }

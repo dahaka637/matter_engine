@@ -4,6 +4,7 @@
 #include "Engine/Athlete/Actions/BallPlay3D.hpp"
 #include "Engine/Athlete/Body/ActiveBodyController3D.hpp"
 #include "Engine/Athlete/Body/ActiveStance3D.hpp"
+#include "Engine/Athlete/Body/PhysicalFeetAssist3D.hpp"
 #include "Engine/Athlete/Legacy/LegacyAthleteState3D.hpp"
 #include "Engine/Athlete/Planning/FootstepPlanner3D.hpp"
 #include "Engine/Athlete/Sensing/BodyObservation3D.hpp"
@@ -23,6 +24,8 @@ struct AthleteState3D {
     ActiveBodyController3D active;
     ActiveStance3D stance;
     ActiveBodyOutput3D activeOutput;
+    // A ajuda nos pes do Fisico total: a ultima saida (telemetria).
+    PhysicalFeetAssistOutput3D feetAssistOutput;
     // Locomocao por pegadas (Etapa 3): o dono dos pes, os alvos deste tick e
     // o que a perna alcancou.
     FootstepPlanner3D footsteps;

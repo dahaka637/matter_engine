@@ -1299,6 +1299,26 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
     }
     applyCharacterControl3D(scene, slot.handle, locomotionOutput, adaptive ? &state.adaptivePhysics.output() : nullptr,
         down);
+    // A ajuda nos pes do Fisico total (PhysicalFeetAssist3D): a forca que leva
+    // o corpo a referencia passa pelos pes apoiados, no que a pelve nao deu.
+    athlete.feetAssistOutput = {};
+    if (command.controlled && adaptive && !down && !settings.defaultLocomotion
+        && settings.physicalFeetAssistPercent > 0.0f && state.adaptivePhysics.output().valid) {
+        const AdaptivePhysicalOutput3D& assist = state.adaptivePhysics.output();
+        const RagdollAnimationConstraint3D& reference = locomotionOutput.guide;
+        PhysicalFeetAssistInput3D feet;
+        feet.share = settings.physicalFeetAssistPercent * 0.01f;
+        feet.referencePosition = reference.rootPositionWorld;
+        feet.referenceOrientation = reference.rootOrientationWorld;
+        feet.referenceVelocity = reference.rootLinearVelocityWorld;
+        feet.referenceAngularVelocity = reference.rootAngularVelocityWorld;
+        feet.pelvisForce = assist.rootForceWorld;
+        feet.pelvisTorque = assist.rootTorqueWorld;
+        const BodyObservation3D observation = athlete.observer.observe(profile, body, deltaTime);
+        athlete.feetAssistOutput = physicalFeetAssist3D(profile, body, observation, feet, settings.physicalFeetAssist);
+        for (const LinkWrench3D& wrench : athlete.feetAssistOutput.wrenches)
+            scene.applyRagdollControlLinkForce(slot.handle, wrench.link, wrench.force, wrench.torque);
+    }
 }
 
 } // namespace MatterEngine

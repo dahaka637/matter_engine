@@ -485,6 +485,7 @@ add_library(MatterEngine STATIC
     src/Engine/Athlete/Legacy/LegacyBallBridge3D.cpp
     src/Engine/Athlete/Body/ActiveBodyController3D.cpp
     src/Engine/Athlete/Body/ActiveStance3D.cpp
+    src/Engine/Athlete/Body/PhysicalFeetAssist3D.cpp
     src/Engine/Athlete/Body/SupportWrench3D.cpp
     src/Engine/Athlete/Core/FootGeometry3D.cpp
     src/Engine/Athlete/Core/Kinematics3D.cpp

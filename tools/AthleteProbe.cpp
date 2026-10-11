@@ -9,6 +9,8 @@
 //      [--ativo 0|1] (o Corpo Ativo; 1 padrao)  [--pegadas 0|1] (locomocao por
 //      pegadas; 0 padrao)  [--passos 0|1] (passos de equilibrio no Ativo)
 //      [--resposta %] (a resposta da capsula no padrao)  [--teste] (os contratos)
+//      [--total] (o modo Fisico total)  [--pes %] (a ajuda nos pes dele)
+//      [--ajuda-parado %] [--ajuda-andando %]
 // Sem --cenario roda todos.
 #include "Engine/Athlete/AthleteAssets3D.hpp"
 #include "Engine/Athlete/AthleteRuntime3D.hpp"
@@ -1023,7 +1025,9 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
         capsuleSpeedScale = output.controlledSpeedScale;
         if (legacy.ballLastOutput.touched) {
             if (std::getenv("XCONDUZ") && settings.newBallHandling)
-                std::printf("  t %.3f TOQUE resultado %.2f %.2f %.2f | pedido %.2f %.2f | corpo %.2f %.2f | bola antes %.2f %.2f\n", t,
+                std::printf("  t %.3f TOQUE %s alcance %.2f lado %d superficie %d | resultado %.2f %.2f %.2f | pedido %.2f %.2f | corpo %.2f %.2f | bola antes %.2f %.2f\n", t,
+                    athlete.ballPlay.imagined() ? "IMAGINADA" : "real", athlete.ballOutput.plan.reach,
+                    athlete.ballOutput.plan.side, static_cast<int>(athlete.ballOutput.plan.surface),
                     athlete.ballOutput.outcomeVelocity.x, athlete.ballOutput.outcomeVelocity.y,
                     athlete.ballOutput.outcomeVelocity.z, control.intent.requestedVelocityWorld.x,
                     control.intent.requestedVelocityWorld.y, scene->characterState().velocity.x,
@@ -1187,6 +1191,12 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
                     o.feet[1].soleCenter.x - mid.x, o.feet[1].soleCenter.y - mid.y, o.feet[1].supporting ? "*" : "-", o.feet[1].loadNewtons,
                     cap.x - mid.x, cap.y - mid.y);
             }
+        }
+        if (std::getenv("XPES") && step % 12 == 0) {
+            const PhysicalFeetAssistOutput3D& f = athlete.feetAssistOutput;
+            std::printf("  t %.2f pes: apoio %d servo %.0f %.0f %.0f | aos pes %.0f %.0f %.0f | o chao deu %.0f %.0f %.0f\n", t,
+                f.supportCount, f.requestedForce.x, f.requestedForce.y, f.requestedForce.z, f.routedForce.x,
+                f.routedForce.y, f.routedForce.z, f.deliveredForce.x, f.deliveredForce.y, f.deliveredForce.z);
         }
         if (std::getenv("XMARCHA")) {
             const DefaultLocomotionOutput3D& o = legacy.defaultLocomotion.output();
@@ -1692,6 +1702,11 @@ int main(int argc, char** argv) {
     bool newBall = false;
     bool noRequests = false;
     bool bridge = AthleteRuntimeSettings3D {}.physicalBridge;
+    // O modo Fisico total (sempre pelo fisico) e as ajudas dele (%).
+    bool totalPhysical = false;
+    float feetAssist = AthleteRuntimeSettings3D {}.physicalFeetAssistPercent;
+    float standingAssist = AthleteRuntimeSettings3D {}.e5StandingAssistPercent;
+    float walkingAssist = AthleteRuntimeSettings3D {}.e5WalkingAssistPercent;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         const auto need = [&]() -> const char* { return i + 1 < argc ? argv[++i] : ""; };
@@ -1707,6 +1722,10 @@ int main(int argc, char** argv) {
         else if (arg == "--sem-pedido") noRequests = true;
         else if (arg == "--ponte") bridge = std::atoi(need()) != 0;
         else if (arg == "--teste") checks = true;
+        else if (arg == "--total") totalPhysical = true;
+        else if (arg == "--pes") feetAssist = static_cast<float>(std::atof(need()));
+        else if (arg == "--ajuda-parado") standingAssist = static_cast<float>(std::atof(need()));
+        else if (arg == "--ajuda-andando") walkingAssist = static_cast<float>(std::atof(need()));
         else if (arg == "--lista") {
             for (const Scenario& scenario : scenarios()) std::printf("%s\n", scenario.name.c_str());
             return 0;
@@ -1737,6 +1756,13 @@ int main(int argc, char** argv) {
     settings.capsuleResponsePercent = response;
     settings.newBallHandling = newBall;
     settings.physicalBridge = bridge;
+    settings.physicalFeetAssistPercent = feetAssist;
+    settings.e5StandingAssistPercent = standingAssist;
+    settings.e5WalkingAssistPercent = walkingAssist;
+    if (totalPhysical) {
+        settings.defaultLocomotion = false;
+        startPhysical = true;
+    }
     ProbeContext context;
     context.profile = &profile;
     context.gaitSpeeds = gaitSpeeds;

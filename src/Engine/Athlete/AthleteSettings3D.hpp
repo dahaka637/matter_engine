@@ -4,6 +4,7 @@
 #include "Engine/Athlete/Actions/BallPlay3D.hpp"
 #include "Engine/Athlete/Body/ActiveBodyController3D.hpp"
 #include "Engine/Athlete/Body/ActiveStance3D.hpp"
+#include "Engine/Athlete/Body/PhysicalFeetAssist3D.hpp"
 #include "Engine/Athlete/Planning/FootstepPlanner3D.hpp"
 #include "Engine/Character/BallControl3D.hpp"
 
@@ -106,6 +107,11 @@ struct AthleteRuntimeSettings3D {
     // deste tempo calmo (s): a inercia da volta os leva.
     float activeFollowSlack = 0.10f;
     float activeReturnTimeout = 1.2f;
+    // A ajuda nos pes do Fisico total (%; pedido do usuario, 10/10 noite): a
+    // forca que leva o corpo a referencia passa pelos pes apoiados, no que a
+    // ajuda da pelve nao deu (PhysicalFeetAssist3D). 0 desliga.
+    float physicalFeetAssistPercent = 0.0f;
+    PhysicalFeetAssistSettings3D physicalFeetAssist;
     // Locomocao por pegadas (Etapa 3): no modo padrao o clipe vira estilo e os
     // pes apoiados ficam onde pousaram (FootstepPlanner3D). Desligada ate o
     // usuario aprovar (a chave A/B do laboratorio).
