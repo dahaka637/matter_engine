@@ -293,6 +293,10 @@ namespace {
 // Mesma curva do backend PhysX: autoridade 1 e escrita exata; abaixo disso, a
 // fracao do caminho percorrida neste passo cresce com a autoridade e nunca
 // chega a 1, de modo que uma autoridade parcial segue o guia sem teleportar.
+// O amortecimento da guia de autoridade parcial (ver applyRagdollGuidePoses):
+// 0,7 quase nao passa do alvo e deixa as pernas acompanharem mais que 1.
+constexpr float GuideDampingRatio = 0.7f;
+
 float guideBlend(float authority, float dt) {
     authority = std::clamp(authority, 0.0f, 1.0f);
     if (authority >= 1.0f) return 1.0f;
@@ -474,11 +478,18 @@ void PhysicsScene3D::Impl::applyRagdollGuidePoses(float dt) {
         r.guidePoseStaged = false;
         r.guidePoseApplied = false;
         r.guideTouched = false;
-        if (!staged || r.frozen || r.kinematic || grabRagdoll == r.handle) continue;
+        if (!staged || r.frozen || r.kinematic || grabRagdoll == r.handle) {
+            r.guidePreviousKnown = false;
+            continue;
+        }
         r.guidePoseApplied = true;
+        if (r.guidePreviousCenters.size() != r.links.size()) {
+            r.guidePreviousCenters.assign(r.links.size(), JPH::Vec3::sZero());
+            r.guidePreviousRotations.assign(r.links.size(), JPH::Quat::sIdentity());
+            r.guidePreviousKnown = false;
+        }
         for (std::size_t i = 0; i < r.links.size(); ++i) {
             const float authority = r.guideAuthority[i];
-            if (authority <= 0.0f) continue;
             const JPH::BodyID id = r.links[i];
             JPH::RVec3 position;
             JPH::Quat rotation;
@@ -487,14 +498,42 @@ void PhysicsScene3D::Impl::applyRagdollGuidePoses(float dt) {
             const JPH::Vec3 local = rotation.Conjugated() * (center - position);
             const JPH::Quat targetRotation = toJolt(r.guideOrientations[i]).Normalized();
             const JPH::Vec3 targetCenter = toJolt(r.guidePositions[i]) + targetRotation * local;
-            JPH::Vec3 linear = (targetCenter - center) / dt;
-            if (!r.guided) linear -= gravity * dt;
-            const JPH::Vec3 angular = rotationVector(targetRotation * rotation.Conjugated()) / dt;
+            const JPH::Vec3 previousCenter = r.guidePreviousCenters[i];
+            const JPH::Quat previousRotation = r.guidePreviousRotations[i];
+            r.guidePreviousCenters[i] = targetCenter;
+            r.guidePreviousRotations[i] = targetRotation;
+            if (authority <= 0.0f) continue;
             const float blend = guideBlend(authority, dt);
+            JPH::Vec3 linear, angular;
+            if (authority >= 0.999f) {
+                // Inteira: o alvo num passo (o corpo da animacao).
+                linear = (targetCenter - center) / dt;
+                angular = rotationVector(targetRotation * rotation.Conjugated()) / dt;
+            } else {
+                // Parcial (a ponte, a saida do guiado, a guiagem de ossos):
+                // a velocidade da pose mais a correcao do erro num tempo que
+                // deixa a mistura amortecida - fechando o erro todo num passo,
+                // a mistura parcial era uma mola quase sem amortecimento e o
+                // corpo passava da pose (a ponte correndo lancava a pelve a 7
+                // m/s; plano v4, etapa C). (tau = 4 zeta^2 dt / mistura; com a
+                // velocidade da pose inteira e um tempo fixo, os saltos da pose
+                // viravam picos de 2000 m/s2.)
+                const float tau = std::max(dt, GuideDampingRatio * GuideDampingRatio * 4.0f * dt / std::max(1e-3f, blend));
+                JPH::Vec3 poseVelocity = JPH::Vec3::sZero(), poseSpin = JPH::Vec3::sZero();
+                if (r.guidePreviousKnown) {
+                    poseVelocity = (targetCenter - previousCenter) / dt;
+                    poseSpin = rotationVector(targetRotation * previousRotation.Conjugated()) / dt;
+                }
+                const float carry = 1.0f - dt / tau;
+                linear = poseVelocity * carry + (targetCenter - center) / tau;
+                angular = poseSpin * carry + rotationVector(targetRotation * rotation.Conjugated()) / tau;
+            }
+            if (!r.guided) linear -= gravity * dt;
             const JPH::Vec3 v = bi.GetLinearVelocity(id);
             const JPH::Vec3 w = bi.GetAngularVelocity(id);
             bi.SetLinearAndAngularVelocity(id, v + (linear - v) * blend, w + (angular - w) * blend);
         }
+        r.guidePreviousKnown = true;
         r.ragdoll->Activate();
     }
 }

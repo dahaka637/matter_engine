@@ -11,6 +11,7 @@
 //      [--resposta %] (a resposta da capsula no padrao)  [--teste] (os contratos)
 //      [--total] (o modo Fisico total)  [--pes %] (a ajuda nos pes)  [--guia %] (a guiagem
 //      de ossos do Fisico total)  [--espaco 0|1] (as pernas nunca se atravessam; 0 padrao)
+//      [--volta-suave 0|1] (a volta do fisico ao padrao suave, plano v4; 1 padrao)
 //      [--ajuda-parado %] [--ajuda-andando %]
 // Sem --cenario roda todos.
 #include "Engine/Athlete/AthleteAssets3D.hpp"
@@ -807,6 +808,13 @@ struct Metrics {
     int legCrossTicks = 0;
     float legOverlap = 0.0f;
     float gestureOverlap = 0.0f;
+    // A troca fisico -> padrao: a maior diferenca de velocidade pelve x
+    // capsula e o maior pico de aceleracao dos links nela.
+    float transitionSpeedGap = 0.0f;
+    float transitionPeak = 0.0f;
+    // E a pelve mais rapida nela e o quanto o peito inclinou em 0,1 s.
+    float transitionSpeedMax = 0.0f;
+    float transitionTrunkRate = 0.0f;
     // O movimento com a bola: a perna dele mais esticada no ar, antes do pouso
     // (fracao do comprimento, do quadril ao tornozelo, no corpo) e os ticks com o pe dele
     // arrastando no chao (a sola a menos de 2 cm do chao, andando mais que 1
@@ -961,6 +969,7 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
     const RagdollHandle3D handle = scene->createRagdoll(profile, spawn);
     RagdollState3D bodyState = scene->ragdollState(handle);
     std::size_t leftFoot = profile.links.size(), rightFoot = profile.links.size();
+    std::size_t chestLink = profile.links.size();
     std::array<std::size_t, 2> thighs { profile.links.size(), profile.links.size() };
     std::array<std::size_t, 2> shins { profile.links.size(), profile.links.size() };
     for (std::size_t i = 0; i < profile.links.size(); ++i) {
@@ -968,6 +977,7 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
         if (profile.links[i].id == "RightFoot") rightFoot = i;
         if (profile.links[i].id == "LeftThigh") thighs[0] = i;
         if (profile.links[i].id == "RightThigh") thighs[1] = i;
+        if (profile.links[i].id == "Chest") chestLink = i;
         if (profile.links[i].id == "LeftShin") shins[0] = i;
         if (profile.links[i].id == "RightShin") shins[1] = i;
     }
@@ -1020,6 +1030,8 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
     };
     metrics.trail = modeOf();
     LegacyBodyMode3D previousMode = legacy.bodyMode;
+    float transitionStart = -1.0f, transitionGuided = -1.0f;
+    std::vector<float> transitionChest;
     std::vector<PhysicsBodyState3D> previousLinks = bodyState.links;
     std::vector<Vec3> previousVelocities(bodyState.links.size());
     bool previousJump = false;
@@ -1647,6 +1659,54 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
                 footBodyVzBefore[side] = bodyVz;
             }
         }
+        // A troca fisico -> padrao (plano v4, etapa C): da saida do fisico ate
+        // 0,6 s depois do guiado, a pelve contra a capsula, a postura e os
+        // picos.
+        if (previousMode == LegacyBodyMode3D::Physical && legacy.bodyMode != LegacyBodyMode3D::Physical) {
+            transitionStart = t;
+            transitionGuided = -1.0f;
+        }
+        if (transitionStart >= 0.0f && transitionGuided < 0.0f && legacy.bodyMode != LegacyBodyMode3D::Physical
+            && legacy.bodyMode != LegacyBodyMode3D::Active)
+            transitionGuided = t;
+        if (legacy.bodyMode == LegacyBodyMode3D::Physical) {
+            transitionStart = -1.0f;
+            transitionChest.clear();
+        }
+        if (transitionStart >= 0.0f && (transitionGuided < 0.0f || t - transitionGuided < 0.6f)
+            && !bodyState.links.empty()) {
+            const PhysicsBodyState3D& pelvisLink = bodyState.links.front();
+            const Vec3 capsuleVelocity = scene->characterState().velocity;
+            const float pelvisSpeed = std::hypot(pelvisLink.linearVelocity.x, pelvisLink.linearVelocity.y);
+            const float capsuleSpeed = std::hypot(capsuleVelocity.x, capsuleVelocity.y);
+            metrics.transitionSpeedGap = std::max(metrics.transitionSpeedGap, std::abs(pelvisSpeed - capsuleSpeed));
+            float worst = 0.0f;
+            for (std::size_t i = 0; i < bodyState.links.size() && i < previousVelocities.size(); ++i)
+                worst = std::max(worst, ((bodyState.links[i].linearVelocity - previousVelocities[i]) * (1.0f / Dt)).length());
+            metrics.transitionPeak = std::max(metrics.transitionPeak, worst);
+            const Vec3 chest = chestLink < bodyState.links.size()
+                ? (bodyState.links[chestLink].orientation * profile.links[chestLink].modelOrientation.conjugate())
+                      .rotate({ 1.0f, 0.0f, 0.0f })
+                : Vec3 {};
+            // (A postura: o quanto o peito inclina em 0,1 s.)
+            transitionChest.push_back(chest.z);
+            if (transitionChest.size() > 12) {
+                metrics.transitionTrunkRate = std::max(metrics.transitionTrunkRate,
+                    std::abs(transitionChest.back() - transitionChest[transitionChest.size() - 13]));
+            }
+            metrics.transitionSpeedMax = std::max(metrics.transitionSpeedMax, pelvisSpeed);
+            if (std::getenv("XTROCA")) {
+                const float poseRoot = legacy.animationPose.linkPositions.empty() ? 0.0f : legacy.animationPose.linkPositions.front().z;
+                static Vec3 lastPoseRoot;
+                const Vec3 poseRootNow = legacy.animationPose.linkPositions.empty() ? Vec3 {} : legacy.animationPose.linkPositions.front();
+                const float poseSpeed = std::hypot(poseRootNow.x - lastPoseRoot.x, poseRootNow.y - lastPoseRoot.y) / Dt;
+                lastPoseRoot = poseRootNow;
+                std::printf("  t %.3f troca %-7s | pelve %.2f m/s pose %.2f capsula %.2f pedido %.2f | pelve z %.3f pose z %.3f | peito %+.2f | pico %.0f\n",
+                    t, modeOf(), pelvisSpeed, poseSpeed, capsuleSpeed,
+                    std::hypot(control.intent.requestedVelocityWorld.x, control.intent.requestedVelocityWorld.y),
+                    pelvisLink.position.z, poseRoot, chest.z, worst);
+            }
+        }
         if (legacy.bodyMode != previousMode) {
             if (legacy.bodyMode == LegacyBodyMode3D::Physical && metrics.trail.find("volta>animado") != std::string::npos)
                 ++metrics.relapses;
@@ -1774,6 +1834,9 @@ void printMetrics(const Scenario& scenario, const Metrics& metrics, bool footste
         std::printf(" | saida do apoio max %.3f m | alcance max %.3f m | arranca %d, acomoda %d, antes %d, no ar %d\n",
             metrics.worstLiftCorrection, metrics.worstReach, metrics.startSteps, metrics.settleSteps, metrics.earlyLifts,
             metrics.catchSteps);
+    if (metrics.transitionPeak > 0.0f)
+        std::printf("%-18s   troca fisico>padrao: pelve max %.2f m/s, pelve x capsula max %.2f m/s, pico %.0f m/s2, peito %.3f em 0,1 s\n",
+            "", metrics.transitionSpeedMax, metrics.transitionSpeedGap, metrics.transitionPeak, metrics.transitionTrunkRate);
     std::printf("%-18s   pernas: cruzadas %d ticks, sobreposicao %.3f m (no gesto %.3f)", "", metrics.legCrossTicks,
         metrics.legOverlap, metrics.gestureOverlap);
     if (metrics.moveSide >= 0)
@@ -2037,6 +2100,7 @@ int main(int argc, char** argv) {
     float feetAssist = AthleteRuntimeSettings3D {}.physicalFeetAssistPercent;
     float boneGuide = AthleteRuntimeSettings3D {}.physicalBoneGuidePercent;
     bool legClearance = AthleteRuntimeSettings3D {}.legClearance.enabled;
+    bool returnSmoothing = AthleteRuntimeSettings3D {}.returnSmoothing;
     float standingAssist = AthleteRuntimeSettings3D {}.e5StandingAssistPercent;
     float walkingAssist = AthleteRuntimeSettings3D {}.e5WalkingAssistPercent;
     for (int i = 1; i < argc; ++i) {
@@ -2058,6 +2122,7 @@ int main(int argc, char** argv) {
         else if (arg == "--pes") feetAssist = static_cast<float>(std::atof(need()));
         else if (arg == "--guia") boneGuide = static_cast<float>(std::atof(need()));
         else if (arg == "--espaco") legClearance = std::atoi(need()) != 0;
+        else if (arg == "--volta-suave") returnSmoothing = std::atoi(need()) != 0;
         else if (arg == "--ajuda-parado") standingAssist = static_cast<float>(std::atof(need()));
         else if (arg == "--ajuda-andando") walkingAssist = static_cast<float>(std::atof(need()));
         else if (arg == "--lista") {
@@ -2093,6 +2158,7 @@ int main(int argc, char** argv) {
     settings.physicalFeetAssistPercent = feetAssist;
     settings.physicalBoneGuidePercent = boneGuide;
     settings.legClearance.enabled = legClearance;
+    settings.returnSmoothing = returnSmoothing;
     settings.e5StandingAssistPercent = standingAssist;
     settings.e5WalkingAssistPercent = walkingAssist;
     if (totalPhysical) {

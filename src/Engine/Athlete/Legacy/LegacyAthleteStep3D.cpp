@@ -20,8 +20,12 @@ constexpr float GetUpHandoffHalfLife = 0.16f;
 constexpr float GetUpHandoffSeconds = 0.65f;
 // Do Ativo ao padrao: a meia-vida e a duracao da inercia (s) do corpo ate a
 // pose do clipe.
-constexpr float ActiveExitHalfLife = 0.10f;
-constexpr float ActiveExitSeconds = 0.40f;
+constexpr float ActiveExitHalfLife = 0.15f;
+constexpr float ActiveExitSeconds = 0.60f;
+// A pose da volta do fisico pela inercia (plano v4, etapa C: com 0,10 s o
+// tronco ia da postura do fisico a do clipe em ~0,15 s).
+constexpr float ReturnHalfLife = 0.14f;
+constexpr float ReturnSeconds = 0.60f;
 
 // No Ativo, o ponto de captura alem disto (m) fora da base leva ao fisico
 // pleno: sem os passos de equilibrio, a pancada que pede passo; com eles, so
@@ -233,6 +237,24 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         // anterior; rework de 06/10).
         if (command.controlled)
             command.intent.requestedVelocityWorld = command.intent.requestedVelocityWorld * state.ballSpeedScale;
+        // Voltando do fisico: a pedida sai da velocidade do corpo e vai a das
+        // teclas numa aceleracao suave (plano v4, etapa C); a capsula vai
+        // junto pela escala dela.
+        state.returnSpeedScale = 1.0f;
+        if (state.returnRampLeft > 0.0f) {
+            state.returnRampLeft = std::max(0.0f, state.returnRampLeft - deltaTime);
+            const Vec3 wanted { command.intent.requestedVelocityWorld.x, command.intent.requestedVelocityWorld.y, 0.0f };
+            Vec3 change = wanted - state.returnVelocity;
+            const float most = std::max(0.1f, settings.returnAcceleration) * deltaTime;
+            if (change.length() > most) change = change * (most / change.length());
+            state.returnVelocity += change;
+            if ((wanted - state.returnVelocity).length() < 0.02f) state.returnRampLeft = 0.0f;
+            command.intent.requestedVelocityWorld = { state.returnVelocity.x, state.returnVelocity.y,
+                command.intent.requestedVelocityWorld.z };
+            const float wantedSpeed = wanted.length();
+            if (wantedSpeed > 0.05f) state.returnSpeedScale = std::clamp(state.returnVelocity.length() / wantedSpeed, 0.0f, 1.0f);
+        }
+        output.controlledSpeedScale = state.returnSpeedScale;
     }
     command.balanceFootPlacement = e5 && settings.e5FootPlacement;
     command.walkingAssist = state.adaptivePhysics.settings().walkingAssistScale;
@@ -488,7 +510,11 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                         const Vec3 forward = (pelvis.orientation
                             * profile.links.front().modelOrientation.conjugate()).rotate({ 1.0f, 0.0f, 0.0f });
                         seed.pelvisYawRadians = std::atan2(forward.y, forward.x);
-                        seed.velocityWorld = capsule.velocity;
+                        // (A velocidade do corpo, nao a da capsula: no fisico
+                        // ele anda mais devagar que ela.)
+                        seed.velocityWorld = settings.returnSmoothing
+                            ? Vec3 { pelvis.linearVelocity.x, pelvis.linearVelocity.y, capsule.velocity.z }
+                            : capsule.velocity;
                         seed.pelvisWorld = pelvis.position;
                         std::size_t feetLinks[2] = { 0, 0 };
                         for (std::size_t i = 0; i < profile.links.size(); ++i) {
@@ -513,9 +539,24 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                         }
                         state.returnInertia.start(state.returnCoordinates, velocities, pelvis.position,
                             pelvis.orientation, pelvis.linearVelocity, pelvis.angularVelocity,
-                            handoff ? GetUpHandoffHalfLife : 0.10f, handoff ? GetUpHandoffSeconds : 0.45f);
+                            handoff ? GetUpHandoffHalfLife : settings.returnSmoothing ? ReturnHalfLife : 0.10f,
+                            handoff ? GetUpHandoffSeconds : settings.returnSmoothing ? ReturnSeconds : 0.45f);
                     } else {
                         state.returnInertia.stop();
+                    }
+                    // A velocidade sai da do corpo: a capsula com ela, e a
+                    // pedida indo as teclas aos poucos (plano v4, etapa C). (No
+                    // levantar com pressa, a arrancada ja e a dele.)
+                    // (E a capsula embaixo do corpo: a pose do padrao, presa
+                    // nela, comeca onde o corpo esta - a capsula a frente
+                    // puxava o corpo atras dela.)
+                    if (settings.returnSmoothing && settings.physicalBridge && !settings.activeBody)
+                        scene.placeCharacter({ pelvis.position.x, pelvis.position.y, groundHeight(pelvis.position) },
+                            assets.avatarSettings);
+                    if (!handoff && settings.returnSmoothing) {
+                        state.returnVelocity = { pelvis.linearVelocity.x, pelvis.linearVelocity.y, 0.0f };
+                        state.returnRampLeft = settings.returnRampSeconds;
+                        scene.setCharacterVelocity({ state.returnVelocity.x, state.returnVelocity.y, capsule.velocity.z });
                     }
                     if (settings.activeBody) {
                         // A volta pelo Corpo Ativo: o corpo fisico vai a pose
@@ -550,6 +591,7 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                         state.bridgeSeconds = 0.0f;
                         const bool moving = handoff || command.intent.requestedVelocityWorld.lengthSquared() > 0.25f;
                         state.bridgeDuration = moving ? settings.bridgeMovingSeconds : settings.bridgeSeconds;
+                        if (!settings.returnSmoothing) state.bridgeDuration = moving ? 0.30f : 0.45f;
                     } else {
                         scene.setRagdollGuided(slot.handle, true);
                         state.guided = true;
@@ -809,7 +851,7 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         state.ballLastOutput = {};
         state.ballLastOutput.touched = out.touched;
         state.ballSpeedScale = out.speedScale;
-        output.controlledSpeedScale = out.speedScale;
+        output.controlledSpeedScale = out.speedScale * state.returnSpeedScale;
         state.ballStability = 0.0f;
     } else if (command.controlled && !body.links.empty()) {
         // (Manejo V3.)
@@ -1092,7 +1134,8 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                         velocities[i] = { rate[0], rate[1], rate[2] };
                     }
                     state.returnInertia.start(state.returnCoordinates, velocities, pelvis.position, pelvis.orientation,
-                        pelvis.linearVelocity, pelvis.angularVelocity, ActiveExitHalfLife, ActiveExitSeconds);
+                        pelvis.linearVelocity, pelvis.angularVelocity, settings.returnSmoothing ? ActiveExitHalfLife : 0.10f,
+                        settings.returnSmoothing ? ActiveExitSeconds : 0.40f);
                 }
                 scene.setRagdollGuided(slot.handle, true);
                 state.guided = true;
@@ -1137,7 +1180,7 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                     state.bodyModeSeconds = 0.0f;
                 }
             } else if (state.bodyMode == BodyMode::Returning) {
-                constexpr float ReturnSeconds = 0.35f;
+                constexpr float ReturnSeconds = 0.60f;
                 const float x = std::clamp(state.bodyModeSeconds / ReturnSeconds, 0.0f, 1.0f);
                 const float share = x * x * (3.0f - 2.0f * x);
                 for (std::size_t i = 0; i < coordinates.size() && i < state.returnCoordinates.size(); ++i)

@@ -76,6 +76,12 @@ struct LegacyAthleteState3D {
     std::vector<Vec3> returnCoordinates;
     // A volta pela inercia ("Volta do fisico acompanhando o corpo").
     PoseInertializer3D returnInertia;
+    // A velocidade na volta (plano v4, etapa C): parte da do corpo e vai a
+    // pedida numa aceleracao suave, por ate returnRampLeft s - a capsula
+    // saltava para a pedida e a pose do padrao, presa nela, puxava o corpo.
+    Vec3 returnVelocity;
+    float returnRampLeft = 0.0f;
+    float returnSpeedScale = 1.0f;
     // A ponte fisico -> padrao (plano v2, fase D; o modo Ativo por dentro):
     // o tempo nela e quanto ela dura (s).
     bool bridge = false;

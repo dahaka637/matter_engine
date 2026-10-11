@@ -191,6 +191,11 @@ struct PhysicsScene3D::Impl final : public JPH::ContactListener,
         std::vector<Vec3> guidePositions;
         std::vector<Quaternion> guideOrientations;
         std::vector<float> guideAuthority;
+        // O alvo de cada link no passo anterior (centro de massa e giro): a
+        // velocidade da pose, na autoridade parcial.
+        bool guidePreviousKnown = false;
+        std::vector<JPH::Vec3> guidePreviousCenters;
+        std::vector<JPH::Quat> guidePreviousRotations;
     };
 
     struct RagdollSlot {

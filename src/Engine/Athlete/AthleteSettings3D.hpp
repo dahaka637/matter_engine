@@ -90,8 +90,18 @@ struct AthleteRuntimeSettings3D {
     // no padrao nao entra nela.
     bool physicalBridge = true;
     float bridgeSeconds = 0.45f;
-    float bridgeMovingSeconds = 0.30f;
+    float bridgeMovingSeconds = 0.45f;
     float bridgeAuthorityStart = 0.15f;
+    // A volta suave (plano v4, etapa C; desligada, a de antes): a capsula
+    // embaixo do corpo e com a velocidade dele, a pedida subindo aos poucos,
+    // a pose saindo do corpo mais devagar.
+    bool returnSmoothing = true;
+    // Na volta, a velocidade pedida sai da do corpo e vai a das teclas nesta
+    // aceleracao (m/s2), por ate returnRampSeconds (s) (plano v4, etapa C: a
+    // capsula ia a pedida a 14 m/s2 e o corpo, mais devagar no fisico,
+    // disparava atras dela).
+    float returnAcceleration = 2.5f;
+    float returnRampSeconds = 0.8f;
     ActiveBodySettings3D activeBodySettings;
     ActiveStanceSettings3D activeStanceSettings;
     float activeEnterImpulse = 1.0f;
