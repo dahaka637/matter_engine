@@ -16,6 +16,8 @@
 // Sem --cenario roda todos.
 #include "Engine/Athlete/AthleteAssets3D.hpp"
 #include "Engine/Athlete/AthleteRuntime3D.hpp"
+#include "Engine/Athlete/Dribble/BodyForecast3D.hpp"
+#include "Engine/Athlete/Dribble/ContactPose3D.hpp"
 #include "Engine/Athlete/Planning/MotionPlanner3D.hpp"
 #include "Engine/Control/AdaptivePhysicalCharacter3D.hpp"
 #include "Engine/Materials/MaterialLibrary.hpp"
@@ -933,6 +935,10 @@ struct Metrics {
     std::array<bool, 2> forecastWasPlanted { true, true };
     std::vector<float> forecastTimeErrors;
     std::vector<float> forecastPositionErrors;
+    // Plano v5 (E2): a capsula prevista 0,3 s antes contra a de verdade (m).
+    std::vector<std::pair<float, Vec3>> bodyForecasts;
+    std::vector<float> bodyForecastErrors;
+    float lastFacingYaw = 0.0f;
     int stanceTremor = 0;
     int bodyTremor = 0;
     float lockGap = 0.0f;
@@ -1960,6 +1966,32 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
                     metrics.footSlide.push_back(std::hypot(link.linearVelocity.x, link.linearVelocity.y));
             }
         }
+        // Plano v5 (E2): a capsula prevista 0,3 s antes contra a de verdade.
+        if (t > 0.5f && legacy.defaultLocomotion.output().valid) {
+            const PhysicsCharacterState3D& now = scene->characterState();
+            while (!metrics.bodyForecasts.empty() && metrics.bodyForecasts.front().first <= t + 1e-4f) {
+                const Vec3 predicted = metrics.bodyForecasts.front().second;
+                metrics.bodyForecastErrors.push_back(std::hypot(predicted.x - now.position.x, predicted.y - now.position.y));
+                metrics.bodyForecasts.erase(metrics.bodyForecasts.begin());
+            }
+            const AthleteCapsuleResponse3D response = athleteCapsuleResponse3D(settings.capsuleResponsePercent);
+            BodyForecastInput3D in;
+            in.pelvisGround = { now.position.x, now.position.y, 0.0f };
+            in.velocity = { now.velocity.x, now.velocity.y, 0.0f };
+            in.requested = { control.intent.requestedVelocityWorld.x, control.intent.requestedVelocityWorld.y, 0.0f };
+            in.acceleration = response.acceleration;
+            in.deceleration = response.deceleration;
+            in.brake = response.brake;
+            in.turnRate = response.turnRate;
+            const float yawNow = legacy.defaultLocomotion.output().facingYawRadians;
+            in.facingYaw = yawNow;
+            in.facingRate = std::remainder(yawNow - metrics.lastFacingYaw, 6.2831853f) / Dt;
+            metrics.lastFacingYaw = yawNow;
+            in.horizon = 0.35f;
+            BodyForecast3D forecast;
+            forecast.build(in);
+            if (step % 6 == 0) metrics.bodyForecasts.push_back({ t + 0.3f, forecast.pelvisGround(0.3f) });
+        }
         // Plano v5 (E1): a previsao do pouso contra o de verdade.
         if (t > 0.35f && legacy.bodyMode == LegacyBodyMode3D::Animated && legacy.defaultLocomotion.output().valid) {
             const DefaultLocomotionOutput3D& style = legacy.defaultLocomotion.output();
@@ -2094,6 +2126,10 @@ void printMetrics(const Scenario& scenario, const Metrics& metrics, bool footste
             metrics.latencies.empty() ? 0.0f : latencySum / static_cast<float>(metrics.latencies.size()), latencyMax,
             metrics.crazyLegTicks, metrics.kneeFlipTicks, metrics.legSpinMax, metrics.longestFlight);
     }
+    if (!metrics.bodyForecastErrors.empty())
+        std::printf("%-18s   previsao do corpo (0,3 s antes): %zu | med %.3f p95 %.3f max %.3f m\n", "",
+            metrics.bodyForecastErrors.size(), percentile(metrics.bodyForecastErrors, 0.5f),
+            percentile(metrics.bodyForecastErrors, 0.95f), percentile(metrics.bodyForecastErrors, 1.0f));
     if (!metrics.forecastTimeErrors.empty())
         std::printf("%-18s   previsao do pouso (0,2-0,3 s antes): %zu pousos | instante med %.3f max %.3f s | pe med %.3f max %.3f m\n",
             "", metrics.forecastTimeErrors.size(), percentile(metrics.forecastTimeErrors, 0.5f),
@@ -2384,8 +2420,95 @@ int runChecks(const ProbeContext& context) {
 
 } // namespace
 
+// Plano v5 (E3): as poses de contato paradas - o corpo de pe (a pose de
+// ligacao, a pelve 5 cm mais baixa), uma perna com a parte certa do pe
+// encostada na bola, para os 8 rumos do toque e as duas pernas. Um quadro por
+// pose (0,1 s cada), para a folha de quadros.
+int writeContactPoses(const RagdollProfile3D& profile, const std::string& path) {
+    const ContactFeet3D feet = resolveContactFeet3D(profile);
+    if (!feet.valid) {
+        std::fprintf(stderr, "perfil sem a geometria dos pes\n");
+        return 1;
+    }
+    FILE* file = std::fopen(path.c_str(), "w");
+    if (file == nullptr) return 1;
+    std::fprintf(file, "S poses_contato\n");
+    const Quaternion rootOrientation = profile.links.front().modelOrientation;
+    // (A pelve do modelo fica na origem: de pe, na altura de pe do perfil.)
+    const Vec3 standingRoot { 0.0f, 0.0f, profile.standingRootHeightMeters };
+    const Vec3 rootPosition = standingRoot - Vec3 { 0.0f, 0.0f, 0.05f };
+    std::vector<Vec3> bind(profile.links.size(), Vec3 {});
+    RagdollAnimationPose3D standing;
+    athleteWorldPose3D(profile, bind, standingRoot, rootOrientation, standing);
+    const float radius = 0.11f;
+    const Vec3 forward { 1.0f, 0.0f, 0.0f }, left { 0.0f, 1.0f, 0.0f };
+    int frame = 0;
+    for (int side = 0; side < 2; ++side) {
+        const float out = side == 0 ? 1.0f : -1.0f;
+        for (int k = 0; k < 8; ++k) {
+            const float angle = static_cast<float>(k) * 0.785398f;
+            const Vec3 push { std::cos(angle), std::sin(angle), 0.0f };
+            // (A bola onde esta perna a toca bem nesse rumo.)
+            const Vec3 ball = Vec3 { 0.0f, 0.0f, radius } + forward * (0.26f * std::cos(angle) + 0.06f)
+                + left * (0.13f * out + 0.10f * std::sin(angle));
+            ContactStyle3D style = ContactStyle3D::Front;
+            BallTouchSurface3D surface = BallTouchSurface3D::Inside;
+            if (!contactStyle3D(side, ball, rootPosition, forward, push, false, BallActionKind3D::Dribble, 0.0f, style,
+                    surface))
+                continue;
+            ContactRequest3D request;
+            request.side = side;
+            request.surface = surface;
+            request.style = style;
+            request.ball = ball;
+            request.radius = radius;
+            request.push = push;
+            request.bodyForward = forward;
+            request.power = 0.4f;
+            const ContactPose3D pose = contactPose3D(feet, request);
+            std::vector<Vec3> coordinates = bind;
+            // O apoio plano no lugar dele (a pelve desceu) e a perna do toque.
+            const std::size_t support = static_cast<std::size_t>(1 - side);
+            const std::size_t supportFoot = feet.legs.foot[support];
+            solveAthleteLeg3D(profile, feet.legs, 1 - side, coordinates, rootPosition, rootOrientation,
+                standing.linkPositions[supportFoot] + standing.linkOrientations[supportFoot].rotate(feet.legs.ankleInFoot[support]),
+                forward, standing.linkOrientations[supportFoot]);
+            const Vec3 knee = (forward + left * (out * (surface == BallTouchSurface3D::Outside ? -0.25f : 0.25f))).normalized();
+            solveAthleteLeg3D(profile, feet.legs, side, coordinates, rootPosition, rootOrientation, pose.ankle, knee,
+                pose.orientation);
+            RagdollAnimationPose3D world;
+            athleteWorldPose3D(profile, coordinates, rootPosition, rootOrientation, world);
+            RagdollState3D state;
+            state.links.resize(profile.links.size());
+            for (std::size_t i = 0; i < profile.links.size(); ++i) {
+                state.links[i].position = world.linkPositions[i];
+                state.links[i].orientation = world.linkOrientations[i];
+            }
+            std::fprintf(file, "T\n");
+            dumpFrame(file, profile, state, 0.1f * static_cast<float>(frame), 0);
+            std::fprintf(file, "K %.4f %.4f %.4f 0 0 0\n", ball.x, ball.y, ball.z);
+            const float gap = contactFootGap3D(feet, side, world.linkPositions[feet.legs.foot[static_cast<std::size_t>(side)]],
+                world.linkOrientations[feet.legs.foot[static_cast<std::size_t>(side)]], ball, radius);
+            const Vec3 hip = world.linkPositions.front() + world.linkOrientations.front().rotate(feet.legs.hipInPelvis[static_cast<std::size_t>(side)]);
+            if (std::getenv("XPOSES"))
+                std::printf("  bola %.3f %.3f %.3f | pe %.3f %.3f %.3f | tornozelo %.3f %.3f %.3f | ponto %.3f %.3f %.3f | quadril %.3f %.3f %.3f | pe no corpo %.3f %.3f %.3f | raiz %.3f %.3f %.3f\n",
+                    ball.x, ball.y, ball.z, pose.foot.x, pose.foot.y, pose.foot.z, pose.ankle.x, pose.ankle.y, pose.ankle.z,
+                    pose.surfacePoint.x, pose.surfacePoint.y, pose.surfacePoint.z, hip.x, hip.y, hip.z,
+                    world.linkPositions[feet.legs.foot[static_cast<std::size_t>(side)]].x,
+                    world.linkPositions[feet.legs.foot[static_cast<std::size_t>(side)]].y,
+                    world.linkPositions[feet.legs.foot[static_cast<std::size_t>(side)]].z, rootPosition.x, rootPosition.y, rootPosition.z);
+            std::printf("quadro %2d perna %c rumo %3d superficie %d estilo %d | folga %.3f m | alcance %.2f\n", frame,
+                side == 0 ? 'E' : 'D', k * 45, static_cast<int>(surface), static_cast<int>(style), gap,
+                (pose.ankle - hip).length() / feet.legLength[static_cast<std::size_t>(side)]);
+            ++frame;
+        }
+    }
+    std::fclose(file);
+    return 0;
+}
+
 int main(int argc, char** argv) {
-    std::string only, dumpPath;
+    std::string only, dumpPath, contactPoses;
     int every = 3;
     bool startPhysical = false;
     bool activeBody = AthleteRuntimeSettings3D {}.activeBody;
@@ -2419,6 +2542,7 @@ int main(int argc, char** argv) {
         else if (arg == "--sem-pedido") noRequests = true;
         else if (arg == "--ponte") bridge = std::atoi(need()) != 0;
         else if (arg == "--teste") checks = true;
+        else if (arg == "--poses-contato") contactPoses = need();
         else if (arg == "--total") totalPhysical = true;
         else if (arg == "--pes") feetAssist = static_cast<float>(std::atof(need()));
         else if (arg == "--guia") boneGuide = static_cast<float>(std::atof(need()));
@@ -2475,6 +2599,7 @@ int main(int argc, char** argv) {
     context.runtimeAssets.defaultClips = &defaultClips;
     context.runtimeAssets.avatarSettings = avatar;
     if (checks) return runChecks(context);
+    if (!contactPoses.empty()) return writeContactPoses(profile, contactPoses);
 
     FILE* dump = dumpPath.empty() ? nullptr : std::fopen(dumpPath.c_str(), "w");
     std::printf("cenario            | deslize pe no chao med/p95/max m/s | pico acel tronco+bracos / pernas | salto pose | modos (trocas; animado/ativo/fisico/volta s; ajuda N.s) | bola\n");
