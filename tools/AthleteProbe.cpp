@@ -374,6 +374,88 @@ std::vector<Scenario> scenarios() {
             list.push_back(s);
         }
     }
+    // Plano v5 (E0): o manejo como o usuario joga (11/10 noite: "manuseios
+    // consecutivos rapidos com mudanca de direcao", "manejando rapidamente a
+    // bola para a direita", intercalando). As teclas dao o movimento e o rumo
+    // do toque (como no laboratorio); o clique (forca baixa, o clique rapido)
+    // sai sempre que a bola esta ao alcance e o intervalo passou.
+    {
+        const auto add = [&list](const char* name, float seconds, float cooldown, float distance, Vec3 ball,
+                             std::function<Keys(float)> keys) {
+            Scenario s { name, seconds, std::move(keys) };
+            s.ball = true;
+            s.ballStart = ball;
+            s.autoDistance = distance;
+            s.autoKind = BallActionKind3D::Dribble;
+            s.autoCooldown = cooldown;
+            s.autoPower = 0.15f;
+            list.push_back(s);
+        };
+        // O rumo das teclas (rad, 0 frente, + esquerda) e o tamanho.
+        const auto heading = [](float angle, float amount) {
+            Keys k;
+            k.forward = std::cos(angle) * amount;
+            k.left = std::sin(angle) * amount;
+            return k;
+        };
+        constexpr float Quarter = 1.5707963f;
+        // Parado (quase): o rumo trocando a cada 0,18 s - direita, esquerda,
+        // frente, tras.
+        add("rajada_parado", 4.0f, 0.16f, 1.0f, { 0.30f, 0.0f, 0.11f }, [heading](float t) {
+            static const float angles[4] = { -Quarter, Quarter, 0.0f, 2.0f * Quarter };
+            if (t < 0.3f) return Keys {};
+            return heading(angles[static_cast<int>((t - 0.3f) / 0.18f) % 4], 0.3f); });
+        add("rajada_anda", 5.0f, 0.18f, 1.1f, { 0.40f, 0.0f, 0.11f }, [heading](float t) {
+            if (t < 0.3f) return Keys {};
+            return heading((static_cast<int>((t - 0.3f) / 0.2f) % 2 == 0 ? 1.0f : -1.0f) * 1.05f, 0.4f); });
+        add("rajada_corre", 5.0f, 0.2f, 1.2f, { 0.55f, 0.0f, 0.11f }, [heading](float t) {
+            if (t < 0.3f) return Keys {};
+            return heading((static_cast<int>((t - 0.3f) / 0.22f) % 2 == 0 ? 1.0f : -1.0f) * 0.785f, 1.0f); });
+        // Correndo, o rumo das teclas girando 90 graus a cada 0,4 s.
+        add("rajada_vira_corre", 5.0f, 0.2f, 1.3f, { 0.55f, 0.0f, 0.11f }, [heading](float t) {
+            if (t < 0.3f) return Keys {};
+            return heading(static_cast<float>(static_cast<int>((t - 0.3f) / 0.4f) % 4) * Quarter, 1.0f); });
+        // Manejando para a direita, sem parar.
+        add("continuo_direita_parado", 4.0f, 0.25f, 1.0f, { 0.10f, -0.30f, 0.11f }, [heading](float t) {
+            return t < 0.3f ? Keys {} : heading(-Quarter, 0.25f); });
+        add("continuo_direita_anda", 5.0f, 0.25f, 1.1f, { 0.10f, -0.35f, 0.11f }, [heading](float t) {
+            return t < 0.3f ? Keys {} : heading(-Quarter, 0.5f); });
+        add("continuo_direita_corre", 5.0f, 0.22f, 1.2f, { 0.10f, -0.45f, 0.11f }, [heading](float t) {
+            return t < 0.3f ? Keys {} : heading(-Quarter, 1.0f); });
+        // Intercalando: frente, frente-direita, frente, frente-esquerda...
+        add("intercala_corre", 5.0f, 0.22f, 1.2f, { 0.55f, 0.0f, 0.11f }, [heading](float t) {
+            static const float angles[4] = { 0.0f, -0.785f, 0.0f, 0.785f };
+            if (t < 0.3f) return Keys {};
+            return heading(angles[static_cast<int>((t - 0.3f) / 0.25f) % 4], 1.0f); });
+        // Parado: frente, tras (a sola), direita, esquerda.
+        add("intercala_parado", 4.0f, 0.28f, 1.0f, { 0.30f, 0.0f, 0.11f }, [heading](float t) {
+            static const float angles[4] = { 0.0f, 2.0f * Quarter, -Quarter, Quarter };
+            if (t < 0.3f) return Keys {};
+            return heading(angles[static_cast<int>((t - 0.3f) / 0.3f) % 4], 0.25f); });
+        // Com a camera (o olhar) girando, como o mouse no laboratorio: o rumo do
+        // corpo vira junto e as teclas sao relativas a ela.
+        add("rajada_camera_corre", 5.0f, 0.2f, 1.2f, { 0.55f, 0.0f, 0.11f }, [heading](float t) {
+            if (t < 0.3f) return Keys {};
+            Keys k = heading((static_cast<int>((t - 0.3f) / 0.22f) % 2 == 0 ? 1.0f : -1.0f) * 0.785f, 1.0f);
+            k.cameraYaw = 1.2f * std::sin(5.2f * (t - 0.3f));
+            return k; });
+        add("rajada_camera_parado", 4.0f, 0.16f, 1.0f, { 0.30f, 0.0f, 0.11f }, [heading](float t) {
+            static const float angles[4] = { -Quarter, Quarter, 0.0f, 2.0f * Quarter };
+            if (t < 0.3f) return Keys {};
+            Keys k = heading(angles[static_cast<int>((t - 0.3f) / 0.18f) % 4], 0.3f);
+            k.cameraYaw = 3.0f * (t - 0.3f);
+            return k; });
+        add("rajada_camera_anda", 5.0f, 0.18f, 1.1f, { 0.40f, 0.0f, 0.11f }, [heading](float t) {
+            if (t < 0.3f) return Keys {};
+            Keys k = heading((static_cast<int>((t - 0.3f) / 0.2f) % 2 == 0 ? 1.0f : -1.0f) * 1.05f, 0.4f);
+            k.cameraYaw = 0.9f * std::sin(7.0f * (t - 0.3f));
+            return k; });
+        // Parado, sai correndo, para - tocando o tempo todo.
+        add("para_toca_sai", 5.0f, 0.3f, 1.1f, { 0.35f, 0.0f, 0.11f }, [](float t) {
+            Keys k;
+            k.forward = t >= 1.3f && t < 3.5f ? 1.0f : 0.0f;
+            return k; });
+    }
     // Manejo v2 (plano v2, fase C): os casos do teste do usuario. A bola fora
     // do lugar (a 0,35, 0,65 e 0,9 m da pelve, em oito angulos) parado,
     // andando e correndo, o toque pedido no instante em que ela e posta; o
@@ -830,6 +912,19 @@ struct Metrics {
     // passada o pe nunca volta - o "chicote").
     std::array<float, 6> phaseBackSpeed {};
     int moveDragTicks = 0;
+    // Plano v5 (E0): a folga entre o pe (a caixa dele, a mais perto da bola
+    // dos dois) e a bola no instante da forca (m), o atraso do clique a forca
+    // (s), a "perna louca" (ticks com coxa ou canela girando a mais de 30
+    // rad/s; e com o joelho virando de lado mais de 60 graus num tick) e o
+    // maior voo (os dois pes no ar, s).
+    std::vector<float> contactGaps;
+    std::vector<float> latencies;
+    std::vector<float> pendingRequests;
+    int crazyLegTicks = 0;
+    int kneeFlipTicks = 0;
+    float legSpinMax = 0.0f;
+    float longestFlight = 0.0f;
+    float flightRun = 0.0f;
     int stanceTremor = 0;
     int bodyTremor = 0;
     float lockGap = 0.0f;
@@ -1204,6 +1299,7 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
         if (control.ballRequest != BallActionKind3D::None) {
             ++metrics.requests;
             if (metrics.requestTime < 0.0f) metrics.requestTime = t;
+            metrics.pendingRequests.push_back(t);
         }
         if (std::getenv("XPAREDE")) {
             float wallImpulse = 0.0f;
@@ -1240,6 +1336,31 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
                     scene->characterState().velocity.y, ballState.linearVelocity.x, ballState.linearVelocity.y);
             ++metrics.touches;
             if (dump != nullptr) std::fprintf(dump, "T\n");
+            // (Plano v5: o atraso do pedido mais antigo e a folga pe-bola.)
+            if (!metrics.pendingRequests.empty()) {
+                metrics.latencies.push_back(t - metrics.pendingRequests.front());
+                metrics.pendingRequests.erase(metrics.pendingRequests.begin());
+            }
+            {
+                const AthleteLegs3D legs = resolveAthleteLegs3D(profile);
+                const float radius = scene->inflatedBallProfile(ballHandle).radiusMeters;
+                float gap = 10.0f;
+                for (std::size_t side = 0; side < 2 && legs.valid; ++side) {
+                    const std::size_t link = legs.foot[side];
+                    if (link >= bodyState.links.size()) continue;
+                    const RagdollCapsuleDefinition3D& collider = profile.links[link].collider;
+                    if (collider.shape != RagdollColliderShape3D::Box) continue;
+                    const Quaternion q = (bodyState.links[link].orientation * collider.localOrientation).normalized();
+                    const Vec3 center = bodyState.links[link].position
+                        + bodyState.links[link].orientation.rotate(collider.localPosition);
+                    const Vec3 local = q.conjugate().rotate(ballState.position - center);
+                    const Vec3 h = collider.boxHalfExtents;
+                    const Vec3 nearest { std::clamp(local.x, -h.x, h.x), std::clamp(local.y, -h.y, h.y),
+                        std::clamp(local.z, -h.z, h.z) };
+                    gap = std::min(gap, (local - nearest).length() - radius);
+                }
+                metrics.contactGaps.push_back(std::max(0.0f, gap));
+            }
             if (metrics.forceTime < 0.0f && settings.newBallHandling) {
                 metrics.forceTime = t;
                 metrics.moveSide = athlete.ballPlay.move().side();
@@ -1831,6 +1952,43 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
                     metrics.footSlide.push_back(std::hypot(link.linearVelocity.x, link.linearVelocity.y));
             }
         }
+        // Plano v5 (E0): a "perna louca" (coxa ou canela girando a mais de 30
+        // rad/s; o joelho virando de lado mais de 60 graus num tick) e o voo
+        // (os dois pes no ar).
+        if (t > 0.35f && scenario.ball && legacy.bodyMode == LegacyBodyMode3D::Animated) {
+            const AthleteLegs3D legs = resolveAthleteLegs3D(profile);
+            if (legs.valid) {
+                bool crazy = false, flipped = false;
+                for (std::size_t side = 0; side < 2; ++side) {
+                    for (const std::size_t link : { legs.thigh[side], legs.shin[side] }) {
+                        if (link >= bodyState.links.size() || link >= previousLinks.size()) continue;
+                        const Quaternion change = (previousLinks[link].orientation.conjugate() * bodyState.links[link].orientation).normalized();
+                        const float angle = 2.0f * std::acos(std::clamp(std::abs(change.w), 0.0f, 1.0f));
+                        metrics.legSpinMax = std::max(metrics.legSpinMax, angle / Dt);
+                        if (angle / Dt > 30.0f) crazy = true;
+                    }
+                    const auto pole = [&](const std::vector<PhysicsBodyState3D>& links, Vec3& out) {
+                        const Vec3 hip = links.front().position + links.front().orientation.rotate(legs.hipInPelvis[side]);
+                        const Vec3 knee = links[legs.shin[side]].position;
+                        const Vec3 ankle = links[legs.foot[side]].position + links[legs.foot[side]].orientation.rotate(legs.ankleInFoot[side]);
+                        const Vec3 axis = ankle - hip;
+                        if (axis.lengthSquared() < 1e-6f) return false;
+                        const Vec3 unit = axis.normalized();
+                        const Vec3 off = (knee - hip) - unit * dot(knee - hip, unit);
+                        if (off.length() < 0.04f) return false;
+                        out = off.normalized();
+                        return true;
+                    };
+                    Vec3 before, now;
+                    if (pole(previousLinks, before) && pole(bodyState.links, now) && dot(before, now) < 0.5f) flipped = true;
+                }
+                if (crazy) ++metrics.crazyLegTicks;
+                if (flipped) ++metrics.kneeFlipTicks;
+                const float left = bodyState.links[legs.foot[0]].position.z, right = bodyState.links[legs.foot[1]].position.z;
+                metrics.flightRun = left > 0.10f && right > 0.10f ? metrics.flightRun + Dt : 0.0f;
+                metrics.longestFlight = std::max(metrics.longestFlight, metrics.flightRun);
+            }
+        }
         previousLinks = bodyState.links;
         metrics.lowestPelvis = std::min(metrics.lowestPelvis, bodyState.links.front().position.z);
         if (bodyState.links.front().position.z < 0.5f) metrics.fell = true;
@@ -1880,6 +2038,19 @@ void printMetrics(const Scenario& scenario, const Metrics& metrics, bool footste
     if (metrics.ballDistanceCount > 0)
         std::printf("%-18s   conduzir: bola longe (>2,5 m) %.2f s, distancia media %.2f m\n", "", metrics.ballFarSeconds,
             metrics.ballDistanceSum / static_cast<float>(metrics.ballDistanceCount));
+    if (metrics.requests > 0) {
+        // (Plano v5: a folga pe-bola na forca, o atraso do clique a forca, a
+        // perna louca e o voo.)
+        float latencySum = 0.0f, latencyMax = 0.0f;
+        for (const float value : metrics.latencies) {
+            latencySum += value;
+            latencyMax = std::max(latencyMax, value);
+        }
+        std::printf("%-18s   v5: pedidos %d toques %d | folga pe-bola na forca med %.3f max %.3f m | atraso med %.3f max %.3f s | perna louca %d joelho virando %d giro max %.1f rad/s | voo max %.3f s\n",
+            "", metrics.requests, metrics.touches, percentile(metrics.contactGaps, 0.5f), percentile(metrics.contactGaps, 1.0f),
+            metrics.latencies.empty() ? 0.0f : latencySum / static_cast<float>(metrics.latencies.size()), latencyMax,
+            metrics.crazyLegTicks, metrics.kneeFlipTicks, metrics.legSpinMax, metrics.longestFlight);
+    }
     if (metrics.capsuleUp > 0.0f || metrics.pelvisUp > 0.0f)
         std::printf("%-18s   subida max: capsula %.2f m/s, pelve %.2f m/s, pelve sobre a capsula %.2f m\n", "",
             metrics.capsuleUp, metrics.pelvisUp, metrics.pelvisOverCapsule);
