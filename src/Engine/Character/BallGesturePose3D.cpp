@@ -385,6 +385,34 @@ void applyBallGesturePose3D(const RagdollProfile3D& profile, const BallGestureLe
         }
     }
     if (!solveLegs) return;
+    if (gesture.perLeg) {
+        // Plano v5: cada perna da pose da locomocao ate o alvo dela, pelo peso;
+        // sem peso, presa onde a locomocao a pos (a pelve mexeu em volta).
+        for (int side = 0; side < 2; ++side) {
+            const BallGesturePose3D::Leg& leg = gesture.legs[static_cast<std::size_t>(side)];
+            const float weight = std::clamp(leg.weight, 0.0f, 1.0f);
+            if (weight > 0.001f) {
+                const Vec3 ankle = baseAnkle[side] + (leg.ankle - baseAnkle[side]) * weight;
+                Vec3 knee = baseKnee[side] + (leg.knee - baseKnee[side]) * weight;
+                if (knee.lengthSquared() < 1e-6f) knee = leg.knee;
+                const std::vector<Vec3> before = coordinates;
+                solveBallGestureLeg3D(profile, legs, side, coordinates, rootPosition, rootOrientation, ankle,
+                    knee.normalized(), nlerpQuat(baseFoot[side], leg.foot, weight));
+                // (Bem no comeco e no fim, a perna da locomocao: o IK da mesma
+                // pose nao e identico a ela.)
+                const float keep = smooth(weight * 5.0f);
+                if (keep < 1.0f) {
+                    const std::size_t s = static_cast<std::size_t>(side);
+                    for (const std::size_t index : { legs.thigh[s], legs.shin[s], legs.foot[s] })
+                        coordinates[index] = before[index] + (coordinates[index] - before[index]) * keep;
+                }
+            } else if (gesture.holdSupport && w > 0.001f) {
+                solveBallGestureLeg3D(profile, legs, side, coordinates, rootPosition, rootOrientation, baseAnkle[side],
+                    baseKnee[side], baseFoot[side]);
+            }
+        }
+        return;
+    }
     // A perna que joga: da pose da locomocao ate o alvo do gesto, pelo peso.
     const float lw = std::clamp(gesture.legWeight, 0.0f, 1.0f);
     const Vec3 kickAnkle = baseAnkle[kick] + (gesture.ankle - baseAnkle[kick]) * lw;

@@ -492,6 +492,31 @@ void DefaultLocomotion3D::prepare(const RagdollProfile3D& profile, const Charact
                 if (distance < best) { best = distance; gait.crossing = phase; }
             }
         }
+        // Plano v5: os pes pelo ciclo em relacao a pelve, no rumo dela (a
+        // previsao do pe no futuro - o manejo planeja o toque dentro do
+        // balanco).
+        const RagdollLinkDefinition3D& root = profile.links.front();
+        for (Gait& gait : m_gaits) {
+            if (gait.clip == nullptr || leftFoot == 0 || rightFoot == 0) continue;
+            for (int k = 0; k < Gait::FeetSamples; ++k) {
+                const float phase = static_cast<float>(k) / static_cast<float>(Gait::FeetSamples);
+                const RagdollAnimationPose3D pose = sampleRagdollAnimationPose3D(profile, gait.clip,
+                    fraction(phase + gait.touchdown) * gait.clip->durationSeconds, true);
+                const Vec3 pelvisForward = (pose.linkOrientations.front() * root.modelOrientation.conjugate())
+                    .rotate({ 1.0f, 0.0f, 0.0f });
+                const Quaternion back = yawRotation(-std::atan2(pelvisForward.y, pelvisForward.x));
+                const std::size_t feet[2] = { leftFoot, rightFoot };
+                for (std::size_t side = 0; side < 2; ++side) {
+                    gait.feet[side][static_cast<std::size_t>(k)] = back.rotate(pose.linkPositions[feet[side]] - pose.linkPositions.front());
+                    gait.feetTurn[side][static_cast<std::size_t>(k)] = (back * pose.linkOrientations[feet[side]]).normalized();
+                }
+            }
+            for (std::size_t side = 0; side < 2; ++side) {
+                Vec3 sum {};
+                for (const Vec3& foot : gait.feet[side]) sum += foot;
+                gait.feetMean[side] = sum * (1.0f / static_cast<float>(Gait::FeetSamples));
+            }
+        }
     }
     m_arcs = { animations.runForwardArcLeft, animations.runForwardArcRight, animations.runBackwardArcRight };
     for (std::size_t k = 0; k < m_arcs.size(); ++k) {
@@ -1771,6 +1796,8 @@ void DefaultLocomotion3D::update(const RagdollProfile3D& profile,
     // locomocao o pos), tronco, bracos e cabeca, e a perna que joga pelo IK
     // analitico (armada com o joelho dobrado, desdobrando ate a bola).
     int ballSide = -1;
+    // (Plano v5: as duas pernas podem estar num toque.)
+    std::array<bool, 2> gestureFeet {};
     if (m_feet[0] != 0 && m_feet[1] != 0) {
         RagdollAnimationPose3D style;
         defaultLocomotionPose3D(profile, rootPosition, rootOrientation, m_coordinates, style);
@@ -1789,7 +1816,12 @@ void DefaultLocomotion3D::update(const RagdollProfile3D& profile,
     if (input.ballGesture.active && m_gestureLegs.valid) {
         applyBallGesturePose3D(profile, m_gestureLegs, input.ballGesture, m_coordinates, rootPosition,
             rootOrientation, true, true);
-        if (input.ballGesture.legWeight > 0.3f) ballSide = input.ballGesture.side;
+        if (input.ballGesture.perLeg) {
+            for (std::size_t side = 0; side < 2; ++side) gestureFeet[side] = input.ballGesture.legs[side].weight > 0.3f;
+        } else if (input.ballGesture.legWeight > 0.3f) {
+            ballSide = input.ballGesture.side;
+            gestureFeet[static_cast<std::size_t>(ballSide)] = true;
+        }
     }
     const Quaternion rootInverse = rootOrientation.conjugate();
 
@@ -1925,7 +1957,7 @@ void DefaultLocomotion3D::update(const RagdollProfile3D& profile,
             Vec3 position = rootPosition + rootOrientation.rotate(local.linkPositions[index]);
             Quaternion orientation = (rootOrientation * local.linkOrientations[index]).normalized();
             const float footContact = std::clamp(contact[side], 0.0f, 1.0f);
-            const bool ballFoot = static_cast<int>(side) == ballSide;
+            const bool ballFoot = gestureFeet[side];
             const auto strideShift = [&](Vec3 at) {
                 Vec3 result {};
                 if (std::abs(strideAmount) <= 1e-4f) return result;
@@ -2209,6 +2241,69 @@ void DefaultLocomotion3D::update(const RagdollProfile3D& profile,
         }
         m_output.swingProgress[side] = std::clamp(fraction(m_phase - gait.liftOff[side]) / span, 0.0f, 1.0f);
         m_output.secondsToTouchdown[side] = fraction(gait.land[side] - m_phase) / rate;
+    }
+    // Plano v5: as janelas de balanco, o ciclo e o pe no futuro (o manejo
+    // planeja o toque dentro do balanco - a janela do pe que toca e o pouso
+    // dele vem daqui).
+    {
+        const bool cycling = m_output.cycling && rate > 1e-3f;
+        const Gait& gait = m_gaits[dominant];
+        m_output.cycleSeconds = cycling ? 1.0f / rate : -1.0f;
+        for (std::size_t side = 0; side < 2; ++side) {
+            for (auto& window : m_output.swingWindows[side]) window = { -1.0f, -1.0f };
+            if (!cycling) continue;
+            const float span = std::max(0.05f, fraction(gait.land[side] - gait.liftOff[side]));
+            // (O comeco do balanco atual, ou do proximo: a fase do pe sair do
+            // chao contada para tras dentro do balanco.)
+            float since = fraction(m_phase - gait.liftOff[side]);
+            float start = since < span ? -since : fraction(gait.liftOff[side] - m_phase);
+            for (auto& window : m_output.swingWindows[side]) {
+                window = { start / rate, (start + span) / rate };
+                start += 1.0f;
+            }
+        }
+        // O pe no futuro: a tabela das marchas (pelos pesos), com a passada de
+        // agora (o comprimento no rumo de cada marcha) e a altura da pelve.
+        const float height = rootPosition.z - feet.z;
+        const float stride = (strideScale - 1.0f) * m_moving * smoothStep((speed - 0.3f) / 1.0f);
+        float total = 0.0f;
+        for (std::size_t g = 0; g < GaitCount; ++g) total += m_weights[g];
+        for (int k = 0; k < DefaultLocomotionOutput3D::ForecastCount; ++k) {
+            const float ahead = static_cast<float>(k) * m_output.forecastStep;
+            const float phase = fraction(m_phase + rate * ahead);
+            for (std::size_t side = 0; side < 2; ++side) {
+                Vec3 position {};
+                QuaternionSum turn;
+                float used = 0.0f;
+                for (std::size_t g = 0; g < GaitCount && total > 1e-3f; ++g) {
+                    const float weight = m_weights[g] / total;
+                    if (weight < 0.02f || m_gaits[g].clip == nullptr) continue;
+                    const float u = phase * Gait::FeetSamples;
+                    const int a = static_cast<int>(u) % Gait::FeetSamples;
+                    const int b = (a + 1) % Gait::FeetSamples;
+                    const float f = u - std::floor(u);
+                    const auto& table = m_gaits[g].feet[side];
+                    Vec3 foot = table[static_cast<std::size_t>(a)] * (1.0f - f) + table[static_cast<std::size_t>(b)] * f;
+                    // (A amplitude da marcha: o pe em volta da media do ciclo.)
+                    foot = m_gaits[g].feetMean[side] + (foot - m_gaits[g].feetMean[side]) * gaitAmplitude(g);
+                    const Vec3 axis { std::cos(m_gaits[g].heading), std::sin(m_gaits[g].heading), 0.0f };
+                    foot += axis * (dot(Vec3 { foot.x, foot.y, 0.0f }, axis) * stride);
+                    position += foot * weight;
+                    turn.add(m_gaits[g].feetTurn[side][static_cast<std::size_t>(a)], weight * (1.0f - f));
+                    turn.add(m_gaits[g].feetTurn[side][static_cast<std::size_t>(b)], weight * f);
+                    used += weight;
+                }
+                if (used > 1e-3f) {
+                    position = position * (1.0f / used);
+                    position.z += height;
+                    m_output.footForecast[side][static_cast<std::size_t>(k)] = position;
+                    m_output.footForecastOrientation[side][static_cast<std::size_t>(k)] = turn.result();
+                } else {
+                    m_output.footForecast[side][static_cast<std::size_t>(k)] = {};
+                    m_output.footForecastOrientation[side][static_cast<std::size_t>(k)] = {};
+                }
+            }
+        }
     }
 }
 

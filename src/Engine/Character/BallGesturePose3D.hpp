@@ -73,6 +73,20 @@ struct BallGesturePose3D {
     Vec3 releaseKnee { 1.0f, 0.0f, 0.0f };
     Quaternion releaseFoot;
     float releaseWeight = 0.0f;
+    // Plano v5 (o manejo refeito): as duas pernas por lado - cada uma com o
+    // alvo dela (tornozelo, joelho e pe no mundo) e o peso sobre a perna da
+    // locomocao (o toque mora num balanco; dois balancos podem se encostar
+    // no voo). Com perLeg, side/legWeight e release* nao valem; a perna sem
+    // peso fica onde a locomocao a pos (holdSupport: presa ali com a pelve
+    // mexendo).
+    bool perLeg = false;
+    struct Leg {
+        Vec3 ankle;
+        Vec3 knee { 1.0f, 0.0f, 0.0f };
+        Quaternion foot;
+        float weight = 0.0f;
+    };
+    std::array<Leg, 2> legs {};
 };
 
 // As pernas do perfil para o IK analitico (coxa, canela, pe; juntas e

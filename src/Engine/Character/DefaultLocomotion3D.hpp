@@ -369,6 +369,16 @@ struct DefaultLocomotionInput3D {
     // O ritmo da passada vezes isto (o gesto com a bola entra na passada: o
     // pe do toque pousa no clipe quando o gesto volta). 1: o normal.
     float phaseRateScale = 1.0f;
+    // Plano v5: a passada de conducao (0..1: a cadencia sobe com os passos
+    // mais curtos, como num drible).
+    float dribbleStyle = 0.0f;
+};
+
+// Plano v5: uma janela de balanco de um pe (s a partir de agora, no ritmo
+// aplicado: do pe sair do chao ao pouso).
+struct DefaultSwingWindow3D {
+    float start = 0.0f;
+    float end = 0.0f;
 };
 
 struct DefaultLocomotionOutput3D {
@@ -414,6 +424,19 @@ struct DefaultLocomotionOutput3D {
     std::array<Vec3, 2> locomotionFootPosition {};
     std::array<Quaternion, 2> locomotionFootOrientation {};
     std::array<Vec3, 2> styleKneeDirection { Vec3 { 1.0f, 0.0f, 0.0f }, Vec3 { 1.0f, 0.0f, 0.0f } };
+    // Plano v5 (o manejo refeito): andando (cycling), as janelas de balanco de
+    // cada pe - a atual, se no ar (comeco negativo), e as proximas -, o ciclo
+    // (s) e o pe do estilo no futuro (a origem do link e a orientacao), no
+    // referencial do corpo: a pelve no chao, o rumo dela (x frente, y
+    // esquerda), a cada forecastStep s a partir de agora (o primeiro e agora),
+    // pela tabela das marchas (sem a amplitude) com a passada de agora.
+    static constexpr int SwingWindowCount = 3;
+    static constexpr int ForecastCount = 16;
+    std::array<std::array<DefaultSwingWindow3D, SwingWindowCount>, 2> swingWindows {};
+    float cycleSeconds = -1.0f;
+    float forecastStep = 0.04f;
+    std::array<std::array<Vec3, ForecastCount>, 2> footForecast {};
+    std::array<std::array<Quaternion, ForecastCount>, 2> footForecastOrientation {};
     // Inclinacao aplicada (rad: x para a esquerda, y para a frente).
     Vec3 lean;
     // Carrinho: em andamento (a pelve vai pelo clipe; a capsula vai embaixo
@@ -539,6 +562,14 @@ private:
         // A fase (do ciclo) em que os pes passam um pelo outro embaixo do
         // corpo - a mais perto da pose parada: a saida do parado comeca nela.
         float crossing = 0.0f;
+        // Plano v5: os pes pelo ciclo (a origem do link e a orientacao em
+        // relacao a pelve, no rumo dela) em FeetSamples fases - a previsao.
+        static constexpr int FeetSamples = 48;
+        std::array<std::array<Vec3, FeetSamples>, 2> feet {};
+        std::array<std::array<Quaternion, FeetSamples>, 2> feetTurn {};
+        // (E a media de cada pe no ciclo: a amplitude da marcha escala o pe
+        // em volta dela.)
+        std::array<Vec3, 2> feetMean {};
         // A media de cada junta no ciclo (a amplitude do trote cresce em
         // volta dela; ver trotAmplitude).
         std::vector<Vec3> mean;

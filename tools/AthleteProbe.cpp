@@ -925,6 +925,14 @@ struct Metrics {
     float legSpinMax = 0.0f;
     float longestFlight = 0.0f;
     float flightRun = 0.0f;
+    // Plano v5 (E1): a previsao do pouso de cada pe (feita 0,2-0,3 s antes)
+    // contra o pouso de verdade: o erro do instante (s) e da posicao (m, no
+    // plano).
+    std::array<float, 2> forecastAt { -1.0f, -1.0f };
+    std::array<Vec3, 2> forecastFoot {};
+    std::array<bool, 2> forecastWasPlanted { true, true };
+    std::vector<float> forecastTimeErrors;
+    std::vector<float> forecastPositionErrors;
     int stanceTremor = 0;
     int bodyTremor = 0;
     float lockGap = 0.0f;
@@ -1952,6 +1960,41 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
                     metrics.footSlide.push_back(std::hypot(link.linearVelocity.x, link.linearVelocity.y));
             }
         }
+        // Plano v5 (E1): a previsao do pouso contra o de verdade.
+        if (t > 0.35f && legacy.bodyMode == LegacyBodyMode3D::Animated && legacy.defaultLocomotion.output().valid) {
+            const DefaultLocomotionOutput3D& style = legacy.defaultLocomotion.output();
+            const Vec3 pelvis = bodyState.links.front().position;
+            const float yaw = style.facingYawRadians;
+            const Vec3 velocity { scene->characterState().velocity.x, scene->characterState().velocity.y, 0.0f };
+            const AthleteLegs3D legs = resolveAthleteLegs3D(profile);
+            for (std::size_t side = 0; side < 2 && legs.valid; ++side) {
+                const bool planted = style.cyclePlanted[side];
+                if (style.cycling && !planted && metrics.forecastAt[side] < 0.0f) {
+                    const float end = style.swingWindows[side][0].end;
+                    if (end > 0.2f && end <= 0.3f) {
+                        const int k = std::clamp(static_cast<int>(std::lround(end / style.forecastStep)), 0,
+                            DefaultLocomotionOutput3D::ForecastCount - 1);
+                        const Vec3 local = style.footForecast[side][static_cast<std::size_t>(k)];
+                        const float c = std::cos(yaw), s = std::sin(yaw);
+                        metrics.forecastAt[side] = t + end;
+                        metrics.forecastFoot[side] = Vec3 { pelvis.x, pelvis.y, 0.0f }
+                            + Vec3 { c * local.x - s * local.y, s * local.x + c * local.y, local.z } + velocity * end;
+                    }
+                }
+                if (planted && !metrics.forecastWasPlanted[side] && metrics.forecastAt[side] >= 0.0f) {
+                    const Vec3 actual = bodyState.links[legs.foot[side]].position;
+                    metrics.forecastTimeErrors.push_back(std::abs(t - metrics.forecastAt[side]));
+                    metrics.forecastPositionErrors.push_back(std::hypot(actual.x - metrics.forecastFoot[side].x,
+                        actual.y - metrics.forecastFoot[side].y));
+                    if (std::getenv("XPREVISAO"))
+                        std::printf("  t %.3f pouso %c previsto %.3f | pe %.3f %.3f previsto %.3f %.3f\n", t, side == 0 ? 'E' : 'D',
+                            metrics.forecastAt[side], actual.x, actual.y, metrics.forecastFoot[side].x, metrics.forecastFoot[side].y);
+                    metrics.forecastAt[side] = -1.0f;
+                }
+                if (planted) metrics.forecastAt[side] = planted && metrics.forecastWasPlanted[side] ? -1.0f : metrics.forecastAt[side];
+                metrics.forecastWasPlanted[side] = planted;
+            }
+        }
         // Plano v5 (E0): a "perna louca" (coxa ou canela girando a mais de 30
         // rad/s; o joelho virando de lado mais de 60 graus num tick) e o voo
         // (os dois pes no ar).
@@ -2051,6 +2094,11 @@ void printMetrics(const Scenario& scenario, const Metrics& metrics, bool footste
             metrics.latencies.empty() ? 0.0f : latencySum / static_cast<float>(metrics.latencies.size()), latencyMax,
             metrics.crazyLegTicks, metrics.kneeFlipTicks, metrics.legSpinMax, metrics.longestFlight);
     }
+    if (!metrics.forecastTimeErrors.empty())
+        std::printf("%-18s   previsao do pouso (0,2-0,3 s antes): %zu pousos | instante med %.3f max %.3f s | pe med %.3f max %.3f m\n",
+            "", metrics.forecastTimeErrors.size(), percentile(metrics.forecastTimeErrors, 0.5f),
+            percentile(metrics.forecastTimeErrors, 1.0f), percentile(metrics.forecastPositionErrors, 0.5f),
+            percentile(metrics.forecastPositionErrors, 1.0f));
     if (metrics.capsuleUp > 0.0f || metrics.pelvisUp > 0.0f)
         std::printf("%-18s   subida max: capsula %.2f m/s, pelve %.2f m/s, pelve sobre a capsula %.2f m\n", "",
             metrics.capsuleUp, metrics.pelvisUp, metrics.pelvisOverCapsule);
