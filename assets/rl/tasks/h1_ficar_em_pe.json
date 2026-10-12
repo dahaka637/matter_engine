@@ -13,7 +13,7 @@
     "headHeight": 0.5,
     "comOverSupport": 0.5,
     "still": 0.3,
-    "trunkStill": 0.3,
+    "trunkTurn": 0.2,
     "footSlip": 0.5,
     "footDrift": 1.0,
     "effort": 0.1,

@@ -84,10 +84,11 @@ O treino inteiro (física, rede na GTX 1070 Ti e PPO), com 512 mundos:
   0,8 cm no 10/6 e 0,3 cm no 20/20.
 - **Linha de base:** a ação zero (o PD segurando a pose base) fica 0% de pé e
   cai em 2,6–2,8 s.
-- **O tronco girando:** sem a parcela `trunkStill`, 15 dos 32 mundos ficavam
+- **O tronco girando:** sem a parcela `trunkTurn`, 15 dos 32 mundos ficavam
   com a pelve rodando de um lado para o outro (até 46° de ponta a ponta), com
   os pés plantados. O centro de massa quase não se move, então a oscilação
-  não via. Agora a recompensa cobra a rotação da pelve e do peito, e a
+  não via. Agora a recompensa cobra a rotação da pelve e do peito
+  (−0,2·ω², quadrática para ensinar também com o ruído do treino), e a
   bateria mede o giro do tronco (`turn`), que entra na nota.
 
 ## Semanas ligado

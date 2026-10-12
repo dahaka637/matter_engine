@@ -17,10 +17,12 @@ struct TrainingRewardWeights3D {
     float headHeight = 0.5f;
     float comOverSupport = 0.5f;
     float still = 0.3f;
-    // O tronco quieto: pelve e peito sem rodar. O "still" so ve o centro de
-    // massa, e girar o tronco quase nao o move. Uma parcela nova comeca
-    // desligada (as tarefas antigas nao mudam sem pedir).
-    float trunkStill = 0.0f;
+    // O tronco girando (penalidade): a velocidade angular da pelve e do peito
+    // ao quadrado. O "still" so ve o centro de massa, e girar o tronco quase
+    // nao o move. Quadratica (e nao uma nota em sino) para ensinar tambem com
+    // o ruido do treino, que faz o tronco girar a ~1,5 rad/s. Uma parcela nova
+    // comeca desligada (as tarefas antigas nao mudam sem pedir).
+    float trunkTurn = 0.0f;
     float footSlip = 0.5f;
     float footDrift = 1.0f;
     float effort = 0.1f;
@@ -31,7 +33,7 @@ struct TrainingRewardWeights3D {
 };
 
 inline constexpr std::array<const char*, 13> TrainingRewardComponentNames3D {
-    "alive", "upright", "headHeight", "comOverSupport", "still", "trunkStill", "footSlip", "footDrift", "effort",
+    "alive", "upright", "headHeight", "comOverSupport", "still", "trunkTurn", "footSlip", "footDrift", "effort",
     "actionRate", "jointLimit", "posePrior", "fall"
 };
 

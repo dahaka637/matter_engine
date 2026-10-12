@@ -488,11 +488,11 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
     const float comOverSupport = std::exp(-(dx * dx + dy * dy) / (0.06f * 0.06f));
     const float comSpeed2 = reading.comVelocity.lengthSquared();
     const float still = std::exp(-comSpeed2 / 0.04f);
-    // O tronco quieto: pelve e peito sem rodar (o balanco natural, ~0,05 rad/s,
-    // quase nao conta; girar a ~0,6 rad/s quase zera a parcela).
+    // O tronco girando: a media dos quadrados da velocidade angular da pelve e
+    // do peito (rad/s), com teto de 2 rad/s (numa queda ja paga o "fall").
     const float trunkTurn2 = 0.5f
         * (state.links[0].angularVelocity.lengthSquared() + state.links[body.upperChest].angularVelocity.lengthSquared());
-    const float trunkStill = std::exp(-trunkTurn2 / 0.09f);
+    const float trunkTurn = std::min(trunkTurn2, 4.0f);
 
     float slip = 0.0f, drift = 0.0f;
     for (std::size_t f = 0; f < 2; ++f) {
@@ -537,7 +537,7 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
         w.headHeight * headHeight,
         w.comOverSupport * comOverSupport,
         w.still * still,
-        w.trunkStill * trunkStill,
+        -w.trunkTurn * trunkTurn,
         -w.footSlip * slip,
         -w.footDrift * drift,
         -w.effort * effort,
