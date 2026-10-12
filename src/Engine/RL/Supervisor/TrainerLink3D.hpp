@@ -92,6 +92,7 @@ private:
     void worker();
     [[nodiscard]] std::string request(const std::string& line, int timeoutMilliseconds) const;
     void readStatus(const std::string& json, bool alive);
+    [[nodiscard]] std::string lastLogLine() const;
 
     TrainerPaths3D m_paths;
     std::string m_run;
@@ -104,6 +105,8 @@ private:
     // Abrindo o treinador (o Python e o PyTorch levam alguns segundos).
     std::chrono::steady_clock::time_point m_openedAt {};
     bool m_opening = false;
+    // Por que o ultimo treinador aberto por esta tela nao abriu.
+    std::string m_failure;
     bool m_refresh = true;
     std::atomic<bool> m_stop { false };
     std::thread m_thread;

@@ -105,6 +105,7 @@ bool TrainerLink3D::runLauncher(const std::vector<std::string>& arguments, std::
     posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0);
     posix_spawn_file_actions_addopen(&actions, 1, "/dev/null", O_WRONLY, 0);
     posix_spawn_file_actions_adddup2(&actions, 1, 2);
+    posix_spawn_file_actions_addclosefrom_np(&actions, 3);
     pid_t pid = 0;
     const int result = posix_spawn(&pid, values.front().c_str(), &actions, nullptr, argv.data(), environ);
     posix_spawn_file_actions_destroy(&actions);
@@ -115,6 +116,14 @@ bool TrainerLink3D::runLauncher(const std::vector<std::string>& arguments, std::
     std::lock_guard lock(m_mutex);
     m_children.push_back(pid);
     return true;
+}
+
+std::string TrainerLink3D::lastLogLine() const {
+    std::ifstream log(m_paths.run(m_run) / "treinador.log");
+    std::string line, last;
+    while (std::getline(log, line))
+        if (!line.empty() && line.find("Warning") == std::string::npos) last = line;
+    return last.size() > 160 ? last.substr(last.size() - 160) : last;
 }
 
 bool TrainerLink3D::resumesAtBoot() const {
@@ -144,6 +153,8 @@ bool TrainerLink3D::start(const std::string& task, const std::string& mode, std:
     posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0);
     posix_spawn_file_actions_addopen(&actions, 1, log.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0644);
     posix_spawn_file_actions_adddup2(&actions, 1, 2);
+    // O treinador nao herda o que a janela tem aberto (Vulkan, Wayland, audio).
+    posix_spawn_file_actions_addclosefrom_np(&actions, 3);
     posix_spawnattr_t attributes;
     posix_spawnattr_init(&attributes);
     // Sessao propria: o treino segue com a tela (e o terminal) fechados.
@@ -161,6 +172,7 @@ bool TrainerLink3D::start(const std::string& task, const std::string& mode, std:
         m_children.push_back(pid);
         m_status.state = "abrindo";
         m_opening = true;
+        m_failure.clear();
         m_openedAt = std::chrono::steady_clock::now();
         m_refresh = true;
     }
@@ -249,8 +261,17 @@ void TrainerLink3D::worker() {
             m_wake.wait_for(lock, std::chrono::milliseconds(1000), [this] { return m_stop || m_refresh; });
             commands.swap(m_queue);
             m_refresh = false;
-            // Os supervisores abertos por esta tela que ja sairam (sem zumbis).
-            std::erase_if(m_children, [](int pid) { return ::waitpid(pid, nullptr, WNOHANG) == pid; });
+            // Os processos abertos por esta tela que ja sairam (sem zumbis). Um
+            // treinador que nao abriu deixa a ultima linha do log como aviso.
+            std::erase_if(m_children, [this](int pid) {
+                int status = 0;
+                if (::waitpid(pid, &status, WNOHANG) != pid) return false;
+                if (m_opening && WIFEXITED(status) && WEXITSTATUS(status) != 0) {
+                    m_opening = false;
+                    m_failure = lastLogLine();
+                }
+                return true;
+            });
         }
         if (m_stop) break;
         for (const std::string& command : commands) {
@@ -265,6 +286,7 @@ void TrainerLink3D::worker() {
             readStatus(parsed["status"].dump(), true);
             std::lock_guard lock(m_mutex);
             m_opening = false;
+            m_failure.clear();
             continue;
         }
         // Sem treinador (ou outro treino aberto): o ultimo estado gravado.
@@ -281,6 +303,7 @@ void TrainerLink3D::worker() {
         if (m_opening && std::chrono::steady_clock::now() - m_openedAt < std::chrono::seconds(120))
             m_status.state = "abrindo";
         else m_opening = false;
+        if (!m_failure.empty()) m_status.message = "o treinador não abriu: " + m_failure;
     }
 }
 

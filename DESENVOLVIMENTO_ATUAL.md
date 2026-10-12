@@ -30,7 +30,24 @@ dele. Ele substitui o início feito pelo Codex em 11/10.
   20/20 do jogo (10 threads, RelWithDebInfo). `MatterRLBenchmark` mede.
 - **`MatterAnimationClips`:** `AnimationClip3D.cpp` saiu do `MatterEngine`
   para uma biblioteca própria (o treino usa os clipes sem a engine gráfica).
-- **CTest:** 16/18. `Character` e `AdaptivePhysics` falham como antes.
+- **E3 (treinador, `tools/rl`):**
+  - PPO no PyTorch (GPU com o `torch` cu126, a variante que roda na GTX
+    1070 Ti), checkpoints atômicos, SQLite, avaliação de 60 s no solver do
+    treino e no do jogo, canal de controle por socket, modos de desempenho,
+    guarda de temperatura, recuperação de NaN e a CLI `matter-rl`;
+  - a ponte `bindings/python` (nanobind) é a única peça com Python;
+  - `PolicyRuntime3D` roda a política exportada no C++.
+- **Achado do mapa da ação:** presa em ±1 indo da pose base aos limites, o
+  desvio da ação nos joelhos ficava ~0,06 e o KL derrubava a taxa ao mínimo.
+  Agora o alvo é a pose base + 0,25 rad por unidade (corte em ±10; os limites
+  da junta seguram).
+- **E5 (tela):** "Aprendizado por Reforço" no menu, com o treinador, os modos,
+  "Retomar ao ligar o PC", a avaliação, o visualizador com a política no
+  jogador de verdade, os empurrões e os gráficos. `RagdollSkeletonView`
+  (Modeling/Rig) é a pose do jogador pelos links, também usada pelo `quadros`.
+- **E6:** relatório, gráficos, folhas e a skill `rl-supervisao`.
+- **CTest:** 17/19. `Character` e `AdaptivePhysics` falham como antes.
+  Python: 12/12 (`cd tools/rl && .venv/bin/python -m pytest`).
 
 ## Novo controle do atleta: Etapas 0 a 2 (10/10/2026, noite)
 
