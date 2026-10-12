@@ -125,6 +125,9 @@ private:
 
     // O historico (graficos) e os avisos.
     TrainingHistory3D m_history;
+    // A leitura do banco roda fora da interface (semanas de treino sao muitas
+    // linhas).
+    std::optional<std::future<TrainingHistory3D>> m_historyPending;
     float m_historyWatch = 0.0f;
     std::string m_notice;
     float m_noticeSeconds = 0.0f;

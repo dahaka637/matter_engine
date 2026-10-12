@@ -80,7 +80,7 @@ def trainer_command(args: argparse.Namespace) -> list[str]:
 
 def command_serve(args: argparse.Namespace) -> int:
     """Mantem o treino aberto: reabre na troca de modo e depois de um erro."""
-    from .trainer import RESTART_CODE
+    from .system import RESTART_CODE  # sem o PyTorch: o supervisor fica leve
     failures = 0
     first = True
     while True:
@@ -157,17 +157,17 @@ WantedBy=default.target
 def command_boot(args: argparse.Namespace) -> int:
     """O que o servico roda ao ligar o PC: so retoma se o treino nao foi parado
     pelo usuario (desligar o PC no meio do treino retoma; Parar nao)."""
-    from .trainer import RunConfig
     config_path = paths.run_dir(args.run) / "run.json"
     if not config_path.exists():
         return 0
-    config = RunConfig.load(config_path)
-    if config.end_reason == "usuario":
+    # O run.json lido direto (o RunConfig traria o PyTorch para o supervisor).
+    config = json.loads(config_path.read_text())
+    if config.get("end_reason") == "usuario":
         print("o treino foi parado pelo usuario: nao retomo")
         return 0
     if control.ping():
         return 0
-    args.tarefa, args.modo, args.mundos, args.dispositivo = config.task, config.mode, None, "auto"
+    args.tarefa, args.modo, args.mundos, args.dispositivo = config.get("task"), config.get("mode"), None, "auto"
     return command_serve(args)
 
 
@@ -191,7 +191,8 @@ def send(command: str, arguments: dict | None = None) -> int:
     if not answer.get("ok"):
         print(f"erro: {answer.get('error')}")
         return 1
-    print(json.dumps({k: v for k, v in answer.items() if k not in ("ok", "protocol")}, ensure_ascii=False) or "ok")
+    rest = {k: v for k, v in answer.items() if k not in ("ok", "protocol")}
+    print(json.dumps(rest, ensure_ascii=False) if rest else "ok")
     return 0
 
 

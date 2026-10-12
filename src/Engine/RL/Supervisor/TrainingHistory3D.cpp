@@ -33,21 +33,37 @@ TrainingHistory3D readTrainingHistory3D(const std::filesystem::path& database, c
         std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count());
     const double since = sinceSeconds > 0.0 ? now - sinceSeconds : 0.0;
 
+    // A amostra e por tempo (a rodada mais recente de cada janela), e nao pelo
+    // numero da rodada: as antigas, ja compactadas em uma a cada 10 min,
+    // continuam no grafico.
     sqlite3_stmt* statement = nullptr;
-    if (sqlite3_prepare_v2(db, "SELECT COUNT(*) FROM iterations WHERE run=?1 AND time>=?2", -1, &statement, nullptr)
+    double first = 0.0;
+    double last = 0.0;
+    bool any = false;
+    if (sqlite3_prepare_v2(db, "SELECT MIN(time), MAX(time) FROM iterations WHERE run=?1 AND time>=?2", -1, &statement,
+            nullptr)
         == SQLITE_OK) {
         sqlite3_bind_text(statement, 1, run.c_str(), -1, SQLITE_TRANSIENT);
         sqlite3_bind_double(statement, 2, since);
-        std::int64_t count = 0;
-        if (sqlite3_step(statement) == SQLITE_ROW) count = sqlite3_column_int64(statement, 0);
+        if (sqlite3_step(statement) == SQLITE_ROW && sqlite3_column_type(statement, 0) != SQLITE_NULL) {
+            first = sqlite3_column_double(statement, 0);
+            last = sqlite3_column_double(statement, 1);
+            any = true;
+        }
         sqlite3_finalize(statement);
-        const std::int64_t stride = std::max<std::int64_t>(1, count / static_cast<std::int64_t>(std::max<std::size_t>(1, maximumPoints)));
-        const char* sql = "SELECT iteration, time, steps, reward, episode_seconds, fall_fraction, sps FROM iterations "
-                          "WHERE run=?1 AND time>=?2 AND (iteration % ?3)=0 ORDER BY iteration";
+    }
+    if (any) {
+        const double window
+            = std::max((last - first) / static_cast<double>(std::max<std::size_t>(1, maximumPoints)), 1.0e-6);
+        // Com um MAX() so, o SQLite tira as outras colunas da mesma linha.
+        const char* sql = "SELECT MAX(iteration), time, steps, reward, episode_seconds, fall_fraction, sps "
+                          "FROM iterations WHERE run=?1 AND time>=?2 GROUP BY CAST((time - ?3) / ?4 AS INTEGER) "
+                          "ORDER BY 1";
         if (sqlite3_prepare_v2(db, sql, -1, &statement, nullptr) == SQLITE_OK) {
             sqlite3_bind_text(statement, 1, run.c_str(), -1, SQLITE_TRANSIENT);
             sqlite3_bind_double(statement, 2, since);
-            sqlite3_bind_int64(statement, 3, stride);
+            sqlite3_bind_double(statement, 3, first);
+            sqlite3_bind_double(statement, 4, window);
             while (sqlite3_step(statement) == SQLITE_ROW) {
                 TrainingIterationPoint3D point;
                 point.iteration = static_cast<std::uint64_t>(sqlite3_column_int64(statement, 0));

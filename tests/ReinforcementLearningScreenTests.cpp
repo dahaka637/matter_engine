@@ -126,14 +126,20 @@ int main() {
         std::filesystem::create_directories(sandbox / "runtime");
         setenv("MATTER_RL_DATA", (sandbox / "dados").c_str(), 1);
         setenv("XDG_RUNTIME_DIR", (sandbox / "runtime").c_str(), 1);
-        writePolicy(sandbox / "dados" / "runs" / "principal" / "exports" / "policy_latest.mrlpolicy", 5);
+        // MATTER_RL_TEST_POLICY=<arquivo>: uma politica de verdade (de um treino)
+        // no lugar da de mentira, para ver o jogador treinado na tela.
+        const char* realPolicy = std::getenv("MATTER_RL_TEST_POLICY");
+        const std::filesystem::path policyFile = sandbox / "dados" / "runs" / "principal" / "exports" / "policy_latest.mrlpolicy";
+        writePolicy(policyFile, 5);
         writeHistory(sandbox / "dados" / "rl.db");
         {
-            PolicyRuntime3D runtime(sandbox / "dados" / "runs" / "principal" / "exports" / "policy_latest.mrlpolicy");
+            PolicyRuntime3D runtime(policyFile);
             std::vector<float> obs(160, 1.0f), act(39, 7.0f);
             runtime.evaluate(obs, act);
             require(act[0] == 0.0f && runtime.info().iteration == 5, "a politica de mentira da acao zero");
         }
+        if (realPolicy != nullptr) std::filesystem::copy_file(realPolicy, policyFile,
+            std::filesystem::copy_options::overwrite_existing);
 
         TestSupport::HeadlessUi ui;
         FakeCanvas canvas;
@@ -152,8 +158,13 @@ int main() {
         snapshot(canvas, "rl_tela");
 
         // A politica de mentira segura a pose base: depois de 1 s o corpo
-        // ainda esta de pe; um empurrao forte o tira do lugar.
-        screen.advanceViewer(30);
+        // ainda esta de pe; um empurrao forte o tira do lugar. Com uma politica
+        // de verdade, 30 s no visualizador antes da foto.
+        screen.advanceViewer(realPolicy != nullptr ? 900 : 30);
+        if (realPolicy != nullptr) {
+            frame(screen, canvas, 3);
+            snapshot(canvas, "rl_tela_politica_30s");
+        }
         require(screen.renderViewport(640, 480) && !screen.image().empty(), "o visualizador renderiza sob demanda");
         screen.push(0, 600.0f);
         screen.advanceViewer(10);

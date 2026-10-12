@@ -135,7 +135,7 @@ def plots(run: str, output: Path) -> list[Path]:
     import matplotlib.pyplot as plt
 
     db = storage.Database(readonly=True)
-    rows = db.execute("SELECT * FROM iterations WHERE run=? ORDER BY iteration", (run,)).fetchall()
+    rows = db.sampled_iterations(run, 2000)
     evals = db.execute("SELECT * FROM evaluations WHERE run=? ORDER BY iteration", (run,)).fetchall()
     db.close()
     output.mkdir(parents=True, exist_ok=True)

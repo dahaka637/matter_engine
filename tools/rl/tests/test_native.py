@@ -51,4 +51,4 @@ def test_exported_policy_matches_torch(tmp_path: Path):
     with torch.no_grad():
         expected = model.actor(model.obs_norm(torch.tensor(obs))).clamp(-10, 10).numpy()
     got = runtime.evaluate(obs)
-    assert np.abs(got - expected).max() < 1e-4
+    assert np.abs(got - expected).max() < 1e-5

@@ -142,6 +142,56 @@ def test_database_roundtrip(tmp_path: Path):
     assert reader.execute("SELECT author FROM events").fetchone()[0] == "claude"
 
 
+def test_resume_after_crash_rewinds_history(tmp_path: Path):
+    """Um processo morto sem fechar (kill, queda de energia): a sessao aberta
+    fecha como interrompida e o que veio depois do checkpoint sai do banco."""
+    db = storage.Database(tmp_path / "rl.db")
+    db.ensure_run("t", "h1", "abc", {})
+    crashed = db.begin_session("t", 0, "maximo", "cuda")
+    for iteration in range(1, 21):
+        db.log_iteration({"run": "t", "iteration": iteration, "time": time.time(), "steps": iteration})
+    db.log_evaluation({"run": "t", "iteration": 15, "time": time.time(), "steps": 15, "battery": "b", "solver": "jogo"})
+    db.commit()
+    resumed = db.begin_session("t", 10, "maximo", "cuda")
+    assert db.rewind("t", 10) == 10
+    rows = db.execute("SELECT id, end_reason, finish_utc FROM sessions ORDER BY id").fetchall()
+    assert rows[0]["id"] == crashed and rows[0]["end_reason"] == "interrompida" and rows[0]["finish_utc"]
+    assert rows[1]["id"] == resumed and rows[1]["finish_utc"] is None
+    assert db.execute("SELECT MAX(iteration) FROM iterations").fetchone()[0] == 10
+    assert db.execute("SELECT COUNT(*) FROM evaluations").fetchone()[0] == 0
+    assert db.last_evaluation("t") == {}
+    for solver, score in (("treino", 0.9), ("jogo", 0.95)):
+        db.log_evaluation({"run": "t", "iteration": 10, "time": time.time(), "steps": 10, "battery": "b",
+                           "solver": solver, "stand_fraction": 1.0, "score": score, "ends": "{\"tempo\": 32}"})
+    last = db.last_evaluation("t")
+    assert last["iteration"] == 10 and last["score"] == 0.9 and last["solvers"]["jogo"]["ends"] == {"tempo": 32}
+
+
+def test_history_sampled_by_time_keeps_compacted_rows(tmp_path: Path):
+    """Semanas de treino: as rodadas antigas compactadas (uma a cada 10 min) e
+    as recentes densas aparecem espalhadas no tempo, nao so as recentes."""
+    db = storage.Database(tmp_path / "rl.db")
+    db.ensure_run("t", "h1", "abc", {})
+    now = time.time()
+    old_start = now - 10 * 86400.0
+    iteration = 0
+    for day in range(7):  # 7 dias compactados: uma rodada a cada 10 min
+        for block in range(144):
+            iteration += 1 + (block % 7)
+            db.log_iteration({"run": "t", "iteration": iteration, "time": old_start + day * 86400 + block * 600,
+                              "steps": iteration})
+    for second in range(0, 86400, 2):  # 1 dia denso
+        iteration += 1
+        db.log_iteration({"run": "t", "iteration": iteration, "time": now - 86400 + second, "steps": iteration})
+    db.commit()
+    rows = db.sampled_iterations("t", 200)
+    times = [row["time"] for row in rows]
+    assert 150 <= len(rows) <= 201
+    assert sum(1 for t in times if t < now - 2 * 86400) > 100  # o historico antigo continua la
+    assert [row["iteration"] for row in rows] == sorted(row["iteration"] for row in rows)
+    assert db.compact("t") == 0  # o que tem mais de 3 dias ja esta em uma a cada 10 min
+
+
 def test_control_roundtrip(tmp_path: Path):
     socket_path = tmp_path / "c.sock"
     server = control.ControlServer(lambda: {"state": "treinando"}, socket_path)

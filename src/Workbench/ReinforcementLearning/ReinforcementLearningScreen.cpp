@@ -195,8 +195,7 @@ void ReinforcementLearningScreen::reloadPolicy(bool force) {
             return;
         }
         m_policy = std::move(policy);
-        m_policyText = "rodada " + std::to_string(m_policy->info().iteration);
-        if (!force) notify("Política da rodada " + std::to_string(m_policy->info().iteration));
+        m_policyText = "política da rodada " + std::to_string(m_policy->info().iteration);
     } catch (const std::exception& error) {
         m_policy.reset();
         m_policyText = error.what();
@@ -262,10 +261,21 @@ void ReinforcementLearningScreen::waitUntilLoaded() {
     if (m_pending) m_pending->wait();
     pollModel();
     ensureViewer();
+    if (m_historyPending) {
+        m_historyPending->wait();
+        refreshHistory();
+    }
 }
 
 void ReinforcementLearningScreen::refreshHistory() {
-    m_history = readTrainingHistory3D(m_link->paths().database, m_options.run, 0.0, 400);
+    if (m_historyPending) {
+        if (m_historyPending->wait_for(std::chrono::seconds(0)) != std::future_status::ready) return;
+        m_history = m_historyPending->get();
+        m_historyPending.reset();
+        return;
+    }
+    m_historyPending = std::async(std::launch::async,
+        [database = m_link->paths().database, run = m_options.run] { return readTrainingHistory3D(database, run, 0.0, 400); });
 }
 
 void ReinforcementLearningScreen::update(float deltaSeconds) {
@@ -276,8 +286,9 @@ void ReinforcementLearningScreen::update(float deltaSeconds) {
         m_policyWatch = 2.0f;
         reloadPolicy(false);
     }
-    if ((m_historyWatch -= deltaSeconds) <= 0.0f) {
-        m_historyWatch = 5.0f;
+    // (A leitura pedida chega no quadro seguinte em que ficar pronta.)
+    if (m_historyPending || (m_historyWatch -= deltaSeconds) <= 0.0f) {
+        if (!m_historyPending) m_historyWatch = 5.0f;
         refreshHistory();
     }
     if (m_noticeSeconds > 0.0f) m_noticeSeconds -= deltaSeconds;

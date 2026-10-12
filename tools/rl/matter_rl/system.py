@@ -5,6 +5,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+RESTART_CODE = 75  # o supervisor reabre o treino (troca de modo)
+
 
 @dataclass(frozen=True)
 class Mode:

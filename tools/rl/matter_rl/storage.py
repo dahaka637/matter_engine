@@ -17,8 +17,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import torch
-
 from . import paths
 
 SCHEMA = """
@@ -146,6 +144,10 @@ class Database:
         self.commit()
 
     def begin_session(self, run: str, iteration: int, mode: str, device: str) -> int:
+        # A trava do treino garante um processo por vez: uma sessao ainda aberta
+        # e de um processo que morreu sem fechar (queda de energia, kill).
+        self.execute("UPDATE sessions SET finish_utc=?, end_reason='interrompida' WHERE run=? AND finish_utc IS NULL",
+                     (utc_now(), run))
         cursor = self.execute("""INSERT INTO sessions(run, start_utc, start_iteration, mode, device, pid)
                                  VALUES (?, ?, ?, ?, ?, ?)""", (run, utc_now(), iteration, mode, device, os.getpid()))
         self.commit()
@@ -180,8 +182,45 @@ class Database:
                      (run, time.time(), kind, author, message, json.dumps(data) if data is not None else None))
         self.commit()
 
-    def compact(self, run: str, keep_days: float = 14.0) -> int:
-        """Rodadas antigas viram uma a cada 10 min (a sanitizacao do historico)."""
+    def rewind(self, run: str, iteration: int) -> int:
+        """Apaga as rodadas e avaliacoes depois do checkpoint retomado (o processo
+        caiu antes do proximo): o historico segue numa linha so."""
+        lost = self.execute("SELECT COUNT(*) FROM iterations WHERE run=? AND iteration>?", (run, iteration)).fetchone()[0]
+        self.execute("DELETE FROM iterations WHERE run=? AND iteration>?", (run, iteration))
+        self.execute("DELETE FROM evaluations WHERE run=? AND iteration>?", (run, iteration))
+        self.commit()
+        return int(lost)
+
+    def last_evaluation(self, run: str) -> dict:
+        """A avaliacao mais recente do treino, no formato do status (a tela e a
+        CLI mostram a ultima nota logo depois de reabrir)."""
+        rows = self.execute("""SELECT * FROM evaluations WHERE run=? AND iteration=
+                               (SELECT MAX(iteration) FROM evaluations WHERE run=?)""", (run, run)).fetchall()
+        if not rows:
+            return {}
+        keys = ("stand_fraction", "mean_seconds", "sway", "foot_drift", "action_rate", "effort", "upright", "score")
+        solvers = {row["solver"]: {key: row[key] for key in keys} | {"ends": json.loads(row["ends"] or "{}")}
+                   for row in rows}
+        return {"iteration": rows[0]["iteration"], "score": min(m["score"] for m in solvers.values()),
+                "solvers": solvers, "seconds": 0.0}
+
+    def sampled_iterations(self, run: str, points: int = 2000, since: float = 0.0) -> list[sqlite3.Row]:
+        """Ate `points` rodadas espalhadas no tempo (a mais recente de cada janela).
+        Por tempo, e nao pelo numero da rodada: as antigas, ja compactadas em uma
+        a cada 10 min, continuam nas curvas."""
+        first, last = self.execute("SELECT MIN(time), MAX(time) FROM iterations WHERE run=? AND time>=?",
+                                   (run, since)).fetchone()
+        if first is None:
+            return []
+        window = max((last - first) / max(1, points), 1e-6)
+        # Com um MAX() so, o SQLite tira as outras colunas da mesma linha.
+        return self.execute("""SELECT MAX(iteration) AS iteration, * FROM iterations WHERE run=? AND time>=?
+                               GROUP BY CAST((time - ?) / ? AS INTEGER) ORDER BY 1""",
+                            (run, since, first, window)).fetchall()
+
+    def compact(self, run: str, keep_days: float = 3.0) -> int:
+        """Rodadas com mais de 3 dias viram uma a cada 10 min (a sanitizacao do
+        historico: ~100 MB por dia de treino viram ~0,1 MB)."""
         limit = time.time() - keep_days * 86400.0
         rows = self.execute("""SELECT iteration, time FROM iterations WHERE run=? AND time<? ORDER BY time""",
                             (run, limit)).fetchall()
@@ -263,6 +302,7 @@ def _write_json_atomic(path: Path, data: dict) -> None:
 
 def save_checkpoint(run_directory: Path, iteration: int, state: dict, manifest: dict) -> CheckpointRef:
     """Grava ck-<iteracao>/ (model.pt + manifest.json) e aponta latest.json para ele."""
+    import torch  # so aqui: o supervisor e a CLI nao carregam o PyTorch
     directory = run_directory / "checkpoints"
     directory.mkdir(parents=True, exist_ok=True)
     final = directory / f"ck-{iteration:09d}"
@@ -317,6 +357,7 @@ def latest_checkpoint(run_directory: Path) -> CheckpointRef | None:
 
 
 def load_checkpoint(reference: CheckpointRef, device: str = "cpu") -> dict:
+    import torch
     return torch.load(reference.path / "model.pt", map_location=device, weights_only=True)
 
 

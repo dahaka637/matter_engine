@@ -1,5 +1,6 @@
 #include "Engine/RL/Environment/TrainingBatch3D.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -67,6 +68,49 @@ void testContract() {
         float sum = 0.0f;
         for (std::size_t r = 0; r < R; ++r) sum += batch.rewardComponents()[e * R + r];
         require(std::abs(sum - batch.rewards()[e]) < 1e-4f, "recompensa diferente da soma das parcelas");
+    }
+}
+
+// A observacao fica no referencial do rumo: sem ruido e sem variacao, o mesmo
+// corpo virado para lados diferentes (o rumo sorteado de cada mundo) ve a
+// mesma coisa, no inicio e depois de alguns passos.
+void testHeadingInvariance() {
+    constexpr std::size_t Worlds = 6;
+    TrainingBatch3D batch(settings(Worlds, 2));
+    TrainingTask3D task = batch.task();
+    task.initialState.jointNoiseRadians = 0.0f;
+    task.initialState.jointVelocityNoise = 0.0f;
+    task.initialState.rootVelocityNoise = 0.0f;
+    task.initialState.rootAngularVelocityNoise = 0.0f;
+    task.initialState.randomYaw = true;
+    task.randomization.friction = { 0.9f, 0.9f };
+    task.randomization.mass = { 1.0f, 1.0f };
+    task.randomization.strength = { 1.0f, 1.0f };
+    task.randomization.actionDelayProbability = 0.0f;
+    task.randomization.observationNoise = 0.0f;
+    batch.updateTask(task);
+    batch.reset(21);
+    // O rumo como o lote mede (Z para cima, o X da pelve no referencial do modelo).
+    const Quaternion model = batch.body().profile.links.front().modelOrientation.conjugate();
+    const auto heading = [&](std::size_t e) {
+        const Quaternion frame = batch.view(e).state->links.front().orientation * model;
+        const Vec3 forward = frame.rotate(Vec3 { 1.0f, 0.0f, 0.0f });
+        return std::atan2(forward.y, forward.x);
+    };
+    float spread = 0.0f;
+    for (std::size_t e = 1; e < Worlds; ++e) spread = std::max(spread, std::abs(heading(e) - heading(0)));
+    require(spread > 0.3f, "os mundos deveriam comecar virados para lados diferentes");
+    const std::size_t O = batch.observationSize();
+    const auto& layout = batch.observationLayout().channels;
+    std::vector<float> actions(Worlds * batch.actionSize(), 0.0f);
+    for (int step = 0; step <= 10; ++step) {
+        if (step > 0) batch.step(actions);
+        const auto obs = batch.observations();
+        for (std::size_t e = 1; e < Worlds; ++e)
+            for (std::size_t i = 0; i < O; ++i)
+                require(std::abs(obs[e * O + i] - obs[i]) < (step == 0 ? 1e-4f : 2e-2f),
+                    "o canal " + layout[i].name + " depende do rumo (passo " + std::to_string(step) + ", "
+                        + std::to_string(obs[e * O + i]) + " x " + std::to_string(obs[i]) + ")");
     }
 }
 
@@ -159,6 +203,7 @@ void testTimeLimit() {
 
 void runTrainingBatchTests() {
     testContract();
+    testHeadingInvariance();
     testDeterminism();
     testFallsAndRestart();
     testTimeLimit();

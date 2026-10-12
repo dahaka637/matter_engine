@@ -18,7 +18,7 @@ from .evaluation import Battery, Evaluator
 from .model import ActorCritic, export_policy, migrate_inputs
 from .ppo import PPO, PPOSettings, Rollout
 
-RESTART_CODE = 75  # o supervisor reabre o treino (troca de modo)
+RESTART_CODE = system.RESTART_CODE
 
 
 @dataclass
@@ -180,6 +180,11 @@ class Trainer:
             self.ppo.load_state_dict(state["ppo"])
         self.counters.update(state.get("counters", {}))
         self.best.update(state.get("best", {}))
+        lost = self.db.rewind(self.run, self.counters["iteration"])
+        if lost:
+            self.db.event(self.run, "retomada", f"retomado da rodada {self.counters['iteration']}; "
+                                                f"{lost} rodadas depois do checkpoint se perderam")
+        self.last_evaluation = self.db.last_evaluation(self.run)
         if "rng_torch" in state:
             torch.set_rng_state(state["rng_torch"].cpu())
         if state.get("body_hash") != self.batch.body_hash:
@@ -420,6 +425,7 @@ class Trainer:
         self.model.load_state_dict(state["model"])
         self.ppo.load_state_dict(state["ppo"])
         self.counters.update(state.get("counters", {}))
+        self.db.rewind(self.run, self.counters["iteration"])
         self.ppo.learning_rate = max(self.settings.min_learning_rate, self.ppo.learning_rate * 0.5)
         for group in self.ppo.optimizer.param_groups:
             group["lr"] = self.ppo.learning_rate
