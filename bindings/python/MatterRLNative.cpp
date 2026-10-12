@@ -174,9 +174,9 @@ NB_MODULE(matter_rl_native, m) {
                 // Colunas: mundo, razao, primeiro link no chao, lado da queda,
                 // decisoes, segundos, retorno, oscilacao, deriva dos pes,
                 // mudanca de acao, esforco, velocidade das juntas, vertical,
-                // giro do tronco, giro dos pes no chao.
+                // giro do tronco, giro dos pes no chao, erro da postura.
                 const auto episodes = b.finishedEpisodes();
-                constexpr std::size_t Columns = 15;
+                constexpr std::size_t Columns = 16;
                 auto* data = new float[std::max<std::size_t>(1, episodes.size()) * Columns];
                 for (std::size_t i = 0; i < episodes.size(); ++i) {
                     const TrainingEpisode3D& e = episodes[i];
@@ -196,6 +196,7 @@ NB_MODULE(matter_rl_native, m) {
                     row[12] = e.meanUpright;
                     row[13] = e.trunkTurnRms;
                     row[14] = e.footTurnMax;
+                    row[15] = e.poseErrorRms;
                 }
                 nb::capsule owner(data, [](void* p) noexcept { delete[] static_cast<float*>(p); });
                 return nb::ndarray<nb::numpy, float, nb::ndim<2>>(data, { episodes.size(), Columns }, owner);

@@ -83,6 +83,8 @@ struct TrainingEpisode3D {
     float trunkTurnRms = 0.0f;
     // O maior giro de um pe no chao desde o inicio (rad, em torno da vertical).
     float footTurnMax = 0.0f;
+    // O quanto as juntas ficam longe da postura pedida (RMS, rad).
+    float poseErrorRms = 0.0f;
 };
 
 // Um mundo de treino visto por fora (o visualizador, a gravacao).

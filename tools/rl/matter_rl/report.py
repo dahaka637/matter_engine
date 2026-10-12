@@ -62,6 +62,8 @@ def format_status(status: dict) -> str:
                         f"oscilacao {100 * m['sway']:.1f} cm")
                 if m.get("turn") is not None:
                     part += f", giro do tronco {math.degrees(m['turn']):.0f} graus/s"
+                if m.get("pose_error") is not None:
+                    part += f", postura a {math.degrees(m['pose_error']):.1f} graus"
                 parts.append(part)
             lines.append(f"  {battery}: " + " · ".join(parts))
     if best and best.get("iteration", -1) >= 0:

@@ -65,6 +65,8 @@ struct TrainerStatus3D {
         std::string posture;
         std::vector<std::pair<std::string, double>> stand;
         double turn = -1.0;
+        // O quanto as juntas ficam longe da postura pedida, no jogo (rad; < 0 sem a medida).
+        double poseError = -1.0;
     };
     std::vector<Battery> evaluationBatteries;
     double bestScore = 0.0;

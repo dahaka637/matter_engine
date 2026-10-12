@@ -640,6 +640,11 @@ void ReinforcementLearningScreen::drawEvaluation(const TrainerStatus3D& status) 
             tooltip("A velocidade angular da pelve e do peito na bateria do jogo (média dos mundos). Parado de "
                     "verdade fica perto de zero; o tronco rodando de um lado para o outro sobe.");
         }
+        if (battery.poseError >= 0.0) {
+            infoRow("Postura", decimal(battery.poseError * 180.0 / 3.14159265358979, 1) + "°");
+            tooltip("O quanto as juntas ficam longe da postura pedida (a média, nos mundos da bateria do jogo). "
+                    "Perto de zero, ele segura a postura da habilidade.");
+        }
     }
     infoRow("Nota", decimal(status.evaluationScore, 2) + " (rodada " + std::to_string(status.evaluationIteration) + ")");
     tooltip("A nota da pior bateria: uma habilidade nova não esconde a antiga.");

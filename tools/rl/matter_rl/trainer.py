@@ -275,7 +275,7 @@ class Trainer:
                     "sway": metrics["sway"], "foot_drift": metrics["foot_drift"],
                     "action_rate": metrics["action_rate"], "effort": metrics["effort"], "upright": metrics["upright"],
                     "turn": metrics["turn"], "joint_speed": metrics["joint_speed"], "foot_turn": metrics["foot_turn"],
-                    "score": metrics["score"], "ends": json.dumps(metrics["ends"]),
+                    "pose_error": metrics["pose_error"], "score": metrics["score"], "ends": json.dumps(metrics["ends"]),
                 })
         # A nota e a da pior bateria (uma habilidade nova nao apaga a antiga).
         combined = min(m["score"] for solvers in results.values() for m in solvers.values())

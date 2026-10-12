@@ -73,6 +73,7 @@ ROWS = [
     ("pe girando no chao: media (graus)", lambda m: f"{math.degrees(m.get('foot_turn', 0.0)):.1f}"),
     ("pe girando no chao: pior mundo (graus)", lambda m: f"{math.degrees(m.get('foot_turn_worst', 0.0)):.1f}"),
     ("velocidade das juntas (rad/s)", lambda m: f"{m.get('joint_speed', 0.0):.3f}"),
+    ("erro da postura pedida (graus, RMS das juntas)", lambda m: f"{math.degrees(m.get('pose_error', 0.0)):.1f}"),
     ("tremor (mudanca da acao)", lambda m: f"{m['action_rate']:.4f}"),
     ("esforco", lambda m: f"{m['effort']:.3f}"),
     ("postura", lambda m: f"{m['upright']:.3f}"),

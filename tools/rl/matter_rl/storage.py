@@ -84,6 +84,7 @@ CREATE TABLE IF NOT EXISTS evaluations (
     turn REAL,
     joint_speed REAL,
     foot_turn REAL,
+    pose_error REAL,
     PRIMARY KEY (run, iteration, battery, solver)
 );
 CREATE TABLE IF NOT EXISTS checkpoints (
@@ -128,7 +129,7 @@ class Database:
             self.connection.executescript(SCHEMA)
             # Colunas que entraram depois (bancos de antes delas).
             known = {row[1] for row in self.connection.execute("PRAGMA table_info(evaluations)")}
-            for column in ("turn", "joint_speed", "foot_turn"):
+            for column in ("turn", "joint_speed", "foot_turn", "pose_error"):
                 if column not in known:
                     self.connection.execute(f"ALTER TABLE evaluations ADD COLUMN {column} REAL")
             self.connection.commit()
@@ -208,7 +209,7 @@ class Database:
             return {}
         from .evaluation import BASE_BATTERY, battery_posture
         keys = ("stand_fraction", "mean_seconds", "sway", "foot_drift", "action_rate", "effort", "upright", "turn",
-                "joint_speed", "foot_turn", "score")
+                "joint_speed", "foot_turn", "pose_error", "score")
         batteries: dict[str, dict] = {}
         for row in rows:
             entry = batteries.setdefault(row["battery"], {"posture": battery_posture(row["battery"]), "solvers": {}})

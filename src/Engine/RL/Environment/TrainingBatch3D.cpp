@@ -89,6 +89,7 @@ struct Environment {
     double jointSpeedSum = 0.0;
     double uprightSum = 0.0;
     double trunkTurnSquares = 0.0;
+    double poseErrorSquares = 0.0;
 };
 
 struct Scene {
@@ -409,6 +410,7 @@ void TrainingBatch3D::Impl::resetEnvironment(std::uint32_t index) {
     env.footDriftMax = 0.0f;
     env.footTurnMax = 0.0f;
     env.actionRateSum = env.effortSum = env.jointSpeedSum = env.uprightSum = env.trunkTurnSquares = 0.0;
+    env.poseErrorSquares = 0.0;
 }
 
 BodyReading TrainingBatch3D::Impl::read(const RagdollState3D& state) const {
@@ -564,7 +566,7 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
         env.footDriftMax = std::max(env.footDriftMax, moved);
     }
 
-    float effort = 0.0f, actionRate = 0.0f, limit = 0.0f, pose = 0.0f, speed = 0.0f;
+    float effort = 0.0f, actionRate = 0.0f, limit = 0.0f, pose = 0.0f, speed = 0.0f, poseError = 0.0f;
     for (std::size_t d = 0; d < body.dofs.size(); ++d) {
         const RLBodyDof3D& dof = body.dofs[d];
         const RagdollJointState3D& joint = state.joints[dof.linkIndex];
@@ -580,6 +582,7 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
         limit += std::max(0.0f, 0.05f - x) / 0.05f + std::max(0.0f, x - 0.95f) / 0.05f;
         const float fromPosture = 2.0f * (q - posture.dofRadians[d]) / range;
         pose += fromPosture * fromPosture;
+        poseError += (q - posture.dofRadians[d]) * (q - posture.dofRadians[d]);
         speed += std::abs(joint.velocityRadiansPerSecond[axis]);
     }
     const float dofCount = static_cast<float>(std::max<std::size_t>(1, body.dofs.size()));
@@ -588,6 +591,7 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
     limit /= dofCount;
     pose /= dofCount;
     speed /= dofCount;
+    poseError /= dofCount;
 
     const std::array<float, RewardCount> values {
         w.alive,
@@ -620,6 +624,7 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
     env.jointSpeedSum += speed;
     env.uprightSum += upright;
     env.trunkTurnSquares += trunkTurn2;
+    env.poseErrorSquares += poseError;
     return total;
 }
 
@@ -647,6 +652,7 @@ void TrainingBatch3D::Impl::finishEpisode(Scene& scene, std::uint32_t index, Tra
     episode.meanJointSpeed = static_cast<float>(env.jointSpeedSum / n);
     episode.meanUpright = static_cast<float>(env.uprightSum / n);
     episode.trunkTurnRms = static_cast<float>(std::sqrt(env.trunkTurnSquares / n));
+    episode.poseErrorRms = static_cast<float>(std::sqrt(env.poseErrorSquares / n));
     if (reason == TrainingEndReason3D::FallContact || reason == TrainingEndReason3D::FallHeight) {
         // O lado da queda: para onde o centro de massa ia, no referencial do corpo.
         const Vec3 v = reading.valid ? reading.headingInverse.rotate(reading.comVelocity) : Vec3 {};

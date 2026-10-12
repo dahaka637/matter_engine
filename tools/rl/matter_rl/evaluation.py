@@ -15,7 +15,7 @@ from .model import ACTION_LIMIT, ActorCritic
 
 REASONS = ["nenhum", "queda_contato", "queda_altura", "numerico", "tempo", "limite"]
 # As colunas do resumo de um episodio (finished_episodes do modulo nativo).
-EPISODE_COLUMNS = 15
+EPISODE_COLUMNS = 16
 FALLS = {1, 2, 3}
 
 
@@ -48,13 +48,15 @@ class Battery:
 
 
 def score(metrics: dict) -> float:
-    """Quanto ficou de pe, descontando oscilacao, tremedeira, deriva e o tronco
-    girando (o giro passa despercebido na oscilacao do centro de massa)."""
+    """Quanto ficou de pe, descontando oscilacao, tremedeira, deriva, o tronco
+    girando (o giro passa despercebido na oscilacao do centro de massa) e o
+    quanto se afasta da postura pedida (de pe em outra postura nao conta)."""
     return (metrics["stand_fraction"]
             - 0.15 * min(1.0, metrics["sway"] / 0.05)
             - 0.15 * min(1.0, metrics["action_rate"] / 0.05)
             - 0.10 * min(1.0, metrics["foot_drift"] / 0.20)
-            - 0.15 * min(1.0, metrics.get("turn", 0.0) / 0.30))
+            - 0.15 * min(1.0, metrics.get("turn", 0.0) / 0.30)
+            - 0.15 * min(1.0, metrics.get("pose_error", 0.0) / 0.15))
 
 
 class Evaluator:
@@ -145,7 +147,8 @@ class Evaluator:
         if len(rows) == 0:
             return {"stand_fraction": 0.0, "mean_seconds": 0.0, "sway": 1.0, "foot_drift": 1.0, "foot_drift_median": 1.0,
                     "foot_drift_worst": 1.0, "action_rate": 1.0, "effort": 1.0, "upright": 0.0, "turn": 1.0,
-                    "turn_worst": 1.0, "joint_speed": 1.0, "foot_turn": 1.0, "foot_turn_worst": 1.0, "ends": {},
+                    "turn_worst": 1.0, "joint_speed": 1.0, "foot_turn": 1.0, "foot_turn_worst": 1.0,
+                    "pose_error": 1.0, "ends": {},
                     "score": -1.0, "episodes": 0}
         reasons = rows[:, 1].astype(int)
         stood = reasons == 4
@@ -169,6 +172,8 @@ class Evaluator:
             # O maior giro de um pe no chao (rad): a media e o pior mundo.
             "foot_turn": float(subset[:, 14].mean()),
             "foot_turn_worst": float(subset[:, 14].max()),
+            # O quanto as juntas ficam longe da postura pedida (RMS, rad).
+            "pose_error": float(subset[:, 15].mean()),
             "ends": dict(ends),
         }
         metrics["score"] = score(metrics)
