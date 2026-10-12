@@ -148,6 +148,8 @@ void testFallsAndRestart() {
                     || episode.reason == TrainingEndReason3D::FallHeight,
                 std::string("fim inesperado: ") + trainingEndReasonName3D(episode.reason));
             require(batch.terminated()[episode.environment] == 1, "queda deveria marcar terminated");
+            require(episode.trunkTurnRms > 0.05f && std::isfinite(episode.trunkTurnRms),
+                "o tronco gira numa queda (o giro do resumo)");
             // (O ruido inicial das juntas muda a altura da pelve em uns cm.)
             require(std::abs(batch.observations()[episode.environment * batch.observationSize()]) < 0.2f,
                 "o mundo deveria recomecar de pe");

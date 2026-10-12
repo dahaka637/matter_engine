@@ -47,6 +47,7 @@ TrainingTask3D loadTrainingTask3D(const std::filesystem::path& definitionPath) {
         w.headHeight = r.value("headHeight", w.headHeight);
         w.comOverSupport = r.value("comOverSupport", w.comOverSupport);
         w.still = r.value("still", w.still);
+        w.trunkStill = r.value("trunkStill", w.trunkStill);
         w.footSlip = r.value("footSlip", w.footSlip);
         w.footDrift = r.value("footDrift", w.footDrift);
         w.effort = r.value("effort", w.effort);

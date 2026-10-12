@@ -80,6 +80,7 @@ struct Environment {
     double effortSum = 0.0;
     double jointSpeedSum = 0.0;
     double uprightSum = 0.0;
+    double trunkTurnSquares = 0.0;
 };
 
 struct Scene {
@@ -358,7 +359,7 @@ void TrainingBatch3D::Impl::resetEnvironment(std::uint32_t index) {
     env.comSum[0] = env.comSum[1] = 0.0;
     env.comSquares[0] = env.comSquares[1] = 0.0;
     env.footDriftMax = 0.0f;
-    env.actionRateSum = env.effortSum = env.jointSpeedSum = env.uprightSum = 0.0;
+    env.actionRateSum = env.effortSum = env.jointSpeedSum = env.uprightSum = env.trunkTurnSquares = 0.0;
 }
 
 BodyReading TrainingBatch3D::Impl::read(const RagdollState3D& state) const {
@@ -487,6 +488,11 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
     const float comOverSupport = std::exp(-(dx * dx + dy * dy) / (0.06f * 0.06f));
     const float comSpeed2 = reading.comVelocity.lengthSquared();
     const float still = std::exp(-comSpeed2 / 0.04f);
+    // O tronco quieto: pelve e peito sem rodar (o balanco natural, ~0,05 rad/s,
+    // quase nao conta; girar a ~0,6 rad/s quase zera a parcela).
+    const float trunkTurn2 = 0.5f
+        * (state.links[0].angularVelocity.lengthSquared() + state.links[body.upperChest].angularVelocity.lengthSquared());
+    const float trunkStill = std::exp(-trunkTurn2 / 0.09f);
 
     float slip = 0.0f, drift = 0.0f;
     for (std::size_t f = 0; f < 2; ++f) {
@@ -531,6 +537,7 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
         w.headHeight * headHeight,
         w.comOverSupport * comOverSupport,
         w.still * still,
+        w.trunkStill * trunkStill,
         -w.footSlip * slip,
         -w.footDrift * drift,
         -w.effort * effort,
@@ -554,6 +561,7 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
     env.effortSum += effort;
     env.jointSpeedSum += speed;
     env.uprightSum += upright;
+    env.trunkTurnSquares += trunkTurn2;
     return total;
 }
 
@@ -579,6 +587,7 @@ void TrainingBatch3D::Impl::finishEpisode(Scene& scene, std::uint32_t index, Tra
     episode.meanEffort = static_cast<float>(env.effortSum / n);
     episode.meanJointSpeed = static_cast<float>(env.jointSpeedSum / n);
     episode.meanUpright = static_cast<float>(env.uprightSum / n);
+    episode.trunkTurnRms = static_cast<float>(std::sqrt(env.trunkTurnSquares / n));
     if (reason == TrainingEndReason3D::FallContact || reason == TrainingEndReason3D::FallHeight) {
         // O lado da queda: para onde o centro de massa ia, no referencial do corpo.
         const Vec3 v = reading.valid ? reading.headingInverse.rotate(reading.comVelocity) : Vec3 {};

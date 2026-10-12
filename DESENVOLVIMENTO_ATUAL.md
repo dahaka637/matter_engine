@@ -46,8 +46,22 @@ dele. Ele substitui o início feito pelo Codex em 11/10.
   jogador de verdade, os empurrões e os gráficos. `RagdollSkeletonView`
   (Modeling/Rig) é a pose do jogador pelos links, também usada pelo `quadros`.
 - **E6:** relatório, gráficos, folhas e a skill `rl-supervisao`.
+- **E4 (validação da H1, do zero, GPU):** de pé no treino em ~1 min; 100% de
+  pé por 60 s na bateria dos dois solvers em ~10 min (11 milhões de
+  decisões). A ação zero fica 0% e cai em 2,6–2,8 s. A postura (pelve, peito
+  e cabeça como na pose base) foi conferida nas folhas e na tela.
+- **E7 (semanas ligado):**
+  - testado `kill -9` (o supervisor reabre do último checkpoint);
+  - testado desligar e religar pelo serviço do systemd (volta da mesma
+    rodada);
+  - testada a troca de modo (sem perder rodadas);
+  - a sessão morta fica "interrompida" e as rodadas perdidas saem do
+    histórico;
+  - o supervisor e a CLI não carregam o PyTorch;
+  - os gráficos amostram por tempo e as rodadas com mais de 3 dias são
+    compactadas.
 - **CTest:** 17/19. `Character` e `AdaptivePhysics` falham como antes.
-  Python: 12/12 (`cd tools/rl && .venv/bin/python -m pytest`).
+  Python: 15/15 (`cd tools/rl && .venv/bin/python -m pytest`).
 
 ## Novo controle do atleta: Etapas 0 a 2 (10/10/2026, noite)
 

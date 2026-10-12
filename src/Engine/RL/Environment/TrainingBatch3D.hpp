@@ -75,6 +75,8 @@ struct TrainingEpisode3D {
     float meanEffort = 0.0f;
     float meanJointSpeed = 0.0f;
     float meanUpright = 0.0f;
+    // O giro do tronco: a velocidade angular da pelve e do peito (RMS, rad/s).
+    float trunkTurnRms = 0.0f;
 };
 
 // Um mundo de treino visto por fora (o visualizador, a gravacao).

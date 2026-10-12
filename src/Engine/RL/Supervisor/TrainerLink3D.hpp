@@ -56,6 +56,8 @@ struct TrainerStatus3D {
     bool evaluated = false;
     // De pe por 60 s em cada solver da bateria ("treino", "jogo").
     std::vector<std::pair<std::string, double>> evaluationStand;
+    // O giro do tronco no solver do jogo (rad/s, media dos mundos; < 0 sem a medida).
+    double evaluationTurn = -1.0;
     double bestScore = 0.0;
     std::int64_t bestIteration = -1;
     std::string policy;

@@ -81,6 +81,8 @@ CREATE TABLE IF NOT EXISTS evaluations (
     upright REAL,
     score REAL,
     ends TEXT,
+    turn REAL,
+    joint_speed REAL,
     PRIMARY KEY (run, iteration, battery, solver)
 );
 CREATE TABLE IF NOT EXISTS checkpoints (
@@ -123,6 +125,11 @@ class Database:
             self.connection.execute("PRAGMA journal_mode=WAL")
             self.connection.execute("PRAGMA synchronous=NORMAL")
             self.connection.executescript(SCHEMA)
+            # Colunas que entraram depois (bancos de antes delas).
+            known = {row[1] for row in self.connection.execute("PRAGMA table_info(evaluations)")}
+            for column in ("turn", "joint_speed"):
+                if column not in known:
+                    self.connection.execute(f"ALTER TABLE evaluations ADD COLUMN {column} REAL")
             self.connection.commit()
         self.connection.row_factory = sqlite3.Row
 
@@ -198,9 +205,10 @@ class Database:
                                (SELECT MAX(iteration) FROM evaluations WHERE run=?)""", (run, run)).fetchall()
         if not rows:
             return {}
-        keys = ("stand_fraction", "mean_seconds", "sway", "foot_drift", "action_rate", "effort", "upright", "score")
-        solvers = {row["solver"]: {key: row[key] for key in keys} | {"ends": json.loads(row["ends"] or "{}")}
-                   for row in rows}
+        keys = ("stand_fraction", "mean_seconds", "sway", "foot_drift", "action_rate", "effort", "upright", "turn",
+                "joint_speed", "score")
+        solvers = {row["solver"]: {key: row[key] if key in row.keys() else None for key in keys}
+                   | {"ends": json.loads(row["ends"] or "{}")} for row in rows}
         return {"iteration": rows[0]["iteration"], "score": min(m["score"] for m in solvers.values()),
                 "solvers": solvers, "seconds": 0.0, "time": max(row["time"] for row in rows)}
 

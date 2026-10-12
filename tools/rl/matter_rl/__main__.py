@@ -9,7 +9,9 @@
     matter-rl peso <parcela> <valor> [--motivo M]
     matter-rl relatorio [--desde 1h]      o que mudou no periodo (Markdown)
     matter-rl graficos [--saida DIR]      PNG das curvas
-    matter-rl folha [--episodio ARQ] [--cena NOME] [--saida PNG]
+    matter-rl folha [--episodio ARQ] [--cena NOME] [--saida PNG] [--de S --ate S]
+    matter-rl folha --checkpoint X [--mundo N] [--solver jogo|treino]   um mundo de um checkpoint
+    matter-rl comparar A B                a bateria em dois checkpoints, lado a lado
     matter-rl episodios                   as gravacoes da ultima avaliacao
 """
 from __future__ import annotations
@@ -214,14 +216,30 @@ def latest_dump(run: str) -> Path | None:
 
 
 def command_sheet(args: argparse.Namespace) -> int:
-    dump = Path(args.episodio) if args.episodio else latest_dump(args.run)
+    scenario = args.cena
+    if args.checkpoint:
+        # Roda a bateria nesse checkpoint (fora do treino) gravando o mundo pedido.
+        from . import compare
+        reference = compare.resolve(args.run, args.checkpoint)
+        record = paths.run_dir(args.run) / "folhas" / f"ck-{reference.iteration:09d}-mundo{args.mundo}"
+        compare.evaluate(args.run, args.checkpoint, record=record, watch=(args.mundo,), solvers=[args.solver])
+        dump = record.with_name(f"{record.stem}-{args.solver}.dump")
+        scenario = scenario or f"parado_mundo{args.mundo}_{args.solver}"
+    else:
+        dump = Path(args.episodio) if args.episodio else latest_dump(args.run)
     if dump is None:
         print("nenhum episodio gravado ainda (as avaliacoes gravam)")
         return 1
     output = Path(args.saida) if args.saida else paths.run_dir(args.run) / "folhas" / f"{dump.stem}.png"
     output.parent.mkdir(parents=True, exist_ok=True)
-    report.sheet(dump, args.cena, output, args.quadros, args.vista)
+    report.sheet(dump, scenario, output, args.quadros, args.vista, args.de, args.ate)
     print(output)
+    return 0
+
+
+def command_compare(args: argparse.Namespace) -> int:
+    from . import compare
+    print(compare.compare(args.run, args.a, args.b, args.threads))
     return 0
 
 
@@ -283,7 +301,17 @@ def main(argv: list[str] | None = None) -> int:
     sheet.add_argument("--saida")
     sheet.add_argument("--quadros", type=int, default=8)
     sheet.add_argument("--vista")
+    sheet.add_argument("--checkpoint", help="rodada, ultimo ou melhor: avalia fora do treino e grava o mundo")
+    sheet.add_argument("--mundo", type=int, default=0)
+    sheet.add_argument("--solver", default="jogo", choices=["jogo", "treino"])
+    sheet.add_argument("--de", type=float, help="so o trecho a partir de (s)")
+    sheet.add_argument("--ate", type=float, help="so o trecho ate (s)")
     sheet.set_defaults(func=command_sheet)
+    comparison = run_args(sub.add_parser("comparar"))
+    comparison.add_argument("a", help="rodada, ultimo ou melhor")
+    comparison.add_argument("b", help="rodada, ultimo ou melhor")
+    comparison.add_argument("--threads", type=int, default=2)
+    comparison.set_defaults(func=command_compare)
     run_args(sub.add_parser("episodios")).set_defaults(func=command_episodes)
     service = run_args(sub.add_parser("servico"))
     service.add_argument("acao", choices=["instalar", "remover", "status"])

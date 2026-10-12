@@ -3,6 +3,7 @@ as folhas de quadros (o jogador de verdade, pelo MatterModelInspector)."""
 from __future__ import annotations
 
 import json
+import math
 import subprocess
 import time
 from pathlib import Path
@@ -54,8 +55,11 @@ def format_status(status: dict) -> str:
     if evaluation:
         parts = []
         for solver, m in evaluation.get("solvers", {}).items():
-            parts.append(f"{solver}: de pe {100 * m['stand_fraction']:.0f}% ({m['mean_seconds']:.0f} s), "
-                         f"oscilacao {100 * m['sway']:.1f} cm")
+            part = (f"{solver}: de pe {100 * m['stand_fraction']:.0f}% ({m['mean_seconds']:.0f} s), "
+                    f"oscilacao {100 * m['sway']:.1f} cm")
+            if m.get("turn") is not None:
+                part += f", giro do tronco {math.degrees(m['turn']):.0f} graus/s"
+            parts.append(part)
         lines.append(f"avaliacao (rodada {evaluation.get('iteration')}): nota {evaluation.get('score', 0):.3f} · "
                      + " · ".join(parts))
     if best and best.get("iteration", -1) >= 0:
@@ -115,10 +119,13 @@ def report(run: str, since_seconds: float) -> str:
         out.append("- Nenhuma rodada no periodo.")
     if evals:
         out += ["", "## Avaliacoes", "", "| Rodada | Solver | De pe 60 s | Media (s) | Oscilacao (cm) | Deriva pes (cm) | "
-                "Mudanca de acao | Nota |", "|---:|---|---:|---:|---:|---:|---:|---:|"]
+                "Giro do tronco (graus/s) | Mudanca de acao | Nota |", "|---:|---|---:|---:|---:|---:|---:|---:|---:|"]
         for e in evals:
+            value = e["turn"] if "turn" in e.keys() else None
+            turn = f"{math.degrees(value):.1f}" if value is not None else "—"
             out.append(f"| {e['iteration']} | {e['solver']} | {100 * e['stand_fraction']:.0f}% | {e['mean_seconds']:.1f} | "
-                       f"{100 * e['sway']:.1f} | {100 * e['foot_drift']:.1f} | {e['action_rate']:.4f} | {e['score']:.3f} |")
+                       f"{100 * e['sway']:.1f} | {100 * e['foot_drift']:.1f} | {turn} | {e['action_rate']:.4f} | "
+                       f"{e['score']:.3f} |")
     if events:
         out += ["", "## Eventos", ""]
         for e in events:
@@ -169,8 +176,10 @@ def plots(run: str, output: Path) -> list[Path]:
     return [main]
 
 
-def sheet(dump: Path, scenario: str | None, output: Path, frames: int = 8, view: str | None = None) -> Path:
-    """Folha de quadros de um episodio gravado, com o jogador de verdade."""
+def sheet(dump: Path, scenario: str | None, output: Path, frames: int = 8, view: str | None = None,
+          start: float | None = None, end: float | None = None) -> Path:
+    """Folha de quadros de um episodio gravado, com o jogador de verdade
+    (start/end: so um trecho, em segundos)."""
     inspector = paths.inspector()
     if inspector is None:
         raise SystemExit("MatterModelInspector ausente: compile a build (tools/build.sh)")
@@ -180,6 +189,10 @@ def sheet(dump: Path, scenario: str | None, output: Path, frames: int = 8, view:
         command += ["--cenario", scenario]
     if view:
         command += ["--vista", view]
+    if start is not None:
+        command += ["--de", str(start)]
+    if end is not None:
+        command += ["--ate", str(end)]
     subprocess.run(command, check=True, cwd=paths.REPO, stdout=subprocess.DEVNULL)
     return output
 

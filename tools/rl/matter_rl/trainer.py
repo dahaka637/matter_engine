@@ -14,7 +14,7 @@ import numpy as np
 import torch
 
 from . import control, native, paths, storage, system
-from .evaluation import Battery, Evaluator
+from .evaluation import EPISODE_COLUMNS, Battery, Evaluator
 from .model import ActorCritic, export_policy, migrate_inputs
 from .ppo import PPO, PPOSettings, Rollout
 
@@ -250,7 +250,8 @@ class Trainer:
                 "steps": self.counters["steps"], "battery": self.evaluator.battery.name, "solver": solver,
                 "stand_fraction": metrics["stand_fraction"], "mean_seconds": metrics["mean_seconds"],
                 "sway": metrics["sway"], "foot_drift": metrics["foot_drift"], "action_rate": metrics["action_rate"],
-                "effort": metrics["effort"], "upright": metrics["upright"], "score": metrics["score"],
+                "effort": metrics["effort"], "upright": metrics["upright"], "turn": metrics["turn"],
+                "joint_speed": metrics["joint_speed"], "score": metrics["score"],
                 "ends": json.dumps(metrics["ends"]),
             })
         combined = min(m["score"] for m in results.values())
@@ -312,9 +313,9 @@ class Trainer:
         if command == "peso":
             data = json.loads(self.live_task.read_text())
             component, value = arguments["componente"], float(arguments["valor"])
-            if component not in data["reward"]:
+            if component not in data["reward"] and component not in self.reward_names:
                 raise ValueError(f"parcela desconhecida: {component}")
-            old = data["reward"][component]
+            old = data["reward"].get(component, "padrao")
             data["reward"][component] = value
             storage.write_json_atomic(self.live_task, data)
             self.batch.update_task(str(self.live_task))
@@ -386,7 +387,7 @@ class Trainer:
         self.counters["iteration"] += 1
         self.counters["steps"] += samples
         self.counters["train_seconds"] += collect + update
-        rows = np.concatenate(episodes) if episodes else np.zeros((0, 13))
+        rows = np.concatenate(episodes) if episodes else np.zeros((0, EPISODE_COLUMNS))
         self.counters["episodes"] += len(rows)
         reasons = rows[:, 1].astype(int) if len(rows) else np.zeros(0, dtype=int)
         names = self.native.END_REASONS

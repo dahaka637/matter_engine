@@ -241,8 +241,10 @@ void TrainerLink3D::readStatus(const std::string& json, bool alive) {
         status.evaluationScore = number(*evaluation, "score");
         status.evaluationIteration = static_cast<std::uint64_t>(number(*evaluation, "iteration"));
         if (const auto solvers = evaluation->find("solvers"); solvers != evaluation->end() && solvers->is_object())
-            for (const auto& [name, metrics] : solvers->items())
+            for (const auto& [name, metrics] : solvers->items()) {
                 status.evaluationStand.emplace_back(name, number(metrics, "stand_fraction"));
+                if (name == "jogo") status.evaluationTurn = number(metrics, "turn", -1.0);
+            }
     }
     if (const auto best = s.find("best"); best != s.end() && best->is_object()) {
         status.bestScore = number(*best, "score");

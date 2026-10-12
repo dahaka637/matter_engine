@@ -535,6 +535,11 @@ void ReinforcementLearningScreen::drawEvaluation(const TrainerStatus3D& status) 
     }
     tooltip("Quantos dos 32 mundos da bateria ficaram de pé os 60 s, sem ruído e sem variação do mundo. "
             "\"Jogo\" é a mesma bateria com a física do jogo (20/20).");
+    if (status.evaluationTurn >= 0.0) {
+        infoRow("Giro do tronco", decimal(status.evaluationTurn * 180.0 / 3.14159265358979, 1) + "°/s");
+        tooltip("A velocidade angular da pelve e do peito na bateria do jogo (média dos mundos). Parado de "
+                "verdade fica perto de zero; o tronco rodando de um lado para o outro sobe.");
+    }
     infoRow("Nota", decimal(status.evaluationScore, 2) + " (rodada " + std::to_string(status.evaluationIteration) + ")");
     if (status.bestIteration >= 0)
         infoRow("Melhor", decimal(status.bestScore, 2) + " (rodada " + std::to_string(status.bestIteration) + ")");
