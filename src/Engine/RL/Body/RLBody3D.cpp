@@ -42,6 +42,62 @@ std::uint32_t findLink(const RagdollProfile3D& profile, std::string_view id) {
     throw std::runtime_error("corpo de RL: o perfil nao tem o link " + std::string(id));
 }
 
+// As juntas e a inclinacao da pelve num quadro de clipe (o hash do corpo
+// passa a incluir o clipe).
+void readClipPose(const RagdollProfile3D& profile, const std::filesystem::path& clipPath, float time,
+    std::vector<Vec3>& coordinates, Quaternion& rootRotation, std::uint64_t& hash) {
+    const AnimationClip3D clip = loadAnimationClip3D(clipPath.string());
+    hash = fnv1a(readText(clipPath), hash);
+    coordinates.assign(profile.links.size(), {});
+    rootRotation = {};
+    for (std::size_t i = 0; i < profile.links.size(); ++i) {
+        const AnimationTrack3D* track = findAnimationTrack3D(clip, profile.links[i].id);
+        if (!track) continue;
+        const AnimationTransformSample3D sample = sampleAnimationTrack3D(*track, time, clip.durationSeconds, true);
+        if (i == 0) rootRotation = sample.rotationDelta.normalized();
+        else coordinates[i] = sample.jointPositionRadians;
+    }
+}
+
+// Uma postura das juntas de um quadro: os eixos atuados presos no curso e as
+// medidas com os pes no chao.
+RLPosture3D makePosture(const RLBody3D& body, std::string id, std::string displayName, std::vector<Vec3> coordinates,
+    Quaternion rootRotation) {
+    const RagdollProfile3D& profile = body.profile;
+    RLPosture3D posture;
+    posture.id = std::move(id);
+    posture.displayName = std::move(displayName);
+    for (const RLBodyDof3D& dof : body.dofs) {
+        Vec3& c = coordinates[dof.linkIndex];
+        float& value = dof.axis == RagdollAxis3D::Twist ? c.x : dof.axis == RagdollAxis3D::Swing1 ? c.y : c.z;
+        value = std::clamp(value, dof.minimumRadians, dof.maximumRadians);
+        posture.dofRadians.push_back(value);
+    }
+    posture.jointCoordinates = std::move(coordinates);
+    posture.rootRotation = rootRotation;
+    const Quaternion root = profile.links.front().modelOrientation * rootRotation;
+    const RLBodyPose3D pose = rlBodyPose3D(profile, {}, root, posture.jointCoordinates);
+    const float lowest = rlBodyLowestFootPoint3D(body, pose);
+    posture.standingPelvisHeight = pose.positions.front().z - lowest;
+    posture.standingHeadHeight = pose.positions[body.head].z - lowest;
+    // O rumo pelo eixo da frente da pelve (como o ambiente le) e o "para cima"
+    // de cada parte nele.
+    const Quaternion pelvisFrame = (pose.orientations.front() * profile.links.front().modelOrientation.conjugate())
+        .normalized();
+    const Vec3 forward = pelvisFrame.rotate({ 1.0f, 0.0f, 0.0f });
+    const Quaternion headingInverse = Quaternion::fromAxisAngle({ 0.0f, 0.0f, 1.0f }, -std::atan2(forward.y, forward.x));
+    const auto up = [&](std::uint32_t link) {
+        const Quaternion frame = pose.orientations[link] * profile.links[link].modelOrientation.conjugate();
+        return headingInverse.rotate(frame.rotate({ 0.0f, 0.0f, 1.0f })).normalized();
+    };
+    posture.pelvisUp = up(0);
+    posture.chestUp = up(body.upperChest);
+    posture.headUp = up(body.head);
+    if (!(posture.standingPelvisHeight > 0.3f) || !(posture.standingHeadHeight > posture.standingPelvisHeight))
+        throw std::runtime_error("corpo de RL: a postura " + posture.id + " nao fica de pe");
+    return posture;
+}
+
 } // namespace
 
 float RLBodyDof3D::target(float action) const {
@@ -189,17 +245,8 @@ RLBody3D loadRLBody3D(const std::filesystem::path& definitionPath) {
     body.baseJointCoordinates.assign(profile.links.size(), {});
     if (document.contains("basePose")) {
         const nlohmann::json& base = document["basePose"];
-        const std::filesystem::path clipPath = (directory / base.at("clip").get<std::string>()).lexically_normal();
-        const AnimationClip3D clip = loadAnimationClip3D(clipPath.string());
-        const float time = base.value("timeSeconds", 0.0f);
-        body.hash = fnv1a(readText(clipPath), body.hash);
-        for (std::size_t i = 0; i < profile.links.size(); ++i) {
-            const AnimationTrack3D* track = findAnimationTrack3D(clip, profile.links[i].id);
-            if (!track) continue;
-            const AnimationTransformSample3D sample = sampleAnimationTrack3D(*track, time, clip.durationSeconds, true);
-            if (i == 0) body.baseRootRotation = sample.rotationDelta.normalized();
-            else body.baseJointCoordinates[i] = sample.jointPositionRadians;
-        }
+        readClipPose(profile, (directory / base.at("clip").get<std::string>()).lexically_normal(),
+            base.value("timeSeconds", 0.0f), body.baseJointCoordinates, body.baseRootRotation, body.hash);
     }
 
     const float defaultActionScale = document.value("actionScale", 0.25f);
@@ -250,28 +297,31 @@ RLBody3D loadRLBody3D(const std::filesystem::path& definitionPath) {
         else coordinates.z = dof.baseRadians;
     }
 
-    // As medidas de pe, com os pes no chao.
-    const Quaternion root = profile.links.front().modelOrientation * body.baseRootRotation;
-    const RLBodyPose3D pose = rlBodyPose3D(profile, {}, root, body.baseJointCoordinates);
-    const float lowest = rlBodyLowestFootPoint3D(body, pose);
-    body.standingPelvisHeight = pose.positions.front().z - lowest;
-    body.standingHeadHeight = pose.positions[body.head].z - lowest;
-    // O rumo pelo eixo da frente da pelve (como o ambiente le) e o "para cima"
-    // de cada parte nele.
-    const Quaternion pelvisFrame = (pose.orientations.front() * profile.links.front().modelOrientation.conjugate())
-        .normalized();
-    const Vec3 forward = pelvisFrame.rotate({ 1.0f, 0.0f, 0.0f });
-    const Quaternion headingInverse = Quaternion::fromAxisAngle({ 0.0f, 0.0f, 1.0f }, -std::atan2(forward.y, forward.x));
-    const auto up = [&](std::uint32_t link) {
-        const Quaternion frame = pose.orientations[link] * profile.links[link].modelOrientation.conjugate();
-        return headingInverse.rotate(frame.rotate({ 0.0f, 0.0f, 1.0f })).normalized();
-    };
-    body.basePelvisUp = up(0);
-    body.baseChestUp = up(body.upperChest);
-    body.baseHeadUp = up(body.head);
-    if (!(body.standingPelvisHeight > 0.3f) || !(body.standingHeadHeight > body.standingPelvisHeight))
-        throw std::runtime_error("corpo de RL: a pose base nao fica de pe");
+    // A base e a primeira postura; as medidas dela ficam tambem nos campos da
+    // base (o contrato da observacao e da acao parte dela).
+    body.postures.push_back(makePosture(body, "natural", "Natural", body.baseJointCoordinates, body.baseRootRotation));
+    const RLPosture3D& base = body.postures.front();
+    body.standingPelvisHeight = base.standingPelvisHeight;
+    body.standingHeadHeight = base.standingHeadHeight;
+    body.basePelvisUp = base.pelvisUp;
+    body.baseChestUp = base.chestUp;
+    body.baseHeadUp = base.headUp;
+    for (const nlohmann::json& entry : document.value("postures", nlohmann::json::array())) {
+        const std::string id = entry.at("id").get<std::string>();
+        if (findRLPosture3D(body, id) >= 0) throw std::runtime_error("corpo de RL: postura repetida: " + id);
+        std::vector<Vec3> coordinates;
+        Quaternion rootRotation;
+        readClipPose(profile, (directory / entry.at("clip").get<std::string>()).lexically_normal(),
+            entry.value("timeSeconds", 0.0f), coordinates, rootRotation, body.hash);
+        body.postures.push_back(makePosture(body, id, entry.value("displayName", id), std::move(coordinates), rootRotation));
+    }
     return body;
+}
+
+int findRLPosture3D(const RLBody3D& body, std::string_view id) {
+    for (std::size_t i = 0; i < body.postures.size(); ++i)
+        if (body.postures[i].id == id) return static_cast<int>(i);
+    return -1;
 }
 
 } // namespace MatterEngine

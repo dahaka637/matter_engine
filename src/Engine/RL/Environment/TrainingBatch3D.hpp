@@ -44,6 +44,10 @@ struct TrainingBatchSettings3D {
     // avaliacao confere a politica tambem com as 20/20 do jogo.
     int solverPositionIterations = -1;
     int solverVelocityIterations = -1;
+    // A postura de todos os mundos (o id no corpo): a bateria de uma
+    // habilidade e o visualizador. Vazio = a mistura da tarefa no treino (a
+    // primeira postura dela na avaliacao).
+    std::string posture;
 };
 
 enum class TrainingEndReason3D : std::uint8_t {
@@ -86,6 +90,8 @@ struct TrainingEnvironmentView3D {
     const RagdollState3D* state = nullptr;
     Vec3 origin;
     std::uint32_t steps = 0;
+    // A postura do episodio (o indice em RLBody3D::postures).
+    std::uint32_t posture = 0;
     Vec3 pushForce;
     int pushLink = -1;
 };
@@ -123,6 +129,11 @@ public:
     // inicio, variacao e empurroes (vale do proximo passo/episodio em
     // diante). Corpo e actionRepeat nao mudam.
     void updateTask(const TrainingTask3D& task);
+    // Forca a postura de todos os mundos (o id no corpo; vazio volta a mistura
+    // da tarefa), do proximo recomeco em diante.
+    void setPosture(const std::string& id);
+    // As posturas que a tarefa pede, na ordem dela.
+    [[nodiscard]] std::vector<std::string> taskPostureIds() const;
 
     // Todos os mundos recomecam (sementes derivadas de seed).
     void reset(std::uint64_t seed);

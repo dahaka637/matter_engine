@@ -22,6 +22,8 @@ struct TrainingEvaluationPoint3D {
     std::uint64_t iteration = 0;
     double time = 0.0;
     double steps = 0.0;
+    // A bateria (uma por habilidade: equilibrio_v1, postura_alerta_v1...) e o solver.
+    std::string battery;
     std::string solver;
     double standFraction = 0.0;
     double meanSeconds = 0.0;

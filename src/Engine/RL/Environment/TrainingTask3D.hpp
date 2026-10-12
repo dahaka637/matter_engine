@@ -42,6 +42,14 @@ struct TrainingRange3D {
     float maximum = 0.0f;
 };
 
+// Uma postura que a tarefa pede (pelo id no corpo) e a fatia dos episodios
+// de treino com ela. Uma habilidade nova mantem uma fatia das antigas (o
+// ensaio: aprende a nova sem esquecer).
+struct TrainingPostureWeight3D {
+    std::string id;
+    float weight = 1.0f;
+};
+
 // Uma tarefa de treino (assets/rl/tasks/<id>.json): o que se pede ao corpo,
 // como o episodio comeca e acaba e o quanto o mundo varia.
 struct TrainingTask3D {
@@ -52,6 +60,8 @@ struct TrainingTask3D {
     std::uint32_t actionRepeat = 4;
     float episodeSeconds = 20.0f;
     std::string groundMaterial = "grass";
+    // As posturas pedidas; sem a lista, so a pose base ("natural").
+    std::vector<TrainingPostureWeight3D> postures { { "natural", 1.0f } };
     TrainingRewardWeights3D reward;
 
     struct Termination {

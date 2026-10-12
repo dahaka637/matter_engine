@@ -26,6 +26,22 @@ class RunningNorm(nn.Module):
         self.register_buffer("mean", torch.zeros(size))
         self.register_buffer("var", torch.ones(size))
         self.register_buffer("count", torch.tensor(1e-4))
+        self.fixed: torch.Tensor | None = None
+
+    @torch.no_grad()
+    def fix_channels(self, mask: torch.Tensor) -> None:
+        """Canais que passam crus (media 0, desvio 1, sem acumular): os comandos.
+        Eles valem 0 ou 1 e mudam de distribuicao de uma tarefa para outra (na
+        H1 o comando da postura e sempre 0, e a variancia iria a zero)."""
+        self.fixed = mask.to(torch.bool).cpu()
+        self._hold()
+
+    @torch.no_grad()
+    def _hold(self) -> None:
+        if self.fixed is not None and bool(self.fixed.any()):
+            mask = self.fixed.to(self.mean.device)
+            self.mean[mask] = 0.0
+            self.var[mask] = 1.0
 
     @torch.no_grad()
     def update(self, batch: torch.Tensor) -> None:
@@ -40,6 +56,7 @@ class RunningNorm(nn.Module):
         self.mean += delta * (n / total)
         self.var = (self.var * self.count + var * n + delta.pow(2) * self.count * n / total) / total
         self.count = total
+        self._hold()
 
     def inverse_std(self) -> torch.Tensor:
         return torch.rsqrt(self.var + 1e-8)

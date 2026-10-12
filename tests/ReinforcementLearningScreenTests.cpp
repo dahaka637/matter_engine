@@ -207,6 +207,20 @@ int main() {
         screen.setDisplay(ReinforcementLearningScreen::Display::Full);
         frame(screen, canvas, 2);
 
+        // As habilidades: uma por tarefa. Escolher a postura de alerta muda o
+        // mundo; a politica de mentira (de antes do comando da postura, 160
+        // entradas) le o comeco da observacao.
+        require(screen.skillTasks() == std::vector<std::string> { "h1_ficar_em_pe", "h1b_em_pe_posturado" },
+            "as habilidades vem das tarefas");
+        require(screen.viewerPosture() == 0, "a H1 mostra a postura natural");
+        screen.selectSkill(1);
+        frame(screen, canvas, 2);
+        require(screen.viewerPosture() == 1, "a H1b mostra a postura de alerta");
+        snapshot(canvas, "rl_tela_posturado");
+        screen.selectSkill(0);
+        frame(screen, canvas, 2);
+        require(screen.viewerPosture() == 0, "de volta a H1");
+
         // A politica de mentira segura a pose base: depois de 1 s o corpo
         // ainda esta de pe; um empurrao forte o tira do lugar. Com uma politica
         // de verdade, 30 s no visualizador antes da foto.

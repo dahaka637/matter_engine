@@ -25,6 +25,18 @@ def test_running_norm_matches_numpy():
     assert np.allclose(norm.var.numpy(), data.var(0), rtol=1e-2)
 
 
+def test_command_channels_pass_raw():
+    """Os canais de comando nao acumulam media e variancia (valem 0 ou 1)."""
+    norm = RunningNorm(3)
+    norm.fix_channels(torch.tensor([False, True, False]))
+    for _ in range(5):
+        norm.update(torch.rand(100, 3) * torch.tensor([10.0, 0.0, 1.0]))
+    assert float(norm.mean[1]) == 0.0 and float(norm.var[1]) == 1.0
+    assert float(norm.mean[0]) > 1.0
+    out = norm(torch.tensor([[5.0, 1.0, 0.5]]))
+    assert abs(float(out[0, 1]) - 1.0) < 1e-6
+
+
 def test_gae_matches_hand_computation():
     rollout = Rollout(3, 1, 1, 1, 1, torch.device("cpu"))
     rollout.rewards[:, 0] = torch.tensor([1.0, 1.0, 1.0])

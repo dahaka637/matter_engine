@@ -7,6 +7,15 @@
     "clip": "../../animations/clips/natural_idle.matteranim.json",
     "timeSeconds": 0.0
   },
+  "postures": [
+    {
+      "id": "alerta",
+      "displayName": "Postura de alerta",
+      "comment": "O parado do jogo e do laboratorio (o idle do personagem): base mais larga, joelhos um pouco dobrados, bracos soltos e afastados. A acao continua partindo da base; segurar esta postura e pedir os desvios dela.",
+      "clip": "../../animations/clips/alert_idle.matteranim.json",
+      "timeSeconds": 0.0
+    }
+  ],
   "solver": {
     "comment": "10/6 em vez das 20/20 do jogo: 1,6x mais rapido; segurando a pose base o corpo cai em media em 2,67 s contra 2,81 s no 20/20 e as quedas com acao aleatoria sao iguais (12/10/2026). A bateria de avaliacao confere a politica tambem no 20/20.",
     "positionIterations": 10,

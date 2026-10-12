@@ -2,6 +2,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <fstream>
 #include <iterator>
 #include <stdexcept>
@@ -38,6 +39,14 @@ TrainingTask3D loadTrainingTask3D(const std::filesystem::path& definitionPath) {
     task.groundMaterial = document.value("groundMaterial", std::string("grass"));
     if (task.actionRepeat == 0 || task.actionRepeat > 16 || !(task.episodeSeconds > 0.0f))
         throw std::runtime_error("tarefa de RL: actionRepeat/episodeSeconds invalidos");
+    if (document.contains("postures")) {
+        task.postures.clear();
+        for (const nlohmann::json& entry : document["postures"])
+            task.postures.push_back({ entry.at("id").get<std::string>(), entry.value("weight", 1.0f) });
+        float total = 0.0f;
+        for (const TrainingPostureWeight3D& posture : task.postures) total += std::max(0.0f, posture.weight);
+        if (task.postures.empty() || !(total > 0.0f)) throw std::runtime_error("tarefa de RL: posturas sem peso");
+    }
 
     if (document.contains("reward")) {
         const nlohmann::json& r = document["reward"];

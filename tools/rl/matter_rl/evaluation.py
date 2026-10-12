@@ -19,6 +19,25 @@ EPISODE_COLUMNS = 15
 FALLS = {1, 2, 3}
 
 
+BASE_BATTERY = "equilibrio_v1"
+
+
+def battery_name(posture: str) -> str:
+    """A bateria de cada postura (a da base mantem o nome de sempre)."""
+    return BASE_BATTERY if posture == "natural" else f"postura_{posture}_v1"
+
+
+def battery_posture(name: str) -> str:
+    return "natural" if name == BASE_BATTERY else name.removeprefix("postura_").removesuffix("_v1")
+
+
+def task_postures(task_path: Path) -> list[str]:
+    """As posturas que a tarefa pede, na ordem dela (sem a lista: a base)."""
+    import json
+    data = json.loads(Path(task_path).read_text())
+    return [entry["id"] for entry in data.get("postures", [])] or ["natural"]
+
+
 @dataclass
 class Battery:
     name: str = "equilibrio_v1"
@@ -39,15 +58,21 @@ def score(metrics: dict) -> float:
 
 
 class Evaluator:
-    def __init__(self, native, task_path: Path, threads: int, battery: Battery | None = None):
+    """Uma bateria por postura que a tarefa pede (cada habilidade aprovada tem a
+    sua), cada uma no solver do treino e no do jogo."""
+
+    def __init__(self, native, task_path: Path, threads: int, battery: Battery | None = None,
+                 postures: list[str] | None = None):
         self.battery = battery or Battery()
         self.native = native
+        self.postures = list(postures or task_postures(task_path))
         self.batches = {}
-        for solver, (position, velocity) in self.battery.solvers.items():
-            self.batches[solver] = native.Batch(
-                str(task_path), environments=self.battery.environments, per_scene=4, threads=threads,
-                seed=self.battery.seed, evaluation=True, evaluation_seconds=self.battery.seconds,
-                solver_position=position, solver_velocity=velocity)
+        for posture in self.postures:
+            for solver, (position, velocity) in self.battery.solvers.items():
+                self.batches[(posture, solver)] = native.Batch(
+                    str(task_path), environments=self.battery.environments, per_scene=4, threads=threads,
+                    seed=self.battery.seed, evaluation=True, evaluation_seconds=self.battery.seconds,
+                    solver_position=position, solver_velocity=velocity, posture=posture)
 
     def observation_names(self) -> list[str]:
         return next(iter(self.batches.values())).observation_names()
@@ -55,14 +80,16 @@ class Evaluator:
     @torch.no_grad()
     def run(self, model: ActorCritic, device: torch.device, record: Path | None = None,
             watch: tuple[int, ...] = (0,)) -> dict:
-        """watch: os mundos gravados inteiros (alem das primeiras quedas)."""
-        results = {}
-        for solver, batch in self.batches.items():
-            results[solver] = self._run_one(model, device, batch, record, solver, watch)
+        """{bateria: {solver: metricas}}. watch: os mundos gravados inteiros
+        (alem das primeiras quedas)."""
+        results: dict[str, dict] = {}
+        for (posture, solver), batch in self.batches.items():
+            results.setdefault(battery_name(posture), {})[solver] = self._run_one(
+                model, device, batch, record, solver, watch, posture)
         return results
 
     def _run_one(self, model: ActorCritic, device: torch.device, batch, record: Path | None, solver: str,
-                 watch: tuple[int, ...]) -> dict:
+                 watch: tuple[int, ...], posture: str = "natural") -> dict:
         envs = batch.num_envs
         dt = batch.policy_dt
         batch.reset(self.battery.seed)
@@ -86,7 +113,8 @@ class Evaluator:
                 first[e] = row
                 reason = int(row[1])
                 if record is not None and reason in FALLS and len(falls) < 4:
-                    falls.append((f"queda_mundo{e}_{REASONS[reason]}_{row[5]:.1f}s", list(rings[e])))
+                    prefix = "queda" if posture == "natural" else f"queda_{posture}"
+                    falls.append((f"{prefix}_mundo{e}_{REASONS[reason]}_{row[5]:.1f}s", list(rings[e])))
             if record is not None and step % 2 == 0:
                 for e in range(envs):
                     if e not in first:
@@ -101,8 +129,11 @@ class Evaluator:
         metrics = self._metrics(rows, envs)
         if record is not None:
             record.parent.mkdir(parents=True, exist_ok=True)
-            with open(record.with_name(record.stem + f"-{solver}.dump"), "w") as out:
-                for name, frames in [(f"parado_mundo{w}_{solver}", full[w]) for w in watch] + falls:
+            # (A base mantem os nomes de sempre: aval-N-jogo.dump, parado_mundo0_jogo.)
+            label = solver if posture == "natural" else f"{posture}-{solver}"
+            scene = "parado" if posture == "natural" else posture
+            with open(record.with_name(record.stem + f"-{label}.dump"), "w") as out:
+                for name, frames in [(f"{scene}_mundo{w}_{solver}", full[w]) for w in watch] + falls:
                     out.write(f"S {name}\n")
                     for t, lines in frames:
                         out.write(f"F {t:.4f} 0\n")

@@ -114,6 +114,66 @@ void testHeadingInvariance() {
     }
 }
 
+// As posturas: o comando no fim da observacao (zero na H1), a postura forcada
+// (a bateria, o visualizador) partindo da pose dela e a tarefa da postura de
+// alerta sorteando as duas no treino.
+void testPostures() {
+    {
+        TrainingBatch3D batch(settings(4, 1));
+        const auto& channels = batch.observationLayout().channels;
+        require(channels.back().name == "command.posture.alerta", "o comando da postura fecha a observacao");
+        const std::size_t O = batch.observationSize();
+        for (std::size_t e = 0; e < 4; ++e)
+            require(batch.observations()[e * O + O - 1] == 0.0f && batch.view(e).posture == 0,
+                "a H1 pede a postura natural");
+        require(batch.taskPostureIds() == std::vector<std::string> { "natural" }, "as posturas da H1");
+    }
+    {
+        TrainingBatchSettings3D s = settings(4, 1);
+        s.evaluation = true;
+        s.posture = "alerta";
+        TrainingBatch3D batch(s);
+        TrainingTask3D task = batch.task();
+        task.initialState.jointNoiseRadians = 0.0f;
+        task.initialState.jointVelocityNoise = 0.0f;
+        task.initialState.rootVelocityNoise = 0.0f;
+        task.initialState.rootAngularVelocityNoise = 0.0f;
+        batch.updateTask(task);
+        batch.reset(5);
+        const RLBody3D& body = batch.body();
+        const RLPosture3D& alert = body.postures[1];
+        const auto& channels = batch.observationLayout().channels;
+        const std::size_t O = batch.observationSize();
+        const auto obs = batch.observations();
+        for (std::size_t i = 0; i < channels.size(); ++i) {
+            const std::string& name = channels[i].name;
+            const std::string suffix = ".position_from_base";
+            if (name.size() <= suffix.size() || name.compare(name.size() - suffix.size(), suffix.size(), suffix) != 0)
+                continue;
+            for (std::size_t d = 0; d < body.dofs.size(); ++d)
+                if (body.dofs[d].name + suffix == name)
+                    require(std::abs(obs[i] - (alert.dofRadians[d] - body.dofs[d].baseRadians)) < 2e-3f,
+                        "o alerta comeca na pose dele: " + name);
+        }
+        require(obs[O - 1] == 1.0f && batch.view(0).posture == 1, "o comando pede o alerta");
+        require(obs[0] < -0.01f, "a pelve fica mais baixa que a da base");
+    }
+    {
+        TrainingBatchSettings3D s = settings(48, 2);
+        s.taskPath = std::filesystem::path(MATTERENGINE_TEST_ASSETS_DIR) / "rl/tasks/h1b_em_pe_posturado.json";
+        TrainingBatch3D batch(s);
+        require(batch.taskPostureIds() == std::vector<std::string> { "natural", "alerta" }, "as posturas da H1b");
+        std::size_t alert = 0;
+        const std::size_t O = batch.observationSize();
+        for (std::size_t e = 0; e < 48; ++e) {
+            const bool asked = batch.observations()[e * O + O - 1] == 1.0f;
+            require(asked == (batch.view(e).posture == 1), "o comando e a postura do episodio");
+            alert += asked ? 1 : 0;
+        }
+        require(alert > 20 && alert < 48, "o treino sorteia as duas posturas (70% alerta)");
+    }
+}
+
 // Mesma semente, mesmas acoes: o mesmo resultado, com 1 ou 3 threads.
 void testDeterminism() {
     TrainingBatch3D a(settings(8, 1));
@@ -208,6 +268,7 @@ void testTimeLimit() {
 void runTrainingBatchTests() {
     testContract();
     testHeadingInvariance();
+    testPostures();
     testDeterminism();
     testFallsAndRestart();
     testTimeLimit();

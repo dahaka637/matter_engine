@@ -53,15 +53,17 @@ def format_status(status: dict) -> str:
         if fall is not None:
             lines[-1] += f" · quedas {100 * fall:.0f}% dos fins"
     if evaluation:
-        parts = []
-        for solver, m in evaluation.get("solvers", {}).items():
-            part = (f"{solver}: de pe {100 * m['stand_fraction']:.0f}% ({m['mean_seconds']:.0f} s), "
-                    f"oscilacao {100 * m['sway']:.1f} cm")
-            if m.get("turn") is not None:
-                part += f", giro do tronco {math.degrees(m['turn']):.0f} graus/s"
-            parts.append(part)
-        lines.append(f"avaliacao (rodada {evaluation.get('iteration')}): nota {evaluation.get('score', 0):.3f} · "
-                     + " · ".join(parts))
+        lines.append(f"avaliacao (rodada {evaluation.get('iteration')}): nota {evaluation.get('score', 0):.3f}")
+        batteries = evaluation.get("batteries") or {"equilibrio_v1": {"solvers": evaluation.get("solvers", {})}}
+        for battery, entry in batteries.items():
+            parts = []
+            for solver, m in entry.get("solvers", {}).items():
+                part = (f"{solver}: de pe {100 * m['stand_fraction']:.0f}% ({m['mean_seconds']:.0f} s), "
+                        f"oscilacao {100 * m['sway']:.1f} cm")
+                if m.get("turn") is not None:
+                    part += f", giro do tronco {math.degrees(m['turn']):.0f} graus/s"
+                parts.append(part)
+            lines.append(f"  {battery}: " + " · ".join(parts))
     if best and best.get("iteration", -1) >= 0:
         lines.append(f"melhor: nota {best['score']:.3f} na rodada {best['iteration']}")
     temperature = status.get("cpuTemperature")
@@ -77,7 +79,7 @@ def report(run: str, since_seconds: float) -> str:
     db = storage.Database(readonly=True)
     start = time.time() - since_seconds
     rows = db.execute("SELECT * FROM iterations WHERE run=? AND time>=? ORDER BY iteration", (run, start)).fetchall()
-    evals = db.execute("""SELECT * FROM evaluations WHERE run=? AND time>=? ORDER BY iteration, solver""",
+    evals = db.execute("""SELECT * FROM evaluations WHERE run=? AND time>=? ORDER BY iteration, battery, solver""",
                        (run, start)).fetchall()
     events = db.execute("SELECT * FROM events WHERE run=? AND time>=? ORDER BY time", (run, start)).fetchall()
     out = [f"# Treino `{run}` — ultimas {since_seconds / 3600:.1f} h", ""]
@@ -118,15 +120,16 @@ def report(run: str, since_seconds: float) -> str:
     else:
         out.append("- Nenhuma rodada no periodo.")
     if evals:
-        out += ["", "## Avaliacoes", "", "| Rodada | Solver | De pe 60 s | Media (s) | Oscilacao (cm) | Deriva pes (cm) | "
-                "Giro do tronco (graus/s) | Pe girando (graus) | Mudanca de acao | Nota |",
-                "|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|"]
+        out += ["", "## Avaliacoes", "", "| Rodada | Bateria | Solver | De pe 60 s | Media (s) | Oscilacao (cm) | "
+                "Deriva pes (cm) | Giro do tronco (graus/s) | Pe girando (graus) | Mudanca de acao | Nota |",
+                "|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|"]
         for e in evals:
             value = e["turn"] if "turn" in e.keys() else None
             turn = f"{math.degrees(value):.1f}" if value is not None else "—"
             value = e["foot_turn"] if "foot_turn" in e.keys() else None
             foot = f"{math.degrees(value):.1f}" if value is not None else "—"
-            out.append(f"| {e['iteration']} | {e['solver']} | {100 * e['stand_fraction']:.0f}% | {e['mean_seconds']:.1f} | "
+            out.append(f"| {e['iteration']} | {e['battery']} | {e['solver']} | {100 * e['stand_fraction']:.0f}% | "
+                       f"{e['mean_seconds']:.1f} | "
                        f"{100 * e['sway']:.1f} | {100 * e['foot_drift']:.1f} | {turn} | {foot} | {e['action_rate']:.4f} | "
                        f"{e['score']:.3f} |")
     if events:
@@ -164,10 +167,10 @@ def plots(run: str, output: Path) -> list[Path]:
     series(axes[0][1], "episode_seconds", "duracao do episodio (s)")
     series(axes[1][0], "fall_fraction", "fins por queda (%)", 100.0)
     if evals:
-        for solver in sorted({e["solver"] for e in evals}):
-            points = [(e["steps"] / 1e6, 100 * e["stand_fraction"]) for e in evals if e["solver"] == solver]
-            axes[1][1].plot([p[0] for p in points], [p[1] for p in points], marker="o", label=solver)
-        axes[1][1].legend()
+        for key in sorted({(e["battery"], e["solver"]) for e in evals}):
+            points = [(e["steps"] / 1e6, 100 * e["stand_fraction"]) for e in evals if (e["battery"], e["solver"]) == key]
+            axes[1][1].plot([p[0] for p in points], [p[1] for p in points], marker="o", label=f"{key[0]} {key[1]}")
+        axes[1][1].legend(fontsize=7)
     axes[1][1].set_title("avaliacao: de pe por 60 s (%)")
     axes[1][1].grid(alpha=0.3)
     series(axes[2][0], "action_std", "desvio da acao")

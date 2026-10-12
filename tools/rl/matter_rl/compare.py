@@ -11,7 +11,7 @@ import torch
 
 from . import native, paths, storage
 from .evaluation import Battery, Evaluator
-from .model import ActorCritic
+from .model import ActorCritic, migrate_inputs
 
 
 def resolve(run: str, spec: str) -> storage.CheckpointRef:
@@ -37,8 +37,9 @@ def resolve(run: str, spec: str) -> storage.CheckpointRef:
 
 
 def evaluate(run: str, spec: str, threads: int = 2, record: Path | None = None, watch: tuple[int, ...] = (0,),
-             solvers: list[str] | None = None) -> tuple[storage.CheckpointRef, dict]:
-    """A bateria do treino (a tarefa com os pesos de agora) num checkpoint."""
+             solvers: list[str] | None = None, postures: list[str] | None = None) -> tuple[storage.CheckpointRef, dict]:
+    """As baterias do treino (a tarefa com os pesos de agora) num checkpoint:
+    {bateria: {solver: metricas}}."""
     os.nice(10)  # o desktop e o treinador passam na frente
     reference = resolve(run, spec)
     state = storage.load_checkpoint(reference)
@@ -49,9 +50,14 @@ def evaluate(run: str, spec: str, threads: int = 2, record: Path | None = None, 
     if solvers:
         battery.solvers = {name: value for name, value in battery.solvers.items() if name in solvers}
     torch.set_num_threads(1)
-    evaluator = Evaluator(native.load(), paths.run_dir(run) / "tarefa.json", threads, battery)
-    if evaluator.observation_names() != state["obs_names"]:
-        raise SystemExit(f"o checkpoint {reference.iteration} e de outra observacao (de uma etapa anterior)")
+    evaluator = Evaluator(native.load(), paths.run_dir(run) / "tarefa.json", threads, battery, postures)
+    names = evaluator.observation_names()
+    if names != state["obs_names"]:
+        # Um checkpoint de antes de uma entrada nova: a mesma migracao do treino
+        # (a rede faz o mesmo; a entrada nova entra com peso zero).
+        critic = next(iter(evaluator.batches.values())).critic_names()
+        model = migrate_inputs(model, state["obs_names"], names, state["critic_names"], critic)
+        model.eval()
     return reference, evaluator.run(model, torch.device("cpu"), record, watch)
 
 
@@ -84,10 +90,11 @@ def compare(run: str, a: str, b: str, threads: int = 2) -> str:
         results.append(evaluate(run, spec, threads, record))
     (ra, ma), (rb, mb) = results
     lines = [f"# {run}: rodada {ra.iteration} x rodada {rb.iteration}", ""]
-    for solver in ma:
-        lines += [f"## solver {solver}", "", f"| | {ra.iteration} | {rb.iteration} |", "|---|---:|---:|"]
-        lines += [f"| {label} | {show(ma[solver])} | {show(mb[solver])} |" for label, show in ROWS]
-        lines.append("")
+    for battery in ma:
+        for solver in ma[battery]:
+            lines += [f"## {battery}, solver {solver}", "", f"| | {ra.iteration} | {rb.iteration} |", "|---|---:|---:|"]
+            lines += [f"| {label} | {show(ma[battery][solver])} | {show(mb[battery][solver])} |" for label, show in ROWS]
+            lines.append("")
     lines.append("Gravacoes (para `matter-rl folha --episodio ...`):")
     lines += [f"- {path}" for path in sorted(directory.glob("ck-*.dump"))
               if path.stem.startswith((f"ck-{ra.iteration:09d}", f"ck-{rb.iteration:09d}"))]

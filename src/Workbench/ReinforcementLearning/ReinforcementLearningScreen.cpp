@@ -115,6 +115,7 @@ Highlight cross(Vec3 at, float radius, Color color) {
 ReinforcementLearningScreen::ReinforcementLearningScreen(Options options, std::function<void()> onBack)
     : m_options(std::move(options)), m_onBack(std::move(onBack)) {
     m_link = std::make_unique<TrainerLink3D>(defaultTrainerPaths3D(m_options.sourceRoot), m_options.run);
+    loadSkills();
     m_pending = std::async(std::launch::async, [] {
         ModelOutcome outcome;
         outcome.loaded = loadPlayerModel(defaultPlayerModelManifest(), {}, &outcome.error);
@@ -127,6 +128,65 @@ ReinforcementLearningScreen::ReinforcementLearningScreen(Options options, std::f
 ReinforcementLearningScreen::~ReinforcementLearningScreen() = default;
 
 TrainerStatus3D ReinforcementLearningScreen::status() const { return m_link->status(); }
+
+void ReinforcementLearningScreen::loadSkills() {
+    std::vector<std::filesystem::path> files;
+    std::error_code code;
+    for (const auto& entry : std::filesystem::directory_iterator(m_options.sourceRoot / "assets" / "rl" / "tasks", code))
+        if (entry.path().extension() == ".json") files.push_back(entry.path());
+    std::sort(files.begin(), files.end());
+    for (const std::filesystem::path& file : files) {
+        try {
+            const TrainingTask3D task = loadTrainingTask3D(file);
+            Skill skill;
+            skill.task = task.id;
+            skill.name = task.displayName;
+            float weight = -1.0f;
+            for (const TrainingPostureWeight3D& posture : task.postures)
+                if (posture.weight > weight) {
+                    weight = posture.weight;
+                    skill.posture = posture.id;
+                }
+            skill.battery = skill.posture == "natural" ? "equilibrio_v1" : "postura_" + skill.posture + "_v1";
+            m_skills.push_back(std::move(skill));
+        } catch (const std::exception&) {
+            // Uma tarefa que nao abre fica fora da lista.
+        }
+    }
+    for (std::size_t i = 0; i < m_skills.size(); ++i)
+        if (m_skills[i].task == m_options.task) m_skill = i;
+}
+
+std::vector<std::string> ReinforcementLearningScreen::skillTasks() const {
+    std::vector<std::string> tasks;
+    for (const Skill& skill : m_skills) tasks.push_back(skill.task);
+    return tasks;
+}
+
+std::string ReinforcementLearningScreen::skillName(const std::string& battery) const {
+    for (const Skill& skill : m_skills)
+        if (skill.battery == battery) return skill.name;
+    return battery;
+}
+
+void ReinforcementLearningScreen::selectSkill(std::size_t index) {
+    if (index >= m_skills.size()) return;
+    m_skill = index;
+    m_skillChosen = true;
+    if (m_viewer) {
+        try {
+            m_viewer->setPosture(m_skills[index].posture);
+            m_viewer->reset(static_cast<std::uint64_t>(std::time(nullptr)));
+        } catch (const std::exception& error) {
+            notify(error.what());
+        }
+    }
+    m_dirty = true;
+}
+
+std::uint32_t ReinforcementLearningScreen::viewerPosture() const {
+    return m_viewer ? m_viewer->view(0).posture : 0;
+}
 
 std::string ReinforcementLearningScreen::activeRun() const {
     const TrainerStatus3D status = m_link->status();
@@ -171,6 +231,7 @@ void ReinforcementLearningScreen::ensureViewer() {
         // O visualizador mostra a fisica do jogo.
         settings.solverPositionIterations = 20;
         settings.solverVelocityIterations = 20;
+        if (m_skill < m_skills.size()) settings.posture = m_skills[m_skill].posture;
         m_viewer = std::make_unique<TrainingBatch3D>(settings);
         m_action.assign(m_viewer->actionSize(), 0.0f);
         m_colliders = buildRagdollColliderWireframe3D(m_viewer->body().profile);
@@ -195,12 +256,18 @@ void ReinforcementLearningScreen::reloadPolicy(bool force) {
     m_policyPath = path;
     try {
         auto policy = std::make_unique<PolicyRuntime3D>(path);
-        if (policy->observationSize() != m_viewer->observationSize() || policy->actionSize() != m_viewer->actionSize()) {
+        // Os comandos fecham a observacao: uma politica de antes deles le o comeco.
+        std::size_t commands = 0;
+        for (const RLChannel3D& channel : m_viewer->observationLayout().channels)
+            if (channel.name.rfind("command.", 0) == 0) ++commands;
+        const std::size_t inputs = policy->observationSize(), full = m_viewer->observationSize();
+        if ((inputs != full && inputs + commands != full) || policy->actionSize() != m_viewer->actionSize()) {
             m_policy.reset();
             m_policyText = "política de outro corpo";
             return;
         }
         m_policy = std::move(policy);
+        m_policyInputs = inputs;
         m_policyText = "política da rodada " + std::to_string(m_policy->info().iteration);
     } catch (const std::exception& error) {
         m_policy.reset();
@@ -210,7 +277,7 @@ void ReinforcementLearningScreen::reloadPolicy(bool force) {
 
 void ReinforcementLearningScreen::stepOnce() {
     const std::span<const float> observation = m_viewer->observations();
-    if (m_policy) m_policy->evaluate(observation, m_action);
+    if (m_policy) m_policy->evaluate(observation.first(m_policyInputs), m_action);
     else std::fill(m_action.begin(), m_action.end(), 0.0f);
     m_viewer->step(m_action);
 }
@@ -287,6 +354,15 @@ void ReinforcementLearningScreen::refreshHistory() {
 void ReinforcementLearningScreen::update(float deltaSeconds) {
     pollModel();
     ensureViewer();
+    // Ao abrir, a habilidade escolhida e a do treino (aberto ou o ultimo).
+    if (!m_skillChosen) {
+        const TrainerStatus3D status = m_link->status();
+        if (status.known && !status.task.empty()) {
+            for (std::size_t i = 0; i < m_skills.size(); ++i)
+                if (m_skills[i].task == status.task && i != m_skill) selectSkill(i);
+            m_skillChosen = true;
+        }
+    }
     stepViewer(deltaSeconds);
     if ((m_policyWatch -= deltaSeconds) <= 0.0f) {
         m_policyWatch = 2.0f;
@@ -415,7 +491,7 @@ void ReinforcementLearningScreen::draw(CanvasTarget& canvas, float uiScale) {
 
 void ReinforcementLearningScreen::drawSidebar(float height) {
     drawTrainer();
-    drawSkills();
+    drawSkills(m_link->status());
     drawEvaluation(m_link->status());
     const std::string back = UI::FontAwesome::label(UI::FontAwesome::ArrowLeft, "Menu principal");
     ImGui::SetCursorPosY(std::max(ImGui::GetCursorPosY(), height - ui(58.0f)));
@@ -461,7 +537,8 @@ void ReinforcementLearningScreen::drawControls(const TrainerStatus3D& status) {
             status.known ? "Continuar treino" : "Iniciar treino");
         if (ImGui::Button(label.c_str(), { -1.0f, ui(36.0f) })) {
             std::string error;
-            if (!m_link->start(m_options.task, m_mode, &error)) notify(error);
+            const std::string& task = m_skill < m_skills.size() ? m_skills[m_skill].task : m_options.task;
+            if (!m_link->start(task, m_mode, &error)) notify(error);
         }
         ImGui::EndDisabled();
         tooltip("Abre o treino em segundo plano, do último checkpoint. Ele continua com o Matter Engine fechado.");
@@ -518,14 +595,27 @@ void ReinforcementLearningScreen::drawModes(const TrainerStatus3D& status) {
     tooltip("Se o PC desligar com o treino aberto, ele volta sozinho no próximo login. Um \"Parar\" seu não volta.");
 }
 
-void ReinforcementLearningScreen::drawSkills() {
+void ReinforcementLearningScreen::drawSkills(const TrainerStatus3D& status) {
     ImGui::Dummy({ 1.0f, ui(8.0f) });
     panelHeader("HABILIDADES");
     ImGui::Dummy({ 1.0f, ui(2.0f) });
-    const std::string label = UI::FontAwesome::label(UI::FontAwesome::Brain, "Ficar em pé");
-    navigationButton(label.c_str(), true, { -1.0f, ui(32.0f) });
-    tooltip("H1: ficar em pé, estável, sem ajuda nenhuma (só os músculos das juntas). Pronto quando fica de pé "
-            "60 s em todas as sementes da bateria, sem escorregar nem tremer.");
+    for (std::size_t i = 0; i < m_skills.size(); ++i) {
+        const Skill& skill = m_skills[i];
+        const bool trained = status.known && status.task == skill.task;
+        const std::string label
+            = UI::FontAwesome::label(trained ? UI::FontAwesome::Bolt : UI::FontAwesome::Brain, skill.name) + "##" + skill.task;
+        if (navigationButton(label.c_str(), i == m_skill, { -1.0f, ui(32.0f) }) && i != m_skill) selectSkill(i);
+        tooltip(trained ? "A habilidade do treino (o raio). Escolher uma habilidade mostra a postura dela no mundo."
+                        : "Escolher mostra a postura desta habilidade no mundo.");
+    }
+    if (m_skill < m_skills.size() && status.alive && status.task != m_skills[m_skill].task) {
+        ImGui::Dummy({ 1.0f, ui(2.0f) });
+        const std::string label = UI::FontAwesome::label(UI::FontAwesome::Play, "Treinar esta habilidade");
+        if (ImGui::Button(label.c_str(), { -1.0f, ui(32.0f) }))
+            m_link->send("tarefa", std::string("{\"tarefa\":\"") + m_skills[m_skill].task + "\"}");
+        tooltip("O treino aberto passa para esta habilidade, no mesmo cérebro: o que ele já sabe continua, e as "
+                "habilidades anteriores seguem numa parte dos episódios.");
+    }
 }
 
 void ReinforcementLearningScreen::drawEvaluation(const TrainerStatus3D& status) {
@@ -536,18 +626,23 @@ void ReinforcementLearningScreen::drawEvaluation(const TrainerStatus3D& status) 
         ImGui::TextColored(MutedText, "—");
         return;
     }
-    for (const auto& [solver, stand] : status.evaluationStand) {
-        const std::string name = solver == "jogo" ? "De pé (jogo)" : "De pé (treino)";
-        infoRow(name.c_str(), decimal(stand * 100.0, 0) + "%");
-    }
-    tooltip("Quantos dos 32 mundos da bateria ficaram de pé os 60 s, sem ruído e sem variação do mundo. "
-            "\"Jogo\" é a mesma bateria com a física do jogo (20/20).");
-    if (status.evaluationTurn >= 0.0) {
-        infoRow("Giro do tronco", decimal(status.evaluationTurn * 180.0 / 3.14159265358979, 1) + "°/s");
-        tooltip("A velocidade angular da pelve e do peito na bateria do jogo (média dos mundos). Parado de "
-                "verdade fica perto de zero; o tronco rodando de um lado para o outro sobe.");
+    // Uma bateria por habilidade: de pe no jogo e no treino, e o giro do tronco.
+    for (const TrainerStatus3D::Battery& battery : status.evaluationBatteries) {
+        if (status.evaluationBatteries.size() > 1) ImGui::TextColored(InfoText, "%s", skillName(battery.battery).c_str());
+        for (const auto& [solver, stand] : battery.stand) {
+            const std::string name = solver == "jogo" ? "De pé (jogo)" : "De pé (treino)";
+            infoRow(name.c_str(), decimal(stand * 100.0, 0) + "%");
+        }
+        tooltip("Quantos dos 32 mundos da bateria ficaram de pé os 60 s, sem ruído e sem variação do mundo. "
+                "\"Jogo\" é a mesma bateria com a física do jogo (20/20).");
+        if (battery.turn >= 0.0) {
+            infoRow("Giro do tronco", decimal(battery.turn * 180.0 / 3.14159265358979, 1) + "°/s");
+            tooltip("A velocidade angular da pelve e do peito na bateria do jogo (média dos mundos). Parado de "
+                    "verdade fica perto de zero; o tronco rodando de um lado para o outro sobe.");
+        }
     }
     infoRow("Nota", decimal(status.evaluationScore, 2) + " (rodada " + std::to_string(status.evaluationIteration) + ")");
+    tooltip("A nota da pior bateria: uma habilidade nova não esconde a antiga.");
     if (status.bestIteration >= 0)
         infoRow("Melhor", decimal(status.bestScore, 2) + " (rodada " + std::to_string(status.bestIteration) + ")");
 }
@@ -682,8 +777,11 @@ void ReinforcementLearningScreen::drawPushes() {
 void ReinforcementLearningScreen::drawCharts(float height) {
     ImGui::Dummy({ 1.0f, ui(4.0f) });
     std::vector<float> stand, seconds, reward, speed;
+    // De pe: a bateria da habilidade escolhida, no jogo.
+    const std::string battery = m_skill < m_skills.size() ? m_skills[m_skill].battery : std::string("equilibrio_v1");
     for (const TrainingEvaluationPoint3D& point : m_history.evaluations)
-        if (point.solver == "jogo") stand.push_back(static_cast<float>(point.standFraction * 100.0));
+        if (point.solver == "jogo" && (point.battery == battery || (point.battery.empty() && battery == "equilibrio_v1")))
+            stand.push_back(static_cast<float>(point.standFraction * 100.0));
     for (const TrainingIterationPoint3D& point : m_history.iterations) {
         seconds.push_back(static_cast<float>(point.episodeSeconds));
         reward.push_back(static_cast<float>(point.reward));
@@ -702,7 +800,8 @@ void ReinforcementLearningScreen::drawCharts(float height) {
         return result * 1.05f;
     };
     const std::array<Chart, 4> charts { {
-        { "De pé 60 s (%)", &stand, 0.0f, 100.0f, "A bateria de avaliação com a física do jogo, a cada 10 min." },
+        { "De pé 60 s (%)", &stand, 0.0f, 100.0f,
+            "A bateria da habilidade escolhida, com a física do jogo, a cada 10 min." },
         { "Episódio (s)", &seconds, 0.0f, top(seconds, 1.0f), "Quanto dura um episódio do treino (o máximo é 20 s)." },
         { "Recompensa / passo", &reward, FLT_MAX, FLT_MAX, "A recompensa média por decisão em cada rodada do treino." },
         { "Decisões / s", &speed, 0.0f, top(speed, 1000.0f), "A velocidade do treino (física + rede)." },

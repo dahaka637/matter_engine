@@ -58,6 +58,15 @@ struct TrainerStatus3D {
     std::vector<std::pair<std::string, double>> evaluationStand;
     // O giro do tronco no solver do jogo (rad/s, media dos mundos; < 0 sem a medida).
     double evaluationTurn = -1.0;
+    // Cada bateria da ultima avaliacao (uma por habilidade): de pe por solver e
+    // o giro do tronco no jogo.
+    struct Battery {
+        std::string battery;
+        std::string posture;
+        std::vector<std::pair<std::string, double>> stand;
+        double turn = -1.0;
+    };
+    std::vector<Battery> evaluationBatteries;
     double bestScore = 0.0;
     std::int64_t bestIteration = -1;
     std::string policy;

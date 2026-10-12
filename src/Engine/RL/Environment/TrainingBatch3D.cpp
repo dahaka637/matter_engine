@@ -55,6 +55,8 @@ struct Environment {
     // O episodio: o relogio (que pode comecar sorteado) e as decisoes jogadas.
     std::uint32_t steps = 0;
     std::uint32_t played = 0;
+    // A postura pedida neste episodio (o indice em body.postures).
+    std::uint32_t posture = 0;
     // O limite deste episodio (no treino, a duracao da tarefa +-20%: sem isso
     // as quedas do comeco agrupam as fases e, sem quedas depois, os fins
     // ficam sincronizados para sempre).
@@ -143,6 +145,11 @@ struct TrainingBatch3D::Impl {
     std::vector<std::uint8_t> truncated;
     std::vector<TrainingEpisode3D> finished;
     std::vector<std::uint32_t> pushLinks;
+    // As posturas da tarefa (indices em body.postures) com a fatia acumulada
+    // de cada uma, e a forcada (-1 = a mistura).
+    std::vector<std::uint32_t> taskPostures;
+    std::vector<float> postureCumulative;
+    int forcedPosture = -1;
     std::array<std::uint32_t, KeyBodyCount> keyBodies {};
     std::uint32_t workers = 1;
     std::uint32_t maximumSteps = 600;
@@ -155,6 +162,8 @@ struct TrainingBatch3D::Impl {
     [[nodiscard]] bool training() const { return !settings.evaluation; }
 
     void buildLayouts();
+    void resolvePostures();
+    [[nodiscard]] std::uint32_t choosePosture(Environment& env) const;
     void createWorld();
     void configureEpisodeLength();
     void resetEnvironment(std::uint32_t index);
@@ -193,6 +202,10 @@ void TrainingBatch3D::Impl::buildLayouts() {
     o.channels.push_back({ "LeftFoot.normal_force", "peso" });
     o.channels.push_back({ "RightFoot.normal_force", "peso" });
     for (const RLBodyDof3D& dof : body.dofs) o.channels.push_back({ dof.name + ".previous_action", "acao" });
+    // O comando: a postura pedida, um canal por postura alem da base (todos
+    // zero = a base). No fim: uma politica sem ele le o comeco igual.
+    for (std::size_t p = 1; p < body.postures.size(); ++p)
+        o.channels.push_back({ "command.posture." + body.postures[p].id, "0/1" });
 
     RLVectorLayout3D& c = criticLayout;
     c = o;
@@ -302,15 +315,39 @@ void TrainingBatch3D::Impl::writeTargets(Environment& env, std::span<const float
     }
 }
 
+void TrainingBatch3D::Impl::resolvePostures() {
+    taskPostures.clear();
+    postureCumulative.clear();
+    float total = 0.0f;
+    for (const TrainingPostureWeight3D& entry : task.postures) {
+        const int index = findRLPosture3D(body, entry.id);
+        if (index < 0) throw std::runtime_error("lote de RL: o corpo nao tem a postura " + entry.id);
+        taskPostures.push_back(static_cast<std::uint32_t>(index));
+        total += std::max(0.0f, entry.weight);
+        postureCumulative.push_back(total);
+    }
+}
+
+std::uint32_t TrainingBatch3D::Impl::choosePosture(Environment& env) const {
+    if (forcedPosture >= 0) return static_cast<std::uint32_t>(forcedPosture);
+    if (!training() || taskPostures.size() == 1) return taskPostures.front();
+    const float pick = std::uniform_real_distribution<float>(0.0f, postureCumulative.back())(env.rng);
+    for (std::size_t i = 0; i < taskPostures.size(); ++i)
+        if (pick < postureCumulative[i]) return taskPostures[i];
+    return taskPostures.back();
+}
+
 void TrainingBatch3D::Impl::resetEnvironment(std::uint32_t index) {
     Environment& env = environments[index];
     Scene& scene = scenes[env.scene];
     const TrainingTask3D::InitialState& start = task.initialState;
     const float noise = 1.0f;
 
-    // A pose base com variacao pequena, girada no rumo sorteado e apoiada no
-    // chao (o ponto mais baixo dos pes 2 mm acima dele).
-    std::vector<Vec3> coordinates = body.baseJointCoordinates;
+    // A postura do episodio com variacao pequena, girada no rumo sorteado e
+    // apoiada no chao (o ponto mais baixo dos pes 2 mm acima dele).
+    env.posture = choosePosture(env);
+    const RLPosture3D& posture = body.postures[env.posture];
+    std::vector<Vec3> coordinates = posture.jointCoordinates;
     std::vector<Vec3> velocities(coordinates.size());
     for (const RLBodyDof3D& dof : body.dofs) {
         Vec3& q = coordinates[dof.linkIndex];
@@ -325,7 +362,7 @@ void TrainingBatch3D::Impl::resetEnvironment(std::uint32_t index) {
     const float yaw = start.randomYaw
         ? std::uniform_real_distribution<float>(-std::numbers::pi_v<float>, std::numbers::pi_v<float>)(env.rng) : 0.0f;
     const Quaternion heading = Quaternion::fromAxisAngle({ 0.0f, 0.0f, 1.0f }, yaw);
-    const Quaternion root = (heading * body.profile.links.front().modelOrientation * body.baseRootRotation).normalized();
+    const Quaternion root = (heading * body.profile.links.front().modelOrientation * posture.rootRotation).normalized();
     const RLBodyPose3D probe = rlBodyPose3D(body.profile, env.origin, root, coordinates);
     const float lift = 0.002f - rlBodyLowestFootPoint3D(body, probe);
     const Vec3 rootPosition = env.origin + Vec3 { 0.0f, 0.0f, lift };
@@ -457,6 +494,7 @@ void TrainingBatch3D::Impl::writeObservation(const Environment& env, const Ragdo
     for (std::size_t f = 0; f < 2; ++f) *out++ = reading.footContact[f] ? 1.0f : 0.0f;
     for (std::size_t f = 0; f < 2; ++f) *out++ = std::min(3.0f, reading.footForce[f] / weight);
     for (const float a : env.action) *out++ = a;
+    for (std::size_t p = 1; p < body.postures.size(); ++p) *out++ = env.posture == p ? 1.0f : 0.0f;
 
     if (criticOut == nullptr) return;
     // O critico: a observacao sem ruido mais o mundo que a politica nao ve.
@@ -480,20 +518,21 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
     bool fell, float* componentsOut) {
     const TrainingRewardWeights3D& w = task.reward;
     const RagdollProfile3D& profile = body.profile;
+    const RLPosture3D& posture = body.postures[env.posture];
 
-    // Pelve, peito e cabeca na postura da pose base (o parado natural), no
-    // referencial do rumo: o angulo entre o "para cima" de cada um e o da base.
+    // Pelve, peito e cabeca na postura pedida, no referencial do rumo: o
+    // angulo entre o "para cima" de cada um e o da postura.
     const auto deviation = [&](std::uint32_t link, Vec3 base) {
         const Quaternion frame = state.links[link].orientation * profile.links[link].modelOrientation.conjugate();
         const Vec3 up = reading.headingInverse.rotate(frame.rotate({ 0.0f, 0.0f, 1.0f }));
         return std::acos(std::clamp(dot(up, base), -1.0f, 1.0f));
     };
-    const float pelvisTilt = deviation(0, body.basePelvisUp);
-    const float chestTilt = deviation(body.upperChest, body.baseChestUp);
-    const float headTilt = deviation(body.head, body.baseHeadUp);
+    const float pelvisTilt = deviation(0, posture.pelvisUp);
+    const float chestTilt = deviation(body.upperChest, posture.chestUp);
+    const float headTilt = deviation(body.head, posture.headUp);
     const float upright = 0.4f * std::exp(-pelvisTilt * pelvisTilt / 0.06f)
         + 0.3f * std::exp(-chestTilt * chestTilt / 0.06f) + 0.3f * std::exp(-headTilt * headTilt / 0.06f);
-    const float headError = (state.links[body.head].position.z - body.standingHeadHeight) / 0.08f;
+    const float headError = (state.links[body.head].position.z - posture.standingHeadHeight) / 0.08f;
     const float headHeight = std::exp(-headError * headError);
     const Vec3 support = (reading.footCenter[0] + reading.footCenter[1]) * 0.5f;
     const float dx = reading.com.x - support.x, dy = reading.com.y - support.y;
@@ -539,8 +578,8 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
         const float q = joint.positionRadians[axis];
         const float x = (q - dof.minimumRadians) / range;
         limit += std::max(0.0f, 0.05f - x) / 0.05f + std::max(0.0f, x - 0.95f) / 0.05f;
-        const float fromBase = 2.0f * (q - dof.baseRadians) / range;
-        pose += fromBase * fromBase;
+        const float fromPosture = 2.0f * (q - posture.dofRadians[d]) / range;
+        pose += fromPosture * fromPosture;
         speed += std::abs(joint.velocityRadiansPerSecond[axis]);
     }
     const float dofCount = static_cast<float>(std::max<std::size_t>(1, body.dofs.size()));
@@ -690,8 +729,9 @@ void TrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> actio
             const PhysicsBodyState3D& pelvis = state->links.front();
             const float head = state->links[body.head].position.z;
             if (env.firstContactLink >= 0) reason = TrainingEndReason3D::FallContact;
-            else if (head < body.standingHeadHeight * task.termination.minimumHeadHeightFraction
-                || pelvis.position.z < body.standingPelvisHeight * task.termination.minimumPelvisHeightFraction)
+            else if (head < body.postures[env.posture].standingHeadHeight * task.termination.minimumHeadHeightFraction
+                || pelvis.position.z
+                    < body.postures[env.posture].standingPelvisHeight * task.termination.minimumPelvisHeightFraction)
                 reason = TrainingEndReason3D::FallHeight;
             else if (env.steps >= env.limit) reason = TrainingEndReason3D::TimeLimit;
             else {
@@ -738,6 +778,11 @@ TrainingBatch3D::TrainingBatch3D(const TrainingBatchSettings3D& settings) : m_im
         for (std::size_t i = 0; i < impl.body.profile.links.size(); ++i)
             if (impl.body.profile.links[i].id == id) impl.pushLinks.push_back(static_cast<std::uint32_t>(i));
     impl.configureEpisodeLength();
+    impl.resolvePostures();
+    if (!settings.posture.empty()) {
+        impl.forcedPosture = findRLPosture3D(impl.body, settings.posture);
+        if (impl.forcedPosture < 0) throw std::runtime_error("lote de RL: o corpo nao tem a postura " + settings.posture);
+    }
     impl.buildLayouts();
 
     const std::uint32_t hardware = std::max(1u, std::thread::hardware_concurrency());
@@ -781,10 +826,29 @@ void TrainingBatch3D::updateTask(const TrainingTask3D& task) {
     impl.task.initialState = task.initialState;
     impl.task.randomization = task.randomization;
     impl.task.pushes = task.pushes;
+    impl.task.postures = task.postures;
+    impl.resolvePostures();
     impl.pushLinks.clear();
     for (const std::string& id : impl.task.pushes.links)
         for (std::size_t i = 0; i < impl.body.profile.links.size(); ++i)
             if (impl.body.profile.links[i].id == id) impl.pushLinks.push_back(static_cast<std::uint32_t>(i));
+}
+
+void TrainingBatch3D::setPosture(const std::string& id) {
+    Impl& impl = *m_impl;
+    if (id.empty()) {
+        impl.forcedPosture = -1;
+        return;
+    }
+    const int index = findRLPosture3D(impl.body, id);
+    if (index < 0) throw std::invalid_argument("lote de RL: o corpo nao tem a postura " + id);
+    impl.forcedPosture = index;
+}
+
+std::vector<std::string> TrainingBatch3D::taskPostureIds() const {
+    std::vector<std::string> ids;
+    for (const std::uint32_t index : m_impl->taskPostures) ids.push_back(m_impl->body.postures[index].id);
+    return ids;
 }
 
 void TrainingBatch3D::reset(std::uint64_t seed) {
@@ -853,6 +917,7 @@ TrainingEnvironmentView3D TrainingBatch3D::view(std::size_t environment) const {
     view.state = impl.scenes[env.scene].physics->ragdollStateView(env.ragdoll);
     view.origin = env.origin;
     view.steps = env.steps;
+    view.posture = env.posture;
     if (env.pushRemaining > 0.0f) {
         view.pushForce = env.pushForce;
         view.pushLink = static_cast<int>(env.pushLink);

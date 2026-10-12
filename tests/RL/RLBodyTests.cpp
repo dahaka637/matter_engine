@@ -95,8 +95,34 @@ void testPoseMatchesBackend() {
 
 } // namespace
 
+// As posturas: a natural e a pose base; a de alerta (o parado do jogo) e
+// outra pose parada, mais baixa (joelhos dobrados), dentro do curso das juntas.
+void testPostures() {
+    const RLBody3D body = loadBody();
+    require(body.postures.size() == 2 && body.postures[0].id == "natural" && body.postures[1].id == "alerta",
+        "o corpo deveria ter as posturas natural e alerta");
+    require(findRLPosture3D(body, "alerta") == 1 && findRLPosture3D(body, "sentado") == -1, "busca de postura");
+    const RLPosture3D& natural = body.postures[0];
+    const RLPosture3D& alert = body.postures[1];
+    float moved = 0.0f;
+    for (std::size_t d = 0; d < body.dofs.size(); ++d) {
+        const RLBodyDof3D& dof = body.dofs[d];
+        require(natural.dofRadians[d] == dof.baseRadians, "a postura natural e a pose base");
+        require(alert.dofRadians[d] >= dof.minimumRadians && alert.dofRadians[d] <= dof.maximumRadians,
+            "a postura de alerta fica dentro do curso de " + dof.name);
+        moved = std::max(moved, std::abs(alert.dofRadians[d] - natural.dofRadians[d]));
+    }
+    require(moved > 0.1f, "a postura de alerta deveria ser outra pose");
+    require(natural.standingPelvisHeight == body.standingPelvisHeight, "as medidas da base sao as da postura natural");
+    require(alert.standingPelvisHeight < natural.standingPelvisHeight - 0.005f, "o alerta e mais baixo (joelhos dobrados)");
+    require(alert.standingHeadHeight > alert.standingPelvisHeight + 0.5f, "o alerta fica de pe");
+    for (const Vec3 up : { alert.pelvisUp, alert.chestUp, alert.headUp })
+        require(std::abs(up.length() - 1.0f) < 1e-4f && up.z > 0.8f, "o para cima do alerta e quase vertical");
+}
+
 void runRLBodyTests() {
     testDefinition();
     testPoseMatchesBackend();
+    testPostures();
     std::cout << "RL body tests passed\n";
 }

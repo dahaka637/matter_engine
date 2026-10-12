@@ -76,7 +76,7 @@ NB_MODULE(matter_rl_native, m) {
             "__init__",
             [](TrainingBatch3D* self, const std::string& task, std::uint32_t environments, std::uint32_t perScene,
                 std::uint32_t threads, std::uint64_t seed, bool evaluation, float evaluationSeconds,
-                int solverPosition, int solverVelocity) {
+                int solverPosition, int solverVelocity, const std::string& posture) {
                 TrainingBatchSettings3D settings;
                 settings.taskPath = task;
                 settings.environmentCount = environments;
@@ -87,12 +87,13 @@ NB_MODULE(matter_rl_native, m) {
                 settings.evaluationEpisodeSeconds = evaluationSeconds;
                 settings.solverPositionIterations = solverPosition;
                 settings.solverVelocityIterations = solverVelocity;
+                settings.posture = posture;
                 nb::gil_scoped_release release;
                 new (self) TrainingBatch3D(settings);
             },
             "task"_a, "environments"_a = 256, "per_scene"_a = 4, "threads"_a = 0, "seed"_a = 1,
             "evaluation"_a = false, "evaluation_seconds"_a = 60.0f, "solver_position"_a = -1,
-            "solver_velocity"_a = -1)
+            "solver_velocity"_a = -1, "posture"_a = "")
         .def_prop_ro("num_envs", &TrainingBatch3D::environmentCount)
         .def_prop_ro("obs_size", &TrainingBatch3D::observationSize)
         .def_prop_ro("critic_size", &TrainingBatch3D::criticObservationSize)
@@ -112,6 +113,14 @@ NB_MODULE(matter_rl_native, m) {
                 for (const RagdollLinkDefinition3D& link : b.body().profile.links) ids.push_back(link.id);
                 return ids;
             })
+        .def("task_postures", &TrainingBatch3D::taskPostureIds)
+        .def("posture_ids",
+            [](const TrainingBatch3D& b) {
+                std::vector<std::string> ids;
+                for (const RLPosture3D& posture : b.body().postures) ids.push_back(posture.id);
+                return ids;
+            })
+        .def("set_posture", &TrainingBatch3D::setPosture, "posture"_a)
         .def("observation_names", [](const TrainingBatch3D& b) { return names(b.observationLayout()); })
         .def("critic_names", [](const TrainingBatch3D& b) { return names(b.criticObservationLayout()); })
         .def("action_names", [](const TrainingBatch3D& b) { return names(b.actionLayout()); })

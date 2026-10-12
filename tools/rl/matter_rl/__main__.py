@@ -6,6 +6,7 @@
     matter-rl treinar [...]               um processo de treino (o que o servir abre)
     matter-rl status | pausar | retomar | parar | salvar | avaliar
     matter-rl modo maximo|equilibrado|leve
+    matter-rl tarefa <id>                 o treino aberto passa para outra habilidade (o mesmo cerebro)
     matter-rl peso <parcela> <valor> [--motivo M]
     matter-rl relatorio [--desde 1h]      o que mudou no periodo (Markdown)
     matter-rl graficos [--saida DIR]      PNG das curvas
@@ -71,8 +72,6 @@ def command_train(args: argparse.Namespace) -> int:
 
 def trainer_command(args: argparse.Namespace) -> list[str]:
     command = [sys.executable, "-m", "matter_rl", "treinar", "--run", args.run]
-    if args.tarefa:
-        command += ["--tarefa", args.tarefa]
     if args.mundos:
         command += ["--mundos", str(args.mundos)]
     if args.dispositivo != "auto":
@@ -87,6 +86,10 @@ def command_serve(args: argparse.Namespace) -> int:
     first = True
     while True:
         command = trainer_command(args)
+        # Tarefa e modo so na primeira abertura: depois valem os do run.json (a
+        # troca de habilidade ou de modo reabre o treino com os novos).
+        if first and args.tarefa:
+            command += ["--tarefa", args.tarefa]
         if first and args.modo:
             command += ["--modo", args.modo]
         first = False
@@ -222,9 +225,11 @@ def command_sheet(args: argparse.Namespace) -> int:
         from . import compare
         reference = compare.resolve(args.run, args.checkpoint)
         record = paths.run_dir(args.run) / "folhas" / f"ck-{reference.iteration:09d}-mundo{args.mundo}"
-        compare.evaluate(args.run, args.checkpoint, record=record, watch=(args.mundo,), solvers=[args.solver])
-        dump = record.with_name(f"{record.stem}-{args.solver}.dump")
-        scenario = scenario or f"parado_mundo{args.mundo}_{args.solver}"
+        compare.evaluate(args.run, args.checkpoint, record=record, watch=(args.mundo,), solvers=[args.solver],
+                         postures=[args.postura])
+        natural = args.postura == "natural"
+        dump = record.with_name(f"{record.stem}-{args.solver if natural else args.postura + '-' + args.solver}.dump")
+        scenario = scenario or f"{'parado' if natural else args.postura}_mundo{args.mundo}_{args.solver}"
     else:
         dump = Path(args.episodio) if args.episodio else latest_dump(args.run)
     if dump is None:
@@ -282,6 +287,10 @@ def main(argv: list[str] | None = None) -> int:
     mode.add_argument("modo", choices=list(system.MODES))
     mode.add_argument("--autor", default="usuario")
     mode.set_defaults(func=lambda a: send("modo", {"modo": a.modo, "autor": a.autor}))
+    switch = sub.add_parser("tarefa")
+    switch.add_argument("tarefa", help="o id da tarefa (assets/rl/tasks), ex.: h1b_em_pe_posturado")
+    switch.add_argument("--autor", default="usuario")
+    switch.set_defaults(func=lambda a: send("tarefa", {"tarefa": a.tarefa, "autor": a.autor}))
     weight = sub.add_parser("peso")
     weight.add_argument("componente")
     weight.add_argument("valor", type=float)
@@ -304,6 +313,7 @@ def main(argv: list[str] | None = None) -> int:
     sheet.add_argument("--checkpoint", help="rodada, ultimo ou melhor: avalia fora do treino e grava o mundo")
     sheet.add_argument("--mundo", type=int, default=0)
     sheet.add_argument("--solver", default="jogo", choices=["jogo", "treino"])
+    sheet.add_argument("--postura", default="natural", help="a postura pedida (natural, alerta)")
     sheet.add_argument("--de", type=float, help="so o trecho a partir de (s)")
     sheet.add_argument("--ate", type=float, help="so o trecho ate (s)")
     sheet.set_defaults(func=command_sheet)

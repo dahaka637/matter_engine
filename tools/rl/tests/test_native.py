@@ -31,6 +31,34 @@ def test_batch_shapes_and_views():
     assert lines.count("\n") >= 18 and lines.startswith(("C ", "B "))
 
 
+def test_postures_through_the_bridge():
+    posturado = str(paths.task_path("h1b_em_pe_posturado"))
+    batch = module.Batch(TASK, environments=2, threads=1)
+    assert batch.posture_ids() == ["natural", "alerta"] and batch.task_postures() == ["natural"]
+    assert batch.observation_names()[-1] == "command.posture.alerta"
+    assert (batch.observations()[:, -1] == 0).all()
+    forced = module.Batch(posturado, environments=2, threads=1, evaluation=True, posture="alerta")
+    assert forced.task_postures() == ["natural", "alerta"]
+    assert (forced.observations()[:, -1] == 1).all()
+    forced.set_posture("natural")
+    forced.reset(3)
+    assert (forced.observations()[:, -1] == 0).all()
+    with pytest.raises(Exception):
+        module.Batch(TASK, environments=1, threads=1, posture="sentado")
+
+
+def test_battery_per_posture():
+    """A tarefa da postura de alerta tem duas baterias: a da base e a dela."""
+    from matter_rl.evaluation import Battery, Evaluator
+    evaluator = Evaluator(module, paths.task_path("h1b_em_pe_posturado"), 2, Battery(environments=4, seconds=1.0))
+    probe = module.Batch(TASK, environments=1, threads=1)
+    model = ActorCritic(probe.obs_size, probe.critic_size, probe.action_size)
+    results = evaluator.run(model, torch.device("cpu"))
+    assert set(results) == {"equilibrio_v1", "postura_alerta_v1"}
+    assert set(results["postura_alerta_v1"]) == {"treino", "jogo"}
+    assert all(m["episodes"] == 4 for solvers in results.values() for m in solvers.values())
+
+
 def test_batch_rejects_bad_actions():
     batch = module.Batch(TASK, environments=2, threads=1)
     with pytest.raises(ValueError):

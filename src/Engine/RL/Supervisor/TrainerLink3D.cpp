@@ -245,6 +245,20 @@ void TrainerLink3D::readStatus(const std::string& json, bool alive) {
                 status.evaluationStand.emplace_back(name, number(metrics, "stand_fraction"));
                 if (name == "jogo") status.evaluationTurn = number(metrics, "turn", -1.0);
             }
+        if (const auto batteries = evaluation->find("batteries"); batteries != evaluation->end() && batteries->is_object())
+            for (const auto& [name, entry] : batteries->items()) {
+                TrainerStatus3D::Battery battery;
+                battery.battery = name;
+                battery.posture = text(entry, "posture");
+                if (const auto solvers = entry.find("solvers"); solvers != entry.end() && solvers->is_object())
+                    for (const auto& [solver, metrics] : solvers->items()) {
+                        battery.stand.emplace_back(solver, number(metrics, "stand_fraction"));
+                        if (solver == "jogo") battery.turn = number(metrics, "turn", -1.0);
+                    }
+                status.evaluationBatteries.push_back(std::move(battery));
+            }
+        if (status.evaluationBatteries.empty())
+            status.evaluationBatteries.push_back({ "equilibrio_v1", "natural", status.evaluationStand, status.evaluationTurn });
     }
     if (const auto best = s.find("best"); best != s.end() && best->is_object()) {
         status.bestScore = number(*best, "score");

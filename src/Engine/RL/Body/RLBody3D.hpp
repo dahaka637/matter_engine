@@ -43,6 +43,28 @@ struct RLBodyDof3D {
     [[nodiscard]] float target(float action) const;
 };
 
+// Uma postura parada (um quadro de clipe): o que uma tarefa de ficar de pe
+// pede. A primeira do corpo e a pose base ("natural", de onde a acao parte);
+// as outras vem de "postures" no arquivo do corpo. A acao continua partindo
+// da base: segurar outra postura e pedir os desvios dela.
+struct RLPosture3D {
+    std::string id;
+    std::string displayName;
+    // Por link (o vetor de rotacao de cada junta, dentro do curso) e a
+    // inclinacao da pelve.
+    std::vector<Vec3> jointCoordinates;
+    Quaternion rootRotation;
+    // O angulo de cada eixo atuado (na ordem de RLBody3D::dofs).
+    std::vector<float> dofRadians;
+    // Medidas com os pes no chao (z = 0) e o "para cima" da pelve, do peito
+    // (UpperChest) e da cabeca no referencial do rumo.
+    float standingPelvisHeight = 0.0f;
+    float standingHeadHeight = 0.0f;
+    Vec3 pelvisUp { 0.0f, 0.0f, 1.0f };
+    Vec3 chestUp { 0.0f, 0.0f, 1.0f };
+    Vec3 headUp { 0.0f, 0.0f, 1.0f };
+};
+
 // O corpo de treino: o perfil do jogo mais os atuadores do RL por cima
 // (assets/rl/bodies/<id>.json). O perfil do jogo nao muda; os tetos e os
 // ganhos do RL entram pelas escalas de cada alvo.
@@ -74,11 +96,16 @@ struct RLBody3D {
     Vec3 basePelvisUp { 0.0f, 0.0f, 1.0f };
     Vec3 baseChestUp { 0.0f, 0.0f, 1.0f };
     Vec3 baseHeadUp { 0.0f, 0.0f, 1.0f };
+    // As posturas paradas: a base primeiro ("natural"), depois as do arquivo.
+    std::vector<RLPosture3D> postures;
     // Identidade do corpo: hash do perfil e da definicao (FNV-1a de 64 bits).
     std::uint64_t hash = 0;
 };
 
 [[nodiscard]] RLBody3D loadRLBody3D(const std::filesystem::path& definitionPath);
+
+// O indice de uma postura do corpo pelo id (-1 se nao houver).
+[[nodiscard]] int findRLPosture3D(const RLBody3D& body, std::string_view id);
 
 // Poses dos links (origem, como PhysicsBodyState3D) a partir das coordenadas
 // das juntas, com a raiz dada. Mesma convencao do backend e dos clipes.

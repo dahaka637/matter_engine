@@ -1,6 +1,7 @@
 """O treinador inteiro num treino pequeno (16 mundos, CPU, uma pasta temporaria):
-parar e continuar do checkpoint, e a rede que vira NaN volta ao ultimo
-checkpoint bom sem deixar rodadas perdidas no historico."""
+parar e continuar do checkpoint, a rede que vira NaN voltando ao ultimo
+checkpoint bom sem deixar rodadas perdidas no historico, e a troca de
+habilidade (H1 -> postura de alerta) no mesmo cerebro."""
 from __future__ import annotations
 
 import subprocess
@@ -14,8 +15,11 @@ data = Path(sys.argv[1])
 os.environ["MATTER_RL_DATA"] = str(data)
 os.environ["MATTER_RL_SOCKET"] = str(data / "controle.sock")
 sys.path.insert(0, sys.argv[2])
+import json
 import torch
 from matter_rl import storage, trainer as T
+from matter_rl.evaluation import Battery
+T.Battery = lambda: Battery(environments=4, seconds=1.0)  # a bateria pequena do teste
 
 def make(iterations):
     t = T.Trainer("t", mode="maximo", environments=16, device="cpu", seed=3, iterations=iterations)
@@ -50,6 +54,40 @@ assert rows[3][1] > recovered, "a rodada 4 de antes da recuperacao saiu do histo
 assert [r[1] for r in rows] == sorted(r[1] for r in rows)
 sessions = db.execute("SELECT end_reason FROM sessions WHERE run='t' ORDER BY id").fetchall()
 assert [s[0] for s in sessions] == ["parado", "parado"], [s[0] for s in sessions]
+
+# A habilidade seguinte no mesmo cerebro: a tarefa do treino troca, a rede e a
+# mesma (o comando da postura ja estava na entrada), cada habilidade tem o
+# seu melhor e as duas baterias rodam.
+second.evaluate()
+h1_best = dict(second.best)
+third = T.Trainer("t", task="h1b_em_pe_posturado", mode="maximo", environments=16, device="cpu", seed=3, iterations=8)
+third.config.evaluation_minutes = 60.0  # so a avaliacao imediata da habilidade nova
+assert third.switched_from == "h1_ficar_em_pe"
+assert json.loads(third.live_task.read_text())["id"] == "h1b_em_pe_posturado"
+assert third.obs_names == second.obs_names and third.obs_names[-1] == "command.posture.alerta"
+assert third.counters["iteration"] == 6 and third.best["iteration"] == -1
+assert third.bests["h1_ficar_em_pe"]["iteration"] == h1_best["iteration"]
+assert third.loop() == 0  # avalia logo na primeira rodada (habilidade nova)
+batteries = {row[0] for row in db.execute("SELECT DISTINCT battery FROM evaluations WHERE run='t' AND iteration > 6")}
+assert batteries == {"equilibrio_v1", "postura_alerta_v1"}, batteries
+assert set(third.last_evaluation["batteries"]) == batteries
+assert third.bests["h1b_em_pe_posturado"]["iteration"] > 6 and "h1_ficar_em_pe" in third.bests
+i = third.obs_names.index("command.posture.alerta")
+assert float(third.model.obs_norm.mean[i]) == 0.0 and float(third.model.obs_norm.var[i]) == 1.0
+events = [row[0] for row in db.execute("SELECT kind FROM events WHERE run='t' ORDER BY id")]
+assert "tarefa" in events and "migracao" not in events, events
+
+# O comando "tarefa" (a tela): valida o id e pede para reabrir com a outra.
+fourth = T.Trainer("t", mode="maximo", environments=16, device="cpu", seed=3, iterations=9)
+try:
+    fourth.command("tarefa", {"tarefa": "nao_existe"})
+    raise AssertionError("tarefa desconhecida deveria falhar")
+except ValueError:
+    pass
+assert fourth.command("tarefa", {"tarefa": "h1_ficar_em_pe"}) == {"ok": True}
+assert fourth.restart_requested and fourth.config.task == "h1_ficar_em_pe"
+fourth.server.close()
+fourth.lock.release()
 print("ok")
 '''
 

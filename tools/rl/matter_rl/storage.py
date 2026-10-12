@@ -206,12 +206,19 @@ class Database:
                                (SELECT MAX(iteration) FROM evaluations WHERE run=?)""", (run, run)).fetchall()
         if not rows:
             return {}
+        from .evaluation import BASE_BATTERY, battery_posture
         keys = ("stand_fraction", "mean_seconds", "sway", "foot_drift", "action_rate", "effort", "upright", "turn",
                 "joint_speed", "foot_turn", "score")
-        solvers = {row["solver"]: {key: row[key] if key in row.keys() else None for key in keys}
-                   | {"ends": json.loads(row["ends"] or "{}")} for row in rows}
-        return {"iteration": rows[0]["iteration"], "score": min(m["score"] for m in solvers.values()),
-                "solvers": solvers, "seconds": 0.0, "time": max(row["time"] for row in rows)}
+        batteries: dict[str, dict] = {}
+        for row in rows:
+            entry = batteries.setdefault(row["battery"], {"posture": battery_posture(row["battery"]), "solvers": {}})
+            entry["solvers"][row["solver"]] = ({key: row[key] if key in row.keys() else None for key in keys}
+                                               | {"ends": json.loads(row["ends"] or "{}")})
+        first = batteries.get(BASE_BATTERY) or next(iter(batteries.values()))
+        return {"iteration": rows[0]["iteration"],
+                "score": min(m["score"] for b in batteries.values() for m in b["solvers"].values()),
+                "solvers": first["solvers"], "batteries": batteries, "seconds": 0.0,
+                "time": max(row["time"] for row in rows)}
 
     def sampled_iterations(self, run: str, points: int = 2000, since: float = 0.0) -> list[sqlite3.Row]:
         """Ate `points` rodadas espalhadas no tempo (a mais recente de cada janela).

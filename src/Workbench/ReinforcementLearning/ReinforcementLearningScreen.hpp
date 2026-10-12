@@ -61,6 +61,11 @@ public:
         m_display = display;
         m_dirty = true;
     }
+    // As habilidades (uma por tarefa em assets/rl/tasks) e a escolhida: o que o
+    // mundo mostra (a postura dela) e o que "Iniciar" treina.
+    [[nodiscard]] std::vector<std::string> skillTasks() const;
+    void selectSkill(std::size_t index);
+    [[nodiscard]] std::uint32_t viewerPosture() const;
 
 private:
     struct ModelOutcome {
@@ -72,7 +77,7 @@ private:
     void drawTrainer();
     void drawControls(const TrainerStatus3D& status);
     void drawModes(const TrainerStatus3D& status);
-    void drawSkills();
+    void drawSkills(const TrainerStatus3D& status);
     void drawEvaluation(const TrainerStatus3D& status);
     void drawToolbar();
     void drawViewport(CanvasTarget& canvas, float bottomHeight);
@@ -82,6 +87,8 @@ private:
     void notify(std::string text);
     [[nodiscard]] float ui(float value) const { return value * m_uiScale; }
 
+    void loadSkills();
+    [[nodiscard]] std::string skillName(const std::string& battery) const;
     void ensureViewer();
     void reloadPolicy(bool force);
     void stepViewer(float deltaSeconds);
@@ -133,6 +140,20 @@ private:
     bool m_showContacts = true;
     // 100 N por 0,2 s no peito: o que a H1 (sem treino de empurroes) aguenta.
     float m_pushNewtons = 100.0f;
+
+    struct Skill {
+        std::string task;
+        std::string name;
+        // A postura principal (a de maior fatia na tarefa) e a bateria dela.
+        std::string posture;
+        std::string battery;
+    };
+    std::vector<Skill> m_skills;
+    std::size_t m_skill = 0;
+    bool m_skillChosen = false;
+    // Quantos canais da observacao a politica le (uma politica de antes do
+    // comando da postura le o comeco, que e igual).
+    std::size_t m_policyInputs = 0;
 
     // O historico (graficos) e os avisos.
     TrainingHistory3D m_history;

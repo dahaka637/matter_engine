@@ -14,7 +14,7 @@ import numpy as np
 import torch
 
 from . import control, native, paths, storage, system
-from .evaluation import EPISODE_COLUMNS, Battery, Evaluator
+from .evaluation import BASE_BATTERY, EPISODE_COLUMNS, Battery, Evaluator, battery_posture
 from .model import ActorCritic, export_policy, migrate_inputs
 from .ppo import PPO, PPOSettings, Rollout
 
@@ -88,7 +88,14 @@ class Trainer:
         self.native = native.load()
         self.task_path = paths.task_path(self.config.task)
         # Uma copia da tarefa no treino: os pesos mudados com ele andando ficam aqui.
+        # Outra habilidade (a etapa seguinte) troca a copia pela do repositorio.
         self.live_task = self.directory / "tarefa.json"
+        self.switched_from: str | None = None
+        if self.live_task.exists():
+            previous = json.loads(self.live_task.read_text()).get("id")
+            if previous != self.config.task:
+                self.switched_from = previous
+                self.live_task.unlink()
         if not self.live_task.exists():
             data = json.loads(self.task_path.read_text())
             data["body"] = str((self.task_path.parent / data["body"]).resolve())
@@ -108,11 +115,17 @@ class Trainer:
         self.settings = PPOSettings.from_dict(self.config.ppo)
         self.ppo = PPO(self.model, self.settings)
         self.counters = {"iteration": 0, "steps": 0, "train_seconds": 0.0, "episodes": 0}
+        # O melhor da habilidade de agora e o de cada uma (os checkpoints deles
+        # ficam protegidos da limpeza).
         self.best = {"score": -1e9, "iteration": -1}
+        self.bests: dict[str, dict] = {}
         self.last_evaluation: dict = {}
         self.db = storage.Database()
         self.db.ensure_run(run, self.config.task, self.batch.body_hash, asdict(self.config))
+        if self.switched_from:
+            self.db.event(run, "tarefa", f"habilidade {self.switched_from} -> {self.config.task}")
         self.restore()
+        self.fix_commands()
 
         self.state = "treinando"
         self.message = ""
@@ -143,7 +156,7 @@ class Trainer:
         return {
             "run": self.run, "task": self.config.task, "body_id": self.batch.body_id,
             "body_hash": self.batch.body_hash, "task_hash": self.batch.task_hash,
-            "steps": self.counters["steps"], "time": time.time(), "best": self.best,
+            "steps": self.counters["steps"], "time": time.time(), "best": self.best, "bests": self.bests,
             "obs_names": self.obs_names, "critic_names": self.critic_names, "action_names": self.action_names,
         }
 
@@ -153,6 +166,7 @@ class Trainer:
             "ppo": self.ppo.state_dict(),
             "counters": dict(self.counters),
             "best": dict(self.best),
+            "bests": {task: dict(best) for task, best in self.bests.items()},
             "obs_names": self.obs_names,
             "critic_names": self.critic_names,
             "action_names": self.action_names,
@@ -179,7 +193,10 @@ class Trainer:
             self.model.load_state_dict(state["model"])
             self.ppo.load_state_dict(state["ppo"])
         self.counters.update(state.get("counters", {}))
-        self.best.update(state.get("best", {}))
+        # (Checkpoints de antes da lista: o melhor era o da tarefa deles.)
+        bests = state.get("bests") or {reference.manifest.get("task", self.config.task): state.get("best", {})}
+        self.bests = {task: dict(best) for task, best in bests.items() if best and best.get("iteration", -1) >= 0}
+        self.best = dict(self.bests.get(self.config.task, {"score": -1e9, "iteration": -1}))
         lost = self.db.rewind(self.run, self.counters["iteration"])
         if lost:
             self.db.event(self.run, "retomada", f"retomado da rodada {self.counters['iteration']}; "
@@ -189,6 +206,11 @@ class Trainer:
             torch.set_rng_state(state["rng_torch"].cpu())
         if state.get("body_hash") != self.batch.body_hash:
             self.db.event(self.run, "corpo", "o corpo mudou desde o checkpoint: o treino segue adaptando")
+
+    def fix_commands(self) -> None:
+        """Os canais de comando passam crus pela normalizacao (valem 0 ou 1)."""
+        for norm, names in ((self.model.obs_norm, self.obs_names), (self.model.critic_norm, self.critic_names)):
+            norm.fix_channels(torch.tensor([name.startswith("command.") for name in names]))
 
     def status(self) -> dict:
         evaluation = self.last_evaluation
@@ -217,7 +239,7 @@ class Trainer:
         self.db.log_checkpoint(self.run, self.counters["iteration"], self.counters["steps"], reference.path, kind,
                                self.last_evaluation.get("score"))
         self.export("policy_latest")
-        protected = {self.best["iteration"]} if self.best["iteration"] >= 0 else set()
+        protected = {best["iteration"] for best in [self.best, *self.bests.values()] if best.get("iteration", -1) >= 0}
         for iteration in storage.prune_checkpoints(self.directory, protected):
             self.db.forget_checkpoint(self.run, iteration)
         self.db.compact(self.run)
@@ -244,21 +266,28 @@ class Trainer:
         record = self.directory / "episodes" / f"aval-{self.counters['iteration']:09d}"
         started = time.time()
         results = self.evaluator.run(self.model, self.device, record)
-        for solver, metrics in results.items():
-            self.db.log_evaluation({
-                "run": self.run, "iteration": self.counters["iteration"], "time": time.time(),
-                "steps": self.counters["steps"], "battery": self.evaluator.battery.name, "solver": solver,
-                "stand_fraction": metrics["stand_fraction"], "mean_seconds": metrics["mean_seconds"],
-                "sway": metrics["sway"], "foot_drift": metrics["foot_drift"], "action_rate": metrics["action_rate"],
-                "effort": metrics["effort"], "upright": metrics["upright"], "turn": metrics["turn"],
-                "joint_speed": metrics["joint_speed"], "foot_turn": metrics["foot_turn"], "score": metrics["score"],
-                "ends": json.dumps(metrics["ends"]),
-            })
-        combined = min(m["score"] for m in results.values())
-        self.last_evaluation = {"iteration": self.counters["iteration"], "score": combined, "solvers": results,
-                                "seconds": time.time() - started, "time": time.time()}
+        for battery, solvers in results.items():
+            for solver, metrics in solvers.items():
+                self.db.log_evaluation({
+                    "run": self.run, "iteration": self.counters["iteration"], "time": time.time(),
+                    "steps": self.counters["steps"], "battery": battery, "solver": solver,
+                    "stand_fraction": metrics["stand_fraction"], "mean_seconds": metrics["mean_seconds"],
+                    "sway": metrics["sway"], "foot_drift": metrics["foot_drift"],
+                    "action_rate": metrics["action_rate"], "effort": metrics["effort"], "upright": metrics["upright"],
+                    "turn": metrics["turn"], "joint_speed": metrics["joint_speed"], "foot_turn": metrics["foot_turn"],
+                    "score": metrics["score"], "ends": json.dumps(metrics["ends"]),
+                })
+        # A nota e a da pior bateria (uma habilidade nova nao apaga a antiga).
+        combined = min(m["score"] for solvers in results.values() for m in solvers.values())
+        self.last_evaluation = {
+            "iteration": self.counters["iteration"], "score": combined,
+            "solvers": results.get(BASE_BATTERY) or next(iter(results.values())),
+            "batteries": {battery: {"posture": battery_posture(battery), "solvers": solvers}
+                          for battery, solvers in results.items()},
+            "seconds": time.time() - started, "time": time.time()}
         if combined > self.best["score"] + 1e-6:
             self.best = {"score": combined, "iteration": self.counters["iteration"], "steps": self.counters["steps"]}
+            self.bests[self.config.task] = dict(self.best)
             self.export("policy_best")
             self.save("melhor")
             self.db.event(self.run, "melhor", f"novo melhor: nota {combined:.3f}", data=results)
@@ -308,6 +337,16 @@ class Trainer:
                 self.config.mode = name
                 self.config.save(self.directory / "run.json")
                 self.db.event(self.run, "modo", f"modo {system.MODES[name].label}", author)
+                self.restart_requested = True
+            return {"ok": True}
+        if command == "tarefa":
+            # Outra habilidade no mesmo cerebro: o treino reabre com a tarefa dela.
+            task = arguments["tarefa"]
+            if not paths.task_path(task).exists():
+                raise ValueError(f"tarefa desconhecida: {task}")
+            if task != self.config.task:
+                self.config.task = task
+                self.config.save(self.directory / "run.json")
                 self.restart_requested = True
             return {"ok": True}
         if command == "peso":
@@ -425,6 +464,7 @@ class Trainer:
         state = storage.load_checkpoint(reference, str(self.device))
         self.model.load_state_dict(state["model"])
         self.ppo.load_state_dict(state["ppo"])
+        self.fix_commands()
         self.counters.update(state.get("counters", {}))
         self.db.rewind(self.run, self.counters["iteration"])
         self.ppo.learning_rate = max(self.settings.min_learning_rate, self.ppo.learning_rate * 0.5)
@@ -453,8 +493,8 @@ class Trainer:
     def loop(self) -> int:
         self.last_save = time.time()
         # O relogio da avaliacao segue o da ultima (trocar de modo ou reabrir nao
-        # adia a proxima); um treino sem nenhuma avalia logo.
-        self.last_evaluation_time = self.last_evaluation.get("time", 0.0)
+        # adia a proxima); um treino sem nenhuma, ou numa habilidade nova, avalia logo.
+        self.last_evaluation_time = 0.0 if self.switched_from else self.last_evaluation.get("time", 0.0)
         last_status = 0.0
         last_temperature = 0.0
         last_export = time.time()

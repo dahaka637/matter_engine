@@ -78,8 +78,8 @@ TrainingHistory3D readTrainingHistory3D(const std::filesystem::path& database, c
             sqlite3_finalize(statement);
         }
     }
-    const char* evaluations = "SELECT iteration, time, steps, solver, stand_fraction, mean_seconds, sway, score "
-                              "FROM evaluations WHERE run=?1 AND time>=?2 ORDER BY iteration, solver";
+    const char* evaluations = "SELECT iteration, time, steps, solver, stand_fraction, mean_seconds, sway, score, battery "
+                              "FROM evaluations WHERE run=?1 AND time>=?2 ORDER BY iteration, battery, solver";
     if (sqlite3_prepare_v2(db, evaluations, -1, &statement, nullptr) == SQLITE_OK) {
         sqlite3_bind_text(statement, 1, run.c_str(), -1, SQLITE_TRANSIENT);
         sqlite3_bind_double(statement, 2, since);
@@ -93,6 +93,7 @@ TrainingHistory3D readTrainingHistory3D(const std::filesystem::path& database, c
             point.meanSeconds = columnDouble(statement, 5);
             point.sway = columnDouble(statement, 6);
             point.score = columnDouble(statement, 7);
+            point.battery = columnText(statement, 8);
             history.evaluations.push_back(point);
         }
         sqlite3_finalize(statement);
