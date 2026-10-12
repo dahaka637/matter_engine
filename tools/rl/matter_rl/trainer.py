@@ -255,7 +255,7 @@ class Trainer:
             })
         combined = min(m["score"] for m in results.values())
         self.last_evaluation = {"iteration": self.counters["iteration"], "score": combined, "solvers": results,
-                                "seconds": time.time() - started}
+                                "seconds": time.time() - started, "time": time.time()}
         if combined > self.best["score"] + 1e-6:
             self.best = {"score": combined, "iteration": self.counters["iteration"], "steps": self.counters["steps"]}
             self.export("policy_best")
@@ -451,7 +451,9 @@ class Trainer:
 
     def loop(self) -> int:
         self.last_save = time.time()
-        self.last_evaluation_time = time.time() if self.counters["iteration"] else 0.0
+        # O relogio da avaliacao segue o da ultima (trocar de modo ou reabrir nao
+        # adia a proxima); um treino sem nenhuma avalia logo.
+        self.last_evaluation_time = self.last_evaluation.get("time", 0.0)
         last_status = 0.0
         last_temperature = 0.0
         last_export = time.time()

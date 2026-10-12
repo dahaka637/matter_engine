@@ -165,6 +165,7 @@ def test_resume_after_crash_rewinds_history(tmp_path: Path):
                            "solver": solver, "stand_fraction": 1.0, "score": score, "ends": "{\"tempo\": 32}"})
     last = db.last_evaluation("t")
     assert last["iteration"] == 10 and last["score"] == 0.9 and last["solvers"]["jogo"]["ends"] == {"tempo": 32}
+    assert abs(last["time"] - time.time()) < 60.0
 
 
 def test_history_sampled_by_time_keeps_compacted_rows(tmp_path: Path):

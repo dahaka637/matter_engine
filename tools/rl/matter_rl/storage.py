@@ -202,7 +202,7 @@ class Database:
         solvers = {row["solver"]: {key: row[key] for key in keys} | {"ends": json.loads(row["ends"] or "{}")}
                    for row in rows}
         return {"iteration": rows[0]["iteration"], "score": min(m["score"] for m in solvers.values()),
-                "solvers": solvers, "seconds": 0.0}
+                "solvers": solvers, "seconds": 0.0, "time": max(row["time"] for row in rows)}
 
     def sampled_iterations(self, run: str, points: int = 2000, since: float = 0.0) -> list[sqlite3.Row]:
         """Ate `points` rodadas espalhadas no tempo (a mais recente de cada janela).
