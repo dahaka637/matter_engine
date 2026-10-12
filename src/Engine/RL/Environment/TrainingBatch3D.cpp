@@ -64,6 +64,7 @@ struct Environment {
     std::vector<RagdollDriveTarget3D> targets;
     std::vector<RagdollDriveTarget3D> previousTargets;
     std::array<Vec3, 2> footStart {};
+    std::array<Quaternion, 2> footStartOrientation {};
     float friction = 1.0f;
     float strength = 1.0f;
     bool delayed = false;
@@ -80,6 +81,7 @@ struct Environment {
     double comSum[2] {};
     double comSquares[2] {};
     float footDriftMax = 0.0f;
+    float footTurnMax = 0.0f;
     double actionRateSum = 0.0;
     double effortSum = 0.0;
     double jointSpeedSum = 0.0;
@@ -362,11 +364,13 @@ void TrainingBatch3D::Impl::resetEnvironment(std::uint32_t index) {
     for (std::size_t f = 0; f < 2; ++f) {
         const std::uint32_t foot = f == 0 ? body.leftFoot : body.rightFoot;
         env.footStart[f] = state ? state->links[foot].position : Vec3 {};
+        env.footStartOrientation[f] = state ? state->links[foot].orientation : Quaternion {};
     }
     env.episodeReturn = 0.0;
     env.comSum[0] = env.comSum[1] = 0.0;
     env.comSquares[0] = env.comSquares[1] = 0.0;
     env.footDriftMax = 0.0f;
+    env.footTurnMax = 0.0f;
     env.actionRateSum = env.effortSum = env.jointSpeedSum = env.uprightSum = env.trunkTurnSquares = 0.0;
 }
 
@@ -506,8 +510,15 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
     for (std::size_t f = 0; f < 2; ++f) {
         const std::uint32_t foot = f == 0 ? body.leftFoot : body.rightFoot;
         const PhysicsBodyState3D& link = state.links[foot];
+        // A sola escorregando: o centro do pe mais o giro em torno da vertical
+        // (um pe que pivota no lugar quase nao move o centro; 0,1 m e meia sola).
         if (reading.footContact[f])
-            slip += std::sqrt(link.linearVelocity.x * link.linearVelocity.x + link.linearVelocity.y * link.linearVelocity.y);
+            slip += std::sqrt(link.linearVelocity.x * link.linearVelocity.x + link.linearVelocity.y * link.linearVelocity.y)
+                + 0.1f * std::abs(link.angularVelocity.z);
+        // O quanto o pe girou no chao desde o inicio (o giro em torno da vertical).
+        const Quaternion turned = link.orientation * env.footStartOrientation[f].conjugate();
+        const float twist = 2.0f * std::atan2(std::abs(turned.z), std::abs(turned.w));
+        env.footTurnMax = std::max(env.footTurnMax, twist);
         const float mx = link.position.x - env.footStart[f].x, my = link.position.y - env.footStart[f].y;
         const float moved = std::sqrt(mx * mx + my * my);
         drift += moved;
@@ -591,6 +602,7 @@ void TrainingBatch3D::Impl::finishEpisode(Scene& scene, std::uint32_t index, Tra
     }
     episode.comSwayRms = static_cast<float>(std::sqrt(variance));
     episode.footDriftMax = env.footDriftMax;
+    episode.footTurnMax = env.footTurnMax;
     episode.meanActionRate = static_cast<float>(env.actionRateSum / n);
     episode.meanEffort = static_cast<float>(env.effortSum / n);
     episode.meanJointSpeed = static_cast<float>(env.jointSpeedSum / n);

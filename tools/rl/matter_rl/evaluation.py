@@ -15,7 +15,7 @@ from .model import ACTION_LIMIT, ActorCritic
 
 REASONS = ["nenhum", "queda_contato", "queda_altura", "numerico", "tempo", "limite"]
 # As colunas do resumo de um episodio (finished_episodes do modulo nativo).
-EPISODE_COLUMNS = 14
+EPISODE_COLUMNS = 15
 FALLS = {1, 2, 3}
 
 
@@ -114,7 +114,8 @@ class Evaluator:
         if len(rows) == 0:
             return {"stand_fraction": 0.0, "mean_seconds": 0.0, "sway": 1.0, "foot_drift": 1.0, "foot_drift_median": 1.0,
                     "foot_drift_worst": 1.0, "action_rate": 1.0, "effort": 1.0, "upright": 0.0, "turn": 1.0,
-                    "turn_worst": 1.0, "joint_speed": 1.0, "ends": {}, "score": -1.0, "episodes": 0}
+                    "turn_worst": 1.0, "joint_speed": 1.0, "foot_turn": 1.0, "foot_turn_worst": 1.0, "ends": {},
+                    "score": -1.0, "episodes": 0}
         reasons = rows[:, 1].astype(int)
         stood = reasons == 4
         subset = rows[stood] if stood.any() else rows
@@ -134,6 +135,9 @@ class Evaluator:
             "turn": float(subset[:, 13].mean()),
             "turn_worst": float(subset[:, 13].max()),
             "joint_speed": float(subset[:, 11].mean()),
+            # O maior giro de um pe no chao (rad): a media e o pior mundo.
+            "foot_turn": float(subset[:, 14].mean()),
+            "foot_turn_worst": float(subset[:, 14].max()),
             "ends": dict(ends),
         }
         metrics["score"] = score(metrics)

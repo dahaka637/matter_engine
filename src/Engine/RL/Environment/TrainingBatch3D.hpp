@@ -77,6 +77,8 @@ struct TrainingEpisode3D {
     float meanUpright = 0.0f;
     // O giro do tronco: a velocidade angular da pelve e do peito (RMS, rad/s).
     float trunkTurnRms = 0.0f;
+    // O maior giro de um pe no chao desde o inicio (rad, em torno da vertical).
+    float footTurnMax = 0.0f;
 };
 
 // Um mundo de treino visto por fora (o visualizador, a gravacao).

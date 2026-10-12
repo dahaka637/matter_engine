@@ -251,7 +251,7 @@ class Trainer:
                 "stand_fraction": metrics["stand_fraction"], "mean_seconds": metrics["mean_seconds"],
                 "sway": metrics["sway"], "foot_drift": metrics["foot_drift"], "action_rate": metrics["action_rate"],
                 "effort": metrics["effort"], "upright": metrics["upright"], "turn": metrics["turn"],
-                "joint_speed": metrics["joint_speed"], "score": metrics["score"],
+                "joint_speed": metrics["joint_speed"], "foot_turn": metrics["foot_turn"], "score": metrics["score"],
                 "ends": json.dumps(metrics["ends"]),
             })
         combined = min(m["score"] for m in results.values())

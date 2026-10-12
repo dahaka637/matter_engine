@@ -119,12 +119,15 @@ def report(run: str, since_seconds: float) -> str:
         out.append("- Nenhuma rodada no periodo.")
     if evals:
         out += ["", "## Avaliacoes", "", "| Rodada | Solver | De pe 60 s | Media (s) | Oscilacao (cm) | Deriva pes (cm) | "
-                "Giro do tronco (graus/s) | Mudanca de acao | Nota |", "|---:|---|---:|---:|---:|---:|---:|---:|---:|"]
+                "Giro do tronco (graus/s) | Pe girando (graus) | Mudanca de acao | Nota |",
+                "|---:|---|---:|---:|---:|---:|---:|---:|---:|---:|"]
         for e in evals:
             value = e["turn"] if "turn" in e.keys() else None
             turn = f"{math.degrees(value):.1f}" if value is not None else "—"
+            value = e["foot_turn"] if "foot_turn" in e.keys() else None
+            foot = f"{math.degrees(value):.1f}" if value is not None else "—"
             out.append(f"| {e['iteration']} | {e['solver']} | {100 * e['stand_fraction']:.0f}% | {e['mean_seconds']:.1f} | "
-                       f"{100 * e['sway']:.1f} | {100 * e['foot_drift']:.1f} | {turn} | {e['action_rate']:.4f} | "
+                       f"{100 * e['sway']:.1f} | {100 * e['foot_drift']:.1f} | {turn} | {foot} | {e['action_rate']:.4f} | "
                        f"{e['score']:.3f} |")
     if events:
         out += ["", "## Eventos", ""]

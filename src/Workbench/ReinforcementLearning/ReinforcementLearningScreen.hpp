@@ -125,7 +125,8 @@ private:
     bool m_showColliders = false;
     bool m_showCenterOfMass = true;
     bool m_showContacts = true;
-    float m_pushNewtons = 250.0f;
+    // 100 N por 0,2 s no peito: o que a H1 (sem treino de empurroes) aguenta.
+    float m_pushNewtons = 100.0f;
 
     // O historico (graficos) e os avisos.
     TrainingHistory3D m_history;

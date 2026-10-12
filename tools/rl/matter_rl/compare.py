@@ -64,6 +64,8 @@ ROWS = [
     ("deriva dos pes: pior mundo (cm)", lambda m: f"{100 * m.get('foot_drift_worst', m['foot_drift']):.1f}"),
     ("giro do tronco: media (graus/s)", lambda m: f"{math.degrees(m.get('turn', 0.0)):.1f}"),
     ("giro do tronco: pior mundo (graus/s)", lambda m: f"{math.degrees(m.get('turn_worst', 0.0)):.1f}"),
+    ("pe girando no chao: media (graus)", lambda m: f"{math.degrees(m.get('foot_turn', 0.0)):.1f}"),
+    ("pe girando no chao: pior mundo (graus)", lambda m: f"{math.degrees(m.get('foot_turn_worst', 0.0)):.1f}"),
     ("velocidade das juntas (rad/s)", lambda m: f"{m.get('joint_speed', 0.0):.3f}"),
     ("tremor (mudanca da acao)", lambda m: f"{m['action_rate']:.4f}"),
     ("esforco", lambda m: f"{m['effort']:.3f}"),

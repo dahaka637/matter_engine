@@ -150,6 +150,7 @@ void testFallsAndRestart() {
             require(batch.terminated()[episode.environment] == 1, "queda deveria marcar terminated");
             require(episode.trunkTurnRms > 0.05f && std::isfinite(episode.trunkTurnRms),
                 "o tronco gira numa queda (o giro do resumo)");
+            require(episode.footTurnMax >= 0.0f && episode.footTurnMax <= 3.1416f, "o giro do pe e um angulo");
             // (O ruido inicial das juntas muda a altura da pelve em uns cm.)
             require(std::abs(batch.observations()[episode.environment * batch.observationSize()]) < 0.2f,
                 "o mundo deveria recomecar de pe");
