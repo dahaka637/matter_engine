@@ -65,6 +65,9 @@ public:
     // mundo mostra (a postura dela) e o que "Iniciar" treina.
     [[nodiscard]] std::vector<std::string> skillTasks() const;
     void selectSkill(std::size_t index);
+    // "Treinar esta habilidade": o treino aberto salva, fecha e reabre na escolhida.
+    void trainSelectedSkill();
+    [[nodiscard]] bool switchingSkill() const { return !m_switchTask.empty(); }
     [[nodiscard]] std::uint32_t viewerPosture() const;
 
 private:
@@ -151,6 +154,11 @@ private:
     std::vector<Skill> m_skills;
     std::size_t m_skill = 0;
     bool m_skillChosen = false;
+    // A troca de habilidade em andamento: fecha o treino e reabre nesta tarefa.
+    std::string m_switchTask;
+    std::string m_switchMode;
+    std::string m_switchRun;
+    float m_switchSeconds = 0.0f;
     // Quantos canais da observacao a politica le (uma politica de antes do
     // comando da postura le o comeco, que e igual).
     std::size_t m_policyInputs = 0;

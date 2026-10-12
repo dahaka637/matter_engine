@@ -132,18 +132,20 @@ bool TrainerLink3D::resumesAtBoot() const {
     return std::filesystem::exists(home / ".config/systemd/user/default.target.wants/matter-rl.service", code);
 }
 
-bool TrainerLink3D::start(const std::string& task, const std::string& mode, std::string* error) {
+bool TrainerLink3D::start(const std::string& task, const std::string& mode, std::string* error,
+    const std::string& run) {
     if (status().alive) return true;
+    const std::string& target = run.empty() ? m_run : run;
     if (!std::filesystem::exists(m_paths.launcher)) {
         if (error) *error = "treinador ausente: " + m_paths.launcher.string();
         return false;
     }
-    const std::filesystem::path directory = m_paths.run(m_run);
+    const std::filesystem::path directory = m_paths.run(target);
     std::error_code code;
     std::filesystem::create_directories(directory, code);
     const std::string log = (directory / "treinador.log").string();
     const std::string launcher = m_paths.launcher.string();
-    std::vector<std::string> arguments { launcher, "servir", "--run", m_run, "--tarefa", task, "--modo", mode };
+    std::vector<std::string> arguments { launcher, "servir", "--run", target, "--tarefa", task, "--modo", mode };
     std::vector<char*> argv;
     for (std::string& argument : arguments) argv.push_back(argument.data());
     argv.push_back(nullptr);

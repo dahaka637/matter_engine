@@ -345,16 +345,6 @@ class Trainer:
                 self.db.event(self.run, "modo", f"modo {system.MODES[name].label}", author)
                 self.restart_requested = True
             return {"ok": True}
-        if command == "tarefa":
-            # Outra habilidade no mesmo cerebro: o treino reabre com a tarefa dela.
-            task = arguments["tarefa"]
-            if not paths.task_path(task).exists():
-                raise ValueError(f"tarefa desconhecida: {task}")
-            if task != self.config.task:
-                self.config.task = task
-                self.config.save(self.directory / "run.json")
-                self.restart_requested = True
-            return {"ok": True}
         if command == "peso":
             data = json.loads(self.live_task.read_text())
             component, value = arguments["componente"], float(arguments["valor"])

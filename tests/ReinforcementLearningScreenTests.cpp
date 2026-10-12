@@ -16,6 +16,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <chrono>
 #include <thread>
 #include <iostream>
@@ -143,11 +144,49 @@ int liveSnapshot() {
     return 0;
 }
 
+// MATTER_RL_TEST_SWITCH=1: num treino de verdade aberto (use MATTER_RL_DATA e
+// MATTER_RL_SOCKET de um treino de teste), "Treinar esta habilidade" na outra
+// habilidade: o treino fecha e reabre nela.
+int liveSwitch() {
+    TestSupport::HeadlessUi ui;
+    FakeCanvas canvas;
+    ReinforcementLearningScreen::Options options;
+    options.sourceRoot = std::filesystem::path(MATTERENGINE_TEST_ASSETS_DIR).parent_path();
+    options.capturesDirectory = std::filesystem::temp_directory_path() / "matter_rl_tela_capturas";
+    ReinforcementLearningScreen screen(std::move(options), {});
+    screen.waitUntilLoaded();
+    const auto wait = [&](const std::function<bool()>& done, int seconds) {
+        for (int i = 0; i < seconds * 10 && !done(); ++i) {
+            frame(screen, canvas, 1);
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        return done();
+    };
+    require(wait([&] { return screen.status().alive; }, 15), "nenhum treinador aberto");
+    const std::string before = screen.status().task;
+    const std::vector<std::string> tasks = screen.skillTasks();
+    std::size_t other = 0;
+    while (other < tasks.size() && tasks[other] == before) ++other;
+    require(other < tasks.size(), "nao ha outra habilidade");
+    screen.selectSkill(other);
+    screen.trainSelectedSkill();
+    require(screen.switchingSkill(), "a troca deveria comecar");
+    frame(screen, canvas, 3);
+    snapshot(canvas, "rl_tela_trocando");
+    require(wait([&] { return screen.status().alive && screen.status().task == tasks[other]; }, 150),
+        "o treino deveria reabrir na outra habilidade (" + tasks[other] + "), esta em " + screen.status().task);
+    frame(screen, canvas, 30);
+    snapshot(canvas, "rl_tela_trocou");
+    std::cout << "Reinforcement learning screen live switch: " << before << " -> " << tasks[other] << '\n';
+    return 0;
+}
+
 } // namespace
 
 int main() {
     try {
         if (std::getenv("MATTER_RL_TEST_LIVE") != nullptr) return liveSnapshot();
+        if (std::getenv("MATTER_RL_TEST_SWITCH") != nullptr) return liveSwitch();
         const std::filesystem::path sandbox = std::filesystem::temp_directory_path() / "matter_rl_tela";
         std::filesystem::remove_all(sandbox);
         std::filesystem::create_directories(sandbox / "runtime");

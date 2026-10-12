@@ -78,17 +78,6 @@ assert float(third.model.obs_norm.mean[i]) == 0.0 and float(third.model.obs_norm
 events = [row[0] for row in db.execute("SELECT kind FROM events WHERE run='t' ORDER BY id")]
 assert "tarefa" in events and "migracao" not in events, events
 
-# O comando "tarefa" (a tela): valida o id e pede para reabrir com a outra.
-fourth = T.Trainer("t", mode="maximo", environments=16, device="cpu", seed=3, iterations=9)
-try:
-    fourth.command("tarefa", {"tarefa": "nao_existe"})
-    raise AssertionError("tarefa desconhecida deveria falhar")
-except ValueError:
-    pass
-assert fourth.command("tarefa", {"tarefa": "h1_ficar_em_pe"}) == {"ok": True}
-assert fourth.restart_requested and fourth.config.task == "h1_ficar_em_pe"
-fourth.server.close()
-fourth.lock.release()
 print("ok")
 '''
 

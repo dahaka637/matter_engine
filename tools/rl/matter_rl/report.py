@@ -66,7 +66,7 @@ def format_status(status: dict) -> str:
                     part += f", postura a {math.degrees(m['pose_error']):.1f} graus"
                 parts.append(part)
             lines.append(f"  {battery}: " + " · ".join(parts))
-    if best and best.get("iteration", -1) >= 0:
+    if best and best.get("iteration", -1) >= 0 and best.get("score", -1e9) > -1e8:
         lines.append(f"melhor: nota {best['score']:.3f} na rodada {best['iteration']}")
     temperature = status.get("cpuTemperature")
     if temperature:

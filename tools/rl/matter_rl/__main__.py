@@ -201,6 +201,27 @@ def send(command: str, arguments: dict | None = None) -> int:
     return 0
 
 
+def command_switch(args: argparse.Namespace) -> int:
+    """Outra habilidade no mesmo cerebro: o treino aberto salva e fecha, e reabre
+    com a tarefa nova (o que ele sabe continua). Fechar e reabrir vale para
+    qualquer versao do treinador aberto."""
+    if not paths.task_path(args.tarefa).exists():
+        print(f"tarefa desconhecida: {args.tarefa}", file=sys.stderr)
+        return 1
+    status = report.read_status(args.run) or {}
+    if control.ping():
+        send("parar", {"autor": "usuario"})
+        for _ in range(180):
+            if not control.ping():
+                break
+            time.sleep(0.5)
+        else:
+            print("o treino nao fechou", file=sys.stderr)
+            return 1
+    args.modo, args.mundos = status.get("mode"), None
+    return command_start(args)
+
+
 def command_report(args: argparse.Namespace) -> int:
     print(report.report(args.run, parse_duration(args.desde)))
     return 0
@@ -287,10 +308,9 @@ def main(argv: list[str] | None = None) -> int:
     mode.add_argument("modo", choices=list(system.MODES))
     mode.add_argument("--autor", default="usuario")
     mode.set_defaults(func=lambda a: send("modo", {"modo": a.modo, "autor": a.autor}))
-    switch = sub.add_parser("tarefa")
+    switch = run_args(sub.add_parser("tarefa"))
     switch.add_argument("tarefa", help="o id da tarefa (assets/rl/tasks), ex.: h1b_em_pe_posturado")
-    switch.add_argument("--autor", default="usuario")
-    switch.set_defaults(func=lambda a: send("tarefa", {"tarefa": a.tarefa, "autor": a.autor}))
+    switch.set_defaults(func=command_switch)
     weight = sub.add_parser("peso")
     weight.add_argument("componente")
     weight.add_argument("valor", type=float)

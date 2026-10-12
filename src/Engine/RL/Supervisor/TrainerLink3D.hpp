@@ -88,8 +88,8 @@ public:
     [[nodiscard]] const std::string& run() const { return m_run; }
     [[nodiscard]] TrainerStatus3D status() const;
     // Abre o supervisor do treino (tools/rl/matter-rl servir) em segundo
-    // plano, com a saida no treinador.log do treino.
-    bool start(const std::string& task, const std::string& mode, std::string* error);
+    // plano, com a saida no treinador.log do treino. run vazio = o desta ponte.
+    bool start(const std::string& task, const std::string& mode, std::string* error, const std::string& run = {});
     // Roda um comando curto do treinador (matter-rl <argumentos>) sem esperar.
     bool runLauncher(const std::vector<std::string>& arguments, std::string* error);
     // O servico que retoma o treino ao ligar o PC esta ligado.

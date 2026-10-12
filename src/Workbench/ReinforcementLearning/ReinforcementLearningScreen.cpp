@@ -37,7 +37,8 @@ struct StateLabel {
     ImVec4 color;
 };
 
-constexpr std::array<StateLabel, 9> StateLabels { {
+constexpr std::array<StateLabel, 10> StateLabels { {
+    { "trocando", "Trocando de habilidade", AccentText },
     { "treinando", "Treinando", SuccessText },
     { "pausado", "Pausado", WarningText },
     { "avaliando", "Avaliando", AccentText },
@@ -182,6 +183,20 @@ void ReinforcementLearningScreen::selectSkill(std::size_t index) {
         }
     }
     m_dirty = true;
+}
+
+void ReinforcementLearningScreen::trainSelectedSkill() {
+    const TrainerStatus3D status = m_link->status();
+    if (m_skill >= m_skills.size() || !status.alive || status.task == m_skills[m_skill].task || !m_switchTask.empty())
+        return;
+    // O treino salva, fecha e reabre nela: vale para qualquer versao do
+    // treinador aberto, e o treinador e o supervisor voltam atualizados.
+    m_switchTask = m_skills[m_skill].task;
+    m_switchMode = status.mode.empty() ? m_mode : status.mode;
+    m_switchRun = status.run;
+    m_switchSeconds = 0.0f;
+    m_link->send("parar");
+    notify("Trocando para " + m_skills[m_skill].name);
 }
 
 std::uint32_t ReinforcementLearningScreen::viewerPosture() const {
@@ -354,6 +369,19 @@ void ReinforcementLearningScreen::refreshHistory() {
 void ReinforcementLearningScreen::update(float deltaSeconds) {
     pollModel();
     ensureViewer();
+    // A troca de habilidade: depois que o treino fecha, ele reabre na nova.
+    if (!m_switchTask.empty()) {
+        m_switchSeconds += deltaSeconds;
+        const TrainerStatus3D status = m_link->status();
+        if (!status.alive && status.state != "abrindo" && status.state != "parando") {
+            std::string error;
+            if (!m_link->start(m_switchTask, m_switchMode, &error, m_switchRun)) notify(error);
+            m_switchTask.clear();
+        } else if (m_switchSeconds > 90.0f) {
+            notify("O treino não fechou para trocar de habilidade");
+            m_switchTask.clear();
+        }
+    }
     // Ao abrir, a habilidade escolhida e a do treino (aberto ou o ultimo).
     if (!m_skillChosen) {
         const TrainerStatus3D status = m_link->status();
@@ -502,7 +530,7 @@ void ReinforcementLearningScreen::drawTrainer() {
     const TrainerStatus3D status = m_link->status();
     panelHeader("TREINO");
     ImGui::Dummy({ 1.0f, ui(2.0f) });
-    const StateLabel state = stateLabel(status.state);
+    const StateLabel state = stateLabel(m_switchTask.empty() ? status.state : std::string("trocando"));
     ImGui::TextColored(state.color, "%s", state.label);
     if (status.alive && !status.device.empty()) {
         ImGui::SameLine();
@@ -511,7 +539,8 @@ void ReinforcementLearningScreen::drawTrainer() {
     ImGui::Dummy({ 1.0f, ui(2.0f) });
     if (status.known) {
         if (status.alive && status.run != m_options.run) infoRow("Treino", status.run);
-        infoRow("Etapa", status.taskName.empty() ? status.task : status.taskName);
+        infoRow("Habilidade", status.taskName.empty() ? status.task : status.taskName);
+        tooltip("A habilidade que o treino está treinando (a marcada com o raio em HABILIDADES).");
         infoRow("Rodada", std::to_string(status.iteration));
         infoRow("Decisões", decimal(static_cast<double>(status.steps) / 1e6, 1) + " M");
         if (status.alive) infoRow("Velocidade", decimal(status.sps, 0) + " /s");
@@ -532,16 +561,20 @@ void ReinforcementLearningScreen::drawControls(const TrainerStatus3D& status) {
     const bool alive = status.alive;
     const bool opening = status.state == "abrindo";
     if (!alive) {
-        ImGui::BeginDisabled(opening);
-        const std::string label = UI::FontAwesome::label(UI::FontAwesome::Play,
-            status.known ? "Continuar treino" : "Iniciar treino");
+        ImGui::BeginDisabled(opening || !m_switchTask.empty());
+        const std::string& task = m_skill < m_skills.size() ? m_skills[m_skill].task : m_options.task;
+        // Com outra habilidade escolhida, o botao diz qual vai ser treinada.
+        const std::string text = !status.known ? std::string("Iniciar treino")
+            : status.task == task || m_skill >= m_skills.size() ? std::string("Continuar treino")
+                                                                 : "Continuar em: " + m_skills[m_skill].name;
+        const std::string label = UI::FontAwesome::label(UI::FontAwesome::Play, text.c_str());
         if (ImGui::Button(label.c_str(), { -1.0f, ui(36.0f) })) {
             std::string error;
-            const std::string& task = m_skill < m_skills.size() ? m_skills[m_skill].task : m_options.task;
             if (!m_link->start(task, m_mode, &error)) notify(error);
         }
         ImGui::EndDisabled();
-        tooltip("Abre o treino em segundo plano, do último checkpoint. Ele continua com o Matter Engine fechado.");
+        tooltip("Abre o treino em segundo plano, do último checkpoint, na habilidade escolhida em HABILIDADES. "
+                "Ele continua com o Matter Engine fechado.");
         return;
     }
     const bool paused = status.state == "pausado";
@@ -602,19 +635,21 @@ void ReinforcementLearningScreen::drawSkills(const TrainerStatus3D& status) {
     for (std::size_t i = 0; i < m_skills.size(); ++i) {
         const Skill& skill = m_skills[i];
         const bool trained = status.known && status.task == skill.task;
+        const std::string name = trained ? skill.name + " · em treino" : skill.name;
         const std::string label
-            = UI::FontAwesome::label(trained ? UI::FontAwesome::Bolt : UI::FontAwesome::Brain, skill.name) + "##" + skill.task;
+            = UI::FontAwesome::label(trained ? UI::FontAwesome::Bolt : UI::FontAwesome::Brain, name.c_str()) + "##" + skill.task;
         if (navigationButton(label.c_str(), i == m_skill, { -1.0f, ui(32.0f) }) && i != m_skill) selectSkill(i);
         tooltip(trained ? "A habilidade do treino (o raio). Escolher uma habilidade mostra a postura dela no mundo."
                         : "Escolher mostra a postura desta habilidade no mundo.");
     }
     if (m_skill < m_skills.size() && status.alive && status.task != m_skills[m_skill].task) {
         ImGui::Dummy({ 1.0f, ui(2.0f) });
+        ImGui::BeginDisabled(!m_switchTask.empty());
         const std::string label = UI::FontAwesome::label(UI::FontAwesome::Play, "Treinar esta habilidade");
-        if (ImGui::Button(label.c_str(), { -1.0f, ui(32.0f) }))
-            m_link->send("tarefa", std::string("{\"tarefa\":\"") + m_skills[m_skill].task + "\"}");
-        tooltip("O treino aberto passa para esta habilidade, no mesmo cérebro: o que ele já sabe continua, e as "
-                "habilidades anteriores seguem numa parte dos episódios.");
+        if (ImGui::Button(label.c_str(), { -1.0f, ui(32.0f) })) trainSelectedSkill();
+        ImGui::EndDisabled();
+        tooltip("O treino passa para esta habilidade, no mesmo cérebro: ele salva, fecha e reabre nela, e o que já "
+                "sabe continua (as habilidades anteriores seguem numa parte dos episódios).");
     }
 }
 
@@ -648,7 +683,8 @@ void ReinforcementLearningScreen::drawEvaluation(const TrainerStatus3D& status) 
     }
     infoRow("Nota", decimal(status.evaluationScore, 2) + " (rodada " + std::to_string(status.evaluationIteration) + ")");
     tooltip("A nota da pior bateria: uma habilidade nova não esconde a antiga.");
-    if (status.bestIteration >= 0)
+    // (Um melhor de outra conta da nota guarda so a rodada, ate a proxima avaliacao.)
+    if (status.bestIteration >= 0 && status.bestScore > -1.0e8)
         infoRow("Melhor", decimal(status.bestScore, 2) + " (rodada " + std::to_string(status.bestIteration) + ")");
 }
 
