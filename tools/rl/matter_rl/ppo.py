@@ -21,7 +21,9 @@ class PPOSettings:
     value_coef: float = 1.0
     entropy_coef: float = 0.003
     learning_rate: float = 3e-4
-    min_learning_rate: float = 5e-5
+    # O piso do rsl_rl: com o desvio da acao caindo, o mesmo passo da mais KL,
+    # e um piso alto (era 5e-5) deixava a taxa colada nele com o KL acima do alvo.
+    min_learning_rate: float = 1e-5
     max_learning_rate: float = 1e-3
     # O KL e somado nas 39 juntas: o alvo do rsl_rl (0,01 para 12 juntas)
     # vezes ~2 (medido: com 0,01 a taxa ia ao minimo em 8 rodadas).
