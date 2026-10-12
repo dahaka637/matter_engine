@@ -256,6 +256,19 @@ RLBody3D loadRLBody3D(const std::filesystem::path& definitionPath) {
     const float lowest = rlBodyLowestFootPoint3D(body, pose);
     body.standingPelvisHeight = pose.positions.front().z - lowest;
     body.standingHeadHeight = pose.positions[body.head].z - lowest;
+    // O rumo pelo eixo da frente da pelve (como o ambiente le) e o "para cima"
+    // de cada parte nele.
+    const Quaternion pelvisFrame = (pose.orientations.front() * profile.links.front().modelOrientation.conjugate())
+        .normalized();
+    const Vec3 forward = pelvisFrame.rotate({ 1.0f, 0.0f, 0.0f });
+    const Quaternion headingInverse = Quaternion::fromAxisAngle({ 0.0f, 0.0f, 1.0f }, -std::atan2(forward.y, forward.x));
+    const auto up = [&](std::uint32_t link) {
+        const Quaternion frame = pose.orientations[link] * profile.links[link].modelOrientation.conjugate();
+        return headingInverse.rotate(frame.rotate({ 0.0f, 0.0f, 1.0f })).normalized();
+    };
+    body.basePelvisUp = up(0);
+    body.baseChestUp = up(body.upperChest);
+    body.baseHeadUp = up(body.head);
     if (!(body.standingPelvisHeight > 0.3f) || !(body.standingHeadHeight > body.standingPelvisHeight))
         throw std::runtime_error("corpo de RL: a pose base nao fica de pe");
     return body;

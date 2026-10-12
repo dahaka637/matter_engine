@@ -468,15 +468,18 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
     const TrainingRewardWeights3D& w = task.reward;
     const RagdollProfile3D& profile = body.profile;
 
-    // Tronco e pelve na vertical (cada um vale metade).
-    const auto tilt = [&](std::uint32_t link) {
+    // Pelve, peito e cabeca na postura da pose base (o parado natural), no
+    // referencial do rumo: o angulo entre o "para cima" de cada um e o da base.
+    const auto deviation = [&](std::uint32_t link, Vec3 base) {
         const Quaternion frame = state.links[link].orientation * profile.links[link].modelOrientation.conjugate();
-        const float up = std::clamp(frame.rotate({ 0.0f, 0.0f, 1.0f }).z, -1.0f, 1.0f);
-        return std::acos(up);
+        const Vec3 up = reading.headingInverse.rotate(frame.rotate({ 0.0f, 0.0f, 1.0f }));
+        return std::acos(std::clamp(dot(up, base), -1.0f, 1.0f));
     };
-    const float pelvisTilt = tilt(0);
-    const float chestTilt = tilt(body.upperChest);
-    const float upright = 0.5f * std::exp(-pelvisTilt * pelvisTilt / 0.06f) + 0.5f * std::exp(-chestTilt * chestTilt / 0.06f);
+    const float pelvisTilt = deviation(0, body.basePelvisUp);
+    const float chestTilt = deviation(body.upperChest, body.baseChestUp);
+    const float headTilt = deviation(body.head, body.baseHeadUp);
+    const float upright = 0.4f * std::exp(-pelvisTilt * pelvisTilt / 0.06f)
+        + 0.3f * std::exp(-chestTilt * chestTilt / 0.06f) + 0.3f * std::exp(-headTilt * headTilt / 0.06f);
     const float headError = (state.links[body.head].position.z - body.standingHeadHeight) / 0.08f;
     const float headHeight = std::exp(-headError * headError);
     const Vec3 support = (reading.footCenter[0] + reading.footCenter[1]) * 0.5f;

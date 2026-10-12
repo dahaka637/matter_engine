@@ -69,6 +69,11 @@ struct RLBody3D {
     // Medidas da pose base apoiada no chao (z = 0).
     float standingPelvisHeight = 0.0f;
     float standingHeadHeight = 0.0f;
+    // O "para cima" da pelve, do peito (UpperChest) e da cabeca na pose base,
+    // no referencial do rumo do corpo: a postura que a recompensa pede.
+    Vec3 basePelvisUp { 0.0f, 0.0f, 1.0f };
+    Vec3 baseChestUp { 0.0f, 0.0f, 1.0f };
+    Vec3 baseHeadUp { 0.0f, 0.0f, 1.0f };
     // Identidade do corpo: hash do perfil e da definicao (FNV-1a de 64 bits).
     std::uint64_t hash = 0;
 };
