@@ -2,7 +2,9 @@
 
 O personagem aprende do zero, por etapas sob demanda. A primeira é a H1:
 ficar em pé, estável, sem ajuda nenhuma. A H1b é ficar em pé na postura de
-alerta (o `alert_idle`, o parado do jogo), no mesmo cérebro. O plano completo e o diário ficam no
+alerta (o `alert_idle`, o parado do jogo), e a H3 é andar seguindo um comando
+de velocidade, até o trote da locomoção padrão (4,5 m/s). Todas no mesmo
+cérebro. O plano completo e o diário ficam no
 vault (`30_Projects/matter_engine/Aprendizado_por_Reforco/`); aqui fica o que
 está implementado e como usar.
 
@@ -113,6 +115,35 @@ O treino inteiro (física, rede na GTX 1070 Ti e PPO), com 512 mundos:
 - **Avaliação:** uma bateria por postura (`equilibrio_v1`,
   `postura_alerta_v1`). A nota é a da pior, e desconta o erro da postura
   pedida. Há um "melhor" por habilidade.
+
+## Andar (H3)
+
+- **O comando** (frente, lado, giro, no referencial do rumo) entra no fim da
+  observação. Na tarefa `h3_andar`, agora só a frente está ligada (até 4,5
+  m/s).
+- **O currículo** começa em 0,75 m/s e sobe 0,25 quando ele acompanha bem; ele
+  aparece no TREINO da tela. Os limites ficam em `commands.limits` na cópia da
+  tarefa do treino.
+- **Costas, lados e giro já estão prontos.** Para ligar, na tarefa:
+  1. um máximo acima de 0 em `commands.backward`, `lateral` e `yawRate`
+     (sugestão em `commands.prontos`: 3, 3 e 2);
+  2. `"enabled": true` nas baterias `andar_tras_v1`, `andar_lado_v1` e
+     `girar_v1`;
+  3. reabrir o treino (`matter-rl tarefa h3_andar`).
+- **A recompensa** é a dos humanoides do Isaac Lab:
+  - seguir a velocidade e o giro;
+  - o pé no ar em apoio simples;
+  - a sola sem escorregar;
+  - o tronco sem balançar de lado;
+  - o tronco e os braços perto do alerta.
+
+  As parcelas de parado só valem com comando 0.
+- **Baterias:**
+  - `andar_frente_v1` (parado, 1,5, 3, 4,5 m/s, parar);
+  - `ir_ate_10m_v1` (o comando calculado de um ponto a 10 m);
+  - as de pé.
+- **Na tela:** escolha "Andar" e use o controle "Andar" (m/s) do
+  visualizador. O chão corre sob os pés e a câmera segue.
 
 ## Semanas ligado
 
