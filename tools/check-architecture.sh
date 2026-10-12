@@ -69,6 +69,8 @@ check_absent "Atletas: planejamento, sintese, acoes, pedidos e bola trabalham co
     '#include "Engine/Physics/(PhysicsScene3D|PhysicsEngine3D)|Jolt' src/Engine/Athlete/Planning src/Engine/Athlete/Synthesis \
     src/Engine/Athlete/Actions src/Engine/Athlete/Intent src/Engine/Athlete/Ball src/Engine/Athlete/Core \
     src/Engine/Athlete/Dribble
+check_absent "Nucleo de RL nao depende de render, interface, audio, plataforma nem entrada" \
+    '#include "Engine/(Render|RHI|UI|Audio|Platform|Input)/|#include .imgui|#include <SDL' src/Engine/RL
 check_absent "Identidade antiga e prototipos removidos nao podem retornar" \
     'SoccerFall|SOCCERFALL|LegacyFootworkRig|AnimatorScreen' \
     CMakeLists.txt src tests

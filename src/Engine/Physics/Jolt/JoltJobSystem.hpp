@@ -32,8 +32,14 @@ namespace MatterEngine {
 class JoltJobSystem final : public JPH::JobSystemWithBarrier {
 public:
     JoltJobSystem(std::shared_ptr<TaskScheduler> scheduler,
-        std::uint32_t maximumJobs, std::uint32_t maximumBarriers);
+        std::uint32_t maximumJobs, std::uint32_t maximumBarriers,
+        std::uint32_t maximumConcurrency = 0);
     ~JoltJobSystem() override;
+
+    // Aguarda somente as tarefas submetidas por este JobSystem. Uma espera
+    // global no TaskScheduler mistura cenas independentes e entra em deadlock
+    // quando uma cena e avancada de dentro de um parallelFor do proprio pool.
+    void waitIdle();
 
     [[nodiscard]] int GetMaxConcurrency() const override {
         return m_maximumConcurrency;
@@ -60,6 +66,7 @@ private:
     static void executeJob(void* context) noexcept;
 
     std::shared_ptr<TaskScheduler> m_scheduler;
+    TaskGroup m_tasks;
     JPH::FixedSizeFreeList<Job> m_jobs;
     int m_maximumConcurrency = 1;
     std::atomic<std::size_t> m_submittedJobs { 0 };

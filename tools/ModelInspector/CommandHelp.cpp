@@ -48,9 +48,17 @@ COMANDOS
   pesos       os pesos do skin dos vertices perto de um ponto (na ligacao): --perto x,y,z
               --raio 0.02 --parte calcao, ou --triangulos T2174 (os vertices dos triangulos que o "avesso" mostra)
   quadros     uma gravacao do jogo desenhada com o jogador de verdade (folha de quadros):
-              --dump <arquivo> (MatterLocomotionProbe --dump, harness XPOSEDUMP, MatterAthleteProbe)
+              --dump <arquivo> (MatterLocomotionProbe --dump, harness XPOSEDUMP, MatterAthleteProbe,
+              MatterRLDynamics, MatterRLJointProbe, matter-rl folha)
               --cenario <nome|indice>  --instantes t0,t1 | --de A --ate B --quadros K
               --seguir 0|1  --distancia <m>  --colunas C  (bola amarela; vermelha no toque)
+              --colisores 1 as shapes fisicas por cima (com BUILD_RL); contatos P em cruz vermelha
+  colisores   o perfil fisico sobre a malha, em repouso ou num clipe (com BUILD_RL):
+              --perfil <ragdoll.json> --pose sprint@0.3
+              --poses repouso,sprint@0.3,jump_standing@0.35 (uma matriz)
+              --vistas frente,direita,cima --modo raiox
+              azul/esquerda, laranja/direita, branco/centro, amarelo/COM,
+              magenta/juntas, cruz cinza/origem do link
   exportar-jogo  o jogador para o jogo (o personagem do laboratorio): o perfil fisico
               medido no corpo novo (ancoras, links e colisores), a pele e o atlas
               --destino <pasta> (assets/characters/football_player troca o do jogo)

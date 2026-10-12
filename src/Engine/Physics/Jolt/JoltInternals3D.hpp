@@ -12,6 +12,7 @@
 
 #include <Jolt/Jolt.h>
 
+#include <Jolt/Core/JobSystemSingleThreaded.h>
 #include <Jolt/Core/TempAllocator.h>
 #include <Jolt/Physics/Character/CharacterVirtual.h>
 #include <Jolt/Physics/Body/BodyID.h>
@@ -145,6 +146,9 @@ struct PhysicsScene3D::Impl final : public JPH::ContactListener,
         std::uint64_t entityId = 0;
         RagdollProfile3D profile;
         JPH::Ref<JPH::RagdollSettings> settings;
+        // Snapshot exato das shapes/massas antes de RagdollSettings::Stabilize.
+        // Permite auditar o condicionamento sem vazar Jolt na API publica.
+        std::vector<JPH::MassProperties> unconditionedMassProperties;
         // A auto-colisao (GroupFilterTable) vive dentro das settings.
         JPH::Ref<JPH::Ragdoll> ragdoll;
         std::vector<JPH::BodyID> links;
@@ -228,7 +232,10 @@ struct PhysicsScene3D::Impl final : public JPH::ContactListener,
     JoltBroadPhaseLayerInterface broadPhaseLayers;
     JoltObjectVsBroadPhaseLayerFilter objectVsBroadPhaseFilter;
     JoltObjectLayerPairFilter objectLayerPairFilter;
-    std::unique_ptr<JoltJobSystem> jobSystem;
+    // O despacho dos jobs do passo: pelo TaskScheduler (pooledJobSystem) ou
+    // na propria thread (PhysicsSceneSettings3D::runJobsInline).
+    std::unique_ptr<JPH::JobSystem> jobSystem;
+    JoltJobSystem* pooledJobSystem = nullptr;
     std::unique_ptr<JPH::TempAllocator> tempAllocator;
     std::unique_ptr<JPH::PhysicsSystem> system;
 

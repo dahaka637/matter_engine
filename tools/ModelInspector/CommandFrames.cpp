@@ -3,11 +3,17 @@
 #include "Engine/Animation/RagdollVisualPose3D.hpp"
 #include "Engine/Modeling/Inspection/ContactSheet.hpp"
 #include "Engine/Modeling/Rig/GameRig.hpp"
+#if defined(MATTERENGINE_MODEL_INSPECTOR_RL)
+#include "Engine/RL/Calibration/RagdollColliderWireframe3D.hpp"
+#endif
 
 #include <algorithm>
+#include <array>
 #include <cmath>
+#include <cstdint>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <sstream>
 
 namespace MatterEngine::ModelInspector {
@@ -16,7 +22,9 @@ using namespace Modeling;
 
 // Folha de quadros de uma gravacao do jogo com o jogador de verdade (a pele, nao
 // os colisores): o dump da MatterLocomotionProbe (--dump), do harness
-// (XPOSEDUMP) ou da MatterAthleteProbe. Formato (linhas):
+// (XPOSEDUMP), da MatterAthleteProbe, das sondas de RL (MatterRLDynamics,
+// MatterRLJointProbe) ou de um episodio do treino (matter-rl folha). Formato
+// (linhas):
 //   S <nome do cenario>
 //   F <t> <estado> <fase>
 //   C|B <link> <centro x y z> <orientacao x y z w> ...   (o colisor do link)
@@ -25,11 +33,13 @@ using namespace Modeling;
 //   Z <lado> <x y z> <apoiado 0|1>   (pegada planejada)
 //   T                        (tocou na bola neste quadro)
 //   E <texto>                (evento: entra na legenda)
+//   P <x y z> <link> [normal x y z] [impulso N.s]   (contato fisico)
 // Linhas desconhecidas sao ignoradas.
 //   --dump <arquivo> --cenario <nome ou indice>
 //   --instantes t0,t1,...  ou  --de A --ate B --quadros K (padrao: 8 no cenario)
 //   --vista <id> ou --yaw/--pitch   --seguir 0|1   --distancia <m>   --chao <z do mundo>
 //   --colunas C   --largura/--altura (de cada quadro)   --modo <id>   --saida <png>
+//   --colisores 1 (as shapes fisicas por cima, com BUILD_RL)
 namespace {
 
 struct DumpLink {
@@ -49,6 +59,14 @@ struct DumpFrame {
     std::vector<std::pair<Vec3, bool>> footsteps;
     bool touched = false;
     std::string events;
+    struct Contact {
+        Vec3 position;
+        Vec3 normal;
+        std::uint32_t linkIndex = 0;
+        float impulseNewtonSeconds = 0.0f;
+        bool hasNormal = false;
+    };
+    std::vector<Contact> contacts;
 };
 
 struct DumpScenario {
@@ -104,6 +122,13 @@ std::vector<DumpScenario> readDump(const std::string& path) {
             std::string text;
             std::getline(in, text);
             frame->events += text;
+        } else if (tag == "P") {
+            DumpFrame::Contact contact;
+            in >> contact.position.x >> contact.position.y >> contact.position.z >> contact.linkIndex;
+            if (!in) continue;
+            if (in >> contact.normal.x >> contact.normal.y >> contact.normal.z >> contact.impulseNewtonSeconds)
+                contact.hasNormal = contact.normal.lengthSquared() > 0.000001f;
+            frame->contacts.push_back(contact);
         }
     }
     return scenarios;
@@ -228,6 +253,11 @@ int runFrames(const ModelContext& context, const CommandLine& line) {
     // posicao dela; o chao standingRootHeightMeters abaixo).
     const float gameFloor = profile.links.empty() ? 0.0f
         : profile.links.front().modelPosition.z - profile.standingRootHeightMeters;
+#if defined(MATTERENGINE_MODEL_INSPECTOR_RL)
+    const bool drawColliders = line.integer("colisores", 0) != 0;
+    const std::optional<RagdollColliderWireframe3D> restColliders = drawColliders
+        ? std::optional<RagdollColliderWireframe3D>(buildRagdollColliderWireframe3D(profile)) : std::nullopt;
+#endif
 
     // O primeiro quadro fixa o referencial sem --seguir.
     RagdollAnimationPose3D firstLinks;
@@ -293,6 +323,35 @@ int runFrames(const ModelContext& context, const CommandLine& line) {
             highlights.push_back(circle({ at.x, at.y, toSkeleton(Vec3 { 0, 0, gameFloor }).z + 0.004f }, 0.05f,
                 { 1, 0, 0 }, { 0, 1, 0 }, planted ? Palette::Left : Palette::Right));
         }
+        for (const DumpFrame::Contact& contact : frame.contacts) {
+            const Vec3 at = toSkeleton(toGame(contact.position));
+            Highlight marker;
+            marker.color = Palette::Error;
+            constexpr float Radius = 0.025f;
+            marker.segments.push_back({ at - Vec3 { Radius, 0, 0 }, at + Vec3 { Radius, 0, 0 } });
+            marker.segments.push_back({ at - Vec3 { 0, Radius, 0 }, at + Vec3 { 0, Radius, 0 } });
+            marker.segments.push_back({ at - Vec3 { 0, 0, Radius }, at + Vec3 { 0, 0, Radius } });
+            if (contact.hasNormal)
+                marker.segments.push_back({ at, toSkeleton(toGame(contact.position + contact.normal.normalized() * 0.09f)) });
+            highlights.push_back(std::move(marker));
+        }
+#if defined(MATTERENGINE_MODEL_INSPECTOR_RL)
+        if (restColliders) {
+            const RagdollColliderWireframe3D colliders = poseRagdollColliderWireframe3D(profile, *restColliders,
+                links.linkPositions, links.linkOrientations, false);
+            std::array<Highlight, 3> sides;
+            sides[0].color = Palette::Center;
+            sides[1].color = Palette::Left;
+            sides[2].color = Palette::Right;
+            for (const RagdollColliderWireframeLink3D& link : colliders.links) {
+                const std::size_t side = link.side == RagdollColliderWireframeSide3D::Left ? 1
+                    : link.side == RagdollColliderWireframeSide3D::Right ? 2 : 0;
+                for (const auto& [a, b] : link.segments) sides[side].segments.push_back({ toSkeleton(a), toSkeleton(b) });
+            }
+            highlights.insert(highlights.end(), std::make_move_iterator(sides.begin()),
+                std::make_move_iterator(sides.end()));
+        }
+#endif
 
         InspectionScene scene = context.scene();
         scene.pose = &pose;
@@ -314,10 +373,13 @@ int runFrames(const ModelContext& context, const CommandLine& line) {
         camera.pitch = pitch * DegreesToRadians;
         camera.distance = distance;
         images.push_back(renderInspection(scene, style, camera, width, height));
-        char caption[160];
-        std::snprintf(caption, sizeof caption, "t %.2f s%s%s%s", frame.t, frame.touched ? "  TOQUE" : "",
-            frame.events.empty() ? "" : " ", frame.events.c_str());
-        captions.push_back(caption);
+        char time[48];
+        std::snprintf(time, sizeof time, "t %.2f s", frame.t);
+        std::string caption = time;
+        if (frame.touched) caption += "  TOQUE";
+        if (!frame.events.empty()) caption += " " + frame.events;
+        if (!frame.contacts.empty()) caption += "  contatos " + std::to_string(frame.contacts.size());
+        captions.push_back(std::move(caption));
     }
     if (images.empty()) {
         std::cerr << "quadros: nenhum quadro desenhado\n";

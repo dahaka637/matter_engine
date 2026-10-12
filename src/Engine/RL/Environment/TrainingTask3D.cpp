@@ -1,0 +1,103 @@
+#include "Engine/RL/Environment/TrainingTask3D.hpp"
+
+#include <nlohmann/json.hpp>
+
+#include <fstream>
+#include <iterator>
+#include <stdexcept>
+
+namespace MatterEngine {
+namespace {
+
+TrainingRange3D range(const nlohmann::json& object, const char* key, TrainingRange3D fallback) {
+    if (!object.contains(key)) return fallback;
+    const auto& values = object.at(key);
+    if (!values.is_array() || values.size() != 2) throw std::runtime_error(std::string("tarefa de RL: faixa invalida em ") + key);
+    TrainingRange3D result { values[0].get<float>(), values[1].get<float>() };
+    if (!(result.minimum <= result.maximum)) throw std::runtime_error(std::string("tarefa de RL: faixa invertida em ") + key);
+    return result;
+}
+
+} // namespace
+
+TrainingTask3D loadTrainingTask3D(const std::filesystem::path& definitionPath) {
+    std::ifstream input(definitionPath, std::ios::binary);
+    if (!input) throw std::runtime_error("tarefa de RL: arquivo ausente: " + definitionPath.string());
+    const std::string text { std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>() };
+    const nlohmann::json document = nlohmann::json::parse(text);
+    if (document.value("schema", std::string()) != "matter-rl-task-1")
+        throw std::runtime_error("tarefa de RL: schema desconhecido em " + definitionPath.string());
+
+    TrainingTask3D task;
+    task.id = document.at("id").get<std::string>();
+    task.displayName = document.value("displayName", task.id);
+    task.definitionPath = definitionPath;
+    task.bodyPath = (definitionPath.parent_path() / document.at("body").get<std::string>()).lexically_normal();
+    task.actionRepeat = document.value("actionRepeat", 4u);
+    task.episodeSeconds = document.value("episodeSeconds", 20.0f);
+    task.groundMaterial = document.value("groundMaterial", std::string("grass"));
+    if (task.actionRepeat == 0 || task.actionRepeat > 16 || !(task.episodeSeconds > 0.0f))
+        throw std::runtime_error("tarefa de RL: actionRepeat/episodeSeconds invalidos");
+
+    if (document.contains("reward")) {
+        const nlohmann::json& r = document["reward"];
+        TrainingRewardWeights3D& w = task.reward;
+        w.alive = r.value("alive", w.alive);
+        w.upright = r.value("upright", w.upright);
+        w.headHeight = r.value("headHeight", w.headHeight);
+        w.comOverSupport = r.value("comOverSupport", w.comOverSupport);
+        w.still = r.value("still", w.still);
+        w.footSlip = r.value("footSlip", w.footSlip);
+        w.footDrift = r.value("footDrift", w.footDrift);
+        w.effort = r.value("effort", w.effort);
+        w.actionRate = r.value("actionRate", w.actionRate);
+        w.jointLimit = r.value("jointLimit", w.jointLimit);
+        w.posePrior = r.value("posePrior", w.posePrior);
+        w.fall = r.value("fall", w.fall);
+    }
+    if (document.contains("termination")) {
+        const nlohmann::json& t = document["termination"];
+        auto& out = task.termination;
+        out.minimumHeadHeightFraction = t.value("minimumHeadHeightFraction", out.minimumHeadHeightFraction);
+        out.minimumPelvisHeightFraction = t.value("minimumPelvisHeightFraction", out.minimumPelvisHeightFraction);
+        out.nonSupportContact = t.value("nonSupportContact", out.nonSupportContact);
+        out.maximumDistanceFromStart = t.value("maximumDistanceFromStart", out.maximumDistanceFromStart);
+    }
+    if (document.contains("initialState")) {
+        const nlohmann::json& s = document["initialState"];
+        auto& out = task.initialState;
+        out.jointNoiseRadians = s.value("jointNoiseRadians", out.jointNoiseRadians);
+        out.jointVelocityNoise = s.value("jointVelocityNoise", out.jointVelocityNoise);
+        out.rootVelocityNoise = s.value("rootVelocityNoise", out.rootVelocityNoise);
+        out.rootAngularVelocityNoise = s.value("rootAngularVelocityNoise", out.rootAngularVelocityNoise);
+        out.randomYaw = s.value("randomYaw", out.randomYaw);
+    }
+    if (document.contains("randomization")) {
+        const nlohmann::json& r = document["randomization"];
+        auto& out = task.randomization;
+        out.friction = range(r, "friction", out.friction);
+        out.mass = range(r, "mass", out.mass);
+        out.strength = range(r, "strength", out.strength);
+        out.actionDelayProbability = r.value("actionDelayProbability", out.actionDelayProbability);
+        out.observationNoise = r.value("observationNoise", out.observationNoise);
+    }
+    if (document.contains("pushes")) {
+        const nlohmann::json& p = document["pushes"];
+        auto& out = task.pushes;
+        out.enabled = p.value("enabled", out.enabled);
+        out.intervalSeconds = range(p, "intervalSeconds", out.intervalSeconds);
+        out.durationSeconds = range(p, "durationSeconds", out.durationSeconds);
+        out.forceNewtons = range(p, "forceNewtons", out.forceNewtons);
+        if (p.contains("links")) out.links = p["links"].get<std::vector<std::string>>();
+    }
+
+    std::uint64_t hash = 14695981039346656037ull;
+    for (const char c : text) {
+        hash ^= static_cast<unsigned char>(c);
+        hash *= 1099511628211ull;
+    }
+    task.hash = hash;
+    return task;
+}
+
+} // namespace MatterEngine

@@ -14,7 +14,13 @@ PhysicsScene3D::PhysicsScene3D(PhysicsEngine3D& engine,
     auto& impl = *m_impl;
     impl.engine = engine.m_impl;
     impl.settings = settings;
-    impl.jobSystem = std::make_unique<JoltJobSystem>(impl.engine->scheduler, 2048, 8);
+    if (settings.runJobsInline) {
+        impl.jobSystem = std::make_unique<JPH::JobSystemSingleThreaded>(2048);
+    } else {
+        auto pooled = std::make_unique<JoltJobSystem>(impl.engine->scheduler, 2048, 8, settings.workerThreadCount);
+        impl.pooledJobSystem = pooled.get();
+        impl.jobSystem = std::move(pooled);
+    }
     impl.tempAllocator = std::make_unique<JPH::TempAllocatorImpl>(
         settings.scratchBufferSizeBytes ? settings.scratchBufferSizeBytes : 10 * 1024 * 1024);
     impl.system = std::make_unique<JPH::PhysicsSystem>();
@@ -40,7 +46,7 @@ PhysicsScene3D::PhysicsScene3D(PhysicsEngine3D& engine,
 }
 PhysicsScene3D::~PhysicsScene3D() { clear(); }
 PhysicsScene3D::Impl::~Impl() {
-    if (engine) engine->scheduler->waitIdle();
+    if (pooledJobSystem) pooledJobSystem->waitIdle();
     if (system) {
         system->SetContactListener(nullptr);
         system->RemoveStepListener(this);
@@ -94,7 +100,7 @@ void PhysicsScene3D::simulate(float dt) {
     impl.reportedContactPoints = 0;
     impl.allContactPairs = 0;
     impl.callbackFailed = false;
-    impl.jobSystem->resetStepCounters();
+    if (impl.pooledJobSystem) impl.pooledJobSystem->resetStepCounters();
     impl.applyPendingRagdollCommands();
     impl.applyRagdollDrives();
     impl.applyRagdollKinematics(dt);
@@ -105,8 +111,10 @@ void PhysicsScene3D::simulate(float dt) {
     impl.system->GetActiveBodies(JPH::EBodyType::RigidBody, impl.previouslyActiveBodies);
     const auto dispatch = Clock::now();
     const auto error = impl.system->Update(dt, impl.collisionSteps, impl.tempAllocator.get(), impl.jobSystem.get());
-    // Barrier completion can precede release of the scheduler's last Job reference.
-    impl.engine->scheduler->waitIdle();
+    // A barreira do Jolt pode terminar antes da liberacao da ultima referencia
+    // que ainda esta na fila do scheduler. Aguarde apenas os jobs desta cena:
+    // uma espera global impediria cenas independentes de progredir em paralelo.
+    if (impl.pooledJobSystem) impl.pooledJobSystem->waitIdle();
     if (error != JPH::EPhysicsUpdateError::None || impl.callbackFailed)
         throw std::runtime_error("Jolt: simulation capacity exceeded or callback failed");
     // (Antes da bola: ela ve o corpo guiado na pose.)
@@ -131,7 +139,7 @@ void PhysicsScene3D::simulate(float dt) {
     d.discreteContactPairs = impl.allContactPairs;
     d.reportedContactPairs = impl.reportedContactPairs;
     d.reportedContactPoints = impl.reportedContactPoints;
-    d.submittedPhysicsTasks = impl.jobSystem->submittedJobCount();
+    d.submittedPhysicsTasks = impl.pooledJobSystem ? impl.pooledJobSystem->submittedJobCount() : 0;
     d.physicsWorkerCount = impl.engine->scheduler->workerCount();
     const auto ms = [](auto a, auto b) { return std::chrono::duration<float, std::milli>(b-a).count(); };
     d.preSimulationMilliseconds = ms(begin, dispatch);

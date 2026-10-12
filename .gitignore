@@ -50,3 +50,9 @@ Desktop.ini
 /.cache/
 __pycache__/
 *.py[cod]
+
+# Ambiente Python do treinador de RL (tools/rl/setup.sh recria)
+/tools/rl/.venv/
+__pycache__/
+*.pyc
+/tools/rl/.pytest_cache/

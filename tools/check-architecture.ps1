@@ -65,6 +65,10 @@ $checks = @(
             "src/Engine/Athlete/Ball", "src/Engine/Athlete/Core")
     }
     @{
+        Name = "Nucleo de RL nao depende de render, interface, audio, plataforma nem entrada"
+        Arguments = @("-n", '#include "Engine/(Render|RHI|UI|Audio|Platform|Input)/|#include .imgui|#include <SDL', "src/Engine/RL")
+    }
+    @{
         Name = "Identidade antiga e prototipos removidos nao podem retornar"
         Arguments = @("-n", "SoccerFall|SOCCERFALL|LegacyFootworkRig|PhysicalBiped|AnimatorScreen", "CMakeLists.txt", "src", "tests")
     }

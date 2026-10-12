@@ -1,0 +1,39 @@
+{
+  "schema": "matter-rl-body-1",
+  "id": "football_player_v1",
+  "comment": "O corpo de treino: o perfil do jogo com os atuadores do RL por cima. Os tetos de torque sao de um atleta de 80 kg (plano do RL, decisao D2), por eixo [twist, swing1, swing2]; os do perfil do jogo (875 no quadril, 750 no joelho...) nao mudam. Rigidez e amortecimento sao os do perfil vezes as escalas abaixo. A pose base e o primeiro quadro do parado natural.",
+  "profile": "../../characters/football_player/FootballPlayerV1.ragdoll.json",
+  "basePose": {
+    "clip": "../../animations/clips/natural_idle.matteranim.json",
+    "timeSeconds": 0.0
+  },
+  "solver": {
+    "comment": "10/6 em vez das 20/20 do jogo: 1,6x mais rapido; segurando a pose base o corpo cai em media em 2,67 s contra 2,81 s no 20/20 e as quedas com acao aleatoria sao iguais (12/10/2026). A bateria de avaliacao confere a politica tambem no 20/20.",
+    "positionIterations": 10,
+    "velocityIterations": 6
+  },
+  "gains": {
+    "stiffnessScale": 1.0,
+    "dampingScale": 1.0
+  },
+  "supportLinks": ["LeftFoot", "RightFoot"],
+  "torque": {
+    "Abdomen": [150, 300, 250],
+    "Chest": [150, 300, 250],
+    "UpperChest": [150, 300, 250],
+    "Neck": [60, 60, 60],
+    "Head": [40, 40, 40],
+    "LeftUpperArm": [120, 120, 120],
+    "LeftForearm": [90, 0, 0],
+    "LeftHand": [20, 20, 0],
+    "RightUpperArm": [120, 120, 120],
+    "RightForearm": [90, 0, 0],
+    "RightHand": [20, 20, 0],
+    "LeftThigh": [150, 350, 250],
+    "LeftShin": [300, 0, 0],
+    "LeftFoot": [250, 120, 0],
+    "RightThigh": [150, 350, 250],
+    "RightShin": [300, 0, 0],
+    "RightFoot": [250, 120, 0]
+  }
+}

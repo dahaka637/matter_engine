@@ -117,7 +117,16 @@ struct PhysicsSceneSettings3D {
     // deveria empurrar com a mesma forca do vento livre. 0 desliga a
     // checagem (comportamento antigo: vento sempre uniforme na cena).
     float windShelterDistanceMeters = 4.0f;
+    // Concorrencia maxima interna deste passo fisico, incluindo a thread que
+    // chama simulate(). Zero usa toda a capacidade do TaskScheduler. Um e util
+    // para executar varias cenas pequenas em paralelo sem paralelismo aninhado.
     std::uint32_t workerThreadCount = 0;
+    // Os jobs do passo rodam na propria thread que chama simulate(), sem
+    // passar pelo TaskScheduler (nenhum pool novo: nao ha threads). Para
+    // cenas pequenas que o chamador ja avanca em paralelo, uma por thread (os
+    // mundos de treino do RL): o despacho pelo pool custava mais que o
+    // trabalho de uma cena com poucos corpos.
+    bool runJobsInline = false;
     // Iteracoes do solver, 0 = o backend usa a propria calibragem.
     //
     // Estes numeros NAO sao transferiveis entre backends: 4 posicao / 1

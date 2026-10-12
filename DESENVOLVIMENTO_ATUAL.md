@@ -5,7 +5,32 @@
 > registrar não apenas *o que* mudou, mas também *por que*, como foi validado e
 > quais limitações ainda existem.
 
-**Última atualização:** 10 de outubro de 2026
+**Última atualização:** 12 de outubro de 2026
+
+## Aprendizado por Reforço (12/10/2026)
+
+O plano está no vault (`30_Projects/matter_engine/Aprendizado_por_Reforco/
+Plano_Claude.md`) e o diário de cada etapa em `Execucao_Claude.md`, ao lado
+dele. Ele substitui o início feito pelo Codex em 11/10.
+
+- **Arquitetura:** os mundos de treino são C++ sem janela
+  (`src/Engine/RL`, só física e clipes). O treinador é Python/PyTorch num
+  processo próprio (`tools/rl`). A tela do Workbench só comanda e mostra.
+- **E0 (limpeza):**
+  - a antropometria do Codex foi arquivada em
+    `archive/2026-10-12-rl-calibracao-codex/`;
+  - a reformatação dele nos arquivos de modelagem foi desfeita.
+- **E1 (simulação):**
+  - `TrainingBatch3D`: centenas de mundos em paralelo, jobs do Jolt na
+    própria thread (`runJobsInline`), recomeço por `resetRagdollState`;
+  - o corpo de RL (`assets/rl/bodies/`), com tetos de atleta por cima do
+    perfil do jogo, que não muda;
+  - a tarefa H1 "Ficar em pé" (`assets/rl/tasks/`).
+- **Velocidade:** 22.500 decisões/s com o solver 10/6 do treino, 14.300 com o
+  20/20 do jogo (10 threads, RelWithDebInfo). `MatterRLBenchmark` mede.
+- **`MatterAnimationClips`:** `AnimationClip3D.cpp` saiu do `MatterEngine`
+  para uma biblioteca própria (o treino usa os clipes sem a engine gráfica).
+- **CTest:** 16/18. `Character` e `AdaptivePhysics` falham como antes.
 
 ## Novo controle do atleta: Etapas 0 a 2 (10/10/2026, noite)
 

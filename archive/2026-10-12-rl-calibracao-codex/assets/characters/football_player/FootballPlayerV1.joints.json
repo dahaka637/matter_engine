@@ -1,0 +1,151 @@
+{
+  "schemaVersion": 1,
+  "id": "FootballPlayerV1.JointReview.DraftV1",
+  "profileId": "FootballPlayerV1",
+  "status": "draft_reference",
+  "notes": [
+    "Este arquivo separa convencoes de eixo, ROM clinico e forca isocinetica dos parametros do motor.",
+    "Candidate e apenas uma hipotese de mapeamento para revisao visual/mecanica. Somente approved podera autorizar comparacao numerica futura.",
+    "Nenhum benchmark deste schema altera o ragdoll automaticamente."
+  ],
+  "sources": [
+    {
+      "id": "isb_jcs_lower_2002",
+      "title": "ISB recommendation on definitions of joint coordinate systems - Part I: ankle, hip, and spine",
+      "doi": "10.1016/S0021-9290(01)00222-6",
+      "url": "https://pubmed.ncbi.nlm.nih.gov/11934426/",
+      "purpose": "Convencoes anatomicas e sistemas de coordenadas para membros inferiores e coluna.",
+      "limitations": "Define como relatar movimento; nao publica limites de ROM nem capacidade muscular. O frame do rig ainda precisa ser alinhado e verificado."
+    },
+    {
+      "id": "isb_jcs_upper_2005",
+      "title": "ISB recommendation on definitions of joint coordinate systems - Part II: shoulder, elbow, wrist and hand",
+      "doi": "10.1016/j.jbiomech.2004.05.042",
+      "url": "https://pubmed.ncbi.nlm.nih.gov/15844264/",
+      "purpose": "Convencoes anatomicas e sistemas de coordenadas para membros superiores.",
+      "limitations": "Define frames e sinais; nao fornece ROM nem torque e nao valida os eixos locais do asset."
+    },
+    {
+      "id": "soucie_2011_rom",
+      "title": "Range of motion measurements: reference values and a database for comparison studies",
+      "doi": "10.1111/j.1365-2516.2010.02399.x",
+      "url": "https://archive.cdc.gov/www_cdc_gov/ncbddd/jointrom/index_1715172647.html",
+      "purpose": "Benchmarks clinicos de ROM para homens saudaveis de 20 a 44 anos.",
+      "limitations": "Medidas goniometricas passivas de movimentos isolados; nao sao limites duros, nao cobrem todos os eixos e nao descrevem poses combinadas de atleta."
+    },
+    {
+      "id": "anderson_2007_strength_model",
+      "title": "Maximum voluntary joint torque as a function of joint angle and angular velocity",
+      "doi": "10.1016/j.jbiomech.2007.03.022",
+      "url": "https://pubmed.ncbi.nlm.nih.gov/17485097/",
+      "purpose": "Fundamenta a necessidade de envelope torque-angulo-velocidade nos membros inferiores.",
+      "limitations": "Modelo populacional, nao especifico de futebol; nao autoriza copiar um unico torque constante para a engine."
+    },
+    {
+      "id": "fousekis_2010_professional_soccer",
+      "title": "Lower limb strength in professional soccer players: profile, asymmetry, and training age",
+      "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC3761700/",
+      "purpose": "Benchmark de pico de torque isocinetico do joelho em 100 jogadores profissionais.",
+      "limitations": "Faixas abaixo sao medias entre grupos, nao maximos individuais; dependem de direcao, contracao e velocidade e nao equivalem ao teto simetrico do motor."
+    }
+  ],
+  "motionBenchmarks": [
+    { "id": "hip_extension_male_20_44", "joint": "hip", "motion": "extension", "population": "healthy males 20-44", "meanDegrees": 17.4, "confidence95Degrees": [16.3, 18.5], "sourceIds": ["soucie_2011_rom"] },
+    { "id": "hip_flexion_male_20_44", "joint": "hip", "motion": "flexion", "population": "healthy males 20-44", "meanDegrees": 130.4, "confidence95Degrees": [129.0, 131.8], "sourceIds": ["soucie_2011_rom"] },
+    { "id": "knee_extension_male_20_44", "joint": "knee", "motion": "extension", "population": "healthy males 20-44", "meanDegrees": 1.0, "confidence95Degrees": [0.6, 1.4], "sourceIds": ["soucie_2011_rom"] },
+    { "id": "knee_flexion_male_20_44", "joint": "knee", "motion": "flexion", "population": "healthy males 20-44", "meanDegrees": 137.7, "confidence95Degrees": [136.5, 138.9], "sourceIds": ["soucie_2011_rom"] },
+    { "id": "ankle_dorsiflexion_male_20_44", "joint": "ankle", "motion": "dorsiflexion", "population": "healthy males 20-44", "meanDegrees": 12.7, "confidence95Degrees": [11.6, 13.8], "sourceIds": ["soucie_2011_rom"] },
+    { "id": "ankle_plantarflexion_male_20_44", "joint": "ankle", "motion": "plantarflexion", "population": "healthy males 20-44", "meanDegrees": 54.6, "confidence95Degrees": [53.2, 56.0], "sourceIds": ["soucie_2011_rom"] },
+    { "id": "shoulder_flexion_male_20_44", "joint": "shoulder", "motion": "flexion", "population": "healthy males 20-44", "meanDegrees": 168.8, "confidence95Degrees": [167.3, 170.3], "sourceIds": ["soucie_2011_rom"] },
+    { "id": "elbow_extension_male_20_44", "joint": "elbow", "motion": "extension", "population": "healthy males 20-44", "meanDegrees": 0.8, "confidence95Degrees": [0.1, 1.5], "sourceIds": ["soucie_2011_rom"] },
+    { "id": "elbow_flexion_male_20_44", "joint": "elbow", "motion": "flexion", "population": "healthy males 20-44", "meanDegrees": 144.6, "confidence95Degrees": [143.6, 145.6], "sourceIds": ["soucie_2011_rom"] },
+    { "id": "elbow_pronation_male_20_44", "joint": "elbow", "motion": "pronation", "population": "healthy males 20-44", "meanDegrees": 76.9, "confidence95Degrees": [75.6, 78.2], "sourceIds": ["soucie_2011_rom"] },
+    { "id": "elbow_supination_male_20_44", "joint": "elbow", "motion": "supination", "population": "healthy males 20-44", "meanDegrees": 85.0, "confidence95Degrees": [83.8, 86.2], "sourceIds": ["soucie_2011_rom"] }
+  ],
+  "strengthBenchmarks": [
+    {
+      "id": "soccer_knee_extension_concentric_60",
+      "joint": "knee",
+      "motion": "extension",
+      "population": "100 male professional soccer players, group means by training age and side",
+      "contraction": "concentric isokinetic",
+      "angularVelocityRadiansPerSecond": 1.0471976,
+      "reportedMeanRangeNewtonMeters": [227.0, 251.0],
+      "sourceIds": ["fousekis_2010_professional_soccer", "anderson_2007_strength_model"],
+      "notes": "Table 3; range across left/right group means at 60 deg/s."
+    },
+    {
+      "id": "soccer_knee_flexion_concentric_60",
+      "joint": "knee",
+      "motion": "flexion",
+      "population": "100 male professional soccer players, group means by training age and side",
+      "contraction": "concentric isokinetic",
+      "angularVelocityRadiansPerSecond": 1.0471976,
+      "reportedMeanRangeNewtonMeters": [126.0, 141.0],
+      "sourceIds": ["fousekis_2010_professional_soccer", "anderson_2007_strength_model"],
+      "notes": "Table 3; range across left/right group means at 60 deg/s."
+    }
+  ],
+  "axisReviews": [
+    { "id": "abdomen_twist", "linkIds": ["Abdomen"], "axis": "twist", "status": "pending", "sourceIds": ["isb_jcs_lower_2002"], "notes": "A distribuicao do ROM total da coluna por tres links ainda nao foi definida." },
+    { "id": "abdomen_swing1", "linkIds": ["Abdomen"], "axis": "swing1", "status": "pending", "sourceIds": ["isb_jcs_lower_2002"] },
+    { "id": "abdomen_swing2", "linkIds": ["Abdomen"], "axis": "swing2", "status": "pending", "sourceIds": ["isb_jcs_lower_2002"] },
+    { "id": "chest_twist", "linkIds": ["Chest"], "axis": "twist", "status": "pending", "sourceIds": ["isb_jcs_lower_2002"] },
+    { "id": "chest_swing1", "linkIds": ["Chest"], "axis": "swing1", "status": "pending", "sourceIds": ["isb_jcs_lower_2002"] },
+    { "id": "chest_swing2", "linkIds": ["Chest"], "axis": "swing2", "status": "pending", "sourceIds": ["isb_jcs_lower_2002"] },
+    { "id": "upper_chest_twist", "linkIds": ["UpperChest"], "axis": "twist", "status": "pending", "sourceIds": ["isb_jcs_lower_2002"] },
+    { "id": "upper_chest_swing1", "linkIds": ["UpperChest"], "axis": "swing1", "status": "pending", "sourceIds": ["isb_jcs_lower_2002"] },
+    { "id": "upper_chest_swing2", "linkIds": ["UpperChest"], "axis": "swing2", "status": "pending", "sourceIds": ["isb_jcs_lower_2002"] },
+    { "id": "neck_twist", "linkIds": ["Neck"], "axis": "twist", "status": "pending" },
+    { "id": "neck_swing1", "linkIds": ["Neck"], "axis": "swing1", "status": "pending" },
+    { "id": "neck_swing2", "linkIds": ["Neck"], "axis": "swing2", "status": "pending" },
+    { "id": "head_twist", "linkIds": ["Head"], "axis": "twist", "status": "pending" },
+    { "id": "head_swing1", "linkIds": ["Head"], "axis": "swing1", "status": "pending" },
+    { "id": "head_swing2", "linkIds": ["Head"], "axis": "swing2", "status": "pending" },
+
+    { "id": "shoulders_twist", "linkIds": ["LeftUpperArm", "RightUpperArm"], "axis": "twist", "status": "pending", "sourceIds": ["isb_jcs_upper_2005"] },
+    { "id": "shoulders_swing1", "linkIds": ["LeftUpperArm", "RightUpperArm"], "axis": "swing1", "status": "pending", "sourceIds": ["isb_jcs_upper_2005"], "notes": "O benchmark de flexao do ombro nao deve ser atribuido a um swing isolado sem validar o frame e a pose T." },
+    { "id": "shoulders_swing2", "linkIds": ["LeftUpperArm", "RightUpperArm"], "axis": "swing2", "status": "pending", "sourceIds": ["isb_jcs_upper_2005"] },
+    {
+      "id": "elbows_flexion_extension",
+      "linkIds": ["LeftForearm", "RightForearm"],
+      "axis": "twist",
+      "status": "approved",
+      "anatomicalMotion": "negative extension / positive flexion",
+      "negativeMotionBenchmarkId": "elbow_extension_male_20_44",
+      "positiveMotionBenchmarkId": "elbow_flexion_male_20_44",
+      "sourceIds": ["isb_jcs_upper_2005", "soucie_2011_rom"],
+      "notes": "Mapeamento de eixo, sinal e lados aprovado em 2026-10-12 apos ensaio mecanico a 120 Hz e auditoria visual neutra/final. A aprovacao nao transforma a media clinica em limite duro nem aprova automaticamente -5/+145 graus."
+    },
+    { "id": "wrists_twist", "linkIds": ["LeftHand", "RightHand"], "axis": "twist", "status": "pending", "sourceIds": ["isb_jcs_upper_2005"] },
+    { "id": "wrists_swing1", "linkIds": ["LeftHand", "RightHand"], "axis": "swing1", "status": "pending", "sourceIds": ["isb_jcs_upper_2005"] },
+
+    { "id": "hips_twist", "linkIds": ["LeftThigh", "RightThigh"], "axis": "twist", "status": "pending", "sourceIds": ["isb_jcs_lower_2002"] },
+    {
+      "id": "hips_flexion_extension",
+      "linkIds": ["LeftThigh", "RightThigh"],
+      "axis": "swing1",
+      "status": "candidate",
+      "anatomicalMotion": "negative flexion / positive extension",
+      "negativeMotionBenchmarkId": "hip_flexion_male_20_44",
+      "positiveMotionBenchmarkId": "hip_extension_male_20_44",
+      "sourceIds": ["isb_jcs_lower_2002", "soucie_2011_rom"],
+      "notes": "Hipotese coerente com as ferramentas de pose atuais; falta validar no frame fisico e em combinacoes com abducao/rotacao."
+    },
+    { "id": "hips_swing2", "linkIds": ["LeftThigh", "RightThigh"], "axis": "swing2", "status": "pending", "sourceIds": ["isb_jcs_lower_2002"] },
+    {
+      "id": "knees_flexion_extension",
+      "linkIds": ["LeftShin", "RightShin"],
+      "axis": "twist",
+      "status": "approved",
+      "anatomicalMotion": "negative extension / positive flexion",
+      "negativeMotionBenchmarkId": "knee_extension_male_20_44",
+      "positiveMotionBenchmarkId": "knee_flexion_male_20_44",
+      "strengthBenchmarkIds": ["soccer_knee_extension_concentric_60", "soccer_knee_flexion_concentric_60"],
+      "sourceIds": ["isb_jcs_lower_2002", "soucie_2011_rom", "fousekis_2010_professional_soccer", "anderson_2007_strength_model"],
+      "notes": "Mapeamento de eixo, sinal e lados aprovado em 2026-10-12 apos ensaio mecanico a 120 Hz e auditoria visual neutra/final. O motor atual usa 750 N.m simetricos; os benchmarks publicados sao direcionais e dependentes de velocidade, portanto nao autorizam substituir esse teto diretamente."
+    },
+    { "id": "ankles_twist", "linkIds": ["LeftFoot", "RightFoot"], "axis": "twist", "status": "pending", "anatomicalMotion": "plantarflexion / dorsiflexion sign pending", "sourceIds": ["isb_jcs_lower_2002", "soucie_2011_rom"] },
+    { "id": "ankles_swing1", "linkIds": ["LeftFoot", "RightFoot"], "axis": "swing1", "status": "pending", "sourceIds": ["isb_jcs_lower_2002"] }
+  ]
+}

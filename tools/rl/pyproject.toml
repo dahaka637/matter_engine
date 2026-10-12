@@ -1,0 +1,28 @@
+[project]
+name = "matter-rl"
+version = "0.1.0"
+description = "Treinador de Aprendizado por Reforco do Matter Engine"
+requires-python = ">=3.14,<3.15"
+dependencies = [
+    "torch==2.14.1",
+    "numpy>=2.3",
+    "matplotlib>=3.10",
+]
+
+[dependency-groups]
+dev = [
+    "nanobind>=2.9",
+    "pytest>=8.4",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu126" }
+
+# O PyTorch so compila a GTX 1070 Ti (Pascal, sm_61) na variante CUDA 12.6.
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true

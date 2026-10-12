@@ -42,6 +42,9 @@ int main(int argc, char** argv) {
     if (command == "postura") return runPosture(*context, line);
     if (command == "pesos") return runWeights(*context, line);
     if (command == "quadros") return runFrames(*context, line);
+#if defined(MATTERENGINE_MODEL_INSPECTOR_RL)
+    if (command == "colisores") return runColliders(*context, line);
+#endif
     std::cerr << "comando desconhecido: " << command << " (MatterModelInspector ajuda)\n";
     return 2;
 }

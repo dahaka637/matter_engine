@@ -518,9 +518,14 @@ Image renderInspection(const InspectionScene& scene, const InspectionStyle& styl
     for (const Highlight& highlight : scene.highlights) {
         if (!highlight.hasLabel) continue;
         const ScreenPoint p = overlay.project(highlight.labelAt);
-        if (p.visible)
-            text.drawLabel(image, p.x + 8.0f, p.y - labelSize - 8.0f, highlight.label, labelSize, highlight.color,
-                Palette::LabelBackground, 3.0f);
+        if (!p.visible) continue;
+        // (Perto da borda direita o rotulo vai para a esquerda do ponto.)
+        const float labelWidth = text.measure(highlight.label, labelSize).width + 6.0f;
+        const float right = p.x + 8.0f;
+        const float x = right + labelWidth < static_cast<float>(image.width()) - 4.0f
+            ? right : std::max(4.0f, p.x - labelWidth - 8.0f);
+        text.drawLabel(image, x, p.y - labelSize - 8.0f, highlight.label, labelSize, highlight.color,
+            Palette::LabelBackground, 3.0f);
     }
     if (style.gizmo) drawGizmo(image, overlay, labelSize, style.gizmoLegend);
     if (style.scaleBar) drawScaleBar(image, overlay, camera, labelSize);

@@ -1,0 +1,71 @@
+{
+  "schemaVersion": 1,
+  "id": "FootballPlayerV1.VisualLandmarkCandidates.V1",
+  "profileId": "FootballPlayerV1",
+  "referenceId": "FootballPlayerV1.DeLevaMale1996.DraftV3",
+  "notes": [
+    "Este arquivo contem fontes de autoria reproduziveis do modelo visual; VERT e MET3 foram promovidos explicitamente na referencia, enquanto HEEL/TTIP continuam apenas candidatos.",
+    "Pontos skeleton_joint seguem a pose T fisica pelo GameRig.",
+    "HEEL usa o extremo posterior do cabedal da chuteira e por isso representa o exterior do calcado, nao o pternion da pele.",
+    "Entradas promovidas permanecem aqui para que os testes detectem deriva entre a fonte visual e o model_point versionado na referencia."
+  ],
+  "candidates": [
+    {
+      "landmarkId": "vert",
+      "source": "skeleton_joint",
+      "jointName": "HeadTop",
+      "provenance": "junta visual HeadTop do GameRig na pose fisica de repouso",
+      "notes": "Candidato ao vertice craniano; conferir contra o topo real da malha da cabeca."
+    },
+    {
+      "landmarkId": "left_met3",
+      "source": "skeleton_joint",
+      "jointName": "LeftMiddle1",
+      "provenance": "junta visual LeftMiddle1 do GameRig na pose fisica de repouso",
+      "notes": "A junta fica na base do terceiro dedo; confirmar a definicao MET3 usada pela referencia."
+    },
+    {
+      "landmarkId": "right_met3",
+      "source": "skeleton_joint",
+      "jointName": "RightMiddle1",
+      "provenance": "junta visual RightMiddle1 do GameRig na pose fisica de repouso",
+      "notes": "A junta fica na base do terceiro dedo; confirmar a definicao MET3 usada pela referencia."
+    },
+    {
+      "landmarkId": "left_heel",
+      "source": "mesh_part_extreme",
+      "meshPartName": "chuteira_cabedal_esquerda",
+      "axisFromJointName": "LeftFoot",
+      "axisToJointName": "LeftToeTip",
+      "extreme": "minimum",
+      "selectionToleranceMeters": 0.006,
+      "provenance": "media dos vertices nos 6 mm posteriores do cabedal esquerdo, no eixo LeftFoot-LeftToeTip",
+      "notes": "Candidato exterior com chuteira; nao aprovar como pternion anatomico sem compensar o calcado."
+    },
+    {
+      "landmarkId": "right_heel",
+      "source": "mesh_part_extreme",
+      "meshPartName": "chuteira_cabedal_direita",
+      "axisFromJointName": "RightFoot",
+      "axisToJointName": "RightToeTip",
+      "extreme": "minimum",
+      "selectionToleranceMeters": 0.006,
+      "provenance": "media dos vertices nos 6 mm posteriores do cabedal direito, no eixo RightFoot-RightToeTip",
+      "notes": "Candidato exterior com chuteira; nao aprovar como pternion anatomico sem compensar o calcado."
+    },
+    {
+      "landmarkId": "left_ttip",
+      "source": "skeleton_joint",
+      "jointName": "LeftToeTip",
+      "provenance": "junta visual LeftToeTip do GameRig na pose fisica de repouso",
+      "notes": "O rig tem um unico eixo de dedos; conferir se coincide com a ponta do halux exigida por TTIP."
+    },
+    {
+      "landmarkId": "right_ttip",
+      "source": "skeleton_joint",
+      "jointName": "RightToeTip",
+      "provenance": "junta visual RightToeTip do GameRig na pose fisica de repouso",
+      "notes": "O rig tem um unico eixo de dedos; conferir se coincide com a ponta do halux exigida por TTIP."
+    }
+  ]
+}

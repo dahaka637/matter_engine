@@ -7,7 +7,8 @@
 namespace MatterEngine {
 
 JoltJobSystem::JoltJobSystem(std::shared_ptr<TaskScheduler> scheduler,
-    std::uint32_t maximumJobs, std::uint32_t maximumBarriers)
+    std::uint32_t maximumJobs, std::uint32_t maximumBarriers,
+    std::uint32_t maximumConcurrency)
     : m_scheduler(std::move(scheduler)) {
     if (!m_scheduler) {
         throw std::invalid_argument(
@@ -19,11 +20,16 @@ JoltJobSystem::JoltJobSystem(std::shared_ptr<TaskScheduler> scheduler,
     // executa jobs em vez de esperar parada, portanto conta como capacidade
     // real de execucao. O Jolt usa este numero para dimensionar estruturas
     // internas e para decidir em quantas partes dividir o trabalho do passo.
-    m_maximumConcurrency =
-        static_cast<int>(std::max(1u, m_scheduler->workerCount())) + 1;
+    const std::uint32_t availableConcurrency =
+        std::max(1u, m_scheduler->workerCount()) + 1;
+    m_maximumConcurrency = static_cast<int>(maximumConcurrency > 0
+        ? std::min(maximumConcurrency, availableConcurrency)
+        : availableConcurrency);
 }
 
-JoltJobSystem::~JoltJobSystem() = default;
+JoltJobSystem::~JoltJobSystem() { waitIdle(); }
+
+void JoltJobSystem::waitIdle() { m_scheduler->wait(m_tasks); }
 
 JPH::JobHandle JoltJobSystem::CreateJob(const char* name,
     JPH::ColorArg color, const JobFunction& jobFunction,
@@ -57,7 +63,7 @@ void JoltJobSystem::QueueJob(Job* job) {
     // job pertence ao TaskScheduler.
     job->AddRef();
     m_submittedJobs.fetch_add(1, std::memory_order_relaxed);
-    m_scheduler->submit({ &executeJob, job });
+    m_scheduler->submit({ &executeJob, job }, &m_tasks);
 }
 
 void JoltJobSystem::QueueJobs(Job** jobs, JPH::uint32 jobCount) {

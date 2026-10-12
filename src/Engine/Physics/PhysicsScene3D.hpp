@@ -11,6 +11,7 @@
 #include <limits>
 #include <memory>
 #include <span>
+#include <string>
 #include <vector>
 
 namespace MatterEngine {
@@ -152,6 +153,11 @@ struct RagdollSpawnDefinition3D {
     Quaternion orientation;
     float rigidityPercent = 0.0f;
     bool active = true;
+    // Iteracoes do solver nas juntas deste boneco, 0 = a calibragem do
+    // backend (no Jolt, 20/20: a pilha de 22 bonecos do jogo). O corpo de
+    // treino do RL escolhe as dele por medicao de fidelidade.
+    std::uint32_t solverPositionIterations = 0;
+    std::uint32_t solverVelocityIterations = 0;
 };
 
 enum class RagdollContactMotion3D : std::uint8_t { Static, Dynamic, Kinematic };
@@ -354,6 +360,32 @@ struct RagdollDynamics3D {
     bool valid = false;
 };
 
+// Propriedades de massa que o backend realmente aplicou a um link. Os
+// momentos principais e a orientacao deles representam o tensor de inercia
+// completo no espaco local do corpo sem deixar tipos do SDK atravessarem a
+// API publica.
+struct RagdollLinkEffectiveMass3D {
+    std::string id;
+    float massKg = 0.0f;
+    Vec3 centerOfMassLocal;
+    // Tensor calculado apenas da shape e da massa declarada, antes de o
+    // backend condicionar a cadeia articulada.
+    Vec3 unconditionedPrincipalInertiaKgSquareMeters;
+    Quaternion unconditionedPrincipalAxesLocal;
+    // Tensor realmente usado pelo corpo depois da estabilizacao.
+    Vec3 principalInertiaKgSquareMeters;
+    Quaternion principalAxesLocal;
+    // Maior razao entre momentos principais ordenados: efetivo / anterior.
+    float maximumInertiaConditioningRatio = 1.0f;
+};
+
+struct RagdollEffectiveMass3D {
+    std::vector<RagdollLinkEffectiveMass3D> links;
+    float totalMassKg = 0.0f;
+    Vec3 centerOfMassWorld;
+    bool valid = false;
+};
+
 // Cena autoritativa: atores, consultas, CCT e eventos pertencem ao mesmo
 // broad phase. A aplicacao guarda handles e le snapshots depois de simulate /
 // fetchResults; ela nunca integra corpos nem escreve transforms diretamente.
@@ -435,10 +467,27 @@ public:
     [[nodiscard]] bool contains(RagdollHandle3D ragdoll) const;
     [[nodiscard]] RagdollState3D ragdollState(
         RagdollHandle3D ragdoll) const;
+    // O mesmo snapshot sem copia (nullptr para handle invalido). Vale ate o
+    // proximo simulate() ou a destruicao do ragdoll: para quem le o estado
+    // de muitos corpos a cada passo (os mundos de treino do RL).
+    [[nodiscard]] const RagdollState3D* ragdollStateView(
+        RagdollHandle3D ragdoll) const;
+    // Recoloca o corpo inteiro numa pose (links no indice do perfil: posicao,
+    // orientacao e velocidades) e zera o que o solver lembrava do passo
+    // anterior. So para o inicio de um episodio ou de um teste - um
+    // controlador nunca escreve transforms durante a simulacao. As juntas
+    // precisam estar coerentes com a pose (ancoras coincidindo).
+    void resetRagdollState(RagdollHandle3D ragdoll,
+        std::span<const PhysicsBodyState3D> links);
     // Consulta pura: era nao-const porque o caminho PhysX escrevia no
     // PxArticulationCache para satisfazer o contrato das rotinas de dinamica
     // inversa. Sem essas rotinas, nada e mutado.
     [[nodiscard]] RagdollDynamics3D ragdollDynamics(
+        RagdollHandle3D ragdoll) const;
+    // Snapshot diagnostico das propriedades efetivas, consultado fora de
+    // simulate(). No Jolt, portanto, inclui o condicionamento de inercia feito
+    // por RagdollSettings::Stabilize e a escala de massa final.
+    [[nodiscard]] RagdollEffectiveMass3D ragdollEffectiveMass(
         RagdollHandle3D ragdoll) const;
     // Alterações de drives são enfileiradas e aplicadas no ponto seguro
     // anterior ao próximo simulate(), nunca durante o solver.

@@ -45,5 +45,8 @@ int runUniform(const ModelContext& context, const CommandLine& line);
 int runPosture(const ModelContext& context, const CommandLine& line);
 int runWeights(const ModelContext& context, const CommandLine& line);
 int runFrames(const ModelContext& context, const CommandLine& line);
+#if defined(MATTERENGINE_MODEL_INSPECTOR_RL)
+int runColliders(const ModelContext& context, const CommandLine& line);
+#endif
 
 } // namespace MatterEngine::ModelInspector

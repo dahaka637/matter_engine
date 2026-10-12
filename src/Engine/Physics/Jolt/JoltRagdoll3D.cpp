@@ -217,8 +217,9 @@ RagdollHandle3D PhysicsScene3D::createRagdoll(const RagdollProfile3D& profile, c
             //   4 subpassos 8/20  0,84 cm (0,72) - primeira versao, 3,87 ms
             // A ilha inteira paga a maior contagem pedida por um constraint,
             // entao isto vale onde ha ragdoll, nao para a cena toda.
-            joint->mNumPositionStepsOverride = 20;
-            joint->mNumVelocityStepsOverride = 20;
+            // O corpo de treino do RL pede as dele (RagdollSpawnDefinition3D).
+            joint->mNumPositionStepsOverride = spawn.solverPositionIterations ? spawn.solverPositionIterations : 20;
+            joint->mNumVelocityStepsOverride = spawn.solverVelocityIterations ? spawn.solverVelocityIterations : 20;
             joint->mSwingType = JPH::ESwingType::Pyramid;
             for (int a = 0; a < 3; ++a) {
                 joint->MakeFixedAxis(static_cast<JPH::SixDOFConstraintSettings::EAxis>(a));
@@ -233,6 +234,9 @@ RagdollHandle3D PhysicsScene3D::createRagdoll(const RagdollProfile3D& profile, c
         }
         settings.mParts.push_back(part);
     }
+    record->unconditionedMassProperties.reserve(settings.mParts.size());
+    for (const JPH::RagdollSettings::Part& part : settings.mParts)
+        record->unconditionedMassProperties.push_back(part.GetMassProperties());
     if (!settings.Stabilize()) throw std::runtime_error("Jolt: invalid ragdoll inertia");
     // Stabilize conditions inertias for a constraint chain. Preserve authored
     // masses so gravity feedforward and gameplay momentum retain their units.
@@ -272,4 +276,25 @@ void PhysicsScene3D::destroyRagdoll(RagdollHandle3D h) {
     m_impl->freeRagdollSlots.push_back(h.index);
 }
 bool PhysicsScene3D::contains(RagdollHandle3D h) const { return m_impl->ragdoll(h) != nullptr; }
+void PhysicsScene3D::resetRagdollState(RagdollHandle3D h, std::span<const PhysicsBodyState3D> links) {
+    auto* r = m_impl->ragdoll(h);
+    if (!r || r->frozen || links.size() != r->links.size()) return;
+    for (const PhysicsBodyState3D& link : links)
+        if (!std::isfinite(link.position.x) || !std::isfinite(link.position.y) || !std::isfinite(link.position.z)
+            || !std::isfinite(link.orientation.w) || !std::isfinite(link.linearVelocity.x)
+            || !std::isfinite(link.angularVelocity.x)) return;
+    auto& bi = m_impl->system->GetBodyInterface();
+    for (auto id : r->links) std::erase_if(m_impl->pendingBodyWrenches, [id](const auto& w) { return w.body == id; });
+    for (std::size_t i = 0; i < links.size(); ++i) {
+        const JPH::BodyID id = r->links[i];
+        bi.SetPositionAndRotation(id, toJolt(links[i].position), toJolt(links[i].orientation.normalized()),
+            JPH::EActivation::Activate);
+        bi.SetLinearAndAngularVelocity(id, toJolt(links[i].linearVelocity), toJolt(links[i].angularVelocity));
+    }
+    // (Os impulsos do passo anterior nao valem para a pose nova.)
+    r->ragdoll->ResetWarmStart();
+    r->stepContacts.clear();
+    r->externalForceMagnitude = 0.0f;
+    m_impl->publishRagdoll(*r);
+}
 } // namespace MatterEngine

@@ -1,0 +1,574 @@
+{
+  "schemaVersion": 3,
+  "id": "FootballPlayerV1.DeLevaMale1996.DraftV3",
+  "profileId": "FootballPlayerV1",
+  "status": "draft_reference",
+  "population": "Homens jovens do conjunto Zatsiorsky-Seluyanov reajustado por de Leva; referencia populacional, nao medida individual do personagem.",
+  "notes": [
+    "Os alvos de massa, COM longitudinal e raios de giracao foram transcritos da Tabela 4 masculina de de Leva (1996).",
+    "A topologia publicada foi agregada explicitamente aos 18 links atuais do Matter Engine.",
+    "Landmarks anatomicos sao entidades versionadas e reutilizaveis; a comparacao direta usa apenas os que estao approved e podem ser resolvidos no perfil.",
+    "HeadTop, ToeTip e a cadeia do terceiro dedo do rig sao candidatos de autoria, nao equivalencias antropometricas aprovadas; grupos dependentes continuam pending_landmarks.",
+    "Somente o raio de giracao longitudinal e comparado nesta versao; os eixos sagital e transversal ficam versionados ate existir um frame anatomico explicito.",
+    "reviewToleranceRelative=0.15 e uma banda de triagem de engenharia, nao uma faixa biologica publicada.",
+    "centerOfMassReviewToleranceAbsolute=0.05 e inertiaReviewToleranceRelative=0.20 tambem sao bandas de triagem de engenharia.",
+    "O estado draft_reference impede que esta comparacao autorize alteracoes automaticas no ragdoll."
+  ],
+  "sources": [
+    {
+      "id": "de_leva_1996_table_4",
+      "title": "Adjustments to Zatsiorsky-Seluyanov's segment inertia parameters",
+      "doi": "10.1016/0021-9290(95)00178-6",
+      "url": "https://doi.org/10.1016/0021-9290(95)00178-6",
+      "notes": "Tabela 4 masculina, incluindo a linha alternativa KJC-AJC da perna; parametros populacionais derivados do conjunto original por gamma-scanner e reajustados para centros articulares."
+    }
+  ],
+  "landmarks": [
+    {
+      "id": "vert",
+      "label": "VERT (vertice craniano)",
+      "kind": "model_point",
+      "status": "approved",
+      "modelPosition": [-0.0439, 0.0, 0.8502],
+      "provenance": "junta visual HeadTop do GameRig na pose fisica de repouso, conferida contra o topo da malha em 2026-10-12",
+      "notes": "Aprovado como vertice craniano do modelo; a fonte visual permanece versionada para detectar deriva."
+    },
+    {
+      "id": "midg",
+      "label": "MIDG (ponto medio entre os gonios)",
+      "kind": "pending",
+      "status": "pending",
+      "notes": "O modelo ainda nao declara os gonios mandibulares."
+    },
+    {
+      "id": "supr",
+      "label": "SUPR (suprasternale)",
+      "kind": "pending",
+      "status": "pending",
+      "notes": "Precisa ser marcado sobre a anatomia do torax, nao inferido de uma junta da coluna."
+    },
+    {
+      "id": "xyph",
+      "label": "XYPH (xyphion)",
+      "kind": "pending",
+      "status": "pending",
+      "notes": "Precisa ser marcado sobre a anatomia do torax."
+    },
+    {
+      "id": "omph",
+      "label": "OMPH (omphalion)",
+      "kind": "pending",
+      "status": "pending",
+      "notes": "Precisa ser marcado no umbigo da malha final."
+    },
+    {
+      "id": "left_sjc",
+      "label": "SJC esquerdo (centro do ombro)",
+      "kind": "profile_joint_center",
+      "status": "approved",
+      "jointChildLinkId": "LeftUpperArm",
+      "provenance": "anchor da junta UpperChest-LeftUpperArm no FootballPlayerV1.ragdoll.json"
+    },
+    {
+      "id": "left_ejc",
+      "label": "EJC esquerdo (centro do cotovelo)",
+      "kind": "profile_joint_center",
+      "status": "approved",
+      "jointChildLinkId": "LeftForearm",
+      "provenance": "anchor da junta LeftUpperArm-LeftForearm no FootballPlayerV1.ragdoll.json"
+    },
+    {
+      "id": "left_wjc",
+      "label": "WJC esquerdo (centro do punho)",
+      "kind": "profile_joint_center",
+      "status": "approved",
+      "jointChildLinkId": "LeftHand",
+      "provenance": "anchor da junta LeftForearm-LeftHand no FootballPlayerV1.ragdoll.json"
+    },
+    {
+      "id": "right_sjc",
+      "label": "SJC direito (centro do ombro)",
+      "kind": "profile_joint_center",
+      "status": "approved",
+      "jointChildLinkId": "RightUpperArm",
+      "provenance": "anchor da junta UpperChest-RightUpperArm no FootballPlayerV1.ragdoll.json"
+    },
+    {
+      "id": "right_ejc",
+      "label": "EJC direito (centro do cotovelo)",
+      "kind": "profile_joint_center",
+      "status": "approved",
+      "jointChildLinkId": "RightForearm",
+      "provenance": "anchor da junta RightUpperArm-RightForearm no FootballPlayerV1.ragdoll.json"
+    },
+    {
+      "id": "right_wjc",
+      "label": "WJC direito (centro do punho)",
+      "kind": "profile_joint_center",
+      "status": "approved",
+      "jointChildLinkId": "RightHand",
+      "provenance": "anchor da junta RightForearm-RightHand no FootballPlayerV1.ragdoll.json"
+    },
+    {
+      "id": "left_met3",
+      "label": "MET3 esquerdo (terceiro metacarpal)",
+      "kind": "model_point",
+      "status": "approved",
+      "modelPosition": [-0.0679, 0.8639, 0.4773],
+      "provenance": "junta visual LeftMiddle1 do GameRig na pose fisica de repouso, centro da terceira articulacao metacarpofalangica conferido na malha em 2026-10-12",
+      "notes": "Aprovado como extremidade distal do terceiro metacarpal para a referencia segmentar."
+    },
+    {
+      "id": "right_met3",
+      "label": "MET3 direito (terceiro metacarpal)",
+      "kind": "model_point",
+      "status": "approved",
+      "modelPosition": [-0.0679, -0.8639, 0.4773],
+      "provenance": "junta visual RightMiddle1 do GameRig na pose fisica de repouso, centro da terceira articulacao metacarpofalangica conferido na malha em 2026-10-12",
+      "notes": "Aprovado como extremidade distal do terceiro metacarpal para a referencia segmentar."
+    },
+    {
+      "id": "left_hjc",
+      "label": "HJC esquerdo (centro do quadril)",
+      "kind": "profile_joint_center",
+      "status": "approved",
+      "jointChildLinkId": "LeftThigh",
+      "provenance": "anchor da junta Pelvis-LeftThigh no FootballPlayerV1.ragdoll.json"
+    },
+    {
+      "id": "left_kjc",
+      "label": "KJC esquerdo (centro do joelho)",
+      "kind": "profile_joint_center",
+      "status": "approved",
+      "jointChildLinkId": "LeftShin",
+      "provenance": "anchor da junta LeftThigh-LeftShin no FootballPlayerV1.ragdoll.json"
+    },
+    {
+      "id": "left_ajc",
+      "label": "AJC esquerdo (centro do tornozelo)",
+      "kind": "profile_joint_center",
+      "status": "approved",
+      "jointChildLinkId": "LeftFoot",
+      "provenance": "anchor da junta LeftShin-LeftFoot no FootballPlayerV1.ragdoll.json"
+    },
+    {
+      "id": "right_hjc",
+      "label": "HJC direito (centro do quadril)",
+      "kind": "profile_joint_center",
+      "status": "approved",
+      "jointChildLinkId": "RightThigh",
+      "provenance": "anchor da junta Pelvis-RightThigh no FootballPlayerV1.ragdoll.json"
+    },
+    {
+      "id": "right_kjc",
+      "label": "KJC direito (centro do joelho)",
+      "kind": "profile_joint_center",
+      "status": "approved",
+      "jointChildLinkId": "RightShin",
+      "provenance": "anchor da junta RightThigh-RightShin no FootballPlayerV1.ragdoll.json"
+    },
+    {
+      "id": "right_ajc",
+      "label": "AJC direito (centro do tornozelo)",
+      "kind": "profile_joint_center",
+      "status": "approved",
+      "jointChildLinkId": "RightFoot",
+      "provenance": "anchor da junta RightShin-RightFoot no FootballPlayerV1.ragdoll.json"
+    },
+    {
+      "id": "midh",
+      "label": "MIDH (ponto medio dos quadris)",
+      "kind": "midpoint",
+      "status": "approved",
+      "midpointFirstLandmarkId": "left_hjc",
+      "midpointSecondLandmarkId": "right_hjc",
+      "provenance": "ponto medio derivado dos dois HJC aprovados"
+    },
+    {
+      "id": "left_heel",
+      "label": "HEEL esquerdo (pternion)",
+      "kind": "pending",
+      "status": "pending",
+      "notes": "Precisa ser marcado na superficie do calcaneo; a aresta da caixa fisica nao e landmark anatomico."
+    },
+    {
+      "id": "left_ttip",
+      "label": "TTIP esquerdo (ponta do maior dedo)",
+      "kind": "pending",
+      "status": "pending",
+      "notes": "LeftToeTip existe no rig visual e deve ser auditado como candidato antes de aprovacao."
+    },
+    {
+      "id": "right_heel",
+      "label": "HEEL direito (pternion)",
+      "kind": "pending",
+      "status": "pending",
+      "notes": "Precisa ser marcado na superficie do calcaneo; a aresta da caixa fisica nao e landmark anatomico."
+    },
+    {
+      "id": "right_ttip",
+      "label": "TTIP direito (ponta do maior dedo)",
+      "kind": "pending",
+      "status": "pending",
+      "notes": "RightToeTip existe no rig visual e deve ser auditado como candidato antes de aprovacao."
+    }
+  ],
+  "massGroups": [
+    {
+      "id": "head_neck",
+      "linkIds": ["Neck", "Head"],
+      "targetMassFraction": 0.0694,
+      "reviewToleranceRelative": 0.15,
+      "sourceIds": ["de_leva_1996_table_4"],
+      "mappingNotes": "O segmento Head publicado inclui a regiao ate o marco cervical; os links Neck e Head foram agregados."
+    },
+    {
+      "id": "thorax",
+      "linkIds": ["Chest", "UpperChest"],
+      "targetMassFraction": 0.1596,
+      "reviewToleranceRelative": 0.15,
+      "sourceIds": ["de_leva_1996_table_4"],
+      "mappingNotes": "Chest e UpperChest representam juntos o torax publicado."
+    },
+    {
+      "id": "abdomen",
+      "linkIds": ["Abdomen"],
+      "targetMassFraction": 0.1633,
+      "reviewToleranceRelative": 0.15,
+      "sourceIds": ["de_leva_1996_table_4"]
+    },
+    {
+      "id": "pelvis",
+      "linkIds": ["Pelvis"],
+      "targetMassFraction": 0.1117,
+      "reviewToleranceRelative": 0.15,
+      "sourceIds": ["de_leva_1996_table_4"]
+    },
+    {
+      "id": "left_upper_arm",
+      "linkIds": ["LeftUpperArm"],
+      "targetMassFraction": 0.0271,
+      "reviewToleranceRelative": 0.15,
+      "sourceIds": ["de_leva_1996_table_4"]
+    },
+    {
+      "id": "right_upper_arm",
+      "linkIds": ["RightUpperArm"],
+      "targetMassFraction": 0.0271,
+      "reviewToleranceRelative": 0.15,
+      "sourceIds": ["de_leva_1996_table_4"]
+    },
+    {
+      "id": "left_forearm",
+      "linkIds": ["LeftForearm"],
+      "targetMassFraction": 0.0162,
+      "reviewToleranceRelative": 0.15,
+      "sourceIds": ["de_leva_1996_table_4"]
+    },
+    {
+      "id": "right_forearm",
+      "linkIds": ["RightForearm"],
+      "targetMassFraction": 0.0162,
+      "reviewToleranceRelative": 0.15,
+      "sourceIds": ["de_leva_1996_table_4"]
+    },
+    {
+      "id": "left_hand",
+      "linkIds": ["LeftHand"],
+      "targetMassFraction": 0.0061,
+      "reviewToleranceRelative": 0.15,
+      "sourceIds": ["de_leva_1996_table_4"]
+    },
+    {
+      "id": "right_hand",
+      "linkIds": ["RightHand"],
+      "targetMassFraction": 0.0061,
+      "reviewToleranceRelative": 0.15,
+      "sourceIds": ["de_leva_1996_table_4"]
+    },
+    {
+      "id": "left_thigh",
+      "linkIds": ["LeftThigh"],
+      "targetMassFraction": 0.1416,
+      "reviewToleranceRelative": 0.15,
+      "sourceIds": ["de_leva_1996_table_4"]
+    },
+    {
+      "id": "right_thigh",
+      "linkIds": ["RightThigh"],
+      "targetMassFraction": 0.1416,
+      "reviewToleranceRelative": 0.15,
+      "sourceIds": ["de_leva_1996_table_4"]
+    },
+    {
+      "id": "left_shank",
+      "linkIds": ["LeftShin"],
+      "targetMassFraction": 0.0433,
+      "reviewToleranceRelative": 0.15,
+      "sourceIds": ["de_leva_1996_table_4"]
+    },
+    {
+      "id": "right_shank",
+      "linkIds": ["RightShin"],
+      "targetMassFraction": 0.0433,
+      "reviewToleranceRelative": 0.15,
+      "sourceIds": ["de_leva_1996_table_4"]
+    },
+    {
+      "id": "left_foot",
+      "linkIds": ["LeftFoot"],
+      "targetMassFraction": 0.0137,
+      "reviewToleranceRelative": 0.15,
+      "sourceIds": ["de_leva_1996_table_4"]
+    },
+    {
+      "id": "right_foot",
+      "linkIds": ["RightFoot"],
+      "targetMassFraction": 0.0137,
+      "reviewToleranceRelative": 0.15,
+      "sourceIds": ["de_leva_1996_table_4"]
+    }
+  ],
+  "inertialGroups": [
+    {
+      "id": "head_neck",
+      "originLandmarkId": "vert",
+      "otherLandmarkId": "midg",
+      "targetCenterOfMassFromOriginFraction": 0.5976,
+      "targetRadiusOfGyration": {
+        "sagittalFraction": 0.362,
+        "transverseFraction": 0.376,
+        "longitudinalFraction": 0.312
+      },
+      "centerOfMassReviewToleranceAbsolute": 0.05,
+      "inertiaReviewToleranceRelative": 0.20,
+      "sourceIds": ["de_leva_1996_table_4"],
+      "mappingNotes": "O perfil separa Neck e Head, mas ainda nao declara VERT e MIDG; extremos de capsula nao substituem esses marcos."
+    },
+    {
+      "id": "thorax",
+      "originLandmarkId": "supr",
+      "otherLandmarkId": "xyph",
+      "targetCenterOfMassFromOriginFraction": 0.2999,
+      "targetRadiusOfGyration": {
+        "sagittalFraction": 0.716,
+        "transverseFraction": 0.454,
+        "longitudinalFraction": 0.659
+      },
+      "centerOfMassReviewToleranceAbsolute": 0.05,
+      "inertiaReviewToleranceRelative": 0.20,
+      "sourceIds": ["de_leva_1996_table_4"],
+      "mappingNotes": "Chest e UpperChest nao declaram SUPR e XYPH como landmarks anatomicos."
+    },
+    {
+      "id": "abdomen",
+      "originLandmarkId": "xyph",
+      "otherLandmarkId": "omph",
+      "targetCenterOfMassFromOriginFraction": 0.4502,
+      "targetRadiusOfGyration": {
+        "sagittalFraction": 0.482,
+        "transverseFraction": 0.383,
+        "longitudinalFraction": 0.468
+      },
+      "centerOfMassReviewToleranceAbsolute": 0.05,
+      "inertiaReviewToleranceRelative": 0.20,
+      "sourceIds": ["de_leva_1996_table_4"],
+      "mappingNotes": "As juntas atuais do tronco nao foram certificadas como XYPH e OMPH."
+    },
+    {
+      "id": "pelvis",
+      "originLandmarkId": "omph",
+      "otherLandmarkId": "midh",
+      "targetCenterOfMassFromOriginFraction": 0.6115,
+      "targetRadiusOfGyration": {
+        "sagittalFraction": 0.615,
+        "transverseFraction": 0.551,
+        "longitudinalFraction": 0.587
+      },
+      "centerOfMassReviewToleranceAbsolute": 0.05,
+      "inertiaReviewToleranceRelative": 0.20,
+      "sourceIds": ["de_leva_1996_table_4"],
+      "mappingNotes": "A raiz nao possui um marco OMPH declarado e os dois HJC nao equivalem sozinhos ao eixo OMPH-MIDH."
+    },
+    {
+      "id": "left_upper_arm",
+      "originLandmarkId": "left_sjc",
+      "otherLandmarkId": "left_ejc",
+      "targetCenterOfMassFromOriginFraction": 0.5772,
+      "targetRadiusOfGyration": {
+        "sagittalFraction": 0.285,
+        "transverseFraction": 0.269,
+        "longitudinalFraction": 0.158
+      },
+      "centerOfMassReviewToleranceAbsolute": 0.05,
+      "inertiaReviewToleranceRelative": 0.20,
+      "sourceIds": ["de_leva_1996_table_4"],
+      "mappingNotes": "Os anchors ombro e cotovelo correspondem diretamente aos endpoints publicados."
+    },
+    {
+      "id": "right_upper_arm",
+      "originLandmarkId": "right_sjc",
+      "otherLandmarkId": "right_ejc",
+      "targetCenterOfMassFromOriginFraction": 0.5772,
+      "targetRadiusOfGyration": {
+        "sagittalFraction": 0.285,
+        "transverseFraction": 0.269,
+        "longitudinalFraction": 0.158
+      },
+      "centerOfMassReviewToleranceAbsolute": 0.05,
+      "inertiaReviewToleranceRelative": 0.20,
+      "sourceIds": ["de_leva_1996_table_4"],
+      "mappingNotes": "Os anchors ombro e cotovelo correspondem diretamente aos endpoints publicados."
+    },
+    {
+      "id": "left_forearm",
+      "originLandmarkId": "left_ejc",
+      "otherLandmarkId": "left_wjc",
+      "targetCenterOfMassFromOriginFraction": 0.4574,
+      "targetRadiusOfGyration": {
+        "sagittalFraction": 0.276,
+        "transverseFraction": 0.265,
+        "longitudinalFraction": 0.121
+      },
+      "centerOfMassReviewToleranceAbsolute": 0.05,
+      "inertiaReviewToleranceRelative": 0.20,
+      "sourceIds": ["de_leva_1996_table_4"],
+      "mappingNotes": "Os anchors cotovelo e punho correspondem diretamente aos endpoints publicados."
+    },
+    {
+      "id": "right_forearm",
+      "originLandmarkId": "right_ejc",
+      "otherLandmarkId": "right_wjc",
+      "targetCenterOfMassFromOriginFraction": 0.4574,
+      "targetRadiusOfGyration": {
+        "sagittalFraction": 0.276,
+        "transverseFraction": 0.265,
+        "longitudinalFraction": 0.121
+      },
+      "centerOfMassReviewToleranceAbsolute": 0.05,
+      "inertiaReviewToleranceRelative": 0.20,
+      "sourceIds": ["de_leva_1996_table_4"],
+      "mappingNotes": "Os anchors cotovelo e punho correspondem diretamente aos endpoints publicados."
+    },
+    {
+      "id": "left_hand",
+      "originLandmarkId": "left_wjc",
+      "otherLandmarkId": "left_met3",
+      "targetCenterOfMassFromOriginFraction": 0.7900,
+      "targetRadiusOfGyration": {
+        "sagittalFraction": 0.628,
+        "transverseFraction": 0.513,
+        "longitudinalFraction": 0.401
+      },
+      "centerOfMassReviewToleranceAbsolute": 0.05,
+      "inertiaReviewToleranceRelative": 0.20,
+      "sourceIds": ["de_leva_1996_table_4"],
+      "mappingNotes": "A mao tem WJC, mas nao declara MET3; o extremo do collider nao e um substituto certificado."
+    },
+    {
+      "id": "right_hand",
+      "originLandmarkId": "right_wjc",
+      "otherLandmarkId": "right_met3",
+      "targetCenterOfMassFromOriginFraction": 0.7900,
+      "targetRadiusOfGyration": {
+        "sagittalFraction": 0.628,
+        "transverseFraction": 0.513,
+        "longitudinalFraction": 0.401
+      },
+      "centerOfMassReviewToleranceAbsolute": 0.05,
+      "inertiaReviewToleranceRelative": 0.20,
+      "sourceIds": ["de_leva_1996_table_4"],
+      "mappingNotes": "A mao tem WJC, mas nao declara MET3; o extremo do collider nao e um substituto certificado."
+    },
+    {
+      "id": "left_thigh",
+      "originLandmarkId": "left_hjc",
+      "otherLandmarkId": "left_kjc",
+      "targetCenterOfMassFromOriginFraction": 0.4095,
+      "targetRadiusOfGyration": {
+        "sagittalFraction": 0.329,
+        "transverseFraction": 0.329,
+        "longitudinalFraction": 0.149
+      },
+      "centerOfMassReviewToleranceAbsolute": 0.05,
+      "inertiaReviewToleranceRelative": 0.20,
+      "sourceIds": ["de_leva_1996_table_4"],
+      "mappingNotes": "Os anchors quadril e joelho correspondem diretamente aos endpoints publicados."
+    },
+    {
+      "id": "right_thigh",
+      "originLandmarkId": "right_hjc",
+      "otherLandmarkId": "right_kjc",
+      "targetCenterOfMassFromOriginFraction": 0.4095,
+      "targetRadiusOfGyration": {
+        "sagittalFraction": 0.329,
+        "transverseFraction": 0.329,
+        "longitudinalFraction": 0.149
+      },
+      "centerOfMassReviewToleranceAbsolute": 0.05,
+      "inertiaReviewToleranceRelative": 0.20,
+      "sourceIds": ["de_leva_1996_table_4"],
+      "mappingNotes": "Os anchors quadril e joelho correspondem diretamente aos endpoints publicados."
+    },
+    {
+      "id": "left_shank",
+      "originLandmarkId": "left_kjc",
+      "otherLandmarkId": "left_ajc",
+      "targetCenterOfMassFromOriginFraction": 0.4395,
+      "targetRadiusOfGyration": {
+        "sagittalFraction": 0.251,
+        "transverseFraction": 0.246,
+        "longitudinalFraction": 0.102
+      },
+      "centerOfMassReviewToleranceAbsolute": 0.05,
+      "inertiaReviewToleranceRelative": 0.20,
+      "sourceIds": ["de_leva_1996_table_4"],
+      "mappingNotes": "Usa a linha alternativa KJC-AJC da Tabela 4, compatível com os anchors joelho e tornozelo."
+    },
+    {
+      "id": "right_shank",
+      "originLandmarkId": "right_kjc",
+      "otherLandmarkId": "right_ajc",
+      "targetCenterOfMassFromOriginFraction": 0.4395,
+      "targetRadiusOfGyration": {
+        "sagittalFraction": 0.251,
+        "transverseFraction": 0.246,
+        "longitudinalFraction": 0.102
+      },
+      "centerOfMassReviewToleranceAbsolute": 0.05,
+      "inertiaReviewToleranceRelative": 0.20,
+      "sourceIds": ["de_leva_1996_table_4"],
+      "mappingNotes": "Usa a linha alternativa KJC-AJC da Tabela 4, compatível com os anchors joelho e tornozelo."
+    },
+    {
+      "id": "left_foot",
+      "originLandmarkId": "left_heel",
+      "otherLandmarkId": "left_ttip",
+      "targetCenterOfMassFromOriginFraction": 0.4415,
+      "targetRadiusOfGyration": {
+        "sagittalFraction": 0.257,
+        "transverseFraction": 0.245,
+        "longitudinalFraction": 0.124
+      },
+      "centerOfMassReviewToleranceAbsolute": 0.05,
+      "inertiaReviewToleranceRelative": 0.20,
+      "sourceIds": ["de_leva_1996_table_4"],
+      "mappingNotes": "A caixa do pe fornece suporte fisico, mas ainda nao declara HEEL e TTIP como landmarks."
+    },
+    {
+      "id": "right_foot",
+      "originLandmarkId": "right_heel",
+      "otherLandmarkId": "right_ttip",
+      "targetCenterOfMassFromOriginFraction": 0.4415,
+      "targetRadiusOfGyration": {
+        "sagittalFraction": 0.257,
+        "transverseFraction": 0.245,
+        "longitudinalFraction": 0.124
+      },
+      "centerOfMassReviewToleranceAbsolute": 0.05,
+      "inertiaReviewToleranceRelative": 0.20,
+      "sourceIds": ["de_leva_1996_table_4"],
+      "mappingNotes": "A caixa do pe fornece suporte fisico, mas ainda nao declara HEEL e TTIP como landmarks."
+    }
+  ]
+}

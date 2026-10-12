@@ -305,6 +305,60 @@ else()
     target_compile_options(MatterPhysics PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
+# Os clipes de animacao no formato do ragdoll (matter-ragdoll-animation-1):
+# carregar, amostrar e projetar na articulacao. Saiu do MatterEngine para que
+# o treino de RL (sem janela) use os mesmos clipes que o jogo.
+add_library(MatterAnimationClips STATIC
+    src/Engine/Animation/AnimationClip3D.cpp
+)
+target_include_directories(MatterAnimationClips PUBLIC src)
+target_link_libraries(MatterAnimationClips
+    PUBLIC MatterPhysics
+    PRIVATE nlohmann_json::nlohmann_json)
+
+# Fundacao isolada do experimento de Reinforcement Learning. Esta opcao
+# compila apenas contratos/ferramentas C++ headless: nao adiciona Python,
+# PyTorch, renderer ou Workbench ao grafo de dependencias.
+option(MATTERENGINE_BUILD_RL "Build isolated MatterEngine RL foundations" ON)
+if(MATTERENGINE_BUILD_RL)
+    add_library(MatterRLCalibration STATIC
+        src/Engine/RL/Calibration/RagdollCalibrationAudit3D.cpp
+        src/Engine/RL/Calibration/RagdollJointLimitLab3D.cpp
+        src/Engine/RL/Calibration/RagdollColliderWireframe3D.cpp
+        src/Engine/RL/Calibration/RagdollDynamicLab3D.cpp
+    )
+    target_include_directories(MatterRLCalibration PUBLIC src)
+    target_link_libraries(MatterRLCalibration
+        PUBLIC MatterPhysics
+        PRIVATE nlohmann_json::nlohmann_json)
+    if(MSVC)
+        target_compile_options(MatterRLCalibration PRIVATE
+            /W4 /permissive- /utf-8)
+    else()
+        target_compile_options(MatterRLCalibration PRIVATE
+            -Wall -Wextra -Wpedantic)
+    endif()
+
+    # Os mundos de treino: o corpo de RL, as tarefas e o lote paralelo.
+    # Depende so da fisica e dos clipes (nada de janela, render ou Python).
+    add_library(MatterRLEnvironment STATIC
+        src/Engine/RL/Body/RLBody3D.cpp
+        src/Engine/RL/Environment/TrainingTask3D.cpp
+        src/Engine/RL/Environment/TrainingBatch3D.cpp
+    )
+    target_include_directories(MatterRLEnvironment PUBLIC src)
+    target_link_libraries(MatterRLEnvironment
+        PUBLIC MatterPhysics MatterAnimationClips
+        PRIVATE nlohmann_json::nlohmann_json)
+    if(MSVC)
+        target_compile_options(MatterRLEnvironment PRIVATE
+            /W4 /permissive- /utf-8)
+    else()
+        target_compile_options(MatterRLEnvironment PRIVATE
+            -Wall -Wextra -Wpedantic)
+    endif()
+endif()
+
 add_library(MatterVulkan STATIC
     src/Engine/Render/SceneLightPacking.cpp
     src/Engine/RHI/Vulkan/ScenePassGraph.cpp
@@ -470,7 +524,6 @@ else()
 endif()
 
 add_library(MatterEngine STATIC
-    src/Engine/Animation/AnimationClip3D.cpp
     src/Engine/Animation/RagdollCharacter3D.cpp
     src/Engine/Animation/RagdollVisualPose3D.cpp
     src/Engine/Athlete/AthleteAssets3D.cpp
@@ -546,7 +599,7 @@ add_library(MatterEngine STATIC
 
 target_include_directories(MatterEngine PUBLIC src)
 target_link_libraries(MatterEngine
-    PUBLIC MatterCore MatterRHI MatterPhysics MatterAudio
+    PUBLIC MatterCore MatterRHI MatterPhysics MatterAnimationClips MatterAudio
     PRIVATE MatterVulkan SDL3::SDL3-static imgui sqlite3
         cgltf stb_image nlohmann_json::nlohmann_json
 )
@@ -655,6 +708,44 @@ if(MATTERENGINE_BUILD_TESTS)
     add_executable(MatterBallTests tests/InflatedBallTests.cpp)
     target_link_libraries(MatterBallTests PRIVATE MatterEngine)
     add_test(NAME MatterEngine.Ball COMMAND MatterBallTests)
+    if(MATTERENGINE_BUILD_RL)
+        # Primeiro contrato de RL: a auditoria declarativa do corpo compila
+        # apenas contra o modulo headless de calibracao/fisica.
+        add_executable(MatterRLCalibrationTests
+            tests/RL/RagdollCalibrationAuditTests.cpp)
+        target_link_libraries(MatterRLCalibrationTests
+            PRIVATE MatterRLCalibration)
+        target_compile_definitions(MatterRLCalibrationTests PRIVATE
+            MATTERENGINE_TEST_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
+        add_test(NAME MatterEngine.RLCalibration
+            COMMAND MatterRLCalibrationTests)
+        add_executable(MatterRLJointLimitLabTests
+            tests/RL/RagdollJointLimitLabTests.cpp)
+        target_link_libraries(MatterRLJointLimitLabTests
+            PRIVATE MatterRLCalibration)
+        target_compile_definitions(MatterRLJointLimitLabTests PRIVATE
+            MATTERENGINE_TEST_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
+        add_test(NAME MatterEngine.RLJointLimits
+            COMMAND MatterRLJointLimitLabTests)
+        add_executable(MatterRLDynamicsTests
+            tests/RL/RagdollDynamicLabTests.cpp)
+        target_link_libraries(MatterRLDynamicsTests
+            PRIVATE MatterRLCalibration)
+        target_compile_definitions(MatterRLDynamicsTests PRIVATE
+            MATTERENGINE_TEST_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
+        add_test(NAME MatterEngine.RLDynamics
+            COMMAND MatterRLDynamicsTests)
+        add_executable(MatterRLTrainingTests
+            tests/RL/RLBodyTests.cpp
+            tests/RL/TrainingBatchTests.cpp
+            tests/RL/RLTestMain.cpp)
+        target_link_libraries(MatterRLTrainingTests
+            PRIVATE MatterRLEnvironment)
+        target_compile_definitions(MatterRLTrainingTests PRIVATE
+            MATTERENGINE_TEST_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
+        add_test(NAME MatterEngine.RLTraining
+            COMMAND MatterRLTrainingTests)
+    endif()
     # Modelagem do personagem: o nucleo (linkado so contra MatterModeling,
     # provando que ele nao depende da engine) e a ponte com o jogo, com a tela
     # "Inspecao de jogador" rodando sem janela.
@@ -719,6 +810,28 @@ target_link_libraries(MatterPhysicsBenchmark PRIVATE MatterEngine)
 target_compile_definitions(MatterPhysicsBenchmark PRIVATE
     MATTERENGINE_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
 
+if(MATTERENGINE_BUILD_RL)
+    # Ferramenta headless de baseline: imprime Markdown em stdout e retorna
+    # erro somente para perfil invalido (ou aviso com --strict).
+    add_executable(MatterRLAudit tools/RLAudit.cpp)
+    target_link_libraries(MatterRLAudit PRIVATE MatterRLCalibration)
+    target_compile_definitions(MatterRLAudit PRIVATE
+        MATTERENGINE_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
+    add_executable(MatterRLDynamics tools/RLDynamics.cpp)
+    target_link_libraries(MatterRLDynamics PRIVATE MatterRLCalibration)
+    target_compile_definitions(MatterRLDynamics PRIVATE
+        MATTERENGINE_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
+    add_executable(MatterRLJointProbe tools/RLJointProbe.cpp)
+    target_link_libraries(MatterRLJointProbe PRIVATE MatterRLCalibration)
+    target_compile_definitions(MatterRLJointProbe PRIVATE
+        MATTERENGINE_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
+    # Velocidade dos mundos de treino por arranjo (sem janela).
+    add_executable(MatterRLBenchmark tools/RLBenchmark.cpp)
+    target_link_libraries(MatterRLBenchmark PRIVATE MatterRLEnvironment)
+    target_compile_definitions(MatterRLBenchmark PRIVATE
+        MATTERENGINE_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
+endif()
+
 # Visualizador de toque na bola na linha de comando (a mesma simulacao da
 # tela "Toque na bola" do Workbench; os desenhos saem de
 # tools/analysis/ball_touch_preview.py).
@@ -757,6 +870,14 @@ add_executable(MatterModelInspector
     tools/ModelInspector/CommandFrames.cpp
 )
 target_link_libraries(MatterModelInspector PRIVATE MatterModelingRig)
+if(MATTERENGINE_BUILD_RL)
+    target_sources(MatterModelInspector PRIVATE
+        tools/ModelInspector/CommandColliders.cpp)
+    target_link_libraries(MatterModelInspector PRIVATE MatterRLCalibration)
+    target_compile_definitions(MatterModelInspector PRIVATE
+        MATTERENGINE_MODEL_INSPECTOR_RL=1
+        MATTERENGINE_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
+endif()
 
 # Sonda dos atletas (rework de 10/10/2026): o mesmo runtime do laboratorio
 # com a fisica de verdade, sem janela; o dump vai para MatterModelInspector quadros.
@@ -781,9 +902,21 @@ set_target_properties(MatterWorkbench MatterEngineApp
     PROPERTIES FOLDER "MatterEngine Workbench")
 set_target_properties(MatterVulkanSmoke PROPERTIES FOLDER "Tests")
 set_target_properties(MatterPhysicsBenchmark PROPERTIES FOLDER "Tests")
+if(MATTERENGINE_BUILD_RL)
+    set_target_properties(MatterRLCalibration MatterRLEnvironment PROPERTIES
+        FOLDER "MatterEngine RL")
+    set_target_properties(MatterRLAudit MatterRLDynamics MatterRLJointProbe
+        MatterRLBenchmark PROPERTIES FOLDER "Tools")
+endif()
 if(MATTERENGINE_BUILD_TESTS)
     set_target_properties(MatterEngineTests MatterAudioTests
         PROPERTIES FOLDER "Tests")
+    if(MATTERENGINE_BUILD_RL)
+        set_target_properties(MatterRLCalibrationTests
+            MatterRLJointLimitLabTests MatterRLDynamicsTests
+            MatterRLTrainingTests PROPERTIES
+            FOLDER "Tests")
+    endif()
 endif()
 
 if(MSVC)

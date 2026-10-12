@@ -11,7 +11,9 @@ $build = Join-Path $root "build-modern"
 cmake -S $root -B $build -G "Visual Studio 17 2022" -A x64
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-cmake --build $build --config $Configuration --target MatterEngineApp MatterEngineTests MatterAudioTests MatterAdaptiveTests -j 8
+# O CTest registra todos os executaveis de teste. ALL_BUILD garante que uma
+# arvore limpa nao produza falsos "Not Run" por binarios ausentes.
+cmake --build $build --config $Configuration --target ALL_BUILD -j 8
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 if (-not $SkipTests) {
