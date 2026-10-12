@@ -84,6 +84,9 @@ private:
     void refreshHistory();
     void frame(float yawDegrees, float pitchDegrees);
     void saveCapture();
+    // O treino mostrado: o do treinador aberto no PC (pode ter sido aberto pelo
+    // terminal com outro nome) ou, sem treinador, o desta tela.
+    [[nodiscard]] std::string activeRun() const;
     [[nodiscard]] std::filesystem::path taskPath() const;
     [[nodiscard]] std::filesystem::path policyPath() const;
 
@@ -97,6 +100,7 @@ private:
     std::unique_ptr<TrainingBatch3D> m_viewer;
     std::unique_ptr<PolicyRuntime3D> m_policy;
     std::filesystem::file_time_type m_policyWrite {};
+    std::filesystem::path m_policyPath;
     std::string m_policyText;
     bool m_useBest = false;
     float m_policyWatch = 0.0f;

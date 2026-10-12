@@ -283,15 +283,15 @@ void TrainerLink3D::worker() {
         }
         const std::string reply = request(R"({"cmd":"status"})", 3000);
         const nlohmann::json parsed = nlohmann::json::parse(reply, nullptr, false);
-        if (!parsed.is_discarded() && parsed.is_object() && parsed.value("ok", false) && parsed.contains("status")
-            && parsed["status"].value("run", std::string()) == m_run) {
+        // O treinador aberto no PC (so ha um), seja qual for o treino dele.
+        if (!parsed.is_discarded() && parsed.is_object() && parsed.value("ok", false) && parsed.contains("status")) {
             readStatus(parsed["status"].dump(), true);
             std::lock_guard lock(m_mutex);
             m_opening = false;
             m_failure.clear();
             continue;
         }
-        // Sem treinador (ou outro treino aberto): o ultimo estado gravado.
+        // Sem treinador: o ultimo estado gravado do treino desta tela.
         std::ifstream file(m_paths.run(m_run) / "status.json");
         if (file) {
             const std::string json { std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>() };

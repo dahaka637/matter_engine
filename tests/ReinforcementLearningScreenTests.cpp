@@ -16,6 +16,8 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <chrono>
+#include <thread>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -117,10 +119,34 @@ void writeHistory(const std::filesystem::path& database) {
     sqlite3_close(db);
 }
 
+// MATTER_RL_TEST_LIVE=1: a tela no treino de verdade (o treinador aberto no
+// PC), so para a foto "rl_tela_ao_vivo". Nada e clicado: o treino nao muda.
+int liveSnapshot() {
+    TestSupport::HeadlessUi ui;
+    FakeCanvas canvas;
+    ReinforcementLearningScreen::Options options;
+    options.sourceRoot = std::filesystem::path(MATTERENGINE_TEST_ASSETS_DIR).parent_path();
+    options.capturesDirectory = std::filesystem::temp_directory_path() / "matter_rl_tela_capturas";
+    ReinforcementLearningScreen screen(std::move(options), {});
+    screen.waitUntilLoaded();
+    for (int i = 0; i < 100 && !screen.status().alive; ++i) {
+        frame(screen, canvas, 1);
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    require(screen.status().alive, "nenhum treinador aberto no PC");
+    screen.advanceViewer(300);
+    frame(screen, canvas, 30);
+    snapshot(canvas, "rl_tela_ao_vivo");
+    require(ui.errors().empty(), "o ImGui reclamou: " + (ui.errors().empty() ? std::string() : ui.errors().front()));
+    std::cout << "Reinforcement learning screen live snapshot (" << checks << " checks)\n";
+    return 0;
+}
+
 } // namespace
 
 int main() {
     try {
+        if (std::getenv("MATTER_RL_TEST_LIVE") != nullptr) return liveSnapshot();
         const std::filesystem::path sandbox = std::filesystem::temp_directory_path() / "matter_rl_tela";
         std::filesystem::remove_all(sandbox);
         std::filesystem::create_directories(sandbox / "runtime");

@@ -128,15 +128,20 @@ ReinforcementLearningScreen::~ReinforcementLearningScreen() = default;
 
 TrainerStatus3D ReinforcementLearningScreen::status() const { return m_link->status(); }
 
+std::string ReinforcementLearningScreen::activeRun() const {
+    const TrainerStatus3D status = m_link->status();
+    return status.alive && !status.run.empty() ? status.run : m_options.run;
+}
+
 std::filesystem::path ReinforcementLearningScreen::taskPath() const {
     // A tarefa do treino (com os pesos de agora) ou a do repositorio.
-    const std::filesystem::path live = m_link->paths().run(m_options.run) / "tarefa.json";
+    const std::filesystem::path live = m_link->paths().run(activeRun()) / "tarefa.json";
     if (std::filesystem::exists(live)) return live;
     return m_options.sourceRoot / "assets" / "rl" / "tasks" / (m_options.task + ".json");
 }
 
 std::filesystem::path ReinforcementLearningScreen::policyPath() const {
-    return m_link->paths().run(m_options.run) / "exports"
+    return m_link->paths().run(activeRun()) / "exports"
         / (m_useBest ? "policy_best.mrlpolicy" : "policy_latest.mrlpolicy");
 }
 
@@ -185,8 +190,9 @@ void ReinforcementLearningScreen::reloadPolicy(bool force) {
         return;
     }
     const auto write = std::filesystem::last_write_time(path, code);
-    if (!force && write == m_policyWrite) return;
+    if (!force && write == m_policyWrite && path == m_policyPath) return;
     m_policyWrite = write;
+    m_policyPath = path;
     try {
         auto policy = std::make_unique<PolicyRuntime3D>(path);
         if (policy->observationSize() != m_viewer->observationSize() || policy->actionSize() != m_viewer->actionSize()) {
@@ -275,7 +281,7 @@ void ReinforcementLearningScreen::refreshHistory() {
         return;
     }
     m_historyPending = std::async(std::launch::async,
-        [database = m_link->paths().database, run = m_options.run] { return readTrainingHistory3D(database, run, 0.0, 400); });
+        [database = m_link->paths().database, run = activeRun()] { return readTrainingHistory3D(database, run, 0.0, 400); });
 }
 
 void ReinforcementLearningScreen::update(float deltaSeconds) {
@@ -428,6 +434,7 @@ void ReinforcementLearningScreen::drawTrainer() {
     }
     ImGui::Dummy({ 1.0f, ui(2.0f) });
     if (status.known) {
+        if (status.alive && status.run != m_options.run) infoRow("Treino", status.run);
         infoRow("Etapa", status.taskName.empty() ? status.task : status.taskName);
         infoRow("Rodada", std::to_string(status.iteration));
         infoRow("Decisões", decimal(static_cast<double>(status.steps) / 1e6, 1) + " M");
@@ -504,7 +511,7 @@ void ReinforcementLearningScreen::drawModes(const TrainerStatus3D& status) {
     bool boot = m_link->resumesAtBoot();
     if (ImGui::Checkbox("Retomar ao ligar o PC", &boot)) {
         std::string error;
-        if (!m_link->runLauncher({ "servico", boot ? "instalar" : "remover", "--run", m_options.run }, &error))
+        if (!m_link->runLauncher({ "servico", boot ? "instalar" : "remover", "--run", activeRun() }, &error))
             notify(error);
         else notify(boot ? "O treino volta sozinho ao ligar o PC" : "O treino não volta mais sozinho");
     }

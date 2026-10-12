@@ -55,6 +55,10 @@ struct Environment {
     // O episodio: o relogio (que pode comecar sorteado) e as decisoes jogadas.
     std::uint32_t steps = 0;
     std::uint32_t played = 0;
+    // O limite deste episodio (no treino, a duracao da tarefa +-20%: sem isso
+    // as quedas do comeco agrupam as fases e, sem quedas depois, os fins
+    // ficam sincronizados para sempre).
+    std::uint32_t limit = 600;
     std::vector<float> previousAction;
     std::vector<float> action;
     std::vector<RagdollDriveTarget3D> targets;
@@ -341,6 +345,10 @@ void TrainingBatch3D::Impl::resetEnvironment(std::uint32_t index) {
     scene.physics->setRagdollFrictionScale(env.ragdoll, env.friction);
     env.steps = 0;
     env.played = 0;
+    env.limit = training()
+        ? std::max(1u, static_cast<std::uint32_t>(std::lround(static_cast<float>(maximumSteps)
+              * std::uniform_real_distribution<float>(0.8f, 1.2f)(env.rng))))
+        : maximumSteps;
     std::fill(env.previousAction.begin(), env.previousAction.end(), 0.0f);
     std::fill(env.action.begin(), env.action.end(), 0.0f);
     writeTargets(env, {});
@@ -673,7 +681,7 @@ void TrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> actio
             else if (head < body.standingHeadHeight * task.termination.minimumHeadHeightFraction
                 || pelvis.position.z < body.standingPelvisHeight * task.termination.minimumPelvisHeightFraction)
                 reason = TrainingEndReason3D::FallHeight;
-            else if (env.steps >= maximumSteps) reason = TrainingEndReason3D::TimeLimit;
+            else if (env.steps >= env.limit) reason = TrainingEndReason3D::TimeLimit;
             else {
                 const float dx = pelvis.position.x - env.origin.x, dy = pelvis.position.y - env.origin.y;
                 if (dx * dx + dy * dy > task.termination.maximumDistanceFromStart * task.termination.maximumDistanceFromStart)
@@ -779,7 +787,7 @@ void TrainingBatch3D::reset(std::uint64_t seed) {
         // mundos que aguentam ate o fim terminam todos no mesmo passo e as
         // rodadas viram ondas (o mesmo truque do legged_gym).
         if (impl.training())
-            env.steps = std::uniform_int_distribution<std::uint32_t>(0, impl.maximumSteps - 1)(env.rng);
+            env.steps = std::uniform_int_distribution<std::uint32_t>(0, env.limit - 1)(env.rng);
         const RagdollState3D* view = impl.scenes[env.scene].physics->ragdollStateView(env.ragdoll);
         const BodyReading reading = impl.read(*view);
         impl.writeObservation(env, *view, reading, impl.observations.data() + i * O, impl.critic.data() + i * C,
