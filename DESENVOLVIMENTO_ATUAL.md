@@ -60,6 +60,17 @@ dele. Ele substitui o início feito pelo Codex em 11/10.
   - o supervisor e a CLI não carregam o PyTorch;
   - os gráficos amostram por tempo e as rodadas com mais de 3 dias são
     compactadas.
+- **O tronco girando (achado da validação):**
+  - em 15 dos 32 mundos da bateria a pelve rodava de um lado para o outro
+    (até 46°), invisível no centro de massa;
+  - a recompensa ganhou `trunkTurn` (−0,2·ω² da pelve e do peito);
+  - a bateria mede o giro do tronco e o dos pés no chão;
+  - o pé que pivota conta como escorregar.
+
+  Depois disso: 3 de 32 mundos acima de 2° e giro médio de 3 °/s.
+- **Ferramentas:** `matter-rl comparar A B` e `folha --checkpoint X --mundo N`.
+- **A tela** segue o treinador aberto no PC (qualquer nome). O empurrão
+  padrão é 100 N, o que a H1 aguenta; empurrões são a H2.
 - **CTest:** 17/19. `Character` e `AdaptivePhysics` falham como antes.
   Python: 15/15 (`cd tools/rl && .venv/bin/python -m pytest`).
 

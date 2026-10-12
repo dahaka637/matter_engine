@@ -90,6 +90,11 @@ O treino inteiro (física, rede na GTX 1070 Ti e PPO), com 512 mundos:
   não via. Agora a recompensa cobra a rotação da pelve e do peito
   (−0,2·ω², quadrática para ensinar também com o ruído do treino), e a
   bateria mede o giro do tronco (`turn`), que entra na nota.
+- **O pé que pivota** conta como escorregar (o centro do pé + 0,1 m × o giro
+  em torno da vertical), e a bateria mede o giro dos pés no chão.
+- **Empurrões:** a H1 não treina empurrões (é a H2). Ela aguenta 100 N por
+  0,2 s no peito em todos os mundos, 150 N em metade e 200 N em nenhum. O
+  empurrão padrão da tela é 100 N.
 
 ## Semanas ligado
 
