@@ -364,7 +364,8 @@ std::uint32_t TrainingBatch3D::Impl::choosePosture(Environment& env) const {
 
 // O comando de velocidade: o roteiro da bateria, o fixo de fora ou, no treino,
 // sorteado a cada intervalo (parado numa fatia; cada direcao ate o limite de
-// agora do curriculo). Comandos muito pequenos viram parado.
+// agora do curriculo). Comandos pequenos (menos de 0,3 m/s, ambiguos com
+// ficar parado) viram parado.
 void TrainingBatch3D::Impl::updateCommand(Environment& env, bool start) {
     const float stepSeconds = static_cast<float>(task.actionRepeat) * FixedStep;
     if (env.commandForced) {
@@ -391,7 +392,7 @@ void TrainingBatch3D::Impl::updateCommand(Environment& env, bool start) {
     const Vec3 command { std::uniform_real_distribution<float>(-backward, forward)(env.rng),
         lateral > 0.0f ? std::uniform_real_distribution<float>(-lateral, lateral)(env.rng) : 0.0f,
         yaw > 0.0f ? std::uniform_real_distribution<float>(-yaw, yaw)(env.rng) : 0.0f };
-    if (std::hypot(command.x, command.y) < 0.1f && std::abs(command.z) < 0.1f) return;
+    if (std::hypot(command.x, command.y) < 0.3f && std::abs(command.z) < 0.2f) return;
     env.command = command;
 }
 

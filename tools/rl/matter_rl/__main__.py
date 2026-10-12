@@ -7,6 +7,7 @@
     matter-rl status | pausar | retomar | parar | salvar | avaliar
     matter-rl modo maximo|equilibrado|leve
     matter-rl tarefa <id>                 o treino aberto passa para outra habilidade (o mesmo cerebro)
+    matter-rl explorar <desvio>           reabre a exploracao (o desvio da acao volta a pelo menos esse)
     matter-rl peso <parcela> <valor> [--motivo M]
     matter-rl relatorio [--desde 1h]      o que mudou no periodo (Markdown)
     matter-rl graficos [--saida DIR]      PNG das curvas
@@ -314,6 +315,11 @@ def main(argv: list[str] | None = None) -> int:
     mode.add_argument("modo", choices=list(system.MODES))
     mode.add_argument("--autor", default="usuario")
     mode.set_defaults(func=lambda a: send("modo", {"modo": a.modo, "autor": a.autor}))
+    explore = sub.add_parser("explorar")
+    explore.add_argument("desvio", type=float, help="o desvio minimo da acao (unidades de acao; o inicio e ~0,6)")
+    explore.add_argument("--autor", default="usuario")
+    explore.add_argument("--motivo", default="")
+    explore.set_defaults(func=lambda a: send("explorar", {"desvio": a.desvio, "autor": a.autor, "motivo": a.motivo}))
     switch = run_args(sub.add_parser("tarefa"))
     switch.add_argument("tarefa", help="o id da tarefa (assets/rl/tasks), ex.: h1b_em_pe_posturado")
     switch.set_defaults(func=command_switch)

@@ -37,7 +37,7 @@
   },
   "curriculum": {
     "comment": "Cada direcao ligada comeca no limite start e sobe step quando a nota media do acompanhamento da velocidade (0 a 1, nas decisoes andando) passa de threshold por 3 rodadas seguidas, com pelo menos minimumIterations rodadas entre uma subida e outra.",
-    "start": 0.75,
+    "start": 1.0,
     "step": 0.25,
     "threshold": 0.7,
     "minimumIterations": 50
@@ -266,5 +266,9 @@
         ]
       ]
     }
-  ]
+  ],
+  "exploration": {
+    "comment": "Uma habilidade nova reabre a exploracao: ao trocar para esta tarefa, o desvio da acao volta a pelo menos minimumStd (uma politica que ja fica de pe explora pouco e nao acha o passo). Ele cai sozinho conforme aprende.",
+    "minimumStd": 0.6
+  }
 }

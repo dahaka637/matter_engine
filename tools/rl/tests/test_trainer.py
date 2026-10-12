@@ -78,29 +78,39 @@ assert float(third.model.obs_norm.mean[i]) == 0.0 and float(third.model.obs_norm
 events = [row[0] for row in db.execute("SELECT kind FROM events WHERE run='t' ORDER BY id")]
 assert "tarefa" in events and "migracao" not in events, events
 
-# O curriculo do andar: a velocidade para frente comeca em 0,75 m/s e sobe
+# O curriculo do andar: a velocidade para frente comeca em 1,0 m/s e sobe
 # 0,25 quando ele acompanha bem (3 rodadas seguidas), guardada na tarefa do treino.
 walker = T.Trainer("andar", task="h3_andar", mode="maximo", environments=16, device="cpu", seed=3, iterations=1)
 live = json.loads(walker.live_task.read_text())
-assert live["commands"]["limits"] == {"forward": 0.75}, live["commands"].get("limits")
-assert walker.status()["commands"] == {"forward": {"limit": 0.75, "max": 4.5}}
+assert live["commands"]["limits"] == {"forward": 1.0}, live["commands"].get("limits")
+assert walker.status()["commands"] == {"forward": {"limit": 1.0, "max": 4.5}}
 walker.counters["iteration"] = 100
 for tracking in (0.9, 0.5, 0.9, 0.9):
     walker.curriculum_step(tracking)
-assert walker.command_limits["forward"] == 0.75, "a sequencia foi quebrada"
+assert walker.command_limits["forward"] == 1.0, "a sequencia foi quebrada"
 walker.curriculum_step(0.9)
-assert walker.command_limits["forward"] == 1.0
-assert json.loads(walker.live_task.read_text())["commands"]["limits"]["forward"] == 1.0
+assert walker.command_limits["forward"] == 1.25
+assert json.loads(walker.live_task.read_text())["commands"]["limits"]["forward"] == 1.25
 walker.batch.reset(5)
 forward = walker.obs_names.index("command.velocity.forward")
-assert (walker.batch.observations()[:, forward] * 3 <= 1.0 + 1e-4).all()
+assert (walker.batch.observations()[:, forward] * 3 <= 1.25 + 1e-4).all()
 for _ in range(3):
     walker.curriculum_step(0.9)
-assert walker.command_limits["forward"] == 1.0, "pelo menos 50 rodadas entre subidas"
+assert walker.command_limits["forward"] == 1.25, "pelo menos 50 rodadas entre subidas"
 kinds = [row[0] for row in db.execute("SELECT kind FROM events WHERE run='andar'")]
 assert kinds.count("curriculo") == 1, kinds
 walker.server.close()
 walker.lock.release()
+
+# Uma habilidade nova reabre a exploracao: da H1b para o andar, o desvio da
+# acao volta a pelo menos 0,6.
+before = float(third.model.log_std.exp().min())
+fifth = T.Trainer("t", task="h3_andar", mode="maximo", environments=16, device="cpu", seed=3, iterations=10)
+assert fifth.switched_from == "h1b_em_pe_posturado"
+assert float(fifth.model.log_std.exp().min()) >= 0.6 - 1e-5, (before, float(fifth.model.log_std.exp().min()))
+assert "exploracao" in [row[0] for row in db.execute("SELECT kind FROM events WHERE run='t'")]
+fifth.server.close()
+fifth.lock.release()
 print("ok")
 '''
 

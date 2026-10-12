@@ -127,6 +127,10 @@ class Trainer:
             self.db.event(run, "tarefa", f"habilidade {self.switched_from} -> {self.config.task}")
         self.restore()
         self.fix_commands()
+        if self.switched_from:
+            minimum = (json.loads(self.live_task.read_text()).get("exploration") or {}).get("minimumStd")
+            if minimum:
+                self.explore(float(minimum), "habilidade nova")
 
         self.state = "treinando"
         self.message = ""
@@ -258,6 +262,15 @@ class Trainer:
         self.curriculum["lastRaise"] = self.counters["iteration"]
         self.curriculum_streak = 0
         self.db.event(self.run, "curriculo", "velocidade: " + ", ".join(raised), data={"acompanhamento": tracking})
+
+    def explore(self, minimum: float, reason: str, author: str = "treinador") -> None:
+        """Reabre a exploracao: o desvio da acao volta a pelo menos minimum (em
+        unidades de acao) em todos os eixos. Ele cai sozinho conforme aprende."""
+        with torch.no_grad():
+            before = float(self.model.log_std.exp().mean())
+            self.model.log_std.clamp_(min=math.log(minimum))
+            after = float(self.model.log_std.exp().mean())
+        self.db.event(self.run, "exploracao", f"desvio da acao {before:.2f} -> {after:.2f} ({reason})", author)
 
     def fix_commands(self) -> None:
         """Os canais de comando passam crus pela normalizacao (valem 0 ou 1)."""
@@ -395,6 +408,9 @@ class Trainer:
                 self.config.save(self.directory / "run.json")
                 self.db.event(self.run, "modo", f"modo {system.MODES[name].label}", author)
                 self.restart_requested = True
+            return {"ok": True}
+        if command == "explorar":
+            self.explore(float(arguments["desvio"]), arguments.get("motivo", "pedido"), author)
             return {"ok": True}
         if command == "peso":
             data = json.loads(self.live_task.read_text())
