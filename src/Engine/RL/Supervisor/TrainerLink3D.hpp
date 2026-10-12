@@ -18,7 +18,7 @@ namespace MatterEngine {
 struct TrainerPaths3D {
     std::filesystem::path data;      // ~/.local/share/matter-engine/rl (ou MATTER_RL_DATA)
     std::filesystem::path database;  // data/rl.db
-    std::filesystem::path socket;    // $XDG_RUNTIME_DIR/matter-rl/control.sock
+    std::filesystem::path socket;    // $XDG_RUNTIME_DIR/matter-rl/control.sock (ou MATTER_RL_SOCKET)
     std::filesystem::path launcher;  // <repo>/tools/rl/matter-rl
 
     [[nodiscard]] std::filesystem::path run(const std::string& name) const { return data / "runs" / name; }

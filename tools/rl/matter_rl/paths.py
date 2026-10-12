@@ -11,7 +11,7 @@ DATA = Path(os.environ.get("MATTER_RL_DATA", Path.home() / ".local" / "share" / 
 RUNS = DATA / "runs"
 DATABASE = DATA / "rl.db"
 RUNTIME = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp")) / "matter-rl"
-SOCKET = RUNTIME / "control.sock"
+SOCKET = Path(os.environ.get("MATTER_RL_SOCKET", RUNTIME / "control.sock"))
 NATIVE_DIR = Path(os.environ.get("MATTER_RL_NATIVE", REPO / "build-rl" / "python"))
 
 

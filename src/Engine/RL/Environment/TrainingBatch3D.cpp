@@ -52,8 +52,9 @@ struct Environment {
     Vec3 origin;
     std::mt19937_64 rng;
     float massScale = 1.0f;
-    // O episodio.
+    // O episodio: o relogio (que pode comecar sorteado) e as decisoes jogadas.
     std::uint32_t steps = 0;
+    std::uint32_t played = 0;
     std::vector<float> previousAction;
     std::vector<float> action;
     std::vector<RagdollDriveTarget3D> targets;
@@ -338,6 +339,7 @@ void TrainingBatch3D::Impl::resetEnvironment(std::uint32_t index) {
             < random.actionDelayProbability;
     scene.physics->setRagdollFrictionScale(env.ragdoll, env.friction);
     env.steps = 0;
+    env.played = 0;
     std::fill(env.previousAction.begin(), env.previousAction.end(), 0.0f);
     std::fill(env.action.begin(), env.action.end(), 0.0f);
     writeTargets(env, {});
@@ -559,10 +561,10 @@ void TrainingBatch3D::Impl::finishEpisode(Scene& scene, std::uint32_t index, Tra
     episode.environment = index;
     episode.reason = reason;
     episode.firstContactLink = env.firstContactLink;
-    episode.steps = env.steps;
-    episode.seconds = static_cast<float>(env.steps) * static_cast<float>(task.actionRepeat) * FixedStep;
+    episode.steps = env.played;
+    episode.seconds = static_cast<float>(env.played) * static_cast<float>(task.actionRepeat) * FixedStep;
     episode.episodeReturn = static_cast<float>(env.episodeReturn);
-    const double n = std::max(1u, env.steps);
+    const double n = std::max(1u, env.played);
     double variance = 0.0;
     for (std::size_t a = 0; a < 2; ++a) {
         const double mean = env.comSum[a] / n;
@@ -640,6 +642,7 @@ void TrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> actio
     for (const std::uint32_t index : scene.environments) {
         Environment& env = environments[index];
         ++env.steps;
+        ++env.played;
         const RagdollState3D* state = physics.ragdollStateView(env.ragdoll);
         float* actor = observations.data() + index * O;
         float* criticOut = critic.data() + index * C;
@@ -759,7 +762,12 @@ void TrainingBatch3D::reset(std::uint64_t seed) {
     const std::size_t O = impl.observationSize(), C = impl.criticSize();
     for (std::uint32_t i = 0; i < impl.environments.size(); ++i) {
         impl.resetEnvironment(i);
-        const Environment& env = impl.environments[i];
+        Environment& env = impl.environments[i];
+        // No treino, o relogio de cada episodio comeca sorteado: sem isso, os
+        // mundos que aguentam ate o fim terminam todos no mesmo passo e as
+        // rodadas viram ondas (o mesmo truque do legged_gym).
+        if (impl.training())
+            env.steps = std::uniform_int_distribution<std::uint32_t>(0, impl.maximumSteps - 1)(env.rng);
         const RagdollState3D* view = impl.scenes[env.scene].physics->ragdollStateView(env.ragdoll);
         const BodyReading reading = impl.read(*view);
         impl.writeObservation(env, *view, reading, impl.observations.data() + i * O, impl.critic.data() + i * C,

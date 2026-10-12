@@ -33,6 +33,8 @@ class RunConfig:
     end_reason: str = ""
     checkpoint_minutes: float = 10.0
     evaluation_minutes: float = 10.0
+    # A politica que a tela mostra (policy_latest) sai a cada minuto.
+    export_minutes: float = 1.0
     disk_cap_gb: float = 10.0
     ppo: dict = field(default_factory=lambda: PPOSettings().to_dict())
 
@@ -446,6 +448,7 @@ class Trainer:
         self.last_evaluation_time = time.time() if self.counters["iteration"] else 0.0
         last_status = 0.0
         last_temperature = 0.0
+        last_export = time.time()
         failures = 0
         code = 0
         try:
@@ -481,6 +484,10 @@ class Trainer:
                     self.evaluate()
                 if now - self.last_save >= self.config.checkpoint_minutes * 60.0:
                     self.save()
+                    last_export = now
+                elif now - last_export >= self.config.export_minutes * 60.0:
+                    self.export("policy_latest")
+                    last_export = now
                 if now - last_status >= 2.0:
                     self.write_status()
                     last_status = now

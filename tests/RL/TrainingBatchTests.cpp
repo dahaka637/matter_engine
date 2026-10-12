@@ -144,7 +144,8 @@ void testTimeLimit() {
             truncatedSeen = true;
             require(batch.truncated()[episode.environment] == 1 && batch.terminated()[episode.environment] == 0,
                 "o limite de tempo trunca");
-            require(episode.steps == 15, "0,5 s a 30 Hz sao 15 decisoes");
+            // (O primeiro episodio de cada mundo comeca com o relogio sorteado.)
+            require(episode.steps >= 1 && episode.steps <= 15, "0,5 s a 30 Hz sao ate 15 decisoes");
             const std::size_t C = batch.criticObservationSize();
             const auto terminal = batch.terminalCriticObservations().subspan(episode.environment * C, C);
             require(finiteAll(terminal), "o critico final deveria estar guardado");

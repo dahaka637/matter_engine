@@ -146,5 +146,5 @@ class PPO:
                 count += 1
         result = {key: value / max(1, count) for key, value in totals.items()}
         result["learning_rate"] = self.learning_rate
-        result["action_std"] = float(model.log_std.exp().mean())
+        result["action_std"] = float(model.log_std.detach().exp().mean())
         return result

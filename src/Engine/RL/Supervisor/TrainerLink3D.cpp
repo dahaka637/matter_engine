@@ -43,7 +43,7 @@ TrainerPaths3D defaultTrainerPaths3D(const std::filesystem::path& sourceRoot) {
     const std::filesystem::path home = environmentPath("HOME", "/tmp");
     paths.data = environmentPath("MATTER_RL_DATA", home / ".local" / "share" / "matter-engine" / "rl");
     paths.database = paths.data / "rl.db";
-    paths.socket = environmentPath("XDG_RUNTIME_DIR", "/tmp") / "matter-rl" / "control.sock";
+    paths.socket = environmentPath("MATTER_RL_SOCKET", environmentPath("XDG_RUNTIME_DIR", "/tmp") / "matter-rl" / "control.sock");
     paths.launcher = sourceRoot / "tools" / "rl" / "matter-rl";
     return paths;
 }
