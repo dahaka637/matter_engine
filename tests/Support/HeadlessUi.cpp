@@ -122,6 +122,30 @@ HeadlessUi::~HeadlessUi() {
     ImGui::DestroyContext();
 }
 
+std::vector<std::string> sweepIdConflicts(const std::function<void()>& drawFrame, float step) {
+    ImGuiIO& io = ImGui::GetIO();
+    const ImGuiContext& g = *ImGui::GetCurrentContext();
+    std::vector<std::string> conflicts;
+    for (float y = step * 0.5f; y < io.DisplaySize.y; y += step) {
+        for (float x = step * 0.5f; x < io.DisplaySize.x; x += step) {
+            io.MousePos = { x, y };
+            int count = 0;
+            for (int frame = 0; frame < 2; ++frame) {
+                io.DeltaTime = 1.0f / 60.0f;
+                ImGui::NewFrame();
+                drawFrame();
+                count = g.HoveredIdPreviousFrameItemCount;
+                ImGui::Render();
+            }
+            if (count > 1)
+                conflicts.push_back(std::to_string(count) + " itens com o mesmo ID em (" + std::to_string(static_cast<int>(x))
+                    + ", " + std::to_string(static_cast<int>(y)) + ")");
+        }
+    }
+    io.MousePos = { -FLT_MAX, -FLT_MAX };
+    return conflicts;
+}
+
 const std::vector<std::string>& HeadlessUi::errors() const {
     return imguiErrors;
 }

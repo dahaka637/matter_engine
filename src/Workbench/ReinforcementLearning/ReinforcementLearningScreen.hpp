@@ -38,6 +38,9 @@ public:
         std::string task = "h1_ficar_em_pe";
     };
 
+    // O que o mundo mostra: o jogador inteiro, so o esqueleto ou so os colisores.
+    enum class Display { Full, Skeleton, Colliders };
+
     ReinforcementLearningScreen(Options options, std::function<void()> onBack);
     ~ReinforcementLearningScreen();
 
@@ -54,6 +57,10 @@ public:
     [[nodiscard]] bool renderViewport(int width, int height) { return render(width, height); }
     [[nodiscard]] const TrainingHistory3D& history() const { return m_history; }
     void push(int direction, float newtons);
+    void setDisplay(Display display) {
+        m_display = display;
+        m_dirty = true;
+    }
 
 private:
     struct ModelOutcome {
@@ -121,8 +128,7 @@ private:
     Modeling::Image m_image;
     float m_aspect = 0.0f;
     bool m_dirty = true;
-    bool m_showMesh = true;
-    bool m_showColliders = false;
+    Display m_display = Display::Full;
     bool m_showCenterOfMass = true;
     bool m_showContacts = true;
     // 100 N por 0,2 s no peito: o que a H1 (sem treino de empurroes) aguenta.

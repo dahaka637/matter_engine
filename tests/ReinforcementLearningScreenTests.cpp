@@ -26,6 +26,7 @@
 using namespace MatterEngine;
 using TestSupport::FakeCanvas;
 using TestSupport::snapshot;
+using TestSupport::sweepIdConflicts;
 using Workbench::ReinforcementLearningScreen;
 
 namespace {
@@ -182,6 +183,29 @@ int main() {
         require(screen.history().iterations.size() == 50 && screen.history().evaluations.size() == 10,
             "o historico do banco deveria aparecer");
         snapshot(canvas, "rl_tela");
+
+        // Nenhum ID repetido (o ImGui so avisa com o mouse em cima): a varredura
+        // acha dois botoes iguais e nao acha nada na tela.
+        const auto duplicates = sweepIdConflicts([] {
+            ImGui::SetNextWindowPos({ 0.0f, 0.0f });
+            ImGui::Begin("teste");
+            ImGui::Button("Igual", { 200.0f, 60.0f });
+            ImGui::Button("Igual", { 200.0f, 60.0f });
+            ImGui::End();
+        });
+        require(!duplicates.empty(), "a varredura deveria achar dois botoes com o mesmo ID");
+        const auto conflicts = sweepIdConflicts([&] { screen.draw(canvas, 1.0f); });
+        require(conflicts.empty(), "IDs repetidos na tela: " + (conflicts.empty() ? std::string() : conflicts.front()));
+
+        // O que o mundo mostra: o jogador, so o esqueleto, so os colisores.
+        screen.setDisplay(ReinforcementLearningScreen::Display::Skeleton);
+        frame(screen, canvas, 2);
+        snapshot(canvas, "rl_tela_esqueleto");
+        screen.setDisplay(ReinforcementLearningScreen::Display::Colliders);
+        frame(screen, canvas, 2);
+        snapshot(canvas, "rl_tela_colisores");
+        screen.setDisplay(ReinforcementLearningScreen::Display::Full);
+        frame(screen, canvas, 2);
 
         // A politica de mentira segura a pose base: depois de 1 s o corpo
         // ainda esta de pe; um empurrao forte o tira do lugar. Com uma politica

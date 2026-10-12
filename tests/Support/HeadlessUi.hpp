@@ -8,6 +8,7 @@
 #include "Engine/Modeling/Raster/Image.hpp"
 #include "Workbench/PlayerInspector/CanvasTarget.hpp"
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -32,6 +33,13 @@ struct FakeCanvas final : Workbench::CanvasTarget {
 
 // A foto do ultimo quadro quando MATTERENGINE_UI_SNAPSHOT aponta uma pasta.
 void snapshot(const FakeCanvas& canvas, const char* name);
+
+// Os conflitos de ID do ImGui (o "N visible items with conflicting ID" que so
+// aparece com o mouse em cima de um dos itens): o mouse varre a tela numa grade
+// e, em cada ponto, o quadro seguinte conta os itens com o ID do que ficou
+// embaixo. drawFrame desenha a tela (entre NewFrame e Render, sem avancar
+// nada). Devolve um texto por ponto com conflito.
+[[nodiscard]] std::vector<std::string> sweepIdConflicts(const std::function<void()>& drawFrame, float step = 24.0f);
 
 // O contexto ImGui da tela (um por vez).
 class HeadlessUi {

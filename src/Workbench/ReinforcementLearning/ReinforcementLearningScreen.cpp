@@ -320,7 +320,7 @@ bool ReinforcementLearningScreen::render(int width, int height) {
     if (model.mesh.hasSkin()) posed = model.mesh.posedPositions(skinningTransforms(model.skeleton, pose));
 
     std::vector<Highlight> highlights;
-    if (m_showColliders && m_colliders) {
+    if (m_display == Display::Colliders && m_colliders) {
         const RagdollAnimationPose3D& links = m_skeleton->gameLinks();
         const RagdollColliderWireframe3D wireframe =
             poseRagdollColliderWireframe3D(profile, *m_colliders, links.linkPositions, links.linkOrientations, false);
@@ -365,9 +365,9 @@ bool ReinforcementLearningScreen::render(int width, int height) {
     scene.meshPositions = posed;
     scene.highlights = highlights;
     InspectionStyle style;
-    style.surface = m_showMesh ? SurfaceMode::Solid : SurfaceMode::Hidden;
-    style.skeleton = !m_showMesh;
-    style.joints = !m_showMesh;
+    style.surface = m_display == Display::Full ? SurfaceMode::Solid : SurfaceMode::Hidden;
+    style.skeleton = m_display == Display::Skeleton;
+    style.joints = m_display == Display::Skeleton;
     style.hud = false;
     style.gizmo = false;
     style.scaleBar = false;
@@ -563,10 +563,6 @@ void ReinforcementLearningScreen::drawToolbar() {
         if (ImGui::Button(view.label, { ui(70.0f), ui(30.0f) })) frame(view.yaw, view.pitch);
         ImGui::SameLine();
     }
-    if (ImGui::Checkbox("Malha", &m_showMesh)) m_dirty = true;
-    ImGui::SameLine();
-    if (ImGui::Checkbox("Colisores", &m_showColliders)) m_dirty = true;
-    ImGui::SameLine();
     if (ImGui::Checkbox("Centro de massa", &m_showCenterOfMass)) m_dirty = true;
     tooltip("O centro de massa (amarelo) e a projeção dele no chão: dentro dos pés, ele está equilibrado.");
     ImGui::SameLine();
@@ -586,6 +582,23 @@ void ReinforcementLearningScreen::drawToolbar() {
         ImGui::EndCombo();
     }
     tooltip("Recente: o último checkpoint do treino (recarrega sozinha). Melhor: a de maior nota na avaliação.");
+    ImGui::SameLine();
+    struct DisplayOption {
+        Display display;
+        const char* label;
+    };
+    constexpr std::array<DisplayOption, 3> Displays { { { Display::Full, "Render completo" },
+        { Display::Skeleton, "Só esqueleto" }, { Display::Colliders, "Só colisores" } } };
+    ImGui::SetNextItemWidth(ui(150.0f));
+    if (ImGui::BeginCombo("##RLDisplay", Displays[static_cast<std::size_t>(m_display)].label)) {
+        for (const DisplayOption& option : Displays)
+            if (ImGui::Selectable(option.label, m_display == option.display)) {
+                m_display = option.display;
+                m_dirty = true;
+            }
+        ImGui::EndCombo();
+    }
+    tooltip("O que aparece no mundo: o jogador inteiro, só o esqueleto ou só as caixas de colisão da física.");
     ImGui::SameLine();
     const std::string pause = m_paused ? UI::FontAwesome::label(UI::FontAwesome::Play, "Continuar")
                                        : UI::FontAwesome::label(UI::FontAwesome::Pause, "Congelar");
@@ -655,12 +668,15 @@ void ReinforcementLearningScreen::drawPushes() {
     ImGui::SetNextItemWidth(ui(180.0f));
     ImGui::SliderFloat("##RLPushForce", &m_pushNewtons, 50.0f, 800.0f, "%.0f N");
     const std::array<const char*, 4> labels { "Frente", "Trás", "Esquerda", "Direita" };
+    // (Os rotulos repetem os das vistas, "Frente": IDs proprios.)
+    ImGui::PushID("RLPush");
     for (int i = 0; i < 4; ++i) {
         ImGui::SameLine();
         ImGui::BeginDisabled(!m_viewer);
         if (ImGui::Button(labels[static_cast<std::size_t>(i)], { ui(84.0f), ui(28.0f) })) push(i, m_pushNewtons);
         ImGui::EndDisabled();
     }
+    ImGui::PopID();
 }
 
 void ReinforcementLearningScreen::drawCharts(float height) {
