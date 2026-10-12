@@ -197,6 +197,8 @@ void testCommands() {
         standing += c.x == 0.0f ? 1 : 0;
     }
     require(standing > 4 && standing < 40, "uma fatia dos sorteios pede ficar parado");
+    for (std::size_t e = 0; e < 64; ++e)
+        if (batch.view(e).posture == 0) require(commandOf(e).x == 0.0f, "a postura natural fica so parada (o ensaio da H1)");
     require(std::abs(batch.view(1).origin.x - batch.view(0).origin.x) > 200.0f, "os mundos de andar ficam longe");
     TrainingTask3D task = batch.task();
     task.commands.limits.forward = 1.0f;

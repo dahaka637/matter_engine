@@ -2,15 +2,16 @@
   "schema": "matter-rl-task-1",
   "id": "h3_andar",
   "displayName": "Andar",
-  "comment": "H3: andar seguindo um comando de velocidade (para frente, de 0 ao trote da locomocao padrao, 4,5 m/s), saindo e parando na postura de alerta. A velocidade maxima sobe pelo curriculo conforme ele acompanha. 25% dos sorteios pedem ficar parado (o ensaio da H1b), e 10% dos episodios comecam na postura natural. Costas, lados e giro ja estao prontos na mesma tarefa: basta um maximo acima de 0 em commands (os valores de proximo passo estao em commands.prontos) e ligar as baterias deles.",
+  "comment": "H3: andar seguindo um comando de velocidade (para frente, de 0 ao trote da locomocao padrao, 4,5 m/s), saindo e parando na postura de alerta. A velocidade maxima sobe pelo curriculo conforme ele acompanha. 25% dos sorteios pedem ficar parado (o ensaio da H1b), e 15% dos episodios ficam parados na postura natural (o ensaio da H1: sem pedidos de andar nela, que a faziam esquecer o parado). Costas, lados e giro ja estao prontos na mesma tarefa: basta um maximo acima de 0 em commands (os valores de proximo passo estao em commands.prontos) e ligar as baterias deles.",
   "postures": [
     {
       "id": "natural",
-      "weight": 0.1
+      "weight": 0.15,
+      "standingOnly": true
     },
     {
       "id": "alerta",
-      "weight": 0.9
+      "weight": 0.85
     }
   ],
   "body": "../bodies/football_player_v1.json",

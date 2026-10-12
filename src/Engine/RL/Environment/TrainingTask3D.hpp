@@ -60,6 +60,9 @@ struct TrainingRange3D {
 struct TrainingPostureWeight3D {
     std::string id;
     float weight = 1.0f;
+    // So parado nesta postura (o ensaio de uma habilidade de ficar de pe numa
+    // tarefa de andar: pedidos de andar nela a fariam esquecer o parado).
+    bool standingOnly = false;
 };
 
 // Um trecho do comando de velocidade numa bateria: a partir de seconds, a
@@ -83,7 +86,7 @@ struct TrainingTask3D {
     float episodeSeconds = 20.0f;
     std::string groundMaterial = "grass";
     // As posturas pedidas; sem a lista, so a pose base ("natural").
-    std::vector<TrainingPostureWeight3D> postures { { "natural", 1.0f } };
+    std::vector<TrainingPostureWeight3D> postures { { "natural", 1.0f, false } };
     // A distancia entre os mundos de uma cena (e o chao cobre cada um com
     // metade dela em volta): andando, ninguem sai do chao nem tromba no vizinho.
     float worldSpacingMeters = 16.0f;

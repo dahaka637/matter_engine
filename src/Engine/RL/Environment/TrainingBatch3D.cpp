@@ -164,6 +164,8 @@ struct TrainingBatch3D::Impl {
     // de cada uma, e a forcada (-1 = a mistura).
     std::vector<std::uint32_t> taskPostures;
     std::vector<float> postureCumulative;
+    // As posturas so de parado (indices em body.postures).
+    std::vector<std::uint8_t> standingOnly;
     int forcedPosture = -1;
     // Os eixos do tronco e dos bracos (andando, a postura pedida vale so neles).
     std::vector<std::uint8_t> upperDof;
@@ -343,11 +345,13 @@ void TrainingBatch3D::Impl::writeTargets(Environment& env, std::span<const float
 void TrainingBatch3D::Impl::resolvePostures() {
     taskPostures.clear();
     postureCumulative.clear();
+    standingOnly.assign(body.postures.size(), 0);
     float total = 0.0f;
     for (const TrainingPostureWeight3D& entry : task.postures) {
         const int index = findRLPosture3D(body, entry.id);
         if (index < 0) throw std::runtime_error("lote de RL: o corpo nao tem a postura " + entry.id);
         taskPostures.push_back(static_cast<std::uint32_t>(index));
+        if (entry.standingOnly) standingOnly[static_cast<std::size_t>(index)] = 1;
         total += std::max(0.0f, entry.weight);
         postureCumulative.push_back(total);
     }
@@ -386,7 +390,7 @@ void TrainingBatch3D::Impl::updateCommand(Environment& env, bool start) {
     const float forward = limit(c.forward, c.limits.forward), backward = limit(c.backward, c.limits.backward);
     const float lateral = limit(c.lateral, c.limits.lateral), yaw = limit(c.yawRate, c.limits.yawRate);
     env.command = {};
-    if (forward + backward + lateral + yaw <= 0.0f
+    if (forward + backward + lateral + yaw <= 0.0f || standingOnly[env.posture]
         || std::uniform_real_distribution<float>(0.0f, 1.0f)(env.rng) < c.standingFraction)
         return;
     const Vec3 command { std::uniform_real_distribution<float>(-backward, forward)(env.rng),
