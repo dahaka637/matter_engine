@@ -63,6 +63,8 @@ CREATE TABLE IF NOT EXISTS iterations (
     grad_norm REAL,
     collect_seconds REAL,
     update_seconds REAL,
+    velocity_tracking REAL,
+    forward_limit REAL,
     PRIMARY KEY (run, iteration)
 );
 CREATE TABLE IF NOT EXISTS evaluations (
@@ -85,6 +87,9 @@ CREATE TABLE IF NOT EXISTS evaluations (
     joint_speed REAL,
     foot_turn REAL,
     pose_error REAL,
+    velocity_error REAL,
+    lateral_drift REAL,
+    goal_error REAL,
     PRIMARY KEY (run, iteration, battery, solver)
 );
 CREATE TABLE IF NOT EXISTS checkpoints (
@@ -129,9 +134,14 @@ class Database:
             self.connection.executescript(SCHEMA)
             # Colunas que entraram depois (bancos de antes delas).
             known = {row[1] for row in self.connection.execute("PRAGMA table_info(evaluations)")}
-            for column in ("turn", "joint_speed", "foot_turn", "pose_error"):
+            for column in ("turn", "joint_speed", "foot_turn", "pose_error", "velocity_error", "lateral_drift",
+                           "goal_error"):
                 if column not in known:
                     self.connection.execute(f"ALTER TABLE evaluations ADD COLUMN {column} REAL")
+            known = {row[1] for row in self.connection.execute("PRAGMA table_info(iterations)")}
+            for column in ("velocity_tracking", "forward_limit"):
+                if column not in known:
+                    self.connection.execute(f"ALTER TABLE iterations ADD COLUMN {column} REAL")
             self.connection.commit()
         self.connection.row_factory = sqlite3.Row
 
@@ -207,12 +217,13 @@ class Database:
                                (SELECT MAX(iteration) FROM evaluations WHERE run=?)""", (run, run)).fetchall()
         if not rows:
             return {}
-        from .evaluation import BASE_BATTERY, battery_posture
+        from .evaluation import BASE_BATTERY, battery_kind, battery_posture
         keys = ("stand_fraction", "mean_seconds", "sway", "foot_drift", "action_rate", "effort", "upright", "turn",
-                "joint_speed", "foot_turn", "pose_error", "score")
+                "joint_speed", "foot_turn", "pose_error", "velocity_error", "lateral_drift", "goal_error", "score")
         batteries: dict[str, dict] = {}
         for row in rows:
-            entry = batteries.setdefault(row["battery"], {"posture": battery_posture(row["battery"]), "solvers": {}})
+            entry = batteries.setdefault(row["battery"], {"posture": battery_posture(row["battery"]),
+                                                          "kind": battery_kind(row["battery"]), "solvers": {}})
             entry["solvers"][row["solver"]] = ({key: row[key] if key in row.keys() else None for key in keys}
                                                | {"ends": json.loads(row["ends"] or "{}")})
         first = batteries.get(BASE_BATTERY) or next(iter(batteries.values()))

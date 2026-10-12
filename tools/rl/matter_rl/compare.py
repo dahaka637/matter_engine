@@ -37,7 +37,8 @@ def resolve(run: str, spec: str) -> storage.CheckpointRef:
 
 
 def evaluate(run: str, spec: str, threads: int = 2, record: Path | None = None, watch: tuple[int, ...] = (0,),
-             solvers: list[str] | None = None, postures: list[str] | None = None) -> tuple[storage.CheckpointRef, dict]:
+             solvers: list[str] | None = None, postures: list[str] | None = None,
+             names: list[str] | None = None) -> tuple[storage.CheckpointRef, dict]:
     """As baterias do treino (a tarefa com os pesos de agora) num checkpoint:
     {bateria: {solver: metricas}}."""
     os.nice(10)  # o desktop e o treinador passam na frente
@@ -50,7 +51,7 @@ def evaluate(run: str, spec: str, threads: int = 2, record: Path | None = None, 
     if solvers:
         battery.solvers = {name: value for name, value in battery.solvers.items() if name in solvers}
     torch.set_num_threads(1)
-    evaluator = Evaluator(native.load(), paths.run_dir(run) / "tarefa.json", threads, battery, postures)
+    evaluator = Evaluator(native.load(), paths.run_dir(run) / "tarefa.json", threads, battery, postures, names)
     names = evaluator.observation_names()
     if names != state["obs_names"]:
         # Um checkpoint de antes de uma entrada nova: a mesma migracao do treino
@@ -74,6 +75,10 @@ ROWS = [
     ("pe girando no chao: pior mundo (graus)", lambda m: f"{math.degrees(m.get('foot_turn_worst', 0.0)):.1f}"),
     ("velocidade das juntas (rad/s)", lambda m: f"{m.get('joint_speed', 0.0):.3f}"),
     ("erro da postura pedida (graus, RMS das juntas)", lambda m: f"{math.degrees(m.get('pose_error', 0.0)):.1f}"),
+    ("andar: erro da velocidade (m/s, RMS)", lambda m: f"{m.get('velocity_error', 0.0):.2f}"),
+    ("andar: desvio para o lado (m)", lambda m: f"{m.get('lateral_drift', 0.0):.2f}"),
+    ("andar: distancia (m)", lambda m: f"{m.get('distance', 0.0):.1f}"),
+    ("ir ate o ponto: erro no fim (m)", lambda m: f"{m['goal_error']:.2f}" if "goal_error" in m else "—"),
     ("tremor (mudanca da acao)", lambda m: f"{m['action_rate']:.4f}"),
     ("esforco", lambda m: f"{m['effort']:.3f}"),
     ("postura", lambda m: f"{m['upright']:.3f}"),

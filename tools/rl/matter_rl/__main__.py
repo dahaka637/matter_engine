@@ -246,11 +246,17 @@ def command_sheet(args: argparse.Namespace) -> int:
         from . import compare
         reference = compare.resolve(args.run, args.checkpoint)
         record = paths.run_dir(args.run) / "folhas" / f"ck-{reference.iteration:09d}-mundo{args.mundo}"
+        from .evaluation import Evaluator, battery_name, task_batteries
+        name = args.bateria or battery_name(args.postura)
+        spec = next((b for b in task_batteries(paths.run_dir(args.run) / "tarefa.json") if b["name"] == name), None)
+        if spec is None:
+            print(f"a tarefa do treino nao tem a bateria {name}", file=sys.stderr)
+            return 1
         compare.evaluate(args.run, args.checkpoint, record=record, watch=(args.mundo,), solvers=[args.solver],
-                         postures=[args.postura])
-        natural = args.postura == "natural"
-        dump = record.with_name(f"{record.stem}-{args.solver if natural else args.postura + '-' + args.solver}.dump")
-        scenario = scenario or f"{'parado' if natural else args.postura}_mundo{args.mundo}_{args.solver}"
+                         names=[name])
+        label, scene = Evaluator.labels(spec, args.solver)
+        dump = record.with_name(f"{record.stem}-{label}.dump")
+        scenario = scenario or f"{scene}_mundo{args.mundo}_{args.solver}"
     else:
         dump = Path(args.episodio) if args.episodio else latest_dump(args.run)
     if dump is None:
@@ -334,6 +340,7 @@ def main(argv: list[str] | None = None) -> int:
     sheet.add_argument("--mundo", type=int, default=0)
     sheet.add_argument("--solver", default="jogo", choices=["jogo", "treino"])
     sheet.add_argument("--postura", default="natural", help="a postura pedida (natural, alerta)")
+    sheet.add_argument("--bateria", help="a bateria pelo nome (andar_frente_v1, ir_ate_10m_v1...); sem ela, a de pe da postura")
     sheet.add_argument("--de", type=float, help="so o trecho a partir de (s)")
     sheet.add_argument("--ate", type=float, help="so o trecho ate (s)")
     sheet.set_defaults(func=command_sheet)

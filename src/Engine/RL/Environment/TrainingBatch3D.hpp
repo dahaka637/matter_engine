@@ -48,6 +48,9 @@ struct TrainingBatchSettings3D {
     // habilidade e o visualizador. Vazio = a mistura da tarefa no treino (a
     // primeira postura dela na avaliacao).
     std::string posture;
+    // O roteiro do comando de velocidade numa bateria de andar (trechos por
+    // tempo do episodio). Vazio na avaliacao = parado.
+    std::vector<TrainingCommandStep3D> commandSchedule;
 };
 
 enum class TrainingEndReason3D : std::uint8_t {
@@ -85,6 +88,15 @@ struct TrainingEpisode3D {
     float footTurnMax = 0.0f;
     // O quanto as juntas ficam longe da postura pedida (RMS, rad).
     float poseErrorRms = 0.0f;
+    // Andar: o erro da velocidade no plano (m/s) e do giro (rad/s), em RMS; a
+    // nota media do acompanhamento nas decisoes com comando de andar (-1 sem
+    // nenhuma: o curriculo usa); a distancia do comeco e o desvio para o lado
+    // do rumo inicial (m).
+    float velocityErrorRms = 0.0f;
+    float yawRateErrorRms = 0.0f;
+    float velocityTracking = -1.0f;
+    float distance = 0.0f;
+    float lateralDrift = 0.0f;
 };
 
 // Um mundo de treino visto por fora (o visualizador, a gravacao).
@@ -92,8 +104,12 @@ struct TrainingEnvironmentView3D {
     const RagdollState3D* state = nullptr;
     Vec3 origin;
     std::uint32_t steps = 0;
-    // A postura do episodio (o indice em RLBody3D::postures).
+    // A postura do episodio (o indice em RLBody3D::postures) e o comando de
+    // velocidade de agora (m/s para frente e para a esquerda, giro em rad/s).
     std::uint32_t posture = 0;
+    Vec3 command;
+    // O rumo no comeco do episodio (rad, do eixo x do mundo).
+    float startHeading = 0.0f;
     Vec3 pushForce;
     int pushLink = -1;
 };
@@ -136,6 +152,9 @@ public:
     void setPosture(const std::string& id);
     // As posturas que a tarefa pede, na ordem dela.
     [[nodiscard]] std::vector<std::string> taskPostureIds() const;
+    // Um comando de velocidade fixo num mundo (o visualizador), ate soltar.
+    void setCommand(std::size_t environment, Vec3 command);
+    void clearCommand(std::size_t environment);
 
     // Todos os mundos recomecam (sementes derivadas de seed).
     void reset(std::uint64_t seed);

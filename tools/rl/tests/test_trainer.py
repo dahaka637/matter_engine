@@ -64,7 +64,7 @@ third = T.Trainer("t", task="h1b_em_pe_posturado", mode="maximo", environments=1
 third.config.evaluation_minutes = 60.0  # so a avaliacao imediata da habilidade nova
 assert third.switched_from == "h1_ficar_em_pe"
 assert json.loads(third.live_task.read_text())["id"] == "h1b_em_pe_posturado"
-assert third.obs_names == second.obs_names and third.obs_names[-1] == "command.posture.alerta"
+assert third.obs_names == second.obs_names and "command.posture.alerta" in third.obs_names
 assert third.counters["iteration"] == 6 and third.best["iteration"] == -1
 assert third.bests["h1_ficar_em_pe"]["iteration"] == h1_best["iteration"]
 assert third.loop() == 0  # avalia logo na primeira rodada (habilidade nova)
@@ -78,6 +78,29 @@ assert float(third.model.obs_norm.mean[i]) == 0.0 and float(third.model.obs_norm
 events = [row[0] for row in db.execute("SELECT kind FROM events WHERE run='t' ORDER BY id")]
 assert "tarefa" in events and "migracao" not in events, events
 
+# O curriculo do andar: a velocidade para frente comeca em 0,75 m/s e sobe
+# 0,25 quando ele acompanha bem (3 rodadas seguidas), guardada na tarefa do treino.
+walker = T.Trainer("andar", task="h3_andar", mode="maximo", environments=16, device="cpu", seed=3, iterations=1)
+live = json.loads(walker.live_task.read_text())
+assert live["commands"]["limits"] == {"forward": 0.75}, live["commands"].get("limits")
+assert walker.status()["commands"] == {"forward": {"limit": 0.75, "max": 4.5}}
+walker.counters["iteration"] = 100
+for tracking in (0.9, 0.5, 0.9, 0.9):
+    walker.curriculum_step(tracking)
+assert walker.command_limits["forward"] == 0.75, "a sequencia foi quebrada"
+walker.curriculum_step(0.9)
+assert walker.command_limits["forward"] == 1.0
+assert json.loads(walker.live_task.read_text())["commands"]["limits"]["forward"] == 1.0
+walker.batch.reset(5)
+forward = walker.obs_names.index("command.velocity.forward")
+assert (walker.batch.observations()[:, forward] * 3 <= 1.0 + 1e-4).all()
+for _ in range(3):
+    walker.curriculum_step(0.9)
+assert walker.command_limits["forward"] == 1.0, "pelo menos 50 rodadas entre subidas"
+kinds = [row[0] for row in db.execute("SELECT kind FROM events WHERE run='andar'")]
+assert kinds.count("curriculo") == 1, kinds
+walker.server.close()
+walker.lock.release()
 print("ok")
 '''
 

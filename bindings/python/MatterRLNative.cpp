@@ -7,6 +7,7 @@
 #include <nanobind/ndarray.h>
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
+#include <nanobind/stl/array.h>
 
 #include "Engine/RL/Environment/TrainingBatch3D.hpp"
 #include "Engine/RL/Policy/PolicyRuntime3D.hpp"
@@ -76,7 +77,8 @@ NB_MODULE(matter_rl_native, m) {
             "__init__",
             [](TrainingBatch3D* self, const std::string& task, std::uint32_t environments, std::uint32_t perScene,
                 std::uint32_t threads, std::uint64_t seed, bool evaluation, float evaluationSeconds,
-                int solverPosition, int solverVelocity, const std::string& posture) {
+                int solverPosition, int solverVelocity, const std::string& posture,
+                const std::vector<std::array<float, 4>>& schedule) {
                 TrainingBatchSettings3D settings;
                 settings.taskPath = task;
                 settings.environmentCount = environments;
@@ -88,12 +90,14 @@ NB_MODULE(matter_rl_native, m) {
                 settings.solverPositionIterations = solverPosition;
                 settings.solverVelocityIterations = solverVelocity;
                 settings.posture = posture;
+                for (const auto& [seconds, forward, lateral, yaw] : schedule)
+                    settings.commandSchedule.push_back({ seconds, forward, lateral, yaw });
                 nb::gil_scoped_release release;
                 new (self) TrainingBatch3D(settings);
             },
             "task"_a, "environments"_a = 256, "per_scene"_a = 4, "threads"_a = 0, "seed"_a = 1,
             "evaluation"_a = false, "evaluation_seconds"_a = 60.0f, "solver_position"_a = -1,
-            "solver_velocity"_a = -1, "posture"_a = "")
+            "solver_velocity"_a = -1, "posture"_a = "", "schedule"_a = std::vector<std::array<float, 4>> {})
         .def_prop_ro("num_envs", &TrainingBatch3D::environmentCount)
         .def_prop_ro("obs_size", &TrainingBatch3D::observationSize)
         .def_prop_ro("critic_size", &TrainingBatch3D::criticObservationSize)
@@ -121,6 +125,27 @@ NB_MODULE(matter_rl_native, m) {
                 return ids;
             })
         .def("set_posture", &TrainingBatch3D::setPosture, "posture"_a)
+        .def(
+            "set_command",
+            [](TrainingBatch3D& b, std::size_t env, float forward, float lateral, float yaw) {
+                b.setCommand(env, { forward, lateral, yaw });
+            },
+            "env"_a, "forward"_a, "lateral"_a = 0.0f, "yaw"_a = 0.0f)
+        .def("clear_command", &TrainingBatch3D::clearCommand, "env"_a)
+        .def("root_positions",
+            [](const TrainingBatch3D& b) {
+                // A pelve de cada mundo (m, no mundo) e a origem dele.
+                const std::size_t n = b.environmentCount();
+                auto* data = new float[std::max<std::size_t>(1, n) * 6];
+                for (std::size_t e = 0; e < n; ++e) {
+                    const TrainingEnvironmentView3D view = b.view(e);
+                    const Vec3 p = view.state ? view.state->links.front().position : Vec3 {};
+                    const float values[6] { p.x, p.y, p.z, view.origin.x, view.origin.y, view.startHeading };
+                    std::copy(values, values + 6, data + e * 6);
+                }
+                nb::capsule owner(data, [](void* p) noexcept { delete[] static_cast<float*>(p); });
+                return nb::ndarray<nb::numpy, float, nb::ndim<2>>(data, { n, 6 }, owner);
+            })
         .def("observation_names", [](const TrainingBatch3D& b) { return names(b.observationLayout()); })
         .def("critic_names", [](const TrainingBatch3D& b) { return names(b.criticObservationLayout()); })
         .def("action_names", [](const TrainingBatch3D& b) { return names(b.actionLayout()); })
@@ -174,9 +199,10 @@ NB_MODULE(matter_rl_native, m) {
                 // Colunas: mundo, razao, primeiro link no chao, lado da queda,
                 // decisoes, segundos, retorno, oscilacao, deriva dos pes,
                 // mudanca de acao, esforco, velocidade das juntas, vertical,
-                // giro do tronco, giro dos pes no chao, erro da postura.
+                // giro do tronco, giro dos pes no chao, erro da postura, erro da
+                // velocidade e do giro, acompanhamento, distancia, desvio lateral.
                 const auto episodes = b.finishedEpisodes();
-                constexpr std::size_t Columns = 16;
+                constexpr std::size_t Columns = 21;
                 auto* data = new float[std::max<std::size_t>(1, episodes.size()) * Columns];
                 for (std::size_t i = 0; i < episodes.size(); ++i) {
                     const TrainingEpisode3D& e = episodes[i];
@@ -197,6 +223,11 @@ NB_MODULE(matter_rl_native, m) {
                     row[13] = e.trunkTurnRms;
                     row[14] = e.footTurnMax;
                     row[15] = e.poseErrorRms;
+                    row[16] = e.velocityErrorRms;
+                    row[17] = e.yawRateErrorRms;
+                    row[18] = e.velocityTracking;
+                    row[19] = e.distance;
+                    row[20] = e.lateralDrift;
                 }
                 nb::capsule owner(data, [](void* p) noexcept { delete[] static_cast<float*>(p); });
                 return nb::ndarray<nb::numpy, float, nb::ndim<2>>(data, { episodes.size(), Columns }, owner);

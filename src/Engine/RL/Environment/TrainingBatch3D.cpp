@@ -20,7 +20,6 @@ constexpr float FixedStep = 1.0f / 120.0f;
 constexpr float Gravity = 9.81f;
 // Distancia entre os mundos de uma cena: longe o bastante para nunca se
 // tocarem dentro do raio em que o episodio vale.
-constexpr float EnvironmentSpacing = 16.0f;
 constexpr std::size_t KeyBodyCount = 5;
 constexpr std::size_t RewardCount = TrainingRewardComponentNames3D.size();
 // Os canais do critico alem da observacao: atrito, massa, forca, atraso, o
@@ -57,6 +56,17 @@ struct Environment {
     std::uint32_t played = 0;
     // A postura pedida neste episodio (o indice em body.postures).
     std::uint32_t posture = 0;
+    // O comando de velocidade (x para frente, y para a esquerda, z o giro), o
+    // tempo ate o proximo sorteio e o comando fixo de fora (o visualizador).
+    Vec3 command;
+    float commandTimer = 0.0f;
+    bool commandForced = false;
+    Vec3 forcedCommand;
+    // Os relogios de cada pe: ha quanto tempo apoiado e ha quanto no ar.
+    std::array<float, 2> footContactTime {};
+    std::array<float, 2> footAirTime {};
+    // O rumo no comeco do episodio (o desvio para o lado e medido dele).
+    float startHeading = 0.0f;
     // O limite deste episodio (no treino, a duracao da tarefa +-20%: sem isso
     // as quedas do comeco agrupam as fases e, sem quedas depois, os fins
     // ficam sincronizados para sempre).
@@ -90,6 +100,10 @@ struct Environment {
     double uprightSum = 0.0;
     double trunkTurnSquares = 0.0;
     double poseErrorSquares = 0.0;
+    double velocityErrorSquares = 0.0;
+    double yawErrorSquares = 0.0;
+    double trackingSum = 0.0;
+    std::uint32_t movingSteps = 0;
 };
 
 struct Scene {
@@ -151,6 +165,8 @@ struct TrainingBatch3D::Impl {
     std::vector<std::uint32_t> taskPostures;
     std::vector<float> postureCumulative;
     int forcedPosture = -1;
+    // Os eixos do tronco e dos bracos (andando, a postura pedida vale so neles).
+    std::vector<std::uint8_t> upperDof;
     std::array<std::uint32_t, KeyBodyCount> keyBodies {};
     std::uint32_t workers = 1;
     std::uint32_t maximumSteps = 600;
@@ -165,6 +181,7 @@ struct TrainingBatch3D::Impl {
     void buildLayouts();
     void resolvePostures();
     [[nodiscard]] std::uint32_t choosePosture(Environment& env) const;
+    void updateCommand(Environment& env, bool start);
     void createWorld();
     void configureEpisodeLength();
     void resetEnvironment(std::uint32_t index);
@@ -207,6 +224,11 @@ void TrainingBatch3D::Impl::buildLayouts() {
     // zero = a base). No fim: uma politica sem ele le o comeco igual.
     for (std::size_t p = 1; p < body.postures.size(); ++p)
         o.channels.push_back({ "command.posture." + body.postures[p].id, "0/1" });
+    // O comando de velocidade (zero parado): para frente e para a esquerda no
+    // referencial do rumo, e o giro.
+    o.channels.push_back({ "command.velocity.forward", "m/s/3" });
+    o.channels.push_back({ "command.velocity.lateral", "m/s/3" });
+    o.channels.push_back({ "command.velocity.yaw", "rad/s/2" });
 
     RLVectorLayout3D& c = criticLayout;
     c = o;
@@ -254,11 +276,13 @@ void TrainingBatch3D::Impl::createWorld() {
         sceneSettings.windShelterDistanceMeters = 0.0f;
         scene.physics = engine->createScene(sceneSettings, materials);
 
-        // O chao: uma caixa estatica grande sob os mundos da cena (topo em z = 0).
-        const float halfLength = 0.5f * EnvironmentSpacing * static_cast<float>(last - first) + 20.0f;
+        // O chao: uma caixa estatica grande sob os mundos da cena (topo em z = 0),
+        // com metade da distancia entre eles em volta de cada um.
+        const float spacing = task.worldSpacingMeters;
+        const float halfLength = 0.5f * spacing * static_cast<float>(last - first) + std::max(20.0f, 0.5f * spacing);
         PhysicsShape3D shape;
         shape.type = PhysicsShapeType3D::Box;
-        shape.halfExtents = { halfLength, 20.0f, 0.5f };
+        shape.halfExtents = { halfLength, std::max(20.0f, 0.5f * spacing), 0.5f };
         shape.materialId = task.groundMaterial;
         PhysicsBodyDefinition3D ground;
         ground.motionType = PhysicsMotionType3D::Static;
@@ -269,8 +293,8 @@ void TrainingBatch3D::Impl::createWorld() {
         for (std::uint32_t index = first; index < last; ++index) {
             Environment& env = environments[index];
             env.scene = s;
-            env.origin = { (static_cast<float>(index - first) - 0.5f * static_cast<float>(last - first - 1))
-                    * EnvironmentSpacing, 0.0f, 0.0f };
+            env.origin = { (static_cast<float>(index - first) - 0.5f * static_cast<float>(last - first - 1)) * spacing,
+                0.0f, 0.0f };
             std::uint64_t envSeed = seedState + index * 0x9E3779B97F4A7C15ull;
             env.rng.seed(splitmix64(envSeed));
             // A massa varia por mundo (fica a vida toda dele): o corpo nao e
@@ -338,6 +362,39 @@ std::uint32_t TrainingBatch3D::Impl::choosePosture(Environment& env) const {
     return taskPostures.back();
 }
 
+// O comando de velocidade: o roteiro da bateria, o fixo de fora ou, no treino,
+// sorteado a cada intervalo (parado numa fatia; cada direcao ate o limite de
+// agora do curriculo). Comandos muito pequenos viram parado.
+void TrainingBatch3D::Impl::updateCommand(Environment& env, bool start) {
+    const float stepSeconds = static_cast<float>(task.actionRepeat) * FixedStep;
+    if (env.commandForced) {
+        env.command = env.forcedCommand;
+        return;
+    }
+    if (settings.evaluation) {
+        env.command = {};
+        const float t = static_cast<float>(env.played) * stepSeconds;
+        for (const TrainingCommandStep3D& step : settings.commandSchedule)
+            if (t >= step.seconds) env.command = { step.forward, step.lateral, step.yawRate };
+        return;
+    }
+    if (!start && (env.commandTimer -= stepSeconds) > 0.0f) return;
+    const TrainingTask3D::Commands& c = task.commands;
+    env.commandTimer = uniform(env.rng, c.resampleSeconds);
+    const auto limit = [](float maximum, float current) { return current < 0.0f ? maximum : std::min(maximum, current); };
+    const float forward = limit(c.forward, c.limits.forward), backward = limit(c.backward, c.limits.backward);
+    const float lateral = limit(c.lateral, c.limits.lateral), yaw = limit(c.yawRate, c.limits.yawRate);
+    env.command = {};
+    if (forward + backward + lateral + yaw <= 0.0f
+        || std::uniform_real_distribution<float>(0.0f, 1.0f)(env.rng) < c.standingFraction)
+        return;
+    const Vec3 command { std::uniform_real_distribution<float>(-backward, forward)(env.rng),
+        lateral > 0.0f ? std::uniform_real_distribution<float>(-lateral, lateral)(env.rng) : 0.0f,
+        yaw > 0.0f ? std::uniform_real_distribution<float>(-yaw, yaw)(env.rng) : 0.0f };
+    if (std::hypot(command.x, command.y) < 0.1f && std::abs(command.z) < 0.1f) return;
+    env.command = command;
+}
+
 void TrainingBatch3D::Impl::resetEnvironment(std::uint32_t index) {
     Environment& env = environments[index];
     Scene& scene = scenes[env.scene];
@@ -375,6 +432,12 @@ void TrainingBatch3D::Impl::resetEnvironment(std::uint32_t index) {
     std::vector<PhysicsBodyState3D> links;
     rlBodyLinkStates3D(body.profile, rootPosition, root, rootVelocity, rootSpin, coordinates, velocities, links);
     scene.physics->resetRagdollState(env.ragdoll, links);
+    {
+        const Vec3 forward = (root * body.profile.links.front().modelOrientation.conjugate()).rotate({ 1.0f, 0.0f, 0.0f });
+        env.startHeading = std::atan2(forward.y, forward.x);
+    }
+    env.footContactTime = {};
+    env.footAirTime = {};
 
     // O mundo e o corpo deste episodio.
     const TrainingTask3D::Randomization& random = task.randomization;
@@ -410,7 +473,9 @@ void TrainingBatch3D::Impl::resetEnvironment(std::uint32_t index) {
     env.footDriftMax = 0.0f;
     env.footTurnMax = 0.0f;
     env.actionRateSum = env.effortSum = env.jointSpeedSum = env.uprightSum = env.trunkTurnSquares = 0.0;
-    env.poseErrorSquares = 0.0;
+    env.poseErrorSquares = env.velocityErrorSquares = env.yawErrorSquares = env.trackingSum = 0.0;
+    env.movingSteps = 0;
+    updateCommand(env, true);
 }
 
 BodyReading TrainingBatch3D::Impl::read(const RagdollState3D& state) const {
@@ -497,6 +562,9 @@ void TrainingBatch3D::Impl::writeObservation(const Environment& env, const Ragdo
     for (std::size_t f = 0; f < 2; ++f) *out++ = std::min(3.0f, reading.footForce[f] / weight);
     for (const float a : env.action) *out++ = a;
     for (std::size_t p = 1; p < body.postures.size(); ++p) *out++ = env.posture == p ? 1.0f : 0.0f;
+    *out++ = env.command.x / 3.0f;
+    *out++ = env.command.y / 3.0f;
+    *out++ = env.command.z / 2.0f;
 
     if (criticOut == nullptr) return;
     // O critico: a observacao sem ruido mais o mundo que a politica nao ve.
@@ -521,6 +589,10 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
     const TrainingRewardWeights3D& w = task.reward;
     const RagdollProfile3D& profile = body.profile;
     const RLPosture3D& posture = body.postures[env.posture];
+    // Andando ou parado: as parcelas de parado (quieto, centro de massa sobre
+    // os pes, pe saindo do lugar) so valem com comando zero.
+    const bool moving = env.command.x != 0.0f || env.command.y != 0.0f || env.command.z != 0.0f;
+    const float standing = moving ? 0.0f : 1.0f;
 
     // Pelve, peito e cabeca na postura pedida, no referencial do rumo: o
     // angulo entre o "para cima" de cada um e o da postura.
@@ -543,9 +615,37 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
     const float still = std::exp(-comSpeed2 / 0.04f);
     // O tronco girando: a media dos quadrados da velocidade angular da pelve e
     // do peito (rad/s), com teto de 2 rad/s (numa queda ja paga o "fall").
-    const float trunkTurn2 = 0.5f
-        * (state.links[0].angularVelocity.lengthSquared() + state.links[body.upperChest].angularVelocity.lengthSquared());
+    // Andando, so o balanco para os lados e para frente e tras (o giro em torno
+    // da vertical e o comandado, e a pelve gira um pouco a cada passo).
+    const auto turn2 = [&](Vec3 w) { return moving ? w.x * w.x + w.y * w.y : w.lengthSquared(); };
+    const float trunkTurn2
+        = 0.5f * (turn2(state.links[0].angularVelocity) + turn2(state.links[body.upperChest].angularVelocity));
     const float trunkTurn = std::min(trunkTurn2, 4.0f);
+    // Andar: a velocidade da pelve no referencial do rumo e o giro contra o pedido.
+    const Vec3 velocity = reading.headingInverse.rotate(state.links[0].linearVelocity);
+    const float velocityError2
+        = (velocity.x - env.command.x) * (velocity.x - env.command.x) + (velocity.y - env.command.y) * (velocity.y - env.command.y);
+    const float yawError = state.links[0].angularVelocity.z - env.command.z;
+    const float velocityTracking = std::exp(-velocityError2 / 0.25f);
+    const float yawTracking = std::exp(-yawError * yawError / 0.25f);
+    // O pe no ar: num apoio simples, o menor tempo no modo de agora dos dois
+    // pes (o de apoio no chao, o outro no ar), ate 0,4 s; so andando (o passo
+    // de verdade, dos humanoides do Isaac Lab).
+    const float stepSeconds = static_cast<float>(task.actionRepeat) * FixedStep;
+    for (std::size_t f = 0; f < 2; ++f) {
+        if (reading.footContact[f]) {
+            env.footContactTime[f] += stepSeconds;
+            env.footAirTime[f] = 0.0f;
+        } else {
+            env.footAirTime[f] += stepSeconds;
+            env.footContactTime[f] = 0.0f;
+        }
+    }
+    float airTime = 0.0f;
+    if (reading.footContact[0] != reading.footContact[1] && std::hypot(env.command.x, env.command.y) > 0.1f) {
+        const auto mode = [&](std::size_t f) { return reading.footContact[f] ? env.footContactTime[f] : env.footAirTime[f]; };
+        airTime = std::min(0.4f, std::min(mode(0), mode(1)));
+    }
 
     float slip = 0.0f, drift = 0.0f;
     for (std::size_t f = 0; f < 2; ++f) {
@@ -567,6 +667,7 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
     }
 
     float effort = 0.0f, actionRate = 0.0f, limit = 0.0f, pose = 0.0f, speed = 0.0f, poseError = 0.0f;
+    float upperError = 0.0f, upperCount = 0.0f;
     for (std::size_t d = 0; d < body.dofs.size(); ++d) {
         const RLBodyDof3D& dof = body.dofs[d];
         const RagdollJointState3D& joint = state.joints[dof.linkIndex];
@@ -583,6 +684,10 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
         const float fromPosture = 2.0f * (q - posture.dofRadians[d]) / range;
         pose += fromPosture * fromPosture;
         poseError += (q - posture.dofRadians[d]) * (q - posture.dofRadians[d]);
+        if (upperDof[d]) {
+            upperError += (q - posture.dofRadians[d]) * (q - posture.dofRadians[d]);
+            upperCount += 1.0f;
+        }
         speed += std::abs(joint.velocityRadiansPerSecond[axis]);
     }
     const float dofCount = static_cast<float>(std::max<std::size_t>(1, body.dofs.size()));
@@ -592,21 +697,28 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
     pose /= dofCount;
     speed /= dofCount;
     poseError /= dofCount;
+    upperError /= std::max(1.0f, upperCount);
+    // A postura pedida: parado, o corpo todo (sigma ~10 graus); andando, so o
+    // tronco e os bracos, mais folgados (sigma ~18 graus: os bracos balancam).
+    const float poseMatch = moving ? std::exp(-upperError / 0.1f) : std::exp(-poseError / 0.03f);
 
     const std::array<float, RewardCount> values {
         w.alive,
         w.upright * upright,
         w.headHeight * headHeight,
-        w.comOverSupport * comOverSupport,
-        w.still * still,
+        w.comOverSupport * comOverSupport * standing,
+        w.still * still * standing,
         -w.trunkTurn * trunkTurn,
         -w.footSlip * slip,
-        -w.footDrift * drift,
+        -w.footDrift * drift * standing,
         -w.effort * effort,
         -w.actionRate * actionRate,
         -w.jointLimit * limit,
         -w.posePrior * pose,
-        w.poseMatch * std::exp(-poseError / 0.03f),
+        w.poseMatch * poseMatch,
+        w.velocity * velocityTracking,
+        w.yawRate * yawTracking,
+        w.feetAirTime * airTime,
         fell ? -w.fall : 0.0f,
     };
     float total = 0.0f;
@@ -626,6 +738,12 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
     env.uprightSum += upright;
     env.trunkTurnSquares += trunkTurn2;
     env.poseErrorSquares += poseError;
+    env.velocityErrorSquares += velocityError2;
+    env.yawErrorSquares += yawError * yawError;
+    if (moving) {
+        env.trackingSum += velocityTracking;
+        ++env.movingSteps;
+    }
     return total;
 }
 
@@ -654,6 +772,14 @@ void TrainingBatch3D::Impl::finishEpisode(Scene& scene, std::uint32_t index, Tra
     episode.meanUpright = static_cast<float>(env.uprightSum / n);
     episode.trunkTurnRms = static_cast<float>(std::sqrt(env.trunkTurnSquares / n));
     episode.poseErrorRms = static_cast<float>(std::sqrt(env.poseErrorSquares / n));
+    episode.velocityErrorRms = static_cast<float>(std::sqrt(env.velocityErrorSquares / n));
+    episode.yawRateErrorRms = static_cast<float>(std::sqrt(env.yawErrorSquares / n));
+    episode.velocityTracking = env.movingSteps > 0 ? static_cast<float>(env.trackingSum / env.movingSteps) : -1.0f;
+    if (reading.valid) {
+        const Vec3 moved { reading.com.x - env.origin.x, reading.com.y - env.origin.y, 0.0f };
+        episode.distance = moved.length();
+        episode.lateralDrift = std::abs(-std::sin(env.startHeading) * moved.x + std::cos(env.startHeading) * moved.y);
+    }
     if (reason == TrainingEndReason3D::FallContact || reason == TrainingEndReason3D::FallHeight) {
         // O lado da queda: para onde o centro de massa ia, no referencial do corpo.
         const Vec3 v = reading.valid ? reading.headingInverse.rotate(reading.comVelocity) : Vec3 {};
@@ -750,6 +876,17 @@ void TrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> actio
         const bool fell = reason == TrainingEndReason3D::FallContact || reason == TrainingEndReason3D::FallHeight;
         if (reading.valid) {
             rewards[index] = reward(env, *state, reading, fell, parts);
+            // O comando da proxima decisao (a recompensa usou o que valia neste
+            // passo). Quando ele muda, a referencia dos pes recomeca: o "pe
+            // saindo do lugar" de quem para depois de andar e de agora.
+            const Vec3 previous = env.command;
+            updateCommand(env, false);
+            if (env.command.x != previous.x || env.command.y != previous.y || env.command.z != previous.z)
+                for (std::size_t f = 0; f < 2; ++f) {
+                    const std::uint32_t foot = f == 0 ? body.leftFoot : body.rightFoot;
+                    env.footStart[f] = state->links[foot].position;
+                    env.footStartOrientation[f] = state->links[foot].orientation;
+                }
             writeObservation(env, *state, reading, actor, criticOut, training());
         } else {
             std::fill(parts, parts + RewardCount, 0.0f);
@@ -786,6 +923,13 @@ TrainingBatch3D::TrainingBatch3D(const TrainingBatchSettings3D& settings) : m_im
             if (impl.body.profile.links[i].id == id) impl.pushLinks.push_back(static_cast<std::uint32_t>(i));
     impl.configureEpisodeLength();
     impl.resolvePostures();
+    // Os eixos do tronco e dos bracos: tudo menos coxas, canelas e pes.
+    for (const RLBodyDof3D& dof : impl.body.dofs) {
+        const std::string& link = impl.body.profile.links[dof.linkIndex].id;
+        const bool leg = link.find("Thigh") != std::string::npos || link.find("Shin") != std::string::npos
+            || link.find("Foot") != std::string::npos || link.find("Toe") != std::string::npos;
+        impl.upperDof.push_back(leg ? 0 : 1);
+    }
     if (!settings.posture.empty()) {
         impl.forcedPosture = findRLPosture3D(impl.body, settings.posture);
         if (impl.forcedPosture < 0) throw std::runtime_error("lote de RL: o corpo nao tem a postura " + settings.posture);
@@ -834,6 +978,7 @@ void TrainingBatch3D::updateTask(const TrainingTask3D& task) {
     impl.task.randomization = task.randomization;
     impl.task.pushes = task.pushes;
     impl.task.postures = task.postures;
+    impl.task.commands = task.commands;
     impl.resolvePostures();
     impl.pushLinks.clear();
     for (const std::string& id : impl.task.pushes.links)
@@ -850,6 +995,19 @@ void TrainingBatch3D::setPosture(const std::string& id) {
     const int index = findRLPosture3D(impl.body, id);
     if (index < 0) throw std::invalid_argument("lote de RL: o corpo nao tem a postura " + id);
     impl.forcedPosture = index;
+}
+
+void TrainingBatch3D::setCommand(std::size_t environment, Vec3 command) {
+    if (environment >= m_impl->environments.size()) return;
+    Environment& env = m_impl->environments[environment];
+    env.commandForced = true;
+    env.forcedCommand = command;
+    env.command = command;
+}
+
+void TrainingBatch3D::clearCommand(std::size_t environment) {
+    if (environment >= m_impl->environments.size()) return;
+    m_impl->environments[environment].commandForced = false;
 }
 
 std::vector<std::string> TrainingBatch3D::taskPostureIds() const {
@@ -925,6 +1083,8 @@ TrainingEnvironmentView3D TrainingBatch3D::view(std::size_t environment) const {
     view.origin = env.origin;
     view.steps = env.steps;
     view.posture = env.posture;
+    view.command = env.command;
+    view.startHeading = env.startHeading;
     if (env.pushRemaining > 0.0f) {
         view.pushForce = env.pushForce;
         view.pushLink = static_cast<int>(env.pushLink);

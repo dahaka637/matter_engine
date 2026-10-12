@@ -252,12 +252,16 @@ void TrainerLink3D::readStatus(const std::string& json, bool alive) {
                 TrainerStatus3D::Battery battery;
                 battery.battery = name;
                 battery.posture = text(entry, "posture");
+                if (const std::string kind = text(entry, "kind"); !kind.empty()) battery.kind = kind;
                 if (const auto solvers = entry.find("solvers"); solvers != entry.end() && solvers->is_object())
                     for (const auto& [solver, metrics] : solvers->items()) {
                         battery.stand.emplace_back(solver, number(metrics, "stand_fraction"));
                         if (solver == "jogo") {
                             battery.turn = number(metrics, "turn", -1.0);
                             battery.poseError = number(metrics, "pose_error", -1.0);
+                            battery.velocityError = number(metrics, "velocity_error", -1.0);
+                            battery.lateralDrift = number(metrics, "lateral_drift", -1.0);
+                            battery.goalError = number(metrics, "goal_error", -1.0);
                         }
                     }
                 status.evaluationBatteries.push_back(std::move(battery));
@@ -265,6 +269,12 @@ void TrainerLink3D::readStatus(const std::string& json, bool alive) {
         if (status.evaluationBatteries.empty())
             status.evaluationBatteries.push_back(
                 { "equilibrio_v1", "natural", status.evaluationStand, status.evaluationTurn, -1.0 });
+    }
+    if (const auto commands = s.find("commands"); commands != s.end() && commands->is_object()) {
+        if (const auto forward = commands->find("forward"); forward != commands->end() && forward->is_object()) {
+            status.forwardLimit = number(*forward, "limit", -1.0);
+            status.forwardMax = number(*forward, "max", -1.0);
+        }
     }
     if (const auto best = s.find("best"); best != s.end() && best->is_object()) {
         status.bestScore = number(*best, "score");

@@ -1,0 +1,270 @@
+{
+  "schema": "matter-rl-task-1",
+  "id": "h3_andar",
+  "displayName": "Andar",
+  "comment": "H3: andar seguindo um comando de velocidade (para frente, de 0 ao trote da locomocao padrao, 4,5 m/s), saindo e parando na postura de alerta. A velocidade maxima sobe pelo curriculo conforme ele acompanha. 25% dos sorteios pedem ficar parado (o ensaio da H1b), e 10% dos episodios comecam na postura natural. Costas, lados e giro ja estao prontos na mesma tarefa: basta um maximo acima de 0 em commands (os valores de proximo passo estao em commands.prontos) e ligar as baterias deles.",
+  "postures": [
+    {
+      "id": "natural",
+      "weight": 0.1
+    },
+    {
+      "id": "alerta",
+      "weight": 0.9
+    }
+  ],
+  "body": "../bodies/football_player_v1.json",
+  "actionRepeat": 4,
+  "episodeSeconds": 20.0,
+  "groundMaterial": "grass",
+  "worldSpacingMeters": 250.0,
+  "commands": {
+    "comment": "m/s no referencial do rumo (frente, lado) e rad/s (giro). Os maximos sao o alvo; o curriculo guarda os limites de agora em commands.limits (na copia da tarefa do treino).",
+    "resampleSeconds": [
+      4.0,
+      6.0
+    ],
+    "standingFraction": 0.25,
+    "forward": 4.5,
+    "backward": 0.0,
+    "lateral": 0.0,
+    "yawRate": 0.0,
+    "prontos": {
+      "backward": 3.0,
+      "lateral": 3.0,
+      "yawRate": 2.0
+    }
+  },
+  "curriculum": {
+    "comment": "Cada direcao ligada comeca no limite start e sobe step quando a nota media do acompanhamento da velocidade (0 a 1, nas decisoes andando) passa de threshold por 3 rodadas seguidas, com pelo menos minimumIterations rodadas entre uma subida e outra.",
+    "start": 0.75,
+    "step": 0.25,
+    "threshold": 0.7,
+    "minimumIterations": 50
+  },
+  "reward": {
+    "alive": 1.0,
+    "upright": 0.3,
+    "headHeight": 0.3,
+    "comOverSupport": 0.5,
+    "still": 0.3,
+    "trunkTurn": 0.2,
+    "footSlip": 0.3,
+    "footDrift": 1.0,
+    "effort": 0.1,
+    "actionRate": 0.05,
+    "jointLimit": 0.2,
+    "posePrior": 0.1,
+    "poseMatch": 0.5,
+    "velocity": 1.5,
+    "yawRate": 0.5,
+    "feetAirTime": 1.0,
+    "fall": 10.0
+  },
+  "termination": {
+    "minimumHeadHeightFraction": 0.6,
+    "minimumPelvisHeightFraction": 0.5,
+    "nonSupportContact": true,
+    "maximumDistanceFromStart": 120.0
+  },
+  "initialState": {
+    "jointNoiseRadians": 0.05,
+    "jointVelocityNoise": 0.2,
+    "rootVelocityNoise": 0.1,
+    "rootAngularVelocityNoise": 0.1,
+    "randomYaw": true
+  },
+  "randomization": {
+    "friction": [
+      0.7,
+      1.1
+    ],
+    "mass": [
+      0.95,
+      1.05
+    ],
+    "strength": [
+      0.9,
+      1.1
+    ],
+    "actionDelayProbability": 0.5,
+    "observationNoise": 1.0
+  },
+  "pushes": {
+    "enabled": false,
+    "intervalSeconds": [
+      2.0,
+      4.0
+    ],
+    "durationSeconds": [
+      0.1,
+      0.2
+    ],
+    "forceNewtons": [
+      50.0,
+      150.0
+    ],
+    "links": [
+      "Pelvis",
+      "UpperChest"
+    ]
+  },
+  "evaluation": [
+    {
+      "name": "equilibrio_v1",
+      "posture": "natural"
+    },
+    {
+      "name": "postura_alerta_v1",
+      "posture": "alerta"
+    },
+    {
+      "name": "andar_frente_v1",
+      "posture": "alerta",
+      "seconds": 26.0,
+      "schedule": [
+        [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          2.0,
+          1.5,
+          0.0,
+          0.0
+        ],
+        [
+          8.0,
+          3.0,
+          0.0,
+          0.0
+        ],
+        [
+          14.0,
+          4.5,
+          0.0,
+          0.0
+        ],
+        [
+          20.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      ]
+    },
+    {
+      "name": "ir_ate_10m_v1",
+      "posture": "alerta",
+      "seconds": 15.0,
+      "goal": {
+        "distance": 10.0,
+        "speed": 2.0
+      }
+    },
+    {
+      "name": "andar_tras_v1",
+      "posture": "alerta",
+      "seconds": 20.0,
+      "enabled": false,
+      "schedule": [
+        [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          2.0,
+          -1.5,
+          0.0,
+          0.0
+        ],
+        [
+          8.0,
+          -3.0,
+          0.0,
+          0.0
+        ],
+        [
+          14.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      ]
+    },
+    {
+      "name": "andar_lado_v1",
+      "posture": "alerta",
+      "seconds": 26.0,
+      "enabled": false,
+      "schedule": [
+        [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          2.0,
+          0.0,
+          1.5,
+          0.0
+        ],
+        [
+          8.0,
+          0.0,
+          -1.5,
+          0.0
+        ],
+        [
+          14.0,
+          0.0,
+          3.0,
+          0.0
+        ],
+        [
+          20.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      ]
+    },
+    {
+      "name": "girar_v1",
+      "posture": "alerta",
+      "seconds": 16.0,
+      "enabled": false,
+      "schedule": [
+        [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          2.0,
+          0.0,
+          0.0,
+          1.5
+        ],
+        [
+          8.0,
+          0.0,
+          0.0,
+          -1.5
+        ],
+        [
+          14.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      ]
+    }
+  ]
+}

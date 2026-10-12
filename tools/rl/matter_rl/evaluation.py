@@ -15,7 +15,7 @@ from .model import ACTION_LIMIT, ActorCritic
 
 REASONS = ["nenhum", "queda_contato", "queda_altura", "numerico", "tempo", "limite"]
 # As colunas do resumo de um episodio (finished_episodes do modulo nativo).
-EPISODE_COLUMNS = 16
+EPISODE_COLUMNS = 21
 FALLS = {1, 2, 3}
 
 
@@ -28,7 +28,22 @@ def battery_name(posture: str) -> str:
 
 
 def battery_posture(name: str) -> str:
-    return "natural" if name == BASE_BATTERY else name.removeprefix("postura_").removesuffix("_v1")
+    """A postura de uma bateria de ficar de pe pelo nome (vazio nas outras)."""
+    if name == BASE_BATTERY:
+        return "natural"
+    if name.startswith("postura_") and name.endswith("_v1"):
+        return name.removeprefix("postura_").removesuffix("_v1")
+    return ""
+
+
+def battery_kind(name: str) -> str:
+    """O tipo de uma bateria pelo nome (a convencao das tarefas): andar_* e
+    girar_* seguem um roteiro de velocidades, ir_ate_* vao a um ponto."""
+    if name.startswith(("andar_", "girar_")):
+        return "andar"
+    if name.startswith("ir_ate_"):
+        return "alvo"
+    return "de_pe"
 
 
 def task_postures(task_path: Path) -> list[str]:
@@ -36,6 +51,23 @@ def task_postures(task_path: Path) -> list[str]:
     import json
     data = json.loads(Path(task_path).read_text())
     return [entry["id"] for entry in data.get("postures", [])] or ["natural"]
+
+
+def task_batteries(task_path: Path) -> list[dict]:
+    """As baterias da tarefa ("evaluation" no arquivo; as desligadas ficam de
+    fora). Sem a lista: uma de ficar de pe por postura. Cada uma: name,
+    posture, kind (de pe, andar por roteiro, ir ate um ponto), seconds,
+    schedule e goal."""
+    import json
+    data = json.loads(Path(task_path).read_text())
+    entries = data.get("evaluation") or [{"name": battery_name(p), "posture": p} for p in task_postures(task_path)]
+    batteries = []
+    for entry in entries:
+        if not entry.get("enabled", True):
+            continue
+        kind = "andar" if entry.get("schedule") else "alvo" if entry.get("goal") else "de_pe"
+        batteries.append(dict(entry, kind=kind, posture=entry.get("posture", "natural")))
+    return batteries
 
 
 @dataclass
@@ -52,6 +84,23 @@ class Battery:
 SCORE_VERSION = 2
 
 
+def walking_score(metrics: dict) -> float:
+    """Andar: nao cair, acompanhar a velocidade pedida, ir reto, sem balancar
+    o tronco para os lados nem tremer."""
+    return (metrics["stand_fraction"]
+            - 0.40 * min(1.0, metrics.get("velocity_error", 1.0) / 1.0)
+            - 0.10 * min(1.0, metrics.get("lateral_drift", 0.0) / 3.0)
+            - 0.15 * min(1.0, metrics.get("turn", 0.0) / 0.6)
+            - 0.15 * min(1.0, metrics["action_rate"] / 0.05))
+
+
+def goal_score(metrics: dict) -> float:
+    """Ir ate um ponto: chegar perto dele, sem cair e sem tremer."""
+    return (metrics["stand_fraction"]
+            - 0.50 * min(1.0, metrics.get("goal_error", 10.0) / 2.0)
+            - 0.15 * min(1.0, metrics["action_rate"] / 0.05))
+
+
 def score(metrics: dict) -> float:
     """Quanto ficou de pe, descontando oscilacao, tremedeira, deriva, o tronco
     girando (o giro passa despercebido na oscilacao do centro de massa) e o
@@ -65,24 +114,37 @@ def score(metrics: dict) -> float:
 
 
 class Evaluator:
-    """Uma bateria por postura que a tarefa pede (cada habilidade aprovada tem a
-    sua), cada uma no solver do treino e no do jogo."""
+    """As baterias da tarefa (cada habilidade aprovada tem a sua: de pe numa
+    postura, andar por um roteiro de velocidades, ir ate um ponto), cada uma
+    no solver do treino e no do jogo."""
 
     def __init__(self, native, task_path: Path, threads: int, battery: Battery | None = None,
-                 postures: list[str] | None = None):
+                 postures: list[str] | None = None, names: list[str] | None = None):
         self.battery = battery or Battery()
         self.native = native
-        self.postures = list(postures or task_postures(task_path))
+        self.specs = [spec for spec in task_batteries(task_path)
+                      if (postures is None or spec["posture"] in postures) and (names is None or spec["name"] in names)]
+        if not self.specs:
+            raise ValueError("nenhuma bateria com esses filtros")
         self.batches = {}
-        for posture in self.postures:
+        for spec in self.specs:
             for solver, (position, velocity) in self.battery.solvers.items():
-                self.batches[(posture, solver)] = native.Batch(
+                self.batches[(spec["name"], solver)] = native.Batch(
                     str(task_path), environments=self.battery.environments, per_scene=4, threads=threads,
-                    seed=self.battery.seed, evaluation=True, evaluation_seconds=self.battery.seconds,
-                    solver_position=position, solver_velocity=velocity, posture=posture)
+                    seed=self.battery.seed, evaluation=True,
+                    evaluation_seconds=float(spec.get("seconds", self.battery.seconds)), solver_position=position,
+                    solver_velocity=velocity, posture=spec["posture"],
+                    schedule=[tuple(float(v) for v in step) for step in spec.get("schedule", [])])
+        self.by_name = {spec["name"]: spec for spec in self.specs}
 
     def observation_names(self) -> list[str]:
         return next(iter(self.batches.values())).observation_names()
+
+    def posture_of(self, battery: str) -> str:
+        return self.by_name[battery]["posture"]
+
+    def kind_of(self, battery: str) -> str:
+        return self.by_name[battery]["kind"]
 
     @torch.no_grad()
     def run(self, model: ActorCritic, device: torch.device, record: Path | None = None,
@@ -90,23 +152,50 @@ class Evaluator:
         """{bateria: {solver: metricas}}. watch: os mundos gravados inteiros
         (alem das primeiras quedas)."""
         results: dict[str, dict] = {}
-        for (posture, solver), batch in self.batches.items():
-            results.setdefault(battery_name(posture), {})[solver] = self._run_one(
-                model, device, batch, record, solver, watch, posture)
+        for (name, solver), batch in self.batches.items():
+            results.setdefault(name, {})[solver] = self._run_one(
+                model, device, batch, record, solver, watch, self.by_name[name])
         return results
 
+    @staticmethod
+    def labels(spec: dict, solver: str) -> tuple[str, str]:
+        """O sufixo da gravacao e o nome das cenas (a de pe na base mantem os de
+        sempre: aval-N-jogo.dump, parado_mundo0_jogo)."""
+        if spec["kind"] == "de_pe":
+            natural = spec["posture"] == "natural"
+            return (solver if natural else f"{spec['posture']}-{solver}"), ("parado" if natural else spec["posture"])
+        return f"{spec['name']}-{solver}", spec["name"]
+
+    def _goal_commands(self, batch, goal: dict) -> None:
+        """Ir ate um ponto: o alvo fica a distance metros na frente do rumo
+        inicial; a velocidade pedida e a do alvo, freando perto dele."""
+        positions = batch.root_positions()
+        heading = positions[:, 5]
+        along = ((positions[:, 0] - positions[:, 3]) * np.cos(heading)
+                 + (positions[:, 1] - positions[:, 4]) * np.sin(heading))
+        remaining = float(goal["distance"]) - along
+        speed = np.clip(1.5 * remaining, 0.0, float(goal.get("speed", 2.0)))
+        for e in range(batch.num_envs):
+            batch.set_command(e, float(speed[e]) if remaining[e] > 0.3 else 0.0, 0.0, 0.0)
+
     def _run_one(self, model: ActorCritic, device: torch.device, batch, record: Path | None, solver: str,
-                 watch: tuple[int, ...], posture: str = "natural") -> dict:
+                 watch: tuple[int, ...], spec: dict) -> dict:
         envs = batch.num_envs
         dt = batch.policy_dt
+        for e in range(envs):
+            batch.clear_command(e)
         batch.reset(self.battery.seed)
         first: dict[int, np.ndarray] = {}
         rings = [collections.deque(maxlen=48) for _ in range(envs)]
         watch = tuple(w for w in watch if 0 <= w < envs)
         full: dict[int, list[tuple[float, str]]] = {w: [] for w in watch}
         falls: list[tuple[str, list]] = []
-        limit = int(math.ceil(self.battery.seconds / dt)) + 2
+        label, scene = self.labels(spec, solver)
+        seconds = float(spec.get("seconds", self.battery.seconds))
+        limit = int(math.ceil(seconds / dt)) + 2
         for step in range(limit):
+            if spec["kind"] == "alvo":
+                self._goal_commands(batch, spec["goal"])
             obs = torch.tensor(batch.observations(), device=device)
             action = model.actor(model.obs_norm(obs)).clamp(-ACTION_LIMIT, ACTION_LIMIT)
             batch.step(np.ascontiguousarray(action.cpu().numpy(), dtype=np.float32))
@@ -120,7 +209,7 @@ class Evaluator:
                 first[e] = row
                 reason = int(row[1])
                 if record is not None and reason in FALLS and len(falls) < 4:
-                    prefix = "queda" if posture == "natural" else f"queda_{posture}"
+                    prefix = "queda" if label == solver else f"queda_{scene}"
                     falls.append((f"{prefix}_mundo{e}_{REASONS[reason]}_{row[5]:.1f}s", list(rings[e])))
             if record is not None and step % 2 == 0:
                 for e in range(envs):
@@ -131,14 +220,13 @@ class Evaluator:
                         full[w].append((t, rings[w][-1][1]))
             if len(first) >= envs:
                 break
+        for e in range(envs):
+            batch.clear_command(e)
         rows = (np.array([first[e] for e in sorted(first)], dtype=np.float32) if first
                 else np.zeros((0, EPISODE_COLUMNS)))
-        metrics = self._metrics(rows, envs)
+        metrics = self._metrics(rows, envs, spec)
         if record is not None:
             record.parent.mkdir(parents=True, exist_ok=True)
-            # (A base mantem os nomes de sempre: aval-N-jogo.dump, parado_mundo0_jogo.)
-            label = solver if posture == "natural" else f"{posture}-{solver}"
-            scene = "parado" if posture == "natural" else posture
             with open(record.with_name(record.stem + f"-{label}.dump"), "w") as out:
                 for name, frames in [(f"{scene}_mundo{w}_{solver}", full[w]) for w in watch] + falls:
                     out.write(f"S {name}\n")
@@ -148,13 +236,14 @@ class Evaluator:
         return metrics
 
     @staticmethod
-    def _metrics(rows: np.ndarray, envs: int) -> dict:
+    def _metrics(rows: np.ndarray, envs: int, spec: dict | None = None) -> dict:
+        kind = (spec or {}).get("kind", "de_pe")
         if len(rows) == 0:
             return {"stand_fraction": 0.0, "mean_seconds": 0.0, "sway": 1.0, "foot_drift": 1.0, "foot_drift_median": 1.0,
                     "foot_drift_worst": 1.0, "action_rate": 1.0, "effort": 1.0, "upright": 0.0, "turn": 1.0,
                     "turn_worst": 1.0, "joint_speed": 1.0, "foot_turn": 1.0, "foot_turn_worst": 1.0,
-                    "pose_error": 1.0, "ends": {},
-                    "score": -1.0, "episodes": 0}
+                    "pose_error": 1.0, "velocity_error": 10.0, "lateral_drift": 10.0, "goal_error": 10.0,
+                    "ends": {}, "kind": kind, "score": -1.0, "episodes": 0}
         reasons = rows[:, 1].astype(int)
         stood = reasons == 4
         subset = rows[stood] if stood.any() else rows
@@ -179,7 +268,20 @@ class Evaluator:
             "foot_turn_worst": float(subset[:, 14].max()),
             # O quanto as juntas ficam longe da postura pedida (RMS, rad).
             "pose_error": float(subset[:, 15].mean()),
+            # Andar (todos os episodios, quedas inclusive): o erro da velocidade e
+            # do giro (RMS), a distancia do comeco e o desvio para o lado (m).
+            "velocity_error": float(rows[:, 16].mean()),
+            "yaw_error": float(rows[:, 17].mean()),
+            "distance": float(rows[:, 19].mean()),
+            "lateral_drift": float(rows[:, 20].mean()),
             "ends": dict(ends),
         }
-        metrics["score"] = score(metrics)
+        if kind == "alvo":
+            # O quanto parou longe do ponto (pelo centro de massa no fim).
+            target = float(spec["goal"]["distance"])
+            along = np.sqrt(np.maximum(rows[:, 19] ** 2 - rows[:, 20] ** 2, 0.0))
+            metrics["goal_error"] = float(np.sqrt((target - along) ** 2 + rows[:, 20] ** 2).mean())
+        metrics["kind"] = kind
+        metrics["score"] = walking_score(metrics) if kind == "andar" else goal_score(metrics) if kind == "alvo" \
+            else score(metrics)
         return metrics

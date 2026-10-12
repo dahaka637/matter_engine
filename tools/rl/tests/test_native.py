@@ -35,14 +35,16 @@ def test_postures_through_the_bridge():
     posturado = str(paths.task_path("h1b_em_pe_posturado"))
     batch = module.Batch(TASK, environments=2, threads=1)
     assert batch.posture_ids() == ["natural", "alerta"] and batch.task_postures() == ["natural"]
-    assert batch.observation_names()[-1] == "command.posture.alerta"
-    assert (batch.observations()[:, -1] == 0).all()
+    names = batch.observation_names()
+    alert = names.index("command.posture.alerta")
+    assert names[alert + 1:] == ["command.velocity.forward", "command.velocity.lateral", "command.velocity.yaw"]
+    assert (batch.observations()[:, alert] == 0).all()
     forced = module.Batch(posturado, environments=2, threads=1, evaluation=True, posture="alerta")
     assert forced.task_postures() == ["natural", "alerta"]
-    assert (forced.observations()[:, -1] == 1).all()
+    assert (forced.observations()[:, alert] == 1).all()
     forced.set_posture("natural")
     forced.reset(3)
-    assert (forced.observations()[:, -1] == 0).all()
+    assert (forced.observations()[:, alert] == 0).all()
     with pytest.raises(Exception):
         module.Batch(TASK, environments=1, threads=1, posture="sentado")
 
@@ -57,6 +59,27 @@ def test_battery_per_posture():
     assert set(results) == {"equilibrio_v1", "postura_alerta_v1"}
     assert set(results["postura_alerta_v1"]) == {"treino", "jogo"}
     assert all(m["episodes"] == 4 for solvers in results.values() for m in solvers.values())
+
+
+def test_walking_batteries():
+    """A tarefa de andar: o roteiro de velocidades e o ponto a 10 m; parada, a
+    politica zero nao anda (erro de velocidade alto, longe do ponto)."""
+    from matter_rl.evaluation import Battery, Evaluator
+    walking = paths.task_path("h3_andar")
+    evaluator = Evaluator(module, walking, 2, Battery(environments=4),
+                          names=["andar_frente_v1", "ir_ate_10m_v1"])
+    probe = module.Batch(str(walking), environments=1, threads=1)
+    model = ActorCritic(probe.obs_size, probe.critic_size, probe.action_size)
+    with torch.no_grad():
+        last = [layer for layer in model.actor if isinstance(layer, torch.nn.Linear)][-1]
+        last.weight.zero_()
+        last.bias.zero_()
+    results = evaluator.run(model, torch.device("cpu"))
+    assert set(results) == {"andar_frente_v1", "ir_ate_10m_v1"}
+    walk, goal = results["andar_frente_v1"]["jogo"], results["ir_ate_10m_v1"]["jogo"]
+    assert walk["kind"] == "andar" and goal["kind"] == "alvo"
+    assert walk["velocity_error"] > 0.5 and goal["goal_error"] > 5.0
+    assert walk["score"] < 0.8 and goal["score"] < 0.8
 
 
 def test_batch_rejects_bad_actions():

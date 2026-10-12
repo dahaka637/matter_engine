@@ -64,7 +64,29 @@ TrainingTask3D loadTrainingTask3D(const std::filesystem::path& definitionPath) {
         w.jointLimit = r.value("jointLimit", w.jointLimit);
         w.posePrior = r.value("posePrior", w.posePrior);
         w.poseMatch = r.value("poseMatch", w.poseMatch);
+        w.velocity = r.value("velocity", w.velocity);
+        w.yawRate = r.value("yawRate", w.yawRate);
+        w.feetAirTime = r.value("feetAirTime", w.feetAirTime);
         w.fall = r.value("fall", w.fall);
+    }
+    task.worldSpacingMeters = document.value("worldSpacingMeters", task.worldSpacingMeters);
+    if (!(task.worldSpacingMeters >= 4.0f)) throw std::runtime_error("tarefa de RL: worldSpacingMeters invalido");
+    if (document.contains("commands")) {
+        const nlohmann::json& c = document["commands"];
+        auto& out = task.commands;
+        out.resampleSeconds = range(c, "resampleSeconds", out.resampleSeconds);
+        out.standingFraction = std::clamp(c.value("standingFraction", out.standingFraction), 0.0f, 1.0f);
+        out.forward = std::max(0.0f, c.value("forward", out.forward));
+        out.backward = std::max(0.0f, c.value("backward", out.backward));
+        out.lateral = std::max(0.0f, c.value("lateral", out.lateral));
+        out.yawRate = std::max(0.0f, c.value("yawRate", out.yawRate));
+        if (c.contains("limits")) {
+            const nlohmann::json& l = c["limits"];
+            out.limits.forward = l.value("forward", out.limits.forward);
+            out.limits.backward = l.value("backward", out.limits.backward);
+            out.limits.lateral = l.value("lateral", out.limits.lateral);
+            out.limits.yawRate = l.value("yawRate", out.limits.yawRate);
+        }
     }
     if (document.contains("termination")) {
         const nlohmann::json& t = document["termination"];

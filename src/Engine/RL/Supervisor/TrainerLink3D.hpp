@@ -67,8 +67,18 @@ struct TrainerStatus3D {
         double turn = -1.0;
         // O quanto as juntas ficam longe da postura pedida, no jogo (rad; < 0 sem a medida).
         double poseError = -1.0;
+        // O tipo ("de_pe", "andar", "alvo") e, andando, o erro da velocidade
+        // (m/s), o desvio para o lado (m) e o erro no ponto (m), no jogo.
+        std::string kind = "de_pe";
+        double velocityError = -1.0;
+        double lateralDrift = -1.0;
+        double goalError = -1.0;
     };
     std::vector<Battery> evaluationBatteries;
+    // O curriculo do andar: o limite de agora e o maximo da velocidade para
+    // frente (m/s; < 0 sem comando de andar).
+    double forwardLimit = -1.0;
+    double forwardMax = -1.0;
     double bestScore = 0.0;
     std::int64_t bestIteration = -1;
     std::string policy;

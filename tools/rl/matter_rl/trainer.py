@@ -14,7 +14,7 @@ import numpy as np
 import torch
 
 from . import control, native, paths, storage, system
-from .evaluation import BASE_BATTERY, EPISODE_COLUMNS, SCORE_VERSION, Battery, Evaluator, battery_posture
+from .evaluation import BASE_BATTERY, EPISODE_COLUMNS, SCORE_VERSION, Battery, Evaluator
 from .model import ActorCritic, export_policy, migrate_inputs
 from .ppo import PPO, PPOSettings, Rollout
 
@@ -105,6 +105,7 @@ class Trainer:
         self.obs_names = self.batch.observation_names()
         self.critic_names = self.batch.critic_names()
         self.action_names = self.batch.action_names()
+        self.curriculum_setup()
         self.reward_names = self.batch.reward_names()
 
         # O ruido inicial: ~0,15 rad em cada junta (desvio ~0,6 na escala da acao).
@@ -212,6 +213,52 @@ class Trainer:
         if state.get("body_hash") != self.batch.body_hash:
             self.db.event(self.run, "corpo", "o corpo mudou desde o checkpoint: o treino segue adaptando")
 
+    # --- curriculo --------------------------------------------------------------
+    def curriculum_setup(self) -> None:
+        """Os limites de agora do comando de velocidade: cada direcao ligada (um
+        maximo acima de 0) comeca no start do curriculo e sobe com ele. Ficam na
+        copia da tarefa do treino (sobrevivem a reabrir)."""
+        data = json.loads(self.live_task.read_text())
+        commands, curriculum = data.get("commands") or {}, data.get("curriculum")
+        self.curriculum = dict(curriculum) if curriculum and commands else None
+        self.curriculum_streak = 0
+        self.command_max = {key: float(commands.get(key, 0.0)) for key in ("forward", "backward", "lateral", "yawRate")
+                            if float(commands.get(key, 0.0)) > 0.0}
+        limits = dict(commands.get("limits") or {})
+        if self.curriculum:
+            start = float(self.curriculum.get("start", 0.75))
+            for key, maximum in self.command_max.items():
+                limits.setdefault(key, min(maximum, start))
+        self.command_limits = {key: float(limits.get(key, maximum)) for key, maximum in self.command_max.items()}
+        if self.curriculum and limits != (commands.get("limits") or {}):
+            data["commands"]["limits"] = limits
+            storage.write_json_atomic(self.live_task, data)
+            self.batch.update_task(str(self.live_task))
+
+    def curriculum_step(self, tracking: float | None) -> None:
+        """Sobe os limites quando ele acompanha bem a velocidade pedida."""
+        if not self.curriculum or tracking is None:
+            return
+        self.curriculum_streak = self.curriculum_streak + 1 if tracking >= float(self.curriculum.get("threshold", 0.7)) else 0
+        since = self.counters["iteration"] - int(self.curriculum.get("lastRaise", 0))
+        if self.curriculum_streak < 3 or since < int(self.curriculum.get("minimumIterations", 50)):
+            return
+        step, raised = float(self.curriculum.get("step", 0.25)), []
+        for key, limit in self.command_limits.items():
+            if limit < self.command_max[key] - 1e-6:
+                self.command_limits[key] = min(self.command_max[key], limit + step)
+                raised.append(f"{key} {limit:.2f} -> {self.command_limits[key]:.2f}")
+        if not raised:
+            return
+        data = json.loads(self.live_task.read_text())
+        data["commands"]["limits"] = dict(self.command_limits)
+        data["curriculum"]["lastRaise"] = self.counters["iteration"]
+        storage.write_json_atomic(self.live_task, data)
+        self.batch.update_task(str(self.live_task))
+        self.curriculum["lastRaise"] = self.counters["iteration"]
+        self.curriculum_streak = 0
+        self.db.event(self.run, "curriculo", "velocidade: " + ", ".join(raised), data={"acompanhamento": tracking})
+
     def fix_commands(self) -> None:
         """Os canais de comando passam crus pela normalizacao (valem 0 ou 1)."""
         for norm, names in ((self.model.obs_norm, self.obs_names), (self.model.critic_norm, self.critic_names)):
@@ -229,6 +276,8 @@ class Trainer:
             "cpuTemperature": system.cpu_temperature(), "memoryMB": system.memory_mb(),
             "gpuMemoryMB": torch.cuda.memory_allocated() / 1e6 if self.device.type == "cuda" else 0.0,
             "policy": str(self.directory / "exports" / "policy_latest.mrlpolicy"), "message": self.message,
+            "commands": {key: {"limit": self.command_limits.get(key, maximum), "max": maximum}
+                         for key, maximum in self.command_max.items()},
             "pid": os.getpid(), "updated": time.time(),
         }
 
@@ -280,15 +329,17 @@ class Trainer:
                     "sway": metrics["sway"], "foot_drift": metrics["foot_drift"],
                     "action_rate": metrics["action_rate"], "effort": metrics["effort"], "upright": metrics["upright"],
                     "turn": metrics["turn"], "joint_speed": metrics["joint_speed"], "foot_turn": metrics["foot_turn"],
-                    "pose_error": metrics["pose_error"], "score": metrics["score"], "ends": json.dumps(metrics["ends"]),
+                    "pose_error": metrics["pose_error"], "velocity_error": metrics.get("velocity_error"),
+                    "lateral_drift": metrics.get("lateral_drift"), "goal_error": metrics.get("goal_error"),
+                    "score": metrics["score"], "ends": json.dumps(metrics["ends"]),
                 })
         # A nota e a da pior bateria (uma habilidade nova nao apaga a antiga).
         combined = min(m["score"] for solvers in results.values() for m in solvers.values())
         self.last_evaluation = {
             "iteration": self.counters["iteration"], "score": combined,
             "solvers": results.get(BASE_BATTERY) or next(iter(results.values())),
-            "batteries": {battery: {"posture": battery_posture(battery), "solvers": solvers}
-                          for battery, solvers in results.items()},
+            "batteries": {battery: {"posture": self.evaluator.posture_of(battery), "kind": self.evaluator.kind_of(battery),
+                                    "solvers": solvers} for battery, solvers in results.items()},
             "seconds": time.time() - started, "time": time.time()}
         if combined > self.best["score"] + 1e-6:
             self.best = {"score": combined, "iteration": self.counters["iteration"], "steps": self.counters["steps"],
@@ -427,6 +478,9 @@ class Trainer:
         reasons = rows[:, 1].astype(int) if len(rows) else np.zeros(0, dtype=int)
         names = self.native.END_REASONS
         ends = {names[r]: int((reasons == r).sum()) for r in set(reasons.tolist())}
+        # O acompanhamento da velocidade nos episodios com comando de andar (o curriculo).
+        moving = rows[:, 18][rows[:, 18] >= 0.0] if len(rows) else np.zeros(0)
+        tracking = float(moving.mean()) if len(moving) >= 8 else None
         sps = samples / max(1e-6, collect + update)
         self.recent_sps = sps if self.recent_sps == 0.0 else 0.9 * self.recent_sps + 0.1 * sps
         result = {
@@ -443,6 +497,7 @@ class Trainer:
             "kl": stats["kl"], "clip_fraction": stats["clip_fraction"], "learning_rate": stats["learning_rate"],
             "action_std": stats["action_std"], "grad_norm": stats["grad_norm"],
             "collect_seconds": collect, "update_seconds": update,
+            "velocity_tracking": tracking, "forward_limit": self.command_limits.get("forward"),
         }
         return result
 
@@ -523,6 +578,7 @@ class Trainer:
                     "iteration", "sps", "reward", "episodes", "episode_return", "episode_seconds", "fall_fraction",
                     "kl", "entropy", "learning_rate", "action_std", "value_loss")}
                 self.db.log_iteration(result)
+                self.curriculum_step(result["velocity_tracking"])
                 self.db.commit()
                 now = time.time()
                 if now - self.last_evaluation_time >= self.config.evaluation_minutes * 60.0:

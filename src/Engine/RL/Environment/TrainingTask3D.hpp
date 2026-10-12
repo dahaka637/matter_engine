@@ -34,12 +34,19 @@ struct TrainingRewardWeights3D {
     // contam. O posePrior, normalizado pelo curso, quase nao cobra um antebraco
     // 40 graus fora. Desligada se a tarefa nao pede.
     float poseMatch = 0.0f;
+    // Andar (comando de velocidade): seguir a velocidade pedida no plano (no
+    // referencial do rumo) e o giro pedido, notas em sino de sigma 0,5; e o
+    // tempo de cada pe no ar (o passo de verdade, nao arrastar), so com
+    // comando de andar. Desligadas nas tarefas de ficar de pe.
+    float velocity = 0.0f;
+    float yawRate = 0.0f;
+    float feetAirTime = 0.0f;
     float fall = 10.0f;
 };
 
-inline constexpr std::array<const char*, 14> TrainingRewardComponentNames3D {
+inline constexpr std::array<const char*, 17> TrainingRewardComponentNames3D {
     "alive", "upright", "headHeight", "comOverSupport", "still", "trunkTurn", "footSlip", "footDrift", "effort",
-    "actionRate", "jointLimit", "posePrior", "poseMatch", "fall"
+    "actionRate", "jointLimit", "posePrior", "poseMatch", "velocity", "yawRate", "feetAirTime", "fall"
 };
 
 struct TrainingRange3D {
@@ -55,6 +62,16 @@ struct TrainingPostureWeight3D {
     float weight = 1.0f;
 };
 
+// Um trecho do comando de velocidade numa bateria: a partir de seconds, a
+// velocidade pedida (m/s, para frente e para a esquerda, no referencial do
+// rumo) e o giro (rad/s, anti-horario).
+struct TrainingCommandStep3D {
+    float seconds = 0.0f;
+    float forward = 0.0f;
+    float lateral = 0.0f;
+    float yawRate = 0.0f;
+};
+
 // Uma tarefa de treino (assets/rl/tasks/<id>.json): o que se pede ao corpo,
 // como o episodio comeca e acaba e o quanto o mundo varia.
 struct TrainingTask3D {
@@ -67,13 +84,36 @@ struct TrainingTask3D {
     std::string groundMaterial = "grass";
     // As posturas pedidas; sem a lista, so a pose base ("natural").
     std::vector<TrainingPostureWeight3D> postures { { "natural", 1.0f } };
+    // A distancia entre os mundos de uma cena (e o chao cobre cada um com
+    // metade dela em volta): andando, ninguem sai do chao nem tromba no vizinho.
+    float worldSpacingMeters = 16.0f;
     TrainingRewardWeights3D reward;
+
+    // O comando de velocidade (andar). Sem ele, so parado. Os maximos sao o
+    // alvo de cada direcao; os limites de agora sao os do curriculo (o
+    // treinador os sobe conforme a politica acompanha) e nunca passam do
+    // maximo. Costas, lados e giro ficam prontos: basta um maximo acima de 0.
+    struct Commands {
+        TrainingRange3D resampleSeconds { 4.0f, 6.0f };
+        // A fatia dos sorteios que pede ficar parado (comando zero).
+        float standingFraction = 1.0f;
+        float forward = 0.0f;
+        float backward = 0.0f;
+        float lateral = 0.0f;
+        float yawRate = 0.0f;
+        struct Limits {
+            float forward = -1.0f;
+            float backward = -1.0f;
+            float lateral = -1.0f;
+            float yawRate = -1.0f;
+        } limits;
+    } commands;
 
     struct Termination {
         float minimumHeadHeightFraction = 0.6f;
         float minimumPelvisHeightFraction = 0.5f;
         bool nonSupportContact = true;
-        float maximumDistanceFromStart = 5.0f;
+        float maximumDistanceFromStart = 5.0f;  // m (o fim e truncado, nao queda)
     } termination;
 
     struct InitialState {

@@ -121,10 +121,12 @@ void testPostures() {
     {
         TrainingBatch3D batch(settings(4, 1));
         const auto& channels = batch.observationLayout().channels;
-        require(channels.back().name == "command.posture.alerta", "o comando da postura fecha a observacao");
         const std::size_t O = batch.observationSize();
+        require(channels[O - 4].name == "command.posture.alerta" && channels[O - 3].name == "command.velocity.forward"
+                && channels.back().name == "command.velocity.yaw",
+            "os comandos (postura, velocidade) fecham a observacao");
         for (std::size_t e = 0; e < 4; ++e)
-            require(batch.observations()[e * O + O - 1] == 0.0f && batch.view(e).posture == 0,
+            require(batch.observations()[e * O + O - 4] == 0.0f && batch.view(e).posture == 0,
                 "a H1 pede a postura natural");
         require(batch.taskPostureIds() == std::vector<std::string> { "natural" }, "as posturas da H1");
     }
@@ -155,7 +157,7 @@ void testPostures() {
                     require(std::abs(obs[i] - (alert.dofRadians[d] - body.dofs[d].baseRadians)) < 2e-3f,
                         "o alerta comeca na pose dele: " + name);
         }
-        require(obs[O - 1] == 1.0f && batch.view(0).posture == 1, "o comando pede o alerta");
+        require(obs[O - 4] == 1.0f && batch.view(0).posture == 1, "o comando pede o alerta");
         require(obs[0] < -0.01f, "a pelve fica mais baixa que a da base");
     }
     {
@@ -166,12 +168,56 @@ void testPostures() {
         std::size_t alert = 0;
         const std::size_t O = batch.observationSize();
         for (std::size_t e = 0; e < 48; ++e) {
-            const bool asked = batch.observations()[e * O + O - 1] == 1.0f;
+            const bool asked = batch.observations()[e * O + O - 4] == 1.0f;
             require(asked == (batch.view(e).posture == 1), "o comando e a postura do episodio");
             alert += asked ? 1 : 0;
         }
         require(alert > 20 && alert < 48, "o treino sorteia as duas posturas (70% alerta)");
     }
+}
+
+// O comando de velocidade (andar): no treino, sorteado ate o limite de agora
+// do curriculo (para frente so, nesta etapa) com uma fatia parada; na bateria,
+// o roteiro; de fora, o fixo. Os mundos ficam longe uns dos outros.
+void testCommands() {
+    const std::filesystem::path walking = std::filesystem::path(MATTERENGINE_TEST_ASSETS_DIR) / "rl/tasks/h3_andar.json";
+    TrainingBatchSettings3D s = settings(64, 2);
+    s.taskPath = walking;
+    TrainingBatch3D batch(s);
+    const std::size_t O = batch.observationSize();
+    const auto commandOf = [&](std::size_t e) {
+        const auto obs = batch.observations();
+        return Vec3 { obs[e * O + O - 3] * 3.0f, obs[e * O + O - 2] * 3.0f, obs[e * O + O - 1] * 2.0f };
+    };
+    std::size_t standing = 0;
+    for (std::size_t e = 0; e < 64; ++e) {
+        const Vec3 c = commandOf(e);
+        require(c.x >= 0.0f && c.x <= 4.5f + 1e-4f && c.y == 0.0f && c.z == 0.0f, "so para frente, ate 4,5 m/s");
+        require(std::abs(c.x - batch.view(e).command.x) < 1e-4f, "o comando da observacao e o do mundo");
+        standing += c.x == 0.0f ? 1 : 0;
+    }
+    require(standing > 4 && standing < 40, "uma fatia dos sorteios pede ficar parado");
+    require(std::abs(batch.view(1).origin.x - batch.view(0).origin.x) > 200.0f, "os mundos de andar ficam longe");
+    TrainingTask3D task = batch.task();
+    task.commands.limits.forward = 1.0f;
+    batch.updateTask(task);
+    batch.reset(9);
+    for (std::size_t e = 0; e < 64; ++e) require(commandOf(e).x <= 1.0f + 1e-4f, "o limite do curriculo segura o sorteio");
+    batch.setCommand(3, { 2.0f, 0.0f, 0.0f });
+    std::vector<float> actions(64 * batch.actionSize(), 0.0f);
+    batch.step(actions);
+    require(std::abs(commandOf(3).x - 2.0f) < 1e-4f, "o comando fixo vale");
+
+    TrainingBatchSettings3D e = settings(2, 1);
+    e.taskPath = walking;
+    e.evaluation = true;
+    e.posture = "alerta";
+    e.commandSchedule = { { 0.0f, 0.0f, 0.0f, 0.0f }, { 0.5f, 1.5f, 0.0f, 0.0f } };
+    TrainingBatch3D battery(e);
+    std::vector<float> still(2 * battery.actionSize(), 0.0f);
+    require(battery.view(0).command.x == 0.0f, "o roteiro comeca parado");
+    for (int i = 0; i < 30; ++i) battery.step(still);
+    require(battery.view(0).command.x == 1.5f && battery.view(1).command.x == 1.5f, "o roteiro pede 1,5 m/s depois de 0,5 s");
 }
 
 // Mesma semente, mesmas acoes: o mesmo resultado, com 1 ou 3 threads.
@@ -269,6 +315,7 @@ void runTrainingBatchTests() {
     testContract();
     testHeadingInvariance();
     testPostures();
+    testCommands();
     testDeterminism();
     testFallsAndRestart();
     testTimeLimit();

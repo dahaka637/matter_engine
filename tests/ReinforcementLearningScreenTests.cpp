@@ -249,16 +249,28 @@ int main() {
         // As habilidades: uma por tarefa. Escolher a postura de alerta muda o
         // mundo; a politica de mentira (de antes do comando da postura, 160
         // entradas) le o comeco da observacao.
-        require(screen.skillTasks() == std::vector<std::string> { "h1_ficar_em_pe", "h1b_em_pe_posturado" },
+        require(screen.skillTasks() == std::vector<std::string> { "h1_ficar_em_pe", "h1b_em_pe_posturado", "h3_andar" },
             "as habilidades vem das tarefas");
         require(screen.viewerPosture() == 0, "a H1 mostra a postura natural");
         screen.selectSkill(1);
         frame(screen, canvas, 2);
         require(screen.viewerPosture() == 1, "a H1b mostra a postura de alerta");
         snapshot(canvas, "rl_tela_posturado");
+        // Andar: o mundo e refeito com a tarefa dela (a arena grande), a postura
+        // de alerta e a velocidade pedida pelo controle "Andar".
+        screen.selectSkill(2);
+        frame(screen, canvas, 2);
+        screen.setWalkSpeed(2.0f);
+        screen.advanceViewer(3);
+        frame(screen, canvas, 2);
+        require(screen.viewerWalkCommand() == 2.0f, "o jogador do mundo recebe a velocidade pedida");
+        snapshot(canvas, "rl_tela_andar");
+        const auto walkingConflicts = sweepIdConflicts([&] { screen.draw(canvas, 1.0f); });
+        require(walkingConflicts.empty(),
+            "IDs repetidos com o andar: " + (walkingConflicts.empty() ? std::string() : walkingConflicts.front()));
         screen.selectSkill(0);
         frame(screen, canvas, 2);
-        require(screen.viewerPosture() == 0, "de volta a H1");
+        require(screen.viewerPosture() == 0 && screen.viewerWalkCommand() == 0.0f, "de volta a H1, parado");
 
         // A politica de mentira segura a pose base: depois de 1 s o corpo
         // ainda esta de pe; um empurrao forte o tira do lugar. Com uma politica

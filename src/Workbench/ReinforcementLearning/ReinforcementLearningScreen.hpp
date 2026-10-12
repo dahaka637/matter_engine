@@ -57,6 +57,8 @@ public:
     [[nodiscard]] bool renderViewport(int width, int height) { return render(width, height); }
     [[nodiscard]] const TrainingHistory3D& history() const { return m_history; }
     void push(int direction, float newtons);
+    // O comando de andar do jogador do mundo (m/s para frente).
+    void setWalkSpeed(float metersPerSecond);
     void setDisplay(Display display) {
         m_display = display;
         m_dirty = true;
@@ -69,6 +71,7 @@ public:
     void trainSelectedSkill();
     [[nodiscard]] bool switchingSkill() const { return !m_switchTask.empty(); }
     [[nodiscard]] std::uint32_t viewerPosture() const;
+    [[nodiscard]] float viewerWalkCommand() const { return m_viewer ? m_viewer->view(0).command.x : 0.0f; }
 
 private:
     struct ModelOutcome {
@@ -115,6 +118,9 @@ private:
 
     // O mundo do visualizador e a politica dele.
     std::unique_ptr<TrainingBatch3D> m_viewer;
+    // A tarefa do mundo do visualizador: a da habilidade escolhida (a arena e o
+    // termino dela: andando, o chao e grande).
+    std::filesystem::path m_viewerTask;
     std::unique_ptr<PolicyRuntime3D> m_policy;
     std::filesystem::file_time_type m_policyWrite {};
     std::filesystem::path m_policyPath;
@@ -143,6 +149,8 @@ private:
     bool m_showContacts = true;
     // 100 N por 0,2 s no peito: o que a H1 (sem treino de empurroes) aguenta.
     float m_pushNewtons = 100.0f;
+    // A velocidade pedida ao jogador do mundo (m/s, nas habilidades de andar).
+    float m_walkSpeed = 0.0f;
 
     struct Skill {
         std::string task;
@@ -150,6 +158,9 @@ private:
         // A postura principal (a de maior fatia na tarefa) e a bateria dela.
         std::string posture;
         std::string battery;
+        // A velocidade maxima para frente (m/s; 0 = so parado) e a bateria do andar.
+        float maxForward = 0.0f;
+        std::string walkBattery;
     };
     std::vector<Skill> m_skills;
     std::size_t m_skill = 0;

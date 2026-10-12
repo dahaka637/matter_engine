@@ -149,6 +149,10 @@ void ReinforcementLearningScreen::loadSkills() {
                     skill.posture = posture.id;
                 }
             skill.battery = skill.posture == "natural" ? "equilibrio_v1" : "postura_" + skill.posture + "_v1";
+            skill.maxForward = task.commands.forward;
+            if (skill.maxForward > 0.0f) {
+                skill.battery = skill.walkBattery = "andar_frente_v1";
+            }
             m_skills.push_back(std::move(skill));
         } catch (const std::exception&) {
             // Uma tarefa que nao abre fica fora da lista.
@@ -170,12 +174,29 @@ std::string ReinforcementLearningScreen::skillName(const std::string& battery) c
     return battery;
 }
 
+void ReinforcementLearningScreen::setWalkSpeed(float metersPerSecond) {
+    const float maximum = m_skill < m_skills.size() ? m_skills[m_skill].maxForward : 0.0f;
+    m_walkSpeed = std::clamp(metersPerSecond, 0.0f, maximum);
+    if (m_viewer) m_viewer->setCommand(0, { m_walkSpeed, 0.0f, 0.0f });
+}
+
 void ReinforcementLearningScreen::selectSkill(std::size_t index) {
     if (index >= m_skills.size()) return;
     m_skill = index;
     m_skillChosen = true;
+    m_walkSpeed = 0.0f;
+    // Outra tarefa (de ficar de pe para andar): o mundo do visualizador e refeito.
+    const std::filesystem::path task = m_options.sourceRoot / "assets" / "rl" / "tasks" / (m_skills[index].task + ".json");
+    if (m_viewer && task != m_viewerTask) {
+        m_viewer.reset();
+        m_viewerError.clear();
+        ensureViewer();
+        m_dirty = true;
+        return;
+    }
     if (m_viewer) {
         try {
+            m_viewer->setCommand(0, {});
             m_viewer->setPosture(m_skills[index].posture);
             m_viewer->reset(static_cast<std::uint64_t>(std::time(nullptr)));
         } catch (const std::exception& error) {
@@ -236,7 +257,10 @@ void ReinforcementLearningScreen::ensureViewer() {
     if (m_viewer || !m_viewerError.empty()) return;
     try {
         TrainingBatchSettings3D settings;
-        settings.taskPath = taskPath();
+        settings.taskPath = m_skill < m_skills.size()
+            ? m_options.sourceRoot / "assets" / "rl" / "tasks" / (m_skills[m_skill].task + ".json")
+            : taskPath();
+        m_viewerTask = settings.taskPath;
         settings.environmentCount = 1;
         settings.environmentsPerScene = 1;
         settings.workerThreads = 1;
@@ -248,6 +272,7 @@ void ReinforcementLearningScreen::ensureViewer() {
         settings.solverVelocityIterations = 20;
         if (m_skill < m_skills.size()) settings.posture = m_skills[m_skill].posture;
         m_viewer = std::make_unique<TrainingBatch3D>(settings);
+        m_viewer->setCommand(0, { m_walkSpeed, 0.0f, 0.0f });
         m_action.assign(m_viewer->actionSize(), 0.0f);
         m_colliders = buildRagdollColliderWireframe3D(m_viewer->body().profile);
         reloadPolicy(true);
@@ -417,7 +442,9 @@ bool ReinforcementLearningScreen::render(int width, int height) {
         positions[i] = state.links[i].position;
         orientations[i] = state.links[i].orientation;
     }
-    const Vec3 anchor = positions.front();
+    // O mundo fica preso na origem do episodio (e nao na pelve): andando, o chao
+    // corre sob os pes e a camera segue o jogador.
+    const Vec3 anchor = view.origin;
     const SkeletonPose& pose = m_skeleton->update(positions, orientations, anchor, 0.0f, m_viewer->policyStepSeconds());
     const InspectionModel& model = *m_model->model;
     std::vector<Vec3> posed;
@@ -478,7 +505,7 @@ bool ReinforcementLearningScreen::render(int width, int height) {
     style.gridExtent = 4.0f;
     style.supersample = 1;
     OrbitCamera camera = m_camera;
-    const Vec3 pelvis = m_skeleton->toSkeleton(anchor);
+    const Vec3 pelvis = m_skeleton->toSkeleton(positions.front());
     camera.target = { pelvis.x, pelvis.y, pelvis.z - 0.04f };
     m_image = renderInspection(scene, style, camera, width, height);
     m_dirty = false;
@@ -541,6 +568,11 @@ void ReinforcementLearningScreen::drawTrainer() {
         if (status.alive && status.run != m_options.run) infoRow("Treino", status.run);
         infoRow("Habilidade", status.taskName.empty() ? status.task : status.taskName);
         tooltip("A habilidade que o treino está treinando (a marcada com o raio em HABILIDADES).");
+        if (status.forwardMax > 0.0) {
+            infoRow("Velocidade", decimal(status.forwardLimit, 2) + " de " + decimal(status.forwardMax, 1) + " m/s");
+            tooltip("O currículo: a velocidade máxima que o treino pede agora, que sobe conforme ele acompanha, "
+                    "até o alvo.");
+        }
         infoRow("Rodada", std::to_string(status.iteration));
         infoRow("Decisões", decimal(static_cast<double>(status.steps) / 1e6, 1) + " M");
         if (status.alive) infoRow("Velocidade", decimal(status.sps, 0) + " /s");
@@ -664,6 +696,23 @@ void ReinforcementLearningScreen::drawEvaluation(const TrainerStatus3D& status) 
     // Uma bateria por habilidade: de pe no jogo e no treino, e o giro do tronco.
     for (const TrainerStatus3D::Battery& battery : status.evaluationBatteries) {
         if (status.evaluationBatteries.size() > 1) ImGui::TextColored(InfoText, "%s", skillName(battery.battery).c_str());
+        if (battery.kind != "de_pe") {
+            // Andar (o roteiro de velocidades) e ir ate o ponto: sem cair e o quanto acerta.
+            for (const auto& [solver, stand] : battery.stand)
+                if (solver == "jogo") infoRow("Sem cair (jogo)", decimal(stand * 100.0, 0) + "%");
+            if (battery.kind == "andar" && battery.velocityError >= 0.0) {
+                infoRow("Erro da velocidade", decimal(battery.velocityError, 2) + " m/s");
+                tooltip("A diferença média entre a velocidade pedida e a dele no roteiro (parado, 1,5, 3 e 4,5 m/s, "
+                        "parar), na física do jogo.");
+            }
+            if (battery.kind == "andar" && battery.lateralDrift >= 0.0)
+                infoRow("Desvio lateral", decimal(battery.lateralDrift, 2) + " m");
+            if (battery.kind == "alvo" && battery.goalError >= 0.0) {
+                infoRow("Erro no ponto", decimal(battery.goalError, 2) + " m");
+                tooltip("O quanto ele para longe do ponto a 10 m na frente (indo a até 2 m/s e freando perto).");
+            }
+            continue;
+        }
         for (const auto& [solver, stand] : battery.stand) {
             const std::string name = solver == "jogo" ? "De pé (jogo)" : "De pé (treino)";
             infoRow(name.c_str(), decimal(stand * 100.0, 0) + "%");
@@ -797,6 +846,20 @@ void ReinforcementLearningScreen::drawViewport(CanvasTarget& canvas, float botto
 
 void ReinforcementLearningScreen::drawPushes() {
     ImGui::Dummy({ 1.0f, ui(2.0f) });
+    // Andar: a velocidade pedida ao jogador do mundo (as habilidades de andar).
+    const float maxForward = m_skill < m_skills.size() ? m_skills[m_skill].maxForward : 0.0f;
+    if (maxForward > 0.0f) {
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(InfoText, "%s", UI::FontAwesome::label(UI::FontAwesome::Play, "Andar").c_str());
+        tooltip("A velocidade pedida ao jogador do visualizador (para frente; 0 = parado). O treino não muda.");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(ui(180.0f));
+        float speed = m_walkSpeed;
+        if (ImGui::SliderFloat("##RLWalkSpeed", &speed, 0.0f, maxForward, "%.1f m/s")) setWalkSpeed(speed);
+        ImGui::SameLine();
+        ImGui::Dummy({ ui(18.0f), 1.0f });
+        ImGui::SameLine();
+    }
     ImGui::AlignTextToFramePadding();
     ImGui::TextColored(InfoText, "%s", UI::FontAwesome::label(UI::FontAwesome::Hand, "Empurrão").c_str());
     tooltip("Um empurrão no peito do jogador do visualizador, por 0,2 s, para testar a política (o treino não muda).");
@@ -840,8 +903,9 @@ void ReinforcementLearningScreen::drawCharts(float height) {
         for (const float v : values) result = std::max(result, v);
         return result * 1.05f;
     };
+    const bool walking = m_skill < m_skills.size() && m_skills[m_skill].maxForward > 0.0f;
     const std::array<Chart, 4> charts { {
-        { "De pé 60 s (%)", &stand, 0.0f, 100.0f,
+        { walking ? "Anda sem cair (%)" : "De pé 60 s (%)", &stand, 0.0f, 100.0f,
             "A bateria da habilidade escolhida, com a física do jogo, a cada 10 min." },
         { "Episódio (s)", &seconds, 0.0f, top(seconds, 1.0f), "Quanto dura um episódio do treino (o máximo é 20 s)." },
         { "Recompensa / passo", &reward, FLT_MAX, FLT_MAX, "A recompensa média por decisão em cada rodada do treino." },
