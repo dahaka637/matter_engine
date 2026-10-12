@@ -1,7 +1,8 @@
 # Aprendizado por Reforço no Matter Engine
 
 O personagem aprende do zero, por etapas sob demanda. A primeira é a H1:
-ficar em pé, estável, sem ajuda nenhuma. O plano completo e o diário ficam no
+ficar em pé, estável, sem ajuda nenhuma. A H1b é ficar em pé na postura de
+alerta (o `alert_idle`, o parado do jogo), no mesmo cérebro. O plano completo e o diário ficam no
 vault (`30_Projects/matter_engine/Aprendizado_por_Reforco/`); aqui fica o que
 está implementado e como usar.
 
@@ -39,6 +40,8 @@ tudo (`matter-rl doctor`).
 - **Pelo terminal:** `tools/rl/matter-rl` com:
   - `iniciar`, `status`, `pausar`, `retomar`, `parar`, `salvar`, `avaliar`;
   - `modo maximo|equilibrado|leve`;
+  - `tarefa <id>`: o treino aberto passa para outra habilidade (o mesmo
+    cérebro, sem perder o que sabe);
   - `peso <parcela> <valor>`;
   - `relatorio --desde 1h`, `graficos`, `episodios`, `folha --cena <nome>`;
   - `comparar A B`: a bateria em dois checkpoints (rodada, `ultimo` ou
@@ -96,6 +99,21 @@ O treino inteiro (física, rede na GTX 1070 Ti e PPO), com 512 mundos:
   0,2 s no peito em todos os mundos, 150 N em metade e 200 N em nenhum. O
   empurrão padrão da tela é 100 N.
 
+## Habilidades no mesmo cérebro
+
+- **Uma habilidade é uma tarefa** (`assets/rl/tasks`). A tela lista as
+  tarefas; escolher uma mostra a postura dela no mundo, e "Iniciar" treina a
+  escolhida. Com um treino aberto, "Treinar esta habilidade" troca a dele.
+- **Posturas:** o corpo tem uma biblioteca (`postures` no arquivo do corpo).
+  A natural é a pose base, de onde a ação parte. A tarefa diz quais pede e a
+  fatia de cada uma (a H1b: 70% alerta, 30% natural, para não esquecer a H1).
+- **O comando** da postura entra no fim da observação. Uma política de antes
+  dele lê o começo igual, e a migração entra com peso zero. Os canais de
+  comando passam crus pela normalização.
+- **Avaliação:** uma bateria por postura (`equilibrio_v1`,
+  `postura_alerta_v1`). A nota é a da pior, e desconta o erro da postura
+  pedida. Há um "melhor" por habilidade.
+
 ## Semanas ligado
 
 - **Desligar o PC** (SIGTERM): o treino grava o checkpoint e fecha em ~2 s.
@@ -133,5 +151,7 @@ O treino inteiro (física, rede na GTX 1070 Ti e PPO), com 512 mundos:
   - checkpoints atômicos e a limpeza;
   - trava, banco, canal de controle;
   - a retomada depois de uma queda e a amostra das curvas por tempo;
-  - o treinador inteiro: continuar do checkpoint e a recuperação de NaN;
+  - o treinador inteiro: continuar do checkpoint, a recuperação de NaN e a
+    troca de habilidade (H1 → H1b);
+  - as posturas pela ponte e uma bateria por postura;
   - ponte nativa e paridade com o C++ (< 1e-5).
