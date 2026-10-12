@@ -13,12 +13,16 @@
 
 namespace MatterEngine {
 
+// O maior modulo de acao que o corpo aceita (o resto o ambiente corta).
+inline constexpr float RLActionLimit = 10.0f;
+
 // Um eixo atuado do corpo de treino: o que a politica comanda.
 //
-// O alvo da junta sai da acao (em [-1, 1]) por uma reta em cada lado da pose
-// base: acao 0 segura a pose base, +1 vai ao limite maximo e -1 ao minimo.
-// A politica alcanca o curso inteiro da junta sem que a pose de pe deixe de
-// ser o zero dela.
+// O alvo da junta e a pose base mais actionScale radianos por unidade de
+// acao, limitado ao curso da junta: acao 0 segura a pose base. A acao nao e
+// presa em [-1, 1] (so em +-ActionLimit): o ruido de exploracao fica pequeno
+// em radianos (~0,15 rad com desvio 0,6) e a politica ainda alcanca o curso
+// inteiro pedindo valores maiores (o mapa dos robos com pernas, rsl_rl).
 struct RLBodyDof3D {
     std::string name;
     std::uint32_t linkIndex = 0;
@@ -26,6 +30,7 @@ struct RLBodyDof3D {
     float minimumRadians = 0.0f;
     float maximumRadians = 0.0f;
     float baseRadians = 0.0f;
+    float actionScale = 0.25f;
     // Rigidez (N.m/rad), amortecimento (N.m.s/rad) e teto de torque (N.m)
     // de verdade, e as escalas sobre o perfil que o backend recebe.
     float stiffness = 0.0f;
@@ -36,9 +41,6 @@ struct RLBodyDof3D {
     float maximumTorqueScale = 0.0f;
 
     [[nodiscard]] float target(float action) const;
-    // Radianos por unidade de acao, na media dos dois lados (para o ruido
-    // inicial da politica sair do mesmo tamanho em todas as juntas).
-    [[nodiscard]] float meanRadiansPerAction() const;
 };
 
 // O corpo de treino: o perfil do jogo mais os atuadores do RL por cima

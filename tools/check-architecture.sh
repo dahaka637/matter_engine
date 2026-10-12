@@ -71,6 +71,16 @@ check_absent "Atletas: planejamento, sintese, acoes, pedidos e bola trabalham co
     src/Engine/Athlete/Dribble
 check_absent "Nucleo de RL nao depende de render, interface, audio, plataforma nem entrada" \
     '#include "Engine/(Render|RHI|UI|Audio|Platform|Input)/|#include .imgui|#include <SDL' src/Engine/RL
+check_absent "So a ponte do treinador (bindings/python) inclui Python" \
+    '#include .(Python\.h|pybind11|nanobind)' src tests tools -g '!tools/rl/**'
+check_absent "Mundos de treino e politica do RL nao dependem da interface nem do treinador" \
+    '#include "(Workbench|Engine/RL/Supervisor)/' src/Engine/RL/Environment src/Engine/RL/Body src/Engine/RL/Policy
+check_absent "A politica exportada (RL/Policy) nao depende da fisica" \
+    '#include "Engine/(Physics|RL/Environment|RL/Body)/' src/Engine/RL/Policy
+check_absent "Tela de RL fala com o treinador so pelo Supervisor (sem sockets nem processos)" \
+    '#include <(sys/|spawn\.h|unistd\.h)' src/Workbench
+check_absent "Tela de RL fala com a GPU so pelo CanvasTarget" \
+    'RHI::|Renderer&|#include "Engine/(RHI|Render)/' src/Workbench/ReinforcementLearning
 check_absent "Identidade antiga e prototipos removidos nao podem retornar" \
     'SoccerFall|SOCCERFALL|LegacyFootworkRig|AnimatorScreen' \
     CMakeLists.txt src tests

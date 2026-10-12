@@ -32,6 +32,8 @@ inline constexpr char32_t Hand = 0xF256;
 inline constexpr char32_t DoorOpen = 0xF52B;
 inline constexpr char32_t HandFist = 0xF6DE;
 inline constexpr char32_t RotateLeft = 0xF2EA;
+inline constexpr char32_t Brain = 0xF5DC;
+inline constexpr char32_t ChartLine = 0xF201;
 
 [[nodiscard]] inline std::string icon(char32_t codepoint) {
     std::string result;

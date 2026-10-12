@@ -21,6 +21,14 @@ set(CMAKE_CXX_SCAN_FOR_MODULES OFF CACHE BOOL "" FORCE)
 
 include(FetchContent)
 
+# A ponte Python do treinador de RL (bindings/python) e um modulo
+# compartilhado: tudo o que entra nele, inclusive o Jolt, precisa ser PIC.
+# Fica desligada na build normal; tools/rl/setup.sh a liga numa build propria.
+option(MATTERENGINE_BUILD_RL_PYTHON "Build the Python bridge of the RL trainer" OFF)
+if(MATTERENGINE_BUILD_RL_PYTHON)
+    set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+endif()
+
 
 # The Vulkan toolchain is fetched explicitly so contributors only need a C++
 # compiler and a Vulkan-capable driver. A system-wide Vulkan SDK remains useful
@@ -339,6 +347,31 @@ if(MATTERENGINE_BUILD_RL)
             -Wall -Wextra -Wpedantic)
     endif()
 
+    # A politica exportada pelo treinador, para a tela e o jogo: so a MLP e
+    # a normalizacao, sem fisica nem treinador.
+    add_library(MatterRLPolicy STATIC
+        src/Engine/RL/Policy/PolicyRuntime3D.cpp
+    )
+    target_include_directories(MatterRLPolicy PUBLIC src)
+    target_link_libraries(MatterRLPolicy PRIVATE nlohmann_json::nlohmann_json)
+    if(MSVC)
+        target_compile_options(MatterRLPolicy PRIVATE /W4 /permissive- /utf-8)
+    else()
+        target_compile_options(MatterRLPolicy PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+
+    # A ligacao da tela com o treinador (processo, socket local) e o
+    # historico do banco do treino, so leitura. POSIX; sem interface.
+    add_library(MatterRLSupervisor STATIC
+        src/Engine/RL/Supervisor/TrainerLink3D.cpp
+        src/Engine/RL/Supervisor/TrainingHistory3D.cpp
+    )
+    target_include_directories(MatterRLSupervisor PUBLIC src)
+    target_link_libraries(MatterRLSupervisor PRIVATE nlohmann_json::nlohmann_json sqlite3)
+    if(NOT MSVC)
+        target_compile_options(MatterRLSupervisor PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+
     # Os mundos de treino: o corpo de RL, as tarefas e o lote paralelo.
     # Depende so da fisica e dos clipes (nada de janela, render ou Python).
     add_library(MatterRLEnvironment STATIC
@@ -356,6 +389,19 @@ if(MATTERENGINE_BUILD_RL)
     else()
         target_compile_options(MatterRLEnvironment PRIVATE
             -Wall -Wextra -Wpedantic)
+    endif()
+
+    if(MATTERENGINE_BUILD_RL_PYTHON)
+        # O Python e o do ambiente do treinador (tools/rl/.venv), que traz o
+        # nanobind; o modulo sai em <build>/python.
+        find_package(Python 3.14 COMPONENTS Interpreter Development.Module REQUIRED)
+        execute_process(COMMAND "${Python_EXECUTABLE}" -m nanobind --cmake_dir
+            OUTPUT_STRIP_TRAILING_WHITESPACE OUTPUT_VARIABLE nanobind_ROOT)
+        find_package(nanobind CONFIG REQUIRED)
+        nanobind_add_module(matter_rl_native NB_STATIC bindings/python/MatterRLNative.cpp)
+        target_link_libraries(matter_rl_native PRIVATE MatterRLEnvironment MatterRLPolicy)
+        set_target_properties(matter_rl_native PROPERTIES
+            LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/python")
     endif()
 endif()
 
@@ -626,6 +672,7 @@ add_library(MatterModelingRig STATIC
     src/Engine/Modeling/Rig/GameRig.cpp
     src/Engine/Modeling/Rig/GameCharacterExport.cpp
     src/Engine/Modeling/Rig/PlayerModelAsset.cpp
+    src/Engine/Modeling/Rig/RagdollSkeletonView.cpp
 )
 target_include_directories(MatterModelingRig PUBLIC src)
 target_link_libraries(MatterModelingRig
@@ -654,12 +701,19 @@ add_library(MatterWorkbench STATIC
     src/Workbench/PlayerInspector/PlayerInspectorScreen.cpp
     src/Workbench/PlayerInspector/PlayerAnimations.cpp
     src/Workbench/PlayerInspector/UiCanvasTexture.cpp
+    src/Workbench/Screens/ReinforcementLearningHost.cpp
+    src/Workbench/ReinforcementLearning/ReinforcementLearningScreen.cpp
 )
 
+# A tela de Aprendizado por Reforco usa o modulo de RL inteiro (os mundos, a
+# politica, a ligacao com o treinador e os colisores).
+if(NOT MATTERENGINE_BUILD_RL)
+    message(FATAL_ERROR "O Workbench precisa de MATTERENGINE_BUILD_RL (a tela de Aprendizado por Reforco)")
+endif()
 target_include_directories(MatterWorkbench PUBLIC src)
 target_link_libraries(MatterWorkbench
     PUBLIC MatterEngine MatterModelingRig MatterObjects
-    PRIVATE imgui meshoptimizer
+    PRIVATE imgui meshoptimizer MatterRLEnvironment MatterRLPolicy MatterRLSupervisor MatterRLCalibration
 )
 target_compile_definitions(MatterWorkbench PRIVATE MATTERENGINE_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
 
@@ -794,6 +848,13 @@ if(MATTERENGINE_BUILD_TESTS)
     target_compile_definitions(MatterObjectInspectorTests PRIVATE
         MATTERENGINE_TEST_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
     add_test(NAME MatterEngine.ObjectInspector COMMAND MatterObjectInspectorTests)
+    # A tela "Aprendizado por Reforco" sem janela (um treino de mentira numa
+    # pasta temporaria).
+    add_executable(MatterReinforcementLearningScreenTests tests/ReinforcementLearningScreenTests.cpp)
+    target_link_libraries(MatterReinforcementLearningScreenTests PRIVATE MatterTestHeadlessUi MatterRLPolicy sqlite3)
+    target_compile_definitions(MatterReinforcementLearningScreenTests PRIVATE
+        MATTERENGINE_TEST_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
+    add_test(NAME MatterEngine.ReinforcementLearningScreen COMMAND MatterReinforcementLearningScreenTests)
 endif()
 
 # Smoke test manual: abre uma janela real e percorre resize, minimizar/restaurar

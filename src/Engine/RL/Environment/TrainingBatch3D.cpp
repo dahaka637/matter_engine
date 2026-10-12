@@ -589,7 +589,8 @@ void TrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> actio
     for (const std::uint32_t index : scene.environments) {
         Environment& env = environments[index];
         std::swap(env.previousAction, env.action);
-        for (std::size_t d = 0; d < A; ++d) env.action[d] = std::clamp(actions[index * A + d], -1.0f, 1.0f);
+        for (std::size_t d = 0; d < A; ++d)
+            env.action[d] = std::clamp(actions[index * A + d], -RLActionLimit, RLActionLimit);
         std::swap(env.previousTargets, env.targets);
         writeTargets(env, env.action);
         physics.setRagdollActiveDriveTargets(env.ragdoll, env.delayed ? env.previousTargets : env.targets, false);
@@ -601,11 +602,13 @@ void TrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> actio
             Environment& env = environments[index];
             // Atraso de um passo fisico: o comando novo entra no segundo.
             if (sub == 1 && env.delayed) physics.setRagdollActiveDriveTargets(env.ragdoll, env.targets, false);
-            if (!pushes) continue;
             if (env.pushRemaining > 0.0f) {
                 physics.applyRagdollLinkForce(env.ragdoll, env.pushLink, env.pushForce, {});
                 env.pushRemaining -= FixedStep;
-            } else if ((env.pushTimer -= FixedStep) <= 0.0f) {
+                continue;
+            }
+            if (!pushes) continue;
+            if ((env.pushTimer -= FixedStep) <= 0.0f) {
                 const float angle =
                     std::uniform_real_distribution<float>(-std::numbers::pi_v<float>, std::numbers::pi_v<float>)(env.rng);
                 const float force = uniform(env.rng, task.pushes.forceNewtons);
@@ -817,9 +820,20 @@ TrainingEnvironmentView3D TrainingBatch3D::view(std::size_t environment) const {
     return view;
 }
 
+void TrainingBatch3D::push(std::size_t environment, std::uint32_t link, Vec3 forceNewtons, float seconds) {
+    Impl& impl = *m_impl;
+    if (environment >= impl.environments.size() || link >= impl.body.profile.links.size() || !finite(forceNewtons)
+        || !(seconds > 0.0f))
+        return;
+    Environment& env = impl.environments[environment];
+    env.pushLink = link;
+    env.pushForce = forceNewtons;
+    env.pushRemaining = seconds;
+}
+
 std::vector<float> TrainingBatch3D::actionRadiansPerUnit() const {
     std::vector<float> result;
-    for (const RLBodyDof3D& dof : m_impl->body.dofs) result.push_back(dof.meanRadiansPerAction());
+    for (const RLBodyDof3D& dof : m_impl->body.dofs) result.push_back(dof.actionScale);
     return result;
 }
 

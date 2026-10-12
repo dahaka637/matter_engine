@@ -45,14 +45,8 @@ std::uint32_t findLink(const RagdollProfile3D& profile, std::string_view id) {
 } // namespace
 
 float RLBodyDof3D::target(float action) const {
-    action = std::clamp(action, -1.0f, 1.0f);
-    const float value = action >= 0.0f ? baseRadians + action * (maximumRadians - baseRadians)
-                                       : baseRadians + action * (baseRadians - minimumRadians);
-    return std::clamp(value, minimumRadians, maximumRadians);
-}
-
-float RLBodyDof3D::meanRadiansPerAction() const {
-    return std::max(0.01f, 0.5f * (maximumRadians - minimumRadians));
+    action = std::clamp(action, -RLActionLimit, RLActionLimit);
+    return std::clamp(baseRadians + actionScale * action, minimumRadians, maximumRadians);
 }
 
 Quaternion rlQuaternionExp3D(Vec3 rotationVector) {
@@ -208,6 +202,8 @@ RLBody3D loadRLBody3D(const std::filesystem::path& definitionPath) {
         }
     }
 
+    const float defaultActionScale = document.value("actionScale", 0.25f);
+    const nlohmann::json actionScales = document.value("actionScales", nlohmann::json::object());
     float stiffnessGain = 1.0f, dampingGain = 1.0f;
     if (document.contains("gains")) {
         stiffnessGain = document["gains"].value("stiffnessScale", 1.0f);
@@ -228,6 +224,7 @@ RLBody3D loadRLBody3D(const std::filesystem::path& definitionPath) {
             const float base = a == 0 ? body.baseJointCoordinates[i].x
                 : a == 1 ? body.baseJointCoordinates[i].y : body.baseJointCoordinates[i].z;
             dof.baseRadians = std::clamp(base, axis.minimumRadians, axis.maximumRadians);
+            dof.actionScale = actionScales.contains(link.id) ? actionScales[link.id].get<float>() : defaultActionScale;
             // Rigidez/amortecimento do perfil vezes o ganho; o modo ativo do
             // backend multiplica a escala por 5 (rigidez) e 2 (amortecimento).
             dof.stiffness = axis.stiffness * stiffnessGain;

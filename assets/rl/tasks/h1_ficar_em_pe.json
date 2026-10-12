@@ -16,7 +16,7 @@
     "footSlip": 0.5,
     "footDrift": 1.0,
     "effort": 0.1,
-    "actionRate": 0.2,
+    "actionRate": 0.05,
     "jointLimit": 0.2,
     "posePrior": 0.1,
     "fall": 10.0

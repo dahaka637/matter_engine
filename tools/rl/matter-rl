@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# A linha de comando do treino de RL (matter-rl ajuda: matter-rl -h).
+set -Eeuo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ ! -x "$here/.venv/bin/python" ]]; then
+    echo "ambiente do treino ausente: rode $here/setup.sh" >&2
+    exit 2
+fi
+cd "$here"
+exec "$here/.venv/bin/python" -m matter_rl "$@"

@@ -93,7 +93,7 @@ void testDeterminism() {
 void testFallsAndRestart() {
     TrainingBatch3D batch(settings(8, 2));
     std::mt19937 rng(3);
-    std::uniform_real_distribution<float> unit(-1.0f, 1.0f);
+    std::uniform_real_distribution<float> unit(-6.0f, 6.0f);
     std::vector<float> actions(8 * batch.actionSize());
     std::size_t falls = 0;
     for (int step = 0; step < 150 && falls < 3; ++step) {
@@ -104,7 +104,8 @@ void testFallsAndRestart() {
                     || episode.reason == TrainingEndReason3D::FallHeight,
                 std::string("fim inesperado: ") + trainingEndReasonName3D(episode.reason));
             require(batch.terminated()[episode.environment] == 1, "queda deveria marcar terminated");
-            require(std::abs(batch.observations()[episode.environment * batch.observationSize()]) < 0.1f,
+            // (O ruido inicial das juntas muda a altura da pelve em uns cm.)
+            require(std::abs(batch.observations()[episode.environment * batch.observationSize()]) < 0.2f,
                 "o mundo deveria recomecar de pe");
             ++falls;
         }

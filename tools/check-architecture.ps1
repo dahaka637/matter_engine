@@ -69,6 +69,26 @@ $checks = @(
         Arguments = @("-n", '#include "Engine/(Render|RHI|UI|Audio|Platform|Input)/|#include .imgui|#include <SDL', "src/Engine/RL")
     }
     @{
+        Name = "So a ponte do treinador (bindings/python) inclui Python"
+        Arguments = @("-n", '#include .(Python\.h|pybind11|nanobind)', "src", "tests", "tools", "-g", "!tools/rl/**")
+    }
+    @{
+        Name = "Mundos de treino e politica do RL nao dependem da interface nem do treinador"
+        Arguments = @("-n", '#include "(Workbench|Engine/RL/Supervisor)/', "src/Engine/RL/Environment", "src/Engine/RL/Body", "src/Engine/RL/Policy")
+    }
+    @{
+        Name = "A politica exportada (RL/Policy) nao depende da fisica"
+        Arguments = @("-n", '#include "Engine/(Physics|RL/Environment|RL/Body)/', "src/Engine/RL/Policy")
+    }
+    @{
+        Name = "Tela de RL fala com o treinador so pelo Supervisor (sem sockets nem processos)"
+        Arguments = @("-n", '#include <(sys/|spawn\.h|unistd\.h)', "src/Workbench")
+    }
+    @{
+        Name = "Tela de RL fala com a GPU so pelo CanvasTarget"
+        Arguments = @("-n", 'RHI::|Renderer&|#include "Engine/(RHI|Render)/', "src/Workbench/ReinforcementLearning")
+    }
+    @{
         Name = "Identidade antiga e prototipos removidos nao podem retornar"
         Arguments = @("-n", "SoccerFall|SOCCERFALL|LegacyFootworkRig|PhysicalBiped|AnimatorScreen", "CMakeLists.txt", "src", "tests")
     }

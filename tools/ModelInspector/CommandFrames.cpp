@@ -3,6 +3,7 @@
 #include "Engine/Animation/RagdollVisualPose3D.hpp"
 #include "Engine/Modeling/Inspection/ContactSheet.hpp"
 #include "Engine/Modeling/Rig/GameRig.hpp"
+#include "Engine/Modeling/Rig/RagdollSkeletonView.hpp"
 #if defined(MATTERENGINE_MODEL_INSPECTOR_RL)
 #include "Engine/RL/Calibration/RagdollColliderWireframe3D.hpp"
 #endif
@@ -223,7 +224,6 @@ int runFrames(const ModelContext& context, const CommandLine& line) {
     }
 
     const RagdollCharacter3D& character = *context.loaded.character;
-    const GameRig& rig = *context.loaded.rig;
     const InspectionModel& model = context.model();
     const RagdollProfile3D& profile = character.profile;
     const int width = std::clamp(line.integer("largura", 420), 64, 2048);
@@ -266,18 +266,8 @@ int runFrames(const ModelContext& context, const CommandLine& line) {
         return 2;
     }
     const Vec3 fixedPelvis = firstLinks.linkPositions.front();
-    // Mundo do dump -> espaco do modelo do jogo -> espaco do esqueleto (a raiz
-    // medida do modelo novo sobe/escala como em sampleGameRigPose).
-    const auto toSkeleton = [&](Vec3 game) {
-        if (!rig.fitted) return game;
-        for (const Joint& joint : rig.skeleton.joints)
-            if (joint.parent < 0)
-                return joint.bind.position + Vec3 { 0.0f, 0.0f, rig.rootRestLift }
-                    + (game - rig.rootGameBind.position) * rig.rootScale;
-        return game;
-    };
-
-    RagdollVisualPose3D visual;
+    // Mundo do dump -> espaco do modelo do jogo -> espaco do esqueleto.
+    RagdollSkeletonView view(context.loaded.character, context.loaded.rig);
     std::vector<Image> images;
     std::vector<std::string> captions;
     float previousT = scenario->frames.front().t;
@@ -287,25 +277,16 @@ int runFrames(const ModelContext& context, const CommandLine& line) {
         if (!linksFromFrame(profile, frame, links)) continue;
         const Vec3 pelvisWorld = links.linkPositions.front();
         const Vec3 anchor = follow ? pelvisWorld : fixedPelvis;
-        const auto toGame = [&](Vec3 world) {
-            return Vec3 { world.x - anchor.x + profile.links.front().modelPosition.x,
-                world.y - anchor.y + profile.links.front().modelPosition.y, world.z - floorWorld + gameFloor };
-        };
-        for (Vec3& position : links.linkPositions) position = toGame(position);
-        RagdollVisualPoseInput3D visualInput;
-        visualInput.linkPositions = links.linkPositions;
-        visualInput.linkOrientations = links.linkOrientations;
-        visualInput.groundHeight = { gameFloor, gameFloor };
-        visualInput.deltaTime = std::max(1.0f / 120.0f, frame.t - previousT);
+        const SkeletonPose& pose = view.update(links.linkPositions, links.linkOrientations, anchor, floorWorld,
+            std::max(1.0f / 120.0f, frame.t - previousT));
         previousT = frame.t;
-        const std::vector<Quaternion> rotations = visual.update(character, visualInput);
-        const SkeletonPose pose = gameRigPoseFromLinks(character, rig, links, rotations, false);
+        const auto toSkeleton = [&](Vec3 world) { return view.toSkeleton(world); };
         std::vector<Vec3> posed;
         if (model.mesh.hasSkin()) posed = model.mesh.posedPositions(skinningTransforms(model.skeleton, pose));
 
         std::vector<Highlight> highlights;
         if (frame.ballValid) {
-            const Vec3 ball = toSkeleton(toGame(frame.ball));
+            const Vec3 ball = toSkeleton(frame.ball);
             const float radius = 0.11f;
             const Color color = frame.touched ? Palette::Error : Palette::Focus;
             highlights.push_back(circle(ball, radius, { 1, 0, 0 }, { 0, 1, 0 }, color));
@@ -315,16 +296,16 @@ int runFrames(const ModelContext& context, const CommandLine& line) {
         for (const Vec3 goal : frame.footGoals) {
             Highlight marker;
             marker.color = Palette::Info;
-            marker.points.push_back(toSkeleton(toGame(goal)));
+            marker.points.push_back(toSkeleton(goal));
             highlights.push_back(std::move(marker));
         }
         for (const auto& [step, planted] : frame.footsteps) {
-            const Vec3 at = toSkeleton(toGame(step));
-            highlights.push_back(circle({ at.x, at.y, toSkeleton(Vec3 { 0, 0, gameFloor }).z + 0.004f }, 0.05f,
+            const Vec3 at = toSkeleton(step);
+            highlights.push_back(circle({ at.x, at.y, view.gameToSkeleton(Vec3 { 0, 0, gameFloor }).z + 0.004f }, 0.05f,
                 { 1, 0, 0 }, { 0, 1, 0 }, planted ? Palette::Left : Palette::Right));
         }
         for (const DumpFrame::Contact& contact : frame.contacts) {
-            const Vec3 at = toSkeleton(toGame(contact.position));
+            const Vec3 at = toSkeleton(contact.position);
             Highlight marker;
             marker.color = Palette::Error;
             constexpr float Radius = 0.025f;
@@ -332,13 +313,13 @@ int runFrames(const ModelContext& context, const CommandLine& line) {
             marker.segments.push_back({ at - Vec3 { 0, Radius, 0 }, at + Vec3 { 0, Radius, 0 } });
             marker.segments.push_back({ at - Vec3 { 0, 0, Radius }, at + Vec3 { 0, 0, Radius } });
             if (contact.hasNormal)
-                marker.segments.push_back({ at, toSkeleton(toGame(contact.position + contact.normal.normalized() * 0.09f)) });
+                marker.segments.push_back({ at, toSkeleton(contact.position + contact.normal.normalized() * 0.09f) });
             highlights.push_back(std::move(marker));
         }
 #if defined(MATTERENGINE_MODEL_INSPECTOR_RL)
         if (restColliders) {
             const RagdollColliderWireframe3D colliders = poseRagdollColliderWireframe3D(profile, *restColliders,
-                links.linkPositions, links.linkOrientations, false);
+                view.gameLinks().linkPositions, view.gameLinks().linkOrientations, false);
             std::array<Highlight, 3> sides;
             sides[0].color = Palette::Center;
             sides[1].color = Palette::Left;
@@ -346,7 +327,8 @@ int runFrames(const ModelContext& context, const CommandLine& line) {
             for (const RagdollColliderWireframeLink3D& link : colliders.links) {
                 const std::size_t side = link.side == RagdollColliderWireframeSide3D::Left ? 1
                     : link.side == RagdollColliderWireframeSide3D::Right ? 2 : 0;
-                for (const auto& [a, b] : link.segments) sides[side].segments.push_back({ toSkeleton(a), toSkeleton(b) });
+                for (const auto& [a, b] : link.segments)
+                    sides[side].segments.push_back({ view.gameToSkeleton(a), view.gameToSkeleton(b) });
             }
             highlights.insert(highlights.end(), std::make_move_iterator(sides.begin()),
                 std::make_move_iterator(sides.end()));
@@ -367,7 +349,7 @@ int runFrames(const ModelContext& context, const CommandLine& line) {
         style.gridExtent = 3.0f;
         style.supersample = std::clamp(line.integer("ssaa", 2), 1, 4);
         OrbitCamera camera;
-        const Vec3 pelvis = toSkeleton(toGame(pelvisWorld));
+        const Vec3 pelvis = toSkeleton(pelvisWorld);
         camera.target = { pelvis.x, pelvis.y, pelvis.z - 0.04f };
         camera.yaw = yaw * DegreesToRadians;
         camera.pitch = pitch * DegreesToRadians;

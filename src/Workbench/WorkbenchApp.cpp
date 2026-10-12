@@ -346,6 +346,9 @@ void WorkbenchApp::applyAutostartIfRequested() {
         if (environmentValue("MATTERENGINE_BALL_ACTION") == "chute")
             m_ballViewerSettings.kind = BallActionKind3D::Shot;
         if (mode == "ball-viewer-smoke") m_automaticQuitSeconds = 6.0f;
+    } else if (mode == "reinforcement-learning" || mode == "reinforcement-learning-smoke") {
+        m_screen = Screen::ReinforcementLearning;
+        if (mode == "reinforcement-learning-smoke") m_automaticQuitSeconds = 6.0f;
     } else if (mode == "player-inspector" || mode == "player-inspector-smoke") {
         m_screen = Screen::PlayerInspector;
         if (mode == "player-inspector-smoke") m_automaticQuitSeconds = 6.0f;
@@ -599,6 +602,7 @@ void WorkbenchApp::onEvent(const Event& event) {
         if (m_screen == Screen::Settings) {
             m_screen = m_settingsReturnScreen;
         } else if (m_screen == Screen::ObjectInspector
+            || m_screen == Screen::ReinforcementLearning
             || m_screen == Screen::BallTouchViewer
             || m_screen == Screen::PlayerInspector) {
             m_screen = Screen::MainMenu;
@@ -752,6 +756,9 @@ void WorkbenchApp::onUpdate(float deltaTime) {
     if (m_screen == Screen::ObjectInspector && m_objectInspector) {
         m_objectInspector->update(deltaTime);
     }
+    if (m_screen == Screen::ReinforcementLearning && m_reinforcementLearning) {
+        m_reinforcementLearning->update(deltaTime);
+    }
 }
 
 void WorkbenchApp::onRender(Renderer& activeRenderer) {
@@ -814,6 +821,9 @@ void WorkbenchApp::onGui(Renderer& activeRenderer) {
     case Screen::ObjectInspector:
         drawObjectInspector(activeRenderer);
         break;
+    case Screen::ReinforcementLearning:
+        drawReinforcementLearning(activeRenderer);
+        break;
     case Screen::BallTouchViewer:
         drawBallTouchViewer();
         break;
@@ -831,6 +841,9 @@ void WorkbenchApp::onGui(Renderer& activeRenderer) {
     }
     if (m_screen != Screen::ObjectInspector && m_objectInspectorCanvas) {
         m_objectInspectorCanvas->release();
+    }
+    if (m_screen != Screen::ReinforcementLearning && m_reinforcementLearningCanvas) {
+        m_reinforcementLearningCanvas->release();
     }
 
     if (m_videoConfirm.active) {

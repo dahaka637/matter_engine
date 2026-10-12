@@ -1,0 +1,133 @@
+#pragma once
+
+#include "Engine/Modeling/Raster/Camera.hpp"
+#include "Engine/Modeling/Raster/Image.hpp"
+#include "Engine/Modeling/Rig/PlayerModelAsset.hpp"
+#include "Engine/Modeling/Rig/RagdollSkeletonView.hpp"
+#include "Engine/RL/Environment/TrainingBatch3D.hpp"
+#include "Engine/RL/Policy/PolicyRuntime3D.hpp"
+#include "Engine/RL/Supervisor/TrainerLink3D.hpp"
+#include "Engine/RL/Supervisor/TrainingHistory3D.hpp"
+#include "Engine/RL/Calibration/RagdollColliderWireframe3D.hpp"
+#include "Workbench/PlayerInspector/CanvasTarget.hpp"
+
+#include <filesystem>
+#include <functional>
+#include <future>
+#include <memory>
+#include <optional>
+#include <string>
+
+namespace MatterEngine::Workbench {
+
+// A tela "Aprendizado por Reforco": comanda o treinador (um processo proprio,
+// que segue com a tela fechada) e mostra o treino. A lateral tem o estado, os
+// controles (iniciar, pausar, retomar, parar, salvar, avaliar), o modo de
+// desempenho, as habilidades e a ultima avaliacao; o visualizador roda a
+// politica mais recente num mundo proprio, em tempo real (inferencia em C++,
+// a fisica do jogo), com o jogador de verdade, empurroes para testar e os
+// graficos do historico embaixo. Nada daqui muda a simulacao do treino.
+class ReinforcementLearningScreen {
+public:
+    struct Options {
+        // A raiz do repositorio (o treinador e as tarefas ficam nela).
+        std::filesystem::path sourceRoot;
+        // Onde "Salvar imagem" grava.
+        std::filesystem::path capturesDirectory;
+        std::string run = "principal";
+        std::string task = "h1_ficar_em_pe";
+    };
+
+    ReinforcementLearningScreen(Options options, std::function<void()> onBack);
+    ~ReinforcementLearningScreen();
+
+    void update(float deltaSeconds);
+    void draw(CanvasTarget& canvas, float uiScale);
+
+    // Automacao (testes, capturas).
+    [[nodiscard]] TrainerStatus3D status() const;
+    [[nodiscard]] bool viewerReady() const { return m_viewer != nullptr; }
+    [[nodiscard]] bool modelLoaded() const { return m_model.has_value(); }
+    void waitUntilLoaded();
+    void advanceViewer(int decisions);
+    [[nodiscard]] const Modeling::Image& image() const { return m_image; }
+    [[nodiscard]] bool renderViewport(int width, int height) { return render(width, height); }
+    [[nodiscard]] const TrainingHistory3D& history() const { return m_history; }
+    void push(int direction, float newtons);
+
+private:
+    struct ModelOutcome {
+        std::optional<Modeling::LoadedPlayerModel> loaded;
+        std::string error;
+    };
+
+    void drawSidebar(float height);
+    void drawTrainer();
+    void drawControls(const TrainerStatus3D& status);
+    void drawModes(const TrainerStatus3D& status);
+    void drawSkills();
+    void drawEvaluation(const TrainerStatus3D& status);
+    void drawToolbar();
+    void drawViewport(CanvasTarget& canvas, float bottomHeight);
+    void drawPushes();
+    void drawCharts(float height);
+    void drawFooter();
+    void notify(std::string text);
+    [[nodiscard]] float ui(float value) const { return value * m_uiScale; }
+
+    void ensureViewer();
+    void reloadPolicy(bool force);
+    void stepViewer(float deltaSeconds);
+    void stepOnce();
+    [[nodiscard]] bool render(int width, int height);
+    void pollModel();
+    void refreshHistory();
+    void frame(float yawDegrees, float pitchDegrees);
+    void saveCapture();
+    [[nodiscard]] std::filesystem::path taskPath() const;
+    [[nodiscard]] std::filesystem::path policyPath() const;
+
+    Options m_options;
+    std::function<void()> m_onBack;
+    std::unique_ptr<TrainerLink3D> m_link;
+    std::string m_mode = "equilibrado";
+    float m_uiScale = 1.0f;
+
+    // O mundo do visualizador e a politica dele.
+    std::unique_ptr<TrainingBatch3D> m_viewer;
+    std::unique_ptr<PolicyRuntime3D> m_policy;
+    std::filesystem::file_time_type m_policyWrite {};
+    std::string m_policyText;
+    bool m_useBest = false;
+    float m_policyWatch = 0.0f;
+    float m_accumulator = 0.0f;
+    bool m_paused = false;
+    std::vector<float> m_action;
+    std::string m_viewerError;
+
+    // O jogador de verdade (carregado numa thread propria).
+    std::optional<std::future<ModelOutcome>> m_pending;
+    std::optional<Modeling::LoadedPlayerModel> m_model;
+    std::unique_ptr<Modeling::RagdollSkeletonView> m_skeleton;
+    std::optional<RagdollColliderWireframe3D> m_colliders;
+    std::string m_modelError;
+
+    // O desenho.
+    Modeling::OrbitCamera m_camera;
+    Modeling::Image m_image;
+    float m_aspect = 0.0f;
+    bool m_dirty = true;
+    bool m_showMesh = true;
+    bool m_showColliders = false;
+    bool m_showCenterOfMass = true;
+    bool m_showContacts = true;
+    float m_pushNewtons = 250.0f;
+
+    // O historico (graficos) e os avisos.
+    TrainingHistory3D m_history;
+    float m_historyWatch = 0.0f;
+    std::string m_notice;
+    float m_noticeSeconds = 0.0f;
+};
+
+} // namespace MatterEngine::Workbench

@@ -26,6 +26,7 @@
 #include "Workbench/ObjectInspector/ObjectInspectorScreen.hpp"
 #include "Workbench/PlayerInspector/PlayerInspectorScreen.hpp"
 #include "Workbench/PlayerInspector/UiCanvasTexture.hpp"
+#include "Workbench/ReinforcementLearning/ReinforcementLearningScreen.hpp"
 #include "Workbench/Props/PropCatalog.hpp"
 
 #include <array>
@@ -63,6 +64,7 @@ private:
         MainMenu,
         Laboratory,
         ObjectInspector,
+        ReinforcementLearning,
         BallTouchViewer,
         PlayerInspector,
         Settings
@@ -227,6 +229,8 @@ private:
     void drawMainMenu();
     // A tela "Objetos" (Workbench/ObjectInspector).
     void drawObjectInspector(Renderer& activeRenderer);
+    // A tela "Aprendizado por Reforco" (Workbench/ReinforcementLearning).
+    void drawReinforcementLearning(Renderer& activeRenderer);
     // Visualizador de toque na bola (menu inicial): BallTouchViewerScreen.cpp.
     void drawBallTouchViewer();
     // A tela "Inspecao de jogador" (Workbench/PlayerInspector).
@@ -812,6 +816,9 @@ private:
     // Objetos procedurais (09/10): a tela e a textura da imagem dela.
     std::unique_ptr<ObjectInspectorScreen> m_objectInspector;
     std::unique_ptr<UiCanvasTexture> m_objectInspectorCanvas;
+    // Aprendizado por Reforco (12/10): a tela e a textura do visualizador.
+    std::unique_ptr<ReinforcementLearningScreen> m_reinforcementLearning;
+    std::unique_ptr<UiCanvasTexture> m_reinforcementLearningCanvas;
     std::future<BallTouchPreviewResult3D> m_ballViewerJob;
     std::atomic<bool> m_ballViewerCancel { false };
     std::atomic<float> m_ballViewerProgress { 0.0f };

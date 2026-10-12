@@ -134,6 +134,9 @@ public:
     [[nodiscard]] std::span<const float> terminalCriticObservations() const;
     [[nodiscard]] std::span<const TrainingEpisode3D> finishedEpisodes() const;
     [[nodiscard]] TrainingEnvironmentView3D view(std::size_t environment) const;
+    // Um empurrao de fora (a tela: testar a politica), no proximo step: a
+    // forca no link durante os segundos dados. Registrado como os do treino.
+    void push(std::size_t environment, std::uint32_t link, Vec3 forceNewtons, float seconds);
     // Radianos por unidade de acao de cada canal (o ruido inicial da politica).
     [[nodiscard]] std::vector<float> actionRadiansPerUnit() const;
     // Milissegundos do ultimo step() (fisica + observacao) e o total de passos

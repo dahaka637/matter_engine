@@ -3,6 +3,7 @@
 #include "Engine/Physics/PhysicsScene3D.hpp"
 #include "Engine/RL/Body/RLBody3D.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <random>
@@ -29,8 +30,12 @@ void testDefinition() {
         require(dof.baseRadians >= dof.minimumRadians && dof.baseRadians <= dof.maximumRadians,
             "pose base fora do limite em " + dof.name);
         require(std::abs(dof.target(0.0f) - dof.baseRadians) < 1e-6f, "acao zero deveria segurar a base: " + dof.name);
-        require(std::abs(dof.target(1.0f) - dof.maximumRadians) < 1e-5f, "acao +1 deveria ir ao maximo: " + dof.name);
-        require(std::abs(dof.target(-1.0f) - dof.minimumRadians) < 1e-5f, "acao -1 deveria ir ao minimo: " + dof.name);
+        const float step = std::min(dof.baseRadians + dof.actionScale, dof.maximumRadians);
+        require(std::abs(dof.target(1.0f) - step) < 1e-5f, "acao +1 deveria somar actionScale: " + dof.name);
+        require(std::abs(dof.target(RLActionLimit) - std::min(dof.maximumRadians, dof.baseRadians + dof.actionScale * RLActionLimit)) < 1e-5f,
+            "o maior pedido vai ao limite: " + dof.name);
+        require(dof.target(-1000.0f) >= dof.minimumRadians && dof.target(1000.0f) <= dof.maximumRadians,
+            "o alvo fica no curso da junta: " + dof.name);
         require(dof.maximumTorque > 0.0f && dof.maximumTorqueScale > 0.0f, "teto de torque ausente em " + dof.name);
     }
     // Os tetos de atleta da definicao (o perfil do jogo segue com os dele).
