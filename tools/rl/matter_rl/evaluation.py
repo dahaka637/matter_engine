@@ -47,6 +47,11 @@ class Battery:
     solvers: dict = field(default_factory=lambda: {"treino": (-1, -1), "jogo": (20, 20)})
 
 
+# A versao da conta da nota: um "melhor" de outra versao nao se compara (2:
+# entrou o erro da postura pedida).
+SCORE_VERSION = 2
+
+
 def score(metrics: dict) -> float:
     """Quanto ficou de pe, descontando oscilacao, tremedeira, deriva, o tronco
     girando (o giro passa despercebido na oscilacao do centro de massa) e o

@@ -63,6 +63,7 @@ TrainingTask3D loadTrainingTask3D(const std::filesystem::path& definitionPath) {
         w.actionRate = r.value("actionRate", w.actionRate);
         w.jointLimit = r.value("jointLimit", w.jointLimit);
         w.posePrior = r.value("posePrior", w.posePrior);
+        w.poseMatch = r.value("poseMatch", w.poseMatch);
         w.fall = r.value("fall", w.fall);
     }
     if (document.contains("termination")) {

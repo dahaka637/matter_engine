@@ -29,12 +29,17 @@ struct TrainingRewardWeights3D {
     float actionRate = 0.2f;
     float jointLimit = 0.2f;
     float posePrior = 0.1f;
+    // A postura pedida junta por junta (nota em sino do erro quadratico medio
+    // das juntas, sigma ~10 graus): numa postura comandada os bracos tambem
+    // contam. O posePrior, normalizado pelo curso, quase nao cobra um antebraco
+    // 40 graus fora. Desligada se a tarefa nao pede.
+    float poseMatch = 0.0f;
     float fall = 10.0f;
 };
 
-inline constexpr std::array<const char*, 13> TrainingRewardComponentNames3D {
+inline constexpr std::array<const char*, 14> TrainingRewardComponentNames3D {
     "alive", "upright", "headHeight", "comOverSupport", "still", "trunkTurn", "footSlip", "footDrift", "effort",
-    "actionRate", "jointLimit", "posePrior", "fall"
+    "actionRate", "jointLimit", "posePrior", "poseMatch", "fall"
 };
 
 struct TrainingRange3D {

@@ -72,6 +72,7 @@ batteries = {row[0] for row in db.execute("SELECT DISTINCT battery FROM evaluati
 assert batteries == {"equilibrio_v1", "postura_alerta_v1"}, batteries
 assert set(third.last_evaluation["batteries"]) == batteries
 assert third.bests["h1b_em_pe_posturado"]["iteration"] > 6 and "h1_ficar_em_pe" in third.bests
+assert third.best["version"] == T.SCORE_VERSION
 i = third.obs_names.index("command.posture.alerta")
 assert float(third.model.obs_norm.mean[i]) == 0.0 and float(third.model.obs_norm.var[i]) == 1.0
 events = [row[0] for row in db.execute("SELECT kind FROM events WHERE run='t' ORDER BY id")]

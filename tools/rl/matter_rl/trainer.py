@@ -14,7 +14,7 @@ import numpy as np
 import torch
 
 from . import control, native, paths, storage, system
-from .evaluation import BASE_BATTERY, EPISODE_COLUMNS, Battery, Evaluator, battery_posture
+from .evaluation import BASE_BATTERY, EPISODE_COLUMNS, SCORE_VERSION, Battery, Evaluator, battery_posture
 from .model import ActorCritic, export_policy, migrate_inputs
 from .ppo import PPO, PPOSettings, Rollout
 
@@ -196,6 +196,11 @@ class Trainer:
         # (Checkpoints de antes da lista: o melhor era o da tarefa deles.)
         bests = state.get("bests") or {reference.manifest.get("task", self.config.task): state.get("best", {})}
         self.bests = {task: dict(best) for task, best in bests.items() if best and best.get("iteration", -1) >= 0}
+        for best in self.bests.values():
+            # Uma nota de outra conta nao se compara: o checkpoint dela continua
+            # protegido, e a proxima avaliacao pode ficar no lugar.
+            if best.get("version") != SCORE_VERSION:
+                best["score"] = -1e9
         self.best = dict(self.bests.get(self.config.task, {"score": -1e9, "iteration": -1}))
         lost = self.db.rewind(self.run, self.counters["iteration"])
         if lost:
@@ -286,7 +291,8 @@ class Trainer:
                           for battery, solvers in results.items()},
             "seconds": time.time() - started, "time": time.time()}
         if combined > self.best["score"] + 1e-6:
-            self.best = {"score": combined, "iteration": self.counters["iteration"], "steps": self.counters["steps"]}
+            self.best = {"score": combined, "iteration": self.counters["iteration"], "steps": self.counters["steps"],
+                         "version": SCORE_VERSION}
             self.bests[self.config.task] = dict(self.best)
             self.export("policy_best")
             self.save("melhor")

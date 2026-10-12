@@ -606,6 +606,7 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
         -w.actionRate * actionRate,
         -w.jointLimit * limit,
         -w.posePrior * pose,
+        w.poseMatch * std::exp(-poseError / 0.03f),
         fell ? -w.fall : 0.0f,
     };
     float total = 0.0f;

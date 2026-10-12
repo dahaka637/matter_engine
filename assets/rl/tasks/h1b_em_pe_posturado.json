@@ -2,7 +2,7 @@
   "schema": "matter-rl-task-1",
   "id": "h1b_em_pe_posturado",
   "displayName": "Ficar em pé posturado",
-  "comment": "H1b: ficar de pe na postura de alerta (o parado do jogo e do laboratorio), comecando nela. A mesma recompensa da H1, com as referencias da postura pedida (pelve, peito e cabeca, altura da cabeca, juntas). 30% dos episodios continuam na postura natural (o ensaio: a H1 nao se perde). A politica recebe a postura pedida no comando da observacao.",
+  "comment": "H1b: ficar de pe na postura de alerta (o parado do jogo e do laboratorio), comecando nela. A mesma recompensa da H1, com as referencias da postura pedida (pelve, peito e cabeca, altura da cabeca, juntas), mais a pose junta por junta (poseMatch: na postura de alerta os bracos tambem contam). 30% dos episodios continuam na postura natural (o ensaio: a H1 nao se perde). A politica recebe a postura pedida no comando da observacao.",
   "postures": [
     {
       "id": "natural",
@@ -30,6 +30,7 @@
     "actionRate": 0.05,
     "jointLimit": 0.2,
     "posePrior": 0.1,
+    "poseMatch": 0.5,
     "fall": 10.0
   },
   "termination": {
