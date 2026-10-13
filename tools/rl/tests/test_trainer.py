@@ -102,6 +102,21 @@ assert kinds.count("curriculo") == 1, kinds
 walker.server.close()
 walker.lock.release()
 
+# A tarefa do repositorio ganha versao nova: a copia do treino e refeita (o
+# relogio de passada entra) e o curriculo de agora continua.
+old = json.loads(walker.live_task.read_text())
+old.pop("version", None)
+old.pop("gait", None)
+old["commands"]["limits"] = {"forward": 2.0}
+walker.live_task.write_text(json.dumps(old))
+updated = T.Trainer("andar", mode="maximo", environments=16, device="cpu", seed=3, iterations=1)
+assert updated.task_updated == (1, 2), updated.task_updated
+fresh = json.loads(updated.live_task.read_text())
+assert fresh["version"] == 2 and "gait" in fresh and fresh["commands"]["limits"] == {"forward": 2.0}
+assert updated.command_limits["forward"] == 2.0
+updated.server.close()
+updated.lock.release()
+
 # Uma habilidade nova reabre a exploracao: da H1b para o andar, o desvio da
 # acao volta a pelo menos 0,6.
 before = float(third.model.log_std.exp().min())

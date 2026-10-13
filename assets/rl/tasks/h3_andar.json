@@ -1,8 +1,9 @@
 {
   "schema": "matter-rl-task-1",
   "id": "h3_andar",
+  "version": 2,
   "displayName": "Andar",
-  "comment": "H3: andar seguindo um comando de velocidade (para frente, de 0 ao trote da locomocao padrao, 4,5 m/s), saindo e parando na postura de alerta. A velocidade maxima sobe pelo curriculo conforme ele acompanha. 25% dos sorteios pedem ficar parado (o ensaio da H1b), e 15% dos episodios ficam parados na postura natural (o ensaio da H1: sem pedidos de andar nela, que a faziam esquecer o parado). Costas, lados e giro ja estao prontos na mesma tarefa: basta um maximo acima de 0 em commands (os valores de proximo passo estao em commands.prontos) e ligar as baterias deles.",
+  "comment": "H3: andar seguindo um comando de velocidade (para frente, de 0 ao trote da locomocao padrao, 4,5 m/s), saindo e parando na postura de alerta. A velocidade maxima sobe pelo curriculo conforme ele acompanha. 25% dos sorteios pedem ficar parado (o ensaio da H1b), e 15% dos episodios ficam parados na postura natural (o ensaio da H1: sem pedidos de andar nela, que a faziam esquecer o parado). Costas, lados e giro ja estao prontos na mesma tarefa: basta um maximo acima de 0 em commands (os valores de proximo passo estao em commands.prontos) e ligar as baterias deles. Versao 2: com pedido de andar, ficar parado nao paga (vivo, postura, cabeca, pose e giro valem multiplicados pelo acompanhamento da velocidade), e o relogio de passada ensina o passo (cada pe no chao ou no ar na hora certa da fase, o pe de balanco subindo 8 cm).",
   "postures": [
     {
       "id": "natural",
@@ -34,7 +35,8 @@
       "backward": 3.0,
       "lateral": 3.0,
       "yawRate": 2.0
-    }
+    },
+    "gateByTracking": true
   },
   "curriculum": {
     "comment": "Cada direcao ligada comeca no limite start e sobe step quando a nota media do acompanhamento da velocidade (0 a 1, nas decisoes andando) passa de threshold por 3 rodadas seguidas, com pelo menos minimumIterations rodadas entre uma subida e outra.",
@@ -60,7 +62,9 @@
     "velocity": 1.5,
     "yawRate": 0.5,
     "feetAirTime": 1.0,
-    "fall": 10.0
+    "fall": 10.0,
+    "gaitContact": 0.6,
+    "swingHeight": 0.3
   },
   "termination": {
     "minimumHeadHeightFraction": 0.6,
@@ -271,5 +275,15 @@
   "exploration": {
     "comment": "Uma habilidade nova reabre a exploracao: ao trocar para esta tarefa, o desvio da acao volta a pelo menos minimumStd (uma politica que ja fica de pe explora pouco e nao acha o passo). Ele cai sozinho conforme aprende.",
     "minimumStd": 0.6
+  },
+  "gait": {
+    "comment": "A fase corre a frequency[0] + frequency[1] * |v| passadas/s (~1 a 1 m/s, ~1,5 a 4,5 m/s, a cadencia natural); apoio duplo devagar que vira voo acima de flightSpeed m/s.",
+    "frequency": [
+      0.9,
+      0.13
+    ],
+    "doubleSupport": 0.1,
+    "flightSpeed": 2.5,
+    "swingHeight": 0.08
   }
 }

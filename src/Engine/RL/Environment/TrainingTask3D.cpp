@@ -68,6 +68,8 @@ TrainingTask3D loadTrainingTask3D(const std::filesystem::path& definitionPath) {
         w.velocity = r.value("velocity", w.velocity);
         w.yawRate = r.value("yawRate", w.yawRate);
         w.feetAirTime = r.value("feetAirTime", w.feetAirTime);
+        w.gaitContact = r.value("gaitContact", w.gaitContact);
+        w.swingHeight = r.value("swingHeight", w.swingHeight);
         w.fall = r.value("fall", w.fall);
     }
     task.worldSpacingMeters = document.value("worldSpacingMeters", task.worldSpacingMeters);
@@ -81,6 +83,7 @@ TrainingTask3D loadTrainingTask3D(const std::filesystem::path& definitionPath) {
         out.backward = std::max(0.0f, c.value("backward", out.backward));
         out.lateral = std::max(0.0f, c.value("lateral", out.lateral));
         out.yawRate = std::max(0.0f, c.value("yawRate", out.yawRate));
+        out.gateByTracking = c.value("gateByTracking", out.gateByTracking);
         if (c.contains("limits")) {
             const nlohmann::json& l = c["limits"];
             out.limits.forward = l.value("forward", out.limits.forward);
@@ -88,6 +91,18 @@ TrainingTask3D loadTrainingTask3D(const std::filesystem::path& definitionPath) {
             out.limits.lateral = l.value("lateral", out.limits.lateral);
             out.limits.yawRate = l.value("yawRate", out.limits.yawRate);
         }
+    }
+    if (document.contains("gait")) {
+        const nlohmann::json& g = document["gait"];
+        auto& out = task.gait;
+        if (g.contains("frequency")) {
+            const auto& values = g["frequency"];
+            if (!values.is_array() || values.size() != 2) throw std::runtime_error("tarefa de RL: gait.frequency invalida");
+            out.frequency = { values[0].get<float>(), values[1].get<float>() };
+        }
+        out.doubleSupport = g.value("doubleSupport", out.doubleSupport);
+        out.flightSpeed = std::max(0.1f, g.value("flightSpeed", out.flightSpeed));
+        out.swingHeight = std::max(0.01f, g.value("swingHeight", out.swingHeight));
     }
     if (document.contains("termination")) {
         const nlohmann::json& t = document["termination"];

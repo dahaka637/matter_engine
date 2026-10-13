@@ -122,12 +122,13 @@ void testPostures() {
         TrainingBatch3D batch(settings(4, 1));
         const auto& channels = batch.observationLayout().channels;
         const std::size_t O = batch.observationSize();
-        require(channels[O - 4].name == "command.posture.alerta" && channels[O - 3].name == "command.velocity.forward"
-                && channels.back().name == "command.velocity.yaw",
-            "os comandos (postura, velocidade) fecham a observacao");
+        require(channels[O - 6].name == "command.posture.alerta" && channels[O - 5].name == "command.velocity.forward"
+                && channels[O - 3].name == "command.velocity.yaw" && channels.back().name == "command.gait.cos",
+            "os comandos (postura, velocidade, relogio) fecham a observacao");
         for (std::size_t e = 0; e < 4; ++e)
-            require(batch.observations()[e * O + O - 4] == 0.0f && batch.view(e).posture == 0,
-                "a H1 pede a postura natural");
+            require(batch.observations()[e * O + O - 6] == 0.0f && batch.view(e).posture == 0
+                    && batch.observations()[e * O + O - 1] == 0.0f,
+                "a H1 pede a postura natural, sem relogio");
         require(batch.taskPostureIds() == std::vector<std::string> { "natural" }, "as posturas da H1");
     }
     {
@@ -157,7 +158,7 @@ void testPostures() {
                     require(std::abs(obs[i] - (alert.dofRadians[d] - body.dofs[d].baseRadians)) < 2e-3f,
                         "o alerta comeca na pose dele: " + name);
         }
-        require(obs[O - 4] == 1.0f && batch.view(0).posture == 1, "o comando pede o alerta");
+        require(obs[O - 6] == 1.0f && batch.view(0).posture == 1, "o comando pede o alerta");
         require(obs[0] < -0.01f, "a pelve fica mais baixa que a da base");
     }
     {
@@ -168,7 +169,7 @@ void testPostures() {
         std::size_t alert = 0;
         const std::size_t O = batch.observationSize();
         for (std::size_t e = 0; e < 48; ++e) {
-            const bool asked = batch.observations()[e * O + O - 4] == 1.0f;
+            const bool asked = batch.observations()[e * O + O - 6] == 1.0f;
             require(asked == (batch.view(e).posture == 1), "o comando e a postura do episodio");
             alert += asked ? 1 : 0;
         }
@@ -187,7 +188,7 @@ void testCommands() {
     const std::size_t O = batch.observationSize();
     const auto commandOf = [&](std::size_t e) {
         const auto obs = batch.observations();
-        return Vec3 { obs[e * O + O - 3] * 3.0f, obs[e * O + O - 2] * 3.0f, obs[e * O + O - 1] * 2.0f };
+        return Vec3 { obs[e * O + O - 5] * 3.0f, obs[e * O + O - 4] * 3.0f, obs[e * O + O - 3] * 2.0f };
     };
     std::size_t standing = 0;
     for (std::size_t e = 0; e < 64; ++e) {
@@ -220,6 +221,10 @@ void testCommands() {
     require(battery.view(0).command.x == 0.0f, "o roteiro comeca parado");
     for (int i = 0; i < 30; ++i) battery.step(still);
     require(battery.view(0).command.x == 1.5f && battery.view(1).command.x == 1.5f, "o roteiro pede 1,5 m/s depois de 0,5 s");
+    // O relogio corre andando (o cosseno da fase sai de 1) e fica em zero parado.
+    const std::size_t B = battery.observationSize();
+    for (int i = 0; i < 5; ++i) battery.step(still);
+    require(battery.observations()[B - 1] < 0.999f && battery.observations()[B - 1] > -1.0f, "o relogio de passada corre andando");
 }
 
 // Mesma semente, mesmas acoes: o mesmo resultado, com 1 ou 3 threads.

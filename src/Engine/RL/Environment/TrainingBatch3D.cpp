@@ -62,6 +62,8 @@ struct Environment {
     float commandTimer = 0.0f;
     bool commandForced = false;
     Vec3 forcedCommand;
+    // A fase do relogio de passada (0 a 1; parado fica em 0).
+    float gaitPhase = 0.0f;
     // Os relogios de cada pe: ha quanto tempo apoiado e ha quanto no ar.
     std::array<float, 2> footContactTime {};
     std::array<float, 2> footAirTime {};
@@ -231,6 +233,9 @@ void TrainingBatch3D::Impl::buildLayouts() {
     o.channels.push_back({ "command.velocity.forward", "m/s/3" });
     o.channels.push_back({ "command.velocity.lateral", "m/s/3" });
     o.channels.push_back({ "command.velocity.yaw", "rad/s/2" });
+    // O relogio de passada (zero parado): o seno e o cosseno da fase.
+    o.channels.push_back({ "command.gait.sin", "1" });
+    o.channels.push_back({ "command.gait.cos", "1" });
 
     RLVectorLayout3D& c = criticLayout;
     c = o;
@@ -443,6 +448,7 @@ void TrainingBatch3D::Impl::resetEnvironment(std::uint32_t index) {
     }
     env.footContactTime = {};
     env.footAirTime = {};
+    env.gaitPhase = 0.0f;
 
     // O mundo e o corpo deste episodio.
     const TrainingTask3D::Randomization& random = task.randomization;
@@ -570,6 +576,9 @@ void TrainingBatch3D::Impl::writeObservation(const Environment& env, const Ragdo
     *out++ = env.command.x / 3.0f;
     *out++ = env.command.y / 3.0f;
     *out++ = env.command.z / 2.0f;
+    const bool walking = env.command.x != 0.0f || env.command.y != 0.0f || env.command.z != 0.0f;
+    *out++ = walking ? std::sin(2.0f * std::numbers::pi_v<float> * env.gaitPhase) : 0.0f;
+    *out++ = walking ? std::cos(2.0f * std::numbers::pi_v<float> * env.gaitPhase) : 0.0f;
 
     if (criticOut == nullptr) return;
     // O critico: a observacao sem ruido mais o mundo que a politica nao ve.
@@ -651,6 +660,32 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
         const auto mode = [&](std::size_t f) { return reading.footContact[f] ? env.footContactTime[f] : env.footAirTime[f]; };
         airTime = std::min(0.4f, std::min(mode(0), mode(1)));
     }
+    // O relogio de passada: o esquerdo apoia na metade de seno positivo da fase
+    // e o direito na outra; perto da troca, apoio duplo devagar e voo rapido
+    // (a faixa d muda de sinal em flightSpeed). Cada pe no chao ou no ar na
+    // hora certa vale +1 (-1 errado), e o pe que devia estar no ar sobe ate a
+    // altura do passo.
+    float gaitContact = 0.0f, swingHeight = 0.0f;
+    if (moving) {
+        const TrainingTask3D::Gait& gait = task.gait;
+        const float speed = std::hypot(env.command.x, env.command.y);
+        const float band = gait.doubleSupport * (1.0f - speed / gait.flightSpeed);
+        const float phase = std::sin(2.0f * std::numbers::pi_v<float> * env.gaitPhase);
+        const std::array<bool, 2> stance { phase >= -band, phase <= band };
+        float swinging = 0.0f;
+        for (std::size_t f = 0; f < 2; ++f) {
+            gaitContact += reading.footContact[f] == stance[f] ? 0.5f : -0.5f;
+            if (stance[f]) continue;
+            const std::uint32_t foot = f == 0 ? body.leftFoot : body.rightFoot;
+            const float height = state.links[foot].position.z - env.footStart[f].z;
+            swingHeight += std::clamp(height / gait.swingHeight, 0.0f, 1.0f);
+            swinging += 1.0f;
+        }
+        if (swinging > 0.0f) swingHeight /= swinging;
+    }
+    // Com pedido de andar, "estar bem" so paga andando: vivo, postura, cabeca,
+    // pose e giro multiplicados pelo acompanhamento da velocidade.
+    const float gate = moving && task.commands.gateByTracking ? velocityTracking : 1.0f;
 
     float slip = 0.0f, drift = 0.0f;
     for (std::size_t f = 0; f < 2; ++f) {
@@ -708,9 +743,9 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
     const float poseMatch = moving ? std::exp(-upperError / 0.1f) : std::exp(-poseError / 0.03f);
 
     const std::array<float, RewardCount> values {
-        w.alive,
-        w.upright * upright,
-        w.headHeight * headHeight,
+        w.alive * gate,
+        w.upright * upright * gate,
+        w.headHeight * headHeight * gate,
         w.comOverSupport * comOverSupport * standing,
         w.still * still * standing,
         -w.trunkTurn * trunkTurn,
@@ -720,10 +755,12 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
         -w.actionRate * actionRate,
         -w.jointLimit * limit,
         -w.posePrior * pose,
-        w.poseMatch * poseMatch,
+        w.poseMatch * poseMatch * gate,
         w.velocity * velocityTracking,
-        w.yawRate * yawTracking,
+        w.yawRate * yawTracking * gate,
         w.feetAirTime * airTime,
+        w.gaitContact * gaitContact,
+        w.swingHeight * swingHeight,
         fell ? -w.fall : 0.0f,
     };
     float total = 0.0f;
@@ -885,7 +922,15 @@ void TrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> actio
             // passo). Quando ele muda, a referencia dos pes recomeca: o "pe
             // saindo do lugar" de quem para depois de andar e de agora.
             const Vec3 previous = env.command;
+            // A fase anda com o comando deste passo (a cadencia sobe com a
+            // velocidade) e volta a 0 quando o proximo pede parado.
+            {
+                const float speed = std::hypot(previous.x, previous.y);
+                const float frequency = task.gait.frequency.minimum + task.gait.frequency.maximum * speed;
+                env.gaitPhase = std::fmod(env.gaitPhase + frequency * static_cast<float>(task.actionRepeat) * FixedStep, 1.0f);
+            }
             updateCommand(env, false);
+            if (env.command.x == 0.0f && env.command.y == 0.0f && env.command.z == 0.0f) env.gaitPhase = 0.0f;
             if (env.command.x != previous.x || env.command.y != previous.y || env.command.z != previous.z)
                 for (std::size_t f = 0; f < 2; ++f) {
                     const std::uint32_t foot = f == 0 ? body.leftFoot : body.rightFoot;

@@ -37,7 +37,8 @@ def test_postures_through_the_bridge():
     assert batch.posture_ids() == ["natural", "alerta"] and batch.task_postures() == ["natural"]
     names = batch.observation_names()
     alert = names.index("command.posture.alerta")
-    assert names[alert + 1:] == ["command.velocity.forward", "command.velocity.lateral", "command.velocity.yaw"]
+    assert names[alert + 1:] == ["command.velocity.forward", "command.velocity.lateral", "command.velocity.yaw",
+                                 "command.gait.sin", "command.gait.cos"]
     assert (batch.observations()[:, alert] == 0).all()
     forced = module.Batch(posturado, environments=2, threads=1, evaluation=True, posture="alerta")
     assert forced.task_postures() == ["natural", "alerta"]

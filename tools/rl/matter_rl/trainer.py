@@ -91,14 +91,28 @@ class Trainer:
         # Outra habilidade (a etapa seguinte) troca a copia pela do repositorio.
         self.live_task = self.directory / "tarefa.json"
         self.switched_from: str | None = None
+        self.task_updated: tuple | None = None
+        kept: dict = {}
         if self.live_task.exists():
-            previous = json.loads(self.live_task.read_text()).get("id")
-            if previous != self.config.task:
-                self.switched_from = previous
+            live = json.loads(self.live_task.read_text())
+            if live.get("id") != self.config.task:
+                self.switched_from = live.get("id")
+                self.live_task.unlink()
+            elif int(json.loads(self.task_path.read_text()).get("version", 1)) > int(live.get("version", 1)):
+                # A tarefa do repositorio ganhou versao nova: a copia e refeita,
+                # com o curriculo de agora (o que ele ja alcancou continua).
+                self.task_updated = (int(live.get("version", 1)),
+                                     int(json.loads(self.task_path.read_text()).get("version", 1)))
+                kept = {"limits": (live.get("commands") or {}).get("limits"),
+                        "lastRaise": (live.get("curriculum") or {}).get("lastRaise")}
                 self.live_task.unlink()
         if not self.live_task.exists():
             data = json.loads(self.task_path.read_text())
             data["body"] = str((self.task_path.parent / data["body"]).resolve())
+            if kept.get("limits") and "commands" in data:
+                data["commands"]["limits"] = kept["limits"]
+            if kept.get("lastRaise") and "curriculum" in data:
+                data["curriculum"]["lastRaise"] = kept["lastRaise"]
             storage.write_json_atomic(self.live_task, data)
         self.batch = self.native.Batch(str(self.live_task), environments=self.config.environments, per_scene=4,
                                        threads=self.threads, seed=self.config.seed)
@@ -125,6 +139,9 @@ class Trainer:
         self.db.ensure_run(run, self.config.task, self.batch.body_hash, asdict(self.config))
         if self.switched_from:
             self.db.event(run, "tarefa", f"habilidade {self.switched_from} -> {self.config.task}")
+        if self.task_updated:
+            self.db.event(run, "tarefa", f"tarefa atualizada: versao {self.task_updated[0]} -> {self.task_updated[1]} "
+                                         "(o curriculo continua)")
         self.restore()
         self.fix_commands()
         if self.switched_from:

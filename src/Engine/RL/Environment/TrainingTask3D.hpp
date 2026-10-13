@@ -41,12 +41,17 @@ struct TrainingRewardWeights3D {
     float velocity = 0.0f;
     float yawRate = 0.0f;
     float feetAirTime = 0.0f;
+    // O relogio de passada (andando): cada pe no chao ou no ar na hora certa
+    // da fase (alternando) e o pe de balanco subindo ate a altura do passo.
+    float gaitContact = 0.0f;
+    float swingHeight = 0.0f;
     float fall = 10.0f;
 };
 
-inline constexpr std::array<const char*, 17> TrainingRewardComponentNames3D {
+inline constexpr std::array<const char*, 19> TrainingRewardComponentNames3D {
     "alive", "upright", "headHeight", "comOverSupport", "still", "trunkTurn", "footSlip", "footDrift", "effort",
-    "actionRate", "jointLimit", "posePrior", "poseMatch", "velocity", "yawRate", "feetAirTime", "fall"
+    "actionRate", "jointLimit", "posePrior", "poseMatch", "velocity", "yawRate", "feetAirTime", "gaitContact",
+    "swingHeight", "fall"
 };
 
 struct TrainingRange3D {
@@ -110,7 +115,23 @@ struct TrainingTask3D {
             float lateral = -1.0f;
             float yawRate = -1.0f;
         } limits;
+        // Com comando de andar, as parcelas de "estar bem" (vivo, postura,
+        // cabeca, pose, giro) valem multiplicadas pelo acompanhamento da
+        // velocidade: parado sob um pedido de andar nao ganha nada.
+        bool gateByTracking = false;
     } commands;
+
+    // O relogio de passada (so andando): a fase corre a frequency[0] +
+    // frequency[1] * |v| passadas por segundo; cada pe fica no ar metade dela
+    // (o esquerdo na primeira, o direito na segunda), com um apoio duplo de
+    // doubleSupport (no seno da fase) que vira voo acima de flightSpeed m/s; o
+    // pe de balanco sobe ate swingHeight metros.
+    struct Gait {
+        TrainingRange3D frequency { 0.9f, 0.13f };
+        float doubleSupport = 0.1f;
+        float flightSpeed = 2.5f;
+        float swingHeight = 0.08f;
+    } gait;
 
     struct Termination {
         float minimumHeadHeightFraction = 0.6f;
