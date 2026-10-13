@@ -139,6 +139,9 @@ struct TrainingEnvironmentView3D {
     // Os proximos alvos ja no mapa (target.lookahead), em ordem.
     std::uint32_t upcomingCount = 0;
     std::array<Vec3, 3> upcoming {};
+    // Os ultimos alcancados no episodio (o mais novo primeiro).
+    std::uint32_t reachedCount = 0;
+    std::array<Vec3, 3> reached {};
     // Para onde o cerebro quer ir (a direcao em que o clipe de agora anda, no
     // mundo, unitaria) e para onde ele vai (a velocidade do centro de massa).
     bool hasIntent = false;

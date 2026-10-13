@@ -76,6 +76,9 @@ std::string frameLines(const TrainingBatch3D& batch, std::size_t environment) {
     // Os proximos alvos ja no mapa (N), em ordem.
     for (std::uint32_t i = 0; i < view.upcomingCount; ++i)
         out << "N " << view.upcoming[i].x << ' ' << view.upcoming[i].y << ' ' << view.upcoming[i].z << '\n';
+    // Os ja alcancados (R), o mais novo primeiro.
+    for (std::uint32_t i = 0; i < view.reachedCount; ++i)
+        out << "R " << view.reached[i].x << ' ' << view.reached[i].y << ' ' << view.reached[i].z << '\n';
     // As setas: para onde o cerebro quer ir (W) e a velocidade do centro de massa (V).
     if (view.hasIntent) out << "W " << view.intent.x << ' ' << view.intent.y << ' ' << view.intent.z << '\n';
     out << "V " << view.velocity.x << ' ' << view.velocity.y << ' ' << view.velocity.z << '\n';

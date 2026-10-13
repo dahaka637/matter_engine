@@ -121,9 +121,11 @@ struct InspectionArrow {
 
 // Os alvos de uma sequencia (o de agora e os proximos, em ordem): o de agora
 // cheio, os seguintes cada vez mais fracos e baixos, ligados por um traco fino
-// de aro a aro com a ponta no que vem depois.
-void appendTargetSequence(std::span<const Vec3> targets, float radius, std::vector<InspectionMarker>& markers,
-    std::vector<InspectionArrow>& arrows);
+// de aro a aro com a ponta no que vem depois. Os ja alcancados (o mais novo
+// primeiro) ficam verdes e apagando; um que cai em cima de um alvo ainda por
+// vir (a volta seguinte do percurso) fica so vermelho.
+void appendTargetSequence(std::span<const Vec3> targets, std::span<const Vec3> reached, float radius,
+    std::vector<InspectionMarker>& markers, std::vector<InspectionArrow>& arrows);
 
 // Um olho desenhado de frente para a camera (o rumo mandado olhar, no
 // horizonte): as palpebras, a iris e a pupila, com size de largura (m).

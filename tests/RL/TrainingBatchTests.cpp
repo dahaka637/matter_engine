@@ -716,6 +716,8 @@ void testCourses() {
             require(planar(now.target, before.upcoming[0]) < 1e-3f && planar(now.upcoming[0], before.upcoming[1]) < 1e-3f,
                 "a fila anda: o proximo vira o alvo");
             require(near(planar(now.upcoming[1], now.upcoming[0]), 4.0f, 1e-3f), "o novo entra no fim (o quadrado de novo)");
+            require(now.reachedCount == 1 && planar(now.reached[0], before.target) < 1e-3f,
+                "o alcancado fica guardado (o visualizador o pinta de verde)");
         }
         require(reached, "seguindo o clipe, ele chega no primeiro ponto a 1,2 m");
     }

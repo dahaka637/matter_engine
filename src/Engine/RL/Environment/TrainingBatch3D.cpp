@@ -140,6 +140,9 @@ struct Environment {
     std::array<Vec3, 3> upcoming {};
     std::array<float, 3> upcomingDirection {};
     float courseHeading = 0.0f;
+    // Os ultimos alvos alcancados (o mais novo primeiro), para o visualizador.
+    std::array<Vec3, 3> reachedTargets {};
+    std::uint32_t reachedCount = 0;
 };
 
 struct Scene {
@@ -506,6 +509,7 @@ void TrainingBatch3D::Impl::placeFirstTarget(Environment& env, const RagdollStat
     env.targetSince = 0.0f;
     env.targetCount = 1;
     env.targetsReached = 0;
+    env.reachedCount = 0;
     env.firstTargetSeconds = -1.0f;
     env.targetSpeedSum = 0.0;
 }
@@ -736,6 +740,7 @@ void TrainingBatch3D::Impl::resetEnvironment(std::uint32_t index) {
             // Biblioteca: o alvo primeiro (em volta, pelo rumo sorteado), o
             // clipe que o planejador escolhe para ele e uma fase dele.
             env.targetsReached = 0;
+            env.reachedCount = 0;
             env.firstTargetSeconds = -1.0f;
             env.targetSpeedSum = 0.0;
             env.targetSince = 0.0f;
@@ -1264,6 +1269,9 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
             const float speed = covered / std::max(stepSeconds, now - env.targetSince);
             targetReached = std::min(speed / t.referenceSpeed, t.speedCap);
             ++env.targetsReached;
+            for (std::size_t i = env.reachedTargets.size() - 1; i > 0; --i) env.reachedTargets[i] = env.reachedTargets[i - 1];
+            env.reachedTargets[0] = env.target;
+            env.reachedCount = std::min<std::uint32_t>(env.reachedCount + 1, static_cast<std::uint32_t>(env.reachedTargets.size()));
             env.targetSpeedSum += speed;
             if (env.firstTargetSeconds < 0.0f) env.firstTargetSeconds = now;
             env.targetSince = now;
@@ -1793,6 +1801,8 @@ TrainingEnvironmentView3D TrainingBatch3D::view(std::size_t environment) const {
         view.targetsReached = env.targetsReached;
         view.upcomingCount = impl.imitating() && impl.reference.library ? impl.task.target.lookahead : 0u;
         for (std::uint32_t i = 0; i < view.upcomingCount; ++i) view.upcoming[i] = env.upcoming[i];
+        view.reachedCount = env.reachedCount;
+        for (std::uint32_t i = 0; i < view.reachedCount; ++i) view.reached[i] = env.reachedTargets[i];
     }
     if (view.state) {
         const RagdollProfile3D& profile = impl.body.profile;

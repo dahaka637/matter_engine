@@ -114,8 +114,22 @@ std::span<const SurfaceMode> allSurfaceModes() {
     return Modes;
 }
 
-void appendTargetSequence(std::span<const Vec3> targets, float radius, std::vector<InspectionMarker>& markers,
-    std::vector<InspectionArrow>& arrows) {
+void appendTargetSequence(std::span<const Vec3> targets, std::span<const Vec3> reached, float radius,
+    std::vector<InspectionMarker>& markers, std::vector<InspectionArrow>& arrows) {
+    constexpr std::array<float, 3> Passed { 0.75f, 0.45f, 0.28f };
+    for (std::size_t i = 0; i < reached.size(); ++i) {
+        bool ahead = false;
+        for (const Vec3& target : targets)
+            ahead = ahead || std::hypot(target.x - reached[i].x, target.y - reached[i].y) < radius;
+        if (ahead) continue;
+        InspectionMarker marker;
+        marker.center = reached[i];
+        marker.radius = radius;
+        marker.color = rgb(60, 205, 100);
+        marker.strength = Passed[std::min(i, Passed.size() - 1)];
+        marker.glowHeight *= 0.5f;
+        markers.push_back(marker);
+    }
     constexpr std::array<float, 4> Strength { 1.0f, 0.42f, 0.26f, 0.18f };
     for (std::size_t i = 0; i < targets.size(); ++i) {
         InspectionMarker marker;

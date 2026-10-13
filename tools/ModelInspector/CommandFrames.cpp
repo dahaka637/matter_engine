@@ -73,6 +73,7 @@ struct DumpFrame {
     Vec3 target;
     float targetRadius = 1.0f;
     std::vector<Vec3> upcoming;
+    std::vector<Vec3> reached;
     // As setas do RL: para onde o cerebro quer ir e a velocidade.
     bool intentValid = false;
     Vec3 intent;
@@ -156,6 +157,9 @@ std::vector<DumpScenario> readDump(const std::string& path) {
         } else if (tag == "N") {
             Vec3 next;
             if (in >> next.x >> next.y >> next.z) frame->upcoming.push_back(next);
+        } else if (tag == "R") {
+            Vec3 passed;
+            if (in >> passed.x >> passed.y >> passed.z) frame->reached.push_back(passed);
         } else if (tag == "P") {
             DumpFrame::Contact contact;
             in >> contact.position.x >> contact.position.y >> contact.position.z >> contact.linkIndex;
@@ -368,18 +372,21 @@ int runFrames(const ModelContext& context, const CommandLine& line) {
         }
 #endif
 
-        // O alvo e os proximos (N), mais fracos e ligados em ordem.
+        // O alvo e os proximos (N), mais fracos e ligados em ordem; os ja
+        // alcancados (R) verdes.
         std::vector<InspectionMarker> markers;
         std::vector<InspectionArrow> arrows;
         const float floorSkeleton = view.gameToSkeleton(Vec3 { 0, 0, gameFloor }).z;
         if (frame.targetValid) {
             std::vector<Vec3> sequence { frame.target };
             sequence.insert(sequence.end(), frame.upcoming.begin(), frame.upcoming.end());
-            for (Vec3& point : sequence) {
-                const Vec3 at = toSkeleton(point);
-                point = { at.x, at.y, floorSkeleton };
-            }
-            appendTargetSequence(sequence, frame.targetRadius, markers, arrows);
+            std::vector<Vec3> reached = frame.reached;
+            for (std::vector<Vec3>* list : { &sequence, &reached })
+                for (Vec3& point : *list) {
+                    const Vec3 at = toSkeleton(point);
+                    point = { at.x, at.y, floorSkeleton };
+                }
+            appendTargetSequence(sequence, reached, frame.targetRadius, markers, arrows);
         }
         // A seta do RL: para onde ele vai (a velocidade vezes 0,35 s), no chao, um
         // traco fino. (A intencao, W, fica no dump.)
