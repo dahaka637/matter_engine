@@ -206,18 +206,15 @@ struct TrainingTask3D {
         float standingStart = 0.5f;
         bool residualActions = false;
         // Uma biblioteca (todos os clipes em ciclo): o planejador escolhe a cada
-        // decisao, pela direcao e pela distancia do alvo em relacao a frente do
-        // corpo. Longe (farDistance), para a frente: o sprint (sprintDistance)
-        // ou o trote, virando; perto, frente, esquerda, direita ou costas pelo
-        // angulo (os quadrantes de 90 graus), com histerese e um tempo minimo
-        // em cada clipe. Os nomes sao os ids dos clipes da lista.
+        // decisao o clipe que anda mais perto da direcao do alvo, medida a partir
+        // de para onde o corpo deve olhar (target.facing; sem ele, a frente do
+        // corpo), com histerese e um tempo minimo em cada clipe. Com as 8
+        // direcoes (frente, diagonais, lados, costas), e o andar do jogo: o
+        // corpo olha para a camera e anda para qualquer lado.
         bool library = false;
         struct Planner {
-            float farDistance = 5.0f;
-            float sprintDistance = 8.0f;
             float hysteresisDegrees = 10.0f;
             float minimumSeconds = 0.4f;
-            std::string sprint, forward, left, right, back;
         } planner;
         float poseScale = 2.0f;
         float velocityScale = 0.1f;
@@ -255,6 +252,13 @@ struct TrainingTask3D {
         float turnGain = 2.0f;
         float turnMaximum = 2.5f;
         float turnSigma = 0.5f;
+        // Para onde olhar (o jogo: a camera), separado do alvo: com facing, o
+        // episodio sorteia esse rumo (o do corpo no comeco), o giro pedido o
+        // segura (turnGain por radiano de desvio) e a direcao do alvo e medida a
+        // partir dele. facingDriftRadians (rad/s): o quanto ele passeia, como uma
+        // camera virando devagar (0 = parado).
+        bool facing = false;
+        float facingDriftRadians = 0.0f;
     } target;
 
     struct Termination {

@@ -1,9 +1,9 @@
 {
   "schema": "matter-rl-task-1",
   "id": "h4_direcoes",
-  "version": 1,
+  "version": 2,
   "displayName": "Ir em todas as direções",
-  "comment": "Fase 2 (pedido do usuario, 13/10): ir a um alvo em qualquer lugar em volta (360 graus, 2 a 10 m) com o movimento certo. A referencia e uma biblioteca de clipes em ciclo e um planejador escolhe a cada decisao, pela direcao e pela distancia do alvo em relacao a frente do corpo: longe, vira e corre de frente (o sprint a partir de 8 m, senao o trote); perto, frente, lado ou costas pelo quadrante, com histerese. A troca de clipe entra no quadro mais parecido. A nota do giro pede que o corpo vire o necessario para a direcao em que o clipe anda apontar o alvo. O resto e o da corrida (H3 v9): a acao corrige a pose do clipe, os sinos do DeepMimic, a velocidade em direcao ao alvo e a chegada; passar do alvo encerra o episodio.",
+  "comment": "Fase 2 (pedido do usuario, 13/10): o andar do jogo. O corpo olha para onde a camera olha (target.facing: o rumo dele no comeco do episodio) e anda ate o alvo em qualquer lugar em volta (2 a 8 m) nas 8 direcoes em trote: frente, as diagonais, os lados e costas. A referencia e uma biblioteca de clipes em ciclo e o planejador escolhe a cada decisao o que anda mais perto da direcao do alvo (medida a partir do olhar), com histerese; a troca entra no quadro mais parecido. A nota do giro segura o olhar. O resto e o da corrida (H3 v9). Versao 1: longe ele virava e corria de frente, o que contraria o olhar para a camera, e na validacao corria para longe do alvo antes de virar. O sprint nas 8 direcoes vem depois (falta o da diagonal para a frente).",
   "postures": [
     {
       "id": "alerta",
@@ -16,27 +16,39 @@
   "groundMaterial": "grass",
   "worldSpacingMeters": 250.0,
   "imitation": {
-    "comment": "Uma biblioteca: todos em ciclo, o planejador escolhe. O de costas e autoral (o do Mixamo foi reprovado no retarget); os de lado vem do Jog Strafe do Mixamo com as correcoes do corpo.",
+    "comment": "As 8 direcoes do trote: a frente e a captura do Mixamo (Running); diagonais e costas sao os autorais do jogo (trot.py); os lados vem do Jog Strafe do Mixamo com as correcoes do corpo.",
     "clips": [
       {
-        "id": "sprint",
-        "clip": "../../animations/clips/mixamo_sprint.matteranim.json"
+        "id": "frente",
+        "clip": "../../animations/clips/mixamo_running.matteranim.json"
       },
       {
-        "id": "trote",
-        "clip": "../../animations/clips/mixamo_running.matteranim.json"
+        "id": "frente_esquerda",
+        "clip": "../../animations/clips/trot_forward_left.matteranim.json"
       },
       {
         "id": "esquerda",
         "clip": "../../animations/clips/jog_strafe_left.matteranim.json"
       },
       {
+        "id": "tras_esquerda",
+        "clip": "../../animations/clips/trot_backward_left.matteranim.json"
+      },
+      {
+        "id": "costas",
+        "clip": "../../animations/clips/trot_backward.matteranim.json"
+      },
+      {
+        "id": "tras_direita",
+        "clip": "../../animations/clips/trot_backward_right.matteranim.json"
+      },
+      {
         "id": "direita",
         "clip": "../../animations/clips/jog_strafe_right.matteranim.json"
       },
       {
-        "id": "costas",
-        "clip": "../../animations/clips/run_backward.matteranim.json"
+        "id": "frente_direita",
+        "clip": "../../animations/clips/trot_forward_right.matteranim.json"
       }
     ],
     "residualActions": true,
@@ -49,19 +61,12 @@
     },
     "library": true,
     "planner": {
-      "farDistance": 5.0,
-      "sprintDistance": 8.0,
       "hysteresisDegrees": 10.0,
-      "minimumSeconds": 0.4,
-      "sprint": "sprint",
-      "forward": "trote",
-      "left": "esquerda",
-      "right": "direita",
-      "back": "costas"
+      "minimumSeconds": 0.4
     }
   },
   "target": {
-    "comment": "Cada alvo em volta do corpo (angulo sorteado na volta toda, a partir de para onde ele olha) e entre 2 e 10 m. Na avaliacao, cada mundo tem o primeiro alvo numa das 16 direcoes, alternando 3,5 m (perto: lado e costas) e 7 m (longe: virar e correr), e os seguintes seguem as listas.",
+    "comment": "Cada alvo em volta (o angulo sorteado na volta toda a partir de para onde ele deve olhar), entre 2 e 8 m. Na avaliacao, cada mundo tem o primeiro alvo numa das 16 direcoes a 4 m, e os seguintes seguem a lista.",
     "distance": 10.0,
     "radius": 0.8,
     "firstAngleDegrees": 180.0,
@@ -84,24 +89,25 @@
       315.0,
       337.5
     ],
-    "referenceSpeed": 6.0,
+    "referenceSpeed": 3.0,
     "speedCap": 1.2,
     "missMeters": 3.0,
     "distanceRange": [
       2.0,
-      10.0
+      8.0
     ],
     "evaluationPerWorld": true,
     "evaluationDistances": [
-      3.5,
-      7.0
+      4.0
     ],
     "turnGain": 2.0,
     "turnMaximum": 2.5,
-    "turnSigma": 0.5
+    "turnSigma": 0.5,
+    "facing": true,
+    "facingDriftRadians": 0.0
   },
   "reward": {
-    "comment": "Os da corrida (H3 v9) mais o giro: imitacao 0,8, velocidade em direcao ao alvo 0,3, chegada 3 vezes a velocidade media sobre 6 m/s, o giro pedido 0,15, menos um pouco de mudanca de acao e a queda.",
+    "comment": "Os da corrida (H3 v9) mais o giro (segurar o olhar): imitacao 0,8, velocidade em direcao ao alvo 0,3, chegada 3 vezes a velocidade media sobre 3 m/s, o giro 0,15, menos um pouco de mudanca de acao e a queda.",
     "positiveOnly": false,
     "alive": 0.0,
     "upright": 0.0,
@@ -184,7 +190,7 @@
       "name": "direcoes_v1",
       "posture": "alerta",
       "seconds": 15.0,
-      "referenceSpeed": 6.0
+      "referenceSpeed": 3.0
     }
   ],
   "exploration": {

@@ -151,15 +151,8 @@ TrainingTask3D loadTrainingTask3D(const std::filesystem::path& definitionPath) {
         if (m.contains("planner")) {
             const nlohmann::json& p = m["planner"];
             auto& planner = out.planner;
-            planner.farDistance = p.value("farDistance", planner.farDistance);
-            planner.sprintDistance = p.value("sprintDistance", planner.sprintDistance);
             planner.hysteresisDegrees = std::max(0.0f, p.value("hysteresisDegrees", planner.hysteresisDegrees));
             planner.minimumSeconds = std::max(0.0f, p.value("minimumSeconds", planner.minimumSeconds));
-            planner.sprint = p.value("sprint", planner.sprint);
-            planner.forward = p.value("forward", planner.forward);
-            planner.left = p.value("left", planner.left);
-            planner.right = p.value("right", planner.right);
-            planner.back = p.value("back", planner.back);
         }
         if (m.contains("scales")) {
             const nlohmann::json& k = m["scales"];
@@ -188,6 +181,8 @@ TrainingTask3D loadTrainingTask3D(const std::filesystem::path& definitionPath) {
         out.turnGain = std::max(0.0f, t.value("turnGain", out.turnGain));
         out.turnMaximum = std::max(0.0f, t.value("turnMaximum", out.turnMaximum));
         out.turnSigma = std::max(1.0e-3f, t.value("turnSigma", out.turnSigma));
+        out.facing = t.value("facing", out.facing);
+        out.facingDriftRadians = std::max(0.0f, t.value("facingDriftRadians", out.facingDriftRadians));
         if (!(out.distance > out.radius) || !(out.radius > 0.0f) || !(out.referenceSpeed > 0.0f)
             || out.evaluationAngles.empty())
             throw std::runtime_error("tarefa de RL: target invalido");
