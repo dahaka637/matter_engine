@@ -1,9 +1,9 @@
 {
   "schema": "matter-rl-task-1",
   "id": "h5_pontos",
-  "version": 2,
+  "version": 3,
   "displayName": "Vários pontos em sequência",
-  "comment": "Etapa 3 do plano (pedido do usuario, 13/10): os varios pontos no mapa, em sequencia. O mesmo trote livre nas 8 direcoes da H4 v3 (a biblioteca de clipes com o planejador), mas os dois proximos alvos ja estao no mapa e na observacao (target.lookahead): ele pode sair de um alvo ja apontado para o seguinte, sem parar nem dar a volta larga. Cada alvo sai do anterior (2 a 8 m, em qualquer direcao a partir do rumo do trecho que chega nele). A avaliacao troca as direcoes soltas por percursos fixos (quadrado, zigue-zague, vai e volta, triangulo), um por mundo, girados para o rumo do comeco. Olhar para a camera enquanto percorre e a etapa 4. Versao 2 (o usuario: no laboratorio parecia recomecar a cada ponto): no quadrado de 4 pontos, com os dois proximos no mapa, o ponto alcancado voltava logo a ser um alvo da volta seguinte (vermelho de novo). Agora nenhum percurso repete ponto dentro da janela (3 alcancados + o de agora + 2 proximos): o quadrado tem 6 m de lado com um ponto a cada 3 m (8 pontos, os do meio dos lados se atravessam sem virar), e o vai e volta e o triangulo andam um pouco a cada volta. O primeiro percurso (o que o laboratorio mostra) e o desenho do usuario: 6 pontos com viradas variadas (56, 90, 134, 136, 180 e 124 graus), no lugar do triangulo. Bateria percursos_v2.",
+  "comment": "Etapa 3 do plano (pedido do usuario, 13/10): os varios pontos no mapa, em sequencia. O mesmo trote livre nas 8 direcoes da H4 v3 (a biblioteca de clipes com o planejador), mas os dois proximos alvos ja estao no mapa e na observacao (target.lookahead): ele pode sair de um alvo ja apontado para o seguinte, sem parar nem dar a volta larga. Cada alvo sai do anterior (2 a 8 m, em qualquer direcao a partir do rumo do trecho que chega nele). A avaliacao troca as direcoes soltas por percursos fixos (quadrado, zigue-zague, vai e volta, triangulo), um por mundo, girados para o rumo do comeco. Olhar para a camera enquanto percorre e a etapa 4. Versao 2 (o usuario: no laboratorio parecia recomecar a cada ponto): no quadrado de 4 pontos, com os dois proximos no mapa, o ponto alcancado voltava logo a ser um alvo da volta seguinte (vermelho de novo). Agora nenhum percurso repete ponto dentro da janela (3 alcancados + o de agora + 2 proximos): o quadrado tem 6 m de lado com um ponto a cada 3 m (8 pontos, os do meio dos lados se atravessam sem virar), e o vai e volta e o triangulo andam um pouco a cada volta. O primeiro percurso (o que o laboratorio mostra) e o desenho do usuario: 6 pontos com viradas variadas (56, 90, 134, 136, 180 e 124 graus), no lugar do triangulo. Bateria percursos_v2. Versao 3 (13/10 07:30, a analise de hora: uma hora sem ganho, ele so vira depois de chegar): o tracado de corrida. O planejador e a nota do giro miravam o centro do alvo de agora, o que castigava virar cedo para o proximo. Agora miram o ponto do disco do lado do proximo, a 0,6 do raio do centro: o ponto fica dentro do disco, entao seguir ate ele e chegar, e ele ja entra virado (corta a curva nas viradas, encurta o caminho na volta).",
   "postures": [
     {
       "id": "alerta",
@@ -84,6 +84,7 @@
     "facing": false,
     "facingDriftRadians": 0.0,
     "lookahead": 2,
+    "racingLine": 0.6,
     "evaluationCourses": [
       {
         "name": "variado",

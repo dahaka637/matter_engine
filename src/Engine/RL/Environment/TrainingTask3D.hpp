@@ -264,6 +264,11 @@ struct TrainingTask3D {
         // chegada do anterior). Com eles, cada alvo sai do anterior, pelo rumo do
         // trecho que chega nele.
         std::uint32_t lookahead = 0;
+        // O tracado de corrida (com lookahead): o planejador e a nota do giro
+        // miram o ponto do disco do alvo do lado do proximo, a racingLine
+        // (fracao do raio) do centro. O ponto fica dentro do disco (seguir ate
+        // ele e chegar), e ele ja entra virado para o seguinte. 0 = o centro.
+        float racingLine = 0.0f;
         // Os percursos fixos da avaliacao: os pontos em metros no referencial do
         // comeco (x para a frente, y para a esquerda), em ordem; no fim, o
         // percurso recomeca deslocado do ultimo ponto (um fechado volta ao

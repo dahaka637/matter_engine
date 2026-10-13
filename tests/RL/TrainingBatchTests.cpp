@@ -745,6 +745,24 @@ void testCourses() {
         require(reached, "seguindo o clipe, ele chega no primeiro ponto a 1,2 m");
     }
     {
+        // O tracado de corrida: a mira vai para o lado do proximo e muda o giro
+        // pedido (o percurso variado, mundo 0: o proximo fica a direita do alvo).
+        const auto turn = [&](const std::filesystem::path& task) {
+            TrainingBatchSettings3D s = settings(4, 2);
+            s.taskPath = task;
+            s.evaluation = true;
+            s.evaluationEpisodeSeconds = 20.0f;
+            TrainingBatch3D batch(s);
+            return batch.observations()[channel(batch, "target.turn_rate")] * 2.0f;
+        };
+        const float center = turn(raceVariant("tracado_centro.json", { { "\"racingLine\": 0.6", "\"racingLine\": 0.0" } },
+            "h5_pontos.json"));
+        const float line = turn(raceVariant("tracado_borda.json", { { "\"racingLine\": 0.6", "\"racingLine\": 0.6" } },
+            "h5_pontos.json"));
+        require(std::abs(line - center) > 0.05f, "o tracado de corrida muda o giro pedido (" + std::to_string(center)
+            + " -> " + std::to_string(line) + ")");
+    }
+    {
         // No treino, cada alvo sai do anterior, entre 2 e 8 m.
         TrainingBatchSettings3D s = settings(8, 2);
         s.taskPath = std::filesystem::path(MATTERENGINE_TEST_ASSETS_DIR) / "rl/tasks/h5_pontos.json";

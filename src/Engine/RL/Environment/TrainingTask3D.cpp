@@ -185,6 +185,7 @@ TrainingTask3D loadTrainingTask3D(const std::filesystem::path& definitionPath) {
         out.facing = t.value("facing", out.facing);
         out.facingDriftRadians = std::max(0.0f, t.value("facingDriftRadians", out.facingDriftRadians));
         out.lookahead = std::min(3u, t.value("lookahead", out.lookahead));
+        out.racingLine = std::clamp(t.value("racingLine", out.racingLine), 0.0f, 0.95f);
         if (t.contains("evaluationCourses"))
             for (const nlohmann::json& c : t["evaluationCourses"]) {
                 TrainingTask3D::Target::Course course;

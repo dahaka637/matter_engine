@@ -255,6 +255,7 @@ struct TrainingBatch3D::Impl {
     void drawLibraryTarget(Environment& env, Vec3 from, float facing, std::uint32_t k, Vec3& point, float& direction);
     void plan(Environment& env, Vec3 position, float facing, bool force);
     [[nodiscard]] float wantedTurn(const Environment& env, Vec3 position, float facing) const;
+    [[nodiscard]] Vec3 aimPoint(const Environment& env) const;
     [[nodiscard]] std::vector<ReferenceDof> resolveReference(const TrainingTask3D::Gait& gait) const;
     void resolvePostures();
     [[nodiscard]] std::uint32_t choosePosture(Environment& env) const;
@@ -437,6 +438,17 @@ void TrainingBatch3D::Impl::placeLibraryTarget(Environment& env, Vec3 from, floa
     env.targetCount = k + 1;
 }
 
+// A mira do planejador e do giro: o centro do alvo, ou, com o tracado de
+// corrida, o ponto do disco do lado do proximo alvo.
+Vec3 TrainingBatch3D::Impl::aimPoint(const Environment& env) const {
+    const TrainingTask3D::Target& t = task.target;
+    if (!(t.racingLine > 0.0f) || t.lookahead == 0) return env.target;
+    const Vec3 toward { env.upcoming[0].x - env.target.x, env.upcoming[0].y - env.target.y, 0.0f };
+    const float length = std::hypot(toward.x, toward.y);
+    if (length < 1.0e-4f) return env.target;
+    return env.target + toward * (t.racingLine * t.radius / length);
+}
+
 float TrainingBatch3D::Impl::wantedTurn(const Environment& env, Vec3 position, float facing) const {
     const TrainingTask3D::Target& t = task.target;
     // Olhando para o comando (a camera): o giro so corrige o rumo do corpo.
@@ -445,7 +457,8 @@ float TrainingBatch3D::Impl::wantedTurn(const Environment& env, Vec3 position, f
         error = std::atan2(std::sin(error), std::cos(error));
         return std::clamp(t.turnGain * error, -t.turnMaximum, t.turnMaximum);
     }
-    const float dx = env.target.x - position.x, dy = env.target.y - position.y;
+    const Vec3 aim = aimPoint(env);
+    const float dx = aim.x - position.x, dy = aim.y - position.y;
     if (dx * dx + dy * dy < 1.0e-6f) return 0.0f;
     const ReferenceSegment3D& segment =
         reference.segments[std::min<std::size_t>(env.cursor.segment, reference.segments.size() - 1)];
@@ -457,10 +470,11 @@ float TrainingBatch3D::Impl::wantedTurn(const Environment& env, Vec3 position, f
 void TrainingBatch3D::Impl::plan(Environment& env, Vec3 position, float facing, bool force) {
     const TrainingTask3D::Imitation::Planner& planner = task.imitation.planner;
     const float base = task.target.facing ? env.facingCommand : facing;
-    const float dx = env.target.x - position.x, dy = env.target.y - position.y;
+    const Vec3 aim = aimPoint(env);
+    const float dx = aim.x - position.x, dy = aim.y - position.y;
     float angle = std::atan2(dy, dx) - base;
     angle = std::atan2(std::sin(angle), std::cos(angle));
-    // O clipe que anda mais perto da direcao do alvo (a partir de para onde ele
+    // O clipe que anda mais perto da direcao da mira (a partir de para onde ele
     // olha); o de agora leva a histerese.
     const float hysteresis = force ? 0.0f : planner.hysteresisDegrees * std::numbers::pi_v<float> / 180.0f;
     std::uint32_t best = env.cursor.segment;
