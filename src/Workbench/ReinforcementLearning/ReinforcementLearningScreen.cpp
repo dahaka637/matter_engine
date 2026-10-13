@@ -176,6 +176,7 @@ std::string ReinforcementLearningScreen::skillName(const std::string& battery) c
 
 void ReinforcementLearningScreen::setWalkSpeed(float metersPerSecond) {
     const float maximum = m_skill < m_skills.size() ? m_skills[m_skill].maxForward : 0.0f;
+    m_walkOverride = true;
     m_walkSpeed = std::clamp(metersPerSecond, 0.0f, maximum);
     if (m_viewer) m_viewer->setCommand(0, { m_walkSpeed, 0.0f, 0.0f });
 }
@@ -185,6 +186,8 @@ void ReinforcementLearningScreen::selectSkill(std::size_t index) {
     m_skill = index;
     m_skillChosen = true;
     m_walkSpeed = 0.0f;
+    m_demoSeconds = 0.0f;
+    m_walkOverride = false;
     // Outra tarefa (de ficar de pe para andar): o mundo do visualizador e refeito.
     const std::filesystem::path task = m_options.sourceRoot / "assets" / "rl" / "tasks" / (m_skills[index].task + ".json");
     if (m_viewer && task != m_viewerTask) {
@@ -316,6 +319,16 @@ void ReinforcementLearningScreen::reloadPolicy(bool force) {
 }
 
 void ReinforcementLearningScreen::stepOnce() {
+    // Andar: o ciclo de demonstracao (parado 3 s, metade do limite 5 s, o
+    // limite 5 s, parado 4 s), com o limite que o treino ja pede.
+    if (m_skill < m_skills.size() && m_skills[m_skill].maxForward > 0.0f && !m_walkOverride) {
+        m_demoSeconds = std::fmod(m_demoSeconds + m_viewer->policyStepSeconds(), 17.0f);
+        m_walkSpeed = m_demoSeconds < 3.0f ? 0.0f
+            : m_demoSeconds < 8.0f        ? 0.5f * m_demoLimit
+            : m_demoSeconds < 13.0f       ? m_demoLimit
+                                          : 0.0f;
+        m_viewer->setCommand(0, { m_walkSpeed, 0.0f, 0.0f });
+    }
     const std::span<const float> observation = m_viewer->observations();
     if (m_policy) m_policy->evaluate(observation.first(m_policyInputs), m_action);
     else std::fill(m_action.begin(), m_action.end(), 0.0f);
@@ -406,6 +419,14 @@ void ReinforcementLearningScreen::update(float deltaSeconds) {
             notify("O treino não fechou para trocar de habilidade");
             m_switchTask.clear();
         }
+    }
+    // O limite do ciclo de andar do visualizador: o que o treino ja pede (o
+    // curriculo), ou o comeco dele sem um treino de andar.
+    {
+        const TrainerStatus3D status = m_link->status();
+        const float maximum = m_skill < m_skills.size() ? m_skills[m_skill].maxForward : 0.0f;
+        m_demoLimit = status.forwardMax > 0.0 && status.forwardLimit > 0.0
+            ? std::min(maximum, static_cast<float>(status.forwardLimit)) : std::min(1.0f, maximum);
     }
     // Ao abrir, a habilidade escolhida e a do treino (aberto ou o ultimo).
     if (!m_skillChosen) {
@@ -793,6 +814,7 @@ void ReinforcementLearningScreen::drawToolbar() {
     if (ImGui::Button(UI::FontAwesome::label(UI::FontAwesome::RotateLeft, "Recomeçar").c_str(), { ui(120.0f), ui(30.0f) })
         && m_viewer) {
         m_viewer->reset(static_cast<std::uint64_t>(std::time(nullptr)));
+        m_demoSeconds = 0.0f;
         m_dirty = true;
     }
     ImGui::SameLine();
@@ -839,27 +861,19 @@ void ReinforcementLearningScreen::drawViewport(CanvasTarget& canvas, float botto
     const bool rendered = render(width, height);
     const std::uint64_t id = canvas.present(m_image, rendered);
     drawList->AddImage(static_cast<ImTextureID>(id), origin, end);
-    // A politica que esta no corpo agora (canto de cima).
-    const std::string label = m_policyText;
+    // A politica que esta no corpo agora (canto de cima) e, andando, o pedido
+    // do ciclo e a velocidade dele.
+    std::string label = m_policyText;
+    if (m_viewer && m_skill < m_skills.size() && m_skills[m_skill].maxForward > 0.0f) {
+        const TrainingEnvironmentView3D view = m_viewer->view(0);
+        const Vec3 v = view.state ? view.state->links.front().linearVelocity : Vec3 {};
+        label += "\npedido " + decimal(m_walkSpeed, 1) + " m/s · ele " + decimal(std::hypot(v.x, v.y), 1) + " m/s";
+    }
     drawList->AddText({ origin.x + ui(10.0f), origin.y + ui(8.0f) }, UiMuted, label.c_str());
 }
 
 void ReinforcementLearningScreen::drawPushes() {
     ImGui::Dummy({ 1.0f, ui(2.0f) });
-    // Andar: a velocidade pedida ao jogador do mundo (as habilidades de andar).
-    const float maxForward = m_skill < m_skills.size() ? m_skills[m_skill].maxForward : 0.0f;
-    if (maxForward > 0.0f) {
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextColored(InfoText, "%s", UI::FontAwesome::label(UI::FontAwesome::Play, "Andar").c_str());
-        tooltip("A velocidade pedida ao jogador do visualizador (para frente; 0 = parado). O treino não muda.");
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(ui(180.0f));
-        float speed = m_walkSpeed;
-        if (ImGui::SliderFloat("##RLWalkSpeed", &speed, 0.0f, maxForward, "%.1f m/s")) setWalkSpeed(speed);
-        ImGui::SameLine();
-        ImGui::Dummy({ ui(18.0f), 1.0f });
-        ImGui::SameLine();
-    }
     ImGui::AlignTextToFramePadding();
     ImGui::TextColored(InfoText, "%s", UI::FontAwesome::label(UI::FontAwesome::Hand, "Empurrão").c_str());
     tooltip("Um empurrão no peito do jogador do visualizador, por 0,2 s, para testar a política (o treino não muda).");

@@ -57,7 +57,8 @@ public:
     [[nodiscard]] bool renderViewport(int width, int height) { return render(width, height); }
     [[nodiscard]] const TrainingHistory3D& history() const { return m_history; }
     void push(int direction, float newtons);
-    // O comando de andar do jogador do mundo (m/s para frente).
+    // Fixa a velocidade do jogador do mundo (m/s para frente) no lugar do ciclo
+    // de demonstracao (automacao).
     void setWalkSpeed(float metersPerSecond);
     void setDisplay(Display display) {
         m_display = display;
@@ -149,8 +150,13 @@ private:
     bool m_showContacts = true;
     // 100 N por 0,2 s no peito: o que a H1 (sem treino de empurroes) aguenta.
     float m_pushNewtons = 100.0f;
-    // A velocidade pedida ao jogador do mundo (m/s, nas habilidades de andar).
+    // Andar: o jogador do mundo demonstra sozinho, num ciclo de velocidades
+    // (parado, metade e o limite que o treino ja pede, parado). A automacao
+    // pode fixar uma velocidade no lugar do ciclo.
     float m_walkSpeed = 0.0f;
+    float m_demoSeconds = 0.0f;
+    float m_demoLimit = 1.0f;
+    bool m_walkOverride = false;
 
     struct Skill {
         std::string task;

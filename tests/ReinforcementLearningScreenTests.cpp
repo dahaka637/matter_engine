@@ -257,9 +257,15 @@ int main() {
         require(screen.viewerPosture() == 1, "a H1b mostra a postura de alerta");
         snapshot(canvas, "rl_tela_posturado");
         // Andar: o mundo e refeito com a tarefa dela (a arena grande), a postura
-        // de alerta e a velocidade pedida pelo controle "Andar".
+        // de alerta e o ciclo de demonstracao sozinho (parado, metade e o
+        // limite); a automacao ainda pode fixar uma velocidade.
         screen.selectSkill(2);
         frame(screen, canvas, 2);
+        require(screen.viewerWalkCommand() == 0.0f, "o ciclo comeca parado");
+        screen.advanceViewer(150);
+        require(screen.viewerWalkCommand() == 0.5f, "depois de 3 s o ciclo pede metade do limite (1,0 m/s)");
+        frame(screen, canvas, 2);
+        snapshot(canvas, "rl_tela_andar_ciclo");
         screen.setWalkSpeed(2.0f);
         screen.advanceViewer(3);
         frame(screen, canvas, 2);
