@@ -1388,6 +1388,63 @@ void testBootCollider(PhysicsEngine3D &engine, MaterialLibrary &materials) {
   require(rest.linearVelocity.length() < 0.05f, "a chuteira para no chao");
 }
 
+// A aderencia da chuteira (diagnostico, MATTERENGINE_TEST_FILTER=atrito): a
+// chuteira apoiada no chao, uma forca de lado que cresce devagar, e o atrito
+// efetivo e a forca sobre o peso quando ela comeca a andar.
+float slipCoefficient(PhysicsEngine3D &engine, MaterialLibrary &materials, const std::vector<PhysicsShape3D> &shapes,
+                      const std::string &ground, float lift) {
+  PhysicsSceneSettings3D sceneSettings;
+  sceneSettings.gravity = {0.0f, 0.0f, -9.81f};
+  auto scene = engine.createScene(sceneSettings, materials);
+  PhysicsShape3D groundShape;
+  groundShape.type = PhysicsShapeType3D::Box;
+  groundShape.halfExtents = {20.0f, 20.0f, 0.5f};
+  groundShape.materialId = ground;
+  PhysicsBodyDefinition3D floor;
+  floor.motionType = PhysicsMotionType3D::Static;
+  floor.position = {0.0f, 0.0f, -0.5f};
+  floor.materialId = ground;
+  (void)scene->createBody(floor, std::span<const PhysicsShape3D>(&groundShape, 1));
+  PhysicsBodyDefinition3D boot;
+  boot.motionType = PhysicsMotionType3D::Dynamic;
+  boot.position = {0.0f, 0.0f, lift};
+  boot.massKg = 40.0f;
+  boot.materialId = "shoe_sole";
+  const PhysicsBodyHandle3D body = scene->createBody(boot, std::span<const PhysicsShape3D>(shapes.data(), shapes.size()));
+  for (int step = 0; step < 120; ++step) scene->simulate(1.0f / 120.0f);
+  const float weight = boot.massKg * 9.81f;
+  const Vec3 start = scene->bodyState(body).position;
+  for (int step = 0; step < 600; ++step) {
+    const float share = 1.4f * static_cast<float>(step) / 600.0f;
+    const PhysicsBodyState3D state = scene->bodyState(body);
+    scene->applyForceAtPoint(body, {share * weight, 0.0f, 0.0f}, state.position);
+    scene->simulate(1.0f / 120.0f);
+    const PhysicsBodyState3D now = scene->bodyState(body);
+    if (now.linearVelocity.x > 0.02f || now.position.x - start.x > 0.005f) return share;
+  }
+  return 1.4f;
+}
+
+void testBootGrip(PhysicsEngine3D &engine, MaterialLibrary &materials) {
+  const RagdollProfile3D profile =
+      loadRagdollProfile3D(std::string(MATTERENGINE_TEST_ASSETS_DIR) + "/characters/football_player/FootballPlayerV1.ragdoll.json");
+  const RagdollCapsuleDefinition3D &boot = profile.links.back().collider;
+  PhysicsShape3D hull;
+  hull.type = PhysicsShapeType3D::ConvexHull;
+  hull.hullPoints = boot.hullPoints;
+  hull.convexRadius = boot.convexRadiusMeters;
+  hull.materialId = "shoe_sole";
+  PhysicsShape3D box;
+  box.type = PhysicsShapeType3D::Box;
+  box.halfExtents = {0.1345f, 0.048f, 0.065f};
+  box.materialId = "shoe_sole";
+  for (const char *ground : {"grass", "concrete"}) {
+    const float h = slipCoefficient(engine, materials, {hull}, ground, boot.boxHalfExtents.z + 0.002f);
+    const float b = slipCoefficient(engine, materials, {box}, ground, 0.067f);
+    std::cout << "atrito efetivo da chuteira em " << ground << ": casca " << h << ", caixa antiga " << b << '\n';
+  }
+}
+
 void testCookingConvexo(PhysicsEngine3D &engine) {
   // Tres barras formam um U concavo. Um hull unico fecharia o vazio; a
   // decomposicao precisa publicar mais de uma shape convexa.
@@ -4909,6 +4966,13 @@ int main() {
     testAnimationCatalog();
     testArticulationIndexing();
     testArticulationGravityCompensation();
+    if (const char *filter = std::getenv("MATTERENGINE_TEST_FILTER");
+        filter && std::string_view(filter) == "atrito") {
+      PhysicsEngine3D engine;
+      MaterialLibrary materials;
+      testBootGrip(engine, materials);
+      return 0;
+    }
     if (const char *filter = std::getenv("MATTERENGINE_TEST_FILTER");
         filter && std::string_view(filter) == "activecontact") {
       testActiveRagdollsInContact();
