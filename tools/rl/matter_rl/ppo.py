@@ -2,6 +2,7 @@
 taxa de aprendizado adaptada pelo KL e o desvio aprendido por canal."""
 from __future__ import annotations
 
+import math
 from dataclasses import asdict, dataclass
 
 import torch
@@ -30,6 +31,10 @@ class PPOSettings:
     desired_kl: float = 0.02
     learning_rate_step: float = 1.3
     max_grad_norm: float = 1.0
+    # O teto do desvio da acao (unidades de acao; 0 = sem teto). Na imitacao, o
+    # bonus de entropia fazia o desvio subir sem parar (1,2 -> 1,4 em 40 min,
+    # ~0,35 rad de ruido por junta) e o treino caia bem mais que a bateria.
+    max_std: float = 0.0
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -163,6 +168,9 @@ class PPO:
                 totals["clip_fraction"] += float(((ratio - 1.0).abs() > s.clip).float().mean())
                 totals["grad_norm"] += float(grad_norm)
                 count += 1
+        if s.max_std > 0.0:
+            with torch.no_grad():
+                model.log_std.clamp_(max=math.log(s.max_std))
         result = {key: value / max(1, count) for key, value in totals.items()}
         result["learning_rate"] = self.learning_rate
         result["action_std"] = float(model.log_std.detach().exp().mean())
