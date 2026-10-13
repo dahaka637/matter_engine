@@ -82,6 +82,27 @@ struct TrainerStatus3D {
     double bestScore = 0.0;
     std::int64_t bestIteration = -1;
     std::string policy;
+    // O aprendizado guiado (state "professor"): quanto ja foi da fase, as
+    // decisoes do professor, o erro da imitacao (quadratico medio, unidades
+    // da acao), as quedas e a velocidade dele.
+    struct Imitation {
+        bool active = false;
+        double minutes = 0.0;
+        double elapsedSeconds = 0.0;
+        std::uint64_t decisions = 0;
+        double loss = -1.0;
+        double teacherFalls = 0.0;
+        double teacherSpeed = 0.0;
+    } imitation;
+    // Depois do professor: as rodadas desde o fim dele, as so do critico e o
+    // peso de agora do termo de imitacao no PPO.
+    struct Kickstart {
+        bool active = false;
+        std::int64_t since = 0;
+        std::int64_t criticIterations = 0;
+        std::int64_t decayIterations = 0;
+        double weight = 0.0;
+    } kickstart;
 };
 
 // A ponte da tela com o treinador: abre o processo (que sobrevive a tela

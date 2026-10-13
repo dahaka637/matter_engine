@@ -1,9 +1,9 @@
 {
   "schema": "matter-rl-task-1",
   "id": "h3_andar",
-  "version": 4,
+  "version": 5,
   "displayName": "Andar",
-  "comment": "H3: andar seguindo um comando de velocidade (para frente, de 0 ao trote da locomocao padrao, 4,5 m/s), saindo e parando na postura de alerta. A velocidade maxima sobe pelo curriculo conforme ele acompanha. 25% dos sorteios pedem ficar parado (o ensaio da H1b), e 15% dos episodios ficam parados na postura natural (o ensaio da H1: sem pedidos de andar nela, que a faziam esquecer o parado). Costas, lados e giro ja estao prontos na mesma tarefa: basta um maximo acima de 0 em commands (os valores de proximo passo estao em commands.prontos) e ligar as baterias deles. Versao 2: com pedido de andar, ficar parado nao paga (vivo, postura, cabeca, pose e giro valem multiplicados pelo acompanhamento da velocidade), e o relogio de passada ensina o passo (cada pe no chao ou no ar na hora certa da fase, o pe de balanco subindo 8 cm). Versao 3: os episodios com pedido de andar comecam com o corpo ja na velocidade pedida (parado, ele cai para a frente: o primeiro passo vira uma reacao). Versao 4: com pedido de andar, a velocidade e o estar bem sao medidos contra ficar parado (parado vale 0 em qualquer velocidade pedida), e o total de cada passo, menos a queda, nunca fica negativo: tentar andar e errar nunca vale menos que ficar parado.",
+  "comment": "H3: andar seguindo um comando de velocidade (para frente, de 0 ao trote da locomocao padrao, 4,5 m/s), saindo e parando na postura de alerta. A velocidade maxima sobe pelo curriculo conforme ele acompanha. 25% dos sorteios pedem ficar parado (o ensaio da H1b), e 15% dos episodios ficam parados na postura natural (o ensaio da H1: sem pedidos de andar nela, que a faziam esquecer o parado). Costas, lados e giro ja estao prontos na mesma tarefa: basta um maximo acima de 0 em commands (os valores de proximo passo estao em commands.prontos) e ligar as baterias deles. Versao 2: com pedido de andar, ficar parado nao paga (vivo, postura, cabeca, pose e giro valem multiplicados pelo acompanhamento da velocidade), e o relogio de passada ensina o passo (cada pe no chao ou no ar na hora certa da fase, o pe de balanco subindo 8 cm). Versao 3: os episodios com pedido de andar comecam com o corpo ja na velocidade pedida (parado, ele cai para a frente: o primeiro passo vira uma reacao). Versao 4: com pedido de andar, a velocidade e o estar bem sao medidos contra ficar parado (parado vale 0 em qualquer velocidade pedida), e o total de cada passo, menos a queda, nunca fica negativo: tentar andar e errar nunca vale menos que ficar parado. Versao 5: o professor (secao teacher) para o aprendizado guiado.",
   "postures": [
     {
       "id": "natural",
@@ -39,6 +39,35 @@
     "gateByTracking": true,
     "startMoving": true,
     "relativeToStanding": true
+  },
+  "teacher": {
+    "comment": "O aprendizado guiado (matter-rl professor, ou o botao da tela): a locomocao fisica do jogo, no modo fisico total com as ajudas em 0% (andando, a pelve ainda leva metade do peso: a sustentacao de base da locomocao fisica v2), conduz o corpo num roteiro sorteado de trechos de segmentSeconds: parado, girando no lugar, andando para frente, para tras, de lado e na diagonal (as vezes em curva), com empurroes no tronco. A politica imita a acao dele (o alvo de cada junta que daria o torque que ele aplicou) por imitation.minutes; depois o treino normal segue com o desvio da acao em imitation.actionStd, imitation.criticIterations rodadas so do critico e a imitacao sumindo em imitation.decayIterations rodadas.",
+    "standingAssistPercent": 0.0,
+    "walkingAssistPercent": 0.0,
+    "feetAssistPercent": 0.0,
+    "segmentSeconds": [2.0, 5.0],
+    "standingWeight": 0.2,
+    "turnWeight": 0.15,
+    "forwardWeight": 0.35,
+    "backwardWeight": 0.1,
+    "sideWeight": 0.1,
+    "diagonalWeight": 0.1,
+    "speedFraction": [0.3, 1.0],
+    "turnRate": [0.6, 1.8],
+    "curveFraction": 0.3,
+    "curveRate": [0.2, 0.8],
+    "pushes": true,
+    "pushInterval": [3.0, 7.0],
+    "pushForce": [80.0, 220.0],
+    "pushSeconds": [0.1, 0.2],
+    "imitation": {
+      "minutes": 15.0,
+      "environments": 128,
+      "actionStd": 0.45,
+      "criticIterations": 20,
+      "decayIterations": 300,
+      "decayWeight": 0.5
+    }
   },
   "curriculum": {
     "comment": "Cada direcao ligada comeca no limite start e sobe step quando a nota media do acompanhamento da velocidade (0 a 1, nas decisoes andando) passa de threshold por 3 rodadas seguidas, com pelo menos minimumIterations rodadas entre uma subida e outra.",

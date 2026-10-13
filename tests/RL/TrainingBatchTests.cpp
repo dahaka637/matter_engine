@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <numbers>
 #include <random>
 #include <stdexcept>
 #include <string>
@@ -379,6 +380,77 @@ void testTimeLimit() {
     std::filesystem::remove_all(dir);
 }
 
+// Um professor que manda nas juntas como o RL, com uma acao fixa: o rotulo
+// do lote (o alvo que da o torque dele) tem de devolver a acao.
+class EchoTeacher final : public TrainingTeacher3D {
+public:
+    EchoTeacher(const RLBody3D& body, std::vector<float> action) : m_body(body), m_action(std::move(action)) {}
+    void attach(const TrainingTeacherWorld3D&) override { ++attached; }
+    void beginEpisode(const TrainingTeacherWorld3D&, const RagdollState3D&, std::uint64_t) override { ++episodes; }
+    void control(const TrainingTeacherWorld3D& world, const RagdollState3D&, float) override {
+        std::vector<RagdollDriveTarget3D> targets(m_body.dofs.size());
+        for (std::size_t d = 0; d < m_body.dofs.size(); ++d) {
+            const RLBodyDof3D& dof = m_body.dofs[d];
+            RagdollDriveTarget3D& target = targets[d];
+            target.linkIndex = dof.linkIndex;
+            target.axis = dof.axis;
+            target.positionRadians = dof.target(m_action[d]);
+            target.stiffnessScale = dof.stiffnessScale;
+            target.dampingScale = dof.dampingScale;
+            target.maximumTorqueScale = dof.maximumTorqueScale;
+            target.gravityCompensationScale = 0.0f;
+        }
+        world.scene->setRagdollActiveDriveTargets(world.ragdoll, targets, false);
+    }
+    [[nodiscard]] Vec3 command(std::size_t) const override { return { 1.0f, 0.0f, 0.0f }; }
+    [[nodiscard]] float gaitPhase(std::size_t) const override { return 0.3f; }
+    int attached = 0;
+    int episodes = 0;
+
+private:
+    const RLBody3D& m_body;
+    std::vector<float> m_action;
+};
+
+void testTeacher() {
+    TrainingBatchSettings3D s = settings(4, 2);
+    s.taskPath = std::filesystem::path(MATTERENGINE_TEST_ASSETS_DIR) / "rl/tasks/h3_andar.json";
+    const RLBody3D body = loadRLBody3D(loadTrainingTask3D(s.taskPath).bodyPath);
+    std::mt19937 rng(3);
+    std::uniform_real_distribution<float> unit(-0.6f, 0.6f);
+    std::vector<float> action(body.dofs.size());
+    for (float& a : action) a = unit(rng);
+    auto teacher = std::make_shared<EchoTeacher>(body, action);
+    s.teacher = teacher;
+    TrainingBatch3D batch(s);
+    require(teacher->attached == 4 && teacher->episodes >= 4, "o professor conhece cada mundo e cada episodio");
+    const std::size_t A = batch.actionSize();
+    std::vector<float> ignored(4 * A, 0.0f);
+    // (Alguns passos para o corpo chegar perto dos alvos: perto, nada satura.)
+    for (int i = 0; i < 3; ++i) batch.step(ignored);
+    // (Os ombros, de tres eixos acoplados num alvo de orientacao, e o pe de
+    // apoio, preso pelo chao, ficam mais longe: o rotulo e aproximado.)
+    std::size_t close = 0, total = 0;
+    double error = 0.0;
+    for (std::size_t e = 0; e < 4; ++e)
+        for (std::size_t d = 0; d < A; ++d) {
+            const RLBodyDof3D& dof = body.dofs[d];
+            const float target = dof.baseRadians + dof.actionScale * action[d];
+            if (target <= dof.minimumRadians + 0.02f || target >= dof.maximumRadians - 0.02f) continue;
+            ++total;
+            const float miss = std::abs(batch.teacherActions()[e * A + d] - action[d]);
+            close += miss < 0.15f ? 1 : 0;
+            error += miss;
+        }
+    require(total > 100 && close >= total * 8 / 10 && error / static_cast<double>(total) < 0.08,
+        "o rotulo devolve a acao de quem manda como o RL");
+    // O comando e a fase sao os do professor (no rumo do corpo).
+    require(std::hypot(batch.view(0).command.x, batch.view(0).command.y) > 0.9f, "o comando e o do professor");
+    const std::size_t O = batch.observationSize();
+    require(std::abs(batch.observations()[O - 2] - std::sin(2.0f * std::numbers::pi_v<float> * 0.3f)) < 1e-4f,
+        "a fase do relogio e a do professor");
+}
+
 } // namespace
 
 void runTrainingBatchTests() {
@@ -389,5 +461,6 @@ void runTrainingBatchTests() {
     testDeterminism();
     testFallsAndRestart();
     testTimeLimit();
+    testTeacher();
     std::cout << "RL training batch tests passed\n";
 }

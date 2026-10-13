@@ -280,6 +280,23 @@ void TrainerLink3D::readStatus(const std::string& json, bool alive) {
         status.bestScore = number(*best, "score");
         status.bestIteration = static_cast<std::int64_t>(number(*best, "iteration", -1.0));
     }
+    if (const auto imitation = s.find("imitation"); imitation != s.end() && imitation->is_object()
+        && !imitation->empty()) {
+        status.imitation.active = true;
+        status.imitation.minutes = number(*imitation, "minutes");
+        status.imitation.elapsedSeconds = number(*imitation, "elapsed");
+        status.imitation.decisions = static_cast<std::uint64_t>(number(*imitation, "decisions"));
+        status.imitation.loss = number(*imitation, "loss", -1.0);
+        status.imitation.teacherFalls = number(*imitation, "teacherFalls");
+        status.imitation.teacherSpeed = number(*imitation, "teacherSpeed");
+    }
+    if (const auto kick = s.find("kickstart"); kick != s.end() && kick->is_object() && !kick->empty()) {
+        status.kickstart.active = true;
+        status.kickstart.since = static_cast<std::int64_t>(number(*kick, "since"));
+        status.kickstart.criticIterations = static_cast<std::int64_t>(number(*kick, "criticIterations"));
+        status.kickstart.decayIterations = static_cast<std::int64_t>(number(*kick, "decayIterations"));
+        status.kickstart.weight = number(*kick, "weight");
+    }
     if (!alive && status.state != "erro") status.state = "parado";
     std::lock_guard lock(m_mutex);
     m_status = std::move(status);

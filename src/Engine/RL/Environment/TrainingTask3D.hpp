@@ -138,6 +138,10 @@ struct TrainingTask3D {
         bool relativeToStanding = false;
     } commands;
 
+    // A tarefa tem a secao "teacher" (o professor do aprendizado guiado, em
+    // RL/Teacher; os mundos de treino nao a leem).
+    bool hasTeacher = false;
+
     // O relogio de passada (so andando): a fase corre a frequency[0] +
     // frequency[1] * |v| passadas por segundo; cada pe fica no ar metade dela
     // (o esquerdo na primeira, o direito na segunda), com um apoio duplo de

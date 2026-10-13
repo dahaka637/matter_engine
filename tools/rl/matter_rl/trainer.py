@@ -15,6 +15,7 @@ import torch
 
 from . import control, native, paths, storage, system
 from .evaluation import BASE_BATTERY, EPISODE_COLUMNS, SCORE_VERSION, Battery, Evaluator
+from .imitation import Demonstrations, ImitationSettings, TeacherWorlds, decay_weight, imitation_loss, std_log
 from .model import ActorCritic, export_policy, migrate_inputs
 from .ppo import PPO, PPOSettings, Rollout
 
@@ -135,6 +136,12 @@ class Trainer:
         self.best = {"score": -1e9, "iteration": -1}
         self.bests: dict[str, dict] = {}
         self.last_evaluation: dict = {}
+        # O aprendizado guiado (o professor): o pedido, o progresso da fase, as
+        # decisoes dele (na memoria) e o termo de imitacao no PPO depois dela.
+        self.imitation_request: dict | None = None
+        self.imitation_progress: dict = {}
+        self.demonstrations: Demonstrations | None = None
+        self.kickstart: dict | None = None
         self.db = storage.Database()
         self.db.ensure_run(run, self.config.task, self.batch.body_hash, asdict(self.config))
         if self.switched_from:
@@ -194,6 +201,7 @@ class Trainer:
             "action_names": self.action_names,
             "body_hash": self.batch.body_hash,
             "rng_torch": torch.get_rng_state(),
+            "kickstart": self.kickstart,
         }
 
     def restore(self) -> None:
@@ -215,6 +223,9 @@ class Trainer:
             self.model.load_state_dict(state["model"])
             self.ppo.load_state_dict(state["ppo"])
         self.counters.update(state.get("counters", {}))
+        # (Reaberto no meio da volta da imitacao: as decisoes do professor nao
+        # voltam, mas as rodadas so do critico e o desvio seguem.)
+        self.kickstart = state.get("kickstart")
         # (Checkpoints de antes da lista: o melhor era o da tarefa deles.)
         bests = state.get("bests") or {reference.manifest.get("task", self.config.task): state.get("best", {})}
         self.bests = {task: dict(best) for task, best in bests.items() if best and best.get("iteration", -1) >= 0}
@@ -308,6 +319,8 @@ class Trainer:
             "policy": str(self.directory / "exports" / "policy_latest.mrlpolicy"), "message": self.message,
             "commands": {key: {"limit": self.command_limits.get(key, maximum), "max": maximum}
                          for key, maximum in self.command_max.items()},
+            "imitation": self.imitation_progress if self.state == "professor" else {},
+            "kickstart": self.kickstart_status(),
             "pid": os.getpid(), "updated": time.time(),
         }
 
@@ -444,6 +457,17 @@ class Trainer:
             self.db.event(self.run, "peso", f"{component}: {old} -> {value}", author,
                           {"motivo": arguments.get("motivo", "")})
             return {"ok": True}
+        if command == "professor":
+            request = {"author": author}
+            if "minutos" in arguments:
+                minutes = float(arguments["minutos"])
+                if not 0.5 <= minutes <= 240.0:
+                    raise ValueError("minutos entre 0,5 e 240")
+                request["minutes"] = minutes
+            if not (json.loads(self.live_task.read_text()).get("teacher")):
+                raise ValueError("a habilidade de agora nao tem professor")
+            self.imitation_request = request
+            return {"ok": True}
         if command == "empurroes":
             data = json.loads(self.live_task.read_text())
             pushes = data.setdefault("pushes", {})
@@ -455,6 +479,142 @@ class Trainer:
             self.db.event(self.run, "empurroes", json.dumps(pushes), author, {"motivo": arguments.get("motivo", "")})
             return {"ok": True}
         raise ValueError(f"comando desconhecido: {command}")
+
+    # --- o aprendizado guiado (o professor) ------------------------------------------------
+    def imitation_settings(self, request: dict) -> ImitationSettings:
+        teacher = json.loads(self.live_task.read_text()).get("teacher") or {}
+        return ImitationSettings.from_dict({**(teacher.get("imitation") or {}), **request})
+
+    def rehearsal(self, settings: ImitationSettings, steps: int = 200) -> Demonstrations | None:
+        """O parado da propria politica (a media dela nos mundos parados do
+        treino): entra em cada lote da imitacao para a H1 e a H1b ficarem."""
+        names = self.obs_names
+        command = [names.index(n) for n in ("command.velocity.forward", "command.velocity.lateral",
+                                             "command.velocity.yaw") if n in names]
+        if not command or settings.rehearsal_fraction <= 0.0:
+            return None
+        memory = Demonstrations(steps * self.batch.num_envs // 2, self.batch.obs_size, self.batch.action_size,
+                                self.device)
+        obs = self.tensor(self.batch.observations())
+        with torch.no_grad():
+            for _ in range(steps):
+                mean = self.model.actor(self.model.obs_norm(obs))
+                standing = (obs[:, command].abs().sum(-1) == 0.0)
+                memory.add(obs[standing], mean[standing])
+                self.batch.step(np.ascontiguousarray(mean.cpu().numpy(), dtype=np.float32))
+                obs = self.tensor(self.batch.observations())
+        return memory if memory.size >= settings.batch_size else None
+
+    def imitate(self, request: dict) -> None:
+        """A fase do professor: os mundos dele andam pelo roteiro e a media da
+        politica imita a acao dele; no fim, o PPO segue com o que ela extraiu
+        (o desvio da acao baixo, so o critico por umas rodadas e a imitacao
+        sumindo aos poucos)."""
+        settings = self.imitation_settings({k: v for k, v in request.items() if k != "author" and v is not None})
+        author = request.get("author", "usuario")
+        self.state = "professor"
+        self.imitation_progress = {"minutes": settings.minutes, "elapsed": 0.0, "decisions": 0, "samples": 0,
+                                   "loss": None, "teacherFalls": 0.0, "teacherSpeed": 0.0, "updates": 0}
+        self.write_status()
+        self.db.event(self.run, "professor", f"aprendendo com a locomocao fisica por {settings.minutes:g} min",
+                      author)
+        rehearsal = self.rehearsal(settings)
+        teacher = TeacherWorlds(self.native, self.live_task, settings.environments, self.threads,
+                                int(time.time()) & 0x7FFFFFFF, self.device)
+        if teacher.batch.obs_size != self.batch.obs_size or teacher.batch.action_size != self.batch.action_size:
+            raise RuntimeError("os mundos do professor nao batem com os do treino")
+        memory = self.demonstrations
+        if memory is None or memory.obs.shape[1] != self.batch.obs_size:
+            memory = Demonstrations(settings.capacity, self.batch.obs_size, self.batch.action_size, self.device)
+        optimizer = torch.optim.Adam(list(self.model.actor.parameters()), lr=settings.learning_rate)
+        started, last_status, owed = time.time(), 0.0, 0.0
+        losses: list[float] = []
+        updates = 0
+        while time.time() - started < settings.minutes * 60.0:
+            self.handle_commands()
+            if self.stop_requested or self.restart_requested:
+                break
+            if self.pause_requested:
+                time.sleep(0.2)
+                continue
+            obs, actions = teacher.step()
+            memory.add(obs, actions)
+            owed += settings.updates_per_step
+            while owed >= 1.0 and memory.size >= settings.batch_size:
+                owed -= 1.0
+                extra = int(settings.batch_size * settings.rehearsal_fraction) if rehearsal is not None else 0
+                inputs, targets = memory.sample(settings.batch_size - extra)
+                if extra:
+                    more_inputs, more_targets = rehearsal.sample(extra)
+                    inputs, targets = torch.cat([inputs, more_inputs]), torch.cat([targets, more_targets])
+                loss = imitation_loss(self.model, inputs, targets)
+                optimizer.zero_grad(set_to_none=True)
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.model.actor.parameters(), 1.0)
+                optimizer.step()
+                losses.append(loss.item())
+                updates += 1
+            now = time.time()
+            if now - last_status >= 2.0:
+                recent = losses[-50:]
+                self.imitation_progress = {
+                    "minutes": settings.minutes, "elapsed": now - started, "decisions": teacher.decisions,
+                    "samples": memory.size, "loss": sum(recent) / len(recent) if recent else None,
+                    "teacherFalls": teacher.fall_fraction, "teacherSpeed": teacher.mean_speed, "updates": updates}
+                self.write_status()
+                last_status = now
+        recent = losses[-200:]
+        loss = sum(recent) / len(recent) if recent else float("nan")
+        decisions, falls, speed = teacher.decisions, teacher.fall_fraction, teacher.mean_speed
+        del teacher
+        self.demonstrations = memory
+        with torch.no_grad():
+            self.model.log_std.fill_(std_log(settings.action_std))
+        # (Otimizador novo: o embalo do Adam era o do ator de antes da imitacao.)
+        self.ppo = PPO(self.model, self.settings)
+        self.kickstart = {"start": self.counters["iteration"], "settings": settings.to_dict()}
+        self.db.event(self.run, "professor",
+                      f"terminou: {decisions} decisoes do professor (andando a {speed:.2f} m/s em media, caiu em "
+                      f"{falls:.0%} dos episodios), erro da imitacao {loss:.3f}; o treino segue com o desvio da acao "
+                      f"em {settings.action_std:g}, {settings.critic_iterations} rodadas so do critico e a imitacao "
+                      f"sumindo em {settings.decay_iterations}", author)
+        self.imitation_progress = {}
+        self.save("professor")
+        self.state = "treinando"
+
+    def kickstart_terms(self):
+        """Depois do professor: as rodadas so do critico e o termo de imitacao
+        (some em decay_iterations; sem as decisoes na memoria, ele fica de fora)."""
+        if not self.kickstart:
+            return False, None
+        settings = ImitationSettings.from_dict(self.kickstart.get("settings"))
+        since = self.counters["iteration"] - int(self.kickstart["start"])
+        if since < settings.critic_iterations:
+            return True, None
+        weight = decay_weight(settings, since - settings.critic_iterations)
+        if weight <= 0.0:
+            self.kickstart = None
+            self.db.event(self.run, "professor", "a imitacao saiu do treino: segue so o PPO")
+            return False, None
+        memory = self.demonstrations
+        if memory is None or memory.size < settings.batch_size:
+            return False, None
+
+        def auxiliary():
+            inputs, targets = memory.sample(settings.batch_size // 2)
+            return weight * imitation_loss(self.model, inputs, targets)
+        return False, auxiliary
+
+    def kickstart_status(self) -> dict:
+        if not self.kickstart:
+            return {}
+        settings = ImitationSettings.from_dict(self.kickstart.get("settings"))
+        since = self.counters["iteration"] - int(self.kickstart["start"])
+        return {"since": since, "criticIterations": settings.critic_iterations,
+                "decayIterations": settings.decay_iterations,
+                "weight": 0.0 if since < settings.critic_iterations
+                else decay_weight(settings, since - settings.critic_iterations),
+                "memory": self.demonstrations.size if self.demonstrations is not None else 0}
 
     # --- o laco ----------------------------------------------------------------------
     def tensor(self, array: np.ndarray) -> torch.Tensor:
@@ -499,7 +659,8 @@ class Trainer:
         rollout.compute_returns(last_values, s.gamma, s.lam)
         collect = time.time() - begin
         begin = time.time()
-        stats = self.ppo.update(rollout)
+        frozen, auxiliary = self.kickstart_terms()
+        stats = self.ppo.update(rollout, actor_frozen=frozen, auxiliary=auxiliary)
         update = time.time() - begin
 
         samples = s.steps_per_env * envs
@@ -595,6 +756,10 @@ class Trainer:
                         self.state = "pausado"
                         self.write_status()
                     time.sleep(0.2)
+                    continue
+                if self.imitation_request is not None:
+                    request, self.imitation_request = self.imitation_request, None
+                    self.imitate(request)
                     continue
                 self.state = "treinando"
                 result = self.iteration()

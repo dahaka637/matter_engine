@@ -75,6 +75,9 @@ struct Environment {
     std::uint32_t limit = 600;
     std::vector<float> previousAction;
     std::vector<float> action;
+    // Com professor: a soma, nos passos de fisica da decisao, do alvo que daria
+    // o torque dele (em unidades da acao).
+    std::vector<float> teacherSum;
     std::vector<RagdollDriveTarget3D> targets;
     std::vector<RagdollDriveTarget3D> previousTargets;
     std::array<Vec3, 2> footStart {};
@@ -178,6 +181,8 @@ struct TrainingBatch3D::Impl {
         float scale = 0.0f;
     };
     std::vector<ReferenceDof> referenceDofs;
+    // A acao do professor no ultimo step (mundos x eixos).
+    std::vector<float> teacherLabels;
     std::array<std::uint32_t, KeyBodyCount> keyBodies {};
     std::uint32_t workers = 1;
     std::uint32_t maximumSteps = 600;
@@ -188,6 +193,15 @@ struct TrainingBatch3D::Impl {
     [[nodiscard]] std::size_t observationSize() const { return observationLayout.size(); }
     [[nodiscard]] std::size_t criticSize() const { return criticLayout.size(); }
     [[nodiscard]] bool training() const { return !settings.evaluation; }
+    [[nodiscard]] bool teaching() const { return settings.teacher != nullptr; }
+    // O mundo visto pelo professor.
+    [[nodiscard]] TrainingTeacherWorld3D teacherWorld(std::uint32_t index) {
+        const Environment& env = environments[index];
+        return { index, scenes[env.scene].physics.get(), env.ragdoll, env.origin, env.startHeading };
+    }
+    // A acao do professor (o alvo que daria o torque dele, em unidades da
+    // acao) a partir do estado depois de um passo de fisica, somada em sum.
+    void accumulateTeacher(const RagdollState3D& state, std::vector<float>& sum) const;
 
     void buildLayouts();
     [[nodiscard]] std::vector<ReferenceDof> resolveReference(const TrainingTask3D::Gait& gait) const;
@@ -314,7 +328,7 @@ void TrainingBatch3D::Impl::createWorld() {
             env.rng.seed(splitmix64(envSeed));
             // A massa varia por mundo (fica a vida toda dele): o corpo nao e
             // recriado entre episodios.
-            env.massScale = training() ? uniform(env.rng, task.randomization.mass) : 1.0f;
+            env.massScale = training() && !teaching() ? uniform(env.rng, task.randomization.mass) : 1.0f;
             RagdollProfile3D profile = body.profile;
             profile.totalMassKg *= env.massScale;
             RagdollSpawnDefinition3D spawn;
@@ -333,7 +347,9 @@ void TrainingBatch3D::Impl::createWorld() {
             env.action.assign(actionSize(), 0.0f);
             env.targets.resize(actionSize());
             env.previousTargets.resize(actionSize());
+            env.teacherSum.assign(teaching() ? actionSize() : 0, 0.0f);
             scene.environments.push_back(index);
+            if (teaching()) settings.teacher->attach(teacherWorld(index));
         }
         scene.finished.reserve(perScene);
     }
@@ -399,6 +415,11 @@ std::uint32_t TrainingBatch3D::Impl::choosePosture(Environment& env) const {
 // ficar parado) viram parado.
 void TrainingBatch3D::Impl::updateCommand(Environment& env, bool start) {
     const float stepSeconds = static_cast<float>(task.actionRepeat) * FixedStep;
+    // Com professor, o comando e o que ele tenta (a cada passo, em stepScene).
+    if (teaching()) {
+        if (start) env.command = {};
+        return;
+    }
     if (env.commandForced) {
         env.command = env.forcedCommand;
         return;
@@ -462,7 +483,7 @@ void TrainingBatch3D::Impl::resetEnvironment(std::uint32_t index) {
     const Vec3 rootPosition = env.origin + Vec3 { 0.0f, 0.0f, lift };
     Vec3 rootVelocity { gaussian(env.rng, start.rootVelocityNoise * noise),
         gaussian(env.rng, start.rootVelocityNoise * noise), 0.0f };
-    if (training() && task.commands.startMoving) {
+    if (training() && !teaching() && task.commands.startMoving) {
         // Ja na velocidade pedida (no rumo do corpo): o passo vira reacao.
         const Vec3 forward = (root * body.profile.links.front().modelOrientation.conjugate()).rotate({ 1.0f, 0.0f, 0.0f });
         const Vec3 left { -forward.y, forward.x, 0.0f };
@@ -484,9 +505,10 @@ void TrainingBatch3D::Impl::resetEnvironment(std::uint32_t index) {
 
     // O mundo e o corpo deste episodio.
     const TrainingTask3D::Randomization& random = task.randomization;
-    env.friction = training() ? uniform(env.rng, random.friction) : 1.0f;
-    env.strength = training() ? uniform(env.rng, random.strength) : 1.0f;
-    env.delayed = training() && std::uniform_real_distribution<float>(0.0f, 1.0f)(env.rng)
+    const bool varied = training() && !teaching();
+    env.friction = varied ? uniform(env.rng, random.friction) : 1.0f;
+    env.strength = varied ? uniform(env.rng, random.strength) : 1.0f;
+    env.delayed = varied && std::uniform_real_distribution<float>(0.0f, 1.0f)(env.rng)
             < random.actionDelayProbability;
     scene.physics->setRagdollFrictionScale(env.ragdoll, env.friction);
     env.limit = training()
@@ -516,6 +538,25 @@ void TrainingBatch3D::Impl::resetEnvironment(std::uint32_t index) {
     env.actionRateSum = env.effortSum = env.jointSpeedSum = env.uprightSum = env.trunkTurnSquares = 0.0;
     env.poseErrorSquares = env.velocityErrorSquares = env.yawErrorSquares = env.trackingSum = 0.0;
     env.movingSteps = 0;
+    if (teaching() && state) {
+        std::fill(env.teacherSum.begin(), env.teacherSum.end(), 0.0f);
+        settings.teacher->beginEpisode(teacherWorld(index), *state, env.rng());
+    }
+}
+
+void TrainingBatch3D::Impl::accumulateTeacher(const RagdollState3D& state, std::vector<float>& sum) const {
+    // O alvo do RL que da o mesmo torque: o do RL e k (alvo - q) - c q', sem
+    // alvo de velocidade nem antecipacao; o do professor, o do motor mais a
+    // antecipacao dele (a compensacao de gravidade inclusa).
+    for (std::size_t d = 0; d < body.dofs.size(); ++d) {
+        const RLBodyDof3D& dof = body.dofs[d];
+        const RagdollJointState3D& joint = state.joints[dof.linkIndex];
+        const std::size_t axis = static_cast<std::size_t>(dof.axis);
+        const float torque = joint.motorTorqueNewtonMeters[axis] + joint.feedforwardTorqueNewtonMeters[axis];
+        const float q = joint.positionRadians[axis];
+        const float target = q + (torque + dof.damping * joint.velocityRadiansPerSecond[axis]) / std::max(1.0e-3f, dof.stiffness);
+        sum[d] += (target - dof.baseRadians) / std::max(1.0e-4f, dof.actionScale);
+    }
 }
 
 BodyReading TrainingBatch3D::Impl::read(const RagdollState3D& state) const {
@@ -903,9 +944,15 @@ void TrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> actio
     PhysicsScene3D& physics = *scene.physics;
     const std::size_t A = actionSize();
     scene.finished.clear();
+    const bool teacher = teaching();
     for (const std::uint32_t index : scene.environments) {
         Environment& env = environments[index];
         std::swap(env.previousAction, env.action);
+        // Com professor, os alvos sao os dele (a cada passo de fisica).
+        if (teacher) {
+            std::fill(env.teacherSum.begin(), env.teacherSum.end(), 0.0f);
+            continue;
+        }
         for (std::size_t d = 0; d < A; ++d)
             env.action[d] = std::clamp(actions[index * A + d], -RLActionLimit, RLActionLimit);
         std::swap(env.previousTargets, env.targets);
@@ -935,7 +982,19 @@ void TrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> actio
                 env.pushTimer = uniform(env.rng, task.pushes.intervalSeconds);
             }
         }
+        if (teacher)
+            for (const std::uint32_t index : scene.environments) {
+                const Environment& env = environments[index];
+                if (const RagdollState3D* state = physics.ragdollStateView(env.ragdoll))
+                    settings.teacher->control(teacherWorld(index), *state, FixedStep);
+            }
         physics.simulate(FixedStep);
+        if (teacher)
+            for (const std::uint32_t index : scene.environments) {
+                Environment& env = environments[index];
+                if (const RagdollState3D* state = physics.ragdollStateView(env.ragdoll))
+                    accumulateTeacher(*state, env.teacherSum);
+            }
         // Queda por contato em qualquer subpasso: um link que nao e apoio no chao.
         if (!task.termination.nonSupportContact) continue;
         for (const std::uint32_t index : scene.environments) {
@@ -954,6 +1013,15 @@ void TrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> actio
 
     const std::size_t O = observationSize();
     const std::size_t C = criticSize();
+    if (teacher)
+        for (const std::uint32_t index : scene.environments) {
+            Environment& env = environments[index];
+            const float scale = 1.0f / static_cast<float>(std::max(1u, task.actionRepeat));
+            for (std::size_t d = 0; d < A; ++d) {
+                env.action[d] = std::clamp(env.teacherSum[d] * scale, -RLActionLimit, RLActionLimit);
+                teacherLabels[index * A + d] = env.action[d];
+            }
+        }
     for (const std::uint32_t index : scene.environments) {
         Environment& env = environments[index];
         ++env.steps;
@@ -993,7 +1061,15 @@ void TrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> actio
             const Vec3 previous = env.command;
             // A fase anda com o comando deste passo (a cadencia sobe com a
             // velocidade) e volta a 0 quando o proximo pede parado.
-            {
+            if (teacher) {
+                // O que o professor tenta, no rumo do corpo, e a fase da passada dele.
+                const Vec3 wanted = settings.teacher->command(index);
+                const Vec3 local = reading.headingInverse.rotate({ wanted.x, wanted.y, 0.0f });
+                env.command = { local.x, local.y, wanted.z };
+                if (std::hypot(env.command.x, env.command.y) < 0.3f) env.command.x = env.command.y = 0.0f;
+                if (std::abs(env.command.z) < 0.2f) env.command.z = 0.0f;
+                env.gaitPhase = std::max(0.0f, settings.teacher->gaitPhase(index));
+            } else {
                 const float speed = std::hypot(previous.x, previous.y);
                 const float frequency = task.gait.frequency.minimum + task.gait.frequency.maximum * speed;
                 env.gaitPhase = std::fmod(env.gaitPhase + frequency * static_cast<float>(task.actionRepeat) * FixedStep, 1.0f);
@@ -1033,6 +1109,8 @@ TrainingBatch3D::TrainingBatch3D(const TrainingBatchSettings3D& settings) : m_im
     Impl& impl = *m_impl;
     if (settings.environmentCount == 0) throw std::invalid_argument("lote de RL sem mundos");
     impl.settings = settings;
+    // O professor conduz pela capsula da cena: um boneco por cena.
+    if (settings.teacher) impl.settings.environmentsPerScene = 1;
     impl.task = loadTrainingTask3D(settings.taskPath);
     impl.body = loadRLBody3D(impl.task.bodyPath);
     impl.keyBodies = { impl.body.head, impl.body.leftHand, impl.body.rightHand, impl.body.leftFoot,
@@ -1071,6 +1149,7 @@ TrainingBatch3D::TrainingBatch3D(const TrainingBatchSettings3D& settings) : m_im
     impl.components.assign(N * RewardCount, 0.0f);
     impl.terminated.assign(N, 0);
     impl.truncated.assign(N, 0);
+    impl.teacherLabels.assign(settings.teacher ? N * impl.actionSize() : 0, 0.0f);
     impl.createWorld();
     reset(settings.seed);
 }
@@ -1193,6 +1272,7 @@ std::span<const float> TrainingBatch3D::observations() const { return m_impl->ob
 std::span<const float> TrainingBatch3D::criticObservations() const { return m_impl->critic; }
 std::span<const float> TrainingBatch3D::rewards() const { return m_impl->rewards; }
 std::span<const float> TrainingBatch3D::rewardComponents() const { return m_impl->components; }
+std::span<const float> TrainingBatch3D::teacherActions() const { return m_impl->teacherLabels; }
 std::span<const std::uint8_t> TrainingBatch3D::terminated() const { return m_impl->terminated; }
 std::span<const std::uint8_t> TrainingBatch3D::truncated() const { return m_impl->truncated; }
 std::span<const float> TrainingBatch3D::terminalCriticObservations() const { return m_impl->terminalCritic; }

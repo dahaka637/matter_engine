@@ -96,6 +96,7 @@ TrainingTask3D loadTrainingTask3D(const std::filesystem::path& definitionPath) {
             out.limits.yawRate = l.value("yawRate", out.limits.yawRate);
         }
     }
+    task.hasTeacher = document.contains("teacher") && document["teacher"].is_object();
     if (document.contains("gait")) {
         const nlohmann::json& g = document["gait"];
         auto& out = task.gait;

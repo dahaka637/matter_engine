@@ -11,9 +11,12 @@
 
 #include "Engine/RL/Environment/TrainingBatch3D.hpp"
 #include "Engine/RL/Policy/PolicyRuntime3D.hpp"
+#include "Engine/RL/Teacher/LocomotionTeacher3D.hpp"
 
 #include <cstdio>
+#include <memory>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -78,7 +81,7 @@ NB_MODULE(matter_rl_native, m) {
             [](TrainingBatch3D* self, const std::string& task, std::uint32_t environments, std::uint32_t perScene,
                 std::uint32_t threads, std::uint64_t seed, bool evaluation, float evaluationSeconds,
                 int solverPosition, int solverVelocity, const std::string& posture,
-                const std::vector<std::array<float, 4>>& schedule) {
+                const std::vector<std::array<float, 4>>& schedule, const std::string& teacherAssets) {
                 TrainingBatchSettings3D settings;
                 settings.taskPath = task;
                 settings.environmentCount = environments;
@@ -93,11 +96,17 @@ NB_MODULE(matter_rl_native, m) {
                 for (const auto& [seconds, forward, lateral, yaw] : schedule)
                     settings.commandSchedule.push_back({ seconds, forward, lateral, yaw });
                 nb::gil_scoped_release release;
+                // O professor (a locomocao fisica do jogo), com o roteiro da secao
+                // "teacher" da tarefa; teacher_assets e a pasta assets do jogo.
+                if (!teacherAssets.empty())
+                    settings.teacher = std::make_shared<LocomotionTeacher3D>(
+                        teacherAssets, loadLocomotionTeacherSettings3D(task));
                 new (self) TrainingBatch3D(settings);
             },
             "task"_a, "environments"_a = 256, "per_scene"_a = 4, "threads"_a = 0, "seed"_a = 1,
             "evaluation"_a = false, "evaluation_seconds"_a = 60.0f, "solver_position"_a = -1,
-            "solver_velocity"_a = -1, "posture"_a = "", "schedule"_a = std::vector<std::array<float, 4>> {})
+            "solver_velocity"_a = -1, "posture"_a = "", "schedule"_a = std::vector<std::array<float, 4>> {},
+            "teacher_assets"_a = "")
         .def_prop_ro("num_envs", &TrainingBatch3D::environmentCount)
         .def_prop_ro("obs_size", &TrainingBatch3D::observationSize)
         .def_prop_ro("critic_size", &TrainingBatch3D::criticObservationSize)
@@ -182,6 +191,11 @@ NB_MODULE(matter_rl_native, m) {
             [](TrainingBatch3D& b) { return view2(b, b.terminalCriticObservations(), b.criticObservationSize()); })
         .def("reward_components",
             [](TrainingBatch3D& b) { return view2(b, b.rewardComponents(), b.rewardComponentCount()); })
+        .def("teacher_actions",
+            [](TrainingBatch3D& b) {
+                if (b.teacherActions().empty()) throw std::runtime_error("lote sem professor");
+                return view2(b, b.teacherActions(), b.actionSize());
+            })
         .def("rewards",
             [](TrainingBatch3D& b) {
                 return FloatView1(b.rewards().data(), { b.environmentCount() }, nb::find(&b));

@@ -4,7 +4,8 @@ O personagem aprende do zero, por etapas sob demanda. A primeira é a H1:
 ficar em pé, estável, sem ajuda nenhuma. A H1b é ficar em pé na postura de
 alerta (o `alert_idle`, o parado do jogo), e a H3 é andar seguindo um comando
 de velocidade, até o trote da locomoção padrão (4,5 m/s). Todas no mesmo
-cérebro. O plano completo e o diário ficam no
+cérebro. O andar pode aprender também imitando a locomoção física do jogo (o
+aprendizado guiado). O plano completo e o diário ficam no
 vault (`30_Projects/matter_engine/Aprendizado_por_Reforco/`); aqui fica o que
 está implementado e como usar.
 
@@ -17,6 +18,7 @@ está implementado e como usar.
 | Tarefas | `assets/rl/tasks` | `h1_ficar_em_pe.json`: pesos da recompensa, término, início, variação do mundo, empurrões (desligados na H1) |
 | Política no C++ | `src/Engine/RL/Policy` | `PolicyRuntime3D` lê o `.mrlpolicy` que o treinador exporta (a mesma conta do PyTorch, com teste de paridade) |
 | Ligação com o treinador | `src/Engine/RL/Supervisor` | abrir o processo, socket local e o histórico (`rl.db`, só leitura) |
+| Professor | `src/Engine/RL/Teacher` | a locomoção física do jogo conduzindo o corpo nos mundos de treino (o aprendizado guiado) |
 | Ponte Python | `bindings/python` | `matter_rl_native` (nanobind): o lote como arrays numpy sem cópia; a única peça com Python |
 | Treinador | `tools/rl` | PPO (PyTorch na GPU), checkpoints, SQLite, avaliação, canal de controle e a CLI `matter-rl` |
 | Tela | `src/Workbench/ReinforcementLearning` | "Aprendizado por Reforço" no menu: controles, modos, avaliação, o visualizador ao vivo e os gráficos |
@@ -119,9 +121,9 @@ O treino inteiro (física, rede na GTX 1070 Ti e PPO), com 512 mundos:
 ## Andar (H3)
 
 - **O comando** (frente, lado, giro, no referencial do rumo) entra no fim da
-  observação. Na tarefa `h3_andar`, agora só a frente está ligada (até 4,5
-  m/s).
-- **O currículo** começa em 0,75 m/s e sobe 0,25 quando ele acompanha bem; ele
+  observação, junto com o relógio de passada (seno e cosseno da fase). Na
+  tarefa `h3_andar`, agora só a frente está ligada (até 4,5 m/s).
+- **O currículo** começa em 1,0 m/s e sobe 0,25 quando ele acompanha bem; ele
   aparece no TREINO da tela. Os limites ficam em `commands.limits` na cópia da
   tarefa do treino.
 - **Costas, lados e giro já estão prontos.** Para ligar, na tarefa:
@@ -138,12 +140,73 @@ O treino inteiro (física, rede na GTX 1070 Ti e PPO), com 512 mundos:
   - o tronco e os braços perto do alerta.
 
   As parcelas de parado só valem com comando 0.
+- **Ficar parado não paga** (versões 2 a 4 da tarefa):
+  - com pedido de andar, o "estar bem" (vivo, postura, cabeça, pose) vale
+    multiplicado pelo acompanhamento;
+  - o acompanhamento é medido contra ficar parado (`relativeToStanding`):
+    parado vale 0 em qualquer velocidade pedida (no sino puro, parado com
+    0,3 m/s pedidos levava 70%);
+  - o total de cada passo, menos a queda, nunca fica negativo
+    (`reward.positiveOnly`, o `only_positive_rewards` do legged_gym): tentar
+    andar e errar nunca vale menos que ficar parado;
+  - os episódios com pedido de andar começam com o corpo já na velocidade
+    pedida (`startMoving`).
+
+  Com a versão 4, numa validação, ele passou a tirar os pés do chão e o
+  currículo subiu de 1,0 para 1,25 m/s em ~25 min.
+- **O relógio de passada** (`gait`): cada pé no chão ou no ar na hora certa
+  da fase e o pé de balanço subindo 8 cm. Há também uma referência de
+  passada opcional (`gait.reference`, a do humanoid-gym), desligada.
 - **Baterias:**
   - `andar_frente_v1` (parado, 1,5, 3, 4,5 m/s, parar);
   - `ir_ate_10m_v1` (o comando calculado de um ponto a 10 m);
   - as de pé.
-- **Na tela:** escolha "Andar" e use o controle "Andar" (m/s) do
-  visualizador. O chão corre sob os pés e a câmera segue.
+- **Na tela:** escolha "Andar". O visualizador faz sozinho um ciclo de
+  demonstração (parado, metade do limite, o limite, parado), e o chão corre
+  sob os pés com a câmera seguindo.
+
+## Aprendizado guiado (o professor)
+
+O RL aprende imitando a locomoção física do jogo e depois segue pelo treino
+normal com o que extraiu.
+
+- **O professor** (`src/Engine/RL/Teacher`, `LocomotionTeacher3D`):
+  - o mesmo runtime dos atletas do laboratório (`AthleteRuntime3D`), no modo
+    físico total, com as ajudas parado, andando e nos pés em 0%;
+  - conduz o corpo de cada mundo de treino, um boneco por cena (ele precisa
+    da cápsula da cena), com a coleira e o corte da locomoção física v2;
+  - segue um roteiro sorteado: parado, girando no lugar, andando para
+    frente, para trás, de lado e na diagonal (às vezes em curva), com
+    empurrões no tronco;
+  - o roteiro fica na seção `teacher` da tarefa.
+- **O que é "sem força auxiliar":** no 0% do jogo, andando, a pelve ainda
+  leva metade do peso (a sustentação de base da locomoção física v2, ver o
+  vault). Com as pernas levando tudo (`T_WeightWalk=1`), o professor anda
+  mais devagar e cai de lado e na inversão. Ele é o modelo da passada;
+  carregar o peso inteiro o aluno aprende no treino normal.
+- **O rótulo:** para cada junta, o alvo do RL que, com a rigidez e o
+  amortecimento do RL, daria o torque que o professor aplicou (motor mais
+  antecipação), em média nos passos de física da decisão. O comando é o que
+  ele tenta (a cápsula, colada ao corpo), e o relógio de passada é o dele
+  (o pé direito no ar de 0 a 0,5, o esquerdo de 0,5 a 1).
+- **A fase** (`tools/rl/matter_rl/imitation.py`):
+  1. os mundos do professor (128) andam pelo roteiro, e as decisões dele vão
+     para uma memória na GPU (sem o meio segundo antes de cada queda);
+  2. a média da política imita a ação dele (erro quadrático), com 20% de
+     cada lote vindo do parado da própria política (para a H1 e a H1b
+     ficarem);
+  3. no fim: o desvio da ação vai a 0,45, o otimizador recomeça, 20 rodadas
+     só do crítico (o ator parado) e um termo de imitação no PPO que some em
+     300 rodadas.
+- **Usar:**
+  - na tela, com o andar em treino: "Aprender com a locomoção física"
+    (HABILIDADES);
+  - no terminal: `matter-rl professor [--minutos N]` (padrão: 15);
+  - para ver o professor: "Professor" no seletor acima do mundo, ou
+    `matter-rl folha --professor --de 0 --ate 10`.
+- **Medido** (12/10/2026): o professor roda a ~5.400 decisões/s com 8
+  threads, anda a 0,65 m/s em média no roteiro e cai em ~7% dos episódios.
+  O erro da imitação cai de 0,26 para 0,07 em 2 min.
 
 ## Semanas ligado
 
@@ -185,4 +248,11 @@ O treino inteiro (física, rede na GTX 1070 Ti e PPO), com 512 mundos:
   - o treinador inteiro: continuar do checkpoint, a recuperação de NaN e a
     troca de habilidade (H1 → H1b);
   - as posturas pela ponte e uma bateria por postura;
+  - o aprendizado guiado: a memória do professor, a janela de queda, a fase
+    no treinador, as rodadas só do crítico e o termo de imitação sumindo;
   - ponte nativa e paridade com o C++ (< 1e-5).
+- **O professor (C++):**
+  - `MatterEngine.RLTraining`: o rótulo de um professor que manda nas
+    juntas como o RL devolve a ação dele;
+  - `MatterEngine.RLTeacher`: a locomoção física nos mundos de treino anda
+    sem cair, o rótulo é finito e a fase da passada corre.

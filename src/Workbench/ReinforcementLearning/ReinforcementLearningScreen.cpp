@@ -3,6 +3,7 @@
 #include "Engine/Modeling/Inspection/InspectionRenderer.hpp"
 #include "Engine/Modeling/Raster/ImageIO.hpp"
 #include "Engine/Modeling/Skeleton/Skeleton.hpp"
+#include "Engine/RL/Teacher/LocomotionTeacher3D.hpp"
 #include "Engine/UI/FontAwesome.hpp"
 #include "Workbench/UiKit.hpp"
 #include "imgui.h"
@@ -37,8 +38,9 @@ struct StateLabel {
     ImVec4 color;
 };
 
-constexpr std::array<StateLabel, 10> StateLabels { {
+constexpr std::array<StateLabel, 11> StateLabels { {
     { "trocando", "Trocando de habilidade", AccentText },
+    { "professor", "Aprendendo com a locomoção física", AccentText },
     { "treinando", "Treinando", SuccessText },
     { "pausado", "Pausado", WarningText },
     { "avaliando", "Avaliando", AccentText },
@@ -150,6 +152,7 @@ void ReinforcementLearningScreen::loadSkills() {
                 }
             skill.battery = skill.posture == "natural" ? "equilibrio_v1" : "postura_" + skill.posture + "_v1";
             skill.maxForward = task.commands.forward;
+            skill.teacher = task.hasTeacher;
             if (skill.maxForward > 0.0f) {
                 skill.battery = skill.walkBattery = "andar_frente_v1";
             }
@@ -274,6 +277,9 @@ void ReinforcementLearningScreen::ensureViewer() {
         settings.solverPositionIterations = 20;
         settings.solverVelocityIterations = 20;
         if (m_skill < m_skills.size()) settings.posture = m_skills[m_skill].posture;
+        if (m_showTeacher && m_skill < m_skills.size() && m_skills[m_skill].teacher)
+            settings.teacher = std::make_shared<LocomotionTeacher3D>(
+                m_options.sourceRoot / "assets", loadLocomotionTeacherSettings3D(settings.taskPath));
         m_viewer = std::make_unique<TrainingBatch3D>(settings);
         m_viewer->setCommand(0, { m_walkSpeed, 0.0f, 0.0f });
         m_action.assign(m_viewer->actionSize(), 0.0f);
@@ -319,7 +325,24 @@ void ReinforcementLearningScreen::reloadPolicy(bool force) {
     }
 }
 
+void ReinforcementLearningScreen::showTeacher(bool show) {
+    if (show == m_showTeacher) return;
+    m_showTeacher = show;
+    // O mundo do visualizador e refeito (com ou sem o professor).
+    m_viewer.reset();
+    m_viewerError.clear();
+    m_demoSeconds = 0.0f;
+    ensureViewer();
+    m_dirty = true;
+}
+
 void ReinforcementLearningScreen::stepOnce() {
+    // O professor conduz o corpo: as acoes nao valem.
+    if (m_viewer && !m_viewer->teacherActions().empty()) {
+        std::fill(m_action.begin(), m_action.end(), 0.0f);
+        m_viewer->step(m_action);
+        return;
+    }
     // Andar: o ciclo de demonstracao (parado 3 s, metade do limite 5 s, o
     // limite 5 s, parado 4 s), com o limite que o treino ja pede.
     if (m_skill < m_skills.size() && m_skills[m_skill].maxForward > 0.0f && !m_walkOverride) {
@@ -602,6 +625,28 @@ void ReinforcementLearningScreen::drawTrainer() {
         if (status.alive && status.lastFallFraction >= 0.0)
             infoRow("Episódio", decimal(status.lastEpisodeSeconds, 1) + " s");
         if (status.alive && status.cpuTemperature > 0.0) infoRow("CPU", decimal(status.cpuTemperature, 0) + " °C");
+        if (status.alive && status.imitation.active) {
+            infoRow("Professor", decimal(status.imitation.elapsedSeconds / 60.0, 1) + " de "
+                    + decimal(status.imitation.minutes, 0) + " min");
+            tooltip("O aprendizado guiado: a locomoção física do jogo conduz o corpo nos mundos de treino e a política "
+                    "imita o que ela faz. No fim, o treino normal segue sozinho.");
+            if (status.imitation.loss >= 0.0) {
+                infoRow("Erro da imitação", decimal(status.imitation.loss, 3));
+                tooltip("O quanto a política ainda erra a ação do professor (quadrado médio, em unidades da ação). "
+                        "Cai conforme ela aprende.");
+            }
+            infoRow("O professor", decimal(status.imitation.teacherSpeed, 2) + " m/s · caiu em "
+                    + decimal(status.imitation.teacherFalls * 100.0, 0) + "%");
+            tooltip("A velocidade média que o professor anda no roteiro (com os trechos parado e girando) e a fração "
+                    "dos episódios em que ele caiu.");
+        } else if (status.alive && status.kickstart.active) {
+            const bool critic = status.kickstart.since < status.kickstart.criticIterations;
+            infoRow("Depois do professor", critic ? "crítico " + std::to_string(status.kickstart.since) + " de "
+                                                        + std::to_string(status.kickstart.criticIterations)
+                                                  : "imitação a " + decimal(status.kickstart.weight, 2));
+            tooltip(critic ? "Primeiro só o crítico aprende (os valores da política nova), com o ator parado."
+                           : "O treino normal, com um resto da imitação do professor que some aos poucos.");
+        }
     }
     if (!status.message.empty()) ImGui::TextColored(WarningText, "%s", status.message.c_str());
     ImGui::Dummy({ 1.0f, ui(4.0f) });
@@ -696,6 +741,20 @@ void ReinforcementLearningScreen::drawSkills(const TrainerStatus3D& status) {
         tooltip(trained ? "A habilidade do treino (o raio). Escolher uma habilidade mostra a postura dela no mundo."
                         : "Escolher mostra a postura desta habilidade no mundo.");
     }
+    // O aprendizado guiado: a habilidade em treino, com professor.
+    if (m_skill < m_skills.size() && status.alive && status.task == m_skills[m_skill].task && m_skills[m_skill].teacher) {
+        ImGui::Dummy({ 1.0f, ui(2.0f) });
+        ImGui::BeginDisabled(status.state == "professor" || !m_switchTask.empty());
+        const std::string label = UI::FontAwesome::label(UI::FontAwesome::Brain, "Aprender com a locomoção física");
+        if (ImGui::Button(label.c_str(), { -1.0f, ui(32.0f) })) {
+            m_link->send("professor");
+            notify("O professor assume os mundos de treino");
+        }
+        ImGui::EndDisabled();
+        tooltip("A locomoção física do jogo (sem força auxiliar) conduz o boneco nos mundos de treino: parado, girando, "
+                "andando para todos os lados e levando empurrões. A política imita por um tempo e depois o treino "
+                "normal segue com o que ela extraiu. Para ver o professor, escolha \"Professor\" acima do mundo.");
+    }
     if (m_skill < m_skills.size() && status.alive && status.task != m_skills[m_skill].task) {
         ImGui::Dummy({ 1.0f, ui(2.0f) });
         ImGui::BeginDisabled(!m_switchTask.empty());
@@ -776,19 +835,24 @@ void ReinforcementLearningScreen::drawToolbar() {
     if (ImGui::Checkbox("Contatos", &m_showContacts)) m_dirty = true;
     ImGui::SameLine();
     ImGui::SetNextItemWidth(ui(150.0f));
-    const char* source = m_useBest ? "Política melhor" : "Política recente";
+    const bool teacherAvailable = m_skill < m_skills.size() && m_skills[m_skill].teacher;
+    const char* source = m_showTeacher ? "Professor" : m_useBest ? "Política melhor" : "Política recente";
     if (ImGui::BeginCombo("##RLPolicySource", source)) {
-        if (ImGui::Selectable("Política recente", !m_useBest)) {
+        if (ImGui::Selectable("Política recente", !m_showTeacher && !m_useBest)) {
             m_useBest = false;
+            showTeacher(false);
             reloadPolicy(true);
         }
-        if (ImGui::Selectable("Política melhor", m_useBest)) {
+        if (ImGui::Selectable("Política melhor", !m_showTeacher && m_useBest)) {
             m_useBest = true;
+            showTeacher(false);
             reloadPolicy(true);
         }
+        if (teacherAvailable && ImGui::Selectable("Professor", m_showTeacher)) showTeacher(true);
         ImGui::EndCombo();
     }
-    tooltip("Recente: o último checkpoint do treino (recarrega sozinha). Melhor: a de maior nota na avaliação.");
+    tooltip("Recente: o último checkpoint do treino (recarrega sozinha). Melhor: a de maior nota na avaliação. "
+            "Professor: a locomoção física do jogo conduzindo o boneco do RL, no roteiro do aprendizado guiado.");
     ImGui::SameLine();
     struct DisplayOption {
         Display display;

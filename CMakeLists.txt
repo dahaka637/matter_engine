@@ -391,6 +391,22 @@ if(MATTERENGINE_BUILD_RL)
             -Wall -Wextra -Wpedantic)
     endif()
 
+    # O professor dos mundos de treino: a locomocao fisica do jogo (o runtime
+    # dos atletas) conduzindo o corpo do RL. Depende do atleta (a engine), por
+    # isso fica fora dos mundos de treino, que so conhecem a interface.
+    add_library(MatterRLTeacher STATIC
+        src/Engine/RL/Teacher/LocomotionTeacher3D.cpp
+    )
+    target_include_directories(MatterRLTeacher PUBLIC src)
+    target_link_libraries(MatterRLTeacher
+        PUBLIC MatterRLEnvironment MatterEngine
+        PRIVATE nlohmann_json::nlohmann_json)
+    if(MSVC)
+        target_compile_options(MatterRLTeacher PRIVATE /W4 /permissive- /utf-8)
+    else()
+        target_compile_options(MatterRLTeacher PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+
     if(MATTERENGINE_BUILD_RL_PYTHON)
         # O Python e o do ambiente do treinador (tools/rl/.venv), que traz o
         # nanobind; o modulo sai em <build>/python.
@@ -399,7 +415,7 @@ if(MATTERENGINE_BUILD_RL)
             OUTPUT_STRIP_TRAILING_WHITESPACE OUTPUT_VARIABLE nanobind_ROOT)
         find_package(nanobind CONFIG REQUIRED)
         nanobind_add_module(matter_rl_native NB_STATIC bindings/python/MatterRLNative.cpp)
-        target_link_libraries(matter_rl_native PRIVATE MatterRLEnvironment MatterRLPolicy)
+        target_link_libraries(matter_rl_native PRIVATE MatterRLEnvironment MatterRLPolicy MatterRLTeacher)
         set_target_properties(matter_rl_native PROPERTIES
             LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/python")
     endif()
@@ -713,7 +729,7 @@ endif()
 target_include_directories(MatterWorkbench PUBLIC src)
 target_link_libraries(MatterWorkbench
     PUBLIC MatterEngine MatterModelingRig MatterObjects
-    PRIVATE imgui meshoptimizer MatterRLEnvironment MatterRLPolicy MatterRLSupervisor MatterRLCalibration
+    PRIVATE imgui meshoptimizer MatterRLEnvironment MatterRLPolicy MatterRLSupervisor MatterRLCalibration MatterRLTeacher
 )
 target_compile_definitions(MatterWorkbench PRIVATE MATTERENGINE_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
 
@@ -799,6 +815,13 @@ if(MATTERENGINE_BUILD_TESTS)
             MATTERENGINE_TEST_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
         add_test(NAME MatterEngine.RLTraining
             COMMAND MatterRLTrainingTests)
+        # O professor (a locomocao fisica do jogo nos mundos de treino).
+        add_executable(MatterRLTeacherTests tests/RL/TeacherTests.cpp)
+        target_link_libraries(MatterRLTeacherTests PRIVATE MatterRLTeacher)
+        target_compile_definitions(MatterRLTeacherTests PRIVATE
+            MATTERENGINE_TEST_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
+        add_test(NAME MatterEngine.RLTeacher
+            COMMAND MatterRLTeacherTests)
     endif()
     # Modelagem do personagem: o nucleo (linkado so contra MatterModeling,
     # provando que ele nao depende da engine) e a ponte com o jogo, com a tela

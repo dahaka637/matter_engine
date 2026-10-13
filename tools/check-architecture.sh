@@ -75,6 +75,8 @@ check_absent "So a ponte do treinador (bindings/python) inclui Python" \
     '#include .(Python\.h|pybind11|nanobind)' src tests tools -g '!tools/rl/**'
 check_absent "Mundos de treino e politica do RL nao dependem da interface nem do treinador" \
     '#include "(Workbench|Engine/RL/Supervisor)/' src/Engine/RL/Environment src/Engine/RL/Body src/Engine/RL/Policy
+check_absent "Mundos de treino e politica do RL nao dependem do atleta nem da locomocao do jogo (o professor entra pela interface, em RL/Teacher)" \
+    '#include "Engine/(Athlete|Character|Control|Locomotion)/' src/Engine/RL/Environment src/Engine/RL/Body src/Engine/RL/Policy
 check_absent "A politica exportada (RL/Policy) nao depende da fisica" \
     '#include "Engine/(Physics|RL/Environment|RL/Body)/' src/Engine/RL/Policy
 check_absent "Tela de RL fala com o treinador so pelo Supervisor (sem sockets nem processos)" \

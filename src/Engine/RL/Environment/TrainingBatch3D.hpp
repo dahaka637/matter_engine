@@ -3,6 +3,7 @@
 #include "Engine/Physics/PhysicsScene3D.hpp"
 #include "Engine/RL/Body/RLBody3D.hpp"
 #include "Engine/RL/Environment/TrainingTask3D.hpp"
+#include "Engine/RL/Environment/TrainingTeacher3D.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -51,6 +52,11 @@ struct TrainingBatchSettings3D {
     // O roteiro do comando de velocidade numa bateria de andar (trechos por
     // tempo do episodio). Vazio na avaliacao = parado.
     std::vector<TrainingCommandStep3D> commandSchedule;
+    // O professor (opcional): ele conduz todos os mundos no lugar da politica,
+    // um boneco por cena, e teacherActions() devolve a acao dele em unidades
+    // do RL. O comando e a fase do relogio de passada passam a ser os dele, e
+    // o mundo fica sem variacao (massa, atrito, forca, atraso).
+    std::shared_ptr<TrainingTeacher3D> teacher;
 };
 
 enum class TrainingEndReason3D : std::uint8_t {
@@ -165,6 +171,10 @@ public:
     [[nodiscard]] std::span<const float> criticObservations() const;
     [[nodiscard]] std::span<const float> rewards() const;
     [[nodiscard]] std::span<const float> rewardComponents() const;
+    // Com professor: a acao dele no ultimo step() (mundos x eixos), o alvo
+    // de cada junta que, com a rigidez e o amortecimento do RL, daria em
+    // media o torque que ele aplicou nos passos de fisica da decisao.
+    [[nodiscard]] std::span<const float> teacherActions() const;
     [[nodiscard]] std::span<const std::uint8_t> terminated() const;
     [[nodiscard]] std::span<const std::uint8_t> truncated() const;
     [[nodiscard]] std::span<const float> terminalCriticObservations() const;

@@ -73,6 +73,9 @@ public:
     [[nodiscard]] bool switchingSkill() const { return !m_switchTask.empty(); }
     [[nodiscard]] std::uint32_t viewerPosture() const;
     [[nodiscard]] float viewerWalkCommand() const { return m_viewer ? m_viewer->view(0).command.x : 0.0f; }
+    // O visualizador com o professor (refaz o mundo dele) ou com a politica.
+    void showTeacher(bool show);
+    [[nodiscard]] bool showingTeacher() const { return m_showTeacher; }
 
 private:
     struct ModelOutcome {
@@ -127,6 +130,9 @@ private:
     std::filesystem::path m_policyPath;
     std::string m_policyText;
     bool m_useBest = false;
+    // O visualizador mostra o professor (a locomocao fisica do jogo conduzindo
+    // o corpo do RL) no lugar da politica.
+    bool m_showTeacher = false;
     float m_policyWatch = 0.0f;
     float m_accumulator = 0.0f;
     bool m_paused = false;
@@ -167,6 +173,8 @@ private:
         // A velocidade maxima para frente (m/s; 0 = so parado) e a bateria do andar.
         float maxForward = 0.0f;
         std::string walkBattery;
+        // A tarefa tem professor (o aprendizado guiado).
+        bool teacher = false;
     };
     std::vector<Skill> m_skills;
     std::size_t m_skill = 0;

@@ -8,11 +8,13 @@
     matter-rl modo maximo|equilibrado|leve
     matter-rl tarefa <id>                 o treino aberto passa para outra habilidade (o mesmo cerebro)
     matter-rl explorar <desvio>           reabre a exploracao (o desvio da acao volta a pelo menos esse)
+    matter-rl professor [--minutos N]     aprende com a locomocao fisica do jogo (imitando) e volta ao treino normal
     matter-rl peso <parcela> <valor> [--motivo M]
     matter-rl relatorio [--desde 1h]      o que mudou no periodo (Markdown)
     matter-rl graficos [--saida DIR]      PNG das curvas
     matter-rl folha [--episodio ARQ] [--cena NOME] [--saida PNG] [--de S --ate S]
     matter-rl folha --checkpoint X [--mundo N] [--solver jogo|treino]   um mundo de um checkpoint
+    matter-rl folha --professor [--de S --ate S]   um episodio do professor (a locomocao fisica do jogo)
     matter-rl comparar A B                a bateria em dois checkpoints, lado a lado
     matter-rl episodios                   as gravacoes da ultima avaliacao
 """
@@ -240,8 +242,36 @@ def latest_dump(run: str) -> Path | None:
     return dumps[-1] if dumps else None
 
 
+def teacher_dump(task: str, seconds: float, seed: int, record: Path) -> Path:
+    """Um episodio do professor (a locomocao fisica do jogo conduzindo o corpo
+    do RL, no roteiro do aprendizado guiado), gravado para a folha."""
+    from . import native
+    import numpy as np
+    batch = native.load().Batch(str(paths.task_path(task)), environments=1, per_scene=1, threads=1, seed=seed,
+                                evaluation=True, evaluation_seconds=seconds + 1.0, solver_position=20,
+                                solver_velocity=20, posture="alerta", teacher_assets=str(paths.ASSETS))
+    zero = np.zeros((1, batch.action_size), dtype=np.float32)
+    record.parent.mkdir(parents=True, exist_ok=True)
+    with open(record, "w") as out:
+        out.write("S professor\n")
+        for step in range(int(seconds / batch.policy_dt)):
+            batch.step(zero)
+            if step % 2 == 1:
+                out.write(f"F {(step + 1) * batch.policy_dt:.4f} 0\n")
+                out.write(batch.frame_lines(0))
+    return record
+
+
 def command_sheet(args: argparse.Namespace) -> int:
     scenario = args.cena
+    if args.professor:
+        dump = teacher_dump(args.tarefa or "h3_andar", args.ate or 20.0, args.semente,
+                            paths.run_dir(args.run) / "folhas" / "professor.dump")
+        scenario = "professor"
+        output = Path(args.saida) if args.saida else dump.with_suffix(".png")
+        report.sheet(dump, scenario, output, args.quadros, args.vista, args.de, args.ate)
+        print(output)
+        return 0
     if args.checkpoint:
         # Roda a bateria nesse checkpoint (fora do treino) gravando o mundo pedido.
         from . import compare
@@ -320,6 +350,12 @@ def main(argv: list[str] | None = None) -> int:
     explore.add_argument("--autor", default="usuario")
     explore.add_argument("--motivo", default="")
     explore.set_defaults(func=lambda a: send("explorar", {"desvio": a.desvio, "autor": a.autor, "motivo": a.motivo}))
+    teacher = sub.add_parser("professor")
+    teacher.add_argument("--minutos", type=float, default=None,
+                         help="quanto tempo a politica imita o professor (padrao: o da tarefa, ou 15)")
+    teacher.add_argument("--autor", default="usuario")
+    teacher.set_defaults(func=lambda a: send("professor", {"autor": a.autor,
+                                                           **({"minutos": a.minutos} if a.minutos else {})}))
     switch = run_args(sub.add_parser("tarefa"))
     switch.add_argument("tarefa", help="o id da tarefa (assets/rl/tasks), ex.: h1b_em_pe_posturado")
     switch.set_defaults(func=command_switch)
@@ -349,6 +385,10 @@ def main(argv: list[str] | None = None) -> int:
     sheet.add_argument("--bateria", help="a bateria pelo nome (andar_frente_v1, ir_ate_10m_v1...); sem ela, a de pe da postura")
     sheet.add_argument("--de", type=float, help="so o trecho a partir de (s)")
     sheet.add_argument("--ate", type=float, help="so o trecho ate (s)")
+    sheet.add_argument("--professor", action="store_true",
+                       help="um episodio do professor (a locomocao fisica do jogo no corpo do RL)")
+    sheet.add_argument("--tarefa", help="com --professor: a tarefa (padrao h3_andar)")
+    sheet.add_argument("--semente", type=int, default=11, help="com --professor: o sorteio do roteiro")
     sheet.set_defaults(func=command_sheet)
     comparison = run_args(sub.add_parser("comparar"))
     comparison.add_argument("a", help="rodada, ultimo ou melhor")

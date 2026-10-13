@@ -104,11 +104,15 @@ class PPO:
         for group in self.optimizer.param_groups:
             group["lr"] = self.learning_rate
 
-    def update(self, rollout: Rollout) -> dict:
+    def update(self, rollout: Rollout, actor_frozen: bool = False, auxiliary=None) -> dict:
+        """Uma atualizacao do PPO. actor_frozen: so o critico aprende (o ator e o
+        desvio ficam como estao: depois da imitacao, ate os valores fazerem
+        sentido). auxiliary: uma funcao que devolve uma perda a somar (a
+        imitacao do professor sumindo aos poucos), ou None."""
         s = self.settings
         model = self.model
         totals = {"policy_loss": 0.0, "value_loss": 0.0, "entropy": 0.0, "kl": 0.0, "clip_fraction": 0.0,
-                  "grad_norm": 0.0}
+                  "grad_norm": 0.0, "auxiliary": 0.0}
         count = 0
         for _ in range(s.epochs):
             for obs, critic, actions, old_log_probs, old_values, advantages, returns, old_mean, old_std in \
@@ -121,7 +125,9 @@ class PPO:
                     # KL entre a politica que coletou e a de agora (gaussianas).
                     kl = (torch.log(dist.stddev / old_std) + (old_std.pow(2) + (old_mean - dist.mean).pow(2))
                           / (2.0 * dist.stddev.pow(2)) - 0.5).sum(-1).mean()
-                    if kl > 2.0 * s.desired_kl:
+                    if actor_frozen:
+                        pass
+                    elif kl > 2.0 * s.desired_kl:
                         self.learning_rate = max(s.min_learning_rate, self.learning_rate / s.learning_rate_step)
                     elif 0.0 < kl < 0.5 * s.desired_kl:
                         self.learning_rate = min(s.max_learning_rate, self.learning_rate * s.learning_rate_step)
@@ -134,9 +140,20 @@ class PPO:
                 policy_loss = torch.max(surrogate, clipped).mean()
                 value_clipped = old_values + (values - old_values).clamp(-s.clip, s.clip)
                 value_loss = torch.max((values - returns).pow(2), (value_clipped - returns).pow(2)).mean()
-                loss = policy_loss + s.value_coef * value_loss - s.entropy_coef * entropy
+                if actor_frozen:
+                    loss = s.value_coef * value_loss
+                else:
+                    loss = policy_loss + s.value_coef * value_loss - s.entropy_coef * entropy
+                extra = auxiliary() if auxiliary is not None and not actor_frozen else None
+                if extra is not None:
+                    loss = loss + extra
+                    totals["auxiliary"] += float(extra.detach())
                 self.optimizer.zero_grad(set_to_none=True)
                 loss.backward()
+                if actor_frozen:
+                    # (Sem gradiente o Adam pula o parametro: nem o embalo antigo o move.)
+                    for parameter in [*model.actor.parameters(), model.log_std]:
+                        parameter.grad = None
                 grad_norm = nn.utils.clip_grad_norm_(model.parameters(), s.max_grad_norm)
                 self.optimizer.step()
                 totals["policy_loss"] += policy_loss.item()
