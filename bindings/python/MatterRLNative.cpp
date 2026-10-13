@@ -76,6 +76,9 @@ std::string frameLines(const TrainingBatch3D& batch, std::size_t environment) {
     // As setas: para onde o cerebro quer ir (W) e a velocidade do centro de massa (V).
     if (view.hasIntent) out << "W " << view.intent.x << ' ' << view.intent.y << ' ' << view.intent.z << '\n';
     out << "V " << view.velocity.x << ' ' << view.velocity.y << ' ' << view.velocity.z << '\n';
+    // Para onde a cabeca olha (H) e o rumo mandado olhar (L, rad).
+    out << "H " << view.gaze.x << ' ' << view.gaze.y << ' ' << view.gaze.z << '\n';
+    if (view.hasFacing) out << "L " << view.facingCommand << '\n';
     return out.str();
 }
 

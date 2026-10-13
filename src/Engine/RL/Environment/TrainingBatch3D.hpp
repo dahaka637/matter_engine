@@ -140,6 +140,11 @@ struct TrainingEnvironmentView3D {
     bool hasIntent = false;
     Vec3 intent;
     Vec3 velocity;
+    // Para onde a cabeca olha de verdade (a frente dela no plano, unitaria) e,
+    // com o comando de olhar (target.facing), o rumo mandado (rad, no mundo).
+    Vec3 gaze;
+    bool hasFacing = false;
+    float facingCommand = 0.0f;
 };
 
 // Centenas de mundos de treino sem janela, avancados em paralelo.

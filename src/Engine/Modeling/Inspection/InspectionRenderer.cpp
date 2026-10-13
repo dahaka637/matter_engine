@@ -371,6 +371,38 @@ void drawArrows(const InspectionScene& scene, Rasterizer& raster, float pixel) {
     }
 }
 
+// O olho virado para a camera: duas palpebras em arco, a iris cheia e a pupila.
+void drawEyes(const InspectionScene& scene, const OrbitCamera& camera, Rasterizer& raster, float pixel) {
+    if (scene.eyes.empty()) return;
+    const Vec3 right = camera.right(), up = camera.up();
+    constexpr int Steps = 24;
+    for (const InspectionEye& eye : scene.eyes) {
+        const float half = 0.5f * eye.size;
+        const auto lid = [&](float sign) {
+            Vec3 previous = eye.position - right * half;
+            for (int i = 1; i <= Steps; ++i) {
+                const float u = -1.0f + 2.0f * static_cast<float>(i) / static_cast<float>(Steps);
+                const Vec3 point = eye.position + right * (u * half) + up * (sign * 0.42f * half * (1.0f - u * u));
+                raster.line(previous, point, 2.2f * pixel, withAlpha(eye.color, 0.85f), DepthMode::Ignore, 0.0f, 0.0f);
+                previous = point;
+            }
+        };
+        lid(1.0f);
+        lid(-1.0f);
+        const float iris = 0.26f * half;
+        for (int i = 0; i < Steps; ++i) {
+            const float a = 6.2831853f * static_cast<float>(i) / static_cast<float>(Steps);
+            const float b = 6.2831853f * static_cast<float>(i + 1) / static_cast<float>(Steps);
+            const Vec3 p = eye.position + (right * std::cos(a) + up * std::sin(a)) * iris;
+            const Vec3 q = eye.position + (right * std::cos(b) + up * std::sin(b)) * iris;
+            raster.overlayTriangle(eye.position, p, q, withAlpha(eye.color, 0.55f), 1.0e3f);
+            const Vec3 pp = eye.position + (right * std::cos(a) + up * std::sin(a)) * (0.4f * iris);
+            const Vec3 qq = eye.position + (right * std::cos(b) + up * std::sin(b)) * (0.4f * iris);
+            raster.overlayTriangle(eye.position, pp, qq, withAlpha(rgb(10, 14, 20), 0.9f), 1.0e3f);
+        }
+    }
+}
+
 void drawSkeleton(const InspectionScene& scene, const InspectionStyle& style, const Visibility& visibility,
     std::span<const Vec3> joints, Rasterizer& raster, DepthMode depthMode, float pixel) {
     const Skeleton& skeleton = *scene.skeleton;
@@ -564,6 +596,7 @@ Image renderInspection(const InspectionScene& scene, const InspectionStyle& styl
 
     drawMarkers(scene, raster, pixel);
     drawArrows(scene, raster, pixel);
+    drawEyes(scene, camera, raster, pixel);
     for (const Highlight& highlight : scene.highlights) {
         if (hasMesh)
             for (const std::uint32_t t : highlight.triangles) {

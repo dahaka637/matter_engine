@@ -569,6 +569,26 @@ bool ReinforcementLearningScreen::render(int width, int height) {
         going.lineWidthPixels = 2.0f;
         arrows.push_back(going);
     }
+    // Para onde ele olha de verdade: um traco azul saindo da cabeca.
+    std::vector<InspectionEye> eyes;
+    if (view.gaze.lengthSquared() > 0.5f) {
+        const Vec3 head = positions[m_viewer->body().head];
+        InspectionArrow looking;
+        looking.from = m_skeleton->toSkeleton(head);
+        looking.to = m_skeleton->toSkeleton(head + view.gaze * 0.9f);
+        looking.color = rgb(110, 190, 255, 0.8f);
+        looking.lineWidthPixels = 2.0f;
+        arrows.push_back(looking);
+    }
+    // E, com o comando de olhar, o olho no horizonte na direcao mandada.
+    if (view.hasFacing) {
+        const Vec3 pelvis = positions.front();
+        InspectionEye eye;
+        eye.position = m_skeleton->toSkeleton({ pelvis.x + std::cos(view.facingCommand) * 28.0f,
+            pelvis.y + std::sin(view.facingCommand) * 28.0f, 1.7f });
+        eye.size = 3.2f;
+        eyes.push_back(eye);
+    }
 
     InspectionScene scene;
     scene.skeleton = &model.skeleton;
@@ -580,6 +600,7 @@ bool ReinforcementLearningScreen::render(int width, int height) {
     scene.highlights = highlights;
     scene.markers = markers;
     scene.arrows = arrows;
+    scene.eyes = eyes;
     InspectionStyle style;
     style.surface = m_display == Display::Full ? SurfaceMode::Solid : SurfaceMode::Hidden;
     style.skeleton = m_display == Display::Skeleton;

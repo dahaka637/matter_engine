@@ -77,6 +77,11 @@ struct DumpFrame {
     Vec3 intent;
     bool velocityValid = false;
     Vec3 velocity;
+    // Para onde a cabeca olha e o rumo mandado olhar (rad).
+    bool gazeValid = false;
+    Vec3 gaze;
+    bool lookValid = false;
+    float look = 0.0f;
 };
 
 struct DumpScenario {
@@ -138,6 +143,12 @@ std::vector<DumpScenario> readDump(const std::string& path) {
         } else if (tag == "V") {
             in >> frame->velocity.x >> frame->velocity.y >> frame->velocity.z;
             frame->velocityValid = static_cast<bool>(in);
+        } else if (tag == "H") {
+            in >> frame->gaze.x >> frame->gaze.y >> frame->gaze.z;
+            frame->gazeValid = static_cast<bool>(in);
+        } else if (tag == "L") {
+            in >> frame->look;
+            frame->lookValid = static_cast<bool>(in);
         } else if (tag == "A") {
             in >> frame->target.x >> frame->target.y >> frame->target.z >> frame->targetRadius;
             frame->targetValid = static_cast<bool>(in);
@@ -376,12 +387,30 @@ int runFrames(const ModelContext& context, const CommandLine& line) {
             going.lineWidthPixels = 2.0f;
             arrows.push_back(going);
         }
+        std::vector<InspectionEye> eyes;
+        for (const DumpLink& link : frame.links) {
+            if (link.id != "Head" || !frame.gazeValid || frame.gaze.lengthSquared() < 0.5f) continue;
+            InspectionArrow looking;
+            looking.from = toSkeleton(link.center);
+            looking.to = toSkeleton(link.center + frame.gaze * 0.9f);
+            looking.color = rgb(110, 190, 255, 0.8f);
+            looking.lineWidthPixels = 2.0f;
+            arrows.push_back(looking);
+        }
+        if (frame.lookValid) {
+            InspectionEye eye;
+            eye.position = toSkeleton(
+                { pelvisWorld.x + std::cos(frame.look) * 28.0f, pelvisWorld.y + std::sin(frame.look) * 28.0f, 1.7f });
+            eye.size = 3.2f;
+            eyes.push_back(eye);
+        }
         InspectionScene scene = context.scene();
         scene.pose = &pose;
         scene.meshPositions = posed;
         scene.highlights = highlights;
         scene.markers = markers;
         scene.arrows = arrows;
+        scene.eyes = eyes;
         InspectionStyle style;
         style.surface = *mode;
         style.skeleton = model.mesh.empty();

@@ -1728,6 +1728,19 @@ TrainingEnvironmentView3D TrainingBatch3D::view(std::size_t environment) const {
             mass += profile.links[i].massFraction;
         }
         if (mass > 0.0f) view.velocity = view.velocity * (1.0f / mass);
+        {
+            const std::uint32_t head = impl.body.head;
+            const Quaternion frame =
+                (view.state->links[head].orientation * profile.links[head].modelOrientation.conjugate()).normalized();
+            Vec3 forward = frame.rotate({ 1.0f, 0.0f, 0.0f });
+            forward.z = 0.0f;
+            const float length = forward.length();
+            view.gaze = length > 1.0e-4f ? forward * (1.0f / length) : Vec3 {};
+        }
+        if (impl.targeting() && impl.task.target.facing) {
+            view.hasFacing = true;
+            view.facingCommand = env.facingCommand;
+        }
         if (impl.imitating()) {
             const Quaternion frame =
                 (view.state->links.front().orientation * profile.links.front().modelOrientation.conjugate()).normalized();

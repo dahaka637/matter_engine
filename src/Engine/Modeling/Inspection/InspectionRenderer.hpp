@@ -117,6 +117,14 @@ struct InspectionArrow {
     float lineWidthPixels = 0.0f;
 };
 
+// Um olho desenhado de frente para a camera (o rumo mandado olhar, no
+// horizonte): as palpebras, a iris e a pupila, com size de largura (m).
+struct InspectionEye {
+    Vec3 position;
+    float size = 1.2f;
+    Color color = rgb(120, 200, 255);
+};
+
 struct InspectionScene {
     const Skeleton* skeleton = nullptr;
     // Nulo = pose de ligacao.
@@ -129,6 +137,7 @@ struct InspectionScene {
     std::span<const Highlight> highlights;
     std::span<const InspectionMarker> markers;
     std::span<const InspectionArrow> arrows;
+    std::span<const InspectionEye> eyes;
     // Os grupos do sombreamento liso da malha, se ja feitos (na quina do
     // estilo); nulo = feitos a cada imagem.
     const ShadingNormals* shading = nullptr;

@@ -624,8 +624,8 @@ void testRace() {
 }
 
 
-// Todas as direcoes (H4): olhando para o comando (a camera), o planejador
-// escolhe entre as 8 direcoes do trote a que anda mais perto do alvo.
+// Todas as direcoes (H4, livre): o planejador escolhe entre as 8 direcoes do
+// trote a que anda mais perto do alvo.
 void testDirections() {
     TrainingBatchSettings3D s = settings(16, 2);
     s.taskPath = std::filesystem::path(MATTERENGINE_TEST_ASSETS_DIR) / "rl/tasks/h4_direcoes.json";
@@ -647,11 +647,11 @@ void testDirections() {
     for (std::size_t e = 0; e < 16; e += 2)
         require(clipOf(e) == clips[e / 2], "o alvo a " + std::to_string(e * 22.5) + " graus pede " + clips[e / 2]
             + " (veio " + clipOf(e) + ")");
-    const std::size_t turn = channel(batch, "target.turn_rate"), cosine = channel(batch, "command.facing.cos");
-    for (std::size_t e = 0; e < 16; ++e) {
-        require(std::abs(batch.observations()[e * O + turn]) < 0.05f, "olhando para o comando, nada a girar no comeco");
-        require(batch.observations()[e * O + cosine] > 0.99f, "o olhar pedido e o do corpo no comeco");
-    }
+    // Livre (sem comando de olhar): o giro pedido so acerta o clipe mais perto
+    // com o alvo (no maximo meio setor de 45 graus).
+    const std::size_t turn = channel(batch, "target.turn_rate");
+    for (std::size_t e = 0; e < 16; ++e)
+        require(std::abs(batch.observations()[e * O + turn]) * 2.0f < 1.0f, "o giro pedido so corrige o clipe mais perto");
     // Seguindo o clipe (acao zero), o giro paga e nada quebra.
     const std::size_t R = TrainingRewardComponentNames3D.size(), spin = rewardIndex("targetTurn");
     float paid = 0.0f;
