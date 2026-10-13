@@ -249,7 +249,8 @@ int main() {
         // As habilidades: uma por tarefa. Escolher a postura de alerta muda o
         // mundo; a politica de mentira (de antes do comando da postura, 160
         // entradas) le o comeco da observacao.
-        require(screen.skillTasks() == std::vector<std::string> { "h1_ficar_em_pe", "h1b_em_pe_posturado", "h3_andar" },
+        require(screen.skillTasks()
+                == std::vector<std::string> { "h1_ficar_em_pe", "h1b_em_pe_posturado", "h3_andar", "h3b_caminhar_alvo" },
             "as habilidades vem das tarefas");
         require(screen.viewerPosture() == 0, "a H1 mostra a postura natural");
         screen.selectSkill(1);
@@ -268,6 +269,11 @@ int main() {
         const auto raceConflicts = sweepIdConflicts([&] { screen.draw(canvas, 1.0f); });
         require(raceConflicts.empty(),
             "IDs repetidos na corrida: " + (raceConflicts.empty() ? std::string() : raceConflicts.front()));
+        // A caminhada ate o alvo: a mesma corrida, com o clipe de andar.
+        screen.selectSkill(3);
+        frame(screen, canvas, 2);
+        require(screen.viewerHasTarget(), "a caminhada mostra o alvo");
+        snapshot(canvas, "rl_tela_caminhada");
         // A corrida nao tem professor: o visualizador segue com a politica.
         screen.showTeacher(true);
         require(!screen.showingTeacher() && screen.viewerReady(), "sem professor ligado, o visualizador segue na politica");

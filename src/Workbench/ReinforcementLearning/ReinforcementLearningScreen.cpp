@@ -158,7 +158,8 @@ void ReinforcementLearningScreen::loadSkills() {
             if (skill.maxForward > 0.0f) {
                 skill.battery = skill.walkBattery = "andar_frente_v1";
             }
-            if (skill.target) skill.battery = "corrida_alvo_v1";
+            // A bateria do alvo e a primeira da tarefa (corrida, caminhada...).
+            if (skill.target && !task.evaluationBatteries.empty()) skill.battery = task.evaluationBatteries.front();
             m_skills.push_back(std::move(skill));
         } catch (const std::exception&) {
             // Uma tarefa que nao abre fica fora da lista.
@@ -1027,7 +1028,7 @@ void ReinforcementLearningScreen::drawCharts(float height) {
     const bool walking = m_skill < m_skills.size() && m_skills[m_skill].maxForward > 0.0f;
     const bool racing = m_skill < m_skills.size() && m_skills[m_skill].target;
     const std::array<Chart, 4> charts { {
-        { racing ? "Corre sem cair (%)" : walking ? "Anda sem cair (%)" : "De pé 60 s (%)", &stand, 0.0f, 100.0f,
+        { racing ? "Sem cair (%)" : walking ? "Anda sem cair (%)" : "De pé 60 s (%)", &stand, 0.0f, 100.0f,
             "A bateria da habilidade escolhida, com a física do jogo, a cada 10 min." },
         { "Episódio (s)", &seconds, 0.0f, top(seconds, 1.0f), "Quanto dura um episódio do treino (o máximo é 20 s)." },
         { "Recompensa / passo", &reward, FLT_MAX, FLT_MAX, "A recompensa média por decisão em cada rodada do treino." },

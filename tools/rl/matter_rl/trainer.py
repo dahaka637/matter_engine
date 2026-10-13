@@ -14,7 +14,7 @@ import numpy as np
 import torch
 
 from . import control, native, paths, storage, system
-from .evaluation import BASE_BATTERY, EPISODE_COLUMNS, SCORE_VERSION, Battery, Evaluator
+from .evaluation import BASE_BATTERY, EPISODE_COLUMNS, SCORE_VERSION, Battery, Evaluator, task_batteries
 from .imitation import Demonstrations, ImitationSettings, TeacherWorlds, decay_weight, imitation_loss, std_log
 from .model import ActorCritic, export_policy, migrate_inputs
 from .ppo import PPO, PPOSettings, Rollout
@@ -257,6 +257,15 @@ class Trainer:
             # protegido, e a proxima avaliacao pode ficar no lugar.
             if best.get("version") != SCORE_VERSION:
                 best["score"] = -1e9
+        # Uma nota de outras baterias tambem nao (a tarefa trocou de bateria
+        # numa versao nova: a corrida ate o alvo contra o andar de antes).
+        batteries = sorted(spec["name"] for spec in task_batteries(self.live_task))
+        for best in self.bests.values():
+            if best.get("batteries") is not None and best["batteries"] != batteries:
+                best["score"] = -1e9
+        current = self.bests.get(self.config.task)
+        if current is not None and current.get("batteries") is None and (self.switched_from or self.task_updated):
+            current["score"] = -1e9
         self.best = dict(self.bests.get(self.config.task, {"score": -1e9, "iteration": -1}))
         lost = self.db.rewind(self.run, self.counters["iteration"])
         if lost:
@@ -415,7 +424,7 @@ class Trainer:
             "seconds": time.time() - started, "time": time.time()}
         if combined > self.best["score"] + 1e-6:
             self.best = {"score": combined, "iteration": self.counters["iteration"], "steps": self.counters["steps"],
-                         "version": SCORE_VERSION}
+                         "version": SCORE_VERSION, "batteries": sorted(results)}
             self.bests[self.config.task] = dict(self.best)
             self.export("policy_best")
             self.save("melhor")

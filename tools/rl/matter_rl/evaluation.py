@@ -39,12 +39,13 @@ def battery_posture(name: str) -> str:
 def battery_kind(name: str) -> str:
     """O tipo de uma bateria pelo nome (a convencao das tarefas): andar_* e
     girar_* seguem um roteiro de velocidades, ir_ate_* vao a um ponto,
-    corrida_* correm ate os alvos da tarefa (o alvo no mundo, com imitacao)."""
+    corrida_* e caminhada_* vao ate os alvos da tarefa (o alvo no mundo, com
+    imitacao)."""
     if name.startswith(("andar_", "girar_")):
         return "andar"
     if name.startswith("ir_ate_"):
         return "alvo"
-    if name.startswith("corrida_"):
+    if name.startswith(("corrida_", "caminhada_")):
         return "corrida"
     return "de_pe"
 
@@ -69,7 +70,7 @@ def task_batteries(task_path: Path) -> list[dict]:
         if not entry.get("enabled", True):
             continue
         kind = ("andar" if entry.get("schedule") else "alvo" if entry.get("goal")
-                else "corrida" if entry["name"].startswith("corrida_") else "de_pe")
+                else "corrida" if entry["name"].startswith(("corrida_", "caminhada_")) else "de_pe")
         batteries.append(dict(entry, kind=kind, posture=entry.get("posture", "natural")))
     return batteries
 
@@ -106,11 +107,12 @@ def goal_score(metrics: dict) -> float:
 
 
 def race_score(metrics: dict) -> float:
-    """Correr ate o alvo: nao cair, chegar, chegar rapido (6 m/s vale tudo) e
-    correr parecido com a referencia (o erro das juntas abaixo de 0,5 rad)."""
+    """Ir ate o alvo: nao cair, chegar, chegar rapido (a velocidade da
+    referencia vale tudo: 6 m/s correndo, 1,1 caminhando) e se mover parecido
+    com ela (o erro das juntas abaixo de 0,5 rad)."""
     return (0.30 * metrics["stand_fraction"]
             + 0.30 * metrics.get("reached_fraction", 0.0)
-            + 0.25 * min(1.0, metrics.get("target_speed", 0.0) / 6.0)
+            + 0.25 * min(1.0, metrics.get("target_speed", 0.0) / metrics.get("reference_speed", 6.0))
             + 0.15 * max(0.0, 1.0 - metrics.get("imitation_error", 1.0) / 0.5))
 
 
@@ -311,6 +313,7 @@ class Evaluator:
             metrics["target_speed"] = float(rows[reached, 23].mean()) if reached.any() else 0.0
             errors = rows[:, 24][rows[:, 24] >= 0]
             metrics["imitation_error"] = float(errors.mean()) if len(errors) else 1.0
+            metrics["reference_speed"] = float((spec or {}).get("referenceSpeed", 6.0))
         metrics["kind"] = kind
         metrics["score"] = (walking_score(metrics) if kind == "andar" else goal_score(metrics) if kind == "alvo"
                             else race_score(metrics) if kind == "corrida" else score(metrics))

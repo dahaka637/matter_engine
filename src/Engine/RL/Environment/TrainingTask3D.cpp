@@ -206,6 +206,10 @@ TrainingTask3D loadTrainingTask3D(const std::filesystem::path& definitionPath) {
         if (p.contains("links")) out.links = p["links"].get<std::vector<std::string>>();
     }
 
+    for (const nlohmann::json& entry : document.value("evaluation", nlohmann::json::array()))
+        if (entry.is_object() && entry.value("enabled", true) && entry.contains("name"))
+            task.evaluationBatteries.push_back(entry["name"].get<std::string>());
+
     std::uint64_t hash = 14695981039346656037ull;
     for (const char c : text) {
         hash ^= static_cast<unsigned char>(c);

@@ -256,6 +256,10 @@ struct TrainingTask3D {
         std::vector<std::string> links { "Pelvis", "UpperChest" };
     } pushes;
 
+    // As baterias da tarefa (os nomes das ligadas, na ordem do arquivo; a
+    // tela mostra a primeira da habilidade).
+    std::vector<std::string> evaluationBatteries;
+
     std::uint64_t hash = 0;
 };
 
