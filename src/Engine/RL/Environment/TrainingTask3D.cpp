@@ -86,7 +86,11 @@ TrainingTask3D loadTrainingTask3D(const std::filesystem::path& definitionPath) {
         out.lateral = std::max(0.0f, c.value("lateral", out.lateral));
         out.yawRate = std::max(0.0f, c.value("yawRate", out.yawRate));
         out.gateByTracking = c.value("gateByTracking", out.gateByTracking);
-        out.startMoving = c.value("startMoving", out.startMoving);
+        if (c.contains("startMoving")) {
+            const nlohmann::json& start = c["startMoving"];
+            out.startMoving = start.is_boolean() ? (start.get<bool>() ? 1.0f : 0.0f)
+                                                 : std::clamp(start.get<float>(), 0.0f, 1.0f);
+        }
         out.relativeToStanding = c.value("relativeToStanding", out.relativeToStanding);
         if (c.contains("limits")) {
             const nlohmann::json& l = c["limits"];
@@ -96,7 +100,8 @@ TrainingTask3D loadTrainingTask3D(const std::filesystem::path& definitionPath) {
             out.limits.yawRate = l.value("yawRate", out.limits.yawRate);
         }
     }
-    task.hasTeacher = document.contains("teacher") && document["teacher"].is_object();
+    task.hasTeacher = document.contains("teacher") && document["teacher"].is_object()
+        && document["teacher"].value("enabled", true);
     if (document.contains("gait")) {
         const nlohmann::json& g = document["gait"];
         auto& out = task.gait;

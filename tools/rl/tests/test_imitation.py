@@ -60,6 +60,16 @@ try:
     raise SystemExit("aceitou 0,1 min")
 except ValueError:
     pass
+# (Na tarefa de agora o professor esta desligado: o pedido e recusado.)
+try:
+    t.command("professor", {})
+    raise SystemExit("aceitou o professor desligado")
+except ValueError:
+    pass
+import json
+live = json.loads(t.live_task.read_text())
+live["teacher"]["enabled"] = True
+t.live_task.write_text(json.dumps(live))
 assert t.command("professor", {})["ok"] and t.imitation_request is not None
 t.imitation_request = None
 t.imitate({"minutes": 0.05, "environments": 8, "batch_size": 256, "capacity": 20000, "critic_iterations": 1,

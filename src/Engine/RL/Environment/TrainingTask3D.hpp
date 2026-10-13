@@ -41,8 +41,9 @@ struct TrainingRewardWeights3D {
     float velocity = 0.0f;
     float yawRate = 0.0f;
     float feetAirTime = 0.0f;
-    // O relogio de passada (andando): cada pe no chao ou no ar na hora certa
-    // da fase (alternando) e o pe de balanco subindo ate a altura do passo.
+    // O relogio de passada (andando): o pe de balanco no ar na hora certa da
+    // fase (alternando; no chao, ou o de apoio no ar, desconta) e subindo ate
+    // a altura do passo. Parado, com os dois pes plantados, nunca paga.
     float gaitContact = 0.0f;
     float swingHeight = 0.0f;
     // A referencia de passada (gait.reference): as juntas das pernas perto do
@@ -126,10 +127,11 @@ struct TrainingTask3D {
         // cabeca, pose, giro) valem multiplicadas pelo acompanhamento da
         // velocidade: parado sob um pedido de andar nao ganha nada.
         bool gateByTracking = false;
-        // Os episodios de treino com pedido de andar comecam com o corpo ja na
-        // velocidade pedida: parado, ele cai para a frente, e o primeiro passo
-        // vira uma reacao (como o de quem e empurrado).
-        bool startMoving = false;
+        // A fracao dos episodios de treino com pedido de andar que comeca com o
+        // corpo ja na velocidade pedida: parado, ele cai para a frente, e o
+        // primeiro passo vira uma reacao (como o de quem e empurrado). O resto
+        // sai do parado (o primeiro passo de verdade). Na tarefa, true = 1.
+        float startMoving = 0.0f;
         // Medido contra ficar parado: com pedido de andar, a velocidade (e o
         // giro, se pedido) vale 0 parado e 1 seguindo o pedido, e o "estar
         // bem" (gateByTracking) vai junto. Parado nao ganha nada do que paga
@@ -138,8 +140,8 @@ struct TrainingTask3D {
         bool relativeToStanding = false;
     } commands;
 
-    // A tarefa tem a secao "teacher" (o professor do aprendizado guiado, em
-    // RL/Teacher; os mundos de treino nao a leem).
+    // A tarefa tem a secao "teacher" ligada (o professor do aprendizado
+    // guiado, em RL/Teacher; os mundos de treino nao a leem).
     bool hasTeacher = false;
 
     // O relogio de passada (so andando): a fase corre a frequency[0] +

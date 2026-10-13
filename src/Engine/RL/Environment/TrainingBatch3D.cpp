@@ -441,11 +441,16 @@ void TrainingBatch3D::Impl::updateCommand(Environment& env, bool start) {
     if (forward + backward + lateral + yaw <= 0.0f || standingOnly[env.posture]
         || std::uniform_real_distribution<float>(0.0f, 1.0f)(env.rng) < c.standingFraction)
         return;
-    const Vec3 command { std::uniform_real_distribution<float>(-backward, forward)(env.rng),
-        lateral > 0.0f ? std::uniform_real_distribution<float>(-lateral, lateral)(env.rng) : 0.0f,
-        yaw > 0.0f ? std::uniform_real_distribution<float>(-yaw, yaw)(env.rng) : 0.0f };
-    if (std::hypot(command.x, command.y) < 0.3f && std::abs(command.z) < 0.2f) return;
-    env.command = command;
+    // Um pedido pequeno demais para andar (abaixo de 0,3 m/s e de 0,2 rad/s)
+    // e sorteado de novo: parado so vem da fatia standingFraction.
+    for (int attempt = 0; attempt < 8; ++attempt) {
+        const Vec3 command { std::uniform_real_distribution<float>(-backward, forward)(env.rng),
+            lateral > 0.0f ? std::uniform_real_distribution<float>(-lateral, lateral)(env.rng) : 0.0f,
+            yaw > 0.0f ? std::uniform_real_distribution<float>(-yaw, yaw)(env.rng) : 0.0f };
+        if (std::hypot(command.x, command.y) < 0.3f && std::abs(command.z) < 0.2f) continue;
+        env.command = command;
+        return;
+    }
 }
 
 void TrainingBatch3D::Impl::resetEnvironment(std::uint32_t index) {
@@ -483,7 +488,8 @@ void TrainingBatch3D::Impl::resetEnvironment(std::uint32_t index) {
     const Vec3 rootPosition = env.origin + Vec3 { 0.0f, 0.0f, lift };
     Vec3 rootVelocity { gaussian(env.rng, start.rootVelocityNoise * noise),
         gaussian(env.rng, start.rootVelocityNoise * noise), 0.0f };
-    if (training() && !teaching() && task.commands.startMoving) {
+    if (training() && !teaching() && task.commands.startMoving > 0.0f
+        && std::uniform_real_distribution<float>(0.0f, 1.0f)(env.rng) < task.commands.startMoving) {
         // Ja na velocidade pedida (no rumo do corpo): o passo vira reacao.
         const Vec3 forward = (root * body.profile.links.front().modelOrientation.conjugate()).rotate({ 1.0f, 0.0f, 0.0f });
         const Vec3 left { -forward.y, forward.x, 0.0f };
@@ -732,9 +738,8 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
     }
     // O relogio de passada: o esquerdo apoia na metade de seno positivo da fase
     // e o direito na outra; perto da troca, apoio duplo devagar e voo rapido
-    // (a faixa d muda de sinal em flightSpeed). Cada pe no chao ou no ar na
-    // hora certa vale +1 (-1 errado), e o pe que devia estar no ar sobe ate a
-    // altura do passo.
+    // (a faixa d muda de sinal em flightSpeed). O pe que devia estar no ar
+    // paga estando no ar e desconta no chao, e sobe ate a altura do passo.
     float gaitContact = 0.0f, swingHeight = 0.0f;
     if (moving) {
         const TrainingTask3D::Gait& gait = task.gait;
@@ -744,7 +749,11 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
         const std::array<bool, 2> stance { phase >= -band, phase <= band };
         float swinging = 0.0f;
         for (std::size_t f = 0; f < 2; ++f) {
-            gaitContact += reading.footContact[f] == stance[f] ? 0.5f : -0.5f;
+            // So o passo paga: o pe de balanco no ar +0,5 (no chao -0,5) e o de
+            // apoio no chao 0 (no ar -0,5). Parado, com os dois pes plantados,
+            // nunca passa de 0 (no apoio duplo, o "acerto" dos dois pagava +1).
+            if (stance[f]) gaitContact += reading.footContact[f] ? 0.0f : -0.5f;
+            else gaitContact += reading.footContact[f] ? -0.5f : 0.5f;
             if (stance[f]) continue;
             const std::uint32_t foot = f == 0 ? body.leftFoot : body.rightFoot;
             const float height = state.links[foot].position.z - env.footStart[f].z;
@@ -864,7 +873,8 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
         -w.posePrior * pose,
         w.poseMatch * poseMatch * gate,
         w.velocity * linearScore,
-        w.yawRate * yawScore * (relative ? 1.0f : gate),
+        // (Medido contra parado: sem giro pedido, o "nao girar" so paga andando.)
+        w.yawRate * yawScore * (relative && env.command.z != 0.0f ? 1.0f : gate),
         w.feetAirTime * airTime,
         w.gaitContact * gaitContact,
         w.swingHeight * swingHeight,

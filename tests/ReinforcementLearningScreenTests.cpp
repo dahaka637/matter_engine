@@ -274,16 +274,10 @@ int main() {
         const auto walkingConflicts = sweepIdConflicts([&] { screen.draw(canvas, 1.0f); });
         require(walkingConflicts.empty(),
             "IDs repetidos com o andar: " + (walkingConflicts.empty() ? std::string() : walkingConflicts.front()));
-        // O professor (o andar tem um): a locomocao fisica do jogo conduz o
-        // boneco do visualizador, de pe, e o comando e o que ele tenta.
+        // O professor do andar esta desligado na tarefa: o visualizador segue
+        // com a politica.
         screen.showTeacher(true);
-        require(screen.showingTeacher() && screen.viewerReady(), "o visualizador abre com o professor");
-        screen.advanceViewer(90);
-        frame(screen, canvas, 2);
-        snapshot(canvas, "rl_tela_professor");
-        require(screen.viewerReady(), "o professor segue conduzindo");
-        screen.showTeacher(false);
-        require(!screen.showingTeacher() && screen.viewerReady(), "de volta a politica");
+        require(!screen.showingTeacher() && screen.viewerReady(), "sem professor ligado, o visualizador segue na politica");
         screen.selectSkill(0);
         frame(screen, canvas, 2);
         require(screen.viewerPosture() == 0 && screen.viewerWalkCommand() == 0.0f, "de volta a H1, parado");

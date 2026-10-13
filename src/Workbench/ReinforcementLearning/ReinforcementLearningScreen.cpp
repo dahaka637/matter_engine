@@ -188,6 +188,8 @@ void ReinforcementLearningScreen::selectSkill(std::size_t index) {
     if (index >= m_skills.size()) return;
     m_skill = index;
     m_skillChosen = true;
+    // (O professor so na habilidade que o tem ligado.)
+    if (!m_skills[index].teacher) m_showTeacher = false;
     m_walkSpeed = 0.0f;
     m_demoSeconds = 0.0f;
     m_walkOverride = false;
@@ -326,6 +328,8 @@ void ReinforcementLearningScreen::reloadPolicy(bool force) {
 }
 
 void ReinforcementLearningScreen::showTeacher(bool show) {
+    // (Sem professor ligado na habilidade, o pedido nao vale.)
+    if (show && (m_skill >= m_skills.size() || !m_skills[m_skill].teacher)) show = false;
     if (show == m_showTeacher) return;
     m_showTeacher = show;
     // O mundo do visualizador e refeito (com ou sem o professor).

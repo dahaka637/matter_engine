@@ -199,17 +199,20 @@ void testCommands() {
         require(std::abs(c.x - batch.view(e).command.x) < 1e-4f, "o comando da observacao e o do mundo");
         standing += c.x == 0.0f ? 1 : 0;
     }
-    require(standing > 4 && standing < 40, "uma fatia dos sorteios pede ficar parado");
-    // Com pedido de andar, o corpo comeca ja na velocidade pedida (no rumo dele).
+    require(standing == 0, "o treino de andar nao pede ficar parado");
+    // Metade dos episodios comeca ja na velocidade pedida (no rumo do corpo), a
+    // outra metade sai do parado.
     std::size_t velocityChannel = 0;
     for (std::size_t i = 0; i < batch.observationLayout().channels.size(); ++i)
         if (batch.observationLayout().channels[i].name == "pelvis.linear_velocity_heading.x") velocityChannel = i;
+    std::size_t moving = 0, resting = 0;
     for (std::size_t e = 0; e < 64; ++e) {
         const float start = batch.observations()[e * O + velocityChannel] * 2.0f;
-        require(std::abs(start - commandOf(e).x) < 0.45f, "o corpo comeca na velocidade pedida");
+        if (std::abs(start - commandOf(e).x) < 0.45f && commandOf(e).x > 0.6f) ++moving;
+        else if (std::abs(start) < 0.3f) ++resting;
     }
-    for (std::size_t e = 0; e < 64; ++e)
-        if (batch.view(e).posture == 0) require(commandOf(e).x == 0.0f, "a postura natural fica so parada (o ensaio da H1)");
+    require(moving > 12 && resting > 12, "uns comecam na velocidade pedida e outros parados");
+    for (std::size_t e = 0; e < 64; ++e) require(batch.view(e).posture == 1, "o andar e todo na postura de alerta");
     require(std::abs(batch.view(1).origin.x - batch.view(0).origin.x) > 200.0f, "os mundos de andar ficam longe");
     TrainingTask3D task = batch.task();
     task.commands.limits.forward = 1.0f;
@@ -283,11 +286,19 @@ void testCommands() {
     std::size_t velocityIndex = R;
     for (std::size_t i = 0; i < R; ++i)
         if (std::string_view(TrainingRewardComponentNames3D[i]) == "velocity") velocityIndex = i;
+    std::size_t yawIndex = R, gaitIndex = R;
+    for (std::size_t i = 0; i < R; ++i) {
+        if (std::string_view(TrainingRewardComponentNames3D[i]) == "yawRate") yawIndex = i;
+        if (std::string_view(TrainingRewardComponentNames3D[i]) == "gaitContact") gaitIndex = i;
+    }
     for (int i = 0; i < 4; ++i) {
         battery.step(still);
         require(battery.rewardComponents()[velocityIndex] < 0.05f * relative.reward.velocity,
             "parado sob pedido de andar, a velocidade nao paga");
-        require(battery.rewards()[0] >= 0.0f, "o total sem queda nunca fica negativo");
+        require(battery.rewardComponents()[yawIndex] < 0.05f * relative.reward.yawRate,
+            "parado sob pedido de andar, o nao girar nao paga");
+        require(battery.rewardComponents()[gaitIndex] <= 0.0f, "parado, o relogio de passada nunca paga");
+        require(battery.rewards()[0] == 0.0f, "parado sob pedido de andar, o passo vale exatamente 0");
     }
 }
 

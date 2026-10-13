@@ -151,10 +151,10 @@ class Trainer:
                                          "(o curriculo continua)")
         self.restore()
         self.fix_commands()
-        if self.switched_from:
+        if self.switched_from or self.task_updated:
             minimum = (json.loads(self.live_task.read_text()).get("exploration") or {}).get("minimumStd")
             if minimum:
-                self.explore(float(minimum), "habilidade nova")
+                self.explore(float(minimum), "habilidade nova" if self.switched_from else "tarefa nova")
 
         self.state = "treinando"
         self.message = ""
@@ -376,13 +376,16 @@ class Trainer:
                     "lateral_drift": metrics.get("lateral_drift"), "goal_error": metrics.get("goal_error"),
                     "score": metrics["score"], "ends": json.dumps(metrics["ends"]),
                 })
-        # A nota e a da pior bateria (uma habilidade nova nao apaga a antiga).
-        combined = min(m["score"] for solvers in results.values() for m in solvers.values())
+        # A nota e a da pior bateria (uma habilidade nova nao apaga a antiga),
+        # das que contam (as de "scored": false so sao medidas).
+        counted = {b: v for b, v in results.items() if self.evaluator.scored(b)} or results
+        combined = min(m["score"] for solvers in counted.values() for m in solvers.values())
         self.last_evaluation = {
             "iteration": self.counters["iteration"], "score": combined,
             "solvers": results.get(BASE_BATTERY) or next(iter(results.values())),
             "batteries": {battery: {"posture": self.evaluator.posture_of(battery), "kind": self.evaluator.kind_of(battery),
-                                    "solvers": solvers} for battery, solvers in results.items()},
+                                    "scored": self.evaluator.scored(battery), "solvers": solvers}
+                          for battery, solvers in results.items()},
             "seconds": time.time() - started, "time": time.time()}
         if combined > self.best["score"] + 1e-6:
             self.best = {"score": combined, "iteration": self.counters["iteration"], "steps": self.counters["steps"],
@@ -464,8 +467,9 @@ class Trainer:
                 if not 0.5 <= minutes <= 240.0:
                     raise ValueError("minutos entre 0,5 e 240")
                 request["minutes"] = minutes
-            if not (json.loads(self.live_task.read_text()).get("teacher")):
-                raise ValueError("a habilidade de agora nao tem professor")
+            teacher = json.loads(self.live_task.read_text()).get("teacher") or {}
+            if not teacher or not teacher.get("enabled", True):
+                raise ValueError("a habilidade de agora nao tem professor (ou ele esta desligado na tarefa)")
             self.imitation_request = request
             return {"ok": True}
         if command == "empurroes":

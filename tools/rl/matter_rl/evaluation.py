@@ -146,6 +146,11 @@ class Evaluator:
     def kind_of(self, battery: str) -> str:
         return self.by_name[battery]["kind"]
 
+    def scored(self, battery: str) -> bool:
+        """A bateria entra na nota (com "scored": false, so e medida: uma
+        habilidade que o treino de agora nao pratica)."""
+        return bool(self.by_name[battery].get("scored", True))
+
     @torch.no_grad()
     def run(self, model: ActorCritic, device: torch.device, record: Path | None = None,
             watch: tuple[int, ...] = (0,)) -> dict:
