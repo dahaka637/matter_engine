@@ -25,6 +25,15 @@ não os usa mais.
 `natural_idle` também fica somente como referência/autoria antiga; não é
 declarado pelo personagem nem carregado como pose inicial.
 
+**Referências da imitação do RL** (a H3 desde a v7, `assets/rl/tasks`):
+`idle_to_sprint` e `mixamo_sprint` (a corrida até o alvo) e `ual_walk` (o
+Walk_Loop da UAL1 da Quaternius, CC0, para o degrau lento). Este último foi
+importado com `tools/import_humanoid_animation.py --source-rig unreal --loop`.
+Com o Blender do sistema, rode com `PYTHONHOME=/usr` e
+`--python-use-system-env`: sem isso ele pega a biblioteca do Python do uv e
+não acha o `math`. O Jog_Fwd_Loop e o Sprint_Loop da mesma biblioteca foram
+reprovados no retarget (membros até 39° fora e o ciclo sem fechar).
+
 O manifesto do personagem (`locomotion` em `character.json`) diz qual clipe
 cumpre cada papel: `idle`, `walk`, `walkBackward`, `sprint`, os de strafe,
 os de pulo, `standUpBack` e `standUpFront`. O personagem olha para a câmera;
