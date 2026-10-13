@@ -83,6 +83,15 @@ O treino inteiro (física, rede na GTX 1070 Ti e PPO), com 512 mundos:
 | Equilibrado (padrão) | 8 | ociosa | ~15.500 |
 | Leve | 4 | ociosa | menos |
 
+## O pé do corpo (12/10/2026, noite)
+
+O pé do corpo de RL é o do jogo: a casca convexa da chuteira, com a sola plana
+no contorno dela (antes, uma caixa de 26,9 × 9,6 × 13 cm), e o boneco ficou
+2,1 cm mais baixo com o pé nivelado. A sola real é menor que a caixa (o
+calcanhar tem ~6 cm de largura): com a ação zero, o corpo cai em ~1,9 s, contra
+~2,8 s com a caixa. As políticas treinadas antes seguem adaptando ("o corpo
+mudou desde o checkpoint").
+
 ## A H1 do zero (validação de 12/10/2026)
 
 - **Em ~1 min** ele já fica de pé no treino.
@@ -90,7 +99,7 @@ O treino inteiro (física, rede na GTX 1070 Ti e PPO), com 512 mundos:
   de pé por 60 s nos dois solvers. A oscilação do centro de massa fica em
   0,8 cm no 10/6 e 0,3 cm no 20/20.
 - **Linha de base:** a ação zero (o PD segurando a pose base) fica 0% de pé e
-  cai em 2,6–2,8 s.
+  caía em 2,6–2,8 s com a caixa no pé (~1,9 s com a chuteira).
 - **O tronco girando:** sem a parcela `trunkTurn`, 15 dos 32 mundos ficavam
   com a pelve rodando de um lado para o outro (até 46° de ponta a ponta), com
   os pés plantados. O centro de massa quase não se move, então a oscilação
@@ -140,7 +149,7 @@ O treino inteiro (física, rede na GTX 1070 Ti e PPO), com 512 mundos:
   - o tronco e os braços perto do alerta.
 
   As parcelas de parado só valem com comando 0.
-- **Ficar parado não paga** (versões 2 a 4 da tarefa):
+- **Ficar parado não paga** (versões 2 a 6 da tarefa):
   - com pedido de andar, o "estar bem" (vivo, postura, cabeça, pose) vale
     multiplicado pelo acompanhamento;
   - o acompanhamento é medido contra ficar parado (`relativeToStanding`):
@@ -154,6 +163,17 @@ O treino inteiro (física, rede na GTX 1070 Ti e PPO), com 512 mundos:
 
   Com a versão 4, numa validação, ele passou a tirar os pés do chão e o
   currículo subiu de 1,0 para 1,25 m/s em ~25 min.
+- **Versão 6** (pedido do usuário: "ficar parado não deve recompensar quando o
+  treino é andar"):
+  - a tarefa só pede andar: nada de trechos parados, e um pedido pequeno
+    demais (abaixo de 0,3 m/s) é sorteado de novo;
+  - parado sob pedido de andar vale exatamente 0: o relógio de passada só
+    paga o pé de balanço no ar (no chão, desconta), e o "não girar" só vale
+    andando;
+  - a queda custa 5 (tentar e cair é barato);
+  - metade dos episódios sai do parado e metade já em movimento;
+  - as baterias de ficar em pé são medidas, mas não entram na nota do andar
+    (`"scored": false`).
 - **O relógio de passada** (`gait`): cada pé no chão ou no ar na hora certa
   da fase e o pé de balanço subindo 8 cm. Há também uma referência de
   passada opcional (`gait.reference`, a do humanoid-gym), desligada.
@@ -168,7 +188,10 @@ O treino inteiro (física, rede na GTX 1070 Ti e PPO), com 512 mundos:
 ## Aprendizado guiado (o professor)
 
 O RL aprende imitando a locomoção física do jogo e depois segue pelo treino
-normal com o que extraiu.
+normal com o que extraiu. **Desligado por ora** (`teacher.enabled: false` na
+`h3_andar`, decisão do usuário em 12/10): o "0%" de ajuda do jogo ainda
+sustenta metade do peso andando, e o aluno imitava um corpo mais leve. O
+código fica; para religar, `"enabled": true` na seção `teacher` da tarefa.
 
 - **O professor** (`src/Engine/RL/Teacher`, `LocomotionTeacher3D`):
   - o mesmo runtime dos atletas do laboratório (`AthleteRuntime3D`), no modo
