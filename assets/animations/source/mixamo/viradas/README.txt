@@ -12,10 +12,13 @@ correndo do RL (o tiro com volta, etapa 4a do plano de imitacao).
   (base aberta, gira, alguns passos, planta, gira de volta, volta), 1,87 s,
   fecha o ciclo (clipe running_turn_180_loop, com --loop). Tambem no lugar:
   o deslocamento tera de ser reconstruido pelo pe de apoio (contacts).
+- ChangeDirection.fbx ("Change Direction"): chega correndo, planta de lado,
+  desce bem baixo para cortar e sai correndo para tras (180 graus), 2,17 s,
+  sem parar no meio (clipe change_direction). Tambem no lugar (0,08 m).
 
 Licenca: termos padrao do Mixamo/Adobe (nao CC0), como os outros desta pasta.
 Clipes gerados (assets/animations/clips/running_turn_180, running_to_turn,
-turn_to_running e running_turn_180_loop) com:
+turn_to_running, running_turn_180_loop e change_direction) com:
 
   env PYTHONHOME=/usr blender --background --factory-startup \
     --python-use-system-env --python-exit-code 1 \
