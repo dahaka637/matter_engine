@@ -166,6 +166,7 @@ TrainingTask3D loadTrainingTask3D(const std::filesystem::path& definitionPath) {
         if (t.contains("evaluationAngles")) out.evaluationAngles = t["evaluationAngles"].get<std::vector<float>>();
         out.referenceSpeed = t.value("referenceSpeed", out.referenceSpeed);
         out.speedCap = t.value("speedCap", out.speedCap);
+        out.missMeters = std::max(0.0f, t.value("missMeters", out.missMeters));
         if (!(out.distance > out.radius) || !(out.radius > 0.0f) || !(out.referenceSpeed > 0.0f)
             || out.evaluationAngles.empty())
             throw std::runtime_error("tarefa de RL: target invalido");

@@ -1,9 +1,9 @@
 {
   "schema": "matter-rl-task-1",
   "id": "h3_andar",
-  "version": 8,
+  "version": 9,
   "displayName": "Correr até o alvo",
-  "comment": "H3. Versoes 1 a 6 (12/10): andar seguindo um comando de velocidade so com recompensas (relogio de passada, tempo de pe no ar, medido contra ficar parado, so pedidos de andar). Em todas ele achou um atalho; na 6 corria saltitando, de joelho alto, e em curva. Versao 7 (13/10, pedido do usuario): imitacao de clipes (o DeepMimic) mais um alvo a 10 m. A referencia e o parado->sprint do Mixamo seguido do sprint em ciclo (RL/Imitation): o clipe diz como correr, a fisica e a mesma de sempre (nada empurra o corpo). Quanto mais rapido ele chega, mais ganha: a velocidade em direcao ao alvo paga por decisao (linear ate 1,2 x 6 m/s) e cada chegada paga a velocidade media do trecho; chegando, nasce o proximo 10 m adiante. O episodio tem duracao fixa: correr mais rapido rende mais alvos, e enrolar nao paga. Versao 8 (13/10, a primeira validacao): na 7 ele voltou a ficar parado. Longe do clipe a imitacao valia ~0 e o castigo de mudar a acao era maior que ela; com o total nunca negativo, tudo virava 0 e so sobrava nao cair. Agora a acao corrige a pose do clipe (acao zero segue a referencia com os mesmos motores, nada empurra o corpo), os sinos sao mais largos e o total pode ser o que for.",
+  "comment": "H3. Versoes 1 a 6 (12/10): andar seguindo um comando de velocidade so com recompensas (relogio de passada, tempo de pe no ar, medido contra ficar parado, so pedidos de andar). Em todas ele achou um atalho; na 6 corria saltitando, de joelho alto, e em curva. Versao 7 (13/10, pedido do usuario): imitacao de clipes (o DeepMimic) mais um alvo a 10 m. A referencia e o parado->sprint do Mixamo seguido do sprint em ciclo (RL/Imitation): o clipe diz como correr, a fisica e a mesma de sempre (nada empurra o corpo). Quanto mais rapido ele chega, mais ganha: a velocidade em direcao ao alvo paga por decisao (linear ate 1,2 x 6 m/s) e cada chegada paga a velocidade media do trecho; chegando, nasce o proximo 10 m adiante. O episodio tem duracao fixa: correr mais rapido rende mais alvos, e enrolar nao paga. Versao 8 (13/10, a primeira validacao): na 7 ele voltou a ficar parado. Longe do clipe a imitacao valia ~0 e o castigo de mudar a acao era maior que ela; com o total nunca negativo, tudo virava 0 e so sobrava nao cair. Agora a acao corrige a pose do clipe (acao zero segue a referencia com os mesmos motores, nada empurra o corpo), os sinos sao mais largos e o total pode ser o que for. Versao 9 (pedido do usuario: virando para fora do alvo, ele demorava a recomecar): passar do alvo (3 m alem do mais perto que chegou) encerra o episodio, sem o custo da queda; no treino isso tambem cobra mirar.",
   "postures": [
     { "id": "alerta", "weight": 1.0 }
   ],
@@ -30,7 +30,8 @@
     "nextAngleDegrees": 20.0,
     "evaluationAngles": [0.0],
     "referenceSpeed": 6.0,
-    "speedCap": 1.2
+    "speedCap": 1.2,
+    "missMeters": 3.0
   },
   "reward": {
     "comment": "Por decisao (30 Hz): imitacao 0,8 (pose 0,5, velocidade das juntas 0,05, partes-chave 0,15, raiz 0,1) e o alvo (velocidade em direcao a ele 0,3, chegada 3 vezes a velocidade media sobre 6 m/s), menos um pouco de mudanca de acao e a queda. Os termos das versoes de andar ficam em 0.",

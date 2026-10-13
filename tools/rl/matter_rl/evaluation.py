@@ -13,7 +13,7 @@ import torch
 
 from .model import ACTION_LIMIT, ActorCritic
 
-REASONS = ["nenhum", "queda_contato", "queda_altura", "numerico", "tempo", "limite"]
+REASONS = ["nenhum", "queda_contato", "queda_altura", "numerico", "tempo", "limite", "alvo_perdido"]
 # As colunas do resumo de um episodio (finished_episodes do modulo nativo).
 EPISODE_COLUMNS = 25
 FALLS = {1, 2, 3}
@@ -303,6 +303,9 @@ class Evaluator:
             along = np.sqrt(np.maximum(rows[:, 19] ** 2 - rows[:, 20] ** 2, 0.0))
             metrics["goal_error"] = float(np.sqrt((target - along) ** 2 + rows[:, 20] ** 2).mean())
         if kind == "corrida":
+            # Indo ate o alvo, "sem cair" e nao cair (passar do alvo encerra o
+            # episodio sem queda).
+            metrics["stand_fraction"] = float((~np.isin(reasons, list(FALLS))).sum()) / float(envs)
             # Os alvos (todos os episodios, quedas inclusive): quantos, a fatia que
             # chegou ao primeiro, quando chegou e a velocidade ate eles; e o erro
             # das juntas contra a referencia (RMS por eixo, rad).

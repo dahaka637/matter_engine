@@ -1,9 +1,9 @@
 {
   "schema": "matter-rl-task-1",
   "id": "h3b_caminhar_alvo",
-  "version": 1,
+  "version": 2,
   "displayName": "Caminhar até o alvo",
-  "comment": "Caminhar ate um alvo a 10 m imitando o andar da UAL1 (Quaternius, CC0; o Walk_Loop, 1,1 m/s), a mesma maquina da corrida (H3 v8): a acao corrige a pose do clipe, os sinos do DeepMimic, a velocidade em direcao ao alvo (linear ate 1,2 x 1,1 m/s) e a chegada paga pela velocidade media; chegando, nasce o proximo 10 m adiante. Pedido do usuario (13/10): uma de caminhar ate o alvo tambem. E o degrau lento: a base para as velocidades pedidas no futuro.",
+  "comment": "Caminhar ate um alvo a 10 m imitando o andar da UAL1 (Quaternius, CC0; o Walk_Loop, 1,1 m/s), a mesma maquina da corrida (H3 v8): a acao corrige a pose do clipe, os sinos do DeepMimic, a velocidade em direcao ao alvo (linear ate 1,2 x 1,1 m/s) e a chegada paga pela velocidade media; chegando, nasce o proximo 10 m adiante. Pedido do usuario (13/10): uma de caminhar ate o alvo tambem. E o degrau lento: a base para as velocidades pedidas no futuro. Versao 2: passar do alvo (3 m alem do mais perto que chegou) encerra o episodio.",
   "postures": [
     {
       "id": "alerta",
@@ -43,7 +43,8 @@
       0.0
     ],
     "referenceSpeed": 1.1,
-    "speedCap": 1.2
+    "speedCap": 1.2,
+    "missMeters": 3.0
   },
   "reward": {
     "comment": "Os da corrida (H3 v8): imitacao 0,8 (pose 0,5, velocidade das juntas 0,05, partes-chave 0,15, raiz 0,1) e o alvo (velocidade em direcao a ele 0,3, chegada 3 vezes a velocidade media sobre 1,1 m/s), menos um pouco de mudanca de acao e a queda.",

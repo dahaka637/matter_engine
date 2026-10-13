@@ -599,6 +599,28 @@ void testRace() {
         require(arrived >= 6, "quem corre chega ao alvo perto (" + std::to_string(arrived) + " de 8)");
         require(paid > 0.0f && toward > 0.0f, "chegar e ir em direcao ao alvo pagam");
     }
+    {
+        // O alvo atras (a avaliacao o poe a 180 graus): correndo para longe, o
+        // episodio acaba como alvo perdido, sem queda.
+        const std::filesystem::path behind = raceVariant("alvo_atras.json",
+            { { "\"evaluationAngles\": [0.0]", "\"evaluationAngles\": [180.0]" },
+              { "\"missMeters\": 3.0", "\"missMeters\": 0.5" } });
+        TrainingBatchSettings3D s = settings(4, 2);
+        s.taskPath = behind;
+        s.evaluation = true;
+        s.evaluationEpisodeSeconds = 12.0f;
+        TrainingBatch3D batch(s);
+        bool missed = false;
+        for (int step = 0; step < 45 && !missed; ++step) {
+            batch.step(std::vector<float>(4 * batch.actionSize(), 0.0f));
+            for (const TrainingEpisode3D& episode : batch.finishedEpisodes())
+                if (episode.reason == TrainingEndReason3D::TargetMissed) {
+                    missed = true;
+                    require(batch.terminated()[episode.environment] == 1, "passar do alvo termina (nao trunca)");
+                }
+        }
+        require(missed, "indo para longe do alvo, o episodio acaba como alvo perdido");
+    }
 }
 
 } // namespace

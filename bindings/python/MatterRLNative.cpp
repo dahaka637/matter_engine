@@ -389,7 +389,7 @@ NB_MODULE(matter_rl_native, m) {
         .def("physics_steps", &TrainingBatch3D::physicsStepCount);
 
     m.attr("END_REASONS") = std::vector<std::string> { "nenhum", "queda_contato", "queda_altura", "numerico", "tempo",
-        "limite" };
+        "limite", "alvo_perdido" };
 
     nb::class_<PolicyRuntime3D>(m, "Policy")
         .def(nb::init<const std::string&>(), "path"_a)

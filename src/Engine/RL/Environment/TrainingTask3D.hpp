@@ -223,6 +223,9 @@ struct TrainingTask3D {
         std::vector<float> evaluationAngles { 0.0f };
         float referenceSpeed = 6.0f;
         float speedCap = 1.2f;
+        // Passou do alvo: a distancia ate ele passa do mais perto que ele
+        // chegou mais isto (m) e o episodio acaba (0 = desligado).
+        float missMeters = 0.0f;
     } target;
 
     struct Termination {

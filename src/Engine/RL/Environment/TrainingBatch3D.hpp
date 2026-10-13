@@ -65,7 +65,10 @@ enum class TrainingEndReason3D : std::uint8_t {
     FallHeight,
     Numeric,
     TimeLimit,
-    Boundary
+    Boundary,
+    // Passou do alvo ou foi para longe dele (target.missMeters alem do mais
+    // perto que chegou): termina, sem o custo da queda.
+    TargetMissed
 };
 
 [[nodiscard]] const char* trainingEndReasonName3D(TrainingEndReason3D reason);

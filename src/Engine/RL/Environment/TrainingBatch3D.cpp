@@ -123,6 +123,8 @@ struct Environment {
     std::uint32_t targetsReached = 0;
     float firstTargetSeconds = -1.0f;
     double targetSpeedSum = 0.0;
+    // O mais perto que ele chegou do alvo de agora (o "passou do alvo").
+    float targetClosest = 1e9f;
 };
 
 struct Scene {
@@ -154,6 +156,7 @@ const char* trainingEndReasonName3D(TrainingEndReason3D reason) {
         case TrainingEndReason3D::Numeric: return "numerico";
         case TrainingEndReason3D::TimeLimit: return "tempo";
         case TrainingEndReason3D::Boundary: return "limite";
+        case TrainingEndReason3D::TargetMissed: return "alvo_perdido";
     }
     return "?";
 }
@@ -343,6 +346,7 @@ void TrainingBatch3D::Impl::placeFirstTarget(Environment& env, const RagdollStat
     env.targetFrom = { pelvis.position.x, pelvis.position.y, 0.0f };
     env.targetDirection = direction;
     env.target = env.targetFrom + Vec3 { std::cos(direction), std::sin(direction), 0.0f } * t.distance;
+    env.targetClosest = 1e9f;
     env.targetSince = 0.0f;
     env.targetCount = 1;
     env.targetsReached = 0;
@@ -359,6 +363,7 @@ void TrainingBatch3D::Impl::placeNextTarget(Environment& env) {
                                       : t.evaluationAngles[index] * Radians;
     env.targetFrom = env.target;
     env.target = env.targetFrom + Vec3 { std::cos(env.targetDirection), std::sin(env.targetDirection), 0.0f } * t.distance;
+    env.targetClosest = 1e9f;
     ++env.targetCount;
 }
 
@@ -1053,6 +1058,7 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
         const TrainingTask3D::Target& t = task.target;
         const Vec3 to { env.target.x - reading.com.x, env.target.y - reading.com.y, 0.0f };
         const float distance = to.length();
+        env.targetClosest = std::min(env.targetClosest, distance);
         if (distance > 1.0e-4f) {
             const float toward = (reading.comVelocity.x * to.x + reading.comVelocity.y * to.y) / distance;
             targetSpeed = std::clamp(toward / t.referenceSpeed, 0.0f, t.speedCap);
@@ -1285,6 +1291,13 @@ void TrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> actio
                 const float dx = pelvis.position.x - env.origin.x, dy = pelvis.position.y - env.origin.y;
                 if (dx * dx + dy * dy > task.termination.maximumDistanceFromStart * task.termination.maximumDistanceFromStart)
                     reason = TrainingEndReason3D::Boundary;
+                // Passou do alvo (ou correu para longe dele): o episodio acaba
+                // (no visualizador, ele recomeca logo).
+                else if (targeting() && task.target.missMeters > 0.0f) {
+                    const float tx = env.target.x - reading.com.x, ty = env.target.y - reading.com.y;
+                    if (std::sqrt(tx * tx + ty * ty) > env.targetClosest + task.target.missMeters)
+                        reason = TrainingEndReason3D::TargetMissed;
+                }
             }
         }
         const bool fell = reason == TrainingEndReason3D::FallContact || reason == TrainingEndReason3D::FallHeight;
@@ -1326,7 +1339,8 @@ void TrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> actio
             std::fill(criticOut, criticOut + C, 0.0f);
         }
         env.episodeReturn += rewards[index];
-        terminated[index] = fell || reason == TrainingEndReason3D::Numeric ? 1u : 0u;
+        terminated[index] =
+            fell || reason == TrainingEndReason3D::Numeric || reason == TrainingEndReason3D::TargetMissed ? 1u : 0u;
         truncated[index] =
             reason == TrainingEndReason3D::TimeLimit || reason == TrainingEndReason3D::Boundary ? 1u : 0u;
         if (reason == TrainingEndReason3D::None) continue;
