@@ -79,7 +79,7 @@ void dumpFrame(FILE* file, const RagdollProfile3D& profile, const BallTouchPrevi
         const auto& collider = profile.links[i].collider;
         const Vec3 center = frame.linkPositions[i] + frame.linkOrientations[i].rotate(collider.localPosition);
         const Quaternion q = (frame.linkOrientations[i] * collider.localOrientation).normalized();
-        if (collider.shape == RagdollColliderShape3D::Box) {
+        if (ragdollColliderHasBox3D(collider)) {
             std::fprintf(file, "B %s %.4f %.4f %.4f %.5f %.5f %.5f %.5f %.4f %.4f %.4f\n", profile.links[i].id.c_str(),
                 center.x, center.y, center.z, q.x, q.y, q.z, q.w,
                 collider.boxHalfExtents.x, collider.boxHalfExtents.y, collider.boxHalfExtents.z);

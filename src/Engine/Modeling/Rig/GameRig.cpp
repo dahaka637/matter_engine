@@ -21,7 +21,7 @@ Side sideOf(const std::string& name) {
 
 float linkRadius(const RagdollLinkDefinition3D& link) {
     const RagdollCapsuleDefinition3D& collider = link.collider;
-    if (collider.shape == RagdollColliderShape3D::Box) {
+    if (ragdollColliderHasBox3D(collider)) {
         // A meia medida do meio (a largura do pe, nao o comprimento).
         float extents[3] = { collider.boxHalfExtents.x, collider.boxHalfExtents.y, collider.boxHalfExtents.z };
         std::sort(extents, extents + 3);
@@ -165,8 +165,17 @@ void applyJointFit(GameRig& rig, const std::vector<std::pair<std::string, Vec3>>
             bind[j] = { position[j], joint.parent >= 0 ? bind[static_cast<std::size_t>(joint.parent)].orientation : game[j].orientation };
             continue;
         }
-        const Vec3 gameAlong = game[static_cast<std::size_t>(child)].position - game[j].position;
-        const Vec3 fitAlong = position[static_cast<std::size_t>(child)] - position[j];
+        Vec3 gameAlong = game[static_cast<std::size_t>(child)].position - game[j].position;
+        Vec3 fitAlong = position[static_cast<std::size_t>(child)] - position[j];
+        // O pe se alinha pela sola no chao, nao pelo osso do tornozelo a bola
+        // do pe: com a proporcao do corpo novo, o osso descia ~10 graus mais
+        // que o do jogo, e esse giro ia para a ligacao - no repouso (o pe do
+        // jogo reto) a chuteira ficava de bico para baixo e o calcanhar a ~3
+        // cm do chao. So o rumo (o giro em volta da vertical) segue o osso.
+        if (joint.name.ends_with("Foot")) {
+            gameAlong.z = 0.0f;
+            fitAlong.z = 0.0f;
+        }
         Vec3 gameSecondary { 1.0f, 0.0f, 0.0f }, fitSecondary { 1.0f, 0.0f, 0.0f };
         if (joint.name.find("Thumb") != std::string::npos) {
             gameSecondary = palm("Right", false);

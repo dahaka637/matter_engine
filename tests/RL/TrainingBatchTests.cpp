@@ -105,12 +105,16 @@ void testHeadingInvariance() {
     const std::size_t O = batch.observationSize();
     const auto& layout = batch.observationLayout().channels;
     std::vector<float> actions(Worlds * batch.actionSize(), 0.0f);
-    for (int step = 0; step <= 10; ++step) {
+    // No comeco, exato; nos primeiros passos, quase. Depois a fisica diverge
+    // sozinha (a sola da chuteira e um poligono e o Jolt escolhe 4 pontos
+    // dele para o contato, uma escolha que muda com a orientacao): ali nao ha
+    // mais o que comparar.
+    for (int step = 0; step <= 2; ++step) {
         if (step > 0) batch.step(actions);
         const auto obs = batch.observations();
         for (std::size_t e = 1; e < Worlds; ++e)
             for (std::size_t i = 0; i < O; ++i)
-                require(std::abs(obs[e * O + i] - obs[i]) < (step == 0 ? 1e-4f : 2e-2f),
+                require(std::abs(obs[e * O + i] - obs[i]) < (step == 0 ? 1e-4f : 1e-2f),
                     "o canal " + layout[i].name + " depende do rumo (passo " + std::to_string(step) + ", "
                         + std::to_string(obs[e * O + i]) + " x " + std::to_string(obs[i]) + ")");
     }

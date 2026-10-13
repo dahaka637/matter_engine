@@ -3,6 +3,7 @@
 #include "Engine/Physics/Jolt/JoltConversions.hpp"
 #include "Engine/Physics/Jolt/JoltInternals3D.hpp"
 
+#include <Jolt/Physics/Collision/Shape/ConvexHullShape.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/RotatedTranslatedShape.h>
@@ -131,6 +132,15 @@ JPH::RefConst<JPH::Shape> createJoltShape(const PhysicsShape3D& shape,
         // A shape cozida e imutavel e compartilhada por milhares de
         // instancias; o material dela foi fixado no cooking.
         geometry = mesh->shape;
+        break;
+    }
+    case PhysicsShapeType3D::ConvexHull: {
+        if (shape.hullPoints.size() < 4) throw std::invalid_argument("Casca convexa com menos de 4 pontos");
+        JPH::Array<JPH::Vec3> points;
+        points.reserve(shape.hullPoints.size());
+        for (const Vec3& point : shape.hullPoints) points.push_back(toJolt(point));
+        JPH::ConvexHullShapeSettings settings(points, std::max(0.0f, shape.convexRadius), material);
+        geometry = finalize(settings.Create(), "casca convexa invalida");
         break;
     }
     case PhysicsShapeType3D::TriangleMesh: {

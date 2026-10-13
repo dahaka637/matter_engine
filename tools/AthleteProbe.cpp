@@ -993,7 +993,7 @@ LegPiece legPiece(const RagdollProfile3D& profile, const PhysicsBodyState3D& lin
     const Quaternion q = (link.orientation * collider.localOrientation).normalized();
     const Vec3 axis = q.rotate({ 1.0f, 0.0f, 0.0f });
     LegPiece piece;
-    if (collider.shape == RagdollColliderShape3D::Box) {
+    if (ragdollColliderHasBox3D(collider)) {
         const Vec3 h = collider.boxHalfExtents;
         const float half = std::max(0.0f, h.x - std::min(h.y, h.z));
         piece = { center - axis * half, center + axis * half, std::min(h.y, h.z) };
@@ -1018,7 +1018,7 @@ void dumpFrame(FILE* file, const RagdollProfile3D& profile, const RagdollState3D
         const auto& collider = profile.links[i].collider;
         const Vec3 center = state.links[i].position + state.links[i].orientation.rotate(collider.localPosition);
         const Quaternion q = (state.links[i].orientation * collider.localOrientation).normalized();
-        if (collider.shape == RagdollColliderShape3D::Box) {
+        if (ragdollColliderHasBox3D(collider)) {
             std::fprintf(file, "B %s %.4f %.4f %.4f %.5f %.5f %.5f %.5f %.4f %.4f %.4f\n", profile.links[i].id.c_str(),
                 center.x, center.y, center.z, q.x, q.y, q.z, q.w, collider.boxHalfExtents.x, collider.boxHalfExtents.y,
                 collider.boxHalfExtents.z);
@@ -1396,17 +1396,16 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
                     const std::size_t link = legs.foot[side];
                     if (link >= bodyState.links.size()) continue;
                     const RagdollCapsuleDefinition3D& collider = profile.links[link].collider;
-                    if (collider.shape != RagdollColliderShape3D::Box) continue;
+                    if (!ragdollColliderHasBox3D(collider)) continue;
                     const Quaternion q = (bodyState.links[link].orientation * collider.localOrientation).normalized();
                     const Vec3 center = bodyState.links[link].position
                         + bodyState.links[link].orientation.rotate(collider.localPosition);
                     const Vec3 local = q.conjugate().rotate(ballState.position - center);
-                    const Vec3 h = collider.boxHalfExtents;
-                    const Vec3 nearest { std::clamp(local.x, -h.x, h.x), std::clamp(local.y, -h.y, h.y),
-                        std::clamp(local.z, -h.z, h.z) };
-                    gap = std::min(gap, (local - nearest).length() - radius);
+                    // (A distancia com sinal ao pe de verdade: a casca da chuteira.)
+                    const float signedGap = ragdollColliderClosestPoint3D(collider, local).distance - radius;
+                    gap = std::min(gap, signedGap);
                     if (std::getenv("XV5") && settings.dribbleV5)
-                        std::printf("  t %.3f pe %c folga com sinal %.3f m\n", t, side == 0 ? 'E' : 'D', (local - nearest).length() - radius);
+                        std::printf("  t %.3f pe %c folga com sinal %.3f m\n", t, side == 0 ? 'E' : 'D', signedGap);
                 }
                 (settings.dribbleV5 && athlete.dribbleOutput.touchGuaranteed ? metrics.guaranteedGaps : metrics.contactGaps)
                     .push_back(std::max(0.0f, gap));
@@ -2134,24 +2133,22 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
                 if (flipped) ++metrics.kneeFlipTicks;
                 if (scenario.ball)
                     for (std::size_t side = 0; side < 2; ++side) {
-                        // (A caixa do pe entrando mais de 2 cm na bola.)
+                        // (O pe entrando mais de 2 cm na bola.)
                         const std::size_t link = legs.foot[side];
                         const RagdollCapsuleDefinition3D& collider = profile.links[link].collider;
-                        if (collider.shape != RagdollColliderShape3D::Box) continue;
+                        if (!ragdollColliderHasBox3D(collider)) continue;
                         const PhysicsBodyState3D& foot = bodyState.links[link];
                         const Quaternion q = (foot.orientation * collider.localOrientation).normalized();
                         const Vec3 center = foot.position + foot.orientation.rotate(collider.localPosition);
                         const Vec3 local = q.conjugate().rotate(ballState.position - center);
-                        const Vec3 h = collider.boxHalfExtents;
-                        const Vec3 nearest { std::clamp(local.x, -h.x, h.x), std::clamp(local.y, -h.y, h.y),
-                            std::clamp(local.z, -h.z, h.z) };
                         const float radius = scene->inflatedBallProfile(ballHandle).radiusMeters;
-                        if ((local - nearest).length() - radius < -0.02f) {
+                        const float inside = radius - ragdollColliderClosestPoint3D(collider, local).distance;
+                        if (inside > 0.02f) {
                             ++metrics.footOnBallTicks;
                             if (settings.dribbleV5 && athlete.dribbleOutput.legs[side].weight > 0.0f) ++metrics.swingFootOnBallTicks;
                             if (std::getenv("XPEBOLA"))
                                 std::printf("  t %.3f PE NA BOLA %c entra %.3f m | balanco %.2f | pe z %.3f\n", t, side == 0 ? 'E' : 'D',
-                                    radius - (local - nearest).length(), athlete.dribbleOutput.legs[side].weight, foot.position.z);
+                                    inside, athlete.dribbleOutput.legs[side].weight, foot.position.z);
                         }
                     }
                 const float left = bodyState.links[legs.foot[0]].position.z, right = bodyState.links[legs.foot[1]].position.z;

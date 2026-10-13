@@ -318,7 +318,7 @@ float supportMargin(Vec3 capture, Vec3 minimum, Vec3 maximum) {
 }
 
 float footSoleOffset(const RagdollLinkDefinition3D& link) {
-    return link.collider.shape == RagdollColliderShape3D::Box
+    return ragdollColliderHasBox3D(link.collider)
         ? link.collider.boxHalfExtents.z : link.collider.radiusMeters;
 }
 

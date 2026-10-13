@@ -273,6 +273,9 @@ public:
 
 private:
     struct FootGeometry {
+        // O colisor do pe (a casca da chuteira, ou a caixa): o contato pela hitbox e
+        // a distancia exata a ele.
+        RagdollCapsuleDefinition3D collider;
         bool valid = false;
         std::size_t link = 0;
         std::size_t hip = 0;  // a coxa (a junta do quadril e a ancora dela)

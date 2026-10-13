@@ -4,6 +4,7 @@
 #include <array>
 #include <cmath>
 #include <numbers>
+#include <map>
 #include <stdexcept>
 #include <string_view>
 
@@ -123,6 +124,30 @@ void appendBox(std::vector<Segment>& segments, const RagdollLinkDefinition3D& li
     for (const auto& edge : Edges) segments.emplace_back(corners[edge[0]], corners[edge[1]]);
 }
 
+// As arestas da casca convexa (cada uma uma vez; as que separam duas faces
+// no mesmo plano ficam de fora, como numa caixa).
+void appendHull(std::vector<Segment>& segments, const RagdollLinkDefinition3D& link) {
+    const RagdollCapsuleDefinition3D& hull = link.collider;
+    const auto model = [&](Vec3 local) {
+        return link.modelPosition + link.modelOrientation.rotate(hull.localPosition + hull.localOrientation.rotate(local));
+    };
+    std::map<std::pair<std::uint16_t, std::uint16_t>, std::vector<std::size_t>> edges;
+    for (std::size_t f = 0; f < hull.hullFaces.size(); ++f)
+        for (int k = 0; k < 3; ++k) {
+            const std::uint16_t a = hull.hullFaces[f][static_cast<std::size_t>(k)];
+            const std::uint16_t b = hull.hullFaces[f][static_cast<std::size_t>((k + 1) % 3)];
+            edges[{ std::min(a, b), std::max(a, b) }].push_back(f);
+        }
+    for (const auto& [edge, faces] : edges) {
+        if (faces.size() == 2 && faces[0] < hull.hullPlanes.size() && faces[1] < hull.hullPlanes.size()) {
+            const auto& p = hull.hullPlanes[faces[0]];
+            const auto& q = hull.hullPlanes[faces[1]];
+            if (p[0] * q[0] + p[1] * q[1] + p[2] * q[2] > 0.9995f) continue;
+        }
+        segments.emplace_back(model(hull.hullPoints[edge.first]), model(hull.hullPoints[edge.second]));
+    }
+}
+
 Vec3 posedPoint(const RagdollLinkDefinition3D& link, Vec3 restPoint, Vec3 posedPosition, Quaternion posedOrientation,
     Vec3 inPlaceShift) {
     const Vec3 linkLocal = link.modelOrientation.conjugate().rotate(restPoint - link.modelPosition);
@@ -153,6 +178,8 @@ RagdollColliderWireframe3D buildRagdollColliderWireframe3D(
         if (wireframe.hasInboundJoint) wireframe.inboundJointModel = link.inboundJoint.anchorModelPosition;
         if (link.collider.shape == RagdollColliderShape3D::Box)
             appendBox(wireframe.segments, link);
+        else if (link.collider.shape == RagdollColliderShape3D::ConvexHull)
+            appendHull(wireframe.segments, link);
         else
             appendCapsule(wireframe.segments, link, radialSegments, capSegments);
         result.links.push_back(std::move(wireframe));

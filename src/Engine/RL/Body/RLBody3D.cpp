@@ -183,12 +183,10 @@ float rlBodyLowestFootPoint3D(const RLBody3D& body, const RLBodyPose3D& pose) {
         const RagdollCapsuleDefinition3D& collider = body.profile.links[foot].collider;
         const Vec3 center = pose.positions[foot] + pose.orientations[foot].rotate(collider.localPosition);
         const Quaternion orientation = pose.orientations[foot] * collider.localOrientation;
-        if (collider.shape == RagdollColliderShape3D::Box) {
-            const Vec3 e = collider.boxHalfExtents;
-            for (int k = 0; k < 8; ++k) {
-                const Vec3 corner { (k & 1) ? e.x : -e.x, (k & 2) ? e.y : -e.y, (k & 4) ? e.z : -e.z };
+        if (ragdollColliderHasBox3D(collider)) {
+            // Os cantos da caixa, ou os vertices da casca da chuteira.
+            for (const Vec3& corner : ragdollColliderCorners3D(collider))
                 lowest = std::min(lowest, (center + orientation.rotate(corner)).z);
-            }
         } else {
             const float half = ragdollCapsuleHalfSegment3D(collider);
             for (const float side : { -1.0f, 1.0f })

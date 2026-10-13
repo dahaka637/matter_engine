@@ -202,9 +202,33 @@ MeshData3D buildJointSphereMesh() {
     return buildCapsuleMesh(sphere);
 }
 
+// A casca convexa (a chuteira): cada face com a normal dela (sombreado
+// facetado, como a fisica a ve).
+MeshData3D buildHullMesh(const RagdollCapsuleDefinition3D& hull) {
+    MeshData3D mesh;
+    for (std::size_t f = 0; f < hull.hullFaces.size() && f < hull.hullPlanes.size(); ++f) {
+        const auto& face = hull.hullFaces[f];
+        const Vec3 normal { hull.hullPlanes[f][0], hull.hullPlanes[f][1], hull.hullPlanes[f][2] };
+        Vec3 a = hull.hullPoints[face[0]], b = hull.hullPoints[face[1]], c = hull.hullPoints[face[2]];
+        if (dot(cross(b - a, c - a), normal) < 0.0f) std::swap(b, c);
+        const std::uint32_t first = static_cast<std::uint32_t>(mesh.vertices.size());
+        for (const Vec3 corner : { a, b, c }) {
+            MeshVertex3D vertex;
+            vertex.position = hull.localPosition + hull.localOrientation.rotate(corner);
+            vertex.normal = hull.localOrientation.rotate(normal);
+            vertex.color = RagdollVisualColor;
+            mesh.vertices.push_back(vertex);
+        }
+        mesh.indices.insert(mesh.indices.end(), { first, first + 1, first + 2 });
+    }
+    recomputeBounds(mesh);
+    return mesh;
+}
+
 MeshData3D buildRagdollLinkVisual(
     const RagdollLinkDefinition3D& link) {
-    if (link.collider.shape == RagdollColliderShape3D::Box) {
+    if (link.collider.shape == RagdollColliderShape3D::ConvexHull) return buildHullMesh(link.collider);
+    if (ragdollColliderHasBox3D(link.collider)) {
         return buildBoxMesh(link.collider.localPosition,
             link.collider.boxHalfExtents, link.collider.localOrientation);
     }
@@ -257,7 +281,7 @@ void WorkbenchApp::ensureRagdollAssetsLoaded(Renderer& activeRenderer) {
         for (const auto& link : m_humanRagdollProfile->links) {
             const auto rotation=link.modelOrientation*link.collider.localOrientation;
             Vec3 extents;
-            if (link.collider.shape==RagdollColliderShape3D::Box) {
+            if (ragdollColliderHasBox3D(link.collider)) {
                 const auto half=link.collider.boxHalfExtents;
                 extents=absolute(rotation.rotate({half.x,0,0}))
                     +absolute(rotation.rotate({0,half.y,0}))+absolute(rotation.rotate({0,0,half.z}));

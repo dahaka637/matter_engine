@@ -59,7 +59,7 @@ LegClearance3D::Piece LegClearance3D::piece(const RagdollProfile3D& profile, con
     const Vec3 center = pose.linkPositions[link] + pose.linkOrientations[link].rotate(collider.localPosition);
     const Quaternion q = (pose.linkOrientations[link] * collider.localOrientation).normalized();
     const Vec3 axis = q.rotate({ 1.0f, 0.0f, 0.0f });
-    if (collider.shape == RagdollColliderShape3D::Box) {
+    if (ragdollColliderHasBox3D(collider)) {
         const Vec3 h = collider.boxHalfExtents;
         const float half = std::max(0.0f, h.x - std::min(h.y, h.z));
         return { center - axis * half, center + axis * half, std::min(h.y, h.z) };

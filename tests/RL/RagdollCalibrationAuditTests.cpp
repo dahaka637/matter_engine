@@ -80,6 +80,10 @@ void testColliderWireframeCoversProfile() {
         if (link.shape == RagdollColliderShape3D::Box) {
             ++boxCount;
             require(link.segments.size() == 12, "Caixa nao possui as 12 arestas");
+        } else if (link.shape == RagdollColliderShape3D::ConvexHull) {
+            // A chuteira: a casca, com bem mais arestas que uma caixa.
+            ++boxCount;
+            require(link.segments.size() > 12, "Casca convexa sem as arestas dela");
         }
         if (link.hasInboundJoint) ++jointCount;
         for (const auto& [a, b] : link.segments) {

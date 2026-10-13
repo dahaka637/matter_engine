@@ -58,7 +58,10 @@ enum class PhysicsShapeType3D : std::uint8_t {
     Sphere,
     Capsule,
     ConvexMesh,
-    TriangleMesh
+    TriangleMesh,
+    // Uma casca convexa dos pontos (hullPoints), montada na hora (a chuteira
+    // do jogador); as quinas arredondam em convexRadius, as faces ficam.
+    ConvexHull
 };
 
 struct PhysicsShape3D {
@@ -72,6 +75,8 @@ struct PhysicsShape3D {
     // radius passa a ser o da tampa -Y.
     float capsuleTopRadius = 0.0f;
     std::shared_ptr<const PhysicsMesh3D> mesh;
+    std::vector<Vec3> hullPoints;
+    float convexRadius = 0.0f;
     std::string materialId = "default";
 };
 

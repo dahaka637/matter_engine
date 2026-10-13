@@ -65,7 +65,7 @@ BallFootBox3D resolveBallFootBox3D(const RagdollProfile3D& profile, const Athlet
         const std::size_t index = legs.foot[side];
         if (index >= profile.links.size()) return box;
         const auto& collider = profile.links[index].collider;
-        if (collider.shape != RagdollColliderShape3D::Box) return box;
+        if (!ragdollColliderHasBox3D(collider)) return box;
         box.center[side] = collider.localPosition;
         box.orientation[side] = collider.localOrientation.normalized();
         box.half[side] = collider.boxHalfExtents;

@@ -1121,7 +1121,7 @@ constexpr float BrakeCrouchOmega = 14.0f;
 constexpr float BrakeRiseMeters = 0.01f;
 
 float footSoleOffset(const RagdollLinkDefinition3D& link) {
-    return link.collider.shape == RagdollColliderShape3D::Box
+    return ragdollColliderHasBox3D(link.collider)
         ? link.collider.boxHalfExtents.z
         : link.collider.radiusMeters;
 }
@@ -1136,7 +1136,13 @@ float lowestColliderOffset(const RagdollLinkDefinition3D& link,
     Quaternion colliderWorldOrientation) {
     const Vec3 up = colliderWorldOrientation.conjugate().rotate(
         { 0.0f, 0.0f, 1.0f });
-    if (link.collider.shape == RagdollColliderShape3D::Box) {
+    // A casca (a chuteira): o vertice que mais desce.
+    if (link.collider.shape == RagdollColliderShape3D::ConvexHull) {
+        float lowest = 0.0f;
+        for (const Vec3& point : link.collider.hullPoints) lowest = std::max(lowest, -dot(up, point));
+        return lowest;
+    }
+    if (ragdollColliderHasBox3D(link.collider)) {
         const Vec3 half = link.collider.boxHalfExtents;
         return std::abs(up.x) * half.x + std::abs(up.y) * half.y
             + std::abs(up.z) * half.z;
@@ -1641,19 +1647,19 @@ void applyBalanceReaction(const RagdollProfile3D& profile,
 Vec3 footBallPushOut(const RagdollLinkDefinition3D& link, Vec3 position, Quaternion orientation,
     Vec3 ball, float radius, float margin) {
     const RagdollCapsuleDefinition3D& collider = link.collider;
-    if (collider.shape != RagdollColliderShape3D::Box) return {};
-    const Vec3 half = collider.boxHalfExtents;
+    if (!ragdollColliderHasBox3D(collider)) return {};
     const Quaternion box = (orientation * collider.localOrientation).normalized();
     Vec3 total {};
     for (int pass = 0; pass < 3; ++pass) {
         const Vec3 center = position + total + orientation.rotate(collider.localPosition);
-        const Vec3 local = box.conjugate().rotate(ball - center);
-        const Vec3 clamped { std::clamp(local.x, -half.x, half.x), std::clamp(local.y, -half.y, half.y),
-            std::clamp(local.z, -half.z, half.z) };
-        const Vec3 closest = center + box.rotate(clamped);
-        const float deficit = radius + margin - (closest - ball).length();
+        // O ponto do pe (a casca da chuteira, ou a caixa) mais perto da bola,
+        // com a distancia com sinal: com o centro da bola dentro do pe, ele
+        // sai pela face mais perto.
+        const RagdollColliderClosest3D near = ragdollColliderClosestPoint3D(collider, box.conjugate().rotate(ball - center));
+        const float deficit = radius + margin - near.distance;
         if (deficit <= 0.0f) break;
-        Vec3 away { closest.x - ball.x, closest.y - ball.y, 0.0f };
+        const Vec3 normal = box.rotate(near.normal);
+        Vec3 away { -normal.x, -normal.y, 0.0f };
         if (away.lengthSquared() < 1e-6f) away = { center.x - ball.x, center.y - ball.y, 0.0f };
         if (away.lengthSquared() < 1e-6f) away = { 1.0f, 0.0f, 0.0f };
         total += away.normalized() * deficit;
@@ -7668,7 +7674,7 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
                 rolled = (Quaternion::fromAxisAngle(normal, yaw) * rolled)
                     .normalized();
             }
-            const Vec3 half = link.collider.shape == RagdollColliderShape3D::Box
+            const Vec3 half = ragdollColliderHasBox3D(link.collider)
                 ? link.collider.boxHalfExtents : Vec3 {};
             const Vec3 toe = link.collider.localPosition
                 + link.collider.localOrientation.rotate(

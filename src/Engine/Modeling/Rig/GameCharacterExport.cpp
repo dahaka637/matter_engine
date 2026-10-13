@@ -1,6 +1,7 @@
 #include "Engine/Modeling/Rig/GameCharacterExport.hpp"
 
 #include "Engine/Animation/AnimationClip3D.hpp"
+#include "Engine/Geometry/ConvexHull3D.hpp"
 #include "Engine/Modeling/Mesh/ShadingNormals.hpp"
 #include "Engine/Modeling/Raster/ImageIO.hpp"
 #include "Engine/Modeling/Rig/GameRig.hpp"
@@ -67,9 +68,11 @@ Quaternion rotationFromX(Vec3 direction) {
     return Quaternion::fromAxisAngle(axis / s, std::atan2(s, c));
 }
 
-// Um colisor medido, no espaco do modelo (o centro e o giro).
+// Um colisor medido, no espaco do modelo (o centro e o giro). A casca
+// convexa (a chuteira) tambem tem a caixa (a justa dela, centrada).
 struct Collider {
     bool box = false;
+    bool hull = false;
     Vec3 center;
     Quaternion orientation;
     float length = 0.0f;
@@ -77,6 +80,9 @@ struct Collider {
     float radiusPositive = 0.0f;
     bool tapered = false;
     Vec3 halfExtents;
+    std::vector<Vec3> hullPoints;
+    std::vector<std::array<std::uint16_t, 3>> hullFaces;
+    float convexRadius = 0.005f;
 };
 
 // Membro (braco, antebraco, coxa, canela; a mao, o pescoco e a cabeca sem
@@ -189,6 +195,54 @@ Collider fitFoot(const std::vector<Vec3>& points, float halfHeight, float ground
     return out;
 }
 
+// O pe: a casca convexa da chuteira (pedido do usuario, 12/10: "cada cantinho
+// do pe em contato com a bola importa"). O rumo e o da caixa de antes (o eixo
+// maior visto de cima); a meia acima de BootTop fica de fora; a sola e plana
+// no chao, no contorno da chuteira (o que fica abaixo de SoleBand desce ao
+// chao: as travas e a placa; a ponta, que sobe, fica como e); a casca para a
+// HullTolerance da exata. O centro e o da caixa justa dela.
+constexpr float BootTop = 0.13f, SoleBand = 0.025f, HullTolerance = 0.0015f, BootConvexRadius = 0.005f;
+Collider fitBoot(const std::vector<Vec3>& points, float ground, std::vector<std::string>& lines) {
+    const Collider guide = fitFoot(points, 0.05f, ground);
+    const Quaternion inverse = guide.orientation.conjugate();
+    std::vector<Vec3> local;
+    local.reserve(points.size());
+    for (const Vec3& p : points) {
+        if (p.z > ground + BootTop) continue;
+        Vec3 q = inverse.rotate(Vec3 { p.x - guide.center.x, p.y - guide.center.y, p.z - ground });
+        if (q.z < SoleBand) q.z = 0.0f;
+        local.push_back(q);
+    }
+    if (local.size() < 64) throw std::runtime_error("a chuteira com poucos pontos para medir");
+    ConvexHull3D shape = buildConvexHull3D(local, HullTolerance, 128);
+    Vec3 low = shape.points.front(), high = low;
+    for (const Vec3& q : shape.points) {
+        low = { std::min(low.x, q.x), std::min(low.y, q.y), std::min(low.z, q.z) };
+        high = { std::max(high.x, q.x), std::max(high.y, q.y), std::max(high.z, q.z) };
+    }
+    const Vec3 middle = (low + high) * 0.5f;
+    for (Vec3& q : shape.points) q = q - middle;
+    // A medida: quanto da chuteira fica fora da casca (a tolerancia, no maximo).
+    float worst = 0.0f;
+    for (const Vec3& q : local) worst = std::max(worst, convexHullOutside3D(shape, q - middle));
+    Collider out;
+    out.box = true;
+    out.hull = true;
+    out.orientation = guide.orientation;
+    out.center = Vec3 { guide.center.x, guide.center.y, ground } + guide.orientation.rotate(middle);
+    out.halfExtents = (high - low) * 0.5f;
+    out.hullPoints = std::move(shape.points);
+    out.hullFaces = std::move(shape.faces);
+    out.convexRadius = BootConvexRadius;
+    char line[256];
+    std::snprintf(line, sizeof line,
+        "chuteira: %zu pontos medidos, casca de %zu vertices e %zu faces, %.1f x %.1f x %.1f cm; a malha fica no maximo "
+        "%.1f mm fora", local.size(), out.hullPoints.size(), out.hullFaces.size(), out.halfExtents.x * 200.0f,
+        out.halfExtents.y * 200.0f, out.halfExtents.z * 200.0f, worst * 1000.0f);
+    lines.push_back(line);
+    return out;
+}
+
 // O eixo de uma capsula: os centros das esferas das pontas e os raios delas.
 struct Segment {
     Vec3 a, b;
@@ -267,7 +321,11 @@ Collider profileCollider(const RagdollLinkDefinition3D& link) {
     const RagdollCapsuleDefinition3D& c = link.collider;
     const Quaternion frame = link.modelOrientation.normalized();
     Collider out;
-    out.box = c.shape == RagdollColliderShape3D::Box;
+    out.box = ragdollColliderHasBox3D(c);
+    out.hull = c.shape == RagdollColliderShape3D::ConvexHull;
+    out.hullPoints = c.hullPoints;
+    out.hullFaces = c.hullFaces;
+    out.convexRadius = c.convexRadiusMeters;
     out.center = link.modelPosition + frame.rotate(c.localPosition);
     out.orientation = (frame * c.localOrientation).normalized();
     out.length = c.lengthMeters;
@@ -281,7 +339,12 @@ Collider profileCollider(const RagdollLinkDefinition3D& link) {
 // Uma linha do colisor (o de antes e o novo, lado a lado).
 std::string describe(const std::string& id, const RagdollCapsuleDefinition3D& before, const Collider& now) {
     char line[256];
-    if (now.box) {
+    if (now.hull) {
+        std::snprintf(line, sizeof line, "%-14s casca %zu vertices, %4.1f x %4.1f x %4.1f cm (antes %4.1f x %4.1f x %4.1f), rumo %+.1f graus",
+            id.c_str(), now.hullPoints.size(), now.halfExtents.x * 200.0f, now.halfExtents.y * 200.0f, now.halfExtents.z * 200.0f,
+            before.boxHalfExtents.x * 200.0f, before.boxHalfExtents.y * 200.0f, before.boxHalfExtents.z * 200.0f,
+            2.0f * std::atan2(now.orientation.z, now.orientation.w) * 57.29578f);
+    } else if (now.box) {
         std::snprintf(line, sizeof line, "%-14s caixa %4.1f x %4.1f x %4.1f cm (antes %4.1f x %4.1f x %4.1f), rumo %+.1f graus", id.c_str(),
             now.halfExtents.x * 200.0f, now.halfExtents.y * 200.0f, now.halfExtents.z * 200.0f, before.boxHalfExtents.x * 200.0f,
             before.boxHalfExtents.y * 200.0f, before.boxHalfExtents.z * 200.0f,
@@ -525,15 +588,15 @@ bool exportGameCharacter(const LoadedPlayerModel& loaded, const std::filesystem:
             } else if (part == "Head") {
                 colliders[i] = fitLimb(start, restOf("HeadTop").value_or(start + Vec3 { 0.0f, 0.0f, 0.2f }), points, 70.0f, false, {});
             } else if (part == "Foot") {
-                if (link.collider.shape != RagdollColliderShape3D::Box) throw std::runtime_error("o pe do perfil sem caixa");
-                colliders[i] = fitFoot(points, link.collider.boxHalfExtents.z, skeleton.groundHeight);
+                if (!ragdollColliderHasBox3D(link.collider)) throw std::runtime_error("o pe do perfil sem caixa nem casca");
+                colliders[i] = fitBoot(points, skeleton.groundHeight, report.lines);
             } else {
                 // O tronco: a capsula deitada do perfil, no lugar novo.
                 const Quaternion orientation = (link.modelOrientation * link.collider.localOrientation).normalized();
                 const Vec3 center = linkPosition[i] + link.modelOrientation.rotate(link.collider.localPosition * scale[i]);
                 colliders[i] = fitTorso(orientation, center, points);
             }
-            if (colliders[i].box != (link.collider.shape == RagdollColliderShape3D::Box))
+            if (colliders[i].box != ragdollColliderHasBox3D(link.collider))
                 throw std::runtime_error("o colisor de " + link.id + " mudou de forma");
         }
         // As coxas afastadas no repouso: sobrepostas, a autocolisao
@@ -753,10 +816,24 @@ bool exportGameCharacter(const LoadedPlayerModel& loaded, const std::filesystem:
             if (profile.links[i].parentIndex >= 0) entry.at("joint")["anchor"] = vector3(anchor[i] + lift);
             const Collider& c = colliders[i];
             const Quaternion linkInverse = profile.links[i].modelOrientation.normalized().conjugate();
-            Json& shape = entry.at(c.box ? "box" : "capsule");
+            if (c.hull && !entry.contains("hull")) {
+                // A caixa vira casca (o material e o sensor continuam).
+                Json previous = entry.at("box");
+                previous.erase("halfExtents");
+                entry.erase("box");
+                entry["hull"] = previous;
+            }
+            Json& shape = entry.at(c.hull ? "hull" : c.box ? "box" : "capsule");
             shape["position"] = vector3(linkInverse.rotate(c.center - linkPosition[i]));
             shape["orientation"] = quaternion4(linkInverse * c.orientation);
-            if (c.box) {
+            if (c.hull) {
+                Json hullPoints = Json::array(), hullFaces = Json::array();
+                for (const Vec3& q : c.hullPoints) hullPoints.push_back(vector3(q));
+                for (const auto& face : c.hullFaces) hullFaces.push_back(Json::array({ face[0], face[1], face[2] }));
+                shape["convexRadius"] = rounded(c.convexRadius);
+                shape["points"] = hullPoints;
+                shape["faces"] = hullFaces;
+            } else if (c.box) {
                 shape["halfExtents"] = vector3(c.halfExtents);
             } else {
                 shape["length"] = rounded(c.length);

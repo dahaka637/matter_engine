@@ -124,7 +124,7 @@ void BodilyGetUp3D::resolveLinks(const RagdollProfile3D& profile) {
         links.hipInPelvis[side] = anchorInParent(profile, links.thigh[side]);
         // Bola do pe: na frente da sola, embaixo.
         const RagdollCapsuleDefinition3D& foot = profile.links[links.foot[side]].collider;
-        const Vec3 half = foot.shape == RagdollColliderShape3D::Box
+        const Vec3 half = ragdollColliderHasBox3D(foot)
             ? foot.boxHalfExtents : Vec3 { 0.14f, 0.05f, 0.065f };
         links.ballInFoot[side] = foot.localPosition
             + foot.localOrientation.rotate({ 0.62f * half.x, 0.0f, -half.z });

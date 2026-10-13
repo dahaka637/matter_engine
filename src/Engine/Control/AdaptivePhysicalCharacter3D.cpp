@@ -325,13 +325,22 @@ void AdaptivePhysicalCharacter3D::update(const RagdollProfile3D& profile,
         const auto& body = state.links[footLink[side]];
         const Quaternion box = (body.orientation * link.collider.localOrientation).normalized();
         const Vec3 center = body.position + body.orientation.rotate(link.collider.localPosition);
-        const Vec3 half = link.collider.shape == RagdollColliderShape3D::Box
-            ? link.collider.boxHalfExtents : Vec3 { 0.12f, 0.05f, 0.03f };
-        for (const float sx : { -1.0f, 1.0f }) {
-            for (const float sy : { -1.0f, 1.0f }) {
-                Vec3 corner = center + box.rotate({ sx * half.x, sy * half.y, 0.0f });
+        if (ragdollColliderHasBox3D(link.collider)) {
+            // O contorno de verdade da sola (a casca da chuteira afina no
+            // calcanhar e na ponta; o retangulo dava apoio onde nao ha sola).
+            for (const Vec3& point : ragdollColliderSolePoints3D(link.collider)) {
+                Vec3 corner = center + box.rotate({ point.x, point.y, 0.0f });
                 corner.z = 0;
                 soles.push_back(corner);
+            }
+        } else {
+            const Vec3 half { 0.12f, 0.05f, 0.03f };
+            for (const float sx : { -1.0f, 1.0f }) {
+                for (const float sy : { -1.0f, 1.0f }) {
+                    Vec3 corner = center + box.rotate({ sx * half.x, sy * half.y, 0.0f });
+                    corner.z = 0;
+                    soles.push_back(corner);
+                }
             }
         }
     }

@@ -632,7 +632,7 @@ void dumpFrame(FILE* file, const RagdollProfile3D& profile, const RagdollAnimati
         const auto& collider = profile.links[i].collider;
         const Vec3 center = pose.linkPositions[i] + pose.linkOrientations[i].rotate(collider.localPosition);
         const Quaternion q = (pose.linkOrientations[i] * collider.localOrientation).normalized();
-        if (collider.shape == RagdollColliderShape3D::Box) {
+        if (ragdollColliderHasBox3D(collider)) {
             std::fprintf(file, "B %s %.4f %.4f %.4f %.5f %.5f %.5f %.5f %.4f %.4f %.4f\n", profile.links[i].id.c_str(),
                 center.x, center.y, center.z, q.x, q.y, q.z, q.w,
                 collider.boxHalfExtents.x, collider.boxHalfExtents.y, collider.boxHalfExtents.z);
@@ -647,7 +647,7 @@ void dumpFrame(FILE* file, const RagdollProfile3D& profile, const RagdollAnimati
 // A sola: o canto mais baixo da caixa do pe.
 float soleHeight(const RagdollLinkDefinition3D& link, Vec3 position, Quaternion orientation) {
     const auto& c = link.collider;
-    if (c.shape != RagdollColliderShape3D::Box) return position.z;
+    if (!ragdollColliderHasBox3D(c)) return position.z;
     const Vec3 center = position + orientation.rotate(c.localPosition);
     const Quaternion q = (orientation * c.localOrientation).normalized();
     float lowest = 1e9f;

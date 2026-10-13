@@ -514,10 +514,10 @@ std::string renderRagdollDynamicLabPoseDump3D(
                 const PhysicsBodyState3D& state = frame.links[index];
                 const Vec3 center = state.position + state.orientation.rotate(link.collider.localPosition);
                 const Quaternion orientation = (state.orientation * link.collider.localOrientation).normalized();
-                output << (link.collider.shape == RagdollColliderShape3D::Box ? "B " : "C ") << link.id << ' '
+                output << (ragdollColliderHasBox3D(link.collider) ? "B " : "C ") << link.id << ' '
                        << std::setprecision(5) << center.x << ' ' << center.y << ' ' << center.z << ' ' << orientation.x
                        << ' ' << orientation.y << ' ' << orientation.z << ' ' << orientation.w;
-                if (link.collider.shape == RagdollColliderShape3D::Box) {
+                if (ragdollColliderHasBox3D(link.collider)) {
                     output << ' ' << link.collider.boxHalfExtents.x << ' ' << link.collider.boxHalfExtents.y << ' '
                            << link.collider.boxHalfExtents.z;
                 } else {

@@ -482,6 +482,7 @@ void BallControl3D::resolve(const RagdollProfile3D& profile) {
         const std::size_t shin = findLink(shins[side]);
         if (geometry.link != 0 && geometry.hip != 0 && shin != 0) {
             const auto& collider = profile.links[geometry.link].collider;
+            geometry.collider = collider;
             geometry.center = collider.localPosition;
             geometry.half = collider.boxHalfExtents;
             geometry.boxOrientation = collider.localOrientation;
@@ -2260,14 +2261,10 @@ bool BallControl3D::hitboxTouch(const BallControlInput3D& input, const BallContr
         orientation = (body.orientation * f.boxOrientation).normalized();
     }
     const float margin = hitboxMargin(input);
-    const Vec3 half = f.half + Vec3 { margin, margin, margin };
     const Vec3 ball = input.ballPosition;
-    {
-        const Vec3 local = orientation.conjugate().rotate(ball - center);
-        const Vec3 clamped { std::clamp(local.x, -f.half.x, f.half.x), std::clamp(local.y, -f.half.y, f.half.y),
-            std::clamp(local.z, -f.half.z, f.half.z) };
-        m_hitGap = (local - clamped).length() - input.ballRadius;
-    }
+    // A folga da bola ao pe de verdade (a casca da chuteira: cada canto conta).
+    m_hitGap = ragdollColliderClosestPoint3D(f.collider, orientation.conjugate().rotate(ball - center)).distance
+        - input.ballRadius;
     if (!m_hitPrevious) {
         m_hitCenter = center;
         m_hitOrientation = orientation;
@@ -2284,10 +2281,7 @@ bool BallControl3D::hitboxTouch(const BallControlInput3D& input, const BallContr
         const Vec3 c = m_hitCenter + (center - m_hitCenter) * u;
         const Quaternion q = slerpQuat(m_hitOrientation, orientation, u);
         const Vec3 b = m_hitBall + (ball - m_hitBall) * u;
-        const Vec3 local = q.conjugate().rotate(b - c);
-        const Vec3 clamped { std::clamp(local.x, -half.x, half.x), std::clamp(local.y, -half.y, half.y),
-            std::clamp(local.z, -half.z, half.z) };
-        hit = (local - clamped).length() <= input.ballRadius;
+        hit = ragdollColliderClosestPoint3D(f.collider, q.conjugate().rotate(b - c)).distance <= input.ballRadius + margin;
     }
     m_hitPrevious = true;
     m_hitCenter = center;

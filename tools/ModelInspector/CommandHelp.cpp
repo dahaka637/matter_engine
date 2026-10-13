@@ -56,7 +56,7 @@ COMANDOS
   colisores   o perfil fisico sobre a malha, em repouso ou num clipe (com BUILD_RL):
               --perfil <ragdoll.json> --pose sprint@0.3
               --poses repouso,sprint@0.3,jump_standing@0.35 (uma matriz)
-              --vistas frente,direita,cima --modo raiox
+              --vistas frente,direita,cima --modo raiox  --link LeftFoot (so aquele osso, de perto)
               azul/esquerda, laranja/direita, branco/centro, amarelo/COM,
               magenta/juntas, cruz cinza/origem do link
   exportar-jogo  o jogador para o jogo (o personagem do laboratorio): o perfil fisico

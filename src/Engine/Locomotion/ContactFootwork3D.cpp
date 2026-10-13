@@ -709,7 +709,7 @@ Vec3 ContactFootwork3D::locomotionLanding(const RagdollProfile3D& profile,
     const float growth = std::exp(omega * period);
     const Vec3 offset = desired * (period / std::max(0.05f, growth - 1.0f));
     const RagdollLinkDefinition3D& link = profile.links[m_feet[side]];
-    const Vec3 half = link.collider.shape == RagdollColliderShape3D::Box
+    const Vec3 half = ragdollColliderHasBox3D(link.collider)
         ? link.collider.boxHalfExtents : Vec3 {};
     Vec3 soleOffset = orientation.rotate(link.collider.localPosition
         + link.collider.localOrientation.rotate({ 0.0f, 0.0f, -half.z }));
@@ -760,7 +760,7 @@ Vec3 ContactFootwork3D::predictedLocomotionLanding(const RagdollProfile3D& profi
     const float omega = std::clamp(physical.captureOmega, 1.0f, 6.0f);
     const float remaining = std::max(0.0f, foot.swingDurationSeconds - foot.swingSeconds);
     const RagdollLinkDefinition3D& link = profile.links[m_feet[side]];
-    const Vec3 half = link.collider.shape == RagdollColliderShape3D::Box
+    const Vec3 half = ragdollColliderHasBox3D(link.collider)
         ? link.collider.boxHalfExtents : Vec3 {};
     const Vec3 soleOffset = planar(orientation.rotate(link.collider.localPosition
         + link.collider.localOrientation.rotate({ 0.0f, 0.0f, -half.z })));
@@ -852,7 +852,7 @@ Vec3 ContactFootwork3D::captureLanding(const RagdollProfile3D& profile,
     // Da sola (onde vai o ponto de captura) para a origem do link (o que o IK
     // recebe), na orientacao do pouso.
     const RagdollLinkDefinition3D& link = profile.links[m_feet[side]];
-    const Vec3 half = link.collider.shape == RagdollColliderShape3D::Box
+    const Vec3 half = ragdollColliderHasBox3D(link.collider)
         ? link.collider.boxHalfExtents : Vec3 {};
     Vec3 soleOffset = orientation.rotate(link.collider.localPosition
         + link.collider.localOrientation.rotate({ 0.0f, 0.0f, -half.z }));
@@ -985,7 +985,7 @@ Vec3 ContactFootwork3D::brakeLanding(const RagdollProfile3D& profile,
         + outwardBody * (BrakeHalfWidth * (1.0f - std::abs(sideways)));
     // Da sola para a origem do link (o que o IK recebe), na orientacao do pouso.
     const RagdollLinkDefinition3D& link = profile.links[m_feet[side]];
-    const Vec3 half = link.collider.shape == RagdollColliderShape3D::Box
+    const Vec3 half = ragdollColliderHasBox3D(link.collider)
         ? link.collider.boxHalfExtents : Vec3 {};
     Vec3 soleOffset = orientation.rotate(link.collider.localPosition
         + link.collider.localOrientation.rotate({ 0.0f, 0.0f, -half.z }));
@@ -1658,7 +1658,7 @@ void ContactFootwork3D::update(const RagdollProfile3D& profile,
             const Vec3 at = inAir ? foot.goalWorld : foot.anchorWorld;
             const Quaternion orientation = inAir ? foot.liftoffOrientationWorld
                 : foot.anchorOrientationWorld;
-            const Vec3 half = link.collider.shape == RagdollColliderShape3D::Box
+            const Vec3 half = ragdollColliderHasBox3D(link.collider)
                 ? link.collider.boxHalfExtents
                 : Vec3 { link.collider.radiusMeters, link.collider.radiusMeters,
                     link.collider.radiusMeters };

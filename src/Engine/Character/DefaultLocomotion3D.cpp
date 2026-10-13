@@ -167,7 +167,7 @@ void solveFoot(const RagdollProfile3D& profile, std::vector<Vec3>& coordinates, 
 // base dos dedos (tanto atras da frente) - na frente dela os dedos dobram.
 float soleHeight(const RagdollLinkDefinition3D& link, Vec3 position, Quaternion orientation, float toeLength = 0.0f) {
     const auto& c = link.collider;
-    if (c.shape != RagdollColliderShape3D::Box) return position.z;
+    if (!ragdollColliderHasBox3D(c)) return position.z;
     const Vec3 center = position + orientation.rotate(c.localPosition);
     const Quaternion box = (orientation * c.localOrientation).normalized();
     const Vec3 h = c.boxHalfExtents;

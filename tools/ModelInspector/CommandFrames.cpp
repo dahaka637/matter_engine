@@ -40,7 +40,7 @@ using namespace Modeling;
 //   --instantes t0,t1,...  ou  --de A --ate B --quadros K (padrao: 8 no cenario)
 //   --vista <id> ou --yaw/--pitch   --seguir 0|1   --distancia <m>   --chao <z do mundo>
 //   --colunas C   --largura/--altura (de cada quadro)   --modo <id>   --saida <png>
-//   --colisores 1 (as shapes fisicas por cima, com BUILD_RL)
+//   --colisores 1 (as shapes fisicas por cima, com BUILD_RL)   --alvo <link> (a camera mira o osso)
 namespace {
 
 struct DumpLink {
@@ -351,6 +351,10 @@ int runFrames(const ModelContext& context, const CommandLine& line) {
         OrbitCamera camera;
         const Vec3 pelvis = toSkeleton(pelvisWorld);
         camera.target = { pelvis.x, pelvis.y, pelvis.z - 0.04f };
+        // --alvo <link>: a camera mira aquele osso (a chuteira de perto).
+        if (const std::string aim = line.text("alvo", ""); !aim.empty())
+            for (std::size_t i = 0; i < profile.links.size(); ++i)
+                if (profile.links[i].id == aim) camera.target = toSkeleton(links.linkPositions[i]);
         camera.yaw = yaw * DegreesToRadians;
         camera.pitch = pitch * DegreesToRadians;
         camera.distance = distance;

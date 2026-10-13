@@ -19,7 +19,13 @@ Vec3 clampLength(Vec3 v, float maximum) {
 // Ponto mais baixo do colisor abaixo do centro dele, na orientacao atual.
 float lowestOffset(const RagdollLinkDefinition3D& link, Quaternion colliderWorld) {
     const Vec3 up = colliderWorld.conjugate().rotate({ 0.0f, 0.0f, 1.0f });
-    if (link.collider.shape == RagdollColliderShape3D::Box) {
+    // A casca (a chuteira): o vertice que mais desce.
+    if (link.collider.shape == RagdollColliderShape3D::ConvexHull) {
+        float lowest = 0.0f;
+        for (const Vec3& point : link.collider.hullPoints) lowest = std::max(lowest, -dot(up, point));
+        return lowest;
+    }
+    if (ragdollColliderHasBox3D(link.collider)) {
         const Vec3 half = link.collider.boxHalfExtents;
         return std::abs(up.x) * half.x + std::abs(up.y) * half.y
             + std::abs(up.z) * half.z;
@@ -166,15 +172,19 @@ const CharacterPhysicalState3D& CharacterStateEstimator3D::update(
         const PhysicsBodyState3D& body = state.links[index];
         const Quaternion shape = body.orientation * link.collider.localOrientation;
         const Vec3 center = body.position + body.orientation.rotate(link.collider.localPosition);
-        const Vec3 half = link.collider.shape == RagdollColliderShape3D::Box
+        const Vec3 half = ragdollColliderHasBox3D(link.collider)
             ? link.collider.boxHalfExtents
             : Vec3 { link.collider.radiusMeters, link.collider.radiusMeters,
                 link.collider.radiusMeters };
-        std::size_t corner = 0;
-        for (const float sx : { -1.0f, 1.0f }) {
-            for (const float sy : { -1.0f, 1.0f }) {
-                foot.soleCornersWorld[corner++] = center + shape.rotate({ sx * half.x, sy * half.y, -half.z });
-            }
+        foot.soleCornersWorld.clear();
+        if (ragdollColliderHasBox3D(link.collider)) {
+            // O contorno de verdade da sola (a chuteira afina no calcanhar e na ponta).
+            for (const Vec3& point : ragdollColliderSolePoints3D(link.collider))
+                foot.soleCornersWorld.push_back(center + shape.rotate(point));
+        } else {
+            for (const float sx : { -1.0f, 1.0f })
+                for (const float sy : { -1.0f, 1.0f })
+                    foot.soleCornersWorld.push_back(center + shape.rotate({ sx * half.x, sy * half.y, -half.z }));
         }
         foot.soleCenterWorld = center + shape.rotate({ 0.0f, 0.0f, -half.z });
         foot.soleLowestHeight = center.z - lowestOffset(link, shape);

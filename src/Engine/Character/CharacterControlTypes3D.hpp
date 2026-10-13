@@ -3,6 +3,7 @@
 #include "Engine/Physics/PhysicsScene3D.hpp"
 
 #include <array>
+#include <vector>
 #include <cstdint>
 
 namespace MatterEngine {
@@ -60,8 +61,9 @@ struct FootSupportEstimate3D {
     float supportingSeconds = 0.0f;
     // Apoiado em corpo movel (caixa, outro personagem).
     bool onDynamicBody = false;
-    // Cantos da sola (mundo) e o ponto mais baixo dela.
-    std::array<Vec3, 4> soleCornersWorld {};
+    // O contorno da sola (mundo: os 4 cantos da caixa, ou o da chuteira) e o
+    // ponto mais baixo dela.
+    std::vector<Vec3> soleCornersWorld;
     Vec3 soleCenterWorld;
     float soleLowestHeight = 0.0f;
     // Velocidade do centro da sola (mundo): escorregar/arrastar.

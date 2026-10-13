@@ -646,6 +646,7 @@ add_library(MatterEngine STATIC
     src/Engine/Math/ShadowCascade.cpp
     src/Engine/Environment/WindSystem.cpp
     src/Engine/Geometry/MeshData3D.cpp
+    src/Engine/Geometry/ConvexHull3D.cpp
     src/Engine/Geometry/ProceduralSoccerBall3D.cpp
     src/Engine/Geometry/GltfLoader.cpp
     src/Engine/Geometry/GltfPhysicsMetadata3D.cpp

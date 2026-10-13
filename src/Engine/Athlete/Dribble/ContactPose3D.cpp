@@ -46,7 +46,7 @@ ContactFeet3D resolveContactFeet3D(const RagdollProfile3D& profile) {
     for (std::size_t side = 0; side < 2; ++side) {
         const std::size_t link = feet.legs.foot[side];
         const RagdollCapsuleDefinition3D& collider = profile.links[link].collider;
-        if (collider.shape != RagdollColliderShape3D::Box) return feet;
+        if (!ragdollColliderHasBox3D(collider)) return feet;
         feet.boxCenter[side] = collider.localPosition;
         feet.boxOrientation[side] = collider.localOrientation;
         feet.boxHalf[side] = collider.boxHalfExtents;

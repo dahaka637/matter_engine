@@ -36,7 +36,11 @@ enum class RagdollAxis3D : std::uint8_t {
 
 enum class RagdollColliderShape3D : std::uint8_t {
     Capsule,
-    Box
+    Box,
+    // Casca convexa (a chuteira): pontos e faces no referencial do colisor.
+    // boxHalfExtents e a caixa justa dela, centrada (o contorno da sola, a
+    // ponta e o calcanhar para quem so precisa deles).
+    ConvexHull
 };
 
 struct RagdollCapsuleDefinition3D;
@@ -46,6 +50,27 @@ struct RagdollCapsuleDefinition3D;
 // Meia distância entre os centros das duas esferas das pontas.
 [[nodiscard]] float ragdollCapsuleHalfSegment3D(
     const RagdollCapsuleDefinition3D& capsule);
+// O colisor tem caixa (a dele, ou a justa de uma casca convexa): os que leem o
+// contorno de um pe (a sola, a ponta, o calcanhar) aceitam os dois.
+[[nodiscard]] bool ragdollColliderHasBox3D(const RagdollCapsuleDefinition3D& collider);
+// O ponto do colisor mais perto de um ponto, tudo no referencial do colisor
+// (localPosition/localOrientation): a distancia com sinal (negativa por
+// dentro) e a normal de fora no ponto. Caixa, capsula e casca convexa exatas.
+struct RagdollColliderClosest3D {
+    Vec3 point;
+    Vec3 normal { 0.0f, 0.0f, 1.0f };
+    float distance = 0.0f;
+};
+[[nodiscard]] RagdollColliderClosest3D ragdollColliderClosestPoint3D(
+    const RagdollCapsuleDefinition3D& collider, Vec3 localPoint);
+// Os pontos de canto do colisor no referencial dele (os 8 da caixa, os da
+// casca; a capsula, os das duas tampas nos 6 rumos): o mais baixo no mundo, a
+// sola de um pe, sai deles.
+[[nodiscard]] std::vector<Vec3> ragdollColliderCorners3D(const RagdollCapsuleDefinition3D& collider);
+// O contorno da sola (o apoio no chao) no referencial do colisor: os 4 cantos
+// de baixo da caixa; na casca, os vertices do plano de baixo (ate 16, os de
+// mais longe em cada rumo, em volta). A capsula: as duas tampas por baixo.
+[[nodiscard]] std::vector<Vec3> ragdollColliderSolePoints3D(const RagdollCapsuleDefinition3D& collider);
 
 struct RagdollAxisDefinition3D {
     bool enabled = false;
@@ -69,7 +94,17 @@ struct RagdollCapsuleDefinition3D {
     float radiusAtPositiveXMeters = 0.0f;
     // Usado quando shape == Box. Mantemos o mesmo container para não
     // fragmentar o contrato do perfil; cada shape valida apenas seus campos.
+    // Numa casca convexa, a caixa justa dela (o leitor a calcula e centra).
     Vec3 boxHalfExtents { 0.05f, 0.05f, 0.05f };
+    // Usados quando shape == ConvexHull: os vertices e os triangulos (indices),
+    // no referencial do colisor; os planos das faces (normal para fora e o
+    // deslocamento, n.p <= d dentro), que o leitor calcula; e o arredondamento
+    // das quinas na fisica (m; as faces ficam onde estao).
+    std::vector<Vec3> hullPoints;
+    std::vector<std::array<std::uint16_t, 3>> hullFaces;
+    std::vector<std::array<float, 4>> hullPlanes;
+    std::vector<Vec3> hullSole;
+    float convexRadiusMeters = 0.005f;
     std::string materialId = "default";
     // Contatos detalhados são caros e, portanto, opt-in por link. Pés usam
     // esta telemetria para suporte/CoP; mãos e joelhos poderão habilitá-la

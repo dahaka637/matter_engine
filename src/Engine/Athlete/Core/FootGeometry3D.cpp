@@ -14,7 +14,7 @@ AthleteFootGeometry3D resolveAthleteFootGeometry3D(const RagdollProfile3D& profi
         const std::size_t index = legs.foot[side];
         if (index >= profile.links.size()) return geometry;
         const RagdollLinkDefinition3D& foot = profile.links[index];
-        if (foot.collider.shape != RagdollColliderShape3D::Box) return geometry;
+        if (!ragdollColliderHasBox3D(foot.collider)) return geometry;
         geometry.link[side] = index;
         geometry.flat[side] = foot.modelOrientation.normalized();
         // Os cantos da caixa no modelo (o pe plano); a face de baixo.

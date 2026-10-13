@@ -1053,7 +1053,7 @@ void dumpPose(FILE* file, float t, int state, int phase, const RagdollProfile3D&
         const auto& collider = profile.links[i].collider;
         const Vec3 center = body.links[i].position + body.links[i].orientation.rotate(collider.localPosition);
         const Quaternion q = (body.links[i].orientation * collider.localOrientation).normalized();
-        if (collider.shape == RagdollColliderShape3D::Box) {
+        if (ragdollColliderHasBox3D(collider)) {
             std::fprintf(file, "B %s %.4f %.4f %.4f %.5f %.5f %.5f %.5f %.4f %.4f %.4f\n", profile.links[i].id.c_str(),
                 center.x, center.y, center.z, q.x, q.y, q.z, q.w,
                 collider.boxHalfExtents.x, collider.boxHalfExtents.y, collider.boxHalfExtents.z);

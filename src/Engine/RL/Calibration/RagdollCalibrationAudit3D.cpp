@@ -26,7 +26,7 @@ float capsuleVolume(const RagdollCapsuleDefinition3D& collider) {
 }
 
 float colliderVolume(const RagdollCapsuleDefinition3D& collider) {
-    if (collider.shape == RagdollColliderShape3D::Box) {
+    if (ragdollColliderHasBox3D(collider)) {
         return 8.0f * collider.boxHalfExtents.x * collider.boxHalfExtents.y * collider.boxHalfExtents.z;
     }
     return capsuleVolume(collider);
@@ -68,7 +68,7 @@ float colliderSizeDifference(const RagdollCapsuleDefinition3D& first, const Ragd
     if (first.shape != second.shape) {
         return std::numeric_limits<float>::infinity();
     }
-    if (first.shape == RagdollColliderShape3D::Box) {
+    if (ragdollColliderHasBox3D(first)) {
         return maximumComponentDifference(first.boxHalfExtents, second.boxHalfExtents);
     }
     return std::max(
@@ -267,7 +267,7 @@ std::string renderRagdollCalibrationMarkdown3D(const RagdollCalibrationAudit3D& 
                << " | " << fixed(link.massKg, 3) << " kg | " << fixed(link.massFraction, 5) << " | `"
                << fixed(link.centerOfMassModel.x) << ", " << fixed(link.centerOfMassModel.y) << ", "
                << fixed(link.centerOfMassModel.z) << "` | ";
-        if (link.colliderShape == RagdollColliderShape3D::Box) {
+        if ((link.colliderShape == RagdollColliderShape3D::Box || link.colliderShape == RagdollColliderShape3D::ConvexHull)) {
             output << "caixa `" << fixed(2.0f * link.boxHalfExtents.x, 3) << " x "
                    << fixed(2.0f * link.boxHalfExtents.y, 3) << " x " << fixed(2.0f * link.boxHalfExtents.z, 3)
                    << "` m";

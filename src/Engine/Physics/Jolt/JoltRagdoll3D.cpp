@@ -163,8 +163,12 @@ RagdollHandle3D PhysicsScene3D::createRagdoll(const RagdollProfile3D& profile, c
         const auto& link = profile.links[i];
         settings.mSkeleton->AddJoint(link.id.c_str(), link.parentIndex);
         PhysicsShape3D collider;
-        collider.type = link.collider.shape == RagdollColliderShape3D::Box ? PhysicsShapeType3D::Box : PhysicsShapeType3D::Capsule;
+        collider.type = link.collider.shape == RagdollColliderShape3D::Box ? PhysicsShapeType3D::Box
+            : link.collider.shape == RagdollColliderShape3D::ConvexHull     ? PhysicsShapeType3D::ConvexHull
+                                                                            : PhysicsShapeType3D::Capsule;
         collider.halfExtents = link.collider.boxHalfExtents;
+        collider.hullPoints = link.collider.hullPoints;
+        collider.convexRadius = link.collider.convexRadiusMeters;
         collider.radius = link.collider.radiusMeters;
         // Conica: a tampa +X do perfil vira a +Y do Jolt (a rotacao abaixo).
         collider.capsuleTopRadius = link.collider.radiusAtPositiveXMeters;

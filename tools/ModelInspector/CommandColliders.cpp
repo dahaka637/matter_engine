@@ -103,6 +103,49 @@ Box3 boundsIncludingHighlights(
     return bounds;
 }
 
+// Com --link: o colisor daquele osso, com uma folga (as malhas em volta
+// entram no quadro so ate ela).
+std::optional<Box3> linkBounds(const RagdollColliderWireframe3D& wireframe, const std::string& link, float margin) {
+    if (link.empty()) return std::nullopt;
+    for (const RagdollColliderWireframeLink3D& entry : wireframe.links) {
+        if (entry.linkId != link) continue;
+        Box3 bounds;
+        for (const auto& [a, b] : entry.segments) {
+            bounds.include(a);
+            bounds.include(b);
+        }
+        bounds.include(bounds.minimum - Vec3 { margin, margin, margin });
+        bounds.include(bounds.maximum + Vec3 { margin, margin, margin });
+        return bounds;
+    }
+    return std::nullopt;
+}
+
+// A malha do rig fica no espaco da modelagem (o chao fixo dela) e o perfil no
+// do jogo (a pelve na origem): o wireframe vai para o da malha pela pelve
+// (sem isso, depois de uma exportacao que muda a altura de pe, os colisores
+// apareciam deslocados da malha).
+RagdollColliderWireframe3D alignedToRig(const RagdollColliderWireframe3D& wireframe, const GameRig& rig,
+    const SkeletonPose& pose, Vec3 rootLink) {
+    for (std::size_t j = 0; j < rig.link.size() && j < pose.joints.size(); ++j) {
+        if (rig.link[j] != 0) continue;
+        const Vec3 delta = pose.joints[j].position - rootLink;
+        RagdollColliderWireframe3D moved = wireframe;
+        for (RagdollColliderWireframeLink3D& link : moved.links) {
+            for (auto& [a, b] : link.segments) {
+                a = a + delta;
+                b = b + delta;
+            }
+            link.linkOriginModel = link.linkOriginModel + delta;
+            link.colliderCenterModel = link.colliderCenterModel + delta;
+            link.centerOfMassModel = link.centerOfMassModel + delta;
+            link.inboundJointModel = link.inboundJointModel + delta;
+        }
+        return moved;
+    }
+    return wireframe;
+}
+
 } // namespace
 
 int runColliders(const ModelContext& context, const CommandLine& line) {
@@ -137,11 +180,13 @@ int runColliders(const ModelContext& context, const CommandLine& line) {
             }
             const RagdollAnimationPose3D physicalPose = sampleRagdollAnimationPose3D(
                 profile, poseRequest->clip ? &*poseRequest->clip : nullptr, poseRequest->timeSeconds, true);
-            const RagdollColliderWireframe3D posedWireframe = poseRagdollColliderWireframe3D(
-                profile, wireframe, physicalPose.linkPositions, physicalPose.linkOrientations, true);
             const SkeletonPose visualPose = sampleGameRigPose(*context.loaded.character, *context.loaded.rig,
                 poseRequest->clip ? &*poseRequest->clip : nullptr, poseRequest->timeSeconds, RigHandPose::Relaxed,
                 true);
+            const RagdollColliderWireframe3D posed = poseRagdollColliderWireframe3D(
+                profile, wireframe, physicalPose.linkPositions, physicalPose.linkOrientations, true);
+            const RagdollColliderWireframe3D posedWireframe = alignedToRig(posed, *context.loaded.rig, visualPose,
+                posed.links.front().linkOriginModel);
             std::vector<Vec3> posedMesh;
             if (context.model().mesh.hasSkin())
                 posedMesh =
@@ -151,7 +196,8 @@ int runColliders(const ModelContext& context, const CommandLine& line) {
             scene.pose = &visualPose;
             scene.meshPositions = posedMesh;
             scene.highlights = highlights;
-            const Box3 completeBounds = boundsIncludingHighlights(scene, highlights, context.region("visao_geral"));
+            const Box3 completeBounds = linkBounds(posedWireframe, line.text("link", ""), 0.04f)
+                                            .value_or(boundsIncludingHighlights(scene, highlights, context.region("visao_geral")));
 
             for (const std::string& view : views) {
                 CommandLine panelLine = line;
@@ -199,8 +245,6 @@ int runColliders(const ModelContext& context, const CommandLine& line) {
             profile, wireframe, physicalPose.linkPositions, physicalPose.linkOrientations, true);
     }
 
-    const std::vector<Highlight> highlights = colliderHighlights(wireframe);
-
     // Sem --pose, converte a pose A de autoria para a pose T fisica. Com um
     // clipe, o ModelContext ja fornece exatamente a mesma amostra visual usada
     // acima para os links do ragdoll.
@@ -214,8 +258,11 @@ int runColliders(const ModelContext& context, const CommandLine& line) {
         scene.pose = &*rest;
         scene.meshPositions = restMesh;
     }
+    if (scene.pose) wireframe = alignedToRig(wireframe, *context.loaded.rig, *scene.pose, wireframe.links.front().linkOriginModel);
+    const std::vector<Highlight> highlights = colliderHighlights(wireframe);
     scene.highlights = highlights;
-    const Box3 completeBounds = boundsIncludingHighlights(scene, highlights, context.region("visao_geral"));
+    const Box3 completeBounds = linkBounds(wireframe, line.text("link", ""), 0.04f)
+                                    .value_or(boundsIncludingHighlights(scene, highlights, context.region("visao_geral")));
     std::vector<std::string> views = line.list("vistas");
     if (views.empty()) views = { "frente", "direita", "cima" };
     const int panelWidth = line.integer("largura", 620);

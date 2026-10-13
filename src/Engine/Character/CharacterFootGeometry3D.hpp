@@ -17,7 +17,7 @@ namespace MatterEngine {
 inline float lowestColliderOffset3D(const RagdollLinkDefinition3D& link,
     Quaternion colliderWorldOrientation) {
     const Vec3 up = colliderWorldOrientation.conjugate().rotate({ 0.0f, 0.0f, 1.0f });
-    if (link.collider.shape == RagdollColliderShape3D::Box) {
+    if (ragdollColliderHasBox3D(link.collider)) {
         const Vec3 half = link.collider.boxHalfExtents;
         return std::abs(up.x) * half.x + std::abs(up.y) * half.y + std::abs(up.z) * half.z;
     }
@@ -48,7 +48,7 @@ inline float footYaw3D(const RagdollLinkDefinition3D& link, Quaternion orientati
 
 // A bola do pe (60% do caminho para a ponta, na sola), no referencial do link.
 inline Vec3 footBallLocal3D(const RagdollLinkDefinition3D& link) {
-    const Vec3 half = link.collider.shape == RagdollColliderShape3D::Box
+    const Vec3 half = ragdollColliderHasBox3D(link.collider)
         ? link.collider.boxHalfExtents : Vec3 {};
     return link.collider.localPosition
         + link.collider.localOrientation.rotate({ half.x * 0.6f, 0.0f, -half.z });

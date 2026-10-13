@@ -6,6 +6,7 @@
 #include "Engine/Core/TaskScheduler.hpp"
 #include "Engine/Environment/OceanSurface.hpp"
 #include "Engine/Environment/WindSystem.hpp"
+#include "Engine/Geometry/ConvexHull3D.hpp"
 #include "Engine/Geometry/GltfAcousticZone3D.hpp"
 #include "Engine/Geometry/GltfPhysicsMetadata3D.hpp"
 #include "Engine/Materials/MaterialLibrary.hpp"
@@ -32,6 +33,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <random>
 #include <span>
 #include <stdexcept>
 #include <string>
@@ -1280,6 +1282,110 @@ void testAcousticZoneParsing() {
     threw = true;
   }
   require(threw, "radius invalido nao lancou std::invalid_argument");
+}
+
+// A casca convexa: um cubo vira 8 vertices e 12 triangulos; numa nuvem, todos
+// os pontos ficam dentro, e com tolerancia ela fica no maximo isso por dentro,
+// com menos vertices. Pontos num plano nao tem casca.
+void testConvexHull() {
+  std::vector<Vec3> cube;
+  for (const float x : {-1.0f, 1.0f})
+    for (const float y : {-1.0f, 1.0f})
+      for (const float z : {-1.0f, 1.0f}) cube.push_back({x, y, z});
+  cube.push_back({0.2f, 0.1f, -0.3f});
+  const ConvexHull3D box = buildConvexHull3D(cube);
+  require(box.points.size() == 8 && box.faces.size() == 12, "o cubo vira 8 vertices e 12 triangulos");
+  for (const Vec3 &point : cube)
+    require(convexHullOutside3D(box, point) <= 1.0e-5f, "nenhum ponto do cubo fica fora da casca");
+  std::mt19937 rng(7);
+  std::normal_distribution<float> normal(0.0f, 1.0f);
+  std::uniform_real_distribution<float> radius(0.3f, 1.0f);
+  std::vector<Vec3> cloud;
+  for (int i = 0; i < 3000; ++i) {
+    const Vec3 direction = Vec3{normal(rng), normal(rng), normal(rng)}.normalized();
+    cloud.push_back(direction * radius(rng));
+  }
+  const ConvexHull3D exact = buildConvexHull3D(cloud);
+  const ConvexHull3D rough = buildConvexHull3D(cloud, 0.02f);
+  float exactWorst = -1.0f, roughWorst = -1.0f;
+  for (const Vec3 &point : cloud) {
+    exactWorst = std::max(exactWorst, convexHullOutside3D(exact, point));
+    roughWorst = std::max(roughWorst, convexHullOutside3D(rough, point));
+  }
+  require(exactWorst <= 1.0e-5f, "a casca exata contem a nuvem toda");
+  require(roughWorst <= 0.02f + 1.0e-5f, "com tolerancia, a nuvem fica no maximo ela fora");
+  require(rough.points.size() < exact.points.size(), "com tolerancia, menos vertices");
+  bool flat = false;
+  try {
+    (void)buildConvexHull3D(std::vector<Vec3>{{0, 0, 0}, {1, 0, 0}, {0, 1, 0}, {1, 1, 0}, {0.5f, 0.5f, 0}});
+  } catch (const std::invalid_argument &) {
+    flat = true;
+  }
+  require(flat, "pontos num plano nao tem casca");
+}
+
+// A chuteira do jogador: o pe do perfil e a casca dela, centrada na caixa
+// justa; as consultas sao exatas; a sola e o plano de baixo; e na fisica ela
+// pousa no chao pela sola, como a malha.
+void testBootCollider(PhysicsEngine3D &engine, MaterialLibrary &materials) {
+  const RagdollProfile3D profile =
+      loadRagdollProfile3D(std::string(MATTERENGINE_TEST_ASSETS_DIR) + "/characters/football_player/FootballPlayerV1.ragdoll.json");
+  int boots = 0;
+  for (const RagdollLinkDefinition3D &link : profile.links) {
+    if (!link.id.ends_with("Foot")) continue;
+    const RagdollCapsuleDefinition3D &boot = link.collider;
+    require(boot.shape == RagdollColliderShape3D::ConvexHull, "o pe e a casca da chuteira");
+    ++boots;
+    Vec3 extent{};
+    for (const Vec3 &point : boot.hullPoints)
+      extent = {std::max(extent.x, std::abs(point.x)), std::max(extent.y, std::abs(point.y)), std::max(extent.z, std::abs(point.z))};
+    require(std::abs(extent.x - boot.boxHalfExtents.x) < 1e-5f && std::abs(extent.z - boot.boxHalfExtents.z) < 1e-5f,
+            "a caixa do pe e a justa da casca, centrada");
+    require(boot.boxHalfExtents.x > 0.12f && boot.boxHalfExtents.x < 0.16f && boot.boxHalfExtents.y > 0.04f,
+            "a chuteira com ~28 cm de comprimento e ~10 de largura");
+    // Por baixo da sola, a distancia ate ela e reta para baixo; dentro, negativa.
+    const RagdollColliderClosest3D below = ragdollColliderClosestPoint3D(boot, {0.0f, 0.0f, -boot.boxHalfExtents.z - 0.05f});
+    require(std::abs(below.distance - 0.05f) < 1e-3f && below.normal.z < -0.99f, "por baixo, a sola fica a 5 cm");
+    require(ragdollColliderClosestPoint3D(boot, {0.0f, 0.0f, 0.0f}).distance < 0.0f, "por dentro, a distancia e negativa");
+    // A ponta e mais baixa que o tornozelo: em cima da ponta, a casca acaba
+    // bem antes do topo da caixa (era a parede invisivel da caixa).
+    const RagdollColliderClosest3D toe = ragdollColliderClosestPoint3D(boot, {boot.boxHalfExtents.x - 0.03f, 0.0f, boot.boxHalfExtents.z});
+    require(toe.distance > 0.03f, "em cima da ponta da chuteira nao ha colisor");
+    const std::vector<Vec3> sole = ragdollColliderSolePoints3D(boot);
+    require(sole.size() >= 6, "a sola segue o contorno da chuteira");
+    for (const Vec3 &point : sole)
+      require(std::abs(point.z + boot.boxHalfExtents.z) < 1e-4f, "a sola e o plano de baixo");
+  }
+  require(boots == 2, "as duas chuteiras");
+
+  // A casca na fisica: largada de lado no chao, ela pousa pela sola (o ponto
+  // mais baixo dela no chao) e para.
+  PhysicsSceneSettings3D sceneSettings;
+  sceneSettings.gravity = {0.0f, 0.0f, -9.81f};
+  auto scene = engine.createScene(sceneSettings, materials);
+  PhysicsShape3D groundShape;
+  groundShape.type = PhysicsShapeType3D::Box;
+  groundShape.halfExtents = {5.0f, 5.0f, 0.5f};
+  PhysicsBodyDefinition3D ground;
+  ground.motionType = PhysicsMotionType3D::Static;
+  ground.position = {0.0f, 0.0f, -0.5f};
+  (void)scene->createBody(ground, std::span<const PhysicsShape3D>(&groundShape, 1));
+  const RagdollCapsuleDefinition3D &boot = profile.links[profile.links.size() - 1].collider;
+  PhysicsShape3D hull;
+  hull.type = PhysicsShapeType3D::ConvexHull;
+  hull.hullPoints = boot.hullPoints;
+  hull.convexRadius = boot.convexRadiusMeters;
+  PhysicsBodyDefinition3D falling;
+  falling.motionType = PhysicsMotionType3D::Dynamic;
+  falling.position = {0.0f, 0.0f, boot.boxHalfExtents.z + 0.05f};
+  falling.massKg = 1.2f;
+  const PhysicsBodyHandle3D body = scene->createBody(falling, std::span<const PhysicsShape3D>(&hull, 1));
+  for (int step = 0; step < 240; ++step) scene->simulate(1.0f / 120.0f);
+  const PhysicsBodyState3D rest = scene->bodyState(body);
+  float lowest = std::numeric_limits<float>::max();
+  for (const Vec3 &point : boot.hullPoints) lowest = std::min(lowest, (rest.position + rest.orientation.rotate(point)).z);
+  require(std::abs(lowest) < 0.006f, "a chuteira pousa no chao pela sola");
+  require(rest.linearVelocity.length() < 0.05f, "a chuteira para no chao");
 }
 
 void testCookingConvexo(PhysicsEngine3D &engine) {
@@ -4911,6 +5017,8 @@ int main() {
       MaterialLibrary materials;
       PhysicsEngine3D engine;
       testCookingConvexo(engine);
+      testConvexHull();
+      testBootCollider(engine, materials);
       testRigidBodiesAndEvents(engine, materials);
       testOceanPhysicsLifecycle(engine, materials);
       testWindShelterExposure(engine, materials);
