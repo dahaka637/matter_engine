@@ -39,13 +39,13 @@ def battery_posture(name: str) -> str:
 def battery_kind(name: str) -> str:
     """O tipo de uma bateria pelo nome (a convencao das tarefas): andar_* e
     girar_* seguem um roteiro de velocidades, ir_ate_* vao a um ponto,
-    corrida_*, caminhada_*, direcoes_* e percursos_* vao ate os alvos da
-    tarefa (o alvo no mundo, com imitacao)."""
+    corrida_*, caminhada_*, direcoes_*, percursos_* e tiro_* vao ate os alvos
+    da tarefa (o alvo no mundo, com imitacao)."""
     if name.startswith(("andar_", "girar_")):
         return "andar"
     if name.startswith("ir_ate_"):
         return "alvo"
-    if name.startswith(("corrida_", "caminhada_", "direcoes_", "percursos_")):
+    if name.startswith(("corrida_", "caminhada_", "direcoes_", "percursos_", "tiro_")):
         return "corrida"
     return "de_pe"
 

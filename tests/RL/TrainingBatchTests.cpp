@@ -700,8 +700,11 @@ void testCourses() {
         // Nenhum percurso repete ponto na janela do visualizador (3 alcancados,
         // o de agora e os 2 proximos): o alcancado nunca volta a ser vermelho.
         {
+            const TrainingTask3D h7 = loadTrainingTask3D(std::filesystem::path(MATTERENGINE_TEST_ASSETS_DIR) / "rl/tasks/h7_tiro.json");
+            std::vector<TrainingTask3D::Target::Course> courses = loadTrainingTask3D(s.taskPath).target.evaluationCourses;
+            courses.insert(courses.end(), h7.target.evaluationCourses.begin(), h7.target.evaluationCourses.end());
             const TrainingTask3D task = loadTrainingTask3D(s.taskPath);
-            for (const TrainingTask3D::Target::Course& course : task.target.evaluationCourses) {
+            for (const TrainingTask3D::Target::Course& course : courses) {
                 const std::size_t n = course.points.size();
                 const auto at = [&](std::size_t i) {
                     const float laps = static_cast<float>(i / n);
@@ -834,6 +837,54 @@ void testChestFacing() {
     }
 }
 
+// A velocidade no planejador: com o sprint na biblioteca e a velocidade pedida
+// pela distancia, longe ele escolhe o sprint e perto o trote.
+void testPlannerSpeed() {
+    const std::string clips = (std::filesystem::path(MATTERENGINE_TEST_ASSETS_DIR) / "animations/clips").string();
+    const auto clipAt = [&](const std::string& distance) {
+        const std::filesystem::path task = raceVariant("velocidade_" + distance + ".json",
+            { { "trot_forward_right.matteranim.json\"",
+                  "trot_forward_right.matteranim.json\" }, { \"id\": \"sprint\", \"clip\": \"" + clips
+                      + "/mixamo_sprint.matteranim.json\"" },
+              { "\"hysteresisDegrees\": 10.0,",
+                  "\"hysteresisDegrees\": 10.0, \"speedByDistance\": [[2.0, 2.5], [10.0, 6.0]], \"speedWeight\": 1.0," },
+              { "\"evaluationDistances\": [\n      4.0\n    ]", "\"evaluationDistances\": [" + distance + "]" } },
+            "h4_direcoes.json");
+        TrainingBatchSettings3D s = settings(1, 1);
+        s.taskPath = task;
+        s.evaluation = true;
+        s.evaluationEpisodeSeconds = 15.0f;
+        TrainingBatch3D batch(s);
+        return std::pair { batch.observations()[channel(batch, "reference.clip.sprint")],
+            batch.observations()[channel(batch, "reference.clip.frente")] };
+    };
+    const auto [farSprint, farTrot] = clipAt("15.0");
+    require(farSprint == 1.0f && farTrot == 0.0f, "o alvo a 15 m a frente pede o sprint");
+    const auto [nearSprint, nearTrot] = clipAt("2.0");
+    require(nearSprint == 0.0f && nearTrot == 1.0f, "o alvo a 2 m a frente pede o trote");
+}
+
+// O tiro com volta (H7): no treino cada alvo seguinte fica de 12 a 24 m do
+// anterior e volta (180 graus, ate 20 para cada lado).
+void testShuttle() {
+    TrainingBatchSettings3D s = settings(16, 4);
+    s.taskPath = std::filesystem::path(MATTERENGINE_TEST_ASSETS_DIR) / "rl/tasks/h7_tiro.json";
+    TrainingBatch3D batch(s);
+    for (std::size_t e = 0; e < 16; ++e) {
+        const TrainingEnvironmentView3D view = batch.view(e);
+        const Vec3 a = view.upcoming[0] - view.target, b = view.upcoming[1] - view.upcoming[0];
+        const float la = std::hypot(a.x, a.y), lb = std::hypot(b.x, b.y);
+        require(la >= 12.0f - 1e-3f && la <= 24.0f + 1e-3f && lb >= 12.0f - 1e-3f && lb <= 24.0f + 1e-3f,
+            "os alvos do tiro ficam de 12 a 24 m");
+        require((a.x * b.x + a.y * b.y) / (la * lb) <= std::cos(160.0f * std::numbers::pi_v<float> / 180.0f) + 1e-3f,
+            "cada alvo do tiro volta (160 a 200 graus)");
+    }
+    for (int step = 0; step < 10; ++step) {
+        batch.step(std::vector<float>(16 * batch.actionSize(), 0.0f));
+        require(finiteAll(batch.observations()) && finiteAll(batch.rewards()), "o tiro anda sem numero ruim");
+    }
+}
+
 } // namespace
 
 void runTrainingBatchTests() {
@@ -849,5 +900,7 @@ void runTrainingBatchTests() {
     testDirections();
     testCourses();
     testChestFacing();
+    testPlannerSpeed();
+    testShuttle();
     std::cout << "RL training batch tests passed\n";
 }

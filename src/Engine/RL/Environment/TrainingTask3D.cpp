@@ -155,6 +155,14 @@ TrainingTask3D loadTrainingTask3D(const std::filesystem::path& definitionPath) {
             auto& planner = out.planner;
             planner.hysteresisDegrees = std::max(0.0f, p.value("hysteresisDegrees", planner.hysteresisDegrees));
             planner.minimumSeconds = std::max(0.0f, p.value("minimumSeconds", planner.minimumSeconds));
+            if (p.contains("speedByDistance"))
+                planner.speedByDistance = p["speedByDistance"].get<std::vector<std::array<float, 2>>>();
+            for (std::size_t i = 0; i < planner.speedByDistance.size(); ++i)
+                if (!(planner.speedByDistance[i][1] > 0.0f)
+                    || (i > 0 && !(planner.speedByDistance[i][0] > planner.speedByDistance[i - 1][0])))
+                    throw std::runtime_error("tarefa de RL: speedByDistance em ordem de distancia, velocidades acima de 0");
+            planner.speedWeight = std::max(0.0f, p.value("speedWeight", planner.speedWeight));
+            planner.directionWeight = std::max(0.0f, p.value("directionWeight", planner.directionWeight));
         }
         if (m.contains("scales")) {
             const nlohmann::json& k = m["scales"];
@@ -173,6 +181,7 @@ TrainingTask3D loadTrainingTask3D(const std::filesystem::path& definitionPath) {
         out.radius = t.value("radius", out.radius);
         out.firstAngleDegrees = std::max(0.0f, t.value("firstAngleDegrees", out.firstAngleDegrees));
         out.nextAngleDegrees = std::max(0.0f, t.value("nextAngleDegrees", out.nextAngleDegrees));
+        out.nextAngleOffsetDegrees = t.value("nextAngleOffsetDegrees", out.nextAngleOffsetDegrees);
         if (t.contains("evaluationAngles")) out.evaluationAngles = t["evaluationAngles"].get<std::vector<float>>();
         out.referenceSpeed = t.value("referenceSpeed", out.referenceSpeed);
         out.speedCap = t.value("speedCap", out.speedCap);

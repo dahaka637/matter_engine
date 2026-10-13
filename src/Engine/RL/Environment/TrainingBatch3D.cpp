@@ -405,7 +405,8 @@ void TrainingBatch3D::Impl::drawLibraryTarget(Environment& env, Vec3 from, float
     float angle = 0.0f, distance = t.distance;
     if (training()) {
         const float spread = (k == 0 ? t.firstAngleDegrees : t.nextAngleDegrees) * Radians;
-        angle = std::uniform_real_distribution<float>(-spread, spread)(env.rng);
+        angle = (k == 0 ? 0.0f : t.nextAngleOffsetDegrees * Radians)
+            + std::uniform_real_distribution<float>(-spread, spread)(env.rng);
         if (t.distanceRange.maximum > 0.0f) distance = uniform(env.rng, t.distanceRange);
     } else {
         const std::size_t slot = (t.evaluationPerWorld ? env.index : 0u) + k;
@@ -493,13 +494,30 @@ void TrainingBatch3D::Impl::plan(Environment& env, Vec3 position, float facing, 
     float angle = std::atan2(dy, dx) - base;
     angle = std::atan2(std::sin(angle), std::cos(angle));
     // O clipe que anda mais perto da direcao da mira (a partir de para onde ele
-    // olha); o de agora leva a histerese.
+    // olha) e, com speedByDistance, da velocidade pedida pela distancia; o de
+    // agora leva a histerese.
+    float wantedSpeed = 0.0f;
+    if (const auto& table = planner.speedByDistance; !table.empty() && planner.speedWeight > 0.0f) {
+        const float distance = std::hypot(dx, dy);
+        wantedSpeed = table.front()[1];
+        for (std::size_t i = 1; i < table.size(); ++i) {
+            if (distance >= table[i][0]) { wantedSpeed = table[i][1]; continue; }
+            if (distance > table[i - 1][0]) {
+                const float u = (distance - table[i - 1][0]) / (table[i][0] - table[i - 1][0]);
+                wantedSpeed = table[i - 1][1] + u * (table[i][1] - table[i - 1][1]);
+            }
+            break;
+        }
+    }
     const float hysteresis = force ? 0.0f : planner.hysteresisDegrees * std::numbers::pi_v<float> / 180.0f;
     std::uint32_t best = env.cursor.segment;
     float bestCost = std::numeric_limits<float>::max();
     for (std::uint32_t c = 0; c < reference.segments.size(); ++c) {
         float error = angle - reference.segments[c].travelRelative;
-        error = std::abs(std::atan2(std::sin(error), std::cos(error)));
+        error = planner.directionWeight * std::abs(std::atan2(std::sin(error), std::cos(error)));
+        if (wantedSpeed > 0.0f)
+            error += planner.speedWeight
+                * std::abs(std::log(std::max(reference.segments[c].meanSpeed, 0.3f) / wantedSpeed));
         if (!force && c == env.cursor.segment) error -= hysteresis;
         if (error < bestCost) {
             bestCost = error;

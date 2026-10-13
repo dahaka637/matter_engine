@@ -218,6 +218,18 @@ struct TrainingTask3D {
         struct Planner {
             float hysteresisDegrees = 10.0f;
             float minimumSeconds = 0.4f;
+            // A velocidade (com clipes de varias velocidades, como o trote e o
+            // sprint): a pedida pela distancia ate a mira (pares [m, m/s] em
+            // ordem, interpolados e presos nas pontas), e o peso dela na
+            // escolha: speedWeight por unidade de |ln(v do clipe / v pedida)|,
+            // somado ao erro de direcao (rad). 0 = so a direcao.
+            std::vector<std::array<float, 2>> speedByDistance;
+            float speedWeight = 0.0f;
+            // O peso do erro de direcao no custo (1 = so ele). Abaixo de 1, longe
+            // vale virar o corpo e correr de frente (o sprint) em vez de ir de
+            // costas no trote; perto, a velocidade pedida e baixa e o clipe da
+            // direcao continua valendo.
+            float directionWeight = 1.0f;
         } planner;
         float poseScale = 2.0f;
         float velocityScale = 0.1f;
@@ -237,6 +249,10 @@ struct TrainingTask3D {
         float radius = 1.0f;
         float firstAngleDegrees = 10.0f;
         float nextAngleDegrees = 30.0f;
+        // O centro do sorteio do proximo alvo (graus, a partir do rumo do trecho
+        // que chega nele): 0 em volta da frente, 180 para voltar (o tiro com
+        // volta), sorteado ate nextAngleDegrees dele.
+        float nextAngleOffsetDegrees = 0.0f;
         std::vector<float> evaluationAngles { 0.0f };
         float referenceSpeed = 6.0f;
         float speedCap = 1.2f;
