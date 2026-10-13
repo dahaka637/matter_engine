@@ -508,14 +508,15 @@ std::filesystem::path raceVariant(const std::string& name, const std::vector<std
     return path;
 }
 
-// As juntas pedidas pela referencia no fim da decisao, em unidades da acao.
-std::vector<float> referenceActions(const TrainingBatch3D& batch) {
+// A acao que leva cada junta a pose base (com a acao corrigindo a referencia,
+// a base e a referencia menos o desvio dela): o contrario de seguir o clipe.
+std::vector<float> baseActions(const TrainingBatch3D& batch) {
     const std::size_t N = batch.environmentCount(), A = batch.actionSize(), O = batch.observationSize();
     const std::size_t first = channel(batch, "reference." + batch.body().dofs.front().name);
     std::vector<float> actions(N * A);
     for (std::size_t e = 0; e < N; ++e)
         for (std::size_t d = 0; d < A; ++d)
-            actions[e * A + d] = batch.observations()[e * O + first + d] / batch.body().dofs[d].actionScale;
+            actions[e * A + d] = -batch.observations()[e * O + first + d] / batch.body().dofs[d].actionScale;
     return actions;
 }
 
@@ -541,14 +542,14 @@ void testRace() {
             require(std::abs(batch.observations()[e * O + distance] - 1.0f) < 0.01f, "a distancia do alvo na observacao");
             require(batch.observations()[e * O + start] == 1.0f, "a avaliacao sai da partida");
         }
-        // Seguindo a referencia (alvo de PD = a pose dela), a nota da pose no
-        // primeiro passo e alta; segurando a base, bem menor.
-        batch.step(referenceActions(batch));
+        // Acao zero segue a referencia (a acao corrige a pose dela): a nota da
+        // pose no primeiro passo e alta; levando as juntas a base, bem menor.
+        batch.step(std::vector<float>(4 * batch.actionSize(), 0.0f));
         float following = 0.0f;
         for (std::size_t e = 0; e < 4; ++e) following += batch.rewardComponents()[e * R + pose] / 0.5f / 4.0f;
         require(following > 0.6f, "seguir a referencia vale a pose (" + std::to_string(following) + ")");
         batch.reset(11);
-        batch.step(std::vector<float>(4 * batch.actionSize(), 0.0f));
+        batch.step(baseActions(batch));
         float holding = 0.0f;
         for (std::size_t e = 0; e < 4; ++e) holding += batch.rewardComponents()[e * R + pose] / 0.5f / 4.0f;
         require(holding < following, "segurar a base vale menos que seguir a referencia");
@@ -582,7 +583,7 @@ void testRace() {
         float paid = 0.0f, toward = 0.0f;
         std::size_t arrived = 0;
         for (int step = 0; step < 6; ++step) {
-            batch.step(referenceActions(batch));
+            batch.step(std::vector<float>(8 * batch.actionSize(), 0.0f));
             for (std::size_t e = 0; e < 8; ++e) {
                 paid += batch.rewardComponents()[e * R + reached];
                 toward += batch.rewardComponents()[e * R + speed];

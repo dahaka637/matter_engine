@@ -128,6 +128,10 @@ fifth = T.Trainer("t", task="h3_andar", mode="maximo", environments=16, device="
 assert fifth.switched_from == "h1b_em_pe_posturado"
 assert float(fifth.model.log_std.exp().min()) >= 0.6 - 1e-5, (before, float(fifth.model.log_std.exp().min()))
 assert "exploracao" in [row[0] for row in db.execute("SELECT kind FROM events WHERE run='t'")]
+# Na corrida a acao corrige o clipe: a saida do ator de ficar de pe recomeca em zero.
+last = [layer for layer in fifth.model.actor if isinstance(layer, torch.nn.Linear)][-1]
+assert float(last.weight.abs().sum()) == 0.0 and float(last.bias.abs().sum()) == 0.0
+assert "acao" in [row[0] for row in db.execute("SELECT kind FROM events WHERE run='t'")]
 fifth.server.close()
 fifth.lock.release()
 print("ok")

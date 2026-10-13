@@ -193,10 +193,15 @@ struct TrainingTask3D {
         std::string id;
         std::filesystem::path path;
     };
+    // Com residualActions, a acao corrige a pose da referencia: o alvo de cada
+    // junta e o da referencia no fim da decisao (e a velocidade dela) mais
+    // actionScale vezes a acao. Acao zero segue o clipe com os motores de
+    // sempre (nada empurra o corpo): a politica aprende o equilibrio.
     struct Imitation {
         bool enabled = false;
         std::vector<ImitationClip> clips;
         float standingStart = 0.5f;
+        bool residualActions = false;
         float poseScale = 2.0f;
         float velocityScale = 0.1f;
         float keyBodyScale = 40.0f;

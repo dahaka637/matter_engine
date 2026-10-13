@@ -442,13 +442,21 @@ void TrainingBatch3D::Impl::createWorld() {
 }
 
 void TrainingBatch3D::Impl::writeTargets(Environment& env, std::span<const float> action) {
+    // A acao como correcao da referencia (residualActions): a partir da pose e
+    // da velocidade dela no fim desta decisao.
+    const ReferenceFrame3D* reference = imitating() && task.imitation.residualActions
+        ? &referenceFrame3D(this->reference, advanceReference3D(this->reference, env.cursor, task.actionRepeat))
+        : nullptr;
     for (std::size_t d = 0; d < body.dofs.size(); ++d) {
         const RLBodyDof3D& dof = body.dofs[d];
         RagdollDriveTarget3D& target = env.targets[d];
         target.linkIndex = dof.linkIndex;
         target.axis = dof.axis;
-        target.positionRadians = dof.target(action.empty() ? 0.0f : action[d]);
-        target.velocityRadiansPerSecond = 0.0f;
+        const float a = action.empty() ? 0.0f : std::clamp(action[d], -RLActionLimit, RLActionLimit);
+        target.positionRadians = reference
+            ? std::clamp(reference->dofRadians[d] + dof.actionScale * a, dof.minimumRadians, dof.maximumRadians)
+            : dof.target(a);
+        target.velocityRadiansPerSecond = reference ? reference->dofVelocities[d] : 0.0f;
         target.feedforwardTorqueNewtonMeters = 0.0f;
         target.stiffnessScale = dof.stiffnessScale;
         target.dampingScale = dof.dampingScale;

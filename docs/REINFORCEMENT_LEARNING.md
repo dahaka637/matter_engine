@@ -127,7 +127,59 @@ mudou desde o checkpoint").
   `postura_alerta_v1`). A nota é a da pior, e desconta o erro da postura
   pedida. Há um "melhor" por habilidade.
 
-## Andar (H3)
+## Correr até o alvo (H3 v7+, imitação)
+
+Desde 13/10 a H3 é uma corrida até um alvo a 10 m, imitando clipes de
+captura (o DeepMimic). O andar só com recompensas (v1–v6, abaixo) não deu um
+passo de gente: em cada versão ele achou um atalho.
+
+- **A referência** (`src/Engine/RL/Imitation/ReferenceMotion3D`): os trechos
+  de `imitation.clips` em sequência, o último em ciclo (hoje o parado→sprint
+  e o sprint do Mixamo).
+  - Amostrada no corpo do RL a 120 Hz: juntas, velocidades, a altura, a
+    velocidade e a inclinação da pelve, e cabeça, mãos e pés no referencial
+    do rumo.
+  - O vazamento da inclinação do chão do Mixamo (~5°) sai da altura da
+    pelve, e o pé de apoio fica no chão em cada quadro.
+  - Na troca de trecho, o ciclo entra na fase mais parecida.
+- **A ação corrige a pose do clipe** (`imitation.residualActions`): o alvo de
+  cada junta é o da referência no fim da decisão (com a velocidade dela)
+  mais `actionScale` vezes a ação. Ação zero segue o clipe com os motores de
+  sempre; nada empurra o corpo.
+- **A recompensa:**
+  - os sinos do DeepMimic contra a referência: pose, velocidade das juntas,
+    partes-chave e raiz (`imitation.scales`);
+  - a velocidade em direção ao alvo, linear: mais rápido paga mais;
+  - a chegada, paga pela velocidade média do trecho;
+  - ao chegar, nasce o próximo alvo 10 m adiante.
+
+  O episódio tem duração fixa: quem corre mais chega a mais alvos.
+- **O começo** (o RSI do DeepMimic): metade dos episódios sai do parado, a
+  outra metade numa fase sorteada do sprint, já com a pose e as velocidades
+  do clipe.
+- **A observação cresce no fim:** o trecho, a fase, as juntas da referência e
+  a direção e a distância do alvo. Os pesos antigos ficam.
+- **A bateria `corrida_alvo_v1`:** sai do parado, com os alvos em linha reta.
+  Mede sem cair, chegou, alvos, o tempo até o 1º, a velocidade média e o erro
+  da pose (RMS, rad).
+- **Folhas:**
+  - `matter-rl folha --checkpoint ultimo --bateria corrida_alvo_v1`;
+  - `matter-rl folha --referencia` (o clipe no corpo do RL, nos mesmos
+    instantes);
+  - o alvo sai no dump (linha `A`) e na folha como o disco vermelho.
+- **Na tela:** "Correr até o alvo" mostra o alvo (o disco vermelho com o
+  brilho subindo), o chão de 30 m e a câmera de lado, com o jogador e o alvo
+  no quadro.
+- **Versão 8:** na 7, numa validação, ele voltou a ficar parado. Longe do
+  clipe a imitação valia ~0, o castigo de mudar a ação era maior, e com o
+  total nunca negativo tudo virava 0. Por isso a 8 tem a ação corrigindo o
+  clipe, os sinos mais largos e o total livre.
+
+## Andar por comando (H3 v1–v6)
+
+Guardado em `tests/RL/data/andar_comando.json` para os testes (e para a
+etapa de velocidade comandada, no futuro).
+
 
 - **O comando** (frente, lado, giro, no referencial do rumo) entra no fim da
   observação, junto com o relógio de passada (seno e cosseno da fase). Na
@@ -181,8 +233,8 @@ mudou desde o checkpoint").
   - `andar_frente_v1` (parado, 1,5, 3, 4,5 m/s, parar);
   - `ir_ate_10m_v1` (o comando calculado de um ponto a 10 m);
   - as de pé.
-- **Na tela:** escolha "Andar". O visualizador faz sozinho um ciclo de
-  demonstração (parado, metade do limite, o limite, parado), e o chão corre
+- **Na tela** (com uma tarefa de comando): o visualizador faz sozinho um ciclo
+  de demonstração (parado, metade do limite, o limite, parado), e o chão corre
   sob os pés com a câmera seguindo.
 
 ## Aprendizado guiado (o professor)

@@ -145,6 +145,7 @@ TrainingTask3D loadTrainingTask3D(const std::filesystem::path& definitionPath) {
         }
         if (out.clips.empty()) throw std::runtime_error("tarefa de RL: imitation sem clipes");
         out.standingStart = std::clamp(m.value("standingStart", out.standingStart), 0.0f, 1.0f);
+        out.residualActions = m.value("residualActions", out.residualActions);
         if (m.contains("scales")) {
             const nlohmann::json& k = m["scales"];
             out.poseScale = std::max(0.0f, k.value("pose", out.poseScale));

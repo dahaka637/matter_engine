@@ -95,8 +95,12 @@ class Trainer:
         self.task_updated: tuple | None = None
         kept: dict = {}
         task_id = json.loads(self.task_path.read_text()).get("id", self.config.task)
+        # A acao corrigia o clipe na copia de antes (para saber se o sentido da
+        # acao muda com a troca).
+        self.previous_residual = False
         if self.live_task.exists():
             live = json.loads(self.live_task.read_text())
+            self.previous_residual = bool((live.get("imitation") or {}).get("residualActions"))
             if live.get("id") != task_id:
                 self.switched_from = live.get("id")
                 self.live_task.unlink()
@@ -155,6 +159,13 @@ class Trainer:
                                          "(o curriculo continua)")
         self.restore()
         self.fix_commands()
+        # A acao passou a corrigir a pose do clipe (a imitacao com
+        # residualActions): a saida do ator de antes (o que segurava a postura)
+        # vira desvio em cima do clipe. Ela recomeca em zero (seguir o clipe);
+        # as camadas de dentro ficam.
+        residual = bool((json.loads(self.live_task.read_text()).get("imitation") or {}).get("residualActions"))
+        if residual and not self.previous_residual and self.counters["iteration"] > 0:
+            self.reset_actor_output()
         if self.switched_from or self.task_updated:
             minimum = (json.loads(self.live_task.read_text()).get("exploration") or {}).get("minimumStd")
             if minimum:
@@ -207,6 +218,14 @@ class Trainer:
             "rng_torch": torch.get_rng_state(),
             "kickstart": self.kickstart,
         }
+
+    def reset_actor_output(self) -> None:
+        last = [layer for layer in self.model.actor if isinstance(layer, torch.nn.Linear)][-1]
+        with torch.no_grad():
+            last.weight.zero_()
+            last.bias.zero_()
+        self.ppo = PPO(self.model, self.settings)
+        self.db.event(self.run, "acao", "a acao agora corrige o clipe: a saida do ator recomeca em zero")
 
     def restore(self) -> None:
         reference = storage.latest_checkpoint(self.directory)

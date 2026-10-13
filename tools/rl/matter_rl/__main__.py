@@ -15,6 +15,7 @@
     matter-rl folha [--episodio ARQ] [--cena NOME] [--saida PNG] [--de S --ate S]
     matter-rl folha --checkpoint X [--mundo N] [--solver jogo|treino]   um mundo de um checkpoint
     matter-rl folha --professor [--de S --ate S]   um episodio do professor (a locomocao fisica do jogo)
+    matter-rl folha --referencia [--de S --ate S]  a referencia da imitacao (o clipe no corpo do RL)
     matter-rl comparar A B                a bateria em dois checkpoints, lado a lado
     matter-rl episodios                   as gravacoes da ultima avaliacao
 """
@@ -242,6 +243,23 @@ def latest_dump(run: str) -> Path | None:
     return dumps[-1] if dumps else None
 
 
+def reference_dump(task: Path, seconds: float, record: Path) -> Path:
+    """A referencia da imitacao da tarefa (os clipes no corpo do RL, a pelve
+    andando com a velocidade dela), gravada para a folha: o que a politica
+    deveria fazer em cada instante."""
+    import json
+    from . import native
+    data = json.loads(Path(task).read_text())
+    imitation = data.get("imitation") or {}
+    if not imitation.get("clips"):
+        raise SystemExit("a tarefa nao tem imitacao (secao imitation)")
+    clips = [str((Path(task).parent / clip["clip"]).resolve()) for clip in imitation["clips"]]
+    body = str((Path(task).parent / data["body"]).resolve())
+    record.parent.mkdir(parents=True, exist_ok=True)
+    record.write_text(native.load().reference_dump(body, clips, seconds, "referencia"))
+    return record
+
+
 def teacher_dump(task: str, seconds: float, seed: int, record: Path) -> Path:
     """Um episodio do professor (a locomocao fisica do jogo conduzindo o corpo
     do RL, no roteiro do aprendizado guiado), gravado para a folha."""
@@ -264,6 +282,13 @@ def teacher_dump(task: str, seconds: float, seed: int, record: Path) -> Path:
 
 def command_sheet(args: argparse.Namespace) -> int:
     scenario = args.cena
+    if args.referencia:
+        task = paths.task_path(args.tarefa) if args.tarefa else paths.run_dir(args.run) / "tarefa.json"
+        dump = reference_dump(task, (args.ate or 3.0) + 0.1, paths.run_dir(args.run) / "folhas" / "referencia.dump")
+        output = Path(args.saida) if args.saida else dump.with_suffix(".png")
+        report.sheet(dump, "referencia", output, args.quadros, args.vista, args.de, args.ate)
+        print(output)
+        return 0
     if args.professor:
         dump = teacher_dump(args.tarefa or "h3_andar", args.ate or 20.0, args.semente,
                             paths.run_dir(args.run) / "folhas" / "professor.dump")
@@ -387,7 +412,9 @@ def main(argv: list[str] | None = None) -> int:
     sheet.add_argument("--ate", type=float, help="so o trecho ate (s)")
     sheet.add_argument("--professor", action="store_true",
                        help="um episodio do professor (a locomocao fisica do jogo no corpo do RL)")
-    sheet.add_argument("--tarefa", help="com --professor: a tarefa (padrao h3_andar)")
+    sheet.add_argument("--referencia", action="store_true",
+                       help="a referencia da imitacao (o clipe no corpo do RL) nos mesmos instantes da folha")
+    sheet.add_argument("--tarefa", help="com --professor ou --referencia: a tarefa (padrao h3_andar / a do treino)")
     sheet.add_argument("--semente", type=int, default=11, help="com --professor: o sorteio do roteiro")
     sheet.set_defaults(func=command_sheet)
     comparison = run_args(sub.add_parser("comparar"))
