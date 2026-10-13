@@ -109,10 +109,13 @@ old.pop("version", None)
 old.pop("gait", None)
 old["commands"]["limits"] = {"forward": 2.0}
 walker.live_task.write_text(json.dumps(old))
+from matter_rl.paths import TASKS
+current = json.loads((TASKS / "h3_andar.json").read_text())["version"]
+assert current >= 2
 updated = T.Trainer("andar", mode="maximo", environments=16, device="cpu", seed=3, iterations=1)
-assert updated.task_updated == (1, 2), updated.task_updated
+assert updated.task_updated == (1, current), updated.task_updated
 fresh = json.loads(updated.live_task.read_text())
-assert fresh["version"] == 2 and "gait" in fresh and fresh["commands"]["limits"] == {"forward": 2.0}
+assert fresh["version"] == current and "gait" in fresh and fresh["commands"]["limits"] == {"forward": 2.0}
 assert updated.command_limits["forward"] == 2.0
 updated.server.close()
 updated.lock.release()

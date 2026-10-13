@@ -119,6 +119,10 @@ struct TrainingTask3D {
         // cabeca, pose, giro) valem multiplicadas pelo acompanhamento da
         // velocidade: parado sob um pedido de andar nao ganha nada.
         bool gateByTracking = false;
+        // Os episodios de treino com pedido de andar comecam com o corpo ja na
+        // velocidade pedida: parado, ele cai para a frente, e o primeiro passo
+        // vira uma reacao (como o de quem e empurrado).
+        bool startMoving = false;
     } commands;
 
     // O relogio de passada (so andando): a fase corre a frequency[0] +

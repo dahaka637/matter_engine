@@ -84,6 +84,7 @@ TrainingTask3D loadTrainingTask3D(const std::filesystem::path& definitionPath) {
         out.lateral = std::max(0.0f, c.value("lateral", out.lateral));
         out.yawRate = std::max(0.0f, c.value("yawRate", out.yawRate));
         out.gateByTracking = c.value("gateByTracking", out.gateByTracking);
+        out.startMoving = c.value("startMoving", out.startMoving);
         if (c.contains("limits")) {
             const nlohmann::json& l = c["limits"];
             out.limits.forward = l.value("forward", out.limits.forward);

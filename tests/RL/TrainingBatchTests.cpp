@@ -198,6 +198,14 @@ void testCommands() {
         standing += c.x == 0.0f ? 1 : 0;
     }
     require(standing > 4 && standing < 40, "uma fatia dos sorteios pede ficar parado");
+    // Com pedido de andar, o corpo comeca ja na velocidade pedida (no rumo dele).
+    std::size_t velocityChannel = 0;
+    for (std::size_t i = 0; i < batch.observationLayout().channels.size(); ++i)
+        if (batch.observationLayout().channels[i].name == "pelvis.linear_velocity_heading.x") velocityChannel = i;
+    for (std::size_t e = 0; e < 64; ++e) {
+        const float start = batch.observations()[e * O + velocityChannel] * 2.0f;
+        require(std::abs(start - commandOf(e).x) < 0.45f, "o corpo comeca na velocidade pedida");
+    }
     for (std::size_t e = 0; e < 64; ++e)
         if (batch.view(e).posture == 0) require(commandOf(e).x == 0.0f, "a postura natural fica so parada (o ensaio da H1)");
     require(std::abs(batch.view(1).origin.x - batch.view(0).origin.x) > 200.0f, "os mundos de andar ficam longe");

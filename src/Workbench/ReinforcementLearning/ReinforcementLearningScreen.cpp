@@ -299,12 +299,13 @@ void ReinforcementLearningScreen::reloadPolicy(bool force) {
     m_policyPath = path;
     try {
         auto policy = std::make_unique<PolicyRuntime3D>(path);
-        // Os comandos fecham a observacao: uma politica de antes deles le o comeco.
+        // Os comandos fecham a observacao, na ordem em que entraram: uma politica
+        // de antes de parte deles le o comeco.
         std::size_t commands = 0;
         for (const RLChannel3D& channel : m_viewer->observationLayout().channels)
             if (channel.name.rfind("command.", 0) == 0) ++commands;
         const std::size_t inputs = policy->observationSize(), full = m_viewer->observationSize();
-        if ((inputs != full && inputs + commands != full) || policy->actionSize() != m_viewer->actionSize()) {
+        if (inputs > full || full - inputs > commands || policy->actionSize() != m_viewer->actionSize()) {
             m_policy.reset();
             m_policyText = "política de outro corpo";
             return;

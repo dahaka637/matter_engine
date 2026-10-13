@@ -415,6 +415,10 @@ void TrainingBatch3D::Impl::resetEnvironment(std::uint32_t index) {
     // apoiada no chao (o ponto mais baixo dos pes 2 mm acima dele).
     env.posture = choosePosture(env);
     const RLPosture3D& posture = body.postures[env.posture];
+    // O comando do comeco (o roteiro da bateria conta do zero).
+    env.steps = 0;
+    env.played = 0;
+    updateCommand(env, true);
     std::vector<Vec3> coordinates = posture.jointCoordinates;
     std::vector<Vec3> velocities(coordinates.size());
     for (const RLBodyDof3D& dof : body.dofs) {
@@ -434,8 +438,14 @@ void TrainingBatch3D::Impl::resetEnvironment(std::uint32_t index) {
     const RLBodyPose3D probe = rlBodyPose3D(body.profile, env.origin, root, coordinates);
     const float lift = 0.002f - rlBodyLowestFootPoint3D(body, probe);
     const Vec3 rootPosition = env.origin + Vec3 { 0.0f, 0.0f, lift };
-    const Vec3 rootVelocity { gaussian(env.rng, start.rootVelocityNoise * noise),
+    Vec3 rootVelocity { gaussian(env.rng, start.rootVelocityNoise * noise),
         gaussian(env.rng, start.rootVelocityNoise * noise), 0.0f };
+    if (training() && task.commands.startMoving) {
+        // Ja na velocidade pedida (no rumo do corpo): o passo vira reacao.
+        const Vec3 forward = (root * body.profile.links.front().modelOrientation.conjugate()).rotate({ 1.0f, 0.0f, 0.0f });
+        const Vec3 left { -forward.y, forward.x, 0.0f };
+        rootVelocity += Vec3 { forward.x, forward.y, 0.0f } * env.command.x + left * env.command.y;
+    }
     const Vec3 rootSpin { gaussian(env.rng, start.rootAngularVelocityNoise * noise),
         gaussian(env.rng, start.rootAngularVelocityNoise * noise),
         gaussian(env.rng, start.rootAngularVelocityNoise * noise) };
@@ -457,8 +467,6 @@ void TrainingBatch3D::Impl::resetEnvironment(std::uint32_t index) {
     env.delayed = training() && std::uniform_real_distribution<float>(0.0f, 1.0f)(env.rng)
             < random.actionDelayProbability;
     scene.physics->setRagdollFrictionScale(env.ragdoll, env.friction);
-    env.steps = 0;
-    env.played = 0;
     env.limit = training()
         ? std::max(1u, static_cast<std::uint32_t>(std::lround(static_cast<float>(maximumSteps)
               * std::uniform_real_distribution<float>(0.8f, 1.2f)(env.rng))))
@@ -486,7 +494,6 @@ void TrainingBatch3D::Impl::resetEnvironment(std::uint32_t index) {
     env.actionRateSum = env.effortSum = env.jointSpeedSum = env.uprightSum = env.trunkTurnSquares = 0.0;
     env.poseErrorSquares = env.velocityErrorSquares = env.yawErrorSquares = env.trackingSum = 0.0;
     env.movingSteps = 0;
-    updateCommand(env, true);
 }
 
 BodyReading TrainingBatch3D::Impl::read(const RagdollState3D& state) const {
