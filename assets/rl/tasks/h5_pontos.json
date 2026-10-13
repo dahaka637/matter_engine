@@ -173,7 +173,7 @@
     }
   ],
   "exploration": {
-    "comment": "Uma habilidade nova reabre a exploracao: ao trocar para esta tarefa, o desvio da acao volta a pelo menos minimumStd. Ele cai sozinho conforme aprende.",
-    "minimumStd": 0.6
+    "comment": "Uma habilidade nova reabre a exploracao: ao trocar para esta tarefa, o desvio da acao volta a pelo menos minimumStd. Aqui o movimento e o mesmo da H4 (so o planejamento muda), entao o piso e baixo: 0,45, abaixo do 0,61 que ele tinha na troca.",
+    "minimumStd": 0.45
   }
 }
