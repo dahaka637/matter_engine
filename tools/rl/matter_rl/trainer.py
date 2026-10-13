@@ -409,6 +409,7 @@ class Trainer:
                     "targets": metrics.get("targets"), "reached_fraction": metrics.get("reached_fraction"),
                     "first_target_seconds": metrics.get("first_target_seconds"),
                     "target_speed": metrics.get("target_speed"), "imitation_error": metrics.get("imitation_error"),
+                    "facing_error": metrics.get("facing_error"),
                     "score": metrics["score"], "ends": json.dumps(metrics["ends"]),
                 })
         # A nota e a da pior bateria (uma habilidade nova nao apaga a antiga),

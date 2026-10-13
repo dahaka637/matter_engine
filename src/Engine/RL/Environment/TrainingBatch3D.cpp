@@ -114,6 +114,9 @@ struct Environment {
     // A imitacao: onde a referencia esta e o erro das juntas somado.
     ReferenceCursor3D cursor;
     double imitationErrorSquares = 0.0;
+    // O erro do rumo pedido (com o comando de olhar), somado por decisao.
+    double facingErrorSquares = 0.0;
+    std::uint32_t facingSteps = 0;
     // O alvo: onde ele esta (no chao), de onde o trecho ate ele saiu e quando,
     // a direcao do trecho (rad), quantos nasceram e quantos ele alcancou.
     Vec3 target;
@@ -888,6 +891,8 @@ void TrainingBatch3D::Impl::resetEnvironment(std::uint32_t index) {
         env.footStartOrientation[f] = state ? state->links[foot].orientation : Quaternion {};
     }
     env.imitationErrorSquares = 0.0;
+    env.facingErrorSquares = 0.0;
+    env.facingSteps = 0;
     if (targeting() && state && !(imitating() && reference.library)) placeFirstTarget(env, *state);
     env.episodeReturn = 0.0;
     env.comSum[0] = env.comSum[1] = 0.0;
@@ -1323,6 +1328,16 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
     }
     // O giro: o do corpo contra o pedido (o do clipe agora mais o que alinha a
     // direcao em que o clipe anda com o alvo, da decisao anterior).
+    // Segurar o rumo pedido: o link do comando contra ele, em sino.
+    float facingHold = 0.0f;
+    if (env.facingActive) {
+        float error = env.facingCommand - facingLinkHeading(state);
+        error = std::atan2(std::sin(error), std::cos(error));
+        const float sigma = task.target.facingSigma;
+        facingHold = std::exp(-error * error / (sigma * sigma));
+        env.facingErrorSquares += error * error;
+        ++env.facingSteps;
+    }
     float targetTurn = 0.0f;
     if (targeting() && imitating()) {
         const float wanted = referenceFrame3D(reference, env.cursor).rootSpin.z + env.turnRate;
@@ -1359,6 +1374,7 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
         w.targetSpeed * targetSpeed,
         w.targetReached * targetReached,
         w.targetTurn * targetTurn,
+        w.facingHold * facingHold,
         fell ? -w.fall : 0.0f,
     };
     // A queda e a ultima parcela; o resto, com positiveOnly, nunca abaixo de 0.
@@ -1426,6 +1442,8 @@ void TrainingBatch3D::Impl::finishEpisode(Scene& scene, std::uint32_t index, Tra
     episode.firstTargetSeconds = env.firstTargetSeconds;
     episode.meanTargetSpeed = env.targetsReached > 0 ? static_cast<float>(env.targetSpeedSum / env.targetsReached) : 0.0f;
     episode.imitationErrorRms = imitating() ? static_cast<float>(std::sqrt(env.imitationErrorSquares / n)) : -1.0f;
+    episode.facingErrorRms =
+        env.facingSteps > 0 ? static_cast<float>(std::sqrt(env.facingErrorSquares / env.facingSteps)) : -1.0f;
     if (reason == TrainingEndReason3D::FallContact || reason == TrainingEndReason3D::FallHeight) {
         // O lado da queda: para onde o centro de massa ia, no referencial do corpo.
         const Vec3 v = reading.valid ? reading.headingInverse.rotate(reading.comVelocity) : Vec3 {};

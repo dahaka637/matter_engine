@@ -79,6 +79,7 @@ TrainingTask3D loadTrainingTask3D(const std::filesystem::path& definitionPath) {
         w.targetSpeed = r.value("targetSpeed", w.targetSpeed);
         w.targetReached = r.value("targetReached", w.targetReached);
         w.targetTurn = r.value("targetTurn", w.targetTurn);
+        w.facingHold = r.value("facingHold", w.facingHold);
         w.fall = r.value("fall", w.fall);
         w.positiveOnly = r.value("positiveOnly", w.positiveOnly);
     }
@@ -188,6 +189,7 @@ TrainingTask3D loadTrainingTask3D(const std::filesystem::path& definitionPath) {
         if (out.facingLink != "pelvis" && out.facingLink != "chest")
             throw std::runtime_error("tarefa de RL: facingLink e pelvis ou chest");
         out.facingFraction = std::clamp(t.value("facingFraction", out.facingFraction), 0.0f, 1.0f);
+        out.facingSigma = std::max(1.0e-3f, t.value("facingSigma", out.facingSigma));
         out.lookahead = std::min(3u, t.value("lookahead", out.lookahead));
         out.racingLine = std::clamp(t.value("racingLine", out.racingLine), 0.0f, 0.95f);
         if (t.contains("evaluationCourses"))

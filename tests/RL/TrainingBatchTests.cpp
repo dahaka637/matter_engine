@@ -803,6 +803,24 @@ void testChestFacing() {
     const float free = off.observations()[turn] * 2.0f, held = on.observations()[turn] * 2.0f;
     require(std::abs(held) < 0.1f && std::abs(free - held) > 0.1f,
         "com o comando o peito nao vira para o alvo (livre " + std::to_string(free) + ", com ele " + std::to_string(held) + ")");
+    // Segurar o peito paga so com o comando; o episodio guarda o erro dele.
+    {
+        const std::size_t R = TrainingRewardComponentNames3D.size(), hold = rewardIndex("facingHold");
+        float paidOn = 0.0f, paidOff = 0.0f;
+        for (int step = 0; step < 10; ++step) {
+            on.step(std::vector<float>(4 * on.actionSize(), 0.0f));
+            off.step(std::vector<float>(4 * off.actionSize(), 0.0f));
+            for (std::size_t e = 0; e < 4; ++e) {
+                paidOn += on.rewardComponents()[e * R + hold];
+                paidOff += off.rewardComponents()[e * R + hold];
+            }
+            for (const TrainingEpisode3D& episode : on.finishedEpisodes())
+                require(episode.facingErrorRms >= 0.0f, "com o comando o episodio mede o peito");
+            for (const TrainingEpisode3D& episode : off.finishedEpisodes())
+                require(episode.facingErrorRms < 0.0f, "livre o episodio nao mede o peito");
+        }
+        require(paidOn > 0.0f && paidOff == 0.0f, "segurar o peito paga so com o comando");
+    }
     // No treino, ~70% dos episodios com o comando.
     TrainingBatchSettings3D s = settings(64, 4);
     s.taskPath = task;

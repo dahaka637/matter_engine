@@ -65,6 +65,9 @@ struct TrainingRewardWeights3D {
     // O giro: a velocidade de giro do corpo contra a pedida (o giro do clipe
     // mais o que alinha a direcao em que ele anda com o alvo), em sino.
     float targetTurn = 0.0f;
+    // Segurar o rumo pedido (com o comando de olhar): o erro do link que fica
+    // virado para ele (target.facingLink) em sino (target.facingSigma).
+    float facingHold = 0.0f;
     float fall = 10.0f;
     // O total de cada passo, menos a queda, nunca fica negativo (o
     // "only_positive_rewards" do legged_gym): tentar e errar nunca vale menos
@@ -72,11 +75,11 @@ struct TrainingRewardWeights3D {
     bool positiveOnly = false;
 };
 
-inline constexpr std::array<const char*, 27> TrainingRewardComponentNames3D {
+inline constexpr std::array<const char*, 28> TrainingRewardComponentNames3D {
     "alive", "upright", "headHeight", "comOverSupport", "still", "trunkTurn", "footSlip", "footDrift", "effort",
     "actionRate", "jointLimit", "posePrior", "poseMatch", "velocity", "yawRate", "feetAirTime", "gaitContact",
     "swingHeight", "gaitReference", "imitationPose", "imitationVelocity", "imitationKeyBodies", "imitationRoot",
-    "targetSpeed", "targetReached", "targetTurn", "fall"
+    "targetSpeed", "targetReached", "targetTurn", "facingHold", "fall"
 };
 
 struct TrainingRange3D {
@@ -267,6 +270,7 @@ struct TrainingTask3D {
         // (ou o que a bateria pedir).
         std::string facingLink = "pelvis";
         float facingFraction = 1.0f;
+        float facingSigma = 0.5f;
         // Os varios pontos (biblioteca): quantos alvos depois do de agora ja
         // estao no mapa e na observacao (0 a 3; com 0, cada um nasce so na
         // chegada do anterior). Com eles, cada alvo sai do anterior, pelo rumo do

@@ -119,6 +119,9 @@ struct TrainingEpisode3D {
     // A imitacao: o quanto as juntas ficam longe da referencia (RMS por eixo,
     // rad; -1 sem imitacao).
     float imitationErrorRms = -1.0f;
+    // O comando de olhar: o quanto o link virado para ele ficou fora (RMS,
+    // rad; -1 sem o comando no episodio).
+    float facingErrorRms = -1.0f;
 };
 
 // Um mundo de treino visto por fora (o visualizador, a gravacao).

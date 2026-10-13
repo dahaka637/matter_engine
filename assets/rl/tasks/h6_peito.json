@@ -1,9 +1,9 @@
 {
   "schema": "matter-rl-task-1",
   "id": "h6_peito",
-  "version": 1,
+  "version": 2,
   "displayName": "Peito para a câmera",
-  "comment": "Etapa 4 do plano (decidido com o usuario, 13/10 ~07:40): se deslocar com o peito virado para a camera. E a H5 v3 (varios pontos, os dois proximos no mapa, o tracado de corrida, a biblioteca de 8 trotes) com o comando de olhar ligado no peito (o UpperChest, facingLink chest): o jogo de pes leva de lado, de costas e nas diagonais, e o quadril abre o que a passada pedir. A cabeca fica livre (olhar para um ponto vem depois). Contra as quedas da H4 v2 (o olhar fixo, 98% nos primeiros 12 min): parte do cerebro da H5, que ja se move; 30% dos episodios de treino continuam livres (facingFraction 0,7), e o comando gira devagar como uma camera (facingDriftRadians). Duas baterias: os percursos com o peito fixo para a frente (o quadrado vira o exercicio de agilidade: frente, lado, costas, outro lado) e os mesmos percursos livres, para nao perder o que ja sabe.",
+  "comment": "Etapa 4 do plano (decidido com o usuario, 13/10 ~07:40): se deslocar com o peito virado para a camera. E a H5 v3 (varios pontos, os dois proximos no mapa, o tracado de corrida, a biblioteca de 8 trotes) com o comando de olhar ligado no peito (o UpperChest, facingLink chest): o jogo de pes leva de lado, de costas e nas diagonais, e o quadril abre o que a passada pedir. A cabeca fica livre (olhar para um ponto vem depois). Contra as quedas da H4 v2 (o olhar fixo, 98% nos primeiros 12 min): parte do cerebro da H5, que ja se move; 30% dos episodios de treino continuam livres (facingFraction 0,7), e o comando gira devagar como uma camera (facingDriftRadians). Duas baterias: os percursos com o peito fixo para a frente (o quadrado vira o exercicio de agilidade: frente, lado, costas, outro lado) e os mesmos percursos livres, para nao perder o que ja sabe. Versao 2 (13/10 10:26, a primeira analise de hora): com o peito fixo, nas pernas de costas ele virava o peito e corria de frente (o peito ~50-75 graus fora do comando em media, picos de 180). Correr de frente rende mais velocidade, e so a nota do giro (0,15) segurava o peito. Agora uma nota direta para segurar o rumo pedido (facingHold 0,3, sino de 0,5 rad no erro do peito), e a bateria mede o erro do peito (desconta ate 0,25 da nota).",
   "postures": [
     {
       "id": "alerta",
@@ -85,6 +85,7 @@
     "facingDriftRadians": 0.3,
     "facingLink": "chest",
     "facingFraction": 0.7,
+    "facingSigma": 0.5,
     "lookahead": 2,
     "racingLine": 0.6,
     "evaluationCourses": [
@@ -107,7 +108,7 @@
     ]
   },
   "reward": {
-    "comment": "Os da corrida (H3 v9) mais o giro (alinhar o clipe com o alvo): imitacao 0,8, velocidade em direcao ao alvo 0,3, chegada 3 vezes a velocidade media sobre 3 m/s, o giro 0,15, menos um pouco de mudanca de acao e a queda.",
+    "comment": "Os da corrida (H3 v9) mais o giro (alinhar o clipe com o alvo): imitacao 0,8, velocidade em direcao ao alvo 0,3, chegada 3 vezes a velocidade media sobre 3 m/s, o giro 0,15, menos um pouco de mudanca de acao e a queda. Com o comando de olhar, segurar o peito virado para ele paga 0,3 (o mesmo que correr na velocidade de referencia): andar de costas virado para a camera vale mais que virar e correr de frente.",
     "positiveOnly": false,
     "alive": 0.0,
     "upright": 0.0,
@@ -135,7 +136,8 @@
     "targetSpeed": 0.3,
     "targetReached": 3.0,
     "fall": 5.0,
-    "targetTurn": 0.15
+    "targetTurn": 0.15,
+    "facingHold": 0.3
   },
   "termination": {
     "minimumHeadHeightFraction": 0.6,
@@ -169,7 +171,7 @@
   },
   "evaluation": [
     {
-      "name": "percursos_peito_v1",
+      "name": "percursos_peito_v2",
       "posture": "alerta",
       "seconds": 20.0,
       "referenceSpeed": 3.0,
