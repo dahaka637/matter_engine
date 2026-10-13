@@ -171,6 +171,13 @@ struct TrainingBatch3D::Impl {
     int forcedPosture = -1;
     // Os eixos do tronco e dos bracos (andando, a postura pedida vale so neles).
     std::vector<std::uint8_t> upperDof;
+    // A referencia de passada: o eixo de cada junta pedida, a perna e a escala.
+    struct ReferenceDof {
+        std::size_t dof = 0;
+        std::uint32_t leg = 0;
+        float scale = 0.0f;
+    };
+    std::vector<ReferenceDof> referenceDofs;
     std::array<std::uint32_t, KeyBodyCount> keyBodies {};
     std::uint32_t workers = 1;
     std::uint32_t maximumSteps = 600;
@@ -183,6 +190,7 @@ struct TrainingBatch3D::Impl {
     [[nodiscard]] bool training() const { return !settings.evaluation; }
 
     void buildLayouts();
+    [[nodiscard]] std::vector<ReferenceDof> resolveReference(const TrainingTask3D::Gait& gait) const;
     void resolvePostures();
     [[nodiscard]] std::uint32_t choosePosture(Environment& env) const;
     void updateCommand(Environment& env, bool start);
@@ -345,6 +353,20 @@ void TrainingBatch3D::Impl::writeTargets(Environment& env, std::span<const float
         target.maximumTorqueScale = dof.maximumTorqueScale * env.strength;
         target.gravityCompensationScale = 0.0f;
     }
+}
+
+std::vector<TrainingBatch3D::Impl::ReferenceDof> TrainingBatch3D::Impl::resolveReference(
+    const TrainingTask3D::Gait& gait) const {
+    std::vector<ReferenceDof> resolved;
+    for (const TrainingTask3D::ReferenceJoint& joint : gait.referenceJoints) {
+        std::size_t found = body.dofs.size();
+        for (std::size_t d = 0; d < body.dofs.size(); ++d)
+            if (body.dofs[d].name == joint.dof) found = d;
+        if (found == body.dofs.size())
+            throw std::runtime_error("lote de RL: a referencia de passada pede " + joint.dof + ", que o corpo nao tem");
+        resolved.push_back({ found, joint.leg, joint.scale });
+    }
+    return resolved;
 }
 
 void TrainingBatch3D::Impl::resolvePostures() {
@@ -690,9 +712,46 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
         }
         if (swinging > 0.0f) swingHeight /= swinging;
     }
+    // A referencia de passada: o balanco de cada perna (0 no apoio e no apoio
+    // duplo, 1 no meio do voo) puxa as juntas pedidas da postura ao alvo.
+    float gaitReference = 0.0f;
+    if (moving && task.gait.referenceHipFlexion > 0.0f && !referenceDofs.empty()) {
+        const TrainingTask3D::Gait& gait = task.gait;
+        const float speed = std::hypot(env.command.x, env.command.y);
+        const float fade = std::clamp((gait.referenceFade.maximum - speed)
+                / (gait.referenceFade.maximum - gait.referenceFade.minimum), 0.0f, 1.0f);
+        const float band = std::max(0.0f, gait.doubleSupport * (1.0f - speed / gait.flightSpeed));
+        const float phase = std::sin(2.0f * std::numbers::pi_v<float> * env.gaitPhase);
+        const float open = std::max(1.0e-3f, 1.0f - band);
+        const std::array<float, 2> swing { std::max(0.0f, -phase - band) / open, std::max(0.0f, phase - band) / open };
+        float distance2 = 0.0f;
+        for (const ReferenceDof& reference : referenceDofs) {
+            const RLBodyDof3D& dof = body.dofs[reference.dof];
+            const float q = state.joints[dof.linkIndex].positionRadians[static_cast<std::size_t>(dof.axis)];
+            const float target
+                = posture.dofRadians[reference.dof] + reference.scale * gait.referenceHipFlexion * swing[reference.leg];
+            distance2 += (q - target) * (q - target);
+        }
+        const float distance = std::sqrt(distance2);
+        gaitReference = fade * (std::exp(-2.0f * distance) - 0.2f * std::min(distance, 0.5f));
+    }
+    // Medido contra ficar parado (relativeToStanding): 0 parado, 1 seguindo o
+    // pedido. Sem pedido de giro, o giro segue em sino (nao girar).
+    const float linear2 = env.command.x * env.command.x + env.command.y * env.command.y;
+    const bool relative = moving && task.commands.relativeToStanding;
+    const auto overStanding = [](float tracking, float commanded2) {
+        const float standing = std::exp(-commanded2 / 0.25f);
+        return std::clamp((tracking - standing) / std::max(1.0e-3f, 1.0f - standing), 0.0f, 1.0f);
+    };
+    const float linearScore = relative && linear2 > 0.0f ? overStanding(velocityTracking, linear2) : velocityTracking;
+    const float yawScore
+        = relative && env.command.z != 0.0f ? overStanding(yawTracking, env.command.z * env.command.z) : yawTracking;
     // Com pedido de andar, "estar bem" so paga andando: vivo, postura, cabeca,
-    // pose e giro multiplicados pelo acompanhamento da velocidade.
-    const float gate = moving && task.commands.gateByTracking ? velocityTracking : 1.0f;
+    // pose (e giro, no sino puro) multiplicados pelo acompanhamento.
+    float gate = 1.0f;
+    if (moving && task.commands.gateByTracking)
+        gate = relative ? std::min(linear2 > 0.0f ? linearScore : 1.0f, env.command.z != 0.0f ? yawScore : 1.0f)
+                        : velocityTracking;
 
     float slip = 0.0f, drift = 0.0f;
     for (std::size_t f = 0; f < 2; ++f) {
@@ -763,18 +822,21 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
         -w.jointLimit * limit,
         -w.posePrior * pose,
         w.poseMatch * poseMatch * gate,
-        w.velocity * velocityTracking,
-        w.yawRate * yawTracking * gate,
+        w.velocity * linearScore,
+        w.yawRate * yawScore * (relative ? 1.0f : gate),
         w.feetAirTime * airTime,
         w.gaitContact * gaitContact,
         w.swingHeight * swingHeight,
+        w.gaitReference * gaitReference,
         fell ? -w.fall : 0.0f,
     };
-    float total = 0.0f;
+    // A queda e a ultima parcela; o resto, com positiveOnly, nunca abaixo de 0.
+    float living = 0.0f;
     for (std::size_t i = 0; i < RewardCount; ++i) {
         componentsOut[i] = values[i];
-        total += values[i];
+        if (i + 1 < RewardCount) living += values[i];
     }
+    const float total = (w.positiveOnly ? std::max(0.0f, living) : living) + values[RewardCount - 1];
 
     // O resumo do episodio.
     env.comSum[0] += reading.com.x;
@@ -987,6 +1049,7 @@ TrainingBatch3D::TrainingBatch3D(const TrainingBatchSettings3D& settings) : m_im
             || link.find("Foot") != std::string::npos || link.find("Toe") != std::string::npos;
         impl.upperDof.push_back(leg ? 0 : 1);
     }
+    impl.referenceDofs = impl.resolveReference(impl.task.gait);
     if (!settings.posture.empty()) {
         impl.forcedPosture = findRLPosture3D(impl.body, settings.posture);
         if (impl.forcedPosture < 0) throw std::runtime_error("lote de RL: o corpo nao tem a postura " + settings.posture);
@@ -1029,6 +1092,8 @@ const TrainingTask3D& TrainingBatch3D::task() const { return m_impl->task; }
 
 void TrainingBatch3D::updateTask(const TrainingTask3D& task) {
     Impl& impl = *m_impl;
+    // Confere antes de mudar: uma tarefa recusada deixa o lote como estava.
+    std::vector<Impl::ReferenceDof> reference = impl.resolveReference(task.gait);
     impl.task.reward = task.reward;
     impl.task.termination = task.termination;
     impl.task.initialState = task.initialState;
@@ -1036,6 +1101,8 @@ void TrainingBatch3D::updateTask(const TrainingTask3D& task) {
     impl.task.pushes = task.pushes;
     impl.task.postures = task.postures;
     impl.task.commands = task.commands;
+    impl.task.gait = task.gait;
+    impl.referenceDofs = std::move(reference);
     impl.resolvePostures();
     impl.pushLinks.clear();
     for (const std::string& id : impl.task.pushes.links)

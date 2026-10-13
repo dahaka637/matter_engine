@@ -1,9 +1,9 @@
 {
   "schema": "matter-rl-task-1",
   "id": "h3_andar",
-  "version": 3,
+  "version": 4,
   "displayName": "Andar",
-  "comment": "H3: andar seguindo um comando de velocidade (para frente, de 0 ao trote da locomocao padrao, 4,5 m/s), saindo e parando na postura de alerta. A velocidade maxima sobe pelo curriculo conforme ele acompanha. 25% dos sorteios pedem ficar parado (o ensaio da H1b), e 15% dos episodios ficam parados na postura natural (o ensaio da H1: sem pedidos de andar nela, que a faziam esquecer o parado). Costas, lados e giro ja estao prontos na mesma tarefa: basta um maximo acima de 0 em commands (os valores de proximo passo estao em commands.prontos) e ligar as baterias deles. Versao 2: com pedido de andar, ficar parado nao paga (vivo, postura, cabeca, pose e giro valem multiplicados pelo acompanhamento da velocidade), e o relogio de passada ensina o passo (cada pe no chao ou no ar na hora certa da fase, o pe de balanco subindo 8 cm). Versao 3: os episodios com pedido de andar comecam com o corpo ja na velocidade pedida (parado, ele cai para a frente: o primeiro passo vira uma reacao).",
+  "comment": "H3: andar seguindo um comando de velocidade (para frente, de 0 ao trote da locomocao padrao, 4,5 m/s), saindo e parando na postura de alerta. A velocidade maxima sobe pelo curriculo conforme ele acompanha. 25% dos sorteios pedem ficar parado (o ensaio da H1b), e 15% dos episodios ficam parados na postura natural (o ensaio da H1: sem pedidos de andar nela, que a faziam esquecer o parado). Costas, lados e giro ja estao prontos na mesma tarefa: basta um maximo acima de 0 em commands (os valores de proximo passo estao em commands.prontos) e ligar as baterias deles. Versao 2: com pedido de andar, ficar parado nao paga (vivo, postura, cabeca, pose e giro valem multiplicados pelo acompanhamento da velocidade), e o relogio de passada ensina o passo (cada pe no chao ou no ar na hora certa da fase, o pe de balanco subindo 8 cm). Versao 3: os episodios com pedido de andar comecam com o corpo ja na velocidade pedida (parado, ele cai para a frente: o primeiro passo vira uma reacao). Versao 4: com pedido de andar, a velocidade e o estar bem sao medidos contra ficar parado (parado vale 0 em qualquer velocidade pedida), e o total de cada passo, menos a queda, nunca fica negativo: tentar andar e errar nunca vale menos que ficar parado.",
   "postures": [
     {
       "id": "natural",
@@ -37,7 +37,8 @@
       "yawRate": 2.0
     },
     "gateByTracking": true,
-    "startMoving": true
+    "startMoving": true,
+    "relativeToStanding": true
   },
   "curriculum": {
     "comment": "Cada direcao ligada comeca no limite start e sobe step quando a nota media do acompanhamento da velocidade (0 a 1, nas decisoes andando) passa de threshold por 3 rodadas seguidas, com pelo menos minimumIterations rodadas entre uma subida e outra.",
@@ -47,6 +48,7 @@
     "minimumIterations": 50
   },
   "reward": {
+    "positiveOnly": true,
     "alive": 1.0,
     "upright": 0.3,
     "headHeight": 0.3,

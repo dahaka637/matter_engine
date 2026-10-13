@@ -45,13 +45,20 @@ struct TrainingRewardWeights3D {
     // da fase (alternando) e o pe de balanco subindo ate a altura do passo.
     float gaitContact = 0.0f;
     float swingHeight = 0.0f;
+    // A referencia de passada (gait.reference): as juntas das pernas perto do
+    // alvo senoidal da fase, em sino da distancia (rad), menos um tanto dela.
+    float gaitReference = 0.0f;
     float fall = 10.0f;
+    // O total de cada passo, menos a queda, nunca fica negativo (o
+    // "only_positive_rewards" do legged_gym): tentar e errar nunca vale menos
+    // que ficar parado, e cair nunca compensa as penalidades de seguir vivo.
+    bool positiveOnly = false;
 };
 
-inline constexpr std::array<const char*, 19> TrainingRewardComponentNames3D {
+inline constexpr std::array<const char*, 20> TrainingRewardComponentNames3D {
     "alive", "upright", "headHeight", "comOverSupport", "still", "trunkTurn", "footSlip", "footDrift", "effort",
     "actionRate", "jointLimit", "posePrior", "poseMatch", "velocity", "yawRate", "feetAirTime", "gaitContact",
-    "swingHeight", "fall"
+    "swingHeight", "gaitReference", "fall"
 };
 
 struct TrainingRange3D {
@@ -123,6 +130,12 @@ struct TrainingTask3D {
         // velocidade pedida: parado, ele cai para a frente, e o primeiro passo
         // vira uma reacao (como o de quem e empurrado).
         bool startMoving = false;
+        // Medido contra ficar parado: com pedido de andar, a velocidade (e o
+        // giro, se pedido) vale 0 parado e 1 seguindo o pedido, e o "estar
+        // bem" (gateByTracking) vai junto. Parado nao ganha nada do que paga
+        // andar, em qualquer velocidade pedida (no sino puro, parado com 0,3
+        // m/s pedidos levava 70%).
+        bool relativeToStanding = false;
     } commands;
 
     // O relogio de passada (so andando): a fase corre a frequency[0] +
@@ -130,11 +143,25 @@ struct TrainingTask3D {
     // (o esquerdo na primeira, o direito na segunda), com um apoio duplo de
     // doubleSupport (no seno da fase) que vira voo acima de flightSpeed m/s; o
     // pe de balanco sobe ate swingHeight metros.
+    //
+    // A referencia (receita do humanoid-gym): a perna de balanco segue um alvo
+    // no ritmo da fase, a partir da postura; cada junta listada vai a postura
+    // mais scale * hipFlexion * o balanco da perna dela (0 no apoio, 1 no meio
+    // do voo). E o empurrao para o primeiro passo, nao o jeito de correr: o
+    // peso some com a velocidade pedida entre fade[0] e fade[1] m/s.
+    struct ReferenceJoint {
+        std::string dof;
+        std::uint32_t leg = 0;  // 0 esquerda, 1 direita
+        float scale = 0.0f;
+    };
     struct Gait {
         TrainingRange3D frequency { 0.9f, 0.13f };
         float doubleSupport = 0.1f;
         float flightSpeed = 2.5f;
         float swingHeight = 0.08f;
+        float referenceHipFlexion = 0.0f;
+        TrainingRange3D referenceFade { 2.0f, 3.5f };
+        std::vector<ReferenceJoint> referenceJoints;
     } gait;
 
     struct Termination {

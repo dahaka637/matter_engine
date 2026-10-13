@@ -8,6 +8,7 @@
 #include <random>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -233,6 +234,60 @@ void testCommands() {
     const std::size_t B = battery.observationSize();
     for (int i = 0; i < 5; ++i) battery.step(still);
     require(battery.observations()[B - 1] < 0.999f && battery.observations()[B - 1] > -1.0f, "o relogio de passada corre andando");
+
+    // A referencia de passada: so andando, no maximo o peso, e some acima da
+    // faixa de fade. Uma junta que o corpo nao tem e erro.
+    constexpr std::size_t R = TrainingRewardComponentNames3D.size();
+    std::size_t referenceIndex = R;
+    for (std::size_t i = 0; i < R; ++i)
+        if (std::string_view(TrainingRewardComponentNames3D[i]) == "gaitReference") referenceIndex = i;
+    require(referenceIndex == R - 2 && std::string_view(TrainingRewardComponentNames3D[R - 1]) == "fall",
+        "a parcela da referencia antes da queda (a queda e a ultima)");
+    TrainingTask3D guided = battery.task();
+    guided.reward.gaitReference = 2.0f;
+    guided.gait.referenceHipFlexion = 0.4f;
+    guided.gait.referenceFade = { 2.0f, 3.5f };
+    guided.gait.referenceJoints = { { "LeftThigh.swing1", 0, -1.0f }, { "LeftShin.twist", 0, 2.0f },
+        { "RightThigh.swing1", 1, -1.0f }, { "RightShin.twist", 1, 2.0f } };
+    battery.updateTask(guided);
+    battery.setCommand(1, { 4.0f, 0.0f, 0.0f });
+    float walked = 0.0f;
+    for (int i = 0; i < 6; ++i) {
+        battery.step(still);
+        const float a = battery.rewardComponents()[0 * R + referenceIndex];
+        const float b = battery.rewardComponents()[1 * R + referenceIndex];
+        require(a > -0.21f && a <= 2.0f + 1e-4f, "a referencia vale no maximo o peso");
+        require(b == 0.0f, "acima da faixa de fade a referencia some");
+        walked += a;
+    }
+    require(walked != 0.0f, "andando a 1,5 m/s a referencia conta");
+    guided.gait.referenceJoints.push_back({ "LeftKnee.swing9", 0, 1.0f });
+    bool refused = false;
+    try {
+        battery.updateTask(guided);
+    } catch (const std::runtime_error&) {
+        refused = true;
+    }
+    require(refused, "uma junta que o corpo nao tem e erro");
+
+    // Medido contra ficar parado, e o total nunca negativo: parado sob um
+    // pedido de andar, a velocidade vale 0 e o passo vale 0 (nao menos).
+    TrainingTask3D relative = battery.task();
+    relative.reward.gaitReference = 0.0f;
+    relative.gait.referenceJoints.clear();
+    relative.commands.relativeToStanding = true;
+    relative.reward.positiveOnly = true;
+    battery.updateTask(relative);
+    battery.setCommand(0, { 1.5f, 0.0f, 0.0f });
+    std::size_t velocityIndex = R;
+    for (std::size_t i = 0; i < R; ++i)
+        if (std::string_view(TrainingRewardComponentNames3D[i]) == "velocity") velocityIndex = i;
+    for (int i = 0; i < 4; ++i) {
+        battery.step(still);
+        require(battery.rewardComponents()[velocityIndex] < 0.05f * relative.reward.velocity,
+            "parado sob pedido de andar, a velocidade nao paga");
+        require(battery.rewards()[0] >= 0.0f, "o total sem queda nunca fica negativo");
+    }
 }
 
 // Mesma semente, mesmas acoes: o mesmo resultado, com 1 ou 3 threads.

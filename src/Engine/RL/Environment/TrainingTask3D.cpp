@@ -70,7 +70,9 @@ TrainingTask3D loadTrainingTask3D(const std::filesystem::path& definitionPath) {
         w.feetAirTime = r.value("feetAirTime", w.feetAirTime);
         w.gaitContact = r.value("gaitContact", w.gaitContact);
         w.swingHeight = r.value("swingHeight", w.swingHeight);
+        w.gaitReference = r.value("gaitReference", w.gaitReference);
         w.fall = r.value("fall", w.fall);
+        w.positiveOnly = r.value("positiveOnly", w.positiveOnly);
     }
     task.worldSpacingMeters = document.value("worldSpacingMeters", task.worldSpacingMeters);
     if (!(task.worldSpacingMeters >= 4.0f)) throw std::runtime_error("tarefa de RL: worldSpacingMeters invalido");
@@ -85,6 +87,7 @@ TrainingTask3D loadTrainingTask3D(const std::filesystem::path& definitionPath) {
         out.yawRate = std::max(0.0f, c.value("yawRate", out.yawRate));
         out.gateByTracking = c.value("gateByTracking", out.gateByTracking);
         out.startMoving = c.value("startMoving", out.startMoving);
+        out.relativeToStanding = c.value("relativeToStanding", out.relativeToStanding);
         if (c.contains("limits")) {
             const nlohmann::json& l = c["limits"];
             out.limits.forward = l.value("forward", out.limits.forward);
@@ -104,6 +107,20 @@ TrainingTask3D loadTrainingTask3D(const std::filesystem::path& definitionPath) {
         out.doubleSupport = g.value("doubleSupport", out.doubleSupport);
         out.flightSpeed = std::max(0.1f, g.value("flightSpeed", out.flightSpeed));
         out.swingHeight = std::max(0.01f, g.value("swingHeight", out.swingHeight));
+        if (g.contains("reference")) {
+            const nlohmann::json& reference = g["reference"];
+            out.referenceHipFlexion = std::max(0.0f, reference.value("hipFlexion", 0.0f));
+            out.referenceFade = range(reference, "fade", out.referenceFade);
+            if (!(out.referenceFade.maximum > out.referenceFade.minimum))
+                throw std::runtime_error("tarefa de RL: gait.reference.fade invalido");
+            for (const nlohmann::json& joint : reference.value("joints", nlohmann::json::array())) {
+                const std::string leg = joint.value("leg", std::string());
+                if (leg != "left" && leg != "right")
+                    throw std::runtime_error("tarefa de RL: gait.reference.joints com perna invalida");
+                out.referenceJoints.push_back(
+                    { joint.at("dof").get<std::string>(), leg == "left" ? 0u : 1u, joint.value("scale", 0.0f) });
+            }
+        }
     }
     if (document.contains("termination")) {
         const nlohmann::json& t = document["termination"];
