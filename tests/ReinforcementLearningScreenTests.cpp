@@ -250,7 +250,8 @@ int main() {
         // mundo; a politica de mentira (de antes do comando da postura, 160
         // entradas) le o comeco da observacao.
         require(screen.skillTasks()
-                == std::vector<std::string> { "h1_ficar_em_pe", "h1b_em_pe_posturado", "h3_andar", "h3b_caminhar_alvo" },
+                == std::vector<std::string> { "h1_ficar_em_pe", "h1b_em_pe_posturado", "h3_andar", "h3b_caminhar_alvo",
+                    "h4_direcoes" },
             "as habilidades vem das tarefas");
         require(screen.viewerPosture() == 0, "a H1 mostra a postura natural");
         screen.selectSkill(1);

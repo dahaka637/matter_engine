@@ -55,19 +55,28 @@ struct ReferenceSegment3D {
     // Onde a sequencia entra neste trecho vindo do anterior: o quadro mais
     // parecido com o fim dele (no primeiro trecho, 0).
     std::uint32_t entryFrame = 0;
-    // O rumo em que o trecho anda, em relacao ao rumo da pelve no quadro 0
-    // (rad): o alvo de quem sai deste trecho fica nessa direcao.
+    // O rumo em que o trecho anda no mundo do clipe (rad): o alvo de quem sai
+    // deste trecho fica nessa direcao.
     float travelHeading = 0.0f;
+    // A direcao em que ele anda em relacao ao rumo medio da pelve (rad): 0 para
+    // a frente, pi/2 para a esquerda, pi para tras (o planejador escolhe por ela).
+    float travelRelative = 0.0f;
     // A velocidade media no plano (m/s).
     float meanSpeed = 0.0f;
     // O maior pulo de pose na entrada (rad, RMS dos eixos): a emenda.
     float entryJumpRms = 0.0f;
 };
 
-// Uma referencia de movimento: os trechos em sequencia, o ultimo em ciclo.
+// Uma referencia de movimento: os trechos em sequencia, o ultimo em ciclo; ou
+// uma biblioteca (todos em ciclo, o planejador do ambiente escolhe qual), com
+// a tabela de emendas: de cada quadro de um trecho, o quadro mais parecido de
+// cada outro.
 struct ReferenceMotion3D {
     std::vector<ReferenceSegment3D> segments;
     float frameSeconds = 1.0f / 120.0f;
+    bool library = false;
+    // transitions[de][para][quadro de "de"] = o quadro de entrada em "para".
+    std::vector<std::vector<std::vector<std::uint32_t>>> transitions;
     std::uint64_t hash = 0;
 };
 
@@ -80,8 +89,9 @@ struct ReferenceClip3D {
 
 // Amostra os clipes no corpo. Lanca se um clipe nao for do corpo, se so o
 // ultimo trecho nao estiver em ciclo, ou se a sequencia for vazia.
+// Com library, todos os trechos ficam em ciclo e a tabela de emendas e feita.
 [[nodiscard]] ReferenceMotion3D buildReferenceMotion3D(const RLBody3D& body, std::span<const ReferenceClip3D> clips,
-    float frameSeconds = 1.0f / 120.0f);
+    float frameSeconds = 1.0f / 120.0f, bool library = false);
 
 // Onde a referencia esta: o trecho e o quadro dentro dele.
 struct ReferenceCursor3D {
@@ -95,6 +105,11 @@ struct ReferenceCursor3D {
     std::uint32_t frames);
 
 [[nodiscard]] const ReferenceFrame3D& referenceFrame3D(const ReferenceMotion3D& motion, ReferenceCursor3D cursor);
+
+// Numa biblioteca: o cursor no trecho pedido, pelo quadro da emenda (no mesmo
+// trecho, nada muda).
+[[nodiscard]] ReferenceCursor3D switchReference3D(const ReferenceMotion3D& motion, ReferenceCursor3D cursor,
+    std::uint32_t segment);
 
 // O quanto o trecho ja andou (0 a 1; num ciclo, a fase).
 [[nodiscard]] float referenceProgress3D(const ReferenceMotion3D& motion, ReferenceCursor3D cursor);

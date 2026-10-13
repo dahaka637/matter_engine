@@ -39,13 +39,13 @@ def battery_posture(name: str) -> str:
 def battery_kind(name: str) -> str:
     """O tipo de uma bateria pelo nome (a convencao das tarefas): andar_* e
     girar_* seguem um roteiro de velocidades, ir_ate_* vao a um ponto,
-    corrida_* e caminhada_* vao ate os alvos da tarefa (o alvo no mundo, com
-    imitacao)."""
+    corrida_*, caminhada_* e direcoes_* vao ate os alvos da tarefa (o alvo no
+    mundo, com imitacao)."""
     if name.startswith(("andar_", "girar_")):
         return "andar"
     if name.startswith("ir_ate_"):
         return "alvo"
-    if name.startswith(("corrida_", "caminhada_")):
+    if name.startswith(("corrida_", "caminhada_", "direcoes_")):
         return "corrida"
     return "de_pe"
 
@@ -70,7 +70,7 @@ def task_batteries(task_path: Path) -> list[dict]:
         if not entry.get("enabled", True):
             continue
         kind = ("andar" if entry.get("schedule") else "alvo" if entry.get("goal")
-                else "corrida" if entry["name"].startswith(("corrida_", "caminhada_")) else "de_pe")
+                else "corrida" if entry["name"].startswith(("corrida_", "caminhada_", "direcoes_")) else "de_pe")
         batteries.append(dict(entry, kind=kind, posture=entry.get("posture", "natural")))
     return batteries
 

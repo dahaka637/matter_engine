@@ -93,7 +93,10 @@ ReferenceSegment3D sampleSegment(const RLBody3D& body, const ReferenceClip3D& re
     // linear tira o k x so de um avanco constante; o resto (k vezes o x que
     // sobrou no in-place) sai aqui.
     const Vec3 drift = clip.sourceRootDisplacementMeters;
-    const Vec3 advance { drift.x, drift.y, 0.0f };
+    // (Os clipes autorais nao tem deriva: declaram a velocidade e a direcao em
+    // relacao a pelve; o avanco deles entra depois do rumo medio da pelve.)
+    const bool declared = std::hypot(drift.x, drift.y) < 1.0e-3f && clip.nominalSpeedMetersPerSecond > 0.0f;
+    Vec3 advance { drift.x, drift.y, 0.0f };
     const float leak = std::abs(drift.x) > 0.1f ? drift.z / drift.x : 0.0f;
 
     std::vector<RawFrame> raw(count);
@@ -105,7 +108,7 @@ ReferenceSegment3D sampleSegment(const RLBody3D& body, const ReferenceClip3D& re
         frame.rootRotation = root.rotationDelta.normalized();
         Vec3 offset = root.translationOffsetMeters;
         offset.z -= leak * offset.x;
-        frame.rootPosition = offset + advance * (t / duration);
+        frame.rootPosition = offset;
         for (std::size_t link = 1; link < profile.links.size(); ++link) {
             const AnimationTrack3D* track = findAnimationTrack3D(clip, profile.links[link].id);
             if (!track) continue;
@@ -196,6 +199,22 @@ ReferenceSegment3D sampleSegment(const RLBody3D& body, const ReferenceClip3D& re
         ground = std::move(smooth);
     }
     for (std::size_t i = 0; i < count; ++i) raw[i].rootPosition.z -= ground[i];
+    // O avanco: a deriva do in-place ou, nos autorais, a velocidade declarada na
+    // direcao declarada a partir do rumo medio da pelve.
+    if (declared) {
+        float sine = 0.0f, cosine = 0.0f;
+        for (const RLBodyPose3D& pose : poses) {
+            const float heading = pelvisHeading(profile, pose.orientations.front());
+            sine += std::sin(heading);
+            cosine += std::cos(heading);
+        }
+        const float direction = std::atan2(sine, cosine) + clip.travelDirectionRadians;
+        advance = Vec3 { std::cos(direction), std::sin(direction), 0.0f } * (clip.nominalSpeedMetersPerSecond * duration);
+    }
+    for (std::size_t i = 0; i < count; ++i) {
+        const float t = std::min(duration, static_cast<float>(i) * frameSeconds);
+        raw[i].rootPosition += advance * (t / duration);
+    }
 
     for (std::size_t i = 0; i < count; ++i) {
         ReferenceFrame3D& frame = segment.frames[i];
@@ -235,6 +254,14 @@ ReferenceSegment3D sampleSegment(const RLBody3D& body, const ReferenceClip3D& re
         frame.footContact = contact[i];
     }
     segment.travelHeading = std::hypot(advance.x, advance.y) > 1.0e-4f ? std::atan2(advance.y, advance.x) : 0.0f;
+    {
+        float sine = 0.0f, cosine = 0.0f;
+        for (const ReferenceFrame3D& frame : segment.frames) {
+            sine += std::sin(frame.heading);
+            cosine += std::cos(frame.heading);
+        }
+        segment.travelRelative = wrapAngle(segment.travelHeading - std::atan2(sine, cosine));
+    }
     segment.meanSpeed = std::hypot(advance.x, advance.y) / duration;
     return segment;
 }
@@ -248,19 +275,60 @@ float poseDistance2(const ReferenceFrame3D& a, const ReferenceFrame3D& b) {
     return sum;
 }
 
+// A emenda de um quadro para outro trecho: a pose e (um pouco) a velocidade das
+// juntas, para nao entrar com a perna indo para o lado contrario.
+float transitionCost(const ReferenceFrame3D& a, const ReferenceFrame3D& b) {
+    float velocity = 0.0f;
+    for (std::size_t d = 0; d < a.dofVelocities.size(); ++d) {
+        const float e = a.dofVelocities[d] - b.dofVelocities[d];
+        velocity += e * e;
+    }
+    return poseDistance2(a, b) + 0.01f * velocity;
+}
+
 } // namespace
 
 ReferenceMotion3D buildReferenceMotion3D(const RLBody3D& body, std::span<const ReferenceClip3D> clips,
-    float frameSeconds) {
+    float frameSeconds, bool library) {
     if (clips.empty()) throw std::invalid_argument("referencia: sem trechos");
     if (!(frameSeconds > 0.0f)) throw std::invalid_argument("referencia: passo invalido");
     for (std::size_t i = 0; i < clips.size(); ++i)
-        if (clips[i].loops != (i + 1 == clips.size()))
-            throw std::invalid_argument("referencia: so o ultimo trecho fica em ciclo (" + clips[i].clipPath.string() + ")");
+        if (library ? !clips[i].loops : clips[i].loops != (i + 1 == clips.size()))
+            throw std::invalid_argument(library ? "referencia: numa biblioteca todo trecho fica em ciclo ("
+                    + clips[i].clipPath.string() + ")"
+                                                : "referencia: so o ultimo trecho fica em ciclo ("
+                    + clips[i].clipPath.string() + ")");
     ReferenceMotion3D motion;
     motion.frameSeconds = frameSeconds;
+    motion.library = library;
     motion.hash = 14695981039346656037ull;
     for (const ReferenceClip3D& clip : clips) motion.segments.push_back(sampleSegment(body, clip, frameSeconds, motion.hash));
+    if (library) {
+        const std::size_t count = motion.segments.size();
+        motion.transitions.assign(count, std::vector<std::vector<std::uint32_t>>(count));
+        for (std::size_t from = 0; from < count; ++from)
+            for (std::size_t to = 0; to < count; ++to) {
+                const ReferenceSegment3D& a = motion.segments[from];
+                const ReferenceSegment3D& b = motion.segments[to];
+                std::vector<std::uint32_t>& entry = motion.transitions[from][to];
+                entry.resize(a.frames.size());
+                for (std::size_t f = 0; f < a.frames.size(); ++f) {
+                    if (from == to) {
+                        entry[f] = static_cast<std::uint32_t>(f);
+                        continue;
+                    }
+                    float best = std::numeric_limits<float>::max();
+                    for (std::size_t g = 0; g < b.frames.size(); ++g) {
+                        const float cost = transitionCost(a.frames[f], b.frames[g]);
+                        if (cost < best) {
+                            best = cost;
+                            entry[f] = static_cast<std::uint32_t>(g);
+                        }
+                    }
+                }
+            }
+        return motion;
+    }
     // A emenda: cada trecho entra pelo quadro mais parecido com o fim do anterior.
     for (std::size_t s = 1; s < motion.segments.size(); ++s) {
         const ReferenceFrame3D& last = motion.segments[s - 1].frames.back();
@@ -313,6 +381,12 @@ const ReferenceFrame3D& referenceFrame3D(const ReferenceMotion3D& motion, Refere
     const ReferenceSegment3D& segment =
         motion.segments[std::min<std::size_t>(cursor.segment, motion.segments.size() - 1)];
     return segment.frames[std::min<std::size_t>(cursor.frame, segment.frames.size() - 1)];
+}
+
+ReferenceCursor3D switchReference3D(const ReferenceMotion3D& motion, ReferenceCursor3D cursor, std::uint32_t segment) {
+    if (segment >= motion.segments.size() || segment == cursor.segment || motion.transitions.empty()) return cursor;
+    const auto& entries = motion.transitions[cursor.segment][segment];
+    return { segment, entries[std::min<std::size_t>(cursor.frame, entries.size() - 1)] };
 }
 
 float referenceProgress3D(const ReferenceMotion3D& motion, ReferenceCursor3D cursor) {

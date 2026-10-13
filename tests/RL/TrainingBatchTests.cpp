@@ -623,6 +623,47 @@ void testRace() {
     }
 }
 
+
+// Todas as direcoes (H4): a biblioteca, o planejador e o giro pedido.
+void testDirections() {
+    TrainingBatchSettings3D s = settings(16, 2);
+    s.taskPath = std::filesystem::path(MATTERENGINE_TEST_ASSETS_DIR) / "rl/tasks/h4_direcoes.json";
+    s.evaluation = true;
+    s.evaluationEpisodeSeconds = 15.0f;
+    TrainingBatch3D batch(s);
+    const std::size_t O = batch.observationSize();
+    const std::vector<std::string> clips { "sprint", "trote", "esquerda", "direita", "costas" };
+    const auto clipOf = [&](std::size_t e) {
+        std::size_t best = 0;
+        for (std::size_t c = 1; c < clips.size(); ++c)
+            if (batch.observations()[e * O + channel(batch, "reference.clip." + clips[c])]
+                > batch.observations()[e * O + channel(batch, "reference.clip." + clips[best])])
+                best = c;
+        return clips[best];
+    };
+    const float turn = static_cast<float>(channel(batch, "target.turn_rate"));
+    // Os mundos pares ficam a 3,5 m (perto) e os impares a 7 m (longe), cada um
+    // a 22,5 graus do anterior.
+    require(clipOf(0) == "trote", "perto e na frente: o trote");
+    require(clipOf(4) == "esquerda", "perto e a esquerda: de lado para a esquerda");
+    require(clipOf(8) == "costas", "perto e atras: de costas");
+    require(clipOf(12) == "direita", "perto e a direita: de lado para a direita");
+    for (const std::size_t far : { 1u, 5u, 9u, 13u })
+        require(clipOf(far) == "trote", "longe: de frente (" + clipOf(far) + " no mundo " + std::to_string(far) + ")");
+    const float leftTurn = batch.observations()[5 * O + static_cast<std::size_t>(turn)] * 2.0f;
+    const float rightTurn = batch.observations()[13 * O + static_cast<std::size_t>(turn)] * 2.0f;
+    require(leftTurn > 1.5f && rightTurn < -1.5f, "longe e de lado: vira para o alvo");
+    // Seguindo o clipe (acao zero), o giro paga e nada quebra.
+    const std::size_t R = TrainingRewardComponentNames3D.size(), spin = rewardIndex("targetTurn");
+    float paid = 0.0f;
+    for (int step = 0; step < 20; ++step) {
+        batch.step(std::vector<float>(16 * batch.actionSize(), 0.0f));
+        require(finiteAll(batch.observations()) && finiteAll(batch.rewards()), "a biblioteca anda sem numero ruim");
+        for (std::size_t e = 0; e < 16; ++e) paid += batch.rewardComponents()[e * R + spin];
+    }
+    require(paid > 0.0f, "o giro paga");
+}
+
 } // namespace
 
 void runTrainingBatchTests() {
@@ -635,5 +676,6 @@ void runTrainingBatchTests() {
     testTimeLimit();
     testTeacher();
     testRace();
+    testDirections();
     std::cout << "RL training batch tests passed\n";
 }

@@ -62,6 +62,9 @@ struct TrainingRewardWeights3D {
     // do trecho sobre a de referencia (uma vez por alvo).
     float targetSpeed = 0.0f;
     float targetReached = 0.0f;
+    // O giro: a velocidade de giro do corpo contra a pedida (o giro do clipe
+    // mais o que alinha a direcao em que ele anda com o alvo), em sino.
+    float targetTurn = 0.0f;
     float fall = 10.0f;
     // O total de cada passo, menos a queda, nunca fica negativo (o
     // "only_positive_rewards" do legged_gym): tentar e errar nunca vale menos
@@ -69,11 +72,11 @@ struct TrainingRewardWeights3D {
     bool positiveOnly = false;
 };
 
-inline constexpr std::array<const char*, 26> TrainingRewardComponentNames3D {
+inline constexpr std::array<const char*, 27> TrainingRewardComponentNames3D {
     "alive", "upright", "headHeight", "comOverSupport", "still", "trunkTurn", "footSlip", "footDrift", "effort",
     "actionRate", "jointLimit", "posePrior", "poseMatch", "velocity", "yawRate", "feetAirTime", "gaitContact",
     "swingHeight", "gaitReference", "imitationPose", "imitationVelocity", "imitationKeyBodies", "imitationRoot",
-    "targetSpeed", "targetReached", "fall"
+    "targetSpeed", "targetReached", "targetTurn", "fall"
 };
 
 struct TrainingRange3D {
@@ -202,6 +205,20 @@ struct TrainingTask3D {
         std::vector<ImitationClip> clips;
         float standingStart = 0.5f;
         bool residualActions = false;
+        // Uma biblioteca (todos os clipes em ciclo): o planejador escolhe a cada
+        // decisao, pela direcao e pela distancia do alvo em relacao a frente do
+        // corpo. Longe (farDistance), para a frente: o sprint (sprintDistance)
+        // ou o trote, virando; perto, frente, esquerda, direita ou costas pelo
+        // angulo (os quadrantes de 90 graus), com histerese e um tempo minimo
+        // em cada clipe. Os nomes sao os ids dos clipes da lista.
+        bool library = false;
+        struct Planner {
+            float farDistance = 5.0f;
+            float sprintDistance = 8.0f;
+            float hysteresisDegrees = 10.0f;
+            float minimumSeconds = 0.4f;
+            std::string sprint, forward, left, right, back;
+        } planner;
         float poseScale = 2.0f;
         float velocityScale = 0.1f;
         float keyBodyScale = 40.0f;
@@ -226,6 +243,18 @@ struct TrainingTask3D {
         // Passou do alvo: a distancia ate ele passa do mais perto que ele
         // chegou mais isto (m) e o episodio acaba (0 = desligado).
         float missMeters = 0.0f;
+        // A distancia sorteada de cada alvo (com maximo acima de 0; senao a
+        // distance). Na avaliacao, evaluationPerWorld da a cada mundo o angulo
+        // (e a distancia) da sua posicao nas listas, e os alvos seguintes
+        // seguem as listas dali.
+        TrainingRange3D distanceRange { 0.0f, 0.0f };
+        bool evaluationPerWorld = false;
+        std::vector<float> evaluationDistances;
+        // O giro pedido: turnGain por radiano entre a direcao em que o clipe anda
+        // e o alvo, ate turnMaximum (rad/s); turnSigma e o sino da nota.
+        float turnGain = 2.0f;
+        float turnMaximum = 2.5f;
+        float turnSigma = 0.5f;
     } target;
 
     struct Termination {

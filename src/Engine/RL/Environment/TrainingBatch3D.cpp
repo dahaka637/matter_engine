@@ -125,6 +125,13 @@ struct Environment {
     double targetSpeedSum = 0.0;
     // O mais perto que ele chegou do alvo de agora (o "passou do alvo").
     float targetClosest = 1e9f;
+    // O planejador (biblioteca): o indice do mundo (as listas da avaliacao), a
+    // familia de agora (0 sprint, 1 frente, 2 esquerda, 3 direita, 4 costas), ha
+    // quanto tempo nela e o giro pedido (rad/s).
+    std::uint32_t index = 0;
+    std::uint32_t family = 1;
+    float clipSince = 0.0f;
+    float turnRate = 0.0f;
 };
 
 struct Scene {
@@ -201,8 +208,10 @@ struct TrainingBatch3D::Impl {
     // A acao do professor no ultimo step (mundos x eixos).
     std::vector<float> teacherLabels;
     std::array<std::uint32_t, KeyBodyCount> keyBodies {};
-    // A referencia da imitacao (vazia sem a secao imitation).
+    // A referencia da imitacao (vazia sem a secao imitation) e, numa
+    // biblioteca, o trecho de cada familia do planejador (-1 sem ele).
     ReferenceMotion3D reference;
+    std::array<int, 5> plannerSegments { -1, -1, -1, -1, -1 };
     std::uint32_t workers = 1;
     std::uint32_t maximumSteps = 600;
     float lastStepMilliseconds = 0.0f;
@@ -230,6 +239,12 @@ struct TrainingBatch3D::Impl {
     // seguinte, distance adiante do alcancado.
     void placeFirstTarget(Environment& env, const RagdollState3D& state);
     void placeNextTarget(Environment& env);
+    // Biblioteca: o alvo a partir de um ponto e de um rumo (o k-esimo do
+    // episodio, para as listas da avaliacao), o planejador (a familia pela
+    // direcao e distancia do alvo; force troca sem histerese) e o giro pedido.
+    void placeLibraryTarget(Environment& env, Vec3 from, float facing, std::uint32_t k);
+    void plan(Environment& env, Vec3 position, float facing, bool force);
+    [[nodiscard]] float wantedTurn(const Environment& env, Vec3 position, float facing) const;
     [[nodiscard]] std::vector<ReferenceDof> resolveReference(const TrainingTask3D::Gait& gait) const;
     void resolvePostures();
     [[nodiscard]] std::uint32_t choosePosture(Environment& env) const;
@@ -299,6 +314,12 @@ void TrainingBatch3D::Impl::buildLayouts() {
         o.channels.push_back({ "target.direction.y", "unit" });
         o.channels.push_back({ "target.distance", "m/10" });
     }
+    // A biblioteca: o clipe de agora (um canal por clipe) e o giro pedido.
+    if (imitating() && reference.library) {
+        for (const ReferenceSegment3D& segment : reference.segments)
+            o.channels.push_back({ "reference.clip." + segment.id, "0/1" });
+        o.channels.push_back({ "target.turn_rate", "rad/s/2" });
+    }
 
     RLVectorLayout3D& c = criticLayout;
     c = o;
@@ -319,11 +340,99 @@ void TrainingBatch3D::Impl::buildLayouts() {
 
 void TrainingBatch3D::Impl::buildReference() {
     reference = {};
+    plannerSegments = { -1, -1, -1, -1, -1 };
     if (!task.imitation.enabled) return;
+    const bool library = task.imitation.library;
     std::vector<ReferenceClip3D> clips;
     for (std::size_t i = 0; i < task.imitation.clips.size(); ++i)
-        clips.push_back({ task.imitation.clips[i].id, task.imitation.clips[i].path, i + 1 == task.imitation.clips.size() });
-    reference = buildReferenceMotion3D(body, clips, FixedStep);
+        clips.push_back({ task.imitation.clips[i].id, task.imitation.clips[i].path,
+            library || i + 1 == task.imitation.clips.size() });
+    reference = buildReferenceMotion3D(body, clips, FixedStep, library);
+    if (!library) return;
+    const TrainingTask3D::Imitation::Planner& planner = task.imitation.planner;
+    const std::array<const std::string*, 5> ids { &planner.sprint, &planner.forward, &planner.left, &planner.right,
+        &planner.back };
+    for (std::size_t f = 0; f < ids.size(); ++f) {
+        if (ids[f]->empty()) continue;
+        for (std::size_t c = 0; c < task.imitation.clips.size(); ++c)
+            if (task.imitation.clips[c].id == *ids[f]) plannerSegments[f] = static_cast<int>(c);
+        if (plannerSegments[f] < 0)
+            throw std::runtime_error("lote de RL: o planejador pede o clipe " + *ids[f] + ", que a lista nao tem");
+    }
+    if (plannerSegments[1] < 0) throw std::runtime_error("lote de RL: o planejador precisa do clipe forward");
+}
+
+void TrainingBatch3D::Impl::placeLibraryTarget(Environment& env, Vec3 from, float facing, std::uint32_t k) {
+    const TrainingTask3D::Target& t = task.target;
+    constexpr float Radians = std::numbers::pi_v<float> / 180.0f;
+    float angle = 0.0f, distance = t.distance;
+    if (training()) {
+        const float spread = (k == 0 ? t.firstAngleDegrees : t.nextAngleDegrees) * Radians;
+        angle = std::uniform_real_distribution<float>(-spread, spread)(env.rng);
+        if (t.distanceRange.maximum > 0.0f) distance = uniform(env.rng, t.distanceRange);
+    } else {
+        const std::size_t slot = (t.evaluationPerWorld ? env.index : 0u) + k;
+        angle = t.evaluationAngles[slot % t.evaluationAngles.size()] * Radians;
+        if (!t.evaluationDistances.empty()) distance = t.evaluationDistances[slot % t.evaluationDistances.size()];
+    }
+    env.targetFrom = { from.x, from.y, 0.0f };
+    env.targetDirection = facing + angle;
+    env.target = env.targetFrom + Vec3 { std::cos(env.targetDirection), std::sin(env.targetDirection), 0.0f } * distance;
+    env.targetClosest = 1e9f;
+    env.targetCount = k + 1;
+}
+
+float TrainingBatch3D::Impl::wantedTurn(const Environment& env, Vec3 position, float facing) const {
+    const TrainingTask3D::Target& t = task.target;
+    const float dx = env.target.x - position.x, dy = env.target.y - position.y;
+    if (dx * dx + dy * dy < 1.0e-6f) return 0.0f;
+    const ReferenceSegment3D& segment =
+        reference.segments[std::min<std::size_t>(env.cursor.segment, reference.segments.size() - 1)];
+    float error = std::atan2(dy, dx) - facing - segment.travelRelative;
+    error = std::atan2(std::sin(error), std::cos(error));
+    return std::clamp(t.turnGain * error, -t.turnMaximum, t.turnMaximum);
+}
+
+void TrainingBatch3D::Impl::plan(Environment& env, Vec3 position, float facing, bool force) {
+    const TrainingTask3D::Imitation::Planner& planner = task.imitation.planner;
+    const float dx = env.target.x - position.x, dy = env.target.y - position.y;
+    const float distance = std::sqrt(dx * dx + dy * dy);
+    float angle = std::atan2(dy, dx) - facing;
+    angle = std::atan2(std::sin(angle), std::cos(angle));
+    constexpr float Quarter = 0.25f * std::numbers::pi_v<float>;
+    const float hysteresis = force ? 0.0f : planner.hysteresisDegrees * std::numbers::pi_v<float> / 180.0f;
+    const bool current = !force;
+    const auto available = [&](std::uint32_t family) { return plannerSegments[family] >= 0; };
+    // Longe, para a frente (o sprint mais longe ainda); perto, pelo quadrante.
+    const float farMargin = current && (env.family <= 1) ? -0.5f : 0.5f;
+    std::uint32_t family = 1;
+    if (distance >= planner.farDistance + farMargin) {
+        const float sprintMargin = current && env.family == 0 ? -0.5f : 0.5f;
+        family = available(0) && distance >= planner.sprintDistance + sprintMargin ? 0u : 1u;
+    } else {
+        const auto sector = [&](std::uint32_t f, float widen) {
+            switch (f) {
+                case 2: return angle > Quarter - widen && angle <= 3.0f * Quarter + widen;
+                case 3: return angle < -Quarter + widen && angle >= -3.0f * Quarter - widen;
+                case 4: return std::abs(angle) > 3.0f * Quarter - widen;
+                default: return std::abs(angle) <= Quarter + widen;
+            }
+        };
+        const std::uint32_t kept = env.family == 0 ? 1u : env.family;
+        if (current && sector(kept, hysteresis)) family = kept;
+        else
+            for (const std::uint32_t f : { 1u, 2u, 3u, 4u })
+                if (sector(f, 0.0f)) family = f;
+        if (!available(family)) family = 1;
+    }
+    if (!force && family != env.family && env.clipSince < planner.minimumSeconds) family = env.family;
+    if (force || family != env.family) {
+        const std::uint32_t segment = static_cast<std::uint32_t>(plannerSegments[family]);
+        env.cursor = force ? ReferenceCursor3D { segment, env.cursor.frame } : switchReference3D(reference, env.cursor, segment);
+        env.family = family;
+        env.clipSince = 0.0f;
+    }
+    env.turnRate = wantedTurn(env, position, facing);
 }
 
 void TrainingBatch3D::Impl::placeFirstTarget(Environment& env, const RagdollState3D& state) {
@@ -413,6 +522,7 @@ void TrainingBatch3D::Impl::createWorld() {
         for (std::uint32_t index = first; index < last; ++index) {
             Environment& env = environments[index];
             env.scene = s;
+            env.index = index;
             env.origin = { (static_cast<float>(index - first) - 0.5f * static_cast<float>(last - first - 1)) * spacing,
                 0.0f, 0.0f };
             std::uint64_t envSeed = seedState + index * 0x9E3779B97F4A7C15ull;
@@ -572,12 +682,29 @@ void TrainingBatch3D::Impl::resetEnvironment(std::uint32_t index) {
         // partida) ou de uma fase sorteada do ciclo, com a pose e as
         // velocidades do clipe mais o ruido do comeco.
         const std::uint32_t last = static_cast<std::uint32_t>(reference.segments.size() - 1);
-        const bool fromStart = !training()
-            || std::uniform_real_distribution<float>(0.0f, 1.0f)(env.rng) < task.imitation.standingStart;
-        env.cursor = { 0, 0 };
-        if (!fromStart) {
-            const std::uint32_t frames = static_cast<std::uint32_t>(reference.segments[last].frames.size());
-            env.cursor = { last, std::uniform_int_distribution<std::uint32_t>(0, frames - 1)(env.rng) };
+        const float startYaw = start.randomYaw
+            ? std::uniform_real_distribution<float>(-std::numbers::pi_v<float>, std::numbers::pi_v<float>)(env.rng)
+            : 0.0f;
+        if (reference.library) {
+            // Biblioteca: o alvo primeiro (em volta, pelo rumo sorteado), o
+            // clipe que o planejador escolhe para ele e uma fase dele.
+            env.targetsReached = 0;
+            env.firstTargetSeconds = -1.0f;
+            env.targetSpeedSum = 0.0;
+            env.targetSince = 0.0f;
+            placeLibraryTarget(env, env.origin, startYaw, 0);
+            plan(env, env.origin, startYaw, true);
+            const std::uint32_t frames = static_cast<std::uint32_t>(reference.segments[env.cursor.segment].frames.size());
+            env.cursor.frame = training() ? std::uniform_int_distribution<std::uint32_t>(0, frames - 1)(env.rng) : 0u;
+            env.turnRate = wantedTurn(env, env.origin, startYaw);
+        } else {
+            const bool fromStart = !training()
+                || std::uniform_real_distribution<float>(0.0f, 1.0f)(env.rng) < task.imitation.standingStart;
+            env.cursor = { 0, 0 };
+            if (!fromStart) {
+                const std::uint32_t frames = static_cast<std::uint32_t>(reference.segments[last].frames.size());
+                env.cursor = { last, std::uniform_int_distribution<std::uint32_t>(0, frames - 1)(env.rng) };
+            }
         }
         ReferenceFrame3D frame = referenceFrame3D(reference, env.cursor);
         for (const RLBodyDof3D& dof : body.dofs) {
@@ -594,9 +721,7 @@ void TrainingBatch3D::Impl::resetEnvironment(std::uint32_t index) {
         frame.rootSpin += Vec3 { gaussian(env.rng, start.rootAngularVelocityNoise * noise),
             gaussian(env.rng, start.rootAngularVelocityNoise * noise),
             gaussian(env.rng, start.rootAngularVelocityNoise * noise) };
-        const float yaw = start.randomYaw
-            ? std::uniform_real_distribution<float>(-std::numbers::pi_v<float>, std::numbers::pi_v<float>)(env.rng)
-            : 0.0f;
+        const float yaw = startYaw;
         // O pe de apoio 2 mm acima do chao (no voo, como o clipe).
         const float lowest = rlBodyLowestFootPoint3D(body, referencePose3D(body, frame, env.origin, yaw));
         referenceLinkStates3D(body, frame, env.origin + Vec3 { 0.0f, 0.0f, std::max(0.0f, 0.002f - lowest) }, yaw, links);
@@ -672,7 +797,7 @@ void TrainingBatch3D::Impl::resetEnvironment(std::uint32_t index) {
         env.footStartOrientation[f] = state ? state->links[foot].orientation : Quaternion {};
     }
     env.imitationErrorSquares = 0.0;
-    if (targeting() && state) placeFirstTarget(env, *state);
+    if (targeting() && state && !(imitating() && reference.library)) placeFirstTarget(env, *state);
     env.episodeReturn = 0.0;
     env.comSum[0] = env.comSum[1] = 0.0;
     env.comSquares[0] = env.comSquares[1] = 0.0;
@@ -811,6 +936,10 @@ void TrainingBatch3D::Impl::writeObservation(const Environment& env, const Ragdo
         *out++ = distance > 1.0e-4f ? to.x / distance : 1.0f;
         *out++ = distance > 1.0e-4f ? to.y / distance : 0.0f;
         *out++ = std::min(distance, 20.0f) / 10.0f;
+    }
+    if (imitating() && reference.library) {
+        for (std::size_t c = 0; c < reference.segments.size(); ++c) *out++ = env.cursor.segment == c ? 1.0f : 0.0f;
+        *out++ = env.turnRate / 2.0f;
     }
 
     if (criticOut == nullptr) return;
@@ -1072,8 +1201,23 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
             env.targetSpeedSum += speed;
             if (env.firstTargetSeconds < 0.0f) env.firstTargetSeconds = now;
             env.targetSince = now;
-            placeNextTarget(env);
+            if (imitating() && reference.library) {
+                // O proximo em volta, a partir de onde ele esta e para onde olha.
+                const Vec3 forward = reading.pelvisFrame.rotate({ 1.0f, 0.0f, 0.0f });
+                placeLibraryTarget(env, reading.com, std::atan2(forward.y, forward.x), env.targetCount);
+            } else {
+                placeNextTarget(env);
+            }
         }
+    }
+    // O giro: o do corpo contra o pedido (o do clipe agora mais o que alinha a
+    // direcao em que o clipe anda com o alvo, da decisao anterior).
+    float targetTurn = 0.0f;
+    if (targeting() && imitating()) {
+        const float wanted = referenceFrame3D(reference, env.cursor).rootSpin.z + env.turnRate;
+        const float error = state.links.front().angularVelocity.z - wanted;
+        const float sigma = task.target.turnSigma;
+        targetTurn = std::exp(-error * error / (sigma * sigma));
     }
 
     const std::array<float, RewardCount> values {
@@ -1103,6 +1247,7 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
         w.imitationRoot * imitationRoot,
         w.targetSpeed * targetSpeed,
         w.targetReached * targetReached,
+        w.targetTurn * targetTurn,
         fell ? -w.fall : 0.0f,
     };
     // A queda e a ultima parcela; o resto, com positiveOnly, nunca abaixo de 0.
@@ -1330,6 +1475,14 @@ void TrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> actio
                     env.footStart[f] = state->links[foot].position;
                     env.footStartOrientation[f] = state->links[foot].orientation;
                 }
+            // O planejador (biblioteca) ou so o giro pedido, para a proxima decisao.
+            if (imitating() && targeting()) {
+                const Vec3 forward = reading.pelvisFrame.rotate({ 1.0f, 0.0f, 0.0f });
+                const float facing = std::atan2(forward.y, forward.x);
+                env.clipSince += static_cast<float>(task.actionRepeat) * FixedStep;
+                if (reference.library) plan(env, reading.com, facing, false);
+                else env.turnRate = wantedTurn(env, reading.com, facing);
+            }
             writeObservation(env, *state, reading, actor, criticOut, training());
         } else {
             std::fill(parts, parts + RewardCount, 0.0f);

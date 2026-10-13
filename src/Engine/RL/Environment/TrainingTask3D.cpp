@@ -77,6 +77,7 @@ TrainingTask3D loadTrainingTask3D(const std::filesystem::path& definitionPath) {
         w.imitationRoot = r.value("imitationRoot", w.imitationRoot);
         w.targetSpeed = r.value("targetSpeed", w.targetSpeed);
         w.targetReached = r.value("targetReached", w.targetReached);
+        w.targetTurn = r.value("targetTurn", w.targetTurn);
         w.fall = r.value("fall", w.fall);
         w.positiveOnly = r.value("positiveOnly", w.positiveOnly);
     }
@@ -146,6 +147,20 @@ TrainingTask3D loadTrainingTask3D(const std::filesystem::path& definitionPath) {
         if (out.clips.empty()) throw std::runtime_error("tarefa de RL: imitation sem clipes");
         out.standingStart = std::clamp(m.value("standingStart", out.standingStart), 0.0f, 1.0f);
         out.residualActions = m.value("residualActions", out.residualActions);
+        out.library = m.value("library", out.library);
+        if (m.contains("planner")) {
+            const nlohmann::json& p = m["planner"];
+            auto& planner = out.planner;
+            planner.farDistance = p.value("farDistance", planner.farDistance);
+            planner.sprintDistance = p.value("sprintDistance", planner.sprintDistance);
+            planner.hysteresisDegrees = std::max(0.0f, p.value("hysteresisDegrees", planner.hysteresisDegrees));
+            planner.minimumSeconds = std::max(0.0f, p.value("minimumSeconds", planner.minimumSeconds));
+            planner.sprint = p.value("sprint", planner.sprint);
+            planner.forward = p.value("forward", planner.forward);
+            planner.left = p.value("left", planner.left);
+            planner.right = p.value("right", planner.right);
+            planner.back = p.value("back", planner.back);
+        }
         if (m.contains("scales")) {
             const nlohmann::json& k = m["scales"];
             out.poseScale = std::max(0.0f, k.value("pose", out.poseScale));
@@ -167,6 +182,12 @@ TrainingTask3D loadTrainingTask3D(const std::filesystem::path& definitionPath) {
         out.referenceSpeed = t.value("referenceSpeed", out.referenceSpeed);
         out.speedCap = t.value("speedCap", out.speedCap);
         out.missMeters = std::max(0.0f, t.value("missMeters", out.missMeters));
+        out.distanceRange = range(t, "distanceRange", out.distanceRange);
+        out.evaluationPerWorld = t.value("evaluationPerWorld", out.evaluationPerWorld);
+        if (t.contains("evaluationDistances")) out.evaluationDistances = t["evaluationDistances"].get<std::vector<float>>();
+        out.turnGain = std::max(0.0f, t.value("turnGain", out.turnGain));
+        out.turnMaximum = std::max(0.0f, t.value("turnMaximum", out.turnMaximum));
+        out.turnSigma = std::max(1.0e-3f, t.value("turnSigma", out.turnSigma));
         if (!(out.distance > out.radius) || !(out.radius > 0.0f) || !(out.referenceSpeed > 0.0f)
             || out.evaluationAngles.empty())
             throw std::runtime_error("tarefa de RL: target invalido");
