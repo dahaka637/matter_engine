@@ -676,46 +676,69 @@ void testCourses() {
         s.evaluationEpisodeSeconds = 20.0f;
         TrainingBatch3D batch(s);
         const std::size_t O = batch.observationSize();
-        // O quadrado de 4 m (mundo 0) e o zigue-zague (mundo 1), pela forma.
-        const TrainingEnvironmentView3D square = batch.view(0);
+        // O variado (o desenho do usuario, mundo 0), o quadrado de 6 m com um
+        // ponto a cada 3 m (mundo 1) e o zigue-zague (mundo 2), pela forma.
+        const TrainingEnvironmentView3D varied = batch.view(0);
+        require(near(planar(varied.target, varied.origin), std::hypot(1.5f, 2.2f), 1e-3f)
+                && near(planar(varied.upcoming[0], varied.target), 4.0f, 1e-3f)
+                && near(planar(varied.upcoming[1], varied.upcoming[0]), 4.2f, 1e-3f),
+            "o mundo 0 faz o percurso variado");
+        const TrainingEnvironmentView3D square = batch.view(1);
         require(square.upcomingCount == 2, "a H5 mostra os dois proximos alvos");
         const Vec3 origin = square.origin;
-        require(near(planar(square.target, origin), 4.0f, 1e-3f) && near(planar(square.upcoming[0], square.target), 4.0f, 1e-3f)
-                && near(planar(square.upcoming[1], square.upcoming[0]), 4.0f, 1e-3f)
-                && near(planar(square.upcoming[1], origin), 4.0f, 1e-3f)
-                && near(planar(square.upcoming[0], origin), 4.0f * std::sqrt(2.0f), 1e-3f),
-            "o mundo 0 faz o quadrado de 4 m");
-        const TrainingEnvironmentView3D zigzag = batch.view(1);
+        require(near(planar(square.target, origin), 3.0f, 1e-3f) && near(planar(square.upcoming[0], square.target), 3.0f, 1e-3f)
+                && near(planar(square.upcoming[1], square.upcoming[0]), 3.0f, 1e-3f)
+                && near(planar(square.upcoming[0], origin), 6.0f, 1e-3f)
+                && near(planar(square.upcoming[1], origin), std::hypot(6.0f, 3.0f), 1e-3f),
+            "o mundo 0 faz o quadrado de 6 m");
+        const TrainingEnvironmentView3D zigzag = batch.view(2);
         require(near(planar(zigzag.target, zigzag.origin), std::hypot(2.5f, 2.0f), 1e-3f)
                 && near(planar(zigzag.upcoming[0], zigzag.origin), 5.0f, 1e-3f)
                 && near(planar(zigzag.upcoming[1], zigzag.origin), std::hypot(7.5f, 2.0f), 1e-3f),
             "o mundo 1 faz o zigue-zague (recomecando do ultimo ponto)");
         // Os proximos na observacao: a distancia ate o primeiro da fila.
+        // Nenhum percurso repete ponto na janela do visualizador (3 alcancados,
+        // o de agora e os 2 proximos): o alcancado nunca volta a ser vermelho.
+        {
+            const TrainingTask3D task = loadTrainingTask3D(s.taskPath);
+            for (const TrainingTask3D::Target::Course& course : task.target.evaluationCourses) {
+                const std::size_t n = course.points.size();
+                const auto at = [&](std::size_t i) {
+                    const float laps = static_cast<float>(i / n);
+                    return Vec3 { course.points[i % n][0] + laps * course.points[n - 1][0],
+                        course.points[i % n][1] + laps * course.points[n - 1][1], 0.0f };
+                };
+                for (std::size_t i = 0; i < 24; ++i)
+                    for (std::size_t j = i + 1; j < i + 6; ++j)
+                        require(planar(at(i), at(j)) > 2.0f * task.target.radius,
+                            "o percurso " + course.name + " repete ponto na janela");
+            }
+        }
         const std::size_t next = channel(batch, "target.next1.distance");
         require(channel(batch, "target.next2.direction.y") > next, "os canais dos dois proximos");
-        const float seen = batch.observations()[next] * 10.0f;
+        const float seen = batch.observations()[O + next] * 10.0f;
         require(std::abs(seen - planar(square.upcoming[0], origin)) < 0.5f, "o proximo alvo na observacao");
     }
     {
         // Chegando: o primeiro da fila vira o alvo e um novo entra no fim.
         const std::filesystem::path close = raceVariant("percurso_perto.json",
-            { { "[[4.0, 0.0], [4.0, 4.0]", "[[1.2, 0.0], [4.0, 4.0]" } },
+            { { "[[3.0, 0.0], [6.0, 0.0]", "[[1.2, 0.0], [6.0, 0.0]" } },
             "h5_pontos.json");
         TrainingBatchSettings3D s = settings(4, 2);
         s.taskPath = close;
         s.evaluation = true;
         s.evaluationEpisodeSeconds = 20.0f;
         TrainingBatch3D batch(s);
-        const TrainingEnvironmentView3D before = batch.view(0);
+        const TrainingEnvironmentView3D before = batch.view(1);
         bool reached = false;
         for (int step = 0; step < 45 && !reached; ++step) {
             batch.step(std::vector<float>(4 * batch.actionSize(), 0.0f));
-            const TrainingEnvironmentView3D now = batch.view(0);
+            const TrainingEnvironmentView3D now = batch.view(1);
             if (now.targetsReached == 0) continue;
             reached = true;
             require(planar(now.target, before.upcoming[0]) < 1e-3f && planar(now.upcoming[0], before.upcoming[1]) < 1e-3f,
                 "a fila anda: o proximo vira o alvo");
-            require(near(planar(now.upcoming[1], now.upcoming[0]), 4.0f, 1e-3f), "o novo entra no fim (o quadrado de novo)");
+            require(near(planar(now.upcoming[1], now.upcoming[0]), 3.0f, 1e-3f), "o novo entra no fim (o lado do quadrado)");
             require(now.reachedCount == 1 && planar(now.reached[0], before.target) < 1e-3f,
                 "o alcancado fica guardado (o visualizador o pinta de verde)");
         }

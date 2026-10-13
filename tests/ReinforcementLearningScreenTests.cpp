@@ -287,7 +287,7 @@ int main() {
         if (realPolicy != nullptr) {
             const std::uint32_t before = screen.viewerSteps();
             std::uint32_t reached = 0;
-            for (int i = 0; i < 300 && reached < 2; ++i) {
+            for (int i = 0; i < 900 && reached < 6; ++i) {
                 screen.advanceViewer(1);
                 const std::uint32_t now = screen.viewerTargetsReached();
                 require(screen.viewerSteps() > before, "o visualizador nao recomeca ao chegar num ponto");
@@ -298,6 +298,11 @@ int main() {
                     screen.advanceViewer(6);
                     frame(screen, canvas, 2);
                     snapshot(canvas, "rl_tela_pontos_chegada_depois");
+                }
+                // Depois de 4: os 3 ultimos verdes atras, o de agora e 2 vermelhos a frente.
+                if (now == 4 && reached == 3) {
+                    frame(screen, canvas, 2);
+                    snapshot(canvas, "rl_tela_pontos_trilha");
                 }
                 reached = now;
             }

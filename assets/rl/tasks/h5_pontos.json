@@ -1,9 +1,9 @@
 {
   "schema": "matter-rl-task-1",
   "id": "h5_pontos",
-  "version": 1,
+  "version": 2,
   "displayName": "Vários pontos em sequência",
-  "comment": "Etapa 3 do plano (pedido do usuario, 13/10): os varios pontos no mapa, em sequencia. O mesmo trote livre nas 8 direcoes da H4 v3 (a biblioteca de clipes com o planejador), mas os dois proximos alvos ja estao no mapa e na observacao (target.lookahead): ele pode sair de um alvo ja apontado para o seguinte, sem parar nem dar a volta larga. Cada alvo sai do anterior (2 a 8 m, em qualquer direcao a partir do rumo do trecho que chega nele). A avaliacao troca as direcoes soltas por percursos fixos (quadrado, zigue-zague, vai e volta, triangulo), um por mundo, girados para o rumo do comeco. Olhar para a camera enquanto percorre e a etapa 4.",
+  "comment": "Etapa 3 do plano (pedido do usuario, 13/10): os varios pontos no mapa, em sequencia. O mesmo trote livre nas 8 direcoes da H4 v3 (a biblioteca de clipes com o planejador), mas os dois proximos alvos ja estao no mapa e na observacao (target.lookahead): ele pode sair de um alvo ja apontado para o seguinte, sem parar nem dar a volta larga. Cada alvo sai do anterior (2 a 8 m, em qualquer direcao a partir do rumo do trecho que chega nele). A avaliacao troca as direcoes soltas por percursos fixos (quadrado, zigue-zague, vai e volta, triangulo), um por mundo, girados para o rumo do comeco. Olhar para a camera enquanto percorre e a etapa 4. Versao 2 (o usuario: no laboratorio parecia recomecar a cada ponto): no quadrado de 4 pontos, com os dois proximos no mapa, o ponto alcancado voltava logo a ser um alvo da volta seguinte (vermelho de novo). Agora nenhum percurso repete ponto dentro da janela (3 alcancados + o de agora + 2 proximos): o quadrado tem 6 m de lado com um ponto a cada 3 m (8 pontos, os do meio dos lados se atravessam sem virar), e o vai e volta e o triangulo andam um pouco a cada volta. O primeiro percurso (o que o laboratorio mostra) e o desenho do usuario: 6 pontos com viradas variadas (56, 90, 134, 136, 180 e 124 graus), no lugar do triangulo. Bateria percursos_v2.",
   "postures": [
     {
       "id": "alerta",
@@ -66,7 +66,7 @@
     }
   },
   "target": {
-    "comment": "Os alvos em fila: o de agora (cheio no mapa) e os dois seguintes (mais fracos, ligados por um traco). Chegando no de agora, o primeiro da fila vira o alvo e um novo entra no fim. No treino cada um e sorteado em volta do anterior; na avaliacao os mundos fazem os percursos de evaluationCourses (metros, x para a frente e y para a esquerda do comeco; no fim, o percurso recomeca do ultimo ponto).",
+    "comment": "Os alvos em fila: o de agora (cheio no mapa) e os dois seguintes (mais fracos, ligados por um traco). Chegando no de agora, o primeiro da fila vira o alvo e um novo entra no fim. No treino cada um e sorteado em volta do anterior; na avaliacao os mundos fazem os percursos de evaluationCourses (metros, x para a frente e y para a esquerda do comeco; no fim, o percurso recomeca do ultimo ponto; o variado e o quadrado sao fechados, o zigue-zague e o vai e volta andam).",
     "distance": 10.0,
     "radius": 0.8,
     "firstAngleDegrees": 180.0,
@@ -86,8 +86,12 @@
     "lookahead": 2,
     "evaluationCourses": [
       {
+        "name": "variado",
+        "points": [[1.5, -2.2], [5.5, -2.2], [5.5, 2.0], [3.4, 0.0], [7.8, 0.0], [0.0, 0.0]]
+      },
+      {
         "name": "quadrado",
-        "points": [[4.0, 0.0], [4.0, 4.0], [0.0, 4.0], [0.0, 0.0]]
+        "points": [[3.0, 0.0], [6.0, 0.0], [6.0, 3.0], [6.0, 6.0], [3.0, 6.0], [0.0, 6.0], [0.0, 3.0], [0.0, 0.0]]
       },
       {
         "name": "zigue_zague",
@@ -95,11 +99,7 @@
       },
       {
         "name": "vai_e_volta",
-        "points": [[5.0, 0.0], [0.0, 0.0]]
-      },
-      {
-        "name": "triangulo",
-        "points": [[3.0, 3.0], [3.0, -3.0], [0.0, 0.0]]
+        "points": [[5.0, 0.0], [0.0, 2.0]]
       }
     ]
   },
@@ -166,7 +166,7 @@
   },
   "evaluation": [
     {
-      "name": "percursos_v1",
+      "name": "percursos_v2",
       "posture": "alerta",
       "seconds": 20.0,
       "referenceSpeed": 3.0
