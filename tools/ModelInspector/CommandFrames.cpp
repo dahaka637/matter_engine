@@ -361,18 +361,10 @@ int runFrames(const ModelContext& context, const CommandLine& line) {
             marker.radius = frame.targetRadius;
             markers.push_back(marker);
         }
-        // As setas do RL: verde na altura da pelve (o que ele quer), amarela no chao
-        // (para onde vai, a velocidade vezes 0,35 s).
+        // A seta do RL: para onde ele vai (a velocidade vezes 0,35 s), no chao, um
+        // traco fino. (A intencao, W, fica no dump.)
         std::vector<InspectionArrow> arrows;
         const float floorSkeleton = view.gameToSkeleton(Vec3 { 0, 0, gameFloor }).z;
-        if (frame.intentValid) {
-            InspectionArrow intent;
-            intent.from = toSkeleton(pelvisWorld);
-            intent.to = toSkeleton(pelvisWorld + Vec3 { frame.intent.x, frame.intent.y, 0.0f } * 1.8f);
-            intent.color = rgb(80, 230, 90);
-            intent.width = 0.11f;
-            arrows.push_back(intent);
-        }
         if (frame.velocityValid && std::hypot(frame.velocity.x, frame.velocity.y) > 0.2f) {
             InspectionArrow going;
             const Vec3 base = toSkeleton(pelvisWorld);
@@ -380,8 +372,8 @@ int runFrames(const ModelContext& context, const CommandLine& line) {
                 toSkeleton(pelvisWorld + Vec3 { frame.velocity.x, frame.velocity.y, 0.0f } * 0.35f);
             going.from = { base.x, base.y, floorSkeleton + 0.03f };
             going.to = { ahead.x, ahead.y, floorSkeleton + 0.03f };
-            going.color = rgb(245, 214, 60);
-            going.width = 0.11f;
+            going.color = rgb(245, 214, 60, 0.7f);
+            going.lineWidthPixels = 2.0f;
             arrows.push_back(going);
         }
         InspectionScene scene = context.scene();

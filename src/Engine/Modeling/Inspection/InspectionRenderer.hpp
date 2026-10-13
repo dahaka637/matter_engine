@@ -106,13 +106,15 @@ struct InspectionMarker {
     float glowHeight = 0.9f;
 };
 
-// Uma seta chapada na horizontal (as setas de intencao e de movimento do RL):
-// a haste com width de largura e a ponta, por cima da cena.
+// Uma seta na horizontal (o movimento do RL): chapada, com a haste de width de
+// largura e a ponta; ou, com lineWidthPixels > 0, so o traco (a haste e as duas
+// pernas da ponta), fino como um desenho por cima do chao.
 struct InspectionArrow {
     Vec3 from;
     Vec3 to;
     Color color = rgb(80, 230, 90);
     float width = 0.06f;
+    float lineWidthPixels = 0.0f;
 };
 
 struct InspectionScene {

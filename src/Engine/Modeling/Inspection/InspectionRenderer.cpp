@@ -336,7 +336,7 @@ void drawMarkers(const InspectionScene& scene, Rasterizer& raster, float pixel) 
 
 // A haste e a ponta como faixas chapadas na horizontal (misturadas, atras do
 // corpo somem), com a borda escura para ler sobre a grade.
-void drawArrows(const InspectionScene& scene, Rasterizer& raster) {
+void drawArrows(const InspectionScene& scene, Rasterizer& raster, float pixel) {
     for (const InspectionArrow& arrow : scene.arrows) {
         Vec3 along = arrow.to - arrow.from;
         along.z = 0.0f;
@@ -344,6 +344,16 @@ void drawArrows(const InspectionScene& scene, Rasterizer& raster) {
         if (length < 1.0e-3f) continue;
         along = along * (1.0f / length);
         const Vec3 side { -along.y, along.x, 0.0f };
+        if (arrow.lineWidthPixels > 0.0f) {
+            // So o traco: a haste e a ponta em duas pernas.
+            const float thickness = arrow.lineWidthPixels * pixel;
+            const float head = std::min(0.3f * length, 0.22f);
+            const Vec3 back = arrow.to - along * head;
+            raster.line(arrow.from, arrow.to, thickness, arrow.color, DepthMode::Test, 0.0f, 0.004f);
+            raster.line(arrow.to, back + side * (0.55f * head), thickness, arrow.color, DepthMode::Test, 0.0f, 0.004f);
+            raster.line(arrow.to, back - side * (0.55f * head), thickness, arrow.color, DepthMode::Test, 0.0f, 0.004f);
+            continue;
+        }
         const float head = std::min(length * 0.45f, arrow.width * 3.5f);
         const Vec3 neck = arrow.from + along * (length - head);
         const Vec3 tip = arrow.from + along * length;
@@ -553,7 +563,7 @@ Image renderInspection(const InspectionScene& scene, const InspectionStyle& styl
     });
 
     drawMarkers(scene, raster, pixel);
-    drawArrows(scene, raster);
+    drawArrows(scene, raster, pixel);
     for (const Highlight& highlight : scene.highlights) {
         if (hasMesh)
             for (const std::uint32_t t : highlight.triangles) {
