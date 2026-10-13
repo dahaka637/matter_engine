@@ -49,6 +49,19 @@ struct TrainingRewardWeights3D {
     // A referencia de passada (gait.reference): as juntas das pernas perto do
     // alvo senoidal da fase, em sino da distancia (rad), menos um tanto dela.
     float gaitReference = 0.0f;
+    // A imitacao (secao imitation, o DeepMimic): notas em sino de 0 a 1 contra
+    // a referencia no mesmo instante. A pose (as juntas e a inclinacao da
+    // pelve), a velocidade das juntas, cabeca, maos e pes em relacao a pelve
+    // (no referencial do rumo) e a raiz (a altura e a velocidade da pelve).
+    float imitationPose = 0.0f;
+    float imitationVelocity = 0.0f;
+    float imitationKeyBodies = 0.0f;
+    float imitationRoot = 0.0f;
+    // O alvo (secao target): a velocidade em direcao a ele (linear: 1 na
+    // velocidade de referencia, ate o teto) e, ao chegar, a velocidade media
+    // do trecho sobre a de referencia (uma vez por alvo).
+    float targetSpeed = 0.0f;
+    float targetReached = 0.0f;
     float fall = 10.0f;
     // O total de cada passo, menos a queda, nunca fica negativo (o
     // "only_positive_rewards" do legged_gym): tentar e errar nunca vale menos
@@ -56,10 +69,11 @@ struct TrainingRewardWeights3D {
     bool positiveOnly = false;
 };
 
-inline constexpr std::array<const char*, 20> TrainingRewardComponentNames3D {
+inline constexpr std::array<const char*, 26> TrainingRewardComponentNames3D {
     "alive", "upright", "headHeight", "comOverSupport", "still", "trunkTurn", "footSlip", "footDrift", "effort",
     "actionRate", "jointLimit", "posePrior", "poseMatch", "velocity", "yawRate", "feetAirTime", "gaitContact",
-    "swingHeight", "gaitReference", "fall"
+    "swingHeight", "gaitReference", "imitationPose", "imitationVelocity", "imitationKeyBodies", "imitationRoot",
+    "targetSpeed", "targetReached", "fall"
 };
 
 struct TrainingRange3D {
@@ -169,6 +183,42 @@ struct TrainingTask3D {
         TrainingRange3D referenceFade { 2.0f, 3.5f };
         std::vector<ReferenceJoint> referenceJoints;
     } gait;
+
+    // A imitacao (H3 v7): os trechos de clipe em sequencia, o ultimo em ciclo
+    // (RL/Imitation). Metade dos episodios de treino (standingStart) sai do
+    // primeiro quadro do primeiro trecho; o resto entra no ultimo numa fase
+    // sorteada, ja com a pose e as velocidades do clipe (o RSI do DeepMimic).
+    // Os sinos: nota = exp(-escala * erro ao quadrado somado).
+    struct ImitationClip {
+        std::string id;
+        std::filesystem::path path;
+    };
+    struct Imitation {
+        bool enabled = false;
+        std::vector<ImitationClip> clips;
+        float standingStart = 0.5f;
+        float poseScale = 2.0f;
+        float velocityScale = 0.1f;
+        float keyBodyScale = 40.0f;
+        float rootHeightScale = 40.0f;
+        float rootVelocityScale = 0.5f;
+    } imitation;
+
+    // O alvo (H3 v7): um ponto a distance metros; chegando a radius dele,
+    // nasce o proximo, distance adiante. O primeiro fica no rumo do trecho de
+    // partida (no treino, sorteado ate firstAngle graus dele); o proximo, ate
+    // nextAngle graus da direcao em que ele chegou. A avaliacao usa
+    // evaluationAngles (graus, um por alvo, o ultimo se repete).
+    struct Target {
+        bool enabled = false;
+        float distance = 10.0f;
+        float radius = 1.0f;
+        float firstAngleDegrees = 10.0f;
+        float nextAngleDegrees = 30.0f;
+        std::vector<float> evaluationAngles { 0.0f };
+        float referenceSpeed = 6.0f;
+        float speedCap = 1.2f;
+    } target;
 
     struct Termination {
         float minimumHeadHeightFraction = 0.6f;

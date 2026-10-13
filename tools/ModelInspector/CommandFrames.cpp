@@ -68,6 +68,10 @@ struct DumpFrame {
         bool hasNormal = false;
     };
     std::vector<Contact> contacts;
+    // O alvo do RL (o marcador no chao): centro e raio.
+    bool targetValid = false;
+    Vec3 target;
+    float targetRadius = 1.0f;
 };
 
 struct DumpScenario {
@@ -123,6 +127,9 @@ std::vector<DumpScenario> readDump(const std::string& path) {
             std::string text;
             std::getline(in, text);
             frame->events += text;
+        } else if (tag == "A") {
+            in >> frame->target.x >> frame->target.y >> frame->target.z >> frame->targetRadius;
+            frame->targetValid = static_cast<bool>(in);
         } else if (tag == "P") {
             DumpFrame::Contact contact;
             in >> contact.position.x >> contact.position.y >> contact.position.z >> contact.linkIndex;
@@ -335,10 +342,19 @@ int runFrames(const ModelContext& context, const CommandLine& line) {
         }
 #endif
 
+        std::vector<InspectionMarker> markers;
+        if (frame.targetValid) {
+            InspectionMarker marker;
+            const Vec3 at = toSkeleton(frame.target);
+            marker.center = { at.x, at.y, view.gameToSkeleton(Vec3 { 0, 0, gameFloor }).z };
+            marker.radius = frame.targetRadius;
+            markers.push_back(marker);
+        }
         InspectionScene scene = context.scene();
         scene.pose = &pose;
         scene.meshPositions = posed;
         scene.highlights = highlights;
+        scene.markers = markers;
         InspectionStyle style;
         style.surface = *mode;
         style.skeleton = model.mesh.empty();
@@ -346,7 +362,9 @@ int runFrames(const ModelContext& context, const CommandLine& line) {
         style.hud = false;
         style.gizmo = false;
         style.scaleBar = false;
-        style.gridExtent = 3.0f;
+        // --grade / --passo: o chao maior (a corrida ate o alvo pede 10 m ou mais).
+        style.gridExtent = line.number("grade", 3.0f);
+        style.gridStep = line.number("passo", 0.0f);
         style.supersample = std::clamp(line.integer("ssaa", 2), 1, 4);
         OrbitCamera camera;
         const Vec3 pelvis = toSkeleton(pelvisWorld);

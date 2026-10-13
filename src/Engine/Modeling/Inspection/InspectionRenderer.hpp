@@ -51,6 +51,9 @@ struct InspectionStyle {
     // O meio lado da grade no chao (m); 0 = pela distancia da camera (ate
     // 2,5 m). As cenas grandes (o laboratorio de objetos) pedem mais.
     float gridExtent = 0.0f;
+    // O passo da grade (m); 0 = pela distancia da camera (1, 5 ou 10 cm). Um
+    // chao grande pede passo largo (a linha forte fica a cada 5).
+    float gridStep = 0.0f;
     bool gizmo = true;
     // A legenda dos eixos ao lado do gizmo ("X frente · Y esquerda · Z cima").
     bool gizmoLegend = true;
@@ -94,6 +97,15 @@ struct Highlight {
 
 [[nodiscard]] Highlight highlightFor(const Finding& finding);
 
+// Um marcador no chao (o alvo do RL): o disco, o aro e um brilho que sobe das
+// bordas e some no alto. O centro fica no chao.
+struct InspectionMarker {
+    Vec3 center;
+    float radius = 0.5f;
+    Color color = rgb(232, 44, 44);
+    float glowHeight = 0.9f;
+};
+
 struct InspectionScene {
     const Skeleton* skeleton = nullptr;
     // Nulo = pose de ligacao.
@@ -104,6 +116,7 @@ struct InspectionScene {
     const BodyRegions* regions = nullptr;
     std::span<const int> jointRegion;
     std::span<const Highlight> highlights;
+    std::span<const InspectionMarker> markers;
     // Os grupos do sombreamento liso da malha, se ja feitos (na quina do
     // estilo); nulo = feitos a cada imagem.
     const ShadingNormals* shading = nullptr;

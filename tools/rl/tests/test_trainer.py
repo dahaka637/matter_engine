@@ -80,7 +80,9 @@ assert "tarefa" in events and "migracao" not in events, events
 
 # O curriculo do andar: a velocidade para frente comeca em 1,0 m/s e sobe
 # 0,25 quando ele acompanha bem (3 rodadas seguidas), guardada na tarefa do treino.
-walker = T.Trainer("andar", task="h3_andar", mode="maximo", environments=16, device="cpu", seed=3, iterations=1)
+# (O andar por comando e a H3 v6, guardada para os testes: a do repositorio virou a corrida ate o alvo.)
+WALKING = Path(sys.argv[2]).resolve().parents[1] / "tests" / "RL" / "data" / "andar_comando.json"
+walker = T.Trainer("andar", task=str(WALKING), mode="maximo", environments=16, device="cpu", seed=3, iterations=1)
 live = json.loads(walker.live_task.read_text())
 assert live["commands"]["limits"] == {"forward": 1.0}, live["commands"].get("limits")
 assert walker.status()["commands"] == {"forward": {"limit": 1.0, "max": 4.5}}
@@ -109,8 +111,7 @@ old.pop("version", None)
 old.pop("gait", None)
 old["commands"]["limits"] = {"forward": 2.0}
 walker.live_task.write_text(json.dumps(old))
-from matter_rl.paths import TASKS
-current = json.loads((TASKS / "h3_andar.json").read_text())["version"]
+current = json.loads(WALKING.read_text())["version"]
 assert current >= 2
 updated = T.Trainer("andar", mode="maximo", environments=16, device="cpu", seed=3, iterations=1)
 assert updated.task_updated == (1, current), updated.task_updated

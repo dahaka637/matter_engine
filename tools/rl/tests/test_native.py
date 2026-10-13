@@ -66,7 +66,8 @@ def test_walking_batteries():
     """A tarefa de andar: o roteiro de velocidades e o ponto a 10 m; parada, a
     politica zero nao anda (erro de velocidade alto, longe do ponto)."""
     from matter_rl.evaluation import Battery, Evaluator
-    walking = paths.task_path("h3_andar")
+    # O andar por comando (a H3 v6, guardada para os testes).
+    walking = Path(__file__).resolve().parents[3] / "tests" / "RL" / "data" / "andar_comando.json"
     evaluator = Evaluator(module, walking, 2, Battery(environments=4),
                           names=["andar_frente_v1", "ir_ate_10m_v1"])
     probe = module.Batch(str(walking), environments=1, threads=1)

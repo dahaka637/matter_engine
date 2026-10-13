@@ -73,6 +73,7 @@ public:
     [[nodiscard]] bool switchingSkill() const { return !m_switchTask.empty(); }
     [[nodiscard]] std::uint32_t viewerPosture() const;
     [[nodiscard]] float viewerWalkCommand() const { return m_viewer ? m_viewer->view(0).command.x : 0.0f; }
+    [[nodiscard]] bool viewerHasTarget() const { return m_viewer && m_viewer->view(0).hasTarget; }
     // O visualizador com o professor (refaz o mundo dele) ou com a politica.
     void showTeacher(bool show);
     [[nodiscard]] bool showingTeacher() const { return m_showTeacher; }
@@ -175,6 +176,8 @@ private:
         std::string walkBattery;
         // A tarefa tem professor (o aprendizado guiado).
         bool teacher = false;
+        // A tarefa corre ate um alvo no mundo (o marcador no chao).
+        bool target = false;
     };
     std::vector<Skill> m_skills;
     std::size_t m_skill = 0;

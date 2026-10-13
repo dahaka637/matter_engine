@@ -256,26 +256,19 @@ int main() {
         frame(screen, canvas, 2);
         require(screen.viewerPosture() == 1, "a H1b mostra a postura de alerta");
         snapshot(canvas, "rl_tela_posturado");
-        // Andar: o mundo e refeito com a tarefa dela (a arena grande), a postura
-        // de alerta e o ciclo de demonstracao sozinho (parado, metade e o
-        // limite); a automacao ainda pode fixar uma velocidade.
+        // A corrida ate o alvo (a H3 v7): o mundo e refeito com a tarefa dela,
+        // com o alvo no chao (o marcador) e sem ciclo de velocidade.
         screen.selectSkill(2);
         frame(screen, canvas, 2);
-        require(screen.viewerWalkCommand() == 0.0f, "o ciclo comeca parado");
-        screen.advanceViewer(150);
-        require(screen.viewerWalkCommand() == 0.5f, "depois de 3 s o ciclo pede metade do limite (1,0 m/s)");
+        require(screen.viewerHasTarget(), "a corrida mostra o alvo");
+        screen.advanceViewer(60);
+        require(screen.viewerWalkCommand() == 0.0f, "a corrida nao pede velocidade");
         frame(screen, canvas, 2);
-        snapshot(canvas, "rl_tela_andar_ciclo");
-        screen.setWalkSpeed(2.0f);
-        screen.advanceViewer(3);
-        frame(screen, canvas, 2);
-        require(screen.viewerWalkCommand() == 2.0f, "o jogador do mundo recebe a velocidade pedida");
-        snapshot(canvas, "rl_tela_andar");
-        const auto walkingConflicts = sweepIdConflicts([&] { screen.draw(canvas, 1.0f); });
-        require(walkingConflicts.empty(),
-            "IDs repetidos com o andar: " + (walkingConflicts.empty() ? std::string() : walkingConflicts.front()));
-        // O professor do andar esta desligado na tarefa: o visualizador segue
-        // com a politica.
+        snapshot(canvas, "rl_tela_corrida");
+        const auto raceConflicts = sweepIdConflicts([&] { screen.draw(canvas, 1.0f); });
+        require(raceConflicts.empty(),
+            "IDs repetidos na corrida: " + (raceConflicts.empty() ? std::string() : raceConflicts.front()));
+        // A corrida nao tem professor: o visualizador segue com a politica.
         screen.showTeacher(true);
         require(!screen.showingTeacher() && screen.viewerReady(), "sem professor ligado, o visualizador segue na politica");
         screen.selectSkill(0);

@@ -94,9 +94,10 @@ class Trainer:
         self.switched_from: str | None = None
         self.task_updated: tuple | None = None
         kept: dict = {}
+        task_id = json.loads(self.task_path.read_text()).get("id", self.config.task)
         if self.live_task.exists():
             live = json.loads(self.live_task.read_text())
-            if live.get("id") != self.config.task:
+            if live.get("id") != task_id:
                 self.switched_from = live.get("id")
                 self.live_task.unlink()
             elif int(json.loads(self.task_path.read_text()).get("version", 1)) > int(live.get("version", 1)):
@@ -110,6 +111,9 @@ class Trainer:
         if not self.live_task.exists():
             data = json.loads(self.task_path.read_text())
             data["body"] = str((self.task_path.parent / data["body"]).resolve())
+            # Os clipes da imitacao tambem: a copia mora no diretorio do treino.
+            for clip in (data.get("imitation") or {}).get("clips", []):
+                clip["clip"] = str((self.task_path.parent / clip["clip"]).resolve())
             if kept.get("limits") and "commands" in data:
                 data["commands"]["limits"] = kept["limits"]
             if kept.get("lastRaise") and "curriculum" in data:
@@ -374,6 +378,9 @@ class Trainer:
                     "turn": metrics["turn"], "joint_speed": metrics["joint_speed"], "foot_turn": metrics["foot_turn"],
                     "pose_error": metrics["pose_error"], "velocity_error": metrics.get("velocity_error"),
                     "lateral_drift": metrics.get("lateral_drift"), "goal_error": metrics.get("goal_error"),
+                    "targets": metrics.get("targets"), "reached_fraction": metrics.get("reached_fraction"),
+                    "first_target_seconds": metrics.get("first_target_seconds"),
+                    "target_speed": metrics.get("target_speed"), "imitation_error": metrics.get("imitation_error"),
                     "score": metrics["score"], "ends": json.dumps(metrics["ends"]),
                 })
         # A nota e a da pior bateria (uma habilidade nova nao apaga a antiga),

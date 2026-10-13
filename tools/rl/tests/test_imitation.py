@@ -38,13 +38,15 @@ data = Path(sys.argv[1])
 os.environ["MATTER_RL_DATA"] = str(data)
 os.environ["MATTER_RL_SOCKET"] = str(data / "controle.sock")
 sys.path.insert(0, sys.argv[2])
+# O andar por comando (a H3 v6, com o professor): a H3 do repositorio virou a corrida ate o alvo.
+WALKING = Path(sys.argv[2]).resolve().parents[1] / "tests" / "RL" / "data" / "andar_comando.json"
 import numpy as np
 import torch
 from matter_rl import native, paths, trainer as T
 from matter_rl.imitation import HOLD, TeacherWorlds
 
 # Os mundos do professor: so saem as decisoes que passaram da janela de queda.
-worlds = TeacherWorlds(native.load(), paths.task_path("h3_andar"), 4, 2, 5, torch.device("cpu"))
+worlds = TeacherWorlds(native.load(), WALKING, 4, 2, 5, torch.device("cpu"))
 released = 0
 for _ in range(HOLD + 10):
     obs, actions = worlds.step()
@@ -53,7 +55,7 @@ for _ in range(HOLD + 10):
 assert 0 < released <= 10 * 4, released
 del worlds
 
-t = T.Trainer("t", task="h3_andar", mode="maximo", environments=16, device="cpu", seed=3, iterations=3)
+t = T.Trainer("t", task=str(WALKING), mode="maximo", environments=16, device="cpu", seed=3, iterations=3)
 t.config.evaluation_minutes = 1e9
 try:
     t.command("professor", {"minutos": 0.1})

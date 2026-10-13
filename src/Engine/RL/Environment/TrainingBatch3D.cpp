@@ -3,6 +3,7 @@
 #include "Engine/Core/TaskScheduler.hpp"
 #include "Engine/Materials/MaterialLibrary.hpp"
 #include "Engine/Physics/PhysicsEngine3D.hpp"
+#include "Engine/RL/Imitation/ReferenceMotion3D.hpp"
 
 #include <algorithm>
 #include <array>
@@ -109,6 +110,19 @@ struct Environment {
     double yawErrorSquares = 0.0;
     double trackingSum = 0.0;
     std::uint32_t movingSteps = 0;
+    // A imitacao: onde a referencia esta e o erro das juntas somado.
+    ReferenceCursor3D cursor;
+    double imitationErrorSquares = 0.0;
+    // O alvo: onde ele esta (no chao), de onde o trecho ate ele saiu e quando,
+    // a direcao do trecho (rad), quantos nasceram e quantos ele alcancou.
+    Vec3 target;
+    Vec3 targetFrom;
+    float targetSince = 0.0f;
+    float targetDirection = 0.0f;
+    std::uint32_t targetCount = 0;
+    std::uint32_t targetsReached = 0;
+    float firstTargetSeconds = -1.0f;
+    double targetSpeedSum = 0.0;
 };
 
 struct Scene {
@@ -184,6 +198,8 @@ struct TrainingBatch3D::Impl {
     // A acao do professor no ultimo step (mundos x eixos).
     std::vector<float> teacherLabels;
     std::array<std::uint32_t, KeyBodyCount> keyBodies {};
+    // A referencia da imitacao (vazia sem a secao imitation).
+    ReferenceMotion3D reference;
     std::uint32_t workers = 1;
     std::uint32_t maximumSteps = 600;
     float lastStepMilliseconds = 0.0f;
@@ -194,6 +210,8 @@ struct TrainingBatch3D::Impl {
     [[nodiscard]] std::size_t criticSize() const { return criticLayout.size(); }
     [[nodiscard]] bool training() const { return !settings.evaluation; }
     [[nodiscard]] bool teaching() const { return settings.teacher != nullptr; }
+    [[nodiscard]] bool imitating() const { return task.imitation.enabled && !reference.segments.empty(); }
+    [[nodiscard]] bool targeting() const { return task.target.enabled; }
     // O mundo visto pelo professor.
     [[nodiscard]] TrainingTeacherWorld3D teacherWorld(std::uint32_t index) {
         const Environment& env = environments[index];
@@ -204,6 +222,11 @@ struct TrainingBatch3D::Impl {
     void accumulateTeacher(const RagdollState3D& state, std::vector<float>& sum) const;
 
     void buildLayouts();
+    void buildReference();
+    // O primeiro alvo do episodio (na direcao em que a referencia anda) e o
+    // seguinte, distance adiante do alcancado.
+    void placeFirstTarget(Environment& env, const RagdollState3D& state);
+    void placeNextTarget(Environment& env);
     [[nodiscard]] std::vector<ReferenceDof> resolveReference(const TrainingTask3D::Gait& gait) const;
     void resolvePostures();
     [[nodiscard]] std::uint32_t choosePosture(Environment& env) const;
@@ -258,6 +281,21 @@ void TrainingBatch3D::Impl::buildLayouts() {
     // O relogio de passada (zero parado): o seno e o cosseno da fase.
     o.channels.push_back({ "command.gait.sin", "1" });
     o.channels.push_back({ "command.gait.cos", "1" });
+    // A imitacao (so com a secao): o trecho e a fase da referencia e as juntas
+    // dela no fim da decisao (o alvo de pose do passo).
+    if (imitating()) {
+        o.channels.push_back({ "reference.start", "0/1" });
+        o.channels.push_back({ "reference.progress", "0..1" });
+        o.channels.push_back({ "reference.loop.sin", "1" });
+        o.channels.push_back({ "reference.loop.cos", "1" });
+        for (const RLBodyDof3D& dof : body.dofs) o.channels.push_back({ "reference." + dof.name, "rad" });
+    }
+    // O alvo (so com a secao): a direcao no referencial do rumo e a distancia.
+    if (targeting()) {
+        o.channels.push_back({ "target.direction.x", "unit" });
+        o.channels.push_back({ "target.direction.y", "unit" });
+        o.channels.push_back({ "target.distance", "m/10" });
+    }
 
     RLVectorLayout3D& c = criticLayout;
     c = o;
@@ -274,6 +312,54 @@ void TrainingBatch3D::Impl::buildLayouts() {
     a.id = "matter.rl.action";
     a.version = 1;
     for (const RLBodyDof3D& dof : body.dofs) a.channels.push_back({ dof.name + ".target", "acao" });
+}
+
+void TrainingBatch3D::Impl::buildReference() {
+    reference = {};
+    if (!task.imitation.enabled) return;
+    std::vector<ReferenceClip3D> clips;
+    for (std::size_t i = 0; i < task.imitation.clips.size(); ++i)
+        clips.push_back({ task.imitation.clips[i].id, task.imitation.clips[i].path, i + 1 == task.imitation.clips.size() });
+    reference = buildReferenceMotion3D(body, clips, FixedStep);
+}
+
+void TrainingBatch3D::Impl::placeFirstTarget(Environment& env, const RagdollState3D& state) {
+    const TrainingTask3D::Target& t = task.target;
+    const PhysicsBodyState3D& pelvis = state.links.front();
+    const Quaternion frame = (pelvis.orientation * body.profile.links.front().modelOrientation.conjugate()).normalized();
+    const Vec3 forward = frame.rotate({ 1.0f, 0.0f, 0.0f });
+    // A direcao em que a referencia anda a partir deste quadro (em relacao ao
+    // rumo da pelve); sem imitacao, a frente da pelve.
+    float direction = std::atan2(forward.y, forward.x);
+    if (imitating()) {
+        const ReferenceSegment3D& segment = reference.segments[std::min<std::size_t>(env.cursor.segment,
+            reference.segments.size() - 1)];
+        direction += segment.travelHeading - referenceFrame3D(reference, env.cursor).heading;
+    }
+    constexpr float Radians = std::numbers::pi_v<float> / 180.0f;
+    const float spread = t.firstAngleDegrees * Radians;
+    direction += training() ? std::uniform_real_distribution<float>(-spread, spread)(env.rng)
+                            : t.evaluationAngles.front() * Radians;
+    env.targetFrom = { pelvis.position.x, pelvis.position.y, 0.0f };
+    env.targetDirection = direction;
+    env.target = env.targetFrom + Vec3 { std::cos(direction), std::sin(direction), 0.0f } * t.distance;
+    env.targetSince = 0.0f;
+    env.targetCount = 1;
+    env.targetsReached = 0;
+    env.firstTargetSeconds = -1.0f;
+    env.targetSpeedSum = 0.0;
+}
+
+void TrainingBatch3D::Impl::placeNextTarget(Environment& env) {
+    const TrainingTask3D::Target& t = task.target;
+    constexpr float Radians = std::numbers::pi_v<float> / 180.0f;
+    const float spread = t.nextAngleDegrees * Radians;
+    const std::size_t index = std::min<std::size_t>(env.targetCount, t.evaluationAngles.size() - 1);
+    env.targetDirection += training() ? std::uniform_real_distribution<float>(-spread, spread)(env.rng)
+                                      : t.evaluationAngles[index] * Radians;
+    env.targetFrom = env.target;
+    env.target = env.targetFrom + Vec3 { std::cos(env.targetDirection), std::sin(env.targetDirection), 0.0f } * t.distance;
+    ++env.targetCount;
 }
 
 void TrainingBatch3D::Impl::configureEpisodeLength() {
@@ -467,42 +553,78 @@ void TrainingBatch3D::Impl::resetEnvironment(std::uint32_t index) {
     env.steps = 0;
     env.played = 0;
     updateCommand(env, true);
-    std::vector<Vec3> coordinates = posture.jointCoordinates;
-    std::vector<Vec3> velocities(coordinates.size());
-    for (const RLBodyDof3D& dof : body.dofs) {
-        Vec3& q = coordinates[dof.linkIndex];
-        Vec3& qd = velocities[dof.linkIndex];
-        const float dq = gaussian(env.rng, start.jointNoiseRadians * noise);
-        const float dqd = gaussian(env.rng, start.jointVelocityNoise * noise);
-        float* value = dof.axis == RagdollAxis3D::Twist ? &q.x : dof.axis == RagdollAxis3D::Swing1 ? &q.y : &q.z;
-        float* rate = dof.axis == RagdollAxis3D::Twist ? &qd.x : dof.axis == RagdollAxis3D::Swing1 ? &qd.y : &qd.z;
-        *value = std::clamp(*value + dq, dof.minimumRadians, dof.maximumRadians);
-        *rate = dqd;
-    }
-    const float yaw = start.randomYaw
-        ? std::uniform_real_distribution<float>(-std::numbers::pi_v<float>, std::numbers::pi_v<float>)(env.rng) : 0.0f;
-    const Quaternion heading = Quaternion::fromAxisAngle({ 0.0f, 0.0f, 1.0f }, yaw);
-    const Quaternion root = (heading * body.profile.links.front().modelOrientation * posture.rootRotation).normalized();
-    const RLBodyPose3D probe = rlBodyPose3D(body.profile, env.origin, root, coordinates);
-    const float lift = 0.002f - rlBodyLowestFootPoint3D(body, probe);
-    const Vec3 rootPosition = env.origin + Vec3 { 0.0f, 0.0f, lift };
-    Vec3 rootVelocity { gaussian(env.rng, start.rootVelocityNoise * noise),
-        gaussian(env.rng, start.rootVelocityNoise * noise), 0.0f };
-    if (training() && !teaching() && task.commands.startMoving > 0.0f
-        && std::uniform_real_distribution<float>(0.0f, 1.0f)(env.rng) < task.commands.startMoving) {
-        // Ja na velocidade pedida (no rumo do corpo): o passo vira reacao.
-        const Vec3 forward = (root * body.profile.links.front().modelOrientation.conjugate()).rotate({ 1.0f, 0.0f, 0.0f });
-        const Vec3 left { -forward.y, forward.x, 0.0f };
-        rootVelocity += Vec3 { forward.x, forward.y, 0.0f } * env.command.x + left * env.command.y;
-    }
-    const Vec3 rootSpin { gaussian(env.rng, start.rootAngularVelocityNoise * noise),
-        gaussian(env.rng, start.rootAngularVelocityNoise * noise),
-        gaussian(env.rng, start.rootAngularVelocityNoise * noise) };
     std::vector<PhysicsBodyState3D> links;
-    rlBodyLinkStates3D(body.profile, rootPosition, root, rootVelocity, rootSpin, coordinates, velocities, links);
+    if (imitating()) {
+        // Pela referencia (o RSI do DeepMimic): do primeiro quadro (o parado da
+        // partida) ou de uma fase sorteada do ciclo, com a pose e as
+        // velocidades do clipe mais o ruido do comeco.
+        const std::uint32_t last = static_cast<std::uint32_t>(reference.segments.size() - 1);
+        const bool fromStart = !training()
+            || std::uniform_real_distribution<float>(0.0f, 1.0f)(env.rng) < task.imitation.standingStart;
+        env.cursor = { 0, 0 };
+        if (!fromStart) {
+            const std::uint32_t frames = static_cast<std::uint32_t>(reference.segments[last].frames.size());
+            env.cursor = { last, std::uniform_int_distribution<std::uint32_t>(0, frames - 1)(env.rng) };
+        }
+        ReferenceFrame3D frame = referenceFrame3D(reference, env.cursor);
+        for (const RLBodyDof3D& dof : body.dofs) {
+            Vec3& q = frame.jointCoordinates[dof.linkIndex];
+            Vec3& qd = frame.jointVelocities[dof.linkIndex];
+            float* value = dof.axis == RagdollAxis3D::Twist ? &q.x : dof.axis == RagdollAxis3D::Swing1 ? &q.y : &q.z;
+            float* rate = dof.axis == RagdollAxis3D::Twist ? &qd.x : dof.axis == RagdollAxis3D::Swing1 ? &qd.y : &qd.z;
+            *value = std::clamp(*value + gaussian(env.rng, start.jointNoiseRadians * noise), dof.minimumRadians,
+                dof.maximumRadians);
+            *rate += gaussian(env.rng, start.jointVelocityNoise * noise);
+        }
+        frame.rootVelocity += Vec3 { gaussian(env.rng, start.rootVelocityNoise * noise),
+            gaussian(env.rng, start.rootVelocityNoise * noise), 0.0f };
+        frame.rootSpin += Vec3 { gaussian(env.rng, start.rootAngularVelocityNoise * noise),
+            gaussian(env.rng, start.rootAngularVelocityNoise * noise),
+            gaussian(env.rng, start.rootAngularVelocityNoise * noise) };
+        const float yaw = start.randomYaw
+            ? std::uniform_real_distribution<float>(-std::numbers::pi_v<float>, std::numbers::pi_v<float>)(env.rng)
+            : 0.0f;
+        // O pe de apoio 2 mm acima do chao (no voo, como o clipe).
+        const float lowest = rlBodyLowestFootPoint3D(body, referencePose3D(body, frame, env.origin, yaw));
+        referenceLinkStates3D(body, frame, env.origin + Vec3 { 0.0f, 0.0f, std::max(0.0f, 0.002f - lowest) }, yaw, links);
+    } else {
+        std::vector<Vec3> coordinates = posture.jointCoordinates;
+        std::vector<Vec3> velocities(coordinates.size());
+        for (const RLBodyDof3D& dof : body.dofs) {
+            Vec3& q = coordinates[dof.linkIndex];
+            Vec3& qd = velocities[dof.linkIndex];
+            const float dq = gaussian(env.rng, start.jointNoiseRadians * noise);
+            const float dqd = gaussian(env.rng, start.jointVelocityNoise * noise);
+            float* value = dof.axis == RagdollAxis3D::Twist ? &q.x : dof.axis == RagdollAxis3D::Swing1 ? &q.y : &q.z;
+            float* rate = dof.axis == RagdollAxis3D::Twist ? &qd.x : dof.axis == RagdollAxis3D::Swing1 ? &qd.y : &qd.z;
+            *value = std::clamp(*value + dq, dof.minimumRadians, dof.maximumRadians);
+            *rate = dqd;
+        }
+        const float yaw = start.randomYaw
+            ? std::uniform_real_distribution<float>(-std::numbers::pi_v<float>, std::numbers::pi_v<float>)(env.rng) : 0.0f;
+        const Quaternion heading = Quaternion::fromAxisAngle({ 0.0f, 0.0f, 1.0f }, yaw);
+        const Quaternion root = (heading * body.profile.links.front().modelOrientation * posture.rootRotation).normalized();
+        const RLBodyPose3D probe = rlBodyPose3D(body.profile, env.origin, root, coordinates);
+        const float lift = 0.002f - rlBodyLowestFootPoint3D(body, probe);
+        const Vec3 rootPosition = env.origin + Vec3 { 0.0f, 0.0f, lift };
+        Vec3 rootVelocity { gaussian(env.rng, start.rootVelocityNoise * noise),
+            gaussian(env.rng, start.rootVelocityNoise * noise), 0.0f };
+        if (training() && !teaching() && task.commands.startMoving > 0.0f
+            && std::uniform_real_distribution<float>(0.0f, 1.0f)(env.rng) < task.commands.startMoving) {
+            // Ja na velocidade pedida (no rumo do corpo): o passo vira reacao.
+            const Vec3 forward = (root * body.profile.links.front().modelOrientation.conjugate()).rotate({ 1.0f, 0.0f, 0.0f });
+            const Vec3 left { -forward.y, forward.x, 0.0f };
+            rootVelocity += Vec3 { forward.x, forward.y, 0.0f } * env.command.x + left * env.command.y;
+        }
+        const Vec3 rootSpin { gaussian(env.rng, start.rootAngularVelocityNoise * noise),
+            gaussian(env.rng, start.rootAngularVelocityNoise * noise),
+            gaussian(env.rng, start.rootAngularVelocityNoise * noise) };
+        rlBodyLinkStates3D(body.profile, rootPosition, root, rootVelocity, rootSpin, coordinates, velocities, links);
+    }
     scene.physics->resetRagdollState(env.ragdoll, links);
     {
-        const Vec3 forward = (root * body.profile.links.front().modelOrientation.conjugate()).rotate({ 1.0f, 0.0f, 0.0f });
+        const Vec3 forward = (links.front().orientation * body.profile.links.front().modelOrientation.conjugate())
+            .rotate({ 1.0f, 0.0f, 0.0f });
         env.startHeading = std::atan2(forward.y, forward.x);
     }
     env.footContactTime = {};
@@ -536,6 +658,8 @@ void TrainingBatch3D::Impl::resetEnvironment(std::uint32_t index) {
         env.footStart[f] = state ? state->links[foot].position : Vec3 {};
         env.footStartOrientation[f] = state ? state->links[foot].orientation : Quaternion {};
     }
+    env.imitationErrorSquares = 0.0;
+    if (targeting() && state) placeFirstTarget(env, *state);
     env.episodeReturn = 0.0;
     env.comSum[0] = env.comSum[1] = 0.0;
     env.comSquares[0] = env.comSquares[1] = 0.0;
@@ -655,6 +779,26 @@ void TrainingBatch3D::Impl::writeObservation(const Environment& env, const Ragdo
     const bool walking = env.command.x != 0.0f || env.command.y != 0.0f || env.command.z != 0.0f;
     *out++ = walking ? std::sin(2.0f * std::numbers::pi_v<float> * env.gaitPhase) : 0.0f;
     *out++ = walking ? std::cos(2.0f * std::numbers::pi_v<float> * env.gaitPhase) : 0.0f;
+    if (imitating()) {
+        // A referencia no fim desta decisao: o trecho, a fase e as juntas.
+        const ReferenceCursor3D next = advanceReference3D(reference, env.cursor, task.actionRepeat);
+        const bool loop = reference.segments[next.segment].loops;
+        const float progress = referenceProgress3D(reference, next);
+        *out++ = loop ? 0.0f : 1.0f;
+        *out++ = loop ? 0.0f : progress;
+        *out++ = loop ? std::sin(2.0f * std::numbers::pi_v<float> * progress) : 0.0f;
+        *out++ = loop ? std::cos(2.0f * std::numbers::pi_v<float> * progress) : 0.0f;
+        const ReferenceFrame3D& frame = referenceFrame3D(reference, next);
+        for (std::size_t d = 0; d < body.dofs.size(); ++d) *out++ = frame.dofRadians[d] - body.dofs[d].baseRadians;
+    }
+    if (targeting()) {
+        const Vec3 to = reading.headingInverse.rotate(Vec3 { env.target.x - pelvis.position.x,
+            env.target.y - pelvis.position.y, 0.0f });
+        const float distance = std::hypot(to.x, to.y);
+        *out++ = distance > 1.0e-4f ? to.x / distance : 1.0f;
+        *out++ = distance > 1.0e-4f ? to.y / distance : 0.0f;
+        *out++ = std::min(distance, 20.0f) / 10.0f;
+    }
 
     if (criticOut == nullptr) return;
     // O critico: a observacao sem ruido mais o mundo que a politica nao ve.
@@ -858,6 +1002,66 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
     // tronco e os bracos, mais folgados (sigma ~18 graus: os bracos balancam).
     const float poseMatch = moving ? std::exp(-upperError / 0.1f) : std::exp(-poseError / 0.03f);
 
+    // A imitacao: o corpo contra a referencia no mesmo instante (o fim desta
+    // decisao), tudo no referencial do rumo de cada um.
+    float imitationPose = 0.0f, imitationVelocity = 0.0f, imitationKeyBodies = 0.0f, imitationRoot = 0.0f;
+    if (imitating()) {
+        const TrainingTask3D::Imitation& m = task.imitation;
+        const ReferenceFrame3D& frame = referenceFrame3D(reference, env.cursor);
+        float pose2 = 0.0f, velocity2 = 0.0f;
+        for (std::size_t d = 0; d < body.dofs.size(); ++d) {
+            const RLBodyDof3D& dof = body.dofs[d];
+            const RagdollJointState3D& joint = state.joints[dof.linkIndex];
+            const std::size_t axis = static_cast<std::size_t>(dof.axis);
+            const float e = joint.positionRadians[axis] - frame.dofRadians[d];
+            const float ev = joint.velocityRadiansPerSecond[axis] - frame.dofVelocities[d];
+            pose2 += e * e;
+            velocity2 += ev * ev;
+        }
+        env.imitationErrorSquares += pose2 / dofCount;
+        // A inclinacao da pelve entra na pose (a pelve nao tem junta).
+        const Vec3 up = reading.headingInverse.rotate(reading.pelvisFrame.rotate({ 0.0f, 0.0f, 1.0f }));
+        const float tilt = std::acos(std::clamp(dot(up, frame.pelvisUp), -1.0f, 1.0f));
+        pose2 += tilt * tilt;
+        const PhysicsBodyState3D& pelvis = state.links.front();
+        float key2 = 0.0f;
+        for (std::size_t k = 0; k < KeyBodyCount; ++k) {
+            const Vec3 p = reading.headingInverse.rotate(state.links[keyBodies[k]].position - pelvis.position);
+            key2 += (p - frame.keyBodies[k]).lengthSquared();
+        }
+        const float height = pelvis.position.z - frame.rootHeight;
+        const Vec3 rootVelocity = reading.headingInverse.rotate(pelvis.linearVelocity);
+        imitationPose = std::exp(-m.poseScale * pose2);
+        imitationVelocity = std::exp(-m.velocityScale * velocity2);
+        imitationKeyBodies = std::exp(-m.keyBodyScale * key2);
+        imitationRoot = std::exp(-m.rootHeightScale * height * height
+            - m.rootVelocityScale * (rootVelocity - frame.rootVelocity).lengthSquared());
+    }
+    // O alvo: a velocidade do centro de massa em direcao a ele (linear: correr
+    // mais rapido paga mais) e, chegando, a velocidade media do trecho; o
+    // proximo nasce na hora.
+    float targetSpeed = 0.0f, targetReached = 0.0f;
+    if (targeting()) {
+        const TrainingTask3D::Target& t = task.target;
+        const Vec3 to { env.target.x - reading.com.x, env.target.y - reading.com.y, 0.0f };
+        const float distance = to.length();
+        if (distance > 1.0e-4f) {
+            const float toward = (reading.comVelocity.x * to.x + reading.comVelocity.y * to.y) / distance;
+            targetSpeed = std::clamp(toward / t.referenceSpeed, 0.0f, t.speedCap);
+        }
+        if (distance < t.radius) {
+            const float now = static_cast<float>(env.played) * stepSeconds;
+            const float covered = (env.target - env.targetFrom).length();
+            const float speed = covered / std::max(stepSeconds, now - env.targetSince);
+            targetReached = std::min(speed / t.referenceSpeed, t.speedCap);
+            ++env.targetsReached;
+            env.targetSpeedSum += speed;
+            if (env.firstTargetSeconds < 0.0f) env.firstTargetSeconds = now;
+            env.targetSince = now;
+            placeNextTarget(env);
+        }
+    }
+
     const std::array<float, RewardCount> values {
         w.alive * gate,
         w.upright * upright * gate,
@@ -879,6 +1083,12 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
         w.gaitContact * gaitContact,
         w.swingHeight * swingHeight,
         w.gaitReference * gaitReference,
+        w.imitationPose * imitationPose,
+        w.imitationVelocity * imitationVelocity,
+        w.imitationKeyBodies * imitationKeyBodies,
+        w.imitationRoot * imitationRoot,
+        w.targetSpeed * targetSpeed,
+        w.targetReached * targetReached,
         fell ? -w.fall : 0.0f,
     };
     // A queda e a ultima parcela; o resto, com positiveOnly, nunca abaixo de 0.
@@ -942,6 +1152,10 @@ void TrainingBatch3D::Impl::finishEpisode(Scene& scene, std::uint32_t index, Tra
         episode.distance = moved.length();
         episode.lateralDrift = std::abs(-std::sin(env.startHeading) * moved.x + std::cos(env.startHeading) * moved.y);
     }
+    episode.targetsReached = env.targetsReached;
+    episode.firstTargetSeconds = env.firstTargetSeconds;
+    episode.meanTargetSpeed = env.targetsReached > 0 ? static_cast<float>(env.targetSpeedSum / env.targetsReached) : 0.0f;
+    episode.imitationErrorRms = imitating() ? static_cast<float>(std::sqrt(env.imitationErrorSquares / n)) : -1.0f;
     if (reason == TrainingEndReason3D::FallContact || reason == TrainingEndReason3D::FallHeight) {
         // O lado da queda: para onde o centro de massa ia, no referencial do corpo.
         const Vec3 v = reading.valid ? reading.headingInverse.rotate(reading.comVelocity) : Vec3 {};
@@ -1036,6 +1250,9 @@ void TrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> actio
         Environment& env = environments[index];
         ++env.steps;
         ++env.played;
+        // A referencia andou junto com a fisica: a recompensa compara com o
+        // quadro de agora.
+        if (imitating()) env.cursor = advanceReference3D(reference, env.cursor, task.actionRepeat);
         const RagdollState3D* state = physics.ragdollStateView(env.ragdoll);
         float* actor = observations.data() + index * O;
         float* criticOut = critic.data() + index * C;
@@ -1138,6 +1355,7 @@ TrainingBatch3D::TrainingBatch3D(const TrainingBatchSettings3D& settings) : m_im
         impl.upperDof.push_back(leg ? 0 : 1);
     }
     impl.referenceDofs = impl.resolveReference(impl.task.gait);
+    impl.buildReference();
     if (!settings.posture.empty()) {
         impl.forcedPosture = findRLPosture3D(impl.body, settings.posture);
         if (impl.forcedPosture < 0) throw std::runtime_error("lote de RL: o corpo nao tem a postura " + settings.posture);
@@ -1183,6 +1401,16 @@ void TrainingBatch3D::updateTask(const TrainingTask3D& task) {
     Impl& impl = *m_impl;
     // Confere antes de mudar: uma tarefa recusada deixa o lote como estava.
     std::vector<Impl::ReferenceDof> reference = impl.resolveReference(task.gait);
+    // A imitacao e o alvo mudam a observacao: nao ligam nem desligam com o
+    // treino andando (os clipes podem trocar).
+    if (task.imitation.enabled != impl.task.imitation.enabled || task.target.enabled != impl.task.target.enabled)
+        throw std::runtime_error("lote de RL: a imitacao e o alvo nao ligam nem desligam com o treino andando");
+    bool clipsChanged = task.imitation.clips.size() != impl.task.imitation.clips.size();
+    for (std::size_t i = 0; !clipsChanged && i < task.imitation.clips.size(); ++i)
+        clipsChanged = task.imitation.clips[i].path != impl.task.imitation.clips[i].path;
+    impl.task.imitation = task.imitation;
+    impl.task.target = task.target;
+    if (clipsChanged) impl.buildReference();
     impl.task.reward = task.reward;
     impl.task.termination = task.termination;
     impl.task.initialState = task.initialState;
@@ -1302,6 +1530,12 @@ TrainingEnvironmentView3D TrainingBatch3D::view(std::size_t environment) const {
     if (env.pushRemaining > 0.0f) {
         view.pushForce = env.pushForce;
         view.pushLink = static_cast<int>(env.pushLink);
+    }
+    if (impl.targeting()) {
+        view.hasTarget = true;
+        view.target = env.target;
+        view.targetRadius = impl.task.target.radius;
+        view.targetsReached = env.targetsReached;
     }
     return view;
 }

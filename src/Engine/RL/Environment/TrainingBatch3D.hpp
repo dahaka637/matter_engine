@@ -103,6 +103,14 @@ struct TrainingEpisode3D {
     float velocityTracking = -1.0f;
     float distance = 0.0f;
     float lateralDrift = 0.0f;
+    // O alvo: quantos ele alcancou, quando chegou ao primeiro (s, -1 sem
+    // chegar) e a velocidade media dos trechos ate cada alvo alcancado (m/s).
+    std::uint32_t targetsReached = 0;
+    float firstTargetSeconds = -1.0f;
+    float meanTargetSpeed = 0.0f;
+    // A imitacao: o quanto as juntas ficam longe da referencia (RMS por eixo,
+    // rad; -1 sem imitacao).
+    float imitationErrorRms = -1.0f;
 };
 
 // Um mundo de treino visto por fora (o visualizador, a gravacao).
@@ -118,6 +126,12 @@ struct TrainingEnvironmentView3D {
     float startHeading = 0.0f;
     Vec3 pushForce;
     int pushLink = -1;
+    // O alvo de agora (no mundo, no chao), o raio de chegada e quantos ele ja
+    // alcancou no episodio.
+    bool hasTarget = false;
+    Vec3 target;
+    float targetRadius = 0.0f;
+    std::uint32_t targetsReached = 0;
 };
 
 // Centenas de mundos de treino sem janela, avancados em paralelo.

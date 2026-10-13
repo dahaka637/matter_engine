@@ -71,6 +71,12 @@ TrainingTask3D loadTrainingTask3D(const std::filesystem::path& definitionPath) {
         w.gaitContact = r.value("gaitContact", w.gaitContact);
         w.swingHeight = r.value("swingHeight", w.swingHeight);
         w.gaitReference = r.value("gaitReference", w.gaitReference);
+        w.imitationPose = r.value("imitationPose", w.imitationPose);
+        w.imitationVelocity = r.value("imitationVelocity", w.imitationVelocity);
+        w.imitationKeyBodies = r.value("imitationKeyBodies", w.imitationKeyBodies);
+        w.imitationRoot = r.value("imitationRoot", w.imitationRoot);
+        w.targetSpeed = r.value("targetSpeed", w.targetSpeed);
+        w.targetReached = r.value("targetReached", w.targetReached);
         w.fall = r.value("fall", w.fall);
         w.positiveOnly = r.value("positiveOnly", w.positiveOnly);
     }
@@ -127,6 +133,41 @@ TrainingTask3D loadTrainingTask3D(const std::filesystem::path& definitionPath) {
                     { joint.at("dof").get<std::string>(), leg == "left" ? 0u : 1u, joint.value("scale", 0.0f) });
             }
         }
+    }
+    if (document.contains("imitation") && document["imitation"].is_object()
+        && document["imitation"].value("enabled", true)) {
+        const nlohmann::json& m = document["imitation"];
+        auto& out = task.imitation;
+        out.enabled = true;
+        for (const nlohmann::json& clip : m.at("clips")) {
+            const std::string file = clip.at("clip").get<std::string>();
+            out.clips.push_back({ clip.value("id", std::string()), (definitionPath.parent_path() / file).lexically_normal() });
+        }
+        if (out.clips.empty()) throw std::runtime_error("tarefa de RL: imitation sem clipes");
+        out.standingStart = std::clamp(m.value("standingStart", out.standingStart), 0.0f, 1.0f);
+        if (m.contains("scales")) {
+            const nlohmann::json& k = m["scales"];
+            out.poseScale = std::max(0.0f, k.value("pose", out.poseScale));
+            out.velocityScale = std::max(0.0f, k.value("velocity", out.velocityScale));
+            out.keyBodyScale = std::max(0.0f, k.value("keyBodies", out.keyBodyScale));
+            out.rootHeightScale = std::max(0.0f, k.value("rootHeight", out.rootHeightScale));
+            out.rootVelocityScale = std::max(0.0f, k.value("rootVelocity", out.rootVelocityScale));
+        }
+    }
+    if (document.contains("target") && document["target"].is_object() && document["target"].value("enabled", true)) {
+        const nlohmann::json& t = document["target"];
+        auto& out = task.target;
+        out.enabled = true;
+        out.distance = t.value("distance", out.distance);
+        out.radius = t.value("radius", out.radius);
+        out.firstAngleDegrees = std::max(0.0f, t.value("firstAngleDegrees", out.firstAngleDegrees));
+        out.nextAngleDegrees = std::max(0.0f, t.value("nextAngleDegrees", out.nextAngleDegrees));
+        if (t.contains("evaluationAngles")) out.evaluationAngles = t["evaluationAngles"].get<std::vector<float>>();
+        out.referenceSpeed = t.value("referenceSpeed", out.referenceSpeed);
+        out.speedCap = t.value("speedCap", out.speedCap);
+        if (!(out.distance > out.radius) || !(out.radius > 0.0f) || !(out.referenceSpeed > 0.0f)
+            || out.evaluationAngles.empty())
+            throw std::runtime_error("tarefa de RL: target invalido");
     }
     if (document.contains("termination")) {
         const nlohmann::json& t = document["termination"];

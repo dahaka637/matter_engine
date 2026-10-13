@@ -282,7 +282,8 @@ void drawGrid(const InspectionScene& scene, const InspectionStyle& style, const 
     const float ground = scene.skeleton->groundHeight;
     // Mais fina de perto: 1 cm, 5 cm ou 10 cm (a linha forte a cada 5).
     const float extent = style.gridExtent > 0.0f ? style.gridExtent : std::clamp(camera.distance * 0.9f, 0.3f, 2.5f);
-    const float step = camera.distance < 0.6f ? 0.01f : camera.distance < 1.4f ? 0.05f : 0.1f;
+    const float step = style.gridStep > 0.0f ? style.gridStep
+        : camera.distance < 0.6f ? 0.01f : camera.distance < 1.4f ? 0.05f : 0.1f;
     const int count = static_cast<int>(std::ceil(extent / step));
     const float cx = std::round(camera.target.x / step) * step;
     const float cy = std::round(camera.target.y / step) * step;
@@ -295,6 +296,41 @@ void drawGrid(const InspectionScene& scene, const InspectionStyle& style, const 
             majorX ? Palette::GridMajor : Palette::Grid, DepthMode::Test, 0.0f, 0.0f);
         raster.line({ cx - extent, y, ground }, { cx + extent, y, ground }, (majorY ? 1.3f : 1.0f) * pixel,
             majorY ? Palette::GridMajor : Palette::Grid, DepthMode::Test, 0.0f, 0.0f);
+    }
+}
+
+// O disco no chao (um pouco acima, misturado), o brilho em faixas que sobem do
+// aro cada vez mais fracas e o aro por cima. Atras do corpo ele some.
+void drawMarkers(const InspectionScene& scene, Rasterizer& raster, float pixel) {
+    constexpr int Segments = 64;
+    constexpr int Bands = 12;
+    constexpr float Tau = 6.2831853f;
+    for (const InspectionMarker& marker : scene.markers) {
+        std::array<Vec3, Segments> rim {};
+        for (int i = 0; i < Segments; ++i) {
+            const float angle = Tau * static_cast<float>(i) / static_cast<float>(Segments);
+            rim[static_cast<std::size_t>(i)] =
+                marker.center + Vec3 { std::cos(angle) * marker.radius, std::sin(angle) * marker.radius, 0.0f };
+        }
+        const Vec3 lift { 0.0f, 0.0f, 0.003f };
+        const auto at = [&](int i) { return rim[static_cast<std::size_t>((i + Segments) % Segments)]; };
+        for (int i = 0; i < Segments; ++i)
+            raster.overlayTriangle(marker.center + lift, at(i) + lift, at(i + 1) + lift, withAlpha(marker.color, 0.42f),
+                0.01f);
+        const Color glow = mix(marker.color, rgb(255, 214, 200), 0.35f);
+        for (int band = 0; band < Bands; ++band) {
+            const Vec3 low { 0.0f, 0.0f, marker.glowHeight * static_cast<float>(band) / static_cast<float>(Bands) };
+            const Vec3 high { 0.0f, 0.0f, marker.glowHeight * static_cast<float>(band + 1) / static_cast<float>(Bands) };
+            const float fade = 1.0f - (static_cast<float>(band) + 0.5f) / static_cast<float>(Bands);
+            const Color color = withAlpha(glow, 0.26f * fade * fade);
+            for (int i = 0; i < Segments; ++i) {
+                raster.overlayTriangle(at(i) + low, at(i + 1) + low, at(i + 1) + high, color, 0.01f);
+                raster.overlayTriangle(at(i) + low, at(i + 1) + high, at(i) + high, color, 0.01f);
+            }
+        }
+        for (int i = 0; i < Segments; ++i)
+            raster.line(at(i) + lift, at(i + 1) + lift, 2.4f * pixel, withAlpha(marker.color, 0.95f), DepthMode::Test,
+                0.0f, 0.004f);
     }
 }
 
@@ -489,6 +525,7 @@ Image renderInspection(const InspectionScene& scene, const InspectionStyle& styl
         }
     });
 
+    drawMarkers(scene, raster, pixel);
     for (const Highlight& highlight : scene.highlights) {
         if (hasMesh)
             for (const std::uint32_t t : highlight.triangles) {

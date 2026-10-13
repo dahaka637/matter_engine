@@ -378,6 +378,7 @@ if(MATTERENGINE_BUILD_RL)
         src/Engine/RL/Body/RLBody3D.cpp
         src/Engine/RL/Environment/TrainingTask3D.cpp
         src/Engine/RL/Environment/TrainingBatch3D.cpp
+        src/Engine/RL/Imitation/ReferenceMotion3D.cpp
     )
     target_include_directories(MatterRLEnvironment PUBLIC src)
     target_link_libraries(MatterRLEnvironment
@@ -813,14 +814,16 @@ if(MATTERENGINE_BUILD_TESTS)
         target_link_libraries(MatterRLTrainingTests
             PRIVATE MatterRLEnvironment)
         target_compile_definitions(MatterRLTrainingTests PRIVATE
-            MATTERENGINE_TEST_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
+            MATTERENGINE_TEST_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets"
+            MATTERENGINE_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/RL/data")
         add_test(NAME MatterEngine.RLTraining
             COMMAND MatterRLTrainingTests)
         # O professor (a locomocao fisica do jogo nos mundos de treino).
         add_executable(MatterRLTeacherTests tests/RL/TeacherTests.cpp)
         target_link_libraries(MatterRLTeacherTests PRIVATE MatterRLTeacher)
         target_compile_definitions(MatterRLTeacherTests PRIVATE
-            MATTERENGINE_TEST_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
+            MATTERENGINE_TEST_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets"
+            MATTERENGINE_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/RL/data")
         add_test(NAME MatterEngine.RLTeacher
             COMMAND MatterRLTeacherTests)
     endif()

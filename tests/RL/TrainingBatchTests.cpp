@@ -10,6 +10,7 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -187,7 +188,8 @@ void testPostures() {
 // do curriculo (para frente so, nesta etapa) com uma fatia parada; na bateria,
 // o roteiro; de fora, o fixo. Os mundos ficam longe uns dos outros.
 void testCommands() {
-    const std::filesystem::path walking = std::filesystem::path(MATTERENGINE_TEST_ASSETS_DIR) / "rl/tasks/h3_andar.json";
+    // O andar por comando de velocidade (a H3 v6; a do repositorio virou a corrida ate o alvo).
+    const std::filesystem::path walking = std::filesystem::path(MATTERENGINE_TEST_DATA_DIR) / "andar_comando.json";
     TrainingBatchSettings3D s = settings(64, 2);
     s.taskPath = walking;
     TrainingBatch3D batch(s);
@@ -249,7 +251,7 @@ void testCommands() {
     std::size_t referenceIndex = R;
     for (std::size_t i = 0; i < R; ++i)
         if (std::string_view(TrainingRewardComponentNames3D[i]) == "gaitReference") referenceIndex = i;
-    require(referenceIndex == R - 2 && std::string_view(TrainingRewardComponentNames3D[R - 1]) == "fall",
+    require(referenceIndex < R - 1 && std::string_view(TrainingRewardComponentNames3D[R - 1]) == "fall",
         "a parcela da referencia antes da queda (a queda e a ultima)");
     TrainingTask3D guided = battery.task();
     guided.reward.gaitReference = 2.0f;
@@ -429,7 +431,7 @@ private:
 
 void testTeacher() {
     TrainingBatchSettings3D s = settings(4, 2);
-    s.taskPath = std::filesystem::path(MATTERENGINE_TEST_ASSETS_DIR) / "rl/tasks/h3_andar.json";
+    s.taskPath = std::filesystem::path(MATTERENGINE_TEST_DATA_DIR) / "andar_comando.json";
     const RLBody3D body = loadRLBody3D(loadTrainingTask3D(s.taskPath).bodyPath);
     std::mt19937 rng(3);
     std::uniform_real_distribution<float> unit(-0.6f, 0.6f);
@@ -466,6 +468,138 @@ void testTeacher() {
         "a fase do relogio e a do professor");
 }
 
+
+// A corrida ate o alvo (a H3 v7): a imitacao do clipe e o alvo.
+std::size_t rewardIndex(std::string_view name) {
+    for (std::size_t i = 0; i < TrainingRewardComponentNames3D.size(); ++i)
+        if (TrainingRewardComponentNames3D[i] == name) return i;
+    throw std::runtime_error("parcela desconhecida: " + std::string(name));
+}
+
+std::size_t channel(const TrainingBatch3D& batch, std::string_view name) {
+    const auto& channels = batch.observationLayout().channels;
+    for (std::size_t i = 0; i < channels.size(); ++i)
+        if (channels[i].name == name) return i;
+    throw std::runtime_error("canal ausente: " + std::string(name));
+}
+
+// Uma copia da corrida com trocas no texto (caminhos absolutos: a copia mora fora).
+std::filesystem::path raceVariant(const std::string& name, const std::vector<std::pair<std::string, std::string>>& swaps) {
+    const std::filesystem::path assets = MATTERENGINE_TEST_ASSETS_DIR;
+    std::ifstream in(assets / "rl/tasks/h3_andar.json");
+    std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    std::vector<std::pair<std::string, std::string>> all {
+        { "\"body\": \"../bodies/football_player_v1.json\"",
+            "\"body\": \"" + (assets / "rl/bodies/football_player_v1.json").string() + "\"" },
+        { "\"clip\": \"../../animations/clips/", "\"clip\": \"" + (assets / "animations/clips").string() + "/" } };
+    all.insert(all.end(), swaps.begin(), swaps.end());
+    for (const auto& [from, to] : all) {
+        bool found = false;
+        for (std::size_t at = text.find(from); at != std::string::npos; at = text.find(from, at + to.size())) {
+            text.replace(at, from.size(), to);
+            found = true;
+        }
+        require(found, "a corrida deveria ter " + from);
+    }
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "matter_rl_task_test";
+    std::filesystem::create_directories(dir);
+    const std::filesystem::path path = dir / name;
+    std::ofstream(path) << text;
+    return path;
+}
+
+// As juntas pedidas pela referencia no fim da decisao, em unidades da acao.
+std::vector<float> referenceActions(const TrainingBatch3D& batch) {
+    const std::size_t N = batch.environmentCount(), A = batch.actionSize(), O = batch.observationSize();
+    const std::size_t first = channel(batch, "reference." + batch.body().dofs.front().name);
+    std::vector<float> actions(N * A);
+    for (std::size_t e = 0; e < N; ++e)
+        for (std::size_t d = 0; d < A; ++d)
+            actions[e * A + d] = batch.observations()[e * O + first + d] / batch.body().dofs[d].actionScale;
+    return actions;
+}
+
+void testRace() {
+    const std::size_t pose = rewardIndex("imitationPose"), speed = rewardIndex("targetSpeed"),
+                      reached = rewardIndex("targetReached");
+    const std::size_t R = TrainingRewardComponentNames3D.size();
+    {
+        // A avaliacao sai do parado, com o alvo 10 m a frente na direcao da partida.
+        TrainingBatchSettings3D s = settings(4, 2);
+        s.taskPath = std::filesystem::path(MATTERENGINE_TEST_ASSETS_DIR) / "rl/tasks/h3_andar.json";
+        s.evaluation = true;
+        s.evaluationEpisodeSeconds = 12.0f;
+        TrainingBatch3D batch(s);
+        const std::size_t O = batch.observationSize();
+        const std::size_t distance = channel(batch, "target.distance"), start = channel(batch, "reference.start");
+        for (std::size_t e = 0; e < 4; ++e) {
+            const TrainingEnvironmentView3D view = batch.view(e);
+            require(view.hasTarget && view.targetsReached == 0, "o alvo existe desde o comeco");
+            const Vec3 pelvis = view.state->links.front().position;
+            require(std::abs(std::hypot(view.target.x - pelvis.x, view.target.y - pelvis.y) - 10.0f) < 0.05f,
+                "o primeiro alvo fica a 10 m");
+            require(std::abs(batch.observations()[e * O + distance] - 1.0f) < 0.01f, "a distancia do alvo na observacao");
+            require(batch.observations()[e * O + start] == 1.0f, "a avaliacao sai da partida");
+        }
+        // Seguindo a referencia (alvo de PD = a pose dela), a nota da pose no
+        // primeiro passo e alta; segurando a base, bem menor.
+        batch.step(referenceActions(batch));
+        float following = 0.0f;
+        for (std::size_t e = 0; e < 4; ++e) following += batch.rewardComponents()[e * R + pose] / 0.5f / 4.0f;
+        require(following > 0.6f, "seguir a referencia vale a pose (" + std::to_string(following) + ")");
+        batch.reset(11);
+        batch.step(std::vector<float>(4 * batch.actionSize(), 0.0f));
+        float holding = 0.0f;
+        for (std::size_t e = 0; e < 4; ++e) holding += batch.rewardComponents()[e * R + pose] / 0.5f / 4.0f;
+        require(holding < following, "segurar a base vale menos que seguir a referencia");
+    }
+    {
+        // No treino, metade sai do parado e metade ja no sprint (a velocidade do clipe).
+        TrainingBatchSettings3D s = settings(64, 2);
+        s.taskPath = std::filesystem::path(MATTERENGINE_TEST_ASSETS_DIR) / "rl/tasks/h3_andar.json";
+        TrainingBatch3D batch(s);
+        const std::size_t O = batch.observationSize(), start = channel(batch, "reference.start");
+        const std::size_t forward = channel(batch, "com.velocity_heading.x");
+        std::size_t sprinting = 0, fast = 0;
+        for (std::size_t e = 0; e < 64; ++e) {
+            if (batch.observations()[e * O + start] == 0.0f) ++sprinting;
+            if (batch.observations()[e * O + forward] * 2.0f > 4.0f) ++fast;
+        }
+        require(sprinting > 16 && sprinting < 48, "metade dos episodios no sprint (" + std::to_string(sprinting) + ")");
+        require(fast + 4 >= sprinting && fast <= sprinting + 4, "quem sai no sprint ja corre (" + std::to_string(fast) + ")");
+    }
+    {
+        // Um alvo a 1,2 m de quem sai no sprint: ele chega, paga a velocidade do
+        // trecho e o proximo nasce 1,2 m adiante.
+        const std::filesystem::path near = raceVariant("alvo_perto.json",
+            { { "\"distance\": 10.0", "\"distance\": 1.2" }, { "\"standingStart\": 0.5", "\"standingStart\": 0.0" },
+              { "\"firstAngleDegrees\": 10.0", "\"firstAngleDegrees\": 0.0" } });
+        TrainingBatchSettings3D s = settings(8, 2);
+        s.taskPath = near;
+        TrainingBatch3D batch(s);
+        std::vector<Vec3> first;
+        for (std::size_t e = 0; e < 8; ++e) first.push_back(batch.view(e).target);
+        float paid = 0.0f, toward = 0.0f;
+        std::size_t arrived = 0;
+        for (int step = 0; step < 6; ++step) {
+            batch.step(referenceActions(batch));
+            for (std::size_t e = 0; e < 8; ++e) {
+                paid += batch.rewardComponents()[e * R + reached];
+                toward += batch.rewardComponents()[e * R + speed];
+            }
+        }
+        for (std::size_t e = 0; e < 8; ++e) {
+            const TrainingEnvironmentView3D view = batch.view(e);
+            if (view.targetsReached == 0) continue;
+            ++arrived;
+            require(std::abs((view.target - first[e]).length() - 1.2f * static_cast<float>(view.targetsReached)) < 0.05f,
+                "o proximo alvo nasce 1,2 m adiante");
+        }
+        require(arrived >= 6, "quem corre chega ao alvo perto (" + std::to_string(arrived) + " de 8)");
+        require(paid > 0.0f && toward > 0.0f, "chegar e ir em direcao ao alvo pagam");
+    }
+}
+
 } // namespace
 
 void runTrainingBatchTests() {
@@ -477,5 +611,6 @@ void runTrainingBatchTests() {
     testFallsAndRestart();
     testTimeLimit();
     testTeacher();
+    testRace();
     std::cout << "RL training batch tests passed\n";
 }

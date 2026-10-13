@@ -1,0 +1,340 @@
+{
+  "schema": "matter-rl-task-1",
+  "id": "andar_comando",
+  "version": 6,
+  "displayName": "Andar por comando (v6, teste)",
+  "comment": "Copia da H3 v6 (andar por comando de velocidade, 12/10) para os testes da maquina de comandos, do curriculo e do professor. A H3 do repositorio virou a corrida ate o alvo com imitacao (v7). H3: andar seguindo um comando de velocidade (para frente, de 0 ao trote da locomocao padrao, 4,5 m/s), saindo e parando na postura de alerta. A velocidade maxima sobe pelo curriculo conforme ele acompanha. Ate a versao 5, 25% dos sorteios pediam ficar parado e 15% dos episodios ficavam parados na postura natural (o ensaio da H1 e da H1b); na 6, nada parado. Costas, lados e giro ja estao prontos na mesma tarefa: basta um maximo acima de 0 em commands (os valores de proximo passo estao em commands.prontos) e ligar as baterias deles. Versao 2: com pedido de andar, ficar parado nao paga (vivo, postura, cabeca, pose e giro valem multiplicados pelo acompanhamento da velocidade), e o relogio de passada ensina o passo (cada pe no chao ou no ar na hora certa da fase, o pe de balanco subindo 8 cm). Versao 3: os episodios com pedido de andar comecam com o corpo ja na velocidade pedida (parado, ele cai para a frente: o primeiro passo vira uma reacao). Versao 4: com pedido de andar, a velocidade e o estar bem sao medidos contra ficar parado (parado vale 0 em qualquer velocidade pedida), e o total de cada passo, menos a queda, nunca fica negativo: tentar andar e errar nunca vale menos que ficar parado. Versao 5: o professor (secao teacher) para o aprendizado guiado. Versao 6 (pedido do usuario: ficar parado nao deve recompensar quando o treino e andar): so pedidos de andar (nada parado nesta tarefa; as baterias de ficar em pe so sao medidas, fora da nota), o relogio de passada so paga o passo e o nao girar so vale andando (parado sob pedido de andar vale exatamente 0), a queda custa 5 (tentar e cair e barato), metade dos episodios sai do parado e metade ja em movimento, e o professor fica desligado.",
+  "postures": [
+    {
+      "id": "alerta",
+      "weight": 1.0
+    }
+  ],
+  "body": "../../../assets/rl/bodies/football_player_v1.json",
+  "actionRepeat": 4,
+  "episodeSeconds": 20.0,
+  "groundMaterial": "grass",
+  "worldSpacingMeters": 250.0,
+  "commands": {
+    "comment": "m/s no referencial do rumo (frente, lado) e rad/s (giro). Os maximos sao o alvo; o curriculo guarda os limites de agora em commands.limits (na copia da tarefa do treino).",
+    "resampleSeconds": [
+      4.0,
+      6.0
+    ],
+    "standingFraction": 0.0,
+    "forward": 4.5,
+    "backward": 0.0,
+    "lateral": 0.0,
+    "yawRate": 0.0,
+    "prontos": {
+      "backward": 3.0,
+      "lateral": 3.0,
+      "yawRate": 2.0
+    },
+    "gateByTracking": true,
+    "startMoving": 0.5,
+    "relativeToStanding": true
+  },
+  "teacher": {
+    "enabled": false,
+    "comment": "O aprendizado guiado (matter-rl professor, ou o botao da tela): a locomocao fisica do jogo, no modo fisico total com as ajudas em 0% (andando, a pelve ainda leva metade do peso: a sustentacao de base da locomocao fisica v2), conduz o corpo num roteiro sorteado de trechos de segmentSeconds: parado, girando no lugar, andando para frente, para tras, de lado e na diagonal (as vezes em curva), com empurroes no tronco. A politica imita a acao dele (o alvo de cada junta que daria o torque que ele aplicou) por imitation.minutes; depois o treino normal segue com o desvio da acao em imitation.actionStd, imitation.criticIterations rodadas so do critico e a imitacao sumindo em imitation.decayIterations rodadas.",
+    "standingAssistPercent": 0.0,
+    "walkingAssistPercent": 0.0,
+    "feetAssistPercent": 0.0,
+    "segmentSeconds": [
+      2.0,
+      5.0
+    ],
+    "standingWeight": 0.2,
+    "turnWeight": 0.15,
+    "forwardWeight": 0.35,
+    "backwardWeight": 0.1,
+    "sideWeight": 0.1,
+    "diagonalWeight": 0.1,
+    "speedFraction": [
+      0.3,
+      1.0
+    ],
+    "turnRate": [
+      0.6,
+      1.8
+    ],
+    "curveFraction": 0.3,
+    "curveRate": [
+      0.2,
+      0.8
+    ],
+    "pushes": true,
+    "pushInterval": [
+      3.0,
+      7.0
+    ],
+    "pushForce": [
+      80.0,
+      220.0
+    ],
+    "pushSeconds": [
+      0.1,
+      0.2
+    ],
+    "imitation": {
+      "minutes": 15.0,
+      "environments": 128,
+      "actionStd": 0.45,
+      "criticIterations": 20,
+      "decayIterations": 300,
+      "decayWeight": 0.5
+    }
+  },
+  "curriculum": {
+    "comment": "Cada direcao ligada comeca no limite start e sobe step quando a nota media do acompanhamento da velocidade (0 a 1, nas decisoes andando) passa de threshold por 3 rodadas seguidas, com pelo menos minimumIterations rodadas entre uma subida e outra.",
+    "start": 1.0,
+    "step": 0.25,
+    "threshold": 0.7,
+    "minimumIterations": 50
+  },
+  "reward": {
+    "positiveOnly": true,
+    "alive": 1.0,
+    "upright": 0.3,
+    "headHeight": 0.3,
+    "comOverSupport": 0.5,
+    "still": 0.3,
+    "trunkTurn": 0.2,
+    "footSlip": 0.3,
+    "footDrift": 1.0,
+    "effort": 0.1,
+    "actionRate": 0.05,
+    "jointLimit": 0.2,
+    "posePrior": 0.1,
+    "poseMatch": 0.5,
+    "velocity": 1.5,
+    "yawRate": 0.5,
+    "feetAirTime": 1.0,
+    "fall": 5.0,
+    "gaitContact": 0.6,
+    "swingHeight": 0.3
+  },
+  "termination": {
+    "minimumHeadHeightFraction": 0.6,
+    "minimumPelvisHeightFraction": 0.5,
+    "nonSupportContact": true,
+    "maximumDistanceFromStart": 120.0
+  },
+  "initialState": {
+    "jointNoiseRadians": 0.05,
+    "jointVelocityNoise": 0.2,
+    "rootVelocityNoise": 0.1,
+    "rootAngularVelocityNoise": 0.1,
+    "randomYaw": true
+  },
+  "randomization": {
+    "friction": [
+      0.7,
+      1.1
+    ],
+    "mass": [
+      0.95,
+      1.05
+    ],
+    "strength": [
+      0.9,
+      1.1
+    ],
+    "actionDelayProbability": 0.5,
+    "observationNoise": 1.0
+  },
+  "pushes": {
+    "enabled": false,
+    "intervalSeconds": [
+      2.0,
+      4.0
+    ],
+    "durationSeconds": [
+      0.1,
+      0.2
+    ],
+    "forceNewtons": [
+      50.0,
+      150.0
+    ],
+    "links": [
+      "Pelvis",
+      "UpperChest"
+    ]
+  },
+  "evaluation": [
+    {
+      "name": "equilibrio_v1",
+      "posture": "natural",
+      "scored": false
+    },
+    {
+      "name": "postura_alerta_v1",
+      "posture": "alerta",
+      "scored": false
+    },
+    {
+      "name": "andar_frente_v1",
+      "posture": "alerta",
+      "seconds": 26.0,
+      "schedule": [
+        [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          2.0,
+          1.5,
+          0.0,
+          0.0
+        ],
+        [
+          8.0,
+          3.0,
+          0.0,
+          0.0
+        ],
+        [
+          14.0,
+          4.5,
+          0.0,
+          0.0
+        ],
+        [
+          20.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      ]
+    },
+    {
+      "name": "ir_ate_10m_v1",
+      "posture": "alerta",
+      "seconds": 15.0,
+      "goal": {
+        "distance": 10.0,
+        "speed": 2.0
+      }
+    },
+    {
+      "name": "andar_tras_v1",
+      "posture": "alerta",
+      "seconds": 20.0,
+      "enabled": false,
+      "schedule": [
+        [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          2.0,
+          -1.5,
+          0.0,
+          0.0
+        ],
+        [
+          8.0,
+          -3.0,
+          0.0,
+          0.0
+        ],
+        [
+          14.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      ]
+    },
+    {
+      "name": "andar_lado_v1",
+      "posture": "alerta",
+      "seconds": 26.0,
+      "enabled": false,
+      "schedule": [
+        [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          2.0,
+          0.0,
+          1.5,
+          0.0
+        ],
+        [
+          8.0,
+          0.0,
+          -1.5,
+          0.0
+        ],
+        [
+          14.0,
+          0.0,
+          3.0,
+          0.0
+        ],
+        [
+          20.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      ]
+    },
+    {
+      "name": "girar_v1",
+      "posture": "alerta",
+      "seconds": 16.0,
+      "enabled": false,
+      "schedule": [
+        [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ],
+        [
+          2.0,
+          0.0,
+          0.0,
+          1.5
+        ],
+        [
+          8.0,
+          0.0,
+          0.0,
+          -1.5
+        ],
+        [
+          14.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      ]
+    }
+  ],
+  "exploration": {
+    "comment": "Uma habilidade nova reabre a exploracao: ao trocar para esta tarefa, o desvio da acao volta a pelo menos minimumStd (uma politica que ja fica de pe explora pouco e nao acha o passo). Ele cai sozinho conforme aprende.",
+    "minimumStd": 0.6
+  },
+  "gait": {
+    "comment": "A fase corre a frequency[0] + frequency[1] * |v| passadas/s (~1 a 1 m/s, ~1,5 a 4,5 m/s, a cadencia natural); apoio duplo devagar que vira voo acima de flightSpeed m/s.",
+    "frequency": [
+      0.9,
+      0.13
+    ],
+    "doubleSupport": 0.1,
+    "flightSpeed": 2.5,
+    "swingHeight": 0.08
+  }
+}

@@ -13,6 +13,7 @@
 #include <cfloat>
 #include <chrono>
 #include <cmath>
+#include <numbers>
 #include <ctime>
 #include <utility>
 
@@ -153,9 +154,11 @@ void ReinforcementLearningScreen::loadSkills() {
             skill.battery = skill.posture == "natural" ? "equilibrio_v1" : "postura_" + skill.posture + "_v1";
             skill.maxForward = task.commands.forward;
             skill.teacher = task.hasTeacher;
+            skill.target = task.target.enabled;
             if (skill.maxForward > 0.0f) {
                 skill.battery = skill.walkBattery = "andar_frente_v1";
             }
+            if (skill.target) skill.battery = "corrida_alvo_v1";
             m_skills.push_back(std::move(skill));
         } catch (const std::exception&) {
             // Uma tarefa que nao abre fica fora da lista.
@@ -186,7 +189,10 @@ void ReinforcementLearningScreen::setWalkSpeed(float metersPerSecond) {
 
 void ReinforcementLearningScreen::selectSkill(std::size_t index) {
     if (index >= m_skills.size()) return;
+    const bool wasRacing = m_skill < m_skills.size() && m_skills[m_skill].target;
     m_skill = index;
+    // Entrando ou saindo da corrida, a camera se ajusta (longe com o alvo).
+    if (m_skills[index].target != wasRacing) frame(35.0f, 10.0f);
     m_skillChosen = true;
     // (O professor so na habilidade que o tem ligado.)
     if (!m_skills[index].teacher) m_showTeacher = false;
@@ -255,9 +261,12 @@ void ReinforcementLearningScreen::notify(std::string text) {
 }
 
 void ReinforcementLearningScreen::frame(float yawDegrees, float pitchDegrees) {
+    // Na corrida a camera fica longe e mais alta: o jogador e o alvo (a 10 m)
+    // no mesmo quadro.
+    const bool racing = m_skill < m_skills.size() && m_skills[m_skill].target;
     m_camera.yaw = yawDegrees * DegreesToRadians;
-    m_camera.pitch = pitchDegrees * DegreesToRadians;
-    m_camera.distance = 4.4f;
+    m_camera.pitch = (racing ? std::max(pitchDegrees, 24.0f) : pitchDegrees) * DegreesToRadians;
+    m_camera.distance = racing ? 12.5f : 4.4f;
     m_dirty = true;
 }
 
@@ -536,6 +545,15 @@ bool ReinforcementLearningScreen::render(int width, int height) {
         highlights.push_back(std::move(arrow));
     }
 
+    // O alvo: o disco vermelho no chao com o brilho subindo das bordas.
+    std::vector<InspectionMarker> markers;
+    if (view.hasTarget) {
+        InspectionMarker marker;
+        marker.center = m_skeleton->toSkeleton({ view.target.x, view.target.y, 0.0f });
+        marker.radius = view.targetRadius;
+        markers.push_back(marker);
+    }
+
     InspectionScene scene;
     scene.skeleton = &model.skeleton;
     scene.mesh = &model.mesh;
@@ -544,6 +562,7 @@ bool ReinforcementLearningScreen::render(int width, int height) {
     scene.pose = &pose;
     scene.meshPositions = posed;
     scene.highlights = highlights;
+    scene.markers = markers;
     InspectionStyle style;
     style.surface = m_display == Display::Full ? SurfaceMode::Solid : SurfaceMode::Hidden;
     style.skeleton = m_display == Display::Skeleton;
@@ -551,11 +570,24 @@ bool ReinforcementLearningScreen::render(int width, int height) {
     style.hud = false;
     style.gizmo = false;
     style.scaleBar = false;
-    style.gridExtent = 4.0f;
+    // O chao: 30 m de cada lado com passo de 0,5 m na corrida (o alvo fica a
+    // 10 m); 12 m com a grade fina (10 cm) parado.
+    const bool racing = view.hasTarget;
+    style.gridExtent = racing ? 30.0f : 12.0f;
+    style.gridStep = racing ? 0.5f : 0.0f;
     style.supersample = 1;
     OrbitCamera camera = m_camera;
     const Vec3 pelvis = m_skeleton->toSkeleton(positions.front());
     camera.target = { pelvis.x, pelvis.y, pelvis.z - 0.04f };
+    // Na corrida a camera mira entre o jogador e o alvo e gira com a corrida:
+    // de lado, um pouco por tras (o giro do mouse soma em cima do 3/4).
+    if (view.hasTarget) {
+        const Vec3 goal = m_skeleton->toSkeleton({ view.target.x, view.target.y, 0.0f });
+        camera.target = { pelvis.x + 0.5f * (goal.x - pelvis.x), pelvis.y + 0.5f * (goal.y - pelvis.y),
+            0.6f * pelvis.z };
+        const float run = std::atan2(goal.y - pelvis.y, goal.x - pelvis.x);
+        camera.yaw = run - 0.5f * std::numbers::pi_v<float> - 0.35f + (m_camera.yaw - 35.0f * DegreesToRadians);
+    }
     m_image = renderInspection(scene, style, camera, width, height);
     m_dirty = false;
     return true;
@@ -938,6 +970,12 @@ void ReinforcementLearningScreen::drawViewport(CanvasTarget& canvas, float botto
         const Vec3 v = view.state ? view.state->links.front().linearVelocity : Vec3 {};
         label += "\npedido " + decimal(m_walkSpeed, 1) + " m/s · ele " + decimal(std::hypot(v.x, v.y), 1) + " m/s";
     }
+    if (m_viewer && m_skill < m_skills.size() && m_skills[m_skill].target) {
+        const TrainingEnvironmentView3D view = m_viewer->view(0);
+        const Vec3 v = view.state ? view.state->links.front().linearVelocity : Vec3 {};
+        label += "\n" + decimal(std::hypot(v.x, v.y), 1) + " m/s · " + std::to_string(view.targetsReached)
+            + (view.targetsReached == 1 ? " alvo" : " alvos");
+    }
     drawList->AddText({ origin.x + ui(10.0f), origin.y + ui(8.0f) }, UiMuted, label.c_str());
 }
 
@@ -987,8 +1025,9 @@ void ReinforcementLearningScreen::drawCharts(float height) {
         return result * 1.05f;
     };
     const bool walking = m_skill < m_skills.size() && m_skills[m_skill].maxForward > 0.0f;
+    const bool racing = m_skill < m_skills.size() && m_skills[m_skill].target;
     const std::array<Chart, 4> charts { {
-        { walking ? "Anda sem cair (%)" : "De pé 60 s (%)", &stand, 0.0f, 100.0f,
+        { racing ? "Corre sem cair (%)" : walking ? "Anda sem cair (%)" : "De pé 60 s (%)", &stand, 0.0f, 100.0f,
             "A bateria da habilidade escolhida, com a física do jogo, a cada 10 min." },
         { "Episódio (s)", &seconds, 0.0f, top(seconds, 1.0f), "Quanto dura um episódio do treino (o máximo é 20 s)." },
         { "Recompensa / passo", &reward, FLT_MAX, FLT_MAX, "A recompensa média por decisão em cada rodada do treino." },

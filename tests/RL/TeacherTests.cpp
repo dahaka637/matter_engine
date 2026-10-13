@@ -29,8 +29,10 @@ void require(bool condition, const std::string& message) {
 int main() {
     try {
         const std::filesystem::path assets = MATTERENGINE_TEST_ASSETS_DIR;
+        // O andar por comando (a H3 v6), com a secao do professor.
+        const std::filesystem::path walking = std::filesystem::path(MATTERENGINE_TEST_DATA_DIR) / "andar_comando.json";
         // So andando para a frente, sem empurroes: o caso que ele precisa fazer bem.
-        LocomotionTeacherSettings3D teacherSettings = loadLocomotionTeacherSettings3D(assets / "rl/tasks/h3_andar.json");
+        LocomotionTeacherSettings3D teacherSettings = loadLocomotionTeacherSettings3D(walking);
         teacherSettings.standingWeight = teacherSettings.turnWeight = 0.0f;
         teacherSettings.backwardWeight = teacherSettings.sideWeight = teacherSettings.diagonalWeight = 0.0f;
         teacherSettings.forwardWeight = 1.0f;
@@ -38,7 +40,7 @@ int main() {
         teacherSettings.speedFraction = { 0.5f, 0.5f };
         teacherSettings.pushes = false;
         TrainingBatchSettings3D settings;
-        settings.taskPath = assets / "rl/tasks/h3_andar.json";
+        settings.taskPath = walking;
         settings.environmentCount = 4;
         settings.workerThreads = 2;
         settings.seed = 5;

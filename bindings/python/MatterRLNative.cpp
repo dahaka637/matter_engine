@@ -10,9 +10,12 @@
 #include <nanobind/stl/array.h>
 
 #include "Engine/RL/Environment/TrainingBatch3D.hpp"
+#include "Engine/RL/Imitation/ReferenceMotion3D.hpp"
 #include "Engine/RL/Policy/PolicyRuntime3D.hpp"
 #include "Engine/RL/Teacher/LocomotionTeacher3D.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <memory>
 #include <sstream>
@@ -67,6 +70,132 @@ std::string frameLines(const TrainingBatch3D& batch, std::size_t environment) {
         out << "P " << contact.position.x << ' ' << contact.position.y << ' ' << contact.position.z << ' '
             << contact.linkIndex << ' ' << contact.normal.x << ' ' << contact.normal.y << ' ' << contact.normal.z << ' '
             << contact.normalImpulseNewtonSeconds << '\n';
+    // O alvo de agora (o marcador no chao): centro e raio ("T" e o toque na bola).
+    if (view.hasTarget)
+        out << "A " << view.target.x << ' ' << view.target.y << ' ' << view.target.z << ' ' << view.targetRadius << '\n';
+    return out.str();
+}
+
+
+// As linhas de colisores de uma pose (o formato do dump do quadros).
+std::string poseLines(const RagdollProfile3D& profile, const RLBodyPose3D& pose) {
+    std::ostringstream out;
+    for (std::size_t i = 0; i < profile.links.size(); ++i) {
+        const RagdollLinkDefinition3D& link = profile.links[i];
+        const Vec3 center = pose.positions[i] + pose.orientations[i].rotate(link.collider.localPosition);
+        const Quaternion orientation = (pose.orientations[i] * link.collider.localOrientation).normalized();
+        out << (link.collider.shape == RagdollColliderShape3D::Box ? "B " : "C ") << link.id << ' ' << center.x << ' '
+            << center.y << ' ' << center.z << ' ' << orientation.x << ' ' << orientation.y << ' ' << orientation.z
+            << ' ' << orientation.w << '\n';
+    }
+    return out.str();
+}
+
+// Uma referencia de uma lista de clipes (o ultimo em ciclo).
+ReferenceMotion3D referenceFromClips(const RLBody3D& body, const std::vector<std::string>& clips) {
+    std::vector<ReferenceClip3D> requests;
+    for (std::size_t i = 0; i < clips.size(); ++i) requests.push_back({ "", clips[i], i + 1 == clips.size() });
+    return buildReferenceMotion3D(body, requests);
+}
+
+constexpr float Degrees = 57.29578f;
+
+// O resumo de cada trecho: a emenda, a velocidade, o rumo, a altura da pelve e
+// os pes contra o chao (no apoio pelo clipe e no voo).
+std::string referenceReport(const std::string& bodyPath, const std::vector<std::string>& clips) {
+    const RLBody3D body = loadRLBody3D(bodyPath);
+    const ReferenceMotion3D motion = referenceFromClips(body, clips);
+    std::ostringstream out;
+    out.setf(std::ios::fixed);
+    out.precision(3);
+    for (const ReferenceSegment3D& segment : motion.segments) {
+        float headingLow = 1e9f, headingHigh = -1e9f, heightLow = 1e9f, heightHigh = -1e9f;
+        float stanceHigh = 0.0f, flightLow = 1e9f;
+        std::size_t stance = 0, flight = 0, floating = 0;
+        for (const ReferenceFrame3D& frame : segment.frames) {
+            headingLow = std::min(headingLow, frame.heading);
+            headingHigh = std::max(headingHigh, frame.heading);
+            heightLow = std::min(heightLow, frame.rootHeight);
+            heightHigh = std::max(heightHigh, frame.rootHeight);
+            const float lowest = rlBodyLowestFootPoint3D(body, referencePose3D(body, frame, {}, frame.heading));
+            if (frame.footContact[0] >= 0.5f || frame.footContact[1] >= 0.5f) {
+                ++stance;
+                stanceHigh = std::max(stanceHigh, lowest);
+                if (lowest > 0.02f) ++floating;
+            } else {
+                ++flight;
+                flightLow = std::min(flightLow, lowest);
+            }
+        }
+        const ReferenceFrame3D& first = segment.frames.front();
+        out << "trecho " << segment.id << ": " << segment.frames.size() << " quadros, "
+            << (segment.loops ? "em ciclo" : "uma vez") << ", entra no quadro " << segment.entryFrame << " (pulo "
+            << segment.entryJumpRms * Degrees << " graus RMS)\n";
+        out << "  anda " << segment.meanSpeed << " m/s, para " << (segment.travelHeading - first.heading) * Degrees
+            << " graus do rumo da pelve no quadro 0; rumo da pelve de " << headingLow * Degrees << " a "
+            << headingHigh * Degrees << " graus\n";
+        out << "  altura da pelve de " << heightLow << " a " << heightHigh << " m; quadros no apoio " << stance
+            << " (pe mais baixo ate " << stanceHigh << " m acima do chao, " << floating << " acima de 2 cm), no voo "
+            << flight << " (pe mais baixo a partir de " << (flight > 0 ? flightLow : 0.0f) << " m)\n";
+        out << "  velocidade da pelve no quadro 0: " << first.rootVelocity.x << ' ' << first.rootVelocity.y << ' '
+            << first.rootVelocity.z << " m/s\n";
+    }
+    return out.str();
+}
+
+// Quadro a quadro: o apoio pelo clipe e a altura do ponto mais baixo de cada
+// pe (a cada step quadros).
+std::string referenceFrames(const std::string& bodyPath, const std::vector<std::string>& clips, std::uint32_t step) {
+    const RLBody3D body = loadRLBody3D(bodyPath);
+    const ReferenceMotion3D motion = referenceFromClips(body, clips);
+    const auto lowestOf = [&](const RLBodyPose3D& pose, std::uint32_t foot) {
+        const RagdollCapsuleDefinition3D& collider = body.profile.links[foot].collider;
+        const Vec3 center = pose.positions[foot] + pose.orientations[foot].rotate(collider.localPosition);
+        const Quaternion orientation = pose.orientations[foot] * collider.localOrientation;
+        float lowest = 1e9f;
+        for (const Vec3& corner : ragdollColliderCorners3D(collider))
+            lowest = std::min(lowest, (center + orientation.rotate(corner)).z);
+        return lowest;
+    };
+    std::ostringstream out;
+    out.setf(std::ios::fixed);
+    out.precision(3);
+    for (const ReferenceSegment3D& segment : motion.segments) {
+        out << "trecho " << segment.id << "\n";
+        for (std::size_t f = 0; f < segment.frames.size(); f += std::max<std::uint32_t>(1, step)) {
+            const ReferenceFrame3D& frame = segment.frames[f];
+            const RLBodyPose3D pose = referencePose3D(body, frame, {}, frame.heading);
+            out << "  q" << f << " apoio " << frame.footContact[0] << ' ' << frame.footContact[1] << " | pe esq "
+                << lowestOf(pose, body.leftFoot) << " dir " << lowestOf(pose, body.rightFoot) << " | pelve "
+                << frame.rootHeight << " | v " << frame.rootVelocity.x << ' ' << frame.rootVelocity.y << ' '
+                << frame.rootVelocity.z << " | rumo " << frame.heading * Degrees << "\n";
+        }
+    }
+    return out.str();
+}
+
+// Um dump do quadros com a referencia tocando no corpo de RL por seconds
+// segundos, a pelve andando com a velocidade da referencia.
+std::string referenceDump(const std::string& bodyPath, const std::vector<std::string>& clips, float seconds,
+    const std::string& scene) {
+    const RLBody3D body = loadRLBody3D(bodyPath);
+    const ReferenceMotion3D motion = referenceFromClips(body, clips);
+    std::ostringstream out;
+    out << "S " << scene << '\n';
+    ReferenceCursor3D cursor;
+    Vec3 position;
+    const std::uint32_t total = static_cast<std::uint32_t>(std::lround(seconds / motion.frameSeconds));
+    for (std::uint32_t tick = 0; tick <= total; ++tick) {
+        const ReferenceFrame3D& frame = referenceFrame3D(motion, cursor);
+        if (tick % 4 == 0) {
+            char line[64];
+            std::snprintf(line, sizeof line, "F %.4f 0\n", static_cast<double>(tick) * motion.frameSeconds);
+            out << line << poseLines(body.profile, referencePose3D(body, frame, position, frame.heading));
+        }
+        const Quaternion world = Quaternion::fromAxisAngle({ 0.0f, 0.0f, 1.0f }, frame.heading);
+        position += world.rotate({ frame.rootVelocity.x, frame.rootVelocity.y, 0.0f }) * motion.frameSeconds;
+        cursor = advanceReference3D(motion, cursor, 1);
+    }
     return out.str();
 }
 
@@ -214,9 +343,11 @@ NB_MODULE(matter_rl_native, m) {
                 // decisoes, segundos, retorno, oscilacao, deriva dos pes,
                 // mudanca de acao, esforco, velocidade das juntas, vertical,
                 // giro do tronco, giro dos pes no chao, erro da postura, erro da
-                // velocidade e do giro, acompanhamento, distancia, desvio lateral.
+                // velocidade e do giro, acompanhamento, distancia, desvio lateral,
+                // alvos alcancados, segundos ate o primeiro, velocidade media ate
+                // eles e o erro da imitacao.
                 const auto episodes = b.finishedEpisodes();
-                constexpr std::size_t Columns = 21;
+                constexpr std::size_t Columns = 25;
                 auto* data = new float[std::max<std::size_t>(1, episodes.size()) * Columns];
                 for (std::size_t i = 0; i < episodes.size(); ++i) {
                     const TrainingEpisode3D& e = episodes[i];
@@ -242,6 +373,10 @@ NB_MODULE(matter_rl_native, m) {
                     row[18] = e.velocityTracking;
                     row[19] = e.distance;
                     row[20] = e.lateralDrift;
+                    row[21] = static_cast<float>(e.targetsReached);
+                    row[22] = e.firstTargetSeconds;
+                    row[23] = e.meanTargetSpeed;
+                    row[24] = e.imitationErrorRms;
                 }
                 nb::capsule owner(data, [](void* p) noexcept { delete[] static_cast<float*>(p); });
                 return nb::ndarray<nb::numpy, float, nb::ndim<2>>(data, { episodes.size(), Columns }, owner);
@@ -275,4 +410,11 @@ NB_MODULE(matter_rl_native, m) {
                 return nb::ndarray<nb::numpy, float, nb::ndim<2>>(data, { rows, p.actionSize() }, owner);
             },
             "observations"_a);
+
+    m.def("reference_report", &referenceReport, "body"_a, "clips"_a,
+        "o resumo da referencia de imitacao nos clipes dados (o ultimo em ciclo)");
+    m.def("reference_frames", &referenceFrames, "body"_a, "clips"_a, "step"_a = 4,
+        "quadro a quadro: o apoio pelo clipe, os pes contra o chao, a pelve e o rumo");
+    m.def("reference_dump", &referenceDump, "body"_a, "clips"_a, "seconds"_a = 3.0f, "scene"_a = "referencia",
+        "um dump do quadros com a referencia tocando no corpo de RL");
 }

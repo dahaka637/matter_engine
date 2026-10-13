@@ -15,7 +15,7 @@ from .model import ACTION_LIMIT, ActorCritic
 
 REASONS = ["nenhum", "queda_contato", "queda_altura", "numerico", "tempo", "limite"]
 # As colunas do resumo de um episodio (finished_episodes do modulo nativo).
-EPISODE_COLUMNS = 21
+EPISODE_COLUMNS = 25
 FALLS = {1, 2, 3}
 
 
@@ -38,11 +38,14 @@ def battery_posture(name: str) -> str:
 
 def battery_kind(name: str) -> str:
     """O tipo de uma bateria pelo nome (a convencao das tarefas): andar_* e
-    girar_* seguem um roteiro de velocidades, ir_ate_* vao a um ponto."""
+    girar_* seguem um roteiro de velocidades, ir_ate_* vao a um ponto,
+    corrida_* correm ate os alvos da tarefa (o alvo no mundo, com imitacao)."""
     if name.startswith(("andar_", "girar_")):
         return "andar"
     if name.startswith("ir_ate_"):
         return "alvo"
+    if name.startswith("corrida_"):
+        return "corrida"
     return "de_pe"
 
 
@@ -65,7 +68,8 @@ def task_batteries(task_path: Path) -> list[dict]:
     for entry in entries:
         if not entry.get("enabled", True):
             continue
-        kind = "andar" if entry.get("schedule") else "alvo" if entry.get("goal") else "de_pe"
+        kind = ("andar" if entry.get("schedule") else "alvo" if entry.get("goal")
+                else "corrida" if entry["name"].startswith("corrida_") else "de_pe")
         batteries.append(dict(entry, kind=kind, posture=entry.get("posture", "natural")))
     return batteries
 
@@ -99,6 +103,15 @@ def goal_score(metrics: dict) -> float:
     return (metrics["stand_fraction"]
             - 0.50 * min(1.0, metrics.get("goal_error", 10.0) / 2.0)
             - 0.15 * min(1.0, metrics["action_rate"] / 0.05))
+
+
+def race_score(metrics: dict) -> float:
+    """Correr ate o alvo: nao cair, chegar, chegar rapido (6 m/s vale tudo) e
+    correr parecido com a referencia (o erro das juntas abaixo de 0,5 rad)."""
+    return (0.30 * metrics["stand_fraction"]
+            + 0.30 * metrics.get("reached_fraction", 0.0)
+            + 0.25 * min(1.0, metrics.get("target_speed", 0.0) / 6.0)
+            + 0.15 * max(0.0, 1.0 - metrics.get("imitation_error", 1.0) / 0.5))
 
 
 def score(metrics: dict) -> float:
@@ -248,7 +261,8 @@ class Evaluator:
                     "foot_drift_worst": 1.0, "action_rate": 1.0, "effort": 1.0, "upright": 0.0, "turn": 1.0,
                     "turn_worst": 1.0, "joint_speed": 1.0, "foot_turn": 1.0, "foot_turn_worst": 1.0,
                     "pose_error": 1.0, "velocity_error": 10.0, "lateral_drift": 10.0, "goal_error": 10.0,
-                    "ends": {}, "kind": kind, "score": -1.0, "episodes": 0}
+                    "targets": 0.0, "reached_fraction": 0.0, "first_target_seconds": -1.0, "target_speed": 0.0,
+                    "imitation_error": 1.0, "ends": {}, "kind": kind, "score": -1.0, "episodes": 0}
         reasons = rows[:, 1].astype(int)
         stood = reasons == 4
         subset = rows[stood] if stood.any() else rows
@@ -286,7 +300,18 @@ class Evaluator:
             target = float(spec["goal"]["distance"])
             along = np.sqrt(np.maximum(rows[:, 19] ** 2 - rows[:, 20] ** 2, 0.0))
             metrics["goal_error"] = float(np.sqrt((target - along) ** 2 + rows[:, 20] ** 2).mean())
+        if kind == "corrida":
+            # Os alvos (todos os episodios, quedas inclusive): quantos, a fatia que
+            # chegou ao primeiro, quando chegou e a velocidade ate eles; e o erro
+            # das juntas contra a referencia (RMS por eixo, rad).
+            reached = rows[:, 21] >= 1
+            metrics["targets"] = float(rows[:, 21].mean())
+            metrics["reached_fraction"] = float(reached.sum()) / float(envs)
+            metrics["first_target_seconds"] = float(rows[reached, 22].mean()) if reached.any() else -1.0
+            metrics["target_speed"] = float(rows[reached, 23].mean()) if reached.any() else 0.0
+            errors = rows[:, 24][rows[:, 24] >= 0]
+            metrics["imitation_error"] = float(errors.mean()) if len(errors) else 1.0
         metrics["kind"] = kind
-        metrics["score"] = walking_score(metrics) if kind == "andar" else goal_score(metrics) if kind == "alvo" \
-            else score(metrics)
+        metrics["score"] = (walking_score(metrics) if kind == "andar" else goal_score(metrics) if kind == "alvo"
+                            else race_score(metrics) if kind == "corrida" else score(metrics))
         return metrics
