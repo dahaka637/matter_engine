@@ -293,6 +293,7 @@ void ReinforcementLearningScreen::ensureViewer() {
             settings.teacher = std::make_shared<LocomotionTeacher3D>(
                 m_options.sourceRoot / "assets", loadLocomotionTeacherSettings3D(settings.taskPath));
         m_viewer = std::make_unique<TrainingBatch3D>(settings);
+        m_raceCamera.valid = false;
         m_viewer->setCommand(0, { m_walkSpeed, 0.0f, 0.0f });
         m_action.assign(m_viewer->actionSize(), 0.0f);
         m_colliders = buildRagdollColliderWireframe3D(m_viewer->body().profile);
@@ -371,6 +372,31 @@ void ReinforcementLearningScreen::stepOnce() {
     if (m_policy) m_policy->evaluate(observation.first(m_policyInputs), m_action);
     else std::fill(m_action.begin(), m_action.end(), 0.0f);
     m_viewer->step(m_action);
+    updateRaceCamera(m_viewer->policyStepSeconds(), false);
+}
+
+void ReinforcementLearningScreen::updateRaceCamera(float seconds, bool snap) {
+    const TrainingEnvironmentView3D view = m_viewer ? m_viewer->view(0) : TrainingEnvironmentView3D {};
+    if (!view.hasTarget || !view.state || view.state->links.empty()) {
+        m_raceCamera.valid = false;
+        return;
+    }
+    const Vec3 pelvis = view.state->links.front().position;
+    const Vec3 to { view.target.x - pelvis.x, view.target.y - pelvis.y, 0.0f };
+    const Vec3 aim { pelvis.x + 0.5f * to.x, pelvis.y + 0.5f * to.y, 0.0f };
+    // O rumo dele ate o alvo; perto do alvo o rumo fica (senao a camera gira
+    // em volta dele na chegada).
+    float yaw = m_raceCamera.yaw;
+    if (std::hypot(to.x, to.y) > 1.5f || !m_raceCamera.valid) yaw = std::atan2(to.y, to.x);
+    // Comeco, outro episodio ou outro mundo: a camera vai direto.
+    if (snap || !m_raceCamera.valid || view.steps < m_raceCamera.steps) {
+        m_raceCamera = { true, aim, yaw, view.steps };
+        return;
+    }
+    const float follow = 1.0f - std::exp(-seconds / 0.6f), turn = 1.0f - std::exp(-seconds / 0.9f);
+    m_raceCamera.aim += (aim - m_raceCamera.aim) * follow;
+    m_raceCamera.yaw += std::remainder(yaw - m_raceCamera.yaw, 2.0f * std::numbers::pi_v<float>) * turn;
+    m_raceCamera.steps = view.steps;
 }
 
 void ReinforcementLearningScreen::stepViewer(float deltaSeconds) {
@@ -621,10 +647,12 @@ bool ReinforcementLearningScreen::render(int width, int height) {
     // Na corrida a camera mira entre o jogador e o alvo e gira com a corrida:
     // de lado, um pouco por tras (o giro do mouse soma em cima do 3/4).
     if (view.hasTarget) {
-        const Vec3 goal = m_skeleton->toSkeleton({ view.target.x, view.target.y, 0.0f });
-        camera.target = { pelvis.x + 0.5f * (goal.x - pelvis.x), pelvis.y + 0.5f * (goal.y - pelvis.y),
-            0.6f * pelvis.z };
-        const float run = std::atan2(goal.y - pelvis.y, goal.x - pelvis.x);
+        if (!m_raceCamera.valid) updateRaceCamera(0.0f, true);
+        const Vec3 aim = m_skeleton->toSkeleton({ m_raceCamera.aim.x, m_raceCamera.aim.y, 0.0f });
+        const Vec3 ahead = m_skeleton->toSkeleton({ m_raceCamera.aim.x + std::cos(m_raceCamera.yaw),
+            m_raceCamera.aim.y + std::sin(m_raceCamera.yaw), 0.0f });
+        camera.target = { aim.x, aim.y, 0.6f * pelvis.z };
+        const float run = std::atan2(ahead.y - aim.y, ahead.x - aim.x);
         camera.yaw = run - 0.5f * std::numbers::pi_v<float> - 0.35f + (m_camera.yaw - 35.0f * DegreesToRadians);
     }
     m_image = renderInspection(scene, style, camera, width, height);

@@ -282,6 +282,27 @@ int main() {
         screen.advanceViewer(30);
         frame(screen, canvas, 2);
         snapshot(canvas, "rl_tela_pontos");
+        // Com uma politica de verdade: chegando num ponto ele segue para o
+        // proximo, sem recomecar (a de mentira cai em 0,4 s).
+        if (realPolicy != nullptr) {
+            const std::uint32_t before = screen.viewerSteps();
+            std::uint32_t reached = 0;
+            for (int i = 0; i < 300 && reached < 2; ++i) {
+                screen.advanceViewer(1);
+                const std::uint32_t now = screen.viewerTargetsReached();
+                require(screen.viewerSteps() > before, "o visualizador nao recomeca ao chegar num ponto");
+                // A chegada no primeiro e logo depois: a camera vai atras, sem pular.
+                if (now == 1 && reached == 0) {
+                    frame(screen, canvas, 2);
+                    snapshot(canvas, "rl_tela_pontos_chegada");
+                    screen.advanceViewer(6);
+                    frame(screen, canvas, 2);
+                    snapshot(canvas, "rl_tela_pontos_chegada_depois");
+                }
+                reached = now;
+            }
+            std::cout << "  pontos: " << reached << " alvos em " << screen.viewerSteps() << " passos\n";
+        }
         // A corrida nao tem professor: o visualizador segue com a politica.
         screen.showTeacher(true);
         require(!screen.showingTeacher() && screen.viewerReady(), "sem professor ligado, o visualizador segue na politica");

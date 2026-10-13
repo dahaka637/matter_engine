@@ -74,6 +74,8 @@ public:
     [[nodiscard]] std::uint32_t viewerPosture() const;
     [[nodiscard]] float viewerWalkCommand() const { return m_viewer ? m_viewer->view(0).command.x : 0.0f; }
     [[nodiscard]] bool viewerHasTarget() const { return m_viewer && m_viewer->view(0).hasTarget; }
+    [[nodiscard]] std::uint32_t viewerTargetsReached() const { return m_viewer ? m_viewer->view(0).targetsReached : 0u; }
+    [[nodiscard]] std::uint32_t viewerSteps() const { return m_viewer ? m_viewer->view(0).steps : 0u; }
     // O visualizador com o professor (refaz o mundo dele) ou com a politica.
     void showTeacher(bool show);
     [[nodiscard]] bool showingTeacher() const { return m_showTeacher; }
@@ -104,6 +106,7 @@ private:
     void reloadPolicy(bool force);
     void stepViewer(float deltaSeconds);
     void stepOnce();
+    void updateRaceCamera(float seconds, bool snap);
     [[nodiscard]] bool render(int width, int height);
     void pollModel();
     void refreshHistory();
@@ -136,6 +139,15 @@ private:
     bool m_showTeacher = false;
     float m_policyWatch = 0.0f;
     float m_accumulator = 0.0f;
+    // A camera da corrida (no mundo): a mira entre ele e o alvo e o rumo da
+    // corrida andam atras do pedido, sem pular quando um alvo troca pelo
+    // seguinte (o pulo parecia o episodio recomecando).
+    struct RaceCamera {
+        bool valid = false;
+        Vec3 aim;
+        float yaw = 0.0f;
+        std::uint32_t steps = 0;
+    } m_raceCamera;
     bool m_paused = false;
     std::vector<float> m_action;
     std::string m_viewerError;
