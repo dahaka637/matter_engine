@@ -184,6 +184,10 @@ TrainingTask3D loadTrainingTask3D(const std::filesystem::path& definitionPath) {
         out.turnSigma = std::max(1.0e-3f, t.value("turnSigma", out.turnSigma));
         out.facing = t.value("facing", out.facing);
         out.facingDriftRadians = std::max(0.0f, t.value("facingDriftRadians", out.facingDriftRadians));
+        out.facingLink = t.value("facingLink", out.facingLink);
+        if (out.facingLink != "pelvis" && out.facingLink != "chest")
+            throw std::runtime_error("tarefa de RL: facingLink e pelvis ou chest");
+        out.facingFraction = std::clamp(t.value("facingFraction", out.facingFraction), 0.0f, 1.0f);
         out.lookahead = std::min(3u, t.value("lookahead", out.lookahead));
         out.racingLine = std::clamp(t.value("racingLine", out.racingLine), 0.0f, 0.95f);
         if (t.contains("evaluationCourses"))

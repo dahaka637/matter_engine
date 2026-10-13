@@ -135,6 +135,10 @@ struct Environment {
     float facingCommand = 0.0f;
     float facingRate = 0.0f;
     float facingTimer = 0.0f;
+    // O comando vale neste episodio (target.facingFraction) e o rumo do que
+    // fica virado para ele (a pelve ou o peito), medido na ultima decisao.
+    bool facingActive = false;
+    float facingHeading = 0.0f;
     // Os proximos alvos ja no mapa (target.lookahead) com o rumo do trecho que
     // chega em cada um, e o percurso fixo da avaliacao (o rumo do comeco).
     std::array<Vec3, 3> upcoming {};
@@ -256,6 +260,8 @@ struct TrainingBatch3D::Impl {
     void plan(Environment& env, Vec3 position, float facing, bool force);
     [[nodiscard]] float wantedTurn(const Environment& env, Vec3 position, float facing) const;
     [[nodiscard]] Vec3 aimPoint(const Environment& env) const;
+    // O rumo no chao do link que fica virado para o comando de olhar (rad).
+    [[nodiscard]] float facingLinkHeading(const RagdollState3D& state) const;
     [[nodiscard]] std::vector<ReferenceDof> resolveReference(const TrainingTask3D::Gait& gait) const;
     void resolvePostures();
     [[nodiscard]] std::uint32_t choosePosture(Environment& env) const;
@@ -340,6 +346,7 @@ void TrainingBatch3D::Impl::buildLayouts() {
         if (task.target.facing) {
             o.channels.push_back({ "command.facing.sin", "1" });
             o.channels.push_back({ "command.facing.cos", "1" });
+            o.channels.push_back({ "command.facing.active", "0/1" });
         }
     }
 
@@ -438,6 +445,14 @@ void TrainingBatch3D::Impl::placeLibraryTarget(Environment& env, Vec3 from, floa
     env.targetCount = k + 1;
 }
 
+float TrainingBatch3D::Impl::facingLinkHeading(const RagdollState3D& state) const {
+    const std::uint32_t link = task.target.facingLink == "chest" ? body.upperChest : 0u;
+    const Quaternion frame =
+        (state.links[link].orientation * body.profile.links[link].modelOrientation.conjugate()).normalized();
+    const Vec3 forward = frame.rotate({ 1.0f, 0.0f, 0.0f });
+    return std::atan2(forward.y, forward.x);
+}
+
 // A mira do planejador e do giro: o centro do alvo, ou, com o tracado de
 // corrida, o ponto do disco do lado do proximo alvo.
 Vec3 TrainingBatch3D::Impl::aimPoint(const Environment& env) const {
@@ -452,8 +467,8 @@ Vec3 TrainingBatch3D::Impl::aimPoint(const Environment& env) const {
 float TrainingBatch3D::Impl::wantedTurn(const Environment& env, Vec3 position, float facing) const {
     const TrainingTask3D::Target& t = task.target;
     // Olhando para o comando (a camera): o giro so corrige o rumo do corpo.
-    if (t.facing) {
-        float error = env.facingCommand - facing;
+    if (env.facingActive) {
+        float error = env.facingCommand - env.facingHeading;
         error = std::atan2(std::sin(error), std::cos(error));
         return std::clamp(t.turnGain * error, -t.turnMaximum, t.turnMaximum);
     }
@@ -469,7 +484,7 @@ float TrainingBatch3D::Impl::wantedTurn(const Environment& env, Vec3 position, f
 
 void TrainingBatch3D::Impl::plan(Environment& env, Vec3 position, float facing, bool force) {
     const TrainingTask3D::Imitation::Planner& planner = task.imitation.planner;
-    const float base = task.target.facing ? env.facingCommand : facing;
+    const float base = env.facingActive ? env.facingCommand : facing;
     const Vec3 aim = aimPoint(env);
     const float dx = aim.x - position.x, dy = aim.y - position.y;
     float angle = std::atan2(dy, dx) - base;
@@ -758,10 +773,16 @@ void TrainingBatch3D::Impl::resetEnvironment(std::uint32_t index) {
             env.firstTargetSeconds = -1.0f;
             env.targetSpeedSum = 0.0;
             env.targetSince = 0.0f;
-            // Para onde olhar: o rumo do corpo no comeco (a camera atras dele).
+            // Para onde olhar: o rumo do corpo no comeco (a camera atras dele),
+            // valendo numa fracao dos episodios de treino (na avaliacao, o que a
+            // bateria pedir).
             env.facingCommand = startYaw;
+            env.facingHeading = startYaw;
             env.facingRate = 0.0f;
             env.facingTimer = 0.0f;
+            env.facingActive = task.target.facing
+                && (training() ? std::uniform_real_distribution<float>(0.0f, 1.0f)(env.rng) < task.target.facingFraction
+                               : settings.facing != 0);
             placeLibraryTarget(env, env.origin, startYaw, 0);
             plan(env, env.origin, startYaw, true);
             const std::uint32_t frames = static_cast<std::uint32_t>(reference.segments[env.cursor.segment].frames.size());
@@ -1019,11 +1040,12 @@ void TrainingBatch3D::Impl::writeObservation(const Environment& env, const Ragdo
         for (std::size_t c = 0; c < reference.segments.size(); ++c) *out++ = env.cursor.segment == c ? 1.0f : 0.0f;
         *out++ = env.turnRate / 2.0f;
         if (task.target.facing) {
-            // Para onde olhar, no referencial do rumo do corpo.
-            const Vec3 forward = reading.pelvisFrame.rotate({ 1.0f, 0.0f, 0.0f });
-            const float error = env.facingCommand - std::atan2(forward.y, forward.x);
+            // Para onde olhar, em relacao ao rumo do que fica virado para o
+            // comando (zero sem ele), e se ele vale neste episodio.
+            const float error = env.facingActive ? env.facingCommand - facingLinkHeading(state) : 0.0f;
             *out++ = std::sin(error);
             *out++ = std::cos(error);
+            *out++ = env.facingActive ? 1.0f : 0.0f;
         }
     }
 
@@ -1292,7 +1314,7 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
             if (imitating() && reference.library) {
                 // O proximo em volta, a partir de onde ele esta e para onde olha.
                 const Vec3 forward = reading.pelvisFrame.rotate({ 1.0f, 0.0f, 0.0f });
-                const float facing = task.target.facing ? env.facingCommand : std::atan2(forward.y, forward.x);
+                const float facing = env.facingActive ? env.facingCommand : std::atan2(forward.y, forward.x);
                 placeLibraryTarget(env, reading.com, facing, env.targetCount);
             } else {
                 placeNextTarget(env);
@@ -1570,7 +1592,8 @@ void TrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> actio
                 const float facing = std::atan2(forward.y, forward.x);
                 const float decision = static_cast<float>(task.actionRepeat) * FixedStep;
                 env.clipSince += decision;
-                if (task.target.facing && task.target.facingDriftRadians > 0.0f && training()) {
+                env.facingHeading = facingLinkHeading(*state);
+                if (env.facingActive && task.target.facingDriftRadians > 0.0f && training()) {
                     if ((env.facingTimer -= decision) <= 0.0f) {
                         env.facingTimer = std::uniform_real_distribution<float>(2.0f, 4.0f)(env.rng);
                         env.facingRate = std::uniform_real_distribution<float>(-task.target.facingDriftRadians,
@@ -1835,7 +1858,7 @@ TrainingEnvironmentView3D TrainingBatch3D::view(std::size_t environment) const {
             const float length = forward.length();
             view.gaze = length > 1.0e-4f ? forward * (1.0f / length) : Vec3 {};
         }
-        if (impl.targeting() && impl.task.target.facing) {
+        if (impl.targeting() && env.facingActive) {
             view.hasFacing = true;
             view.facingCommand = env.facingCommand;
         }

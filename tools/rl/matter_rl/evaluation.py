@@ -149,7 +149,8 @@ class Evaluator:
                     seed=self.battery.seed, evaluation=True,
                     evaluation_seconds=float(spec.get("seconds", self.battery.seconds)), solver_position=position,
                     solver_velocity=velocity, posture=spec["posture"],
-                    schedule=[tuple(float(v) for v in step) for step in spec.get("schedule", [])])
+                    schedule=[tuple(float(v) for v in step) for step in spec.get("schedule", [])],
+                    facing=int(spec.get("facing", -1)))
         self.by_name = {spec["name"]: spec for spec in self.specs}
 
     def observation_names(self) -> list[str]:

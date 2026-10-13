@@ -251,7 +251,7 @@ int main() {
         // entradas) le o comeco da observacao.
         require(screen.skillTasks()
                 == std::vector<std::string> { "h1_ficar_em_pe", "h1b_em_pe_posturado", "h3_andar", "h3b_caminhar_alvo",
-                    "h4_direcoes", "h5_pontos" },
+                    "h4_direcoes", "h5_pontos", "h6_peito" },
             "as habilidades vem das tarefas");
         require(screen.viewerPosture() == 0, "a H1 mostra a postura natural");
         screen.selectSkill(1);

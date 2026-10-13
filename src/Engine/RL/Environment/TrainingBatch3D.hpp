@@ -53,6 +53,10 @@ struct TrainingBatchSettings3D {
     // O roteiro do comando de velocidade numa bateria de andar (trechos por
     // tempo do episodio). Vazio na avaliacao = parado.
     std::vector<TrainingCommandStep3D> commandSchedule;
+    // O comando de olhar na avaliacao (com target.facing): -1 = o da tarefa
+    // (todos os mundos com ele), 0 = livre, 1 = com ele. Uma bateria mede as
+    // duas coisas lado a lado.
+    int facing = -1;
     // O professor (opcional): ele conduz todos os mundos no lugar da politica,
     // um boneco por cena, e teacherActions() devolve a acao dele em unidades
     // do RL. O comando e a fase do relogio de passada passam a ser os dele, e

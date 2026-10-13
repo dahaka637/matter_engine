@@ -259,6 +259,14 @@ struct TrainingTask3D {
         // camera virando devagar (0 = parado).
         bool facing = false;
         float facingDriftRadians = 0.0f;
+        // O que fica virado para o comando: "pelvis" ou "chest" (o peito, o
+        // UpperChest: o jogo de pes leva de lado e de costas com o peito para a
+        // camera, e o quadril abre o que a passada pedir). facingFraction: a
+        // fracao dos episodios de treino com o comando; nos outros ele anda
+        // livre (o que ja sabe nao se perde). Na avaliacao, todos com o comando
+        // (ou o que a bateria pedir).
+        std::string facingLink = "pelvis";
+        float facingFraction = 1.0f;
         // Os varios pontos (biblioteca): quantos alvos depois do de agora ja
         // estao no mapa e na observacao (0 a 3; com 0, cada um nasce so na
         // chegada do anterior). Com eles, cada alvo sai do anterior, pelo rumo do

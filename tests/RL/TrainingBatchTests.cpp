@@ -776,6 +776,46 @@ void testCourses() {
     }
 }
 
+// O peito para a camera (H6): o comando de olhar vale no peito, numa fracao
+// dos episodios de treino; a bateria escolhe com ou sem ele.
+void testChestFacing() {
+    const std::filesystem::path task = std::filesystem::path(MATTERENGINE_TEST_ASSETS_DIR) / "rl/tasks/h6_peito.json";
+    const auto evaluation = [&](int facing) {
+        TrainingBatchSettings3D s = settings(4, 2);
+        s.taskPath = task;
+        s.evaluation = true;
+        s.evaluationEpisodeSeconds = 20.0f;
+        s.facing = facing;
+        return s;
+    };
+    TrainingBatch3D on(evaluation(1)), off(evaluation(0)), standard(evaluation(-1));
+    const std::size_t O = on.observationSize(), active = channel(on, "command.facing.active");
+    for (std::size_t e = 0; e < 4; ++e) {
+        require(on.observations()[e * O + active] == 1.0f && standard.observations()[e * O + active] == 1.0f,
+            "na avaliacao o comando vale (pedido ou o da tarefa)");
+        require(off.observations()[e * O + active] == 0.0f, "a bateria livre desliga o comando");
+        require(on.view(e).hasFacing && !off.view(e).hasFacing, "o olho no horizonte so com o comando");
+    }
+    // O percurso variado (mundo 0): o primeiro alvo fica a -56 graus. Livre, o
+    // giro alinha o clipe com ele; com o comando, o peito fica para a frente e
+    // so as pernas levam.
+    const std::size_t turn = channel(on, "target.turn_rate");
+    const float free = off.observations()[turn] * 2.0f, held = on.observations()[turn] * 2.0f;
+    require(std::abs(held) < 0.1f && std::abs(free - held) > 0.1f,
+        "com o comando o peito nao vira para o alvo (livre " + std::to_string(free) + ", com ele " + std::to_string(held) + ")");
+    // No treino, ~70% dos episodios com o comando.
+    TrainingBatchSettings3D s = settings(64, 4);
+    s.taskPath = task;
+    TrainingBatch3D training(s);
+    std::size_t count = 0;
+    for (std::size_t e = 0; e < 64; ++e) count += training.observations()[e * training.observationSize() + active] == 1.0f;
+    require(count >= 32 && count <= 58, "facingFraction 0,7 no treino (" + std::to_string(count) + " de 64)");
+    for (int step = 0; step < 10; ++step) {
+        training.step(std::vector<float>(64 * training.actionSize(), 0.0f));
+        require(finiteAll(training.observations()) && finiteAll(training.rewards()), "o peito anda sem numero ruim");
+    }
+}
+
 } // namespace
 
 void runTrainingBatchTests() {
@@ -790,5 +830,6 @@ void runTrainingBatchTests() {
     testRace();
     testDirections();
     testCourses();
+    testChestFacing();
     std::cout << "RL training batch tests passed\n";
 }

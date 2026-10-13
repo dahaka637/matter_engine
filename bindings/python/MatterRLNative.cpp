@@ -222,7 +222,7 @@ NB_MODULE(matter_rl_native, m) {
             [](TrainingBatch3D* self, const std::string& task, std::uint32_t environments, std::uint32_t perScene,
                 std::uint32_t threads, std::uint64_t seed, bool evaluation, float evaluationSeconds,
                 int solverPosition, int solverVelocity, const std::string& posture,
-                const std::vector<std::array<float, 4>>& schedule, const std::string& teacherAssets) {
+                const std::vector<std::array<float, 4>>& schedule, const std::string& teacherAssets, int facing) {
                 TrainingBatchSettings3D settings;
                 settings.taskPath = task;
                 settings.environmentCount = environments;
@@ -234,6 +234,7 @@ NB_MODULE(matter_rl_native, m) {
                 settings.solverPositionIterations = solverPosition;
                 settings.solverVelocityIterations = solverVelocity;
                 settings.posture = posture;
+                settings.facing = facing;
                 for (const auto& [seconds, forward, lateral, yaw] : schedule)
                     settings.commandSchedule.push_back({ seconds, forward, lateral, yaw });
                 nb::gil_scoped_release release;
@@ -247,7 +248,7 @@ NB_MODULE(matter_rl_native, m) {
             "task"_a, "environments"_a = 256, "per_scene"_a = 4, "threads"_a = 0, "seed"_a = 1,
             "evaluation"_a = false, "evaluation_seconds"_a = 60.0f, "solver_position"_a = -1,
             "solver_velocity"_a = -1, "posture"_a = "", "schedule"_a = std::vector<std::array<float, 4>> {},
-            "teacher_assets"_a = "")
+            "teacher_assets"_a = "", "facing"_a = -1)
         .def_prop_ro("num_envs", &TrainingBatch3D::environmentCount)
         .def_prop_ro("obs_size", &TrainingBatch3D::observationSize)
         .def_prop_ro("critic_size", &TrainingBatch3D::criticObservationSize)
