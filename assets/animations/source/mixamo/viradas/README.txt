@@ -7,10 +7,15 @@ correndo do RL (o tiro com volta, etapa 4a do plano de imitacao).
   termina parado; anda 4,1 m em 2,27 s.
 - TurnToRunning.fbx   ("Turn To Running"): parado, vira e sai correndo;
   anda 3,3 m em 1,70 s.
+- RunningTurn180Longo.fbx ("Running Turn 180" estendido, baixado depois; o
+  Mixamo nao oferece tirar o In Place nele): o vai e volta inteiro em ciclo
+  (base aberta, gira, alguns passos, planta, gira de volta, volta), 1,87 s,
+  fecha o ciclo (clipe running_turn_180_loop, com --loop). Tambem no lugar:
+  o deslocamento tera de ser reconstruido pelo pe de apoio (contacts).
 
 Licenca: termos padrao do Mixamo/Adobe (nao CC0), como os outros desta pasta.
 Clipes gerados (assets/animations/clips/running_turn_180, running_to_turn,
-turn_to_running) com:
+turn_to_running e running_turn_180_loop) com:
 
   env PYTHONHOME=/usr blender --background --factory-startup \
     --python-use-system-env --python-exit-code 1 \
