@@ -33,6 +33,9 @@ Com o Blender do sistema, rode com `PYTHONHOME=/usr` e
 `--python-use-system-env`: sem isso ele pega a biblioteca do Python do uv e
 não acha o `math`. O Jog_Fwd_Loop e o Sprint_Loop da mesma biblioteca foram
 reprovados no retarget (membros até 39° fora e o ciclo sem fechar).
+As viradas correndo do Mixamo (`running_turn_180`, `running_to_turn` e
+`turn_to_running`, fontes em `source/mixamo/viradas`) são referências para o
+tiro com volta, ainda fora das tarefas.
 
 O manifesto do personagem (`locomotion` em `character.json`) diz qual clipe
 cumpre cada papel: `idle`, `walk`, `walkBackward`, `sprint`, os de strafe,
