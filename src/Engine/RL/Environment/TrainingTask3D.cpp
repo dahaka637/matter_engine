@@ -3,6 +3,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <iterator>
 #include <stdexcept>
@@ -183,6 +184,23 @@ TrainingTask3D loadTrainingTask3D(const std::filesystem::path& definitionPath) {
         out.turnSigma = std::max(1.0e-3f, t.value("turnSigma", out.turnSigma));
         out.facing = t.value("facing", out.facing);
         out.facingDriftRadians = std::max(0.0f, t.value("facingDriftRadians", out.facingDriftRadians));
+        out.lookahead = std::min(3u, t.value("lookahead", out.lookahead));
+        if (t.contains("evaluationCourses"))
+            for (const nlohmann::json& c : t["evaluationCourses"]) {
+                TrainingTask3D::Target::Course course;
+                course.name = c.value("name", std::string());
+                course.points = c.at("points").get<std::vector<std::array<float, 2>>>();
+                if (course.points.empty()) throw std::runtime_error("tarefa de RL: percurso " + course.name + " vazio");
+                // Cada ponto longe do anterior (e o primeiro do comeco): senao
+                // chegar num ja seria chegar no seguinte.
+                std::array<float, 2> previous { 0.0f, 0.0f };
+                for (const auto& point : course.points) {
+                    if (!(std::hypot(point[0] - previous[0], point[1] - previous[1]) > out.radius))
+                        throw std::runtime_error("tarefa de RL: percurso " + course.name + " com pontos colados");
+                    previous = point;
+                }
+                out.evaluationCourses.push_back(std::move(course));
+            }
         if (!(out.distance > out.radius) || !(out.radius > 0.0f) || !(out.referenceSpeed > 0.0f)
             || out.evaluationAngles.empty())
             throw std::runtime_error("tarefa de RL: target invalido");

@@ -135,6 +135,11 @@ struct Environment {
     float facingCommand = 0.0f;
     float facingRate = 0.0f;
     float facingTimer = 0.0f;
+    // Os proximos alvos ja no mapa (target.lookahead) com o rumo do trecho que
+    // chega em cada um, e o percurso fixo da avaliacao (o rumo do comeco).
+    std::array<Vec3, 3> upcoming {};
+    std::array<float, 3> upcomingDirection {};
+    float courseHeading = 0.0f;
 };
 
 struct Scene {
@@ -244,6 +249,7 @@ struct TrainingBatch3D::Impl {
     // episodio, para as listas da avaliacao), o planejador (o clipe que anda mais
     // perto da direcao do alvo; force troca sem histerese) e o giro pedido.
     void placeLibraryTarget(Environment& env, Vec3 from, float facing, std::uint32_t k);
+    void drawLibraryTarget(Environment& env, Vec3 from, float facing, std::uint32_t k, Vec3& point, float& direction);
     void plan(Environment& env, Vec3 position, float facing, bool force);
     [[nodiscard]] float wantedTurn(const Environment& env, Vec3 position, float facing) const;
     [[nodiscard]] std::vector<ReferenceDof> resolveReference(const TrainingTask3D::Gait& gait) const;
@@ -314,6 +320,13 @@ void TrainingBatch3D::Impl::buildLayouts() {
         o.channels.push_back({ "target.direction.x", "unit" });
         o.channels.push_back({ "target.direction.y", "unit" });
         o.channels.push_back({ "target.distance", "m/10" });
+        // Os proximos (os varios pontos), do mesmo jeito, em ordem.
+        for (std::uint32_t i = 0; i < task.target.lookahead; ++i) {
+            const std::string name = "target.next" + std::to_string(i + 1);
+            o.channels.push_back({ name + ".direction.x", "unit" });
+            o.channels.push_back({ name + ".direction.y", "unit" });
+            o.channels.push_back({ name + ".distance", "m/10" });
+        }
     }
     // A biblioteca: o clipe de agora (um canal por clipe) e o giro pedido.
     if (imitating() && reference.library) {
@@ -354,9 +367,27 @@ void TrainingBatch3D::Impl::buildReference() {
     reference = buildReferenceMotion3D(body, clips, FixedStep, library);
 }
 
-void TrainingBatch3D::Impl::placeLibraryTarget(Environment& env, Vec3 from, float facing, std::uint32_t k) {
+// Um alvo em volta de from, a partir do rumo facing (o k-esimo do episodio): no
+// treino sorteado, na avaliacao pelas listas ou pelo percurso do mundo.
+void TrainingBatch3D::Impl::drawLibraryTarget(Environment& env, Vec3 from, float facing, std::uint32_t k, Vec3& point,
+    float& direction) {
     const TrainingTask3D::Target& t = task.target;
     constexpr float Radians = std::numbers::pi_v<float> / 180.0f;
+    if (!training() && !t.evaluationCourses.empty()) {
+        const auto& points = t.evaluationCourses[(t.evaluationPerWorld ? env.index : 0u) % t.evaluationCourses.size()].points;
+        const std::size_t n = points.size();
+        const auto at = [&](std::size_t i) {
+            const float laps = static_cast<float>(i / n);
+            const float x = points[i % n][0] + laps * points[n - 1][0], y = points[i % n][1] + laps * points[n - 1][1];
+            const float c = std::cos(env.courseHeading), s = std::sin(env.courseHeading);
+            return env.origin + Vec3 { c * x - s * y, s * x + c * y, 0.0f };
+        };
+        point = at(k);
+        const Vec3 previous = k == 0 ? Vec3 { env.origin.x, env.origin.y, 0.0f } : at(k - 1);
+        direction = std::atan2(point.y - previous.y, point.x - previous.x);
+        point.z = 0.0f;
+        return;
+    }
     float angle = 0.0f, distance = t.distance;
     if (training()) {
         const float spread = (k == 0 ? t.firstAngleDegrees : t.nextAngleDegrees) * Radians;
@@ -367,9 +398,38 @@ void TrainingBatch3D::Impl::placeLibraryTarget(Environment& env, Vec3 from, floa
         angle = t.evaluationAngles[slot % t.evaluationAngles.size()] * Radians;
         if (!t.evaluationDistances.empty()) distance = t.evaluationDistances[slot % t.evaluationDistances.size()];
     }
-    env.targetFrom = { from.x, from.y, 0.0f };
-    env.targetDirection = facing + angle;
-    env.target = env.targetFrom + Vec3 { std::cos(env.targetDirection), std::sin(env.targetDirection), 0.0f } * distance;
+    direction = facing + angle;
+    point = Vec3 { from.x, from.y, 0.0f } + Vec3 { std::cos(direction), std::sin(direction), 0.0f } * distance;
+}
+
+// O k-esimo alvo do episodio. Sem lookahead ele nasce em volta de from (onde o
+// corpo chegou) pelo rumo do corpo; com lookahead, o de agora e o primeiro da
+// fila e um novo entra no fim, saindo do ultimo pelo rumo do trecho dele.
+void TrainingBatch3D::Impl::placeLibraryTarget(Environment& env, Vec3 from, float facing, std::uint32_t k) {
+    const std::uint32_t ahead = task.target.lookahead;
+    if (k == 0) env.courseHeading = facing;
+    if (ahead == 0 || k == 0) {
+        env.targetFrom = { from.x, from.y, 0.0f };
+        drawLibraryTarget(env, from, facing, k, env.target, env.targetDirection);
+        Vec3 last = env.target;
+        float lastDirection = env.targetDirection;
+        for (std::uint32_t i = 0; i < ahead; ++i) {
+            drawLibraryTarget(env, last, lastDirection, k + 1 + i, env.upcoming[i], env.upcomingDirection[i]);
+            last = env.upcoming[i];
+            lastDirection = env.upcomingDirection[i];
+        }
+    } else {
+        env.targetFrom = env.target;
+        env.target = env.upcoming[0];
+        env.targetDirection = env.upcomingDirection[0];
+        for (std::uint32_t i = 0; i + 1 < ahead; ++i) {
+            env.upcoming[i] = env.upcoming[i + 1];
+            env.upcomingDirection[i] = env.upcomingDirection[i + 1];
+        }
+        const Vec3 last = ahead > 1 ? env.upcoming[ahead - 2] : env.target;
+        const float lastDirection = ahead > 1 ? env.upcomingDirection[ahead - 2] : env.targetDirection;
+        drawLibraryTarget(env, last, lastDirection, k + ahead, env.upcoming[ahead - 1], env.upcomingDirection[ahead - 1]);
+    }
     env.targetClosest = 1e9f;
     env.targetCount = k + 1;
 }
@@ -927,6 +987,14 @@ void TrainingBatch3D::Impl::writeObservation(const Environment& env, const Ragdo
         *out++ = distance > 1.0e-4f ? to.x / distance : 1.0f;
         *out++ = distance > 1.0e-4f ? to.y / distance : 0.0f;
         *out++ = std::min(distance, 20.0f) / 10.0f;
+        for (std::uint32_t i = 0; i < task.target.lookahead; ++i) {
+            const Vec3 next = reading.headingInverse.rotate(Vec3 { env.upcoming[i].x - pelvis.position.x,
+                env.upcoming[i].y - pelvis.position.y, 0.0f });
+            const float far = std::hypot(next.x, next.y);
+            *out++ = far > 1.0e-4f ? next.x / far : 1.0f;
+            *out++ = far > 1.0e-4f ? next.y / far : 0.0f;
+            *out++ = std::min(far, 30.0f) / 10.0f;
+        }
     }
     if (imitating() && reference.library) {
         for (std::size_t c = 0; c < reference.segments.size(); ++c) *out++ = env.cursor.segment == c ? 1.0f : 0.0f;
@@ -1539,6 +1607,8 @@ TrainingBatch3D::TrainingBatch3D(const TrainingBatchSettings3D& settings) : m_im
     }
     impl.referenceDofs = impl.resolveReference(impl.task.gait);
     impl.buildReference();
+    if (impl.task.target.lookahead > 0 && !(impl.imitating() && impl.reference.library))
+        throw std::runtime_error("lote de RL: os proximos alvos (target.lookahead) pedem a biblioteca de clipes");
     if (!settings.posture.empty()) {
         impl.forcedPosture = findRLPosture3D(impl.body, settings.posture);
         if (impl.forcedPosture < 0) throw std::runtime_error("lote de RL: o corpo nao tem a postura " + settings.posture);
@@ -1588,6 +1658,8 @@ void TrainingBatch3D::updateTask(const TrainingTask3D& task) {
     // treino andando (os clipes podem trocar).
     if (task.imitation.enabled != impl.task.imitation.enabled || task.target.enabled != impl.task.target.enabled)
         throw std::runtime_error("lote de RL: a imitacao e o alvo nao ligam nem desligam com o treino andando");
+    if (task.target.lookahead != impl.task.target.lookahead || task.imitation.library != impl.task.imitation.library)
+        throw std::runtime_error("lote de RL: os proximos alvos e a biblioteca nao mudam com o treino andando");
     bool clipsChanged = task.imitation.clips.size() != impl.task.imitation.clips.size();
     for (std::size_t i = 0; !clipsChanged && i < task.imitation.clips.size(); ++i)
         clipsChanged = task.imitation.clips[i].path != impl.task.imitation.clips[i].path;
@@ -1719,6 +1791,8 @@ TrainingEnvironmentView3D TrainingBatch3D::view(std::size_t environment) const {
         view.target = env.target;
         view.targetRadius = impl.task.target.radius;
         view.targetsReached = env.targetsReached;
+        view.upcomingCount = impl.imitating() && impl.reference.library ? impl.task.target.lookahead : 0u;
+        for (std::uint32_t i = 0; i < view.upcomingCount; ++i) view.upcoming[i] = env.upcoming[i];
     }
     if (view.state) {
         const RagdollProfile3D& profile = impl.body.profile;

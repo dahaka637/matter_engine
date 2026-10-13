@@ -98,12 +98,14 @@ struct Highlight {
 [[nodiscard]] Highlight highlightFor(const Finding& finding);
 
 // Um marcador no chao (o alvo do RL): o disco, o aro e um brilho que sobe das
-// bordas e some no alto. O centro fica no chao.
+// bordas e some no alto. O centro fica no chao. strength apaga o marcador
+// inteiro (os proximos alvos de uma sequencia vem mais fracos).
 struct InspectionMarker {
     Vec3 center;
     float radius = 0.5f;
     Color color = rgb(232, 44, 44);
     float glowHeight = 0.9f;
+    float strength = 1.0f;
 };
 
 // Uma seta na horizontal (o movimento do RL): chapada, com a haste de width de
@@ -116,6 +118,12 @@ struct InspectionArrow {
     float width = 0.06f;
     float lineWidthPixels = 0.0f;
 };
+
+// Os alvos de uma sequencia (o de agora e os proximos, em ordem): o de agora
+// cheio, os seguintes cada vez mais fracos e baixos, ligados por um traco fino
+// de aro a aro com a ponta no que vem depois.
+void appendTargetSequence(std::span<const Vec3> targets, float radius, std::vector<InspectionMarker>& markers,
+    std::vector<InspectionArrow>& arrows);
 
 // Um olho desenhado de frente para a camera (o rumo mandado olhar, no
 // horizonte): as palpebras, a iris e a pupila, com size de largura (m).

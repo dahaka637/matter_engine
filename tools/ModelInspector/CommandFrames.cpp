@@ -72,6 +72,7 @@ struct DumpFrame {
     bool targetValid = false;
     Vec3 target;
     float targetRadius = 1.0f;
+    std::vector<Vec3> upcoming;
     // As setas do RL: para onde o cerebro quer ir e a velocidade.
     bool intentValid = false;
     Vec3 intent;
@@ -152,6 +153,9 @@ std::vector<DumpScenario> readDump(const std::string& path) {
         } else if (tag == "A") {
             in >> frame->target.x >> frame->target.y >> frame->target.z >> frame->targetRadius;
             frame->targetValid = static_cast<bool>(in);
+        } else if (tag == "N") {
+            Vec3 next;
+            if (in >> next.x >> next.y >> next.z) frame->upcoming.push_back(next);
         } else if (tag == "P") {
             DumpFrame::Contact contact;
             in >> contact.position.x >> contact.position.y >> contact.position.z >> contact.linkIndex;
@@ -364,18 +368,21 @@ int runFrames(const ModelContext& context, const CommandLine& line) {
         }
 #endif
 
+        // O alvo e os proximos (N), mais fracos e ligados em ordem.
         std::vector<InspectionMarker> markers;
+        std::vector<InspectionArrow> arrows;
+        const float floorSkeleton = view.gameToSkeleton(Vec3 { 0, 0, gameFloor }).z;
         if (frame.targetValid) {
-            InspectionMarker marker;
-            const Vec3 at = toSkeleton(frame.target);
-            marker.center = { at.x, at.y, view.gameToSkeleton(Vec3 { 0, 0, gameFloor }).z };
-            marker.radius = frame.targetRadius;
-            markers.push_back(marker);
+            std::vector<Vec3> sequence { frame.target };
+            sequence.insert(sequence.end(), frame.upcoming.begin(), frame.upcoming.end());
+            for (Vec3& point : sequence) {
+                const Vec3 at = toSkeleton(point);
+                point = { at.x, at.y, floorSkeleton };
+            }
+            appendTargetSequence(sequence, frame.targetRadius, markers, arrows);
         }
         // A seta do RL: para onde ele vai (a velocidade vezes 0,35 s), no chao, um
         // traco fino. (A intencao, W, fica no dump.)
-        std::vector<InspectionArrow> arrows;
-        const float floorSkeleton = view.gameToSkeleton(Vec3 { 0, 0, gameFloor }).z;
         if (frame.velocityValid && std::hypot(frame.velocity.x, frame.velocity.y) > 0.2f) {
             InspectionArrow going;
             const Vec3 base = toSkeleton(pelvisWorld);

@@ -484,9 +484,10 @@ std::size_t channel(const TrainingBatch3D& batch, std::string_view name) {
 }
 
 // Uma copia da corrida com trocas no texto (caminhos absolutos: a copia mora fora).
-std::filesystem::path raceVariant(const std::string& name, const std::vector<std::pair<std::string, std::string>>& swaps) {
+std::filesystem::path raceVariant(const std::string& name, const std::vector<std::pair<std::string, std::string>>& swaps,
+    const std::string& source = "h3_andar.json") {
     const std::filesystem::path assets = MATTERENGINE_TEST_ASSETS_DIR;
-    std::ifstream in(assets / "rl/tasks/h3_andar.json");
+    std::ifstream in(assets / "rl/tasks" / source);
     std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     std::vector<std::pair<std::string, std::string>> all {
         { "\"body\": \"../bodies/football_player_v1.json\"",
@@ -663,6 +664,75 @@ void testDirections() {
     require(paid > 0.0f, "o giro paga");
 }
 
+// Os varios pontos (H5): os dois proximos alvos ja no mapa e na observacao; a
+// avaliacao faz os percursos fixos, um por mundo.
+void testCourses() {
+    const auto planar = [](Vec3 a, Vec3 b) { return std::hypot(a.x - b.x, a.y - b.y); };
+    const auto near = [](float a, float b, float tolerance) { return std::abs(a - b) <= tolerance; };
+    {
+        TrainingBatchSettings3D s = settings(16, 2);
+        s.taskPath = std::filesystem::path(MATTERENGINE_TEST_ASSETS_DIR) / "rl/tasks/h5_pontos.json";
+        s.evaluation = true;
+        s.evaluationEpisodeSeconds = 20.0f;
+        TrainingBatch3D batch(s);
+        const std::size_t O = batch.observationSize();
+        // O quadrado de 4 m (mundo 0) e o zigue-zague (mundo 1), pela forma.
+        const TrainingEnvironmentView3D square = batch.view(0);
+        require(square.upcomingCount == 2, "a H5 mostra os dois proximos alvos");
+        const Vec3 origin = square.origin;
+        require(near(planar(square.target, origin), 4.0f, 1e-3f) && near(planar(square.upcoming[0], square.target), 4.0f, 1e-3f)
+                && near(planar(square.upcoming[1], square.upcoming[0]), 4.0f, 1e-3f)
+                && near(planar(square.upcoming[1], origin), 4.0f, 1e-3f)
+                && near(planar(square.upcoming[0], origin), 4.0f * std::sqrt(2.0f), 1e-3f),
+            "o mundo 0 faz o quadrado de 4 m");
+        const TrainingEnvironmentView3D zigzag = batch.view(1);
+        require(near(planar(zigzag.target, zigzag.origin), std::hypot(2.5f, 2.0f), 1e-3f)
+                && near(planar(zigzag.upcoming[0], zigzag.origin), 5.0f, 1e-3f)
+                && near(planar(zigzag.upcoming[1], zigzag.origin), std::hypot(7.5f, 2.0f), 1e-3f),
+            "o mundo 1 faz o zigue-zague (recomecando do ultimo ponto)");
+        // Os proximos na observacao: a distancia ate o primeiro da fila.
+        const std::size_t next = channel(batch, "target.next1.distance");
+        require(channel(batch, "target.next2.direction.y") > next, "os canais dos dois proximos");
+        const float seen = batch.observations()[next] * 10.0f;
+        require(std::abs(seen - planar(square.upcoming[0], origin)) < 0.5f, "o proximo alvo na observacao");
+    }
+    {
+        // Chegando: o primeiro da fila vira o alvo e um novo entra no fim.
+        const std::filesystem::path close = raceVariant("percurso_perto.json",
+            { { "[[4.0, 0.0], [4.0, 4.0]", "[[1.2, 0.0], [4.0, 4.0]" } },
+            "h5_pontos.json");
+        TrainingBatchSettings3D s = settings(4, 2);
+        s.taskPath = close;
+        s.evaluation = true;
+        s.evaluationEpisodeSeconds = 20.0f;
+        TrainingBatch3D batch(s);
+        const TrainingEnvironmentView3D before = batch.view(0);
+        bool reached = false;
+        for (int step = 0; step < 45 && !reached; ++step) {
+            batch.step(std::vector<float>(4 * batch.actionSize(), 0.0f));
+            const TrainingEnvironmentView3D now = batch.view(0);
+            if (now.targetsReached == 0) continue;
+            reached = true;
+            require(planar(now.target, before.upcoming[0]) < 1e-3f && planar(now.upcoming[0], before.upcoming[1]) < 1e-3f,
+                "a fila anda: o proximo vira o alvo");
+            require(near(planar(now.upcoming[1], now.upcoming[0]), 4.0f, 1e-3f), "o novo entra no fim (o quadrado de novo)");
+        }
+        require(reached, "seguindo o clipe, ele chega no primeiro ponto a 1,2 m");
+    }
+    {
+        // No treino, cada alvo sai do anterior, entre 2 e 8 m.
+        TrainingBatchSettings3D s = settings(8, 2);
+        s.taskPath = std::filesystem::path(MATTERENGINE_TEST_ASSETS_DIR) / "rl/tasks/h5_pontos.json";
+        TrainingBatch3D batch(s);
+        for (std::size_t e = 0; e < 8; ++e) {
+            const TrainingEnvironmentView3D view = batch.view(e);
+            const float a = planar(view.upcoming[0], view.target), b = planar(view.upcoming[1], view.upcoming[0]);
+            require(a >= 2.0f - 1e-3f && a <= 8.0f + 1e-3f && b >= 2.0f - 1e-3f && b <= 8.0f + 1e-3f,
+                "no treino os proximos ficam a 2-8 m do anterior");
+        }
+    }
+}
+
 } // namespace
 
 void runTrainingBatchTests() {
@@ -676,5 +746,6 @@ void runTrainingBatchTests() {
     testTeacher();
     testRace();
     testDirections();
+    testCourses();
     std::cout << "RL training batch tests passed\n";
 }

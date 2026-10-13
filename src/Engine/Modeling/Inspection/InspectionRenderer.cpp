@@ -114,6 +114,31 @@ std::span<const SurfaceMode> allSurfaceModes() {
     return Modes;
 }
 
+void appendTargetSequence(std::span<const Vec3> targets, float radius, std::vector<InspectionMarker>& markers,
+    std::vector<InspectionArrow>& arrows) {
+    constexpr std::array<float, 4> Strength { 1.0f, 0.42f, 0.26f, 0.18f };
+    for (std::size_t i = 0; i < targets.size(); ++i) {
+        InspectionMarker marker;
+        marker.center = targets[i];
+        marker.radius = radius;
+        marker.strength = Strength[std::min(i, Strength.size() - 1)];
+        marker.glowHeight *= 0.4f + 0.6f * marker.strength;
+        markers.push_back(marker);
+        if (i == 0) continue;
+        Vec3 along = targets[i] - targets[i - 1];
+        along.z = 0.0f;
+        const float length = along.length();
+        if (length < 2.0f * radius + 0.1f) continue;
+        along = along * (1.0f / length);
+        InspectionArrow link;
+        link.from = targets[i - 1] + along * radius + Vec3 { 0.0f, 0.0f, 0.02f };
+        link.to = targets[i] - along * radius + Vec3 { 0.0f, 0.0f, 0.02f };
+        link.color = rgb(232, 44, 44, 0.3f + 0.25f * marker.strength);
+        link.lineWidthPixels = 1.5f;
+        arrows.push_back(link);
+    }
+}
+
 Highlight highlightFor(const Finding& finding) {
     Highlight highlight;
     highlight.triangles = finding.triangles;
@@ -315,22 +340,22 @@ void drawMarkers(const InspectionScene& scene, Rasterizer& raster, float pixel) 
         const Vec3 lift { 0.0f, 0.0f, 0.003f };
         const auto at = [&](int i) { return rim[static_cast<std::size_t>((i + Segments) % Segments)]; };
         for (int i = 0; i < Segments; ++i)
-            raster.overlayTriangle(marker.center + lift, at(i) + lift, at(i + 1) + lift, withAlpha(marker.color, 0.42f),
-                0.01f);
+            raster.overlayTriangle(marker.center + lift, at(i) + lift, at(i + 1) + lift,
+                withAlpha(marker.color, 0.42f * marker.strength), 0.01f);
         const Color glow = mix(marker.color, rgb(255, 214, 200), 0.35f);
         for (int band = 0; band < Bands; ++band) {
             const Vec3 low { 0.0f, 0.0f, marker.glowHeight * static_cast<float>(band) / static_cast<float>(Bands) };
             const Vec3 high { 0.0f, 0.0f, marker.glowHeight * static_cast<float>(band + 1) / static_cast<float>(Bands) };
             const float fade = 1.0f - (static_cast<float>(band) + 0.5f) / static_cast<float>(Bands);
-            const Color color = withAlpha(glow, 0.26f * fade * fade);
+            const Color color = withAlpha(glow, 0.26f * fade * fade * marker.strength);
             for (int i = 0; i < Segments; ++i) {
                 raster.overlayTriangle(at(i) + low, at(i + 1) + low, at(i + 1) + high, color, 0.01f);
                 raster.overlayTriangle(at(i) + low, at(i + 1) + high, at(i) + high, color, 0.01f);
             }
         }
         for (int i = 0; i < Segments; ++i)
-            raster.line(at(i) + lift, at(i + 1) + lift, 2.4f * pixel, withAlpha(marker.color, 0.95f), DepthMode::Test,
-                0.0f, 0.004f);
+            raster.line(at(i) + lift, at(i + 1) + lift, 2.4f * pixel, withAlpha(marker.color, 0.95f * marker.strength),
+                DepthMode::Test, 0.0f, 0.004f);
     }
 }
 

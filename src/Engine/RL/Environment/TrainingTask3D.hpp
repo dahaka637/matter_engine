@@ -259,6 +259,20 @@ struct TrainingTask3D {
         // camera virando devagar (0 = parado).
         bool facing = false;
         float facingDriftRadians = 0.0f;
+        // Os varios pontos (biblioteca): quantos alvos depois do de agora ja
+        // estao no mapa e na observacao (0 a 3; com 0, cada um nasce so na
+        // chegada do anterior). Com eles, cada alvo sai do anterior, pelo rumo do
+        // trecho que chega nele.
+        std::uint32_t lookahead = 0;
+        // Os percursos fixos da avaliacao: os pontos em metros no referencial do
+        // comeco (x para a frente, y para a esquerda), em ordem; no fim, o
+        // percurso recomeca deslocado do ultimo ponto (um fechado volta ao
+        // comeco). Cada mundo pega um pela sua posicao.
+        struct Course {
+            std::string name;
+            std::vector<std::array<float, 2>> points;
+        };
+        std::vector<Course> evaluationCourses;
     } target;
 
     struct Termination {

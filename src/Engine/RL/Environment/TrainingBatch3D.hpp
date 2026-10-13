@@ -5,6 +5,7 @@
 #include "Engine/RL/Environment/TrainingTask3D.hpp"
 #include "Engine/RL/Environment/TrainingTeacher3D.hpp"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -135,6 +136,9 @@ struct TrainingEnvironmentView3D {
     Vec3 target;
     float targetRadius = 0.0f;
     std::uint32_t targetsReached = 0;
+    // Os proximos alvos ja no mapa (target.lookahead), em ordem.
+    std::uint32_t upcomingCount = 0;
+    std::array<Vec3, 3> upcoming {};
     // Para onde o cerebro quer ir (a direcao em que o clipe de agora anda, no
     // mundo, unitaria) e para onde ele vai (a velocidade do centro de massa).
     bool hasIntent = false;

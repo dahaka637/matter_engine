@@ -546,18 +546,19 @@ bool ReinforcementLearningScreen::render(int width, int height) {
         highlights.push_back(std::move(arrow));
     }
 
-    // O alvo: o disco vermelho no chao com o brilho subindo das bordas.
+    // O alvo: o disco vermelho no chao com o brilho subindo das bordas; os
+    // proximos (os varios pontos) mais fracos, ligados em ordem.
     std::vector<InspectionMarker> markers;
+    std::vector<InspectionArrow> arrows;
     if (view.hasTarget) {
-        InspectionMarker marker;
-        marker.center = m_skeleton->toSkeleton({ view.target.x, view.target.y, 0.0f });
-        marker.radius = view.targetRadius;
-        markers.push_back(marker);
+        std::vector<Vec3> sequence { m_skeleton->toSkeleton({ view.target.x, view.target.y, 0.0f }) };
+        for (std::uint32_t i = 0; i < view.upcomingCount; ++i)
+            sequence.push_back(m_skeleton->toSkeleton({ view.upcoming[i].x, view.upcoming[i].y, 0.0f }));
+        appendTargetSequence(sequence, view.targetRadius, markers, arrows);
     }
 
     // A seta de para onde ele vai: a velocidade do centro de massa no chao (0,35 s
     // a frente), um traco fino.
-    std::vector<InspectionArrow> arrows;
     if (std::hypot(view.velocity.x, view.velocity.y) > 0.2f) {
         Vec3 center;
         for (std::size_t i = 0; i < state.links.size(); ++i) center += positions[i] * profile.links[i].massFraction;
