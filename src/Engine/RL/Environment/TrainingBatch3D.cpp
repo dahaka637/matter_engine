@@ -1712,6 +1712,25 @@ TrainingEnvironmentView3D TrainingBatch3D::view(std::size_t environment) const {
         view.targetRadius = impl.task.target.radius;
         view.targetsReached = env.targetsReached;
     }
+    if (view.state) {
+        const RagdollProfile3D& profile = impl.body.profile;
+        float mass = 0.0f;
+        for (std::size_t i = 0; i < profile.links.size() && i < view.state->links.size(); ++i) {
+            view.velocity += view.state->links[i].linearVelocity * profile.links[i].massFraction;
+            mass += profile.links[i].massFraction;
+        }
+        if (mass > 0.0f) view.velocity = view.velocity * (1.0f / mass);
+        if (impl.imitating()) {
+            const Quaternion frame =
+                (view.state->links.front().orientation * profile.links.front().modelOrientation.conjugate()).normalized();
+            const Vec3 forward = frame.rotate({ 1.0f, 0.0f, 0.0f });
+            const ReferenceSegment3D& segment = impl.reference.segments[std::min<std::size_t>(env.cursor.segment,
+                impl.reference.segments.size() - 1)];
+            const float heading = std::atan2(forward.y, forward.x) + segment.travelRelative;
+            view.hasIntent = true;
+            view.intent = { std::cos(heading), std::sin(heading), 0.0f };
+        }
+    }
     return view;
 }
 

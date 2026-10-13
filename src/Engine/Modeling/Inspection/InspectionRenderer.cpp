@@ -334,6 +334,33 @@ void drawMarkers(const InspectionScene& scene, Rasterizer& raster, float pixel) 
     }
 }
 
+// A haste e a ponta como faixas chapadas na horizontal (misturadas, atras do
+// corpo somem), com a borda escura para ler sobre a grade.
+void drawArrows(const InspectionScene& scene, Rasterizer& raster) {
+    for (const InspectionArrow& arrow : scene.arrows) {
+        Vec3 along = arrow.to - arrow.from;
+        along.z = 0.0f;
+        const float length = along.length();
+        if (length < 1.0e-3f) continue;
+        along = along * (1.0f / length);
+        const Vec3 side { -along.y, along.x, 0.0f };
+        const float head = std::min(length * 0.45f, arrow.width * 3.5f);
+        const Vec3 neck = arrow.from + along * (length - head);
+        const Vec3 tip = arrow.from + along * length;
+        const Vec3 up { 0.0f, 0.0f, arrow.to.z - arrow.from.z };
+        const auto lift = [&](Vec3 p, float t) { return p + up * t; };
+        const float half = 0.5f * arrow.width;
+        const Color fill = withAlpha(arrow.color, 0.92f);
+        const Vec3 a = arrow.from + side * half, b = arrow.from - side * half;
+        const Vec3 c = neck - side * half, d = neck + side * half;
+        const float neckT = (length - head) / length;
+        raster.overlayTriangle(a, b, lift(c, neckT), fill, 0.02f);
+        raster.overlayTriangle(a, lift(c, neckT), lift(d, neckT), fill, 0.02f);
+        raster.overlayTriangle(lift(neck + side * (half * 2.6f), neckT), lift(neck - side * (half * 2.6f), neckT),
+            lift(tip, 1.0f), fill, 0.02f);
+    }
+}
+
 void drawSkeleton(const InspectionScene& scene, const InspectionStyle& style, const Visibility& visibility,
     std::span<const Vec3> joints, Rasterizer& raster, DepthMode depthMode, float pixel) {
     const Skeleton& skeleton = *scene.skeleton;
@@ -526,6 +553,7 @@ Image renderInspection(const InspectionScene& scene, const InspectionStyle& styl
     });
 
     drawMarkers(scene, raster, pixel);
+    drawArrows(scene, raster);
     for (const Highlight& highlight : scene.highlights) {
         if (hasMesh)
             for (const std::uint32_t t : highlight.triangles) {

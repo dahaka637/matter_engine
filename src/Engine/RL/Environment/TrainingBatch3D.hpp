@@ -135,6 +135,11 @@ struct TrainingEnvironmentView3D {
     Vec3 target;
     float targetRadius = 0.0f;
     std::uint32_t targetsReached = 0;
+    // Para onde o cerebro quer ir (a direcao em que o clipe de agora anda, no
+    // mundo, unitaria) e para onde ele vai (a velocidade do centro de massa).
+    bool hasIntent = false;
+    Vec3 intent;
+    Vec3 velocity;
 };
 
 // Centenas de mundos de treino sem janela, avancados em paralelo.

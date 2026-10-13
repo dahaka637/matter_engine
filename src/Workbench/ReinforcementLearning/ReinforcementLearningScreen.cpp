@@ -555,6 +555,30 @@ bool ReinforcementLearningScreen::render(int width, int height) {
         markers.push_back(marker);
     }
 
+    // As setas: verde, para onde o cerebro quer ir (na altura da pelve); amarela,
+    // para onde ele vai (a velocidade do centro de massa, no chao).
+    std::vector<InspectionArrow> arrows;
+    if (view.hasIntent) {
+        const Vec3 at = positions.front();
+        InspectionArrow intent;
+        intent.from = m_skeleton->toSkeleton(at);
+        intent.to = m_skeleton->toSkeleton({ at.x + view.intent.x * 1.8f, at.y + view.intent.y * 1.8f, at.z });
+        intent.color = rgb(80, 230, 90);
+        intent.width = 0.11f;
+        arrows.push_back(intent);
+    }
+    if (std::hypot(view.velocity.x, view.velocity.y) > 0.2f) {
+        Vec3 center;
+        for (std::size_t i = 0; i < state.links.size(); ++i) center += positions[i] * profile.links[i].massFraction;
+        InspectionArrow going;
+        going.from = m_skeleton->toSkeleton({ center.x, center.y, 0.03f });
+        going.to = m_skeleton->toSkeleton(
+            { center.x + view.velocity.x * 0.35f, center.y + view.velocity.y * 0.35f, 0.03f });
+        going.color = rgb(245, 214, 60);
+        going.width = 0.11f;
+        arrows.push_back(going);
+    }
+
     InspectionScene scene;
     scene.skeleton = &model.skeleton;
     scene.mesh = &model.mesh;
@@ -564,6 +588,7 @@ bool ReinforcementLearningScreen::render(int width, int height) {
     scene.meshPositions = posed;
     scene.highlights = highlights;
     scene.markers = markers;
+    scene.arrows = arrows;
     InspectionStyle style;
     style.surface = m_display == Display::Full ? SurfaceMode::Solid : SurfaceMode::Hidden;
     style.skeleton = m_display == Display::Skeleton;

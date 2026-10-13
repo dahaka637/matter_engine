@@ -73,6 +73,9 @@ std::string frameLines(const TrainingBatch3D& batch, std::size_t environment) {
     // O alvo de agora (o marcador no chao): centro e raio ("T" e o toque na bola).
     if (view.hasTarget)
         out << "A " << view.target.x << ' ' << view.target.y << ' ' << view.target.z << ' ' << view.targetRadius << '\n';
+    // As setas: para onde o cerebro quer ir (W) e a velocidade do centro de massa (V).
+    if (view.hasIntent) out << "W " << view.intent.x << ' ' << view.intent.y << ' ' << view.intent.z << '\n';
+    out << "V " << view.velocity.x << ' ' << view.velocity.y << ' ' << view.velocity.z << '\n';
     return out.str();
 }
 

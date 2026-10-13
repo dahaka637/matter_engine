@@ -106,6 +106,15 @@ struct InspectionMarker {
     float glowHeight = 0.9f;
 };
 
+// Uma seta chapada na horizontal (as setas de intencao e de movimento do RL):
+// a haste com width de largura e a ponta, por cima da cena.
+struct InspectionArrow {
+    Vec3 from;
+    Vec3 to;
+    Color color = rgb(80, 230, 90);
+    float width = 0.06f;
+};
+
 struct InspectionScene {
     const Skeleton* skeleton = nullptr;
     // Nulo = pose de ligacao.
@@ -117,6 +126,7 @@ struct InspectionScene {
     std::span<const int> jointRegion;
     std::span<const Highlight> highlights;
     std::span<const InspectionMarker> markers;
+    std::span<const InspectionArrow> arrows;
     // Os grupos do sombreamento liso da malha, se ja feitos (na quina do
     // estilo); nulo = feitos a cada imagem.
     const ShadingNormals* shading = nullptr;

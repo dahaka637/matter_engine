@@ -72,6 +72,11 @@ struct DumpFrame {
     bool targetValid = false;
     Vec3 target;
     float targetRadius = 1.0f;
+    // As setas do RL: para onde o cerebro quer ir e a velocidade.
+    bool intentValid = false;
+    Vec3 intent;
+    bool velocityValid = false;
+    Vec3 velocity;
 };
 
 struct DumpScenario {
@@ -127,6 +132,12 @@ std::vector<DumpScenario> readDump(const std::string& path) {
             std::string text;
             std::getline(in, text);
             frame->events += text;
+        } else if (tag == "W") {
+            in >> frame->intent.x >> frame->intent.y >> frame->intent.z;
+            frame->intentValid = static_cast<bool>(in);
+        } else if (tag == "V") {
+            in >> frame->velocity.x >> frame->velocity.y >> frame->velocity.z;
+            frame->velocityValid = static_cast<bool>(in);
         } else if (tag == "A") {
             in >> frame->target.x >> frame->target.y >> frame->target.z >> frame->targetRadius;
             frame->targetValid = static_cast<bool>(in);
@@ -350,11 +361,35 @@ int runFrames(const ModelContext& context, const CommandLine& line) {
             marker.radius = frame.targetRadius;
             markers.push_back(marker);
         }
+        // As setas do RL: verde na altura da pelve (o que ele quer), amarela no chao
+        // (para onde vai, a velocidade vezes 0,35 s).
+        std::vector<InspectionArrow> arrows;
+        const float floorSkeleton = view.gameToSkeleton(Vec3 { 0, 0, gameFloor }).z;
+        if (frame.intentValid) {
+            InspectionArrow intent;
+            intent.from = toSkeleton(pelvisWorld);
+            intent.to = toSkeleton(pelvisWorld + Vec3 { frame.intent.x, frame.intent.y, 0.0f } * 1.8f);
+            intent.color = rgb(80, 230, 90);
+            intent.width = 0.11f;
+            arrows.push_back(intent);
+        }
+        if (frame.velocityValid && std::hypot(frame.velocity.x, frame.velocity.y) > 0.2f) {
+            InspectionArrow going;
+            const Vec3 base = toSkeleton(pelvisWorld);
+            const Vec3 ahead =
+                toSkeleton(pelvisWorld + Vec3 { frame.velocity.x, frame.velocity.y, 0.0f } * 0.35f);
+            going.from = { base.x, base.y, floorSkeleton + 0.03f };
+            going.to = { ahead.x, ahead.y, floorSkeleton + 0.03f };
+            going.color = rgb(245, 214, 60);
+            going.width = 0.11f;
+            arrows.push_back(going);
+        }
         InspectionScene scene = context.scene();
         scene.pose = &pose;
         scene.meshPositions = posed;
         scene.highlights = highlights;
         scene.markers = markers;
+        scene.arrows = arrows;
         InspectionStyle style;
         style.surface = *mode;
         style.skeleton = model.mesh.empty();
