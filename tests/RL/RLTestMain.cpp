@@ -5,12 +5,14 @@
 void runRLBodyTests();
 void runBodyContractTests();
 void runTrainingBatchTests();
+void runBodyBatchTests();
 
 int main() {
     try {
         runRLBodyTests();
         runBodyContractTests();
         runTrainingBatchTests();
+        runBodyBatchTests();
         std::cout << "RL training tests passed\n";
         return 0;
     } catch (const std::exception& error) {

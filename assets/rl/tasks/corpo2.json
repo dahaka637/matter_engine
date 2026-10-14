@@ -1,0 +1,145 @@
+{
+  "schema": "matter-rl-task-2",
+  "id": "corpo2",
+  "displayName": "Corpo v2: Experimento B",
+  "body": "../bodies/football_player_v2.json",
+  "decision": {
+    "substeps": 4,
+    "historyDecisions": 3,
+    "velocityTarget": "mean_slope",
+    "velocityFraction": 1.0,
+    "maximumTargetVelocity": 20.0
+  },
+  "episodeSeconds": 20.0,
+  "groundMaterial": "grass",
+  "worldSpacingMeters": 250.0,
+  "player": {
+    "height": 1.8,
+    "mass": 80.0,
+    "strength": [1.0, 1.0, 1.0],
+    "sprintCap": 6.5
+  },
+  "speedCaps": {
+    "front": 1.0,
+    "diagonalFront": 0.9,
+    "side": 0.65,
+    "diagonalBack": 0.6,
+    "back": 0.55
+  },
+  "jumpWindowSeconds": 0.6,
+  "reward": {
+    "velocityForm": "cauchy",
+    "velocityToleranceAbsolute": 0.2,
+    "velocityToleranceRelative": 0.1,
+    "facingSigma": 0.4,
+    "costs": {
+      "work": 0.1,
+      "torque": 0.2,
+      "slip": 0.3,
+      "impact": 0.05,
+      "head": 0.01,
+      "smooth": 0.2,
+      "limits": 0.1,
+      "contacts": 0.0
+    },
+    "fall": 1.0
+  },
+  "termination": {
+    "minimumHeadHeightFraction": 0.6,
+    "minimumPelvisHeightFraction": 0.5,
+    "nonSupportContact": true,
+    "maximumDistanceFromStart": 120.0
+  },
+  "initialState": {
+    "posture": "alerta",
+    "jointNoiseRadians": 0.03,
+    "jointVelocityNoise": 0.2,
+    "rootVelocityNoise": 0.1,
+    "rootAngularVelocityNoise": 0.1,
+    "randomYaw": true
+  },
+  "randomization": {
+    "friction": [0.7, 1.1],
+    "mass": [0.95, 1.05],
+    "strength": [0.9, 1.1],
+    "actionDelayProbability": 0.5,
+    "observationNoise": 1.0
+  },
+  "drills": [
+    {
+      "id": "parado",
+      "displayName": "Parado",
+      "weight": 0.2,
+      "task": { "velocity": 0.5, "facing": 0.5 },
+      "pilot": {
+        "kind": "hold",
+        "camera": {
+          "fixed": 0.5,
+          "follow": 0.0,
+          "turns": 0.5,
+          "turnDegrees": [45.0, 180.0],
+          "turnRate": [0.4, 1.2],
+          "pauseSeconds": [1.5, 4.0]
+        }
+      }
+    },
+    {
+      "id": "deslocamento",
+      "displayName": "Deslocamento",
+      "weight": 0.5,
+      "task": { "velocity": 0.7, "facing": 0.3 },
+      "pilot": {
+        "kind": "stick",
+        "bands": [
+          { "name": "andar", "speed": [0.8, 1.6], "weight": 0.3 },
+          { "name": "trote", "speed": [2.0, 3.2], "weight": 0.4 },
+          { "name": "corrida", "speed": [4.0, 5.0], "weight": 0.3 }
+        ],
+        "stickSeconds": [0.5, 4.0],
+        "releaseFraction": 0.2,
+        "keysFraction": 0.7,
+        "syncFraction": 0.3,
+        "leashMeters": 40.0,
+        "camera": {
+          "fixed": 0.4,
+          "follow": 0.2,
+          "turns": 0.4,
+          "followRate": 4.0,
+          "turnDegrees": [45.0, 180.0],
+          "turnRate": [0.4, 1.2],
+          "pauseSeconds": [1.0, 3.0]
+        }
+      }
+    },
+    {
+      "id": "estrela",
+      "displayName": "Estrela",
+      "weight": 0.3,
+      "task": { "velocity": 0.7, "facing": 0.3 },
+      "pilot": {
+        "kind": "star",
+        "bands": [
+          { "name": "andar", "speed": [0.8, 1.6], "distance": [3.0, 6.0], "weight": 0.3 },
+          { "name": "trote", "speed": [2.0, 3.2], "distance": [5.0, 10.0], "weight": 0.4 },
+          { "name": "corrida", "speed": [4.0, 5.0], "distance": [8.0, 14.0], "weight": 0.3 }
+        ],
+        "starDirections": 8,
+        "starJitterDegrees": 8.0,
+        "continuousFraction": 0.5,
+        "stopFraction": 0.5,
+        "holdSeconds": [0.8, 1.5],
+        "brake": [3.0, 6.0],
+        "arriveRadius": 0.6,
+        "camera": {
+          "fixed": 0.4,
+          "follow": 0.3,
+          "turns": 0.3,
+          "followRate": 4.0,
+          "turnDegrees": [45.0, 180.0],
+          "turnRate": [0.4, 1.2],
+          "pauseSeconds": [1.0, 3.0]
+        }
+      }
+    }
+  ]
+}

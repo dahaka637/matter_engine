@@ -322,10 +322,17 @@ void BodyContract3D::beginDecision(BodyContractState3D& state, std::span<const f
 
 void BodyContract3D::writeTargets(const BodyContractState3D& state, std::uint32_t substep,
     const PlayerAttributes3D& player, std::vector<RagdollDriveTarget3D>& out, float hiddenStrength) const {
+    writeTargetsAt(state,
+        static_cast<float>(std::min(substep, m_settings.substepsPerDecision - 1) + 1)
+            / static_cast<float>(m_settings.substepsPerDecision),
+        player, out, hiddenStrength);
+}
+
+void BodyContract3D::writeTargetsAt(const BodyContractState3D& state, float u, const PlayerAttributes3D& player,
+    std::vector<RagdollDriveTarget3D>& out, float hiddenStrength) const {
     const std::size_t count = m_body.dofs.size();
     out.resize(count + m_body.lockedDofs.size());
-    const float u = static_cast<float>(std::min(substep, m_settings.substepsPerDecision - 1) + 1)
-        / static_cast<float>(m_settings.substepsPerDecision);
+    u = std::clamp(u, 0.0f, 1.0f);
     const auto fill = [&](RagdollDriveTarget3D& target, const RLBodyDof3D& dof, StrengthGroup3D group, float position,
                           float velocity) {
         target.linkIndex = dof.linkIndex;

@@ -21,8 +21,18 @@ no `docs/REINFORCEMENT_LEARNING.md` ("A reformulação do Corpo").
   - o contrato v2 (`MatterRLContract`): a entrada de 528 canais sem clipe e a
     ação absoluta com a reta entre decisões;
   - os testes do contrato.
-- **E1 (falta):** o lote v2 (os mundos de treino pelo contrato), o esquema 2 da
-  tarefa e o teste de paridade de informação.
+- **E1 (parte 2) e E3 (o piloto e as notas):**
+  - o adaptador do controle e o piloto (`MatterRLCommands`, dados puros): as
+    teclas no referencial da câmera, os tetos por direção, o pulo esperando a
+    decolagem; o piloto solta, segura direções ou faz a estrela, com a câmera
+    parada, acompanhando ou girando;
+  - as notas v2 (`RL/Rewards`): a tarefa (o vetor de velocidade e o olhar no
+    peito) e os custos físicos, por segundo;
+  - o esquema 2 da tarefa e o `corpo2.json` (o conjunto do Experimento B);
+  - o lote v2 (`BodyTrainingBatch3D`, `BodyBatch` na ponte): ~16.900
+    decisões/s com 512 mundos;
+  - os testes: o piloto, a ordem da nota, as trapaças, o determinismo e a
+    paridade de informação.
 - **E2 (Experimento A, feito):**
   - a velocidade pedida pela reta da ação média;
   - a ponta do pé sem tremor numérico;
@@ -32,7 +42,12 @@ no `docs/REINFORCEMENT_LEARNING.md` ("A reformulação do Corpo").
 - **Limitações:**
   - a ponta do pé com o peso em cima só se mede com uma política que equilibre
     (Experimento B);
-  - nada foi treinado ainda com o contrato v2.
+  - nada foi treinado ainda com o contrato v2;
+  - os pesos dos custos do `corpo2.json` são pontos de partida (a calibração
+    por pares de trajetórias precisa de trajetórias de verdade, nos primeiros
+    treinos do Experimento B);
+  - os eventos da nota (o pulo, o "de pé") vêm com os exercícios de pulo e de
+    levantar (E9).
 
 ## Aprendizado por Reforço (12/10/2026)
 

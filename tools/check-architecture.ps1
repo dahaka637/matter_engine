@@ -85,6 +85,14 @@ $checks = @(
         Arguments = @("-n", '#include "Engine/RL/(Environment|Style|Rewards|Commands|Imitation|Teacher|Supervisor|Calibration)/', "src/Engine/RL/Contract", "src/Engine/RL/Body")
     }
     @{
+        Name = "O piloto e o adaptador do controle (RL/Commands) sao dados puros: sem fisica, Jolt nem as pecas do treino"
+        Arguments = @("-n", '#include "Engine/(Physics|RL/(Environment|Style|Rewards|Imitation|Teacher|Supervisor|Calibration|Body))/|#include <Jolt/', "src/Engine/RL/Commands")
+    }
+    @{
+        Name = "As notas do Corpo (RL/Rewards) nao dependem dos mundos de treino, do estilo nem da imitacao"
+        Arguments = @("-n", '#include "Engine/RL/(Environment|Style|Imitation|Teacher|Supervisor)/', "src/Engine/RL/Rewards")
+    }
+    @{
         Name = "Tela de RL fala com o treinador so pelo Supervisor (sem sockets nem processos)"
         Arguments = @("-n", '#include <(sys/|spawn\.h|unistd\.h)', "src/Workbench")
     }

@@ -75,6 +75,65 @@ o cérebro antigo e as comparações até a F1.
   - `evaluateBatch` faz vários jogadores numa conta só;
   - a rede do plano caiu de 876 para 153 µs por decisão. Os 22 jogadores custam
     ~10% de um núcleo a 30 Hz.
+- **O adaptador do controle e o piloto** (`src/Engine/RL/Commands`, biblioteca
+  `MatterRLCommands`, dados puros sem física):
+  - **`ControlAdapter3D`:** o que o jogador aperta vira o comando do Corpo. O
+    direcional fica no referencial da câmera (as teclas dão as 8 direções com as
+    diagonais normalizadas; o analógico, qualquer ângulo). A velocidade é a do
+    modo do jogo, presa no teto da direção em relação à câmera (`SpeedCaps3D`:
+    frente 1, diagonal da frente 0,9, lado 0,65, diagonal de trás 0,6, costas
+    0,55 do sprint). O pulo apertado espera a decolagem por até 0,6 s. O jogo e
+    a IA usam o mesmo adaptador;
+  - **`CommandPilot3D`:** o "jogador de mentira" dos exercícios. Ele segura o
+    direcional pelo adaptador: solto (`hold`), uma direção em relação à câmera
+    por 0,5–4 s e troca (`stick`), ou a estrela, indo aos pontos e soltando
+    aos poucos para parar (`star`). A câmera fica parada, acompanha o movimento
+    ou gira em trechos (45–180°, 0,4–1,2 rad/s), e as trocas são só da câmera,
+    só da direção ou das duas;
+  - **a regra de arquitetura:** sem física, Jolt nem peças do treino.
+- **As notas do Corpo** (`src/Engine/RL/Rewards/BodyReward3D`):
+  `r = dt × (tarefa − custos) − queda`, e o treinador soma `dt × β × estilo`.
+  - **A tarefa:** a velocidade compara o vetor inteiro do centro de massa com o
+    pedido, na cauda longa `1/(1 + (e/tol)²)` ou no sino, com a tolerância
+    0,2 m/s + 10% do pedido. O olhar é o sino do erro do peito contra a câmera
+    (0,4 rad). Os pesos são do exercício (parado 0,5/0,5; andando 0,7/0,3).
+  - **Os custos** são somados nos passos de física: o trabalho positivo dos
+    motores por peso, o uso do motor `(τ/teto)²`, o escorregar no ponto de
+    contato dos pés (pesado pela carga), a força do pé acima de 2 pesos, o giro
+    e o tranco da cabeça, a mudança do alvo com as reversões (4×), as juntas no
+    fim do curso e o contato que não é pé. O tempo no teto do torque é medido,
+    sem peso.
+  - **Ainda não:** os eventos (o pulo, o "de pé") entram com os exercícios de
+    pulo e de levantar.
+- **A tarefa do Corpo v2** (`Environment/BodyTask3D`, o esquema
+  `matter-rl-task-2`): o corpo, a decisão do contrato, o jogador, os tetos, a
+  nota, o começo, o fim, a variação escondida do mundo e os exercícios como
+  roteiros do piloto. `assets/rl/tasks/corpo2.json` é o conjunto do
+  Experimento B: parado (20% dos mundos), deslocamento (50%) e estrela (30%),
+  em andar, trote e corrida.
+- **O lote v2** (`Environment/BodyTrainingBatch3D`) só orquestra o contrato, o
+  piloto pelo adaptador e as notas:
+  - `step(ações, médias)`: a média da política vira a velocidade pedida aos
+    motores;
+  - **as cotas:** cada mundo fica no seu exercício pelo peso, então a fatia das
+    decisões é a fatia dos mundos;
+  - **o crítico** vê a entrada sem ruído e o que o ator não vê: o atrito, a
+    massa, a força, o atraso, o contato de cada link, o exercício, o modo da
+    câmera e a idade do pedido;
+  - **o atraso** de um passo de física desloca a reta inteira (o contrato tem
+    `writeTargetsAt`);
+  - **as medidas de cada episódio:** as notas, os erros de velocidade e de
+    olhar, a reação a cada troca do pedido, os custos, a telemetria da ação
+    (tamanho, presa no limite, alvo preso no curso, reversão) e a cadência;
+  - **na ponte:** `matter_rl_native.BodyBatch`, com `episode_columns()` e
+    `frame_lines()` para as folhas de quadros;
+  - **a velocidade medida:** ~16.900 decisões/s com 512 mundos e ações
+    aleatórias (os 20 links e as pontas no chão).
+  - **Os testes** (`tests/RL/BodyBatchTests.cpp` e `tools/rl/tests/test_native.py`):
+    o adaptador, o piloto (determinístico, dentro dos tetos, os modos da
+    câmera), a ordem da nota e as trapaças, a conta das parcelas, o
+    determinismo com qualquer número de threads e a paridade de informação (a
+    entrada montada só com o que o jogo tem é a do treino).
 
 ## As peças
 

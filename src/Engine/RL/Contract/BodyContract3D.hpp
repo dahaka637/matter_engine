@@ -99,6 +99,10 @@ public:
     // hiddenStrength: a variacao de forca do treino que a rede nao ve.
     void writeTargets(const BodyContractState3D& state, std::uint32_t substep, const PlayerAttributes3D& player,
         std::vector<RagdollDriveTarget3D>& out, float hiddenStrength = 1.0f) const;
+    // Os alvos num ponto u (0 a 1) da reta da decisao: writeTargets e o fim de
+    // cada passo de fisica; um u menor e o comando atrasado.
+    void writeTargetsAt(const BodyContractState3D& state, float u, const PlayerAttributes3D& player,
+        std::vector<RagdollDriveTarget3D>& out, float hiddenStrength = 1.0f) const;
 
     // O grupo de forca de um link (pelo id).
     [[nodiscard]] static StrengthGroup3D strengthGroup(std::string_view linkId);

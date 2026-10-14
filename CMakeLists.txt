@@ -395,16 +395,34 @@ if(MATTERENGINE_BUILD_RL)
         target_compile_options(MatterRLContract PRIVATE -Wall -Wextra -Wpedantic)
     endif()
 
-    # Os mundos de treino: as tarefas e o lote paralelo. Depende so da fisica,
-    # dos clipes e do contrato (nada de janela, render ou Python).
+    # O adaptador do controle e o piloto (dados puros, sem fisica): o jogo e a
+    # IA reaproveitam; o treino aperta o controle por ele.
+    add_library(MatterRLCommands STATIC
+        src/Engine/RL/Commands/ControlAdapter3D.cpp
+        src/Engine/RL/Commands/CommandPilot3D.cpp
+    )
+    target_include_directories(MatterRLCommands PUBLIC src)
+    target_link_libraries(MatterRLCommands PUBLIC MatterCore)
+    if(MSVC)
+        target_compile_options(MatterRLCommands PRIVATE /W4 /permissive- /utf-8)
+    else()
+        target_compile_options(MatterRLCommands PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+
+    # Os mundos de treino: as tarefas, as notas e os lotes paralelos (o do
+    # contrato 1 e o do Corpo v2). Depende so da fisica, dos clipes, do
+    # contrato e do piloto (nada de janela, render ou Python).
     add_library(MatterRLEnvironment STATIC
         src/Engine/RL/Environment/TrainingTask3D.cpp
         src/Engine/RL/Environment/TrainingBatch3D.cpp
+        src/Engine/RL/Environment/BodyTask3D.cpp
+        src/Engine/RL/Environment/BodyTrainingBatch3D.cpp
+        src/Engine/RL/Rewards/BodyReward3D.cpp
         src/Engine/RL/Imitation/ReferenceMotion3D.cpp
     )
     target_include_directories(MatterRLEnvironment PUBLIC src)
     target_link_libraries(MatterRLEnvironment
-        PUBLIC MatterRLContract MatterPhysics MatterAnimationClips
+        PUBLIC MatterRLContract MatterRLCommands MatterPhysics MatterAnimationClips
         PRIVATE nlohmann_json::nlohmann_json)
     if(MSVC)
         target_compile_options(MatterRLEnvironment PRIVATE
@@ -832,6 +850,7 @@ if(MATTERENGINE_BUILD_TESTS)
             tests/RL/RLBodyTests.cpp
             tests/RL/BodyContractTests.cpp
             tests/RL/TrainingBatchTests.cpp
+            tests/RL/BodyBatchTests.cpp
             tests/RL/RLTestMain.cpp)
         target_link_libraries(MatterRLTrainingTests
             PRIVATE MatterRLEnvironment)

@@ -9,6 +9,7 @@
 #include <nanobind/stl/vector.h>
 #include <nanobind/stl/array.h>
 
+#include "Engine/RL/Environment/BodyTrainingBatch3D.hpp"
 #include "Engine/RL/Environment/TrainingBatch3D.hpp"
 #include "Engine/RL/Imitation/ReferenceMotion3D.hpp"
 #include "Engine/RL/Policy/PolicyRuntime3D.hpp"
@@ -17,6 +18,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <iterator>
 #include <memory>
 #include <sstream>
 #include <stdexcept>
@@ -45,7 +47,8 @@ std::vector<std::string> names(const RLVectorLayout3D& layout) {
     return result;
 }
 
-FloatView2 view2(TrainingBatch3D& batch, std::span<const float> data, std::size_t columns) {
+template <typename Batch>
+FloatView2 view2(Batch& batch, std::span<const float> data, std::size_t columns) {
     const std::size_t rows = batch.environmentCount();
     return FloatView2(data.data(), { rows, columns }, nb::find(&batch));
 }
@@ -93,6 +96,54 @@ std::string frameLines(const TrainingBatch3D& batch, std::size_t environment) {
     return out.str();
 }
 
+
+// O mesmo dump do quadros para um mundo do Corpo v2: os colisores, os
+// contatos, o ponto do piloto (A), o comando (W: a direcao pedida no mundo;
+// U: a velocidade pedida e a de agora), a velocidade do centro de massa (V),
+// para onde a cabeca olha (H) e a camera (L, rad).
+std::string bodyFrameLines(const BodyTrainingBatch3D& batch, std::size_t environment) {
+    const BodyWorldView3D view = batch.view(environment);
+    std::ostringstream out;
+    if (!view.state) return {};
+    const RagdollProfile3D& profile = batch.body().profile;
+    for (std::size_t i = 0; i < profile.links.size() && i < view.state->links.size(); ++i) {
+        const RagdollLinkDefinition3D& link = profile.links[i];
+        const PhysicsBodyState3D& state = view.state->links[i];
+        const Vec3 center = state.position + state.orientation.rotate(link.collider.localPosition);
+        const Quaternion orientation = (state.orientation * link.collider.localOrientation).normalized();
+        out << (link.collider.shape == RagdollColliderShape3D::Box ? "B " : "C ") << link.id << ' ' << center.x << ' '
+            << center.y << ' ' << center.z << ' ' << orientation.x << ' ' << orientation.y << ' ' << orientation.z
+            << ' ' << orientation.w << '\n';
+    }
+    for (const RagdollContactPoint3D& contact : view.state->contacts)
+        out << "P " << contact.position.x << ' ' << contact.position.y << ' ' << contact.position.z << ' '
+            << contact.linkIndex << ' ' << contact.normal.x << ' ' << contact.normal.y << ' ' << contact.normal.z << ' '
+            << contact.normalImpulseNewtonSeconds << '\n';
+    if (view.hasTarget) {
+        const float radius = batch.task().drills[view.drill].pilot.arriveRadius;
+        out << "A " << view.target.x << ' ' << view.target.y << ' ' << view.target.z << ' ' << radius << '\n';
+    }
+    const Vec3 wanted = view.command.moveVelocity;
+    const float speed = std::hypot(wanted.x, wanted.y);
+    if (speed > 1.0e-4f) out << "W " << wanted.x / speed << ' ' << wanted.y / speed << " 0\n";
+    out << "U " << speed << ' ' << std::hypot(view.velocity.x, view.velocity.y) << '\n';
+    out << "V " << view.velocity.x << ' ' << view.velocity.y << ' ' << view.velocity.z << '\n';
+    const RLBody3D& body = batch.body();
+    const Quaternion head = view.state->links[body.head].orientation * profile.links[body.head].modelOrientation.conjugate();
+    const Vec3 gaze = head.rotate({ 1.0f, 0.0f, 0.0f });
+    const float planar = std::max(1.0e-6f, std::hypot(gaze.x, gaze.y));
+    out << "H " << gaze.x / planar << ' ' << gaze.y / planar << " 0\n";
+    out << "L " << view.command.faceHeading << '\n';
+    return out.str();
+}
+
+// As colunas de finished_episodes() do Corpo v2, na ordem.
+const std::vector<std::string> BodyEpisodeColumns {
+    "mundo", "exercicio", "razao", "primeiro_link", "decisoes", "segundos", "retorno", "nota_velocidade", "nota_olhar",
+    "erro_velocidade", "erro_olhar", "reacao", "reacao_resolvida", "trocas", "trabalho", "uso_motor", "escorregar",
+    "pancada", "cabeca", "suavidade", "limites", "contatos", "no_teto", "acao_media", "acao_presa", "alvo_preso",
+    "reversao", "cadencia", "distancia"
+};
 
 // As linhas de colisores de uma pose (o formato do dump do quadros).
 std::string poseLines(const RagdollProfile3D& profile, const RLBodyPose3D& pose) {
@@ -433,6 +484,135 @@ NB_MODULE(matter_rl_native, m) {
 
     m.attr("END_REASONS") = std::vector<std::string> { "nenhum", "queda_contato", "queda_altura", "numerico", "tempo",
         "limite", "alvo_perdido" };
+
+    // O lote do Corpo v2 (o contrato v2, o piloto e as notas novas).
+    nb::class_<BodyTrainingBatch3D>(m, "BodyBatch")
+        .def(
+            "__init__",
+            [](BodyTrainingBatch3D* self, const std::string& task, std::uint32_t environments, std::uint32_t perScene,
+                std::uint32_t threads, std::uint64_t seed, bool evaluation, float evaluationSeconds, int solverPosition,
+                int solverVelocity, const std::string& drill) {
+                BodyBatchSettings3D settings;
+                settings.taskPath = task;
+                settings.environmentCount = environments;
+                settings.environmentsPerScene = perScene;
+                settings.workerThreads = threads;
+                settings.seed = seed;
+                settings.evaluation = evaluation;
+                settings.evaluationEpisodeSeconds = evaluationSeconds;
+                settings.solverPositionIterations = solverPosition;
+                settings.solverVelocityIterations = solverVelocity;
+                settings.drill = drill;
+                nb::gil_scoped_release release;
+                new (self) BodyTrainingBatch3D(settings);
+            },
+            "task"_a, "environments"_a = 512, "per_scene"_a = 4, "threads"_a = 0, "seed"_a = 1, "evaluation"_a = false,
+            "evaluation_seconds"_a = 20.0f, "solver_position"_a = -1, "solver_velocity"_a = -1, "drill"_a = "")
+        .def_prop_ro("num_envs", &BodyTrainingBatch3D::environmentCount)
+        .def_prop_ro("obs_size", &BodyTrainingBatch3D::observationSize)
+        .def_prop_ro("critic_size", &BodyTrainingBatch3D::criticObservationSize)
+        .def_prop_ro("action_size", &BodyTrainingBatch3D::actionSize)
+        .def_prop_ro("reward_count", &BodyTrainingBatch3D::rewardComponentCount)
+        .def_prop_ro("threads", &BodyTrainingBatch3D::workerThreads)
+        .def_prop_ro("policy_dt", &BodyTrainingBatch3D::policyStepSeconds)
+        .def_prop_ro("body_id", [](const BodyTrainingBatch3D& b) { return b.body().id; })
+        .def_prop_ro("body_hash", [](const BodyTrainingBatch3D& b) { return hex(b.body().hash); })
+        .def_prop_ro("task_id", [](const BodyTrainingBatch3D& b) { return b.task().id; })
+        .def_prop_ro("task_name", [](const BodyTrainingBatch3D& b) { return b.task().displayName; })
+        .def_prop_ro("task_hash", [](const BodyTrainingBatch3D& b) { return hex(b.task().hash); })
+        .def_prop_ro("profile_path", [](const BodyTrainingBatch3D& b) { return b.body().profilePath.string(); })
+        .def_prop_ro("link_ids",
+            [](const BodyTrainingBatch3D& b) {
+                std::vector<std::string> ids;
+                for (const RagdollLinkDefinition3D& link : b.body().profile.links) ids.push_back(link.id);
+                return ids;
+            })
+        .def_prop_ro("drill_ids",
+            [](const BodyTrainingBatch3D& b) {
+                std::vector<std::string> ids;
+                for (const BodyDrill3D& drill : b.task().drills) ids.push_back(drill.id);
+                return ids;
+            })
+        .def("world_drills",
+            [](BodyTrainingBatch3D& b) {
+                return nb::ndarray<nb::numpy, const std::uint32_t, nb::ndim<1>>(
+                    b.worldDrills().data(), { b.environmentCount() }, nb::find(&b));
+            })
+        .def("observation_names", [](const BodyTrainingBatch3D& b) { return names(b.observationLayout()); })
+        .def("critic_names", [](const BodyTrainingBatch3D& b) { return names(b.criticObservationLayout()); })
+        .def("action_names", [](const BodyTrainingBatch3D& b) { return names(b.actionLayout()); })
+        .def("reward_names",
+            [](const BodyTrainingBatch3D&) {
+                return std::vector<std::string>(BodyRewardTermNames3D.begin(), BodyRewardTermNames3D.end());
+            })
+        .def("episode_columns", [](const BodyTrainingBatch3D&) { return BodyEpisodeColumns; })
+        .def("layout_ids",
+            [](const BodyTrainingBatch3D& b) {
+                return std::vector<std::string> { b.observationLayout().id, std::to_string(b.observationLayout().version),
+                    b.actionLayout().id, std::to_string(b.actionLayout().version) };
+            })
+        .def("action_radians_per_unit", &BodyTrainingBatch3D::actionRadiansPerUnit)
+        .def(
+            "reset",
+            [](BodyTrainingBatch3D& b, std::uint64_t seed) {
+                nb::gil_scoped_release release;
+                b.reset(seed);
+            },
+            "seed"_a)
+        .def(
+            "step",
+            [](BodyTrainingBatch3D& b, nb::ndarray<const float, nb::ndim<2>, nb::c_contig, nb::device::cpu> actions,
+                nb::ndarray<const float, nb::ndim<2>, nb::c_contig, nb::device::cpu> means) {
+                if (actions.shape(0) != b.environmentCount() || actions.shape(1) != b.actionSize()
+                    || means.shape(0) != b.environmentCount() || means.shape(1) != b.actionSize())
+                    throw nb::value_error("acoes com forma errada");
+                const std::span<const float> a(actions.data(), actions.size());
+                const std::span<const float> m(means.data(), means.size());
+                nb::gil_scoped_release release;
+                b.step(a, m);
+            },
+            "actions"_a, "means"_a)
+        .def("observations", [](BodyTrainingBatch3D& b) { return view2(b, b.observations(), b.observationSize()); })
+        .def("critic_observations",
+            [](BodyTrainingBatch3D& b) { return view2(b, b.criticObservations(), b.criticObservationSize()); })
+        .def("terminal_critic_observations",
+            [](BodyTrainingBatch3D& b) { return view2(b, b.terminalCriticObservations(), b.criticObservationSize()); })
+        .def("reward_components",
+            [](BodyTrainingBatch3D& b) { return view2(b, b.rewardComponents(), b.rewardComponentCount()); })
+        .def("rewards",
+            [](BodyTrainingBatch3D& b) { return FloatView1(b.rewards().data(), { b.environmentCount() }, nb::find(&b)); })
+        .def("terminated",
+            [](BodyTrainingBatch3D& b) { return ByteView1(b.terminated().data(), { b.environmentCount() }, nb::find(&b)); })
+        .def("truncated",
+            [](BodyTrainingBatch3D& b) { return ByteView1(b.truncated().data(), { b.environmentCount() }, nb::find(&b)); })
+        .def("finished_episodes",
+            [](BodyTrainingBatch3D& b) {
+                // As colunas de episode_columns().
+                const auto episodes = b.finishedEpisodes();
+                const std::size_t columns = BodyEpisodeColumns.size();
+                auto* data = new float[std::max<std::size_t>(1, episodes.size()) * columns];
+                for (std::size_t i = 0; i < episodes.size(); ++i) {
+                    const BodyEpisode3D& e = episodes[i];
+                    const BodyCosts3D& c = e.costs;
+                    const float row[] { static_cast<float>(e.environment), static_cast<float>(e.drill),
+                        static_cast<float>(static_cast<int>(e.reason)), static_cast<float>(e.firstContactLink),
+                        static_cast<float>(e.steps), e.seconds, e.episodeReturn, e.velocityScore, e.facingScore,
+                        e.velocityErrorRms, e.facingErrorRms, e.reactionSeconds, e.reactionResolved,
+                        static_cast<float>(e.commandChanges), c.work, c.torque, c.slip, c.impact, c.head, c.smooth,
+                        c.limits, c.contacts, c.saturation, e.meanAbsAction, e.actionClipped, e.targetClamped,
+                        e.meanReversal, e.cadence, e.distance };
+                    static_assert(std::size(row) == 29);
+                    std::copy(std::begin(row), std::end(row), data + i * columns);
+                }
+                nb::capsule owner(data, [](void* p) noexcept { delete[] static_cast<float*>(p); });
+                return nb::ndarray<nb::numpy, float, nb::ndim<2>>(data, { episodes.size(), columns }, owner);
+            })
+        .def("frame_lines", &bodyFrameLines, "environment"_a)
+        .def("last_step_ms", &BodyTrainingBatch3D::lastStepMilliseconds)
+        .def("physics_steps", &BodyTrainingBatch3D::physicsStepCount);
+
+    m.attr("BODY_END_REASONS") =
+        std::vector<std::string> { "nenhum", "queda_contato", "queda_altura", "numerico", "tempo", "limite" };
 
     nb::class_<PolicyRuntime3D>(m, "Policy")
         .def(nb::init<const std::string&>(), "path"_a)

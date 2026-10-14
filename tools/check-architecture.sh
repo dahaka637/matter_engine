@@ -82,6 +82,11 @@ check_absent "A politica exportada (RL/Policy) nao depende da fisica" \
 check_absent "Contrato do Corpo e corpo de RL (vao para o jogo) nao dependem dos mundos de treino, do estilo, das notas, do piloto, da imitacao, do professor nem do treinador" \
     '#include "Engine/RL/(Environment|Style|Rewards|Commands|Imitation|Teacher|Supervisor|Calibration)/' \
     src/Engine/RL/Contract src/Engine/RL/Body
+check_absent "O piloto e o adaptador do controle (RL/Commands) sao dados puros: sem fisica, Jolt nem as pecas do treino" \
+    '#include "Engine/(Physics|RL/(Environment|Style|Rewards|Imitation|Teacher|Supervisor|Calibration|Body))/|#include <Jolt/' \
+    src/Engine/RL/Commands
+check_absent "As notas do Corpo (RL/Rewards) nao dependem dos mundos de treino, do estilo nem da imitacao" \
+    '#include "Engine/RL/(Environment|Style|Imitation|Teacher|Supervisor)/' src/Engine/RL/Rewards
 check_absent "Tela de RL fala com o treinador so pelo Supervisor (sem sockets nem processos)" \
     '#include <(sys/|spawn\.h|unistd\.h)' src/Workbench
 check_absent "Tela de RL fala com a GPU so pelo CanvasTarget" \
