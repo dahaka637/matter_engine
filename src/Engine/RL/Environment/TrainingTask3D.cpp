@@ -237,8 +237,7 @@ TrainingTask3D parseTask(const nlohmann::json& document, const std::filesystem::
         if (out.pattern != "random" && out.pattern != "star" && out.pattern != "arc" && out.pattern != "hold"
             && out.pattern != "getup")
             throw std::runtime_error("tarefa de RL: pattern e random, star, arc, hold ou getup");
-        out.knockdownNewtons = range(t, "knockdownNewtons", out.knockdownNewtons);
-        out.knockdownSeconds = std::max(0.01f, t.value("knockdownSeconds", out.knockdownSeconds));
+        out.dropHeight = std::max(0.5f, t.value("dropHeight", out.dropHeight));
         out.getUpBackClip = t.value("getUpBackClip", out.getUpBackClip);
         out.getUpFrontClip = t.value("getUpFrontClip", out.getUpFrontClip);
         out.getUpSprintClip = t.value("getUpSprintClip", out.getUpSprintClip);

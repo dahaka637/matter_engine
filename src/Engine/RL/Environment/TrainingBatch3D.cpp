@@ -1479,6 +1479,30 @@ void TrainingBatch3D::Impl::resetEnvironment(std::uint32_t index) {
             gaussian(env.rng, start.rootAngularVelocityNoise * noise) };
         rlBodyLinkStates3D(body.profile, rootPosition, root, rootVelocity, rootSpin, coordinates, velocities, links);
     }
+    // O levantar: a dropHeight do chao, numa orientacao e numa pose sorteadas
+    // (cada junta em qualquer lugar da metade do curso em volta da postura),
+    // solto: cai como boneco de pano.
+    if (task.target.pattern == "getup" && imitating() && reference.library) {
+        std::vector<Vec3> coordinates = posture.jointCoordinates;
+        std::vector<Vec3> velocities(coordinates.size());
+        for (const RLBodyDof3D& dof : body.dofs) {
+            Vec3& q = coordinates[dof.linkIndex];
+            float* value = dof.axis == RagdollAxis3D::Twist ? &q.x : dof.axis == RagdollAxis3D::Swing1 ? &q.y : &q.z;
+            const float spread = 0.5f * (dof.maximumRadians - dof.minimumRadians);
+            *value = std::clamp(*value + std::uniform_real_distribution<float>(-0.5f, 0.5f)(env.rng) * spread,
+                dof.minimumRadians, dof.maximumRadians);
+        }
+        const auto angle = [&] {
+            return std::uniform_real_distribution<float>(-std::numbers::pi_v<float>, std::numbers::pi_v<float>)(env.rng);
+        };
+        const Quaternion turn = (Quaternion::fromAxisAngle({ 0.0f, 0.0f, 1.0f }, angle())
+            * Quaternion::fromAxisAngle({ 0.0f, 1.0f, 0.0f }, angle())
+            * Quaternion::fromAxisAngle({ 1.0f, 0.0f, 0.0f }, angle())).normalized();
+        const Quaternion root = (turn * body.profile.links.front().modelOrientation).normalized();
+        const Vec3 spin { gaussian(env.rng, 1.0f), gaussian(env.rng, 1.0f), gaussian(env.rng, 1.0f) };
+        rlBodyLinkStates3D(body.profile, env.origin + Vec3 { 0.0f, 0.0f, task.target.dropHeight }, root, Vec3 {}, spin,
+            coordinates, velocities, links);
+    }
     scene.physics->resetRagdollState(env.ragdoll, links);
     {
         const Vec3 forward = (links.front().orientation * body.profile.links.front().modelOrientation.conjugate())
@@ -1517,8 +1541,7 @@ void TrainingBatch3D::Impl::resetEnvironment(std::uint32_t index) {
     env.pushRemaining = 0.0f;
     env.pushForce = {};
     env.pushesOn = task.pushes.enabled && (!task.pushes.whenRotating || env.facingDrifting);
-    // O levantar: em pe, solto, e o tranco no peito numa direcao sorteada (na
-    // avaliacao: de costas, de frente, para um lado e para o outro).
+    // O levantar: caindo, solto, ate parar no chao.
     env.knockdown = task.target.pattern == "getup" && imitating() && reference.library;
     env.knockdownTime = env.restTime = 0.0f;
     env.controlAt = -1.0f;
@@ -1526,16 +1549,6 @@ void TrainingBatch3D::Impl::resetEnvironment(std::uint32_t index) {
     env.standSince = env.getUpSeconds = env.getUpTargetSeconds = -1.0f;
     env.stoodOnce = env.downAgain = false;
     env.refalls = 0;
-    if (env.knockdown) {
-        const TrainingRange3D& push = task.target.knockdownNewtons;
-        const float side = training()
-            ? std::uniform_real_distribution<float>(-std::numbers::pi_v<float>, std::numbers::pi_v<float>)(env.rng)
-            : std::numbers::pi_v<float> + static_cast<float>(env.sequence % 4) * 0.5f * std::numbers::pi_v<float>;
-        const float force = training() ? uniform(env.rng, push) : 0.5f * (push.minimum + push.maximum);
-        env.pushForce = Vec3 { std::cos(env.startHeading + side), std::sin(env.startHeading + side), 0.0f } * force;
-        env.pushLink = body.upperChest;
-        env.pushRemaining = task.target.knockdownSeconds;
-    }
     env.pushStartedAt = env.lowSince = env.pushRecoverySince = -1.0f;
     env.pushRecoverySum = 0.0;
     env.pushRecoveryCount = 0;
@@ -2632,14 +2645,14 @@ void TrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> actio
                     }
                     env.facingCommand += env.facingRate * decision;
                 }
-                // O levantar: 1 s parado no chao (ou 5 s caindo) e o controle comeca.
+                // O levantar: 1 s parado no chao (ou 6 s caindo) e o controle comeca.
                 if (env.knockdown) {
                     env.knockdownTime += decision;
                     const Vec3 v = state->links.front().linearVelocity;
                     const bool still = std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z) < 0.25f
                         && state->links.front().position.z < 0.6f * body.postures[env.posture].standingPelvisHeight;
                     env.restTime = still ? env.restTime + decision : 0.0f;
-                    if (env.restTime >= 1.0f || env.knockdownTime >= 5.0f) startGetUp(env, *state, reading);
+                    if (env.restTime >= 1.0f || env.knockdownTime >= 6.0f) startGetUp(env, *state, reading);
                 }
                 if (reference.library) plan(env, reading.com, facing, false);
                 else env.turnRate = wantedTurn(env, reading.com, facing);

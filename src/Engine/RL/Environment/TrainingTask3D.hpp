@@ -417,16 +417,14 @@ struct TrainingTask3D {
         float standJumpFraction = 0.0f;
         TrainingRange3D runJumpRise { 0.20f, 0.50f };
         TrainingRange3D standJumpRise { 0.15f, 0.45f };
-        // O levantar (o 10): pattern "getup". Ele nasce em pe, solto como
-        // boneco de pano, e um tranco no peito (knockdownNewtons por
-        // knockdownSeconds, numa direcao sorteada) o joga no chao; 1 s depois
-        // de parar no chao o controle comeca, com o clipe de levantar pela
+        // O levantar (o 10): pattern "getup". Ele nasce solto como boneco de
+        // pano a dropHeight (m) do chao, numa orientacao e numa pose sorteadas,
+        // e cai; 1 s depois de parar no chao o controle comeca, com o clipe de levantar pela
         // posicao (getUpBackClip de costas, getUpFrontClip de brucos; os ids da
         // biblioteca). Com getUpTarget (m), ao comecar o controle um alvo a essa
         // distancia, na pedida da faixa, e no meio do levantar o clipe emenda
         // na arrancada (getUpSprintClip); sem ele, levantar e ficar no alerta.
-        TrainingRange3D knockdownNewtons { 700.0f, 1100.0f };
-        float knockdownSeconds = 0.15f;
+        float dropHeight = 5.0f;
         std::string getUpBackClip;
         std::string getUpFrontClip;
         std::string getUpSprintClip;

@@ -302,11 +302,12 @@ diagonal), e a voltar.
 O exercício 10, como o usuário descreveu, em duas variantes (o grupo
 "Levantar" na tela: Sem alvo, Com alvo).
 
-- **O começo, nas duas:** ele nasce em pé, solto como boneco de pano (os
-  motores a 5% da rigidez), e um tranco no peito (`knockdownNewtons`
-  700–1100 N por 0,15 s, numa direção sorteada; na avaliação de costas, de
-  frente e para os dois lados) o joga no chão. 1 s parado no chão (ou 5 s
-  caindo) e o controle começa. Caindo, a nota é zero.
+- **O começo, nas duas:** ele nasce solto como boneco de pano (os motores a
+  5% da rigidez) a `dropHeight` (5 m) do chão, numa orientação e numa pose
+  sorteadas (cada junta na metade do curso em volta da postura), e cai. 1 s
+  parado no chão (ou 6 s caindo) e o controle começa. Caindo, a nota é zero.
+  (A primeira versão do dia derrubava com um tranco a partir de em pé; o
+  usuário preferiu a queda do alto, que dá posições de verdade aleatórias.)
 - **O exemplo:** o levantar do Kimodo pela posição (a frente do peito para
   cima: `stand_up_back_kimodo`; para baixo: `stand_up_front_kimodo`), tocado do
   começo ao fim. Depois, o planejador comum (o parado, ou a corrida).
