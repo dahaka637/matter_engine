@@ -8,8 +8,10 @@ politica precisa ter os mesmos nomes de entrada da tarefa.
 
   .venv/bin/python previa_corpo.py --tarefa corpo2 --exercicio deslocamento \\
       --politica ~/.local/share/matter-engine/rl/runs/corpo2/exports/policy_latest.mrlpolicy \\
-      --segundos 20 --saida /tmp/previa --mundos 0,3
-  ../../build-profile/MatterModelInspector quadros --dump /tmp/previa/m0.dump --quadros 16 --colunas 8
+      --segundos 20 --saida /tmp/previa --mundos 0,3 --folha
+
+Com --folha, cada mundo com dump vira uma folha de quadros (m<N>.png), pelo
+MatterModelInspector mais recente das builds.
 """
 
 from __future__ import annotations
@@ -18,6 +20,7 @@ import argparse
 import json
 import shutil
 import struct
+import subprocess
 import sys
 from pathlib import Path
 
@@ -45,6 +48,9 @@ def main() -> int:
     parser.add_argument("--mundos", default="0", help="os mundos com dump, separados por virgula")
     parser.add_argument("--solver", choices=["jogo", "treino"], default="jogo")
     parser.add_argument("--saida", required=True)
+    parser.add_argument("--folha", action="store_true", help="renderiza a folha de quadros de cada mundo com dump")
+    parser.add_argument("--quadros", type=int, default=16)
+    parser.add_argument("--vista", default="34")
     args = parser.parse_args()
 
     out = Path(args.saida)
@@ -93,6 +99,17 @@ def main() -> int:
                 dumps[e] += [f"F {(step + 1) * batch.policy_dt:.4f} 0", lines.rstrip()]
     for w, lines in dumps.items():
         (out / f"m{w}.dump").write_text("\n".join(lines) + "\n")
+    if args.folha:
+        inspectors = [p for p in REPO.glob("build-*/MatterModelInspector") if p.is_file()]
+        if not inspectors:
+            print("MatterModelInspector ausente: as folhas ficam por fazer", file=sys.stderr)
+        else:
+            inspector = max(inspectors, key=lambda p: p.stat().st_mtime)
+            for w in sorted(dumps):
+                subprocess.run([str(inspector), "quadros", "--dump", str(out / f"m{w}.dump"), "--quadros",
+                                str(args.quadros), "--colunas", "8", "--largura", "180", "--altura", "260", "--vista",
+                                args.vista, "--saida", str(out / f"m{w}.png")], check=False, capture_output=True)
+                print(f"folha: {out / f'm{w}.png'}")
     drills = list(batch.drill_ids)
     print(f"politica rodada {policy.iteration} · tarefa {task.stem} · exercicio {args.exercicio or '(as cotas)'} · "
           f"solver {args.solver} · {args.segundos:.0f} s")
