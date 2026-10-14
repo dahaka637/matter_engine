@@ -227,6 +227,19 @@ o cérebro antigo e as comparações até a F1.
     status.
 - **A prévia do Corpo v2** (`tools/rl/previa_corpo.py`): uma política exportada
   no lote v2 com a física do jogo, mais os dumps para as folhas de quadros.
+- **A afinidade com o acervo** (`tools/rl/matter_rl/affinity.py`, uma peça do
+  exame da E9; `matter-rl afinidade treinar --politicas a,b` e `medir`):
+  - **um juiz de avaliação congelado,** treinado uma vez: o acervo (+1)
+    contra amostras de políticas e movimentos estragados de propósito (ruído
+    grande, metades de pares diferentes e a pose exagerada). Congelar ou
+    inverter o tempo não entram: em 33 ms o par estragado fica quase o de
+    verdade;
+  - **mede compatibilidade com o acervo, não naturalidade,** e nunca decide
+    sozinho;
+  - **no teste de 14/10,** com 4 políticas de teste como negativas: os clipes
+    de treino tiram 0,98, os reservados 0,75 e os negativos 0,13. Duas
+    políticas de fora do treino, ambas com posturas ruins, ficam no meio (0,60
+    e 0,46).
 - **O cérebro do Corpo no jogo** (`src/Engine/RL/Brain/BodyBrain3D`, biblioteca
   `MatterRLBrain`: o contrato v2 mais a política exportada, sem nada do
   treino):

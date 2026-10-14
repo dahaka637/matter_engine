@@ -19,6 +19,8 @@
     matter-rl folha --referencia [--de S --ate S]  a referencia da imitacao (o clipe no corpo do RL)
     matter-rl comparar A B                a bateria em dois checkpoints, lado a lado
     matter-rl episodios                   as gravacoes da ultima avaliacao
+    matter-rl afinidade treinar --politicas a,b   o juiz de avaliacao congelado (Corpo v2), uma vez
+    matter-rl afinidade medir --politicas x       a afinidade de politicas com o acervo
 """
 from __future__ import annotations
 
@@ -419,6 +421,36 @@ def command_episodes(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_affinity(args: argparse.Namespace) -> int:
+    """A afinidade com o acervo (o juiz de avaliacao congelado do Corpo v2)."""
+    import numpy as np
+    from . import native
+    from .affinity import AffinityJudge, AffinitySettings, corrupted, describe, policy_pairs
+    module = native.load()
+    task = paths.task_path(args.tarefa)
+    data = json.loads(task.read_text())
+    body = str((task.parent / data["body"]).resolve())
+    dataset = module.motion_dataset(body, str((task.parent / data["style"]["dataset"]).resolve()))
+    judge_path = Path(args.juiz) if args.juiz else paths.DATA / "avaliacao" / "juiz_afinidade.pt"
+    device = "cuda" if __import__("torch").cuda.is_available() else "cpu"
+    if args.acao == "treinar":
+        policies = [p for p in args.politicas.split(",") if p.strip()]
+        rng = np.random.default_rng(0)
+        negatives = [corrupted(np.asarray(dataset["pairs"]), rng)]
+        for policy in policies:
+            negatives.append(policy_pairs(module, str(task), policy))
+        judge = AffinityJudge(dataset, AffinitySettings(), device)
+        result = judge.train(np.concatenate(negatives))
+        judge.save(judge_path, {"politicas": policies, "resultado": result})
+        print(f"juiz de afinidade salvo em {judge_path}: {describe(result)}")
+        return 0
+    judge = AffinityJudge.load(judge_path, dataset, device)
+    for policy in [p for p in args.politicas.split(",") if p.strip()]:
+        print(f"{policy}: afinidade {judge.score(policy_pairs(module, str(task), policy)):.3f}")
+    print(f"clipes reservados: {judge.score(judge.reserved_pairs):.3f}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="matter-rl", description="Treino de RL do Matter Engine")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -439,6 +471,12 @@ def main(argv: list[str] | None = None) -> int:
         return p
 
     sub.add_parser("doctor").set_defaults(func=command_doctor)
+    affinity = sub.add_parser("afinidade", help="o juiz de avaliacao congelado do Corpo v2")
+    affinity.add_argument("acao", choices=["treinar", "medir"])
+    affinity.add_argument("--politicas", default="", help="politicas exportadas (.mrlpolicy), separadas por virgula")
+    affinity.add_argument("--tarefa", default="corpo2")
+    affinity.add_argument("--juiz", default="", help="o arquivo do juiz (padrao: <dados>/avaliacao/juiz_afinidade.pt)")
+    affinity.set_defaults(func=command_affinity)
     run_args(sub.add_parser("treinar"), True).set_defaults(func=command_train)
     run_args(sub.add_parser("servir"), True).set_defaults(func=command_serve)
     run_args(sub.add_parser("iniciar"), True).set_defaults(func=command_start)

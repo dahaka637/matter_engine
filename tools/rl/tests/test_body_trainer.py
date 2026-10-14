@@ -171,3 +171,33 @@ def test_body_trainer_evaluation(scratch):
     assert len(rows) == 3
     trainer.max_iterations = trainer.counters["iteration"] + 1
     trainer.loop()
+
+
+def test_affinity_judge(tmp_path):
+    """O juiz de avaliacao congelado: nota alta nos reservados (que nunca viu) e
+    baixa nos estragados; salva e carrega igual."""
+    from matter_rl import native
+    from matter_rl.affinity import AffinityJudge, AffinitySettings, corrupted, policy_pairs
+    from matter_rl.model import ActorCritic, export_policy
+    module = native.load()
+    dataset = module.motion_dataset(str(paths.ASSETS / "rl" / "bodies" / "football_player_v2.json"),
+                                    str(paths.ASSETS / "rl" / "style" / "acervo_corpo.json"))
+    task = str(paths.task_path("corpo2"))
+    batch = module.BodyBatch(task, environments=2, per_scene=2, threads=1, seed=1)
+    torch.manual_seed(1)
+    model = ActorCritic(batch.obs_size, batch.critic_size, batch.action_size, actor_hidden=[32], critic_hidden=[32])
+    policy = tmp_path / "aleatoria.mrlpolicy"
+    export_policy(model, policy, {"observationNames": batch.observation_names()})
+    agent = policy_pairs(module, task, str(policy), worlds=4, seconds=1.0)
+    rng = np.random.default_rng(0)
+    negatives = np.concatenate([corrupted(np.asarray(dataset["pairs"]), rng), agent])
+    judge = AffinityJudge(dataset, AffinitySettings(hidden=[64, 32], steps=400, batch=256, learning_rate=1e-3))
+    result = judge.train(negatives)
+    assert result["reserved"] > 0.5 and result["reserved"] > result["negatives"] + 0.2
+    # (No primeiro segundo a politica aleatoria ainda esta no alerta do comeco,
+    # que e um quadro de clipe: a nota dela pode ser alta.)
+    assert 0.0 <= judge.score(agent) <= 1.0
+    path = tmp_path / "juiz.pt"
+    judge.save(path)
+    again = AffinityJudge.load(path, dataset)
+    assert abs(again.score(agent) - judge.score(agent)) < 1e-5
