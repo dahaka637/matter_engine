@@ -125,6 +125,12 @@ public:
     [[nodiscard]] const BodyContract3D& contract() const;
     // O exercicio de cada mundo (o indice em task().drills).
     [[nodiscard]] std::span<const std::uint32_t> worldDrills() const;
+    // O estilo: o que o juiz ve de um instante (StyleFeatures3D) e, de cada
+    // mundo, o par da decisao que acabou no ultimo step() (o instante de antes
+    // e o de agora, antes de um recomeco): environmentCount x (2 x styleSize).
+    [[nodiscard]] std::size_t styleSize() const;
+    [[nodiscard]] const RLVectorLayout3D& styleLayout() const;
+    [[nodiscard]] std::span<const float> stylePairs() const;
 
     // Todos os mundos recomecam (sementes derivadas de seed).
     void reset(std::uint64_t seed);

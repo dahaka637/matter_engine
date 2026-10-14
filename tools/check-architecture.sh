@@ -87,6 +87,10 @@ check_absent "O piloto e o adaptador do controle (RL/Commands) sao dados puros: 
     src/Engine/RL/Commands
 check_absent "As notas do Corpo (RL/Rewards) nao dependem dos mundos de treino, do estilo nem da imitacao" \
     '#include "Engine/RL/(Environment|Style|Imitation|Teacher|Supervisor)/' src/Engine/RL/Rewards
+check_absent "O estilo (o juiz e o acervo, RL/Style) so entra nos mundos de treino" \
+    '#include "Engine/RL/Style/' src/Engine/RL/Policy src/Engine/RL/Commands src/Engine/RL/Rewards \
+    src/Engine/RL/Imitation src/Engine/RL/Teacher src/Engine/RL/Supervisor src/Engine/RL/Calibration \
+    src/Engine/Athlete src/Workbench
 check_absent "Tela de RL fala com o treinador so pelo Supervisor (sem sockets nem processos)" \
     '#include <(sys/|spawn\.h|unistd\.h)' src/Workbench
 check_absent "Tela de RL fala com a GPU so pelo CanvasTarget" \

@@ -193,17 +193,20 @@ void rlBodyLinkStates3D(const RagdollProfile3D& profile, Vec3 rootPosition, Quat
     Vec3 rootLinearVelocity, Vec3 rootAngularVelocity, std::span<const Vec3> jointCoordinates,
     std::span<const Vec3> jointVelocities, std::vector<PhysicsBodyState3D>& out) {
     constexpr float H = 1e-3f;
-    const RLBodyPose3D now = rlBodyPose3D(profile, rootPosition, rootOrientation, jointCoordinates);
+    // As duas poses com a raiz na origem: a diferenca de posicoes longe dela
+    // (os mundos de treino ficam a centenas de metros) perderia a precisao do
+    // float (a 375 m, ~0,03 m/s de erro na velocidade).
+    const RLBodyPose3D now = rlBodyPose3D(profile, {}, rootOrientation, jointCoordinates);
     std::vector<Vec3> ahead(jointCoordinates.begin(), jointCoordinates.end());
     for (std::size_t i = 0; i < ahead.size() && i < jointVelocities.size(); ++i) ahead[i] += jointVelocities[i] * H;
-    const RLBodyPose3D next = rlBodyPose3D(profile, rootPosition + rootLinearVelocity * H,
-        rlQuaternionExp3D(rootAngularVelocity * H) * rootOrientation, ahead);
+    const RLBodyPose3D next =
+        rlBodyPose3D(profile, {}, rlQuaternionExp3D(rootAngularVelocity * H) * rootOrientation, ahead);
     out.resize(profile.links.size());
     for (std::size_t i = 0; i < out.size(); ++i) {
         PhysicsBodyState3D& state = out[i];
-        state.position = now.positions[i];
+        state.position = rootPosition + now.positions[i];
         state.orientation = now.orientations[i];
-        state.linearVelocity = (next.positions[i] - now.positions[i]) * (1.0f / H);
+        state.linearVelocity = rootLinearVelocity + (next.positions[i] - now.positions[i]) * (1.0f / H);
         state.angularVelocity =
             rlQuaternionLog3D((next.orientations[i] * now.orientations[i].conjugate()).normalized()) * (1.0f / H);
         state.sleeping = false;

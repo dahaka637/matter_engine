@@ -156,3 +156,22 @@ def test_body_batch_episodes_and_forced_drill():
     reasons = {module.BODY_END_REASONS[int(row[columns.index("razao")])] for row in finished}
     assert reasons <= {"queda_contato", "queda_altura", "tempo"}
     assert all(row[columns.index("exercicio")] == 2 for row in finished)
+
+
+def test_motion_dataset_and_style_pairs():
+    dataset = module.motion_dataset(str(paths.ASSETS / "rl" / "bodies" / "football_player_v2.json"),
+                                    str(paths.ASSETS / "rl" / "style" / "acervo_corpo.json"))
+    size = dataset["feature_size"]
+    assert dataset["pairs"].shape == (len(dataset["pair_clip"]), 2 * size) and len(dataset["names"]) == size
+    weights = dataset["pair_weight"]
+    assert abs(float(weights.sum()) - 1.0) < 1e-4
+    reserved = [c for c in dataset["clips"] if c["reserved"]]
+    assert reserved and all(weights[c["first_pair"]:c["first_pair"] + c["pairs"]].sum() == 0 for c in reserved)
+    assert not [c for c in dataset["clips"] if c["id"].startswith("jump_")]
+    # O lote entrega o par da decisao com as mesmas medidas do acervo.
+    batch = module.BodyBatch(BODY_TASK, environments=4, per_scene=2, threads=1, seed=2)
+    assert batch.style_size == size and batch.style_names() == dataset["names"]
+    zero = np.zeros((4, 37), dtype=np.float32)
+    batch.step(zero, zero)
+    pairs = batch.style_pairs()
+    assert pairs.shape == (4, 2 * size) and np.isfinite(pairs).all()

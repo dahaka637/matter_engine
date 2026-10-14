@@ -5,6 +5,7 @@
 #include "Engine/Physics/PhysicsEngine3D.hpp"
 #include "Engine/RL/Commands/CommandPilot3D.hpp"
 #include "Engine/RL/Commands/ControlAdapter3D.hpp"
+#include "Engine/RL/Style/StyleFeatures3D.hpp"
 
 #include <algorithm>
 #include <array>
@@ -73,6 +74,8 @@ struct World {
     std::vector<float> endTargets;
     std::vector<float> endChange;
     std::vector<float> actionDelta;
+    // O que o juiz viu no fim da decisao anterior.
+    std::vector<float> styleLast;
     BodyCostAccumulator3D costs;
     // O relogio do episodio (que pode comecar sorteado), as decisoes jogadas e o limite.
     std::uint32_t steps = 0;
@@ -132,6 +135,7 @@ struct BodyTrainingBatch3D::Impl {
     BodyTask3D task;
     RLBody3D body;
     std::unique_ptr<BodyContract3D> contract;
+    std::unique_ptr<StyleFeatures3D> style;
     std::shared_ptr<TaskScheduler> scheduler;
     std::unique_ptr<PhysicsEngine3D> engine;
     MaterialLibrary materials;
@@ -146,6 +150,7 @@ struct BodyTrainingBatch3D::Impl {
     std::vector<float> terminalCritic;
     std::vector<std::uint8_t> terminated;
     std::vector<std::uint8_t> truncated;
+    std::vector<float> stylePairs;
     std::vector<BodyEpisode3D> finished;
     std::uint32_t posture = 0;
     std::uint32_t workers = 1;
@@ -277,6 +282,7 @@ void BodyTrainingBatch3D::Impl::createWorld() {
             world.endTargets.assign(actionSize(), 0.0f);
             world.endChange.assign(actionSize(), 0.0f);
             world.actionDelta.assign(actionSize(), 0.0f);
+            world.styleLast.assign(style->size(), 0.0f);
             scene.worlds.push_back(index);
         }
         scene.finished.reserve(perScene);
@@ -406,6 +412,7 @@ void BodyTrainingBatch3D::Impl::resetWorld(std::uint32_t index) {
     std::fill(world.actionDelta.begin(), world.actionDelta.end(), 0.0f);
     world.firstContactLink = -1;
     world.start = state->links.front().position;
+    style->write(state->links, world.player.heightMeters / 1.8f, world.styleLast.data());
 
     world.episodeReturn = 0.0;
     world.velocityScore = world.facingScore = world.velocitySquares = world.facingSquares = 0.0;
@@ -574,6 +581,12 @@ void BodyTrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> a
                 world.changeAt = -1.0f;
             }
             world.touchdowns += (world.contract.touchdown[0] ? 1u : 0u) + (world.contract.touchdown[1] ? 1u : 0u);
+            // O par do juiz: o instante de antes e o de agora.
+            const std::size_t S = style->size();
+            float* pair = stylePairs.data() + index * 2 * S;
+            std::copy(world.styleLast.begin(), world.styleLast.end(), pair);
+            style->write(state->links, world.player.heightMeters / 1.8f, pair + S);
+            std::copy(pair + S, pair + 2 * S, world.styleLast.begin());
             // O comando da proxima decisao e a entrada.
             nextCommand(world, reading, decision());
             writeObservation(world, *state, actor, criticOut);
@@ -581,6 +594,7 @@ void BodyTrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> a
             std::fill(parts, parts + RewardCount, 0.0f);
             parts[static_cast<std::size_t>(BodyRewardTerm3D::Fall)] = task.reward.fall;
             reward = -task.reward.fall;
+            std::fill_n(stylePairs.data() + index * 2 * style->size(), 2 * style->size(), 0.0f);
             std::fill(actor, actor + O, 0.0f);
             std::fill(criticOut, criticOut + C, 0.0f);
         }
@@ -604,6 +618,7 @@ BodyTrainingBatch3D::BodyTrainingBatch3D(const BodyBatchSettings3D& settings) : 
     impl.task = loadBodyTask3D(settings.taskPath);
     impl.body = loadRLBody3D(impl.task.bodyPath);
     impl.contract = std::make_unique<BodyContract3D>(impl.body, impl.task.contract);
+    impl.style = std::make_unique<StyleFeatures3D>(impl.body);
     const int posture = findRLPosture3D(impl.body, impl.task.initialState.posture);
     if (posture < 0) throw std::runtime_error("lote do Corpo: o corpo nao tem a postura " + impl.task.initialState.posture);
     impl.posture = static_cast<std::uint32_t>(posture);
@@ -625,6 +640,7 @@ BodyTrainingBatch3D::BodyTrainingBatch3D(const BodyBatchSettings3D& settings) : 
     impl.components.assign(N * RewardCount, 0.0f);
     impl.terminated.assign(N, 0);
     impl.truncated.assign(N, 0);
+    impl.stylePairs.assign(N * 2 * impl.style->size(), 0.0f);
     impl.createWorld();
     reset(settings.seed);
 }
@@ -645,6 +661,9 @@ const RLBody3D& BodyTrainingBatch3D::body() const { return m_impl->body; }
 const BodyTask3D& BodyTrainingBatch3D::task() const { return m_impl->task; }
 const BodyContract3D& BodyTrainingBatch3D::contract() const { return *m_impl->contract; }
 std::span<const std::uint32_t> BodyTrainingBatch3D::worldDrills() const { return m_impl->worldDrill; }
+std::size_t BodyTrainingBatch3D::styleSize() const { return m_impl->style->size(); }
+const RLVectorLayout3D& BodyTrainingBatch3D::styleLayout() const { return m_impl->style->layout(); }
+std::span<const float> BodyTrainingBatch3D::stylePairs() const { return m_impl->stylePairs; }
 
 void BodyTrainingBatch3D::reset(std::uint64_t seed) {
     Impl& impl = *m_impl;
@@ -662,6 +681,7 @@ void BodyTrainingBatch3D::reset(std::uint64_t seed) {
     }
     std::fill(impl.rewards.begin(), impl.rewards.end(), 0.0f);
     std::fill(impl.components.begin(), impl.components.end(), 0.0f);
+    std::fill(impl.stylePairs.begin(), impl.stylePairs.end(), 0.0f);
     std::fill(impl.terminated.begin(), impl.terminated.end(), 0);
     std::fill(impl.truncated.begin(), impl.truncated.end(), 0);
     impl.finished.clear();

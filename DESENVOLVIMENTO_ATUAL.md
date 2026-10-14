@@ -33,6 +33,15 @@ no `docs/REINFORCEMENT_LEARNING.md` ("A reformulação do Corpo").
     decisões/s com 512 mundos;
   - os testes: o piloto, a ordem da nota, as trapaças, o determinismo e a
     paridade de informação.
+- **E4 (o acervo do juiz de estilo, `RL/Style`):**
+  - as medidas do juiz (95 por instante) saem só do estado dos links, pela
+    mesma conta no corpo e no acervo, sem as pontas dos pés;
+  - o acervo (`assets/rl/style/acervo_corpo.json`): 47 clipes em 8 grupos, 12
+    reservados, conferidos nas folhas de quadros. Saem os 6 pulos (no corpo
+    eles ficam em pé, sem voo) e o `sprint_backward_long` (de costas a 7 m/s);
+  - o lote v2 entrega o par de cada decisão para o juiz;
+  - `rlBodyLinkStates3D`: as velocidades com a raiz na origem (longe dela o
+    float perdia ~0,03 m/s).
 - **E2 (Experimento A, feito):**
   - a velocidade pedida pela reta da ação média;
   - a ponta do pé sem tremor numérico;
@@ -47,7 +56,9 @@ no `docs/REINFORCEMENT_LEARNING.md` ("A reformulação do Corpo").
     por pares de trajetórias precisa de trajetórias de verdade, nos primeiros
     treinos do Experimento B);
   - os eventos da nota (o pulo, o "de pé") vêm com os exercícios de pulo e de
-    levantar (E9).
+    levantar (E9);
+  - o acervo não tem pulos de verdade nem o espelho dos clipes (o espelho vem
+    com o `Mirror3D`, E8).
 
 ## Aprendizado por Reforço (12/10/2026)
 

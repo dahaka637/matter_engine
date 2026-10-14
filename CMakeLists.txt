@@ -418,6 +418,8 @@ if(MATTERENGINE_BUILD_RL)
         src/Engine/RL/Environment/BodyTask3D.cpp
         src/Engine/RL/Environment/BodyTrainingBatch3D.cpp
         src/Engine/RL/Rewards/BodyReward3D.cpp
+        src/Engine/RL/Style/StyleFeatures3D.cpp
+        src/Engine/RL/Style/MotionDataset3D.cpp
         src/Engine/RL/Imitation/ReferenceMotion3D.cpp
     )
     target_include_directories(MatterRLEnvironment PUBLIC src)
@@ -851,6 +853,7 @@ if(MATTERENGINE_BUILD_TESTS)
             tests/RL/BodyContractTests.cpp
             tests/RL/TrainingBatchTests.cpp
             tests/RL/BodyBatchTests.cpp
+            tests/RL/StyleTests.cpp
             tests/RL/RLTestMain.cpp)
         target_link_libraries(MatterRLTrainingTests
             PRIVATE MatterRLEnvironment)

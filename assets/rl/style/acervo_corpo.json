@@ -1,0 +1,165 @@
+{
+  "schema": "matter-rl-style-1",
+  "id": "acervo_corpo",
+  "clipsDirectory": "../../animations/clips",
+  "pairFrames": 4,
+  "excluded": [
+    {
+      "clips": [
+        "jump_prep",
+        "jump_standing",
+        "jump_forward",
+        "jump_backward",
+        "jump_left",
+        "jump_right"
+      ],
+      "reason": "no corpo do RL ficam de pe, sem agachar nem sair do chao: sao poses do pulo animado do jogo, em que a fisica fazia a subida (folha de 14/10). Voltam com um clipe de pulo de verdade (o Running Jump do inventario)."
+    },
+    {
+      "clips": [
+        "sprint_backward_long"
+      ],
+      "reason": "de costas a 7 m/s: nenhum humano corre assim, e o teto de costas do jogador e 3,6 m/s."
+    },
+    {
+      "clips": [
+        "tackle_slide",
+        "tackle_soccer"
+      ],
+      "reason": "gestos da fase Bola."
+    }
+  ],
+  "groups": [
+    {
+      "id": "parado",
+      "displayName": "Parado",
+      "weight": 1.0,
+      "clips": [
+        "alert_idle",
+        "natural_idle",
+        "cc0_idle"
+      ],
+      "reserved": [
+        "cc0_idle"
+      ]
+    },
+    {
+      "id": "giros",
+      "displayName": "Giros no lugar",
+      "weight": 1.0,
+      "clips": [
+        "turn_left",
+        "turn_right",
+        "giro_esquerda_180",
+        "giro_direita_180"
+      ],
+      "reserved": [
+        "giro_esquerda_180",
+        "giro_direita_180"
+      ]
+    },
+    {
+      "id": "andar",
+      "displayName": "Andar",
+      "weight": 1.0,
+      "clips": [
+        "ual_walk",
+        "walk_backward",
+        "walk_strafe_left",
+        "walk_strafe_right"
+      ],
+      "reserved": [
+        "walk_backward"
+      ]
+    },
+    {
+      "id": "trote",
+      "displayName": "Trote",
+      "weight": 1.5,
+      "clips": [
+        "trot_forward",
+        "trot_forward_left",
+        "trot_forward_right",
+        "trot_backward",
+        "trot_backward_left",
+        "trot_backward_right",
+        "jog",
+        "jog_strafe_left",
+        "jog_strafe_right"
+      ],
+      "reserved": [
+        "trot_backward_left",
+        "trot_backward_right"
+      ]
+    },
+    {
+      "id": "corrida",
+      "displayName": "Corrida",
+      "weight": 1.0,
+      "clips": [
+        "mixamo_running",
+        "run_forward_medium",
+        "run_backward",
+        "run_forward_arc_left",
+        "run_forward_arc_right",
+        "run_backward_arc_right"
+      ],
+      "reserved": [
+        "run_forward_arc_left",
+        "run_forward_arc_right"
+      ]
+    },
+    {
+      "id": "sprint",
+      "displayName": "Sprint",
+      "weight": 1.0,
+      "clips": [
+        "mixamo_sprint",
+        "sprint",
+        "sprint_forward",
+        "sprint_strafe_left",
+        "sprint_strafe_right",
+        "sprint_backward",
+        "sprint_backward_left",
+        "sprint_backward_right"
+      ],
+      "reserved": [
+        "sprint_backward_left",
+        "sprint_backward_right"
+      ]
+    },
+    {
+      "id": "arrancar_virar",
+      "displayName": "Arrancar e virar",
+      "weight": 1.0,
+      "clips": [
+        "idle_to_sprint",
+        "crouched_to_sprint",
+        "change_direction",
+        "running_to_turn",
+        "running_turn_180",
+        "running_turn_180_loop",
+        "turn_to_running"
+      ],
+      "reserved": [
+        "running_turn_180_loop"
+      ]
+    },
+    {
+      "id": "levantar",
+      "displayName": "Levantar",
+      "weight": 1.0,
+      "clips": [
+        "stand_up_back",
+        "stand_up_back_kimodo",
+        "stand_up_front",
+        "stand_up_front_kimodo",
+        "stand_up_front_crouch",
+        "stand_up_front_getup"
+      ],
+      "reserved": [
+        "stand_up_front_crouch"
+      ]
+    }
+  ]
+}

@@ -134,6 +134,37 @@ o cérebro antigo e as comparações até a F1.
     câmera), a ordem da nota e as trapaças, a conta das parcelas, o
     determinismo com qualquer número de threads e a paridade de informação (a
     entrada montada só com o que o jogo tem é a do treino).
+- **O acervo do juiz de estilo** (`src/Engine/RL/Style`, só no treino):
+  - **`StyleFeatures3D`:** o que o juiz vê de um instante, no referencial do
+    rumo da pelve: a altura, a inclinação, a velocidade e o giro da pelve, os
+    35 eixos (ângulo e velocidade) e a cabeça, as mãos e os pés em relação à
+    pelve (95 números). Tudo sai só do estado dos links, pela mesma conta no
+    corpo e no acervo: os dois lados nunca diferem por convenção numérica. As
+    pontas dos pés ficam de fora (os clipes não têm a junta dos dedos; o juiz
+    ensinaria a nunca usá-la). As posições se dividem pela escala da altura e
+    as velocidades seguem a escala de Froude;
+  - **`MotionDataset3D`** (`assets/rl/style/acervo_corpo.json`): cada clipe
+    tocado no corpo vira pares de instantes separados por uma decisão (4
+    quadros), com o peso por grupo e os reservados fora do treino. O espelho
+    dos clipes entra com o `Mirror3D` (E8);
+  - **o acervo de hoje:** 47 clipes em 8 grupos, 12 deles reservados. Ficam de
+    fora (o motivo está no arquivo):
+    - os 6 pulos: no corpo, eles ficam em pé sem sair do chão, porque eram
+      poses do pulo animado em que a física fazia a subida;
+    - o `sprint_backward_long`: de costas a 7 m/s;
+    - os carrinhos (fase Bola);
+  - **o lote v2** entrega, de cada mundo, o par da decisão que acabou
+    (`stylePairs`, `BodyBatch.style_pairs()`), e a ponte tem
+    `matter_rl_native.motion_dataset(corpo, acervo)`;
+  - **os testes** (`tests/RL/StyleTests.cpp`): o layout sem as pontas, a mesma
+    medida em qualquer lugar e rumo, as medidas batendo com o quadro do clipe,
+    o teste do acervo (o clipe posto no corpo da física dá as medidas que o
+    acervo calcula, e a velocidade de cada eixo é a do backend), os pesos por
+    grupo e o par do lote;
+  - **a regra de arquitetura:** o estilo só entra nos mundos de treino.
+- **`rlBodyLinkStates3D`** passou a calcular as velocidades com a raiz na
+  origem: longe dela, a diferença das posições perdia a precisão do float (a
+  375 m, onde ficam mundos de treino, ~0,03 m/s de erro).
 
 ## As peças
 

@@ -13,6 +13,7 @@
 #include "Engine/RL/Environment/TrainingBatch3D.hpp"
 #include "Engine/RL/Imitation/ReferenceMotion3D.hpp"
 #include "Engine/RL/Policy/PolicyRuntime3D.hpp"
+#include "Engine/RL/Style/MotionDataset3D.hpp"
 #include "Engine/RL/Teacher/LocomotionTeacher3D.hpp"
 
 #include <algorithm>
@@ -164,6 +165,62 @@ ReferenceMotion3D referenceFromClips(const RLBody3D& body, const std::vector<std
     std::vector<ReferenceClip3D> requests;
     for (std::size_t i = 0; i < clips.size(); ++i) requests.push_back({ "", clips[i], i + 1 == clips.size() });
     return buildReferenceMotion3D(body, requests);
+}
+
+// Um array numpy que e dono de uma copia dos dados.
+template <typename T>
+nb::ndarray<nb::numpy, T> owned(const std::vector<T>& values, std::initializer_list<std::size_t> shape) {
+    auto* data = new T[std::max<std::size_t>(1, values.size())];
+    std::copy(values.begin(), values.end(), data);
+    nb::capsule owner(data, [](void* p) noexcept { delete[] static_cast<T*>(p); });
+    return nb::ndarray<nb::numpy, T>(data, shape.size(), shape.begin(), owner);
+}
+
+// O acervo do juiz de estilo no corpo dado: os pares, o clipe e o peso de cada
+// par, os clipes e os grupos.
+nb::dict motionDataset(const std::string& bodyPath, const std::string& definition, float heightScale) {
+    MotionDataset3D dataset;
+    std::vector<std::string> featureNames;
+    {
+        nb::gil_scoped_release release;
+        const RLBody3D body = loadRLBody3D(bodyPath);
+        const StyleFeatures3D features(body);
+        dataset = loadMotionDataset3D(body, features, definition, heightScale);
+        featureNames = names(features.layout());
+    }
+    nb::dict out;
+    out["id"] = dataset.id;
+    out["hash"] = hex(dataset.hash);
+    out["pair_frames"] = dataset.pairFrames;
+    out["feature_size"] = dataset.featureSize;
+    out["names"] = featureNames;
+    out["pairs"] = owned(dataset.pairs, { dataset.pairCount(), 2 * dataset.featureSize });
+    out["pair_clip"] = owned(dataset.pairClip, { dataset.pairCount() });
+    out["pair_weight"] = owned(dataset.pairWeight, { dataset.pairCount() });
+    nb::list groups;
+    for (const MotionGroup3D& group : dataset.groups) {
+        nb::dict g;
+        g["id"] = group.id;
+        g["name"] = group.displayName;
+        g["weight"] = group.weight;
+        groups.append(g);
+    }
+    out["groups"] = groups;
+    nb::list clips;
+    for (const MotionClip3D& clip : dataset.clips) {
+        nb::dict c;
+        c["id"] = clip.id;
+        c["group"] = clip.group;
+        c["reserved"] = clip.reserved;
+        c["loops"] = clip.loops;
+        c["frames"] = clip.frames;
+        c["first_pair"] = clip.firstPair;
+        c["pairs"] = clip.pairCount;
+        c["mean_speed"] = clip.meanSpeed;
+        clips.append(c);
+    }
+    out["clips"] = clips;
+    return out;
 }
 
 constexpr float Degrees = 57.29578f;
@@ -546,6 +603,9 @@ NB_MODULE(matter_rl_native, m) {
                 return std::vector<std::string>(BodyRewardTermNames3D.begin(), BodyRewardTermNames3D.end());
             })
         .def("episode_columns", [](const BodyTrainingBatch3D&) { return BodyEpisodeColumns; })
+        .def_prop_ro("style_size", &BodyTrainingBatch3D::styleSize)
+        .def("style_names", [](const BodyTrainingBatch3D& b) { return names(b.styleLayout()); })
+        .def("style_pairs", [](BodyTrainingBatch3D& b) { return view2(b, b.stylePairs(), 2 * b.styleSize()); })
         .def("layout_ids",
             [](const BodyTrainingBatch3D& b) {
                 return std::vector<std::string> { b.observationLayout().id, std::to_string(b.observationLayout().version),
@@ -634,6 +694,8 @@ NB_MODULE(matter_rl_native, m) {
             },
             "observations"_a);
 
+    m.def("motion_dataset", &motionDataset, "body"_a, "definition"_a, "height_scale"_a = 1.0f,
+        "o acervo do juiz de estilo no corpo: os pares (instante e o da decisao seguinte), o clipe e o peso de cada par");
     m.def("reference_report", &referenceReport, "body"_a, "clips"_a,
         "o resumo da referencia de imitacao nos clipes dados (o ultimo em ciclo)");
     m.def("reference_frames", &referenceFrames, "body"_a, "clips"_a, "step"_a = 4,
