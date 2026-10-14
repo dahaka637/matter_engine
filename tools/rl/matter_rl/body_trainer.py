@@ -485,6 +485,9 @@ class BodyTrainer:
         pairs: list[np.ndarray] = []
         style_sum = 0.0
         dt, beta = batch.policy_dt, self.beta
+        if self.stream is not None:
+            # Os pesos que o sync copiou (no fluxo padrao) antes da coleta ler.
+            self.stream.wait_stream(torch.cuda.current_stream())
         with context, torch.no_grad():
             rollout = Rollout(s.steps_per_env, envs, batch.obs_size, batch.critic_size, batch.action_size, self.device)
             obs, critic = self.tensor(batch.observations()), self.tensor(batch.critic_observations())
