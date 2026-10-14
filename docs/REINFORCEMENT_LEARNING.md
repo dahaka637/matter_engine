@@ -227,6 +227,13 @@ o cérebro antigo e as comparações até a F1.
     status.
 - **A prévia do Corpo v2** (`tools/rl/previa_corpo.py`): uma política exportada
   no lote v2 com a física do jogo, mais os dumps para as folhas de quadros.
+- **O teste de dependência** (`tools/rl/tests/test_dependency.py`, seção 12.6):
+  num empacotamento sem os arquivos de animação (o corpo, o perfil e a tarefa
+  numa pasta temporária; nada se apaga), o lote roda, o treino sem o juiz
+  treina e exporta, e a política exportada roda no runtime em C++. A entrada
+  exportada não tem canal de clipe, de alvo ou de exercício. Com a fatia do
+  acervo ligada, o mesmo pacote falha (a prova de que ele não alcança os
+  clipes).
 - **A afinidade com o acervo** (`tools/rl/matter_rl/affinity.py`, uma peça do
   exame da E9; `matter-rl afinidade treinar --politicas a,b` e `medir`):
   - **um juiz de avaliação congelado,** treinado uma vez: o acervo (+1)
