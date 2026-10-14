@@ -323,6 +323,13 @@ struct TrainingTask3D {
         // Dos episodios com o comando: a fatia em que ele gira (facingDrift); o
         // resto fica fixo no rumo do comeco (o "norte").
         float facingDriftFraction = 1.0f;
+        // O giro em trechos (o jogador girando a camera): com facingDriftTurns,
+        // cada trecho sorteia quantas voltas dar (0,5 = meia) e a velocidade
+        // (rad/s, facingDriftSpeed) e o sentido; acabou, sorteia o seguinte (o
+        // sentido pode repetir: mais de uma volta seguida). Sem ele, o giro
+        // antigo (ate facingDriftRadians, trocando a cada 2-4 s).
+        TrainingRange3D facingDriftTurns { 0.0f, 0.0f };
+        TrainingRange3D facingDriftSpeed { 0.4f, 1.2f };
         // O comando de velocidade: cada trecho ate um alvo tem uma velocidade
         // pedida, sorteada numa faixa (andar, trote, corrida, sprint), e a nota
         // e acertar ela (speedMatch), nao correr mais. A pedida desce antes do

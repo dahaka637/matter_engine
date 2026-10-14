@@ -232,10 +232,10 @@ diagonal), e a voltar.
 
   | Faixa | m/s | m | Peso |
   |---|---|---|---|
-  | andar | 0,8–1,6 | 4–8 | 1 |
-  | trote | 2,0–3,2 | 6–12 | 1,5 |
-  | corrida | 4,0–5,0 | 15–25 | 1 |
-  | sprint | 5,5–6,5 | 25–40 | 0,7 |
+  | andar | 0,8–1,6 | 6–9 | 1 |
+  | trote | 2,0–3,2 | 8–12 | 1,5 |
+  | corrida | 4,0–5,0 | 12–17 | 1 |
+  | sprint | 5,5–6,5 | 16–22 | 0,7 |
 
   - **A volta ao centro** repete a velocidade da ida. No treino, em metade
     das vezes sorteia outra (`redrawOnReturn`).
@@ -253,8 +253,10 @@ diagonal), e a voltar.
     senão a até 50°). De lado vale o sprint de lado (4,1 m/s).
 - **Os três modos no mesmo exercício:** livre em 40% dos episódios, fixo em
   30% e girando em 30% (`facingFraction` 0,6, e metade desses gira:
-  `facingDriftFraction` 0,5). Girando, o rumo do peito gira com velocidade
-  (até 0,6 rad/s, `facingDriftRadians`) e sentido sorteados a cada 2–4 s.
+  `facingDriftFraction` 0,5). Girando, o rumo do peito gira em trechos: cada
+  um sorteia de meia a uma volta e meia (`facingDriftTurns`), a velocidade
+  (0,4–1,2 rad/s, `facingDriftSpeed`) e o sentido; o sentido pode repetir, e
+  aí ele dá mais de uma volta seguida (como o jogador girando a câmera).
   Na avaliação, `"facing": 2` pede o girando.
   - **Peito fixo:** o planejador mede a direção dos clipes pelo peito
     (`directionWeightFacing` 2): andar de costas, de lado, as diagonais de trás.

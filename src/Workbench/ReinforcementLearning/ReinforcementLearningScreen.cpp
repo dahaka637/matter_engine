@@ -705,10 +705,10 @@ bool ReinforcementLearningScreen::render(int width, int height) {
     style.hud = false;
     style.gizmo = false;
     style.scaleBar = false;
-    // O chao: 30 m de cada lado com passo de 0,5 m na corrida (o alvo fica a
-    // 10 m); 12 m com a grade fina (10 cm) parado.
+    // O chao: 70 m de cada lado com passo de 0,5 m na corrida (a camera de
+    // tras ve longe, ate perto do horizonte); 12 m com a grade fina (10 cm) parado.
     const bool racing = view.hasTarget;
-    style.gridExtent = racing ? 30.0f : 12.0f;
+    style.gridExtent = racing ? 70.0f : 12.0f;
     style.gridStep = racing ? 0.5f : 0.0f;
     style.supersample = 1;
     OrbitCamera camera = m_camera;

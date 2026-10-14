@@ -142,6 +142,8 @@ struct Environment {
     float facingCommand = 0.0f;
     float facingRate = 0.0f;
     float facingTimer = 0.0f;
+    // O giro em trechos: o quanto falta girar no trecho de agora (rad).
+    float facingRemaining = 0.0f;
     // O comando vale neste episodio (target.facingFraction) e o rumo do que
     // fica virado para ele (a pelve ou o peito), medido na ultima decisao.
     bool facingActive = false;
@@ -992,6 +994,7 @@ void TrainingBatch3D::Impl::resetEnvironment(std::uint32_t index) {
             env.facingHeading = startYaw;
             env.facingRate = 0.0f;
             env.facingTimer = 0.0f;
+            env.facingRemaining = 0.0f;
             env.facingActive = task.target.facing
                 && (training() ? std::uniform_real_distribution<float>(0.0f, 1.0f)(env.rng) < task.target.facingFraction
                                : settings.facing != 0);
@@ -1861,7 +1864,18 @@ void TrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> actio
                 const float decision = static_cast<float>(task.actionRepeat) * FixedStep;
                 env.clipSince += decision;
                 env.facingHeading = facingLinkHeading(*state);
-                if (env.facingActive && env.facingDrifting && task.target.facingDriftRadians > 0.0f) {
+                const TrainingTask3D::Target& t = task.target;
+                if (env.facingActive && env.facingDrifting && t.facingDriftTurns.maximum > 0.0f) {
+                    // Em trechos: meia volta, uma, uma e meia..., na velocidade e
+                    // no sentido sorteados.
+                    if (env.facingRemaining <= 0.0f) {
+                        env.facingRemaining = 2.0f * std::numbers::pi_v<float> * uniform(env.rng, t.facingDriftTurns);
+                        const float sign = std::uniform_int_distribution<int>(0, 1)(env.rng) == 0 ? -1.0f : 1.0f;
+                        env.facingRate = sign * uniform(env.rng, t.facingDriftSpeed);
+                    }
+                    env.facingCommand += env.facingRate * decision;
+                    env.facingRemaining -= std::abs(env.facingRate) * decision;
+                } else if (env.facingActive && env.facingDrifting && task.target.facingDriftRadians > 0.0f) {
                     if ((env.facingTimer -= decision) <= 0.0f) {
                         env.facingTimer = std::uniform_real_distribution<float>(2.0f, 4.0f)(env.rng);
                         env.facingRate = std::uniform_real_distribution<float>(-task.target.facingDriftRadians,

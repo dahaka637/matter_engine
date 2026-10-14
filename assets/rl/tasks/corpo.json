@@ -1,9 +1,9 @@
 {
   "schema": "matter-rl-task-1",
   "id": "corpo",
-  "version": 3,
+  "version": 4,
   "displayName": "Corpo",
-  "comment": "Area 1 da metodologia de 13/10 (as 3 areas: Corpo, Bola e Goleiro; docs/REINFORCEMENT_LEARNING.md e o Vault, Arquitetura_RL.md): uma tarefa so com os exercicios do corpo misturados no mesmo treino. Cada mundo sorteia o seu exercicio pelo peso (drills); o exercicio muda o mundo (como os alvos nascem, as notas, a duracao), nunca o que a rede ve ou faz, e a rede nunca sabe o nome dele: no jogo nao ha exercicio, ha comandos. As fatias seguem o exame (drillWeights). Versao 2 (14/10): o primeiro exercicio de verdade, a estrela (treino_locomocao_claude.md, o 3), no lugar dos tres provisorios (pontos, peito e tiro viram os modos livre e peito fixo dela; o tiro volta como os cortes). Versao 3 (14/10): o peito girando vira um modo de verdade (metade dos de peito fixo, ate 0,6 rad/s, sentido e velocidade sorteados a cada 2-4 s), com a sua bateria e a opcao no laboratorio.",
+  "comment": "Area 1 da metodologia de 13/10 (as 3 areas: Corpo, Bola e Goleiro; docs/REINFORCEMENT_LEARNING.md e o Vault, Arquitetura_RL.md): uma tarefa so com os exercicios do corpo misturados no mesmo treino. Cada mundo sorteia o seu exercicio pelo peso (drills); o exercicio muda o mundo (como os alvos nascem, as notas, a duracao), nunca o que a rede ve ou faz, e a rede nunca sabe o nome dele: no jogo nao ha exercicio, ha comandos. As fatias seguem o exame (drillWeights). Versao 2 (14/10): o primeiro exercicio de verdade, a estrela (treino_locomocao_claude.md, o 3), no lugar dos tres provisorios (pontos, peito e tiro viram os modos livre e peito fixo dela; o tiro volta como os cortes). Versao 3 (14/10): o peito girando vira um modo de verdade (metade dos de peito fixo, ate 0,6 rad/s, sentido e velocidade sorteados a cada 2-4 s), com a sua bateria e a opcao no laboratorio. Versao 4 (14/10): o giro em trechos de meia a uma volta e meia (0,4-1,2 rad/s) e as distancias mais parecidas (andar 6-9, trote 8-12, corrida 12-17, sprint 16-22 m).",
   "postures": [
     {
       "id": "alerta",
@@ -162,25 +162,25 @@
         {
           "name": "andar",
           "speed": [0.8, 1.6],
-          "distance": [4.0, 8.0],
+          "distance": [6.0, 9.0],
           "weight": 1.0
         },
         {
           "name": "trote",
           "speed": [2.0, 3.2],
-          "distance": [6.0, 12.0],
+          "distance": [8.0, 12.0],
           "weight": 1.5
         },
         {
           "name": "corrida",
           "speed": [4.0, 5.0],
-          "distance": [15.0, 25.0],
+          "distance": [12.0, 17.0],
           "weight": 1.0
         },
         {
           "name": "sprint",
           "speed": [5.5, 6.5],
-          "distance": [25.0, 40.0],
+          "distance": [16.0, 22.0],
           "weight": 0.7
         }
       ],
@@ -272,7 +272,9 @@
           "starJitterDegrees": 8.0,
           "facingFraction": 0.6,
           "facingDriftFraction": 0.5,
-          "facingDriftRadians": 0.6
+          "facingDriftRadians": 0.6,
+          "facingDriftTurns": [0.5, 1.5],
+          "facingDriftSpeed": [0.4, 1.2]
         }
       }
     }
