@@ -142,7 +142,8 @@ TrainingTask3D parseTask(const nlohmann::json& document, const std::filesystem::
         out.enabled = true;
         for (const nlohmann::json& clip : m.at("clips")) {
             const std::string file = clip.at("clip").get<std::string>();
-            out.clips.push_back({ clip.value("id", std::string()), (definitionPath.parent_path() / file).lexically_normal() });
+            out.clips.push_back({ clip.value("id", std::string()), (definitionPath.parent_path() / file).lexically_normal(),
+                clip.value("loops", true) });
         }
         if (out.clips.empty()) throw std::runtime_error("tarefa de RL: imitation sem clipes");
         out.standingStart = std::clamp(m.value("standingStart", out.standingStart), 0.0f, 1.0f);
@@ -233,8 +234,15 @@ TrainingTask3D parseTask(const nlohmann::json& document, const std::filesystem::
             if (sc.enabled && sc.bands.empty()) throw std::runtime_error("tarefa de RL: comando de velocidade sem faixas");
         }
         out.pattern = t.value("pattern", out.pattern);
-        if (out.pattern != "random" && out.pattern != "star" && out.pattern != "arc" && out.pattern != "hold")
-            throw std::runtime_error("tarefa de RL: pattern e random, star, arc ou hold");
+        if (out.pattern != "random" && out.pattern != "star" && out.pattern != "arc" && out.pattern != "hold"
+            && out.pattern != "getup")
+            throw std::runtime_error("tarefa de RL: pattern e random, star, arc, hold ou getup");
+        out.knockdownNewtons = range(t, "knockdownNewtons", out.knockdownNewtons);
+        out.knockdownSeconds = std::max(0.01f, t.value("knockdownSeconds", out.knockdownSeconds));
+        out.getUpBackClip = t.value("getUpBackClip", out.getUpBackClip);
+        out.getUpFrontClip = t.value("getUpFrontClip", out.getUpFrontClip);
+        out.getUpSprintClip = t.value("getUpSprintClip", out.getUpSprintClip);
+        out.getUpTarget = range(t, "getUpTarget", out.getUpTarget);
         if (t.contains("arcRadii")) {
             out.arcRadii.clear();
             for (const nlohmann::json& r : t["arcRadii"]) {
@@ -369,6 +377,7 @@ TrainingTask3D loadTrainingTask3D(const std::filesystem::path& definitionPath) {
         TrainingTask3D::Drill drill;
         drill.id = entry.at("id").get<std::string>();
         drill.name = entry.value("name", std::string());
+        drill.group = entry.value("group", std::string());
         if (drill.name.empty()) {
             drill.name = drill.id;
             if (!drill.name.empty()) drill.name[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(drill.name[0])));

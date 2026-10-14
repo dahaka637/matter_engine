@@ -166,6 +166,13 @@ struct TrainingEpisode3D {
     // As forcas: o tempo medio ate voltar, em pe e na velocidade pedida,
     // depois de cada uma (s; -1 sem).
     float pushRecoverySeconds = -1.0f;
+    // O levantar: o tempo ate ficar de pe (s do comeco do controle; -1 nunca),
+    // se levantou em 5 s (1/0; -1 fora do levantar), o tempo ate o alvo (-1 sem
+    // alvo, -2 sem chegar) e as quedas de novo depois de levantar.
+    float getUpSeconds = -1.0f;
+    float getUpStood5 = -1.0f;
+    float getUpTargetSeconds = -1.0f;
+    float getUpRefalls = -1.0f;
 };
 
 // Um mundo de treino visto por fora (o visualizador, a gravacao).
@@ -205,6 +212,9 @@ struct TrainingEnvironmentView3D {
     // caminho, a altura da barreira (a pelve de pe mais a subida pedida) e, no
     // pulo parado, a direcao pedida no mundo (pelo rumo do corpo agora; sem
     // ela, para cima).
+    // O levantar: caindo (o corpo solto) e levantando (o clipe de levantar).
+    bool knockdown = false;
+    bool gettingUp = false;
     bool hasJump = false;
     bool jumpStanding = false;
     Vec3 jumpCenter;

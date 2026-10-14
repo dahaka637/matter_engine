@@ -297,6 +297,38 @@ diagonal), e a voltar.
   não tem entram com zero, como na migração do treinador. Assim um cérebro
   antigo roda numa tarefa mais nova.
 
+## Levantar (14/10/2026)
+
+O exercício 10, como o usuário descreveu, em duas variantes (o grupo
+"Levantar" na tela: Sem alvo, Com alvo).
+
+- **O começo, nas duas:** ele nasce em pé, solto como boneco de pano (os
+  motores a 5% da rigidez), e um tranco no peito (`knockdownNewtons`
+  700–1100 N por 0,15 s, numa direção sorteada; na avaliação de costas, de
+  frente e para os dois lados) o joga no chão. 1 s parado no chão (ou 5 s
+  caindo) e o controle começa. Caindo, a nota é zero.
+- **O exemplo:** o levantar do Kimodo pela posição (a frente do peito para
+  cima: `stand_up_back_kimodo`; para baixo: `stand_up_front_kimodo`), tocado do
+  começo ao fim. Depois, o planejador comum (o parado, ou a corrida).
+- **Sem alvo:** levantar e ficar no alerta onde está.
+- **Com alvo** (`getUpTarget` 5–10 m, a faixa do sprint): no começo do
+  controle, um alvo a 5–10 m; no quadro do levantar mais parecido com o
+  começo da arrancada agachada (`closestFrame3D`, depois de 40% do clipe), o
+  exemplo vira o `crouched_to_sprint`, girando para o alvo. Chegando, ele para.
+- **O chão não encerra** (a terminação do exercício sem altura mínima nem
+  contato); a nota soma estar de pé (`headHeight`, `upright`).
+- **A biblioteca aceita trechos que terminam** (`"loops": false` no clipe da
+  tarefa): ele fica no último quadro até trocar, e o planejador comum nunca o
+  escolhe. Os três da biblioteca: `levantar_costas`, `levantar_frente`,
+  `arrancada_agachada`.
+- **A prova** (`levantar_v1`, `levantar_correr_v1`, do tipo `levantar`;
+  colunas 41–44, 45 no total): o tempo até ficar de pé (a cabeça e a pelve a
+  85% da altura por 0,5 s), a fatia que levantou em 5 s, o tempo até o alvo e
+  as quedas de novo. `getup_score`.
+- **A prévia com o cérebro de 14/10 (rodada 60068):** cai e se debate no
+  chão tentando o exemplo, sem levantar (0 de 16).
+- **Na tela,** os ramos de um exercício só abrem com ele escolhido.
+
 ## Não cair: o peito girando + força do Frear e parar (14/10/2026)
 
 O exercício 9 não é um exercício separado: por pedido do usuário, as forças

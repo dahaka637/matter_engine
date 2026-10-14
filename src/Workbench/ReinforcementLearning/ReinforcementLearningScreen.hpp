@@ -212,6 +212,8 @@ private:
         std::vector<unsigned> drillChests;
         // O peito girando do exercicio vem com as forcas (o "girando + forca").
         std::vector<bool> drillForce;
+        // O grupo de cada exercicio (vazio: sem grupo).
+        std::vector<std::string> drillGroups;
         bool facing = false;
     };
     std::vector<Skill> m_skills;

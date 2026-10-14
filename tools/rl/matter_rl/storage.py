@@ -110,6 +110,11 @@ CREATE TABLE IF NOT EXISTS evaluations (
     landing_falls REAL,
     jump_recovery REAL,
     push_recovery REAL,
+    getup_seconds REAL,
+    getup_stood5 REAL,
+    getup_reached REAL,
+    getup_target_seconds REAL,
+    getup_refalls REAL,
     PRIMARY KEY (run, iteration, battery, solver)
 );
 CREATE TABLE IF NOT EXISTS checkpoints (
@@ -157,7 +162,8 @@ class Database:
             for column in ("turn", "joint_speed", "foot_turn", "pose_error", "velocity_error", "lateral_drift",
                            "goal_error", "targets", "reached_fraction", "first_target_seconds", "target_speed",
                            "imitation_error", "facing_error", "speed_error", "foot_slip", "stop_overshoot", "line_error", "cadence", "chatter", "reversal", "cut_seconds", "jump_run", "jump_stand",
-                           "jump_rise_error", "landing_falls", "jump_recovery", "push_recovery"):
+                           "jump_rise_error", "landing_falls", "jump_recovery", "push_recovery", "getup_seconds",
+                           "getup_stood5", "getup_reached", "getup_target_seconds", "getup_refalls"):
                 if column not in known:
                     self.connection.execute(f"ALTER TABLE evaluations ADD COLUMN {column} REAL")
             known = {row[1] for row in self.connection.execute("PRAGMA table_info(iterations)")}

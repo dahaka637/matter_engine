@@ -174,6 +174,7 @@ void ReinforcementLearningScreen::loadSkills() {
                 if (target.facingFraction > 0.0f && target.facingDriftFraction > 0.0f) modes |= 4u;
                 skill.drillChests.push_back(modes == 0u ? 1u : modes);
                 skill.drillForce.push_back(drill.task->pushes.enabled && drill.task->pushes.whenRotating);
+                skill.drillGroups.push_back(drill.group);
             }
             skill.facing = task.target.facing;
             m_skills.push_back(std::move(skill));
@@ -1007,6 +1008,32 @@ void ReinforcementLearningScreen::drawDrillTree(std::size_t index) {
     for (std::size_t d = 0; d < skill.drills.size(); ++d) {
         const std::string& drill = skill.drills[d];
         const bool open = here && drill == current;
+        // Os do mesmo grupo (o Levantar, sem e com alvo): o grupo uma vez, e
+        // cada exercicio um ramo dele, aberto so com um deles escolhido.
+        if (const std::string& group = skill.drillGroups[d]; !group.empty()) {
+            const auto chosen = std::find(skill.drills.begin(), skill.drills.end(), current) - skill.drills.begin();
+            const bool groupOpen = here && static_cast<std::size_t>(chosen) < skill.drillGroups.size()
+                && skill.drillGroups[static_cast<std::size_t>(chosen)] == group;
+            if (d == 0 || skill.drillGroups[d - 1] != group) {
+                ImGui::Indent(ui(14.0f));
+                const std::string header = UI::FontAwesome::label(UI::FontAwesome::Crosshairs, group.c_str())
+                    + "##group" + skill.task + group;
+                if (navigationButton(header.c_str(), false, { -1.0f, ui(28.0f) })) {
+                    if (!here) selectSkill(index);
+                    setViewerDrill(drill, 0);
+                }
+                ImGui::Unindent(ui(14.0f));
+            }
+            if (!groupOpen) continue;
+            ImGui::Indent(ui(28.0f));
+            const std::string item = skill.drillNames[d] + "##drill" + skill.task + drill;
+            if (navigationButton(item.c_str(), open, { -1.0f, ui(26.0f) })) {
+                if (!here) selectSkill(index);
+                setViewerDrill(drill, 0);
+            }
+            ImGui::Unindent(ui(28.0f));
+            continue;
+        }
         ImGui::Indent(ui(14.0f));
         const std::string label = UI::FontAwesome::label(UI::FontAwesome::Crosshairs, skill.drillNames[d].c_str())
             + "##drill" + skill.task + drill;
@@ -1018,7 +1045,8 @@ void ReinforcementLearningScreen::drawDrillTree(std::size_t index) {
             if (!here) selectSkill(index);
             setViewerDrill(drill, (modes & (1u << m_viewerChest)) ? m_viewerChest : first);
         }
-        if (branches) {
+        // Os modos do peito: abertos so no exercicio escolhido.
+        if (branches && open) {
             ImGui::Indent(ui(14.0f));
             for (int chest = 0; chest < 3; ++chest) {
                 if (!(modes & (1u << chest))) continue;

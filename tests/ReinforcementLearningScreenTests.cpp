@@ -288,7 +288,7 @@ int main() {
         // peito livre e fixo.
         screen.selectSkill(0);
         frame(screen, canvas, 2);
-        require(screen.skillDrills() == std::vector<std::string> { "estrela", "frear", "curvas", "parado", "girar", "empurroes", "pulos" }, "o Corpo lista os exercicios");
+        require(screen.skillDrills() == std::vector<std::string> { "estrela", "frear", "curvas", "parado", "girar", "empurroes", "pulos", "levantar", "levantar_correr" }, "o Corpo lista os exercicios");
         screen.showDrill("estrela", 1);
         frame(screen, canvas, 2);
         require(screen.viewerHasTarget() && screen.viewerDrill() == 0, "o visualizador mostra a estrela");
@@ -352,6 +352,17 @@ int main() {
             screen.advanceViewer(30);
             frame(screen, canvas, 1);
             if (second % 2 == 0) snapshot(canvas, ("rl_tela_frear_forca_" + std::to_string(second) + "s").c_str());
+        }
+        // O levantar: a queda (o corpo solto) e o levantar, sem e com alvo.
+        for (const char* drill : { "levantar", "levantar_correr" }) {
+            screen.showDrill(drill, 0);
+            frame(screen, canvas, 2);
+            for (int tenth = 1; tenth <= 60; ++tenth) {
+                screen.advanceViewer(3);
+                frame(screen, canvas, 1);
+                if (tenth % 6 == 0)
+                    snapshot(canvas, ("rl_tela_" + std::string(drill) + "_" + std::to_string(tenth / 10) + "_" + std::to_string(tenth % 10) + "s").c_str());
+            }
         }
         // Os parados: girar (o peito girando) e os empurroes, no lugar.
         for (const auto& [drill, chest] : { std::pair<const char*, int> { "girar", 2 }, { "empurroes", 1 } }) {

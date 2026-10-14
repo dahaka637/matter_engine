@@ -109,6 +109,26 @@ struct Environment {
     // de queda (a chance de se recobrar) e a volta a velocidade depois de cada
     // uma.
     bool pushesOn = false;
+    // O levantar: caindo (o corpo solto depois do tranco) ate o controle; o
+    // tempo caindo e o parado no chao; o comeco do controle (s do episodio);
+    // levantando (o clipe), o trecho dele, o quadro de emendar na arrancada e
+    // a arrancada; o alvo ja posto; as medidas (de pe desde, o tempo ate ficar
+    // de pe, as quedas de novo, o tempo ate o alvo).
+    bool knockdown = false;
+    float knockdownTime = 0.0f;
+    float restTime = 0.0f;
+    float controlAt = -1.0f;
+    bool gettingUp = false;
+    std::uint32_t getUpSegment = 0;
+    std::uint32_t getUpExit = 0;
+    bool getUpSprint = false;
+    bool getUpTargeted = false;
+    float standSince = -1.0f;
+    float getUpSeconds = -1.0f;
+    bool stoodOnce = false;
+    bool downAgain = false;
+    std::uint32_t refalls = 0;
+    float getUpTargetSeconds = -1.0f;
     float pushStartedAt = -1.0f;
     float lowSince = -1.0f;
     float pushRecoverySince = -1.0f;
@@ -386,6 +406,10 @@ struct TrainingBatch3D::Impl {
     // trecho (o tempo parado e as mudancas da pedida no caminho).
     [[nodiscard]] bool drawStop(Environment& env, std::uint32_t k);
     [[nodiscard]] std::uint8_t drawJump(Environment& env, std::uint32_t k);
+    // O levantar: o trecho de um clipe pelo id, e o comeco do controle (o
+    // clipe pela posicao, o alvo).
+    [[nodiscard]] int segmentIndex(const std::string& id) const;
+    void startGetUp(Environment& env, const RagdollState3D& state, const BodyReading& reading);
     void finishJump(Environment& env, bool passed, float rise, float now);
     void startLeg(Environment& env, std::uint32_t k);
     [[nodiscard]] float redrawSpeed(Environment& env, std::uint32_t k);
@@ -533,7 +557,7 @@ void TrainingBatch3D::Impl::buildReference() {
     std::vector<ReferenceClip3D> clips;
     for (std::size_t i = 0; i < task.imitation.clips.size(); ++i)
         clips.push_back({ task.imitation.clips[i].id, task.imitation.clips[i].path,
-            library || i + 1 == task.imitation.clips.size() });
+            library ? task.imitation.clips[i].loops : i + 1 == task.imitation.clips.size() });
     reference = buildReferenceMotion3D(body, clips, FixedStep, library);
 }
 
@@ -602,6 +626,24 @@ void TrainingBatch3D::Impl::drawLibraryTarget(Environment& env, Vec3 from, float
         return std::min(wanted, directionCapability(env, direction - env.facingCommand));
     };
     speed = t.referenceSpeed;
+    if (t.pattern == "getup") {
+        // Caido e sem alvo: ficar onde esta (o comeco, ou onde comecou o
+        // controle). Com alvo: o primeiro a getUpTarget, os seguintes parado nele.
+        if (!env.getUpTargeted || k > 0) {
+            point = { from.x, from.y, 0.0f };
+            direction = facing;
+            speed = 0.0f;
+            return;
+        }
+        const float distance = pickIn(t.getUpTarget);
+        const float angle = training()
+            ? std::uniform_real_distribution<float>(-std::numbers::pi_v<float>, std::numbers::pi_v<float>)(env.rng)
+            : static_cast<float>((env.sequence * 3) % 8) * std::numbers::pi_v<float> / 4.0f;
+        direction = env.courseHeading + angle;
+        point = Vec3 { from.x, from.y, 0.0f } + Vec3 { std::cos(direction), std::sin(direction), 0.0f } * distance;
+        speed = sc.enabled ? capped(pickIn(sc.bands[drawSpeedBand(env, 0)].speed)) : t.referenceSpeed;
+        return;
+    }
     if (t.pattern == "hold") {
         // Parado: o alvo e o lugar do comeco, e a pedida e zero.
         point = { env.origin.x, env.origin.y, 0.0f };
@@ -782,6 +824,37 @@ void TrainingBatch3D::Impl::placeLibraryTarget(Environment& env, Vec3 from, floa
     startLeg(env, k);
 }
 
+int TrainingBatch3D::Impl::segmentIndex(const std::string& id) const {
+    for (std::size_t s = 0; s < reference.segments.size(); ++s)
+        if (reference.segments[s].id == id) return static_cast<int>(s);
+    return -1;
+}
+
+void TrainingBatch3D::Impl::startGetUp(Environment& env, const RagdollState3D& state, const BodyReading& reading) {
+    const TrainingTask3D::Target& t = taskOf(env).target;
+    env.knockdown = false;
+    env.controlAt = static_cast<float>(env.played) * static_cast<float>(taskOf(env).actionRepeat) * FixedStep;
+    // De costas (a frente do peito para cima) ou de brucos.
+    const Quaternion chest = (state.links[body.upperChest].orientation
+        * body.profile.links[body.upperChest].modelOrientation.conjugate()).normalized();
+    const bool onBack = chest.rotate({ 1.0f, 0.0f, 0.0f }).z > 0.0f;
+    const int segment = segmentIndex(onBack ? t.getUpBackClip : t.getUpFrontClip);
+    const Vec3 forward = reading.pelvisFrame.rotate({ 1.0f, 0.0f, 0.0f });
+    const float facing = std::atan2(forward.y, forward.x);
+    env.getUpTargeted = t.getUpTarget.maximum > 0.0f;
+    placeLibraryTarget(env, reading.com, facing, 0);
+    if (segment < 0) return;
+    env.gettingUp = true;
+    env.getUpSprint = false;
+    env.getUpSegment = static_cast<std::uint32_t>(segment);
+    env.cursor = { env.getUpSegment, 0 };
+    env.clipSince = 0.0f;
+    const int sprint = segmentIndex(t.getUpSprintClip);
+    env.getUpExit = env.getUpTargeted && sprint >= 0
+        ? closestFrame3D(reference, env.getUpSegment, static_cast<std::uint32_t>(sprint), 0.4f)
+        : static_cast<std::uint32_t>(reference.segments[env.getUpSegment].frames.size());
+}
+
 // Os pulos na estrela: nas idas do centro a ponta (os alvos pares) a zona no
 // meio do caminho, nas voltas ao centro (os impares) o pulo parado nele. Na
 // avaliacao, todos.
@@ -809,7 +882,7 @@ void TrainingBatch3D::Impl::finishJump(Environment& env, bool passed, float rise
 }
 
 bool TrainingBatch3D::Impl::drawStop(Environment& env, std::uint32_t k) {
-    if (taskOf(env).target.pattern == "hold") return true;  // parado: sempre
+    if (taskOf(env).target.pattern == "hold" || taskOf(env).target.pattern == "getup") return true;  // parado: sempre
     const auto& sc = taskOf(env).target.speedCommand;
     if (!sc.enabled || !(sc.stopFraction > 0.0f)) return false;
     // Na avaliacao, um sim e um nao (cada mundo comeca de um lado).
@@ -857,7 +930,9 @@ void TrainingBatch3D::Impl::startLeg(Environment& env, std::uint32_t k) {
     env.stopHeld = 0.0f;
     env.stopEntered = false;
     env.stopOvershoot = 0.0f;
-    env.stopHold = taskOf(env).target.pattern == "hold" ? std::numeric_limits<float>::max()  // nunca acaba
+    const bool holding = taskOf(env).target.pattern == "hold"
+        || (taskOf(env).target.pattern == "getup" && (!env.getUpTargeted || k > 0));
+    env.stopHold = holding ? std::numeric_limits<float>::max()  // nunca acaba
         : !env.targetStop ? 0.0f
         : training()               ? uniform(env.rng, sc.stopHoldSeconds)
                                    : 0.5f * (sc.stopHoldSeconds.minimum + sc.stopHoldSeconds.maximum);
@@ -919,6 +994,28 @@ float TrainingBatch3D::Impl::wantedTurn(const Environment& env, Vec3 position, f
 
 void TrainingBatch3D::Impl::plan(Environment& env, Vec3 position, float facing, bool force) {
     const TrainingTask3D& task = taskOf(env);  // o exercicio do mundo
+    // O levantar: caindo, nada; levantando, o clipe de levantar ate o fim (com
+    // alvo, no quadro de emendar ele vira a arrancada, girando para o alvo).
+    if (env.knockdown) {
+        env.turnRate = 0.0f;
+        return;
+    }
+    if (env.gettingUp) {
+        env.turnRate = 0.0f;
+        if (env.getUpTargeted && !env.getUpSprint && env.cursor.segment == env.getUpSegment
+            && env.cursor.frame >= env.getUpExit) {
+            const int sprint = segmentIndex(task.target.getUpSprintClip);
+            if (sprint >= 0) {
+                env.cursor = { static_cast<std::uint32_t>(sprint), 0 };
+                env.clipSince = 0.0f;
+                env.getUpSprint = true;
+            }
+        }
+        if (env.getUpSprint) env.turnRate = wantedTurn(env, position, facing);
+        const ReferenceSegment3D& now = reference.segments[env.cursor.segment];
+        if (!now.loops && env.cursor.frame + 1 >= now.frames.size()) env.gettingUp = false;
+        if (env.gettingUp || !force) return;
+    }
     const TrainingTask3D::Imitation::Planner& planner = task.imitation.planner;
     const float base = env.facingActive ? env.facingCommand : facing;
     const Vec3 aim = aimPoint(env);
@@ -975,6 +1072,9 @@ void TrainingBatch3D::Impl::plan(Environment& env, Vec3 position, float facing, 
     for (std::uint32_t c = 0; c < reference.segments.size(); ++c) {
         // (O lado do clipe pelo peito: no andar de lado do Mixamo a pelve vai virada.)
         const ReferenceSegment3D& candidate = reference.segments[c];
+        // Os trechos que comecam e terminam (o levantar, a arrancada) so o
+        // levantar escolhe.
+        if (!candidate.loops) continue;
         if (stopping) {
             // Parado: so os clipes que nao andam, pelo giro que o peito pede
             // agora (o parado sem giro; os giros no lugar acima de
@@ -1417,6 +1517,25 @@ void TrainingBatch3D::Impl::resetEnvironment(std::uint32_t index) {
     env.pushRemaining = 0.0f;
     env.pushForce = {};
     env.pushesOn = task.pushes.enabled && (!task.pushes.whenRotating || env.facingDrifting);
+    // O levantar: em pe, solto, e o tranco no peito numa direcao sorteada (na
+    // avaliacao: de costas, de frente, para um lado e para o outro).
+    env.knockdown = task.target.pattern == "getup" && imitating() && reference.library;
+    env.knockdownTime = env.restTime = 0.0f;
+    env.controlAt = -1.0f;
+    env.gettingUp = env.getUpSprint = env.getUpTargeted = false;
+    env.standSince = env.getUpSeconds = env.getUpTargetSeconds = -1.0f;
+    env.stoodOnce = env.downAgain = false;
+    env.refalls = 0;
+    if (env.knockdown) {
+        const TrainingRange3D& push = task.target.knockdownNewtons;
+        const float side = training()
+            ? std::uniform_real_distribution<float>(-std::numbers::pi_v<float>, std::numbers::pi_v<float>)(env.rng)
+            : std::numbers::pi_v<float> + static_cast<float>(env.sequence % 4) * 0.5f * std::numbers::pi_v<float>;
+        const float force = training() ? uniform(env.rng, push) : 0.5f * (push.minimum + push.maximum);
+        env.pushForce = Vec3 { std::cos(env.startHeading + side), std::sin(env.startHeading + side), 0.0f } * force;
+        env.pushLink = body.upperChest;
+        env.pushRemaining = task.target.knockdownSeconds;
+    }
     env.pushStartedAt = env.lowSince = env.pushRecoverySince = -1.0f;
     env.pushRecoverySum = 0.0;
     env.pushRecoveryCount = 0;
@@ -1653,6 +1772,34 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
     bool fell, float* componentsOut) {
     const TrainingTask3D& task = taskOf(env);  // o exercicio do mundo
     const TrainingRewardWeights3D& w = task.reward;
+    // O levantar: caindo, nada conta (a rede ainda nao manda no corpo).
+    if (env.knockdown) {
+        std::fill(componentsOut, componentsOut + RewardCount, 0.0f);
+        return 0.0f;
+    }
+    // De pe de verdade (a cabeca e a pelve na altura) por 0,5 s: levantou; e,
+    // depois disso, a cabeca baixa de novo e uma queda.
+    if (env.controlAt >= 0.0f) {
+        const float now = static_cast<float>(env.played) * static_cast<float>(task.actionRepeat) * FixedStep;
+        const RLPosture3D& upright = body.postures[env.posture];
+        const float head = state.links[body.head].position.z;
+        const bool up = head >= 0.85f * upright.standingHeadHeight
+            && state.links.front().position.z >= 0.85f * upright.standingPelvisHeight;
+        if (up) {
+            if (env.standSince < 0.0f) env.standSince = now;
+            if (!env.stoodOnce && now - env.standSince >= 0.5f) {
+                env.stoodOnce = true;
+                env.getUpSeconds = env.standSince - env.controlAt;
+            }
+            env.downAgain = false;
+        } else {
+            env.standSince = -1.0f;
+            if (env.stoodOnce && !env.downAgain && head < 0.6f * upright.standingHeadHeight) {
+                ++env.refalls;
+                env.downAgain = true;
+            }
+        }
+    }
     const RagdollProfile3D& profile = body.profile;
     const RLPosture3D& posture = body.postures[env.posture];
     // Andando ou parado: as parcelas de parado (quieto, centro de massa sobre
@@ -1949,6 +2096,9 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
         // stopSpeed) pelo tempo pedido; o quanto passa do disco depois de
         // entrar nele fica medido.
         bool arrived = distance < t.radius;
+        // O levantar com alvo: o tempo do comeco do controle ate entrar no disco.
+        if (env.getUpTargeted && env.getUpTargetSeconds < 0.0f && env.targetCount == 1 && distance < t.radius)
+            env.getUpTargetSeconds = static_cast<float>(env.played) * stepSeconds - env.controlAt;
         if (env.targetStop && env.targetJump != 2) {  // (o pulo parado chega pelo pulo)
             if (distance < t.radius) env.stopEntered = true;
             if (env.stopEntered) env.stopOvershoot = std::max(env.stopOvershoot, distance - t.radius);
@@ -2212,6 +2362,15 @@ void TrainingBatch3D::Impl::finishEpisode(Scene& scene, std::uint32_t index, Tra
         const bool afterJump = env.jumpAirborne || (env.jumpEndedAt >= 0.0f && ended - env.jumpEndedAt < 1.5f);
         episode.landingFall = jumpsTried > 0 || env.jumpAirborne ? (fallReason && afterJump ? 1.0f : 0.0f) : -1.0f;
     }
+    // O levantar: o tempo ate ficar de pe (do comeco do controle), se levantou
+    // em 5 s, o tempo ate o alvo (-1 sem alvo, -2 com alvo e sem chegar) e as
+    // quedas de novo (-1 fora do levantar).
+    const bool getup = task.target.pattern == "getup";
+    episode.getUpSeconds = env.getUpSeconds;
+    episode.getUpStood5 = getup ? (env.getUpSeconds >= 0.0f && env.getUpSeconds <= 5.0f ? 1.0f : 0.0f) : -1.0f;
+    episode.getUpTargetSeconds = !getup || !(task.target.getUpTarget.maximum > 0.0f) ? -1.0f
+        : env.getUpTargetSeconds >= 0.0f ? env.getUpTargetSeconds : -2.0f;
+    episode.getUpRefalls = getup ? static_cast<float>(env.refalls) : -1.0f;
     episode.pushRecoverySeconds =
         env.pushRecoveryCount > 0 ? static_cast<float>(env.pushRecoverySum / env.pushRecoveryCount) : -1.0f;
     episode.jumpRecoverySeconds =
@@ -2269,6 +2428,13 @@ void TrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> actio
             env.action[d] = std::clamp(actions[index * A + d], -RLActionLimit, RLActionLimit);
         std::swap(env.previousTargets, env.targets);
         writeTargets(env, env.action);
+        // Caindo (o levantar): o corpo solto, como boneco de pano.
+        if (env.knockdown)
+            for (RagdollDriveTarget3D& target : env.targets) {
+                target.stiffnessScale *= 0.05f;
+                target.dampingScale *= 0.3f;
+                target.maximumTorqueScale *= 0.15f;
+            }
         physics.setRagdollActiveDriveTargets(env.ragdoll, env.delayed ? env.previousTargets : env.targets, false);
     }
 
@@ -2466,6 +2632,15 @@ void TrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> actio
                     }
                     env.facingCommand += env.facingRate * decision;
                 }
+                // O levantar: 1 s parado no chao (ou 5 s caindo) e o controle comeca.
+                if (env.knockdown) {
+                    env.knockdownTime += decision;
+                    const Vec3 v = state->links.front().linearVelocity;
+                    const bool still = std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z) < 0.25f
+                        && state->links.front().position.z < 0.6f * body.postures[env.posture].standingPelvisHeight;
+                    env.restTime = still ? env.restTime + decision : 0.0f;
+                    if (env.restTime >= 1.0f || env.knockdownTime >= 5.0f) startGetUp(env, *state, reading);
+                }
                 if (reference.library) plan(env, reading.com, facing, false);
                 else env.turnRate = wantedTurn(env, reading.com, facing);
             }
@@ -2578,7 +2753,8 @@ void TrainingBatch3D::updateTask(const TrainingTask3D& task) {
         throw std::runtime_error("lote de RL: os proximos alvos e a biblioteca nao mudam com o treino andando");
     bool clipsChanged = task.imitation.clips.size() != impl.task.imitation.clips.size();
     for (std::size_t i = 0; !clipsChanged && i < task.imitation.clips.size(); ++i)
-        clipsChanged = task.imitation.clips[i].path != impl.task.imitation.clips[i].path;
+        clipsChanged = task.imitation.clips[i].path != impl.task.imitation.clips[i].path
+            || task.imitation.clips[i].loops != impl.task.imitation.clips[i].loops;
     impl.task.imitation = task.imitation;
     impl.task.target = task.target;
     if (clipsChanged) impl.buildReference();
@@ -2721,6 +2897,8 @@ TrainingEnvironmentView3D TrainingBatch3D::view(std::size_t environment) const {
             view.upcomingStop[i] = env.upcomingStop[i];
         }
         view.targetStop = env.targetStop;
+        view.knockdown = env.knockdown;
+        view.gettingUp = env.gettingUp;
         if (env.jumpActive) {
             view.hasJump = true;
             view.jumpStanding = env.jumpStanding;

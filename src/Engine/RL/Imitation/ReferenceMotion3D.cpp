@@ -315,11 +315,10 @@ ReferenceMotion3D buildReferenceMotion3D(const RLBody3D& body, std::span<const R
     if (clips.empty()) throw std::invalid_argument("referencia: sem trechos");
     if (!(frameSeconds > 0.0f)) throw std::invalid_argument("referencia: passo invalido");
     for (std::size_t i = 0; i < clips.size(); ++i)
-        if (library ? !clips[i].loops : clips[i].loops != (i + 1 == clips.size()))
-            throw std::invalid_argument(library ? "referencia: numa biblioteca todo trecho fica em ciclo ("
-                    + clips[i].clipPath.string() + ")"
-                                                : "referencia: so o ultimo trecho fica em ciclo ("
-                    + clips[i].clipPath.string() + ")");
+        // (Numa biblioteca um trecho pode comecar e terminar: o levantar, a
+        // arrancada; ele segura o ultimo quadro ate o planejador trocar.)
+        if (!library && clips[i].loops != (i + 1 == clips.size()))
+            throw std::invalid_argument("referencia: so o ultimo trecho fica em ciclo (" + clips[i].clipPath.string() + ")");
     ReferenceMotion3D motion;
     motion.frameSeconds = frameSeconds;
     motion.library = library;
@@ -380,6 +379,11 @@ ReferenceCursor3D advanceReference3D(const ReferenceMotion3D& motion, ReferenceC
             cursor.frame = (cursor.frame + remaining) % size;
             return cursor;
         }
+        // Na biblioteca, o trecho que termina fica no ultimo quadro.
+        if (motion.library) {
+            cursor.frame = std::min(cursor.frame + remaining, size - 1);
+            return cursor;
+        }
         // O ultimo quadro de um trecho que nao e ciclo e o primeiro do proximo.
         const std::uint32_t left = size - 1 - std::min(cursor.frame, size - 1);
         if (remaining <= left) {
@@ -397,6 +401,23 @@ ReferenceCursor3D advanceReference3D(const ReferenceMotion3D& motion, ReferenceC
         }
     }
     return cursor;
+}
+
+std::uint32_t closestFrame3D(const ReferenceMotion3D& motion, std::uint32_t from, std::uint32_t to, float fromFraction) {
+    const ReferenceSegment3D& a = motion.segments.at(from);
+    const ReferenceFrame3D& b = motion.segments.at(to).frames.front();
+    const std::size_t first = std::min(a.frames.size() - 1,
+        static_cast<std::size_t>(std::clamp(fromFraction, 0.0f, 1.0f) * static_cast<float>(a.frames.size())));
+    std::uint32_t best = static_cast<std::uint32_t>(a.frames.size() - 1);
+    float bestCost = std::numeric_limits<float>::max();
+    for (std::size_t f = first; f < a.frames.size(); ++f) {
+        const float cost = poseDistance2(a.frames[f], b);
+        if (cost < bestCost) {
+            bestCost = cost;
+            best = static_cast<std::uint32_t>(f);
+        }
+    }
+    return best;
 }
 
 const ReferenceFrame3D& referenceFrame3D(const ReferenceMotion3D& motion, ReferenceCursor3D cursor) {

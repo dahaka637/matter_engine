@@ -15,7 +15,7 @@ from .model import ACTION_LIMIT, ActorCritic
 
 REASONS = ["nenhum", "queda_contato", "queda_altura", "numerico", "tempo", "limite", "alvo_perdido"]
 # As colunas do resumo de um episodio (finished_episodes do modulo nativo).
-EPISODE_COLUMNS = 41
+EPISODE_COLUMNS = 45
 FALLS = {1, 2, 3}
 
 
@@ -48,6 +48,8 @@ def battery_kind(name: str) -> str:
         return "alvo"
     if name.startswith("giro_"):
         return "giro"
+    if name.startswith("levantar"):
+        return "levantar"
     if name.startswith(("corrida_", "caminhada_", "direcoes_", "percursos_", "tiro_", "estrela_", "frear_", "curvas_", "pulos_")):
         return "corrida"
     return "de_pe"
@@ -73,7 +75,7 @@ def task_batteries(task_path: Path) -> list[dict]:
         if not entry.get("enabled", True):
             continue
         kind = ("andar" if entry.get("schedule") else "alvo" if entry.get("goal")
-                else battery_kind(entry["name"]) if battery_kind(entry["name"]) in ("corrida", "giro") else "de_pe")
+                else battery_kind(entry["name"]) if battery_kind(entry["name"]) in ("corrida", "giro", "levantar") else "de_pe")
         batteries.append(dict(entry, kind=kind, posture=entry.get("posture", "natural")))
     return batteries
 
@@ -157,6 +159,19 @@ def human_penalty(metrics: dict) -> float:
     segundo de cada pe; 5 ou mais tira 0,10)."""
     return (0.15 * min(1.0, metrics.get("chatter", 0.0) / 1.0)
             + 0.10 * min(1.0, max(0.0, metrics.get("cadence", 0.0) - 3.5) / 1.5))
+
+
+def getup_score(metrics: dict) -> float:
+    """Levantar: a fatia que ficou de pe em 5 s, rapido (6 s ou mais nao
+    rende), sem cair de novo e, com alvo, chegando nele (12 s ou mais nao
+    rende)."""
+    quick = max(0.0, 1.0 - metrics["getup_seconds"] / 6.0) if metrics.get("getup_seconds", -1.0) >= 0 else 0.0
+    steady = 1.0 - min(1.0, max(0.0, metrics.get("getup_refalls", 0.0)))
+    if not metrics.get("getup_target"):
+        return 0.6 * metrics.get("getup_stood5", 0.0) + 0.25 * quick + 0.15 * steady
+    fast = max(0.0, 1.0 - metrics["getup_target_seconds"] / 12.0) if metrics.get("getup_target_seconds", -1.0) >= 0 else 0.0
+    return (0.45 * metrics.get("getup_stood5", 0.0) + 0.2 * quick + 0.15 * steady
+            + 0.2 * max(0.0, metrics.get("getup_reached", 0.0)) * fast)
 
 
 def turn_score(metrics: dict) -> float:
@@ -416,8 +431,21 @@ class Evaluator:
             pushed = rows[:, 40][rows[:, 40] >= 0]
             metrics["push_recovery"] = float(pushed.mean()) if len(pushed) else -1.0
             metrics["reference_speed"] = float((spec or {}).get("referenceSpeed", 6.0))
+        if kind == "levantar":
+            # O levantar: o tempo ate ficar de pe, a fatia que levantou em 5 s,
+            # o tempo ate o alvo (com alvo; quem nao chegou fica de fora e conta
+            # na fatia que chegou) e as quedas de novo.
+            got = rows[:, 41][rows[:, 41] >= 0]
+            targeted = rows[:, 43] != -1
+            reached = rows[:, 43][rows[:, 43] >= 0]
+            metrics["getup_seconds"] = float(got.mean()) if len(got) else -1.0
+            metrics["getup_stood5"] = float(rows[:, 42][rows[:, 42] >= 0].mean()) if (rows[:, 42] >= 0).any() else 0.0
+            metrics["getup_target"] = bool(targeted.any())
+            metrics["getup_reached"] = float(len(reached)) / float(targeted.sum()) if targeted.any() else -1.0
+            metrics["getup_target_seconds"] = float(reached.mean()) if len(reached) else -1.0
+            metrics["getup_refalls"] = float(rows[:, 44][rows[:, 44] >= 0].mean()) if (rows[:, 44] >= 0).any() else 0.0
         metrics["kind"] = kind
         metrics["score"] = (walking_score(metrics) if kind == "andar" else goal_score(metrics) if kind == "alvo"
                             else race_score(metrics) if kind == "corrida" else turn_score(metrics) if kind == "giro"
-                            else score(metrics))
+                            else getup_score(metrics) if kind == "levantar" else score(metrics))
         return metrics

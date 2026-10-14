@@ -112,6 +112,12 @@ struct ReferenceCursor3D {
 [[nodiscard]] ReferenceCursor3D advanceReference3D(const ReferenceMotion3D& motion, ReferenceCursor3D cursor,
     std::uint32_t frames);
 
+// O quadro de "from" (a partir de fromFraction dele) com a pose mais perto da
+// do primeiro quadro de "to": a hora de emendar um trecho que termina no
+// seguinte (o levantar na arrancada).
+[[nodiscard]] std::uint32_t closestFrame3D(const ReferenceMotion3D& motion, std::uint32_t from, std::uint32_t to,
+    float fromFraction);
+
 [[nodiscard]] const ReferenceFrame3D& referenceFrame3D(const ReferenceMotion3D& motion, ReferenceCursor3D cursor);
 
 // Numa biblioteca: o cursor no trecho pedido, pelo quadro da emenda (no mesmo

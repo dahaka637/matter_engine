@@ -125,8 +125,11 @@ struct TrainingTask3D {
     // mesma rede serve a todos, e ela nunca sabe o nome do exercicio.
     struct Drill {
         std::string id;
-        // O nome na tela (o id com a primeira maiuscula, sem ele).
+        // O nome na tela (o id com a primeira maiuscula, sem ele) e o grupo (os
+        // exercicios do mesmo grupo viram ramos de um so na tela: o Levantar,
+        // sem e com alvo).
         std::string name;
+        std::string group;
         float weight = 1.0f;
         std::shared_ptr<const TrainingTask3D> task;
     };
@@ -222,6 +225,9 @@ struct TrainingTask3D {
     struct ImitationClip {
         std::string id;
         std::filesystem::path path;
+        // Na biblioteca: em ciclo (o normal) ou um trecho que comeca e termina
+        // (o levantar, a arrancada), que o planejador comum nunca escolhe.
+        bool loops = true;
     };
     // Com residualActions, a acao corrige a pose da referencia: o alvo de cada
     // junta e o da referencia no fim da decisao (e a velocidade dela) mais
@@ -411,6 +417,20 @@ struct TrainingTask3D {
         float standJumpFraction = 0.0f;
         TrainingRange3D runJumpRise { 0.20f, 0.50f };
         TrainingRange3D standJumpRise { 0.15f, 0.45f };
+        // O levantar (o 10): pattern "getup". Ele nasce em pe, solto como
+        // boneco de pano, e um tranco no peito (knockdownNewtons por
+        // knockdownSeconds, numa direcao sorteada) o joga no chao; 1 s depois
+        // de parar no chao o controle comeca, com o clipe de levantar pela
+        // posicao (getUpBackClip de costas, getUpFrontClip de brucos; os ids da
+        // biblioteca). Com getUpTarget (m), ao comecar o controle um alvo a essa
+        // distancia, na pedida da faixa, e no meio do levantar o clipe emenda
+        // na arrancada (getUpSprintClip); sem ele, levantar e ficar no alerta.
+        TrainingRange3D knockdownNewtons { 700.0f, 1100.0f };
+        float knockdownSeconds = 0.15f;
+        std::string getUpBackClip;
+        std::string getUpFrontClip;
+        std::string getUpSprintClip;
+        TrainingRange3D getUpTarget { 0.0f, 0.0f };
         // As curvas ("arc"): cada uma sorteia um dos tipos de raio (arcRadii,
         // [m, m]: aberta, media, fechada), o quanto gira (arcSweepDegrees) e o
         // sentido (arcSwitchFraction: a chance de trocar de lado, as curvas em

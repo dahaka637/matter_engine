@@ -938,7 +938,7 @@ void testDrills() {
         // A tarefa Corpo (a area 1): a estrela, com o desenho e o comando de
         // velocidade dela.
         const TrainingTask3D corpo = loadTrainingTask3D(std::filesystem::path(MATTERENGINE_TEST_ASSETS_DIR) / "rl/tasks/corpo.json");
-        require(corpo.drills.size() == 7 && corpo.drills[0].id == "estrela"
+        require(corpo.drills.size() == 9 && corpo.drills[0].id == "estrela"
                 && corpo.drills[0].task->target.pattern == "star" && corpo.target.pattern == "random"
                 && corpo.drills[0].task->target.facingFraction == 0.6f && corpo.target.speedCommand.enabled
                 && corpo.target.speedCommand.bands.size() == 4,
@@ -1307,6 +1307,71 @@ void testBrakeForces() {
     }
 }
 
+// O levantar (o 10): o tranco com o corpo solto, a nota zero caindo, o controle
+// no chao com o clipe de levantar, o chao sem encerrar; com alvo, ele nasce a
+// 5-10 m no comeco do controle. Os outros exercicios nunca pegam os trechos que
+// terminam.
+void testGetUp() {
+    const std::filesystem::path task = std::filesystem::path(MATTERENGINE_TEST_ASSETS_DIR) / "rl/tasks/corpo.json";
+    const TrainingTask3D corpo = loadTrainingTask3D(task);
+    require(corpo.drills[7].id == "levantar" && corpo.drills[7].group == "Levantar" && corpo.drills[8].group == "Levantar",
+        "o levantar e um grupo de dois");
+    for (const char* id : { "levantar", "levantar_correr" }) {
+        TrainingBatchSettings3D s = settings(4, 2);
+        s.taskPath = task;
+        s.evaluation = true;
+        s.evaluationEpisodeSeconds = 15.0f;
+        s.drill = id;
+        TrainingBatch3D batch(s);
+        const std::size_t O = batch.observationSize(), back = channel(batch, "reference.clip.levantar_costas"),
+                          front = channel(batch, "reference.clip.levantar_frente");
+        for (std::size_t e = 0; e < 4; ++e) require(batch.view(e).knockdown, std::string(id) + ": comeca caindo");
+        std::vector<bool> started(4, false);
+        bool finished = false;
+        for (int step = 0; step < 200; ++step) {
+            std::vector<bool> falling(4);
+            for (std::size_t e = 0; e < 4; ++e) falling[e] = batch.view(e).knockdown;
+            batch.step(std::vector<float>(4 * batch.actionSize(), 0.0f));
+            finished = finished || !batch.finishedEpisodes().empty();
+            for (std::size_t e = 0; e < 4; ++e) {
+                const TrainingEnvironmentView3D view = batch.view(e);
+                if (falling[e] && view.knockdown)
+                    require(batch.rewards()[e] == 0.0f, std::string(id) + ": caindo, a nota e zero");
+                if (falling[e] && !view.knockdown) {
+                    started[e] = true;
+                    const float* o = batch.observations().data() + e * O;
+                    require(view.gettingUp && (o[back] == 1.0f || o[front] == 1.0f),
+                        std::string(id) + ": o controle comeca com o clipe de levantar");
+                    require(view.state && view.state->links.front().position.z < 0.6f, std::string(id) + ": e no chao");
+                    const float far = std::hypot(view.target.x - view.state->links.front().position.x,
+                        view.target.y - view.state->links.front().position.y);
+                    if (std::string(id) == "levantar_correr")
+                        require(far > 4.5f && far < 10.5f, "com alvo, ele nasce a 5-10 m (" + std::to_string(far) + " m)");
+                    else
+                        require(far < 1.0f, "sem alvo, o alvo e onde ele esta");
+                }
+            }
+        }
+        require(std::count(started.begin(), started.end(), true) == 4, std::string(id) + ": o controle comecou nos quatro");
+        require(!finished, std::string(id) + ": estar no chao nao encerra");
+    }
+    // A estrela nunca pega os trechos que terminam.
+    TrainingBatchSettings3D s = settings(8, 4);
+    s.taskPath = task;
+    s.evaluation = true;
+    s.evaluationEpisodeSeconds = 40.0f;
+    s.drill = "estrela";
+    TrainingBatch3D star(s);
+    const std::size_t O = star.observationSize();
+    const std::array<std::size_t, 3> ends { channel(star, "reference.clip.levantar_costas"),
+        channel(star, "reference.clip.levantar_frente"), channel(star, "reference.clip.arrancada_agachada") };
+    for (int step = 0; step < 30; ++step) {
+        star.step(std::vector<float>(8 * star.actionSize(), 0.0f));
+        for (std::size_t e = 0; e < 8; ++e)
+            for (const std::size_t c : ends) require(star.observations()[e * O + c] == 0.0f, "a estrela nao pega o levantar");
+    }
+}
+
 } // namespace
 
 void runTrainingBatchTests() {
@@ -1332,5 +1397,6 @@ void runTrainingBatchTests() {
     testTurnCycles();
     testJumps();
     testBrakeForces();
+    testGetUp();
     std::cout << "RL training batch tests passed\n";
 }
