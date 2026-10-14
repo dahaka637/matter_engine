@@ -150,3 +150,24 @@ def test_body_trainer_with_mirror_loss(scratch):
     db = storage.Database(paths.DATABASE)
     row = db.execute("SELECT details FROM iterations WHERE run='espelho' ORDER BY iteration DESC").fetchone()
     assert json.loads(row["details"])["mirror"] > 0.0
+
+
+def test_body_trainer_evaluation(scratch):
+    from matter_rl.body_trainer import BodyTrainer
+    trainer = tiny(BodyTrainer, scratch, "avaliacao")
+    trainer.config.evaluation_worlds = 4
+    trainer.config.evaluation_seconds = 2.0
+    trainer.max_iterations = 1
+    trainer.loop()
+    trainer = tiny(BodyTrainer, scratch, "avaliacao")
+    trainer.config.evaluation_worlds = 4
+    trainer.config.evaluation_seconds = 2.0
+    result = trainer.command("avaliar", {})["evaluation"]
+    assert set(result["drills"]) == {"parado", "deslocamento", "estrela"}
+    for summary in result["drills"].values():
+        assert summary["worlds"] == 4 and summary["episodes"] == 4
+    db = storage.Database(paths.DATABASE)
+    rows = db.execute("SELECT drill, data FROM body_evaluations WHERE run='avaliacao'").fetchall()
+    assert len(rows) == 3
+    trainer.max_iterations = trainer.counters["iteration"] + 1
+    trainer.loop()

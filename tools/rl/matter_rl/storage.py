@@ -127,6 +127,16 @@ CREATE TABLE IF NOT EXISTS checkpoints (
     score REAL,
     PRIMARY KEY (run, iteration)
 );
+CREATE TABLE IF NOT EXISTS body_evaluations (
+    run TEXT NOT NULL,
+    iteration INTEGER NOT NULL,
+    time REAL NOT NULL,
+    steps INTEGER NOT NULL,
+    drill TEXT NOT NULL,
+    solver TEXT NOT NULL,
+    data TEXT NOT NULL,
+    PRIMARY KEY (run, iteration, drill, solver)
+);
 CREATE TABLE IF NOT EXISTS events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     run TEXT,
@@ -211,6 +221,12 @@ class Database:
         columns = ", ".join(row)
         marks = ", ".join(f":{key}" for key in row)
         self.execute(f"INSERT OR REPLACE INTO iterations({columns}) VALUES ({marks})", row)
+
+    def log_body_evaluation(self, run: str, iteration: int, steps: int, drill: str, solver: str, data: dict) -> None:
+        """A avaliacao do Corpo v2: as medidas de um exercicio (JSON)."""
+        self.execute("""INSERT OR REPLACE INTO body_evaluations(run, iteration, time, steps, drill, solver, data)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)""", (run, iteration, time.time(), steps, drill, solver, json.dumps(data)))
+        self.commit()
 
     def log_evaluation(self, row: dict) -> None:
         columns = ", ".join(row)

@@ -72,6 +72,11 @@ class BodyRunConfig:
     mirror_loss: float = 0.0
     checkpoint_minutes: float = 10.0
     export_minutes: float = 1.0
+    # A avaliacao: cada exercicio com a acao media (como no jogo), em mundos
+    # fixos, a cada evaluation_minutes (0 = nunca), no solver do jogo.
+    evaluation_minutes: float = 10.0
+    evaluation_worlds: int = 32
+    evaluation_seconds: float = 20.0
     disk_cap_gb: float = 10.0
     ppo: dict = field(default_factory=lambda: PPOSettings().to_dict())
     network: dict = field(default_factory=lambda: dict(NETWORK))
@@ -227,6 +232,8 @@ class BodyTrainer:
         self.recent_sps = 0.0
         self.last_iteration_stats: dict = {}
         self.last_judge: dict = {}
+        self.last_evaluation: dict = {}
+        self.evaluation_batches: dict = {}
         self.pending = None
         self.failures = 0
         self.session = self.db.begin_session(run, self.counters["iteration"], self.mode.name, str(self.device))
@@ -290,7 +297,8 @@ class BodyTrainer:
             "device": str(self.device), "environments": self.config.environments,
             "iteration": self.counters["iteration"], "steps": self.counters["steps"], "sps": self.recent_sps,
             "trainSeconds": self.counters["train_seconds"], "sessionSeconds": time.time() - self.started,
-            "episodes": self.counters["episodes"], "last": self.last_iteration_stats, "evaluation": {}, "best": {},
+            "episodes": self.counters["episodes"], "last": self.last_iteration_stats,
+            "evaluation": self.last_evaluation, "best": {},
             "cpuTemperature": system.cpu_temperature(), "memoryMB": system.memory_mb(),
             "gpuMemoryMB": torch.cuda.memory_allocated() / 1e6 if self.device.type == "cuda" else 0.0,
             "policy": str(self.directory / "exports" / "policy_latest.mrlpolicy"), "message": self.message,
@@ -324,6 +332,49 @@ class BodyTrainer:
             "observationNames": list(self.obs_names),
         })
 
+    # --- avaliacao -------------------------------------------------------------------
+    def evaluate(self) -> dict:
+        """Cada exercicio com a acao media, os mesmos mundos e o solver do jogo:
+        o primeiro episodio de cada mundo. As medidas vao para o banco."""
+        self.drain()
+        previous, self.state = self.state, "avaliando"
+        self.write_status()
+        results: dict = {}
+        col = {name: i for i, name in enumerate(self.episode_columns)}
+        for drill in self.drill_ids:
+            batch = self.evaluation_batches.get(drill)
+            if batch is None:
+                batch = self.native.BodyBatch(str(self.live_task), environments=self.config.evaluation_worlds,
+                                              per_scene=4, threads=self.threads, seed=20261014, evaluation=True,
+                                              evaluation_seconds=self.config.evaluation_seconds, solver_position=20,
+                                              solver_velocity=20, drill=drill)
+                self.evaluation_batches[drill] = batch
+            else:
+                batch.update_task(str(self.live_task))
+                batch.reset(20261014)
+            worlds = batch.num_envs
+            first: dict[int, np.ndarray] = {}
+            steps = int(self.config.evaluation_seconds / batch.policy_dt) + 2
+            with torch.no_grad():
+                for _ in range(steps):
+                    obs = self.tensor(batch.observations())
+                    mean = self.model.actor(self.model.obs_norm(obs))
+                    action = np.ascontiguousarray(mean.cpu().numpy(), dtype=np.float32)
+                    batch.step(action, action)
+                    for row in batch.finished_episodes():
+                        first.setdefault(int(row[col["mundo"]]), np.array(row))
+                    if len(first) >= worlds:
+                        break
+            rows = np.array(list(first.values())) if first else np.zeros((0, len(self.episode_columns)))
+            summary = drill_summary(rows, self.episode_columns, self.drill_ids).get(drill, {})
+            summary["worlds"] = worlds
+            results[drill] = summary
+            self.db.log_body_evaluation(self.run, self.counters["iteration"], self.counters["steps"], drill, "jogo",
+                                        summary)
+        self.last_evaluation = {"iteration": self.counters["iteration"], "time": time.time(), "drills": results}
+        self.state = previous
+        return self.last_evaluation
+
     # --- comandos -------------------------------------------------------------------
     def handle_commands(self) -> None:
         for command, arguments, answer in self.server.pending():
@@ -352,6 +403,8 @@ class BodyTrainer:
             self.drain()
             self.save("manual")
             return {"ok": True, "iteration": self.counters["iteration"]}
+        if command == "avaliar":
+            return {"ok": True, "evaluation": self.evaluate()}
         if command == "modo":
             name = arguments["modo"]
             system.mode(name)
@@ -601,6 +654,7 @@ class BodyTrainer:
         self.failures = 0
         last_status = 0.0
         last_export = time.time()
+        last_evaluation = time.time()
         code = 0
         try:
             while True:
@@ -622,6 +676,9 @@ class BodyTrainer:
                 self.state = "treinando"
                 self.round()
                 now = time.time()
+                if self.config.evaluation_minutes > 0.0 and now - last_evaluation >= self.config.evaluation_minutes * 60.0:
+                    self.evaluate()
+                    last_evaluation = time.time()
                 if now - self.last_save >= self.config.checkpoint_minutes * 60.0:
                     self.drain()
                     self.save()
