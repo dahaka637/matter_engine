@@ -244,7 +244,7 @@ O que os números ensinaram, e ficou nos parâmetros:
 ### Inspiração em referências, sem cópia
 
 O usuário traz animações de referência (Mixamo) para inspirar o estilo. Elas
-ficam em `assets/animations/source/mixamo/study/` e **não viram clipe**:
+ficam em `assets/animations/source/mixamo/` (pastas por tipo) e **não viram clipe**:
 
 1. `reference_capture.py` (Blender) exporta as articulações quadro a quadro,
    no nosso referencial e na escala do nosso corpo (pelo comprimento da

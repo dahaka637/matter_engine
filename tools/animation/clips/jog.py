@@ -1,7 +1,7 @@
 """Corrida leve - a passada padrao do personagem.
 
 Um trote de jogador de futebol, inspirado (medido, nao copiado) em Slow Run.fbx
-(assets/animations/source/mixamo/study; numeros em gait_metrics.py). Da
+(assets/animations/source/mixamo, pastas por tipo; numeros em gait_metrics.py). Da
 referencia vieram as caracteristicas, nao os valores crus:
 
   - ritmo: ~3 m/s a 164 passos/min, com voo entre um pe e outro;

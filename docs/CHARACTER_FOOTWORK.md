@@ -186,7 +186,7 @@ descendo a escada.
 
 O caso atual parte da base escalonada de `alert_idle` e foi estudado quadro a
 quadro em Right Turn(4) e Left Turn
-(`assets/animations/source/mixamo/study`):
+(`assets/animations/source/mixamo`, pastas por tipo):
 
 1. o tronco começa o giro e a pelve vem junto, girando continuamente;
 2. para qualquer lado, o pé de **trás** sai primeiro e contorna o da frente,

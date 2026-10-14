@@ -1,5 +1,21 @@
 # Biblioteca de animações
 
+## Onde fica cada coisa
+
+| O quê | Onde | Índice |
+|---|---|---|
+| **Os clipes prontos** (o que o jogo e o RL usam) | `clips/` | [`CATALOGO.md`](CATALOGO.md): por tipo, com duração, velocidade, direção, fonte e onde é usado |
+| **As fontes do Mixamo** (os FBX), por tipo de movimento | `source/mixamo/<tipo>/` | [`source/INVENTARIO.md`](source/INVENTARIO.md): duração, quanto anda e gira; [`source/mixamo/README.md`](source/mixamo/README.md): as pastas e a história |
+| **As fontes CC0** (UAL1 da Quaternius, KayKit) | `source/cc0/` | as ações dentro de cada GLB |
+| **As fontes do Kimodo** (levantar) | `source/kimodo/` | — |
+| **Os retargets intermediários** | `source/retargeted/` | — |
+| **Os geradores dos clipes autorais** | `tools/animation/clips/` | `tools/animation/README.md` |
+
+Atualizar os índices depois de mexer:
+- `python3 tools/animation/catalogo.py`: o catálogo dos clipes;
+- `tools/animation/inventario.py`, pelo Blender (o comando está no topo do arquivo): o inventário das fontes.
+
+
 Os clipes ativos, normalizados para `FootballPlayerV1`, ficam em `clips/`.
 
 **Autorais**, criados do zero em código (`tools/animation/`, metodologia em
@@ -35,7 +51,7 @@ não acha o `math`. O Jog_Fwd_Loop e o Sprint_Loop da mesma biblioteca foram
 reprovados no retarget (membros até 39° fora e o ciclo sem fechar).
 As viradas correndo do Mixamo (`running_turn_180`, `running_turn_180_loop`,
 `running_to_turn`, `turn_to_running` e `change_direction`, fontes em
-`source/mixamo/viradas`) são referências para o tiro com volta, ainda fora das
+`source/mixamo/curvas_e_cortes`) são referências para o tiro com volta, ainda fora das
 tarefas.
 
 O manifesto do personagem (`locomotion` em `character.json`) diz qual clipe
@@ -50,7 +66,7 @@ da frente: corrida; lados: strafe; trás e diagonais de trás: recuo). Ver
 O menu **ANIMAÇÕES** não enumera este diretório. Ele mostra os clipes do
 personagem, na ordem em que o jogo os usa: parado, corrida leve (o papel
 `walk`), corrida de costas, sprint, strafes e pulos. As passadas foram
-calibradas medindo referências de estudo (`source/mixamo/study/`, ver o
+calibradas medindo referências de estudo (`source/mixamo/`, nas pastas por tipo; ver o
 README de lá), sem copiar pose.
 
 ## Fontes CC0

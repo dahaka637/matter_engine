@@ -134,7 +134,7 @@ def build(key: str) -> None:
         "id": variant["id"],
         "displayName": variant["name"],
         "targetRigId": template["targetRigId"],
-        "sourceAssetPath": f"assets/animations/source/mixamo/{'LeftTurn' if key == 'left' else 'RightTurn'}.fbx (Mixamo), retargeteado",
+        "sourceAssetPath": f"assets/animations/source/mixamo/giros_parado/{'LeftTurn' if key == 'left' else 'RightTurn'}.fbx (Mixamo), retargeteado",
         "durationSeconds": round(duration, 7),
         "sourceSampleRateHz": RATE,
         "loops": False,

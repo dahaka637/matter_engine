@@ -3,7 +3,7 @@
  "id": "turn_right",
  "displayName": "Giro parado para a direita (Mixamo)",
  "targetRigId": "FootballPlayerV1",
- "sourceAssetPath": "assets/animations/source/mixamo/RightTurn.fbx (Mixamo), retargeteado",
+ "sourceAssetPath": "assets/animations/source/mixamo/giros_parado/RightTurn.fbx (Mixamo), retargeteado",
  "durationSeconds": 1.0,
  "sourceSampleRateHz": 30.0,
  "loops": false,

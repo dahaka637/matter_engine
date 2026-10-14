@@ -6330,7 +6330,7 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
     // leans forward a little more, roughly in line with the lean/twist
     // magnitudes measured off a real running-turn reference (calibrated by
     // hand against that capture, not sampled from it — see
-    // assets/animations/source/mixamo/study/README.txt).
+    // assets/animations/source/mixamo/README.md).
     // v * yawRate is centripetal acceleration. Small curves get a soft
     // onset, and rotating in place does not bank like a running turn.
     const float curveAcceleration = signedCurveAcceleration;

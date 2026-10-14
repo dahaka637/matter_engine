@@ -1,3 +1,60 @@
+# Fontes do Mixamo
+
+Os FBX do Mixamo (Adobe) que o usuário baixou, **organizados por tipo de
+movimento** (13/10/2026). Licença: os termos padrão do Mixamo/Adobe (não CC0).
+
+| Pasta | O que tem |
+|---|---|
+| `parado/` | parado (Idle, Stand) |
+| `giros_parado/` | giros no lugar (90°, 96°, 120°) |
+| `andar/` | andar de costas, de lado, andar virando |
+| `trote/` | trote e corrida leve (até ~3,5 m/s): frente, costas, lados, diagonais |
+| `corrida/` | corrida (3,5–5,5 m/s) |
+| `sprint/` | sprint (acima de 5,5 m/s), inclusive de costas |
+| `curvas_e_cortes/` | arcos, viradas correndo (36°–60°), meias-voltas e cortes de 180° |
+| `arrancar_e_frear/` | arrancadas (parado → sprint) e paradas |
+| `pulos/` | pulos parado, para a frente, correndo, aterrissagem |
+| `tropecos_e_reacoes/` | tropeços |
+| `chao_e_levantar/` | deitar, rolar, levantar |
+| `futebol/` | carrinho, deslizar |
+| `goleiro/` | reposição do goleiro |
+
+- **Quanto cada um dura, anda e gira:** `../INVENTARIO.md`, gerado por
+  `tools/animation/inventario.py`.
+- **Os clipes já importados** (`assets/animations/clips`) e onde cada um é
+  usado: `assets/animations/CATALOGO.md`.
+
+**Arquivo novo:**
+1. Entra na pasta do tipo dele, com o nome do Mixamo. Se o nome já existir,
+   ganha a duração no fim, ex.: `Getting Up [7,6s].fbx`.
+2. Rode o inventário de novo.
+3. Escreva aqui embaixo, na história, o que ele é e para que serve.
+
+Os "(1)", "(2)"... são downloads diferentes do mesmo nome, com outro conteúdo
+(as duplicatas exatas foram tiradas).
+
+## A história das fontes
+
+Os textos abaixo são os READMEs de antes da organização, sem mudança. Onde
+dizem `study/`, `viradas/` ou `biblioteca/`, os arquivos agora estão na pasta
+do tipo deles.
+
+### A primeira fonte (Running.fbx, 24/09)
+
+```text
+Fonte: Mixamo (Adobe), download avulso "Running.fbx" em 24/09/2026.
+
+Licença: termos padrão do Mixamo/Adobe (não CC0). Por isso este clipe não
+entra no manifesto do personagem (assets/characters/*/character.json) nem na
+biblioteca ativa CC0 descrita em assets/animations/README.md. Ele existe
+apenas para o workspace procedural do menu ANIMAÇÕES (inspeção de canais,
+retarget e velocidade), regenerável a qualquer momento a partir deste FBX via
+tools/import_humanoid_animation.py.
+```
+
+### As referências de estudo (antiga `study/`)
+
+```text
 Fontes: Mixamo (Adobe), baixadas avulsas em 24/09/2026 (mesmos termos de
 licença do README.txt em assets/animations/source/mixamo/).
 
@@ -103,3 +160,53 @@ docs/CHARACTER_FOOTWORK.md, "Freada" e "Giro parado").
   dessa base em alerta. Para os dois lados, o pé de trás contorna primeiro o
   da frente, que sustenta o peso; o pé da frente recompõe a base no segundo
   passo. As poses dos FBX não entram no runtime.
+```
+
+### As viradas correndo (antiga `viradas/`, 13/10)
+
+```text
+Fonte: Mixamo (Adobe), baixados pelo usuario em 13/10/2026 para as viradas
+correndo do RL (o tiro com volta, etapa 4a do plano de imitacao).
+
+- RunningTurn180.fbx  ("Running Turn 180"): a meia-volta repentina. Veio
+  no lugar (In Place): gira 180 graus sem andar (0,04 m em 0,67 s).
+- RunningToTurn.fbx   ("Running To Turn"): corre, freia, vira (174 graus) e
+  termina parado; anda 4,1 m em 2,27 s.
+- TurnToRunning.fbx   ("Turn To Running"): parado, vira e sai correndo;
+  anda 3,3 m em 1,70 s.
+- RunningTurn180Longo.fbx ("Running Turn 180" estendido, baixado depois; o
+  Mixamo nao oferece tirar o In Place nele): o vai e volta inteiro em ciclo
+  (base aberta, gira, alguns passos, planta, gira de volta, volta), 1,87 s,
+  fecha o ciclo (clipe running_turn_180_loop, com --loop). Tambem no lugar:
+  o deslocamento tera de ser reconstruido pelo pe de apoio (contacts).
+- ChangeDirection.fbx ("Change Direction"): chega correndo, planta de lado,
+  desce bem baixo para cortar e sai correndo para tras (180 graus), 2,17 s,
+  sem parar no meio (clipe change_direction). Tambem no lugar (0,08 m).
+
+Licenca: termos padrao do Mixamo/Adobe (nao CC0), como os outros desta pasta.
+Clipes gerados (assets/animations/clips/running_turn_180, running_to_turn,
+turn_to_running, running_turn_180_loop e change_direction) com:
+
+  env PYTHONHOME=/usr blender --background --factory-startup \
+    --python-use-system-env --python-exit-code 1 \
+    --python tools/import_humanoid_animation.py -- <fbx> --source-rig mixamo \
+    --profile assets/characters/football_player/FootballPlayerV1.ragdoll.json \
+    --root-motion preserve --dynamic-projection --output <clipe> --id <id> --name <nome>
+
+O --dynamic-projection foi preciso (como no Sprint): sem ele o joelho de um
+quadro passa do teto de 8 graus de erro de membro (14,8 a 17,7 graus).
+```
+
+### Os downloads guardados (antiga `biblioteca/`, 13/10)
+
+```text
+Fonte: Mixamo (Adobe). Os FBX que o usuario baixou ao longo de setembro e
+outubro de 2026 e que so existiam na pasta Downloads dele: copiados para ca em
+13/10/2026 (sem duplicatas pelo conteudo; os "(1)" sao downloads diferentes do
+mesmo nome, com outro conteudo). Licenca: termos padrao do Mixamo/Adobe (nao
+CC0), como os outros desta pasta.
+
+O inventario de todas as fontes (duracao, quanto o quadril anda, giro) esta em
+assets/animations/source/INVENTARIO.md, gerado por tools/animation/inventario.py.
+Rode de novo quando chegarem arquivos.
+```

@@ -20,7 +20,7 @@
   "idle": {
    "license": "Mixamo (Adobe) - termos de uso da Mixamo",
    "sources": [
-    "assets/animations/source/mixamo/study/Idle.fbx",
+    "assets/animations/source/mixamo/parado/Idle.fbx",
     "assets/animations/source/retargeted/alert_idle.retarget.json",
     "tools/animation/clips/alert_idle.py"
    ]
@@ -39,7 +39,7 @@
     "tools/animation/jump.py"
    ]
   },
-  "note": "Corrida leve, corrida de costas, sprint, sprint de costas e pulos sao autorais do projeto (gerados por codigo em tools/animation, sem captura nem biblioteca). As passadas foram calibradas medindo referencias Mixamo de estudo (assets/animations/source/mixamo/study, gait_metrics.py) - numeros como cadencia e altura do joelho, nenhuma pose copiada. O strafe e o parado em alerta sao a excecao, a pedido do usuario: o strafe e o Jog Strafe Left/Right da Mixamo retargeteado, com as correcoes minimas que o corpo exige (tools/animation/clips/strafe.py); o unico parado preserva tronco, bracos e cabeca do Idle da Mixamo, adaptando somente o rumo e o plantio dos pes (tools/animation/clips/alert_idle.py). Os levantar de frente e de costas vem de FBX retargeteados (ver assets/animations/source).",
+  "note": "Corrida leve, corrida de costas, sprint, sprint de costas e pulos sao autorais do projeto (gerados por codigo em tools/animation, sem captura nem biblioteca). As passadas foram calibradas medindo referencias Mixamo de estudo (assets/animations/source/mixamo, pastas por tipo; gait_metrics.py) - numeros como cadencia e altura do joelho, nenhuma pose copiada. O strafe e o parado em alerta sao a excecao, a pedido do usuario: o strafe e o Jog Strafe Left/Right da Mixamo retargeteado, com as correcoes minimas que o corpo exige (tools/animation/clips/strafe.py); o unico parado preserva tronco, bracos e cabeca do Idle da Mixamo, adaptando somente o rumo e o plantio dos pes (tools/animation/clips/alert_idle.py). Os levantar de frente e de costas vem de FBX retargeteados (ver assets/animations/source).",
   "runningArcs": {
    "license": "arquivos FBX fornecidos pelo usuario; procedencia nao declarada",
    "sources": [
@@ -75,8 +75,8 @@
   "strafe": {
    "license": "Mixamo (Adobe) - termos de uso da Mixamo",
    "sources": [
-    "assets/animations/source/mixamo/study/Jog Strafe Left.fbx",
-    "assets/animations/source/mixamo/study/Jog Strafe Right.fbx",
+    "assets/animations/source/mixamo/trote/Jog Strafe Left.fbx",
+    "assets/animations/source/mixamo/trote/Jog Strafe Right.fbx",
     "assets/animations/source/retargeted/jog_strafe_left.retarget.json",
     "assets/animations/source/retargeted/jog_strafe_right.retarget.json",
     "tools/animation/clips/strafe.py"
@@ -95,8 +95,8 @@
   "turnInPlace": {
    "note": "Left Turn e Right Turn da Mixamo (fornecidos pelo usuario em 04/10/2026), retargeteados; o giro parado com a ajuda cheia toca as pernas deles na velocidade do giro pedido.",
    "sources": [
-    "assets/animations/source/mixamo/LeftTurn.fbx",
-    "assets/animations/source/mixamo/RightTurn.fbx",
+    "assets/animations/source/mixamo/giros_parado/LeftTurn.fbx",
+    "assets/animations/source/mixamo/giros_parado/RightTurn.fbx",
     "assets/animations/source/retargeted/turn_left.retarget.json",
     "assets/animations/source/retargeted/turn_right.retarget.json",
     "tools/animation/clips/turn_in_place.py"
