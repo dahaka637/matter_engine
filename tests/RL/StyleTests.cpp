@@ -151,6 +151,10 @@ void testMotionDataset() {
     const MotionDataset3D dataset = loadMotionDataset3D(body, style, assets("rl/style/acervo_corpo.json"));
     require(dataset.groups.size() == 8 && dataset.clips.size() == 47, "os 8 grupos e os 47 clipes que passaram nas folhas");
     require(dataset.pairs.size() == dataset.pairCount() * 2 * dataset.featureSize, "os pares tem dois instantes");
+    require(dataset.mirror, "o acervo tem a copia espelhada");
+    std::size_t mirroredPairs = 0;
+    for (const std::uint8_t m : dataset.pairMirrored) mirroredPairs += m;
+    require(mirroredPairs * 2 == dataset.pairCount(), "metade dos pares e a copia espelhada");
     double total = 0.0;
     std::vector<double> perGroup(dataset.groups.size(), 0.0);
     std::size_t reserved = 0;
@@ -183,6 +187,11 @@ void testMotionDataset() {
         require(worst(std::vector<float>(pair, pair + F), now) < 1.0e-6f
                 && worst(std::vector<float>(pair + F, pair + 2 * F), next) < 1.0e-6f,
             "o par e o instante e o da decisao seguinte");
+        // A copia espelhada fica na segunda metade do bloco do clipe.
+        const std::uint32_t originals = walk.pairCount / 2;
+        const float* copy = dataset.pairs.data() + static_cast<std::size_t>(walk.firstPair + originals + f) * 2 * F;
+        require(dataset.pairMirrored[walk.firstPair + originals + f] == 1, "a copia e marcada");
+        require(std::abs(copy[0] - pair[0]) < 1.0e-6f, "a altura da pelve nao muda no espelho");
     }
 }
 

@@ -30,6 +30,7 @@ from . import control, native, paths, storage, system
 from .amp import Judge, JudgeSettings, style_score
 from .model import ActorCritic, export_policy
 from .ppo import PPO, PPOSettings, Rollout
+from .symmetry import MirrorLoss
 
 RESTART_CODE = system.RESTART_CODE
 TASK_SCHEMA = "matter-rl-task-2"
@@ -66,6 +67,9 @@ class BodyRunConfig:
     # O juiz de estilo (B2) ou so a tarefa e a fisica (B1); escolhido ao criar.
     style: bool = True
     overlap: bool = True
+    # O peso da perda do espelho no ator (0 = desligada; o plano compara com e
+    # sem depois do Experimento C).
+    mirror_loss: float = 0.0
     checkpoint_minutes: float = 10.0
     export_minutes: float = 1.0
     disk_cap_gb: float = 10.0
@@ -197,6 +201,7 @@ class BodyTrainer:
         if self.config.style:
             dataset = self.native.motion_dataset(live["body"], live["style"]["dataset"])
             self.judge = Judge(dataset, JudgeSettings.from_dict(self.config.judge), self.device, self.config.seed)
+        self.mirror = MirrorLoss(self.batch.mirror_maps(), self.device) if self.config.mirror_loss > 0.0 else None
         self.counters = {"iteration": 0, "steps": 0, "train_seconds": 0.0, "episodes": 0}
         self.db = storage.Database(paths.DATABASE)
         self.db.ensure_run(run, self.config.task, self.batch.body_hash, asdict(self.config))
@@ -466,7 +471,15 @@ class BodyTrainer:
                 dist = self.model.distribution(rollout.obs.reshape(-1, rollout.obs.shape[-1]))
                 rollout.anchor_mean = dist.mean.reshape(rollout.mean.shape)
                 rollout.anchor_std = dist.stddev.reshape(rollout.std.shape)
-        stats = self.ppo.update(rollout)
+        auxiliary = None
+        if self.mirror is not None:
+            flat = rollout.obs.reshape(-1, rollout.obs.shape[-1])
+            weight = self.config.mirror_loss
+
+            def auxiliary():
+                index = torch.randint(0, flat.shape[0], (min(4096, flat.shape[0]),), device=flat.device)
+                return weight * self.mirror(self.model, flat[index])
+        stats = self.ppo.update(rollout, auxiliary=auxiliary)
         if self.judge is not None:
             stats.update(self.judge.update())
         if self.device.type == "cuda":
@@ -510,7 +523,7 @@ class BodyTrainer:
         judge = {k: v for k, v in stats.items() if k.startswith(("judge_", "style_"))}
         if judge:
             self.last_judge = judge
-        details = {"beta": self.beta, "style": info["style"], "judge": judge,
+        details = {"beta": self.beta, "style": info["style"], "judge": judge, "mirror": stats.get("auxiliary"),
                    "drills": drill_summary(rows, self.episode_columns, self.drill_ids)}
         result = {
             "run": self.run, "iteration": self.counters["iteration"], "time": time.time(),

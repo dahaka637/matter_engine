@@ -104,3 +104,49 @@ def test_judge_learns_to_separate():
     assert health["judge_real"] > health["judge_fake"]
     assert health["style_reserved"] > health["style_agent"]
     assert 0.0 <= health["style_agent"] <= 1.0
+
+
+def test_mirror_maps_and_loss():
+    """O mapa do espelho pela ponte e a perda do espelho no ator."""
+    from matter_rl import native
+    from matter_rl.model import ActorCritic
+    from matter_rl.symmetry import ChannelMirror, MirrorLoss
+    module = native.load()
+    batch = module.BodyBatch(str(paths.task_path("corpo2")), environments=4, per_scene=2, threads=1, seed=1)
+    maps = batch.mirror_maps()
+    assert maps["asymmetry"] < 0.01
+    device = torch.device("cpu")
+    observation = ChannelMirror(maps["observation"], device)
+    obs = torch.tensor(np.asarray(batch.observations()))
+    assert torch.allclose(observation(observation(obs)), obs, atol=1e-4)
+    names = batch.observation_names()
+    left = names.index("LeftThigh.swing1.velocity")
+    mirrored = observation(obs)
+    assert names[int(observation.source[left])] == "RightThigh.swing1.velocity"
+    torch.manual_seed(0)
+    model = ActorCritic(batch.obs_size, batch.critic_size, batch.action_size, actor_hidden=[64], critic_hidden=[64])
+    model.obs_norm.update(obs)
+    loss = MirrorLoss(maps, device)
+    optimizer = torch.optim.Adam(model.actor.parameters(), lr=1e-2)
+    obs_n = model.obs_norm(obs)
+    before = float(loss(model, obs_n).detach())
+    for _ in range(50):
+        optimizer.zero_grad()
+        value = loss(model, obs_n)
+        value.backward()
+        optimizer.step()
+    assert float(loss(model, obs_n).detach()) < 0.5 * before
+    assert mirrored.shape == obs.shape
+
+
+def test_body_trainer_with_mirror_loss(scratch):
+    from matter_rl.body_trainer import BodyTrainer
+    trainer = tiny(BodyTrainer, scratch, "espelho")
+    trainer.config.mirror_loss = 0.5
+    from matter_rl.symmetry import MirrorLoss
+    trainer.mirror = MirrorLoss(trainer.batch.mirror_maps(), trainer.device)
+    trainer.max_iterations = 2
+    assert trainer.loop() == 0
+    db = storage.Database(paths.DATABASE)
+    row = db.execute("SELECT details FROM iterations WHERE run='espelho' ORDER BY iteration DESC").fetchone()
+    assert json.loads(row["details"])["mirror"] > 0.0

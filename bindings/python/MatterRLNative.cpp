@@ -9,6 +9,7 @@
 #include <nanobind/stl/vector.h>
 #include <nanobind/stl/array.h>
 
+#include "Engine/RL/Contract/Mirror3D.hpp"
 #include "Engine/RL/Environment/BodyTrainingBatch3D.hpp"
 #include "Engine/RL/Environment/TrainingBatch3D.hpp"
 #include "Engine/RL/Imitation/ReferenceMotion3D.hpp"
@@ -176,6 +177,15 @@ nb::ndarray<nb::numpy, T> owned(const std::vector<T>& values, std::initializer_l
     return nb::ndarray<nb::numpy, T>(data, shape.size(), shape.begin(), owner);
 }
 
+// O espelho de um layout: de onde cada canal vem, a escala e o deslocamento.
+nb::dict mirrorMap(const MirrorChannelMap3D& map) {
+    nb::dict out;
+    out["source"] = owned(map.source, { map.source.size() });
+    out["scale"] = owned(map.scale, { map.scale.size() });
+    out["offset"] = owned(map.offset, { map.offset.size() });
+    return out;
+}
+
 // O acervo do juiz de estilo no corpo dado: os pares, o clipe e o peso de cada
 // par, os clipes e os grupos.
 nb::dict motionDataset(const std::string& bodyPath, const std::string& definition, float heightScale) {
@@ -197,6 +207,8 @@ nb::dict motionDataset(const std::string& bodyPath, const std::string& definitio
     out["pairs"] = owned(dataset.pairs, { dataset.pairCount(), 2 * dataset.featureSize });
     out["pair_clip"] = owned(dataset.pairClip, { dataset.pairCount() });
     out["pair_weight"] = owned(dataset.pairWeight, { dataset.pairCount() });
+    out["pair_mirrored"] = owned(dataset.pairMirrored, { dataset.pairCount() });
+    out["mirror"] = dataset.mirror;
     nb::list groups;
     for (const MotionGroup3D& group : dataset.groups) {
         nb::dict g;
@@ -603,6 +615,19 @@ NB_MODULE(matter_rl_native, m) {
                 return std::vector<std::string>(BodyRewardTermNames3D.begin(), BodyRewardTermNames3D.end());
             })
         .def("episode_columns", [](const BodyTrainingBatch3D&) { return BodyEpisodeColumns; })
+        .def("mirror_maps",
+            [](const BodyTrainingBatch3D& b) {
+                // O espelho (o lado esquerdo vira o direito) da entrada, do
+                // critico, da acao e das medidas do juiz, medido no corpo.
+                const Mirror3D mirror(b.body());
+                nb::dict out;
+                out["observation"] = mirrorMap(mirror.layoutMap(b.observationLayout()));
+                out["critic"] = mirrorMap(mirror.layoutMap(b.criticObservationLayout()));
+                out["action"] = mirrorMap(mirror.layoutMap(b.actionLayout()));
+                out["style"] = mirrorMap(mirror.layoutMap(b.styleLayout()));
+                out["asymmetry"] = mirror.bindAsymmetry();
+                return out;
+            })
         .def_prop_ro("style_size", &BodyTrainingBatch3D::styleSize)
         .def("style_names", [](const BodyTrainingBatch3D& b) { return names(b.styleLayout()); })
         .def("style_pairs", [](BodyTrainingBatch3D& b) { return view2(b, b.stylePairs(), 2 * b.styleSize()); })

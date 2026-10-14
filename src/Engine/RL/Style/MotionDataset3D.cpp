@@ -1,6 +1,7 @@
 #include "Engine/RL/Style/MotionDataset3D.hpp"
 
 #include "Engine/Animation/AnimationClip3D.hpp"
+#include "Engine/RL/Contract/Mirror3D.hpp"
 #include "Engine/RL/Imitation/ReferenceMotion3D.hpp"
 
 #include <nlohmann/json.hpp>
@@ -39,6 +40,7 @@ MotionDataset3D loadMotionCatalog3D(const std::filesystem::path& definitionPath)
     dataset.id = document.at("id").get<std::string>();
     dataset.definitionPath = definitionPath;
     dataset.pairFrames = document.value("pairFrames", dataset.pairFrames);
+    dataset.mirror = document.value("mirror", false);
     if (dataset.pairFrames == 0) fail("pairFrames precisa ser positivo");
     const std::filesystem::path clips =
         (definitionPath.parent_path() / document.value("clipsDirectory", std::string("../../animations/clips")))
@@ -79,6 +81,10 @@ MotionDataset3D loadMotionDataset3D(const RLBody3D& body, const StyleFeatures3D&
     std::uint64_t hash = dataset.hash;
     std::vector<float> frameFeatures;
     std::vector<PhysicsBodyState3D> links;
+    // O espelho das medidas (o mesmo mapa do juiz para os dois instantes).
+    MirrorChannelMap3D mirrorMap;
+    if (dataset.mirror) mirrorMap = Mirror3D(body).layoutMap(features.layout());
+    std::vector<float> mirrored(F);
     for (std::size_t c = 0; c < dataset.clips.size(); ++c) {
         MotionClip3D& clip = dataset.clips[c];
         const ReferenceClip3D request { clip.id, clip.path, clip.loops };
@@ -108,6 +114,18 @@ MotionDataset3D loadMotionDataset3D(const RLBody3D& body, const StyleFeatures3D&
             dataset.pairs.insert(dataset.pairs.end(), a, a + F);
             dataset.pairs.insert(dataset.pairs.end(), b, b + F);
             dataset.pairClip.push_back(static_cast<std::uint32_t>(c));
+            dataset.pairMirrored.push_back(0);
+        }
+        if (dataset.mirror) {
+            const std::size_t first = clip.firstPair, last = dataset.pairCount();
+            for (std::size_t p = first; p < last; ++p) {
+                for (std::size_t half = 0; half < 2; ++half) {
+                    mirrorMap.apply(dataset.pairs.data() + (p * 2 + half) * F, mirrored.data());
+                    dataset.pairs.insert(dataset.pairs.end(), mirrored.begin(), mirrored.end());
+                }
+                dataset.pairClip.push_back(static_cast<std::uint32_t>(c));
+                dataset.pairMirrored.push_back(1);
+            }
         }
         clip.pairCount = static_cast<std::uint32_t>(dataset.pairCount()) - clip.firstPair;
         if (clip.pairCount == 0) fail("o clipe " + clip.id + " e curto demais para um par");

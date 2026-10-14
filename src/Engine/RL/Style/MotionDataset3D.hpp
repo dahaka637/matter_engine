@@ -17,7 +17,9 @@ namespace MatterEngine {
 // parado longo nao afoga o resto) e os reservados fora do treino (a
 // avaliacao: o juiz congelado precisa dar nota alta a eles).
 //
-// O espelho dos clipes entra com o mapa do espelho (Mirror3D, E8).
+// Com "mirror" no arquivo, cada clipe ganha a copia espelhada (o lado
+// esquerdo vira o direito, pelo Mirror3D): os pares espelhados vem logo depois
+// dos do clipe, no mesmo bloco, e dividem o peso do grupo.
 
 struct MotionGroup3D {
     std::string id;
@@ -45,12 +47,15 @@ struct MotionDataset3D {
     std::uint64_t hash = 0;
     // Os quadros (1/120 s) entre os dois instantes de um par: uma decisao.
     std::uint32_t pairFrames = 4;
+    bool mirror = false;
     std::size_t featureSize = 0;
     std::vector<MotionGroup3D> groups;
     std::vector<MotionClip3D> clips;
     // Os pares: pairCount() x (2 x featureSize), o instante e o seguinte.
     std::vector<float> pairs;
     std::vector<std::uint32_t> pairClip;
+    // O par e a copia espelhada (1) de um do clipe.
+    std::vector<std::uint8_t> pairMirrored;
     // O peso de amostra de cada par: o do grupo dividido pelos pares de treino
     // dele (soma 1 nos de treino; os reservados ficam com 0).
     std::vector<float> pairWeight;

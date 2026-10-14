@@ -7,6 +7,7 @@ void runBodyContractTests();
 void runTrainingBatchTests();
 void runBodyBatchTests();
 void runStyleTests();
+void runMirrorTests();
 
 int main() {
     try {
@@ -15,6 +16,7 @@ int main() {
         runTrainingBatchTests();
         runBodyBatchTests();
         runStyleTests();
+        runMirrorTests();
         std::cout << "RL training tests passed\n";
         return 0;
     } catch (const std::exception& error) {

@@ -3,6 +3,7 @@
   "id": "acervo_corpo",
   "clipsDirectory": "../../animations/clips",
   "pairFrames": 4,
+  "mirror": true,
   "excluded": [
     {
       "clips": [

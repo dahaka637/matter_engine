@@ -384,6 +384,7 @@ if(MATTERENGINE_BUILD_RL)
         src/Engine/RL/Body/RLBody3D.cpp
         src/Engine/RL/Body/RLFootSplit3D.cpp
         src/Engine/RL/Contract/BodyContract3D.cpp
+        src/Engine/RL/Contract/Mirror3D.cpp
     )
     target_include_directories(MatterRLContract PUBLIC src)
     target_link_libraries(MatterRLContract
@@ -854,6 +855,7 @@ if(MATTERENGINE_BUILD_TESTS)
             tests/RL/TrainingBatchTests.cpp
             tests/RL/BodyBatchTests.cpp
             tests/RL/StyleTests.cpp
+            tests/RL/MirrorTests.cpp
             tests/RL/RLTestMain.cpp)
         target_link_libraries(MatterRLTrainingTests
             PRIVATE MatterRLEnvironment)
