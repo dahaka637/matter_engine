@@ -55,6 +55,11 @@ PolicyRuntime3D::PolicyRuntime3D(const std::filesystem::path& path) {
             throw std::runtime_error("politica: camada fora do arquivo");
         previous = layer.outputs;
         widest = std::max(widest, layer.outputs);
+        layer.transposed = m_transposed.size();
+        m_transposed.resize(m_transposed.size() + layer.inputs * layer.outputs);
+        for (std::size_t o = 0; o < layer.outputs; ++o)
+            for (std::size_t i = 0; i < layer.inputs; ++i)
+                m_transposed[layer.transposed + i * layer.outputs + o] = m_data[layer.weights + o * layer.inputs + i];
         m_layers.push_back(layer);
     }
     if (m_layers.empty() || previous != m_actionSize) throw std::runtime_error("politica: saida diferente da acao");
@@ -85,18 +90,64 @@ void PolicyRuntime3D::evaluate(std::span<const float> observation, std::span<flo
         in[i] = std::clamp((observation[i] - m_data[m_mean + i]) * m_data[m_inverseStd + i], -m_clip, m_clip);
     for (std::size_t l = 0; l < m_layers.size(); ++l) {
         const Layer& layer = m_layers[l];
-        const float* w = m_data.data() + layer.weights;
+        const float* w = m_transposed.data() + layer.transposed;
         const float* b = m_data.data() + layer.bias;
         const bool hidden = l + 1 < m_layers.size();
-        for (std::size_t o = 0; o < layer.outputs; ++o) {
-            const float* row = w + o * layer.inputs;
-            float sum = b[o];
-            for (std::size_t i = 0; i < layer.inputs; ++i) sum += row[i] * in[i];
-            out[o] = hidden ? (sum > 0.0f ? sum : std::expm1(sum)) : sum;
+        const std::size_t outputs = layer.outputs;
+        for (std::size_t o = 0; o < outputs; ++o) out[o] = b[o];
+        for (std::size_t i = 0; i < layer.inputs; ++i) {
+            const float x = in[i];
+            const float* column = w + i * outputs;
+            for (std::size_t o = 0; o < outputs; ++o) out[o] += column[o] * x;
         }
+        if (hidden)
+            for (std::size_t o = 0; o < outputs; ++o) out[o] = out[o] > 0.0f ? out[o] : std::expm1(out[o]);
         std::swap(in, out);
     }
     for (std::size_t a = 0; a < m_actionSize; ++a) action[a] = std::clamp(in[a], -m_actionLimit, m_actionLimit);
+}
+
+void PolicyRuntime3D::evaluateBatch(std::span<const float> observations, std::span<float> actions,
+    std::size_t count) const {
+    if (observations.size() != count * m_observationSize || actions.size() != count * m_actionSize)
+        throw std::invalid_argument("politica: dimensoes erradas no lote");
+    std::size_t widest = m_observationSize;
+    for (const Layer& layer : m_layers) widest = std::max(widest, layer.outputs);
+    m_batchA.resize(count * widest);
+    m_batchB.resize(count * widest);
+    float* in = m_batchA.data();
+    float* out = m_batchB.data();
+    std::size_t width = m_observationSize;
+    for (std::size_t n = 0; n < count; ++n)
+        for (std::size_t i = 0; i < m_observationSize; ++i)
+            in[n * width + i] = std::clamp((observations[n * m_observationSize + i] - m_data[m_mean + i])
+                    * m_data[m_inverseStd + i], -m_clip, m_clip);
+    for (std::size_t l = 0; l < m_layers.size(); ++l) {
+        const Layer& layer = m_layers[l];
+        const float* w = m_transposed.data() + layer.transposed;
+        const float* b = m_data.data() + layer.bias;
+        const bool hidden = l + 1 < m_layers.size();
+        const std::size_t outputs = layer.outputs;
+        for (std::size_t n = 0; n < count; ++n)
+            for (std::size_t o = 0; o < outputs; ++o) out[n * outputs + o] = b[o];
+        // Cada coluna de pesos (as saidas de uma entrada) fica no cache
+        // enquanto passa pelos jogadores.
+        for (std::size_t i = 0; i < layer.inputs; ++i) {
+            const float* column = w + i * outputs;
+            for (std::size_t n = 0; n < count; ++n) {
+                const float x = in[n * width + i];
+                float* target = out + n * outputs;
+                for (std::size_t o = 0; o < outputs; ++o) target[o] += column[o] * x;
+            }
+        }
+        if (hidden)
+            for (std::size_t k = 0; k < count * outputs; ++k) out[k] = out[k] > 0.0f ? out[k] : std::expm1(out[k]);
+        std::swap(in, out);
+        width = outputs;
+    }
+    for (std::size_t n = 0; n < count; ++n)
+        for (std::size_t a = 0; a < m_actionSize; ++a)
+            actions[n * m_actionSize + a] = std::clamp(in[n * width + a], -m_actionLimit, m_actionLimit);
 }
 
 } // namespace MatterEngine

@@ -13,6 +13,69 @@ aprendizado guiado). O plano completo e o diário ficam no
 vault (`30_Projects/matter_engine/Aprendizado_por_Reforco/`); aqui fica o que
 está implementado e como usar.
 
+## A reformulação do Corpo (14/10/2026)
+
+O RL do Corpo está sendo refeito: o clipe sai da ação e da entrada da rede e
+vira só um juiz de estilo, com um peso que o usuário abaixa até zero. O plano
+completo está no vault (`Aprendizado_por_Reforco/novo_plano/plano_claude_rl.md`)
+e o resultado de cada experimento ao lado dele. O que está daqui para baixo
+neste documento é o contrato 1 (a imitação residual), que continua rodando para
+o cérebro antigo e as comparações até a F1.
+
+- **E0:** o cérebro da imitação residual (rodada 60068, tarefa `corpo` v15) está
+  guardado em `protegidos/principal_residual_corpo_v15_ck-000060068`, com a
+  tarefa, as políticas exportadas e um `LEIA.txt`.
+- **O corpo v2** (`assets/rl/bodies/football_player_v2.json`; o perfil do jogo não
+  muda):
+  - **a junta dos dedos:** o carregador divide a casca da chuteira na linha dos
+    dedos (70% do comprimento a partir do calcanhar, 2,5 cm acima da sola; o
+    osso dos dedos do modelo visual fica ali). Ele cria `LeftToe` e `RightToe`,
+    filhos dos pés, com 20% da massa do pé e um eixo de −60° a 25° (positivo
+    dobra a ponta para baixo). O pé mantém a massa total e o centro de massa
+    (`Body/RLFootSplit3D`);
+  - **os pulsos travados:** `lockedAxes` tira os eixos da ação e da entrada, e o
+    motor os segura na postura base. Destravar é tirar da lista (o eixo volta
+    como canal novo, com peso zero);
+  - **as posturas como dados:** a base e o alerta são os ângulos do primeiro
+    quadro de `natural_idle` e `alert_idle`, guardados no arquivo, sem carregar
+    clipe;
+  - **o resultado:** 37 eixos atuados (39 + 2 das pontas − 4 dos pulsos) e 20
+    links.
+- **O contrato v2** (`src/Engine/RL/Contract`, biblioteca `MatterRLContract`, que
+  vai para o jogo junto com a política):
+  - **`BodyCommand3D`:** a velocidade desejada no mundo, o rumo e o giro da
+    câmera e o pulo (pendente, a subida pedida, o tempo desde o aperto);
+  - **`PlayerAttributes3D`:** altura, massa, a força por grupo (pernas, tronco,
+    braços) e os tetos de velocidade;
+  - **`BodyContract3D`:**
+    - a entrada tem 528 canais: o próprio corpo, o contato de cada pé resumido
+      nos 4 passos de física (fração, força média e pico, pisou, saiu, a
+      ponta), os comandos, os dados do jogador e a memória das 3 decisões
+      anteriores;
+    - nada de clipe, alvo, futuro ou exercício;
+    - a ação é o alvo absoluto de cada eixo. Nos passos de física, o alvo anda
+      em linha reta de uma decisão à outra, e a velocidade pedida sai da reta da
+      ação média da política (`BodyVelocityTarget3D::MeanSlope`, a decisão do
+      Experimento A). Os eixos travados ficam na base.
+  - **Os testes:** `tests/RL/BodyContractTests.cpp`.
+  - **A regra de arquitetura:** o contrato e o corpo não incluem mundos de
+    treino, estilo, notas, piloto, imitação, professor nem treinador.
+- **`ConvexHull3D`** passou para a `MatterCore`: a divisão do pé usa a casca sem
+  a engine gráfica.
+- **O Experimento A** (o relatório completo está no vault, `experimento_A.md`):
+  - **`MatterRLMotorProbe`:** o balanço do quadril em cinco opções de velocidade
+    pedida, com e sem ruído de exploração, e a ponta do pé nos dois solvers;
+  - **`tools/rl/custo_atualizacao.py`:** o custo de uma rodada do PPO na GPU
+    (redes do plano, juiz, espelho);
+  - **`MatterRLPolicyBench`:** a política com 22 jogadores a 30 Hz.
+- **`PolicyRuntime3D`:**
+  - os pesos são transpostos na carga e a conta anda pelas saídas: vetoriza sem
+    reordenar as somas, com o mesmo resultado;
+  - `-O3` na biblioteca;
+  - `evaluateBatch` faz vários jogadores numa conta só;
+  - a rede do plano caiu de 876 para 153 µs por decisão. Os 22 jogadores custam
+    ~10% de um núcleo a 30 Hz.
+
 ## As peças
 
 | Peça | Onde | O que faz |

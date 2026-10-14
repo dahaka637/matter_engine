@@ -5,7 +5,34 @@
 > registrar não apenas *o que* mudou, mas também *por que*, como foi validado e
 > quais limitações ainda existem.
 
-**Última atualização:** 12 de outubro de 2026
+**Última atualização:** 14 de outubro de 2026
+
+## A reformulação do RL do Corpo (14/10/2026)
+
+O clipe sai da ação e da entrada da rede do Corpo; ele vira só um juiz de
+estilo (AMP), com um peso que o usuário abaixa até zero. O plano está no vault
+(`Aprendizado_por_Reforco/novo_plano/plano_claude_rl.md`), e o que está pronto,
+no `docs/REINFORCEMENT_LEARNING.md` ("A reformulação do Corpo").
+
+- **E0:** o cérebro da imitação residual (rodada 60068) está protegido.
+- **E1 (parte 1):**
+  - o corpo v2: a junta dos dedos, os pulsos travados e as posturas como dados,
+    com 37 eixos;
+  - o contrato v2 (`MatterRLContract`): a entrada de 528 canais sem clipe e a
+    ação absoluta com a reta entre decisões;
+  - os testes do contrato.
+- **E1 (falta):** o lote v2 (os mundos de treino pelo contrato), o esquema 2 da
+  tarefa e o teste de paridade de informação.
+- **E2 (Experimento A, feito):**
+  - a velocidade pedida pela reta da ação média;
+  - a ponta do pé sem tremor numérico;
+  - o treino precisa sobrepor atualização e coleta;
+  - o runtime da política vetorizado: 22 jogadores com a rede do plano em ~10%
+    de um núcleo.
+- **Limitações:**
+  - a ponta do pé com o peso em cima só se mede com uma política que equilibre
+    (Experimento B);
+  - nada foi treinado ainda com o contrato v2.
 
 ## Aprendizado por Reforço (12/10/2026)
 
