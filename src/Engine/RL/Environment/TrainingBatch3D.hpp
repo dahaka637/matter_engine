@@ -155,8 +155,14 @@ struct TrainingEpisode3D {
     // Os cortes: o tempo medio de cada um (da chegada num alvo com virada de
     // 45 graus ou mais ate andar a 80% da pedida rumo ao seguinte; s; -1 sem).
     float cutSeconds = -1.0f;
-    // Os alvos no ar: a fatia pega dos que ele alcancou ou perdeu (-1 sem).
-    float jumpHitFraction = -1.0f;
+    // Os pulos: a fatia das zonas vencidas correndo e paradas (-1 sem), a
+    // altura alcancada menos a pedida (m, media), a queda na aterrissagem (1,
+    // 0, ou -1 sem pulo) e a volta a 80% da velocidade depois do correndo (s).
+    float runJumpPassed = -1.0f;
+    float standJumpPassed = -1.0f;
+    float jumpRiseError = 0.0f;
+    float landingFall = -1.0f;
+    float jumpRecoverySeconds = -1.0f;
 };
 
 // Um mundo de treino visto por fora (o visualizador, a gravacao).
@@ -192,10 +198,18 @@ struct TrainingEnvironmentView3D {
     std::array<Vec3, 3> upcoming {};
     // Frear e parar: o alvo de agora e os proximos sao de "pare aqui".
     bool targetStop = false;
+    // Os pulos: a zona do trecho de agora (ligada, parada), o centro, o rumo do
+    // caminho, a altura da barreira (a pelve de pe mais a subida pedida) e, no
+    // pulo parado, a direcao pedida no mundo (pelo rumo do corpo agora; sem
+    // ela, para cima).
+    bool hasJump = false;
+    bool jumpStanding = false;
+    Vec3 jumpCenter;
+    float jumpPath = 0.0f;
+    float jumpBarrier = 0.0f;
+    bool jumpUp = true;
+    float jumpDirection = 0.0f;
     std::array<bool, 3> upcomingStop {};
-    // Os alvos no ar: a altura do de agora e dos proximos (0 no chao).
-    float targetHeight = 0.0f;
-    std::array<float, 3> upcomingHeight {};
     // Os ultimos alcancados no episodio (o mais novo primeiro).
     std::uint32_t reachedCount = 0;
     std::array<Vec3, 3> reached {};

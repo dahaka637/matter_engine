@@ -1224,10 +1224,17 @@ void testTurnCycles() {
     }
 }
 
-// Os pulos (o 8): a estrela com alvos no ar; a rede ve a altura; so pega com
-// a cabeca acima do alvo, e saindo do disco por baixo o alvo fica perdido.
+// Os pulos (o 8, a secao 8 do plano): na ida do centro a ponta a zona no meio
+// do caminho (a barreira na subida pedida da pelve); a volta ao centro e o
+// pulo parado (o disco de parar); a velocidade so de trote ou corrida; o
+// comando de pulo na observacao de todos os exercicios, ligado so aqui.
 void testJumps() {
     const std::filesystem::path task = std::filesystem::path(MATTERENGINE_TEST_ASSETS_DIR) / "rl/tasks/corpo.json";
+    const TrainingTask3D corpo = loadTrainingTask3D(task);
+    float standing = 0.0f;  // a pelve de pe na postura dos mundos (o alerta)
+    for (const RLPosture3D& posture : loadRLBody3D(corpo.bodyPath).postures)
+        if (posture.id == "alerta") standing = posture.standingPelvisHeight;
+    const auto planar = [](Vec3 a, Vec3 b) { return std::hypot(a.x - b.x, a.y - b.y); };
     TrainingBatchSettings3D s = settings(8, 4);
     s.taskPath = task;
     s.evaluation = true;
@@ -1235,25 +1242,28 @@ void testJumps() {
     s.facing = 0;
     s.drill = "pulos";
     TrainingBatch3D batch(s);
-    const std::size_t O = batch.observationSize(), height = channel(batch, "target.height"),
-                      next = channel(batch, "target.next1.height");
-    // Na avaliacao: o primeiro no chao; um sim e um nao no ar, cada mundo de um lado.
+    const std::size_t O = batch.observationSize(), active = channel(batch, "jump.active"),
+                      stand = channel(batch, "jump.standing"), rise = channel(batch, "jump.rise"),
+                      speed = channel(batch, "command.speed");
     for (std::size_t e = 0; e < 8; ++e) {
         const TrainingEnvironmentView3D view = batch.view(e);
-        require(view.targetHeight == 0.0f && batch.observations()[e * O + height] == 0.0f, "o primeiro alvo fica no chao");
-        const bool up = (e + 1) % 2 == 0;
-        require((view.upcomingHeight[0] > 1.8f) == up && (batch.observations()[e * O + next] > 0.9f) == up,
-            "o seguinte no ar num mundo sim e noutro nao, e a rede ve a altura");
-        // A cabeca em pe fica abaixo dos alvos no ar (ele tem de pular).
-        require(view.state && view.state->links[loadRLBody3D(loadTrainingTask3D(task).bodyPath).head].position.z < 1.85f,
-            "parado, a cabeca nao alcanca o alvo no ar");
+        const Vec3 middle { 0.5f * (view.origin.x + view.target.x), 0.5f * (view.origin.y + view.target.y), 0.0f };
+        require(view.hasJump && !view.jumpStanding && planar(view.jumpCenter, middle) < 1e-3f,
+            "a ida do centro a ponta tem a zona no meio do caminho");
+        const float wanted = batch.observations()[e * O + rise];
+        require(wanted >= 0.2f && wanted <= 0.5f && std::abs(view.jumpBarrier - (standing + wanted)) < 1e-3f,
+            "a barreira fica na pelve de pe mais a subida pedida (" + std::to_string(wanted) + " m)");
+        require(batch.observations()[e * O + active] == 1.0f && batch.observations()[e * O + stand] == 0.0f,
+            "a rede ve a zona correndo");
+        require(planar(view.upcoming[0], view.origin) < 1e-3f && view.upcomingStop[0], "a volta ao centro e o pulo parado");
+        const float commanded = batch.observations()[e * O + speed] * 6.0f;
+        require(commanded >= 2.0f - 1e-3f && commanded <= 5.0f + 1e-3f, "so trote ou corrida");
     }
-    // Os outros exercicios tem os canais de altura, sempre zero.
     TrainingBatchSettings3D other = s;
     other.drill = "estrela";
     TrainingBatch3D star(other);
-    require(star.observationSize() == O && star.observations()[channel(star, "target.next1.height")] == 0.0f,
-        "a estrela ve as alturas, todas no chao");
+    require(star.observationSize() == O && star.observations()[channel(star, "jump.active")] == 0.0f && !star.view(0).hasJump,
+        "a estrela ve o comando de pulo, desligado");
     for (int step = 0; step < 20; ++step) {
         batch.step(std::vector<float>(8 * batch.actionSize(), 0.0f));
         require(finiteAll(batch.observations()) && finiteAll(batch.rewards()), "os pulos andam sem numero ruim");

@@ -639,32 +639,46 @@ bool ReinforcementLearningScreen::render(int width, int height) {
     std::vector<InspectionMarker> markers;
     std::vector<InspectionArrow> arrows;
     if (view.hasTarget) {
-        std::vector<Vec3> sequence { m_skeleton->toSkeleton({ view.target.x, view.target.y, view.targetHeight }) };
+        std::vector<Vec3> sequence { m_skeleton->toSkeleton({ view.target.x, view.target.y, 0.0f }) };
         for (std::uint32_t i = 0; i < view.upcomingCount; ++i)
-            sequence.push_back(m_skeleton->toSkeleton({ view.upcoming[i].x, view.upcoming[i].y, view.upcomingHeight[i] }));
+            sequence.push_back(m_skeleton->toSkeleton({ view.upcoming[i].x, view.upcoming[i].y, 0.0f }));
         std::vector<Vec3> reached;
         for (std::uint32_t i = 0; i < view.reachedCount; ++i)
             reached.push_back(m_skeleton->toSkeleton({ view.reached[i].x, view.reached[i].y, 0.0f }));
         appendTargetSequence(sequence, reached, view.targetRadius, markers, arrows);
-        // Os de "pare aqui" (frear e parar) em laranja; os no ar (o pulo) sem o
-        // brilho subindo e com um fio ate o chao.
+        // Os de "pare aqui" (frear e parar) em laranja.
         const std::size_t first = markers.size() - sequence.size();
-        for (std::size_t i = 0; i < sequence.size(); ++i) {
+        for (std::size_t i = 0; i < sequence.size(); ++i)
             if (i == 0 ? view.targetStop : view.upcomingStop[i - 1]) markers[first + i].color = rgb(245, 160, 40);
-            const float height = i == 0 ? view.targetHeight : view.upcomingHeight[i - 1];
-            if (height > 0.0f) {
-                markers[first + i].glowHeight = 0.08f;
-                InspectionMarker shadow = markers[first + i];
-                shadow.center.z = m_skeleton->toSkeleton({ 0.0f, 0.0f, 0.0f }).z;
-                shadow.strength *= 0.3f;
-                shadow.glowHeight = 0.0f;
-                markers.push_back(shadow);
-                Highlight wire;
-                wire.color = rgb(232, 44, 44);
-                const Vec3 top = sequence[i];
-                wire.segments.push_back({ m_skeleton->toSkeleton({ i == 0 ? view.target.x : view.upcoming[i - 1].x,
-                                              i == 0 ? view.target.y : view.upcoming[i - 1].y, 0.0f }), top });
-                highlights.push_back(std::move(wire));
+        // A zona de pulo: o marcador no chao e a barreira imaginaria na altura
+        // pedida (dois postes e a barra, atravessando o caminho); no pulo
+        // parado, a barra sobre o centro e a seta da direcao pedida no chao.
+        if (view.hasJump) {
+            const Color cyan = rgb(70, 200, 235);
+            InspectionMarker zone;
+            zone.center = m_skeleton->toSkeleton({ view.jumpCenter.x, view.jumpCenter.y, 0.0f });
+            zone.radius = view.jumpStanding ? 0.45f : 0.6f;
+            zone.color = cyan;
+            zone.strength = 0.7f;
+            zone.glowHeight = 0.0f;
+            markers.push_back(zone);
+            const float across = view.jumpPath + 0.5f * std::numbers::pi_v<float>;
+            const Vec3 side { 0.8f * std::cos(across), 0.8f * std::sin(across), 0.0f };
+            const Vec3 base { view.jumpCenter.x, view.jumpCenter.y, 0.0f };
+            const Vec3 up { 0.0f, 0.0f, view.jumpBarrier };
+            Highlight barrier;
+            barrier.color = cyan;
+            barrier.segments.push_back({ m_skeleton->toSkeleton(base - side + up), m_skeleton->toSkeleton(base + side + up) });
+            barrier.segments.push_back({ m_skeleton->toSkeleton(base - side), m_skeleton->toSkeleton(base - side + up) });
+            barrier.segments.push_back({ m_skeleton->toSkeleton(base + side), m_skeleton->toSkeleton(base + side + up) });
+            highlights.push_back(std::move(barrier));
+            if (view.jumpStanding && !view.jumpUp) {
+                InspectionArrow where;
+                where.from = m_skeleton->toSkeleton(base + Vec3 { 0.0f, 0.0f, 0.02f });
+                where.to = m_skeleton->toSkeleton(base + Vec3 { 0.9f * std::cos(view.jumpDirection),
+                    0.9f * std::sin(view.jumpDirection), 0.02f });
+                where.color = cyan;
+                arrows.push_back(where);
             }
         }
         // O desenho do exercicio (a estrela): os pontos fracos, fora os que ja
@@ -755,8 +769,7 @@ bool ReinforcementLearningScreen::render(int width, int height) {
         const Vec3 base { positions.front().x, positions.front().y, 0.0f };
         const Vec3 aim = m_skeleton->toSkeleton(base);
         const Vec3 ahead = m_skeleton->toSkeleton(base + Vec3 { std::cos(m_raceCamera.yaw), std::sin(m_raceCamera.yaw), 0.0f });
-        // (Com o alvo no ar, a mira sobe um pouco: o disco suspenso no quadro.)
-        camera.target = { aim.x, aim.y, 0.85f * pelvis.z + 0.3f * view.targetHeight };
+        camera.target = { aim.x, aim.y, 0.85f * pelvis.z };
         const float run = std::atan2(ahead.y - aim.y, ahead.x - aim.x);
         camera.yaw = run - std::numbers::pi_v<float> + 0.45f + (m_camera.yaw - 35.0f * DegreesToRadians);
     }

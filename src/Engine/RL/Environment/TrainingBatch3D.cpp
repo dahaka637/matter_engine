@@ -173,13 +173,37 @@ struct Environment {
     std::array<bool, 3> upcomingStop {};
     // A reacao: os proximos escondidos neste trecho.
     bool nextHidden = false;
-    // Os alvos no ar: a altura do de agora e dos proximos (0 no chao), se ele
-    // ja entrou no disco deste, e os pegos e os perdidos.
-    float targetHeight = 0.0f;
-    std::array<float, 3> upcomingHeight {};
-    bool aerialInside = false;
-    std::uint32_t aerialHits = 0;
-    std::uint32_t aerialMisses = 0;
+    // Os pulos: o tipo de pulo do trecho de cada alvo (0 nenhum, 1 a zona no
+    // meio do caminho ate ele, 2 o pulo parado nele) e a zona do trecho de
+    // agora: ativa, parada ou correndo, o centro, o rumo do caminho, a subida
+    // pedida (sobre a pelve de pe), a direcao pedida no parado (para cima, ou
+    // o angulo em relacao ao rumo do corpo), o mais alto da pelve na zona, e
+    // o pulo parado: o tempo quieto no disco, a espera, no ar, a decolagem.
+    std::uint8_t targetJump = 0;
+    std::array<std::uint8_t, 3> upcomingJump {};
+    bool jumpActive = false;
+    bool jumpStanding = false;
+    Vec3 jumpCenter;
+    float jumpPath = 0.0f;
+    float jumpRise = 0.0f;
+    bool jumpUp = true;
+    float jumpAngle = 0.0f;
+    float jumpZoneHigh = 0.0f;
+    float jumpStill = 0.0f;
+    float jumpWait = 0.0f;
+    bool jumpAirborne = false;
+    float jumpAirTime = 0.0f;
+    Vec3 jumpTakeoff;
+    float jumpTakeoffHeading = 0.0f;
+    // As medidas dos pulos: zonas correndo e paradas (vencidas e tentadas), a
+    // altura alcancada menos a pedida, o fim do ultimo pulo (a queda logo
+    // depois e da aterrissagem) e a volta a velocidade depois do correndo.
+    std::uint32_t runJumps = 0, runJumpsPassed = 0, standJumps = 0, standJumpsPassed = 0;
+    double riseErrorSum = 0.0;
+    float jumpEndedAt = -1.0f;
+    float jumpRecoverySince = -1.0f;
+    double jumpRecoverySum = 0.0;
+    std::uint32_t jumpRecoveryCount = 0;
     // O corte: depois de um alvo com virada de 45 graus ou mais, o tempo ate
     // ele andar a 80% da pedida rumo ao seguinte (o comeco, e a soma).
     float cutSince = -1.0f;
@@ -351,7 +375,8 @@ struct TrainingBatch3D::Impl {
     // Frear e parar: se o k-esimo alvo e de "pare aqui", e o comeco de um
     // trecho (o tempo parado e as mudancas da pedida no caminho).
     [[nodiscard]] bool drawStop(Environment& env, std::uint32_t k);
-    [[nodiscard]] float drawHeight(Environment& env, std::uint32_t k);
+    [[nodiscard]] std::uint8_t drawJump(Environment& env, std::uint32_t k);
+    void finishJump(Environment& env, bool passed, float rise, float now);
     void startLeg(Environment& env, std::uint32_t k);
     [[nodiscard]] float redrawSpeed(Environment& env, std::uint32_t k);
     // O comando de velocidade: a faixa sorteada (pelo peso), a velocidade pedida
@@ -448,11 +473,18 @@ void TrainingBatch3D::Impl::buildLayouts() {
             for (std::uint32_t i = 0; i < task.target.lookahead; ++i)
                 o.channels.push_back({ "command.speed.next" + std::to_string(i + 1), "m/s/6" });
         }
-        // Os alvos no ar: a altura do de agora e dos proximos (0 no chao).
-        if (task.target.aerial) {
-            o.channels.push_back({ "target.height", "m/2" });
-            for (std::uint32_t i = 0; i < task.target.lookahead; ++i)
-                o.channels.push_back({ "target.next" + std::to_string(i + 1) + ".height", "m/2" });
+        // O comando de pulo (os pulos): a zona do trecho (ligada, parada), a
+        // direcao e a distancia ate ela, a subida pedida da pelve e, no pulo
+        // parado, a direcao pedida em relacao ao corpo (zero: para cima).
+        if (task.target.jumps) {
+            o.channels.push_back({ "jump.active", "0/1" });
+            o.channels.push_back({ "jump.standing", "0/1" });
+            o.channels.push_back({ "jump.zone.direction.x", "unit" });
+            o.channels.push_back({ "jump.zone.direction.y", "unit" });
+            o.channels.push_back({ "jump.zone.distance", "m/10" });
+            o.channels.push_back({ "jump.rise", "m" });
+            o.channels.push_back({ "jump.direction.x", "unit" });
+            o.channels.push_back({ "jump.direction.y", "unit" });
         }
     }
     // A biblioteca: o clipe de agora (um canal por clipe) e o giro pedido.
@@ -702,15 +734,15 @@ void TrainingBatch3D::Impl::placeLibraryTarget(Environment& env, Vec3 from, floa
     if (ahead == 0 || k == 0) {
         env.targetFrom = { from.x, from.y, 0.0f };
         drawLibraryTarget(env, from, facing, k, env.target, env.targetDirection, env.targetSpeedCommand);
-        env.targetStop = drawStop(env, k);
-        env.targetHeight = drawHeight(env, k);
+        env.targetJump = drawJump(env, k);
+        env.targetStop = drawStop(env, k) || env.targetJump == 2;
         Vec3 last = env.target;
         float lastDirection = env.targetDirection;
         for (std::uint32_t i = 0; i < ahead; ++i) {
             drawLibraryTarget(env, last, lastDirection, k + 1 + i, env.upcoming[i], env.upcomingDirection[i],
                 env.upcomingSpeed[i]);
-            env.upcomingStop[i] = drawStop(env, k + 1 + i);
-            env.upcomingHeight[i] = drawHeight(env, k + 1 + i);
+            env.upcomingJump[i] = drawJump(env, k + 1 + i);
+            env.upcomingStop[i] = drawStop(env, k + 1 + i) || env.upcomingJump[i] == 2;
             last = env.upcoming[i];
             lastDirection = env.upcomingDirection[i];
         }
@@ -720,24 +752,50 @@ void TrainingBatch3D::Impl::placeLibraryTarget(Environment& env, Vec3 from, floa
         env.targetDirection = env.upcomingDirection[0];
         env.targetSpeedCommand = env.upcomingSpeed[0];
         env.targetStop = env.upcomingStop[0];
-        env.targetHeight = env.upcomingHeight[0];
+        env.targetJump = env.upcomingJump[0];
         for (std::uint32_t i = 0; i + 1 < ahead; ++i) {
-            env.upcomingHeight[i] = env.upcomingHeight[i + 1];
             env.upcoming[i] = env.upcoming[i + 1];
             env.upcomingDirection[i] = env.upcomingDirection[i + 1];
             env.upcomingSpeed[i] = env.upcomingSpeed[i + 1];
             env.upcomingStop[i] = env.upcomingStop[i + 1];
+            env.upcomingJump[i] = env.upcomingJump[i + 1];
         }
         const Vec3 last = ahead > 1 ? env.upcoming[ahead - 2] : env.target;
         const float lastDirection = ahead > 1 ? env.upcomingDirection[ahead - 2] : env.targetDirection;
         drawLibraryTarget(env, last, lastDirection, k + ahead, env.upcoming[ahead - 1], env.upcomingDirection[ahead - 1],
             env.upcomingSpeed[ahead - 1]);
-        env.upcomingStop[ahead - 1] = drawStop(env, k + ahead);
-        env.upcomingHeight[ahead - 1] = drawHeight(env, k + ahead);
+        env.upcomingJump[ahead - 1] = drawJump(env, k + ahead);
+        env.upcomingStop[ahead - 1] = drawStop(env, k + ahead) || env.upcomingJump[ahead - 1] == 2;
     }
     env.targetClosest = 1e9f;
     env.targetCount = k + 1;
     startLeg(env, k);
+}
+
+// Os pulos na estrela: nas idas do centro a ponta (os alvos pares) a zona no
+// meio do caminho, nas voltas ao centro (os impares) o pulo parado nele. Na
+// avaliacao, todos.
+std::uint8_t TrainingBatch3D::Impl::drawJump(Environment& env, std::uint32_t k) {
+    const TrainingTask3D::Target& t = taskOf(env).target;
+    if (!t.jumps || t.pattern != "star") return 0;
+    const float fraction = k % 2 == 0 ? t.runJumpFraction : t.standJumpFraction;
+    if (!(fraction > 0.0f)) return 0;
+    const bool jump = !training() || std::uniform_real_distribution<float>(0.0f, 1.0f)(env.rng) < fraction;
+    return jump ? static_cast<std::uint8_t>(k % 2 == 0 ? 1 : 2) : 0;
+}
+
+void TrainingBatch3D::Impl::finishJump(Environment& env, bool passed, float rise, float now) {
+    if (env.jumpStanding) {
+        ++env.standJumps;
+        env.standJumpsPassed += passed ? 1u : 0u;
+    } else {
+        ++env.runJumps;
+        env.runJumpsPassed += passed ? 1u : 0u;
+        env.jumpRecoverySince = now;
+    }
+    env.riseErrorSum += rise - env.jumpRise;
+    env.jumpEndedAt = now;
+    env.jumpActive = false;
 }
 
 bool TrainingBatch3D::Impl::drawStop(Environment& env, std::uint32_t k) {
@@ -747,16 +805,6 @@ bool TrainingBatch3D::Impl::drawStop(Environment& env, std::uint32_t k) {
     // Na avaliacao, um sim e um nao (cada mundo comeca de um lado).
     if (!training()) return (env.sequence + k) % 2 == 1;
     return std::uniform_real_distribution<float>(0.0f, 1.0f)(env.rng) < sc.stopFraction;
-}
-
-float TrainingBatch3D::Impl::drawHeight(Environment& env, std::uint32_t k) {
-    const TrainingTask3D::Target& t = taskOf(env).target;
-    if (!t.aerial || !(t.aerialFraction > 0.0f) || k == 0) return 0.0f;  // o primeiro, no chao
-    // Na avaliacao, um sim e um nao, na altura do meio.
-    if (!training())
-        return (env.sequence + k) % 2 == 0 ? 0.5f * (t.aerialHeight.minimum + t.aerialHeight.maximum) : 0.0f;
-    return std::uniform_real_distribution<float>(0.0f, 1.0f)(env.rng) < t.aerialFraction ? uniform(env.rng, t.aerialHeight)
-                                                                                           : 0.0f;
 }
 
 float TrainingBatch3D::Impl::redrawSpeed(Environment& env, std::uint32_t k) {
@@ -770,7 +818,28 @@ float TrainingBatch3D::Impl::redrawSpeed(Environment& env, std::uint32_t k) {
 
 void TrainingBatch3D::Impl::startLeg(Environment& env, std::uint32_t k) {
     const auto& sc = taskOf(env).target.speedCommand;
-    env.aerialInside = false;
+    // A zona de pulo deste trecho: correndo no meio do caminho, parada no alvo.
+    const TrainingTask3D::Target& jt = taskOf(env).target;
+    env.jumpActive = env.targetJump != 0;
+    env.jumpStanding = env.targetJump == 2;
+    env.jumpZoneHigh = 0.0f;
+    env.jumpStill = env.jumpWait = env.jumpAirTime = 0.0f;
+    env.jumpAirborne = false;
+    if (env.jumpActive) {
+        env.jumpPath = std::atan2(env.target.y - env.targetFrom.y, env.target.x - env.targetFrom.x);
+        env.jumpCenter = env.jumpStanding ? Vec3 { env.target.x, env.target.y, 0.0f }
+                                          : Vec3 { 0.5f * (env.targetFrom.x + env.target.x), 0.5f * (env.targetFrom.y + env.target.y), 0.0f };
+        // As alturas fixas da avaliacao: a 1/6, 1/2 e 5/6 da faixa, pelo mundo e
+        // pelo trecho (parado 20, 30 e 40 cm; correndo 25, 35 e 45 cm).
+        const TrainingRange3D rise = env.jumpStanding ? jt.standJumpRise : jt.runJumpRise;
+        const float level = (1.0f + 2.0f * static_cast<float>((env.sequence + k / 2) % 3)) / 6.0f;
+        env.jumpRise = training() ? uniform(env.rng, rise) : rise.minimum + level * (rise.maximum - rise.minimum);
+        // Parado: para cima ou uma das 8 direcoes em relacao ao corpo.
+        const std::uint32_t pick = training() ? std::uniform_int_distribution<std::uint32_t>(0, 8)(env.rng)
+                                              : static_cast<std::uint32_t>((env.sequence + k / 2) % 9);
+        env.jumpUp = pick == 0;
+        env.jumpAngle = env.jumpUp ? 0.0f : static_cast<float>(pick - 1) * std::numbers::pi_v<float> / 4.0f;
+    }
     // A reacao: os proximos escondidos neste trecho (na avaliacao, um em tres).
     const float hide = taskOf(env).target.hideNextFraction;
     env.nextHidden = hide > 0.0f
@@ -1358,8 +1427,12 @@ void TrainingBatch3D::Impl::resetEnvironment(std::uint32_t index) {
     env.cutSince = -1.0f;
     env.cutSum = 0.0;
     env.cutCount = 0;
-    env.aerialHits = 0;
-    env.aerialMisses = 0;
+    env.runJumps = env.runJumpsPassed = env.standJumps = env.standJumpsPassed = 0;
+    env.riseErrorSum = 0.0;
+    env.jumpEndedAt = -1.0f;
+    env.jumpRecoverySince = -1.0f;
+    env.jumpRecoverySum = 0.0;
+    env.jumpRecoveryCount = 0;
     if (targeting() && state && !(imitating() && reference.library)) placeFirstTarget(env, *state);
     env.episodeReturn = 0.0;
     env.comSum[0] = env.comSum[1] = 0.0;
@@ -1516,11 +1589,19 @@ void TrainingBatch3D::Impl::writeObservation(const Environment& env, const Ragdo
             for (std::uint32_t i = 0; i < task.target.lookahead; ++i)
                 *out++ = (env.nextHidden ? env.targetSpeedCommand : env.upcomingSpeed[i]) / 6.0f;
         }
-        // Os alvos no ar: a altura do de agora e dos proximos (0 no chao).
-        if (task.target.aerial) {
-            *out++ = env.targetHeight / 2.0f;
-            for (std::uint32_t i = 0; i < task.target.lookahead; ++i)
-                *out++ = (env.nextHidden ? env.targetHeight : env.upcomingHeight[i]) / 2.0f;
+        if (task.target.jumps) {
+            const Vec3 zone = reading.headingInverse.rotate(Vec3 { env.jumpCenter.x - pelvis.position.x,
+                env.jumpCenter.y - pelvis.position.y, 0.0f });
+            const float far = std::hypot(zone.x, zone.y);
+            const bool on = env.jumpActive;
+            *out++ = on ? 1.0f : 0.0f;
+            *out++ = on && env.jumpStanding ? 1.0f : 0.0f;
+            *out++ = on && far > 1.0e-4f ? zone.x / far : 0.0f;
+            *out++ = on && far > 1.0e-4f ? zone.y / far : 0.0f;
+            *out++ = on ? std::min(far, 20.0f) / 10.0f : 0.0f;
+            *out++ = on ? env.jumpRise : 0.0f;
+            *out++ = on && env.jumpStanding && !env.jumpUp ? std::cos(env.jumpAngle) : 0.0f;
+            *out++ = on && env.jumpStanding && !env.jumpUp ? std::sin(env.jumpAngle) : 0.0f;
         }
     }
     if (imitating() && reference.library) {
@@ -1791,7 +1872,7 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
     // O alvo: a velocidade do centro de massa em direcao a ele (linear: correr
     // mais rapido paga mais) e, chegando, a velocidade media do trecho; o
     // proximo nasce na hora.
-    float targetSpeed = 0.0f, targetReached = 0.0f, speedMatch = 0.0f;
+    float targetSpeed = 0.0f, targetReached = 0.0f, speedMatch = 0.0f, jumpZone = 0.0f;
     if (targeting()) {
         const TrainingTask3D::Target& t = task.target;
         const Vec3 to { env.target.x - reading.com.x, env.target.y - reading.com.y, 0.0f };
@@ -1800,6 +1881,12 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
         const float toward = distance > 1.0e-4f
             ? (reading.comVelocity.x * to.x + reading.comVelocity.y * to.y) / distance : 0.0f;
         targetSpeed = std::clamp(toward / t.referenceSpeed, 0.0f, t.speedCap);
+        // A volta a velocidade depois do pulo correndo (ate 80% da pedida).
+        if (env.jumpRecoverySince >= 0.0f && t.speedCommand.enabled && toward >= 0.8f * env.targetSpeedCommand) {
+            env.jumpRecoverySum += static_cast<float>(env.played) * stepSeconds - env.jumpRecoverySince;
+            ++env.jumpRecoveryCount;
+            env.jumpRecoverySince = -1.0f;
+        }
         // O corte: medindo desde a chegada com virada, ate ele sair a 80%.
         if (env.cutSince >= 0.0f && t.speedCommand.enabled && toward >= 0.8f * env.targetSpeedCommand) {
             env.cutSum += static_cast<float>(env.played) * stepSeconds - env.cutSince;
@@ -1835,7 +1922,7 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
         // stopSpeed) pelo tempo pedido; o quanto passa do disco depois de
         // entrar nele fica medido.
         bool arrived = distance < t.radius;
-        if (env.targetStop) {
+        if (env.targetStop && env.targetJump != 2) {  // (o pulo parado chega pelo pulo)
             if (distance < t.radius) env.stopEntered = true;
             if (env.stopEntered) env.stopOvershoot = std::max(env.stopOvershoot, distance - t.radius);
             const float planar = std::hypot(reading.comVelocity.x, reading.comVelocity.y);
@@ -1847,21 +1934,80 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
                 ++env.overshootCount;
             }
         }
-        // O alvo no ar: so com a cabeca acima dele, no disco; saindo do disco
-        // por baixo, perdido (o seguinte assume, sem a nota da chegada).
-        bool jumpMissed = false;
-        if (env.targetHeight > 0.0f) {
-            const bool inside = distance < t.radius;
-            arrived = inside && state.links[body.head].position.z >= env.targetHeight;
-            if (arrived) ++env.aerialHits;
-            else if (env.aerialInside && !inside) {
-                jumpMissed = true;
-                ++env.aerialMisses;
+        // Os pulos: a zona vencida e com a pelve acima da subida pedida; a
+        // nota e maxima ate 10 cm acima e cai depois (alto demais nao rende).
+        const float jumpNow = static_cast<float>(env.played) * stepSeconds;
+        const PhysicsBodyState3D& hip = state.links.front();
+        const float standing = body.postures[env.posture].standingPelvisHeight;
+        const bool grounded = reading.footContact[0] || reading.footContact[1];
+        const auto zoneScore = [](float rise, float wanted) {
+            const float over = rise - (wanted + 0.10f);
+            return over <= 0.0f ? 1.0f : std::exp(-over * over / (0.15f * 0.15f));
+        };
+        bool standDone = false, standPassed = false;
+        if (env.jumpActive && !env.jumpStanding) {
+            // Correndo: a zona e uma faixa no meio do caminho (1 m ao longo,
+            // 1,6 m de largura); passou dela, conta.
+            const float ux = std::cos(env.jumpPath), uy = std::sin(env.jumpPath);
+            const float dx = hip.position.x - env.jumpCenter.x, dy = hip.position.y - env.jumpCenter.y;
+            const float along = dx * ux + dy * uy, across = -dx * uy + dy * ux;
+            if (std::abs(along) <= 0.5f && std::abs(across) <= 0.8f)
+                env.jumpZoneHigh = std::max(env.jumpZoneHigh, hip.position.z);
+            if (along > 0.5f) {
+                const float rise = env.jumpZoneHigh > 0.0f ? env.jumpZoneHigh - standing : 0.0f;
+                const bool passed = env.jumpZoneHigh > 0.0f && rise >= env.jumpRise;
+                if (passed) jumpZone = zoneScore(rise, env.jumpRise);
+                finishJump(env, passed, rise, jumpNow);
             }
-            env.aerialInside = inside;
+        } else if (env.jumpActive) {
+            // Parado: quieto no disco, depois o pulo na direcao pedida; sem
+            // pular em 5 s, perdido.
+            const bool inside = distance < t.radius;
+            const float planar = std::hypot(reading.comVelocity.x, reading.comVelocity.y);
+            if (!env.jumpAirborne) {
+                // Os 5 s contam da entrada no disco; o pulo so vale depois de
+                // 0,3 s quieto nele (o pulo parado).
+                if (inside && grounded && planar < t.speedCommand.stopSpeed) env.jumpStill += stepSeconds;
+                else if (grounded) env.jumpStill = 0.0f;
+                if (inside) env.jumpWait += stepSeconds;
+                if (!grounded && env.jumpStill >= 0.3f) {
+                    env.jumpAirborne = true;
+                    env.jumpAirTime = 0.0f;
+                    env.jumpTakeoff = hip.position;
+                    const Vec3 forward = reading.pelvisFrame.rotate({ 1.0f, 0.0f, 0.0f });
+                    env.jumpTakeoffHeading = std::atan2(forward.y, forward.x);
+                    env.jumpZoneHigh = hip.position.z;
+                } else if (env.jumpWait > 5.0f) {
+                    standDone = true;
+                    finishJump(env, false, 0.0f, jumpNow);
+                }
+            } else if (!grounded) {
+                env.jumpZoneHigh = std::max(env.jumpZoneHigh, hip.position.z);
+                env.jumpAirTime += stepSeconds;
+            } else if (env.jumpAirTime < 0.1f) {
+                env.jumpAirborne = false;  // um pe que piscou, nao um pulo
+                env.jumpStill = 0.0f;
+            } else {
+                const float rise = env.jumpZoneHigh - standing;
+                const float mx = hip.position.x - env.jumpTakeoff.x, my = hip.position.y - env.jumpTakeoff.y;
+                bool direction = std::hypot(mx, my) <= 0.25f;  // para cima: sem sair do lugar
+                if (!env.jumpUp) {
+                    const float want = env.jumpTakeoffHeading + env.jumpAngle;
+                    const float along = mx * std::cos(want) + my * std::sin(want);
+                    const float across = -mx * std::sin(want) + my * std::cos(want);
+                    direction = along >= 0.25f && std::abs(across) <= 0.35f;
+                }
+                standPassed = rise >= env.jumpRise && direction;
+                if (standPassed) jumpZone = zoneScore(rise, env.jumpRise);
+                standDone = true;
+                finishJump(env, standPassed, rise, jumpNow);
+            }
         }
-        if (jumpMissed && imitating() && reference.library) {
-            env.targetSince = static_cast<float>(env.played) * stepSeconds;
+        // O pulo parado e a chegada no centro: vencido, conta; perdido, o
+        // seguinte assume sem a nota da chegada.
+        if (env.targetJump == 2) arrived = standDone && standPassed;
+        if (env.targetJump == 2 && standDone && !standPassed && imitating() && reference.library) {
+            env.targetSince = jumpNow;
             const Vec3 forward = reading.pelvisFrame.rotate({ 1.0f, 0.0f, 0.0f });
             placeLibraryTarget(env, reading.com, env.facingActive ? env.facingCommand : std::atan2(forward.y, forward.x),
                 env.targetCount);
@@ -1969,6 +2115,7 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
         w.targetTurn * targetTurn,
         w.facingHold * facingHold,
         w.speedMatch * speedMatch,
+        w.jumpZone * jumpZone,
         fell ? -w.fall : 0.0f,
     };
     // A queda e a ultima parcela; o resto, com positiveOnly, nunca abaixo de 0.
@@ -2023,9 +2170,23 @@ void TrainingBatch3D::Impl::finishEpisode(Scene& scene, std::uint32_t index, Tra
     episode.footTurnMax = env.footTurnMax;
     episode.meanActionRate = static_cast<float>(env.actionRateSum / n);
     episode.meanReversal = static_cast<float>(env.reversalSum / n);
-    episode.jumpHitFraction = env.aerialHits + env.aerialMisses > 0
-        ? static_cast<float>(env.aerialHits) / static_cast<float>(env.aerialHits + env.aerialMisses) : -1.0f;
     episode.cutSeconds = env.cutCount > 0 ? static_cast<float>(env.cutSum / env.cutCount) : -1.0f;
+    // Os pulos: as zonas vencidas correndo e paradas, a altura alcancada menos
+    // a pedida, a queda na aterrissagem (no ar ou ate 1,5 s depois de um pulo)
+    // e a volta a velocidade.
+    const std::uint32_t jumpsTried = env.runJumps + env.standJumps;
+    episode.runJumpPassed = env.runJumps > 0 ? static_cast<float>(env.runJumpsPassed) / static_cast<float>(env.runJumps) : -1.0f;
+    episode.standJumpPassed =
+        env.standJumps > 0 ? static_cast<float>(env.standJumpsPassed) / static_cast<float>(env.standJumps) : -1.0f;
+    episode.jumpRiseError = jumpsTried > 0 ? static_cast<float>(env.riseErrorSum / jumpsTried) : 0.0f;
+    {
+        const float ended = static_cast<float>(env.played) * static_cast<float>(task.actionRepeat) * FixedStep;
+        const bool fallReason = reason == TrainingEndReason3D::FallContact || reason == TrainingEndReason3D::FallHeight;
+        const bool afterJump = env.jumpAirborne || (env.jumpEndedAt >= 0.0f && ended - env.jumpEndedAt < 1.5f);
+        episode.landingFall = jumpsTried > 0 || env.jumpAirborne ? (fallReason && afterJump ? 1.0f : 0.0f) : -1.0f;
+    }
+    episode.jumpRecoverySeconds =
+        env.jumpRecoveryCount > 0 ? static_cast<float>(env.jumpRecoverySum / env.jumpRecoveryCount) : -1.0f;
     episode.meanEffort = static_cast<float>(env.effortSum / n);
     episode.meanJointSpeed = static_cast<float>(env.jointSpeedSum / n);
     episode.meanUpright = static_cast<float>(env.uprightSum / n);
@@ -2493,10 +2654,22 @@ TrainingEnvironmentView3D TrainingBatch3D::view(std::size_t environment) const {
         for (std::uint32_t i = 0; i < view.upcomingCount; ++i) {
             view.upcoming[i] = env.upcoming[i];
             view.upcomingStop[i] = env.upcomingStop[i];
-            view.upcomingHeight[i] = env.upcomingHeight[i];
         }
         view.targetStop = env.targetStop;
-        view.targetHeight = env.targetHeight;
+        if (env.jumpActive) {
+            view.hasJump = true;
+            view.jumpStanding = env.jumpStanding;
+            view.jumpCenter = env.jumpCenter;
+            view.jumpPath = env.jumpPath;
+            view.jumpBarrier = impl.body.postures[env.posture].standingPelvisHeight + env.jumpRise;
+            view.jumpUp = env.jumpUp;
+            if (view.state && !view.state->links.empty()) {
+                const Quaternion frame = (view.state->links.front().orientation
+                    * impl.body.profile.links.front().modelOrientation.conjugate()).normalized();
+                const Vec3 forward = frame.rotate({ 1.0f, 0.0f, 0.0f });
+                view.jumpDirection = std::atan2(forward.y, forward.x) + env.jumpAngle;
+            }
+        }
         view.reachedCount = env.reachedCount;
         for (std::uint32_t i = 0; i < view.reachedCount; ++i) view.reached[i] = env.reachedTargets[i];
         const TrainingTask3D& drill = impl.taskOf(env);

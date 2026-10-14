@@ -72,6 +72,9 @@ struct TrainingRewardWeights3D {
     // Acertar a velocidade pedida (o comando de velocidade): a velocidade em
     // direcao ao alvo contra a pedida (ja com a freada antes do ponto), em sino.
     float speedMatch = 0.0f;
+    // A zona de pulo vencida (os pulos): maxima da altura pedida ate 10 cm
+    // acima, caindo depois (pular alto demais nao rende); fora da zona nada.
+    float jumpZone = 0.0f;
     float fall = 10.0f;
     // O total de cada passo, menos a queda, nunca fica negativo (o
     // "only_positive_rewards" do legged_gym): tentar e errar nunca vale menos
@@ -79,11 +82,11 @@ struct TrainingRewardWeights3D {
     bool positiveOnly = false;
 };
 
-inline constexpr std::array<const char*, 29> TrainingRewardComponentNames3D {
+inline constexpr std::array<const char*, 30> TrainingRewardComponentNames3D {
     "alive", "upright", "headHeight", "comOverSupport", "still", "trunkTurn", "footSlip", "footDrift", "effort",
     "actionRate", "jointLimit", "posePrior", "poseMatch", "velocity", "yawRate", "feetAirTime", "gaitContact",
     "swingHeight", "gaitReference", "imitationPose", "imitationVelocity", "imitationKeyBodies", "imitationRoot",
-    "targetSpeed", "targetReached", "targetTurn", "facingHold", "speedMatch", "fall"
+    "targetSpeed", "targetReached", "targetTurn", "facingHold", "speedMatch", "jumpZone", "fall"
 };
 
 struct TrainingRange3D {
@@ -395,15 +398,19 @@ struct TrainingTask3D {
         // veem o de agora, e a pedida nao freia para uma virada que ele nao
         // conhece).
         float hideNextFraction = 0.0f;
-        // Os alvos no ar (o pulo): com aerial, a rede ve a altura do alvo de
-        // agora e dos proximos (0 no chao; mesma observacao para todos os
-        // exercicios). aerialFraction: a fatia dos alvos suspensos, a uma
-        // altura sorteada em aerialHeight (m do chao); ele so pega o alvo
-        // passando no disco com a cabeca acima dela (pulando). Saindo do disco
-        // por baixo, o alvo fica perdido e o seguinte assume.
-        bool aerial = false;
-        float aerialFraction = 0.0f;
-        TrainingRange3D aerialHeight { 1.9f, 2.2f };
+        // Os pulos (o 8): a zona de pulo, uma barreira imaginaria na altura
+        // pedida. jumps liga o comando de pulo na observacao (em todos os
+        // exercicios, a mesma). Na estrela, runJumpFraction das idas do centro
+        // a ponta tem a zona no meio do caminho (o pulo correndo: ele passa
+        // por ela com a pelve acima da altura e segue ate a ponta), e
+        // standJumpFraction das voltas ao centro tem o pulo parado no centro
+        // (ele para no disco e pula na direcao pedida: para cima ou uma das 8
+        // em relacao ao corpo). A altura e a subida da pelve sobre a de pe.
+        bool jumps = false;
+        float runJumpFraction = 0.0f;
+        float standJumpFraction = 0.0f;
+        TrainingRange3D runJumpRise { 0.20f, 0.50f };
+        TrainingRange3D standJumpRise { 0.15f, 0.45f };
         // As curvas ("arc"): cada uma sorteia um dos tipos de raio (arcRadii,
         // [m, m]: aberta, media, fechada), o quanto gira (arcSweepDegrees) e o
         // sentido (arcSwitchFraction: a chance de trocar de lado, as curvas em

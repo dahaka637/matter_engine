@@ -299,25 +299,40 @@ diagonal), e a voltar.
 
 ## Pulos (14/10/2026)
 
-O exercício 8: a estrela padrão (8 pontas, a velocidade sorteada, o peito
-livre ou fixo) com metade dos alvos no ar.
+O exercício 8, como a seção 8 do `treino_locomocao_claude.md` pede. A primeira
+versão do mesmo dia (alvos no ar no lugar dos destinos) estava errada e foi
+revertida: com a freada antes de cada volta, todo pulo virava um pulo parado.
 
-- **Os alvos no ar** (`target.aerial`, `aerialFraction` 0,5, `aerialHeight`
-  1,9–2,2 m do chão): ele só pega o alvo passando no disco com a cabeça
-  acima dele, pulando. Saindo do disco por baixo, o alvo fica perdido e o
-  seguinte assume, sem a nota da chegada. O primeiro alvo fica sempre no
-  chão; na avaliação, um sim e um não.
-- **A rede vê a altura** do alvo de agora e dos próximos (`target.height`,
-  `target.nextN.height`, em m/2; 0 no chão). Os canais existem em todos os
-  exercícios (a mesma observação), sempre zero fora dos pulos.
-- **A prova:** `pulos_livre_v1` e `pulos_peito_v1`; a fatia dos alvos no ar
-  pegos (`jump_hits`, coluna 35, 36 colunas), só medida.
-- **Na tela:** o disco suspenso, um fio até o chão e uma sombra fraca no chão;
-  com o alvo no ar, a mira da câmera sobe um pouco.
-- **Ainda sem referência de pulo:** a biblioteca não tem clipe de pulo (o pulo
-  do Mixamo não é ciclo). Com o cérebro de 14/10, 0% dos alvos no ar.
-- **Os ramos na tela** seguem os modos do peito que cada exercício sorteia
-  (o Pulos: livre e fixo).
+- **O mundo:** a estrela de 9 pontos, o peito livre ou fixo, a velocidade só
+  de trote ou corrida (as faixas do exercício).
+- **O pulo correndo:** na ida do centro à ponta, a zona de pulo no meio do
+  caminho (uma faixa de 1 m ao longo e 1,6 m de largura), uma barreira
+  imaginária na altura pedida. Ele passa por ela com a pelve acima da altura
+  e segue até a ponta.
+- **O pulo parado:** na volta, o centro é a zona (o disco de parar). Ele fica
+  0,3 s quieto no disco e pula na direção pedida: para cima (sem sair mais de
+  25 cm do lugar) ou uma das 8 em relação ao corpo (pelo menos 25 cm para lá).
+  Sem pular em 5 s desde a entrada no disco, perdido, e o seguinte assume.
+- **A altura:** a subida da pelve sobre a de pé no alerta
+  (`standingPelvisHeight`): parado 15–45 cm (`standJumpRise`), correndo
+  20–50 cm (`runJumpRise`). Na avaliação, três alturas fixas (1/6, 1/2 e 5/6
+  da faixa).
+- **O comando de pulo** (`target.jumps`, na observação de todos os exercícios,
+  ligado só nos pulos): `jump.active`, `jump.standing`, a direção e a distância
+  até a zona, `jump.rise` e a direção pedida no parado.
+- **A nota** `jumpZone` (1,0 nos pulos): só a zona vencida paga, máxima até
+  10 cm acima da pedida e caindo depois. Pular fora da zona não rende nada.
+- **A prova** (`pulos_livre_v1`, `pulos_peito_v1`; colunas 35–39, 40 no total,
+  só medidas): as zonas vencidas correndo (`jump_run`) e paradas
+  (`jump_stand`), a subida menos a pedida, as quedas na aterrissagem (no ar ou
+  até 1,5 s depois) e a volta a 80% da velocidade depois do pulo correndo.
+- **Na tela:** o disco azul da zona e a barreira (dois postes e a barra na
+  altura pedida); no pulo parado, a seta da direção pedida.
+- **Fora, de propósito:** os clipes de pulo (a biblioteca só aceita ciclos; a
+  muleta se decide na calibração), a altura subindo com o currículo
+  (calibração) e a barreira física (mais tarde, como no plano).
+- **A prévia com o cérebro de 14/10 (rodada 60068):** 16 de 16 de pé, todos
+  passam pelas duas zonas, 0% vencidas (ele não pula; ~30 cm abaixo da pedida).
 
 ## O tremor parado e a estrela contínua (14/10/2026)
 

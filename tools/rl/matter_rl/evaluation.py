@@ -15,7 +15,7 @@ from .model import ACTION_LIMIT, ActorCritic
 
 REASONS = ["nenhum", "queda_contato", "queda_altura", "numerico", "tempo", "limite", "alvo_perdido"]
 # As colunas do resumo de um episodio (finished_episodes do modulo nativo).
-EPISODE_COLUMNS = 36
+EPISODE_COLUMNS = 40
 FALLS = {1, 2, 3}
 
 
@@ -399,9 +399,19 @@ class Evaluator:
             # Os cortes: o tempo medio de cada um (s; so medido).
             cuts = rows[:, 34][rows[:, 34] >= 0]
             metrics["cut_seconds"] = float(cuts.mean()) if len(cuts) else -1.0
-            # Os alvos no ar: a fatia pega (so medida).
-            jumps = rows[:, 35][rows[:, 35] >= 0]
-            metrics["jump_hits"] = float(jumps.mean()) if len(jumps) else -1.0
+            # Os pulos (so medidos): as zonas vencidas correndo e paradas, a
+            # altura alcancada menos a pedida, as quedas na aterrissagem e a
+            # volta a velocidade depois do pulo correndo.
+            run = rows[:, 35][rows[:, 35] >= 0]
+            stand = rows[:, 36][rows[:, 36] >= 0]
+            jumped = (rows[:, 35] >= 0) | (rows[:, 36] >= 0)
+            landing = rows[:, 38][rows[:, 38] >= 0]
+            recovery = rows[:, 39][rows[:, 39] >= 0]
+            metrics["jump_run"] = float(run.mean()) if len(run) else -1.0
+            metrics["jump_stand"] = float(stand.mean()) if len(stand) else -1.0
+            metrics["jump_rise_error"] = float(rows[jumped, 37].mean()) if jumped.any() else 0.0
+            metrics["landing_falls"] = float(landing.mean()) if len(landing) else -1.0
+            metrics["jump_recovery"] = float(recovery.mean()) if len(recovery) else -1.0
             metrics["reference_speed"] = float((spec or {}).get("referenceSpeed", 6.0))
         metrics["kind"] = kind
         metrics["score"] = (walking_score(metrics) if kind == "andar" else goal_score(metrics) if kind == "alvo"
