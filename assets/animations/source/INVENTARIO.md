@@ -47,14 +47,18 @@ ao último quadro (m); perto de 0 com "máx" pequeno = veio no lugar (In Place).
 | `futebol/Soccer Tackle.fbx` | 1.77 | 4.13 | 4.13 | -7 | 104 |
 | `giros_parado/Happy Right Turn.fbx` | 0.73 | 0.13 | 0.13 | -120 | 120 |
 | `giros_parado/Left Turn 90.fbx` | 0.93 | 0.01 | 0.11 | 90 | 90 |
+| `giros_parado/Left Turn(2).fbx` | 2.07 | 0.18 | 0.18 | 180 | 180 |
 | `giros_parado/Left Turn.fbx` | 1.03 | 0.01 | 0.12 | 90 | 90 |
 | `giros_parado/LeftTurn.fbx` | 1.03 | 0.01 | 0.12 | 90 | 90 |
+| `giros_parado/Quick 180 Turn (rifle).fbx` | 1.30 | 0.05 | 0.11 | -180 | 198 |
 | `giros_parado/Right Turn(1).fbx` | 1.03 | 0.01 | 0.18 | -90 | 90 |
 | `giros_parado/Right Turn(2).fbx` | 1.03 | 0.01 | 0.17 | -90 | 90 |
 | `giros_parado/Right Turn(3).fbx` | 1.00 | 0.12 | 0.12 | -96 | 96 |
 | `giros_parado/Right Turn(4).fbx` | 1.03 | 0.01 | 0.17 | -90 | 90 |
+| `giros_parado/Right Turn(6).fbx` | 2.07 | 0.34 | 0.34 | -180 | 180 |
 | `giros_parado/Right Turn.fbx` | 1.00 | 0.13 | 0.13 | -96 | 96 |
 | `giros_parado/RightTurn.fbx` | 1.03 | 0.01 | 0.17 | -90 | 90 |
+| `giros_parado/Turn 90 Right (rifle).fbx` | 1.00 | 0.01 | 0.16 | -90 | 90 |
 | `goleiro/Goalkeeper Drop Kick(1).fbx` | 2.77 | 2.76 | 2.76 | 63 | 133 |
 | `goleiro/Goalkeeper Drop Kick.fbx` | 3.90 | 3.11 | 3.11 | 2 | 72 |
 | `parado/Idle.fbx` | 10.00 | 0.00 | 0.01 | 0 | 1 |
