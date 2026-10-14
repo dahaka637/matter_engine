@@ -250,17 +250,17 @@ int main() {
         // mundo; a politica de mentira (de antes do comando da postura, 160
         // entradas) le o comeco da observacao.
         require(screen.skillTasks()
-                == std::vector<std::string> { "h1_ficar_em_pe", "h1b_em_pe_posturado", "h3_andar", "h3b_caminhar_alvo",
+                == std::vector<std::string> { "corpo", "h1_ficar_em_pe", "h1b_em_pe_posturado", "h3_andar", "h3b_caminhar_alvo",
                     "h4_direcoes", "h5_pontos", "h6_peito", "h7_tiro" },
             "as habilidades vem das tarefas");
         require(screen.viewerPosture() == 0, "a H1 mostra a postura natural");
-        screen.selectSkill(1);
+        screen.selectSkill(2);
         frame(screen, canvas, 2);
         require(screen.viewerPosture() == 1, "a H1b mostra a postura de alerta");
         snapshot(canvas, "rl_tela_posturado");
         // A corrida ate o alvo (a H3 v7): o mundo e refeito com a tarefa dela,
         // com o alvo no chao (o marcador) e sem ciclo de velocidade.
-        screen.selectSkill(2);
+        screen.selectSkill(3);
         frame(screen, canvas, 2);
         require(screen.viewerHasTarget(), "a corrida mostra o alvo");
         screen.advanceViewer(60);
@@ -271,12 +271,12 @@ int main() {
         require(raceConflicts.empty(),
             "IDs repetidos na corrida: " + (raceConflicts.empty() ? std::string() : raceConflicts.front()));
         // A caminhada ate o alvo: a mesma corrida, com o clipe de andar.
-        screen.selectSkill(3);
+        screen.selectSkill(4);
         frame(screen, canvas, 2);
         require(screen.viewerHasTarget(), "a caminhada mostra o alvo");
         snapshot(canvas, "rl_tela_caminhada");
         // Os varios pontos: o alvo e os dois proximos, mais fracos, ligados.
-        screen.selectSkill(5);
+        screen.selectSkill(6);
         frame(screen, canvas, 2);
         require(screen.viewerHasTarget(), "os varios pontos mostram os alvos");
         screen.advanceViewer(30);
@@ -311,7 +311,7 @@ int main() {
         // A corrida nao tem professor: o visualizador segue com a politica.
         screen.showTeacher(true);
         require(!screen.showingTeacher() && screen.viewerReady(), "sem professor ligado, o visualizador segue na politica");
-        screen.selectSkill(0);
+        screen.selectSkill(1);
         frame(screen, canvas, 2);
         require(screen.viewerPosture() == 0 && screen.viewerWalkCommand() == 0.0f, "de volta a H1, parado");
 

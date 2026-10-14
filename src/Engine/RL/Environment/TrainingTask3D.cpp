@@ -22,14 +22,9 @@ TrainingRange3D range(const nlohmann::json& object, const char* key, TrainingRan
 
 } // namespace
 
-TrainingTask3D loadTrainingTask3D(const std::filesystem::path& definitionPath) {
-    std::ifstream input(definitionPath, std::ios::binary);
-    if (!input) throw std::runtime_error("tarefa de RL: arquivo ausente: " + definitionPath.string());
-    const std::string text { std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>() };
-    const nlohmann::json document = nlohmann::json::parse(text);
-    if (document.value("schema", std::string()) != "matter-rl-task-1")
-        throw std::runtime_error("tarefa de RL: schema desconhecido em " + definitionPath.string());
+namespace {
 
+TrainingTask3D parseTask(const nlohmann::json& document, const std::filesystem::path& definitionPath) {
     TrainingTask3D task;
     task.id = document.at("id").get<std::string>();
     task.displayName = document.value("displayName", task.id);
@@ -260,6 +255,57 @@ TrainingTask3D loadTrainingTask3D(const std::filesystem::path& definitionPath) {
     for (const nlohmann::json& entry : document.value("evaluation", nlohmann::json::array()))
         if (entry.is_object() && entry.value("enabled", true) && entry.contains("name"))
             task.evaluationBatteries.push_back(entry["name"].get<std::string>());
+    return task;
+}
+
+// O que um exercicio nao pode mudar: o que forma a observacao e a acao (a
+// mesma rede serve a todos) e o mundo (o corpo, o chao, as posturas).
+void requireSameLayout(const TrainingTask3D& base, const TrainingTask3D& drill, const std::string& id) {
+    bool clips = base.imitation.clips.size() == drill.imitation.clips.size();
+    for (std::size_t i = 0; clips && i < base.imitation.clips.size(); ++i)
+        clips = base.imitation.clips[i].id == drill.imitation.clips[i].id
+            && base.imitation.clips[i].path == drill.imitation.clips[i].path;
+    const bool same = clips && base.bodyPath == drill.bodyPath && base.actionRepeat == drill.actionRepeat
+        && base.groundMaterial == drill.groundMaterial && base.worldSpacingMeters == drill.worldSpacingMeters
+        && base.imitation.enabled == drill.imitation.enabled && base.imitation.library == drill.imitation.library
+        && base.imitation.residualActions == drill.imitation.residualActions
+        && base.target.enabled == drill.target.enabled && base.target.lookahead == drill.target.lookahead
+        && base.target.facing == drill.target.facing && base.postures.size() == drill.postures.size();
+    if (!same)
+        throw std::runtime_error("tarefa de RL: o exercicio " + id
+            + " muda o que a rede ve ou faz (clipes, corpo, alvo, lookahead, facing, posturas)");
+}
+
+} // namespace
+
+TrainingTask3D loadTrainingTask3D(const std::filesystem::path& definitionPath) {
+    std::ifstream input(definitionPath, std::ios::binary);
+    if (!input) throw std::runtime_error("tarefa de RL: arquivo ausente: " + definitionPath.string());
+    const std::string text { std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>() };
+    nlohmann::json document = nlohmann::json::parse(text);
+    if (document.value("schema", std::string()) != "matter-rl-task-1")
+        throw std::runtime_error("tarefa de RL: schema desconhecido em " + definitionPath.string());
+
+    const nlohmann::json drills = document.contains("drills") ? document["drills"] : nlohmann::json::array();
+    document.erase("drills");
+    TrainingTask3D task = parseTask(document, definitionPath);
+    // Os exercicios: cada um e a tarefa base com o que ele muda por cima (o
+    // merge patch do JSON: objetos se misturam, listas e valores se trocam).
+    float total = 0.0f;
+    for (const nlohmann::json& entry : drills) {
+        TrainingTask3D::Drill drill;
+        drill.id = entry.at("id").get<std::string>();
+        drill.weight = std::max(0.0f, entry.value("weight", 1.0f));
+        nlohmann::json merged = document;
+        if (entry.contains("overrides")) merged.merge_patch(entry["overrides"]);
+        drill.task = std::make_shared<TrainingTask3D>(parseTask(merged, definitionPath));
+        requireSameLayout(task, *drill.task, drill.id);
+        for (const TrainingTask3D::Drill& other : task.drills)
+            if (other.id == drill.id) throw std::runtime_error("tarefa de RL: exercicio repetido: " + drill.id);
+        total += drill.weight;
+        task.drills.push_back(std::move(drill));
+    }
+    if (!task.drills.empty() && !(total > 0.0f)) throw std::runtime_error("tarefa de RL: exercicios sem peso");
 
     std::uint64_t hash = 14695981039346656037ull;
     for (const char c : text) {

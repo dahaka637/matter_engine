@@ -1,0 +1,271 @@
+{
+  "schema": "matter-rl-task-1",
+  "id": "corpo",
+  "version": 1,
+  "displayName": "Corpo",
+  "comment": "Area 1 da metodologia de 13/10 (as 3 areas: Corpo, Bola e Goleiro; docs/REINFORCEMENT_LEARNING.md e o Vault, Arquitetura_RL.md): uma tarefa so com os exercicios do corpo misturados no mesmo treino. Cada mundo sorteia o seu exercicio pelo peso (drills); o exercicio muda o mundo (como os alvos nascem, as notas, a duracao), nunca o que a rede ve ou faz, e a rede nunca sabe o nome dele: no jogo nao ha exercicio, ha comandos. As fatias seguem o exame (drillWeights): o exercicio mais atrasado ganha mais mundos. Versao 1: o esqueleto, com os tres exercicios de 13/10 (pontos = H5 v3, peito = H6 v2, tiro = H7) como ponto de partida provisorio, a reescrever com o usuario um por um.",
+  "postures": [
+    {
+      "id": "alerta",
+      "weight": 1.0
+    }
+  ],
+  "body": "../bodies/football_player_v1.json",
+  "actionRepeat": 4,
+  "episodeSeconds": 15.0,
+  "groundMaterial": "grass",
+  "worldSpacingMeters": 250.0,
+  "imitation": {
+    "comment": "A biblioteca de todos os exercicios (a mesma para todos: a observacao tem um canal por clipe): os 8 trotes e o sprint. O planejador da base pesa so a direcao; o tiro liga a velocidade.",
+    "clips": [
+      {
+        "id": "frente",
+        "clip": "../../animations/clips/mixamo_running.matteranim.json"
+      },
+      {
+        "id": "frente_esquerda",
+        "clip": "../../animations/clips/trot_forward_left.matteranim.json"
+      },
+      {
+        "id": "esquerda",
+        "clip": "../../animations/clips/jog_strafe_left.matteranim.json"
+      },
+      {
+        "id": "tras_esquerda",
+        "clip": "../../animations/clips/trot_backward_left.matteranim.json"
+      },
+      {
+        "id": "costas",
+        "clip": "../../animations/clips/trot_backward.matteranim.json"
+      },
+      {
+        "id": "tras_direita",
+        "clip": "../../animations/clips/trot_backward_right.matteranim.json"
+      },
+      {
+        "id": "direita",
+        "clip": "../../animations/clips/jog_strafe_right.matteranim.json"
+      },
+      {
+        "id": "frente_direita",
+        "clip": "../../animations/clips/trot_forward_right.matteranim.json"
+      },
+      {
+        "id": "sprint",
+        "clip": "../../animations/clips/mixamo_sprint.matteranim.json"
+      }
+    ],
+    "residualActions": true,
+    "scales": {
+      "pose": 1.0,
+      "velocity": 0.05,
+      "keyBodies": 20.0,
+      "rootHeight": 20.0,
+      "rootVelocity": 0.3
+    },
+    "library": true,
+    "planner": {
+      "hysteresisDegrees": 10.0,
+      "minimumSeconds": 0.4
+    }
+  },
+  "target": {
+    "comment": "A base dos alvos (a da H5 v3 com o comando de olhar no peito disponivel). O comando de olhar existe na observacao de todos os exercicios (facing true), mas so vale onde o exercicio pede (facingFraction).",
+    "distance": 10.0,
+    "radius": 0.8,
+    "firstAngleDegrees": 180.0,
+    "nextAngleDegrees": 180.0,
+    "evaluationAngles": [0.0, 22.5, 45.0, 67.5, 90.0, 112.5, 135.0, 157.5, 180.0, 202.5, 225.0, 247.5, 270.0, 292.5, 315.0, 337.5],
+    "referenceSpeed": 3.0,
+    "speedCap": 1.2,
+    "missMeters": 3.0,
+    "distanceRange": [2.0, 8.0],
+    "evaluationPerWorld": true,
+    "evaluationDistances": [4.0],
+    "turnGain": 2.0,
+    "turnMaximum": 2.5,
+    "turnSigma": 0.5,
+    "facing": true,
+    "facingDriftRadians": 0.3,
+    "facingLink": "chest",
+    "facingFraction": 0.0,
+    "facingSigma": 0.5,
+    "lookahead": 2,
+    "racingLine": 0.6,
+    "evaluationCourses": [
+      {
+        "name": "variado",
+        "points": [[1.5, -2.2], [5.5, -2.2], [5.5, 2.0], [3.4, 0.0], [7.8, 0.0], [0.0, 0.0]]
+      },
+      {
+        "name": "quadrado",
+        "points": [[3.0, 0.0], [6.0, 0.0], [6.0, 3.0], [6.0, 6.0], [3.0, 6.0], [0.0, 6.0], [0.0, 3.0], [0.0, 0.0]]
+      },
+      {
+        "name": "zigue_zague",
+        "points": [[2.5, 2.0], [5.0, 0.0]]
+      },
+      {
+        "name": "vai_e_volta",
+        "points": [[5.0, 0.0], [0.0, 2.0]]
+      }
+    ]
+  },
+  "reward": {
+    "comment": "Os da corrida (H3 v9) mais o giro (alinhar o clipe com o alvo): imitacao 0,8, velocidade em direcao ao alvo 0,3, chegada 3 vezes a velocidade media sobre 3 m/s, o giro 0,15, menos um pouco de mudanca de acao e a queda. Com o comando de olhar, segurar o peito virado para ele paga 0,3 (o mesmo que correr na velocidade de referencia): andar de costas virado para a camera vale mais que virar e correr de frente.",
+    "positiveOnly": false,
+    "alive": 0.0,
+    "upright": 0.0,
+    "headHeight": 0.0,
+    "comOverSupport": 0.0,
+    "still": 0.0,
+    "trunkTurn": 0.0,
+    "footSlip": 0.0,
+    "footDrift": 0.0,
+    "effort": 0.0,
+    "actionRate": 0.01,
+    "jointLimit": 0.0,
+    "posePrior": 0.0,
+    "poseMatch": 0.0,
+    "velocity": 0.0,
+    "yawRate": 0.0,
+    "feetAirTime": 0.0,
+    "gaitContact": 0.0,
+    "swingHeight": 0.0,
+    "gaitReference": 0.0,
+    "imitationPose": 0.5,
+    "imitationVelocity": 0.05,
+    "imitationKeyBodies": 0.15,
+    "imitationRoot": 0.1,
+    "targetSpeed": 0.3,
+    "targetReached": 3.0,
+    "fall": 5.0,
+    "targetTurn": 0.15,
+    "facingHold": 0.3
+  },
+  "termination": {
+    "minimumHeadHeightFraction": 0.6,
+    "minimumPelvisHeightFraction": 0.5,
+    "nonSupportContact": true,
+    "maximumDistanceFromStart": 120.0
+  },
+  "initialState": {
+    "jointNoiseRadians": 0.03,
+    "jointVelocityNoise": 0.2,
+    "rootVelocityNoise": 0.1,
+    "rootAngularVelocityNoise": 0.1,
+    "randomYaw": true
+  },
+  "randomization": {
+    "friction": [0.7, 1.1],
+    "mass": [0.95, 1.05],
+    "strength": [0.9, 1.1],
+    "actionDelayProbability": 0.5,
+    "observationNoise": 1.0
+  },
+  "pushes": {
+    "enabled": false,
+    "intervalSeconds": [2.0, 4.0],
+    "durationSeconds": [0.1, 0.2],
+    "forceNewtons": [50.0, 150.0],
+    "links": [
+      "Pelvis",
+      "UpperChest"
+    ]
+  },
+  "drillWeights": {
+    "comment": "As fatias pelo exame: o exercicio atras do melhor ganha gain x o atraso (em nota) a mais de peso, ate maximumFactor vezes o de base; o que alcanca os outros volta ao peso de base.",
+    "auto": true,
+    "gain": 10.0,
+    "maximumFactor": 3.0
+  },
+  "drills": [
+    {
+      "id": "pontos",
+      "weight": 0.2,
+      "comment": "Varios pontos, livre (a H5 v3).",
+      "overrides": {
+        "target": {
+          "facingFraction": 0.0
+        }
+      }
+    },
+    {
+      "id": "peito",
+      "weight": 0.3,
+      "comment": "Os mesmos pontos com o peito para a camera (a H6 v2), sempre com o comando.",
+      "overrides": {
+        "target": {
+          "facingFraction": 1.0,
+          "facingDriftRadians": 0.3
+        }
+      }
+    },
+    {
+      "id": "tiro",
+      "weight": 0.5,
+      "comment": "O tiro com volta (a H7): o sprint, a freada e a volta, livre.",
+      "overrides": {
+        "episodeSeconds": 20.0,
+        "imitation": {
+          "planner": {
+            "hysteresisDegrees": 10.0,
+            "minimumSeconds": 0.4,
+            "speedByDistance": [[3.0, 2.5], [10.0, 6.0]],
+            "speedWeight": 1.0,
+            "directionWeight": 0.3
+          }
+        },
+        "target": {
+          "firstAngleDegrees": 180.0,
+          "nextAngleDegrees": 20.0,
+          "nextAngleOffsetDegrees": 180.0,
+          "distanceRange": [12.0, 24.0],
+          "referenceSpeed": 6.0,
+          "missMeters": 5.0,
+          "evaluationCourses": [
+            {
+              "name": "tiro_com_volta",
+              "points": [[20.0, 0.0], [0.0, -5.0], [20.0, -5.0], [0.0, -10.0], [20.0, -10.0], [0.0, 0.0]]
+            },
+            {
+              "name": "vai_e_volta_20",
+              "points": [[20.0, 0.0], [0.0, 2.0]]
+            }
+          ],
+          "facingFraction": 0.0
+        }
+      }
+    }
+  ],
+  "evaluation": [
+    {
+      "name": "percursos_v2",
+      "drill": "pontos",
+      "posture": "alerta",
+      "seconds": 20.0,
+      "referenceSpeed": 3.0,
+      "facing": 0
+    },
+    {
+      "name": "percursos_peito_v2",
+      "drill": "peito",
+      "posture": "alerta",
+      "seconds": 20.0,
+      "referenceSpeed": 3.0,
+      "facing": 1
+    },
+    {
+      "name": "tiro_v1",
+      "drill": "tiro",
+      "posture": "alerta",
+      "seconds": 30.0,
+      "referenceSpeed": 6.0,
+      "facing": 0
+    }
+  ],
+  "exploration": {
+    "comment": "Ao trocar para esta tarefa, o desvio da acao volta a pelo menos minimumStd. O sprint e a freada sao novos para o cerebro de agora: 0,5.",
+    "minimumStd": 0.5
+  }
+}

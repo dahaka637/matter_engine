@@ -1,5 +1,9 @@
 # Aprendizado por Reforço no Matter Engine
 
+**Desde 13/10/2026 a metodologia é a das 3 áreas** (Corpo, Bola, Goleiro), com
+os exercícios de cada área misturados no mesmo treino: ver "As 3 áreas e os
+exercícios" abaixo. O que vem antes disso conta como as etapas da área 1.
+
 O personagem aprende do zero, por etapas sob demanda. A primeira é a H1:
 ficar em pé, estável, sem ajuda nenhuma. A H1b é ficar em pé na postura de
 alerta (o `alert_idle`, o parado do jogo), e a H3 é andar seguindo um comando
@@ -126,6 +130,118 @@ mudou desde o checkpoint").
 - **Avaliação:** uma bateria por postura (`equilibrio_v1`,
   `postura_alerta_v1`). A nota é a da pior, e desconta o erro da postura
   pedida. Há um "melhor" por habilidade.
+
+## As 3 áreas e os exercícios (13/10/2026)
+
+Combinado com o usuário. O guia de estudo é o `Arquitetura_RL_MatterEngine.html`
+(na área de trabalho dele), e o processo de trabalho está no Vault
+(`Aprendizado_por_Reforco/Arquitetura_RL.md`).
+
+- **Três áreas, três cérebros:**
+  - **Corpo:** a locomoção ampla e os gestos sem bola. É o único que mexe nos
+    músculos.
+  - **Bola:** a cabeça que decide o lance (conduzir, chutar, passar, dominar,
+    cabecear, disputar).
+  - **Goleiro:** a cabeça própria, e o corpo é uma cópia do Corpo com os
+    mergulhos.
+
+  As cabeças mandam no Corpo (onde ir, para onde olhar, qual gesto, com que
+  força) e treinam com ele congelado, então ensinar passe não mexe na corrida.
+- **Dentro de cada área, exercícios misturados, não em fila.** Uma tarefa por
+  área (a do Corpo é `assets/rl/tasks/corpo.json`). Cada mundo sorteia o seu
+  exercício pelo peso a cada episódio, e toda atualização da rede vê todos os
+  exercícios, então nenhum é esquecido.
+- **O exercício muda o mundo, nunca a rede.** Ele pode mudar como os alvos
+  nascem, as notas, os empurrões, a duração e o planejador. Não pode mudar o
+  que a rede vê ou faz: o corpo, os clipes, o alvo ligado, o `lookahead`, o
+  `facing` existir, as posturas. O carregador recusa se mudar.
+  - **A rede nunca sabe o nome do exercício,** só os comandos (alvos, rumo
+    do peito, velocidade). No jogo não há exercício, há comandos.
+- **O exame geral:** cada exercício tem a sua bateria (`"drill"` na entrada
+  da bateria), todas rodam a cada 10 min, e a nota é a da pior. Cada bateria
+  tem de medir o objetivo do exercício. A lição da H6 v1: o peito virado
+  não entrava na nota, e ele trapaceava.
+- **As fatias seguem o exame** (`"drillWeights": {"auto": true}`). O
+  exercício atrás do melhor ganha `gain` × o atraso (em pontos de nota) a mais
+  de peso, até `maximumFactor` × o de base. O que alcança os outros volta ao
+  peso de base (`baseWeight` na cópia do treino). Cada mudança vira um evento
+  `exercicios` no banco.
+
+O formato, na tarefa da área:
+
+```json
+"drills": [
+  { "id": "pontos", "weight": 0.2, "overrides": { "target": { "facingFraction": 0.0 } } },
+  { "id": "tiro", "weight": 0.5, "overrides": {
+      "episodeSeconds": 20.0,
+      "imitation": { "planner": { "speedByDistance": [[3.0, 2.5], [10.0, 6.0]], "speedWeight": 1.0 } },
+      "target": { "distanceRange": [12.0, 24.0], "nextAngleOffsetDegrees": 180.0 } } }
+],
+"drillWeights": { "auto": true, "gain": 10.0, "maximumFactor": 3.0 },
+"evaluation": [
+  { "name": "percursos_v2", "drill": "pontos", "seconds": 20.0, "referenceSpeed": 3.0, "facing": 0 },
+  { "name": "tiro_v1", "drill": "tiro", "seconds": 30.0, "referenceSpeed": 6.0, "facing": 0 }
+]
+```
+
+- `overrides` é um merge patch do JSON sobre a tarefa base: objetos se
+  misturam; listas e valores se trocam.
+- Na avaliação, `"drill"` fixa o exercício de todos os mundos e `"facing"`
+  liga (1) ou desliga (0) o comando de olhar. Sem `"drill"`, a avaliação usa o
+  primeiro exercício.
+- O episódio grava o exercício na coluna 26 da linha (`drill`), e a vista de
+  um mundo também.
+
+**Exercício novo, passo a passo:**
+1. A ideia com o usuário: o que ensina e como medir.
+2. Os clipes na biblioteca da área, se faltarem. A biblioteca é a mesma para
+   todos: clipe novo é canal novo, e a migração entra com peso zero.
+3. O exercício em `drills`, com a bateria dele (`"drill"`).
+4. Um teste em C++ do que ele gera (como `testShuttle`).
+5. A prévia: a política do treino nele, numa cópia, com as folhas de quadros,
+   antes de entrar na mistura.
+6. Entrar na mistura com um peso pequeno, e o exame mostra se algum antigo
+   caiu.
+
+## Da H4 à H7 (13/10/2026): a biblioteca de clipes e o planejador
+
+- **A biblioteca** (`imitation.library`): todos os clipes em ciclo, e o
+  planejador do ambiente escolhe qual seguir a cada decisão. A troca entra no
+  quadro mais parecido (a tabela de emendas). A observação tem um canal por
+  clipe e o giro pedido.
+- **O planejador escolhe o clipe:**
+  - pela direção da mira (a partir do corpo, ou do comando de olhar), com
+    histerese;
+  - com `speedByDistance` e `speedWeight`, também pela velocidade pedida pela
+    distância (longe, o sprint; perto, o trote);
+  - `directionWeight` < 1: longe, vale virar e correr de frente em vez de ir
+    de costas.
+- **Vários pontos** (`target.lookahead`): os próximos alvos ficam no mapa e na
+  observação.
+  - Na avaliação, os percursos fixos de `evaluationCourses`, um por mundo.
+  - Na tela e nas folhas: o alvo cheio, os próximos mais fracos e ligados, os
+    alcançados verdes.
+  - `nextAngleOffsetDegrees` sorteia o próximo em volta de uma volta (o tiro
+    com volta).
+- **O traçado de corrida** (`target.racingLine`): o planejador e o giro miram
+  o ponto do disco do lado do próximo alvo. O ponto fica dentro do disco, e ele
+  entra já virado.
+- **O comando de olhar** (`target.facing`):
+  - `facingLink` `chest` segura o peito, e o quadril fica livre;
+  - `facingFraction` é a fatia dos episódios com o comando (canal
+    `command.facing.active`);
+  - `facingHold` é a nota direta de segurar o rumo;
+  - a bateria mede o erro do peito (`facing_error`, e a nota desconta até 0,25).
+- **As tarefas:**
+
+  | Tarefa | O que é |
+  |---|---|
+  | `h4_direcoes` | 8 trotes, livre |
+  | `h5_pontos` | vários pontos e o traçado de corrida |
+  | `h6_peito` | peito para a câmera |
+  | `h7_tiro` | tiro com volta, com o sprint |
+
+  Hoje viram os exercícios do `corpo`.
 
 ## Correr até o alvo (H3 v7+, imitação)
 

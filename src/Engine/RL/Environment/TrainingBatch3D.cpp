@@ -142,6 +142,8 @@ struct Environment {
     // fica virado para ele (a pelve ou o peito), medido na ultima decisao.
     bool facingActive = false;
     float facingHeading = 0.0f;
+    // O exercicio deste episodio (o indice em task.drills).
+    std::uint32_t drill = 0;
     // Os proximos alvos ja no mapa (target.lookahead) com o rumo do trecho que
     // chega em cada um, e o percurso fixo da avaliacao (o rumo do comeco).
     std::array<Vec3, 3> upcoming {};
@@ -240,6 +242,15 @@ struct TrainingBatch3D::Impl {
     [[nodiscard]] bool teaching() const { return settings.teacher != nullptr; }
     [[nodiscard]] bool imitating() const { return task.imitation.enabled && !reference.segments.empty(); }
     [[nodiscard]] bool targeting() const { return task.target.enabled; }
+    // O exercicio do mundo: a tarefa dele (o que ele muda por cima da base), ou
+    // a base sem exercicios. As funcoes de um mundo leem a configuracao por
+    // aqui (const TrainingTask3D& task = taskOf(env), que esconde a da base).
+    [[nodiscard]] const TrainingTask3D& taskOf(const Environment& env) const {
+        return task.drills.empty() ? task : *task.drills[std::min<std::size_t>(env.drill, task.drills.size() - 1)].task;
+    }
+    [[nodiscard]] std::uint32_t chooseDrill(Environment& env);
+    // O exercicio pedido pelas configuracoes (a bateria, o visualizador); -1 = sorteado.
+    int forcedDrill = -1;
     // O mundo visto pelo professor.
     [[nodiscard]] TrainingTeacherWorld3D teacherWorld(std::uint32_t index) {
         const Environment& env = environments[index];
@@ -385,6 +396,7 @@ void TrainingBatch3D::Impl::buildReference() {
 // treino sorteado, na avaliacao pelas listas ou pelo percurso do mundo.
 void TrainingBatch3D::Impl::drawLibraryTarget(Environment& env, Vec3 from, float facing, std::uint32_t k, Vec3& point,
     float& direction) {
+    const TrainingTask3D& task = taskOf(env);  // o exercicio do mundo
     const TrainingTask3D::Target& t = task.target;
     constexpr float Radians = std::numbers::pi_v<float> / 180.0f;
     if (!training() && !t.evaluationCourses.empty()) {
@@ -421,6 +433,7 @@ void TrainingBatch3D::Impl::drawLibraryTarget(Environment& env, Vec3 from, float
 // corpo chegou) pelo rumo do corpo; com lookahead, o de agora e o primeiro da
 // fila e um novo entra no fim, saindo do ultimo pelo rumo do trecho dele.
 void TrainingBatch3D::Impl::placeLibraryTarget(Environment& env, Vec3 from, float facing, std::uint32_t k) {
+    const TrainingTask3D& task = taskOf(env);  // o exercicio do mundo
     const std::uint32_t ahead = task.target.lookahead;
     if (k == 0) env.courseHeading = facing;
     if (ahead == 0 || k == 0) {
@@ -460,6 +473,7 @@ float TrainingBatch3D::Impl::facingLinkHeading(const RagdollState3D& state) cons
 // A mira do planejador e do giro: o centro do alvo, ou, com o tracado de
 // corrida, o ponto do disco do lado do proximo alvo.
 Vec3 TrainingBatch3D::Impl::aimPoint(const Environment& env) const {
+    const TrainingTask3D& task = taskOf(env);  // o exercicio do mundo
     const TrainingTask3D::Target& t = task.target;
     if (!(t.racingLine > 0.0f) || t.lookahead == 0) return env.target;
     const Vec3 toward { env.upcoming[0].x - env.target.x, env.upcoming[0].y - env.target.y, 0.0f };
@@ -469,6 +483,7 @@ Vec3 TrainingBatch3D::Impl::aimPoint(const Environment& env) const {
 }
 
 float TrainingBatch3D::Impl::wantedTurn(const Environment& env, Vec3 position, float facing) const {
+    const TrainingTask3D& task = taskOf(env);  // o exercicio do mundo
     const TrainingTask3D::Target& t = task.target;
     // Olhando para o comando (a camera): o giro so corrige o rumo do corpo.
     if (env.facingActive) {
@@ -487,6 +502,7 @@ float TrainingBatch3D::Impl::wantedTurn(const Environment& env, Vec3 position, f
 }
 
 void TrainingBatch3D::Impl::plan(Environment& env, Vec3 position, float facing, bool force) {
+    const TrainingTask3D& task = taskOf(env);  // o exercicio do mundo
     const TrainingTask3D::Imitation::Planner& planner = task.imitation.planner;
     const float base = env.facingActive ? env.facingCommand : facing;
     const Vec3 aim = aimPoint(env);
@@ -536,6 +552,7 @@ void TrainingBatch3D::Impl::plan(Environment& env, Vec3 position, float facing, 
 }
 
 void TrainingBatch3D::Impl::placeFirstTarget(Environment& env, const RagdollState3D& state) {
+    const TrainingTask3D& task = taskOf(env);  // o exercicio do mundo
     const TrainingTask3D::Target& t = task.target;
     const PhysicsBodyState3D& pelvis = state.links.front();
     const Quaternion frame = (pelvis.orientation * body.profile.links.front().modelOrientation.conjugate()).normalized();
@@ -565,6 +582,7 @@ void TrainingBatch3D::Impl::placeFirstTarget(Environment& env, const RagdollStat
 }
 
 void TrainingBatch3D::Impl::placeNextTarget(Environment& env) {
+    const TrainingTask3D& task = taskOf(env);  // o exercicio do mundo
     const TrainingTask3D::Target& t = task.target;
     constexpr float Radians = std::numbers::pi_v<float> / 180.0f;
     const float spread = t.nextAngleDegrees * Radians;
@@ -575,6 +593,19 @@ void TrainingBatch3D::Impl::placeNextTarget(Environment& env) {
     env.target = env.targetFrom + Vec3 { std::cos(env.targetDirection), std::sin(env.targetDirection), 0.0f } * t.distance;
     env.targetClosest = 1e9f;
     ++env.targetCount;
+}
+
+std::uint32_t TrainingBatch3D::Impl::chooseDrill(Environment& env) {
+    if (task.drills.empty()) return 0;
+    if (forcedDrill >= 0) return static_cast<std::uint32_t>(forcedDrill);
+    if (!training()) return 0;
+    float total = 0.0f;
+    for (const TrainingTask3D::Drill& drill : task.drills) total += drill.weight;
+    float pick = std::uniform_real_distribution<float>(0.0f, total)(env.rng);
+    for (std::uint32_t d = 0; d < task.drills.size(); ++d) {
+        if ((pick -= task.drills[d].weight) < 0.0f) return d;
+    }
+    return static_cast<std::uint32_t>(task.drills.size() - 1);
 }
 
 void TrainingBatch3D::Impl::configureEpisodeLength() {
@@ -765,6 +796,8 @@ void TrainingBatch3D::Impl::updateCommand(Environment& env, bool start) {
 
 void TrainingBatch3D::Impl::resetEnvironment(std::uint32_t index) {
     Environment& env = environments[index];
+    env.drill = chooseDrill(env);
+    const TrainingTask3D& task = taskOf(env);  // o exercicio do mundo
     Scene& scene = scenes[env.scene];
     const TrainingTask3D::InitialState& start = task.initialState;
     const float noise = 1.0f;
@@ -889,8 +922,10 @@ void TrainingBatch3D::Impl::resetEnvironment(std::uint32_t index) {
     env.delayed = varied && std::uniform_real_distribution<float>(0.0f, 1.0f)(env.rng)
             < random.actionDelayProbability;
     scene.physics->setRagdollFrictionScale(env.ragdoll, env.friction);
+    // A duracao: a do exercicio no treino (variada), a da bateria na avaliacao.
+    const float stepSeconds = static_cast<float>(task.actionRepeat) * FixedStep;
     env.limit = training()
-        ? std::max(1u, static_cast<std::uint32_t>(std::lround(static_cast<float>(maximumSteps)
+        ? std::max(1u, static_cast<std::uint32_t>(std::lround(task.episodeSeconds / stepSeconds
               * std::uniform_real_distribution<float>(0.8f, 1.2f)(env.rng))))
         : maximumSteps;
     std::fill(env.previousAction.begin(), env.previousAction.end(), 0.0f);
@@ -983,6 +1018,7 @@ BodyReading TrainingBatch3D::Impl::read(const RagdollState3D& state) const {
 
 void TrainingBatch3D::Impl::writeObservation(const Environment& env, const RagdollState3D& state,
     const BodyReading& reading, float* actor, float* criticOut, bool noise) {
+    const TrainingTask3D& task = taskOf(env);  // o exercicio do mundo
     const RagdollProfile3D& profile = body.profile;
     const PhysicsBodyState3D& pelvis = state.links.front();
     std::mt19937_64& rng = const_cast<Environment&>(env).rng;
@@ -1092,6 +1128,7 @@ void TrainingBatch3D::Impl::writeObservation(const Environment& env, const Ragdo
 
 float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& state, const BodyReading& reading,
     bool fell, float* componentsOut) {
+    const TrainingTask3D& task = taskOf(env);  // o exercicio do mundo
     const TrainingRewardWeights3D& w = task.reward;
     const RagdollProfile3D& profile = body.profile;
     const RLPosture3D& posture = body.postures[env.posture];
@@ -1426,8 +1463,10 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
 void TrainingBatch3D::Impl::finishEpisode(Scene& scene, std::uint32_t index, TrainingEndReason3D reason,
     const BodyReading& reading) {
     const Environment& env = environments[index];
+    const TrainingTask3D& task = taskOf(env);  // o exercicio do mundo
     TrainingEpisode3D episode;
     episode.environment = index;
+    episode.drill = env.drill;
     episode.reason = reason;
     episode.firstContactLink = env.firstContactLink;
     episode.steps = env.played;
@@ -1490,7 +1529,6 @@ void TrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> actio
         physics.setRagdollActiveDriveTargets(env.ragdoll, env.delayed ? env.previousTargets : env.targets, false);
     }
 
-    const bool pushes = task.pushes.enabled && !pushLinks.empty();
     for (std::uint32_t sub = 0; sub < task.actionRepeat; ++sub) {
         for (const std::uint32_t index : scene.environments) {
             Environment& env = environments[index];
@@ -1501,7 +1539,8 @@ void TrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> actio
                 env.pushRemaining -= FixedStep;
                 continue;
             }
-            if (!pushes) continue;
+            const TrainingTask3D& task = taskOf(env);  // o exercicio do mundo
+            if (!task.pushes.enabled || pushLinks.empty()) continue;
             if ((env.pushTimer -= FixedStep) <= 0.0f) {
                 const float angle =
                     std::uniform_real_distribution<float>(-std::numbers::pi_v<float>, std::numbers::pi_v<float>)(env.rng);
@@ -1526,10 +1565,9 @@ void TrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> actio
                     accumulateTeacher(*state, env.teacherSum);
             }
         // Queda por contato em qualquer subpasso: um link que nao e apoio no chao.
-        if (!task.termination.nonSupportContact) continue;
         for (const std::uint32_t index : scene.environments) {
             Environment& env = environments[index];
-            if (env.firstContactLink >= 0) continue;
+            if (!taskOf(env).termination.nonSupportContact || env.firstContactLink >= 0) continue;
             const RagdollState3D* state = physics.ragdollStateView(env.ragdoll);
             if (!state) continue;
             for (const RagdollContactPoint3D& contact : state->contacts) {
@@ -1554,6 +1592,7 @@ void TrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> actio
         }
     for (const std::uint32_t index : scene.environments) {
         Environment& env = environments[index];
+        const TrainingTask3D& task = taskOf(env);  // o exercicio do mundo
         ++env.steps;
         ++env.played;
         // A referencia andou junto com a fisica: a recompensa compara com o
@@ -1671,6 +1710,12 @@ TrainingBatch3D::TrainingBatch3D(const TrainingBatchSettings3D& settings) : m_im
     // O professor conduz pela capsula da cena: um boneco por cena.
     if (settings.teacher) impl.settings.environmentsPerScene = 1;
     impl.task = loadTrainingTask3D(settings.taskPath);
+    // O exercicio pedido (a bateria de um exercicio, o visualizador).
+    if (!settings.drill.empty()) {
+        for (std::size_t d = 0; d < impl.task.drills.size(); ++d)
+            if (impl.task.drills[d].id == settings.drill) impl.forcedDrill = static_cast<int>(d);
+        if (impl.forcedDrill < 0) throw std::runtime_error("lote de RL: a tarefa nao tem o exercicio " + settings.drill);
+    }
     impl.body = loadRLBody3D(impl.task.bodyPath);
     impl.keyBodies = { impl.body.head, impl.body.leftHand, impl.body.rightHand, impl.body.leftFoot,
         impl.body.rightFoot };
@@ -1755,6 +1800,13 @@ void TrainingBatch3D::updateTask(const TrainingTask3D& task) {
     impl.task.postures = task.postures;
     impl.task.commands = task.commands;
     impl.task.gait = task.gait;
+    // Os exercicios: os mesmos (pelo id), com o que cada um muda e o peso de
+    // agora (as fatias que o treinador ajusta).
+    bool sameDrills = task.drills.size() == impl.task.drills.size();
+    for (std::size_t d = 0; sameDrills && d < task.drills.size(); ++d)
+        sameDrills = task.drills[d].id == impl.task.drills[d].id;
+    if (!sameDrills) throw std::runtime_error("lote de RL: os exercicios nao mudam de lista com o treino andando");
+    impl.task.drills = task.drills;
     impl.referenceDofs = std::move(reference);
     impl.resolvePostures();
     impl.pushLinks.clear();
@@ -1863,6 +1915,7 @@ TrainingEnvironmentView3D TrainingBatch3D::view(std::size_t environment) const {
     view.posture = env.posture;
     view.command = env.command;
     view.startHeading = env.startHeading;
+    view.drill = env.drill;
     if (env.pushRemaining > 0.0f) {
         view.pushForce = env.pushForce;
         view.pushLink = static_cast<int>(env.pushLink);

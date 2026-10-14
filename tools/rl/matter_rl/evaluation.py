@@ -15,7 +15,7 @@ from .model import ACTION_LIMIT, ActorCritic
 
 REASONS = ["nenhum", "queda_contato", "queda_altura", "numerico", "tempo", "limite", "alvo_perdido"]
 # As colunas do resumo de um episodio (finished_episodes do modulo nativo).
-EPISODE_COLUMNS = 26
+EPISODE_COLUMNS = 27
 FALLS = {1, 2, 3}
 
 
@@ -106,6 +106,27 @@ def goal_score(metrics: dict) -> float:
             - 0.15 * min(1.0, metrics["action_rate"] / 0.05))
 
 
+def drill_weights(drills: list[dict], scores: dict[str, float], rule: dict) -> list[tuple[str, float, float]]:
+    """As fatias dos exercicios pelo exame (a metodologia das 3 areas): o
+    exercicio atras do melhor ganha mais mundos (gain por ponto de nota de
+    atraso, ate maximumFactor vezes o peso de base); o que alcanca os outros
+    volta ao peso de base. scores: a nota de cada exercicio (a pior das baterias
+    dele). Devolve (id, peso de base, peso novo) de cada exercicio com nota."""
+    if not scores:
+        return []
+    top = max(scores.values())
+    gain = float(rule.get("gain", 10.0))
+    cap = max(1.0, float(rule.get("maximumFactor", 3.0)))
+    out = []
+    for drill in drills:
+        if drill["id"] not in scores:
+            continue
+        base = float(drill.get("baseWeight", drill.get("weight", 1.0)))
+        deficit = max(0.0, top - scores[drill["id"]])
+        out.append((drill["id"], base, round(base * min(cap, 1.0 + gain * deficit), 4)))
+    return out
+
+
 def race_score(metrics: dict) -> float:
     """Ir ate o alvo: nao cair, chegar, chegar rapido (a velocidade da
     referencia vale tudo: 6 m/s correndo, 1,1 caminhando) e se mover parecido
@@ -152,7 +173,7 @@ class Evaluator:
                     evaluation_seconds=float(spec.get("seconds", self.battery.seconds)), solver_position=position,
                     solver_velocity=velocity, posture=spec["posture"],
                     schedule=[tuple(float(v) for v in step) for step in spec.get("schedule", [])],
-                    facing=int(spec.get("facing", -1)))
+                    facing=int(spec.get("facing", -1)), drill=str(spec.get("drill", "")))
         self.by_name = {spec["name"]: spec for spec in self.specs}
 
     def observation_names(self) -> list[str]:

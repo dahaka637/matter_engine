@@ -386,6 +386,33 @@ class Trainer:
         })
 
     # --- avaliacao -----------------------------------------------------------------
+    def adjust_drill_weights(self, results: dict) -> None:
+        """As fatias dos exercicios pelo exame, com "drillWeights": {"auto": true}
+        na tarefa: o mais atrasado ganha mais mundos (ver drill_weights). O peso
+        de base de cada um fica guardado em baseWeight na copia do treino."""
+        data = json.loads(self.live_task.read_text())
+        drills, rule = data.get("drills") or [], data.get("drillWeights") or {}
+        if not drills or not rule.get("auto", False):
+            return
+        scores: dict[str, float] = {}
+        for spec in task_batteries(self.live_task):
+            if spec.get("drill") and spec["name"] in results:
+                score = min(m["score"] for m in results[spec["name"]].values())
+                scores[spec["drill"]] = min(score, scores.get(spec["drill"], score))
+        changed = []
+        by_id = {drill["id"]: drill for drill in drills}
+        for drill_id, base, weight in drill_weights(drills, scores, rule):
+            drill = by_id[drill_id]
+            drill.setdefault("baseWeight", base)
+            if abs(weight - float(drill.get("weight", base))) > 1e-4:
+                changed.append(f"{drill_id} {float(drill.get('weight', base)):.2f} -> {weight:.2f}")
+                drill["weight"] = weight
+        if not changed:
+            return
+        storage.write_json_atomic(self.live_task, data)
+        self.batch.update_task(str(self.live_task))
+        self.db.event(self.run, "exercicios", "fatias: " + ", ".join(changed), data={"notas": scores})
+
     def evaluate(self) -> None:
         previous = self.state
         self.state = "avaliando"
@@ -412,6 +439,7 @@ class Trainer:
                     "facing_error": metrics.get("facing_error"),
                     "score": metrics["score"], "ends": json.dumps(metrics["ends"]),
                 })
+        self.adjust_drill_weights(results)
         # A nota e a da pior bateria (uma habilidade nova nao apaga a antiga),
         # das que contam (as de "scored": false so sao medidas).
         counted = {b: v for b, v in results.items() if self.evaluator.scored(b)} or results

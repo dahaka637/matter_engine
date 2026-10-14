@@ -885,6 +885,65 @@ void testShuttle() {
     }
 }
 
+// Os exercicios (a metodologia das 3 areas): cada mundo sorteia o seu pelo
+// peso e usa o que ele muda; a bateria pode fixar um; um exercicio nao muda o
+// que a rede ve.
+void testDrills() {
+    const std::string drills = "\"drills\": ["
+        "{ \"id\": \"perto\", \"weight\": 3.0, \"overrides\": { \"target\": { \"distanceRange\": [2.0, 4.0] } } },"
+        "{ \"id\": \"longe\", \"weight\": 1.0, \"overrides\": { \"target\": { \"distanceRange\": [10.0, 14.0] },"
+        " \"episodeSeconds\": 30.0 } } ], \"exploration\": {";
+    const std::filesystem::path task = raceVariant("exercicios.json", { { "\"exploration\": {", drills } }, "h5_pontos.json");
+    {
+        TrainingBatchSettings3D s = settings(64, 4);
+        s.taskPath = task;
+        TrainingBatch3D batch(s);
+        require(batch.task().drills.size() == 2 && batch.task().drills[1].task->episodeSeconds == 30.0f,
+            "os exercicios carregam o que mudam");
+        std::size_t near = 0;
+        for (std::size_t e = 0; e < 64; ++e) {
+            const TrainingEnvironmentView3D view = batch.view(e);
+            const Vec3 a = view.upcoming[0] - view.target;
+            const float length = std::hypot(a.x, a.y);
+            if (view.drill == 0) {
+                ++near;
+                require(length >= 2.0f - 1e-3f && length <= 4.0f + 1e-3f, "o exercicio perto poe os alvos a 2-4 m");
+            } else {
+                require(length >= 10.0f - 1e-3f && length <= 14.0f + 1e-3f, "o exercicio longe poe os alvos a 10-14 m");
+            }
+        }
+        require(near >= 38 && near <= 60, "os pesos 3:1 (" + std::to_string(near) + " de 64 perto)");
+        for (int step = 0; step < 5; ++step) {
+            batch.step(std::vector<float>(64 * batch.actionSize(), 0.0f));
+            require(finiteAll(batch.observations()) && finiteAll(batch.rewards()), "os exercicios andam sem numero ruim");
+        }
+    }
+    {
+        TrainingBatchSettings3D s = settings(4, 2);
+        s.taskPath = task;
+        s.drill = "longe";
+        TrainingBatch3D batch(s);
+        for (std::size_t e = 0; e < 4; ++e) require(batch.view(e).drill == 1, "a bateria fixa o exercicio");
+    }
+    {
+        const std::filesystem::path bad = raceVariant("exercicio_ruim.json",
+            { { "\"exploration\": {", "\"drills\": [ { \"id\": \"x\", \"overrides\": { \"target\": { \"lookahead\": 1 } } } ],"
+                " \"exploration\": {" } }, "h5_pontos.json");
+        bool refused = false;
+        try { (void)loadTrainingTask3D(bad); } catch (const std::exception&) { refused = true; }
+        require(refused, "um exercicio nao muda o que a rede ve (lookahead)");
+    }
+    {
+        // A tarefa Corpo (a area 1): os tres exercicios de partida, cada um com
+        // a sua bateria.
+        const TrainingTask3D corpo = loadTrainingTask3D(std::filesystem::path(MATTERENGINE_TEST_ASSETS_DIR) / "rl/tasks/corpo.json");
+        require(corpo.drills.size() == 3 && corpo.drills[2].id == "tiro" && corpo.drills[2].task->target.distanceRange.minimum == 12.0f
+                && corpo.drills[1].task->target.facingFraction == 1.0f && corpo.drills[0].task->target.facingFraction == 0.0f
+                && corpo.drills[2].task->imitation.planner.speedWeight > 0.0f && corpo.imitation.planner.speedWeight == 0.0f,
+            "o Corpo carrega pontos, peito e tiro com o que cada um muda");
+    }
+}
+
 } // namespace
 
 void runTrainingBatchTests() {
@@ -902,5 +961,6 @@ void runTrainingBatchTests() {
     testChestFacing();
     testPlannerSpeed();
     testShuttle();
+    testDrills();
     std::cout << "RL training batch tests passed\n";
 }

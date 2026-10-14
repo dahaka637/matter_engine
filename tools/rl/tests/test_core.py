@@ -221,3 +221,18 @@ def test_control_roundtrip(tmp_path: Path):
     assert answer["echo"] == ["pausar", {"autor": "teste"}]
     server.close()
     assert control.request("status", path=socket_path) is None
+
+
+def test_drill_weights_follow_the_exam():
+    """As fatias dos exercicios: o atrasado ganha mais mundos (ate o teto), o
+    que alcanca os outros volta ao peso de base."""
+    from matter_rl.evaluation import drill_weights
+    drills = [{"id": "pontos", "weight": 1.0}, {"id": "peito", "weight": 2.0, "baseWeight": 1.0},
+              {"id": "tiro", "weight": 1.0}]
+    rule = {"gain": 10.0, "maximumFactor": 3.0}
+    out = {d: (base, w) for d, base, w in drill_weights(drills, {"pontos": 0.90, "peito": 0.90, "tiro": 0.85}, rule)}
+    assert out["pontos"] == (1.0, 1.0) and out["peito"] == (1.0, 1.0)   # o que alcanca volta a base
+    assert out["tiro"] == (1.0, 1.5)                                     # 0,05 atras: 1 + 10 * 0,05
+    capped = dict((d, w) for d, _, w in drill_weights(drills, {"pontos": 0.9, "tiro": 0.2}, rule))
+    assert capped["tiro"] == 3.0 and "peito" not in capped              # o teto; sem nota, fica de fora
+    assert drill_weights(drills, {}, rule) == []

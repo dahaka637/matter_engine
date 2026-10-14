@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -111,6 +112,18 @@ struct TrainingCommandStep3D {
 // Uma tarefa de treino (assets/rl/tasks/<id>.json): o que se pede ao corpo,
 // como o episodio comeca e acaba e o quanto o mundo varia.
 struct TrainingTask3D {
+    // Um exercicio (a metodologia das 3 areas: os exercicios de uma area
+    // misturados no mesmo treino, cada mundo sorteando o seu pelo peso): a
+    // tarefa base com o que ele muda por cima. Ele so muda o mundo (os alvos,
+    // as notas, os empurroes, a duracao...), nunca o que a rede ve ou faz: a
+    // mesma rede serve a todos, e ela nunca sabe o nome do exercicio.
+    struct Drill {
+        std::string id;
+        float weight = 1.0f;
+        std::shared_ptr<const TrainingTask3D> task;
+    };
+    std::vector<Drill> drills;
+
     std::string id;
     std::string displayName;
     std::filesystem::path definitionPath;

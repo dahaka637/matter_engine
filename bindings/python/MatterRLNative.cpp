@@ -222,7 +222,8 @@ NB_MODULE(matter_rl_native, m) {
             [](TrainingBatch3D* self, const std::string& task, std::uint32_t environments, std::uint32_t perScene,
                 std::uint32_t threads, std::uint64_t seed, bool evaluation, float evaluationSeconds,
                 int solverPosition, int solverVelocity, const std::string& posture,
-                const std::vector<std::array<float, 4>>& schedule, const std::string& teacherAssets, int facing) {
+                const std::vector<std::array<float, 4>>& schedule, const std::string& teacherAssets, int facing,
+                const std::string& drill) {
                 TrainingBatchSettings3D settings;
                 settings.taskPath = task;
                 settings.environmentCount = environments;
@@ -235,6 +236,7 @@ NB_MODULE(matter_rl_native, m) {
                 settings.solverVelocityIterations = solverVelocity;
                 settings.posture = posture;
                 settings.facing = facing;
+                settings.drill = drill;
                 for (const auto& [seconds, forward, lateral, yaw] : schedule)
                     settings.commandSchedule.push_back({ seconds, forward, lateral, yaw });
                 nb::gil_scoped_release release;
@@ -248,7 +250,7 @@ NB_MODULE(matter_rl_native, m) {
             "task"_a, "environments"_a = 256, "per_scene"_a = 4, "threads"_a = 0, "seed"_a = 1,
             "evaluation"_a = false, "evaluation_seconds"_a = 60.0f, "solver_position"_a = -1,
             "solver_velocity"_a = -1, "posture"_a = "", "schedule"_a = std::vector<std::array<float, 4>> {},
-            "teacher_assets"_a = "", "facing"_a = -1)
+            "teacher_assets"_a = "", "facing"_a = -1, "drill"_a = "")
         .def_prop_ro("num_envs", &TrainingBatch3D::environmentCount)
         .def_prop_ro("obs_size", &TrainingBatch3D::observationSize)
         .def_prop_ro("critic_size", &TrainingBatch3D::criticObservationSize)
@@ -360,7 +362,7 @@ NB_MODULE(matter_rl_native, m) {
                 // alvos alcancados, segundos ate o primeiro, velocidade media ate
                 // eles e o erro da imitacao.
                 const auto episodes = b.finishedEpisodes();
-                constexpr std::size_t Columns = 26;
+                constexpr std::size_t Columns = 27;
                 auto* data = new float[std::max<std::size_t>(1, episodes.size()) * Columns];
                 for (std::size_t i = 0; i < episodes.size(); ++i) {
                     const TrainingEpisode3D& e = episodes[i];
@@ -391,6 +393,7 @@ NB_MODULE(matter_rl_native, m) {
                     row[23] = e.meanTargetSpeed;
                     row[24] = e.imitationErrorRms;
                     row[25] = e.facingErrorRms;
+                    row[26] = static_cast<float>(e.drill);
                 }
                 nb::capsule owner(data, [](void* p) noexcept { delete[] static_cast<float*>(p); });
                 return nb::ndarray<nb::numpy, float, nb::ndim<2>>(data, { episodes.size(), Columns }, owner);

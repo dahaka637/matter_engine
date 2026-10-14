@@ -57,6 +57,10 @@ struct TrainingBatchSettings3D {
     // (todos os mundos com ele), 0 = livre, 1 = com ele. Uma bateria mede as
     // duas coisas lado a lado.
     int facing = -1;
+    // O exercicio de todos os mundos (o id em task.drills): a bateria de um
+    // exercicio, o visualizador. Vazio = sorteado pelo peso no treino, o
+    // primeiro na avaliacao.
+    std::string drill;
     // O professor (opcional): ele conduz todos os mundos no lugar da politica,
     // um boneco por cena, e teacherActions() devolve a acao dele em unidades
     // do RL. O comando e a fase do relogio de passada passam a ser os dele, e
@@ -122,6 +126,8 @@ struct TrainingEpisode3D {
     // O comando de olhar: o quanto o link virado para ele ficou fora (RMS,
     // rad; -1 sem o comando no episodio).
     float facingErrorRms = -1.0f;
+    // O exercicio do episodio (o indice em task.drills; 0 sem exercicios).
+    std::uint32_t drill = 0;
 };
 
 // Um mundo de treino visto por fora (o visualizador, a gravacao).
@@ -143,6 +149,8 @@ struct TrainingEnvironmentView3D {
     Vec3 target;
     float targetRadius = 0.0f;
     std::uint32_t targetsReached = 0;
+    // O exercicio do episodio (o indice em task.drills).
+    std::uint32_t drill = 0;
     // Os proximos alvos ja no mapa (target.lookahead), em ordem.
     std::uint32_t upcomingCount = 0;
     std::array<Vec3, 3> upcoming {};
