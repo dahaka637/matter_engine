@@ -132,6 +132,11 @@ public:
     [[nodiscard]] const RLVectorLayout3D& styleLayout() const;
     [[nodiscard]] std::span<const float> stylePairs() const;
 
+    // Muda o que pode mudar com o treino andando (vale do proximo passo ou
+    // episodio em diante): a nota, o fim, a variacao do mundo, o controle e,
+    // em cada exercicio, o roteiro, os pesos da tarefa e a duracao. O corpo, o
+    // contrato, o comeco e a lista dos exercicios (e as cotas) nao mudam.
+    void updateTask(const BodyTask3D& task);
     // Todos os mundos recomecam (sementes derivadas de seed).
     void reset(std::uint64_t seed);
     // actions e means: environmentCount x actionSize, linha por mundo.

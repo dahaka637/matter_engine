@@ -52,7 +52,16 @@ struct BodyTask3D {
         // Longe demais do comeco: truncado, nao queda (m).
         float maximumDistanceFromStart = 120.0f;
     } termination;
+    // O acervo do estilo (style.dataset no arquivo): o juiz do treinador e os
+    // comecos pelo acervo usam. Vazio = sem acervo.
+    std::filesystem::path styleDataset;
     struct InitialState {
+        // A fatia dos comecos pelo acervo (a muleta do plano, secao 10.1): um
+        // quadro de um clipe de treino com a pose e as velocidades dele, e o
+        // primeiro pedido seguindo o movimento. So quadros de pe: a pelve a
+        // pelo menos referenceMinimumPelvis da altura de pe da postura.
+        float referenceFraction = 0.0f;
+        float referenceMinimumPelvis = 0.6f;
         // De pe: a postura do corpo (o id), com ruido.
         std::string posture = "alerta";
         float jointNoiseRadians = 0.03f;

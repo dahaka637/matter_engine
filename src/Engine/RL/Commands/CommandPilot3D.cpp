@@ -126,6 +126,43 @@ void CommandPilot3D::start(const PilotScript3D& script, PilotState3D& state, Vec
     state.changes = 0;
 }
 
+void CommandPilot3D::follow(const PilotScript3D& script, PilotState3D& state, Vec3 velocity, std::mt19937_64& rng) {
+    const float speed = std::hypot(velocity.x, velocity.y);
+    if (speed < 0.3f) return;
+    const float direction = std::atan2(velocity.y, velocity.x);
+    if (script.kind == "stick") {
+        const float relative = wrap(direction - state.camera);
+        state.stickForward = std::cos(relative);
+        state.stickLeft = std::sin(relative);
+        state.stickWorld = direction;
+        state.speed = speed;
+        state.stickTime = pick(rng, script.stickSeconds);
+    } else if (script.kind == "star" && !script.bands.empty()) {
+        const std::uint32_t directions = std::max(1u, script.starDirections);
+        const float step = 2.0f * Pi / static_cast<float>(directions);
+        const auto slot = static_cast<std::uint32_t>(
+            (static_cast<int>(std::lround(wrap(direction - state.startHeading) / step)) + static_cast<int>(directions))
+            % static_cast<int>(directions));
+        // A faixa da velocidade de agora (ou a mais perto dela).
+        const PilotBand3D* band = &script.bands.front();
+        float closest = 1e9f;
+        for (const PilotBand3D& candidate : script.bands) {
+            const float gap = speed < candidate.speed.minimum ? candidate.speed.minimum - speed
+                : speed > candidate.speed.maximum ? speed - candidate.speed.maximum : 0.0f;
+            if (gap < closest) {
+                closest = gap;
+                band = &candidate;
+            }
+        }
+        const float angle = state.startHeading + step * static_cast<float>(slot);
+        state.lastSlot = slot;
+        state.cruise = speed;
+        state.target = state.origin + Vec3 { std::cos(angle), std::sin(angle), 0.0f } * pick(rng, band->distance);
+        state.hasTarget = true;
+        state.atTip = true;
+    }
+}
+
 ControlInput3D CommandPilot3D::update(const PilotScript3D& script, PilotState3D& state, const PilotView3D& view,
     float dt, std::mt19937_64& rng) {
     state.clock += dt;

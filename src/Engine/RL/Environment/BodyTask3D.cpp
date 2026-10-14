@@ -176,7 +176,15 @@ BodyTask3D loadBodyTask3D(const std::filesystem::path& path) {
         start.rootVelocityNoise = s.value("rootVelocityNoise", start.rootVelocityNoise);
         start.rootAngularVelocityNoise = s.value("rootAngularVelocityNoise", start.rootAngularVelocityNoise);
         start.randomYaw = s.value("randomYaw", start.randomYaw);
+        start.referenceFraction = s.value("referenceFraction", start.referenceFraction);
+        start.referenceMinimumPelvis = s.value("referenceMinimumPelvis", start.referenceMinimumPelvis);
+        if (start.referenceFraction < 0.0f || start.referenceFraction > 1.0f) fail("referenceFraction fora de 0..1");
     }
+    if (document.contains("style") && document["style"].contains("dataset"))
+        task.styleDataset =
+            (path.parent_path() / document["style"]["dataset"].get<std::string>()).lexically_normal();
+    if (task.initialState.referenceFraction > 0.0f && task.styleDataset.empty())
+        fail("os comecos pelo acervo pedem style.dataset");
     if (document.contains("randomization")) {
         const nlohmann::json& r = document["randomization"];
         auto& random = task.randomization;

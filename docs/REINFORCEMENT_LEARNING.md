@@ -122,6 +122,14 @@ o cérebro antigo e as comparações até a F1.
     câmera e a idade do pedido;
   - **o atraso** de um passo de física desloca a reta inteira (o contrato tem
     `writeTargetsAt`);
+  - **os começos pelo acervo** (a muleta da seção 10.1 do plano;
+    `initialState.referenceFraction`, 0,4 no `corpo2`): um quadro de um clipe
+    de treino, sorteado pelo peso do grupo, com a pose e as velocidades dele.
+    Só quadros de pé (a pelve a 60% da altura de pé ou mais; o levantar tem o
+    currículo dele). A câmera começa no rumo do peito do clipe, e o primeiro
+    pedido segue o movimento (`CommandPilot3D::follow`: o direcional nessa
+    direção e velocidade, ou a ponta da estrela dessa direção). Só no treino;
+    a avaliação começa de pé;
   - **as medidas de cada episódio:** as notas, os erros de velocidade e de
     olhar, a reação a cada troca do pedido, os custos, a telemetria da ação
     (tamanho, presa no limite, alvo preso no curso, reversão) e a cadência;
@@ -165,6 +173,45 @@ o cérebro antigo e as comparações até a F1.
 - **`rlBodyLinkStates3D`** passou a calcular as velocidades com a raiz na
   origem: longe dela, a diferença das posições perdia a precisão do float (a
   375 m, onde ficam mundos de treino, ~0,03 m/s de erro).
+- **O juiz de estilo** (`tools/rl/matter_rl/amp.py`):
+  - **a rede:** 1024-512 com ReLU e uma saída, por mínimos quadrados (o acervo
+    vale +1 e o corpo −1);
+  - **o que segura o juiz:** a penalidade de gradiente nos pares do acervo (5),
+    uma regularização leve na última camada e a memória dos pares recentes do
+    corpo (1 milhão, na CPU). A entrada é normalizada pelo acervo de treino;
+  - **a nota:** `max(0, 1 − 0,25 (D − 1)²)`, e o treinador soma `dt × β × nota`;
+  - **a saúde:** a nota média no acervo e no corpo, a acurácia (sadia por
+    volta de 60–80%), a penalidade e a nota nos clipes reservados;
+  - **ainda não:** o juiz de avaliação congelado, que precisa de checkpoints
+    de vários momentos do treino (vem com o exame, E9).
+- **O treinador do Corpo v2** (`tools/rl/matter_rl/body_trainer.py`; o
+  `trainer.py` continua com o contrato 1):
+  - **as redes do plano:** ator e crítico 1024-512-256 (os tamanhos ficam no
+    `run.json` e no checkpoint);
+  - **a sobreposição:** enquanto a GPU atualiza com a rodada k, a física
+    coleta a k+1 com uma cópia da política de antes, num fluxo próprio da GPU.
+    O PPO já guarda as probabilidades de quem coletou. O KL que ajusta a taxa
+    de aprendizado é medido contra a política do começo da atualização
+    (`Rollout.anchor_mean`): medido contra quem coletou, ele somava a mudança
+    da atualização anterior, e a taxa caía pela metade (visto no treino curto
+    de teste);
+  - **a velocidade medida** (512 mundos, modo Equilibrado): ~9.000 decisões/s
+    em série e ~12.200 com a sobreposição. O gargalo é a física do corpo v2:
+    as pontas dos pés custam ~19% (16.800 contra 20.800 decisões/s com o corpo
+    v1, no mesmo lote, 10 threads);
+  - **o β** fica na cópia da tarefa do treino (`style.beta`). `matter-rl peso
+    estilo 0.5` muda com o treino andando e salva um checkpoint antes;
+    `matter-rl peso slip 0.5` (e os outros custos) também;
+  - **a variante:** `--sem-estilo` cria o treino sem o juiz (a B1 do
+    Experimento B); `--sem-sobreposicao` desliga a sobreposição;
+  - **o despacho:** `matter-rl treinar/iniciar --tarefa corpo2` (o esquema 2)
+    abre este treinador; um treino do contrato 1 nunca abre nele;
+  - **cada rodada no banco:** a coluna `details` (JSON), com o β, a nota de
+    estilo média, a saúde do juiz e as medidas de cada exercício (quedas,
+    duração, erros de velocidade e de olhar, reação, escorregar, trabalho,
+    tempo no teto, reversão e cadência).
+- **A prévia do Corpo v2** (`tools/rl/previa_corpo.py`): uma política exportada
+  no lote v2 com a física do jogo, mais os dumps para as folhas de quadros.
 
 ## As peças
 

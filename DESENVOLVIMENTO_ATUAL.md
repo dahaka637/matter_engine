@@ -42,6 +42,21 @@ no `docs/REINFORCEMENT_LEARNING.md` ("A reformulação do Corpo").
   - o lote v2 entrega o par de cada decisão para o juiz;
   - `rlBodyLinkStates3D`: as velocidades com a raiz na origem (longe dela o
     float perdia ~0,03 m/s).
+- **E5 (o juiz e o treinador do Corpo v2):**
+  - o juiz de estilo (`tools/rl/matter_rl/amp.py`): 1024-512, mínimos
+    quadrados, penalidade de gradiente, memória de 1 milhão de pares, a nota e
+    a saúde;
+  - o treinador próprio do Corpo v2 (`body_trainer.py`): as redes do plano, o
+    β na cópia da tarefa (`matter-rl peso estilo`), a B1 (`--sem-estilo`) e a
+    atualização da GPU sobreposta à coleta (~9.000 → ~12.200 decisões/s);
+  - os começos pelo acervo (40% no `corpo2`), com o pedido seguindo o
+    movimento do clipe;
+  - a prévia do Corpo v2 (`tools/rl/previa_corpo.py`);
+  - os treinos curtos de teste (numa pasta temporária): o juiz separa o acervo
+    do corpo e dá nota alta aos clipes reservados; o corpo começa a durar mais
+    (1,9 → 3,6 s em 3 milhões de decisões). A taxa de aprendizado fica presa
+    no piso com a rede maior: o ajuste é a primeira coisa a acertar no
+    Experimento B.
 - **E2 (Experimento A, feito):**
   - a velocidade pedida pela reta da ação média;
   - a ponta do pé sem tremor numérico;
@@ -58,7 +73,10 @@ no `docs/REINFORCEMENT_LEARNING.md` ("A reformulação do Corpo").
   - os eventos da nota (o pulo, o "de pé") vêm com os exercícios de pulo e de
     levantar (E9);
   - o acervo não tem pulos de verdade nem o espelho dos clipes (o espelho vem
-    com o `Mirror3D`, E8).
+    com o `Mirror3D`, E8);
+  - as pontas dos pés custam ~19% da física (16.800 contra 20.800
+    decisões/s com o corpo v1, 10 threads);
+  - o juiz de avaliação congelado vem com o exame (E9).
 
 ## Aprendizado por Reforço (12/10/2026)
 

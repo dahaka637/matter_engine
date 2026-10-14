@@ -170,6 +170,9 @@ class Database:
             for column in ("velocity_tracking", "forward_limit"):
                 if column not in known:
                     self.connection.execute(f"ALTER TABLE iterations ADD COLUMN {column} REAL")
+            # O Corpo v2: as medidas por exercicio e a saude do juiz (JSON).
+            if "details" not in known:
+                self.connection.execute("ALTER TABLE iterations ADD COLUMN details TEXT")
             self.connection.commit()
         self.connection.row_factory = sqlite3.Row
 

@@ -58,6 +58,10 @@ struct MotionDataset3D {
     [[nodiscard]] std::size_t pairCount() const { return pairClip.size(); }
 };
 
+// So o catalogo: os grupos e os clipes (com os reservados), sem tocar os
+// clipes no corpo nem montar os pares (os comecos pelo acervo usam).
+[[nodiscard]] MotionDataset3D loadMotionCatalog3D(const std::filesystem::path& definitionPath);
+
 // heightScale: a altura do jogador sobre a nominal (o acervo na escala dele).
 [[nodiscard]] MotionDataset3D loadMotionDataset3D(const RLBody3D& body, const StyleFeatures3D& features,
     const std::filesystem::path& definitionPath, float heightScale = 1.0f);

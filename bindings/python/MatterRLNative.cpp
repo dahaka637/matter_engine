@@ -668,6 +668,9 @@ NB_MODULE(matter_rl_native, m) {
                 return nb::ndarray<nb::numpy, float, nb::ndim<2>>(data, { episodes.size(), columns }, owner);
             })
         .def("frame_lines", &bodyFrameLines, "environment"_a)
+        .def(
+            "update_task", [](BodyTrainingBatch3D& b, const std::string& path) { b.updateTask(loadBodyTask3D(path)); },
+            "path"_a)
         .def("last_step_ms", &BodyTrainingBatch3D::lastStepMilliseconds)
         .def("physics_steps", &BodyTrainingBatch3D::physicsStepCount);
 

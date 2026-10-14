@@ -62,6 +62,12 @@ class Rollout:
         self.returns = torch.zeros(shape, device=device)
         self.mean = torch.zeros(*shape, actions, device=device)
         self.std = torch.zeros(*shape, actions, device=device)
+        # A politica de onde o KL que ajusta a taxa e medido (None = a que
+        # coletou). Com a coleta sobreposta, os dados sao de uma rodada antes:
+        # medir contra quem coletou somaria a mudanca da atualizacao anterior e
+        # cortaria a taxa pela metade. A razao do PPO continua contra quem coletou.
+        self.anchor_mean: torch.Tensor | None = None
+        self.anchor_std: torch.Tensor | None = None
         self.position = 0
 
     def add(self, obs, critic, actions, log_probs, values, rewards, dones, mean, std) -> None:
@@ -86,8 +92,10 @@ class Rollout:
         size = total // count
         order = torch.randperm(total, device=self.obs.device)
         flat = lambda x: x.reshape(total, *x.shape[2:])  # noqa: E731
+        mean = self.mean if self.anchor_mean is None else self.anchor_mean
+        std = self.std if self.anchor_std is None else self.anchor_std
         data = [flat(x) for x in (self.obs, self.critic, self.actions, self.log_probs, self.values,
-                                  self.advantages, self.returns, self.mean, self.std)]
+                                  self.advantages, self.returns, mean, std)]
         for start in range(0, size * count, size):
             index = order[start:start + size]
             yield [x[index] for x in data]

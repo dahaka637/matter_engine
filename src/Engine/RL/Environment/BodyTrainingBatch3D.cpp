@@ -5,6 +5,8 @@
 #include "Engine/Physics/PhysicsEngine3D.hpp"
 #include "Engine/RL/Commands/CommandPilot3D.hpp"
 #include "Engine/RL/Commands/ControlAdapter3D.hpp"
+#include "Engine/RL/Imitation/ReferenceMotion3D.hpp"
+#include "Engine/RL/Style/MotionDataset3D.hpp"
 #include "Engine/RL/Style/StyleFeatures3D.hpp"
 
 #include <algorithm>
@@ -102,6 +104,12 @@ struct World {
     std::uint32_t reactionOpened = 0;
 };
 
+// Um clipe de onde os comecos pelo acervo saem: os quadros dele e os de pe.
+struct StartClip {
+    ReferenceSegment3D segment;
+    std::vector<std::uint32_t> standing;
+};
+
 struct Scene {
     std::unique_ptr<PhysicsScene3D> physics;
     std::vector<std::uint32_t> worlds;
@@ -152,6 +160,9 @@ struct BodyTrainingBatch3D::Impl {
     std::vector<std::uint8_t> truncated;
     std::vector<float> stylePairs;
     std::vector<BodyEpisode3D> finished;
+    // Os comecos pelo acervo: os clipes de treino e o peso acumulado deles.
+    std::vector<StartClip> starts;
+    std::vector<double> startCumulative;
     std::uint32_t posture = 0;
     std::uint32_t workers = 1;
     std::uint64_t physicsSteps = 0;
@@ -164,6 +175,7 @@ struct BodyTrainingBatch3D::Impl {
     [[nodiscard]] float decision() const { return task.contract.decisionSeconds; }
 
     void buildCriticLayout();
+    void buildStarts();
     void assignDrills();
     void createWorld();
     void resetWorld(std::uint32_t index);
@@ -192,6 +204,38 @@ void BodyTrainingBatch3D::Impl::buildCriticLayout() {
     c.channels.push_back({ "pilot.camera.follow", "0/1" });
     c.channels.push_back({ "pilot.camera.turns", "0/1" });
     c.channels.push_back({ "pilot.command_age", "s/3" });
+}
+
+void BodyTrainingBatch3D::Impl::buildStarts() {
+    // Os clipes de treino (os reservados ficam de fora), pelo peso do grupo
+    // dividido entre os clipes dele; so os quadros de pe.
+    starts.clear();
+    startCumulative.clear();
+    if (!(task.initialState.referenceFraction > 0.0f)) return;
+    const MotionDataset3D catalog = loadMotionCatalog3D(task.styleDataset);
+    const float minimum = task.initialState.referenceMinimumPelvis * body.postures[posture].standingPelvisHeight;
+    std::vector<std::uint32_t> perGroup(catalog.groups.size(), 0);
+    std::vector<std::uint32_t> groupOf;
+    for (const MotionClip3D& clip : catalog.clips) {
+        if (clip.reserved) continue;
+        const ReferenceClip3D request { clip.id, clip.path, clip.loops };
+        ReferenceMotion3D motion =
+            buildReferenceMotion3D(body, std::span<const ReferenceClip3D>(&request, 1), 1.0f / 120.0f, true);
+        StartClip start;
+        start.segment = std::move(motion.segments.front());
+        for (std::uint32_t f = 0; f < start.segment.frames.size(); ++f)
+            if (start.segment.frames[f].rootHeight >= minimum) start.standing.push_back(f);
+        if (start.standing.empty()) continue;
+        ++perGroup[clip.group];
+        groupOf.push_back(clip.group);
+        starts.push_back(std::move(start));
+    }
+    double total = 0.0;
+    for (std::size_t s = 0; s < starts.size(); ++s) {
+        total += catalog.groups[groupOf[s]].weight / static_cast<double>(perGroup[groupOf[s]]);
+        startCumulative.push_back(total);
+    }
+    if (starts.empty() || !(total > 0.0)) throw std::runtime_error("lote do Corpo: nenhum quadro de pe no acervo");
 }
 
 void BodyTrainingBatch3D::Impl::assignDrills() {
@@ -360,30 +404,53 @@ void BodyTrainingBatch3D::Impl::resetWorld(std::uint32_t index) {
     const BodyTask3D::InitialState& start = task.initialState;
     const RLPosture3D& pose = body.postures[posture];
 
-    // De pe na postura, com ruido, girado no rumo sorteado e apoiado no chao
-    // (o ponto mais baixo dos pes 2 mm acima dele).
-    std::vector<Vec3> coordinates = pose.jointCoordinates;
-    std::vector<Vec3> velocities(coordinates.size());
-    for (const RLBodyDof3D& dof : body.dofs) {
-        Vec3& q = coordinates[dof.linkIndex];
-        Vec3& qd = velocities[dof.linkIndex];
-        float* value = dof.axis == RagdollAxis3D::Twist ? &q.x : dof.axis == RagdollAxis3D::Swing1 ? &q.y : &q.z;
-        float* rate = dof.axis == RagdollAxis3D::Twist ? &qd.x : dof.axis == RagdollAxis3D::Swing1 ? &qd.y : &qd.z;
-        *value = std::clamp(*value + gaussian(world.rng, start.jointNoiseRadians), dof.minimumRadians, dof.maximumRadians);
-        *rate = gaussian(world.rng, start.jointVelocityNoise);
-    }
     const float yaw = start.randomYaw ? std::uniform_real_distribution<float>(-Pi, Pi)(world.rng) : 0.0f;
-    const Quaternion heading = Quaternion::fromAxisAngle({ 0.0f, 0.0f, 1.0f }, yaw);
-    const Quaternion root = (heading * body.profile.links.front().modelOrientation * pose.rootRotation).normalized();
-    const RLBodyPose3D probe = rlBodyPose3D(body.profile, world.origin, root, coordinates);
-    const float lift = 0.002f - rlBodyLowestFootPoint3D(body, probe);
-    const Vec3 rootVelocity { gaussian(world.rng, start.rootVelocityNoise), gaussian(world.rng, start.rootVelocityNoise),
-        0.0f };
-    const Vec3 rootSpin { gaussian(world.rng, start.rootAngularVelocityNoise),
-        gaussian(world.rng, start.rootAngularVelocityNoise), gaussian(world.rng, start.rootAngularVelocityNoise) };
     std::vector<PhysicsBodyState3D> links;
-    rlBodyLinkStates3D(body.profile, world.origin + Vec3 { 0.0f, 0.0f, lift }, root, rootVelocity, rootSpin, coordinates,
-        velocities, links);
+    // O comeco pelo acervo (so no treino): o movimento do clipe, para o pedido seguir.
+    bool fromClip = false;
+    Vec3 clipVelocity;
+    float clipChest = 0.0f;
+    if (training() && !starts.empty()
+        && std::uniform_real_distribution<float>(0.0f, 1.0f)(world.rng) < start.referenceFraction) {
+        const double roll = std::uniform_real_distribution<double>(0.0, startCumulative.back())(world.rng);
+        const auto at = static_cast<std::size_t>(
+            std::upper_bound(startCumulative.begin(), startCumulative.end(), roll) - startCumulative.begin());
+        const StartClip& clip = starts[std::min(at, starts.size() - 1)];
+        const std::uint32_t frameIndex =
+            clip.standing[std::uniform_int_distribution<std::size_t>(0, clip.standing.size() - 1)(world.rng)];
+        const ReferenceFrame3D& frame = clip.segment.frames[frameIndex];
+        // O pe mais baixo 2 mm acima do chao (no voo, como o clipe).
+        const float lowest = rlBodyLowestFootPoint3D(body, referencePose3D(body, frame, world.origin, yaw));
+        referenceLinkStates3D(body, frame, world.origin + Vec3 { 0.0f, 0.0f, std::max(0.0f, 0.002f - lowest) }, yaw,
+            links);
+        clipVelocity = Quaternion::fromAxisAngle({ 0.0f, 0.0f, 1.0f }, yaw).rotate(frame.rootVelocity);
+        clipChest = yaw + frame.chestHeading;
+        fromClip = true;
+    } else {
+        // De pe na postura, com ruido, girado no rumo sorteado e apoiado no chao
+        // (o ponto mais baixo dos pes 2 mm acima dele).
+        std::vector<Vec3> coordinates = pose.jointCoordinates;
+        std::vector<Vec3> velocities(coordinates.size());
+        for (const RLBodyDof3D& dof : body.dofs) {
+            Vec3& q = coordinates[dof.linkIndex];
+            Vec3& qd = velocities[dof.linkIndex];
+            float* value = dof.axis == RagdollAxis3D::Twist ? &q.x : dof.axis == RagdollAxis3D::Swing1 ? &q.y : &q.z;
+            float* rate = dof.axis == RagdollAxis3D::Twist ? &qd.x : dof.axis == RagdollAxis3D::Swing1 ? &qd.y : &qd.z;
+            *value = std::clamp(*value + gaussian(world.rng, start.jointNoiseRadians), dof.minimumRadians,
+                dof.maximumRadians);
+            *rate = gaussian(world.rng, start.jointVelocityNoise);
+        }
+        const Quaternion heading = Quaternion::fromAxisAngle({ 0.0f, 0.0f, 1.0f }, yaw);
+        const Quaternion root = (heading * body.profile.links.front().modelOrientation * pose.rootRotation).normalized();
+        const RLBodyPose3D probe = rlBodyPose3D(body.profile, world.origin, root, coordinates);
+        const float lift = 0.002f - rlBodyLowestFootPoint3D(body, probe);
+        const Vec3 rootVelocity { gaussian(world.rng, start.rootVelocityNoise),
+            gaussian(world.rng, start.rootVelocityNoise), 0.0f };
+        const Vec3 rootSpin { gaussian(world.rng, start.rootAngularVelocityNoise),
+            gaussian(world.rng, start.rootAngularVelocityNoise), gaussian(world.rng, start.rootAngularVelocityNoise) };
+        rlBodyLinkStates3D(body.profile, world.origin + Vec3 { 0.0f, 0.0f, lift }, root, rootVelocity, rootSpin,
+            coordinates, velocities, links);
+    }
     physics.resetRagdollState(world.ragdoll, links);
 
     // O mundo deste episodio.
@@ -423,10 +490,12 @@ void BodyTrainingBatch3D::Impl::resetWorld(std::uint32_t index) {
     world.reactionSum = 0.0;
     world.reactionCount = world.reactionOpened = 0;
 
-    // O piloto: a camera comeca no rumo do peito.
+    // O piloto: a camera comeca no rumo do peito; no comeco pelo acervo, o
+    // primeiro pedido segue o movimento do clipe.
     const Reading reading = read(*state);
     world.control = {};
-    CommandPilot3D::start(drill.pilot, world.pilot, reading.com, reading.chestHeading, world.rng);
+    CommandPilot3D::start(drill.pilot, world.pilot, reading.com, fromClip ? clipChest : reading.chestHeading, world.rng);
+    if (fromClip) CommandPilot3D::follow(drill.pilot, world.pilot, clipVelocity, world.rng);
     nextCommand(world, reading, 0.0f);
 }
 
@@ -622,6 +691,7 @@ BodyTrainingBatch3D::BodyTrainingBatch3D(const BodyBatchSettings3D& settings) : 
     const int posture = findRLPosture3D(impl.body, impl.task.initialState.posture);
     if (posture < 0) throw std::runtime_error("lote do Corpo: o corpo nao tem a postura " + impl.task.initialState.posture);
     impl.posture = static_cast<std::uint32_t>(posture);
+    impl.buildStarts();
     impl.buildCriticLayout();
     impl.assignDrills();
 
@@ -664,6 +734,37 @@ std::span<const std::uint32_t> BodyTrainingBatch3D::worldDrills() const { return
 std::size_t BodyTrainingBatch3D::styleSize() const { return m_impl->style->size(); }
 const RLVectorLayout3D& BodyTrainingBatch3D::styleLayout() const { return m_impl->style->layout(); }
 std::span<const float> BodyTrainingBatch3D::stylePairs() const { return m_impl->stylePairs; }
+
+void BodyTrainingBatch3D::updateTask(const BodyTask3D& task) {
+    Impl& impl = *m_impl;
+    // Confere antes de mudar: uma tarefa recusada deixa o lote como estava.
+    if (task.bodyPath != impl.task.bodyPath) throw std::runtime_error("lote do Corpo: o corpo nao muda com o treino andando");
+    const BodyContractSettings3D& a = task.contract;
+    const BodyContractSettings3D& b = impl.task.contract;
+    if (a.substepsPerDecision != b.substepsPerDecision || a.historyDecisions != b.historyDecisions
+        || a.velocityTarget != b.velocityTarget || a.velocityFraction != b.velocityFraction
+        || a.maximumTargetVelocity != b.maximumTargetVelocity)
+        throw std::runtime_error("lote do Corpo: o contrato nao muda com o treino andando");
+    if (task.initialState.posture != impl.task.initialState.posture)
+        throw std::runtime_error("lote do Corpo: a postura do comeco nao muda com o treino andando");
+    bool same = task.drills.size() == impl.task.drills.size();
+    for (std::size_t d = 0; same && d < task.drills.size(); ++d) same = task.drills[d].id == impl.task.drills[d].id;
+    if (!same) throw std::runtime_error("lote do Corpo: os exercicios nao mudam de lista com o treino andando");
+    impl.task.reward = task.reward;
+    impl.task.termination = task.termination;
+    impl.task.randomization = task.randomization;
+    impl.task.initialState = task.initialState;
+    impl.task.control = task.control;
+    impl.task.episodeSeconds = task.episodeSeconds;
+    for (std::size_t d = 0; d < task.drills.size(); ++d) {
+        BodyDrill3D& drill = impl.task.drills[d];
+        drill.pilot = task.drills[d].pilot;
+        drill.task = task.drills[d].task;
+        drill.episodeSeconds = task.drills[d].episodeSeconds;
+        drill.displayName = task.drills[d].displayName;
+    }
+    impl.task.hash = task.hash;
+}
 
 void BodyTrainingBatch3D::reset(std::uint64_t seed) {
     Impl& impl = *m_impl;

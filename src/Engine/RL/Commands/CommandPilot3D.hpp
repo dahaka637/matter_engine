@@ -128,6 +128,10 @@ public:
     // O comeco de um episodio: o corpo em origin, olhando para heading (a camera).
     static void start(const PilotScript3D& script, PilotState3D& state, Vec3 origin, float heading,
         std::mt19937_64& rng);
+    // O comeco pelo acervo: o primeiro pedido segue o movimento de agora (a
+    // velocidade no mundo): o segurar aponta para la nessa velocidade e a
+    // estrela pega a ponta dessa direcao; parado (ou no "hold"), nada muda.
+    static void follow(const PilotScript3D& script, PilotState3D& state, Vec3 velocity, std::mt19937_64& rng);
     // O que ele aperta na proxima decisao (dt: a duracao dela).
     [[nodiscard]] static ControlInput3D update(const PilotScript3D& script, PilotState3D& state, const PilotView3D& view,
         float dt, std::mt19937_64& rng);

@@ -27,6 +27,10 @@
     "back": 0.55
   },
   "jumpWindowSeconds": 0.6,
+  "style": {
+    "dataset": "../style/acervo_corpo.json",
+    "beta": 1.0
+  },
   "reward": {
     "velocityForm": "cauchy",
     "velocityToleranceAbsolute": 0.2,
@@ -51,6 +55,8 @@
     "maximumDistanceFromStart": 120.0
   },
   "initialState": {
+    "referenceFraction": 0.4,
+    "referenceMinimumPelvis": 0.6,
     "posture": "alerta",
     "jointNoiseRadians": 0.03,
     "jointVelocityNoise": 0.2,

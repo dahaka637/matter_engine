@@ -10,7 +10,7 @@
     matter-rl tarefa <id>                 o treino aberto passa para outra habilidade (o mesmo cerebro)
     matter-rl explorar <desvio>           reabre a exploracao (o desvio da acao volta a pelo menos esse)
     matter-rl professor [--minutos N]     aprende com a locomocao fisica do jogo (imitando) e volta ao treino normal
-    matter-rl peso <parcela> <valor> [--motivo M]
+    matter-rl peso <parcela> <valor> [--motivo M]   (no Corpo v2: "estilo" e o beta do juiz)
     matter-rl relatorio [--desde 1h]      o que mudou no periodo (Markdown)
     matter-rl graficos [--saida DIR]      PNG das curvas
     matter-rl folha [--episodio ARQ] [--cena NOME] [--saida PNG] [--de S --ate S]
@@ -69,6 +69,14 @@ def command_doctor(_: argparse.Namespace) -> int:
 
 
 def command_train(args: argparse.Namespace) -> int:
+    from .body_trainer import BodyTrainer, is_body_run, is_body_task
+    # O Corpo v2 (a tarefa do esquema 2, ou um treino dele) tem o treinador proprio.
+    if is_body_run(args.run) or (args.tarefa and is_body_task(paths.task_path(args.tarefa))):
+        trainer = BodyTrainer(args.run, task=args.tarefa, mode=args.modo, environments=args.mundos,
+                              device=args.dispositivo, seed=args.semente, iterations=args.rodadas,
+                              style=False if args.sem_estilo else None,
+                              overlap=False if args.sem_sobreposicao else None)
+        return trainer.loop()
     from .trainer import Trainer
     trainer = Trainer(args.run, task=args.tarefa, mode=args.modo, environments=args.mundos, device=args.dispositivo,
                       seed=args.semente, iterations=args.rodadas)
@@ -81,6 +89,10 @@ def trainer_command(args: argparse.Namespace) -> list[str]:
         command += ["--mundos", str(args.mundos)]
     if args.dispositivo != "auto":
         command += ["--dispositivo", args.dispositivo]
+    if getattr(args, "sem_estilo", False):
+        command += ["--sem-estilo"]
+    if getattr(args, "sem_sobreposicao", False):
+        command += ["--sem-sobreposicao"]
     return command
 
 
@@ -122,6 +134,9 @@ def command_start(args: argparse.Namespace) -> int:
     for flag, value in (("--tarefa", args.tarefa), ("--modo", args.modo), ("--mundos", args.mundos)):
         if value:
             command += [flag, str(value)]
+    for flag, value in (("--sem-estilo", args.sem_estilo), ("--sem-sobreposicao", args.sem_sobreposicao)):
+        if value:
+            command.append(flag)
     subprocess.Popen(command, cwd=str(Path(__file__).resolve().parents[1]), stdout=log, stderr=subprocess.STDOUT,
                      stdin=subprocess.DEVNULL, start_new_session=True)
     for _ in range(120):
@@ -417,6 +432,10 @@ def main(argv: list[str] | None = None) -> int:
             p.add_argument("--dispositivo", default="auto", choices=["auto", "cuda", "cpu"])
             p.add_argument("--semente", type=int)
             p.add_argument("--rodadas", type=int)
+            # O Corpo v2: sem o juiz de estilo (a variante B1; escolhida ao criar
+            # o treino) e sem a atualizacao sobreposta a coleta.
+            p.add_argument("--sem-estilo", action="store_true")
+            p.add_argument("--sem-sobreposicao", action="store_true")
         return p
 
     sub.add_parser("doctor").set_defaults(func=command_doctor)

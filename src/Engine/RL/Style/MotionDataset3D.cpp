@@ -28,8 +28,7 @@ std::uint64_t fnv1a(const std::string& text, std::uint64_t hash) {
 
 } // namespace
 
-MotionDataset3D loadMotionDataset3D(const RLBody3D& body, const StyleFeatures3D& features,
-    const std::filesystem::path& definitionPath, float heightScale) {
+MotionDataset3D loadMotionCatalog3D(const std::filesystem::path& definitionPath) {
     std::ifstream file(definitionPath, std::ios::binary);
     if (!file) fail("nao abriu " + definitionPath.string());
     const std::string text((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
@@ -40,17 +39,12 @@ MotionDataset3D loadMotionDataset3D(const RLBody3D& body, const StyleFeatures3D&
     dataset.id = document.at("id").get<std::string>();
     dataset.definitionPath = definitionPath;
     dataset.pairFrames = document.value("pairFrames", dataset.pairFrames);
-    dataset.featureSize = features.size();
     if (dataset.pairFrames == 0) fail("pairFrames precisa ser positivo");
     const std::filesystem::path clips =
         (definitionPath.parent_path() / document.value("clipsDirectory", std::string("../../animations/clips")))
             .lexically_normal();
-    std::uint64_t hash = fnv1a(text, 14695981039346656037ull);
-
+    dataset.hash = fnv1a(text, 14695981039346656037ull);
     std::set<std::string> seen;
-    std::vector<std::vector<PhysicsBodyState3D>> frameLinks;
-    std::vector<float> frameFeatures;
-    std::vector<std::size_t> trainingPairs;
     for (const nlohmann::json& g : document.at("groups")) {
         MotionGroup3D group;
         group.id = g.at("id").get<std::string>();
@@ -69,43 +63,55 @@ MotionDataset3D loadMotionDataset3D(const RLBody3D& body, const StyleFeatures3D&
             clip.path = clips / (clip.id + ".matteranim.json");
             clip.reserved = reserved.erase(clip.id) > 0;
             clip.loops = loadAnimationClip3D(clip.path.string()).loops;
-            const ReferenceClip3D request { clip.id, clip.path, clip.loops };
-            // (Como biblioteca de um trecho: um clipe que comeca e termina tambem vale.)
-            const ReferenceMotion3D motion =
-                buildReferenceMotion3D(body, std::span<const ReferenceClip3D>(&request, 1), 1.0f / 120.0f, true);
-            hash ^= motion.hash;
-            hash *= 1099511628211ull;
-            const ReferenceSegment3D& segment = motion.segments.front();
-            clip.frames = static_cast<std::uint32_t>(segment.frames.size());
-            clip.meanSpeed = segment.meanSpeed;
-            // As medidas de cada quadro, pelo estado dos links (a mesma conta do corpo).
-            frameFeatures.assign(static_cast<std::size_t>(clip.frames) * dataset.featureSize, 0.0f);
-            std::vector<PhysicsBodyState3D> links;
-            for (std::uint32_t f = 0; f < clip.frames; ++f) {
-                referenceLinkStates3D(body, segment.frames[f], {}, segment.frames[f].heading, links);
-                features.write(links, heightScale, frameFeatures.data() + static_cast<std::size_t>(f) * dataset.featureSize);
-            }
-            clip.firstPair = static_cast<std::uint32_t>(dataset.pairCount());
-            const std::size_t F = dataset.featureSize;
-            for (std::uint32_t f = 0; f < clip.frames; ++f) {
-                std::uint32_t next = f + dataset.pairFrames;
-                if (next >= clip.frames) {
-                    if (!clip.loops) break;
-                    next %= clip.frames;
-                }
-                const float* a = frameFeatures.data() + static_cast<std::size_t>(f) * F;
-                const float* b = frameFeatures.data() + static_cast<std::size_t>(next) * F;
-                dataset.pairs.insert(dataset.pairs.end(), a, a + F);
-                dataset.pairs.insert(dataset.pairs.end(), b, b + F);
-                dataset.pairClip.push_back(static_cast<std::uint32_t>(dataset.clips.size()));
-            }
-            clip.pairCount = static_cast<std::uint32_t>(dataset.pairCount()) - clip.firstPair;
-            if (clip.pairCount == 0) fail("o clipe " + clip.id + " e curto demais para um par");
             dataset.clips.push_back(std::move(clip));
         }
         if (!reserved.empty()) fail("reservado fora da lista do grupo " + group.id + ": " + *reserved.begin());
     }
     if (dataset.clips.empty()) fail("sem clipes");
+    return dataset;
+}
+
+MotionDataset3D loadMotionDataset3D(const RLBody3D& body, const StyleFeatures3D& features,
+    const std::filesystem::path& definitionPath, float heightScale) {
+    MotionDataset3D dataset = loadMotionCatalog3D(definitionPath);
+    dataset.featureSize = features.size();
+    const std::size_t F = dataset.featureSize;
+    std::uint64_t hash = dataset.hash;
+    std::vector<float> frameFeatures;
+    std::vector<PhysicsBodyState3D> links;
+    for (std::size_t c = 0; c < dataset.clips.size(); ++c) {
+        MotionClip3D& clip = dataset.clips[c];
+        const ReferenceClip3D request { clip.id, clip.path, clip.loops };
+        // (Como biblioteca de um trecho: um clipe que comeca e termina tambem vale.)
+        const ReferenceMotion3D motion =
+            buildReferenceMotion3D(body, std::span<const ReferenceClip3D>(&request, 1), 1.0f / 120.0f, true);
+        hash ^= motion.hash;
+        hash *= 1099511628211ull;
+        const ReferenceSegment3D& segment = motion.segments.front();
+        clip.frames = static_cast<std::uint32_t>(segment.frames.size());
+        clip.meanSpeed = segment.meanSpeed;
+        // As medidas de cada quadro, pelo estado dos links (a mesma conta do corpo).
+        frameFeatures.assign(static_cast<std::size_t>(clip.frames) * F, 0.0f);
+        for (std::uint32_t f = 0; f < clip.frames; ++f) {
+            referenceLinkStates3D(body, segment.frames[f], {}, segment.frames[f].heading, links);
+            features.write(links, heightScale, frameFeatures.data() + static_cast<std::size_t>(f) * F);
+        }
+        clip.firstPair = static_cast<std::uint32_t>(dataset.pairCount());
+        for (std::uint32_t f = 0; f < clip.frames; ++f) {
+            std::uint32_t next = f + dataset.pairFrames;
+            if (next >= clip.frames) {
+                if (!clip.loops) break;
+                next %= clip.frames;
+            }
+            const float* a = frameFeatures.data() + static_cast<std::size_t>(f) * F;
+            const float* b = frameFeatures.data() + static_cast<std::size_t>(next) * F;
+            dataset.pairs.insert(dataset.pairs.end(), a, a + F);
+            dataset.pairs.insert(dataset.pairs.end(), b, b + F);
+            dataset.pairClip.push_back(static_cast<std::uint32_t>(c));
+        }
+        clip.pairCount = static_cast<std::uint32_t>(dataset.pairCount()) - clip.firstPair;
+        if (clip.pairCount == 0) fail("o clipe " + clip.id + " e curto demais para um par");
+    }
 
     // O peso: por grupo, dividido pelos pares de treino dele.
     std::vector<std::size_t> groupPairs(dataset.groups.size(), 0);

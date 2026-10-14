@@ -8,7 +8,10 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
+#include <iterator>
 #include <numbers>
 #include <random>
 #include <set>
@@ -406,6 +409,56 @@ void testBodyBatchInfoParity() {
     }
 }
 
+// O comeco pelo acervo: o corpo no quadro de um clipe de pe, e o primeiro
+// pedido seguindo o movimento dele.
+void testReferenceStarts() {
+    BodyBatchSettings3D settings = smallBatch(24, 2, false);
+    const std::string path = std::string(MATTERENGINE_TEST_ASSETS_DIR) + "/rl/tasks/corpo2.json";
+    // (Uma copia da tarefa com todos os comecos pelo acervo.)
+    BodyTask3D probe = loadBodyTask3D(path);
+    require(probe.initialState.referenceFraction > 0.0f && !probe.styleDataset.empty(), "o corpo2 comeca pelo acervo");
+    std::ifstream in(path);
+    std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    const std::string key = "\"referenceFraction\": 0.4";
+    require(text.find(key) != std::string::npos, "a fatia do corpo2");
+    text.replace(text.find(key), key.size(), "\"referenceFraction\": 1.0");
+    // (A copia fica na pasta temporaria, com o corpo e o acervo pelo caminho inteiro.)
+    const std::string assets = std::string(MATTERENGINE_TEST_ASSETS_DIR) + "/rl/";
+    for (const std::string relative : { "\"../bodies/", "\"../style/" }) {
+        const std::size_t at = text.find(relative);
+        require(at != std::string::npos, "o corpo2 aponta para " + relative);
+        text.replace(at, relative.size(), "\"" + assets + relative.substr(4));
+    }
+    const std::filesystem::path copy = std::filesystem::temp_directory_path() / "matter_rl_teste_comecos.json";
+    { std::ofstream out(copy); out << text; }
+    settings.taskPath = copy;
+    BodyTrainingBatch3D batch(settings);
+    std::filesystem::remove(copy);
+    const float standing = batch.body().postures[static_cast<std::size_t>(findRLPosture3D(batch.body(), "alerta"))]
+                               .standingPelvisHeight;
+    std::size_t moving = 0, coherent = 0;
+    for (std::size_t w = 0; w < batch.environmentCount(); ++w) {
+        const BodyWorldView3D view = batch.view(w);
+        require(view.state->links.front().position.z >= 0.55f * standing, "comeca de pe");
+        const Vec3 v = view.velocity;
+        const Vec3 wanted = view.command.moveVelocity;
+        const float speed = std::hypot(v.x, v.y);
+        const std::string& drill = batch.task().drills[view.drill].id;
+        if (speed < 1.0f || drill == "parado") continue;
+        ++moving;
+        const float dot = (v.x * wanted.x + v.y * wanted.y) / (speed * std::max(1e-6f, std::hypot(wanted.x, wanted.y)));
+        if (dot > 0.7f) ++coherent;
+    }
+    require(moving >= 4, "varios comecos em movimento (" + std::to_string(moving) + ")");
+    require(coherent * 10 >= moving * 8, "o pedido segue o movimento do clipe (" + std::to_string(coherent) + " de "
+            + std::to_string(moving) + ")");
+    std::vector<float> zero(batch.environmentCount() * batch.actionSize(), 0.0f);
+    for (int step = 0; step < 30; ++step) {
+        batch.step(zero, zero);
+        require(allFinite(batch.observations()) && allFinite(batch.rewards()), "o comeco pelo acervo e estavel");
+    }
+}
+
 } // namespace
 
 void runBodyBatchTests() {
@@ -416,5 +469,6 @@ void runBodyBatchTests() {
     testBodyBatch();
     testBodyBatchDeterminism();
     testBodyBatchInfoParity();
+    testReferenceStarts();
     std::cout << "Body batch tests passed\n";
 }

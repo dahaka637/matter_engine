@@ -83,13 +83,17 @@ def mlp(inputs: int, outputs: int, hidden=HIDDEN, last_gain: float = 1.0) -> nn.
 
 class ActorCritic(nn.Module):
     """Politica gaussiana: a media sai do ator, o desvio e um parametro por
-    canal (comeca de modo que o ruido seja ~0,15 rad em cada junta)."""
+    canal (comeca de modo que o ruido seja ~0,15 rad em cada junta). As camadas
+    escondidas do ator e do critico sao configuraveis (o Corpo v2 usa
+    1024-512-256 nas duas); o padrao e o do contrato 1."""
 
-    def __init__(self, obs_size: int, critic_size: int, action_size: int, initial_std: np.ndarray | None = None):
+    def __init__(self, obs_size: int, critic_size: int, action_size: int, initial_std: np.ndarray | None = None,
+                 actor_hidden=HIDDEN, critic_hidden=HIDDEN):
         super().__init__()
         self.obs_size, self.critic_size, self.action_size = obs_size, critic_size, action_size
-        self.actor = mlp(obs_size, action_size, last_gain=0.01)
-        self.critic = mlp(critic_size, 1, last_gain=1.0)
+        self.actor_hidden, self.critic_hidden = tuple(actor_hidden), tuple(critic_hidden)
+        self.actor = mlp(obs_size, action_size, self.actor_hidden, last_gain=0.01)
+        self.critic = mlp(critic_size, 1, self.critic_hidden, last_gain=1.0)
         std = torch.full((action_size,), 0.3) if initial_std is None else torch.as_tensor(initial_std, dtype=torch.float32)
         self.log_std = nn.Parameter(std.clamp(0.02, 2.0).log())
         self.obs_norm = RunningNorm(obs_size)
