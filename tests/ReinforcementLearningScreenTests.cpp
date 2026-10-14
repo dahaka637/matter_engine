@@ -345,6 +345,14 @@ int main() {
             frame(screen, canvas, 1);
             if (second == 1 || second % 3 == 0) snapshot(canvas, ("rl_tela_pulos_" + std::to_string(second) + "s").c_str());
         }
+        // O frear com o peito girando + forca (as setas das forcas).
+        screen.showDrill("frear", 2);
+        frame(screen, canvas, 2);
+        for (int second = 1; second <= 12; ++second) {
+            screen.advanceViewer(30);
+            frame(screen, canvas, 1);
+            if (second % 2 == 0) snapshot(canvas, ("rl_tela_frear_forca_" + std::to_string(second) + "s").c_str());
+        }
         // Os parados: girar (o peito girando) e os empurroes, no lugar.
         for (const auto& [drill, chest] : { std::pair<const char*, int> { "girar", 2 }, { "empurroes", 1 } }) {
             screen.showDrill(drill, chest);

@@ -104,6 +104,16 @@ struct Environment {
     float pushRemaining = 0.0f;
     Vec3 pushForce;
     std::uint32_t pushLink = 0;
+    // As forcas valem neste episodio (pushes.whenRotating: so com o peito
+    // girando); o comeco da ultima (s do episodio), o tempo abaixo da altura
+    // de queda (a chance de se recobrar) e a volta a velocidade depois de cada
+    // uma.
+    bool pushesOn = false;
+    float pushStartedAt = -1.0f;
+    float lowSince = -1.0f;
+    float pushRecoverySince = -1.0f;
+    double pushRecoverySum = 0.0;
+    std::uint32_t pushRecoveryCount = 0;
     // Acumuladores do resumo.
     double episodeReturn = 0.0;
     double comSum[2] {};
@@ -1406,6 +1416,10 @@ void TrainingBatch3D::Impl::resetEnvironment(std::uint32_t index) {
     env.pushTimer = uniform(env.rng, task.pushes.intervalSeconds);
     env.pushRemaining = 0.0f;
     env.pushForce = {};
+    env.pushesOn = task.pushes.enabled && (!task.pushes.whenRotating || env.facingDrifting);
+    env.pushStartedAt = env.lowSince = env.pushRecoverySince = -1.0f;
+    env.pushRecoverySum = 0.0;
+    env.pushRecoveryCount = 0;
     const RagdollState3D* state = scene.physics->ragdollStateView(env.ragdoll);
     for (std::size_t f = 0; f < 2; ++f) {
         const std::uint32_t foot = f == 0 ? body.leftFoot : body.rightFoot;
@@ -1881,6 +1895,19 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
         const float toward = distance > 1.0e-4f
             ? (reading.comVelocity.x * to.x + reading.comVelocity.y * to.y) / distance : 0.0f;
         targetSpeed = std::clamp(toward / t.referenceSpeed, 0.0f, t.speedCap);
+        // A volta depois de uma forca: em pe e de novo na pedida (80% dela; a
+        // pedida a quase zero, quase parado).
+        if (env.pushRecoverySince >= 0.0f && env.pushRemaining <= 0.0f && t.speedCommand.enabled) {
+            const float upright = state.links.front().position.z / body.postures[env.posture].standingPelvisHeight;
+            const float planar = std::hypot(reading.comVelocity.x, reading.comVelocity.y);
+            const float wanted = effectiveSpeed(env, distance);
+            const bool back = upright > 0.85f && (wanted < 0.5f ? planar < 0.5f : toward >= 0.8f * wanted);
+            if (back) {
+                env.pushRecoverySum += static_cast<float>(env.played) * stepSeconds - env.pushRecoverySince;
+                ++env.pushRecoveryCount;
+                env.pushRecoverySince = -1.0f;
+            }
+        }
         // A volta a velocidade depois do pulo correndo (ate 80% da pedida).
         if (env.jumpRecoverySince >= 0.0f && t.speedCommand.enabled && toward >= 0.8f * env.targetSpeedCommand) {
             env.jumpRecoverySum += static_cast<float>(env.played) * stepSeconds - env.jumpRecoverySince;
@@ -2185,6 +2212,8 @@ void TrainingBatch3D::Impl::finishEpisode(Scene& scene, std::uint32_t index, Tra
         const bool afterJump = env.jumpAirborne || (env.jumpEndedAt >= 0.0f && ended - env.jumpEndedAt < 1.5f);
         episode.landingFall = jumpsTried > 0 || env.jumpAirborne ? (fallReason && afterJump ? 1.0f : 0.0f) : -1.0f;
     }
+    episode.pushRecoverySeconds =
+        env.pushRecoveryCount > 0 ? static_cast<float>(env.pushRecoverySum / env.pushRecoveryCount) : -1.0f;
     episode.jumpRecoverySeconds =
         env.jumpRecoveryCount > 0 ? static_cast<float>(env.jumpRecoverySum / env.jumpRecoveryCount) : -1.0f;
     episode.meanEffort = static_cast<float>(env.effortSum / n);
@@ -2254,15 +2283,38 @@ void TrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> actio
                 continue;
             }
             const TrainingTask3D& task = taskOf(env);  // o exercicio do mundo
-            if (!task.pushes.enabled || pushLinks.empty()) continue;
+            if (!env.pushesOn || pushLinks.empty()) continue;
             if ((env.pushTimer -= FixedStep) <= 0.0f) {
+                const TrainingTask3D::Pushes& p = task.pushes;
                 const float angle =
                     std::uniform_real_distribution<float>(-std::numbers::pi_v<float>, std::numbers::pi_v<float>)(env.rng);
-                const float force = uniform(env.rng, task.pushes.forceNewtons);
-                env.pushForce = { std::cos(angle) * force, std::sin(angle) * force, 0.0f };
-                env.pushLink = pushLinks[std::uniform_int_distribution<std::size_t>(0, pushLinks.size() - 1)(env.rng)];
-                env.pushRemaining = uniform(env.rng, task.pushes.durationSeconds);
-                env.pushTimer = uniform(env.rng, task.pushes.intervalSeconds);
+                const Vec3 side { std::cos(angle), std::sin(angle), 0.0f };
+                const float kind = std::uniform_real_distribution<float>(0.0f, 1.0f)(env.rng);
+                // O pe no ar (na ultima decisao), para o tropeco.
+                int airborne = env.footAirTime[0] > 0.0f ? 0 : env.footAirTime[1] > 0.0f ? 1 : -1;
+                if (kind < p.tripFraction && airborne >= 0) {
+                    // O tropeco: o pe no ar puxado contra o rumo do corpo.
+                    Vec3 back = -side;
+                    if (const RagdollState3D* now = physics.ragdollStateView(env.ragdoll)) {
+                        const Vec3 v = now->links.front().linearVelocity;
+                        const float speed = std::hypot(v.x, v.y);
+                        if (speed > 0.3f) back = Vec3 { -v.x / speed, -v.y / speed, 0.0f };
+                    }
+                    env.pushForce = back * uniform(env.rng, p.tripNewtons);
+                    env.pushLink = airborne == 0 ? body.leftFoot : body.rightFoot;
+                    env.pushRemaining = uniform(env.rng, p.tripSeconds);
+                } else if (kind < p.tripFraction + p.sustainedFraction) {
+                    env.pushForce = side * uniform(env.rng, p.sustainedNewtons);
+                    env.pushLink = pushLinks[std::uniform_int_distribution<std::size_t>(0, pushLinks.size() - 1)(env.rng)];
+                    env.pushRemaining = uniform(env.rng, p.sustainedSeconds);
+                } else {
+                    env.pushForce = side * uniform(env.rng, p.forceNewtons);
+                    env.pushLink = pushLinks[std::uniform_int_distribution<std::size_t>(0, pushLinks.size() - 1)(env.rng)];
+                    env.pushRemaining = uniform(env.rng, p.durationSeconds);
+                }
+                env.pushTimer = uniform(env.rng, p.intervalSeconds);
+                env.pushStartedAt = static_cast<float>(env.played * task.actionRepeat + sub) * FixedStep;
+                if (env.pushRecoverySince < 0.0f) env.pushRecoverySince = env.pushStartedAt;
             }
         }
         if (teacher)
@@ -2284,9 +2336,15 @@ void TrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> actio
             if (!taskOf(env).termination.nonSupportContact || env.firstContactLink >= 0) continue;
             const RagdollState3D* state = physics.ragdollStateView(env.ragdoll);
             if (!state) continue;
+            // (Logo depois de uma forca, as maos no chao sao apoio: ele se segura.)
+            const TrainingTask3D::Termination& end = taskOf(env).termination;
+            const float clock = static_cast<float>(env.played * task.actionRepeat) * FixedStep;
+            const bool recovering = end.recoverySeconds > 0.0f && env.pushStartedAt >= 0.0f
+                && clock - env.pushStartedAt < end.recoverySeconds;
             for (const RagdollContactPoint3D& contact : state->contacts) {
                 if (contact.otherMotion != RagdollContactMotion3D::Static) continue;
                 if (contact.linkIndex < body.supportLink.size() && body.supportLink[contact.linkIndex]) continue;
+                if (recovering && (contact.linkIndex == body.leftHand || contact.linkIndex == body.rightHand)) continue;
                 env.firstContactLink = static_cast<int>(contact.linkIndex);
                 break;
             }
@@ -2326,11 +2384,18 @@ void TrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> actio
         } else {
             const PhysicsBodyState3D& pelvis = state->links.front();
             const float head = state->links[body.head].position.z;
-            if (env.firstContactLink >= 0) reason = TrainingEndReason3D::FallContact;
-            else if (head < body.postures[env.posture].standingHeadHeight * task.termination.minimumHeadHeightFraction
+            const bool low = head < body.postures[env.posture].standingHeadHeight * task.termination.minimumHeadHeightFraction
                 || pelvis.position.z
-                    < body.postures[env.posture].standingPelvisHeight * task.termination.minimumPelvisHeightFraction)
-                reason = TrainingEndReason3D::FallHeight;
+                    < body.postures[env.posture].standingPelvisHeight * task.termination.minimumPelvisHeightFraction;
+            // Logo depois de uma forca, baixo so e queda se durar fallGraceSeconds.
+            const float clock = static_cast<float>(env.played * task.actionRepeat) * FixedStep;
+            const bool recovering = task.termination.recoverySeconds > 0.0f && env.pushStartedAt >= 0.0f
+                && clock - env.pushStartedAt < task.termination.recoverySeconds;
+            if (!low) env.lowSince = -1.0f;
+            else if (env.lowSince < 0.0f) env.lowSince = clock;
+            const bool fallen = low && (!recovering || clock - env.lowSince >= task.termination.fallGraceSeconds);
+            if (env.firstContactLink >= 0) reason = TrainingEndReason3D::FallContact;
+            else if (fallen) reason = TrainingEndReason3D::FallHeight;
             else if (env.steps >= env.limit) reason = TrainingEndReason3D::TimeLimit;
             else {
                 const float dx = pelvis.position.x - env.origin.x, dy = pelvis.position.y - env.origin.y;

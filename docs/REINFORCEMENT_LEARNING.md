@@ -297,6 +297,29 @@ diagonal), e a voltar.
   não tem entram com zero, como na migração do treinador. Assim um cérebro
   antigo roda numa tarefa mais nova.
 
+## Não cair: o peito girando + força do Frear e parar (14/10/2026)
+
+O exercício 9 não é um exercício separado: por pedido do usuário, as forças
+ficam no modo peito girando do Frear e parar ("Peito girando + força").
+
+- **As forças** (`pushes` do exercício, `whenRotating`: só nos episódios de
+  peito girando), sem aviso, a cada 2–4 s, sorteadas entre:
+  - **o tranco:** 100–800 N por 0,1–0,25 s, na pelve ou no peito, de qualquer
+    lado;
+  - **a força contínua** (`sustainedFraction` 0,3): 100–300 N por 1–3 s;
+  - **o tropeço** (`tripFraction` 0,2): um puxão de 150–400 N por 0,08–0,15 s
+    no pé que está no ar, contra o rumo do corpo (sem pé no ar, um tranco).
+- **Se recobrar ao quase cair** (`termination.recoverySeconds` 3,
+  `fallGraceSeconds` 0,75): por 3 s depois do começo de uma força, a mão no
+  chão não encerra, e a cabeça ou a pelve baixas só são queda se ficarem
+  baixas por 0,75 s.
+- **A prova:** `frear_forca_v1` (peito 2). O tempo até voltar, em pé e na
+  pedida, depois de cada força (`push_recovery`, a coluna 40, 41 no total), só
+  medido.
+- **Na tela:** o ramo "Peito girando + força"; a seta da força onde ela entra.
+- **A prévia com o cérebro de 14/10 (rodada 60068):** de pé em 4 de 16 em
+  40 s (sem forças, 16 de 16); a volta depois de uma força, 2,2 s.
+
 ## Pulos (14/10/2026)
 
 O exercício 8, como a seção 8 do `treino_locomocao_claude.md` pede. A primeira

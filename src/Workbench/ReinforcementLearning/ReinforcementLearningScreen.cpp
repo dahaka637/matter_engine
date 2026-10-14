@@ -173,6 +173,7 @@ void ReinforcementLearningScreen::loadSkills() {
                 if (target.facingFraction > 0.0f && target.facingDriftFraction < 1.0f) modes |= 2u;
                 if (target.facingFraction > 0.0f && target.facingDriftFraction > 0.0f) modes |= 4u;
                 skill.drillChests.push_back(modes == 0u ? 1u : modes);
+                skill.drillForce.push_back(drill.task->pushes.enabled && drill.task->pushes.whenRotating);
             }
             skill.facing = task.target.facing;
             m_skills.push_back(std::move(skill));
@@ -1021,7 +1022,8 @@ void ReinforcementLearningScreen::drawDrillTree(std::size_t index) {
             ImGui::Indent(ui(14.0f));
             for (int chest = 0; chest < 3; ++chest) {
                 if (!(modes & (1u << chest))) continue;
-                const std::string item = std::string(Chests[chest]) + "##chest" + skill.task + drill + std::to_string(chest);
+                const std::string name = chest == 2 && skill.drillForce[d] ? "Peito girando + força" : Chests[chest];
+                const std::string item = name + "##chest" + skill.task + drill + std::to_string(chest);
                 if (navigationButton(item.c_str(), open && chest == m_viewerChest, { -1.0f, ui(26.0f) })) {
                     if (!here) selectSkill(index);
                     setViewerDrill(drill, chest);

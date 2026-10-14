@@ -285,6 +285,8 @@ TrainingTask3D parseTask(const nlohmann::json& document, const std::filesystem::
         out.minimumPelvisHeightFraction = t.value("minimumPelvisHeightFraction", out.minimumPelvisHeightFraction);
         out.nonSupportContact = t.value("nonSupportContact", out.nonSupportContact);
         out.maximumDistanceFromStart = t.value("maximumDistanceFromStart", out.maximumDistanceFromStart);
+        out.recoverySeconds = std::max(0.0f, t.value("recoverySeconds", out.recoverySeconds));
+        out.fallGraceSeconds = std::max(0.0f, t.value("fallGraceSeconds", out.fallGraceSeconds));
     }
     if (document.contains("initialState")) {
         const nlohmann::json& s = document["initialState"];
@@ -308,6 +310,13 @@ TrainingTask3D parseTask(const nlohmann::json& document, const std::filesystem::
         const nlohmann::json& p = document["pushes"];
         auto& out = task.pushes;
         out.enabled = p.value("enabled", out.enabled);
+        out.whenRotating = p.value("whenRotating", out.whenRotating);
+        out.sustainedFraction = std::clamp(p.value("sustainedFraction", out.sustainedFraction), 0.0f, 1.0f);
+        out.sustainedNewtons = range(p, "sustainedNewtons", out.sustainedNewtons);
+        out.sustainedSeconds = range(p, "sustainedSeconds", out.sustainedSeconds);
+        out.tripFraction = std::clamp(p.value("tripFraction", out.tripFraction), 0.0f, 1.0f);
+        out.tripNewtons = range(p, "tripNewtons", out.tripNewtons);
+        out.tripSeconds = range(p, "tripSeconds", out.tripSeconds);
         out.intervalSeconds = range(p, "intervalSeconds", out.intervalSeconds);
         out.durationSeconds = range(p, "durationSeconds", out.durationSeconds);
         out.forceNewtons = range(p, "forceNewtons", out.forceNewtons);

@@ -447,6 +447,12 @@ struct TrainingTask3D {
         float minimumPelvisHeightFraction = 0.5f;
         bool nonSupportContact = true;
         float maximumDistanceFromStart = 5.0f;  // m (o fim e truncado, nao queda)
+        // Se recobrar ao quase cair: por recoverySeconds depois do comeco de
+        // uma perturbacao, as maos no chao contam como apoio e a cabeca ou a
+        // pelve baixas so sao queda se ficarem baixas por fallGraceSeconds
+        // (0 = como sempre).
+        float recoverySeconds = 0.0f;
+        float fallGraceSeconds = 0.0f;
     } termination;
 
     struct InitialState {
@@ -467,9 +473,22 @@ struct TrainingTask3D {
 
     struct Pushes {
         bool enabled = false;
+        // So nos episodios de peito girando (o "peito girando + forca").
+        bool whenRotating = false;
         TrainingRange3D intervalSeconds { 2.0f, 4.0f };
+        // Os tipos, sorteados a cada perturbacao, sem aviso: o tranco
+        // (forceNewtons por durationSeconds), a forca continua
+        // (sustainedFraction: sustainedNewtons por sustainedSeconds) e o
+        // tropeco (tripFraction: um puxao no pe que esta no ar, contra o rumo,
+        // tripNewtons por tripSeconds; sem pe no ar, um tranco).
         TrainingRange3D durationSeconds { 0.1f, 0.2f };
         TrainingRange3D forceNewtons { 50.0f, 150.0f };
+        float sustainedFraction = 0.0f;
+        TrainingRange3D sustainedNewtons { 100.0f, 300.0f };
+        TrainingRange3D sustainedSeconds { 1.0f, 3.0f };
+        float tripFraction = 0.0f;
+        TrainingRange3D tripNewtons { 150.0f, 400.0f };
+        TrainingRange3D tripSeconds { 0.08f, 0.15f };
         std::vector<std::string> links { "Pelvis", "UpperChest" };
     } pushes;
 

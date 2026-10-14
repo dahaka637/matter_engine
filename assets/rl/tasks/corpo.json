@@ -1,9 +1,9 @@
 {
   "schema": "matter-rl-task-1",
   "id": "corpo",
-  "version": 12,
+  "version": 13,
   "displayName": "Corpo",
-  "comment": "Area 1 da metodologia de 13/10 (as 3 areas: Corpo, Bola e Goleiro; docs/REINFORCEMENT_LEARNING.md e o Vault, Arquitetura_RL.md): uma tarefa so com os exercicios do corpo misturados no mesmo treino. Cada mundo sorteia o seu exercicio pelo peso (drills); o exercicio muda o mundo (como os alvos nascem, as notas, a duracao), nunca o que a rede ve ou faz, e a rede nunca sabe o nome dele: no jogo nao ha exercicio, ha comandos. As fatias seguem o exame (drillWeights). Versao 2 (14/10): o primeiro exercicio de verdade, a estrela (treino_locomocao_claude.md, o 3), no lugar dos tres provisorios (pontos, peito e tiro viram os modos livre e peito fixo dela; o tiro volta como os cortes). Versao 3 (14/10): o peito girando vira um modo de verdade (metade dos de peito fixo, ate 0,6 rad/s, sentido e velocidade sorteados a cada 2-4 s), com a sua bateria e a opcao no laboratorio. Versao 4 (14/10): o giro em trechos de meia a uma volta e meia (0,4-1,2 rad/s) e as distancias mais parecidas (andar 6-9, trote 8-12, corrida 12-17, sprint 16-22 m). Versao 5 (14/10): o exercicio frear (o 4: a pedida muda no caminho e metade dos discos e de pare aqui) e o clipe parado na biblioteca. Versao 6 (14/10): o exercicio curvas (o 5: alvos a cada 2 m em arcos abertos, medios e fechados, em S, com a velocidade limitada pelo raio). Versao 7 (14/10): com o peito livre, o peito olha para onde vai (o proximo alvo, puxado para o seguinte), na nota e na bateria: ele ia de lado. De costas ou de lado com o peito livre, so no ultimo metro. Versao 8 (14/10): os exercicios parado (o 1, no alerta), girar parado (o 2, o peito girando em trechos e ele junto, no lugar) e empurroes (parado, levando empurroes de lados e forcas sorteados), com o desenho hold (o alvo e o lugar do comeco). Versao 9 (14/10): os giros no lugar do Mixamo (90 e 180 graus, em ciclo) para o girar parado ter passos de verdade. Versao 10 (14/10): os parados revisam a estabilizacao do comeco (as notas de ficar de pe do H1b: quieto, centro de massa sobre os pes, pe sem sair do lugar nem escorregar, tronco sem girar; no girar, sem as duas que o giro precisa); eles nao tinham, e o cerebro tremia parado. Versao 11 (14/10): a estrela continua (de ponta a ponta) e a reacao (o proximo escondido ate a chegada), no lugar do exercicio cortes; o tempo de cada corte medido na bateria. Versao 12 (14/10): o exercicio pulos (secao 8: a zona no meio da ida, o pulo parado no centro com a direcao pedida; a altura pela pelve; o comando de pulo na observacao de todos os exercicios).",
+  "comment": "Area 1 da metodologia de 13/10 (as 3 areas: Corpo, Bola e Goleiro; docs/REINFORCEMENT_LEARNING.md e o Vault, Arquitetura_RL.md): uma tarefa so com os exercicios do corpo misturados no mesmo treino. Cada mundo sorteia o seu exercicio pelo peso (drills); o exercicio muda o mundo (como os alvos nascem, as notas, a duracao), nunca o que a rede ve ou faz, e a rede nunca sabe o nome dele: no jogo nao ha exercicio, ha comandos. As fatias seguem o exame (drillWeights). Versao 2 (14/10): o primeiro exercicio de verdade, a estrela (treino_locomocao_claude.md, o 3), no lugar dos tres provisorios (pontos, peito e tiro viram os modos livre e peito fixo dela; o tiro volta como os cortes). Versao 3 (14/10): o peito girando vira um modo de verdade (metade dos de peito fixo, ate 0,6 rad/s, sentido e velocidade sorteados a cada 2-4 s), com a sua bateria e a opcao no laboratorio. Versao 4 (14/10): o giro em trechos de meia a uma volta e meia (0,4-1,2 rad/s) e as distancias mais parecidas (andar 6-9, trote 8-12, corrida 12-17, sprint 16-22 m). Versao 5 (14/10): o exercicio frear (o 4: a pedida muda no caminho e metade dos discos e de pare aqui) e o clipe parado na biblioteca. Versao 6 (14/10): o exercicio curvas (o 5: alvos a cada 2 m em arcos abertos, medios e fechados, em S, com a velocidade limitada pelo raio). Versao 7 (14/10): com o peito livre, o peito olha para onde vai (o proximo alvo, puxado para o seguinte), na nota e na bateria: ele ia de lado. De costas ou de lado com o peito livre, so no ultimo metro. Versao 8 (14/10): os exercicios parado (o 1, no alerta), girar parado (o 2, o peito girando em trechos e ele junto, no lugar) e empurroes (parado, levando empurroes de lados e forcas sorteados), com o desenho hold (o alvo e o lugar do comeco). Versao 9 (14/10): os giros no lugar do Mixamo (90 e 180 graus, em ciclo) para o girar parado ter passos de verdade. Versao 10 (14/10): os parados revisam a estabilizacao do comeco (as notas de ficar de pe do H1b: quieto, centro de massa sobre os pes, pe sem sair do lugar nem escorregar, tronco sem girar; no girar, sem as duas que o giro precisa); eles nao tinham, e o cerebro tremia parado. Versao 11 (14/10): a estrela continua (de ponta a ponta) e a reacao (o proximo escondido ate a chegada), no lugar do exercicio cortes; o tempo de cada corte medido na bateria. Versao 12 (14/10): o exercicio pulos (secao 8: a zona no meio da ida, o pulo parado no centro com a direcao pedida; a altura pela pelve; o comando de pulo na observacao de todos os exercicios). Versao 13 (14/10): o nao cair (o 9) no peito girando do frear: as forcas (tranco, continua, tropeco) e a chance de se recobrar; a bateria frear_forca_v1.",
   "postures": [
     {
       "id": "alerta",
@@ -306,7 +306,7 @@
       "id": "frear",
       "name": "Frear e parar",
       "weight": 1.0,
-      "comment": "O 4 (treino_locomocao_claude.md): na estrela, a pedida muda ate 2 vezes no caminho entre um disco e outro (arrancar e frear sem aviso) e metade dos discos e de pare aqui (parar dentro do disco, ficar parado 0,8-1,5 s e arrancar dali). O peito livre, fixo e girando como na estrela.",
+      "comment": "O 4 (treino_locomocao_claude.md): na estrela, a pedida muda ate 2 vezes no caminho entre um disco e outro (arrancar e frear sem aviso) e metade dos discos e de pare aqui (parar dentro do disco, ficar parado 0,8-1,5 s e arrancar dali). O peito livre, fixo e girando como na estrela. Peito girando + forca (o 9, nao cair, 14/10): so com o peito girando, sem aviso a cada 2-4 s, um tranco (100-800 N por 0,1-0,25 s), uma forca continua (30%: 100-300 N por 1-3 s) ou um tropeco (20%: um puxao de 150-400 N no pe que esta no ar); por 3 s depois de cada uma, a mao no chao nao encerra e baixo so e queda se durar 0,75 s (ele pode se recobrar).",
       "overrides": {
         "target": {
           "pattern": "star",
@@ -321,6 +321,24 @@
             "changesPerLeg": 2,
             "stopFraction": 0.5
           }
+        },
+        "pushes": {
+          "enabled": true,
+          "whenRotating": true,
+          "intervalSeconds": [2.0, 4.0],
+          "durationSeconds": [0.1, 0.25],
+          "forceNewtons": [100.0, 800.0],
+          "sustainedFraction": 0.3,
+          "sustainedNewtons": [100.0, 300.0],
+          "sustainedSeconds": [1.0, 3.0],
+          "tripFraction": 0.2,
+          "tripNewtons": [150.0, 400.0],
+          "tripSeconds": [0.08, 0.15],
+          "links": ["Pelvis", "UpperChest"]
+        },
+        "termination": {
+          "recoverySeconds": 3.0,
+          "fallGraceSeconds": 0.75
         }
       }
     },
@@ -569,6 +587,14 @@
       "seconds": 40.0,
       "referenceSpeed": 3.0,
       "facing": 1
+    },
+    {
+      "name": "frear_forca_v1",
+      "drill": "frear",
+      "posture": "alerta",
+      "seconds": 40.0,
+      "referenceSpeed": 3.0,
+      "facing": 2
     }
   ],
   "exploration": {

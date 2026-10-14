@@ -1270,6 +1270,43 @@ void testJumps() {
     }
 }
 
+// O frear com o peito girando + forca (o 9, nao cair): as forcas so com o
+// peito girando, de 100 a 800 N (o intervalo encurtado numa copia, para a
+// primeira vir antes de o boneco sem politica cair).
+void testBrakeForces() {
+    const std::filesystem::path task = raceVariant("corpo_forcas.json",
+        { { "\"intervalSeconds\": [2.0, 4.0]", "\"intervalSeconds\": [0.02, 0.04]" } }, "corpo.json");
+    const TrainingTask3D corpo = loadTrainingTask3D(std::filesystem::path(MATTERENGINE_TEST_ASSETS_DIR) / "rl/tasks/corpo.json");
+    const TrainingTask3D& frear = *corpo.drills[1].task;
+    require(frear.pushes.enabled && frear.pushes.whenRotating && frear.pushes.sustainedFraction > 0.0f
+            && frear.pushes.tripFraction > 0.0f && frear.termination.recoverySeconds > 0.0f
+            && frear.termination.fallGraceSeconds > 0.0f && !corpo.drills[0].task->pushes.enabled,
+        "o frear tem as forcas no peito girando e a chance de se recobrar");
+    for (const int facing : { 1, 2 }) {
+        TrainingBatchSettings3D s = settings(8, 4);
+        s.taskPath = task;
+        s.evaluation = true;
+        s.evaluationEpisodeSeconds = 40.0f;
+        s.facing = facing;
+        s.drill = "frear";
+        TrainingBatch3D batch(s);
+        bool pushed = false;
+        float strongest = 0.0f;
+        for (int step = 0; step < 10; ++step) {
+            batch.step(std::vector<float>(8 * batch.actionSize(), 0.0f));
+            for (std::size_t e = 0; e < 8; ++e) {
+                const TrainingEnvironmentView3D view = batch.view(e);
+                if (view.pushLink < 0) continue;
+                pushed = true;
+                strongest = std::max(strongest, std::hypot(view.pushForce.x, view.pushForce.y));
+            }
+        }
+        require(pushed == (facing == 2), "as forcas so com o peito girando (peito " + std::to_string(facing) + ")");
+        if (facing == 2)
+            require(strongest > 100.0f && strongest <= 800.0f + 1.0f, "as forcas ate 800 N (" + std::to_string(strongest) + ")");
+    }
+}
+
 } // namespace
 
 void runTrainingBatchTests() {
@@ -1294,5 +1331,6 @@ void runTrainingBatchTests() {
     testStanding();
     testTurnCycles();
     testJumps();
+    testBrakeForces();
     std::cout << "RL training batch tests passed\n";
 }

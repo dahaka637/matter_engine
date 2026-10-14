@@ -163,6 +163,9 @@ struct TrainingEpisode3D {
     float jumpRiseError = 0.0f;
     float landingFall = -1.0f;
     float jumpRecoverySeconds = -1.0f;
+    // As forcas: o tempo medio ate voltar, em pe e na velocidade pedida,
+    // depois de cada uma (s; -1 sem).
+    float pushRecoverySeconds = -1.0f;
 };
 
 // Um mundo de treino visto por fora (o visualizador, a gravacao).

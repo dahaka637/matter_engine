@@ -15,7 +15,7 @@ from .model import ACTION_LIMIT, ActorCritic
 
 REASONS = ["nenhum", "queda_contato", "queda_altura", "numerico", "tempo", "limite", "alvo_perdido"]
 # As colunas do resumo de um episodio (finished_episodes do modulo nativo).
-EPISODE_COLUMNS = 40
+EPISODE_COLUMNS = 41
 FALLS = {1, 2, 3}
 
 
@@ -412,6 +412,9 @@ class Evaluator:
             metrics["jump_rise_error"] = float(rows[jumped, 37].mean()) if jumped.any() else 0.0
             metrics["landing_falls"] = float(landing.mean()) if len(landing) else -1.0
             metrics["jump_recovery"] = float(recovery.mean()) if len(recovery) else -1.0
+            # As forcas: o tempo ate voltar, em pe e na pedida (s; so medido).
+            pushed = rows[:, 40][rows[:, 40] >= 0]
+            metrics["push_recovery"] = float(pushed.mean()) if len(pushed) else -1.0
             metrics["reference_speed"] = float((spec or {}).get("referenceSpeed", 6.0))
         metrics["kind"] = kind
         metrics["score"] = (walking_score(metrics) if kind == "andar" else goal_score(metrics) if kind == "alvo"

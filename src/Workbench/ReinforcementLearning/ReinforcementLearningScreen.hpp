@@ -210,6 +210,8 @@ private:
         // Os modos do peito de cada exercicio (bit 0 livre, 1 fixo, 2 girando):
         // um so, sem ramos; mais de um, um ramo por modo.
         std::vector<unsigned> drillChests;
+        // O peito girando do exercicio vem com as forcas (o "girando + forca").
+        std::vector<bool> drillForce;
         bool facing = false;
     };
     std::vector<Skill> m_skills;
