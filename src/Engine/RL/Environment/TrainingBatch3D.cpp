@@ -1746,6 +1746,28 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
         facingHold = std::exp(-error * error / (sigma * sigma));
         env.facingErrorSquares += error * error;
         ++env.facingSteps;
+    } else if (targeting() && task.target.freeLook) {
+        // O peito livre olha para onde vai: o proximo alvo, puxado para o
+        // seguinte; a menos de 1,5 raio do alvo, o seguinte.
+        const auto unit = [](float x, float y) {
+            const float length = std::hypot(x, y);
+            return length > 1.0e-4f ? Vec3 { x / length, y / length, 0.0f } : Vec3 {};
+        };
+        const float ax = env.target.x - reading.com.x, ay = env.target.y - reading.com.y;
+        const bool next = task.target.lookahead > 0;
+        Vec3 look = unit(ax, ay);
+        if (next) {
+            const Vec3 onward = unit(env.upcoming[0].x - env.target.x, env.upcoming[0].y - env.target.y);
+            look = std::hypot(ax, ay) < 1.5f * task.target.radius ? onward : look + onward * task.target.freeLookNext;
+        }
+        if (std::hypot(look.x, look.y) > 1.0e-3f) {
+            float error = std::atan2(look.y, look.x) - facingLinkHeading(state);
+            error = std::atan2(std::sin(error), std::cos(error));
+            const float sigma = task.target.facingSigma;
+            facingHold = std::exp(-error * error / (sigma * sigma));
+            env.facingErrorSquares += error * error;
+            ++env.facingSteps;
+        }
     }
     // O giro: o do corpo contra o pedido (o do clipe agora mais o que alinha a
     // direcao em que o clipe anda com o alvo, da decisao anterior).

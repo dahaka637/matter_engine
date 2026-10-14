@@ -1141,8 +1141,11 @@ void testCurves() {
     for (int step = 0; step < 20; ++step) {
         batch.step(std::vector<float>(8 * batch.actionSize(), 0.0f));
         require(finiteAll(batch.observations()) && finiteAll(batch.rewards()), "as curvas andam sem numero ruim");
-        for (const TrainingEpisode3D& episode : batch.finishedEpisodes())
+        for (const TrainingEpisode3D& episode : batch.finishedEpisodes()) {
             require(episode.lineErrorRms >= 0.0f || episode.steps < 2, "o episodio mede o afastamento da linha");
+            // Com o peito livre, o peito olhando para onde vai entra no erro.
+            require(episode.facingErrorRms >= 0.0f || episode.steps < 2, "o peito livre mede o olhar para o caminho");
+        }
     }
 }
 

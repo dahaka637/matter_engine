@@ -202,6 +202,8 @@ TrainingTask3D parseTask(const nlohmann::json& document, const std::filesystem::
         out.facingSigma = std::max(1.0e-3f, t.value("facingSigma", out.facingSigma));
         out.facingDriftFraction = std::clamp(t.value("facingDriftFraction", out.facingDriftFraction), 0.0f, 1.0f);
         out.facingDriftTurns = range(t, "facingDriftTurns", out.facingDriftTurns);
+        out.freeLook = t.value("freeLook", out.freeLook);
+        out.freeLookNext = std::clamp(t.value("freeLookNext", out.freeLookNext), 0.0f, 2.0f);
         out.facingDriftSpeed = range(t, "facingDriftSpeed", out.facingDriftSpeed);
         if (t.contains("speedCommand") && t["speedCommand"].is_object()) {
             const nlohmann::json& c = t["speedCommand"];

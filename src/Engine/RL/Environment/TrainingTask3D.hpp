@@ -328,6 +328,13 @@ struct TrainingTask3D {
         // Dos episodios com o comando: a fatia em que ele gira (facingDrift); o
         // resto fica fixo no rumo do comeco (o "norte").
         float facingDriftFraction = 1.0f;
+        // O peito livre olhando para onde vai: sem o comando de olhar, o link
+        // do comando (o peito) contra a direcao do proximo alvo, puxada
+        // freeLookNext para o seguinte (perto do alvo, o seguinte), na mesma
+        // nota facingHold e no mesmo erro do episodio. Sem isso, com o peito
+        // livre ir de lado saia de graca.
+        bool freeLook = false;
+        float freeLookNext = 0.5f;
         // O giro em trechos (o jogador girando a camera): com facingDriftTurns,
         // cada trecho sorteia quantas voltas dar (0,5 = meia) e a velocidade
         // (rad/s, facingDriftSpeed) e o sentido; acabou, sorteia o seguinte (o

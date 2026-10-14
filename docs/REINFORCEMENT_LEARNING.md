@@ -297,6 +297,21 @@ diagonal), e a voltar.
   não tem entram com zero, como na migração do treinador. Assim um cérebro
   antigo roda numa tarefa mais nova.
 
+## O peito livre olha para onde vai (14/10/2026)
+
+Com o peito livre, nada cobrava para onde o peito olhava, e o cérebro ia de
+lado (41–45° fora do caminho na estrela, no frear e nas curvas, rodada 60068).
+O usuário viu no laboratório.
+
+- **`target.freeLook`:** sem o comando de olhar, o peito é medido contra a
+  direção do próximo alvo, puxada `freeLookNext` (0,5) para o seguinte. A
+  menos de 1,5 raio do alvo, vale o seguinte.
+- **A mesma nota e o mesmo erro do modo fixo:** a nota `facingHold` e o erro
+  do peito do episódio. A bateria do peito livre passa a descontar o peito
+  fora do caminho.
+- **De costas ou de lado com o peito livre,** só no último metro
+  (`freeBackwardDistance` 1).
+
 ## Frear e parar (14/10/2026)
 
 O segundo exercício do Corpo (o 4 do `treino_locomocao_claude.md`): a estrela,
