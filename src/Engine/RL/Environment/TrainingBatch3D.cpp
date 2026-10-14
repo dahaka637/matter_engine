@@ -133,6 +133,10 @@ struct Environment {
     // quanto tempo no clipe de agora, o giro pedido (rad/s) e para onde olhar (o
     // rumo no mundo; a camera do jogo), com o quanto ele gira agora.
     std::uint32_t index = 0;
+    // O roteiro da avaliacao que o episodio segue (o mundo da bateria; com
+    // evaluationCycle, o seguinte a cada episodio) e os episodios comecados.
+    std::uint32_t sequence = 0;
+    std::uint32_t episodesStarted = 0;
     float clipSince = 0.0f;
     float turnRate = 0.0f;
     float facingCommand = 0.0f;
@@ -428,7 +432,7 @@ std::uint32_t TrainingBatch3D::Impl::drawSpeedBand(Environment& env, std::uint32
     if (bands.size() <= 1) return 0;
     // Na avaliacao, a faixa segue a posicao do mundo e o trecho (cada mundo
     // passa por todas).
-    if (!training()) return static_cast<std::uint32_t>((env.index + k / 2) % bands.size());
+    if (!training()) return static_cast<std::uint32_t>((env.sequence + k / 2) % bands.size());
     float total = 0.0f;
     for (const auto& band : bands) total += band.weight;
     float pick = std::uniform_real_distribution<float>(0.0f, total)(env.rng);
@@ -494,7 +498,7 @@ void TrainingBatch3D::Impl::drawLibraryTarget(Environment& env, Vec3 from, float
             const std::uint32_t directions = std::max(1u, t.starDirections);
             const std::uint32_t slot = training()
                 ? std::uniform_int_distribution<std::uint32_t>(0, directions - 1)(env.rng)
-                : static_cast<std::uint32_t>((env.index * 3 + (k / 2) * 5) % directions);
+                : static_cast<std::uint32_t>((env.sequence * 3 + (k / 2) * 5) % directions);
             const float jitter = training() ? std::uniform_real_distribution<float>(-t.starJitterDegrees,
                 t.starJitterDegrees)(env.rng) * Radians : 0.0f;
             direction = env.courseHeading + 2.0f * std::numbers::pi_v<float> * static_cast<float>(slot)
@@ -523,7 +527,7 @@ void TrainingBatch3D::Impl::drawLibraryTarget(Environment& env, Vec3 from, float
         return;
     }
     if (!training() && !t.evaluationCourses.empty()) {
-        const auto& points = t.evaluationCourses[(t.evaluationPerWorld ? env.index : 0u) % t.evaluationCourses.size()].points;
+        const auto& points = t.evaluationCourses[(t.evaluationPerWorld ? env.sequence : 0u) % t.evaluationCourses.size()].points;
         const std::size_t n = points.size();
         const auto at = [&](std::size_t i) {
             const float laps = static_cast<float>(i / n);
@@ -545,7 +549,7 @@ void TrainingBatch3D::Impl::drawLibraryTarget(Environment& env, Vec3 from, float
             + std::uniform_real_distribution<float>(-spread, spread)(env.rng);
         if (t.distanceRange.maximum > 0.0f) distance = uniform(env.rng, t.distanceRange);
     } else {
-        const std::size_t slot = (t.evaluationPerWorld ? env.index : 0u) + k;
+        const std::size_t slot = (t.evaluationPerWorld ? env.sequence : 0u) + k;
         angle = t.evaluationAngles[slot % t.evaluationAngles.size()] * Radians;
         if (!t.evaluationDistances.empty()) distance = t.evaluationDistances[slot % t.evaluationDistances.size()];
     }
@@ -947,6 +951,9 @@ void TrainingBatch3D::Impl::updateCommand(Environment& env, bool start) {
 
 void TrainingBatch3D::Impl::resetEnvironment(std::uint32_t index) {
     Environment& env = environments[index];
+    env.sequence = env.index
+        + (settings.evaluationCycle ? env.episodesStarted * static_cast<std::uint32_t>(environments.size()) : 0u);
+    ++env.episodesStarted;
     env.drill = chooseDrill(env);
     const TrainingTask3D& task = taskOf(env);  // o exercicio do mundo
     Scene& scene = scenes[env.scene];

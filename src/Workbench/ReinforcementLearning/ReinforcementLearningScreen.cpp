@@ -291,6 +291,9 @@ void ReinforcementLearningScreen::ensureViewer() {
         settings.seed = 7;
         settings.evaluation = true;
         settings.evaluationEpisodeSeconds = 600.0f;
+        // Cada recomeco (uma queda) segue o roteiro de outro mundo da bateria:
+        // na estrela, outra direcao e outra velocidade.
+        settings.evaluationCycle = true;
         // O visualizador mostra a fisica do jogo.
         settings.solverPositionIterations = 20;
         settings.solverVelocityIterations = 20;

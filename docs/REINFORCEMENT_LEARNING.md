@@ -272,6 +272,10 @@ diagonal), e a voltar.
 - **Na tela:** Corpo → Estrela → Peito livre/fixo.
   - O rótulo mostra a velocidade de agora e a pedida ("1,0 m/s · pede 1,2").
   - As 8 pontas da estrela aparecem em cinza, no tamanho da ida de agora.
+  - Cada recomeço (uma queda) segue o roteiro do mundo seguinte da bateria
+    (`evaluationCycle`; `cycle=True` no `Batch` do Python), então o mundo da
+    tela passa por todas as direções e faixas. Sem isso, ele recomeçava
+    sempre no andar para a frente.
 - **Os clipes novos da biblioteca (19 no total):**
   - andar de costas (`walk_backward`);
   - andar de lado (`walk_strafe_right`, e o espelho `walk_strafe_left` feito

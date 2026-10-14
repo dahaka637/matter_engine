@@ -1023,6 +1023,23 @@ void testStar() {
         const float run = 0.5f * (bands[2].speed.minimum + bands[2].speed.maximum);
         require(sideways < run - 0.1f, "de lado a pedida fica no que o sprint de lado faz (" + std::to_string(sideways) + " m/s)");
     }
+    {
+        // O visualizador (um mundo, evaluationCycle): cada recomeco segue o
+        // roteiro do mundo seguinte da bateria, outra direcao e outra faixa.
+        TrainingBatchSettings3D s = evaluation(0);
+        s.environmentCount = 1;
+        s.environmentsPerScene = 1;
+        s.evaluationCycle = true;
+        TrainingBatch3D viewer(s);
+        const TrainingEnvironmentView3D first = viewer.view(0);
+        viewer.reset(7);
+        const TrainingEnvironmentView3D second = viewer.view(0);
+        const float a = std::atan2(first.target.y - first.origin.y, first.target.x - first.origin.x);
+        const float b = std::atan2(second.target.y - second.origin.y, second.target.x - second.origin.x);
+        require(std::abs(std::atan2(std::sin(a - b), std::cos(a - b))) > 0.5f, "o recomeco vai para outra direcao");
+        require(std::abs(planar(second.target, second.origin) - planar(first.target, first.origin)) > 1.0f,
+            "e em outra faixa (outra distancia)");
+    }
 }
 
 } // namespace

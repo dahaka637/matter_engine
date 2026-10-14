@@ -42,6 +42,11 @@ struct TrainingBatchSettings3D {
     // Avaliacao: sem variacao do mundo, sem ruido, episodio mais longo.
     bool evaluation = false;
     float evaluationEpisodeSeconds = 60.0f;
+    // O visualizador: na avaliacao, cada episodio novo de um mundo segue o
+    // roteiro do mundo seguinte da bateria (o mundo mais os episodios ja
+    // comecados vezes os mundos), entao um mundo so passa por todas as idas.
+    // A bateria deixa desligado (cada mundo, o seu roteiro).
+    bool evaluationCycle = false;
     // Iteracoes do solver das juntas; negativo = as do corpo de RL. A
     // avaliacao confere a politica tambem com as 20/20 do jogo.
     int solverPositionIterations = -1;
