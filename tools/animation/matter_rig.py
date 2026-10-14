@@ -143,6 +143,20 @@ class Rig:
         uniform_radius = float(data["uniformRadiusMeters"])
         self.links: list[Link] = []
         for source in data["links"]:
+            if "hull" in source and "box" not in source and "capsule" not in source:
+                # A casca convexa (a chuteira, desde 12/10): aqui vale a caixa
+                # que a envolve, no referencial dela (o chao e as
+                # autocolisoes das ferramentas so precisam do volume).
+                hull = source["hull"]
+                points = np.array(hull["points"], dtype=np.float64)
+                low, high = points.min(axis=0), points.max(axis=0)
+                center = np.array(hull.get("position", [0, 0, 0]), dtype=np.float64)
+                orientation = np.array(hull.get("orientation", [0, 0, 0, 1]), dtype=np.float64)
+                source = dict(source, box={
+                    "position": list(center + qrotate(orientation, (low + high) / 2.0)),
+                    "orientation": list(orientation),
+                    "halfExtents": list((high - low) / 2.0 + float(hull.get("convexRadius", 0.0))),
+                })
             has_box = "box" in source
             shape = source["box"] if has_box else source["capsule"]
             collider = Collider(

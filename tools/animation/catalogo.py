@@ -7,6 +7,7 @@ onde e usado (as tarefas do RL e o personagem do jogo).
 """
 
 import json
+import math
 import pathlib
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -21,7 +22,7 @@ TYPES = [
     ("Arrancar e frear", lambda i: i in ("idle_to_sprint", "crouched_to_sprint") or "stop" in i),
     ("Curvas e cortes", lambda i: "arc" in i or "turn" in i or i == "change_direction"),
     ("Trote", lambda i: i.startswith(("jog", "trot", "mixamo_running"))),
-    ("Corrida e sprint", lambda i: "sprint" in i or "run_backward" in i),
+    ("Corrida e sprint", lambda i: "sprint" in i or i.startswith(("run_backward", "run_forward"))),
     ("Pulos", lambda i: i.startswith("jump")),
     ("Chão e levantar", lambda i: i.startswith("stand_up") or "getting_up" in i),
     ("Futebol", lambda i: i.startswith("tackle")),
@@ -63,6 +64,10 @@ def main() -> int:
         clip_id = clip.name.removesuffix(".matteranim.json")
         speed = data.get("nominalSpeedMetersPerSecond")
         direction = data.get("travelDirectionDegrees")
+        # Os importados com o deslocamento da raiz (x frente, y esquerda): a direcao dele.
+        displacement = data.get("sourceRootDisplacementMeters") or [0.0, 0.0]
+        if direction is None and math.hypot(displacement[0], displacement[1]) > 0.2:
+            direction = math.degrees(math.atan2(displacement[1], displacement[0]))
         row = (f"| `{clip_id}` | {data.get('displayName', '')} | {float(data.get('durationSeconds', 0)):.2f} | "
                f"{'sim' if data.get('loops') else 'não'} | {f'{speed:.1f}' if speed else '—'} | "
                f"{f'{direction:.0f}°' if direction is not None else '—'} | {source(data)} | "
