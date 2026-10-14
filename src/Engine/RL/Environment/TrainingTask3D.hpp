@@ -395,6 +395,15 @@ struct TrainingTask3D {
         // veem o de agora, e a pedida nao freia para uma virada que ele nao
         // conhece).
         float hideNextFraction = 0.0f;
+        // Os alvos no ar (o pulo): com aerial, a rede ve a altura do alvo de
+        // agora e dos proximos (0 no chao; mesma observacao para todos os
+        // exercicios). aerialFraction: a fatia dos alvos suspensos, a uma
+        // altura sorteada em aerialHeight (m do chao); ele so pega o alvo
+        // passando no disco com a cabeca acima dela (pulando). Saindo do disco
+        // por baixo, o alvo fica perdido e o seguinte assume.
+        bool aerial = false;
+        float aerialFraction = 0.0f;
+        TrainingRange3D aerialHeight { 1.9f, 2.2f };
         // As curvas ("arc"): cada uma sorteia um dos tipos de raio (arcRadii,
         // [m, m]: aberta, media, fechada), o quanto gira (arcSweepDegrees) e o
         // sentido (arcSwitchFraction: a chance de trocar de lado, as curvas em

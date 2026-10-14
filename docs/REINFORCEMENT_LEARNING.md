@@ -297,6 +297,28 @@ diagonal), e a voltar.
   não tem entram com zero, como na migração do treinador. Assim um cérebro
   antigo roda numa tarefa mais nova.
 
+## Pulos (14/10/2026)
+
+O exercício 8: a estrela padrão (8 pontas, a velocidade sorteada, o peito
+livre ou fixo) com metade dos alvos no ar.
+
+- **Os alvos no ar** (`target.aerial`, `aerialFraction` 0,5, `aerialHeight`
+  1,9–2,2 m do chão): ele só pega o alvo passando no disco com a cabeça
+  acima dele, pulando. Saindo do disco por baixo, o alvo fica perdido e o
+  seguinte assume, sem a nota da chegada. O primeiro alvo fica sempre no
+  chão; na avaliação, um sim e um não.
+- **A rede vê a altura** do alvo de agora e dos próximos (`target.height`,
+  `target.nextN.height`, em m/2; 0 no chão). Os canais existem em todos os
+  exercícios (a mesma observação), sempre zero fora dos pulos.
+- **A prova:** `pulos_livre_v1` e `pulos_peito_v1`; a fatia dos alvos no ar
+  pegos (`jump_hits`, coluna 35, 36 colunas), só medida.
+- **Na tela:** o disco suspenso, um fio até o chão e uma sombra fraca no chão;
+  com o alvo no ar, a mira da câmera sobe um pouco.
+- **Ainda sem referência de pulo:** a biblioteca não tem clipe de pulo (o pulo
+  do Mixamo não é ciclo). Com o cérebro de 14/10, 0% dos alvos no ar.
+- **Os ramos na tela** seguem os modos do peito que cada exercício sorteia
+  (o Pulos: livre e fixo).
+
 ## O tremor parado e a estrela contínua (14/10/2026)
 
 **O tremor parado.** O usuário viu o cérebro tremer os pés no girar parado. A

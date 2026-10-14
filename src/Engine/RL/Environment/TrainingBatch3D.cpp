@@ -173,6 +173,13 @@ struct Environment {
     std::array<bool, 3> upcomingStop {};
     // A reacao: os proximos escondidos neste trecho.
     bool nextHidden = false;
+    // Os alvos no ar: a altura do de agora e dos proximos (0 no chao), se ele
+    // ja entrou no disco deste, e os pegos e os perdidos.
+    float targetHeight = 0.0f;
+    std::array<float, 3> upcomingHeight {};
+    bool aerialInside = false;
+    std::uint32_t aerialHits = 0;
+    std::uint32_t aerialMisses = 0;
     // O corte: depois de um alvo com virada de 45 graus ou mais, o tempo ate
     // ele andar a 80% da pedida rumo ao seguinte (o comeco, e a soma).
     float cutSince = -1.0f;
@@ -344,6 +351,7 @@ struct TrainingBatch3D::Impl {
     // Frear e parar: se o k-esimo alvo e de "pare aqui", e o comeco de um
     // trecho (o tempo parado e as mudancas da pedida no caminho).
     [[nodiscard]] bool drawStop(Environment& env, std::uint32_t k);
+    [[nodiscard]] float drawHeight(Environment& env, std::uint32_t k);
     void startLeg(Environment& env, std::uint32_t k);
     [[nodiscard]] float redrawSpeed(Environment& env, std::uint32_t k);
     // O comando de velocidade: a faixa sorteada (pelo peso), a velocidade pedida
@@ -439,6 +447,12 @@ void TrainingBatch3D::Impl::buildLayouts() {
             o.channels.push_back({ "command.speed.now", "m/s/6" });
             for (std::uint32_t i = 0; i < task.target.lookahead; ++i)
                 o.channels.push_back({ "command.speed.next" + std::to_string(i + 1), "m/s/6" });
+        }
+        // Os alvos no ar: a altura do de agora e dos proximos (0 no chao).
+        if (task.target.aerial) {
+            o.channels.push_back({ "target.height", "m/2" });
+            for (std::uint32_t i = 0; i < task.target.lookahead; ++i)
+                o.channels.push_back({ "target.next" + std::to_string(i + 1) + ".height", "m/2" });
         }
     }
     // A biblioteca: o clipe de agora (um canal por clipe) e o giro pedido.
@@ -689,12 +703,14 @@ void TrainingBatch3D::Impl::placeLibraryTarget(Environment& env, Vec3 from, floa
         env.targetFrom = { from.x, from.y, 0.0f };
         drawLibraryTarget(env, from, facing, k, env.target, env.targetDirection, env.targetSpeedCommand);
         env.targetStop = drawStop(env, k);
+        env.targetHeight = drawHeight(env, k);
         Vec3 last = env.target;
         float lastDirection = env.targetDirection;
         for (std::uint32_t i = 0; i < ahead; ++i) {
             drawLibraryTarget(env, last, lastDirection, k + 1 + i, env.upcoming[i], env.upcomingDirection[i],
                 env.upcomingSpeed[i]);
             env.upcomingStop[i] = drawStop(env, k + 1 + i);
+            env.upcomingHeight[i] = drawHeight(env, k + 1 + i);
             last = env.upcoming[i];
             lastDirection = env.upcomingDirection[i];
         }
@@ -704,7 +720,9 @@ void TrainingBatch3D::Impl::placeLibraryTarget(Environment& env, Vec3 from, floa
         env.targetDirection = env.upcomingDirection[0];
         env.targetSpeedCommand = env.upcomingSpeed[0];
         env.targetStop = env.upcomingStop[0];
+        env.targetHeight = env.upcomingHeight[0];
         for (std::uint32_t i = 0; i + 1 < ahead; ++i) {
+            env.upcomingHeight[i] = env.upcomingHeight[i + 1];
             env.upcoming[i] = env.upcoming[i + 1];
             env.upcomingDirection[i] = env.upcomingDirection[i + 1];
             env.upcomingSpeed[i] = env.upcomingSpeed[i + 1];
@@ -715,6 +733,7 @@ void TrainingBatch3D::Impl::placeLibraryTarget(Environment& env, Vec3 from, floa
         drawLibraryTarget(env, last, lastDirection, k + ahead, env.upcoming[ahead - 1], env.upcomingDirection[ahead - 1],
             env.upcomingSpeed[ahead - 1]);
         env.upcomingStop[ahead - 1] = drawStop(env, k + ahead);
+        env.upcomingHeight[ahead - 1] = drawHeight(env, k + ahead);
     }
     env.targetClosest = 1e9f;
     env.targetCount = k + 1;
@@ -730,6 +749,16 @@ bool TrainingBatch3D::Impl::drawStop(Environment& env, std::uint32_t k) {
     return std::uniform_real_distribution<float>(0.0f, 1.0f)(env.rng) < sc.stopFraction;
 }
 
+float TrainingBatch3D::Impl::drawHeight(Environment& env, std::uint32_t k) {
+    const TrainingTask3D::Target& t = taskOf(env).target;
+    if (!t.aerial || !(t.aerialFraction > 0.0f) || k == 0) return 0.0f;  // o primeiro, no chao
+    // Na avaliacao, um sim e um nao, na altura do meio.
+    if (!training())
+        return (env.sequence + k) % 2 == 0 ? 0.5f * (t.aerialHeight.minimum + t.aerialHeight.maximum) : 0.0f;
+    return std::uniform_real_distribution<float>(0.0f, 1.0f)(env.rng) < t.aerialFraction ? uniform(env.rng, t.aerialHeight)
+                                                                                           : 0.0f;
+}
+
 float TrainingBatch3D::Impl::redrawSpeed(Environment& env, std::uint32_t k) {
     const auto& sc = taskOf(env).target.speedCommand;
     const auto& band = sc.bands[drawSpeedBand(env, k)];
@@ -741,6 +770,7 @@ float TrainingBatch3D::Impl::redrawSpeed(Environment& env, std::uint32_t k) {
 
 void TrainingBatch3D::Impl::startLeg(Environment& env, std::uint32_t k) {
     const auto& sc = taskOf(env).target.speedCommand;
+    env.aerialInside = false;
     // A reacao: os proximos escondidos neste trecho (na avaliacao, um em tres).
     const float hide = taskOf(env).target.hideNextFraction;
     env.nextHidden = hide > 0.0f
@@ -1328,6 +1358,8 @@ void TrainingBatch3D::Impl::resetEnvironment(std::uint32_t index) {
     env.cutSince = -1.0f;
     env.cutSum = 0.0;
     env.cutCount = 0;
+    env.aerialHits = 0;
+    env.aerialMisses = 0;
     if (targeting() && state && !(imitating() && reference.library)) placeFirstTarget(env, *state);
     env.episodeReturn = 0.0;
     env.comSum[0] = env.comSum[1] = 0.0;
@@ -1483,6 +1515,12 @@ void TrainingBatch3D::Impl::writeObservation(const Environment& env, const Ragdo
             *out++ = effectiveSpeed(env, distance) / 6.0f;
             for (std::uint32_t i = 0; i < task.target.lookahead; ++i)
                 *out++ = (env.nextHidden ? env.targetSpeedCommand : env.upcomingSpeed[i]) / 6.0f;
+        }
+        // Os alvos no ar: a altura do de agora e dos proximos (0 no chao).
+        if (task.target.aerial) {
+            *out++ = env.targetHeight / 2.0f;
+            for (std::uint32_t i = 0; i < task.target.lookahead; ++i)
+                *out++ = (env.nextHidden ? env.targetHeight : env.upcomingHeight[i]) / 2.0f;
         }
     }
     if (imitating() && reference.library) {
@@ -1809,6 +1847,25 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
                 ++env.overshootCount;
             }
         }
+        // O alvo no ar: so com a cabeca acima dele, no disco; saindo do disco
+        // por baixo, perdido (o seguinte assume, sem a nota da chegada).
+        bool jumpMissed = false;
+        if (env.targetHeight > 0.0f) {
+            const bool inside = distance < t.radius;
+            arrived = inside && state.links[body.head].position.z >= env.targetHeight;
+            if (arrived) ++env.aerialHits;
+            else if (env.aerialInside && !inside) {
+                jumpMissed = true;
+                ++env.aerialMisses;
+            }
+            env.aerialInside = inside;
+        }
+        if (jumpMissed && imitating() && reference.library) {
+            env.targetSince = static_cast<float>(env.played) * stepSeconds;
+            const Vec3 forward = reading.pelvisFrame.rotate({ 1.0f, 0.0f, 0.0f });
+            placeLibraryTarget(env, reading.com, env.facingActive ? env.facingCommand : std::atan2(forward.y, forward.x),
+                env.targetCount);
+        }
         if (arrived) {
             const float now = static_cast<float>(env.played) * stepSeconds;
             // Um corte comeca aqui se a virada para o seguinte passa de 45 graus.
@@ -1966,6 +2023,8 @@ void TrainingBatch3D::Impl::finishEpisode(Scene& scene, std::uint32_t index, Tra
     episode.footTurnMax = env.footTurnMax;
     episode.meanActionRate = static_cast<float>(env.actionRateSum / n);
     episode.meanReversal = static_cast<float>(env.reversalSum / n);
+    episode.jumpHitFraction = env.aerialHits + env.aerialMisses > 0
+        ? static_cast<float>(env.aerialHits) / static_cast<float>(env.aerialHits + env.aerialMisses) : -1.0f;
     episode.cutSeconds = env.cutCount > 0 ? static_cast<float>(env.cutSum / env.cutCount) : -1.0f;
     episode.meanEffort = static_cast<float>(env.effortSum / n);
     episode.meanJointSpeed = static_cast<float>(env.jointSpeedSum / n);
@@ -2434,8 +2493,10 @@ TrainingEnvironmentView3D TrainingBatch3D::view(std::size_t environment) const {
         for (std::uint32_t i = 0; i < view.upcomingCount; ++i) {
             view.upcoming[i] = env.upcoming[i];
             view.upcomingStop[i] = env.upcomingStop[i];
+            view.upcomingHeight[i] = env.upcomingHeight[i];
         }
         view.targetStop = env.targetStop;
+        view.targetHeight = env.targetHeight;
         view.reachedCount = env.reachedCount;
         for (std::uint32_t i = 0; i < view.reachedCount; ++i) view.reached[i] = env.reachedTargets[i];
         const TrainingTask3D& drill = impl.taskOf(env);

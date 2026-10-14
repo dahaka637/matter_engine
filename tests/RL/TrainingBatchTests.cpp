@@ -938,7 +938,7 @@ void testDrills() {
         // A tarefa Corpo (a area 1): a estrela, com o desenho e o comando de
         // velocidade dela.
         const TrainingTask3D corpo = loadTrainingTask3D(std::filesystem::path(MATTERENGINE_TEST_ASSETS_DIR) / "rl/tasks/corpo.json");
-        require(corpo.drills.size() == 6 && corpo.drills[0].id == "estrela"
+        require(corpo.drills.size() == 7 && corpo.drills[0].id == "estrela"
                 && corpo.drills[0].task->target.pattern == "star" && corpo.target.pattern == "random"
                 && corpo.drills[0].task->target.facingFraction == 0.6f && corpo.target.speedCommand.enabled
                 && corpo.target.speedCommand.bands.size() == 4,
@@ -1224,6 +1224,42 @@ void testTurnCycles() {
     }
 }
 
+// Os pulos (o 8): a estrela com alvos no ar; a rede ve a altura; so pega com
+// a cabeca acima do alvo, e saindo do disco por baixo o alvo fica perdido.
+void testJumps() {
+    const std::filesystem::path task = std::filesystem::path(MATTERENGINE_TEST_ASSETS_DIR) / "rl/tasks/corpo.json";
+    TrainingBatchSettings3D s = settings(8, 4);
+    s.taskPath = task;
+    s.evaluation = true;
+    s.evaluationEpisodeSeconds = 40.0f;
+    s.facing = 0;
+    s.drill = "pulos";
+    TrainingBatch3D batch(s);
+    const std::size_t O = batch.observationSize(), height = channel(batch, "target.height"),
+                      next = channel(batch, "target.next1.height");
+    // Na avaliacao: o primeiro no chao; um sim e um nao no ar, cada mundo de um lado.
+    for (std::size_t e = 0; e < 8; ++e) {
+        const TrainingEnvironmentView3D view = batch.view(e);
+        require(view.targetHeight == 0.0f && batch.observations()[e * O + height] == 0.0f, "o primeiro alvo fica no chao");
+        const bool up = (e + 1) % 2 == 0;
+        require((view.upcomingHeight[0] > 1.8f) == up && (batch.observations()[e * O + next] > 0.9f) == up,
+            "o seguinte no ar num mundo sim e noutro nao, e a rede ve a altura");
+        // A cabeca em pe fica abaixo dos alvos no ar (ele tem de pular).
+        require(view.state && view.state->links[loadRLBody3D(loadTrainingTask3D(task).bodyPath).head].position.z < 1.85f,
+            "parado, a cabeca nao alcanca o alvo no ar");
+    }
+    // Os outros exercicios tem os canais de altura, sempre zero.
+    TrainingBatchSettings3D other = s;
+    other.drill = "estrela";
+    TrainingBatch3D star(other);
+    require(star.observationSize() == O && star.observations()[channel(star, "target.next1.height")] == 0.0f,
+        "a estrela ve as alturas, todas no chao");
+    for (int step = 0; step < 20; ++step) {
+        batch.step(std::vector<float>(8 * batch.actionSize(), 0.0f));
+        require(finiteAll(batch.observations()) && finiteAll(batch.rewards()), "os pulos andam sem numero ruim");
+    }
+}
+
 } // namespace
 
 void runTrainingBatchTests() {
@@ -1247,5 +1283,6 @@ void runTrainingBatchTests() {
     testCurves();
     testStanding();
     testTurnCycles();
+    testJumps();
     std::cout << "RL training batch tests passed\n";
 }

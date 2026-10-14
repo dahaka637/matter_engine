@@ -207,8 +207,9 @@ private:
         // Os exercicios da tarefa (os ids) e se ela tem o comando de olhar.
         std::vector<std::string> drills;
         std::vector<std::string> drillNames;
-        // O peito de cada exercicio: -1 os tres (ramos), ou o unico (0 a 2).
-        std::vector<int> drillChests;
+        // Os modos do peito de cada exercicio (bit 0 livre, 1 fixo, 2 girando):
+        // um so, sem ramos; mais de um, um ramo por modo.
+        std::vector<unsigned> drillChests;
         bool facing = false;
     };
     std::vector<Skill> m_skills;

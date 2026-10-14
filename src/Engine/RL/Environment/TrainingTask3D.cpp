@@ -250,6 +250,9 @@ TrainingTask3D parseTask(const nlohmann::json& document, const std::filesystem::
         out.starJitterDegrees = std::max(0.0f, t.value("starJitterDegrees", out.starJitterDegrees));
         out.starContinuousFraction = std::clamp(t.value("starContinuousFraction", out.starContinuousFraction), 0.0f, 1.0f);
         out.hideNextFraction = std::clamp(t.value("hideNextFraction", out.hideNextFraction), 0.0f, 1.0f);
+        out.aerial = t.value("aerial", out.aerial);
+        out.aerialFraction = std::clamp(t.value("aerialFraction", out.aerialFraction), 0.0f, 1.0f);
+        out.aerialHeight = range(t, "aerialHeight", out.aerialHeight);
         out.lookahead = std::min(3u, t.value("lookahead", out.lookahead));
         out.racingLine = std::clamp(t.value("racingLine", out.racingLine), 0.0f, 0.95f);
         if (t.contains("evaluationCourses"))
@@ -326,6 +329,7 @@ void requireSameLayout(const TrainingTask3D& base, const TrainingTask3D& drill, 
         && base.imitation.enabled == drill.imitation.enabled && base.imitation.library == drill.imitation.library
         && base.imitation.residualActions == drill.imitation.residualActions
         && base.target.enabled == drill.target.enabled && base.target.lookahead == drill.target.lookahead
+        && base.target.aerial == drill.target.aerial
         && base.target.facing == drill.target.facing && base.postures.size() == drill.postures.size()
         && base.target.speedCommand.enabled == drill.target.speedCommand.enabled;
     if (!same)

@@ -165,9 +165,14 @@ void ReinforcementLearningScreen::loadSkills() {
             for (const TrainingTask3D::Drill& drill : task.drills) {
                 skill.drills.push_back(drill.id);
                 skill.drillNames.push_back(drill.name);
-                // Os parados tem um peito so: o fixo, ou o girando.
+                // Os modos que o exercicio sorteia: livre sem o comando sempre,
+                // fixo e girando pela fatia dos com o comando que gira.
                 const TrainingTask3D::Target& target = drill.task->target;
-                skill.drillChests.push_back(target.pattern != "hold" ? -1 : target.facingDriftFraction >= 1.0f ? 2 : 1);
+                unsigned modes = 0u;
+                if (target.facingFraction < 1.0f) modes |= 1u;
+                if (target.facingFraction > 0.0f && target.facingDriftFraction < 1.0f) modes |= 2u;
+                if (target.facingFraction > 0.0f && target.facingDriftFraction > 0.0f) modes |= 4u;
+                skill.drillChests.push_back(modes == 0u ? 1u : modes);
             }
             skill.facing = task.target.facing;
             m_skills.push_back(std::move(skill));
@@ -634,17 +639,34 @@ bool ReinforcementLearningScreen::render(int width, int height) {
     std::vector<InspectionMarker> markers;
     std::vector<InspectionArrow> arrows;
     if (view.hasTarget) {
-        std::vector<Vec3> sequence { m_skeleton->toSkeleton({ view.target.x, view.target.y, 0.0f }) };
+        std::vector<Vec3> sequence { m_skeleton->toSkeleton({ view.target.x, view.target.y, view.targetHeight }) };
         for (std::uint32_t i = 0; i < view.upcomingCount; ++i)
-            sequence.push_back(m_skeleton->toSkeleton({ view.upcoming[i].x, view.upcoming[i].y, 0.0f }));
+            sequence.push_back(m_skeleton->toSkeleton({ view.upcoming[i].x, view.upcoming[i].y, view.upcomingHeight[i] }));
         std::vector<Vec3> reached;
         for (std::uint32_t i = 0; i < view.reachedCount; ++i)
             reached.push_back(m_skeleton->toSkeleton({ view.reached[i].x, view.reached[i].y, 0.0f }));
         appendTargetSequence(sequence, reached, view.targetRadius, markers, arrows);
-        // Os de "pare aqui" (frear e parar) em laranja.
+        // Os de "pare aqui" (frear e parar) em laranja; os no ar (o pulo) sem o
+        // brilho subindo e com um fio ate o chao.
         const std::size_t first = markers.size() - sequence.size();
-        for (std::size_t i = 0; i < sequence.size(); ++i)
+        for (std::size_t i = 0; i < sequence.size(); ++i) {
             if (i == 0 ? view.targetStop : view.upcomingStop[i - 1]) markers[first + i].color = rgb(245, 160, 40);
+            const float height = i == 0 ? view.targetHeight : view.upcomingHeight[i - 1];
+            if (height > 0.0f) {
+                markers[first + i].glowHeight = 0.08f;
+                InspectionMarker shadow = markers[first + i];
+                shadow.center.z = m_skeleton->toSkeleton({ 0.0f, 0.0f, 0.0f }).z;
+                shadow.strength *= 0.3f;
+                shadow.glowHeight = 0.0f;
+                markers.push_back(shadow);
+                Highlight wire;
+                wire.color = rgb(232, 44, 44);
+                const Vec3 top = sequence[i];
+                wire.segments.push_back({ m_skeleton->toSkeleton({ i == 0 ? view.target.x : view.upcoming[i - 1].x,
+                                              i == 0 ? view.target.y : view.upcoming[i - 1].y, 0.0f }), top });
+                highlights.push_back(std::move(wire));
+            }
+        }
         // O desenho do exercicio (a estrela): os pontos fracos, fora os que ja
         // sao alvo agora.
         for (std::uint32_t i = 0; i < view.layoutCount; ++i) {
@@ -733,7 +755,8 @@ bool ReinforcementLearningScreen::render(int width, int height) {
         const Vec3 base { positions.front().x, positions.front().y, 0.0f };
         const Vec3 aim = m_skeleton->toSkeleton(base);
         const Vec3 ahead = m_skeleton->toSkeleton(base + Vec3 { std::cos(m_raceCamera.yaw), std::sin(m_raceCamera.yaw), 0.0f });
-        camera.target = { aim.x, aim.y, 0.85f * pelvis.z };
+        // (Com o alvo no ar, a mira sobe um pouco: o disco suspenso no quadro.)
+        camera.target = { aim.x, aim.y, 0.85f * pelvis.z + 0.3f * view.targetHeight };
         const float run = std::atan2(ahead.y - aim.y, ahead.x - aim.x);
         camera.yaw = run - std::numbers::pi_v<float> + 0.45f + (m_camera.yaw - 35.0f * DegreesToRadians);
     }
@@ -973,15 +996,18 @@ void ReinforcementLearningScreen::drawDrillTree(std::size_t index) {
         ImGui::Indent(ui(14.0f));
         const std::string label = UI::FontAwesome::label(UI::FontAwesome::Crosshairs, skill.drillNames[d].c_str())
             + "##drill" + skill.task + drill;
-        const int only = skill.drillChests[d];
-        const bool branches = skill.facing && only < 0;
+        const unsigned modes = skill.drillChests[d];
+        const bool branches = skill.facing && (modes & (modes - 1u)) != 0u;  // mais de um modo
+        int first = 0;
+        while (first < 2 && !(modes & (1u << first))) ++first;
         if (navigationButton(label.c_str(), open && !branches, { -1.0f, ui(28.0f) })) {
             if (!here) selectSkill(index);
-            setViewerDrill(drill, only >= 0 ? only : m_viewerChest);
+            setViewerDrill(drill, (modes & (1u << m_viewerChest)) ? m_viewerChest : first);
         }
         if (branches) {
             ImGui::Indent(ui(14.0f));
             for (int chest = 0; chest < 3; ++chest) {
+                if (!(modes & (1u << chest))) continue;
                 const std::string item = std::string(Chests[chest]) + "##chest" + skill.task + drill + std::to_string(chest);
                 if (navigationButton(item.c_str(), open && chest == m_viewerChest, { -1.0f, ui(26.0f) })) {
                     if (!here) selectSkill(index);

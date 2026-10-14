@@ -155,6 +155,8 @@ struct TrainingEpisode3D {
     // Os cortes: o tempo medio de cada um (da chegada num alvo com virada de
     // 45 graus ou mais ate andar a 80% da pedida rumo ao seguinte; s; -1 sem).
     float cutSeconds = -1.0f;
+    // Os alvos no ar: a fatia pega dos que ele alcancou ou perdeu (-1 sem).
+    float jumpHitFraction = -1.0f;
 };
 
 // Um mundo de treino visto por fora (o visualizador, a gravacao).
@@ -191,6 +193,9 @@ struct TrainingEnvironmentView3D {
     // Frear e parar: o alvo de agora e os proximos sao de "pare aqui".
     bool targetStop = false;
     std::array<bool, 3> upcomingStop {};
+    // Os alvos no ar: a altura do de agora e dos proximos (0 no chao).
+    float targetHeight = 0.0f;
+    std::array<float, 3> upcomingHeight {};
     // Os ultimos alcancados no episodio (o mais novo primeiro).
     std::uint32_t reachedCount = 0;
     std::array<Vec3, 3> reached {};
