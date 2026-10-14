@@ -57,6 +57,10 @@ no `docs/REINFORCEMENT_LEARNING.md` ("A reformulação do Corpo").
     (1,9 → 3,6 s em 3 milhões de decisões). A taxa de aprendizado fica presa
     no piso com a rede maior: o ajuste é a primeira coisa a acertar no
     Experimento B.
+- **E8 adiantada (o espelho, sem treino):** o mapa entre os lados medido nas
+  poses (o corpo v2 é simétrico até 1,5 mm), os mapas da entrada, da ação e
+  do juiz, o teste da física espelhada, o acervo com a cópia espelhada de cada
+  clipe e a perda do espelho no ator (desligada até a comparação).
 - **E2 (Experimento A, feito):**
   - a velocidade pedida pela reta da ação média;
   - a ponta do pé sem tremor numérico;

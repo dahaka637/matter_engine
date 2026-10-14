@@ -212,6 +212,30 @@ o cérebro antigo e as comparações até a F1.
     tempo no teto, reversão e cadência).
 - **A prévia do Corpo v2** (`tools/rl/previa_corpo.py`): uma política exportada
   no lote v2 com a física do jogo, mais os dumps para as folhas de quadros.
+- **O espelho** (`src/Engine/RL/Contract/Mirror3D`, a mecânica da E8 adiantada;
+  a comparação com e sem ele depende de treino):
+  - **o mapa sai das poses:** para cada eixo de cada junta, o sinal do eixo do
+    outro lado é o que reproduz a pose refletida. A medida é nas superfícies
+    dos colisores (a distância com sinal de cada ponto até o próprio colisor
+    contra a do refletido até o do outro lado), então a triangulação das
+    cascas não conta. O corpo v2 é simétrico até 1,5 mm, e todos os eixos se
+    decidem;
+  - **os mapas dos layouts** pelos nomes dos canais: a entrada, o crítico, a
+    ação e as medidas do juiz. Os vetores trocam o y, os giros trocam o x e o
+    z, os eixos vão para o outro lado com o sinal medido (a posição desde a
+    base e a ação levam também um deslocamento, porque a base não é
+    simétrica), e o seno e o giro do olhar e o y do movimento trocam de sinal;
+  - **os testes** (`tests/RL/MirrorTests.cpp`):
+    - o espelho do espelho é o original;
+    - as poses dos clipes espelhadas são as refletidas;
+    - a física espelhada se afasta 2,4 mm em 0,5 s sem chão e 2,6 mm em
+      0,1 s de pé. Depois o boneco sem política tomba e o afastamento cresce
+      com o tombo (27 mm em 0,5 s; um trote caindo no chão chega a 155 mm em
+      0,25 s);
+  - **o acervo** (`"mirror": true`) ganha a cópia espelhada de cada clipe;
+  - **a perda do espelho no ator** (`tools/rl/matter_rl/symmetry.py`;
+    `mirror_loss` no `run.json`, desligada por padrão). A ponte entrega os
+    mapas (`BodyBatch.mirror_maps()`).
 
 ## As peças
 
