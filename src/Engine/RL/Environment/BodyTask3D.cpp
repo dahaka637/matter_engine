@@ -139,7 +139,8 @@ BodyTask3D loadBodyTask3D(const std::filesystem::path& path) {
         const nlohmann::json& r = document["reward"];
         BodyRewardSettings3D& w = task.reward;
         w.velocityForm = r.value("velocityForm", w.velocityForm);
-        if (w.velocityForm != "cauchy" && w.velocityForm != "bell") fail("velocityForm desconhecida: " + w.velocityForm);
+        if (w.velocityForm != "cauchy" && w.velocityForm != "bell" && w.velocityForm != "mixed")
+            fail("velocityForm desconhecida: " + w.velocityForm);
         w.velocityToleranceAbsolute = r.value("velocityToleranceAbsolute", w.velocityToleranceAbsolute);
         w.velocityToleranceRelative = r.value("velocityToleranceRelative", w.velocityToleranceRelative);
         w.facingSigma = r.value("facingSigma", w.facingSigma);

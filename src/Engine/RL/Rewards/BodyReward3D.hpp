@@ -20,9 +20,11 @@ namespace MatterEngine {
 
 struct BodyRewardSettings3D {
     // A forma do termo de velocidade (o Experimento B compara): "cauchy"
-    // (cauda longa: 1 / (1 + (e/tol)^2), sinal em toda parte) ou "bell"
-    // (exp(-e^2 / (2 tol^2))). A tolerancia e absoluta mais relativa ao
-    // pedido e nunca vai a zero.
+    // (cauda longa: 1 / (1 + (e/tol)^2), sinal em toda parte), "bell"
+    // (exp(-e^2 / (2 tol^2))) ou "mixed" (metade cauchy, metade linear:
+    // max(0, 1 - e / (|pedido| + 1)), com inclinacao constante longe do
+    // pedido: parado com pedido de andar paga pouco, meio caminho ja paga). A
+    // tolerancia e absoluta mais relativa ao pedido e nunca vai a zero.
     std::string velocityForm = "cauchy";
     float velocityToleranceAbsolute = 0.2f;
     float velocityToleranceRelative = 0.1f;

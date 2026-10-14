@@ -108,7 +108,10 @@ float bodyVelocityScore3D(const BodyRewardSettings3D& settings, Vec3 measured, V
         + settings.velocityToleranceRelative * std::hypot(wanted.x, wanted.y);
     const float u = error / std::max(1.0e-3f, tolerance);
     if (settings.velocityForm == "bell") return std::exp(-0.5f * u * u);
-    return 1.0f / (1.0f + u * u);
+    const float cauchy = 1.0f / (1.0f + u * u);
+    if (settings.velocityForm == "mixed")
+        return 0.5f * cauchy + 0.5f * std::max(0.0f, 1.0f - error / (std::hypot(wanted.x, wanted.y) + 1.0f));
+    return cauchy;
 }
 
 float bodyFacingScore3D(const BodyRewardSettings3D& settings, float chestHeading, float faceHeading) {

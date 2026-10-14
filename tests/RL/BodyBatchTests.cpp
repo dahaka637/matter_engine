@@ -262,6 +262,17 @@ void testRewardOrder() {
     const Vec3 far { 1.0f, 0.0f, 0.0f };
     require(bodyVelocityScore3D(task.reward, far, {}) > 5.0f * bodyVelocityScore3D(bell, far, {}),
         "a cauda longa ainda paga longe do pedido");
+    // A forma mista: parado com pedido de 3 m/s paga pouco, meia velocidade
+    // paga bem mais que na cauda longa, e no pedido paga tudo.
+    BodyRewardSettings3D mixed = task.reward;
+    mixed.velocityForm = "mixed";
+    const Vec3 run3 { 3.0f, 0.0f, 0.0f };
+    const float stillMixed = bodyVelocityScore3D(mixed, {}, run3);
+    const float halfMixed = bodyVelocityScore3D(mixed, { 1.5f, 0.0f, 0.0f }, run3);
+    const float halfCauchy = bodyVelocityScore3D(task.reward, { 1.5f, 0.0f, 0.0f }, run3);
+    const float stillCauchy = bodyVelocityScore3D(task.reward, {}, run3);
+    require(stillMixed < 0.2f && near(bodyVelocityScore3D(mixed, run3, run3), 1.0f), "a forma mista nos extremos");
+    require(halfMixed - stillMixed > 3.0f * (halfCauchy - stillCauchy), "a forma mista tem inclinacao longe do pedido");
     // A conta: dt x (tarefa - custos) - queda, com as parcelas.
     std::array<float, BodyRewardTermNames3D.size()> parts {};
     const float r = bodyReward3D(task.reward, move, 0.8f, 0.5f, running, true, Dt, parts.data());
