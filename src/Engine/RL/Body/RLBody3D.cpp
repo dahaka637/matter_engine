@@ -1,6 +1,7 @@
 #include "Engine/RL/Body/RLBody3D.hpp"
 
 #include "Engine/Animation/AnimationClip3D.hpp"
+#include "Engine/RL/Body/RLFootSplit3D.hpp"
 
 #include <nlohmann/json.hpp>
 
@@ -9,6 +10,7 @@
 #include <fstream>
 #include <iterator>
 #include <limits>
+#include <set>
 #include <stdexcept>
 
 namespace MatterEngine {
@@ -59,6 +61,33 @@ void readClipPose(const RagdollProfile3D& profile, const std::filesystem::path& 
     }
 }
 
+// Uma pose guardada como dado no arquivo do corpo (o corpo v2: o jogo nao
+// carrega clipe nenhum para o Corpo): "coordinates" (o vetor de rotacao de cada
+// junta, pelo id do link; os que faltam ficam em zero) e "rootRotation" (a
+// inclinacao da pelve, [x, y, z, w]).
+void readDataPose(const RagdollProfile3D& profile, const nlohmann::json& source, std::vector<Vec3>& coordinates,
+    Quaternion& rootRotation) {
+    coordinates.assign(profile.links.size(), {});
+    rootRotation = {};
+    if (source.contains("rootRotation")) {
+        const auto& q = source.at("rootRotation");
+        rootRotation = Quaternion { q.at(0).get<float>(), q.at(1).get<float>(), q.at(2).get<float>(), q.at(3).get<float>() }
+            .normalized();
+    }
+    for (const auto& [id, value] : source.at("coordinates").items()) {
+        const std::uint32_t link = findLink(profile, id);
+        coordinates[link] = { value.at(0).get<float>(), value.at(1).get<float>(), value.at(2).get<float>() };
+    }
+}
+
+// A pose de uma entrada do arquivo: de um quadro de clipe ("clip") ou dos dados.
+void readPose(const RagdollProfile3D& profile, const std::filesystem::path& directory, const nlohmann::json& entry,
+    std::vector<Vec3>& coordinates, Quaternion& rootRotation, std::uint64_t& hash) {
+    if (entry.contains("coordinates")) readDataPose(profile, entry, coordinates, rootRotation);
+    else readClipPose(profile, (directory / entry.at("clip").get<std::string>()).lexically_normal(),
+        entry.value("timeSeconds", 0.0f), coordinates, rootRotation, hash);
+}
+
 // Uma postura das juntas de um quadro: os eixos atuados presos no curso e as
 // medidas com os pes no chao.
 RLPosture3D makePosture(const RLBody3D& body, std::string id, std::string displayName, std::vector<Vec3> coordinates,
@@ -72,6 +101,11 @@ RLPosture3D makePosture(const RLBody3D& body, std::string id, std::string displa
         float& value = dof.axis == RagdollAxis3D::Twist ? c.x : dof.axis == RagdollAxis3D::Swing1 ? c.y : c.z;
         value = std::clamp(value, dof.minimumRadians, dof.maximumRadians);
         posture.dofRadians.push_back(value);
+    }
+    // Os eixos travados ficam na pose base em qualquer postura (o motor os segura la).
+    for (const RLBodyDof3D& dof : body.lockedDofs) {
+        Vec3& c = coordinates[dof.linkIndex];
+        (dof.axis == RagdollAxis3D::Twist ? c.x : dof.axis == RagdollAxis3D::Swing1 ? c.y : c.z) = dof.baseRadians;
     }
     posture.jointCoordinates = std::move(coordinates);
     posture.rootRotation = rootRotation;
@@ -179,7 +213,10 @@ void rlBodyLinkStates3D(const RagdollProfile3D& profile, Vec3 rootPosition, Quat
 
 float rlBodyLowestFootPoint3D(const RLBody3D& body, const RLBodyPose3D& pose) {
     float lowest = std::numeric_limits<float>::max();
-    for (const std::uint32_t foot : { body.leftFoot, body.rightFoot }) {
+    std::vector<std::uint32_t> parts;
+    for (const auto& side : body.footParts) parts.insert(parts.end(), side.begin(), side.end());
+    if (parts.empty()) parts = { body.leftFoot, body.rightFoot };
+    for (const std::uint32_t foot : parts) {
         const RagdollCapsuleDefinition3D& collider = body.profile.links[foot].collider;
         const Vec3 center = pose.positions[foot] + pose.orientations[foot].rotate(collider.localPosition);
         const Quaternion orientation = pose.orientations[foot] * collider.localOrientation;
@@ -221,6 +258,21 @@ RLBody3D loadRLBody3D(const std::filesystem::path& definitionPath) {
     const std::filesystem::path directory = definitionPath.parent_path();
     body.profilePath = (directory / document.at("profile").get<std::string>()).lexically_normal();
     body.profile = loadRagdollProfile3D(body.profilePath.string());
+    // A junta dos dedos (o corpo v2): o pe dividido em calcanhar e ponta.
+    if (document.contains("toes")) {
+        const nlohmann::json& toes = document["toes"];
+        RLToeSettings3D settings;
+        constexpr float Radians = 3.14159265358979f / 180.0f;
+        settings.jointFromHeel = toes.value("jointFromHeel", settings.jointFromHeel);
+        settings.jointHeight = toes.value("jointHeightMeters", settings.jointHeight);
+        settings.massShare = toes.value("massShare", settings.massShare);
+        settings.minimumRadians = toes.value("minimumDegrees", settings.minimumRadians / Radians) * Radians;
+        settings.maximumRadians = toes.value("maximumDegrees", settings.maximumRadians / Radians) * Radians;
+        settings.stiffness = toes.value("stiffness", settings.stiffness);
+        settings.damping = toes.value("damping", settings.damping);
+        settings.maximumTorque = toes.value("maximumTorque", settings.maximumTorque);
+        splitRagdollToes3D(body.profile, settings);
+    }
     const RagdollProfile3D& profile = body.profile;
     body.hash = fnv1a(text, fnv1a(readText(body.profilePath)));
 
@@ -230,6 +282,14 @@ RLBody3D loadRLBody3D(const std::filesystem::path& definitionPath) {
     body.leftHand = findLink(profile, "LeftHand");
     body.rightHand = findLink(profile, "RightHand");
     body.upperChest = findLink(profile, "UpperChest");
+    for (std::size_t i = 0; i < profile.links.size(); ++i) {
+        if (profile.links[i].id == "LeftToe") body.leftToe = static_cast<int>(i);
+        if (profile.links[i].id == "RightToe") body.rightToe = static_cast<int>(i);
+    }
+    body.footParts[0] = { body.leftFoot };
+    body.footParts[1] = { body.rightFoot };
+    if (body.leftToe >= 0) body.footParts[0].push_back(static_cast<std::uint32_t>(body.leftToe));
+    if (body.rightToe >= 0) body.footParts[1].push_back(static_cast<std::uint32_t>(body.rightToe));
     body.supportLink.assign(profile.links.size(), 0);
     for (const auto& id : document.at("supportLinks")) body.supportLink[findLink(profile, id.get<std::string>())] = 1;
 
@@ -241,11 +301,8 @@ RLBody3D loadRLBody3D(const std::filesystem::path& definitionPath) {
     // A pose base: as coordenadas das juntas e a inclinacao da pelve num
     // quadro do clipe.
     body.baseJointCoordinates.assign(profile.links.size(), {});
-    if (document.contains("basePose")) {
-        const nlohmann::json& base = document["basePose"];
-        readClipPose(profile, (directory / base.at("clip").get<std::string>()).lexically_normal(),
-            base.value("timeSeconds", 0.0f), body.baseJointCoordinates, body.baseRootRotation, body.hash);
-    }
+    if (document.contains("basePose"))
+        readPose(profile, directory, document["basePose"], body.baseJointCoordinates, body.baseRootRotation, body.hash);
 
     const float defaultActionScale = document.value("actionScale", 0.25f);
     const nlohmann::json actionScales = document.value("actionScales", nlohmann::json::object());
@@ -255,6 +312,8 @@ RLBody3D loadRLBody3D(const std::filesystem::path& definitionPath) {
         dampingGain = document["gains"].value("dampingScale", 1.0f);
     }
     const nlohmann::json torque = document.value("torque", nlohmann::json::object());
+    std::set<std::string> locked;
+    for (const auto& name : document.value("lockedAxes", nlohmann::json::array())) locked.insert(name.get<std::string>());
     for (std::size_t i = 1; i < profile.links.size(); ++i) {
         const RagdollLinkDefinition3D& link = profile.links[i];
         for (std::size_t a = 0; a < 3; ++a) {
@@ -283,12 +342,18 @@ RLBody3D loadRLBody3D(const std::filesystem::path& definitionPath) {
             }
             dof.maximumTorque = std::min(cap, axis.maximumTorque * 3.0f);
             dof.maximumTorqueScale = axis.maximumTorque > 0.0f ? dof.maximumTorque / axis.maximumTorque : 0.0f;
-            body.dofs.push_back(std::move(dof));
+            if (locked.erase(dof.name) > 0) body.lockedDofs.push_back(std::move(dof));
+            else body.dofs.push_back(std::move(dof));
         }
     }
+    if (!locked.empty()) throw std::runtime_error("corpo de RL: eixo travado que nao existe: " + *locked.begin());
     // Clipes guardam as juntas ja limitadas; a base volta aos limites tambem
     // no vetor por link (para a cinematica).
-    for (const RLBodyDof3D& dof : body.dofs) {
+    std::vector<const RLBodyDof3D*> allDofs;
+    for (const RLBodyDof3D& dof : body.dofs) allDofs.push_back(&dof);
+    for (const RLBodyDof3D& dof : body.lockedDofs) allDofs.push_back(&dof);
+    for (const RLBodyDof3D* pointer : allDofs) {
+        const RLBodyDof3D& dof = *pointer;
         Vec3& coordinates = body.baseJointCoordinates[dof.linkIndex];
         if (dof.axis == RagdollAxis3D::Twist) coordinates.x = dof.baseRadians;
         else if (dof.axis == RagdollAxis3D::Swing1) coordinates.y = dof.baseRadians;
@@ -309,8 +374,7 @@ RLBody3D loadRLBody3D(const std::filesystem::path& definitionPath) {
         if (findRLPosture3D(body, id) >= 0) throw std::runtime_error("corpo de RL: postura repetida: " + id);
         std::vector<Vec3> coordinates;
         Quaternion rootRotation;
-        readClipPose(profile, (directory / entry.at("clip").get<std::string>()).lexically_normal(),
-            entry.value("timeSeconds", 0.0f), coordinates, rootRotation, body.hash);
+        readPose(profile, directory, entry, coordinates, rootRotation, body.hash);
         body.postures.push_back(makePosture(body, id, entry.value("displayName", id), std::move(coordinates), rootRotation));
     }
     return body;

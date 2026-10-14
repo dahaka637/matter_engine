@@ -98,6 +98,15 @@ struct RLBody3D {
     Vec3 baseHeadUp { 0.0f, 0.0f, 1.0f };
     // As posturas paradas: a base primeiro ("natural"), depois as do arquivo.
     std::vector<RLPosture3D> postures;
+    // Os eixos travados ("lockedAxes" no arquivo; no corpo v2, os pulsos):
+    // ficam fora da acao e da entrada, e o motor os segura na pose base.
+    // Destravar e tirar da lista: o eixo volta como canal novo.
+    std::vector<RLBodyDof3D> lockedDofs;
+    // As partes de cada pe que pisam (0 esquerdo, 1 direito): o pe e, com a
+    // junta dos dedos ("toes" no arquivo), a ponta (LeftToe, RightToe).
+    std::array<std::vector<std::uint32_t>, 2> footParts;
+    int leftToe = -1;
+    int rightToe = -1;
     // Identidade do corpo: hash do perfil e da definicao (FNV-1a de 64 bits).
     std::uint64_t hash = 0;
 };

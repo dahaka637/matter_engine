@@ -79,6 +79,9 @@ check_absent "Mundos de treino e politica do RL nao dependem do atleta nem da lo
     '#include "Engine/(Athlete|Character|Control|Locomotion)/' src/Engine/RL/Environment src/Engine/RL/Body src/Engine/RL/Policy src/Engine/RL/Imitation
 check_absent "A politica exportada (RL/Policy) nao depende da fisica" \
     '#include "Engine/(Physics|RL/Environment|RL/Body)/' src/Engine/RL/Policy
+check_absent "Contrato do Corpo e corpo de RL (vao para o jogo) nao dependem dos mundos de treino, do estilo, das notas, do piloto, da imitacao, do professor nem do treinador" \
+    '#include "Engine/RL/(Environment|Style|Rewards|Commands|Imitation|Teacher|Supervisor|Calibration)/' \
+    src/Engine/RL/Contract src/Engine/RL/Body
 check_absent "Tela de RL fala com o treinador so pelo Supervisor (sem sockets nem processos)" \
     '#include <(sys/|spawn\.h|unistd\.h)' src/Workbench
 check_absent "Tela de RL fala com a GPU so pelo CanvasTarget" \

@@ -81,6 +81,10 @@ $checks = @(
         Arguments = @("-n", '#include "Engine/(Physics|RL/Environment|RL/Body)/', "src/Engine/RL/Policy")
     }
     @{
+        Name = "Contrato do Corpo e corpo de RL (vao para o jogo) nao dependem dos mundos de treino, do estilo, das notas, do piloto, da imitacao, do professor nem do treinador"
+        Arguments = @("-n", '#include "Engine/RL/(Environment|Style|Rewards|Commands|Imitation|Teacher|Supervisor|Calibration)/', "src/Engine/RL/Contract", "src/Engine/RL/Body")
+    }
+    @{
         Name = "Tela de RL fala com o treinador so pelo Supervisor (sem sockets nem processos)"
         Arguments = @("-n", '#include <(sys/|spawn\.h|unistd\.h)', "src/Workbench")
     }

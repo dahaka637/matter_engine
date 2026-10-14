@@ -3,11 +3,13 @@
 
 // Os testes do treino de RL (corpo e lote). Cada arquivo registra os seus.
 void runRLBodyTests();
+void runBodyContractTests();
 void runTrainingBatchTests();
 
 int main() {
     try {
         runRLBodyTests();
+        runBodyContractTests();
         runTrainingBatchTests();
         std::cout << "RL training tests passed\n";
         return 0;

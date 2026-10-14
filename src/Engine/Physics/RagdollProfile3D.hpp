@@ -170,5 +170,9 @@ struct RagdollProfileValidationIssue3D {
 void validateRagdollProfileOrThrow3D(const RagdollProfile3D& profile);
 [[nodiscard]] std::size_t ragdollDegreesOfFreedom3D(
     const RagdollProfile3D& profile);
+// Uma casca convexa montada fora do arquivo (os pontos e as faces no
+// referencial do colisor): centra na caixa justa (o colisor desloca junto) e
+// calcula os planos das faces e o contorno da sola, como o leitor faz.
+void prepareRagdollConvexHull3D(RagdollCapsuleDefinition3D& collider);
 
 } // namespace MatterEngine

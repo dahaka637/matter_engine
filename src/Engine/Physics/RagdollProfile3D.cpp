@@ -610,6 +610,11 @@ void validateRagdollProfileOrThrow3D(const RagdollProfile3D& profile) {
     throw std::runtime_error(message);
 }
 
+void prepareRagdollConvexHull3D(RagdollCapsuleDefinition3D& collider) {
+    collider.shape = RagdollColliderShape3D::ConvexHull;
+    prepareHull(collider);
+}
+
 std::size_t ragdollDegreesOfFreedom3D(const RagdollProfile3D& profile) {
     std::size_t count = 0;
     for (const RagdollLinkDefinition3D& link : profile.links) {

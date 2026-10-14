@@ -1,0 +1,345 @@
+{
+  "schema": "matter-rl-body-1",
+  "id": "football_player_v2",
+  "comment": "O corpo de treino da reformulacao do RL (vault: Aprendizado_por_Reforco/novo_plano/plano_claude_rl.md, secao 5.10): o perfil do jogo (que nao muda) com a junta dos dedos (o pe dividido em calcanhar e ponta, LeftToe e RightToe) e os pulsos travados (lockedAxes: o motor os segura na pose base; destravar e tirar da lista). As posturas sao dados (o primeiro quadro de natural_idle e de alert_idle), sem carregar clipe. Os tetos de torque, os ganhos e as escalas da acao sao os do v1, mais os da ponta. O v1 continua sendo o corpo do contrato 1 (o cerebro da imitacao residual).",
+  "profile": "../../characters/football_player/FootballPlayerV1.ragdoll.json",
+  "toes": {
+    "comment": "O osso dos dedos do modelo visual fica a 70% da chuteira a partir do calcanhar e 2,5 cm acima da sola. Positivo dobra a ponta para baixo, negativo para cima (o empurrao da ponta do pe: ate 60 graus).",
+    "jointFromHeel": 0.7,
+    "jointHeightMeters": 0.025,
+    "massShare": 0.2,
+    "minimumDegrees": -60.0,
+    "maximumDegrees": 25.0,
+    "stiffness": 60.0,
+    "damping": 2.0,
+    "maximumTorque": 60.0
+  },
+  "lockedAxes": [
+    "LeftHand.twist",
+    "LeftHand.swing1",
+    "RightHand.twist",
+    "RightHand.swing1"
+  ],
+  "basePose": {
+    "comment": "O primeiro quadro de natural_idle (a postura natural, de onde a acao parte).",
+    "rootRotation": [
+      0.0,
+      0.0087265,
+      0.0,
+      0.9999619
+    ],
+    "coordinates": {
+      "Abdomen": [
+        0.0,
+        0.015708,
+        0.0
+      ],
+      "Chest": [
+        0.0,
+        0.018326,
+        0.0
+      ],
+      "UpperChest": [
+        0.0,
+        0.018326,
+        0.0
+      ],
+      "Neck": [
+        0.0124436,
+        0.0279253,
+        -0.0
+      ],
+      "Head": [
+        0.0186654,
+        0.0418879,
+        -0.0
+      ],
+      "LeftUpperArm": [
+        0.0696324,
+        1.2976289,
+        -0.1745519
+      ],
+      "LeftForearm": [
+        0.2792527,
+        0.0,
+        0.0
+      ],
+      "LeftHand": [
+        -0.1047198,
+        0.0,
+        0.0
+      ],
+      "RightUpperArm": [
+        -0.0696324,
+        1.2976289,
+        0.1745519
+      ],
+      "RightForearm": [
+        0.2792527,
+        0.0,
+        0.0
+      ],
+      "RightHand": [
+        0.1047198,
+        0.0,
+        0.0
+      ],
+      "LeftThigh": [
+        0.1206276,
+        -0.1842672,
+        -0.0273329
+      ],
+      "LeftShin": [
+        0.3415537,
+        0.0,
+        0.0
+      ],
+      "LeftFoot": [
+        -0.1733753,
+        0.0182538,
+        0.0
+      ],
+      "RightThigh": [
+        -0.1206275,
+        -0.1842767,
+        0.0273335
+      ],
+      "RightShin": [
+        0.3415729,
+        0.0,
+        0.0
+      ],
+      "RightFoot": [
+        -0.1733849,
+        -0.0182539,
+        0.0
+      ]
+    }
+  },
+  "postures": [
+    {
+      "id": "alerta",
+      "displayName": "Postura de alerta",
+      "comment": "O primeiro quadro de alert_idle (o parado do jogo).",
+      "rootRotation": [
+        -0.0282065,
+        -0.0432596,
+        -0.1903335,
+        0.9803602
+      ],
+      "coordinates": {
+        "Abdomen": [
+          0.0816649,
+          0.1878964,
+          0.0151313
+        ],
+        "Chest": [
+          0.1647326,
+          0.0441919,
+          0.0308191
+        ],
+        "UpperChest": [
+          0.1647325,
+          0.0441918,
+          0.030819
+        ],
+        "Neck": [
+          -0.0074358,
+          -0.0599236,
+          -0.0015154
+        ],
+        "Head": [
+          -0.0074359,
+          -0.0948307,
+          -0.0015154
+        ],
+        "LeftUpperArm": [
+          -0.1191997,
+          1.3415893,
+          -0.0832904
+        ],
+        "LeftForearm": [
+          0.8168208,
+          0.0,
+          0.0
+        ],
+        "LeftHand": [
+          0.3439498,
+          -0.3384761,
+          0.0
+        ],
+        "RightUpperArm": [
+          -0.1133294,
+          1.3156925,
+          -0.2256409
+        ],
+        "RightForearm": [
+          0.7442677,
+          0.0,
+          0.0
+        ],
+        "RightHand": [
+          0.0001482,
+          0.2119575,
+          0.0
+        ],
+        "LeftThigh": [
+          0.2185392,
+          -0.2819899,
+          -0.2643188
+        ],
+        "LeftShin": [
+          0.343366,
+          0.0,
+          0.0
+        ],
+        "LeftFoot": [
+          0.0542205,
+          0.1647337,
+          0.0
+        ],
+        "RightThigh": [
+          -0.3505454,
+          0.1097907,
+          0.1985685
+        ],
+        "RightShin": [
+          0.3259205,
+          0.0,
+          0.0
+        ],
+        "RightFoot": [
+          -0.2896049,
+          -0.219716,
+          0.0
+        ]
+      }
+    }
+  ],
+  "solver": {
+    "comment": "10/6 em vez das 20/20 do jogo: 1,6x mais rapido; segurando a pose base o corpo cai em media em 2,67 s contra 2,81 s no 20/20 e as quedas com acao aleatoria sao iguais (12/10/2026). A bateria de avaliacao confere a politica tambem no 20/20.",
+    "positionIterations": 10,
+    "velocityIterations": 6
+  },
+  "actionScale": 0.25,
+  "actionScales": {
+    "Abdomen": 0.15,
+    "Chest": 0.15,
+    "UpperChest": 0.15,
+    "Neck": 0.15,
+    "Head": 0.15,
+    "LeftHand": 0.2,
+    "RightHand": 0.2,
+    "LeftUpperArm": 0.3,
+    "RightUpperArm": 0.3,
+    "LeftToe": 0.2,
+    "RightToe": 0.2
+  },
+  "gains": {
+    "stiffnessScale": 1.0,
+    "dampingScale": 1.0
+  },
+  "supportLinks": [
+    "LeftFoot",
+    "RightFoot",
+    "LeftToe",
+    "RightToe"
+  ],
+  "torque": {
+    "Abdomen": [
+      150,
+      300,
+      250
+    ],
+    "Chest": [
+      150,
+      300,
+      250
+    ],
+    "UpperChest": [
+      150,
+      300,
+      250
+    ],
+    "Neck": [
+      60,
+      60,
+      60
+    ],
+    "Head": [
+      40,
+      40,
+      40
+    ],
+    "LeftUpperArm": [
+      120,
+      120,
+      120
+    ],
+    "LeftForearm": [
+      90,
+      0,
+      0
+    ],
+    "LeftHand": [
+      20,
+      20,
+      0
+    ],
+    "RightUpperArm": [
+      120,
+      120,
+      120
+    ],
+    "RightForearm": [
+      90,
+      0,
+      0
+    ],
+    "RightHand": [
+      20,
+      20,
+      0
+    ],
+    "LeftThigh": [
+      150,
+      350,
+      250
+    ],
+    "LeftShin": [
+      300,
+      0,
+      0
+    ],
+    "LeftFoot": [
+      250,
+      120,
+      0
+    ],
+    "RightThigh": [
+      150,
+      350,
+      250
+    ],
+    "RightShin": [
+      300,
+      0,
+      0
+    ],
+    "RightFoot": [
+      250,
+      120,
+      0
+    ],
+    "LeftToe": [
+      30,
+      0,
+      0
+    ],
+    "RightToe": [
+      30,
+      0,
+      0
+    ]
+  }
+}

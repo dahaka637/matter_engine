@@ -279,6 +279,9 @@ add_library(MatterCore STATIC
     src/Engine/Math/Vec3.cpp
     src/Engine/Math/Quaternion.cpp
     src/Engine/Math/Mat4.cpp
+    # A casca convexa (quickhull) so depende da matematica: a chuteira do
+    # exportador e a divisao do pe do corpo de RL (sem a engine grafica).
+    src/Engine/Geometry/ConvexHull3D.cpp
 )
 target_include_directories(MatterCore PUBLIC src)
 
@@ -357,7 +360,10 @@ if(MATTERENGINE_BUILD_RL)
     if(MSVC)
         target_compile_options(MatterRLPolicy PRIVATE /W4 /permissive- /utf-8)
     else()
-        target_compile_options(MatterRLPolicy PRIVATE -Wall -Wextra -Wpedantic)
+        # -O3: a conta da rede vetoriza (o -O2 do RelWithDebInfo usa o custo
+        # "very-cheap" e deixa o laco escalar).
+        target_compile_options(MatterRLPolicy PRIVATE -Wall -Wextra -Wpedantic
+            $<$<NOT:$<CONFIG:Debug>>:-O3>)
     endif()
 
     # A ligacao da tela com o treinador (processo, socket local) e o
@@ -372,17 +378,33 @@ if(MATTERENGINE_BUILD_RL)
         target_compile_options(MatterRLSupervisor PRIVATE -Wall -Wextra -Wpedantic)
     endif()
 
-    # Os mundos de treino: o corpo de RL, as tarefas e o lote paralelo.
-    # Depende so da fisica e dos clipes (nada de janela, render ou Python).
-    add_library(MatterRLEnvironment STATIC
+    # O corpo de RL e o contrato do Corpo v2 (o que a rede ve e faz): vai para
+    # o jogo junto com a politica, entao nao depende dos mundos de treino.
+    add_library(MatterRLContract STATIC
         src/Engine/RL/Body/RLBody3D.cpp
+        src/Engine/RL/Body/RLFootSplit3D.cpp
+        src/Engine/RL/Contract/BodyContract3D.cpp
+    )
+    target_include_directories(MatterRLContract PUBLIC src)
+    target_link_libraries(MatterRLContract
+        PUBLIC MatterPhysics MatterAnimationClips MatterCore
+        PRIVATE nlohmann_json::nlohmann_json)
+    if(MSVC)
+        target_compile_options(MatterRLContract PRIVATE /W4 /permissive- /utf-8)
+    else()
+        target_compile_options(MatterRLContract PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+
+    # Os mundos de treino: as tarefas e o lote paralelo. Depende so da fisica,
+    # dos clipes e do contrato (nada de janela, render ou Python).
+    add_library(MatterRLEnvironment STATIC
         src/Engine/RL/Environment/TrainingTask3D.cpp
         src/Engine/RL/Environment/TrainingBatch3D.cpp
         src/Engine/RL/Imitation/ReferenceMotion3D.cpp
     )
     target_include_directories(MatterRLEnvironment PUBLIC src)
     target_link_libraries(MatterRLEnvironment
-        PUBLIC MatterPhysics MatterAnimationClips
+        PUBLIC MatterRLContract MatterPhysics MatterAnimationClips
         PRIVATE nlohmann_json::nlohmann_json)
     if(MSVC)
         target_compile_options(MatterRLEnvironment PRIVATE
@@ -647,7 +669,6 @@ add_library(MatterEngine STATIC
     src/Engine/Math/ShadowCascade.cpp
     src/Engine/Environment/WindSystem.cpp
     src/Engine/Geometry/MeshData3D.cpp
-    src/Engine/Geometry/ConvexHull3D.cpp
     src/Engine/Geometry/ProceduralSoccerBall3D.cpp
     src/Engine/Geometry/GltfLoader.cpp
     src/Engine/Geometry/GltfPhysicsMetadata3D.cpp
@@ -809,6 +830,7 @@ if(MATTERENGINE_BUILD_TESTS)
             COMMAND MatterRLDynamicsTests)
         add_executable(MatterRLTrainingTests
             tests/RL/RLBodyTests.cpp
+            tests/RL/BodyContractTests.cpp
             tests/RL/TrainingBatchTests.cpp
             tests/RL/RLTestMain.cpp)
         target_link_libraries(MatterRLTrainingTests
@@ -913,6 +935,15 @@ if(MATTERENGINE_BUILD_RL)
     target_link_libraries(MatterRLJointProbe PRIVATE MatterRLCalibration)
     target_compile_definitions(MatterRLJointProbe PRIVATE
         MATTERENGINE_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
+    # O Experimento A da reformulacao do RL: os motores do corpo v2 pelo
+    # contrato (a reta entre decisoes, o ruido de exploracao, a ponta do pe).
+    add_executable(MatterRLMotorProbe tools/RLMotorProbe.cpp)
+    target_link_libraries(MatterRLMotorProbe PRIVATE MatterRLContract)
+    target_compile_definitions(MatterRLMotorProbe PRIVATE
+        MATTERENGINE_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
+    # O custo da politica no jogo (22 jogadores a 30 Hz), pelo runtime de hoje.
+    add_executable(MatterRLPolicyBench tools/RLPolicyBench.cpp)
+    target_link_libraries(MatterRLPolicyBench PRIVATE MatterRLPolicy)
     # Velocidade dos mundos de treino por arranjo (sem janela).
     add_executable(MatterRLBenchmark tools/RLBenchmark.cpp)
     target_link_libraries(MatterRLBenchmark PRIVATE MatterRLEnvironment)
