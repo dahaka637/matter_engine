@@ -236,3 +236,24 @@ def test_drill_weights_follow_the_exam():
     capped = dict((d, w) for d, _, w in drill_weights(drills, {"pontos": 0.9, "tiro": 0.2}, rule))
     assert capped["tiro"] == 3.0 and "peito" not in capped              # o teto; sem nota, fica de fora
     assert drill_weights(drills, {}, rule) == []
+
+
+def test_trainer_applies_drill_weights(tmp_path):
+    """O caminho do treino de verdade: o treinador aplica as fatias do exame
+    na copia da tarefa, recarrega os mundos e grava o evento (em 14/10 ele
+    caia no exame por um import faltando, e o teste de cima nao via)."""
+    import json
+    import types
+    from matter_rl.trainer import Trainer
+    task = tmp_path / "tarefa.json"
+    task.write_text(json.dumps({
+        "drills": [{"id": "a", "weight": 1.0}, {"id": "b", "weight": 1.0}],
+        "drillWeights": {"auto": True, "gain": 10.0, "maximumFactor": 3.0},
+        "evaluation": [{"name": "a_v1", "drill": "a"}, {"name": "b_v1", "drill": "b"}]}))
+    reloads, events = [], []
+    fake = types.SimpleNamespace(live_task=task, run="r", batch=types.SimpleNamespace(update_task=reloads.append),
+                                 db=types.SimpleNamespace(event=lambda *args, **kwargs: events.append(args)))
+    Trainer.adjust_drill_weights(fake, {"a_v1": {"jogo": {"score": 0.9}}, "b_v1": {"jogo": {"score": 0.8}}})
+    weights = {d["id"]: (d["weight"], d.get("baseWeight")) for d in json.loads(task.read_text())["drills"]}
+    assert weights["a"][0] == 1.0 and weights["b"] == (2.0, 1.0)   # 0,1 atras: 1 + 10 * 0,1
+    assert reloads == [str(task)] and events[0][1] == "exercicios"

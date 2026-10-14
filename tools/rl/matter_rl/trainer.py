@@ -14,7 +14,7 @@ import numpy as np
 import torch
 
 from . import control, native, paths, storage, system
-from .evaluation import BASE_BATTERY, EPISODE_COLUMNS, SCORE_VERSION, Battery, Evaluator, task_batteries
+from .evaluation import BASE_BATTERY, EPISODE_COLUMNS, SCORE_VERSION, Battery, Evaluator, drill_weights, task_batteries
 from .imitation import Demonstrations, ImitationSettings, TeacherWorlds, decay_weight, imitation_loss, std_log
 from .model import ActorCritic, export_policy, migrate_inputs
 from .ppo import PPO, PPOSettings, Rollout
