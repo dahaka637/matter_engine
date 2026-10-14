@@ -424,7 +424,7 @@ struct TrainingTask3D {
         // biblioteca). Com getUpTarget (m), ao comecar o controle um alvo a essa
         // distancia, na pedida da faixa, e no meio do levantar o clipe emenda
         // na arrancada (getUpSprintClip); sem ele, levantar e ficar no alerta.
-        float dropHeight = 5.0f;
+        float dropHeight = 2.0f;
         std::string getUpBackClip;
         std::string getUpFrontClip;
         std::string getUpSprintClip;
