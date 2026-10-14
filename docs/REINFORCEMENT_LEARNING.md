@@ -209,9 +209,26 @@ o cérebro antigo e as comparações até a F1.
   - **cada rodada no banco:** a coluna `details` (JSON), com o β, a nota de
     estilo média, a saúde do juiz e as medidas de cada exercício (quedas,
     duração, erros de velocidade e de olhar, reação, escorregar, trabalho,
-    tempo no teto, reversão e cadência).
+    tempo no teto, reversão e cadência);
+  - **a avaliação** (a cada `evaluation_minutes`, 10 por padrão, ou com
+    `matter-rl avaliar`): cada exercício roda com a ação média (como no jogo),
+    em 32 mundos fixos e no solver 20/20 do jogo. O primeiro episódio de cada
+    mundo vira as medidas do exercício, na tabela `body_evaluations` e no
+    status.
 - **A prévia do Corpo v2** (`tools/rl/previa_corpo.py`): uma política exportada
   no lote v2 com a física do jogo, mais os dumps para as folhas de quadros.
+- **O cérebro do Corpo no jogo** (`src/Engine/RL/Brain/BodyBrain3D`, biblioteca
+  `MatterRLBrain`: o contrato v2 mais a política exportada, sem nada do
+  treino):
+  - a cada decisão, `decide` (a entrada e a ação média) ou `decideMany` (os
+    22 numa conta só); a cada passo de física, `targets` antes e `afterStep`
+    depois;
+  - recusa uma política de outro contrato (os tamanhos ou os nomes da
+    entrada);
+  - **a paridade do runtime** (`tests/RL/BodyBrainTests.cpp`): numa cena só
+    dele, com o estado inicial e os comandos do mundo 0 do lote, o cérebro dá
+    a mesma entrada a cada decisão e a mesma trajetória, bit a bit, por 24
+    decisões.
 - **O espelho** (`src/Engine/RL/Contract/Mirror3D`, a mecânica da E8 adiantada;
   a comparação com e sem ele depende de treino):
   - **o mapa sai das poses:** para cada eixo de cada junta, o sinal do eixo do

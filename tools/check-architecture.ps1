@@ -93,6 +93,10 @@ $checks = @(
         Arguments = @("-n", '#include "Engine/RL/(Environment|Style|Imitation|Teacher|Supervisor)/', "src/Engine/RL/Rewards")
     }
     @{
+        Name = "O cerebro do Corpo no jogo (RL/Brain) e so o contrato e a politica: nada do treino"
+        Arguments = @("-n", '#include "Engine/RL/(Environment|Style|Rewards|Commands|Imitation|Teacher|Supervisor|Calibration)/', "src/Engine/RL/Brain")
+    }
+    @{
         Name = "O estilo (o juiz e o acervo, RL/Style) so entra nos mundos de treino"
         Arguments = @("-n", '#include "Engine/RL/Style/', "src/Engine/RL/Policy", "src/Engine/RL/Commands", "src/Engine/RL/Rewards", "src/Engine/RL/Imitation", "src/Engine/RL/Teacher", "src/Engine/RL/Supervisor", "src/Engine/RL/Calibration", "src/Engine/Athlete", "src/Workbench")
     }

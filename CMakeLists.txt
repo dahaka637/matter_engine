@@ -396,6 +396,19 @@ if(MATTERENGINE_BUILD_RL)
         target_compile_options(MatterRLContract PRIVATE -Wall -Wextra -Wpedantic)
     endif()
 
+    # O cerebro do Corpo no jogo: o contrato v2 e a politica exportada (sem
+    # nada do treino).
+    add_library(MatterRLBrain STATIC
+        src/Engine/RL/Brain/BodyBrain3D.cpp
+    )
+    target_include_directories(MatterRLBrain PUBLIC src)
+    target_link_libraries(MatterRLBrain PUBLIC MatterRLContract MatterRLPolicy)
+    if(MSVC)
+        target_compile_options(MatterRLBrain PRIVATE /W4 /permissive- /utf-8)
+    else()
+        target_compile_options(MatterRLBrain PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+
     # O adaptador do controle e o piloto (dados puros, sem fisica): o jogo e a
     # IA reaproveitam; o treino aperta o controle por ele.
     add_library(MatterRLCommands STATIC
@@ -856,9 +869,10 @@ if(MATTERENGINE_BUILD_TESTS)
             tests/RL/BodyBatchTests.cpp
             tests/RL/StyleTests.cpp
             tests/RL/MirrorTests.cpp
+            tests/RL/BodyBrainTests.cpp
             tests/RL/RLTestMain.cpp)
         target_link_libraries(MatterRLTrainingTests
-            PRIVATE MatterRLEnvironment)
+            PRIVATE MatterRLEnvironment MatterRLBrain)
         target_compile_definitions(MatterRLTrainingTests PRIVATE
             MATTERENGINE_TEST_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets"
             MATTERENGINE_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/RL/data")

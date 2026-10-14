@@ -87,6 +87,9 @@ check_absent "O piloto e o adaptador do controle (RL/Commands) sao dados puros: 
     src/Engine/RL/Commands
 check_absent "As notas do Corpo (RL/Rewards) nao dependem dos mundos de treino, do estilo nem da imitacao" \
     '#include "Engine/RL/(Environment|Style|Imitation|Teacher|Supervisor)/' src/Engine/RL/Rewards
+check_absent "O cerebro do Corpo no jogo (RL/Brain) e so o contrato e a politica: nada do treino" \
+    '#include "Engine/RL/(Environment|Style|Rewards|Commands|Imitation|Teacher|Supervisor|Calibration)/' \
+    src/Engine/RL/Brain
 check_absent "O estilo (o juiz e o acervo, RL/Style) so entra nos mundos de treino" \
     '#include "Engine/RL/Style/' src/Engine/RL/Policy src/Engine/RL/Commands src/Engine/RL/Rewards \
     src/Engine/RL/Imitation src/Engine/RL/Teacher src/Engine/RL/Supervisor src/Engine/RL/Calibration \
