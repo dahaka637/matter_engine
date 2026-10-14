@@ -94,8 +94,10 @@ o cérebro antigo e as comparações até a F1.
 - **As notas do Corpo** (`src/Engine/RL/Rewards/BodyReward3D`):
   `r = dt × (tarefa − custos) − queda`, e o treinador soma `dt × β × estilo`.
   - **A tarefa:** a velocidade compara o vetor inteiro do centro de massa com o
-    pedido, na cauda longa `1/(1 + (e/tol)²)` ou no sino, com a tolerância
-    0,2 m/s + 10% do pedido. O olhar é o sino do erro do peito contra a câmera
+    pedido, na cauda longa `1/(1 + (e/tol)²)`, no sino, ou na mista (metade
+    cauda longa, metade linear `max(0, 1 − e/(|pedido| + 1))`, com inclinação
+    longe do pedido; no teste de 24 milhões, com a cauda longa ele ficou
+    parado com pedido de andar). A tolerância é 0,2 m/s + 10% do pedido. O olhar é o sino do erro do peito contra a câmera
     (0,4 rad). Os pesos são do exercício (parado 0,5/0,5; andando 0,7/0,3).
   - **Os custos** são somados nos passos de física: o trabalho positivo dos
     motores por peso, o uso do motor `(τ/teto)²`, o escorregar no ponto de
