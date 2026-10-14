@@ -7,6 +7,7 @@
  "durationSeconds": 1.0,
  "sourceSampleRateHz": 30.0,
  "loops": false,
+ "turnCycleDegrees": 90.0,
  "sourceRootDisplacementMeters": [
   0.0120851,
   -0.0052036,

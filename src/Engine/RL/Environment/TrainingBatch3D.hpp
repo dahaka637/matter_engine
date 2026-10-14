@@ -47,6 +47,9 @@ struct TrainingBatchSettings3D {
     // comecados vezes os mundos), entao um mundo so passa por todas as idas.
     // A bateria deixa desligado (cada mundo, o seu roteiro).
     bool evaluationCycle = false;
+    // O musculo (s) no lugar do da tarefa (< 0 = o da tarefa): o visualizador
+    // usa o da copia do treino, com que o cerebro treina agora (a rampa).
+    float muscleSeconds = -1.0f;
     // Iteracoes do solver das juntas; negativo = as do corpo de RL. A
     // avaliacao confere a politica tambem com as 20/20 do jogo.
     int solverPositionIterations = -1;
@@ -145,6 +148,10 @@ struct TrainingEpisode3D {
     // As curvas: o quanto o centro de massa saiu da linha dos alvos (RMS, m;
     // -1 fora delas).
     float lineErrorRms = -1.0f;
+    // Os passos: pisadas por segundo de cada pe e passinhos (pe menos de
+    // 0,1 s no ar) por segundo.
+    float cadence = 0.0f;
+    float chatterRate = 0.0f;
 };
 
 // Um mundo de treino visto por fora (o visualizador, a gravacao).

@@ -81,7 +81,12 @@ ReferenceSegment3D sampleSegment(const RLBody3D& body, const ReferenceClip3D& re
     segment.id = request.id.empty() ? clip.id : request.id;
     segment.clipPath = request.clipPath;
     segment.loops = request.loops;
-    // Em ciclo, o ultimo quadro do clipe e o primeiro: fica de fora.
+    // Em ciclo, o ultimo quadro do clipe e o primeiro: fica de fora. Um giro
+    // em ciclo (turnCycleRadians) nao fecha na rotacao: a amostra nao alisa a
+    // emenda, e as derivadas que dao a volta somam o giro de um ciclo.
+    const float cycleTurn = request.loops ? clip.turnCycleRadians : 0.0f;
+    const bool turning = std::abs(cycleTurn) > 1.0e-3f;
+    const bool wrap = request.loops && !turning;
     const float duration = clip.durationSeconds;
     const std::size_t count = std::max<std::size_t>(2, static_cast<std::size_t>(std::lround(duration / frameSeconds))
         + (request.loops ? 0 : 1));
@@ -104,7 +109,7 @@ ReferenceSegment3D sampleSegment(const RLBody3D& body, const ReferenceClip3D& re
         const float t = std::min(duration, static_cast<float>(i) * frameSeconds);
         RawFrame& frame = raw[i];
         frame.coordinates.assign(profile.links.size(), {});
-        const AnimationTransformSample3D root = sampleAnimationTrackSmooth3D(*rootTrack, t, duration, request.loops);
+        const AnimationTransformSample3D root = sampleAnimationTrackSmooth3D(*rootTrack, t, duration, wrap);
         frame.rootRotation = root.rotationDelta.normalized();
         Vec3 offset = root.translationOffsetMeters;
         offset.z -= leak * offset.x;
@@ -112,7 +117,7 @@ ReferenceSegment3D sampleSegment(const RLBody3D& body, const ReferenceClip3D& re
         for (std::size_t link = 1; link < profile.links.size(); ++link) {
             const AnimationTrack3D* track = findAnimationTrack3D(clip, profile.links[link].id);
             if (!track) continue;
-            Vec3 q = sampleAnimationTrackSmooth3D(*track, t, duration, request.loops).jointPositionRadians;
+            Vec3 q = sampleAnimationTrackSmooth3D(*track, t, duration, wrap).jointPositionRadians;
             // Fora do curso a fisica nao vai: a referencia tambem nao.
             const RagdollJointDefinition3D& joint = profile.links[link].inboundJoint;
             float* axes[] = { &q.x, &q.y, &q.z };
@@ -248,7 +253,11 @@ ReferenceSegment3D sampleSegment(const RLBody3D& body, const ReferenceClip3D& re
         const Quaternion headingInverse = yawRotation(-frame.heading);
         const Vec3 velocity = (positionAt(b, wrapB) - positionAt(a, wrapA)) * inverse;
         frame.rootVelocity = headingInverse.rotate(velocity);
-        const Quaternion qa = poses[a].orientations.front(), qb = poses[b].orientations.front();
+        // (Num giro em ciclo o vizinho do outro ciclo vem virado de uma volta.)
+        const Quaternion qa = (wrapA != 0 ? yawRotation(-cycleTurn) * poses[a].orientations.front()
+                                          : poses[a].orientations.front()).normalized();
+        const Quaternion qb = (wrapB != 0 ? yawRotation(cycleTurn) * poses[b].orientations.front()
+                                          : poses[b].orientations.front()).normalized();
         frame.rootSpin = headingInverse.rotate(rlQuaternionLog3D((qb * qa.conjugate()).normalized()) * inverse);
         const Quaternion pelvisFrame =
             (pose.orientations.front() * profile.links.front().modelOrientation.conjugate()).normalized();
@@ -275,6 +284,7 @@ ReferenceSegment3D sampleSegment(const RLBody3D& body, const ReferenceClip3D& re
         segment.travelRelativeChest = wrapAngle(segment.travelHeading - std::atan2(chestSine, chestCosine));
     }
     segment.meanSpeed = std::hypot(advance.x, advance.y) / duration;
+    segment.meanSpin = cycleTurn / duration;
     return segment;
 }
 

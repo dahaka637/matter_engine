@@ -1,4 +1,5 @@
 #include "Engine/RL/Environment/TrainingBatch3D.hpp"
+#include "Engine/RL/Imitation/ReferenceMotion3D.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -1187,6 +1188,30 @@ void testStanding() {
     }
 }
 
+// Os giros no lugar em ciclo (turnCycleDegrees): o giro medio de cada um no
+// lado e no ritmo do clipe, e a emenda do fim no comeco sem o pulo de uma
+// volta no giro da referencia.
+void testTurnCycles() {
+    const std::filesystem::path assets = MATTERENGINE_TEST_ASSETS_DIR;
+    const TrainingTask3D corpo = loadTrainingTask3D(assets / "rl/tasks/corpo.json");
+    const RLBody3D body = loadRLBody3D(corpo.bodyPath);
+    const std::vector<ReferenceClip3D> clips {
+        { "e90", assets / "animations/clips/turn_left.matteranim.json", true },
+        { "d90", assets / "animations/clips/turn_right.matteranim.json", true },
+        { "e180", assets / "animations/clips/giro_esquerda_180.matteranim.json", true },
+        { "d180", assets / "animations/clips/giro_direita_180.matteranim.json", true } };
+    const ReferenceMotion3D motion = buildReferenceMotion3D(body, clips, 1.0f / 120.0f, true);
+    const std::array<float, 4> expected { 1.5708f / 1.0f, -1.5708f / 1.0f, 3.1416f / 2.0667f, -3.1416f / 2.0667f };
+    for (std::size_t i = 0; i < 4; ++i) {
+        const ReferenceSegment3D& segment = motion.segments[i];
+        require(std::abs(segment.meanSpin - expected[i]) < 0.05f && segment.meanSpeed < 0.3f,
+            segment.id + ": o giro medio do clipe (" + std::to_string(segment.meanSpin) + " rad/s)");
+        float worst = 0.0f;
+        for (const ReferenceFrame3D& frame : segment.frames) worst = std::max(worst, std::abs(frame.rootSpin.z));
+        require(worst < 8.0f, segment.id + ": sem o pulo de uma volta na emenda (" + std::to_string(worst) + " rad/s)");
+    }
+}
+
 } // namespace
 
 void runTrainingBatchTests() {
@@ -1209,5 +1234,6 @@ void runTrainingBatchTests() {
     testBrake();
     testCurves();
     testStanding();
+    testTurnCycles();
     std::cout << "RL training batch tests passed\n";
 }

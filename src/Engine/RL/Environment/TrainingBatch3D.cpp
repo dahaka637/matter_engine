@@ -77,6 +77,12 @@ struct Environment {
     // ficam sincronizados para sempre).
     std::uint32_t limit = 600;
     std::vector<float> previousAction;
+    // O musculo: a acao filtrada (muscleSeconds) que vira o alvo das juntas.
+    std::vector<float> muscle;
+    // Os passos: as pisadas, as de um pe que mal saiu do chao (passinho) e o
+    // tempo no ar de cada pe antes de pisar.
+    std::uint32_t touchdowns = 0;
+    std::uint32_t chatter = 0;
     std::vector<float> action;
     // Com professor: a soma, nos passos de fisica da decisao, do alvo que daria
     // o torque dele (em unidades da acao).
@@ -808,20 +814,40 @@ void TrainingBatch3D::Impl::plan(Environment& env, Vec3 position, float facing, 
     // Parar (pare aqui, ou a pedida a quase zero): o clipe mais lento, o parado.
     const bool stopping = planner.idleBelow > 0.0f && planner.speedFromCommand && planner.speedByDistance.empty()
         && wantedSpeed < planner.idleBelow;
+    // O giro que o peito pede parado (rad/s): o do comando mais o que corrige
+    // o desvio dele, como o giro pedido da referencia.
+    float stoppedSpin = 0.0f;
+    if (stopping && env.facingActive) {
+        const float error = std::atan2(std::sin(env.facingCommand - env.facingHeading), std::cos(env.facingCommand - env.facingHeading));
+        // (O balanco do peito parado nao pede giro: so o desvio acima de 20 graus.)
+        const float beyond = std::copysign(std::max(0.0f, std::abs(error) - 0.35f), error);
+        stoppedSpin = std::clamp((env.facingDrifting ? env.facingRate : 0.0f) + task.target.turnGain * beyond,
+            -task.target.turnMaximum, task.target.turnMaximum);
+    }
     if (forwardOnly && wantedSpeed > 0.0f && !stopping)
         wantedSpeed = std::max(task.target.speedCommand.minimumArrivalSpeed, wantedSpeed * std::max(0.0f, std::cos(angle)));
     std::uint32_t best = env.cursor.segment;
     float bestCost = std::numeric_limits<float>::max();
     for (std::uint32_t c = 0; c < reference.segments.size(); ++c) {
         // (O lado do clipe pelo peito: no andar de lado do Mixamo a pelve vai virada.)
+        const ReferenceSegment3D& candidate = reference.segments[c];
         if (stopping) {
-            const float slow = reference.segments[c].meanSpeed;
-            if (slow < bestCost) {
-                bestCost = slow;
+            // Parado: so os clipes que nao andam, pelo giro que o peito pede
+            // agora (o parado sem giro; os giros no lugar acima de
+            // turnInPlaceAbove, do lado pedido e no ritmo mais perto).
+            if (candidate.meanSpeed > 0.3f) continue;
+            float cost = std::abs(candidate.meanSpin - stoppedSpin);
+            if (std::abs(stoppedSpin) < planner.turnInPlaceAbove) cost = std::abs(candidate.meanSpin) * 10.0f;
+            else if (candidate.meanSpin * stoppedSpin <= 0.0f) cost += 10.0f;
+            if (!force && c == env.cursor.segment) cost -= 0.2f;
+            if (cost < bestCost) {
+                bestCost = cost;
                 best = c;
             }
             continue;
         }
+        // Andando, os giros no lugar nao valem.
+        if (std::abs(candidate.meanSpin) > 0.1f) continue;
         if (forwardOnly && std::abs(reference.segments[c].travelRelativeChest) > std::numbers::pi_v<float> / 3.0f) continue;
         float error = angle - (chest ? reference.segments[c].travelRelativeChest : reference.segments[c].travelRelative);
         error = directionWeight * std::abs(std::atan2(std::sin(error), std::cos(error)));
@@ -971,6 +997,7 @@ void TrainingBatch3D::Impl::createWorld() {
                 spawn.solverVelocityIterations = static_cast<std::uint32_t>(settings.solverVelocityIterations);
             env.ragdoll = scene.physics->createRagdoll(profile, spawn);
             env.previousAction.assign(actionSize(), 0.0f);
+            env.muscle.assign(actionSize(), 0.0f);
             env.action.assign(actionSize(), 0.0f);
             env.targets.resize(actionSize());
             env.previousTargets.resize(actionSize());
@@ -1233,6 +1260,9 @@ void TrainingBatch3D::Impl::resetEnvironment(std::uint32_t index) {
               * std::uniform_real_distribution<float>(0.8f, 1.2f)(env.rng))))
         : maximumSteps;
     std::fill(env.previousAction.begin(), env.previousAction.end(), 0.0f);
+    std::fill(env.muscle.begin(), env.muscle.end(), 0.0f);
+    env.touchdowns = 0;
+    env.chatter = 0;
     std::fill(env.action.begin(), env.action.end(), 0.0f);
     writeTargets(env, {});
     env.previousTargets = env.targets;
@@ -1495,6 +1525,12 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
     const float stepSeconds = static_cast<float>(task.actionRepeat) * FixedStep;
     for (std::size_t f = 0; f < 2; ++f) {
         if (reading.footContact[f]) {
+            // Uma pisada; a de um pe que ficou menos de 0,1 s no ar e um
+            // passinho (o tremer dos pes, que um humano nao faz).
+            if (env.footAirTime[f] > 0.0f) {
+                ++env.touchdowns;
+                if (env.footAirTime[f] < 0.1f) ++env.chatter;
+            }
             env.footContactTime[f] += stepSeconds;
             env.footAirTime[f] = 0.0f;
         } else {
@@ -1892,6 +1928,10 @@ void TrainingBatch3D::Impl::finishEpisode(Scene& scene, std::uint32_t index, Tra
     episode.speedErrorRms =
         env.speedSteps > 0 ? static_cast<float>(std::sqrt(env.speedErrorSquares / env.speedSteps)) : -1.0f;
     episode.footSlipMean = env.slipSamples > 0 ? static_cast<float>(env.slipSum / env.slipSamples) : -1.0f;
+    // Os passos por segundo de cada pe e os passinhos por segundo.
+    const float played = std::max(1.0e-3f, static_cast<float>(env.played) * static_cast<float>(task.actionRepeat) * FixedStep);
+    episode.cadence = static_cast<float>(env.touchdowns) / (2.0f * played);
+    episode.chatterRate = static_cast<float>(env.chatter) / played;
     episode.lineErrorRms = env.lineSteps > 0 ? static_cast<float>(std::sqrt(env.lineSquares / env.lineSteps)) : -1.0f;
     episode.stopOvershootMean = env.overshootCount > 0 ? static_cast<float>(env.overshootSum / env.overshootCount) : -1.0f;
     if (reason == TrainingEndReason3D::FallContact || reason == TrainingEndReason3D::FallHeight) {
@@ -1917,8 +1957,12 @@ void TrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> actio
         }
         for (std::size_t d = 0; d < A; ++d)
             env.action[d] = std::clamp(actions[index * A + d], -RLActionLimit, RLActionLimit);
+        // O musculo: o alvo segue a acao com o atraso dele (nada de tremer).
+        const float delay = settings.muscleSeconds >= 0.0f ? settings.muscleSeconds : task.muscleSeconds;
+        const float muscle = delay > 0.0f ? 1.0f - std::exp(-static_cast<float>(task.actionRepeat) * FixedStep / delay) : 1.0f;
+        for (std::size_t d = 0; d < A; ++d) env.muscle[d] += muscle * (env.action[d] - env.muscle[d]);
         std::swap(env.previousTargets, env.targets);
-        writeTargets(env, env.action);
+        writeTargets(env, env.muscle);
         physics.setRagdollActiveDriveTargets(env.ragdoll, env.delayed ? env.previousTargets : env.targets, false);
     }
 
@@ -2201,6 +2245,7 @@ void TrainingBatch3D::updateTask(const TrainingTask3D& task) {
     impl.task.initialState = task.initialState;
     impl.task.randomization = task.randomization;
     impl.task.pushes = task.pushes;
+    impl.task.muscleSeconds = task.muscleSeconds;
     impl.task.postures = task.postures;
     impl.task.commands = task.commands;
     impl.task.gait = task.gait;

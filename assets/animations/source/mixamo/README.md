@@ -210,3 +210,12 @@ O inventario de todas as fontes (duracao, quanto o quadril anda, giro) esta em
 assets/animations/source/INVENTARIO.md, gerado por tools/animation/inventario.py.
 Rode de novo quando chegarem arquivos.
 ```
+
+### Giros parados (14/10)
+
+```text
+Left Turn(2).fbx, Right Turn(6).fbx: giros de 180 graus no lugar (2,1 s), os
+clipes giro_esquerda_180 e giro_direita_180. Quick 180 Turn (rifle).fbx e Turn
+90 Right (rifle).fbx: giros com um rifle nas maos (o que vale e o movimento dos
+pes), ainda nao importados.
+```

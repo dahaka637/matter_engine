@@ -132,6 +132,8 @@ AnimationClip3D loadAnimationClip3D(std::string_view filePath) {
         if (!std::isfinite(clip.travelDirectionRadians)) {
             throw std::runtime_error("Invalid travel direction");
         }
+        clip.turnCycleRadians = root.value("turnCycleDegrees", 0.0f) * (3.14159265358979323846f / 180.0f);
+        if (!std::isfinite(clip.turnCycleRadians)) throw std::runtime_error("Invalid turn cycle");
         if (root.contains("contacts")) {
             const Json& contacts = root.at("contacts");
             const auto loadContact = [&](std::string_view name,

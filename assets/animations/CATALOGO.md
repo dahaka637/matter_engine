@@ -14,7 +14,7 @@ tarefas do RL e o personagem do jogo que citam o arquivo.
 
 | Clipe | Nome | s | Ciclo | Vel. | Dir. | Fonte | Usado em |
 |---|---|---:|---|---:|---:|---|---|
-| `alert_idle` | Parado em alerta | 10.00 | sim | — | 0° | autoral (`tools/animation/clips/alert_idle.py`) | personagem (football_player) |
+| `alert_idle` | Parado em alerta | 10.00 | sim | — | 0° | autoral (`tools/animation/clips/alert_idle.py`) | personagem (football_player), corpo |
 | `cc0_idle` | Parado natural | 2.50 | sim | — | — | `UAL1_Standard_RM.glb` | — |
 | `natural_idle` | Parado natural | 4.00 | sim | — | 0° | autoral (`tools/animation/clips/natural_idle.py`) | — |
 
@@ -22,8 +22,8 @@ tarefas do RL e o personagem do jogo que citam o arquivo.
 
 | Clipe | Nome | s | Ciclo | Vel. | Dir. | Fonte | Usado em |
 |---|---|---:|---|---:|---:|---|---|
-| `turn_left` | Giro parado para a esquerda (Mixamo) | 1.00 | não | — | — | autoral (`assets/animations/source/mixamo/giros_parado/LeftTurn.fbx`) | personagem (football_player) |
-| `turn_right` | Giro parado para a direita (Mixamo) | 1.00 | não | — | — | autoral (`assets/animations/source/mixamo/giros_parado/RightTurn.fbx`) | personagem (football_player) |
+| `turn_left` | Giro parado para a esquerda (Mixamo) | 1.00 | não | — | — | autoral (`assets/animations/source/mixamo/giros_parado/LeftTurn.fbx`) | personagem (football_player), corpo |
+| `turn_right` | Giro parado para a direita (Mixamo) | 1.00 | não | — | — | autoral (`assets/animations/source/mixamo/giros_parado/RightTurn.fbx`) | personagem (football_player), corpo |
 
 ## Andar
 
@@ -113,3 +113,10 @@ tarefas do RL e o personagem do jogo que citam o arquivo.
 |---|---|---:|---|---:|---:|---|---|
 | `tackle_slide` | Carrinho sentado (mais rapido) | 1.50 | não | — | -2° | autoral (`running_slide`) | personagem (football_player) |
 | `tackle_soccer` | Carrinho de lado (mais devagar) | 1.77 | não | — | -2° | autoral (`soccer_tackle`) | personagem (football_player) |
+
+## Outros
+
+| Clipe | Nome | s | Ciclo | Vel. | Dir. | Fonte | Usado em |
+|---|---|---:|---|---:|---:|---|---|
+| `giro_direita_180` | Giro parado 180 para a direita (Mixamo) | 2.07 | não | 0.2 | -135° | `Right Turn(6).fbx` | corpo |
+| `giro_esquerda_180` | Giro parado 180 para a esquerda (Mixamo) | 2.07 | não | 0.1 | 110° | `Left Turn(2).fbx` | corpo |

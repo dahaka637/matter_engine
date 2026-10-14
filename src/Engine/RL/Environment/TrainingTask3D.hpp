@@ -137,6 +137,11 @@ struct TrainingTask3D {
     std::filesystem::path definitionPath;
     std::filesystem::path bodyPath;
     std::uint32_t actionRepeat = 4;
+    // O musculo: o alvo das juntas segue a acao da rede com este atraso (s, um
+    // filtro de primeira ordem por decisao), como um musculo humano, que nao
+    // muda de comando mais rapido que umas 5-8 vezes por segundo. Tira a
+    // tremedeira de alta frequencia (0 = a acao direto).
+    float muscleSeconds = 0.0f;
     float episodeSeconds = 20.0f;
     std::string groundMaterial = "grass";
     // As posturas pedidas; sem a lista, so a pose base ("natural").
@@ -268,6 +273,9 @@ struct TrainingTask3D {
             // Abaixo desta velocidade pedida (m/s), o clipe mais lento (o parado
             // da biblioteca): parar e ficar parado (0 = nunca).
             float idleBelow = 0.0f;
+            // Parado, acima deste giro pedido (rad/s) o clipe e um giro no lugar
+            // (os de turnCycleDegrees) do lado pedido; abaixo, o parado.
+            float turnInPlaceAbove = 0.35f;
         } planner;
         float poseScale = 2.0f;
         float velocityScale = 0.1f;

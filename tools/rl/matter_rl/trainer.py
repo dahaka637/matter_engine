@@ -323,6 +323,31 @@ class Trainer:
         self.curriculum_streak = 0
         self.db.event(self.run, "curriculo", "velocidade: " + ", ".join(raised), data={"acompanhamento": tracking})
 
+    def muscle_step(self) -> None:
+        """O musculo endurece aos poucos (a tarefa: "muscle": {"startSeconds",
+        "rampIterations"} e o final em muscleSeconds): na copia do treino o
+        atraso vai do comeco ao final em rampIterations rodadas, contadas da
+        primeira em que a rampa valeu, para o cerebro se acostumar sem cair."""
+        data = json.loads(self.live_task.read_text())
+        ramp = data.get("muscle") or {}
+        if not ramp or "startSeconds" not in ramp:
+            return
+        final = float(ramp.get("finalSeconds", data.get("muscleSeconds", 0.0)))
+        fresh = "startIteration" not in ramp
+        if fresh:
+            ramp["startIteration"] = self.counters["iteration"]
+            ramp["finalSeconds"] = final
+        done = min(1.0, (self.counters["iteration"] - int(ramp["startIteration"])) / max(1, int(ramp.get("rampIterations", 4000))))
+        now = round(float(ramp["startSeconds"]) + (final - float(ramp["startSeconds"])) * done, 3)
+        if not fresh and abs(now - float(data.get("muscleSeconds", -1.0))) < 0.005:
+            return
+        previous = float(data.get("muscleSeconds", 0.0))
+        data["muscle"] = ramp
+        data["muscleSeconds"] = now
+        storage.write_json_atomic(self.live_task, data)
+        self.batch.update_task(str(self.live_task))
+        self.db.event(self.run, "musculo", f"atraso do musculo {previous:.3f} -> {now:.3f} s", data={"rodada": self.counters["iteration"]})
+
     def explore(self, minimum: float, reason: str, author: str = "treinador") -> None:
         """Reabre a exploracao: o desvio da acao volta a pelo menos minimum (em
         unidades de acao) em todos os eixos. Ele cai sozinho conforme aprende."""
@@ -439,7 +464,8 @@ class Trainer:
                     "target_speed": metrics.get("target_speed"), "imitation_error": metrics.get("imitation_error"),
                     "facing_error": metrics.get("facing_error"), "speed_error": metrics.get("speed_error"),
                     "foot_slip": metrics.get("foot_slip"), "stop_overshoot": metrics.get("stop_overshoot"),
-                    "line_error": metrics.get("line_error"),
+                    "line_error": metrics.get("line_error"), "cadence": metrics.get("cadence"),
+                    "chatter": metrics.get("chatter"),
                     "score": metrics["score"], "ends": json.dumps(metrics["ends"]),
                 })
         self.adjust_drill_weights(results)
@@ -848,6 +874,7 @@ class Trainer:
                     "kl", "entropy", "learning_rate", "action_std", "value_loss")}
                 self.db.log_iteration(result)
                 self.curriculum_step(result["velocity_tracking"])
+                self.muscle_step()
                 self.db.commit()
                 now = time.time()
                 if now - self.last_evaluation_time >= self.config.evaluation_minutes * 60.0:

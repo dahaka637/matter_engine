@@ -300,6 +300,16 @@ void ReinforcementLearningScreen::ensureViewer() {
         // Cada recomeco (uma queda) segue o roteiro de outro mundo da bateria:
         // na estrela, outra direcao e outra velocidade.
         settings.evaluationCycle = true;
+        // O musculo com que o cerebro treina agora (a copia do treino, se for
+        // desta habilidade): sem ela, o da tarefa.
+        try {
+            const std::filesystem::path live = m_link->paths().run(activeRun()) / "tarefa.json";
+            if (m_skill < m_skills.size() && std::filesystem::exists(live)) {
+                const TrainingTask3D running = loadTrainingTask3D(live);
+                if (running.id == m_skills[m_skill].task) settings.muscleSeconds = running.muscleSeconds;
+            }
+        } catch (const std::exception&) {
+        }
         // O visualizador mostra a fisica do jogo.
         settings.solverPositionIterations = 20;
         settings.solverVelocityIterations = 20;

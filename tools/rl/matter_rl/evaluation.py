@@ -15,7 +15,7 @@ from .model import ACTION_LIMIT, ActorCritic
 
 REASONS = ["nenhum", "queda_contato", "queda_altura", "numerico", "tempo", "limite", "alvo_perdido"]
 # As colunas do resumo de um episodio (finished_episodes do modulo nativo).
-EPISODE_COLUMNS = 31
+EPISODE_COLUMNS = 33
 FALLS = {1, 2, 3}
 
 
@@ -89,7 +89,7 @@ class Battery:
 
 # A versao da conta da nota: um "melhor" de outra versao nao se compara (2:
 # entrou o erro da postura pedida).
-SCORE_VERSION = 4
+SCORE_VERSION = 5
 
 
 def walking_score(metrics: dict) -> float:
@@ -147,7 +147,16 @@ def race_score(metrics: dict) -> float:
             + 0.25 * speed
             + 0.15 * max(0.0, 1.0 - metrics.get("imitation_error", 1.0) / 0.5)
             - (0.25 * min(1.0, metrics["facing_error"] / 60.0) if metrics.get("facing_error", -1.0) >= 0 else 0.0)
-            - (0.20 * min(1.0, metrics["line_error"] / 1.0) if metrics.get("line_error", -1.0) >= 0 else 0.0))
+            - (0.20 * min(1.0, metrics["line_error"] / 1.0) if metrics.get("line_error", -1.0) >= 0 else 0.0)
+            - human_penalty(metrics))
+
+
+def human_penalty(metrics: dict) -> float:
+    """O que um humano nao faz: passinhos (um pe que mal sai do chao; 1 por
+    segundo ou mais tira 0,15) e pisar rapido demais (acima de 3,5 passos por
+    segundo de cada pe; 5 ou mais tira 0,10)."""
+    return (0.15 * min(1.0, metrics.get("chatter", 0.0) / 1.0)
+            + 0.10 * min(1.0, max(0.0, metrics.get("cadence", 0.0) - 3.5) / 1.5))
 
 
 def turn_score(metrics: dict) -> float:
@@ -158,7 +167,8 @@ def turn_score(metrics: dict) -> float:
     slip = metrics.get("foot_slip", -1.0)
     return (metrics["stand_fraction"]
             - (0.5 * min(1.0, facing / 45.0) if facing >= 0 else 0.5)
-            - (0.15 * min(1.0, slip / 0.3) if slip >= 0 else 0.0))
+            - (0.15 * min(1.0, slip / 0.3) if slip >= 0 else 0.0)
+            - human_penalty(metrics))
 
 
 def score(metrics: dict) -> float:
@@ -170,7 +180,8 @@ def score(metrics: dict) -> float:
             - 0.15 * min(1.0, metrics["action_rate"] / 0.05)
             - 0.10 * min(1.0, metrics["foot_drift"] / 0.20)
             - 0.15 * min(1.0, metrics.get("turn", 0.0) / 0.30)
-            - 0.15 * min(1.0, metrics.get("pose_error", 0.0) / 0.15))
+            - 0.15 * min(1.0, metrics.get("pose_error", 0.0) / 0.15)
+            - human_penalty(metrics))
 
 
 class Evaluator:
@@ -342,6 +353,10 @@ class Evaluator:
             "distance": float(rows[:, 19].mean()),
             "lateral_drift": float(rows[:, 20].mean()),
             "ends": dict(ends),
+            # Os passos (todos os episodios): pisadas por segundo de cada pe e
+            # passinhos (pe menos de 0,1 s no ar) por segundo.
+            "cadence": float(rows[:, 31].mean()) if rows.shape[1] > 32 else 0.0,
+            "chatter": float(rows[:, 32].mean()) if rows.shape[1] > 32 else 0.0,
         }
         if kind == "alvo":
             # O quanto parou longe do ponto (pelo centro de massa no fim).

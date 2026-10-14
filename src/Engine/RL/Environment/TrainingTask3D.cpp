@@ -32,6 +32,7 @@ TrainingTask3D parseTask(const nlohmann::json& document, const std::filesystem::
     task.definitionPath = definitionPath;
     task.bodyPath = (definitionPath.parent_path() / document.at("body").get<std::string>()).lexically_normal();
     task.actionRepeat = document.value("actionRepeat", 4u);
+    task.muscleSeconds = std::max(0.0f, document.value("muscleSeconds", 0.0f));
     task.episodeSeconds = document.value("episodeSeconds", 20.0f);
     task.groundMaterial = document.value("groundMaterial", std::string("grass"));
     if (task.actionRepeat == 0 || task.actionRepeat > 16 || !(task.episodeSeconds > 0.0f))
@@ -164,6 +165,7 @@ TrainingTask3D parseTask(const nlohmann::json& document, const std::filesystem::
             planner.speedFromCommand = p.value("speedFromCommand", planner.speedFromCommand);
             planner.freeBackwardDistance = std::max(0.0f, p.value("freeBackwardDistance", planner.freeBackwardDistance));
             planner.idleBelow = std::max(0.0f, p.value("idleBelow", planner.idleBelow));
+            planner.turnInPlaceAbove = std::max(0.0f, p.value("turnInPlaceAbove", planner.turnInPlaceAbove));
         }
         if (m.contains("scales")) {
             const nlohmann::json& k = m["scales"];

@@ -69,6 +69,8 @@ struct ReferenceSegment3D {
     float travelRelativeChest = 0.0f;
     // A velocidade media no plano (m/s).
     float meanSpeed = 0.0f;
+    // O giro medio (rad/s, positivo para a esquerda): os giros parados em ciclo.
+    float meanSpin = 0.0f;
     // O maior pulo de pose na entrada (rad, RMS dos eixos): a emenda.
     float entryJumpRms = 0.0f;
 };

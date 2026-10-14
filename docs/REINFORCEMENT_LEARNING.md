@@ -297,6 +297,42 @@ diagonal), e a voltar.
   não tem entram com zero, como na migração do treinador. Assim um cérebro
   antigo roda numa tarefa mais nova.
 
+## Limites humanos contra a tremedeira (14/10/2026)
+
+O usuário viu no girar parado micromovimentos rápidos dos pés, que pareciam
+tremer, e que um humano não faz. Nada cobrava isso (a mudança da ação tinha
+peso 0,01), e a referência do giro era o parado girando, sem passo.
+
+- **O músculo** (`muscleSeconds`): o alvo das juntas segue a ação da rede por
+  um filtro de primeira ordem por decisão, como um músculo, que não muda de
+  comando mais rápido que umas 5–8 vezes por segundo. Ele corta os passinhos
+  pela metade já com 0,03 s.
+  - O cérebro que treinou sem o músculo cai com ele (com 0,08 s, 16 de 16 na
+    estrela). Por isso existe a rampa (`"muscle": {"startSeconds": 0.03,
+    "rampIterations": 4000}`): o treinador leva o atraso da cópia do treino de
+    0,03 a 0,08 s em 4000 rodadas (evento `musculo`).
+  - A tela usa o músculo da cópia do treino (`settings.muscleSeconds`), o
+    mesmo com que o cérebro treina agora. O jogo, quando rodar a política,
+    precisa do mesmo filtro.
+- **Os giros no lugar em ciclo:** os giros parados do Mixamo (90° e 180°) na
+  biblioteca.
+  - O clipe marca quanto gira por ciclo (`turnCycleDegrees`, por
+    `tools/animation/ciclo_de_giro.py`). A referência não alisa a emenda e soma
+    a volta nas derivadas, e cada trecho tem o giro médio (`meanSpin`).
+  - Parado, o planejador escolhe o giro do lado e no ritmo mais perto do que
+    o peito pede, acima de `turnInPlaceAbove` (0,35 rad/s). O desvio do peito
+    só pede giro acima de 20°. Andando, os giros não valem.
+- **As medidas:** pisadas por segundo de cada pé (`cadence`, coluna 31) e
+  passinhos por segundo (`chatter`, coluna 32: o pé que ficou menos de 0,1 s
+  no ar), 33 colunas.
+  - Elas descontam da nota da corrida, do giro e de ficar de pé
+    (`human_penalty`): até 0,15 pelos passinhos (1 por segundo ou mais) e até
+    0,10 pela cadência acima de 3,5 (5 ou mais). `SCORE_VERSION` 5.
+- **A medida com o cérebro de 14/10 (rodada 60068):** no girar parado,
+  passinhos 2,7/s sem músculo e 1,5/s com 0,03 s. Nas folhas, os pés ficam
+  plantados em vez de trocar de lugar a cada 0,13 s, mas esse cérebro ainda
+  escorrega e cai: só o treino com o músculo resolve.
+
 ## Parado, girar parado e empurrões (14/10/2026)
 
 Os exercícios 1 e 2 do `treino_locomocao_claude.md`, no Corpo. Os três usam

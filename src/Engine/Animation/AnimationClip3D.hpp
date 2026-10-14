@@ -75,6 +75,10 @@ struct AnimationClip3D {
     // para trás (recuo). Clipes autorais a declaram; importados andam para a
     // frente.
     float travelDirectionRadians = 0.0f;
+    // Um giro parado tocado em ciclo (a biblioteca do RL): o quanto o corpo
+    // vira de um ciclo para o outro (rad, positivo para a esquerda; 0 = nao
+    // gira). Gravado por tools/animation/ciclo_de_giro.py.
+    float turnCycleRadians = 0.0f;
     // Authored contact phase. Value 1 means stance; 0 means swing.
     AnimationScalarTrack3D leftFootContact;
     AnimationScalarTrack3D rightFootContact;
