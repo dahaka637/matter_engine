@@ -222,9 +222,11 @@ o cérebro antigo e as comparações até a F1.
     tempo no teto, reversão e cadência);
   - **a avaliação** (a cada `evaluation_minutes`, 10 por padrão, ou com
     `matter-rl avaliar`): cada exercício roda com a ação média (como no jogo),
-    em 32 mundos fixos e no solver 20/20 do jogo. O primeiro episódio de cada
-    mundo vira as medidas do exercício, na tabela `body_evaluations` e no
-    status.
+    em 32 mundos fixos, no solver do jogo (20/20) e no do treino. O primeiro
+    episódio de cada mundo vira as medidas do exercício, na tabela
+    `body_evaluations` e no status. As quedas vêm com o limite de cima do
+    intervalo de 95% (zero em 32 ainda é compatível com ~11%), e o erro de
+    velocidade com a mediana e o percentil 90.
 - **A prévia do Corpo v2** (`tools/rl/previa_corpo.py`): uma política exportada
   no lote v2 com a física do jogo, mais os dumps para as folhas de quadros.
 - **O teste de dependência** (`tools/rl/tests/test_dependency.py`, seção 12.6):

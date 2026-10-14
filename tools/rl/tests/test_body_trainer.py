@@ -163,12 +163,15 @@ def test_body_trainer_evaluation(scratch):
     trainer.config.evaluation_worlds = 4
     trainer.config.evaluation_seconds = 2.0
     result = trainer.command("avaliar", {})["evaluation"]
-    assert set(result["drills"]) == {"parado", "deslocamento", "estrela"}
-    for summary in result["drills"].values():
-        assert summary["worlds"] == 4 and summary["episodes"] == 4
+    assert set(result["solvers"]) == {"jogo", "treino"}
+    for solver in result["solvers"].values():
+        assert set(solver) == {"parado", "deslocamento", "estrela"}
+        for summary in solver.values():
+            assert summary["worlds"] == 4 and summary["episodes"] == 4
+            assert summary["falls"] <= summary["falls_upper95"] <= 1.0
     db = storage.Database(paths.DATABASE)
     rows = db.execute("SELECT drill, data FROM body_evaluations WHERE run='avaliacao'").fetchall()
-    assert len(rows) == 3
+    assert len(rows) == 6
     trainer.max_iterations = trainer.counters["iteration"] + 1
     trainer.loop()
 
@@ -201,3 +204,9 @@ def test_affinity_judge(tmp_path):
     judge.save(path)
     again = AffinityJudge.load(path, dataset)
     assert abs(again.score(agent) - judge.score(agent)) < 1e-5
+
+
+def test_wilson_upper():
+    from matter_rl.body_trainer import wilson_upper
+    assert 0.10 < wilson_upper(0, 32) < 0.12
+    assert wilson_upper(16, 32) > 0.5 and wilson_upper(32, 32) == 1.0

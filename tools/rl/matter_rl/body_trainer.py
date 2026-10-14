@@ -103,6 +103,16 @@ def choose_device(preference: str = "auto") -> torch.device:
         return torch.device("cpu")
 
 
+def wilson_upper(failures: int, total: int, z: float = 1.96) -> float:
+    """O limite de cima (95%) da fatia de falhas: 0 em 32 ainda e ~11%."""
+    if total <= 0:
+        return 1.0
+    p = failures / total
+    center = p + z * z / (2 * total)
+    margin = z * math.sqrt(p * (1 - p) / total + z * z / (4 * total * total))
+    return min(1.0, (center + margin) / (1 + z * z / total))
+
+
 def drill_summary(rows: np.ndarray, columns: list[str], drills: list[str]) -> dict:
     """As medidas dos episodios que acabaram, por exercicio."""
     out: dict = {}
@@ -116,9 +126,14 @@ def drill_summary(rows: np.ndarray, columns: list[str], drills: list[str]) -> di
         reasons = part[:, col["razao"]].astype(int)
         reaction = part[:, col["reacao"]]
         reaction = reaction[reaction >= 0.0]
+        falls = int(np.isin(reasons, [1, 2]).sum())
+        velocity = part[:, col["erro_velocidade"]]
         out[drill] = {
             "episodes": int(len(part)),
-            "falls": float(np.isin(reasons, [1, 2]).mean()),
+            "falls": falls / len(part),
+            "falls_upper95": wilson_upper(falls, len(part)),
+            "velocity_error_median": float(np.median(velocity)),
+            "velocity_error_p90": float(np.percentile(velocity, 90)),
             "seconds": float(part[:, col["segundos"]].mean()),
             "velocity_error": float(part[:, col["erro_velocidade"]].mean()),
             "facing_error": float(part[:, col["erro_olhar"]].mean()),
@@ -341,14 +356,16 @@ class BodyTrainer:
         self.write_status()
         results: dict = {}
         col = {name: i for i, name in enumerate(self.episode_columns)}
-        for drill in self.drill_ids:
-            batch = self.evaluation_batches.get(drill)
+        # O solver do jogo (20/20) e o do treino (o do corpo).
+        for drill, solver in [(d, s) for s in ("jogo", "treino") for d in self.drill_ids]:
+            batch = self.evaluation_batches.get((drill, solver))
             if batch is None:
+                iterations = 20 if solver == "jogo" else -1
                 batch = self.native.BodyBatch(str(self.live_task), environments=self.config.evaluation_worlds,
                                               per_scene=4, threads=self.threads, seed=20261014, evaluation=True,
-                                              evaluation_seconds=self.config.evaluation_seconds, solver_position=20,
-                                              solver_velocity=20, drill=drill)
-                self.evaluation_batches[drill] = batch
+                                              evaluation_seconds=self.config.evaluation_seconds,
+                                              solver_position=iterations, solver_velocity=iterations, drill=drill)
+                self.evaluation_batches[(drill, solver)] = batch
             else:
                 batch.update_task(str(self.live_task))
                 batch.reset(20261014)
@@ -368,10 +385,10 @@ class BodyTrainer:
             rows = np.array(list(first.values())) if first else np.zeros((0, len(self.episode_columns)))
             summary = drill_summary(rows, self.episode_columns, self.drill_ids).get(drill, {})
             summary["worlds"] = worlds
-            results[drill] = summary
-            self.db.log_body_evaluation(self.run, self.counters["iteration"], self.counters["steps"], drill, "jogo",
+            results.setdefault(solver, {})[drill] = summary
+            self.db.log_body_evaluation(self.run, self.counters["iteration"], self.counters["steps"], drill, solver,
                                         summary)
-        self.last_evaluation = {"iteration": self.counters["iteration"], "time": time.time(), "drills": results}
+        self.last_evaluation = {"iteration": self.counters["iteration"], "time": time.time(), "solvers": results}
         self.state = previous
         return self.last_evaluation
 
