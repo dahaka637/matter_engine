@@ -295,6 +295,18 @@ int main() {
         screen.advanceViewer(20);
         frame(screen, canvas, 2);
         snapshot(canvas, "rl_tela_estrela");
+        // A camera em 3a pessoa nunca o corta: 40 s de estrela (com a politica
+        // de verdade, as idas longas da corrida e do sprint), ele sempre perto
+        // do meio da imagem.
+        for (int second = 1; second <= 40; ++second) {
+            screen.advanceViewer(30);
+            frame(screen, canvas, 1);
+            const std::array<float, 2> shown = screen.viewerPelvisOnScreen();
+            require(shown[0] > 0.2f && shown[0] < 0.8f && shown[1] > 0.2f && shown[1] < 0.8f,
+                "a camera mantem o jogador no quadro (" + std::to_string(shown[0]) + ", " + std::to_string(shown[1])
+                    + " aos " + std::to_string(second) + " s)");
+            if (second % 10 == 0) snapshot(canvas, ("rl_tela_estrela_" + std::to_string(second) + "s").c_str());
+        }
         const auto drillConflicts = sweepIdConflicts([&] { screen.draw(canvas, 1.0f); });
         require(drillConflicts.empty(), "IDs repetidos na estrela: " + (drillConflicts.empty() ? std::string() : drillConflicts.front()));
         // Os varios pontos: o alvo e os dois proximos, mais fracos, ligados.

@@ -11,6 +11,7 @@
 #include "Engine/RL/Calibration/RagdollColliderWireframe3D.hpp"
 #include "Workbench/PlayerInspector/CanvasTarget.hpp"
 
+#include <array>
 #include <filesystem>
 #include <functional>
 #include <future>
@@ -79,6 +80,7 @@ public:
     [[nodiscard]] std::uint32_t viewerTargetsReached() const { return m_viewer ? m_viewer->view(0).targetsReached : 0u; }
     [[nodiscard]] std::uint32_t viewerSteps() const { return m_viewer ? m_viewer->view(0).steps : 0u; }
     [[nodiscard]] std::uint32_t viewerDrill() const { return m_viewer ? m_viewer->view(0).drill : 0u; }
+    [[nodiscard]] std::array<float, 2> viewerPelvisOnScreen() const { return m_pelvisOnScreen; }
     [[nodiscard]] std::vector<std::string> skillDrills() const {
         return m_skill < m_skills.size() ? m_skills[m_skill].drills : std::vector<std::string> {};
     }
@@ -150,15 +152,16 @@ private:
     bool m_showTeacher = false;
     float m_policyWatch = 0.0f;
     float m_accumulator = 0.0f;
-    // A camera da corrida (no mundo): a mira entre ele e o alvo e o rumo da
-    // corrida andam atras do pedido, sem pular quando um alvo troca pelo
+    // A camera da corrida (no mundo), em 3a pessoa presa ao mapa: o rumo ate
+    // o alvo anda atras do pedido, sem pular quando um alvo troca pelo
     // seguinte (o pulo parecia o episodio recomecando).
     struct RaceCamera {
         bool valid = false;
-        Vec3 aim;
         float yaw = 0.0f;
         std::uint32_t steps = 0;
     } m_raceCamera;
+    // Onde a pelve aparece no ultimo quadro (0 a 1 na imagem; -1 fora dela).
+    std::array<float, 2> m_pelvisOnScreen { -1.0f, -1.0f };
     bool m_paused = false;
     std::vector<float> m_action;
     std::string m_viewerError;

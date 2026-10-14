@@ -268,12 +268,12 @@ void ReinforcementLearningScreen::notify(std::string text) {
 }
 
 void ReinforcementLearningScreen::frame(float yawDegrees, float pitchDegrees) {
-    // Na corrida a camera fica longe e mais alta: o jogador e o alvo (a 10 m)
-    // no mesmo quadro.
+    // Na corrida, a 3a pessoa: atras dele e um pouco acima, perto o bastante
+    // para ver o passo e baixa o bastante para ver o alvo la na frente.
     const bool racing = m_skill < m_skills.size() && m_skills[m_skill].target;
     m_camera.yaw = yawDegrees * DegreesToRadians;
-    m_camera.pitch = (racing ? std::max(pitchDegrees, 24.0f) : pitchDegrees) * DegreesToRadians;
-    m_camera.distance = racing ? 12.5f : 4.4f;
+    m_camera.pitch = (racing ? std::max(pitchDegrees, 18.0f) : pitchDegrees) * DegreesToRadians;
+    m_camera.distance = racing ? 7.0f : 4.4f;
     m_dirty = true;
 }
 
@@ -434,18 +434,17 @@ void ReinforcementLearningScreen::updateRaceCamera(float seconds, bool snap) {
     }
     const Vec3 pelvis = view.state->links.front().position;
     const Vec3 to { view.target.x - pelvis.x, view.target.y - pelvis.y, 0.0f };
-    const Vec3 aim { pelvis.x + 0.5f * to.x, pelvis.y + 0.5f * to.y, 0.0f };
-    // O rumo dele ate o alvo; perto do alvo o rumo fica (senao a camera gira
-    // em volta dele na chegada).
+    // O rumo e o do mapa (dele ate o alvo), nao o do corpo, que balanca a cada
+    // passo e gira com o peito fixo; perto do alvo o rumo fica (senao a camera
+    // gira em volta dele na chegada).
     float yaw = m_raceCamera.yaw;
     if (std::hypot(to.x, to.y) > 1.5f || !m_raceCamera.valid) yaw = std::atan2(to.y, to.x);
     // Comeco, outro episodio ou outro mundo: a camera vai direto.
     if (snap || !m_raceCamera.valid || view.steps < m_raceCamera.steps) {
-        m_raceCamera = { true, aim, yaw, view.steps };
+        m_raceCamera = { true, yaw, view.steps };
         return;
     }
-    const float follow = 1.0f - std::exp(-seconds / 0.6f), turn = 1.0f - std::exp(-seconds / 0.9f);
-    m_raceCamera.aim += (aim - m_raceCamera.aim) * follow;
+    const float turn = 1.0f - std::exp(-seconds / 1.0f);
     m_raceCamera.yaw += std::remainder(yaw - m_raceCamera.yaw, 2.0f * std::numbers::pi_v<float>) * turn;
     m_raceCamera.steps = view.steps;
 }
@@ -715,17 +714,24 @@ bool ReinforcementLearningScreen::render(int width, int height) {
     OrbitCamera camera = m_camera;
     const Vec3 pelvis = m_skeleton->toSkeleton(positions.front());
     camera.target = { pelvis.x, pelvis.y, pelvis.z - 0.04f };
-    // Na corrida a camera mira entre o jogador e o alvo e gira com a corrida:
-    // de lado, um pouco por tras (o giro do mouse soma em cima do 3/4).
+    // Na corrida, a 3a pessoa presa ao mapa: a camera mira a pelve (sem
+    // atraso; so o rumo anda suave), atras dele no rumo do alvo e um pouco de
+    // lado, para ver as pernas (o giro do mouse soma em cima disso). Por
+    // tras, o caminho ate o alvo ja fica na frente dele no quadro.
     if (view.hasTarget) {
         if (!m_raceCamera.valid) updateRaceCamera(0.0f, true);
-        const Vec3 aim = m_skeleton->toSkeleton({ m_raceCamera.aim.x, m_raceCamera.aim.y, 0.0f });
-        const Vec3 ahead = m_skeleton->toSkeleton({ m_raceCamera.aim.x + std::cos(m_raceCamera.yaw),
-            m_raceCamera.aim.y + std::sin(m_raceCamera.yaw), 0.0f });
-        camera.target = { aim.x, aim.y, 0.6f * pelvis.z };
+        const Vec3 base { positions.front().x, positions.front().y, 0.0f };
+        const Vec3 aim = m_skeleton->toSkeleton(base);
+        const Vec3 ahead = m_skeleton->toSkeleton(base + Vec3 { std::cos(m_raceCamera.yaw), std::sin(m_raceCamera.yaw), 0.0f });
+        camera.target = { aim.x, aim.y, 0.85f * pelvis.z };
         const float run = std::atan2(ahead.y - aim.y, ahead.x - aim.x);
-        camera.yaw = run - 0.5f * std::numbers::pi_v<float> - 0.35f + (m_camera.yaw - 35.0f * DegreesToRadians);
+        camera.yaw = run - std::numbers::pi_v<float> + 0.45f + (m_camera.yaw - 35.0f * DegreesToRadians);
     }
+    // Onde ele aparece (os testes conferem que a camera nao o corta).
+    const ScreenPoint shown = Projector(camera, width, height).project(pelvis);
+    m_pelvisOnScreen = shown.visible
+        ? std::array<float, 2> { shown.x / static_cast<float>(width), shown.y / static_cast<float>(height) }
+        : std::array<float, 2> { -1.0f, -1.0f };
     m_image = renderInspection(scene, style, camera, width, height);
     m_dirty = false;
     return true;

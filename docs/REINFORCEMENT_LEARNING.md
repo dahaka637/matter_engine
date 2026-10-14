@@ -272,6 +272,10 @@ diagonal), e a voltar.
 - **Na tela:** Corpo → Estrela → Peito livre/fixo.
   - O rótulo mostra a velocidade de agora e a pedida ("1,0 m/s · pede 1,2").
   - As 8 pontas da estrela aparecem em cinza, no tamanho da ida de agora.
+  - A câmera fica em 3ª pessoa presa ao mapa: atrás dele (um pouco de lado)
+    no rumo até o alvo, não no do corpo, a 7 m e 18° de cima. O mouse gira e
+    aproxima por cima disso, e o duplo clique volta ao padrão. Um teste da
+    tela confere que, em 40 s de estrela, ele fica sempre no meio do quadro.
   - Cada recomeço (uma queda) segue o roteiro do mundo seguinte da bateria
     (`evaluationCycle`; `cycle=True` no `Batch` do Python), então o mundo da
     tela passa por todas as direções e faixas. Sem isso, ele recomeçava
