@@ -15,7 +15,7 @@ from .model import ACTION_LIMIT, ActorCritic
 
 REASONS = ["nenhum", "queda_contato", "queda_altura", "numerico", "tempo", "limite", "alvo_perdido"]
 # As colunas do resumo de um episodio (finished_episodes do modulo nativo).
-EPISODE_COLUMNS = 30
+EPISODE_COLUMNS = 31
 FALLS = {1, 2, 3}
 
 
@@ -39,13 +39,13 @@ def battery_posture(name: str) -> str:
 def battery_kind(name: str) -> str:
     """O tipo de uma bateria pelo nome (a convencao das tarefas): andar_* e
     girar_* seguem um roteiro de velocidades, ir_ate_* vao a um ponto,
-    corrida_*, caminhada_*, direcoes_*, percursos_*, tiro_*, estrela_* e frear_* vao ate
+    corrida_*, caminhada_*, direcoes_*, percursos_*, tiro_*, estrela_*, frear_* e curvas_* vao ate
     os alvos da tarefa (o alvo no mundo, com imitacao)."""
     if name.startswith(("andar_", "girar_")):
         return "andar"
     if name.startswith("ir_ate_"):
         return "alvo"
-    if name.startswith(("corrida_", "caminhada_", "direcoes_", "percursos_", "tiro_", "estrela_", "frear_")):
+    if name.startswith(("corrida_", "caminhada_", "direcoes_", "percursos_", "tiro_", "estrela_", "frear_", "curvas_")):
         return "corrida"
     return "de_pe"
 
@@ -86,7 +86,7 @@ class Battery:
 
 # A versao da conta da nota: um "melhor" de outra versao nao se compara (2:
 # entrou o erro da postura pedida).
-SCORE_VERSION = 3
+SCORE_VERSION = 4
 
 
 def walking_score(metrics: dict) -> float:
@@ -133,7 +133,8 @@ def race_score(metrics: dict) -> float:
     com ela (o erro das juntas abaixo de 0,5 rad). Com o comando de velocidade,
     a parte da velocidade e acertar a pedida (o erro abaixo de 1,5 m/s), nao
     correr mais. Com o comando de olhar, o peito fora dele desconta ate 0,25
-    (60 graus ou mais)."""
+    (60 graus ou mais). Nas curvas, sair da linha desconta ate 0,20 (1 m ou
+    mais)."""
     if metrics.get("speed_error", -1.0) >= 0:
         speed = max(0.0, 1.0 - metrics["speed_error"] / 1.5)
     else:
@@ -142,7 +143,8 @@ def race_score(metrics: dict) -> float:
             + 0.30 * metrics.get("reached_fraction", 0.0)
             + 0.25 * speed
             + 0.15 * max(0.0, 1.0 - metrics.get("imitation_error", 1.0) / 0.5)
-            - (0.25 * min(1.0, metrics["facing_error"] / 60.0) if metrics.get("facing_error", -1.0) >= 0 else 0.0))
+            - (0.25 * min(1.0, metrics["facing_error"] / 60.0) if metrics.get("facing_error", -1.0) >= 0 else 0.0)
+            - (0.20 * min(1.0, metrics["line_error"] / 1.0) if metrics.get("line_error", -1.0) >= 0 else 0.0))
 
 
 def score(metrics: dict) -> float:
@@ -360,6 +362,9 @@ class Evaluator:
             # Pare aqui: o quanto passou do disco antes de parar (m; so medida).
             overshoots = rows[:, 29][rows[:, 29] >= 0]
             metrics["stop_overshoot"] = float(overshoots.mean()) if len(overshoots) else -1.0
+            # As curvas: o quanto saiu da linha dos alvos (RMS, m).
+            lines = rows[:, 30][rows[:, 30] >= 0]
+            metrics["line_error"] = float(lines.mean()) if len(lines) else -1.0
             metrics["reference_speed"] = float((spec or {}).get("referenceSpeed", 6.0))
         metrics["kind"] = kind
         metrics["score"] = (walking_score(metrics) if kind == "andar" else goal_score(metrics) if kind == "alvo"

@@ -172,6 +172,17 @@ struct Environment {
     std::array<float, 4> changeAt {};
     std::uint32_t changeCount = 0;
     std::uint32_t changeNext = 0;
+    // As curvas: os alvos que faltam na curva de agora, quantas ja foram, o
+    // raio, o sentido (+1 esquerda), o giro entre dois alvos e a velocidade.
+    // O afastamento da linha (do trecho entre dois alvos) somado.
+    std::uint32_t arcLeft = 0;
+    std::uint32_t arcIndex = 0;
+    float arcRadius = 0.0f;
+    float arcSign = 1.0f;
+    float arcStep = 0.0f;
+    float arcSpeed = 0.0f;
+    double lineSquares = 0.0;
+    std::uint32_t lineSteps = 0;
     float speedNow = 0.0f;
     double speedErrorSquares = 0.0;
     std::uint32_t speedSteps = 0;
@@ -514,6 +525,42 @@ void TrainingBatch3D::Impl::drawLibraryTarget(Environment& env, Vec3 from, float
         return std::min(wanted, directionCapability(env, direction - env.facingCommand));
     };
     speed = t.referenceSpeed;
+    if (t.pattern == "arc") {
+        // As curvas: uma nova quando a de agora acaba (o tipo de raio, o giro,
+        // o sentido e a velocidade); cada alvo e a corda seguinte do arco.
+        if (k == 0) {
+            env.arcLeft = 0;
+            env.arcIndex = 0;
+            env.arcSign = 1.0f;
+        }
+        if (env.arcLeft == 0) {
+            const std::uint32_t arc = env.arcIndex++;
+            const std::size_t type = training()
+                ? std::uniform_int_distribution<std::size_t>(0, t.arcRadii.size() - 1)(env.rng)
+                : (env.sequence + arc) % t.arcRadii.size();
+            env.arcRadius = pickIn(t.arcRadii[type]);
+            const float sweep = pickIn(t.arcSweepDegrees) * Radians;
+            const bool flip = training() ? std::uniform_real_distribution<float>(0.0f, 1.0f)(env.rng) < t.arcSwitchFraction
+                                         : (env.sequence + arc) % 2 == 1;
+            if (arc == 0) env.arcSign = training() && std::uniform_int_distribution<int>(0, 1)(env.rng) == 0 ? -1.0f : 1.0f;
+            else if (flip) env.arcSign = -env.arcSign;
+            env.arcLeft = std::max(2u, static_cast<std::uint32_t>(std::lround(env.arcRadius * sweep / t.arcSpacing)));
+            env.arcStep = sweep / static_cast<float>(env.arcLeft);
+            float wanted = t.referenceSpeed;
+            if (sc.enabled) {
+                const auto& band = sc.bands[drawSpeedBand(env, 2u * arc)];
+                wanted = pickIn(band.speed);
+            }
+            env.arcSpeed = std::min(wanted, std::sqrt(t.arcLateralAcceleration * env.arcRadius));
+        }
+        --env.arcLeft;
+        const float heading = (k == 0 ? env.courseHeading : facing) + env.arcSign * 0.5f * env.arcStep;
+        const float chord = 2.0f * env.arcRadius * std::sin(0.5f * env.arcStep);
+        point = Vec3 { from.x, from.y, 0.0f } + Vec3 { std::cos(heading), std::sin(heading), 0.0f } * chord;
+        direction = heading + env.arcSign * 0.5f * env.arcStep;
+        speed = capped(env.arcSpeed);
+        return;
+    }
     if (t.pattern == "star") {
         // A estrela: os pares vao do centro a uma das direcoes (no rumo do
         // comeco, o "norte"), os impares voltam ao centro.
@@ -1201,6 +1248,8 @@ void TrainingBatch3D::Impl::resetEnvironment(std::uint32_t index) {
     env.slipSamples = 0;
     env.overshootSum = 0.0;
     env.overshootCount = 0;
+    env.lineSquares = 0.0;
+    env.lineSteps = 0;
     if (targeting() && state && !(imitating() && reference.library)) placeFirstTarget(env, *state);
     env.episodeReturn = 0.0;
     env.comSum[0] = env.comSum[1] = 0.0;
@@ -1636,6 +1685,17 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
             env.speedErrorSquares += error * error;
             ++env.speedSteps;
         }
+        // As curvas: o quanto ele sai da linha (o trecho do alvo anterior ao de
+        // agora, que segue o arco a cada 2 m).
+        if (t.pattern == "arc") {
+            const float sx = env.target.x - env.targetFrom.x, sy = env.target.y - env.targetFrom.y;
+            const float length2 = std::max(1.0e-6f, sx * sx + sy * sy);
+            const float u = std::clamp(((reading.com.x - env.targetFrom.x) * sx + (reading.com.y - env.targetFrom.y) * sy)
+                / length2, 0.0f, 1.0f);
+            const float off = std::hypot(reading.com.x - (env.targetFrom.x + u * sx), reading.com.y - (env.targetFrom.y + u * sy));
+            env.lineSquares += off * off;
+            ++env.lineSteps;
+        }
         // Pare aqui: chegar e so parar dentro do disco (mais devagar que
         // stopSpeed) pelo tempo pedido; o quanto passa do disco depois de
         // entrar nele fica medido.
@@ -1801,6 +1861,7 @@ void TrainingBatch3D::Impl::finishEpisode(Scene& scene, std::uint32_t index, Tra
     episode.speedErrorRms =
         env.speedSteps > 0 ? static_cast<float>(std::sqrt(env.speedErrorSquares / env.speedSteps)) : -1.0f;
     episode.footSlipMean = env.slipSamples > 0 ? static_cast<float>(env.slipSum / env.slipSamples) : -1.0f;
+    episode.lineErrorRms = env.lineSteps > 0 ? static_cast<float>(std::sqrt(env.lineSquares / env.lineSteps)) : -1.0f;
     episode.stopOvershootMean = env.overshootCount > 0 ? static_cast<float>(env.overshootSum / env.overshootCount) : -1.0f;
     if (reason == TrainingEndReason3D::FallContact || reason == TrainingEndReason3D::FallHeight) {
         // O lado da queda: para onde o centro de massa ia, no referencial do corpo.
@@ -2235,7 +2296,7 @@ TrainingEnvironmentView3D TrainingBatch3D::view(std::size_t environment) const {
     if (impl.targeting()) {
         view.hasTarget = true;
         view.target = env.target;
-        view.targetRadius = impl.task.target.radius;
+        view.targetRadius = impl.taskOf(env).target.radius;  // o do exercicio
         view.targetsReached = env.targetsReached;
         view.upcomingCount = impl.imitating() && impl.reference.library ? impl.task.target.lookahead : 0u;
         for (std::uint32_t i = 0; i < view.upcomingCount; ++i) {

@@ -937,7 +937,7 @@ void testDrills() {
         // A tarefa Corpo (a area 1): a estrela, com o desenho e o comando de
         // velocidade dela.
         const TrainingTask3D corpo = loadTrainingTask3D(std::filesystem::path(MATTERENGINE_TEST_ASSETS_DIR) / "rl/tasks/corpo.json");
-        require(corpo.drills.size() == 2 && corpo.drills[0].id == "estrela"
+        require(corpo.drills.size() == 3 && corpo.drills[0].id == "estrela"
                 && corpo.drills[0].task->target.pattern == "star" && corpo.target.pattern == "random"
                 && corpo.drills[0].task->target.facingFraction == 0.6f && corpo.target.speedCommand.enabled
                 && corpo.target.speedCommand.bands.size() == 4,
@@ -963,6 +963,7 @@ void testStar() {
         // No treino: o de agora fora, o proximo no centro, o seguinte fora de novo.
         TrainingBatchSettings3D s = settings(32, 4);
         s.taskPath = task;
+        s.drill = "estrela";
         TrainingBatch3D batch(s);
         const std::size_t O = batch.observationSize(), speed = channel(batch, "command.speed"),
                           now = channel(batch, "command.speed.now");
@@ -1112,6 +1113,39 @@ void testBrake() {
     }
 }
 
+// As curvas (o 5): alvos a cada ~2 m num arco, a velocidade limitada pelo raio.
+void testCurves() {
+    const std::filesystem::path task = std::filesystem::path(MATTERENGINE_TEST_ASSETS_DIR) / "rl/tasks/corpo.json";
+    const auto planar = [](Vec3 a, Vec3 b) { return std::hypot(a.x - b.x, a.y - b.y); };
+    TrainingBatchSettings3D s = settings(8, 4);
+    s.taskPath = task;
+    s.evaluation = true;
+    s.evaluationEpisodeSeconds = 40.0f;
+    s.facing = 0;
+    s.drill = "curvas";
+    TrainingBatch3D batch(s);
+    const std::size_t O = batch.observationSize(), speed = channel(batch, "command.speed");
+    for (std::size_t e = 0; e < 8; ++e) {
+        const TrainingEnvironmentView3D view = batch.view(e);
+        const Vec3 a { view.origin.x, view.origin.y, 0.0f }, b = view.target, c = view.upcoming[0], d = view.upcoming[1];
+        require(planar(a, b) > 1.4f && planar(a, b) < 2.2f && planar(b, c) > 1.4f && planar(b, c) < 2.2f,
+            "os alvos da curva ficam a cada ~2 m (" + std::to_string(planar(a, b)) + ")");
+        // A curva: o giro de um trecho para o outro tem o mesmo sentido.
+        const float turn1 = std::remainder(std::atan2(c.y - b.y, c.x - b.x) - std::atan2(b.y - a.y, b.x - a.x), 6.2831853f);
+        const float turn2 = std::remainder(std::atan2(d.y - c.y, d.x - c.x) - std::atan2(c.y - b.y, c.x - b.x), 6.2831853f);
+        require(std::abs(turn1) > 0.05f && turn1 * turn2 > 0.0f, "os alvos seguem um arco");
+    }
+    // O mundo 2 comeca na curva fechada (~3 m) com a corrida pedida: a
+    // pedida fica no que o raio deixa (sqrt(5 x 3) ~ 3,9 m/s).
+    require(batch.observations()[2 * O + speed] * 6.0f < 4.0f, "na curva fechada a pedida e limitada pelo raio");
+    for (int step = 0; step < 20; ++step) {
+        batch.step(std::vector<float>(8 * batch.actionSize(), 0.0f));
+        require(finiteAll(batch.observations()) && finiteAll(batch.rewards()), "as curvas andam sem numero ruim");
+        for (const TrainingEpisode3D& episode : batch.finishedEpisodes())
+            require(episode.lineErrorRms >= 0.0f || episode.steps < 2, "o episodio mede o afastamento da linha");
+    }
+}
+
 } // namespace
 
 void runTrainingBatchTests() {
@@ -1132,5 +1166,6 @@ void runTrainingBatchTests() {
     testDrills();
     testStar();
     testBrake();
+    testCurves();
     std::cout << "RL training batch tests passed\n";
 }

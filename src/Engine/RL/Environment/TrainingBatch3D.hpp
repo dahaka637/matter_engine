@@ -142,6 +142,9 @@ struct TrainingEpisode3D {
     // Pare aqui: o quanto passou do disco depois de entrar, na media dos
     // alvos de parar alcancados (m; -1 sem nenhum).
     float stopOvershootMean = -1.0f;
+    // As curvas: o quanto o centro de massa saiu da linha dos alvos (RMS, m;
+    // -1 fora delas).
+    float lineErrorRms = -1.0f;
 };
 
 // Um mundo de treino visto por fora (o visualizador, a gravacao).

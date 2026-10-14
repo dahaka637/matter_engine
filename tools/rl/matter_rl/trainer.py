@@ -439,6 +439,7 @@ class Trainer:
                     "target_speed": metrics.get("target_speed"), "imitation_error": metrics.get("imitation_error"),
                     "facing_error": metrics.get("facing_error"), "speed_error": metrics.get("speed_error"),
                     "foot_slip": metrics.get("foot_slip"), "stop_overshoot": metrics.get("stop_overshoot"),
+                    "line_error": metrics.get("line_error"),
                     "score": metrics["score"], "ends": json.dumps(metrics["ends"]),
                 })
         self.adjust_drill_weights(results)

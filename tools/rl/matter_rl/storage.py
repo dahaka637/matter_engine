@@ -99,6 +99,7 @@ CREATE TABLE IF NOT EXISTS evaluations (
     speed_error REAL,
     foot_slip REAL,
     stop_overshoot REAL,
+    line_error REAL,
     PRIMARY KEY (run, iteration, battery, solver)
 );
 CREATE TABLE IF NOT EXISTS checkpoints (
@@ -145,7 +146,7 @@ class Database:
             known = {row[1] for row in self.connection.execute("PRAGMA table_info(evaluations)")}
             for column in ("turn", "joint_speed", "foot_turn", "pose_error", "velocity_error", "lateral_drift",
                            "goal_error", "targets", "reached_fraction", "first_target_seconds", "target_speed",
-                           "imitation_error", "facing_error", "speed_error", "foot_slip", "stop_overshoot"):
+                           "imitation_error", "facing_error", "speed_error", "foot_slip", "stop_overshoot", "line_error"):
                 if column not in known:
                     self.connection.execute(f"ALTER TABLE evaluations ADD COLUMN {column} REAL")
             known = {row[1] for row in self.connection.execute("PRAGMA table_info(iterations)")}

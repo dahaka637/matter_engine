@@ -229,7 +229,20 @@ TrainingTask3D parseTask(const nlohmann::json& document, const std::filesystem::
             if (sc.enabled && sc.bands.empty()) throw std::runtime_error("tarefa de RL: comando de velocidade sem faixas");
         }
         out.pattern = t.value("pattern", out.pattern);
-        if (out.pattern != "random" && out.pattern != "star") throw std::runtime_error("tarefa de RL: pattern e random ou star");
+        if (out.pattern != "random" && out.pattern != "star" && out.pattern != "arc")
+            throw std::runtime_error("tarefa de RL: pattern e random, star ou arc");
+        if (t.contains("arcRadii")) {
+            out.arcRadii.clear();
+            for (const nlohmann::json& r : t["arcRadii"]) {
+                const auto pair = r.get<std::array<float, 2>>();
+                out.arcRadii.push_back({ std::max(0.5f, pair[0]), std::max(0.5f, pair[1]) });
+            }
+        }
+        out.arcSweepDegrees = range(t, "arcSweepDegrees", out.arcSweepDegrees);
+        out.arcSpacing = std::max(0.5f, t.value("arcSpacing", out.arcSpacing));
+        out.arcLateralAcceleration = std::max(0.5f, t.value("arcLateralAcceleration", out.arcLateralAcceleration));
+        out.arcSwitchFraction = std::clamp(t.value("arcSwitchFraction", out.arcSwitchFraction), 0.0f, 1.0f);
+        if (out.pattern == "arc" && out.arcRadii.empty()) throw std::runtime_error("tarefa de RL: curvas sem arcRadii");
         out.starDirections = std::clamp(t.value("starDirections", out.starDirections), 1u, 16u);
         out.starJitterDegrees = std::max(0.0f, t.value("starJitterDegrees", out.starJitterDegrees));
         out.lookahead = std::min(3u, t.value("lookahead", out.lookahead));

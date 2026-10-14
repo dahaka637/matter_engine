@@ -1,9 +1,9 @@
 {
   "schema": "matter-rl-task-1",
   "id": "corpo",
-  "version": 5,
+  "version": 6,
   "displayName": "Corpo",
-  "comment": "Area 1 da metodologia de 13/10 (as 3 areas: Corpo, Bola e Goleiro; docs/REINFORCEMENT_LEARNING.md e o Vault, Arquitetura_RL.md): uma tarefa so com os exercicios do corpo misturados no mesmo treino. Cada mundo sorteia o seu exercicio pelo peso (drills); o exercicio muda o mundo (como os alvos nascem, as notas, a duracao), nunca o que a rede ve ou faz, e a rede nunca sabe o nome dele: no jogo nao ha exercicio, ha comandos. As fatias seguem o exame (drillWeights). Versao 2 (14/10): o primeiro exercicio de verdade, a estrela (treino_locomocao_claude.md, o 3), no lugar dos tres provisorios (pontos, peito e tiro viram os modos livre e peito fixo dela; o tiro volta como os cortes). Versao 3 (14/10): o peito girando vira um modo de verdade (metade dos de peito fixo, ate 0,6 rad/s, sentido e velocidade sorteados a cada 2-4 s), com a sua bateria e a opcao no laboratorio. Versao 4 (14/10): o giro em trechos de meia a uma volta e meia (0,4-1,2 rad/s) e as distancias mais parecidas (andar 6-9, trote 8-12, corrida 12-17, sprint 16-22 m). Versao 5 (14/10): o exercicio frear (o 4: a pedida muda no caminho e metade dos discos e de pare aqui) e o clipe parado na biblioteca.",
+  "comment": "Area 1 da metodologia de 13/10 (as 3 areas: Corpo, Bola e Goleiro; docs/REINFORCEMENT_LEARNING.md e o Vault, Arquitetura_RL.md): uma tarefa so com os exercicios do corpo misturados no mesmo treino. Cada mundo sorteia o seu exercicio pelo peso (drills); o exercicio muda o mundo (como os alvos nascem, as notas, a duracao), nunca o que a rede ve ou faz, e a rede nunca sabe o nome dele: no jogo nao ha exercicio, ha comandos. As fatias seguem o exame (drillWeights). Versao 2 (14/10): o primeiro exercicio de verdade, a estrela (treino_locomocao_claude.md, o 3), no lugar dos tres provisorios (pontos, peito e tiro viram os modos livre e peito fixo dela; o tiro volta como os cortes). Versao 3 (14/10): o peito girando vira um modo de verdade (metade dos de peito fixo, ate 0,6 rad/s, sentido e velocidade sorteados a cada 2-4 s), com a sua bateria e a opcao no laboratorio. Versao 4 (14/10): o giro em trechos de meia a uma volta e meia (0,4-1,2 rad/s) e as distancias mais parecidas (andar 6-9, trote 8-12, corrida 12-17, sprint 16-22 m). Versao 5 (14/10): o exercicio frear (o 4: a pedida muda no caminho e metade dos discos e de pare aqui) e o clipe parado na biblioteca. Versao 6 (14/10): o exercicio curvas (o 5: alvos a cada 2 m em arcos abertos, medios e fechados, em S, com a velocidade limitada pelo raio).",
   "postures": [
     {
       "id": "alerta",
@@ -302,6 +302,28 @@
           }
         }
       }
+    },
+    {
+      "id": "curvas",
+      "name": "Curvas",
+      "weight": 1.0,
+      "comment": "O 5 (treino_locomocao_claude.md): alvos pequenos a cada 2 m ao longo de arcos; cada curva sorteia o raio (aberta 13-17, media 6,5-9,5, fechada 2,5-3,5 m), o giro (60-180 graus) e o sentido (metade das vezes troca: as curvas em S); a velocidade da faixa, no maximo sqrt(5 x raio). O peito livre, fixo e girando como na estrela. A nota desconta o quanto ele sai da linha.",
+      "overrides": {
+        "target": {
+          "pattern": "arc",
+          "radius": 0.6,
+          "arcRadii": [[13.0, 17.0], [6.5, 9.5], [2.5, 3.5]],
+          "arcSweepDegrees": [60.0, 180.0],
+          "arcSpacing": 2.0,
+          "arcLateralAcceleration": 5.0,
+          "arcSwitchFraction": 0.5,
+          "facingFraction": 0.6,
+          "facingDriftFraction": 0.5,
+          "facingDriftRadians": 0.6,
+          "facingDriftTurns": [0.5, 1.5],
+          "facingDriftSpeed": [0.4, 1.2]
+        }
+      }
     }
   ],
   "evaluation": [
@@ -340,6 +362,22 @@
     {
       "name": "frear_peito_v1",
       "drill": "frear",
+      "posture": "alerta",
+      "seconds": 40.0,
+      "referenceSpeed": 3.0,
+      "facing": 1
+    },
+    {
+      "name": "curvas_livre_v1",
+      "drill": "curvas",
+      "posture": "alerta",
+      "seconds": 40.0,
+      "referenceSpeed": 3.0,
+      "facing": 0
+    },
+    {
+      "name": "curvas_peito_v1",
+      "drill": "curvas",
       "posture": "alerta",
       "seconds": 40.0,
       "referenceSpeed": 3.0,

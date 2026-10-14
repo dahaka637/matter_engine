@@ -374,6 +374,16 @@ struct TrainingTask3D {
         std::string pattern = "random";
         std::uint32_t starDirections = 8;
         float starJitterDegrees = 8.0f;
+        // As curvas ("arc"): cada uma sorteia um dos tipos de raio (arcRadii,
+        // [m, m]: aberta, media, fechada), o quanto gira (arcSweepDegrees) e o
+        // sentido (arcSwitchFraction: a chance de trocar de lado, as curvas em
+        // S); os alvos ficam a cada arcSpacing metros no arco. A velocidade e
+        // uma por curva, no maximo sqrt(arcLateralAcceleration * raio).
+        std::vector<TrainingRange3D> arcRadii;
+        TrainingRange3D arcSweepDegrees { 60.0f, 180.0f };
+        float arcSpacing = 2.0f;
+        float arcLateralAcceleration = 5.0f;
+        float arcSwitchFraction = 0.5f;
         // Os varios pontos (biblioteca): quantos alvos depois do de agora ja
         // estao no mapa e na observacao (0 a 3; com 0, cada um nasce so na
         // chegada do anterior). Com eles, cada alvo sai do anterior, pelo rumo do

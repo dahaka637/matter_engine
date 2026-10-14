@@ -323,6 +323,30 @@ com duas coisas a mais.
   modos do peito, ramos de cada exercício (Corpo → Estrela / Frear e parar →
   Peito livre / fixo / girando). O nome vem de `"name"` no exercício.
 
+## Curvas (14/10/2026)
+
+O terceiro exercício do Corpo (o 5 do `treino_locomocao_claude.md`).
+
+- **O desenho** (`"pattern": "arc"`): alvos pequenos (raio 0,6 m) a cada
+  `arcSpacing` (2 m) ao longo de um arco, os dois próximos no mapa.
+  - Cada curva sorteia o tipo de raio (`arcRadii`: aberta 13–17, média
+    6,5–9,5, fechada 2,5–3,5 m) e o quanto gira (`arcSweepDegrees`, 60–180°).
+  - O sentido troca em metade das curvas (`arcSwitchFraction`): as curvas em S.
+  - A velocidade é uma por curva, da faixa sorteada, no máximo
+    √(`arcLateralAcceleration` × raio) (5 m/s²: na fechada, ~3,9 m/s).
+- **Os clipes:** os de ciclo (trotes, sprint, andar) com a referência girando
+  pelo rumo do alvo. Os clipes de curva do Mixamo (não são ciclos) ficam para
+  depois, se a imagem pedir.
+- **O afastamento da linha** (`line_error`, a coluna 30 do episódio, 31
+  colunas): a distância do centro de massa ao trecho entre o alvo anterior e o
+  de agora, em RMS. Desconta até 0,20 da nota da corrida (1 m ou mais); nas
+  outras baterias é -1 e não conta (`SCORE_VERSION` 4).
+- **As baterias:** `curvas_livre_v1` e `curvas_peito_v1`. Na avaliação, o
+  tipo de raio e a troca de lado seguem o mundo e a curva.
+- **A prévia com o cérebro de 14/10 (rodada 60068, antes de treinar):** em
+  30 s, de pé em 15 de 16 (livre) e 14 de 16 (fixo), ~19 alvos, 0,6–0,7 m fora
+  da linha, 2–2,8 m/s abaixo da pedida (devagar nas curvas).
+
 ## Da H4 à H7 (13/10/2026): a biblioteca de clipes e o planejador
 
 - **A biblioteca** (`imitation.library`): todos os clipes em ciclo, e o
