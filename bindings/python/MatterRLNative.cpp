@@ -370,7 +370,7 @@ NB_MODULE(matter_rl_native, m) {
                 // alvos alcancados, segundos ate o primeiro, velocidade media ate
                 // eles e o erro da imitacao.
                 const auto episodes = b.finishedEpisodes();
-                constexpr std::size_t Columns = 33;
+                constexpr std::size_t Columns = 35;
                 auto* data = new float[std::max<std::size_t>(1, episodes.size()) * Columns];
                 for (std::size_t i = 0; i < episodes.size(); ++i) {
                     const TrainingEpisode3D& e = episodes[i];
@@ -408,6 +408,8 @@ NB_MODULE(matter_rl_native, m) {
                     row[30] = e.lineErrorRms;
                     row[31] = e.cadence;
                     row[32] = e.chatterRate;
+                    row[33] = e.meanReversal;
+                    row[34] = e.cutSeconds;
                 }
                 nb::capsule owner(data, [](void* p) noexcept { delete[] static_cast<float*>(p); });
                 return nb::ndarray<nb::numpy, float, nb::ndim<2>>(data, { episodes.size(), Columns }, owner);

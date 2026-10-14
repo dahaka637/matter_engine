@@ -258,28 +258,3 @@ def test_trainer_applies_drill_weights(tmp_path):
     assert weights["a"][0] == 1.0 and weights["b"] == (2.0, 1.0)   # 0,1 atras: 1 + 10 * 0,1
     assert reloads == [str(task)] and events[0][1] == "exercicios"
 
-
-def test_trainer_ramps_the_muscle(tmp_path):
-    """O musculo endurece aos poucos: do comeco ao final em rampIterations
-    rodadas, na copia do treino, com o lote recarregado e o evento gravado."""
-    import json
-    import types
-    from matter_rl.trainer import Trainer
-    task = tmp_path / "tarefa.json"
-    task.write_text(json.dumps({"muscleSeconds": 0.08, "muscle": {"startSeconds": 0.03, "rampIterations": 100}}))
-    reloads, events = [], []
-    fake = types.SimpleNamespace(live_task=task, run="r", counters={"iteration": 1000},
-                                 batch=types.SimpleNamespace(update_task=reloads.append),
-                                 db=types.SimpleNamespace(event=lambda *args, **kwargs: events.append(args)))
-    Trainer.muscle_step(fake)
-    assert json.loads(task.read_text())["muscleSeconds"] == 0.03
-    fake.counters["iteration"] = 1050
-    Trainer.muscle_step(fake)
-    assert abs(json.loads(task.read_text())["muscleSeconds"] - 0.055) < 1e-6
-    fake.counters["iteration"] = 1052
-    Trainer.muscle_step(fake)                     # menos de 0,005 s: fica
-    fake.counters["iteration"] = 5000
-    Trainer.muscle_step(fake)
-    data = json.loads(task.read_text())
-    assert data["muscleSeconds"] == 0.08 and data["muscle"]["startIteration"] == 1000
-    assert len(reloads) == 3 and all(e[1] == "musculo" for e in events)

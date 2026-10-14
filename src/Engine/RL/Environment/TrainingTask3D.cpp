@@ -32,7 +32,6 @@ TrainingTask3D parseTask(const nlohmann::json& document, const std::filesystem::
     task.definitionPath = definitionPath;
     task.bodyPath = (definitionPath.parent_path() / document.at("body").get<std::string>()).lexically_normal();
     task.actionRepeat = document.value("actionRepeat", 4u);
-    task.muscleSeconds = std::max(0.0f, document.value("muscleSeconds", 0.0f));
     task.episodeSeconds = document.value("episodeSeconds", 20.0f);
     task.groundMaterial = document.value("groundMaterial", std::string("grass"));
     if (task.actionRepeat == 0 || task.actionRepeat > 16 || !(task.episodeSeconds > 0.0f))
@@ -249,6 +248,8 @@ TrainingTask3D parseTask(const nlohmann::json& document, const std::filesystem::
         if (out.pattern == "arc" && out.arcRadii.empty()) throw std::runtime_error("tarefa de RL: curvas sem arcRadii");
         out.starDirections = std::clamp(t.value("starDirections", out.starDirections), 1u, 16u);
         out.starJitterDegrees = std::max(0.0f, t.value("starJitterDegrees", out.starJitterDegrees));
+        out.starContinuousFraction = std::clamp(t.value("starContinuousFraction", out.starContinuousFraction), 0.0f, 1.0f);
+        out.hideNextFraction = std::clamp(t.value("hideNextFraction", out.hideNextFraction), 0.0f, 1.0f);
         out.lookahead = std::min(3u, t.value("lookahead", out.lookahead));
         out.racingLine = std::clamp(t.value("racingLine", out.racingLine), 0.0f, 0.95f);
         if (t.contains("evaluationCourses"))

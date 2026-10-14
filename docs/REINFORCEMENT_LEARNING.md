@@ -297,41 +297,42 @@ diagonal), e a voltar.
   não tem entram com zero, como na migração do treinador. Assim um cérebro
   antigo roda numa tarefa mais nova.
 
-## Limites humanos contra a tremedeira (14/10/2026)
+## O tremor parado e a estrela contínua (14/10/2026)
 
-O usuário viu no girar parado micromovimentos rápidos dos pés, que pareciam
-tremer, e que um humano não faz. Nada cobrava isso (a mudança da ação tinha
-peso 0,01), e a referência do giro era o parado girando, sem passo.
+**O tremor parado.** O usuário viu o cérebro tremer os pés no girar parado. A
+causa (ele lembrou): a estabilização foi treinada no começo (H1 e H1b, com as
+notas de ficar de pé) e depois nunca foi revisada; na Corpo essas notas
+estavam em zero, inclusive nos parados.
 
-- **O músculo** (`muscleSeconds`): o alvo das juntas segue a ação da rede por
-  um filtro de primeira ordem por decisão, como um músculo, que não muda de
-  comando mais rápido que umas 5–8 vezes por segundo. Ele corta os passinhos
-  pela metade já com 0,03 s.
-  - O cérebro que treinou sem o músculo cai com ele (com 0,08 s, 16 de 16 na
-    estrela). Por isso existe a rampa (`"muscle": {"startSeconds": 0.03,
-    "rampIterations": 4000}`): o treinador leva o atraso da cópia do treino de
-    0,03 a 0,08 s em 4000 rodadas (evento `musculo`).
-  - A tela usa o músculo da cópia do treino (`settings.muscleSeconds`), o
-    mesmo com que o cérebro treina agora. O jogo, quando rodar a política,
-    precisa do mesmo filtro.
-- **Os giros no lugar em ciclo:** os giros parados do Mixamo (90° e 180°) na
-  biblioteca.
-  - O clipe marca quanto gira por ciclo (`turnCycleDegrees`, por
-    `tools/animation/ciclo_de_giro.py`). A referência não alisa a emenda e soma
-    a volta nas derivadas, e cada trecho tem o giro médio (`meanSpin`).
-  - Parado, o planejador escolhe o giro do lado e no ritmo mais perto do que
-    o peito pede, acima de `turnInPlaceAbove` (0,35 rad/s). O desvio do peito
-    só pede giro acima de 20°. Andando, os giros não valem.
-- **As medidas:** pisadas por segundo de cada pé (`cadence`, coluna 31) e
-  passinhos por segundo (`chatter`, coluna 32: o pé que ficou menos de 0,1 s
-  no ar), 33 colunas.
-  - Elas descontam da nota da corrida, do giro e de ficar de pé
-    (`human_penalty`): até 0,15 pelos passinhos (1 por segundo ou mais) e até
-    0,10 pela cadência acima de 3,5 (5 ou mais). `SCORE_VERSION` 5.
-- **A medida com o cérebro de 14/10 (rodada 60068):** no girar parado,
-  passinhos 2,7/s sem músculo e 1,5/s com 0,03 s. Nas folhas, os pés ficam
-  plantados em vez de trocar de lugar a cada 0,13 s, mas esse cérebro ainda
-  escorrega e cai: só o treino com o músculo resolve.
+- **Os parados revisam a estabilização do começo:** `parado` e `empurroes`
+  com as notas de ficar de pé do H1b (quieto, centro de massa sobre os pés,
+  pé sem sair do lugar nem escorregar, tronco sem girar, esforço, mudança de
+  ação). O `girar` sem "tronco sem girar" e "pé sem sair do lugar" (o giro
+  precisa das duas).
+- **Sem limites artificiais:** um filtro de "músculo" (um atraso na ação) e
+  duas penalidades novas foram feitos e desfeitos no mesmo dia. Um atraso não
+  é uma limitação humana: um humano reage rápido.
+- **Só medido, na prova:** a cadência (pisadas por segundo de cada pé,
+  coluna 31), os passinhos (pé menos de 0,1 s no ar, coluna 32) e a reversão
+  (a mudança da ação contra a anterior, o índice de tremor, coluna 33).
+  `human_penalty` desconta os passinhos e a cadência alta da nota.
+- **Os giros no lugar em ciclo** (`turnCycleDegrees`, os giros do Mixamo na
+  biblioteca) ficaram, como muleta do girar parado: a direção combinada com o
+  usuário é tirar os clipes aos poucos depois (o corpo fazendo os próprios
+  movimentos antes da bola).
+
+**A estrela contínua (o exercício 6, cortes, virou isto).**
+
+- `starContinuousFraction` (0,5 na estrela): depois de uma ponta, metade das
+  vezes ele vai direto a outra ponta (outra direção) em vez de voltar ao
+  centro. Os cortes de todos os ângulos aparecem sem a parada da volta.
+- `hideNextFraction` (0,3): em parte dos trechos os próximos ficam escondidos
+  até a chegada (a rede, a mira, o olhar livre e a tela só veem o de agora;
+  a pedida não freia para uma virada que ele não conhece). Na avaliação, um
+  trecho em três.
+- **O tempo de cada corte** (`cut_seconds`, coluna 34, 35 colunas): da
+  chegada num alvo com virada de 45° ou mais até andar a 80% da pedida rumo
+  ao seguinte. Só medido. Com o cérebro de 14/10: 2,3 s em média.
 
 ## Parado, girar parado e empurrões (14/10/2026)
 

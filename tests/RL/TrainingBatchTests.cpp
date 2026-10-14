@@ -968,13 +968,23 @@ void testStar() {
         TrainingBatch3D batch(s);
         const std::size_t O = batch.observationSize(), speed = channel(batch, "command.speed"),
                           now = channel(batch, "command.speed.now");
+        std::uint32_t continuous = 0, hidden = 0;
         for (std::size_t e = 0; e < 32; ++e) {
             const TrainingEnvironmentView3D view = batch.view(e);
             const float out = planar(view.target, view.origin);
             require(out >= bands.front().distance.minimum - 0.5f && out <= bands.back().distance.maximum + 0.5f,
                 "o ponto de fora fica na distancia das faixas (" + std::to_string(out) + " m)");
-            require(planar(view.upcoming[0], view.origin) < 1e-3f, "depois do ponto de fora vem o centro");
-            require(planar(view.upcoming[1], view.origin) >= bands.front().distance.minimum - 0.5f, "e depois fora de novo");
+            // Depois da ponta, o centro ou (a estrela continua) outra ponta; com
+            // os proximos escondidos (a reacao), a vista nao os mostra.
+            if (view.upcomingCount > 0) {
+                const float next = planar(view.upcoming[0], view.origin);
+                require(next < 1e-3f || (next >= bands.front().distance.minimum - 0.5f
+                                            && planar(view.upcoming[0], view.target) > 1.0f),
+                    "depois da ponta vem o centro ou outra ponta");
+                continuous += next > 1e-3f ? 1u : 0u;
+            } else {
+                ++hidden;
+            }
             const float wanted = batch.observations()[e * O + speed] * 6.0f, current = batch.observations()[e * O + now] * 6.0f;
             require(wanted >= bands.front().speed.minimum - 1e-3f && wanted <= bands.back().speed.maximum + 1e-3f,
                 "a velocidade pedida vem das faixas");
@@ -985,6 +995,8 @@ void testStar() {
             require(std::abs(planar(view.layout[1], view.layout[0]) - out) < 1e-3f,
                 "a estrela desenhada tem o tamanho da ida de agora");
         }
+        require(continuous > 2 && hidden > 2, "a estrela continua e a reacao aparecem no treino ("
+            + std::to_string(continuous) + " continuas, " + std::to_string(hidden) + " escondidas)");
         for (int step = 0; step < 20; ++step) {
             batch.step(std::vector<float>(32 * batch.actionSize(), 0.0f));
             require(finiteAll(batch.observations()) && finiteAll(batch.rewards()), "a estrela anda sem numero ruim");

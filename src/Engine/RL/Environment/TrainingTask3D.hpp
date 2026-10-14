@@ -137,11 +137,6 @@ struct TrainingTask3D {
     std::filesystem::path definitionPath;
     std::filesystem::path bodyPath;
     std::uint32_t actionRepeat = 4;
-    // O musculo: o alvo das juntas segue a acao da rede com este atraso (s, um
-    // filtro de primeira ordem por decisao), como um musculo humano, que nao
-    // muda de comando mais rapido que umas 5-8 vezes por segundo. Tira a
-    // tremedeira de alta frequencia (0 = a acao direto).
-    float muscleSeconds = 0.0f;
     float episodeSeconds = 20.0f;
     std::string groundMaterial = "grass";
     // As posturas pedidas; sem a lista, so a pose base ("natural").
@@ -391,6 +386,15 @@ struct TrainingTask3D {
         std::string pattern = "random";
         std::uint32_t starDirections = 8;
         float starJitterDegrees = 8.0f;
+        // A estrela continua: depois de uma ponta, a chance de ir direto a
+        // outra ponta (outra direcao) em vez de voltar ao centro; ele emenda
+        // cortes de todos os angulos sem a parada da volta.
+        float starContinuousFraction = 0.0f;
+        // A reacao: a fatia dos trechos em que os proximos alvos ficam
+        // escondidos ate ele chegar no de agora (a rede, a mira e a tela so
+        // veem o de agora, e a pedida nao freia para uma virada que ele nao
+        // conhece).
+        float hideNextFraction = 0.0f;
         // As curvas ("arc"): cada uma sorteia um dos tipos de raio (arcRadii,
         // [m, m]: aberta, media, fechada), o quanto gira (arcSweepDegrees) e o
         // sentido (arcSwitchFraction: a chance de trocar de lado, as curvas em

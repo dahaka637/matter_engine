@@ -77,8 +77,10 @@ struct Environment {
     // ficam sincronizados para sempre).
     std::uint32_t limit = 600;
     std::vector<float> previousAction;
-    // O musculo: a acao filtrada (muscleSeconds) que vira o alvo das juntas.
-    std::vector<float> muscle;
+    // A mudanca da acao na decisao anterior e a reversao somada no episodio (a
+    // medida de tremor: a junta indo e logo voltando).
+    std::vector<float> previousDelta;
+    double reversalSum = 0.0;
     // Os passos: as pisadas, as de um pe que mal saiu do chao (passinho) e o
     // tempo no ar de cada pe antes de pisar.
     std::uint32_t touchdowns = 0;
@@ -169,6 +171,18 @@ struct Environment {
     // alvo em cada uma).
     bool targetStop = false;
     std::array<bool, 3> upcomingStop {};
+    // A reacao: os proximos escondidos neste trecho.
+    bool nextHidden = false;
+    // O corte: depois de um alvo com virada de 45 graus ou mais, o tempo ate
+    // ele andar a 80% da pedida rumo ao seguinte (o comeco, e a soma).
+    float cutSince = -1.0f;
+    double cutSum = 0.0;
+    std::uint32_t cutCount = 0;
+    // A estrela continua: o ultimo ponto desenhado foi uma ponta (e qual), e
+    // quantas pontas ja foram (o roteiro da avaliacao).
+    bool starLastOuter = false;
+    std::uint32_t starLastSlot = 0;
+    std::uint32_t starOuterCount = 0;
     float stopHold = 0.0f;
     float stopHeld = 0.0f;
     bool stopEntered = false;
@@ -489,7 +503,8 @@ float TrainingBatch3D::Impl::effectiveSpeed(const Environment& env, float distan
     // A chegada pela virada para o proximo: cheia em linha reta, a minima numa
     // volta de 180 graus.
     float arrival = sc.minimumArrivalSpeed;
-    if (task.target.lookahead > 0) {
+    if (env.nextHidden) arrival = wanted;  // nao sabe a virada: nao freia por ela
+    else if (task.target.lookahead > 0) {
         const float turn = std::abs(std::atan2(std::sin(env.upcomingDirection[0] - env.targetDirection),
             std::cos(env.upcomingDirection[0] - env.targetDirection)));
         arrival = std::max(sc.minimumArrivalSpeed, std::min(wanted, env.upcomingSpeed[0]) * std::cos(0.5f * turn));
@@ -575,21 +590,34 @@ void TrainingBatch3D::Impl::drawLibraryTarget(Environment& env, Vec3 from, float
         return;
     }
     if (t.pattern == "star") {
-        // A estrela: os pares vao do centro a uma das direcoes (no rumo do
-        // comeco, o "norte"), os impares voltam ao centro.
+        // A estrela: do centro a uma das direcoes (no rumo do comeco, o
+        // "norte") e de volta ao centro; continua (starContinuousFraction),
+        // de uma ponta direto a outra.
         const Vec3 center { env.origin.x, env.origin.y, 0.0f };
-        if (k % 2 == 0) {
+        if (k == 0) {
+            env.starLastOuter = false;
+            env.starOuterCount = 0;
+        }
+        const bool onward = env.starLastOuter
+            && (training() ? std::uniform_real_distribution<float>(0.0f, 1.0f)(env.rng) < t.starContinuousFraction
+                           : t.starContinuousFraction > 0.0f && (env.sequence + k) % 3 == 0);
+        if (!env.starLastOuter || onward) {
             const std::uint32_t directions = std::max(1u, t.starDirections);
-            const std::uint32_t slot = training()
+            const std::uint32_t outer = env.starOuterCount++;
+            std::uint32_t slot = training()
                 ? std::uniform_int_distribution<std::uint32_t>(0, directions - 1)(env.rng)
-                : static_cast<std::uint32_t>((env.sequence * 3 + (k / 2) * 5) % directions);
+                : static_cast<std::uint32_t>((env.sequence * 3 + outer * 5) % directions);
+            // De uma ponta direto a outra: outra direcao.
+            if (onward && slot == env.starLastSlot) slot = (slot + 1 + directions / 2) % directions;
+            env.starLastSlot = slot;
+            env.starLastOuter = true;
             const float jitter = training() ? std::uniform_real_distribution<float>(-t.starJitterDegrees,
                 t.starJitterDegrees)(env.rng) * Radians : 0.0f;
             direction = env.courseHeading + 2.0f * std::numbers::pi_v<float> * static_cast<float>(slot)
                 / static_cast<float>(directions) + jitter;
             float distance = t.distance;
             if (sc.enabled) {
-                env.starBand = drawSpeedBand(env, k);
+                env.starBand = drawSpeedBand(env, 2u * outer);
                 const auto& band = sc.bands[env.starBand];
                 env.starSpeed = pickIn(band.speed);
                 distance = band.distance.maximum > 0.0f ? pickIn(band.distance) : t.distance;
@@ -598,8 +626,11 @@ void TrainingBatch3D::Impl::drawLibraryTarget(Environment& env, Vec3 from, float
             }
             env.starDistance = distance;
             point = center + Vec3 { std::cos(direction), std::sin(direction), 0.0f } * distance;
+            // (De uma ponta a outra, o rumo e o da corda entre elas.)
+            if (onward) direction = std::atan2(point.y - from.y, point.x - from.x);
             speed = capped(sc.enabled ? env.starSpeed : t.referenceSpeed);
         } else {
+            env.starLastOuter = false;
             point = center;
             direction = std::atan2(center.y - from.y, center.x - from.x);
             float back = env.starSpeed;
@@ -710,6 +741,10 @@ float TrainingBatch3D::Impl::redrawSpeed(Environment& env, std::uint32_t k) {
 
 void TrainingBatch3D::Impl::startLeg(Environment& env, std::uint32_t k) {
     const auto& sc = taskOf(env).target.speedCommand;
+    // A reacao: os proximos escondidos neste trecho (na avaliacao, um em tres).
+    const float hide = taskOf(env).target.hideNextFraction;
+    env.nextHidden = hide > 0.0f
+        && (training() ? std::uniform_real_distribution<float>(0.0f, 1.0f)(env.rng) < hide : (env.sequence + k) % 3 == 2);
     env.stopHeld = 0.0f;
     env.stopEntered = false;
     env.stopOvershoot = 0.0f;
@@ -747,7 +782,7 @@ float TrainingBatch3D::Impl::facingLinkHeading(const RagdollState3D& state) cons
 Vec3 TrainingBatch3D::Impl::aimPoint(const Environment& env) const {
     const TrainingTask3D& task = taskOf(env);  // o exercicio do mundo
     const TrainingTask3D::Target& t = task.target;
-    if (!(t.racingLine > 0.0f) || t.lookahead == 0) return env.target;
+    if (!(t.racingLine > 0.0f) || t.lookahead == 0 || env.nextHidden) return env.target;
     const Vec3 toward { env.upcoming[0].x - env.target.x, env.upcoming[0].y - env.target.y, 0.0f };
     const float length = std::hypot(toward.x, toward.y);
     if (length < 1.0e-4f) return env.target;
@@ -997,7 +1032,7 @@ void TrainingBatch3D::Impl::createWorld() {
                 spawn.solverVelocityIterations = static_cast<std::uint32_t>(settings.solverVelocityIterations);
             env.ragdoll = scene.physics->createRagdoll(profile, spawn);
             env.previousAction.assign(actionSize(), 0.0f);
-            env.muscle.assign(actionSize(), 0.0f);
+            env.previousDelta.assign(actionSize(), 0.0f);
             env.action.assign(actionSize(), 0.0f);
             env.targets.resize(actionSize());
             env.previousTargets.resize(actionSize());
@@ -1260,7 +1295,8 @@ void TrainingBatch3D::Impl::resetEnvironment(std::uint32_t index) {
               * std::uniform_real_distribution<float>(0.8f, 1.2f)(env.rng))))
         : maximumSteps;
     std::fill(env.previousAction.begin(), env.previousAction.end(), 0.0f);
-    std::fill(env.muscle.begin(), env.muscle.end(), 0.0f);
+    std::fill(env.previousDelta.begin(), env.previousDelta.end(), 0.0f);
+    env.reversalSum = 0.0;
     env.touchdowns = 0;
     env.chatter = 0;
     std::fill(env.action.begin(), env.action.end(), 0.0f);
@@ -1289,6 +1325,9 @@ void TrainingBatch3D::Impl::resetEnvironment(std::uint32_t index) {
     env.overshootCount = 0;
     env.lineSquares = 0.0;
     env.lineSteps = 0;
+    env.cutSince = -1.0f;
+    env.cutSum = 0.0;
+    env.cutCount = 0;
     if (targeting() && state && !(imitating() && reference.library)) placeFirstTarget(env, *state);
     env.episodeReturn = 0.0;
     env.comSum[0] = env.comSum[1] = 0.0;
@@ -1430,8 +1469,10 @@ void TrainingBatch3D::Impl::writeObservation(const Environment& env, const Ragdo
         *out++ = distance > 1.0e-4f ? to.y / distance : 0.0f;
         *out++ = std::min(distance, 20.0f) / 10.0f;
         for (std::uint32_t i = 0; i < task.target.lookahead; ++i) {
-            const Vec3 next = reading.headingInverse.rotate(Vec3 { env.upcoming[i].x - pelvis.position.x,
-                env.upcoming[i].y - pelvis.position.y, 0.0f });
+            // Escondidos, os proximos aparecem no lugar do de agora (nada depois dele).
+            const Vec3 shown = env.nextHidden ? env.target : env.upcoming[i];
+            const Vec3 next = reading.headingInverse.rotate(Vec3 { shown.x - pelvis.position.x,
+                shown.y - pelvis.position.y, 0.0f });
             const float far = std::hypot(next.x, next.y);
             *out++ = far > 1.0e-4f ? next.x / far : 1.0f;
             *out++ = far > 1.0e-4f ? next.y / far : 0.0f;
@@ -1440,7 +1481,8 @@ void TrainingBatch3D::Impl::writeObservation(const Environment& env, const Ragdo
         if (task.target.speedCommand.enabled) {
             *out++ = env.targetSpeedCommand / 6.0f;
             *out++ = effectiveSpeed(env, distance) / 6.0f;
-            for (std::uint32_t i = 0; i < task.target.lookahead; ++i) *out++ = env.upcomingSpeed[i] / 6.0f;
+            for (std::uint32_t i = 0; i < task.target.lookahead; ++i)
+                *out++ = (env.nextHidden ? env.targetSpeedCommand : env.upcomingSpeed[i]) / 6.0f;
         }
     }
     if (imitating() && reference.library) {
@@ -1633,7 +1675,7 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
         env.footDriftMax = std::max(env.footDriftMax, moved);
     }
 
-    float effort = 0.0f, actionRate = 0.0f, limit = 0.0f, pose = 0.0f, speed = 0.0f, poseError = 0.0f;
+    float effort = 0.0f, actionRate = 0.0f, reversal = 0.0f, limit = 0.0f, pose = 0.0f, speed = 0.0f, poseError = 0.0f;
     float upperError = 0.0f, upperCount = 0.0f;
     for (std::size_t d = 0; d < body.dofs.size(); ++d) {
         const RLBodyDof3D& dof = body.dofs[d];
@@ -1644,6 +1686,9 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
         effort += torque * torque;
         const float da = env.action[d] - env.previousAction[d];
         actionRate += da * da;
+        // A medida de tremor: ir e logo voltar (os sinais opostos).
+        reversal += std::max(0.0f, -da * env.previousDelta[d]);
+        env.previousDelta[d] = da;
         const float range = std::max(0.01f, dof.maximumRadians - dof.minimumRadians);
         const float q = joint.positionRadians[axis];
         const float x = (q - dof.minimumRadians) / range;
@@ -1660,6 +1705,7 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
     const float dofCount = static_cast<float>(std::max<std::size_t>(1, body.dofs.size()));
     effort /= dofCount;
     actionRate /= dofCount;
+    reversal /= dofCount;
     limit /= dofCount;
     pose /= dofCount;
     speed /= dofCount;
@@ -1716,6 +1762,12 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
         const float toward = distance > 1.0e-4f
             ? (reading.comVelocity.x * to.x + reading.comVelocity.y * to.y) / distance : 0.0f;
         targetSpeed = std::clamp(toward / t.referenceSpeed, 0.0f, t.speedCap);
+        // O corte: medindo desde a chegada com virada, ate ele sair a 80%.
+        if (env.cutSince >= 0.0f && t.speedCommand.enabled && toward >= 0.8f * env.targetSpeedCommand) {
+            env.cutSum += static_cast<float>(env.played) * stepSeconds - env.cutSince;
+            ++env.cutCount;
+            env.cutSince = -1.0f;
+        }
         // A pedida que muda no caminho (arrancar e frear sem aviso).
         while (env.changeNext < env.changeCount && distance < env.changeAt[env.changeNext]) {
             env.targetSpeedCommand = redrawSpeed(env, 2u * (env.targetCount + env.changeNext + 1u));
@@ -1759,6 +1811,12 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
         }
         if (arrived) {
             const float now = static_cast<float>(env.played) * stepSeconds;
+            // Um corte comeca aqui se a virada para o seguinte passa de 45 graus.
+            if (task.target.lookahead > 0) {
+                const float turn = std::abs(std::atan2(std::sin(env.upcomingDirection[0] - env.targetDirection),
+                    std::cos(env.upcomingDirection[0] - env.targetDirection)));
+                env.cutSince = turn > std::numbers::pi_v<float> / 4.0f && !env.upcomingStop[0] ? now : -1.0f;
+            }
             const float covered = (env.target - env.targetFrom).length();
             const float speed = covered / std::max(stepSeconds, now - env.targetSince);
             // A chegada paga a velocidade do trecho sobre a de referencia, ou,
@@ -1799,7 +1857,7 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
             return length > 1.0e-4f ? Vec3 { x / length, y / length, 0.0f } : Vec3 {};
         };
         const float ax = env.target.x - reading.com.x, ay = env.target.y - reading.com.y;
-        const bool next = task.target.lookahead > 0;
+        const bool next = task.target.lookahead > 0 && !env.nextHidden;
         Vec3 look = unit(ax, ay);
         if (next) {
             const Vec3 onward = unit(env.upcoming[0].x - env.target.x, env.upcoming[0].y - env.target.y);
@@ -1870,6 +1928,7 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
     env.comSquares[0] += static_cast<double>(reading.com.x) * reading.com.x;
     env.comSquares[1] += static_cast<double>(reading.com.y) * reading.com.y;
     env.actionRateSum += actionRate;
+    env.reversalSum += reversal;
     env.effortSum += effort;
     env.jointSpeedSum += speed;
     env.uprightSum += upright;
@@ -1906,6 +1965,8 @@ void TrainingBatch3D::Impl::finishEpisode(Scene& scene, std::uint32_t index, Tra
     episode.footDriftMax = env.footDriftMax;
     episode.footTurnMax = env.footTurnMax;
     episode.meanActionRate = static_cast<float>(env.actionRateSum / n);
+    episode.meanReversal = static_cast<float>(env.reversalSum / n);
+    episode.cutSeconds = env.cutCount > 0 ? static_cast<float>(env.cutSum / env.cutCount) : -1.0f;
     episode.meanEffort = static_cast<float>(env.effortSum / n);
     episode.meanJointSpeed = static_cast<float>(env.jointSpeedSum / n);
     episode.meanUpright = static_cast<float>(env.uprightSum / n);
@@ -1957,12 +2018,8 @@ void TrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> actio
         }
         for (std::size_t d = 0; d < A; ++d)
             env.action[d] = std::clamp(actions[index * A + d], -RLActionLimit, RLActionLimit);
-        // O musculo: o alvo segue a acao com o atraso dele (nada de tremer).
-        const float delay = settings.muscleSeconds >= 0.0f ? settings.muscleSeconds : task.muscleSeconds;
-        const float muscle = delay > 0.0f ? 1.0f - std::exp(-static_cast<float>(task.actionRepeat) * FixedStep / delay) : 1.0f;
-        for (std::size_t d = 0; d < A; ++d) env.muscle[d] += muscle * (env.action[d] - env.muscle[d]);
         std::swap(env.previousTargets, env.targets);
-        writeTargets(env, env.muscle);
+        writeTargets(env, env.action);
         physics.setRagdollActiveDriveTargets(env.ragdoll, env.delayed ? env.previousTargets : env.targets, false);
     }
 
@@ -2245,7 +2302,6 @@ void TrainingBatch3D::updateTask(const TrainingTask3D& task) {
     impl.task.initialState = task.initialState;
     impl.task.randomization = task.randomization;
     impl.task.pushes = task.pushes;
-    impl.task.muscleSeconds = task.muscleSeconds;
     impl.task.postures = task.postures;
     impl.task.commands = task.commands;
     impl.task.gait = task.gait;
@@ -2374,7 +2430,7 @@ TrainingEnvironmentView3D TrainingBatch3D::view(std::size_t environment) const {
         view.target = env.target;
         view.targetRadius = impl.taskOf(env).target.radius;  // o do exercicio
         view.targetsReached = env.targetsReached;
-        view.upcomingCount = impl.imitating() && impl.reference.library ? impl.task.target.lookahead : 0u;
+        view.upcomingCount = impl.imitating() && impl.reference.library && !env.nextHidden ? impl.task.target.lookahead : 0u;
         for (std::uint32_t i = 0; i < view.upcomingCount; ++i) {
             view.upcoming[i] = env.upcoming[i];
             view.upcomingStop[i] = env.upcomingStop[i];

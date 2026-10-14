@@ -15,7 +15,7 @@ from .model import ACTION_LIMIT, ActorCritic
 
 REASONS = ["nenhum", "queda_contato", "queda_altura", "numerico", "tempo", "limite", "alvo_perdido"]
 # As colunas do resumo de um episodio (finished_episodes do modulo nativo).
-EPISODE_COLUMNS = 33
+EPISODE_COLUMNS = 35
 FALLS = {1, 2, 3}
 
 
@@ -357,6 +357,8 @@ class Evaluator:
             # passinhos (pe menos de 0,1 s no ar) por segundo.
             "cadence": float(rows[:, 31].mean()) if rows.shape[1] > 32 else 0.0,
             "chatter": float(rows[:, 32].mean()) if rows.shape[1] > 32 else 0.0,
+            # O tremor: a reversao media das juntas por decisao (ir e voltar).
+            "reversal": float(rows[:, 33].mean()) if rows.shape[1] > 33 else 0.0,
         }
         if kind == "alvo":
             # O quanto parou longe do ponto (pelo centro de massa no fim).
@@ -394,6 +396,9 @@ class Evaluator:
             # As curvas: o quanto saiu da linha dos alvos (RMS, m).
             lines = rows[:, 30][rows[:, 30] >= 0]
             metrics["line_error"] = float(lines.mean()) if len(lines) else -1.0
+            # Os cortes: o tempo medio de cada um (s; so medido).
+            cuts = rows[:, 34][rows[:, 34] >= 0]
+            metrics["cut_seconds"] = float(cuts.mean()) if len(cuts) else -1.0
             metrics["reference_speed"] = float((spec or {}).get("referenceSpeed", 6.0))
         metrics["kind"] = kind
         metrics["score"] = (walking_score(metrics) if kind == "andar" else goal_score(metrics) if kind == "alvo"
