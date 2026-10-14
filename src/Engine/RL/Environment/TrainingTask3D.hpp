@@ -126,6 +126,9 @@ struct TrainingTask3D {
 
     std::string id;
     std::string displayName;
+    // Aparece na lista de habilidades da tela ("menu": false esconde as tarefas
+    // antigas, que ficam no repositorio para os testes e o historico).
+    bool listed = true;
     std::filesystem::path definitionPath;
     std::filesystem::path bodyPath;
     std::uint32_t actionRepeat = 4;

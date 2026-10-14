@@ -28,6 +28,7 @@ TrainingTask3D parseTask(const nlohmann::json& document, const std::filesystem::
     TrainingTask3D task;
     task.id = document.at("id").get<std::string>();
     task.displayName = document.value("displayName", task.id);
+    task.listed = document.value("menu", true);
     task.definitionPath = definitionPath;
     task.bodyPath = (definitionPath.parent_path() / document.at("body").get<std::string>()).lexically_normal();
     task.actionRepeat = document.value("actionRepeat", 4u);

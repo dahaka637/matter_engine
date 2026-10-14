@@ -3,6 +3,7 @@
   "id": "h4_direcoes",
   "version": 3,
   "displayName": "Ir em todas as direções",
+  "menu": false,
   "comment": "Fase 2 (pedido do usuario, 13/10). Versao 3 (o usuario: comecar livre, sem precisar olhar para um lugar; depois os varios pontos; por ultimo olhar e se deslocar): sem comando de olhar, o corpo anda ate o alvo em qualquer lugar em volta (2 a 8 m) nas 8 direcoes em trote: frente, as diagonais, os lados e costas. A referencia e uma biblioteca de clipes em ciclo e o planejador escolhe a cada decisao o que anda mais perto da direcao do alvo (medida a partir do olhar), com histerese; a troca entra no quadro mais parecido. A nota do giro segura o olhar. O resto e o da corrida (H3 v9). Versao 1: longe ele virava e corria de frente, o que contraria o olhar para a camera, e na validacao corria para longe do alvo antes de virar. O sprint nas 8 direcoes vem depois (falta o da diagonal para a frente). Versao 2: com o olhar fixo na camera (target.facing), caia em 98% dos episodios nos primeiros 12 min; o olhar volta na etapa de olhar e se deslocar.",
   "postures": [
     {

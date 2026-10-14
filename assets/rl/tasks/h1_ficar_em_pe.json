@@ -2,6 +2,7 @@
   "schema": "matter-rl-task-1",
   "id": "h1_ficar_em_pe",
   "displayName": "Ficar em pé",
+  "menu": false,
   "comment": "H1: ficar de pe, estavel, sem ajuda. Recompensa por parcela (pesos por decisao, a 30 Hz); a queda termina o episodio. Os empurroes ficam para a H2.",
   "body": "../bodies/football_player_v1.json",
   "actionRepeat": 4,

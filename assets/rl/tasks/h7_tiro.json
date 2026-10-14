@@ -3,6 +3,7 @@
   "id": "h7_tiro",
   "version": 1,
   "displayName": "Tiro com volta",
+  "menu": false,
   "comment": "Etapa 4a do plano (o desenho do usuario, 13/10 ~06:50): o tiro com volta do futebol. Seis pontos, tres numa linha e tres noutra a ~20 m: ele cruza, chega, freia, vira e volta para o ponto seguinte do outro lado. Quanto mais rapido completar, mais ganha, e isso inclui frear e virar rapido. Livre (sem o comando de olhar). E a H5 v3 (os dois proximos no mapa, o tracado de corrida) com o sprint na biblioteca: o planejador escolhe tambem a velocidade, pela distancia ate a mira (longe o sprint, perto o trote). No treino cada alvo fica de 12 a 24 m do anterior, voltando (180 graus, ate 20 para cada lado). Ainda sem os clipes de virada (o corte do Mixamo esta no lugar; o deslocamento dele vem depois): a freada e a volta sao dele.",
   "postures": [
     {

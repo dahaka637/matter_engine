@@ -212,6 +212,15 @@ int main() {
         ReinforcementLearningScreen::Options options;
         options.sourceRoot = std::filesystem::path(MATTERENGINE_TEST_ASSETS_DIR).parent_path();
         options.capturesDirectory = sandbox / "capturas";
+        // Por padrao o menu so lista o Corpo (as tarefas antigas tem "menu":
+        // false); o teste abre todas para seguir conferindo as telas delas.
+        {
+            ReinforcementLearningScreen::Options plain = options;
+            ReinforcementLearningScreen menu(std::move(plain), {});
+            require(menu.skillTasks() == std::vector<std::string> { "corpo" }, "o menu so lista o Corpo");
+        }
+        options.showUnlistedSkills = true;
+        options.task = "h1_ficar_em_pe";
         ReinforcementLearningScreen screen(std::move(options), {});
         screen.waitUntilLoaded();
         require(screen.modelLoaded(), "o jogador deveria carregar");

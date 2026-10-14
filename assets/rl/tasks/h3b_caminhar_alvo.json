@@ -3,6 +3,7 @@
   "id": "h3b_caminhar_alvo",
   "version": 2,
   "displayName": "Caminhar até o alvo",
+  "menu": false,
   "comment": "Caminhar ate um alvo a 10 m imitando o andar da UAL1 (Quaternius, CC0; o Walk_Loop, 1,1 m/s), a mesma maquina da corrida (H3 v8): a acao corrige a pose do clipe, os sinos do DeepMimic, a velocidade em direcao ao alvo (linear ate 1,2 x 1,1 m/s) e a chegada paga pela velocidade media; chegando, nasce o proximo 10 m adiante. Pedido do usuario (13/10): uma de caminhar ate o alvo tambem. E o degrau lento: a base para as velocidades pedidas no futuro. Versao 2: passar do alvo (3 m alem do mais perto que chegou) encerra o episodio.",
   "postures": [
     {

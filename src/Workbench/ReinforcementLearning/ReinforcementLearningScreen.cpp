@@ -142,6 +142,7 @@ void ReinforcementLearningScreen::loadSkills() {
     for (const std::filesystem::path& file : files) {
         try {
             const TrainingTask3D task = loadTrainingTask3D(file);
+            if (!task.listed && !m_options.showUnlistedSkills) continue;
             Skill skill;
             skill.task = task.id;
             skill.name = task.displayName;

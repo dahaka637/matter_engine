@@ -35,7 +35,9 @@ public:
         // Onde "Salvar imagem" grava.
         std::filesystem::path capturesDirectory;
         std::string run = "principal";
-        std::string task = "h1_ficar_em_pe";
+        std::string task = "corpo";
+        // Lista tambem as tarefas com "menu": false (as antigas): so os testes.
+        bool showUnlistedSkills = false;
     };
 
     // O que o mundo mostra: o jogador inteiro, so o esqueleto ou so os colisores.
