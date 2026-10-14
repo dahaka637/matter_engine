@@ -139,6 +139,9 @@ struct TrainingEpisode3D {
     // A sola escorregando: a velocidade media de cada pe no chao (o centro mais
     // o giro em torno da vertical, como na nota footSlip; m/s; -1 sem contato).
     float footSlipMean = -1.0f;
+    // Pare aqui: o quanto passou do disco depois de entrar, na media dos
+    // alvos de parar alcancados (m; -1 sem nenhum).
+    float stopOvershootMean = -1.0f;
 };
 
 // Um mundo de treino visto por fora (o visualizador, a gravacao).
@@ -172,6 +175,9 @@ struct TrainingEnvironmentView3D {
     // Os proximos alvos ja no mapa (target.lookahead), em ordem.
     std::uint32_t upcomingCount = 0;
     std::array<Vec3, 3> upcoming {};
+    // Frear e parar: o alvo de agora e os proximos sao de "pare aqui".
+    bool targetStop = false;
+    std::array<bool, 3> upcomingStop {};
     // Os ultimos alcancados no episodio (o mais novo primeiro).
     std::uint32_t reachedCount = 0;
     std::array<Vec3, 3> reached {};

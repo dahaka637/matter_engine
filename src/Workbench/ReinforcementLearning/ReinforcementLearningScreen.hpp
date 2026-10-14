@@ -206,6 +206,7 @@ private:
         bool target = false;
         // Os exercicios da tarefa (os ids) e se ela tem o comando de olhar.
         std::vector<std::string> drills;
+        std::vector<std::string> drillNames;
         bool facing = false;
     };
     std::vector<Skill> m_skills;
@@ -217,6 +218,7 @@ private:
     // O peito no visualizador: 0 livre, 1 fixo, 2 girando.
     int m_viewerChest = 0;
     void setViewerDrill(const std::string& drill, int chest);
+    void drawDrillTree(std::size_t index);
     // A troca de habilidade em andamento: fecha o treino e reabre nesta tarefa.
     std::string m_switchTask;
     std::string m_switchMode;

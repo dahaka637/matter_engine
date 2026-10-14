@@ -937,11 +937,16 @@ void testDrills() {
         // A tarefa Corpo (a area 1): a estrela, com o desenho e o comando de
         // velocidade dela.
         const TrainingTask3D corpo = loadTrainingTask3D(std::filesystem::path(MATTERENGINE_TEST_ASSETS_DIR) / "rl/tasks/corpo.json");
-        require(corpo.drills.size() == 1 && corpo.drills[0].id == "estrela"
+        require(corpo.drills.size() == 2 && corpo.drills[0].id == "estrela"
                 && corpo.drills[0].task->target.pattern == "star" && corpo.target.pattern == "random"
                 && corpo.drills[0].task->target.facingFraction == 0.6f && corpo.target.speedCommand.enabled
                 && corpo.target.speedCommand.bands.size() == 4,
             "o Corpo carrega a estrela com o que ela muda");
+        const auto& brake = corpo.drills[1].task->target.speedCommand;
+        require(corpo.drills[1].id == "frear" && brake.changesPerLeg == 2 && brake.stopFraction == 0.5f
+                && brake.bands.size() == 4 && corpo.drills[1].task->target.pattern == "star"
+                && corpo.target.speedCommand.stopFraction == 0.0f,
+            "o frear e a estrela com a pedida mudando e os discos de parar");
     }
 }
 
@@ -1074,6 +1079,39 @@ void testStar() {
     }
 }
 
+// O frear (o 4): a estrela com a pedida mudando no caminho e os discos de
+// "pare aqui" (na avaliacao, um sim e um nao, cada mundo de um lado).
+void testBrake() {
+    const std::filesystem::path task = std::filesystem::path(MATTERENGINE_TEST_ASSETS_DIR) / "rl/tasks/corpo.json";
+    {
+        TrainingBatchSettings3D s = settings(8, 4);
+        s.taskPath = task;
+        s.evaluation = true;
+        s.evaluationEpisodeSeconds = 40.0f;
+        s.facing = 0;
+        s.drill = "frear";
+        TrainingBatch3D batch(s);
+        const TrainingEnvironmentView3D even = batch.view(0), odd = batch.view(1);
+        require(!even.targetStop && even.upcomingStop[0] && !even.upcomingStop[1], "mundo par: o segundo alvo e de parar");
+        require(odd.targetStop && !odd.upcomingStop[0], "mundo impar: o primeiro e de parar");
+        const std::size_t O = batch.observationSize(), now = channel(batch, "command.speed.now");
+        require(batch.observations()[O + now] > 0.1f, "longe do disco de parar ele ainda corre");
+        for (int step = 0; step < 20; ++step) {
+            batch.step(std::vector<float>(8 * batch.actionSize(), 0.0f));
+            require(finiteAll(batch.observations()) && finiteAll(batch.rewards()), "o frear anda sem numero ruim");
+        }
+    }
+    {
+        TrainingBatchSettings3D s = settings(32, 4);
+        s.taskPath = task;
+        s.drill = "frear";
+        TrainingBatch3D batch(s);
+        std::uint32_t stops = 0;
+        for (std::size_t e = 0; e < 32; ++e) stops += batch.view(e).targetStop ? 1u : 0u;
+        require(stops > 4 && stops < 28, "no treino, parte dos discos e de parar (" + std::to_string(stops) + " de 32)");
+    }
+}
+
 } // namespace
 
 void runTrainingBatchTests() {
@@ -1093,5 +1131,6 @@ void runTrainingBatchTests() {
     testShuttle();
     testDrills();
     testStar();
+    testBrake();
     std::cout << "RL training batch tests passed\n";
 }

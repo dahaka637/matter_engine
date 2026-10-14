@@ -288,7 +288,7 @@ int main() {
         // peito livre e fixo.
         screen.selectSkill(0);
         frame(screen, canvas, 2);
-        require(screen.skillDrills() == std::vector<std::string> { "estrela" }, "o Corpo lista os exercicios");
+        require(screen.skillDrills() == std::vector<std::string> { "estrela", "frear" }, "o Corpo lista os exercicios");
         screen.showDrill("estrela", 1);
         frame(screen, canvas, 2);
         require(screen.viewerHasTarget() && screen.viewerDrill() == 0, "o visualizador mostra a estrela");
@@ -315,6 +315,15 @@ int main() {
             screen.advanceViewer(30);
             frame(screen, canvas, 1);
             if (second % 4 == 0) snapshot(canvas, ("rl_tela_girando_" + std::to_string(second) + "s").c_str());
+        }
+        // O frear: o segundo ramo do Corpo, com os discos de parar.
+        screen.showDrill("frear", 0);
+        frame(screen, canvas, 2);
+        require(screen.viewerDrill() == 1, "o visualizador mostra o frear");
+        for (int second = 1; second <= 12; ++second) {
+            screen.advanceViewer(30);
+            frame(screen, canvas, 1);
+            if (second % 4 == 0) snapshot(canvas, ("rl_tela_frear_" + std::to_string(second) + "s").c_str());
         }
         const auto drillConflicts = sweepIdConflicts([&] { screen.draw(canvas, 1.0f); });
         require(drillConflicts.empty(), "IDs repetidos na estrela: " + (drillConflicts.empty() ? std::string() : drillConflicts.front()));

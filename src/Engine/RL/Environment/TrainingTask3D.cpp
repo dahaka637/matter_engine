@@ -163,6 +163,7 @@ TrainingTask3D parseTask(const nlohmann::json& document, const std::filesystem::
             planner.directionWeightFacing = p.value("directionWeightFacing", planner.directionWeightFacing);
             planner.speedFromCommand = p.value("speedFromCommand", planner.speedFromCommand);
             planner.freeBackwardDistance = std::max(0.0f, p.value("freeBackwardDistance", planner.freeBackwardDistance));
+            planner.idleBelow = std::max(0.0f, p.value("idleBelow", planner.idleBelow));
         }
         if (m.contains("scales")) {
             const nlohmann::json& k = m["scales"];
@@ -221,6 +222,10 @@ TrainingTask3D parseTask(const nlohmann::json& document, const std::filesystem::
             sc.sigma = std::max(0.05f, c.value("sigma", sc.sigma));
             sc.redrawOnReturn = std::clamp(c.value("redrawOnReturn", sc.redrawOnReturn), 0.0f, 1.0f);
             sc.capByDirection = c.value("capByDirection", sc.capByDirection);
+            sc.changesPerLeg = std::min(4u, c.value("changesPerLeg", sc.changesPerLeg));
+            sc.stopFraction = std::clamp(c.value("stopFraction", sc.stopFraction), 0.0f, 1.0f);
+            sc.stopHoldSeconds = range(c, "stopHoldSeconds", sc.stopHoldSeconds);
+            sc.stopSpeed = std::max(0.05f, c.value("stopSpeed", sc.stopSpeed));
             if (sc.enabled && sc.bands.empty()) throw std::runtime_error("tarefa de RL: comando de velocidade sem faixas");
         }
         out.pattern = t.value("pattern", out.pattern);
@@ -329,6 +334,11 @@ TrainingTask3D loadTrainingTask3D(const std::filesystem::path& definitionPath) {
     for (const nlohmann::json& entry : drills) {
         TrainingTask3D::Drill drill;
         drill.id = entry.at("id").get<std::string>();
+        drill.name = entry.value("name", std::string());
+        if (drill.name.empty()) {
+            drill.name = drill.id;
+            if (!drill.name.empty()) drill.name[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(drill.name[0])));
+        }
         drill.weight = std::max(0.0f, entry.value("weight", 1.0f));
         nlohmann::json merged = document;
         if (entry.contains("overrides")) merged.merge_patch(entry["overrides"]);

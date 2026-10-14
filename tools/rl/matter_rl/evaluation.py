@@ -15,7 +15,7 @@ from .model import ACTION_LIMIT, ActorCritic
 
 REASONS = ["nenhum", "queda_contato", "queda_altura", "numerico", "tempo", "limite", "alvo_perdido"]
 # As colunas do resumo de um episodio (finished_episodes do modulo nativo).
-EPISODE_COLUMNS = 29
+EPISODE_COLUMNS = 30
 FALLS = {1, 2, 3}
 
 
@@ -39,13 +39,13 @@ def battery_posture(name: str) -> str:
 def battery_kind(name: str) -> str:
     """O tipo de uma bateria pelo nome (a convencao das tarefas): andar_* e
     girar_* seguem um roteiro de velocidades, ir_ate_* vao a um ponto,
-    corrida_*, caminhada_*, direcoes_*, percursos_*, tiro_* e estrela_* vao ate
+    corrida_*, caminhada_*, direcoes_*, percursos_*, tiro_*, estrela_* e frear_* vao ate
     os alvos da tarefa (o alvo no mundo, com imitacao)."""
     if name.startswith(("andar_", "girar_")):
         return "andar"
     if name.startswith("ir_ate_"):
         return "alvo"
-    if name.startswith(("corrida_", "caminhada_", "direcoes_", "percursos_", "tiro_", "estrela_")):
+    if name.startswith(("corrida_", "caminhada_", "direcoes_", "percursos_", "tiro_", "estrela_", "frear_")):
         return "corrida"
     return "de_pe"
 
@@ -357,6 +357,9 @@ class Evaluator:
             # A sola escorregando no chao (m/s, a media dos episodios; so medida).
             slips = rows[:, 28][rows[:, 28] >= 0]
             metrics["foot_slip"] = float(slips.mean()) if len(slips) else -1.0
+            # Pare aqui: o quanto passou do disco antes de parar (m; so medida).
+            overshoots = rows[:, 29][rows[:, 29] >= 0]
+            metrics["stop_overshoot"] = float(overshoots.mean()) if len(overshoots) else -1.0
             metrics["reference_speed"] = float((spec or {}).get("referenceSpeed", 6.0))
         metrics["kind"] = kind
         metrics["score"] = (walking_score(metrics) if kind == "andar" else goal_score(metrics) if kind == "alvo"

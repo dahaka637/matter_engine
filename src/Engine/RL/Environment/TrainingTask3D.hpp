@@ -122,6 +122,8 @@ struct TrainingTask3D {
     // mesma rede serve a todos, e ela nunca sabe o nome do exercicio.
     struct Drill {
         std::string id;
+        // O nome na tela (o id com a primeira maiuscula, sem ele).
+        std::string name;
         float weight = 1.0f;
         std::shared_ptr<const TrainingTask3D> task;
     };
@@ -263,6 +265,9 @@ struct TrainingTask3D {
             // o cosseno do angulo ate a mira (no minimo a de chegada): vira
             // andando e acelera ao alinhar (0 = sempre valem).
             float freeBackwardDistance = 0.0f;
+            // Abaixo desta velocidade pedida (m/s), o clipe mais lento (o parado
+            // da biblioteca): parar e ficar parado (0 = nunca).
+            float idleBelow = 0.0f;
         } planner;
         float poseScale = 2.0f;
         float velocityScale = 0.1f;
@@ -352,6 +357,16 @@ struct TrainingTask3D {
             float sigma = 0.6f;
             float redrawOnReturn = 0.5f;
             bool capByDirection = true;
+            // Frear e arrancar: no caminho de um trecho a pedida muda ate
+            // changesPerLeg vezes (sorteada de novo entre as faixas, em pontos
+            // sorteados do caminho). stopFraction: a fatia dos alvos de "pare
+            // aqui" (a chegada a zero): ele tem de parar dentro do disco (mais
+            // devagar que stopSpeed) e ficar parado stopHoldSeconds; dali ele
+            // arranca para o seguinte.
+            std::uint32_t changesPerLeg = 0;
+            float stopFraction = 0.0f;
+            TrainingRange3D stopHoldSeconds { 0.8f, 1.5f };
+            float stopSpeed = 0.35f;
         } speedCommand;
         // O desenho dos alvos (biblioteca): "random" (cada um em volta do
         // anterior) ou "star" (a estrela: do centro a uma das 8 direcoes, de

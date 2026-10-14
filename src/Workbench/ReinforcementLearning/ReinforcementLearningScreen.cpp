@@ -162,7 +162,10 @@ void ReinforcementLearningScreen::loadSkills() {
             }
             // A bateria do alvo e a primeira da tarefa (corrida, caminhada...).
             if (skill.target && !task.evaluationBatteries.empty()) skill.battery = task.evaluationBatteries.front();
-            for (const TrainingTask3D::Drill& drill : task.drills) skill.drills.push_back(drill.id);
+            for (const TrainingTask3D::Drill& drill : task.drills) {
+                skill.drills.push_back(drill.id);
+                skill.drillNames.push_back(drill.name);
+            }
             skill.facing = task.target.facing;
             m_skills.push_back(std::move(skill));
         } catch (const std::exception&) {
@@ -635,6 +638,10 @@ bool ReinforcementLearningScreen::render(int width, int height) {
         for (std::uint32_t i = 0; i < view.reachedCount; ++i)
             reached.push_back(m_skeleton->toSkeleton({ view.reached[i].x, view.reached[i].y, 0.0f }));
         appendTargetSequence(sequence, reached, view.targetRadius, markers, arrows);
+        // Os de "pare aqui" (frear e parar) em laranja.
+        const std::size_t first = markers.size() - sequence.size();
+        for (std::size_t i = 0; i < sequence.size(); ++i)
+            if (i == 0 ? view.targetStop : view.upcomingStop[i - 1]) markers[first + i].color = rgb(245, 160, 40);
         // O desenho do exercicio (a estrela): os pontos fracos, fora os que ja
         // sao alvo agora.
         for (std::uint32_t i = 0; i < view.layoutCount; ++i) {
@@ -920,6 +927,7 @@ void ReinforcementLearningScreen::drawSkills(const TrainerStatus3D& status) {
         if (navigationButton(label.c_str(), i == m_skill, { -1.0f, ui(32.0f) }) && i != m_skill) selectSkill(i);
         tooltip(trained ? "A habilidade do treino (o raio). Escolher uma habilidade mostra a postura dela no mundo."
                         : "Escolher mostra a postura desta habilidade no mundo.");
+        drawDrillTree(i);
     }
     // O aprendizado guiado: a habilidade em treino, com professor.
     if (m_skill < m_skills.size() && status.alive && status.task == m_skills[m_skill].task && m_skills[m_skill].teacher) {
@@ -943,6 +951,41 @@ void ReinforcementLearningScreen::drawSkills(const TrainerStatus3D& status) {
         ImGui::EndDisabled();
         tooltip("O treino passa para esta habilidade, no mesmo cérebro: ele salva, fecha e reabre nela, e o que já "
                 "sabe continua (as habilidades anteriores seguem numa parte dos episódios).");
+    }
+}
+
+// Os exercicios da habilidade como ramos dela e, com o comando de olhar, os
+// modos do peito como ramos de cada exercicio: escolher um mostra aquilo no
+// visualizador (o treino sorteia todos).
+void ReinforcementLearningScreen::drawDrillTree(std::size_t index) {
+    const Skill& skill = m_skills[index];
+    if (skill.drills.empty()) return;
+    const bool here = index == m_skill;
+    const std::string current = here && std::find(skill.drills.begin(), skill.drills.end(), m_viewerDrill) != skill.drills.end()
+        ? m_viewerDrill : skill.drills.front();
+    static constexpr const char* Chests[] = { "Peito livre", "Peito fixo", "Peito girando" };
+    for (std::size_t d = 0; d < skill.drills.size(); ++d) {
+        const std::string& drill = skill.drills[d];
+        const bool open = here && drill == current;
+        ImGui::Indent(ui(14.0f));
+        const std::string label = UI::FontAwesome::label(UI::FontAwesome::Crosshairs, skill.drillNames[d].c_str())
+            + "##drill" + skill.task + drill;
+        if (navigationButton(label.c_str(), open && !skill.facing, { -1.0f, ui(28.0f) })) {
+            if (!here) selectSkill(index);
+            setViewerDrill(drill, m_viewerChest);
+        }
+        if (skill.facing) {
+            ImGui::Indent(ui(14.0f));
+            for (int chest = 0; chest < 3; ++chest) {
+                const std::string item = std::string(Chests[chest]) + "##chest" + skill.task + drill + std::to_string(chest);
+                if (navigationButton(item.c_str(), open && chest == m_viewerChest, { -1.0f, ui(26.0f) })) {
+                    if (!here) selectSkill(index);
+                    setViewerDrill(drill, chest);
+                }
+            }
+            ImGui::Unindent(ui(14.0f));
+        }
+        ImGui::Unindent(ui(14.0f));
     }
 }
 
@@ -1033,35 +1076,6 @@ void ReinforcementLearningScreen::drawToolbar() {
     }
     tooltip("Recente: o último checkpoint do treino (recarrega sozinha). Melhor: a de maior nota na avaliação. "
             "Professor: a locomoção física do jogo conduzindo o boneco do RL, no roteiro do aprendizado guiado.");
-    if (m_skill < m_skills.size() && !m_skills[m_skill].drills.empty()) {
-        const auto& drills = m_skills[m_skill].drills;
-        const std::string current =
-            std::find(drills.begin(), drills.end(), m_viewerDrill) != drills.end() ? m_viewerDrill : drills.front();
-        const auto title = [](std::string id) {
-            if (!id.empty()) id[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(id[0])));
-            return id;
-        };
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(ui(130.0f));
-        if (ImGui::BeginCombo("##RLDrill", title(current).c_str())) {
-            for (const std::string& drill : drills)
-                if (ImGui::Selectable(title(drill).c_str(), drill == current)) setViewerDrill(drill, m_viewerChest);
-            ImGui::EndCombo();
-        }
-        tooltip("O exercício que o visualizador mostra. O treino sorteia todos, cada mundo o seu.");
-        if (m_skills[m_skill].facing) {
-            ImGui::SameLine();
-            ImGui::SetNextItemWidth(ui(140.0f));
-            static constexpr const char* Chests[] = { "Peito livre", "Peito fixo", "Peito girando" };
-            if (ImGui::BeginCombo("##RLChest", Chests[std::clamp(m_viewerChest, 0, 2)])) {
-                for (int chest = 0; chest < 3; ++chest)
-                    if (ImGui::Selectable(Chests[chest], chest == m_viewerChest)) setViewerDrill(current, chest);
-                ImGui::EndCombo();
-            }
-            tooltip("Livre: ele vira para onde vai. Fixo: o peito fica num rumo e ele anda de lado, de costas e nas "
-                    "diagonais. Girando: o rumo do peito gira, com velocidade e sentido sorteados.");
-        }
-    }
     ImGui::SameLine();
     struct DisplayOption {
         Display display;

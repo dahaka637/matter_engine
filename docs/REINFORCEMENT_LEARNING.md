@@ -274,7 +274,7 @@ diagonal), e a voltar.
     peito.
   - A sola escorregando (`foot_slip`: a velocidade média do pé no chão, m/s)
     é só medida, fora da nota, até mostrar que precisa entrar.
-- **Na tela:** Corpo → Estrela → Peito livre/fixo/girando.
+- **Na tela:** Corpo → Estrela → Peito livre/fixo/girando (ramos na lista de habilidades).
   - O rótulo mostra a velocidade de agora e a pedida ("1,0 m/s · pede 1,2").
   - As 8 pontas da estrela aparecem em cinza, no tamanho da ida de agora.
   - A câmera fica em 3ª pessoa presa ao mapa: atrás dele (um pouco de lado)
@@ -296,6 +296,32 @@ diagonal), e a voltar.
   14/10). A tela e a prévia montam a entrada pelos nomes, e as que a tarefa
   não tem entram com zero, como na migração do treinador. Assim um cérebro
   antigo roda numa tarefa mais nova.
+
+## Frear e parar (14/10/2026)
+
+O segundo exercício do Corpo (o 4 do `treino_locomocao_claude.md`): a estrela,
+com duas coisas a mais.
+
+- **A pedida muda no caminho** (`speedCommand.changesPerLeg` 2): em cada
+  trecho, de 0 a 2 vezes, em pontos sorteados do caminho (entre 85% e 25% do
+  que falta), a velocidade pedida é sorteada de novo entre as faixas. Ele
+  arranca e freia sem esperar o disco.
+- **Metade dos discos é de "pare aqui"** (`stopFraction` 0,5; laranja na
+  tela).
+  - A chegada pedida é zero: a freada leva a pedida a zero na borda do disco.
+  - Ele tem de ficar dentro do disco, mais devagar que `stopSpeed`
+    (0,35 m/s), por `stopHoldSeconds` (0,8–1,5 s). Só então o alvo conta, e
+    ele arranca dali para o próximo.
+  - O planejador usa o clipe parado (`alert_idle`, o `parado` da biblioteca)
+    quando a pedida cai abaixo de `idleBelow` (0,5 m/s).
+- **Na avaliação,** os discos alternam parar e passar, cada mundo começando
+  de um lado, e as mudanças no caminho vão de 0 a 2 pelo mundo e pelo trecho.
+- **As baterias:** `frear_livre_v1` e `frear_peito_v1`. O quanto ele passa do
+  disco antes de parar (`stop_overshoot`, a coluna 29 do episódio, 30 colunas)
+  é só medido, fora da nota.
+- **Na tela:** os exercícios são ramos do Corpo na lista de habilidades, e os
+  modos do peito, ramos de cada exercício (Corpo → Estrela / Frear e parar →
+  Peito livre / fixo / girando). O nome vem de `"name"` no exercício.
 
 ## Da H4 à H7 (13/10/2026): a biblioteca de clipes e o planejador
 

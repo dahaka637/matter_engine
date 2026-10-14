@@ -6,6 +6,7 @@
 #include "Engine/RL/Imitation/ReferenceMotion3D.hpp"
 
 #include <algorithm>
+#include <functional>
 #include <array>
 #include <chrono>
 #include <limits>
@@ -156,6 +157,21 @@ struct Environment {
     // proximos (m/s), a de agora (com a freada antes do ponto) e o erro somado.
     float targetSpeedCommand = 0.0f;
     std::array<float, 3> upcomingSpeed {};
+    // Frear e parar: o alvo de agora e os proximos sao de "pare aqui"; o tempo
+    // parado pedido e o ja feito; o quanto passou do disco neste alvo e a soma
+    // dos alvos de parar; as mudancas da pedida no caminho (o que falta ate o
+    // alvo em cada uma).
+    bool targetStop = false;
+    std::array<bool, 3> upcomingStop {};
+    float stopHold = 0.0f;
+    float stopHeld = 0.0f;
+    bool stopEntered = false;
+    float stopOvershoot = 0.0f;
+    double overshootSum = 0.0;
+    std::uint32_t overshootCount = 0;
+    std::array<float, 4> changeAt {};
+    std::uint32_t changeCount = 0;
+    std::uint32_t changeNext = 0;
     float speedNow = 0.0f;
     double speedErrorSquares = 0.0;
     std::uint32_t speedSteps = 0;
@@ -294,6 +310,11 @@ struct TrainingBatch3D::Impl {
     void placeLibraryTarget(Environment& env, Vec3 from, float facing, std::uint32_t k);
     void drawLibraryTarget(Environment& env, Vec3 from, float facing, std::uint32_t k, Vec3& point, float& direction,
         float& speed);
+    // Frear e parar: se o k-esimo alvo e de "pare aqui", e o comeco de um
+    // trecho (o tempo parado e as mudancas da pedida no caminho).
+    [[nodiscard]] bool drawStop(Environment& env, std::uint32_t k);
+    void startLeg(Environment& env, std::uint32_t k);
+    [[nodiscard]] float redrawSpeed(Environment& env, std::uint32_t k);
     // O comando de velocidade: a faixa sorteada (pelo peso), a velocidade pedida
     // de agora (a do trecho com a freada antes do ponto) e o teto da direcao em
     // relacao ao peito (o mais rapido dos clipes que andam para la).
@@ -456,6 +477,7 @@ float TrainingBatch3D::Impl::effectiveSpeed(const Environment& env, float distan
             std::cos(env.upcomingDirection[0] - env.targetDirection)));
         arrival = std::max(sc.minimumArrivalSpeed, std::min(wanted, env.upcomingSpeed[0]) * std::cos(0.5f * turn));
     }
+    if (env.targetStop) arrival = 0.0f;  // pare aqui: a chegada a zero
     const float remaining = std::max(0.0f, distance - task.target.radius);
     return std::min(wanted, std::sqrt(arrival * arrival + 2.0f * sc.brakeAcceleration * remaining));
 }
@@ -575,11 +597,13 @@ void TrainingBatch3D::Impl::placeLibraryTarget(Environment& env, Vec3 from, floa
     if (ahead == 0 || k == 0) {
         env.targetFrom = { from.x, from.y, 0.0f };
         drawLibraryTarget(env, from, facing, k, env.target, env.targetDirection, env.targetSpeedCommand);
+        env.targetStop = drawStop(env, k);
         Vec3 last = env.target;
         float lastDirection = env.targetDirection;
         for (std::uint32_t i = 0; i < ahead; ++i) {
             drawLibraryTarget(env, last, lastDirection, k + 1 + i, env.upcoming[i], env.upcomingDirection[i],
                 env.upcomingSpeed[i]);
+            env.upcomingStop[i] = drawStop(env, k + 1 + i);
             last = env.upcoming[i];
             lastDirection = env.upcomingDirection[i];
         }
@@ -588,18 +612,64 @@ void TrainingBatch3D::Impl::placeLibraryTarget(Environment& env, Vec3 from, floa
         env.target = env.upcoming[0];
         env.targetDirection = env.upcomingDirection[0];
         env.targetSpeedCommand = env.upcomingSpeed[0];
+        env.targetStop = env.upcomingStop[0];
         for (std::uint32_t i = 0; i + 1 < ahead; ++i) {
             env.upcoming[i] = env.upcoming[i + 1];
             env.upcomingDirection[i] = env.upcomingDirection[i + 1];
             env.upcomingSpeed[i] = env.upcomingSpeed[i + 1];
+            env.upcomingStop[i] = env.upcomingStop[i + 1];
         }
         const Vec3 last = ahead > 1 ? env.upcoming[ahead - 2] : env.target;
         const float lastDirection = ahead > 1 ? env.upcomingDirection[ahead - 2] : env.targetDirection;
         drawLibraryTarget(env, last, lastDirection, k + ahead, env.upcoming[ahead - 1], env.upcomingDirection[ahead - 1],
             env.upcomingSpeed[ahead - 1]);
+        env.upcomingStop[ahead - 1] = drawStop(env, k + ahead);
     }
     env.targetClosest = 1e9f;
     env.targetCount = k + 1;
+    startLeg(env, k);
+}
+
+bool TrainingBatch3D::Impl::drawStop(Environment& env, std::uint32_t k) {
+    const auto& sc = taskOf(env).target.speedCommand;
+    if (!sc.enabled || !(sc.stopFraction > 0.0f)) return false;
+    // Na avaliacao, um sim e um nao (cada mundo comeca de um lado).
+    if (!training()) return (env.sequence + k) % 2 == 1;
+    return std::uniform_real_distribution<float>(0.0f, 1.0f)(env.rng) < sc.stopFraction;
+}
+
+float TrainingBatch3D::Impl::redrawSpeed(Environment& env, std::uint32_t k) {
+    const auto& sc = taskOf(env).target.speedCommand;
+    const auto& band = sc.bands[drawSpeedBand(env, k)];
+    float speed = training() ? uniform(env.rng, band.speed) : 0.5f * (band.speed.minimum + band.speed.maximum);
+    if (sc.capByDirection && env.facingActive)
+        speed = std::min(speed, directionCapability(env, env.targetDirection - env.facingCommand));
+    return speed;
+}
+
+void TrainingBatch3D::Impl::startLeg(Environment& env, std::uint32_t k) {
+    const auto& sc = taskOf(env).target.speedCommand;
+    env.stopHeld = 0.0f;
+    env.stopEntered = false;
+    env.stopOvershoot = 0.0f;
+    env.stopHold = !env.targetStop ? 0.0f
+        : training()               ? uniform(env.rng, sc.stopHoldSeconds)
+                                   : 0.5f * (sc.stopHoldSeconds.minimum + sc.stopHoldSeconds.maximum);
+    // As mudancas da pedida: quantas (no treino de 0 a changesPerLeg; na
+    // avaliacao pelo mundo e pelo trecho) e onde, pelo que falta ate o alvo
+    // (entre 85% e 25% do caminho, em ordem).
+    env.changeCount = 0;
+    env.changeNext = 0;
+    if (!sc.enabled || sc.changesPerLeg == 0) return;
+    const float length = std::hypot(env.target.x - env.targetFrom.x, env.target.y - env.targetFrom.y);
+    env.changeCount = training() ? std::uniform_int_distribution<std::uint32_t>(0, sc.changesPerLeg)(env.rng)
+                                 : (env.sequence + k) % (sc.changesPerLeg + 1);
+    for (std::uint32_t i = 0; i < env.changeCount; ++i) {
+        const float u = training() ? std::uniform_real_distribution<float>(0.25f, 0.85f)(env.rng)
+                                   : 0.85f - 0.6f * static_cast<float>(i + 1) / static_cast<float>(env.changeCount + 1);
+        env.changeAt[i] = u * length;
+    }
+    std::sort(env.changeAt.begin(), env.changeAt.begin() + env.changeCount, std::greater<float>());
 }
 
 float TrainingBatch3D::Impl::facingLinkHeading(const RagdollState3D& state) const {
@@ -679,12 +749,23 @@ void TrainingBatch3D::Impl::plan(Environment& env, Vec3 position, float facing, 
     // para a mira (de costas para ela, o da chegada), e acelera ao alinhar.
     const bool forwardOnly = !env.facingActive && planner.freeBackwardDistance > 0.0f
         && std::hypot(env.target.x - position.x, env.target.y - position.y) > planner.freeBackwardDistance;
-    if (forwardOnly && wantedSpeed > 0.0f)
+    // Parar (pare aqui, ou a pedida a quase zero): o clipe mais lento, o parado.
+    const bool stopping = planner.idleBelow > 0.0f && planner.speedFromCommand && planner.speedByDistance.empty()
+        && wantedSpeed < planner.idleBelow;
+    if (forwardOnly && wantedSpeed > 0.0f && !stopping)
         wantedSpeed = std::max(task.target.speedCommand.minimumArrivalSpeed, wantedSpeed * std::max(0.0f, std::cos(angle)));
     std::uint32_t best = env.cursor.segment;
     float bestCost = std::numeric_limits<float>::max();
     for (std::uint32_t c = 0; c < reference.segments.size(); ++c) {
         // (O lado do clipe pelo peito: no andar de lado do Mixamo a pelve vai virada.)
+        if (stopping) {
+            const float slow = reference.segments[c].meanSpeed;
+            if (slow < bestCost) {
+                bestCost = slow;
+                best = c;
+            }
+            continue;
+        }
         if (forwardOnly && std::abs(reference.segments[c].travelRelativeChest) > std::numbers::pi_v<float> / 3.0f) continue;
         float error = angle - (chest ? reference.segments[c].travelRelativeChest : reference.segments[c].travelRelative);
         error = directionWeight * std::abs(std::atan2(std::sin(error), std::cos(error)));
@@ -1118,6 +1199,8 @@ void TrainingBatch3D::Impl::resetEnvironment(std::uint32_t index) {
     env.speedNow = 0.0f;
     env.slipSum = 0.0;
     env.slipSamples = 0;
+    env.overshootSum = 0.0;
+    env.overshootCount = 0;
     if (targeting() && state && !(imitating() && reference.library)) placeFirstTarget(env, *state);
     env.episodeReturn = 0.0;
     env.comSum[0] = env.comSum[1] = 0.0;
@@ -1539,6 +1622,11 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
         const float toward = distance > 1.0e-4f
             ? (reading.comVelocity.x * to.x + reading.comVelocity.y * to.y) / distance : 0.0f;
         targetSpeed = std::clamp(toward / t.referenceSpeed, 0.0f, t.speedCap);
+        // A pedida que muda no caminho (arrancar e frear sem aviso).
+        while (env.changeNext < env.changeCount && distance < env.changeAt[env.changeNext]) {
+            env.targetSpeedCommand = redrawSpeed(env, 2u * (env.targetCount + env.changeNext + 1u));
+            ++env.changeNext;
+        }
         // O comando de velocidade: acertar a pedida de agora (com a freada).
         if (t.speedCommand.enabled) {
             env.speedNow = effectiveSpeed(env, distance);
@@ -1548,7 +1636,23 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
             env.speedErrorSquares += error * error;
             ++env.speedSteps;
         }
-        if (distance < t.radius) {
+        // Pare aqui: chegar e so parar dentro do disco (mais devagar que
+        // stopSpeed) pelo tempo pedido; o quanto passa do disco depois de
+        // entrar nele fica medido.
+        bool arrived = distance < t.radius;
+        if (env.targetStop) {
+            if (distance < t.radius) env.stopEntered = true;
+            if (env.stopEntered) env.stopOvershoot = std::max(env.stopOvershoot, distance - t.radius);
+            const float planar = std::hypot(reading.comVelocity.x, reading.comVelocity.y);
+            if (distance < t.radius && planar < t.speedCommand.stopSpeed) env.stopHeld += stepSeconds;
+            else if (distance >= t.radius) env.stopHeld = 0.0f;
+            arrived = env.stopHeld >= env.stopHold;
+            if (arrived) {
+                env.overshootSum += env.stopOvershoot;
+                ++env.overshootCount;
+            }
+        }
+        if (arrived) {
             const float now = static_cast<float>(env.played) * stepSeconds;
             const float covered = (env.target - env.targetFrom).length();
             const float speed = covered / std::max(stepSeconds, now - env.targetSince);
@@ -1697,6 +1801,7 @@ void TrainingBatch3D::Impl::finishEpisode(Scene& scene, std::uint32_t index, Tra
     episode.speedErrorRms =
         env.speedSteps > 0 ? static_cast<float>(std::sqrt(env.speedErrorSquares / env.speedSteps)) : -1.0f;
     episode.footSlipMean = env.slipSamples > 0 ? static_cast<float>(env.slipSum / env.slipSamples) : -1.0f;
+    episode.stopOvershootMean = env.overshootCount > 0 ? static_cast<float>(env.overshootSum / env.overshootCount) : -1.0f;
     if (reason == TrainingEndReason3D::FallContact || reason == TrainingEndReason3D::FallHeight) {
         // O lado da queda: para onde o centro de massa ia, no referencial do corpo.
         const Vec3 v = reading.valid ? reading.headingInverse.rotate(reading.comVelocity) : Vec3 {};
@@ -2133,7 +2238,11 @@ TrainingEnvironmentView3D TrainingBatch3D::view(std::size_t environment) const {
         view.targetRadius = impl.task.target.radius;
         view.targetsReached = env.targetsReached;
         view.upcomingCount = impl.imitating() && impl.reference.library ? impl.task.target.lookahead : 0u;
-        for (std::uint32_t i = 0; i < view.upcomingCount; ++i) view.upcoming[i] = env.upcoming[i];
+        for (std::uint32_t i = 0; i < view.upcomingCount; ++i) {
+            view.upcoming[i] = env.upcoming[i];
+            view.upcomingStop[i] = env.upcomingStop[i];
+        }
+        view.targetStop = env.targetStop;
         view.reachedCount = env.reachedCount;
         for (std::uint32_t i = 0; i < view.reachedCount; ++i) view.reached[i] = env.reachedTargets[i];
         const TrainingTask3D& drill = impl.taskOf(env);
