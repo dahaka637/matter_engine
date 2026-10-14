@@ -39,12 +39,17 @@ struct BodyBatchSettings3D {
 
 enum class BodyEndReason3D : std::uint8_t { None = 0, FallContact, FallHeight, Numeric, TimeLimit, Boundary };
 
+// De onde um episodio comecou: de pe na postura, num quadro de clipe (a muleta
+// do acervo) ou num estado guardado da propria experiencia.
+enum class BodyStart3D : std::uint8_t { Standing = 0, Clip, Saved };
+
 [[nodiscard]] const char* bodyEndReasonName3D(BodyEndReason3D reason);
 
 // O resumo de um episodio que acabou no ultimo step().
 struct BodyEpisode3D {
     std::uint32_t environment = 0;
     std::uint32_t drill = 0;
+    BodyStart3D start = BodyStart3D::Standing;
     BodyEndReason3D reason = BodyEndReason3D::None;
     // O primeiro link que nao e apoio a tocar o chao (-1 sem).
     int firstContactLink = -1;
@@ -131,6 +136,8 @@ public:
     [[nodiscard]] std::size_t styleSize() const;
     [[nodiscard]] const RLVectorLayout3D& styleLayout() const;
     [[nodiscard]] std::span<const float> stylePairs() const;
+    // Quantos estados guardados ha (somando as cenas).
+    [[nodiscard]] std::size_t savedStates() const;
 
     // Muda o que pode mudar com o treino andando (vale do proximo passo ou
     // episodio em diante): a nota, o fim, a variacao do mundo, o controle e,

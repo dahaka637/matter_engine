@@ -57,6 +57,9 @@ no `docs/REINFORCEMENT_LEARNING.md` ("A reformulação do Corpo").
     (1,9 → 3,6 s em 3 milhões de decisões). A taxa de aprendizado fica presa
     no piso com a rede maior: o ajuste é a primeira coisa a acertar no
     Experimento B.
+- **Os estados guardados** (a versão simples da E7): cada cena guarda estados
+  de pé da própria experiência e uma fatia dos episódios recomeça deles (para
+  o Experimento C trocar os começos pelo acervo).
 - **O cérebro do Corpo no jogo** (`RL/Brain/BodyBrain3D`, o começo da E11): o
   contrato e a política exportada; no mesmo estado e com os mesmos comandos,
   dá a mesma entrada e a mesma trajetória do lote de treino, bit a bit.

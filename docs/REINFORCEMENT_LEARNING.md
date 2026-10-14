@@ -130,6 +130,14 @@ o cérebro antigo e as comparações até a F1.
     pedido segue o movimento (`CommandPilot3D::follow`: o direcional nessa
     direção e velocidade, ou a ponta da estrela dessa direção). Só no treino;
     a avaliação começa de pé;
+  - **os estados guardados** (a versão simples da seção 10.1;
+    `initialState.bankFraction`, zero no `corpo2`): cada cena guarda até
+    `bankCapacity` estados de pé da própria experiência, um a cada ~1 s de
+    cada mundo, com prioridade para os interessantes (velocidade, giro, pelve
+    baixa). Uma fatia dos episódios recomeça deles, girada num rumo sorteado,
+    com o pedido seguindo o movimento. É o que troca os começos pelo acervo no
+    Experimento C. Cada episódio diz de onde começou (de pé, quadro de clipe
+    ou estado guardado; a coluna `comeco`);
   - **as medidas de cada episódio:** as notas, os erros de velocidade e de
     olhar, a reação a cada troca do pedido, os custos, a telemetria da ação
     (tamanho, presa no limite, alvo preso no curso, reversão) e a cadência;
@@ -198,7 +206,9 @@ o cérebro antigo e as comparações até a F1.
   - **a velocidade medida** (512 mundos, modo Equilibrado): ~9.000 decisões/s
     em série e ~12.200 com a sobreposição. O gargalo é a física do corpo v2:
     as pontas dos pés custam ~19% (16.800 contra 20.800 decisões/s com o corpo
-    v1, no mesmo lote, 10 threads);
+    v1, no mesmo lote, 10 threads). Cascas mais simples no calcanhar e na
+    ponta quase não ajudam (6 mm de tolerância: +4%): o custo vem dos corpos,
+    das juntas e dos pares de contato a mais;
   - **o β** fica na cópia da tarefa do treino (`style.beta`). `matter-rl peso
     estilo 0.5` muda com o treino andando e salva um checkpoint antes;
     `matter-rl peso slip 0.5` (e os outros custos) também;

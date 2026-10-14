@@ -178,7 +178,14 @@ BodyTask3D loadBodyTask3D(const std::filesystem::path& path) {
         start.randomYaw = s.value("randomYaw", start.randomYaw);
         start.referenceFraction = s.value("referenceFraction", start.referenceFraction);
         start.referenceMinimumPelvis = s.value("referenceMinimumPelvis", start.referenceMinimumPelvis);
-        if (start.referenceFraction < 0.0f || start.referenceFraction > 1.0f) fail("referenceFraction fora de 0..1");
+        start.bankFraction = s.value("bankFraction", start.bankFraction);
+        start.bankCapacity = s.value("bankCapacity", start.bankCapacity);
+        start.bankEverySeconds = s.value("bankEverySeconds", start.bankEverySeconds);
+        if (start.referenceFraction < 0.0f || start.bankFraction < 0.0f
+            || start.referenceFraction + start.bankFraction > 1.0f)
+            fail("referenceFraction e bankFraction fora de 0..1");
+        if (start.bankFraction > 0.0f && (start.bankCapacity == 0 || !(start.bankEverySeconds > 0.0f)))
+            fail("estados guardados sem capacidade ou sem ritmo");
     }
     if (document.contains("style") && document["style"].contains("dataset"))
         task.styleDataset =

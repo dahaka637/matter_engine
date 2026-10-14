@@ -62,6 +62,14 @@ struct BodyTask3D {
         // pelo menos referenceMinimumPelvis da altura de pe da postura.
         float referenceFraction = 0.0f;
         float referenceMinimumPelvis = 0.6f;
+        // A fatia dos comecos pelos estados guardados (a versao simples da
+        // secao 10.1): estados da propria experiencia dele, de pe, com
+        // prioridade para os interessantes (velocidade, giro, pelve baixa).
+        // Cada cena guarda os seus (bankCapacity), um a cada ~bankEverySeconds
+        // de cada mundo. A soma com referenceFraction nao passa de 1.
+        float bankFraction = 0.0f;
+        std::uint32_t bankCapacity = 64;
+        float bankEverySeconds = 1.0f;
         // De pe: a postura do corpo (o id), com ruido.
         std::string posture = "alerta";
         float jointNoiseRadians = 0.03f;

@@ -78,6 +78,10 @@ struct World {
     std::vector<float> actionDelta;
     // O que o juiz viu no fim da decisao anterior.
     std::vector<float> styleLast;
+    // Os estados guardados: quanto falta para o proximo (s).
+    float bankTimer = 0.0f;
+    // De onde o episodio comecou (BodyStart3D).
+    BodyStart3D startKind = BodyStart3D::Standing;
     BodyCostAccumulator3D costs;
     // O relogio do episodio (que pode comecar sorteado), as decisoes jogadas e o limite.
     std::uint32_t steps = 0;
@@ -110,10 +114,18 @@ struct StartClip {
     std::vector<std::uint32_t> standing;
 };
 
+// Um estado guardado: os links, no mundo da captura.
+struct SavedState {
+    std::vector<PhysicsBodyState3D> links;
+};
+
 struct Scene {
     std::unique_ptr<PhysicsScene3D> physics;
     std::vector<std::uint32_t> worlds;
     std::vector<BodyEpisode3D> finished;
+    // Os estados guardados desta cena (em anel; so esta thread mexe neles).
+    std::vector<SavedState> bank;
+    std::size_t bankHead = 0;
 };
 
 // O que a nota, o fim e o piloto leem do corpo depois de uma decisao.
@@ -410,8 +422,39 @@ void BodyTrainingBatch3D::Impl::resetWorld(std::uint32_t index) {
     bool fromClip = false;
     Vec3 clipVelocity;
     float clipChest = 0.0f;
-    if (training() && !starts.empty()
-        && std::uniform_real_distribution<float>(0.0f, 1.0f)(world.rng) < start.referenceFraction) {
+    const float roll = std::uniform_real_distribution<float>(0.0f, 1.0f)(world.rng);
+    Scene& home = scenes[world.scene];
+    world.startKind = BodyStart3D::Standing;
+    if (training() && start.bankFraction > 0.0f && !home.bank.empty() && roll >= start.referenceFraction
+        && roll < start.referenceFraction + start.bankFraction) {
+        // O comeco por um estado guardado: girado no rumo sorteado em volta da
+        // pelve e levado para a origem deste mundo.
+        const SavedState& saved =
+            home.bank[std::uniform_int_distribution<std::size_t>(0, home.bank.size() - 1)(world.rng)];
+        const Vec3 pivot { saved.links.front().position.x, saved.links.front().position.y, 0.0f };
+        const Quaternion turn = Quaternion::fromAxisAngle({ 0.0f, 0.0f, 1.0f }, yaw);
+        links = saved.links;
+        for (PhysicsBodyState3D& link : links) {
+            const Vec3 relative = link.position - pivot;
+            link.position = world.origin + turn.rotate(relative);
+            link.orientation = (turn * link.orientation).normalized();
+            link.linearVelocity = turn.rotate(link.linearVelocity);
+            link.angularVelocity = turn.rotate(link.angularVelocity);
+        }
+        float massSum = 0.0f;
+        for (std::size_t i = 0; i < links.size(); ++i) {
+            clipVelocity += links[i].linearVelocity * body.profile.links[i].massFraction;
+            massSum += body.profile.links[i].massFraction;
+        }
+        clipVelocity = clipVelocity / std::max(1.0e-6f, massSum);
+        const Quaternion chest = (links[body.upperChest].orientation
+            * body.profile.links[body.upperChest].modelOrientation.conjugate()).normalized();
+        const Vec3 forward = chest.rotate({ 1.0f, 0.0f, 0.0f });
+        clipChest = std::atan2(forward.y, forward.x);
+        fromClip = true;
+        world.startKind = BodyStart3D::Saved;
+    } else if (training() && !starts.empty() && roll < start.referenceFraction) {
+        world.startKind = BodyStart3D::Clip;
         const double roll = std::uniform_real_distribution<double>(0.0, startCumulative.back())(world.rng);
         const auto at = static_cast<std::size_t>(
             std::upper_bound(startCumulative.begin(), startCumulative.end(), roll) - startCumulative.begin());
@@ -479,6 +522,7 @@ void BodyTrainingBatch3D::Impl::resetWorld(std::uint32_t index) {
     std::fill(world.actionDelta.begin(), world.actionDelta.end(), 0.0f);
     world.firstContactLink = -1;
     world.start = state->links.front().position;
+    world.bankTimer = std::uniform_real_distribution<float>(0.2f, 1.8f)(world.rng) * start.bankEverySeconds;
     style->write(state->links, world.player.heightMeters / 1.8f, world.styleLast.data());
 
     world.episodeReturn = 0.0;
@@ -505,6 +549,7 @@ void BodyTrainingBatch3D::Impl::finishEpisode(Scene& scene, std::uint32_t index,
     BodyEpisode3D episode;
     episode.environment = index;
     episode.drill = world.drill;
+    episode.start = world.startKind;
     episode.reason = reason;
     episode.firstContactLink = world.firstContactLink;
     episode.steps = world.played;
@@ -650,6 +695,26 @@ void BodyTrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> a
                 world.changeAt = -1.0f;
             }
             world.touchdowns += (world.contract.touchdown[0] ? 1u : 0u) + (world.contract.touchdown[1] ? 1u : 0u);
+            // Os estados guardados: de pe, de vez em quando, mais os interessantes.
+            if (training() && task.initialState.bankFraction > 0.0f && reason == BodyEndReason3D::None
+                && (world.bankTimer -= decision()) <= 0.0f) {
+                world.bankTimer = std::uniform_real_distribution<float>(0.5f, 1.5f)(world.rng)
+                    * task.initialState.bankEverySeconds;
+                const PhysicsBodyState3D& pelvis = state->links.front();
+                const float speed = std::hypot(reading.comVelocity.x, reading.comVelocity.y);
+                const float spin = pelvis.angularVelocity.length();
+                const float crouch = std::max(0.0f, pose.standingPelvisHeight - pelvis.position.z);
+                const float interest = 1.0f + speed / 3.0f + spin / 2.0f + crouch / 0.2f;
+                // Guarda com chance pela prioridade (o tedioso entra de vez em quando).
+                if (std::uniform_real_distribution<float>(0.0f, 1.0f)(world.rng) < std::min(1.0f, interest / 3.0f)) {
+                    SavedState saved { state->links };
+                    if (scene.bank.size() < task.initialState.bankCapacity) scene.bank.push_back(std::move(saved));
+                    else {
+                        scene.bank[scene.bankHead] = std::move(saved);
+                        scene.bankHead = (scene.bankHead + 1) % scene.bank.size();
+                    }
+                }
+            }
             // O par do juiz: o instante de antes e o de agora.
             const std::size_t S = style->size();
             float* pair = stylePairs.data() + index * 2 * S;
@@ -734,6 +799,11 @@ std::span<const std::uint32_t> BodyTrainingBatch3D::worldDrills() const { return
 std::size_t BodyTrainingBatch3D::styleSize() const { return m_impl->style->size(); }
 const RLVectorLayout3D& BodyTrainingBatch3D::styleLayout() const { return m_impl->style->layout(); }
 std::span<const float> BodyTrainingBatch3D::stylePairs() const { return m_impl->stylePairs; }
+std::size_t BodyTrainingBatch3D::savedStates() const {
+    std::size_t count = 0;
+    for (const Scene& scene : m_impl->scenes) count += scene.bank.size();
+    return count;
+}
 
 void BodyTrainingBatch3D::updateTask(const BodyTask3D& task) {
     Impl& impl = *m_impl;

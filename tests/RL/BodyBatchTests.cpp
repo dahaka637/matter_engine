@@ -459,6 +459,43 @@ void testReferenceStarts() {
     }
 }
 
+// Os estados guardados: a cena guarda estados de pe da propria experiencia e
+// recomeca deles, com o pedido seguindo o movimento.
+void testSavedStates() {
+    const std::string path = std::string(MATTERENGINE_TEST_ASSETS_DIR) + "/rl/tasks/corpo2.json";
+    std::ifstream in(path);
+    std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    const std::string key = "\"referenceFraction\": 0.4,";
+    require(text.find(key) != std::string::npos, "a fatia do corpo2");
+    text.replace(text.find(key), key.size(),
+        "\"referenceFraction\": 0.0, \"bankFraction\": 0.8, \"bankCapacity\": 16, \"bankEverySeconds\": 0.2,");
+    const std::string assets = std::string(MATTERENGINE_TEST_ASSETS_DIR) + "/rl/";
+    for (const std::string relative : { "\"../bodies/", "\"../style/" }) {
+        const std::size_t at = text.find(relative);
+        text.replace(at, relative.size(), "\"" + assets + relative.substr(4));
+    }
+    const std::filesystem::path copy = std::filesystem::temp_directory_path() / "matter_rl_teste_estados.json";
+    { std::ofstream out(copy); out << text; }
+    BodyBatchSettings3D settings = smallBatch(8, 2, false);
+    settings.taskPath = copy;
+    BodyTrainingBatch3D batch(settings);
+    std::filesystem::remove(copy);
+    require(batch.savedStates() == 0, "comeca sem estados guardados");
+    std::mt19937 rng(2);
+    std::normal_distribution<float> gauss(0.0f, 0.3f);
+    std::vector<float> actions(batch.environmentCount() * batch.actionSize());
+    std::array<std::size_t, 3> starts {};
+    for (int step = 0; step < 400; ++step) {
+        for (float& v : actions) v = gauss(rng);
+        batch.step(actions, actions);
+        require(allFinite(batch.observations()) && allFinite(batch.rewards()), "os recomecos guardados sao estaveis");
+        for (const BodyEpisode3D& episode : batch.finishedEpisodes()) ++starts[static_cast<std::size_t>(episode.start)];
+    }
+    require(batch.savedStates() > 0 && batch.savedStates() <= 4 * 16, "as cenas guardam ate a capacidade");
+    require(starts[static_cast<std::size_t>(BodyStart3D::Saved)] > 0, "episodios recomecam dos estados guardados");
+    require(starts[static_cast<std::size_t>(BodyStart3D::Clip)] == 0, "sem a fatia do acervo, nenhum comeco por clipe");
+}
+
 } // namespace
 
 void runBodyBatchTests() {
@@ -470,5 +507,6 @@ void runBodyBatchTests() {
     testBodyBatchDeterminism();
     testBodyBatchInfoParity();
     testReferenceStarts();
+    testSavedStates();
     std::cout << "Body batch tests passed\n";
 }
