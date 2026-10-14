@@ -231,8 +231,8 @@ TrainingTask3D parseTask(const nlohmann::json& document, const std::filesystem::
             if (sc.enabled && sc.bands.empty()) throw std::runtime_error("tarefa de RL: comando de velocidade sem faixas");
         }
         out.pattern = t.value("pattern", out.pattern);
-        if (out.pattern != "random" && out.pattern != "star" && out.pattern != "arc")
-            throw std::runtime_error("tarefa de RL: pattern e random, star ou arc");
+        if (out.pattern != "random" && out.pattern != "star" && out.pattern != "arc" && out.pattern != "hold")
+            throw std::runtime_error("tarefa de RL: pattern e random, star, arc ou hold");
         if (t.contains("arcRadii")) {
             out.arcRadii.clear();
             for (const nlohmann::json& r : t["arcRadii"]) {

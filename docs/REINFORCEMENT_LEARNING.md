@@ -297,6 +297,31 @@ diagonal), e a voltar.
   não tem entram com zero, como na migração do treinador. Assim um cérebro
   antigo roda numa tarefa mais nova.
 
+## Parado, girar parado e empurrões (14/10/2026)
+
+Os exercícios 1 e 2 do `treino_locomocao_claude.md`, no Corpo. Os três usam
+o desenho `"hold"`: o alvo é o lugar onde ele começa, de "pare aqui" para
+sempre, com a pedida zero (o planejador dá o clipe `parado`). O peito tem o
+comando sempre (`facingFraction` 1).
+
+- **Parado** (`parado`, peso 0,5): o peito fixo no rumo do começo. Bateria
+  `parado_v1` (de pé: o desvio, o pé saindo do lugar, o tronco girando, a
+  postura).
+- **Girar parado** (`girar`): o rumo do peito gira em trechos (meia a uma
+  volta e meia, 0,4–1,2 rad/s, o sentido sorteado) e ele gira junto, no
+  lugar. A referência é o parado girando junto (os giros do Mixamo não são
+  ciclos e a biblioteca só aceita ciclos). Bateria `giro_parado_v1`, do tipo
+  novo `giro` (`turn_score`: de pé, menos até 0,5 pelo peito fora do rumo
+  e até 0,15 pela sola escorregando).
+- **Empurrões** (`empurroes`): parado, com `pushes` ligado só nele (80–250 N
+  por 0,1–0,25 s a cada 1,5–3,5 s, na pelve ou no peito, de qualquer lado; na
+  avaliação também). Bateria `empurroes_v1` (de pé).
+- **Na tela,** os três são ramos do Corpo sem os modos do peito (cada um tem
+  um só).
+- **A prévia com o cérebro de 14/10 (rodada 60068):** de pé em 16/16
+  (parado), 14/16 (girar, o peito 21° fora) e 15/16 (empurrões). A sola
+  escorrega muito nos três (0,7–0,9 m/s): ele nunca treinou ficar parado.
+
 ## O peito livre olha para onde vai (14/10/2026)
 
 Com o peito livre, nada cobrava para onde o peito olhava, e o cérebro ia de

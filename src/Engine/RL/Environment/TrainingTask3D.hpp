@@ -376,8 +376,10 @@ struct TrainingTask3D {
             float stopSpeed = 0.35f;
         } speedCommand;
         // O desenho dos alvos (biblioteca): "random" (cada um em volta do
-        // anterior) ou "star" (a estrela: do centro a uma das 8 direcoes, de
-        // volta ao centro, e assim por diante; a distancia da faixa sorteada).
+        // anterior), "star" (a estrela: do centro a uma das 8 direcoes, de
+        // volta ao centro, e assim por diante; a distancia da faixa sorteada),
+        // "arc" (as curvas) ou "hold" (parado: o alvo e o lugar onde ele
+        // comeca, de "pare aqui" para sempre, com a pedida zero).
         std::string pattern = "random";
         std::uint32_t starDirections = 8;
         float starJitterDegrees = 8.0f;

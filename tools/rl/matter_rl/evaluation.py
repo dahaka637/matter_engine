@@ -40,11 +40,14 @@ def battery_kind(name: str) -> str:
     """O tipo de uma bateria pelo nome (a convencao das tarefas): andar_* e
     girar_* seguem um roteiro de velocidades, ir_ate_* vao a um ponto,
     corrida_*, caminhada_*, direcoes_*, percursos_*, tiro_*, estrela_*, frear_* e curvas_* vao ate
-    os alvos da tarefa (o alvo no mundo, com imitacao)."""
+    os alvos da tarefa (o alvo no mundo, com imitacao); giro_* gira no lugar com
+    o peito no rumo que gira."""
     if name.startswith(("andar_", "girar_")):
         return "andar"
     if name.startswith("ir_ate_"):
         return "alvo"
+    if name.startswith("giro_"):
+        return "giro"
     if name.startswith(("corrida_", "caminhada_", "direcoes_", "percursos_", "tiro_", "estrela_", "frear_", "curvas_")):
         return "corrida"
     return "de_pe"
@@ -70,7 +73,7 @@ def task_batteries(task_path: Path) -> list[dict]:
         if not entry.get("enabled", True):
             continue
         kind = ("andar" if entry.get("schedule") else "alvo" if entry.get("goal")
-                else "corrida" if battery_kind(entry["name"]) == "corrida" else "de_pe")
+                else battery_kind(entry["name"]) if battery_kind(entry["name"]) in ("corrida", "giro") else "de_pe")
         batteries.append(dict(entry, kind=kind, posture=entry.get("posture", "natural")))
     return batteries
 
@@ -145,6 +148,17 @@ def race_score(metrics: dict) -> float:
             + 0.15 * max(0.0, 1.0 - metrics.get("imitation_error", 1.0) / 0.5)
             - (0.25 * min(1.0, metrics["facing_error"] / 60.0) if metrics.get("facing_error", -1.0) >= 0 else 0.0)
             - (0.20 * min(1.0, metrics["line_error"] / 1.0) if metrics.get("line_error", -1.0) >= 0 else 0.0))
+
+
+def turn_score(metrics: dict) -> float:
+    """Girar parado: nao cair, o peito acompanhando o rumo que gira (45 graus
+    fora ou mais tiram metade) e a sola sem escorregar (0,3 m/s ou mais tiram
+    0,15)."""
+    facing = metrics.get("facing_error", -1.0)
+    slip = metrics.get("foot_slip", -1.0)
+    return (metrics["stand_fraction"]
+            - (0.5 * min(1.0, facing / 45.0) if facing >= 0 else 0.5)
+            - (0.15 * min(1.0, slip / 0.3) if slip >= 0 else 0.0))
 
 
 def score(metrics: dict) -> float:
@@ -334,8 +348,8 @@ class Evaluator:
             target = float(spec["goal"]["distance"])
             along = np.sqrt(np.maximum(rows[:, 19] ** 2 - rows[:, 20] ** 2, 0.0))
             metrics["goal_error"] = float(np.sqrt((target - along) ** 2 + rows[:, 20] ** 2).mean())
-        if kind == "corrida":
-            # Indo ate o alvo, "sem cair" e nao cair (passar do alvo encerra o
+        if kind in ("corrida", "giro"):
+            # Indo ate o alvo (ou girando no lugar), "sem cair" e nao cair (passar do alvo encerra o
             # episodio sem queda).
             metrics["stand_fraction"] = float((~np.isin(reasons, list(FALLS))).sum()) / float(envs)
             # Os alvos (todos os episodios, quedas inclusive): quantos, a fatia que
@@ -368,5 +382,6 @@ class Evaluator:
             metrics["reference_speed"] = float((spec or {}).get("referenceSpeed", 6.0))
         metrics["kind"] = kind
         metrics["score"] = (walking_score(metrics) if kind == "andar" else goal_score(metrics) if kind == "alvo"
-                            else race_score(metrics) if kind == "corrida" else score(metrics))
+                            else race_score(metrics) if kind == "corrida" else turn_score(metrics) if kind == "giro"
+                            else score(metrics))
         return metrics

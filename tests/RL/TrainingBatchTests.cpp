@@ -937,7 +937,7 @@ void testDrills() {
         // A tarefa Corpo (a area 1): a estrela, com o desenho e o comando de
         // velocidade dela.
         const TrainingTask3D corpo = loadTrainingTask3D(std::filesystem::path(MATTERENGINE_TEST_ASSETS_DIR) / "rl/tasks/corpo.json");
-        require(corpo.drills.size() == 3 && corpo.drills[0].id == "estrela"
+        require(corpo.drills.size() == 6 && corpo.drills[0].id == "estrela"
                 && corpo.drills[0].task->target.pattern == "star" && corpo.target.pattern == "random"
                 && corpo.drills[0].task->target.facingFraction == 0.6f && corpo.target.speedCommand.enabled
                 && corpo.target.speedCommand.bands.size() == 4,
@@ -1149,6 +1149,44 @@ void testCurves() {
     }
 }
 
+// Os parados (o 1 e o 2): o alvo e o lugar do comeco, a pedida zero e o clipe
+// parado; girando, o rumo do peito gira; nos empurroes, eles ligados.
+void testStanding() {
+    const std::filesystem::path task = std::filesystem::path(MATTERENGINE_TEST_ASSETS_DIR) / "rl/tasks/corpo.json";
+    const TrainingTask3D corpo = loadTrainingTask3D(task);
+    const auto drill = [&](const std::string& id) {
+        for (const auto& d : corpo.drills)
+            if (d.id == id) return d.task;
+        throw std::runtime_error("sem o exercicio " + id);
+    };
+    require(drill("empurroes")->pushes.enabled && !drill("parado")->pushes.enabled && !corpo.pushes.enabled,
+        "so os empurroes empurram");
+    require(drill("girar")->target.facingDriftFraction == 1.0f && drill("parado")->target.facingDriftFraction == 0.0f,
+        "o girar gira o peito, o parado nao");
+    for (const char* id : { "parado", "girar", "empurroes" }) {
+        TrainingBatchSettings3D s = settings(4, 2);
+        s.taskPath = task;
+        s.evaluation = true;
+        s.evaluationEpisodeSeconds = 30.0f;
+        s.facing = std::string(id) == "girar" ? 2 : 1;
+        s.drill = id;
+        TrainingBatch3D batch(s);
+        const std::size_t O = batch.observationSize(), now = channel(batch, "command.speed.now"),
+                          idle = channel(batch, "reference.clip.parado");
+        for (std::size_t e = 0; e < 4; ++e) {
+            const TrainingEnvironmentView3D view = batch.view(e);
+            require(std::hypot(view.target.x - view.origin.x, view.target.y - view.origin.y) < 1e-3f && view.targetStop,
+                std::string(id) + ": o alvo e o lugar do comeco, de parar");
+            require(batch.observations()[e * O + now] == 0.0f && batch.observations()[e * O + idle] == 1.0f,
+                std::string(id) + ": a pedida zero e o clipe parado");
+        }
+        for (int step = 0; step < 10; ++step) {
+            batch.step(std::vector<float>(4 * batch.actionSize(), 0.0f));
+            require(finiteAll(batch.observations()) && finiteAll(batch.rewards()), std::string(id) + " sem numero ruim");
+        }
+    }
+}
+
 } // namespace
 
 void runTrainingBatchTests() {
@@ -1170,5 +1208,6 @@ void runTrainingBatchTests() {
     testStar();
     testBrake();
     testCurves();
+    testStanding();
     std::cout << "RL training batch tests passed\n";
 }

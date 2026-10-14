@@ -165,6 +165,9 @@ void ReinforcementLearningScreen::loadSkills() {
             for (const TrainingTask3D::Drill& drill : task.drills) {
                 skill.drills.push_back(drill.id);
                 skill.drillNames.push_back(drill.name);
+                // Os parados tem um peito so: o fixo, ou o girando.
+                const TrainingTask3D::Target& target = drill.task->target;
+                skill.drillChests.push_back(target.pattern != "hold" ? -1 : target.facingDriftFraction >= 1.0f ? 2 : 1);
             }
             skill.facing = task.target.facing;
             m_skills.push_back(std::move(skill));
@@ -970,11 +973,13 @@ void ReinforcementLearningScreen::drawDrillTree(std::size_t index) {
         ImGui::Indent(ui(14.0f));
         const std::string label = UI::FontAwesome::label(UI::FontAwesome::Crosshairs, skill.drillNames[d].c_str())
             + "##drill" + skill.task + drill;
-        if (navigationButton(label.c_str(), open && !skill.facing, { -1.0f, ui(28.0f) })) {
+        const int only = skill.drillChests[d];
+        const bool branches = skill.facing && only < 0;
+        if (navigationButton(label.c_str(), open && !branches, { -1.0f, ui(28.0f) })) {
             if (!here) selectSkill(index);
-            setViewerDrill(drill, m_viewerChest);
+            setViewerDrill(drill, only >= 0 ? only : m_viewerChest);
         }
-        if (skill.facing) {
+        if (branches) {
             ImGui::Indent(ui(14.0f));
             for (int chest = 0; chest < 3; ++chest) {
                 const std::string item = std::string(Chests[chest]) + "##chest" + skill.task + drill + std::to_string(chest);

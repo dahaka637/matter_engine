@@ -525,6 +525,13 @@ void TrainingBatch3D::Impl::drawLibraryTarget(Environment& env, Vec3 from, float
         return std::min(wanted, directionCapability(env, direction - env.facingCommand));
     };
     speed = t.referenceSpeed;
+    if (t.pattern == "hold") {
+        // Parado: o alvo e o lugar do comeco, e a pedida e zero.
+        point = { env.origin.x, env.origin.y, 0.0f };
+        direction = facing;
+        speed = 0.0f;
+        return;
+    }
     if (t.pattern == "arc") {
         // As curvas: uma nova quando a de agora acaba (o tipo de raio, o giro,
         // o sentido e a velocidade); cada alvo e a corda seguinte do arco.
@@ -678,6 +685,7 @@ void TrainingBatch3D::Impl::placeLibraryTarget(Environment& env, Vec3 from, floa
 }
 
 bool TrainingBatch3D::Impl::drawStop(Environment& env, std::uint32_t k) {
+    if (taskOf(env).target.pattern == "hold") return true;  // parado: sempre
     const auto& sc = taskOf(env).target.speedCommand;
     if (!sc.enabled || !(sc.stopFraction > 0.0f)) return false;
     // Na avaliacao, um sim e um nao (cada mundo comeca de um lado).
@@ -699,7 +707,8 @@ void TrainingBatch3D::Impl::startLeg(Environment& env, std::uint32_t k) {
     env.stopHeld = 0.0f;
     env.stopEntered = false;
     env.stopOvershoot = 0.0f;
-    env.stopHold = !env.targetStop ? 0.0f
+    env.stopHold = taskOf(env).target.pattern == "hold" ? std::numeric_limits<float>::max()  // nunca acaba
+        : !env.targetStop ? 0.0f
         : training()               ? uniform(env.rng, sc.stopHoldSeconds)
                                    : 0.5f * (sc.stopHoldSeconds.minimum + sc.stopHoldSeconds.maximum);
     // As mudancas da pedida: quantas (no treino de 0 a changesPerLeg; na
