@@ -1024,6 +1024,38 @@ void testStar() {
         require(sideways < run - 0.1f, "de lado a pedida fica no que o sprint de lado faz (" + std::to_string(sideways) + " m/s)");
     }
     {
+        // O peito girando (facing 2): na avaliacao o rumo pedido gira, em
+        // velocidade e sentido sorteados por mundo; com o fixo ele fica.
+        TrainingBatch3D fixed(evaluation(1)), turning(evaluation(2));
+        std::vector<float> start(8), held(8);
+        for (std::size_t e = 0; e < 8; ++e) {
+            start[e] = turning.view(e).facingCommand;
+            held[e] = fixed.view(e).facingCommand;
+        }
+        // (Sem politica eles caem em meio segundo: 1/3 s, e o mundo que
+        // recomecou fica de fora.)
+        std::vector<bool> restarted(8, false);
+        for (int step = 0; step < 10; ++step) {
+            fixed.step(std::vector<float>(8 * fixed.actionSize(), 0.0f));
+            turning.step(std::vector<float>(8 * turning.actionSize(), 0.0f));
+            for (const TrainingEpisode3D& episode : fixed.finishedEpisodes()) restarted[episode.environment] = true;
+            for (const TrainingEpisode3D& episode : turning.finishedEpisodes()) restarted[episode.environment] = true;
+        }
+        float moved = 0.0f, still = 0.0f;
+        bool clockwise = false, counter = false;
+        for (std::size_t e = 0; e < 8; ++e) {
+            if (restarted[e]) continue;
+            const float turned = std::remainder(turning.view(e).facingCommand - start[e], 2.0f * std::numbers::pi_v<float>);
+            moved = std::max(moved, std::abs(turned));
+            clockwise = clockwise || turned < -0.005f;
+            counter = counter || turned > 0.005f;
+            still = std::max(still, std::abs(fixed.view(e).facingCommand - held[e]));
+        }
+        require(std::count(restarted.begin(), restarted.end(), false) >= 4, "a maioria ainda de pe");
+        require(moved > 0.03f && still < 1e-4f, "girando o rumo do peito gira; fixo ele fica (" + std::to_string(moved) + ", " + std::to_string(still) + ")");
+        require(clockwise && counter, "o giro sorteia os dois sentidos");
+    }
+    {
         // O visualizador (um mundo, evaluationCycle): cada recomeco segue o
         // roteiro do mundo seguinte da bateria, outra direcao e outra faixa.
         TrainingBatchSettings3D s = evaluation(0);

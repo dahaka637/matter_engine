@@ -289,7 +289,7 @@ int main() {
         screen.selectSkill(0);
         frame(screen, canvas, 2);
         require(screen.skillDrills() == std::vector<std::string> { "estrela" }, "o Corpo lista os exercicios");
-        screen.showDrill("estrela", true);
+        screen.showDrill("estrela", 1);
         frame(screen, canvas, 2);
         require(screen.viewerHasTarget() && screen.viewerDrill() == 0, "o visualizador mostra a estrela");
         screen.advanceViewer(20);
@@ -306,6 +306,15 @@ int main() {
                 "a camera mantem o jogador no quadro (" + std::to_string(shown[0]) + ", " + std::to_string(shown[1])
                     + " aos " + std::to_string(second) + " s)");
             if (second % 10 == 0) snapshot(canvas, ("rl_tela_estrela_" + std::to_string(second) + "s").c_str());
+        }
+        // O peito girando: o mesmo exercicio, com o rumo do peito girando.
+        screen.showDrill("estrela", 2);
+        frame(screen, canvas, 2);
+        require(screen.viewerHasTarget(), "o peito girando mostra a estrela");
+        for (int second = 1; second <= 12; ++second) {
+            screen.advanceViewer(30);
+            frame(screen, canvas, 1);
+            if (second % 4 == 0) snapshot(canvas, ("rl_tela_girando_" + std::to_string(second) + "s").c_str());
         }
         const auto drillConflicts = sweepIdConflicts([&] { screen.draw(canvas, 1.0f); });
         require(drillConflicts.empty(), "IDs repetidos na estrela: " + (drillConflicts.empty() ? std::string() : drillConflicts.front()));

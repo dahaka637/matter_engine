@@ -84,7 +84,7 @@ public:
     [[nodiscard]] std::vector<std::string> skillDrills() const {
         return m_skill < m_skills.size() ? m_skills[m_skill].drills : std::vector<std::string> {};
     }
-    void showDrill(const std::string& drill, bool chestFixed) { setViewerDrill(drill, chestFixed); }
+    void showDrill(const std::string& drill, int chest) { setViewerDrill(drill, chest); }
     // O visualizador com o professor (refaz o mundo dele) ou com a politica.
     void showTeacher(bool show);
     [[nodiscard]] bool showingTeacher() const { return m_showTeacher; }
@@ -214,8 +214,9 @@ private:
     // O que o visualizador mostra de uma tarefa com exercicios: qual deles e o
     // peito (livre ou fixo para a frente).
     std::string m_viewerDrill;
-    bool m_viewerChestFixed = false;
-    void setViewerDrill(const std::string& drill, bool chestFixed);
+    // O peito no visualizador: 0 livre, 1 fixo, 2 girando.
+    int m_viewerChest = 0;
+    void setViewerDrill(const std::string& drill, int chest);
     // A troca de habilidade em andamento: fecha o treino e reabre nesta tarefa.
     std::string m_switchTask;
     std::string m_switchMode;

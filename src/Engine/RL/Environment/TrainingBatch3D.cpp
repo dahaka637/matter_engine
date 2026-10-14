@@ -995,8 +995,12 @@ void TrainingBatch3D::Impl::resetEnvironment(std::uint32_t index) {
             env.facingActive = task.target.facing
                 && (training() ? std::uniform_real_distribution<float>(0.0f, 1.0f)(env.rng) < task.target.facingFraction
                                : settings.facing != 0);
-            env.facingDrifting = env.facingActive && training()
-                && std::uniform_real_distribution<float>(0.0f, 1.0f)(env.rng) < task.target.facingDriftFraction;
+            // O peito girando (o rumo pedido gira com velocidade e sentido
+            // sorteados): no treino numa fracao dos de peito fixo, na avaliacao
+            // quando a bateria pede (facing 2).
+            env.facingDrifting = env.facingActive
+                && (training() ? std::uniform_real_distribution<float>(0.0f, 1.0f)(env.rng) < task.target.facingDriftFraction
+                               : settings.facing == 2);
             placeLibraryTarget(env, env.origin, startYaw, 0);
             plan(env, env.origin, startYaw, true);
             const std::uint32_t frames = static_cast<std::uint32_t>(reference.segments[env.cursor.segment].frames.size());
@@ -1857,7 +1861,7 @@ void TrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> actio
                 const float decision = static_cast<float>(task.actionRepeat) * FixedStep;
                 env.clipSince += decision;
                 env.facingHeading = facingLinkHeading(*state);
-                if (env.facingActive && env.facingDrifting && task.target.facingDriftRadians > 0.0f && training()) {
+                if (env.facingActive && env.facingDrifting && task.target.facingDriftRadians > 0.0f) {
                     if ((env.facingTimer -= decision) <= 0.0f) {
                         env.facingTimer = std::uniform_real_distribution<float>(2.0f, 4.0f)(env.rng);
                         env.facingRate = std::uniform_real_distribution<float>(-task.target.facingDriftRadians,

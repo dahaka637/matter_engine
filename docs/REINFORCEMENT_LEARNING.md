@@ -251,8 +251,11 @@ diagonal), e a voltar.
   - **Com o peito fixo, a pedida não passa do que os clipes fazem naquela
     direção em relação ao peito** (`capByDirection`: o mais rápido a até 25°,
     senão a até 50°). De lado vale o sprint de lado (4,1 m/s).
-- **Os dois modos no mesmo exercício:** peito fixo em 60% dos episódios
-  (`facingFraction`; em 40% deles o comando deriva devagar), livre no resto.
+- **Os três modos no mesmo exercício:** livre em 40% dos episódios, fixo em
+  30% e girando em 30% (`facingFraction` 0,6, e metade desses gira:
+  `facingDriftFraction` 0,5). Girando, o rumo do peito gira com velocidade
+  (até 0,6 rad/s, `facingDriftRadians`) e sentido sorteados a cada 2–4 s.
+  Na avaliação, `"facing": 2` pede o girando.
   - **Peito fixo:** o planejador mede a direção dos clipes pelo peito
     (`directionWeightFacing` 2): andar de costas, de lado, as diagonais de trás.
   - **Peito livre:** até 4 m (`freeBackwardDistance`) valem todos os clipes.
@@ -261,15 +264,15 @@ diagonal), e a voltar.
     até a mira (no mínimo a de chegada): vira andando e acelera ao alinhar.
     Antes, o sprint de costas para o alvo levava o corpo para longe dele, e o
     alvo se perdia em 1,7 s.
-- **As baterias:** `estrela_livre_v1` (peito livre) e `estrela_peito_v1`
-  (fixo), 40 s cada.
+- **As baterias:** `estrela_livre_v1` (peito livre), `estrela_peito_v1`
+  (fixo) e `estrela_girando_v1` (girando), 40 s cada.
   - O mundo i vai na direção (3i + 5·ida) mod 8 e na faixa (i + ida) mod 4,
     então 16 mundos passam por todas.
   - A nota da corrida desconta o erro de velocidade (`speed_error`) e o do
     peito.
   - A sola escorregando (`foot_slip`: a velocidade média do pé no chão, m/s)
     é só medida, fora da nota, até mostrar que precisa entrar.
-- **Na tela:** Corpo → Estrela → Peito livre/fixo.
+- **Na tela:** Corpo → Estrela → Peito livre/fixo/girando.
   - O rótulo mostra a velocidade de agora e a pedida ("1,0 m/s · pede 1,2").
   - As 8 pontas da estrela aparecem em cinza, no tamanho da ida de agora.
   - A câmera fica em 3ª pessoa presa ao mapa: atrás dele (um pouco de lado)

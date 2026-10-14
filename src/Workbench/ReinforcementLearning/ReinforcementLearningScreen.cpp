@@ -197,7 +197,7 @@ void ReinforcementLearningScreen::selectSkill(std::size_t index) {
     const bool wasRacing = m_skill < m_skills.size() && m_skills[m_skill].target;
     m_skill = index;
     m_viewerDrill.clear();
-    m_viewerChestFixed = false;
+    m_viewerChest = 0;
     // Entrando ou saindo da corrida, a camera se ajusta (longe com o alvo).
     if (m_skills[index].target != wasRacing) frame(35.0f, 10.0f);
     m_skillChosen = true;
@@ -303,7 +303,7 @@ void ReinforcementLearningScreen::ensureViewer() {
             const auto& drills = m_skills[m_skill].drills;
             settings.drill = std::find(drills.begin(), drills.end(), m_viewerDrill) != drills.end() ? m_viewerDrill : drills.front();
         }
-        if (m_skill < m_skills.size() && m_skills[m_skill].facing) settings.facing = m_viewerChestFixed ? 1 : 0;
+        if (m_skill < m_skills.size() && m_skills[m_skill].facing) settings.facing = m_viewerChest;
         if (m_showTeacher && m_skill < m_skills.size() && m_skills[m_skill].teacher)
             settings.teacher = std::make_shared<LocomotionTeacher3D>(
                 m_options.sourceRoot / "assets", loadLocomotionTeacherSettings3D(settings.taskPath));
@@ -372,10 +372,10 @@ void ReinforcementLearningScreen::reloadPolicy(bool force) {
     }
 }
 
-void ReinforcementLearningScreen::setViewerDrill(const std::string& drill, bool chestFixed) {
-    if (drill == m_viewerDrill && chestFixed == m_viewerChestFixed && m_viewer) return;
+void ReinforcementLearningScreen::setViewerDrill(const std::string& drill, int chest) {
+    if (drill == m_viewerDrill && chest == m_viewerChest && m_viewer) return;
     m_viewerDrill = drill;
-    m_viewerChestFixed = chestFixed;
+    m_viewerChest = chest;
     m_viewer.reset();
     m_viewerError.clear();
     ensureViewer();
@@ -1045,20 +1045,21 @@ void ReinforcementLearningScreen::drawToolbar() {
         ImGui::SetNextItemWidth(ui(130.0f));
         if (ImGui::BeginCombo("##RLDrill", title(current).c_str())) {
             for (const std::string& drill : drills)
-                if (ImGui::Selectable(title(drill).c_str(), drill == current)) setViewerDrill(drill, m_viewerChestFixed);
+                if (ImGui::Selectable(title(drill).c_str(), drill == current)) setViewerDrill(drill, m_viewerChest);
             ImGui::EndCombo();
         }
         tooltip("O exercício que o visualizador mostra. O treino sorteia todos, cada mundo o seu.");
         if (m_skills[m_skill].facing) {
             ImGui::SameLine();
-            ImGui::SetNextItemWidth(ui(120.0f));
-            if (ImGui::BeginCombo("##RLChest", m_viewerChestFixed ? "Peito fixo" : "Peito livre")) {
-                if (ImGui::Selectable("Peito livre", !m_viewerChestFixed)) setViewerDrill(current, false);
-                if (ImGui::Selectable("Peito fixo", m_viewerChestFixed)) setViewerDrill(current, true);
+            ImGui::SetNextItemWidth(ui(140.0f));
+            static constexpr const char* Chests[] = { "Peito livre", "Peito fixo", "Peito girando" };
+            if (ImGui::BeginCombo("##RLChest", Chests[std::clamp(m_viewerChest, 0, 2)])) {
+                for (int chest = 0; chest < 3; ++chest)
+                    if (ImGui::Selectable(Chests[chest], chest == m_viewerChest)) setViewerDrill(current, chest);
                 ImGui::EndCombo();
             }
-            tooltip("Livre: ele vira para onde vai. Fixo: o peito fica virado para a frente (a câmera) e ele anda de "
-                    "lado, de costas e nas diagonais.");
+            tooltip("Livre: ele vira para onde vai. Fixo: o peito fica num rumo e ele anda de lado, de costas e nas "
+                    "diagonais. Girando: o rumo do peito gira, com velocidade e sentido sorteados.");
         }
     }
     ImGui::SameLine();

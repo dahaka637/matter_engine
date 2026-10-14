@@ -59,8 +59,8 @@ struct TrainingBatchSettings3D {
     // tempo do episodio). Vazio na avaliacao = parado.
     std::vector<TrainingCommandStep3D> commandSchedule;
     // O comando de olhar na avaliacao (com target.facing): -1 = o da tarefa
-    // (todos os mundos com ele), 0 = livre, 1 = com ele. Uma bateria mede as
-    // duas coisas lado a lado.
+    // (todos os mundos com ele), 0 = livre, 1 = com ele, 2 = com ele girando
+    // (velocidade e sentido sorteados a cada 2-4 s). Uma bateria mede cada um.
     int facing = -1;
     // O exercicio de todos os mundos (o id em task.drills): a bateria de um
     // exercicio, o visualizador. Vazio = sorteado pelo peso no treino, o
