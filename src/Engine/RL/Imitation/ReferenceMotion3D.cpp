@@ -239,6 +239,12 @@ ReferenceSegment3D sampleSegment(const RLBody3D& body, const ReferenceClip3D& re
         frame.rootHeight = raw[i].rootPosition.z;
         const RLBodyPose3D& pose = poses[i];
         frame.heading = pelvisHeading(profile, pose.orientations.front());
+        {
+            const Quaternion chest =
+                (pose.orientations[body.upperChest] * profile.links[body.upperChest].modelOrientation.conjugate()).normalized();
+            const Vec3 forward = chest.rotate({ 1.0f, 0.0f, 0.0f });
+            frame.chestHeading = wrapAngle(std::atan2(forward.y, forward.x) - frame.heading);
+        }
         const Quaternion headingInverse = yawRotation(-frame.heading);
         const Vec3 velocity = (positionAt(b, wrapB) - positionAt(a, wrapA)) * inverse;
         frame.rootVelocity = headingInverse.rotate(velocity);
@@ -261,6 +267,12 @@ ReferenceSegment3D sampleSegment(const RLBody3D& body, const ReferenceClip3D& re
             cosine += std::cos(frame.heading);
         }
         segment.travelRelative = wrapAngle(segment.travelHeading - std::atan2(sine, cosine));
+        float chestSine = 0.0f, chestCosine = 0.0f;
+        for (const ReferenceFrame3D& frame : segment.frames) {
+            chestSine += std::sin(frame.heading + frame.chestHeading);
+            chestCosine += std::cos(frame.heading + frame.chestHeading);
+        }
+        segment.travelRelativeChest = wrapAngle(segment.travelHeading - std::atan2(chestSine, chestCosine));
     }
     segment.meanSpeed = std::hypot(advance.x, advance.y) / duration;
     return segment;

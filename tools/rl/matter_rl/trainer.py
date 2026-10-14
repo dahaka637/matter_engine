@@ -383,6 +383,7 @@ class Trainer:
             "observationLayout": "matter.rl.observation", "observationVersion": 1, "actionLayout": "matter.rl.action",
             "bodyId": self.batch.body_id, "bodyHash": self.batch.body_hash, "taskId": self.config.task,
             "run": self.run, "iteration": self.counters["iteration"], "steps": self.counters["steps"],
+            "observationNames": list(self.obs_names),
         })
 
     # --- avaliacao -----------------------------------------------------------------
@@ -436,7 +437,8 @@ class Trainer:
                     "targets": metrics.get("targets"), "reached_fraction": metrics.get("reached_fraction"),
                     "first_target_seconds": metrics.get("first_target_seconds"),
                     "target_speed": metrics.get("target_speed"), "imitation_error": metrics.get("imitation_error"),
-                    "facing_error": metrics.get("facing_error"),
+                    "facing_error": metrics.get("facing_error"), "speed_error": metrics.get("speed_error"),
+                    "foot_slip": metrics.get("foot_slip"),
                     "score": metrics["score"], "ends": json.dumps(metrics["ends"]),
                 })
         self.adjust_drill_weights(results)

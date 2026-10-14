@@ -35,6 +35,9 @@ struct ReferenceFrame3D {
     float rootHeight = 0.0f;
     // O rumo da pelve no mundo do clipe (rad, do eixo x).
     float heading = 0.0f;
+    // O rumo do peito (o UpperChest) em relacao ao da pelve (rad): no andar de
+    // lado do Mixamo o quadril vai virado ~30 graus e o peito fica de frente.
+    float chestHeading = 0.0f;
     // A velocidade e o giro da pelve, no referencial do rumo.
     Vec3 rootVelocity;
     Vec3 rootSpin;
@@ -61,6 +64,9 @@ struct ReferenceSegment3D {
     // A direcao em que ele anda em relacao ao rumo medio da pelve (rad): 0 para
     // a frente, pi/2 para a esquerda, pi para tras (o planejador escolhe por ela).
     float travelRelative = 0.0f;
+    // A mesma direcao medida pelo rumo medio do peito (o planejador usa esta
+    // quando o comando de olhar vale no peito).
+    float travelRelativeChest = 0.0f;
     // A velocidade media no plano (m/s).
     float meanSpeed = 0.0f;
     // O maior pulo de pose na entrada (rad, RMS dos eixos): a emenda.

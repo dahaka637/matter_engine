@@ -74,6 +74,7 @@ struct DumpFrame {
     float targetRadius = 1.0f;
     std::vector<Vec3> upcoming;
     std::vector<Vec3> reached;
+    std::vector<Vec3> layout;
     // As setas do RL: para onde o cerebro quer ir e a velocidade.
     bool intentValid = false;
     Vec3 intent;
@@ -160,6 +161,9 @@ std::vector<DumpScenario> readDump(const std::string& path) {
         } else if (tag == "R") {
             Vec3 passed;
             if (in >> passed.x >> passed.y >> passed.z) frame->reached.push_back(passed);
+        } else if (tag == "G") {
+            Vec3 spot;
+            if (in >> spot.x >> spot.y >> spot.z) frame->layout.push_back(spot);
         } else if (tag == "P") {
             DumpFrame::Contact contact;
             in >> contact.position.x >> contact.position.y >> contact.position.z >> contact.linkIndex;
@@ -387,6 +391,21 @@ int runFrames(const ModelContext& context, const CommandLine& line) {
                     point = { at.x, at.y, floorSkeleton };
                 }
             appendTargetSequence(sequence, reached, frame.targetRadius, markers, arrows);
+            // O desenho do exercicio (os pontos da estrela), fraco.
+            for (const Vec3& point : frame.layout) {
+                const Vec3 at = toSkeleton(point);
+                bool taken = false;
+                for (const InspectionMarker& marker : markers)
+                    taken = taken || std::hypot(marker.center.x - at.x, marker.center.y - at.y) < frame.targetRadius;
+                if (taken) continue;
+                InspectionMarker spot;
+                spot.center = { at.x, at.y, floorSkeleton };
+                spot.radius = frame.targetRadius * 0.7f;
+                spot.color = rgb(170, 182, 200);
+                spot.strength = 0.35f;
+                spot.glowHeight = 0.0f;
+                markers.push_back(spot);
+            }
         }
         // A seta do RL: para onde ele vai (a velocidade vezes 0,35 s), no chao, um
         // traco fino. (A intencao, W, fica no dump.)

@@ -69,6 +69,9 @@ struct TrainingRewardWeights3D {
     // Segurar o rumo pedido (com o comando de olhar): o erro do link que fica
     // virado para ele (target.facingLink) em sino (target.facingSigma).
     float facingHold = 0.0f;
+    // Acertar a velocidade pedida (o comando de velocidade): a velocidade em
+    // direcao ao alvo contra a pedida (ja com a freada antes do ponto), em sino.
+    float speedMatch = 0.0f;
     float fall = 10.0f;
     // O total de cada passo, menos a queda, nunca fica negativo (o
     // "only_positive_rewards" do legged_gym): tentar e errar nunca vale menos
@@ -76,11 +79,11 @@ struct TrainingRewardWeights3D {
     bool positiveOnly = false;
 };
 
-inline constexpr std::array<const char*, 28> TrainingRewardComponentNames3D {
+inline constexpr std::array<const char*, 29> TrainingRewardComponentNames3D {
     "alive", "upright", "headHeight", "comOverSupport", "still", "trunkTurn", "footSlip", "footDrift", "effort",
     "actionRate", "jointLimit", "posePrior", "poseMatch", "velocity", "yawRate", "feetAirTime", "gaitContact",
     "swingHeight", "gaitReference", "imitationPose", "imitationVelocity", "imitationKeyBodies", "imitationRoot",
-    "targetSpeed", "targetReached", "targetTurn", "facingHold", "fall"
+    "targetSpeed", "targetReached", "targetTurn", "facingHold", "speedMatch", "fall"
 };
 
 struct TrainingRange3D {
@@ -246,6 +249,20 @@ struct TrainingTask3D {
             // costas no trote; perto, a velocidade pedida e baixa e o clipe da
             // direcao continua valendo.
             float directionWeight = 1.0f;
+            // Com o comando de olhar valendo: o peso da direcao (o clipe tem de
+            // andar para onde o alvo esta em relacao ao peito); < 0 = o de cima.
+            float directionWeightFacing = -1.0f;
+            // A velocidade pedida (o comando de velocidade da tarefa, com a
+            // freada antes do ponto) escolhe o passo; speedByDistance, se houver,
+            // tem prioridade.
+            bool speedFromCommand = false;
+            // Sem o comando de olhar (o peito livre): os clipes de lado e de
+            // costas (mais de 60 graus da frente) so valem com o alvo mais
+            // perto que isto (m); mais longe ele vira e vai de frente, como um
+            // jogador, e enquanto vira a velocidade pedida da escolha cai com
+            // o cosseno do angulo ate a mira (no minimo a de chegada): vira
+            // andando e acelera ao alinhar (0 = sempre valem).
+            float freeBackwardDistance = 0.0f;
         } planner;
         float poseScale = 2.0f;
         float velocityScale = 0.1f;
@@ -303,6 +320,38 @@ struct TrainingTask3D {
         std::string facingLink = "pelvis";
         float facingFraction = 1.0f;
         float facingSigma = 0.5f;
+        // Dos episodios com o comando: a fatia em que ele gira (facingDrift); o
+        // resto fica fixo no rumo do comeco (o "norte").
+        float facingDriftFraction = 1.0f;
+        // O comando de velocidade: cada trecho ate um alvo tem uma velocidade
+        // pedida, sorteada numa faixa (andar, trote, corrida, sprint), e a nota
+        // e acertar ela (speedMatch), nao correr mais. A pedida desce antes do
+        // ponto como uma freada (brakeAcceleration, m/s2) ate a velocidade de
+        // chegada, que depende da virada para o proximo (cheia em linha reta,
+        // minimumArrivalSpeed numa volta de 180 graus). Com o comando de olhar,
+        // capByDirection limita a pedida ao que os clipes fazem naquela direcao
+        // em relacao ao peito (nao se pede sprint de lado).
+        struct SpeedBand {
+            std::string name;
+            TrainingRange3D speed;
+            TrainingRange3D distance;
+            float weight = 1.0f;
+        };
+        struct SpeedCommand {
+            bool enabled = false;
+            std::vector<SpeedBand> bands;
+            float brakeAcceleration = 4.0f;
+            float minimumArrivalSpeed = 1.0f;
+            float sigma = 0.6f;
+            float redrawOnReturn = 0.5f;
+            bool capByDirection = true;
+        } speedCommand;
+        // O desenho dos alvos (biblioteca): "random" (cada um em volta do
+        // anterior) ou "star" (a estrela: do centro a uma das 8 direcoes, de
+        // volta ao centro, e assim por diante; a distancia da faixa sorteada).
+        std::string pattern = "random";
+        std::uint32_t starDirections = 8;
+        float starJitterDegrees = 8.0f;
         // Os varios pontos (biblioteca): quantos alvos depois do de agora ja
         // estao no mapa e na observacao (0 a 3; com 0, cada um nasce so na
         // chegada do anterior). Com eles, cada alvo sai do anterior, pelo rumo do

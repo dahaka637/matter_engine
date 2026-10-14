@@ -56,7 +56,22 @@ tudo (`matter-rl doctor`).
     `melhor`), lado a lado, fora do treino;
   - `folha --checkpoint X --mundo N [--de S --ate S]`: um mundo qualquer da
     bateria, num checkpoint, no trecho pedido;
+  - `voltar --checkpoint N`: o treino (fechado) volta àquele checkpoint sem
+    apagar nada (os mais novos vão para `protegidos/`, e a tarefa e as
+    políticas voltam com ele);
   - `servico instalar|remover`.
+- **A prévia de um exercício:** `tools/rl/previa.py` roda uma cópia de uma
+  política numa tarefa e num exercício, mundo a mundo (de pé ou caiu, os alvos,
+  os clipes, o erro de velocidade e o do peito), e grava os dumps das folhas
+  de quadros. Nada se escreve no treino:
+
+  ```bash
+  cd tools/rl && .venv/bin/python previa.py --tarefa corpo --exercicio estrela --peito 1 \
+      --politica ~/.local/share/matter-engine/rl/runs/principal/exports/policy_latest.mrlpolicy \
+      --segundos 30 --saida /tmp/previa --mundos 0,4
+  ../../build-profile/MatterModelInspector quadros --dump /tmp/previa/m4.dump --de 0 --ate 6 \
+      --quadros 12 --vista 34 --seguir 1 --distancia 5 --colunas 6 --saida /tmp/previa/m4.png
+  ```
 
 ## Onde ficam os treinos
 
@@ -171,16 +186,14 @@ O formato, na tarefa da área:
 
 ```json
 "drills": [
-  { "id": "pontos", "weight": 0.2, "overrides": { "target": { "facingFraction": 0.0 } } },
-  { "id": "tiro", "weight": 0.5, "overrides": {
-      "episodeSeconds": 20.0,
-      "imitation": { "planner": { "speedByDistance": [[3.0, 2.5], [10.0, 6.0]], "speedWeight": 1.0 } },
-      "target": { "distanceRange": [12.0, 24.0], "nextAngleOffsetDegrees": 180.0 } } }
+  { "id": "estrela", "weight": 1.0, "overrides": { "target": {
+      "pattern": "star", "starDirections": 8, "starJitterDegrees": 8.0,
+      "facingFraction": 0.6, "facingDriftFraction": 0.4, "facingDriftRadians": 0.3 } } }
 ],
 "drillWeights": { "auto": true, "gain": 10.0, "maximumFactor": 3.0 },
 "evaluation": [
-  { "name": "percursos_v2", "drill": "pontos", "seconds": 20.0, "referenceSpeed": 3.0, "facing": 0 },
-  { "name": "tiro_v1", "drill": "tiro", "seconds": 30.0, "referenceSpeed": 6.0, "facing": 0 }
+  { "name": "estrela_livre_v1", "drill": "estrela", "seconds": 40.0, "referenceSpeed": 3.0, "facing": 0 },
+  { "name": "estrela_peito_v1", "drill": "estrela", "seconds": 40.0, "referenceSpeed": 3.0, "facing": 1 }
 ]
 ```
 
@@ -190,7 +203,8 @@ O formato, na tarefa da área:
   liga (1) ou desliga (0) o comando de olhar. Sem `"drill"`, a avaliação usa o
   primeiro exercício.
 - O episódio grava o exercício na coluna 26 da linha (`drill`), e a vista de
-  um mundo também.
+  um mundo também. A 25 é o erro do peito, a 27 o de velocidade e a 28 a sola
+  escorregando (29 colunas).
 
 **Exercício novo, passo a passo:**
 1. A ideia com o usuário: o que ensina e como medir.
@@ -198,10 +212,77 @@ O formato, na tarefa da área:
    todos: clipe novo é canal novo, e a migração entra com peso zero.
 3. O exercício em `drills`, com a bateria dele (`"drill"`).
 4. Um teste em C++ do que ele gera (como `testShuttle`).
-5. A prévia: a política do treino nele, numa cópia, com as folhas de quadros,
-   antes de entrar na mistura.
+5. A prévia: a política do treino nele, numa cópia, com as folhas de quadros
+   (`tools/rl/previa.py`), antes de entrar na mistura.
 6. Entrar na mistura com um peso pequeno, e o exame mostra se algum antigo
    caiu.
+
+## A estrela e o comando de velocidade (14/10/2026)
+
+O primeiro exercício do Corpo (o 3 do `treino_locomocao_claude.md`, na pasta
+de treinos do usuário). Ensina a sair do centro para as 8 direções em quatro
+velocidades, com o peito livre (ele vira) ou fixo (vai de costas, de lado, na
+diagonal), e a voltar.
+
+- **O desenho** (`"pattern": "star"`): os alvos pares vão do centro a uma das
+  8 direções (`starDirections`), medidas do rumo do começo (o "norte"), com
+  ±8° de sorteio no treino (`starJitterDegrees`). Os ímpares voltam ao centro.
+- **O comando de velocidade** (`target.speedCommand`): cada ida sorteia uma
+  faixa, e dela a velocidade e a distância.
+
+  | Faixa | m/s | m | Peso |
+  |---|---|---|---|
+  | andar | 0,8–1,6 | 4–8 | 1 |
+  | trote | 2,0–3,2 | 6–12 | 1,5 |
+  | corrida | 4,0–5,0 | 15–25 | 1 |
+  | sprint | 5,5–6,5 | 25–40 | 0,7 |
+
+  - **A volta ao centro** repete a velocidade da ida. No treino, em metade
+    das vezes sorteia outra (`redrawOnReturn`).
+  - **A pedida de agora freia antes do ponto:**
+    v = min(v do trecho, √(v_chegada² + 2·a·(d − raio))), com a =
+    `brakeAcceleration` (4 m/s²) e v_chegada = max(`minimumArrivalSpeed`,
+    min(v, v do próximo)·cos(virada/2)). Numa volta de 180° ele chega a 1 m/s.
+  - **A rede vê** `command.speed` (a do trecho), `command.speed.now` (a de
+    agora) e `command.speed.next0/1` (a dos próximos), divididas por 6.
+  - **A nota `speedMatch`:** um sino na velocidade em direção ao alvo menos a
+    pedida de agora (sigma 0,6 m/s). A chegada (`targetReached`) também mede
+    pela pedida.
+  - **Com o peito fixo, a pedida não passa do que os clipes fazem naquela
+    direção em relação ao peito** (`capByDirection`: o mais rápido a até 25°,
+    senão a até 50°). De lado vale o sprint de lado (4,1 m/s).
+- **Os dois modos no mesmo exercício:** peito fixo em 60% dos episódios
+  (`facingFraction`; em 40% deles o comando deriva devagar), livre no resto.
+  - **Peito fixo:** o planejador mede a direção dos clipes pelo peito
+    (`directionWeightFacing` 2): andar de costas, de lado, as diagonais de trás.
+  - **Peito livre:** até 4 m (`freeBackwardDistance`) valem todos os clipes.
+    Mais longe, só os de frente, e ele vira.
+  - **Enquanto vira,** a velocidade da escolha cai com o cosseno do ângulo
+    até a mira (no mínimo a de chegada): vira andando e acelera ao alinhar.
+    Antes, o sprint de costas para o alvo levava o corpo para longe dele, e o
+    alvo se perdia em 1,7 s.
+- **As baterias:** `estrela_livre_v1` (peito livre) e `estrela_peito_v1`
+  (fixo), 40 s cada.
+  - O mundo i vai na direção (3i + 5·ida) mod 8 e na faixa (i + ida) mod 4,
+    então 16 mundos passam por todas.
+  - A nota da corrida desconta o erro de velocidade (`speed_error`) e o do
+    peito.
+  - A sola escorregando (`foot_slip`: a velocidade média do pé no chão, m/s)
+    é só medida, fora da nota, até mostrar que precisa entrar.
+- **Na tela:** Corpo → Estrela → Peito livre/fixo.
+  - O rótulo mostra a velocidade de agora e a pedida ("1,0 m/s · pede 1,2").
+  - As 8 pontas da estrela aparecem em cinza, no tamanho da ida de agora.
+- **Os clipes novos da biblioteca (19 no total):**
+  - andar de costas (`walk_backward`);
+  - andar de lado (`walk_strafe_right`, e o espelho `walk_strafe_left` feito
+    por `tools/animation/espelhar.py`);
+  - a corrida média (`run_forward_medium`, 4,3 m/s).
+
+  O andar de frente é o `ual_walk`.
+- **A política grava os nomes das entradas** (`observationNames`, desde
+  14/10). A tela e a prévia montam a entrada pelos nomes, e as que a tarefa
+  não tem entram com zero, como na migração do treinador. Assim um cérebro
+  antigo roda numa tarefa mais nova.
 
 ## Da H4 à H7 (13/10/2026): a biblioteca de clipes e o planejador
 

@@ -128,6 +128,12 @@ struct TrainingEpisode3D {
     float facingErrorRms = -1.0f;
     // O exercicio do episodio (o indice em task.drills; 0 sem exercicios).
     std::uint32_t drill = 0;
+    // O comando de velocidade: o quanto a velocidade em direcao ao alvo ficou
+    // longe da pedida de agora (RMS, m/s; -1 sem o comando).
+    float speedErrorRms = -1.0f;
+    // A sola escorregando: a velocidade media de cada pe no chao (o centro mais
+    // o giro em torno da vertical, como na nota footSlip; m/s; -1 sem contato).
+    float footSlipMean = -1.0f;
 };
 
 // Um mundo de treino visto por fora (o visualizador, a gravacao).
@@ -151,6 +157,13 @@ struct TrainingEnvironmentView3D {
     std::uint32_t targetsReached = 0;
     // O exercicio do episodio (o indice em task.drills).
     std::uint32_t drill = 0;
+    // O comando de velocidade: a pedida do trecho e a de agora (m/s).
+    bool hasSpeedCommand = false;
+    float speedCommand = 0.0f;
+    float speedNow = 0.0f;
+    // O desenho do exercicio no chao (a estrela: o centro e as direcoes).
+    std::uint32_t layoutCount = 0;
+    std::array<Vec3, 17> layout {};
     // Os proximos alvos ja no mapa (target.lookahead), em ordem.
     std::uint32_t upcomingCount = 0;
     std::array<Vec3, 3> upcoming {};

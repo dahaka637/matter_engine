@@ -76,6 +76,7 @@ TrainingTask3D parseTask(const nlohmann::json& document, const std::filesystem::
         w.targetReached = r.value("targetReached", w.targetReached);
         w.targetTurn = r.value("targetTurn", w.targetTurn);
         w.facingHold = r.value("facingHold", w.facingHold);
+        w.speedMatch = r.value("speedMatch", w.speedMatch);
         w.fall = r.value("fall", w.fall);
         w.positiveOnly = r.value("positiveOnly", w.positiveOnly);
     }
@@ -159,6 +160,9 @@ TrainingTask3D parseTask(const nlohmann::json& document, const std::filesystem::
                     throw std::runtime_error("tarefa de RL: speedByDistance em ordem de distancia, velocidades acima de 0");
             planner.speedWeight = std::max(0.0f, p.value("speedWeight", planner.speedWeight));
             planner.directionWeight = std::max(0.0f, p.value("directionWeight", planner.directionWeight));
+            planner.directionWeightFacing = p.value("directionWeightFacing", planner.directionWeightFacing);
+            planner.speedFromCommand = p.value("speedFromCommand", planner.speedFromCommand);
+            planner.freeBackwardDistance = std::max(0.0f, p.value("freeBackwardDistance", planner.freeBackwardDistance));
         }
         if (m.contains("scales")) {
             const nlohmann::json& k = m["scales"];
@@ -195,6 +199,32 @@ TrainingTask3D parseTask(const nlohmann::json& document, const std::filesystem::
             throw std::runtime_error("tarefa de RL: facingLink e pelvis ou chest");
         out.facingFraction = std::clamp(t.value("facingFraction", out.facingFraction), 0.0f, 1.0f);
         out.facingSigma = std::max(1.0e-3f, t.value("facingSigma", out.facingSigma));
+        out.facingDriftFraction = std::clamp(t.value("facingDriftFraction", out.facingDriftFraction), 0.0f, 1.0f);
+        if (t.contains("speedCommand") && t["speedCommand"].is_object()) {
+            const nlohmann::json& c = t["speedCommand"];
+            auto& sc = out.speedCommand;
+            sc.enabled = c.value("enabled", true);
+            sc.bands.clear();
+            for (const nlohmann::json& b : c.value("bands", nlohmann::json::array())) {
+                TrainingTask3D::Target::SpeedBand band;
+                band.name = b.value("name", std::string());
+                band.speed = range(b, "speed", band.speed);
+                band.distance = range(b, "distance", band.distance);
+                band.weight = std::max(0.0f, b.value("weight", 1.0f));
+                if (!(band.speed.minimum > 0.0f)) throw std::runtime_error("tarefa de RL: faixa de velocidade sem velocidade: " + band.name);
+                sc.bands.push_back(band);
+            }
+            sc.brakeAcceleration = std::max(0.1f, c.value("brakeAcceleration", sc.brakeAcceleration));
+            sc.minimumArrivalSpeed = std::max(0.0f, c.value("minimumArrivalSpeed", sc.minimumArrivalSpeed));
+            sc.sigma = std::max(0.05f, c.value("sigma", sc.sigma));
+            sc.redrawOnReturn = std::clamp(c.value("redrawOnReturn", sc.redrawOnReturn), 0.0f, 1.0f);
+            sc.capByDirection = c.value("capByDirection", sc.capByDirection);
+            if (sc.enabled && sc.bands.empty()) throw std::runtime_error("tarefa de RL: comando de velocidade sem faixas");
+        }
+        out.pattern = t.value("pattern", out.pattern);
+        if (out.pattern != "random" && out.pattern != "star") throw std::runtime_error("tarefa de RL: pattern e random ou star");
+        out.starDirections = std::clamp(t.value("starDirections", out.starDirections), 1u, 16u);
+        out.starJitterDegrees = std::max(0.0f, t.value("starJitterDegrees", out.starJitterDegrees));
         out.lookahead = std::min(3u, t.value("lookahead", out.lookahead));
         out.racingLine = std::clamp(t.value("racingLine", out.racingLine), 0.0f, 0.95f);
         if (t.contains("evaluationCourses"))
@@ -271,7 +301,8 @@ void requireSameLayout(const TrainingTask3D& base, const TrainingTask3D& drill, 
         && base.imitation.enabled == drill.imitation.enabled && base.imitation.library == drill.imitation.library
         && base.imitation.residualActions == drill.imitation.residualActions
         && base.target.enabled == drill.target.enabled && base.target.lookahead == drill.target.lookahead
-        && base.target.facing == drill.target.facing && base.postures.size() == drill.postures.size();
+        && base.target.facing == drill.target.facing && base.postures.size() == drill.postures.size()
+        && base.target.speedCommand.enabled == drill.target.speedCommand.enabled;
     if (!same)
         throw std::runtime_error("tarefa de RL: o exercicio " + id
             + " muda o que a rede ve ou faz (clipes, corpo, alvo, lookahead, facing, posturas)");

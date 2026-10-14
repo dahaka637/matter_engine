@@ -2,6 +2,7 @@
 
     matter-rl doctor                      confere GPU, modulo nativo e tarefas
     matter-rl iniciar [--run R] [--modo M] [--tarefa T]   abre o treino em segundo plano
+    matter-rl voltar --checkpoint N [--run R]   o treino (fechado) volta para um checkpoint, sem apagar nada
     matter-rl servir  [...]               o mesmo, em primeiro plano (reabre na troca de modo)
     matter-rl treinar [...]               um processo de treino (o que o servir abre)
     matter-rl status | pausar | retomar | parar | salvar | avaliar
@@ -205,6 +206,69 @@ def send(command: str, arguments: dict | None = None) -> int:
     return 0
 
 
+def command_back(args: argparse.Namespace) -> int:
+    """Volta o treino para um checkpoint, com o treinador fechado. Nada se apaga:
+    o escolhido ganha uma copia em protegidos, e os mais novos vao para la
+    (assim nao colidem com os que o treino vai gravar). latest.json aponta para
+    ele; a copia da tarefa e o run.json voltam para a tarefa dele (uma copia de
+    outra tarefa faria o treinador zerar a saida da rede ao reabrir); e as
+    politicas exportadas passam a ser as dele."""
+    import shutil
+    if control.ping():
+        print("feche o treino antes (matter-rl parar)", file=sys.stderr)
+        return 1
+    directory = paths.run_dir(args.run)
+    refs = storage.list_checkpoints(directory)
+    chosen = next((r for r in refs if r.iteration == int(args.checkpoint)), None)
+    if chosen is None:
+        print(f"checkpoint {args.checkpoint} nao existe em {directory / 'checkpoints'}", file=sys.stderr)
+        return 1
+    protected = paths.DATA / "protegidos"
+    protected.mkdir(parents=True, exist_ok=True)
+    copy = protected / f"{args.run}_voltar_{chosen.path.name}"
+    if not copy.exists():
+        shutil.copytree(chosen.path, copy)
+    moved = []
+    for ref in refs:
+        if ref.iteration > chosen.iteration:
+            target = protected / f"{args.run}_depois_de_{chosen.iteration}_{ref.path.name}"
+            if target.exists():
+                print(f"ja existe {target}; nada movido", file=sys.stderr)
+                return 1
+            shutil.move(str(ref.path), str(target))
+            moved.append(target.name)
+    storage.write_json_atomic(directory / "latest.json", {"iteration": chosen.iteration, "path": chosen.path.name})
+    # A copia da tarefa e a do checkpoint (os caminhos absolutos, como o treinador faz).
+    task = chosen.manifest.get("task")
+    if task and paths.task_path(task).exists():
+        source = paths.task_path(task)
+        data = json.loads(source.read_text())
+        data["body"] = str((source.parent / data["body"]).resolve())
+        for clip in (data.get("imitation") or {}).get("clips", []):
+            clip["clip"] = str((source.parent / clip["clip"]).resolve())
+        storage.write_json_atomic(directory / "tarefa.json", data)
+        config = json.loads((directory / "run.json").read_text())
+        config["task"] = task
+        storage.write_json_atomic(directory / "run.json", config)
+    # As politicas exportadas: as do checkpoint, com os nomes das entradas.
+    from .model import ActorCritic, export_policy
+    state = storage.load_checkpoint(chosen)
+    manifest = chosen.manifest
+    model = ActorCritic(len(manifest["obs_names"]), len(manifest["critic_names"]), len(manifest["action_names"]))
+    model.load_state_dict(state["model"])
+    meta = {"observationLayout": "matter.rl.observation", "observationVersion": 1, "actionLayout": "matter.rl.action",
+            "bodyId": manifest.get("body_id"), "bodyHash": manifest.get("body_hash"), "taskId": task, "run": args.run,
+            "iteration": chosen.iteration, "steps": manifest.get("steps", 0),
+            "observationNames": list(manifest["obs_names"])}
+    for name in ("policy_latest", "policy_best"):
+        export_policy(model, directory / "exports" / f"{name}.mrlpolicy", meta)
+    db = storage.Database()
+    db.event(args.run, "voltar", f"de volta ao checkpoint {chosen.iteration} ({task}); mais novos em protegidos: "
+             + (", ".join(moved) or "nenhum"), args.autor)
+    print(f"treino {args.run} de volta ao {chosen.path.name} ({task}); mais novos em {protected}: {', '.join(moved) or 'nenhum'}")
+    return 0
+
+
 def command_switch(args: argparse.Namespace) -> int:
     """Outra habilidade no mesmo cerebro: o treino aberto salva e fecha, e reabre
     com a tarefa nova (o que ele sabe continua). Fechar e reabrir vale para
@@ -381,6 +445,10 @@ def main(argv: list[str] | None = None) -> int:
     teacher.add_argument("--autor", default="usuario")
     teacher.set_defaults(func=lambda a: send("professor", {"autor": a.autor,
                                                            **({"minutos": a.minutos} if a.minutos else {})}))
+    back = run_args(sub.add_parser("voltar"))
+    back.add_argument("--checkpoint", required=True, help="a rodada do checkpoint (ex.: 59316)")
+    back.add_argument("--autor", default="usuario")
+    back.set_defaults(func=command_back)
     switch = run_args(sub.add_parser("tarefa"))
     switch.add_argument("tarefa", help="o id da tarefa (assets/rl/tasks), ex.: h1b_em_pe_posturado")
     switch.set_defaults(func=command_switch)

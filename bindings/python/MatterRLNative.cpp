@@ -76,6 +76,11 @@ std::string frameLines(const TrainingBatch3D& batch, std::size_t environment) {
     // Os proximos alvos ja no mapa (N), em ordem.
     for (std::uint32_t i = 0; i < view.upcomingCount; ++i)
         out << "N " << view.upcoming[i].x << ' ' << view.upcoming[i].y << ' ' << view.upcoming[i].z << '\n';
+    // O comando de velocidade (U: a pedida do trecho e a de agora) e o desenho
+    // do exercicio no chao (G: os pontos da estrela).
+    if (view.hasSpeedCommand) out << "U " << view.speedCommand << ' ' << view.speedNow << '\n';
+    for (std::uint32_t i = 0; i < view.layoutCount; ++i)
+        out << "G " << view.layout[i].x << ' ' << view.layout[i].y << ' ' << view.layout[i].z << '\n';
     // Os ja alcancados (R), o mais novo primeiro.
     for (std::uint32_t i = 0; i < view.reachedCount; ++i)
         out << "R " << view.reached[i].x << ' ' << view.reached[i].y << ' ' << view.reached[i].z << '\n';
@@ -146,6 +151,8 @@ std::string referenceReport(const std::string& bodyPath, const std::vector<std::
         out << "  anda " << segment.meanSpeed << " m/s, para " << (segment.travelHeading - first.heading) * Degrees
             << " graus do rumo da pelve no quadro 0; rumo da pelve de " << headingLow * Degrees << " a "
             << headingHigh * Degrees << " graus\n";
+        out << "  direcao em relacao ao rumo medio: pela pelve " << segment.travelRelative * Degrees << " graus, pelo peito "
+            << segment.travelRelativeChest * Degrees << " graus\n";
         out << "  altura da pelve de " << heightLow << " a " << heightHigh << " m; quadros no apoio " << stance
             << " (pe mais baixo ate " << stanceHigh << " m acima do chao, " << floating << " acima de 2 cm), no voo "
             << flight << " (pe mais baixo a partir de " << (flight > 0 ? flightLow : 0.0f) << " m)\n";
@@ -362,7 +369,7 @@ NB_MODULE(matter_rl_native, m) {
                 // alvos alcancados, segundos ate o primeiro, velocidade media ate
                 // eles e o erro da imitacao.
                 const auto episodes = b.finishedEpisodes();
-                constexpr std::size_t Columns = 27;
+                constexpr std::size_t Columns = 29;
                 auto* data = new float[std::max<std::size_t>(1, episodes.size()) * Columns];
                 for (std::size_t i = 0; i < episodes.size(); ++i) {
                     const TrainingEpisode3D& e = episodes[i];
@@ -394,6 +401,8 @@ NB_MODULE(matter_rl_native, m) {
                     row[24] = e.imitationErrorRms;
                     row[25] = e.facingErrorRms;
                     row[26] = static_cast<float>(e.drill);
+                    row[27] = e.speedErrorRms;
+                    row[28] = e.footSlipMean;
                 }
                 nb::capsule owner(data, [](void* p) noexcept { delete[] static_cast<float*>(p); });
                 return nb::ndarray<nb::numpy, float, nb::ndim<2>>(data, { episodes.size(), Columns }, owner);

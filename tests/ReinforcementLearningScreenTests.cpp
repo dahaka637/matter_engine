@@ -284,6 +284,19 @@ int main() {
         frame(screen, canvas, 2);
         require(screen.viewerHasTarget(), "a caminhada mostra o alvo");
         snapshot(canvas, "rl_tela_caminhada");
+        // O Corpo (a area 1): o exercicio da estrela no visualizador, com o
+        // peito livre e fixo.
+        screen.selectSkill(0);
+        frame(screen, canvas, 2);
+        require(screen.skillDrills() == std::vector<std::string> { "estrela" }, "o Corpo lista os exercicios");
+        screen.showDrill("estrela", true);
+        frame(screen, canvas, 2);
+        require(screen.viewerHasTarget() && screen.viewerDrill() == 0, "o visualizador mostra a estrela");
+        screen.advanceViewer(20);
+        frame(screen, canvas, 2);
+        snapshot(canvas, "rl_tela_estrela");
+        const auto drillConflicts = sweepIdConflicts([&] { screen.draw(canvas, 1.0f); });
+        require(drillConflicts.empty(), "IDs repetidos na estrela: " + (drillConflicts.empty() ? std::string() : drillConflicts.front()));
         // Os varios pontos: o alvo e os dois proximos, mais fracos, ligados.
         screen.selectSkill(6);
         frame(screen, canvas, 2);

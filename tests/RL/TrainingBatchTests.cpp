@@ -934,13 +934,94 @@ void testDrills() {
         require(refused, "um exercicio nao muda o que a rede ve (lookahead)");
     }
     {
-        // A tarefa Corpo (a area 1): os tres exercicios de partida, cada um com
-        // a sua bateria.
+        // A tarefa Corpo (a area 1): a estrela, com o desenho e o comando de
+        // velocidade dela.
         const TrainingTask3D corpo = loadTrainingTask3D(std::filesystem::path(MATTERENGINE_TEST_ASSETS_DIR) / "rl/tasks/corpo.json");
-        require(corpo.drills.size() == 3 && corpo.drills[2].id == "tiro" && corpo.drills[2].task->target.distanceRange.minimum == 12.0f
-                && corpo.drills[1].task->target.facingFraction == 1.0f && corpo.drills[0].task->target.facingFraction == 0.0f
-                && corpo.drills[2].task->imitation.planner.speedWeight > 0.0f && corpo.imitation.planner.speedWeight == 0.0f,
-            "o Corpo carrega pontos, peito e tiro com o que cada um muda");
+        require(corpo.drills.size() == 1 && corpo.drills[0].id == "estrela"
+                && corpo.drills[0].task->target.pattern == "star" && corpo.target.pattern == "random"
+                && corpo.drills[0].task->target.facingFraction == 0.6f && corpo.target.speedCommand.enabled
+                && corpo.target.speedCommand.bands.size() == 4,
+            "o Corpo carrega a estrela com o que ela muda");
+    }
+}
+
+// A estrela (o primeiro exercicio do Corpo): do centro a uma das 8 direcoes e de
+// volta, na velocidade pedida; o planejador escolhe o passo pela velocidade e,
+// com o peito fixo, a direcao pelo peito e a pedida nao passa do que os clipes
+// fazem para aquele lado.
+void testStar() {
+    const std::filesystem::path task = std::filesystem::path(MATTERENGINE_TEST_ASSETS_DIR) / "rl/tasks/corpo.json";
+    const TrainingTask3D corpo = loadTrainingTask3D(task);
+    const auto& bands = corpo.target.speedCommand.bands;
+    const auto planar = [](Vec3 a, Vec3 b) { return std::hypot(a.x - b.x, a.y - b.y); };
+    {
+        // No treino: o de agora fora, o proximo no centro, o seguinte fora de novo.
+        TrainingBatchSettings3D s = settings(32, 4);
+        s.taskPath = task;
+        TrainingBatch3D batch(s);
+        const std::size_t O = batch.observationSize(), speed = channel(batch, "command.speed"),
+                          now = channel(batch, "command.speed.now");
+        for (std::size_t e = 0; e < 32; ++e) {
+            const TrainingEnvironmentView3D view = batch.view(e);
+            const float out = planar(view.target, view.origin);
+            require(out >= bands.front().distance.minimum - 0.5f && out <= bands.back().distance.maximum + 0.5f,
+                "o ponto de fora fica na distancia das faixas (" + std::to_string(out) + " m)");
+            require(planar(view.upcoming[0], view.origin) < 1e-3f, "depois do ponto de fora vem o centro");
+            require(planar(view.upcoming[1], view.origin) >= bands.front().distance.minimum - 0.5f, "e depois fora de novo");
+            const float wanted = batch.observations()[e * O + speed] * 6.0f, current = batch.observations()[e * O + now] * 6.0f;
+            require(wanted >= bands.front().speed.minimum - 1e-3f && wanted <= bands.back().speed.maximum + 1e-3f,
+                "a velocidade pedida vem das faixas");
+            require(current <= wanted + 1e-3f, "a pedida de agora nunca passa da do trecho");
+            require(view.hasSpeedCommand && view.layoutCount == 9, "a vista tem a velocidade e os 9 pontos da estrela");
+            // As pontas desenhadas ficam na distancia da ida de agora (nao na
+            // do ponto sorteado mais a frente).
+            require(std::abs(planar(view.layout[1], view.layout[0]) - out) < 1e-3f,
+                "a estrela desenhada tem o tamanho da ida de agora");
+        }
+        for (int step = 0; step < 20; ++step) {
+            batch.step(std::vector<float>(32 * batch.actionSize(), 0.0f));
+            require(finiteAll(batch.observations()) && finiteAll(batch.rewards()), "a estrela anda sem numero ruim");
+            for (const TrainingEpisode3D& episode : batch.finishedEpisodes()) {
+                require(episode.speedErrorRms >= 0.0f, "o episodio mede o erro de velocidade");
+                require(episode.footSlipMean >= 0.0f || episode.steps < 5, "e a sola escorregando");
+            }
+        }
+    }
+    const auto evaluation = [&](int facing) {
+        TrainingBatchSettings3D s = settings(8, 4);
+        s.taskPath = task;
+        s.evaluation = true;
+        s.evaluationEpisodeSeconds = 40.0f;
+        s.facing = facing;
+        return s;
+    };
+    {
+        // Na avaliacao, o mundo 0 anda (a faixa 0) para a frente: o andar.
+        TrainingBatch3D free(evaluation(0));
+        require(free.observations()[channel(free, "reference.clip.andar_frente")] == 1.0f,
+            "andando para a frente, o clipe e o andar");
+        // O mundo 7 pede o sprint (a faixa 3) para tras e para o lado (a direcao
+        // 5 de 8): a pedida continua a do sprint, mas ele vira andando antes de
+        // acelerar (o sprint de costas para o alvo o levava para longe dele).
+        const std::size_t O = free.observationSize();
+        const float* behind = free.observations().data() + 7 * O;
+        require(behind[channel(free, "command.speed")] * 6.0f > 5.4f, "a pedida para tras e a do sprint");
+        require(behind[channel(free, "reference.clip.sprint")] == 0.0f
+                && behind[channel(free, "reference.clip.corrida_frente")] == 0.0f
+                && behind[channel(free, "reference.clip.frente")] == 0.0f,
+            "de costas para o alvo, ele vira num passo lento antes do sprint");
+    }
+    {
+        // Com o peito fixo, o mundo 4 anda para tras (a direcao 4 de 8): o andar
+        // de costas. O mundo 6 corre (a faixa 2) para o lado: a pedida nao passa
+        // do sprint de lado.
+        TrainingBatch3D fixed(evaluation(1));
+        const std::size_t O = fixed.observationSize();
+        require(fixed.observations()[4 * O + channel(fixed, "reference.clip.andar_costas")] == 1.0f,
+            "com o peito fixo e o alvo atras, o andar de costas");
+        const float sideways = fixed.observations()[6 * O + channel(fixed, "command.speed")] * 6.0f;
+        const float run = 0.5f * (bands[2].speed.minimum + bands[2].speed.maximum);
+        require(sideways < run - 0.1f, "de lado a pedida fica no que o sprint de lado faz (" + std::to_string(sideways) + " m/s)");
     }
 }
 
@@ -962,5 +1043,6 @@ void runTrainingBatchTests() {
     testPlannerSpeed();
     testShuttle();
     testDrills();
+    testStar();
     std::cout << "RL training batch tests passed\n";
 }

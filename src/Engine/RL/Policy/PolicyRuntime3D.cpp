@@ -71,6 +71,7 @@ PolicyRuntime3D::PolicyRuntime3D(const std::filesystem::path& path) {
     m_info.iteration = header.value("iteration", std::uint64_t { 0 });
     m_info.steps = header.value("steps", std::uint64_t { 0 });
     m_info.createdUtc = header.value("createdUtc", std::string());
+    if (header.contains("observationNames")) m_info.observationNames = header["observationNames"].get<std::vector<std::string>>();
     m_scratchA.resize(std::max(widest, m_observationSize));
     m_scratchB.resize(std::max(widest, m_observationSize));
 }

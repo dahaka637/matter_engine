@@ -27,6 +27,11 @@ struct PolicyInfo3D {
     std::uint64_t iteration = 0;
     std::uint64_t steps = 0;
     std::string createdUtc;
+    // O nome de cada entrada, na ordem (vazio nos arquivos de antes): com eles,
+    // quem usa a politica monta a observacao pelos nomes, e uma politica serve a
+    // uma tarefa com outras entradas (as que faltam entram com zero, como na
+    // migracao do treinador).
+    std::vector<std::string> observationNames;
 };
 
 class PolicyRuntime3D final {

@@ -9,6 +9,7 @@
 #include "imgui.h"
 
 #include <algorithm>
+#include <cctype>
 #include <array>
 #include <cfloat>
 #include <chrono>
@@ -161,6 +162,8 @@ void ReinforcementLearningScreen::loadSkills() {
             }
             // A bateria do alvo e a primeira da tarefa (corrida, caminhada...).
             if (skill.target && !task.evaluationBatteries.empty()) skill.battery = task.evaluationBatteries.front();
+            for (const TrainingTask3D::Drill& drill : task.drills) skill.drills.push_back(drill.id);
+            skill.facing = task.target.facing;
             m_skills.push_back(std::move(skill));
         } catch (const std::exception&) {
             // Uma tarefa que nao abre fica fora da lista.
@@ -193,6 +196,8 @@ void ReinforcementLearningScreen::selectSkill(std::size_t index) {
     if (index >= m_skills.size()) return;
     const bool wasRacing = m_skill < m_skills.size() && m_skills[m_skill].target;
     m_skill = index;
+    m_viewerDrill.clear();
+    m_viewerChestFixed = false;
     // Entrando ou saindo da corrida, a camera se ajusta (longe com o alvo).
     if (m_skills[index].target != wasRacing) frame(35.0f, 10.0f);
     m_skillChosen = true;
@@ -290,6 +295,12 @@ void ReinforcementLearningScreen::ensureViewer() {
         settings.solverPositionIterations = 20;
         settings.solverVelocityIterations = 20;
         if (m_skill < m_skills.size()) settings.posture = m_skills[m_skill].posture;
+        // O exercicio e o peito que o visualizador mostra (o treino sorteia).
+        if (m_skill < m_skills.size() && !m_skills[m_skill].drills.empty()) {
+            const auto& drills = m_skills[m_skill].drills;
+            settings.drill = std::find(drills.begin(), drills.end(), m_viewerDrill) != drills.end() ? m_viewerDrill : drills.front();
+        }
+        if (m_skill < m_skills.size() && m_skills[m_skill].facing) settings.facing = m_viewerChestFixed ? 1 : 0;
         if (m_showTeacher && m_skill < m_skills.size() && m_skills[m_skill].teacher)
             settings.teacher = std::make_shared<LocomotionTeacher3D>(
                 m_options.sourceRoot / "assets", loadLocomotionTeacherSettings3D(settings.taskPath));
@@ -319,8 +330,27 @@ void ReinforcementLearningScreen::reloadPolicy(bool force) {
     m_policyPath = path;
     try {
         auto policy = std::make_unique<PolicyRuntime3D>(path);
-        // Os comandos fecham a observacao, na ordem em que entraram: uma politica
-        // de antes de parte deles le o comeco.
+        // Com os nomes das entradas, a observacao da politica e montada por eles
+        // (o que falta entra com zero, como na migracao do treino): qualquer
+        // cerebro do corpo serve a qualquer tarefa dele.
+        m_policyMap.clear();
+        const std::vector<std::string>& names = policy->info().observationNames;
+        if (names.size() == policy->observationSize() && policy->actionSize() == m_viewer->actionSize()) {
+            const auto& channels = m_viewer->observationLayout().channels;
+            for (const std::string& name : names) {
+                int found = -1;
+                for (std::size_t c = 0; c < channels.size(); ++c)
+                    if (channels[c].name == name) found = static_cast<int>(c);
+                m_policyMap.push_back(found);
+            }
+            m_policyInput.assign(names.size(), 0.0f);
+            m_policy = std::move(policy);
+            m_policyInputs = names.size();
+            m_policyText = "política da rodada " + std::to_string(m_policy->info().iteration);
+            return;
+        }
+        // Sem os nomes: os comandos fecham a observacao, na ordem em que
+        // entraram; uma politica de antes de parte deles le o comeco.
         std::size_t commands = 0;
         for (const RLChannel3D& channel : m_viewer->observationLayout().channels)
             if (channel.name.rfind("command.", 0) == 0) ++commands;
@@ -337,6 +367,16 @@ void ReinforcementLearningScreen::reloadPolicy(bool force) {
         m_policy.reset();
         m_policyText = error.what();
     }
+}
+
+void ReinforcementLearningScreen::setViewerDrill(const std::string& drill, bool chestFixed) {
+    if (drill == m_viewerDrill && chestFixed == m_viewerChestFixed && m_viewer) return;
+    m_viewerDrill = drill;
+    m_viewerChestFixed = chestFixed;
+    m_viewer.reset();
+    m_viewerError.clear();
+    ensureViewer();
+    m_dirty = true;
 }
 
 void ReinforcementLearningScreen::showTeacher(bool show) {
@@ -370,8 +410,15 @@ void ReinforcementLearningScreen::stepOnce() {
         m_viewer->setCommand(0, { m_walkSpeed, 0.0f, 0.0f });
     }
     const std::span<const float> observation = m_viewer->observations();
-    if (m_policy) m_policy->evaluate(observation.first(m_policyInputs), m_action);
-    else std::fill(m_action.begin(), m_action.end(), 0.0f);
+    if (m_policy && !m_policyMap.empty()) {
+        for (std::size_t i = 0; i < m_policyMap.size(); ++i)
+            m_policyInput[i] = m_policyMap[i] >= 0 ? observation[static_cast<std::size_t>(m_policyMap[i])] : 0.0f;
+        m_policy->evaluate(m_policyInput, m_action);
+    } else if (m_policy) {
+        m_policy->evaluate(observation.first(m_policyInputs), m_action);
+    } else {
+        std::fill(m_action.begin(), m_action.end(), 0.0f);
+    }
     m_viewer->step(m_action);
     updateRaceCamera(m_viewer->policyStepSeconds(), false);
 }
@@ -586,6 +633,22 @@ bool ReinforcementLearningScreen::render(int width, int height) {
         for (std::uint32_t i = 0; i < view.reachedCount; ++i)
             reached.push_back(m_skeleton->toSkeleton({ view.reached[i].x, view.reached[i].y, 0.0f }));
         appendTargetSequence(sequence, reached, view.targetRadius, markers, arrows);
+        // O desenho do exercicio (a estrela): os pontos fracos, fora os que ja
+        // sao alvo agora.
+        for (std::uint32_t i = 0; i < view.layoutCount; ++i) {
+            const Vec3 point = m_skeleton->toSkeleton({ view.layout[i].x, view.layout[i].y, 0.0f });
+            bool taken = false;
+            for (const InspectionMarker& marker : markers)
+                taken = taken || std::hypot(marker.center.x - point.x, marker.center.y - point.y) < view.targetRadius;
+            if (taken) continue;
+            InspectionMarker spot;
+            spot.center = point;
+            spot.radius = view.targetRadius * 0.7f;
+            spot.color = rgb(170, 182, 200);
+            spot.strength = 0.35f;
+            spot.glowHeight = 0.0f;
+            markers.push_back(spot);
+        }
     }
 
     // A seta de para onde ele vai: a velocidade do centro de massa no chao (0,35 s
@@ -961,6 +1024,34 @@ void ReinforcementLearningScreen::drawToolbar() {
     }
     tooltip("Recente: o último checkpoint do treino (recarrega sozinha). Melhor: a de maior nota na avaliação. "
             "Professor: a locomoção física do jogo conduzindo o boneco do RL, no roteiro do aprendizado guiado.");
+    if (m_skill < m_skills.size() && !m_skills[m_skill].drills.empty()) {
+        const auto& drills = m_skills[m_skill].drills;
+        const std::string current =
+            std::find(drills.begin(), drills.end(), m_viewerDrill) != drills.end() ? m_viewerDrill : drills.front();
+        const auto title = [](std::string id) {
+            if (!id.empty()) id[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(id[0])));
+            return id;
+        };
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(ui(130.0f));
+        if (ImGui::BeginCombo("##RLDrill", title(current).c_str())) {
+            for (const std::string& drill : drills)
+                if (ImGui::Selectable(title(drill).c_str(), drill == current)) setViewerDrill(drill, m_viewerChestFixed);
+            ImGui::EndCombo();
+        }
+        tooltip("O exercício que o visualizador mostra. O treino sorteia todos, cada mundo o seu.");
+        if (m_skills[m_skill].facing) {
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(ui(120.0f));
+            if (ImGui::BeginCombo("##RLChest", m_viewerChestFixed ? "Peito fixo" : "Peito livre")) {
+                if (ImGui::Selectable("Peito livre", !m_viewerChestFixed)) setViewerDrill(current, false);
+                if (ImGui::Selectable("Peito fixo", m_viewerChestFixed)) setViewerDrill(current, true);
+                ImGui::EndCombo();
+            }
+            tooltip("Livre: ele vira para onde vai. Fixo: o peito fica virado para a frente (a câmera) e ele anda de "
+                    "lado, de costas e nas diagonais.");
+        }
+    }
     ImGui::SameLine();
     struct DisplayOption {
         Display display;
@@ -1045,8 +1136,9 @@ void ReinforcementLearningScreen::drawViewport(CanvasTarget& canvas, float botto
     if (m_viewer && m_skill < m_skills.size() && m_skills[m_skill].target) {
         const TrainingEnvironmentView3D view = m_viewer->view(0);
         const Vec3 v = view.state ? view.state->links.front().linearVelocity : Vec3 {};
-        label += "\n" + decimal(std::hypot(v.x, v.y), 1) + " m/s · " + std::to_string(view.targetsReached)
-            + (view.targetsReached == 1 ? " alvo" : " alvos");
+        label += "\n" + decimal(std::hypot(v.x, v.y), 1) + " m/s"
+            + (view.hasSpeedCommand ? " · pede " + decimal(view.speedNow > 0.0f ? view.speedNow : view.speedCommand, 1) : std::string())
+            + " · " + std::to_string(view.targetsReached) + (view.targetsReached == 1 ? " alvo" : " alvos");
     }
     drawList->AddText({ origin.x + ui(10.0f), origin.y + ui(8.0f) }, UiMuted, label.c_str());
 }

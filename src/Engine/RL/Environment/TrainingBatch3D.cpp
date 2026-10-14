@@ -144,6 +144,22 @@ struct Environment {
     float facingHeading = 0.0f;
     // O exercicio deste episodio (o indice em task.drills).
     std::uint32_t drill = 0;
+    // O comando de olhar gira neste episodio (facingDriftFraction).
+    bool facingDrifting = false;
+    // O comando de velocidade: a pedida do trecho ate o alvo de agora e dos
+    // proximos (m/s), a de agora (com a freada antes do ponto) e o erro somado.
+    float targetSpeedCommand = 0.0f;
+    std::array<float, 3> upcomingSpeed {};
+    float speedNow = 0.0f;
+    double speedErrorSquares = 0.0;
+    std::uint32_t speedSteps = 0;
+    // A sola escorregando, somada nos passos de cada pe no chao.
+    double slipSum = 0.0;
+    std::uint32_t slipSamples = 0;
+    // A estrela: a faixa, a velocidade e a distancia da ida de agora.
+    std::uint32_t starBand = 0;
+    float starSpeed = 0.0f;
+    float starDistance = 0.0f;
     // Os proximos alvos ja no mapa (target.lookahead) com o rumo do trecho que
     // chega em cada um, e o percurso fixo da avaliacao (o rumo do comeco).
     std::array<Vec3, 3> upcoming {};
@@ -270,7 +286,14 @@ struct TrainingBatch3D::Impl {
     // episodio, para as listas da avaliacao), o planejador (o clipe que anda mais
     // perto da direcao do alvo; force troca sem histerese) e o giro pedido.
     void placeLibraryTarget(Environment& env, Vec3 from, float facing, std::uint32_t k);
-    void drawLibraryTarget(Environment& env, Vec3 from, float facing, std::uint32_t k, Vec3& point, float& direction);
+    void drawLibraryTarget(Environment& env, Vec3 from, float facing, std::uint32_t k, Vec3& point, float& direction,
+        float& speed);
+    // O comando de velocidade: a faixa sorteada (pelo peso), a velocidade pedida
+    // de agora (a do trecho com a freada antes do ponto) e o teto da direcao em
+    // relacao ao peito (o mais rapido dos clipes que andam para la).
+    [[nodiscard]] std::uint32_t drawSpeedBand(Environment& env, std::uint32_t k);
+    [[nodiscard]] float effectiveSpeed(const Environment& env, float distance) const;
+    [[nodiscard]] float directionCapability(const Environment& env, float relative) const;
     void plan(Environment& env, Vec3 position, float facing, bool force);
     [[nodiscard]] float wantedTurn(const Environment& env, Vec3 position, float facing) const;
     [[nodiscard]] Vec3 aimPoint(const Environment& env) const;
@@ -351,6 +374,14 @@ void TrainingBatch3D::Impl::buildLayouts() {
             o.channels.push_back({ name + ".direction.y", "unit" });
             o.channels.push_back({ name + ".distance", "m/10" });
         }
+        // O comando de velocidade: a pedida do trecho, a de agora (com a freada
+        // antes do ponto) e a dos proximos.
+        if (task.target.speedCommand.enabled) {
+            o.channels.push_back({ "command.speed", "m/s/6" });
+            o.channels.push_back({ "command.speed.now", "m/s/6" });
+            for (std::uint32_t i = 0; i < task.target.lookahead; ++i)
+                o.channels.push_back({ "command.speed.next" + std::to_string(i + 1), "m/s/6" });
+        }
     }
     // A biblioteca: o clipe de agora (um canal por clipe) e o giro pedido.
     if (imitating() && reference.library) {
@@ -392,13 +423,105 @@ void TrainingBatch3D::Impl::buildReference() {
     reference = buildReferenceMotion3D(body, clips, FixedStep, library);
 }
 
+std::uint32_t TrainingBatch3D::Impl::drawSpeedBand(Environment& env, std::uint32_t k) {
+    const auto& bands = taskOf(env).target.speedCommand.bands;
+    if (bands.size() <= 1) return 0;
+    // Na avaliacao, a faixa segue a posicao do mundo e o trecho (cada mundo
+    // passa por todas).
+    if (!training()) return static_cast<std::uint32_t>((env.index + k / 2) % bands.size());
+    float total = 0.0f;
+    for (const auto& band : bands) total += band.weight;
+    float pick = std::uniform_real_distribution<float>(0.0f, total)(env.rng);
+    for (std::uint32_t b = 0; b < bands.size(); ++b)
+        if ((pick -= bands[b].weight) < 0.0f) return b;
+    return static_cast<std::uint32_t>(bands.size() - 1);
+}
+
+float TrainingBatch3D::Impl::effectiveSpeed(const Environment& env, float distance) const {
+    const TrainingTask3D& task = taskOf(env);  // o exercicio do mundo
+    const auto& sc = task.target.speedCommand;
+    const float wanted = env.targetSpeedCommand;
+    if (!sc.enabled) return wanted;
+    // A chegada pela virada para o proximo: cheia em linha reta, a minima numa
+    // volta de 180 graus.
+    float arrival = sc.minimumArrivalSpeed;
+    if (task.target.lookahead > 0) {
+        const float turn = std::abs(std::atan2(std::sin(env.upcomingDirection[0] - env.targetDirection),
+            std::cos(env.upcomingDirection[0] - env.targetDirection)));
+        arrival = std::max(sc.minimumArrivalSpeed, std::min(wanted, env.upcomingSpeed[0]) * std::cos(0.5f * turn));
+    }
+    const float remaining = std::max(0.0f, distance - task.target.radius);
+    return std::min(wanted, std::sqrt(arrival * arrival + 2.0f * sc.brakeAcceleration * remaining));
+}
+
+float TrainingBatch3D::Impl::directionCapability(const Environment& env, float relative) const {
+    const bool chest = taskOf(env).target.facingLink == "chest";
+    float best = 0.0f;
+    for (const float window : { 25.0f, 50.0f }) {
+        for (const ReferenceSegment3D& segment : reference.segments) {
+            const float travel = chest ? segment.travelRelativeChest : segment.travelRelative;
+            const float error = std::abs(std::atan2(std::sin(travel - relative), std::cos(travel - relative)));
+            if (error <= window * std::numbers::pi_v<float> / 180.0f) best = std::max(best, segment.meanSpeed);
+        }
+        if (best > 0.0f) return best;
+    }
+    return taskOf(env).target.referenceSpeed;
+}
+
 // Um alvo em volta de from, a partir do rumo facing (o k-esimo do episodio): no
 // treino sorteado, na avaliacao pelas listas ou pelo percurso do mundo.
 void TrainingBatch3D::Impl::drawLibraryTarget(Environment& env, Vec3 from, float facing, std::uint32_t k, Vec3& point,
-    float& direction) {
+    float& direction, float& speed) {
     const TrainingTask3D& task = taskOf(env);  // o exercicio do mundo
     const TrainingTask3D::Target& t = task.target;
+    const auto& sc = t.speedCommand;
     constexpr float Radians = std::numbers::pi_v<float> / 180.0f;
+    const auto pickIn = [&](TrainingRange3D range) {
+        return training() ? uniform(env.rng, range) : 0.5f * (range.minimum + range.maximum);
+    };
+    // Com o comando de olhar, a pedida nao passa do que os clipes fazem na
+    // direcao do trecho em relacao ao peito.
+    const auto capped = [&](float wanted) {
+        if (!sc.enabled || !sc.capByDirection || !env.facingActive) return wanted;
+        return std::min(wanted, directionCapability(env, direction - env.facingCommand));
+    };
+    speed = t.referenceSpeed;
+    if (t.pattern == "star") {
+        // A estrela: os pares vao do centro a uma das direcoes (no rumo do
+        // comeco, o "norte"), os impares voltam ao centro.
+        const Vec3 center { env.origin.x, env.origin.y, 0.0f };
+        if (k % 2 == 0) {
+            const std::uint32_t directions = std::max(1u, t.starDirections);
+            const std::uint32_t slot = training()
+                ? std::uniform_int_distribution<std::uint32_t>(0, directions - 1)(env.rng)
+                : static_cast<std::uint32_t>((env.index * 3 + (k / 2) * 5) % directions);
+            const float jitter = training() ? std::uniform_real_distribution<float>(-t.starJitterDegrees,
+                t.starJitterDegrees)(env.rng) * Radians : 0.0f;
+            direction = env.courseHeading + 2.0f * std::numbers::pi_v<float> * static_cast<float>(slot)
+                / static_cast<float>(directions) + jitter;
+            float distance = t.distance;
+            if (sc.enabled) {
+                env.starBand = drawSpeedBand(env, k);
+                const auto& band = sc.bands[env.starBand];
+                env.starSpeed = pickIn(band.speed);
+                distance = band.distance.maximum > 0.0f ? pickIn(band.distance) : t.distance;
+            } else if (t.distanceRange.maximum > 0.0f) {
+                distance = pickIn(t.distanceRange);
+            }
+            env.starDistance = distance;
+            point = center + Vec3 { std::cos(direction), std::sin(direction), 0.0f } * distance;
+            speed = capped(sc.enabled ? env.starSpeed : t.referenceSpeed);
+        } else {
+            point = center;
+            direction = std::atan2(center.y - from.y, center.x - from.x);
+            float back = env.starSpeed;
+            if (sc.enabled && training()
+                && std::uniform_real_distribution<float>(0.0f, 1.0f)(env.rng) < sc.redrawOnReturn)
+                back = pickIn(sc.bands[drawSpeedBand(env, k)].speed);
+            speed = capped(sc.enabled ? back : t.referenceSpeed);
+        }
+        return;
+    }
     if (!training() && !t.evaluationCourses.empty()) {
         const auto& points = t.evaluationCourses[(t.evaluationPerWorld ? env.index : 0u) % t.evaluationCourses.size()].points;
         const std::size_t n = points.size();
@@ -412,6 +535,7 @@ void TrainingBatch3D::Impl::drawLibraryTarget(Environment& env, Vec3 from, float
         const Vec3 previous = k == 0 ? Vec3 { env.origin.x, env.origin.y, 0.0f } : at(k - 1);
         direction = std::atan2(point.y - previous.y, point.x - previous.x);
         point.z = 0.0f;
+        if (sc.enabled) speed = capped(pickIn(sc.bands[drawSpeedBand(env, k)].speed));
         return;
     }
     float angle = 0.0f, distance = t.distance;
@@ -426,6 +550,12 @@ void TrainingBatch3D::Impl::drawLibraryTarget(Environment& env, Vec3 from, float
         if (!t.evaluationDistances.empty()) distance = t.evaluationDistances[slot % t.evaluationDistances.size()];
     }
     direction = facing + angle;
+    if (sc.enabled) {
+        // A faixa sorteada da a velocidade e, se tiver, a distancia.
+        const auto& band = sc.bands[drawSpeedBand(env, k)];
+        if (band.distance.maximum > 0.0f) distance = pickIn(band.distance);
+        speed = capped(pickIn(band.speed));
+    }
     point = Vec3 { from.x, from.y, 0.0f } + Vec3 { std::cos(direction), std::sin(direction), 0.0f } * distance;
 }
 
@@ -438,11 +568,12 @@ void TrainingBatch3D::Impl::placeLibraryTarget(Environment& env, Vec3 from, floa
     if (k == 0) env.courseHeading = facing;
     if (ahead == 0 || k == 0) {
         env.targetFrom = { from.x, from.y, 0.0f };
-        drawLibraryTarget(env, from, facing, k, env.target, env.targetDirection);
+        drawLibraryTarget(env, from, facing, k, env.target, env.targetDirection, env.targetSpeedCommand);
         Vec3 last = env.target;
         float lastDirection = env.targetDirection;
         for (std::uint32_t i = 0; i < ahead; ++i) {
-            drawLibraryTarget(env, last, lastDirection, k + 1 + i, env.upcoming[i], env.upcomingDirection[i]);
+            drawLibraryTarget(env, last, lastDirection, k + 1 + i, env.upcoming[i], env.upcomingDirection[i],
+                env.upcomingSpeed[i]);
             last = env.upcoming[i];
             lastDirection = env.upcomingDirection[i];
         }
@@ -450,13 +581,16 @@ void TrainingBatch3D::Impl::placeLibraryTarget(Environment& env, Vec3 from, floa
         env.targetFrom = env.target;
         env.target = env.upcoming[0];
         env.targetDirection = env.upcomingDirection[0];
+        env.targetSpeedCommand = env.upcomingSpeed[0];
         for (std::uint32_t i = 0; i + 1 < ahead; ++i) {
             env.upcoming[i] = env.upcoming[i + 1];
             env.upcomingDirection[i] = env.upcomingDirection[i + 1];
+            env.upcomingSpeed[i] = env.upcomingSpeed[i + 1];
         }
         const Vec3 last = ahead > 1 ? env.upcoming[ahead - 2] : env.target;
         const float lastDirection = ahead > 1 ? env.upcomingDirection[ahead - 2] : env.targetDirection;
-        drawLibraryTarget(env, last, lastDirection, k + ahead, env.upcoming[ahead - 1], env.upcomingDirection[ahead - 1]);
+        drawLibraryTarget(env, last, lastDirection, k + ahead, env.upcoming[ahead - 1], env.upcomingDirection[ahead - 1],
+            env.upcomingSpeed[ahead - 1]);
     }
     env.targetClosest = 1e9f;
     env.targetCount = k + 1;
@@ -513,7 +647,10 @@ void TrainingBatch3D::Impl::plan(Environment& env, Vec3 position, float facing, 
     // olha) e, com speedByDistance, da velocidade pedida pela distancia; o de
     // agora leva a histerese.
     float wantedSpeed = 0.0f;
-    if (const auto& table = planner.speedByDistance; !table.empty() && planner.speedWeight > 0.0f) {
+    if (planner.speedFromCommand && planner.speedByDistance.empty() && planner.speedWeight > 0.0f) {
+        // A velocidade pedida de agora (com a freada antes do ponto) escolhe o passo.
+        wantedSpeed = effectiveSpeed(env, std::hypot(env.target.x - position.x, env.target.y - position.y));
+    } else if (const auto& table = planner.speedByDistance; !table.empty() && planner.speedWeight > 0.0f) {
         const float distance = std::hypot(dx, dy);
         wantedSpeed = table.front()[1];
         for (std::size_t i = 1; i < table.size(); ++i) {
@@ -526,11 +663,25 @@ void TrainingBatch3D::Impl::plan(Environment& env, Vec3 position, float facing, 
         }
     }
     const float hysteresis = force ? 0.0f : planner.hysteresisDegrees * std::numbers::pi_v<float> / 180.0f;
+    // Com o comando de olhar: a direcao de cada clipe medida pelo link do
+    // comando (o peito), e o peso dela proprio.
+    const bool chest = env.facingActive && task.target.facingLink == "chest";
+    const float directionWeight = env.facingActive && planner.directionWeightFacing >= 0.0f
+        ? planner.directionWeightFacing : planner.directionWeight;
+    // Peito livre e o alvo longe: so os clipes que andam para a frente (ele
+    // vira), no passo da virada: a pedida vezes o quanto ele ja esta de frente
+    // para a mira (de costas para ela, o da chegada), e acelera ao alinhar.
+    const bool forwardOnly = !env.facingActive && planner.freeBackwardDistance > 0.0f
+        && std::hypot(env.target.x - position.x, env.target.y - position.y) > planner.freeBackwardDistance;
+    if (forwardOnly && wantedSpeed > 0.0f)
+        wantedSpeed = std::max(task.target.speedCommand.minimumArrivalSpeed, wantedSpeed * std::max(0.0f, std::cos(angle)));
     std::uint32_t best = env.cursor.segment;
     float bestCost = std::numeric_limits<float>::max();
     for (std::uint32_t c = 0; c < reference.segments.size(); ++c) {
-        float error = angle - reference.segments[c].travelRelative;
-        error = planner.directionWeight * std::abs(std::atan2(std::sin(error), std::cos(error)));
+        // (O lado do clipe pelo peito: no andar de lado do Mixamo a pelve vai virada.)
+        if (forwardOnly && std::abs(reference.segments[c].travelRelativeChest) > std::numbers::pi_v<float> / 3.0f) continue;
+        float error = angle - (chest ? reference.segments[c].travelRelativeChest : reference.segments[c].travelRelative);
+        error = directionWeight * std::abs(std::atan2(std::sin(error), std::cos(error)));
         if (wantedSpeed > 0.0f)
             error += planner.speedWeight
                 * std::abs(std::log(std::max(reference.segments[c].meanSpeed, 0.3f) / wantedSpeed));
@@ -837,6 +988,8 @@ void TrainingBatch3D::Impl::resetEnvironment(std::uint32_t index) {
             env.facingActive = task.target.facing
                 && (training() ? std::uniform_real_distribution<float>(0.0f, 1.0f)(env.rng) < task.target.facingFraction
                                : settings.facing != 0);
+            env.facingDrifting = env.facingActive && training()
+                && std::uniform_real_distribution<float>(0.0f, 1.0f)(env.rng) < task.target.facingDriftFraction;
             placeLibraryTarget(env, env.origin, startYaw, 0);
             plan(env, env.origin, startYaw, true);
             const std::uint32_t frames = static_cast<std::uint32_t>(reference.segments[env.cursor.segment].frames.size());
@@ -946,6 +1099,11 @@ void TrainingBatch3D::Impl::resetEnvironment(std::uint32_t index) {
     env.imitationErrorSquares = 0.0;
     env.facingErrorSquares = 0.0;
     env.facingSteps = 0;
+    env.speedErrorSquares = 0.0;
+    env.speedSteps = 0;
+    env.speedNow = 0.0f;
+    env.slipSum = 0.0;
+    env.slipSamples = 0;
     if (targeting() && state && !(imitating() && reference.library)) placeFirstTarget(env, *state);
     env.episodeReturn = 0.0;
     env.comSum[0] = env.comSum[1] = 0.0;
@@ -1093,6 +1251,11 @@ void TrainingBatch3D::Impl::writeObservation(const Environment& env, const Ragdo
             *out++ = far > 1.0e-4f ? next.x / far : 1.0f;
             *out++ = far > 1.0e-4f ? next.y / far : 0.0f;
             *out++ = std::min(far, 30.0f) / 10.0f;
+        }
+        if (task.target.speedCommand.enabled) {
+            *out++ = env.targetSpeedCommand / 6.0f;
+            *out++ = effectiveSpeed(env, distance) / 6.0f;
+            for (std::uint32_t i = 0; i < task.target.lookahead; ++i) *out++ = env.upcomingSpeed[i] / 6.0f;
         }
     }
     if (imitating() && reference.library) {
@@ -1262,9 +1425,13 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
         const PhysicsBodyState3D& link = state.links[foot];
         // A sola escorregando: o centro do pe mais o giro em torno da vertical
         // (um pe que pivota no lugar quase nao move o centro; 0,1 m e meia sola).
-        if (reading.footContact[f])
-            slip += std::sqrt(link.linearVelocity.x * link.linearVelocity.x + link.linearVelocity.y * link.linearVelocity.y)
-                + 0.1f * std::abs(link.angularVelocity.z);
+        if (reading.footContact[f]) {
+            const float sliding = std::sqrt(link.linearVelocity.x * link.linearVelocity.x
+                + link.linearVelocity.y * link.linearVelocity.y) + 0.1f * std::abs(link.angularVelocity.z);
+            slip += sliding;
+            env.slipSum += sliding;
+            ++env.slipSamples;
+        }
         // O quanto o pe girou no chao desde o inicio (o giro em torno da vertical).
         const Quaternion turned = link.orientation * env.footStartOrientation[f].conjugate();
         const float twist = 2.0f * std::atan2(std::abs(turned.z), std::abs(turned.w));
@@ -1349,21 +1516,32 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
     // O alvo: a velocidade do centro de massa em direcao a ele (linear: correr
     // mais rapido paga mais) e, chegando, a velocidade media do trecho; o
     // proximo nasce na hora.
-    float targetSpeed = 0.0f, targetReached = 0.0f;
+    float targetSpeed = 0.0f, targetReached = 0.0f, speedMatch = 0.0f;
     if (targeting()) {
         const TrainingTask3D::Target& t = task.target;
         const Vec3 to { env.target.x - reading.com.x, env.target.y - reading.com.y, 0.0f };
         const float distance = to.length();
         env.targetClosest = std::min(env.targetClosest, distance);
-        if (distance > 1.0e-4f) {
-            const float toward = (reading.comVelocity.x * to.x + reading.comVelocity.y * to.y) / distance;
-            targetSpeed = std::clamp(toward / t.referenceSpeed, 0.0f, t.speedCap);
+        const float toward = distance > 1.0e-4f
+            ? (reading.comVelocity.x * to.x + reading.comVelocity.y * to.y) / distance : 0.0f;
+        targetSpeed = std::clamp(toward / t.referenceSpeed, 0.0f, t.speedCap);
+        // O comando de velocidade: acertar a pedida de agora (com a freada).
+        if (t.speedCommand.enabled) {
+            env.speedNow = effectiveSpeed(env, distance);
+            const float error = toward - env.speedNow;
+            const float sigma = t.speedCommand.sigma;
+            speedMatch = std::exp(-error * error / (sigma * sigma));
+            env.speedErrorSquares += error * error;
+            ++env.speedSteps;
         }
         if (distance < t.radius) {
             const float now = static_cast<float>(env.played) * stepSeconds;
             const float covered = (env.target - env.targetFrom).length();
             const float speed = covered / std::max(stepSeconds, now - env.targetSince);
-            targetReached = std::min(speed / t.referenceSpeed, t.speedCap);
+            // A chegada paga a velocidade do trecho sobre a de referencia, ou,
+            // com o comando, sobre a pedida (mais rapido que ela nao rende).
+            const float measure = t.speedCommand.enabled ? std::max(0.3f, env.targetSpeedCommand) : t.referenceSpeed;
+            targetReached = std::min(speed / measure, t.speedCap);
             ++env.targetsReached;
             for (std::size_t i = env.reachedTargets.size() - 1; i > 0; --i) env.reachedTargets[i] = env.reachedTargets[i - 1];
             env.reachedTargets[0] = env.target;
@@ -1381,8 +1559,6 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
             }
         }
     }
-    // O giro: o do corpo contra o pedido (o do clipe agora mais o que alinha a
-    // direcao em que o clipe anda com o alvo, da decisao anterior).
     // Segurar o rumo pedido: o link do comando contra ele, em sino.
     float facingHold = 0.0f;
     if (env.facingActive) {
@@ -1393,6 +1569,8 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
         env.facingErrorSquares += error * error;
         ++env.facingSteps;
     }
+    // O giro: o do corpo contra o pedido (o do clipe agora mais o que alinha a
+    // direcao em que o clipe anda com o alvo, da decisao anterior).
     float targetTurn = 0.0f;
     if (targeting() && imitating()) {
         const float wanted = referenceFrame3D(reference, env.cursor).rootSpin.z + env.turnRate;
@@ -1430,6 +1608,7 @@ float TrainingBatch3D::Impl::reward(Environment& env, const RagdollState3D& stat
         w.targetReached * targetReached,
         w.targetTurn * targetTurn,
         w.facingHold * facingHold,
+        w.speedMatch * speedMatch,
         fell ? -w.fall : 0.0f,
     };
     // A queda e a ultima parcela; o resto, com positiveOnly, nunca abaixo de 0.
@@ -1501,6 +1680,9 @@ void TrainingBatch3D::Impl::finishEpisode(Scene& scene, std::uint32_t index, Tra
     episode.imitationErrorRms = imitating() ? static_cast<float>(std::sqrt(env.imitationErrorSquares / n)) : -1.0f;
     episode.facingErrorRms =
         env.facingSteps > 0 ? static_cast<float>(std::sqrt(env.facingErrorSquares / env.facingSteps)) : -1.0f;
+    episode.speedErrorRms =
+        env.speedSteps > 0 ? static_cast<float>(std::sqrt(env.speedErrorSquares / env.speedSteps)) : -1.0f;
+    episode.footSlipMean = env.slipSamples > 0 ? static_cast<float>(env.slipSum / env.slipSamples) : -1.0f;
     if (reason == TrainingEndReason3D::FallContact || reason == TrainingEndReason3D::FallHeight) {
         // O lado da queda: para onde o centro de massa ia, no referencial do corpo.
         const Vec3 v = reading.valid ? reading.headingInverse.rotate(reading.comVelocity) : Vec3 {};
@@ -1668,7 +1850,7 @@ void TrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> actio
                 const float decision = static_cast<float>(task.actionRepeat) * FixedStep;
                 env.clipSince += decision;
                 env.facingHeading = facingLinkHeading(*state);
-                if (env.facingActive && task.target.facingDriftRadians > 0.0f && training()) {
+                if (env.facingActive && env.facingDrifting && task.target.facingDriftRadians > 0.0f && training()) {
                     if ((env.facingTimer -= decision) <= 0.0f) {
                         env.facingTimer = std::uniform_real_distribution<float>(2.0f, 4.0f)(env.rng);
                         env.facingRate = std::uniform_real_distribution<float>(-task.target.facingDriftRadians,
@@ -1929,6 +2111,29 @@ TrainingEnvironmentView3D TrainingBatch3D::view(std::size_t environment) const {
         for (std::uint32_t i = 0; i < view.upcomingCount; ++i) view.upcoming[i] = env.upcoming[i];
         view.reachedCount = env.reachedCount;
         for (std::uint32_t i = 0; i < view.reachedCount; ++i) view.reached[i] = env.reachedTargets[i];
+        const TrainingTask3D& drill = impl.taskOf(env);
+        if (drill.target.speedCommand.enabled) {
+            view.hasSpeedCommand = true;
+            view.speedCommand = env.targetSpeedCommand;
+            view.speedNow = env.speedNow;
+        }
+        // A estrela: o centro e as direcoes, na distancia da ida de agora (o alvo,
+        // ou, voltando ao centro, o proximo; os sorteados mais a frente nao).
+        const Vec3 center { env.origin.x, env.origin.y, 0.0f };
+        const auto away = [&](Vec3 point) { return std::hypot(point.x - center.x, point.y - center.y); };
+        float radius = away(env.target);
+        if (radius < drill.target.radius && view.upcomingCount > 0) radius = away(env.upcoming[0]);
+        if (drill.target.pattern == "star" && radius >= drill.target.radius) {
+            const std::uint32_t directions = std::min<std::uint32_t>(drill.target.starDirections,
+                static_cast<std::uint32_t>(view.layout.size() - 1));
+            view.layout[0] = center;
+            for (std::uint32_t d = 0; d < directions; ++d) {
+                const float angle = env.courseHeading + 2.0f * std::numbers::pi_v<float> * static_cast<float>(d)
+                    / static_cast<float>(drill.target.starDirections);
+                view.layout[d + 1] = center + Vec3 { std::cos(angle), std::sin(angle), 0.0f } * radius;
+            }
+            view.layoutCount = directions + 1;
+        }
     }
     if (view.state) {
         const RagdollProfile3D& profile = impl.body.profile;

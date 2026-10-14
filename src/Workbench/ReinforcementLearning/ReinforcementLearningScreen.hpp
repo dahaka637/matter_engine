@@ -78,6 +78,11 @@ public:
     [[nodiscard]] bool viewerHasTarget() const { return m_viewer && m_viewer->view(0).hasTarget; }
     [[nodiscard]] std::uint32_t viewerTargetsReached() const { return m_viewer ? m_viewer->view(0).targetsReached : 0u; }
     [[nodiscard]] std::uint32_t viewerSteps() const { return m_viewer ? m_viewer->view(0).steps : 0u; }
+    [[nodiscard]] std::uint32_t viewerDrill() const { return m_viewer ? m_viewer->view(0).drill : 0u; }
+    [[nodiscard]] std::vector<std::string> skillDrills() const {
+        return m_skill < m_skills.size() ? m_skills[m_skill].drills : std::vector<std::string> {};
+    }
+    void showDrill(const std::string& drill, bool chestFixed) { setViewerDrill(drill, chestFixed); }
     // O visualizador com o professor (refaz o mundo dele) ou com a politica.
     void showTeacher(bool show);
     [[nodiscard]] bool showingTeacher() const { return m_showTeacher; }
@@ -132,6 +137,10 @@ private:
     // termino dela: andando, o chao e grande).
     std::filesystem::path m_viewerTask;
     std::unique_ptr<PolicyRuntime3D> m_policy;
+    // A entrada da politica montada pelos nomes (o canal do visualizador de
+    // cada entrada dela, -1 = falta, entra com zero); vazio = pelo comeco.
+    std::vector<int> m_policyMap;
+    std::vector<float> m_policyInput;
     std::filesystem::file_time_type m_policyWrite {};
     std::filesystem::path m_policyPath;
     std::string m_policyText;
@@ -192,10 +201,18 @@ private:
         bool teacher = false;
         // A tarefa corre ate um alvo no mundo (o marcador no chao).
         bool target = false;
+        // Os exercicios da tarefa (os ids) e se ela tem o comando de olhar.
+        std::vector<std::string> drills;
+        bool facing = false;
     };
     std::vector<Skill> m_skills;
     std::size_t m_skill = 0;
     bool m_skillChosen = false;
+    // O que o visualizador mostra de uma tarefa com exercicios: qual deles e o
+    // peito (livre ou fixo para a frente).
+    std::string m_viewerDrill;
+    bool m_viewerChestFixed = false;
+    void setViewerDrill(const std::string& drill, bool chestFixed);
     // A troca de habilidade em andamento: fecha o treino e reabre nesta tarefa.
     std::string m_switchTask;
     std::string m_switchMode;

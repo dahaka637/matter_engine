@@ -15,7 +15,7 @@ from .model import ACTION_LIMIT, ActorCritic
 
 REASONS = ["nenhum", "queda_contato", "queda_altura", "numerico", "tempo", "limite", "alvo_perdido"]
 # As colunas do resumo de um episodio (finished_episodes do modulo nativo).
-EPISODE_COLUMNS = 27
+EPISODE_COLUMNS = 29
 FALLS = {1, 2, 3}
 
 
@@ -39,13 +39,13 @@ def battery_posture(name: str) -> str:
 def battery_kind(name: str) -> str:
     """O tipo de uma bateria pelo nome (a convencao das tarefas): andar_* e
     girar_* seguem um roteiro de velocidades, ir_ate_* vao a um ponto,
-    corrida_*, caminhada_*, direcoes_*, percursos_* e tiro_* vao ate os alvos
-    da tarefa (o alvo no mundo, com imitacao)."""
+    corrida_*, caminhada_*, direcoes_*, percursos_*, tiro_* e estrela_* vao ate
+    os alvos da tarefa (o alvo no mundo, com imitacao)."""
     if name.startswith(("andar_", "girar_")):
         return "andar"
     if name.startswith("ir_ate_"):
         return "alvo"
-    if name.startswith(("corrida_", "caminhada_", "direcoes_", "percursos_", "tiro_")):
+    if name.startswith(("corrida_", "caminhada_", "direcoes_", "percursos_", "tiro_", "estrela_")):
         return "corrida"
     return "de_pe"
 
@@ -130,11 +130,17 @@ def drill_weights(drills: list[dict], scores: dict[str, float], rule: dict) -> l
 def race_score(metrics: dict) -> float:
     """Ir ate o alvo: nao cair, chegar, chegar rapido (a velocidade da
     referencia vale tudo: 6 m/s correndo, 1,1 caminhando) e se mover parecido
-    com ela (o erro das juntas abaixo de 0,5 rad). Com o comando de olhar, o
-    peito fora dele desconta ate 0,25 (60 graus ou mais)."""
+    com ela (o erro das juntas abaixo de 0,5 rad). Com o comando de velocidade,
+    a parte da velocidade e acertar a pedida (o erro abaixo de 1,5 m/s), nao
+    correr mais. Com o comando de olhar, o peito fora dele desconta ate 0,25
+    (60 graus ou mais)."""
+    if metrics.get("speed_error", -1.0) >= 0:
+        speed = max(0.0, 1.0 - metrics["speed_error"] / 1.5)
+    else:
+        speed = min(1.0, metrics.get("target_speed", 0.0) / metrics.get("reference_speed", 6.0))
     return (0.30 * metrics["stand_fraction"]
             + 0.30 * metrics.get("reached_fraction", 0.0)
-            + 0.25 * min(1.0, metrics.get("target_speed", 0.0) / metrics.get("reference_speed", 6.0))
+            + 0.25 * speed
             + 0.15 * max(0.0, 1.0 - metrics.get("imitation_error", 1.0) / 0.5)
             - (0.25 * min(1.0, metrics["facing_error"] / 60.0) if metrics.get("facing_error", -1.0) >= 0 else 0.0))
 
@@ -344,6 +350,13 @@ class Evaluator:
             # dele (RMS por episodio, em graus; -1 sem o comando).
             facing = rows[:, 25][rows[:, 25] >= 0]
             metrics["facing_error"] = float(np.degrees(facing.mean())) if len(facing) else -1.0
+            # Com o comando de velocidade: o quanto ele ficou longe da pedida de
+            # agora (RMS por episodio, m/s; -1 sem o comando).
+            speeds = rows[:, 27][rows[:, 27] >= 0]
+            metrics["speed_error"] = float(speeds.mean()) if len(speeds) else -1.0
+            # A sola escorregando no chao (m/s, a media dos episodios; so medida).
+            slips = rows[:, 28][rows[:, 28] >= 0]
+            metrics["foot_slip"] = float(slips.mean()) if len(slips) else -1.0
             metrics["reference_speed"] = float((spec or {}).get("referenceSpeed", 6.0))
         metrics["kind"] = kind
         metrics["score"] = (walking_score(metrics) if kind == "andar" else goal_score(metrics) if kind == "alvo"
