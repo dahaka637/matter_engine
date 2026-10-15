@@ -77,7 +77,12 @@ def command_train(args: argparse.Namespace) -> int:
         trainer = BodyTrainer(args.run, task=args.tarefa, mode=args.modo, environments=args.mundos,
                               device=args.dispositivo, seed=args.semente, iterations=args.rodadas,
                               style=False if args.sem_estilo else None,
-                              overlap=False if args.sem_sobreposicao else None)
+                              overlap=True if args.sobreposicao else (False if args.sem_sobreposicao else None),
+                              transfer_from=args.de_checkpoint,
+                              transfer=tuple(part for part in args.transferir.split(",") if part),
+                              warmup=args.aquecimento,
+                              exploration=({"mode": "learned", "initial_rad": args.desvio_aprendido}
+                                           if args.desvio_aprendido else None))
         return trainer.loop()
     from .trainer import Trainer
     trainer = Trainer(args.run, task=args.tarefa, mode=args.modo, environments=args.mundos, device=args.dispositivo,
@@ -95,6 +100,14 @@ def trainer_command(args: argparse.Namespace) -> list[str]:
         command += ["--sem-estilo"]
     if getattr(args, "sem_sobreposicao", False):
         command += ["--sem-sobreposicao"]
+    if getattr(args, "sobreposicao", False):
+        command += ["--sobreposicao"]
+    if getattr(args, "de_checkpoint", None):
+        command += ["--de-checkpoint", args.de_checkpoint, "--transferir", args.transferir]
+    if getattr(args, "aquecimento", None) is not None:
+        command += ["--aquecimento", str(args.aquecimento)]
+    if getattr(args, "desvio_aprendido", None):
+        command += ["--desvio-aprendido", str(args.desvio_aprendido)]
     return command
 
 
@@ -468,6 +481,17 @@ def main(argv: list[str] | None = None) -> int:
             # o treino) e sem a atualizacao sobreposta a coleta.
             p.add_argument("--sem-estilo", action="store_true")
             p.add_argument("--sem-sobreposicao", action="store_true")
+            # A coleta e a atualizacao em serie sao o padrao do Corpo v2; a
+            # sobreposicao so volta depois do P3 (plano de recuperacao, 5.1).
+            p.add_argument("--sobreposicao", action="store_true")
+            # Um treino NOVO que nasce de outro (o ator e a normalizacao passam; o
+            # critico e o juiz recomecam): "treino", "treino:rodada" ou uma pasta.
+            p.add_argument("--de-checkpoint")
+            p.add_argument("--transferir", default="ator,normalizacao")
+            # Rodadas so do juiz e do critico antes de o ator voltar a aprender.
+            p.add_argument("--aquecimento", type=int)
+            # O desvio aprendido (o v1), com este desvio inicial em rad, em vez do fixo por grupo.
+            p.add_argument("--desvio-aprendido", type=float)
         return p
 
     sub.add_parser("doctor").set_defaults(func=command_doctor)

@@ -19,12 +19,14 @@ from torch import nn
 @dataclass
 class JudgeSettings:
     hidden: list[int] = field(default_factory=lambda: [1024, 512])
-    learning_rate: float = 1e-4
-    # Pares do acervo e do corpo em cada lote, e os lotes por rodada (os do PPO:
-    # 5 epocas x 4 lotes; o Experimento A mediu o custo com 2.048).
+    # Os ajustes de partida do plano de recuperacao (5.5; o P2 confirma): o juiz
+    # saturava em ~6 rodadas com 1e-4, penalidade 5 e 20 atualizacoes.
+    learning_rate: float = 5e-5
+    # Pares do acervo e do corpo em cada lote, e os lotes por rodada (o
+    # Experimento A mediu o custo com 2.048).
     batch: int = 2048
-    updates: int = 20
-    gradient_penalty: float = 5.0
+    updates: int = 10
+    gradient_penalty: float = 10.0
     logit_regularization: float = 0.05
     weight_decay: float = 1e-4
     # A memoria dos pares do corpo (os mais recentes).
@@ -112,10 +114,14 @@ class Judge:
         self.dataset_hash = dataset["hash"]
         # A normalizacao pelo acervo de treino: as duas metades do par sao a
         # mesma medida em instantes diferentes, e dividem a estatistica.
+        # Com os pesos dos pares (a amostragem do juiz os usa; a media simples
+        # daria peso igual a um clipe longo e a um curto).
         half = self.width // 2
         stacked = np.concatenate([pairs[training, :half], pairs[training, half:]])
-        mean = stacked.mean(0)
-        std = np.maximum(stacked.std(0), settings.min_std)
+        w = np.concatenate([weights[training], weights[training]])
+        w = w / w.sum()
+        mean = (stacked * w[:, None]).sum(0)
+        std = np.maximum(np.sqrt((((stacked - mean) ** 2) * w[:, None]).sum(0)), settings.min_std)
         self.mean = torch.tensor(np.tile(mean, 2), device=device, dtype=torch.float32)
         self.inv_std = torch.tensor(1.0 / np.tile(std, 2), device=device, dtype=torch.float32)
         self.pairs = torch.tensor(pairs[training], device=device)
@@ -177,6 +183,12 @@ class Judge:
                 "mean": self.mean.cpu(), "inv_std": self.inv_std.cpu(), "dataset_hash": self.dataset_hash}
 
     def load_state_dict(self, state: dict) -> None:
+        # Um juiz so serve ao acervo em que aprendeu (a normalizacao e a funcao
+        # dele sao desse acervo): outro acervo recomeca o juiz.
+        saved = state.get("dataset_hash")
+        if saved is not None and saved != self.dataset_hash:
+            raise RuntimeError(f"o juiz foi treinado em outro acervo ({saved} contra {self.dataset_hash}): "
+                               "recomece o juiz (a transferencia nao leva o juiz)")
         self.net.load_state_dict(state["net"])
         self.optimizer.load_state_dict(state["optimizer"])
         # A normalizacao do acervo em que ele aprendeu (o acervo pode ter mudado).

@@ -29,9 +29,18 @@ class MirrorLoss:
         self.observation = ChannelMirror(maps["observation"], device)
         self.action = ChannelMirror(maps["action"], device)
 
-    def __call__(self, model, obs_n: torch.Tensor) -> torch.Tensor:
+    def __call__(self, model, obs, raw: bool = False) -> torch.Tensor:
+        """raw=True: a entrada e a observacao CRUA (como o lote entrega): ela e
+        espelhada crua e os dois lados passam pela mesma estatistica congelada.
+        raw=False: a entrada ja esta normalizada; volta ao valor cru pela
+        estatistica de agora (o corte em +-5 nao se desfaz: use raw=True no
+        treino)."""
         norm = model.obs_norm
-        raw = obs_n * torch.sqrt(norm.var + 1e-8) + norm.mean
-        mirrored_n = norm(self.observation(raw))
-        mean = model.actor(obs_n)
+        if raw:
+            observed = norm(obs)
+        else:
+            observed = obs
+            obs = obs * torch.sqrt(norm.var + 1e-8) + norm.mean
+        mirrored_n = norm(self.observation(obs))
+        mean = model.actor(observed)
         return (model.actor(mirrored_n) - self.action(mean)).pow(2).sum(-1).mean()

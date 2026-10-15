@@ -166,7 +166,8 @@ def migrate_inputs(model: ActorCritic, old_obs: list[str], new_obs: list[str], o
     """Uma rede para a entrada nova a partir da antiga, fazendo exatamente o
     mesmo no primeiro instante: os canais que ja existiam levam os pesos deles,
     os novos entram com peso zero (e normalizacao neutra)."""
-    fresh = ActorCritic(len(new_obs), len(new_critic), model.action_size)
+    fresh = ActorCritic(len(new_obs), len(new_critic), model.action_size, actor_hidden=model.actor_hidden,
+                        critic_hidden=model.critic_hidden).to(next(model.parameters()).device)
     fresh.load_state_dict({k: v for k, v in model.state_dict().items()
                            if not (k.startswith("actor.0.") or k.startswith("critic.0.")
                                    or k.startswith("obs_norm.") or k.startswith("critic_norm."))}, strict=False)

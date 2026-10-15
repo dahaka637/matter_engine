@@ -19,8 +19,8 @@ def scratch(tmp_path, monkeypatch):
     return tmp_path
 
 
-def tiny(trainer_class, scratch, run, **kwargs):
-    trainer = trainer_class(run, task="corpo2", environments=16, seed=3, iterations=3,
+def tiny(trainer_class, scratch, run, task="corpo2", **kwargs):
+    trainer = trainer_class(run, task=task, environments=16, seed=3, iterations=3,
                             socket_path=scratch / f"{run}.sock", **kwargs)
     # Rodadas curtas e o juiz pequeno (a mecanica, nao o aprendizado).
     trainer.settings.steps_per_env = 8
@@ -210,3 +210,168 @@ def test_wilson_upper():
     from matter_rl.body_trainer import wilson_upper
     assert 0.10 < wilson_upper(0, 32) < 0.12
     assert wilson_upper(16, 32) > 0.5 and wilson_upper(32, 32) == 1.0
+
+
+# --- o plano de recuperacao (R1, itens 5, 6 e 10) ---------------------------------------
+
+
+def test_reward_composition_matches_the_batch_without_style(scratch):
+    """Sem o juiz, a conta do treinador e a do C++ (a regra do total nunca negativo
+    incluida); com o juiz, so o estilo pela porta G entra."""
+    from matter_rl.body_trainer import BodyTrainer
+    trainer = tiny(BodyTrainer, scratch, "composicao", task="aquisicao_p1", style=False)
+    batch = trainer.batch
+    assert trainer.positive_only
+    rng = np.random.default_rng(0)
+    for _ in range(6):
+        action = rng.normal(size=(batch.num_envs, batch.action_size)).astype(np.float32) * 0.5
+        batch.step(action, action)
+        parts = torch.tensor(np.asarray(batch.reward_components()))
+        mine = trainer.compose_rewards(parts, None).numpy()
+        assert np.allclose(mine, np.asarray(batch.rewards()), atol=1e-6)
+    # O estilo so paga pela porta G: onde G = 0 (parado com pedido de andar) nada entra.
+    style = torch.ones(batch.num_envs)
+    base = trainer.compose_rewards(parts, None)
+    paid = trainer.compose_rewards(parts, style)
+    gate = parts[:, trainer.ri["style_gate"]]
+    assert torch.all(paid - base >= -1e-9) and torch.all((paid - base)[gate == 0] == 0)
+
+
+def test_fixed_sigma_and_seeds(scratch):
+    from matter_rl.body_trainer import BodyTrainer, axis_group
+    a = tiny(BodyTrainer, scratch, "sigma_a", task="aquisicao_p0", style=False)
+    b = tiny(BodyTrainer, scratch, "sigma_b", task="aquisicao_p0", style=False)
+    # A mesma semente, a mesma rede inicial (o PyTorch tambem e semeado).
+    assert all(torch.equal(x, y) for x, y in zip(a.model.actor.parameters(), b.model.actor.parameters()))
+    assert not a.model.log_std.requires_grad
+    radians = np.asarray(a.batch.action_radians_per_unit())
+    sigma = a.model.log_std.detach().exp().cpu().numpy() * radians
+    for i, name in enumerate(a.action_names):
+        expected = {"legs": 0.06, "toes": 0.06, "arms": 0.05, "trunk": 0.03}[axis_group(name)]
+        assert abs(sigma[i] - expected) < 1e-3, name
+    before = a.model.log_std.detach().clone()
+    a.max_iterations = 2
+    a.loop()
+    assert torch.equal(a.model.log_std.detach(), before)
+    assert a.settings.entropy_coef == 0.0
+    manifest = json.loads((paths.run_dir("sigma_a") / "checkpoints" / sorted(
+        p.name for p in (paths.run_dir("sigma_a") / "checkpoints").iterdir())[-1] / "manifest.json").read_text())
+    assert manifest["seed"] == 3 and manifest["exploration"]["mode"] == "fixed" and manifest["positive_only"]
+
+
+def test_two_optimizers_and_kl_stop():
+    """O critico aprende mesmo quando o KL interrompe o ator."""
+    from matter_rl.model import ActorCritic
+    from matter_rl.ppo import PPO, PPOSettings, Rollout
+    torch.manual_seed(0)
+    model = ActorCritic(6, 7, 3, actor_hidden=[16], critic_hidden=[16])
+    settings = PPOSettings(steps_per_env=8, epochs=2, minibatches=2, separate_critic=True, kl_stop_factor=1e-9)
+    ppo = PPO(model, settings)
+    assert ppo.critic_optimizer is not None
+    actor_before = [p.detach().clone() for p in model.actor.parameters()]
+    critic_before = [p.detach().clone() for p in model.critic.parameters()]
+    rollout = Rollout(8, 16, 6, 7, 3, torch.device("cpu"))
+    for _ in range(8):
+        obs, critic = torch.randn(16, 6), torch.randn(16, 7)
+        dist = model.distribution(obs)
+        action = dist.sample()
+        rollout.add(obs, critic, action, dist.log_prob(action).sum(-1).detach(), model.value(critic).detach(), torch.randn(16),
+                    torch.zeros(16), dist.mean.detach(), dist.stddev.detach())
+    rollout.compute_returns(torch.zeros(16), settings.gamma, settings.lam)
+    stats = ppo.update(rollout)
+    # (O primeiro minibatch ve KL ~0 e atualiza o ator; a partir do segundo, ja parou.)
+    assert stats["kl_halted"] == 1.0 and stats["actor_steps"] <= 1
+    assert any(not torch.equal(x, y) for x, y in zip(critic_before, model.critic.parameters()))
+    # Sem a parada, o ator anda; e o estado dos dois otimizadores vai e volta.
+    ppo.settings.kl_stop_factor = 0.0
+    stats = ppo.update(rollout)
+    assert stats["actor_steps"] == 4 and stats["critic_grad_norm"] > 0.0
+    assert any(not torch.equal(x, y) for x, y in zip(actor_before, model.actor.parameters()))
+    state = ppo.state_dict()
+    assert "critic_optimizer" in state
+    PPO(ActorCritic(6, 7, 3, actor_hidden=[16], critic_hidden=[16]), settings).load_state_dict(state)
+
+
+def test_frozen_normalization_and_raw_mirror(scratch):
+    """A estatistica da normalizacao so muda na fronteira da rodada, e o espelho
+    usa a observacao crua (o corte em +-5 nao se desfaz)."""
+    from matter_rl.body_trainer import BodyTrainer
+    from matter_rl.symmetry import MirrorLoss
+    trainer = tiny(BodyTrainer, scratch, "congelada", task="aquisicao_p0", style=False)
+    trainer.settings.steps_per_env = 4
+    before = trainer.model.obs_norm.mean.clone()
+    rollout, info = trainer.collect()
+    # Na coleta a estatistica ficou congelada e a candidata andou.
+    assert torch.equal(trainer.collector.obs_norm.mean, before) and torch.equal(trainer.model.obs_norm.mean, before)
+    assert not torch.equal(trainer.obs_candidate.mean, before)
+    # As observacoes guardadas sao as que a politica viu, e as cruas batem com elas.
+    assert torch.allclose(trainer.model.obs_norm(rollout.raw), rollout.obs, atol=1e-6)
+    stats = trainer.update(rollout)
+    assert torch.equal(trainer.model.obs_norm.mean, before)
+    trainer.finish(stats, info)
+    assert torch.equal(trainer.model.obs_norm.mean, trainer.obs_candidate.mean)
+    assert torch.equal(trainer.collector.obs_norm.mean, trainer.model.obs_norm.mean)
+    # O espelho cru: uma entrada que o corte em +-5 teria mudado.
+    mirror = MirrorLoss(trainer.batch.mirror_maps(), trainer.device)
+    raw = rollout.raw.reshape(-1, rollout.raw.shape[-1])[:64].clone()
+    raw[:, 0] += 50.0
+    exact = float(mirror(trainer.model, raw, raw=True).detach())
+    recovered = float(mirror(trainer.model, trainer.model.obs_norm(raw)).detach())
+    assert np.isfinite(exact) and np.isfinite(recovered)
+    mirrored = mirror.observation(raw)
+    manual = (trainer.model.actor(trainer.model.obs_norm(mirrored))
+              - mirror.action(trainer.model.actor(trainer.model.obs_norm(raw)))).pow(2).sum(-1).mean()
+    assert abs(exact - float(manual.detach())) < 1e-5
+
+
+def test_transfer_between_steps_and_judge_warmup(scratch):
+    """Um treino novo que nasce de outro: o ator e a normalizacao passam, o
+    critico e o juiz recomecam, e o ator espera o aquecimento do juiz."""
+    from matter_rl.body_trainer import BodyTrainer
+    first = tiny(BodyTrainer, scratch, "degrau_a", task="aquisicao_p0", style=False)
+    first.max_iterations = 1
+    first.loop()
+    second = tiny(BodyTrainer, scratch, "degrau_b", task="aquisicao_p3a", transfer_from="degrau_a", warmup=2)
+    assert second.counters["iteration"] == 0 and second.counters["warmup_left"] == 2
+    assert all(torch.equal(x, y) for x, y in zip(first.model.actor.parameters(), second.model.actor.parameters()))
+    assert torch.equal(first.model.obs_norm.mean, second.model.obs_norm.mean)
+    assert second.config.transferred_from == "degrau_a" and second.judge is not None
+    actor_start = [p.detach().clone() for p in second.model.actor.parameters()]
+    second.max_iterations = 2
+    second.loop()
+    # As duas rodadas de aquecimento nao mexeram no ator; a seguinte mexe.
+    assert second.counters["warmup_left"] == 0
+    assert all(torch.equal(x, y) for x, y in zip(actor_start, second.model.actor.parameters()))
+    third = tiny(BodyTrainer, scratch, "degrau_b", task="aquisicao_p3a")
+    assert third.counters["iteration"] == 2 and third.counters["warmup_left"] == 0
+    third.max_iterations = 4
+    third.loop()
+    assert any(not torch.equal(x, y) for x, y in zip(actor_start, third.model.actor.parameters()))
+    db = storage.Database(paths.DATABASE)
+    events = [row["kind"] for row in db.execute("SELECT kind FROM events WHERE run='degrau_b'").fetchall()]
+    assert "transferencia" in events and "aquecimento" in events
+
+
+def test_judge_refuses_another_acervo_and_weights_the_normalization():
+    from matter_rl.amp import Judge, JudgeSettings
+    rng = np.random.default_rng(0)
+    width = 6
+    pairs = rng.normal(size=(40, width)).astype(np.float32)
+    pairs[:20] += 5.0
+    weights = np.concatenate([np.full(20, 0.9 / 20), np.full(20, 0.1 / 20)])
+
+    def dataset(name):
+        return {"pairs": pairs, "pair_weight": weights, "hash": name,
+                "clips": [{"reserved": False, "first_pair": 0, "pairs": 40}]}
+
+    device = torch.device("cpu")
+    judge = Judge(dataset("a"), JudgeSettings(hidden=[8]), device)
+    # A media com os pesos: a metade pesada (+5) domina.
+    half = width // 2
+    expected = (pairs[:, :half].T @ weights + pairs[:, half:].T @ weights) / (2 * weights.sum())
+    assert np.allclose(judge.mean[:half].numpy(), expected, atol=1e-4)
+    other = Judge(dataset("b"), JudgeSettings(hidden=[8]), device)
+    with pytest.raises(RuntimeError):
+        other.load_state_dict(judge.state_dict())
+    twin = Judge(dataset("a"), JudgeSettings(hidden=[8]), device)
+    twin.load_state_dict(judge.state_dict())
