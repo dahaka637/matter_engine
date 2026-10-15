@@ -162,7 +162,7 @@ def test_resume_after_crash_rewinds_history(tmp_path: Path):
     crashed = db.begin_session("t", 0, "maximo", "cuda")
     for iteration in range(1, 21):
         db.log_iteration({"run": "t", "iteration": iteration, "time": time.time(), "steps": iteration})
-    db.log_evaluation({"run": "t", "iteration": 15, "time": time.time(), "steps": 15, "battery": "b", "solver": "jogo"})
+    db.log_body_evaluation("t", 15, 15, "andar_frente", "jogo", {"falls": 0.0})
     db.commit()
     resumed = db.begin_session("t", 10, "maximo", "cuda")
     assert db.rewind("t", 10) == 10
@@ -170,14 +170,7 @@ def test_resume_after_crash_rewinds_history(tmp_path: Path):
     assert rows[0]["id"] == crashed and rows[0]["end_reason"] == "interrompida" and rows[0]["finish_utc"]
     assert rows[1]["id"] == resumed and rows[1]["finish_utc"] is None
     assert db.execute("SELECT MAX(iteration) FROM iterations").fetchone()[0] == 10
-    assert db.execute("SELECT COUNT(*) FROM evaluations").fetchone()[0] == 0
-    assert db.last_evaluation("t") == {}
-    for solver, score in (("treino", 0.9), ("jogo", 0.95)):
-        db.log_evaluation({"run": "t", "iteration": 10, "time": time.time(), "steps": 10, "battery": "b",
-                           "solver": solver, "stand_fraction": 1.0, "score": score, "ends": "{\"tempo\": 32}"})
-    last = db.last_evaluation("t")
-    assert last["iteration"] == 10 and last["score"] == 0.9 and last["solvers"]["jogo"]["ends"] == {"tempo": 32}
-    assert abs(last["time"] - time.time()) < 60.0
+    assert db.execute("SELECT COUNT(*) FROM body_evaluations").fetchone()[0] == 0
 
 
 def test_history_sampled_by_time_keeps_compacted_rows(tmp_path: Path):
@@ -221,40 +214,3 @@ def test_control_roundtrip(tmp_path: Path):
     assert answer["echo"] == ["pausar", {"autor": "teste"}]
     server.close()
     assert control.request("status", path=socket_path) is None
-
-
-def test_drill_weights_follow_the_exam():
-    """As fatias dos exercicios: o atrasado ganha mais mundos (ate o teto), o
-    que alcanca os outros volta ao peso de base."""
-    from matter_rl.evaluation import drill_weights
-    drills = [{"id": "pontos", "weight": 1.0}, {"id": "peito", "weight": 2.0, "baseWeight": 1.0},
-              {"id": "tiro", "weight": 1.0}]
-    rule = {"gain": 10.0, "maximumFactor": 3.0}
-    out = {d: (base, w) for d, base, w in drill_weights(drills, {"pontos": 0.90, "peito": 0.90, "tiro": 0.85}, rule)}
-    assert out["pontos"] == (1.0, 1.0) and out["peito"] == (1.0, 1.0)   # o que alcanca volta a base
-    assert out["tiro"] == (1.0, 1.5)                                     # 0,05 atras: 1 + 10 * 0,05
-    capped = dict((d, w) for d, _, w in drill_weights(drills, {"pontos": 0.9, "tiro": 0.2}, rule))
-    assert capped["tiro"] == 3.0 and "peito" not in capped              # o teto; sem nota, fica de fora
-    assert drill_weights(drills, {}, rule) == []
-
-
-def test_trainer_applies_drill_weights(tmp_path):
-    """O caminho do treino de verdade: o treinador aplica as fatias do exame
-    na copia da tarefa, recarrega os mundos e grava o evento (em 14/10 ele
-    caia no exame por um import faltando, e o teste de cima nao via)."""
-    import json
-    import types
-    from matter_rl.trainer import Trainer
-    task = tmp_path / "tarefa.json"
-    task.write_text(json.dumps({
-        "drills": [{"id": "a", "weight": 1.0}, {"id": "b", "weight": 1.0}],
-        "drillWeights": {"auto": True, "gain": 10.0, "maximumFactor": 3.0},
-        "evaluation": [{"name": "a_v1", "drill": "a"}, {"name": "b_v1", "drill": "b"}]}))
-    reloads, events = [], []
-    fake = types.SimpleNamespace(live_task=task, run="r", batch=types.SimpleNamespace(update_task=reloads.append),
-                                 db=types.SimpleNamespace(event=lambda *args, **kwargs: events.append(args)))
-    Trainer.adjust_drill_weights(fake, {"a_v1": {"jogo": {"score": 0.9}}, "b_v1": {"jogo": {"score": 0.8}}})
-    weights = {d["id"]: (d["weight"], d.get("baseWeight")) for d in json.loads(task.read_text())["drills"]}
-    assert weights["a"][0] == 1.0 and weights["b"] == (2.0, 1.0)   # 0,1 atras: 1 + 10 * 0,1
-    assert reloads == [str(task)] and events[0][1] == "exercicios"
-

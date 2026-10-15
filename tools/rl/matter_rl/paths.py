@@ -16,7 +16,7 @@ NATIVE_DIR = Path(os.environ.get("MATTER_RL_NATIVE", REPO / "build-rl" / "python
 
 
 def task_path(task: str) -> Path:
-    """Aceita o id da tarefa (h1_ficar_em_pe) ou um caminho."""
+    """Aceita o id da tarefa (aquisicao_p3a) ou um caminho."""
     candidate = Path(task)
     if candidate.suffix == ".json" and candidate.exists():
         return candidate.resolve()

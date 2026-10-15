@@ -75,25 +75,28 @@ check_absent "So a ponte do treinador (bindings/python) inclui Python" \
     '#include .(Python\.h|pybind11|nanobind)' src tests tools -g '!tools/rl/**'
 check_absent "Mundos de treino e politica do RL nao dependem da interface nem do treinador" \
     '#include "(Workbench|Engine/RL/Supervisor)/' src/Engine/RL/Environment src/Engine/RL/Body src/Engine/RL/Policy src/Engine/RL/Imitation
-check_absent "Mundos de treino e politica do RL nao dependem do atleta nem da locomocao do jogo (o professor entra pela interface, em RL/Teacher)" \
+check_absent "Mundos de treino e politica do RL nao dependem do atleta nem da locomocao do jogo" \
     '#include "Engine/(Athlete|Character|Control|Locomotion)/' src/Engine/RL/Environment src/Engine/RL/Body src/Engine/RL/Policy src/Engine/RL/Imitation
 check_absent "A politica exportada (RL/Policy) nao depende da fisica" \
     '#include "Engine/(Physics|RL/Environment|RL/Body)/' src/Engine/RL/Policy
-check_absent "Contrato do Corpo e corpo de RL (vao para o jogo) nao dependem dos mundos de treino, do estilo, das notas, do piloto, da imitacao, do professor nem do treinador" \
-    '#include "Engine/RL/(Environment|Style|Rewards|Commands|Imitation|Teacher|Supervisor|Calibration)/' \
+check_absent "Contrato do Corpo e corpo de RL (vao para o jogo) nao dependem dos mundos de treino, do estilo, das notas, do piloto, da imitacao nem do treinador" \
+    '#include "Engine/RL/(Environment|Style|Rewards|Commands|Imitation|Supervisor|Calibration)/' \
     src/Engine/RL/Contract src/Engine/RL/Body
 check_absent "O piloto e o adaptador do controle (RL/Commands) sao dados puros: sem fisica, Jolt nem as pecas do treino" \
-    '#include "Engine/(Physics|RL/(Environment|Style|Rewards|Imitation|Teacher|Supervisor|Calibration|Body))/|#include <Jolt/' \
+    '#include "Engine/(Physics|RL/(Environment|Style|Rewards|Imitation|Supervisor|Calibration|Body))/|#include <Jolt/' \
     src/Engine/RL/Commands
 check_absent "As notas do Corpo (RL/Rewards) nao dependem dos mundos de treino, do estilo nem da imitacao" \
-    '#include "Engine/RL/(Environment|Style|Imitation|Teacher|Supervisor)/' src/Engine/RL/Rewards
+    '#include "Engine/RL/(Environment|Style|Imitation|Supervisor)/' src/Engine/RL/Rewards
 check_absent "O cerebro do Corpo no jogo (RL/Brain) e so o contrato e a politica: nada do treino" \
-    '#include "Engine/RL/(Environment|Style|Rewards|Commands|Imitation|Teacher|Supervisor|Calibration)/' \
+    '#include "Engine/RL/(Environment|Style|Rewards|Commands|Imitation|Supervisor|Calibration)/' \
     src/Engine/RL/Brain
 check_absent "O estilo (o juiz e o acervo, RL/Style) so entra nos mundos de treino" \
     '#include "Engine/RL/Style/' src/Engine/RL/Policy src/Engine/RL/Commands src/Engine/RL/Rewards \
-    src/Engine/RL/Imitation src/Engine/RL/Teacher src/Engine/RL/Supervisor src/Engine/RL/Calibration \
+    src/Engine/RL/Imitation src/Engine/RL/Supervisor src/Engine/RL/Calibration \
     src/Engine/Athlete src/Workbench
+check_absent "O contrato 1 do RL (o lote antigo, as tarefas H e o professor) foi removido e nao volta" \
+    '\b(TrainingBatch3D|TrainingTask3D|TrainingTeacher3D|LocomotionTeacher3D)\b|Engine/RL/Teacher/' src tests tools bindings \
+    -g '!tools/check-architecture.*'
 check_absent "Tela de RL fala com o treinador so pelo Supervisor (sem sockets nem processos)" \
     '#include <(sys/|spawn\.h|unistd\.h)' src/Workbench
 check_absent "Tela de RL fala com a GPU so pelo CanvasTarget" \

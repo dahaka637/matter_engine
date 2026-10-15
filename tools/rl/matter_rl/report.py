@@ -3,7 +3,6 @@ as folhas de quadros (o jogador de verdade, pelo MatterModelInspector)."""
 from __future__ import annotations
 
 import json
-import math
 import subprocess
 import time
 from pathlib import Path
@@ -36,7 +35,6 @@ def hours(seconds: float) -> str:
 def format_status(status: dict) -> str:
     last = status.get("last") or {}
     evaluation = status.get("evaluation") or {}
-    best = status.get("best") or {}
     lines = [
         f"treino {status['run']} · {status.get('taskName', status.get('task'))} · {status['state']}"
         + ("" if status.get("alive") else " (treinador fechado)"),
@@ -52,22 +50,22 @@ def format_status(status: dict) -> str:
                      f"{ep:.1f} s" if ep is not None else f"ultima rodada: recompensa {last.get('reward', 0):.3f}")
         if fall is not None:
             lines[-1] += f" · quedas {100 * fall:.0f}% dos fins"
-    if evaluation:
-        lines.append(f"avaliacao (rodada {evaluation.get('iteration')}): nota {evaluation.get('score', 0):.3f}")
-        batteries = evaluation.get("batteries") or {"equilibrio_v1": {"solvers": evaluation.get("solvers", {})}}
-        for battery, entry in batteries.items():
-            parts = []
-            for solver, m in entry.get("solvers", {}).items():
-                part = (f"{solver}: de pe {100 * m['stand_fraction']:.0f}% ({m['mean_seconds']:.0f} s), "
-                        f"oscilacao {100 * m['sway']:.1f} cm")
-                if m.get("turn") is not None:
-                    part += f", giro do tronco {math.degrees(m['turn']):.0f} graus/s"
-                if m.get("pose_error") is not None:
-                    part += f", postura a {math.degrees(m['pose_error']):.1f} graus"
-                parts.append(part)
-            lines.append(f"  {battery}: " + " · ".join(parts))
-    if best and best.get("iteration", -1) >= 0 and best.get("score", -1e9) > -1e8:
-        lines.append(f"melhor: nota {best['score']:.3f} na rodada {best['iteration']}")
+    if evaluation.get("solvers"):
+        # A avaliacao do Corpo: solver -> exercicio -> medidas.
+        lines.append(f"avaliacao (rodada {evaluation.get('iteration')}):")
+        for solver, drills in evaluation["solvers"].items():
+            for drill, m in drills.items():
+                part = f"  {drill} ({solver}): quedas {100 * m.get('falls', 0):.0f}%"
+                if m.get("velocity_error_median") is not None:
+                    part += f", erro de velocidade {m['velocity_error_median']:.2f} m/s"
+                if m.get("useful_steps") is not None:
+                    part += f", passos uteis {m['useful_steps']:.2f}/s"
+                if m.get("slip") is not None:
+                    part += f", escorregar {m['slip']:.3f} m/s"
+                lines.append(part)
+    style = status.get("style") or {}
+    if style.get("enabled"):
+        lines.append(f"estilo: beta {style.get('beta', 0):.2f} · nota {last.get('style', 0):.3f}/decisao")
     temperature = status.get("cpuTemperature")
     if temperature:
         lines.append(f"CPU {temperature:.0f} °C · memoria {status.get('memoryMB', 0):.0f} MB")
@@ -81,7 +79,7 @@ def report(run: str, since_seconds: float) -> str:
     db = storage.Database(readonly=True)
     start = time.time() - since_seconds
     rows = db.execute("SELECT * FROM iterations WHERE run=? AND time>=? ORDER BY iteration", (run, start)).fetchall()
-    evals = db.execute("""SELECT * FROM evaluations WHERE run=? AND time>=? ORDER BY iteration, battery, solver""",
+    evals = db.execute("""SELECT * FROM body_evaluations WHERE run=? AND time>=? ORDER BY iteration, drill, solver""",
                        (run, start)).fetchall()
     events = db.execute("SELECT * FROM events WHERE run=? AND time>=? ORDER BY time", (run, start)).fetchall()
     out = [f"# Treino `{run}` — ultimas {since_seconds / 3600:.1f} h", ""]
@@ -122,18 +120,15 @@ def report(run: str, since_seconds: float) -> str:
     else:
         out.append("- Nenhuma rodada no periodo.")
     if evals:
-        out += ["", "## Avaliacoes", "", "| Rodada | Bateria | Solver | De pe 60 s | Media (s) | Oscilacao (cm) | "
-                "Deriva pes (cm) | Giro do tronco (graus/s) | Pe girando (graus) | Mudanca de acao | Nota |",
-                "|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|"]
+        out += ["", "## Avaliacoes", "", "| Rodada | Exercicio | Solver | Quedas | Erro de velocidade (m/s) | "
+                "Passos uteis /s | Escorregar (m/s) |", "|---:|---|---|---:|---:|---:|---:|"]
+        def cell(value, pattern):
+            return pattern.format(value) if value is not None else "—"
         for e in evals:
-            value = e["turn"] if "turn" in e.keys() else None
-            turn = f"{math.degrees(value):.1f}" if value is not None else "—"
-            value = e["foot_turn"] if "foot_turn" in e.keys() else None
-            foot = f"{math.degrees(value):.1f}" if value is not None else "—"
-            out.append(f"| {e['iteration']} | {e['battery']} | {e['solver']} | {100 * e['stand_fraction']:.0f}% | "
-                       f"{e['mean_seconds']:.1f} | "
-                       f"{100 * e['sway']:.1f} | {100 * e['foot_drift']:.1f} | {turn} | {foot} | {e['action_rate']:.4f} | "
-                       f"{e['score']:.3f} |")
+            m = json.loads(e["data"] or "{}")
+            out.append(f"| {e['iteration']} | {e['drill']} | {e['solver']} | {100 * m.get('falls', 0):.0f}% | "
+                       f"{cell(m.get('velocity_error_median'), '{:.2f}')} | {cell(m.get('useful_steps'), '{:.2f}')} | "
+                       f"{cell(m.get('slip'), '{:.3f}')} |")
     if events:
         out += ["", "## Eventos", ""]
         for e in events:
@@ -151,7 +146,7 @@ def plots(run: str, output: Path) -> list[Path]:
 
     db = storage.Database(readonly=True)
     rows = db.sampled_iterations(run, 2000)
-    evals = db.execute("SELECT * FROM evaluations WHERE run=? ORDER BY iteration", (run,)).fetchall()
+    evals = db.execute("SELECT * FROM body_evaluations WHERE run=? ORDER BY iteration", (run,)).fetchall()
     db.close()
     output.mkdir(parents=True, exist_ok=True)
     if not rows:
@@ -169,11 +164,12 @@ def plots(run: str, output: Path) -> list[Path]:
     series(axes[0][1], "episode_seconds", "duracao do episodio (s)")
     series(axes[1][0], "fall_fraction", "fins por queda (%)", 100.0)
     if evals:
-        for key in sorted({(e["battery"], e["solver"]) for e in evals}):
-            points = [(e["steps"] / 1e6, 100 * e["stand_fraction"]) for e in evals if (e["battery"], e["solver"]) == key]
+        for key in sorted({(e["drill"], e["solver"]) for e in evals}):
+            points = [(e["steps"] / 1e6, 100 * (1.0 - json.loads(e["data"] or "{}").get("falls", 0.0)))
+                      for e in evals if (e["drill"], e["solver"]) == key]
             axes[1][1].plot([p[0] for p in points], [p[1] for p in points], marker="o", label=f"{key[0]} {key[1]}")
         axes[1][1].legend(fontsize=7)
-    axes[1][1].set_title("avaliacao: de pe por 60 s (%)")
+    axes[1][1].set_title("avaliacao: sem cair (%)")
     axes[1][1].grid(alpha=0.3)
     series(axes[2][0], "action_std", "desvio da acao")
     series(axes[2][1], "sps", "decisoes por segundo")

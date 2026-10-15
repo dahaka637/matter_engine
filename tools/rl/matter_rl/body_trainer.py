@@ -2,9 +2,8 @@
 e as notas novas), o PPO com as redes do plano, o juiz de estilo (AMP) com o
 botao beta e a atualizacao da GPU sobreposta a coleta seguinte.
 
-O contrato 1 (a imitacao residual, o professor, o curriculo) continua no
-trainer.py. Os dois dividem o banco, o canal de controle, os checkpoints e a
-exportacao para o C++.
+O banco, o canal de controle, os checkpoints e a exportacao para o C++ ficam
+nos modulos de apoio (storage, control, model).
 
 A sobreposicao (Experimento A: a GPU leva ~0,6 s por rodada, quase o mesmo que
 a fisica): enquanto a GPU atualiza com a rodada k, a fisica coleta a k+1 com a

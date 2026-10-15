@@ -228,12 +228,6 @@ class Database:
                         VALUES (?, ?, ?, ?, ?, ?, ?)""", (run, iteration, time.time(), steps, drill, solver, json.dumps(data)))
         self.commit()
 
-    def log_evaluation(self, row: dict) -> None:
-        columns = ", ".join(row)
-        marks = ", ".join(f":{key}" for key in row)
-        self.execute(f"INSERT OR REPLACE INTO evaluations({columns}) VALUES ({marks})", row)
-        self.commit()
-
     def log_checkpoint(self, run: str, iteration: int, steps: int, path: Path, kind: str, score: float | None) -> None:
         self.execute("""INSERT OR REPLACE INTO checkpoints(run, iteration, time, steps, path, kind, score)
                         VALUES (?, ?, ?, ?, ?, ?, ?)""", (run, iteration, time.time(), steps, str(path), kind, score))
@@ -254,30 +248,9 @@ class Database:
         lost = self.execute("SELECT COUNT(*) FROM iterations WHERE run=? AND iteration>?", (run, iteration)).fetchone()[0]
         self.execute("DELETE FROM iterations WHERE run=? AND iteration>?", (run, iteration))
         self.execute("DELETE FROM evaluations WHERE run=? AND iteration>?", (run, iteration))
+        self.execute("DELETE FROM body_evaluations WHERE run=? AND iteration>?", (run, iteration))
         self.commit()
         return int(lost)
-
-    def last_evaluation(self, run: str) -> dict:
-        """A avaliacao mais recente do treino, no formato do status (a tela e a
-        CLI mostram a ultima nota logo depois de reabrir)."""
-        rows = self.execute("""SELECT * FROM evaluations WHERE run=? AND iteration=
-                               (SELECT MAX(iteration) FROM evaluations WHERE run=?)""", (run, run)).fetchall()
-        if not rows:
-            return {}
-        from .evaluation import BASE_BATTERY, battery_kind, battery_posture
-        keys = ("stand_fraction", "mean_seconds", "sway", "foot_drift", "action_rate", "effort", "upright", "turn",
-                "joint_speed", "foot_turn", "pose_error", "velocity_error", "lateral_drift", "goal_error", "score")
-        batteries: dict[str, dict] = {}
-        for row in rows:
-            entry = batteries.setdefault(row["battery"], {"posture": battery_posture(row["battery"]),
-                                                          "kind": battery_kind(row["battery"]), "solvers": {}})
-            entry["solvers"][row["solver"]] = ({key: row[key] if key in row.keys() else None for key in keys}
-                                               | {"ends": json.loads(row["ends"] or "{}")})
-        first = batteries.get(BASE_BATTERY) or next(iter(batteries.values()))
-        return {"iteration": rows[0]["iteration"],
-                "score": min(m["score"] for b in batteries.values() for m in b["solvers"].values()),
-                "solvers": first["solvers"], "batteries": batteries, "seconds": 0.0,
-                "time": max(row["time"] for row in rows)}
 
     def sampled_iterations(self, run: str, points: int = 2000, since: float = 0.0) -> list[sqlite3.Row]:
         """Ate `points` rodadas espalhadas no tempo (a mais recente de cada janela).

@@ -81,24 +81,24 @@ $checks = @(
         Arguments = @("-n", '#include "Engine/(Physics|RL/Environment|RL/Body)/', "src/Engine/RL/Policy")
     }
     @{
-        Name = "Contrato do Corpo e corpo de RL (vao para o jogo) nao dependem dos mundos de treino, do estilo, das notas, do piloto, da imitacao, do professor nem do treinador"
-        Arguments = @("-n", '#include "Engine/RL/(Environment|Style|Rewards|Commands|Imitation|Teacher|Supervisor|Calibration)/', "src/Engine/RL/Contract", "src/Engine/RL/Body")
+        Name = "Contrato do Corpo e corpo de RL (vao para o jogo) nao dependem dos mundos de treino, do estilo, das notas, do piloto, da imitacao nem do treinador"
+        Arguments = @("-n", '#include "Engine/RL/(Environment|Style|Rewards|Commands|Imitation|Supervisor|Calibration)/', "src/Engine/RL/Contract", "src/Engine/RL/Body")
     }
     @{
         Name = "O piloto e o adaptador do controle (RL/Commands) sao dados puros: sem fisica, Jolt nem as pecas do treino"
-        Arguments = @("-n", '#include "Engine/(Physics|RL/(Environment|Style|Rewards|Imitation|Teacher|Supervisor|Calibration|Body))/|#include <Jolt/', "src/Engine/RL/Commands")
+        Arguments = @("-n", '#include "Engine/(Physics|RL/(Environment|Style|Rewards|Imitation|Supervisor|Calibration|Body))/|#include <Jolt/', "src/Engine/RL/Commands")
     }
     @{
         Name = "As notas do Corpo (RL/Rewards) nao dependem dos mundos de treino, do estilo nem da imitacao"
-        Arguments = @("-n", '#include "Engine/RL/(Environment|Style|Imitation|Teacher|Supervisor)/', "src/Engine/RL/Rewards")
+        Arguments = @("-n", '#include "Engine/RL/(Environment|Style|Imitation|Supervisor)/', "src/Engine/RL/Rewards")
     }
     @{
         Name = "O cerebro do Corpo no jogo (RL/Brain) e so o contrato e a politica: nada do treino"
-        Arguments = @("-n", '#include "Engine/RL/(Environment|Style|Rewards|Commands|Imitation|Teacher|Supervisor|Calibration)/', "src/Engine/RL/Brain")
+        Arguments = @("-n", '#include "Engine/RL/(Environment|Style|Rewards|Commands|Imitation|Supervisor|Calibration)/', "src/Engine/RL/Brain")
     }
     @{
         Name = "O estilo (o juiz e o acervo, RL/Style) so entra nos mundos de treino"
-        Arguments = @("-n", '#include "Engine/RL/Style/', "src/Engine/RL/Policy", "src/Engine/RL/Commands", "src/Engine/RL/Rewards", "src/Engine/RL/Imitation", "src/Engine/RL/Teacher", "src/Engine/RL/Supervisor", "src/Engine/RL/Calibration", "src/Engine/Athlete", "src/Workbench")
+        Arguments = @("-n", '#include "Engine/RL/Style/', "src/Engine/RL/Policy", "src/Engine/RL/Commands", "src/Engine/RL/Rewards", "src/Engine/RL/Imitation", "src/Engine/RL/Supervisor", "src/Engine/RL/Calibration", "src/Engine/Athlete", "src/Workbench")
     }
     @{
         Name = "Tela de RL fala com o treinador so pelo Supervisor (sem sockets nem processos)"
