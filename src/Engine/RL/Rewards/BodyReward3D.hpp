@@ -71,7 +71,8 @@ struct BodyRewardSettings3D {
     // Andando: a cada pisada, a base mais estreita que athleticWalkWidth (m)
     // tambem custa (fracao que falta; 0 = desligado).
     float athleticWalkWidth = 0.0f;
-    // O pivo: o giro (rad/s) dos pes apoiados em torno da vertical.
+    // O pivo: o giro (rad/s) dos pes apoiados em torno da vertical (so com a
+    // camera quieta: girar no lugar pode girar o pe).
     float pivot = 0.0f;
     // O parado de verdade: o custo still so vale com o pedido de parar ha mais
     // de stillGraceSeconds (os passos para frear nao pagam).

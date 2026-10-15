@@ -906,7 +906,8 @@ void BodyTrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> a
             // A base estreita das pisadas desta decisao e o pivo dos pes apoiados.
             // (Cada pisada vale como 0,25 s da falta: a soma por segundo fica perto da fatia que falta.)
             costs.athletic += world.walkWidthPenalty * 0.25f / decision();
-            costs.pivot = world.pivotNow;
+            // O pivo so custa com a camera quieta: girar no lugar pode girar o pe.
+            costs.pivot = std::abs(world.command.faceRate) < 0.1f ? world.pivotNow : 0.0f;
             world.walkWidthPenalty = world.pivotNow = 0.0f;
             if (!world.footWas[0] && !world.footWas[1]) ++world.bothAirSteps;
             const bool contactNow[2] = { world.footWas[0], world.footWas[1] };
