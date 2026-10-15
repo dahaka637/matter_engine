@@ -54,7 +54,9 @@ struct BodyRewardSettings3D {
     float still = 0.0f;
     float athletic = 0.0f;
     // A postura: a inclinacao do peito que nao custa cresce com a velocidade
-    // (graus: a base mais por m/s, ate o maximo; a cabeca so tem a base).
+    // e com a aceleracao do corpo (graus: a base, mais por m/s, mais atan(a/g):
+    // o quanto a fisica pede para acelerar, frear, curvar ou segurar um
+    // empurrao; ate o maximo). A cabeca so tem a base.
     float postureLeanDegrees = 0.0f;
     float postureLeanPerSpeed = 0.0f;
     float postureLeanMaxDegrees = 0.0f;
@@ -174,6 +176,10 @@ private:
     double m_impact = 0.0;
     double m_head = 0.0;
     double m_posture = 0.0;
+    // A aceleracao horizontal da pelve, suavizada (m/s2), e a velocidade de antes.
+    float m_accel = 0.0f;
+    Vec3 m_lastVelocity;
+    bool m_haveVelocity = false;
     float m_leanBase = 0.0f;
     float m_leanPerSpeed = 0.0f;
     float m_leanMax = 0.0f;

@@ -615,6 +615,7 @@ void BodyTrainingBatch3D::Impl::resetWorld(std::uint32_t index) {
     world.steps = 0;
     world.played = 0;
     world.pushRemaining = 0.0f;
+    world.costs = BodyCostAccumulator3D {};
 
     // O contrato parte do corpo de agora; os motores seguram a pose dele.
     const RagdollState3D* state = physics.ragdollStateView(world.ragdoll);

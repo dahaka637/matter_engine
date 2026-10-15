@@ -17,8 +17,16 @@ bool isFootPart(const RLBody3D& body, std::uint32_t link) {
 
 void BodyCostAccumulator3D::begin(const RagdollState3D& state, const RLBody3D& body) {
     const float leanBase = m_leanBase, leanPerSpeed = m_leanPerSpeed, leanMax = m_leanMax;
+    const float accel = m_accel;
+    const Vec3 lastVelocity = m_lastVelocity;
+    const bool haveVelocity = m_haveVelocity;
     *this = {};
     setLean(leanBase, leanPerSpeed, leanMax);
+    // A aceleracao segue de uma decisao para a outra (o lote recria o
+    // acumulador a cada episodio).
+    m_accel = accel;
+    m_lastVelocity = lastVelocity;
+    m_haveVelocity = haveVelocity;
     m_headVertical = state.links[body.head].linearVelocity.z;
 }
 
@@ -80,7 +88,14 @@ void BodyCostAccumulator3D::addSubstep(const RLBody3D& body, const RagdollState3
     // cabeca, so a base.
     const Vec3 v = state.links.front().linearVelocity;
     const float speed = std::hypot(v.x, v.y);
-    const float chestLean = std::min(m_leanMax, m_leanBase + m_leanPerSpeed * speed) * 3.14159265f / 180.0f;
+    if (m_haveVelocity) {
+        const float a = std::hypot(v.x - m_lastVelocity.x, v.y - m_lastVelocity.y) / std::max(1.0e-4f, fixedStep);
+        m_accel += (a - m_accel) * std::min(1.0f, fixedStep / 0.1f);
+    }
+    m_lastVelocity = v;
+    m_haveVelocity = true;
+    const float needed = std::atan(m_accel / 9.81f) * 180.0f / 3.14159265f;
+    const float chestLean = std::min(m_leanMax, m_leanBase + m_leanPerSpeed * speed + needed) * 3.14159265f / 180.0f;
     const float headLean = m_leanBase * 3.14159265f / 180.0f;
     for (const std::uint32_t link : { body.upperChest, body.head }) {
         const Quaternion frame = (state.links[link].orientation
