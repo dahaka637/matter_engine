@@ -1,5 +1,5 @@
-"""O Experimento A da reformulacao do RL (vault: Aprendizado_por_Reforco/
-novo_plano/plano_claude_rl.md, secao 14.1): quanto custa, na GPU, uma rodada
+"""O Experimento A da reformulacao do RL (vault: legado/rl_v1/
+04_locomocao/referencia/plano_claude_rl.md, secao 14.1): quanto custa, na GPU, uma rodada
 do PPO com as redes de hoje e com as do plano (o ator e o critico maiores, o
 juiz de estilo e o espelho), contra o tempo da coleta da fisica.
 

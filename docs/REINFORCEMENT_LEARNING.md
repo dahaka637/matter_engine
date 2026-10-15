@@ -5,13 +5,13 @@ aprende a se mover sozinho: PPO com o juiz de estilo (AMP) como peso que o
 usuário abaixa até zero. O contrato 1 (a imitação residual, o professor, as
 tarefas H1 a H7 e o Corpo v15) foi removido em 15/10/2026: só o Corpo v2
 existe. O plano, a escada de recuperação e o diário ficam no vault
-(`30_Projects/matter_engine/Aprendizado_por_Reforco/` e `diario_atualizado/`);
+(`30_Projects/matter_engine/legado/rl_v1/` e `diario/rl_locomocao/`);
 aqui fica o que está implementado e como usar.
 
 ## A recuperação: o R1 (14/10/2026, noite)
 
 Depois dos testes que mostraram o Corpo v2 de pé e parado, a escada de
-recuperação do vault (`novo_plano/v2/plano_de_recuperacao_rl_claude.md`) começa
+recuperação do vault (`04_locomocao/plano_de_recuperacao_rl_claude.md`) começa
 pelo R1, as correções. O que ficou diferente no código:
 
 - **Tarefas da escada:** `assets/rl/tasks/aquisicao_p0.json` (ficar de pé),
@@ -43,7 +43,7 @@ pelo R1, as correções. O que ficou diferente no código:
 
 O RL do Corpo foi refeito: o clipe saiu da ação e da entrada da rede e virou
 só um juiz de estilo, com um peso que o usuário abaixa até zero. O plano
-completo está no vault (`Aprendizado_por_Reforco/novo_plano/plano_claude_rl.md`)
+completo está no vault (`04_locomocao/referencia/plano_claude_rl.md`)
 e o resultado de cada experimento ao lado dele.
 
 - **O corpo v2** (`assets/rl/bodies/football_player_v2.json`; o perfil do jogo não
