@@ -68,6 +68,11 @@ struct BodyRewardSettings3D {
     // athleticWidth (m, entre os pes de lado na pelve) tambem.
     float athleticHeight = 0.94f;
     float athleticWidth = 0.35f;
+    // Andando: a cada pisada, a base mais estreita que athleticWalkWidth (m)
+    // tambem custa (fracao que falta; 0 = desligado).
+    float athleticWalkWidth = 0.0f;
+    // O pivo: o giro (rad/s) dos pes apoiados em torno da vertical.
+    float pivot = 0.0f;
     // O parado de verdade: o custo still so vale com o pedido de parar ha mais
     // de stillGraceSeconds (os passos para frear nao pagam).
     float stillGraceSeconds = 1.0f;
@@ -113,12 +118,12 @@ struct BodyTaskWeights3D {
 // primeiras manterem o lugar.
 enum class BodyRewardTerm3D : std::size_t {
     Velocity = 0, Facing, Task, Work, Torque, Slip, Impact, Head, Smooth, Limits, Contacts, Fall, StandGate, StyleGate,
-    Air, Posture, Still, Athletic, Count
+    Air, Posture, Still, Athletic, Pivot, Count
 };
 
 inline constexpr std::array<const char*, static_cast<std::size_t>(BodyRewardTerm3D::Count)> BodyRewardTermNames3D {
     "velocity", "facing", "task", "work", "torque", "slip", "impact", "head", "smooth", "limits", "contacts", "fall",
-    "stand_gate", "style_gate", "air", "posture", "still", "athletic"
+    "stand_gate", "style_gate", "air", "posture", "still", "athletic", "pivot"
 };
 
 // Os custos fisicos de uma decisao, antes dos pesos.
@@ -152,6 +157,8 @@ struct BodyCosts3D {
     // A postura atletica: o quanto o quadril passa da altura alvo (fracao da
     // altura de pe) mais, parado, o quanto a base falta (fracao da largura alvo).
     float athletic = 0.0f;
+    // O pivo: o giro medio dos pes apoiados em torno da vertical (rad/s).
+    float pivot = 0.0f;
     // Medida, sem peso: a fatia dos eixos-passos com o torque a 98% do teto
     // ou mais (o tempo no teto).
     float saturation = 0.0f;

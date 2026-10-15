@@ -25,7 +25,7 @@ constexpr float FixedStep = 1.0f / 120.0f;
 constexpr float Gravity = 9.81f;
 constexpr float Pi = std::numbers::pi_v<float>;
 constexpr std::size_t RewardCount = BodyRewardTermNames3D.size();
-constexpr std::size_t CostCount = 12;
+constexpr std::size_t CostCount = 13;
 
 std::uint64_t splitmix64(std::uint64_t& state) {
     std::uint64_t z = (state += 0x9E3779B97F4A7C15ull);
@@ -48,7 +48,7 @@ float gaussian(std::mt19937_64& rng, float sigma) {
 float wrap(float angle) { return std::atan2(std::sin(angle), std::cos(angle)); }
 
 std::array<float, CostCount> costArray(const BodyCosts3D& c) {
-    return { c.work, c.torque, c.slip, c.impact, c.head, c.smooth, c.limits, c.contacts, c.saturation, c.posture, c.still, c.athletic };
+    return { c.work, c.torque, c.slip, c.impact, c.head, c.smooth, c.limits, c.contacts, c.saturation, c.posture, c.still, c.athletic, c.pivot };
 }
 
 struct World {
@@ -132,6 +132,9 @@ struct World {
     // pe-decisao em contato.
     double pivotSum = 0.0;
     std::uint32_t pivotCount = 0;
+    // O que esta decisao somou de base estreita nas pisadas e de pivo.
+    float walkWidthPenalty = 0.0f;
+    float pivotNow = 0.0f;
     // A largura da base: a cada pisada, a distancia de lado entre os pes no
     // eixo esquerda-direita da pelve (positiva com o esquerdo a esquerda) e
     // quantas vezes ficou negativa (cruzou).
@@ -698,7 +701,7 @@ void BodyTrainingBatch3D::Impl::finishEpisode(Scene& scene, std::uint32_t index,
         episode.reactionSeconds = static_cast<float>(world.reactionSum / world.reactionCount);
     BodyCosts3D& c = episode.costs;
     float* costs[CostCount] = { &c.work, &c.torque, &c.slip, &c.impact, &c.head, &c.smooth, &c.limits, &c.contacts,
-        &c.saturation, &c.posture, &c.still, &c.athletic };
+        &c.saturation, &c.posture, &c.still, &c.athletic, &c.pivot };
     for (std::size_t k = 0; k < CostCount; ++k) *costs[k] = static_cast<float>(world.costSum[k] / n);
     const double actions = n * static_cast<double>(std::max<std::size_t>(1, actionSize()));
     episode.meanAbsAction = static_cast<float>(world.absAction / actions);
@@ -878,6 +881,8 @@ void BodyTrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> a
                     const float width = (f == 0 ? 1.0f : -1.0f) * dot(footAt - other, left);
                     world.widthSum += width;
                     ++world.widthCount;
+                    if (task.reward.athleticWalkWidth > 0.0f)
+                        world.walkWidthPenalty += std::max(0.0f, task.reward.athleticWalkWidth - width) / task.reward.athleticWalkWidth;
                     if (width < 0.0f) ++world.crossings;
                 }
                 if (!was && inContact && world.footLiftSeen[f] && airSeconds >= 0.12f && now >= 0.3f
@@ -890,12 +895,19 @@ void BodyTrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> a
                     if (world.firstStep < 0.0f) world.firstStep = now;
                 }
                 if (inContact) {
-                    world.pivotSum += std::abs(state->links[f == 0 ? body.leftFoot : body.rightFoot].angularVelocity.z);
+                    const float yaw = std::abs(state->links[f == 0 ? body.leftFoot : body.rightFoot].angularVelocity.z);
+                    world.pivotSum += yaw;
                     ++world.pivotCount;
+                    world.pivotNow += 0.5f * yaw;
                 }
                 world.footSeconds[f] = inContact == was ? airSeconds + decision() : decision();
                 world.footWas[f] = inContact;
             }
+            // A base estreita das pisadas desta decisao e o pivo dos pes apoiados.
+            // (Cada pisada vale como 0,25 s da falta: a soma por segundo fica perto da fatia que falta.)
+            costs.athletic += world.walkWidthPenalty * 0.25f / decision();
+            costs.pivot = world.pivotNow;
+            world.walkWidthPenalty = world.pivotNow = 0.0f;
             if (!world.footWas[0] && !world.footWas[1]) ++world.bothAirSteps;
             const bool contactNow[2] = { world.footWas[0], world.footWas[1] };
             const float secondsNow[2] = { world.footSeconds[0], world.footSeconds[1] };
