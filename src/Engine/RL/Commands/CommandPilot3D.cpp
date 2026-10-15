@@ -87,6 +87,27 @@ void pickCenter(const PilotScript3D& script, PilotState3D& state, std::mt19937_6
     markChange(state);
 }
 
+// Um arco novo que comeca em from, andando no rumo heading (rad): o sentido
+// (trocando as vezes), o raio, o tamanho, a velocidade (limitada pela curva) e
+// se para no fim.
+void pickArc(const PilotScript3D& script, PilotState3D& state, Vec3 from, float heading, std::mt19937_64& rng) {
+    if (state.hasArc && chance(rng, script.arcFlipFraction)) state.arcSign = -state.arcSign;
+    else if (!state.hasArc) state.arcSign = chance(rng, 0.5f) ? 1.0f : -1.0f;
+    state.arcRadius = pick(rng, script.arcRadius);
+    const Vec3 left { -std::sin(heading), std::cos(heading), 0.0f };
+    state.arcCenter = Vec3 { from.x, from.y, 0.0f } + left * (state.arcSign * state.arcRadius);
+    const float start = std::atan2(from.y - state.arcCenter.y, from.x - state.arcCenter.x);
+    state.arcEnd = start + state.arcSign * pick(rng, script.arcDegrees) * Pi / 180.0f;
+    state.target = state.arcCenter + Vec3 { std::cos(state.arcEnd), std::sin(state.arcEnd), 0.0f } * state.arcRadius;
+    state.hasTarget = true;
+    state.hasArc = true;
+    state.cruise = std::min(pickSpeed(script, pickBand(script, rng), 1.5f, rng),
+        std::sqrt(script.lateralAcceleration * state.arcRadius));
+    state.stopAtTarget = chance(rng, script.stopFraction);
+    state.brake = pick(rng, script.brake);
+    markChange(state);
+}
+
 // Um pedido novo do segurar: outra direcao em relacao a camera, outra faixa, ou solto.
 void pickStick(const PilotScript3D& script, PilotState3D& state, const PilotView3D& view, std::mt19937_64& rng) {
     state.stickTime = pick(rng, script.stickSeconds);
@@ -136,6 +157,7 @@ void CommandPilot3D::start(const PilotScript3D& script, PilotState3D& state, Vec
     const PilotView3D view { state.origin, {} };
     if (script.kind == "star") pickTip(script, state, rng, false);
     else if (script.kind == "stick") pickStick(script, state, view, rng);
+    else if (script.kind == "arc") pickArc(script, state, state.origin, heading, rng);
     state.changed = false;
     state.changes = 0;
 }
@@ -219,6 +241,48 @@ ControlInput3D CommandPilot3D::update(const PilotScript3D& script, PilotState3D&
                     std::sqrt(2.0f * state.brake * std::max(0.0f, distance - 0.3f * script.arriveRadius)));
             moving = state.speed > 0.0f;
         }
+    } else if (script.kind == "arc" && state.hasArc) {
+        const Vec3 away { view.position.x - state.arcCenter.x, view.position.y - state.arcCenter.y, 0.0f };
+        const float radial = std::hypot(away.x, away.y);
+        const float angle = std::atan2(away.y, away.x);
+        // O que falta do arco (rad, no sentido dele) e onde a mira fica.
+        const float remaining = state.arcSign * wrap(state.arcEnd - angle);
+        state.speed = 0.0f;
+        if (state.holdLeft > 0.0f) {
+            const float distance = std::hypot(state.target.x - view.position.x, state.target.y - view.position.y);
+            state.holdDistanceSum += distance;
+            ++state.holdDecisions;
+            if ((state.holdLeft -= dt) <= 0.0f) {
+                state.holdLeft = 0.0f;
+                pickArc(script, state, state.target, wrap(state.arcEnd + state.arcSign * Pi / 2.0f), rng);
+            }
+        } else if (remaining * state.arcRadius < script.arriveRadius) {
+            const float planar = std::hypot(view.velocity.x, view.velocity.y);
+            if (!state.stopAtTarget) {
+                ++state.reached;
+                pickArc(script, state, state.target, wrap(state.arcEnd + state.arcSign * Pi / 2.0f), rng);
+            } else if (planar < 0.4f) {
+                ++state.reached;
+                state.holdLeft = pick(rng, script.holdSeconds);
+                markChange(state);
+            } else {
+                // Passou do ponto sem parar: volta a ele.
+                worldDirection = std::atan2(state.target.y - view.position.y, state.target.x - view.position.x);
+                state.speed = std::min(state.cruise, 0.8f);
+                moving = true;
+            }
+        } else {
+            state.arcErrorSum += std::abs(radial - state.arcRadius);
+            ++state.arcDecisions;
+            const float aim = angle + state.arcSign * std::min(remaining, script.arcLookahead / state.arcRadius);
+            const Vec3 carrot = state.arcCenter + Vec3 { std::cos(aim), std::sin(aim), 0.0f } * state.arcRadius;
+            worldDirection = std::atan2(carrot.y - view.position.y, carrot.x - view.position.x);
+            state.speed = state.cruise;
+            if (state.stopAtTarget)
+                state.speed = std::min(state.speed,
+                    std::sqrt(2.0f * state.brake * std::max(0.0f, remaining * state.arcRadius - 0.3f * script.arriveRadius)));
+            moving = state.speed > 0.0f;
+        }
     } else if (script.kind == "stick") {
         if ((state.stickTime -= dt) <= 0.0f) pickStick(script, state, view, rng);
         moving = state.speed > 0.0f;
@@ -253,7 +317,7 @@ ControlInput3D CommandPilot3D::update(const PilotScript3D& script, PilotState3D&
     if (moving) {
         // A estrela e o segurar acompanhado seguram uma direcao no mundo (o
         // analogico corrigido a cada decisao); o resto, a direcao na camera.
-        const bool world = script.kind == "star" || state.cameraMode == PilotCameraMode3D::Follow;
+        const bool world = script.kind == "star" || script.kind == "arc" || state.cameraMode == PilotCameraMode3D::Follow;
         const float relative = world ? wrap(worldDirection - state.camera) : std::atan2(state.stickLeft, state.stickForward);
         input.stickForward = std::cos(relative);
         input.stickLeft = std::sin(relative);

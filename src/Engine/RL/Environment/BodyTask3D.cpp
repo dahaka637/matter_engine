@@ -32,7 +32,7 @@ PilotScript3D parsePilot(const nlohmann::json& p, const std::string& drill) {
     PilotScript3D script;
     script.kind = p.value("kind", script.kind);
     script.forwardOnly = p.value("forwardOnly", script.forwardOnly);
-    if (script.kind != "hold" && script.kind != "stick" && script.kind != "star")
+    if (script.kind != "hold" && script.kind != "stick" && script.kind != "star" && script.kind != "arc")
         fail("o piloto do exercicio " + drill + " tem kind desconhecido: " + script.kind);
     if (p.contains("bands"))
         for (const nlohmann::json& b : p["bands"]) {
@@ -72,6 +72,16 @@ PilotScript3D parsePilot(const nlohmann::json& p, const std::string& drill) {
     script.holdSeconds = range(p, "holdSeconds", script.holdSeconds);
     script.brake = range(p, "brake", script.brake);
     script.arriveRadius = p.value("arriveRadius", script.arriveRadius);
+    script.arcRadius = range(p, "arcRadius", script.arcRadius);
+    script.arcDegrees = range(p, "arcDegrees", script.arcDegrees);
+    script.arcFlipFraction = p.value("arcFlipFraction", script.arcFlipFraction);
+    script.lateralAcceleration = p.value("lateralAcceleration", script.lateralAcceleration);
+    script.arcLookahead = p.value("arcLookahead", script.arcLookahead);
+    // (Um arco ate 170 graus: o "quanto falta" e medido por um angulo entre -180 e 180.)
+    if (!(script.arcRadius.minimum > 0.5f) || !(script.arcDegrees.minimum > 0.0f) || script.arcDegrees.maximum > 170.0f
+        || !(script.lateralAcceleration > 0.0f)
+        || !(script.arcLookahead > 0.0f))
+        fail("curva invalida em " + drill);
     if (!(script.stickSeconds.minimum > 0.0f) || script.starDirections == 0 || !(script.arriveRadius > 0.0f)
         || !(script.brake.minimum > 0.0f))
         fail("roteiro invalido em " + drill);

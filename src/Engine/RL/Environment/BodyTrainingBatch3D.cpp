@@ -698,6 +698,8 @@ void BodyTrainingBatch3D::Impl::finishEpisode(Scene& scene, std::uint32_t index,
     episode.targetsPerMinute = episode.seconds > 0.0f ? 60.0f * static_cast<float>(world.pilot.reached) / episode.seconds : 0.0f;
     if (world.pilot.holdDecisions > 0)
         episode.holdDrift = world.pilot.holdDistanceSum / static_cast<float>(world.pilot.holdDecisions);
+    if (world.pilot.arcDecisions > 0)
+        episode.arcError = world.pilot.arcErrorSum / static_cast<float>(world.pilot.arcDecisions);
     if (state && finite(state->links.front().position)) {
         const Vec3 p = state->links.front().position;
         episode.distance = std::hypot(p.x - world.start.x, p.y - world.start.y);

@@ -99,6 +99,8 @@ struct BodyEpisode3D {
     // parado num ponto (-1 sem espera).
     float targetsPerMinute = 0.0f;
     float holdDrift = -1.0f;
+    // As curvas: o afastamento medio da linha do arco (m; -1 sem curva).
+    float arcError = -1.0f;
 };
 
 // Um mundo visto por fora (a previa, as folhas de quadros).

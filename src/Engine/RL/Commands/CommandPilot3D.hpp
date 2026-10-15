@@ -54,7 +54,9 @@ struct PilotScript3D {
     // "hold": o direcional solto (parado). "stick": segura uma direcao em
     // relacao a camera e uma faixa por um tempo e troca (outra direcao, outra
     // faixa, ou solta). "star": a estrela (o centro e as pontas, indo e
-    // voltando ou de ponta a ponta, parando ou passando direto).
+    // voltando ou de ponta a ponta, parando ou passando direto). "arc": as
+    // curvas (arcos emendados, as vezes trocando de lado, parando ou nao no
+    // fim de cada um).
     std::string kind = "hold";
     std::vector<PilotBand3D> bands;
     // A janela de velocidade de agora (m/s; o currículo da aquisição): as
@@ -87,6 +89,15 @@ struct PilotScript3D {
     // parar (m/s2): o "quando soltar" de uma pessoa ou da IA.
     PilotRange3D brake { 3.0f, 6.0f };
     float arriveRadius = 0.6f;
+    // As curvas: o raio (m) e o tamanho (graus) de cada arco, a chance do
+    // seguinte virar para o outro lado (o S), a aceleracao lateral maxima que
+    // limita a velocidade pedida (v <= sqrt(a x raio)) e quanto a frente, no
+    // arco, o piloto mira (m).
+    PilotRange3D arcRadius { 12.0f, 18.0f };
+    PilotRange3D arcDegrees { 60.0f, 160.0f };
+    float arcFlipFraction = 0.5f;
+    float lateralAcceleration = 4.0f;
+    float arcLookahead = 1.5f;
 };
 
 // O que o piloto ve do corpo: onde esta e para onde vai.
@@ -132,6 +143,15 @@ struct PilotState3D {
     // decisao parado nele, e quantas decisoes (a deriva media da espera).
     float holdDistanceSum = 0.0f;
     std::uint32_t holdDecisions = 0;
+    // A curva de agora: o centro, o raio, o sentido (+1 anti-horario), o
+    // angulo do fim (rad, no centro) e o afastamento da linha (soma e decisoes).
+    bool hasArc = false;
+    Vec3 arcCenter;
+    float arcRadius = 0.0f;
+    float arcSign = 1.0f;
+    float arcEnd = 0.0f;
+    float arcErrorSum = 0.0f;
+    std::uint32_t arcDecisions = 0;
 };
 
 class CommandPilot3D {

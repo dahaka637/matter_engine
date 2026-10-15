@@ -149,6 +149,31 @@ PilotRun runPilot(const BodyTask3D& task, const BodyDrill3D& drill, std::uint64_
     return run;
 }
 
+// As curvas: um seguidor perfeito fica perto da linha, emenda os arcos (para
+// nos de parar) e a velocidade pedida respeita a curva.
+void testArcPilot() {
+    const BodyTask3D task = loadBodyTask3D(taskPath());
+    BodyDrill3D drill = task.drills[static_cast<std::size_t>(findBodyDrill3D(task, "estrela"))];
+    drill.pilot.kind = "arc";
+    drill.pilot.arcRadius = { 4.0f, 6.0f };
+    drill.pilot.arcDegrees = { 60.0f, 120.0f };
+    drill.pilot.stopFraction = 0.3f;
+    drill.pilot.lateralAcceleration = 4.0f;
+    drill.pilot.camera = {};
+    drill.pilot.camera.fixedWeight = 0.0f;
+    drill.pilot.camera.followWeight = 1.0f;
+    drill.pilot.camera.turnsWeight = 0.0f;
+    const PilotRun a = runPilot(task, drill, 4, 2400);
+    const PilotRun b = runPilot(task, drill, 4, 2400);
+    require(a.trace == b.trace, "as curvas repetem com a mesma semente");
+    require(a.state.reached >= 6, "as curvas emendam arcos (" + std::to_string(a.state.reached) + ")");
+    require(a.state.arcDecisions > 0 && a.state.arcErrorSum / static_cast<float>(a.state.arcDecisions) < 0.5f,
+        "o seguidor perfeito fica perto da linha");
+    require(a.state.holdDecisions > 0, "as curvas tambem param e esperam no fim de alguns arcos");
+    for (std::size_t i = 0; i < a.trace.size(); i += 6)
+        require(a.trace[i + 2] <= std::sqrt(4.0f * 6.0f) + 1.0e-3f, "a velocidade pedida respeita a curva");
+}
+
 // O piloto: deterministico, dentro dos tetos, a camera nos modos e na
 // velocidade do roteiro, a estrela chegando aos pontos.
 void testPilot() {
@@ -561,6 +586,7 @@ void testSavedStates() {
 void runBodyBatchTests() {
     testControlAdapter();
     testPilot();
+    testArcPilot();
     testRewardOrder();
     testTaskLoader();
     testBodyBatch();

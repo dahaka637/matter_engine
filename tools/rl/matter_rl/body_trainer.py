@@ -230,6 +230,10 @@ def drill_summary(rows: np.ndarray, columns: list[str], drills: list[str]) -> di
             out[drill]["hold_drift"] = float(drift.mean()) if len(drift) else None
         if "postura" in col:
             out[drill]["posture"] = float(part[:, col["postura"]].mean())
+        if "afastamento_curva" in col:
+            arc = part[:, col["afastamento_curva"]]
+            arc = arc[arc >= 0.0]
+            out[drill]["arc_error"] = float(arc.mean()) if len(arc) else None
     return out
 
 
