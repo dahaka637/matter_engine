@@ -106,8 +106,9 @@ BodyCosts3D BodyCostAccumulator3D::finish(float decisionSeconds, float bodyWeigh
 
 namespace {
 
+// sqrt(x^2 + d^2) - d, escrito sem a subtracao de numeros grandes.
 float pseudoHuber(float x, float delta) {
-    return std::sqrt(x * x + delta * delta) - delta;
+    return x * x / (std::sqrt(x * x + delta * delta) + delta);
 }
 
 float smoothstep(float from, float to, float x) {
@@ -158,6 +159,10 @@ float bodyStandGate3D(const BodyRewardSettings3D& settings, float pelvisHeightRa
 float bodyAirCredit3D(const BodyRewardSettings3D& settings, bool moving, const bool (&contact)[2],
     const float (&seconds)[2]) {
     if (!(settings.air.weight > 0.0f) || !moving || contact[0] == contact[1]) return 0.0f;
+    // So paga enquanto o balanco e recente (ate 1,5 teto): ficar parado num pe
+    // so, com o outro no ar, pagaria para sempre.
+    const std::size_t swing = contact[0] ? 1 : 0;
+    if (seconds[swing] > 1.5f * settings.air.capSeconds) return 0.0f;
     return std::min(settings.air.capSeconds, std::min(seconds[0], seconds[1]))
         / std::max(1.0e-3f, settings.air.capSeconds);
 }
@@ -171,6 +176,8 @@ BodyTaskTerms3D bodyTaskTerms3D(const BodyRewardSettings3D& settings, Vec3 measu
     terms.airCredit = airCredit;
     const bool moving = std::hypot(wanted.x, wanted.y) >= settings.movingThreshold;
     if (settings.velocityForm == "progress" && moving) {
+        // Marchar no lugar paga so um quarto da muleta; o resto vem do progresso.
+        terms.airCredit = airCredit * (0.25f + 0.75f * std::clamp(terms.velocityScore, 0.0f, 1.0f));
         // O olhar e o estilo so pagam junto com o progresso: parado com pedido
         // de andar nao rende nada.
         terms.facingGate = std::max(0.0f, terms.velocityScore);

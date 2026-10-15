@@ -1,0 +1,22 @@
+{
+  "schema": "matter-rl-style-1",
+  "id": "acervo_p2",
+  "clipsDirectory": "../../animations/clips",
+  "pairFrames": 4,
+  "mirror": true,
+  "comment": "O degrau P2 do plano de recuperacao: um clipe de trote (e o espelho) para o juiz sozinho ensinar a passada; o jog fica reservado, para conferir que o juiz mede compatibilidade e nao decorou.",
+  "groups": [
+    {
+      "id": "trote",
+      "displayName": "Trote",
+      "weight": 1.0,
+      "clips": [
+        "trot_forward",
+        "jog"
+      ],
+      "reserved": [
+        "jog"
+      ]
+    }
+  ]
+}

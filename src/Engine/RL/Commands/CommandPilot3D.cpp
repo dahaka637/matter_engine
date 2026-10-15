@@ -141,15 +141,18 @@ void CommandPilot3D::start(const PilotScript3D& script, PilotState3D& state, Vec
 }
 
 void CommandPilot3D::follow(const PilotScript3D& script, PilotState3D& state, Vec3 velocity, std::mt19937_64& rng) {
-    const float speed = std::hypot(velocity.x, velocity.y);
+    float speed = std::hypot(velocity.x, velocity.y);
     if (speed < 0.3f) return;
+    if (script.speedWindow.maximum > 0.0f)
+        speed = std::clamp(speed, script.speedWindow.minimum, script.speedWindow.maximum);
     const float direction = std::atan2(velocity.y, velocity.x);
     if (script.kind == "stick") {
-        const float relative = wrap(direction - state.camera);
+        // So para a frente: o quadro do clipe da a velocidade, nao a direcao.
+        const float relative = script.forwardOnly ? 0.0f : wrap(direction - state.camera);
         state.stickForward = std::cos(relative);
         state.stickLeft = std::sin(relative);
-        state.stickWorld = direction;
-        state.speed = script.speedWindow.maximum > 0.0f ? std::min(speed, script.speedWindow.maximum) : speed;
+        state.stickWorld = wrap(state.camera + relative);
+        state.speed = speed;
         state.stickTime = pick(rng, script.stickSeconds);
     } else if (script.kind == "star" && !script.bands.empty()) {
         const std::uint32_t directions = std::max(1u, script.starDirections);
@@ -170,7 +173,7 @@ void CommandPilot3D::follow(const PilotScript3D& script, PilotState3D& state, Ve
         }
         const float angle = state.startHeading + step * static_cast<float>(slot);
         state.lastSlot = slot;
-        state.cruise = script.speedWindow.maximum > 0.0f ? std::min(speed, script.speedWindow.maximum) : speed;
+        state.cruise = speed;
         state.target = state.origin + Vec3 { std::cos(angle), std::sin(angle), 0.0f } * pick(rng, band->distance);
         state.hasTarget = true;
         state.atTip = true;

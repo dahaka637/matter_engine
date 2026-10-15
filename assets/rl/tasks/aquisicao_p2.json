@@ -1,0 +1,134 @@
+{
+  "schema": "matter-rl-task-2",
+  "id": "aquisicao_p2",
+  "displayName": "Aquisicao P2: o juiz sozinho",
+  "comment": "O degrau P2 do plano de recuperacao (secao 6): sem tarefa, so o estilo (taskScale 0, beta 1); todos os comecos num quadro do clipe de trote (acervo_p2), com o pedido seguindo o clipe (2,2 a 3,0 m/s). Nasce do zero: e um diagnostico e nao passa pesos adiante. A porta de pe e o total nunca negativo ficam ligados.",
+  "body": "../bodies/football_player_v2.json",
+  "decision": {
+    "substeps": 4,
+    "historyDecisions": 3,
+    "velocityTarget": "zero",
+    "velocityFraction": 1.0,
+    "maximumTargetVelocity": 20.0
+  },
+  "episodeSeconds": 20.0,
+  "groundMaterial": "grass",
+  "worldSpacingMeters": 250.0,
+  "player": {
+    "height": 1.8,
+    "mass": 80.0,
+    "strength": [
+      1.0,
+      1.0,
+      1.0
+    ],
+    "sprintCap": 6.5
+  },
+  "speedCaps": {
+    "front": 1.0,
+    "diagonalFront": 0.9,
+    "side": 0.65,
+    "diagonalBack": 0.6,
+    "back": 0.55
+  },
+  "jumpWindowSeconds": 0.6,
+  "solverMix": {
+    "heavyFraction": 0.25,
+    "heavyPositionIterations": 20,
+    "heavyVelocityIterations": 20
+  },
+  "reward": {
+    "velocityForm": "cauchy",
+    "facingSigma": 0.4,
+    "positiveOnly": true,
+    "standGate": {
+      "enabled": true
+    },
+    "costs": {
+      "work": 0.0,
+      "torque": 0.0,
+      "slip": 0.0,
+      "impact": 0.0,
+      "head": 0.0,
+      "smooth": 0.0,
+      "limits": 0.0,
+      "contacts": 0.0
+    },
+    "fall": 0.2,
+    "taskScale": 0.0
+  },
+  "termination": {
+    "minimumHeadHeightFraction": 0.6,
+    "minimumPelvisHeightFraction": 0.5,
+    "nonSupportContact": true,
+    "maximumDistanceFromStart": 120.0
+  },
+  "initialState": {
+    "referenceFraction": 1.0,
+    "movingFraction": 0.0,
+    "posture": "natural",
+    "jointNoiseRadians": 0.03,
+    "jointVelocityNoise": 0.2,
+    "rootVelocityNoise": 0.1,
+    "rootAngularVelocityNoise": 0.1,
+    "randomYaw": true,
+    "referenceMinimumPelvis": 0.6
+  },
+  "randomization": {
+    "friction": [
+      0.7,
+      1.1
+    ],
+    "mass": [
+      0.95,
+      1.05
+    ],
+    "strength": [
+      0.9,
+      1.1
+    ],
+    "actionDelayProbability": 0.5,
+    "observationNoise": 1.0
+  },
+  "drills": [
+    {
+      "id": "trote_clipe",
+      "displayName": "Trote pelo clipe",
+      "weight": 1.0,
+      "task": {
+        "velocity": 0.7,
+        "facing": 0.3
+      },
+      "pilot": {
+        "kind": "stick",
+        "forwardOnly": true,
+        "bands": [
+          {
+            "name": "trote",
+            "speed": [
+              2.2,
+              3.0
+            ],
+            "weight": 1.0
+          }
+        ],
+        "stickSeconds": [
+          3.0,
+          6.0
+        ],
+        "releaseFraction": 0.0,
+        "keysFraction": 1.0,
+        "syncFraction": 0.0,
+        "camera": {
+          "fixed": 1.0,
+          "follow": 0.0,
+          "turns": 0.0
+        }
+      }
+    }
+  ],
+  "style": {
+    "dataset": "../style/acervo_p2.json",
+    "beta": 1.0
+  }
+}

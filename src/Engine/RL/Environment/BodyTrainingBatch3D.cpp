@@ -73,6 +73,7 @@ struct World {
     // O passo util: onde cada pe saiu do chao, quantos passos, o tempo do
     // primeiro e do ultimo, a sequencia de agora e a maior.
     std::array<Vec3, 2> footLift {};
+    std::array<bool, 2> footLiftSeen {};
     std::uint32_t usefulSteps = 0;
     float firstStep = -1.0f;
     float lastStep = -1.0f;
@@ -441,26 +442,42 @@ void BodyTrainingBatch3D::Impl::writeObservation(World& world, const RagdollStat
 
 const ReferenceFrame3D* BodyTrainingBatch3D::Impl::pickClipFrame(World& world) const {
     const bool limited = task.curriculum.speedMax > 0.0f;
-    const float cap = limited ? task.curriculum.speedMax + task.curriculum.clipSlack : 0.0f;
-    std::vector<std::uint32_t> eligible;
-    // Sorteia o clipe pelo peso e, no curriculo, so aceita um que tenha quadro
-    // de velocidade ate o teto: a distribuicao dos clipes elegiveis segue os pesos.
-    for (int attempt = 0; attempt < 8; ++attempt) {
+    if (!limited) {
         const double roll = std::uniform_real_distribution<double>(0.0, startCumulative.back())(world.rng);
         const auto at = static_cast<std::size_t>(
             std::upper_bound(startCumulative.begin(), startCumulative.end(), roll) - startCumulative.begin());
         const StartClip& clip = starts[std::min(at, starts.size() - 1)];
-        if (!limited)
-            return &clip.segment.frames[clip.standing[std::uniform_int_distribution<std::size_t>(0, clip.standing.size() - 1)(world.rng)]];
-        eligible.clear();
+        return &clip.segment.frames[clip.standing[std::uniform_int_distribution<std::size_t>(0, clip.standing.size() - 1)(world.rng)]];
+    }
+    // No curriculo: so os clipes com algum quadro de velocidade ate o teto,
+    // pelo peso deles renormalizado; e, nele, um quadro elegivel.
+    const float cap = task.curriculum.speedMax + task.curriculum.clipSlack;
+    const auto eligibleCount = [&](const StartClip& clip) {
+        std::size_t count = 0;
         for (const std::uint32_t f : clip.standing) {
             const Vec3 v = clip.segment.frames[f].rootVelocity;
-            if (std::hypot(v.x, v.y) <= cap) eligible.push_back(f);
+            if (std::hypot(v.x, v.y) <= cap) ++count;
         }
-        if (!eligible.empty())
-            return &clip.segment.frames[eligible[std::uniform_int_distribution<std::size_t>(0, eligible.size() - 1)(world.rng)]];
+        return count;
+    };
+    std::vector<double> cumulative(starts.size(), 0.0);
+    double total = 0.0;
+    for (std::size_t c = 0; c < starts.size(); ++c) {
+        const double weight = startCumulative[c] - (c ? startCumulative[c - 1] : 0.0);
+        if (eligibleCount(starts[c]) > 0) total += weight;
+        cumulative[c] = total;
     }
-    return nullptr;
+    if (!(total > 0.0)) return nullptr;
+    const double roll = std::uniform_real_distribution<double>(0.0, total)(world.rng);
+    const auto at = static_cast<std::size_t>(std::upper_bound(cumulative.begin(), cumulative.end(), roll) - cumulative.begin());
+    const StartClip& clip = starts[std::min(at, starts.size() - 1)];
+    std::vector<std::uint32_t> eligible;
+    for (const std::uint32_t f : clip.standing) {
+        const Vec3 v = clip.segment.frames[f].rootVelocity;
+        if (std::hypot(v.x, v.y) <= cap) eligible.push_back(f);
+    }
+    if (eligible.empty()) return nullptr;
+    return &clip.segment.frames[eligible[std::uniform_int_distribution<std::size_t>(0, eligible.size() - 1)(world.rng)]];
 }
 
 void BodyTrainingBatch3D::Impl::resetWorld(std::uint32_t index) {
@@ -582,6 +599,7 @@ void BodyTrainingBatch3D::Impl::resetWorld(std::uint32_t index) {
     world.absAction = world.clipped = world.clamped = world.reversal = 0.0;
     world.touchdowns = 0;
     world.usefulSteps = world.stepRun = world.longestRun = 0;
+    world.footLiftSeen = { false, false };
     world.firstStep = world.lastStep = -1.0f;
     world.requestedSum = world.gateSum = 0.0;
     world.changeAt = -1.0f;
@@ -765,8 +783,11 @@ void BodyTrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> a
                 const bool was = world.footWas[f];
                 const float airSeconds = world.footSeconds[f];
                 const Vec3 footAt = state->links[f == 0 ? body.leftFoot : body.rightFoot].position;
-                if (was && !inContact) world.footLift[f] = footAt;
-                if (!was && inContact && airSeconds >= 0.12f && now >= 0.3f
+                if (was && !inContact) {
+                    world.footLift[f] = footAt;
+                    world.footLiftSeen[f] = true;
+                }
+                if (!was && inContact && world.footLiftSeen[f] && airSeconds >= 0.12f && now >= 0.3f
                     && std::hypot(footAt.x - world.footLift[f].x, footAt.y - world.footLift[f].y) >= 0.10f) {
                     // Um passo util: uma sequencia segue enquanto cada um vem a ate 1 s do anterior.
                     ++world.usefulSteps;
@@ -927,6 +948,10 @@ void BodyTrainingBatch3D::updateTask(const BodyTask3D& task) {
         throw std::runtime_error("lote do Corpo: o contrato nao muda com o treino andando");
     if (task.initialState.posture != impl.task.initialState.posture)
         throw std::runtime_error("lote do Corpo: a postura do comeco nao muda com o treino andando");
+    if (task.solverMix.heavyFraction != impl.task.solverMix.heavyFraction
+        || task.solverMix.heavyPositionIterations != impl.task.solverMix.heavyPositionIterations
+        || task.solverMix.heavyVelocityIterations != impl.task.solverMix.heavyVelocityIterations)
+        throw std::runtime_error("lote do Corpo: o solver misto nao muda com o treino andando");
     bool same = task.drills.size() == impl.task.drills.size();
     for (std::size_t d = 0; same && d < task.drills.size(); ++d) same = task.drills[d].id == impl.task.drills[d].id;
     if (!same) throw std::runtime_error("lote do Corpo: os exercicios nao mudam de lista com o treino andando");

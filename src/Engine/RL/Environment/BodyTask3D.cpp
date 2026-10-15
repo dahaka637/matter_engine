@@ -11,6 +11,8 @@
 namespace MatterEngine {
 namespace {
 
+struct Curriculum_ { float min, max, slack; };
+
 constexpr float Degrees = 3.14159265358979f / 180.0f;
 
 [[noreturn]] void fail(const std::string& what) {
@@ -172,8 +174,13 @@ BodyTask3D loadBodyTask3D(const std::filesystem::path& path) {
             w.air.capSeconds = r["air"].value("capSeconds", w.air.capSeconds);
             if (w.air.weight < 0.0f || !(w.air.capSeconds > 0.0f)) fail("air invalido");
         }
-        if (!(w.movingThreshold > 0.0f) || !(w.progressDeltaBase > 0.0f) || !(w.stopSigma > 0.0f))
+        if (!(w.movingThreshold > 0.0f) || !(w.progressDeltaBase > 0.0f) || !(w.stopSigma > 0.0f)
+            || !(w.progressDeltaPerSpeed >= 0.0f) || w.progressDeltaBase > 10.0f || w.progressDeltaPerSpeed > 10.0f
+            || w.stopSigma > 10.0f || w.movingThreshold > 10.0f)
             fail("limiares da nota de progresso invalidos");
+        if (!(w.standGate.heightFrom >= 0.0f) || w.standGate.heightTo > 2.0f || !(w.standGate.uprightToDegrees >= 0.0f)
+            || w.standGate.uprightFromDegrees > 180.0f)
+            fail("standGate fora do dominio fisico (altura 0..2, angulos 0..180)");
         w.velocityToleranceAbsolute = r.value("velocityToleranceAbsolute", w.velocityToleranceAbsolute);
         w.velocityToleranceRelative = r.value("velocityToleranceRelative", w.velocityToleranceRelative);
         w.facingSigma = r.value("facingSigma", w.facingSigma);
@@ -243,6 +250,10 @@ BodyTask3D loadBodyTask3D(const std::filesystem::path& path) {
         task.curriculum.speedMin = k.value("speedMin", task.curriculum.speedMin);
         task.curriculum.speedMax = k.value("speedMax", task.curriculum.speedMax);
         task.curriculum.clipSlack = k.value("clipSlack", task.curriculum.clipSlack);
+        const Curriculum_ check = { task.curriculum.speedMin, task.curriculum.speedMax, task.curriculum.clipSlack };
+        if (!std::isfinite(check.min) || !std::isfinite(check.max) || !std::isfinite(check.slack) || check.min < 0.0f
+            || check.max < 0.0f || check.slack < 0.0f)
+            fail("curriculum com limites negativos ou nao finitos");
         if (task.curriculum.speedMax > 0.0f && task.curriculum.speedMin > task.curriculum.speedMax)
             fail("curriculum com a velocidade minima acima da maxima");
     }

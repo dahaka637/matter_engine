@@ -1,0 +1,27 @@
+{
+  "schema": "matter-rl-style-1",
+  "id": "acervo_p3b",
+  "clipsDirectory": "../../animations/clips",
+  "pairFrames": 4,
+  "mirror": true,
+  "comment": "O P3b: o andar e o trote para a frente (trot_forward 2,6 m/s e jog 3,0 m/s), quando o curriculo passa de 2,3 m/s. Continua do P3a por transferencia.",
+  "groups": [
+    {
+      "id": "andar",
+      "displayName": "Andar",
+      "weight": 1.0,
+      "clips": [
+        "ual_walk"
+      ]
+    },
+    {
+      "id": "trote",
+      "displayName": "Trote",
+      "weight": 1.0,
+      "clips": [
+        "trot_forward",
+        "jog"
+      ]
+    }
+  ]
+}
