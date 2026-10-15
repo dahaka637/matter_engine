@@ -77,6 +77,10 @@ struct BodyTask3D {
         float rootVelocityNoise = 0.1f;
         float rootAngularVelocityNoise = 0.1f;
         bool randomYaw = true;
+        // A fatia dos comecos de pe que ja saem na velocidade do primeiro
+        // pedido (o startMoving do v3-v6): uma translacao rigida de todos os
+        // links, que preserva as velocidades relativas das juntas.
+        float movingFraction = 0.0f;
     } initialState;
     // A variacao do mundo que a rede nao ve (so no treino).
     struct Randomization {
@@ -88,6 +92,23 @@ struct BodyTask3D {
         // A escala do ruido de observacao do contrato.
         float observationNoise = 1.0f;
     } randomization;
+    // O curriculo da velocidade (a aquisicao; o treinador sobe speedMax pelo
+    // progresso e reescreve a copia da tarefa): as velocidades pedidas ficam
+    // na janela [speedMin, speedMax] e os comecos por clipe so usam quadros
+    // com velocidade ate speedMax + clipSlack. Desligado se speedMax <= 0.
+    struct Curriculum {
+        float speedMin = 0.0f;
+        float speedMax = 0.0f;
+        float clipSlack = 0.3f;
+    } curriculum;
+    // O solver misto (plano 5.7): uma fatia dos mundos de treino, dentro de
+    // cada exercicio, roda com mais iteracoes (a fisica do jogo, 20/20); o
+    // resto usa as do corpo. A avaliacao escolhe o solver pelo lote.
+    struct SolverMix {
+        float heavyFraction = 0.0f;
+        std::uint32_t heavyPositionIterations = 20;
+        std::uint32_t heavyVelocityIterations = 20;
+    } solverMix;
     std::vector<BodyDrill3D> drills;
 };
 

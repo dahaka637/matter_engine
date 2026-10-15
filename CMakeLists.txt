@@ -871,6 +871,7 @@ if(MATTERENGINE_BUILD_TESTS)
             tests/RL/MirrorTests.cpp
             tests/RL/BodyBrainTests.cpp
             tests/RL/CenterOfMassTests.cpp
+            tests/RL/AcquisitionTests.cpp
             tests/RL/RLTestMain.cpp)
         target_link_libraries(MatterRLTrainingTests
             PRIVATE MatterRLEnvironment MatterRLBrain)

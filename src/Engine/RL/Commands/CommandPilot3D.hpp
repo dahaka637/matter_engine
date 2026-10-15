@@ -57,6 +57,13 @@ struct PilotScript3D {
     // voltando ou de ponta a ponta, parando ou passando direto).
     std::string kind = "hold";
     std::vector<PilotBand3D> bands;
+    // A janela de velocidade de agora (m/s; o currículo da aquisição): as
+    // velocidades pedidas saem da faixa cortada por ela. Desligada se o maximo
+    // for 0. O pedido herdado de um quadro de clipe também é cortado nela.
+    PilotRange3D speedWindow { 0.0f, 0.0f };
+    // So para a frente da camera (o segurar nao sorteia outra direcao): a
+    // aquisicao da passada, antes das 8 direcoes.
+    bool forwardOnly = false;
     PilotCamera3D camera;
     // O segurar: quanto dura cada pedido, a chance da troca soltar (parar), a
     // fatia das teclas (as 8 direcoes; o resto e o analogico em qualquer

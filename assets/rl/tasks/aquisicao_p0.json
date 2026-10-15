@@ -1,0 +1,43 @@
+{
+  "schema": "matter-rl-task-2",
+  "id": "aquisicao_p0",
+  "displayName": "Aquisicao P0: ficar de pe",
+  "comment": "O degrau P0 do plano de recuperacao (vault: novo_plano/v2/plano_de_recuperacao_rl_claude.md): so o Parado, na postura base, sem juiz. Parado com pedido de parar vale a nota de parar; a porta de pe e o total nunca negativo ficam ligados; sem custos. O ator e a normalizacao passam para o P1 e o P3.",
+  "body": "../bodies/football_player_v2.json",
+  "decision": { "substeps": 4, "historyDecisions": 3, "velocityTarget": "zero", "velocityFraction": 1.0, "maximumTargetVelocity": 20.0 },
+  "episodeSeconds": 20.0,
+  "groundMaterial": "grass",
+  "worldSpacingMeters": 250.0,
+  "player": { "height": 1.8, "mass": 80.0, "strength": [1.0, 1.0, 1.0], "sprintCap": 6.5 },
+  "speedCaps": { "front": 1.0, "diagonalFront": 0.9, "side": 0.65, "diagonalBack": 0.6, "back": 0.55 },
+  "jumpWindowSeconds": 0.6,
+  "solverMix": { "heavyFraction": 0.25, "heavyPositionIterations": 20, "heavyVelocityIterations": 20 },
+  "reward": {
+    "velocityForm": "progress",
+    "facingSigma": 0.4,
+    "positiveOnly": true,
+    "standGate": { "enabled": true },
+    "costs": { "work": 0.0, "torque": 0.0, "slip": 0.0, "impact": 0.0, "head": 0.0, "smooth": 0.0, "limits": 0.0, "contacts": 0.0 },
+    "fall": 0.2
+  },
+  "termination": { "minimumHeadHeightFraction": 0.6, "minimumPelvisHeightFraction": 0.5, "nonSupportContact": true, "maximumDistanceFromStart": 120.0 },
+  "initialState": {
+    "referenceFraction": 0.0,
+    "posture": "natural",
+    "jointNoiseRadians": 0.03,
+    "jointVelocityNoise": 0.2,
+    "rootVelocityNoise": 0.1,
+    "rootAngularVelocityNoise": 0.1,
+    "randomYaw": true
+  },
+  "randomization": { "friction": [0.7, 1.1], "mass": [0.95, 1.05], "strength": [0.9, 1.1], "actionDelayProbability": 0.5, "observationNoise": 1.0 },
+  "drills": [
+    {
+      "id": "parado",
+      "displayName": "Parado",
+      "weight": 1.0,
+      "task": { "velocity": 0.5, "facing": 0.5 },
+      "pilot": { "kind": "hold", "camera": { "fixed": 1.0, "follow": 0.0, "turns": 0.0 } }
+    }
+  ]
+}

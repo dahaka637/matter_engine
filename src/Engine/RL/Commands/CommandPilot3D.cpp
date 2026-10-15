@@ -22,6 +22,18 @@ bool chance(std::mt19937_64& rng, float fraction) {
     return std::uniform_real_distribution<float>(0.0f, 1.0f)(rng) < fraction;
 }
 
+// A velocidade pedida de uma faixa, cortada pela janela de agora.
+float pickSpeed(const PilotScript3D& script, const PilotBand3D* band, float fallback, std::mt19937_64& rng) {
+    PilotRange3D range = band ? band->speed : PilotRange3D { fallback, fallback };
+    const PilotRange3D& window = script.speedWindow;
+    if (window.maximum > 0.0f) {
+        const float low = std::max(range.minimum, window.minimum);
+        const float high = std::min(range.maximum, window.maximum);
+        range = low <= high ? PilotRange3D { low, high } : window;
+    }
+    return pick(rng, range);
+}
+
 const PilotBand3D* pickBand(const PilotScript3D& script, std::mt19937_64& rng) {
     if (script.bands.empty()) return nullptr;
     float total = 0.0f;
@@ -55,7 +67,7 @@ void pickTip(const PilotScript3D& script, PilotState3D& state, std::mt19937_64& 
     const float angle = state.startHeading + 2.0f * Pi * static_cast<float>(slot) / static_cast<float>(directions) + jitter;
     const PilotBand3D* band = pickBand(script, rng);
     const float distance = band ? pick(rng, band->distance) : 8.0f;
-    state.cruise = band ? pick(rng, band->speed) : 2.0f;
+    state.cruise = pickSpeed(script, band, 2.0f, rng);
     state.target = state.origin + Vec3 { std::cos(angle), std::sin(angle), 0.0f } * distance;
     state.hasTarget = true;
     state.stopAtTarget = chance(rng, script.stopFraction);
@@ -68,7 +80,7 @@ void pickCenter(const PilotScript3D& script, PilotState3D& state, std::mt19937_6
     state.target = state.origin;
     state.hasTarget = true;
     if (chance(rng, 0.5f))
-        if (const PilotBand3D* band = pickBand(script, rng)) state.cruise = pick(rng, band->speed);
+        if (const PilotBand3D* band = pickBand(script, rng)) state.cruise = pickSpeed(script, band, 2.0f, rng);
     state.stopAtTarget = chance(rng, script.stopFraction);
     state.brake = pick(rng, script.brake);
     state.atTip = false;
@@ -84,11 +96,13 @@ void pickStick(const PilotScript3D& script, PilotState3D& state, const PilotView
         return;
     }
     const PilotBand3D* band = pickBand(script, rng);
-    state.speed = band ? pick(rng, band->speed) : 2.0f;
+    state.speed = pickSpeed(script, band, 2.0f, rng);
     const bool keys = chance(rng, script.keysFraction);
     float relative = 0.0f;
     const float awayX = view.position.x - state.origin.x, awayY = view.position.y - state.origin.y;
-    if (std::hypot(awayX, awayY) > script.leashMeters) {
+    if (script.forwardOnly) {
+        relative = 0.0f;
+    } else if (std::hypot(awayX, awayY) > script.leashMeters) {
         // Longe da origem: uma direcao de volta (ate 60 graus de lado).
         const float home = std::atan2(-awayY, -awayX) + std::uniform_real_distribution<float>(-Pi / 3.0f, Pi / 3.0f)(rng);
         relative = wrap(home - state.camera);
@@ -96,7 +110,7 @@ void pickStick(const PilotScript3D& script, PilotState3D& state, const PilotView
         relative = keys ? static_cast<float>(std::uniform_int_distribution<int>(0, 7)(rng)) * Pi / 4.0f
                         : std::uniform_real_distribution<float>(-Pi, Pi)(rng);
     }
-    if (keys) relative = std::round(relative / (Pi / 4.0f)) * (Pi / 4.0f);
+    if (keys && !script.forwardOnly) relative = std::round(relative / (Pi / 4.0f)) * (Pi / 4.0f);
     state.stickForward = std::cos(relative);
     state.stickLeft = std::sin(relative);
     state.stickWorld = wrap(state.camera + relative);
@@ -135,7 +149,7 @@ void CommandPilot3D::follow(const PilotScript3D& script, PilotState3D& state, Ve
         state.stickForward = std::cos(relative);
         state.stickLeft = std::sin(relative);
         state.stickWorld = direction;
-        state.speed = speed;
+        state.speed = script.speedWindow.maximum > 0.0f ? std::min(speed, script.speedWindow.maximum) : speed;
         state.stickTime = pick(rng, script.stickSeconds);
     } else if (script.kind == "star" && !script.bands.empty()) {
         const std::uint32_t directions = std::max(1u, script.starDirections);
@@ -156,7 +170,7 @@ void CommandPilot3D::follow(const PilotScript3D& script, PilotState3D& state, Ve
         }
         const float angle = state.startHeading + step * static_cast<float>(slot);
         state.lastSlot = slot;
-        state.cruise = speed;
+        state.cruise = script.speedWindow.maximum > 0.0f ? std::min(speed, script.speedWindow.maximum) : speed;
         state.target = state.origin + Vec3 { std::cos(angle), std::sin(angle), 0.0f } * pick(rng, band->distance);
         state.hasTarget = true;
         state.atTip = true;

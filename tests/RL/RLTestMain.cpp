@@ -10,6 +10,7 @@ void runStyleTests();
 void runMirrorTests();
 void runBodyBrainTests();
 void runCenterOfMassTests();
+void runAcquisitionTests();
 
 int main() {
     try {
@@ -21,6 +22,7 @@ int main() {
         runMirrorTests();
         runBodyBrainTests();
         runCenterOfMassTests();
+        runAcquisitionTests();
         std::cout << "RL training tests passed\n";
         return 0;
     } catch (const std::exception& error) {

@@ -80,6 +80,17 @@ struct BodyEpisode3D {
     // As pisadas por segundo (os dois pes) e a distancia do comeco (m).
     float cadence = 0.0f;
     float distance = 0.0f;
+    // O passo util (o plano de recuperacao, 5.9): o toque de um pe que ficou
+    // ao menos 0,12 s no ar e andou ao menos 10 cm no plano durante o voo, fora
+    // dos primeiros 0,3 s. Por segundo do episodio (depois dos 0,3 s), o
+    // tempo ate o primeiro (s; -1 sem passo), a maior sequencia de passos
+    // (cada um a ate 1 s do anterior), o pedido medio de velocidade (m/s) e a
+    // porta de pe media.
+    float usefulStepsPerSecond = 0.0f;
+    float firstStepSeconds = -1.0f;
+    float longestStepRun = 0.0f;
+    float meanRequested = 0.0f;
+    float meanStandGate = 1.0f;
 };
 
 // Um mundo visto por fora (a previa, as folhas de quadros).

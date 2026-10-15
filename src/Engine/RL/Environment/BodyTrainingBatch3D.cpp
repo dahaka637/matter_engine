@@ -63,7 +63,23 @@ struct World {
     float friction = 1.0f;
     float strength = 1.0f;
     bool delayed = false;
+    // O mundo roda com o solver pesado (o do jogo; o solverMix da tarefa).
+    bool heavySolver = false;
     float weight = 0.0f;
+    // Ha quanto tempo cada pe esta no estado de agora (no chao / no ar), para
+    // a muleta do pe no ar, e qual era o estado na decisao anterior.
+    std::array<float, 2> footSeconds {};
+    std::array<bool, 2> footWas {};
+    // O passo util: onde cada pe saiu do chao, quantos passos, o tempo do
+    // primeiro e do ultimo, a sequencia de agora e a maior.
+    std::array<Vec3, 2> footLift {};
+    std::uint32_t usefulSteps = 0;
+    float firstStep = -1.0f;
+    float lastStep = -1.0f;
+    std::uint32_t stepRun = 0;
+    std::uint32_t longestRun = 0;
+    double requestedSum = 0.0;
+    double gateSum = 0.0;
     BodyContractState3D contract;
     BodyContractState3D criticScratch;
     PilotState3D pilot;
@@ -191,6 +207,7 @@ struct BodyTrainingBatch3D::Impl {
     void assignDrills();
     void createWorld();
     void resetWorld(std::uint32_t index);
+    [[nodiscard]] const ReferenceFrame3D* pickClipFrame(World& world) const;
     [[nodiscard]] Reading read(const RagdollState3D& state) const;
     void nextCommand(World& world, const Reading& reading, float dt);
     void writeObservation(World& world, const RagdollState3D& state, float* actor, float* criticOut);
@@ -209,6 +226,7 @@ void BodyTrainingBatch3D::Impl::buildCriticLayout() {
     c.channels.push_back({ "body.mass_scale", "x" });
     c.channels.push_back({ "body.strength_scale", "x" });
     c.channels.push_back({ "body.action_delayed", "0/1" });
+    c.channels.push_back({ "world.solver_heavy", "0/1" });
     for (const RagdollLinkDefinition3D& link : body.profile.links)
         c.channels.push_back({ link.id + ".ground_contact", "0/1" });
     for (const BodyDrill3D& drill : task.drills) c.channels.push_back({ "drill." + drill.id, "0/1" });
@@ -285,6 +303,11 @@ void BodyTrainingBatch3D::Impl::createWorld() {
     scenes.resize(sceneCount);
     worlds.resize(count);
     std::uint64_t seedState = settings.seed ^ 0xA5A5A5A55A5A5A5Aull;
+    // O solver misto: dentro de cada exercicio, uma fatia dos mundos usa o
+    // solver pesado (so no treino e quando o lote nao fixa o solver).
+    const bool mixSolver = training() && settings.solverPositionIterations < 0 && settings.solverVelocityIterations < 0
+        && task.solverMix.heavyFraction > 0.0f;
+    std::vector<std::uint32_t> drillRank(task.drills.size(), 0);
     for (std::uint32_t s = 0; s < sceneCount; ++s) {
         Scene& scene = scenes[s];
         const std::uint32_t first = s * perScene;
@@ -317,6 +340,12 @@ void BodyTrainingBatch3D::Impl::createWorld() {
             World& world = worlds[index];
             world.scene = s;
             world.drill = worldDrill[index];
+            if (mixSolver) {
+                const float fraction = task.solverMix.heavyFraction;
+                const std::uint32_t rank = drillRank[world.drill]++;
+                world.heavySolver = std::floor(static_cast<float>(rank + 1) * fraction)
+                    > std::floor(static_cast<float>(rank) * fraction);
+            }
             world.origin = { (static_cast<float>(index - first) - 0.5f * static_cast<float>(last - first - 1)) * spacing,
                 0.0f, 0.0f };
             std::uint64_t worldSeed = seedState + index * 0x9E3779B97F4A7C15ull;
@@ -334,6 +363,10 @@ void BodyTrainingBatch3D::Impl::createWorld() {
                 ? static_cast<std::uint32_t>(settings.solverPositionIterations) : body.solverPositionIterations;
             spawn.solverVelocityIterations = settings.solverVelocityIterations >= 0
                 ? static_cast<std::uint32_t>(settings.solverVelocityIterations) : body.solverVelocityIterations;
+            if (world.heavySolver) {
+                spawn.solverPositionIterations = task.solverMix.heavyPositionIterations;
+                spawn.solverVelocityIterations = task.solverMix.heavyVelocityIterations;
+            }
             world.ragdoll = scene.physics->createRagdoll(profile, spawn);
             world.endTargets.assign(actionSize(), 0.0f);
             world.endChange.assign(actionSize(), 0.0f);
@@ -392,6 +425,7 @@ void BodyTrainingBatch3D::Impl::writeObservation(World& world, const RagdollStat
     *p++ = world.massScale;
     *p++ = world.strength;
     *p++ = world.delayed ? 1.0f : 0.0f;
+    *p++ = world.heavySolver ? 1.0f : 0.0f;
     float* contacts = p;
     std::fill(contacts, contacts + body.profile.links.size(), 0.0f);
     for (const RagdollContactPoint3D& contact : state.contacts)
@@ -403,6 +437,30 @@ void BodyTrainingBatch3D::Impl::writeObservation(World& world, const RagdollStat
     *p++ = world.pilot.cameraMode == PilotCameraMode3D::Follow ? 1.0f : 0.0f;
     *p++ = world.pilot.cameraMode == PilotCameraMode3D::Turns ? 1.0f : 0.0f;
     *p++ = std::min(1.0f, (world.pilot.clock - world.pilot.lastChange) / 3.0f);
+}
+
+const ReferenceFrame3D* BodyTrainingBatch3D::Impl::pickClipFrame(World& world) const {
+    const bool limited = task.curriculum.speedMax > 0.0f;
+    const float cap = limited ? task.curriculum.speedMax + task.curriculum.clipSlack : 0.0f;
+    std::vector<std::uint32_t> eligible;
+    // Sorteia o clipe pelo peso e, no curriculo, so aceita um que tenha quadro
+    // de velocidade ate o teto: a distribuicao dos clipes elegiveis segue os pesos.
+    for (int attempt = 0; attempt < 8; ++attempt) {
+        const double roll = std::uniform_real_distribution<double>(0.0, startCumulative.back())(world.rng);
+        const auto at = static_cast<std::size_t>(
+            std::upper_bound(startCumulative.begin(), startCumulative.end(), roll) - startCumulative.begin());
+        const StartClip& clip = starts[std::min(at, starts.size() - 1)];
+        if (!limited)
+            return &clip.segment.frames[clip.standing[std::uniform_int_distribution<std::size_t>(0, clip.standing.size() - 1)(world.rng)]];
+        eligible.clear();
+        for (const std::uint32_t f : clip.standing) {
+            const Vec3 v = clip.segment.frames[f].rootVelocity;
+            if (std::hypot(v.x, v.y) <= cap) eligible.push_back(f);
+        }
+        if (!eligible.empty())
+            return &clip.segment.frames[eligible[std::uniform_int_distribution<std::size_t>(0, eligible.size() - 1)(world.rng)]];
+    }
+    return nullptr;
 }
 
 void BodyTrainingBatch3D::Impl::resetWorld(std::uint32_t index) {
@@ -420,6 +478,10 @@ void BodyTrainingBatch3D::Impl::resetWorld(std::uint32_t index) {
     const float roll = std::uniform_real_distribution<float>(0.0f, 1.0f)(world.rng);
     Scene& home = scenes[world.scene];
     world.startKind = BodyStart3D::Standing;
+    // O quadro do clipe do comeco (so os de pe e, com o curriculo, so os de
+    // velocidade ate speedMax + folga). Sem quadro elegivel, o comeco e de pe.
+    const ReferenceFrame3D* clipFrame = nullptr;
+    if (training() && !starts.empty() && roll < start.referenceFraction) clipFrame = pickClipFrame(world);
     if (training() && start.bankFraction > 0.0f && !home.bank.empty() && roll >= start.referenceFraction
         && roll < start.referenceFraction + start.bankFraction) {
         // O comeco por um estado guardado: girado no rumo sorteado em volta da
@@ -448,15 +510,9 @@ void BodyTrainingBatch3D::Impl::resetWorld(std::uint32_t index) {
         clipChest = std::atan2(forward.y, forward.x);
         fromClip = true;
         world.startKind = BodyStart3D::Saved;
-    } else if (training() && !starts.empty() && roll < start.referenceFraction) {
+    } else if (clipFrame) {
         world.startKind = BodyStart3D::Clip;
-        const double roll = std::uniform_real_distribution<double>(0.0, startCumulative.back())(world.rng);
-        const auto at = static_cast<std::size_t>(
-            std::upper_bound(startCumulative.begin(), startCumulative.end(), roll) - startCumulative.begin());
-        const StartClip& clip = starts[std::min(at, starts.size() - 1)];
-        const std::uint32_t frameIndex =
-            clip.standing[std::uniform_int_distribution<std::size_t>(0, clip.standing.size() - 1)(world.rng)];
-        const ReferenceFrame3D& frame = clip.segment.frames[frameIndex];
+        const ReferenceFrame3D& frame = *clipFrame;
         // O pe mais baixo 2 mm acima do chao (no voo, como o clipe).
         const float lowest = rlBodyLowestFootPoint3D(body, referencePose3D(body, frame, world.origin, yaw));
         referenceLinkStates3D(body, frame, world.origin + Vec3 { 0.0f, 0.0f, std::max(0.0f, 0.002f - lowest) }, yaw,
@@ -525,6 +581,9 @@ void BodyTrainingBatch3D::Impl::resetWorld(std::uint32_t index) {
     world.costSum = {};
     world.absAction = world.clipped = world.clamped = world.reversal = 0.0;
     world.touchdowns = 0;
+    world.usefulSteps = world.stepRun = world.longestRun = 0;
+    world.firstStep = world.lastStep = -1.0f;
+    world.requestedSum = world.gateSum = 0.0;
     world.changeAt = -1.0f;
     world.reactionSum = 0.0;
     world.reactionCount = world.reactionOpened = 0;
@@ -536,6 +595,21 @@ void BodyTrainingBatch3D::Impl::resetWorld(std::uint32_t index) {
     CommandPilot3D::start(drill.pilot, world.pilot, reading.com, fromClip ? clipChest : reading.chestHeading, world.rng);
     if (fromClip) CommandPilot3D::follow(drill.pilot, world.pilot, clipVelocity, world.rng);
     nextCommand(world, reading, 0.0f);
+    world.footSeconds = {};
+    world.footWas = { world.contract.lastContact[0], world.contract.lastContact[1] };
+
+    // O comeco ja em movimento (o startMoving do v3-v6): a velocidade do primeiro
+    // pedido vai a todos os links (uma translacao rigida: as velocidades
+    // relativas das juntas ficam como estao).
+    const Vec3 wanted = world.command.moveVelocity;
+    if (training() && world.startKind == BodyStart3D::Standing && start.movingFraction > 0.0f
+        && std::hypot(wanted.x, wanted.y) >= task.reward.movingThreshold
+        && std::uniform_real_distribution<float>(0.0f, 1.0f)(world.rng) < start.movingFraction) {
+        std::vector<PhysicsBodyState3D> moving(state->links.begin(), state->links.end());
+        for (PhysicsBodyState3D& link : moving) link.linearVelocity += Vec3 { wanted.x, wanted.y, 0.0f };
+        physics.resetRagdollState(world.ragdoll, moving);
+        style->write(state->links, world.player.heightMeters / 1.8f, world.styleLast.data());
+    }
 }
 
 void BodyTrainingBatch3D::Impl::finishEpisode(Scene& scene, std::uint32_t index, BodyEndReason3D reason,
@@ -569,7 +643,14 @@ void BodyTrainingBatch3D::Impl::finishEpisode(Scene& scene, std::uint32_t index,
     episode.actionClipped = static_cast<float>(world.clipped / actions);
     episode.targetClamped = static_cast<float>(world.clamped / actions);
     episode.meanReversal = static_cast<float>(world.reversal / actions);
-    episode.cadence = episode.seconds > 0.0f ? static_cast<float>(world.touchdowns) / episode.seconds : 0.0f;
+    // As pisadas depois dos primeiros 0,3 s (os toques da largada nao contam).
+    const float counted = std::max(0.0f, episode.seconds - 0.3f);
+    episode.cadence = counted > 0.0f ? static_cast<float>(world.touchdowns) / counted : 0.0f;
+    episode.usefulStepsPerSecond = counted > 0.0f ? static_cast<float>(world.usefulSteps) / counted : 0.0f;
+    episode.firstStepSeconds = world.firstStep;
+    episode.longestStepRun = static_cast<float>(world.longestRun);
+    episode.meanRequested = static_cast<float>(world.requestedSum / n);
+    episode.meanStandGate = static_cast<float>(world.gateSum / n);
     if (state && finite(state->links.front().position)) {
         const Vec3 p = state->links.front().position;
         episode.distance = std::hypot(p.x - world.start.x, p.y - world.start.y);
@@ -670,9 +751,40 @@ void BodyTrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> a
             const BodyDrill3D& drill = task.drills[world.drill];
             const BodyCosts3D costs = world.costs.finish(decision(), world.weight);
             const Vec3 wanted = world.command.moveVelocity;
-            const float velocityScore = bodyVelocityScore3D(task.reward, reading.comVelocity, wanted);
             const float facingScore = bodyFacingScore3D(task.reward, reading.chestHeading, world.command.faceHeading);
-            reward = bodyReward3D(task.reward, drill.task, velocityScore, facingScore, costs, fell, decision(), parts);
+            // A porta de pe: a altura da pelve e o "para cima" dela.
+            const PhysicsBodyState3D& pelvisNow = state->links.front();
+            const Quaternion pelvisFrame =
+                (pelvisNow.orientation * body.profile.links.front().modelOrientation.conjugate()).normalized();
+            const float gate = bodyStandGate3D(task.reward, pelvisNow.position.z / std::max(1.0e-3f, pose.standingPelvisHeight),
+                pelvisFrame.rotate({ 0.0f, 0.0f, 1.0f }).z);
+            // A muleta do pe no ar: quanto tempo cada pe esta no estado de agora.
+            const float now = static_cast<float>(world.played) * decision();
+            for (std::size_t f = 0; f < 2; ++f) {
+                const bool inContact = world.contract.lastContact[f];
+                const bool was = world.footWas[f];
+                const float airSeconds = world.footSeconds[f];
+                const Vec3 footAt = state->links[f == 0 ? body.leftFoot : body.rightFoot].position;
+                if (was && !inContact) world.footLift[f] = footAt;
+                if (!was && inContact && airSeconds >= 0.12f && now >= 0.3f
+                    && std::hypot(footAt.x - world.footLift[f].x, footAt.y - world.footLift[f].y) >= 0.10f) {
+                    // Um passo util: uma sequencia segue enquanto cada um vem a ate 1 s do anterior.
+                    ++world.usefulSteps;
+                    world.stepRun = world.lastStep >= 0.0f && now - world.lastStep <= 1.0f ? world.stepRun + 1 : 1;
+                    world.longestRun = std::max(world.longestRun, world.stepRun);
+                    world.lastStep = now;
+                    if (world.firstStep < 0.0f) world.firstStep = now;
+                }
+                world.footSeconds[f] = inContact == was ? airSeconds + decision() : decision();
+                world.footWas[f] = inContact;
+            }
+            const bool contactNow[2] = { world.footWas[0], world.footWas[1] };
+            const float secondsNow[2] = { world.footSeconds[0], world.footSeconds[1] };
+            const bool wantsToMove = std::hypot(wanted.x, wanted.y) >= task.reward.movingThreshold;
+            const BodyTaskTerms3D terms = bodyTaskTerms3D(task.reward, reading.comVelocity, wanted, facingScore, gate,
+                bodyAirCredit3D(task.reward, wantsToMove, contactNow, secondsNow));
+            const float velocityScore = terms.velocityScore;
+            reward = bodyReward3D(task.reward, drill.task, terms, costs, fell, decision(), parts);
             const float velocityError =
                 std::hypot(reading.comVelocity.x - wanted.x, reading.comVelocity.y - wanted.y);
             const float facingError = wrap(world.command.faceHeading - reading.chestHeading);
@@ -689,7 +801,10 @@ void BodyTrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> a
                 ++world.reactionCount;
                 world.changeAt = -1.0f;
             }
-            world.touchdowns += (world.contract.touchdown[0] ? 1u : 0u) + (world.contract.touchdown[1] ? 1u : 0u);
+            if (static_cast<float>(world.played) * decision() >= 0.3f)
+                world.touchdowns += (world.contract.touchdown[0] ? 1u : 0u) + (world.contract.touchdown[1] ? 1u : 0u);
+            world.requestedSum += std::hypot(wanted.x, wanted.y);
+            world.gateSum += gate;
             // Os estados guardados: de pe, de vez em quando, mais os interessantes.
             if (training() && task.initialState.bankFraction > 0.0f && reason == BodyEndReason3D::None
                 && (world.bankTimer -= decision()) <= 0.0f) {
@@ -828,6 +943,7 @@ void BodyTrainingBatch3D::updateTask(const BodyTask3D& task) {
         drill.episodeSeconds = task.drills[d].episodeSeconds;
         drill.displayName = task.drills[d].displayName;
     }
+    impl.task.curriculum = task.curriculum;
     impl.task.hash = task.hash;
 }
 

@@ -351,7 +351,7 @@ void testBodyBatch() {
     const std::size_t L = batch.body().profile.links.size();
     const std::size_t D = batch.task().drills.size();
     require(A == 37 && batch.observationSize() == batch.contract().observationSize(), "a entrada e a do contrato");
-    require(batch.criticObservationSize() == batch.observationSize() + 4 + L + D + 4, "o critico ve o mundo");
+    require(batch.criticObservationSize() == batch.observationSize() + 5 + L + D + 4, "o critico ve o mundo (atrito, massa, forca, atraso, solver)");
     require(batch.rewardComponentCount() == BodyRewardTermNames3D.size(), "as parcelas da nota");
     std::array<int, 3> perDrill {};
     for (const std::uint32_t d : batch.worldDrills()) ++perDrill[d];

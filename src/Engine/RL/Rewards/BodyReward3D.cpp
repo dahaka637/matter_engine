@@ -104,8 +104,32 @@ BodyCosts3D BodyCostAccumulator3D::finish(float decisionSeconds, float bodyWeigh
     return costs;
 }
 
+namespace {
+
+float pseudoHuber(float x, float delta) {
+    return std::sqrt(x * x + delta * delta) - delta;
+}
+
+float smoothstep(float from, float to, float x) {
+    if (!(to > from)) return x >= to ? 1.0f : 0.0f;
+    const float t = std::clamp((x - from) / (to - from), 0.0f, 1.0f);
+    return t * t * (3.0f - 2.0f * t);
+}
+
+} // namespace
+
 float bodyVelocityScore3D(const BodyRewardSettings3D& settings, Vec3 measured, Vec3 wanted) {
     const float error = std::hypot(measured.x - wanted.x, measured.y - wanted.y);
+    if (settings.velocityForm == "progress") {
+        const float requested = std::hypot(wanted.x, wanted.y);
+        if (requested < settings.movingThreshold) {
+            const float u = std::hypot(measured.x, measured.y) / std::max(1.0e-3f, settings.stopSigma);
+            return std::exp(-u * u);
+        }
+        const float delta = settings.progressDeltaBase + settings.progressDeltaPerSpeed * requested;
+        const float still = pseudoHuber(requested, delta);
+        return std::clamp((still - pseudoHuber(error, delta)) / std::max(1.0e-6f, still), -1.0f, 1.0f);
+    }
     const float tolerance = settings.velocityToleranceAbsolute
         + settings.velocityToleranceRelative * std::hypot(wanted.x, wanted.y);
     const float u = error / std::max(1.0e-3f, tolerance);
@@ -122,9 +146,55 @@ float bodyFacingScore3D(const BodyRewardSettings3D& settings, float chestHeading
     return std::exp(-(error * error) / (sigma * sigma));
 }
 
+float bodyStandGate3D(const BodyRewardSettings3D& settings, float pelvisHeightRatio, float uprightCosine) {
+    const BodyRewardSettings3D::StandGate& gate = settings.standGate;
+    if (!gate.enabled) return 1.0f;
+    constexpr float Degrees = 3.14159265358979f / 180.0f;
+    return smoothstep(gate.heightFrom, gate.heightTo, pelvisHeightRatio)
+        * smoothstep(std::cos(gate.uprightFromDegrees * Degrees), std::cos(gate.uprightToDegrees * Degrees),
+            uprightCosine);
+}
+
+float bodyAirCredit3D(const BodyRewardSettings3D& settings, bool moving, const bool (&contact)[2],
+    const float (&seconds)[2]) {
+    if (!(settings.air.weight > 0.0f) || !moving || contact[0] == contact[1]) return 0.0f;
+    return std::min(settings.air.capSeconds, std::min(seconds[0], seconds[1]))
+        / std::max(1.0e-3f, settings.air.capSeconds);
+}
+
+BodyTaskTerms3D bodyTaskTerms3D(const BodyRewardSettings3D& settings, Vec3 measured, Vec3 wanted, float facingScore,
+    float standGate, float airCredit) {
+    BodyTaskTerms3D terms;
+    terms.velocityScore = bodyVelocityScore3D(settings, measured, wanted);
+    terms.facingScore = facingScore;
+    terms.standGate = standGate;
+    terms.airCredit = airCredit;
+    const bool moving = std::hypot(wanted.x, wanted.y) >= settings.movingThreshold;
+    if (settings.velocityForm == "progress" && moving) {
+        // O olhar e o estilo so pagam junto com o progresso: parado com pedido
+        // de andar nao rende nada.
+        terms.facingGate = std::max(0.0f, terms.velocityScore);
+        terms.styleGate = standGate * std::max(0.0f, terms.velocityScore);
+    } else {
+        terms.styleGate = standGate;
+    }
+    return terms;
+}
+
 float bodyReward3D(const BodyRewardSettings3D& settings, const BodyTaskWeights3D& weights, float velocityScore,
     float facingScore, const BodyCosts3D& costs, bool fell, float decisionSeconds, float* components) {
-    const float task = weights.velocity * velocityScore + weights.facing * facingScore;
+    BodyTaskTerms3D terms;
+    terms.velocityScore = velocityScore;
+    terms.facingScore = facingScore;
+    return bodyReward3D(settings, weights, terms, costs, fell, decisionSeconds, components);
+}
+
+float bodyReward3D(const BodyRewardSettings3D& settings, const BodyTaskWeights3D& weights,
+    const BodyTaskTerms3D& task_, const BodyCosts3D& costs, bool fell, float decisionSeconds, float* components) {
+    const float velocityScore = task_.velocityScore;
+    const float facingScore = task_.facingScore;
+    const float task = settings.taskScale * task_.standGate * (weights.velocity * velocityScore + weights.facing * facingScore * task_.facingGate);
+    const float air = settings.air.weight * task_.standGate * task_.airCredit;
     const float terms[8] = { settings.work * costs.work, settings.torque * costs.torque, settings.slip * costs.slip,
         settings.impact * costs.impact, settings.head * costs.head, settings.smooth * costs.smooth,
         settings.limits * costs.limits, settings.contacts * costs.contacts };
@@ -137,8 +207,12 @@ float bodyReward3D(const BodyRewardSettings3D& settings, const BodyTaskWeights3D
         components[static_cast<std::size_t>(BodyRewardTerm3D::Task)] = task;
         for (std::size_t i = 0; i < 8; ++i) components[static_cast<std::size_t>(BodyRewardTerm3D::Work) + i] = terms[i];
         components[static_cast<std::size_t>(BodyRewardTerm3D::Fall)] = fall;
+        components[static_cast<std::size_t>(BodyRewardTerm3D::StandGate)] = task_.standGate;
+        components[static_cast<std::size_t>(BodyRewardTerm3D::StyleGate)] = task_.styleGate;
+        components[static_cast<std::size_t>(BodyRewardTerm3D::Air)] = air;
     }
-    return decisionSeconds * (task - cost) - fall;
+    const float rate = task + air - cost;
+    return decisionSeconds * (settings.positiveOnly ? std::max(0.0f, rate) : rate) - fall;
 }
 
 } // namespace MatterEngine

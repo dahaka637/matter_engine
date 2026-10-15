@@ -28,6 +28,17 @@ struct BodyRewardSettings3D {
     std::string velocityForm = "cauchy";
     float velocityToleranceAbsolute = 0.2f;
     float velocityToleranceRelative = 0.1f;
+    // "progress" (o plano de recuperacao, 5.4): com pedido de movimento, o
+    // quanto o corpo se aproximou do pedido contra ficar parado,
+    //   P = clamp((L(e0) - L(e)) / L(e0), -1, 1),  L(x) = sqrt(x^2 + d^2) - d,
+    //   d = progressDeltaBase + progressDeltaPerSpeed x |pedido|,
+    // 0 parado, 1 no pedido, negativo na direcao errada; com pedido de parar
+    // (|pedido| < movingThreshold), exp(-(|v| / stopSigma)^2). O olhar so paga
+    // junto com o progresso (max(0, P)).
+    float movingThreshold = 0.3f;
+    float progressDeltaBase = 0.1f;
+    float progressDeltaPerSpeed = 0.1f;
+    float stopSigma = 0.2f;
     // O olhar: o sino do erro do peito contra a camera (rad).
     float facingSigma = 0.4f;
     // Os pesos dos custos.
@@ -41,6 +52,29 @@ struct BodyRewardSettings3D {
     float contacts = 0.0f;
     // A queda (um evento: paga uma vez).
     float fall = 1.0f;
+    // O total por decisao nunca fica negativo (antes da queda): tentar e errar
+    // nunca vale menos que ficar parado (a aquisicao; sai na F1 com os custos).
+    bool positiveOnly = false;
+    // Multiplica a tarefa (0 = so o estilo e a muleta: o P2, onde o juiz sozinho
+    // tem de ensinar a passada de um clipe).
+    float taskScale = 1.0f;
+    // A porta de "de pe" (5.4): multiplica a tarefa para tombar para a frente
+    // nao render velocidade. Vale 1 numa faixa larga (inclinar para correr e
+    // agachar para arrancar nao perdem nada); sobe de 0 a 1 entre os limites.
+    struct StandGate {
+        bool enabled = false;
+        float heightFrom = 0.55f;
+        float heightTo = 0.80f;
+        float uprightFromDegrees = 65.0f;
+        float uprightToDegrees = 40.0f;
+    } standGate;
+    // A muleta do pe no ar (o feetAirTime do v6; so a aquisicao): com um pe so
+    // no chao e pedido de movimento, paga min(capSeconds, tempo do pe de apoio
+    // plantado, tempo do pe de balanco no ar) / capSeconds, vezes o peso.
+    struct Air {
+        float weight = 0.0f;
+        float capSeconds = 0.4f;
+    } air;
 };
 
 // Os pesos da tarefa num exercicio (somam 1).
@@ -49,12 +83,21 @@ struct BodyTaskWeights3D {
     float facing = 0.3f;
 };
 
+// As parcelas por decisao. Task e a tarefa em taxa por segundo, ja com a porta
+// de pe (T); StandGate e a porta (g); StyleGate e a porta do estilo (G: o
+// estilo so paga junto com o progresso e de pe); Air e a muleta do pe no ar (A,
+// em taxa, ja com o peso e a porta); Fall e a queda ja aplicada (F). O
+// treinador compoe  dt x max(0, T + beta x G x S + A - custos) - F  com o
+// estilo S, que so ele tem. As tres ultimas vem depois da queda para as
+// primeiras manterem o lugar.
 enum class BodyRewardTerm3D : std::size_t {
-    Velocity = 0, Facing, Task, Work, Torque, Slip, Impact, Head, Smooth, Limits, Contacts, Fall, Count
+    Velocity = 0, Facing, Task, Work, Torque, Slip, Impact, Head, Smooth, Limits, Contacts, Fall, StandGate, StyleGate,
+    Air, Count
 };
 
 inline constexpr std::array<const char*, static_cast<std::size_t>(BodyRewardTerm3D::Count)> BodyRewardTermNames3D {
-    "velocity", "facing", "task", "work", "torque", "slip", "impact", "head", "smooth", "limits", "contacts", "fall"
+    "velocity", "facing", "task", "work", "torque", "slip", "impact", "head", "smooth", "limits", "contacts", "fall",
+    "stand_gate", "style_gate", "air"
 };
 
 // Os custos fisicos de uma decisao, antes dos pesos.
@@ -112,8 +155,40 @@ private:
 [[nodiscard]] float bodyVelocityScore3D(const BodyRewardSettings3D& settings, Vec3 measured, Vec3 wanted);
 // O termo do olhar: o rumo do peito contra o da camera.
 [[nodiscard]] float bodyFacingScore3D(const BodyRewardSettings3D& settings, float chestHeading, float faceHeading);
+// A porta de pe (0..1): a altura da pelve sobre a de pe e o "para cima" da
+// pelve contra a vertical (cosseno). 1 se a porta esta desligada.
+[[nodiscard]] float bodyStandGate3D(const BodyRewardSettings3D& settings, float pelvisHeightRatio, float uprightCosine);
+// A muleta do pe no ar (0..1, antes do peso): um pe so no chao, com pedido de
+// movimento. contactSeconds/airSeconds: ha quanto tempo cada pe esta no estado
+// de agora (no chao / no ar).
+[[nodiscard]] float bodyAirCredit3D(const BodyRewardSettings3D& settings, bool moving, const bool (&contact)[2],
+    const float (&seconds)[2]);
+
+// A tarefa de uma decisao: as notas e as portas (so a forma "progress" mexe
+// nas portas do olhar e do estilo).
+struct BodyTaskTerms3D {
+    float velocityScore = 0.0f;
+    float facingScore = 0.0f;
+    // g: a porta de pe; multiplica a tarefa.
+    float standGate = 1.0f;
+    // A porta do olhar: max(0, P) com pedido de movimento na forma "progress".
+    float facingGate = 1.0f;
+    // G: a porta do estilo, ja com g.
+    float styleGate = 1.0f;
+    // O credito da muleta do pe no ar (0..1).
+    float airCredit = 0.0f;
+};
+
+// As notas de velocidade e do olhar de uma decisao e as portas, pela forma
+// escolhida e pelo pedido.
+[[nodiscard]] BodyTaskTerms3D bodyTaskTerms3D(const BodyRewardSettings3D& settings, Vec3 measured, Vec3 wanted,
+    float facingScore, float standGate, float airCredit);
 
 // A nota da decisao (sem o estilo) e as parcelas (BodyRewardTermNames3D).
+[[nodiscard]] float bodyReward3D(const BodyRewardSettings3D& settings, const BodyTaskWeights3D& weights,
+    const BodyTaskTerms3D& terms, const BodyCosts3D& costs, bool fell, float decisionSeconds, float* components);
+// A mesma conta com as portas em 1 e sem a muleta (a tarefa dos testes e das
+// formas antigas).
 [[nodiscard]] float bodyReward3D(const BodyRewardSettings3D& settings, const BodyTaskWeights3D& weights,
     float velocityScore, float facingScore, const BodyCosts3D& costs, bool fell, float decisionSeconds,
     float* components);

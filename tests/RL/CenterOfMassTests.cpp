@@ -96,9 +96,11 @@ void testBodyCenterOfMass() {
     require(rlBodyCenterOfMassVelocity3D(body.profile, links).length() < 1e-5f, "o corpo parado nao se move");
 }
 
-// As velocidades de um estado reconstruido sao as do centro de massa: tirando
-// omega x (R c), sobra a derivada da posicao da origem, medida por fora com
-// outro passo e diferenca central.
+// As velocidades de um estado reconstruido sao as do centro de massa: a
+// derivada da posicao do centro de massa (origem + R c), medida por fora com
+// diferenca central e sem usar a velocidade angular da implementacao. Roda no
+// perfil do corpo e num perfil com centro de massa deslocado na raiz e nas
+// pontas (que no perfil real sao zero).
 void testReconstructedVelocitiesAreCenterOfMass() {
     const RLBody3D body = loadBody();
     std::mt19937 rng(5);
@@ -119,32 +121,40 @@ void testReconstructedVelocitiesAreCenterOfMass() {
         * body.profile.links.front().modelOrientation).normalized();
     const Vec3 rootVelocity { 1.5f, -0.7f, 0.2f };
     const Vec3 rootSpin { 0.4f, -1.1f, 2.0f };
-    std::vector<PhysicsBodyState3D> links;
-    rlBodyLinkStates3D(body.profile, {}, root, rootVelocity, rootSpin, joints, rates, links);
 
-    constexpr float h = 2.0e-3f;
-    std::vector<Vec3> ahead(joints), behind(joints);
-    for (std::size_t i = 0; i < joints.size(); ++i) {
-        ahead[i] += rates[i] * h;
-        behind[i] -= rates[i] * h;
-    }
-    const RLBodyPose3D forward = rlBodyPose3D(body.profile, rootVelocity * h, rlQuaternionExp3D(rootSpin * h) * root, ahead);
-    const RLBodyPose3D backward =
-        rlBodyPose3D(body.profile, rootVelocity * -h, rlQuaternionExp3D(rootSpin * -h) * root, behind);
-    float worst = 0.0f;
-    std::size_t worstLink = 0;
-    for (std::size_t i = 0; i < links.size(); ++i) {
-        const Vec3 originVelocity = (forward.positions[i] - backward.positions[i]) * (0.5f / h);
-        const Vec3 fromState = links[i].linearVelocity
-            - cross(links[i].angularVelocity, links[i].orientation.rotate(body.profile.links[i].centerOfMassLocal));
-        const float error = distance(fromState, originVelocity);
-        if (error > worst) {
-            worst = error;
-            worstLink = i;
+    RagdollProfile3D shifted = body.profile;
+    shifted.links[0].centerOfMassLocal = { 0.03f, -0.02f, 0.05f };
+    for (const int toe : { body.leftToe, body.rightToe })
+        if (toe >= 0) shifted.links[static_cast<std::size_t>(toe)].centerOfMassLocal = { 0.02f, 0.0f, -0.01f };
+
+    const RagdollProfile3D& original = body.profile;
+    for (const RagdollProfile3D* profile : { &original, static_cast<const RagdollProfile3D*>(&shifted) }) {
+        std::vector<PhysicsBodyState3D> links;
+        rlBodyLinkStates3D(*profile, {}, root, rootVelocity, rootSpin, joints, rates, links);
+        constexpr float h = 2.0e-3f;
+        std::vector<Vec3> ahead(joints), behind(joints);
+        for (std::size_t i = 0; i < joints.size(); ++i) {
+            ahead[i] += rates[i] * h;
+            behind[i] -= rates[i] * h;
         }
+        const RLBodyPose3D forward = rlBodyPose3D(*profile, rootVelocity * h, rlQuaternionExp3D(rootSpin * h) * root, ahead);
+        const RLBodyPose3D backward =
+            rlBodyPose3D(*profile, rootVelocity * -h, rlQuaternionExp3D(rootSpin * -h) * root, behind);
+        float worst = 0.0f;
+        std::size_t worstLink = 0;
+        for (std::size_t i = 0; i < links.size(); ++i) {
+            const Vec3 c = profile->links[i].centerOfMassLocal;
+            const Vec3 comAhead = forward.positions[i] + forward.orientations[i].rotate(c);
+            const Vec3 comBehind = backward.positions[i] + backward.orientations[i].rotate(c);
+            const float error = distance(links[i].linearVelocity, (comAhead - comBehind) * (0.5f / h));
+            if (error > worst) {
+                worst = error;
+                worstLink = i;
+            }
+        }
+        require(worst < 0.02f, "a velocidade reconstruida nao e a do centro de massa em "
+            + profile->links[worstLink].id + " (" + std::to_string(worst) + " m/s)");
     }
-    require(worst < 0.02f, "a velocidade reconstruida nao e a do centro de massa em "
-        + body.profile.links[worstLink].id + " (" + std::to_string(worst) + " m/s)");
 }
 
 // O escorregar do corpo (o acumulador de custos) de um pe rolando sobre o

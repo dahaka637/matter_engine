@@ -29,6 +29,7 @@ PilotRange3D range(const nlohmann::json& object, const char* key, PilotRange3D f
 PilotScript3D parsePilot(const nlohmann::json& p, const std::string& drill) {
     PilotScript3D script;
     script.kind = p.value("kind", script.kind);
+    script.forwardOnly = p.value("forwardOnly", script.forwardOnly);
     if (script.kind != "hold" && script.kind != "stick" && script.kind != "star")
         fail("o piloto do exercicio " + drill + " tem kind desconhecido: " + script.kind);
     if (p.contains("bands"))
@@ -145,8 +146,34 @@ BodyTask3D loadBodyTask3D(const std::filesystem::path& path) {
         const nlohmann::json& r = document["reward"];
         BodyRewardSettings3D& w = task.reward;
         w.velocityForm = r.value("velocityForm", w.velocityForm);
-        if (w.velocityForm != "cauchy" && w.velocityForm != "bell" && w.velocityForm != "mixed")
+        if (w.velocityForm != "cauchy" && w.velocityForm != "bell" && w.velocityForm != "mixed"
+            && w.velocityForm != "progress")
             fail("velocityForm desconhecida: " + w.velocityForm);
+        w.movingThreshold = r.value("movingThreshold", w.movingThreshold);
+        w.progressDeltaBase = r.value("progressDeltaBase", w.progressDeltaBase);
+        w.progressDeltaPerSpeed = r.value("progressDeltaPerSpeed", w.progressDeltaPerSpeed);
+        w.stopSigma = r.value("stopSigma", w.stopSigma);
+        w.positiveOnly = r.value("positiveOnly", w.positiveOnly);
+        w.taskScale = r.value("taskScale", w.taskScale);
+        if (w.taskScale < 0.0f) fail("taskScale negativo");
+        if (r.contains("standGate")) {
+            const nlohmann::json& g = r["standGate"];
+            w.standGate.enabled = g.value("enabled", true);
+            w.standGate.heightFrom = g.value("heightFrom", w.standGate.heightFrom);
+            w.standGate.heightTo = g.value("heightTo", w.standGate.heightTo);
+            w.standGate.uprightFromDegrees = g.value("uprightFromDegrees", w.standGate.uprightFromDegrees);
+            w.standGate.uprightToDegrees = g.value("uprightToDegrees", w.standGate.uprightToDegrees);
+            if (!(w.standGate.heightTo > w.standGate.heightFrom)
+                || !(w.standGate.uprightFromDegrees > w.standGate.uprightToDegrees))
+                fail("standGate com limites invertidos");
+        }
+        if (r.contains("air")) {
+            w.air.weight = r["air"].value("weight", w.air.weight);
+            w.air.capSeconds = r["air"].value("capSeconds", w.air.capSeconds);
+            if (w.air.weight < 0.0f || !(w.air.capSeconds > 0.0f)) fail("air invalido");
+        }
+        if (!(w.movingThreshold > 0.0f) || !(w.progressDeltaBase > 0.0f) || !(w.stopSigma > 0.0f))
+            fail("limiares da nota de progresso invalidos");
         w.velocityToleranceAbsolute = r.value("velocityToleranceAbsolute", w.velocityToleranceAbsolute);
         w.velocityToleranceRelative = r.value("velocityToleranceRelative", w.velocityToleranceRelative);
         w.facingSigma = r.value("facingSigma", w.facingSigma);
@@ -188,6 +215,8 @@ BodyTask3D loadBodyTask3D(const std::filesystem::path& path) {
         start.bankFraction = s.value("bankFraction", start.bankFraction);
         start.bankCapacity = s.value("bankCapacity", start.bankCapacity);
         start.bankEverySeconds = s.value("bankEverySeconds", start.bankEverySeconds);
+        start.movingFraction = s.value("movingFraction", start.movingFraction);
+        if (start.movingFraction < 0.0f || start.movingFraction > 1.0f) fail("movingFraction fora de 0..1");
         if (start.referenceFraction < 0.0f || start.bankFraction < 0.0f
             || start.referenceFraction + start.bankFraction > 1.0f)
             fail("referenceFraction e bankFraction fora de 0..1");
@@ -209,6 +238,22 @@ BodyTask3D loadBodyTask3D(const std::filesystem::path& path) {
         random.observationNoise = r.value("observationNoise", random.observationNoise);
     }
 
+    if (document.contains("curriculum")) {
+        const nlohmann::json& k = document["curriculum"];
+        task.curriculum.speedMin = k.value("speedMin", task.curriculum.speedMin);
+        task.curriculum.speedMax = k.value("speedMax", task.curriculum.speedMax);
+        task.curriculum.clipSlack = k.value("clipSlack", task.curriculum.clipSlack);
+        if (task.curriculum.speedMax > 0.0f && task.curriculum.speedMin > task.curriculum.speedMax)
+            fail("curriculum com a velocidade minima acima da maxima");
+    }
+    if (document.contains("solverMix")) {
+        const nlohmann::json& m = document["solverMix"];
+        task.solverMix.heavyFraction = m.value("heavyFraction", task.solverMix.heavyFraction);
+        task.solverMix.heavyPositionIterations = m.value("heavyPositionIterations", task.solverMix.heavyPositionIterations);
+        task.solverMix.heavyVelocityIterations = m.value("heavyVelocityIterations", task.solverMix.heavyVelocityIterations);
+        if (task.solverMix.heavyFraction < 0.0f || task.solverMix.heavyFraction > 1.0f) fail("solverMix fora de 0..1");
+    }
+
     if (!document.contains("drills") || document["drills"].empty()) fail("sem exercicios");
     float total = 0.0f;
     for (const nlohmann::json& d : document["drills"]) {
@@ -218,6 +263,8 @@ BodyTask3D loadBodyTask3D(const std::filesystem::path& path) {
         drill.weight = d.value("weight", 1.0f);
         drill.episodeSeconds = d.value("episodeSeconds", 0.0f);
         drill.pilot = parsePilot(d.value("pilot", nlohmann::json::object()), drill.id);
+        if (task.curriculum.speedMax > 0.0f)
+            drill.pilot.speedWindow = { task.curriculum.speedMin, task.curriculum.speedMax };
         if (d.contains("task")) {
             drill.task.velocity = d["task"].value("velocity", drill.task.velocity);
             drill.task.facing = d["task"].value("facing", drill.task.facing);
