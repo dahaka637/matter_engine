@@ -192,7 +192,9 @@ ControlInput3D CommandPilot3D::update(const PilotScript3D& script, PilotState3D&
         const float planar = std::hypot(view.velocity.x, view.velocity.y);
         state.speed = 0.0f;
         if (state.holdLeft > 0.0f) {
-            // Parado no ponto; acabou, o seguinte.
+            // Parado no ponto (o quanto ele sai dele); acabou, o seguinte.
+            state.holdDistanceSum += distance;
+            ++state.holdDecisions;
             if ((state.holdLeft -= dt) <= 0.0f) {
                 state.holdLeft = 0.0f;
                 if (state.atTip && !chance(rng, script.continuousFraction)) pickCenter(script, state, rng);

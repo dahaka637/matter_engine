@@ -503,6 +503,8 @@ const ReferenceFrame3D* BodyTrainingBatch3D::Impl::pickClipFrame(World& world) c
 
 void BodyTrainingBatch3D::Impl::resetWorld(std::uint32_t index) {
     World& world = worlds[index];
+    // A cota de agora (as fatias podem ter mudado com o treino andando).
+    world.drill = worldDrill[index];
     PhysicsScene3D& physics = *scenes[world.scene].physics;
     const BodyTask3D::InitialState& start = task.initialState;
     const RLPosture3D& pose = body.postures[posture];
@@ -693,6 +695,9 @@ void BodyTrainingBatch3D::Impl::finishEpisode(Scene& scene, std::uint32_t index,
     episode.meanRequested = static_cast<float>(world.requestedSum / n);
     episode.meanStandGate = static_cast<float>(world.gateSum / n);
     episode.bothFeetAirFraction = static_cast<float>(world.bothAirSteps / n);
+    episode.targetsPerMinute = episode.seconds > 0.0f ? 60.0f * static_cast<float>(world.pilot.reached) / episode.seconds : 0.0f;
+    if (world.pilot.holdDecisions > 0)
+        episode.holdDrift = world.pilot.holdDistanceSum / static_cast<float>(world.pilot.holdDecisions);
     if (state && finite(state->links.front().position)) {
         const Vec3 p = state->links.front().position;
         episode.distance = std::hypot(p.x - world.start.x, p.y - world.start.y);
@@ -997,6 +1002,15 @@ void BodyTrainingBatch3D::updateTask(const BodyTask3D& task) {
         drill.episodeSeconds = task.drills[d].episodeSeconds;
         drill.displayName = task.drills[d].displayName;
     }
+    // As fatias: com pesos novos, os mundos se redistribuem, e cada um troca de
+    // exercicio no proximo episodio.
+    bool weights = false;
+    for (std::size_t d = 0; d < task.drills.size(); ++d)
+        if (impl.task.drills[d].weight != task.drills[d].weight) {
+            impl.task.drills[d].weight = task.drills[d].weight;
+            weights = true;
+        }
+    if (weights) impl.assignDrills();
     impl.task.curriculum = task.curriculum;
     impl.task.hash = task.hash;
 }

@@ -99,7 +99,7 @@ const std::vector<std::string> BodyEpisodeColumns {
     "erro_velocidade", "erro_olhar", "reacao", "reacao_resolvida", "trocas", "trabalho", "uso_motor", "escorregar",
     "pancada", "cabeca", "suavidade", "limites", "contatos", "no_teto", "acao_media", "acao_presa", "alvo_preso",
     "reversao", "cadencia", "distancia", "comeco", "passos_uteis", "primeiro_passo", "sequencia", "pedido_medio",
-    "porta_media", "voo_duplo"
+    "porta_media", "voo_duplo", "alvos_por_minuto", "deriva_espera"
 };
 
 // As linhas de colisores de uma pose (o formato do dump do quadros).
@@ -432,8 +432,8 @@ NB_MODULE(matter_rl_native, m) {
                         c.limits, c.contacts, c.saturation, e.meanAbsAction, e.actionClipped, e.targetClamped,
                         e.meanReversal, e.cadence, e.distance, static_cast<float>(static_cast<int>(e.start)),
                         e.usefulStepsPerSecond, e.firstStepSeconds, e.longestStepRun, e.meanRequested,
-                        e.meanStandGate, e.bothFeetAirFraction };
-                    static_assert(std::size(row) == 36);
+                        e.meanStandGate, e.bothFeetAirFraction, e.targetsPerMinute, e.holdDrift };
+                    static_assert(std::size(row) == 38);
                     std::copy(std::begin(row), std::end(row), data + i * columns);
                 }
                 nb::capsule owner(data, [](void* p) noexcept { delete[] static_cast<float*>(p); });

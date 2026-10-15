@@ -128,6 +128,10 @@ struct PilotState3D {
     bool changed = false;
     std::uint32_t changes = 0;
     std::uint32_t reached = 0;
+    // A espera nos pontos de parar: a soma da distancia ate o ponto a cada
+    // decisao parado nele, e quantas decisoes (a deriva media da espera).
+    float holdDistanceSum = 0.0f;
+    std::uint32_t holdDecisions = 0;
 };
 
 class CommandPilot3D {

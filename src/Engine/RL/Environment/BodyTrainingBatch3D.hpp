@@ -95,6 +95,10 @@ struct BodyEpisode3D {
     // A fatia das decisoes com os dois pes fora do chao (o saltitar; a nota de
     // aquisicao nao o cobra: o custo de trabalho so volta na F1).
     float bothFeetAirFraction = 0.0f;
+    // A estrela: os pontos alcancados por minuto e a deriva media (m) na espera
+    // parado num ponto (-1 sem espera).
+    float targetsPerMinute = 0.0f;
+    float holdDrift = -1.0f;
 };
 
 // Um mundo visto por fora (a previa, as folhas de quadros).
@@ -159,8 +163,9 @@ public:
 
     // Muda o que pode mudar com o treino andando (vale do proximo passo ou
     // episodio em diante): a nota, o fim, a variacao do mundo, o controle e,
-    // em cada exercicio, o roteiro, os pesos da tarefa e a duracao. O corpo, o
-    // contrato, o comeco e a lista dos exercicios (e as cotas) nao mudam.
+    // em cada exercicio, o roteiro, os pesos da tarefa, a duracao e o peso (as
+    // cotas: os mundos se redistribuem e trocam de exercicio no proximo
+    // episodio). O corpo, o contrato, o comeco e a lista dos exercicios nao mudam.
     void updateTask(const BodyTask3D& task);
     // Todos os mundos recomecam (sementes derivadas de seed).
     void reset(std::uint64_t seed);

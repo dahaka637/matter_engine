@@ -482,3 +482,24 @@ def test_command_gain_reaches_the_network_and_the_export(scratch):
     old = scratch / "antigo2.json"
     old.write_text(json.dumps({"task": "corpo2", "environments": 4}))
     assert BodyRunConfig.load(old).command_gain == 1.0
+
+
+def test_drill_balance_follows_difficulty_with_a_floor():
+    """As fatias seguem a dificuldade (exercicios_do_corpo_v2): o pior ganha
+    mais, ate o teto; o bom volta ao peso de base; nenhum fica abaixo do piso."""
+    from matter_rl.body_trainer import balance_drills
+    drills = [{"id": "parado", "weight": 1.0}, {"id": "estrela", "weight": 1.0}]
+    rule = {"gain": 2.0, "maximumFactor": 3.0, "floor": 0.08}
+    even = balance_drills(drills, {"parado": {"falls": 0.0, "velocity_error_median": 0.1},
+                                   "estrela": {"falls": 0.0, "velocity_error_median": 0.1}}, rule)
+    assert abs(even["parado"] - 1.0) < 1e-6 and abs(even["estrela"] - 1.0) < 1e-6
+    hard = balance_drills(drills, {"parado": {"falls": 0.0, "velocity_error_median": 0.05},
+                                   "estrela": {"falls": 0.5, "velocity_error_median": 0.6}}, rule)
+    assert hard["estrela"] > hard["parado"]
+    assert abs(hard["estrela"] / hard["parado"] - 3.0) < 1e-6          # o teto: 3 x o de base
+    tiny = balance_drills([{"id": "parado", "weight": 0.01}, {"id": "estrela", "weight": 1.0}],
+                          {"parado": {"falls": 0.0}, "estrela": {"falls": 1.0, "velocity_error_median": 1.0}}, rule)
+    assert tiny["parado"] / sum(tiny.values()) >= 0.08 - 1e-6           # o piso
+    base = balance_drills([{"id": "parado", "weight": 2.0, "baseWeight": 1.0}, {"id": "estrela", "weight": 1.0}],
+                          {"estrela": {"falls": 0.0}}, rule)
+    assert abs(base["parado"] - 1.0) < 1e-6                              # sem medida: o peso de base

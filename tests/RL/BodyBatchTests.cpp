@@ -174,6 +174,10 @@ void testPilot() {
     const BodyDrill3D& star = task.drills[static_cast<std::size_t>(findBodyDrill3D(task, "estrela"))];
     const PilotRun stars = runPilot(task, star, 3, 1800);
     require(stars.state.reached >= 4, "a estrela chega aos pontos");
+    // A espera nos pontos de parar e medida: um seguidor perfeito fica dentro do ponto.
+    require(stars.state.holdDecisions > 0, "a estrela mede a espera nos pontos de parar");
+    require(stars.state.holdDistanceSum / static_cast<float>(stars.state.holdDecisions) < star.pilot.arriveRadius,
+        "parado no ponto ele fica dentro dele");
     // Parado: teclas soltas o tempo todo.
     const BodyDrill3D& hold = task.drills[static_cast<std::size_t>(findBodyDrill3D(task, "parado"))];
     const PilotRun still = runPilot(task, hold, 9, 600);
@@ -379,6 +383,27 @@ void testBodyBatch() {
     require(episodes > 0 && falls > 0, "sem politica ele cai e o mundo recomeca");
 }
 
+// As fatias com o treino andando: pesos novos redistribuem os mundos, e cada
+// um troca de exercicio no proximo episodio.
+void testDrillQuotasUpdate() {
+    BodyTrainingBatch3D batch(smallBatch(10, 2, false));
+    BodyTask3D task = loadBodyTask3D(taskPath());
+    task.drills[0].weight = 0.0f;
+    task.drills[1].weight = 0.0f;
+    task.drills[2].weight = 1.0f;
+    batch.updateTask(task);
+    for (const std::uint32_t d : batch.worldDrills()) require(d == 2, "a cota nova manda todos para o terceiro exercicio");
+    batch.reset(5);
+    for (std::size_t w = 0; w < batch.environmentCount(); ++w)
+        require(batch.view(w).drill == 2, "depois do recomeco cada mundo esta no exercicio da cota nova");
+    task.drills[0].weight = 1.0f;
+    task.drills[1].weight = 1.0f;
+    batch.updateTask(task);
+    std::array<int, 3> perDrill {};
+    for (const std::uint32_t d : batch.worldDrills()) ++perDrill[d];
+    require(perDrill[0] >= 3 && perDrill[1] >= 3 && perDrill[2] >= 3, "as fatias voltam a dividir os mundos");
+}
+
 // O mesmo lote com a mesma semente e as mesmas acoes da o mesmo resultado,
 // com qualquer numero de threads.
 void testBodyBatchDeterminism() {
@@ -538,6 +563,7 @@ void runBodyBatchTests() {
     testRewardOrder();
     testTaskLoader();
     testBodyBatch();
+    testDrillQuotasUpdate();
     testBodyBatchDeterminism();
     testBodyBatchInfoParity();
     testReferenceStarts();

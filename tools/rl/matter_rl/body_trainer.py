@@ -222,7 +222,50 @@ def drill_summary(rows: np.ndarray, columns: list[str], drills: list[str]) -> di
             "stand_gate": float(part[:, col["porta_media"]].mean()),
             "both_feet_air": float(part[:, col["voo_duplo"]].mean()),
         }
+        # A estrela (colunas que um modulo nativo antigo nao tem).
+        if "alvos_por_minuto" in col:
+            out[drill]["targets_per_minute"] = float(part[:, col["alvos_por_minuto"]].mean())
+            drift = part[:, col["deriva_espera"]]
+            drift = drift[drift >= 0.0]
+            out[drill]["hold_drift"] = float(drift.mean()) if len(drift) else None
     return out
+
+
+def drill_difficulty(metrics: dict) -> float:
+    """A dificuldade de um exercicio na avaliacao (0 = perfeito): as quedas mais o
+    erro mediano de velocidade (1 m/s conta como cair sempre)."""
+    return float(metrics.get("falls", 0.0)) + min(1.0, float(metrics.get("velocity_error_median", 0.0)))
+
+
+def balance_drills(drills: list[dict], evaluation: dict, rule: dict) -> dict[str, float]:
+    """As fatias seguem a dificuldade (exercicios_do_corpo_v2): o peso de cada
+    exercicio e o de base vezes 1 + gain x (a dificuldade dele menos a do
+    melhor), ate maximumFactor x o de base; depois nenhum fica abaixo de
+    floor da soma. Sem medida, o exercicio fica no peso de base."""
+    gain = float(rule.get("gain", 2.0))
+    factor = float(rule.get("maximumFactor", 3.0))
+    floor = float(rule.get("floor", 0.08))
+    base = {d["id"]: float(d.get("baseWeight", d.get("weight", 1.0))) for d in drills}
+    difficulty = {d: drill_difficulty(evaluation[d]) for d in base if d in evaluation}
+    best = min(difficulty.values()) if difficulty else 0.0
+    weights = {d: base[d] * min(factor, 1.0 + gain * (difficulty[d] - best)) if d in difficulty else base[d]
+               for d in base}
+    total = sum(weights.values())
+    if total <= 0.0:
+        return base
+    # O piso: quem fica abaixo dele vai para o piso, e o resto se divide entre os
+    # outros na proporcao deles (repete ate ninguem novo cair abaixo).
+    floor = min(floor, 1.0 / len(weights))
+    pinned: set[str] = set()
+    while True:
+        free = {d: w for d, w in weights.items() if d not in pinned}
+        room = 1.0 - floor * len(pinned)
+        free_total = sum(free.values())
+        shares = {d: floor for d in pinned} | {d: room * w / free_total for d, w in free.items()}
+        low = {d for d, share in shares.items() if share < floor - 1e-12 and d not in pinned}
+        if not low:
+            return {d: shares[d] * total for d in shares}
+        pinned |= low
 
 
 class BodyTrainer:
@@ -560,8 +603,30 @@ class BodyTrainer:
             self.db.log_body_evaluation(self.run, self.counters["iteration"], self.counters["steps"], drill, solver,
                                         summary)
         self.last_evaluation = {"iteration": self.counters["iteration"], "time": time.time(), "solvers": results}
+        self.adjust_drill_weights(results.get("jogo", {}))
         self.state = previous
         return self.last_evaluation
+
+    def adjust_drill_weights(self, evaluation: dict) -> None:
+        """Com "drillWeights": {"auto": true} na tarefa, as fatias seguem a
+        avaliacao do solver do jogo (o peso de base fica em baseWeight)."""
+        live = json.loads(self.live_task.read_text())
+        rule = live.get("drillWeights") or {}
+        drills = live.get("drills") or []
+        if not rule.get("auto") or len(drills) < 2 or not evaluation:
+            return
+        for drill in drills:
+            drill.setdefault("baseWeight", drill.get("weight", 1.0))
+        weights = balance_drills(drills, evaluation, rule)
+        if all(abs(drill.get("weight", 1.0) - weights[drill["id"]]) < 1e-3 for drill in drills):
+            return
+        for drill in drills:
+            drill["weight"] = round(weights[drill["id"]], 4)
+        storage.write_json_atomic(self.live_task, live)
+        self.batch.update_task(str(self.live_task))
+        total = sum(weights.values())
+        self.db.event(self.run, "exercicios", "fatias: " + ", ".join(
+            f"{d['id']} {100 * weights[d['id']] / total:.0f}%" for d in drills))
 
     # --- comandos -------------------------------------------------------------------
     def handle_commands(self) -> None:
