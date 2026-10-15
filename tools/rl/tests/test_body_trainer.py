@@ -247,7 +247,7 @@ def test_fixed_sigma_and_seeds(scratch):
     radians = np.asarray(a.batch.action_radians_per_unit())
     sigma = a.model.log_std.detach().exp().cpu().numpy() * radians
     for i, name in enumerate(a.action_names):
-        expected = {"legs": 0.06, "toes": 0.06, "arms": 0.05, "trunk": 0.03}[axis_group(name)]
+        expected = {"legs": 0.06, "toes": 0.06, "arms": 0.05, "trunk": 0.02}[axis_group(name)]
         assert abs(sigma[i] - expected) < 1e-3, name
     before = a.model.log_std.detach().clone()
     a.max_iterations = 2

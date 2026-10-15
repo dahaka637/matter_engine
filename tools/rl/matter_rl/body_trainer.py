@@ -47,8 +47,9 @@ BODY_PPO = {"separate_critic": True, "critic_learning_rate": 3e-4, "critic_max_g
             "learning_rate": 5e-6, "min_learning_rate": 1e-6, "max_learning_rate": 3e-4, "entropy_coef": 0.0,
             # O alvo do rsl_rl: com 37 eixos o recorte ja chega a ~0,4 com KL 0,02 (a razao soma 37 termos).
             "desired_kl": 0.01}
-# O desvio fixo da exploracao por grupo de eixos (rad; plano 5.3).
-FIXED_SIGMA = {"legs": 0.06, "toes": 0.06, "arms": 0.05, "trunk": 0.03}
+# O desvio fixo da exploracao por grupo de eixos (rad; plano 5.3). O tronco em 0,02 e o resultado do D0
+# (14/10): com 0,03 o corpo com ruido ficava a 1,64x da distancia do corpo sem ruido ao acervo; com 0,02, 1,44x.
+FIXED_SIGMA = {"legs": 0.06, "toes": 0.06, "arms": 0.05, "trunk": 0.02}
 
 
 def axis_group(action_name: str) -> str:
