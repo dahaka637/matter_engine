@@ -751,7 +751,8 @@ void BodyTrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> a
             world.actionDelta[d] = delta;
         }
         contract->beginDecision(world.contract, action, means.subspan(index * A, A));
-        world.costs.setLean(task.reward.postureLeanDegrees, task.reward.postureLeanPerSpeed, task.reward.postureLeanMaxDegrees);
+        world.costs.setLean(task.reward.postureLeanDegrees, task.reward.postureLeanPerSpeed, task.reward.postureLeanMaxDegrees,
+            task.reward.postureLeanPerCrouch);
         if (const RagdollState3D* state = physics.ragdollStateView(world.ragdoll)) world.costs.begin(*state, body);
         world.costs.setTargetChange(world.endTargets, world.endChange, world.contract.rampTo);
         for (std::size_t d = 0; d < A; ++d) {

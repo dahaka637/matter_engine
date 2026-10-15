@@ -210,6 +210,7 @@ BodyTask3D loadBodyTask3D(const std::filesystem::path& path) {
             w.postureLeanDegrees = c.value("postureLeanDegrees", w.postureLeanDegrees);
             w.postureLeanPerSpeed = c.value("postureLeanPerSpeed", w.postureLeanPerSpeed);
             w.postureLeanMaxDegrees = c.value("postureLeanMaxDegrees", w.postureLeanMaxDegrees);
+            w.postureLeanPerCrouch = c.value("postureLeanPerCrouch", w.postureLeanPerCrouch);
             w.smooth = c.value("smooth", w.smooth);
             w.limits = c.value("limits", w.limits);
             w.contacts = c.value("contacts", w.contacts);

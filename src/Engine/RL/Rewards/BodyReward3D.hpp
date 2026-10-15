@@ -60,6 +60,9 @@ struct BodyRewardSettings3D {
     float postureLeanDegrees = 0.0f;
     float postureLeanPerSpeed = 0.0f;
     float postureLeanMaxDegrees = 0.0f;
+    // Mais folga quanto mais baixo o quadril (graus por fracao da altura de pe
+    // abaixo dela): a postura de prontidao inclina o tronco.
+    float postureLeanPerCrouch = 0.0f;
     // A postura atletica: o quadril acima de athleticHeight x a altura de pe
     // reto custa sempre; parado (o relogio do still), a base mais estreita que
     // athleticWidth (m, entre os pes de lado na pelve) tambem.
@@ -158,10 +161,11 @@ struct BodyCosts3D {
 class BodyCostAccumulator3D {
 public:
     // A tolerancia da inclinacao do peito (graus; 0 = a postura antiga, sem folga).
-    void setLean(float baseDegrees, float perSpeed, float maximumDegrees) {
+    void setLean(float baseDegrees, float perSpeed, float maximumDegrees, float perCrouch = 0.0f) {
         m_leanBase = baseDegrees;
         m_leanPerSpeed = perSpeed;
         m_leanMax = maximumDegrees;
+        m_leanPerCrouch = perCrouch;
     }
     void begin(const RagdollState3D& state, const RLBody3D& body);
     void addSubstep(const RLBody3D& body, const RagdollState3D& state, float fixedStep, float bodyWeight);
@@ -183,6 +187,7 @@ private:
     float m_leanBase = 0.0f;
     float m_leanPerSpeed = 0.0f;
     float m_leanMax = 0.0f;
+    float m_leanPerCrouch = 0.0f;
     float m_smooth = 0.0f;
     float m_torque = 0.0f;
     float m_limits = 0.0f;
