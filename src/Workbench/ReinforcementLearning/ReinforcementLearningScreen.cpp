@@ -631,8 +631,8 @@ void ReinforcementLearningScreen::drawTrainer() {
         if (status.lastFallFraction >= 0.0) infoRow("Quedas", decimal(status.lastFallFraction * 100.0, 0) + "%");
         tooltip("A fração dos episódios da última rodada do treino que acabaram em queda.");
         if (status.styleBeta >= 0.0) {
-            infoRow("Estilo", "β " + decimal(status.styleBeta, 2) + " · " + decimal(status.lastStyle, 3));
-            tooltip("O peso do juiz de estilo (β) e a nota média dele por decisão na última rodada.");
+            infoRow("Estilo", "peso " + decimal(status.styleBeta, 2) + " · " + decimal(status.lastStyle, 3));
+            tooltip("O peso do juiz de estilo (beta) e a nota média dele por decisão na última rodada.");
         }
         if (status.alive && status.cpuTemperature > 0.0) infoRow("CPU", decimal(status.cpuTemperature, 0) + " °C");
     }
@@ -742,7 +742,7 @@ void ReinforcementLearningScreen::drawEvaluation(const TrainerStatus3D& status) 
         infoRow("Sem cair", decimal((1.0 - entry.falls) * 100.0, 0) + "%");
         tooltip("Os mundos da avaliação que não caíram em 20 s, sem ruído e com a física do jogo (20/20).");
         if (entry.velocityError >= 0.0) {
-            infoRow("Erro de velocidade", decimal(entry.velocityError, 2) + " m/s");
+            infoRow("Erro vel.", decimal(entry.velocityError, 2) + " m/s");
             tooltip("A mediana da diferença entre a velocidade pedida e a dele.");
         }
         if (entry.usefulSteps >= 0.0) {
