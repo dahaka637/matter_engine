@@ -2,7 +2,7 @@
   "schema": "matter-rl-task-2",
   "id": "fase2",
   "displayName": "Fase 2: girar, trotar e curvar",
-  "comment": "Fase 2, ultimo degrau: a curva suave (andar e trote leve) entra na mistura. Parte da F2c. A fase 2 dos exercicios do Corpo v2 (vault novo_plano/v2/exercicios_do_corpo_v2.md): o parado com o giro suave da camera (o peito segue um rumo que gira devagar, ~30 graus/s, com pausas), a estrela com trote leve (ate ~2,5 m/s) e 35% de ponta a ponta, e a curva suave (arcos de 12-18 m, andar e trote leve, S as vezes). A parada com espera continua em todos. Os exercicios da fase 1 continuam na mistura (o parado sem giro e a estrela so andando). Sem o juiz. Parte do checkpoint aprovado da fase 1. Mesma nota da fase 1 (sem juiz, postura 1,0, sem muleta, still 1,0 com folga 1,5 s).",
+  "comment": "Fase 2, ultimo degrau: a curva suave (andar e trote leve) entra na mistura. Parte da F2c. A fase 2 dos exercicios do Corpo v2 (vault novo_plano/v2/exercicios_do_corpo_v2.md): o parado com o giro suave da camera (o peito segue um rumo que gira devagar, ~30 graus/s, com pausas), a estrela com trote leve (ate ~2,5 m/s) e 35% de ponta a ponta, e a curva suave (arcos de 12-18 m, andar e trote leve, S as vezes). A parada com espera continua em todos. Os exercicios da fase 1 continuam na mistura (o parado sem giro e a estrela so andando). Sem o juiz. Parte do checkpoint aprovado da fase 1. Mesma nota da fase 1 (sem juiz, postura 1,0, sem muleta, still 1,0 com folga 1,5 s). O andar para a frente do Bloco 1 volta a mistura (15/10, 09:55): sem ele a velocidade em linha reta regrediu (pedindo 2,5 m/s, o B1.4 fazia 2,23 e a F2 atletica 1,92); a estrela freia e vira demais para manter a velocidade.",
   "body": "../bodies/football_player_v2.json",
   "decision": {
     "substeps": 4,
@@ -110,6 +110,41 @@
     "observationNoise": 1.0
   },
   "drills": [
+    {
+      "id": "andar_frente",
+      "displayName": "Andar para a frente",
+      "weight": 0.15,
+      "task": {
+        "velocity": 0.7,
+        "facing": 0.3
+      },
+      "pilot": {
+        "kind": "stick",
+        "forwardOnly": true,
+        "bands": [
+          {
+            "name": "andar",
+            "speed": [
+              0.8,
+              2.5
+            ],
+            "weight": 1.0
+          }
+        ],
+        "stickSeconds": [
+          3.0,
+          6.0
+        ],
+        "releaseFraction": 0.0,
+        "keysFraction": 1.0,
+        "syncFraction": 0.0,
+        "camera": {
+          "fixed": 1.0,
+          "follow": 0.0,
+          "turns": 0.0
+        }
+      }
+    },
     {
       "id": "parado",
       "displayName": "Parado",
