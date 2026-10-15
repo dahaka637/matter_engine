@@ -384,12 +384,12 @@ def test_start_arguments_keep_the_transfer(scratch):
     from matter_rl.__main__ import start_arguments, trainer_command
     args = argparse.Namespace(run="p3", tarefa="aquisicao_p3a", modo=None, mundos=None, semente=5,
                               de_checkpoint="p0:9", transferir="ator", aquecimento=30, desvio_aprendido=None,
-                              sem_estilo=False, sem_sobreposicao=False, sobreposicao=False, dispositivo="auto", espelho=0.25)
+                              sem_estilo=False, sem_sobreposicao=False, sobreposicao=False, dispositivo="auto", espelho=0.25, ganho_comando=3.0)
     command = start_arguments(args, ["x"])
     assert command[command.index("--de-checkpoint") + 1] == "p0:9"
     assert command[command.index("--transferir") + 1] == "ator" and command[command.index("--aquecimento") + 1] == "30"
     assert command[command.index("--semente") + 1] == "5" and "--sem-estilo" not in command
-    assert command[command.index("--espelho") + 1] == "0.25"
+    assert command[command.index("--espelho") + 1] == "0.25" and command[command.index("--ganho-comando") + 1] == "3.0"
     again = trainer_command(args)
     assert "--de-checkpoint" in again and "--semente" in again
 
@@ -458,3 +458,27 @@ def test_speed_curriculum_rises_with_progress(scratch):
         trainer.update_curriculum(rows, col)
     assert top() == 3.0
     assert json.loads(trainer.live_task.read_text())["curriculum"]["speedCap"] == 3.0
+
+
+def test_command_gain_reaches_the_network_and_the_export(scratch):
+    """O canal da velocidade pedida passa por um ganho fixo (a rede quase o ignorava): a
+    normalizacao o multiplica por 3, e o que vai ao jogo (o desvio exportado) e o mesmo."""
+    from matter_rl.body_trainer import BodyRunConfig, BodyTrainer
+    trainer = tiny(BodyTrainer, scratch, "ganho", task="aquisicao_p1", style=False, command_gain=3.0)
+    names = trainer.obs_names
+    i = names.index("command.move.x")
+    other = names.index("command.face.sin")
+    norm = trainer.model.obs_norm
+    assert abs(float(norm.var[i]) - 1.0 / 9.0) < 1e-6 and float(norm.mean[i]) == 0.0
+    assert float(norm.var[other]) == 1.0                  # os outros comandos seguem crus
+    x = torch.zeros(1, len(names), device=trainer.device)
+    x[0, i] = 2.0 / 6.0                                   # 2 m/s
+    assert abs(float(norm(x)[0, i]) - 1.0) < 1e-4         # 2 m/s chega como 1,0 (v/2)
+    assert float(trainer.model.critic_norm.var[trainer.critic_names.index("command.move.x")]) < 0.2
+    # A estatistica candidata e a congelada guardam o ganho depois de acumular.
+    trainer.obs_candidate.update(torch.randn(64, len(names), device=trainer.device))
+    assert abs(float(trainer.obs_candidate.var[i]) - 1.0 / 9.0) < 1e-6
+    # Treinos de antes (sem o campo) seguem com ganho 1.
+    old = scratch / "antigo2.json"
+    old.write_text(json.dumps({"task": "corpo2", "environments": 4}))
+    assert BodyRunConfig.load(old).command_gain == 1.0

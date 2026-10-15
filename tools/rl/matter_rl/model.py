@@ -29,11 +29,14 @@ class RunningNorm(nn.Module):
         self.fixed: torch.Tensor | None = None
 
     @torch.no_grad()
-    def fix_channels(self, mask: torch.Tensor) -> None:
-        """Canais que passam crus (media 0, desvio 1, sem acumular): os comandos.
-        Eles valem 0 ou 1 e mudam de distribuicao de uma tarefa para outra (na
-        H1 o comando da postura e sempre 0, e a variancia iria a zero)."""
+    def fix_channels(self, mask: torch.Tensor, gain: torch.Tensor | None = None) -> None:
+        """Canais que passam crus (media 0, sem acumular): os comandos. Eles valem 0
+        ou 1 e mudam de distribuicao de uma tarefa para outra (na H1 o comando da
+        postura e sempre 0, e a variancia iria a zero). gain: um ganho fixo por canal
+        (o desvio vira 1/ganho): a velocidade pedida entra como v/6 e, sem ganho, a
+        rede quase nao a enxergava (a acao media mudava 0,002 rad do pedido 0,5 ao 3,0)."""
         self.fixed = mask.to(torch.bool).cpu()
+        self.gain = None if gain is None else gain.to(torch.float32).cpu()
         self._hold()
 
     @torch.no_grad()
@@ -42,6 +45,9 @@ class RunningNorm(nn.Module):
             mask = self.fixed.to(self.mean.device)
             self.mean[mask] = 0.0
             self.var[mask] = 1.0
+            gain = getattr(self, "gain", None)
+            if gain is not None:
+                self.var[mask] = (1.0 / gain.to(self.var.device)[mask].pow(2)).to(self.var.dtype)
 
     @torch.no_grad()
     def update(self, batch: torch.Tensor) -> None:

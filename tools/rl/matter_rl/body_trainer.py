@@ -127,6 +127,10 @@ class BodyRunConfig:
     transferred_from: str = ""
     # O corte do recorte: com a media acima de 0,35 por 5 rodadas, 3 epocas.
     clip_streak_limit: int = 5
+    # O ganho fixo do canal da velocidade pedida (command.move.*, que entra como v/6): 3
+    # leva 3 m/s a 1,5. Sem ele, a rede nao usava o comando (14/10: a acao media
+    # mudava 0,002 rad do pedido 0,5 ao 3,0). 1 = o antigo (treinos de antes).
+    command_gain: float = 3.0
     # O curriculo da velocidade (a tarefa traz curriculum.speedMax e speedCap): sobe
     # curriculum_step quando a nota de progresso media passa de curriculum_threshold
     # em curriculum_rounds rodadas seguidas e ha ao menos curriculum_gap rodadas
@@ -142,6 +146,8 @@ class BodyRunConfig:
     def load(path: Path) -> "BodyRunConfig":
         data = json.loads(path.read_text())
         known = {k: v for k, v in data.items() if k in BodyRunConfig.__dataclass_fields__}
+        if "command_gain" not in known:
+            known["command_gain"] = 1.0
         if "exploration" not in known:
             # Um treino de antes do desvio fixo aprendia o desvio: continua assim.
             known["exploration"] = {"mode": "learned", "initial_rad": 0.15}
@@ -225,7 +231,8 @@ class BodyTrainer:
                  device: str = "auto", seed: int | None = None, socket_path: Path | None = None,
                  iterations: int | None = None, style: bool | None = None, overlap: bool | None = None,
                  transfer_from: str | None = None, transfer: tuple = ("ator", "normalizacao"),
-                 warmup: int | None = None, exploration: dict | None = None, mirror_loss: float | None = None):
+                 warmup: int | None = None, exploration: dict | None = None, mirror_loss: float | None = None,
+                 command_gain: float | None = None):
         self.run = run
         self.directory = paths.run_dir(run)
         self.directory.mkdir(parents=True, exist_ok=True)
@@ -251,6 +258,8 @@ class BodyTrainer:
             self.config.overlap = overlap
         if fresh and exploration is not None:
             self.config.exploration = exploration
+        if fresh and command_gain is not None:
+            self.config.command_gain = command_gain
         if fresh and mirror_loss is not None:
             self.config.mirror_loss = mirror_loss
         if fresh and warmup is not None:
@@ -375,7 +384,8 @@ class BodyTrainer:
 
     def fix_raw_channels(self) -> None:
         for norm, names in ((self.model.obs_norm, self.obs_names), (self.model.critic_norm, self.critic_names)):
-            norm.fix_channels(torch.tensor([name.startswith(RAW_PREFIXES) for name in names]))
+            gain = torch.tensor([self.config.command_gain if name.startswith("command.move") else 1.0 for name in names])
+            norm.fix_channels(torch.tensor([name.startswith(RAW_PREFIXES) for name in names]), gain)
 
     def seed_everything(self, seed: int) -> None:
         """A semente de cada gerador: Python, NumPy, PyTorch (CPU e CUDA). O lote

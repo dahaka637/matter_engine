@@ -80,7 +80,7 @@ def command_train(args: argparse.Namespace) -> int:
                               overlap=True if args.sobreposicao else (False if args.sem_sobreposicao else None),
                               transfer_from=args.de_checkpoint,
                               transfer=tuple(part for part in args.transferir.split(",") if part),
-                              warmup=args.aquecimento, mirror_loss=args.espelho,
+                              warmup=args.aquecimento, mirror_loss=args.espelho, command_gain=args.ganho_comando,
                               exploration=({"mode": "learned", "initial_rad": args.desvio_aprendido}
                                            if args.desvio_aprendido else None))
         return trainer.loop()
@@ -112,6 +112,8 @@ def trainer_command(args: argparse.Namespace) -> list[str]:
         command += ["--desvio-aprendido", str(args.desvio_aprendido)]
     if getattr(args, "espelho", None) is not None:
         command += ["--espelho", str(args.espelho)]
+    if getattr(args, "ganho_comando", None) is not None:
+        command += ["--ganho-comando", str(args.ganho_comando)]
     return command
 
 
@@ -148,7 +150,7 @@ def start_arguments(args: argparse.Namespace, command: list[str]) -> list[str]:
     for flag, value in (("--tarefa", args.tarefa), ("--modo", args.modo), ("--mundos", args.mundos),
                         ("--semente", getattr(args, "semente", None)), ("--de-checkpoint", args.de_checkpoint),
                         ("--aquecimento", args.aquecimento), ("--desvio-aprendido", args.desvio_aprendido),
-                        ("--espelho", args.espelho)):
+                        ("--espelho", args.espelho), ("--ganho-comando", args.ganho_comando)):
         if value is not None and value != "":
             command += [flag, str(value)]
     if args.de_checkpoint:
@@ -510,6 +512,8 @@ def main(argv: list[str] | None = None) -> int:
             p.add_argument("--desvio-aprendido", type=float)
             # O peso da perda do espelho no ator (0 = desligada; so ao criar o treino).
             p.add_argument("--espelho", type=float)
+            # O ganho fixo do canal da velocidade pedida (padrao 3; 1 = o antigo).
+            p.add_argument("--ganho-comando", type=float)
         return p
 
     sub.add_parser("doctor").set_defaults(func=command_doctor)
