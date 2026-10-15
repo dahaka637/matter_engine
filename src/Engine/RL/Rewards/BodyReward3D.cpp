@@ -52,8 +52,10 @@ void BodyCostAccumulator3D::addSubstep(const RLBody3D& body, const RagdollState3
             if (contact.linkIndex < body.supportLink.size() && !body.supportLink[contact.linkIndex]) m_contacts = 1.0f;
             continue;
         }
-        const PhysicsBodyState3D& link = state.links[contact.linkIndex];
-        const Vec3 point = link.linearVelocity + cross(link.angularVelocity, contact.position - link.position);
+        // A velocidade do ponto de contato pelo centro de massa do link (a
+        // origem do calcanhar dividido nao e o centro de massa dele).
+        const Vec3 point = rlLinkPointVelocity3D(body.profile.links[contact.linkIndex],
+            state.links[contact.linkIndex], contact.position);
         const Vec3 tangent = point - contact.normal * dot(contact.normal, point);
         const double load = std::max(0.0f, contact.normalImpulseNewtonSeconds);
         slipSum += static_cast<double>(tangent.length()) * load;

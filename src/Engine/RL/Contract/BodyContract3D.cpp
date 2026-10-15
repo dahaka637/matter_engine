@@ -201,16 +201,10 @@ void BodyContract3D::writeObservation(const RagdollState3D& ragdoll, const BodyC
     const Vec3 forward = pelvisFrame.rotate({ 1.0f, 0.0f, 0.0f });
     const Quaternion headingInverse =
         Quaternion::fromAxisAngle({ 0.0f, 0.0f, 1.0f }, -std::atan2(forward.y, forward.x));
-    Vec3 com {}, comVelocity {};
-    float massSum = 0.0f;
-    for (std::size_t i = 0; i < profile.links.size(); ++i) {
-        const float m = profile.links[i].massFraction;
-        com += ragdoll.links[i].position * m;
-        comVelocity += ragdoll.links[i].linearVelocity * m;
-        massSum += m;
-    }
-    com = com / std::max(1.0e-6f, massSum);
-    comVelocity = comVelocity / std::max(1.0e-6f, massSum);
+    // O centro de massa de verdade: a posicao publicada e a da origem do corpo
+    // (a velocidade ja e a do centro de massa; ver RLBody3D.hpp).
+    const Vec3 com = rlBodyCenterOfMass3D(profile, ragdoll.links);
+    const Vec3 comVelocity = rlBodyCenterOfMassVelocity3D(profile, ragdoll.links);
 
     float* p = out;
     *p++ = (pelvis.position.z - m_body.standingPelvisHeight) / 0.3f + n(0.005f);

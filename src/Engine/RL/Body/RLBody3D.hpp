@@ -126,7 +126,27 @@ struct RLBodyPose3D {
 [[nodiscard]] RLBodyPose3D rlBodyPose3D(const RagdollProfile3D& profile, Vec3 rootPosition,
     Quaternion rootOrientation, std::span<const Vec3> jointCoordinates);
 
-// Os links com velocidades: a pose em q e em q + qdot*h, por diferenca.
+// Posicao e velocidade de um link (a convencao do backend, medida no Jolt):
+//   position        = a ORIGEM do corpo (GetPosition), nao o centro de massa;
+//   linearVelocity  = a velocidade do CENTRO DE MASSA (GetLinearVelocity);
+//   angularVelocity = a do corpo todo.
+// O centro de massa fica em position + orientation x centerOfMassLocal. Os links
+// de centro de massa deslocado (o calcanhar do pe dividido) tem os dois
+// diferentes: tratar a origem como centro de massa erra a velocidade de um
+// ponto por omega x (R c) e o centro de massa do corpo.
+[[nodiscard]] Vec3 rlLinkCenterOfMass3D(const RagdollLinkDefinition3D& link, const PhysicsBodyState3D& state);
+// O centro de massa do corpo todo e a velocidade dele (pelas fracoes de massa).
+[[nodiscard]] Vec3 rlBodyCenterOfMass3D(const RagdollProfile3D& profile, std::span<const PhysicsBodyState3D> links);
+[[nodiscard]] Vec3 rlBodyCenterOfMassVelocity3D(const RagdollProfile3D& profile,
+    std::span<const PhysicsBodyState3D> links);
+// A velocidade de um ponto do mundo preso ao link: v_CM + omega x (ponto - CM).
+[[nodiscard]] Vec3 rlLinkPointVelocity3D(const RagdollLinkDefinition3D& link, const PhysicsBodyState3D& state,
+    Vec3 worldPoint);
+
+// Os links com velocidades: a pose em q e em q + qdot*h, por diferenca. A
+// velocidade da raiz (rootLinearVelocity) e a da ORIGEM dela; as saidas
+// seguem a convencao acima (a velocidade de cada link e a do centro de massa),
+// a que o backend recebe no reset.
 void rlBodyLinkStates3D(const RagdollProfile3D& profile, Vec3 rootPosition, Quaternion rootOrientation,
     Vec3 rootLinearVelocity, Vec3 rootAngularVelocity, std::span<const Vec3> jointCoordinates,
     std::span<const Vec3> jointVelocities, std::vector<PhysicsBodyState3D>& out);

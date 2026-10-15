@@ -7,6 +7,7 @@
     "substeps": 4,
     "historyDecisions": 3,
     "velocityTarget": "mean_slope",
+    "legacyMeanSlope": true,
     "velocityFraction": 1.0,
     "maximumTargetVelocity": 20.0
   },

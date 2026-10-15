@@ -288,7 +288,8 @@ void testRewardOrder() {
 void testTaskLoader() {
     const BodyTask3D task = loadBodyTask3D(taskPath());
     require(task.drills.size() == 3 && findBodyDrill3D(task, "estrela") >= 0, "o corpo2 tem os exercicios do Experimento B");
-    require(task.contract.velocityTarget == BodyVelocityTarget3D::MeanSlope, "a velocidade pela reta da media");
+    require(task.contract.velocityTarget == BodyVelocityTarget3D::MeanSlope, "o corpo2 historico segue pela reta da media");
+    require(BodyContractSettings3D {}.velocityTarget == BodyVelocityTarget3D::Zero, "o padrao e a velocidade zero");
     require(near(task.contract.decisionSeconds, 4.0f / 120.0f), "a decisao a 30 Hz");
     bool refused = false;
     try {
@@ -297,6 +298,35 @@ void testTaskLoader() {
         refused = true;
     }
     require(refused, "o esquema 1 nao abre como tarefa do Corpo v2");
+
+    // A media da politica no motor so com a marca historica; sem velocityTarget, zero.
+    const auto variant = [&](const std::string& from, const std::string& to) {
+        std::string text;
+        {
+            std::ifstream in(taskPath());
+            text.assign(std::istreambuf_iterator<char>(in), {});
+        }
+        const std::string assets = std::string(MATTERENGINE_TEST_ASSETS_DIR) + "/rl/";
+        for (const char* relative : { "../bodies/", "../style/" }) {
+            const std::size_t at = text.find(relative);
+            if (at != std::string::npos) text.replace(at, std::string(relative).size(), assets + (relative + 3));
+        }
+        const std::size_t at = text.find(from);
+        require(at != std::string::npos, "o corpo2.json mudou: " + from);
+        text.replace(at, from.size(), to);
+        const auto path = std::filesystem::temp_directory_path() / "matter_corpo2_variant.json";
+        std::ofstream(path) << text;
+        return path;
+    };
+    bool meanRefused = false;
+    try {
+        (void)loadBodyTask3D(variant("\"legacyMeanSlope\": true,", ""));
+    } catch (const std::runtime_error&) {
+        meanRefused = true;
+    }
+    require(meanRefused, "mean_slope sem a marca historica e recusado");
+    const BodyTask3D zero = loadBodyTask3D(variant("\"velocityTarget\": \"mean_slope\",\n    \"legacyMeanSlope\": true,", ""));
+    require(zero.contract.velocityTarget == BodyVelocityTarget3D::Zero, "sem velocityTarget a tarefa nova usa zero");
 }
 
 BodyBatchSettings3D smallBatch(std::uint32_t worlds, std::uint32_t threads, bool evaluation) {

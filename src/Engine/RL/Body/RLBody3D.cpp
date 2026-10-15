@@ -189,6 +189,36 @@ RLBodyPose3D rlBodyPose3D(const RagdollProfile3D& profile, Vec3 rootPosition, Qu
     return pose;
 }
 
+Vec3 rlLinkCenterOfMass3D(const RagdollLinkDefinition3D& link, const PhysicsBodyState3D& state) {
+    return state.position + state.orientation.rotate(link.centerOfMassLocal);
+}
+
+Vec3 rlBodyCenterOfMass3D(const RagdollProfile3D& profile, std::span<const PhysicsBodyState3D> links) {
+    Vec3 sum {};
+    float mass = 0.0f;
+    for (std::size_t i = 0; i < profile.links.size() && i < links.size(); ++i) {
+        const float m = profile.links[i].massFraction;
+        sum += rlLinkCenterOfMass3D(profile.links[i], links[i]) * m;
+        mass += m;
+    }
+    return sum / std::max(1.0e-6f, mass);
+}
+
+Vec3 rlBodyCenterOfMassVelocity3D(const RagdollProfile3D& profile, std::span<const PhysicsBodyState3D> links) {
+    Vec3 sum {};
+    float mass = 0.0f;
+    for (std::size_t i = 0; i < profile.links.size() && i < links.size(); ++i) {
+        const float m = profile.links[i].massFraction;
+        sum += links[i].linearVelocity * m;
+        mass += m;
+    }
+    return sum / std::max(1.0e-6f, mass);
+}
+
+Vec3 rlLinkPointVelocity3D(const RagdollLinkDefinition3D& link, const PhysicsBodyState3D& state, Vec3 worldPoint) {
+    return state.linearVelocity + cross(state.angularVelocity, worldPoint - rlLinkCenterOfMass3D(link, state));
+}
+
 void rlBodyLinkStates3D(const RagdollProfile3D& profile, Vec3 rootPosition, Quaternion rootOrientation,
     Vec3 rootLinearVelocity, Vec3 rootAngularVelocity, std::span<const Vec3> jointCoordinates,
     std::span<const Vec3> jointVelocities, std::vector<PhysicsBodyState3D>& out) {
@@ -206,9 +236,12 @@ void rlBodyLinkStates3D(const RagdollProfile3D& profile, Vec3 rootPosition, Quat
         PhysicsBodyState3D& state = out[i];
         state.position = rootPosition + now.positions[i];
         state.orientation = now.orientations[i];
-        state.linearVelocity = rootLinearVelocity + (next.positions[i] - now.positions[i]) * (1.0f / H);
         state.angularVelocity =
             rlQuaternionLog3D((next.orientations[i] * now.orientations[i].conjugate()).normalized()) * (1.0f / H);
+        // A diferenca de posicoes e a velocidade da origem; o backend recebe a
+        // do centro de massa: v_CM = v_origem + omega x (R c).
+        state.linearVelocity = rootLinearVelocity + (next.positions[i] - now.positions[i]) * (1.0f / H)
+            + cross(state.angularVelocity, state.orientation.rotate(profile.links[i].centerOfMassLocal));
         state.sleeping = false;
         state.frozen = false;
     }

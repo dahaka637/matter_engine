@@ -99,11 +99,17 @@ BodyTask3D loadBodyTask3D(const std::filesystem::path& path) {
         BodyContractSettings3D& c = task.contract;
         c.substepsPerDecision = d.value("substeps", c.substepsPerDecision);
         c.historyDecisions = d.value("historyDecisions", c.historyDecisions);
-        const std::string velocity = d.value("velocityTarget", std::string("mean_slope"));
+        const std::string velocity = d.value("velocityTarget", std::string("zero"));
         if (velocity == "zero") c.velocityTarget = BodyVelocityTarget3D::Zero;
         else if (velocity == "sampled_slope") c.velocityTarget = BodyVelocityTarget3D::SampledSlope;
-        else if (velocity == "mean_slope") c.velocityTarget = BodyVelocityTarget3D::MeanSlope;
-        else fail("velocityTarget desconhecido: " + velocity);
+        else if (velocity == "mean_slope") {
+            // A media da politica no motor e um canal que o PPO nao enxerga (a
+            // probabilidade e a da acao sorteada): so o historico (o corpo2 de
+            // 14/10) o usa, com a marca explicita. Plano de recuperacao, 5.2.
+            if (!d.value("legacyMeanSlope", false))
+                fail("velocityTarget mean_slope so com decision.legacyMeanSlope: true (ver o plano de recuperacao 5.2)");
+            c.velocityTarget = BodyVelocityTarget3D::MeanSlope;
+        } else fail("velocityTarget desconhecido: " + velocity);
         c.velocityFraction = d.value("velocityFraction", c.velocityFraction);
         c.maximumTargetVelocity = d.value("maximumTargetVelocity", c.maximumTargetVelocity);
         if (c.substepsPerDecision == 0 || c.substepsPerDecision > 16 || c.historyDecisions > 8)

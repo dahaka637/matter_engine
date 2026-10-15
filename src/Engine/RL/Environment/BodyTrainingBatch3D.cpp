@@ -353,16 +353,11 @@ Reading BodyTrainingBatch3D::Impl::read(const RagdollState3D& state) const {
         reading.valid = false;
         return reading;
     }
-    float massSum = 0.0f;
-    for (std::size_t i = 0; i < profile.links.size(); ++i) {
-        const float m = profile.links[i].massFraction;
-        reading.com += state.links[i].position * m;
-        reading.comVelocity += state.links[i].linearVelocity * m;
-        massSum += m;
+    for (std::size_t i = 0; i < profile.links.size(); ++i)
         if (!finite(state.links[i].position) || !finite(state.links[i].linearVelocity)) reading.valid = false;
-    }
-    reading.com = reading.com / std::max(1.0e-6f, massSum);
-    reading.comVelocity = reading.comVelocity / std::max(1.0e-6f, massSum);
+    // O centro de massa de verdade (a posicao publicada e a da origem do corpo).
+    reading.com = rlBodyCenterOfMass3D(profile, state.links);
+    reading.comVelocity = rlBodyCenterOfMassVelocity3D(profile, state.links);
     const Quaternion chest = (state.links[body.upperChest].orientation
         * profile.links[body.upperChest].modelOrientation.conjugate()).normalized();
     const Vec3 forward = chest.rotate({ 1.0f, 0.0f, 0.0f });

@@ -19,11 +19,13 @@ namespace MatterEngine {
 // O alvo de velocidade dos motores (plano_claude_rl.md secoes 1.3 e 5.6; o
 // Experimento A escolhe). O alvo de posicao anda em linha reta de uma decisao
 // a outra nos passos de fisica; a velocidade pedida e:
-//  - Zero: nenhuma (o amortecimento freia todo movimento da junta);
+//  - Zero: nenhuma (o amortecimento freia o movimento da junta; o padrao: a
+//    transicao depende so da acao sorteada e do estado, como o PPO supoe);
 //  - SampledSlope: a da reta da acao sorteada (o ruido da exploracao vira
 //    velocidade pedida);
-//  - MeanSlope: a da reta da acao media da politica (o ruido mexe so na
-//    posicao; no jogo a acao e a media e as duas coincidem).
+//  - MeanSlope: a da reta da acao media da politica (so o historico: a media
+//    entra na fisica por um caminho que o PPO nao ve; as tarefas novas a
+//    recusam sem decision.legacyMeanSlope).
 enum class BodyVelocityTarget3D : std::uint8_t { Zero, SampledSlope, MeanSlope };
 
 struct BodyContractSettings3D {
@@ -32,7 +34,7 @@ struct BodyContractSettings3D {
     // Os passos de fisica de uma decisao e a duracao dela (s).
     std::uint32_t substepsPerDecision = 4;
     float decisionSeconds = 4.0f / 120.0f;
-    BodyVelocityTarget3D velocityTarget = BodyVelocityTarget3D::MeanSlope;
+    BodyVelocityTarget3D velocityTarget = BodyVelocityTarget3D::Zero;
     // A fracao da reta que vira velocidade pedida e o teto dela (rad/s).
     float velocityFraction = 1.0f;
     float maximumTargetVelocity = 20.0f;
