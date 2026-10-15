@@ -44,7 +44,9 @@ RAW_PREFIXES = ("command.", "player.", "drill.", "pilot.", "world.solver")
 # a taxa do ator entre 1e-6 e 3e-4 pelo KL, a parada das atualizacoes do ator
 # quando o KL passa de 3x o alvo e sem bonus de entropia (o desvio e fixo).
 BODY_PPO = {"separate_critic": True, "critic_learning_rate": 3e-4, "critic_max_grad_norm": 1.0, "kl_stop_factor": 3.0,
-            "learning_rate": 5e-6, "min_learning_rate": 1e-6, "max_learning_rate": 3e-4, "entropy_coef": 0.0}
+            "learning_rate": 5e-6, "min_learning_rate": 1e-6, "max_learning_rate": 3e-4, "entropy_coef": 0.0,
+            # O alvo do rsl_rl: com 37 eixos o recorte ja chega a ~0,4 com KL 0,02 (a razao soma 37 termos).
+            "desired_kl": 0.01}
 # O desvio fixo da exploracao por grupo de eixos (rad; plano 5.3).
 FIXED_SIGMA = {"legs": 0.06, "toes": 0.06, "arms": 0.05, "trunk": 0.03}
 
@@ -119,7 +121,7 @@ class BodyRunConfig:
     # juiz e do critico antes de o ator voltar a aprender (minimo, maximo; sai
     # antes se a variancia explicada do critico passa de 0,5 depois do minimo).
     warmup_rounds: int = 0
-    warmup_min_rounds: int = 10
+    warmup_min_rounds: int = 20
     # De onde o treino nasceu (a transferencia entre degraus), para o manifesto.
     transferred_from: str = ""
     # O corte do recorte: com a media acima de 0,35 por 5 rodadas, 3 epocas.
@@ -131,6 +133,9 @@ class BodyRunConfig:
     def load(path: Path) -> "BodyRunConfig":
         data = json.loads(path.read_text())
         known = {k: v for k, v in data.items() if k in BodyRunConfig.__dataclass_fields__}
+        if "exploration" not in known:
+            # Um treino de antes do desvio fixo aprendia o desvio: continua assim.
+            known["exploration"] = {"mode": "learned", "initial_rad": 0.15}
         return BodyRunConfig(**known)
 
     def save(self, path: Path) -> None:
@@ -225,6 +230,10 @@ class BodyTrainer:
             self.config.exploration = exploration
         if fresh and warmup is not None:
             self.config.warmup_rounds = warmup
+        elif fresh and transfer_from and self.config.style:
+            # Uma transferencia com juiz novo: o ator espera o juiz e o critico
+            # (20 a 60 rodadas; sai antes se o critico ja explica o retorno).
+            self.config.warmup_rounds = 60
         if fresh and transfer_from:
             self.config.transferred_from = transfer_from
         self.config.save(config_path)
@@ -289,11 +298,11 @@ class BodyTrainer:
         self.mirror = MirrorLoss(self.batch.mirror_maps(), self.device) if self.config.mirror_loss > 0.0 else None
         self.counters = {"iteration": 0, "steps": 0, "train_seconds": 0.0, "episodes": 0,
                          "warmup_left": int(self.config.warmup_rounds) if self.judge is not None else 0,
-                         "warmup_done": 0}
-        self.clip_streak = 0
+                         "warmup_done": 0, "epochs": self.config.ppo.get("epochs", PPOSettings().epochs), "clip_streak": 0}
         self.db = storage.Database(paths.DATABASE)
         self.db.ensure_run(run, self.config.task, self.batch.body_hash, asdict(self.config))
         self.restore()
+        self.ppo.settings.epochs = int(self.counters["epochs"])
         if transfer_from and self.counters["iteration"] == 0 and storage.latest_checkpoint(self.directory) is None:
             self.transfer_weights(transfer_from, transfer)
         self.fix_raw_channels()
@@ -635,6 +644,7 @@ class BodyTrainer:
             self.stream.wait_stream(torch.cuda.current_stream())
         with context, torch.no_grad():
             rollout = Rollout(s.steps_per_env, envs, batch.obs_size, batch.critic_size, batch.action_size, self.device)
+            rollout.norm = (net.obs_norm.mean.clone(), net.obs_norm.inverse_std().clone())
             obs, critic = self.tensor(batch.observations()), self.tensor(batch.critic_observations())
             for _ in range(s.steps_per_env):
                 self.obs_candidate.update(obs)
@@ -706,7 +716,7 @@ class BodyTrainer:
 
             def auxiliary():
                 index = torch.randint(0, raw.shape[0], (min(4096, raw.shape[0]),), device=raw.device)
-                return weight * self.mirror(self.model, raw[index], raw=True)
+                return weight * self.mirror(self.model, raw[index], raw=True, norm=rollout.norm)
         # O aquecimento depois de trocar o juiz: so o juiz e o critico aprendem.
         frozen = self.counters.get("warmup_left", 0) > 0
         stats = self.ppo.update(rollout, actor_frozen=frozen, auxiliary=auxiliary)
@@ -804,9 +814,9 @@ class BodyTrainer:
                 self.db.event(self.run, "aquecimento", f"o ator volta a aprender depois de {self.counters['warmup_done']} "
                                                        f"rodadas (variancia explicada {stats['explained_variance']:.2f})")
         # O recorte alto por muitas rodadas: 3 epocas em vez de 5.
-        self.clip_streak = self.clip_streak + 1 if stats["clip_fraction"] > 0.35 else 0
-        if self.clip_streak >= self.config.clip_streak_limit and self.ppo.settings.epochs > 3:
-            self.ppo.settings.epochs = 3
+        self.counters["clip_streak"] = self.counters["clip_streak"] + 1 if stats["clip_fraction"] > 0.35 else 0
+        if self.counters["clip_streak"] >= self.config.clip_streak_limit and self.ppo.settings.epochs > 3:
+            self.ppo.settings.epochs = self.counters["epochs"] = 3
             self.db.event(self.run, "epocas", "o recorte ficou acima de 0,35 por "
                                               f"{self.config.clip_streak_limit} rodadas: 3 epocas")
         self.last_iteration_stats = {k: result[k] for k in (
@@ -835,7 +845,10 @@ class BodyTrainer:
         self.fix_raw_channels()
         self.reset_candidates()
         self.collector.load_state_dict(self.model.state_dict())
+        if self.scorer is not None:
+            self.scorer.load_state_dict(self.judge.net.state_dict())
         self.counters.update(state.get("counters", {}))
+        self.ppo.settings.epochs = int(self.counters["epochs"])
         self.db.rewind(self.run, self.counters["iteration"])
         self.ppo.learning_rate = max(self.settings.min_learning_rate, self.ppo.learning_rate * 0.5)
         for group in self.ppo.optimizer.param_groups:

@@ -375,3 +375,47 @@ def test_judge_refuses_another_acervo_and_weights_the_normalization():
         other.load_state_dict(judge.state_dict())
     twin = Judge(dataset("a"), JudgeSettings(hidden=[8]), device)
     twin.load_state_dict(judge.state_dict())
+
+
+def test_start_arguments_keep_the_transfer(scratch):
+    """O iniciar e o servir montam o comando do treino por uma construcao so: a
+    transferencia, o aquecimento e a semente nao se perdem no caminho."""
+    import argparse
+    from matter_rl.__main__ import start_arguments, trainer_command
+    args = argparse.Namespace(run="p3", tarefa="aquisicao_p3a", modo=None, mundos=None, semente=5,
+                              de_checkpoint="p0:9", transferir="ator", aquecimento=30, desvio_aprendido=None,
+                              sem_estilo=False, sem_sobreposicao=False, sobreposicao=False, dispositivo="auto")
+    command = start_arguments(args, ["x"])
+    assert command[command.index("--de-checkpoint") + 1] == "p0:9"
+    assert command[command.index("--transferir") + 1] == "ator" and command[command.index("--aquecimento") + 1] == "30"
+    assert command[command.index("--semente") + 1] == "5" and "--sem-estilo" not in command
+    again = trainer_command(args)
+    assert "--de-checkpoint" in again and "--semente" in again
+
+
+def test_old_runs_keep_their_learned_sigma_and_the_epochs_persist(scratch):
+    from matter_rl.body_trainer import BodyRunConfig, BodyTrainer
+    old = scratch / "antigo.json"
+    old.write_text(json.dumps({"task": "corpo2", "environments": 4, "overlap": True}))
+    config = BodyRunConfig.load(old)
+    assert config.exploration["mode"] == "learned"
+    trainer = tiny(BodyTrainer, scratch, "epocas", task="aquisicao_p0", style=False)
+    trainer.max_iterations = 1
+    trainer.counters["epochs"] = 3
+    trainer.ppo.settings.epochs = 3
+    trainer.loop()
+    reopened = tiny(BodyTrainer, scratch, "epocas", task="aquisicao_p0", style=False)
+    assert reopened.ppo.settings.epochs == 3 and reopened.counters["epochs"] == 3
+
+
+def test_recovery_syncs_the_scoring_judge(scratch):
+    from matter_rl.body_trainer import BodyTrainer
+    trainer = tiny(BodyTrainer, scratch, "recuperar", task="aquisicao_p3a")
+    trainer.max_iterations = 1
+    trainer.loop()
+    trainer = tiny(BodyTrainer, scratch, "recuperar", task="aquisicao_p3a")
+    for parameter in trainer.judge.net.parameters():
+        parameter.data.add_(1.0)
+    trainer.sync()
+    trainer.recover()
+    assert all(torch.equal(a, b) for a, b in zip(trainer.scorer.parameters(), trainer.judge.net.parameters()))

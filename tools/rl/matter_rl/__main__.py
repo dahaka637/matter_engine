@@ -96,6 +96,8 @@ def trainer_command(args: argparse.Namespace) -> list[str]:
         command += ["--mundos", str(args.mundos)]
     if args.dispositivo != "auto":
         command += ["--dispositivo", args.dispositivo]
+    if getattr(args, "semente", None) is not None:
+        command += ["--semente", str(args.semente)]
     if getattr(args, "sem_estilo", False):
         command += ["--sem-estilo"]
     if getattr(args, "sem_sobreposicao", False):
@@ -138,6 +140,23 @@ def command_serve(args: argparse.Namespace) -> int:
         time.sleep(10)
 
 
+def start_arguments(args: argparse.Namespace, command: list[str]) -> list[str]:
+    """As opcoes de abertura de um treino (iniciar e servir): uma construcao so, para
+    nenhuma se perder no caminho (a transferencia entre degraus, por exemplo)."""
+    for flag, value in (("--tarefa", args.tarefa), ("--modo", args.modo), ("--mundos", args.mundos),
+                        ("--semente", getattr(args, "semente", None)), ("--de-checkpoint", args.de_checkpoint),
+                        ("--aquecimento", args.aquecimento), ("--desvio-aprendido", args.desvio_aprendido)):
+        if value is not None and value != "":
+            command += [flag, str(value)]
+    if args.de_checkpoint:
+        command += ["--transferir", args.transferir]
+    for flag, value in (("--sem-estilo", args.sem_estilo), ("--sem-sobreposicao", args.sem_sobreposicao),
+                        ("--sobreposicao", args.sobreposicao)):
+        if value:
+            command.append(flag)
+    return command
+
+
 def command_start(args: argparse.Namespace) -> int:
     if control.ping():
         print("ja existe um treinador aberto (matter-rl status)")
@@ -145,13 +164,7 @@ def command_start(args: argparse.Namespace) -> int:
     directory = paths.run_dir(args.run)
     directory.mkdir(parents=True, exist_ok=True)
     log = open(directory / "treinador.log", "a")
-    command = [sys.executable, "-m", "matter_rl", "servir", "--run", args.run]
-    for flag, value in (("--tarefa", args.tarefa), ("--modo", args.modo), ("--mundos", args.mundos)):
-        if value:
-            command += [flag, str(value)]
-    for flag, value in (("--sem-estilo", args.sem_estilo), ("--sem-sobreposicao", args.sem_sobreposicao)):
-        if value:
-            command.append(flag)
+    command = start_arguments(args, [sys.executable, "-m", "matter_rl", "servir", "--run", args.run])
     subprocess.Popen(command, cwd=str(Path(__file__).resolve().parents[1]), stdout=log, stderr=subprocess.STDOUT,
                      stdin=subprocess.DEVNULL, start_new_session=True)
     for _ in range(120):

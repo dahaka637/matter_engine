@@ -77,6 +77,9 @@ class Rollout:
         # coletou). Com a coleta sobreposta, os dados sao de uma rodada antes:
         # medir contra quem coletou somaria a mudanca da atualizacao anterior e
         # cortaria a taxa pela metade. A razao do PPO continua contra quem coletou.
+        # A normalizacao com que a politica viu esta rodada (media, inverso do desvio):
+        # o espelho normaliza com ela, nao com a que ja valha no modelo.
+        self.norm: tuple[torch.Tensor, torch.Tensor] | None = None
         self.anchor_mean: torch.Tensor | None = None
         self.anchor_std: torch.Tensor | None = None
         self.position = 0
@@ -107,8 +110,10 @@ class Rollout:
         flat = lambda x: x.reshape(total, *x.shape[2:])  # noqa: E731
         mean = self.mean if self.anchor_mean is None else self.anchor_mean
         std = self.std if self.anchor_std is None else self.anchor_std
+        # (Os dois ultimos: a politica que coletou, para o KL de seguranca, que nunca
+        # usa a referencia trocada da sobreposicao.)
         data = [flat(x) for x in (self.obs, self.critic, self.actions, self.log_probs, self.values,
-                                  self.advantages, self.returns, mean, std)]
+                                  self.advantages, self.returns, mean, std, self.mean, self.std)]
         for start in range(0, size * count, size):
             index = order[start:start + size]
             yield [x[index] for x in data]
@@ -156,8 +161,8 @@ class PPO:
         actor_steps = 0
         halted = False
         for _ in range(s.epochs):
-            for obs, critic, actions, old_log_probs, old_values, advantages, returns, old_mean, old_std in \
-                    rollout.minibatches(s.minibatches):
+            for obs, critic, actions, old_log_probs, old_values, advantages, returns, old_mean, old_std, \
+                    collector_mean, collector_std in rollout.minibatches(s.minibatches):
                 dist = model.distribution(obs)
                 log_probs = dist.log_prob(actions).sum(-1)
                 entropy = dist.entropy().sum(-1).mean()
@@ -166,8 +171,13 @@ class PPO:
                     # KL entre a politica que coletou e a de agora (gaussianas).
                     kl = (torch.log(dist.stddev / old_std) + (old_std.pow(2) + (old_mean - dist.mean).pow(2))
                           / (2.0 * dist.stddev.pow(2)) - 0.5).sum(-1).mean()
-                    kl_max = max(kl_max, float(kl))
-                    if s.kl_stop_factor > 0.0 and kl > s.kl_stop_factor * s.desired_kl:
+                    # O KL de seguranca e sempre contra quem coletou (a razao do PPO e
+                    # contra ele); o que adapta a taxa pode usar outra referencia.
+                    safety = (torch.log(dist.stddev / collector_std)
+                              + (collector_std.pow(2) + (collector_mean - dist.mean).pow(2)) / (2.0 * dist.stddev.pow(2))
+                              - 0.5).sum(-1).mean()
+                    kl_max = max(kl_max, float(safety))
+                    if s.kl_stop_factor > 0.0 and safety > s.kl_stop_factor * s.desired_kl:
                         halted = True
                     if actor_frozen:
                         pass
