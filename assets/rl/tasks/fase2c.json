@@ -2,7 +2,7 @@
   "schema": "matter-rl-task-2",
   "id": "fase2c",
   "displayName": "Fase 2c: ponta a ponta",
-  "comment": "Fase 2, terceiro degrau: 35% de ponta a ponta na estrela com trote. Parte da F2b.",
+  "comment": "Fase 2, terceiro degrau: 35% de ponta a ponta na estrela com trote. Parte da F2b. Mais a flexibilizacao do tronco (usuario, 15/10): teto de 40 graus e +150 graus por fracao de quadril abaixo da altura de pe (a postura de prontidao inclina o tronco; a cabeca continua erguida). Parte da fase2_atletica.",
   "body": "../bodies/football_player_v2.json",
   "decision": {
     "substeps": 4,
@@ -71,7 +71,8 @@
       "athleticWidth": 0.35,
       "postureLeanDegrees": 5.0,
       "postureLeanPerSpeed": 4.0,
-      "postureLeanMaxDegrees": 25.0
+      "postureLeanMaxDegrees": 40.0,
+      "postureLeanPerCrouch": 150.0
     },
     "fall": 0.2
   },

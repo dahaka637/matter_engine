@@ -71,7 +71,8 @@
       "athleticWidth": 0.35,
       "postureLeanDegrees": 5.0,
       "postureLeanPerSpeed": 4.0,
-      "postureLeanMaxDegrees": 25.0
+      "postureLeanMaxDegrees": 40.0,
+      "postureLeanPerCrouch": 150.0
     },
     "fall": 0.2
   },
