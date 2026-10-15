@@ -2,6 +2,7 @@
 
 #include "Engine/Physics/PhysicsScene3D.hpp"
 #include "Engine/RL/Body/RLBody3D.hpp"
+#include "Engine/RL/Commands/ControlAdapter3D.hpp"
 #include "Engine/RL/Contract/BodyContract3D.hpp"
 #include "Engine/RL/Contract/VectorLayout3D.hpp"
 #include "Engine/RL/Environment/BodyTask3D.hpp"
@@ -112,6 +113,9 @@ struct BodyWorldView3D {
     // A velocidade do centro de massa e o rumo do peito (rad).
     Vec3 velocity;
     float chestHeading = 0.0f;
+    // O empurrao de agora (push; -1 sem).
+    int pushLink = -1;
+    Vec3 pushForce;
 };
 
 // Os mundos de treino do Corpo v2: centenas de bonecos sem janela, avancados
@@ -172,6 +176,11 @@ public:
     [[nodiscard]] std::span<const float> terminalCriticObservations() const;
     [[nodiscard]] std::span<const BodyEpisode3D> finishedEpisodes() const;
     [[nodiscard]] BodyWorldView3D view(std::size_t environment) const;
+    // O visualizador do laboratorio (o treino nao usa): o controle de um mundo
+    // na mao, no lugar do piloto (nullptr devolve ao piloto; a camera fica a
+    // do piloto), e um empurrao num link por alguns segundos.
+    void setManualControl(std::size_t environment, const ControlInput3D* input);
+    void push(std::size_t environment, std::uint32_t link, Vec3 forceNewtons, float seconds);
     // Radianos por unidade de acao de cada canal (o ruido inicial da politica).
     [[nodiscard]] std::vector<float> actionRadiansPerUnit() const;
     [[nodiscard]] float lastStepMilliseconds() const;

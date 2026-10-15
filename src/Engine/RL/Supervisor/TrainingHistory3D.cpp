@@ -78,8 +78,10 @@ TrainingHistory3D readTrainingHistory3D(const std::filesystem::path& database, c
             sqlite3_finalize(statement);
         }
     }
-    const char* evaluations = "SELECT iteration, time, steps, solver, stand_fraction, mean_seconds, sway, score, battery "
-                              "FROM evaluations WHERE run=?1 AND time>=?2 ORDER BY iteration, battery, solver";
+    // As medidas de cada exercicio ficam num JSON (o treinador acrescenta outras sem mudar o banco).
+    const char* evaluations = "SELECT iteration, time, steps, solver, drill, json_extract(data, '$.falls'), "
+                              "json_extract(data, '$.velocity_error_median'), json_extract(data, '$.useful_steps') "
+                              "FROM body_evaluations WHERE run=?1 AND time>=?2 ORDER BY iteration, drill, solver";
     if (sqlite3_prepare_v2(db, evaluations, -1, &statement, nullptr) == SQLITE_OK) {
         sqlite3_bind_text(statement, 1, run.c_str(), -1, SQLITE_TRANSIENT);
         sqlite3_bind_double(statement, 2, since);
@@ -89,11 +91,10 @@ TrainingHistory3D readTrainingHistory3D(const std::filesystem::path& database, c
             point.time = columnDouble(statement, 1);
             point.steps = columnDouble(statement, 2);
             point.solver = columnText(statement, 3);
-            point.standFraction = columnDouble(statement, 4);
-            point.meanSeconds = columnDouble(statement, 5);
-            point.sway = columnDouble(statement, 6);
-            point.score = columnDouble(statement, 7);
-            point.battery = columnText(statement, 8);
+            point.drill = columnText(statement, 4);
+            point.falls = columnDouble(statement, 5);
+            point.velocityError = sqlite3_column_type(statement, 6) == SQLITE_NULL ? -1.0 : columnDouble(statement, 6);
+            point.usefulSteps = sqlite3_column_type(statement, 7) == SQLITE_NULL ? -1.0 : columnDouble(statement, 7);
             history.evaluations.push_back(point);
         }
         sqlite3_finalize(statement);

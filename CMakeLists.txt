@@ -423,12 +423,10 @@ if(MATTERENGINE_BUILD_RL)
         target_compile_options(MatterRLCommands PRIVATE -Wall -Wextra -Wpedantic)
     endif()
 
-    # Os mundos de treino: as tarefas, as notas e os lotes paralelos (o do
-    # contrato 1 e o do Corpo v2). Depende so da fisica, dos clipes, do
-    # contrato e do piloto (nada de janela, render ou Python).
+    # Os mundos de treino do Corpo: a tarefa, a nota e o lote paralelo.
+    # Depende so da fisica, dos clipes, do contrato e do piloto (nada de
+    # janela, render ou Python).
     add_library(MatterRLEnvironment STATIC
-        src/Engine/RL/Environment/TrainingTask3D.cpp
-        src/Engine/RL/Environment/TrainingBatch3D.cpp
         src/Engine/RL/Environment/BodyTask3D.cpp
         src/Engine/RL/Environment/BodyTrainingBatch3D.cpp
         src/Engine/RL/Rewards/BodyReward3D.cpp
@@ -448,22 +446,6 @@ if(MATTERENGINE_BUILD_RL)
             -Wall -Wextra -Wpedantic)
     endif()
 
-    # O professor dos mundos de treino: a locomocao fisica do jogo (o runtime
-    # dos atletas) conduzindo o corpo do RL. Depende do atleta (a engine), por
-    # isso fica fora dos mundos de treino, que so conhecem a interface.
-    add_library(MatterRLTeacher STATIC
-        src/Engine/RL/Teacher/LocomotionTeacher3D.cpp
-    )
-    target_include_directories(MatterRLTeacher PUBLIC src)
-    target_link_libraries(MatterRLTeacher
-        PUBLIC MatterRLEnvironment MatterEngine
-        PRIVATE nlohmann_json::nlohmann_json)
-    if(MSVC)
-        target_compile_options(MatterRLTeacher PRIVATE /W4 /permissive- /utf-8)
-    else()
-        target_compile_options(MatterRLTeacher PRIVATE -Wall -Wextra -Wpedantic)
-    endif()
-
     if(MATTERENGINE_BUILD_RL_PYTHON)
         # O Python e o do ambiente do treinador (tools/rl/.venv), que traz o
         # nanobind; o modulo sai em <build>/python.
@@ -472,7 +454,7 @@ if(MATTERENGINE_BUILD_RL)
             OUTPUT_STRIP_TRAILING_WHITESPACE OUTPUT_VARIABLE nanobind_ROOT)
         find_package(nanobind CONFIG REQUIRED)
         nanobind_add_module(matter_rl_native NB_STATIC bindings/python/MatterRLNative.cpp)
-        target_link_libraries(matter_rl_native PRIVATE MatterRLEnvironment MatterRLPolicy MatterRLTeacher)
+        target_link_libraries(matter_rl_native PRIVATE MatterRLEnvironment MatterRLPolicy)
         set_target_properties(matter_rl_native PROPERTIES
             LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/python")
     endif()
@@ -786,7 +768,7 @@ endif()
 target_include_directories(MatterWorkbench PUBLIC src)
 target_link_libraries(MatterWorkbench
     PUBLIC MatterEngine MatterModelingRig MatterObjects
-    PRIVATE imgui meshoptimizer MatterRLEnvironment MatterRLPolicy MatterRLSupervisor MatterRLCalibration MatterRLTeacher
+    PRIVATE imgui meshoptimizer MatterRLEnvironment MatterRLPolicy MatterRLSupervisor MatterRLCalibration
 )
 target_compile_definitions(MatterWorkbench PRIVATE MATTERENGINE_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
 
@@ -865,7 +847,6 @@ if(MATTERENGINE_BUILD_TESTS)
         add_executable(MatterRLTrainingTests
             tests/RL/RLBodyTests.cpp
             tests/RL/BodyContractTests.cpp
-            tests/RL/TrainingBatchTests.cpp
             tests/RL/BodyBatchTests.cpp
             tests/RL/StyleTests.cpp
             tests/RL/MirrorTests.cpp
@@ -876,18 +857,9 @@ if(MATTERENGINE_BUILD_TESTS)
         target_link_libraries(MatterRLTrainingTests
             PRIVATE MatterRLEnvironment MatterRLBrain)
         target_compile_definitions(MatterRLTrainingTests PRIVATE
-            MATTERENGINE_TEST_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets"
-            MATTERENGINE_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/RL/data")
+            MATTERENGINE_TEST_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
         add_test(NAME MatterEngine.RLTraining
             COMMAND MatterRLTrainingTests)
-        # O professor (a locomocao fisica do jogo nos mundos de treino).
-        add_executable(MatterRLTeacherTests tests/RL/TeacherTests.cpp)
-        target_link_libraries(MatterRLTeacherTests PRIVATE MatterRLTeacher)
-        target_compile_definitions(MatterRLTeacherTests PRIVATE
-            MATTERENGINE_TEST_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets"
-            MATTERENGINE_TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/tests/RL/data")
-        add_test(NAME MatterEngine.RLTeacher
-            COMMAND MatterRLTeacherTests)
     endif()
     # Modelagem do personagem: o nucleo (linkado so contra MatterModeling,
     # provando que ele nao depende da engine) e a ponte com o jogo, com a tela
@@ -940,7 +912,8 @@ if(MATTERENGINE_BUILD_TESTS)
     # A tela "Aprendizado por Reforco" sem janela (um treino de mentira numa
     # pasta temporaria).
     add_executable(MatterReinforcementLearningScreenTests tests/ReinforcementLearningScreenTests.cpp)
-    target_link_libraries(MatterReinforcementLearningScreenTests PRIVATE MatterTestHeadlessUi MatterRLPolicy sqlite3)
+    target_link_libraries(MatterReinforcementLearningScreenTests PRIVATE MatterTestHeadlessUi MatterRLPolicy MatterRLEnvironment
+        sqlite3 nlohmann_json::nlohmann_json)
     target_compile_definitions(MatterReinforcementLearningScreenTests PRIVATE
         MATTERENGINE_TEST_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
     add_test(NAME MatterEngine.ReinforcementLearningScreen COMMAND MatterReinforcementLearningScreenTests)
@@ -984,11 +957,6 @@ if(MATTERENGINE_BUILD_RL)
     # O custo da politica no jogo (22 jogadores a 30 Hz), pelo runtime de hoje.
     add_executable(MatterRLPolicyBench tools/RLPolicyBench.cpp)
     target_link_libraries(MatterRLPolicyBench PRIVATE MatterRLPolicy)
-    # Velocidade dos mundos de treino por arranjo (sem janela).
-    add_executable(MatterRLBenchmark tools/RLBenchmark.cpp)
-    target_link_libraries(MatterRLBenchmark PRIVATE MatterRLEnvironment)
-    target_compile_definitions(MatterRLBenchmark PRIVATE
-        MATTERENGINE_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
 endif()
 
 # Visualizador de toque na bola na linha de comando (a mesma simulacao da
@@ -1065,7 +1033,7 @@ if(MATTERENGINE_BUILD_RL)
     set_target_properties(MatterRLCalibration MatterRLEnvironment PROPERTIES
         FOLDER "MatterEngine RL")
     set_target_properties(MatterRLAudit MatterRLDynamics MatterRLJointProbe
-        MatterRLBenchmark PROPERTIES FOLDER "Tools")
+        PROPERTIES FOLDER "Tools")
 endif()
 if(MATTERENGINE_BUILD_TESTS)
     set_target_properties(MatterEngineTests MatterAudioTests

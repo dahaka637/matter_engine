@@ -22,13 +22,14 @@ struct TrainingEvaluationPoint3D {
     std::uint64_t iteration = 0;
     double time = 0.0;
     double steps = 0.0;
-    // A bateria (uma por habilidade: equilibrio_v1, postura_alerta_v1...) e o solver.
-    std::string battery;
+    // O exercicio da tarefa e o solver ("jogo", "treino").
+    std::string drill;
     std::string solver;
-    double standFraction = 0.0;
-    double meanSeconds = 0.0;
-    double sway = 0.0;
-    double score = 0.0;
+    // A fatia dos mundos que cairam, a mediana do erro de velocidade (m/s) e
+    // os passos uteis por segundo (< 0 sem a medida).
+    double falls = 0.0;
+    double velocityError = -1.0;
+    double usefulSteps = -1.0;
 };
 
 struct TrainingEventPoint3D {

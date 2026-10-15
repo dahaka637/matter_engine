@@ -51,58 +51,24 @@ struct TrainerStatus3D {
     double lastEpisodeSeconds = 0.0;
     double lastFallFraction = -1.0;
     double cpuTemperature = 0.0;
-    double evaluationScore = 0.0;
-    std::uint64_t evaluationIteration = 0;
-    bool evaluated = false;
-    // De pe por 60 s em cada solver da bateria ("treino", "jogo").
-    std::vector<std::pair<std::string, double>> evaluationStand;
-    // O giro do tronco no solver do jogo (rad/s, media dos mundos; < 0 sem a medida).
-    double evaluationTurn = -1.0;
-    // Cada bateria da ultima avaliacao (uma por habilidade): de pe por solver e
-    // o giro do tronco no jogo.
-    struct Battery {
-        std::string battery;
-        std::string posture;
-        std::vector<std::pair<std::string, double>> stand;
-        double turn = -1.0;
-        // O quanto as juntas ficam longe da postura pedida, no jogo (rad; < 0 sem a medida).
-        double poseError = -1.0;
-        // O tipo ("de_pe", "andar", "alvo") e, andando, o erro da velocidade
-        // (m/s), o desvio para o lado (m) e o erro no ponto (m), no jogo.
-        std::string kind = "de_pe";
+    // O peso do juiz de estilo (beta; < 0 sem juiz) e a nota media dele na
+    // ultima rodada.
+    double styleBeta = -1.0;
+    double lastStyle = 0.0;
+    // A ultima avaliacao: as medidas de cada exercicio em cada solver.
+    struct DrillEvaluation {
+        std::string drill;
+        std::string solver;
+        double falls = 0.0;
         double velocityError = -1.0;
-        double lateralDrift = -1.0;
-        double goalError = -1.0;
+        double usefulSteps = -1.0;
+        double sustained = -1.0;
+        double slip = -1.0;
     };
-    std::vector<Battery> evaluationBatteries;
-    // O curriculo do andar: o limite de agora e o maximo da velocidade para
-    // frente (m/s; < 0 sem comando de andar).
-    double forwardLimit = -1.0;
-    double forwardMax = -1.0;
-    double bestScore = 0.0;
-    std::int64_t bestIteration = -1;
+    bool evaluated = false;
+    std::uint64_t evaluationIteration = 0;
+    std::vector<DrillEvaluation> evaluation;
     std::string policy;
-    // O aprendizado guiado (state "professor"): quanto ja foi da fase, as
-    // decisoes do professor, o erro da imitacao (quadratico medio, unidades
-    // da acao), as quedas e a velocidade dele.
-    struct Imitation {
-        bool active = false;
-        double minutes = 0.0;
-        double elapsedSeconds = 0.0;
-        std::uint64_t decisions = 0;
-        double loss = -1.0;
-        double teacherFalls = 0.0;
-        double teacherSpeed = 0.0;
-    } imitation;
-    // Depois do professor: as rodadas desde o fim dele, as so do critico e o
-    // peso de agora do termo de imitacao no PPO.
-    struct Kickstart {
-        bool active = false;
-        std::int64_t since = 0;
-        std::int64_t criticIterations = 0;
-        std::int64_t decayIterations = 0;
-        double weight = 0.0;
-    } kickstart;
 };
 
 // A ponte da tela com o treinador: abre o processo (que sobrevive a tela

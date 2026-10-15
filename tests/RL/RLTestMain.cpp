@@ -4,7 +4,6 @@
 // Os testes do treino de RL (corpo e lote). Cada arquivo registra os seus.
 void runRLBodyTests();
 void runBodyContractTests();
-void runTrainingBatchTests();
 void runBodyBatchTests();
 void runStyleTests();
 void runMirrorTests();
@@ -16,7 +15,6 @@ int main() {
     try {
         runRLBodyTests();
         runBodyContractTests();
-        runTrainingBatchTests();
         runBodyBatchTests();
         runStyleTests();
         runMirrorTests();

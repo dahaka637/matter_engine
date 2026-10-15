@@ -284,20 +284,13 @@ void testRewardOrder() {
         "a nota e dt x (tarefa - custos) - queda");
 }
 
-// O esquema 2 recusa o que nao e dele.
+// A tarefa do esquema 2.
 void testTaskLoader() {
     const BodyTask3D task = loadBodyTask3D(taskPath());
     require(task.drills.size() == 3 && findBodyDrill3D(task, "estrela") >= 0, "o corpo2 tem os exercicios do Experimento B");
     require(task.contract.velocityTarget == BodyVelocityTarget3D::MeanSlope, "o corpo2 historico segue pela reta da media");
     require(BodyContractSettings3D {}.velocityTarget == BodyVelocityTarget3D::Zero, "o padrao e a velocidade zero");
     require(near(task.contract.decisionSeconds, 4.0f / 120.0f), "a decisao a 30 Hz");
-    bool refused = false;
-    try {
-        (void)loadBodyTask3D(std::string(MATTERENGINE_TEST_ASSETS_DIR) + "/rl/tasks/corpo.json");
-    } catch (const std::runtime_error&) {
-        refused = true;
-    }
-    require(refused, "o esquema 1 nao abre como tarefa do Corpo v2");
 
     // A media da politica no motor so com a marca historica; sem velocityTarget, zero.
     const auto variant = [&](const std::string& from, const std::string& to) {

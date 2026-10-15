@@ -32,12 +32,17 @@ const RLBodyDof3D* findDof(const RLBody3D& body, const std::string& name) {
 
 // O corpo v2: a junta dos dedos, os pulsos travados e as posturas como dados.
 void testBodyV2() {
-    const RLBody3D v1 = loadBody("football_player_v1.json");
     const RLBody3D v2 = loadBody("football_player_v2.json");
-    require(v2.profile.links.size() == v1.profile.links.size() + 2, "o v2 tem os dois links da ponta");
+    // O perfil do jogo, com o pe inteiro (o v2 o divide em calcanhar e ponta).
+    const RagdollProfile3D game = loadRagdollProfile3D(v2.profilePath.string());
+    const auto gameLink = [&](const std::string& id) -> const RagdollLinkDefinition3D& {
+        for (const RagdollLinkDefinition3D& link : game.links)
+            if (link.id == id) return link;
+        throw std::runtime_error("o perfil do jogo nao tem " + id);
+    };
+    require(v2.profile.links.size() == game.links.size() + 2, "o v2 tem os dois links da ponta");
     require(v2.leftToe >= 0 && v2.rightToe >= 0, "o v2 acha as pontas");
     require(v2.footParts[0].size() == 2 && v2.footParts[1].size() == 2, "cada pe pisa com o calcanhar e a ponta");
-    require(v1.footParts[0].size() == 1 && v1.leftToe < 0, "o v1 continua sem ponta");
     require(v2.dofs.size() == 37, "o v2 atua 37 eixos (39 + 2 das pontas - 4 dos pulsos), tem " + std::to_string(v2.dofs.size()));
     require(v2.lockedDofs.size() == 4, "os 4 eixos dos pulsos ficam travados");
     for (const RLBodyDof3D& dof : v2.lockedDofs)
@@ -52,29 +57,15 @@ void testBodyV2() {
     require(toe->maximumTorque > 0.0f && std::abs(toe->maximumTorque - 30.0f) < 1e-3f, "o teto da ponta e 30 N.m");
     require(v2.supportLink[static_cast<std::size_t>(v2.leftToe)] && v2.supportLink[static_cast<std::size_t>(v2.rightToe)],
         "a ponta e apoio");
-
-    // As posturas como dados batem com as do clipe (v1) em todo eixo comum.
-    for (std::size_t p = 0; p < 2; ++p) {
-        for (std::size_t d = 0; d < v2.dofs.size(); ++d) {
-            const std::string& name = v2.dofs[d].name;
-            for (std::size_t e = 0; e < v1.dofs.size(); ++e) {
-                if (v1.dofs[e].name != name) continue;
-                require(std::abs(v2.postures[p].dofRadians[d] - v1.postures[p].dofRadians[e]) < 1e-5f,
-                    "a postura " + v2.postures[p].id + " como dado difere do clipe em " + name);
-            }
-        }
-    }
     require(v2.postures.size() == 2 && v2.postures[1].id == "alerta", "o v2 tem a postura de alerta");
-    require(std::abs(v2.standingPelvisHeight - v1.standingPelvisHeight) < 0.01f, "a pelve de pe do v2 fica onde estava");
 
     // A divisao: a massa e o centro de massa do pe inteiro se mantem; o calcanhar
     // e a ponta da chuteira ficam onde estavam.
     for (std::size_t side = 0; side < 2; ++side) {
         const std::uint32_t foot = side == 0 ? v2.leftFoot : v2.rightFoot;
-        const std::uint32_t whole = side == 0 ? v1.leftFoot : v1.rightFoot;
         const auto& heelLink = v2.profile.links[foot];
         const auto& toeLink = v2.profile.links[static_cast<std::size_t>(side == 0 ? v2.leftToe : v2.rightToe)];
-        const auto& wholeLink = v1.profile.links[whole];
+        const auto& wholeLink = gameLink(heelLink.id);
         require(std::abs(heelLink.massFraction + toeLink.massFraction - wholeLink.massFraction) < 1e-6f, "a massa do pe se mantem");
         const Vec3 heelCom = heelLink.modelPosition + heelLink.modelOrientation.rotate(heelLink.centerOfMassLocal);
         const Vec3 com = (heelCom * heelLink.massFraction + toeLink.modelPosition * toeLink.massFraction)

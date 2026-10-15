@@ -19,13 +19,14 @@ void require(bool condition, const std::string& message) {
 }
 
 RLBody3D loadBody() {
-    return loadRLBody3D(std::string(MATTERENGINE_TEST_ASSETS_DIR) + "/rl/bodies/football_player_v1.json");
+    return loadRLBody3D(std::string(MATTERENGINE_TEST_ASSETS_DIR) + "/rl/bodies/football_player_v2.json");
 }
 
 void testDefinition() {
     const RLBody3D body = loadBody();
-    require(body.dofs.size() == ragdollDegreesOfFreedom3D(body.profile), "o corpo de RL deveria atuar todos os eixos");
-    require(body.dofs.size() == 39, "o jogador tem 39 eixos atuados");
+    require(body.dofs.size() + body.lockedDofs.size() == ragdollDegreesOfFreedom3D(body.profile),
+        "o corpo de RL atua ou trava cada eixo");
+    require(body.dofs.size() == 37, "o jogador tem 37 eixos atuados");
     for (const RLBodyDof3D& dof : body.dofs) {
         require(dof.baseRadians >= dof.minimumRadians && dof.baseRadians <= dof.maximumRadians,
             "pose base fora do limite em " + dof.name);

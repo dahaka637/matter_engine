@@ -86,6 +86,12 @@ struct World {
     BodyContractState3D criticScratch;
     PilotState3D pilot;
     ControlState3D control;
+    // O controle na mao (o visualizador) e o empurrao de agora.
+    bool manual = false;
+    ControlInput3D manualInput;
+    float pushRemaining = 0.0f;
+    Vec3 pushForce;
+    std::uint32_t pushLink = 0;
     PlayerAttributes3D player;
     BodyCommand3D command;
     std::vector<RagdollDriveTarget3D> targets;
@@ -402,8 +408,22 @@ Reading BodyTrainingBatch3D::Impl::read(const RagdollState3D& state) const {
 
 void BodyTrainingBatch3D::Impl::nextCommand(World& world, const Reading& reading, float dt) {
     const PilotScript3D& script = task.drills[world.drill].pilot;
-    const ControlInput3D input =
-        CommandPilot3D::update(script, world.pilot, PilotView3D { reading.com, reading.comVelocity }, dt, world.rng);
+    ControlInput3D input;
+    if (world.manual) {
+        // Na mao: o relogio do piloto anda (a idade do pedido) e a camera e a dele.
+        input = world.manualInput;
+        input.cameraHeading = world.pilot.camera;
+        world.pilot.clock += dt;
+        if (input.speed != world.pilot.speed || input.stickForward != world.pilot.stickForward
+            || input.stickLeft != world.pilot.stickLeft) {
+            world.pilot.speed = input.speed;
+            world.pilot.stickForward = input.stickForward;
+            world.pilot.stickLeft = input.stickLeft;
+            world.pilot.lastChange = world.pilot.clock;
+        }
+    } else {
+        input = CommandPilot3D::update(script, world.pilot, PilotView3D { reading.com, reading.comVelocity }, dt, world.rng);
+    }
     world.command = ControlAdapter3D::command(task.control, input, world.control, world.player, dt);
     // A reacao: uma troca do pedido de velocidade abre a janela.
     const Vec3 wanted = world.command.moveVelocity;
@@ -579,6 +599,7 @@ void BodyTrainingBatch3D::Impl::resetWorld(std::uint32_t index) {
     world.limit = std::max(1u, static_cast<std::uint32_t>(std::lround(seconds * stretch / decision())));
     world.steps = 0;
     world.played = 0;
+    world.pushRemaining = 0.0f;
 
     // O contrato parte do corpo de agora; os motores seguram a pose dele.
     const RagdollState3D* state = physics.ragdollStateView(world.ragdoll);
@@ -715,6 +736,10 @@ void BodyTrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> a
             const float u = static_cast<float>(world.delayed ? sub : sub + 1) / static_cast<float>(substeps);
             contract->writeTargetsAt(world.contract, u, world.player, world.targets, world.strength);
             physics.setRagdollActiveDriveTargets(world.ragdoll, world.targets, false);
+            if (world.pushRemaining > 0.0f) {
+                physics.applyRagdollLinkForce(world.ragdoll, world.pushLink, world.pushForce, {});
+                world.pushRemaining -= FixedStep;
+            }
         }
         physics.simulate(FixedStep);
         for (const std::uint32_t index : scene.worlds) {
@@ -1055,7 +1080,26 @@ BodyWorldView3D BodyTrainingBatch3D::view(std::size_t environment) const {
         view.velocity = reading.comVelocity;
         view.chestHeading = reading.chestHeading;
     }
+    if (world.pushRemaining > 0.0f) {
+        view.pushLink = static_cast<int>(world.pushLink);
+        view.pushForce = world.pushForce;
+    }
     return view;
+}
+
+void BodyTrainingBatch3D::setManualControl(std::size_t environment, const ControlInput3D* input) {
+    if (environment >= m_impl->worlds.size()) return;
+    World& world = m_impl->worlds[environment];
+    world.manual = input != nullptr;
+    if (input) world.manualInput = *input;
+}
+
+void BodyTrainingBatch3D::push(std::size_t environment, std::uint32_t link, Vec3 forceNewtons, float seconds) {
+    if (environment >= m_impl->worlds.size() || link >= m_impl->body.profile.links.size()) return;
+    World& world = m_impl->worlds[environment];
+    world.pushLink = link;
+    world.pushForce = forceNewtons;
+    world.pushRemaining = seconds;
 }
 
 std::vector<float> BodyTrainingBatch3D::actionRadiansPerUnit() const {

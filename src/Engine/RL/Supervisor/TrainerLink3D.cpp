@@ -236,66 +236,32 @@ void TrainerLink3D::readStatus(const std::string& json, bool alive) {
         status.lastReward = number(*last, "reward");
         status.lastEpisodeSeconds = number(*last, "episode_seconds");
         status.lastFallFraction = number(*last, "fall_fraction", -1.0);
+        status.lastStyle = number(*last, "style");
     }
-    if (const auto evaluation = s.find("evaluation"); evaluation != s.end() && evaluation->is_object()
-        && evaluation->contains("score")) {
-        status.evaluated = true;
-        status.evaluationScore = number(*evaluation, "score");
+    if (const auto style = s.find("style"); style != s.end() && style->is_object()) {
+        const auto enabled = style->find("enabled");
+        if (enabled != style->end() && enabled->is_boolean() && enabled->get<bool>()) status.styleBeta = number(*style, "beta");
+    }
+    // A avaliacao: solvers -> exercicio -> medidas.
+    if (const auto evaluation = s.find("evaluation"); evaluation != s.end() && evaluation->is_object()) {
         status.evaluationIteration = static_cast<std::uint64_t>(number(*evaluation, "iteration"));
         if (const auto solvers = evaluation->find("solvers"); solvers != evaluation->end() && solvers->is_object())
-            for (const auto& [name, metrics] : solvers->items()) {
-                status.evaluationStand.emplace_back(name, number(metrics, "stand_fraction"));
-                if (name == "jogo") status.evaluationTurn = number(metrics, "turn", -1.0);
+            for (const auto& [solver, drills] : solvers->items()) {
+                if (!drills.is_object()) continue;
+                for (const auto& [drill, metrics] : drills.items()) {
+                    if (!metrics.is_object()) continue;
+                    TrainerStatus3D::DrillEvaluation entry;
+                    entry.drill = drill;
+                    entry.solver = solver;
+                    entry.falls = number(metrics, "falls");
+                    entry.velocityError = number(metrics, "velocity_error_median", -1.0);
+                    entry.usefulSteps = number(metrics, "useful_steps", -1.0);
+                    entry.sustained = number(metrics, "sustained", -1.0);
+                    entry.slip = number(metrics, "slip", -1.0);
+                    status.evaluation.push_back(std::move(entry));
+                }
             }
-        if (const auto batteries = evaluation->find("batteries"); batteries != evaluation->end() && batteries->is_object())
-            for (const auto& [name, entry] : batteries->items()) {
-                TrainerStatus3D::Battery battery;
-                battery.battery = name;
-                battery.posture = text(entry, "posture");
-                if (const std::string kind = text(entry, "kind"); !kind.empty()) battery.kind = kind;
-                if (const auto solvers = entry.find("solvers"); solvers != entry.end() && solvers->is_object())
-                    for (const auto& [solver, metrics] : solvers->items()) {
-                        battery.stand.emplace_back(solver, number(metrics, "stand_fraction"));
-                        if (solver == "jogo") {
-                            battery.turn = number(metrics, "turn", -1.0);
-                            battery.poseError = number(metrics, "pose_error", -1.0);
-                            battery.velocityError = number(metrics, "velocity_error", -1.0);
-                            battery.lateralDrift = number(metrics, "lateral_drift", -1.0);
-                            battery.goalError = number(metrics, "goal_error", -1.0);
-                        }
-                    }
-                status.evaluationBatteries.push_back(std::move(battery));
-            }
-        if (status.evaluationBatteries.empty())
-            status.evaluationBatteries.push_back(
-                { "equilibrio_v1", "natural", status.evaluationStand, status.evaluationTurn, -1.0 });
-    }
-    if (const auto commands = s.find("commands"); commands != s.end() && commands->is_object()) {
-        if (const auto forward = commands->find("forward"); forward != commands->end() && forward->is_object()) {
-            status.forwardLimit = number(*forward, "limit", -1.0);
-            status.forwardMax = number(*forward, "max", -1.0);
-        }
-    }
-    if (const auto best = s.find("best"); best != s.end() && best->is_object()) {
-        status.bestScore = number(*best, "score");
-        status.bestIteration = static_cast<std::int64_t>(number(*best, "iteration", -1.0));
-    }
-    if (const auto imitation = s.find("imitation"); imitation != s.end() && imitation->is_object()
-        && !imitation->empty()) {
-        status.imitation.active = true;
-        status.imitation.minutes = number(*imitation, "minutes");
-        status.imitation.elapsedSeconds = number(*imitation, "elapsed");
-        status.imitation.decisions = static_cast<std::uint64_t>(number(*imitation, "decisions"));
-        status.imitation.loss = number(*imitation, "loss", -1.0);
-        status.imitation.teacherFalls = number(*imitation, "teacherFalls");
-        status.imitation.teacherSpeed = number(*imitation, "teacherSpeed");
-    }
-    if (const auto kick = s.find("kickstart"); kick != s.end() && kick->is_object() && !kick->empty()) {
-        status.kickstart.active = true;
-        status.kickstart.since = static_cast<std::int64_t>(number(*kick, "since"));
-        status.kickstart.criticIterations = static_cast<std::int64_t>(number(*kick, "criticIterations"));
-        status.kickstart.decayIterations = static_cast<std::int64_t>(number(*kick, "decayIterations"));
-        status.kickstart.weight = number(*kick, "weight");
+        status.evaluated = !status.evaluation.empty();
     }
     if (!alive && status.state != "erro") status.state = "parado";
     std::lock_guard lock(m_mutex);
