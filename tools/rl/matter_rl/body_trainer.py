@@ -241,6 +241,8 @@ def drill_summary(rows: np.ndarray, columns: list[str], drills: list[str]) -> di
             out[drill]["feet_crossed"] = float(part[:, col["pes_cruzados"]].mean())
         if "parado_pes" in col:
             out[drill]["still_feet"] = float(part[:, col["parado_pes"]].mean())
+        if "pivo_pe" in col:
+            out[drill]["foot_pivot"] = float(part[:, col["pivo_pe"]].mean())
     return out
 
 

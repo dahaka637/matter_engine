@@ -105,6 +105,8 @@ struct BodyEpisode3D {
     // -1 sem pisada) e a fatia das pisadas com os pes cruzados.
     float stanceWidth = -1.0f;
     float crossFraction = 0.0f;
+    // O pivo: o giro medio dos pes apoiados em torno da vertical (rad/s).
+    float footPivot = 0.0f;
 };
 
 // Um mundo visto por fora (a previa, as folhas de quadros).

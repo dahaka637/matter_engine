@@ -128,6 +128,10 @@ struct World {
     // Ha quanto tempo o pedido e ficar parado com a camera quieta (o relogio do
     // custo still: um giro da camera zera, e girar no lugar pode dar passos).
     float quietSeconds = 0.0f;
+    // O pivo: o giro (rad/s, em torno da vertical) dos pes no chao, somado por
+    // pe-decisao em contato.
+    double pivotSum = 0.0;
+    std::uint32_t pivotCount = 0;
     // A largura da base: a cada pisada, a distancia de lado entre os pes no
     // eixo esquerda-direita da pelve (positiva com o esquerdo a esquerda) e
     // quantas vezes ficou negativa (cruzou).
@@ -632,6 +636,8 @@ void BodyTrainingBatch3D::Impl::resetWorld(std::uint32_t index) {
     world.absAction = world.clipped = world.clamped = world.reversal = 0.0;
     world.touchdowns = 0;
     world.quietSeconds = 0.0f;
+    world.pivotSum = 0.0;
+    world.pivotCount = 0;
     world.widthSum = 0.0;
     world.widthCount = world.crossings = 0;
     world.usefulSteps = world.stepRun = world.longestRun = 0;
@@ -710,6 +716,7 @@ void BodyTrainingBatch3D::Impl::finishEpisode(Scene& scene, std::uint32_t index,
     episode.targetsPerMinute = episode.seconds > 0.0f ? 60.0f * static_cast<float>(world.pilot.reached) / episode.seconds : 0.0f;
     if (world.pilot.holdDecisions > 0)
         episode.holdDrift = world.pilot.holdDistanceSum / static_cast<float>(world.pilot.holdDecisions);
+    if (world.pivotCount > 0) episode.footPivot = static_cast<float>(world.pivotSum / world.pivotCount);
     if (world.widthCount > 0) {
         episode.stanceWidth = static_cast<float>(world.widthSum / world.widthCount);
         episode.crossFraction = static_cast<float>(world.crossings) / static_cast<float>(world.widthCount);
@@ -865,6 +872,10 @@ void BodyTrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> a
                     world.longestRun = std::max(world.longestRun, world.stepRun);
                     world.lastStep = now;
                     if (world.firstStep < 0.0f) world.firstStep = now;
+                }
+                if (inContact) {
+                    world.pivotSum += std::abs(state->links[f == 0 ? body.leftFoot : body.rightFoot].angularVelocity.z);
+                    ++world.pivotCount;
                 }
                 world.footSeconds[f] = inContact == was ? airSeconds + decision() : decision();
                 world.footWas[f] = inContact;
