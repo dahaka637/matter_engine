@@ -194,6 +194,18 @@ def drill_summary(rows: np.ndarray, columns: list[str], drills: list[str]) -> di
             "saturation": float(part[:, col["no_teto"]].mean()),
             "reversal": float(part[:, col["reversao"]].mean()),
             "cadence": float(part[:, col["cadencia"]].mean()),
+            # O passo util (plano 5.9): por segundo, a partida (so entre os que
+            # deram um passo, com a fatia deles), a sequencia e a caminhada
+            # sustentada (>= 6 passos seguidos e 8 s sem cair).
+            "useful_steps": float(part[:, col["passos_uteis"]].mean()),
+            "first_step_median": float(np.median(part[part[:, col["primeiro_passo"]] >= 0, col["primeiro_passo"]]))
+            if (part[:, col["primeiro_passo"]] >= 0).any() else None,
+            "first_step_fraction": float((part[:, col["primeiro_passo"]] >= 0).mean()),
+            "step_run_median": float(np.median(part[:, col["sequencia"]])),
+            "sustained": float(((part[:, col["sequencia"]] >= 6) & (part[:, col["segundos"]] >= 8.0)
+                                & ~np.isin(reasons, [1, 2])).mean()),
+            "requested": float(part[:, col["pedido_medio"]].mean()),
+            "stand_gate": float(part[:, col["porta_media"]].mean()),
         }
     return out
 
