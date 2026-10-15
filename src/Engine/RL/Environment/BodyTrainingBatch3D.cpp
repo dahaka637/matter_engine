@@ -25,7 +25,7 @@ constexpr float FixedStep = 1.0f / 120.0f;
 constexpr float Gravity = 9.81f;
 constexpr float Pi = std::numbers::pi_v<float>;
 constexpr std::size_t RewardCount = BodyRewardTermNames3D.size();
-constexpr std::size_t CostCount = 11;
+constexpr std::size_t CostCount = 12;
 
 std::uint64_t splitmix64(std::uint64_t& state) {
     std::uint64_t z = (state += 0x9E3779B97F4A7C15ull);
@@ -48,7 +48,7 @@ float gaussian(std::mt19937_64& rng, float sigma) {
 float wrap(float angle) { return std::atan2(std::sin(angle), std::cos(angle)); }
 
 std::array<float, CostCount> costArray(const BodyCosts3D& c) {
-    return { c.work, c.torque, c.slip, c.impact, c.head, c.smooth, c.limits, c.contacts, c.saturation, c.posture, c.still };
+    return { c.work, c.torque, c.slip, c.impact, c.head, c.smooth, c.limits, c.contacts, c.saturation, c.posture, c.still, c.athletic };
 }
 
 struct World {
@@ -697,7 +697,7 @@ void BodyTrainingBatch3D::Impl::finishEpisode(Scene& scene, std::uint32_t index,
         episode.reactionSeconds = static_cast<float>(world.reactionSum / world.reactionCount);
     BodyCosts3D& c = episode.costs;
     float* costs[CostCount] = { &c.work, &c.torque, &c.slip, &c.impact, &c.head, &c.smooth, &c.limits, &c.contacts,
-        &c.saturation, &c.posture, &c.still };
+        &c.saturation, &c.posture, &c.still, &c.athletic };
     for (std::size_t k = 0; k < CostCount; ++k) *costs[k] = static_cast<float>(world.costSum[k] / n);
     const double actions = n * static_cast<double>(std::max<std::size_t>(1, actionSize()));
     episode.meanAbsAction = static_cast<float>(world.absAction / actions);
@@ -750,6 +750,7 @@ void BodyTrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> a
             world.actionDelta[d] = delta;
         }
         contract->beginDecision(world.contract, action, means.subspan(index * A, A));
+        world.costs.setLean(task.reward.postureLeanDegrees, task.reward.postureLeanPerSpeed, task.reward.postureLeanMaxDegrees);
         if (const RagdollState3D* state = physics.ragdollStateView(world.ragdoll)) world.costs.begin(*state, body);
         world.costs.setTargetChange(world.endTargets, world.endChange, world.contract.rampTo);
         for (std::size_t d = 0; d < A; ++d) {
@@ -835,6 +836,19 @@ void BodyTrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> a
                 const Vec3 left = state->links[body.leftFoot].linearVelocity;
                 const Vec3 right = state->links[body.rightFoot].linearVelocity;
                 costs.still = 0.5f * (left.length() + right.length());
+            }
+            // A postura atletica: o quadril baixo sempre; parado, a base larga.
+            {
+                const float height = state->links.front().position.z / std::max(1.0e-3f, pose.standingPelvisHeight);
+                float athletic = std::max(0.0f, height - task.reward.athleticHeight);
+                if (world.quietSeconds >= task.reward.stillGraceSeconds && task.reward.athleticWidth > 0.0f) {
+                    Vec3 side = (state->links.front().orientation * body.profile.links.front().modelOrientation.conjugate())
+                                    .normalized().rotate({ 0.0f, 1.0f, 0.0f });
+                    side = Vec3 { side.x, side.y, 0.0f }.normalized();
+                    const float width = std::abs(dot(state->links[body.leftFoot].position - state->links[body.rightFoot].position, side));
+                    athletic += std::max(0.0f, task.reward.athleticWidth - width) / task.reward.athleticWidth;
+                }
+                costs.athletic = athletic;
             }
             const Vec3 wanted = world.command.moveVelocity;
             const float facingScore = bodyFacingScore3D(task.reward, reading.chestHeading, world.command.faceHeading);

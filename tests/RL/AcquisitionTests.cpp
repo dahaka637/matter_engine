@@ -229,6 +229,14 @@ void testPostureCost() {
     const float expected = 1.0f - std::cos(30.0f * 3.14159265f / 180.0f);
     require(std::abs(leaning.finish(1.0f / 120.0f, 800.0f).posture - expected) < 1.0e-3f,
         "o peito a 30 graus custa 1 - cos(30)");
+    // Com a folga de 20 graus (parado), so o que passa dela custa.
+    BodyCostAccumulator3D tolerant;
+    tolerant.setLean(20.0f, 4.0f, 25.0f);
+    tolerant.begin(state, body);
+    tolerant.addSubstep(body, state, 1.0f / 120.0f, 800.0f);
+    const float over = (1.0f - std::cos(30.0f * 3.14159265f / 180.0f)) - (1.0f - std::cos(20.0f * 3.14159265f / 180.0f));
+    require(std::abs(tolerant.finish(1.0f / 120.0f, 800.0f).posture - over) < 1.0e-3f,
+        "com a folga, so a inclinacao alem dela custa");
 }
 
 void testPilotWindow() {

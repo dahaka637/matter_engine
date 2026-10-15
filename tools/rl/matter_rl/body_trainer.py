@@ -366,7 +366,7 @@ class BodyTrainer:
         names = list(self.reward_names)
         self.ri = {name: names.index(name) for name in names}
         self.cost_index = [names.index(name) for name in
-                           ("work", "torque", "slip", "impact", "head", "smooth", "limits", "contacts", "posture", "still")]
+                           ("work", "torque", "slip", "impact", "head", "smooth", "limits", "contacts", "posture", "still", "athletic")]
         self.episode_columns = self.batch.episode_columns()
         self.drill_ids = list(self.batch.drill_ids)
 
@@ -709,7 +709,7 @@ class BodyTrainer:
         if component == "fall":
             old = reward.get("fall", "padrao")
             reward["fall"] = value
-        elif component in ("work", "torque", "slip", "impact", "head", "smooth", "limits", "contacts", "posture", "still"):
+        elif component in ("work", "torque", "slip", "impact", "head", "smooth", "limits", "contacts", "posture", "still", "athletic"):
             old = costs.get(component, "padrao")
             costs[component] = value
         else:

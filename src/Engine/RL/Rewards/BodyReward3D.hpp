@@ -52,6 +52,17 @@ struct BodyRewardSettings3D {
     float contacts = 0.0f;
     float posture = 0.0f;
     float still = 0.0f;
+    float athletic = 0.0f;
+    // A postura: a inclinacao do peito que nao custa cresce com a velocidade
+    // (graus: a base mais por m/s, ate o maximo; a cabeca so tem a base).
+    float postureLeanDegrees = 0.0f;
+    float postureLeanPerSpeed = 0.0f;
+    float postureLeanMaxDegrees = 0.0f;
+    // A postura atletica: o quadril acima de athleticHeight x a altura de pe
+    // reto custa sempre; parado (o relogio do still), a base mais estreita que
+    // athleticWidth (m, entre os pes de lado na pelve) tambem.
+    float athleticHeight = 0.94f;
+    float athleticWidth = 0.35f;
     // O parado de verdade: o custo still so vale com o pedido de parar ha mais
     // de stillGraceSeconds (os passos para frear nao pagam).
     float stillGraceSeconds = 1.0f;
@@ -97,12 +108,12 @@ struct BodyTaskWeights3D {
 // primeiras manterem o lugar.
 enum class BodyRewardTerm3D : std::size_t {
     Velocity = 0, Facing, Task, Work, Torque, Slip, Impact, Head, Smooth, Limits, Contacts, Fall, StandGate, StyleGate,
-    Air, Posture, Still, Count
+    Air, Posture, Still, Athletic, Count
 };
 
 inline constexpr std::array<const char*, static_cast<std::size_t>(BodyRewardTerm3D::Count)> BodyRewardTermNames3D {
     "velocity", "facing", "task", "work", "torque", "slip", "impact", "head", "smooth", "limits", "contacts", "fall",
-    "stand_gate", "style_gate", "air", "posture", "still"
+    "stand_gate", "style_gate", "air", "posture", "still", "athletic"
 };
 
 // Os custos fisicos de uma decisao, antes dos pesos.
@@ -133,6 +144,9 @@ struct BodyCosts3D {
     // O parado: a velocidade media dos pes (m/s) quando o pedido e parar ha
     // mais que a folga (marchar no lugar paga; o lote o preenche).
     float still = 0.0f;
+    // A postura atletica: o quanto o quadril passa da altura alvo (fracao da
+    // altura de pe) mais, parado, o quanto a base falta (fracao da largura alvo).
+    float athletic = 0.0f;
     // Medida, sem peso: a fatia dos eixos-passos com o torque a 98% do teto
     // ou mais (o tempo no teto).
     float saturation = 0.0f;
@@ -141,6 +155,12 @@ struct BodyCosts3D {
 // Os custos somados nos passos de fisica de uma decisao.
 class BodyCostAccumulator3D {
 public:
+    // A tolerancia da inclinacao do peito (graus; 0 = a postura antiga, sem folga).
+    void setLean(float baseDegrees, float perSpeed, float maximumDegrees) {
+        m_leanBase = baseDegrees;
+        m_leanPerSpeed = perSpeed;
+        m_leanMax = maximumDegrees;
+    }
     void begin(const RagdollState3D& state, const RLBody3D& body);
     void addSubstep(const RLBody3D& body, const RagdollState3D& state, float fixedStep, float bodyWeight);
     // A mudanca dos alvos entre decisoes (o fim da reta), pela decisao.
@@ -154,6 +174,9 @@ private:
     double m_impact = 0.0;
     double m_head = 0.0;
     double m_posture = 0.0;
+    float m_leanBase = 0.0f;
+    float m_leanPerSpeed = 0.0f;
+    float m_leanMax = 0.0f;
     float m_smooth = 0.0f;
     float m_torque = 0.0f;
     float m_limits = 0.0f;

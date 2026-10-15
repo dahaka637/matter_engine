@@ -16,7 +16,9 @@ bool isFootPart(const RLBody3D& body, std::uint32_t link) {
 } // namespace
 
 void BodyCostAccumulator3D::begin(const RagdollState3D& state, const RLBody3D& body) {
+    const float leanBase = m_leanBase, leanPerSpeed = m_leanPerSpeed, leanMax = m_leanMax;
     *this = {};
+    setLean(leanBase, leanPerSpeed, leanMax);
     m_headVertical = state.links[body.head].linearVelocity.z;
 }
 
@@ -74,10 +76,18 @@ void BodyCostAccumulator3D::addSubstep(const RLBody3D& body, const RagdollState3
         + 0.0025f * vertical * vertical;
     // A postura: o "para cima" do peito e da cabeca (no referencial do modelo)
     // contra a vertical.
+    // O peito tem a folga da velocidade (inclinar para correr e frear); a
+    // cabeca, so a base.
+    const Vec3 v = state.links.front().linearVelocity;
+    const float speed = std::hypot(v.x, v.y);
+    const float chestLean = std::min(m_leanMax, m_leanBase + m_leanPerSpeed * speed) * 3.14159265f / 180.0f;
+    const float headLean = m_leanBase * 3.14159265f / 180.0f;
     for (const std::uint32_t link : { body.upperChest, body.head }) {
         const Quaternion frame = (state.links[link].orientation
             * body.profile.links[link].modelOrientation.conjugate()).normalized();
-        m_posture += 1.0f - std::clamp(frame.rotate({ 0.0f, 0.0f, 1.0f }).z, -1.0f, 1.0f);
+        const float tilt = 1.0f - std::clamp(frame.rotate({ 0.0f, 0.0f, 1.0f }).z, -1.0f, 1.0f);
+        const float allowed = 1.0f - std::cos(link == body.head ? headLean : chestLean);
+        m_posture += std::max(0.0f, tilt - allowed);
     }
     ++m_substeps;
 }
@@ -215,7 +225,8 @@ float bodyReward3D(const BodyRewardSettings3D& settings, const BodyTaskWeights3D
         settings.limits * costs.limits, settings.contacts * costs.contacts };
     const float posture = settings.posture * costs.posture;
     const float still = settings.still * costs.still;
-    float cost = posture + still;
+    const float athletic = settings.athletic * costs.athletic;
+    float cost = posture + still + athletic;
     for (const float term : terms) cost += term;
     const float fall = fell ? settings.fall : 0.0f;
     if (components) {
@@ -229,6 +240,7 @@ float bodyReward3D(const BodyRewardSettings3D& settings, const BodyTaskWeights3D
         components[static_cast<std::size_t>(BodyRewardTerm3D::Air)] = air;
         components[static_cast<std::size_t>(BodyRewardTerm3D::Posture)] = posture;
         components[static_cast<std::size_t>(BodyRewardTerm3D::Still)] = still;
+        components[static_cast<std::size_t>(BodyRewardTerm3D::Athletic)] = athletic;
     }
     const float rate = task + air - cost;
     return decisionSeconds * (settings.positiveOnly ? std::max(0.0f, rate) : rate) - fall;
