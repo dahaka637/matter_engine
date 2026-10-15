@@ -228,6 +228,8 @@ def drill_summary(rows: np.ndarray, columns: list[str], drills: list[str]) -> di
             drift = part[:, col["deriva_espera"]]
             drift = drift[drift >= 0.0]
             out[drill]["hold_drift"] = float(drift.mean()) if len(drift) else None
+        if "postura" in col:
+            out[drill]["posture"] = float(part[:, col["postura"]].mean())
     return out
 
 
@@ -351,7 +353,7 @@ class BodyTrainer:
         names = list(self.reward_names)
         self.ri = {name: names.index(name) for name in names}
         self.cost_index = [names.index(name) for name in
-                           ("work", "torque", "slip", "impact", "head", "smooth", "limits", "contacts")]
+                           ("work", "torque", "slip", "impact", "head", "smooth", "limits", "contacts", "posture")]
         self.episode_columns = self.batch.episode_columns()
         self.drill_ids = list(self.batch.drill_ids)
 
@@ -694,7 +696,7 @@ class BodyTrainer:
         if component == "fall":
             old = reward.get("fall", "padrao")
             reward["fall"] = value
-        elif component in ("work", "torque", "slip", "impact", "head", "smooth", "limits", "contacts"):
+        elif component in ("work", "torque", "slip", "impact", "head", "smooth", "limits", "contacts", "posture"):
             old = costs.get(component, "padrao")
             costs[component] = value
         else:

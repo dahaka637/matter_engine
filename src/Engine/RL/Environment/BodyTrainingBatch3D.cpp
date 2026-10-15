@@ -25,7 +25,7 @@ constexpr float FixedStep = 1.0f / 120.0f;
 constexpr float Gravity = 9.81f;
 constexpr float Pi = std::numbers::pi_v<float>;
 constexpr std::size_t RewardCount = BodyRewardTermNames3D.size();
-constexpr std::size_t CostCount = 9;
+constexpr std::size_t CostCount = 10;
 
 std::uint64_t splitmix64(std::uint64_t& state) {
     std::uint64_t z = (state += 0x9E3779B97F4A7C15ull);
@@ -48,7 +48,7 @@ float gaussian(std::mt19937_64& rng, float sigma) {
 float wrap(float angle) { return std::atan2(std::sin(angle), std::cos(angle)); }
 
 std::array<float, CostCount> costArray(const BodyCosts3D& c) {
-    return { c.work, c.torque, c.slip, c.impact, c.head, c.smooth, c.limits, c.contacts, c.saturation };
+    return { c.work, c.torque, c.slip, c.impact, c.head, c.smooth, c.limits, c.contacts, c.saturation, c.posture };
 }
 
 struct World {
@@ -679,7 +679,7 @@ void BodyTrainingBatch3D::Impl::finishEpisode(Scene& scene, std::uint32_t index,
         episode.reactionSeconds = static_cast<float>(world.reactionSum / world.reactionCount);
     BodyCosts3D& c = episode.costs;
     float* costs[CostCount] = { &c.work, &c.torque, &c.slip, &c.impact, &c.head, &c.smooth, &c.limits, &c.contacts,
-        &c.saturation };
+        &c.saturation, &c.posture };
     for (std::size_t k = 0; k < CostCount; ++k) *costs[k] = static_cast<float>(world.costSum[k] / n);
     const double actions = n * static_cast<double>(std::max<std::size_t>(1, actionSize()));
     episode.meanAbsAction = static_cast<float>(world.absAction / actions);

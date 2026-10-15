@@ -191,6 +191,7 @@ BodyTask3D loadBodyTask3D(const std::filesystem::path& path) {
             w.slip = c.value("slip", w.slip);
             w.impact = c.value("impact", w.impact);
             w.head = c.value("head", w.head);
+            w.posture = c.value("posture", w.posture);
             w.smooth = c.value("smooth", w.smooth);
             w.limits = c.value("limits", w.limits);
             w.contacts = c.value("contacts", w.contacts);

@@ -50,6 +50,7 @@ struct BodyRewardSettings3D {
     float smooth = 0.0f;
     float limits = 0.0f;
     float contacts = 0.0f;
+    float posture = 0.0f;
     // A queda (um evento: paga uma vez).
     float fall = 1.0f;
     // O total por decisao nunca fica negativo (antes da queda): tentar e errar
@@ -92,12 +93,12 @@ struct BodyTaskWeights3D {
 // primeiras manterem o lugar.
 enum class BodyRewardTerm3D : std::size_t {
     Velocity = 0, Facing, Task, Work, Torque, Slip, Impact, Head, Smooth, Limits, Contacts, Fall, StandGate, StyleGate,
-    Air, Count
+    Air, Posture, Count
 };
 
 inline constexpr std::array<const char*, static_cast<std::size_t>(BodyRewardTerm3D::Count)> BodyRewardTermNames3D {
     "velocity", "facing", "task", "work", "torque", "slip", "impact", "head", "smooth", "limits", "contacts", "fall",
-    "stand_gate", "style_gate", "air"
+    "stand_gate", "style_gate", "air", "posture"
 };
 
 // Os custos fisicos de uma decisao, antes dos pesos.
@@ -122,6 +123,9 @@ struct BodyCosts3D {
     float limits = 0.0f;
     // 1 se algo que nao e pe tocou o chao.
     float contacts = 0.0f;
+    // A postura: o quanto o peito e a cabeca saem da vertical, (1 - cos) de
+    // cada um, somados (0 de pe reto; ~0,03 com 10 graus em cada; ~0,27 com 30).
+    float posture = 0.0f;
     // Medida, sem peso: a fatia dos eixos-passos com o torque a 98% do teto
     // ou mais (o tempo no teto).
     float saturation = 0.0f;
@@ -142,6 +146,7 @@ private:
     double m_slip = 0.0;
     double m_impact = 0.0;
     double m_head = 0.0;
+    double m_posture = 0.0;
     float m_smooth = 0.0f;
     float m_torque = 0.0f;
     float m_limits = 0.0f;

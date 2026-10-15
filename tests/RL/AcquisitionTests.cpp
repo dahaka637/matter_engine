@@ -208,6 +208,29 @@ void testGateOnClips() {
 }
 
 // O piloto so para a frente, dentro da janela de velocidade.
+// O custo da postura: de pe reto (a pose do modelo) e zero; o peito inclinado
+// 30 graus para a frente custa 1 - cos(30) so dele.
+void testPostureCost() {
+    const RLBody3D body = loadRLBody3D(assets() + "bodies/football_player_v2.json");
+    RagdollState3D state;
+    state.links.resize(body.profile.links.size());
+    state.joints.resize(body.profile.links.size());
+    for (std::size_t i = 0; i < state.links.size(); ++i) state.links[i].orientation = body.profile.links[i].modelOrientation;
+    BodyCostAccumulator3D upright;
+    upright.begin(state, body);
+    upright.addSubstep(body, state, 1.0f / 120.0f, 800.0f);
+    require(std::abs(upright.finish(1.0f / 120.0f, 800.0f).posture) < 1.0e-5f, "de pe reto a postura nao custa");
+    state.links[body.upperChest].orientation =
+        (Quaternion::fromAxisAngle({ 0.0f, 1.0f, 0.0f }, 30.0f * 3.14159265f / 180.0f) * body.profile.links[body.upperChest].modelOrientation)
+            .normalized();
+    BodyCostAccumulator3D leaning;
+    leaning.begin(state, body);
+    leaning.addSubstep(body, state, 1.0f / 120.0f, 800.0f);
+    const float expected = 1.0f - std::cos(30.0f * 3.14159265f / 180.0f);
+    require(std::abs(leaning.finish(1.0f / 120.0f, 800.0f).posture - expected) < 1.0e-3f,
+        "o peito a 30 graus custa 1 - cos(30)");
+}
+
 void testPilotWindow() {
     const BodyTask3D task = loadBodyTask3D(assets() + "tasks/aquisicao_p1.json");
     require(task.drills.size() == 1 && task.drills[0].pilot.forwardOnly, "o P1 anda so para a frente");
@@ -469,6 +492,7 @@ void testEveryAcquisitionTaskRuns() {
 } // namespace
 
 void runAcquisitionTests() {
+    testPostureCost();
     testEveryAcquisitionTaskRuns();
     testProgressForm();
     testStandGate();
