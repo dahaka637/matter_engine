@@ -234,6 +234,11 @@ def drill_summary(rows: np.ndarray, columns: list[str], drills: list[str]) -> di
             arc = part[:, col["afastamento_curva"]]
             arc = arc[arc >= 0.0]
             out[drill]["arc_error"] = float(arc.mean()) if len(arc) else None
+        if "largura_base" in col:
+            width = part[:, col["largura_base"]]
+            width = width[width > -1.0]
+            out[drill]["stance_width"] = float(width.mean()) if len(width) else None
+            out[drill]["feet_crossed"] = float(part[:, col["pes_cruzados"]].mean())
     return out
 
 

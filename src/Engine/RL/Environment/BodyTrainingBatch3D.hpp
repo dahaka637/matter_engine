@@ -101,6 +101,10 @@ struct BodyEpisode3D {
     float holdDrift = -1.0f;
     // As curvas: o afastamento medio da linha do arco (m; -1 sem curva).
     float arcError = -1.0f;
+    // A base: a largura media entre os pes nas pisadas (m, de lado na pelve;
+    // -1 sem pisada) e a fatia das pisadas com os pes cruzados.
+    float stanceWidth = -1.0f;
+    float crossFraction = 0.0f;
 };
 
 // Um mundo visto por fora (a previa, as folhas de quadros).

@@ -125,6 +125,12 @@ struct World {
     double clamped = 0.0;
     double reversal = 0.0;
     std::uint32_t touchdowns = 0;
+    // A largura da base: a cada pisada, a distancia de lado entre os pes no
+    // eixo esquerda-direita da pelve (positiva com o esquerdo a esquerda) e
+    // quantas vezes ficou negativa (cruzou).
+    double widthSum = 0.0;
+    std::uint32_t widthCount = 0;
+    std::uint32_t crossings = 0;
     Vec3 lastWanted;
     float changeAt = -1.0f;
     double reactionSum = 0.0;
@@ -622,6 +628,8 @@ void BodyTrainingBatch3D::Impl::resetWorld(std::uint32_t index) {
     world.costSum = {};
     world.absAction = world.clipped = world.clamped = world.reversal = 0.0;
     world.touchdowns = 0;
+    world.widthSum = 0.0;
+    world.widthCount = world.crossings = 0;
     world.usefulSteps = world.stepRun = world.longestRun = 0;
     world.footLiftSeen = { false, false };
     world.firstStep = world.lastStep = -1.0f;
@@ -698,6 +706,10 @@ void BodyTrainingBatch3D::Impl::finishEpisode(Scene& scene, std::uint32_t index,
     episode.targetsPerMinute = episode.seconds > 0.0f ? 60.0f * static_cast<float>(world.pilot.reached) / episode.seconds : 0.0f;
     if (world.pilot.holdDecisions > 0)
         episode.holdDrift = world.pilot.holdDistanceSum / static_cast<float>(world.pilot.holdDecisions);
+    if (world.widthCount > 0) {
+        episode.stanceWidth = static_cast<float>(world.widthSum / world.widthCount);
+        episode.crossFraction = static_cast<float>(world.crossings) / static_cast<float>(world.widthCount);
+    }
     if (world.pilot.arcDecisions > 0)
         episode.arcError = world.pilot.arcErrorSum / static_cast<float>(world.pilot.arcDecisions);
     if (state && finite(state->links.front().position)) {
@@ -821,6 +833,15 @@ void BodyTrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> a
                 if (was && !inContact) {
                     world.footLift[f] = footAt;
                     world.footLiftSeen[f] = true;
+                }
+                if (!was && inContact && now >= 0.3f) {
+                    const Vec3 other = state->links[f == 0 ? body.rightFoot : body.leftFoot].position;
+                    Vec3 left = pelvisFrame.rotate({ 0.0f, 1.0f, 0.0f });
+                    left = Vec3 { left.x, left.y, 0.0f }.normalized();
+                    const float width = (f == 0 ? 1.0f : -1.0f) * dot(footAt - other, left);
+                    world.widthSum += width;
+                    ++world.widthCount;
+                    if (width < 0.0f) ++world.crossings;
                 }
                 if (!was && inContact && world.footLiftSeen[f] && airSeconds >= 0.12f && now >= 0.3f
                     && std::hypot(footAt.x - world.footLift[f].x, footAt.y - world.footLift[f].y) >= 0.10f) {
