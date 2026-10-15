@@ -81,6 +81,7 @@ struct World {
     std::uint32_t longestRun = 0;
     double requestedSum = 0.0;
     double gateSum = 0.0;
+    std::uint32_t bothAirSteps = 0;
     BodyContractState3D contract;
     BodyContractState3D criticScratch;
     PilotState3D pilot;
@@ -602,6 +603,7 @@ void BodyTrainingBatch3D::Impl::resetWorld(std::uint32_t index) {
     world.footLiftSeen = { false, false };
     world.firstStep = world.lastStep = -1.0f;
     world.requestedSum = world.gateSum = 0.0;
+    world.bothAirSteps = 0;
     world.changeAt = -1.0f;
     world.reactionSum = 0.0;
     world.reactionCount = world.reactionOpened = 0;
@@ -669,6 +671,7 @@ void BodyTrainingBatch3D::Impl::finishEpisode(Scene& scene, std::uint32_t index,
     episode.longestStepRun = static_cast<float>(world.longestRun);
     episode.meanRequested = static_cast<float>(world.requestedSum / n);
     episode.meanStandGate = static_cast<float>(world.gateSum / n);
+    episode.bothFeetAirFraction = static_cast<float>(world.bothAirSteps / n);
     if (state && finite(state->links.front().position)) {
         const Vec3 p = state->links.front().position;
         episode.distance = std::hypot(p.x - world.start.x, p.y - world.start.y);
@@ -799,6 +802,7 @@ void BodyTrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> a
                 world.footSeconds[f] = inContact == was ? airSeconds + decision() : decision();
                 world.footWas[f] = inContact;
             }
+            if (!world.footWas[0] && !world.footWas[1]) ++world.bothAirSteps;
             const bool contactNow[2] = { world.footWas[0], world.footWas[1] };
             const float secondsNow[2] = { world.footSeconds[0], world.footSeconds[1] };
             const bool wantsToMove = std::hypot(wanted.x, wanted.y) >= task.reward.movingThreshold;

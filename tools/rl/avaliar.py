@@ -96,7 +96,7 @@ def main(argv=None) -> int:
               f"pedido {r['request'] if r['request'] is not None else 'da tarefa'}, {r['worlds']} mundos")
         print(f"  quedas {r['falls']:.0%} (limite de cima {r['falls_upper95']:.0%}); segundos {r['seconds']:.1f}")
         print(f"  erro de velocidade: mediana {r['velocity_error_median']:.2f}, p90 {r['velocity_error_p90']:.2f} m/s "
-              f"(pedido medio {r['requested']:.2f})")
+              f"(pedido medio {r['requested']:.2f}); nota de progresso media {r['velocity_score']:.2f}")
         start = f"{r['first_step_median']:.2f} s" if r["first_step_median"] is not None else "sem passo"
         print(f"  passos uteis {r['useful_steps']:.2f}/s; partida {start} ({r['first_step_fraction']:.0%} deram o primeiro "
               f"passo); sequencia mediana {r['step_run_median']:.0f}; sustentada {r['sustained']:.0%}")

@@ -12,7 +12,7 @@
   "speedCaps": { "front": 1.0, "diagonalFront": 0.9, "side": 0.65, "diagonalBack": 0.6, "back": 0.55 },
   "jumpWindowSeconds": 0.6,
   "solverMix": { "heavyFraction": 0.25, "heavyPositionIterations": 20, "heavyVelocityIterations": 20 },
-  "curriculum": { "speedMin": 0.5, "speedMax": 1.5, "clipSlack": 0.3 },
+  "curriculum": { "speedMin": 0.5, "speedMax": 1.5, "clipSlack": 0.3, "speedCap": 3.0 },
   "reward": {
     "velocityForm": "progress",
     "facingSigma": 0.4,

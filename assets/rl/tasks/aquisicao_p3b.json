@@ -40,7 +40,8 @@
   "curriculum": {
     "speedMin": 0.5,
     "speedMax": 2.3,
-    "clipSlack": 0.3
+    "clipSlack": 0.3,
+    "speedCap": 3.0
   },
   "reward": {
     "velocityForm": "progress",

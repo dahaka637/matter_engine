@@ -127,6 +127,14 @@ class BodyRunConfig:
     transferred_from: str = ""
     # O corte do recorte: com a media acima de 0,35 por 5 rodadas, 3 epocas.
     clip_streak_limit: int = 5
+    # O curriculo da velocidade (a tarefa traz curriculum.speedMax e speedCap): sobe
+    # curriculum_step quando a nota de progresso media passa de curriculum_threshold
+    # em curriculum_rounds rodadas seguidas e ha ao menos curriculum_gap rodadas
+    # desde a ultima subida (a regra do v3-v6).
+    curriculum_threshold: float = 0.7
+    curriculum_step: float = 0.25
+    curriculum_rounds: int = 3
+    curriculum_gap: int = 50
     network: dict = field(default_factory=lambda: dict(NETWORK))
     judge: dict = field(default_factory=lambda: JudgeSettings().to_dict())
 
@@ -187,6 +195,7 @@ def drill_summary(rows: np.ndarray, columns: list[str], drills: list[str]) -> di
             "velocity_error_p90": float(np.percentile(velocity, 90)),
             "seconds": float(part[:, col["segundos"]].mean()),
             "velocity_error": float(part[:, col["erro_velocidade"]].mean()),
+            "velocity_score": float(part[:, col["nota_velocidade"]].mean()),
             "facing_error": float(part[:, col["erro_olhar"]].mean()),
             "reaction": float(reaction.mean()) if len(reaction) else None,
             "slip": float(part[:, col["escorregar"]].mean()),
@@ -206,6 +215,7 @@ def drill_summary(rows: np.ndarray, columns: list[str], drills: list[str]) -> di
                                 & ~np.isin(reasons, [1, 2])).mean()),
             "requested": float(part[:, col["pedido_medio"]].mean()),
             "stand_gate": float(part[:, col["porta_media"]].mean()),
+            "both_feet_air": float(part[:, col["voo_duplo"]].mean()),
         }
     return out
 
@@ -313,7 +323,7 @@ class BodyTrainer:
         self.mirror = MirrorLoss(self.batch.mirror_maps(), self.device) if self.config.mirror_loss > 0.0 else None
         self.counters = {"iteration": 0, "steps": 0, "train_seconds": 0.0, "episodes": 0,
                          "warmup_left": int(self.config.warmup_rounds) if self.judge is not None else 0,
-                         "warmup_done": 0, "epochs": self.config.ppo.get("epochs", PPOSettings().epochs), "clip_streak": 0}
+                         "warmup_done": 0, "curriculum_streak": 0, "curriculum_last": 0, "epochs": self.config.ppo.get("epochs", PPOSettings().epochs), "clip_streak": 0}
         self.db = storage.Database(paths.DATABASE)
         self.db.ensure_run(run, self.config.task, self.batch.body_hash, asdict(self.config))
         self.restore()
@@ -828,6 +838,7 @@ class BodyTrainer:
             if self.counters["warmup_left"] == 0:
                 self.db.event(self.run, "aquecimento", f"o ator volta a aprender depois de {self.counters['warmup_done']} "
                                                        f"rodadas (variancia explicada {stats['explained_variance']:.2f})")
+        self.update_curriculum(rows, col)
         # O recorte alto por muitas rodadas: 3 epocas em vez de 5.
         self.counters["clip_streak"] = self.counters["clip_streak"] + 1 if stats["clip_fraction"] > 0.35 else 0
         if self.counters["clip_streak"] >= self.config.clip_streak_limit and self.ppo.settings.epochs > 3:
@@ -840,6 +851,29 @@ class BodyTrainer:
         self.last_iteration_stats["style"] = info["style"]
         self.db.log_iteration(result)
         self.db.commit()
+
+    def update_curriculum(self, rows: np.ndarray, col: dict) -> None:
+        """Sobe a janela de velocidade pedida (curriculum.speedMax na copia da tarefa)
+        quando o corpo ja segue bem o pedido de agora."""
+        if not len(rows):
+            return
+        live = json.loads(self.live_task.read_text())
+        curriculum = live.get("curriculum")
+        if not curriculum or not curriculum.get("speedCap"):
+            return
+        top, cap = float(curriculum.get("speedMax", 0.0)), float(curriculum["speedCap"])
+        if top >= cap:
+            return
+        c, cfg = self.counters, self.config
+        score = float(rows[:, col["nota_velocidade"]].mean())
+        c["curriculum_streak"] = c["curriculum_streak"] + 1 if score >= cfg.curriculum_threshold else 0
+        if c["curriculum_streak"] >= cfg.curriculum_rounds and c["iteration"] - c["curriculum_last"] >= cfg.curriculum_gap:
+            curriculum["speedMax"] = min(cap, top + cfg.curriculum_step)
+            storage.write_json_atomic(self.live_task, live)
+            self.batch.update_task(str(self.live_task))
+            c["curriculum_streak"], c["curriculum_last"] = 0, c["iteration"]
+            self.db.event(self.run, "curriculo", f"velocidade pedida ate {curriculum['speedMax']:.2f} m/s "
+                                                 f"(progresso medio {score:.2f})")
 
     def healthy(self, result: dict) -> bool:
         values = [result["policy_loss"], result["value_loss"], result["kl"]]

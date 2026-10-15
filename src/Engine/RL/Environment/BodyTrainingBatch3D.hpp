@@ -91,6 +91,9 @@ struct BodyEpisode3D {
     float longestStepRun = 0.0f;
     float meanRequested = 0.0f;
     float meanStandGate = 1.0f;
+    // A fatia das decisoes com os dois pes fora do chao (o saltitar; a nota de
+    // aquisicao nao o cobra: o custo de trabalho so volta na F1).
+    float bothFeetAirFraction = 0.0f;
 };
 
 // Um mundo visto por fora (a previa, as folhas de quadros).

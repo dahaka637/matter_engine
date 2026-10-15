@@ -420,3 +420,41 @@ def test_recovery_syncs_the_scoring_judge(scratch):
     trainer.sync()
     trainer.recover()
     assert all(torch.equal(a, b) for a, b in zip(trainer.scorer.parameters(), trainer.judge.net.parameters()))
+
+
+def test_speed_curriculum_rises_with_progress(scratch):
+    """A janela de velocidade sobe pelo progresso (3 rodadas seguidas, com folga entre as subidas)."""
+    from matter_rl.body_trainer import BodyTrainer
+    trainer = tiny(BodyTrainer, scratch, "curriculo", task="aquisicao_p1", style=False)
+    col = {name: i for i, name in enumerate(trainer.episode_columns)}
+    rows = np.zeros((4, len(trainer.episode_columns)), dtype=np.float32)
+    rows[:, col["nota_velocidade"]] = 0.8
+
+    def top():
+        return json.loads(trainer.live_task.read_text())["curriculum"]["speedMax"]
+
+    assert top() == 1.5
+    for iteration in (60, 61):
+        trainer.counters["iteration"] = iteration
+        trainer.update_curriculum(rows, col)
+    assert top() == 1.5                       # so 2 rodadas boas
+    trainer.counters["iteration"] = 62
+    trainer.update_curriculum(rows, col)
+    assert top() == 1.75 and trainer.counters["curriculum_last"] == 62
+    for iteration in (63, 64, 65):            # a folga de 50 rodadas ainda nao passou
+        trainer.counters["iteration"] = iteration
+        trainer.update_curriculum(rows, col)
+    assert top() == 1.75
+    trainer.counters["iteration"] = 113
+    trainer.update_curriculum(rows, col)
+    assert top() == 2.0
+    rows[:, col["nota_velocidade"]] = 0.4     # nota baixa: a sequencia zera
+    trainer.update_curriculum(rows, col)
+    assert trainer.counters["curriculum_streak"] == 0
+    trainer.counters["curriculum_last"] = -1000
+    rows[:, col["nota_velocidade"]] = 0.9
+    for iteration in range(200, 400):         # sobe ate o teto e para
+        trainer.counters["iteration"] = iteration
+        trainer.update_curriculum(rows, col)
+    assert top() == 3.0
+    assert json.loads(trainer.live_task.read_text())["curriculum"]["speedCap"] == 3.0

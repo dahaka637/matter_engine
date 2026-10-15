@@ -142,6 +142,39 @@ void testAirCredit() {
     require(bodyAirCredit3D(s, true, left, long_) == 0.0f, "sem peso nao paga");
 }
 
+// Com o custo de escorregar (o P1s): andar com o pe plantado > patinar > ficar
+// parado, todos estritamente. Os numeros do P1 aos 15 M: patinando a ~0,72 m/s
+// para um pedido de 1,0, com o escorregar a ~0,8 m/s; um passo de verdade teria o
+// escorregar em ~0,1. O peso 0,4 mantem a ordem; perto de 1,0 patinar cairia a
+// zero e empataria com ficar parado (o atrator de que o P1 saiu).
+void testSlipCostKeepsTheOrder() {
+    const float dt = 1.0f / 30.0f;
+    const auto run = [&](float weight, float speed, float slip, int steps) {
+        BodyRewardSettings3D s = progressSettings();
+        s.slip = weight;
+        const BodyTaskWeights3D weights { 0.7f, 0.3f };
+        float total = 0.0f;
+        for (int i = 0; i < steps; ++i) {
+            BodyCosts3D costs;
+            costs.slip = slip;
+            const BodyTaskTerms3D terms = bodyTaskTerms3D(s, { speed, 0.0f, 0.0f }, { 1.0f, 0.0f, 0.0f }, 1.0f, 1.0f, 0.0f);
+            total += bodyReward3D(s, weights, terms, costs, false, dt, nullptr);
+        }
+        return total;
+    };
+    for (const float weight : { 0.3f, 0.4f, 0.5f }) {
+        const float standing = run(weight, 0.0f, 0.0f, 300);
+        const float skating = run(weight, 0.72f, 0.8f, 300);
+        const float stepping = run(weight, 0.72f, 0.1f, 300);
+        std::cout << "escorregar " << weight << ": parado " << standing << ", patinando " << skating
+                  << ", passo com o pe plantado " << stepping << "\n";
+        require(stepping > skating + 0.3f && skating > standing + 0.3f, "a ordem andar > patinar > parado com o peso "
+            + std::to_string(weight));
+    }
+    // Perto de 1,0 patinar empata com ficar parado: o peso nao pode ser tao alto.
+    require(run(1.0f, 0.72f, 0.8f, 300) < 0.3f, "com o peso 1,0 patinar quase nao paga (o atrator)");
+}
+
 // A porta de pe vale 1 nos quadros de locomocao dos clipes do acervo.
 void testGateOnClips() {
     const RLBody3D body = loadRLBody3D(assets() + "bodies/football_player_v2.json");
@@ -384,12 +417,12 @@ void testAcquisitionBatch() {
 void testClipStartsFollowTheCurriculum() {
     const auto limited = variant("aquisicao_p1.json",
         { { "\"referenceFraction\": 0.0,", "\"referenceFraction\": 1.0,"}, { "\"movingFraction\": 0.5,", "\"movingFraction\": 0.0," },
-            { "\"curriculum\": { \"speedMin\": 0.5, \"speedMax\": 1.5, \"clipSlack\": 0.3 },",
+            { "\"curriculum\": { \"speedMin\": 0.5, \"speedMax\": 1.5, \"clipSlack\": 0.3, \"speedCap\": 3.0 },",
                 "\"curriculum\": { \"speedMin\": 0.5, \"speedMax\": 1.0, \"clipSlack\": 0.3 },\n  \"style\": { \"dataset\": \"../style/acervo_corpo.json\" }," } },
         "matter_p1_clip_limited.json");
     const auto open = variant("aquisicao_p1.json",
         { { "\"referenceFraction\": 0.0,", "\"referenceFraction\": 1.0,"}, { "\"movingFraction\": 0.5,", "\"movingFraction\": 0.0," },
-            { "\"curriculum\": { \"speedMin\": 0.5, \"speedMax\": 1.5, \"clipSlack\": 0.3 },",
+            { "\"curriculum\": { \"speedMin\": 0.5, \"speedMax\": 1.5, \"clipSlack\": 0.3, \"speedCap\": 3.0 },",
                 "\"style\": { \"dataset\": \"../style/acervo_corpo.json\" }," } },
         "matter_p1_clip_open.json");
     BodyTrainingBatch3D capped(batchSettings(limited, 48, 9));
@@ -419,7 +452,7 @@ void testClipStartsFollowTheCurriculum() {
 // Todas as tarefas da escada abrem, montam um lote e dao a entrada e a nota
 // finitas em alguns passos (com acao zero).
 void testEveryAcquisitionTaskRuns() {
-    for (const char* name : { "aquisicao_p0", "aquisicao_p1", "aquisicao_p2", "aquisicao_p3a", "aquisicao_p3b" }) {
+    for (const char* name : { "aquisicao_p0", "aquisicao_p1", "aquisicao_p1s", "aquisicao_p2", "aquisicao_p3a", "aquisicao_p3b" }) {
         const std::filesystem::path path = assets() + "tasks/" + name + ".json";
         const BodyTask3D task = loadBodyTask3D(path);
         require(task.contract.velocityTarget == BodyVelocityTarget3D::Zero, std::string(name) + " usa a velocidade zero");
@@ -440,6 +473,7 @@ void runAcquisitionTests() {
     testProgressForm();
     testStandGate();
     testAirCredit();
+    testSlipCostKeepsTheOrder();
     testTaskValidation();
     testPositiveOnlyAndFall();
     testDiveDoesNotPay();
