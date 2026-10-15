@@ -65,7 +65,13 @@
       "contacts": 0.0,
       "posture": 1.0,
       "still": 1.0,
-      "stillGraceSeconds": 1.5
+      "stillGraceSeconds": 1.5,
+      "athletic": 1.5,
+      "athleticHeight": 0.94,
+      "athleticWidth": 0.35,
+      "postureLeanDegrees": 5.0,
+      "postureLeanPerSpeed": 4.0,
+      "postureLeanMaxDegrees": 25.0
     },
     "fall": 0.2
   },
