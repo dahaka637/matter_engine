@@ -384,11 +384,12 @@ def test_start_arguments_keep_the_transfer(scratch):
     from matter_rl.__main__ import start_arguments, trainer_command
     args = argparse.Namespace(run="p3", tarefa="aquisicao_p3a", modo=None, mundos=None, semente=5,
                               de_checkpoint="p0:9", transferir="ator", aquecimento=30, desvio_aprendido=None,
-                              sem_estilo=False, sem_sobreposicao=False, sobreposicao=False, dispositivo="auto")
+                              sem_estilo=False, sem_sobreposicao=False, sobreposicao=False, dispositivo="auto", espelho=0.25)
     command = start_arguments(args, ["x"])
     assert command[command.index("--de-checkpoint") + 1] == "p0:9"
     assert command[command.index("--transferir") + 1] == "ator" and command[command.index("--aquecimento") + 1] == "30"
     assert command[command.index("--semente") + 1] == "5" and "--sem-estilo" not in command
+    assert command[command.index("--espelho") + 1] == "0.25"
     again = trainer_command(args)
     assert "--de-checkpoint" in again and "--semente" in again
 
