@@ -1,0 +1,144 @@
+{
+  "schema": "matter-rl-task-2",
+  "id": "bloco1_postura",
+  "displayName": "Bloco 1: andar com postura",
+  "comment": "Bloco 1 do rumo de 15/10 (vault novo_plano/v2/execucao_autonoma_bloco1_e_fases.md): a receita do P3a sem o juiz (--sem-estilo) mais o custo de postura (peito e cabeca contra a vertical) com peso 1,0. Sem o juiz o B1.1 curvou o tronco e baixou a cabeca: postura media 0,30 contra 0,13 do P3ag. Parte do B1.1.",
+  "body": "../bodies/football_player_v2.json",
+  "decision": {
+    "substeps": 4,
+    "historyDecisions": 3,
+    "velocityTarget": "zero",
+    "velocityFraction": 1.0,
+    "maximumTargetVelocity": 20.0
+  },
+  "episodeSeconds": 20.0,
+  "groundMaterial": "grass",
+  "worldSpacingMeters": 250.0,
+  "player": {
+    "height": 1.8,
+    "mass": 80.0,
+    "strength": [
+      1.0,
+      1.0,
+      1.0
+    ],
+    "sprintCap": 6.5
+  },
+  "speedCaps": {
+    "front": 1.0,
+    "diagonalFront": 0.9,
+    "side": 0.65,
+    "diagonalBack": 0.6,
+    "back": 0.55
+  },
+  "jumpWindowSeconds": 0.6,
+  "solverMix": {
+    "heavyFraction": 0.25,
+    "heavyPositionIterations": 20,
+    "heavyVelocityIterations": 20
+  },
+  "curriculum": {
+    "speedMin": 0.5,
+    "speedMax": 1.5,
+    "clipSlack": 0.3,
+    "speedCap": 2.0
+  },
+  "reward": {
+    "velocityForm": "progress",
+    "facingSigma": 0.4,
+    "positiveOnly": true,
+    "standGate": {
+      "enabled": true
+    },
+    "air": {
+      "weight": 0.5,
+      "capSeconds": 0.4
+    },
+    "costs": {
+      "work": 0.0,
+      "torque": 0.0,
+      "slip": 0.4,
+      "impact": 0.0,
+      "head": 0.0,
+      "smooth": 0.0,
+      "limits": 0.0,
+      "contacts": 0.0,
+      "posture": 1.0
+    },
+    "fall": 0.2
+  },
+  "termination": {
+    "minimumHeadHeightFraction": 0.6,
+    "minimumPelvisHeightFraction": 0.5,
+    "nonSupportContact": true,
+    "maximumDistanceFromStart": 120.0
+  },
+  "initialState": {
+    "referenceFraction": 0.5,
+    "movingFraction": 0.0,
+    "posture": "natural",
+    "jointNoiseRadians": 0.03,
+    "jointVelocityNoise": 0.2,
+    "rootVelocityNoise": 0.1,
+    "rootAngularVelocityNoise": 0.1,
+    "randomYaw": true,
+    "referenceMinimumPelvis": 0.6
+  },
+  "randomization": {
+    "friction": [
+      0.7,
+      1.1
+    ],
+    "mass": [
+      0.95,
+      1.05
+    ],
+    "strength": [
+      0.9,
+      1.1
+    ],
+    "actionDelayProbability": 0.5,
+    "observationNoise": 1.0
+  },
+  "drills": [
+    {
+      "id": "andar_frente",
+      "displayName": "Andar para a frente",
+      "weight": 1.0,
+      "task": {
+        "velocity": 0.7,
+        "facing": 0.3
+      },
+      "pilot": {
+        "kind": "stick",
+        "forwardOnly": true,
+        "bands": [
+          {
+            "name": "andar",
+            "speed": [
+              0.5,
+              3.0
+            ],
+            "weight": 1.0
+          }
+        ],
+        "stickSeconds": [
+          3.0,
+          6.0
+        ],
+        "releaseFraction": 0.0,
+        "keysFraction": 1.0,
+        "syncFraction": 0.0,
+        "camera": {
+          "fixed": 1.0,
+          "follow": 0.0,
+          "turns": 0.0
+        }
+      }
+    }
+  ],
+  "style": {
+    "dataset": "../style/acervo_p3a.json",
+    "beta": 1.0
+  }
+}
