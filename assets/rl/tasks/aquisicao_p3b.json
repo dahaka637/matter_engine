@@ -2,7 +2,7 @@
   "schema": "matter-rl-task-2",
   "id": "aquisicao_p3b",
   "displayName": "Aquisicao P3b: andar e trotar com o juiz",
-  "comment": "O P3b: continua do P3a por transferencia, com o trote no acervo (acervo_p3b). O curriculo parte de 2,3 m/s (o trote entra) e o treinador o sobe ate 3,0.",
+  "comment": "O P3b: continua do P3a por transferencia, com o trote no acervo (acervo_p3b). O curriculo parte de 2,3 m/s (o trote entra) e o treinador o sobe ate 3,0. Mesma receita do P3a (escorregar 0,4 e a muleta do pe no ar).",
   "body": "../bodies/football_player_v2.json",
   "decision": {
     "substeps": 4,
@@ -51,13 +51,13 @@
       "enabled": true
     },
     "air": {
-      "weight": 0.0,
+      "weight": 0.5,
       "capSeconds": 0.4
     },
     "costs": {
       "work": 0.0,
       "torque": 0.0,
-      "slip": 0.0,
+      "slip": 0.4,
       "impact": 0.0,
       "head": 0.0,
       "smooth": 0.0,

@@ -2,7 +2,7 @@
   "schema": "matter-rl-task-2",
   "id": "aquisicao_p3a",
   "displayName": "Aquisicao P3a: andar com o juiz",
-  "comment": "O degrau P3a do plano de recuperacao (secao 6): a nota de progresso com a porta de pe e o juiz (beta 1; o estilo so paga junto com o progresso), sem a muleta do pe no ar. Metade dos comecos parados com pedido de andar (a partida) e metade num quadro do clipe ual_walk. O curriculo vai de 0,5 a 1,5 m/s e o treinador o sobe ate 2,0. Parte do P0.",
+  "comment": "O degrau P3a do plano de recuperacao, ja com o que o P1s ensinou (15/10): a receita do P1s (nota de progresso, porta de pe, custo de escorregar 0,4 e a muleta do pe no ar) MAIS o juiz (beta 1; o estilo so paga junto com o progresso). O plano previa o P3 sem custos e sem a muleta; o P1 sem o custo de escorregar patinou, entao o escorregar fica; a muleta fica ate o estilo mostrar o que faz (sai num passo seguinte, uma mudanca por vez). Metade dos comecos parados com pedido de andar (a partida) e metade num quadro do clipe ual_walk; o espelho 0,25 vai pela linha de comando (--espelho). O curriculo vai de 0,5 a 1,5 m/s e o treinador o sobe ate 2,0. Parte do P0.",
   "body": "../bodies/football_player_v2.json",
   "decision": {
     "substeps": 4,
@@ -51,13 +51,13 @@
       "enabled": true
     },
     "air": {
-      "weight": 0.0,
+      "weight": 0.5,
       "capSeconds": 0.4
     },
     "costs": {
       "work": 0.0,
       "torque": 0.0,
-      "slip": 0.0,
+      "slip": 0.4,
       "impact": 0.0,
       "head": 0.0,
       "smooth": 0.0,
