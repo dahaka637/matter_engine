@@ -2,7 +2,7 @@
   "schema": "matter-rl-task-2",
   "id": "fase2",
   "displayName": "Fase 2: girar, trotar e curvar",
-  "comment": "A fase 2 dos exercicios do Corpo v2 (vault novo_plano/v2/exercicios_do_corpo_v2.md): o parado com o giro suave da camera (o peito segue um rumo que gira devagar, ~30 graus/s, com pausas), a estrela com trote leve (ate ~2,5 m/s) e 35% de ponta a ponta, e a curva suave (arcos de 12-18 m, andar e trote leve, S as vezes). A parada com espera continua em todos. Os exercicios da fase 1 continuam na mistura (o parado sem giro e a estrela so andando). Sem o juiz. Parte do checkpoint aprovado da fase 1. Mesma nota da fase 1 (sem juiz, postura 1,0, sem muleta, still 1,0 com folga 1,5 s).",
+  "comment": "Fase 2, ultimo degrau: a curva suave (andar e trote leve) entra na mistura. Parte da F2c. A fase 2 dos exercicios do Corpo v2 (vault novo_plano/v2/exercicios_do_corpo_v2.md): o parado com o giro suave da camera (o peito segue um rumo que gira devagar, ~30 graus/s, com pausas), a estrela com trote leve (ate ~2,5 m/s) e 35% de ponta a ponta, e a curva suave (arcos de 12-18 m, andar e trote leve, S as vezes). A parada com espera continua em todos. Os exercicios da fase 1 continuam na mistura (o parado sem giro e a estrela so andando). Sem o juiz. Parte do checkpoint aprovado da fase 1. Mesma nota da fase 1 (sem juiz, postura 1,0, sem muleta, still 1,0 com folga 1,5 s).",
   "body": "../bodies/football_player_v2.json",
   "decision": {
     "substeps": 4,

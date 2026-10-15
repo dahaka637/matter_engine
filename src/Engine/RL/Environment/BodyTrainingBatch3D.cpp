@@ -125,6 +125,9 @@ struct World {
     double clamped = 0.0;
     double reversal = 0.0;
     std::uint32_t touchdowns = 0;
+    // Ha quanto tempo o pedido e ficar parado com a camera quieta (o relogio do
+    // custo still: um giro da camera zera, e girar no lugar pode dar passos).
+    float quietSeconds = 0.0f;
     // A largura da base: a cada pisada, a distancia de lado entre os pes no
     // eixo esquerda-direita da pelve (positiva com o esquerdo a esquerda) e
     // quantas vezes ficou negativa (cruzou).
@@ -628,6 +631,7 @@ void BodyTrainingBatch3D::Impl::resetWorld(std::uint32_t index) {
     world.costSum = {};
     world.absAction = world.clipped = world.clamped = world.reversal = 0.0;
     world.touchdowns = 0;
+    world.quietSeconds = 0.0f;
     world.widthSum = 0.0;
     world.widthCount = world.crossings = 0;
     world.usefulSteps = world.stepRun = world.longestRun = 0;
@@ -817,8 +821,10 @@ void BodyTrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> a
             BodyCosts3D costs = world.costs.finish(decision(), world.weight);
             // O parado de verdade: com o pedido de parar ha mais que a folga, a
             // velocidade dos pes (marchar no lugar custa).
-            if (std::hypot(world.command.moveVelocity.x, world.command.moveVelocity.y) < task.reward.movingThreshold
-                && world.pilot.clock - world.pilot.lastChange >= task.reward.stillGraceSeconds) {
+            const bool quiet = std::hypot(world.command.moveVelocity.x, world.command.moveVelocity.y) < task.reward.movingThreshold
+                && std::abs(world.command.faceRate) < 0.1f;
+            world.quietSeconds = quiet ? world.quietSeconds + decision() : 0.0f;
+            if (world.quietSeconds >= task.reward.stillGraceSeconds) {
                 const Vec3 left = state->links[body.leftFoot].linearVelocity;
                 const Vec3 right = state->links[body.rightFoot].linearVelocity;
                 costs.still = 0.5f * (left.length() + right.length());
