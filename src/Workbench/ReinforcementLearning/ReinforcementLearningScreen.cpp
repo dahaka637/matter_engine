@@ -146,14 +146,15 @@ ReinforcementLearningScreen::~ReinforcementLearningScreen() = default;
 TrainerStatus3D ReinforcementLearningScreen::status() const { return m_link->status(); }
 
 void ReinforcementLearningScreen::scanRuns() {
-    // Os treinos do Corpo, do mais recente (o ultimo status gravado) ao mais antigo.
+    // Os treinos do Corpo, do mais recente (o ultimo checkpoint gravado) ao mais antigo.
     std::vector<std::pair<std::filesystem::file_time_type, std::string>> found;
     std::error_code code;
     for (const auto& entry : std::filesystem::directory_iterator(m_paths.data / "runs", code)) {
         if (!entry.is_directory() || !isBodyRun(entry.path())) continue;
         std::error_code timeCode;
-        const std::filesystem::path stamp = std::filesystem::exists(entry.path() / "status.json", timeCode)
-            ? entry.path() / "status.json" : entry.path() / "run.json";
+        std::filesystem::path stamp = entry.path() / "run.json";
+        for (const char* name : { "status.json", "latest.json" })
+            if (std::filesystem::exists(entry.path() / name, timeCode)) stamp = entry.path() / name;
         found.emplace_back(std::filesystem::last_write_time(stamp, timeCode), entry.path().filename().string());
     }
     std::sort(found.begin(), found.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
