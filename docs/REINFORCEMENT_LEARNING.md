@@ -13,6 +13,37 @@ aprendizado guiado). O plano completo e o diário ficam no
 vault (`30_Projects/matter_engine/Aprendizado_por_Reforco/`); aqui fica o que
 está implementado e como usar.
 
+## A recuperação: o R1 (14/10/2026, noite)
+
+Depois dos testes que mostraram o Corpo v2 de pé e parado, a escada de
+recuperação do vault (`novo_plano/v2/plano_de_recuperacao_rl_claude.md`) começa
+pelo R1, as correções. O que ficou diferente no código:
+
+- **Tarefas da escada:** `assets/rl/tasks/aquisicao_p0.json` (ficar de pé),
+  `aquisicao_p1.json` (andar sem juiz, com a muleta do pé no ar),
+  `aquisicao_p2.json` (o juiz sozinho num clipe de trote),
+  `aquisicao_p3a.json` e `aquisicao_p3b.json` (andar com o juiz, e depois
+  trotar). Acervos em `assets/rl/style/acervo_p2|p3a|p3b.json`.
+- **Nota:** `velocityForm: "progress"`, `standGate`, `air`, `positiveOnly`,
+  `taskScale` em `reward`; `curriculum`, `solverMix` e
+  `initialState.movingFraction` na tarefa; `forwardOnly` no piloto. O lote
+  exporta as parcelas `stand_gate`, `style_gate` e `air`, e o treinador compõe
+  `dt x max(0, T + beta x G x S + A - custos) - F`.
+- **Treinador:** serial por padrão (`--sobreposicao` liga a sobreposição),
+  desvio fixo por grupo (`--desvio-aprendido` volta ao aprendido), dois
+  otimizadores, parada do ator pelo KL, normalização congelada por rodada,
+  sementes. `matter-rl iniciar --run R --tarefa T --de-checkpoint RUN[:RODADA]
+  [--transferir ator,normalizacao] [--aquecimento N]` abre um treino novo que
+  nasce de outro (o ator e a normalização passam; o crítico e o juiz
+  recomeçam).
+- **Medidas por episódio** (colunas novas de `finished_episodes`):
+  `passos_uteis`, `primeiro_passo`, `sequencia`, `pedido_medio`,
+  `porta_media`; a cadência não conta os toques dos primeiros 0,3 s.
+- **Centro de massa:** `rlLinkCenterOfMass3D`, `rlBodyCenterOfMass3D`,
+  `rlBodyCenterOfMassVelocity3D` e `rlLinkPointVelocity3D`
+  (`Engine/RL/Body/RLBody3D.hpp`): a posição publicada é a origem do link e a
+  velocidade é a do centro de massa.
+
 ## A reformulação do Corpo (14/10/2026)
 
 O RL do Corpo está sendo refeito: o clipe sai da ação e da entrada da rede e

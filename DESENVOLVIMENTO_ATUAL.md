@@ -7,6 +7,39 @@
 
 **Última atualização:** 14 de outubro de 2026
 
+## A recuperação do RL do Corpo (14/10/2026, noite): o R1
+
+Os testes de 14/10 de manhã mostraram um Corpo v2 que fica de pé e nunca dá um
+passo. O diagnóstico e a escada de correção estão no vault
+(`Aprendizado_por_Reforco/novo_plano/v2/plano_de_recuperacao_rl_claude.md`; o
+diário em `diario_atualizado/`). O R1 (as correções, sem treino) está feito:
+
+- **O centro de massa de verdade** (`07279ed`): o backend publica a origem do
+  link e a velocidade do centro de massa; o escorregar, o centro de massa do
+  corpo e os estados reconstruídos usavam a origem como se fosse o centro. O
+  calcanhar dividido tem o centro deslocado. Ajudantes `rlLink*` em `RLBody3D`,
+  testes analíticos (`tests/RL/CenterOfMassTests.cpp`). O alvo de velocidade do
+  motor passa a zero (a reta da média só com `decision.legacyMeanSlope`).
+- **A nota, o piloto e o lote da aquisição** (`f312ddf`, `f56cb8e`): a forma
+  `progress` (parado com pedido de andar vale zero), a porta de pé, a muleta do
+  pé no ar do v6, o currículo da velocidade, o `startMoving` rígido, o solver
+  misto, as medidas de passo útil; tarefas `aquisicao_p0`, `p1`, `p2`, `p3a`,
+  `p3b` e os acervos `acervo_p2`, `p3a`, `p3b`. Testes em
+  `tests/RL/AcquisitionTests.cpp`.
+- **O treinador** (`c8838e0`, `df2f1bd`): a nota composta por parcelas, dois
+  otimizadores, a parada do ator pelo KL, o desvio fixo por grupo de eixos, a
+  normalização congelada por rodada, as sementes, o espelho cru, o juiz com a
+  normalização ponderada e o hash do acervo, a transferência entre degraus
+  (`matter-rl iniciar --de-checkpoint`) e o aquecimento do juiz.
+- **Limites honestos:** nada foi treinado ainda além de uma fumaça de 60 rodadas;
+  a medida de passo útil não foi validada com um corpo que anda; o teste de que
+  um estado reconstruído e reposto não gera impulso de correção não foi
+  escrito como teste (a conversão do centro de massa está coberta pela
+  cinemática); os custos de carga dos contatos vêm de um impulso estimado
+  antes do solver e só voltam depois de validados.
+- **O Codex** revisou cada pedaço (só leitura: a sandbox dele não grava no
+  repositório); todos os achados foram conferidos no código antes de entrar.
+
 ## A reformulação do RL do Corpo (14/10/2026)
 
 O clipe sai da ação e da entrada da rede do Corpo; ele vira só um juiz de
