@@ -2,7 +2,7 @@
   "schema": "matter-rl-task-2",
   "id": "fase1",
   "displayName": "Fase 1: parado e a estrela basica",
-  "comment": "A fase 1 dos exercicios do Corpo v2 (vault: novo_plano/v2/exercicios_do_corpo_v2.md, 15/10): o parado e a estrela de 8 pontas so andando, com o peito livre (a camera acompanha) e a parada com espera (30% dos pontos: freia e espera 1-2 s; o resto passa direto). Sempre do centro para a ponta e de volta (ponta a ponta so na fase 2). Sem o juiz (--sem-estilo). As fatias seguem a dificuldade com piso de 8% (drillWeights). Parte do checkpoint aprovado do Bloco 1.",
+  "comment": "Fase 1, a estrela combinada (vault novo_plano/v2/exercicios_do_corpo_v2.md): 4-8 m, andar 0,8-1,4 m/s, 30% dos pontos com parada e espera de 1-2 s, peito livre, centro-ponta-centro. Mais o parado. A receita do B1.4 (sem juiz, postura 1,0, sem muleta). Parte da fase 1a.",
   "body": "../bodies/football_player_v2.json",
   "decision": {
     "substeps": 4,
@@ -51,7 +51,7 @@
       "enabled": true
     },
     "air": {
-      "weight": 0.5,
+      "weight": 0.0,
       "capSeconds": 0.4
     },
     "costs": {
@@ -62,7 +62,8 @@
       "head": 0.0,
       "smooth": 0.0,
       "limits": 0.0,
-      "contacts": 0.0
+      "contacts": 0.0,
+      "posture": 1.0
     },
     "fall": 0.2
   },
