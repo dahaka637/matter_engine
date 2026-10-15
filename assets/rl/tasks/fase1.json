@@ -2,7 +2,7 @@
   "schema": "matter-rl-task-2",
   "id": "fase1",
   "displayName": "Fase 1: parado e a estrela basica",
-  "comment": "Fase 1, a estrela combinada (vault novo_plano/v2/exercicios_do_corpo_v2.md): 4-8 m, andar 0,8-1,4 m/s, 30% dos pontos com parada e espera de 1-2 s, peito livre, centro-ponta-centro. Mais o parado. A receita do B1.4 (sem juiz, postura 1,0, sem muleta). Parte da fase 1a.",
+  "comment": "Fase 1, a estrela combinada (vault novo_plano/v2/exercicios_do_corpo_v2.md): 4-8 m, andar 0,8-1,4 m/s, 30% dos pontos com parada e espera de 1-2 s, peito livre, centro-ponta-centro. Mais o parado. A receita do B1.4 (sem juiz, postura 1,0, sem muleta). Parte da fase 1a. Com o custo still (peso 1,0, folga 1,5 s): na F1a o parado nao caia nem saia do lugar, mas sapateava no lugar (pes a 0,32 m/s, ~3 toques/s).",
   "body": "../bodies/football_player_v2.json",
   "decision": {
     "substeps": 4,
@@ -63,7 +63,9 @@
       "smooth": 0.0,
       "limits": 0.0,
       "contacts": 0.0,
-      "posture": 1.0
+      "posture": 1.0,
+      "still": 1.0,
+      "stillGraceSeconds": 1.5
     },
     "fall": 0.2
   },

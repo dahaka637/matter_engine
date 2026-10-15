@@ -393,7 +393,7 @@ void testBodyBatch() {
             for (std::size_t k = static_cast<std::size_t>(BodyRewardTerm3D::Work);
                  k < static_cast<std::size_t>(BodyRewardTerm3D::Fall); ++k)
                 costs += c[k];
-            costs += c[static_cast<std::size_t>(BodyRewardTerm3D::Posture)];
+            costs += c[static_cast<std::size_t>(BodyRewardTerm3D::Posture)] + c[static_cast<std::size_t>(BodyRewardTerm3D::Still)];
             const float expected = batch.policyStepSeconds() * (c[static_cast<std::size_t>(BodyRewardTerm3D::Task)] - costs)
                 - c[static_cast<std::size_t>(BodyRewardTerm3D::Fall)];
             require(near(batch.rewards()[w], expected, 1.0e-5f), "a nota bate com as parcelas");

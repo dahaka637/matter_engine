@@ -51,6 +51,10 @@ struct BodyRewardSettings3D {
     float limits = 0.0f;
     float contacts = 0.0f;
     float posture = 0.0f;
+    float still = 0.0f;
+    // O parado de verdade: o custo still so vale com o pedido de parar ha mais
+    // de stillGraceSeconds (os passos para frear nao pagam).
+    float stillGraceSeconds = 1.0f;
     // A queda (um evento: paga uma vez).
     float fall = 1.0f;
     // O total por decisao nunca fica negativo (antes da queda): tentar e errar
@@ -93,12 +97,12 @@ struct BodyTaskWeights3D {
 // primeiras manterem o lugar.
 enum class BodyRewardTerm3D : std::size_t {
     Velocity = 0, Facing, Task, Work, Torque, Slip, Impact, Head, Smooth, Limits, Contacts, Fall, StandGate, StyleGate,
-    Air, Posture, Count
+    Air, Posture, Still, Count
 };
 
 inline constexpr std::array<const char*, static_cast<std::size_t>(BodyRewardTerm3D::Count)> BodyRewardTermNames3D {
     "velocity", "facing", "task", "work", "torque", "slip", "impact", "head", "smooth", "limits", "contacts", "fall",
-    "stand_gate", "style_gate", "air", "posture"
+    "stand_gate", "style_gate", "air", "posture", "still"
 };
 
 // Os custos fisicos de uma decisao, antes dos pesos.
@@ -126,6 +130,9 @@ struct BodyCosts3D {
     // A postura: o quanto o peito e a cabeca saem da vertical, (1 - cos) de
     // cada um, somados (0 de pe reto; ~0,03 com 10 graus em cada; ~0,27 com 30).
     float posture = 0.0f;
+    // O parado: a velocidade media dos pes (m/s) quando o pedido e parar ha
+    // mais que a folga (marchar no lugar paga; o lote o preenche).
+    float still = 0.0f;
     // Medida, sem peso: a fatia dos eixos-passos com o torque a 98% do teto
     // ou mais (o tempo no teto).
     float saturation = 0.0f;

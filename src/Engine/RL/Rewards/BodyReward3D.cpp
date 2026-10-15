@@ -214,7 +214,8 @@ float bodyReward3D(const BodyRewardSettings3D& settings, const BodyTaskWeights3D
         settings.impact * costs.impact, settings.head * costs.head, settings.smooth * costs.smooth,
         settings.limits * costs.limits, settings.contacts * costs.contacts };
     const float posture = settings.posture * costs.posture;
-    float cost = posture;
+    const float still = settings.still * costs.still;
+    float cost = posture + still;
     for (const float term : terms) cost += term;
     const float fall = fell ? settings.fall : 0.0f;
     if (components) {
@@ -227,6 +228,7 @@ float bodyReward3D(const BodyRewardSettings3D& settings, const BodyTaskWeights3D
         components[static_cast<std::size_t>(BodyRewardTerm3D::StyleGate)] = task_.styleGate;
         components[static_cast<std::size_t>(BodyRewardTerm3D::Air)] = air;
         components[static_cast<std::size_t>(BodyRewardTerm3D::Posture)] = posture;
+        components[static_cast<std::size_t>(BodyRewardTerm3D::Still)] = still;
     }
     const float rate = task + air - cost;
     return decisionSeconds * (settings.positiveOnly ? std::max(0.0f, rate) : rate) - fall;
