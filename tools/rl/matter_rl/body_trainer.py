@@ -215,7 +215,7 @@ class BodyTrainer:
                  device: str = "auto", seed: int | None = None, socket_path: Path | None = None,
                  iterations: int | None = None, style: bool | None = None, overlap: bool | None = None,
                  transfer_from: str | None = None, transfer: tuple = ("ator", "normalizacao"),
-                 warmup: int | None = None, exploration: dict | None = None):
+                 warmup: int | None = None, exploration: dict | None = None, mirror_loss: float | None = None):
         self.run = run
         self.directory = paths.run_dir(run)
         self.directory.mkdir(parents=True, exist_ok=True)
@@ -241,6 +241,8 @@ class BodyTrainer:
             self.config.overlap = overlap
         if fresh and exploration is not None:
             self.config.exploration = exploration
+        if fresh and mirror_loss is not None:
+            self.config.mirror_loss = mirror_loss
         if fresh and warmup is not None:
             self.config.warmup_rounds = warmup
         elif fresh and transfer_from and self.config.style:
