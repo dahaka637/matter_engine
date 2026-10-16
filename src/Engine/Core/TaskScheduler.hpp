@@ -19,6 +19,10 @@ struct Task {
 // Contador de conclusao reutilizavel para um grupo de tarefas independentes.
 // Sua implementacao permanece privada para que mutexes e primitivas do
 // sistema operacional nao vazem pela API publica do modulo Core.
+// O contrato: as tarefas de uma rodada sao submetidas antes do wait() dela
+// (nenhuma submissao concorrente com a espera), o grupo so pode ser destruido
+// depois do wait() voltar, e uma tarefa nunca espera o proprio grupo (ficaria
+// presa: a conclusao dela so desconta depois da espera).
 class TaskGroup final {
 public:
     struct Impl;
