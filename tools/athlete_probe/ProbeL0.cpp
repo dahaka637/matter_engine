@@ -9,9 +9,11 @@
 #include "Engine/Physics/PhysicsEngine3D.hpp"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <string>
@@ -556,9 +558,28 @@ int runBaseline(const ProbeContext& context, int threads) {
         int speedSamples = 0;
         double assist = 0.0;
         int ticks = 0;
+        // A arrancada (s ate 90% da velocidade pedida, nas retas; -1 nunca),
+        // o escorregar do pe apoiado (m/s), a potencia dos motores (W/kg) e a
+        // maior inclinacao do peito (graus).
+        float reach = -1.0f;
+        int reachTicks = 0;
+        float reachStart = -1.0f;
+        std::array<int, 2> contactTicks { 0, 0 };
+        double slide = 0.0;
+        int slideSamples = 0;
+        double power = 0.0;
+        float tilt = 0.0f;
     };
     std::vector<Tally> tally(count);
     float weight = 9.81f * context.profile->totalMassKg;
+    const RagdollProfile3D& profile = *context.profile;
+    std::array<std::size_t, 2> feet { profile.links.size(), profile.links.size() };
+    std::size_t chest = 0;
+    for (std::size_t i = 0; i < profile.links.size(); ++i) {
+        if (profile.links[i].id == "LeftFoot") feet[0] = i;
+        if (profile.links[i].id == "RightFoot") feet[1] = i;
+        if (profile.links[i].id == "Chest") chest = i;
+    }
     for (std::size_t i = 0; i < count; ++i) {
         const Drill& drill = drills[i / 5];
         LocomotionWorld3D& world = batch.world(i);
@@ -612,6 +633,47 @@ int runBaseline(const ProbeContext& context, int threads) {
                 item.speedRatio += (velocity.x * asked.x + velocity.y * asked.y) / (askedSpeed * askedSpeed);
                 ++item.speedSamples;
             }
+            const RagdollState3D& body = world.body();
+            // (A arrancada: 90% da velocidade da tabela por 0,1 s seguidos -
+            // contra a da tabela, nao a pedida: o limite do terreno do
+            // controle fisico sobe em rampa na largada e a pedida vai junto.)
+            const Vec3 nominal = scenarioCommand(context, world.runtimeSettings(), scenario.keys(t), 1.0e9f)
+                                     .intent.requestedVelocityWorld;
+            const float nominalSpeed = std::hypot(nominal.x, nominal.y);
+            if (drills[i / 5].group.rfind("reta_", 0) == 0 && item.reach < 0.0f && nominalSpeed > 0.1f && !item.fell) {
+                const Vec3 velocity = body.links.front().linearVelocity;
+                if ((velocity.x * nominal.x + velocity.y * nominal.y) / nominalSpeed >= 0.9f * nominalSpeed) {
+                    if (item.reachTicks++ == 0) item.reachStart = t;
+                    if (item.reachTicks >= 12) item.reach = item.reachStart - 0.3f;
+                } else {
+                    item.reachTicks = 0;
+                }
+            }
+            if (!item.fell) {
+                for (std::size_t side = 0; side < 2; ++side) {
+                    bool touching = false;
+                    for (const RagdollInteraction3D& contact : body.interactions)
+                        touching |= contact.linkIndex == feet[side] && contact.normalWorld.z > 0.5f;
+                    // (O pe no chao ha 0,05 s: sem o impacto do pouso; o rolar do
+                    // pe ainda conta - a medida e relativa, a mesma para o RL.)
+                    item.contactTicks[side] = touching ? item.contactTicks[side] + 1 : 0;
+                    if (item.contactTicks[side] < 6 || feet[side] >= body.links.size()) continue;
+                    const Vec3 v = body.links[feet[side]].linearVelocity;
+                    item.slide += std::hypot(v.x, v.y);
+                    ++item.slideSamples;
+                }
+                double watts = 0.0;
+                for (const RagdollJointState3D& joint : body.joints)
+                    for (std::size_t axis = 0; axis < 3; ++axis)
+                        watts += std::abs(joint.motorTorqueNewtonMeters[axis] * joint.velocityRadiansPerSecond[axis]);
+                item.power += watts / std::max(1.0f, profile.totalMassKg);
+                if (chest < body.links.size()) {
+                    const Quaternion r = (body.links[chest].orientation
+                        * profile.links[chest].modelOrientation.conjugate()).normalized();
+                    const Vec3 up = r.rotate({ 0.0f, 0.0f, 1.0f });
+                    item.tilt = std::max(item.tilt, std::acos(std::clamp(up.z, -1.0f, 1.0f)) * 57.2958f);
+                }
+            }
         }
     }
     int failedWorlds = 0;
@@ -660,6 +722,31 @@ int runBaseline(const ProbeContext& context, int threads) {
         }
         std::printf(" quedas %d/%d %d/%d %d/%d %d/%d | %.2f\n", falls[0], totals[0], falls[1], totals[1], falls[2], totals[2],
             falls[3], totals[3], assistCount > 0 ? assist / assistCount : 0.0);
+    }
+    // As medidas separadas do plano (a regua do RL): a arrancada nas retas de
+    // corrida e sprint, o escorregar do pe apoiado, a energia e a
+    // estabilidade (a maior inclinacao do peito; quase queda: alem de 35
+    // graus sem cair).
+    std::printf("nivel | arrancada ate 90%% por 0,1 s (s; corre, sprint) | o pe no chao (m/s, depois de 0,05 s de apoio) | energia dos motores (W/kg) | peito: inclinacao max media (graus), quase quedas\n");
+    for (int level = 0; level < 5; ++level) {
+        double reachRun = 0.0, reachSprint = 0.0, slide = 0.0, power = 0.0, tilt = 0.0;
+        int reachRunCount = 0, reachSprintCount = 0, slideCount = 0, powerCount = 0, tiltCount = 0, nearFalls = 0;
+        for (std::size_t d = 0; d < drills.size(); ++d) {
+            const Tally& item = tally[d * 5 + static_cast<std::size_t>(level)];
+            const std::string& group = drills[d].group;
+            if (item.reach >= 0.0f && group == "reta_corre") { reachRun += item.reach; ++reachRunCount; }
+            if (item.reach >= 0.0f && group == "reta_sprint") { reachSprint += item.reach; ++reachSprintCount; }
+            if (group == "pancadas") continue;
+            if (item.slideSamples > 0) { slide += item.slide / item.slideSamples; ++slideCount; }
+            if (item.ticks > 0) { power += item.power / item.ticks; ++powerCount; }
+            tilt += item.tilt;
+            ++tiltCount;
+            nearFalls += !item.fell && item.tilt > 35.0f ? 1 : 0;
+        }
+        const auto mean = [](double sum, int n) { return n > 0 ? sum / n : -1.0; };
+        std::printf("%4.0f%% | %.2f (%d/8), %.2f (%d/8) | %.3f | %.1f | %.1f, %d de %d\n", levels[level],
+            mean(reachRun, reachRunCount), reachRunCount, mean(reachSprint, reachSprintCount), reachSprintCount,
+            mean(slide, slideCount), mean(power, powerCount), mean(tilt, tiltCount), nearFalls, tiltCount);
     }
     // As quedas por exercicio (onde o nivel derruba).
     std::printf("quem cai (niveis 100 70 50 30 0):\n");
