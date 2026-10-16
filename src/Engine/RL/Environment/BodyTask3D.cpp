@@ -213,6 +213,19 @@ BodyTask3D loadBodyTask3D(const std::filesystem::path& path) {
             w.postureLeanPerSpeed = c.value("postureLeanPerSpeed", w.postureLeanPerSpeed);
             w.postureLeanMaxDegrees = c.value("postureLeanMaxDegrees", w.postureLeanMaxDegrees);
             w.postureLeanPerCrouch = c.value("postureLeanPerCrouch", w.postureLeanPerCrouch);
+            if (c.contains("trunkLean")) {
+                const nlohmann::json& t = c["trunkLean"];
+                auto& trunk = w.trunkLean;
+                trunk.backDegrees = t.value("backDegrees", 0.0f);
+                trunk.forwardDegrees = t.value("forwardDegrees", trunk.forwardDegrees);
+                trunk.forwardPerSpeed = t.value("forwardPerSpeed", trunk.forwardPerSpeed);
+                trunk.forwardMaxDegrees = t.value("forwardMaxDegrees", trunk.forwardMaxDegrees);
+                trunk.forwardPerCrouch = t.value("forwardPerCrouch", trunk.forwardPerCrouch);
+                trunk.sideDegrees = t.value("sideDegrees", trunk.sideDegrees);
+                if (trunk.backDegrees < 0.0f || trunk.forwardDegrees < 0.0f || trunk.forwardMaxDegrees < trunk.forwardDegrees
+                    || trunk.sideDegrees < 0.0f)
+                    fail("a folga da linha do tronco e invalida");
+            }
             w.smooth = c.value("smooth", w.smooth);
             w.limits = c.value("limits", w.limits);
             w.contacts = c.value("contacts", w.contacts);

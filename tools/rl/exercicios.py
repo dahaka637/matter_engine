@@ -2,7 +2,9 @@
 """Cada exercicio de uma tarefa com a politica exportada de um treino: 64 mundos,
 o primeiro episodio de cada um, com quedas, erro de velocidade, pontos por
 minuto, deriva na espera, afastamento da curva, base, pes cruzados, erro do
-peito, pes parados, pivo, postura e escorregar.
+peito, pes parados, pivo, postura, escorregar e a inclinacao do peito e da pelve
+(graus para a frente; negativa e para tras) com a fatia do peito para tras, e a
+linha do tronco (da pelve ate a cabeca) com a fatia dela para tras.
 
   .venv/bin/python exercicios.py RUN TAREFA [SEGUNDOS=30] [SOLVER=20 (jogo) | -1 (treino)] [SEMENTE]
 """
@@ -62,7 +64,11 @@ def main() -> int:
               f" | peito {np.degrees(np.median(rows[:, col['erro_olhar']])):.0f} graus"
               f" | pes parado {rows[:, col['parado_pes']].mean():.3f} | pivo {rows[:, col['pivo_pe']].mean():.2f} rad/s"
               f" | postura {rows[:, col['postura']].mean():.3f} | escorregar {rows[:, col['escorregar']].mean():.3f}"
-              f" | segundos {rows[:, col['segundos']].mean():.1f}")
+              f" | segundos {rows[:, col['segundos']].mean():.1f}"
+              + (f" | peito {rows[:, col['peito_frente']].mean():+.1f} pelve {rows[:, col['pelve_frente']].mean():+.1f} graus"
+                 f" tras {100 * rows[:, col['peito_tras']].mean():.0f}%" if "peito_frente" in col else "")
+              + (f" | tronco {rows[:, col['tronco_frente']].mean():+.1f} graus tras {100 * rows[:, col['tronco_tras']].mean():.0f}%"
+                 if "tronco_frente" in col else ""))
     return 0
 
 

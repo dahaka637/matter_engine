@@ -63,6 +63,22 @@ struct BodyRewardSettings3D {
     // Mais folga quanto mais baixo o quadril (graus por fracao da altura de pe
     // abaixo dela): a postura de prontidao inclina o tronco.
     float postureLeanPerCrouch = 0.0f;
+    // A linha do tronco (da pelve ate a cabeca; o olho ve o tronco jogado para
+    // tras nela, mesmo com o peito reto): somada a postura, com folga so para a
+    // frente. O que passa da folga custa o angulo (rad, linear: puxa mesmo
+    // perto da folga). backDegrees < 0 = desligada.
+    struct TrunkLean {
+        // Para tras (0 = passar da vertical para tras sempre custa).
+        float backDegrees = -1.0f;
+        // Para a frente: a base, mais por m/s, mais atan(a/g), mais por fracao
+        // agachada, ate o maximo.
+        float forwardDegrees = 5.0f;
+        float forwardPerSpeed = 0.0f;
+        float forwardMaxDegrees = 20.0f;
+        float forwardPerCrouch = 0.0f;
+        // Para o lado: a base mais atan(a/g) (as curvas), ate o maximo.
+        float sideDegrees = 5.0f;
+    } trunkLean;
     // A postura atletica: o quadril acima de athleticHeight x a altura de pe
     // reto custa sempre; parado (o relogio do still), a base mais estreita que
     // athleticWidth (m, entre os pes de lado na pelve) tambem.
@@ -151,6 +167,7 @@ struct BodyCosts3D {
     float contacts = 0.0f;
     // A postura: o quanto o peito e a cabeca saem da vertical, (1 - cos) de
     // cada um, somados (0 de pe reto; ~0,03 com 10 graus em cada; ~0,27 com 30).
+    // Com a linha do tronco ligada, mais o angulo dela alem da folga (rad).
     float posture = 0.0f;
     // O parado: a velocidade media dos pes (m/s) quando o pedido e parar ha
     // mais que a folga (marchar no lugar paga; o lote o preenche).
@@ -175,6 +192,8 @@ public:
         m_leanMax = maximumDegrees;
         m_leanPerCrouch = perCrouch;
     }
+    // A linha do tronco (backDegrees < 0 = desligada).
+    void setTrunkLean(const BodyRewardSettings3D::TrunkLean& trunk) { m_trunk = trunk; }
     void begin(const RagdollState3D& state, const RLBody3D& body);
     void addSubstep(const RLBody3D& body, const RagdollState3D& state, float fixedStep, float bodyWeight);
     // A mudanca dos alvos entre decisoes (o fim da reta), pela decisao.
@@ -196,6 +215,7 @@ private:
     float m_leanPerSpeed = 0.0f;
     float m_leanMax = 0.0f;
     float m_leanPerCrouch = 0.0f;
+    BodyRewardSettings3D::TrunkLean m_trunk;
     float m_smooth = 0.0f;
     float m_torque = 0.0f;
     float m_limits = 0.0f;
@@ -204,6 +224,19 @@ private:
     float m_headVertical = 0.0f;
     std::uint32_t m_substeps = 0;
 };
+
+// A inclinacao de um link (rad) pelo "para cima" dele, no rumo do proprio
+// link: para a frente (positiva; negativa e para tras) e para o lado
+// (positiva para a esquerda).
+struct BodyLean3D {
+    float forward = 0.0f;
+    float side = 0.0f;
+};
+[[nodiscard]] BodyLean3D bodyLinkLean3D(const RLBody3D& body, const RagdollState3D& state, std::uint32_t link);
+// A linha do tronco (rad): da pelve ate a cabeca, no rumo do peito (para a
+// frente positiva; para o lado positiva para a esquerda). E o que o olho ve
+// como "tronco jogado para tras", mesmo com o peito reto.
+[[nodiscard]] BodyLean3D bodyTrunkLean3D(const RLBody3D& body, const RagdollState3D& state);
 
 // O termo de velocidade: o vetor medido contra o pedido, no plano.
 [[nodiscard]] float bodyVelocityScore3D(const BodyRewardSettings3D& settings, Vec3 measured, Vec3 wanted);

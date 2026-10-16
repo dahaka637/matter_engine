@@ -13,15 +13,38 @@ bool isFootPart(const RLBody3D& body, std::uint32_t link) {
     return false;
 }
 
+// Um vetor (o "para cima" de um link ou a linha do tronco) como inclinacao no
+// rumo de um link: para a frente e para a esquerda.
+BodyLean3D leanAlongHeading(const RLBody3D& body, const RagdollState3D& state, std::uint32_t headingLink, Vec3 v) {
+    const Quaternion frame =
+        (state.links[headingLink].orientation * body.profile.links[headingLink].modelOrientation.conjugate()).normalized();
+    const Vec3 forward = frame.rotate({ 1.0f, 0.0f, 0.0f });
+    const float planar = std::max(1.0e-6f, std::hypot(forward.x, forward.y));
+    const Vec3 ahead { forward.x / planar, forward.y / planar, 0.0f };
+    const Vec3 left { -ahead.y, ahead.x, 0.0f };
+    return { std::atan2(dot(v, ahead), v.z), std::atan2(dot(v, left), v.z) };
+}
+
 } // namespace
+
+BodyLean3D bodyLinkLean3D(const RLBody3D& body, const RagdollState3D& state, std::uint32_t link) {
+    const Quaternion frame = (state.links[link].orientation * body.profile.links[link].modelOrientation.conjugate()).normalized();
+    return leanAlongHeading(body, state, link, frame.rotate({ 0.0f, 0.0f, 1.0f }));
+}
+
+BodyLean3D bodyTrunkLean3D(const RLBody3D& body, const RagdollState3D& state) {
+    return leanAlongHeading(body, state, body.upperChest, state.links[body.head].position - state.links.front().position);
+}
 
 void BodyCostAccumulator3D::begin(const RagdollState3D& state, const RLBody3D& body) {
     const float leanBase = m_leanBase, leanPerSpeed = m_leanPerSpeed, leanMax = m_leanMax, leanPerCrouch = m_leanPerCrouch;
+    const BodyRewardSettings3D::TrunkLean trunk = m_trunk;
     const float accel = m_accel;
     const Vec3 lastVelocity = m_lastVelocity;
     const bool haveVelocity = m_haveVelocity;
     *this = {};
     setLean(leanBase, leanPerSpeed, leanMax, leanPerCrouch);
+    setTrunkLean(trunk);
     // A aceleracao segue de uma decisao para a outra (o lote recria o
     // acumulador a cada episodio).
     m_accel = accel;
@@ -99,6 +122,18 @@ void BodyCostAccumulator3D::addSubstep(const RLBody3D& body, const RagdollState3
     const float chestLean = std::min(m_leanMax, m_leanBase + m_leanPerSpeed * speed + needed + m_leanPerCrouch * crouch)
         * 3.14159265f / 180.0f;
     const float headLean = m_leanBase * 3.14159265f / 180.0f;
+    if (m_trunk.backDegrees >= 0.0f) {
+        // A linha do tronco: folga so para a frente; para tras, a pequena;
+        // para o lado, a base mais a da aceleracao.
+        const float degrees = 3.14159265f / 180.0f;
+        const BodyLean3D trunk = bodyTrunkLean3D(body, state);
+        const float forward = std::min(m_trunk.forwardMaxDegrees,
+            m_trunk.forwardDegrees + m_trunk.forwardPerSpeed * speed + needed + m_trunk.forwardPerCrouch * crouch);
+        const float side = std::min(m_trunk.forwardMaxDegrees, m_trunk.sideDegrees + needed);
+        m_posture += std::max(0.0f, trunk.forward - forward * degrees);
+        m_posture += std::max(0.0f, -trunk.forward - m_trunk.backDegrees * degrees);
+        m_posture += std::max(0.0f, std::abs(trunk.side) - side * degrees);
+    }
     for (const std::uint32_t link : { body.upperChest, body.head }) {
         const Quaternion frame = (state.links[link].orientation
             * body.profile.links[link].modelOrientation.conjugate()).normalized();

@@ -243,6 +243,13 @@ def drill_summary(rows: np.ndarray, columns: list[str], drills: list[str]) -> di
             out[drill]["still_feet"] = float(part[:, col["parado_pes"]].mean())
         if "pivo_pe" in col:
             out[drill]["foot_pivot"] = float(part[:, col["pivo_pe"]].mean())
+        if "peito_frente" in col:
+            out[drill]["chest_lean_forward"] = float(part[:, col["peito_frente"]].mean())
+            out[drill]["pelvis_lean_forward"] = float(part[:, col["pelve_frente"]].mean())
+            out[drill]["chest_back_fraction"] = float(part[:, col["peito_tras"]].mean())
+        if "tronco_frente" in col:
+            out[drill]["trunk_lean_forward"] = float(part[:, col["tronco_frente"]].mean())
+            out[drill]["trunk_back_fraction"] = float(part[:, col["tronco_tras"]].mean())
     return out
 
 
