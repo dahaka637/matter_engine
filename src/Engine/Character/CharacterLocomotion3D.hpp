@@ -765,6 +765,156 @@ private:
         const AnimationClip3D& clip);
 
     void enterState(CharacterLocomotionState3D state);
+    // A reescrita: o update em blocos (CharacterLocomotion3D_<bloco>.cpp). Os tipos que eram
+    // locais da funcao e o Tick (o que um bloco passa aos seguintes num tick).
+    struct GroundSample {
+        bool valid = false;
+        float height = 0.0f;
+        Vec3 normal { 0.0f, 0.0f, 1.0f };
+    };
+    struct FootGoal {
+        bool active = false;
+        Vec3 position;
+        Quaternion orientation;
+        float pelvisGround = 0.0f;
+        // Quanto este pe conta para a pelve alcanca-lo: 1 apoiado ou
+        // pousando, subindo no fim do balanco, 0 no ar.
+        float reach = 0.0f;
+        // O pe do clipe, sem o desnivel do terreno: a pelve so desce o que o
+        // terreno pede a mais que a animacao.
+        Vec3 animatedPosition;
+        Quaternion animatedOrientation;
+        // Pe em balanco: onde vai pousar (tornozelo, no mundo), quanto o
+        // quadril anda ate la e a perna do clipe no toque. A pelve comeca a
+        // descer antes do toque; descendo o ultimo degrau, o pe pousava
+        // fora do alcance da perna e a trava soltava e voltava.
+        float anticipate = 0.0f;
+        Vec3 landingPosition;
+        Quaternion landingOrientation;
+        Vec3 hipTravel;
+        float authoredLandingHorizontal = 0.0f;
+        float authoredLandingVertical = 0.0f;
+        // Teto da descida que este pe pede (m): o pe no ar, correndo no
+        // plano, pede pouco.
+        float dropCap = std::numeric_limits<float>::infinity();
+    };
+    struct Tick {
+        const RagdollProfile3D& profile;
+        const CharacterLocomotionAnimations3D& animations;
+        const RagdollState3D& state;
+        const RagdollDynamics3D& dynamics;
+        const CharacterLocomotionInput3D& input;
+        float deltaTime = 0.0f;
+        bool PostureSupportPendulum {};
+        bool StartOnlyFromRest {};
+        bool LandingResync {};
+        float StanceRootBand {};
+        float StanceDampCurveSpan {};
+        std::vector<Vec3> previousCoordinates {};
+        const CharacterPhysicalState3D* physical {};
+        Vec3 centerOfMass {};
+        bool anyGroundContact {};
+        std::array<bool, 2> feetGroundContact {};
+        float contactFloor {};
+        float rootUpright {};
+        float groundHeightGuess {};
+        float measuredComHeight {};
+        bool physicsOwnsBody {};
+        float fallenUpright {};
+        bool fallenObservation {};
+        bool getUpActive {};
+        float mass {};
+        float impact {};
+        float rootAuthority {};
+        Vec3 desiredPlanarVelocity {};
+        float gaitVelocityScale {};
+        Vec3 brakeNavigationVelocity {};
+        float speed {};
+        bool moving {};
+        float viewYaw {};
+        float lookYaw {};
+        bool turningInPlace {};
+        float pathSpeed {};
+        float curveIntent {};
+        float pathTurnRate {};
+        bool grounded {};
+        CharacterLocomotionState3D desiredState {};
+        Quaternion heading {};
+        Vec3 localVelocity {};
+        bool gaitMoving {};
+        bool gaitStarting {};
+        float startupProgress {};
+        float startupChestAmount {};
+        float startupRootLean {};
+        float startupPelvisDrop {};
+        float gaitCycleSpeed {};
+        const AnimationClip3D* standUpClip {};
+        const AnimationClip3D* gaitClip {};
+        bool jumpPose {};
+        bool leapPose {};
+        const AnimationClip3D* idleClip {};
+        bool authoredStartActive {};
+        float signedCurveAcceleration {};
+        float authoredCurveBlend {};
+        int authoredCurveKind {};
+        const AnimationClip3D* authoredCurveClip {};
+        const AnimationClip3D* selectedClip {};
+        float playbackRate {};
+        float strideScale {};
+        float terrainSpeedLimit {};
+        std::vector<Vec3> sampled {};
+        Quaternion rootRotation {};
+        Vec3 rootTranslation {};
+        std::array<float, 2> contactWeights {};
+        float clipSampleTime {};
+        std::array<float, 2> legSampleTime {};
+        float armSampleTime {};
+        float landingBraceForward {};
+        float landingBraceLateral {};
+        float transition {};
+        float tangentWeight {};
+        float viewYawError {};
+        float curveShare {};
+        float forwardLean {};
+        float lateralLean {};
+        Quaternion rootTilt {};
+        Quaternion accelerationTilt {};
+        Quaternion targetRootOrientation {};
+        Vec3 navigationRoot {};
+        float lowAssist {};
+        Vec3 targetRootPosition {};
+        bool referenceRebase {};
+        bool airbornePose {};
+        RagdollAnimationPose3D localPose {};
+        float baseGround {};
+        bool footworkEnabled {};
+        bool onGround {};
+        Vec3 planarVelocity {};
+        std::array<FootGoal, 2> goals {};
+        bool movementRequested {};
+        bool standing {};
+        bool recovering {};
+        Vec3 standingShift {};
+        float drop {};
+        float muscle {};
+        float squaredError {};
+        std::uint32_t errorCount {};
+    };
+    void stepSense(Tick& t);
+    void stepTackle(Tick& t);
+    void stepGetUp(Tick& t);
+    void stepAuthority(Tick& t);
+    void stepSensors(Tick& t);
+    void stepHeading(Tick& t);
+    void stepAir(Tick& t);
+    void stepCycle(Tick& t);
+    void stepGestures(Tick& t);
+    void stepLook(Tick& t);
+    void stepRoot(Tick& t);
+    void stepFeet(Tick& t);
+    void stepLegs(Tick& t);
+    void stepDrives(Tick& t);
+    void stepOutputs(Tick& t);
 
     CharacterLocomotionOutput3D m_output;
     CharacterLocomotionTelemetry3D m_telemetry;

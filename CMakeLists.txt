@@ -666,6 +666,21 @@ add_library(MatterEngine STATIC
     src/Engine/Character/BiomechanicalBipedExperiment3D.cpp
     src/Engine/Character/CharacterControlApplication3D.cpp
     src/Engine/Character/CharacterLocomotion3D.cpp
+    src/Engine/Character/CharacterLocomotion3D_Sense.cpp
+    src/Engine/Character/CharacterLocomotion3D_Tackle.cpp
+    src/Engine/Character/CharacterLocomotion3D_GetUp.cpp
+    src/Engine/Character/CharacterLocomotion3D_Authority.cpp
+    src/Engine/Character/CharacterLocomotion3D_Sensors.cpp
+    src/Engine/Character/CharacterLocomotion3D_Heading.cpp
+    src/Engine/Character/CharacterLocomotion3D_Air.cpp
+    src/Engine/Character/CharacterLocomotion3D_Cycle.cpp
+    src/Engine/Character/CharacterLocomotion3D_Gestures.cpp
+    src/Engine/Character/CharacterLocomotion3D_Look.cpp
+    src/Engine/Character/CharacterLocomotion3D_Root.cpp
+    src/Engine/Character/CharacterLocomotion3D_Feet.cpp
+    src/Engine/Character/CharacterLocomotion3D_Legs.cpp
+    src/Engine/Character/CharacterLocomotion3D_Drives.cpp
+    src/Engine/Character/CharacterLocomotion3D_Outputs.cpp
     src/Engine/Character/RagdollPoseKinematics3D.cpp
     src/Engine/Character/BodilyGetUp3D.cpp
     src/Engine/Character/BallControl3D.cpp
