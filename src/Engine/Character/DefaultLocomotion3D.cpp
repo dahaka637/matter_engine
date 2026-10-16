@@ -200,9 +200,6 @@ void DefaultLocomotion3D::reset(float facingYawRadians) {
     m_fallSpeed = 0.0f;
     m_landFade = 1.0f;
     m_landingSink = 0.0f;
-    m_kick = {};
-    m_kickWeight = 0.0f;
-    m_kickWeightRate = 0.0f;
     m_tackleClip = nullptr;
     m_tackleFromAir = false;
     m_tackleCooldown = 0.0f;

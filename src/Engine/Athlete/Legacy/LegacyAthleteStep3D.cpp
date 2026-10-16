@@ -1182,9 +1182,6 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         }
         state.crouchHeld = command.intent.crouch;
         input.ballGesture = command.ballGesture;
-        input.ballFoot = command.ballFoot;
-        input.ballScript = command.ballScript;
-        input.ballKick = command.ballKick;
         input.motionVariety = command.motionVariety;
         input.varietySeed = command.varietySeed;
         // (O gesto com a bola entra na passada.)

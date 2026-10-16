@@ -1,7 +1,7 @@
 #pragma once
 
 #include "Engine/Animation/AnimationClip3D.hpp"
-#include "Engine/Character/BallControl3D.hpp"
+#include "Engine/Character/BallGesturePose3D.hpp"
 #include "Engine/Character/CharacterLocomotion3D.hpp"
 #include "Engine/Character/PoseInertializer3D.hpp"
 #include "Engine/Math/Quaternion.hpp"
@@ -365,13 +365,10 @@ struct DefaultLocomotionInput3D {
     // voadora pede os tres juntos, em qualquer ordem).
     bool tackleHeld = false;
     bool airTackleCombo = false;
-    // Manejo de bola: o gesto do corpo inteiro (rework de 06/10). (Os campos
-    // antigos - o pe que vai a bola, o pe dirigido e o corpo do chute - ficam
-    // no contrato, sem uso.)
+    // O contrato do gesto (a reescrita, R4): a camada de pose que uma acao
+    // poe por cima da locomocao - hoje o gesto do corpo inteiro do manejo de
+    // bola (rework de 06/10). A locomocao nao conhece a bola: so esta camada.
     BallGesturePose3D ballGesture;
-    BallFootGoal3D ballFoot;
-    BallFootScript3D ballScript;
-    BallKickPose3D ballKick;
     // "Vida" (0..2; 0 desliga) e a semente do jeito de cada um.
     float motionVariety = 0.0f;
     std::uint32_t varietySeed = 0;
@@ -869,9 +866,6 @@ private:
     std::vector<Vec3> m_coordinates;
     // O corpo do chute com o peso suavizado (a pose de bracos e tronco entra
     // e sai sem salto) e o ultimo pedido dela.
-    BallKickPose3D m_kick;
-    float m_kickWeight = 0.0f;
-    float m_kickWeightRate = 0.0f;
     // As pernas e bracos para o gesto com a bola (IK analitico).
     BallGestureLegs3D m_gestureLegs;
 };
