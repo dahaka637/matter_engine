@@ -1,0 +1,27 @@
+# Linha de base do classico (L0 do RL), 2026-10-16
+# codigo: bdccb02; comando: build-profile/MatterAthleteProbe --linha-de-base 12
+# configuracao: fisico total, atleta comandado sem capsula, ajudas parado e andando no nivel, ajuda nos pes 100%, build profile
+
+linha de base: 81 exercicios x 5 niveis = 405 mundos, 12 threads; fisico total, comandado, ajuda nos pes 100%
+vazao: 24781 ticks de mundo/s = 6195 decisoes/s a 30 Hz (291195 ticks de mundo em 11.8 s de lote; 0 mundos com erro)
+nivel | velocidade/pedida nas retas (8 rumos: frente diag lado diag-tras tras) por marcha | quedas: retas manobras pancadas terreno | ajuda na pelve (peso)
+ 100% | anda 1.00 1.00 0.99 1.00 1.00 | trota 1.01 1.01 1.01 1.00 1.00 | corre 1.00 1.00 1.00 1.00 1.00 | sprint 0.98 1.00 1.00 1.01 1.01 | quedas 0/32 0/15 9/22 0/12 | 0.72
+  70% | anda 1.00 1.00 1.00 1.00 1.00 | trota 1.00 1.01 1.01 1.00 1.00 | corre 1.00 1.00 1.00 1.00 1.00 | sprint 1.00 1.00 1.00 1.00 1.00 | quedas 0/32 0/15 9/22 0/12 | 0.69
+  50% | anda 1.01 1.00 1.00 1.00 1.00 | trota 1.00 1.00 1.01 1.00 1.00 | corre 1.00 1.00 1.00 1.00 1.00 | sprint 1.00 0.99 1.00 1.00 1.00 | quedas 0/32 0/15 10/22 0/12 | 0.62
+  30% | anda 1.00 1.00 0.98 0.99 0.99 | trota 1.00 1.00 1.01 1.00 1.00 | corre 1.00 1.00 1.00 1.00 1.01 | sprint 0.87 0.84 1.01 1.01 1.01 | quedas 0/32 1/15 10/22 1/12 | 0.50
+   0% | anda 0.74 0.75 0.16 0.49 0.52 | trota 0.47 0.53 0.17 0.45 0.48 | corre 0.25 0.24 0.10 0.22 0.21 | sprint 0.19 0.18 0.08 0.20 0.18 | quedas 0/32 0/15 10/22 0/12 | 0.34
+quem cai (niveis 100 70 50 30 0):
+  corte                 -   -   -  CAI  - 
+  queda_lado_1000       -   -   -  CAI CAI
+  queda_lado_1400      CAI CAI CAI CAI CAI
+  queda_lado_1900      CAI CAI CAI CAI CAI
+  queda_000            CAI CAI CAI CAI CAI
+  queda_090            CAI CAI CAI CAI CAI
+  queda_180            CAI CAI CAI CAI CAI
+  queda_270            CAI CAI CAI CAI CAI
+  quedacorre_000       CAI CAI CAI CAI CAI
+  quedacorre_180       CAI CAI CAI CAI  - 
+  quedacorre_270        -   -  CAI  -   - 
+  empurrao_forte       CAI CAI CAI CAI CAI
+  caixa_forte           -   -   -   -  CAI
+  degrau_35_corre       -   -   -  CAI  - 
