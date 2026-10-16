@@ -1,0 +1,18 @@
+{
+  "schema": "matter-rl-style-1",
+  "id": "acervo_alerta",
+  "clipsDirectory": "../../animations/clips",
+  "pairFrames": 4,
+  "mirror": true,
+  "comment": "So o parado em alerta (alert_idle): o juiz de postura do exercicio parado (style.drills), pedido do usuario em 15/10 noite. Pes um pouco desencontrados, joelhos levemente dobrados, bracos relaxados junto ao corpo.",
+  "groups": [
+    {
+      "id": "alerta",
+      "displayName": "Parado em alerta",
+      "weight": 1.0,
+      "clips": [
+        "alert_idle"
+      ]
+    }
+  ]
+}

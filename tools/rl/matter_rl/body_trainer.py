@@ -378,6 +378,13 @@ class BodyTrainer:
                            ("work", "torque", "slip", "impact", "head", "smooth", "limits", "contacts", "posture", "still", "athletic", "pivot")]
         self.episode_columns = self.batch.episode_columns()
         self.drill_ids = list(self.batch.drill_ids)
+        # O juiz so em alguns exercicios (style.drills; vazio = todos): so os
+        # mundos deles dao amostras ao juiz e recebem o estilo.
+        style_drills = live.get("style", {}).get("drills", [])
+        unknown = [d for d in style_drills if d not in self.drill_ids]
+        if unknown:
+            raise RuntimeError(f"style.drills cita exercicios que a tarefa nao tem: {unknown}")
+        self.style_drills = np.array([self.drill_ids.index(d) for d in style_drills], dtype=np.int64)
 
         radians = np.array(self.batch.action_radians_per_unit(), dtype=np.float32)
         std0 = initial_std(self.action_names, radians, self.config.exploration)
@@ -783,8 +790,12 @@ class BodyTrainer:
                 style = None
                 if self.scorer is not None:
                     step_pairs = np.array(batch.style_pairs(), dtype=np.float32)
-                    pairs.append(step_pairs)
                     style = style_score(self.scorer(self.judge.normalize(self.tensor(step_pairs))))
+                    if len(self.style_drills):
+                        judged = np.isin(np.asarray(batch.world_drills()), self.style_drills)
+                        step_pairs = step_pairs[judged]
+                        style = style * self.tensor(judged.astype(np.float32))
+                    pairs.append(step_pairs)
                     style_sum += float(style.sum())
                     paid_sum += float((beta * parts[:, self.ri["style_gate"]] * style).sum())
                 reward = self.compose_rewards(parts, style)
