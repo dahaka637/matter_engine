@@ -629,6 +629,7 @@ add_library(MatterEngine STATIC
     src/Engine/Animation/RagdollVisualPose3D.cpp
     src/Engine/Athlete/AthleteAssets3D.cpp
     src/Engine/Athlete/AthleteRuntime3D.cpp
+    src/Engine/Athlete/AthleteTelemetry3D.cpp
     src/Engine/Athlete/Actions/BallActionPlanner3D.cpp
     src/Engine/Athlete/Actions/BallGesture3D.cpp
     src/Engine/Athlete/Actions/BallHandling3D.cpp

@@ -17,6 +17,7 @@
 // Sem --cenario roda todos.
 #include "Engine/Athlete/AthleteAssets3D.hpp"
 #include "Engine/Athlete/AthleteRuntime3D.hpp"
+#include "Engine/Athlete/AthleteTelemetry3D.hpp"
 #include "Engine/Athlete/Dribble/BodyForecast3D.hpp"
 #include "Engine/Athlete/Dribble/ContactPose3D.hpp"
 #include "Engine/Athlete/Planning/MotionPlanner3D.hpp"
@@ -907,7 +908,7 @@ struct Metrics {
     // ter voltado uma vez ao padrao (a recaida).
     float travel = 0.0f;
     int relapses = 0;
-    LegacyBodyMode3D finalMode = LegacyBodyMode3D::Animated;
+    BodyModeKind3D finalMode = BodyModeKind3D::Animated;
     // Pegadas novas (plano v3): as pernas cruzadas (ticks com um tornozelo do
     // lado errado do outro, lado a lado, no rumo da pelve) e a maior
     // sobreposicao entre as pernas (m, as capsulas e as caixas dos pes, acima
@@ -1056,15 +1057,6 @@ void dumpFrame(FILE* file, const RagdollProfile3D& profile, const RagdollState3D
     }
 }
 
-const char* modeName(LegacyBodyMode3D mode) {
-    switch (mode) {
-    case LegacyBodyMode3D::Animated: return "animado";
-    case LegacyBodyMode3D::Physical: return "fisico";
-    case LegacyBodyMode3D::Returning: return "volta";
-    case LegacyBodyMode3D::Active: return "ativo";
-    }
-    return "?";
-}
 
 } // namespace
 
@@ -1155,6 +1147,13 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
     float airborneSeconds = 0.0f;
     AthleteState3D athlete;
     LegacyAthleteState3D& legacy = athlete.legacy;
+    // O modo pela telemetria neutra (a reescrita, R0): a mesma bateria vale
+    // para o caminho legado e para as pecas novas.
+    const auto mode = [&]() { return athleteTelemetry3D(athlete).mode; };
+    const auto isActive = [&]() {
+        const BodyModeKind3D now = mode();
+        return now == BodyModeKind3D::Active || now == BodyModeKind3D::Bridge;
+    };
     legacy.guideFacingYawRadians = 0.0f;
     legacy.locomotion.reset(profile, bodyState);
     legacy.adaptivePhysics.reset(profile);
@@ -1181,10 +1180,10 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
     Metrics metrics;
     // (O modo Ativo por dentro da ponte fisico -> padrao: "ponte".)
     const auto modeOf = [&]() {
-        return legacy.bridge && legacy.bodyMode == LegacyBodyMode3D::Active ? "ponte" : modeName(legacy.bodyMode);
+        return bodyModeName3D(mode());
     };
     metrics.trail = modeOf();
-    LegacyBodyMode3D previousMode = legacy.bodyMode;
+    BodyModeKind3D previousMode = mode();
     float transitionStart = -1.0f, transitionGuided = -1.0f;
     std::vector<float> transitionChest;
     std::vector<PhysicsBodyState3D> previousLinks = bodyState.links;
@@ -1479,7 +1478,7 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
                     scene->characterState().velocity.z, bodyState.links.front().position.z,
                     bodyState.links.front().linearVelocity.z, modeOf());
         }
-        if (legacy.bodyMode == LegacyBodyMode3D::Physical && !bodyState.links.empty()) {
+        if (mode() == BodyModeKind3D::Physical && !bodyState.links.empty()) {
             const auto& telemetry = legacy.locomotion.telemetry();
             if (metrics.riseAt < 0.0f && telemetry.getUpPhase == CharacterGetUpPhase3D::Rising) {
                 std::size_t chest = 0;
@@ -1493,10 +1492,10 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
             }
         }
         if (metrics.riseAt >= 0.0f && metrics.risenAt < 0.0f
-            && (legacy.bodyMode != LegacyBodyMode3D::Physical
+            && (mode() != BodyModeKind3D::Physical
                 || legacy.locomotion.telemetry().getUpPhase == CharacterGetUpPhase3D::None))
             metrics.risenAt = t;
-        if (std::getenv("XQUEDA") && step % 15 == 0 && legacy.bodyMode == LegacyBodyMode3D::Physical && !bodyState.links.empty()) {
+        if (std::getenv("XQUEDA") && step % 15 == 0 && mode() == BodyModeKind3D::Physical && !bodyState.links.empty()) {
             std::size_t chest = 0;
             for (std::size_t i = 0; i < profile.links.size(); ++i)
                 if (profile.links[i].id == "Chest") chest = i;
@@ -1555,7 +1554,7 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
             previousLinks = bodyState.links;
             for (std::size_t i = 0; i < bodyState.links.size() && i < previousVelocities.size(); ++i)
                 previousVelocities[i] = bodyState.links[i].linearVelocity;
-            previousMode = legacy.bodyMode;
+            previousMode = mode();
             continue;
         }
         if (std::getenv("XALVO") && !legacy.animationPose.linkPositions.empty()) {
@@ -1589,7 +1588,7 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
             lastTarget = pose.linkPositions;
         }
 
-        if (std::getenv("XATIVO") && legacy.bodyMode == LegacyBodyMode3D::Active && step % (std::getenv("XATIVO")[0] == '2' ? 1 : 6) == 0) {
+        if (std::getenv("XATIVO") && isActive() && step % (std::getenv("XATIVO")[0] == '2' ? 1 : 6) == 0) {
             const ActiveBodyOutput3D& a = athlete.activeOutput;
             std::printf("  t %.2f captura fora %.3f | raiz %.3f m giro %.3f rad link %.3f m | apoio %d complac %.2f | base %.3f%s | pedido %.0f/%.0f/%.0f entregue %.0f/%.0f/%.0f ajuda %.0f/%.0f%s%s\n",
                 t, athlete.stance.captureOutside(), a.rootError, a.orientationError, a.linkError, a.supportCount, a.compliance,
@@ -1658,7 +1657,7 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
             last = f.position;
         }
         if (std::getenv("XPEG") && settings.footstepLocomotion
-            && (legacy.bodyMode == LegacyBodyMode3D::Animated || legacy.bodyMode == LegacyBodyMode3D::Returning)) {
+            && (mode() == BodyModeKind3D::Animated || mode() == BodyModeKind3D::Returning)) {
             const DefaultLocomotionOutput3D& o = legacy.defaultLocomotion.output();
             const AthleteLegs3D& legs = athlete.footsteps.legs();
             std::printf("  t %.3f mov %.2f v %.2f |", t, o.movingShare, std::hypot(scene->characterState().velocity.x,
@@ -1678,7 +1677,7 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
         // Medidas.
         // O joelho no modo padrao (no corpo e no alvo).
         if (thighs[0] < bodyState.links.size() && thighs[1] < bodyState.links.size()) {
-            const bool animatedMode = legacy.bodyMode == LegacyBodyMode3D::Animated;
+            const bool animatedMode = mode() == BodyModeKind3D::Animated;
             for (std::size_t side = 0; side < 2; ++side) {
                 const float flexion = kneeFlexion(side, bodyState.links[thighs[side]].orientation,
                     bodyState.links[shins[side]].orientation);
@@ -1846,8 +1845,8 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
                 metrics.worstReach = std::max(metrics.worstReach, reach);
         // Pegadas novas: as pernas nunca se cruzam nem se atravessam, o pe
         // apoiado nao treme, so trava no chao e no ar segue o estilo.
-        const bool defaultMode = legacy.bodyMode == LegacyBodyMode3D::Animated
-            || legacy.bodyMode == LegacyBodyMode3D::Returning;
+        const bool defaultMode = mode() == BodyModeKind3D::Animated
+            || mode() == BodyModeKind3D::Returning;
         if (t > 0.35f && defaultMode && leftFoot < bodyState.links.size() && rightFoot < bodyState.links.size()
             && shins[0] < bodyState.links.size() && shins[1] < bodyState.links.size()) {
             const Vec3 forward = [&] {
@@ -1932,14 +1931,14 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
         // A troca fisico -> padrao (plano v4, etapa C): da saida do fisico ate
         // 0,6 s depois do guiado, a pelve contra a capsula, a postura e os
         // picos.
-        if (previousMode == LegacyBodyMode3D::Physical && legacy.bodyMode != LegacyBodyMode3D::Physical) {
+        if (previousMode == BodyModeKind3D::Physical && mode() != BodyModeKind3D::Physical) {
             transitionStart = t;
             transitionGuided = -1.0f;
         }
-        if (transitionStart >= 0.0f && transitionGuided < 0.0f && legacy.bodyMode != LegacyBodyMode3D::Physical
-            && legacy.bodyMode != LegacyBodyMode3D::Active)
+        if (transitionStart >= 0.0f && transitionGuided < 0.0f && mode() != BodyModeKind3D::Physical
+            && !isActive())
             transitionGuided = t;
-        if (legacy.bodyMode == LegacyBodyMode3D::Physical) {
+        if (mode() == BodyModeKind3D::Physical) {
             transitionStart = -1.0f;
             transitionChest.clear();
         }
@@ -1978,13 +1977,15 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
             }
         }
         // XPRONTO=1: as condicoes da volta do fisico ao padrao, a cada 0,1 s.
-        if (std::getenv("XPRONTO") && legacy.bodyMode == LegacyBodyMode3D::Physical && step % 12 == 0)
+        if (std::getenv("XPRONTO") && mode() == BodyModeKind3D::Physical && step % 12 == 0) {
+            const AthleteTelemetry3D telemetry = athleteTelemetry3D(athlete);
             std::printf("  t %.2f estado %d calma %.2f ajuda %.2f desde-impacto %.2f trava %.2f perturbacao %.2f cambaleio %.2f\n",
-                t, static_cast<int>(legacy.locomotion.telemetry().state), legacy.calmSeconds, legacy.impactAssist.level(),
-                athlete.modeRules.secondsSinceImpact(), athlete.modeRules.lockoutLeft(),
-                legacy.adaptivePhysics.output().perturbation, legacy.locomotion.telemetry().stagger);
-        if (legacy.bodyMode != previousMode) {
-            if (legacy.bodyMode == LegacyBodyMode3D::Physical && metrics.trail.find("volta>animado") != std::string::npos)
+                t, telemetry.fallen ? 9 : telemetry.gettingUp ? 10 : static_cast<int>(legacy.locomotion.telemetry().state),
+                telemetry.calmSeconds, telemetry.assistLevel, athlete.modeRules.secondsSinceImpact(),
+                athlete.modeRules.lockoutLeft(), telemetry.perturbation, telemetry.stagger);
+        }
+        if (mode() != previousMode) {
+            if (mode() == BodyModeKind3D::Physical && metrics.trail.find("volta>animado") != std::string::npos)
                 ++metrics.relapses;
             ++metrics.modeSwitches;
             metrics.trail += std::string(">") + modeOf();
@@ -1992,8 +1993,9 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
             // XTROCAS=1: cada troca com o instante e, pela tabela (R3), o motivo,
             // o valor, o limiar e o que bateu no tick.
             if (std::getenv("XTROCAS")) {
-                const ContactAssessment3D& c = athlete.lastContacts;
-                const ModeDecision3D& d = athlete.lastDecision;
+                const AthleteTelemetry3D telemetry = athleteTelemetry3D(athlete);
+                const ContactAssessment3D& c = telemetry.contacts;
+                const ModeDecision3D& d = telemetry.lastDecision;
                 std::printf("  t %.3f -> %s | ultima decisao: %s %.3f (limiar %.3f) | contato: link %s impulso %.2f N.s "
                             "Dv corpo %.3f link %.2f penetracao %.3f%s\n",
                     t, modeOf(), modeEventName3D(d.event), d.value, d.threshold,
@@ -2001,10 +2003,10 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
                     c.bodyDeltaV, c.linkDeltaV, c.penetrationMeters, c.fromPenetration ? " (penetracao)" : "");
             }
         }
-        previousMode = legacy.bodyMode;
-        (legacy.bodyMode == LegacyBodyMode3D::Animated ? metrics.animatedSeconds
-            : legacy.bodyMode == LegacyBodyMode3D::Physical ? metrics.physicalSeconds
-            : legacy.bodyMode == LegacyBodyMode3D::Active ? metrics.activeSeconds : metrics.returningSeconds) += Dt;
+        previousMode = mode();
+        (mode() == BodyModeKind3D::Animated ? metrics.animatedSeconds
+            : mode() == BodyModeKind3D::Physical ? metrics.physicalSeconds
+            : isActive() ? metrics.activeSeconds : metrics.returningSeconds) += Dt;
         metrics.assistImpulse = athlete.activeOutput.assistImpulseTotal;
         for (std::size_t i = 0; i < bodyState.links.size() && i < profile.links.size(); ++i) {
             const PhysicsBodyState3D& link = bodyState.links[i];
@@ -2046,7 +2048,7 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
                     ? athlete.footTargets[side].mode == FootMode3D::Stance
                     : legacy.defaultLocomotion.output().footPlanted[side] && !legacy.defaultLocomotion.output().airborne;
                 if (t > 0.35f && planted
-                    && (legacy.bodyMode == LegacyBodyMode3D::Animated || legacy.bodyMode == LegacyBodyMode3D::Returning)) {
+                    && (mode() == BodyModeKind3D::Animated || mode() == BodyModeKind3D::Returning)) {
                     const float slide = std::hypot(contact.x - before.x, contact.y - before.y) / Dt;
                     metrics.plantedSlide.push_back(slide);
                     if (std::getenv("XDESLIZE") && slide > 0.3f)
@@ -2088,7 +2090,7 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
             if (step % 6 == 0) metrics.bodyForecasts.push_back({ t + 0.3f, forecast.pelvisGround(0.3f) });
         }
         // Plano v5 (E1): a previsao do pouso contra o de verdade.
-        if (t > 0.35f && legacy.bodyMode == LegacyBodyMode3D::Animated && legacy.defaultLocomotion.output().valid) {
+        if (t > 0.35f && mode() == BodyModeKind3D::Animated && legacy.defaultLocomotion.output().valid) {
             const DefaultLocomotionOutput3D& style = legacy.defaultLocomotion.output();
             const Vec3 pelvis = bodyState.links.front().position;
             const float yaw = style.facingYawRadians;
@@ -2125,7 +2127,7 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
         // Plano v5 (E0): a "perna louca" (coxa ou canela girando a mais de 30
         // rad/s; o joelho virando de lado mais de 60 graus num tick) e o voo
         // (os dois pes no ar).
-        if (t > 0.35f && (scenario.ball || std::getenv("XLOUCA")) && legacy.bodyMode == LegacyBodyMode3D::Animated) {
+        if (t > 0.35f && (scenario.ball || std::getenv("XLOUCA")) && mode() == BodyModeKind3D::Animated) {
             const AthleteLegs3D legs = resolveAthleteLegs3D(profile);
             if (legs.valid) {
                 bool crazy = false, flipped = false;
@@ -2204,14 +2206,14 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
         if (bodyState.links.front().position.z < 0.5f) metrics.fell = true;
         if (scenario.ball) metrics.ballSpeedAfter = std::max(metrics.ballSpeedAfter, ballState.linearVelocity.length());
         if (dump != nullptr && step % every == 0) {
-            dumpFrame(dump, profile, bodyState, t, static_cast<int>(legacy.bodyMode));
+            dumpFrame(dump, profile, bodyState, t, athleteDumpModeCode3D(mode()));
             if (scenario.ball)
                 std::fprintf(dump, "K %.4f %.4f %.4f %.3f %.3f %.3f\n", ballState.position.x, ballState.position.y,
                     ballState.position.z, ballState.linearVelocity.x, ballState.linearVelocity.y,
                     ballState.linearVelocity.z);
         }
     }
-    metrics.finalMode = legacy.bodyMode;
+    metrics.finalMode = mode();
     if (!bodyState.links.empty())
         metrics.travel = std::hypot(bodyState.links.front().position.x, bodyState.links.front().position.y);
     for (const BallActionRecord3D& record : athlete.ballPlay.queue().history()) {
@@ -2237,7 +2239,7 @@ void printMetrics(const Scenario& scenario, const Metrics& metrics, bool footste
         metrics.physicalSeconds, metrics.returningSeconds, metrics.assistImpulse, metrics.fell ? "CAIU, " : "",
         metrics.requests, metrics.touches, metrics.ballSpeedAfter);
     std::printf("%-18s   andou %.2f m, recaidas %d, %s, fim %s (%s)\n", "", metrics.travel, metrics.relapses,
-        metrics.fell ? "CAIU" : "de pe", modeName(metrics.finalMode), metrics.trail.c_str());
+        metrics.fell ? "CAIU" : "de pe", bodyModeName3D(metrics.finalMode), metrics.trail.c_str());
     std::printf("%-18s   joelho esticando max %.0f graus/s (alvo %.0f), acel max %.0f graus/s2\n", "",
         metrics.peakKneeExtension, metrics.peakKneeExtensionTarget, metrics.peakKneeAcceleration);
     std::printf("%-18s   apoio %5.2f / %5.2f / %5.2f m/s%s", "", percentile(metrics.plantedSlide, 0.5f),
@@ -2350,7 +2352,7 @@ int runChecks(const ProbeContext& context) {
     {
         const Metrics m = run("caixa_leve", settings, false);
         expect(has(m, "fisico") && !has(m, "ativo")
-                && (m.finalMode == LegacyBodyMode3D::Animated || m.finalMode == LegacyBodyMode3D::Returning),
+                && (m.finalMode == BodyModeKind3D::Animated || m.finalMode == BodyModeKind3D::Returning),
             "caixa leve: o fisico e a volta ao padrao", m);
     }
     {
@@ -2368,20 +2370,20 @@ int runChecks(const ProbeContext& context) {
         char what[192];
         std::snprintf(what, sizeof(what), "%s: levanta, volta ao padrao e segue (andou %.1f m, recaidas %d)", name,
             m.travel, m.relapses);
-        expect(m.finalMode == LegacyBodyMode3D::Animated && m.relapses == 0 && m.travel >= travel, what, m);
+        expect(m.finalMode == BodyModeKind3D::Animated && m.relapses == 0 && m.travel >= travel, what, m);
     }
     for (const char* name : { "encostao_andando", "encostao_correndo", "caixa_media", "caixa_correndo" }) {
         const Metrics m = run(name, settings, false);
         char what[192];
         std::snprintf(what, sizeof(what), "%s: nao derruba, volta ao padrao (pelve min %.2f m)", name, m.lowestPelvis);
         expect(!m.fell && m.relapses == 0
-                && (m.finalMode == LegacyBodyMode3D::Animated || m.finalMode == LegacyBodyMode3D::Returning),
+                && (m.finalMode == BodyModeKind3D::Animated || m.finalMode == BodyModeKind3D::Returning),
             what, m);
     }
     {
         const Metrics m = run("caixa_leve", activeOn, false);
         expect(has(m, "ativo") && !has(m, "fisico"), "Ativo ligado, caixa leve: segura sem fisico pleno", m);
-        expect(m.finalMode == LegacyBodyMode3D::Animated, "Ativo ligado, caixa leve: volta ao padrao", m);
+        expect(m.finalMode == BodyModeKind3D::Animated, "Ativo ligado, caixa leve: volta ao padrao", m);
     }
     // O terreno (plano v2, fase E): degrau baixo, escada e rampa sem ir ao
     // fisico e sem o lancamento (a pelve longe acima da capsula), andando ate o
@@ -2410,7 +2412,7 @@ int runChecks(const ProbeContext& context) {
     }
     {
         const Metrics m = run("parede_corre", settings, false);
-        expect(m.finalMode != LegacyBodyMode3D::Physical, "terreno, parede_corre: encostado na parede volta ao padrao", m);
+        expect(m.finalMode != BodyModeKind3D::Physical, "terreno, parede_corre: encostado na parede volta ao padrao", m);
     }
     // A ponte fisico -> padrao (plano v2, fase D): toda volta do fisico passa
     // por ela e acaba no padrao, sem salto nos pes na troca; o levantar comeca
@@ -2421,7 +2423,7 @@ int runChecks(const ProbeContext& context) {
         char what[192];
         std::snprintf(what, sizeof(what), "ponte, %s: volta pela ponte ao padrao, sem salto (pe max %.1f m/s, salto %.3f m)",
             name, percentile(m.footSlide, 1.0f), m.worstPoseJump);
-        expect(has(m, "ponte") && (m.finalMode == LegacyBodyMode3D::Animated || m.finalMode == LegacyBodyMode3D::Returning)
+        expect(has(m, "ponte") && (m.finalMode == BodyModeKind3D::Animated || m.finalMode == BodyModeKind3D::Returning)
                 && percentile(m.footSlide, 1.0f) < 10.0f && m.worstPoseJump < 0.03f,
             what, m);
     }
@@ -2436,7 +2438,7 @@ int runChecks(const ProbeContext& context) {
         // faz tropecar - sem queda, basta voltar pela ponte.)
         const bool rose = m.riseAt >= 0.0f && sign * m.riseChest > 0.5f && sign * m.risePelvis > 0.35f
             && m.risenAt >= 0.0f && m.risenAt - m.riseAt < 4.5f;
-        expect((rose || (!m.fell && m.riseAt < 0.0f)) && has(m, "ponte") && m.finalMode != LegacyBodyMode3D::Physical,
+        expect((rose || (!m.fell && m.riseAt < 0.0f)) && has(m, "ponte") && m.finalMode != BodyModeKind3D::Physical,
             what, m);
     }
     // O manejo (plano v3): com a bola na area, toda acao sai, na hora; o
