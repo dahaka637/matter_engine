@@ -14,6 +14,8 @@
 //      [--volta-suave 0|1] (a volta do fisico ao padrao suave, plano v4; 1 padrao)
 //      [--tabela 0|1] (as trocas de modo pela tabela e as classes de contato, a reescrita R3; 1 padrao)
 //      [--velocidades-padrao 0|1] (no fisico, a tabela de velocidades do padrao; a reescrita R5)
+//      [--sem-capsula] (o atleta comandado pelo slot, sem a capsula do jogador: o caminho do treino)
+//      XDESLOCA=m: a largada da capsula deslocada em x (a sensibilidade caotica)
 //      [--ajuda-parado %] [--ajuda-andando %]
 // Sem --cenario roda todos.
 #include "Engine/Athlete/AthleteAssets3D.hpp"
@@ -1066,6 +1068,7 @@ namespace {
 struct ProbeContext {
     const RagdollProfile3D* profile = nullptr;
     CharacterGaitSpeeds3D gaitSpeeds;
+    bool noCapsule = false;
     CharacterMotorSettings3D avatar;
     AthleteRuntimeAssets3D runtimeAssets;
 };
@@ -1109,7 +1112,10 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
             (void)scene->createBody(body, std::span<const PhysicsShape3D>(&shape, 1));
         }
     }
-    scene->createCharacter({ 0.0f, 0.0f, 0.0f }, avatar);
+    // (--sem-capsula: a capsula longe, para o corpo interno dela nunca
+    // encostar no atleta.)
+    scene->createCharacter(context.noCapsule ? Vec3 { -80.0f, -80.0f, 0.0f }
+        : Vec3 { std::getenv("XDESLOCA") ? static_cast<float>(std::atof(std::getenv("XDESLOCA"))) : 0.0f, 0.0f, 0.0f }, avatar);
     RagdollSpawnDefinition3D spawn;
     spawn.entityId = 1;
     spawn.active = true;
@@ -1403,6 +1409,17 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
             }
         }
         AthleteSlot3D slot { 1, handle, &bodyState, true, false, &athlete };
+        // --sem-capsula: ninguem e o controlado; o atleta recebe o comando
+        // pelo slot (a capsula virtual dele anda no pedido).
+        AthleteCommand3D slotCommand;
+        if (context.noCapsule) {
+            control.controlledEntityId = 0;
+            slotCommand.intent = intent;
+            slotCommand.facingYawRadians = keys.cameraYaw;
+            slotCommand.lookPitchRadians = -0.2f;
+            slotCommand.sprinting = keys.sprint;
+            slot.command = &slotCommand;
+        }
         std::vector<AthleteBall3D> balls;
         if (scenario.ball && step >= 0) balls.push_back({ ballHandle, &ballState, &ownership });
         AthleteRuntimeOutput3D output;
@@ -2022,11 +2039,13 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
         // pelve (no plano) - onde o fisico perde velocidade.
         if (std::getenv("XVELOCIDADE") && step % 30 == 0 && !bodyState.links.empty()) {
             const Vec3 asked = control.intent.requestedVelocityWorld;
-            const Vec3 capsuleVelocity = scene->characterState().velocity;
+            // (Sem a capsula: a do plano do comandado.)
+            const Vec3 capsuleVelocity = context.noCapsule ? athlete.commandPlanVelocity : scene->characterState().velocity;
             const Vec3 pelvisVelocity = bodyState.links.front().linearVelocity;
-            std::printf("  t %.2f %s pedida %.2f capsula %.2f pelve %.2f m/s\n", t, modeOf(),
+            const float bodyHeight = scene->characterState().crouched ? avatar.crouchedHeight : avatar.standingHeight;
+            std::printf("  t %.2f %s pedida %.2f capsula %.2f pelve %.2f m/s (pes da capsula z %.3f)\n", t, modeOf(),
                 std::hypot(asked.x, asked.y), std::hypot(capsuleVelocity.x, capsuleVelocity.y),
-                std::hypot(pelvisVelocity.x, pelvisVelocity.y));
+                std::hypot(pelvisVelocity.x, pelvisVelocity.y), scene->characterState().position.z - bodyHeight * 0.5f);
         }
         // XPRONTO=1: as condicoes da volta do fisico ao padrao, a cada 0,1 s.
         if (std::getenv("XPRONTO") && mode() == BodyModeKind3D::Physical && step % 12 == 0) {
@@ -2614,6 +2633,27 @@ int runChecks(const ProbeContext& context) {
             expect(side < 0.01f && behind < 0.05f, what, with);
         }
     }
+    // A reescrita (L0): o atleta comandado sem a capsula do jogador (o caminho
+    // do treino, muitos atletas na cena) anda no fisico total como o
+    // controlado: de pe e perto da mesma distancia (a fisica e caotica: so
+    // mover a largada da capsula 3 mm muda o sprint em 5%, XDESLOCA).
+    {
+        ProbeContext commanded = context;
+        commanded.noCapsule = true;
+        AthleteRuntimeSettings3D physical;
+        physical.defaultLocomotion = false;
+        const struct { const char* name; float travel; } cases[] = {
+            { "trota", 6.0f }, { "sprint", 21.5f }, { "costas", 10.0f }, { "diagonal", 10.0f }, { "zigue", 17.0f } };
+        for (const auto& item : cases)
+            for (const Scenario& scenario : scenarios()) {
+                if (scenario.name != item.name) continue;
+                const Metrics m = runScenario(commanded, scenario, physical, true, nullptr, 1);
+                char what[160];
+                std::snprintf(what, sizeof(what), "comandado sem capsula, %s: de pe, andou %.2f m (>= %.1f)", item.name,
+                    m.travel, item.travel);
+                expect(!m.fell && m.travel >= item.travel, what, m);
+            }
+    }
     std::printf(failures == 0 ? "atleta: tudo certo\n" : "atleta: %d falha(s)\n", failures);
     return failures == 0 ? 0 : 1;
 }
@@ -2728,6 +2768,7 @@ int main(int argc, char** argv) {
     bool returnSmoothing = AthleteRuntimeSettings3D {}.returnSmoothing;
     bool modeTable = AthleteRuntimeSettings3D {}.modeTable;
     bool defaultSpeeds = AthleteRuntimeSettings3D {}.physicalUsesDefaultSpeeds;
+    bool noCapsule = false;
     float standingAssist = AthleteRuntimeSettings3D {}.e5StandingAssistPercent;
     float walkingAssist = AthleteRuntimeSettings3D {}.e5WalkingAssistPercent;
     for (int i = 1; i < argc; ++i) {
@@ -2754,6 +2795,7 @@ int main(int argc, char** argv) {
         else if (arg == "--volta-suave") returnSmoothing = std::atoi(need()) != 0;
         else if (arg == "--tabela") modeTable = std::atoi(need()) != 0;
         else if (arg == "--velocidades-padrao") defaultSpeeds = std::atoi(need()) != 0;
+        else if (arg == "--sem-capsula") noCapsule = true;
         else if (arg == "--ajuda-parado") standingAssist = static_cast<float>(std::atof(need()));
         else if (arg == "--ajuda-andando") walkingAssist = static_cast<float>(std::atof(need()));
         else if (arg == "--lista") {
@@ -2802,6 +2844,7 @@ int main(int argc, char** argv) {
     ProbeContext context;
     context.profile = &profile;
     context.gaitSpeeds = gaitSpeeds;
+    context.noCapsule = noCapsule;
     context.avatar = avatar;
     context.runtimeAssets.profile = &profile;
     context.runtimeAssets.clips = &clips;

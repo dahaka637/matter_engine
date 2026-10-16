@@ -29,6 +29,18 @@ struct AthleteRuntimeAssets3D {
 // Um atleta na cena (um ragdoll humano): a identidade, o corpo publicado no
 // ultimo passo e o estado de controle (de quem chama; o runtime so escreve
 // nele).
+// O comando de um atleta sem a capsula do jogador (a reescrita, rumo ao
+// treino do RL: muitos atletas fisicos comandados na mesma cena). A intencao
+// (com a velocidade ja pedida pela tabela de quem chama), o olhar e o sprint;
+// a capsula virtual dele anda no pedido com a aceleracao do fisico e vai
+// atras do corpo como a de verdade.
+struct AthleteCommand3D {
+    CharacterIntent3D intent;
+    float facingYawRadians = 0.0f;
+    float lookPitchRadians = 0.0f;
+    bool sprinting = false;
+};
+
 struct AthleteSlot3D {
     std::uint64_t entityId = 0;
     RagdollHandle3D handle;
@@ -36,6 +48,9 @@ struct AthleteSlot3D {
     bool active = true;
     bool frozen = false;
     AthleteState3D* athlete = nullptr;
+    // Comandado sem capsula (so os nao controlados; nulo: o boneco solto de
+    // sempre, que so segue o proprio corpo).
+    const AthleteCommand3D* command = nullptr;
 };
 
 // Uma bola inflada na cena: o handle, o estado do ultimo passo e a posse

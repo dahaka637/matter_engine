@@ -74,7 +74,7 @@ void CharacterLocomotion3D::stepLegs(Tick& t) {
     };
     // An uncontrolled root uses its physical XY as the next input anchor;
     // feeding the support shift back into it would integrate a displacement.
-    if (!input.controlled) standingShift.x = standingShift.y = 0.0f;
+    if (!input.controlled && !input.rootAnchored) standingShift.x = standingShift.y = 0.0f;
     targetRootPosition += standingShift;
     // Toque parado na bola com passo de apoio: a pelve vai junto (absoluto,
     // com peso, suavizado). A ancora da capsula nao inclui isto: a capsula

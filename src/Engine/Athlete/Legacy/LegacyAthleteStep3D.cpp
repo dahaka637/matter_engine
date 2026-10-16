@@ -163,6 +163,24 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         };
     }
     command.manipulated = grabbed;
+    // Comandado sem a capsula do jogador (o treino do RL, muitos atletas na
+    // mesma cena): a intencao e o olhar vem do slot.
+    const bool commanded = !command.controlled && slot.command != nullptr;
+    command.rootAnchored = commanded;
+    if (commanded) {
+        command.intent = slot.command->intent;
+        command.facingYawRadians = slot.command->facingYawRadians;
+        state.guideFacingYawRadians = slot.command->facingYawRadians;
+        command.lookPitchRadians = slot.command->lookPitchRadians;
+        // (O chao em qualquer ponto, como o controlado: o pe ve onde vai
+        // pisar.)
+        PhysicsScene3D* scenePointer = &scene;
+        command.groundAt = [scenePointer](Vec3 point) {
+            return scenePointer->probeTerrain(point + Vec3 { 0.0f, 0.0f, 0.55f }, 0.03f, 0.0f, 1.5f, 60.0f);
+        };
+    } else {
+        athlete.commandPlanVelocity = {};
+    }
     if (!command.controlled && settings.adaptivePhysics) {
         // Capsula virtual dos bonecos nao controlados (modo fisico).
         if (!state.navigationAnchorValid) {
@@ -301,6 +319,53 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
     }
     command.balanceFootPlacement = e5 && settings.e5FootPlacement;
     command.walkingAssist = state.adaptivePhysics.settings().walkingAssistScale;
+    if (commanded && settings.adaptivePhysics) {
+        // A capsula virtual anda no pedido como a do laboratorio no fisico: a
+        // aceleracao do fisico pela ajuda andando e, com pouca ajuda, a
+        // coleira (no maximo uma folga acima da velocidade do corpo). Caido ou
+        // levantando, sem teclas.
+        const CharacterLocomotionState3D now = state.locomotion.telemetry().state;
+        const bool lying = now == CharacterLocomotionState3D::Fallen || now == CharacterLocomotionState3D::GettingUp
+            || now == CharacterLocomotionState3D::Tackling;
+        Vec3 wanted { command.intent.requestedVelocityWorld.x, command.intent.requestedVelocityWorld.y, 0.0f };
+        if (lying) wanted = {};
+        const float wantedSpeed = wanted.length();
+        if (wantedSpeed > 1e-4f) {
+            // A curva (como physicalNavigationTurnScale3D no laboratorio): o
+            // giro do rumo pedido filtrado, e virando forte a velocidade cai.
+            const Vec3 direction = wanted * (1.0f / wantedSpeed);
+            const float rate = athlete.commandDirectionValid
+                ? std::acos(std::clamp(dot(athlete.commandDirection, direction), -1.0f, 1.0f)) / std::max(deltaTime, 1e-4f)
+                : 0.0f;
+            athlete.commandTurnRate += (rate - athlete.commandTurnRate) * (1.0f - std::exp(-deltaTime / 0.25f));
+            athlete.commandDirection = direction;
+            athlete.commandDirectionValid = true;
+            if (command.grounded)
+                wanted = wanted * physicalNavigationTurnScale3D(athlete.commandPlanVelocity, direction,
+                    athlete.commandTurnRate, command.walkingAssist);
+            const Vec3 bodyVelocity = state.locomotion.physicalState().centerOfMassVelocityWorld;
+            const float scale = physicalNavigationSpeedScale3D(wanted * (1.0f / wantedSpeed), 1.0f, wantedSpeed,
+                bodyVelocity, physicalNavigationLead3D(command.walkingAssist));
+            wanted = wanted * std::clamp(scale, 0.0f, 1.0f);
+        }
+        const float acceleration = physicalNavigationAcceleration3D(command.walkingAssist);
+        Vec3 change = wanted - athlete.commandPlanVelocity;
+        const float most = acceleration * deltaTime;
+        if (change.length() > most && change.length() > 0.0f) change = change * (most / change.length());
+        athlete.commandPlanVelocity += change;
+        command.rootVelocityWorld = athlete.commandPlanVelocity;
+        command.proxyVelocityWorld = athlete.commandPlanVelocity;
+        // O sprint so vale andando (como o do laboratorio: a tecla e a
+        // capsula em movimento).
+        command.sprinting = slot.command->sprinting
+            && Vec3 { athlete.commandPlanVelocity.x, athlete.commandPlanVelocity.y, 0.0f }.lengthSquared() > 0.001f;
+        // A ancora anda no plano antes do passo, como a capsula do jogador
+        // (movida antes dele): andando no fim, ela ficava um tick atras (6 cm
+        // no sprint) e o corpo puxado de menos.
+        state.navigationAnchor += athlete.commandPlanVelocity * deltaTime;
+        command.rootPositionWorld.x = state.navigationAnchor.x;
+        command.rootPositionWorld.y = state.navigationAnchor.y;
+    }
     command.standingAssist = state.adaptivePhysics.settings().legsAssistRetained;
     command.getUpAssist = std::clamp(settings.getUpAssistPercent * 0.01f, 0.0f, 2.0f);
     {
@@ -1552,9 +1617,27 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         // fica presa ao ponto onde o corpo deitou, e comparando com ela a
         // ancora acumulava metros de erro - na saida, o boneco era
         // arremessado atras dela.
-        state.navigationAnchorVelocity = navigationFollowVelocity3D(
-            body.links.front().position, state.navigationAnchor, down ? 0.0f : followSlack);
-        state.navigationAnchor += state.navigationAnchorVelocity * deltaTime;
+        if (commanded && down) {
+            // Comandado, caido (levantando, no carrinho): a ancora fica no
+            // corpo, como a capsula do jogador; no carrinho o plano leva o
+            // embalo do corpo.
+            const Vec3 pelvis = body.links.front().position;
+            state.navigationAnchor = { pelvis.x, pelvis.y, state.navigationAnchor.z };
+            state.navigationAnchorVelocity = {};
+            const Vec3 velocity = body.links.front().linearVelocity;
+            athlete.commandPlanVelocity = bodyState == CharacterLocomotionState3D::Tackling
+                ? Vec3 { velocity.x, velocity.y, 0.0f } : Vec3 {};
+        } else {
+            // Comandado de pe: vai atras do corpo comparando com a pelve de
+            // referencia da locomocao, como a capsula do jogador (com a
+            // propria ancora, o corpo corria atras dela: o sprint andava 9%
+            // menos).
+            state.navigationAnchorVelocity = navigationFollowVelocity3D(body.links.front().position,
+                commanded ? locomotionOutput.navigationAnchorWorld : state.navigationAnchor,
+                down ? 0.0f : followSlack);
+            // (O plano do comandado ja andou, antes do passo.)
+            state.navigationAnchor += state.navigationAnchorVelocity * deltaTime;
+        }
     }
     if (command.controlled) {
         // A capsula vai atras do corpo quando ele se afasta da pelve de
@@ -1611,8 +1694,9 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
     // o corpo a referencia passa pelos pes apoiados, no que a pelve nao deu.
     // Ela acompanha a ajuda andando e parado: cai com o impacto (o nivel do
     // ImpactAssist3D e o envelope de contato da fisica) e sobe na volta.
+    // (Tambem no comandado sem capsula: sem ela, o sprint andava 9% menos.)
     athlete.feetAssistOutput = {};
-    if (command.controlled && adaptive && !down && settings.physicalFeetAssistPercent > 0.0f
+    if ((command.controlled || commanded) && adaptive && !down && settings.physicalFeetAssistPercent > 0.0f
         && state.adaptivePhysics.output().valid) {
         const AdaptivePhysicalOutput3D& assist = state.adaptivePhysics.output();
         const RagdollAnimationConstraint3D& reference = locomotionOutput.guide;

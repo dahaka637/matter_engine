@@ -243,10 +243,11 @@ void CharacterLocomotion3D::stepRoot(Tick& t) {
     // XY vem da pelve fisica: somar balanco ali realimentaria a posicao.
     // Sua altura de repouso usa a base nominal e o ajuste de alcance dos
     // pes. Levantar precisa da trilha vertical para chegar aos pes.
+    const bool anchored = input.controlled || input.rootAnchored;
     const bool planarAllowed = !risingPose && !airbornePose
-        && input.controlled;
+        && anchored;
     const bool verticalAllowed = risingPose
-        || (input.controlled && !airbornePose);
+        || (anchored && !airbornePose);
     const Vec3 authoredOffset {
         planarAllowed ? rootTranslation.x : 0.0f,
         planarAllowed ? rootTranslation.y : 0.0f,

@@ -243,6 +243,12 @@ struct CharacterLocomotionInput3D {
     bool crouched = false;
     bool sprinting = false;
     bool controlled = false;
+    // Nao controlado, mas a raiz XY vem de uma ancora que vai atras do corpo
+    // pela regra dela (a capsula virtual de um atleta comandado), como a
+    // capsula do controlado, e nao da pelve fisica: o balanco autoral da pelve
+    // e o deslocamento de apoio entram (no boneco solto, realimentariam a
+    // posicao).
+    bool rootAnchored = false;
     // Experimental floating-base path: solve world foot goals from the
     // measured pelvis and leave the root entirely to finite-force control.
     bool forceDrivenRoot = false;

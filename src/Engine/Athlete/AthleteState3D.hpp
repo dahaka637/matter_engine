@@ -57,6 +57,14 @@ struct AthleteState3D {
     // As correcoes do RL nas costuras do controle fisico deste atleta (sem
     // autoridade nenhuma, nem passam: o classico exato).
     PhysicalCorrections3D corrections;
+    // A capsula virtual de um atleta comandado sem a capsula do jogador: a
+    // velocidade do plano dela (sem o "ir atras do corpo").
+    Vec3 commandPlanVelocity;
+    // O giro do rumo pedido (rad/s, filtrado em 0,25 s, como no laboratorio):
+    // virando forte, a velocidade cai como a de quem corre cortando.
+    Vec3 commandDirection;
+    bool commandDirectionValid = false;
+    float commandTurnRate = 0.0f;
     ContactAssessment3D lastContacts;
     ModeDecision3D lastDecision;
     BodyModeKind3D lastDecisionFrom = BodyModeKind3D::Animated;
