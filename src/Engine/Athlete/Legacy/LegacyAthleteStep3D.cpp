@@ -227,9 +227,17 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
     // outros tem a referencia no proprio corpo (empurraveis, dao passo).
     const bool adaptive = settings.adaptivePhysics;
     command.forceDrivenRoot = adaptive;
+    // As forcas das juntas deste tick, copiadas: a troca para o fisico (mais
+    // abaixo, toPhysical) reinicia a ajuda adaptativa e solta o vetor dela, e
+    // o controle fisico lia o span dele depois - memoria ja liberada (o
+    // AddressSanitizer pegou nos contratos da sonda, 16/10). A copia guarda o
+    // que ele lia quando a memoria ainda estava intacta: as forcas da pancada
+    // que causou a troca.
+    std::vector<float> jointStrengthTick;
     if (adaptive) {
         // As juntas perto de uma pancada cedem (do tick anterior).
-        command.jointStrength = state.adaptivePhysics.output().jointStrength;
+        jointStrengthTick = state.adaptivePhysics.output().jointStrength;
+        command.jointStrength = jointStrengthTick;
         command.externalPerturbation = state.adaptivePhysics.output().perturbation;
         if (command.controlled) command.jumpCrouch = control.jumpCrouch;
     }
