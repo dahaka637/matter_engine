@@ -124,8 +124,11 @@ struct ContactAssessment3D {
     float pushImpulse = 0.0f);
 
 // A soma curta dos impulsos (N.s): um choque que se espalha por alguns ticks
-// (a caixa pesada, o empurrao que dura) conta inteiro. Decai com a constante
-// de tempo dada.
+// (a caixa pesada, o empurrao que dura) conta inteiro. E um decaimento
+// exponencial com a constante de tempo dada (nao uma janela dura): 100 ms
+// depois de um choque de 40 N.s sobra ~1,5 N.s, abaixo do minimo da ajuda; a
+// cauda nunca cria uma queda nova da ajuda (ela so recomeca com um choque
+// maior que o que ainda resta).
 struct ImpulseWindow3D {
     float value = 0.0f;
     float add(float impulse, float deltaTime, float timeConstantSeconds);

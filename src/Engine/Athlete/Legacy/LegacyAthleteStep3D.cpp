@@ -57,11 +57,16 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
     // e o chao embaixo da pelve.
     const bool modeTable = settings.modeTable && !settings.activeBody;
     if (modeTable && !athlete.contactBody.valid()) athlete.contactBody = contactBody3D(profile);
-    const float contactBase = body.links.empty() ? 0.0f : groundHeight(body.links.front().position);
+    const float contactBase = !modeTable || body.links.empty() ? 0.0f : groundHeight(body.links.front().position);
     ContactAssessment3D contacts;
     float pushWindowed = 0.0f;
     float impactWindowed = 0.0f;
-    if (modeTable) {
+    if (!modeTable) {
+        // (Sem a tabela nada disto anda: religada, ela comeca do zero.)
+        athlete.pushWindow = {};
+        athlete.impactWindow = {};
+        athlete.modeRules.reset();
+    } else {
         pushWindowed = athlete.pushWindow.add(body.externalPushNewtonSeconds, deltaTime, settings.impactWindowSeconds);
         contacts = assessContacts3D(body.interactions, {}, athlete.contactBody, {}, contactBase,
             settings.contactClasses, pushWindowed);
@@ -786,6 +791,20 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                         if (decision.event == ModeEvent3D::Impact || decision.event == ModeEvent3D::Penetration) {
                             const std::uint32_t link = signals.contacts.link;
                             if (link < profile.links.size()) why += ": " + profile.links[link].id;
+                            // (A penetracao nao tem impulso medido: o que o
+                            // mundo parado vai tirar da parte - a velocidade
+                            // dela contra a superficie x a massa - entra na
+                            // ajuda do impacto agora.)
+                            if (decision.event == ModeEvent3D::Penetration && link < body.links.size()) {
+                                Vec3 normal { 0.0f, 0.0f, 1.0f };
+                                for (const RagdollWorldContact3D& contact : worldContacts)
+                                    if (contact.linkIndex == link) normal = contact.normalWorld;
+                                const float into = std::max(0.0f, -dot(body.links[link].linearVelocity, normal));
+                                const float mass = link < athlete.contactBody.linkMassKg.size()
+                                    ? athlete.contactBody.linkMassKg[link] : 0.0f;
+                                athlete.impactWindow.add(into * mass, 0.0f, settings.impactWindowSeconds);
+                                state.impactAssist.update(athlete.impactWindow.value, false, 0.0f, 0.0f);
+                            }
                         } else if (decision.threshold > 0.0f) {
                             char detail[64];
                             std::snprintf(detail, sizeof(detail), " %.2f (limiar %.2f)", decision.value, decision.threshold);
