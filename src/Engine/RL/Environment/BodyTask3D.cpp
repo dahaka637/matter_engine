@@ -213,18 +213,25 @@ BodyTask3D loadBodyTask3D(const std::filesystem::path& path) {
             w.postureLeanPerSpeed = c.value("postureLeanPerSpeed", w.postureLeanPerSpeed);
             w.postureLeanMaxDegrees = c.value("postureLeanMaxDegrees", w.postureLeanMaxDegrees);
             w.postureLeanPerCrouch = c.value("postureLeanPerCrouch", w.postureLeanPerCrouch);
-            if (c.contains("trunkLean")) {
-                const nlohmann::json& t = c["trunkLean"];
-                auto& trunk = w.trunkLean;
-                trunk.backDegrees = t.value("backDegrees", 0.0f);
-                trunk.forwardDegrees = t.value("forwardDegrees", trunk.forwardDegrees);
-                trunk.forwardPerSpeed = t.value("forwardPerSpeed", trunk.forwardPerSpeed);
-                trunk.forwardMaxDegrees = t.value("forwardMaxDegrees", trunk.forwardMaxDegrees);
-                trunk.forwardPerCrouch = t.value("forwardPerCrouch", trunk.forwardPerCrouch);
-                trunk.sideDegrees = t.value("sideDegrees", trunk.sideDegrees);
-                if (trunk.backDegrees < 0.0f || trunk.forwardDegrees < 0.0f || trunk.forwardMaxDegrees < trunk.forwardDegrees
-                    || trunk.sideDegrees < 0.0f)
-                    fail("a folga da linha do tronco e invalida");
+            if (c.contains("functionalPosture")) {
+                const nlohmann::json& t = c["functionalPosture"];
+                auto& f = w.functionalPosture;
+                f.enabled = t.value("enabled", true);
+                for (auto [key, value] : std::initializer_list<std::pair<const char*, float*>> {
+                         { "fullWeight", &f.fullWeight }, { "lowWeight", &f.lowWeight },
+                         { "fullFloorStanding", &f.fullFloorStanding }, { "fullFloorMoving", &f.fullFloorMoving },
+                         { "lowFloorStanding", &f.lowFloorStanding }, { "lowFloorMoving", &f.lowFloorMoving },
+                         { "fullCeiling", &f.fullCeiling }, { "lowCeiling", &f.lowCeiling },
+                         { "ceilingPerSpeed", &f.ceilingPerSpeed }, { "ceilingPerCrouch", &f.ceilingPerCrouch },
+                         { "ceilingCrouchMax", &f.ceilingCrouchMax }, { "side", &f.side },
+                         { "accelSeconds", &f.accelSeconds }, { "commandSeconds", &f.commandSeconds },
+                         { "commandDeadband", &f.commandDeadband }, { "commandMaximum", &f.commandMaximum },
+                         { "commandShare", &f.commandShare }, { "openForwardMax", &f.openForwardMax },
+                         { "openBackMax", &f.openBackMax }, { "openSideMax", &f.openSideMax } })
+                    *value = t.value(key, *value);
+                if (f.fullWeight < 0.0f || f.lowWeight < 0.0f || f.side < 0.0f || !(f.accelSeconds > 0.0f)
+                    || !(f.commandSeconds > 0.0f) || f.fullCeiling < f.fullFloorMoving || f.lowCeiling < f.lowFloorMoving)
+                    fail("a postura funcional e invalida");
             }
             w.smooth = c.value("smooth", w.smooth);
             w.limits = c.value("limits", w.limits);

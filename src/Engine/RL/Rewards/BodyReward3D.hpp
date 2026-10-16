@@ -63,22 +63,45 @@ struct BodyRewardSettings3D {
     // Mais folga quanto mais baixo o quadril (graus por fracao da altura de pe
     // abaixo dela): a postura de prontidao inclina o tronco.
     float postureLeanPerCrouch = 0.0f;
-    // A linha do tronco (da pelve ate a cabeca; o olho ve o tronco jogado para
-    // tras nela, mesmo com o peito reto): somada a postura, com folga so para a
-    // frente. O que passa da folga custa o angulo (rad, linear: puxa mesmo
-    // perto da folga). backDegrees < 0 = desligada.
-    struct TrunkLean {
-        // Para tras (0 = passar da vertical para tras sempre custa).
-        float backDegrees = -1.0f;
-        // Para a frente: a base, mais por m/s, mais atan(a/g), mais por fracao
-        // agachada, ate o maximo.
-        float forwardDegrees = 5.0f;
-        float forwardPerSpeed = 0.0f;
-        float forwardMaxDegrees = 20.0f;
-        float forwardPerCrouch = 0.0f;
-        // Para o lado: a base mais atan(a/g) (as curvas), ate o maximo.
-        float sideDegrees = 5.0f;
-    } trunkLean;
+    // A postura funcional (postura_funcional.md): a linha do tronco inteiro
+    // (pelve ate a cabeca) e a da parte baixa (pelve ate o UpperChest), pelos
+    // centros dos colisores, no rumo do peito, dentro de uma faixa. Em ritmo
+    // constante a faixa e estreita (nada para tras); ela se abre na direcao da
+    // aceleracao fisica: frear abre para tras, acelerar para a frente, curvar
+    // para dentro. Fora da faixa custa o angulo (rad, linear). Ligada, ela
+    // substitui a folga do peito acima (a cabeca fica).
+    struct FunctionalPosture {
+        bool enabled = false;
+        float fullWeight = 0.3f;
+        float lowWeight = 0.7f;
+        // Os pisos (graus), parado e em movimento (mistura linear ate 1 m/s).
+        float fullFloorStanding = 0.0f;
+        float fullFloorMoving = 3.0f;
+        float lowFloorStanding = -6.0f;
+        float lowFloorMoving = -3.0f;
+        // Os tetos (graus): a base, mais por m/s, mais por fracao agachada (ate
+        // ceilingCrouchMax).
+        float fullCeiling = 15.0f;
+        float lowCeiling = 8.0f;
+        float ceilingPerSpeed = 1.5f;
+        float ceilingPerCrouch = 30.0f;
+        float ceilingCrouchMax = 8.0f;
+        // Para cada lado (graus).
+        float side = 5.0f;
+        // A demanda: a aceleracao medida do centro de massa (suavizada em
+        // accelSeconds) e a do comando ((pedido - corpo) / commandSeconds, com
+        // zona morta e teto, suavizada em commandSeconds, vezes commandShare).
+        // Por semieixo (frente, tras, esquerda, direita) vale a maior.
+        float accelSeconds = 0.25f;
+        float commandSeconds = 0.25f;
+        float commandDeadband = 0.3f;
+        float commandMaximum = 8.0f;
+        float commandShare = 0.5f;
+        // A abertura por semieixo: atan(a/g) em graus, ate o limite.
+        float openForwardMax = 25.0f;
+        float openBackMax = 18.0f;
+        float openSideMax = 25.0f;
+    } functionalPosture;
     // A postura atletica: o quadril acima de athleticHeight x a altura de pe
     // reto custa sempre; parado (o relogio do still), a base mais estreita que
     // athleticWidth (m, entre os pes de lado na pelve) tambem.
@@ -167,7 +190,8 @@ struct BodyCosts3D {
     float contacts = 0.0f;
     // A postura: o quanto o peito e a cabeca saem da vertical, (1 - cos) de
     // cada um, somados (0 de pe reto; ~0,03 com 10 graus em cada; ~0,27 com 30).
-    // Com a linha do tronco ligada, mais o angulo dela alem da folga (rad).
+    // Com a postura funcional ligada, o peito sai e entram as duas linhas do
+    // tronco: o angulo alem da faixa (rad), pesado por linha.
     float posture = 0.0f;
     // O parado: a velocidade media dos pes (m/s) quando o pedido e parar ha
     // mais que a folga (marchar no lugar paga; o lote o preenche).
@@ -182,6 +206,30 @@ struct BodyCosts3D {
     float saturation = 0.0f;
 };
 
+// As linhas do tronco (rad), pelos centros dos colisores, no rumo do peito:
+// o tronco inteiro (pelve ate a cabeca), a parte baixa (pelve ate o
+// UpperChest) e o pescoco (UpperChest ate a cabeca, so medida). Para a frente
+// positiva, para tras negativa; para o lado positiva para a esquerda.
+struct BodyPostureLines3D {
+    float fullForward = 0.0f;
+    float fullSide = 0.0f;
+    float lowForward = 0.0f;
+    float lowSide = 0.0f;
+    float neckForward = 0.0f;
+    // O rumo do peito no plano (frente e esquerda, unitarios).
+    Vec3 ahead { 1.0f, 0.0f, 0.0f };
+    Vec3 left { 0.0f, 1.0f, 0.0f };
+};
+[[nodiscard]] BodyPostureLines3D bodyPostureLines3D(const RLBody3D& body, const RagdollState3D& state);
+
+// A leitura da postura num passo: as linhas, a aceleracao suavizada do centro
+// de massa (m/s2, no plano) e a velocidade dele.
+struct BodyPostureReading3D {
+    BodyPostureLines3D lines;
+    Vec3 acceleration;
+    Vec3 velocity;
+};
+
 // Os custos somados nos passos de fisica de uma decisao.
 class BodyCostAccumulator3D {
 public:
@@ -192,8 +240,12 @@ public:
         m_leanMax = maximumDegrees;
         m_leanPerCrouch = perCrouch;
     }
-    // A linha do tronco (backDegrees < 0 = desligada).
-    void setTrunkLean(const BodyRewardSettings3D::TrunkLean& trunk) { m_trunk = trunk; }
+    void setFunctionalPosture(const BodyRewardSettings3D::FunctionalPosture& posture) { m_functional = posture; }
+    // O pedido de velocidade desta decisao (a demanda do comando).
+    void setCommand(Vec3 moveVelocity) { m_command = moveVelocity; }
+    // A ultima leitura das linhas do tronco e da aceleracao (sempre medida,
+    // mesmo com a postura funcional desligada: as medidas por episodio).
+    [[nodiscard]] const BodyPostureReading3D& postureReading() const { return m_reading; }
     void begin(const RagdollState3D& state, const RLBody3D& body);
     void addSubstep(const RLBody3D& body, const RagdollState3D& state, float fixedStep, float bodyWeight);
     // A mudanca dos alvos entre decisoes (o fim da reta), pela decisao.
@@ -215,7 +267,15 @@ private:
     float m_leanPerSpeed = 0.0f;
     float m_leanMax = 0.0f;
     float m_leanPerCrouch = 0.0f;
-    BodyRewardSettings3D::TrunkLean m_trunk;
+    BodyRewardSettings3D::FunctionalPosture m_functional;
+    // A postura funcional: o pedido, a velocidade do centro de massa de antes
+    // e as duas aceleracoes suavizadas (seguem de uma decisao para a outra).
+    Vec3 m_command;
+    Vec3 m_comVelocity;
+    bool m_haveCom = false;
+    Vec3 m_accelSmooth;
+    Vec3 m_commandSmooth;
+    BodyPostureReading3D m_reading;
     float m_smooth = 0.0f;
     float m_torque = 0.0f;
     float m_limits = 0.0f;
@@ -225,18 +285,6 @@ private:
     std::uint32_t m_substeps = 0;
 };
 
-// A inclinacao de um link (rad) pelo "para cima" dele, no rumo do proprio
-// link: para a frente (positiva; negativa e para tras) e para o lado
-// (positiva para a esquerda).
-struct BodyLean3D {
-    float forward = 0.0f;
-    float side = 0.0f;
-};
-[[nodiscard]] BodyLean3D bodyLinkLean3D(const RLBody3D& body, const RagdollState3D& state, std::uint32_t link);
-// A linha do tronco (rad): da pelve ate a cabeca, no rumo do peito (para a
-// frente positiva; para o lado positiva para a esquerda). E o que o olho ve
-// como "tronco jogado para tras", mesmo com o peito reto.
-[[nodiscard]] BodyLean3D bodyTrunkLean3D(const RLBody3D& body, const RagdollState3D& state);
 
 // O termo de velocidade: o vetor medido contra o pedido, no plano.
 [[nodiscard]] float bodyVelocityScore3D(const BodyRewardSettings3D& settings, Vec3 measured, Vec3 wanted);

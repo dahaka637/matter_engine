@@ -6,6 +6,8 @@
 namespace MatterEngine {
 namespace {
 
+using FunctionalSettings = BodyRewardSettings3D::FunctionalPosture;
+
 bool isFootPart(const RLBody3D& body, std::uint32_t link) {
     for (const auto& side : body.footParts)
         for (const std::uint32_t part : side)
@@ -13,43 +15,58 @@ bool isFootPart(const RLBody3D& body, std::uint32_t link) {
     return false;
 }
 
-// Um vetor (o "para cima" de um link ou a linha do tronco) como inclinacao no
-// rumo de um link: para a frente e para a esquerda.
-BodyLean3D leanAlongHeading(const RLBody3D& body, const RagdollState3D& state, std::uint32_t headingLink, Vec3 v) {
-    const Quaternion frame =
-        (state.links[headingLink].orientation * body.profile.links[headingLink].modelOrientation.conjugate()).normalized();
-    const Vec3 forward = frame.rotate({ 1.0f, 0.0f, 0.0f });
-    const float planar = std::max(1.0e-6f, std::hypot(forward.x, forward.y));
-    const Vec3 ahead { forward.x / planar, forward.y / planar, 0.0f };
-    const Vec3 left { -ahead.y, ahead.x, 0.0f };
-    return { std::atan2(dot(v, ahead), v.z), std::atan2(dot(v, left), v.z) };
+Vec3 colliderCenter(const RLBody3D& body, const RagdollState3D& state, std::uint32_t link) {
+    return state.links[link].position + state.links[link].orientation.rotate(body.profile.links[link].collider.localPosition);
 }
+
+float leanAlong(Vec3 line, Vec3 axis) { return std::atan2(dot(line, axis), line.z); }
 
 } // namespace
 
-BodyLean3D bodyLinkLean3D(const RLBody3D& body, const RagdollState3D& state, std::uint32_t link) {
-    const Quaternion frame = (state.links[link].orientation * body.profile.links[link].modelOrientation.conjugate()).normalized();
-    return leanAlongHeading(body, state, link, frame.rotate({ 0.0f, 0.0f, 1.0f }));
-}
-
-BodyLean3D bodyTrunkLean3D(const RLBody3D& body, const RagdollState3D& state) {
-    return leanAlongHeading(body, state, body.upperChest, state.links[body.head].position - state.links.front().position);
+BodyPostureLines3D bodyPostureLines3D(const RLBody3D& body, const RagdollState3D& state) {
+    BodyPostureLines3D lines;
+    const Quaternion chest =
+        (state.links[body.upperChest].orientation * body.profile.links[body.upperChest].modelOrientation.conjugate()).normalized();
+    const Vec3 forward = chest.rotate({ 1.0f, 0.0f, 0.0f });
+    const float planar = std::hypot(forward.x, forward.y);
+    if (planar > 1.0e-6f) {
+        lines.ahead = { forward.x / planar, forward.y / planar, 0.0f };
+        lines.left = { -lines.ahead.y, lines.ahead.x, 0.0f };
+    }
+    const Vec3 pelvis = colliderCenter(body, state, 0);
+    const Vec3 upper = colliderCenter(body, state, body.upperChest);
+    const Vec3 head = colliderCenter(body, state, body.head);
+    lines.fullForward = leanAlong(head - pelvis, lines.ahead);
+    lines.fullSide = leanAlong(head - pelvis, lines.left);
+    lines.lowForward = leanAlong(upper - pelvis, lines.ahead);
+    lines.lowSide = leanAlong(upper - pelvis, lines.left);
+    lines.neckForward = leanAlong(head - upper, lines.ahead);
+    return lines;
 }
 
 void BodyCostAccumulator3D::begin(const RagdollState3D& state, const RLBody3D& body) {
     const float leanBase = m_leanBase, leanPerSpeed = m_leanPerSpeed, leanMax = m_leanMax, leanPerCrouch = m_leanPerCrouch;
-    const BodyRewardSettings3D::TrunkLean trunk = m_trunk;
+    const BodyRewardSettings3D::FunctionalPosture functional = m_functional;
     const float accel = m_accel;
     const Vec3 lastVelocity = m_lastVelocity;
     const bool haveVelocity = m_haveVelocity;
+    const Vec3 command = m_command, comVelocity = m_comVelocity, accelSmooth = m_accelSmooth, commandSmooth = m_commandSmooth;
+    const bool haveCom = m_haveCom;
+    const BodyPostureReading3D reading = m_reading;
     *this = {};
     setLean(leanBase, leanPerSpeed, leanMax, leanPerCrouch);
-    setTrunkLean(trunk);
-    // A aceleracao segue de uma decisao para a outra (o lote recria o
+    setFunctionalPosture(functional);
+    // As aceleracoes seguem de uma decisao para a outra (o lote recria o
     // acumulador a cada episodio).
     m_accel = accel;
     m_lastVelocity = lastVelocity;
     m_haveVelocity = haveVelocity;
+    m_command = command;
+    m_comVelocity = comVelocity;
+    m_haveCom = haveCom;
+    m_accelSmooth = accelSmooth;
+    m_commandSmooth = commandSmooth;
+    m_reading = reading;
     m_headVertical = state.links[body.head].linearVelocity.z;
 }
 
@@ -122,19 +139,58 @@ void BodyCostAccumulator3D::addSubstep(const RLBody3D& body, const RagdollState3
     const float chestLean = std::min(m_leanMax, m_leanBase + m_leanPerSpeed * speed + needed + m_leanPerCrouch * crouch)
         * 3.14159265f / 180.0f;
     const float headLean = m_leanBase * 3.14159265f / 180.0f;
-    if (m_trunk.backDegrees >= 0.0f) {
-        // A linha do tronco: folga so para a frente; para tras, a pequena;
-        // para o lado, a base mais a da aceleracao.
-        const float degrees = 3.14159265f / 180.0f;
-        const BodyLean3D trunk = bodyTrunkLean3D(body, state);
-        const float forward = std::min(m_trunk.forwardMaxDegrees,
-            m_trunk.forwardDegrees + m_trunk.forwardPerSpeed * speed + needed + m_trunk.forwardPerCrouch * crouch);
-        const float side = std::min(m_trunk.forwardMaxDegrees, m_trunk.sideDegrees + needed);
-        m_posture += std::max(0.0f, trunk.forward - forward * degrees);
-        m_posture += std::max(0.0f, -trunk.forward - m_trunk.backDegrees * degrees);
-        m_posture += std::max(0.0f, std::abs(trunk.side) - side * degrees);
+    // A postura funcional: a aceleracao do centro de massa e a do comando,
+    // suavizadas, e as duas linhas do tronco (medidas sempre; custam se ligada).
+    {
+        const FunctionalSettings& f = m_functional;
+        const float step = std::max(1.0e-4f, fixedStep);
+        const Vec3 com = rlBodyCenterOfMassVelocity3D(body.profile, state.links);
+        if (m_haveCom) {
+            const Vec3 a { (com.x - m_comVelocity.x) / step, (com.y - m_comVelocity.y) / step, 0.0f };
+            m_accelSmooth = m_accelSmooth + (a - m_accelSmooth) * std::min(1.0f, step / std::max(step, f.accelSeconds));
+        }
+        m_comVelocity = com;
+        m_haveCom = true;
+        const Vec3 error { m_command.x - com.x, m_command.y - com.y, 0.0f };
+        const float size = error.length();
+        Vec3 demand;
+        if (size > f.commandDeadband)
+            demand = error * ((size - f.commandDeadband) / size / std::max(1.0e-3f, f.commandSeconds));
+        if (demand.length() > f.commandMaximum) demand = demand * (f.commandMaximum / demand.length());
+        m_commandSmooth = m_commandSmooth + (demand - m_commandSmooth) * std::min(1.0f, step / std::max(step, f.commandSeconds));
+        m_reading.lines = bodyPostureLines3D(body, state);
+        m_reading.acceleration = m_accelSmooth;
+        m_reading.velocity = com;
+        if (f.enabled) {
+            const BodyPostureLines3D& lines = m_reading.lines;
+            // A abertura por semieixo: a maior entre a medida e a do comando.
+            const float measuredAhead = dot(m_accelSmooth, lines.ahead), measuredLeft = dot(m_accelSmooth, lines.left);
+            const float commandAhead = f.commandShare * dot(m_commandSmooth, lines.ahead);
+            const float commandLeft = f.commandShare * dot(m_commandSmooth, lines.left);
+            const auto open = [](float a, float b, float limit) {
+                return std::min(limit, std::atan(std::max({ 0.0f, a, b }) / 9.81f) * 180.0f / 3.14159265f);
+            };
+            const float openForward = open(measuredAhead, commandAhead, f.openForwardMax);
+            const float openBack = open(-measuredAhead, -commandAhead, f.openBackMax);
+            const float openLeft = open(measuredLeft, commandLeft, f.openSideMax);
+            const float openRight = open(-measuredLeft, -commandLeft, f.openSideMax);
+            const float comSpeed = std::hypot(com.x, com.y);
+            const float moving = std::min(1.0f, comSpeed);
+            const float ceiling = f.ceilingPerSpeed * comSpeed + std::min(f.ceilingCrouchMax, f.ceilingPerCrouch * crouch) + openForward;
+            const float degrees = 3.14159265f / 180.0f;
+            const auto outside = [&](float forward, float side, float floor, float top) {
+                return std::max(0.0f, floor * degrees - forward) + std::max(0.0f, forward - top * degrees)
+                    + std::max(0.0f, side - (f.side + openLeft) * degrees) + std::max(0.0f, -side - (f.side + openRight) * degrees);
+            };
+            const float fullFloor = f.fullFloorStanding + (f.fullFloorMoving - f.fullFloorStanding) * moving - openBack;
+            const float lowFloor = f.lowFloorStanding + (f.lowFloorMoving - f.lowFloorStanding) * moving - openBack;
+            m_posture += f.fullWeight * outside(lines.fullForward, lines.fullSide, fullFloor, f.fullCeiling + ceiling)
+                + f.lowWeight * outside(lines.lowForward, lines.lowSide, lowFloor, f.lowCeiling + ceiling);
+        }
     }
     for (const std::uint32_t link : { body.upperChest, body.head }) {
+        // Com a postura funcional, o peito sai (as linhas do tronco o cobrem).
+        if (link == body.upperChest && m_functional.enabled) continue;
         const Quaternion frame = (state.links[link].orientation
             * body.profile.links[link].modelOrientation.conjugate()).normalized();
         const float tilt = 1.0f - std::clamp(frame.rotate({ 0.0f, 0.0f, 1.0f }).z, -1.0f, 1.0f);

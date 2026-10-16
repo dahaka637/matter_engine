@@ -2,9 +2,10 @@
 """Cada exercicio de uma tarefa com a politica exportada de um treino: 64 mundos,
 o primeiro episodio de cada um, com quedas, erro de velocidade, pontos por
 minuto, deriva na espera, afastamento da curva, base, pes cruzados, erro do
-peito, pes parados, pivo, postura, escorregar e a inclinacao do peito e da pelve
-(graus para a frente; negativa e para tras) com a fatia do peito para tras, e a
-linha do tronco (da pelve ate a cabeca) com a fatia dela para tras.
+peito, pes parados, pivo, postura, escorregar e a postura funcional (medianas
+dos episodios, graus no rumo do peito): o tronco inteiro e a parte baixa em
+ritmo constante com as fatias alem de -5 / -8, o tronco freando e acelerando, e
+a fatia das curvas com o tronco para dentro.
 
   .venv/bin/python exercicios.py RUN TAREFA [SEGUNDOS=30] [SOLVER=20 (jogo) | -1 (treino)] [SEMENTE]
 """
@@ -21,6 +22,12 @@ sys.path.insert(0, str(REPO / "build-rl" / "python"))
 import matter_rl_native as native  # noqa: E402
 
 DATA = Path(os.environ.get("MATTER_RL_DATA", Path.home() / ".local" / "share" / "matter-engine" / "rl"))
+
+
+def med(rows: np.ndarray, column: int) -> float:
+    values = rows[:, column]
+    values = values[np.isfinite(values)]
+    return float(np.median(values)) if len(values) else float("nan")
 
 
 def mean_valid(rows: np.ndarray, column: int) -> float:
@@ -65,10 +72,10 @@ def main() -> int:
               f" | pes parado {rows[:, col['parado_pes']].mean():.3f} | pivo {rows[:, col['pivo_pe']].mean():.2f} rad/s"
               f" | postura {rows[:, col['postura']].mean():.3f} | escorregar {rows[:, col['escorregar']].mean():.3f}"
               f" | segundos {rows[:, col['segundos']].mean():.1f}"
-              + (f" | peito {rows[:, col['peito_frente']].mean():+.1f} pelve {rows[:, col['pelve_frente']].mean():+.1f} graus"
-                 f" tras {100 * rows[:, col['peito_tras']].mean():.0f}%" if "peito_frente" in col else "")
-              + (f" | tronco {rows[:, col['tronco_frente']].mean():+.1f} graus tras {100 * rows[:, col['tronco_tras']].mean():.0f}%"
-                 if "tronco_frente" in col else ""))
+              + (f" | tronco cruzeiro {med(rows, col['tronco_cruzeiro']):+.1f} baixo {med(rows, col['baixo_cruzeiro']):+.1f} graus"
+                 f" (tras {100 * med(rows, col['tronco_tras']):.0f}% / {100 * med(rows, col['baixo_tras']):.0f}%)"
+                 f" freando {med(rows, col['tronco_freando']):+.1f} acelerando {med(rows, col['tronco_acelerando']):+.1f}"
+                 f" para dentro {100 * med(rows, col['curva_para_dentro']):.0f}%" if "tronco_cruzeiro" in col else ""))
     return 0
 
 

@@ -107,15 +107,17 @@ struct BodyEpisode3D {
     float crossFraction = 0.0f;
     // O pivo: o giro medio dos pes apoiados em torno da vertical (rad/s).
     float footPivot = 0.0f;
-    // A inclinacao media para a frente (graus; negativa e para tras) do peito
-    // e da pelve, e a fatia das decisoes com o peito mais de 5 graus para tras.
-    float chestLeanForward = 0.0f;
-    float pelvisLeanForward = 0.0f;
-    float chestBackFraction = 0.0f;
-    // A linha do tronco (pelve ate a cabeca) para a frente (graus) e a fatia
-    // das decisoes com ela mais de 5 graus para tras.
-    float trunkLeanForward = 0.0f;
-    float trunkBackFraction = 0.0f;
+    // A postura funcional (graus, no rumo do peito; NaN sem amostra): em ritmo
+    // constante, as medias do tronco inteiro e da parte baixa e as fatias alem
+    // de -5 / -8 graus; o tronco inteiro freando e acelerando; nas curvas, a
+    // fatia com o tronco inclinado para o lado da aceleracao.
+    float cruiseFull = 0.0f;
+    float cruiseLow = 0.0f;
+    float cruiseFullBack = 0.0f;
+    float cruiseLowBack = 0.0f;
+    float brakingFull = 0.0f;
+    float acceleratingFull = 0.0f;
+    float inwardFraction = 0.0f;
 };
 
 // Um mundo visto por fora (a previa, as folhas de quadros).

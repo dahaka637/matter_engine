@@ -100,7 +100,8 @@ const std::vector<std::string> BodyEpisodeColumns {
     "pancada", "cabeca", "suavidade", "limites", "contatos", "no_teto", "acao_media", "acao_presa", "alvo_preso",
     "reversao", "cadencia", "distancia", "comeco", "passos_uteis", "primeiro_passo", "sequencia", "pedido_medio",
     "porta_media", "voo_duplo", "alvos_por_minuto", "deriva_espera", "postura", "afastamento_curva", "largura_base", "pes_cruzados", "parado_pes", "pivo_pe", "atletica",
-    "peito_frente", "pelve_frente", "peito_tras", "tronco_frente", "tronco_tras"
+    "tronco_cruzeiro", "baixo_cruzeiro", "tronco_tras", "baixo_tras", "tronco_freando", "tronco_acelerando",
+    "curva_para_dentro"
 };
 
 // As linhas de colisores de uma pose (o formato do dump do quadros).
@@ -434,9 +435,9 @@ NB_MODULE(matter_rl_native, m) {
                         e.meanReversal, e.cadence, e.distance, static_cast<float>(static_cast<int>(e.start)),
                         e.usefulStepsPerSecond, e.firstStepSeconds, e.longestStepRun, e.meanRequested,
                         e.meanStandGate, e.bothFeetAirFraction, e.targetsPerMinute, e.holdDrift, c.posture, e.arcError, e.stanceWidth, e.crossFraction, c.still, e.footPivot, c.athletic,
-                        e.chestLeanForward, e.pelvisLeanForward, e.chestBackFraction, e.trunkLeanForward,
-                        e.trunkBackFraction };
-                    static_assert(std::size(row) == 50);
+                        e.cruiseFull, e.cruiseLow, e.cruiseFullBack, e.cruiseLowBack, e.brakingFull,
+                        e.acceleratingFull, e.inwardFraction };
+                    static_assert(std::size(row) == 52);
                     std::copy(std::begin(row), std::end(row), data + i * columns);
                 }
                 nb::capsule owner(data, [](void* p) noexcept { delete[] static_cast<float*>(p); });

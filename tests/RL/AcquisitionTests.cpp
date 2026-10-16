@@ -237,41 +237,17 @@ void testPostureCost() {
     const float over = (1.0f - std::cos(30.0f * 3.14159265f / 180.0f)) - (1.0f - std::cos(20.0f * 3.14159265f / 180.0f));
     require(std::abs(tolerant.finish(1.0f / 120.0f, 800.0f).posture - over) < 1.0e-3f,
         "com a folga, so a inclinacao alem dela custa");
-    // A medida do peito: 30 graus para a frente le +30; 10 para tras, -10.
-    require(std::abs(bodyLinkLean3D(body, state, body.upperChest).forward - 30.0f * 3.14159265f / 180.0f) < 1.0e-3f,
-        "o peito a 30 graus para a frente mede +30");
-    state.links[body.upperChest].orientation =
-        (Quaternion::fromAxisAngle({ 0.0f, 1.0f, 0.0f }, -10.0f * 3.14159265f / 180.0f) * body.profile.links[body.upperChest].modelOrientation)
-            .normalized();
-    require(std::abs(bodyLinkLean3D(body, state, body.upperChest).forward + 10.0f * 3.14159265f / 180.0f) < 1.0e-3f,
-        "o peito a 10 graus para tras mede -10");
-    // A linha do tronco (pelve ate a cabeca), com o peito e a cabeca retos e o
-    // rumo do peito em +x: a cabeca 0,6 m acima da pelve, deslocada em x.
-    state.links[body.upperChest].orientation = body.profile.links[body.upperChest].modelOrientation;
-    const float pelvisHeight = body.postures.front().standingPelvisHeight;
-    auto trunkCost = [&](float degrees, bool on) {
-        state.links.front().position = { 0.0f, 0.0f, pelvisHeight };
-        state.links[body.head].position = { 0.6f * std::tan(degrees * 3.14159265f / 180.0f), 0.0f, pelvisHeight + 0.6f };
-        BodyCostAccumulator3D costs;
-        if (on) {
-            BodyRewardSettings3D::TrunkLean trunk;
-            trunk.backDegrees = 0.0f;
-            trunk.forwardDegrees = 5.0f;
-            trunk.forwardMaxDegrees = 20.0f;
-            costs.setTrunkLean(trunk);
-        }
-        costs.begin(state, body);
-        costs.addSubstep(body, state, 1.0f / 120.0f, 800.0f);
-        return costs.finish(1.0f / 120.0f, 800.0f).posture;
-    };
-    require(trunkCost(-10.0f, false) < 1.0e-5f, "desligada, a linha do tronco nao custa");
-    require(std::abs(trunkCost(-10.0f, true) - 10.0f * 3.14159265f / 180.0f) < 1.0e-3f,
-        "a linha do tronco 10 graus para tras custa os 10 graus (rad)");
-    require(trunkCost(4.0f, true) < 1.0e-5f, "4 graus para a frente cabem na folga de 5");
-    require(std::abs(trunkCost(8.0f, true) - 3.0f * 3.14159265f / 180.0f) < 1.0e-3f,
-        "8 graus para a frente custam so os 3 alem da folga");
-    // A linha do tronco na postura natural de pe: perto da vertical (o zero da
-    // medida e do custo).
+}
+
+// A postura funcional: as linhas do tronco pelos centros dos colisores, a faixa
+// em ritmo constante e a abertura na direcao da aceleracao pedida.
+void testFunctionalPosture() {
+    const RLBody3D body = loadRLBody3D(assets() + "bodies/football_player_v2.json");
+    const float deg = 3.14159265f / 180.0f;
+    RagdollState3D state;
+    state.links.resize(body.profile.links.size());
+    state.joints.resize(body.profile.links.size());
+    // Na postura natural de pe, as duas linhas ficam perto da vertical.
     const int natural = findRLPosture3D(body, "natural");
     require(natural >= 0, "a postura natural");
     const RLPosture3D& pose = body.postures[static_cast<std::size_t>(natural)];
@@ -281,11 +257,74 @@ void testPostureCost() {
         state.links[i].position = standing.positions[i];
         state.links[i].orientation = standing.orientations[i];
     }
-    const BodyLean3D trunk = bodyTrunkLean3D(body, state);
-    std::cout << "  linha do tronco na postura natural: " << trunk.forward * 180.0f / 3.14159265f << " graus para a frente, "
-              << trunk.side * 180.0f / 3.14159265f << " para o lado\n";
-    require(std::abs(trunk.forward) < 8.0f * 3.14159265f / 180.0f && std::abs(trunk.side) < 2.0f * 3.14159265f / 180.0f,
-        "de pe na postura natural, a linha do tronco fica perto da vertical");
+    const BodyPostureLines3D natureLines = bodyPostureLines3D(body, state);
+    std::cout << "  postura natural: tronco inteiro " << natureLines.fullForward / deg << " graus, parte baixa "
+              << natureLines.lowForward / deg << ", pescoco " << natureLines.neckForward / deg << '\n';
+    require(std::abs(natureLines.fullForward) < 8.0f * deg && std::abs(natureLines.fullSide) < 2.0f * deg,
+        "de pe na postura natural, o tronco inteiro fica perto da vertical");
+    require(natureLines.lowForward > -10.0f * deg && natureLines.lowForward < 6.0f * deg,
+        "de pe na postura natural, a parte baixa fica perto da vertical");
+
+    // O corpo de pe reto (peito para +x), com os centros da pelve, do UpperChest
+    // e da cabeca postos para dar os angulos pedidos (graus).
+    for (std::size_t i = 0; i < state.links.size(); ++i) {
+        state.links[i].orientation = body.profile.links[i].modelOrientation;
+        state.links[i].position = {};
+        state.links[i].linearVelocity = {};
+    }
+    const auto place = [&](std::uint32_t link, Vec3 center) {
+        state.links[link].position = center - state.links[link].orientation.rotate(body.profile.links[link].collider.localPosition);
+    };
+    const auto pose3 = [&](float full, float low, float side = 0.0f) {
+        place(0, { 0.0f, 0.0f, 1.0f });
+        place(body.upperChest, { 0.45f * std::tan(low * deg), 0.0f, 1.45f });
+        place(body.head, { 0.75f * std::tan(full * deg), 0.75f * std::tan(side * deg), 1.75f });
+    };
+    const auto moving = [&](Vec3 velocity) {
+        for (auto& link : state.links) link.linearVelocity = velocity;
+    };
+    BodyRewardSettings3D::FunctionalPosture on;
+    on.enabled = true;
+    // Mede a postura de um passo depois de aquecer as aceleracoes suavizadas.
+    const auto cost = [&](Vec3 command) {
+        BodyCostAccumulator3D costs;
+        costs.setFunctionalPosture(on);
+        costs.setCommand(command);
+        costs.begin(state, body);
+        for (int i = 0; i < 240; ++i) costs.addSubstep(body, state, 1.0f / 120.0f, 800.0f);
+        costs.begin(state, body);
+        costs.addSubstep(body, state, 1.0f / 120.0f, 800.0f);
+        return costs.finish(1.0f / 120.0f, 800.0f).posture;
+    };
+    pose3(5.0f, 0.0f);
+    require(std::abs(bodyPostureLines3D(body, state).fullForward - 5.0f * deg) < 1.0e-3f, "o tronco a +5 mede +5");
+    require(cost({}) < 1.0e-5f, "parado, +5 no tronco e 0 na parte baixa cabem na faixa");
+    // Parado: o tronco a -10 passa o piso (0) em 10 graus, com o peso 0,3.
+    pose3(-10.0f, 0.0f);
+    require(std::abs(cost({}) - 0.3f * 10.0f * deg) < 1.0e-3f, "parado, o tronco a -10 custa 0,3 x 10 graus");
+    // Andando a 2 m/s no pedido: o piso sobe para +3 e o -10 custa 13 graus.
+    moving({ 2.0f, 0.0f, 0.0f });
+    require(std::abs(cost({ 2.0f, 0.0f, 0.0f }) - 0.3f * 13.0f * deg) < 2.0e-3f, "andando, o piso do tronco e +3");
+    // Pedido de parar a 2 m/s: a freada abre o piso para tras, e o -10 cabe.
+    require(cost({}) < 1.0e-5f, "freando, o tronco pode ir para tras");
+    // Pedido de acelerar para a frente: nao abre o piso de tras.
+    require(std::abs(cost({ 4.0f, 0.0f, 0.0f }) - 0.3f * 13.0f * deg) < 2.0e-3f, "acelerar nunca abre o piso de tras");
+    // A parte baixa a -10 andando passa o piso (-3) em 7 graus, com o peso 0,7.
+    pose3(5.0f, -10.0f);
+    require(std::abs(cost({ 2.0f, 0.0f, 0.0f }) - 0.7f * 7.0f * deg) < 2.0e-3f, "andando, o piso da parte baixa e -3");
+    // Para o lado: 10 graus para a esquerda passam os 5 sem curva; com o pedido
+    // virando para a esquerda, abre para dentro.
+    pose3(5.0f, 0.0f, 10.0f);
+    require(std::abs(cost({ 2.0f, 0.0f, 0.0f }) - 0.3f * 5.0f * deg) < 2.0e-3f, "para o lado, so 5 graus sem curva");
+    require(cost({ 2.0f, 2.0f, 0.0f }) < 1.0e-5f, "curvando para a esquerda, o tronco pode ir para dentro");
+    require(cost({ 2.0f, -2.0f, 0.0f }) > 0.3f * 4.0f * deg, "curvando para a direita, inclinar para fora custa");
+    // O peito inclinado nao custa com a postura funcional (as linhas cobrem).
+    moving({});
+    pose3(5.0f, 0.0f);
+    state.links[body.upperChest].orientation =
+        (Quaternion::fromAxisAngle({ 0.0f, 1.0f, 0.0f }, 30.0f * deg) * body.profile.links[body.upperChest].modelOrientation).normalized();
+    place(body.upperChest, { 0.0f, 0.0f, 1.45f });
+    require(cost({}) < 1.0e-5f, "com a postura funcional, o peito sai do custo antigo");
 }
 
 void testPilotWindow() {
@@ -550,6 +589,7 @@ void testEveryAcquisitionTaskRuns() {
 
 void runAcquisitionTests() {
     testPostureCost();
+    testFunctionalPosture();
     testEveryAcquisitionTaskRuns();
     testProgressForm();
     testStandGate();

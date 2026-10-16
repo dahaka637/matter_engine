@@ -13,6 +13,7 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <limits>
 #include <numbers>
 #include <random>
 #include <stdexcept>
@@ -140,13 +141,13 @@ struct World {
     // quantas vezes ficou negativa (cruzou).
     double widthSum = 0.0;
     std::uint32_t widthCount = 0;
-    // A inclinacao para a frente do peito e da pelve (rad, somada por decisao)
-    // e as decisoes com o peito mais de 5 graus para tras.
-    double chestLeanSum = 0.0;
-    double pelvisLeanSum = 0.0;
-    double trunkLeanSum = 0.0;
-    std::uint32_t chestBackDecisions = 0;
-    std::uint32_t trunkBackDecisions = 0;
+    // A postura funcional por decisao (graus): em ritmo constante (>= 0,8 m/s,
+    // |a| no rumo < 0,7) as duas linhas e as vezes alem de -5 / -8; freando e
+    // acelerando (|a| no rumo > 1,5) o tronco inteiro; nas curvas (|a| de lado
+    // > 1), as vezes que o tronco inclina para o lado da aceleracao.
+    double cruiseFullSum = 0.0, cruiseLowSum = 0.0, brakingSum = 0.0, acceleratingSum = 0.0;
+    std::uint32_t cruiseCount = 0, cruiseFullBack = 0, cruiseLowBack = 0, brakingCount = 0, acceleratingCount = 0;
+    std::uint32_t lateralCount = 0, lateralInward = 0;
     std::uint32_t crossings = 0;
     Vec3 lastWanted;
     float changeAt = -1.0f;
@@ -651,8 +652,9 @@ void BodyTrainingBatch3D::Impl::resetWorld(std::uint32_t index) {
     world.pivotCount = 0;
     world.widthSum = 0.0;
     world.widthCount = world.crossings = 0;
-    world.chestLeanSum = world.pelvisLeanSum = world.trunkLeanSum = 0.0;
-    world.chestBackDecisions = world.trunkBackDecisions = 0;
+    world.cruiseFullSum = world.cruiseLowSum = world.brakingSum = world.acceleratingSum = 0.0;
+    world.cruiseCount = world.cruiseFullBack = world.cruiseLowBack = world.brakingCount = world.acceleratingCount = 0;
+    world.lateralCount = world.lateralInward = 0;
     world.usefulSteps = world.stepRun = world.longestRun = 0;
     world.footLiftSeen = { false, false };
     world.firstStep = world.lastStep = -1.0f;
@@ -729,11 +731,15 @@ void BodyTrainingBatch3D::Impl::finishEpisode(Scene& scene, std::uint32_t index,
     episode.targetsPerMinute = episode.seconds > 0.0f ? 60.0f * static_cast<float>(world.pilot.reached) / episode.seconds : 0.0f;
     if (world.pilot.holdDecisions > 0)
         episode.holdDrift = world.pilot.holdDistanceSum / static_cast<float>(world.pilot.holdDecisions);
-    episode.chestLeanForward = static_cast<float>(world.chestLeanSum / n) * 180.0f / 3.14159265f;
-    episode.pelvisLeanForward = static_cast<float>(world.pelvisLeanSum / n) * 180.0f / 3.14159265f;
-    episode.chestBackFraction = static_cast<float>(world.chestBackDecisions / n);
-    episode.trunkLeanForward = static_cast<float>(world.trunkLeanSum / n) * 180.0f / 3.14159265f;
-    episode.trunkBackFraction = static_cast<float>(world.trunkBackDecisions / n);
+    const float none = std::numeric_limits<float>::quiet_NaN();
+    const auto mean = [none](double sum, std::uint32_t count) { return count > 0 ? static_cast<float>(sum / count) : none; };
+    episode.cruiseFull = mean(world.cruiseFullSum, world.cruiseCount);
+    episode.cruiseLow = mean(world.cruiseLowSum, world.cruiseCount);
+    episode.cruiseFullBack = world.cruiseCount > 0 ? static_cast<float>(world.cruiseFullBack) / static_cast<float>(world.cruiseCount) : none;
+    episode.cruiseLowBack = world.cruiseCount > 0 ? static_cast<float>(world.cruiseLowBack) / static_cast<float>(world.cruiseCount) : none;
+    episode.brakingFull = mean(world.brakingSum, world.brakingCount);
+    episode.acceleratingFull = mean(world.acceleratingSum, world.acceleratingCount);
+    episode.inwardFraction = world.lateralCount > 0 ? static_cast<float>(world.lateralInward) / static_cast<float>(world.lateralCount) : none;
     if (world.pivotCount > 0) episode.footPivot = static_cast<float>(world.pivotSum / world.pivotCount);
     if (world.widthCount > 0) {
         episode.stanceWidth = static_cast<float>(world.widthSum / world.widthCount);
@@ -770,7 +776,8 @@ void BodyTrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> a
         contract->beginDecision(world.contract, action, means.subspan(index * A, A));
         world.costs.setLean(task.reward.postureLeanDegrees, task.reward.postureLeanPerSpeed, task.reward.postureLeanMaxDegrees,
             task.reward.postureLeanPerCrouch);
-        world.costs.setTrunkLean(task.reward.trunkLean);
+        world.costs.setFunctionalPosture(task.reward.functionalPosture);
+        world.costs.setCommand(world.command.moveVelocity);
         if (const RagdollState3D* state = physics.ragdollStateView(world.ragdoll)) world.costs.begin(*state, body);
         world.costs.setTargetChange(world.endTargets, world.endChange, world.contract.rampTo);
         for (std::size_t d = 0; d < A; ++d) {
@@ -870,15 +877,34 @@ void BodyTrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> a
                 }
                 costs.athletic = athletic;
             }
-            // A medida da inclinacao (sem peso): o peito e a pelve para a frente.
+            // A medida da postura funcional (sem peso).
             {
-                const float chestLean = bodyLinkLean3D(body, *state, body.upperChest).forward;
-                world.chestLeanSum += chestLean;
-                world.pelvisLeanSum += bodyLinkLean3D(body, *state, 0).forward;
-                if (chestLean < -5.0f * 3.14159265f / 180.0f) ++world.chestBackDecisions;
-                const float trunkLean = bodyTrunkLean3D(body, *state).forward;
-                world.trunkLeanSum += trunkLean;
-                if (trunkLean < -5.0f * 3.14159265f / 180.0f) ++world.trunkBackDecisions;
+                const BodyPostureReading3D& posture = world.costs.postureReading();
+                const float degrees = 180.0f / 3.14159265f;
+                const float full = posture.lines.fullForward * degrees, low = posture.lines.lowForward * degrees;
+                const Vec3 v = posture.velocity, a = posture.acceleration;
+                const float speed = std::hypot(v.x, v.y);
+                const float along = speed > 1.0e-3f ? (a.x * v.x + a.y * v.y) / speed : 0.0f;
+                if (speed >= 0.8f && std::abs(along) < 0.7f) {
+                    world.cruiseFullSum += full;
+                    world.cruiseLowSum += low;
+                    ++world.cruiseCount;
+                    if (full < -5.0f) ++world.cruiseFullBack;
+                    if (low < -8.0f) ++world.cruiseLowBack;
+                }
+                if (speed >= 0.8f && along < -1.5f) {
+                    world.brakingSum += full;
+                    ++world.brakingCount;
+                }
+                if (speed >= 0.8f && along > 1.5f) {
+                    world.acceleratingSum += full;
+                    ++world.acceleratingCount;
+                }
+                const float lateral = dot(a, posture.lines.left);
+                if (std::abs(lateral) > 1.0f) {
+                    ++world.lateralCount;
+                    if (lateral * posture.lines.fullSide > 0.0f) ++world.lateralInward;
+                }
             }
             const Vec3 wanted = world.command.moveVelocity;
             const float facingScore = bodyFacingScore3D(task.reward, reading.chestHeading, world.command.faceHeading);

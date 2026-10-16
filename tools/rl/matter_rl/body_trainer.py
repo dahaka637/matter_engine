@@ -243,13 +243,15 @@ def drill_summary(rows: np.ndarray, columns: list[str], drills: list[str]) -> di
             out[drill]["still_feet"] = float(part[:, col["parado_pes"]].mean())
         if "pivo_pe" in col:
             out[drill]["foot_pivot"] = float(part[:, col["pivo_pe"]].mean())
-        if "peito_frente" in col:
-            out[drill]["chest_lean_forward"] = float(part[:, col["peito_frente"]].mean())
-            out[drill]["pelvis_lean_forward"] = float(part[:, col["pelve_frente"]].mean())
-            out[drill]["chest_back_fraction"] = float(part[:, col["peito_tras"]].mean())
-        if "tronco_frente" in col:
-            out[drill]["trunk_lean_forward"] = float(part[:, col["tronco_frente"]].mean())
-            out[drill]["trunk_back_fraction"] = float(part[:, col["tronco_tras"]].mean())
+        if "tronco_cruzeiro" in col:
+            # A postura funcional (graus; NaN = sem amostra no episodio).
+            for key, name in (("trunk_cruise", "tronco_cruzeiro"), ("lower_trunk_cruise", "baixo_cruzeiro"),
+                              ("trunk_back_fraction", "tronco_tras"), ("lower_trunk_back_fraction", "baixo_tras"),
+                              ("trunk_braking", "tronco_freando"), ("trunk_accelerating", "tronco_acelerando"),
+                              ("curve_inward", "curva_para_dentro")):
+                values = part[:, col[name]]
+                values = values[np.isfinite(values)]
+                out[drill][key] = float(np.median(values)) if len(values) else None
     return out
 
 
