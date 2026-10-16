@@ -13,6 +13,7 @@
 //      de ossos do Fisico total)  [--espaco 0|1] (as pernas nunca se atravessam; 0 padrao)
 //      [--volta-suave 0|1] (a volta do fisico ao padrao suave, plano v4; 1 padrao)
 //      [--tabela 0|1] (as trocas de modo pela tabela e as classes de contato, a reescrita R3; 1 padrao)
+//      [--velocidades-padrao 0|1] (no fisico, a tabela de velocidades do padrao; a reescrita R5)
 //      [--ajuda-parado %] [--ajuda-andando %]
 // Sem --cenario roda todos.
 #include "Engine/Athlete/AthleteAssets3D.hpp"
@@ -1263,7 +1264,7 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
         if (wantedDirection.lengthSquared() > 1e-4f) {
             const Vec3 direction = wantedDirection.normalized();
             const float travelRelative = std::atan2(direction.y, direction.x) - keys.cameraYaw;
-            const float wanted = controlledAnimated
+            const float wanted = controlledAnimated || settings.physicalUsesDefaultSpeeds
                 ? athleteDefaultTravelSpeed3D(settings, travelRelative, keys.sprint)
                 : characterGaitSpeed3D(gaitSpeeds, travelRelative, keys.sprint);
             const float nominal = keys.sprint ? avatar.sprintSpeed : avatar.walkSpeed;
@@ -2017,6 +2018,16 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
                 assistTally.feetDelivered += athlete.feetAssistOutput.deliveredForce.length() / weight;
             }
         }
+        // XVELOCIDADE=1: a cada 0,25 s, a velocidade pedida, a da capsula e a da
+        // pelve (no plano) - onde o fisico perde velocidade.
+        if (std::getenv("XVELOCIDADE") && step % 30 == 0 && !bodyState.links.empty()) {
+            const Vec3 asked = control.intent.requestedVelocityWorld;
+            const Vec3 capsuleVelocity = scene->characterState().velocity;
+            const Vec3 pelvisVelocity = bodyState.links.front().linearVelocity;
+            std::printf("  t %.2f %s pedida %.2f capsula %.2f pelve %.2f m/s\n", t, modeOf(),
+                std::hypot(asked.x, asked.y), std::hypot(capsuleVelocity.x, capsuleVelocity.y),
+                std::hypot(pelvisVelocity.x, pelvisVelocity.y));
+        }
         // XPRONTO=1: as condicoes da volta do fisico ao padrao, a cada 0,1 s.
         if (std::getenv("XPRONTO") && mode() == BodyModeKind3D::Physical && step % 12 == 0) {
             const AthleteTelemetry3D telemetry = athleteTelemetry3D(athlete);
@@ -2716,6 +2727,7 @@ int main(int argc, char** argv) {
     bool legClearance = AthleteRuntimeSettings3D {}.legClearance.enabled;
     bool returnSmoothing = AthleteRuntimeSettings3D {}.returnSmoothing;
     bool modeTable = AthleteRuntimeSettings3D {}.modeTable;
+    bool defaultSpeeds = AthleteRuntimeSettings3D {}.physicalUsesDefaultSpeeds;
     float standingAssist = AthleteRuntimeSettings3D {}.e5StandingAssistPercent;
     float walkingAssist = AthleteRuntimeSettings3D {}.e5WalkingAssistPercent;
     for (int i = 1; i < argc; ++i) {
@@ -2741,6 +2753,7 @@ int main(int argc, char** argv) {
         else if (arg == "--espaco") legClearance = std::atoi(need()) != 0;
         else if (arg == "--volta-suave") returnSmoothing = std::atoi(need()) != 0;
         else if (arg == "--tabela") modeTable = std::atoi(need()) != 0;
+        else if (arg == "--velocidades-padrao") defaultSpeeds = std::atoi(need()) != 0;
         else if (arg == "--ajuda-parado") standingAssist = static_cast<float>(std::atof(need()));
         else if (arg == "--ajuda-andando") walkingAssist = static_cast<float>(std::atof(need()));
         else if (arg == "--lista") {
@@ -2779,6 +2792,7 @@ int main(int argc, char** argv) {
     settings.legClearance.enabled = legClearance;
     settings.returnSmoothing = returnSmoothing;
     settings.modeTable = modeTable;
+    settings.physicalUsesDefaultSpeeds = defaultSpeeds;
     settings.e5StandingAssistPercent = standingAssist;
     settings.e5WalkingAssistPercent = walkingAssist;
     if (totalPhysical) {

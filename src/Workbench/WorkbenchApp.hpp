@@ -518,6 +518,9 @@ private:
     // A reescrita (R3, 16/10): as trocas de modo pela tabela e as classes de
     // contato (AthleteRuntimeSettings3D::modeTable). Desligado: as de antes.
     bool m_modeTable = true;
+    // A mesma intencao nos dois modos (R5, 16/10): no fisico a capsula pede a
+    // tabela de velocidades do padrao (AthleteRuntimeSettings3D).
+    bool m_physicalDefaultSpeeds = true;
     // A ajuda nos pes do corpo fisico (%; aprovada em 11/10): a forca que leva
     // o corpo passa pelos pes apoiados, no que a ajuda da pelve nao deu. E a
     // guiagem de ossos do Fisico total (%; experimento de 11/10).

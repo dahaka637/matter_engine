@@ -90,6 +90,15 @@ struct AthleteRuntimeSettings3D {
     // ponte; a perna no topo de algo conta; a ponte pode ser abortada (e a
     // guia dela cai com a ajuda do impacto); a ajuda cai pelos impactos de
     // verdade. Desligado: as regras de antes (a chave A/B).
+    // A mesma intencao nos dois modos (a reescrita, R5): no fisico, a capsula
+    // pede a velocidade da tabela do padrao (a aba "Velocidades": trote 4,5 em
+    // todos os rumos, corrida 7,8 / 5,2 / 5,2) em vez da natural dos clipes da
+    // locomocao fisica (trote ~3 m/s e bem menos de lado e de costas). Quem
+    // chama (o laboratorio, a sonda) escolhe a tabela por isto.
+    // Ligado desde 16/10 (medido: com 100% de ajuda o fisico anda 93-96% do
+    // padrao nas direcoes, antes 64-90%; nenhuma queda nova na sonda; com 30%,
+    // uma queda a mais no corte rapido).
+    bool physicalUsesDefaultSpeeds = true;
     bool modeTable = true;
     ContactClassParams3D contactClasses;
     ModeRuleParams3D modeRules;

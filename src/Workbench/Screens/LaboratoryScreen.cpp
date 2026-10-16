@@ -526,7 +526,8 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
                 });
             // No modo padrao, a tabela dele (oito rumos; de costas na
             // diagonal perde menos).
-            const float wanted = m_controlledAnimated && controlled != m_spawnedRagdolls.end()
+            // (No fisico tambem, com a chave "Velocidades do padrao no fisico".)
+            const float wanted = (m_controlledAnimated || m_physicalDefaultSpeeds) && controlled != m_spawnedRagdolls.end()
                 ? athleteDefaultTravelSpeed3D(athleteRuntimeSettings(), travelRelative, command.sprint)
                 : characterGaitSpeed3D(m_avatarGaitSpeeds, travelRelative, command.sprint);
             const float nominal = command.sprint
@@ -662,7 +663,7 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
                         return item.entityId == m_controlledCharacterEntityId;
                     });
                 const float relative = std::atan2(direction.y, direction.x) - movementReferenceYaw;
-                float speed = m_controlledAnimated && controlled != m_spawnedRagdolls.end()
+                float speed = (m_controlledAnimated || m_physicalDefaultSpeeds) && controlled != m_spawnedRagdolls.end()
                     ? athleteDefaultTravelSpeed3D(athleteRuntimeSettings(), relative, sprint)
                     : characterGaitSpeed3D(m_avatarGaitSpeeds, relative, sprint);
                 if (controlled != m_spawnedRagdolls.end() && !m_controlledAnimated) {
@@ -2841,6 +2842,8 @@ void WorkbenchApp::drawLaboratoryUi() {
                             // A reescrita (R3, 16/10): a chave A/B das trocas novas.
                             ImGui::Checkbox("Trocas de modo novas", &m_modeTable);
                             hint("A mesma regra de impacto no padrão, na volta e na ponte; a perna no topo de algo conta; empurrão conta; choque forte derruba. Desligado: as regras de antes.");
+                            ImGui::Checkbox("Velocidades do padrão no físico", &m_physicalDefaultSpeeds);
+                            hint("No físico o corpo pede a mesma tabela de velocidades do padrão (a aba Velocidades). Desligado: as velocidades dos clipes da locomoção física, mais lentas de lado e de costas.");
                             // (A locomocao fisica v2 e o "tentar se manter em pe no
                             // impacto" viraram o padrao - as caixas sairam, pedido do
                             // usuario, 06/10.)
