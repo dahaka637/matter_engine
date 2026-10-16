@@ -658,6 +658,8 @@ add_library(MatterEngine STATIC
     src/Engine/Athlete/Synthesis/LegClearance3D.cpp
     src/Engine/Athlete/Synthesis/LegSynthesis3D.cpp
     src/Engine/Athlete/Legacy/LegacyAthleteStep3D.cpp
+    src/Engine/Athlete/Modes/ContactClasses3D.cpp
+    src/Engine/Athlete/Modes/ModeRules3D.cpp
     src/Engine/Character/BiomechanicalBipedExperiment3D.cpp
     src/Engine/Character/CharacterControlApplication3D.cpp
     src/Engine/Character/CharacterLocomotion3D.cpp
@@ -1016,6 +1018,11 @@ target_compile_definitions(MatterAthleteProbe PRIVATE
 if(MATTERENGINE_BUILD_TESTS)
     # Os contratos do runtime dos atletas (Corpo Ativo, volta do fisico...).
     add_test(NAME MatterEngine.Athlete COMMAND MatterAthleteProbe --teste)
+    # Os modulos novos do atleta (a reescrita da locomocao): modulos puros,
+    # testados sozinhos (unidade, a tabela de trocas, propriedades).
+    add_executable(MatterAthleteModulesTests tests/Athlete/AthleteModulesTests.cpp)
+    target_link_libraries(MatterAthleteModulesTests PRIVATE MatterEngine)
+    add_test(NAME MatterEngine.AthleteModules COMMAND MatterAthleteModulesTests)
 endif()
 
 add_executable(MatterBallPreview tools/BallTouchPreview.cpp)

@@ -7,6 +7,7 @@
 #include "Engine/Athlete/Body/ActiveBodyController3D.hpp"
 #include "Engine/Athlete/Body/ActiveStance3D.hpp"
 #include "Engine/Athlete/Body/PhysicalFeetAssist3D.hpp"
+#include "Engine/Athlete/Modes/ModeRules3D.hpp"
 #include "Engine/Athlete/Planning/FootstepPlanner3D.hpp"
 #include "Engine/Character/BallControl3D.hpp"
 
@@ -83,6 +84,25 @@ struct AthleteRuntimeSettings3D {
     // depois do levantar e no encostao ele derrubava o jogador de novo (a
     // ponte fisico -> padrao do Plano_Claude_v2 o substitui).
     bool activeBody = false;
+    // A reescrita (R3; vault 04_locomocao/reescrita_da_locomocao.md): as
+    // trocas de modo pela tabela (ModeRules3D) e as classes de contato
+    // (ContactClasses3D). A mesma regra de impacto no padrao, na volta e na
+    // ponte; a perna no topo de algo conta; a ponte pode ser abortada (e a
+    // guia dela cai com a ajuda do impacto); a ajuda cai pelos impactos de
+    // verdade. Desligado: as regras de antes (a chave A/B).
+    bool modeTable = true;
+    ContactClassParams3D contactClasses;
+    ModeRuleParams3D modeRules;
+    // A ajuda depois do impacto com a tabela: o choque comum ate 20 N.s tira
+    // ate 20% (o encostao segue de pe); dali ate 40 N.s, ate 90% (o choque
+    // forte derruba de verdade, em vez de so amolecer).
+    float impactKneeImpulse = 20.0f;
+    float impactKneeDrop = 0.2f;
+    float impactFullImpulse = 40.0f;
+    float impactMaximumDrop = 0.9f;
+    // A janela curta dos impulsos (s): o choque espalhado por alguns ticks e
+    // o empurrao que dura contam inteiros (na ajuda e na troca de modo).
+    float impactWindowSeconds = 0.03f;
     // A ponte fisico -> padrao (plano v2, fase D): saindo do fisico (o fim
     // do levantar, o pouso de pe), o corpo segue fisico por bridgeSeconds
     // (bridgeMovingSeconds com as teclas) - os musculos do Ativo indo a pose

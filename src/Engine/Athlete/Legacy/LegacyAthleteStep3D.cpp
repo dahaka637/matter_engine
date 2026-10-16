@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdio>
 #include <string>
 #include <vector>
 
@@ -51,6 +52,22 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
     LegacyAthleteState3D& state = athlete.legacy;
     if (!athlete.observer.ready()) athlete.observer.prepare(profile);
     const auto groundHeight = [&](Vec3 position) { return athleteGroundHeight3D(scene, profile, position); };
+    // A reescrita (R3): os contatos do tick classificados num lugar so (o
+    // chao embaixo da base, o apoio dos pes, os raspoes e os impactos). A base
+    // e o chao embaixo da pelve.
+    const bool modeTable = settings.modeTable && !settings.activeBody;
+    if (modeTable && !athlete.contactBody.valid()) athlete.contactBody = contactBody3D(profile);
+    const float contactBase = body.links.empty() ? 0.0f : groundHeight(body.links.front().position);
+    ContactAssessment3D contacts;
+    float pushWindowed = 0.0f;
+    float impactWindowed = 0.0f;
+    if (modeTable) {
+        pushWindowed = athlete.pushWindow.add(body.externalPushNewtonSeconds, deltaTime, settings.impactWindowSeconds);
+        contacts = assessContacts3D(body.interactions, {}, athlete.contactBody, {}, contactBase,
+            settings.contactClasses, pushWindowed);
+        impactWindowed = athlete.impactWindow.add(contacts.impactImpulse + body.externalPushNewtonSeconds, deltaTime,
+            settings.impactWindowSeconds);
+    }
     {
         // Levou carrinho: pancada de algo que se move e uma perna de quem
         // da o carrinho a menos de 45 cm de um link dele.
@@ -76,7 +93,26 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         // forca do choque - ate 50%, ou ate 20% num carrinho levado - e
         // volta aos poucos (no padrao tambem: o choque que o leva ao
         // fisico ja conta).
-        state.impactAssist.update(impactImpulse3D(body), tackled && settings.tackledAssistLow, impulse, deltaTime);
+        // (Com a tabela, o choque e o dos impactos de verdade: inclui a perna
+        // no topo de algo, e nao conta o raspao nem o apoio.)
+        {
+            ImpactAssistSettings3D& curve = state.impactAssist.settings();
+            const ImpactAssistSettings3D plain;
+            curve.kneeImpulse = modeTable ? settings.impactKneeImpulse : plain.kneeImpulse;
+            curve.kneeDrop = modeTable ? settings.impactKneeDrop : plain.kneeDrop;
+            curve.fullImpulse = modeTable ? settings.impactFullImpulse : plain.fullImpulse;
+            curve.maximumDrop = modeTable ? settings.impactMaximumDrop : plain.maximumDrop;
+        }
+        state.impactAssist.update(modeTable ? impactWindowed : impactImpulse3D(body),
+            tackled && settings.tackledAssistLow, impulse, deltaTime);
+        // (Com a tabela: caido ou levantando, o choque ja foi gasto no tombo -
+        // a ajuda volta inteira e, de pe, ele volta ao padrao como antes. A
+        // pancada no levantar tem a regra dela, getUpHitWeakens.)
+        if (modeTable && state.bodyMode == LegacyBodyMode3D::Physical) {
+            const CharacterLocomotionState3D now = state.locomotion.telemetry().state;
+            if (now == CharacterLocomotionState3D::Fallen || now == CharacterLocomotionState3D::GettingUp)
+                state.impactAssist.reset();
+        }
     }
     const bool grabbed = scene.grabbing() && scene.grabbedRagdoll() == slot.handle;
     const auto& root = body.links.front();
@@ -424,6 +460,15 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                 && wallImpulse > (defaultTackling ? TackleHitImpulse : WallHitImpulse);
             state.bodyModeSeconds += deltaTime;
             if (state.bodyMode == BodyMode::Physical) {
+                // (A tabela no fisico so anda os relogios: o ultimo impacto e a
+                // trava depois de uma ponte abortada.)
+                if (modeTable) {
+                    ModeSignals3D signals;
+                    signals.contacts = contacts;
+                    signals.assistLevel = state.impactAssist.level();
+                    athlete.modeRules.decide(BodyModeKind3D::Physical, signals, settings.modeRules, deltaTime);
+                    athlete.lastContacts = contacts;
+                }
                 // De volta ao padrao com o corpo assentado: de pe, no chao,
                 // sem pancada, por um tempo.
                 const CharacterLocomotionState3D now = state.locomotion.telemetry().state;
@@ -474,7 +519,8 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                 // (E com a ajuda de volta inteira depois do impacto - 06/10.)
                 const bool ready = state.bodyModeSeconds > minimumSeconds
                     && state.calmSeconds > calmSeconds && landedLongEnough
-                    && !state.impactAssist.recovering();
+                    && !state.impactAssist.recovering()
+                    && (!modeTable || athlete.modeRules.returnAllowed(settings.modeRules));
                 state.returnBoost = ready
                     ? std::min(1.0f, state.returnBoost + deltaTime / ReturnBoostSeconds)
                     : std::max(0.0f, state.returnBoost - deltaTime / 0.2f);
@@ -622,6 +668,10 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                 const bool wall = control.capsuleWallImpact > WallImpact;
                 bool penetrating = false;
                 std::string penetratingLink;
+                // (No carrinho, qualquer encostada: 5 mm.)
+                const float PenetrationDepth = defaultTackling ? 0.005f
+                    : modeTable ? std::min(0.015f, settings.contactClasses.penetrationMeters) : 0.015f;
+                std::vector<RagdollWorldContact3D> worldContacts;
                 {
                     std::vector<Vec3> positions(body.links.size());
                     std::vector<Quaternion> orientations(body.links.size());
@@ -629,10 +679,8 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                         positions[i] = body.links[i].position;
                         orientations[i] = body.links[i].orientation;
                     }
-                    // (No carrinho, qualquer encostada: 5 mm.)
-                    const float PenetrationDepth = defaultTackling ? 0.005f : 0.015f;
-                    for (const RagdollWorldContact3D& contact : scene.ragdollPoseWorldContacts(
-                            slot.handle, positions, orientations, PenetrationDepth))
+                    worldContacts = scene.ragdollPoseWorldContacts(slot.handle, positions, orientations, PenetrationDepth);
+                    for (const RagdollWorldContact3D& contact : worldContacts)
                         // (O chao - normal para cima - nao conta, nem o pe na
                         // quina do degrau.)
                         if (contact.normalWorld.z < 0.6f
@@ -654,7 +702,98 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                     && ((!capsule.grounded && capsule.velocity.z > 1.0f && state.airSeconds >= JumpTakeoffSeconds)
                         || (capsule.grounded && state.airSeconds > 0.25f));
                 if (capsule.grounded) state.airSeconds = 0.0f;
-                if (!settings.activeBody && !state.bridge) {
+                if (modeTable) {
+                    // A tabela (R3): a mesma regra de impacto no padrao, na
+                    // volta e na ponte; a ponte abortada pelo corpo saindo da
+                    // pose, pelo tronco tombando, pela falta de apoio ou pela
+                    // ajuda caindo.
+                    ContactClassParams3D classes = settings.contactClasses;
+                    if (defaultTackling) classes.penetrationMeters = std::min(classes.penetrationMeters, 0.005f);
+                    ModeSignals3D signals;
+                    signals.grabbed = grabbed;
+                    signals.contacts = assessContacts3D(body.interactions, worldContacts, athlete.contactBody, {},
+                        contactBase, classes, pushWindowed);
+                    signals.actionContact = defaultTackling
+                        && (hitImpulse > TackleHitImpulse || wallImpulse > TackleHitImpulse);
+                    signals.airTackleStart = airTackle;
+                    signals.jumped = jumped;
+                    signals.capsuleWallImpact = control.capsuleWallImpact;
+                    signals.assistLevel = state.impactAssist.level();
+                    if (state.bridge) {
+                        const BodyObservation3D observation = athlete.observer.observe(profile, body, deltaTime);
+                        signals.supported = observation.supportCount > 0;
+                        signals.airborneByDesign = !capsule.grounded;
+                        const RagdollAnimationPose3D& pose = state.animationPose;
+                        // O peito tombando fora do que a pose faz (rad/s): a
+                        // velocidade do "para cima" do peito do corpo menos a
+                        // da pose (no fim do levantar o tronco sobe rapido de
+                        // proposito).
+                        const std::uint32_t chest = athlete.observer.chestLink();
+                        if (chest < body.links.size() && chest < profile.links.size()) {
+                            const Vec3 bodyUpRate = cross(body.links[chest].angularVelocity, observation.chestUp);
+                            Vec3 poseUpRate;
+                            const RagdollAnimationPose3D& before = state.previousAnimationPose;
+                            if (chest < pose.linkOrientations.size() && chest < before.linkOrientations.size()
+                                && deltaTime > 0.0f) {
+                                const Quaternion model = profile.links[chest].modelOrientation.conjugate();
+                                const Vec3 now = (pose.linkOrientations[chest] * model).rotate({ 0.0f, 0.0f, 1.0f });
+                                const Vec3 then = (before.linkOrientations[chest] * model).rotate({ 0.0f, 0.0f, 1.0f });
+                                poseUpRate = (now - then) * (1.0f / deltaTime);
+                            }
+                            signals.chestTiltRate = (bodyUpRate - poseUpRate).length();
+                        }
+                        if (observation.valid && pose.linkPositions.size() == profile.links.size()
+                            && pose.linkOrientations.size() == profile.links.size()) {
+                            Vec3 poseCenter;
+                            float poseMass = 0.0f;
+                            for (std::size_t i = 0; i < profile.links.size(); ++i) {
+                                const float m = std::max(0.0f, profile.links[i].massFraction);
+                                poseCenter += (pose.linkPositions[i]
+                                    + pose.linkOrientations[i].rotate(profile.links[i].centerOfMassLocal)) * m;
+                                poseMass += m;
+                            }
+                            if (poseMass > 0.0f) poseCenter = poseCenter * (1.0f / poseMass);
+                            Vec3 bodySupport;
+                            Vec3 poseSupport;
+                            int count = 0;
+                            for (int pass = 0; pass < 2 && count == 0; ++pass)
+                                for (const FootObservation3D& foot : observation.feet) {
+                                    if (!foot.valid || foot.link >= body.links.size()) continue;
+                                    if (pass == 0 && !foot.supporting) continue;
+                                    bodySupport += body.links[foot.link].position;
+                                    poseSupport += pose.linkPositions[foot.link];
+                                    ++count;
+                                }
+                            if (count > 0) {
+                                const float inverse = 1.0f / static_cast<float>(count);
+                                signals.pendulumDegrees = pendulumDegrees3D(observation.centerOfMass,
+                                    bodySupport * inverse);
+                                signals.poseDeviationDegrees = pendulumDeviationDegrees3D(observation.centerOfMass,
+                                    bodySupport * inverse, poseCenter, poseSupport * inverse);
+                            }
+                        }
+                    }
+                    const BodyModeKind3D kind = state.bridge ? BodyModeKind3D::Bridge
+                        : state.bodyMode == BodyMode::Returning ? BodyModeKind3D::Returning : BodyModeKind3D::Animated;
+                    const ModeDecision3D decision = athlete.modeRules.decide(kind, signals, settings.modeRules, deltaTime);
+                    athlete.lastContacts = signals.contacts;
+                    if (decision.change) {
+                        athlete.modeRules.noteTransition(kind, decision, settings.modeRules);
+                        athlete.lastDecision = decision;
+                        athlete.lastDecisionFrom = kind;
+                        std::string why = decision.event == ModeEvent3D::Jump ? std::string("pulo")
+                                                                             : std::string(modeEventName3D(decision.event));
+                        if (decision.event == ModeEvent3D::Impact || decision.event == ModeEvent3D::Penetration) {
+                            const std::uint32_t link = signals.contacts.link;
+                            if (link < profile.links.size()) why += ": " + profile.links[link].id;
+                        } else if (decision.threshold > 0.0f) {
+                            char detail[64];
+                            std::snprintf(detail, sizeof(detail), " %.2f (limiar %.2f)", decision.value, decision.threshold);
+                            why += detail;
+                        }
+                        toPhysical(why.c_str());
+                    }
+                } else if (!settings.activeBody && !state.bridge) {
                     if (hit || tackleHit || airTackle || wall || wallHit || penetrating || jumped)
                         toPhysical(grabbed ? "agarrado" : airTackle ? "voadora" : hit || tackleHit ? "pancada"
                             : wall || wallHit ? "parede" : penetrating ? ("membro no mundo: " + penetratingLink).c_str()
@@ -1136,7 +1275,10 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                 state.bridgeSeconds += deltaTime;
                 bridgeShare = std::clamp(state.bridgeSeconds / std::max(0.05f, state.bridgeDuration), 0.0f, 1.0f);
                 const float start = std::clamp(settings.bridgeAuthorityStart, 0.0f, 1.0f);
-                const float authority = start + (1.0f - start) * bridgeShare * bridgeShare * (3.0f - 2.0f * bridgeShare);
+                // (Com a tabela, a guia cai junto com a ajuda do impacto: a
+                // ponte nao segura um corpo que levou pancada.)
+                const float authority = (start + (1.0f - start) * bridgeShare * bridgeShare * (3.0f - 2.0f * bridgeShare))
+                    * (modeTable ? state.impactAssist.level() : 1.0f);
                 const std::vector<float> authorities(profile.links.size(), authority);
                 scene.setRagdollGuidePose(slot.handle, pose.linkPositions, pose.linkOrientations, authorities);
             }

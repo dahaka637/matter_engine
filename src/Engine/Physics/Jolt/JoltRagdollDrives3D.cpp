@@ -334,6 +334,7 @@ void PhysicsScene3D::Impl::resolveRagdollGuides() {
         // forcas externas explicitas. Pe apoiado em chao estatico e suporte,
         // nao interferencia.
         float impulse = r.externalForceMagnitude * stepDeltaTime;
+        r.state.externalPushNewtonSeconds = impulse;
         r.externalForceMagnitude = 0.0f;
         for (const RagdollContactPoint3D& point : r.stepContacts) {
             if (point.linkIndex >= r.profile.links.size()) continue;

@@ -16,6 +16,12 @@ struct ImpactAssistSettings3D {
     float minimumImpulse = 4.0f;
     float fullImpulse = 45.0f;
     float maximumDrop = 0.5f;
+    // A curva em dois trechos (a reescrita, R3: o choque forte que so
+    // "amolecia" porque a ajuda nunca ia abaixo da metade): de minimumImpulse
+    // ate kneeImpulse a queda vai a kneeDrop; dali ate fullImpulse, a
+    // maximumDrop. Sem joelho (kneeImpulse <= minimumImpulse), a reta de antes.
+    float kneeImpulse = 0.0f;
+    float kneeDrop = 0.0f;
     // Carrinho levado: qualquer um tira tackleBaseDrop; o impulso ate
     // tackleFullImpulse leva a tackleMaximumDrop (0,8 = a ajuda a 20%).
     // (Os carrinhos medidos no boneco: ~6 a 13 N.s - a ajuda vai de ~45% a

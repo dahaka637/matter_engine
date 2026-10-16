@@ -515,6 +515,9 @@ private:
     // que vai direto ao fisico total e a ajuda de jogo dele (m/s2).
     bool m_activeBody = false;
     bool m_physicalBridge = true;
+    // A reescrita (R3, 16/10): as trocas de modo pela tabela e as classes de
+    // contato (AthleteRuntimeSettings3D::modeTable). Desligado: as de antes.
+    bool m_modeTable = true;
     // A ajuda nos pes do corpo fisico (%; aprovada em 11/10): a forca que leva
     // o corpo passa pelos pes apoiados, no que a ajuda da pelve nao deu. E a
     // guiagem de ossos do Fisico total (%; experimento de 11/10).

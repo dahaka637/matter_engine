@@ -316,6 +316,10 @@ struct RagdollState3D {
     float rigidityPercent = 0.0f;
     float animationAuthority = 0.0f;
     float externalInterference = 0.0f;
+    // O impulso das forcas externas do ultimo passo (N.s; applyRagdollLinkForce
+    // e applyRagdollRootForce - empurroes de fora, nunca os comandos do
+    // controlador): um empurrao conta como impacto como um contato.
+    float externalPushNewtonSeconds = 0.0f;
     bool active = false;
     bool sleeping = false;
     // Pausa de inspeção: a articulation preserva a pose fora do solver até

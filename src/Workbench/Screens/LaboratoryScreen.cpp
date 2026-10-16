@@ -2838,6 +2838,9 @@ void WorkbenchApp::drawLaboratoryUi() {
                             ImGui::SetNextItemWidth(-1.0f);
                             if (ImGui::Combo("##LocomotionMode", &mode, modes, 2)) m_defaultLocomotion = mode == 0;
                             hint("Padrão: o corpo segue a animação (com massa) e vai ao físico numa pancada, parede ou queda, voltando quando assenta. Físico total: sempre pelos músculos e pelas ajudas.");
+                            // A reescrita (R3, 16/10): a chave A/B das trocas novas.
+                            ImGui::Checkbox("Trocas de modo novas", &m_modeTable);
+                            hint("A mesma regra de impacto no padrão, na volta e na ponte; a perna no topo de algo conta; empurrão conta; choque forte derruba. Desligado: as regras de antes.");
                             // (A locomocao fisica v2 e o "tentar se manter em pe no
                             // impacto" viraram o padrao - as caixas sairam, pedido do
                             // usuario, 06/10.)

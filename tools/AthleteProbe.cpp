@@ -12,6 +12,7 @@
 //      [--total] (o modo Fisico total)  [--pes %] (a ajuda nos pes)  [--guia %] (a guiagem
 //      de ossos do Fisico total)  [--espaco 0|1] (as pernas nunca se atravessam; 0 padrao)
 //      [--volta-suave 0|1] (a volta do fisico ao padrao suave, plano v4; 1 padrao)
+//      [--tabela 0|1] (as trocas de modo pela tabela e as classes de contato, a reescrita R3; 1 padrao)
 //      [--ajuda-parado %] [--ajuda-andando %]
 // Sem --cenario roda todos.
 #include "Engine/Athlete/AthleteAssets3D.hpp"
@@ -709,6 +710,19 @@ std::vector<Scenario> scenarios() {
                 return k;
             };
         };
+        // O pulo correndo contra caixas de 40 a 70 cm em varias distancias (o
+        // caso do usuario: a perna batendo no mundo no pulo).
+        for (int hi = 0; hi < 4; ++hi)
+            for (int xi = 0; xi < 5; ++xi) {
+                const float h = 0.40f + 0.10f * static_cast<float>(hi);
+                const float x = 3.4f + 0.3f * static_cast<float>(xi);
+                char name[32];
+                std::snprintf(name, sizeof(name), "topo_%02d_%02d", static_cast<int>(h * 100.0f + 0.5f),
+                    static_cast<int>(x * 10.0f + 0.5f));
+                Scenario s { name, 3.0f, jumpRun(0.95f) };
+                s.statics.push_back({ { x, 0.0f, 0.5f * h }, { 0.25f, 2.0f, 0.5f * h }, {} });
+                list.push_back(s);
+            }
         Scenario plataforma { "pulo_plataforma", 3.5f, jumpRun(0.95f) };
         plataforma.statics.push_back({ { 4.4f, 0.0f, 0.2f }, { 0.45f, 2.0f, 0.2f }, {} });
         list.push_back(plataforma);
@@ -776,6 +790,18 @@ std::vector<Scenario> scenarios() {
     {
         Scenario s { "caixa_forte", 3.5f, [](float) { return Keys {}; } };
         s.throws.push_back({ 1.0f, 60.0f, { 0.25f, 0.25f, 0.25f }, { 0.0f, 1.4f, 1.1f }, { 0.0f, -6.0f, 0.0f } });
+        list.push_back(s);
+    }
+    // A pancada dupla (a reescrita, R3; o problema 2 do usuario): a caixa forte
+    // derruba no fisico e a media chega em instantes diferentes - na volta (a
+    // ponte) ela era engolida (so acima de 25 N.s ia ao fisico).
+    for (int k = 0; k < 12; ++k) {
+        const float at = 2.0f + 0.15f * static_cast<float>(k);
+        char name[32];
+        std::snprintf(name, sizeof(name), "dupla_%02d", k);
+        Scenario s { name, 7.0f, [](float) { return Keys {}; } };
+        s.throws.push_back({ 1.0f, 60.0f, { 0.25f, 0.25f, 0.25f }, { 0.0f, 1.4f, 1.1f }, { 0.0f, -6.0f, 0.0f } });
+        s.throws.push_back({ at, 20.0f, { 0.2f, 0.2f, 0.2f }, { 0.0f, 1.3f, 1.1f }, { 0.0f, -5.0f, 0.0f } });
         list.push_back(s);
     }
     {
@@ -1951,12 +1977,29 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
                     pelvisLink.position.z, poseRoot, chest.z, worst);
             }
         }
+        // XPRONTO=1: as condicoes da volta do fisico ao padrao, a cada 0,1 s.
+        if (std::getenv("XPRONTO") && legacy.bodyMode == LegacyBodyMode3D::Physical && step % 12 == 0)
+            std::printf("  t %.2f estado %d calma %.2f ajuda %.2f desde-impacto %.2f trava %.2f perturbacao %.2f cambaleio %.2f\n",
+                t, static_cast<int>(legacy.locomotion.telemetry().state), legacy.calmSeconds, legacy.impactAssist.level(),
+                athlete.modeRules.secondsSinceImpact(), athlete.modeRules.lockoutLeft(),
+                legacy.adaptivePhysics.output().perturbation, legacy.locomotion.telemetry().stagger);
         if (legacy.bodyMode != previousMode) {
             if (legacy.bodyMode == LegacyBodyMode3D::Physical && metrics.trail.find("volta>animado") != std::string::npos)
                 ++metrics.relapses;
             ++metrics.modeSwitches;
             metrics.trail += std::string(">") + modeOf();
             if (dump != nullptr) std::fprintf(dump, "E %s\n", modeOf());
+            // XTROCAS=1: cada troca com o instante e, pela tabela (R3), o motivo,
+            // o valor, o limiar e o que bateu no tick.
+            if (std::getenv("XTROCAS")) {
+                const ContactAssessment3D& c = athlete.lastContacts;
+                const ModeDecision3D& d = athlete.lastDecision;
+                std::printf("  t %.3f -> %s | ultima decisao: %s %.3f (limiar %.3f) | contato: link %s impulso %.2f N.s "
+                            "Dv corpo %.3f link %.2f penetracao %.3f%s\n",
+                    t, modeOf(), modeEventName3D(d.event), d.value, d.threshold,
+                    c.link < profile.links.size() ? profile.links[c.link].id.c_str() : "?", c.impactImpulse,
+                    c.bodyDeltaV, c.linkDeltaV, c.penetrationMeters, c.fromPenetration ? " (penetracao)" : "");
+            }
         }
         previousMode = legacy.bodyMode;
         (legacy.bodyMode == LegacyBodyMode3D::Animated ? metrics.animatedSeconds
@@ -2193,8 +2236,8 @@ void printMetrics(const Scenario& scenario, const Metrics& metrics, bool footste
         metrics.worstPoseJump, metrics.modeSwitches, metrics.animatedSeconds, metrics.activeSeconds,
         metrics.physicalSeconds, metrics.returningSeconds, metrics.assistImpulse, metrics.fell ? "CAIU, " : "",
         metrics.requests, metrics.touches, metrics.ballSpeedAfter);
-    std::printf("%-18s   andou %.2f m, recaidas %d, fim %s (%s)\n", "", metrics.travel, metrics.relapses,
-        modeName(metrics.finalMode), metrics.trail.c_str());
+    std::printf("%-18s   andou %.2f m, recaidas %d, %s, fim %s (%s)\n", "", metrics.travel, metrics.relapses,
+        metrics.fell ? "CAIU" : "de pe", modeName(metrics.finalMode), metrics.trail.c_str());
     std::printf("%-18s   joelho esticando max %.0f graus/s (alvo %.0f), acel max %.0f graus/s2\n", "",
         metrics.peakKneeExtension, metrics.peakKneeExtensionTarget, metrics.peakKneeAcceleration);
     std::printf("%-18s   apoio %5.2f / %5.2f / %5.2f m/s%s", "", percentile(metrics.plantedSlide, 0.5f),
@@ -2622,6 +2665,7 @@ int main(int argc, char** argv) {
     float boneGuide = AthleteRuntimeSettings3D {}.physicalBoneGuidePercent;
     bool legClearance = AthleteRuntimeSettings3D {}.legClearance.enabled;
     bool returnSmoothing = AthleteRuntimeSettings3D {}.returnSmoothing;
+    bool modeTable = AthleteRuntimeSettings3D {}.modeTable;
     float standingAssist = AthleteRuntimeSettings3D {}.e5StandingAssistPercent;
     float walkingAssist = AthleteRuntimeSettings3D {}.e5WalkingAssistPercent;
     for (int i = 1; i < argc; ++i) {
@@ -2646,6 +2690,7 @@ int main(int argc, char** argv) {
         else if (arg == "--guia") boneGuide = static_cast<float>(std::atof(need()));
         else if (arg == "--espaco") legClearance = std::atoi(need()) != 0;
         else if (arg == "--volta-suave") returnSmoothing = std::atoi(need()) != 0;
+        else if (arg == "--tabela") modeTable = std::atoi(need()) != 0;
         else if (arg == "--ajuda-parado") standingAssist = static_cast<float>(std::atof(need()));
         else if (arg == "--ajuda-andando") walkingAssist = static_cast<float>(std::atof(need()));
         else if (arg == "--lista") {
@@ -2683,6 +2728,7 @@ int main(int argc, char** argv) {
     settings.physicalBoneGuidePercent = boneGuide;
     settings.legClearance.enabled = legClearance;
     settings.returnSmoothing = returnSmoothing;
+    settings.modeTable = modeTable;
     settings.e5StandingAssistPercent = standingAssist;
     settings.e5WalkingAssistPercent = walkingAssist;
     if (totalPhysical) {
