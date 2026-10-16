@@ -65,6 +65,12 @@ check_absent "Atletas: so o legado e a casca de migracao incluem os controladore
     '#include "Engine/(Character|Control|Locomotion)/' src/Engine/Athlete \
     -g '!src/Engine/Athlete/Legacy/**' -g '!src/Engine/Athlete/AthleteRuntime3D.*' \
     -g '!src/Engine/Athlete/AthleteSettings3D.hpp' -g '!src/Engine/Athlete/AthleteAssets3D.*'
+check_absent "O treino da locomocao (Athlete/Training) usa o atleta so pelo runtime: nem o legado nem os controladores antigos" \
+    '#include "Engine/(Character|Control|Locomotion)/|#include "Engine/Athlete/Legacy/' src/Engine/Athlete/Training
+check_absent "O treino da locomocao nao entra no jogo: o motor e o laboratorio nao o incluem" \
+    '#include "Engine/Athlete/Training/' src/Engine src/Workbench -g '!src/Engine/Athlete/Training/**'
+check_absent "O treino da locomocao nao fala com o treinador, o estilo nem a interface" \
+    '#include "(Workbench|Engine/RL/(Supervisor|Style))/' src/Engine/Athlete/Training
 check_absent "Atletas: planejamento, sintese, acoes, pedidos e bola trabalham com dados (sem a cena fisica nem o Jolt; so os sentidos leem a fisica)" \
     '#include "Engine/Physics/(PhysicsScene3D|PhysicsEngine3D)|Jolt' src/Engine/Athlete/Planning src/Engine/Athlete/Synthesis \
     src/Engine/Athlete/Actions src/Engine/Athlete/Intent src/Engine/Athlete/Ball src/Engine/Athlete/Core \

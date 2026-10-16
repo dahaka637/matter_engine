@@ -1,6 +1,9 @@
 #pragma once
 
 #include "Engine/Athlete/AthleteState3D.hpp"
+#include "Engine/Physics/PhysicsScene3D.hpp"
+
+#include <cstdint>
 
 namespace MatterEngine {
 
@@ -24,6 +27,8 @@ struct AthleteTelemetry3D {
     bool tackling = false;
     float stagger = 0.0f;
     float perturbation = 0.0f;
+    // A velocidade que o terreno a frente deixa (m/s; degrau, rampa).
+    float terrainSpeedLimit = 1.0e9f;
     // Os contatos do ultimo tick e a ultima troca decidida pela tabela.
     ContactAssessment3D contacts;
     ModeDecision3D lastDecision;
@@ -31,6 +36,22 @@ struct AthleteTelemetry3D {
 };
 
 [[nodiscard]] AthleteTelemetry3D athleteTelemetry3D(const AthleteState3D& athlete);
+
+// A impressao digital de um tick (a paridade, R1 da reescrita): o corpo
+// publicado (posicao, orientacao e velocidades dos links), o que o controle
+// mandou (os alvos dos motores, a guia da raiz e a forca dela), as forcas da
+// ajuda (a pelve, os pes, as maos e a ajuda nos pes) e as decisoes (o modo e a
+// ultima troca). Bit a bit: dois caminhos iguais dao os mesmos numeros, e o
+// primeiro que difere diz onde eles se separaram.
+struct AthleteTickDigest3D {
+    std::uint64_t body = 0;
+    std::uint64_t targets = 0;
+    std::uint64_t assist = 0;
+    std::uint64_t decisions = 0;
+    friend bool operator==(const AthleteTickDigest3D&, const AthleteTickDigest3D&) = default;
+};
+
+[[nodiscard]] AthleteTickDigest3D athleteTickDigest3D(const AthleteState3D& athlete, const RagdollState3D& body);
 
 // O codigo do modo na gravacao da sonda (o formato de antes: 0 animado, 1
 // fisico, 2 volta, 3 ativo/ponte).

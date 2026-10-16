@@ -4,10 +4,64 @@
 
 #include "Engine/Athlete/Legacy/LegacyAthleteStep3D.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <string>
 #include <vector>
 
 namespace MatterEngine {
+
+AthleteCommand3D athleteStickCommand3D(const AthleteStickInput3D& stick, const AthleteRuntimeSettings3D& settings,
+    const CharacterGaitSpeeds3D& gaitSpeeds, float terrainSpeedLimit) {
+    AthleteCommand3D command;
+    CharacterIntent3D& intent = command.intent;
+    intent.requestedFacingYawRadians = stick.cameraYawRadians;
+    intent.effort = stick.sprint ? 1.0f : 0.0f;
+    intent.crouch = stick.crouch;
+    const Vec3 move { stick.moveWorld.x, stick.moveWorld.y, 0.0f };
+    if (move.lengthSquared() > 1e-4f) {
+        const Vec3 direction = move.normalized();
+        const float travelRelative = std::atan2(direction.y, direction.x) - stick.cameraYawRadians;
+        const float wanted = settings.physicalUsesDefaultSpeeds
+            ? athleteDefaultTravelSpeed3D(settings, travelRelative, stick.sprint)
+            : characterGaitSpeed3D(gaitSpeeds, travelRelative, stick.sprint);
+        intent.requestedDirectionWorld = direction;
+        const float speed = std::min(wanted * std::min(1.0f, move.length()), terrainSpeedLimit);
+        intent.requestedVelocityWorld = direction * speed;
+    }
+    command.facingYawRadians = stick.cameraYawRadians;
+    command.lookPitchRadians = stick.lookPitchRadians;
+    command.sprinting = stick.sprint;
+    return command;
+}
+
+void athleteStart3D(PhysicsScene3D& scene, RagdollHandle3D handle, const RagdollProfile3D& profile,
+    const RagdollState3D& body, AthleteState3D& athlete, AthleteStartMode3D mode) {
+    LegacyAthleteState3D& legacy = athlete.legacy;
+    legacy.guideFacingYawRadians = 0.0f;
+    legacy.locomotion.reset(profile, body);
+    legacy.adaptivePhysics.reset(profile);
+    if (mode == AthleteStartMode3D::Default) {
+        legacy.defaultLocomotion.reset(0.0f);
+        legacy.guided = true;
+        legacy.bodyMode = LegacyBodyMode3D::Animated;
+        scene.setRagdollGuided(handle, true);
+    }
+}
+
+AthleteSnapshot3D athleteSnapshot3D(const AthleteState3D& athlete, const RagdollState3D& body) {
+    return AthleteSnapshot3D { athlete, body };
+}
+
+void athleteRestore3D(PhysicsScene3D& scene, RagdollHandle3D handle, const AthleteSnapshot3D& snapshot,
+    AthleteState3D& athlete, RagdollState3D& body) {
+    scene.resetRagdollState(handle, snapshot.body.links);
+    athlete = snapshot.athlete;
+    // (O guiado e o unico estado da cena que o passo so escreve nas trocas;
+    // os alvos, a guia e o atrito ele escreve a cada tick.)
+    scene.setRagdollGuided(handle, athlete.legacy.guided);
+    body = snapshot.body;
+}
 
 float athleteGroundHeight3D(const PhysicsScene3D& scene, const RagdollProfile3D& profile, Vec3 position) {
     PhysicsRayHit3D hit;

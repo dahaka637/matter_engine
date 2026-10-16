@@ -120,6 +120,51 @@ public:
         float deltaTime, AthleteRuntimeOutput3D& output);
 };
 
+// O analogico e a camera de quem comanda um atleta: o rumo no mundo (o
+// analogico ja virado pela camera; o comprimento, ate 1, e a fracao da
+// velocidade), o olhar e os botoes.
+struct AthleteStickInput3D {
+    Vec3 moveWorld;
+    float cameraYawRadians = 0.0f;
+    float lookPitchRadians = -0.2f;
+    bool sprint = false;
+    bool crouch = false;
+};
+
+// O comando pelo analogico, como a entrada do laboratorio pede no fisico: a
+// velocidade pelo rumo em relacao ao olhar (a tabela do padrao; com
+// physicalUsesDefaultSpeeds desligado, a natural dos clipes do fisico), vezes
+// a fracao do analogico, no limite do terreno (AthleteTelemetry3D). Um so
+// mapeamento para a sonda, os mundos de treino e o piloto do RL.
+[[nodiscard]] AthleteCommand3D athleteStickCommand3D(const AthleteStickInput3D& stick,
+    const AthleteRuntimeSettings3D& settings, const CharacterGaitSpeeds3D& gaitSpeeds, float terrainSpeedLimit);
+
+// Como um atleta comeca num corpo recem-criado: no padrao (como "Restaurar
+// pose" do laboratorio) ou no fisico (como ao assumir um boneco).
+enum class AthleteStartMode3D : std::uint8_t { Default = 0, Physical };
+
+void athleteStart3D(PhysicsScene3D& scene, RagdollHandle3D handle, const RagdollProfile3D& profile,
+    const RagdollState3D& body, AthleteState3D& athlete, AthleteStartMode3D mode);
+
+// Um instante guardado de um atleta: o estado do controle e o corpo
+// publicado no ultimo passo (os links e o que o controle le dele: contatos,
+// juntas, interferencia). Recomecar dele e o comeco "em estados guardados" do
+// plano do RL, e a paridade parte dele. O que o solver lembrava (o arranque
+// quente dos contatos e dos motores) nao vem junto: o recomeco nao e a
+// continuacao bit a bit, mas dois recomecos do mesmo instante sao iguais.
+struct AthleteSnapshot3D {
+    AthleteState3D athlete;
+    RagdollState3D body;
+};
+
+[[nodiscard]] AthleteSnapshot3D athleteSnapshot3D(const AthleteState3D& athlete, const RagdollState3D& body);
+
+// Poe o instante num corpo do mesmo perfil e no estado de controle dele (o
+// corpo publicado volta a ser o guardado: o proximo tick ve o que a
+// continuacao veria).
+void athleteRestore3D(PhysicsScene3D& scene, RagdollHandle3D handle, const AthleteSnapshot3D& snapshot,
+    AthleteState3D& athlete, RagdollState3D& body);
+
 // O chao embaixo de um ponto (raio no estatico; sem chao, a altura de pe do
 // perfil abaixo dele).
 [[nodiscard]] float athleteGroundHeight3D(const PhysicsScene3D& scene, const RagdollProfile3D& profile, Vec3 position);

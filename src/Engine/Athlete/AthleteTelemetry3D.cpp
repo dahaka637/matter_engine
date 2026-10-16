@@ -1,5 +1,7 @@
 #include "Engine/Athlete/AthleteTelemetry3D.hpp"
 
+#include <cstring>
+
 namespace MatterEngine {
 
 AthleteTelemetry3D athleteTelemetry3D(const AthleteState3D& athlete) {
@@ -22,9 +24,93 @@ AthleteTelemetry3D athleteTelemetry3D(const AthleteState3D& athlete) {
     out.tackling = (physical && locomotion.state == CharacterLocomotionState3D::Tackling) || legacy.defaultTackling;
     out.stagger = physical ? locomotion.stagger : 0.0f;
     out.perturbation = physical ? legacy.adaptivePhysics.output().perturbation : 0.0f;
+    out.terrainSpeedLimit = locomotion.terrainSpeedLimit;
     out.contacts = athlete.lastContacts;
     out.lastDecision = athlete.lastDecision;
     out.lastDecisionFrom = athlete.lastDecisionFrom;
+    return out;
+}
+
+namespace {
+
+// FNV-1a de 64 bits sobre os bits dos numeros (bit a bit: -0 e 0 diferem,
+// como deve ser numa prova de igualdade).
+struct Digest {
+    std::uint64_t value = 1469598103934665603ull;
+    void bytes(const void* data, std::size_t size) {
+        const auto* p = static_cast<const unsigned char*>(data);
+        for (std::size_t i = 0; i < size; ++i) {
+            value ^= p[i];
+            value *= 1099511628211ull;
+        }
+    }
+    void add(float v) {
+        std::uint32_t bits = 0;
+        std::memcpy(&bits, &v, sizeof bits);
+        bytes(&bits, sizeof bits);
+    }
+    void add(std::uint32_t v) { bytes(&v, sizeof v); }
+    void add(Vec3 v) { add(v.x); add(v.y); add(v.z); }
+    void add(Quaternion q) { add(q.x); add(q.y); add(q.z); add(q.w); }
+};
+
+} // namespace
+
+AthleteTickDigest3D athleteTickDigest3D(const AthleteState3D& athlete, const RagdollState3D& body) {
+    AthleteTickDigest3D out;
+    Digest links;
+    for (const PhysicsBodyState3D& link : body.links) {
+        links.add(link.position);
+        links.add(link.orientation);
+        links.add(link.linearVelocity);
+        links.add(link.angularVelocity);
+    }
+    out.body = links.value;
+    const LegacyAthleteState3D& legacy = athlete.legacy;
+    const CharacterLocomotionOutput3D& locomotion = legacy.locomotion.output();
+    Digest targets;
+    for (const RagdollDriveTarget3D& target : locomotion.driveTargets) {
+        targets.add(target.linkIndex);
+        targets.add(static_cast<std::uint32_t>(target.axis));
+        targets.add(target.positionRadians);
+        targets.add(target.velocityRadiansPerSecond);
+        targets.add(target.feedforwardTorqueNewtonMeters);
+        targets.add(target.stiffnessScale);
+        targets.add(target.dampingScale);
+        targets.add(target.maximumTorqueScale);
+    }
+    targets.add(locomotion.guide.rootPositionWorld);
+    targets.add(locomotion.guide.rootOrientationWorld);
+    targets.add(locomotion.rootControlForceWorld);
+    targets.add(locomotion.rootControlTorqueWorld);
+    out.targets = targets.value;
+    const AdaptivePhysicalOutput3D& adaptive = legacy.adaptivePhysics.output();
+    Digest assist;
+    assist.add(adaptive.rootForceWorld);
+    assist.add(adaptive.rootTorqueWorld);
+    for (std::size_t side = 0; side < 2; ++side) {
+        assist.add(adaptive.footForceWorld[side]);
+        assist.add(adaptive.footTorqueWorld[side]);
+        assist.add(adaptive.handTorqueWorld[side]);
+    }
+    for (const LinkWrench3D& wrench : athlete.feetAssistOutput.wrenches) {
+        assist.add(wrench.link);
+        assist.add(wrench.force);
+        assist.add(wrench.torque);
+    }
+    assist.add(legacy.impactAssist.level());
+    out.assist = assist.value;
+    Digest decisions;
+    const AthleteTelemetry3D telemetry = athleteTelemetry3D(athlete);
+    decisions.add(static_cast<std::uint32_t>(telemetry.mode));
+    decisions.add(telemetry.modeSeconds);
+    decisions.add(static_cast<std::uint32_t>(telemetry.fallen) | static_cast<std::uint32_t>(telemetry.gettingUp) << 1
+        | static_cast<std::uint32_t>(telemetry.tackling) << 2);
+    decisions.add(static_cast<std::uint32_t>(athlete.lastDecision.change));
+    decisions.add(static_cast<std::uint32_t>(athlete.lastDecision.to));
+    decisions.add(static_cast<std::uint32_t>(athlete.lastDecision.event));
+    decisions.add(athlete.lastDecision.value);
+    out.decisions = decisions.value;
     return out;
 }
 
