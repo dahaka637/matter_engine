@@ -65,6 +65,16 @@ AthleteTickDigest3D athleteTickDigest3D(const AthleteState3D& athlete, const Rag
         links.add(link.linearVelocity);
         links.add(link.angularVelocity);
     }
+    for (const RagdollInteraction3D& contact : body.interactions) {
+        links.add(contact.linkIndex);
+        links.add(static_cast<std::uint32_t>(contact.otherMotion));
+        links.add(contact.normalWorld);
+        links.add(contact.normalImpulseNewtonSeconds);
+    }
+    for (const RagdollJointState3D& joint : body.joints)
+        for (float angle : joint.positionRadians) links.add(angle);
+    links.add(body.externalInterference);
+    links.add(body.externalPushNewtonSeconds);
     out.body = links.value;
     const LegacyAthleteState3D& legacy = athlete.legacy;
     const CharacterLocomotionOutput3D& locomotion = legacy.locomotion.output();
@@ -110,7 +120,17 @@ AthleteTickDigest3D athleteTickDigest3D(const AthleteState3D& athlete, const Rag
     decisions.add(static_cast<std::uint32_t>(athlete.lastDecision.to));
     decisions.add(static_cast<std::uint32_t>(athlete.lastDecision.event));
     decisions.add(athlete.lastDecision.value);
+    decisions.add(static_cast<std::uint32_t>(legacy.bridge) | static_cast<std::uint32_t>(legacy.guided) << 1);
     out.decisions = decisions.value;
+    Digest navigation;
+    navigation.add(legacy.navigationAnchor);
+    navigation.add(athlete.commandPlanVelocity);
+    navigation.add(athlete.commandTurnRate);
+    navigation.add(athlete.pushWindow.value);
+    navigation.add(athlete.impactWindow.value);
+    navigation.add(legacy.returnBoost);
+    navigation.add(legacy.returnRampLeft);
+    out.navigation = navigation.value;
     return out;
 }
 

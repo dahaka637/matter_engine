@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <vector>
 
 namespace MatterEngine {
 
@@ -15,6 +16,27 @@ class MaterialLibrary;
 // com o topo em z = 0.
 void createLocomotionGround3D(PhysicsScene3D& scene);
 
+// Uma caixa parada no mundo (parede, degrau, rampa, a barra escondida): o
+// centro, a meia-dimensao e a orientacao; de concreto.
+struct LocomotionStaticBox3D {
+    Vec3 center;
+    Vec3 halfExtents;
+    Quaternion orientation;
+};
+
+void createLocomotionStaticBox3D(PhysicsScene3D& scene, const LocomotionStaticBox3D& box);
+
+// Uma caixa de madeira arremessada (a pancada de verdade: contato, nao
+// forca): onde nasce, a velocidade, a massa e a meia-dimensao.
+struct LocomotionThrow3D {
+    Vec3 position;
+    Vec3 velocity;
+    float massKg = 20.0f;
+    Vec3 halfExtents { 0.2f, 0.2f, 0.2f };
+};
+
+void createLocomotionThrow3D(PhysicsScene3D& scene, const LocomotionThrow3D& item);
+
 // O corpo de um atleta de pe na origem (a pelve na altura de pe do perfil, a
 // pose de ligacao), como a sonda e o laboratorio o criam.
 [[nodiscard]] RagdollHandle3D spawnLocomotionAthlete3D(PhysicsScene3D& scene, const RagdollProfile3D& profile,
@@ -23,6 +45,8 @@ void createLocomotionGround3D(PhysicsScene3D& scene);
 struct LocomotionWorldSettings3D {
     // Os ajustes do jogo (a ajuda, a tabela de velocidades, as chaves).
     AthleteRuntimeSettings3D runtime;
+    // O terreno alem do chao (criado depois dele, antes do corpo).
+    std::vector<LocomotionStaticBox3D> statics;
     // A cena: as threads do passo (o lote roda uma cena por thread, inline).
     PhysicsSceneSettings3D scene;
     // O tick do jogo (s).
@@ -38,7 +62,12 @@ struct LocomotionWorldSettings3D {
 // tem a capsula virtual dele (AthleteSlot3D::command).
 //
 // Hoje o atleta comandado so roda no fisico (o padrao e do controlado com a
-// capsula): os comecos "no padrao" do plano esperam o padrao comandado.
+// capsula): os comecos "no padrao" do plano esperam o padrao comandado. Por
+// isso o recomeco (athleteRestore3D) basta: no fisico o passo reescreve os
+// alvos, a guia e o atrito a cada tick, e o guiado volta junto.
+//
+// O motor fisico, os materiais e os recursos (perfil, clipes) sao de quem
+// chama e precisam viver mais que o mundo.
 class LocomotionWorld3D final {
 public:
     LocomotionWorld3D(PhysicsEngine3D& engine, const MaterialLibrary& materials, const AthleteRuntimeAssets3D& assets,
@@ -56,6 +85,11 @@ public:
     // Uma forca num link no proximo tick, entre o passo do atleta e a fisica
     // (onde a sonda e o painel de impacto empurram).
     void push(std::uint32_t link, Vec3 force);
+    // Uma caixa arremessada no proximo tick (no mesmo lugar, antes dos
+    // empurroes, como a sonda).
+    void throwBox(const LocomotionThrow3D& item);
+    // O terreno do proximo comeco (reset ou restore).
+    void setStatics(std::vector<LocomotionStaticBox3D> statics);
 
     // Um tick: o comando, o passo do atleta pelo runtime, os empurroes e a
     // fisica.
@@ -69,6 +103,9 @@ public:
     [[nodiscard]] PhysicsScene3D& scene();
     [[nodiscard]] RagdollHandle3D handle() const;
     [[nodiscard]] const LocomotionWorldSettings3D& settings() const;
+    // Os ajustes do jogo deste mundo (o nivel da ajuda de um episodio; valem
+    // do proximo tick).
+    [[nodiscard]] AthleteRuntimeSettings3D& runtimeSettings();
     // Os ticks desde o comeco (um recomeco num instante guardado zera).
     [[nodiscard]] std::uint64_t ticks() const;
     // O custo do ultimo tick (s): o passo do atleta e a fisica.

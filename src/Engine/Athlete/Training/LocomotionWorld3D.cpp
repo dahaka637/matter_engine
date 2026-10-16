@@ -2,6 +2,7 @@
 
 #include "Engine/Materials/MaterialLibrary.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <span>
 #include <stdexcept>
@@ -20,6 +21,33 @@ void createLocomotionGround3D(PhysicsScene3D& scene) {
     ground.position = { 0.0f, 0.0f, -0.1f };
     ground.materialId = "concrete";
     (void)scene.createBody(ground, std::span<const PhysicsShape3D>(&shape, 1));
+}
+
+void createLocomotionStaticBox3D(PhysicsScene3D& scene, const LocomotionStaticBox3D& box) {
+    PhysicsShape3D shape;
+    shape.type = PhysicsShapeType3D::Box;
+    shape.halfExtents = box.halfExtents;
+    shape.materialId = "concrete";
+    PhysicsBodyDefinition3D body;
+    body.motionType = PhysicsMotionType3D::Static;
+    body.position = box.center;
+    body.orientation = box.orientation;
+    body.materialId = "concrete";
+    (void)scene.createBody(body, std::span<const PhysicsShape3D>(&shape, 1));
+}
+
+void createLocomotionThrow3D(PhysicsScene3D& scene, const LocomotionThrow3D& item) {
+    PhysicsShape3D shape;
+    shape.type = PhysicsShapeType3D::Box;
+    shape.halfExtents = item.halfExtents;
+    shape.materialId = "wood";
+    PhysicsBodyDefinition3D box;
+    box.position = item.position;
+    box.linearVelocity = item.velocity;
+    box.massKg = item.massKg;
+    box.materialId = "wood";
+    box.characteristicSizeMeters = 2.0f * std::max({ item.halfExtents.x, item.halfExtents.y, item.halfExtents.z });
+    (void)scene.createBody(box, std::span<const PhysicsShape3D>(&shape, 1));
 }
 
 RagdollHandle3D spawnLocomotionAthlete3D(PhysicsScene3D& scene, const RagdollProfile3D& profile,
@@ -42,6 +70,7 @@ struct LocomotionWorld3D::Impl {
     AthleteState3D athlete;
     AthleteRuntime3D runtime;
     std::vector<std::pair<std::uint32_t, Vec3>> pushes;
+    std::vector<LocomotionThrow3D> throws;
     std::uint64_t ticks = 0;
     double athleteSeconds = 0.0;
     double physicsSeconds = 0.0;
@@ -56,11 +85,13 @@ struct LocomotionWorld3D::Impl {
         scene.reset();
         scene = engine.createScene(settings.scene, materials);
         createLocomotionGround3D(*scene);
+        for (const LocomotionStaticBox3D& box : settings.statics) createLocomotionStaticBox3D(*scene, box);
         handle = spawnLocomotionAthlete3D(*scene, *assets.profile);
         body = scene->ragdollState(handle);
         athlete = AthleteState3D {};
         runtime = AthleteRuntime3D {};
         pushes.clear();
+        throws.clear();
         ticks = 0;
         athleteSeconds = physicsSeconds = 0.0;
     }
@@ -91,6 +122,10 @@ void LocomotionWorld3D::restore(const AthleteSnapshot3D& snapshot) {
 AthleteSnapshot3D LocomotionWorld3D::snapshot() const { return athleteSnapshot3D(m_impl->athlete, m_impl->body); }
 
 void LocomotionWorld3D::push(std::uint32_t link, Vec3 force) { m_impl->pushes.push_back({ link, force }); }
+void LocomotionWorld3D::throwBox(const LocomotionThrow3D& item) { m_impl->throws.push_back(item); }
+void LocomotionWorld3D::setStatics(std::vector<LocomotionStaticBox3D> statics) {
+    m_impl->settings.statics = std::move(statics);
+}
 
 void LocomotionWorld3D::step(const AthleteCommand3D& command) {
     Impl& w = *m_impl;
@@ -104,6 +139,8 @@ void LocomotionWorld3D::step(const AthleteCommand3D& command) {
     AthleteRuntimeOutput3D output;
     w.runtime.update(*w.scene, w.assets, std::span<AthleteSlot3D>(&slot, 1), {}, w.settings.runtime, control,
         w.settings.tickSeconds, output);
+    for (const LocomotionThrow3D& item : w.throws) createLocomotionThrow3D(*w.scene, item);
+    w.throws.clear();
     for (const auto& [link, force] : w.pushes) w.scene->applyRagdollLinkForce(w.handle, link, force, {});
     w.pushes.clear();
     const auto stepped = Clock::now();
@@ -122,6 +159,7 @@ AthleteTelemetry3D LocomotionWorld3D::telemetry() const { return athleteTelemetr
 PhysicsScene3D& LocomotionWorld3D::scene() { return *m_impl->scene; }
 RagdollHandle3D LocomotionWorld3D::handle() const { return m_impl->handle; }
 const LocomotionWorldSettings3D& LocomotionWorld3D::settings() const { return m_impl->settings; }
+AthleteRuntimeSettings3D& LocomotionWorld3D::runtimeSettings() { return m_impl->settings.runtime; }
 std::uint64_t LocomotionWorld3D::ticks() const { return m_impl->ticks; }
 double LocomotionWorld3D::lastAthleteSeconds() const { return m_impl->athleteSeconds; }
 double LocomotionWorld3D::lastPhysicsSeconds() const { return m_impl->physicsSeconds; }

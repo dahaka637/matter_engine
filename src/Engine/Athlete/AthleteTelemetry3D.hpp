@@ -38,16 +38,19 @@ struct AthleteTelemetry3D {
 [[nodiscard]] AthleteTelemetry3D athleteTelemetry3D(const AthleteState3D& athlete);
 
 // A impressao digital de um tick (a paridade, R1 da reescrita): o corpo
-// publicado (posicao, orientacao e velocidades dos links), o que o controle
-// mandou (os alvos dos motores, a guia da raiz e a forca dela), as forcas da
-// ajuda (a pelve, os pes, as maos e a ajuda nos pes) e as decisoes (o modo e a
-// ultima troca). Bit a bit: dois caminhos iguais dao os mesmos numeros, e o
-// primeiro que difere diz onde eles se separaram.
+// publicado (posicao, orientacao e velocidades dos links, os contatos e as
+// juntas), o que o controle mandou (os alvos dos motores, a guia da raiz e a
+// forca dela), as forcas da ajuda (a pelve, os pes, as maos e a ajuda nos
+// pes), as decisoes (o modo, a ponte, a ultima troca) e o estado de navegacao
+// (a ancora, o plano do comandado, as janelas de impulso, a volta). Bit a bit:
+// dois caminhos iguais dao os mesmos numeros, e o primeiro que difere diz
+// onde eles se separaram.
 struct AthleteTickDigest3D {
     std::uint64_t body = 0;
     std::uint64_t targets = 0;
     std::uint64_t assist = 0;
     std::uint64_t decisions = 0;
+    std::uint64_t navigation = 0;
     friend bool operator==(const AthleteTickDigest3D&, const AthleteTickDigest3D&) = default;
 };
 

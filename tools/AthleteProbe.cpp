@@ -22,6 +22,7 @@
 #include "Engine/Athlete/AthleteAssets3D.hpp"
 #include "Engine/Athlete/AthleteRuntime3D.hpp"
 #include "Engine/Athlete/AthleteTelemetry3D.hpp"
+#include "Engine/Athlete/Training/LocomotionBatch3D.hpp"
 #include "Engine/Athlete/Training/LocomotionWorld3D.hpp"
 #include "Engine/Athlete/Dribble/BodyForecast3D.hpp"
 #include "Engine/Athlete/Dribble/ContactPose3D.hpp"
@@ -1096,18 +1097,7 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
     {
         std::vector<StaticBox> statics = scenario.statics;
         if (scenario.wallHalf.lengthSquared() > 0.0f) statics.push_back({ scenario.wallCenter, scenario.wallHalf, {} });
-        for (const StaticBox& box : statics) {
-            PhysicsShape3D shape;
-            shape.type = PhysicsShapeType3D::Box;
-            shape.halfExtents = box.half;
-            shape.materialId = "concrete";
-            PhysicsBodyDefinition3D body;
-            body.motionType = PhysicsMotionType3D::Static;
-            body.position = box.center;
-            body.orientation = box.orientation;
-            body.materialId = "concrete";
-            (void)scene->createBody(body, std::span<const PhysicsShape3D>(&shape, 1));
-        }
+        for (const StaticBox& box : statics) createLocomotionStaticBox3D(*scene, { box.center, box.half, box.orientation });
     }
     // (--sem-capsula: nenhuma capsula na cena, como num mundo de treino.)
     if (!context.noCapsule)
@@ -1562,17 +1552,7 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
         }
         for (const Throw& item : scenario.throws)
             if (t >= item.at && t < item.at + Dt) {
-                PhysicsShape3D shape;
-                shape.type = PhysicsShapeType3D::Box;
-                shape.halfExtents = item.halfExtents;
-                shape.materialId = "wood";
-                PhysicsBodyDefinition3D box;
-                box.position = item.start;
-                box.linearVelocity = item.velocity;
-                box.massKg = item.massKg;
-                box.materialId = "wood";
-                box.characteristicSizeMeters = 2.0f * std::max({ item.halfExtents.x, item.halfExtents.y, item.halfExtents.z });
-                (void)scene->createBody(box, std::span<const PhysicsShape3D>(&shape, 1));
+                createLocomotionThrow3D(*scene, { item.start, item.velocity, item.massKg, item.halfExtents });
                 if (dump != nullptr) std::fprintf(dump, "E caixa\n");
             }
         for (const Push& push : scenario.pushes)
@@ -2679,6 +2659,8 @@ void stepScenarioWorld(const ProbeContext& context, const AthleteRuntimeSettings
     LocomotionWorld3D& world, float t) {
     const AthleteCommand3D command = scenarioCommand(context, settings, scenario.keys(t),
         world.telemetry().terrainSpeedLimit);
+    for (const Throw& item : scenario.throws)
+        if (t >= item.at && t < item.at + Dt) world.throwBox({ item.start, item.velocity, item.massKg, item.halfExtents });
     for (const Push& push : scenario.pushes)
         if (t >= push.at && t < push.at + push.seconds) {
             world.push(0, push.force * 0.20f);
@@ -2686,6 +2668,14 @@ void stepScenarioWorld(const ProbeContext& context, const AthleteRuntimeSettings
             world.push(3, push.force * 0.48f);
         }
     world.step(command);
+}
+
+// O terreno de um roteiro (os degraus, a rampa, a parede) para um mundo.
+std::vector<LocomotionStaticBox3D> scenarioStatics(const Scenario& scenario) {
+    std::vector<LocomotionStaticBox3D> statics;
+    for (const StaticBox& box : scenario.statics) statics.push_back({ box.center, box.half, box.orientation });
+    if (scenario.wallHalf.lengthSquared() > 0.0f) statics.push_back({ scenario.wallCenter, scenario.wallHalf, {} });
+    return statics;
 }
 
 // Onde duas trilhas de impressoes se separam: o primeiro tick e a parte (o
@@ -2703,6 +2693,7 @@ TraceSplit splitOf(const std::vector<AthleteTickDigest3D>& a, const std::vector<
         split.tick = static_cast<int>(i);
         // (A ordem do tick: as decisoes e os alvos saem antes da fisica.)
         split.part = a[i].decisions != b[i].decisions ? "decisoes"
+            : a[i].navigation != b[i].navigation     ? "navegacao"
             : a[i].targets != b[i].targets           ? "alvos"
             : a[i].assist != b[i].assist             ? "ajuda"
                                                      : "corpo";
@@ -2741,18 +2732,19 @@ int runParity(const ProbeContext& context, int limit, int restores) {
     int failures = 0;
     std::printf("paridade: configuracao fisico total, comandado sem capsula, tick %.6f s, cena %u threads%s\n", Dt,
         worldSettings.scene.workerThreadCount, worldSettings.scene.runJobsInline ? " inline" : " (todas)");
-    std::printf("1. sonda contra mundo de treino, do comeco\n");
+    std::printf("1. sonda contra mundo de treino, do comeco (todos os roteiros sem bola: terreno, caixas, empurroes)\n");
     int scenariosRun = 0, ticksCompared = 0;
     const std::vector<Scenario> list = scenarios();
     for (const Scenario& scenario : list) {
-        if (scenario.ball || !scenario.throws.empty() || !scenario.statics.empty()
-            || scenario.wallHalf.lengthSquared() > 0.0f)
-            continue;
+        // (Sem bola: a bola do treino vem com o RL dela.)
+        if (scenario.ball) continue;
         if (limit > 0 && scenariosRun >= limit) break;
         ++scenariosRun;
         std::vector<AthleteTickDigest3D> probe, trained;
         (void)runScenario(commanded, scenario, settings, true, nullptr, 1, false, &probe);
-        LocomotionWorld3D world(engine, materials, context.runtimeAssets, worldSettings);
+        LocomotionWorldSettings3D terrain = worldSettings;
+        terrain.statics = scenarioStatics(scenario);
+        LocomotionWorld3D world(engine, materials, context.runtimeAssets, terrain);
         world.reset(AthleteStartMode3D::Physical);
         const int ticks = static_cast<int>(scenario.seconds / Dt);
         for (int step = 0; step < ticks; ++step) {
@@ -2822,10 +2814,10 @@ int runParity(const ProbeContext& context, int limit, int restores) {
     }
     failures += restoreFailures;
     std::printf("  %d instantes: %s\n", states, restoreFailures == 0 ? "recomecos iguais bit a bit" : "recomecos diferem");
-    std::printf("4. a cena inline (o lote) contra a com threads (o jogo), e o custo do tick nela\n");
+    std::printf("4. a cena do lote (inline, reservas pequenas) contra a do jogo, e o custo do tick nela\n");
+    // (A cena exata do lote: inline, uma thread, as reservas pequenas.)
     LocomotionWorldSettings3D inlineSettings = worldSettings;
-    inlineSettings.scene.workerThreadCount = 1;
-    inlineSettings.scene.runJobsInline = true;
+    inlineSettings.scene = locomotionBatchScene3D();
     std::vector<double> athleteCost, physicsCost;
     int inlineFailures = 0;
     for (const char* name : { "trota", "sprint", "zigue", "queda_lado_1400" }) {
