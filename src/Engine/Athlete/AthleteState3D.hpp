@@ -65,6 +65,10 @@ struct AthleteState3D {
     Vec3 commandDirection;
     bool commandDirectionValid = false;
     float commandTurnRate = 0.0f;
+    // O custo do ultimo passo (s; o orcamento por modulo): o controle fisico
+    // (por bloco em legacy.locomotion.sectionSeconds()) e a ajuda.
+    float locomotionSeconds = 0.0f;
+    float assistSeconds = 0.0f;
     ContactAssessment3D lastContacts;
     ModeDecision3D lastDecision;
     BodyModeKind3D lastDecisionFrom = BodyModeKind3D::Animated;

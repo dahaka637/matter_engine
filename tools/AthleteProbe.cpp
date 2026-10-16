@@ -2820,7 +2820,8 @@ int runParity(const ProbeContext& context, int limit, int restores) {
     // (A cena exata do lote: inline, uma thread, as reservas pequenas.)
     LocomotionWorldSettings3D inlineSettings = worldSettings;
     inlineSettings.scene = locomotionBatchScene3D();
-    std::vector<double> athleteCost, physicsCost;
+    std::vector<double> athleteCost, physicsCost, locomotionCost, assistCost;
+    std::vector<std::vector<double>> sectionCost(CharacterLocomotion3D::SectionCount);
     int inlineFailures = 0;
     for (const char* name : { "trota", "sprint", "zigue", "queda_lado_1400" }) {
         const Scenario* found = nullptr;
@@ -2842,6 +2843,10 @@ int runParity(const ProbeContext& context, int limit, int restores) {
             b.push_back(athleteTickDigest3D(single.athlete(), single.body()));
             athleteCost.push_back(single.lastAthleteSeconds());
             physicsCost.push_back(single.lastPhysicsSeconds());
+            locomotionCost.push_back(single.athlete().locomotionSeconds);
+            assistCost.push_back(single.athlete().assistSeconds);
+            for (std::size_t k = 0; k < CharacterLocomotion3D::SectionCount; ++k)
+                sectionCost[k].push_back(single.athlete().legacy.locomotion.sectionSeconds()[k]);
         }
         const TraceSplit split = splitOf(a, b);
         if (split.tick >= 0) {
@@ -2860,6 +2865,14 @@ int runParity(const ProbeContext& context, int limit, int restores) {
         inlineFailures == 0 ? "igual bit a bit" : "DIFERE", percentile(athleteCost, 0.5), percentile(athleteCost, 0.95),
         percentile(athleteCost, 0.99), percentile(physicsCost, 0.5), percentile(physicsCost, 0.95),
         percentile(physicsCost, 0.99), athleteCost.size());
+    std::printf("  no passo do atleta: controle fisico p50 %.0f p95 %.0f p99 %.0f | ajuda p50 %.0f p95 %.0f p99 %.0f\n",
+        percentile(locomotionCost, 0.5), percentile(locomotionCost, 0.95), percentile(locomotionCost, 0.99),
+        percentile(assistCost, 0.5), percentile(assistCost, 0.95), percentile(assistCost, 0.99));
+    std::printf("  no controle fisico, por bloco (p50/p99 us):");
+    for (std::size_t k = 0; k < CharacterLocomotion3D::SectionCount; ++k)
+        std::printf(" %s %.0f/%.0f", CharacterLocomotion3D::sectionName(k), percentile(sectionCost[k], 0.5),
+            percentile(sectionCost[k], 0.99));
+    std::printf("\n");
     std::printf(failures == 0 ? "paridade: degrau 2 passa (o degrau 1 espera o contrato da rede)\n"
                               : "paridade: %d falha(s)\n", failures);
     return failures == 0 ? 0 : 1;

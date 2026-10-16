@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <string>
@@ -1577,7 +1578,11 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         output.followVelocityWorld = {};
         return;
     }
-    state.locomotion.update(profile, clips, body, dynamics, command, deltaTime);
+    {
+        const auto begin = std::chrono::steady_clock::now();
+        state.locomotion.update(profile, clips, body, dynamics, command, deltaTime);
+        athlete.locomotionSeconds = std::chrono::duration<float>(std::chrono::steady_clock::now() - begin).count();
+    }
     const auto& locomotionOutput = state.locomotion.output();
     // Fisica adaptativa: com a opcao ligada, a forca limitada da pelve e
     // aplicada no lugar do transporte pela capsula; desligada, so mede.
@@ -1614,7 +1619,11 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
     physicalIntent.footPlantedValid = true;
     physicalIntent.footPlanted = state.locomotion.telemetry().footPlanted;
     physicalIntent.actionStability = command.controlled ? state.ballStability : 0.0f;
-    state.adaptivePhysics.update(profile, body, locomotionOutput.guide, physicalIntent, deltaTime);
+    {
+        const auto begin = std::chrono::steady_clock::now();
+        state.adaptivePhysics.update(profile, body, locomotionOutput.guide, physicalIntent, deltaTime);
+        athlete.assistSeconds = std::chrono::duration<float>(std::chrono::steady_clock::now() - begin).count();
+    }
     const float followSlack = 0.10f * (1.0f - std::clamp(state.adaptivePhysics.output().perturbation, 0.0f, 1.0f));
     if (adaptive && !command.controlled) {
         // A capsula virtual vai atras do corpo; caido, ela fica nele.

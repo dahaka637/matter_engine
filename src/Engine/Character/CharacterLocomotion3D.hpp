@@ -649,6 +649,12 @@ public:
     [[nodiscard]] const CharacterLocomotionTelemetry3D& telemetry() const {
         return m_telemetry;
     }
+    // O custo do ultimo update por bloco (s; o orcamento por modulo da
+    // reescrita): o preparo (o Tick, as checagens), o estimador e os 15
+    // blocos, na ordem do tick.
+    static constexpr std::size_t SectionCount = 17;
+    [[nodiscard]] const std::array<float, SectionCount>& sectionSeconds() const { return m_sectionSeconds; }
+    [[nodiscard]] static const char* sectionName(std::size_t index);
     // Estado fisico medido neste tick (o mesmo que a assistencia e o
     // planejador leem).
     [[nodiscard]] const CharacterPhysicalState3D& physicalState() const {
@@ -1409,6 +1415,13 @@ private:
     // Estado fisico comum (centro de massa, apoio, captura, forca externa),
     // medido uma vez por tick no comeco de update().
     CharacterStateEstimator3D m_estimator;
+    std::array<float, SectionCount> m_sectionSeconds {};
+    // A validacao inteira dos clipes contra o perfil (cara: ~35 us por tick)
+    // vale para o par de recursos que ja passou por ela; a cada tick so as
+    // checagens baratas (o rig e a duracao).
+    const CharacterLocomotionAnimations3D* m_validatedAnimations = nullptr;
+    const RagdollProfile3D* m_validatedProfile = nullptr;
+    bool m_validatedCompatible = false;
     // Juntas medidas ao comecar o levantar: os alvos saem delas (ver
     // update(), "Levantar a partir de onde o corpo esta").
     std::vector<Vec3> m_risingFromMeasured;

@@ -1,5 +1,7 @@
 #include "Engine/Character/CharacterLocomotion3DInternal.hpp"
 
+#include <chrono>
+
 namespace MatterEngine {
 
 
@@ -494,6 +496,15 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
     float deltaTime) {
     // A reescrita: o update em blocos (CharacterLocomotion3D_<bloco>.cpp), com a mesma conta de
     // antes; o que um bloco passa aos seguintes mora no Tick.
+    // (O custo por bloco: so o relogio, nada muda na conta.)
+    using Clock = std::chrono::steady_clock;
+    auto mark = Clock::now();
+    std::size_t section = 0;
+    const auto timed = [&]() {
+        const auto now = Clock::now();
+        m_sectionSeconds[section++] = std::chrono::duration<float>(now - mark).count();
+        mark = now;
+    };
     Tick t { profile, animations, state, dynamics, input };
     m_output = {};
     // Locomocao fisica v2 (ver input.physicalV2).
@@ -508,8 +519,17 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
     const float& StanceRootBand = t.StanceRootBand;
     t.StanceDampCurveSpan = input.physicalV2 ? 0.0f : StanceDampCurveSpanEnv;
     const float& StanceDampCurveSpan = t.StanceDampCurveSpan;
+    if (m_validatedAnimations != &animations || m_validatedProfile != &profile) {
+        m_validatedCompatible = animations.compatible(profile);
+        m_validatedAnimations = &animations;
+        m_validatedProfile = &profile;
+    }
+    const auto cheapValid = [&](const AnimationClip3D* clip) {
+        return clip != nullptr && clip->targetRigId == profile.id && std::isfinite(clip->durationSeconds)
+            && clip->durationSeconds > 0.0f;
+    };
     if (!std::isfinite(deltaTime) || deltaTime <= 0.0f
-        || !animations.compatible(profile)
+        || !m_validatedCompatible || !cheapValid(animations.idle) || !cheapValid(animations.walk)
         || state.links.size() != profile.links.size()
         || state.joints.size() != profile.links.size()
         || !finite(input.rootPositionWorld)
@@ -525,26 +545,49 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
     t.deltaTime = deltaTime;
     t.previousCoordinates = m_coordinates;
     const std::vector<Vec3>& previousCoordinates = t.previousCoordinates;
+    timed();
     // Estado fisico comum deste tick (tambem lido pela assistencia).
     t.physical = &(m_estimator.update(profile, state,
         input.footGround, deltaTime));
     const CharacterPhysicalState3D& physical = *t.physical;
+    timed();
 
     stepSense(t);
+    timed();
     stepTackle(t);
+    timed();
     stepGetUp(t);
+    timed();
     stepAuthority(t);
+    timed();
     stepSensors(t);
+    timed();
     stepHeading(t);
+    timed();
     stepAir(t);
+    timed();
     stepCycle(t);
+    timed();
     stepGestures(t);
+    timed();
     stepLook(t);
+    timed();
     stepRoot(t);
+    timed();
     stepFeet(t);
+    timed();
     stepLegs(t);
+    timed();
     stepDrives(t);
+    timed();
     stepOutputs(t);
+    timed();
+}
+
+const char* CharacterLocomotion3D::sectionName(std::size_t index) {
+    static constexpr const char* names[SectionCount] = { "Preparo", "Estimador", "Sense", "Tackle", "GetUp", "Authority",
+        "Sensors", "Heading", "Air", "Cycle", "Gestures", "Look", "Root", "Feet", "Legs", "Drives", "Outputs" };
+    return index < SectionCount ? names[index] : "";
 }
 
 // Para a locomocao padrao (DefaultLocomotion3D, 04/10): o corpo do chute e a
