@@ -1382,6 +1382,25 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
                 }
             if (wallImpact > 1.0f) std::printf("  t %.3f capsula bateu %.2f\n", t, wallImpact);
         }
+        // XCORRECAO=inclinacao|passo|joelho: um teste dos ganchos do RL (a
+        // correcao fixa numa cabeca, com autoridade cheia).
+        if (const char* hook = std::getenv("XCORRECAO"); hook != nullptr && step == 0) {
+            const std::string which(hook);
+            if (which == "inclinacao") {
+                athlete.corrections.balanceAuthority = 1.0f;
+                athlete.corrections.forwardLean = 0.15f;
+            } else if (which == "passo") {
+                athlete.corrections.footworkAuthority = 1.0f;
+                athlete.corrections.feet[0].touchdownOffset = { 0.0f, 0.12f, 0.0f };
+                athlete.corrections.feet[1].touchdownOffset = { 0.0f, -0.12f, 0.0f };
+            } else if (which == "joelho") {
+                athlete.corrections.poseAuthority = 1.0f;
+                athlete.corrections.jointResiduals.assign(profile.links.size() * 3, 0.0f);
+                for (std::size_t i = 0; i < profile.links.size(); ++i)
+                    if (profile.links[i].id.find("Shin") != std::string::npos)
+                        for (std::size_t axis = 0; axis < 3; ++axis) athlete.corrections.jointResiduals[i * 3 + axis] = 0.25f;
+            }
+        }
         AthleteSlot3D slot { 1, handle, &bodyState, true, false, &athlete };
         std::vector<AthleteBall3D> balls;
         if (scenario.ball && step >= 0) balls.push_back({ ballHandle, &ballState, &ownership });
