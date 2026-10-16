@@ -1,8 +1,8 @@
 {
     "schema": "matter-rl-task-2",
     "id": "fase2h",
-    "displayName": "Fase 2h: o parado com o juiz de postura",
-    "comment": "O parado com o juiz de postura (pedido do usuario, 15/10 noite): na F2g, parado, a base fica aberta demais (0,79 m entre os pes contra 0,60 do clipe), os bracos abertos (maos a 0,55 m do quadril contra 0,37) e o quadril mais baixo. O juiz (AMP) aprende so com o alert_idle e so julga o exercicio parado (style.drills): so os mundos do parado dao amostras e recebem o estilo. Beta 1. O resto da F2g. Parte da F2g.",
+    "displayName": "Fase 2h: o parado na pose do alerta",
+    "comment": "O parado parecido com o alerta (pedido do usuario, 15/10 noite). Na F2g, parado, os pes ficam abertos demais (0,79 m contra 0,60 do clipe), os bracos afastados (maos a 0,55 m do quadril contra 0,37) e o quadril baixo. O juiz AMP saturou em 400 rodadas (acuracia 1, separa pelo tremor e pela normalizacao de um clipe parado; diario 28); no lugar dele, a nota fixa de pose (style.mode pose, consenso Claude + Codex): a semelhanca com a pose media do alert_idle (eixos sigma 0,25 rad, maos/pes/cabeca contra a pelve 0,10, altura da pelve 0,05), o melhor entre o clipe e o espelho, so no parado (style.drills), beta 1. O resto da F2g. Parte da F2g.",
     "body": "../bodies/football_player_v2.json",
     "decision": {
         "substeps": 4,
@@ -381,7 +381,13 @@
         "beta": 1.0,
         "drills": [
             "parado"
-        ]
+        ],
+        "mode": "pose",
+        "sigmas": {
+            "position": 0.25,
+            "offset": 0.1,
+            "height": 0.05
+        }
     },
     "drillWeights": {
         "auto": true,

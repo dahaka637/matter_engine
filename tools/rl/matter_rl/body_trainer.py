@@ -28,6 +28,7 @@ import torch
 
 from . import control, native, paths, storage, system
 from .amp import Judge, JudgeSettings, style_score
+from .pose_prior import PoseScorer
 from .model import ActorCritic, RunningNorm, export_policy, migrate_inputs
 from .ppo import PPO, PPOSettings, Rollout
 from .symmetry import MirrorLoss
@@ -399,9 +400,16 @@ class BodyTrainer:
         self.settings = PPOSettings.from_dict(self.config.ppo)
         self.ppo = PPO(self.model, self.settings)
         self.judge: Judge | None = None
+        # O estilo: o juiz (style.mode "judge", o padrao) ou a nota fixa de pose
+        # do acervo ("pose": sem adversario, diario 28).
+        self.style_mode = live.get("style", {}).get("mode", "judge")
+        self.pose: PoseScorer | None = None
         if self.config.style:
             dataset = self.native.motion_dataset(live["body"], live["style"]["dataset"])
-            self.judge = Judge(dataset, JudgeSettings.from_dict(self.config.judge), self.device, self.config.seed)
+            if self.style_mode == "pose":
+                self.pose = PoseScorer(dataset, live["style"], self.device)
+            else:
+                self.judge = Judge(dataset, JudgeSettings.from_dict(self.config.judge), self.device, self.config.seed)
         self.mirror = MirrorLoss(self.batch.mirror_maps(), self.device) if self.config.mirror_loss > 0.0 else None
         self.counters = {"iteration": 0, "steps": 0, "train_seconds": 0.0, "episodes": 0,
                          "warmup_left": int(self.config.warmup_rounds) if self.judge is not None else 0,
@@ -417,7 +425,7 @@ class BodyTrainer:
         # A copia que coleta (a politica de antes, durante a atualizacao) e a
         # copia do juiz que da a nota na coleta.
         self.collector = copy.deepcopy(self.model)
-        self.scorer = copy.deepcopy(self.judge.net) if self.judge else None
+        self.scorer = copy.deepcopy(self.judge.net) if self.judge else self.pose
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=1, initializer=self._init_worker) \
             if self.config.overlap else None
         self.stream = torch.cuda.Stream() if self.config.overlap and self.device.type == "cuda" else None
@@ -563,7 +571,8 @@ class BodyTrainer:
             "gpuMemoryMB": torch.cuda.memory_allocated() / 1e6 if self.device.type == "cuda" else 0.0,
             "policy": str(self.directory / "exports" / "policy_latest.mrlpolicy"), "message": self.message,
             "commands": {}, "imitation": {}, "kickstart": {},
-            "style": {"enabled": self.judge is not None, "beta": self.beta, "judge": self.last_judge},
+            "style": {"enabled": self.scorer is not None, "mode": self.style_mode, "beta": self.beta,
+                      "judge": self.last_judge},
             "pid": os.getpid(), "updated": time.time(),
         }
 
@@ -708,8 +717,8 @@ class BodyTrainer:
         tarefa do treino. Cada mudanca de beta salva um checkpoint antes."""
         data = json.loads(self.live_task.read_text())
         if component in ("estilo", "beta"):
-            if self.judge is None:
-                raise ValueError("este treino nao tem o juiz de estilo (B1)")
+            if self.scorer is None:
+                raise ValueError("este treino nao tem o estilo (B1)")
             if value < 0.0:
                 raise ValueError("beta nao pode ser negativo")
             self.drain()
@@ -790,7 +799,10 @@ class BodyTrainer:
                 style = None
                 if self.scorer is not None:
                     step_pairs = np.array(batch.style_pairs(), dtype=np.float32)
-                    style = style_score(self.scorer(self.judge.normalize(self.tensor(step_pairs))))
+                    if self.judge is not None:
+                        style = style_score(self.scorer(self.judge.normalize(self.tensor(step_pairs))))
+                    else:
+                        style = self.scorer(self.tensor(step_pairs))
                     if len(self.style_drills):
                         judged = np.isin(np.asarray(batch.world_drills()), self.style_drills)
                         step_pairs = step_pairs[judged]
@@ -871,7 +883,7 @@ class BodyTrainer:
             self.model.obs_norm.load_state_dict(self.obs_candidate.state_dict())
             self.model.critic_norm.load_state_dict(self.critic_candidate.state_dict())
             self.collector.load_state_dict(self.model.state_dict())
-            if self.scorer is not None:
+            if self.judge is not None:
                 self.scorer.load_state_dict(self.judge.net.state_dict())
 
     def drain(self) -> None:
@@ -1003,7 +1015,7 @@ class BodyTrainer:
         self.fix_raw_channels()
         self.reset_candidates()
         self.collector.load_state_dict(self.model.state_dict())
-        if self.scorer is not None:
+        if self.judge is not None and getattr(self, "scorer", None) is not None:
             self.scorer.load_state_dict(self.judge.net.state_dict())
         self.counters.update(state.get("counters", {}))
         self.ppo.settings.epochs = int(self.counters["epochs"])
