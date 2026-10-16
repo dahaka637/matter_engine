@@ -556,6 +556,10 @@ int runBaseline(const ProbeContext& context, int threads) {
     add("terreno", { "degrau_10_anda", "degrau_18_anda", "degrau_25_anda", "degrau_35_anda", "degrau_10_corre",
                        "degrau_18_corre", "degrau_25_corre", "degrau_35_corre", "escada_anda", "escada_corre", "rampa_anda",
                        "rampa_corre" });
+    // (XEXERCICIOS=N: so os N primeiros exercicios - o lote pequeno dos
+    // sanitizadores.)
+    if (const char* limit = std::getenv("XEXERCICIOS"); limit != nullptr && std::atoi(limit) > 0)
+        drills.resize(std::min(drills.size(), static_cast<std::size_t>(std::atoi(limit))));
     const float levels[5] = { 100.0f, 70.0f, 50.0f, 30.0f, 0.0f };
     const std::size_t count = drills.size() * 5;
     AthleteRuntimeSettings3D base;
