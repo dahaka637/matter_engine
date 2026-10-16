@@ -879,6 +879,10 @@ void CharacterLocomotion3D::stepLegs(Tick& t) {
             m_lastFootGoalPosition[side] = goals[side].position;
             m_lastFootGoalOrientation[side] = goals[side].orientation;
         }
+        // O gancho do jogo de pes (o RL): o pouso do pe no balanco, somado ao
+        // alvo do classico a cada tick (sem correcao, o mesmo alvo).
+        goals[side].position = correctedFootGoal3D(goals[side].position, m_feet[side].planted, heading,
+            input.corrections, side);
         const Quaternion rootInverse = ikRootOrientation[side].conjugate();
         // O pe da bola (toque e chute) sai longe da pose do clipe: o IK
         // limitado a ~52 graus por tick (7 iteracoes de 0,13 rad) deixava o

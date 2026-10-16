@@ -130,6 +130,7 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         footGround[foot] = scene.probeTerrain(body.links[i].position + Vec3 { 0, 0, 0.10f }, 0.05f, 0.0f, 0.40f, 48.0f);
     }
     CharacterLocomotionInput3D command;
+    command.corrections = athlete.corrections.active() ? &athlete.corrections : nullptr;
     command.rootPositionWorld = { root.position.x, root.position.y,
         groundHeight(root.position) + profile.standingRootHeightMeters };
     command.rootVelocityWorld = root.linearVelocity;

@@ -717,6 +717,9 @@ void CharacterLocomotion3D::stepDrives(Tick& t) {
         }
     }
 
+    // Os ganchos da pose e da rigidez (o RL): o angulo e as escalas de cada
+    // alvo dos motores (sem correcao, os mesmos).
+    correctDriveTargets3D(m_output.driveTargets, profile, input.corrections);
 }
 
 } // namespace MatterEngine

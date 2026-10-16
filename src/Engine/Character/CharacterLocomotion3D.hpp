@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Engine/Athlete/Physical/PhysicalCorrections3D.hpp"
 #include "Engine/Animation/AnimationClip3D.hpp"
 #include "Engine/Character/BallControl3D.hpp"
 #include "Engine/Character/BodilyGetUp3D.hpp"
@@ -192,6 +193,10 @@ void characterIdleVariety3D(const RagdollProfile3D& profile, float seconds, std:
 // One fixed-step command assembled by gameplay after the persistent capsule
 // has resolved collision, slopes, steps, crouch and jump.
 struct CharacterLocomotionInput3D {
+    // As correcoes do RL nas costuras do controle (a reescrita: o jogo de pes,
+    // o equilibrio, a pose e a rigidez; Athlete/Physical/PhysicalCorrections3D).
+    // Nulo (o padrao): o classico, exato.
+    const PhysicalCorrections3D* corrections = nullptr;
     Vec3 rootPositionWorld;
     Vec3 rootVelocityWorld;
     // Locomocao fisica v2 (06/10/2026): a postura dada como perdida na

@@ -8,6 +8,7 @@
 #include "Engine/Athlete/Body/PhysicalFeetAssist3D.hpp"
 #include "Engine/Athlete/Legacy/LegacyAthleteState3D.hpp"
 #include "Engine/Athlete/Modes/ModeRules3D.hpp"
+#include "Engine/Athlete/Physical/PhysicalCorrections3D.hpp"
 #include "Engine/Athlete/Planning/FootstepPlanner3D.hpp"
 #include "Engine/Athlete/Sensing/BodyObservation3D.hpp"
 #include "Engine/Athlete/Synthesis/LegClearance3D.hpp"
@@ -53,6 +54,9 @@ struct AthleteState3D {
     // o choque inteiro (a queda da ajuda).
     ImpulseWindow3D pushWindow;
     ImpulseWindow3D impactWindow;
+    // As correcoes do RL nas costuras do controle fisico deste atleta (sem
+    // autoridade nenhuma, nem passam: o classico exato).
+    PhysicalCorrections3D corrections;
     ContactAssessment3D lastContacts;
     ModeDecision3D lastDecision;
     BodyModeKind3D lastDecisionFrom = BodyModeKind3D::Animated;

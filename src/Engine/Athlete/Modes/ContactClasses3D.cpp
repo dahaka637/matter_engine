@@ -67,7 +67,8 @@ bool ContactClassParams3D::valid() const {
 BodyRegion3D bodyRegion3D(const std::string& linkId) {
     const auto has = [&](const char* part) { return linkId.find(part) != std::string::npos; };
     if (has("Foot") || has("Toe")) return BodyRegion3D::Foot;
-    if (has("Hand") || has("Arm")) return BodyRegion3D::Arm;
+    // (O antebraco e "Forearm": o "arm" minusculo tambem conta.)
+    if (has("Hand") || has("Arm") || has("arm")) return BodyRegion3D::Arm;
     if (has("Thigh") || has("Shin")) return BodyRegion3D::Leg;
     return BodyRegion3D::Trunk;
 }

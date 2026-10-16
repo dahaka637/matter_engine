@@ -3,6 +3,7 @@
 // trocas linha a linha e propriedades com sinais aleatorios.
 #include "Engine/Athlete/Modes/ContactClasses3D.hpp"
 #include "Engine/Athlete/Modes/ModeRules3D.hpp"
+#include "Engine/Athlete/Physical/PhysicalCorrections3D.hpp"
 #include "Engine/Athlete/Legacy/LegacyReference3D.hpp"
 #include "Engine/Athlete/Reference/ReferenceFrame3D.hpp"
 
@@ -78,6 +79,8 @@ void contactClassTests() {
     const ContactDeclarations3D none;
     expect(p.valid(), "os parametros padrao sao validos");
     expect(body.valid() && std::abs(body.massKg - 80.0f) < 1e-4f, "o corpo de 80 kg");
+    expect(body.regions[7] == BodyRegion3D::Arm && body.regions[6] == BodyRegion3D::Arm,
+        "o antebraco (Forearm, com o arm minusculo) e o braco sao bracos");
     expect(body.regions[LeftShin] == BodyRegion3D::Leg && body.regions[LeftFoot] == BodyRegion3D::Foot
             && body.regions[LeftHand] == BodyRegion3D::Arm && body.regions[Chest] == BodyRegion3D::Trunk,
         "as regioes do corpo pelo nome do link");
@@ -396,6 +399,68 @@ void referenceFrameTests() {
         "um perfil invalido cai no do padrao (falha segura)");
 }
 
+void correctionTests() {
+    PhysicalCorrections3D c;
+    expect(!c.active(), "sem autoridade, as correcoes nao estao ativas (o classico exato)");
+    const Vec3 goal { 1.0f, 2.0f, 0.1f };
+    const Quaternion turned = Quaternion::fromAxisAngle({ 0.0f, 0.0f, 1.0f }, 1.5707963f);
+    c.feet[1].touchdownOffset = { 0.2f, 0.0f, 0.0f };
+    Vec3 out = correctedFootGoal3D(goal, false, turned, &c, 1);
+    expect((out - goal).length() < 1e-6f, "com a autoridade do jogo de pes em zero, o alvo do pe nao muda");
+    c.footworkAuthority = 0.5f;
+    expect(c.active(), "uma cabeca com autoridade liga as correcoes");
+    out = correctedFootGoal3D(goal, false, turned, &c, 1);
+    expect(std::abs(out.x - 1.0f) < 1e-4f && std::abs(out.y - 2.1f) < 1e-4f,
+        "o pe no balanco anda a correcao no referencial do rumo (0,2 m a frente virado 90 graus, metade da autoridade)");
+    expect((correctedFootGoal3D(goal, true, turned, &c, 1) - goal).length() < 1e-6f,
+        "o pe apoiado nunca e arrastado pela correcao");
+    expect((correctedFootGoal3D(goal, false, turned, nullptr, 1) - goal).length() < 1e-6f, "sem correcoes, o alvo e o mesmo");
+    c.footworkAuthority = 7.0f;
+    out = correctedFootGoal3D(goal, false, turned, &c, 1);
+    expect(std::abs(out.y - 2.2f) < 1e-4f, "a autoridade fica entre 0 e 1");
+
+    c.forwardLean = 0.1f;
+    c.lateralLean = -0.05f;
+    expect(correctedForwardLean3D(0.2f, &c) == 0.2f, "sem autoridade no equilibrio, a inclinacao nao muda");
+    c.balanceAuthority = 1.0f;
+    expect(std::abs(correctedForwardLean3D(0.2f, &c) - 0.3f) < 1e-6f
+            && std::abs(correctedLateralLean3D(0.0f, &c) + 0.05f) < 1e-6f,
+        "o equilibrio soma a inclinacao");
+
+    RagdollProfile3D profile;
+    for (const char* id : { "Pelvis", "LeftThigh", "LeftHand" }) {
+        RagdollLinkDefinition3D link;
+        link.id = id;
+        profile.links.push_back(link);
+    }
+    std::vector<RagdollDriveTarget3D> targets(3);
+    for (std::uint32_t i = 0; i < 3; ++i) {
+        targets[i].linkIndex = i;
+        targets[i].axis = RagdollAxis3D::Swing1;
+        targets[i].positionRadians = 0.5f;
+    }
+    const std::vector<RagdollDriveTarget3D> before = targets;
+    c.jointResiduals.assign(9, 0.0f);
+    c.jointResiduals[1 * 3 + 1] = 0.2f;
+    c.gainScale = { 2.0f, 1.0f, 0.5f };
+    correctDriveTargets3D(targets, profile, &c);
+    bool same = true;
+    for (std::size_t i = 0; i < 3; ++i)
+        same &= targets[i].positionRadians == before[i].positionRadians && targets[i].stiffnessScale == before[i].stiffnessScale;
+    expect(same, "sem autoridade na pose e na rigidez, os alvos dos motores nao mudam");
+    c.poseAuthority = 0.5f;
+    c.gainAuthority = 1.0f;
+    correctDriveTargets3D(targets, profile, &c);
+    expect(std::abs(targets[1].positionRadians - 0.6f) < 1e-6f && targets[0].positionRadians == 0.5f,
+        "a pose soma a correcao do eixo (coxa, swing1: 0,2 x 0,5) e so dele");
+    expect(std::abs(targets[1].stiffnessScale - 2.0f) < 1e-6f && std::abs(targets[2].stiffnessScale - 0.5f) < 1e-6f
+            && std::abs(targets[0].stiffnessScale - 1.0f) < 1e-6f,
+        "a rigidez escala por grupo: pernas x2, bracos x0,5, tronco igual");
+    expect(physicalGainGroup3D("RightToe") == 0 && physicalGainGroup3D("Head") == 1
+            && physicalGainGroup3D("RightForearm") == 2,
+        "os grupos de ganho pelo nome do link");
+}
+
 // Propriedades: sequencias aleatorias de sinais em todos os modos.
 void modeRulePropertyTests() {
     const ModeRuleParams3D p;
@@ -459,6 +524,7 @@ int main() {
         modeRuleTests();
         pendulumTests();
         referenceFrameTests();
+        correctionTests();
         modeRulePropertyTests();
         std::cout << "athlete modules: " << g_checks << " checagens, tudo certo\n";
         return 0;

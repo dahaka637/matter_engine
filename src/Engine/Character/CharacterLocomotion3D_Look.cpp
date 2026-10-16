@@ -495,6 +495,10 @@ void CharacterLocomotion3D::stepLook(Tick& t) {
         lateralLean = std::clamp(lateralLean + m_leanNeed.y, -0.35f, 0.35f);
     }
 
+    // O gancho do equilibrio (o RL): a inclinacao do tronco somada (sem
+    // correcao, a mesma).
+    forwardLean = correctedForwardLean3D(forwardLean, input.corrections);
+    lateralLean = correctedLateralLean3D(lateralLean, input.corrections);
 }
 
 } // namespace MatterEngine
