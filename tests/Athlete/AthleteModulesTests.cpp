@@ -1,6 +1,7 @@
 // Os testes dos modulos novos do atleta (a reescrita da locomocao; vault:
 // 04_locomocao/reescrita_da_locomocao.md). Modulos puros: unidade, a tabela de
 // trocas linha a linha e propriedades com sinais aleatorios.
+#include "Engine/Athlete/Contract/LocomotionContract3D.hpp"
 #include "Engine/Athlete/Modes/ContactClasses3D.hpp"
 #include "Engine/Athlete/Modes/ModeRules3D.hpp"
 #include "Engine/Athlete/Physical/PhysicalCorrections3D.hpp"
@@ -9,6 +10,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -461,6 +463,162 @@ void correctionTests() {
         "os grupos de ganho pelo nome do link");
 }
 
+// O contrato da rede (v1) num corpo de 18 links como o do jogo.
+RagdollProfile3D contractProfile() {
+    RagdollProfile3D profile;
+    profile.id = "teste";
+    profile.totalMassKg = 80.0f;
+    const char* ids[] = { "Pelvis", "Abdomen", "Chest", "UpperChest", "Neck", "Head", "LeftUpperArm", "LeftForearm",
+        "LeftHand", "RightUpperArm", "RightForearm", "RightHand", "LeftThigh", "LeftShin", "LeftFoot", "RightThigh",
+        "RightShin", "RightFoot" };
+    for (const char* id : ids) {
+        RagdollLinkDefinition3D link;
+        link.id = id;
+        link.parentIndex = profile.links.empty() ? -1 : 0;
+        link.modelPosition = { 0.0f, 0.0f, 1.0f };
+        const std::string name(id);
+        if (!profile.links.empty()) {
+            link.inboundJoint.axes[0].enabled = true;
+            link.inboundJoint.axes[1].enabled = name.find("Hand") == std::string::npos;
+            link.inboundJoint.axes[2].enabled = name.find("Thigh") != std::string::npos
+                || name.find("UpperArm") != std::string::npos;
+        }
+        if (name == "LeftThigh") link.inboundJoint.anchorModelPosition = { 0.0f, 0.1f, 0.9f };
+        if (name == "RightThigh") link.inboundJoint.anchorModelPosition = { 0.0f, -0.1f, 0.9f };
+        profile.links.push_back(link);
+    }
+    return profile;
+}
+
+RagdollState3D contractBody(const RagdollProfile3D& profile, Quaternion turn) {
+    RagdollState3D body;
+    body.links.resize(profile.links.size());
+    body.joints.resize(profile.links.size());
+    for (std::size_t i = 0; i < profile.links.size(); ++i) {
+        body.links[i].position = Vec3 { 0.0f, 0.0f, 1.0f } + turn.rotate({ 0.01f * static_cast<float>(i), 0.0f, 0.0f });
+        body.links[i].orientation = turn;
+    }
+    return body;
+}
+
+std::size_t channelOf(const LocomotionContract3D& contract, const std::string& name) {
+    const auto& channels = contract.observationLayout().channels;
+    for (std::size_t i = 0; i < channels.size(); ++i)
+        if (channels[i].name == name) return i;
+    throw std::runtime_error("canal sumiu: " + name);
+}
+
+void contractTests() {
+    const RagdollProfile3D profile = contractProfile();
+    const LocomotionContract3D contract(profile);
+    std::size_t axes = 0;
+    for (std::size_t i = 1; i < profile.links.size(); ++i)
+        for (const RagdollAxisDefinition3D& axis : profile.links[i].inboundJoint.axes) axes += axis.enabled ? 1 : 0;
+    expect(contract.actuatedAxes().size() == axes, "os eixos atuados sao os habilitados no perfil");
+    const std::size_t links = profile.links.size();
+    expect(contract.actionSize() == 6 + 2 + axes + 3, "a saida: pes, inclinacao, um residuo por eixo, ganhos");
+    expect(contract.observationSize()
+            == 1 + links * 12 + (links - 1) * 3 + 2 * axes + 4 + 7 + 50 + 28 + 9
+                + LocomotionContract3D::HistoryDecisions * contract.actionSize(),
+        "a entrada: o tamanho de cada bloco");
+
+    // O que observe escreve e o layout, na mesma conta (sem deriva).
+    std::vector<float> out(contract.observationSize());
+    BodyForecast3D forecast;
+    AthleteCommand3D command;
+    AthleteControlView3D view;
+    view.groundHeight = 0.0f;
+    const auto observe = [&](const RagdollState3D& body) {
+        return contract.observe(body, command, view, {}, forecast, out);
+    };
+    LocomotionObservation3D result = observe(contractBody(profile, {}));
+    expect(result.written == contract.observationSize(), "observe escreve exatamente o layout");
+    expect(result.nonFinite == 0, "de pe, nada nao finito");
+    expect(std::abs(out[channelOf(contract, "corpo.Pelvis.frente.x")] - 1.0f) < 1e-5f
+            && std::abs(out[channelOf(contract, "corpo.Pelvis.frente.y")]) < 1e-5f
+            && std::abs(out[channelOf(contract, "corpo.pelve.altura")] - 1.0f) < 1e-5f,
+        "de pe na pose de ligacao: a frente da pelve e +x, a 1 m do chao");
+
+    // Girado: o referencial gira junto (a entrada nao depende do rumo no mundo).
+    const float yaw = 1.1f;
+    const Quaternion turn = Quaternion::fromAxisAngle({ 0.0f, 0.0f, 1.0f }, yaw);
+    command.facingYawRadians = yaw;
+    command.intent.requestedVelocityWorld = turn.rotate({ 3.0f, 0.0f, 0.0f });
+    std::vector<float> turned(contract.observationSize());
+    (void)contract.observe(contractBody(profile, turn), command, view, {}, forecast, turned);
+    command.facingYawRadians = 0.0f;
+    command.intent.requestedVelocityWorld = { 3.0f, 0.0f, 0.0f };
+    (void)observe(contractBody(profile, {}));
+    bool same = true;
+    for (std::size_t i = 0; i < out.size(); ++i) same &= std::abs(out[i] - turned[i]) < 1e-4f;
+    expect(same, "girar o corpo e o comando juntos nao muda a entrada");
+
+    // Deitado de costas (a frente da pelve para cima): o rumo vem do lado.
+    const Quaternion back = Quaternion::fromAxisAngle({ 0.0f, 1.0f, 0.0f }, -1.5707963f);
+    result = observe(contractBody(profile, back));
+    expect(result.nonFinite == 0 && std::abs(out[channelOf(contract, "corpo.Pelvis.frente.z")] - 1.0f) < 1e-4f,
+        "deitado de costas: finito, a frente da pelve para cima");
+
+    // Um numero estragado no corpo vira zero e e contado.
+    RagdollState3D broken = contractBody(profile, {});
+    broken.links[3].linearVelocity.x = std::numeric_limits<float>::quiet_NaN();
+    result = observe(broken);
+    bool finite = true;
+    for (float v : out) finite &= std::isfinite(v);
+    expect(result.nonFinite > 0 && finite, "um NaN no corpo: contado, e a entrada segue finita");
+
+    // A saida.
+    const LocomotionAuthority3D full { 1.0f, 1.0f, 1.0f, 1.0f };
+    PhysicalCorrections3D zero = contract.decode(std::vector<float>(contract.actionSize(), 0.0f), full);
+    bool neutral = zero.forwardLean == 0.0f && zero.lateralLean == 0.0f && zero.jointResiduals.size() == links * 3;
+    for (float r : zero.jointResiduals) neutral &= r == 0.0f;
+    for (float g : zero.gainScale) neutral &= g == 1.0f;
+    for (const FootCorrection3D& foot : zero.feet) neutral &= foot.touchdownOffset.lengthSquared() == 0.0f;
+    expect(neutral, "a acao zero e a correcao zero");
+    std::vector<float> big(contract.actionSize(), 5.0f);
+    big[0] = std::numeric_limits<float>::quiet_NaN();
+    const PhysicalCorrections3D most = contract.decode(big, { 0.5f, 0.25f, 1.0f, 0.75f });
+    expect(most.feet[0].touchdownOffset.x == 0.0f && std::abs(most.feet[0].touchdownOffset.y - 0.15f) < 1e-6f
+            && std::abs(most.feet[1].touchdownOffset.z - 0.05f) < 1e-6f,
+        "o pouso: NaN vira zero, acima de 1 e cortado (0,15 m de lado, 0,05 m de altura)");
+    expect(std::abs(most.forwardLean - 0.2f) < 1e-6f && std::abs(most.gainScale[1] - 2.0f) < 1e-6f,
+        "a inclinacao ate 0,2 rad e o ganho ate 2x");
+    std::size_t nonzero = 0;
+    for (float r : most.jointResiduals) nonzero += r != 0.0f ? 1 : 0;
+    bool onAxes = nonzero == axes;
+    for (std::uint32_t key : contract.actuatedAxes()) onAxes &= std::abs(most.jointResiduals[key] - 0.3f) < 1e-6f;
+    expect(onAxes, "o residuo so nos eixos atuados, ate 0,3 rad");
+    expect(most.footworkAuthority == 0.5f && most.balanceAuthority == 0.25f && most.poseAuthority == 1.0f
+            && most.gainAuthority == 0.75f,
+        "as autoridades sao as do curriculo");
+
+    // A decisao, o historico e a rampa.
+    AthleteState3D athlete;
+    std::vector<float> first(contract.actionSize(), 0.8f), second(contract.actionSize(), -2.0f);
+    contract.decide(athlete, first);
+    const std::uint32_t key = contract.actuatedAxes().front();
+    for (int tick = 1; tick <= LocomotionContract3D::TicksPerDecision; ++tick) {
+        contract.follow(athlete, full);
+        expect(std::abs(athlete.corrections.jointResiduals[key] - 0.3f * 0.8f * static_cast<float>(tick) / 4.0f) < 1e-5f,
+            "a rampa vai da acao de antes (zero) a nova em 4 ticks");
+    }
+    contract.decide(athlete, second);
+    const std::size_t a = contract.actionSize();
+    expect(athlete.policyHistory.size() == LocomotionContract3D::HistoryDecisions * a
+            && athlete.policyHistory[0] == -1.0f && std::abs(athlete.policyHistory[a] - 0.8f) < 1e-6f
+            && athlete.policyHistory[2 * a] == 0.0f,
+        "o historico: a mais nova primeiro, guardada no -1..1");
+    contract.follow(athlete, full);
+    expect(std::abs(athlete.corrections.jointResiduals[key] - 0.3f * (0.8f + (-1.0f - 0.8f) * 0.25f)) < 1e-5f,
+        "a rampa nova parte de onde a anterior estava");
+
+    // A impressao: a mesma para o mesmo corpo, outra se o corpo muda.
+    expect(LocomotionContract3D(profile).hash() == contract.hash(), "a impressao e estavel");
+    RagdollProfile3D other = profile;
+    other.links[14].id = "LeftFootX";
+    expect(LocomotionContract3D(other).hash() != contract.hash(), "outro corpo, outra impressao");
+}
+
 // Propriedades: sequencias aleatorias de sinais em todos os modos.
 void modeRulePropertyTests() {
     const ModeRuleParams3D p;
@@ -525,6 +683,7 @@ int main() {
         pendulumTests();
         referenceFrameTests();
         correctionTests();
+        contractTests();
         modeRulePropertyTests();
         std::cout << "athlete modules: " << g_checks << " checagens, tudo certo\n";
         return 0;

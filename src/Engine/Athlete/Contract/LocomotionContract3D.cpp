@@ -60,7 +60,11 @@ class Writer {
 public:
     explicit Writer(std::span<float> out) : m_out(out) {}
     void put(float value) {
-        if (m_index >= m_out.size()) return;
+        // (Alem do fim, so conta: o teste confere que o escrito e o layout.)
+        if (m_index >= m_out.size()) {
+            ++m_index;
+            return;
+        }
         if (!std::isfinite(value)) {
             ++m_nonFinite;
             value = 0.0f;
@@ -215,14 +219,14 @@ LocomotionContract3D::LocomotionContract3D(const RagdollProfile3D& profile) : m_
     m_hash = hash;
 }
 
-std::size_t LocomotionContract3D::observe(const RagdollState3D& body, const AthleteCommand3D& command,
+LocomotionObservation3D LocomotionContract3D::observe(const RagdollState3D& body, const AthleteCommand3D& command,
     const AthleteControlView3D& view, std::span<const float> history, BodyForecast3D& forecast,
     std::span<float> out) const {
     const RagdollProfile3D& profile = *m_profile;
     Writer w(out);
     if (body.links.size() != profile.links.size() || body.links.empty()) {
         std::fill(out.begin(), out.end(), 0.0f);
-        return 0;
+        return {};
     }
     const PhysicsBodyState3D& pelvis = body.links.front();
     const Heading h = headingOf(pelvisHeading(profile, pelvis.orientation));
@@ -343,8 +347,8 @@ std::size_t LocomotionContract3D::observe(const RagdollState3D& body, const Athl
     const std::size_t historySize = HistoryDecisions * actionSize();
     for (std::size_t i = 0; i < historySize; ++i) w.put(i < history.size() ? history[i] : 0.0f);
     // (Se faltou canal, o resto fica zero.)
-    for (std::size_t i = w.index(); i < out.size(); ++i) out[i] = 0.0f;
-    return w.nonFinite();
+    for (std::size_t i = std::min(w.index(), out.size()); i < out.size(); ++i) out[i] = 0.0f;
+    return { w.index(), w.nonFinite() };
 }
 
 PhysicalCorrections3D LocomotionContract3D::decode(std::span<const float> action,

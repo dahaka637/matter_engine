@@ -15,6 +15,13 @@
 
 namespace MatterEngine {
 
+// O que observe() fez: quantos numeros escreveu (o tamanho do layout, sempre)
+// e quantos nao finitos virou zero (deveria ser sempre zero).
+struct LocomotionObservation3D {
+    std::size_t written = 0;
+    std::size_t nonFinite = 0;
+};
+
 // As autoridades de cada cabeca (0..1): o curriculo do treino, nunca a rede.
 struct LocomotionAuthority3D {
     float footwork = 0.0f;
@@ -73,8 +80,9 @@ public:
     // (um por atleta: nada e compartilhado entre threads). Sempre finita: um
     // numero nao finito vira zero, e a volta conta quantos foram (deveria ser
     // sempre zero; a paridade confere).
-    std::size_t observe(const RagdollState3D& body, const AthleteCommand3D& command, const AthleteControlView3D& view,
-        std::span<const float> history, BodyForecast3D& forecast, std::span<float> out) const;
+    LocomotionObservation3D observe(const RagdollState3D& body, const AthleteCommand3D& command,
+        const AthleteControlView3D& view, std::span<const float> history, BodyForecast3D& forecast,
+        std::span<float> out) const;
 
     // A saida da rede nas correcoes do executor (cada cabeca vezes a sua
     // autoridade; autoridade zero e o classico exato).

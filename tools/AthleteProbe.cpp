@@ -1129,7 +1129,7 @@ void contractAfter(ContractHooks* hooks, const AthleteState3D& athlete, const Ra
     if (hooks == nullptr || hooks->contract == nullptr || hooks->observations == nullptr) return;
     hooks->buffer.resize(hooks->contract->observationSize());
     hooks->nonFinite += hooks->contract->observe(body, command, athleteControlView3D(athlete), athlete.policyHistory,
-        hooks->forecast, hooks->buffer);
+        hooks->forecast, hooks->buffer).nonFinite;
     hooks->observations->push_back(observationPrint(hooks->buffer));
 }
 
