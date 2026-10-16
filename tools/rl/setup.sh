@@ -24,8 +24,11 @@ for source in "$root"/build-profile/_deps/*-src "$root"/build-linux/_deps/*-src;
     name="${name%-src}"
     reuse+=("-DFETCHCONTENT_SOURCE_DIR_${name^^}=$source")
 done
+# A build do treino e so desta maquina: -march=native e LTO (+~10% na fisica; vazao_dos_treinos.md).
 cmake -S "$root" -B "$root/build-rl" -G Ninja -DCMAKE_BUILD_TYPE=Release \
     -DMATTERENGINE_BUILD_RL_PYTHON=ON -DMATTERENGINE_BUILD_TESTS=OFF \
+    -DCMAKE_C_FLAGS="-march=native" -DCMAKE_CXX_FLAGS="-march=native" \
+    -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON -DINTERPROCEDURAL_OPTIMIZATION=ON \
     -DPython_EXECUTABLE="$python" "${reuse[@]}"
 cmake --build "$root/build-rl" --parallel "${CMAKE_BUILD_PARALLEL_LEVEL:-6}" --target matter_rl_native
 
