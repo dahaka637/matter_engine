@@ -1664,24 +1664,31 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             // vezes; so andando, com um pouso no ultimo segundo). (Medido:
             // o erro dos pes contra o estilo em cruzeiro caiu de 0,13-0,70 m
             // para 0,07-0,20; com ganho 1,5, 0,10-0,24.)
+            // (Os dois pes pousando no mesmo tick - o pouso de um pulo - e
+            // ambiguo: a fase segue andando. Um pisca de contato nao conta:
+            // o tempo no ar zera a cada toque.)
             static const char* const feet[2] = { "LeftFoot", "RightFoot" };
+            std::array<bool, 2> landed { false, false };
             for (std::size_t side = 0; side < 2; ++side) {
                 bool touching = false;
                 for (const RagdollInteraction3D& item : body.interactions)
                     if (item.linkIndex < profile.links.size() && profile.links[item.linkIndex].id == feet[side]
                         && item.normalWorld.z > 0.5f)
                         touching = true;
-                if (touching && state.referenceFootAir[side] >= 0.1f) {
-                    state.referenceBodyPhase = side == 0 ? 0.0f : 0.5f;
-                    state.referenceBodyPhaseValid = true;
-                    state.referenceSinceTouchdown = 0.0f;
-                }
+                landed[side] = touching && state.referenceFootAir[side] >= 0.1f;
                 state.referenceFootAir[side] = touching ? 0.0f : state.referenceFootAir[side] + deltaTime;
+            }
+            if (landed[0] != landed[1]) {
+                state.referenceBodyPhase = landed[0] ? 0.0f : 0.5f;
+                state.referenceBodyPhaseValid = true;
+                state.referenceSinceTouchdown = 0.0f;
             }
             const DefaultLocomotionOutput3D& shadow = state.referenceShadow.output();
             const auto wrap = [](float x) { return x - std::floor(x + 0.5f); };
             if (state.referenceShadowActive && state.referenceSinceTouchdown > 0.0f) {
-                // (Entre os pousos, a fase do corpo anda no ritmo da sombra.)
+                // (Entre os pousos, a fase do corpo anda no ritmo da sombra;
+                // um salto da sombra para tras - raro: troca de variacao - so
+                // para a fase do corpo naquele tick.)
                 const float advance = wrap(shadow.cyclePhase - state.referenceShadowPhase);
                 state.referenceBodyPhase = state.referenceBodyPhase + std::max(0.0f, advance)
                     - std::floor(state.referenceBodyPhase + std::max(0.0f, advance));

@@ -1,6 +1,7 @@
 #include "Engine/Athlete/Contract/LocomotionContract3D.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstring>
 #include <string>
@@ -379,21 +380,30 @@ PhysicalCorrections3D LocomotionContract3D::decode(std::span<const float> action
 
 namespace {
 
-// O nome do outro lado (Left <-> Right, esq <-> dir).
+// O nome do outro lado: so palavras inteiras - "Left"/"Right" no comeco de
+// um nome de link (seguido de maiuscula) e "esq"/"dir" entre separadores; um
+// "direcao" nao vira "esqecao".
 std::string mirroredName(const std::string& name) {
+    const auto boundary = [&](std::size_t i) {
+        return i >= name.size() || !(std::isalnum(static_cast<unsigned char>(name[i])) != 0);
+    };
+    const auto startsWord = [&](std::size_t i) { return i == 0 || boundary(i - 1); };
+    const auto upper = [&](std::size_t i) {
+        return i < name.size() && std::isupper(static_cast<unsigned char>(name[i])) != 0;
+    };
     std::string out;
-    out.reserve(name.size());
+    out.reserve(name.size() + 1);
     for (std::size_t i = 0; i < name.size();) {
-        if (name.compare(i, 4, "Left") == 0) {
+        if (startsWord(i) && name.compare(i, 4, "Left") == 0 && (upper(i + 4) || boundary(i + 4))) {
             out += "Right";
             i += 4;
-        } else if (name.compare(i, 5, "Right") == 0) {
+        } else if (startsWord(i) && name.compare(i, 5, "Right") == 0 && (upper(i + 5) || boundary(i + 5))) {
             out += "Left";
             i += 5;
-        } else if (name.compare(i, 3, "esq") == 0) {
+        } else if (startsWord(i) && name.compare(i, 3, "esq") == 0 && boundary(i + 3)) {
             out += "dir";
             i += 3;
-        } else if (name.compare(i, 3, "dir") == 0) {
+        } else if (startsWord(i) && name.compare(i, 3, "dir") == 0 && boundary(i + 3)) {
             out += "esq";
             i += 3;
         } else {
