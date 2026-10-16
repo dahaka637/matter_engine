@@ -1,7 +1,9 @@
 #pragma once
 
+#include "Engine/Animation/AnimationClip3D.hpp"
 #include "Engine/Athlete/Dribble/BodyForecast3D.hpp"
-#include "Engine/Character/DefaultLocomotion3D.hpp"
+#include "Engine/Math/Quaternion.hpp"
+#include "Engine/Math/Vec3.hpp"
 
 #include <array>
 #include <vector>
@@ -16,6 +18,36 @@ namespace MatterEngine {
 // - a fase e, por pe, o apoio e a meta de contato (quando e onde pousa);
 // - a intencao e o plano de navegacao a frente, por um perfil que o corpo
 //   consegue cumprir (o do fisico tem limites menores que o da capsula).
+
+// O movimento que a referencia le (so dados): a saida de quem gera o movimento
+// - hoje o padrao, convertido pela casca de migracao (Athlete/Legacy/
+// LegacyReference3D); a referencia nao conhece o controle antigo.
+struct ReferenceMotion3D {
+    static constexpr int ForecastCount = 16;
+    bool valid = false;
+    // A pose (sem copia: vale ate o proximo update de quem a gerou).
+    const RagdollAnimationPose3D* pose = nullptr;
+    const std::vector<Vec3>* coordinates = nullptr;
+    Vec3 rootPosition;
+    Quaternion rootOrientation;
+    float facingYaw = 0.0f;
+    float phase = 0.0f;
+    float movingShare = 0.0f;
+    float cycleSeconds = -1.0f;
+    bool cycling = false;
+    bool airborne = false;
+    // Os pes: o apoio pela fase (andando) e pelo contato (parado), o tempo ate
+    // sair e ate pousar (s; -1 fora).
+    std::array<bool, 2> cyclePlanted { true, true };
+    std::array<bool, 2> footPlanted { true, true };
+    std::array<float, 2> secondsToLiftoff { -1.0f, -1.0f };
+    std::array<float, 2> cycleSecondsToTouchdown { -1.0f, -1.0f };
+    std::array<float, 2> secondsToTouchdown { -1.0f, -1.0f };
+    // O pe do estilo no futuro (no referencial do corpo em cada instante), a
+    // cada forecastStep s a partir de agora.
+    float forecastStep = 0.04f;
+    const std::array<std::array<Vec3, ForecastCount>, 2>* footForecast = nullptr;
+};
 
 // O perfil de navegacao (a resposta da capsula: m/s2, rad/s). O padrao e o
 // animado (os aprovados, 100% da regua "Resposta").
@@ -81,10 +113,10 @@ struct ReferenceFrameInput3D {
     std::array<Vec3, 2> hipInBody {};
 };
 
-// Monta a referencia a partir da saida do padrao (o movimento que ja roda) e
-// do estado da capsula. A previsao do corpo vai em `forecast` (reusada entre
+// Monta a referencia a partir do movimento (hoje o padrao) e do estado da
+// capsula. A previsao do corpo vai em `forecast` (reusada entre
 // ticks, sem alocar de novo).
-[[nodiscard]] ReferenceFrame3D buildReferenceFrame3D(const DefaultLocomotionOutput3D& motion,
+[[nodiscard]] ReferenceFrame3D buildReferenceFrame3D(const ReferenceMotion3D& motion,
     const ReferenceFrameInput3D& input, BodyForecast3D& forecast);
 
 } // namespace MatterEngine

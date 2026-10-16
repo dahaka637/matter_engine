@@ -659,6 +659,7 @@ add_library(MatterEngine STATIC
     src/Engine/Athlete/Synthesis/LegClearance3D.cpp
     src/Engine/Athlete/Synthesis/LegSynthesis3D.cpp
     src/Engine/Athlete/Legacy/LegacyAthleteStep3D.cpp
+    src/Engine/Athlete/Legacy/LegacyReference3D.cpp
     src/Engine/Athlete/Modes/ContactClasses3D.cpp
     src/Engine/Athlete/Modes/ModeRules3D.cpp
     src/Engine/Athlete/Reference/ReferenceFrame3D.cpp

@@ -3,6 +3,7 @@
 // trocas linha a linha e propriedades com sinais aleatorios.
 #include "Engine/Athlete/Modes/ContactClasses3D.hpp"
 #include "Engine/Athlete/Modes/ModeRules3D.hpp"
+#include "Engine/Athlete/Legacy/LegacyReference3D.hpp"
 #include "Engine/Athlete/Reference/ReferenceFrame3D.hpp"
 
 #include <cmath>
@@ -349,7 +350,7 @@ void referenceFrameTests() {
     BodyForecast3D forecast;
     DefaultLocomotionOutput3D motion;
     ReferenceFrameInput3D input;
-    expect(!buildReferenceFrame3D(motion, input, forecast).valid, "sem o padrao valido, a referencia nao vale");
+    expect(!buildReferenceFrame3D(legacyReferenceMotion3D(motion), input, forecast).valid, "sem o padrao valido, a referencia nao vale");
 
     // Correndo em linha reta a 4 m/s (o pedido igual a velocidade): o pe
     // esquerdo apoiado, o direito no balanco pousando em 0,12 s.
@@ -366,7 +367,7 @@ void referenceFrameTests() {
     input.pelvisGround = { 0.0f, 0.0f, 0.0f };
     input.velocity = { 4.0f, 0.0f, 0.0f };
     input.requested = { 4.0f, 0.0f, 0.0f };
-    const ReferenceFrame3D frame = buildReferenceFrame3D(motion, input, forecast);
+    const ReferenceFrame3D frame = buildReferenceFrame3D(legacyReferenceMotion3D(motion), input, forecast);
     expect(frame.valid && frame.pose == &motion.pose && frame.coordinates == &motion.coordinates,
         "a pose de estilo e a do padrao, sem copia");
     expect(frame.feet[0].planted && !frame.feet[0].touchdownValid, "o pe apoiado nao tem meta de pouso");
@@ -384,13 +385,13 @@ void referenceFrameTests() {
     // Arrancando do parado: o perfil decide o quanto o plano anda.
     input.velocity = {};
     input.profile = { 4.0f, 6.0f, 8.0f, 3.0f };
-    const ReferenceFrame3D slow = buildReferenceFrame3D(motion, input, forecast);
+    const ReferenceFrame3D slow = buildReferenceFrame3D(legacyReferenceMotion3D(motion), input, forecast);
     input.profile = {};
-    const ReferenceFrame3D fast = buildReferenceFrame3D(motion, input, forecast);
+    const ReferenceFrame3D fast = buildReferenceFrame3D(legacyReferenceMotion3D(motion), input, forecast);
     expect(slow.planVelocity[2].x < fast.planVelocity[2].x && std::abs(slow.planVelocity[2].x - 2.0f) < 0.1f,
         "com o perfil do fisico (4 m/s2) o plano chega a 2 m/s em 0,5 s; o do padrao (16 m/s2), mais");
     input.profile = { -1.0f, 6.0f, 8.0f, 3.0f };
-    const ReferenceFrame3D fallback = buildReferenceFrame3D(motion, input, forecast);
+    const ReferenceFrame3D fallback = buildReferenceFrame3D(legacyReferenceMotion3D(motion), input, forecast);
     expect(std::abs(fallback.planVelocity[2].x - fast.planVelocity[2].x) < 1e-4f,
         "um perfil invalido cai no do padrao (falha segura)");
 }

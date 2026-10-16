@@ -14,17 +14,17 @@ bool NavigationProfile3D::valid() const {
         && positiveFinite(turnRate);
 }
 
-ReferenceFrame3D buildReferenceFrame3D(const DefaultLocomotionOutput3D& motion, const ReferenceFrameInput3D& input,
+ReferenceFrame3D buildReferenceFrame3D(const ReferenceMotion3D& motion, const ReferenceFrameInput3D& input,
     BodyForecast3D& forecast) {
     ReferenceFrame3D frame;
     if (!motion.valid) return frame;
     frame.valid = true;
-    frame.pose = &motion.pose;
-    frame.coordinates = &motion.coordinates;
+    frame.pose = motion.pose;
+    frame.coordinates = motion.coordinates;
     frame.rootPosition = motion.rootPosition;
     frame.rootOrientation = motion.rootOrientation;
-    frame.facingYaw = motion.facingYawRadians;
-    frame.phase = motion.cyclePhase;
+    frame.facingYaw = motion.facingYaw;
+    frame.phase = motion.phase;
     frame.movingShare = motion.movingShare;
     frame.cycling = motion.cycling;
     frame.cycleSeconds = motion.cycleSeconds;
@@ -46,7 +46,7 @@ ReferenceFrame3D buildReferenceFrame3D(const DefaultLocomotionOutput3D& motion, 
     plan.facingYaw = input.facingYaw;
     plan.facingRate = input.facingRate;
     plan.hipInBody = input.hipInBody;
-    const float forecastSpan = static_cast<float>(DefaultLocomotionOutput3D::ForecastCount - 1) * motion.forecastStep;
+    const float forecastSpan = static_cast<float>(ReferenceMotion3D::ForecastCount - 1) * motion.forecastStep;
     plan.horizon = std::max({ forecastSpan, frame.planTimes.back(), 0.1f });
     forecast.build(plan);
     for (int i = 0; i < ReferenceFrame3D::PlanCount; ++i) {
@@ -62,11 +62,13 @@ ReferenceFrame3D buildReferenceFrame3D(const DefaultLocomotionOutput3D& motion, 
         foot.planted = motion.cycling ? motion.cyclePlanted[side] : motion.footPlanted[side];
         foot.secondsToLiftoff = motion.secondsToLiftoff[side];
         foot.secondsToTouchdown = motion.cycling ? motion.cycleSecondsToTouchdown[side] : motion.secondsToTouchdown[side];
-        if (foot.planted || !motion.cycling || foot.secondsToTouchdown < 0.0f || motion.forecastStep <= 0.0f) continue;
+        if (foot.planted || !motion.cycling || foot.secondsToTouchdown < 0.0f || motion.forecastStep <= 0.0f
+            || motion.footForecast == nullptr)
+            continue;
         if (foot.secondsToTouchdown > forecastSpan) continue;
         const int k = std::clamp(static_cast<int>(std::lround(foot.secondsToTouchdown / motion.forecastStep)), 0,
-            DefaultLocomotionOutput3D::ForecastCount - 1);
-        const Vec3 local = motion.footForecast[side][static_cast<std::size_t>(k)];
+            ReferenceMotion3D::ForecastCount - 1);
+        const Vec3 local = (*motion.footForecast)[side][static_cast<std::size_t>(k)];
         if (local.lengthSquared() <= 0.0f) continue;
         foot.touchdownWorld = forecast.toWorld(local, static_cast<float>(k) * motion.forecastStep);
         foot.touchdownValid = true;
