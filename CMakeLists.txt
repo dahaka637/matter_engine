@@ -663,6 +663,7 @@ add_library(MatterEngine STATIC
     src/Engine/Athlete/Modes/ContactClasses3D.cpp
     src/Engine/Athlete/Modes/ModeRules3D.cpp
     src/Engine/Athlete/Reference/ReferenceFrame3D.cpp
+    src/Engine/Athlete/Reference/PhaseLock3D.cpp
     src/Engine/Athlete/Physical/PhysicalCorrections3D.cpp
     src/Engine/Athlete/Contract/LocomotionContract3D.cpp
     src/Engine/Athlete/Training/LocomotionWorld3D.cpp

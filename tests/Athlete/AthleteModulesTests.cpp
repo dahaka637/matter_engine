@@ -6,6 +6,7 @@
 #include "Engine/Athlete/Modes/ModeRules3D.hpp"
 #include "Engine/Athlete/Physical/PhysicalCorrections3D.hpp"
 #include "Engine/Athlete/Legacy/LegacyReference3D.hpp"
+#include "Engine/Athlete/Reference/PhaseLock3D.hpp"
 #include "Engine/Athlete/Reference/ReferenceFrame3D.hpp"
 
 #include <cmath>
@@ -701,6 +702,52 @@ void contractTests() {
     expect(LocomotionContract3D(other).hash() != contract.hash(), "outro corpo, outra impressao");
 }
 
+// O laco de fase: a referencia alcanca a fase do corpo pelos pousos.
+void phaseLockTests() {
+    const float dt = 1.0f / 120.0f;
+    const float cycle = 0.7f;
+    const auto wrap = [](float x) { return x - std::floor(x + 0.5f); };
+    // O corpo pousa o pe esquerdo em t = 0,7k e o direito em 0,7k + 0,35
+    // (cada pe 0,2 s no chao); a referencia anda no mesmo ritmo, 0,3 de fase
+    // atrasada, e o laco a puxa.
+    PhaseLock3D lock;
+    float reference = 0.7f;
+    float worstLate = 0.0f;
+    for (int tick = 0; tick < static_cast<int>(4.0f / dt); ++tick) {
+        const float t = static_cast<float>(tick) * dt;
+        const float left = std::fmod(t, cycle), right = std::fmod(t + cycle * 0.5f, cycle);
+        const std::array<bool, 2> touching { left < 0.2f, right < 0.2f };
+        const float rate = lock.update(touching, reference, 1.0f, true, true, dt);
+        expect(rate >= 0.5f && rate <= 1.5f, "o ritmo fica entre 0,5 e 1,5");
+        reference = reference + rate * dt / cycle - std::floor(reference + rate * dt / cycle);
+        const float body = std::fmod(t, cycle) / cycle;
+        if (t > 2.5f) worstLate = std::max(worstLate, std::abs(wrap(reference - body)));
+    }
+    expect(lock.valid(), "com pousos, a fase do corpo vale");
+    expect(worstLate < 0.05f, "a referencia alcanca o corpo (menos de 5% do ciclo depois de 2,5 s)");
+
+    // Os dois pes pousando juntos (um pulo): ambiguo, nao define a fase.
+    PhaseLock3D jump;
+    for (int tick = 0; tick < 30; ++tick) (void)jump.update({ false, false }, 0.0f, 1.0f, true, true, dt);
+    (void)jump.update({ true, true }, 0.0f, 1.0f, true, true, dt);
+    expect(!jump.valid(), "os dois pes pousando juntos nao definem a fase");
+
+    // Um pisca de contato (um tick sem contato) nao e pouso.
+    PhaseLock3D flicker;
+    for (int tick = 0; tick < 10; ++tick) (void)flicker.update({ true, true }, 0.0f, 1.0f, true, true, dt);
+    (void)flicker.update({ false, true }, 0.0f, 1.0f, true, true, dt);
+    (void)flicker.update({ true, true }, 0.0f, 1.0f, true, true, dt);
+    expect(!flicker.valid(), "um tick sem contato nao vira pouso");
+
+    // Parado (a referencia nao anda) ou o laco desligado: o ritmo e 1.
+    PhaseLock3D still;
+    for (int tick = 0; tick < 30; ++tick) (void)still.update({ false, true }, 0.0f, 1.0f, true, true, dt);
+    expect(still.update({ true, true }, 0.3f, 0.2f, true, true, dt) == 1.0f, "parado, o laco nao puxa");
+    expect(still.update({ true, true }, 0.3f, 1.0f, true, false, dt) == 1.0f, "desligado, o laco nao puxa");
+    still.reset();
+    expect(!still.valid() && still.bodyPhase() == 0.0f, "recomecar zera a fase do corpo");
+}
+
 // Propriedades: sequencias aleatorias de sinais em todos os modos.
 void modeRulePropertyTests() {
     const ModeRuleParams3D p;
@@ -766,6 +813,7 @@ int main() {
         referenceFrameTests();
         correctionTests();
         contractTests();
+        phaseLockTests();
         modeRulePropertyTests();
         std::cout << "athlete modules: " << g_checks << " checagens, tudo certo\n";
         return 0;

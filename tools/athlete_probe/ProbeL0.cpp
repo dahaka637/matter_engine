@@ -175,6 +175,7 @@ int runParity(const ProbeContext& context, int limit, int restores) {
     std::printf("1. sonda contra mundo de treino, do comeco (todos os roteiros sem bola: terreno, caixas, empurroes), com a entrada da rede\n");
     int scenariosRun = 0, ticksCompared = 0;
     std::size_t nonFinite = 0;
+    std::uint64_t runPrint = 1469598103934665603ull;
     int observationFailures = 0;
     const std::vector<Scenario> list = scenarios();
     for (const Scenario& scenario : list) {
@@ -201,6 +202,16 @@ int runParity(const ProbeContext& context, int limit, int restores) {
         const TraceSplit split = splitOf(probe, trained);
         ticksCompared += static_cast<int>(probe.size());
         nonFinite += probeHooks.nonFinite + trainedHooks.nonFinite;
+        // (A impressao da rodada: muda com qualquer mudanca no movimento, nas
+        // decisoes ou na entrada da rede - a prova de um refatoramento.)
+        for (std::size_t k = 0; k < trained.size(); ++k) {
+            const std::uint64_t parts[6] = { trained[k].body, trained[k].targets, trained[k].assist, trained[k].decisions,
+                trained[k].navigation, k < trainedObservations.size() ? trainedObservations[k] : 0ull };
+            for (std::uint64_t part : parts) {
+                runPrint ^= part;
+                runPrint *= 1099511628211ull;
+            }
+        }
         if (scenario.name == "trota" && settings.physicalReference) {
             // A referencia de estilo trotando: vale, anda (a fase e o plano a
             // frente) e o erro das partes-chave e de centimetros.
@@ -273,6 +284,8 @@ int runParity(const ProbeContext& context, int limit, int restores) {
     }
     failures += observationFailures;
     if (nonFinite > 0) ++failures;
+    std::printf("  a impressao da rodada (todas as entradas da rede e os ticks): %016llx\n",
+        static_cast<unsigned long long>(runPrint));
     if (settings.physicalReference) {
         // O erro dos pes contra o estilo em cruzeiro (de 1,5 s ao fim; a
         // media dos dois pes, no plano): com a fase da referencia seguindo o
