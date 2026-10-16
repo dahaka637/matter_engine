@@ -16,6 +16,7 @@
 //      [--velocidades-padrao 0|1] (no fisico, a tabela de velocidades do padrao; a reescrita R5)
 //      [--sem-capsula] (o atleta comandado pelo slot, sem a capsula do jogador: o caminho do treino)
 //      XDESLOCA=m: a largada da capsula deslocada em x (a sensibilidade caotica)
+//      XCUSTO=1: o custo do runtime por tick (p50/p95/p99, o pior tick)
 //      [--paridade [N]] (a sonda contra os mundos de treino, bit a bit; N roteiros, 0 todos)
 //      [--linha-de-base [threads]] (o classico por nivel de ajuda num lote de mundos, e a vazao)
 //      [--ajuda-parado %] [--ajuda-andando %]
@@ -924,6 +925,8 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
     InflatedBallState3D ballState;
     BallOwnership3D ownership;
     if (dump != nullptr) std::fprintf(dump, "S %s\n", scenario.name.c_str());
+    // XCUSTO=1: o custo do runtime por tick (o passo do atleta; us, p50/p95/p99).
+    std::vector<double> runtimeCost;
 
     AthleteRuntime3D runtime;
     Vec3 followVelocity {};
@@ -1176,8 +1179,11 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
         if (scenario.ball && step >= 0) balls.push_back({ ballHandle, &ballState, &ownership });
         AthleteRuntimeOutput3D output;
         if (step >= 0) contractBefore(hooks, athlete, step);
+        const auto runtimeBegin = std::chrono::steady_clock::now();
         runtime.update(*scene, runtimeAssets, std::span<AthleteSlot3D>(&slot, 1), balls, step < 0 ? warmSettings : settings,
             control, Dt, output);
+        if (step >= 0)
+            runtimeCost.push_back(std::chrono::duration<double>(std::chrono::steady_clock::now() - runtimeBegin).count());
         if (output.followVelocitySet) followVelocity = output.followVelocityWorld;
         if (output.controlledAnimatedSet) controlledAnimated = output.controlledAnimated;
         capsuleSpeedScale = output.controlledSpeedScale;
@@ -2051,6 +2057,17 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
     metrics.earlyLifts = athlete.footsteps.telemetry().earlyLifts;
     metrics.catchSteps = athlete.footsteps.telemetry().catchSteps;
     metrics.startSteps = athlete.footsteps.telemetry().startSteps;
+    if (std::getenv("XCUSTO") && !runtimeCost.empty()) {
+        const std::size_t worst = static_cast<std::size_t>(
+            std::max_element(runtimeCost.begin(), runtimeCost.end()) - runtimeCost.begin());
+        std::printf("  CUSTO: o pior tick e o %zu (%.2f s)\n", worst, static_cast<double>(worst) * Dt);
+        std::sort(runtimeCost.begin(), runtimeCost.end());
+        const auto at = [&](double p) {
+            return runtimeCost[std::min(runtimeCost.size() - 1, static_cast<std::size_t>(p * runtimeCost.size()))] * 1.0e6;
+        };
+        std::printf("  CUSTO do runtime por tick (us): p50 %.0f p95 %.0f p99 %.0f max %.0f\n", at(0.5), at(0.95), at(0.99),
+            runtimeCost.back() * 1.0e6);
+    }
     return metrics;
 }
 
