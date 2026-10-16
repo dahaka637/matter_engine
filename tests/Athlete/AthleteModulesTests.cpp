@@ -3,6 +3,7 @@
 // trocas linha a linha e propriedades com sinais aleatorios.
 #include "Engine/Athlete/Modes/ContactClasses3D.hpp"
 #include "Engine/Athlete/Modes/ModeRules3D.hpp"
+#include "Engine/Athlete/Reference/ReferenceFrame3D.hpp"
 
 #include <cmath>
 #include <cstdint>
@@ -344,6 +345,56 @@ void pendulumTests() {
     expect(std::abs(pendulumDegrees3D(lean30, base) - 30.0f) < 0.1f, "o pendulo de 30 graus");
 }
 
+void referenceFrameTests() {
+    BodyForecast3D forecast;
+    DefaultLocomotionOutput3D motion;
+    ReferenceFrameInput3D input;
+    expect(!buildReferenceFrame3D(motion, input, forecast).valid, "sem o padrao valido, a referencia nao vale");
+
+    // Correndo em linha reta a 4 m/s (o pedido igual a velocidade): o pe
+    // esquerdo apoiado, o direito no balanco pousando em 0,12 s.
+    motion.valid = true;
+    motion.cycling = true;
+    motion.cyclePhase = 0.3f;
+    motion.movingShare = 1.0f;
+    motion.cycleSeconds = 0.7f;
+    motion.forecastStep = 0.04f;
+    motion.cyclePlanted = { true, false };
+    motion.cycleSecondsToTouchdown = { -1.0f, 0.12f };
+    motion.secondsToLiftoff = { 0.2f, -1.0f };
+    motion.footForecast[1][3] = { 0.3f, -0.1f, 0.0f };
+    input.pelvisGround = { 0.0f, 0.0f, 0.0f };
+    input.velocity = { 4.0f, 0.0f, 0.0f };
+    input.requested = { 4.0f, 0.0f, 0.0f };
+    const ReferenceFrame3D frame = buildReferenceFrame3D(motion, input, forecast);
+    expect(frame.valid && frame.pose == &motion.pose && frame.coordinates == &motion.coordinates,
+        "a pose de estilo e a do padrao, sem copia");
+    expect(frame.feet[0].planted && !frame.feet[0].touchdownValid, "o pe apoiado nao tem meta de pouso");
+    expect(!frame.feet[1].planted && frame.feet[1].touchdownValid
+            && std::abs(frame.feet[1].touchdownWorld.x - (0.48f + 0.3f)) < 0.02f
+            && std::abs(frame.feet[1].touchdownWorld.y + 0.1f) < 0.02f,
+        "o pe no balanco pousa onde a previsao do pe diz, levada pelo corpo a 4 m/s (0,78; -0,1)");
+    for (int i = 0; i < ReferenceFrame3D::PlanCount; ++i) {
+        const float t = frame.planTimes[static_cast<std::size_t>(i)];
+        expect(std::abs(frame.planPosition[static_cast<std::size_t>(i)].x - 4.0f * t) < 0.02f
+                && std::abs(frame.planVelocity[static_cast<std::size_t>(i)].x - 4.0f) < 0.05f,
+            "em linha reta, o plano a frente e a velocidade constante");
+    }
+
+    // Arrancando do parado: o perfil decide o quanto o plano anda.
+    input.velocity = {};
+    input.profile = { 4.0f, 6.0f, 8.0f, 3.0f };
+    const ReferenceFrame3D slow = buildReferenceFrame3D(motion, input, forecast);
+    input.profile = {};
+    const ReferenceFrame3D fast = buildReferenceFrame3D(motion, input, forecast);
+    expect(slow.planVelocity[2].x < fast.planVelocity[2].x && std::abs(slow.planVelocity[2].x - 2.0f) < 0.1f,
+        "com o perfil do fisico (4 m/s2) o plano chega a 2 m/s em 0,5 s; o do padrao (16 m/s2), mais");
+    input.profile = { -1.0f, 6.0f, 8.0f, 3.0f };
+    const ReferenceFrame3D fallback = buildReferenceFrame3D(motion, input, forecast);
+    expect(std::abs(fallback.planVelocity[2].x - fast.planVelocity[2].x) < 1e-4f,
+        "um perfil invalido cai no do padrao (falha segura)");
+}
+
 // Propriedades: sequencias aleatorias de sinais em todos os modos.
 void modeRulePropertyTests() {
     const ModeRuleParams3D p;
@@ -406,6 +457,7 @@ int main() {
         contactClassTests();
         modeRuleTests();
         pendulumTests();
+        referenceFrameTests();
         modeRulePropertyTests();
         std::cout << "athlete modules: " << g_checks << " checagens, tudo certo\n";
         return 0;

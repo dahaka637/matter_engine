@@ -661,6 +661,7 @@ add_library(MatterEngine STATIC
     src/Engine/Athlete/Legacy/LegacyAthleteStep3D.cpp
     src/Engine/Athlete/Modes/ContactClasses3D.cpp
     src/Engine/Athlete/Modes/ModeRules3D.cpp
+    src/Engine/Athlete/Reference/ReferenceFrame3D.cpp
     src/Engine/Character/BiomechanicalBipedExperiment3D.cpp
     src/Engine/Character/CharacterControlApplication3D.cpp
     src/Engine/Character/CharacterLocomotion3D.cpp
