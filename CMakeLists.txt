@@ -671,6 +671,15 @@ add_library(MatterEngine STATIC
     src/Engine/Character/BallOwnership3D.cpp
     src/Engine/Character/BallTouchPreview3D.cpp
     src/Engine/Character/DefaultLocomotion3D.cpp
+    src/Engine/Character/DefaultLocomotion3D_Travel.cpp
+    src/Engine/Character/DefaultLocomotion3D_Tackle.cpp
+    src/Engine/Character/DefaultLocomotion3D_Gait.cpp
+    src/Engine/Character/DefaultLocomotion3D_Air.cpp
+    src/Engine/Character/DefaultLocomotion3D_Pose.cpp
+    src/Engine/Character/DefaultLocomotion3D_Layers.cpp
+    src/Engine/Character/DefaultLocomotion3D_Feet.cpp
+    src/Engine/Character/DefaultLocomotion3D_Exits.cpp
+    src/Engine/Character/DefaultLocomotion3D_Readout.cpp
     src/Engine/Character/PoseInertializer3D.cpp
     src/Engine/Character/CharacterStateEstimator3D.cpp
     src/Engine/Control/CharacterWholeBody3D.cpp

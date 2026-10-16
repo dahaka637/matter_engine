@@ -594,6 +594,60 @@ private:
     // A cadencia da passada de conducao (1: a normal).
     float m_dribbleCadence = 1.0f;
     void prepare(const RagdollProfile3D& profile, const CharacterLocomotionAnimations3D& animations);
+    // A reescrita (R4): o update em blocos (DefaultLocomotion3D_<bloco>.cpp).
+    // O Tick e o que um bloco passa para os seguintes num tick (antes, as
+    // variaveis locais da funcao de 1.700 linhas).
+    struct Tick {
+        const RagdollProfile3D& profile;
+        const CharacterLocomotionAnimations3D& animations;
+        const DefaultLocomotionInput3D& input;
+        const RagdollLinkDefinition3D* rootLink = nullptr;
+        float dt {};
+        std::size_t links {};
+        float viewYaw {};
+        Vec3 viewForward {};
+        Vec3 velocity {};
+        float speed {};
+        float touchdown {};
+        Vec3 requested {};
+        Vec3 travel {};
+        std::array<float, GaitCount> wanted {};
+        float sprint {};
+        float shapeTotal {};
+        float total {};
+        std::size_t dominant {};
+        float upperIdleWeight {};
+        Quaternion yaw {};
+        Vec3 forward {};
+        Vec3 left {};
+        float rate {};
+        float strideScale {};
+        bool seedTick {};
+        float landTrunk {};
+        float landUpper {};
+        float landHead {};
+        Vec3 rootOffset {};
+        std::array<float, 2> contact {};
+        float ground {};
+        Quaternion clipRootRotation {};
+        float curveAcceleration {};
+        float curveShare {};
+        Vec3 feet {};
+        Quaternion rootOrientation {};
+        Vec3 rootPosition {};
+        std::array<bool, 2> gestureFeet {};
+        Quaternion rootInverse {};
+    };
+    void stepTravel(Tick& t);
+    bool stepTackle(Tick& t);
+    void stepGait(Tick& t);
+    void stepAir(Tick& t);
+    void stepPose(Tick& t);
+    void stepLayers(Tick& t);
+    void stepFeet(Tick& t);
+    void stepExits(Tick& t);
+    void stepReadout(Tick& t);
+    [[nodiscard]] float gaitAmplitudeOf(std::size_t g) const;
 
     DefaultLocomotionSettings3D m_settings;
     DefaultLocomotionOutput3D m_output;
