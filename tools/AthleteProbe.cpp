@@ -1178,6 +1178,12 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
     float capsuleRose = 0.0f;
     float wallImpact = 0.0f;
     Metrics metrics;
+    // XAJUDA=1: os canais da ajuda no fisico (medias por tick; fracoes do peso).
+    struct AssistTally {
+        int ticks = 0;
+        double rootUp = 0.0, rootPlanar = 0.0, rootTorquePerKg = 0.0, feetUp = 0.0, feetPlanar = 0.0;
+        double linkTorquePerKg = 0.0, feetDelivered = 0.0;
+    } assistTally;
     // (O modo Ativo por dentro da ponte fisico -> padrao: "ponte".)
     const auto modeOf = [&]() {
         return bodyModeName3D(mode());
@@ -1976,6 +1982,22 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
                     pelvisLink.position.z, poseRoot, chest.z, worst);
             }
         }
+        if (std::getenv("XAJUDA") && mode() == BodyModeKind3D::Physical) {
+            const AdaptivePhysicalOutput3D& a = legacy.adaptivePhysics.output();
+            const double weight = profile.totalMassKg * 9.81;
+            if (a.valid) {
+                ++assistTally.ticks;
+                assistTally.rootUp += a.rootForceWorld.z / weight;
+                assistTally.rootPlanar += std::hypot(a.rootForceWorld.x, a.rootForceWorld.y) / weight;
+                assistTally.rootTorquePerKg += a.rootTorqueWorld.length() / profile.totalMassKg;
+                for (const Vec3& f : a.footForceWorld) {
+                    assistTally.feetUp += f.z / weight;
+                    assistTally.feetPlanar += std::hypot(f.x, f.y) / weight;
+                }
+                for (const Vec3& torque : a.linkTorqueWorld) assistTally.linkTorquePerKg += torque.length() / profile.totalMassKg;
+                assistTally.feetDelivered += athlete.feetAssistOutput.deliveredForce.length() / weight;
+            }
+        }
         // XPRONTO=1: as condicoes da volta do fisico ao padrao, a cada 0,1 s.
         if (std::getenv("XPRONTO") && mode() == BodyModeKind3D::Physical && step % 12 == 0) {
             const AthleteTelemetry3D telemetry = athleteTelemetry3D(athlete);
@@ -2214,6 +2236,13 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
         }
     }
     metrics.finalMode = mode();
+    if (std::getenv("XAJUDA") && assistTally.ticks > 0) {
+        const double n = assistTally.ticks;
+        std::printf("  AJUDA (%d ticks no fisico): pelve vertical %.3f peso, pelve no plano %.3f peso, torque pelve %.2f N.m/kg | "
+                    "pes vertical %.3f, no plano %.3f | torque nos ossos %.2f N.m/kg | ajuda nos pes entregue %.3f peso\n",
+            assistTally.ticks, assistTally.rootUp / n, assistTally.rootPlanar / n, assistTally.rootTorquePerKg / n,
+            assistTally.feetUp / n, assistTally.feetPlanar / n, assistTally.linkTorquePerKg / n, assistTally.feetDelivered / n);
+    }
     if (!bodyState.links.empty())
         metrics.travel = std::hypot(bodyState.links.front().position.x, bodyState.links.front().position.y);
     for (const BallActionRecord3D& record : athlete.ballPlay.queue().history()) {
