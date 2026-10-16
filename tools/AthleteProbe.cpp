@@ -2902,6 +2902,45 @@ int runParity(const ProbeContext& context, int limit, int restores) {
     }
     failures += observationFailures;
     if (nonFinite > 0) ++failures;
+    if (settings.physicalReference) {
+        // O erro dos pes contra o estilo em cruzeiro (de 1,5 s ao fim; a
+        // media dos dois pes, no plano): com a fase da referencia seguindo o
+        // corpo ele cai (a fase diferente soma meia passada).
+        const auto& channels = contract.observationLayout().channels;
+        std::size_t left = channels.size(), right = channels.size(), valid = channels.size();
+        for (std::size_t c = 0; c < channels.size(); ++c) {
+            if (channels[c].name == "ref.estilo_erro.pe_esq.x") left = c;
+            if (channels[c].name == "ref.estilo_erro.pe_dir.x") right = c;
+            if (channels[c].name == "ref.valida") valid = c;
+        }
+        std::printf("  o erro dos pes contra o estilo em cruzeiro (m, media dos dois pes):");
+        for (const char* name : { "anda", "trota", "sprint", "costas", "diagonal", "lados" }) {
+            const Scenario* found = nullptr;
+            for (const Scenario& scenario : list)
+                if (scenario.name == name) found = &scenario;
+            if (found == nullptr || left >= channels.size() || right >= channels.size()) continue;
+            LocomotionWorld3D world(engine, materials, context.runtimeAssets, worldSettings);
+            world.reset(AthleteStartMode3D::Physical);
+            std::vector<float> observation(contract.observationSize());
+            BodyForecast3D forecast;
+            double sum = 0.0;
+            int samples = 0;
+            const int ticks = static_cast<int>(found->seconds / Dt);
+            for (int step = 0; step < ticks; ++step) {
+                stepScenarioWorld(context, settings, *found, world, step);
+                if (static_cast<float>(step) * Dt < 1.5f) continue;
+                (void)contract.observe(world.body(), scenarioCommand(context, settings, found->keys(static_cast<float>(step) * Dt),
+                        world.telemetry().terrainSpeedLimit),
+                    athleteControlView3D(world.athlete()), world.athlete().policyHistory, forecast, observation);
+                if (observation[valid] < 0.5f) continue;
+                sum += 0.5 * (std::hypot(observation[left], observation[left + 1])
+                    + std::hypot(observation[right], observation[right + 1]));
+                ++samples;
+            }
+            std::printf(" %s %.2f", name, samples > 0 ? sum / samples : -1.0);
+        }
+        std::printf("\n");
+    }
     std::printf("  %d roteiros, %d ticks: %s; a entrada da rede %s e %s\n", scenariosRun, ticksCompared,
         failures == 0 ? "iguais bit a bit" : "com diferencas", observationFailures == 0 ? "igual bit a bit" : "DIFERE",
         nonFinite == 0 ? "sempre finita" : "com numeros nao finitos");

@@ -51,6 +51,16 @@ struct LegacyAthleteState3D {
     // instancia propria: nunca mexe no padrao de verdade nem na volta a ele.
     DefaultLocomotion3D referenceShadow;
     bool referenceShadowActive = false;
+    // O relogio da sombra segue o corpo (a licao do RL v1: o relogio do clipe
+    // nao esperava o corpo): a fase do corpo pelos pousos de verdade (0 no
+    // pouso do pe esquerdo, 0,5 no do direito, e no meio anda no ritmo da
+    // sombra), o tempo de cada pe no ar, ha quanto tempo foi o ultimo pouso e
+    // a fase da sombra no tick anterior.
+    float referenceBodyPhase = 0.0f;
+    bool referenceBodyPhaseValid = false;
+    float referenceSinceTouchdown = 10.0f;
+    std::array<float, 2> referenceFootAir { 0.0f, 0.0f };
+    float referenceShadowPhase = 0.0f;
     LegacyBodyMode3D bodyMode = LegacyBodyMode3D::Physical;
     // Tempo no modo atual e, no fisico, tempo assentado (sem pancada, de pe,
     // no chao).

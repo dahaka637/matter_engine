@@ -40,7 +40,10 @@ Heading headingOf(float yaw) {
 // O rumo do corpo pela pelve: a frente dela no plano e a perpendicular do
 // eixo do lado dela, pesadas pelo quanto cada uma esta deitada no plano (de
 // pe as duas concordam; tombando para a frente ou para tras a frente fica
-// vertical e o lado segura o rumo; de lado, o contrario).
+// vertical e o lado segura o rumo; de lado, o contrario). Todo rumo tirado de
+// uma orientacao tem alguma singularidade; a desta fica de cabeca para baixo
+// (a pelve virada 180 graus por um eixo do chao: as duas se anulam), onde o
+// rumo vira 0 - raro, e so naquele instante.
 float pelvisHeading(const RagdollProfile3D& profile, Quaternion orientation) {
     const Quaternion body = (orientation * profile.links.front().modelOrientation.conjugate()).normalized();
     const Vec3 forward = body.rotate({ 1.0f, 0.0f, 0.0f });
@@ -374,7 +377,9 @@ void LocomotionContract3D::decide(AthleteState3D& athlete, std::span<const float
     std::vector<float>& history = athlete.policyHistory;
     history.resize(HistoryDecisions * size, 0.0f);
     std::copy_backward(history.begin(), history.end() - static_cast<std::ptrdiff_t>(size), history.end());
-    for (std::size_t i = 0; i < size; ++i) history[i] = i < action.size() && std::isfinite(action[i]) ? action[i] : 0.0f;
+    // (O historico guarda a acao aplicada: no -1..1, como o decode a usa.)
+    for (std::size_t i = 0; i < size; ++i)
+        history[i] = i < action.size() && std::isfinite(action[i]) ? std::clamp(action[i], -1.0f, 1.0f) : 0.0f;
     // A rampa parte de onde a anterior estava.
     std::vector<float> from(size, 0.0f);
     if (athlete.policyTo.size() == size) {

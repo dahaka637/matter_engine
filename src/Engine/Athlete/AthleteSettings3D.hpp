@@ -105,6 +105,8 @@ struct AthleteRuntimeSettings3D {
     // referencia de estilo do contrato da rede (AthleteControlView3D). Nao
     // mexe no corpo; desligada, nada muda.
     bool physicalReference = false;
+    // O relogio da sombra segue a fase do corpo (os pousos de verdade).
+    bool physicalReferencePhaseLock = true;
     ContactClassParams3D contactClasses;
     ModeRuleParams3D modeRules;
     // A ajuda depois do impacto com a tabela: o choque comum ate 20 N.s tira
