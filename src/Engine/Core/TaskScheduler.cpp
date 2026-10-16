@@ -171,15 +171,32 @@ struct TaskScheduler::Impl {
         return found;
     }
 
+    // A ultima tarefa de um grupo zera o contador com o mutex do grupo na
+    // mao e avisa la dentro; quem espera so devolve (e pode destruir o grupo,
+    // que em parallelFor vive na pilha dele) depois de pegar o mesmo mutex,
+    // isto e, depois que o aviso terminou. Antes o contador ia a zero fora do
+    // mutex: quem esperava via o zero, saia e destruia o grupo enquanto o
+    // worker ainda travava o mutex e chamava notify_all nele - um uso depois
+    // de destruir, raro, que o ThreadSanitizer pegou no lote de treino (16/10).
+    // As outras tarefas descontam sem trava.
+    static void completeGroupTask(TaskGroup::Impl& group) noexcept {
+        std::size_t remaining = group.remaining.load(std::memory_order_acquire);
+        while (remaining > 1) {
+            if (group.remaining.compare_exchange_weak(remaining, remaining - 1,
+                    std::memory_order_acq_rel, std::memory_order_acquire)) {
+                return;
+            }
+        }
+        // Fecha tambem a janela de notificacao perdida entre o predicado e
+        // wait.
+        std::lock_guard completionLock(group.mutex);
+        group.remaining.fetch_sub(1, std::memory_order_acq_rel);
+        group.completed.notify_all();
+    }
+
     void execute(const ScheduledTask& scheduled) noexcept {
         scheduled.task.execute(scheduled.task.context);
-        if (scheduled.group != nullptr
-            && scheduled.group->remaining.fetch_sub(1,
-                std::memory_order_acq_rel) == 1) {
-            // Fecha a janela de notificacao perdida entre o predicado e wait.
-            std::lock_guard completionLock(scheduled.group->mutex);
-            scheduled.group->completed.notify_all();
-        }
+        if (scheduled.group != nullptr) completeGroupTask(*scheduled.group);
         if (outstanding.fetch_sub(1, std::memory_order_acq_rel) == 1) {
             std::lock_guard idleLock(idleMutex);
             idle.notify_all();
@@ -228,6 +245,10 @@ struct TaskScheduler::Impl {
                 return group.remaining.load(std::memory_order_acquire) == 0;
             });
         }
+        // O zero so aparece dentro do mutex (completeGroupTask): pegar o
+        // mutex aqui garante que o aviso ja saiu dele antes de o grupo poder
+        // morrer.
+        std::lock_guard settled(group.mutex);
     }
 
     void waitIdle() {
