@@ -2801,6 +2801,14 @@ int runParity(const ProbeContext& context, int limit, int restores) {
     std::printf("contrato da rede v%u: %zu entradas, %zu saidas, %zu eixos atuados, impressao %016llx\n",
         LocomotionContract3D::Version, contract.observationSize(), contract.actionSize(), contract.actuatedAxes().size(),
         static_cast<unsigned long long>(contract.hash()));
+    {
+        // O espelho (a simetria do treinador): os eixos das juntas do outro
+        // lado devem ser o reflexo exato (alinhamento 1).
+        const LocomotionMirror3D mirror = contract.mirror();
+        std::printf("  o espelho: o pior alinhamento dos eixos refletidos %.3f (%s)%s\n", mirror.worstAxisAlignment,
+            mirror.worstAxis.c_str(), mirror.worstAxisAlignment > 0.95f ? "" : " - EIXOS ASSIMETRICOS");
+        if (mirror.worstAxisAlignment <= 0.95f) ++failures;
+    }
     std::printf("1. sonda contra mundo de treino, do comeco (todos os roteiros sem bola: terreno, caixas, empurroes), com a entrada da rede\n");
     int scenariosRun = 0, ticksCompared = 0;
     std::size_t nonFinite = 0;

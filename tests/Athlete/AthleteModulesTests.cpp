@@ -612,6 +612,88 @@ void contractTests() {
     expect(std::abs(athlete.corrections.jointResiduals[key] - 0.3f * (0.8f + (-1.0f - 0.8f) * 0.25f)) < 1e-5f,
         "a rampa nova parte de onde a anterior estava");
 
+    // O espelho: duas vezes e a identidade, e o espelho da entrada de um corpo
+    // torto e a entrada do corpo refletido de verdade.
+    const LocomotionMirror3D mirror = contract.mirror();
+    bool involution = true;
+    for (const LocomotionMirrorMap3D* map : { &mirror.observation, &mirror.action })
+        for (std::size_t i = 0; i < map->source.size(); ++i)
+            involution &= map->source[map->source[i]] == i && map->scale[i] * map->scale[map->source[i]] == 1.0f;
+    expect(involution && mirror.observation.source.size() == contract.observationSize()
+            && mirror.action.source.size() == contract.actionSize(),
+        "o espelho duas vezes e a identidade");
+    std::uint64_t seed = 0x2545F4914F6CDD1Dull;
+    const auto random = [&]() {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        return static_cast<float>(seed >> 40) / static_cast<float>(1ull << 24) * 2.0f - 1.0f;
+    };
+    const auto mirrorVector = [](Vec3 v) { return Vec3 { v.x, -v.y, v.z }; };
+    const auto mirrorPseudo = [](Vec3 v) { return Vec3 { -v.x, v.y, -v.z }; };
+    std::vector<int> side(links);
+    for (std::size_t i = 0; i < links; ++i) {
+        std::string id = profile.links[i].id;
+        if (id.rfind("Left", 0) == 0) id = "Right" + id.substr(4);
+        else if (id.rfind("Right", 0) == 0) id = "Left" + id.substr(5);
+        for (std::size_t j = 0; j < links; ++j)
+            if (profile.links[j].id == id) side[i] = static_cast<int>(j);
+    }
+    RagdollState3D crooked = contractBody(profile, Quaternion::fromAxisAngle({ 0.0f, 0.0f, 1.0f }, 0.4f));
+    RagdollState3D reflected = crooked;
+    for (std::size_t i = 0; i < links; ++i) {
+        PhysicsBodyState3D& link = crooked.links[i];
+        link.position += Vec3 { 0.3f * random(), 0.3f * random(), 0.2f * random() };
+        link.orientation = (link.orientation * Quaternion::fromAxisAngle({ random(), random(), random() + 0.01f },
+            0.7f * random())).normalized();
+        link.linearVelocity = { 3.0f * random(), 3.0f * random(), random() };
+        link.angularVelocity = { 4.0f * random(), 4.0f * random(), 4.0f * random() };
+    }
+    for (std::size_t i = 0; i < links; ++i) {
+        const PhysicsBodyState3D& from = crooked.links[i];
+        PhysicsBodyState3D& to = reflected.links[static_cast<std::size_t>(side[i])];
+        to.position = mirrorVector(from.position);
+        to.orientation = { -from.orientation.x, from.orientation.y, -from.orientation.z, from.orientation.w };
+        to.linearVelocity = mirrorVector(from.linearVelocity);
+        to.angularVelocity = mirrorPseudo(from.angularVelocity);
+    }
+    RagdollInteraction3D step;
+    step.linkIndex = 14;
+    step.normalWorld = { 0.0f, 0.0f, 1.0f };
+    step.normalImpulseNewtonSeconds = 3.0f;
+    crooked.interactions.push_back(step);
+    step.linkIndex = static_cast<std::uint32_t>(side[14]);
+    reflected.interactions.push_back(step);
+    AthleteCommand3D asked;
+    asked.intent.requestedVelocityWorld = { 2.0f, 1.5f, 0.0f };
+    asked.facingYawRadians = 0.6f;
+    asked.lookPitchRadians = -0.2f;
+    asked.sprinting = true;
+    AthleteCommand3D askedReflected = asked;
+    askedReflected.intent.requestedVelocityWorld = mirrorVector(asked.intent.requestedVelocityWorld);
+    askedReflected.facingYawRadians = -asked.facingYawRadians;
+    AthleteControlView3D assist;
+    assist.pelvisForceWorld = { 100.0f, -250.0f, 400.0f };
+    assist.pelvisTorqueWorld = { 30.0f, 12.0f, -8.0f };
+    AthleteControlView3D assistReflected = assist;
+    assistReflected.pelvisForceWorld = mirrorVector(assist.pelvisForceWorld);
+    assistReflected.pelvisTorqueWorld = mirrorPseudo(assist.pelvisTorqueWorld);
+    std::vector<float> original(contract.observationSize()), mirrored(contract.observationSize());
+    (void)contract.observe(crooked, asked, assist, {}, forecast, original);
+    (void)contract.observe(reflected, askedReflected, assistReflected, {}, forecast, mirrored);
+    std::size_t worst = 0;
+    float worstError = 0.0f;
+    for (std::size_t i = 0; i < original.size(); ++i) {
+        const float predicted = original[mirror.observation.source[i]] * mirror.observation.scale[i];
+        const float error = std::abs(predicted - mirrored[i]);
+        if (error > worstError) {
+            worstError = error;
+            worst = i;
+        }
+    }
+    expect(worstError < 1e-3f, "o espelho da entrada e a entrada do corpo refletido (pior canal: "
+            + contract.observationLayout().channels[worst].name + ", erro " + std::to_string(worstError) + ")");
+
     // A impressao: a mesma para o mesmo corpo, outra se o corpo muda.
     expect(LocomotionContract3D(profile).hash() == contract.hash(), "a impressao e estavel");
     RagdollProfile3D other = profile;

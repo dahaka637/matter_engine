@@ -22,6 +22,24 @@ struct LocomotionObservation3D {
     std::size_t nonFinite = 0;
 };
 
+// O espelho de um layout (a simetria do treinador, tools/rl/matter_rl/
+// symmetry.py): cada canal espelhado vem do canal source vezes scale mais
+// offset.
+struct LocomotionMirrorMap3D {
+    std::vector<std::uint32_t> source;
+    std::vector<float> scale;
+    std::vector<float> offset;
+};
+
+struct LocomotionMirror3D {
+    LocomotionMirrorMap3D observation;
+    LocomotionMirrorMap3D action;
+    // O pior alinhamento dos eixos espelhados (1: o eixo do outro lado e o
+    // reflexo exato) e o eixo dele.
+    float worstAxisAlignment = 1.0f;
+    std::string worstAxis;
+};
+
 // As autoridades de cada cabeca (0..1): o curriculo do treino, nunca a rede.
 struct LocomotionAuthority3D {
     float footwork = 0.0f;
@@ -74,6 +92,14 @@ public:
     [[nodiscard]] std::uint64_t hash() const { return m_hash; }
     // Os eixos atuados (link * 3 + eixo), na ordem dos canais.
     [[nodiscard]] std::span<const std::uint32_t> actuatedAxes() const { return m_axes; }
+
+    // O espelho pelo plano do corpo (y no referencial do rumo): os lados
+    // trocam (Left/Right, esq/dir), os vetores trocam o y, as velocidades de
+    // giro e o torque (pseudovetores) trocam o x e o z, a fase anda meio ciclo
+    // e cada eixo de junta vai ao do outro lado com o sinal que os quadros das
+    // juntas dao (o giro refletido por M = diag(1,-1,1) e o giro pelo eixo M v
+    // ao contrario: s = -<M v, v'>).
+    [[nodiscard]] LocomotionMirror3D mirror() const;
 
     // A entrada de um tick: o corpo publicado, o comando, a visao do controle
     // e o historico das acoes (o do atleta). `forecast` e o rascunho do plano

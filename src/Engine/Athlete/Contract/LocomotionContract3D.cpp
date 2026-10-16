@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <string>
 
 namespace MatterEngine {
@@ -373,6 +374,110 @@ PhysicalCorrections3D LocomotionContract3D::decode(std::span<const float> action
     out.jointResiduals.assign(m_profile->links.size() * 3, 0.0f);
     for (std::uint32_t key : m_axes) out.jointResiduals[key] = value(i++) * JointRadians;
     for (std::size_t g = 0; g < 3; ++g) out.gainScale[g] = std::exp2(value(i++) * GainOctaves);
+    return out;
+}
+
+namespace {
+
+// O nome do outro lado (Left <-> Right, esq <-> dir).
+std::string mirroredName(const std::string& name) {
+    std::string out;
+    out.reserve(name.size());
+    for (std::size_t i = 0; i < name.size();) {
+        if (name.compare(i, 4, "Left") == 0) {
+            out += "Right";
+            i += 4;
+        } else if (name.compare(i, 5, "Right") == 0) {
+            out += "Left";
+            i += 5;
+        } else if (name.compare(i, 3, "esq") == 0) {
+            out += "dir";
+            i += 3;
+        } else if (name.compare(i, 3, "dir") == 0) {
+            out += "esq";
+            i += 3;
+        } else {
+            out += name[i++];
+        }
+    }
+    return out;
+}
+
+bool endsWith(const std::string& text, const char* tail) {
+    const std::size_t n = std::strlen(tail);
+    return text.size() >= n && text.compare(text.size() - n, n, tail) == 0;
+}
+
+bool contains(const std::string& text, const char* part) { return text.find(part) != std::string::npos; }
+
+} // namespace
+
+LocomotionMirror3D LocomotionContract3D::mirror() const {
+    const RagdollProfile3D& profile = *m_profile;
+    LocomotionMirror3D out;
+    // O sinal de cada eixo de junta: o eixo do quadro da junta do outro lado
+    // contra o reflexo deste.
+    const auto linkIndex = [&](const std::string& id) {
+        for (std::size_t i = 0; i < profile.links.size(); ++i)
+            if (profile.links[i].id == id) return static_cast<int>(i);
+        return -1;
+    };
+    const auto axisSign = [&](std::size_t link, std::size_t axis) {
+        const int other = linkIndex(mirroredName(profile.links[link].id));
+        if (other < 0) return 1.0f;
+        Vec3 unit {};
+        (axis == 0 ? unit.x : axis == 1 ? unit.y : unit.z) = 1.0f;
+        const Vec3 v = profile.links[link].inboundJoint.frameModelOrientation.rotate(unit);
+        const Vec3 w = profile.links[static_cast<std::size_t>(other)].inboundJoint.frameModelOrientation.rotate(unit);
+        const float alignment = -(v.x * w.x - v.y * w.y + v.z * w.z);
+        if (std::abs(alignment) < out.worstAxisAlignment) {
+            out.worstAxisAlignment = std::abs(alignment);
+            out.worstAxis = profile.links[link].id + "." + AxisNames[axis];
+        }
+        return alignment >= 0.0f ? 1.0f : -1.0f;
+    };
+    const auto axisOf = [&](const std::string& name) {
+        for (std::size_t a = 0; a < 3; ++a)
+            if (contains(name, (std::string(".") + AxisNames[a]).c_str())) return a;
+        return std::size_t { 0 };
+    };
+    // A regra de um canal (do contrato ou do historico).
+    const auto rule = [&](const std::string& name) {
+        float scale = 1.0f;
+        const bool vector = endsWith(name, ".x") || endsWith(name, ".y") || endsWith(name, ".z");
+        const bool pseudo = contains(name, ".giro.") || contains(name, "ajuda.torque.");
+        if (vector) {
+            if (pseudo) scale = endsWith(name, ".y") ? 1.0f : -1.0f;
+            else scale = endsWith(name, ".y") ? -1.0f : 1.0f;
+        }
+        if (name == "comando.olhar.sen" || name == "ref.fase.sen" || name == "ref.fase.cos"
+            || endsWith(name, "equilibrio.inclina.lado"))
+            scale = -1.0f;
+        if (contains(name, "junta.") || contains(name, "pose.")) {
+            const std::size_t start = contains(name, "junta.") ? name.find("junta.") + 6 : name.find("pose.") + 5;
+            const std::string link = name.substr(start, name.find('.', start) - start);
+            const int index = linkIndex(link);
+            if (index > 0) scale = axisSign(static_cast<std::size_t>(index), axisOf(name.substr(start)));
+        }
+        return scale;
+    };
+    const auto build = [&](const RLVectorLayout3D& layout, LocomotionMirrorMap3D& map) {
+        map.source.resize(layout.size());
+        map.scale.resize(layout.size());
+        map.offset.assign(layout.size(), 0.0f);
+        for (std::size_t i = 0; i < layout.size(); ++i) {
+            const std::string& name = layout.channels[i].name;
+            const std::string other = mirroredName(name);
+            std::uint32_t source = static_cast<std::uint32_t>(i);
+            for (std::size_t j = 0; j < layout.size(); ++j)
+                if (layout.channels[j].name == other) source = static_cast<std::uint32_t>(j);
+            map.source[i] = source;
+            // (A regra pelo nome de origem: o sinal do eixo e o do lado de la.)
+            map.scale[i] = rule(layout.channels[source].name);
+        }
+    };
+    build(m_observation, out.observation);
+    build(m_action, out.action);
     return out;
 }
 
