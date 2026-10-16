@@ -225,6 +225,8 @@ struct BodyTrainingBatch3D::Impl {
     std::vector<StartClip> starts;
     std::vector<double> startCumulative;
     std::uint32_t posture = 0;
+    // Os eixos de dobrar os joelhos (esquerdo, direito; -1 sem): o parado de alerta.
+    std::array<int, 2> kneeDofs { -1, -1 };
     std::uint32_t workers = 1;
     std::uint64_t physicsSteps = 0;
     float lastStepMilliseconds = 0.0f;
@@ -887,13 +889,30 @@ void BodyTrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> a
             // A postura atletica: o quadril baixo sempre; parado, a base larga.
             {
                 const float height = state->links.front().position.z / std::max(1.0e-3f, pose.standingPelvisHeight);
-                float athletic = std::max(0.0f, height - task.reward.athleticHeight);
-                if (world.quietSeconds >= task.reward.stillGraceSeconds && task.reward.athleticWidth > 0.0f) {
+                const bool quiet = world.quietSeconds >= task.reward.stillGraceSeconds;
+                float athletic = 0.0f;
+                if (quiet && task.reward.athleticStillKnee > 0.0f && kneeDofs[0] >= 0 && kneeDofs[1] >= 0) {
+                    // Parado: os joelhos dobrados no lugar do quadril baixo.
+                    float knee = 1.0e9f;
+                    for (const int d : kneeDofs) {
+                        const RLBodyDof3D& dof = body.dofs[static_cast<std::size_t>(d)];
+                        knee = std::min(knee, state->joints[dof.linkIndex].positionRadians[static_cast<std::size_t>(dof.axis)]);
+                    }
+                    // Em rad (sem dividir pelo minimo: dividido, so os joelhos retos ja
+                    // passavam da nota inteira do parado e a nota presa em zero sumia).
+                    athletic += std::max(0.0f, task.reward.athleticStillKnee - knee);
+                } else {
+                    athletic += std::max(0.0f, height - task.reward.athleticHeight);
+                }
+                if (quiet && (task.reward.athleticWidth > 0.0f || task.reward.athleticMaxWidth > 0.0f)) {
                     Vec3 side = (state->links.front().orientation * body.profile.links.front().modelOrientation.conjugate())
                                     .normalized().rotate({ 0.0f, 1.0f, 0.0f });
                     side = Vec3 { side.x, side.y, 0.0f }.normalized();
                     const float width = std::abs(dot(state->links[body.leftFoot].position - state->links[body.rightFoot].position, side));
-                    athletic += std::max(0.0f, task.reward.athleticWidth - width) / task.reward.athleticWidth;
+                    if (task.reward.athleticWidth > 0.0f)
+                        athletic += std::max(0.0f, task.reward.athleticWidth - width) / task.reward.athleticWidth;
+                    if (task.reward.athleticMaxWidth > 0.0f)
+                        athletic += std::max(0.0f, width - task.reward.athleticMaxWidth) / task.reward.athleticMaxWidth;
                 }
                 costs.athletic = athletic;
             }
@@ -1075,6 +1094,10 @@ BodyTrainingBatch3D::BodyTrainingBatch3D(const BodyBatchSettings3D& settings) : 
     const int posture = findRLPosture3D(impl.body, impl.task.initialState.posture);
     if (posture < 0) throw std::runtime_error("lote do Corpo: o corpo nao tem a postura " + impl.task.initialState.posture);
     impl.posture = static_cast<std::uint32_t>(posture);
+    for (std::size_t d = 0; d < impl.body.dofs.size(); ++d) {
+        if (impl.body.dofs[d].name == "LeftShin.twist") impl.kneeDofs[0] = static_cast<int>(d);
+        if (impl.body.dofs[d].name == "RightShin.twist") impl.kneeDofs[1] = static_cast<int>(d);
+    }
     impl.buildStarts();
     impl.buildCriticLayout();
     impl.assignDrills();

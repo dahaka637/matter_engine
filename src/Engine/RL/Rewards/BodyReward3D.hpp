@@ -107,6 +107,12 @@ struct BodyRewardSettings3D {
     // athleticWidth (m, entre os pes de lado na pelve) tambem.
     float athleticHeight = 0.94f;
     float athleticWidth = 0.35f;
+    // Parado (o relogio do still), com athleticStillKnee > 0: no lugar do
+    // quadril baixo, os joelhos dobrados (o que falta ao minimo nos dois, em rad; a pose de
+    // alerta do clipe; abrir as pernas com os joelhos retos baixava o quadril
+    // sem dobrar nada), e a base mais larga que athleticMaxWidth (m) custa.
+    float athleticStillKnee = 0.0f;
+    float athleticMaxWidth = 0.0f;
     // Andando: a cada pisada, a base mais estreita que athleticWalkWidth (m)
     // tambem custa (fracao que falta; 0 = desligado).
     float athleticWalkWidth = 0.0f;
