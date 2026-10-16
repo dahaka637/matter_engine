@@ -18,7 +18,8 @@ class Mode:
 
 
 MODES = {
-    "maximo": Mode("maximo", "Máximo", 10, False, 10),
+    # 12 threads (16/10): a fisica e o gargalo e as 12 threads do Ryzen 5 3600 rendem ~+10% no treino real.
+    "maximo": Mode("maximo", "Máximo", 12, False, 10),
     "equilibrado": Mode("equilibrado", "Equilibrado", 8, True, 19),
     "leve": Mode("leve", "Leve", 4, True, 19),
 }
@@ -32,7 +33,11 @@ def mode(name: str) -> Mode:
 
 
 def threads_for(mode_: Mode) -> int:
-    return max(1, min(mode_.threads, (os.cpu_count() or 2) - 1))
+    # MATTER_RL_THREADS fixa as threads da fisica (a medida da vazao; ate todas).
+    forced = os.environ.get("MATTER_RL_THREADS")
+    if forced:
+        return max(1, min(int(forced), os.cpu_count() or 1))
+    return max(1, min(mode_.threads, os.cpu_count() or 1))
 
 
 def apply_priority(mode_: Mode) -> None:

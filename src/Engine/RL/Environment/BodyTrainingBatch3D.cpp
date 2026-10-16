@@ -22,7 +22,6 @@
 namespace MatterEngine {
 namespace {
 
-constexpr float FixedStep = 1.0f / 120.0f;
 constexpr float Gravity = 9.81f;
 constexpr float Pi = std::numbers::pi_v<float>;
 constexpr std::size_t RewardCount = BodyRewardTermNames3D.size();
@@ -174,6 +173,8 @@ struct Scene {
     // Os estados guardados desta cena (em anel; so esta thread mexe neles).
     std::vector<SavedState> bank;
     std::size_t bankHead = 0;
+    // O tempo de cada fase do passo nesta cena (s, somado; a vazao dos treinos).
+    std::array<double, BodyStepPhaseCount3D> phaseSeconds {};
 };
 
 // O que a nota, o fim e o piloto leem do corpo depois de uma decisao.
@@ -756,6 +757,13 @@ void BodyTrainingBatch3D::Impl::finishEpisode(Scene& scene, std::uint32_t index,
 
 void BodyTrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> actions, std::span<const float> means) {
     PhysicsScene3D& physics = *scene.physics;
+    using Clock = std::chrono::steady_clock;
+    auto mark = Clock::now();
+    const auto lap = [&](BodyStepPhase3D phase) {
+        const auto now = Clock::now();
+        scene.phaseSeconds[static_cast<std::size_t>(phase)] += std::chrono::duration<double>(now - mark).count();
+        mark = now;
+    };
     const std::size_t A = actionSize();
     scene.finished.clear();
     for (const std::uint32_t index : scene.worlds) {
@@ -786,7 +794,10 @@ void BodyTrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> a
         }
     }
 
+    lap(BodyStepPhase3D::Prepare);
     const std::uint32_t substeps = task.contract.substepsPerDecision;
+    // O passo de fisica: a decisao dividida pelos passos (1/120 s no padrao).
+    const float FixedStep = decision() / static_cast<float>(substeps);
     for (std::uint32_t sub = 0; sub < substeps; ++sub) {
         for (const std::uint32_t index : scene.worlds) {
             World& world = worlds[index];
@@ -799,7 +810,15 @@ void BodyTrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> a
                 world.pushRemaining -= FixedStep;
             }
         }
+        lap(BodyStepPhase3D::Targets);
         physics.simulate(FixedStep);
+        lap(BodyStepPhase3D::Simulate);
+        {
+            const PhysicsStepDiagnostics3D& d = physics.diagnostics();
+            scene.phaseSeconds[static_cast<std::size_t>(BodyStepPhase3D::JoltBefore)] += d.preSimulationMilliseconds * 1.0e-3;
+            scene.phaseSeconds[static_cast<std::size_t>(BodyStepPhase3D::JoltUpdate)] += d.simulationDispatchMilliseconds * 1.0e-3;
+            scene.phaseSeconds[static_cast<std::size_t>(BodyStepPhase3D::JoltAfter)] += d.stateSyncMilliseconds * 1.0e-3;
+        }
         for (const std::uint32_t index : scene.worlds) {
             World& world = worlds[index];
             const RagdollState3D* state = physics.ragdollStateView(world.ragdoll);
@@ -815,6 +834,7 @@ void BodyTrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> a
                 break;
             }
         }
+        lap(BodyStepPhase3D::Substep);
     }
 
     const std::size_t O = observationSize();
@@ -1008,15 +1028,18 @@ void BodyTrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> a
                     }
                 }
             }
+            lap(BodyStepPhase3D::Finish);
             // O par do juiz: o instante de antes e o de agora.
             const std::size_t S = style->size();
             float* pair = stylePairs.data() + index * 2 * S;
             std::copy(world.styleLast.begin(), world.styleLast.end(), pair);
             style->write(state->links, world.player.heightMeters / 1.8f, pair + S);
             std::copy(pair + S, pair + 2 * S, world.styleLast.begin());
+            lap(BodyStepPhase3D::Style);
             // O comando da proxima decisao e a entrada.
             nextCommand(world, reading, decision());
             writeObservation(world, *state, actor, criticOut);
+            lap(BodyStepPhase3D::Observe);
         } else {
             std::fill(parts, parts + RewardCount, 0.0f);
             parts[static_cast<std::size_t>(BodyRewardTerm3D::Fall)] = task.reward.fall;
@@ -1031,11 +1054,14 @@ void BodyTrainingBatch3D::Impl::stepScene(Scene& scene, std::span<const float> a
         truncated[index] = reason == BodyEndReason3D::TimeLimit || reason == BodyEndReason3D::Boundary ? 1u : 0u;
         if (reason == BodyEndReason3D::None) continue;
 
+        lap(BodyStepPhase3D::Finish);
         std::copy(criticOut, criticOut + C, terminalCritic.data() + index * C);
         finishEpisode(scene, index, reason, state);
         resetWorld(index);
         writeObservation(world, *physics.ragdollStateView(world.ragdoll), actor, criticOut);
+        lap(BodyStepPhase3D::Reset);
     }
+    lap(BodyStepPhase3D::Finish);
 }
 
 BodyTrainingBatch3D::BodyTrainingBatch3D(const BodyBatchSettings3D& settings) : m_impl(std::make_unique<Impl>()) {
@@ -1251,6 +1277,15 @@ std::vector<float> BodyTrainingBatch3D::actionRadiansPerUnit() const {
 }
 
 float BodyTrainingBatch3D::lastStepMilliseconds() const { return m_impl->lastStepMilliseconds; }
+
+std::array<double, BodyStepPhaseCount3D> BodyTrainingBatch3D::takePhaseSeconds() {
+    std::array<double, BodyStepPhaseCount3D> total {};
+    for (Scene& scene : m_impl->scenes) {
+        for (std::size_t p = 0; p < BodyStepPhaseCount3D; ++p) total[p] += scene.phaseSeconds[p];
+        scene.phaseSeconds = {};
+    }
+    return total;
+}
 std::uint64_t BodyTrainingBatch3D::physicsStepCount() const { return m_impl->physicsSteps; }
 
 } // namespace MatterEngine

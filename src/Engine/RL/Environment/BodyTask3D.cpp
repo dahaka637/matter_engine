@@ -128,7 +128,11 @@ BodyTask3D loadBodyTask3D(const std::filesystem::path& path) {
         if (c.substepsPerDecision == 0 || c.substepsPerDecision > 16 || c.historyDecisions > 8)
             fail("decisao invalida");
     }
-    task.contract.decisionSeconds = static_cast<float>(task.contract.substepsPerDecision) / 120.0f;
+    // A frequencia da fisica (Hz): a do jogo e 120; o treino pode usar outra
+    // (a vazao, 02_estrutura/vazao_dos_treinos.md), avaliando sempre a 120.
+    const float physicsHz = document.contains("decision") ? document["decision"].value("physicsHz", 120.0f) : 120.0f;
+    if (!(physicsHz >= 30.0f && physicsHz <= 480.0f)) fail("decision.physicsHz fora de 30-480");
+    task.contract.decisionSeconds = static_cast<float>(task.contract.substepsPerDecision) / physicsHz;
 
     if (document.contains("player")) {
         const nlohmann::json& p = document["player"];

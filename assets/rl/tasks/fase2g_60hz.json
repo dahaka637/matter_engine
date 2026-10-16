@@ -1,0 +1,390 @@
+{
+    "schema": "matter-rl-task-2",
+    "id": "fase2g_60hz",
+    "displayName": "Fase 2g a 60 Hz (teste de vazao)",
+    "comment": "Teste de vazao (02_estrutura/vazao_dos_treinos.md): a F2g com a fisica a 60 Hz (2 passos por decisao de 30 Hz). O jogo segue a 120 Hz.",
+    "body": "../bodies/football_player_v2.json",
+    "decision": {
+        "substeps": 2,
+        "historyDecisions": 3,
+        "velocityTarget": "zero",
+        "velocityFraction": 1.0,
+        "maximumTargetVelocity": 20.0,
+        "physicsHz": 60.0
+    },
+    "episodeSeconds": 20.0,
+    "groundMaterial": "grass",
+    "worldSpacingMeters": 250.0,
+    "player": {
+        "height": 1.8,
+        "mass": 80.0,
+        "strength": [
+            1.0,
+            1.0,
+            1.0
+        ],
+        "sprintCap": 6.5
+    },
+    "speedCaps": {
+        "front": 1.0,
+        "diagonalFront": 0.9,
+        "side": 0.65,
+        "diagonalBack": 0.6,
+        "back": 0.55
+    },
+    "jumpWindowSeconds": 0.6,
+    "solverMix": {
+        "heavyFraction": 0.25,
+        "heavyPositionIterations": 20,
+        "heavyVelocityIterations": 20
+    },
+    "curriculum": {
+        "speedMin": 0.8,
+        "speedMax": 2.5,
+        "clipSlack": 0.3,
+        "speedCap": 2.5
+    },
+    "reward": {
+        "velocityForm": "progress",
+        "facingSigma": 0.4,
+        "positiveOnly": true,
+        "standGate": {
+            "enabled": true
+        },
+        "air": {
+            "weight": 0.0,
+            "capSeconds": 0.4
+        },
+        "costs": {
+            "work": 0.0,
+            "torque": 0.0,
+            "slip": 0.4,
+            "impact": 0.0,
+            "head": 0.0,
+            "smooth": 0.0,
+            "limits": 0.0,
+            "contacts": 0.0,
+            "posture": 1.0,
+            "still": 1.0,
+            "stillGraceSeconds": 1.5,
+            "athletic": 1.5,
+            "athleticHeight": 0.94,
+            "athleticWidth": 0.35,
+            "postureLeanDegrees": 5.0,
+            "postureLeanPerSpeed": 4.0,
+            "postureLeanMaxDegrees": 40.0,
+            "postureLeanPerCrouch": 150.0,
+            "athleticWalkWidth": 0.13,
+            "pivot": 0.3,
+            "functionalPosture": {
+                "enabled": true,
+                "fullWeight": 0.3,
+                "lowWeight": 0.7,
+                "fullFloorStanding": 0.0,
+                "fullFloorMoving": 3.0,
+                "lowFloorStanding": -6.0,
+                "lowFloorMoving": -3.0,
+                "fullCeiling": 15.0,
+                "lowCeiling": 8.0,
+                "ceilingPerSpeed": 1.5,
+                "ceilingPerCrouch": 30.0,
+                "ceilingCrouchMax": 8.0,
+                "side": 5.0,
+                "accelSeconds": 0.25,
+                "commandSeconds": 0.25,
+                "commandDeadband": 0.3,
+                "commandMaximum": 8.0,
+                "commandShare": 0.5,
+                "openForwardMax": 25.0,
+                "openBackMax": 18.0,
+                "openSideMax": 25.0
+            }
+        },
+        "fall": 0.2
+    },
+    "termination": {
+        "minimumHeadHeightFraction": 0.6,
+        "minimumPelvisHeightFraction": 0.5,
+        "nonSupportContact": true,
+        "maximumDistanceFromStart": 120.0
+    },
+    "initialState": {
+        "referenceFraction": 0.5,
+        "movingFraction": 0.0,
+        "posture": "natural",
+        "jointNoiseRadians": 0.03,
+        "jointVelocityNoise": 0.2,
+        "rootVelocityNoise": 0.1,
+        "rootAngularVelocityNoise": 0.1,
+        "randomYaw": true,
+        "referenceMinimumPelvis": 0.6
+    },
+    "randomization": {
+        "friction": [
+            0.7,
+            1.1
+        ],
+        "mass": [
+            0.95,
+            1.05
+        ],
+        "strength": [
+            0.9,
+            1.1
+        ],
+        "actionDelayProbability": 0.5,
+        "observationNoise": 1.0
+    },
+    "drills": [
+        {
+            "id": "andar_frente",
+            "displayName": "Andar para a frente",
+            "weight": 0.3,
+            "task": {
+                "velocity": 0.7,
+                "facing": 0.3
+            },
+            "pilot": {
+                "kind": "stick",
+                "forwardOnly": true,
+                "bands": [
+                    {
+                        "name": "andar",
+                        "speed": [
+                            0.8,
+                            2.5
+                        ],
+                        "weight": 1.0
+                    }
+                ],
+                "stickSeconds": [
+                    3.0,
+                    6.0
+                ],
+                "releaseFraction": 0.0,
+                "keysFraction": 1.0,
+                "syncFraction": 0.0,
+                "camera": {
+                    "fixed": 1.0,
+                    "follow": 0.0,
+                    "turns": 0.0
+                }
+            }
+        },
+        {
+            "id": "parado",
+            "displayName": "Parado",
+            "weight": 0.15,
+            "task": {
+                "velocity": 0.5,
+                "facing": 0.5
+            },
+            "pilot": {
+                "kind": "hold",
+                "camera": {
+                    "fixed": 1.0,
+                    "follow": 0.0,
+                    "turns": 0.0
+                }
+            }
+        },
+        {
+            "id": "giro",
+            "displayName": "Girar parado",
+            "weight": 0.2,
+            "task": {
+                "velocity": 0.5,
+                "facing": 0.5
+            },
+            "pilot": {
+                "kind": "hold",
+                "camera": {
+                    "fixed": 0.0,
+                    "follow": 0.0,
+                    "turns": 1.0,
+                    "turnDegrees": [
+                        30.0,
+                        120.0
+                    ],
+                    "turnRate": [
+                        0.3,
+                        0.6
+                    ],
+                    "pauseSeconds": [
+                        1.5,
+                        4.0
+                    ]
+                }
+            }
+        },
+        {
+            "id": "estrela",
+            "displayName": "Estrela de 8 pontas",
+            "weight": 0.2,
+            "task": {
+                "velocity": 0.7,
+                "facing": 0.3
+            },
+            "pilot": {
+                "kind": "star",
+                "bands": [
+                    {
+                        "name": "andar",
+                        "speed": [
+                            0.8,
+                            1.4
+                        ],
+                        "distance": [
+                            4.0,
+                            8.0
+                        ],
+                        "weight": 1.0
+                    }
+                ],
+                "starDirections": 8,
+                "starJitterDegrees": 8.0,
+                "continuousFraction": 0.0,
+                "stopFraction": 0.3,
+                "holdSeconds": [
+                    1.0,
+                    2.0
+                ],
+                "brake": [
+                    2.0,
+                    4.0
+                ],
+                "arriveRadius": 0.6,
+                "camera": {
+                    "fixed": 0.0,
+                    "follow": 1.0,
+                    "turns": 0.0,
+                    "followRate": 4.0
+                }
+            }
+        },
+        {
+            "id": "estrela_trote",
+            "displayName": "Estrela com trote leve",
+            "weight": 0.25,
+            "task": {
+                "velocity": 0.7,
+                "facing": 0.3
+            },
+            "pilot": {
+                "kind": "star",
+                "bands": [
+                    {
+                        "name": "andar",
+                        "speed": [
+                            0.8,
+                            1.4
+                        ],
+                        "distance": [
+                            4.0,
+                            8.0
+                        ],
+                        "weight": 1.0
+                    },
+                    {
+                        "name": "trote",
+                        "speed": [
+                            1.8,
+                            2.5
+                        ],
+                        "distance": [
+                            6.0,
+                            10.0
+                        ],
+                        "weight": 1.0
+                    }
+                ],
+                "starDirections": 8,
+                "starJitterDegrees": 8.0,
+                "continuousFraction": 0.35,
+                "stopFraction": 0.3,
+                "holdSeconds": [
+                    1.0,
+                    2.0
+                ],
+                "brake": [
+                    2.0,
+                    4.0
+                ],
+                "arriveRadius": 0.6,
+                "camera": {
+                    "fixed": 0.0,
+                    "follow": 1.0,
+                    "turns": 0.0,
+                    "followRate": 4.0
+                }
+            }
+        },
+        {
+            "id": "curva",
+            "displayName": "Curva suave",
+            "weight": 0.2,
+            "task": {
+                "velocity": 0.7,
+                "facing": 0.3
+            },
+            "pilot": {
+                "kind": "arc",
+                "bands": [
+                    {
+                        "name": "andar",
+                        "speed": [
+                            0.8,
+                            1.4
+                        ],
+                        "weight": 1.0
+                    },
+                    {
+                        "name": "trote",
+                        "speed": [
+                            1.8,
+                            2.5
+                        ],
+                        "weight": 1.0
+                    }
+                ],
+                "arcRadius": [
+                    12.0,
+                    18.0
+                ],
+                "arcDegrees": [
+                    45.0,
+                    120.0
+                ],
+                "arcFlipFraction": 0.4,
+                "lateralAcceleration": 4.0,
+                "arcLookahead": 1.5,
+                "stopFraction": 0.25,
+                "holdSeconds": [
+                    1.0,
+                    2.0
+                ],
+                "brake": [
+                    2.0,
+                    4.0
+                ],
+                "arriveRadius": 0.6,
+                "camera": {
+                    "fixed": 0.0,
+                    "follow": 1.0,
+                    "turns": 0.0,
+                    "followRate": 4.0
+                }
+            }
+        }
+    ],
+    "style": {
+        "dataset": "../style/acervo_p3a.json",
+        "beta": 1.0
+    },
+    "drillWeights": {
+        "auto": true,
+        "gain": 2.0,
+        "maximumFactor": 3.0,
+        "floor": 0.08
+    }
+}

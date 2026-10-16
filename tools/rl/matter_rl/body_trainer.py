@@ -46,7 +46,11 @@ RAW_PREFIXES = ("command.", "player.", "drill.", "pilot.", "world.solver")
 BODY_PPO = {"separate_critic": True, "critic_learning_rate": 3e-4, "critic_max_grad_norm": 1.0, "kl_stop_factor": 3.0,
             "learning_rate": 5e-6, "min_learning_rate": 1e-6, "max_learning_rate": 3e-4, "entropy_coef": 0.0,
             # O alvo do rsl_rl: com 37 eixos o recorte ja chega a ~0,4 com KL 0,02 (a razao soma 37 termos).
-            "desired_kl": 0.01}
+            "desired_kl": 0.01,
+            # 8 epocas (16/10, vazao_dos_treinos.md): a GPU ociosa da sobreposicao vira mais aprendizado por
+            # decisao. Na fase3a, contra 5: nota final +9%, giro com o peito 4 graus mais preciso, sem esquecer
+            # o andar; custa ~4,5% de decisoes/s (a atualizacao segue escondida atras da coleta).
+            "epochs": 8}
 # O desvio fixo da exploracao por grupo de eixos (rad; plano 5.3). O tronco em 0,02 e o resultado do D0
 # (14/10): com 0,03 o corpo com ruido ficava a 1,64x da distancia do corpo sem ruido ao acervo; com 0,02, 1,44x.
 FIXED_SIGMA = {"legs": 0.06, "toes": 0.06, "arms": 0.05, "trunk": 0.02}
@@ -102,7 +106,7 @@ class BodyRunConfig:
     style: bool = True
     # A coleta e a atualizacao em serie (o PPO verificavel): a sobreposicao so
     # volta depois do P3, com o teste de equivalencia (plano 5.1).
-    overlap: bool = False
+    overlap: bool = True
     # O peso da perda do espelho no ator (0 = desligada; o plano compara com e
     # sem depois do Experimento C).
     mirror_loss: float = 0.0
@@ -337,6 +341,10 @@ class BodyTrainer:
             self.config.warmup_rounds = 60
         if fresh and transfer_from:
             self.config.transferred_from = transfer_from
+        # MATTER_RL_PPO (JSON) muda o PPO de um treino novo (a calibracao da
+        # vazao: por exemplo {"minibatches": 8} com 1024 mundos).
+        if fresh and os.environ.get("MATTER_RL_PPO"):
+            self.config.ppo.update(json.loads(os.environ["MATTER_RL_PPO"]))
         self.config.save(config_path)
         self.seed_everything(self.config.seed)
         self.max_iterations = iterations

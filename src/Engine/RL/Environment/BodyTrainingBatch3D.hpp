@@ -1,5 +1,7 @@
 #pragma once
 
+#include <array>
+
 #include "Engine/Physics/PhysicsScene3D.hpp"
 #include "Engine/RL/Body/RLBody3D.hpp"
 #include "Engine/RL/Commands/ControlAdapter3D.hpp"
@@ -45,6 +47,21 @@ enum class BodyEndReason3D : std::uint8_t { None = 0, FallContact, FallHeight, N
 enum class BodyStart3D : std::uint8_t { Standing = 0, Clip, Saved };
 
 [[nodiscard]] const char* bodyEndReasonName3D(BodyEndReason3D reason);
+
+// As fases de um passo do lote (a medida da vazao): preparar a decisao, os
+// alvos dos motores, a fisica, a leitura com contatos e custos de cada passo de
+// fisica, o fim da decisao (nota e fim), o par do juiz, a observacao e os
+// reinicios.
+// As tres ultimas dividem a fisica (a medida da cena: antes do Jolt, o Update
+// do Jolt e depois) e nao entram no total.
+enum class BodyStepPhase3D : std::size_t {
+    Prepare = 0, Targets, Simulate, Substep, Finish, Style, Observe, Reset, JoltBefore, JoltUpdate, JoltAfter, Count
+};
+inline constexpr std::size_t BodyStepPhaseCount3D = static_cast<std::size_t>(BodyStepPhase3D::Count);
+inline constexpr std::array<const char*, BodyStepPhaseCount3D> BodyStepPhaseNames3D {
+    "preparar", "alvos", "fisica", "leitura", "fim", "estilo", "observacao", "reinicio",
+    "fisica_antes", "fisica_jolt", "fisica_depois"
+};
 
 // O resumo de um episodio que acabou no ultimo step().
 struct BodyEpisode3D {
@@ -208,6 +225,9 @@ public:
     // Radianos por unidade de acao de cada canal (o ruido inicial da politica).
     [[nodiscard]] std::vector<float> actionRadiansPerUnit() const;
     [[nodiscard]] float lastStepMilliseconds() const;
+    // O tempo de cada fase dos passos desde a ultima chamada (s de thread,
+    // somado nas cenas; BodyStepPhaseNames3D), e zera.
+    [[nodiscard]] std::array<double, BodyStepPhaseCount3D> takePhaseSeconds();
     [[nodiscard]] std::uint64_t physicsStepCount() const;
 
 private:

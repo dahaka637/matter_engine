@@ -448,6 +448,13 @@ NB_MODULE(matter_rl_native, m) {
             "update_task", [](BodyTrainingBatch3D& b, const std::string& path) { b.updateTask(loadBodyTask3D(path)); },
             "path"_a)
         .def("last_step_ms", &BodyTrainingBatch3D::lastStepMilliseconds)
+        .def("take_phase_seconds",
+            [](BodyTrainingBatch3D& b) {
+                const auto seconds = b.takePhaseSeconds();
+                nb::dict out;
+                for (std::size_t p = 0; p < BodyStepPhaseCount3D; ++p) out[BodyStepPhaseNames3D[p]] = seconds[p];
+                return out;
+            })
         .def("physics_steps", &BodyTrainingBatch3D::physicsStepCount);
 
     m.attr("BODY_END_REASONS") =

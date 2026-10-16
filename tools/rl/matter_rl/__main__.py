@@ -334,11 +334,12 @@ def main(argv: list[str] | None = None) -> int:
             p.add_argument("--semente", type=int)
             p.add_argument("--rodadas", type=int)
             # O Corpo v2: sem o juiz de estilo (a variante B1; escolhida ao criar
-            # o treino) e sem a atualizacao sobreposta a coleta.
+            # o treino).
             p.add_argument("--sem-estilo", action="store_true")
             p.add_argument("--sem-sobreposicao", action="store_true")
-            # A coleta e a atualizacao em serie sao o padrao do Corpo v2; a
-            # sobreposicao so volta depois do P3 (plano de recuperacao, 5.1).
+            # A sobreposicao (a coleta da rodada seguinte enquanto a GPU atualiza) e
+            # o padrao desde 16/10 (aprendizado equivalente, +41%; diario 28);
+            # --sem-sobreposicao volta a serie.
             p.add_argument("--sobreposicao", action="store_true")
             # Um treino NOVO que nasce de outro (o ator e a normalizacao passam; o
             # critico e o juiz recomecam): "treino", "treino:rodada" ou uma pasta.
