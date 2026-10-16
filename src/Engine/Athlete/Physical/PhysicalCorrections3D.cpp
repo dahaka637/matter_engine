@@ -63,7 +63,10 @@ void correctDriveTargets3D(std::vector<RagdollDriveTarget3D>& targets, const Rag
         }
         if (gain > 0.0f && target.linkIndex < profile.links.size()) {
             const int group = physicalGainGroup3D(profile.links[target.linkIndex].id);
-            const float wanted = std::max(0.0f, finiteOr(corrections->gainScale[static_cast<std::size_t>(group)], 1.0f));
+            // (Uma faixa plausivel: ate 4x a rigidez calibrada; sem ela, uma
+            // escala extrema virava infinito e 0 x infinito, NaN.)
+            const float wanted = std::clamp(finiteOr(corrections->gainScale[static_cast<std::size_t>(group)], 1.0f),
+                0.0f, 4.0f);
             const float scale = 1.0f + (wanted - 1.0f) * gain;
             target.stiffnessScale *= scale;
             target.dampingScale *= std::sqrt(scale);

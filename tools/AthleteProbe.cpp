@@ -1271,7 +1271,7 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
             if (wanted > 0.0f && nominal > 0.0f) command.speedScale = wanted / nominal;
             if (controlledAnimated) command.speedScale *= capsuleSpeedScale;
             if (!controlledAnimated && wanted > 0.0f)
-                command.speedScale *= std::clamp(legacy.locomotion.telemetry().terrainSpeedLimit / wanted, 0.2f, 1.0f);
+                command.speedScale *= std::clamp(legacy.locomotion.telemetry().terrainSpeedLimit / wanted, 0.0f, 1.0f);
             intent.requestedDirectionWorld = direction;
             // (O analogico pela metade pede metade da velocidade, como a
             // capsula anda.)

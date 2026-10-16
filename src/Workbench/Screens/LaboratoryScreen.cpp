@@ -546,7 +546,7 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
             if (controlled != m_spawnedRagdolls.end() && wanted > 0.0f && !m_controlledAnimated) {
                 const float limit = controlled->athlete.legacy.locomotion.telemetry()
                     .terrainSpeedLimit;
-                command.speedScale *= std::clamp(limit / wanted, 0.2f, 1.0f);
+                command.speedScale *= std::clamp(limit / wanted, 0.0f, 1.0f);
             }
             // Locomocao fisica v2: virando forte a velocidade cai como a de
             // quem corre cortando, e com pouca ajuda a capsula fica presa a
