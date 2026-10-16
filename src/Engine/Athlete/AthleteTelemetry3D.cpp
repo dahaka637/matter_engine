@@ -1,5 +1,8 @@
 #include "Engine/Athlete/AthleteTelemetry3D.hpp"
 
+#include "Engine/Athlete/Legacy/LegacyReference3D.hpp"
+
+#include <algorithm>
 #include <cstring>
 
 namespace MatterEngine {
@@ -29,6 +32,32 @@ AthleteTelemetry3D athleteTelemetry3D(const AthleteState3D& athlete) {
     out.lastDecision = athlete.lastDecision;
     out.lastDecisionFrom = athlete.lastDecisionFrom;
     return out;
+}
+
+AthleteControlView3D athleteControlView3D(const AthleteState3D& athlete) {
+    const LegacyAthleteState3D& legacy = athlete.legacy;
+    AthleteControlView3D view;
+    view.groundHeight = athlete.groundHeight;
+    view.impactLevel = legacy.impactAssist.level();
+    const AdaptivePhysicalCharacter3D& adaptive = legacy.adaptivePhysics;
+    view.walkingScale = adaptive.settings().walkingAssistScale;
+    view.standingScale = adaptive.settings().legsAssistRetained;
+    view.pelvisForceWorld = adaptive.output().rootForceWorld;
+    view.pelvisTorqueWorld = adaptive.output().rootTorqueWorld;
+    const float acceleration = physicalNavigationAcceleration3D(view.walkingScale);
+    view.navigation = { acceleration, acceleration, acceleration, 10.0f };
+    const CharacterContactPlan3D& plan = legacy.locomotion.contactPlan();
+    for (std::size_t side = 0; side < 2 && plan.valid; ++side) {
+        const FootPlan3D& foot = plan.feet[side];
+        AthleteControlView3D::ClassicFoot& out = view.classicFeet[side];
+        out.swinging = foot.phase == FootPhase3D::Swing;
+        out.goalWorld = foot.goalWorld;
+        out.swingLeft = foot.swingDurationSeconds > 1e-4f
+            ? std::clamp(1.0f - foot.swingSeconds / foot.swingDurationSeconds, 0.0f, 1.0f) : 0.0f;
+    }
+    view.classicPose = &legacy.locomotion.output().targetPose;
+    if (legacy.referenceShadowActive) view.reference = legacyReferenceMotion3D(legacy.referenceShadow.output());
+    return view;
 }
 
 namespace {

@@ -46,6 +46,11 @@ struct LegacyAthleteState3D {
     BallControlOutput3D ballLastOutput;
     float ballStability = 0.0f;
     DefaultLocomotion3D defaultLocomotion;
+    // O padrao a sombra no fisico (AthleteRuntimeSettings3D::physicalReference):
+    // a referencia de estilo do contrato do RL, so calculando a pose. Uma
+    // instancia propria: nunca mexe no padrao de verdade nem na volta a ele.
+    DefaultLocomotion3D referenceShadow;
+    bool referenceShadowActive = false;
     LegacyBodyMode3D bodyMode = LegacyBodyMode3D::Physical;
     // Tempo no modo atual e, no fisico, tempo assentado (sem pancada, de pe,
     // no chao).

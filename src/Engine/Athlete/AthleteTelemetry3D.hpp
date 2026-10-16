@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Engine/Athlete/AthleteState3D.hpp"
+#include "Engine/Athlete/Reference/ReferenceFrame3D.hpp"
 #include "Engine/Physics/PhysicsScene3D.hpp"
 
 #include <cstdint>
@@ -36,6 +37,35 @@ struct AthleteTelemetry3D {
 };
 
 [[nodiscard]] AthleteTelemetry3D athleteTelemetry3D(const AthleteState3D& athlete);
+
+// O que o contrato do RL le do controle (a visao neutra, como a telemetria: o
+// contrato nao conhece o legado). Os ponteiros valem ate o proximo passo.
+struct AthleteControlView3D {
+    // O chao embaixo da pelve (z).
+    float groundHeight = 0.0f;
+    // O orcamento da ajuda: o nivel do impacto e as escalas andando e parado
+    // de agora (0..1), e o que ela aplicou na pelve (N, N.m, no mundo).
+    float impactLevel = 1.0f;
+    float walkingScale = 1.0f;
+    float standingScale = 1.0f;
+    Vec3 pelvisForceWorld;
+    Vec3 pelvisTorqueWorld;
+    // O plano de navegacao que o corpo consegue cumprir (o do fisico).
+    NavigationProfile3D navigation;
+    // O que o classico propos: por pe, no balanco, onde ele pousa (no mundo)
+    // e quanto do balanco falta (0..1); e a pose alvo dele.
+    struct ClassicFoot {
+        bool swinging = false;
+        Vec3 goalWorld;
+        float swingLeft = 0.0f;
+    };
+    std::array<ClassicFoot, 2> classicFeet {};
+    const RagdollAnimationPose3D* classicPose = nullptr;
+    // O movimento de estilo (o padrao a sombra; invalido sem ele).
+    ReferenceMotion3D reference;
+};
+
+[[nodiscard]] AthleteControlView3D athleteControlView3D(const AthleteState3D& athlete);
 
 // A impressao digital de um tick (a paridade, R1 da reescrita): o corpo
 // publicado (posicao, orientacao e velocidades dos links, os contatos e as

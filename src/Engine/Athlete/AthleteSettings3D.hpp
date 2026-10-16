@@ -100,6 +100,11 @@ struct AthleteRuntimeSettings3D {
     // uma queda a mais no corte rapido).
     bool physicalUsesDefaultSpeeds = true;
     bool modeTable = true;
+    // A reescrita (L0 do RL): no fisico, o padrao roda a sombra pelo comando
+    // de agora (a capsula do jogador ou a virtual do comandado) e da a
+    // referencia de estilo do contrato da rede (AthleteControlView3D). Nao
+    // mexe no corpo; desligada, nada muda.
+    bool physicalReference = false;
     ContactClassParams3D contactClasses;
     ModeRuleParams3D modeRules;
     // A ajuda depois do impacto com a tabela: o choque comum ate 20 N.s tira

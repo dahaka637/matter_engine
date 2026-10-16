@@ -322,6 +322,7 @@ public:
         const AdaptivePhysicalIntent3D& intent, float dt);
     const AdaptivePhysicalOutput3D& output() const { return m_output; }
     AdaptivePhysicalSettings3D& settings() { return m_settings; }
+    [[nodiscard]] const AdaptivePhysicalSettings3D& settings() const { return m_settings; }
 private:
     AdaptivePhysicalSettings3D m_settings;
     AdaptivePhysicalOutput3D m_output;

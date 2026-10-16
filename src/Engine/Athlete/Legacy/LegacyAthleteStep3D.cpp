@@ -39,6 +39,27 @@ float activeCaptureLimit(const AthleteRuntimeSettings3D& settings, const ActiveS
         return settings.activeHandoverCapture;
     return settings.activeHandoverCaptureStepping;
 }
+
+// Os ajustes do padrao pelos do runtime (o padrao do jogo e a sombra do
+// fisico usam os mesmos).
+void configureDefaultLocomotion(DefaultLocomotionSettings3D& defaults, const AthleteRuntimeSettings3D& settings) {
+    defaults.adaptiveTransitions = settings.defaultAdaptiveTransitions;
+    defaults.toeRoll = settings.toeRoll;
+    defaults.smoothClipSampling = settings.defaultAdaptiveTransitions;
+    defaults.trunkMotion = settings.defaultTrunkMotion;
+    defaults.landingAbsorb = settings.defaultLandingAbsorb;
+    defaults.curveLeanDeadZone = settings.defaultCurveLeanDeadZone;
+    defaults.airTackle = settings.defaultAirTackle;
+    defaults.airTacklePitchDegrees = settings.defaultAirTacklePitch;
+    {
+        // As velocidades da aba "Velocidades" (0, 45, 90, 135 e 180 graus).
+        const float t = settings.defaultTrotSpeed;
+        defaults.trotSpeeds = { t, t, t, t, t };
+        defaults.sprintSpeeds = { settings.defaultSprintForwardSpeed, settings.defaultSprintForwardSpeed,
+            settings.defaultSprintSideSpeed, settings.defaultSprintBackwardSpeed, settings.defaultSprintBackwardSpeed };
+    }
+    defaults.trunkMotionAmount = settings.defaultTrunkMotionPercent * 0.01f;
+}
 } // namespace
 
 void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& assets,
@@ -58,7 +79,8 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
     // e o chao embaixo da pelve.
     const bool modeTable = settings.modeTable && !settings.activeBody;
     if (modeTable && !athlete.contactBody.valid()) athlete.contactBody = contactBody3D(profile);
-    const float contactBase = !modeTable || body.links.empty() ? 0.0f : groundHeight(body.links.front().position);
+    if (!body.links.empty()) athlete.groundHeight = groundHeight(body.links.front().position);
+    const float contactBase = !modeTable || body.links.empty() ? 0.0f : athlete.groundHeight;
     ContactAssessment3D contacts;
     float pushWindowed = 0.0f;
     float impactWindowed = 0.0f;
@@ -1261,24 +1283,7 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             ? athlete.ballOutput.gaitRateScale : 1.0f;
         input.dribbleStyle = settings.newBallHandlingActive() && settings.dribbleV5 && command.controlled
             ? athlete.dribbleOutput.dribbleStyle : 0.0f;
-        DefaultLocomotionSettings3D& defaults = state.defaultLocomotion.settings();
-        defaults.adaptiveTransitions = settings.defaultAdaptiveTransitions;
-        defaults.toeRoll = settings.toeRoll;
-        defaults.smoothClipSampling = settings.defaultAdaptiveTransitions;
-        defaults.trunkMotion = settings.defaultTrunkMotion;
-        defaults.landingAbsorb = settings.defaultLandingAbsorb;
-        defaults.curveLeanDeadZone = settings.defaultCurveLeanDeadZone;
-        defaults.airTackle = settings.defaultAirTackle;
-        defaults.airTacklePitchDegrees = settings.defaultAirTacklePitch;
-        {
-            // As velocidades da aba "Velocidades" (0, 45, 90, 135 e 180 graus).
-            const float t = settings.defaultTrotSpeed;
-            defaults.trotSpeeds = { t, t, t, t, t };
-            defaults.sprintSpeeds = { settings.defaultSprintForwardSpeed, settings.defaultSprintForwardSpeed,
-                settings.defaultSprintSideSpeed, settings.defaultSprintBackwardSpeed,
-                settings.defaultSprintBackwardSpeed };
-        }
-        defaults.trunkMotionAmount = settings.defaultTrunkMotionPercent * 0.01f;
+        configureDefaultLocomotion(state.defaultLocomotion.settings(), settings);
         return input;
     };
     if (!animated && state.guidedExitLeft > 0.0f) {
@@ -1623,6 +1628,31 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         const auto begin = std::chrono::steady_clock::now();
         state.adaptivePhysics.update(profile, body, locomotionOutput.guide, physicalIntent, deltaTime);
         athlete.assistSeconds = std::chrono::duration<float>(std::chrono::steady_clock::now() - begin).count();
+    }
+    // A referencia de estilo do fisico (o contrato do RL): o padrao a sombra,
+    // pelo comando de agora (a capsula ou a virtual), so calculando a pose.
+    // Caido, ela para; de pe de novo, recomeca no rumo pedido.
+    athlete.referenceSeconds = 0.0f;
+    if (settings.physicalReference && !animated && !down) {
+        const auto begin = std::chrono::steady_clock::now();
+        if (!state.referenceShadowActive) state.referenceShadow.reset(command.facingYawRadians);
+        configureDefaultLocomotion(state.referenceShadow.settings(), settings);
+        DefaultLocomotionInput3D input;
+        input.feetPositionWorld = command.rootPositionWorld - Vec3 { 0.0f, 0.0f, profile.standingRootHeightMeters };
+        input.velocityWorld = command.rootVelocityWorld;
+        input.grounded = command.grounded;
+        input.requestedVelocityWorld = command.intent.requestedVelocityWorld;
+        input.facingYawRadians = command.facingYawRadians;
+        input.lookPitchRadians = command.lookPitchRadians;
+        input.groundAt = command.groundAt;
+        input.deltaTime = deltaTime;
+        input.motionVariety = command.motionVariety;
+        input.varietySeed = command.varietySeed;
+        state.referenceShadow.update(profile, defaultClips, input);
+        state.referenceShadowActive = state.referenceShadow.output().valid;
+        athlete.referenceSeconds = std::chrono::duration<float>(std::chrono::steady_clock::now() - begin).count();
+    } else {
+        state.referenceShadowActive = false;
     }
     const float followSlack = 0.10f * (1.0f - std::clamp(state.adaptivePhysics.output().perturbation, 0.0f, 1.0f));
     if (adaptive && !command.controlled) {

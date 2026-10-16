@@ -65,10 +65,22 @@ struct AthleteState3D {
     Vec3 commandDirection;
     bool commandDirectionValid = false;
     float commandTurnRate = 0.0f;
+    // O chao embaixo da pelve no ultimo passo (z).
+    float groundHeight = 0.0f;
+    // A politica da locomocao (o contrato do RL, Athlete/Contract): as acoes
+    // das ultimas decisoes (a mais nova primeiro, LocomotionContract3D::
+    // HistoryDecisions x o tamanho da acao) e a rampa entre decisoes (a acao
+    // de antes, a nova e os ticks desde a decisao). Mora no atleta: o
+    // instante guardado leva junto, e o jogo usa a mesma.
+    std::vector<float> policyHistory;
+    std::vector<float> policyFrom;
+    std::vector<float> policyTo;
+    int policyTicks = 0;
     // O custo do ultimo passo (s; o orcamento por modulo): o controle fisico
     // (por bloco em legacy.locomotion.sectionSeconds()) e a ajuda.
     float locomotionSeconds = 0.0f;
     float assistSeconds = 0.0f;
+    float referenceSeconds = 0.0f;
     ContactAssessment3D lastContacts;
     ModeDecision3D lastDecision;
     BodyModeKind3D lastDecisionFrom = BodyModeKind3D::Animated;

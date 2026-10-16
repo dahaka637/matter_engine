@@ -23,6 +23,7 @@
 #include "Engine/Athlete/AthleteAssets3D.hpp"
 #include "Engine/Athlete/AthleteRuntime3D.hpp"
 #include "Engine/Athlete/AthleteTelemetry3D.hpp"
+#include "Engine/Athlete/Contract/LocomotionContract3D.hpp"
 #include "Engine/Athlete/Training/LocomotionBatch3D.hpp"
 #include "Engine/Athlete/Training/LocomotionWorld3D.hpp"
 #include "Engine/Athlete/Dribble/BodyForecast3D.hpp"
@@ -38,7 +39,9 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <functional>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -1078,13 +1081,65 @@ struct ProbeContext {
     AthleteRuntimeAssets3D runtimeAssets;
 };
 
+// A paridade do contrato da rede (o degrau 1): a acao fixa de cada decisao
+// (deterministica), aplicada com a rampa, e a impressao da entrada da rede a
+// cada tick.
+struct ContractHooks {
+    const LocomotionContract3D* contract = nullptr;
+    bool act = false;
+    LocomotionAuthority3D authority;
+    std::vector<std::uint64_t>* observations = nullptr;
+    std::size_t nonFinite = 0;
+    BodyForecast3D forecast;
+    std::vector<float> buffer;
+};
+
+std::vector<float> parityAction(const LocomotionContract3D& contract, int decision) {
+    std::vector<float> action(contract.actionSize());
+    for (std::size_t i = 0; i < action.size(); ++i)
+        action[i] = 0.8f * std::sin(static_cast<float>(decision) * 0.37f + static_cast<float>(i) * 1.3f);
+    return action;
+}
+
+// A impressao da entrada (FNV-1a sobre os bits).
+std::uint64_t observationPrint(std::span<const float> values) {
+    std::uint64_t hash = 1469598103934665603ull;
+    for (float v : values) {
+        std::uint32_t bits = 0;
+        std::memcpy(&bits, &v, sizeof bits);
+        for (int k = 0; k < 4; ++k) {
+            hash ^= (bits >> (8 * k)) & 0xFFu;
+            hash *= 1099511628211ull;
+        }
+    }
+    return hash;
+}
+
+// Antes do passo: a decisao (a cada TicksPerDecision ticks) e a rampa.
+void contractBefore(ContractHooks* hooks, AthleteState3D& athlete, int step) {
+    if (hooks == nullptr || hooks->contract == nullptr || !hooks->act) return;
+    if (step % LocomotionContract3D::TicksPerDecision == 0)
+        hooks->contract->decide(athlete, parityAction(*hooks->contract, step / LocomotionContract3D::TicksPerDecision));
+    hooks->contract->follow(athlete, hooks->authority);
+}
+
+// Depois da fisica: a entrada da rede deste instante.
+void contractAfter(ContractHooks* hooks, const AthleteState3D& athlete, const RagdollState3D& body,
+    const AthleteCommand3D& command) {
+    if (hooks == nullptr || hooks->contract == nullptr || hooks->observations == nullptr) return;
+    hooks->buffer.resize(hooks->contract->observationSize());
+    hooks->nonFinite += hooks->contract->observe(body, command, athleteControlView3D(athlete), athlete.policyHistory,
+        hooks->forecast, hooks->buffer);
+    hooks->observations->push_back(observationPrint(hooks->buffer));
+}
+
 // Um cenario do comeco ao fim (a cena nova, o boneco, as teclas, as medidas).
 int runParity(const ProbeContext& context, int limit, int restores);
 
 // (trace: a impressao digital de cada tick do roteiro, para a paridade.)
 Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const AthleteRuntimeSettings3D& settings,
     bool startPhysicalArgument, FILE* dump, int every, bool suppressRequests = false,
-    std::vector<AthleteTickDigest3D>* trace = nullptr) {
+    std::vector<AthleteTickDigest3D>* trace = nullptr, ContractHooks* hooks = nullptr) {
     const bool startPhysical = startPhysicalArgument || scenario.startPhysical;
     const RagdollProfile3D& profile = *context.profile;
     const AthleteFootGeometry3D footGeometry = resolveAthleteFootGeometry3D(profile, resolveAthleteLegs3D(profile), 0.08f);
@@ -1406,6 +1461,7 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
         std::vector<AthleteBall3D> balls;
         if (scenario.ball && step >= 0) balls.push_back({ ballHandle, &ballState, &ownership });
         AthleteRuntimeOutput3D output;
+        if (step >= 0) contractBefore(hooks, athlete, step);
         runtime.update(*scene, runtimeAssets, std::span<AthleteSlot3D>(&slot, 1), balls, step < 0 ? warmSettings : settings,
             control, Dt, output);
         if (output.followVelocitySet) followVelocity = output.followVelocityWorld;
@@ -1566,6 +1622,7 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
         scene->simulate(Dt);
         bodyState = scene->ragdollState(handle);
         if (trace != nullptr && step >= 0) trace->push_back(athleteTickDigest3D(athlete, bodyState));
+        if (step >= 0 && context.noCapsule) contractAfter(hooks, athlete, bodyState, slotCommand);
         if (scenario.ball && step >= 0) ballState = scene->inflatedBallState(ballHandle);
         if (step < 0) {
             previousLinks = bodyState.links;
@@ -2656,11 +2713,14 @@ AthleteCommand3D scenarioCommand(const ProbeContext& context, const AthleteRunti
     return athleteStickCommand3D(stick, settings, context.gaitSpeeds, terrainSpeedLimit);
 }
 
-// Um tick do roteiro num mundo de treino: o comando e os empurroes da sonda.
+// Um tick do roteiro num mundo de treino: o comando, os empurroes da sonda e
+// (na paridade do contrato) a acao fixa e a entrada da rede.
 void stepScenarioWorld(const ProbeContext& context, const AthleteRuntimeSettings3D& settings, const Scenario& scenario,
-    LocomotionWorld3D& world, float t) {
+    LocomotionWorld3D& world, int step, ContractHooks* hooks = nullptr) {
+    const float t = static_cast<float>(step) * Dt;
     const AthleteCommand3D command = scenarioCommand(context, settings, scenario.keys(t),
         world.telemetry().terrainSpeedLimit);
+    contractBefore(hooks, world.athlete(), step);
     for (const Throw& item : scenario.throws)
         if (t >= item.at && t < item.at + Dt) world.throwBox({ item.start, item.velocity, item.massKg, item.halfExtents });
     for (const Push& push : scenario.pushes)
@@ -2670,6 +2730,7 @@ void stepScenarioWorld(const ProbeContext& context, const AthleteRuntimeSettings
             world.push(3, push.force * 0.48f);
         }
     world.step(command);
+    contractAfter(hooks, world.athlete(), world.body(), command);
 }
 
 // O terreno de um roteiro (os degraus, a rampa, a parede) para um mundo.
@@ -2725,6 +2786,8 @@ TraceSplit splitOf(const std::vector<AthleteTickDigest3D>& a, const std::vector<
 int runParity(const ProbeContext& context, int limit, int restores) {
     AthleteRuntimeSettings3D settings;
     settings.defaultLocomotion = false;
+    // (Com a referencia de estilo a sombra: a entrada da rede completa.)
+    settings.physicalReference = true;
     ProbeContext commanded = context;
     commanded.noCapsule = true;
     PhysicsEngine3D engine;
@@ -2732,10 +2795,16 @@ int runParity(const ProbeContext& context, int limit, int restores) {
     LocomotionWorldSettings3D worldSettings;
     worldSettings.runtime = settings;
     int failures = 0;
-    std::printf("paridade: configuracao fisico total, comandado sem capsula, tick %.6f s, cena %u threads%s\n", Dt,
+    std::printf("paridade: configuracao fisico total, comandado sem capsula, referencia a sombra, tick %.6f s, cena %u threads%s\n", Dt,
         worldSettings.scene.workerThreadCount, worldSettings.scene.runJobsInline ? " inline" : " (todas)");
-    std::printf("1. sonda contra mundo de treino, do comeco (todos os roteiros sem bola: terreno, caixas, empurroes)\n");
+    const LocomotionContract3D contract(*context.profile);
+    std::printf("contrato da rede v%u: %zu entradas, %zu saidas, %zu eixos atuados, impressao %016llx\n",
+        LocomotionContract3D::Version, contract.observationSize(), contract.actionSize(), contract.actuatedAxes().size(),
+        static_cast<unsigned long long>(contract.hash()));
+    std::printf("1. sonda contra mundo de treino, do comeco (todos os roteiros sem bola: terreno, caixas, empurroes), com a entrada da rede\n");
     int scenariosRun = 0, ticksCompared = 0;
+    std::size_t nonFinite = 0;
+    int observationFailures = 0;
     const std::vector<Scenario> list = scenarios();
     for (const Scenario& scenario : list) {
         // (Sem bola: a bola do treino vem com o RL dela.)
@@ -2743,25 +2812,99 @@ int runParity(const ProbeContext& context, int limit, int restores) {
         if (limit > 0 && scenariosRun >= limit) break;
         ++scenariosRun;
         std::vector<AthleteTickDigest3D> probe, trained;
-        (void)runScenario(commanded, scenario, settings, true, nullptr, 1, false, &probe);
+        std::vector<std::uint64_t> probeObservations, trainedObservations;
+        ContractHooks probeHooks, trainedHooks;
+        probeHooks.contract = trainedHooks.contract = &contract;
+        probeHooks.observations = &probeObservations;
+        trainedHooks.observations = &trainedObservations;
+        (void)runScenario(commanded, scenario, settings, true, nullptr, 1, false, &probe, &probeHooks);
         LocomotionWorldSettings3D terrain = worldSettings;
         terrain.statics = scenarioStatics(scenario);
         LocomotionWorld3D world(engine, materials, context.runtimeAssets, terrain);
         world.reset(AthleteStartMode3D::Physical);
         const int ticks = static_cast<int>(scenario.seconds / Dt);
         for (int step = 0; step < ticks; ++step) {
-            stepScenarioWorld(context, settings, scenario, world, static_cast<float>(step) * Dt);
+            stepScenarioWorld(context, settings, scenario, world, step, &trainedHooks);
             trained.push_back(athleteTickDigest3D(world.athlete(), world.body()));
         }
         const TraceSplit split = splitOf(probe, trained);
         ticksCompared += static_cast<int>(probe.size());
+        nonFinite += probeHooks.nonFinite + trainedHooks.nonFinite;
+        if (scenario.name == "trota" && settings.physicalReference) {
+            // A referencia de estilo trotando: vale, anda (a fase e o plano a
+            // frente) e o erro das partes-chave e de centimetros.
+            const auto& channels = contract.observationLayout().channels;
+            const auto value = [&](const std::vector<float>& observation, const std::string& name) {
+                for (std::size_t c = 0; c < channels.size(); ++c)
+                    if (channels[c].name == name) return observation[c];
+                return std::numeric_limits<float>::quiet_NaN();
+            };
+            std::vector<float> observation(contract.observationSize());
+            BodyForecast3D forecast;
+            (void)contract.observe(world.body(), scenarioCommand(context, settings, scenario.keys(scenario.seconds - Dt),
+                    world.telemetry().terrainSpeedLimit),
+                athleteControlView3D(world.athlete()), world.athlete().policyHistory, forecast, observation);
+            const float valid = value(observation, "ref.valida"), ahead = value(observation, "ref.plano.0_50.pos.x");
+            const float footError = std::hypot(value(observation, "ref.estilo_erro.pe_esq.x"),
+                value(observation, "ref.estilo_erro.pe_esq.y"));
+            const bool sane = valid > 0.5f && ahead > 0.5f && footError < 0.6f;
+            std::printf("  a referencia trotando: valida %.0f, o plano a 0,5 s %.2f m a frente, a fase (%.2f, %.2f), o pe esquerdo %.2f m do estilo (%s)\n",
+                valid, ahead, value(observation, "ref.fase.sen"), value(observation, "ref.fase.cos"), footError,
+                sane ? "ok" : "FALHOU");
+            if (!sane) ++failures;
+        }
+        if (scenario.name == "parado") {
+            // O referencial da entrada: a frente da pelve sai como +x, e o
+            // olhar relativo e o olhar menos o giro da pelve medido a parte
+            // (parado, a base do classico deixa a pelve uns 20 graus virada;
+            // o peito de cima olha para a camera).
+            const auto& channels = contract.observationLayout().channels;
+            const auto channel = [&](const std::string& name) {
+                for (std::size_t c = 0; c < channels.size(); ++c)
+                    if (channels[c].name == name) return c;
+                return channels.size();
+            };
+            const std::string pelvisId = context.profile->links.front().id;
+            const std::size_t sine = channel("comando.olhar.sen"), cosine = channel("comando.olhar.cos");
+            const std::size_t forwardX = channel("corpo." + pelvisId + ".frente.x");
+            const std::size_t forwardY = channel("corpo." + pelvisId + ".frente.y");
+            std::vector<float> observation(contract.observationSize());
+            BodyForecast3D forecast;
+            (void)contract.observe(world.body(), scenarioCommand(context, settings, Keys {}, 1.0e9f),
+                athleteControlView3D(world.athlete()), world.athlete().policyHistory, forecast, observation);
+            const Quaternion pelvisRotation = (world.body().links.front().orientation
+                * context.profile->links.front().modelOrientation.conjugate()).normalized();
+            const Vec3 pelvisForward = pelvisRotation.rotate({ 1.0f, 0.0f, 0.0f });
+            const float pelvisYaw = std::atan2(pelvisForward.y, pelvisForward.x);
+            const bool found = sine < channels.size() && cosine < channels.size() && forwardX < channels.size()
+                && forwardY < channels.size();
+            const bool frame = found && observation[forwardX] > 0.95f && std::abs(observation[forwardY]) < 0.05f
+                && std::abs(observation[sine] - std::sin(-pelvisYaw)) < 0.02f
+                && std::abs(observation[cosine] - std::cos(-pelvisYaw)) < 0.02f;
+            std::printf("  o referencial parado: a frente da pelve (%.3f, %.3f); o olhar relativo %.1f graus, a pelve virada %.1f (%s)\n",
+                found ? observation[forwardX] : 0.0f, found ? observation[forwardY] : 0.0f,
+                found ? std::atan2(observation[sine], observation[cosine]) * 57.2958f : 0.0f, pelvisYaw * 57.2958f,
+                frame ? "ok" : "FALHOU: o referencial do rumo esta errado");
+            if (!frame) ++failures;
+        }
         if (split.tick >= 0) {
             ++failures;
             std::printf("  FALHOU %-22s separa no tick %d (%s)\n", scenario.name.c_str(), split.tick, split.part);
         }
+        if (probeObservations != trainedObservations) {
+            ++observationFailures;
+            std::size_t first = 0;
+            while (first < std::min(probeObservations.size(), trainedObservations.size())
+                && probeObservations[first] == trainedObservations[first])
+                ++first;
+            std::printf("  FALHOU %-22s a entrada da rede separa no tick %zu\n", scenario.name.c_str(), first);
+        }
     }
-    std::printf("  %d roteiros, %d ticks: %s\n", scenariosRun, ticksCompared,
-        failures == 0 ? "iguais bit a bit" : "com diferencas");
+    failures += observationFailures;
+    if (nonFinite > 0) ++failures;
+    std::printf("  %d roteiros, %d ticks: %s; a entrada da rede %s e %s\n", scenariosRun, ticksCompared,
+        failures == 0 ? "iguais bit a bit" : "com diferencas", observationFailures == 0 ? "igual bit a bit" : "DIFERE",
+        nonFinite == 0 ? "sempre finita" : "com numeros nao finitos");
     std::printf("2. recomecos de instantes guardados (dois mundos novos) e 3. contra a continuacao\n");
     int states = 0, restoreFailures = 0;
     const std::vector<Scenario> all = scenarios();
@@ -2781,7 +2924,7 @@ int runParity(const ProbeContext& context, int limit, int restores) {
             LocomotionWorld3D original(engine, materials, context.runtimeAssets, worldSettings);
             original.reset(AthleteStartMode3D::Physical);
             for (int step = 0; step < startTick; ++step)
-                stepScenarioWorld(context, settings, scenario, original, static_cast<float>(step) * Dt);
+                stepScenarioWorld(context, settings, scenario, original, step);
             const AthleteSnapshot3D snapshot = original.snapshot();
             std::vector<AthleteTickDigest3D> traces[3];
             std::vector<Vec3> pelvis[3];
@@ -2791,9 +2934,8 @@ int runParity(const ProbeContext& context, int limit, int restores) {
             second.restore(snapshot);
             LocomotionWorld3D* worlds[3] { &original, &first, &second };
             for (int step = 0; step < ticks; ++step) {
-                const float t = static_cast<float>(startTick + step) * Dt;
                 for (int k = 0; k < 3; ++k) {
-                    stepScenarioWorld(context, settings, scenario, *worlds[k], t);
+                    stepScenarioWorld(context, settings, scenario, *worlds[k], startTick + step);
                     traces[k].push_back(athleteTickDigest3D(worlds[k]->athlete(), worlds[k]->body()));
                     pelvis[k].push_back(worlds[k]->body().links.front().position);
                 }
@@ -2820,7 +2962,7 @@ int runParity(const ProbeContext& context, int limit, int restores) {
     // (A cena exata do lote: inline, uma thread, as reservas pequenas.)
     LocomotionWorldSettings3D inlineSettings = worldSettings;
     inlineSettings.scene = locomotionBatchScene3D();
-    std::vector<double> athleteCost, physicsCost, locomotionCost, assistCost;
+    std::vector<double> athleteCost, physicsCost, locomotionCost, assistCost, referenceCost;
     std::vector<std::vector<double>> sectionCost(CharacterLocomotion3D::SectionCount);
     int inlineFailures = 0;
     for (const char* name : { "trota", "sprint", "zigue", "queda_lado_1400" }) {
@@ -2836,15 +2978,15 @@ int runParity(const ProbeContext& context, int limit, int restores) {
         std::vector<AthleteTickDigest3D> a, b;
         const int ticks = static_cast<int>(scenario.seconds / Dt);
         for (int step = 0; step < ticks; ++step) {
-            const float t = static_cast<float>(step) * Dt;
-            stepScenarioWorld(context, settings, scenario, pooled, t);
-            stepScenarioWorld(context, settings, scenario, single, t);
+            stepScenarioWorld(context, settings, scenario, pooled, step);
+            stepScenarioWorld(context, settings, scenario, single, step);
             a.push_back(athleteTickDigest3D(pooled.athlete(), pooled.body()));
             b.push_back(athleteTickDigest3D(single.athlete(), single.body()));
             athleteCost.push_back(single.lastAthleteSeconds());
             physicsCost.push_back(single.lastPhysicsSeconds());
             locomotionCost.push_back(single.athlete().locomotionSeconds);
             assistCost.push_back(single.athlete().assistSeconds);
+            referenceCost.push_back(single.athlete().referenceSeconds);
             for (std::size_t k = 0; k < CharacterLocomotion3D::SectionCount; ++k)
                 sectionCost[k].push_back(single.athlete().legacy.locomotion.sectionSeconds()[k]);
         }
@@ -2855,6 +2997,68 @@ int runParity(const ProbeContext& context, int limit, int restores) {
         }
     }
     failures += inlineFailures;
+    // 5. O contrato da rede com as correcoes: a acao fixa (rampa de 4 ticks)
+    // com autoridade 0,5 nas quatro cabecas, pela sonda e pelo mundo (o gancho
+    // nos dois caminhos); e com autoridade zero, igual ao classico.
+    std::printf("5. as correcoes do contrato nos dois caminhos (autoridade 0,5) e a correcao zero igual ao classico\n");
+    int hookFailures = 0, zeroFailures = 0, hookScenarios = 0;
+    for (const Scenario& scenario : list) {
+        if (scenario.ball) continue;
+        if (limit > 0 && hookScenarios >= limit) break;
+        ++hookScenarios;
+        LocomotionWorldSettings3D terrain = worldSettings;
+        terrain.statics = scenarioStatics(scenario);
+        const int ticks = static_cast<int>(scenario.seconds / Dt);
+        // Com autoridade.
+        std::vector<AthleteTickDigest3D> probe, trained;
+        std::vector<std::uint64_t> probeObservations, trainedObservations;
+        ContractHooks probeHooks, trainedHooks;
+        for (ContractHooks* hooks : { &probeHooks, &trainedHooks }) {
+            hooks->contract = &contract;
+            hooks->act = true;
+            hooks->authority = { 0.5f, 0.5f, 0.5f, 0.5f };
+        }
+        probeHooks.observations = &probeObservations;
+        trainedHooks.observations = &trainedObservations;
+        (void)runScenario(commanded, scenario, settings, true, nullptr, 1, false, &probe, &probeHooks);
+        LocomotionWorld3D world(engine, materials, context.runtimeAssets, terrain);
+        world.reset(AthleteStartMode3D::Physical);
+        for (int step = 0; step < ticks; ++step) {
+            stepScenarioWorld(context, settings, scenario, world, step, &trainedHooks);
+            trained.push_back(athleteTickDigest3D(world.athlete(), world.body()));
+        }
+        const TraceSplit split = splitOf(probe, trained);
+        if (split.tick >= 0 || probeObservations != trainedObservations) {
+            ++hookFailures;
+            std::printf("  FALHOU %-22s com correcoes: separa no tick %d (%s)%s\n", scenario.name.c_str(), split.tick,
+                split.part, probeObservations != trainedObservations ? ", a entrada difere" : "");
+        }
+        // Autoridade zero: a mesma acao nao muda nada.
+        ContractHooks zeroHooks;
+        zeroHooks.contract = &contract;
+        zeroHooks.act = true;
+        LocomotionWorld3D plain(engine, materials, context.runtimeAssets, terrain);
+        LocomotionWorld3D zero(engine, materials, context.runtimeAssets, terrain);
+        plain.reset(AthleteStartMode3D::Physical);
+        zero.reset(AthleteStartMode3D::Physical);
+        std::vector<AthleteTickDigest3D> plainTrace, zeroTrace;
+        for (int step = 0; step < ticks; ++step) {
+            stepScenarioWorld(context, settings, scenario, plain, step);
+            stepScenarioWorld(context, settings, scenario, zero, step, &zeroHooks);
+            plainTrace.push_back(athleteTickDigest3D(plain.athlete(), plain.body()));
+            zeroTrace.push_back(athleteTickDigest3D(zero.athlete(), zero.body()));
+        }
+        const TraceSplit zeroSplit = splitOf(plainTrace, zeroTrace);
+        if (zeroSplit.tick >= 0) {
+            ++zeroFailures;
+            std::printf("  FALHOU %-22s autoridade zero muda o classico no tick %d (%s)\n", scenario.name.c_str(),
+                zeroSplit.tick, zeroSplit.part);
+        }
+    }
+    failures += hookFailures + zeroFailures;
+    std::printf("  %d roteiros: com correcoes, sonda e mundo %s; autoridade zero %s\n", hookScenarios,
+        hookFailures == 0 ? "iguais bit a bit (trajetoria e entrada)" : "DIFEREM",
+        zeroFailures == 0 ? "igual ao classico bit a bit" : "MUDA o classico");
     const auto percentile = [](std::vector<double> values, double p) {
         if (values.empty()) return 0.0;
         std::sort(values.begin(), values.end());
@@ -2865,16 +3069,16 @@ int runParity(const ProbeContext& context, int limit, int restores) {
         inlineFailures == 0 ? "igual bit a bit" : "DIFERE", percentile(athleteCost, 0.5), percentile(athleteCost, 0.95),
         percentile(athleteCost, 0.99), percentile(physicsCost, 0.5), percentile(physicsCost, 0.95),
         percentile(physicsCost, 0.99), athleteCost.size());
-    std::printf("  no passo do atleta: controle fisico p50 %.0f p95 %.0f p99 %.0f | ajuda p50 %.0f p95 %.0f p99 %.0f\n",
+    std::printf("  no passo do atleta: controle fisico p50 %.0f p95 %.0f p99 %.0f | ajuda p50 %.0f p95 %.0f p99 %.0f | referencia a sombra p50 %.0f p95 %.0f p99 %.0f\n",
         percentile(locomotionCost, 0.5), percentile(locomotionCost, 0.95), percentile(locomotionCost, 0.99),
-        percentile(assistCost, 0.5), percentile(assistCost, 0.95), percentile(assistCost, 0.99));
+        percentile(assistCost, 0.5), percentile(assistCost, 0.95), percentile(assistCost, 0.99),
+        percentile(referenceCost, 0.5), percentile(referenceCost, 0.95), percentile(referenceCost, 0.99));
     std::printf("  no controle fisico, por bloco (p50/p99 us):");
     for (std::size_t k = 0; k < CharacterLocomotion3D::SectionCount; ++k)
         std::printf(" %s %.0f/%.0f", CharacterLocomotion3D::sectionName(k), percentile(sectionCost[k], 0.5),
             percentile(sectionCost[k], 0.99));
     std::printf("\n");
-    std::printf(failures == 0 ? "paridade: degrau 2 passa (o degrau 1 espera o contrato da rede)\n"
-                              : "paridade: %d falha(s)\n", failures);
+    std::printf(failures == 0 ? "paridade: degraus 1 e 2 passam (contrato v1)\n" : "paridade: %d falha(s)\n", failures);
     return failures == 0 ? 0 : 1;
 }
 
