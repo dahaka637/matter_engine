@@ -1041,7 +1041,8 @@ endif()
 
 # Sonda dos atletas (rework de 10/10/2026): o mesmo runtime do laboratorio
 # com a fisica de verdade, sem janela; o dump vai para MatterModelInspector quadros.
-add_executable(MatterAthleteProbe tools/AthleteProbe.cpp)
+add_executable(MatterAthleteProbe tools/AthleteProbe.cpp tools/athlete_probe/ProbeL0.cpp)
+target_include_directories(MatterAthleteProbe PRIVATE tools)
 target_link_libraries(MatterAthleteProbe PRIVATE MatterEngine)
 target_compile_definitions(MatterAthleteProbe PRIVATE
     MATTERENGINE_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets"
