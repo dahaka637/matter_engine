@@ -17,6 +17,7 @@
 //      [--sem-capsula] (o atleta comandado pelo slot, sem a capsula do jogador: o caminho do treino)
 //      XDESLOCA=m: a largada da capsula deslocada em x (a sensibilidade caotica)
 //      [--paridade [N]] (a sonda contra os mundos de treino, bit a bit; N roteiros, 0 todos)
+//      [--linha-de-base [threads]] (o classico por nivel de ajuda num lote de mundos, e a vazao)
 //      [--ajuda-parado %] [--ajuda-andando %]
 // Sem --cenario roda todos.
 #include "Engine/Athlete/AthleteAssets3D.hpp"
@@ -33,6 +34,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -2863,6 +2865,191 @@ int runParity(const ProbeContext& context, int limit, int restores) {
     return failures == 0 ? 0 : 1;
 }
 
+// A linha de base do classico por nivel de ajuda (a L0 do plano do RL: o que
+// o RL tem de bater) e a vazao do lote: a bateria sem bola - retas em 8 rumos
+// e 4 marchas, as manobras, as pancadas e o terreno - num lote de mundos de
+// treino, um mundo por exercicio e nivel (as ajudas parado e andando no
+// nivel). Mede as quedas, a velocidade contra a pedida nas retas (de 2 a 4 s,
+// no rumo pedido) e a forca da ajuda na pelve (fracao do peso).
+int runBaseline(const ProbeContext& context, int threads) {
+    struct Drill {
+        std::string group;
+        Scenario scenario;
+    };
+    std::vector<Drill> drills;
+    static const struct { const char* key; float amount; bool sprint; } gaits[4] = {
+        { "anda", 0.33f, false }, { "trota", 0.5f, false }, { "corre", 1.0f, false }, { "sprint", 1.0f, true } };
+    for (const auto& gait : gaits)
+        for (int k = 0; k < 8; ++k) {
+            char name[48];
+            std::snprintf(name, sizeof(name), "reta_%s_%03d", gait.key, k * 45);
+            const float angle = static_cast<float>(k) * Pi * 0.25f;
+            const float amount = gait.amount;
+            const bool sprint = gait.sprint;
+            drills.push_back({ std::string("reta_") + gait.key, Scenario { name, 4.0f, [angle, amount, sprint](float t) {
+                Keys keys;
+                if (t > 0.3f) {
+                    keys.forward = std::cos(angle) * amount;
+                    keys.left = std::sin(angle) * amount;
+                    keys.sprint = sprint;
+                }
+                return keys; } } });
+        }
+    const std::vector<Scenario> all = scenarios();
+    const auto add = [&](const char* group, std::initializer_list<const char*> names) {
+        for (const char* name : names)
+            for (const Scenario& scenario : all)
+                if (scenario.name == name) {
+                    Scenario capped = scenario;
+                    // (A pancada decide nos primeiros segundos; o levantar nao
+                    // entra na linha de base.)
+                    capped.seconds = std::min(capped.seconds, 6.0f);
+                    drills.push_back({ group, capped });
+                }
+    };
+    add("manobras", { "zigue", "inverte", "corte", "para", "para_sprint", "lados", "gira", "gira_rapido", "anda_gira",
+                        "corre_gira", "sprint_gira", "lado_gira", "diagonal_gira", "corre_vira180", "anda_vira180" });
+    add("pancadas", { "queda_lado_700", "queda_lado_1000", "queda_lado_1400", "queda_lado_1900", "queda_000", "queda_090",
+                        "queda_180", "queda_270", "quedacorre_000", "quedacorre_090", "quedacorre_180", "quedacorre_270",
+                        "empurrao_leve", "empurrao_medio", "empurrao_forte", "empurrao_correndo", "encostao_andando",
+                        "encostao_correndo", "caixa_leve", "caixa_media", "caixa_forte", "caixa_correndo" });
+    add("terreno", { "degrau_10_anda", "degrau_18_anda", "degrau_25_anda", "degrau_35_anda", "degrau_10_corre",
+                       "degrau_18_corre", "degrau_25_corre", "degrau_35_corre", "escada_anda", "escada_corre", "rampa_anda",
+                       "rampa_corre" });
+    const float levels[5] = { 100.0f, 70.0f, 50.0f, 30.0f, 0.0f };
+    const std::size_t count = drills.size() * 5;
+    AthleteRuntimeSettings3D base;
+    base.defaultLocomotion = false;
+    LocomotionBatchSettings3D batchSettings;
+    batchSettings.worlds = static_cast<std::uint32_t>(count);
+    batchSettings.threads = static_cast<std::uint32_t>(std::max(0, threads));
+    batchSettings.world.runtime = base;
+    LocomotionBatch3D batch(context.runtimeAssets, batchSettings);
+    struct Tally {
+        bool fell = false;
+        double speedRatio = 0.0;
+        int speedSamples = 0;
+        double assist = 0.0;
+        int ticks = 0;
+    };
+    std::vector<Tally> tally(count);
+    float weight = 9.81f * context.profile->totalMassKg;
+    for (std::size_t i = 0; i < count; ++i) {
+        const Drill& drill = drills[i / 5];
+        LocomotionWorld3D& world = batch.world(i);
+        world.runtimeSettings().e5StandingAssistPercent = levels[i % 5];
+        world.runtimeSettings().e5WalkingAssistPercent = levels[i % 5];
+        world.setStatics(scenarioStatics(drill.scenario));
+        world.reset(AthleteStartMode3D::Physical);
+    }
+    float longest = 0.0f;
+    for (const Drill& drill : drills) longest = std::max(longest, drill.scenario.seconds);
+    const int ticks = static_cast<int>(longest / Dt);
+    double stepSeconds = 0.0;
+    std::size_t worldTicks = 0;
+    for (int step = 0; step < ticks; ++step) {
+        const float t = static_cast<float>(step) * Dt;
+        for (std::size_t i = 0; i < count; ++i) {
+            const Scenario& scenario = drills[i / 5].scenario;
+            LocomotionWorld3D& world = batch.world(i);
+            const AthleteRuntimeSettings3D& settings = world.runtimeSettings();
+            const bool running = t < scenario.seconds;
+            batch.commands()[i] = running
+                ? scenarioCommand(context, settings, scenario.keys(t), world.telemetry().terrainSpeedLimit)
+                : scenarioCommand(context, settings, Keys {}, world.telemetry().terrainSpeedLimit);
+            if (!running) continue;
+            for (const Throw& item : scenario.throws)
+                if (t >= item.at && t < item.at + Dt) world.throwBox({ item.start, item.velocity, item.massKg, item.halfExtents });
+            for (const Push& push : scenario.pushes)
+                if (t >= push.at && t < push.at + push.seconds) {
+                    world.push(0, push.force * 0.20f);
+                    world.push(2, push.force * 0.32f);
+                    world.push(3, push.force * 0.48f);
+                }
+        }
+        const auto begin = std::chrono::steady_clock::now();
+        batch.step(1);
+        stepSeconds += std::chrono::duration<double>(std::chrono::steady_clock::now() - begin).count();
+        worldTicks += count;
+        for (std::size_t i = 0; i < count; ++i) {
+            const Scenario& scenario = drills[i / 5].scenario;
+            if (t >= scenario.seconds || batch.failed(i)) continue;
+            LocomotionWorld3D& world = batch.world(i);
+            Tally& item = tally[i];
+            const AthleteTelemetry3D telemetry = world.telemetry();
+            if (telemetry.fallen || telemetry.gettingUp) item.fell = true;
+            item.assist += world.athlete().legacy.adaptivePhysics.output().rootForceWorld.length() / weight;
+            ++item.ticks;
+            const Vec3 asked = batch.commands()[i].intent.requestedVelocityWorld;
+            const float askedSpeed = std::hypot(asked.x, asked.y);
+            if (drills[i / 5].group.rfind("reta_", 0) == 0 && t >= 2.0f && askedSpeed > 0.1f && !item.fell) {
+                const Vec3 velocity = world.body().links.front().linearVelocity;
+                item.speedRatio += (velocity.x * asked.x + velocity.y * asked.y) / (askedSpeed * askedSpeed);
+                ++item.speedSamples;
+            }
+        }
+    }
+    int failedWorlds = 0;
+    for (std::size_t i = 0; i < count; ++i) failedWorlds += batch.failed(i) ? 1 : 0;
+    std::printf("linha de base: %zu exercicios x 5 niveis = %zu mundos, %u threads; fisico total, comandado, ajuda nos pes %.0f%%\n",
+        drills.size(), count, batch.threads(), base.physicalFeetAssistPercent);
+    std::printf("vazao: %.0f ticks de mundo/s = %.0f decisoes/s a 30 Hz (%zu ticks de mundo em %.1f s de lote; %d mundos com erro)\n",
+        static_cast<double>(worldTicks) / stepSeconds, static_cast<double>(worldTicks) / stepSeconds / 4.0, worldTicks,
+        stepSeconds, failedWorlds);
+    std::printf("nivel | velocidade/pedida nas retas (8 rumos: frente diag lado diag-tras tras) por marcha | quedas: retas manobras pancadas terreno | ajuda na pelve (peso)\n");
+    for (int level = 0; level < 5; ++level) {
+        std::printf("%4.0f%% |", levels[level]);
+        int falls[4] = {}, totals[4] = {};
+        double assist = 0.0;
+        int assistCount = 0;
+        for (const auto& gait : gaits) {
+            // (Por rumo: 0 frente, 45 e 315 diagonais, 90 e 270 lados, 135 e
+            // 225 diagonais de tras, 180 tras.)
+            double sums[5] = {};
+            int counts[5] = {};
+            for (std::size_t d = 0; d < drills.size(); ++d) {
+                if (drills[d].group != std::string("reta_") + gait.key) continue;
+                const Tally& item = tally[d * 5 + static_cast<std::size_t>(level)];
+                const int k = std::atoi(drills[d].scenario.name.c_str() + drills[d].scenario.name.size() - 3) / 45;
+                const int bucket = k == 0 ? 0 : (k == 1 || k == 7) ? 1 : (k == 2 || k == 6) ? 2 : (k == 3 || k == 5) ? 3 : 4;
+                if (item.speedSamples > 0) {
+                    sums[bucket] += item.speedRatio / item.speedSamples;
+                    ++counts[bucket];
+                }
+            }
+            std::printf(" %s", gait.key);
+            for (int b = 0; b < 5; ++b)
+                std::printf(counts[b] > 0 ? " %.2f" : "  -  ", counts[b] > 0 ? sums[b] / counts[b] : 0.0);
+            std::printf(" |");
+        }
+        for (std::size_t d = 0; d < drills.size(); ++d) {
+            const Tally& item = tally[d * 5 + static_cast<std::size_t>(level)];
+            const std::string& group = drills[d].group;
+            const int g = group.rfind("reta_", 0) == 0 ? 0 : group == "manobras" ? 1 : group == "pancadas" ? 2 : 3;
+            ++totals[g];
+            falls[g] += item.fell ? 1 : 0;
+            if (item.ticks > 0) {
+                assist += item.assist / item.ticks;
+                ++assistCount;
+            }
+        }
+        std::printf(" quedas %d/%d %d/%d %d/%d %d/%d | %.2f\n", falls[0], totals[0], falls[1], totals[1], falls[2], totals[2],
+            falls[3], totals[3], assistCount > 0 ? assist / assistCount : 0.0);
+    }
+    // As quedas por exercicio (onde o nivel derruba).
+    std::printf("quem cai (niveis 100 70 50 30 0):\n");
+    for (std::size_t d = 0; d < drills.size(); ++d) {
+        bool any = false;
+        for (int level = 0; level < 5; ++level) any = any || tally[d * 5 + static_cast<std::size_t>(level)].fell;
+        if (!any) continue;
+        std::printf("  %-20s", drills[d].scenario.name.c_str());
+        for (int level = 0; level < 5; ++level)
+            std::printf(" %s", tally[d * 5 + static_cast<std::size_t>(level)].fell ? "CAI" : " - ");
+        std::printf("\n");
+    }
+    return failedWorlds == 0 ? 0 : 1;
+}
+
 } // namespace
 
 // Plano v5 (E3): as poses de contato paradas - o corpo de pe (a pose de
@@ -2962,6 +3149,7 @@ int main(int argc, char** argv) {
     bool balanceSteps = AthleteRuntimeSettings3D {}.activeStanceSettings.balanceSteps;
     bool checks = false;
     int parity = -1;
+    int baseline = -1;
     float response = AthleteRuntimeSettings3D {}.capsuleResponsePercent;
     bool newBall = false;
     bool noRequests = false;
@@ -2993,6 +3181,7 @@ int main(int argc, char** argv) {
         else if (arg == "--ponte") bridge = std::atoi(need()) != 0;
         else if (arg == "--teste") checks = true;
         else if (arg == "--paridade") parity = i + 1 < argc && argv[i + 1][0] != '-' ? std::atoi(argv[++i]) : 0;
+        else if (arg == "--linha-de-base") baseline = i + 1 < argc && argv[i + 1][0] != '-' ? std::atoi(argv[++i]) : 0;
         else if (arg == "--poses-contato") contactPoses = need();
         else if (arg == "--v5") dribbleV5 = std::atoi(need()) != 0;
         else if (arg == "--total") totalPhysical = true;
@@ -3059,6 +3248,7 @@ int main(int argc, char** argv) {
     context.runtimeAssets.avatarSettings = avatar;
     if (checks) return runChecks(context);
     if (parity >= 0) return runParity(context, parity, 0);
+    if (baseline >= 0) return runBaseline(context, baseline);
     if (!contactPoses.empty()) return writeContactPoses(profile, contactPoses);
 
     FILE* dump = dumpPath.empty() ? nullptr : std::fopen(dumpPath.c_str(), "w");
