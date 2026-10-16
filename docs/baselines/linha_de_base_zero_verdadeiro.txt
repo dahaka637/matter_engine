@@ -1,0 +1,71 @@
+# Linha de base do classico com a ajuda ZERO DE VERDADE nos niveis baixos (L0 do RL), 2026-10-16
+# codigo: bfe1a3e; comando: T_WeightWalk=1.0 XPES_NO_NIVEL=1 build-profile/MatterAthleteProbe --linha-de-base 12
+# configuracao: como linha_de_base_classico.txt, mas andando as pernas levam todo o peso que a ajuda nao leva (T_WeightWalk 1,0 em vez de 0,5) e a ajuda nos pes vai no nivel; a 0% a pelve leva 0,01 do peso
+
+linha de base: 81 exercicios x 5 niveis = 405 mundos, 12 threads; fisico total, comandado, ajuda nos pes no nivel
+vazao: 29625 ticks de mundo/s = 7406 decisoes/s a 30 Hz (291195 ticks de mundo em 9.8 s de lote; 0 mundos com erro)
+nivel | velocidade/pedida nas retas (8 rumos: frente diag lado diag-tras tras) por marcha | quedas: retas manobras pancadas terreno | ajuda na pelve (peso; e nos pes)
+ 100% | anda 1.00 1.00 0.99 1.00 1.00 | trota 1.01 1.01 1.01 1.00 1.00 | corre 1.00 1.00 1.00 1.00 1.00 | sprint 0.98 1.00 1.00 1.01 1.01 | quedas 0/32 0/15 11/22 0/12 | 0.71 (pes 0.03)
+  70% | anda 1.00 1.00 1.00 1.00 1.00 | trota 1.01 1.00 1.01 1.00 1.00 | corre 1.00 1.00 1.00 1.00 1.00 | sprint 1.00 1.00 1.00 1.00 1.00 | quedas 0/32 0/15 11/22 0/12 | 0.68 (pes 0.01)
+  50% | anda 1.00 1.00 1.00 1.00 1.00 | trota 1.00 1.00 1.01 1.00 1.00 | corre 1.00 1.00 1.00 1.00 1.00 | sprint 0.95 0.98 0.99 1.00 1.00 | quedas 0/32 1/15 12/22 1/12 | 0.56 (pes 0.01)
+  30% | anda 1.01 1.00 1.00 0.99 0.99 | trota 1.01 1.00 0.99 1.00 1.00 | corre 0.80 0.80 0.89 1.01 1.01 | sprint 0.64 0.74 0.96 1.01 1.01 | quedas 6/32 11/15 14/22 6/12 | 0.38 (pes 0.04)
+   0% | anda 0.14 0.13 0.68 0.27 0.23 | trota 0.23 0.31 0.14 0.17 0.18 | corre 0.13 0.16 0.10 0.09 0.11 | sprint 0.09 0.05 0.15 0.09 0.09 | quedas 15/32 8/15 10/22 2/12 | 0.01 (pes 0.00)
+nivel | arrancada ate 90% por 0,1 s (s; corre, sprint) | o pe no chao (m/s, depois de 0,05 s de apoio) | energia dos motores (W/kg) | peito: inclinacao max media (graus), quase quedas
+ 100% | 0.52 (8/8), 0.86 (8/8) | 0.540 | 35.9 | 15.8, 0 de 59
+  70% | 0.55 (8/8), 0.72 (8/8) | 0.514 | 34.6 | 18.1, 0 de 59
+  50% | 0.64 (8/8), 1.15 (8/8) | 0.715 | 32.3 | 20.5, 2 de 59
+  30% | 0.91 (5/8), 1.26 (5/8) | 0.952 | 25.0 | 33.7, 2 de 59
+   0% | -1.00 (0/8), -1.00 (0/8) | 0.359 | 14.5 | 27.5, 1 de 59
+quem cai (niveis 100 70 50 30 0):
+  reta_anda_000         -   -   -   -  CAI
+  reta_anda_045         -   -   -   -  CAI
+  reta_anda_090         -   -   -   -  CAI
+  reta_anda_270         -   -   -   -  CAI
+  reta_trota_045        -   -   -   -  CAI
+  reta_trota_090        -   -   -   -  CAI
+  reta_trota_315        -   -   -   -  CAI
+  reta_corre_000        -   -   -  CAI  - 
+  reta_corre_045        -   -   -  CAI CAI
+  reta_corre_090        -   -   -  CAI CAI
+  reta_corre_270        -   -   -  CAI CAI
+  reta_corre_315        -   -   -  CAI  - 
+  reta_sprint_000       -   -   -   -  CAI
+  reta_sprint_045       -   -   -   -  CAI
+  reta_sprint_090       -   -   -   -  CAI
+  reta_sprint_270       -   -   -  CAI CAI
+  reta_sprint_315       -   -   -   -  CAI
+  zigue                 -   -  CAI CAI  - 
+  inverte               -   -   -  CAI  - 
+  corte                 -   -   -  CAI CAI
+  para                  -   -   -  CAI  - 
+  para_sprint           -   -   -  CAI CAI
+  lados                 -   -   -  CAI CAI
+  corre_gira            -   -   -  CAI CAI
+  sprint_gira           -   -   -  CAI CAI
+  lado_gira             -   -   -  CAI CAI
+  diagonal_gira         -   -   -  CAI  - 
+  corre_vira180         -   -   -  CAI CAI
+  anda_vira180          -   -   -   -  CAI
+  queda_lado_1000       -   -   -  CAI CAI
+  queda_lado_1400      CAI CAI CAI CAI CAI
+  queda_lado_1900      CAI CAI CAI CAI CAI
+  queda_000            CAI CAI CAI CAI CAI
+  queda_090            CAI CAI CAI CAI CAI
+  queda_180            CAI CAI CAI CAI CAI
+  queda_270            CAI CAI CAI CAI CAI
+  quedacorre_000       CAI CAI CAI CAI CAI
+  quedacorre_090       CAI CAI CAI CAI  - 
+  quedacorre_180       CAI CAI CAI  -   - 
+  quedacorre_270       CAI CAI CAI CAI  - 
+  empurrao_forte       CAI CAI CAI CAI CAI
+  empurrao_correndo     -   -   -  CAI  - 
+  encostao_correndo     -   -   -  CAI  - 
+  caixa_forte           -   -   -   -  CAI
+  caixa_correndo        -   -  CAI CAI  - 
+  degrau_10_corre       -   -   -  CAI  - 
+  degrau_18_corre       -   -   -  CAI  - 
+  degrau_25_corre       -   -   -  CAI  - 
+  degrau_35_corre       -   -  CAI CAI  - 
+  escada_corre          -   -   -  CAI  - 
+  rampa_anda            -   -   -   -  CAI
+  rampa_corre           -   -   -  CAI CAI
