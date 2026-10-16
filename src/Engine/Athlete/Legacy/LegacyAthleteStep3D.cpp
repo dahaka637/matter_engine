@@ -179,7 +179,12 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             return scenePointer->probeTerrain(point + Vec3 { 0.0f, 0.0f, 0.55f }, 0.03f, 0.0f, 1.5f, 60.0f);
         };
     } else {
+        // (Sem comando, a capsula virtual e a curva recomecam do zero: um
+        // comando novo nao herda o giro de antes.)
         athlete.commandPlanVelocity = {};
+        athlete.commandDirection = {};
+        athlete.commandDirectionValid = false;
+        athlete.commandTurnRate = 0.0f;
     }
     if (!command.controlled && settings.adaptivePhysics) {
         // Capsula virtual dos bonecos nao controlados (modo fisico).
@@ -356,9 +361,9 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         command.rootVelocityWorld = athlete.commandPlanVelocity;
         command.proxyVelocityWorld = athlete.commandPlanVelocity;
         // O sprint so vale andando (como o do laboratorio: a tecla e a
-        // capsula em movimento).
+        // capsula acima de 0,1 m/s).
         command.sprinting = slot.command->sprinting
-            && Vec3 { athlete.commandPlanVelocity.x, athlete.commandPlanVelocity.y, 0.0f }.lengthSquared() > 0.001f;
+            && Vec3 { athlete.commandPlanVelocity.x, athlete.commandPlanVelocity.y, 0.0f }.lengthSquared() > 0.01f;
         // A ancora anda no plano antes do passo, como a capsula do jogador
         // (movida antes dele): andando no fim, ela ficava um tick atras (6 cm
         // no sprint) e o corpo puxado de menos.
