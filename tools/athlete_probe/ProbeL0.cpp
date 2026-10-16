@@ -557,6 +557,7 @@ int runBaseline(const ProbeContext& context, int threads) {
         double speedRatio = 0.0;
         int speedSamples = 0;
         double assist = 0.0;
+        double feetAssist = 0.0;
         int ticks = 0;
         // A arrancada (s ate 90% da velocidade pedida, nas retas; -1 nunca),
         // o escorregar do pe apoiado (m/s), a potencia dos motores (W/kg) e a
@@ -585,6 +586,9 @@ int runBaseline(const ProbeContext& context, int threads) {
         LocomotionWorld3D& world = batch.world(i);
         world.runtimeSettings().e5StandingAssistPercent = levels[i % 5];
         world.runtimeSettings().e5WalkingAssistPercent = levels[i % 5];
+        // (XPES_NO_NIVEL=1: a ajuda nos pes tambem no nivel - hoje ela fica
+        // em 100% mesmo com as outras em zero.)
+        if (std::getenv("XPES_NO_NIVEL")) world.runtimeSettings().physicalFeetAssistPercent = levels[i % 5];
         world.setStatics(scenarioStatics(drill.scenario));
         world.reset(AthleteStartMode3D::Physical);
     }
@@ -625,6 +629,9 @@ int runBaseline(const ProbeContext& context, int threads) {
             const AthleteTelemetry3D telemetry = world.telemetry();
             if (telemetry.fallen || telemetry.gettingUp) item.fell = true;
             item.assist += world.athlete().legacy.adaptivePhysics.output().rootForceWorld.length() / weight;
+            // (A ajuda nos pes entregue: as forcas dela sao pares internos, a
+            // soma delas e zero - a medida e a da sonda, XAJUDA.)
+            item.feetAssist += world.athlete().feetAssistOutput.deliveredForce.length() / weight;
             ++item.ticks;
             const Vec3 asked = batch.commands()[i].intent.requestedVelocityWorld;
             const float askedSpeed = std::hypot(asked.x, asked.y);
@@ -678,16 +685,16 @@ int runBaseline(const ProbeContext& context, int threads) {
     }
     int failedWorlds = 0;
     for (std::size_t i = 0; i < count; ++i) failedWorlds += batch.failed(i) ? 1 : 0;
-    std::printf("linha de base: %zu exercicios x 5 niveis = %zu mundos, %u threads; fisico total, comandado, ajuda nos pes %.0f%%\n",
-        drills.size(), count, batch.threads(), base.physicalFeetAssistPercent);
+    std::printf("linha de base: %zu exercicios x 5 niveis = %zu mundos, %u threads; fisico total, comandado, ajuda nos pes %s\n",
+        drills.size(), count, batch.threads(), std::getenv("XPES_NO_NIVEL") ? "no nivel" : "100%");
     std::printf("vazao: %.0f ticks de mundo/s = %.0f decisoes/s a 30 Hz (%zu ticks de mundo em %.1f s de lote; %d mundos com erro)\n",
         static_cast<double>(worldTicks) / stepSeconds, static_cast<double>(worldTicks) / stepSeconds / 4.0, worldTicks,
         stepSeconds, failedWorlds);
-    std::printf("nivel | velocidade/pedida nas retas (8 rumos: frente diag lado diag-tras tras) por marcha | quedas: retas manobras pancadas terreno | ajuda na pelve (peso)\n");
+    std::printf("nivel | velocidade/pedida nas retas (8 rumos: frente diag lado diag-tras tras) por marcha | quedas: retas manobras pancadas terreno | ajuda na pelve (peso; e nos pes)\n");
     for (int level = 0; level < 5; ++level) {
         std::printf("%4.0f%% |", levels[level]);
         int falls[4] = {}, totals[4] = {};
-        double assist = 0.0;
+        double assist = 0.0, feetAssist = 0.0;
         int assistCount = 0;
         for (const auto& gait : gaits) {
             // (Por rumo: 0 frente, 45 e 315 diagonais, 90 e 270 lados, 135 e
@@ -717,11 +724,13 @@ int runBaseline(const ProbeContext& context, int threads) {
             falls[g] += item.fell ? 1 : 0;
             if (item.ticks > 0) {
                 assist += item.assist / item.ticks;
+                feetAssist += item.feetAssist / item.ticks;
                 ++assistCount;
             }
         }
-        std::printf(" quedas %d/%d %d/%d %d/%d %d/%d | %.2f\n", falls[0], totals[0], falls[1], totals[1], falls[2], totals[2],
-            falls[3], totals[3], assistCount > 0 ? assist / assistCount : 0.0);
+        std::printf(" quedas %d/%d %d/%d %d/%d %d/%d | %.2f (pes %.2f)\n", falls[0], totals[0], falls[1], totals[1], falls[2],
+            totals[2], falls[3], totals[3], assistCount > 0 ? assist / assistCount : 0.0,
+            assistCount > 0 ? feetAssist / assistCount : 0.0);
     }
     // As medidas separadas do plano (a regua do RL): a arrancada nas retas de
     // corrida e sprint, o escorregar do pe apoiado, a energia e a
