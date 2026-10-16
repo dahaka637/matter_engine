@@ -16,11 +16,13 @@
 //      [--velocidades-padrao 0|1] (no fisico, a tabela de velocidades do padrao; a reescrita R5)
 //      [--sem-capsula] (o atleta comandado pelo slot, sem a capsula do jogador: o caminho do treino)
 //      XDESLOCA=m: a largada da capsula deslocada em x (a sensibilidade caotica)
+//      [--paridade [N]] (a sonda contra os mundos de treino, bit a bit; N roteiros, 0 todos)
 //      [--ajuda-parado %] [--ajuda-andando %]
 // Sem --cenario roda todos.
 #include "Engine/Athlete/AthleteAssets3D.hpp"
 #include "Engine/Athlete/AthleteRuntime3D.hpp"
 #include "Engine/Athlete/AthleteTelemetry3D.hpp"
+#include "Engine/Athlete/Training/LocomotionWorld3D.hpp"
 #include "Engine/Athlete/Dribble/BodyForecast3D.hpp"
 #include "Engine/Athlete/Dribble/ContactPose3D.hpp"
 #include "Engine/Athlete/Planning/MotionPlanner3D.hpp"
@@ -1074,8 +1076,12 @@ struct ProbeContext {
 };
 
 // Um cenario do comeco ao fim (a cena nova, o boneco, as teclas, as medidas).
+int runParity(const ProbeContext& context, int limit, int restores);
+
+// (trace: a impressao digital de cada tick do roteiro, para a paridade.)
 Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const AthleteRuntimeSettings3D& settings,
-    bool startPhysicalArgument, FILE* dump, int every, bool suppressRequests = false) {
+    bool startPhysicalArgument, FILE* dump, int every, bool suppressRequests = false,
+    std::vector<AthleteTickDigest3D>* trace = nullptr) {
     const bool startPhysical = startPhysicalArgument || scenario.startPhysical;
     const RagdollProfile3D& profile = *context.profile;
     const AthleteFootGeometry3D footGeometry = resolveAthleteFootGeometry3D(profile, resolveAthleteLegs3D(profile), 0.08f);
@@ -1085,17 +1091,8 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
     PhysicsEngine3D engine;
     MaterialLibrary materials;
     auto scene = engine.createScene({}, materials);
-    {
-        PhysicsShape3D shape;
-        shape.type = PhysicsShapeType3D::Box;
-        shape.halfExtents = { 60.0f, 60.0f, 0.1f };
-        shape.materialId = "concrete";
-        PhysicsBodyDefinition3D ground;
-        ground.motionType = PhysicsMotionType3D::Static;
-        ground.position = { 0.0f, 0.0f, -0.1f };
-        ground.materialId = "concrete";
-        (void)scene->createBody(ground, std::span<const PhysicsShape3D>(&shape, 1));
-    }
+    // (O chao, o corpo e o comeco sao os dos mundos de treino: a paridade.)
+    createLocomotionGround3D(*scene);
     {
         std::vector<StaticBox> statics = scenario.statics;
         if (scenario.wallHalf.lengthSquared() > 0.0f) statics.push_back({ scenario.wallCenter, scenario.wallHalf, {} });
@@ -1112,15 +1109,12 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
             (void)scene->createBody(body, std::span<const PhysicsShape3D>(&shape, 1));
         }
     }
-    // (--sem-capsula: a capsula longe, para o corpo interno dela nunca
-    // encostar no atleta.)
-    scene->createCharacter(context.noCapsule ? Vec3 { -80.0f, -80.0f, 0.0f }
-        : Vec3 { std::getenv("XDESLOCA") ? static_cast<float>(std::atof(std::getenv("XDESLOCA"))) : 0.0f, 0.0f, 0.0f }, avatar);
-    RagdollSpawnDefinition3D spawn;
-    spawn.entityId = 1;
-    spawn.active = true;
-    spawn.pelvisPosition = { 0.0f, 0.0f, profile.standingRootHeightMeters };
-    const RagdollHandle3D handle = scene->createRagdoll(profile, spawn);
+    // (--sem-capsula: nenhuma capsula na cena, como num mundo de treino.)
+    if (!context.noCapsule)
+        scene->createCharacter(
+            { std::getenv("XDESLOCA") ? static_cast<float>(std::atof(std::getenv("XDESLOCA"))) : 0.0f, 0.0f, 0.0f },
+            avatar);
+    const RagdollHandle3D handle = spawnLocomotionAthlete3D(*scene, profile);
     RagdollState3D bodyState = scene->ragdollState(handle);
     std::size_t leftFoot = profile.links.size(), rightFoot = profile.links.size();
     std::size_t chestLink = profile.links.size();
@@ -1161,17 +1155,10 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
         const BodyModeKind3D now = mode();
         return now == BodyModeKind3D::Active || now == BodyModeKind3D::Bridge;
     };
-    legacy.guideFacingYawRadians = 0.0f;
-    legacy.locomotion.reset(profile, bodyState);
-    legacy.adaptivePhysics.reset(profile);
     // Como "Restaurar pose" do laboratorio: ja no modo padrao. (--fisico:
     // como ao assumir o boneco, no fisico ate ele assentar.)
-    if (!startPhysical) {
-        legacy.defaultLocomotion.reset(0.0f);
-        legacy.guided = true;
-        legacy.bodyMode = LegacyBodyMode3D::Animated;
-        scene->setRagdollGuided(handle, true);
-    }
+    athleteStart3D(*scene, handle, profile, bodyState, athlete,
+        startPhysical ? AthleteStartMode3D::Physical : AthleteStartMode3D::Default);
     InflatedBallHandle3D ballHandle;
     InflatedBallState3D ballState;
     BallOwnership3D ownership;
@@ -1414,10 +1401,14 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
         AthleteCommand3D slotCommand;
         if (context.noCapsule) {
             control.controlledEntityId = 0;
-            slotCommand.intent = intent;
-            slotCommand.facingYawRadians = keys.cameraYaw;
-            slotCommand.lookPitchRadians = -0.2f;
-            slotCommand.sprinting = keys.sprint;
+            AthleteStickInput3D stick;
+            stick.moveWorld = wantedDirection;
+            stick.cameraYawRadians = keys.cameraYaw;
+            stick.lookPitchRadians = -0.2f;
+            stick.sprint = keys.sprint;
+            stick.crouch = keys.crouch;
+            slotCommand = athleteStickCommand3D(stick, settings, gaitSpeeds,
+                athleteTelemetry3D(athlete).terrainSpeedLimit);
             slot.command = &slotCommand;
         }
         std::vector<AthleteBall3D> balls;
@@ -1592,6 +1583,7 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
             }
         scene->simulate(Dt);
         bodyState = scene->ragdollState(handle);
+        if (trace != nullptr && step >= 0) trace->push_back(athleteTickDigest3D(athlete, bodyState));
         if (scenario.ball && step >= 0) ballState = scene->inflatedBallState(ballHandle);
         if (step < 0) {
             previousLinks = bodyState.links;
@@ -2654,7 +2646,228 @@ int runChecks(const ProbeContext& context) {
                 expect(!m.fell && m.travel >= item.travel, what, m);
             }
     }
+    // A paridade (R1, o portao da L0): a sonda e um mundo de treino iguais bit
+    // a bit, os recomecos de um instante iguais e a cena inline igual a com
+    // threads (--paridade roda tudo).
+    {
+        const bool same = runParity(context, 4, 2) == 0;
+        std::printf("  %s paridade: sonda e mundo de treino bit a bit, recomecos e cena inline iguais\n",
+            same ? "ok  " : "FALHOU");
+        if (!same) ++failures;
+    }
     std::printf(failures == 0 ? "atleta: tudo certo\n" : "atleta: %d falha(s)\n", failures);
+    return failures == 0 ? 0 : 1;
+}
+
+// O comando do roteiro num tick, como a sonda o monta (o analogico virado
+// pela camera, sem a virada automatica do manejo).
+AthleteCommand3D scenarioCommand(const ProbeContext& context, const AthleteRuntimeSettings3D& settings, const Keys& keys,
+    float terrainSpeedLimit) {
+    const Vec3 forward { std::cos(keys.cameraYaw), std::sin(keys.cameraYaw), 0.0f };
+    const Vec3 right { forward.y, -forward.x, 0.0f };
+    AthleteStickInput3D stick;
+    stick.moveWorld = forward * keys.forward - right * keys.left;
+    stick.cameraYawRadians = keys.cameraYaw;
+    stick.lookPitchRadians = -0.2f;
+    stick.sprint = keys.sprint;
+    stick.crouch = keys.crouch;
+    return athleteStickCommand3D(stick, settings, context.gaitSpeeds, terrainSpeedLimit);
+}
+
+// Um tick do roteiro num mundo de treino: o comando e os empurroes da sonda.
+void stepScenarioWorld(const ProbeContext& context, const AthleteRuntimeSettings3D& settings, const Scenario& scenario,
+    LocomotionWorld3D& world, float t) {
+    const AthleteCommand3D command = scenarioCommand(context, settings, scenario.keys(t),
+        world.telemetry().terrainSpeedLimit);
+    for (const Push& push : scenario.pushes)
+        if (t >= push.at && t < push.at + push.seconds) {
+            world.push(0, push.force * 0.20f);
+            world.push(2, push.force * 0.32f);
+            world.push(3, push.force * 0.48f);
+        }
+    world.step(command);
+}
+
+// Onde duas trilhas de impressoes se separam: o primeiro tick e a parte (o
+// corpo, os alvos, a ajuda, as decisoes); -1 iguais.
+struct TraceSplit {
+    int tick = -1;
+    const char* part = "";
+};
+
+TraceSplit splitOf(const std::vector<AthleteTickDigest3D>& a, const std::vector<AthleteTickDigest3D>& b) {
+    TraceSplit split;
+    const std::size_t count = std::min(a.size(), b.size());
+    for (std::size_t i = 0; i < count; ++i) {
+        if (a[i] == b[i]) continue;
+        split.tick = static_cast<int>(i);
+        // (A ordem do tick: as decisoes e os alvos saem antes da fisica.)
+        split.part = a[i].decisions != b[i].decisions ? "decisoes"
+            : a[i].targets != b[i].targets           ? "alvos"
+            : a[i].assist != b[i].assist             ? "ajuda"
+                                                     : "corpo";
+        return split;
+    }
+    if (a.size() != b.size()) {
+        split.tick = static_cast<int>(count);
+        split.part = "tamanho";
+    }
+    return split;
+}
+
+// A paridade (R1 da reescrita, o portao da L0 do RL; vault
+// 04_locomocao/reescrita_da_locomocao.md):
+//  1. cada roteiro sem bola nem objetos, do comeco, pelo caminho da sonda (o
+//     chamador do jogo, comandado sem capsula, no fisico) e por um mundo de
+//     treino, comparados tick a tick bit a bit (corpo, alvos, ajuda,
+//     decisoes);
+//  2. os recomecos: instantes guardados no meio de roteiros (1 e 2 s),
+//     recolocados em dois mundos novos e seguidos por 2 s - iguais bit a bit;
+//  3. o recomeco contra a continuacao (o solver perde o arranque quente): so
+//     a medida, em mm da pelve depois de 0,1 e 1 s;
+//  4. a cena inline de uma thread (como o lote roda) contra a com threads (a
+//     do jogo), bit a bit, e o custo do tick nela (p50/p95/p99).
+// O degrau 1 (a entrada e a saida da rede) espera o contrato da rede. limit:
+// os roteiros da parte 1 (0 todos); restores: os da parte 2 (0 todos).
+int runParity(const ProbeContext& context, int limit, int restores) {
+    AthleteRuntimeSettings3D settings;
+    settings.defaultLocomotion = false;
+    ProbeContext commanded = context;
+    commanded.noCapsule = true;
+    PhysicsEngine3D engine;
+    MaterialLibrary materials;
+    LocomotionWorldSettings3D worldSettings;
+    worldSettings.runtime = settings;
+    int failures = 0;
+    std::printf("paridade: configuracao fisico total, comandado sem capsula, tick %.6f s, cena %u threads%s\n", Dt,
+        worldSettings.scene.workerThreadCount, worldSettings.scene.runJobsInline ? " inline" : " (todas)");
+    std::printf("1. sonda contra mundo de treino, do comeco\n");
+    int scenariosRun = 0, ticksCompared = 0;
+    const std::vector<Scenario> list = scenarios();
+    for (const Scenario& scenario : list) {
+        if (scenario.ball || !scenario.throws.empty() || !scenario.statics.empty()
+            || scenario.wallHalf.lengthSquared() > 0.0f)
+            continue;
+        if (limit > 0 && scenariosRun >= limit) break;
+        ++scenariosRun;
+        std::vector<AthleteTickDigest3D> probe, trained;
+        (void)runScenario(commanded, scenario, settings, true, nullptr, 1, false, &probe);
+        LocomotionWorld3D world(engine, materials, context.runtimeAssets, worldSettings);
+        world.reset(AthleteStartMode3D::Physical);
+        const int ticks = static_cast<int>(scenario.seconds / Dt);
+        for (int step = 0; step < ticks; ++step) {
+            stepScenarioWorld(context, settings, scenario, world, static_cast<float>(step) * Dt);
+            trained.push_back(athleteTickDigest3D(world.athlete(), world.body()));
+        }
+        const TraceSplit split = splitOf(probe, trained);
+        ticksCompared += static_cast<int>(probe.size());
+        if (split.tick >= 0) {
+            ++failures;
+            std::printf("  FALHOU %-22s separa no tick %d (%s)\n", scenario.name.c_str(), split.tick, split.part);
+        }
+    }
+    std::printf("  %d roteiros, %d ticks: %s\n", scenariosRun, ticksCompared,
+        failures == 0 ? "iguais bit a bit" : "com diferencas");
+    std::printf("2. recomecos de instantes guardados (dois mundos novos) e 3. contra a continuacao\n");
+    int states = 0, restoreFailures = 0;
+    const std::vector<Scenario> all = scenarios();
+    int restoreScenarios = 0;
+    for (const char* name : { "trota", "sprint", "zigue", "corte", "inverte", "costas", "diagonal", "para_sprint",
+             "queda_lado_1400", "queda_levanta", "mov_corre_090_045", "mov_anda_225_180" }) {
+        if (restores > 0 && restoreScenarios++ >= restores) break;
+        const Scenario* found = nullptr;
+        for (const Scenario& scenario : all)
+            if (scenario.name == name) found = &scenario;
+        if (found == nullptr) continue;
+        const Scenario& scenario = *found;
+        for (const float at : { 1.0f, 2.0f }) {
+            const int startTick = static_cast<int>(at / Dt);
+            const int ticks = std::min(static_cast<int>(2.0f / Dt), static_cast<int>(scenario.seconds / Dt) - startTick);
+            if (ticks <= 0) continue;
+            LocomotionWorld3D original(engine, materials, context.runtimeAssets, worldSettings);
+            original.reset(AthleteStartMode3D::Physical);
+            for (int step = 0; step < startTick; ++step)
+                stepScenarioWorld(context, settings, scenario, original, static_cast<float>(step) * Dt);
+            const AthleteSnapshot3D snapshot = original.snapshot();
+            std::vector<AthleteTickDigest3D> traces[3];
+            std::vector<Vec3> pelvis[3];
+            LocomotionWorld3D first(engine, materials, context.runtimeAssets, worldSettings);
+            LocomotionWorld3D second(engine, materials, context.runtimeAssets, worldSettings);
+            first.restore(snapshot);
+            second.restore(snapshot);
+            LocomotionWorld3D* worlds[3] { &original, &first, &second };
+            for (int step = 0; step < ticks; ++step) {
+                const float t = static_cast<float>(startTick + step) * Dt;
+                for (int k = 0; k < 3; ++k) {
+                    stepScenarioWorld(context, settings, scenario, *worlds[k], t);
+                    traces[k].push_back(athleteTickDigest3D(worlds[k]->athlete(), worlds[k]->body()));
+                    pelvis[k].push_back(worlds[k]->body().links.front().position);
+                }
+            }
+            ++states;
+            const TraceSplit twin = splitOf(traces[1], traces[2]);
+            if (twin.tick >= 0) ++restoreFailures;
+            const auto deviation = [&](int tick) {
+                tick = std::min(tick, static_cast<int>(pelvis[0].size()) - 1);
+                return (pelvis[0][static_cast<std::size_t>(tick)] - pelvis[1][static_cast<std::size_t>(tick)]).length()
+                    * 1000.0f;
+            };
+            const AthleteTelemetry3D end = athleteTelemetry3D(first.athlete());
+            const std::string twinText = twin.tick < 0 ? std::string("iguais")
+                                                       : "DIFEREM no tick " + std::to_string(twin.tick) + " (" + twin.part + ")";
+            std::printf("  %-18s em %.1f s: recomecos %s | contra a continuacao: pelve %.2f mm em 0,1 s, %.1f mm em 1 s (%s)\n",
+                name, at, twinText.c_str(), deviation(12), deviation(120),
+                end.fallen ? "caido" : bodyModeName3D(end.mode));
+        }
+    }
+    failures += restoreFailures;
+    std::printf("  %d instantes: %s\n", states, restoreFailures == 0 ? "recomecos iguais bit a bit" : "recomecos diferem");
+    std::printf("4. a cena inline (o lote) contra a com threads (o jogo), e o custo do tick nela\n");
+    LocomotionWorldSettings3D inlineSettings = worldSettings;
+    inlineSettings.scene.workerThreadCount = 1;
+    inlineSettings.scene.runJobsInline = true;
+    std::vector<double> athleteCost, physicsCost;
+    int inlineFailures = 0;
+    for (const char* name : { "trota", "sprint", "zigue", "queda_lado_1400" }) {
+        const Scenario* found = nullptr;
+        for (const Scenario& scenario : all)
+            if (scenario.name == name) found = &scenario;
+        if (found == nullptr) continue;
+        const Scenario& scenario = *found;
+        LocomotionWorld3D pooled(engine, materials, context.runtimeAssets, worldSettings);
+        LocomotionWorld3D single(engine, materials, context.runtimeAssets, inlineSettings);
+        pooled.reset(AthleteStartMode3D::Physical);
+        single.reset(AthleteStartMode3D::Physical);
+        std::vector<AthleteTickDigest3D> a, b;
+        const int ticks = static_cast<int>(scenario.seconds / Dt);
+        for (int step = 0; step < ticks; ++step) {
+            const float t = static_cast<float>(step) * Dt;
+            stepScenarioWorld(context, settings, scenario, pooled, t);
+            stepScenarioWorld(context, settings, scenario, single, t);
+            a.push_back(athleteTickDigest3D(pooled.athlete(), pooled.body()));
+            b.push_back(athleteTickDigest3D(single.athlete(), single.body()));
+            athleteCost.push_back(single.lastAthleteSeconds());
+            physicsCost.push_back(single.lastPhysicsSeconds());
+        }
+        const TraceSplit split = splitOf(a, b);
+        if (split.tick >= 0) {
+            ++inlineFailures;
+            std::printf("  FALHOU %-22s inline separa no tick %d (%s)\n", name, split.tick, split.part);
+        }
+    }
+    failures += inlineFailures;
+    const auto percentile = [](std::vector<double> values, double p) {
+        if (values.empty()) return 0.0;
+        std::sort(values.begin(), values.end());
+        return values[std::min(values.size() - 1, static_cast<std::size_t>(p * static_cast<double>(values.size())))]
+            * 1.0e6;
+    };
+    std::printf("  inline: %s; o tick (us) atleta p50 %.0f p95 %.0f p99 %.0f | fisica p50 %.0f p95 %.0f p99 %.0f (%zu ticks)\n",
+        inlineFailures == 0 ? "igual bit a bit" : "DIFERE", percentile(athleteCost, 0.5), percentile(athleteCost, 0.95),
+        percentile(athleteCost, 0.99), percentile(physicsCost, 0.5), percentile(physicsCost, 0.95),
+        percentile(physicsCost, 0.99), athleteCost.size());
+    std::printf(failures == 0 ? "paridade: degrau 2 passa (o degrau 1 espera o contrato da rede)\n"
+                              : "paridade: %d falha(s)\n", failures);
     return failures == 0 ? 0 : 1;
 }
 
@@ -2756,6 +2969,7 @@ int main(int argc, char** argv) {
     bool footsteps = false;
     bool balanceSteps = AthleteRuntimeSettings3D {}.activeStanceSettings.balanceSteps;
     bool checks = false;
+    int parity = -1;
     float response = AthleteRuntimeSettings3D {}.capsuleResponsePercent;
     bool newBall = false;
     bool noRequests = false;
@@ -2786,6 +3000,7 @@ int main(int argc, char** argv) {
         else if (arg == "--sem-pedido") noRequests = true;
         else if (arg == "--ponte") bridge = std::atoi(need()) != 0;
         else if (arg == "--teste") checks = true;
+        else if (arg == "--paridade") parity = i + 1 < argc && argv[i + 1][0] != '-' ? std::atoi(argv[++i]) : 0;
         else if (arg == "--poses-contato") contactPoses = need();
         else if (arg == "--v5") dribbleV5 = std::atoi(need()) != 0;
         else if (arg == "--total") totalPhysical = true;
@@ -2851,6 +3066,7 @@ int main(int argc, char** argv) {
     context.runtimeAssets.defaultClips = &defaultClips;
     context.runtimeAssets.avatarSettings = avatar;
     if (checks) return runChecks(context);
+    if (parity >= 0) return runParity(context, parity, 0);
     if (!contactPoses.empty()) return writeContactPoses(profile, contactPoses);
 
     FILE* dump = dumpPath.empty() ? nullptr : std::fopen(dumpPath.c_str(), "w");
