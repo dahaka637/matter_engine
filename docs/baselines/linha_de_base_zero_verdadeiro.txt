@@ -1,9 +1,9 @@
 # Linha de base do classico com a ajuda ZERO DE VERDADE nos niveis baixos (L0 do RL), 2026-10-16
-# codigo: bfe1a3e; comando: T_WeightWalk=1.0 XPES_NO_NIVEL=1 build-profile/MatterAthleteProbe --linha-de-base 12
+# codigo: c1efc05; comando: T_WeightWalk=1.0 XPES_NO_NIVEL=1 build-profile/MatterAthleteProbe --linha-de-base 12
 # configuracao: como linha_de_base_classico.txt, mas andando as pernas levam todo o peso que a ajuda nao leva (T_WeightWalk 1,0 em vez de 0,5) e a ajuda nos pes vai no nivel; a 0% a pelve leva 0,01 do peso
 
 linha de base: 81 exercicios x 5 niveis = 405 mundos, 12 threads; fisico total, comandado, ajuda nos pes no nivel
-vazao: 29625 ticks de mundo/s = 7406 decisoes/s a 30 Hz (291195 ticks de mundo em 9.8 s de lote; 0 mundos com erro)
+vazao: 29459 ticks de mundo/s = 7365 decisoes/s a 30 Hz (291195 ticks de mundo em 9.9 s de lote; 0 mundos com erro)
 nivel | velocidade/pedida nas retas (8 rumos: frente diag lado diag-tras tras) por marcha | quedas: retas manobras pancadas terreno | ajuda na pelve (peso; e nos pes)
  100% | anda 1.00 1.00 0.99 1.00 1.00 | trota 1.01 1.01 1.01 1.00 1.00 | corre 1.00 1.00 1.00 1.00 1.00 | sprint 0.98 1.00 1.00 1.01 1.01 | quedas 0/32 0/15 11/22 0/12 | 0.71 (pes 0.03)
   70% | anda 1.00 1.00 1.00 1.00 1.00 | trota 1.01 1.00 1.01 1.00 1.00 | corre 1.00 1.00 1.00 1.00 1.00 | sprint 1.00 1.00 1.00 1.00 1.00 | quedas 0/32 0/15 11/22 0/12 | 0.68 (pes 0.01)
