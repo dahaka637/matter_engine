@@ -213,7 +213,7 @@ void PhysicsScene3D::Impl::applyPendingRagdollCommands() {
             break;
         }
         }
-        if (!r->frozen) r->ragdoll->Activate();
+        if (!r->frozen) r->ragdoll->Activate(!settings.runJobsInline);  // (sem trava na cena de dono unico)
     }
     pendingRagdollCommands.clear();
 }
@@ -300,7 +300,7 @@ void PhysicsScene3D::Impl::applyRagdollDrives() {
                 pendingBodyWrenches.push_back({r.links[static_cast<std::size_t>(link.parentIndex)], {}, -torque});
             }
         }
-        if (r.stagedActiveTargetsDirty) r.ragdoll->Activate();
+        if (r.stagedActiveTargetsDirty) r.ragdoll->Activate(!settings.runJobsInline);
         r.stagedActiveTargetsDirty = false;
     }
 }
@@ -551,7 +551,7 @@ void PhysicsScene3D::Impl::applyRagdollGuidePoses(float dt) {
             bi.SetLinearAndAngularVelocity(id, v + (linear - v) * blend, w + (angular - w) * blend);
         }
         r.guidePreviousKnown = true;
-        r.ragdoll->Activate();
+        r.ragdoll->Activate(!settings.runJobsInline);
     }
 }
 // Corpo guiado, depois do passo: o quanto os links ficaram da pose e, no modo
