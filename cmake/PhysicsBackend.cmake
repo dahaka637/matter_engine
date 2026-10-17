@@ -58,6 +58,14 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
 else()
     set(USE_ASSERTS OFF CACHE BOOL "" FORCE)
 endif()
+# O profiler e o debug renderer do Jolt (ligados por padrao em Debug e
+# Release): o motor nao usa nenhum dos dois, e fora do Debug eles so custam
+# (um escopo de profile por job e os desenhos virtuais nas shapes). As contas
+# da fisica nao mudam (vault 02_estrutura/estudo_desempenho.md, pipeline-15).
+if(NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
+    set(PROFILER_IN_DEBUG_AND_RELEASE OFF CACHE BOOL "" FORCE)
+    set(DEBUG_RENDERER_IN_DEBUG_AND_RELEASE OFF CACHE BOOL "" FORCE)
+endif()
 # SSE4.2/AVX/AVX2/F16C/FMADD ficam nos padroes ligados do Jolt: o alvo de
 # desenvolvimento (Ryzen 5 3600) suporta todos. Os flags e os defines
 # correspondentes sao PUBLIC no target Jolt, entao linkar o target garante
