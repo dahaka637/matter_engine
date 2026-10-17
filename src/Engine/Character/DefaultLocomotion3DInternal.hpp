@@ -147,11 +147,13 @@ inline void solveFoot(const RagdollProfile3D& profile, std::vector<Vec3>& coordi
     const Vec3 anchor = foot.inboundJoint.anchorModelPosition;
     const Vec3 anchorInFoot = foot.modelOrientation.conjugate().rotate(anchor - foot.modelPosition);
     const Vec3 anchorInShin = shin.modelOrientation.conjugate().rotate(anchor - shin.modelPosition);
-    const std::vector<Vec3> before = coordinates;
+    std::vector<Vec3> before;
+    if (weight < 1.0f) before = coordinates;
     solveRagdollChainPoint3D(profile, coordinates, shinIndex, anchorInShin, 2,
         target + targetOrientation.rotate(anchorInFoot), 1.0f, 12);
+    // (So le a canela: a cadeia ate ela.)
     RagdollAnimationPose3D pose;
-    buildRagdollLocalPose3D(profile, coordinates, pose);
+    buildRagdollChainPose3D(profile, coordinates, pose, shinIndex);
     // orient_pe = orient_canela * canela^-1 * quadro * R * quadro^-1 * pe
     const Quaternion frame = foot.inboundJoint.frameModelOrientation;
     const Quaternion joint = frame.conjugate() * shin.modelOrientation * pose.linkOrientations[shinIndex].conjugate()

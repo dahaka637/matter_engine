@@ -44,41 +44,85 @@ Vec3 ragdollJointJacobian3D(Vec3 coordinates, Vec3 velocity) {
         + cross(coordinates, cross(coordinates, velocity)) * second;
 }
 
+namespace {
+
+// Um link da cinematica direta: so le a pose do pai (o pai vem antes do filho
+// no perfil). A FK completa e a da cadeia usam a mesma expressao, entao dao os
+// mesmos bits.
+inline void poseLink(const RagdollProfile3D& profile,
+    const std::vector<Vec3>& coordinates, RagdollAnimationPose3D& pose,
+    std::size_t index) {
+    const RagdollLinkDefinition3D& link = profile.links[index];
+    if (link.parentIndex < 0) return;
+    const std::size_t parent = static_cast<std::size_t>(link.parentIndex);
+    const RagdollLinkDefinition3D& parentLink = profile.links[parent];
+    Vec3 angles = index < coordinates.size()
+        ? coordinates[index] : Vec3 {};
+    for (std::size_t axis = 0; axis < 3; ++axis) {
+        const RagdollAxisDefinition3D& limit =
+            link.inboundJoint.axes[axis];
+        setComponent(angles, axis, limit.enabled
+            ? std::clamp(component(angles, axis),
+                limit.minimumRadians, limit.maximumRadians)
+            : 0.0f);
+    }
+    const Quaternion frame = link.inboundJoint.frameModelOrientation;
+    pose.linkOrientations[index] =
+        (pose.linkOrientations[parent]
+            * parentLink.modelOrientation.conjugate()
+            * frame * ragdollJointRotation3D(angles)
+            * (link.modelOrientation.conjugate() * frame).conjugate())
+                .normalized();
+    const Vec3 anchor = link.inboundJoint.anchorModelPosition;
+    pose.linkPositions[index] = pose.linkPositions[parent]
+        + pose.linkOrientations[parent].rotate(
+            parentLink.modelOrientation.conjugate().rotate(
+                anchor - parentLink.modelPosition))
+        - pose.linkOrientations[index].rotate(
+            link.modelOrientation.conjugate().rotate(
+                anchor - link.modelPosition));
+}
+
+// Os ancestrais de endIndex (ele incluso, sem a raiz), da raiz para a ponta.
+std::size_t chainOf(const RagdollProfile3D& profile, std::size_t endIndex,
+    std::array<std::size_t, 64>& chain) {
+    std::size_t count = 0;
+    std::size_t index = endIndex;
+    while (index > 0 && index < profile.links.size() && count < chain.size()) {
+        chain[count++] = index;
+        const int parent = profile.links[index].parentIndex;
+        if (parent < 0) break;
+        index = static_cast<std::size_t>(parent);
+    }
+    std::reverse(chain.begin(), chain.begin() + static_cast<std::ptrdiff_t>(count));
+    return count;
+}
+
+} // namespace
+
 void buildRagdollLocalPose3D(const RagdollProfile3D& profile,
     const std::vector<Vec3>& coordinates, RagdollAnimationPose3D& pose) {
     pose.linkPositions.assign(profile.links.size(), {});
     pose.linkOrientations.assign(profile.links.size(), {});
-    for (std::size_t index = 1; index < profile.links.size(); ++index) {
-        const RagdollLinkDefinition3D& link = profile.links[index];
-        if (link.parentIndex < 0) continue;
-        const std::size_t parent = static_cast<std::size_t>(link.parentIndex);
-        const RagdollLinkDefinition3D& parentLink = profile.links[parent];
-        Vec3 angles = index < coordinates.size()
-            ? coordinates[index] : Vec3 {};
-        for (std::size_t axis = 0; axis < 3; ++axis) {
-            const RagdollAxisDefinition3D& limit =
-                link.inboundJoint.axes[axis];
-            setComponent(angles, axis, limit.enabled
-                ? std::clamp(component(angles, axis),
-                    limit.minimumRadians, limit.maximumRadians)
-                : 0.0f);
-        }
-        const Quaternion frame = link.inboundJoint.frameModelOrientation;
-        pose.linkOrientations[index] =
-            (pose.linkOrientations[parent]
-                * parentLink.modelOrientation.conjugate()
-                * frame * ragdollJointRotation3D(angles)
-                * (link.modelOrientation.conjugate() * frame).conjugate())
-                    .normalized();
-        const Vec3 anchor = link.inboundJoint.anchorModelPosition;
-        pose.linkPositions[index] = pose.linkPositions[parent]
-            + pose.linkOrientations[parent].rotate(
-                parentLink.modelOrientation.conjugate().rotate(
-                    anchor - parentLink.modelPosition))
-            - pose.linkOrientations[index].rotate(
-                link.modelOrientation.conjugate().rotate(
-                    anchor - link.modelPosition));
+    for (std::size_t index = 1; index < profile.links.size(); ++index)
+        poseLink(profile, coordinates, pose, index);
+}
+
+void buildRagdollChainPose3D(const RagdollProfile3D& profile,
+    const std::vector<Vec3>& coordinates, RagdollAnimationPose3D& pose,
+    std::size_t endIndex) {
+    if (pose.linkPositions.size() != profile.links.size()
+        || pose.linkOrientations.size() != profile.links.size()) {
+        pose.linkPositions.assign(profile.links.size(), {});
+        pose.linkOrientations.assign(profile.links.size(), {});
+    } else if (!profile.links.empty()) {
+        pose.linkPositions[0] = {};
+        pose.linkOrientations[0] = {};
     }
+    std::array<std::size_t, 64> chain {};
+    const std::size_t count = chainOf(profile, endIndex, chain);
+    for (std::size_t k = 0; k < count; ++k)
+        poseLink(profile, coordinates, pose, chain[k]);
 }
 
 void solveRagdollChainPoint3D(const RagdollProfile3D& profile,
@@ -117,10 +161,16 @@ void solveRagdollChainPoint3D(const RagdollProfile3D& profile,
     }
     if (count == 0) return;
 
-    const std::vector<Vec3> original = coordinates;
+    // (So os componentes dos graus de liberdade sao misturados no fim.)
+    std::array<float, 9> original {};
+    for (std::size_t degreeIndex = 0; degreeIndex < count; ++degreeIndex)
+        original[degreeIndex] = component(coordinates[degrees[degreeIndex].link], degrees[degreeIndex].axis);
+    // A cada iteracao so a cadeia ate o pe (o Jacobiano so le os ancestrais).
     RagdollAnimationPose3D pose;
+    pose.linkPositions.assign(profile.links.size(), {});
+    pose.linkOrientations.assign(profile.links.size(), {});
     for (int iteration = 0; iteration < iterations; ++iteration) {
-        buildRagdollLocalPose3D(profile, coordinates, pose);
+        buildRagdollChainPose3D(profile, coordinates, pose, footIndex);
         const Vec3 endPoint = pose.linkPositions[footIndex]
             + pose.linkOrientations[footIndex].rotate(pointInEnd);
         const Vec3 error = targetRootLocal - endPoint;
@@ -206,7 +256,7 @@ void solveRagdollChainPoint3D(const RagdollProfile3D& profile,
     for (std::size_t degreeIndex = 0; degreeIndex < count; ++degreeIndex) {
         const DegreeOfFreedom degree = degrees[degreeIndex];
         const float result = component(coordinates[degree.link], degree.axis);
-        const float before = component(original[degree.link], degree.axis);
+        const float before = original[degreeIndex];
         setComponent(coordinates[degree.link], degree.axis,
             before + (result - before) * weight);
     }

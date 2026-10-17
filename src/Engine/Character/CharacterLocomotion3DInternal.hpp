@@ -822,7 +822,9 @@ inline void solveFootPose(const RagdollProfile3D& profile,
         anchor - foot.modelPosition);
     const Vec3 anchorInShin = shin.modelOrientation.conjugate().rotate(
         anchor - shin.modelPosition);
-    const std::vector<Vec3> original = coordinates;
+    // (A copia so serve para a mistura com peso parcial, no fim.)
+    std::vector<Vec3> original;
+    if (weight < 1.0f) original = coordinates;
     const Vec3 ankleTarget = targetPosition
         + targetOrientation.rotate(anchorInFoot);
     solveChainPoint(profile, coordinates, shinIndex, anchorInShin, 2,
@@ -848,7 +850,8 @@ inline void solveFootPose(const RagdollProfile3D& profile,
         const std::size_t pelvisIndex =
             static_cast<std::size_t>(std::max(0, thigh.parentIndex));
         const RagdollLinkDefinition3D& pelvis = profile.links[pelvisIndex];
-        buildLocalPose(profile, coordinates, pose);
+        // (So a cadeia ate o pe: le a pelve, a coxa e o pe.)
+        buildRagdollChainPose3D(profile, coordinates, pose, footIndex);
         const Quaternion parentFrame = pose.linkOrientations[pelvisIndex]
             * pelvis.modelOrientation.conjugate()
             * thigh.inboundJoint.frameModelOrientation;
@@ -896,8 +899,8 @@ inline void solveFootPose(const RagdollProfile3D& profile,
         }
     }
 
-    // Tornozelo: Gauss-Newton nos eixos habilitados do pe.
-    buildLocalPose(profile, coordinates, pose);
+    // Tornozelo: Gauss-Newton nos eixos habilitados do pe (so le a canela).
+    buildRagdollChainPose3D(profile, coordinates, pose, shinIndex);
     const Quaternion shinFrame = pose.linkOrientations[shinIndex]
         * shin.modelOrientation.conjugate() * foot.inboundJoint.frameModelOrientation;
     const Quaternion childFrame = (foot.modelOrientation.conjugate()

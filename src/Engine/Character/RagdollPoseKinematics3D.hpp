@@ -24,6 +24,12 @@ namespace MatterEngine {
 void buildRagdollLocalPose3D(const RagdollProfile3D& profile,
     const std::vector<Vec3>& coordinates, RagdollAnimationPose3D& pose);
 
+// So os ancestrais de endIndex (ele incluso), com a mesma conta da FK completa:
+// os mesmos bits nesses links; os outros ficam como estavam (a raiz zerada).
+void buildRagdollChainPose3D(const RagdollProfile3D& profile,
+    const std::vector<Vec3>& coordinates, RagdollAnimationPose3D& pose,
+    std::size_t endIndex);
+
 // Leva um ponto preso ao link endIndex (pointInEnd, no referencial dele) a um
 // alvo no referencial da raiz, mexendo as juntas dele e dos ancestrais ate
 // `depth` links, dentro dos limites. Parte das coordenadas atuais (a solucao
