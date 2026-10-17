@@ -50,7 +50,8 @@
       "pilot": {
         "kind": "star",
         "bands": [ { "name": "andar", "speed": [0.8, 1.4], "distance": [4.0, 8.0], "weight": 1.0 },
-                   { "name": "trote", "speed": [1.8, 2.5], "distance": [6.0, 10.0], "weight": 1.0 } ],
+                   { "name": "trote_lento", "speed": [1.4, 1.8], "distance": [4.0, 8.0], "weight": 1.0 },
+                   { "name": "trote", "speed": [1.8, 2.5], "distance": [4.0, 8.0], "weight": 1.0 } ],
         "starDirections": 8, "starJitterDegrees": 8.0, "continuousFraction": 0.35, "stopFraction": 0.3,
         "holdSeconds": [1.0, 2.0], "brake": [2.0, 4.0], "arriveRadius": 0.6,
         "camera": { "fixed": 0.0, "follow": 1.0, "turns": 0.0, "followRate": 4.0 }
