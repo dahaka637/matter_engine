@@ -507,7 +507,20 @@ void CharacterLocomotion3D::update(const RagdollProfile3D& profile,
         mark = now;
     };
     Tick t { profile, animations, state, dynamics, input };
-    m_output = {};
+    // (Saida zerada a cada tick, mas os vetores guardam a capacidade: antes o
+    // '= {}' os liberava e os push_back realocavam todo tick.)
+    {
+        auto targets = std::move(m_output.driveTargets);
+        auto links = std::move(m_output.assistReactionLinks);
+        auto torques = std::move(m_output.assistReactionTorquesWorld);
+        targets.clear();
+        links.clear();
+        torques.clear();
+        m_output = {};
+        m_output.driveTargets = std::move(targets);
+        m_output.assistReactionLinks = std::move(links);
+        m_output.assistReactionTorquesWorld = std::move(torques);
+    }
     // Locomocao fisica v2 (ver input.physicalV2).
     t.PostureSupportPendulum = input.physicalV2 || PostureSupportPendulumEnv;
     const bool& PostureSupportPendulum = t.PostureSupportPendulum;
