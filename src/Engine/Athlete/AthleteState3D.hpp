@@ -24,9 +24,20 @@ namespace MatterEngine {
 // que e dela e zero.
 struct AthleteExternalAssist3D {
     float pelvisNewtons = 0.0f;   // a pelve: sustentacao e empurrao (parado e andando)
+    float pelvisVerticalNewtons = 0.0f;  // ... a parte vertical (a sustentacao)
+    float pelvisPlanarNewtons = 0.0f;    // ... a parte no plano (o empurrao e a correcao)
     float feetNewtons = 0.0f;     // os pes: a ajuda nos pes e a correcao pelos pes
     float getUpNewtons = 0.0f;    // o levantar: a pelve e o peito
-    float netTorque = 0.0f;       // o torque liquido (N.m) dos canais da regua
+    // O torque de fora: a soma VETORIAL de todos os torques dos canais da regua
+    // (pares internos se cancelam nela), e a magnitude no fim.
+    Vec3 torqueWorld;
+    float netTorque = 0.0f;
+    float correctionTorque = 0.0f;  // a alavanca da correcao de desvio (de fora)
+    // O par interno de postura (pelve x pes/maos, o "musculo virtual" do
+    // controle classico): medido a parte; cancela na soma, nao e ajuda.
+    float postureCoupleTorque = 0.0f;
+    // A volta ao padrao (returnBoost > 0): fora da regua, so no modo Padrao.
+    bool handover = false;
     // Fora da regua (acoes e o modo padrao): o carrinho e o Corpo Ativo.
     float tackleNewtons = 0.0f;
     float tackleTorque = 0.0f;

@@ -42,6 +42,10 @@ struct AthleteRuntimeSettings3D {
     // (0-100, como as outras ajudas; 100% = a ajuda de levantar aprovada, que
     // era o 130% da regua antiga: GetUpAssistFull.)
     float getUpAssistPercent = 100.0f;
+    // O par de postura (pelve x pes) tambem na regua: 0% e sem ajuda nenhuma
+    // (o regime B, 17/10). false: o regime A (classico), o par sempre
+    // inteiro. Vault 04_locomocao/ajuda_auxiliar.md.
+    bool postureCoupleFollowsAssist = true;
     bool getUpHitWeakens = true;
     float getUpHitAssistPercent = 25.0f;
     float getUpHitRecoverSeconds = 1.5f;

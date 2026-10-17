@@ -937,8 +937,10 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
     std::vector<double> runtimeCost;
     struct {
         long ticks = 0;
-        double slider = 0.0, pelvis = 0.0, feet = 0.0, getUp = 0.0, outside = 0.0;
-        float sliderMax = 0.0f, torqueMax = 0.0f;
+        double slider = 0.0, pelvis = 0.0, feet = 0.0, getUp = 0.0, outside = 0.0, vertical = 0.0, planar = 0.0,
+            couple = 0.0;
+        float sliderMax = 0.0f, torqueMax = 0.0f, correctionMax = 0.0f, handoverTorqueMax = 0.0f;
+        long handover = 0;
     } auxStats;
 
     AthleteRuntime3D runtime;
@@ -1247,6 +1249,12 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
             // XAUX=1: a ajuda auxiliar por canal (a medida do atleta).
             const AthleteExternalAssist3D& aux = athlete.externalAssist;
             auxStats.ticks += 1;
+            auxStats.handover += aux.handover ? 1 : 0;
+            // (A volta ao padrao sobe a ajuda ate a cheia: fora da regua.)
+            if (aux.handover) {
+                auxStats.outside += aux.sliderNewtons() + aux.tackleNewtons + aux.activeNewtons;
+                auxStats.handoverTorqueMax = std::max(auxStats.handoverTorqueMax, aux.netTorque);
+            } else {
             auxStats.slider += aux.sliderNewtons();
             auxStats.sliderMax = std::max(auxStats.sliderMax, aux.sliderNewtons());
             auxStats.pelvis += aux.pelvisNewtons;
@@ -1254,6 +1262,11 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
             auxStats.getUp += aux.getUpNewtons;
             auxStats.torqueMax = std::max(auxStats.torqueMax, aux.netTorque);
             auxStats.outside += aux.tackleNewtons + aux.activeNewtons;
+            auxStats.vertical += aux.pelvisVerticalNewtons;
+            auxStats.planar += aux.pelvisPlanarNewtons;
+            auxStats.correctionMax = std::max(auxStats.correctionMax, aux.correctionTorque);
+            auxStats.couple += aux.postureCoupleTorque;
+            }
         }
         if (output.followVelocitySet) followVelocity = output.followVelocityWorld;
         if (output.controlledAnimatedSet) controlledAnimated = output.controlledAnimated;
@@ -2159,6 +2172,9 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
         std::printf("  AJUDA (fracao do peso, media/max): regua %.4f / %.4f | pelve %.4f pes %.4f levantar %.4f | torque liquido max %.4f N.m | fora da regua %.4f\n",
             auxStats.slider / n / weight, auxStats.sliderMax / weight, auxStats.pelvis / n / weight,
             auxStats.feet / n / weight, auxStats.getUp / n / weight, auxStats.torqueMax, auxStats.outside / n / weight);
+        std::printf("  AJUDA (detalhe): pelve vertical %.4f plano %.4f | correcao max %.2f N.m | par de postura medio %.1f N.m | volta ao padrao (fora) %ld ticks, torque max %.1f N.m\n",
+            auxStats.vertical / n / weight, auxStats.planar / n / weight, auxStats.correctionMax, auxStats.couple / n,
+            auxStats.handover, auxStats.handoverTorqueMax);
     }
     if (std::getenv("XCUSTO") && !runtimeCost.empty()) {
         const std::size_t worst = static_cast<std::size_t>(
@@ -2649,6 +2665,7 @@ int main(int argc, char** argv) {
     float standingAssist = AthleteRuntimeSettings3D {}.e5StandingAssistPercent;
     float walkingAssist = AthleteRuntimeSettings3D {}.e5WalkingAssistPercent;
     float getUpAssist = AthleteRuntimeSettings3D {}.getUpAssistPercent;
+    bool postureCouple = AthleteRuntimeSettings3D {}.postureCoupleFollowsAssist;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         const auto need = [&]() -> const char* { return i + 1 < argc ? argv[++i] : ""; };
@@ -2679,6 +2696,8 @@ int main(int argc, char** argv) {
         else if (arg == "--ajuda-parado") standingAssist = static_cast<float>(std::atof(need()));
         else if (arg == "--ajuda-andando") walkingAssist = static_cast<float>(std::atof(need()));
         else if (arg == "--ajuda-levantar") getUpAssist = static_cast<float>(std::atof(need()));
+        else if (arg == "--par-na-regua") postureCouple = true;
+        else if (arg == "--par-fixo") postureCouple = false;
         else if (arg == "--ajuda") {
             // A regua unica do laboratorio (Ajuda auxiliar): as quatro juntas.
             const float all = static_cast<float>(std::atof(need()));
@@ -2724,6 +2743,7 @@ int main(int argc, char** argv) {
     settings.e5StandingAssistPercent = standingAssist;
     settings.e5WalkingAssistPercent = walkingAssist;
     settings.getUpAssistPercent = getUpAssist;
+    settings.postureCoupleFollowsAssist = postureCouple;
     if (totalPhysical) {
         settings.defaultLocomotion = false;
         startPhysical = true;

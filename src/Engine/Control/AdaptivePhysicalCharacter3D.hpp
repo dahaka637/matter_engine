@@ -194,6 +194,16 @@ struct AdaptivePhysicalSettings3D {
     // invisivel), nao a sustentacao que o segura em pe cambaleando. < 0: a de
     // cima.
     float walkingWeightAssistScale = -1.0f;
+    // A ajuda parada escolhida, tambem sem a queda do impacto (a do par de
+    // postura abaixo). < 0: legsAssistRetained.
+    float standingWeightAssistScale = -1.0f;
+    // O par de postura na pelve (pelve x pes/maos, o "musculo virtual" que
+    // passa por cima das juntas) segue a regua escolhida - sem a queda do
+    // impacto: a 0%, a postura so pelas juntas (as pernas); a 100%, inteiro.
+    // false (sozinho, sem quem saiba a regua): o regime A (classico), o par
+    // sempre inteiro; o atleta liga com a regua no comando. Vault
+    // 04_locomocao/ajuda_auxiliar.md.
+    bool postureCoupleFollowsAssist = false;
     // Quanto do PESO as pernas assumem quando carregam (a parte da fracao
     // delas; 1 = a E4). Com 0 o peso fica com a pelve e os motores, e as
     // pernas fazem so o equilibrio (centro de pressao) e a postura: o peso

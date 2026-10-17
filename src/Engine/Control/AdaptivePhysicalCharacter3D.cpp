@@ -640,6 +640,7 @@ void AdaptivePhysicalCharacter3D::update(const RagdollProfile3D& profile,
             || (keepWalkingSpeed > 0.0f && physical != nullptr
                 && planar(physical->centerOfMassVelocityWorld).length() > keepWalkingSpeed));
     bool pelvisSupportInLegsMode = false;
+    bool jumpPushing = false;
     // Decolagem: a janela de impulso comeca quando a capsula decola com o
     // corpo apoiado e acaba quando ele sobe na velocidade dela.
     if (intent.airborne && !m_wasAirborne) {
@@ -665,6 +666,7 @@ void AdaptivePhysicalCharacter3D::update(const RagdollProfile3D& profile,
     if (supported && intent.airborne && !footContact && !pushing) {
         // Voo balistico: nada ergue o corpo sem os pes no chao.
     } else if (supported && pushing) {
+        jumpPushing = true;
         const float charge = std::clamp(intent.jumpCharge, 0.0f, 1.0f);
         out.supportAcceleration = std::clamp(
             (reference.rootLinearVelocityWorld.z - root.linearVelocity.z) * 20.0f
@@ -886,6 +888,9 @@ void AdaptivePhysicalCharacter3D::update(const RagdollProfile3D& profile,
             : legsWalking ? weightAssist * (1.0f - legsWeightFull) : weightAssist;
         out.supportAcceleration *= weightAssist >= 1.0f ? pelvisShare : std::min(pelvisShare, allowed);
     }
+    // O impulso do pulo na pelve tambem e forca de fora: segue a ajuda andando
+    // escolhida (a 0% o pulo e so das pernas; a 100%, o de sempre).
+    if (jumpPushing && weightRunning < 1.0f) out.supportAcceleration *= std::max(0.0f, weightRunning);
     // Andando pela passada, a ajuda discreta usa um unico envelope para
     // propulsao, correcao de posicao e postura. Deixar a intencao inteira
     // enquanto a postura era reduzida fazia "30%" empurrar a pelve com a
@@ -1184,6 +1189,15 @@ void AdaptivePhysicalCharacter3D::update(const RagdollProfile3D& profile,
     out.legPostureRequested = legPosture;
     out.legPostureDelivered = {};
     posture = posture * (1.0f - postureShare);
+    if (m_settings.postureCoupleFollowsAssist) {
+        // A escolhida (sem a queda do impacto, como o peso).
+        const float standingChosen = m_settings.standingWeightAssistScale >= 0.0f
+            ? withAction(m_settings.standingWeightAssistScale) : standingAssist;
+        const float coupleAssist = !legsWalking ? standingChosen
+            : brakeRunShare > 0.001f ? standingChosen + (weightRunning - standingChosen) * brakeRunShare
+            : weightRunning;
+        if (coupleAssist < 1.0f) posture = posture * std::max(0.0f, coupleAssist);
+    }
     out.rootTorqueWorld = posture + correctionLever;
     out.perturbation = m_perturbation;
     out.linkTorqueWorld.assign(profile.links.size(), Vec3 {});

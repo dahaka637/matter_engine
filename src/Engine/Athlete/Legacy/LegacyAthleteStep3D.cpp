@@ -278,6 +278,8 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             || physicalOutput.balanceTorqueWorld.lengthSquared() > 0.000001f) {
             scene.applyRagdollControlRootForce(slot.handle, physicalOutput.balanceForceWorld,
                 physicalOutput.balanceTorqueWorld);
+            // (O experimento biomecanico: fora da regua, medido a parte.)
+            athlete.externalAssist.activeNewtons += physicalOutput.balanceForceWorld.length();
         }
         return;
     }
@@ -302,6 +304,9 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
     // pressao; a pelve conserva apenas o envelope auxiliar escolhido.
     state.adaptivePhysics.settings().jointWhileWalking = e5;
     state.adaptivePhysics.settings().v2 = settings.physicalLocomotionV2;
+    // (O par na regua so com a regua no comando: fora da E5 a ajuda parada
+    // retida e 0 por construcao, nao a escolhida.)
+    state.adaptivePhysics.settings().postureCoupleFollowsAssist = e5 && settings.postureCoupleFollowsAssist;
     command.physicalV2 = settings.physicalLocomotionV2;
     state.adaptivePhysics.settings().legsAssistRetained = e5
         ? std::clamp(settings.e5StandingAssistPercent * 0.01f, 0.0f, 1.0f) : 0.0f;
@@ -318,15 +323,20 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         // (O peso andando fica com a escolhida: o impacto tira o empurrao, nao a
         // sustentacao - ver walkingWeightAssistScale.)
         physical.walkingWeightAssistScale = physical.walkingAssistScale;
+        physical.standingWeightAssistScale = physical.legsAssistRetained;
         physical.legsAssistRetained *= level;
         physical.walkingAssistScale *= level;
     }
     if (state.returnBoost > 0.0f) {
+        // (A volta ao padrao, fora da regua: marcada aqui, onde ela sobe a
+        // ajuda - o boost pode zerar antes da medida, no mesmo tick.)
+        athlete.externalAssist.handover = true;
         const float boost = state.returnBoost * state.returnBoost * (3.0f - 2.0f * state.returnBoost);
         auto& physical = state.adaptivePhysics.settings();
         physical.legsAssistRetained += (1.0f - physical.legsAssistRetained) * boost;
         physical.walkingAssistScale += (1.0f - physical.walkingAssistScale) * boost;
         physical.walkingWeightAssistScale += (1.0f - physical.walkingWeightAssistScale) * boost;
+        physical.standingWeightAssistScale += (1.0f - physical.standingWeightAssistScale) * boost;
     }
     // Cambaleio (do tick anterior): a ajuda cai com o tonus e volta com
     // ele; amolecido, ele nao segue o comando de andar (volta junto).
@@ -1798,6 +1808,10 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         if (adaptive && !down && state.adaptivePhysics.output().valid) {
             const AdaptivePhysicalOutput3D& a = state.adaptivePhysics.output();
             measure.pelvisNewtons += a.rootForceWorld.length();
+            measure.pelvisVerticalNewtons += std::abs(a.rootForceWorld.z);
+            measure.pelvisPlanarNewtons += std::hypot(a.rootForceWorld.x, a.rootForceWorld.y);
+            measure.correctionTorque = a.correctionLeverWorld.length();
+            measure.postureCoupleTorque = (a.rootTorqueWorld - a.correctionLeverWorld).length();
             torque += a.rootTorqueWorld;
             for (std::size_t side = 0; side < 2; ++side) {
                 if (a.footLinkIndex[side] != RagdollDynamics3D::InvalidIndex) {
@@ -1826,7 +1840,9 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         const std::size_t reactions = std::min(locomotionOutput.assistReactionLinks.size(),
             locomotionOutput.assistReactionTorquesWorld.size());
         for (std::size_t i = 0; i < reactions; ++i) torque += locomotionOutput.assistReactionTorquesWorld[i];
+        measure.torqueWorld = torque;
         measure.netTorque = torque.length();
+        measure.handover = measure.handover || state.returnBoost > 0.0f;
     }
     // A ajuda nos pes do corpo fisico (PhysicalFeetAssist3D): a forca que leva
     // o corpo a referencia passa pelos pes apoiados, no que a pelve nao deu.
@@ -1859,7 +1875,8 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             athlete.externalAssist.feetNewtons += wrench.force.length();
             feetTorque += wrench.torque;
         }
-        athlete.externalAssist.netTorque += feetTorque.length();
+        athlete.externalAssist.torqueWorld += feetTorque;
+        athlete.externalAssist.netTorque = athlete.externalAssist.torqueWorld.length();
     }
 }
 
