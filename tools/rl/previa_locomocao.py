@@ -85,8 +85,7 @@ def main() -> int:
         model.eval()
         if state.get("action_scale"):
             scale = torch.as_tensor(np.asarray(state["action_scale"], dtype=np.float32))
-        ramp = max(1, int(config.authority_ramp_rounds))
-        authority = min(1.0, (state["counters"]["iteration"] + 1) / ramp)
+        authority = float(min(1.0, max(0.0, state["counters"].get("authority", 1.0))))
         batch.set_authority(authority, authority, authority, authority)
         iteration = state["counters"]["iteration"]
     batch.reset(args.semente)

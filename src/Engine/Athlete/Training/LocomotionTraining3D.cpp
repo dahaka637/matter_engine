@@ -349,7 +349,8 @@ struct LocomotionTraining3D::Impl {
         const float acceleration = std::max(0.5f, before.navigation.acceleration);
         const float deceleration = std::max(0.5f, before.navigation.deceleration);
 
-        double velocityError2 = 0.0, facingError2 = 0.0, slip = 0.0, power = 0.0, posture = 0.0;
+        double velocityError2 = 0.0, facingError2 = 0.0, slip = 0.0, power = 0.0, posture = 0.0, assist = 0.0;
+        const float weight = Gravity * std::max(1.0f, bundle->profile().totalMassKg);
         int slipSamples = 0, ticks = 0;
         bool fell = false, numeric = false;
         const Vec3 asked = planar(world.command.intent.requestedVelocityWorld);
@@ -430,6 +431,8 @@ struct LocomotionTraining3D::Impl {
                 for (std::size_t axis = 0; axis < 3; ++axis)
                     watts += std::abs(joint.motorTorqueNewtonMeters[axis] * joint.velocityRadiansPerSecond[axis]);
             power += watts / mass;
+            // A ajuda na pelve neste tick (a forca que ela aplicou, fracao do peso).
+            assist += athleteControlView3D(athlete).pelvisForceWorld.length() / weight;
             if (body.links.front().position.z - athlete.groundHeight < task.fallPelvisHeight) {
                 fell = true;
                 break;
@@ -442,6 +445,7 @@ struct LocomotionTraining3D::Impl {
         measure.slip = slipSamples > 0 ? static_cast<float>(slip / slipSamples) : 0.0f;
         measure.power = static_cast<float>(power / tickCount);
         measure.posture = static_cast<float>(posture / tickCount);
+        measure.assist = static_cast<float>(assist / tickCount);
         measure.fell = fell;
 
         // A entrada de agora (e o que a nota le dela: o estilo e as metas de
@@ -469,10 +473,6 @@ struct LocomotionTraining3D::Impl {
                     if (valid) world.goal[side] = ground + frame.out({ obs[g.x], obs[g.y], 0.0f });
                 }
             }
-        }
-        {
-            const AthleteControlView3D after = athleteControlView3D(athlete);
-            measure.assist = after.pelvisForceWorld.length() / (Gravity * std::max(1.0f, bundle->profile().totalMassKg));
         }
         {
             double residual = 0.0;

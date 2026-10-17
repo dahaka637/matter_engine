@@ -85,8 +85,12 @@ class LocomotionRunConfig:
     # O desvio inicial da acao, em unidades do teto da fase (0,5: metade do
     # teto de cada canal).
     initial_std_of_cap: float = 0.5
-    # A rampa de entrada da autoridade (rodadas de 0 a 1, todas as cabecas).
-    authority_ramp_rounds: int = 30
+    # A rampa de entrada da autoridade (todas as cabecas, de 0 a 1 em pelo
+    # menos estas rodadas): ela so sobe numa rodada com as quedas dos
+    # episodios dela ate authority_max_falls (sem episodios, sobe); acima,
+    # segura (a politica domina o regime antes do proximo degrau).
+    authority_ramp_rounds: int = 60
+    authority_max_falls: float = 0.15
     mirror_loss: float = 0.3
     evaluation_minutes: float = 15.0
     evaluation_worlds: int = 24
@@ -222,7 +226,7 @@ class LocomotionTrainer:
         self.settings = PPOSettings.from_dict(self.config.ppo)
         self.ppo = PPO(self.model, self.settings)
         self.mirror = MirrorLoss(self.batch.mirror_maps(), self.device) if self.config.mirror_loss > 0.0 else None
-        self.counters = {"iteration": 0, "steps": 0, "train_seconds": 0.0, "episodes": 0}
+        self.counters = {"iteration": 0, "steps": 0, "train_seconds": 0.0, "episodes": 0, "authority": 0.0}
         self.db = storage.Database(paths.DATABASE)
         self.db.ensure_run(run, self.config.task, self.batch.contract_hash, asdict(self.config))
         self.restore()
@@ -266,8 +270,16 @@ class LocomotionTrainer:
         self.critic_candidate = copy.deepcopy(self.model.critic_norm)
 
     def authority(self) -> float:
-        rounds = max(1, int(self.config.authority_ramp_rounds))
-        return min(1.0, (self.counters["iteration"] + 1) / rounds)
+        return float(min(1.0, max(0.0, self.counters.get("authority", 0.0))))
+
+    def advance_authority(self, fall_fraction: float | None) -> None:
+        """Um degrau da rampa de entrada, se as quedas da rodada deixam."""
+        if self.authority() >= 1.0:
+            return
+        if fall_fraction is not None and fall_fraction > self.config.authority_max_falls:
+            return
+        step = 1.0 / max(1, int(self.config.authority_ramp_rounds))
+        self.counters["authority"] = min(1.0, self.authority() + step)
 
     def apply_authority(self) -> None:
         a = self.authority()
@@ -549,7 +561,6 @@ class LocomotionTrainer:
         self.counters["iteration"] += 1
         self.counters["steps"] += info["samples"]
         self.counters["train_seconds"] += info["collect"] + stats["update"]
-        self.apply_authority()
         rows = info["rows"]
         self.counters["episodes"] += len(rows)
         col = {name: i for i, name in enumerate(self.episode_columns)}
@@ -586,6 +597,8 @@ class LocomotionTrainer:
                 self.db.event(self.run, "erro", self.message)
             return
         self.failures = 0
+        self.advance_authority(result["fall_fraction"])
+        self.apply_authority()
         self.last_iteration_stats = {k: result[k] for k in (
             "iteration", "sps", "reward", "episodes", "episode_return", "episode_seconds", "fall_fraction", "kl",
             "entropy", "learning_rate", "action_std", "value_loss")}
