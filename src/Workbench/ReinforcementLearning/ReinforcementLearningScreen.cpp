@@ -116,12 +116,13 @@ Highlight cross(Vec3 at, float radius, Color color) {
     return marker;
 }
 
-// Um treino do Corpo: o run.json do contrato 2.
-bool isBodyRun(const std::filesystem::path& directory) {
+// Um treino: o run.json do Corpo (contrato 2) ou o da locomocao.
+bool isTrainingRun(const std::filesystem::path& directory) {
     std::ifstream file(directory / "run.json");
     if (!file) return false;
     const nlohmann::json config = nlohmann::json::parse(file, nullptr, false);
     if (config.is_discarded() || !config.is_object()) return false;
+    if (config.value("kind", std::string()) == "locomocao") return true;
     const auto contract = config.find("contract");
     return contract != config.end() && contract->is_number() && contract->get<int>() == 2;
 }
@@ -146,11 +147,11 @@ ReinforcementLearningScreen::~ReinforcementLearningScreen() = default;
 TrainerStatus3D ReinforcementLearningScreen::status() const { return m_link->status(); }
 
 void ReinforcementLearningScreen::scanRuns() {
-    // Os treinos do Corpo, do mais recente (o ultimo checkpoint gravado) ao mais antigo.
+    // Os treinos, do mais recente (o ultimo checkpoint gravado) ao mais antigo.
     std::vector<std::pair<std::filesystem::file_time_type, std::string>> found;
     std::error_code code;
     for (const auto& entry : std::filesystem::directory_iterator(m_paths.data / "runs", code)) {
-        if (!entry.is_directory() || !isBodyRun(entry.path())) continue;
+        if (!entry.is_directory() || !isTrainingRun(entry.path())) continue;
         std::error_code timeCode;
         std::filesystem::path stamp = entry.path() / "run.json";
         for (const char* name : { "status.json", "latest.json" })
@@ -192,7 +193,12 @@ void ReinforcementLearningScreen::loadDrills() {
     m_drillNames.clear();
     const std::filesystem::path path = taskPath();
     if (path.empty() || !std::filesystem::exists(path)) return;
-    try {
+    if (LocomotionViewer3D::isLocomotionTask(path)) {
+        for (const LocomotionViewer3D::Drill& drill : LocomotionViewer3D::drillsOf(path)) {
+            m_drillIds.push_back(drill.id);
+            m_drillNames.push_back(drill.name);
+        }
+    } else try {
         const BodyTask3D task = loadBodyTask3D(path);
         for (const BodyDrill3D& drill : task.drills) {
             m_drillIds.push_back(drill.id);
@@ -208,13 +214,14 @@ void ReinforcementLearningScreen::loadDrills() {
 std::vector<std::string> ReinforcementLearningScreen::drills() const { return m_drillIds; }
 
 void ReinforcementLearningScreen::showDrill(const std::string& drill) {
-    if (drill == m_viewerDrill && m_viewer) return;
+    if (drill == m_viewerDrill && hasViewer()) return;
     m_viewerDrill = drill;
     resetViewer();
 }
 
 void ReinforcementLearningScreen::resetViewer() {
     m_viewer.reset();
+    m_locomotion.reset();
     m_policy.reset();
     m_policyPath.clear();
     m_viewerError.clear();
@@ -230,7 +237,22 @@ void ReinforcementLearningScreen::ensureViewer() {
         resetViewer();
         loadDrills();
     }
-    if (m_viewer || !m_viewerError.empty() || run.empty()) return;
+    if (hasViewer() || !m_viewerError.empty() || run.empty()) return;
+    const std::filesystem::path task = taskPath();
+    if (!task.empty() && LocomotionViewer3D::isLocomotionTask(task)) {
+        try {
+            m_viewerTask = task;
+            m_locomotion = std::make_unique<LocomotionViewer3D>(task, m_options.sourceRoot / "assets", m_viewerDrill,
+                static_cast<std::uint64_t>(std::time(nullptr)));
+            m_colliders = buildRagdollColliderWireframe3D(m_locomotion->profile());
+            applyManual();
+            reloadPolicy(true);
+        } catch (const std::exception& error) {
+            m_locomotion.reset();
+            m_viewerError = error.what();
+        }
+        return;
+    }
     try {
         BodyBatchSettings3D settings;
         settings.taskPath = taskPath();
@@ -258,11 +280,12 @@ void ReinforcementLearningScreen::ensureViewer() {
 }
 
 void ReinforcementLearningScreen::reloadPolicy(bool force) {
-    if (!m_viewer) return;
+    if (!hasViewer()) return;
     const std::filesystem::path path = policyPath();
     std::error_code code;
     if (!std::filesystem::exists(path, code)) {
         m_policy.reset();
+        if (m_locomotion) m_locomotion->clearPolicy();
         m_policyText = "sem política ainda";
         return;
     }
@@ -270,6 +293,10 @@ void ReinforcementLearningScreen::reloadPolicy(bool force) {
     if (!force && write == m_policyWrite && path == m_policyPath) return;
     m_policyWrite = write;
     m_policyPath = path;
+    if (m_locomotion) {
+        m_locomotion->setPolicy(path, m_policyText);
+        return;
+    }
     try {
         auto policy = std::make_unique<PolicyRuntime3D>(path);
         // A politica do Corpo le a entrada do contrato inteira, na mesma ordem.
@@ -297,6 +324,10 @@ void ReinforcementLearningScreen::setManualSpeed(std::optional<float> metersPerS
 }
 
 void ReinforcementLearningScreen::applyManual() {
+    if (m_locomotion) {
+        m_locomotion->setManualSpeed(m_manual ? std::optional<float>(m_manualSpeed) : std::nullopt);
+        return;
+    }
     if (!m_viewer) return;
     if (!m_manual) {
         m_viewer->setManualControl(0, nullptr);
@@ -309,6 +340,10 @@ void ReinforcementLearningScreen::applyManual() {
 }
 
 void ReinforcementLearningScreen::stepOnce() {
+    if (m_locomotion) {
+        m_locomotion->step();
+        return;
+    }
     const std::span<const float> observation = m_viewer->observations();
     if (m_policy) m_policy->evaluate(observation, m_action);
     else std::fill(m_action.begin(), m_action.end(), 0.0f);
@@ -317,8 +352,8 @@ void ReinforcementLearningScreen::stepOnce() {
 }
 
 void ReinforcementLearningScreen::stepViewer(float deltaSeconds) {
-    if (!m_viewer || m_paused) return;
-    const float step = m_viewer->policyStepSeconds();
+    if (!hasViewer() || m_paused) return;
+    const float step = viewerStepSeconds();
     m_accumulator += deltaSeconds;
     int steps = 0;
     while (m_accumulator >= step && steps < MaximumStepsPerFrame) {
@@ -332,33 +367,34 @@ void ReinforcementLearningScreen::stepViewer(float deltaSeconds) {
 
 void ReinforcementLearningScreen::advanceViewer(int decisions) {
     ensureViewer();
-    if (!m_viewer) return;
+    if (!hasViewer()) return;
     for (int i = 0; i < decisions; ++i) stepOnce();
     m_dirty = true;
 }
 
 float ReinforcementLearningScreen::viewerRequestedSpeed() const {
-    if (!m_viewer) return 0.0f;
-    const Vec3 wanted = m_viewer->view(0).command.moveVelocity;
+    if (!hasViewer()) return 0.0f;
+    const Vec3 wanted = viewerView().command.moveVelocity;
     return std::hypot(wanted.x, wanted.y);
 }
 
 float ReinforcementLearningScreen::viewerSpeed() const {
-    if (!m_viewer) return 0.0f;
-    const Vec3 velocity = m_viewer->view(0).velocity;
+    if (!hasViewer()) return 0.0f;
+    const Vec3 velocity = viewerView().velocity;
     return std::hypot(velocity.x, velocity.y);
 }
 
 void ReinforcementLearningScreen::push(int direction, float newtons) {
-    if (!m_viewer) return;
-    const BodyWorldView3D view = m_viewer->view(0);
+    if (!hasViewer()) return;
+    const BodyWorldView3D view = viewerView();
     if (!view.state) return;
     // No referencial do peito: frente, tras, esquerda, direita.
     const Vec3 forward { std::cos(view.chestHeading), std::sin(view.chestHeading), 0.0f };
     const Vec3 left { -forward.y, forward.x, 0.0f };
     const std::array<Vec3, 4> directions { forward, forward * -1.0f, left, left * -1.0f };
     const Vec3 force = directions[static_cast<std::size_t>(std::clamp(direction, 0, 3))] * newtons;
-    m_viewer->push(0, m_viewer->body().upperChest, force, 0.2f);
+    if (m_locomotion) m_locomotion->push(force, 0.2f);
+    else m_viewer->push(0, m_viewer->body().upperChest, force, 0.2f);
 }
 
 void ReinforcementLearningScreen::pollModel() {
@@ -416,12 +452,12 @@ void ReinforcementLearningScreen::update(float deltaSeconds) {
 }
 
 bool ReinforcementLearningScreen::render(int width, int height) {
-    if (!m_viewer || !m_model || !m_skeleton) return false;
+    if (!hasViewer() || !m_model || !m_skeleton) return false;
     if (!m_dirty && !m_image.empty() && m_image.width() == width && m_image.height() == height) return false;
-    const BodyWorldView3D view = m_viewer->view(0);
+    const BodyWorldView3D view = viewerView();
     if (!view.state) return false;
     const RagdollState3D& state = *view.state;
-    const RagdollProfile3D& profile = m_viewer->body().profile;
+    const RagdollProfile3D& profile = viewerProfile();
     std::vector<Vec3> positions(state.links.size());
     std::vector<Quaternion> orientations(state.links.size());
     for (std::size_t i = 0; i < state.links.size(); ++i) {
@@ -430,7 +466,7 @@ bool ReinforcementLearningScreen::render(int width, int height) {
     }
     // O mundo fica preso na origem do episodio (e nao na pelve): andando, o chao
     // corre sob os pes e a camera segue o jogador.
-    const SkeletonPose& pose = m_skeleton->update(positions, orientations, view.origin, 0.0f, m_viewer->policyStepSeconds());
+    const SkeletonPose& pose = m_skeleton->update(positions, orientations, view.origin, 0.0f, viewerStepSeconds());
     const InspectionModel& model = *m_model->model;
     std::vector<Vec3> posed;
     if (model.mesh.hasSkin()) posed = model.mesh.posedPositions(skinningTransforms(model.skeleton, pose));
@@ -565,7 +601,7 @@ void ReinforcementLearningScreen::draw(CanvasTarget& canvas, float uiScale) {
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     drawWorkbenchBackdrop(drawList, io.DisplaySize, uiScale);
     const TrainerStatus3D status = m_link->status();
-    drawWorkbenchHeader(drawList, io.DisplaySize, uiScale, "APRENDIZADO POR REFORÇO", stateLabel(status.state).label);
+    drawWorkbenchHeader(drawList, io.DisplaySize, uiScale, "APRENDIZADO", stateLabel(status.state).label);
 
     const float margin = ui(12.0f);
     const float top = headerHeight(uiScale) + margin;
@@ -796,8 +832,10 @@ void ReinforcementLearningScreen::drawToolbar() {
     tooltip("Congela só o visualizador (o treino segue).");
     ImGui::SameLine();
     if (ImGui::Button(UI::FontAwesome::label(UI::FontAwesome::RotateLeft, "Recomeçar").c_str(), { ui(120.0f), ui(30.0f) })
-        && m_viewer) {
-        m_viewer->reset(static_cast<std::uint64_t>(std::time(nullptr)));
+        && hasViewer()) {
+        const auto seed = static_cast<std::uint64_t>(std::time(nullptr));
+        if (m_locomotion) m_locomotion->reset(seed);
+        else m_viewer->reset(seed);
         applyManual();
         m_dirty = true;
     }
@@ -825,7 +863,7 @@ void ReinforcementLearningScreen::drawViewport(CanvasTarget& canvas, float botto
     const char* waiting = !m_viewerError.empty() ? m_viewerError.c_str()
         : !m_modelError.empty()                  ? m_modelError.c_str()
         : activeRun().empty()                    ? "SEM TREINO"
-        : !m_model || !m_viewer                  ? "CARREGANDO"
+        : !m_model || !hasViewer()              ? "CARREGANDO"
                                                  : nullptr;
     if (waiting != nullptr) {
         const ImVec2 textSize = ImGui::CalcTextSize(waiting);
@@ -882,7 +920,7 @@ void ReinforcementLearningScreen::drawCommands() {
     ImGui::PushID("RLPush");
     for (int i = 0; i < 4; ++i) {
         ImGui::SameLine();
-        ImGui::BeginDisabled(!m_viewer);
+        ImGui::BeginDisabled(!hasViewer());
         if (ImGui::Button(labels[static_cast<std::size_t>(i)], { ui(80.0f), ui(28.0f) })) push(i, m_pushNewtons);
         ImGui::EndDisabled();
     }

@@ -830,6 +830,7 @@ add_library(MatterWorkbench STATIC
     src/Workbench/PlayerInspector/UiCanvasTexture.cpp
     src/Workbench/Screens/ReinforcementLearningHost.cpp
     src/Workbench/ReinforcementLearning/ReinforcementLearningScreen.cpp
+    src/Workbench/ReinforcementLearning/LocomotionViewer3D.cpp
 )
 
 # A tela de Aprendizado por Reforco usa o modulo de RL inteiro (os mundos, a

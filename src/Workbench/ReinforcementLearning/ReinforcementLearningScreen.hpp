@@ -10,6 +10,7 @@
 #include "Engine/RL/Supervisor/TrainingHistory3D.hpp"
 #include "Engine/RL/Calibration/RagdollColliderWireframe3D.hpp"
 #include "Workbench/PlayerInspector/CanvasTarget.hpp"
+#include "Workbench/ReinforcementLearning/LocomotionViewer3D.hpp"
 
 #include <array>
 #include <filesystem>
@@ -52,8 +53,8 @@ public:
 
     // Automacao (testes, capturas).
     [[nodiscard]] TrainerStatus3D status() const;
-    [[nodiscard]] bool viewerReady() const { return m_viewer != nullptr; }
-    [[nodiscard]] bool policyLoaded() const { return m_policy != nullptr; }
+    [[nodiscard]] bool viewerReady() const { return hasViewer(); }
+    [[nodiscard]] bool policyLoaded() const { return m_policy != nullptr || (m_locomotion && m_locomotion->hasPolicy()); }
     [[nodiscard]] const std::string& viewerError() const { return m_viewerError; }
     [[nodiscard]] bool modelLoaded() const { return m_model.has_value(); }
     void waitUntilLoaded();
@@ -79,7 +80,7 @@ public:
     void showDrill(const std::string& drill);
     [[nodiscard]] float viewerRequestedSpeed() const;
     [[nodiscard]] float viewerSpeed() const;
-    [[nodiscard]] std::uint32_t viewerSteps() const { return m_viewer ? m_viewer->view(0).steps : 0u; }
+    [[nodiscard]] std::uint32_t viewerSteps() const { return hasViewer() ? viewerView().steps : 0u; }
     [[nodiscard]] std::array<float, 2> viewerPelvisOnScreen() const { return m_pelvisOnScreen; }
 
 private:
@@ -87,6 +88,16 @@ private:
         std::optional<Modeling::LoadedPlayerModel> loaded;
         std::string error;
     };
+
+    // O visualizador de agora (o do Corpo ou o da locomocao).
+    [[nodiscard]] bool hasViewer() const { return m_viewer != nullptr || m_locomotion != nullptr; }
+    [[nodiscard]] BodyWorldView3D viewerView() const { return m_locomotion ? m_locomotion->view() : m_viewer->view(0); }
+    [[nodiscard]] const RagdollProfile3D& viewerProfile() const {
+        return m_locomotion ? m_locomotion->profile() : m_viewer->body().profile;
+    }
+    [[nodiscard]] float viewerStepSeconds() const {
+        return m_locomotion ? m_locomotion->policyStepSeconds() : m_viewer->policyStepSeconds();
+    }
 
     void drawSidebar(float height);
     void drawTrainer();
@@ -140,6 +151,8 @@ private:
 
     // O mundo do visualizador e a politica dele.
     std::unique_ptr<BodyTrainingBatch3D> m_viewer;
+    // Um treino da locomocao (o RL dentro dos modulos) no lugar do Corpo.
+    std::unique_ptr<LocomotionViewer3D> m_locomotion;
     std::unique_ptr<PolicyRuntime3D> m_policy;
     std::filesystem::file_time_type m_policyWrite {};
     std::filesystem::path m_policyPath;
