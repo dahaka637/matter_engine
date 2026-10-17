@@ -1,6 +1,7 @@
 #include "Workbench/WorkbenchApp.hpp"
 
 #include "Engine/Athlete/AthleteAssets3D.hpp"
+#include "Engine/Athlete/Policy/LocomotionPolicy3D.hpp"
 #include "Engine/Character/CharacterControlApplication3D.hpp"
 #include "Engine/Core/Log.hpp"
 #include "Engine/Geometry/MeshData3D.hpp"
@@ -8,6 +9,10 @@
 #include "Engine/RHI/RHITypes.hpp"
 
 #include <algorithm>
+#include <cstdio>
+#include <memory>
+#include <filesystem>
+#include <cstdlib>
 #include <cmath>
 #include <span>
 #include <stdexcept>
@@ -636,6 +641,35 @@ void WorkbenchApp::toggleControlledCharacterFrozen() {
     };
 }
 
+void WorkbenchApp::reloadLocomotionPolicy() {
+    namespace fs = std::filesystem;
+    fs::path file;
+    if (const char* given = std::getenv("MATTER_LOCOMOTION_POLICY"); given != nullptr && *given != '\0') {
+        file = given;
+    } else {
+        fs::path data;
+        if (const char* root = std::getenv("MATTER_RL_DATA"); root != nullptr && *root != '\0') data = root;
+        else if (const char* home = std::getenv("HOME"); home != nullptr) data = fs::path(home) / ".local/share/matter-engine/rl";
+        file = data / "runs" / "loco_f1f2" / "exports" / "policy_latest.mrlpolicy";
+    }
+    if (!m_humanRagdollProfile) {
+        m_locomotionPolicyLabel = "sem o corpo do jogador";
+        return;
+    }
+    try {
+        auto policy = std::make_shared<LocomotionPolicy3D>(*m_humanRagdollProfile, file);
+        char label[96];
+        std::snprintf(label, sizeof label, "%s, rodada %llu", policy->run().c_str(),
+            static_cast<unsigned long long>(policy->iteration()));
+        m_locomotionPolicyLabel = label;
+        Log::info("rede da locomocao: " + m_locomotionPolicyLabel + " (" + file.string() + ")");
+        m_athleteRuntime.setLocomotionPolicy(std::move(policy));
+    } catch (const std::exception& error) {
+        m_locomotionPolicyLabel = "nao carregou";
+        Log::warn(std::string("rede da locomocao: ") + error.what());
+    }
+}
+
 AthleteRuntimeSettings3D WorkbenchApp::athleteRuntimeSettings() const {
     AthleteRuntimeSettings3D settings;
     settings.defaultLocomotion = m_defaultLocomotion;
@@ -694,6 +728,7 @@ AthleteRuntimeSettings3D WorkbenchApp::athleteRuntimeSettings() const {
     settings.modeTable = m_modeTable;
     settings.physicalUsesDefaultSpeeds = m_physicalDefaultSpeeds;
     settings.physicalFeetAssistPercent = m_physicalFeetAssistPercent;
+    settings.locomotionPolicy = m_locomotionPolicyOn && m_athleteRuntime.locomotionPolicy() != nullptr;
     settings.physicalBoneGuidePercent = m_physicalBoneGuidePercent;
     settings.fullPhysicalImpulse = m_fullPhysicalImpulse;
     settings.activeBodySettings.gameplayAssistAcceleration = m_activeAssistAcceleration;

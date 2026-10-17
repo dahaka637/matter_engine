@@ -107,6 +107,11 @@ struct AthleteRuntimeSettings3D {
     bool physicalReference = false;
     // O relogio da sombra segue a fase do corpo (os pousos de verdade).
     bool physicalReferencePhaseLock = true;
+    // A rede da locomocao (o RL, contrato v2): ligada, o controlado e os
+    // comandados no fisico seguem a politica carregada no runtime
+    // (AthleteRuntime3D::setLocomotionPolicy). Liga tambem a referencia a
+    // sombra (a entrada da rede a le).
+    bool locomotionPolicy = false;
     ContactClassParams3D contactClasses;
     ModeRuleParams3D modeRules;
     // A ajuda depois do impacto com a tabela: o choque comum ate 20 N.s tira

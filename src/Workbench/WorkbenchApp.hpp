@@ -300,6 +300,10 @@ private:
     [[nodiscard]] float ragdollGroundHeight(Vec3 position) const;
     void takeControlOfLatestCharacter();
     void releaseControlledCharacter();
+    // A rede da locomocao (o RL, contrato v2): carrega a ultima politica
+    // exportada pelo treino (MATTER_LOCOMOTION_POLICY, ou a do treino
+    // loco_f1f2 em MATTER_RL_DATA / ~/.local/share/matter-engine/rl).
+    void reloadLocomotionPolicy();
     void resetControlledCharacterPose();
     void toggleControlledCharacterFrozen();
     void updateRagdollImpactLab(float deltaTime);
@@ -450,6 +454,10 @@ private:
     std::vector<SpawnedRagdollInstance> m_spawnedRagdolls;
     // O runtime dos atletas (engine): o que antes era updateActiveRagdolls.
     AthleteRuntime3D m_athleteRuntime;
+    // A rede da locomocao: ligada no menu do personagem, e o que foi
+    // carregado (a rodada do treino, ou o erro).
+    bool m_locomotionPolicyOn = false;
+    std::string m_locomotionPolicyLabel;
     bool m_ragdollAssetsLoadFailed = false;
     bool m_ragdollActive = true;
     float m_ragdollRigidityPercent = 0.0f;

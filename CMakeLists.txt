@@ -350,22 +350,6 @@ if(MATTERENGINE_BUILD_RL)
             -Wall -Wextra -Wpedantic)
     endif()
 
-    # A politica exportada pelo treinador, para a tela e o jogo: so a MLP e
-    # a normalizacao, sem fisica nem treinador.
-    add_library(MatterRLPolicy STATIC
-        src/Engine/RL/Policy/PolicyRuntime3D.cpp
-    )
-    target_include_directories(MatterRLPolicy PUBLIC src)
-    target_link_libraries(MatterRLPolicy PRIVATE nlohmann_json::nlohmann_json)
-    if(MSVC)
-        target_compile_options(MatterRLPolicy PRIVATE /W4 /permissive- /utf-8)
-    else()
-        # -O3: a conta da rede vetoriza (o -O2 do RelWithDebInfo usa o custo
-        # "very-cheap" e deixa o laco escalar).
-        target_compile_options(MatterRLPolicy PRIVATE -Wall -Wextra -Wpedantic
-            $<$<NOT:$<CONFIG:Debug>>:-O3>)
-    endif()
-
     # A ligacao da tela com o treinador (processo, socket local) e o
     # historico do banco do treino, so leitura. POSIX; sem interface.
     add_library(MatterRLSupervisor STATIC
@@ -649,6 +633,23 @@ else()
         PROPERTIES COMPILE_OPTIONS "-w")
 endif()
 
+# A politica exportada pelo treinador, para a tela e o jogo: so a MLP e
+# a normalizacao, sem fisica nem treinador. Sempre construida: o atleta do
+# jogo roda a rede da locomocao (Athlete/Policy).
+add_library(MatterRLPolicy STATIC
+    src/Engine/RL/Policy/PolicyRuntime3D.cpp
+)
+target_include_directories(MatterRLPolicy PUBLIC src)
+target_link_libraries(MatterRLPolicy PRIVATE nlohmann_json::nlohmann_json)
+if(MSVC)
+    target_compile_options(MatterRLPolicy PRIVATE /W4 /permissive- /utf-8)
+else()
+    # -O3: a conta da rede vetoriza (o -O2 do RelWithDebInfo usa o custo
+    # "very-cheap" e deixa o laco escalar).
+    target_compile_options(MatterRLPolicy PRIVATE -Wall -Wextra -Wpedantic
+        $<$<NOT:$<CONFIG:Debug>>:-O3>)
+endif()
+
 # O atleta (o runtime, o controle fisico e o padrao, os planejadores, a ajuda,
 # o contrato da rede e o mundo de treino): sem render, janela nem audio - o
 # jogo, as sondas e o treino de RL (a ponte Python) usam a mesma biblioteca.
@@ -693,6 +694,7 @@ add_library(MatterAthlete STATIC
     src/Engine/Athlete/Reference/PhaseLock3D.cpp
     src/Engine/Athlete/Physical/PhysicalCorrections3D.cpp
     src/Engine/Athlete/Contract/LocomotionContract3D.cpp
+    src/Engine/Athlete/Policy/LocomotionPolicy3D.cpp
     src/Engine/Athlete/Training/LocomotionWorld3D.cpp
     src/Engine/Athlete/Training/LocomotionBatch3D.cpp
     src/Engine/Character/BiomechanicalBipedExperiment3D.cpp
@@ -741,7 +743,7 @@ add_library(MatterAthlete STATIC
 )
 target_include_directories(MatterAthlete PUBLIC src)
 target_link_libraries(MatterAthlete
-    PUBLIC MatterCore MatterPhysics MatterAnimationClips
+    PUBLIC MatterCore MatterPhysics MatterAnimationClips MatterRLPolicy
     PRIVATE nlohmann_json::nlohmann_json
 )
 

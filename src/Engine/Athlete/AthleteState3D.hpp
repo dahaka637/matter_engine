@@ -79,6 +79,9 @@ struct AthleteState3D {
     // O valor fisico aplicado de cada canal da saida (depois do teto, da
     // autoridade e do limite de taxa): o estado do filtro.
     std::vector<float> policyApplied;
+    // A politica e a da rede do runtime (AthleteRuntime3D::setLocomotionPolicy):
+    // desligada, so ela e esquecida (as correcoes postas por fora ficam).
+    bool policyFromRuntime = false;
     // O custo do ultimo passo (s; o orcamento por modulo): o controle fisico
     // (por bloco em legacy.locomotion.sectionSeconds()) e a ajuda.
     float locomotionSeconds = 0.0f;

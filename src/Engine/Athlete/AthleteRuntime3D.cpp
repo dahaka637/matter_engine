@@ -3,6 +3,9 @@
 #include "Engine/Athlete/Planning/MotionPlanner3D.hpp"
 
 #include "Engine/Athlete/Legacy/LegacyAthleteStep3D.hpp"
+#include "Engine/Athlete/AthleteTelemetry3D.hpp"
+#include "Engine/Athlete/Contract/LocomotionContract3D.hpp"
+#include "Engine/Athlete/Policy/LocomotionPolicy3D.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -116,6 +119,30 @@ void AthleteRuntime3D::update(PhysicsScene3D& scene, const AthleteRuntimeAssets3
         if (!slot.active || slot.frozen || slot.state == nullptr || slot.athlete == nullptr || slot.state->frozen
             || !scene.contains(slot.handle) || slot.state->links.empty())
             continue;
+        // A rede da locomocao: o controlado e os comandados, so no fisico (onde
+        // as correcoes agem e onde ela treinou). Fora disso, quem ela dirigia
+        // volta ao classico exato (as correcoes de quem as poe por fora - o
+        // treino, a sonda - ficam).
+        AthleteState3D& athlete = *slot.athlete;
+        const bool controlled = slot.entityId == tickControl.controlledEntityId;
+        const bool driven = m_locomotionPolicy != nullptr && settings.locomotionPolicy
+            && (controlled || slot.command != nullptr) && athleteTelemetry3D(athlete).mode == BodyModeKind3D::Physical;
+        if (driven) {
+            AthleteCommand3D command;
+            if (controlled) {
+                command.intent = tickControl.intent;
+                command.facingYawRadians = tickControl.facingYawRadians;
+                command.lookPitchRadians = tickControl.lookPitchRadians;
+                command.sprinting = tickControl.sprinting;
+            } else {
+                command = *slot.command;
+            }
+            m_locomotionPolicy->before(athlete, *slot.state, command, deltaTime);
+            athlete.policyFromRuntime = true;
+        } else if (athlete.policyFromRuntime) {
+            LocomotionContract3D::clear(athlete);
+            athlete.policyFromRuntime = false;
+        }
         stepLegacyAthlete3D(scene, assets, settings, tickControl, slot, balls, tacklerLegs, deltaTime, output);
     }
 }

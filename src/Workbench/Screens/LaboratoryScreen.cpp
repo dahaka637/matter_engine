@@ -2853,6 +2853,26 @@ void WorkbenchApp::drawLaboratoryUi() {
                                 percent("Guiagem de ossos", "##BoneGuide", &m_physicalBoneGuidePercent, 0.0f, 100.0f,
                                     "Os ossos vão até a pose do modo padrão nesta fração: 0% é a locomoção física de sempre, 100% é como o padrão.");
                         }
+                        // A rede da locomocao (o RL das fases 1 e 2, 16/10).
+                        panelHeader("REDE");
+                        {
+                            if (ImGui::Checkbox("Rede de locomoção", &m_locomotionPolicyOn) && m_locomotionPolicyOn
+                                && m_athleteRuntime.locomotionPolicy() == nullptr)
+                                reloadLocomotionPolicy();
+                            hint("No físico, o corpo segue a rede treinada (as correções dela nos pés, no equilíbrio, na pose e na rigidez). Ela treinou no Físico total com as quatro ajudas em 0%.");
+                            if (ImGui::Button("Como no treino", { ImGui::GetContentRegionAvail().x * 0.5f - ui(2.0f), 0.0f })) {
+                                m_defaultLocomotion = false;
+                                m_e5StandingAssistPercent = 0.0f;
+                                m_e5WalkingAssistPercent = 0.0f;
+                                m_physicalFeetAssistPercent = 0.0f;
+                                m_getUpAssistPercent = 0.0f;
+                            }
+                            hint("Físico total e as quatro ajudas em 0%, como no treino.");
+                            ImGui::SameLine();
+                            if (ImGui::Button("Recarregar a rede", { -1.0f, 0.0f })) reloadLocomotionPolicy();
+                            hint("Carrega a última rede que o treino exportou (a cada 10 minutos).");
+                            if (!m_locomotionPolicyLabel.empty()) ImGui::TextDisabled("%s", m_locomotionPolicyLabel.c_str());
+                        }
                         panelHeader("AJUDAS");
                         percent("Ajuda parado", "##AssistStanding", &m_e5StandingAssistPercent, 0.0f, 100.0f,
                             "Força auxiliar na pelve parado (no físico).");

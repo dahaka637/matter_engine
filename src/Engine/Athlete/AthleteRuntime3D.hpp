@@ -8,6 +8,7 @@
 #include "Engine/Physics/PhysicsScene3D.hpp"
 
 #include <cstdint>
+#include <memory>
 #include <span>
 #include <utility>
 #include <vector>
@@ -113,11 +114,22 @@ struct AthleteRuntimeOutput3D {
 // os alvos (guia, motores, forcas) para a fisica. E a logica que morava em
 // WorkbenchApp::updateActiveRagdolls, agora na engine: o laboratorio, o jogo
 // e a sonda sem janela rodam o mesmo codigo.
+class LocomotionPolicy3D;
+
 class AthleteRuntime3D {
 public:
     void update(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& assets, std::span<AthleteSlot3D> athletes,
         std::span<AthleteBall3D> balls, const AthleteRuntimeSettings3D& settings, const AthleteControlInput3D& control,
         float deltaTime, AthleteRuntimeOutput3D& output);
+
+    // A rede da locomocao (Athlete/Policy, o RL do contrato v2): com
+    // settings.locomotionPolicy, o controlado e os comandados no fisico seguem
+    // esta politica (nula: nenhuma). Sem ela, ou desligada, o classico exato.
+    void setLocomotionPolicy(std::shared_ptr<LocomotionPolicy3D> policy) { m_locomotionPolicy = std::move(policy); }
+    [[nodiscard]] const LocomotionPolicy3D* locomotionPolicy() const { return m_locomotionPolicy.get(); }
+
+private:
+    std::shared_ptr<LocomotionPolicy3D> m_locomotionPolicy;
 };
 
 // O analogico e a camera de quem comanda um atleta: o rumo no mundo (o

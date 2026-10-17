@@ -22,6 +22,7 @@
 //      [--ajuda-parado %] [--ajuda-andando %]
 // Sem --cenario roda todos.
 #include "athlete_probe/ProbeShared.hpp"
+#include "Engine/Athlete/Policy/LocomotionPolicy3D.hpp"
 
 #include "Engine/Athlete/AthleteAssets3D.hpp"
 #include "Engine/Athlete/AthleteRuntime3D.hpp"
@@ -936,6 +937,13 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
     std::vector<double> runtimeCost;
 
     AthleteRuntime3D runtime;
+    // XREDE=<.mrlpolicy>: a rede da locomocao pelo runtime do jogo (como a
+    // chave "Rede de locomocao" do laboratorio).
+    AthleteRuntimeSettings3D policySettings = settings;
+    if (const char* rede = std::getenv("XREDE"); rede != nullptr && *rede != '\0') {
+        runtime.setLocomotionPolicy(std::make_shared<LocomotionPolicy3D>(*context.profile, rede));
+        policySettings.locomotionPolicy = true;
+    }
     Vec3 followVelocity {};
     bool controlledAnimated = !startPhysical;
     float capsuleSpeedScale = 1.0f;
@@ -1226,7 +1234,7 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
         AthleteRuntimeOutput3D output;
         if (step >= 0) contractBefore(hooks, athlete, step);
         const auto runtimeBegin = std::chrono::steady_clock::now();
-        runtime.update(*scene, runtimeAssets, std::span<AthleteSlot3D>(&slot, 1), balls, step < 0 ? warmSettings : settings,
+        runtime.update(*scene, runtimeAssets, std::span<AthleteSlot3D>(&slot, 1), balls, step < 0 ? warmSettings : policySettings,
             control, Dt, output);
         if (step >= 0)
             runtimeCost.push_back(std::chrono::duration<double>(std::chrono::steady_clock::now() - runtimeBegin).count());
