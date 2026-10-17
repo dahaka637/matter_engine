@@ -81,25 +81,52 @@ PolicyRuntime3D::PolicyRuntime3D(const std::filesystem::path& path) {
     m_scratchB.resize(std::max(widest, m_observationSize));
 }
 
+namespace {
+
+// Uma camada densa em blocos de saidas: cada bloco de 16 fica em registradores
+// enquanto percorre todas as entradas (antes, cada entrada lia e escrevia as
+// 512 saidas). A soma de cada saida segue a mesma ordem: o vies, depois as
+// entradas em ordem crescente.
+inline void denseLayer(const float* w, const float* b, const float* in, float* out,
+    std::size_t inputs, std::size_t outputs) {
+    constexpr std::size_t Block = 16;
+    std::size_t o = 0;
+    for (; o + Block <= outputs; o += Block) {
+        float acc[Block];
+        for (std::size_t k = 0; k < Block; ++k) acc[k] = b[o + k];
+        for (std::size_t i = 0; i < inputs; ++i) {
+            const float x = in[i];
+            const float* row = w + i * outputs + o;
+            for (std::size_t k = 0; k < Block; ++k) acc[k] += row[k] * x;
+        }
+        for (std::size_t k = 0; k < Block; ++k) out[o + k] = acc[k];
+    }
+    for (; o < outputs; ++o) {
+        float acc = b[o];
+        for (std::size_t i = 0; i < inputs; ++i) acc += w[i * outputs + o] * in[i];
+        out[o] = acc;
+    }
+}
+
+} // namespace
+
 void PolicyRuntime3D::evaluate(std::span<const float> observation, std::span<float> action) const {
     if (observation.size() != m_observationSize || action.size() != m_actionSize)
         throw std::invalid_argument("politica: dimensoes erradas");
-    float* in = m_scratchA.data();
-    float* out = m_scratchB.data();
+    // (Rascunho por thread: a mesma politica pode servir varios atletas em
+    // paralelo.)
+    thread_local std::vector<float> scratchA, scratchB;
+    if (scratchA.size() < m_scratchA.size()) scratchA.resize(m_scratchA.size());
+    if (scratchB.size() < m_scratchB.size()) scratchB.resize(m_scratchB.size());
+    float* in = scratchA.data();
+    float* out = scratchB.data();
     for (std::size_t i = 0; i < m_observationSize; ++i)
         in[i] = std::clamp((observation[i] - m_data[m_mean + i]) * m_data[m_inverseStd + i], -m_clip, m_clip);
     for (std::size_t l = 0; l < m_layers.size(); ++l) {
         const Layer& layer = m_layers[l];
-        const float* w = m_transposed.data() + layer.transposed;
-        const float* b = m_data.data() + layer.bias;
         const bool hidden = l + 1 < m_layers.size();
         const std::size_t outputs = layer.outputs;
-        for (std::size_t o = 0; o < outputs; ++o) out[o] = b[o];
-        for (std::size_t i = 0; i < layer.inputs; ++i) {
-            const float x = in[i];
-            const float* column = w + i * outputs;
-            for (std::size_t o = 0; o < outputs; ++o) out[o] += column[o] * x;
-        }
+        denseLayer(m_transposed.data() + layer.transposed, m_data.data() + layer.bias, in, out, layer.inputs, outputs);
         if (hidden)
             for (std::size_t o = 0; o < outputs; ++o) out[o] = out[o] > 0.0f ? out[o] : std::expm1(out[o]);
         std::swap(in, out);
@@ -113,10 +140,11 @@ void PolicyRuntime3D::evaluateBatch(std::span<const float> observations, std::sp
         throw std::invalid_argument("politica: dimensoes erradas no lote");
     std::size_t widest = m_observationSize;
     for (const Layer& layer : m_layers) widest = std::max(widest, layer.outputs);
-    m_batchA.resize(count * widest);
-    m_batchB.resize(count * widest);
-    float* in = m_batchA.data();
-    float* out = m_batchB.data();
+    thread_local std::vector<float> batchA, batchB;
+    if (batchA.size() < count * widest) batchA.resize(count * widest);
+    if (batchB.size() < count * widest) batchB.resize(count * widest);
+    float* in = batchA.data();
+    float* out = batchB.data();
     std::size_t width = m_observationSize;
     for (std::size_t n = 0; n < count; ++n)
         for (std::size_t i = 0; i < m_observationSize; ++i)

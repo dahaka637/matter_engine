@@ -1652,7 +1652,10 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
     // pelo comando de agora (a capsula ou a virtual), so calculando a pose.
     // Caido, ela para; de pe de novo, recomeca no rumo pedido.
     athlete.referenceSeconds = 0.0f;
-    if ((settings.physicalReference || settings.locomotionPolicy) && !animated && !down) {
+    // (Com a rede ligada, so quem ela pode dirigir - o controlado e os
+    // comandados - le a sombra; os bonecos soltos nao pagam por ela.)
+    const bool policyReads = settings.locomotionPolicy && (command.controlled || slot.command != nullptr);
+    if ((settings.physicalReference || policyReads) && !animated && !down) {
         const auto begin = std::chrono::steady_clock::now();
         if (!state.referenceShadowActive) {
             // (Recomecando - depois de uma queda: o laco de fase tambem, sem
