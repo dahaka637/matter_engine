@@ -356,7 +356,9 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             const float wantedSpeed = wanted.length();
             if (wantedSpeed > 0.05f) state.returnSpeedScale = std::clamp(state.returnVelocity.length() / wantedSpeed, 0.0f, 1.0f);
         }
-        output.controlledSpeedScale = state.returnSpeedScale;
+        // (So o controlado: com 2+ atletas o ultimo da lista apagava a rampa
+        // de volta do controlado.)
+        if (command.controlled) output.controlledSpeedScale = state.returnSpeedScale;
     }
     command.balanceFootPlacement = e5 && settings.e5FootPlacement;
     command.walkingAssist = state.adaptivePhysics.settings().walkingAssistScale;

@@ -7,6 +7,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <fstream>
 #include <stdexcept>
@@ -109,6 +110,13 @@ const std::filesystem::path& LocomotionPolicy3D::file() const { return m_impl->f
 void LocomotionPolicy3D::before(AthleteState3D& athlete, const RagdollState3D& body, const AthleteCommand3D& command,
     float deltaTime) {
     Impl& impl = *m_impl;
+    // A rede so conhece o tick de 120 Hz do treino (o contato dos pes vira
+    // fracao do peso por ele; 4 ticks por decisao): com outro tick ela nao
+    // dirige e o atleta fica no classico exato.
+    if (std::abs(deltaTime - 1.0f / 120.0f) > 1.0e-6f) {
+        LocomotionContract3D::clear(athlete);
+        return;
+    }
     // A decisao: como no treino, a entrada do instante (o corpo publicado no
     // fim do passo anterior) e a acao media da rede, a cada TicksPerDecision
     // ticks.

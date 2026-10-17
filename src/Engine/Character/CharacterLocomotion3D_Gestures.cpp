@@ -505,7 +505,10 @@ void CharacterLocomotion3D::stepGestures(Tick& t) {
                 const RagdollLinkDefinition3D& parent = profile.links[static_cast<std::size_t>(link.parentIndex)];
                 return parent.modelOrientation.conjugate().rotate(link.inboundJoint.anchorModelPosition - parent.modelPosition);
             };
-            if (thigh > 0 && shin > 0 && upper > 0 && fore > 0 && hand > 0) {
+            const std::size_t n = profile.links.size();
+            // (findLink devolve size() quando nao acha: testar os dois lados.)
+            if (thigh > 0 && shin > 0 && upper > 0 && fore > 0 && hand > 0
+                && thigh < n && shin < n && upper < n && fore < n && hand < n) {
                 std::vector<Vec3> roll = sampled;
                 RagdollAnimationPose3D frame;
                 buildRagdollLocalPose3D(profile, roll, frame);

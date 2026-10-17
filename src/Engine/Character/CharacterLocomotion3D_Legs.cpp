@@ -1258,7 +1258,10 @@ void CharacterLocomotion3D::stepLegs(Tick& t) {
             const std::size_t upper = findLink(profile, upperIds[side]);
             const std::size_t fore = findLink(profile, foreIds[side]);
             const std::size_t palm = findLink(profile, handIds[side]);
-            if (upper == 0 || fore == 0 || palm == 0 || palm >= state.links.size()) continue;
+            // (findLink devolve size() quando nao acha.)
+            if (upper == 0 || fore == 0 || palm == 0 || upper >= profile.links.size() || fore >= profile.links.size()
+                || palm >= profile.links.size() || palm >= state.links.size() || fore >= state.links.size())
+                continue;
             const Vec3 wristInFore = anchorIn(palm);
             const float sideSign = side == 0 ? 1.0f : -1.0f;
             // Mao do clipe: altura do punho acima do chao do clipe.

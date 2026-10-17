@@ -730,6 +730,13 @@ void LocomotionTraining3D::updateTask(LocomotionTask3D task) {
     for (std::size_t d = 0; d < task.drills.size(); ++d)
         if (task.drills[d].id != impl.task.drills[d].id)
             throw std::runtime_error("treino da locomocao: a tarefa nova tem outros exercicios");
+    // As ajudas vao para os mundos na criacao (runtimeFor): uma tarefa com
+    // outras ajudas pede outro lote, nao uma troca silenciosa.
+    if (task.standingAssistPercent != impl.task.standingAssistPercent
+        || task.walkingAssistPercent != impl.task.walkingAssistPercent
+        || task.feetAssistPercent != impl.task.feetAssistPercent
+        || task.getUpAssistPercent != impl.task.getUpAssistPercent)
+        throw std::runtime_error("treino da locomocao: a tarefa nova muda as ajudas (abra outro lote)");
     impl.task = std::move(task);
     impl.computeCaps();
 }
