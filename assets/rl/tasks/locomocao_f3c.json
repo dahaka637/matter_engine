@@ -1,8 +1,8 @@
 {
   "schema": "matter-rl-locomocao-1",
   "id": "locomocao_f3c",
-  "displayName": "Locomocao: fase 3c (o sprint) a 0%",
-  "comment": "A fase 3, ultimo degrau: o sprint na estrela (ate 7,5 m/s; o piloto segura a tecla acima do trote da tabela). Inclui a 3a e a 3b.",
+  "displayName": "Locomocao: fase 3c (sprint) a 0%",
+  "comment": "A fase 3 do plano antigo (vault 04_locomocao/exercicios_do_corpo_v2.md), uma novidade por vez (04_locomocao/cartao_fase3.md): o sprint na estrela (ate 7,5 m/s; o piloto segura a tecla acima do trote da tabela). Tudo o que veio antes continua na mistura.",
   "episodeSeconds": 20.0,
   "assist": {
     "standing": 0.0,
@@ -11,7 +11,7 @@
     "getUp": 0.0
   },
   "caps": {
-    "touchdownMeters": 0.1,
+    "touchdownMeters": 0.06,
     "swingUpMeters": 0.07,
     "swingDownMeters": 0.02,
     "phaseLeadCycles": 0.06,
@@ -20,11 +20,11 @@
     "strideOctaves": 0.3,
     "leanRadians": 0.18,
     "comMeters": 0.12,
-    "pelvisUpMeters": 0.03,
-    "pelvisDownMeters": 0.06,
-    "contactAcceleration": 1.5,
-    "jointRadians": 0.15,
-    "gainOctaves": 0.4
+    "pelvisUpMeters": 0.02,
+    "pelvisDownMeters": 0.04,
+    "contactAcceleration": 1.0,
+    "jointRadians": 0.1,
+    "gainOctaves": 0.3
   },
   "reward": {
     "velocity": 0.4,
@@ -321,8 +321,8 @@
             3.14
           ],
           "pauseSeconds": [
-            0.5,
-            2.0
+            0.0,
+            1.5
           ]
         }
       }
@@ -331,7 +331,7 @@
       "id": "estrela_corrida",
       "displayName": "Estrela com corrida e sprint",
       "phase": 3,
-      "weight": 0.25,
+      "weight": 0.22,
       "minimum": {
         "fallFraction": 0.05,
         "velocityError": 1.0
@@ -425,7 +425,7 @@
       "id": "curva_fechada",
       "displayName": "Curvas fechadas (3 a 8 m) e em S",
       "phase": 3,
-      "weight": 0.2,
+      "weight": 0.18,
       "minimum": {
         "fallFraction": 0.05,
         "velocityError": 0.7

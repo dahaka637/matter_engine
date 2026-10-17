@@ -1,8 +1,8 @@
 {
   "schema": "matter-rl-locomocao-1",
-  "id": "locomocao_f3a",
-  "displayName": "Locomocao: fase 3a (giro rapido, corrida ate 4,5 m/s, curvas fechadas e em S) a 0%",
-  "comment": "A fase 3 do plano antigo (vault 04_locomocao/exercicios_do_corpo_v2.md), primeiro degrau: a velocidade. Tudo das fases 1 e 2 continua na mistura. Os tetos abrem para a corrida (cartao da fase 3: 04_locomocao/cartao_fase3.md).",
+  "id": "locomocao_f3a2",
+  "displayName": "Locomocao: fase 3a2 (corrida ate 4,5 m/s) a 0%",
+  "comment": "A fase 3 do plano antigo (vault 04_locomocao/exercicios_do_corpo_v2.md), uma novidade por vez (04_locomocao/cartao_fase3.md): a estrela com trote forte e corrida (ate 4,5 m/s); abrem o ritmo e a passada. Tudo o que veio antes continua na mistura.",
   "episodeSeconds": 20.0,
   "assist": {
     "standing": 0.0,
@@ -11,20 +11,20 @@
     "getUp": 0.0
   },
   "caps": {
-    "touchdownMeters": 0.1,
+    "touchdownMeters": 0.06,
     "swingUpMeters": 0.07,
     "swingDownMeters": 0.02,
     "phaseLeadCycles": 0.06,
     "recoveryUrgency": 0.5,
     "cadenceOctaves": 0.3,
     "strideOctaves": 0.3,
-    "leanRadians": 0.18,
-    "comMeters": 0.12,
-    "pelvisUpMeters": 0.03,
-    "pelvisDownMeters": 0.06,
-    "contactAcceleration": 1.5,
-    "jointRadians": 0.15,
-    "gainOctaves": 0.4
+    "leanRadians": 0.12,
+    "comMeters": 0.08,
+    "pelvisUpMeters": 0.02,
+    "pelvisDownMeters": 0.04,
+    "contactAcceleration": 1.0,
+    "jointRadians": 0.1,
+    "gainOctaves": 0.3
   },
   "reward": {
     "velocity": 0.4,
@@ -285,8 +285,8 @@
             3.14
           ],
           "pauseSeconds": [
-            0.5,
-            2.0
+            0.0,
+            1.5
           ]
         }
       }
@@ -295,7 +295,7 @@
       "id": "estrela_corrida",
       "displayName": "Estrela com trote forte e corrida (ate 4,5 m/s)",
       "phase": 3,
-      "weight": 0.25,
+      "weight": 0.22,
       "minimum": {
         "fallFraction": 0.05,
         "velocityError": 0.8
@@ -344,72 +344,6 @@
         "starJitterDegrees": 8.0,
         "continuousFraction": 0.35,
         "stopFraction": 0.3,
-        "holdSeconds": [
-          1.0,
-          2.0
-        ],
-        "brake": [
-          3.0,
-          6.0
-        ],
-        "arriveRadius": 0.8,
-        "camera": {
-          "fixed": 0.0,
-          "follow": 1.0,
-          "turns": 0.0,
-          "followRate": 4.0
-        }
-      }
-    },
-    {
-      "id": "curva_fechada",
-      "displayName": "Curvas fechadas (3 a 8 m) e em S",
-      "phase": 3,
-      "weight": 0.2,
-      "minimum": {
-        "fallFraction": 0.05,
-        "velocityError": 0.7
-      },
-      "pilot": {
-        "kind": "arc",
-        "bands": [
-          {
-            "name": "andar",
-            "speed": [
-              0.8,
-              1.4
-            ],
-            "weight": 1.0
-          },
-          {
-            "name": "trote",
-            "speed": [
-              1.8,
-              2.5
-            ],
-            "weight": 1.0
-          },
-          {
-            "name": "corrida",
-            "speed": [
-              3.0,
-              4.5
-            ],
-            "weight": 1.0
-          }
-        ],
-        "arcRadius": [
-          3.0,
-          8.0
-        ],
-        "arcDegrees": [
-          60.0,
-          170.0
-        ],
-        "arcFlipFraction": 0.5,
-        "lateralAcceleration": 5.0,
-        "arcLookahead": 1.2,
-        "stopFraction": 0.25,
         "holdSeconds": [
           1.0,
           2.0

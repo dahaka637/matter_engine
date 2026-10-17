@@ -99,6 +99,8 @@ class LocomotionRunConfig:
     evaluation_worlds: int = 24
     evaluation_seconds: float = 20.0
     checkpoint_minutes: float = 10.0
+    # Todos os mundos num exercicio (o treino curto sozinho de uma novidade).
+    drill: str = ""
     disk_cap_gb: float = 40.0
     end_reason: str = ""
 
@@ -165,7 +167,7 @@ def drill_summary(rows: np.ndarray, columns: list[str], drills: list[str], reaso
 class LocomotionTrainer:
     def __init__(self, run: str, task: str | None = None, mode: str | None = None, environments: int | None = None,
                  device: str = "auto", seed: int | None = None, socket_path: Path | None = None,
-                 iterations: int | None = None):
+                 iterations: int | None = None, drill: str | None = None):
         self.run = run
         self.directory = paths.run_dir(run)
         self.directory.mkdir(parents=True, exist_ok=True)
@@ -184,6 +186,8 @@ class LocomotionTrainer:
             self.config.environments = environments
         if seed is not None:
             self.config.seed = seed
+        if drill is not None:
+            self.config.drill = drill
         if fresh and os.environ.get("MATTER_RL_PPO"):
             self.config.ppo.update(json.loads(os.environ["MATTER_RL_PPO"]))
         self.config.end_reason = ""
@@ -218,7 +222,7 @@ class LocomotionTrainer:
             storage.write_json_atomic(self.live_task, source_task)
         self.assets = str(paths.ASSETS)
         self.batch = self.native.LocomotionBatch(str(self.live_task), self.assets, environments=self.config.environments,
-                                                 threads=self.threads, seed=self.config.seed)
+                                                 threads=self.threads, seed=self.config.seed, drill=self.config.drill)
         self.obs_names = self.batch.observation_names()
         self.critic_names = self.batch.critic_names()
         self.action_names = self.batch.action_names()

@@ -8,6 +8,8 @@
     matter-rl status | pausar | retomar | parar | salvar | avaliar
     matter-rl modo maximo|equilibrado|leve
     matter-rl tarefa <id>                 o treino aberto passa para outra tarefa (o mesmo cerebro)
+    matter-rl ramo --de R --run N         um treino novo do ultimo checkpoint de outro (locomocao: o treino
+                                          curto sozinho de uma novidade, com treinar --exercicio)
     matter-rl peso <parcela> <valor> [--motivo M]   ("estilo" e o beta do juiz)
     matter-rl relatorio [--desde 1h]      o que mudou no periodo (Markdown)
     matter-rl graficos [--saida DIR]      PNG das curvas
@@ -70,7 +72,8 @@ def command_train(args: argparse.Namespace) -> int:
     # esquema matter-rl-locomocao-1, ou um treino dela.
     if is_locomotion_run(args.run) or (args.tarefa and is_locomotion_task(paths.task_path(args.tarefa))):
         trainer = LocomotionTrainer(args.run, task=args.tarefa, mode=args.modo, environments=args.mundos,
-                                    device=args.dispositivo, seed=args.semente, iterations=args.rodadas)
+                                    device=args.dispositivo, seed=args.semente, iterations=args.rodadas,
+                                    drill=args.exercicio)
         return trainer.loop()
     from .body_trainer import BodyTrainer, is_body_run, is_body_task
     # O Corpo v2 (a tarefa do esquema 2, ou um treino dele) tem o treinador proprio.
@@ -129,6 +132,8 @@ def command_serve(args: argparse.Namespace) -> int:
             command += ["--tarefa", args.tarefa]
         if first and args.modo:
             command += ["--modo", args.modo]
+        if first and getattr(args, "exercicio", None):
+            command += ["--exercicio", args.exercicio]
         first = False
         started = time.time()
         code = subprocess.call(command, cwd=str(Path(__file__).resolve().parents[1]))
@@ -149,7 +154,8 @@ def start_arguments(args: argparse.Namespace, command: list[str]) -> list[str]:
     for flag, value in (("--tarefa", args.tarefa), ("--modo", args.modo), ("--mundos", args.mundos),
                         ("--semente", getattr(args, "semente", None)), ("--de-checkpoint", args.de_checkpoint),
                         ("--aquecimento", args.aquecimento), ("--desvio-aprendido", args.desvio_aprendido),
-                        ("--espelho", args.espelho), ("--ganho-comando", args.ganho_comando)):
+                        ("--espelho", args.espelho), ("--ganho-comando", args.ganho_comando),
+                        ("--exercicio", getattr(args, "exercicio", None))):
         if value is not None and value != "":
             command += [flag, str(value)]
     if args.de_checkpoint:
@@ -159,6 +165,34 @@ def start_arguments(args: argparse.Namespace, command: list[str]) -> list[str]:
         if value:
             command.append(flag)
     return command
+
+
+def command_branch(args: argparse.Namespace) -> int:
+    """Um ramo de um treino: o ultimo checkpoint, a configuracao e a copia da
+    tarefa de outro treino num treino novo (o treino curto sozinho de uma
+    novidade sem mexer no principal). O ramo comeca do mesmo cerebro e segue
+    sozinho; o banco o registra quando ele abrir."""
+    source = paths.run_dir(args.de)
+    target = paths.run_dir(args.run)
+    reference = storage.latest_checkpoint(source)
+    if reference is None:
+        print(f"o treino {args.de} nao tem checkpoint", file=sys.stderr)
+        return 1
+    if target.exists() and any(target.iterdir()):
+        print(f"o treino {args.run} ja existe", file=sys.stderr)
+        return 1
+    target.mkdir(parents=True, exist_ok=True)
+    import shutil
+    for name in ("run.json", "tarefa.json"):
+        if (source / name).exists():
+            shutil.copy2(source / name, target / name)
+    shutil.copytree(reference.path, target / reference.path.relative_to(source), dirs_exist_ok=True) \
+        if reference.path.is_dir() else shutil.copy2(reference.path, target / reference.path.relative_to(source))
+    config = json.loads((target / "run.json").read_text())
+    config["end_reason"] = ""
+    storage.write_json_atomic(target / "run.json", config)
+    print(f"ramo {args.run} de {args.de} (rodada {reference.iteration})")
+    return 0
 
 
 def command_start(args: argparse.Namespace) -> int:
@@ -341,6 +375,9 @@ def main(argv: list[str] | None = None) -> int:
             p.add_argument("--dispositivo", default="auto", choices=["auto", "cuda", "cpu"])
             p.add_argument("--semente", type=int)
             p.add_argument("--rodadas", type=int)
+            # A locomocao: todos os mundos num exercicio da tarefa (o treino curto
+            # sozinho de uma novidade; fica no run.json do treino).
+            p.add_argument("--exercicio")
             # O Corpo v2: sem o juiz de estilo (a variante B1; escolhida ao criar
             # o treino).
             p.add_argument("--sem-estilo", action="store_true")
@@ -370,6 +407,9 @@ def main(argv: list[str] | None = None) -> int:
     affinity.add_argument("--tarefa", default="corpo2")
     affinity.add_argument("--juiz", default="", help="o arquivo do juiz (padrao: <dados>/avaliacao/juiz_afinidade.pt)")
     affinity.set_defaults(func=command_affinity)
+    branch = run_args(sub.add_parser("ramo", help="um treino novo a partir do ultimo checkpoint de outro (a locomocao)"))
+    branch.add_argument("--de", required=True)
+    branch.set_defaults(func=command_branch)
     run_args(sub.add_parser("treinar"), True).set_defaults(func=command_train)
     run_args(sub.add_parser("servir"), True).set_defaults(func=command_serve)
     run_args(sub.add_parser("iniciar"), True).set_defaults(func=command_start)

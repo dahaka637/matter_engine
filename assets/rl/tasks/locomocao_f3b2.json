@@ -1,0 +1,491 @@
+{
+  "schema": "matter-rl-locomocao-1",
+  "id": "locomocao_f3b2",
+  "displayName": "Locomocao: fase 3b2 (peito girando) a 0%",
+  "comment": "A fase 3 do plano antigo (vault 04_locomocao/exercicios_do_corpo_v2.md), uma novidade por vez (04_locomocao/cartao_fase3.md): o peito girando em tudo o que anda (a camera gira enquanto ele se desloca). Tudo o que veio antes continua na mistura.",
+  "episodeSeconds": 20.0,
+  "assist": {
+    "standing": 0.0,
+    "walking": 0.0,
+    "feet": 0.0,
+    "getUp": 0.0
+  },
+  "caps": {
+    "touchdownMeters": 0.06,
+    "swingUpMeters": 0.07,
+    "swingDownMeters": 0.02,
+    "phaseLeadCycles": 0.06,
+    "recoveryUrgency": 0.5,
+    "cadenceOctaves": 0.3,
+    "strideOctaves": 0.3,
+    "leanRadians": 0.18,
+    "comMeters": 0.12,
+    "pelvisUpMeters": 0.02,
+    "pelvisDownMeters": 0.04,
+    "contactAcceleration": 1.0,
+    "jointRadians": 0.1,
+    "gainOctaves": 0.3
+  },
+  "reward": {
+    "velocity": 0.4,
+    "facing": 0.1,
+    "style": 0.2,
+    "contact": 0.1,
+    "velocitySigma": 0.5,
+    "facingSigma": 0.4,
+    "styleSigma": 0.15,
+    "contactSigma": 0.15,
+    "slip": 0.05,
+    "work": 0.02,
+    "smooth": 0.05,
+    "assist": 0.05,
+    "posture": 0.2,
+    "residual": 0.02,
+    "fall": 1.0
+  },
+  "termination": {
+    "pelvisHeight": 0.45,
+    "boundaryMeters": 50.0
+  },
+  "drillWeights": {
+    "auto": true,
+    "gain": 2.0,
+    "maximumFactor": 3.0,
+    "floor": 0.08
+  },
+  "drills": [
+    {
+      "id": "parado",
+      "displayName": "Parado",
+      "phase": 1,
+      "weight": 0.08,
+      "minimum": {
+        "fallFraction": 0.02
+      },
+      "pilot": {
+        "kind": "hold",
+        "camera": {
+          "fixed": 1.0,
+          "follow": 0.0,
+          "turns": 0.0
+        }
+      }
+    },
+    {
+      "id": "estrela",
+      "displayName": "Estrela de 8 pontas andando",
+      "phase": 1,
+      "weight": 0.1,
+      "minimum": {
+        "fallFraction": 0.05,
+        "velocityError": 0.35
+      },
+      "pilot": {
+        "kind": "star",
+        "bands": [
+          {
+            "name": "andar",
+            "speed": [
+              0.8,
+              1.4
+            ],
+            "distance": [
+              4.0,
+              8.0
+            ],
+            "weight": 1.0
+          }
+        ],
+        "starDirections": 8,
+        "starJitterDegrees": 8.0,
+        "continuousFraction": 0.0,
+        "stopFraction": 0.3,
+        "holdSeconds": [
+          1.0,
+          2.0
+        ],
+        "brake": [
+          2.0,
+          4.0
+        ],
+        "arriveRadius": 0.6,
+        "camera": {
+          "fixed": 0.35,
+          "follow": 0.35,
+          "turns": 0.3,
+          "followRate": 4.0,
+          "turnDegrees": [
+            45.0,
+            180.0
+          ],
+          "turnRate": [
+            0.4,
+            1.5
+          ],
+          "pauseSeconds": [
+            1.0,
+            3.0
+          ]
+        }
+      }
+    },
+    {
+      "id": "giro",
+      "displayName": "Parado com giro suave",
+      "phase": 2,
+      "weight": 0.08,
+      "minimum": {
+        "fallFraction": 0.02
+      },
+      "pilot": {
+        "kind": "hold",
+        "camera": {
+          "fixed": 0.0,
+          "follow": 0.0,
+          "turns": 1.0,
+          "turnDegrees": [
+            30.0,
+            120.0
+          ],
+          "turnRate": [
+            0.4,
+            0.6
+          ],
+          "pauseSeconds": [
+            1.5,
+            4.0
+          ]
+        }
+      }
+    },
+    {
+      "id": "estrela_trote",
+      "displayName": "Estrela com trote leve (ponta a ponta)",
+      "phase": 2,
+      "weight": 0.1,
+      "minimum": {
+        "fallFraction": 0.05,
+        "velocityError": 0.45
+      },
+      "pilot": {
+        "kind": "star",
+        "bands": [
+          {
+            "name": "andar",
+            "speed": [
+              0.8,
+              1.4
+            ],
+            "distance": [
+              4.0,
+              8.0
+            ],
+            "weight": 1.0
+          },
+          {
+            "name": "trote",
+            "speed": [
+              1.8,
+              2.5
+            ],
+            "distance": [
+              6.0,
+              10.0
+            ],
+            "weight": 1.0
+          }
+        ],
+        "starDirections": 8,
+        "starJitterDegrees": 8.0,
+        "continuousFraction": 0.35,
+        "stopFraction": 0.3,
+        "holdSeconds": [
+          1.0,
+          2.0
+        ],
+        "brake": [
+          2.0,
+          4.0
+        ],
+        "arriveRadius": 0.6,
+        "camera": {
+          "fixed": 0.35,
+          "follow": 0.35,
+          "turns": 0.3,
+          "followRate": 4.0,
+          "turnDegrees": [
+            45.0,
+            180.0
+          ],
+          "turnRate": [
+            0.4,
+            1.5
+          ],
+          "pauseSeconds": [
+            1.0,
+            3.0
+          ]
+        }
+      }
+    },
+    {
+      "id": "curva",
+      "displayName": "Curva suave (~15 m)",
+      "phase": 2,
+      "weight": 0.1,
+      "minimum": {
+        "fallFraction": 0.05,
+        "velocityError": 0.45
+      },
+      "pilot": {
+        "kind": "arc",
+        "bands": [
+          {
+            "name": "andar",
+            "speed": [
+              0.8,
+              1.4
+            ],
+            "weight": 1.0
+          },
+          {
+            "name": "trote",
+            "speed": [
+              1.8,
+              2.5
+            ],
+            "weight": 1.0
+          }
+        ],
+        "arcRadius": [
+          12.0,
+          18.0
+        ],
+        "arcDegrees": [
+          45.0,
+          120.0
+        ],
+        "arcFlipFraction": 0.4,
+        "lateralAcceleration": 4.0,
+        "arcLookahead": 1.5,
+        "stopFraction": 0.25,
+        "holdSeconds": [
+          1.0,
+          2.0
+        ],
+        "brake": [
+          2.0,
+          4.0
+        ],
+        "arriveRadius": 0.6,
+        "camera": {
+          "fixed": 0.35,
+          "follow": 0.35,
+          "turns": 0.3,
+          "followRate": 4.0,
+          "turnDegrees": [
+            45.0,
+            180.0
+          ],
+          "turnRate": [
+            0.4,
+            1.5
+          ],
+          "pauseSeconds": [
+            1.0,
+            3.0
+          ]
+        }
+      }
+    },
+    {
+      "id": "giro_rapido",
+      "displayName": "Parado com giro rapido (ate ~180 graus/s)",
+      "phase": 3,
+      "weight": 0.15,
+      "minimum": {
+        "fallFraction": 0.05
+      },
+      "pilot": {
+        "kind": "hold",
+        "camera": {
+          "fixed": 0.0,
+          "follow": 0.0,
+          "turns": 1.0,
+          "turnDegrees": [
+            60.0,
+            240.0
+          ],
+          "turnRate": [
+            1.0,
+            3.14
+          ],
+          "pauseSeconds": [
+            0.0,
+            1.5
+          ]
+        }
+      }
+    },
+    {
+      "id": "estrela_corrida",
+      "displayName": "Estrela com trote forte e corrida (ate 4,5 m/s)",
+      "phase": 3,
+      "weight": 0.22,
+      "minimum": {
+        "fallFraction": 0.05,
+        "velocityError": 0.8
+      },
+      "pilot": {
+        "kind": "star",
+        "bands": [
+          {
+            "name": "trote",
+            "speed": [
+              1.8,
+              2.5
+            ],
+            "distance": [
+              6.0,
+              10.0
+            ],
+            "weight": 1.0
+          },
+          {
+            "name": "trote_forte",
+            "speed": [
+              2.5,
+              3.5
+            ],
+            "distance": [
+              8.0,
+              12.0
+            ],
+            "weight": 1.0
+          },
+          {
+            "name": "corrida",
+            "speed": [
+              3.5,
+              4.5
+            ],
+            "distance": [
+              10.0,
+              14.0
+            ],
+            "weight": 1.0
+          }
+        ],
+        "starDirections": 8,
+        "starJitterDegrees": 8.0,
+        "continuousFraction": 0.35,
+        "stopFraction": 0.3,
+        "holdSeconds": [
+          1.0,
+          2.0
+        ],
+        "brake": [
+          3.0,
+          6.0
+        ],
+        "arriveRadius": 0.8,
+        "camera": {
+          "fixed": 0.35,
+          "follow": 0.35,
+          "turns": 0.3,
+          "followRate": 4.0,
+          "turnDegrees": [
+            45.0,
+            180.0
+          ],
+          "turnRate": [
+            0.4,
+            1.5
+          ],
+          "pauseSeconds": [
+            1.0,
+            3.0
+          ]
+        }
+      }
+    },
+    {
+      "id": "curva_fechada",
+      "displayName": "Curvas fechadas (3 a 8 m) e em S",
+      "phase": 3,
+      "weight": 0.18,
+      "minimum": {
+        "fallFraction": 0.05,
+        "velocityError": 0.7
+      },
+      "pilot": {
+        "kind": "arc",
+        "bands": [
+          {
+            "name": "andar",
+            "speed": [
+              0.8,
+              1.4
+            ],
+            "weight": 1.0
+          },
+          {
+            "name": "trote",
+            "speed": [
+              1.8,
+              2.5
+            ],
+            "weight": 1.0
+          },
+          {
+            "name": "corrida",
+            "speed": [
+              3.0,
+              4.5
+            ],
+            "weight": 1.0
+          }
+        ],
+        "arcRadius": [
+          3.0,
+          8.0
+        ],
+        "arcDegrees": [
+          60.0,
+          170.0
+        ],
+        "arcFlipFraction": 0.5,
+        "lateralAcceleration": 5.0,
+        "arcLookahead": 1.2,
+        "stopFraction": 0.25,
+        "holdSeconds": [
+          1.0,
+          2.0
+        ],
+        "brake": [
+          3.0,
+          6.0
+        ],
+        "arriveRadius": 0.8,
+        "camera": {
+          "fixed": 0.35,
+          "follow": 0.35,
+          "turns": 0.3,
+          "followRate": 4.0,
+          "turnDegrees": [
+            45.0,
+            180.0
+          ],
+          "turnRate": [
+            0.4,
+            1.5
+          ],
+          "pauseSeconds": [
+            1.0,
+            3.0
+          ]
+        }
+      }
+    }
+  ]
+}
