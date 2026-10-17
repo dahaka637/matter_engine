@@ -28,7 +28,7 @@ import torch
 
 from . import control, paths, storage, system
 from .body_trainer import balance_drills, choose_device, wilson_upper
-from .model import ActorCritic
+from .model import ActorCritic, export_policy
 from .ppo import PPO, PPOSettings, Rollout
 from .symmetry import MirrorLoss
 
@@ -345,9 +345,32 @@ class LocomotionTrainer:
     def write_status(self) -> None:
         storage.write_json_atomic(self.directory / "status.json", self.status())
 
+    def export(self, name: str = "policy_latest") -> Path:
+        """A politica para o jogo (o .mrlpolicy do PolicyRuntime3D): o ator com a
+        escala do teto embutida na ultima camada (a saida ja e a acao do
+        contrato), a normalizacao, e no cabecalho o contrato, a autoridade e os
+        tetos com que ela treinou."""
+        model = copy.deepcopy(self.model).cpu()
+        with torch.no_grad():
+            last = [m for m in model.actor if isinstance(m, torch.nn.Linear)][-1]
+            scale = self.action_scale.cpu()
+            last.weight.mul_(scale.unsqueeze(1))
+            last.bias.mul_(scale)
+        live = json.loads(self.live_task.read_text())
+        path = self.directory / "exports" / f"{name}.mrlpolicy"
+        export_policy(model, path, {
+            "observationLayout": "locomocao.observacao", "observationVersion": int(self.batch.contract_version),
+            "actionLayout": "locomocao.acao", "bodyId": self.batch.body_id, "bodyHash": self.batch.contract_hash,
+            "taskId": self.config.task, "run": self.run, "iteration": self.counters["iteration"],
+            "steps": self.counters["steps"], "observationNames": list(self.obs_names),
+            "contractHash": self.batch.contract_hash, "authority": self.authority(), "caps": live.get("caps", {}),
+        })
+        return path
+
     def save(self, kind: str = "periodico") -> None:
         reference = storage.save_checkpoint(self.directory, self.counters["iteration"], self.checkpoint_state(),
                                             self.manifest())
+        self.export()
         self.db.log_checkpoint(self.run, self.counters["iteration"], self.counters["steps"], reference.path, kind, None)
         for iteration in storage.prune_checkpoints(self.directory, set()):
             self.db.forget_checkpoint(self.run, iteration)
