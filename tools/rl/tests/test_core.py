@@ -117,6 +117,42 @@ def test_rescale_actions_keeps_joint_targets():
         assert torch.allclose(model.actor(model.obs_norm(x)), before, atol=1e-5)
 
 
+def test_task_switch_keeps_the_stochastic_policy():
+    """A troca de tarefa (o critico ganha entradas, os tetos mudam): na mesma
+    acao fisica, a log-probabilidade, o desvio fisico e o valor do critico ficam
+    iguais (o que o PPO ve no primeiro instante da tarefa nova)."""
+    torch.manual_seed(7)
+    obs_names = ["a", "b", "c"]
+    critic_old = ["a", "b", "c", "d"]
+    critic_new = critic_old + ["novo1", "novo2"]
+    model = ActorCritic(3, 4, 3)
+    for p in model.actor.parameters():
+        p.data.normal_()
+    model.log_std.data.normal_(-1.0, 0.3)
+    model.obs_norm.update(torch.randn(64, 3) * 2)
+    model.critic_norm.update(torch.randn(64, 4))
+    old_scale = torch.tensor([0.10, 0.06, 0.2])
+    new_scale = torch.tensor([0.15, 0.09, 0.2])
+    x = torch.randn(16, 3)
+    c = torch.randn(16, 4)
+    c_new = torch.cat([c, torch.randn(16, 2)], 1)
+    with torch.no_grad():
+        before = model.distribution(model.obs_norm(x))
+        physical = before.sample() * old_scale
+        logp_before = before.log_prob(physical / old_scale).sum(-1) - torch.log(old_scale).sum()
+        std_before = before.stddev * old_scale
+        value_before = model.value(model.critic_norm(c))
+    fresh = migrate_inputs(model, obs_names, obs_names, critic_old, critic_new)
+    rescale_actions(fresh, old_scale / new_scale)
+    with torch.no_grad():
+        after = fresh.distribution(fresh.obs_norm(x))
+        logp_after = after.log_prob(physical / new_scale).sum(-1) - torch.log(new_scale).sum()
+        assert torch.allclose(after.stddev * new_scale, std_before, atol=1e-6)
+        assert torch.allclose(logp_after, logp_before, atol=5e-3)  # (float32: o desvio e pequeno)
+        assert torch.allclose(fresh.value(fresh.critic_norm(c_new)), value_before, atol=1e-5)
+        assert float(fresh.critic[0].weight[:, 4:].abs().max()) == 0.0
+
+
 def test_checkpoints_atomic_and_pruned(tmp_path: Path):
     run = tmp_path / "treino"
     now = time.time()
