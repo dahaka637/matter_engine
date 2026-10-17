@@ -12,6 +12,7 @@ portao: a melhora nao pode vir so delas) e o classico (autoridade zero).
 """
 from __future__ import annotations
 
+import concurrent.futures
 import copy
 import json
 import math
@@ -102,6 +103,11 @@ class LocomotionRunConfig:
     # Todos os mundos num exercicio (o treino curto sozinho de uma novidade).
     drill: str = ""
     disk_cap_gb: float = 40.0
+    # A atualizacao do PPO sobreposta a coleta seguinte (vault
+    # 02_estrutura/estudo_desempenho.md, pipeline-16; o padrao do body_trainer):
+    # a coleta usa a politica de uma atualizacao atras; a razao do PPO e contra
+    # quem coletou e o KL da taxa contra a politica do comeco da atualizacao.
+    overlap: bool = True
     end_reason: str = ""
 
     @staticmethod
@@ -200,6 +206,8 @@ class LocomotionTrainer:
         if fresh and os.environ.get("MATTER_RL_PPO"):
             self.config.ppo.update(json.loads(os.environ["MATTER_RL_PPO"]))
         self.config.end_reason = ""
+        # (Nenhuma constante T_* do motor no ambiente sem querer.)
+        self.tuned_environment = system.refuse_tuned_environment("treino da locomocao")
         self.config.save(config_path)
         self.max_iterations = iterations
         random.seed(self.config.seed)
@@ -256,10 +264,20 @@ class LocomotionTrainer:
         self.counters = {"iteration": 0, "steps": 0, "train_seconds": 0.0, "episodes": 0, "authority": 0.0}
         self.db = storage.Database(paths.DATABASE)
         self.db.ensure_run(run, self.config.task, self.batch.contract_hash, asdict(self.config))
+        if self.tuned_environment:
+            self.db.event(run, "ambiente", "rodando com T_* definidas: " + json.dumps(self.tuned_environment))
         self.restore()
         self.fix_raw_channels()
         self.reset_candidates()
         self.collector = copy.deepcopy(self.model)
+        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=1, initializer=self._init_worker) \
+            if self.config.overlap else None
+        self.stream = torch.cuda.Stream() if self.config.overlap and self.device.type == "cuda" else None
+        self.pending = None
+        # (Geradores proprios da atualizacao: com a sobreposicao, a ordem em que
+        # coleta e atualizacao consomem o gerador padrao dependeria do tempo.)
+        self.update_generator = torch.Generator(device=self.device)
+        self.update_generator.manual_seed(self.config.seed * 7919 + 17 + self.counters["iteration"])
         self.apply_authority()
         self.load_drill_weights()
 
@@ -335,7 +353,8 @@ class LocomotionTrainer:
                 "action_scale": self.action_scale.cpu().tolist(),
                 "counters": dict(self.counters), "obs_names": self.obs_names, "critic_names": self.critic_names,
                 "action_names": self.action_names, "contract_hash": self.batch.contract_hash,
-                "rng_torch": torch.get_rng_state()}
+                "rng_torch": torch.get_rng_state(),
+                "rng_cuda": torch.cuda.get_rng_state() if self.device.type == "cuda" else None}
 
     def restore(self) -> None:
         self.restore_notes: list[str] = []
@@ -384,6 +403,13 @@ class LocomotionTrainer:
                                                 f"{lost} rodadas depois do checkpoint se perderam")
         if "rng_torch" in state:
             torch.set_rng_state(state["rng_torch"].cpu())
+        # Retomada: o ruido da GPU segue de onde parou e os mundos recomecam com
+        # uma semente nova (antes cada sessao repetia as sementes da primeira).
+        if self.device.type == "cuda" and state.get("rng_cuda") is not None:
+            torch.cuda.set_rng_state(state["rng_cuda"].cpu())
+        elif self.device.type == "cuda":
+            torch.cuda.manual_seed_all(self.config.seed * 1000003 + self.counters["iteration"])
+        self.batch.reset(self.config.seed * 1000003 + self.counters["iteration"])
 
     def status(self) -> dict:
         return {
@@ -425,6 +451,7 @@ class LocomotionTrainer:
         return path
 
     def save(self, kind: str = "periodico") -> None:
+        self.drain()
         reference = storage.save_checkpoint(self.directory, self.counters["iteration"], self.checkpoint_state(),
                                             self.manifest())
         self.export()
@@ -442,12 +469,19 @@ class LocomotionTrainer:
         """Cada exercicio com a acao media, o primeiro episodio de cada mundo: a
         rede inteira, a rede sem a pose e a rigidez (a ablacao do portao) e o
         classico (autoridade zero). As medidas vao para o banco."""
+        self.drain()
         previous, self.state = self.state, "avaliando"
         self.write_status()
         results: dict = {}
         a = self.authority()
         solvers = {"rede": (a, a, a, a), "sem_pose_rigidez": (a, a, 0.0, 0.0), "classico": (0.0, 0.0, 0.0, 0.0)}
         col = {name: i for i, name in enumerate(self.episode_columns)}
+        # (O classico nao depende da rede: o resumo dele fica em cache pela
+        # tarefa - o arquivo inteiro, com as ajudas - e pelo contrato.)
+        import hashlib
+        task_key = hashlib.sha256(Path(self.live_task).read_bytes()).hexdigest()[:16] + self.batch.contract_hash
+        if not hasattr(self, "classic_cache"):
+            self.classic_cache = {}
         for drill in self.drill_ids:
             batch = self.evaluation_batches.get(drill)
             if batch is None:
@@ -457,8 +491,21 @@ class LocomotionTrainer:
                                                     evaluation_seconds=self.config.evaluation_seconds, drill=drill)
                 self.evaluation_batches[drill] = batch
             else:
-                batch.update_task(str(self.live_task))
+                try:
+                    batch.update_task(str(self.live_task))
+                except Exception:  # noqa: BLE001 (outras ajudas ou exercicios: um lote novo)
+                    batch = self.native.LocomotionBatch(str(self.live_task), self.assets,
+                                                        environments=self.config.evaluation_worlds,
+                                                        threads=self.threads, seed=20261016, evaluation=True,
+                                                        evaluation_seconds=self.config.evaluation_seconds, drill=drill)
+                    self.evaluation_batches[drill] = batch
             for solver, authority in solvers.items():
+                cached = self.classic_cache.get((task_key, drill)) if solver == "classico" else None
+                if cached is not None:
+                    results.setdefault(solver, {})[drill] = cached
+                    self.db.log_body_evaluation(self.run, self.counters["iteration"], self.counters["steps"], drill,
+                                                solver, cached)
+                    continue
                 batch.set_authority(*authority)
                 batch.reset(20261016)
                 worlds = batch.num_envs
@@ -466,9 +513,15 @@ class LocomotionTrainer:
                 steps = int(self.config.evaluation_seconds / batch.policy_dt) + 2
                 with torch.no_grad():
                     for _ in range(steps):
-                        obs = self.tensor(batch.observations())
-                        mean = self.model.actor(self.model.obs_norm(obs))
-                        batch.step(np.ascontiguousarray((mean * self.action_scale).cpu().numpy(), dtype=np.float32))
+                        if solver == "classico":
+                            # (Acao zero: com a da rede, os trancos e o residuo do
+                            # classico mediam a rede, embora ela nao agisse.)
+                            batch.step(np.zeros((worlds, batch.action_size), dtype=np.float32))
+                        else:
+                            obs = self.tensor(batch.observations())
+                            mean = self.model.actor(self.model.obs_norm(obs))
+                            batch.step(np.ascontiguousarray((mean * self.action_scale).cpu().numpy(),
+                                                            dtype=np.float32))
                         for row in batch.finished_episodes():
                             first.setdefault(int(row[col["mundo"]]), np.array(row))
                         if len(first) >= worlds:
@@ -476,6 +529,8 @@ class LocomotionTrainer:
                 rows = np.array(list(first.values())) if first else np.zeros((0, len(self.episode_columns)))
                 summary = drill_summary(rows, self.episode_columns, self.drill_ids, self.end_reasons).get(drill, {})
                 summary["worlds"] = worlds
+                if solver == "classico":
+                    self.classic_cache[(task_key, drill)] = summary
                 results.setdefault(solver, {})[drill] = summary
                 self.db.log_body_evaluation(self.run, self.counters["iteration"], self.counters["steps"], drill, solver,
                                             summary)
@@ -543,6 +598,8 @@ class LocomotionTrainer:
                 self.db.event(self.run, "modo", f"modo {system.MODES[name].label}", author)
                 self.restart_requested = True
             return {"ok": True}
+        if command in ("peso", "tarefa", "modo"):
+            self.drain()
         if command == "peso":
             return self.set_weight(arguments["componente"], float(arguments["valor"]), author,
                                    arguments.get("motivo", ""))
@@ -576,7 +633,11 @@ class LocomotionTrainer:
         components = np.zeros(batch.reward_count, dtype=np.float64)
         episodes: list[np.ndarray] = []
         bootstrap_sum = 0.0
-        with torch.no_grad():
+        context = torch.cuda.stream(self.stream) if self.stream is not None else _Null()
+        if self.stream is not None:
+            # Os pesos que o sync copiou (no fluxo padrao) antes da coleta ler.
+            self.stream.wait_stream(torch.cuda.current_stream())
+        with context, torch.no_grad():
             rollout = Rollout(s.steps_per_env, envs, batch.obs_size, batch.critic_size, batch.action_size, self.device)
             rollout.norm = (net.obs_norm.mean.clone(), net.obs_norm.inverse_std().clone())
             obs, critic = self.tensor(batch.observations()), self.tensor(batch.critic_observations())
@@ -609,13 +670,31 @@ class LocomotionTrainer:
                 obs, critic = self.tensor(batch.observations()), self.tensor(batch.critic_observations())
             last_values = net.value(net.critic_norm(critic))
             rollout.compute_returns(last_values, s.gamma, s.lam)
+        if self.stream is not None:
+            self.stream.synchronize()
         samples = s.steps_per_env * envs
         rows = np.concatenate(episodes) if episodes else np.zeros((0, len(self.episode_columns)))
         return rollout, {"collect": time.time() - begin, "samples": samples, "components": components / samples,
                          "rows": rows, "bootstrap": bootstrap_sum / samples, "reward": float(rollout.rewards.mean())}
 
+    def _init_worker(self) -> None:
+        # A thread da atualizacao com o contexto da GPU desde o comeco.
+        if self.device.type == "cuda":
+            torch.cuda.set_device(self.device.index or 0)
+
     def update(self, rollout: Rollout) -> dict:
+        """A atualizacao (na thread da GPU, com a sobreposicao)."""
         begin = time.time()
+        rollout.generator = self.update_generator
+        if self.config.overlap:
+            # O KL da taxa contra a politica do comeco desta atualizacao.
+            with torch.no_grad():
+                dist = self.model.distribution(rollout.obs.reshape(-1, rollout.obs.shape[-1]))
+                rollout.anchor_mean = dist.mean.reshape(rollout.mean.shape)
+                rollout.anchor_std = dist.stddev.reshape(rollout.std.shape)
+                # (O PPO desacoplado: o log-prob das acoes na politica de agora.)
+                rollout.anchor_log_probs = dist.log_prob(
+                    rollout.actions.reshape(-1, rollout.actions.shape[-1])).sum(-1).reshape(rollout.log_probs.shape)
         with torch.no_grad():
             returns, values = rollout.returns.reshape(-1), rollout.values.reshape(-1)
             explained = float(1.0 - (returns - values).var() / returns.var().clamp(min=1e-8))
@@ -625,7 +704,8 @@ class LocomotionTrainer:
             weight = self.config.mirror_loss
 
             def auxiliary():
-                index = torch.randint(0, raw.shape[0], (min(4096, raw.shape[0]),), device=raw.device)
+                index = torch.randint(0, raw.shape[0], (min(4096, raw.shape[0]),), device=raw.device,
+                                      generator=self.update_generator)
                 return weight * self.mirror(self.model, raw[index], raw=True, norm=rollout.norm)
         stats = self.ppo.update(rollout, auxiliary=auxiliary)
         stats["explained_variance"] = explained
@@ -654,7 +734,8 @@ class LocomotionTrainer:
         falls = int(np.isin(reasons, fall_codes).sum())
         world_seconds = info["samples"] * self.batch.policy_dt
         fall_risk = falls * self.episode_seconds / max(1e-6, world_seconds)
-        seconds = info["collect"] + stats["update"]
+        # A rodada leva o maior dos dois tempos com a sobreposicao.
+        seconds = max(info["collect"], stats["update"]) if self.config.overlap else info["collect"] + stats["update"]
         sps = info["samples"] / max(1e-6, seconds)
         self.recent_sps = sps if self.recent_sps == 0.0 else 0.9 * self.recent_sps + 0.1 * sps
         ppo = {key: stats[key] for key in ("kl", "kl_max", "clip_fraction", "grad_norm", "critic_grad_norm",
@@ -694,6 +775,23 @@ class LocomotionTrainer:
         self.db.log_iteration(result)
         self.db.commit()
 
+    def drain(self) -> None:
+        """Espera a atualizacao em andamento (salvar, avaliar, pausar, parar)."""
+        if getattr(self, "pending", None) is not None:
+            future, info = self.pending
+            self.pending = None
+            self.finish(future.result(), info)
+
+    def round(self) -> None:
+        """Coleta uma rodada e atualiza (com a sobreposicao, a atualizacao desta
+        rodada roda enquanto a proxima coleta)."""
+        rollout, info = self.collect()
+        if self.executor is None:
+            self.finish(self.update(rollout), info)
+            return
+        self.drain()
+        self.pending = (self.executor.submit(self.update, rollout), info)
+
     def healthy(self, result: dict) -> bool:
         values = [result["policy_loss"], result["value_loss"], result["kl"]]
         if not all(math.isfinite(v) for v in values):
@@ -731,16 +829,18 @@ class LocomotionTrainer:
                     break
                 if self.pause_requested:
                     if self.state != "pausado":
+                        self.drain()
                         self.save("pausa")
                         self.state = "pausado"
                         self.write_status()
                     time.sleep(0.2)
                     continue
-                if self.max_iterations and self.counters["iteration"] >= self.max_iterations:
+                # (Com a sobreposicao, a atualizacao em andamento ja conta.)
+                if self.max_iterations and \
+                        self.counters["iteration"] + (1 if self.pending else 0) >= self.max_iterations:
                     break
                 self.state = "treinando"
-                rollout, info = self.collect()
-                self.finish(self.update(rollout), info)
+                self.round()
                 now = time.time()
                 if self.config.evaluation_minutes > 0.0 and now - last_evaluation >= self.config.evaluation_minutes * 60.0:
                     self.evaluate()
@@ -761,6 +861,8 @@ class LocomotionTrainer:
             raise
         finally:
             self.state = "parando"
+            if code != 1:
+                self.drain()
             self.config.end_reason = "erro" if code == 1 else ("" if code == system.RESTART_CODE else self.stop_reason)
             self.config.save(self.directory / "run.json")
             try:
@@ -772,5 +874,15 @@ class LocomotionTrainer:
                 self.db.end_session(self.session, "reinicio" if code == system.RESTART_CODE else
                                     ("erro" if code else "parado"))
                 self.server.close()
+                if self.executor is not None:
+                    self.executor.shutdown(wait=True)
                 self.lock.release()
         return code
+
+
+class _Null:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        return False

@@ -81,3 +81,23 @@ def memory_mb() -> float:
     except OSError:
         pass
     return 0.0
+
+
+def tuned_environment() -> dict[str, str]:
+    """As constantes de calibragem lidas do ambiente pelo motor (T_*: os
+    TEMPTUNE do controle, ~580 leituras). Uma esquecida num terminal muda o
+    treino, a sonda ou o jogo sem rastro (vault 02_estrutura/estudo_desempenho.md,
+    atleta-11)."""
+    import re
+    return {k: v for k, v in os.environ.items() if re.match(r"^T_[A-Za-z]", k)}
+
+
+def refuse_tuned_environment(what: str) -> dict[str, str]:
+    """Recusa comecar com T_* definidas, salvo MATTER_RL_PERMITIR_T=1 (e entao
+    devolve o que estava definido, para registrar)."""
+    tuned = tuned_environment()
+    if tuned and os.environ.get("MATTER_RL_PERMITIR_T") != "1":
+        names = ", ".join(sorted(tuned))
+        raise RuntimeError(f"{what}: constantes de calibragem no ambiente ({names}); tire-as ou use "
+                           "MATTER_RL_PERMITIR_T=1 para rodar com elas de proposito")
+    return tuned

@@ -57,6 +57,8 @@ def main() -> int:
     parser.add_argument("--threads", default="1,12")
     args = parser.parse_args()
 
+    from matter_rl import system
+    system.refuse_tuned_environment("hash")
     module = native()
     task = paths.task_path(args.tarefa)
     result: dict = {"tarefa": args.tarefa, "mundos": args.mundos, "passos": args.passos, "semente": args.semente,

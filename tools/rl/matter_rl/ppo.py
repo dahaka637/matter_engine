@@ -82,6 +82,13 @@ class Rollout:
         self.norm: tuple[torch.Tensor, torch.Tensor] | None = None
         self.anchor_mean: torch.Tensor | None = None
         self.anchor_std: torch.Tensor | None = None
+        # O log-prob das acoes na politica do comeco da atualizacao (a "proximal"
+        # do PPO desacoplado, Hilton et al. 2021): com a coleta sobreposta, o
+        # corte da razao vale contra ela e a defasagem da coleta entra como peso
+        # de importancia (proximal / quem coletou). None = o PPO de sempre.
+        self.anchor_log_probs: torch.Tensor | None = None
+        # (O gerador do sorteio dos minilotes; None = o padrao.)
+        self.generator: torch.Generator | None = None
         self.position = 0
 
     def add(self, obs, critic, actions, log_probs, values, rewards, dones, mean, std, raw=None) -> None:
@@ -106,14 +113,15 @@ class Rollout:
     def minibatches(self, count: int):
         total = self.steps * self.envs
         size = total // count
-        order = torch.randperm(total, device=self.obs.device)
+        order = torch.randperm(total, device=self.obs.device, generator=self.generator)
         flat = lambda x: x.reshape(total, *x.shape[2:])  # noqa: E731
         mean = self.mean if self.anchor_mean is None else self.anchor_mean
         std = self.std if self.anchor_std is None else self.anchor_std
         # (Os dois ultimos: a politica que coletou, para o KL de seguranca, que nunca
         # usa a referencia trocada da sobreposicao.)
+        proximal = self.log_probs if self.anchor_log_probs is None else self.anchor_log_probs
         data = [flat(x) for x in (self.obs, self.critic, self.actions, self.log_probs, self.values,
-                                  self.advantages, self.returns, mean, std, self.mean, self.std)]
+                                  self.advantages, self.returns, mean, std, self.mean, self.std, proximal)]
         for start in range(0, size * count, size):
             index = order[start:start + size]
             yield [x[index] for x in data]
@@ -161,8 +169,9 @@ class PPO:
         actor_steps = 0
         halted = False
         for _ in range(s.epochs):
+            decoupled = rollout.anchor_log_probs is not None
             for obs, critic, actions, old_log_probs, old_values, advantages, returns, old_mean, old_std, \
-                    collector_mean, collector_std in rollout.minibatches(s.minibatches):
+                    collector_mean, collector_std, proximal_log_probs in rollout.minibatches(s.minibatches):
                 dist = model.distribution(obs)
                 log_probs = dist.log_prob(actions).sum(-1)
                 entropy = dist.entropy().sum(-1).mean()
@@ -188,9 +197,18 @@ class PPO:
                     for group in self.optimizer.param_groups:
                         group["lr"] = self.learning_rate
                 advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
-                ratio = torch.exp(log_probs - old_log_probs)
-                surrogate = -advantages * ratio
-                clipped = -advantages * ratio.clamp(1.0 - s.clip, 1.0 + s.clip)
+                if decoupled:
+                    # PPO desacoplado: a razao contra a politica do comeco da
+                    # atualizacao (o mesmo corte do PPO em serie) e o peso de
+                    # importancia da defasagem da coleta (sem gradiente).
+                    ratio = torch.exp(log_probs - proximal_log_probs)
+                    weight = torch.exp(proximal_log_probs - old_log_probs)
+                    surrogate = -advantages * weight * ratio
+                    clipped = -advantages * weight * ratio.clamp(1.0 - s.clip, 1.0 + s.clip)
+                else:
+                    ratio = torch.exp(log_probs - old_log_probs)
+                    surrogate = -advantages * ratio
+                    clipped = -advantages * ratio.clamp(1.0 - s.clip, 1.0 + s.clip)
                 policy_loss = torch.max(surrogate, clipped).mean()
                 value_clipped = old_values + (values - old_values).clamp(-s.clip, s.clip)
                 value_loss = torch.max((values - returns).pow(2), (value_clipped - returns).pow(2)).mean()

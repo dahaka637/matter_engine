@@ -20,6 +20,7 @@ A cara (as folhas e o laboratorio) e do usuario: o portao so mede.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 import time
@@ -35,9 +36,19 @@ from matter_rl.locomotion_trainer import drill_summary, native  # noqa: E402
 from matter_rl.model import ActorCritic  # noqa: E402
 
 
+_BATCHES: dict = {}
+
+
 def evaluate(module, task: Path, drill: str, solver: str, model, scale, worlds: int, seconds: float, threads: int) -> dict:
-    batch = module.LocomotionBatch(str(task), str(paths.ASSETS), environments=worlds, threads=threads, seed=20261018,
-                                   evaluation=True, evaluation_seconds=seconds, drill=drill)
+    # (Um lote por exercicio, reaproveitado nos tres solvers: o reset com a
+    # mesma semente recomeca igual.)
+    key = (str(task), drill, worlds, seconds, threads)
+    batch = _BATCHES.get(key)
+    if batch is None:
+        batch = module.LocomotionBatch(str(task), str(paths.ASSETS), environments=worlds, threads=threads,
+                                       seed=20261018, evaluation=True, evaluation_seconds=seconds, drill=drill)
+        _BATCHES.clear()
+        _BATCHES[key] = batch
     authority = {"rede": (1, 1, 1, 1), "sem_pose_rigidez": (1, 1, 0, 0), "classico": (0, 0, 0, 0)}[solver]
     batch.set_authority(*authority)
     batch.reset(20261018)
@@ -71,6 +82,8 @@ def main() -> int:
     parser.add_argument("--threads", type=int, default=6)
     args = parser.parse_args()
 
+    from matter_rl import system
+    system.refuse_tuned_environment("portao")
     module = native()
     run = paths.run_dir(args.treino)
     task = (Path(args.tarefa) if Path(args.tarefa).exists() else paths.task_path(args.tarefa)) if args.tarefa \
@@ -90,12 +103,30 @@ def main() -> int:
     print(f"portao: {args.treino} rodada {reference.iteration} · tarefa {json.loads(Path(task).read_text())['id']} · "
           f"{args.mundos} episodios de {args.segundos:.0f} s por exercicio e solver")
     results: dict = {}
+    cache_path = run / "portao_classico.json"
+    # (O binario entra na chave: um modulo recompilado refaz o classico.)
+    build_id = str(int(Path(module.__file__).stat().st_mtime))
+    try:
+        classic_cache = json.loads(cache_path.read_text())
+    except (OSError, ValueError):
+        classic_cache = {}
     verdict = True
     reasons: list[str] = []
     for drill in drills:
         d = drill["id"]
+        # (O classico nao depende da rede: em cache pela tarefa, o contrato, os
+        # mundos e os segundos, num arquivo da pasta do treino.)
+        classic_key = "|".join((hashlib.sha256(Path(task).read_bytes()).hexdigest()[:16], str(state.get("contract_hash", "")),
+                                build_id, d, str(args.mundos), str(args.segundos)))
         results[d] = {solver: evaluate(module, task, d, solver, model, scale, args.mundos, args.segundos, args.threads)
-                      for solver in ("rede", "sem_pose_rigidez", "classico")}
+                      for solver in ("rede", "sem_pose_rigidez")}
+        if classic_key in classic_cache:
+            results[d]["classico"] = classic_cache[classic_key]
+        else:
+            results[d]["classico"] = evaluate(module, task, d, "classico", model, scale, args.mundos, args.segundos,
+                                              args.threads)
+            classic_cache[classic_key] = results[d]["classico"]
+            storage.write_json_atomic(cache_path, classic_cache)
         net, ablation, classic = results[d]["rede"], results[d]["sem_pose_rigidez"], results[d]["classico"]
         minimum = net.get("minimums", {})
         checks = []
