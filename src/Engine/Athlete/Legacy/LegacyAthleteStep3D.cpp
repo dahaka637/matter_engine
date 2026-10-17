@@ -153,6 +153,11 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         footGround[foot] = scene.probeTerrain(body.links[i].position + Vec3 { 0, 0, 0.10f }, 0.05f, 0.0f, 0.40f, 48.0f);
     }
     CharacterLocomotionInput3D command;
+    // As correcoes do RL agem no referencial da rede (o rumo da pelve, como
+    // a entrada dela), posto aqui a cada tick pelo corpo publicado.
+    if (athlete.corrections.active())
+        athlete.corrections.frame = Quaternion::fromAxisAngle({ 0.0f, 0.0f, 1.0f },
+            locomotionFrameYaw3D(profile, root.orientation));
     command.corrections = athlete.corrections.active() ? &athlete.corrections : nullptr;
     command.rootPositionWorld = { root.position.x, root.position.y,
         groundHeight(root.position) + profile.standingRootHeightMeters };
@@ -1632,6 +1637,10 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
     physicalIntent.footPlantedValid = true;
     physicalIntent.footPlanted = state.locomotion.telemetry().footPlanted;
     physicalIntent.actionStability = command.controlled ? state.ballStability : 0.0f;
+    if (command.corrections != nullptr && command.corrections->balance) {
+        physicalIntent.rlContact = true;
+        physicalIntent.rlContactAccelerationWorld = contactAccelerationWorld3D(command.corrections);
+    }
     {
         const auto begin = std::chrono::steady_clock::now();
         state.adaptivePhysics.update(profile, body, locomotionOutput.guide, physicalIntent, deltaTime);

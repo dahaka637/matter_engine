@@ -375,6 +375,15 @@ void CharacterLocomotion3D::stepFeet(Tick& t) {
             return FootSurface3D { ground.valid, ground.height, ground.normal };
         };
         footInput.fitOnLevel = [&](Vec3 at, Vec3 forward) { return fitFoot(at, forward); };
+        // O gancho dos pes do planejador (o RL): o pouso a mais dos passos
+        // dele e a urgencia de recuperacao por pe.
+        if (input.corrections != nullptr && input.corrections->footwork) {
+            footInput.rlActive = true;
+            for (std::size_t side = 0; side < 2; ++side) {
+                footInput.rlLandingOffsetWorld[side] = plannerLandingOffset3D(input.corrections, side);
+                footInput.rlRecoveryRequest[side] = recoveryUrgency3D(input.corrections, side);
+            }
+        }
         m_footwork.update(profile, footInput, deltaTime);
         if (footInput.seedFromBody) m_plantFeetFromBody = false;
         // Devolucao a passada: com o segundo passo no ar e o primeiro ja

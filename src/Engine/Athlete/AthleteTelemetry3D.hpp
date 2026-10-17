@@ -63,6 +63,46 @@ struct AthleteControlView3D {
     const RagdollAnimationPose3D* classicPose = nullptr;
     // O movimento de estilo (o padrao a sombra; invalido sem ele).
     ReferenceMotion3D reference;
+    // O executor (o contrato v2, a entrada causal): o relogio e as decisoes
+    // dele neste tick - o que a rede corrige por dentro.
+    struct Executor {
+        // O estado da locomocao (CharacterLocomotionState3D) e o setor da
+        // passada (CharacterGaitDirection3D).
+        int state = 0;
+        int gaitDirection = 0;
+        // O ciclo da passada (0..1), a fase de cada perna nele (com os
+        // avancos), o progresso do balanco (-1 apoiado), o contato do clipe,
+        // o avanco do classico e a perna que espera o toque (-1 nenhuma).
+        float cyclePhase = 0.0f;
+        std::array<float, 2> legPhase {};
+        std::array<float, 2> swingProgress { -1.0f, -1.0f };
+        std::array<float, 2> clipContact {};
+        std::array<float, 2> classicLead {};
+        int waitingLeg = -1;
+        // O ritmo e o comprimento da passada (1 = o do clipe).
+        float playbackRate = 1.0f;
+        float strideScale = 1.0f;
+        // O planejador: a fase de cada pe (FootPhase3D), se ele e o dono e a
+        // urgencia de recuperacao.
+        std::array<int, 2> plannerPhase {};
+        std::array<bool, 2> plannerOwns {};
+        float recoveryUrgency = 0.0f;
+        // O ponto de captura (mundo) e quanto ele sai do apoio (m).
+        Vec3 capturePointWorld;
+        float captureOutside = 0.0f;
+        // A referencia da raiz (o alvo da pelve: a folga e a altura dela).
+        Vec3 referenceRootWorld;
+        // A ajuda efetiva: quanto do peso e do equilibrio as pernas carregam.
+        float legShare = 0.0f;
+        float balanceShare = 0.0f;
+        // O VMC das pernas: a aceleracao do centro de massa pedida, a alocada
+        // (depois do apoio e do atrito) e o resto (m/s2, mundo), e a margem do
+        // centro de massa na base (+ dentro, m).
+        Vec3 comAccelerationRequested;
+        Vec3 comAccelerationAllocated;
+        Vec3 comAccelerationResidual;
+        float balanceMargin = 0.0f;
+    } executor;
 };
 
 [[nodiscard]] AthleteControlView3D athleteControlView3D(const AthleteState3D& athlete);

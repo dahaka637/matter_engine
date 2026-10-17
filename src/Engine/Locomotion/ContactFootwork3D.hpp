@@ -260,6 +260,13 @@ struct ContactFootworkInput3D {
     // anterior ou o quadril esta alem do comprimento da perna).
     std::array<bool, 2> anchorUnreachable {};
     std::array<GaitFootState3D, 2> gait {};
+    // O RL (Athlete/Physical/PhysicalCorrections3D), so com `rlActive`: o
+    // pouso a mais de cada passo daqui (no mundo, no plano) e a urgencia de
+    // um passo de recuperacao com cada pe (0..1; com histerese aqui dentro:
+    // liga em RlRecoveryOn, desliga abaixo de RlRecoveryOff).
+    bool rlActive = false;
+    std::array<Vec3, 2> rlLandingOffsetWorld {};
+    std::array<float, 2> rlRecoveryRequest {};
     // Chao sob um ponto (origem do link do pe), com a ponta para `forward`.
     std::function<FootSurface3D(std::size_t side, Vec3 atWorld, Vec3 forwardWorld)> surfaceAt;
     // Quanto mover um pouso ao longo do pe para ele caber inteiro num nivel
@@ -544,6 +551,8 @@ private:
     std::array<bool, 2> m_liftedOff {};
     // Ultimo deslocamento de peso pedido: sai suave quando nada mais o pede.
     Vec3 m_residualShift;
+    // O pedido de recuperacao do RL ligado por pe (a histerese).
+    std::array<bool, 2> m_rlRecoveryLatched {};
     bool m_initialized = false;
 };
 

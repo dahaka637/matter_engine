@@ -404,31 +404,59 @@ void referenceFrameTests() {
 
 void correctionTests() {
     PhysicalCorrections3D c;
-    expect(!c.active(), "sem autoridade, as correcoes nao estao ativas (o classico exato)");
+    expect(!c.active(), "sem cabeca ligada, as correcoes nao estao ativas (o classico exato)");
     const Vec3 goal { 1.0f, 2.0f, 0.1f };
-    const Quaternion turned = Quaternion::fromAxisAngle({ 0.0f, 0.0f, 1.0f }, 1.5707963f);
+    c.frame = Quaternion::fromAxisAngle({ 0.0f, 0.0f, 1.0f }, 1.5707963f);
     c.feet[1].touchdownOffset = { 0.2f, 0.0f, 0.0f };
-    Vec3 out = correctedFootGoal3D(goal, false, turned, &c, 1);
-    expect((out - goal).length() < 1e-6f, "com a autoridade do jogo de pes em zero, o alvo do pe nao muda");
-    c.footworkAuthority = 0.5f;
-    expect(c.active(), "uma cabeca com autoridade liga as correcoes");
-    out = correctedFootGoal3D(goal, false, turned, &c, 1);
-    expect(std::abs(out.x - 1.0f) < 1e-4f && std::abs(out.y - 2.1f) < 1e-4f,
-        "o pe no balanco anda a correcao no referencial do rumo (0,2 m a frente virado 90 graus, metade da autoridade)");
-    expect((correctedFootGoal3D(goal, true, turned, &c, 1) - goal).length() < 1e-6f,
-        "o pe apoiado nunca e arrastado pela correcao");
-    expect((correctedFootGoal3D(goal, false, turned, nullptr, 1) - goal).length() < 1e-6f, "sem correcoes, o alvo e o mesmo");
-    c.footworkAuthority = 7.0f;
-    out = correctedFootGoal3D(goal, false, turned, &c, 1);
-    expect(std::abs(out.y - 2.2f) < 1e-4f, "a autoridade fica entre 0 e 1");
+    c.feet[1].swingHeight = 0.04f;
+    Vec3 out = correctedFootGoal3D(goal, false, false, 0.5f, &c, 1);
+    expect((out - goal).length() < 1e-6f, "com a cabeca dos pes desligada, o alvo do pe nao muda");
+    c.footwork = true;
+    expect(c.active(), "uma cabeca ligada liga as correcoes");
+    out = correctedFootGoal3D(goal, false, false, 0.5f, &c, 1);
+    expect(std::abs(out.x - 1.0f) < 1e-4f && std::abs(out.y - 2.2f) < 1e-4f && std::abs(out.z - 0.14f) < 1e-4f,
+        "no meio do balanco: o pouso inteiro no referencial do rumo (0,2 m a frente virado 90 graus) e a altura no pico");
+    out = correctedFootGoal3D(goal, false, false, 0.0f, &c, 1);
+    expect((out - goal).length() < 1e-6f, "na saida do pe (progresso 0) nada: o pouso entra ao longo do balanco");
+    out = correctedFootGoal3D(goal, false, false, 1.0f, &c, 1);
+    expect(std::abs(out.y - 2.2f) < 1e-4f && std::abs(out.z - 0.1f) < 1e-4f, "no pouso: o deslocamento inteiro, a altura a zero");
+    out = correctedFootGoal3D(goal, false, true, 0.5f, &c, 1);
+    expect(std::abs(out.y - 2.0f) < 1e-6f && std::abs(out.z - 0.14f) < 1e-4f,
+        "no passo do planejador so a altura: o pouso vai no plano dele");
+    const Vec3 planned = plannerLandingOffset3D(&c, 1);
+    expect(std::abs(planned.x) < 1e-6f && std::abs(planned.y - 0.2f) < 1e-6f, "o pouso do planejador no mundo");
+    expect((correctedFootGoal3D(goal, true, false, 0.5f, &c, 1) - goal).length() < 1e-6f
+            && (correctedFootGoal3D(goal, false, false, -1.0f, &c, 1) - goal).length() < 1e-6f,
+        "o pe apoiado (ou sem balanco) nunca e arrastado pela correcao");
+    expect((correctedFootGoal3D(goal, false, false, 0.5f, nullptr, 1) - goal).length() < 1e-6f, "sem correcoes, o alvo e o mesmo");
+
+    c.cadenceOctaves = 0.5f;
+    c.strideOctaves = -1.0f;
+    expect(std::abs(cadenceFactor3D(&c) - std::sqrt(2.0f)) < 1e-6f && std::abs(strideFactor3D(&c) - 0.5f) < 1e-6f
+            && cadenceFactor3D(nullptr) == 1.0f,
+        "o ritmo e o comprimento em oitavas");
+    c.feet[0].phaseLead = -0.04f;
+    expect(std::abs(legPhaseLead3D(&c, 0, false) + 0.04f) < 1e-6f && legPhaseLead3D(&c, 0, true) == 0.0f,
+        "o atraso de uma perna, cortado na perna que espera o toque");
+    c.feet[0].recoveryUrgency = 3.0f;
+    expect(recoveryUrgency3D(&c, 0) == 1.0f && recoveryUrgency3D(&c, 1) == 0.0f, "a urgencia de recuperacao fica em 0..1");
 
     c.forwardLean = 0.1f;
     c.lateralLean = -0.05f;
-    expect(correctedForwardLean3D(0.2f, &c) == 0.2f, "sem autoridade no equilibrio, a inclinacao nao muda");
-    c.balanceAuthority = 1.0f;
+    c.comOffset = { 0.1f, 0.0f, 0.3f };
+    c.pelvisHeight = -0.03f;
+    c.contactAcceleration = { 0.0f, 2.0f, 5.0f };
+    expect(correctedForwardLean3D(0.2f, &c) == 0.2f && comOffsetWorld3D(&c).lengthSquared() == 0.0f
+            && pelvisHeightOffset3D(&c) == 0.0f,
+        "com o equilibrio desligado, nada muda");
+    c.balance = true;
     expect(std::abs(correctedForwardLean3D(0.2f, &c) - 0.3f) < 1e-6f
             && std::abs(correctedLateralLean3D(0.0f, &c) + 0.05f) < 1e-6f,
         "o equilibrio soma a inclinacao");
+    const Vec3 com = comOffsetWorld3D(&c), push = contactAccelerationWorld3D(&c);
+    expect(std::abs(com.y - 0.1f) < 1e-5f && std::abs(com.x) < 1e-5f && com.z == 0.0f
+            && std::abs(push.x + 2.0f) < 1e-5f && push.z == 0.0f && pelvisHeightOffset3D(&c) == -0.03f,
+        "o centro de massa e o contato no plano, no referencial do rumo; a altura da pelve direto");
 
     RagdollProfile3D profile;
     for (const char* id : { "Pelvis", "LeftThigh", "LeftHand" }) {
@@ -444,18 +472,18 @@ void correctionTests() {
     }
     const std::vector<RagdollDriveTarget3D> before = targets;
     c.jointResiduals.assign(9, 0.0f);
-    c.jointResiduals[1 * 3 + 1] = 0.2f;
+    c.jointResiduals[1 * 3 + 1] = 0.1f;
     c.gainScale = { 2.0f, 1.0f, 0.5f };
     correctDriveTargets3D(targets, profile, &c);
     bool same = true;
     for (std::size_t i = 0; i < 3; ++i)
         same &= targets[i].positionRadians == before[i].positionRadians && targets[i].stiffnessScale == before[i].stiffnessScale;
-    expect(same, "sem autoridade na pose e na rigidez, os alvos dos motores nao mudam");
-    c.poseAuthority = 0.5f;
-    c.gainAuthority = 1.0f;
+    expect(same, "com a pose e a rigidez desligadas, os alvos dos motores nao mudam");
+    c.pose = true;
+    c.gain = true;
     correctDriveTargets3D(targets, profile, &c);
     expect(std::abs(targets[1].positionRadians - 0.6f) < 1e-6f && targets[0].positionRadians == 0.5f,
-        "a pose soma a correcao do eixo (coxa, swing1: 0,2 x 0,5) e so dele");
+        "a pose soma a correcao do eixo (coxa, swing1: 0,1) e so dele");
     expect(std::abs(targets[1].stiffnessScale - 2.0f) < 1e-6f && std::abs(targets[2].stiffnessScale - 0.5f) < 1e-6f
             && std::abs(targets[0].stiffnessScale - 1.0f) < 1e-6f,
         "a rigidez escala por grupo: pernas x2, bracos x0,5, tronco igual");
@@ -464,7 +492,7 @@ void correctionTests() {
         "os grupos de ganho pelo nome do link");
 }
 
-// O contrato da rede (v1) num corpo de 18 links como o do jogo.
+// O contrato da rede num corpo de 18 links como o do jogo.
 RagdollProfile3D contractProfile() {
     RagdollProfile3D profile;
     profile.id = "teste";
@@ -517,11 +545,12 @@ void contractTests() {
         for (const RagdollAxisDefinition3D& axis : profile.links[i].inboundJoint.axes) axes += axis.enabled ? 1 : 0;
     expect(contract.actuatedAxes().size() == axes, "os eixos atuados sao os habilitados no perfil");
     const std::size_t links = profile.links.size();
-    expect(contract.actionSize() == 6 + 2 + axes + 3, "a saida: pes, inclinacao, um residuo por eixo, ganhos");
+    expect(contract.actionSize() == 12 + 7 + axes + 3,
+        "a saida: os pes (12), o equilibrio (7), um residuo por eixo, os ganhos");
     expect(contract.observationSize()
-            == 1 + links * 12 + (links - 1) * 3 + 2 * axes + 4 + 7 + 50 + 28 + 9
+            == 1 + links * 12 + (links - 1) * 3 + 2 * axes + 4 + 7 + 50 + 28 + 9 + 53
                 + LocomotionContract3D::HistoryDecisions * contract.actionSize(),
-        "a entrada: o tamanho de cada bloco");
+        "a entrada: o tamanho de cada bloco (o executor com 53)");
 
     // O que observe escreve e o layout, na mesma conta (sem deriva).
     std::vector<float> out(contract.observationSize());
@@ -568,40 +597,67 @@ void contractTests() {
     for (float v : out) finite &= std::isfinite(v);
     expect(result.nonFinite > 0 && finite, "um NaN no corpo: contado, e a entrada segue finita");
 
-    // A saida.
-    const LocomotionAuthority3D full { 1.0f, 1.0f, 1.0f, 1.0f };
-    PhysicalCorrections3D zero = contract.decode(std::vector<float>(contract.actionSize(), 0.0f), full);
-    bool neutral = zero.forwardLean == 0.0f && zero.lateralLean == 0.0f && zero.jointResiduals.size() == links * 3;
+    // A saida: a escala maxima, o teto da fase e a autoridade da cabeca.
+    const auto actionIndex = [&](const std::string& name) {
+        const auto& channels = contract.actionLayout().channels;
+        for (std::size_t i = 0; i < channels.size(); ++i)
+            if (channels[i].name == name) return i;
+        throw std::runtime_error("canal da saida sumiu: " + name);
+    };
+    LocomotionAuthority3D full { 1.0f, 1.0f, 1.0f, 1.0f };
+    full.caps = LocomotionCaps3D::full();
+    const std::vector<float> none = contract.physical(std::vector<float>(contract.actionSize(), 0.0f), full);
+    bool neutral = true;
+    for (float v : none) neutral &= v == 0.0f;
+    PhysicalCorrections3D zero = contract.corrections(none, full);
+    neutral &= zero.footwork && zero.balance && zero.pose && zero.gain && zero.jointResiduals.size() == links * 3;
     for (float r : zero.jointResiduals) neutral &= r == 0.0f;
     for (float g : zero.gainScale) neutral &= g == 1.0f;
-    for (const FootCorrection3D& foot : zero.feet) neutral &= foot.touchdownOffset.lengthSquared() == 0.0f;
-    expect(neutral, "a acao zero e a correcao zero");
+    expect(neutral, "a acao zero e a correcao zero (as cabecas com autoridade ligadas)");
+    const PhysicalCorrections3D off = contract.corrections(none, LocomotionAuthority3D {});
+    expect(!off.active(), "sem autoridade e sem valor: nenhuma cabeca ligada (o classico exato)");
     std::vector<float> big(contract.actionSize(), 5.0f);
-    big[0] = std::numeric_limits<float>::quiet_NaN();
-    const PhysicalCorrections3D most = contract.decode(big, { 0.5f, 0.25f, 1.0f, 0.75f });
-    expect(most.feet[0].touchdownOffset.x == 0.0f && std::abs(most.feet[0].touchdownOffset.y - 0.15f) < 1e-6f
-            && std::abs(most.feet[1].touchdownOffset.z - 0.05f) < 1e-6f,
-        "o pouso: NaN vira zero, acima de 1 e cortado (0,15 m de lado, 0,05 m de altura)");
-    expect(std::abs(most.forwardLean - 0.2f) < 1e-6f && std::abs(most.gainScale[1] - 2.0f) < 1e-6f,
-        "a inclinacao ate 0,2 rad e o ganho ate 2x");
-    std::size_t nonzero = 0;
-    for (float r : most.jointResiduals) nonzero += r != 0.0f ? 1 : 0;
-    bool onAxes = nonzero == axes;
-    for (std::uint32_t key : contract.actuatedAxes()) onAxes &= std::abs(most.jointResiduals[key] - 0.3f) < 1e-6f;
-    expect(onAxes, "o residuo so nos eixos atuados, ate 0,3 rad");
-    expect(most.footworkAuthority == 0.5f && most.balanceAuthority == 0.25f && most.poseAuthority == 1.0f
-            && most.gainAuthority == 0.75f,
-        "as autoridades sao as do curriculo");
+    big[actionIndex("pes.esq.pouso.x")] = std::numeric_limits<float>::quiet_NaN();
+    LocomotionAuthority3D partial { 0.5f, 0.25f, 1.0f, 0.75f };
+    std::vector<float> most = contract.physical(big, partial);
+    const auto near = [](float a, float b) { return std::abs(a - b) < 1e-6f; };
+    expect(most[actionIndex("pes.esq.pouso.x")] == 0.0f && near(most[actionIndex("pes.esq.pouso.y")], 0.06f * 0.5f)
+            && near(most[actionIndex("pes.dir.altura")], 0.05f * 0.5f)
+            && near(most[actionIndex("pes.esq.recupera")], 0.5f * 0.5f),
+        "os pes: NaN vira zero; o teto da fase corta (pouso 0,06 m, altura 0,05 m, urgencia 0,5) e a autoridade multiplica");
+    expect(near(most[actionIndex("equilibrio.inclina.frente")], 0.12f * 0.25f)
+            && near(most[actionIndex("ganho.tronco")], 0.3f * 0.75f),
+        "o equilibrio e os ganhos: o teto e a autoridade de cada cabeca");
+    bool onAxes = true;
+    for (std::uint32_t key : contract.actuatedAxes())
+        onAxes &= near(most[actionIndex("pose." + profile.links[key / 3].id + "."
+            + (key % 3 == 0 ? "twist" : key % 3 == 1 ? "swing1" : "swing2"))], 0.10f);
+    expect(onAxes, "a pose: o residuo de cada eixo atuado ate o teto (0,10 rad)");
+    const PhysicalCorrections3D mostCorrections = contract.corrections(most, partial);
+    expect(near(mostCorrections.gainScale[1], std::exp2(0.225f)) && mostCorrections.jointResiduals.size() == links * 3,
+        "as correcoes: o ganho em oitavas vira escala");
+    std::vector<float> low(contract.actionSize(), -5.0f);
+    most = contract.physical(low, partial);
+    expect(near(most[actionIndex("equilibrio.altura")], -0.04f * 0.25f)
+            && near(most[actionIndex("pes.esq.altura")], -0.02f * 0.5f) && most[actionIndex("pes.dir.recupera")] == 0.0f,
+        "os canais assimetricos: o lado de baixo com o teto dele; a urgencia so na metade positiva");
+    partial.caps = LocomotionCaps3D::full();
+    most = contract.physical(big, partial);
+    expect(near(most[actionIndex("pes.esq.pouso.y")], 0.30f * 0.5f), "com os tetos abertos, a escala maxima");
 
-    // A decisao, o historico e a rampa.
+    // A decisao, o historico, a rampa e o limite de taxa.
     AthleteState3D athlete;
     std::vector<float> first(contract.actionSize(), 0.8f), second(contract.actionSize(), -2.0f);
     contract.decide(athlete, first);
     const std::uint32_t key = contract.actuatedAxes().front();
+    const float dt = 1.0f / 120.0f;
     for (int tick = 1; tick <= LocomotionContract3D::TicksPerDecision; ++tick) {
-        contract.follow(athlete, full);
-        expect(std::abs(athlete.corrections.jointResiduals[key] - 0.3f * 0.8f * static_cast<float>(tick) / 4.0f) < 1e-5f,
-            "a rampa vai da acao de antes (zero) a nova em 4 ticks");
+        contract.follow(athlete, full, dt);
+        expect(near(athlete.corrections.feet[0].recoveryUrgency, 0.8f * static_cast<float>(tick) / 4.0f),
+            "a rampa vai da acao de antes (zero) a nova em 4 ticks (a urgencia, sem limite de taxa)");
+        expect(std::abs(athlete.corrections.jointResiduals[key] - LocomotionContract3D::JointRate * dt * static_cast<float>(tick))
+                < 1e-5f,
+            "o residuo da junta anda no maximo o limite de taxa por tick");
     }
     contract.decide(athlete, second);
     const std::size_t a = contract.actionSize();
@@ -609,9 +665,19 @@ void contractTests() {
             && athlete.policyHistory[0] == -1.0f && std::abs(athlete.policyHistory[a] - 0.8f) < 1e-6f
             && athlete.policyHistory[2 * a] == 0.0f,
         "o historico: a mais nova primeiro, guardada no -1..1");
-    contract.follow(athlete, full);
-    expect(std::abs(athlete.corrections.jointResiduals[key] - 0.3f * (0.8f + (-1.0f - 0.8f) * 0.25f)) < 1e-5f,
+    contract.follow(athlete, full, dt);
+    expect(near(athlete.corrections.feet[0].recoveryUrgency, 0.8f + (-1.0f - 0.8f) * 0.25f),
         "a rampa nova parte de onde a anterior estava");
+    // Sem autoridade de repente: a cabeca segue ligada ate o valor voltar a
+    // zero pelo limite de taxa (desligada de uma vez, saltava).
+    for (int tick = 0; tick < 3; ++tick) contract.follow(athlete, full, dt);
+    const float leanBefore = athlete.corrections.forwardLean;
+    contract.follow(athlete, LocomotionAuthority3D {}, dt);
+    expect(athlete.corrections.balance && std::abs(athlete.corrections.forwardLean)
+            >= std::abs(leanBefore) - LocomotionContract3D::LeanRate * dt - 1e-6f,
+        "a autoridade a zero: o equilibrio volta pelo limite de taxa, ainda ligado");
+    for (int tick = 0; tick < 240; ++tick) contract.follow(athlete, LocomotionAuthority3D {}, dt);
+    expect(!athlete.corrections.active(), "depois, tudo a zero: nenhuma cabeca ligada");
 
     // O espelho: duas vezes e a identidade, e o espelho da entrada de um corpo
     // torto e a entrada do corpo refletido de verdade.
@@ -676,9 +742,53 @@ void contractTests() {
     AthleteControlView3D assist;
     assist.pelvisForceWorld = { 100.0f, -250.0f, 400.0f };
     assist.pelvisTorqueWorld = { 30.0f, 12.0f, -8.0f };
+    // O executor: um passo de lado em andamento (os dois pes diferentes).
+    AthleteControlView3D::Executor& exec = assist.executor;
+    exec.state = static_cast<int>(CharacterLocomotionState3D::Walking);
+    exec.gaitDirection = static_cast<int>(CharacterGaitDirection3D::Left);
+    exec.cyclePhase = 0.13f;
+    exec.legPhase = { 0.21f, 0.68f };
+    exec.swingProgress = { 0.4f, -1.0f };
+    exec.clipContact = { 0.1f, 0.9f };
+    exec.classicLead = { 0.03f, 0.0f };
+    exec.waitingLeg = 1;
+    exec.playbackRate = 1.2f;
+    exec.strideScale = 0.8f;
+    exec.plannerPhase = { 2, 0 };
+    exec.plannerOwns = { true, false };
+    exec.recoveryUrgency = 0.3f;
+    exec.capturePointWorld = { 0.4f, 0.3f, 0.0f };
+    exec.captureOutside = 0.05f;
+    exec.referenceRootWorld = { 0.1f, -0.2f, 0.95f };
+    exec.legShare = 0.7f;
+    exec.balanceShare = 0.6f;
+    exec.comAccelerationRequested = { 2.0f, -1.0f, 0.0f };
+    exec.comAccelerationAllocated = { 1.5f, -0.5f, 0.0f };
+    exec.comAccelerationResidual = { 0.5f, -0.5f, 0.0f };
+    exec.balanceMargin = 0.04f;
     AthleteControlView3D assistReflected = assist;
     assistReflected.pelvisForceWorld = mirrorVector(assist.pelvisForceWorld);
     assistReflected.pelvisTorqueWorld = mirrorPseudo(assist.pelvisTorqueWorld);
+    {
+        // No espelho: os lados trocam, as fases andam meio ciclo, os vetores
+        // trocam o y.
+        AthleteControlView3D::Executor& r = assistReflected.executor;
+        const auto swap = [](auto pair) { return decltype(pair) { pair[1], pair[0] }; };
+        r.gaitDirection = static_cast<int>(CharacterGaitDirection3D::Right);
+        r.cyclePhase = exec.cyclePhase + 0.5f;
+        r.legPhase = { exec.legPhase[1] + 0.5f, exec.legPhase[0] + 0.5f };
+        r.swingProgress = swap(exec.swingProgress);
+        r.clipContact = swap(exec.clipContact);
+        r.classicLead = swap(exec.classicLead);
+        r.waitingLeg = 1 - exec.waitingLeg;
+        r.plannerPhase = swap(exec.plannerPhase);
+        r.plannerOwns = swap(exec.plannerOwns);
+        r.capturePointWorld = mirrorVector(exec.capturePointWorld);
+        r.referenceRootWorld = mirrorVector(exec.referenceRootWorld);
+        r.comAccelerationRequested = mirrorVector(exec.comAccelerationRequested);
+        r.comAccelerationAllocated = mirrorVector(exec.comAccelerationAllocated);
+        r.comAccelerationResidual = mirrorVector(exec.comAccelerationResidual);
+    }
     std::vector<float> original(contract.observationSize()), mirrored(contract.observationSize());
     (void)contract.observe(crooked, asked, assist, {}, forecast, original);
     (void)contract.observe(reflected, askedReflected, assistReflected, {}, forecast, mirrored);

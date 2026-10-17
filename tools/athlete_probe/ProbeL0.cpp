@@ -47,7 +47,7 @@ void contractBefore(ContractHooks* hooks, AthleteState3D& athlete, int step) {
     if (hooks == nullptr || hooks->contract == nullptr || !hooks->act) return;
     if (step % LocomotionContract3D::TicksPerDecision == 0)
         hooks->contract->decide(athlete, parityAction(*hooks->contract, step / LocomotionContract3D::TicksPerDecision));
-    hooks->contract->follow(athlete, hooks->authority);
+    hooks->contract->follow(athlete, hooks->authority, Dt);
 }
 
 // Depois da fisica: a entrada da rede deste instante.
@@ -501,7 +501,10 @@ int runParity(const ProbeContext& context, int limit, int restores) {
         std::printf(" %s %.0f/%.0f", CharacterLocomotion3D::sectionName(k), percentile(sectionCost[k], 0.5),
             percentile(sectionCost[k], 0.99));
     std::printf("\n");
-    std::printf(failures == 0 ? "paridade: degraus 1 e 2 passam (contrato v1)\n" : "paridade: %d falha(s)\n", failures);
+    if (failures == 0)
+        std::printf("paridade: degraus 1 e 2 passam (contrato v%u)\n", static_cast<unsigned>(LocomotionContract3D::Version));
+    else
+        std::printf("paridade: %d falha(s)\n", failures);
     return failures == 0 ? 0 : 1;
 }
 

@@ -185,6 +185,11 @@ void CharacterLocomotion3D::stepRoot(Tick& t) {
     }
     // Giro parado pelo clipe: a raiz anda o que a do clipe anda.
     navigationRoot += m_clipTurnRootOffset * m_clipTurnWeight;
+    // O gancho do centro de massa (o RL): a referencia da raiz deslocada no
+    // plano - a folga contra a qual a perna de apoio empurra e a base dos
+    // pousos da passada. (Na referencia de navegacao tambem: a ancora que a
+    // capsula segue - alvo menos referencia - nao muda.)
+    if (input.corrections != nullptr && !getUpActive) navigationRoot += comOffsetWorld3D(input.corrections);
     t.targetRootPosition = risingPose
         ? Vec3 { m_getUpAnchorWorld.x, m_getUpAnchorWorld.y,
             input.rootPositionWorld.z }
@@ -377,6 +382,11 @@ void CharacterLocomotion3D::stepRoot(Tick& t) {
         m_landingSinkPeak = 0.0f;
         m_telemetry.pelvisDropLandingMeters = 0.0f;
     }
+    // O gancho da altura da pelve (o RL): depois de todos os afundos do
+    // classico (curva, freada, pulo, pouso), ja suavizada no contrato.
+    // (No ar tambem: ligada e desligada no pulo, ela saltaria a pelve-alvo.)
+    if (input.corrections != nullptr && !getUpActive)
+        targetRootPosition.z += pelvisHeightOffset3D(input.corrections);
 
     t.localPose = {};
     RagdollAnimationPose3D& localPose = t.localPose;

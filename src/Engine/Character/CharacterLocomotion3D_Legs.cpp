@@ -879,10 +879,19 @@ void CharacterLocomotion3D::stepLegs(Tick& t) {
             m_lastFootGoalPosition[side] = goals[side].position;
             m_lastFootGoalOrientation[side] = goals[side].orientation;
         }
-        // O gancho do jogo de pes (o RL): o pouso do pe no balanco, somado ao
-        // alvo do classico a cada tick (sem correcao, o mesmo alvo).
-        goals[side].position = correctedFootGoal3D(goals[side].position, m_feet[side].planted, heading,
-            input.corrections, side);
+        // O gancho dos pes (o RL): a altura do balanco e, no pe da passada, o
+        // pouso, somados ao alvo do classico (sem correcao, o mesmo alvo; o
+        // pouso de um passo do planejador vai no plano dele).
+        if (input.corrections != nullptr) {
+            const bool owned = m_footwork.owns(side);
+            const FootPlan3D& planned = m_footwork.plan().feet[side];
+            const float swingProgress = owned
+                ? (planned.phase == FootPhase3D::Swing || planned.phase == FootPhase3D::TouchdownSearch
+                    ? planned.swingSeconds / std::max(0.05f, planned.swingDurationSeconds) : -1.0f)
+                : m_telemetry.footSwingProgress[side];
+            goals[side].position = correctedFootGoal3D(goals[side].position, m_feet[side].planted, owned,
+                swingProgress, input.corrections, side);
+        }
         const Quaternion rootInverse = ikRootOrientation[side].conjugate();
         // O pe da bola (toque e chute) sai longe da pose do clipe: o IK
         // limitado a ~52 graus por tick (7 iteracoes de 0,13 rad) deixava o

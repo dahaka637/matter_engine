@@ -72,6 +72,13 @@ std::vector<Scenario> scenarios() {
         k.sprint = true;
         return k; } });
     list.push_back({ "lados", 4.0f, [](float t) { Keys k; k.left = t < 0.3f ? 0.0f : t < 2.0f ? 1.0f : -1.0f; return k; } });
+    // Os roteiros do efeito dos ganchos do RL (so com XEFEITO: a lista de
+    // sempre nao muda): andar 6 s para a frente e de lado, a passo.
+    if (std::getenv("XEFEITO") != nullptr) {
+        list.push_back({ "efeito_frente", 6.0f, [](float t) { Keys k; k.forward = t > 0.3f ? 0.33f : 0.0f; return k; } });
+        list.push_back({ "efeito_lado", 6.0f, [](float t) { Keys k; k.left = t > 0.3f ? 0.33f : 0.0f; return k; } });
+        list.push_back({ "efeito_parado", 6.0f, [](float) { return Keys {}; } });
+    }
     list.push_back({ "corte", 4.0f, [](float t) {
         Keys k;
         k.forward = t > 0.3f ? 1.0f : 0.0f;
@@ -972,6 +979,18 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
     const int warmTicks = startPhysical ? 0 : 12;
     AthleteRuntimeSettings3D warmSettings = settings;
     warmSettings.footstepLocomotion = false;
+    // XEFEITO=1: o efeito de um gancho do RL (com XCORRECAO), depois de 1 s:
+    // a velocidade da pelve no plano (media, e a de lado no rumo dela), os
+    // pousos por segundo, o pico do pe no ar sobre o chao, a altura media da
+    // pelve e os passos do planejador.
+    struct EffectTally {
+        double speed = 0.0, lateral = 0.0, pelvis = 0.0;
+        int samples = 0;
+        int touchdowns = 0;
+        float footPeak = 0.0f;
+        std::array<bool, 2> planted { true, true };
+    } effect;
+    const bool effectWanted = std::getenv("XEFEITO") != nullptr;
     for (int step = -warmTicks; step < ticks; ++step) {
         const float t = static_cast<float>(step) * Dt;
         Keys keys = step < 0 ? Keys {} : scenario.keys(t);
@@ -1140,23 +1159,50 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
                 }
             if (wallImpact > 1.0f) std::printf("  t %.3f capsula bateu %.2f\n", t, wallImpact);
         }
-        // XCORRECAO=inclinacao|passo|joelho: um teste dos ganchos do RL (a
-        // correcao fixa numa cabeca, com autoridade cheia).
+        // XCORRECAO=<gancho> (XVALOR=<valor fisico>): um teste dos ganchos do
+        // RL, a correcao fixa numa cabeca (sem teto nem filtro): inclinacao
+        // (rad), passo (m, os pes abrindo), joelho (rad), cm_x/cm_y (m),
+        // altura (m), contato_x/contato_y (m/s2), cadencia/passada (oitavas),
+        // ritmo_esq (ciclo), balanco (m), recupera_esq (0..1).
         if (const char* hook = std::getenv("XCORRECAO"); hook != nullptr && step == 0) {
             const std::string which(hook);
+            const char* given = std::getenv("XVALOR");
+            const auto value = [&](float fallback) { return given != nullptr ? static_cast<float>(std::atof(given)) : fallback; };
+            PhysicalCorrections3D& c = athlete.corrections;
             if (which == "inclinacao") {
-                athlete.corrections.balanceAuthority = 1.0f;
-                athlete.corrections.forwardLean = 0.15f;
+                c.balance = true;
+                c.forwardLean = value(0.15f);
             } else if (which == "passo") {
-                athlete.corrections.footworkAuthority = 1.0f;
-                athlete.corrections.feet[0].touchdownOffset = { 0.0f, 0.12f, 0.0f };
-                athlete.corrections.feet[1].touchdownOffset = { 0.0f, -0.12f, 0.0f };
+                c.footwork = true;
+                c.feet[0].touchdownOffset = { 0.0f, value(0.12f), 0.0f };
+                c.feet[1].touchdownOffset = { 0.0f, -value(0.12f), 0.0f };
             } else if (which == "joelho") {
-                athlete.corrections.poseAuthority = 1.0f;
-                athlete.corrections.jointResiduals.assign(profile.links.size() * 3, 0.0f);
+                c.pose = true;
+                c.jointResiduals.assign(profile.links.size() * 3, 0.0f);
                 for (std::size_t i = 0; i < profile.links.size(); ++i)
                     if (profile.links[i].id.find("Shin") != std::string::npos)
-                        for (std::size_t axis = 0; axis < 3; ++axis) athlete.corrections.jointResiduals[i * 3 + axis] = 0.25f;
+                        for (std::size_t axis = 0; axis < 3; ++axis) c.jointResiduals[i * 3 + axis] = value(0.25f);
+            } else if (which == "cm_x" || which == "cm_y") {
+                c.balance = true;
+                (which == "cm_x" ? c.comOffset.x : c.comOffset.y) = value(0.08f);
+            } else if (which == "altura") {
+                c.balance = true;
+                c.pelvisHeight = value(-0.04f);
+            } else if (which == "contato_x" || which == "contato_y") {
+                c.balance = true;
+                (which == "contato_x" ? c.contactAcceleration.x : c.contactAcceleration.y) = value(1.0f);
+            } else if (which == "cadencia" || which == "passada") {
+                c.footwork = true;
+                (which == "cadencia" ? c.cadenceOctaves : c.strideOctaves) = value(0.2f);
+            } else if (which == "ritmo_esq") {
+                c.footwork = true;
+                c.feet[0].phaseLead = value(0.05f);
+            } else if (which == "balanco") {
+                c.footwork = true;
+                c.feet[0].swingHeight = c.feet[1].swingHeight = value(0.05f);
+            } else if (which == "recupera_esq") {
+                c.footwork = true;
+                c.feet[0].recoveryUrgency = value(0.5f);
             }
         }
         AthleteSlot3D slot { 1, handle, &bodyState, true, false, &athlete };
@@ -1798,6 +1844,24 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
                 std::hypot(asked.x, asked.y), std::hypot(capsuleVelocity.x, capsuleVelocity.y),
                 std::hypot(pelvisVelocity.x, pelvisVelocity.y), scene->characterState().position.z - bodyHeight * 0.5f);
         }
+        if (effectWanted && t > 1.0f && !bodyState.links.empty()) {
+            const PhysicsBodyState3D& pelvis = bodyState.links.front();
+            const float yaw = locomotionFrameYaw3D(profile, pelvis.orientation);
+            effect.speed += std::hypot(pelvis.linearVelocity.x, pelvis.linearVelocity.y);
+            effect.lateral += -std::sin(yaw) * pelvis.linearVelocity.x + std::cos(yaw) * pelvis.linearVelocity.y;
+            effect.pelvis += pelvis.position.z - athlete.groundHeight;
+            ++effect.samples;
+            const CharacterLocomotionTelemetry3D& lt = legacy.locomotion.telemetry();
+            for (std::size_t side = 0; side < 2; ++side) {
+                if (lt.footPlanted[side] && !effect.planted[side]) ++effect.touchdowns;
+                effect.planted[side] = lt.footPlanted[side];
+            }
+            for (std::size_t i = 0; i < profile.links.size(); ++i) {
+                const bool left = profile.links[i].id == "LeftFoot", right = profile.links[i].id == "RightFoot";
+                if ((left || right) && !lt.footPlanted[left ? 0 : 1] && i < bodyState.links.size())
+                    effect.footPeak = std::max(effect.footPeak, bodyState.links[i].position.z - athlete.groundHeight);
+            }
+        }
         // XPRONTO=1: as condicoes da volta do fisico ao padrao, a cada 0,1 s.
         if (std::getenv("XPRONTO") && mode() == BodyModeKind3D::Physical && step % 12 == 0) {
             const AthleteTelemetry3D telemetry = athleteTelemetry3D(athlete);
@@ -2057,6 +2121,13 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
     metrics.earlyLifts = athlete.footsteps.telemetry().earlyLifts;
     metrics.catchSteps = athlete.footsteps.telemetry().catchSteps;
     metrics.startSteps = athlete.footsteps.telemetry().startSteps;
+    if (effectWanted && effect.samples > 0) {
+        const double n = effect.samples;
+        std::printf("  EFEITO %-14s vel %.3f lado %+.3f m/s | pousos/s %.2f | pe no ar max %.3f m | pelve %.3f m | "
+                    "passos do planejador %u | %s\n", scenario.name.c_str(), effect.speed / n, effect.lateral / n,
+            effect.touchdowns / (n * Dt), effect.footPeak, effect.pelvis / n, legacy.locomotion.contactPlan().stepsStarted,
+            metrics.fell ? "CAIU" : "de pe");
+    }
     if (std::getenv("XCUSTO") && !runtimeCost.empty()) {
         const std::size_t worst = static_cast<std::size_t>(
             std::max_element(runtimeCost.begin(), runtimeCost.end()) - runtimeCost.begin());

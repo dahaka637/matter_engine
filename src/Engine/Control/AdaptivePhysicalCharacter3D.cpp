@@ -812,11 +812,13 @@ void AdaptivePhysicalCharacter3D::update(const RagdollProfile3D& profile,
         walkingDriveRamp = 0.35f + 0.65f
             * startup * startup * (3.0f - 2.0f * startup);
     }
-    const Vec3 legPlanarAcceleration = legsWalking
+    Vec3 legPlanarAcceleration = legsWalking
         ? limit(planar(requestedVelocity - physical->centerOfMassVelocityWorld)
             * LegWalkingVelocityGain, LegWalkingAcceleration)
                 * (balanceShare * walkingDriveRamp * physicalWalkingShare)
         : intentAcceleration * balanceShare;
+    // O gancho do contato (o RL): na parte das pernas.
+    if (intent.rlContact) legPlanarAcceleration += planar(intent.rlContactAccelerationWorld) * balanceShare;
     // O peso pelas pernas: a fracao delas vezes quanto do peso elas assumem.
     // Em marcha, o experimento pode conservar peso na pelve para evitar a
     // oscilacao vertical observada. Parado, o slider e a fonte de verdade:

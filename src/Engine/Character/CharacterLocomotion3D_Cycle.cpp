@@ -271,7 +271,14 @@ void CharacterLocomotion3D::stepCycle(Tick& t) {
             // rapida); o comprimento fica o do pouso deslocado.
             if (StumbleDetection && m_tripRecovery > 0.0f)
                 playbackRate *= 1.0f + StumbleCadence * m_tripRecovery;
+            // O gancho do ritmo (o RL): antes da compensacao - a passada abaixo
+            // encurta e a velocidade implicita fica a mesma.
+            if (input.corrections != nullptr) playbackRate *= cadenceFactor3D(input.corrections);
             strideScale = std::clamp(ratio / playbackRate, 0.0f, strideCap);
+            // O gancho do comprimento (o RL): depois da compensacao, no mesmo
+            // ritmo (ate o teto do terreno).
+            if (input.corrections != nullptr)
+                strideScale = std::min(strideScale * strideFactor3D(input.corrections), strideCap);
             // Preparo do carrinho: o passo que pousa e o de firmar o pe.
             if (m_tacklePending)
                 strideScale *= 1.0f + TacklePlantStride * smoothStep(m_tacklePendingSeconds / 0.10f);

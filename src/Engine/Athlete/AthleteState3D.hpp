@@ -76,6 +76,9 @@ struct AthleteState3D {
     std::vector<float> policyFrom;
     std::vector<float> policyTo;
     int policyTicks = 0;
+    // O valor fisico aplicado de cada canal da saida (depois do teto, da
+    // autoridade e do limite de taxa): o estado do filtro.
+    std::vector<float> policyApplied;
     // O custo do ultimo passo (s; o orcamento por modulo): o controle fisico
     // (por bloco em legacy.locomotion.sectionSeconds()) e a ajuda.
     float locomotionSeconds = 0.0f;

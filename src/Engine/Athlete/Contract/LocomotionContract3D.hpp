@@ -40,17 +40,44 @@ struct LocomotionMirror3D {
     std::string worstAxis;
 };
 
-// As autoridades de cada cabeca (0..1): o curriculo do treino, nunca a rede.
+// Os tetos de uma fase (o curriculo do treino, nunca a rede), no valor
+// fisico de cada saida: cortam o que a rede pede. Abrir um teto num portao
+// nao muda o significado das acoes ja aprendidas (a escala da rede e a
+// maxima, fixa). Os de fabrica sao os das fases 1 e 2 (o consenso da etapa A,
+// vault 04_locomocao/plano_fases_1_2.md); full() abre tudo ate a escala.
+struct LocomotionCaps3D {
+    float touchdownMeters = 0.06f;
+    float swingUpMeters = 0.05f;
+    float swingDownMeters = 0.02f;
+    float phaseLeadCycles = 0.05f;
+    float recoveryUrgency = 0.5f;
+    float cadenceOctaves = 0.2f;
+    float strideOctaves = 0.2f;
+    float leanRadians = 0.12f;
+    float comMeters = 0.08f;
+    float pelvisUpMeters = 0.02f;
+    float pelvisDownMeters = 0.04f;
+    float contactAcceleration = 1.0f;
+    float jointRadians = 0.10f;
+    float gainOctaves = 0.3f;
+
+    [[nodiscard]] static LocomotionCaps3D full();
+};
+
+// As autoridades de cada cabeca (0..1: a rampa de entrada e o portao) e os
+// tetos da fase: o curriculo do treino, nunca a rede.
 struct LocomotionAuthority3D {
     float footwork = 0.0f;
     float balance = 0.0f;
     float pose = 0.0f;
     float gain = 0.0f;
+    LocomotionCaps3D caps;
 };
 
 // O contrato da rede da locomocao fisica (o plano do RL, vault
-// 04_locomocao/rl_sobre_a_locomocao.md, secao 3), versao 1. Feito do perfil
-// do corpo; o mesmo no treino e no jogo (o jogo o usa na L6).
+// 04_locomocao/rl_sobre_a_locomocao.md, e o consenso da etapa A em
+// plano_fases_1_2.md), versao 2. Feito do perfil do corpo; o mesmo no treino
+// e no jogo.
 //
 // A entrada, no referencial do rumo da pelve (x a frente, y a esquerda, z
 // para cima; deitado, o rumo vem do eixo de cima da pelve):
@@ -58,28 +85,56 @@ struct LocomotionAuthority3D {
 //   orientacao em 6D e as velocidades); as juntas atuadas (angulo e
 //   velocidade); o contato de cada pe;
 // - o comando: a velocidade pedida, o sprint, o olhar;
-// - a referencia viavel (o padrao a sombra; zeros e a marca 0 sem ela): a
-//   fase, por pe o apoio e a meta de contato, o plano a 0,1/0,25/0,5 s e o
-//   erro das partes-chave (pes, maos, peito, cabeca) contra a pose de estilo;
+// - a referencia viavel (o padrao a sombra; zeros e a marca 0 sem ela);
 // - o que o classico propos: por pe o pouso do balanco, e as partes-chave da
 //   pose alvo dele;
 // - o orcamento da ajuda e a forca que ela aplica;
+// - o executor (v2, a entrada causal): o estado e o setor da marcha, o ciclo
+//   e a fase de cada perna, o balanco, o contato do clipe, a espera do toque,
+//   o ritmo e a passada, o planejador por pe (fase e dono), a urgencia de
+//   recuperacao, o ponto de captura, a referencia da raiz, a ajuda efetiva e
+//   o VMC das pernas (pedida, alocada, resto) com a margem na base;
 // - as acoes das 3 decisoes anteriores.
-// A saida, uma cabeca por modulo (cada numero em -1..1): o pouso de cada pe,
-// a inclinacao do tronco, a correcao de cada eixo atuado e a escala dos
-// ganhos por grupo (pernas, tronco, bracos).
+// A saida (cada numero em -1..1, na escala maxima de cada canal; o teto da
+// fase corta, a autoridade multiplica e o limite de taxa suaviza):
+// - os pes: o pouso de cada um (x, y), a altura do balanco, o ritmo proprio
+//   de cada perna, a urgencia de recuperacao de cada pe, a cadencia e o
+//   comprimento da passada;
+// - o equilibrio: a inclinacao (frente, lado), o centro de massa (x, y), a
+//   altura da pelve, a aceleracao pelo contato (x, y);
+// - a pose: a correcao de cada eixo atuado;
+// - a rigidez: a escala dos ganhos por grupo (pernas, tronco, bracos).
 class LocomotionContract3D {
 public:
-    static constexpr std::uint32_t Version = 1;
+    static constexpr std::uint32_t Version = 2;
     static constexpr std::size_t HistoryDecisions = 3;
     // A decisao a 30 Hz (o seguimento a 120 Hz): a rampa entre decisoes.
     static constexpr int TicksPerDecision = 4;
-    // As escalas da saida (o -1..1 da rede no corpo).
-    static constexpr float TouchdownMeters = 0.15f;
-    static constexpr float TouchdownHeightMeters = 0.05f;
-    static constexpr float LeanRadians = 0.2f;
-    static constexpr float JointRadians = 0.3f;
+    // As escalas maximas (o -1..1 da rede no corpo) e os limites de taxa
+    // (por segundo), por canal.
+    static constexpr float TouchdownMeters = 0.30f;
+    static constexpr float SwingUpMeters = 0.10f;
+    static constexpr float SwingDownMeters = 0.03f;
+    static constexpr float PhaseLeadCycles = 0.10f;
+    static constexpr float CadenceOctaves = 0.5f;
+    static constexpr float StrideOctaves = 0.5f;
+    static constexpr float LeanRadians = 0.30f;
+    static constexpr float ComMeters = 0.20f;
+    static constexpr float PelvisUpMeters = 0.05f;
+    static constexpr float PelvisDownMeters = 0.15f;
+    static constexpr float ContactAcceleration = 4.0f;
+    static constexpr float JointRadians = 0.6f;
     static constexpr float GainOctaves = 1.0f;
+    static constexpr float TouchdownRate = 1.5f;
+    static constexpr float SwingRate = 0.5f;
+    static constexpr float PhaseLeadRate = 0.5f;
+    static constexpr float OctaveRate = 1.0f;
+    static constexpr float LeanRate = 1.5f;
+    static constexpr float ComRate = 0.6f;
+    static constexpr float PelvisRate = 0.3f;
+    static constexpr float ContactRate = 10.0f;
+    static constexpr float JointRate = 2.0f;
+    static constexpr float GainRate = 2.0f;
 
     explicit LocomotionContract3D(const RagdollProfile3D& profile);
 
@@ -95,10 +150,10 @@ public:
 
     // O espelho pelo plano do corpo (y no referencial do rumo): os lados
     // trocam (Left/Right, esq/dir), os vetores trocam o y, as velocidades de
-    // giro e o torque (pseudovetores) trocam o x e o z, a fase anda meio ciclo
-    // e cada eixo de junta vai ao do outro lado com o sinal que os quadros das
-    // juntas dao (o giro refletido por M = diag(1,-1,1) e o giro pelo eixo M v
-    // ao contrario: s = -<M v, v'>).
+    // giro e o torque (pseudovetores) trocam o x e o z, as fases andam meio
+    // ciclo e cada eixo de junta vai ao do outro lado com o sinal que os
+    // quadros das juntas dao (o giro refletido por M = diag(1,-1,1) e o giro
+    // pelo eixo M v ao contrario: s = -<M v, v'>).
     [[nodiscard]] LocomotionMirror3D mirror() const;
 
     // A entrada de um tick: o corpo publicado, o comando, a visao do controle
@@ -110,20 +165,33 @@ public:
         const AthleteControlView3D& view, std::span<const float> history, BodyForecast3D& forecast,
         std::span<float> out) const;
 
-    // A saida da rede nas correcoes do executor (cada cabeca vezes a sua
-    // autoridade; autoridade zero e o classico exato).
-    [[nodiscard]] PhysicalCorrections3D decode(std::span<const float> action,
+    // O valor fisico de cada canal para uma acao (-1..1): a escala, o teto da
+    // fase e a autoridade da cabeca - antes do limite de taxa.
+    [[nodiscard]] std::vector<float> physical(std::span<const float> action, const LocomotionAuthority3D& authority) const;
+    // Os valores fisicos de cada canal nas correcoes do executor (uma cabeca
+    // sem autoridade e sem valor fica desligada: o classico exato).
+    [[nodiscard]] PhysicalCorrections3D corrections(std::span<const float> values,
         const LocomotionAuthority3D& authority) const;
 
     // Uma decisao nova (a cada TicksPerDecision ticks): guarda no historico do
     // atleta e comeca a rampa ate ela.
     void decide(AthleteState3D& athlete, std::span<const float> action) const;
-    // Um tick da rampa: as correcoes do atleta no meio do caminho da acao de
-    // antes ate a nova.
-    void follow(AthleteState3D& athlete, const LocomotionAuthority3D& authority) const;
+    // Um tick: a rampa entre decisoes, o valor fisico e o limite de taxa de
+    // cada canal (o aplicado mora no atleta), e as correcoes dele.
+    void follow(AthleteState3D& athlete, const LocomotionAuthority3D& authority, float deltaTime) const;
 
 private:
+    // O que cada canal da saida e: o tipo, o pe (ou o eixo, ou o grupo).
+    enum class Channel : std::uint8_t {
+        TouchdownX, TouchdownY, SwingHeight, PhaseLead, Recovery, Cadence, Stride,
+        LeanForward, LeanLateral, ComX, ComY, PelvisHeight, ContactX, ContactY, Joint, Gain
+    };
+    struct ChannelSpec {
+        Channel kind = Channel::Joint;
+        std::uint32_t index = 0;
+    };
     const RagdollProfile3D* m_profile = nullptr;
+    std::vector<ChannelSpec> m_specs;
     RLVectorLayout3D m_observation;
     RLVectorLayout3D m_action;
     std::vector<std::uint32_t> m_axes;

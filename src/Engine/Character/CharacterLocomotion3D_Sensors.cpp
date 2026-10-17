@@ -60,6 +60,7 @@ void CharacterLocomotion3D::stepSensors(Tick& t) {
     }
     m_telemetry.externalForceWorld = physical.externalForceWorld;
     m_telemetry.captureOutsideMeters = captureOutside;
+    m_telemetry.capturePointWorld = m_capturePoint;
 
     t.speed = std::hypot(desiredPlanarVelocity.x,
         desiredPlanarVelocity.y);

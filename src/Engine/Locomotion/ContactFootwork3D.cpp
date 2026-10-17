@@ -72,6 +72,9 @@ constexpr float RecoveryCaptureUnloadSeconds = 0.15f;
 constexpr float CaptureTargetSlowSpeed = 0.30f;
 constexpr float CaptureTargetFastSpeed = 0.60f;
 constexpr float RecoveryMemorySeconds = 0.45f;
+// O pedido de recuperacao do RL: liga nesta urgencia, desliga abaixo daquela.
+constexpr float RlRecoveryOn = 0.40f;
+constexpr float RlRecoveryOff = 0.25f;
 // Girando parado sem forca de fora: a captura pode sair isto a mais da base
 // antes de virar recuperacao (m). TEMPTUNE
 const float TurnRecoveryMargin = [] { const char* v = std::getenv("T_TurnRecoveryMargin"); return v ? static_cast<float>(std::atof(v)) : 0.15f; }();
@@ -371,6 +374,7 @@ void ContactFootwork3D::reset(const RagdollProfile3D& profile) {
     m_ticksWithoutContact = {};
     m_liftedOff = {};
     m_residualShift = {};
+    m_rlRecoveryLatched = {};
     m_fitCenter = {};
     m_fitShift = {};
     m_fitValid = {};
@@ -1107,6 +1111,11 @@ void ContactFootwork3D::executeSwing(const RagdollProfile3D& profile,
         plannedOrientation = (Quaternion::fromAxisAngle({ 0.0f, 0.0f, 1.0f },
             yaw - footYaw3D(link, plannedOrientation)) * plannedOrientation).normalized();
     }
+    // O pouso a mais do RL (no plano), antes do encaixe no degrau e do chao.
+    if (input.rlActive) {
+        plannedPosition.x += input.rlLandingOffsetWorld[side].x;
+        plannedPosition.y += input.rlLandingOffsetWorld[side].y;
+    }
     // O pouso cabe inteiro num nivel (quina de degrau): o ponto anda o minimo
     // ao longo do pe, ate 10 cm; alem disso fica onde a pose pos.
     const Vec3 plannedForward = footForwardWorld3D(link, plannedOrientation);
@@ -1777,6 +1786,31 @@ void ContactFootwork3D::update(const RagdollProfile3D& profile,
             }
         }
     }
+    // O pedido de recuperacao do RL (com histerese): o pe dele e a maior das
+    // duas urgencias, so onde o classico tambem decide recuperacao (parado,
+    // com os pes daqui).
+    bool rlRecoveryStep = false;
+    if (input.rlActive) {
+        const bool canRecover = planning && !locomotionPlanning && !input.braking && !input.stumbling
+            && input.allowRecovery;
+        int chosen = -1;
+        float most = 0.0f;
+        for (std::size_t side = 0; side < 2; ++side) {
+            const float request = canRecover ? std::clamp(input.rlRecoveryRequest[side], 0.0f, 1.0f) : 0.0f;
+            m_rlRecoveryLatched[side] = request >= RlRecoveryOn || (m_rlRecoveryLatched[side] && request > RlRecoveryOff);
+            if (m_rlRecoveryLatched[side] && request > most && !input.scripted[side].active) {
+                most = request;
+                chosen = static_cast<int>(side);
+            }
+        }
+        if (chosen >= 0) {
+            plan.recoverySide = chosen;
+            plan.recoveryUrgency = std::max(plan.recoveryUrgency, most);
+            rlRecoveryStep = true;
+        }
+    } else {
+        m_rlRecoveryLatched = {};
+    }
     if (!input.standing || input.assistHold <= 0.5f) m_heldSettles = 0;
     m_sinceRecoveryNeeded = plan.recoverySide >= 0 ? 0.0f
         : std::min(10.0f, m_sinceRecoveryNeeded + deltaTime);
@@ -2026,7 +2060,8 @@ void ContactFootwork3D::update(const RagdollProfile3D& profile,
         // cuida. (Com forca de fora - uma caixa empurrando devagar - o passo
         // sai: pulado ali, a caixa derrubava.)
         bool pointless = false;
-        if (plan.recoverySide >= 0 && m_settings.recoveryCaptureTargeting) {
+        // (Pedido pelo RL, o passo sai: o pouso dele pode mudar a base.)
+        if (plan.recoverySide >= 0 && m_settings.recoveryCaptureTargeting && !rlRecoveryStep) {
             const std::size_t side = static_cast<std::size_t>(plan.recoverySide);
             const float speed = std::hypot(input.planningComVelocityWorld.x,
                 input.planningComVelocityWorld.y);

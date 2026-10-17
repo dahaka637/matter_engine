@@ -144,11 +144,23 @@ void CharacterLocomotion3D::stepGestures(Tick& t) {
         // adiantada enquanto a da frente espera o toque).
         armSampleTime = gaitMoving && standUpClip == nullptr && !jumpPose && m_armPhaseValid
             ? stanceAlignedPhase(*selectedClip, m_armPhase) * selectedClip->durationSeconds : sampleTime;
+        for (std::size_t side = 0; side < 2; ++side) {
+            const float cycle = std::max(0.05f, selectedClip->durationSeconds);
+            if (!(gaitMoving && standUpClip == nullptr && !jumpPose)) {
+                legSampleTime[side] = sampleTime;
+            } else if (input.corrections == nullptr || !input.corrections->footwork) {
+                legSampleTime[side] = std::fmod(sampleTime + m_legPhaseLead[side] * selectedClip->durationSeconds, cycle);
+            } else {
+                // O gancho do ritmo de cada perna (o RL): o avanco ou atraso
+                // proprio dela, somado ao do contato (a perna que espera o
+                // toque so adianta).
+                const float own = legPhaseLead3D(input.corrections, side, m_waitingLeg == static_cast<int>(side));
+                legSampleTime[side] = std::fmod(sampleTime + (m_legPhaseLead[side] + own) * selectedClip->durationSeconds
+                    + cycle, cycle);
+            }
+        }
         for (std::size_t side = 0; side < 2; ++side)
-            legSampleTime[side] = gaitMoving && standUpClip == nullptr && !jumpPose
-                ? std::fmod(sampleTime + m_legPhaseLead[side] * selectedClip->durationSeconds,
-                    std::max(0.05f, selectedClip->durationSeconds))
-                : sampleTime;
+            m_telemetry.legPhase[side] = legSampleTime[side] / std::max(0.05f, selectedClip->durationSeconds);
         if (m_legSideOfLink.size() != profile.links.size()) {
             m_legSideOfLink.assign(profile.links.size(), -1);
             for (std::size_t index = 1; index < profile.links.size(); ++index) {

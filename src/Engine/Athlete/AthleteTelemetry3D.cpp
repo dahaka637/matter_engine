@@ -57,6 +57,32 @@ AthleteControlView3D athleteControlView3D(const AthleteState3D& athlete) {
     }
     view.classicPose = &legacy.locomotion.output().targetPose;
     if (legacy.referenceShadowActive) view.reference = legacyReferenceMotion3D(legacy.referenceShadow.output());
+    const CharacterLocomotionTelemetry3D& telemetry = legacy.locomotion.telemetry();
+    AthleteControlView3D::Executor& executor = view.executor;
+    executor.state = static_cast<int>(telemetry.state);
+    executor.gaitDirection = static_cast<int>(telemetry.gaitDirection);
+    executor.cyclePhase = telemetry.cyclePhase;
+    executor.legPhase = telemetry.legPhase;
+    executor.swingProgress = telemetry.footSwingProgress;
+    executor.clipContact = telemetry.clipFootContact;
+    executor.classicLead = telemetry.legPhaseLead;
+    executor.waitingLeg = telemetry.waitingLeg;
+    executor.playbackRate = telemetry.playbackRate;
+    executor.strideScale = telemetry.strideScale;
+    for (std::size_t side = 0; side < 2; ++side) {
+        executor.plannerPhase[side] = static_cast<int>(plan.feet[side].phase);
+        executor.plannerOwns[side] = !plan.feet[side].followingGait;
+    }
+    executor.recoveryUrgency = plan.recoveryUrgency;
+    executor.capturePointWorld = telemetry.capturePointWorld;
+    executor.captureOutside = telemetry.captureOutsideMeters;
+    executor.referenceRootWorld = legacy.locomotion.output().guide.rootPositionWorld;
+    executor.legShare = adaptive.output().legShare;
+    executor.balanceShare = adaptive.output().balanceShare;
+    executor.comAccelerationRequested = adaptive.output().requestedComAccelerationWorld;
+    executor.comAccelerationAllocated = adaptive.output().allocatedComAccelerationWorld;
+    executor.comAccelerationResidual = adaptive.output().allocationResidualWorld;
+    executor.balanceMargin = adaptive.output().balanceMargin;
     return view;
 }
 

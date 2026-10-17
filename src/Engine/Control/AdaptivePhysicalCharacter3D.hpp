@@ -95,6 +95,12 @@ struct AdaptivePhysicalIntent3D {
     // contato de fora recente (outro jogador, objeto, parede) - os impactos
     // mandam - e nao segura uma queda que ja comecou.
     float actionStability = 0.0f;
+    // O RL (Athlete/Physical/PhysicalCorrections3D): a aceleracao a mais
+    // pedida as pernas pelo contato (no mundo, no plano), so com `rlContact`.
+    // Entra na parte das pernas e passa pelo mesmo alocador (centro de
+    // pressao nos pes, atrito): o chao limita.
+    bool rlContact = false;
+    Vec3 rlContactAccelerationWorld;
 };
 
 struct AdaptivePhysicalSettings3D {

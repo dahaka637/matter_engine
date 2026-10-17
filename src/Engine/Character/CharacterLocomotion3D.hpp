@@ -496,6 +496,10 @@ struct CharacterLocomotionTelemetry3D {
     // Quanto o ciclo ja esperou o pe tocar o chao neste apoio (s).
     float touchdownWaitSeconds = 0.0f;
     std::array<float, 2> legPhaseLead {};
+    // A fase de cada perna no clipe da passada (0..1, com os avancos) e a
+    // perna que espera o toque (-1 nenhuma): o relogio real do executor.
+    std::array<float, 2> legPhase {};
+    int waitingLeg = -1;
     float thrustOffsetMeters = 0.0f;
     // Diagnostico: inclinacao do alvo do pe no mundo (graus, + ponta para
     // baixo) - a do clipe e a pedida ao IK.
@@ -597,6 +601,7 @@ struct CharacterLocomotionTelemetry3D {
     // ~0,45 s depois) e o ponto de captura fora do apoio real (m).
     float reactiveShare = 0.0f;
     float captureOutsideMeters = 0.0f;
+    Vec3 capturePointWorld;
     // O que o planejador recebeu neste tick: parado (dono dos pes), passos
     // permitidos e recuperacao permitida.
     bool footworkStanding = false;

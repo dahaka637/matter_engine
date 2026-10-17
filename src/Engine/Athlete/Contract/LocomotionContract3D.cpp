@@ -39,23 +39,9 @@ Heading headingOf(float yaw) {
     return h;
 }
 
-// O rumo do corpo pela pelve: a frente dela no plano e a perpendicular do
-// eixo do lado dela, pesadas pelo quanto cada uma esta deitada no plano (de
-// pe as duas concordam; tombando para a frente ou para tras a frente fica
-// vertical e o lado segura o rumo; de lado, o contrario). Todo rumo tirado de
-// uma orientacao tem alguma singularidade; a desta fica de cabeca para baixo
-// (a pelve virada 180 graus por um eixo do chao: as duas se anulam), onde o
-// rumo vira 0 - raro, e so naquele instante.
+// O rumo do corpo pela pelve (o referencial da rede, o mesmo das correcoes).
 float pelvisHeading(const RagdollProfile3D& profile, Quaternion orientation) {
-    const Quaternion body = (orientation * profile.links.front().modelOrientation.conjugate()).normalized();
-    const Vec3 forward = body.rotate({ 1.0f, 0.0f, 0.0f });
-    const Vec3 left = body.rotate({ 0.0f, 1.0f, 0.0f });
-    const float fx = forward.x, fy = forward.y;
-    const float lx = left.y, ly = -left.x;
-    const float fw = std::hypot(fx, fy), lw = std::hypot(lx, ly);
-    const float x = fx * fw + lx * lw, y = fy * fw + ly * lw;
-    if (!std::isfinite(x) || !std::isfinite(y) || x * x + y * y < 1e-12f) return 0.0f;
-    return std::atan2(y, x);
+    return locomotionFrameYaw3D(profile, orientation);
 }
 
 class Writer {
@@ -194,19 +180,70 @@ LocomotionContract3D::LocomotionContract3D(const RagdollProfile3D& profile) : m_
     addVec(o, "ajuda.forca", "peso");
     addVec(o, "ajuda.torque", "peso.m");
 
-    // A saida.
+    // O executor (a entrada causal da v2).
+    for (const char* state : { "parado", "andando", "correndo", "ar", "chao" })
+        addChannel(o, std::string("exec.estado.") + state, "1");
+    for (const char* sector : { "frente", "esq", "dir", "tras" }) addChannel(o, std::string("exec.marcha.") + sector, "1");
+    addChannel(o, "exec.ciclo.sen", "1");
+    addChannel(o, "exec.ciclo.cos", "1");
+    for (const char* side : { "esq", "dir" }) {
+        const std::string foot = std::string("exec.pe_") + side;
+        addChannel(o, foot + ".fase.sen", "1");
+        addChannel(o, foot + ".fase.cos", "1");
+        addChannel(o, foot + ".balanco", "1");
+        addChannel(o, foot + ".contato_clipe", "1");
+        addChannel(o, foot + ".avanco", "ciclo");
+        addChannel(o, foot + ".espera", "1");
+        for (const char* phase : { "apoio", "descarrega", "balanco", "procura", "carrega" })
+            addChannel(o, foot + ".plano." + phase, "1");
+        addChannel(o, foot + ".dono", "1");
+    }
+    addChannel(o, "exec.ritmo", "1");
+    addChannel(o, "exec.passada", "1");
+    addChannel(o, "exec.recupera.urgencia", "1");
+    addVec(o, "exec.captura", "m", 2);
+    addChannel(o, "exec.captura.fora", "m");
+    addVec(o, "exec.referencia", "m");
+    addChannel(o, "exec.ajuda.pernas", "1");
+    addChannel(o, "exec.ajuda.equilibrio", "1");
+    addVec(o, "exec.vmc.pedida", "g", 2);
+    addVec(o, "exec.vmc.alocada", "g", 2);
+    addVec(o, "exec.vmc.resto", "g", 2);
+    addChannel(o, "exec.margem", "m");
+
+    // A saida (a unidade e a escala maxima do -1..1).
     RLVectorLayout3D& a = m_action;
     a.id = "locomocao.acao";
     a.version = Version;
-    addVec(a, "pes.esq.pouso", "0.15 m");
-    addVec(a, "pes.dir.pouso", "0.15 m");
-    addChannel(a, "equilibrio.inclina.frente", "0.2 rad");
-    addChannel(a, "equilibrio.inclina.lado", "0.2 rad");
+    const auto action = [&](std::string name, const char* unit, Channel kind, std::uint32_t index) {
+        addChannel(a, std::move(name), unit);
+        m_specs.push_back({ kind, index });
+    };
+    for (std::uint32_t side = 0; side < 2; ++side) {
+        const std::string foot = std::string("pes.") + (side == 0 ? "esq" : "dir");
+        action(foot + ".pouso.x", "0.30 m", Channel::TouchdownX, side);
+        action(foot + ".pouso.y", "0.30 m", Channel::TouchdownY, side);
+    }
+    for (std::uint32_t side = 0; side < 2; ++side)
+        action(std::string("pes.") + (side == 0 ? "esq" : "dir") + ".altura", "+0.10/-0.03 m", Channel::SwingHeight, side);
+    for (std::uint32_t side = 0; side < 2; ++side)
+        action(std::string("pes.") + (side == 0 ? "esq" : "dir") + ".ritmo", "0.10 ciclo", Channel::PhaseLead, side);
+    for (std::uint32_t side = 0; side < 2; ++side)
+        action(std::string("pes.") + (side == 0 ? "esq" : "dir") + ".recupera", "0..1", Channel::Recovery, side);
+    action("passada.cadencia", "0.5 oitava", Channel::Cadence, 0);
+    action("passada.comprimento", "0.5 oitava", Channel::Stride, 0);
+    action("equilibrio.inclina.frente", "0.30 rad", Channel::LeanForward, 0);
+    action("equilibrio.inclina.lado", "0.30 rad", Channel::LeanLateral, 0);
+    action("equilibrio.cm.x", "0.20 m", Channel::ComX, 0);
+    action("equilibrio.cm.y", "0.20 m", Channel::ComY, 0);
+    action("equilibrio.altura", "+0.05/-0.15 m", Channel::PelvisHeight, 0);
+    action("equilibrio.contato.x", "4 m/s2", Channel::ContactX, 0);
+    action("equilibrio.contato.y", "4 m/s2", Channel::ContactY, 0);
     for (std::uint32_t key : m_axes)
-        addChannel(a, "pose." + profile.links[key / 3].id + "." + AxisNames[key % 3], "0.3 rad");
-    addChannel(a, "ganho.pernas", "oitava");
-    addChannel(a, "ganho.tronco", "oitava");
-    addChannel(a, "ganho.bracos", "oitava");
+        action("pose." + profile.links[key / 3].id + "." + AxisNames[key % 3], "0.6 rad", Channel::Joint, key);
+    action("ganho.pernas", "oitava", Channel::Gain, 0);
+    action("ganho.tronco", "oitava", Channel::Gain, 1);
+    action("ganho.bracos", "oitava", Channel::Gain, 2);
 
     // O historico das acoes entra na entrada.
     for (std::size_t d = 0; d < HistoryDecisions; ++d)
@@ -345,6 +382,52 @@ LocomotionObservation3D LocomotionContract3D::observe(const RagdollState3D& body
     w.put(h.in(view.pelvisForceWorld) * (1.0f / weight));
     w.put(h.in(view.pelvisTorqueWorld) * (1.0f / weight));
 
+    // O executor.
+    const AthleteControlView3D::Executor& exec = view.executor;
+    {
+        using State = CharacterLocomotionState3D;
+        const State state = static_cast<State>(exec.state);
+        const bool still = state == State::Idle || state == State::Turning || state == State::CrouchIdle;
+        const bool walking = state == State::Walking || state == State::CrouchWalking;
+        const bool running = state == State::Running;
+        const bool air = state == State::JumpStarting || state == State::Airborne || state == State::Landing;
+        w.put(still ? 1.0f : 0.0f);
+        w.put(walking ? 1.0f : 0.0f);
+        w.put(running ? 1.0f : 0.0f);
+        w.put(air ? 1.0f : 0.0f);
+        w.put(!still && !walking && !running && !air ? 1.0f : 0.0f);
+        using Sector = CharacterGaitDirection3D;
+        const Sector sector = static_cast<Sector>(exec.gaitDirection);
+        w.put(sector == Sector::Forward ? 1.0f : 0.0f);
+        w.put(sector == Sector::Left ? 1.0f : 0.0f);
+        w.put(sector == Sector::Right ? 1.0f : 0.0f);
+        w.put(sector == Sector::Backward ? 1.0f : 0.0f);
+    }
+    w.put(std::sin(exec.cyclePhase * TwoPi));
+    w.put(std::cos(exec.cyclePhase * TwoPi));
+    for (std::size_t side = 0; side < 2; ++side) {
+        w.put(std::sin(exec.legPhase[side] * TwoPi));
+        w.put(std::cos(exec.legPhase[side] * TwoPi));
+        w.put(std::clamp(exec.swingProgress[side], -1.0f, 1.0f));
+        w.put(exec.clipContact[side]);
+        w.put(exec.classicLead[side]);
+        w.put(exec.waitingLeg == static_cast<int>(side) ? 1.0f : 0.0f);
+        for (int phase = 0; phase < 5; ++phase) w.put(exec.plannerPhase[side] == phase ? 1.0f : 0.0f);
+        w.put(exec.plannerOwns[side] ? 1.0f : 0.0f);
+    }
+    w.put(exec.playbackRate);
+    w.put(exec.strideScale);
+    w.put(exec.recoveryUrgency);
+    w.put2(h.in(Vec3 { exec.capturePointWorld.x - pelvis.position.x, exec.capturePointWorld.y - pelvis.position.y, 0.0f }));
+    w.put(std::clamp(exec.captureOutside, 0.0f, 2.0f));
+    w.put(h.in(exec.referenceRootWorld - pelvis.position));
+    w.put(exec.legShare);
+    w.put(exec.balanceShare);
+    w.put2(h.in(exec.comAccelerationRequested) * (1.0f / Gravity));
+    w.put2(h.in(exec.comAccelerationAllocated) * (1.0f / Gravity));
+    w.put2(h.in(exec.comAccelerationResidual) * (1.0f / Gravity));
+    w.put(std::clamp(exec.balanceMargin, -1.0f, 1.0f));
+
     // As decisoes anteriores.
     const std::size_t historySize = HistoryDecisions * actionSize();
     for (std::size_t i = 0; i < historySize; ++i) w.put(i < history.size() ? history[i] : 0.0f);
@@ -353,28 +436,115 @@ LocomotionObservation3D LocomotionContract3D::observe(const RagdollState3D& body
     return { w.index(), w.nonFinite() };
 }
 
-PhysicalCorrections3D LocomotionContract3D::decode(std::span<const float> action,
+LocomotionCaps3D LocomotionCaps3D::full() {
+    using C = LocomotionContract3D;
+    LocomotionCaps3D caps;
+    caps.touchdownMeters = C::TouchdownMeters;
+    caps.swingUpMeters = C::SwingUpMeters;
+    caps.swingDownMeters = C::SwingDownMeters;
+    caps.phaseLeadCycles = C::PhaseLeadCycles;
+    caps.recoveryUrgency = 1.0f;
+    caps.cadenceOctaves = C::CadenceOctaves;
+    caps.strideOctaves = C::StrideOctaves;
+    caps.leanRadians = C::LeanRadians;
+    caps.comMeters = C::ComMeters;
+    caps.pelvisUpMeters = C::PelvisUpMeters;
+    caps.pelvisDownMeters = C::PelvisDownMeters;
+    caps.contactAcceleration = C::ContactAcceleration;
+    caps.jointRadians = C::JointRadians;
+    caps.gainOctaves = C::GainOctaves;
+    return caps;
+}
+
+std::vector<float> LocomotionContract3D::physical(std::span<const float> action,
     const LocomotionAuthority3D& authority) const {
-    const auto value = [&](std::size_t i) {
-        const float v = i < action.size() ? action[i] : 0.0f;
-        return std::isfinite(v) ? std::clamp(v, -1.0f, 1.0f) : 0.0f;
-    };
-    PhysicalCorrections3D out;
-    out.footworkAuthority = authority.footwork;
-    out.balanceAuthority = authority.balance;
-    out.poseAuthority = authority.pose;
-    out.gainAuthority = authority.gain;
-    std::size_t i = 0;
-    for (std::size_t side = 0; side < 2; ++side) {
-        out.feet[side].touchdownOffset = { value(i) * TouchdownMeters, value(i + 1) * TouchdownMeters,
-            value(i + 2) * TouchdownHeightMeters };
-        i += 3;
+    const auto unit = [](float a) { return std::isfinite(a) ? std::clamp(a, 0.0f, 1.0f) : 0.0f; };
+    const LocomotionCaps3D& caps = authority.caps;
+    std::vector<float> out(m_specs.size(), 0.0f);
+    for (std::size_t i = 0; i < m_specs.size(); ++i) {
+        const float raw = i < action.size() ? action[i] : 0.0f;
+        const float v = std::isfinite(raw) ? std::clamp(raw, -1.0f, 1.0f) : 0.0f;
+        // A escala (assimetrica onde o canal e), o teto e a cabeca.
+        float up = 0.0f, down = 0.0f, capUp = 0.0f, capDown = 0.0f, head = 0.0f;
+        const auto both = [&](float scale, float cap, float a) { up = down = scale; capUp = capDown = cap; head = a; };
+        switch (m_specs[i].kind) {
+        case Channel::TouchdownX:
+        case Channel::TouchdownY: both(TouchdownMeters, caps.touchdownMeters, authority.footwork); break;
+        case Channel::SwingHeight:
+            up = SwingUpMeters, down = SwingDownMeters, capUp = caps.swingUpMeters, capDown = caps.swingDownMeters;
+            head = authority.footwork;
+            break;
+        case Channel::PhaseLead: both(PhaseLeadCycles, caps.phaseLeadCycles, authority.footwork); break;
+        case Channel::Recovery:
+            // (So a metade positiva: a acao no meio nao pede passo nenhum.)
+            up = 1.0f, down = 0.0f, capUp = caps.recoveryUrgency, capDown = 0.0f, head = authority.footwork;
+            break;
+        case Channel::Cadence: both(CadenceOctaves, caps.cadenceOctaves, authority.footwork); break;
+        case Channel::Stride: both(StrideOctaves, caps.strideOctaves, authority.footwork); break;
+        case Channel::LeanForward:
+        case Channel::LeanLateral: both(LeanRadians, caps.leanRadians, authority.balance); break;
+        case Channel::ComX:
+        case Channel::ComY: both(ComMeters, caps.comMeters, authority.balance); break;
+        case Channel::PelvisHeight:
+            up = PelvisUpMeters, down = PelvisDownMeters, capUp = caps.pelvisUpMeters, capDown = caps.pelvisDownMeters;
+            head = authority.balance;
+            break;
+        case Channel::ContactX:
+        case Channel::ContactY: both(ContactAcceleration, caps.contactAcceleration, authority.balance); break;
+        case Channel::Joint: both(JointRadians, caps.jointRadians, authority.pose); break;
+        case Channel::Gain: both(GainOctaves, caps.gainOctaves, authority.gain); break;
+        }
+        const float value = v >= 0.0f ? std::min(v * up, std::max(0.0f, capUp)) : std::max(v * down, -std::max(0.0f, capDown));
+        out[i] = value * unit(head);
     }
-    out.forwardLean = value(i++) * LeanRadians;
-    out.lateralLean = value(i++) * LeanRadians;
-    out.jointResiduals.assign(m_profile->links.size() * 3, 0.0f);
-    for (std::uint32_t key : m_axes) out.jointResiduals[key] = value(i++) * JointRadians;
-    for (std::size_t g = 0; g < 3; ++g) out.gainScale[g] = std::exp2(value(i++) * GainOctaves);
+    return out;
+}
+
+PhysicalCorrections3D LocomotionContract3D::corrections(std::span<const float> values,
+    const LocomotionAuthority3D& authority) const {
+    const auto on = [](float a) { return std::isfinite(a) && a > 0.0f; };
+    PhysicalCorrections3D out;
+    out.footwork = on(authority.footwork);
+    out.balance = on(authority.balance);
+    out.pose = on(authority.pose);
+    out.gain = on(authority.gain);
+    // (Uma cabeca que perdeu a autoridade segue ligada ate o valor dela
+    // voltar a zero pelo limite de taxa: desligada de uma vez, saltava.)
+    for (std::size_t i = 0; i < m_specs.size() && i < values.size(); ++i) {
+        if (values[i] == 0.0f) continue;
+        switch (m_specs[i].kind) {
+        case Channel::Joint: out.pose = true; break;
+        case Channel::Gain: out.gain = true; break;
+        case Channel::LeanForward: case Channel::LeanLateral: case Channel::ComX: case Channel::ComY:
+        case Channel::PelvisHeight: case Channel::ContactX: case Channel::ContactY: out.balance = true; break;
+        default: out.footwork = true; break;
+        }
+    }
+    if (out.pose) out.jointResiduals.assign(m_profile->links.size() * 3, 0.0f);
+    for (std::size_t i = 0; i < m_specs.size() && i < values.size(); ++i) {
+        const float value = values[i];
+        const std::uint32_t index = m_specs[i].index;
+        switch (m_specs[i].kind) {
+        case Channel::TouchdownX: out.feet[index].touchdownOffset.x = value; break;
+        case Channel::TouchdownY: out.feet[index].touchdownOffset.y = value; break;
+        case Channel::SwingHeight: out.feet[index].swingHeight = value; break;
+        case Channel::PhaseLead: out.feet[index].phaseLead = value; break;
+        case Channel::Recovery: out.feet[index].recoveryUrgency = value; break;
+        case Channel::Cadence: out.cadenceOctaves = value; break;
+        case Channel::Stride: out.strideOctaves = value; break;
+        case Channel::LeanForward: out.forwardLean = value; break;
+        case Channel::LeanLateral: out.lateralLean = value; break;
+        case Channel::ComX: out.comOffset.x = value; break;
+        case Channel::ComY: out.comOffset.y = value; break;
+        case Channel::PelvisHeight: out.pelvisHeight = value; break;
+        case Channel::ContactX: out.contactAcceleration.x = value; break;
+        case Channel::ContactY: out.contactAcceleration.y = value; break;
+        case Channel::Joint:
+            if (index < out.jointResiduals.size()) out.jointResiduals[index] = value;
+            break;
+        case Channel::Gain: out.gainScale[index] = std::exp2(value); break;
+        }
+    }
     return out;
 }
 
@@ -460,8 +630,12 @@ LocomotionMirror3D LocomotionContract3D::mirror() const {
             if (pseudo) scale = endsWith(name, ".y") ? 1.0f : -1.0f;
             else scale = endsWith(name, ".y") ? -1.0f : 1.0f;
         }
-        if (name == "comando.olhar.sen" || name == "ref.fase.sen" || name == "ref.fase.cos"
-            || endsWith(name, "equilibrio.inclina.lado"))
+        // (As fases andam meio ciclo no espelho: o seno e o cosseno trocam de
+        // sinal. As das pernas tambem trocam de lado, pelo nome.)
+        const bool phase = name == "ref.fase.sen" || name == "ref.fase.cos" || name == "exec.ciclo.sen"
+            || name == "exec.ciclo.cos" || (contains(name, "exec.pe_") && (endsWith(name, ".fase.sen")
+                || endsWith(name, ".fase.cos")));
+        if (name == "comando.olhar.sen" || phase || endsWith(name, "equilibrio.inclina.lado"))
             scale = -1.0f;
         if (contains(name, "junta.") || contains(name, "pose.")) {
             const std::size_t start = contains(name, "junta.") ? name.find("junta.") + 6 : name.find("pose.") + 5;
@@ -496,7 +670,7 @@ void LocomotionContract3D::decide(AthleteState3D& athlete, std::span<const float
     std::vector<float>& history = athlete.policyHistory;
     history.resize(HistoryDecisions * size, 0.0f);
     std::copy_backward(history.begin(), history.end() - static_cast<std::ptrdiff_t>(size), history.end());
-    // (O historico guarda a acao aplicada: no -1..1, como o decode a usa.)
+    // (O historico guarda a acao pedida: no -1..1, como physical a usa.)
     for (std::size_t i = 0; i < size; ++i)
         history[i] = i < action.size() && std::isfinite(action[i]) ? std::clamp(action[i], -1.0f, 1.0f) : 0.0f;
     // A rampa parte de onde a anterior estava.
@@ -512,10 +686,12 @@ void LocomotionContract3D::decide(AthleteState3D& athlete, std::span<const float
     athlete.policyTicks = 0;
 }
 
-void LocomotionContract3D::follow(AthleteState3D& athlete, const LocomotionAuthority3D& authority) const {
+void LocomotionContract3D::follow(AthleteState3D& athlete, const LocomotionAuthority3D& authority,
+    float deltaTime) const {
     const std::size_t size = actionSize();
     if (athlete.policyTo.size() != size) {
         athlete.corrections = {};
+        athlete.policyApplied.clear();
         return;
     }
     const float t = std::clamp(static_cast<float>(athlete.policyTicks + 1) / static_cast<float>(TicksPerDecision), 0.0f,
@@ -524,7 +700,34 @@ void LocomotionContract3D::follow(AthleteState3D& athlete, const LocomotionAutho
     for (std::size_t i = 0; i < size; ++i)
         action[i] = (athlete.policyFrom.size() == size ? athlete.policyFrom[i] : 0.0f) * (1.0f - t)
             + athlete.policyTo[i] * t;
-    athlete.corrections = decode(action, authority);
+    // O limite de taxa de cada canal (por segundo): o aplicado anda ate o
+    // pedido no maximo isto por tick.
+    const std::vector<float> wanted = physical(action, authority);
+    athlete.policyApplied.resize(size, 0.0f);
+    const float dt = std::isfinite(deltaTime) ? std::clamp(deltaTime, 0.0f, 0.05f) : 0.0f;
+    for (std::size_t i = 0; i < size; ++i) {
+        float rate = 0.0f;
+        switch (m_specs[i].kind) {
+        case Channel::TouchdownX: case Channel::TouchdownY: rate = TouchdownRate; break;
+        case Channel::SwingHeight: rate = SwingRate; break;
+        case Channel::PhaseLead: rate = PhaseLeadRate; break;
+        case Channel::Recovery: rate = -1.0f; break;
+        case Channel::Cadence: case Channel::Stride: rate = OctaveRate; break;
+        case Channel::LeanForward: case Channel::LeanLateral: rate = LeanRate; break;
+        case Channel::ComX: case Channel::ComY: rate = ComRate; break;
+        case Channel::PelvisHeight: rate = PelvisRate; break;
+        case Channel::ContactX: case Channel::ContactY: rate = ContactRate; break;
+        case Channel::Joint: rate = JointRate; break;
+        case Channel::Gain: rate = GainRate; break;
+        }
+        float& applied = athlete.policyApplied[i];
+        if (!std::isfinite(applied)) applied = 0.0f;
+        // (A urgencia de recuperacao nao tem limite: a histerese e do planejador.)
+        applied = rate < 0.0f ? wanted[i] : applied + std::clamp(wanted[i] - applied, -rate * dt, rate * dt);
+    }
+    const Quaternion frame = athlete.corrections.frame;
+    athlete.corrections = corrections(athlete.policyApplied, authority);
+    athlete.corrections.frame = frame;
     ++athlete.policyTicks;
 }
 

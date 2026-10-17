@@ -502,6 +502,7 @@ void CharacterLocomotion3D::stepOutputs(Tick& t) {
     m_telemetry.landingBraceForwardRadians = landingBraceForward;
     m_telemetry.landingBraceLateralRadians = landingBraceLateral;
     m_telemetry.cyclePhase = m_cyclePhase;
+    m_telemetry.waitingLeg = m_waitingLeg;
     m_telemetry.playbackRate = playbackRate;
     m_telemetry.strideScale = strideScale;
     m_telemetry.terrainSlope = m_terrainSlope;
