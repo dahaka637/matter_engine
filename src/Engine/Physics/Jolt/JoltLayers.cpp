@@ -7,8 +7,9 @@ JPH::BroadPhaseLayer JoltBroadPhaseLayerInterface::GetBroadPhaseLayer(
     if (layer == JoltObjectLayers::NonMoving) {
         return JoltBroadPhaseLayers::NonMoving;
     }
-    // Props, links de ragdoll e o personagem se movem: compartilham a arvore
-    // dinamica, que e reconstruida por passo.
+    // Os links de ragdoll numa arvore so deles (as sondas de chao nao os veem).
+    if (layer == JoltObjectLayers::Ragdoll) return JoltBroadPhaseLayers::Ragdoll;
+    // Props e o personagem se movem: a arvore dinamica, reconstruida por passo.
     return JoltBroadPhaseLayers::Moving;
 }
 
@@ -17,6 +18,7 @@ const char* JoltBroadPhaseLayerInterface::GetBroadPhaseLayerName(
     JPH::BroadPhaseLayer layer) const {
     if (layer == JoltBroadPhaseLayers::NonMoving) return "NonMoving";
     if (layer == JoltBroadPhaseLayers::Moving) return "Moving";
+    if (layer == JoltBroadPhaseLayers::Ragdoll) return "Ragdoll";
     return "Unknown";
 }
 #endif
@@ -26,7 +28,7 @@ bool JoltObjectVsBroadPhaseLayerFilter::ShouldCollide(
     // Estatico contra estatico nunca produz contato, e testar a arvore estatica
     // contra ela mesma e o desperdicio classico de broad phase.
     if (layer == JoltObjectLayers::NonMoving) {
-        return broadPhaseLayer == JoltBroadPhaseLayers::Moving;
+        return broadPhaseLayer == JoltBroadPhaseLayers::Moving || broadPhaseLayer == JoltBroadPhaseLayers::Ragdoll;
     }
     return true;
 }

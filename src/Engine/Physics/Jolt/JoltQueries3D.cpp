@@ -20,6 +20,18 @@ public:
     bool ShouldCollide(JPH::ObjectLayer layer) const override { return (mask & (1u << layer)) != 0; }
     unsigned mask;
 };
+// A arvore da broad phase de cada camada pedida (as camadas de objeto que nao
+// estao na mascara nem sao visitadas).
+class BroadLayers final : public JPH::BroadPhaseLayerFilter {
+public:
+    explicit BroadLayers(unsigned mask) : mask(mask) {}
+    bool ShouldCollide(JPH::BroadPhaseLayer layer) const override {
+        if (layer == JoltBroadPhaseLayers::NonMoving) return (mask & (1u << JoltObjectLayers::NonMoving)) != 0;
+        if (layer == JoltBroadPhaseLayers::Ragdoll) return (mask & (1u << JoltObjectLayers::Ragdoll)) != 0;
+        return (mask & ~((1u << JoltObjectLayers::NonMoving) | (1u << JoltObjectLayers::Ragdoll))) != 0;
+    }
+    unsigned mask;
+};
 struct Hit { JPH::BodyID id; JPH::SubShapeID sub; Vec3 point; Vec3 normal; float distance; };
 bool cast(const PhysicsScene3D::Impl& impl, const Ray3D& ray, float distance,
     float radius, unsigned mask, Hit& out) {
@@ -30,14 +42,14 @@ bool cast(const PhysicsScene3D::Impl& impl, const Ray3D& ray, float distance,
         JPH::RShapeCast query(&shape, JPH::Vec3::sReplicate(1),
             JPH::RMat44::sTranslation(toJolt(ray.origin)), direction);
         JPH::ClosestHitCollisionCollector<JPH::CastShapeCollector> collector;
-        impl.system->GetNarrowPhaseQuery().CastShape(query, {}, JPH::RVec3::sZero(), collector, {}, Layers(mask));
+        impl.system->GetNarrowPhaseQuery().CastShape(query, {}, JPH::RVec3::sZero(), collector, BroadLayers(mask), Layers(mask));
         if (!collector.HadHit()) return false;
         const auto& hit = collector.mHit;
         out = {hit.mBodyID2, hit.mSubShapeID2, fromJolt(hit.mContactPointOn2),
             fromJolt(-hit.mPenetrationAxis.NormalizedOr(JPH::Vec3::sAxisZ())), hit.mFraction * distance};
     } else {
         JPH::RayCastResult hit;
-        if (!impl.system->GetNarrowPhaseQuery().CastRay({toJolt(ray.origin), direction}, hit, {}, Layers(mask))) return false;
+        if (!impl.system->GetNarrowPhaseQuery().CastRay({toJolt(ray.origin), direction}, hit, BroadLayers(mask), Layers(mask))) return false;
         const auto point = toJolt(ray.origin) + hit.mFraction * direction;
         JPH::BodyLockRead lock(impl.system->GetBodyLockInterface(), hit.mBodyID);
         if (!lock.Succeeded()) return false;
@@ -79,7 +91,7 @@ bool sweepCapsule(const PhysicsScene3D::Impl& impl, Vec3 center, float radius,
     JPH::RShapeCast query(&shape, JPH::Vec3::sReplicate(1),
         JPH::RMat44::sRotationTranslation(JPH::Quat::sRotation(JPH::Vec3::sAxisX(), JPH::JPH_PI * 0.5f), toJolt(center)), toJolt(displacement));
     JPH::ClosestHitCollisionCollector<JPH::CastShapeCollector> collector;
-    impl.system->GetNarrowPhaseQuery().CastShape(query, {}, JPH::RVec3::sZero(), collector, {}, Layers(mask));
+    impl.system->GetNarrowPhaseQuery().CastShape(query, {}, JPH::RVec3::sZero(), collector, BroadLayers(mask), Layers(mask));
     if (!collector.HadHit()) return false;
     const auto& h = collector.mHit;
     out = {h.mBodyID2, h.mSubShapeID2, fromJolt(h.mContactPointOn2),

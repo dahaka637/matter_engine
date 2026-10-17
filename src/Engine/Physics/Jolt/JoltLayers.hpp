@@ -41,8 +41,11 @@ namespace JoltBroadPhaseLayers {
 
 inline constexpr JPH::BroadPhaseLayer NonMoving { 0 };
 inline constexpr JPH::BroadPhaseLayer Moving { 1 };
+// Os links de ragdoll numa arvore propria: as sondas de chao (so estatico e
+// props) deixam de percorrer os links de todos os bonecos.
+inline constexpr JPH::BroadPhaseLayer Ragdoll { 2 };
 
-inline constexpr JPH::uint Count = 2;
+inline constexpr JPH::uint Count = 3;
 
 } // namespace JoltBroadPhaseLayers
 
