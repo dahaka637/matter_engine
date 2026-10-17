@@ -71,6 +71,7 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
     const CharacterLocomotionAnimations3D& defaultClips = *assets.defaultClips;
     const RagdollState3D& body = *slot.state;
     AthleteState3D& athlete = *slot.athlete;
+    athlete.externalAssist = {};
     LegacyAthleteState3D& state = athlete.legacy;
     if (!athlete.observer.ready()) athlete.observer.prepare(profile);
     const auto groundHeight = [&](Vec3 position) { return athleteGroundHeight3D(scene, profile, position); };
@@ -314,6 +315,9 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         // vezes o quanto ja voltou.
         const float level = state.impactAssist.level();
         auto& physical = state.adaptivePhysics.settings();
+        // (O peso andando fica com a escolhida: o impacto tira o empurrao, nao a
+        // sustentacao - ver walkingWeightAssistScale.)
+        physical.walkingWeightAssistScale = physical.walkingAssistScale;
         physical.legsAssistRetained *= level;
         physical.walkingAssistScale *= level;
     }
@@ -322,6 +326,7 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         auto& physical = state.adaptivePhysics.settings();
         physical.legsAssistRetained += (1.0f - physical.legsAssistRetained) * boost;
         physical.walkingAssistScale += (1.0f - physical.walkingAssistScale) * boost;
+        physical.walkingWeightAssistScale += (1.0f - physical.walkingWeightAssistScale) * boost;
     }
     // Cambaleio (do tick anterior): a ajuda cai com o tonus e volta com
     // ele; amolecido, ele nao segue o comando de andar (volta junto).
@@ -410,7 +415,10 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         command.rootPositionWorld.y = state.navigationAnchor.y;
     }
     command.standingAssist = state.adaptivePhysics.settings().legsAssistRetained;
-    command.getUpAssist = std::clamp(settings.getUpAssistPercent * 0.01f, 0.0f, 2.0f);
+    // A regua de 0 a 100 do levantar: 100% e a ajuda aprovada (1,3 da conta
+    // do levantar; era o 130% da regua antiga de 0 a 200).
+    constexpr float GetUpAssistFull = 130.0f * 0.01f;  // (a mesma conta da regua antiga: 100% da os mesmos bits)
+    command.getUpAssist = std::clamp(settings.getUpAssistPercent * 0.01f, 0.0f, 1.0f) * GetUpAssistFull;
     {
         // Pancada enquanto levanta (pedido do usuario, 05/10 noite): a
         // ajuda do levantar cai a getUpHitAssistPercent e volta em
@@ -1372,10 +1380,14 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             const ActiveBodyOutput3D& activeOutput = athlete.activeOutput;
             scene.setRagdollActiveDriveTargets(slot.handle, activeOutput.drives, true);
             scene.setRagdollFrictionScale(slot.handle, 1.0f);
-            for (const LinkWrench3D& wrench : activeOutput.wrenches)
+            for (const LinkWrench3D& wrench : activeOutput.wrenches) {
                 scene.applyRagdollControlLinkForce(slot.handle, wrench.link, wrench.force, wrench.torque);
-            if (activeOutput.assistForce.lengthSquared() > 1e-6f)
+                athlete.externalAssist.activeNewtons += wrench.force.length();
+            }
+            if (activeOutput.assistForce.lengthSquared() > 1e-6f) {
                 scene.applyRagdollControlRootForce(slot.handle, activeOutput.assistForce, {});
+                athlete.externalAssist.activeNewtons += activeOutput.assistForce.length();
+            }
             // A ponte: o guiamento dos ossos ate a pose, a autoridade subindo
             // de bridgeAuthorityStart a cheia no tempo dela.
             float bridgeShare = 0.0f;
@@ -1779,6 +1791,43 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
     }
     applyCharacterControl3D(scene, slot.handle, locomotionOutput, adaptive ? &state.adaptivePhysics.output() : nullptr,
         down);
+    {
+        // A medida da ajuda auxiliar (as mesmas condicoes da aplicacao acima).
+        AthleteExternalAssist3D& measure = athlete.externalAssist;
+        Vec3 torque {};
+        if (adaptive && !down && state.adaptivePhysics.output().valid) {
+            const AdaptivePhysicalOutput3D& a = state.adaptivePhysics.output();
+            measure.pelvisNewtons += a.rootForceWorld.length();
+            torque += a.rootTorqueWorld;
+            for (std::size_t side = 0; side < 2; ++side) {
+                if (a.footLinkIndex[side] != RagdollDynamics3D::InvalidIndex) {
+                    measure.feetNewtons += a.footForceWorld[side].length();
+                    torque += a.footTorqueWorld[side];
+                }
+                if (a.handLinkIndex[side] != RagdollDynamics3D::InvalidIndex) torque += a.handTorqueWorld[side];
+            }
+            for (const Vec3& link : a.linkTorqueWorld) torque += link;
+        } else if (!(adaptive && !down)) {
+            Vec3 rootTorque = locomotionOutput.rootControlTorqueWorld;
+            const float rootForce = locomotionOutput.rootControlForceWorld.length();
+            if (bodyState == CharacterLocomotionState3D::Tackling) {
+                measure.tackleNewtons += rootForce;
+                measure.tackleTorque = rootTorque.length();
+                rootTorque = {};
+            } else {
+                measure.getUpNewtons += rootForce;
+            }
+            torque += rootTorque;
+        }
+        if (locomotionOutput.chestAssistLink != RagdollDynamics3D::InvalidIndex) {
+            measure.getUpNewtons += locomotionOutput.chestAssistForceWorld.length();
+            torque += locomotionOutput.chestAssistTorqueWorld;
+        }
+        const std::size_t reactions = std::min(locomotionOutput.assistReactionLinks.size(),
+            locomotionOutput.assistReactionTorquesWorld.size());
+        for (std::size_t i = 0; i < reactions; ++i) torque += locomotionOutput.assistReactionTorquesWorld[i];
+        measure.netTorque = torque.length();
+    }
     // A ajuda nos pes do corpo fisico (PhysicalFeetAssist3D): a forca que leva
     // o corpo a referencia passa pelos pes apoiados, no que a pelve nao deu.
     // Ela acompanha a ajuda andando e parado: cai com o impacto (o nivel do
@@ -1804,8 +1853,13 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         feet.pelvisTorque = assist.rootTorqueWorld;
         const BodyObservation3D observation = athlete.observer.observe(profile, body, deltaTime);
         athlete.feetAssistOutput = physicalFeetAssist3D(profile, body, observation, feet, settings.physicalFeetAssist);
-        for (const LinkWrench3D& wrench : athlete.feetAssistOutput.wrenches)
+        Vec3 feetTorque {};
+        for (const LinkWrench3D& wrench : athlete.feetAssistOutput.wrenches) {
             scene.applyRagdollControlLinkForce(slot.handle, wrench.link, wrench.force, wrench.torque);
+            athlete.externalAssist.feetNewtons += wrench.force.length();
+            feetTorque += wrench.torque;
+        }
+        athlete.externalAssist.netTorque += feetTorque.length();
     }
 }
 

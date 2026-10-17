@@ -935,6 +935,11 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
     if (dump != nullptr) std::fprintf(dump, "S %s\n", scenario.name.c_str());
     // XCUSTO=1: o custo do runtime por tick (o passo do atleta; us, p50/p95/p99).
     std::vector<double> runtimeCost;
+    struct {
+        long ticks = 0;
+        double slider = 0.0, pelvis = 0.0, feet = 0.0, getUp = 0.0, outside = 0.0;
+        float sliderMax = 0.0f, torqueMax = 0.0f;
+    } auxStats;
 
     AthleteRuntime3D runtime;
     // XREDE=<.mrlpolicy>: a rede da locomocao pelo runtime do jogo (como a
@@ -1238,6 +1243,18 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
             control, Dt, output);
         if (step >= 0)
             runtimeCost.push_back(std::chrono::duration<double>(std::chrono::steady_clock::now() - runtimeBegin).count());
+        if (step >= 0) {
+            // XAUX=1: a ajuda auxiliar por canal (a medida do atleta).
+            const AthleteExternalAssist3D& aux = athlete.externalAssist;
+            auxStats.ticks += 1;
+            auxStats.slider += aux.sliderNewtons();
+            auxStats.sliderMax = std::max(auxStats.sliderMax, aux.sliderNewtons());
+            auxStats.pelvis += aux.pelvisNewtons;
+            auxStats.feet += aux.feetNewtons;
+            auxStats.getUp += aux.getUpNewtons;
+            auxStats.torqueMax = std::max(auxStats.torqueMax, aux.netTorque);
+            auxStats.outside += aux.tackleNewtons + aux.activeNewtons;
+        }
         if (output.followVelocitySet) followVelocity = output.followVelocityWorld;
         if (output.controlledAnimatedSet) controlledAnimated = output.controlledAnimated;
         capsuleSpeedScale = output.controlledSpeedScale;
@@ -2136,6 +2153,13 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
             effect.touchdowns / (n * Dt), effect.footPeak, effect.pelvis / n, legacy.locomotion.contactPlan().stepsStarted,
             metrics.fell ? "CAIU" : "de pe");
     }
+    if (std::getenv("XAUX") && auxStats.ticks > 0) {
+        const double weight = 9.81 * std::max(1.0f, profile.totalMassKg);
+        const double n = static_cast<double>(auxStats.ticks);
+        std::printf("  AJUDA (fracao do peso, media/max): regua %.4f / %.4f | pelve %.4f pes %.4f levantar %.4f | torque liquido max %.4f N.m | fora da regua %.4f\n",
+            auxStats.slider / n / weight, auxStats.sliderMax / weight, auxStats.pelvis / n / weight,
+            auxStats.feet / n / weight, auxStats.getUp / n / weight, auxStats.torqueMax, auxStats.outside / n / weight);
+    }
     if (std::getenv("XCUSTO") && !runtimeCost.empty()) {
         const std::size_t worst = static_cast<std::size_t>(
             std::max_element(runtimeCost.begin(), runtimeCost.end()) - runtimeCost.begin());
@@ -2624,6 +2648,7 @@ int main(int argc, char** argv) {
     bool noCapsule = false;
     float standingAssist = AthleteRuntimeSettings3D {}.e5StandingAssistPercent;
     float walkingAssist = AthleteRuntimeSettings3D {}.e5WalkingAssistPercent;
+    float getUpAssist = AthleteRuntimeSettings3D {}.getUpAssistPercent;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         const auto need = [&]() -> const char* { return i + 1 < argc ? argv[++i] : ""; };
@@ -2653,6 +2678,12 @@ int main(int argc, char** argv) {
         else if (arg == "--sem-capsula") noCapsule = true;
         else if (arg == "--ajuda-parado") standingAssist = static_cast<float>(std::atof(need()));
         else if (arg == "--ajuda-andando") walkingAssist = static_cast<float>(std::atof(need()));
+        else if (arg == "--ajuda-levantar") getUpAssist = static_cast<float>(std::atof(need()));
+        else if (arg == "--ajuda") {
+            // A regua unica do laboratorio (Ajuda auxiliar): as quatro juntas.
+            const float all = static_cast<float>(std::atof(need()));
+            standingAssist = walkingAssist = feetAssist = getUpAssist = all;
+        }
         else if (arg == "--lista") {
             for (const Scenario& scenario : scenarios()) std::printf("%s\n", scenario.name.c_str());
             return 0;
@@ -2692,6 +2723,7 @@ int main(int argc, char** argv) {
     settings.physicalUsesDefaultSpeeds = defaultSpeeds;
     settings.e5StandingAssistPercent = standingAssist;
     settings.e5WalkingAssistPercent = walkingAssist;
+    settings.getUpAssistPercent = getUpAssist;
     if (totalPhysical) {
         settings.defaultLocomotion = false;
         startPhysical = true;

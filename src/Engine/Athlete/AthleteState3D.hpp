@@ -16,6 +16,24 @@
 
 namespace MatterEngine {
 
+// A ajuda auxiliar deste tick: so as forcas de FORA aplicadas pelo controle
+// (sem reacao dentro do corpo), por canal (vault 04_locomocao/ajuda_auxiliar.md).
+// Os motores das juntas, a compensacao de gravidade e os pares internos (a
+// postura pelve x pes) sao o corpo e nao entram; o torque liquido dos pares
+// fica em netTorque (zero quando so ha pares internos). A 0% da regua, tudo o
+// que e dela e zero.
+struct AthleteExternalAssist3D {
+    float pelvisNewtons = 0.0f;   // a pelve: sustentacao e empurrao (parado e andando)
+    float feetNewtons = 0.0f;     // os pes: a ajuda nos pes e a correcao pelos pes
+    float getUpNewtons = 0.0f;    // o levantar: a pelve e o peito
+    float netTorque = 0.0f;       // o torque liquido (N.m) dos canais da regua
+    // Fora da regua (acoes e o modo padrao): o carrinho e o Corpo Ativo.
+    float tackleNewtons = 0.0f;
+    float tackleTorque = 0.0f;
+    float activeNewtons = 0.0f;
+    [[nodiscard]] float sliderNewtons() const { return pelvisNewtons + feetNewtons + getUpNewtons; }
+};
+
 // O estado de controle de um atleta: tudo o que o controle guarda entre os
 // ticks. Um por atleta, sem nada global (bots, muitos jogadores, a sonda sem
 // janela). Hoje so o caminho legado; as pecas novas do rework entram aqui ao
@@ -30,6 +48,8 @@ struct AthleteState3D {
     ActiveBodyOutput3D activeOutput;
     // A ajuda nos pes do Fisico total: a ultima saida (telemetria).
     PhysicalFeetAssistOutput3D feetAssistOutput;
+    // A ajuda auxiliar aplicada neste tick (medida, por canal).
+    AthleteExternalAssist3D externalAssist;
     // Locomocao por pegadas (Etapa 3): o dono dos pes, os alvos deste tick e
     // o que a perna alcancou.
     FootstepPlanner3D footsteps;

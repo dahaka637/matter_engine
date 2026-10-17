@@ -463,8 +463,8 @@ struct LocomotionTraining3D::Impl {
                 for (std::size_t axis = 0; axis < 3; ++axis)
                     watts += std::abs(joint.motorTorqueNewtonMeters[axis] * joint.velocityRadiansPerSecond[axis]);
             power += watts / mass;
-            // A ajuda na pelve neste tick (a forca que ela aplicou, fracao do peso).
-            assist += athleteControlView3D(athlete).pelvisForceWorld.length() / weight;
+            // A ajuda auxiliar neste tick (todas as forcas de fora da regua, fracao do peso).
+            assist += athlete.externalAssist.sliderNewtons() / weight;
             if (body.links.front().position.z - athlete.groundHeight < task.fallPelvisHeight) {
                 fell = true;
                 break;

@@ -39,7 +39,9 @@ struct AthleteRuntimeSettings3D {
     bool biomechanicalExperiment = false;
     float biomechanicalBalanceAssistPercent = 100.0f;
     // Levantar.
-    float getUpAssistPercent = 130.0f;
+    // (0-100, como as outras ajudas; 100% = a ajuda de levantar aprovada, que
+    // era o 130% da regua antiga: GetUpAssistFull.)
+    float getUpAssistPercent = 100.0f;
     bool getUpHitWeakens = true;
     float getUpHitAssistPercent = 25.0f;
     float getUpHitRecoverSeconds = 1.5f;

@@ -655,7 +655,7 @@ private:
     float m_e5WalkingAssistPercent = 100.0f;
     // Ajuda para levantar do chao (%): a subida na pelve e no peito e o torque
     // de endireitar do levantar. 100% e o levantar atual; 0%, so os musculos.
-    float m_getUpAssistPercent = 130.0f;
+    float m_getUpAssistPercent = 100.0f;
     // Rigidez dos musculos ao levantar (%): 100% e a de antes (rigida);
     // menos, mais relaxado (a forca maxima fica).
     float m_getUpStiffnessPercent = 55.0f;

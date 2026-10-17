@@ -752,7 +752,16 @@ void AdaptivePhysicalCharacter3D::update(const RagdollProfile3D& profile,
     // faixa de inclinacao valem sempre.)
     const float actionAssist = m_settings.jointSupport || m_settings.jointWhileWalking
         ? std::clamp(m_settings.actionAssist, 0.0f, 1.0f) * out.actionStability : 0.0f;
-    const float legsMaximumShare = 1.0f - std::max(std::clamp(m_settings.legsAssistRetained, 0.0f, 1.0f), actionAssist);
+    // A ajuda auxiliar (17/10, consenso Claude + Codex; vault
+    // 04_locomocao/ajuda_auxiliar.md): so as forcas de FORA (sem reacao no
+    // corpo), e 0% e zero de verdade em todo canal. O reforco do gesto proprio
+    // nao fura o zero: ele leva a ajuda escolhida a actionAssist na proporcao
+    // dela (igual quando o reforco e 0, o caso de hoje).
+    const auto withAction = [&](float chosen) {
+        chosen = std::clamp(chosen, 0.0f, 1.0f);
+        return chosen + (std::max(chosen, actionAssist) - chosen) * chosen;
+    };
+    const float legsMaximumShare = 1.0f - withAction(m_settings.legsAssistRetained);
     const auto share = [&](float& value, bool enabled, bool wanted) {
         // Andando, a parte das pernas e a da ajuda andando (o peso, a postura
         // e o empurrao ja se dividem por ela): presa ao slider de parado, com
@@ -777,13 +786,16 @@ void AdaptivePhysicalCharacter3D::update(const RagdollProfile3D& profile,
     out.legShare = weightShare;
     out.balanceShare = balanceShare;
     const bool legsCarry = weightShare > 0.001f;
-    const float discreet = std::max(std::clamp(m_settings.walkingAssistScale, 0.0f, 1.0f), actionAssist);
-    const float standingAssist = std::max(std::clamp(m_settings.legsAssistRetained, 0.0f, 1.0f), actionAssist);
+    const float discreet = withAction(m_settings.walkingAssistScale);
+    const float standingAssist = withAction(m_settings.legsAssistRetained);
     // A ajuda e a que o jogador escolheu, sempre. (Antes, com degrau,
     // meio-fio, escada ou qualquer desnivel de 6 cm a frente - uma barreira
     // tambem -, ela voltava inteira enquanto passava: com 0% escolhido, perto
     // de uma parede o corpo andava com 100%.)
     const float runningAssist = discreet;
+    // (O peso andando: a ajuda escolhida sem a queda do impacto.)
+    const float weightRunning = m_settings.walkingWeightAssistScale >= 0.0f
+        ? withAction(m_settings.walkingWeightAssistScale) : runningAssist;
     const float walkingAssist = !legsWalking ? standingAssist
         : brakeRunShare > 0.001f ? standingAssist + (runningAssist - standingAssist) * brakeRunShare
         : runningAssist;
@@ -836,23 +848,44 @@ void AdaptivePhysicalCharacter3D::update(const RagdollProfile3D& profile,
     // subia e descia +-3,3 cm e a velocidade pulsava +-0,3 m/s; a 100%, com
     // o peso todo na mola da pelve, +-1,9 cm e +-0,12).
     static const float weightWalkFloor = tuneTempApc("T_WeightFloor", 0.6f);
-    const float legsWeight = legsWalking
-        ? std::max({ std::clamp(m_settings.legsWeightFraction, 0.0f, 1.0f),
-            weightWalk * (1.0f - runningAssist),
-            weightWalkFloor * std::clamp((runningAssist - 0.5f) / 0.4f, 0.0f, 1.0f) })
-        : 1.0f;
+    // Andando, as pernas carregam o que a ajuda nao leva, em linha reta: a
+    // pelve leva a x (o que levava a 100%). Antes era max(0,5 x (1 - a), piso a
+    // partir de 50%): a 0% a pelve ainda levava metade do peso e o meio da
+    // regua nao era monotonico (0,5 / 0,75 / 0,4). A 100%, a mesma conta de
+    // antes.
+    const float legsWeightFull = std::max({ std::clamp(m_settings.legsWeightFraction, 0.0f, 1.0f),
+        weightWalk * (1.0f - 1.0f), weightWalkFloor * std::clamp((1.0f - 0.5f) / 0.4f, 0.0f, 1.0f) });
+    const float legsWeight = !legsWalking ? 1.0f
+        : weightRunning >= 1.0f ? std::max({ std::clamp(m_settings.legsWeightFraction, 0.0f, 1.0f),
+            weightWalk * (1.0f - weightRunning),
+            weightWalkFloor * std::clamp((weightRunning - 0.5f) / 0.4f, 0.0f, 1.0f) })
+        : 1.0f - weightRunning * (1.0f - legsWeightFull);
     // Andando, as pernas carregam o piso de peso mesmo com a ajuda parado
     // cheia: a parte delas, que vem do slider de parado, ia a zero com 100% e
     // o piso nao fazia nada (o corpo seguia "carregado" pela pelve).
     // (So com a ajuda alta: com pouca, a parte das pernas ja e a da ajuda que
     // falta, e o piso a mais deixava o trote a 5% lento - 1,95 -> 1,31 m/s.)
-    const float floorAssist = std::clamp((runningAssist - 0.5f) / 0.4f, 0.0f, 1.0f);
+    const float floorAssist = std::clamp((weightRunning - 0.5f) / 0.4f, 0.0f, 1.0f);
     m_walkCarryShare = approach(m_walkCarryShare,
         legsWalking && legsCanCarry && m_settings.jointSupport
-            ? weightWalkFloor * floorAssist * floorAssist * (3.0f - 2.0f * floorAssist) : 0.0f, 7.0f, dt);
+            ? (weightRunning >= 1.0f ? weightWalkFloor * floorAssist * floorAssist * (3.0f - 2.0f * floorAssist)
+                : legsWeight) : 0.0f, 7.0f, dt);
     const float weightByLegs = std::max(weightShare * legsWeight, m_walkCarryShare);
     legVerticalAcceleration = legVerticalAcceleration * weightByLegs;
-    if (pelvisSupportInLegsMode) out.supportAcceleration *= 1.0f - weightByLegs;
+    // A pelve leva o que as pernas nao levam; sem apoio (no ar, levantado),
+    // a sustentacao de fora e so a da ajuda: a 0% ninguem segura o corpo.
+    // Abaixo de 100%, a pelve nunca leva mais do que a ajuda deixa: parado, a
+    // fracao escolhida; andando, a x a parte da pelve a 100%; sem apoio, a
+    // fracao inteira escolhida. (Sem o teto, enquanto as pernas assumiam o
+    // peso - 0,15 s no comeco e depois de cada voo - a pelve segurava o resto
+    // mesmo a 0%.)
+    if (pelvisSupportInLegsMode) {
+        const float pelvisShare = 1.0f - weightByLegs;
+        const float weightAssist = legsWalking && brakeRunShare <= 0.001f ? weightRunning : walkingAssist;
+        const float allowed = !legsCanCarry ? weightAssist
+            : legsWalking ? weightAssist * (1.0f - legsWeightFull) : weightAssist;
+        out.supportAcceleration *= weightAssist >= 1.0f ? pelvisShare : std::min(pelvisShare, allowed);
+    }
     // Andando pela passada, a ajuda discreta usa um unico envelope para
     // propulsao, correcao de posicao e postura. Deixar a intencao inteira
     // enquanto a postura era reduzida fazia "30%" empurrar a pelve com a
@@ -951,7 +984,10 @@ void AdaptivePhysicalCharacter3D::update(const RagdollProfile3D& profile,
         m_contactTurning += (turning - m_contactTurning) * (1.0f - std::exp(-dt / (turning > m_contactTurning ? 0.02f : 0.25f)));
         // (So com a ajuda alta - a 5% a passada aprovada ficava mais lenta,
         // 1,6 -> 1,3 m/s.)
-        const float highAssist = std::clamp((runningAssist - 0.5f) / 0.4f, 0.0f, 1.0f);
+        // (A forma da ajuda no apoio e a do 100% em qualquer nivel: a regua so
+        // muda a intensidade - antes ela mudava de continua para pulsada a
+        // partir de 50%.)
+        const float highAssist = runningAssist > 0.0f ? 1.0f : 0.0f;
         const float share = contactShare * (1.0f - m_contactTurning)
             * highAssist * highAssist * (3.0f - 2.0f * highAssist);
         // (Experimento v2, T_LandNoBoost = s: logo depois do pouso de um
@@ -1060,7 +1096,9 @@ void AdaptivePhysicalCharacter3D::update(const RagdollProfile3D& profile,
             out.centerOfMassWorld.z - (state.links[footLink[0]].position.z
                 + state.links[footLink[1]].position.z) * 0.5f);
         correctionLever = cross(ground - root.position, correctionAcceleration * mass)
-            * (saturate(m_perturbation) * (1.0f - balanceShare));
+            * (saturate(m_perturbation) * (1.0f - balanceShare))
+            // (De fora, so na proporcao da ajuda: a 0% o corpo empurrado se vira sozinho.)
+            * (walkingAssist >= 1.0f ? 1.0f : walkingAssist);
         correctionLever.z = 0;
     }
     // Pes que tocam algo agora dividem a correcao (sem contato, nada: no ar

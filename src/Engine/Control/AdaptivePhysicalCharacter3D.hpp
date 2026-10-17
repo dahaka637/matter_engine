@@ -189,6 +189,11 @@ struct AdaptivePhysicalSettings3D {
     // Andando pela passada (os pes com a animacao): envelope unico da
     // propulsao, correcao de posicao e postura na pelve.
     float walkingAssistScale = 1.0f;
+    // A ajuda andando no PESO (a sustentacao vertical), sem a queda do impacto:
+    // o impacto tira o empurrao de fora (a pancada nao e combatida por uma mao
+    // invisivel), nao a sustentacao que o segura em pe cambaleando. < 0: a de
+    // cima.
+    float walkingWeightAssistScale = -1.0f;
     // Quanto do PESO as pernas assumem quando carregam (a parte da fracao
     // delas; 1 = a E4). Com 0 o peso fica com a pelve e os motores, e as
     // pernas fazem so o equilibrio (centro de pressao) e a postura: o peso

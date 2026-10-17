@@ -563,7 +563,7 @@ int runBaseline(const ProbeContext& context, int threads) {
     // sanitizadores.)
     if (const char* limit = std::getenv("XEXERCICIOS"); limit != nullptr && std::atoi(limit) > 0)
         drills.resize(std::min(drills.size(), static_cast<std::size_t>(std::atoi(limit))));
-    const float levels[5] = { 100.0f, 70.0f, 50.0f, 30.0f, 0.0f };
+    const float levels[5] = { 100.0f, 75.0f, 50.0f, 25.0f, 0.0f };
     const std::size_t count = drills.size() * 5;
     AthleteRuntimeSettings3D base;
     base.defaultLocomotion = false;
@@ -604,11 +604,11 @@ int runBaseline(const ProbeContext& context, int threads) {
     for (std::size_t i = 0; i < count; ++i) {
         const Drill& drill = drills[i / 5];
         LocomotionWorld3D& world = batch.world(i);
+        // A regua unica (Ajuda auxiliar, 17/10): as quatro ajudas no nivel.
         world.runtimeSettings().e5StandingAssistPercent = levels[i % 5];
         world.runtimeSettings().e5WalkingAssistPercent = levels[i % 5];
-        // (XPES_NO_NIVEL=1: a ajuda nos pes tambem no nivel - hoje ela fica
-        // em 100% mesmo com as outras em zero.)
-        if (std::getenv("XPES_NO_NIVEL")) world.runtimeSettings().physicalFeetAssistPercent = levels[i % 5];
+        world.runtimeSettings().physicalFeetAssistPercent = levels[i % 5];
+        world.runtimeSettings().getUpAssistPercent = levels[i % 5];
         world.setStatics(scenarioStatics(drill.scenario));
         world.reset(AthleteStartMode3D::Physical);
     }
@@ -705,8 +705,8 @@ int runBaseline(const ProbeContext& context, int threads) {
     }
     int failedWorlds = 0;
     for (std::size_t i = 0; i < count; ++i) failedWorlds += batch.failed(i) ? 1 : 0;
-    std::printf("linha de base: %zu exercicios x 5 niveis = %zu mundos, %u threads; fisico total, comandado, ajuda nos pes %s\n",
-        drills.size(), count, batch.threads(), std::getenv("XPES_NO_NIVEL") ? "no nivel" : "100%");
+    std::printf("linha de base: %zu exercicios x 5 niveis = %zu mundos, %u threads; fisico total, comandado, a regua unica (as quatro ajudas no nivel)\n",
+        drills.size(), count, batch.threads());
     std::printf("vazao: %.0f ticks de mundo/s = %.0f decisoes/s a 30 Hz (%zu ticks de mundo em %.1f s de lote; %d mundos com erro)\n",
         static_cast<double>(worldTicks) / stepSeconds, static_cast<double>(worldTicks) / stepSeconds / 4.0, worldTicks,
         stepSeconds, failedWorlds);
@@ -778,7 +778,7 @@ int runBaseline(const ProbeContext& context, int threads) {
             mean(slide, slideCount), mean(power, powerCount), mean(tilt, tiltCount), nearFalls, tiltCount);
     }
     // As quedas por exercicio (onde o nivel derruba).
-    std::printf("quem cai (niveis 100 70 50 30 0):\n");
+    std::printf("quem cai (niveis 100 75 50 25 0):\n");
     for (std::size_t d = 0; d < drills.size(); ++d) {
         bool any = false;
         for (int level = 0; level < 5; ++level) any = any || tally[d * 5 + static_cast<std::size_t>(level)].fell;
