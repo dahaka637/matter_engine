@@ -4,6 +4,7 @@
 #include "Engine/Materials/MaterialLibrary.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <thread>
 #include <vector>
 
@@ -61,46 +62,55 @@ std::span<AthleteCommand3D> LocomotionBatch3D::commands() { return m_impl->comma
 bool LocomotionBatch3D::failed(std::size_t index) const { return m_impl->failed.at(index) != 0; }
 void LocomotionBatch3D::clearFailure(std::size_t index) { m_impl->failed.at(index) = 0; }
 
-void LocomotionBatch3D::step(int ticks) {
-    Impl& impl = *m_impl;
+namespace {
+
+// Puxada dinamica: uma tarefa por participante (os workers e o chamador), e
+// cada uma pega o proximo mundo livre ate acabar. Faixas fixas deixavam
+// threads paradas na cauda de cada passo (mundos com recomeco, preempcao). Cada
+// mundo e independente: a ordem em que rodam nao muda nenhum bit.
+template <typename Body>
+void pullWorlds(TaskScheduler& scheduler, std::uint32_t participants, std::size_t count, Body body) {
     struct Context {
-        Impl* impl;
-        int ticks;
-    } context { &impl, ticks };
-    impl.scheduler->parallelFor(impl.worlds.size(), 1,
-        [](std::size_t first, std::size_t last, void* raw) noexcept {
+        std::atomic<std::size_t> next { 0 };
+        std::size_t count = 0;
+        Body* body = nullptr;
+    } context;
+    context.count = count;
+    context.body = &body;
+    scheduler.parallelFor(std::max<std::size_t>(1, std::min<std::size_t>(participants, count)), 1,
+        [](std::size_t, std::size_t, void* raw) noexcept {
             auto* ctx = static_cast<Context*>(raw);
-            for (std::size_t i = first; i < last; ++i) {
-                if (ctx->impl->failed[i] != 0) continue;
-                try {
-                    for (int k = 0; k < ctx->ticks; ++k) ctx->impl->worlds[i]->step(ctx->impl->commands[i]);
-                } catch (...) {
-                    ctx->impl->failed[i] = 1;
-                }
-            }
+            for (std::size_t i = ctx->next.fetch_add(1, std::memory_order_relaxed); i < ctx->count;
+                    i = ctx->next.fetch_add(1, std::memory_order_relaxed))
+                (*ctx->body)(i);
         },
         &context);
 }
 
+} // namespace
+
+void LocomotionBatch3D::step(int ticks) {
+    Impl& impl = *m_impl;
+    pullWorlds(*impl.scheduler, impl.workers, impl.worlds.size(), [&impl, ticks](std::size_t i) {
+        if (impl.failed[i] != 0) return;
+        try {
+            for (int k = 0; k < ticks; ++k) impl.worlds[i]->step(impl.commands[i]);
+        } catch (...) {
+            impl.failed[i] = 1;
+        }
+    });
+}
+
 void LocomotionBatch3D::parallel(const std::function<void(std::size_t)>& task) {
     Impl& impl = *m_impl;
-    struct Context {
-        Impl* impl;
-        const std::function<void(std::size_t)>* task;
-    } context { &impl, &task };
-    impl.scheduler->parallelFor(impl.worlds.size(), 1,
-        [](std::size_t first, std::size_t last, void* raw) noexcept {
-            auto* ctx = static_cast<Context*>(raw);
-            for (std::size_t i = first; i < last; ++i) {
-                if (ctx->impl->failed[i] != 0) continue;
-                try {
-                    (*ctx->task)(i);
-                } catch (...) {
-                    ctx->impl->failed[i] = 1;
-                }
-            }
-        },
-        &context);
+    pullWorlds(*impl.scheduler, impl.workers, impl.worlds.size(), [&impl, &task](std::size_t i) {
+        if (impl.failed[i] != 0) return;
+        try {
+            task(i);
+        } catch (...) {
+            impl.failed[i] = 1;
+        }
+    });
 }
 
 } // namespace MatterEngine
