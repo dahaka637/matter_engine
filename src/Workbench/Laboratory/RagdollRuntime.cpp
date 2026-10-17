@@ -729,7 +729,8 @@ AthleteRuntimeSettings3D WorkbenchApp::athleteRuntimeSettings() const {
     settings.physicalUsesDefaultSpeeds = m_physicalDefaultSpeeds;
     settings.physicalFeetAssistPercent = m_physicalFeetAssistPercent;
     settings.locomotionPolicy = m_locomotionPolicyOn && m_athleteRuntime.locomotionPolicy() != nullptr;
-    settings.physicalBoneGuidePercent = m_physicalBoneGuidePercent;
+    // (Com a rede, sem guiagem de ossos: como no treino.)
+    settings.physicalBoneGuidePercent = m_locomotionPolicyOn ? 0.0f : m_physicalBoneGuidePercent;
     settings.fullPhysicalImpulse = m_fullPhysicalImpulse;
     settings.activeBodySettings.gameplayAssistAcceleration = m_activeAssistAcceleration;
     settings.newBallHandling = m_newBallHandling;

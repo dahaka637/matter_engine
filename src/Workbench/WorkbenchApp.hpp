@@ -457,6 +457,8 @@ private:
     // A rede da locomocao: ligada no menu do personagem, e o que foi
     // carregado (a rodada do treino, ou o erro).
     bool m_locomotionPolicyOn = false;
+    // As ajudas: a regua unica ou as quatro (Avancado, desligado por padrao).
+    bool m_assistAdvanced = false;
     std::string m_locomotionPolicyLabel;
     bool m_ragdollAssetsLoadFailed = false;
     bool m_ragdollActive = true;

@@ -2834,56 +2834,60 @@ void WorkbenchApp::drawLaboratoryUi() {
                     if (ImGui::BeginTabItem("Geral")) {
                         panelHeader("LOCOMOÇÃO");
                         {
-                            const char* modes[] = { "Padrão", "Físico total" };
-                            int mode = m_defaultLocomotion ? 0 : 1;
+                            // Os tres tipos (17/10, pedido do usuario): as caixas de
+                            // trocas de modo, velocidades do padrao no fisico e rede
+                            // sairam - as duas primeiras ficam ligadas, a rede e o
+                            // terceiro tipo.
+                            const char* modes[] = { "Padrão", "Físico total", "Físico com RL" };
+                            int mode = m_defaultLocomotion ? 0 : m_locomotionPolicyOn ? 2 : 1;
                             ImGui::SetNextItemWidth(-1.0f);
-                            if (ImGui::Combo("##LocomotionMode", &mode, modes, 2)) m_defaultLocomotion = mode == 0;
-                            hint("Padrão: o corpo segue a animação (com massa) e vai ao físico numa pancada, parede ou queda, voltando quando assenta. Físico total: sempre pelos músculos e pelas ajudas.");
-                            // A reescrita (R3, 16/10): a chave A/B das trocas novas.
-                            ImGui::Checkbox("Trocas de modo novas", &m_modeTable);
-                            hint("A mesma regra de impacto no padrão, na volta e na ponte; a perna no topo de algo conta; empurrão conta; choque forte derruba. Desligado: as regras de antes.");
-                            ImGui::Checkbox("Velocidades do padrão no físico", &m_physicalDefaultSpeeds);
-                            hint("No físico o corpo pede a mesma tabela de velocidades do padrão (a aba Velocidades). Desligado: as velocidades dos clipes da locomoção física, mais lentas de lado e de costas.");
+                            if (ImGui::Combo("##LocomotionMode", &mode, modes, 3)) {
+                                m_defaultLocomotion = mode == 0;
+                                m_locomotionPolicyOn = mode == 2;
+                                if (m_locomotionPolicyOn && m_athleteRuntime.locomotionPolicy() == nullptr)
+                                    reloadLocomotionPolicy();
+                            }
+                            hint("Padrão: o corpo segue a animação (com massa) e vai ao físico numa pancada, parede ou queda, voltando quando assenta. Físico total: sempre pelos músculos e pelas ajudas. Físico com RL: o físico com a rede treinada corrigindo os pés, o equilíbrio, a pose e a rigidez.");
                             // (A locomocao fisica v2 e o "tentar se manter em pe no
                             // impacto" viraram o padrao - as caixas sairam, pedido do
                             // usuario, 06/10.)
                             // (As pegadas sairam de vez: pedido do usuario, 11/10.)
-                            // A guiagem de ossos (experimento do usuario, 11/10).
-                            if (!m_defaultLocomotion)
+                            // A guiagem de ossos (experimento do usuario, 11/10): so no
+                            // Fisico total (com a rede ela fica em zero, como no treino).
+                            if (mode == 1)
                                 percent("Guiagem de ossos", "##BoneGuide", &m_physicalBoneGuidePercent, 0.0f, 100.0f,
                                     "Os ossos vão até a pose do modo padrão nesta fração: 0% é a locomoção física de sempre, 100% é como o padrão.");
-                        }
-                        // A rede da locomocao (o RL das fases 1 e 2, 16/10).
-                        panelHeader("REDE");
-                        {
-                            if (ImGui::Checkbox("Rede de locomoção", &m_locomotionPolicyOn) && m_locomotionPolicyOn
-                                && m_athleteRuntime.locomotionPolicy() == nullptr)
-                                reloadLocomotionPolicy();
-                            hint("No físico, o corpo segue a rede treinada (as correções dela nos pés, no equilíbrio, na pose e na rigidez). Ela treinou no Físico total com as quatro ajudas em 0%.");
-                            if (ImGui::Button("Como no treino", { ImGui::GetContentRegionAvail().x * 0.5f - ui(2.0f), 0.0f })) {
-                                m_defaultLocomotion = false;
-                                m_e5StandingAssistPercent = 0.0f;
-                                m_e5WalkingAssistPercent = 0.0f;
-                                m_physicalFeetAssistPercent = 0.0f;
-                                m_getUpAssistPercent = 0.0f;
+                            if (mode == 2) {
+                                if (ImGui::Button("Recarregar a rede", { -1.0f, 0.0f })) reloadLocomotionPolicy();
+                                hint("Carrega a última rede que o treino exportou.");
+                                if (!m_locomotionPolicyLabel.empty()) ImGui::TextDisabled("%s", m_locomotionPolicyLabel.c_str());
                             }
-                            hint("Físico total e as quatro ajudas em 0%, como no treino.");
-                            ImGui::SameLine();
-                            if (ImGui::Button("Recarregar a rede", { -1.0f, 0.0f })) reloadLocomotionPolicy();
-                            hint("Carrega a última rede que o treino exportou (a cada 10 minutos).");
-                            if (!m_locomotionPolicyLabel.empty()) ImGui::TextDisabled("%s", m_locomotionPolicyLabel.c_str());
                         }
                         panelHeader("AJUDAS");
-                        percent("Ajuda parado", "##AssistStanding", &m_e5StandingAssistPercent, 0.0f, 100.0f,
-                            "Força auxiliar na pelve parado (no físico).");
-                        percent("Ajuda andando", "##AssistWalking", &m_e5WalkingAssistPercent, 0.0f, 100.0f,
-                            "Força auxiliar andando e correndo (no físico).");
-                        // A ajuda nos pes (aprovada pelo usuario, 11/10): no corpo
-                        // fisico todo.
-                        percent("Ajuda nos pés", "##AssistFeet", &m_physicalFeetAssistPercent, 0.0f, 100.0f,
-                            "No físico, a força que leva o corpo ao movimento passa pelos pés apoiados (o pé empurra o chão, até o atrito). Soma com a ajuda na pelve, só no que ela não deu, e cai com o impacto como ela.");
-                        percent("Ajuda ao levantar", "##AssistGetUp", &m_getUpAssistPercent, 0.0f, 200.0f,
-                            "Forças de fora no levantar do chão; 0%: só os músculos.");
+                        {
+                            // A ajuda auxiliar (17/10): uma regua para as quatro; no
+                            // Avancado, cada uma. 0% e nenhuma forca de fora.
+                            ImGui::Checkbox("Avançado", &m_assistAdvanced);
+                            hint("Ajustar cada ajuda separada (parado, andando, nos pés, ao levantar).");
+                            if (!m_assistAdvanced) {
+                                float all = m_e5WalkingAssistPercent;
+                                ImGui::TextUnformatted("Ajuda auxiliar");
+                                ImGui::SetNextItemWidth(-1.0f);
+                                if (ImGui::SliderFloat("##AssistAll", &all, 0.0f, 100.0f, "%.0f%%", ImGuiSliderFlags_AlwaysClamp))
+                                    m_e5StandingAssistPercent = m_e5WalkingAssistPercent = m_physicalFeetAssistPercent
+                                        = m_getUpAssistPercent = all;
+                                hint("Forças de fora no corpo físico (parado, andando, nos pés e ao levantar). 0%: nenhuma, só os músculos; 100%: a ajuda cheia.");
+                            } else {
+                                percent("Ajuda parado", "##AssistStanding", &m_e5StandingAssistPercent, 0.0f, 100.0f,
+                                    "Força de fora na pelve parado (no físico). 0%: nenhuma.");
+                                percent("Ajuda andando", "##AssistWalking", &m_e5WalkingAssistPercent, 0.0f, 100.0f,
+                                    "Força de fora andando e correndo (no físico). 0%: nenhuma.");
+                                percent("Ajuda nos pés", "##AssistFeet", &m_physicalFeetAssistPercent, 0.0f, 100.0f,
+                                    "No físico, a força que leva o corpo ao movimento passa pelos pés apoiados. 0%: nenhuma.");
+                                percent("Ajuda ao levantar", "##AssistGetUp", &m_getUpAssistPercent, 0.0f, 100.0f,
+                                    "Forças de fora no levantar do chão. 0%: só os músculos.");
+                            }
+                        }
                         panelHeader("MÚSCULOS");
                         percent("Rigidez muscular geral", "##MuscleStiffness", &m_characterMusclePercent, 0.0f, 100.0f,
                             "Rigidez e força de todos os músculos no físico (100% é a calibrada).");
