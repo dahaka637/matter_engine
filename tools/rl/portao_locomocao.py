@@ -133,10 +133,12 @@ def main() -> int:
     except (OSError, ValueError):
         pass
     # Dois portoes seguidos, de execucoes independentes (a rodada avancou), para avancar.
-    consecutive = verdict and bool(previous.get("passed")) and previous.get("iteration", -1) < reference.iteration
+    task_id = json.loads(Path(task).read_text())["id"]
+    consecutive = verdict and bool(previous.get("passed")) and previous.get("iteration", -1) < reference.iteration \
+        and previous.get("task_id") == task_id
     print("DOIS SEGUIDOS: " + ("sim - pode avancar" if consecutive else "ainda nao"))
     storage.write_json_atomic(run / "portao.json", {"consecutive": consecutive, "time": time.time(), "iteration": reference.iteration,
-                                                    "task": str(task), "passed": verdict, "reasons": reasons,
+                                                    "task": str(task), "task_id": task_id, "passed": verdict, "reasons": reasons,
                                                     "results": results})
     return 0 if verdict else 2
 
