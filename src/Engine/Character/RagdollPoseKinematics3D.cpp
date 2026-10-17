@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <string>
 
 namespace MatterEngine {
 namespace {
@@ -46,12 +47,47 @@ Vec3 ragdollJointJacobian3D(Vec3 coordinates, Vec3 velocity) {
 
 namespace {
 
+// As subexpressoes da FK que so dependem do perfil, por link, calculadas pelas
+// mesmas funcoes (os mesmos bits): a ancora no pai e no link, o fim do produto
+// das orientacoes e a conjugada do pai. Uma tabela por thread, refeita quando o
+// perfil muda.
+struct LinkConstants {
+    Quaternion parentInverse;
+    Quaternion childFrame;
+    Vec3 anchorInParent;
+    Vec3 anchorInLink;
+};
+
+const std::vector<LinkConstants>& linkConstants(const RagdollProfile3D& profile) {
+    thread_local const RagdollProfile3D* cachedProfile = nullptr;
+    thread_local std::string cachedId;
+    thread_local std::vector<LinkConstants> table;
+    if (cachedProfile != &profile || table.size() != profile.links.size() || cachedId != profile.id) {
+        cachedProfile = &profile;
+        cachedId = profile.id;
+        table.assign(profile.links.size(), {});
+        for (std::size_t index = 1; index < profile.links.size(); ++index) {
+            const RagdollLinkDefinition3D& link = profile.links[index];
+            if (link.parentIndex < 0) continue;
+            const RagdollLinkDefinition3D& parentLink = profile.links[static_cast<std::size_t>(link.parentIndex)];
+            const Quaternion frame = link.inboundJoint.frameModelOrientation;
+            const Vec3 anchor = link.inboundJoint.anchorModelPosition;
+            LinkConstants& c = table[index];
+            c.parentInverse = parentLink.modelOrientation.conjugate();
+            c.childFrame = (link.modelOrientation.conjugate() * frame).conjugate();
+            c.anchorInParent = parentLink.modelOrientation.conjugate().rotate(anchor - parentLink.modelPosition);
+            c.anchorInLink = link.modelOrientation.conjugate().rotate(anchor - link.modelPosition);
+        }
+    }
+    return table;
+}
+
 // Um link da cinematica direta: so le a pose do pai (o pai vem antes do filho
 // no perfil). A FK completa e a da cadeia usam a mesma expressao, entao dao os
 // mesmos bits.
 inline void poseLink(const RagdollProfile3D& profile,
     const std::vector<Vec3>& coordinates, RagdollAnimationPose3D& pose,
-    std::size_t index) {
+    std::size_t index, const std::vector<LinkConstants>& constants) {
     const RagdollLinkDefinition3D& link = profile.links[index];
     if (link.parentIndex < 0) return;
     const std::size_t parent = static_cast<std::size_t>(link.parentIndex);
@@ -67,20 +103,17 @@ inline void poseLink(const RagdollProfile3D& profile,
             : 0.0f);
     }
     const Quaternion frame = link.inboundJoint.frameModelOrientation;
+    const LinkConstants& c = constants[index];
+    (void)parentLink;
     pose.linkOrientations[index] =
         (pose.linkOrientations[parent]
-            * parentLink.modelOrientation.conjugate()
+            * c.parentInverse
             * frame * ragdollJointRotation3D(angles)
-            * (link.modelOrientation.conjugate() * frame).conjugate())
+            * c.childFrame)
                 .normalized();
-    const Vec3 anchor = link.inboundJoint.anchorModelPosition;
     pose.linkPositions[index] = pose.linkPositions[parent]
-        + pose.linkOrientations[parent].rotate(
-            parentLink.modelOrientation.conjugate().rotate(
-                anchor - parentLink.modelPosition))
-        - pose.linkOrientations[index].rotate(
-            link.modelOrientation.conjugate().rotate(
-                anchor - link.modelPosition));
+        + pose.linkOrientations[parent].rotate(c.anchorInParent)
+        - pose.linkOrientations[index].rotate(c.anchorInLink);
 }
 
 // Os ancestrais de endIndex (ele incluso, sem a raiz), da raiz para a ponta.
@@ -104,8 +137,9 @@ void buildRagdollLocalPose3D(const RagdollProfile3D& profile,
     const std::vector<Vec3>& coordinates, RagdollAnimationPose3D& pose) {
     pose.linkPositions.assign(profile.links.size(), {});
     pose.linkOrientations.assign(profile.links.size(), {});
+    const std::vector<LinkConstants>& constants = linkConstants(profile);
     for (std::size_t index = 1; index < profile.links.size(); ++index)
-        poseLink(profile, coordinates, pose, index);
+        poseLink(profile, coordinates, pose, index, constants);
 }
 
 void buildRagdollChainPose3D(const RagdollProfile3D& profile,
@@ -121,8 +155,9 @@ void buildRagdollChainPose3D(const RagdollProfile3D& profile,
     }
     std::array<std::size_t, 64> chain {};
     const std::size_t count = chainOf(profile, endIndex, chain);
+    const std::vector<LinkConstants>& constants = linkConstants(profile);
     for (std::size_t k = 0; k < count; ++k)
-        poseLink(profile, coordinates, pose, chain[k]);
+        poseLink(profile, coordinates, pose, chain[k], constants);
 }
 
 void solveRagdollChainPoint3D(const RagdollProfile3D& profile,
