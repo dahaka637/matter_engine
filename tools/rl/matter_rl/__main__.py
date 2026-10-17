@@ -3,7 +3,8 @@
     matter-rl doctor                      confere GPU, modulo nativo e tarefas
     matter-rl iniciar [--run R] [--modo M] [--tarefa T]   abre o treino em segundo plano
     matter-rl servir  [...]               o mesmo, em primeiro plano (reabre na troca de modo)
-    matter-rl treinar [...]               um processo de treino (o que o servir abre)
+    matter-rl treinar [...]               um processo de treino (o que o servir abre; a tarefa da
+                                          locomocao, esquema matter-rl-locomocao-1, abre o treinador dela)
     matter-rl status | pausar | retomar | parar | salvar | avaliar
     matter-rl modo maximo|equilibrado|leve
     matter-rl tarefa <id>                 o treino aberto passa para outra tarefa (o mesmo cerebro)
@@ -64,6 +65,13 @@ def command_doctor(_: argparse.Namespace) -> int:
 
 
 def command_train(args: argparse.Namespace) -> int:
+    from .locomotion_trainer import LocomotionTrainer, is_locomotion_run, is_locomotion_task
+    # A locomocao (o RL dentro dos modulos do jogo, contrato v2): a tarefa do
+    # esquema matter-rl-locomocao-1, ou um treino dela.
+    if is_locomotion_run(args.run) or (args.tarefa and is_locomotion_task(paths.task_path(args.tarefa))):
+        trainer = LocomotionTrainer(args.run, task=args.tarefa, mode=args.modo, environments=args.mundos,
+                                    device=args.dispositivo, seed=args.semente, iterations=args.rodadas)
+        return trainer.loop()
     from .body_trainer import BodyTrainer, is_body_run, is_body_task
     # O Corpo v2 (a tarefa do esquema 2, ou um treino dele) tem o treinador proprio.
     if is_body_run(args.run) or (args.tarefa and is_body_task(paths.task_path(args.tarefa))):

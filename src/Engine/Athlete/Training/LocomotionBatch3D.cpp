@@ -82,4 +82,25 @@ void LocomotionBatch3D::step(int ticks) {
         &context);
 }
 
+void LocomotionBatch3D::parallel(const std::function<void(std::size_t)>& task) {
+    Impl& impl = *m_impl;
+    struct Context {
+        Impl* impl;
+        const std::function<void(std::size_t)>* task;
+    } context { &impl, &task };
+    impl.scheduler->parallelFor(impl.worlds.size(), 1,
+        [](std::size_t first, std::size_t last, void* raw) noexcept {
+            auto* ctx = static_cast<Context*>(raw);
+            for (std::size_t i = first; i < last; ++i) {
+                if (ctx->impl->failed[i] != 0) continue;
+                try {
+                    (*ctx->task)(i);
+                } catch (...) {
+                    ctx->impl->failed[i] = 1;
+                }
+            }
+        },
+        &context);
+}
+
 } // namespace MatterEngine

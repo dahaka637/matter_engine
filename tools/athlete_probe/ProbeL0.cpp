@@ -439,7 +439,7 @@ int runParity(const ProbeContext& context, int limit, int restores) {
         for (ContractHooks* hooks : { &probeHooks, &trainedHooks }) {
             hooks->contract = &contract;
             hooks->act = true;
-            hooks->authority = { 0.5f, 0.5f, 0.5f, 0.5f };
+            hooks->authority = LocomotionAuthority3D::uniform(0.5f);
         }
         probeHooks.observations = &probeObservations;
         trainedHooks.observations = &trainedObservations;

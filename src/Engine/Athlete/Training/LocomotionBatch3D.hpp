@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <span>
 
@@ -43,6 +44,10 @@ public:
     // decisao do RL a 30 Hz sao 4 ticks). Um mundo cujo passo lancou excecao
     // para ali e fica marcado (failed); o chamador o recomeca.
     void step(int ticks = 1);
+    // Uma tarefa por mundo, em paralelo (cada mundo numa thread por vez): o
+    // treino, que entre os ticks segue a acao da rede e mede. Um mundo cuja
+    // tarefa lancou excecao fica marcado (failed) e e pulado.
+    void parallel(const std::function<void(std::size_t)>& task);
     [[nodiscard]] bool failed(std::size_t index) const;
     void clearFailure(std::size_t index);
 

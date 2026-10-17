@@ -71,6 +71,9 @@ check_absent "O treino da locomocao nao entra no jogo: o motor e o laboratorio n
     '#include "Engine/Athlete/Training/' src/Engine src/Workbench -g '!src/Engine/Athlete/Training/**'
 check_absent "O treino da locomocao nao fala com o treinador, o estilo nem a interface" \
     '#include "(Workbench|Engine/RL/(Supervisor|Style))/' src/Engine/Athlete/Training
+check_absent "O treino da locomocao usa do RL so o piloto e o layout (nunca o lote, o corpo, a imitacao nem a politica do RL do zero: o ReferenceMotion3D deles e outro)" \
+    '#include "Engine/RL/(Environment|Body|Imitation|Policy|Rewards|Brain|Calibration)/' src/Engine/Athlete/Training \
+    bindings/python/MatterLocomotionNative.cpp
 check_absent "Atletas: planejamento, sintese, acoes, pedidos e bola trabalham com dados (sem a cena fisica nem o Jolt; so os sentidos leem a fisica)" \
     '#include "Engine/Physics/(PhysicsScene3D|PhysicsEngine3D)|Jolt' src/Engine/Athlete/Planning src/Engine/Athlete/Synthesis \
     src/Engine/Athlete/Actions src/Engine/Athlete/Intent src/Engine/Athlete/Ball src/Engine/Athlete/Core \

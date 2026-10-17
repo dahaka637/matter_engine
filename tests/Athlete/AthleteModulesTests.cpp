@@ -604,8 +604,7 @@ void contractTests() {
             if (channels[i].name == name) return i;
         throw std::runtime_error("canal da saida sumiu: " + name);
     };
-    LocomotionAuthority3D full { 1.0f, 1.0f, 1.0f, 1.0f };
-    full.caps = LocomotionCaps3D::full();
+    const LocomotionAuthority3D full = LocomotionAuthority3D::uniform(1.0f, LocomotionCaps3D::full());
     const std::vector<float> none = contract.physical(std::vector<float>(contract.actionSize(), 0.0f), full);
     bool neutral = true;
     for (float v : none) neutral &= v == 0.0f;
@@ -618,7 +617,11 @@ void contractTests() {
     expect(!off.active(), "sem autoridade e sem valor: nenhuma cabeca ligada (o classico exato)");
     std::vector<float> big(contract.actionSize(), 5.0f);
     big[actionIndex("pes.esq.pouso.x")] = std::numeric_limits<float>::quiet_NaN();
-    LocomotionAuthority3D partial { 0.5f, 0.25f, 1.0f, 0.75f };
+    LocomotionAuthority3D partial;
+    partial.footwork = 0.5f;
+    partial.balance = 0.25f;
+    partial.pose = 1.0f;
+    partial.gain = 0.75f;
     std::vector<float> most = contract.physical(big, partial);
     const auto near = [](float a, float b) { return std::abs(a - b) < 1e-6f; };
     expect(most[actionIndex("pes.esq.pouso.x")] == 0.0f && near(most[actionIndex("pes.esq.pouso.y")], 0.06f * 0.5f)

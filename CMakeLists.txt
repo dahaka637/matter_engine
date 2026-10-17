@@ -414,13 +414,32 @@ if(MATTERENGINE_BUILD_RL)
     add_library(MatterRLCommands STATIC
         src/Engine/RL/Commands/ControlAdapter3D.cpp
         src/Engine/RL/Commands/CommandPilot3D.cpp
+        src/Engine/RL/Commands/PilotScriptJson3D.cpp
     )
     target_include_directories(MatterRLCommands PUBLIC src)
-    target_link_libraries(MatterRLCommands PUBLIC MatterCore)
+    target_link_libraries(MatterRLCommands PUBLIC MatterCore nlohmann_json::nlohmann_json)
     if(MSVC)
         target_compile_options(MatterRLCommands PRIVATE /W4 /permissive- /utf-8)
     else()
         target_compile_options(MatterRLCommands PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+
+    # O treino da locomocao (a etapa B do plano do RL): a tarefa, a nota e o
+    # lote de RL sobre o atleta do jogo. Sem janela nem render: a ponte Python
+    # o usa.
+    add_library(MatterAthleteTraining STATIC
+        src/Engine/Athlete/Training/LocomotionTask3D.cpp
+        src/Engine/Athlete/Training/LocomotionReward3D.cpp
+        src/Engine/Athlete/Training/LocomotionTraining3D.cpp
+    )
+    target_include_directories(MatterAthleteTraining PUBLIC src)
+    target_link_libraries(MatterAthleteTraining
+        PUBLIC MatterAthlete MatterRLCommands
+        PRIVATE nlohmann_json::nlohmann_json)
+    if(MSVC)
+        target_compile_options(MatterAthleteTraining PRIVATE /W4 /permissive- /utf-8)
+    else()
+        target_compile_options(MatterAthleteTraining PRIVATE -Wall -Wextra -Wpedantic)
     endif()
 
     # Os mundos de treino do Corpo: a tarefa, a nota e o lote paralelo.
@@ -456,6 +475,12 @@ if(MATTERENGINE_BUILD_RL)
         nanobind_add_module(matter_rl_native NB_STATIC bindings/python/MatterRLNative.cpp)
         target_link_libraries(matter_rl_native PRIVATE MatterRLEnvironment MatterRLPolicy)
         set_target_properties(matter_rl_native PROPERTIES
+            LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/python")
+        # O treino da locomocao (o atleta do jogo, contrato v2): um modulo a
+        # parte (o RL do zero tem outro ReferenceMotion3D).
+        nanobind_add_module(matter_locomotion_native NB_STATIC bindings/python/MatterLocomotionNative.cpp)
+        target_link_libraries(matter_locomotion_native PRIVATE MatterAthleteTraining)
+        set_target_properties(matter_locomotion_native PROPERTIES
             LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/python")
     endif()
 endif()
@@ -624,9 +649,11 @@ else()
         PROPERTIES COMPILE_OPTIONS "-w")
 endif()
 
-add_library(MatterEngine STATIC
+# O atleta (o runtime, o controle fisico e o padrao, os planejadores, a ajuda,
+# o contrato da rede e o mundo de treino): sem render, janela nem audio - o
+# jogo, as sondas e o treino de RL (a ponte Python) usam a mesma biblioteca.
+add_library(MatterAthlete STATIC
     src/Engine/Animation/RagdollCharacter3D.cpp
-    src/Engine/Animation/RagdollVisualPose3D.cpp
     src/Engine/Athlete/AthleteAssets3D.cpp
     src/Engine/Athlete/AthleteRuntime3D.cpp
     src/Engine/Athlete/AthleteTelemetry3D.cpp
@@ -710,6 +737,16 @@ add_library(MatterEngine STATIC
     src/Engine/Control/AdaptivePhysicalCharacter3D.cpp
     src/Engine/Control/ImpactAssist3D.cpp
     src/Engine/Locomotion/ContactFootwork3D.cpp
+    src/Engine/Geometry/MeshData3D.cpp
+)
+target_include_directories(MatterAthlete PUBLIC src)
+target_link_libraries(MatterAthlete
+    PUBLIC MatterCore MatterPhysics MatterAnimationClips
+    PRIVATE nlohmann_json::nlohmann_json
+)
+
+add_library(MatterEngine STATIC
+    src/Engine/Animation/RagdollVisualPose3D.cpp
     src/Engine/Core/Application.cpp
     src/Engine/Input/Input.cpp
     src/Engine/Platform/SDL3/SDLPlatform.cpp
@@ -718,7 +755,6 @@ add_library(MatterEngine STATIC
     src/Engine/Math/JitterSequence.cpp
     src/Engine/Math/ShadowCascade.cpp
     src/Engine/Environment/WindSystem.cpp
-    src/Engine/Geometry/MeshData3D.cpp
     src/Engine/Geometry/ProceduralSoccerBall3D.cpp
     src/Engine/Geometry/GltfLoader.cpp
     src/Engine/Geometry/GltfPhysicsMetadata3D.cpp
@@ -734,7 +770,7 @@ add_library(MatterEngine STATIC
 
 target_include_directories(MatterEngine PUBLIC src)
 target_link_libraries(MatterEngine
-    PUBLIC MatterCore MatterRHI MatterPhysics MatterAnimationClips MatterAudio
+    PUBLIC MatterAthlete MatterCore MatterRHI MatterPhysics MatterAnimationClips MatterAudio
     PRIVATE MatterVulkan SDL3::SDL3-static imgui sqlite3
         cgltf stb_image nlohmann_json::nlohmann_json
 )
@@ -854,6 +890,12 @@ if(MATTERENGINE_BUILD_TESTS)
     if(MATTERENGINE_BUILD_RL)
         # Primeiro contrato de RL: a auditoria declarativa do corpo compila
         # apenas contra o modulo headless de calibracao/fisica.
+        # O treino da locomocao: a nota, a tarefa e o lote (curto, sem rede).
+        add_executable(MatterLocomotionTrainingTests tests/Athlete/LocomotionTrainingTests.cpp)
+        target_link_libraries(MatterLocomotionTrainingTests PRIVATE MatterAthleteTraining)
+        target_compile_definitions(MatterLocomotionTrainingTests PRIVATE
+            MATTERENGINE_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
+        add_test(NAME MatterEngine.LocomotionTraining COMMAND MatterLocomotionTrainingTests)
         add_executable(MatterRLCalibrationTests
             tests/RL/RagdollCalibrationAuditTests.cpp)
         target_link_libraries(MatterRLCalibrationTests
@@ -1088,6 +1130,7 @@ endif()
 
 if(MSVC)
     target_compile_options(MatterEngine PRIVATE /W4 /permissive- /utf-8)
+    target_compile_options(MatterAthlete PRIVATE /W4 /permissive- /utf-8)
     target_compile_options(MatterVulkan PRIVATE /W4 /permissive- /utf-8)
     target_compile_options(MatterCore PRIVATE /W4 /permissive- /utf-8)
     target_compile_options(MatterModeling PRIVATE /W4 /permissive- /utf-8)
@@ -1102,6 +1145,7 @@ if(MSVC)
     endif()
 else()
     target_compile_options(MatterEngine PRIVATE -Wall -Wextra -Wpedantic)
+    target_compile_options(MatterAthlete PRIVATE -Wall -Wextra -Wpedantic)
     target_compile_options(MatterVulkan PRIVATE -Wall -Wextra -Wpedantic)
     target_compile_options(MatterCore PRIVATE -Wall -Wextra -Wpedantic)
     target_compile_options(MatterModeling PRIVATE -Wall -Wextra -Wpedantic)

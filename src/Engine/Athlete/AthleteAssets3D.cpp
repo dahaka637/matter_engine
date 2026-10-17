@@ -1,5 +1,7 @@
 #include "Engine/Athlete/AthleteAssets3D.hpp"
 
+#include "Engine/Character/DefaultLocomotion3D.hpp"
+
 #include <algorithm>
 #include <exception>
 #include <filesystem>
@@ -123,6 +125,23 @@ CharacterMotorSettings3D athleteAvatarMotorSettings3D() {
     settings.maximumPushSpeedMetersPerSecond = 2.2f;
     settings.pushSaturationPenetrationMeters = 0.25f;
     return settings;
+}
+
+AthleteBundle3D::AthleteBundle3D(const std::string& assetsDirectory)
+    : m_character(loadRagdollCharacter3D(assetsDirectory + "/characters/football_player/character.json")) {
+    m_clipLibrary = loadAthleteClipLibrary3D(assetsDirectory + "/animations/clips", m_character.profile, &m_clipErrors);
+    m_clips = athleteLocomotionClips3D(m_character, m_clipLibrary);
+    m_defaultClips = defaultLocomotionAnimations3D(m_clips, m_character.defaultLocomotionClipIds, m_clipLibrary);
+    m_gaitSpeeds = characterGaitSpeeds3D(m_clips);
+    CharacterMotorSettings3D avatar = athleteAvatarMotorSettings3D();
+    if (m_gaitSpeeds.walk > 0.0f) {
+        avatar.walkSpeed = m_gaitSpeeds.walk;
+        avatar.sprintSpeed = m_gaitSpeeds.sprint;
+    }
+    m_assets.profile = &m_character.profile;
+    m_assets.clips = &m_clips;
+    m_assets.defaultClips = &m_defaultClips;
+    m_assets.avatarSettings = avatar;
 }
 
 } // namespace MatterEngine

@@ -72,6 +72,11 @@ struct LocomotionAuthority3D {
     float pose = 0.0f;
     float gain = 0.0f;
     LocomotionCaps3D caps;
+
+    // Todas as cabecas na mesma autoridade, com os tetos dados.
+    [[nodiscard]] static LocomotionAuthority3D uniform(float value, const LocomotionCaps3D& caps = {}) {
+        return { value, value, value, value, caps };
+    }
 };
 
 // O contrato da rede da locomocao fisica (o plano do RL, vault
