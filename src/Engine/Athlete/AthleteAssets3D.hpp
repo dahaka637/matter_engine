@@ -1,5 +1,7 @@
 #pragma once
 
+#include <memory>
+
 #include "Engine/Animation/AnimationClip3D.hpp"
 #include "Engine/Animation/RagdollCharacter3D.hpp"
 #include "Engine/Character/CharacterLocomotion3D.hpp"
@@ -36,6 +38,10 @@ namespace MatterEngine {
 // assets() apontam para dentro dele.
 class AthleteBundle3D final {
 public:
+    // Um pacote por pasta, compartilhado no processo (imutavel depois de
+    // carregado): os lotes do treino e das avaliacoes leem os mesmos clipes.
+    [[nodiscard]] static std::shared_ptr<const AthleteBundle3D> shared(const std::string& assetsDirectory);
+
     // assetsDirectory: a pasta assets do repositorio (characters/, animations/).
     explicit AthleteBundle3D(const std::string& assetsDirectory);
     AthleteBundle3D(const AthleteBundle3D&) = delete;

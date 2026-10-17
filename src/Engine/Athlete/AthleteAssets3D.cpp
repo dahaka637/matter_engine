@@ -1,4 +1,6 @@
 #include "Engine/Athlete/AthleteAssets3D.hpp"
+#include <mutex>
+#include <map>
 
 #include "Engine/Character/DefaultLocomotion3D.hpp"
 
@@ -142,6 +144,17 @@ AthleteBundle3D::AthleteBundle3D(const std::string& assetsDirectory)
     m_assets.clips = &m_clips;
     m_assets.defaultClips = &m_defaultClips;
     m_assets.avatarSettings = avatar;
+}
+
+std::shared_ptr<const AthleteBundle3D> AthleteBundle3D::shared(const std::string& assetsDirectory) {
+    static std::mutex mutex;
+    static std::map<std::string, std::weak_ptr<const AthleteBundle3D>> bundles;
+    std::lock_guard<std::mutex> lock(mutex);
+    std::weak_ptr<const AthleteBundle3D>& slot = bundles[assetsDirectory];
+    if (auto existing = slot.lock()) return existing;
+    auto created = std::make_shared<const AthleteBundle3D>(assetsDirectory);
+    slot = created;
+    return created;
 }
 
 } // namespace MatterEngine

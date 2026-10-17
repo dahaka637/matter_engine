@@ -109,7 +109,7 @@ std::vector<float> locomotionEpisodeRow3D(const LocomotionEpisode3D& e) {
 struct LocomotionTraining3D::Impl {
     LocomotionTrainingSettings3D settings;
     LocomotionTask3D task;
-    std::unique_ptr<AthleteBundle3D> bundle;
+    std::shared_ptr<const AthleteBundle3D> bundle;
     std::unique_ptr<LocomotionContract3D> contract;
     std::unique_ptr<LocomotionBatch3D> batch;
     LocomotionAuthority3D authority;
@@ -607,7 +607,7 @@ LocomotionTraining3D::LocomotionTraining3D(const LocomotionTrainingSettings3D& s
     Impl& impl = *m_impl;
     impl.settings = settings;
     impl.task = loadLocomotionTask3D(settings.taskPath);
-    impl.bundle = std::make_unique<AthleteBundle3D>(settings.assetsDirectory);
+    impl.bundle = AthleteBundle3D::shared(settings.assetsDirectory);
     const RagdollProfile3D& profile = impl.bundle->profile();
     impl.contract = std::make_unique<LocomotionContract3D>(profile);
     impl.observationSize = impl.contract->observationSize();

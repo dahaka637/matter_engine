@@ -7,6 +7,8 @@
 #include <algorithm>
 #include <cmath>
 #include <fstream>
+#include <iterator>
+#include <string>
 #include <stdexcept>
 #include <unordered_set>
 
@@ -91,15 +93,18 @@ Quaternion jointLocalOrientation(const RagdollProfile3D& profile,
 } // namespace
 
 AnimationClip3D loadAnimationClip3D(std::string_view filePath) {
-    std::ifstream input { std::string(filePath) };
+    std::ifstream input { std::string(filePath), std::ios::binary };
     if (!input) {
         throw std::runtime_error("Não foi possível abrir clipe de animação: "
             + std::string(filePath));
     }
+    // (O arquivo inteiro num buffer: o parser num bloco contiguo e varias
+    // vezes mais rapido que caractere a caractere pelo istream.)
+    std::string text((std::istreambuf_iterator<char>(input)), std::istreambuf_iterator<char>());
 
     Json root;
     try {
-        input >> root;
+        root = Json::parse(text);
     } catch (const Json::exception& error) {
         throw std::runtime_error("JSON de animação inválido em "
             + std::string(filePath) + ": " + error.what());
