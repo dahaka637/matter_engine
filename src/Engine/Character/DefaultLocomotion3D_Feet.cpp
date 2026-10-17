@@ -96,8 +96,10 @@ void DefaultLocomotion3D::stepFeet(Tick& t) {
             }
             // A perna (seguindo correndo, so a mais baixa) na linha da
             // velocidade, o joelho dobrado.
+            // (So le os pes: as cadeias ate eles.)
             RagdollAnimationPose3D air;
-            buildRagdollLocalPose3D(profile, m_coordinates, air);
+            buildRagdollChainPose3D(profile, m_coordinates, air, m_feet[0]);
+            buildRagdollChainPose3D(profile, m_coordinates, air, m_feet[1]);
             // Seguindo correndo: a perna da frente da tesoura do pulo (a mais a
             // frente no rumo, escolhida no comeco do preparo) vai ao chao; a de
             // tras fica atras, dobrada e mais alta, pronta para o passo
@@ -140,8 +142,10 @@ void DefaultLocomotion3D::stepFeet(Tick& t) {
     // (ao longo do movimento, em volta do quadril), o pe de dentro girando
     // para a curva, e cada pe na altura do chao embaixo dele (nunca dentro;
     // apoiado, encostado). O pe da bola so nao entra no chao.
+    // (So le os pes: as cadeias ate eles.)
     RagdollAnimationPose3D local;
-    buildRagdollLocalPose3D(profile, m_coordinates, local);
+    buildRagdollChainPose3D(profile, m_coordinates, local, m_feet[0]);
+    buildRagdollChainPose3D(profile, m_coordinates, local, m_feet[1]);
     float lowestGround = feet.z;
     if (input.grounded) {
         // (O comprimento ao longo do rumo de cada ciclo, com o peso da forma
@@ -307,7 +311,7 @@ void DefaultLocomotion3D::stepFeet(Tick& t) {
                     (rootInverse * orientation).normalized(), 1.0f);
             moved = true;
         }
-        if (moved) buildRagdollLocalPose3D(profile, m_coordinates, local);
+        (void)moved;
     } else {
         // (No ar nada fica travado: no pouso, cada pe trava onde pousar.)
         m_footLocks = {};

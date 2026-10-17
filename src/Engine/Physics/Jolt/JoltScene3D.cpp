@@ -130,12 +130,9 @@ void PhysicsScene3D::simulate(float dt) {
     // tick ja esteja sobre o guia - a mesma ordem do backend PhysX.
     impl.resolveRagdollGuides();
     impl.publishStepResults();
-    const auto stats = impl.system->GetBodyStats();
+    // (A contagem de corpos e so diagnostico: GetBodyStats trava e varre
+    // todos os corpos; sai em diagnostics(), sob demanda.)
     auto& d = impl.diagnostics;
-    d.staticBodyCount = stats.mNumBodiesStatic;
-    d.dynamicBodyCount = stats.mNumBodiesDynamic;
-    d.activeDynamicBodyCount = stats.mNumActiveBodiesDynamic;
-    d.sleepingDynamicBodyCount = d.dynamicBodyCount - d.activeDynamicBodyCount;
     d.discreteContactPairs = impl.allContactPairs;
     d.reportedContactPairs = impl.reportedContactPairs;
     d.reportedContactPoints = impl.reportedContactPoints;
@@ -175,5 +172,14 @@ void PhysicsScene3D::setOceanTimeSeconds(float value) { m_impl->oceanTimeSeconds
 std::span<const ContactImpactEvent3D> PhysicsScene3D::contactImpacts() const { return m_impl->contactImpacts; }
 std::span<const ContactSlideEvent3D> PhysicsScene3D::contactSlides() const { return m_impl->contactSlides; }
 std::span<const PhysicsBodyStateUpdate3D> PhysicsScene3D::activeBodyStates() const { return m_impl->activeBodyStateUpdates; }
-const PhysicsStepDiagnostics3D& PhysicsScene3D::diagnostics() const { return m_impl->diagnostics; }
+const PhysicsStepDiagnostics3D& PhysicsScene3D::diagnostics() const {
+    // A contagem de corpos sob demanda (GetBodyStats trava e varre todos).
+    const auto stats = m_impl->system->GetBodyStats();
+    auto& d = m_impl->diagnostics;
+    d.staticBodyCount = stats.mNumBodiesStatic;
+    d.dynamicBodyCount = stats.mNumBodiesDynamic;
+    d.activeDynamicBodyCount = stats.mNumActiveBodiesDynamic;
+    d.sleepingDynamicBodyCount = d.dynamicBodyCount - d.activeDynamicBodyCount;
+    return d;
+}
 } // namespace MatterEngine

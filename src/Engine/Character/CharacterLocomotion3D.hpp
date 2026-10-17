@@ -992,6 +992,14 @@ private:
     std::array<float, 2> m_legPhaseLead {};
     std::array<bool, 2> m_legTouchedInStance {};
     std::vector<int> m_legSideOfLink;
+    // Os nomes dos links viram bandeiras uma vez por perfil (os drives
+    // testavam ~30 substrings por link a cada tick; mesmas contas, mesmos bits).
+    struct LinkNameTraits {
+        bool arm = false, forearm = false, hand = false, thigh = false, shin = false, foot = false;
+        bool neck = false, head = false, abdomen = false, chest = false, upperChest = false, left = false;
+    };
+    std::vector<LinkNameTraits> m_linkTraits;
+    const RagdollProfile3D* m_linkTraitsProfile = nullptr;
     int m_waitingLeg = -1;
     // O gancho da raiz do RL (centro de massa e altura da pelve): 0 no
     // levantar, 1 fora dele, com a troca em 0,3 s.

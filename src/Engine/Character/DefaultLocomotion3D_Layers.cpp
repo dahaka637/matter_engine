@@ -217,8 +217,22 @@ void DefaultLocomotion3D::stepLayers(Tick& t) {
     t.gestureFeet = {};
     std::array<bool, 2>& gestureFeet = t.gestureFeet;
     if (m_feet[0] != 0 && m_feet[1] != 0) {
+        // (So os pes e as coxas sao lidos: as cadeias ate os pes, levadas ao
+        // mundo pela mesma conta de defaultLocomotionPose3D.)
         RagdollAnimationPose3D style;
-        defaultLocomotionPose3D(profile, rootPosition, rootOrientation, m_coordinates, style);
+        buildRagdollChainPose3D(profile, m_coordinates, style, m_feet[0]);
+        buildRagdollChainPose3D(profile, m_coordinates, style, m_feet[1]);
+        if (m_gestureLegs.valid)
+            for (std::size_t side = 0; side < 2; ++side)
+                buildRagdollChainPose3D(profile, m_coordinates, style, m_gestureLegs.thigh[side]);
+        for (std::size_t side = 0; side < 2; ++side) {
+            const std::size_t thigh = m_gestureLegs.valid ? m_gestureLegs.thigh[side] : 0;
+            for (const std::size_t i : { m_feet[side], thigh }) {
+                if (i == 0) continue;
+                style.linkPositions[i] = rootPosition + rootOrientation.rotate(style.linkPositions[i]);
+                style.linkOrientations[i] = (rootOrientation * style.linkOrientations[i]).normalized();
+            }
+        }
         for (std::size_t side = 0; side < 2; ++side) {
             m_output.styleFootPosition[side] = style.linkPositions[m_feet[side]];
             m_output.styleFootOrientation[side] = style.linkOrientations[m_feet[side]];

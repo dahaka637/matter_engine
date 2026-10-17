@@ -2,6 +2,10 @@
 
 #include "Engine/Character/DefaultLocomotion3DInternal.hpp"
 
+#include <cstring>
+#include <memory>
+#include <mutex>
+
 namespace MatterEngine {
 
 
@@ -231,7 +235,114 @@ void DefaultLocomotion3D::seed(const DefaultLocomotionSeed3D& seed) {
     m_started = true;
 }
 
+struct DefaultLocomotion3D::PreparedTables {
+    const RagdollProfile3D* profile = nullptr;
+    std::size_t links = 0;
+    CharacterLocomotionAnimations3D animations {};
+    std::vector<float> fingerprint;
+    std::array<Gait, GaitCount> gaits {};
+    std::array<const AnimationClip3D*, 3> arcs {};
+    std::array<float, 3> arcTouchdown {};
+    std::array<const AnimationClip3D*, 2> tackles {};
+    std::array<int, 2> tackleSide { -1, -1 };
+    std::array<float, 2> tackleClipSpeed {};
+    std::array<TackleClipShape3D, 2> tackleShape {};
+    std::array<std::size_t, 2> feet {};
+    std::array<std::size_t, 2> hands {};
+    std::vector<char> upperLinks;
+    std::vector<float> amplitudeShare;
+    BallGestureLegs3D gestureLegs;
+};
+
+namespace {
+
+// O conteudo dos clipes entra na chave (um clipe recarregado no mesmo endereco
+// nao reaproveita tabelas velhas).
+std::vector<float> preparedFingerprint(const RagdollProfile3D& profile, const CharacterLocomotionAnimations3D& animations) {
+    std::vector<float> f;
+    f.push_back(static_cast<float>(profile.links.size()));
+    const auto* clips = reinterpret_cast<const AnimationClip3D* const*>(&animations);
+    const std::size_t count = sizeof(CharacterLocomotionAnimations3D) / sizeof(const AnimationClip3D*);
+    for (std::size_t i = 0; i < count; ++i) {
+        const AnimationClip3D* clip = clips[i];
+        if (clip == nullptr) { f.push_back(-1.0f); continue; }
+        f.push_back(clip->durationSeconds);
+        f.push_back(static_cast<float>(clip->tracks.size()));
+        for (const AnimationTrack3D& track : clip->tracks) {
+            f.push_back(static_cast<float>(track.keyframes.size()));
+            if (!track.keyframes.empty()) {
+                f.push_back(track.keyframes.back().timeSeconds);
+                f.push_back(track.keyframes.back().jointPositionRadians.x);
+            }
+        }
+    }
+    return f;
+}
+
+std::mutex& preparedMutex() {
+    static std::mutex mutex;
+    return mutex;
+}
+
+} // namespace
+
 void DefaultLocomotion3D::prepare(const RagdollProfile3D& profile, const CharacterLocomotionAnimations3D& animations) {
+    static_assert(sizeof(CharacterLocomotionAnimations3D) % sizeof(const AnimationClip3D*) == 0);
+    static std::vector<std::shared_ptr<const PreparedTables>> cache;
+    const std::vector<float> fingerprint = preparedFingerprint(profile, animations);
+    std::shared_ptr<const PreparedTables> found;
+    {
+        std::lock_guard<std::mutex> lock(preparedMutex());
+        for (const auto& entry : cache)
+            if (entry->profile == &profile && entry->links == profile.links.size()
+                && std::memcmp(&entry->animations, &animations, sizeof animations) == 0
+                && entry->fingerprint == fingerprint) {
+                found = entry;
+                break;
+            }
+    }
+    if (found == nullptr) {
+        computePrepared(profile, animations);
+        auto entry = std::make_shared<PreparedTables>();
+        entry->profile = &profile;
+        entry->links = profile.links.size();
+        entry->animations = animations;
+        entry->fingerprint = fingerprint;
+        entry->gaits = m_gaits;
+        entry->arcs = m_arcs;
+        entry->arcTouchdown = m_arcTouchdown;
+        entry->tackles = m_tackles;
+        entry->tackleSide = m_tackleSide;
+        entry->tackleClipSpeed = m_tackleClipSpeed;
+        entry->tackleShape = m_tackleShape;
+        entry->feet = m_feet;
+        entry->hands = m_hands;
+        entry->upperLinks = m_upperLinks;
+        entry->amplitudeShare = m_amplitudeShare;
+        entry->gestureLegs = m_gestureLegs;
+        std::lock_guard<std::mutex> lock(preparedMutex());
+        if (cache.size() >= 32) cache.erase(cache.begin());
+        cache.push_back(std::move(entry));
+    } else {
+        m_gaits = found->gaits;
+        m_arcs = found->arcs;
+        m_arcTouchdown = found->arcTouchdown;
+        m_tackles = found->tackles;
+        m_tackleSide = found->tackleSide;
+        m_tackleClipSpeed = found->tackleClipSpeed;
+        m_tackleShape = found->tackleShape;
+        m_feet = found->feet;
+        m_hands = found->hands;
+        m_upperLinks = found->upperLinks;
+        m_amplitudeShare = found->amplitudeShare;
+        m_gestureLegs = found->gestureLegs;
+    }
+    m_preparedFor = animations.walk;
+    m_preparedAnimations = animations;
+}
+
+void DefaultLocomotion3D::computePrepared(const RagdollProfile3D& profile,
+    const CharacterLocomotionAnimations3D& animations) {
     const AnimationClip3D* trots[Directions] = { animations.walk, animations.walkForwardLeft, animations.strafeLeft,
         animations.walkBackwardLeft, animations.walkBackward, animations.walkBackwardRight, animations.strafeRight,
         animations.walkForwardRight };
@@ -377,7 +488,6 @@ void DefaultLocomotion3D::prepare(const RagdollProfile3D& profile, const Charact
             r1.translationOffsetMeters.y - r0.translationOffsetMeters.y) / 0.2f);
         m_tackleShape[k] = tackleClipShape3D(profile, *m_tackles[k]);
     }
-    m_preparedFor = animations.walk;
 }
 
 float DefaultLocomotion3D::gaitAmplitudeOf(std::size_t g) const {
@@ -399,7 +509,9 @@ void DefaultLocomotion3D::update(const RagdollProfile3D& profile,
     m_output.valid = false;
     m_output.tackleEnded = false;
     if (t.links == 0 || animations.walk == nullptr) return;
-    if (m_preparedFor != animations.walk) prepare(profile, animations);
+    if (m_preparedFor != animations.walk
+        || std::memcmp(&m_preparedAnimations, &animations, sizeof animations) != 0)
+        prepare(profile, animations);
     m_tackleCooldown = std::max(0.0f, m_tackleCooldown - t.dt);
     t.rootLink = &profile.links.front();
     t.viewYaw = input.facingYawRadians;

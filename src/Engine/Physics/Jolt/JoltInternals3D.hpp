@@ -380,6 +380,13 @@ struct PhysicsScene3D::Impl final : public JPH::ContactListener,
     void applyAerodynamicDrag(float deltaTime);
     void applyBuoyancy(float deltaTime);
     void applyRagdollDrives();
+    // A interface dos corpos sem trava por chamada quando a cena tem dono unico
+    // (o lote do treino: Jolt inline, uma thread por cena; os mesmos valores).
+    JPH::BodyInterface& bodiesForStep() {
+        return settings.runJobsInline ? system->GetBodyInterfaceNoLock() : system->GetBodyInterface();
+    }
+    // (O primeiro alvo ativo de cada (link, eixo) no passo, reaproveitado.)
+    std::vector<int> activeTargetOf;
     void applyRagdollKinematics(float dt);
     // Corpo guiado: as velocidades ate a pose (antes do passo) e, depois, a
     // pose exata quando nada de fora encostou.

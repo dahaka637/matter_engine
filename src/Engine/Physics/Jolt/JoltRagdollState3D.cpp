@@ -6,7 +6,7 @@
 #include <utility>
 namespace MatterEngine {
 void PhysicsScene3D::Impl::publishRagdoll(RagdollRecord& r) {
-    const auto& bi = system->GetBodyInterface();
+    const auto& bi = bodiesForStep();
     r.state.sleeping = true;
     for (std::size_t i = 0; i < r.links.size(); ++i) {
         const auto id = r.links[i];

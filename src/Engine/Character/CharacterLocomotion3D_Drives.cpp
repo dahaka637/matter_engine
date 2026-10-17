@@ -4,6 +4,26 @@ namespace MatterEngine {
 
 void CharacterLocomotion3D::stepDrives(Tick& t) {
     const RagdollProfile3D& profile = t.profile;
+    if (m_linkTraitsProfile != &profile || m_linkTraits.size() != profile.links.size()) {
+        m_linkTraitsProfile = &profile;
+        m_linkTraits.assign(profile.links.size(), {});
+        for (std::size_t index = 0; index < profile.links.size(); ++index) {
+            const std::string& id = profile.links[index].id;
+            LinkNameTraits& n = m_linkTraits[index];
+            n.arm = id.find("Arm") != std::string::npos;
+            n.forearm = id.find("Forearm") != std::string::npos;
+            n.hand = id.find("Hand") != std::string::npos;
+            n.thigh = id.find("Thigh") != std::string::npos;
+            n.shin = id.find("Shin") != std::string::npos;
+            n.foot = id.find("Foot") != std::string::npos;
+            n.neck = id == "Neck";
+            n.head = id == "Head";
+            n.abdomen = id == "Abdomen";
+            n.chest = id == "Chest";
+            n.upperChest = id == "UpperChest";
+            n.left = id.starts_with("Left");
+        }
+    }
     const RagdollState3D& state = t.state;
     const CharacterLocomotionInput3D& input = t.input;
     float& deltaTime = t.deltaTime;
@@ -219,10 +239,8 @@ void CharacterLocomotion3D::stepDrives(Tick& t) {
             m_fallSmoothCoordinates = m_coordinates;
         const float blend = 1.0f - std::exp(-deltaTime / std::max(FallSmoothSeconds, 1e-3f));
         for (std::size_t index = 1; index < m_coordinates.size(); ++index) {
-            const std::string& id = profile.links[index].id;
-            const bool reflexLimb = id.find("Arm") != std::string::npos
-                || id.find("Forearm") != std::string::npos || id.find("Hand") != std::string::npos
-                || id == "Neck" || id == "Head";
+            const LinkNameTraits& n = m_linkTraits[index];
+            const bool reflexLimb = n.arm || n.forearm || n.hand || n.neck || n.head;
             // (Levantando, so a transicao do comeco: o resto do reflexo, que
             // leva ~1 s para sair, atrasava o clipe de levantar e o corpo
             // brigava com ele - de bruços ficava ~2 s sem sair do chao.)
@@ -254,11 +272,9 @@ void CharacterLocomotion3D::stepDrives(Tick& t) {
         };
         const Vec3 velocity = jointAngularVelocity(m_coordinates[index],
             m_coordinateVelocities[index], measured);
-        const auto& linkId = profile.links[index].id;
-        const bool leg = linkId.find("Thigh") != std::string::npos
-            || linkId.find("Shin") != std::string::npos
-            || linkId.find("Foot") != std::string::npos;
-        const std::size_t side = linkId.starts_with("Left") ? 0 : 1;
+        const LinkNameTraits& names = m_linkTraits[index];
+        const bool leg = names.thigh || names.shin || names.foot;
+        const std::size_t side = names.left ? 0 : 1;
         // On a loaded foot, discontinuities in IK velocity become a kick
         // against the floor. Position drives retain support; damping absorbs
         // landing energy instead of feeding it back through the velocity goal.
@@ -308,7 +324,7 @@ void CharacterLocomotion3D::stepDrives(Tick& t) {
         // virava um freio de ~0,3 s e chegava 13-23 graus atrasado no sprint
         // (o pe nao pousava como a animacao e o terreno pediam).
         const FootSupportEstimate3D& footEstimate = m_estimator.state().feet[side];
-        const bool ankle = linkId.find("Foot") != std::string::npos;
+        const bool ankle = names.foot;
         const bool footInAir = input.footSpring && input.forceDrivenRoot && !getUpActive
             && !footEstimate.contactObserved && !footEstimate.supporting;
         const bool agileAnkle = footInAir && ankle && gaitMoving;
@@ -319,7 +335,7 @@ void CharacterLocomotion3D::stepDrives(Tick& t) {
         // peso, pouso forte).
         // (So na passada: caindo de um pulo o joelho chega macio - rigido,
         // o pouso quicava, rebote 1,07 -> 1,31 m/s.)
-        const bool agileKnee = footInAir && gaitMoving && linkId.find("Shin") != std::string::npos;
+        const bool agileKnee = footInAir && gaitMoving && names.shin;
         // TEMPTUNE: empurrao - o pe apoiado ja atras do corpo (a segunda
         // metade do apoio, ate a ponta sair). A perna estende com mais forca
         // e segue a velocidade do alvo: mole e freada (velocidade-alvo zero),
@@ -377,19 +393,15 @@ void CharacterLocomotion3D::stepDrives(Tick& t) {
         // reflexos agirem, sem a rigidez de quem esta de pe. Bracos e
         // pescoco rapidos (as maos tem de chegar ao chao antes da cabeca).
         {
-            const std::string& id = profile.links[index].id;
-            const bool reflexLimb = id.find("Arm") != std::string::npos
-                || id.find("Forearm") != std::string::npos
-                || id == "Neck" || id == "Head";
+            const bool reflexLimb = names.arm || names.forearm || names.neck || names.head;
             // Tronco e pernas amolecem so com a queda sem volta; os bracos
             // e o pescoco ja com o reflexo.
-            const bool legLink = id.find("Thigh") != std::string::npos
-                || id.find("Shin") != std::string::npos || id.find("Foot") != std::string::npos;
-            const bool armLink = id.find("Arm") != std::string::npos || id.find("Forearm") != std::string::npos;
+            const bool legLink = names.thigh || names.shin || names.foot;
+            const bool armLink = names.arm || names.forearm;
             // A mao do lado segurando o chao: o braco firma um pouco para
             // amortecer (cede pelo alvo do cotovelo, nao mole).
             const bool catching = FallProtectNew && armLink
-                && m_handCatchSeconds[id.rfind("Left", 0) == 0 ? 0 : 1] > 0.0f;
+                && m_handCatchSeconds[names.left ? 0 : 1] > 0.0f;
             const float fallTone = !FallProtectNew ? (reflexLimb ? FallReflexLimbTone : FallBodyTone)
                 : catching ? FallCatchTone : reflexLimb ? FallReflexLimbTone
                 : legLink ? (FallLegsNew ? FallLegTone : FallBodyTone) : FallTrunkTone;
@@ -405,10 +417,7 @@ void CharacterLocomotion3D::stepDrives(Tick& t) {
         // Caindo, freio baixo tambem: a raiz quadrada do tonus deixava metade
         // do freio de pe e o corpo caia "posado", devagar nas juntas.
         {
-            const std::string& id = profile.links[index].id;
-            const bool reflexLimb = id.find("Arm") != std::string::npos
-                || id.find("Forearm") != std::string::npos
-                || id == "Neck" || id == "Head";
+            const bool reflexLimb = names.arm || names.forearm || names.neck || names.head;
             const float falling = reflexLimb ? m_fallReflex : m_fallCommit;
             dampingMultiplier += ((reflexLimb ? 0.55f : 0.15f)
                 - dampingMultiplier) * falling;
@@ -509,12 +518,8 @@ void CharacterLocomotion3D::stepDrives(Tick& t) {
                 stiffnessMultiplier *= LocomotionAcceptanceStiffness;
         }
         if (getUpActive) {
-            const std::string& id = profile.links[index].id;
-            const bool isArm = id.find("Arm") != std::string::npos
-                || id.find("Forearm") != std::string::npos
-                || id.find("Hand") != std::string::npos;
-            const bool isTorso = id == "Abdomen" || id == "Chest"
-                || id == "UpperChest" || id == "Neck" || id == "Head";
+            const bool isArm = names.arm || names.forearm || names.hand;
+            const bool isTorso = names.abdomen || names.chest || names.upperChest || names.neck || names.head;
             // Deitado com tonus: cabeca e tronco firmes (a cabeca nao bate
             // solta), bracos e pernas moderados - vezes o tonus do momento
             // (cede rolando, volta antes de levantar). O amortecimento fica:
@@ -588,11 +593,7 @@ void CharacterLocomotion3D::stepDrives(Tick& t) {
         // se arrumando para levantar, a compensacao volta com o tonus.
         float gravityScale = 1.0f;
         {
-            const std::string& id = profile.links[index].id;
-            const bool reflexLimb = id.find("Arm") != std::string::npos
-                || id.find("Forearm") != std::string::npos
-                || id.find("Hand") != std::string::npos
-                || id == "Neck" || id == "Head";
+            const bool reflexLimb = names.arm || names.forearm || names.hand || names.neck || names.head;
             if (m_getUpPhase == CharacterGetUpPhase3D::Settling) {
                 gravityScale = LyingGravity + (1.0f - LyingGravity) * m_settleGather;
             } else if (m_getUpPhase == CharacterGetUpPhase3D::Rising && m_tackling) {

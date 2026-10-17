@@ -591,6 +591,11 @@ private:
     // A cadencia da passada de conducao (1: a normal).
     float m_dribbleCadence = 1.0f;
     void prepare(const RagdollProfile3D& profile, const CharacterLocomotionAnimations3D& animations);
+    // As tabelas do prepare sao funcao so do perfil e dos clipes: feitas uma
+    // vez por processo e copiadas (antes, cada atleta e cada episodio do treino
+    // refaziam ~5-8 ms de amostragem dos clipes).
+    void computePrepared(const RagdollProfile3D& profile, const CharacterLocomotionAnimations3D& animations);
+    struct PreparedTables;
     // A reescrita (R4): o update em blocos (DefaultLocomotion3D_<bloco>.cpp).
     // O Tick e o que um bloco passa para os seguintes num tick (antes, as
     // variaveis locais da funcao de 1.700 linhas).
@@ -703,6 +708,8 @@ private:
     Vec3 m_tacklePathDirection { 1.0f, 0.0f, 0.0f };
     Vec3 m_tacklePlanar;
     const AnimationClip3D* m_preparedFor = nullptr;
+    // (A chave completa do preparo: todos os clipes, nao so o de andar.)
+    CharacterLocomotionAnimations3D m_preparedAnimations {};
     std::array<std::size_t, 2> m_feet {};
     std::array<std::size_t, 2> m_hands {};
     // Setor (0 frente, 1 frente-esquerda, 2 esquerda ... 7 frente-direita;

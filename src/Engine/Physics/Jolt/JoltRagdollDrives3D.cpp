@@ -218,7 +218,7 @@ void PhysicsScene3D::Impl::applyPendingRagdollCommands() {
     pendingRagdollCommands.clear();
 }
 void PhysicsScene3D::Impl::applyRagdollDrives() {
-    auto& bi = system->GetBodyInterface();
+    auto& bi = bodiesForStep();
     for (auto& slot : ragdollSlots) {
         // (Guiado: os motores ficam desligados - a pose vem das velocidades.)
         if (!slot.record || slot.record->frozen || slot.record->kinematic || slot.record->guided) continue;
@@ -229,6 +229,26 @@ void PhysicsScene3D::Impl::applyRagdollDrives() {
         for (std::size_t i = 0; i < r.links.size(); ++i)
             r.gravityPoses[i] = {fromJolt(bi.GetPosition(r.links[i])), fromJolt(bi.GetRotation(r.links[i]))};
         if (r.gravityCompensationEnabled) r.gravityCompensator.compute(r.gravityPoses, settings.gravity);
+        // Por ragdoll, uma vez: as escalas da rigidez passiva (iguais em todos
+        // os eixos; so valem fora do ativo) e o primeiro alvo ativo de cada
+        // (link, eixo) - a mesma regra do primeiro encontrado da busca linear.
+        RagdollDriveTarget3D passive;
+        if (!r.active) {
+            const float rigidity = r.passiveRigidityPercent / 100;
+            passive.stiffnessScale = std::pow(rigidity, 2.2f);
+            passive.dampingScale = std::pow(rigidity, 1.4f);
+            passive.maximumTorqueScale = std::pow(rigidity, 1.25f);
+        }
+        activeTargetOf.assign(r.links.size() * 3, -1);
+        if (r.active)
+            for (std::size_t k = 0; k < r.stagedActiveTargets.size(); ++k) {
+                const auto& t = r.stagedActiveTargets[k];
+                const int axisIndex = static_cast<int>(t.axis);
+                if (t.linkIndex < r.links.size() && axisIndex >= 0 && axisIndex < 3) {
+                    int& slotIndex = activeTargetOf[t.linkIndex * 3 + static_cast<std::size_t>(axisIndex)];
+                    if (slotIndex < 0) slotIndex = static_cast<int>(k);
+                }
+            }
         for (std::size_t i = 1; i < r.links.size(); ++i) {
             auto& runtime = r.joints[i];
             auto& constraint = *runtime.constraint;
@@ -238,16 +258,12 @@ void PhysicsScene3D::Impl::applyRagdollDrives() {
                 const auto axis = static_cast<JPH::SixDOFConstraint::EAxis>(a+3);
                 const auto& limit = link.inboundJoint.axes[a];
                 if (!limit.enabled) continue;
-                RagdollDriveTarget3D target;
+                RagdollDriveTarget3D target = passive;
                 target.positionRadians = runtime.targets[a];
-                const float rigidity = r.passiveRigidityPercent / 100;
-                target.stiffnessScale = std::pow(rigidity, 2.2f);
-                target.dampingScale = std::pow(rigidity, 1.4f);
-                target.maximumTorqueScale = std::pow(rigidity, 1.25f);
                 if (r.active) {
                     target.stiffnessScale = target.dampingScale = target.maximumTorqueScale = 0;
-                    for (const auto& t : r.stagedActiveTargets)
-                        if (t.linkIndex == i && static_cast<int>(t.axis) == a) { target = t; break; }
+                    const int found = activeTargetOf[i * 3 + static_cast<std::size_t>(a)];
+                    if (found >= 0) target = r.stagedActiveTargets[static_cast<std::size_t>(found)];
                 }
                 angles.SetComponent(a, std::clamp(target.positionRadians, limit.minimumRadians, limit.maximumRadians));
                 velocity.SetComponent(a, target.velocityRadiansPerSecond);
