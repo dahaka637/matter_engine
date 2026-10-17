@@ -66,7 +66,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--treino", required=True)
     parser.add_argument("--tarefa", default="", help="outra tarefa (padrao: a copia do treino)")
-    parser.add_argument("--mundos", type=int, default=32)
+    parser.add_argument("--mundos", type=int, default=128)
     parser.add_argument("--segundos", type=float, default=20.0)
     parser.add_argument("--threads", type=int, default=6)
     args = parser.parse_args()
@@ -102,6 +102,10 @@ def main() -> int:
         falls_cap = minimum.get("fall_fraction", -1.0)
         if falls_cap >= 0.0 and net["falls"] > falls_cap:
             checks.append(f"quedas {net['falls']:.0%} acima do minimo {falls_cap:.0%}")
+        # Com poucos episodios o ponto e ruidoso (4 de 64 = 6%): alem do minimo, o
+        # limite superior Wilson-95% das quedas fica ate 10% (a regra do Codex, 17/10).
+        if falls_cap >= 0.0 and net["falls_upper95"] > max(0.10, 2.0 * falls_cap):
+            checks.append(f"quedas: o limite superior de 95% e {net['falls_upper95']:.0%} (ate {max(0.10, 2.0 * falls_cap):.0%})")
         error_cap = minimum.get("velocity_error", -1.0)
         if error_cap >= 0.0 and net["velocity_error_median"] > error_cap:
             checks.append(f"erro de velocidade {net['velocity_error_median']:.2f} acima de {error_cap:.2f}")
@@ -123,7 +127,15 @@ def main() -> int:
     print("PORTAO: " + ("passa (falta a cara: as folhas e o laboratorio)" if verdict else "nao passa"))
     for reason in reasons:
         print("  - " + reason)
-    storage.write_json_atomic(run / "portao.json", {"time": time.time(), "iteration": reference.iteration,
+    previous = {}
+    try:
+        previous = json.loads((run / "portao.json").read_text())
+    except (OSError, ValueError):
+        pass
+    # Dois portoes seguidos, de execucoes independentes (a rodada avancou), para avancar.
+    consecutive = verdict and bool(previous.get("passed")) and previous.get("iteration", -1) < reference.iteration
+    print("DOIS SEGUIDOS: " + ("sim - pode avancar" if consecutive else "ainda nao"))
+    storage.write_json_atomic(run / "portao.json", {"consecutive": consecutive, "time": time.time(), "iteration": reference.iteration,
                                                     "task": str(task), "passed": verdict, "reasons": reasons,
                                                     "results": results})
     return 0 if verdict else 2
