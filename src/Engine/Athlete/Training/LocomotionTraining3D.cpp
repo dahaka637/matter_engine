@@ -243,11 +243,19 @@ struct LocomotionTraining3D::Impl {
         if (magnitude > 1.0e-4f) {
             direction = direction * (1.0f / magnitude);
             stick.moveWorld = direction;
-            const Vec3 table = athleteStickCommand3D(stick, runtime, bundle->gaitSpeeds(), 1.0e9f)
-                                   .intent.requestedVelocityWorld;
-            const float tableSpeed = std::hypot(table.x, table.y);
+            const auto tableSpeed = [&]() {
+                const Vec3 table = athleteStickCommand3D(stick, runtime, bundle->gaitSpeeds(), 1.0e9f)
+                                       .intent.requestedVelocityWorld;
+                return std::hypot(table.x, table.y);
+            };
             const float wanted = std::max(0.0f, input.speed) * std::min(1.0f, magnitude);
-            stick.moveWorld = direction * (tableSpeed > 1.0e-3f ? std::min(1.0f, wanted / tableSpeed) : 0.0f);
+            float table = tableSpeed();
+            // Acima do trote da tabela, o sprint (o jogador segurando a tecla).
+            if (wanted > table + 1.0e-3f) {
+                stick.sprint = true;
+                table = tableSpeed();
+            }
+            stick.moveWorld = direction * (table > 1.0e-3f ? std::min(1.0f, wanted / table) : 0.0f);
         }
         return athleteStickCommand3D(stick, runtime, bundle->gaitSpeeds(), scene.telemetry().terrainSpeedLimit);
     }

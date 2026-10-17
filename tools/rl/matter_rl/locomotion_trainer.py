@@ -28,7 +28,7 @@ import torch
 
 from . import control, paths, storage, system
 from .body_trainer import balance_drills, choose_device, wilson_upper
-from .model import ActorCritic, export_policy
+from .model import ActorCritic, export_policy, migrate_inputs, rescale_actions
 from .ppo import PPO, PPOSettings, Rollout
 from .symmetry import MirrorLoss
 
@@ -203,9 +203,19 @@ class LocomotionTrainer:
         if not is_locomotion_task(self.task_path):
             raise RuntimeError(f"a tarefa {self.config.task} nao e da locomocao ({TASK_SCHEMA})")
         # Uma copia da tarefa no treino (as fatias e os pesos mudados andando).
+        # A troca de tarefa (matter-rl tarefa: a fase seguinte, o mesmo cerebro)
+        # troca a copia; o que a rede sabe continua (restore migra o critico e
+        # reescala a acao se os tetos abriram).
         self.live_task = self.directory / "tarefa.json"
-        if not self.live_task.exists():
-            storage.write_json_atomic(self.live_task, json.loads(self.task_path.read_text()))
+        self.switched_from = ""
+        source_task = json.loads(self.task_path.read_text())
+        if self.live_task.exists():
+            previous = json.loads(self.live_task.read_text()).get("id", "")
+            if previous != source_task.get("id"):
+                storage.write_json_atomic(self.live_task, source_task)
+                self.switched_from = previous
+        else:
+            storage.write_json_atomic(self.live_task, source_task)
         self.assets = str(paths.ASSETS)
         self.batch = self.native.LocomotionBatch(str(self.live_task), self.assets, environments=self.config.environments,
                                                  threads=self.threads, seed=self.config.seed)
@@ -253,6 +263,10 @@ class LocomotionTrainer:
         self.evaluation_batches: dict = {}
         self.failures = 0
         self.session = self.db.begin_session(run, self.counters["iteration"], self.mode.name, str(self.device))
+        if self.switched_from:
+            self.db.event(run, "tarefa", f"{self.switched_from} -> {self.config.task} (o mesmo cerebro)")
+        if self.restore_notes:
+            self.db.event(run, "retomada", "; ".join(self.restore_notes))
         self.db.event(run, "sessao", f"locomocao aberta no modo {self.mode.label} ({self.threads} threads, {self.device}; "
                                      f"contrato v{self.batch.contract_version} {self.batch.contract_hash}, "
                                      f"tarefa {self.batch.task_name})")
@@ -311,15 +325,45 @@ class LocomotionTrainer:
                 "rng_torch": torch.get_rng_state()}
 
     def restore(self) -> None:
+        self.restore_notes: list[str] = []
         reference = storage.latest_checkpoint(self.directory)
         if reference is None:
             return
         state = storage.load_checkpoint(reference, str(self.device))
         if state.get("contract_hash") != self.batch.contract_hash or state["action_names"] != self.action_names \
-                or state["obs_names"] != self.obs_names or state["critic_names"] != self.critic_names:
+                or state["obs_names"] != self.obs_names:
             raise RuntimeError("o checkpoint e de outro contrato: abra um treino novo")
-        self.model.load_state_dict(state["model"])
-        self.ppo.load_state_dict(state["ppo"])
+        fresh_optimizer = False
+        if state["critic_names"] != self.critic_names:
+            # Outros exercicios (outra tarefa): o critico ganha as entradas novas
+            # (peso zero) e guarda as que ja tinha; o ator e o mesmo.
+            network = state.get("network", self.config.network)
+            old = ActorCritic(len(state["obs_names"]), len(state["critic_names"]), len(self.action_names),
+                              actor_hidden=network["actor"], critic_hidden=network["critic"]).to(self.device)
+            old.load_state_dict(state["model"])
+            fresh = migrate_inputs(old, list(state["obs_names"]), list(self.obs_names), list(state["critic_names"]),
+                                   list(self.critic_names))
+            self.model.load_state_dict(fresh.state_dict())
+            fresh_optimizer = True
+            self.restore_notes.append("o critico migrou para os exercicios da tarefa nova")
+        else:
+            self.model.load_state_dict(state["model"])
+        old_scale = state.get("action_scale")
+        if old_scale is not None:
+            # Os tetos mudaram: a mesma acao fisica (u novo = u antigo x teto antigo / teto novo).
+            factor = torch.as_tensor(np.asarray(old_scale, dtype=np.float32), device=self.device) / self.action_scale
+            if float((factor - 1.0).abs().max()) > 1e-6:
+                rescale_actions(self.model, factor)
+                fresh_optimizer = True
+                self.restore_notes.append("os tetos mudaram: a acao foi reescalada (a mesma acao fisica)")
+        if fresh_optimizer:
+            # (O embalo do Adam era das formas e escalas de antes: recomeca; a taxa fica.)
+            self.ppo = PPO(self.model, self.settings)
+            self.ppo.learning_rate = float(state["ppo"].get("learning_rate", self.settings.learning_rate))
+            for group in self.ppo.optimizer.param_groups:
+                group["lr"] = self.ppo.learning_rate
+        else:
+            self.ppo.load_state_dict(state["ppo"])
         self.counters.update(state.get("counters", {}))
         lost = self.db.rewind(self.run, self.counters["iteration"])
         if lost:
