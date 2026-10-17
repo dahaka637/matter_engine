@@ -65,6 +65,9 @@ struct LocomotionEpisode3D {
     float targetsPerMinute = 0.0f;
     float holdDrift = -1.0f;
     float arcError = -1.0f;
+    // O diagnostico do erro de velocidade (fora da nota): filtrado em ~um passo, e so no cruzeiro.
+    float velocityErrorWindow = -1.0f;
+    float velocityErrorCruise = -1.0f;
     // As parcelas da nota somadas no episodio.
     std::array<float, LocomotionRewardTermCount3D> terms {};
 };

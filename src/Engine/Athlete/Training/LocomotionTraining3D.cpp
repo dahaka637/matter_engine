@@ -89,7 +89,7 @@ const std::vector<std::string>& locomotionEpisodeColumns3D() {
         std::vector<std::string> c { "mundo", "exercicio", "razao", "decisoes", "segundos", "retorno", "erro_velocidade",
             "erro_rumo", "erro_estilo", "contato_por_pouso", "pousos_por_segundo", "escorregar", "potencia", "ajuda",
             "postura", "residuo", "trancos", "pedido_medio", "velocidade_media", "distancia", "alvos_por_minuto",
-            "deriva_espera", "afastamento_curva" };
+            "deriva_espera", "afastamento_curva", "erro_vel_janela", "erro_vel_cruzeiro" };
         for (const char* term : LocomotionRewardTermNames3D) c.push_back(std::string("nota_") + term);
         return c;
     }();
@@ -101,7 +101,7 @@ std::vector<float> locomotionEpisodeRow3D(const LocomotionEpisode3D& e) {
         static_cast<float>(static_cast<int>(e.reason)), static_cast<float>(e.steps), e.seconds, e.episodeReturn,
         e.velocityError, e.facingError, e.styleError, e.contactPerTouchdown, e.touchdownsPerSecond, e.slip, e.power,
         e.assist, e.posture, e.residual, e.jerk, e.meanRequested, e.meanSpeed, e.distance, e.targetsPerMinute,
-        e.holdDrift, e.arcError };
+        e.holdDrift, e.arcError, e.velocityErrorWindow, e.velocityErrorCruise };
     row.insert(row.end(), e.terms.begin(), e.terms.end());
     return row;
 }
@@ -146,6 +146,12 @@ struct LocomotionTraining3D::Impl {
         Vec3 feasible;
         Vec3 comVelocity;
         bool comValid = false;
+        // O diagnostico do erro de velocidade (so medida, fora da nota): a
+        // velocidade e a viavel passadas pelo mesmo filtro de ~um passo, e o
+        // erro so quando a viavel ja chegou ao pedido (o cruzeiro).
+        Vec3 comSmooth, feasibleSmooth;
+        double windowError2 = 0.0, cruiseError2 = 0.0;
+        int windowTicks = 0, cruiseTicks = 0;
         Vec3 measuredAcceleration;
         std::vector<float> lastAction;
         std::array<int, 2> contactTicks {};
@@ -283,6 +289,9 @@ struct LocomotionTraining3D::Impl {
         world.feasible = {};
         world.comVelocity = {};
         world.comValid = false;
+        world.comSmooth = world.feasibleSmooth = {};
+        world.windowError2 = world.cruiseError2 = 0.0;
+        world.windowTicks = world.cruiseTicks = 0;
         world.measuredAcceleration = {};
         world.lastAction.assign(actionSize, 0.0f);
         world.contactTicks = {};
@@ -392,6 +401,19 @@ struct LocomotionTraining3D::Impl {
             world.comValid = true;
             const Vec3 error = com - world.feasible;
             velocityError2 += error.x * error.x + error.y * error.y;
+            {
+                const float blend = 1.0f - std::exp(-TickSeconds / 0.25f);
+                world.comSmooth += (com - world.comSmooth) * blend;
+                world.feasibleSmooth += (world.feasible - world.feasibleSmooth) * blend;
+                const Vec3 smooth = world.comSmooth - world.feasibleSmooth;
+                world.windowError2 += smooth.x * smooth.x + smooth.y * smooth.y;
+                ++world.windowTicks;
+                const Vec3 gap = asked - world.feasible;
+                if (std::hypot(gap.x, gap.y) < 0.05f) {
+                    world.cruiseError2 += error.x * error.x + error.y * error.y;
+                    ++world.cruiseTicks;
+                }
+            }
             const float yaw = locomotionFrameYaw3D(profile, body.links.front().orientation);
             const Frame frame = frameOf(yaw);
             if (chest >= 0 && static_cast<std::size_t>(chest) < body.links.size()) {
@@ -569,6 +591,10 @@ struct LocomotionTraining3D::Impl {
         e.targetsPerMinute = world.seconds > 0.0f ? static_cast<float>(world.pilot.reached) * 60.0f / world.seconds : 0.0f;
         e.holdDrift = world.pilot.holdDecisions > 0
             ? world.pilot.holdDistanceSum / static_cast<float>(world.pilot.holdDecisions) : -1.0f;
+        e.velocityErrorWindow = world.windowTicks > 0
+            ? static_cast<float>(std::sqrt(world.windowError2 / world.windowTicks)) : -1.0f;
+        e.velocityErrorCruise = world.cruiseTicks > 0
+            ? static_cast<float>(std::sqrt(world.cruiseError2 / world.cruiseTicks)) : -1.0f;
         e.arcError = world.pilot.arcDecisions > 0 ? world.pilot.arcErrorSum / static_cast<float>(world.pilot.arcDecisions)
                                                   : -1.0f;
         for (std::size_t t = 0; t < world.terms.size(); ++t) e.terms[t] = static_cast<float>(world.terms[t]);

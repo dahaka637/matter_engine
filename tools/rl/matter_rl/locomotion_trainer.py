@@ -132,6 +132,13 @@ def drill_summary(rows: np.ndarray, columns: list[str], drills: list[str], reaso
         falls = int(np.isin(ended, fall_codes).sum())
         velocity = part[:, col["erro_velocidade"]]
 
+        def median_of(name):
+            if name not in col:
+                return None
+            values = part[:, col[name]]
+            values = values[values >= 0.0]
+            return float(np.median(values)) if len(values) else None
+
         def mean_of(name, valid=lambda v: v >= 0.0):
             values = part[:, col[name]]
             values = values[valid(values)]
@@ -145,6 +152,8 @@ def drill_summary(rows: np.ndarray, columns: list[str], drills: list[str], reaso
             "return": float(part[:, col["retorno"]].mean()),
             "velocity_error_median": float(np.median(velocity)),
             "velocity_error": float(velocity.mean()),
+            "velocity_error_window_median": median_of("erro_vel_janela"),
+            "velocity_error_cruise_median": median_of("erro_vel_cruzeiro"),
             "speed": float(part[:, col["velocidade_media"]].mean()),
             "requested": float(part[:, col["pedido_medio"]].mean()),
             "facing_error": float(part[:, col["erro_rumo"]].mean()),
