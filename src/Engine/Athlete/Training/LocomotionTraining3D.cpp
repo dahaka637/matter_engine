@@ -262,8 +262,10 @@ struct LocomotionTraining3D::Impl {
         const RagdollState3D& body = scene.body();
         const Vec3 pelvis = body.links.empty() ? Vec3 {} : body.links.front().position;
         world.start = planar(pelvis);
-        // (O corpo nasce olhando para +x; a camera perto disso.)
-        const float camera = settings.evaluation ? 0.0f : std::uniform_real_distribution<float>(-0.25f, 0.25f)(world.rng);
+        // (O corpo nasce olhando para +x; a camera perto disso. Na avaliacao
+        // tambem, pelo sorteio do mundo - reproduzivel pela semente: com a
+        // camera exata em 0, os mundos parados eram copias bit a bit de um so.)
+        const float camera = std::uniform_real_distribution<float>(-0.25f, 0.25f)(world.rng);
         world.pilot = {};
         CommandPilot3D::start(task.drills[world.drill].pilot, world.pilot, world.start, camera, world.rng);
         world.command = {};

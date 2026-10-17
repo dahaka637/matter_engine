@@ -86,9 +86,12 @@ class LocomotionRunConfig:
     # teto de cada canal).
     initial_std_of_cap: float = 0.5
     # A rampa de entrada da autoridade (todas as cabecas, de 0 a 1 em pelo
-    # menos estas rodadas): ela so sobe numa rodada com as quedas dos
-    # episodios dela ate authority_max_falls (sem episodios, sobe); acima,
-    # segura (a politica domina o regime antes do proximo degrau).
+    # menos estas rodadas): ela so sobe numa rodada cujo risco de queda - a
+    # fracao de episodios inteiros que acabariam em queda, as quedas da rodada
+    # sobre os episodios-equivalentes dela (segundos de mundo / duracao do
+    # episodio) - fica ate authority_max_falls; acima, segura. (A fracao das
+    # quedas entre os episodios que acabaram nao serve: nas primeiras rodadas
+    # so as quedas acabam, e 2 em 512 mundos davam 100%.)
     authority_ramp_rounds: int = 60
     authority_max_falls: float = 0.15
     mirror_loss: float = 0.3
@@ -213,6 +216,7 @@ class LocomotionTrainer:
         self.episode_columns = self.batch.episode_columns()
         self.end_reasons = self.batch.end_reasons()
         self.drill_ids = list(self.batch.drill_ids)
+        self.episode_seconds = float(json.loads(self.live_task.read_text()).get("episodeSeconds", 20.0))
         # A rede age em unidades do teto da fase (+-1 = o teto de cada canal); o
         # lote recebe a acao na escala maxima do contrato (vezes a fracao do
         # teto). Assim o desvio e o KL ficam bem condicionados, e abrir um teto
@@ -272,11 +276,11 @@ class LocomotionTrainer:
     def authority(self) -> float:
         return float(min(1.0, max(0.0, self.counters.get("authority", 0.0))))
 
-    def advance_authority(self, fall_fraction: float | None) -> None:
-        """Um degrau da rampa de entrada, se as quedas da rodada deixam."""
+    def advance_authority(self, fall_risk: float) -> None:
+        """Um degrau da rampa de entrada, se o risco de queda da rodada deixa."""
         if self.authority() >= 1.0:
             return
-        if fall_fraction is not None and fall_fraction > self.config.authority_max_falls:
+        if fall_risk > self.config.authority_max_falls:
             return
         step = 1.0 / max(1, int(self.config.authority_ramp_rounds))
         self.counters["authority"] = min(1.0, self.authority() + step)
@@ -567,13 +571,16 @@ class LocomotionTrainer:
         reasons = rows[:, col["razao"]].astype(int) if len(rows) else np.zeros(0, dtype=int)
         ends = {self.end_reasons[r]: int((reasons == r).sum()) for r in set(reasons.tolist())}
         fall_codes = [self.end_reasons.index(n) for n in ("queda", "numerico", "falha")]
+        falls = int(np.isin(reasons, fall_codes).sum())
+        world_seconds = info["samples"] * self.batch.policy_dt
+        fall_risk = falls * self.episode_seconds / max(1e-6, world_seconds)
         seconds = info["collect"] + stats["update"]
         sps = info["samples"] / max(1e-6, seconds)
         self.recent_sps = sps if self.recent_sps == 0.0 else 0.9 * self.recent_sps + 0.1 * sps
         ppo = {key: stats[key] for key in ("kl", "kl_max", "clip_fraction", "grad_norm", "critic_grad_norm",
                                            "explained_variance", "value_loss", "learning_rate", "action_std",
                                            "auxiliary") if key in stats}
-        details = {"authority": self.authority(), "bootstrap": info["bootstrap"], "ppo": ppo,
+        details = {"authority": self.authority(), "fall_risk": fall_risk, "bootstrap": info["bootstrap"], "ppo": ppo,
                    "drills": drill_summary(rows, self.episode_columns, self.drill_ids, self.end_reasons)}
         result = {
             "run": self.run, "iteration": self.counters["iteration"], "time": time.time(),
@@ -597,12 +604,13 @@ class LocomotionTrainer:
                 self.db.event(self.run, "erro", self.message)
             return
         self.failures = 0
-        self.advance_authority(result["fall_fraction"])
+        self.advance_authority(fall_risk)
         self.apply_authority()
         self.last_iteration_stats = {k: result[k] for k in (
             "iteration", "sps", "reward", "episodes", "episode_return", "episode_seconds", "fall_fraction", "kl",
             "entropy", "learning_rate", "action_std", "value_loss")}
         self.last_iteration_stats["authority"] = self.authority()
+        self.last_iteration_stats["fall_risk"] = fall_risk
         self.db.log_iteration(result)
         self.db.commit()
 
