@@ -686,6 +686,15 @@ void LocomotionContract3D::decide(AthleteState3D& athlete, std::span<const float
     athlete.policyTicks = 0;
 }
 
+void LocomotionContract3D::clear(AthleteState3D& athlete) {
+    athlete.policyHistory.clear();
+    athlete.policyFrom.clear();
+    athlete.policyTo.clear();
+    athlete.policyTicks = 0;
+    athlete.policyApplied.clear();
+    athlete.corrections = {};
+}
+
 void LocomotionContract3D::follow(AthleteState3D& athlete, const LocomotionAuthority3D& authority,
     float deltaTime) const {
     const std::size_t size = actionSize();

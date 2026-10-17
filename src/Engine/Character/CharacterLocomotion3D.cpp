@@ -164,6 +164,7 @@ void CharacterLocomotion3D::reset(const RagdollProfile3D& profile,
     m_brakeAnchor = 0.0f;
     m_sinceBrakeSeconds = 10.0f;
     m_previousGrounded = true;
+    m_rlRootHookGate = 1.0f;
     m_initialized = !profile.links.empty()
         && state.links.size() == profile.links.size()
         && state.joints.size() == profile.links.size();

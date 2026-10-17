@@ -188,8 +188,12 @@ void CharacterLocomotion3D::stepRoot(Tick& t) {
     // O gancho do centro de massa (o RL): a referencia da raiz deslocada no
     // plano - a folga contra a qual a perna de apoio empurra e a base dos
     // pousos da passada. (Na referencia de navegacao tambem: a ancora que a
-    // capsula segue - alvo menos referencia - nao muda.)
-    if (input.corrections != nullptr && !getUpActive) navigationRoot += comOffsetWorld3D(input.corrections);
+    // capsula segue - alvo menos referencia - nao muda.) No levantar ele sai,
+    // e entra de novo depois, em 0,3 s (de uma vez, a referencia saltava).
+    m_rlRootHookGate = getUpActive ? std::max(0.0f, m_rlRootHookGate - deltaTime / 0.3f)
+                                   : std::min(1.0f, m_rlRootHookGate + deltaTime / 0.3f);
+    if (input.corrections != nullptr)
+        navigationRoot += comOffsetWorld3D(input.corrections) * m_rlRootHookGate;
     t.targetRootPosition = risingPose
         ? Vec3 { m_getUpAnchorWorld.x, m_getUpAnchorWorld.y,
             input.rootPositionWorld.z }
@@ -384,9 +388,10 @@ void CharacterLocomotion3D::stepRoot(Tick& t) {
     }
     // O gancho da altura da pelve (o RL): depois de todos os afundos do
     // classico (curva, freada, pulo, pouso), ja suavizada no contrato.
-    // (No ar tambem: ligada e desligada no pulo, ela saltaria a pelve-alvo.)
-    if (input.corrections != nullptr && !getUpActive)
-        targetRootPosition.z += pelvisHeightOffset3D(input.corrections);
+    // (No ar tambem: ligada e desligada no pulo, ela saltaria a pelve-alvo;
+    // no levantar sai e volta suave, como o centro de massa.)
+    if (input.corrections != nullptr)
+        targetRootPosition.z += pelvisHeightOffset3D(input.corrections) * m_rlRootHookGate;
 
     t.localPose = {};
     RagdollAnimationPose3D& localPose = t.localPose;

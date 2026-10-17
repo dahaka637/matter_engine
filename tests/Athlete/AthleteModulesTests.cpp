@@ -678,6 +678,11 @@ void contractTests() {
         "a autoridade a zero: o equilibrio volta pelo limite de taxa, ainda ligado");
     for (int tick = 0; tick < 240; ++tick) contract.follow(athlete, LocomotionAuthority3D {}, dt);
     expect(!athlete.corrections.active(), "depois, tudo a zero: nenhuma cabeca ligada");
+    contract.decide(athlete, first);
+    contract.follow(athlete, full, dt);
+    LocomotionContract3D::clear(athlete);
+    expect(!athlete.corrections.active() && athlete.policyApplied.empty() && athlete.policyHistory.empty(),
+        "clear: a politica esquecida de uma vez (o classico exato)");
 
     // O espelho: duas vezes e a identidade, e o espelho da entrada de um corpo
     // torto e a entrada do corpo refletido de verdade.

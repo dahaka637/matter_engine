@@ -178,7 +178,14 @@ public:
     void decide(AthleteState3D& athlete, std::span<const float> action) const;
     // Um tick: a rampa entre decisoes, o valor fisico e o limite de taxa de
     // cada canal (o aplicado mora no atleta), e as correcoes dele.
+    // A autoridade zero: desde o comeco, o classico exato (bit a bit). Cortada
+    // no meio, a cabeca sai pelo limite de taxa (no maximo ~0,5 s) e so entao
+    // fica o classico exato - de proposito, sem salto. Para cortar de uma vez
+    // (um recomeco, o jogo desligando a rede): clear().
     void follow(AthleteState3D& athlete, const LocomotionAuthority3D& authority, float deltaTime) const;
+    // Esquece a politica do atleta (as decisoes, a rampa, o aplicado e as
+    // correcoes): o classico exato no proximo tick.
+    static void clear(AthleteState3D& athlete);
 
 private:
     // O que cada canal da saida e: o tipo, o pe (ou o eixo, ou o grupo).

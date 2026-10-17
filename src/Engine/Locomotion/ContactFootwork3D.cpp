@@ -1796,9 +1796,11 @@ void ContactFootwork3D::update(const RagdollProfile3D& profile,
         int chosen = -1;
         float most = 0.0f;
         for (std::size_t side = 0; side < 2; ++side) {
-            const float request = canRecover ? std::clamp(input.rlRecoveryRequest[side], 0.0f, 1.0f) : 0.0f;
+            // (A histerese segue o pedido sempre; fora de onde ha recuperacao
+            // so a escolha do pe espera - um tick andando nao a desarma.)
+            const float request = std::clamp(input.rlRecoveryRequest[side], 0.0f, 1.0f);
             m_rlRecoveryLatched[side] = request >= RlRecoveryOn || (m_rlRecoveryLatched[side] && request > RlRecoveryOff);
-            if (m_rlRecoveryLatched[side] && request > most && !input.scripted[side].active) {
+            if (canRecover && m_rlRecoveryLatched[side] && request > most && !input.scripted[side].active) {
                 most = request;
                 chosen = static_cast<int>(side);
             }

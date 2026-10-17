@@ -855,6 +855,22 @@ void CharacterLocomotion3D::stepLegs(Tick& t) {
         if (input.ballRepel.active && !m_feet[side].planted && input.ballRepel.exemptSide != static_cast<int>(side))
             goals[side].position += footBallPushOut(profile.links[m_feet[side].linkIndex], goals[side].position,
                 goals[side].orientation, input.ballRepel.position, input.ballRepel.radius, BallRepelMargin);
+        // O gancho dos pes (o RL): a altura do balanco e, no pe da passada, o
+        // pouso, somados ao alvo do classico (sem correcao, o mesmo alvo; o
+        // pouso de um passo do planejador vai no plano dele). Antes da
+        // continuidade do alvo: na troca de dono do pe no ar o pouso a mais
+        // passa de um para o outro misturado, sem salto.
+        if (input.corrections != nullptr) {
+            const bool owned = m_footwork.owns(side);
+            const FootPlan3D& planned = m_footwork.plan().feet[side];
+            const float swingProgress = owned
+                ? (planned.phase == FootPhase3D::Swing || planned.phase == FootPhase3D::TouchdownSearch
+                    ? std::clamp(planned.swingSeconds / std::max(0.05f, planned.swingDurationSeconds), 0.0f, 1.0f)
+                    : -1.0f)
+                : m_telemetry.footSwingProgress[side];
+            goals[side].position = correctedFootGoal3D(goals[side].position, m_feet[side].planted, owned,
+                swingProgress, input.corrections, side);
+        }
         // Continuidade do alvo: na troca de dono do pe no ar (o planejador
         // parado -> a passada, na arrancada) o alvo saltava ate 15 cm num
         // tick (18 m/s): o pe era jogado para o clipe e raspava. O alvo novo
@@ -878,19 +894,6 @@ void CharacterLocomotion3D::stepLegs(Tick& t) {
             }
             m_lastFootGoalPosition[side] = goals[side].position;
             m_lastFootGoalOrientation[side] = goals[side].orientation;
-        }
-        // O gancho dos pes (o RL): a altura do balanco e, no pe da passada, o
-        // pouso, somados ao alvo do classico (sem correcao, o mesmo alvo; o
-        // pouso de um passo do planejador vai no plano dele).
-        if (input.corrections != nullptr) {
-            const bool owned = m_footwork.owns(side);
-            const FootPlan3D& planned = m_footwork.plan().feet[side];
-            const float swingProgress = owned
-                ? (planned.phase == FootPhase3D::Swing || planned.phase == FootPhase3D::TouchdownSearch
-                    ? planned.swingSeconds / std::max(0.05f, planned.swingDurationSeconds) : -1.0f)
-                : m_telemetry.footSwingProgress[side];
-            goals[side].position = correctedFootGoal3D(goals[side].position, m_feet[side].planted, owned,
-                swingProgress, input.corrections, side);
         }
         const Quaternion rootInverse = ikRootOrientation[side].conjugate();
         // O pe da bola (toque e chute) sai longe da pose do clipe: o IK

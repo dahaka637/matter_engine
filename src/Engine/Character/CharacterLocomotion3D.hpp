@@ -993,6 +993,9 @@ private:
     std::array<bool, 2> m_legTouchedInStance {};
     std::vector<int> m_legSideOfLink;
     int m_waitingLeg = -1;
+    // O gancho da raiz do RL (centro de massa e altura da pelve): 0 no
+    // levantar, 1 fora dele, com a troca em 0,3 s.
+    float m_rlRootHookGate = 1.0f;
     bool m_contactSteady = false;
     // Altura do voo regulada (Raibert): topo do corpo e da referencia no voo
     // atual, o erro do ultimo voo e o ajuste da perna de apoio.
