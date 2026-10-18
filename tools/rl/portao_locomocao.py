@@ -134,9 +134,10 @@ def main() -> int:
         if falls_cap >= 0.0 and net["falls"] > falls_cap:
             checks.append(f"quedas {net['falls']:.0%} acima do minimo {falls_cap:.0%}")
         # Com poucos episodios o ponto e ruidoso (4 de 64 = 6%): alem do minimo, o
-        # limite superior Wilson-95% das quedas fica ate 10% (a regra do Codex, 17/10).
-        if falls_cap >= 0.0 and net["falls_upper95"] > max(0.10, 2.0 * falls_cap):
-            checks.append(f"quedas: o limite superior de 95% e {net['falls_upper95']:.0%} (ate {max(0.10, 2.0 * falls_cap):.0%})")
+        # limite superior Wilson-95% das quedas fica SEMPRE ate 10% (a regra do
+        # Codex, 17/10; 18/10: tambem nos exercicios de minimo maior).
+        if falls_cap >= 0.0 and net["falls_upper95"] > 0.10:
+            checks.append(f"quedas: o limite superior de 95% e {net['falls_upper95']:.0%} (ate 10%)")
         error_cap = minimum.get("velocity_error", -1.0)
         if error_cap >= 0.0 and net["velocity_error_median"] > error_cap:
             checks.append(f"erro de velocidade {net['velocity_error_median']:.2f} acima de {error_cap:.2f}")
