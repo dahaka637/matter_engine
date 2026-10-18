@@ -168,6 +168,7 @@ struct ChartSeries {
     const std::vector<float>* values;
     ImVec4 color;
     bool reference = false;
+    std::string label;
 };
 
 // Um grafico de linha: fundo, grade, a serie principal com a area, a de referencia por tras, o valor de
@@ -230,7 +231,9 @@ void lineChart(const char* id, const std::vector<ChartSeries>& series, float min
         ImGui::BeginTooltip();
         for (const ChartSeries& item : series)
             if (static_cast<std::size_t>(hoverIndex) < item.values->size())
-                ImGui::TextColored(item.color, "%s%.2f %s", item.reference ? "clássico  " : "", (*item.values)[static_cast<std::size_t>(hoverIndex)], unit);
+                ImGui::TextColored(item.color, "%s%.2f %s",
+                    !item.label.empty() ? (item.label + "  ").c_str() : item.reference ? "clássico  " : "",
+                    (*item.values)[static_cast<std::size_t>(hoverIndex)], unit);
         ImGui::EndTooltip();
     }
     if (valueText[0]) {
@@ -1107,17 +1110,42 @@ void ReinforcementLearningScreen::drawCharts(float height) {
     bool hasGame = false;
     for (const TrainingEvaluationPoint3D& point : m_history.evaluations) hasGame = hasGame || point.solver == "jogo";
     const std::string primary = hasGame ? "jogo" : "rede";
-    std::vector<float> stand, standClassic, gain, gainClassic, seconds, speed;
+    std::vector<float> stand, standClassic, seconds, speed;
     for (const TrainingEvaluationPoint3D& point : m_history.evaluations) {
         if (!m_viewerDrill.empty() && point.drill != m_viewerDrill) continue;
-        const bool main = point.solver == primary;
-        if (!main && point.solver != "classico") continue;
-        (main ? stand : standClassic).push_back(static_cast<float>((1.0 - point.falls) * 100.0));
-        if (!std::isnan(point.episodeReturn)) (main ? gain : gainClassic).push_back(static_cast<float>(point.episodeReturn));
+        if (point.solver == "classico") standClassic.push_back(static_cast<float>((1.0 - point.falls) * 100.0));
     }
     for (const TrainingIterationPoint3D& point : m_history.iterations) {
         seconds.push_back(static_cast<float>(point.episodeSeconds));
         speed.push_back(static_cast<float>(point.sps));
+    }
+    // O exercicio mostrado, rodada a rodada, com os episodios das ultimas 12 rodadas juntos (uma rodada tem poucos
+    // episodios por exercicio, sozinha ela so oscila): o "sem cair" e a recompensa por segundo (o retorno ja traz a
+    // queda como perda, entao cair derruba a curva).
+    constexpr std::size_t Window = 12;
+    std::vector<float> rate;
+    {
+        struct Entry {
+            double episodes, fell, reward, seconds;
+        };
+        std::vector<Entry> recent;
+        for (const TrainingDrillPoint3D& point : m_history.drills) {
+            if (point.drill != m_viewerDrill) continue;
+            recent.push_back({ point.episodes, point.falls * point.episodes,
+                std::isnan(point.episodeReturn) ? 0.0 : point.episodeReturn * point.episodes,
+                point.seconds * point.episodes });
+            if (recent.size() > Window) recent.erase(recent.begin());
+            Entry sum {};
+            for (const Entry& entry : recent) {
+                sum.episodes += entry.episodes;
+                sum.fell += entry.fell;
+                sum.reward += entry.reward;
+                sum.seconds += entry.seconds;
+            }
+            if (sum.episodes <= 0.0) continue;
+            stand.push_back(static_cast<float>((1.0 - sum.fell / sum.episodes) * 100.0));
+            if (sum.seconds > 0.0) rate.push_back(static_cast<float>(sum.reward / sum.seconds));
+        }
     }
     const auto range = [](std::initializer_list<const std::vector<float>*> lists, float floorTop, float floorBottom) {
         float lowest = floorBottom, highest = floorTop;
@@ -1149,21 +1177,25 @@ void ReinforcementLearningScreen::drawCharts(float height) {
     };
     const ImVec4 green { 0.30f, 0.82f, 0.56f, 1.0f }, amber { 0.96f, 0.70f, 0.28f, 1.0f },
         cyan { 0.35f, 0.78f, 0.94f, 1.0f }, violet { 0.70f, 0.56f, 0.96f, 1.0f };
-    const auto [gainLow, gainHigh] = range({ &gain, &gainClassic }, 0.0f, 0.0f);
-    std::string gainValue;
-    if (!gain.empty()) {
-        gainValue = text(gain.back(), "%.1f");
-        if (gain.size() > 1) gainValue += text(gain.back() - gain[gain.size() - 2], "  (%+.1f)");
+    // A evolucao: a recompensa por segundo do exercicio e, apagado, o melhor nivel que ela ja alcancou no treino.
+    const float best = rate.empty() ? 0.0f : *std::max_element(rate.begin(), rate.end());
+    const std::vector<float> bestLine(2, best);
+    std::string rateValue;
+    if (!rate.empty()) {
+        rateValue = text(rate.back(), "%.2f/s");
+        rateValue += text(rate.back() - rate[rate.size() > 30 ? rate.size() - 31 : 0], "  (%+.2f)");
     }
+    const auto [rateLow, rateHigh] = range({ &rate, &bestLine }, 0.0f, 0.0f);
     const std::array<Chart, 4> charts { {
         { "Sem cair (%)" + (drillName.empty() ? std::string() : " · " + drillName),
             { { &standClassic, green, true }, { &stand, green, false } }, 0.0f, 100.0f,
             stand.empty() ? "" : text(stand.back(), "%.0f%%"), "%",
             "A avaliação do exercício mostrado (a rede; o traço apagado é o clássico, sem a rede)." },
-        { "Recompensa do exercício" + (drillName.empty() ? std::string() : " · " + drillName),
-            { { &gainClassic, amber, true }, { &gain, amber, false } }, gainLow, gainHigh, gainValue, "",
-            "O retorno médio dos episódios do exercício mostrado na avaliação, e entre parênteses o ganho ou a perda "
-            "desde a avaliação anterior (o traço apagado é o clássico)." },
+        { "Evolução · recompensa por segundo" + (drillName.empty() ? std::string() : " · " + drillName),
+            { { &bestLine, amber, true, "melhor" }, { &rate, amber, false } }, rateLow, rateHigh, rateValue, "/s",
+            "Quanto o exercício mostrado é recompensado por segundo (as últimas 12 rodadas juntas; cair conta como perda, "
+            "então falhar derruba a curva). Entre parênteses, a variação em 30 rodadas; o traço apagado é o melhor nível "
+            "já alcançado neste treino." },
         { "Episódio (s)", { { &seconds, cyan, false } }, 0.0f, range({ &seconds }, 1.0f, 0.0f).second,
             seconds.empty() ? "" : text(seconds.back(), "%.1f s"), "s", "Quanto dura um episódio do treino." },
         { "Decisões / s", { { &speed, violet, false } }, 0.0f, range({ &speed }, 1000.0f, 0.0f).second,

@@ -2,14 +2,14 @@
   "schema": "matter-rl-locomocao-1",
   "id": "locomocao_f3e",
   "displayName": "Locomocao: 3e - inversoes e arrancadas",
-  "comment": "3e: soma as inversoes de 180 graus e as arrancadas em velocidade (a responsividade). Pesos congelados. A ajuda auxiliar em 30%, o professor da virada e a quietude (iguais aos das fases 1-2); as velocidades do modo padrao (trote 4,5 todos os rumos; corrida 8 frente, 6 de lado e de costas), o chao de 180 m e o limite de 80 m. A ficha: vault 04_locomocao/cartao_fase3.md.",
+  "comment": "3e: soma as inversoes de 180 graus e as arrancadas em velocidade (a responsividade). Pesos congelados. A ajuda auxiliar em 0%, o professor da virada e a quietude (iguais aos das fases 1-2); as velocidades do modo padrao (trote 4,5 todos os rumos; corrida 8 frente, 6 de lado e de costas), o chao de 180 m e o limite de 80 m. A ficha: vault 04_locomocao/cartao_fase3.md.",
   "episodeSeconds": 10.0,
-  "comment_assist": "A ajuda auxiliar em 30% (decisao do usuario, 17/10): a rede aprende os movimentos dificeis (trote com curvas bruscas) com ajuda; depois, com a rede boa, a ajuda desce (20, 10, 5, 0) ate o 0% de verdade (regime B, vault 04_locomocao/ajuda_auxiliar.md).",
+  "comment_assist": "A ajuda auxiliar em 0% (decisao do usuario, 18/10: volta ao 0% de verdade, os mesmos exercicios; antes 30% desde 17/10): a rede aprende os movimentos dificeis (trote com curvas bruscas) com ajuda; depois, com a rede boa, a ajuda desce (20, 10, 5, 0) ate o 0% de verdade (regime B, vault 04_locomocao/ajuda_auxiliar.md).",
   "assist": {
-    "standing": 30.0,
-    "walking": 30.0,
-    "feet": 30.0,
-    "getUp": 30.0
+    "standing": 0.0,
+    "walking": 0.0,
+    "feet": 0.0,
+    "getUp": 0.0
   },
   "comment_turnMove": "A virada brusca (o professor, DynamicTurnMove3D, vault 04_locomocao/virada_brusca.md): ligada, a rede o ve, ganha sobre ele por familia (turno.ganho.*) e soma o residuo; em 'dropout' dos episodios ele fica desligado (a rede nao depende dele). A avaliacao usa sempre ligada e compara com e sem.",
   "turnMove": {

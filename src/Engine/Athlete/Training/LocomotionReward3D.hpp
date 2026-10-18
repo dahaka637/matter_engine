@@ -69,6 +69,9 @@ struct LocomotionPostureInput3D {
     Vec3 commandAcceleration;
     // A velocidade do corpo no plano (m/s).
     float speed = 0.0f;
+    // O angulo entre o eixo de cima da cabeca e o do peito (rad): o pescoco
+    // torto. So passa de uma folga grande custa (a cabeca livre olha em volta).
+    float neckBend = 0.0f;
 };
 // O angulo fora do envelope (rad, >= 0).
 [[nodiscard]] float locomotionPostureExcess3D(const LocomotionPostureInput3D& input);

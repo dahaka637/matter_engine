@@ -35,6 +35,17 @@ struct TrainingEvaluationPoint3D {
     double episodeReturn = std::numeric_limits<double>::quiet_NaN();
 };
 
+// O que um exercicio mediu numa rodada do treino (da coluna details das rodadas):
+// os episodios que terminaram nele, a fatia que caiu e o retorno medio.
+struct TrainingDrillPoint3D {
+    std::uint64_t iteration = 0;
+    std::string drill;
+    double episodes = 0.0;
+    double falls = 0.0;
+    double seconds = 0.0;
+    double episodeReturn = std::numeric_limits<double>::quiet_NaN();
+};
+
 struct TrainingEventPoint3D {
     double time = 0.0;
     std::string kind;
@@ -45,6 +56,8 @@ struct TrainingEventPoint3D {
 struct TrainingHistory3D {
     std::vector<TrainingIterationPoint3D> iterations;
     std::vector<TrainingEvaluationPoint3D> evaluations;
+    // Por rodada e por exercicio (as avaliacoes sao raras; estas saem de toda rodada).
+    std::vector<TrainingDrillPoint3D> drills;
     std::vector<TrainingEventPoint3D> events;
 };
 

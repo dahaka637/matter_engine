@@ -478,6 +478,11 @@ struct LocomotionTraining3D::Impl {
                 commanded = size < 0.3f ? Vec3 {} : commanded * (std::min(size, 8.0f) * 0.5f / size);
                 input.commandAcceleration = frame.in(commanded);
                 input.speed = std::hypot(com.x, com.y);
+                if (head >= 0 && static_cast<std::size_t>(head) < body.links.size()) {
+                    const Quaternion h = (body.links[static_cast<std::size_t>(head)].orientation
+                        * profile.links[static_cast<std::size_t>(head)].modelOrientation.conjugate()).normalized();
+                    input.neckBend = std::acos(std::clamp(dot(r.rotate({ 0.0f, 0.0f, 1.0f }), h.rotate({ 0.0f, 0.0f, 1.0f })), -1.0f, 1.0f));
+                }
                 posture += locomotionPostureExcess3D(input);
             }
             for (std::size_t side = 0; side < 2; ++side) {

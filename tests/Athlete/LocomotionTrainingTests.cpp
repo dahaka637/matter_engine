@@ -75,6 +75,11 @@ void rewardTests() {
     braking.commandAcceleration = {};
     braking.measuredAcceleration = { -6.0f, 0.0f, 0.0f };
     expect(locomotionPostureExcess3D(braking) < 0.15f, "freando forte, o envelope abre para tras");
+    LocomotionPostureInput3D neck;
+    neck.neckBend = 8.0f * 3.14159265f / 180.0f;
+    expect(locomotionPostureExcess3D(neck) == 0.0f, "o pescoco dentro da folga nao custa");
+    neck.neckBend = 20.0f * 3.14159265f / 180.0f;
+    expect(std::abs(locomotionPostureExcess3D(neck) - 10.0f * 3.14159265f / 180.0f) < 1e-3f, "a cabeca torta custa o que passa da folga");
 }
 
 void taskTests() {

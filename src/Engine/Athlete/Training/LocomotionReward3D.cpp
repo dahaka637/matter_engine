@@ -66,8 +66,10 @@ float locomotionPostureExcess3D(const LocomotionPostureInput3D& input) {
     const float ceiling = (15.0f + 1.5f * input.speed) * Degrees + open(ahead, 25.0f);
     const float sideLeft = 5.0f * Degrees + open(left, 25.0f);
     const float sideRight = 5.0f * Degrees + open(right, 25.0f);
+    // A cabeca torta no parado (18/10): a folga de 10 graus e do pescoco vivo.
+    const float neck = std::max(0.0f, input.neckBend - 10.0f * Degrees);
     return std::max(0.0f, forward - ceiling) + std::max(0.0f, floor - forward) + std::max(0.0f, side - sideLeft)
-        + std::max(0.0f, -side - sideRight);
+        + std::max(0.0f, -side - sideRight) + neck;
 }
 
 } // namespace MatterEngine

@@ -78,6 +78,27 @@ TrainingHistory3D readTrainingHistory3D(const std::filesystem::path& database, c
             sqlite3_finalize(statement);
         }
     }
+    // Cada exercicio em cada rodada (o treino, nao a avaliacao): json_each abre o details.drills.
+    if (sqlite3_prepare_v2(db,
+            "SELECT i.iteration, d.key, json_extract(d.value, '$.episodes'), json_extract(d.value, '$.falls'), "
+            "json_extract(d.value, '$.return'), json_extract(d.value, '$.seconds') FROM iterations i, json_each(i.details, '$.drills') d "
+            "WHERE i.run=?1 AND i.time>=?2 ORDER BY i.iteration",
+            -1, &statement, nullptr)
+        == SQLITE_OK) {
+        sqlite3_bind_text(statement, 1, run.c_str(), -1, SQLITE_TRANSIENT);
+        sqlite3_bind_double(statement, 2, since);
+        while (sqlite3_step(statement) == SQLITE_ROW) {
+            TrainingDrillPoint3D point;
+            point.iteration = static_cast<std::uint64_t>(sqlite3_column_int64(statement, 0));
+            point.drill = columnText(statement, 1);
+            point.episodes = columnDouble(statement, 2);
+            point.falls = columnDouble(statement, 3);
+            if (sqlite3_column_type(statement, 4) != SQLITE_NULL) point.episodeReturn = columnDouble(statement, 4);
+            point.seconds = columnDouble(statement, 5);
+            history.drills.push_back(point);
+        }
+        sqlite3_finalize(statement);
+    }
     // As medidas de cada exercicio ficam num JSON (o treinador acrescenta outras sem mudar o banco).
     const char* evaluations = "SELECT iteration, time, steps, solver, drill, json_extract(data, '$.falls'), "
                               "json_extract(data, '$.velocity_error_median'), json_extract(data, '$.useful_steps'), "
