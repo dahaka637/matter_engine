@@ -68,11 +68,16 @@ def main() -> int:
     system.refuse_tuned_environment("hash")
     module = native()
     task = paths.task_path(args.tarefa)
+    # A tarefa pelo conteudo (o id se repete quando a tarefa dos assets muda).
+    task_sha = hashlib.sha256(task.read_bytes()).hexdigest()[:16]
+    task_id = json.loads(task.read_text()).get("id", args.tarefa)
     gold = json.loads(Path(args.conferir).read_text()) if args.conferir else None
     if gold is not None:
         # O ouro so vale para a mesma prova: a tarefa, os mundos, os passos, a semente e as threads.
-        mismatch = [key for key, mine in (("tarefa", args.tarefa), ("mundos", args.mundos), ("passos", args.passos),
-                                          ("semente", args.semente)) if gold.get(key) != mine]
+        same_task = gold["tarefa_sha"] == task_sha if "tarefa_sha" in gold else gold.get("tarefa") == task_id
+        mismatch = ([] if same_task else ["tarefa"]) + [
+            key for key, mine in (("mundos", args.mundos), ("passos", args.passos), ("semente", args.semente))
+            if gold.get(key) != mine]
         missing = [t for t in args.threads.split(",") if t not in gold.get("por_threads", {})]
         if mismatch or missing:
             print(f"o ouro e de outra prova: {mismatch} {('threads ' + ','.join(missing)) if missing else ''}")
@@ -80,7 +85,7 @@ def main() -> int:
     probe = module.LocomotionBatch(str(task), str(paths.ASSETS), environments=1, threads=1, seed=1)
     columns = gold.get("colunas") if gold else list(probe.episode_columns())
     del probe
-    result: dict = {"tarefa": args.tarefa, "mundos": args.mundos, "passos": args.passos, "semente": args.semente,
+    result: dict = {"tarefa": task_id, "tarefa_sha": task_sha, "mundos": args.mundos, "passos": args.passos, "semente": args.semente,
                     "colunas": columns, "por_threads": {}}
     for threads in [int(t) for t in args.threads.split(",")]:
         begin = time.perf_counter()

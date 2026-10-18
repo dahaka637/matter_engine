@@ -7,6 +7,8 @@
 # mudar. Uso (os argumentos vao para o hash_locomocao.py):
 #   tools/rl/prova.sh --gravar tools/rl/ouro/prova_<tarefa>_<commit>.json --tarefa <tarefa>   # no codigo antigo
 #   tools/rl/prova.sh --conferir tools/rl/ouro/prova_<tarefa>_<commit>.json --tarefa <tarefa> # no novo
+# Os ouros de d33abf7 foram gravados com a f2t de antes das chaves ligadas (2cf5e56):
+#   tools/rl/prova.sh --conferir ouro/prova_locomocao_f2t_d33abf7.json --tarefa ouro/tarefa_locomocao_f2t_d33abf7.json
 set -Eeuo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
