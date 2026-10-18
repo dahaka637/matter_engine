@@ -163,6 +163,93 @@ bool isTrainingRun(const std::filesystem::path& directory) {
     return contract != config.end() && contract->is_number() && contract->get<int>() == 2;
 }
 
+// Uma serie de um grafico: os valores, a cor e se e a de referencia (mais apagada, sem preenchimento).
+struct ChartSeries {
+    const std::vector<float>* values;
+    ImVec4 color;
+    bool reference = false;
+};
+
+// Um grafico de linha: fundo, grade, a serie principal com a area, a de referencia por tras, o valor de
+// agora grande no canto e a dica com o valor sob o mouse.
+void lineChart(const char* id, const std::vector<ChartSeries>& series, float minimum, float maximum, ImVec2 size,
+    const char* valueText, const char* unit) {
+    ImGui::InvisibleButton(id, size);
+    const bool hovered = ImGui::IsItemHovered();
+    const ImVec2 low = ImGui::GetItemRectMin(), high = ImGui::GetItemRectMax();
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    draw->AddRectFilled(low, high, IM_COL32(10, 17, 25, 255), 5.0f);
+    draw->AddRect(low, high, IM_COL32(40, 62, 84, 255), 5.0f);
+    const ImVec2 inner0 { low.x + 8.0f, low.y + 8.0f }, inner1 { high.x - 8.0f, high.y - 8.0f };
+    const float span = std::max(maximum - minimum, 1e-6f);
+    const auto yOf = [&](float v) {
+        return inner1.y - (std::clamp(v, minimum, maximum) - minimum) / span * (inner1.y - inner0.y);
+    };
+    for (int i = 1; i <= 3; ++i) {
+        const float y = inner0.y + (inner1.y - inner0.y) * static_cast<float>(i) / 4.0f;
+        draw->AddLine({ low.x + 1.0f, y }, { high.x - 1.0f, y }, IM_COL32(32, 48, 64, 140));
+    }
+    int hoverIndex = -1;
+    std::size_t hoverCount = 0;
+    for (const ChartSeries& item : series) hoverCount = std::max(hoverCount, item.values->size());
+    if (hovered && hoverCount > 1) {
+        const float t = (ImGui::GetIO().MousePos.x - inner0.x) / std::max(inner1.x - inner0.x, 1.0f);
+        hoverIndex = std::clamp(static_cast<int>(std::lround(t * static_cast<float>(hoverCount - 1))), 0,
+            static_cast<int>(hoverCount) - 1);
+    }
+    for (int pass = 0; pass < 2; ++pass) {
+        for (const ChartSeries& item : series) {
+            if ((pass == 0) != item.reference) continue;
+            const std::vector<float>& v = *item.values;
+            if (v.size() < 2) continue;
+            const auto point = [&](std::size_t i) {
+                return ImVec2 { inner0.x + (inner1.x - inner0.x) * static_cast<float>(i) / static_cast<float>(v.size() - 1),
+                    yOf(v[i]) };
+            };
+            ImVec4 line = item.color;
+            if (item.reference) line.w = 0.45f;
+            const ImU32 lineColor = ImGui::ColorConvertFloat4ToU32(line);
+            if (!item.reference) {
+                ImVec4 fill = item.color;
+                fill.w = 0.16f;
+                const ImU32 fillColor = ImGui::ColorConvertFloat4ToU32(fill);
+                for (std::size_t i = 0; i + 1 < v.size(); ++i) {
+                    const ImVec2 a = point(i), b = point(i + 1);
+                    draw->AddQuadFilled(a, b, { b.x, inner1.y }, { a.x, inner1.y }, fillColor);
+                }
+            }
+            for (std::size_t i = 0; i + 1 < v.size(); ++i)
+                draw->AddLine(point(i), point(i + 1), lineColor, item.reference ? 1.2f : 2.0f);
+            if (!item.reference) draw->AddCircleFilled(point(v.size() - 1), 3.2f, lineColor);
+        }
+    }
+    if (hoverIndex >= 0) {
+        const float x = inner0.x + (inner1.x - inner0.x) * static_cast<float>(hoverIndex)
+            / static_cast<float>(hoverCount - 1);
+        draw->AddLine({ x, inner0.y }, { x, inner1.y }, IM_COL32(120, 150, 180, 120));
+        ImGui::BeginTooltip();
+        for (const ChartSeries& item : series)
+            if (static_cast<std::size_t>(hoverIndex) < item.values->size())
+                ImGui::TextColored(item.color, "%s%.2f %s", item.reference ? "clássico  " : "", (*item.values)[static_cast<std::size_t>(hoverIndex)], unit);
+        ImGui::EndTooltip();
+    }
+    if (valueText[0]) {
+        const ImVec2 extent = ImGui::CalcTextSize(valueText);
+        draw->AddText({ high.x - extent.x - 10.0f, low.y + 6.0f }, ImGui::ColorConvertFloat4ToU32(series.front().color),
+            valueText);
+    }
+    char range[32];
+    std::snprintf(range, sizeof range, "%.3g", maximum);
+    draw->AddText({ low.x + 10.0f, low.y + 6.0f }, IM_COL32(100, 120, 140, 200), range);
+    std::snprintf(range, sizeof range, "%.3g", minimum);
+    draw->AddText({ low.x + 10.0f, high.y - ImGui::GetTextLineHeight() - 6.0f }, IM_COL32(100, 120, 140, 200), range);
+    if (series.empty() || series.front().values->empty()) {
+        const ImVec2 extent = ImGui::CalcTextSize("sem dados");
+        draw->AddText({ (low.x + high.x - extent.x) * 0.5f, (low.y + high.y - extent.y) * 0.5f },
+            IM_COL32(100, 120, 140, 200), "sem dados");
+    }
+}
+
 } // namespace
 
 ReinforcementLearningScreen::ReinforcementLearningScreen(Options options, std::function<void()> onBack)
@@ -1016,35 +1103,71 @@ void ReinforcementLearningScreen::drawCommands() {
 
 void ReinforcementLearningScreen::drawCharts(float height) {
     ImGui::Dummy({ 1.0f, ui(4.0f) });
-    std::vector<float> stand, error, seconds, speed;
-    // A avaliacao do exercicio mostrado, no jogo.
+    // A avaliacao do exercicio mostrado: a da rede (ou a do jogo, no Corpo) e, de referencia, a do classico.
+    bool hasGame = false;
+    for (const TrainingEvaluationPoint3D& point : m_history.evaluations) hasGame = hasGame || point.solver == "jogo";
+    const std::string primary = hasGame ? "jogo" : "rede";
+    std::vector<float> stand, standClassic, gain, gainClassic, seconds, speed;
     for (const TrainingEvaluationPoint3D& point : m_history.evaluations) {
-        if (point.solver != "jogo" || (!m_viewerDrill.empty() && point.drill != m_viewerDrill)) continue;
-        stand.push_back(static_cast<float>((1.0 - point.falls) * 100.0));
-        if (point.velocityError >= 0.0) error.push_back(static_cast<float>(point.velocityError));
+        if (!m_viewerDrill.empty() && point.drill != m_viewerDrill) continue;
+        const bool main = point.solver == primary;
+        if (!main && point.solver != "classico") continue;
+        (main ? stand : standClassic).push_back(static_cast<float>((1.0 - point.falls) * 100.0));
+        if (!std::isnan(point.episodeReturn)) (main ? gain : gainClassic).push_back(static_cast<float>(point.episodeReturn));
     }
     for (const TrainingIterationPoint3D& point : m_history.iterations) {
         seconds.push_back(static_cast<float>(point.episodeSeconds));
         speed.push_back(static_cast<float>(point.sps));
     }
+    const auto range = [](std::initializer_list<const std::vector<float>*> lists, float floorTop, float floorBottom) {
+        float lowest = floorBottom, highest = floorTop;
+        for (const std::vector<float>* list : lists)
+            for (const float v : *list) {
+                lowest = std::min(lowest, v);
+                highest = std::max(highest, v);
+            }
+        const float pad = std::max((highest - lowest) * 0.08f, 1e-3f);
+        return std::pair<float, float> { lowest - (lowest < floorBottom + 1e-6f && floorBottom == 0.0f ? 0.0f : pad), highest + pad };
+    };
+    const std::string drillName = [&] {
+        const auto it = std::find(m_drillIds.begin(), m_drillIds.end(), m_viewerDrill);
+        return it == m_drillIds.end() ? std::string() : m_drillNames[static_cast<std::size_t>(it - m_drillIds.begin())];
+    }();
     struct Chart {
-        const char* title;
-        const std::vector<float>* values;
+        std::string title;
+        std::vector<ChartSeries> series;
         float minimum;
         float maximum;
+        std::string value;
+        const char* unit;
         const char* tooltip;
     };
-    const auto top = [](const std::vector<float>& values, float floor) {
-        float result = floor;
-        for (const float v : values) result = std::max(result, v);
-        return result * 1.05f;
+    const auto text = [](float v, const char* format) {
+        char buffer[32];
+        std::snprintf(buffer, sizeof buffer, format, v);
+        return std::string(buffer);
     };
+    const ImVec4 green { 0.30f, 0.82f, 0.56f, 1.0f }, amber { 0.96f, 0.70f, 0.28f, 1.0f },
+        cyan { 0.35f, 0.78f, 0.94f, 1.0f }, violet { 0.70f, 0.56f, 0.96f, 1.0f };
+    const auto [gainLow, gainHigh] = range({ &gain, &gainClassic }, 0.0f, 0.0f);
+    std::string gainValue;
+    if (!gain.empty()) {
+        gainValue = text(gain.back(), "%.1f");
+        if (gain.size() > 1) gainValue += text(gain.back() - gain[gain.size() - 2], "  (%+.1f)");
+    }
     const std::array<Chart, 4> charts { {
-        { "Sem cair (%)", &stand, 0.0f, 100.0f, "A avaliação do exercício mostrado, com a física do jogo." },
-        { "Erro de velocidade (m/s)", &error, 0.0f, top(error, 0.5f),
-            "A mediana do erro de velocidade na avaliação do exercício mostrado." },
-        { "Episódio (s)", &seconds, 0.0f, top(seconds, 1.0f), "Quanto dura um episódio do treino." },
-        { "Decisões / s", &speed, 0.0f, top(speed, 1000.0f), "A velocidade do treino (física + rede)." },
+        { "Sem cair (%)" + (drillName.empty() ? std::string() : " · " + drillName),
+            { { &standClassic, green, true }, { &stand, green, false } }, 0.0f, 100.0f,
+            stand.empty() ? "" : text(stand.back(), "%.0f%%"), "%",
+            "A avaliação do exercício mostrado (a rede; o traço apagado é o clássico, sem a rede)." },
+        { "Recompensa do exercício" + (drillName.empty() ? std::string() : " · " + drillName),
+            { { &gainClassic, amber, true }, { &gain, amber, false } }, gainLow, gainHigh, gainValue, "",
+            "O retorno médio dos episódios do exercício mostrado na avaliação, e entre parênteses o ganho ou a perda "
+            "desde a avaliação anterior (o traço apagado é o clássico)." },
+        { "Episódio (s)", { { &seconds, cyan, false } }, 0.0f, range({ &seconds }, 1.0f, 0.0f).second,
+            seconds.empty() ? "" : text(seconds.back(), "%.1f s"), "s", "Quanto dura um episódio do treino." },
+        { "Decisões / s", { { &speed, violet, false } }, 0.0f, range({ &speed }, 1000.0f, 0.0f).second,
+            speed.empty() ? "" : text(speed.back(), "%.0f"), "", "A velocidade do treino (física + rede)." },
     } };
     const float spacing = ImGui::GetStyle().ItemSpacing.x;
     const float width = (ImGui::GetContentRegionAvail().x - 3.0f * spacing) / 4.0f;
@@ -1054,13 +1177,11 @@ void ReinforcementLearningScreen::drawCharts(float height) {
         ImGui::SetCursorPosY(rowTop);
         const Chart& chart = charts[i];
         ImGui::BeginGroup();
-        ImGui::TextColored(MutedText, "%s", chart.title);
-        char overlay[48] = "";
-        if (!chart.values->empty()) std::snprintf(overlay, sizeof overlay, "%.2f", chart.values->back());
+        ImGui::TextColored(InfoText, "%s", chart.title.c_str());
         ImGui::PushID(static_cast<int>(i));
-        ImGui::PlotLines("##chart", chart.values->empty() ? nullptr : chart.values->data(),
-            static_cast<int>(chart.values->size()), 0, overlay, chart.minimum, chart.maximum,
-            { width, height - ImGui::GetTextLineHeightWithSpacing() });
+        lineChart("##chart", chart.series, chart.minimum, chart.maximum,
+            { width, std::max(height - ImGui::GetTextLineHeightWithSpacing(), ui(40.0f)) }, chart.value.c_str(),
+            chart.unit);
         ImGui::PopID();
         ImGui::EndGroup();
         tooltip(chart.tooltip);

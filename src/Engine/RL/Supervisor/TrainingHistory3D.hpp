@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <limits>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -30,6 +31,8 @@ struct TrainingEvaluationPoint3D {
     double falls = 0.0;
     double velocityError = -1.0;
     double usefulSteps = -1.0;
+    // O retorno medio dos episodios do exercicio na avaliacao (NaN sem a medida).
+    double episodeReturn = std::numeric_limits<double>::quiet_NaN();
 };
 
 struct TrainingEventPoint3D {
