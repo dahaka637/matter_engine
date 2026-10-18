@@ -14,6 +14,7 @@
 #include <cmath>
 #include <mutex>
 #include <random>
+#include <sstream>
 #include <stdexcept>
 #include <thread>
 
@@ -340,5 +341,34 @@ const TrackingLeaderState3D& TrackingTraining3D::leader(std::size_t world) const
 }
 
 const RagdollState3D& TrackingTraining3D::body(std::size_t world) const { return *m_impl->worlds.at(world).body; }
+
+std::string TrackingTraining3D::frameLines(std::size_t world, bool leader) const {
+    const Impl& impl = *m_impl;
+    const Impl::World& w = impl.worlds.at(world);
+    const RagdollProfile3D& profile = *impl.profile;
+    const std::vector<PhysicsBodyState3D>& links = leader ? w.leader->state().links : w.body->links;
+    std::ostringstream out;
+    for (std::size_t i = 0; i < profile.links.size() && i < links.size(); ++i) {
+        const RagdollLinkDefinition3D& link = profile.links[i];
+        const PhysicsBodyState3D& state = links[i];
+        const Vec3 center = state.position + state.orientation.rotate(link.collider.localPosition);
+        const Quaternion orientation = (state.orientation * link.collider.localOrientation).normalized();
+        out << (link.collider.shape == RagdollColliderShape3D::Box ? "B " : "C ") << link.id << ' ' << center.x << ' '
+            << center.y << ' ' << center.z << ' ' << orientation.x << ' ' << orientation.y << ' ' << orientation.z
+            << ' ' << orientation.w << '\n';
+    }
+    if (!leader)
+        for (const RagdollContactPoint3D& contact : w.body->contacts)
+            out << "P " << contact.position.x << ' ' << contact.position.y << ' ' << contact.position.z << ' '
+                << contact.linkIndex << ' ' << contact.normal.x << ' ' << contact.normal.y << ' ' << contact.normal.z
+                << ' ' << contact.normalImpulseNewtonSeconds << '\n';
+    const Vec3 wanted = w.command.requestedVelocityWorld;
+    const float speed = std::hypot(wanted.x, wanted.y);
+    if (speed > 1.0e-4f) out << "W " << wanted.x / speed << ' ' << wanted.y / speed << " 0\n";
+    const Vec3 com = leader ? w.leader->state().centerOfMassVelocity : rlBodyCenterOfMassVelocity3D(profile, links);
+    out << "U " << speed << ' ' << std::hypot(com.x, com.y) << '\n';
+    out << "V " << com.x << ' ' << com.y << ' ' << com.z << '\n';
+    return out.str();
+}
 
 } // namespace MatterEngine

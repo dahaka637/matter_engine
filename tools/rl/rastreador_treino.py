@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import sys
 import time
 from pathlib import Path
@@ -27,7 +28,7 @@ import torch.nn as nn
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
-sys.path.insert(0, str(REPO / "build-rl" / "python"))
+sys.path.insert(0, os.environ.get("MATTER_TRACKING_NATIVE", str(REPO / "build-rl" / "python")))
 import matter_tracking_native as native  # noqa: E402
 
 DATA = Path.home() / ".local" / "share" / "matter-engine" / "rl" / "rastreador"

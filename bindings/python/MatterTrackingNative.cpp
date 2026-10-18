@@ -145,5 +145,6 @@ NB_MODULE(matter_tracking_native, m) {
         .def("leader_links", [](const TrackingTraining3D& b, std::size_t world) { return links(b.leader(world).links); },
             "world"_a)
         .def("body_links", [](const TrackingTraining3D& b, std::size_t world) { return links(b.body(world).links); },
-            "world"_a);
+            "world"_a)
+        .def("frame_lines", &TrackingTraining3D::frameLines, "world"_a, "leader"_a = false);
 }

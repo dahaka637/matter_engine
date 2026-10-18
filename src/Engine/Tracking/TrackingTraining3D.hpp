@@ -88,6 +88,10 @@ public:
     // Para as previas: o lider e o corpo de um mundo.
     [[nodiscard]] const TrackingLeaderState3D& leader(std::size_t world) const;
     [[nodiscard]] const RagdollState3D& body(std::size_t world) const;
+    // As linhas de um quadro para as folhas (MatterModelInspector quadros: os
+    // colisores no mundo, os contatos, o pedido e a velocidade), do corpo ou do
+    // lider.
+    [[nodiscard]] std::string frameLines(std::size_t world, bool leader) const;
 
 private:
     struct Impl;
