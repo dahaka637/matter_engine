@@ -281,6 +281,7 @@ LocomotionObservation3D LocomotionContract3D::observe(const RagdollState3D& body
     Writer w(out);
     bool referenceNeckValid = false;
     Vec3 referenceHeadUpInChest { 0.0f, 0.0f, 1.0f };
+    float referenceCycleSeconds = -1.0f;
     if (body.links.size() != profile.links.size() || body.links.empty()) {
         std::fill(out.begin(), out.end(), 0.0f);
         return {};
@@ -341,6 +342,7 @@ LocomotionObservation3D LocomotionContract3D::observe(const RagdollState3D& body
         input.profile = view.navigation;
         input.hipInBody = m_hipInBody;
         const ReferenceFrame3D frame = buildReferenceFrame3D(view.reference, input, forecast);
+        if (frame.valid && frame.cycling && frame.cycleSeconds > 0.0f) referenceCycleSeconds = frame.cycleSeconds;
         w.put(frame.valid ? 1.0f : 0.0f);
         w.put(std::sin(frame.phase * TwoPi));
         w.put(std::cos(frame.phase * TwoPi));
@@ -484,6 +486,7 @@ LocomotionObservation3D LocomotionContract3D::observe(const RagdollState3D& body
     result.nonFinite = w.nonFinite();
     result.referenceNeckValid = referenceNeckValid;
     result.referenceHeadUpInChest = referenceHeadUpInChest;
+    result.referenceCycleSeconds = referenceCycleSeconds;
     return result;
 }
 

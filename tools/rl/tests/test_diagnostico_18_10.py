@@ -129,6 +129,10 @@ def test_speed_curriculum_opens_a_cell_that_tracks_and_never_passes_the_band():
         curriculum.observe(np.stack([episode(0, 0.9, False) for _ in range(4)]), columns)
         curriculum.advance(task)
     assert caps["trote"][0] == 4.5  # nunca passa da faixa
+    by_bin = {"speedCurriculum": {"enabled": True, "binStart": [1.5, 1.5, 0.75, 0.75, 0.75, 0.75, 0.75, 1.5]},
+              "drills": [{"id": "andar", "pilot": {"kind": "star", "bands": [{"speed": [0.8, 1.4]}]}}]}
+    caps2 = SpeedCurriculum(by_bin, ["andar"]).initial_caps(by_bin)
+    assert caps2["andar"][0] == 1.4 and caps2["andar"][1] == 1.4 and caps2["andar"][4] == 0.75 and caps2["andar"][15] == 1.4
 
 
 def test_std_tables_by_prefix_and_groups():

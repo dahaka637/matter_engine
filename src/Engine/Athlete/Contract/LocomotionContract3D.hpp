@@ -24,6 +24,8 @@ struct LocomotionObservation3D {
     // sombra no referencial do peito dela (o pescoco da referencia).
     bool referenceNeckValid = false;
     Vec3 referenceHeadUpInChest { 0.0f, 0.0f, 1.0f };
+    // O ciclo da marcha da referencia (s; -1 parada): o contato por ciclo da nota.
+    float referenceCycleSeconds = -1.0f;
 };
 
 // O espelho de um layout (a simetria do treinador, tools/rl/matter_rl/

@@ -40,6 +40,9 @@ class CurriculumRule:
     # O teto de partida (m/s): um para todos, ou por exercicio.
     start: dict = field(default_factory=dict)
     start_default: float = 1.0
+    # O teto de partida por setor de rumo (8 valores, frente primeiro, a esquerda
+    # positiva; a medida M0.1 de 18/10): vale sobre o start quando dado.
+    bin_start: list = field(default_factory=list)
 
     @staticmethod
     def from_task(task: dict) -> "CurriculumRule":
@@ -51,7 +54,8 @@ class CurriculumRule:
             tracking=float(block.get("tracking", 0.8)), max_falls=float(block.get("maxFalls", 0.15)),
             min_cruise=int(block.get("minCruise", 15)),
             start=dict(start) if isinstance(start, dict) else {},
-            start_default=float(start) if not isinstance(start, dict) else float(block.get("startDefault", 1.0)))
+            start_default=float(start) if not isinstance(start, dict) else float(block.get("startDefault", 1.0)),
+            bin_start=[float(v) for v in block.get("binStart", [])])
 
 
 def band_maximum(drill: dict) -> float:
@@ -77,7 +81,10 @@ class SpeedCurriculum:
             if top <= 0.0 or drill["id"] in caps:
                 continue
             start = float(self.rule.start.get(drill["id"], self.rule.start_default))
-            caps[drill["id"]] = [round(min(top, start), 4)] * CELLS
+            if len(self.rule.bin_start) == CELLS // 2:
+                caps[drill["id"]] = [round(min(top, self.rule.bin_start[k // 2]), 4) for k in range(CELLS)]
+            else:
+                caps[drill["id"]] = [round(min(top, start), 4)] * CELLS
         return caps
 
     def observe(self, rows: np.ndarray, columns: list[str]) -> None:

@@ -217,6 +217,9 @@ struct LocomotionTraining3D::Impl {
         double feasibleSpeed = 0.0, jerkCap = 0.0;
         bool referenceNeckValid = false;
         Vec3 referenceHeadUpInChest { 0.0f, 0.0f, 1.0f };
+        float referenceCycleSeconds = -1.0f;
+        // O instante do ultimo pouso (s no episodio; o contato por ciclo).
+        float lastTouchdown = -1.0f;
         int currentCell = -1;
         std::array<double, LocomotionCommandCells3D> cellDecisions {}, cellCruise {}, cellTracking {}, cellError2 {},
             cellAsked {}, cellMade {};
@@ -438,6 +441,8 @@ struct LocomotionTraining3D::Impl {
         world.neckShadowSamples = 0;
         world.feasibleSpeed = world.jerkCap = 0.0;
         world.referenceNeckValid = false;
+        world.referenceCycleSeconds = -1.0f;
+        world.lastTouchdown = -1.0f;
         world.currentCell = -1;
         world.cellDecisions = world.cellCruise = world.cellTracking = world.cellError2 = world.cellAsked = world.cellMade = {};
         world.savedStart = saved != nullptr;
@@ -463,6 +468,7 @@ struct LocomotionTraining3D::Impl {
             contract->observe(body, world.command, view, athlete.policyHistory, world.forecast, obs);
         world.referenceNeckValid = written.referenceNeckValid;
         world.referenceHeadUpInChest = written.referenceHeadUpInChest;
+        world.referenceCycleSeconds = written.referenceCycleSeconds;
         std::copy(obs.begin(), obs.end(), criticRow.begin());
         std::size_t c = observationSize;
         for (std::size_t d = 0; d < drillCount; ++d) criticRow[c++] = d == world.drill ? 1.0f : 0.0f;
@@ -623,13 +629,18 @@ struct LocomotionTraining3D::Impl {
                 if (touching(body, side)) {
                     if (world.contactTicks[side] == 0 && world.airSeconds[side] >= TouchdownAirSeconds) {
                         ++world.touchdowns;
+                        const float now = world.seconds + static_cast<float>(tick + 1) * TickSeconds;
                         if (world.goalValid[side]) {
                             const float dx = foot.x - world.goal[side].x, dy = foot.y - world.goal[side].y;
                             const float sigma = task.reward.contactSigma;
-                            measure.contactScore += std::exp(-(dx * dx + dy * dy) / (sigma * sigma));
+                            float score = std::exp(-(dx * dx + dy * dy) / (sigma * sigma));
+                            if (task.reward.contactPerCycle && world.referenceCycleSeconds > 0.0f && world.lastTouchdown >= 0.0f)
+                                score *= std::min(1.0f, (now - world.lastTouchdown) / (0.5f * world.referenceCycleSeconds));
+                            measure.contactScore += score;
                             ++world.contactGoals;
                             world.goalValid[side] = false;
                         }
+                        world.lastTouchdown = now;
                     }
                     ++world.contactTicks[side];
                     world.airSeconds[side] = 0.0f;

@@ -10,7 +10,11 @@ e contra a mesma rede sem a pose e a rigidez (a ablacao). Passa quando:
 - nenhum exercicio piora contra o classico (as quedas ate 5 pontos acima; o
   erro de velocidade ate 0,03 m/s acima - o ruido dos parados);
 - a rede sem pose e rigidez ainda anda mais perto do pedido que o classico onde
-  ha movimento (a melhora nao vem so delas).
+  ha movimento (a melhora nao vem so delas);
+- cada um dos 8 rumos em relacao a camera (as celulas de comando, vault
+  .../pesquisas/08_plano_consenso.md §1.4) com dados bastantes (60 decisoes de
+  cruzeiro) fica no minimo do exercicio: o erro de cruzeiro e as quedas que
+  aconteceram naquele rumo (--sem-rumos desliga).
 
 A cara (as folhas e o laboratorio) e do usuario: o portao so mede.
 
@@ -73,6 +77,27 @@ def evaluate(module, task: Path, drill: str, solver: str, model, scale, worlds: 
     return summary
 
 
+BINS = ("frente", "diag_esq", "esquerda", "tras_esq", "costas", "tras_dir", "direita", "diag_dir")
+
+
+def direction_report(cells: dict) -> dict:
+    """As celulas (rumo x modo do peito) somadas por rumo: o erro de cruzeiro (RMS), a
+    velocidade pedida e a feita (medias por decisao) e as quedas que aconteceram nele."""
+    out = {}
+    for b, name in enumerate(BINS):
+        parts = [cells[str(k)] for k in (2 * b, 2 * b + 1) if str(k) in cells]
+        decisions = sum(p["decisions"] for p in parts)
+        cruise = sum(p["cruise"] for p in parts)
+        if decisions <= 0:
+            continue
+        error2 = sum((p["error"] ** 2) * p["cruise"] for p in parts if p["error"] is not None)
+        out[name] = {"cruise": cruise, "error": float(np.sqrt(error2 / cruise)) if cruise > 0 else 0.0,
+                     "asked": sum(p["asked"] * p["decisions"] for p in parts) / decisions,
+                     "made": sum(p["made"] * p["decisions"] for p in parts) / decisions,
+                     "falls": sum(p["falls"] for p in parts), "episodes": max(p["episodes"] for p in parts)}
+    return out
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--treino", required=True)
@@ -80,6 +105,7 @@ def main() -> int:
     parser.add_argument("--mundos", type=int, default=128)
     parser.add_argument("--segundos", type=float, default=20.0)
     parser.add_argument("--threads", type=int, default=6)
+    parser.add_argument("--sem-rumos", action="store_true", help="sem a cobertura por rumo")
     args = parser.parse_args()
 
     from matter_rl import system
@@ -148,6 +174,15 @@ def main() -> int:
         moving = net["requested"] > 0.3
         if moving and ablation["velocity_error_median"] >= classic["velocity_error_median"]:
             checks.append("sem pose e rigidez, nao melhora o classico (a melhora vem so delas)")
+        bins = direction_report(net.get("cells", {}))
+        if not args.sem_rumos and moving:
+            for name, b in bins.items():
+                if b["cruise"] < 60:
+                    continue
+                if error_cap >= 0.0 and b["error"] > error_cap:
+                    checks.append(f"rumo {name}: erro de cruzeiro {b['error']:.2f} acima de {error_cap:.2f}")
+                if falls_cap >= 0.0 and b["episodes"] > 0 and b["falls"] / b["episodes"] > max(falls_cap, 0.05):
+                    checks.append(f"rumo {name}: {b['falls']} quedas em {b['episodes']} episodios")
         passed = not checks
         verdict = verdict and passed
         reasons += [f"{d}: {c}" for c in checks]
@@ -156,6 +191,9 @@ def main() -> int:
               f"estilo {net['style_error'] or -1:.3f} ajuda {net['assist']:.2f} | sem pose/rigidez erro "
               f"{ablation['velocity_error_median']:.2f} | classico: quedas {classic['falls']:.0%} vel "
               f"{classic['speed']:.2f} erro {classic['velocity_error_median']:.2f}", flush=True)
+        for name, b in bins.items():
+            print(f"      {name:9s} pedida {b['asked']:.2f} feita {b['made']:.2f} erro {b['error']:.2f} "
+                  f"quedas {b['falls']}/{b['episodes']} ({b['cruise']:.0f} decisoes de cruzeiro)", flush=True)
     print("PORTAO: " + ("passa (falta a cara: as folhas e o laboratorio)" if verdict else "nao passa"))
     for reason in reasons:
         print("  - " + reason)

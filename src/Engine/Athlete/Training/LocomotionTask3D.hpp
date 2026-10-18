@@ -64,6 +64,11 @@ struct LocomotionRewardWeights3D {
     // (que no regime B segue a regua), como forca equivalente num braco de 1 m.
     // false (o padrao): so as forcas, o de sempre.
     bool assistIncludesTorque = false;
+    // O contato por ciclo (a medida M0.3 de 18/10: pagar por pouso premiava a
+    // cadencia, correlacao 0,54-0,72): cada pouso vale no maximo a fracao do
+    // meio ciclo da referencia que passou desde o pouso anterior (pisar mais
+    // rapido que a referencia nao rende mais). false (o padrao): por pouso.
+    bool contactPerCycle = false;
 };
 
 // O curriculo de velocidade por celulas (vault .../pesquisas/04_curriculo_e_ajuda.md):
