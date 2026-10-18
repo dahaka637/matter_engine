@@ -8,8 +8,11 @@
     matter-rl status | pausar | retomar | parar | salvar | avaliar
     matter-rl modo maximo|equilibrado|leve
     matter-rl tarefa <id>                 o treino aberto passa para outra tarefa (o mesmo cerebro)
-    matter-rl ramo --de R --run N         um treino novo do ultimo checkpoint de outro (locomocao: o treino
-                                          curto sozinho de uma novidade, com treinar --exercicio)
+    matter-rl ramo --de R --run N [--tarefa T]   um treino novo do ultimo checkpoint de outro (locomocao:
+                                          o treino curto sozinho de uma novidade, com treinar --exercicio);
+                                          --tarefa: o ramo leva a tarefa T dos assets, nao a copia do outro
+    matter-rl renormalizar --run R        a normalizacao refeita sem mudar a funcao (treino fechado)
+    matter-rl recentrar --run R           a media saturada de volta aos limites, a acao aplicada igual
     matter-rl peso <parcela> <valor> [--motivo M]   ("estilo" e o beta do juiz)
     matter-rl relatorio [--desde 1h]      o que mudou no periodo (Markdown)
     matter-rl graficos [--saida DIR]      PNG das curvas
@@ -190,6 +193,14 @@ def command_branch(args: argparse.Namespace) -> int:
         if reference.path.is_dir() else shutil.copy2(reference.path, target / reference.path.relative_to(source))
     config = json.loads((target / "run.json").read_text())
     config["end_reason"] = ""
+    if getattr(args, "tarefa", None):
+        # A tarefa nova dos assets (o mesmo id que o outro tinha nao trocaria a copia).
+        task = paths.task_path(args.tarefa)
+        if not task.exists():
+            print(f"tarefa desconhecida: {args.tarefa}", file=sys.stderr)
+            return 1
+        shutil.copy2(task, target / "tarefa.json")
+        config["task"] = args.tarefa
     storage.write_json_atomic(target / "run.json", config)
     print(f"ramo {args.run} de {args.de} (rodada {reference.iteration})")
     return 0
@@ -305,7 +316,28 @@ def command_switch(args: argparse.Namespace) -> int:
             print("o treino nao fechou", file=sys.stderr)
             return 1
     args.modo, args.mundos = status.get("mode"), None
+    # (As opcoes de abertura que o "tarefa" nao tem.)
+    for name in ("semente", "de_checkpoint", "aquecimento", "desvio_aprendido", "espelho", "ganho_comando",
+                 "exercicio", "sem_estilo", "sem_sobreposicao", "sobreposicao"):
+        if not hasattr(args, name):
+            setattr(args, name, None)
+    args.transferir = getattr(args, "transferir", None) or "ator,normalizacao"
+    live = paths.run_dir(args.run) / "tarefa.json"
+    if live.exists():
+        # A mesma tarefa com outro conteudo: a copia do treino passa a ser a nova.
+        source = json.loads(paths.task_path(args.tarefa).read_text())
+        if json.loads(live.read_text()).get("id") == source.get("id"):
+            storage.write_json_atomic(live, source)
     return command_start(args)
+
+
+def command_adjust(action: str, args: argparse.Namespace) -> int:
+    """Um ajuste fora do laco (o treino fechado): a normalizacao ou o recentramento."""
+    if control.ping():
+        print("feche o treino antes (matter-rl parar)", file=sys.stderr)
+        return 1
+    from . import ajustes
+    return ajustes.main([action, "--run", args.run, "--passos", str(args.passos)])
 
 
 def command_report(args: argparse.Namespace) -> int:
@@ -409,7 +441,12 @@ def main(argv: list[str] | None = None) -> int:
     affinity.set_defaults(func=command_affinity)
     branch = run_args(sub.add_parser("ramo", help="um treino novo a partir do ultimo checkpoint de outro (a locomocao)"))
     branch.add_argument("--de", required=True)
+    branch.add_argument("--tarefa", help="a tarefa dos assets que o ramo leva (padrao: a copia do outro)")
     branch.set_defaults(func=command_branch)
+    for name in ("renormalizar", "recentrar"):
+        adjust = run_args(sub.add_parser(name))
+        adjust.add_argument("--passos", type=int, default=100)
+        adjust.set_defaults(func=lambda a, n=name: command_adjust(n, a))
     run_args(sub.add_parser("treinar"), True).set_defaults(func=command_train)
     run_args(sub.add_parser("servir"), True).set_defaults(func=command_serve)
     run_args(sub.add_parser("iniciar"), True).set_defaults(func=command_start)

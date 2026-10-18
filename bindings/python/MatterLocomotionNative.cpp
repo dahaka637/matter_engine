@@ -5,6 +5,7 @@
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
 #include <nanobind/stl/string.h>
+#include <nanobind/stl/pair.h>
 #include <nanobind/stl/vector.h>
 
 #include "Engine/Athlete/AthleteAssets3D.hpp"
@@ -141,6 +142,11 @@ NB_MODULE(matter_locomotion_native, m) {
                 return out;
             })
         .def("action_cap_fractions", &LocomotionTraining3D::actionCapFractions)
+        .def("action_bounds", [](const LocomotionTraining3D& self) {
+            const LocomotionTraining3D::ActionBounds bounds = self.actionBounds();
+            return std::make_pair(bounds.lower, bounds.upper);
+        })
+        .def("saved_start_count", &LocomotionTraining3D::savedStartCount)
         .def(
             "set_authority",
             [](LocomotionTraining3D& b, float footwork, float balance, float pose, float gain) {

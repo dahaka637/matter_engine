@@ -20,6 +20,10 @@ namespace MatterEngine {
 struct LocomotionObservation3D {
     std::size_t written = 0;
     std::size_t nonFinite = 0;
+    // Medida, fora da entrada da rede: o eixo de cima da cabeca da pose da
+    // sombra no referencial do peito dela (o pescoco da referencia).
+    bool referenceNeckValid = false;
+    Vec3 referenceHeadUpInChest { 0.0f, 0.0f, 1.0f };
 };
 
 // O espelho de um layout (a simetria do treinador, tools/rl/matter_rl/

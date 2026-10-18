@@ -74,6 +74,34 @@ struct LocomotionEpisode3D {
     float velocityErrorCruise = -1.0f;
     // As parcelas da nota somadas no episodio.
     std::array<float, LocomotionRewardTermCount3D> terms {};
+    // As medidas do diagnostico de 18/10 (vault .../pesquisas/08_plano_consenso.md,
+    // Q0; so medida, fora da nota): a postura separada (rad, media por decisao),
+    // o pescoco do corpo, o da sombra e o angulo entre os dois (rad; -1 sem a
+    // referencia), a velocidade viavel media, os trancos na unidade do teto, o
+    // tempo da queda desde a ultima troca do pedido (s; -1 sem queda), se o
+    // episodio comecou de um estado guardado e a ajuda sorteada (%).
+    float postureTrunk = 0.0f;
+    float postureNeck = 0.0f;
+    float neckBody = 0.0f;
+    float neckShadow = -1.0f;
+    float neckRelative = -1.0f;
+    float meanFeasible = 0.0f;
+    float jerkCap = 0.0f;
+    float fallSinceChange = -1.0f;
+    float savedStart = 0.0f;
+    float assistLevel = 0.0f;
+    // As celulas de comando (rumo do pedido em relacao a camera x modo do peito;
+    // LocomotionCommandCells3D): as decisoes com pedido (> 0,3 m/s), as de
+    // cruzeiro, a soma do nucleo de velocidade (sem peso) e do erro ao quadrado
+    // no cruzeiro, e as somas da velocidade pedida e da feita; e a celula da
+    // queda (-1: sem queda ou parado).
+    float fallCell = -1.0f;
+    std::array<float, LocomotionCommandCells3D> cellDecisions {};
+    std::array<float, LocomotionCommandCells3D> cellCruise {};
+    std::array<float, LocomotionCommandCells3D> cellTracking {};
+    std::array<float, LocomotionCommandCells3D> cellError2 {};
+    std::array<float, LocomotionCommandCells3D> cellAsked {};
+    std::array<float, LocomotionCommandCells3D> cellMade {};
 };
 
 // As colunas de um episodio (a ordem de locomotionEpisodeRow3D).
@@ -115,6 +143,14 @@ public:
     // As escalas da saida: o teto da fase de cada canal sobre a escala maxima
     // (o desvio inicial da exploracao parte dele).
     [[nodiscard]] std::vector<float> actionCapFractions() const;
+    // Os limites de cada canal na unidade da rede (a acao aplicada para de mudar
+    // fora deles: o teto de cada lado; o canal sem lado negativo tem 0 embaixo).
+    // Simetrico: -1 e +1.
+    struct ActionBounds {
+        std::vector<float> lower;
+        std::vector<float> upper;
+    };
+    [[nodiscard]] ActionBounds actionBounds() const;
 
     // A tarefa nova (pesos da nota, tetos, mistura); os exercicios precisam
     // ser os mesmos, na mesma ordem.
@@ -130,6 +166,8 @@ public:
     // As fatias dos exercicios nos proximos comecos (uma por exercicio).
     void setDrillWeights(std::span<const float> weights);
     [[nodiscard]] std::span<const std::uint32_t> worldDrills() const;
+    // Quantos estados guardados (os comecos em movimento) um exercicio tem.
+    [[nodiscard]] std::size_t savedStartCount(std::size_t drill) const;
 
     void reset(std::uint64_t seed);
     void step(std::span<const float> actions);

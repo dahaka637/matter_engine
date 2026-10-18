@@ -23,6 +23,9 @@ class RunningNorm(nn.Module):
     def __init__(self, size: int, clip: float = 5.0):
         super().__init__()
         self.clip = clip
+        # A memoria da estatistica (amostras; 0 = sem limite, o de sempre): com
+        # limite, as rodadas novas pesam o bastante para a media acompanhar a tarefa.
+        self.max_count = 0.0
         self.register_buffer("mean", torch.zeros(size))
         self.register_buffer("var", torch.ones(size))
         self.register_buffer("count", torch.tensor(1e-4))
@@ -57,6 +60,8 @@ class RunningNorm(nn.Module):
             return
         mean = batch.mean(0)
         var = batch.var(0, unbiased=False)
+        if self.max_count > 0.0 and float(self.count) > self.max_count:
+            self.count = torch.as_tensor(self.max_count, dtype=self.count.dtype, device=self.count.device)
         total = self.count + n
         delta = mean - self.mean
         self.mean += delta * (n / total)
@@ -231,3 +236,74 @@ def rescale_actions(model: ActorCritic, factor: torch.Tensor) -> None:
     last.weight.mul_(factor[:, None])
     last.bias.mul_(factor)
     model.log_std.add_(factor.log())
+
+
+@torch.no_grad()
+def refit_normalizer(norm: RunningNorm, first: nn.Linear, samples: torch.Tensor, raw: torch.Tensor | None = None,
+                     count: float | None = None) -> None:
+    """A normalizacao refeita sem mudar a funcao (vault .../pesquisas/03_otimizacao_ppo.md, Q3):
+    media e desvio novos das amostras cruas (os canais em raw passam a crus: media 0,
+    desvio 1), e a primeira camada absorve a troca, W' = W.s'/s e b' = b + W.(m'-m)/s.
+    Igual nas entradas que nenhuma das duas normalizacoes corta (o corte em 5 desvios
+    pode mudar onde a velha cortava: e o que se quer)."""
+    old_mean, old_inv = norm.mean.clone(), norm.inverse_std().clone()
+    samples = samples.reshape(-1, samples.shape[-1]).to(norm.mean.dtype)
+    new_mean = samples.mean(0)
+    new_var = samples.var(0, unbiased=False)
+    if raw is not None:
+        mask = raw.to(torch.bool).to(norm.mean.device)
+        new_mean[mask] = 0.0
+        new_var[mask] = 1.0
+    norm.mean.copy_(new_mean)
+    norm.var.copy_(new_var)
+    if count is not None:
+        norm.count.fill_(count)
+    new_inv = norm.inverse_std()
+    # y = W (x - m) inv + b = W (x - m') inv' + b'  ->  W' = W inv/inv', b' = b + W inv (m' - m)
+    weight = first.weight.clone()
+    first.bias.add_(weight @ (old_inv * (new_mean - old_mean)))
+    first.weight.copy_(weight * (old_inv / new_inv).unsqueeze(0))
+
+
+def recenter_actor(model: ActorCritic, observations: torch.Tensor, lower: torch.Tensor, upper: torch.Tensor,
+                   iterations: int = 3000, learning_rate: float = 1e-4, batch: int = 4096,
+                   generator: torch.Generator | None = None, margin: float = 0.05) -> dict:
+    """O recentramento do ator (vault .../pesquisas/08_plano_consenso.md, rodada 3): a media
+    que passou do limite de um canal volta para dentro dele (lower..upper, a unidade da rede:
+    o contrato corta ali, entao e a acao aplicada): a acao deterministica no mundo fica a
+    mesma e a media volta para onde o gradiente e a exploracao existem. observations: as
+    entradas ja normalizadas. Devolve a fracao fora dos limites antes e depois e quanto a
+    acao aplicada mudou (o maximo, o RMS e o p99).
+    shortcut: regressao no ator inteiro (todas as camadas), o suficiente para os ~50 k estados
+    do treino; se a acao aplicada mudar demais fora deles, regredir so a ultima camada."""
+    def applied(mean: torch.Tensor) -> torch.Tensor:
+        return torch.maximum(torch.minimum(mean, upper), lower)
+
+    def outside(mean: torch.Tensor) -> float:
+        return float(((mean < lower) | (mean > upper)).float().mean())
+
+    # O alvo fica margin para dentro do limite (no limite exato, metade das amostras
+    # sobra um fio fora pelo erro da regressao); a acao aplicada muda no maximo margin.
+    inner_lower = torch.where(lower < 0.0, lower + margin, lower)
+    inner_upper = torch.where(upper > 0.0, upper - margin, upper)
+    with torch.no_grad():
+        original = model.actor(observations)
+        reference = applied(original)
+        target = torch.maximum(torch.minimum(original, inner_upper), inner_lower)
+        before = outside(original)
+    optimizer = torch.optim.Adam(model.actor.parameters(), lr=learning_rate)
+    total = observations.shape[0]
+    for _ in range(iterations):
+        index = torch.randint(0, total, (min(batch, total),), device=observations.device, generator=generator)
+        prediction = model.actor(observations[index])
+        loss = (prediction - target[index]).pow(2).mean()
+        optimizer.zero_grad(set_to_none=True)
+        loss.backward()
+        optimizer.step()
+    with torch.no_grad():
+        mean = model.actor(observations)
+        after = outside(mean)
+        change = applied(mean) - reference
+    return {"saturated_before": before, "saturated_after": after, "applied_max_change": float(change.abs().max()),
+            "applied_rms_change": float(change.pow(2).mean().sqrt()),
+            "applied_p99_change": float(change.abs().flatten().quantile(0.99)) if change.numel() < 16_000_000 else None}

@@ -3,6 +3,8 @@
 #include "Engine/Athlete/Contract/LocomotionContract3D.hpp"
 #include "Engine/RL/Commands/CommandPilot3D.hpp"
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <string>
@@ -41,6 +43,65 @@ struct LocomotionRewardWeights3D {
     // quando o comando pede para ficar quieto; 0 (o padrao): sem o custo.
     float still = 0.0f;
     float fall = 1.0f;
+    // A cauda larga da velocidade e do rumo (vault 04_locomocao/referencia/
+    // pesquisas/02_recompensa_locomocao.md): a fracao do termo que vem de
+    // exp(-|e|/sigmaCauda) (a forma do DReCon e do Siekmann: o gradiente nao
+    // some longe do alvo). 0 (o padrao): so o nucleo de sempre.
+    float velocityTail = 0.0f;
+    float velocityTailSigma = 1.5f;
+    float facingTail = 0.0f;
+    float facingTailSigma = 1.0f;
+    // Os trancos na unidade do teto (a saida da rede, +-1 = o teto de cada
+    // canal) em vez da escala do contrato. false (o padrao): a de sempre.
+    bool smoothCapUnits = false;
+    // O pescoco: a folga (graus) e se ele e medido contra a pose da sombra (a
+    // cabeca no referencial do peito, no corpo e na referencia) em vez de contra
+    // o proprio peito. O padrao (10 graus contra o peito) e o de 18/10.
+    float neckSlackDegrees = 10.0f;
+    bool neckRelative = false;
+    // O custo da ajuda pelo esforco inteiro da regua (vault 04_locomocao/
+    // ajuda_auxiliar.md): alem das forcas, o torque de fora e o par de postura
+    // (que no regime B segue a regua), como forca equivalente num braco de 1 m.
+    // false (o padrao): so as forcas, o de sempre.
+    bool assistIncludesTorque = false;
+};
+
+// O curriculo de velocidade por celulas (vault .../pesquisas/04_curriculo_e_ajuda.md):
+// a celula e o rumo do pedido em relacao a camera (8 setores de 45 graus,
+// 0 = frente, 2 = esquerda, 4 = costas) e o modo do peito (0 camera parada, 1
+// camera girando ou acompanhando). O teto de cada celula corta a velocidade
+// que o piloto pede (so no treino; a avaliacao pede a faixa inteira). Quem abre
+// os tetos e o treinador.
+inline constexpr std::size_t LocomotionCommandBins3D = 8;
+inline constexpr std::size_t LocomotionCommandCells3D = LocomotionCommandBins3D * 2;
+[[nodiscard]] std::size_t locomotionCommandCell3D(float directionRelativeToCamera, bool cameraTurning);
+
+struct LocomotionSpeedCurriculum3D {
+    bool enabled = false;
+    // Por exercicio (o indice do exercicio na tarefa), o teto de cada celula
+    // (m/s; <= 0: sem teto).
+    std::vector<std::array<float, LocomotionCommandCells3D>> caps;
+};
+
+// Os comecos em estados guardados (RSI/STI): instantaneos do treino em
+// cruzeiro que sobreviveram surviveSeconds; a fracao dos episodios de cada
+// exercicio que comeca deles fica no exercicio (savedStartFraction). Nunca na
+// avaliacao.
+struct LocomotionSavedStarts3D {
+    std::uint32_t capacity = 128;
+    float surviveSeconds = 1.0f;
+    // O instante so entra com o pedido ao menos isto (m/s) e no cruzeiro.
+    float minimumSpeed = 1.0f;
+};
+
+// A ajuda sorteada por episodio (so no treino): a fracao dos episodios a 0% e,
+// nos outros, o nivel uniforme entre o minimo e o maximo (%), nos controles
+// parado, andando e pes (o levantar fica no da tarefa). Desligada: a da tarefa.
+struct LocomotionAssistSchedule3D {
+    bool enabled = false;
+    float zeroFraction = 0.6f;
+    float minimumPercent = 5.0f;
+    float maximumPercent = 30.0f;
 };
 
 // Um exercicio: o roteiro do piloto (o mesmo formato do Corpo v2), a fase do
@@ -55,6 +116,9 @@ struct LocomotionDrill3D {
     // das quedas e o erro de velocidade (m/s, RMS). Negativo: sem minimo.
     float maximumFallFraction = -1.0f;
     float maximumVelocityError = -1.0f;
+    // A fracao dos episodios deste exercicio que comeca de um estado guardado
+    // (0: sempre parado, o de sempre).
+    float savedStartFraction = 0.0f;
 };
 
 // A mistura dos exercicios pela dificuldade (o plano antigo: as fatias seguem
@@ -110,6 +174,9 @@ struct LocomotionTask3D {
         float sprintBackward = 5.2f;
     } speeds;
     LocomotionDrillWeights3D drillWeights;
+    LocomotionSpeedCurriculum3D speedCurriculum;
+    LocomotionSavedStarts3D savedStarts;
+    LocomotionAssistSchedule3D assistSchedule;
     std::vector<LocomotionDrill3D> drills;
 };
 

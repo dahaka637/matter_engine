@@ -230,6 +230,163 @@ void turnMoveTests() {
     }
 }
 
+// Uma copia da tarefa f1f2 com trocas de texto (cada par: o trecho e o novo).
+std::filesystem::path editedTask(const std::string& name, const std::vector<std::pair<std::string, std::string>>& edits) {
+    std::ifstream in(Assets + "/rl/tasks/locomocao_f1f2.json");
+    std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    for (const auto& [from, to] : edits) {
+        const std::size_t at = text.find(from);
+        if (at == std::string::npos) throw std::runtime_error("a tarefa mudou: sem o trecho " + from);
+        text.replace(at, from.size(), to);
+    }
+    const std::filesystem::path path = std::filesystem::temp_directory_path() / name;
+    std::ofstream(path) << text;
+    return path;
+}
+
+void diagnosisTests() {
+    // O diagnostico de 18/10 (vault .../pesquisas/08_plano_consenso.md): as celulas
+    // de comando, a postura separada, a cauda da nota, o curriculo de velocidade,
+    // os comecos guardados e a ajuda sorteada.
+    constexpr float Deg = 3.14159265f / 180.0f;
+    expect(locomotionCommandCell3D(0.0f, false) == 0 && locomotionCommandCell3D(22.0f * Deg, false) == 0
+            && locomotionCommandCell3D(23.0f * Deg, false) == 2 && locomotionCommandCell3D(90.0f * Deg, true) == 5
+            && locomotionCommandCell3D(180.0f * Deg, false) == 8 && locomotionCommandCell3D(-45.0f * Deg, false) == 14
+            && locomotionCommandCell3D(7.0f * 3.14159265f, true) == 9,
+        "as celulas: 8 setores de 45 graus a partir da frente, a esquerda positiva, e o modo da camera");
+
+    LocomotionPostureInput3D neck;
+    neck.neckBend = 25.0f * Deg;
+    expect(std::abs(locomotionPostureParts3D(neck).neck - 15.0f * Deg) < 1e-4f && locomotionPostureParts3D(neck).trunk == 0.0f,
+        "o pescoco contra o peito: o que passa da folga de 10 graus, e o tronco a parte");
+    neck.neckRelative = true;
+    neck.neckSlack = 5.0f * Deg;
+    neck.headUpInChest = { std::sin(20.0f * Deg), 0.0f, std::cos(20.0f * Deg) };
+    neck.referenceValid = true;
+    neck.referenceHeadUpInChest = { std::sin(20.0f * Deg), 0.0f, std::cos(20.0f * Deg) };
+    expect(locomotionPostureParts3D(neck).neck == 0.0f, "relativo: a cabeca igual a da sombra nao custa, mesmo inclinada");
+    neck.referenceHeadUpInChest = { 0.0f, 0.0f, 1.0f };
+    expect(std::abs(locomotionPostureParts3D(neck).neck - 15.0f * Deg) < 1e-3f, "relativo: 20 graus da sombra, 15 alem da folga");
+    neck.referenceValid = false;
+    expect(std::abs(locomotionPostureParts3D(neck).neck - 20.0f * Deg) < 1e-4f, "sem a referencia, o modo de sempre");
+
+    LocomotionRewardWeights3D tail;
+    LocomotionStepMeasure3D far;
+    far.velocityError = 1.6f;
+    const float core = locomotionRewardTerms3D(far, tail, 1.0f)[0];
+    tail.velocityTail = 0.5f;
+    const float withTail = locomotionRewardTerms3D(far, tail, 1.0f)[0];
+    expect(core < 1e-4f && std::abs(withTail - 0.4f * (0.5f * core + 0.5f * std::exp(-1.6f / 1.5f))) < 1e-5f,
+        "a cauda devolve o gradiente longe do alvo (1,6 m/s: o nucleo vale ~0)");
+
+    // A tarefa: as chaves novas e a validacao.
+    const std::string curriculum = "\"speedCurriculum\": { \"enabled\": true, \"caps\": { \"estrela_trote\": "
+        "[0.5,0.5,0.5,0.5,0.5,0.5,0.5,0.5,0.5,0.5,0.5,0.5,0.5,0.5,0.5,0.5] } },";
+    {
+        const LocomotionTask3D task = loadLocomotionTask3D(editedTask("matter_diag_task.json",
+            { { "\"episodeSeconds\": 20.0,", "\"episodeSeconds\": 20.0, " + curriculum
+                  + " \"savedStarts\": { \"capacity\": 4, \"surviveSeconds\": 0.2, \"minimumSpeed\": 0.3 },"
+                  + " \"assistSchedule\": { \"enabled\": true, \"zeroFraction\": 0.5, \"minimum\": 5, \"maximum\": 30 }," },
+              { "\"id\": \"estrela\",", "\"id\": \"estrela\", \"savedStartFraction\": 1.0," } }).string());
+        const auto index = [&](const char* id) {
+            for (std::size_t d = 0; d < task.drills.size(); ++d)
+                if (task.drills[d].id == id) return d;
+            throw std::runtime_error(std::string("sem o exercicio ") + id);
+        };
+        expect(task.speedCurriculum.enabled && task.speedCurriculum.caps.size() == task.drills.size()
+                && task.speedCurriculum.caps[index("estrela_trote")][7] == 0.5f
+                && task.speedCurriculum.caps[index("estrela")][0] == 0.0f,
+            "o curriculo: 16 tetos por exercicio, e sem tetos o exercicio nao corta");
+        expect(task.savedStarts.capacity == 4 && task.drills[index("estrela")].savedStartFraction == 1.0f
+                && task.drills[index("estrela_trote")].savedStartFraction == 0.0f && task.assistSchedule.enabled,
+            "os comecos guardados e a ajuda sorteada na tarefa");
+    }
+    bool rejected = false;
+    try {
+        (void)loadLocomotionTask3D(editedTask("matter_diag_bad.json",
+            { { "\"episodeSeconds\": 20.0,", "\"episodeSeconds\": 20.0, \"speedCurriculum\": { \"caps\": { \"estrela\": [1, 2] } }," } })
+                .string());
+    } catch (const std::runtime_error&) {
+        rejected = true;
+    }
+    expect(rejected, "um exercicio com menos de 16 tetos e recusado");
+
+    // O curriculo corta o pedido no treino e nao na avaliacao.
+    LocomotionTrainingSettings3D settings;
+    settings.assetsDirectory = Assets;
+    settings.environments = 8;
+    settings.threads = 2;
+    settings.seed = 13;
+    settings.drill = "estrela_trote";
+    settings.taskPath = editedTask("matter_diag_cap.json", { { "\"episodeSeconds\": 20.0,", "\"episodeSeconds\": 2.0, " + curriculum } });
+    const auto askedPerDecision = [&](LocomotionTraining3D& batch) {
+        const std::vector<float> zero(batch.environmentCount() * batch.actionSize(), 0.0f);
+        double asked = 0.0, decisions = 0.0;
+        for (int step = 0; step < 61; ++step) {
+            batch.step(zero);
+            for (const LocomotionEpisode3D& e : batch.finishedEpisodes())
+                for (std::size_t k = 0; k < LocomotionCommandCells3D; ++k) {
+                    asked += e.cellAsked[k];
+                    decisions += e.cellDecisions[k];
+                }
+        }
+        return decisions > 0.0 ? asked / decisions : -1.0;
+    };
+    {
+        LocomotionTraining3D batch(settings);
+        batch.setAuthority(1.0f, 1.0f, 1.0f, 1.0f);
+        const double asked = askedPerDecision(batch);
+        expect(asked > 0.3 && asked <= 0.5001, "no treino o pedido fica no teto de 0,5 m/s da celula");
+    }
+    {
+        LocomotionTrainingSettings3D evaluation = settings;
+        evaluation.evaluation = true;
+        evaluation.evaluationSeconds = 2.0f;
+        LocomotionTraining3D batch(evaluation);
+        batch.setAuthority(1.0f, 1.0f, 1.0f, 1.0f);
+        expect(askedPerDecision(batch) > 0.6, "na avaliacao a faixa inteira (sem o teto)");
+    }
+
+    // Os comecos guardados e a ajuda sorteada.
+    {
+        LocomotionTrainingSettings3D saved = settings;
+        saved.drill = "estrela";
+        saved.environments = 12;
+        saved.taskPath = editedTask("matter_diag_saved.json",
+            { { "\"episodeSeconds\": 20.0,", "\"episodeSeconds\": 1.5, \"savedStarts\": { \"capacity\": 4, \"surviveSeconds\": 0.2, \"minimumSpeed\": 0.3 },"
+                  " \"assistSchedule\": { \"enabled\": true, \"zeroFraction\": 0.5, \"minimum\": 5, \"maximum\": 30 }," },
+              { "\"id\": \"estrela\",", "\"id\": \"estrela\", \"savedStartFraction\": 1.0," } });
+        LocomotionTraining3D batch(saved);
+        batch.setAuthority(1.0f, 1.0f, 1.0f, 1.0f);
+        const std::vector<float> zero(batch.environmentCount() * batch.actionSize(), 0.0f);
+        std::size_t fromSaved = 0, zeroAid = 0, someAid = 0, episodes = 0;
+        bool finite = true, levelsOk = true;
+        for (int step = 0; step < 240; ++step) {
+            batch.step(zero);
+            for (float v : batch.observations()) finite &= std::isfinite(v);
+            for (const LocomotionEpisode3D& e : batch.finishedEpisodes()) {
+                ++episodes;
+                fromSaved += e.savedStart > 0.5f ? 1 : 0;
+                if (e.assistLevel == 0.0f) ++zeroAid;
+                else if (e.assistLevel >= 5.0f && e.assistLevel <= 30.0f) ++someAid;
+                else levelsOk = false;
+            }
+        }
+        expect(finite, "os comecos guardados: a entrada segue finita");
+        const LocomotionTask3D& task = batch.task();
+        std::size_t star = 0, trot = 0;
+        for (std::size_t d = 0; d < task.drills.size(); ++d) {
+            if (task.drills[d].id == "estrela") star = d;
+            if (task.drills[d].id == "estrela_trote") trot = d;
+        }
+        expect(batch.savedStartCount(star) > 0 && batch.savedStartCount(star) <= 4 && batch.savedStartCount(trot) == 0,
+            "o banco junta instantes do exercicio que pede (no teto da capacidade) e so dele");
+        expect(fromSaved > 0, "episodios comecam de instantes guardados");
+        expect(levelsOk && zeroAid > 0 && someAid > 0, "a ajuda sorteada: parte a 0%, parte entre 5 e 30%");
+        expect(episodes > 20, "episodios bastantes no teste");
+    }
+}
+
 } // namespace
 
 int main() {
@@ -238,6 +395,7 @@ int main() {
         taskTests();
         batchTests();
         turnMoveTests();
+        diagnosisTests();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "treino da locomocao: FALHOU: %s (%d checagens antes)\n", error.what(), checks);
         return 1;

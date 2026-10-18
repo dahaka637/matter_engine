@@ -72,8 +72,23 @@ struct LocomotionPostureInput3D {
     // O angulo entre o eixo de cima da cabeca e o do peito (rad): o pescoco
     // torto. So passa de uma folga grande custa (a cabeca livre olha em volta).
     float neckBend = 0.0f;
+    // A folga do pescoco (rad) e o modo relativo: o eixo de cima da cabeca no
+    // referencial do peito, no corpo e na pose da sombra; o custo e o angulo
+    // entre os dois alem da folga (a cabeca igual a da referencia, nao reta
+    // contra o peito). Sem a referencia valida, o modo de sempre.
+    float neckSlack = 10.0f * (3.14159265359f / 180.0f);
+    bool neckRelative = false;
+    Vec3 headUpInChest { 0.0f, 0.0f, 1.0f };
+    bool referenceValid = false;
+    Vec3 referenceHeadUpInChest { 0.0f, 0.0f, 1.0f };
 };
-// O angulo fora do envelope (rad, >= 0).
+// As duas partes do excesso (rad, >= 0): o tronco (o envelope) e o pescoco.
+struct LocomotionPostureParts3D {
+    float trunk = 0.0f;
+    float neck = 0.0f;
+};
+[[nodiscard]] LocomotionPostureParts3D locomotionPostureParts3D(const LocomotionPostureInput3D& input);
+// O angulo fora do envelope (rad, >= 0): o tronco mais o pescoco.
 [[nodiscard]] float locomotionPostureExcess3D(const LocomotionPostureInput3D& input);
 
 } // namespace MatterEngine

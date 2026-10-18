@@ -98,6 +98,13 @@ const std::vector<std::string>& locomotionEpisodeColumns3D() {
             "postura", "residuo", "trancos", "pedido_medio", "velocidade_media", "distancia", "alvos_por_minuto",
             "deriva_espera", "afastamento_curva", "erro_vel_janela", "erro_vel_cruzeiro", "tremor" };
         for (const char* term : LocomotionRewardTermNames3D) c.push_back(std::string("nota_") + term);
+        for (const char* name : { "postura_tronco", "postura_pescoco", "pescoco_corpo", "pescoco_sombra",
+                 "pescoco_relativo", "viavel_medio", "trancos_teto", "queda_desde_troca", "comeco_guardado",
+                 "ajuda_nivel", "celula_queda" })
+            c.push_back(name);
+        for (const char* field : { "decisoes", "cruzeiro", "rastreio", "erro2", "pedida", "feita" })
+            for (std::size_t k = 0; k < LocomotionCommandCells3D; ++k)
+                c.push_back("cel" + std::string(k < 10 ? "0" : "") + std::to_string(k) + "." + field);
         return c;
     }();
     return columns;
@@ -110,6 +117,11 @@ std::vector<float> locomotionEpisodeRow3D(const LocomotionEpisode3D& e) {
         e.assist, e.posture, e.residual, e.jerk, e.meanRequested, e.meanSpeed, e.distance, e.targetsPerMinute,
         e.holdDrift, e.arcError, e.velocityErrorWindow, e.velocityErrorCruise, e.tremor };
     row.insert(row.end(), e.terms.begin(), e.terms.end());
+    for (float v : { e.postureTrunk, e.postureNeck, e.neckBody, e.neckShadow, e.neckRelative, e.meanFeasible, e.jerkCap,
+             e.fallSinceChange, e.savedStart, e.assistLevel, e.fallCell })
+        row.push_back(v);
+    for (const auto* cells : { &e.cellDecisions, &e.cellCruise, &e.cellTracking, &e.cellError2, &e.cellAsked, &e.cellMade })
+        row.insert(row.end(), cells->begin(), cells->end());
     return row;
 }
 
@@ -132,6 +144,18 @@ struct LocomotionTraining3D::Impl {
     // O teto de cada canal com a autoridade inteira (o maior dos dois lados):
     // o residuo da rede e medido contra ele.
     std::vector<float> capMax;
+    // O teto de cada canal sobre a escala maxima do contrato (a unidade da
+    // rede: os trancos na unidade do teto).
+    std::vector<float> capFraction;
+    std::vector<float> boundLower, boundUpper;
+    // Os comecos em estados guardados: o banco por exercicio (o instante e a
+    // camera dele) e o sorteio da troca quando o banco esta cheio.
+    struct SavedStart {
+        AthleteSnapshot3D snapshot;
+        float camera = 0.0f;
+    };
+    std::vector<std::vector<SavedStart>> savedBank;
+    std::mt19937_64 bankRng;
     // Os links e os canais da entrada que a nota le.
     int chest = -1;
     int head = -1;
@@ -186,6 +210,25 @@ struct LocomotionTraining3D::Impl {
         std::array<double, LocomotionRewardTermCount3D> terms {};
         bool hasEpisode = false;
         LocomotionEpisode3D episode;
+        // O diagnostico de 18/10 (so medida).
+        std::vector<float> lastActionCap;
+        double postureTrunk = 0.0, postureNeck = 0.0, neckBody = 0.0, neckShadow = 0.0, neckRelative = 0.0;
+        int neckShadowSamples = 0;
+        double feasibleSpeed = 0.0, jerkCap = 0.0;
+        bool referenceNeckValid = false;
+        Vec3 referenceHeadUpInChest { 0.0f, 0.0f, 1.0f };
+        int currentCell = -1;
+        std::array<double, LocomotionCommandCells3D> cellDecisions {}, cellCruise {}, cellTracking {}, cellError2 {},
+            cellAsked {}, cellMade {};
+        bool savedStart = false;
+        float assistLevel = 0.0f;
+        // O instante candidato a comeco guardado (vira do banco se o corpo
+        // sobreviver surviveSeconds) e o aceito nesta decisao (o lote junta).
+        bool hasPending = false;
+        SavedStart pending;
+        float pendingAge = 0.0f;
+        bool hasAccepted = false;
+        SavedStart accepted;
     };
     std::vector<World> worlds;
     std::vector<std::uint32_t> worldDrills;
@@ -210,6 +253,21 @@ struct LocomotionTraining3D::Impl {
         capMax.assign(actionSize, 0.0f);
         for (std::size_t i = 0; i < actionSize; ++i) capMax[i] = std::max(std::abs(up[i]), std::abs(down[i]));
         authority.caps = task.caps;
+        const LocomotionAuthority3D widest = LocomotionAuthority3D::uniform(1.0f, LocomotionCaps3D::full());
+        const std::vector<float> mostUp = contract->physical(std::vector<float>(actionSize, 1.0f), widest);
+        const std::vector<float> mostDown = contract->physical(std::vector<float>(actionSize, -1.0f), widest);
+        capFraction.assign(actionSize, 0.0f);
+        boundLower.assign(actionSize, 0.0f);
+        boundUpper.assign(actionSize, 0.0f);
+        for (std::size_t i = 0; i < actionSize; ++i) {
+            const float most = std::max(std::abs(mostUp[i]), std::abs(mostDown[i]));
+            capFraction[i] = most > 0.0f ? capMax[i] / most : 0.0f;
+            if (!(capFraction[i] > 0.0f)) continue;
+            // (O lado satura onde a acao do contrato chega ao teto dele: v = teto/escala.)
+            boundUpper[i] = std::abs(mostUp[i]) > 0.0f ? std::abs(up[i]) / std::abs(mostUp[i]) / capFraction[i] : 0.0f;
+            boundLower[i] = std::abs(mostDown[i]) > 0.0f ? -std::abs(down[i]) / std::abs(mostDown[i]) / capFraction[i] : 0.0f;
+        }
+        savedBank.resize(task.drills.size());
     }
 
     std::uint32_t pickDrill(World& world) {
@@ -268,7 +326,14 @@ struct LocomotionTraining3D::Impl {
                                        .intent.requestedVelocityWorld;
                 return std::hypot(table.x, table.y);
             };
-            const float wanted = std::max(0.0f, input.speed) * std::min(1.0f, magnitude);
+            float wanted = std::max(0.0f, input.speed) * std::min(1.0f, magnitude);
+            // O curriculo de velocidade (so no treino): o teto da celula do pedido.
+            if (task.speedCurriculum.enabled && !settings.evaluation && world.drill < task.speedCurriculum.caps.size()) {
+                const std::size_t cell = locomotionCommandCell3D(std::atan2(input.stickLeft, input.stickForward),
+                    world.pilot.cameraMode != PilotCameraMode3D::Fixed);
+                const float cap = task.speedCurriculum.caps[world.drill][cell];
+                if (cap > 0.0f) wanted = std::min(wanted, cap);
+            }
             float table = tableSpeed();
             // Acima do trote da tabela, o sprint (o jogador segurando a tecla).
             if (wanted > table + 1.0e-3f) {
@@ -285,8 +350,21 @@ struct LocomotionTraining3D::Impl {
         LocomotionWorld3D& scene = batch->world(index);
         world.drill = pickDrill(world);
         worldDrills[index] = world.drill;
-        scene.reset(AthleteStartMode3D::Physical);
-        LocomotionContract3D::clear(scene.athlete());
+        // O comeco em movimento (so no treino, com o exercicio pedindo e o banco
+        // com instantes; desligado, nem o sorteio acontece: o mundo de antes, bit a bit).
+        const SavedStart* saved = nullptr;
+        if (!settings.evaluation && task.drills[world.drill].savedStartFraction > 0.0f
+            && world.drill < savedBank.size() && !savedBank[world.drill].empty()
+            && std::uniform_real_distribution<float>(0.0f, 1.0f)(world.rng) < task.drills[world.drill].savedStartFraction) {
+            const std::vector<SavedStart>& bank = savedBank[world.drill];
+            saved = &bank[std::uniform_int_distribution<std::size_t>(0, bank.size() - 1)(world.rng)];
+        }
+        if (saved != nullptr) {
+            scene.restore(saved->snapshot);
+        } else {
+            scene.reset(AthleteStartMode3D::Physical);
+            LocomotionContract3D::clear(scene.athlete());
+        }
         // A virada brusca do episodio (so com a tarefa ligada: desligada, nem
         // o sorteio acontece e o mundo e o de antes, bit a bit).
         if (task.turnMove.enabled) {
@@ -300,22 +378,40 @@ struct LocomotionTraining3D::Impl {
             // volta ao classico no recomeco.)
             scene.runtimeSettings().dynamicTurnMove = false;
         }
+        // A ajuda sorteada por episodio (so no treino; o levantar fica no da tarefa).
+        world.assistLevel = task.standingAssistPercent;
+        if (task.assistSchedule.enabled && !settings.evaluation) {
+            const LocomotionAssistSchedule3D& schedule = task.assistSchedule;
+            const bool zero = std::uniform_real_distribution<float>(0.0f, 1.0f)(world.rng) < schedule.zeroFraction;
+            const float level = zero ? 0.0f
+                : std::uniform_real_distribution<float>(schedule.minimumPercent, schedule.maximumPercent)(world.rng);
+            AthleteRuntimeSettings3D& runtime = scene.runtimeSettings();
+            runtime.e5StandingAssistPercent = level;
+            runtime.e5WalkingAssistPercent = level;
+            runtime.physicalFeetAssistPercent = level;
+            world.assistLevel = level;
+        }
         const RagdollState3D& body = scene.body();
         const Vec3 pelvis = body.links.empty() ? Vec3 {} : body.links.front().position;
         world.start = planar(pelvis);
         // (O corpo nasce olhando para +x; a camera perto disso. Na avaliacao
         // tambem, pelo sorteio do mundo - reproduzivel pela semente: com a
-        // camera exata em 0, os mundos parados eram copias bit a bit de um so.)
-        const float camera = std::uniform_real_distribution<float>(-0.25f, 0.25f)(world.rng);
+        // camera exata em 0, os mundos parados eram copias bit a bit de um so.
+        // No comeco guardado, a camera do instante.)
+        const float camera = saved != nullptr ? saved->camera
+                                              : std::uniform_real_distribution<float>(-0.25f, 0.25f)(world.rng);
         world.pilot = {};
         CommandPilot3D::start(task.drills[world.drill].pilot, world.pilot, world.start, camera, world.rng);
+        const Vec3 startVelocity = saved != nullptr ? planar(centerOfMassVelocity(body)) : Vec3 {};
+        if (saved != nullptr) CommandPilot3D::follow(task.drills[world.drill].pilot, world.pilot, startVelocity, world.rng);
         world.command = {};
         world.command.facingYawRadians = camera;
         world.command.intent.requestedFacingYawRadians = camera;
         world.command.lookPitchRadians = -0.2f;
-        world.feasible = {};
-        world.comVelocity = {};
-        world.comValid = false;
+        // (No comeco guardado, a viavel e a velocidade de agora: o corpo ja anda.)
+        world.feasible = startVelocity;
+        world.comVelocity = startVelocity;
+        world.comValid = saved != nullptr;
         world.comSmooth = world.feasibleSmooth = {};
         world.windowError2 = world.cruiseError2 = 0.0;
         world.windowTicks = world.cruiseTicks = 0;
@@ -337,7 +433,22 @@ struct LocomotionTraining3D::Impl {
         world.lastChestOmegaValid = false;
         world.requested = world.speed = 0.0;
         world.terms = {};
-        for (std::size_t side = 0; side < 2; ++side) world.contactTicks[side] = touching(body, side) ? SlipAfterTicks : 0;
+        world.lastActionCap.assign(actionSize, 0.0f);
+        world.postureTrunk = world.postureNeck = world.neckBody = world.neckShadow = world.neckRelative = 0.0;
+        world.neckShadowSamples = 0;
+        world.feasibleSpeed = world.jerkCap = 0.0;
+        world.referenceNeckValid = false;
+        world.currentCell = -1;
+        world.cellDecisions = world.cellCruise = world.cellTracking = world.cellError2 = world.cellAsked = world.cellMade = {};
+        world.savedStart = saved != nullptr;
+        world.hasPending = false;
+        world.pendingAge = 0.0f;
+        for (std::size_t side = 0; side < 2; ++side) {
+            const bool down = touching(body, side);
+            world.contactTicks[side] = down ? SlipAfterTicks : 0;
+            // (No comeco guardado, o pe no ar ja conta o proximo pouso.)
+            if (saved != nullptr && !down) world.airSeconds[side] = TouchdownAirSeconds;
+        }
     }
 
     // A entrada e o critico de um mundo agora; volta quantos numeros nao
@@ -350,6 +461,8 @@ struct LocomotionTraining3D::Impl {
         const AthleteControlView3D view = athleteControlView3D(athlete);
         const LocomotionObservation3D written =
             contract->observe(body, world.command, view, athlete.policyHistory, world.forecast, obs);
+        world.referenceNeckValid = written.referenceNeckValid;
+        world.referenceHeadUpInChest = written.referenceHeadUpInChest;
         std::copy(obs.begin(), obs.end(), criticRow.begin());
         std::size_t c = observationSize;
         for (std::size_t d = 0; d < drillCount; ++d) criticRow[c++] = d == world.drill ? 1.0f : 0.0f;
@@ -385,13 +498,19 @@ struct LocomotionTraining3D::Impl {
         terminated[index] = truncated[index] = 0;
 
         LocomotionStepMeasure3D measure;
-        double jerk = 0.0;
+        double jerk = 0.0, jerkCap = 0.0;
         for (std::size_t i = 0; i < actionSize; ++i) {
             const float a = std::isfinite(action[i]) ? std::clamp(action[i], -1.0f, 1.0f) : 0.0f;
             jerk += (a - world.lastAction[i]) * (a - world.lastAction[i]);
             world.lastAction[i] = a;
+            // Na unidade do teto (a saida da rede, +-1 = o teto do canal).
+            const float u = capFraction[i] > 0.0f ? std::clamp(a / capFraction[i], -1.0f, 1.0f) : 0.0f;
+            jerkCap += (u - world.lastActionCap[i]) * (u - world.lastActionCap[i]);
+            world.lastActionCap[i] = u;
         }
-        measure.jerk = static_cast<float>(jerk / std::max<std::size_t>(1, actionSize));
+        const double channels = static_cast<double>(std::max<std::size_t>(1, actionSize));
+        measure.jerk = static_cast<float>((task.reward.smoothCapUnits ? jerkCap : jerk) / channels);
+        world.jerkCap += jerkCap / channels;
         contract->decide(athlete, action);
         world.command = pilotCommand(index, world, decisionSeconds);
         const AthleteControlView3D before = athleteControlView3D(athlete);
@@ -399,6 +518,8 @@ struct LocomotionTraining3D::Impl {
         const float deceleration = std::max(0.5f, before.navigation.deceleration);
 
         double velocityError2 = 0.0, facingError2 = 0.0, slip = 0.0, power = 0.0, posture = 0.0, assist = 0.0;
+        double postureTrunk = 0.0, postureNeck = 0.0, neckBody = 0.0, neckRelative = 0.0;
+        const float neckSlack = task.reward.neckSlackDegrees * (Pi / 180.0f);
         double shake = 0.0;
         const float weight = Gravity * std::max(1.0f, bundle->profile().totalMassKg);
         int slipSamples = 0, ticks = 0;
@@ -478,12 +599,23 @@ struct LocomotionTraining3D::Impl {
                 commanded = size < 0.3f ? Vec3 {} : commanded * (std::min(size, 8.0f) * 0.5f / size);
                 input.commandAcceleration = frame.in(commanded);
                 input.speed = std::hypot(com.x, com.y);
+                input.neckSlack = neckSlack;
+                input.neckRelative = task.reward.neckRelative;
                 if (head >= 0 && static_cast<std::size_t>(head) < body.links.size()) {
                     const Quaternion h = (body.links[static_cast<std::size_t>(head)].orientation
                         * profile.links[static_cast<std::size_t>(head)].modelOrientation.conjugate()).normalized();
                     input.neckBend = std::acos(std::clamp(dot(r.rotate({ 0.0f, 0.0f, 1.0f }), h.rotate({ 0.0f, 0.0f, 1.0f })), -1.0f, 1.0f));
+                    input.headUpInChest = r.conjugate().rotate(h.rotate({ 0.0f, 0.0f, 1.0f }));
+                    input.referenceValid = world.referenceNeckValid;
+                    input.referenceHeadUpInChest = world.referenceHeadUpInChest;
+                    if (world.referenceNeckValid)
+                        neckRelative += std::acos(std::clamp(dot(input.headUpInChest, world.referenceHeadUpInChest), -1.0f, 1.0f));
                 }
-                posture += locomotionPostureExcess3D(input);
+                const LocomotionPostureParts3D parts = locomotionPostureParts3D(input);
+                posture += parts.trunk + parts.neck;
+                postureTrunk += parts.trunk;
+                postureNeck += parts.neck;
+                neckBody += input.neckBend;
             }
             for (std::size_t side = 0; side < 2; ++side) {
                 if (feet[side] < 0 || static_cast<std::size_t>(feet[side]) >= body.links.size()) continue;
@@ -517,7 +649,12 @@ struct LocomotionTraining3D::Impl {
                     watts += std::abs(joint.motorTorqueNewtonMeters[axis] * joint.velocityRadiansPerSecond[axis]);
             power += watts / mass;
             // A ajuda auxiliar neste tick (todas as forcas de fora da regua, fracao do peso).
-            assist += athlete.externalAssist.sliderNewtons() / weight;
+            if (task.reward.assistIncludesTorque) {
+                const AthleteExternalAssist3D& help = athlete.externalAssist;
+                assist += (help.sliderNewtons() + std::abs(help.netTorque) + std::abs(help.postureCoupleTorque)) / weight;
+            } else {
+                assist += athlete.externalAssist.sliderNewtons() / weight;
+            }
             if (body.links.front().position.z - athlete.groundHeight < task.fallPelvisHeight) {
                 fell = true;
                 break;
@@ -532,6 +669,38 @@ struct LocomotionTraining3D::Impl {
         measure.posture = static_cast<float>(posture / tickCount);
         measure.assist = static_cast<float>(assist / tickCount);
         measure.fell = fell;
+        world.postureTrunk += postureTrunk / tickCount;
+        world.postureNeck += postureNeck / tickCount;
+        world.neckBody += neckBody / tickCount;
+        if (world.referenceNeckValid) {
+            world.neckShadow += std::acos(std::clamp(world.referenceHeadUpInChest.z, -1.0f, 1.0f));
+            world.neckRelative += neckRelative / tickCount;
+            ++world.neckShadowSamples;
+        }
+        world.feasibleSpeed += std::hypot(world.feasible.x, world.feasible.y);
+        // A celula de comando desta decisao (o rumo do pedido em relacao a camera e
+        // o modo dela) e o rastreio nela (o nucleo de velocidade sem peso, no cruzeiro).
+        {
+            const float askedSpeed = std::hypot(asked.x, asked.y);
+            if (askedSpeed > 0.3f) {
+                const std::size_t cell = locomotionCommandCell3D(
+                    std::atan2(asked.y, asked.x) - world.command.facingYawRadians,
+                    world.pilot.cameraMode != PilotCameraMode3D::Fixed);
+                world.currentCell = static_cast<int>(cell);
+                world.cellDecisions[cell] += 1.0;
+                world.cellAsked[cell] += askedSpeed;
+                world.cellMade[cell] += std::hypot(world.comVelocity.x, world.comVelocity.y);
+                const Vec3 gap = asked - world.feasible;
+                if (std::hypot(gap.x, gap.y) < 0.05f) {
+                    const float e = measure.velocityError;
+                    world.cellCruise[cell] += 1.0;
+                    world.cellTracking[cell] += std::exp(-(e * e) / (task.reward.velocitySigma * task.reward.velocitySigma));
+                    world.cellError2[cell] += static_cast<double>(e) * e;
+                }
+            } else {
+                world.currentCell = -1;
+            }
+        }
         {
             // A quietude pedida: o pedido ~0 (0,1 a 0,4 m/s a liga e desliga) e sem
             // frear (o pedido perto do viavel: frear nao e tremer).
@@ -611,6 +780,31 @@ struct LocomotionTraining3D::Impl {
         world.speed += std::hypot(world.comVelocity.x, world.comVelocity.y);
         for (std::size_t t = 0; t < values.size(); ++t) world.terms[t] += values[t];
 
+        // Os comecos guardados: o candidato vira do banco depois de sobreviver
+        // surviveSeconds; um candidato novo so no cruzeiro, rapido e longe do limite.
+        if (!settings.evaluation && task.drills[world.drill].savedStartFraction > 0.0f && !fell && !numeric) {
+            if (world.hasPending) {
+                world.pendingAge += decisionSeconds;
+                if (world.pendingAge >= task.savedStarts.surviveSeconds) {
+                    world.accepted = std::move(world.pending);
+                    world.hasAccepted = true;
+                    world.hasPending = false;
+                }
+            } else {
+                const RagdollState3D& now = scene.body();
+                const Vec3 gap = asked - world.feasible;
+                const Vec3 at = now.links.empty() ? Vec3 {} : planar(now.links.front().position);
+                if (std::hypot(asked.x, asked.y) >= task.savedStarts.minimumSpeed && std::hypot(gap.x, gap.y) < 0.05f
+                    && std::hypot(at.x, at.y) < 0.5f * task.boundaryMeters
+                    && std::uniform_real_distribution<float>(0.0f, 1.0f)(world.rng) < 0.05f) {
+                    world.pending.snapshot = scene.snapshot();
+                    world.pending.camera = world.command.facingYawRadians;
+                    world.hasPending = true;
+                    world.pendingAge = 0.0f;
+                }
+            }
+        }
+
         LocomotionEnd3D end = LocomotionEnd3D::None;
         const RagdollState3D& body = scene.body();
         const Vec3 pelvis = body.links.empty() ? Vec3 {} : body.links.front().position;
@@ -667,6 +861,27 @@ struct LocomotionTraining3D::Impl {
         e.arcError = world.pilot.arcDecisions > 0 ? world.pilot.arcErrorSum / static_cast<float>(world.pilot.arcDecisions)
                                                   : -1.0f;
         for (std::size_t t = 0; t < world.terms.size(); ++t) e.terms[t] = static_cast<float>(world.terms[t]);
+        e.postureTrunk = static_cast<float>(world.postureTrunk / steps);
+        e.postureNeck = static_cast<float>(world.postureNeck / steps);
+        e.neckBody = static_cast<float>(world.neckBody / steps);
+        e.neckShadow = world.neckShadowSamples > 0 ? static_cast<float>(world.neckShadow / world.neckShadowSamples) : -1.0f;
+        e.neckRelative = world.neckShadowSamples > 0 ? static_cast<float>(world.neckRelative / world.neckShadowSamples) : -1.0f;
+        e.meanFeasible = static_cast<float>(world.feasibleSpeed / steps);
+        e.jerkCap = static_cast<float>(world.jerkCap / steps);
+        e.fallSinceChange = reason == LocomotionEnd3D::Fall ? world.pilot.clock - world.pilot.lastChange : -1.0f;
+        e.savedStart = world.savedStart ? 1.0f : 0.0f;
+        e.assistLevel = world.assistLevel;
+        e.fallCell = reason == LocomotionEnd3D::Fall && world.currentCell >= 0 ? static_cast<float>(world.currentCell) : -1.0f;
+        for (std::size_t k = 0; k < LocomotionCommandCells3D; ++k) {
+            e.cellDecisions[k] = static_cast<float>(world.cellDecisions[k]);
+            e.cellCruise[k] = static_cast<float>(world.cellCruise[k]);
+            e.cellTracking[k] = static_cast<float>(world.cellTracking[k]);
+            e.cellError2[k] = static_cast<float>(world.cellError2[k]);
+            e.cellAsked[k] = static_cast<float>(world.cellAsked[k]);
+            e.cellMade[k] = static_cast<float>(world.cellMade[k]);
+        }
+        // (Um candidato a comeco guardado nao sobrevive ao fim do episodio.)
+        world.hasPending = false;
         world.hasEpisode = true;
     }
 };
@@ -793,6 +1008,10 @@ std::vector<float> LocomotionTraining3D::actionCapFractions() const {
     return fractions;
 }
 
+LocomotionTraining3D::ActionBounds LocomotionTraining3D::actionBounds() const {
+    return { m_impl->boundLower, m_impl->boundUpper };
+}
+
 void LocomotionTraining3D::updateTask(LocomotionTask3D task) {
     Impl& impl = *m_impl;
     if (task.drills.size() != impl.task.drills.size())
@@ -821,6 +1040,10 @@ void LocomotionTraining3D::setAuthority(float footwork, float balance, float pos
 
 void LocomotionTraining3D::setTurnMoveMode(int mode) { m_impl->turnMoveMode = std::clamp(mode, 0, 2); }
 
+std::size_t LocomotionTraining3D::savedStartCount(std::size_t drill) const {
+    return drill < m_impl->savedBank.size() ? m_impl->savedBank[drill].size() : 0;
+}
+
 bool LocomotionTraining3D::turnMoveActive(std::size_t world) const {
     return world < m_impl->worlds.size() && m_impl->batch->world(world).runtimeSettings().dynamicTurnMove;
 }
@@ -833,6 +1056,7 @@ void LocomotionTraining3D::setDrillWeights(std::span<const float> weights) {
 
 void LocomotionTraining3D::reset(std::uint64_t seed) {
     Impl& impl = *m_impl;
+    impl.bankRng.seed(seed * 0xD1B54A32D192ED03ull + 7);
     for (std::size_t i = 0; i < impl.worlds.size(); ++i) {
         impl.worlds[i].rng.seed(seed * 0x9E3779B97F4A7C15ull + i * 0xBF58476D1CE4E5B9ull + 1);
         impl.batch->clearFailure(i);
@@ -876,6 +1100,18 @@ void LocomotionTraining3D::step(std::span<const float> actions) {
             impl.finished.push_back(world.episode);
             world.hasEpisode = false;
         }
+    // Os comecos guardados aceitos nesta decisao, na ordem dos mundos (o banco
+    // cheio troca um ao acaso, pelo sorteio do lote: reproduzivel).
+    for (std::size_t i = 0; i < impl.worlds.size(); ++i) {
+        Impl::World& world = impl.worlds[i];
+        if (!world.hasAccepted) continue;
+        world.hasAccepted = false;
+        const std::size_t drill = impl.worldDrills[i];
+        if (drill >= impl.savedBank.size()) continue;
+        std::vector<Impl::SavedStart>& bank = impl.savedBank[drill];
+        if (bank.size() < impl.task.savedStarts.capacity) bank.push_back(std::move(world.accepted));
+        else bank[std::uniform_int_distribution<std::size_t>(0, bank.size() - 1)(impl.bankRng)] = std::move(world.accepted);
+    }
     impl.lastStepMilliseconds = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - begin).count();
 }
 

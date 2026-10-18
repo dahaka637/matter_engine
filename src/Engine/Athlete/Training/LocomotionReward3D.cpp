@@ -22,8 +22,16 @@ std::array<float, LocomotionRewardTermCount3D> locomotionRewardTerms3D(const Loc
     const auto set = [&](LocomotionRewardTerm3D term, float value) {
         terms[static_cast<std::size_t>(term)] = finiteOr(value);
     };
-    set(LocomotionRewardTerm3D::Velocity, w.velocity * kernel(m.velocityError, w.velocitySigma) * dt);
-    set(LocomotionRewardTerm3D::Facing, w.facing * kernel(m.facingError, w.facingSigma) * dt);
+    // (Com a cauda em 0, a expressao de sempre, bit a bit.)
+    const auto tracked = [](float error, float sigma, float tail, float tailSigma) {
+        const float core = kernel(error, sigma);
+        if (!(tail > 0.0f)) return core;
+        return (1.0f - tail) * core + tail * std::exp(-std::abs(error) / tailSigma);
+    };
+    set(LocomotionRewardTerm3D::Velocity,
+        w.velocity * tracked(m.velocityError, w.velocitySigma, w.velocityTail, w.velocityTailSigma) * dt);
+    set(LocomotionRewardTerm3D::Facing,
+        w.facing * tracked(m.facingError, w.facingSigma, w.facingTail, w.facingTailSigma) * dt);
     set(LocomotionRewardTerm3D::Style, m.styleValid ? w.style * kernel(m.styleError, w.styleSigma) * dt : 0.0f);
     // (Por pouso, nao por segundo.)
     set(LocomotionRewardTerm3D::Contact, w.contact * m.contactScore);
@@ -45,8 +53,17 @@ float locomotionReward3D(const std::array<float, LocomotionRewardTermCount3D>& t
 }
 
 float locomotionPostureExcess3D(const LocomotionPostureInput3D& input) {
+    const LocomotionPostureParts3D parts = locomotionPostureParts3D(input);
+    return parts.trunk + parts.neck;
+}
+
+LocomotionPostureParts3D locomotionPostureParts3D(const LocomotionPostureInput3D& input) {
+    LocomotionPostureParts3D parts;
     const Vec3 up = input.chestUp;
-    if (!(up.z > 0.05f)) return 1.0f;
+    if (!(up.z > 0.05f)) {
+        parts.trunk = 1.0f;
+        return parts;
+    }
     // A inclinacao para a frente e para o lado (rad; + frente, + esquerda).
     const float forward = std::atan2(up.x, up.z);
     const float side = std::atan2(up.y, up.z);
@@ -66,10 +83,17 @@ float locomotionPostureExcess3D(const LocomotionPostureInput3D& input) {
     const float ceiling = (15.0f + 1.5f * input.speed) * Degrees + open(ahead, 25.0f);
     const float sideLeft = 5.0f * Degrees + open(left, 25.0f);
     const float sideRight = 5.0f * Degrees + open(right, 25.0f);
-    // A cabeca torta no parado (18/10): a folga de 10 graus e do pescoco vivo.
-    const float neck = std::max(0.0f, input.neckBend - 10.0f * Degrees);
-    return std::max(0.0f, forward - ceiling) + std::max(0.0f, floor - forward) + std::max(0.0f, side - sideLeft)
-        + std::max(0.0f, -side - sideRight) + neck;
+    parts.trunk = std::max(0.0f, forward - ceiling) + std::max(0.0f, floor - forward) + std::max(0.0f, side - sideLeft)
+        + std::max(0.0f, -side - sideRight);
+    // A cabeca torta (18/10): contra o peito (a folga e do pescoco vivo) ou,
+    // no modo relativo, contra a cabeca da pose da sombra.
+    if (input.neckRelative && input.referenceValid) {
+        const float cosine = std::clamp(dot(input.headUpInChest, input.referenceHeadUpInChest), -1.0f, 1.0f);
+        parts.neck = std::max(0.0f, std::acos(cosine) - input.neckSlack);
+    } else {
+        parts.neck = std::max(0.0f, input.neckBend - input.neckSlack);
+    }
+    return parts;
 }
 
 } // namespace MatterEngine

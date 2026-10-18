@@ -279,6 +279,8 @@ LocomotionObservation3D LocomotionContract3D::observe(const RagdollState3D& body
     std::span<float> out) const {
     const RagdollProfile3D& profile = *m_profile;
     Writer w(out);
+    bool referenceNeckValid = false;
+    Vec3 referenceHeadUpInChest { 0.0f, 0.0f, 1.0f };
     if (body.links.size() != profile.links.size() || body.links.empty()) {
         std::fill(out.begin(), out.end(), 0.0f);
         return {};
@@ -358,6 +360,18 @@ LocomotionObservation3D LocomotionContract3D::observe(const RagdollState3D& body
         }
         const RagdollAnimationPose3D* style = frame.pose;
         const Heading styleHeading = headingOf(frame.facingYaw);
+        {
+            // O pescoco da referencia (so medida): a cabeca no referencial do peito.
+            const int chest = m_keyParts[4], head = m_keyParts[5];
+            if (style != nullptr && chest >= 0 && head >= 0
+                && static_cast<std::size_t>(std::max(chest, head)) < style->linkOrientations.size()) {
+                const std::size_t c = static_cast<std::size_t>(chest), k = static_cast<std::size_t>(head);
+                const Quaternion chestBone = (style->linkOrientations[c] * profile.links[c].modelOrientation.conjugate()).normalized();
+                const Quaternion headBone = (style->linkOrientations[k] * profile.links[k].modelOrientation.conjugate()).normalized();
+                referenceNeckValid = true;
+                referenceHeadUpInChest = chestBone.conjugate().rotate(headBone.rotate({ 0.0f, 0.0f, 1.0f }));
+            }
+        }
         for (int part : m_keyParts) {
             if (style == nullptr || part < 0 || static_cast<std::size_t>(part) >= style->linkPositions.size()) {
                 w.put(Vec3 {});
@@ -465,7 +479,12 @@ LocomotionObservation3D LocomotionContract3D::observe(const RagdollState3D& body
     for (std::size_t i = 0; i < historySize; ++i) w.put(i < history.size() ? history[i] : 0.0f);
     // (Se faltou canal, o resto fica zero.)
     for (std::size_t i = std::min(w.index(), out.size()); i < out.size(); ++i) out[i] = 0.0f;
-    return { w.index(), w.nonFinite() };
+    LocomotionObservation3D result;
+    result.written = w.index();
+    result.nonFinite = w.nonFinite();
+    result.referenceNeckValid = referenceNeckValid;
+    result.referenceHeadUpInChest = referenceHeadUpInChest;
+    return result;
 }
 
 LocomotionCaps3D LocomotionCaps3D::full() {

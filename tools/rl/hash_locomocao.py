@@ -27,8 +27,13 @@ from matter_rl import paths  # noqa: E402
 from matter_rl.locomotion_trainer import native  # noqa: E402
 
 
-def run(module, task: Path, worlds: int, threads: int, steps: int, seed: int) -> list[str]:
+def run(module, task: Path, worlds: int, threads: int, steps: int, seed: int,
+        columns: list[str] | None = None) -> list[str]:
+    """columns: as colunas dos episodios que entram no hash (as do ouro): uma
+    coluna nova de medida nao muda o comportamento e nao pode quebrar a prova."""
     batch = module.LocomotionBatch(str(task), str(paths.ASSETS), environments=worlds, threads=threads, seed=seed)
+    names = list(batch.episode_columns())
+    keep = [names.index(name) for name in (columns or names)]
     batch.set_authority(1.0, 1.0, 1.0, 1.0)
     batch.reset(seed)
     rng = np.random.default_rng(seed)
@@ -37,9 +42,11 @@ def run(module, task: Path, worlds: int, threads: int, steps: int, seed: int) ->
         actions = np.ascontiguousarray(rng.uniform(-0.05, 0.05, (worlds, batch.action_size)).astype(np.float32))
         batch.step(actions)
         h = hashlib.sha256()
+        episodes = np.asarray(batch.finished_episodes())
+        episodes = episodes[:, keep] if episodes.ndim == 2 and len(episodes) else episodes
         for part in (batch.observations(), batch.critic_observations(), batch.terminal_critic_observations(),
                      batch.rewards(), batch.reward_components(), batch.terminated(), batch.truncated(),
-                     batch.finished_episodes()):
+                     episodes):
             h.update(np.ascontiguousarray(np.asarray(part)).tobytes())
         digests.append(h.hexdigest()[:16])
     return digests
@@ -61,11 +68,16 @@ def main() -> int:
     system.refuse_tuned_environment("hash")
     module = native()
     task = paths.task_path(args.tarefa)
+    gold = json.loads(Path(args.conferir).read_text()) if args.conferir else None
+    probe = module.LocomotionBatch(str(task), str(paths.ASSETS), environments=1, threads=1, seed=1)
+    columns = gold.get("colunas") if gold else list(probe.episode_columns())
+    del probe
     result: dict = {"tarefa": args.tarefa, "mundos": args.mundos, "passos": args.passos, "semente": args.semente,
-                    "por_threads": {}}
+                    "colunas": columns, "por_threads": {}}
     for threads in [int(t) for t in args.threads.split(",")]:
         begin = time.perf_counter()
-        result["por_threads"][str(threads)] = run(module, task, args.mundos, threads, args.passos, args.semente)
+        result["por_threads"][str(threads)] = run(module, task, args.mundos, threads, args.passos, args.semente,
+                                                  columns)
         print(f"threads {threads}: {time.perf_counter() - begin:.1f} s, final {result['por_threads'][str(threads)][-1]}",
               flush=True)
     runs = list(result["por_threads"].values())
@@ -75,7 +87,6 @@ def main() -> int:
         Path(args.gravar).write_text(json.dumps(result, indent=1))
         print(f"ouro gravado: {args.gravar}")
         return 0 if same else 1
-    gold = json.loads(Path(args.conferir).read_text())
     ok = same
     for threads, digests in result["por_threads"].items():
         ref = gold["por_threads"].get(threads)

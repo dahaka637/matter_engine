@@ -43,6 +43,15 @@ class PPOSettings:
     critic_learning_rate: float = 3e-4
     critic_max_grad_norm: float = 1.0
     kl_stop_factor: float = 0.0
+    # A media fora do intervalo da acao (vault .../pesquisas/03_otimizacao_ppo.md):
+    # a perda de limites do rl_games, coef x soma(max(0, |mu| - limite)^2) na
+    # perda do ator (0 = desligada). E a KL que adapta a taxa sem os canais em
+    # que a media velha ou a nova passa do limite (o teto corta a acao: mexer
+    # nela ali nao muda o mundo e so estrangulava a taxa). A KL de seguranca e a
+    # da telemetria seguem completas.
+    bound_loss_coef: float = 0.0
+    bound_limit: float = 1.0
+    kl_exclude_saturated: bool = False
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -132,6 +141,9 @@ class PPO:
         self.model = model
         self.settings = settings
         self.learning_rate = settings.learning_rate
+        # Os limites de cada canal na unidade da acao (a perda de limites e a KL
+        # que adapta a taxa): (inferior, superior); None = +-bound_limit.
+        self.bounds: tuple[torch.Tensor, torch.Tensor] | None = None
         self.critic_optimizer = None
         if settings.separate_critic:
             # Dois otimizadores: o ator (e o desvio) com a taxa adaptada pelo KL,
@@ -140,6 +152,19 @@ class PPO:
             self.critic_optimizer = torch.optim.Adam(model.critic.parameters(), lr=settings.critic_learning_rate)
         else:
             self.optimizer = torch.optim.Adam(model.parameters(), lr=self.learning_rate)
+
+    def _outside(self, mean: torch.Tensor) -> torch.Tensor:
+        """Quanto a media passa do limite de cada canal (0 dentro)."""
+        if self.bounds is None:
+            return (mean.abs() - self.settings.bound_limit).clamp(min=0.0)
+        lower, upper = self.bounds
+        return (mean - upper).clamp(min=0.0) + (lower - mean).clamp(min=0.0)
+
+    def _inside(self, mean: torch.Tensor) -> torch.Tensor:
+        if self.bounds is None:
+            return mean.abs() <= self.settings.bound_limit
+        lower, upper = self.bounds
+        return (mean >= lower) & (mean <= upper)
 
     def state_dict(self) -> dict:
         state = {"optimizer": self.optimizer.state_dict(), "learning_rate": self.learning_rate}
@@ -163,7 +188,9 @@ class PPO:
         s = self.settings
         model = self.model
         totals = {"policy_loss": 0.0, "value_loss": 0.0, "entropy": 0.0, "kl": 0.0, "clip_fraction": 0.0,
-                  "grad_norm": 0.0, "auxiliary": 0.0, "critic_grad_norm": 0.0}
+                  "grad_norm": 0.0, "auxiliary": 0.0, "critic_grad_norm": 0.0, "bound_loss": 0.0, "kl_adapt": 0.0}
+        # A KL por canal (a media na rodada; telemetria, sem efeito no treino).
+        kl_channels = None
         count = 0
         kl_max = 0.0
         actor_steps = 0
@@ -180,6 +207,15 @@ class PPO:
                     # KL entre a politica que coletou e a de agora (gaussianas).
                     kl = (torch.log(dist.stddev / old_std) + (old_std.pow(2) + (old_mean - dist.mean).pow(2))
                           / (2.0 * dist.stddev.pow(2)) - 0.5).sum(-1).mean()
+                    elementwise = (torch.log(dist.stddev / old_std) + (old_std.pow(2) + (old_mean - dist.mean).pow(2))
+                                   / (2.0 * dist.stddev.pow(2)) - 0.5)
+                    channel = elementwise.mean(0)
+                    kl_channels = channel if kl_channels is None else kl_channels + channel
+                    kl_adapt = kl
+                    if s.kl_exclude_saturated:
+                        free = self._inside(old_mean) & self._inside(dist.mean)
+                        kl_adapt = (elementwise * free).sum(-1).mean()
+                    totals["kl_adapt"] += float(kl_adapt)
                     # O KL de seguranca e sempre contra quem coletou (a razao do PPO e
                     # contra ele); o que adapta a taxa pode usar outra referencia.
                     safety = (torch.log(dist.stddev / collector_std)
@@ -190,9 +226,9 @@ class PPO:
                         halted = True
                     if actor_frozen:
                         pass
-                    elif kl > 2.0 * s.desired_kl:
+                    elif kl_adapt > 2.0 * s.desired_kl:
                         self.learning_rate = max(s.min_learning_rate, self.learning_rate / s.learning_rate_step)
-                    elif 0.0 < kl < 0.5 * s.desired_kl:
+                    elif 0.0 < kl_adapt < 0.5 * s.desired_kl:
                         self.learning_rate = min(s.max_learning_rate, self.learning_rate * s.learning_rate_step)
                     for group in self.optimizer.param_groups:
                         group["lr"] = self.learning_rate
@@ -218,6 +254,10 @@ class PPO:
                     grad_norm = torch.zeros(())
                     if not actor_frozen and not halted:
                         actor_loss = policy_loss - s.entropy_coef * entropy
+                        if s.bound_loss_coef > 0.0:
+                            bound = self._outside(dist.mean).pow(2).sum(-1).mean()
+                            actor_loss = actor_loss + s.bound_loss_coef * bound
+                            totals["bound_loss"] += float(bound.detach())
                         extra = auxiliary() if auxiliary is not None else None
                         if extra is not None:
                             actor_loss = actor_loss + extra
@@ -238,6 +278,10 @@ class PPO:
                         loss = s.value_coef * value_loss
                     else:
                         loss = policy_loss + s.value_coef * value_loss - s.entropy_coef * entropy
+                        if s.bound_loss_coef > 0.0:
+                            bound = self._outside(dist.mean).pow(2).sum(-1).mean()
+                            loss = loss + s.bound_loss_coef * bound
+                            totals["bound_loss"] += float(bound.detach())
                     extra = auxiliary() if auxiliary is not None and not actor_frozen else None
                     if extra is not None:
                         loss = loss + extra
@@ -266,4 +310,6 @@ class PPO:
         result["kl_halted"] = float(halted)
         result["learning_rate"] = self.learning_rate
         result["action_std"] = float(model.log_std.detach().exp().mean())
+        result["kl_per_channel"] = ([float(v) for v in (kl_channels / max(1, count)).tolist()]
+                                    if kl_channels is not None else [])
         return result

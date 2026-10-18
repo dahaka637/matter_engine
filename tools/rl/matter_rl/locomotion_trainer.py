@@ -29,6 +29,7 @@ import torch
 
 from . import control, paths, storage, system
 from .body_trainer import balance_drills, choose_device, wilson_upper
+from .curriculum import SpeedCurriculum
 from .model import ActorCritic, export_policy, migrate_inputs, rescale_actions
 from .ppo import PPO, PPOSettings, Rollout
 from .symmetry import MirrorLoss
@@ -39,6 +40,24 @@ NETWORK = {"actor": [512, 512, 256], "critic": [512, 512, 256]}
 # Os canais da entrada que passam crus pela normalizacao: os do critico que so o
 # treino sabe (o exercicio, um-quente) - os outros normalizam.
 RAW_PREFIXES = ("drill.",)
+# Os grupos das saidas (a telemetria da saturacao e do desvio; vault
+# .../pesquisas/03_otimizacao_ppo.md). Os prefixos mais longos primeiro.
+ACTION_GROUPS = ("pose", "pes", "passada", "equilibrio", "ganho", "turno")
+
+
+def action_group(name: str) -> str:
+    head = name.split(".")[0]
+    return "pes" if head == "passada" else head
+
+
+def channel_values(names: list[str], table: dict, default: float) -> np.ndarray:
+    """Um valor por canal pelo prefixo mais longo da tabela ("*" = o resto)."""
+    keys = sorted((k for k in table if k != "*"), key=len, reverse=True)
+    out = []
+    for name in names:
+        match = next((k for k in keys if name.startswith(k)), None)
+        out.append(float(table[match]) if match else float(table.get("*", default)))
+    return np.asarray(out, dtype=np.float32)
 # O PPO da locomocao: o critico a parte; o KL somado nos 61 canais (em unidades
 # do teto, desvio inicial 0,5).
 PPO_DEFAULTS = {"steps_per_env": 32, "epochs": 5, "minibatches": 4, "gamma": 0.99, "lam": 0.95, "clip": 0.2,
@@ -108,6 +127,15 @@ class LocomotionRunConfig:
     # a coleta usa a politica de uma atualizacao atras; a razao do PPO e contra
     # quem coletou e o KL da taxa contra a politica do comeco da atualizacao.
     overlap: bool = True
+    # Os limites do desvio da exploracao por grupo, na unidade do teto (vault
+    # .../pesquisas/08_plano_consenso.md, Q1): {prefixo: valor, "*": o resto}.
+    # Vazios (o padrao): so o max_std do PPO, o de sempre.
+    std_floor: dict = field(default_factory=dict)
+    std_ceiling: dict = field(default_factory=dict)
+    # Canais da entrada que passam crus alem do exercicio (as bandeiras 0/1; Q3) e
+    # a memoria da normalizacao (amostras; 0 = sem limite, o de sempre).
+    raw_extra_prefixes: list = field(default_factory=list)
+    norm_max_count: float = 0.0
     end_reason: str = ""
 
     @staticmethod
@@ -177,6 +205,42 @@ def drill_summary(rows: np.ndarray, columns: list[str], drills: list[str], reaso
             "hold_drift": mean_of("deriva_espera"),
             "arc_error": mean_of("afastamento_curva"),
         }
+        if "postura_tronco" in col:
+            seconds = np.maximum(part[:, col["segundos"]], 1e-6)
+            fell_rows = part[np.isin(ended, fall_codes)]
+            since = fell_rows[:, col["queda_desde_troca"]] if len(fell_rows) else np.zeros(0)
+            since = since[since >= 0.0]
+            out[drill].update({
+                "posture_trunk": float(part[:, col["postura_tronco"]].mean()),
+                "posture_neck": float(part[:, col["postura_pescoco"]].mean()),
+                "neck_body": float(part[:, col["pescoco_corpo"]].mean()),
+                "neck_shadow": mean_of("pescoco_sombra"),
+                "neck_relative": mean_of("pescoco_relativo"),
+                "feasible": float(part[:, col["viavel_medio"]].mean()),
+                "jerk_cap": float(part[:, col["trancos_teto"]].mean()),
+                "fall_since_change_median": float(np.median(since)) if len(since) else None,
+                "saved_start_fraction": float(part[:, col["comeco_guardado"]].mean()),
+                "assist_level": float(part[:, col["ajuda_nivel"]].mean()),
+                "terms_per_second": {name[5:]: float((part[:, col[name]] / seconds).mean())
+                                     for name in columns if name.startswith("nota_")},
+            })
+            cells = {}
+            fall_cell = part[:, col["celula_queda"]].astype(int)
+            for k in range(16):
+                decisions = float(part[:, col[f"cel{k:02d}.decisoes"]].sum())
+                if decisions <= 0.0:
+                    continue
+                cruise = float(part[:, col[f"cel{k:02d}.cruzeiro"]].sum())
+                cells[str(k)] = {
+                    "decisions": decisions, "cruise": cruise,
+                    "tracking": float(part[:, col[f"cel{k:02d}.rastreio"]].sum()) / cruise if cruise > 0 else None,
+                    "error": float(np.sqrt(part[:, col[f"cel{k:02d}.erro2"]].sum() / cruise)) if cruise > 0 else None,
+                    "asked": float(part[:, col[f"cel{k:02d}.pedida"]].sum()) / decisions,
+                    "made": float(part[:, col[f"cel{k:02d}.feita"]].sum()) / decisions,
+                    "falls": int((fall_cell == k).sum()),
+                    "episodes": int((part[:, col[f"cel{k:02d}.decisoes"]] > 0).sum()),
+                }
+            out[drill]["cells"] = cells
     return out
 
 
@@ -262,6 +326,16 @@ class LocomotionTrainer:
         self.settings = PPOSettings.from_dict(self.config.ppo)
         self.ppo = PPO(self.model, self.settings)
         self.mirror = MirrorLoss(self.batch.mirror_maps(), self.device) if self.config.mirror_loss > 0.0 else None
+        # Os limites de cada canal na unidade da rede (a acao aplicada para de mudar
+        # fora deles) e os grupos das saidas (a telemetria; a perda de limites).
+        lower, upper = self.batch.action_bounds()
+        self.action_lower = torch.as_tensor(np.asarray(lower, dtype=np.float32), device=self.device)
+        self.action_upper = torch.as_tensor(np.asarray(upper, dtype=np.float32), device=self.device)
+        self.action_groups = [action_group(name) for name in self.action_names]
+        self.std_floor = (torch.as_tensor(np.log(channel_values(self.action_names, self.config.std_floor, 1e-3)),
+                                          device=self.device) if self.config.std_floor else None)
+        self.std_ceiling = (torch.as_tensor(np.log(channel_values(self.action_names, self.config.std_ceiling, 10.0)),
+                                            device=self.device) if self.config.std_ceiling else None)
         self.counters = {"iteration": 0, "steps": 0, "train_seconds": 0.0, "episodes": 0, "authority": 0.0}
         self.db = storage.Database(paths.DATABASE)
         self.db.ensure_run(run, self.config.task, self.batch.contract_hash, asdict(self.config))
@@ -269,6 +343,8 @@ class LocomotionTrainer:
             self.db.event(run, "ambiente", "rodando com T_* definidas: " + json.dumps(self.tuned_environment))
         self.restore()
         self.fix_raw_channels()
+        self.configure_ppo()
+        self.apply_std_bounds()
         self.reset_candidates()
         self.collector = copy.deepcopy(self.model)
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=1, initializer=self._init_worker) \
@@ -281,6 +357,15 @@ class LocomotionTrainer:
         self.update_generator.manual_seed(self.config.seed * 7919 + 17 + self.counters["iteration"])
         self.apply_authority()
         self.load_drill_weights()
+        # O curriculo de velocidade por celulas (os tetos moram na copia da tarefa).
+        live = json.loads(self.live_task.read_text())
+        self.curriculum = SpeedCurriculum(live, self.drill_ids)
+        if self.curriculum.rule.enabled:
+            before = json.dumps(live.get("speedCurriculum", {}).get("caps", {}), sort_keys=True)
+            self.curriculum.initial_caps(live)
+            if json.dumps(live["speedCurriculum"]["caps"], sort_keys=True) != before:
+                storage.write_json_atomic(self.live_task, live)
+                self.batch.update_task(str(self.live_task))
 
         self.state = "treinando"
         self.message = ""
@@ -312,8 +397,22 @@ class LocomotionTrainer:
         self.stop_reason = "sinal"
 
     def fix_raw_channels(self) -> None:
+        prefixes = RAW_PREFIXES + tuple(self.config.raw_extra_prefixes)
         for norm, names in ((self.model.obs_norm, self.obs_names), (self.model.critic_norm, self.critic_names)):
-            norm.fix_channels(torch.tensor([name.startswith(RAW_PREFIXES) for name in names]))
+            norm.fix_channels(torch.tensor([name.startswith(prefixes) for name in names]))
+            norm.max_count = float(self.config.norm_max_count)
+
+    def configure_ppo(self) -> None:
+        """O que o PPO precisa saber do contrato (depois de todo PPO novo)."""
+        self.ppo.bounds = (self.action_lower, self.action_upper)
+
+    @torch.no_grad()
+    def apply_std_bounds(self) -> None:
+        """O piso e o teto do desvio por grupo (Q1; sem tabelas, nada muda)."""
+        if self.std_floor is not None:
+            self.model.log_std.copy_(torch.maximum(self.model.log_std, self.std_floor))
+        if self.std_ceiling is not None:
+            self.model.log_std.copy_(torch.minimum(self.model.log_std, self.std_ceiling))
 
     def reset_candidates(self) -> None:
         self.obs_candidate = copy.deepcopy(self.model.obs_norm)
@@ -400,6 +499,11 @@ class LocomotionTrainer:
                 self.restore_notes.append("o critico migrou para os exercicios da tarefa nova")
         else:
             self.model.load_state_dict(state["model"])
+        # Um ajuste fora do treino (o recentramento, a normalizacao refeita) pede o
+        # Adam de novo: o embalo era do ator de antes.
+        if state.get("fresh_optimizer"):
+            fresh_optimizer = True
+            self.restore_notes.append("ajuste fora do treino: o otimizador recomeca")
         if old_scale is not None:
             # Os tetos mudaram: a mesma acao fisica (u novo = u antigo x teto antigo / teto novo).
             factor = torch.as_tensor(np.asarray(old_scale, dtype=np.float32), device=self.device) / self.action_scale
@@ -411,6 +515,8 @@ class LocomotionTrainer:
             # (O embalo do Adam era das formas e escalas de antes: recomeca; a taxa fica.)
             self.ppo = PPO(self.model, self.settings)
             self.ppo.learning_rate = float(state["ppo"].get("learning_rate", self.settings.learning_rate))
+            if state.get("learning_rate_override"):
+                self.ppo.learning_rate = float(state["learning_rate_override"])
             for group in self.ppo.optimizer.param_groups:
                 group["lr"] = self.ppo.learning_rate
         else:
@@ -709,9 +815,22 @@ class LocomotionTrainer:
         gates = [j for j, name in enumerate(self.action_names) if name.startswith("turno.ganho.")]
         turn_gate = ([float(1.0 + (rollout.actions[..., j] * self.action_scale[j]).mean()) for j in gates]
                      if gates else [])
+        # A saturacao da media por grupo (a acao aplicada para de mudar fora dos
+        # limites) e os trancos da acao media (sem o ruido), na unidade do teto.
+        with torch.no_grad():
+            mean = rollout.mean
+            outside = (mean < self.action_lower) | (mean > self.action_upper)
+            saturation = {}
+            for group in ACTION_GROUPS:
+                index = [j for j, g in enumerate(self.action_groups) if g == group]
+                if index:
+                    saturation[group] = float(outside[..., index].float().mean())
+            applied = torch.maximum(torch.minimum(mean, self.action_upper), self.action_lower)
+            alive = (1.0 - rollout.dones[:-1]).unsqueeze(-1)
+            jerk_mean = float(((applied[1:] - applied[:-1]).pow(2) * alive).mean() / alive.mean().clamp(min=1e-6))
         return rollout, {"collect": time.time() - begin, "samples": samples, "components": components / samples,
                          "rows": rows, "bootstrap": bootstrap_sum / samples, "reward": float(rollout.rewards.mean()),
-                         "turn_gate": turn_gate}
+                         "turn_gate": turn_gate, "saturation": saturation, "jerk_mean_action": jerk_mean}
 
     def _init_worker(self) -> None:
         # A thread da atualizacao com o contexto da GPU desde o comeco.
@@ -744,6 +863,7 @@ class LocomotionTrainer:
                                       generator=self.update_generator)
                 return weight * self.mirror(self.model, raw[index], raw=True, norm=rollout.norm)
         stats = self.ppo.update(rollout, auxiliary=auxiliary)
+        self.apply_std_bounds()
         stats["explained_variance"] = explained
         if self.device.type == "cuda":
             torch.cuda.synchronize()
@@ -780,6 +900,29 @@ class LocomotionTrainer:
         details = {"authority": self.authority(), "fall_risk": fall_risk, "bootstrap": info["bootstrap"], "ppo": ppo,
                    "turn_gate": info.get("turn_gate", []),
                    "drills": drill_summary(rows, self.episode_columns, self.drill_ids, self.end_reasons)}
+        # O diagnostico de 18/10 (vault .../pesquisas/08_plano_consenso.md, Q0).
+        std = self.model.log_std.detach().exp().cpu().numpy()
+        kl_channels = stats.get("kl_per_channel") or []
+        top = sorted(zip(self.action_names, kl_channels), key=lambda item: -item[1])[:5]
+        details["diag"] = {
+            "saturation": info.get("saturation", {}),
+            "jerk_mean_action": info.get("jerk_mean_action"),
+            "kl_top5": [[name, value] for name, value in top],
+            "kl_adapt": stats.get("kl_adapt"), "bound_loss": stats.get("bound_loss"),
+            "std": {group: {"p50": float(np.median(std[[j for j, g in enumerate(self.action_groups) if g == group]])),
+                            "p95": float(np.percentile(std[[j for j, g in enumerate(self.action_groups) if g == group]], 95))}
+                    for group in ACTION_GROUPS if group in self.action_groups},
+            "saved_starts": {d: int(self.batch.saved_start_count(i)) for i, d in enumerate(self.drill_ids)},
+        }
+        if self.curriculum.rule.enabled:
+            self.curriculum.observe(rows, self.episode_columns)
+            live = json.loads(self.live_task.read_text())
+            opened = self.curriculum.advance(live)
+            if opened:
+                storage.write_json_atomic(self.live_task, live)
+                self.batch.update_task(str(self.live_task))
+                self.db.event(self.run, "curriculo", "; ".join(opened))
+            details["curriculum"] = self.curriculum.snapshot(live)
         result = {
             "run": self.run, "iteration": self.counters["iteration"], "time": time.time(),
             "steps": self.counters["steps"], "sps": sps, "reward": info["reward"], "episodes": int(len(rows)),
@@ -843,6 +986,7 @@ class LocomotionTrainer:
         self.model.load_state_dict(state["model"])
         self.ppo.load_state_dict(state["ppo"])
         self.fix_raw_channels()
+        self.apply_std_bounds()
         self.reset_candidates()
         self.collector.load_state_dict(self.model.state_dict())
         self.counters.update(state.get("counters", {}))

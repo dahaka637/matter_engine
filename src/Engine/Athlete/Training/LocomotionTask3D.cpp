@@ -4,6 +4,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <cmath>
 #include <fstream>
 #include <iterator>
 #include <stdexcept>
@@ -92,8 +93,20 @@ LocomotionTask3D loadLocomotionTask3D(const std::filesystem::path& path) {
         read(r, "residual", w.residual);
         read(r, "still", w.still);
         read(r, "fall", w.fall);
-        if (!(w.velocitySigma > 0.0f) || !(w.facingSigma > 0.0f) || !(w.styleSigma > 0.0f) || !(w.contactSigma > 0.0f))
+        read(r, "velocityTail", w.velocityTail);
+        read(r, "velocityTailSigma", w.velocityTailSigma);
+        read(r, "facingTail", w.facingTail);
+        read(r, "facingTailSigma", w.facingTailSigma);
+        w.smoothCapUnits = r.value("smoothCapUnits", w.smoothCapUnits);
+        read(r, "neckSlackDegrees", w.neckSlackDegrees);
+        w.neckRelative = r.value("neckRelative", w.neckRelative);
+        w.assistIncludesTorque = r.value("assistIncludesTorque", w.assistIncludesTorque);
+        if (!(w.velocitySigma > 0.0f) || !(w.facingSigma > 0.0f) || !(w.styleSigma > 0.0f) || !(w.contactSigma > 0.0f)
+            || !(w.velocityTailSigma > 0.0f) || !(w.facingTailSigma > 0.0f))
             fail("sigma da nota invalido");
+        if (!(w.velocityTail >= 0.0f && w.velocityTail <= 1.0f) || !(w.facingTail >= 0.0f && w.facingTail <= 1.0f))
+            fail("a cauda da nota fica entre 0 e 1");
+        if (!(w.neckSlackDegrees >= 0.0f)) fail("folga do pescoco invalida");
     }
     if (document.contains("termination")) {
         const nlohmann::json& t = document["termination"];
@@ -129,6 +142,9 @@ LocomotionTask3D loadLocomotionTask3D(const std::filesystem::path& path) {
         drill.phase = d.value("phase", drill.phase);
         read(d, "weight", drill.weight);
         if (!(drill.weight >= 0.0f)) fail("peso invalido em " + drill.id);
+        read(d, "savedStartFraction", drill.savedStartFraction);
+        if (!(drill.savedStartFraction >= 0.0f && drill.savedStartFraction <= 1.0f))
+            fail("savedStartFraction fora de 0..1 em " + drill.id);
         drill.pilot = pilotScriptFromJson3D(d.value("pilot", nlohmann::json::object()), drill.id);
         if (d.contains("minimum")) {
             read(d["minimum"], "fallFraction", drill.maximumFallFraction);
@@ -138,7 +154,51 @@ LocomotionTask3D loadLocomotionTask3D(const std::filesystem::path& path) {
             if (other.id == drill.id) fail("exercicio repetido: " + drill.id);
         task.drills.push_back(std::move(drill));
     }
+    if (document.contains("savedStarts")) {
+        const nlohmann::json& g = document["savedStarts"];
+        task.savedStarts.capacity = g.value("capacity", task.savedStarts.capacity);
+        read(g, "surviveSeconds", task.savedStarts.surviveSeconds);
+        read(g, "minimumSpeed", task.savedStarts.minimumSpeed);
+        if (task.savedStarts.capacity == 0 || !(task.savedStarts.surviveSeconds > 0.0f)) fail("savedStarts invalido");
+    }
+    if (document.contains("assistSchedule")) {
+        const nlohmann::json& a = document["assistSchedule"];
+        LocomotionAssistSchedule3D& s = task.assistSchedule;
+        s.enabled = a.value("enabled", s.enabled);
+        read(a, "zeroFraction", s.zeroFraction);
+        read(a, "minimum", s.minimumPercent);
+        read(a, "maximum", s.maximumPercent);
+        if (!(s.zeroFraction >= 0.0f && s.zeroFraction <= 1.0f) || !(s.minimumPercent >= 0.0f)
+            || !(s.maximumPercent >= s.minimumPercent) || !(s.maximumPercent <= 100.0f))
+            fail("assistSchedule invalido");
+    }
+    // O curriculo de velocidade: os tetos por exercicio e celula (o treinador
+    // os abre e reescreve; aqui so le). Exercicio sem tetos: sem corte.
+    task.speedCurriculum.caps.assign(task.drills.size(), {});
+    if (document.contains("speedCurriculum")) {
+        const nlohmann::json& c = document["speedCurriculum"];
+        task.speedCurriculum.enabled = c.value("enabled", false);
+        if (c.contains("caps")) {
+            for (std::size_t d = 0; d < task.drills.size(); ++d) {
+                const auto found = c["caps"].find(task.drills[d].id);
+                if (found == c["caps"].end()) continue;
+                if (!found->is_array() || found->size() != LocomotionCommandCells3D)
+                    fail("speedCurriculum.caps." + task.drills[d].id + " precisa de 16 tetos");
+                for (std::size_t k = 0; k < LocomotionCommandCells3D; ++k)
+                    task.speedCurriculum.caps[d][k] = (*found)[k].get<float>();
+            }
+        }
+    }
     return task;
+}
+
+std::size_t locomotionCommandCell3D(float directionRelativeToCamera, bool cameraTurning) {
+    constexpr float Sector = 6.28318530718f / static_cast<float>(LocomotionCommandBins3D);
+    const float wrapped = std::remainder(directionRelativeToCamera, 6.28318530718f);
+    long bin = std::lround(wrapped / Sector);
+    bin = ((bin % static_cast<long>(LocomotionCommandBins3D)) + static_cast<long>(LocomotionCommandBins3D))
+        % static_cast<long>(LocomotionCommandBins3D);
+    return static_cast<std::size_t>(bin) * 2 + (cameraTurning ? 1 : 0);
 }
 
 } // namespace MatterEngine
