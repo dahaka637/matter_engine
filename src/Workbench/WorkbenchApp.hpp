@@ -558,7 +558,7 @@ private:
     static constexpr float LabDefaultSprintSideSpeed = 6.0f;
     static constexpr float LabDefaultSprintBackwardSpeed = 6.0f;
     static constexpr float LabDefaultCapsuleResponsePercent = 150.0f;
-    static constexpr float LabDefaultCapsuleReversalPercent = 100.0f;
+    static constexpr float LabDefaultCapsuleReversalPercent = 0.0f;
     float m_capsuleResponsePercent = LabDefaultCapsuleResponsePercent;
     float m_capsuleReversalPercent = LabDefaultCapsuleReversalPercent;
     // Transicoes adaptativas da locomocao padrao (05/10): giro da pelve com
