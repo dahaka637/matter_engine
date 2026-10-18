@@ -77,6 +77,23 @@ def evaluate(module, task: Path, drill: str, solver: str, model, scale, worlds: 
     return summary
 
 
+def clip_bands(task: dict, top: float) -> dict:
+    """A tarefa com as faixas de velocidade do roteiro cortadas em top m/s (as que comecam
+    acima saem; o exercicio que fica sem faixa sai). Os parados ficam."""
+    out = json.loads(json.dumps(task))
+    drills = []
+    for drill in out["drills"]:
+        bands = (drill.get("pilot") or {}).get("bands")
+        if bands:
+            kept = [dict(b, speed=[b["speed"][0], min(b["speed"][1], top)]) for b in bands if b["speed"][0] < top]
+            if not kept:
+                continue
+            drill["pilot"]["bands"] = kept
+        drills.append(drill)
+    out["drills"] = drills
+    return out
+
+
 BINS = ("frente", "diag_esq", "esquerda", "tras_esq", "costas", "tras_dir", "direita", "diag_dir")
 
 
@@ -106,6 +123,9 @@ def main() -> int:
     parser.add_argument("--segundos", type=float, default=20.0)
     parser.add_argument("--threads", type=int, default=6)
     parser.add_argument("--sem-rumos", action="store_true", help="sem a cobertura por rumo")
+    parser.add_argument("--ate", type=float, default=0.0,
+                        help="so a parte da faixa ate V m/s (o que o curriculo ja treina): o relatorio por faixa; "
+                             "vai para portao_ate_V.json e nao conta para os dois seguidos")
     args = parser.parse_args()
 
     from matter_rl import system
@@ -118,6 +138,11 @@ def main() -> int:
     if reference is None:
         print(f"o treino {args.treino} nao tem checkpoint", file=sys.stderr)
         return 1
+    if args.ate > 0.0:
+        task = Path(task)
+        clipped = clip_bands(json.loads(task.read_text()), args.ate)
+        task = run / f"tarefa_ate_{args.ate:g}.json"
+        storage.write_json_atomic(task, clipped)
     state = storage.load_checkpoint(reference, "cpu")
     network = state["network"]
     model = ActorCritic(len(state["obs_names"]), len(state["critic_names"]), len(state["action_names"]),
@@ -194,9 +219,15 @@ def main() -> int:
         for name, b in bins.items():
             print(f"      {name:9s} pedida {b['asked']:.2f} feita {b['made']:.2f} erro {b['error']:.2f} "
                   f"quedas {b['falls']}/{b['episodes']} ({b['cruise']:.0f} decisoes de cruzeiro)", flush=True)
-    print("PORTAO: " + ("passa (falta a cara: as folhas e o laboratorio)" if verdict else "nao passa"))
+    print("PORTAO: " + ("passa (falta a cara: as folhas e o laboratorio)" if verdict else "nao passa")
+          + (f" [so ate {args.ate:g} m/s]" if args.ate > 0.0 else ""))
     for reason in reasons:
         print("  - " + reason)
+    if args.ate > 0.0:
+        storage.write_json_atomic(run / f"portao_ate_{args.ate:g}.json", {
+            "time": time.time(), "iteration": reference.iteration, "ate": args.ate, "passed": verdict,
+            "reasons": reasons, "results": results})
+        return 0 if verdict else 2
     previous = {}
     try:
         previous = json.loads((run / "portao.json").read_text())

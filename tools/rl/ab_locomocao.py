@@ -115,9 +115,9 @@ def measures(run: str, last: int = 100) -> dict:
     return out
 
 
-def gate(run: str, worlds: int) -> str:
+def gate(run: str, worlds: int, top: float = 0.0) -> str:
     result = subprocess.run([str(HERE / ".venv" / "bin" / "python"), str(HERE / "portao_locomocao.py"), "--treino", run,
-                             "--mundos", str(worlds), "--threads", "12"], capture_output=True, text=True)
+                             "--mundos", str(worlds), "--threads", "12", "--ate", str(top)], capture_output=True, text=True)
     return "\n".join(line for line in result.stdout.splitlines() if not line.startswith("[INFO]"))
 
 
@@ -125,6 +125,8 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("spec")
     parser.add_argument("--avaliar", type=int, default=64, help="episodios da bateria por exercicio (0: sem)")
+    parser.add_argument("--ate", type=float, default=0.0,
+                        help="tambem a bateria so ate V m/s (a parte da faixa que o curriculo ja treina)")
     args = parser.parse_args()
     spec = json.loads(Path(args.spec).read_text())
     report = {"spec": spec, "inicio": time.strftime("%Y-%m-%d %H:%M"), "bracos": {}}
@@ -135,6 +137,8 @@ def main() -> int:
             name_of, _, arm_of = spec["controle_de"].partition(":")
             previous = json.loads((HERE / "ab" / f"{name_of}.json").read_text())
             report["bracos"]["a"] = dict(previous["bracos"][arm_of or "a"], reaproveitado_de=spec["controle_de"])
+            if args.avaliar > 0 and args.ate > 0.0 and "portao_ate" not in report["bracos"]["a"]:
+                report["bracos"]["a"]["portao_ate"] = gate(report["bracos"]["a"]["run"], args.avaliar, args.ate)
             continue
         run = make_arm(spec, name, change)
         for adjust in ([spec.get("ajuste_comum")] if spec.get("ajuste_comum") else []) + \
@@ -147,6 +151,8 @@ def main() -> int:
         report["bracos"][name] = {"run": run, "minutos": (time.time() - begin) / 60.0, "medidas": measures(run)}
         if args.avaliar > 0:
             report["bracos"][name]["portao"] = gate(run, args.avaliar)
+            if args.ate > 0.0:
+                report["bracos"][name]["portao_ate"] = gate(run, args.avaliar, args.ate)
         out = HERE / "ab" / f"{spec['nome']}.json"
         out.parent.mkdir(exist_ok=True)
         out.write_text(json.dumps(report, indent=1, ensure_ascii=False))

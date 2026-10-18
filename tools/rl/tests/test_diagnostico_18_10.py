@@ -227,3 +227,17 @@ def test_branch_to_a_new_task_keeps_the_opened_caps_of_the_shared_drills(tmp_pat
     # A tarefa desconhecida nao deixa um treino pela metade.
     assert cli.command_branch(argparse.Namespace(de="velho", run="outro", tarefa="nao_existe")) == 1
     assert not (tmp_path / "runs" / "outro").exists()
+
+
+def test_gate_clips_the_speed_bands_to_the_trained_part():
+    import portao_locomocao as gate
+
+    task = {"drills": [{"id": "parado", "pilot": {"kind": "hold"}},
+                       {"id": "trote", "pilot": {"kind": "star", "bands": [
+                           {"name": "andar", "speed": [0.8, 1.4]}, {"name": "A", "speed": [1.8, 3.0]},
+                           {"name": "B", "speed": [3.0, 4.5]}]}},
+                       {"id": "corrida", "pilot": {"kind": "star", "bands": [{"speed": [4.5, 8.0]}]}}]}
+    out = gate.clip_bands(task, 2.0)
+    assert [d["id"] for d in out["drills"]] == ["parado", "trote"]
+    assert [b["speed"] for b in out["drills"][1]["pilot"]["bands"]] == [[0.8, 1.4], [1.8, 2.0]]
+    assert task["drills"][1]["pilot"]["bands"][1]["speed"] == [1.8, 3.0]  # a original fica
