@@ -11,8 +11,8 @@
     matter-rl ramo --de R --run N [--tarefa T]   um treino novo do ultimo checkpoint de outro (locomocao:
                                           o treino curto sozinho de uma novidade, com treinar --exercicio);
                                           --tarefa: o ramo leva a tarefa T dos assets, nao a copia do outro
-    matter-rl renormalizar --run R        a normalizacao refeita sem mudar a funcao (treino fechado)
-    matter-rl recentrar --run R           a media saturada de volta aos limites, a acao aplicada igual
+    matter-rl renormalizar --run R --rodada N   a normalizacao refeita sem mudar a funcao (treino fechado)
+    matter-rl recentrar --run R --rodada N      a media saturada de volta aos limites, a acao aplicada igual
     matter-rl peso <parcela> <valor> [--motivo M]   ("estilo" e o beta do juiz)
     matter-rl relatorio [--desde 1h]      o que mudou no periodo (Markdown)
     matter-rl graficos [--saida DIR]      PNG das curvas
@@ -337,7 +337,7 @@ def command_adjust(action: str, args: argparse.Namespace) -> int:
         print("feche o treino antes (matter-rl parar)", file=sys.stderr)
         return 1
     from . import ajustes
-    return ajustes.main([action, "--run", args.run, "--passos", str(args.passos)])
+    return ajustes.main([action, "--run", args.run, "--rodada", str(args.rodada), "--passos", str(args.passos)])
 
 
 def command_report(args: argparse.Namespace) -> int:
@@ -445,6 +445,7 @@ def main(argv: list[str] | None = None) -> int:
     branch.set_defaults(func=command_branch)
     for name in ("renormalizar", "recentrar"):
         adjust = run_args(sub.add_parser(name))
+        adjust.add_argument("--rodada", type=int, required=True, help="a rodada do checkpoint (o ultimo do treino)")
         adjust.add_argument("--passos", type=int, default=100)
         adjust.set_defaults(func=lambda a, n=name: command_adjust(n, a))
     run_args(sub.add_parser("treinar"), True).set_defaults(func=command_train)

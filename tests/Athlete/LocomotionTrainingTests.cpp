@@ -310,6 +310,24 @@ void diagnosisTests() {
         rejected = true;
     }
     expect(rejected, "um exercicio com menos de 16 tetos e recusado");
+    const auto refuses = [](const std::filesystem::path& path) {
+        try {
+            (void)loadLocomotionTask3D(path.string());
+        } catch (const std::runtime_error&) {
+            return true;
+        }
+        return false;
+    };
+    expect(refuses(editedTask("matter_diag_arc.json", { { "\"id\": \"curva\",", "\"id\": \"curva\", \"savedStartFraction\": 0.5," } })),
+        "o comeco guardado nao vale para o arco (o piloto do arco nao segue a velocidade do instante)");
+    expect(refuses(editedTask("matter_diag_caps.json", { { "\"cadenceOctaves\": 0.2,", "\"cadenceOctaves\": -0.1," } })),
+        "um teto negativo e recusado");
+    {
+        const std::vector<std::string>& columns = locomotionEpisodeColumns3D();
+        expect(std::find(columns.begin(), columns.end(), "cel07.fronteira") != columns.end()
+                && std::find(columns.begin(), columns.end(), "cel15.rastreio_fronteira") != columns.end(),
+            "as colunas da fronteira do curriculo");
+    }
 
     // O curriculo corta o pedido no treino e nao na avaliacao.
     LocomotionTrainingSettings3D settings;

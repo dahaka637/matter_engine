@@ -189,8 +189,9 @@ class PPO:
         model = self.model
         totals = {"policy_loss": 0.0, "value_loss": 0.0, "entropy": 0.0, "kl": 0.0, "clip_fraction": 0.0,
                   "grad_norm": 0.0, "auxiliary": 0.0, "critic_grad_norm": 0.0, "bound_loss": 0.0, "kl_adapt": 0.0}
-        # A KL por canal (a media na rodada; telemetria, sem efeito no treino).
+        # A KL e o corte por canal (a media na rodada; telemetria, sem efeito no treino).
         kl_channels = None
+        clip_channels = None
         count = 0
         kl_max = 0.0
         actor_steps = 0
@@ -211,6 +212,11 @@ class PPO:
                                    / (2.0 * dist.stddev.pow(2)) - 0.5)
                     channel = elementwise.mean(0)
                     kl_channels = channel if kl_channels is None else kl_channels + channel
+                    # (A razao de cada canal contra a politica da referencia do corte.)
+                    reference = torch.distributions.Normal(old_mean, old_std).log_prob(actions)
+                    channel_ratio = torch.exp(dist.log_prob(actions) - reference)
+                    clipped_channel = ((channel_ratio - 1.0).abs() > s.clip).float().mean(0)
+                    clip_channels = clipped_channel if clip_channels is None else clip_channels + clipped_channel
                     kl_adapt = kl
                     if s.kl_exclude_saturated:
                         free = self._inside(old_mean) & self._inside(dist.mean)
@@ -312,4 +318,6 @@ class PPO:
         result["action_std"] = float(model.log_std.detach().exp().mean())
         result["kl_per_channel"] = ([float(v) for v in (kl_channels / max(1, count)).tolist()]
                                     if kl_channels is not None else [])
+        result["clip_per_channel"] = ([float(v) for v in (clip_channels / max(1, count)).tolist()]
+                                      if clip_channels is not None else [])
         return result

@@ -73,6 +73,10 @@ LocomotionTask3D loadLocomotionTask3D(const std::filesystem::path& path) {
         read(c, "contactAcceleration", caps.contactAcceleration);
         read(c, "jointRadians", caps.jointRadians);
         read(c, "gainOctaves", caps.gainOctaves);
+        for (const float v : { caps.touchdownMeters, caps.swingUpMeters, caps.swingDownMeters, caps.phaseLeadCycles,
+                 caps.recoveryUrgency, caps.cadenceOctaves, caps.strideOctaves, caps.leanRadians, caps.comMeters,
+                 caps.pelvisUpMeters, caps.pelvisDownMeters, caps.contactAcceleration, caps.jointRadians, caps.gainOctaves })
+            if (!std::isfinite(v) || v < 0.0f) fail("teto invalido em caps (negativo ou nao finito)");
     }
     if (document.contains("reward")) {
         const nlohmann::json& r = document["reward"];
@@ -147,6 +151,9 @@ LocomotionTask3D loadLocomotionTask3D(const std::filesystem::path& path) {
         if (!(drill.savedStartFraction >= 0.0f && drill.savedStartFraction <= 1.0f))
             fail("savedStartFraction fora de 0..1 em " + drill.id);
         drill.pilot = pilotScriptFromJson3D(d.value("pilot", nlohmann::json::object()), drill.id);
+        // (O piloto do arco nao segue a velocidade de um instante guardado.)
+        if (drill.savedStartFraction > 0.0f && drill.pilot.kind == "arc")
+            fail("savedStartFraction nao vale para o arco (" + drill.id + ")");
         if (d.contains("minimum")) {
             read(d["minimum"], "fallFraction", drill.maximumFallFraction);
             read(d["minimum"], "velocityError", drill.maximumVelocityError);
@@ -179,6 +186,8 @@ LocomotionTask3D loadLocomotionTask3D(const std::filesystem::path& path) {
     if (document.contains("speedCurriculum")) {
         const nlohmann::json& c = document["speedCurriculum"];
         task.speedCurriculum.enabled = c.value("enabled", false);
+        read(c, "frontier", task.speedCurriculum.frontier);
+        if (!(task.speedCurriculum.frontier > 0.0f)) fail("speedCurriculum.frontier invalido");
         if (c.contains("caps")) {
             for (std::size_t d = 0; d < task.drills.size(); ++d) {
                 const auto found = c["caps"].find(task.drills[d].id);

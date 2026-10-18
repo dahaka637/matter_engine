@@ -43,6 +43,27 @@ def test_refit_normalizer_keeps_the_function_where_nothing_is_cut():
     assert float(model.obs_norm.count) == 1e6
 
 
+def test_refit_normalizer_keeps_binary_flags_exact_even_where_the_old_norm_cut_them():
+    model = _model()
+    base = torch.randn(3000, 12)
+    base[:, 5] = 0.0  # uma bandeira quase sempre 0 (desvio minusculo): o 1 era cortado em +5
+    base[:10, 5] = 1.0
+    base[:, 7] = -0.2  # um canal constante (o olhar), nunca variou
+    model.obs_norm.update(base)
+    raw = torch.zeros(12, dtype=torch.bool)
+    raw[5] = raw[7] = True
+    with torch.no_grad():
+        before = model.actor(model.obs_norm(base))
+        refit_normalizer(model.obs_norm, model.actor[0], base, raw)
+        after = model.actor(model.obs_norm(base))
+        others = ~raw
+        rows = ((((base - model.obs_norm.mean) * model.obs_norm.inverse_std()).abs() < 5.0) | raw).all(-1)
+    assert rows[:10].all()  # as linhas com a bandeira em 1 entram na prova
+    assert float((after[rows] - before[rows]).abs().max()) < 1e-4
+    assert float(model.actor[0].weight[:, 7].abs().max()) == 0.0  # constante: coluna zero
+    assert bool(others.any())
+
+
 def test_recenter_actor_brings_the_mean_inside_and_keeps_the_applied_action():
     model = _model()
     obs = torch.randn(3000, 12)
@@ -108,15 +129,16 @@ def test_speed_curriculum_opens_a_cell_that_tracks_and_never_passes_the_band():
     caps = curriculum.initial_caps(task)
     assert "parado" not in caps and caps["trote"] == [1.0] * CELLS
     assert band_maximum(task["drills"][1]) == 4.5
-    columns = ["exercicio", "celula_queda"] + [f"cel{k:02d}.{f}" for f in ("cruzeiro", "rastreio") for k in range(CELLS)]
+    columns = ["exercicio", "celula_queda"] + [f"cel{k:02d}.{f}" for f in ("fronteira", "rastreio_fronteira")
+                                                for k in range(CELLS)]
     col = {name: i for i, name in enumerate(columns)}
 
     def episode(cell: int, tracking: float, fell: bool) -> np.ndarray:
         row = np.zeros(len(columns), dtype=np.float32)
         row[col["exercicio"]] = 1
         row[col["celula_queda"]] = cell if fell else -1
-        row[col[f"cel{cell:02d}.cruzeiro"]] = 10
-        row[col[f"cel{cell:02d}.rastreio"]] = 10 * tracking
+        row[col[f"cel{cell:02d}.fronteira"]] = 10
+        row[col[f"cel{cell:02d}.rastreio_fronteira"]] = 10 * tracking
         return row
 
     curriculum.observe(np.stack([episode(0, 0.9, False) for _ in range(4)]), columns)

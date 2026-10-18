@@ -83,6 +83,10 @@ inline constexpr std::size_t LocomotionCommandCells3D = LocomotionCommandBins3D 
 
 struct LocomotionSpeedCurriculum3D {
     bool enabled = false;
+    // A fronteira da celula (m/s): o rastreio que abre o teto so conta as decisoes
+    // com o pedido ate esta distancia abaixo do teto (a faixa de cima; a revisao de
+    // 18/10: os pedidos baixos rastreados nao podem abrir o teto alto).
+    float frontier = 0.25f;
     // Por exercicio (o indice do exercicio na tarefa), o teto de cada celula
     // (m/s; <= 0: sem teto).
     std::vector<std::array<float, LocomotionCommandCells3D>> caps;

@@ -240,29 +240,59 @@ def rescale_actions(model: ActorCritic, factor: torch.Tensor) -> None:
 
 @torch.no_grad()
 def refit_normalizer(norm: RunningNorm, first: nn.Linear, samples: torch.Tensor, raw: torch.Tensor | None = None,
-                     count: float | None = None) -> None:
-    """A normalizacao refeita sem mudar a funcao (vault .../pesquisas/03_otimizacao_ppo.md, Q3):
-    media e desvio novos das amostras cruas (os canais em raw passam a crus: media 0,
-    desvio 1), e a primeira camada absorve a troca, W' = W.s'/s e b' = b + W.(m'-m)/s.
-    Igual nas entradas que nenhuma das duas normalizacoes corta (o corte em 5 desvios
-    pode mudar onde a velha cortava: e o que se quer)."""
-    old_mean, old_inv = norm.mean.clone(), norm.inverse_std().clone()
+                     count: float | None = None, refit_continuous: bool = True) -> None:
+    """A normalizacao refeita sem mudar a funcao (vault .../pesquisas/03_otimizacao_ppo.md, Q3).
+
+    Os canais normalizados ganham media e desvio novos das amostras, e a primeira camada absorve
+    a troca, W' = W.s'/s e b' = b + W.(m'-m)/s: igual onde nenhuma das duas normalizacoes corta.
+    Os canais em raw passam a crus (media 0, desvio 1) e a coluna deles reproduz a contribuicao
+    antiga - com o corte de antes - em dois pontos: nas bandeiras (dois valores) os dois valores
+    observados, exata nos dois (a absorcao linear transformaria o 1 cortado em +5 num +1/desvio);
+    nos continuos os extremos dentro da faixa que a antiga nao cortava (exata ali). Canal
+    constante nas amostras (a rede nunca o viu variar): coluna zero, como um canal novo (o vies
+    guarda o valor). refit_continuous=False: so as bandeiras mudam (a funcao igual em todo
+    estado; os continuos acompanham a tarefa pelo limite da memoria da normalizacao)."""
+    old_mean, old_inv = norm.mean.clone().double(), norm.inverse_std().clone().double()
     samples = samples.reshape(-1, samples.shape[-1]).to(norm.mean.dtype)
+    raw_mask = (raw.to(torch.bool).to(norm.mean.device) if raw is not None
+                else torch.zeros(samples.shape[-1], dtype=torch.bool, device=norm.mean.device))
     new_mean = samples.mean(0)
     new_var = samples.var(0, unbiased=False)
-    if raw is not None:
-        mask = raw.to(torch.bool).to(norm.mean.device)
-        new_mean[mask] = 0.0
-        new_var[mask] = 1.0
+    if not refit_continuous:
+        # (So as bandeiras mudam: os continuos ficam com a estatistica de agora - a
+        # funcao igual onde ela cortava - e acompanham a tarefa pelo limite da memoria.)
+        new_mean = norm.mean.clone()
+        new_var = norm.var.clone()
+    new_mean[raw_mask] = 0.0
+    new_var[raw_mask] = 1.0
     norm.mean.copy_(new_mean)
     norm.var.copy_(new_var)
     if count is not None:
         norm.count.fill_(count)
-    new_inv = norm.inverse_std()
-    # y = W (x - m) inv + b = W (x - m') inv' + b'  ->  W' = W inv/inv', b' = b + W inv (m' - m)
-    weight = first.weight.clone()
-    first.bias.add_(weight @ (old_inv * (new_mean - old_mean)))
-    first.weight.copy_(weight * (old_inv / new_inv).unsqueeze(0))
+    new_inv = norm.inverse_std().double()
+    weight = first.weight.double()
+    bias = first.bias.double()
+    out_weight = weight * (old_inv / new_inv).unsqueeze(0)
+    bias = bias + weight @ (old_inv * (new_mean.double() - old_mean))
+    clip = float(norm.clip)
+    for j in torch.nonzero(raw_mask).flatten().tolist():
+        lo, hi = float(samples[:, j].min()), float(samples[:, j].max())
+        if torch.unique(samples[:, j]).numel() > 2:
+            # Continuo: os extremos dentro da faixa que a antiga nao cortava (exata ali).
+            reach = clip / float(old_inv[j])
+            lo, hi = max(lo, float(old_mean[j]) - reach), min(hi, float(old_mean[j]) + reach)
+        old_at = lambda v: weight[:, j] * max(-clip, min(clip, (v - float(old_mean[j])) * float(old_inv[j])))  # noqa: E731
+        # (A conta acima ja somou a absorcao linear deste canal ao vies: desfaz e refaz pelos extremos.)
+        bias = bias - weight[:, j] * float(old_inv[j]) * (float(new_mean[j]) - float(old_mean[j]))
+        if hi - lo < 1e-6:
+            out_weight[:, j] = 0.0
+            bias = bias + old_at(lo)
+        else:
+            slope = (old_at(hi) - old_at(lo)) / (hi - lo)
+            out_weight[:, j] = slope
+            bias = bias + old_at(lo) - slope * lo
+    first.weight.copy_(out_weight.to(first.weight.dtype))
+    first.bias.copy_(bias.to(first.bias.dtype))
 
 
 def recenter_actor(model: ActorCritic, observations: torch.Tensor, lower: torch.Tensor, upper: torch.Tensor,

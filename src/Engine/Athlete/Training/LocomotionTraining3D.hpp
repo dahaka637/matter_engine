@@ -102,6 +102,10 @@ struct LocomotionEpisode3D {
     std::array<float, LocomotionCommandCells3D> cellError2 {};
     std::array<float, LocomotionCommandCells3D> cellAsked {};
     std::array<float, LocomotionCommandCells3D> cellMade {};
+    // A fronteira de cada celula (o curriculo): as decisoes de cruzeiro com o
+    // pedido ate speedCurriculum.frontier abaixo do teto, e a soma do nucleo nelas.
+    std::array<float, LocomotionCommandCells3D> cellFrontierCruise {};
+    std::array<float, LocomotionCommandCells3D> cellFrontierTracking {};
 };
 
 // As colunas de um episodio (a ordem de locomotionEpisodeRow3D).

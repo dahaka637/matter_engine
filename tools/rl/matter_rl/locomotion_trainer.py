@@ -221,8 +221,13 @@ def drill_summary(rows: np.ndarray, columns: list[str], drills: list[str], reaso
                 "fall_since_change_median": float(np.median(since)) if len(since) else None,
                 "saved_start_fraction": float(part[:, col["comeco_guardado"]].mean()),
                 "assist_level": float(part[:, col["ajuda_nivel"]].mean()),
-                "terms_per_second": {name[5:]: float((part[:, col[name]] / seconds).mean())
+                "terms_per_second": {name[5:]: float(part[:, col[name]].sum() / seconds.sum())
                                      for name in columns if name.startswith("nota_")},
+                # As quedas no primeiro segundo dos episodios que comecaram guardados
+                # (o instante e aproximado: o resolvedor recomeca frio).
+                "saved_start_early_falls": (float((np.isin(ended, fall_codes)
+                                                   & (part[:, col["segundos"]] < 1.0))[part[:, col["comeco_guardado"]] > 0.5].mean())
+                                            if (part[:, col["comeco_guardado"]] > 0.5).any() else None),
             })
             cells = {}
             fall_cell = part[:, col["celula_queda"]].astype(int)
@@ -908,6 +913,8 @@ class LocomotionTrainer:
             "saturation": info.get("saturation", {}),
             "jerk_mean_action": info.get("jerk_mean_action"),
             "kl_top5": [[name, value] for name, value in top],
+            "clip": ({group: float(np.mean([v for v, g in zip(stats["clip_per_channel"], self.action_groups) if g == group]))
+                      for group in ACTION_GROUPS if group in self.action_groups} if stats.get("clip_per_channel") else {}),
             "kl_adapt": stats.get("kl_adapt"), "bound_loss": stats.get("bound_loss"),
             "std": {group: {"p50": float(np.median(std[[j for j, g in enumerate(self.action_groups) if g == group]])),
                             "p95": float(np.percentile(std[[j for j, g in enumerate(self.action_groups) if g == group]], 95))}

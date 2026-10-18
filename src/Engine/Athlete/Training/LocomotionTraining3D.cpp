@@ -102,7 +102,8 @@ const std::vector<std::string>& locomotionEpisodeColumns3D() {
                  "pescoco_relativo", "viavel_medio", "trancos_teto", "queda_desde_troca", "comeco_guardado",
                  "ajuda_nivel", "celula_queda" })
             c.push_back(name);
-        for (const char* field : { "decisoes", "cruzeiro", "rastreio", "erro2", "pedida", "feita" })
+        for (const char* field : { "decisoes", "cruzeiro", "rastreio", "erro2", "pedida", "feita", "fronteira",
+                 "rastreio_fronteira" })
             for (std::size_t k = 0; k < LocomotionCommandCells3D; ++k)
                 c.push_back("cel" + std::string(k < 10 ? "0" : "") + std::to_string(k) + "." + field);
         return c;
@@ -120,7 +121,8 @@ std::vector<float> locomotionEpisodeRow3D(const LocomotionEpisode3D& e) {
     for (float v : { e.postureTrunk, e.postureNeck, e.neckBody, e.neckShadow, e.neckRelative, e.meanFeasible, e.jerkCap,
              e.fallSinceChange, e.savedStart, e.assistLevel, e.fallCell })
         row.push_back(v);
-    for (const auto* cells : { &e.cellDecisions, &e.cellCruise, &e.cellTracking, &e.cellError2, &e.cellAsked, &e.cellMade })
+    for (const auto* cells : { &e.cellDecisions, &e.cellCruise, &e.cellTracking, &e.cellError2, &e.cellAsked, &e.cellMade,
+             &e.cellFrontierCruise, &e.cellFrontierTracking })
         row.insert(row.end(), cells->begin(), cells->end());
     return row;
 }
@@ -153,6 +155,10 @@ struct LocomotionTraining3D::Impl {
     struct SavedStart {
         AthleteSnapshot3D snapshot;
         float camera = 0.0f;
+        // A ultima acao da rede no instante (os trancos do comeco seguem dela).
+        std::vector<float> lastAction, lastActionCap;
+        // O filtro do candidato: a celula e o rumo de quando ele nasceu.
+        int cell = -1;
     };
     std::vector<std::vector<SavedStart>> savedBank;
     std::mt19937_64 bankRng;
@@ -222,7 +228,9 @@ struct LocomotionTraining3D::Impl {
         float lastTouchdown = -1.0f;
         int currentCell = -1;
         std::array<double, LocomotionCommandCells3D> cellDecisions {}, cellCruise {}, cellTracking {}, cellError2 {},
-            cellAsked {}, cellMade {};
+            cellAsked {}, cellMade {}, cellFrontierCruise {}, cellFrontierTracking {};
+        // Os ticks da ultima decisao (a queda no tick em que aconteceu).
+        int lastDecisionTicks = 0;
         bool savedStart = false;
         float assistLevel = 0.0f;
         // O instante candidato a comeco guardado (vira do banco se o corpo
@@ -271,6 +279,8 @@ struct LocomotionTraining3D::Impl {
             boundLower[i] = std::abs(mostDown[i]) > 0.0f ? -std::abs(down[i]) / std::abs(mostDown[i]) / capFraction[i] : 0.0f;
         }
         savedBank.resize(task.drills.size());
+        for (std::vector<SavedStart>& bank : savedBank)
+            if (bank.size() > task.savedStarts.capacity) bank.resize(task.savedStarts.capacity);
     }
 
     std::uint32_t pickDrill(World& world) {
@@ -383,6 +393,14 @@ struct LocomotionTraining3D::Impl {
         }
         // A ajuda sorteada por episodio (so no treino; o levantar fica no da tarefa).
         world.assistLevel = task.standingAssistPercent;
+        {
+            // (A ajuda base da tarefa a cada recomeco: um sorteio de antes nao
+            // sobra quando o sorteio e desligado andando.)
+            AthleteRuntimeSettings3D& runtime = scene.runtimeSettings();
+            runtime.e5StandingAssistPercent = task.standingAssistPercent;
+            runtime.e5WalkingAssistPercent = task.walkingAssistPercent;
+            runtime.physicalFeetAssistPercent = task.feetAssistPercent;
+        }
         if (task.assistSchedule.enabled && !settings.evaluation) {
             const LocomotionAssistSchedule3D& schedule = task.assistSchedule;
             const bool zero = std::uniform_real_distribution<float>(0.0f, 1.0f)(world.rng) < schedule.zeroFraction;
@@ -437,6 +455,11 @@ struct LocomotionTraining3D::Impl {
         world.requested = world.speed = 0.0;
         world.terms = {};
         world.lastActionCap.assign(actionSize, 0.0f);
+        if (saved != nullptr && saved->lastAction.size() == actionSize) {
+            world.lastAction = saved->lastAction;
+            world.lastActionCap = saved->lastActionCap;
+        }
+        world.lastDecisionTicks = 0;
         world.postureTrunk = world.postureNeck = world.neckBody = world.neckShadow = world.neckRelative = 0.0;
         world.neckShadowSamples = 0;
         world.feasibleSpeed = world.jerkCap = 0.0;
@@ -445,6 +468,7 @@ struct LocomotionTraining3D::Impl {
         world.lastTouchdown = -1.0f;
         world.currentCell = -1;
         world.cellDecisions = world.cellCruise = world.cellTracking = world.cellError2 = world.cellAsked = world.cellMade = {};
+        world.cellFrontierCruise = world.cellFrontierTracking = {};
         world.savedStart = saved != nullptr;
         world.hasPending = false;
         world.pendingAge = 0.0f;
@@ -509,8 +533,11 @@ struct LocomotionTraining3D::Impl {
             const float a = std::isfinite(action[i]) ? std::clamp(action[i], -1.0f, 1.0f) : 0.0f;
             jerk += (a - world.lastAction[i]) * (a - world.lastAction[i]);
             world.lastAction[i] = a;
-            // Na unidade do teto (a saida da rede, +-1 = o teto do canal).
-            const float u = capFraction[i] > 0.0f ? std::clamp(a / capFraction[i], -1.0f, 1.0f) : 0.0f;
+            // Na unidade do teto (a saida da rede sobre o limite do lado dela: +-1 =
+            // o teto daquele lado; os canais assimetricos tem limites diferentes).
+            float u = capFraction[i] > 0.0f ? a / capFraction[i] : 0.0f;
+            u = u >= 0.0f ? (boundUpper[i] > 0.0f ? std::min(1.0f, u / boundUpper[i]) : 0.0f)
+                          : (boundLower[i] < 0.0f ? std::max(-1.0f, u / -boundLower[i]) : 0.0f);
             jerkCap += (u - world.lastActionCap[i]) * (u - world.lastActionCap[i]);
             world.lastActionCap[i] = u;
         }
@@ -524,7 +551,7 @@ struct LocomotionTraining3D::Impl {
         const float deceleration = std::max(0.5f, before.navigation.deceleration);
 
         double velocityError2 = 0.0, facingError2 = 0.0, slip = 0.0, power = 0.0, posture = 0.0, assist = 0.0;
-        double postureTrunk = 0.0, postureNeck = 0.0, neckBody = 0.0, neckRelative = 0.0;
+        double postureTrunk = 0.0, postureNeck = 0.0, neckBody = 0.0, neckRelative = 0.0, madeSpeed = 0.0;
         const float neckSlack = task.reward.neckSlackDegrees * (Pi / 180.0f);
         double shake = 0.0;
         const float weight = Gravity * std::max(1.0f, bundle->profile().totalMassKg);
@@ -557,6 +584,7 @@ struct LocomotionTraining3D::Impl {
             }
             world.comVelocity = com;
             world.comValid = true;
+            madeSpeed += std::hypot(com.x, com.y);
             const Vec3 error = com - world.feasible;
             velocityError2 += error.x * error.x + error.y * error.y;
             {
@@ -689,6 +717,7 @@ struct LocomotionTraining3D::Impl {
             ++world.neckShadowSamples;
         }
         world.feasibleSpeed += std::hypot(world.feasible.x, world.feasible.y);
+        world.lastDecisionTicks = ticks;
         // A celula de comando desta decisao (o rumo do pedido em relacao a camera e
         // o modo dela) e o rastreio nela (o nucleo de velocidade sem peso, no cruzeiro).
         {
@@ -700,13 +729,22 @@ struct LocomotionTraining3D::Impl {
                 world.currentCell = static_cast<int>(cell);
                 world.cellDecisions[cell] += 1.0;
                 world.cellAsked[cell] += askedSpeed;
-                world.cellMade[cell] += std::hypot(world.comVelocity.x, world.comVelocity.y);
+                world.cellMade[cell] += madeSpeed / tickCount;
                 const Vec3 gap = asked - world.feasible;
                 if (std::hypot(gap.x, gap.y) < 0.05f) {
                     const float e = measure.velocityError;
+                    const float kernelValue = std::exp(-(e * e) / (task.reward.velocitySigma * task.reward.velocitySigma));
                     world.cellCruise[cell] += 1.0;
-                    world.cellTracking[cell] += std::exp(-(e * e) / (task.reward.velocitySigma * task.reward.velocitySigma));
+                    world.cellTracking[cell] += kernelValue;
                     world.cellError2[cell] += static_cast<double>(e) * e;
+                    // A fronteira (o curriculo): o pedido no teto da celula.
+                    if (task.speedCurriculum.enabled && world.drill < task.speedCurriculum.caps.size()) {
+                        const float cap = task.speedCurriculum.caps[world.drill][cell];
+                        if (cap > 0.0f && askedSpeed >= cap - task.speedCurriculum.frontier) {
+                            world.cellFrontierCruise[cell] += 1.0;
+                            world.cellFrontierTracking[cell] += kernelValue;
+                        }
+                    }
                 }
             } else {
                 world.currentCell = -1;
@@ -794,9 +832,19 @@ struct LocomotionTraining3D::Impl {
         // Os comecos guardados: o candidato vira do banco depois de sobreviver
         // surviveSeconds; um candidato novo so no cruzeiro, rapido e longe do limite.
         if (!settings.evaluation && task.drills[world.drill].savedStartFraction > 0.0f && !fell && !numeric) {
+            const RagdollState3D& here = scene.body();
+            const Vec3 spot = here.links.empty() ? Vec3 {} : planar(here.links.front().position);
+            const Vec3 lag = asked - world.feasible;
             if (world.hasPending) {
+                // (O candidato so vale se o corpo seguiu no mesmo pedido: rapido, perto
+                // do viavel, na mesma celula e longe do limite durante a espera.)
+                const bool still = std::hypot(asked.x, asked.y) >= task.savedStarts.minimumSpeed
+                    && std::hypot(lag.x, lag.y) < 0.25f && world.currentCell == world.pending.cell
+                    && std::hypot(spot.x, spot.y) < 0.5f * task.boundaryMeters;
                 world.pendingAge += decisionSeconds;
-                if (world.pendingAge >= task.savedStarts.surviveSeconds) {
+                if (!still) {
+                    world.hasPending = false;
+                } else if (world.pendingAge >= task.savedStarts.surviveSeconds) {
                     world.accepted = std::move(world.pending);
                     world.hasAccepted = true;
                     world.hasPending = false;
@@ -810,6 +858,9 @@ struct LocomotionTraining3D::Impl {
                     && std::uniform_real_distribution<float>(0.0f, 1.0f)(world.rng) < 0.05f) {
                     world.pending.snapshot = scene.snapshot();
                     world.pending.camera = world.command.facingYawRadians;
+                    world.pending.lastAction = world.lastAction;
+                    world.pending.lastActionCap = world.lastActionCap;
+                    world.pending.cell = world.currentCell;
                     world.hasPending = true;
                     world.pendingAge = 0.0f;
                 }
@@ -879,7 +930,9 @@ struct LocomotionTraining3D::Impl {
         e.neckRelative = world.neckShadowSamples > 0 ? static_cast<float>(world.neckRelative / world.neckShadowSamples) : -1.0f;
         e.meanFeasible = static_cast<float>(world.feasibleSpeed / steps);
         e.jerkCap = static_cast<float>(world.jerkCap / steps);
-        e.fallSinceChange = reason == LocomotionEnd3D::Fall ? world.pilot.clock - world.pilot.lastChange : -1.0f;
+        e.fallSinceChange = reason == LocomotionEnd3D::Fall
+            ? world.pilot.clock - world.pilot.lastChange + static_cast<float>(world.lastDecisionTicks) * TickSeconds
+            : -1.0f;
         e.savedStart = world.savedStart ? 1.0f : 0.0f;
         e.assistLevel = world.assistLevel;
         e.fallCell = reason == LocomotionEnd3D::Fall && world.currentCell >= 0 ? static_cast<float>(world.currentCell) : -1.0f;
@@ -890,6 +943,8 @@ struct LocomotionTraining3D::Impl {
             e.cellError2[k] = static_cast<float>(world.cellError2[k]);
             e.cellAsked[k] = static_cast<float>(world.cellAsked[k]);
             e.cellMade[k] = static_cast<float>(world.cellMade[k]);
+            e.cellFrontierCruise[k] = static_cast<float>(world.cellFrontierCruise[k]);
+            e.cellFrontierTracking[k] = static_cast<float>(world.cellFrontierTracking[k]);
         }
         // (Um candidato a comeco guardado nao sobrevive ao fim do episodio.)
         world.hasPending = false;

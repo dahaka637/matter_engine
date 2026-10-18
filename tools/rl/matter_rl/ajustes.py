@@ -24,21 +24,33 @@ FLAG_PREFIXES = ("exec.estado.", "exec.marcha.", "comando.sprint", "ref.no_ar", 
 
 
 class RunContext:
-    def __init__(self, run: str, environments: int = 512, threads: int = 12, seed: int = 20261018):
+    def __init__(self, run: str, iteration: int, environments: int = 512, threads: int = 12, seed: int = 20261018):
         self.run = run
         self.directory = paths.run_dir(run)
         self.lock = storage.RunLock(self.directory)
         self.config = LocomotionRunConfig.load(self.directory / "run.json")
+        # O protocolo (08_plano_consenso.md §1.3): a rodada explicita, nunca "a ultima" as cegas.
         self.reference = storage.latest_checkpoint(self.directory)
-        if self.reference is None:
-            raise RuntimeError(f"o treino {run} nao tem checkpoint")
+        if self.reference is None or self.reference.iteration != iteration:
+            found = self.reference.iteration if self.reference else None
+            raise RuntimeError(f"o ultimo checkpoint de {run} e a rodada {found}, nao a {iteration} pedida")
         self.state = storage.load_checkpoint(self.reference, "cpu")
         self.module = native()
         self.batch = self.module.LocomotionBatch(str(self.directory / "tarefa.json"), str(paths.ASSETS),
                                                  environments=environments, threads=threads, seed=seed)
-        if list(self.batch.observation_names()) != list(self.state["obs_names"]) \
-                or list(self.batch.action_names()) != list(self.state["action_names"]):
-            raise RuntimeError("o checkpoint e de outro contrato: retome o treino uma vez antes do ajuste")
+        # Tudo do contrato e dos tetos tem de bater (um ajuste num contexto errado e silencioso).
+        checks = {
+            "entradas": list(self.batch.observation_names()) == list(self.state["obs_names"]),
+            "critico": list(self.batch.critic_names()) == list(self.state["critic_names"]),
+            "saidas": list(self.batch.action_names()) == list(self.state["action_names"]),
+            "contrato": self.batch.contract_hash == self.state.get("contract_hash"),
+            "tetos": np.allclose(np.asarray(self.batch.action_cap_fractions(), dtype=np.float32),
+                                 np.asarray(self.state["action_scale"], dtype=np.float32), atol=1e-7),
+        }
+        wrong = [name for name, ok in checks.items() if not ok]
+        if wrong:
+            raise RuntimeError("o checkpoint nao bate com a tarefa e o contrato de agora (" + ", ".join(wrong)
+                               + "): retome o treino uma vez antes do ajuste")
         network = self.state.get("network", NETWORK)
         self.model = ActorCritic(len(self.state["obs_names"]), len(self.state["critic_names"]),
                                  len(self.state["action_names"]), actor_hidden=network["actor"],
@@ -91,37 +103,68 @@ class RunContext:
         self.lock.release()
 
 
-def unclipped(norm, raw: torch.Tensor) -> torch.Tensor:
-    """As linhas que a normalizacao nao corta em canal nenhum."""
-    scaled = (raw - norm.mean) * norm.inverse_std()
-    return (scaled.abs() < norm.clip).all(dim=-1)
+def unclipped(norm, raw: torch.Tensor, ignore: torch.Tensor | None = None) -> torch.Tensor:
+    """As linhas que a normalizacao nao corta em canal nenhum (fora os canais em ignore: as
+    bandeiras, que o ajuste reproduz exatamente nos dois valores)."""
+    scaled = ((raw - norm.mean) * norm.inverse_std()).abs() < norm.clip
+    if ignore is not None:
+        scaled = scaled | ignore.to(torch.bool)
+    return scaled.all(dim=-1)
 
 
-def renormalize(run: str, steps: int = 100, count: float = 5.0e6) -> dict:
+@torch.no_grad()
+def same_trajectory(context: "RunContext", old_model: ActorCritic, steps: int = 300, seed: int = 777) -> float:
+    """A previa de 1 mundo (o protocolo §1.3): o mundo andado pela rede velha e, em cada estado, a
+    acao da nova; o maior desvio da acao (na unidade do contrato) nos estados que nenhuma das
+    duas normalizacoes corta."""
+    batch = context.module.LocomotionBatch(str(context.directory / "tarefa.json"), str(paths.ASSETS),
+                                           environments=1, threads=1, seed=seed)
+    authority = float(context.state.get("counters", {}).get("authority", 1.0))
+    batch.set_authority(authority, authority, authority, authority)
+    batch.reset(seed)
+    worst = 0.0
+    for _ in range(steps):
+        obs = torch.as_tensor(np.array(batch.observations(), dtype=np.float32))
+        old_action = old_model.actor(old_model.obs_norm(obs)) * context.scale
+        new_action = context.model.actor(context.model.obs_norm(obs)) * context.scale
+        if bool(unclipped(old_model.obs_norm, obs, context.raw_mask).all()
+                and unclipped(context.model.obs_norm, obs, context.raw_mask).all()):
+            worst = max(worst, float((new_action - old_action).abs().max()))
+        batch.step(np.ascontiguousarray(old_action.numpy(), dtype=np.float32))
+    return worst
+
+
+def renormalize(run: str, iteration: int, steps: int = 100, count: float = 5.0e6) -> dict:
     """A normalizacao refeita (Q3): estatistica nova dos estados de agora, as bandeiras cruas,
-    a memoria limitada, a primeira camada do ator e do critico absorvendo a troca."""
-    context = RunContext(run)
+    a memoria limitada, a primeira camada do ator e do critico absorvendo a troca. Os portoes
+    (o protocolo §1.3, com os limites do float32): a acao nos estados sem corte (< 5e-4 na
+    unidade do teto, nas amostras e na previa de 300 decisoes), o desvio igual, o critico
+    (< 1e-3) e as entradas cortadas sem piorar."""
+    import copy
+    context = RunContext(run, iteration)
     try:
         observations, critics = context.collect(steps)
         model = context.model
+        old_model = copy.deepcopy(model)
         with torch.no_grad():
             before_mean = model.actor(model.obs_norm(observations))
             before_value = model.value(model.critic_norm(critics))
-            old_rows = unclipped(model.obs_norm, observations)
-            old_critic_rows = unclipped(model.critic_norm, critics)
-            old_cut = float((((observations - model.obs_norm.mean) * model.obs_norm.inverse_std()).abs()
-                             >= model.obs_norm.clip).float().mean())
             obs_raw = torch.tensor([n.startswith(RAW_PREFIXES + FLAG_PREFIXES) for n in context.state["obs_names"]])
             critic_raw = torch.tensor([n.startswith(RAW_PREFIXES + FLAG_PREFIXES)
                                        for n in context.state["critic_names"]])
+            old_rows = unclipped(model.obs_norm, observations, obs_raw)
+            old_critic_rows = unclipped(model.critic_norm, critics, critic_raw)
+            old_cut = float((((observations - model.obs_norm.mean) * model.obs_norm.inverse_std()).abs()
+                             >= model.obs_norm.clip).float().mean())
             limit = float(count) if count > 0 else float(observations.shape[0])
-            refit_normalizer(model.obs_norm, model.actor[0], observations, obs_raw, count=limit)
-            refit_normalizer(model.critic_norm, model.critic[0], critics, critic_raw, count=limit)
+            refit_normalizer(model.obs_norm, model.actor[0], observations, obs_raw, count=limit, refit_continuous=False)
+            refit_normalizer(model.critic_norm, model.critic[0], critics, critic_raw, count=limit, refit_continuous=False)
             context.fix_raw(FLAG_PREFIXES)
+            context.raw_mask = obs_raw
             after_mean = model.actor(model.obs_norm(observations))
             after_value = model.value(model.critic_norm(critics))
-            rows = old_rows & unclipped(model.obs_norm, observations)
-            critic_rows = old_critic_rows & unclipped(model.critic_norm, critics)
+            rows = old_rows & unclipped(model.obs_norm, observations, obs_raw)
+            critic_rows = old_critic_rows & unclipped(model.critic_norm, critics, critic_raw)
             new_cut = float((((observations - model.obs_norm.mean) * model.obs_norm.inverse_std()).abs()
                              >= model.obs_norm.clip).float().mean())
         report = {
@@ -134,23 +177,38 @@ def renormalize(run: str, steps: int = 100, count: float = 5.0e6) -> dict:
             "inputs_cut_before": old_cut, "inputs_cut_after": new_cut,
             "raw_channels": int(obs_raw.sum()),
         }
-        report["equivalent"] = report["actor_max_change_unclipped"] is not None \
-            and report["actor_max_change_unclipped"] < 1e-4
+        report["std_change"] = float((model.log_std.detach() - old_model.log_std.detach()).abs().max())
+        report["preview_max_action_change"] = same_trajectory(context, old_model)
+        # Os limites sao os do arredondamento do float32 numa primeira camada de ~700 entradas
+        # (medido em 18/10: ~1e-4 na unidade do teto, 0,00001 rad numa junta): fisicamente nada.
+        gates = {
+            "acao_amostras": report["actor_max_change_unclipped"] is not None and report["actor_max_change_unclipped"] < 5e-4,
+            "acao_previa": report["preview_max_action_change"] <= 5e-4,
+            "desvio": report["std_change"] < 1e-6,
+            "critico": report["critic_max_change_unclipped"] is not None and report["critic_max_change_unclipped"] < 1e-3,
+            "cortadas": report["inputs_cut_after"] <= report["inputs_cut_before"],
+            # So as bandeiras mudam: a acao igual em todo estado visitado.
+            "acao_todas": report["actor_max_change_all"] < 5e-4,
+        }
+        report["gates"] = gates
+        report["equivalent"] = all(gates.values())
         if report["equivalent"]:
+            # O checkpoint primeiro, o run.json depois: cair no meio deixa o treino no
+            # checkpoint antigo com a configuracao antiga (o ajuste so vale inteiro).
+            report["checkpoint"] = str(context.save("normalizacao refeita (Q3)"))
             context.config.raw_extra_prefixes = list(FLAG_PREFIXES)
             context.config.norm_max_count = float(count)
             context.config.save(context.directory / "run.json")
-            report["checkpoint"] = str(context.save("normalizacao refeita (Q3)"))
         return report
     finally:
         context.close()
 
 
-def recenter(run: str, steps: int = 100, iterations: int = 4000, tolerance: float = 0.05) -> dict:
+def recenter(run: str, iteration: int, steps: int = 100, iterations: int = 4000, tolerance: float = 0.05) -> dict:
     """O recentramento (rodada 3): a media fora dos limites volta para 0,05 para dentro deles, a
     acao aplicada quase igual (a tolerancia: o RMS da mudanca na unidade do teto; a mudanca
     maxima esperada e a margem, 5% do teto, nos canais saturados)."""
-    context = RunContext(run)
+    context = RunContext(run, iteration)
     try:
         observations, _ = context.collect(steps)
         model = context.model
@@ -173,9 +231,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("acao", choices=["renormalizar", "recentrar"])
     parser.add_argument("--run", required=True)
+    parser.add_argument("--rodada", type=int, required=True, help="a rodada do checkpoint (o ultimo do treino)")
     parser.add_argument("--passos", type=int, default=100)
     args = parser.parse_args(argv)
-    report = renormalize(args.run, args.passos) if args.acao == "renormalizar" else recenter(args.run, args.passos)
+    report = (renormalize(args.run, args.rodada, args.passos) if args.acao == "renormalizar"
+              else recenter(args.run, args.rodada, args.passos))
     print(json.dumps(report, indent=1, ensure_ascii=False))
     return 0 if report.get("equivalent") else 2
 

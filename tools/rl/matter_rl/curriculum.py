@@ -5,8 +5,9 @@ A celula e o rumo do pedido em relacao a camera (8 setores de 45 graus) e o modo
 peito (camera parada ou girando): 16 por exercicio. Cada uma tem um teto de
 velocidade que corta o que o piloto pede (so no treino; a avaliacao e o portao pedem
 a faixa inteira). O teto abre um degrau quando a celula ja rastreia o pedido de
-agora - o nucleo de velocidade medio no cruzeiro >= tracking (0,8: erro ~0,24 m/s,
-a regua do legged_gym) - sem cair mais que maxFalls, com pelo menos minEpisodes
+agora na fronteira (as decisoes de cruzeiro com o pedido ate frontier abaixo do teto) - o
+nucleo de velocidade medio >= tracking (0,8: erro ~0,24 m/s, a regua do legged_gym) - sem
+cair mais que maxFalls, com pelo menos minEpisodes
 episodios desde a ultima abertura (a janela: os ultimos window). Nunca fecha.
 
 O estado que importa (os tetos) mora no tarefa.json do treino; as contagens se
@@ -96,10 +97,12 @@ class SpeedCurriculum:
             drill = self.drill_ids[int(row[col["exercicio"]])]
             fall_cell = int(row[col["celula_queda"]])
             for k in range(CELLS):
-                cruise = row[col[f"cel{k:02d}.cruzeiro"]]
+                # So a fronteira conta (o pedido no teto da celula): os pedidos baixos
+                # rastreados nao podem abrir o teto alto (revisao de 18/10).
+                cruise = row[col[f"cel{k:02d}.fronteira"]]
                 if cruise < self.rule.min_cruise:
                     continue
-                tracking = float(row[col[f"cel{k:02d}.rastreio"]] / cruise)
+                tracking = float(row[col[f"cel{k:02d}.rastreio_fronteira"]] / cruise)
                 self.records[drill][k].append((tracking, fall_cell == k))
                 self.since[drill][k] += 1
 
