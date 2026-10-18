@@ -362,25 +362,43 @@ class LocomotionTrainer:
         if reference is None:
             return
         state = storage.load_checkpoint(reference, str(self.device))
-        if state.get("contract_hash") != self.batch.contract_hash or state["action_names"] != self.action_names \
-                or state["obs_names"] != self.obs_names:
+        # Um contrato novo so com canais ACRESCENTADOS (a entrada e a saida da
+        # virada brusca, v3) migra: os que ja existiam levam os pesos, os novos
+        # entram com peso zero (a politica antiga segue igual no primeiro
+        # instante). Canal que some ou muda de nome nao migra.
+        additive = set(state["obs_names"]) <= set(self.obs_names) and set(state["action_names"]) <= set(self.action_names)
+        io_changed = list(state["obs_names"]) != list(self.obs_names) or list(state["action_names"]) != list(self.action_names)
+        if (state.get("contract_hash") != self.batch.contract_hash or io_changed) and not additive:
             raise RuntimeError("o checkpoint e de outro contrato: abra um treino novo")
         fresh_optimizer = False
-        if state["critic_names"] != self.critic_names:
-            # Outros exercicios (outra tarefa): o critico ganha as entradas novas
-            # (peso zero) e guarda as que ja tinha; o ator e o mesmo.
+        old_scale = state.get("action_scale")
+        if io_changed or state["critic_names"] != self.critic_names:
+            # Outros exercicios (outra tarefa) ou canais novos: o critico e o ator
+            # ganham as entradas (e as saidas) novas com peso zero e guardam as
+            # que ja tinham.
             network = state.get("network", self.config.network)
-            old = ActorCritic(len(state["obs_names"]), len(state["critic_names"]), len(self.action_names),
+            old = ActorCritic(len(state["obs_names"]), len(state["critic_names"]), len(state["action_names"]),
                               actor_hidden=network["actor"], critic_hidden=network["critic"]).to(self.device)
             old.load_state_dict(state["model"])
             fresh = migrate_inputs(old, list(state["obs_names"]), list(self.obs_names), list(state["critic_names"]),
-                                   list(self.critic_names))
+                                   list(self.critic_names), list(state["action_names"]), list(self.action_names),
+                                   self.model.log_std.detach().cpu())
             self.model.load_state_dict(fresh.state_dict())
             fresh_optimizer = True
-            self.restore_notes.append("o critico migrou para os exercicios da tarefa nova")
+            if io_changed:
+                added_in = sorted(set(self.obs_names) - set(state["obs_names"]))
+                added_out = sorted(set(self.action_names) - set(state["action_names"]))
+                self.restore_notes.append(f"o contrato ganhou {len(added_in)} entradas e {len(added_out)} saidas (peso zero)")
+                if old_scale is not None:
+                    # (A escala de cada saida pelo nome: as novas ficam como a de agora.)
+                    previous = {name: float(v) for name, v in zip(state["action_names"], np.asarray(old_scale).tolist())}
+                    current = self.action_scale.detach().cpu().numpy()
+                    old_scale = np.asarray([previous.get(name, float(current[j])) for j, name in enumerate(self.action_names)],
+                                           dtype=np.float32)
+            else:
+                self.restore_notes.append("o critico migrou para os exercicios da tarefa nova")
         else:
             self.model.load_state_dict(state["model"])
-        old_scale = state.get("action_scale")
         if old_scale is not None:
             # Os tetos mudaram: a mesma acao fisica (u novo = u antigo x teto antigo / teto novo).
             factor = torch.as_tensor(np.asarray(old_scale, dtype=np.float32), device=self.device) / self.action_scale
@@ -447,6 +465,7 @@ class LocomotionTrainer:
             "taskId": self.config.task, "run": self.run, "iteration": self.counters["iteration"],
             "steps": self.counters["steps"], "observationNames": list(self.obs_names),
             "contractHash": self.batch.contract_hash, "authority": self.authority(), "caps": live.get("caps", {}),
+            "turnMove": live.get("turnMove", {}),
         })
         return path
 
@@ -474,7 +493,15 @@ class LocomotionTrainer:
         self.write_status()
         results: dict = {}
         a = self.authority()
-        solvers = {"rede": (a, a, a, a), "sem_pose_rigidez": (a, a, 0.0, 0.0), "classico": (0.0, 0.0, 0.0, 0.0)}
+        # (autoridades, virada brusca: 0 a da tarefa, 1 desligada, 2 ligada). Com a
+        # virada na tarefa: a rede com ela, a rede sem ela, ela sem a rede e o classico
+        # sem ela; sem a virada na tarefa, os tres de sempre.
+        turn_task = bool(json.loads(self.live_task.read_text()).get("turnMove", {}).get("enabled", False))
+        solvers = {"rede": ((a, a, a, a), 0), "sem_pose_rigidez": ((a, a, 0.0, 0.0), 0),
+                   "classico": ((0.0, 0.0, 0.0, 0.0), 1 if turn_task else 0)}
+        if turn_task:
+            solvers["rede_sem_virada"] = ((a, a, a, a), 1)
+            solvers["virada_sem_rede"] = ((0.0, 0.0, 0.0, 0.0), 2)
         col = {name: i for i, name in enumerate(self.episode_columns)}
         # (O classico nao depende da rede: o resumo dele fica em cache pela
         # tarefa - o arquivo inteiro, com as ajudas - e pelo contrato.)
@@ -499,7 +526,7 @@ class LocomotionTrainer:
                                                         threads=self.threads, seed=20261016, evaluation=True,
                                                         evaluation_seconds=self.config.evaluation_seconds, drill=drill)
                     self.evaluation_batches[drill] = batch
-            for solver, authority in solvers.items():
+            for solver, (authority, turn_mode) in solvers.items():
                 cached = self.classic_cache.get((task_key, drill)) if solver == "classico" else None
                 if cached is not None:
                     results.setdefault(solver, {})[drill] = cached
@@ -507,6 +534,8 @@ class LocomotionTrainer:
                                                 solver, cached)
                     continue
                 batch.set_authority(*authority)
+                if turn_task:
+                    batch.set_turn_move(turn_mode)
                 batch.reset(20261016)
                 worlds = batch.num_envs
                 first: dict[int, np.ndarray] = {}
@@ -674,8 +703,14 @@ class LocomotionTrainer:
             self.stream.synchronize()
         samples = s.steps_per_env * envs
         rows = np.concatenate(episodes) if episodes else np.zeros((0, len(self.episode_columns)))
+        # O ganho da rede sobre a virada brusca (1 + a acao fisica, por familia): se
+        # nao cai a zero onde o professor ajuda, e se a rede o mexe.
+        gates = [j for j, name in enumerate(self.action_names) if name.startswith("turno.ganho.")]
+        turn_gate = ([float(1.0 + (rollout.actions[..., j] * self.action_scale[j]).mean()) for j in gates]
+                     if gates else [])
         return rollout, {"collect": time.time() - begin, "samples": samples, "components": components / samples,
-                         "rows": rows, "bootstrap": bootstrap_sum / samples, "reward": float(rollout.rewards.mean())}
+                         "rows": rows, "bootstrap": bootstrap_sum / samples, "reward": float(rollout.rewards.mean()),
+                         "turn_gate": turn_gate}
 
     def _init_worker(self) -> None:
         # A thread da atualizacao com o contexto da GPU desde o comeco.
@@ -742,6 +777,7 @@ class LocomotionTrainer:
                                            "explained_variance", "value_loss", "learning_rate", "action_std",
                                            "auxiliary") if key in stats}
         details = {"authority": self.authority(), "fall_risk": fall_risk, "bootstrap": info["bootstrap"], "ppo": ppo,
+                   "turn_gate": info.get("turn_gate", []),
                    "drills": drill_summary(rows, self.episode_columns, self.drill_ids, self.end_reasons)}
         result = {
             "run": self.run, "iteration": self.counters["iteration"], "time": time.time(),

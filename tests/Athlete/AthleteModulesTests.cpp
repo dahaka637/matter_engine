@@ -546,12 +546,12 @@ void contractTests() {
         for (const RagdollAxisDefinition3D& axis : profile.links[i].inboundJoint.axes) axes += axis.enabled ? 1 : 0;
     expect(contract.actuatedAxes().size() == axes, "os eixos atuados sao os habilitados no perfil");
     const std::size_t links = profile.links.size();
-    expect(contract.actionSize() == 12 + 7 + axes + 3,
-        "a saida: os pes (12), o equilibrio (7), um residuo por eixo, os ganhos");
+    expect(contract.actionSize() == 12 + 7 + axes + 3 + 4,
+        "a saida: os pes (12), o equilibrio (7), um residuo por eixo, os ganhos e o ganho da virada (4)");
     expect(contract.observationSize()
-            == 1 + links * 12 + (links - 1) * 3 + 2 * axes + 4 + 7 + 50 + 28 + 9 + 53
+            == 1 + links * 12 + (links - 1) * 3 + 2 * axes + 4 + 7 + 50 + 28 + 9 + 53 + 13
                 + LocomotionContract3D::HistoryDecisions * contract.actionSize(),
-        "a entrada: o tamanho de cada bloco (o executor com 53)");
+        "a entrada: o tamanho de cada bloco (o executor com 53, a virada com 13)");
 
     // O que observe escreve e o layout, na mesma conta (sem deriva).
     std::vector<float> out(contract.observationSize());
@@ -616,6 +616,76 @@ void contractTests() {
     expect(neutral, "a acao zero e a correcao zero (as cabecas com autoridade ligadas)");
     const PhysicalCorrections3D off = contract.corrections(none, LocomotionAuthority3D {});
     expect(!off.active(), "sem autoridade e sem valor: nenhuma cabeca ligada (o classico exato)");
+    {
+        // O ganho da virada: 1 + a acao (-1 descarta, 0 mantem, +1 dobra); a
+        // acao zero e sem autoridade deixam o professor inteiro; o ganho nao
+        // liga cabeca nenhuma.
+        bool unit = true;
+        for (float g : zero.turnGate) unit &= g == 1.0f;
+        for (float g : off.turnGate) unit &= g == 1.0f;
+        expect(unit, "a acao zero e sem autoridade: o ganho da virada e 1 (o professor inteiro)");
+        std::vector<float> gates(contract.actionSize(), 0.0f);
+        gates[actionIndex("turno.ganho.equilibrio")] = -1.0f;
+        gates[actionIndex("turno.ganho.pes")] = 0.5f;
+        gates[actionIndex("turno.ganho.pose")] = 1.0f;
+        gates[actionIndex("turno.ganho.velocidade")] = -0.25f;
+        const PhysicalCorrections3D gated = contract.corrections(contract.physical(gates, full), full);
+        expect(std::abs(gated.turnGate[0] - 0.0f) < 1e-6f && std::abs(gated.turnGate[1] - 1.5f) < 1e-6f
+                && std::abs(gated.turnGate[2] - 2.0f) < 1e-6f && std::abs(gated.turnGate[3] - 0.75f) < 1e-6f,
+            "o ganho da virada: 1 + a acao, de 0 (descarta) a 2");
+        LocomotionAuthority3D nobalance = full;
+        nobalance.balance = 0.0f;
+        const PhysicalCorrections3D closed = contract.corrections(contract.physical(gates, nobalance), nobalance);
+        expect(closed.turnGate[0] == 1.0f && closed.turnGate[2] == 1.0f,
+            "sem a autoridade do equilibrio (a rampa), o ganho fica em 1: a rede ainda nao mexe no professor");
+        std::vector<float> onlyGate(contract.actionSize(), 0.0f);
+        onlyGate[actionIndex("turno.ganho.pes")] = 1.0f;
+        expect(!contract.corrections(contract.physical(onlyGate, LocomotionAuthority3D::uniform(0.0f)),
+                   LocomotionAuthority3D::uniform(0.0f)).active(),
+            "o ganho da virada sozinho nao liga cabeca nenhuma");
+        const LocomotionMirror3D mirror = contract.mirror();
+        bool signs = true;
+        for (const char* name : { "turno.lado", "turno.prior.inclina_lado" }) {
+            const std::size_t at = channelOf(contract, name);
+            signs &= mirror.observation.source[at] == at && mirror.observation.scale[at] == -1.0f;
+        }
+        for (const char* name : { "turno.angulo", "turno.prior.freada", "turno.estado.corte", "turno.prior.altura" }) {
+            const std::size_t at = channelOf(contract, name);
+            signs &= mirror.observation.scale[at] == 1.0f;
+        }
+        for (const char* name : { "turno.ganho.equilibrio", "turno.ganho.pes", "turno.ganho.pose", "turno.ganho.velocidade" }) {
+            const std::size_t at = actionIndex(name);
+            signs &= mirror.action.source[at] == at && mirror.action.scale[at] == 1.0f;
+        }
+        expect(signs, "o espelho: o lado e a inclinacao do professor trocam o sinal; o resto e os ganhos ficam");
+        // A entrada: ativa, o estado e o que o professor pede; desligada, zeros.
+        AthleteControlView3D view;
+        view.turn.active = true;
+        view.turn.state = 3;
+        view.turn.side = -1.0f;
+        view.turn.remainingDegrees = 90.0f;
+        view.turn.priorBrake = 0.4f;
+        RagdollState3D body;
+        body.links.resize(profile.links.size());
+        for (std::size_t i = 0; i < body.links.size(); ++i) {
+            body.links[i].orientation = profile.links[i].modelOrientation;
+            body.links[i].position = profile.links[i].modelPosition;
+        }
+        BodyForecast3D forecast;
+        AthleteCommand3D command;
+        std::vector<float> in(contract.observationSize(), 0.0f);
+        (void)contract.observe(body, command, view, {}, forecast, in);
+        expect(in[channelOf(contract, "turno.ativo")] == 1.0f && in[channelOf(contract, "turno.estado.freando")] == 1.0f
+                && in[channelOf(contract, "turno.estado.corte")] == 0.0f && in[channelOf(contract, "turno.lado")] == -1.0f
+                && std::abs(in[channelOf(contract, "turno.angulo")] - 0.5f) < 1e-6f
+                && std::abs(in[channelOf(contract, "turno.prior.freada")] - 0.4f) < 1e-6f,
+            "a entrada da virada: o estado, o lado, o que falta virar e a freada pedida");
+        view.turn.active = false;
+        (void)contract.observe(body, command, view, {}, forecast, in);
+        expect(in[channelOf(contract, "turno.ativo")] == 0.0f && in[channelOf(contract, "turno.lado")] == 0.0f
+                && in[channelOf(contract, "turno.prior.freada")] == 0.0f,
+            "sem a virada, as entradas dela sao zero");
+    }
     std::vector<float> big(contract.actionSize(), 5.0f);
     big[actionIndex("pes.esq.pouso.x")] = std::numeric_limits<float>::quiet_NaN();
     LocomotionAuthority3D partial;

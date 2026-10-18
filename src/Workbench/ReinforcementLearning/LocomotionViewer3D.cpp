@@ -154,6 +154,9 @@ struct LocomotionViewer3D::Impl {
         control.controlledEntityId = 0;
         AthleteRuntimeOutput3D output;
         settings.locomotionPolicy = policy != nullptr;
+        // (A rede que treinou com o professor da virada brusca: ele entra.)
+        settings.dynamicTurnMove = policy != nullptr && policy->usesTurnMove();
+        if (settings.dynamicTurnMove) settings.dynamicTurnMoveSettings.amount = policy->turnMoveAmount();
         runtime.update(*scene, bundle->assets(), std::span<AthleteSlot3D>(&slot, 1), {}, settings, control,
             TickSeconds, output);
         if (pushSeconds > 0.0f && chest < body.links.size()) {

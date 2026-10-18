@@ -108,10 +108,14 @@ struct LocomotionAuthority3D {
 // - o equilibrio: a inclinacao (frente, lado), o centro de massa (x, y), a
 //   altura da pelve, a aceleracao pelo contato (x, y);
 // - a pose: a correcao de cada eixo atuado;
-// - a rigidez: a escala dos ganhos por grupo (pernas, tronco, bracos).
+// - a rigidez: a escala dos ganhos por grupo (pernas, tronco, bracos);
+// - (v3) o ganho sobre a virada brusca (o professor, DynamicTurnMove3D): por
+//   familia (equilibrio, pes, pose, velocidade), 1 + a acao: -1 descarta a
+//   parte do professor, 0 a mantem, +1 a dobra. A entrada ganha o estado da
+//   virada e o que o professor pede; sem ele (ou desligado), tudo zero.
 class LocomotionContract3D {
 public:
-    static constexpr std::uint32_t Version = 2;
+    static constexpr std::uint32_t Version = 3;
     static constexpr std::size_t HistoryDecisions = 3;
     // A decisao a 30 Hz (o seguimento a 120 Hz): a rampa entre decisoes.
     static constexpr int TicksPerDecision = 4;
@@ -140,6 +144,7 @@ public:
     static constexpr float ContactRate = 10.0f;
     static constexpr float JointRate = 2.0f;
     static constexpr float GainRate = 2.0f;
+    static constexpr float TurnGateRate = 4.0f;
 
     explicit LocomotionContract3D(const RagdollProfile3D& profile);
 
@@ -196,7 +201,7 @@ private:
     // O que cada canal da saida e: o tipo, o pe (ou o eixo, ou o grupo).
     enum class Channel : std::uint8_t {
         TouchdownX, TouchdownY, SwingHeight, PhaseLead, Recovery, Cadence, Stride,
-        LeanForward, LeanLateral, ComX, ComY, PelvisHeight, ContactX, ContactY, Joint, Gain
+        LeanForward, LeanLateral, ComX, ComY, PelvisHeight, ContactX, ContactY, Joint, Gain, TurnGate
     };
     struct ChannelSpec {
         Channel kind = Channel::Joint;

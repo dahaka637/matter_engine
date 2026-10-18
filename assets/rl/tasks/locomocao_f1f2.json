@@ -1,14 +1,17 @@
 {
   "schema": "matter-rl-locomocao-1",
   "id": "locomocao_f1f2",
-  "displayName": "Locomocao: fases 1 e 2 (parado, estrela, giro, trote, curvas) a 0%",
+  "displayName": "Locomocao: fases 1 e 2 (parado, estrela, giro, trote, curvas) a 30%",
   "comment": "As fases 1 e 2 do plano antigo (vault 04_locomocao/exercicios_do_corpo_v2.md) no lote novo, com o RL dentro dos modulos de locomocao (contrato v2) e a ajuda em '0%' (os quatro controles do laboratorio em zero). Plano: 04_locomocao/plano_fases_1_2.md. Os tetos sao os das fases 1-2 do consenso da etapa A.",
   "episodeSeconds": 20.0,
-  "assist": { "standing": 0.0, "walking": 0.0, "feet": 0.0, "getUp": 0.0 },
+  "comment_assist": "A ajuda auxiliar em 30% (decisao do usuario, 17/10): a rede aprende os movimentos dificeis (trote com curvas bruscas) com ajuda; depois, com a rede boa, a ajuda desce (20, 10, 5, 0) ate o 0% de verdade (regime B, vault 04_locomocao/ajuda_auxiliar.md).",
+  "assist": { "standing": 30.0, "walking": 30.0, "feet": 30.0, "getUp": 30.0 },
+  "comment_turnMove": "A virada brusca (o professor, DynamicTurnMove3D, vault 04_locomocao/virada_brusca.md): ligada, a rede o ve, ganha sobre ele por familia (turno.ganho.*) e soma o residuo; em 'dropout' dos episodios ele fica desligado (a rede nao depende dele). A avaliacao usa sempre ligada e compara com e sem.",
+  "turnMove": { "enabled": true, "dropout": 0.3, "amount": 1.0 },
   "caps": {
     "touchdownMeters": 0.06, "swingUpMeters": 0.05, "swingDownMeters": 0.02, "phaseLeadCycles": 0.05,
-    "recoveryUrgency": 0.5, "cadenceOctaves": 0.2, "strideOctaves": 0.2, "leanRadians": 0.12, "comMeters": 0.08,
-    "pelvisUpMeters": 0.02, "pelvisDownMeters": 0.04, "contactAcceleration": 1.0, "jointRadians": 0.10,
+    "recoveryUrgency": 0.5, "cadenceOctaves": 0.2, "strideOctaves": 0.2, "leanRadians": 0.20, "comMeters": 0.08,
+    "pelvisUpMeters": 0.02, "pelvisDownMeters": 0.12, "contactAcceleration": 1.0, "jointRadians": 0.10,
     "gainOctaves": 0.3
   },
   "reward": {

@@ -76,6 +76,15 @@ struct LocomotionTask3D {
     float walkingAssistPercent = 0.0f;
     float feetAssistPercent = 0.0f;
     float getUpAssistPercent = 0.0f;
+    // A virada brusca (o professor, DynamicTurnMove3D): ligada na tarefa, o
+    // episodio a usa (menos o sorteio do dropout: a fracao dos episodios em que
+    // ela fica desligada, para a rede nao depender dela) e a intensidade dela.
+    // Desligada (o padrao): nada muda, nem o sorteio.
+    struct TurnMove {
+        bool enabled = false;
+        float dropout = 0.3f;
+        float amount = 1.0f;
+    } turnMove;
     // Os tetos da fase (as autoridades vem do treinador: a rampa de entrada).
     LocomotionCaps3D caps;
     LocomotionRewardWeights3D reward;

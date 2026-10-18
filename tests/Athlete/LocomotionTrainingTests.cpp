@@ -3,6 +3,9 @@
 #include "Engine/Athlete/Training/LocomotionTraining3D.hpp"
 
 #include <cmath>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <cstdio>
 #include <stdexcept>
 #include <string>
@@ -65,11 +68,14 @@ void taskTests() {
     const LocomotionTask3D task = loadLocomotionTask3D(Assets + "/rl/tasks/locomocao_f1f2.json");
     expect(task.drills.size() == 5 && task.drills[0].id == "parado" && task.drills[4].id == "curva",
         "a tarefa das fases 1 e 2: cinco exercicios");
-    expect(task.standingAssistPercent == 0.0f && task.walkingAssistPercent == 0.0f && task.feetAssistPercent == 0.0f
-            && task.getUpAssistPercent == 0.0f,
-        "a ajuda em 0% (os quatro controles)");
-    expect(std::abs(task.caps.touchdownMeters - 0.06f) < 1e-6f && std::abs(task.caps.jointRadians - 0.10f) < 1e-6f,
-        "os tetos do consenso da etapa A");
+    expect(task.standingAssistPercent == 30.0f && task.walkingAssistPercent == 30.0f && task.feetAssistPercent == 30.0f
+            && task.getUpAssistPercent == 30.0f,
+        "a ajuda em 30% (os quatro controles; o usuario desce depois)");
+    expect(std::abs(task.caps.touchdownMeters - 0.06f) < 1e-6f && std::abs(task.caps.jointRadians - 0.10f) < 1e-6f
+            && std::abs(task.caps.leanRadians - 0.20f) < 1e-6f && std::abs(task.caps.pelvisDownMeters - 0.12f) < 1e-6f,
+        "os tetos do consenso da etapa A, com a inclinacao e a pelve abertas para cobrir o professor da virada");
+    expect(task.turnMove.enabled && std::abs(task.turnMove.dropout - 0.3f) < 1e-6f && task.turnMove.amount == 1.0f,
+        "a virada brusca ligada na tarefa, com 30% de dropout");
 }
 
 void batchTests() {
@@ -130,6 +136,66 @@ void batchTests() {
     expect(same, "dois lotes com a mesma semente e a mesma acao dao a mesma nota");
 }
 
+void turnMoveTests() {
+    // A virada brusca nos episodios: o dropout sorteia por episodio, a avaliacao
+    // usa sempre ligada, o modo forca e uma tarefa desligada nao sorteia nada.
+    const auto write = [](const std::string& name, const std::string& turnMove) {
+        std::ifstream in(Assets + "/rl/tasks/locomocao_f1f2.json");
+        std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        const std::string key = "\"turnMove\": { \"enabled\": true, \"dropout\": 0.3, \"amount\": 1.0 },";
+        const std::size_t at = text.find(key);
+        if (at == std::string::npos) throw std::runtime_error("a tarefa mudou: sem a linha do turnMove");
+        text.replace(at, key.size(), turnMove);
+        const std::filesystem::path path = std::filesystem::temp_directory_path() / name;
+        std::ofstream(path) << text;
+        return path;
+    };
+    const auto count = [](LocomotionTraining3D& batch) {
+        std::size_t on = 0;
+        for (std::size_t i = 0; i < batch.environmentCount(); ++i) on += batch.turnMoveActive(i) ? 1 : 0;
+        return on;
+    };
+    LocomotionTrainingSettings3D settings;
+    settings.assetsDirectory = Assets;
+    settings.environments = 40;
+    settings.threads = 2;
+    settings.seed = 11;
+    {
+        settings.taskPath = write("matter_tm_drop0.json", "\"turnMove\": { \"enabled\": true, \"dropout\": 0.0 },");
+        LocomotionTraining3D batch(settings);
+        expect(count(batch) == 40, "dropout 0: todos os episodios com a virada");
+    }
+    {
+        settings.taskPath = write("matter_tm_drop1.json", "\"turnMove\": { \"enabled\": true, \"dropout\": 1.0 },");
+        LocomotionTraining3D batch(settings);
+        expect(count(batch) == 0, "dropout 1: nenhum episodio com a virada");
+    }
+    {
+        settings.taskPath = write("matter_tm_drop3.json", "\"turnMove\": { \"enabled\": true, \"dropout\": 0.3 },");
+        LocomotionTraining3D batch(settings);
+        const std::size_t on = count(batch);
+        expect(on > 15 && on < 40, "dropout 0,3: a maioria liga e alguns ficam sem (o sorteio e por episodio)");
+        batch.setTurnMoveMode(1);
+        batch.reset(5);
+        expect(count(batch) == 0, "o modo 1 desliga em todos");
+        batch.setTurnMoveMode(2);
+        batch.reset(5);
+        expect(count(batch) == 40, "o modo 2 liga em todos");
+        LocomotionTrainingSettings3D evaluation = settings;
+        evaluation.evaluation = true;
+        LocomotionTraining3D judged(evaluation);
+        expect(count(judged) == 40, "na avaliacao a virada fica sempre ligada (o dropout e do treino)");
+    }
+    {
+        settings.taskPath = write("matter_tm_off.json", "\"turnMove\": { \"enabled\": false },");
+        LocomotionTraining3D batch(settings);
+        expect(count(batch) == 0, "tarefa sem a virada: nenhum episodio com ela");
+        batch.setTurnMoveMode(2);
+        batch.reset(5);
+        expect(count(batch) == 0, "tarefa sem a virada: nem o modo forcado a liga");
+    }
+}
+
 } // namespace
 
 int main() {
@@ -137,6 +203,7 @@ int main() {
         rewardTests();
         taskTests();
         batchTests();
+        turnMoveTests();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "treino da locomocao: FALHOU: %s (%d checagens antes)\n", error.what(), checks);
         return 1;

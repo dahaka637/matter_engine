@@ -93,6 +93,8 @@ struct TurnMoveOutput3D {
     float turnDegrees = 0.0f;
     float side = 0.0f;
     float entrySpeed = 0.0f;
+    // O que falta virar agora (graus; 0 fora da manobra).
+    float remainingDegrees = 0.0f;
     // A escala da velocidade pedida (1 fora da freada) e o tempo desde o
     // disparo (s).
     float speedScale = 1.0f;
@@ -133,5 +135,13 @@ private:
 
 // Soma as correcoes da manobra as do RL (ou so as dela, sem as outras).
 void addTurnMoveCorrections3D(PhysicalCorrections3D& target, const PhysicalCorrections3D& move);
+
+// A manobra com o ganho da rede por familia (PhysicalCorrections3D::turnGate:
+// equilibrio, pes, pose, velocidade): a rede descarta (0), mantem (1) ou
+// amplia (ate 2) cada parte do professor, e soma o residuo dela por cima.
+[[nodiscard]] PhysicalCorrections3D gateTurnMoveCorrections3D(const PhysicalCorrections3D& move,
+    const std::array<float, 4>& gate);
+// A escala da velocidade pedida com o ganho da velocidade (1 sem freada).
+[[nodiscard]] float gateTurnMoveSpeedScale3D(float scale, float gate);
 
 } // namespace MatterEngine

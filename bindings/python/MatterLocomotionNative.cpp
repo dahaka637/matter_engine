@@ -148,6 +148,8 @@ NB_MODULE(matter_locomotion_native, m) {
             },
             "footwork"_a, "balance"_a, "pose"_a, "gain"_a)
         .def(
+            "set_turn_move", [](LocomotionTraining3D& b, int mode) { b.setTurnMoveMode(mode); }, "mode"_a)
+        .def(
             "set_drill_weights",
             [](LocomotionTraining3D& b, const std::vector<float>& weights) { b.setDrillWeights(weights); }, "weights"_a)
         .def(

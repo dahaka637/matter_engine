@@ -103,6 +103,23 @@ struct AthleteControlView3D {
         Vec3 comAccelerationResidual;
         float balanceMargin = 0.0f;
     } executor;
+    // A virada brusca (o professor, DynamicTurnMove3D; zeros sem ele): se
+    // esta ativa, o estado (TurnMoveState3D), o lado (+1 esquerda), o que
+    // falta virar (graus), o andamento (0..1), a velocidade de entrada (m/s) e
+    // o que ele pede: a inclinacao (lado e frente, rad), a pelve (m, + sobe)
+    // e a freada (0..1: 1 - a escala da velocidade pedida).
+    struct Turn {
+        bool active = false;
+        int state = 0;
+        float side = 0.0f;
+        float remainingDegrees = 0.0f;
+        float progress = 0.0f;
+        float entrySpeed = 0.0f;
+        float priorLateralLean = 0.0f;
+        float priorForwardLean = 0.0f;
+        float priorPelvisHeight = 0.0f;
+        float priorBrake = 0.0f;
+    } turn;
 };
 
 [[nodiscard]] AthleteControlView3D athleteControlView3D(const AthleteState3D& athlete);

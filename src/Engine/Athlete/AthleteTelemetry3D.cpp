@@ -57,6 +57,22 @@ AthleteControlView3D athleteControlView3D(const AthleteState3D& athlete) {
     }
     view.classicPose = &legacy.locomotion.output().targetPose;
     if (legacy.referenceShadowActive) view.reference = legacyReferenceMotion3D(legacy.referenceShadow.output());
+    {
+        const TurnMoveOutput3D& move = legacy.turnMove.output();
+        if (move.weight > 0.0f) {
+            const PhysicalCorrections3D& prior = legacy.turnMove.corrections();
+            view.turn.active = true;
+            view.turn.state = static_cast<int>(move.state);
+            view.turn.side = move.side;
+            view.turn.remainingDegrees = move.remainingDegrees;
+            view.turn.progress = move.progress;
+            view.turn.entrySpeed = move.entrySpeed;
+            view.turn.priorLateralLean = prior.lateralLean;
+            view.turn.priorForwardLean = prior.forwardLean;
+            view.turn.priorPelvisHeight = prior.pelvisHeight;
+            view.turn.priorBrake = 1.0f - move.speedScale;
+        }
+    }
     const CharacterLocomotionTelemetry3D& telemetry = legacy.locomotion.telemetry();
     AthleteControlView3D::Executor& executor = view.executor;
     executor.state = static_cast<int>(telemetry.state);

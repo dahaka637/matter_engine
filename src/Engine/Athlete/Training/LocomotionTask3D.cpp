@@ -48,6 +48,13 @@ LocomotionTask3D loadLocomotionTask3D(const std::filesystem::path& path) {
         read(a, "feet", task.feetAssistPercent);
         read(a, "getUp", task.getUpAssistPercent);
     }
+    if (document.contains("turnMove")) {
+        const nlohmann::json& m = document["turnMove"];
+        task.turnMove.enabled = m.value("enabled", false);
+        read(m, "dropout", task.turnMove.dropout);
+        read(m, "amount", task.turnMove.amount);
+        if (!(task.turnMove.dropout >= 0.0f && task.turnMove.dropout <= 1.0f)) fail("turnMove.dropout fora de 0..1");
+    }
     if (document.contains("caps")) {
         const nlohmann::json& c = document["caps"];
         LocomotionCaps3D& caps = task.caps;

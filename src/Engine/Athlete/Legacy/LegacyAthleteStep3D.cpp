@@ -1633,10 +1633,12 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             state.turnCorrections = command.corrections != nullptr ? *command.corrections : PhysicalCorrections3D {};
             state.turnCorrections.frame = Quaternion::fromAxisAngle({ 0.0f, 0.0f, 1.0f },
                 locomotionFrameYaw3D(profile, root.orientation));
-            addTurnMoveCorrections3D(state.turnCorrections, state.turnMove.corrections());
+            // (A rede ganha sobre o professor por familia: sem rede, 1.)
+            const std::array<float, 4>& gate = athlete.corrections.turnGate;
+            addTurnMoveCorrections3D(state.turnCorrections, gateTurnMoveCorrections3D(state.turnMove.corrections(), gate));
             command.corrections = &state.turnCorrections;
             command.intent.requestedVelocityWorld = command.intent.requestedVelocityWorld
-                * state.turnMove.output().speedScale;
+                * gateTurnMoveSpeedScale3D(state.turnMove.output().speedScale, gate[3]);
         }
     } else if (state.turnMove.output().state != TurnMoveState3D::Idle || state.turnMove.output().weight > 0.0f) {
         state.turnMove.reset();

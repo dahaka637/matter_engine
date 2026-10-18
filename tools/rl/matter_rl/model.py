@@ -168,15 +168,41 @@ def export_policy(model: ActorCritic, path: Path, meta: dict) -> None:
 # --- crescer sem esquecer -------------------------------------------------------------
 @torch.no_grad()
 def migrate_inputs(model: ActorCritic, old_obs: list[str], new_obs: list[str], old_critic: list[str],
-                   new_critic: list[str]) -> ActorCritic:
-    """Uma rede para a entrada nova a partir da antiga, fazendo exatamente o
-    mesmo no primeiro instante: os canais que ja existiam levam os pesos deles,
-    os novos entram com peso zero (e normalizacao neutra)."""
-    fresh = ActorCritic(len(new_obs), len(new_critic), model.action_size, actor_hidden=model.actor_hidden,
+                   new_critic: list[str], old_actions: list[str] | None = None, new_actions: list[str] | None = None,
+                   new_log_std: torch.Tensor | None = None) -> ActorCritic:
+    """Uma rede para a entrada (e a saida) nova a partir da antiga, fazendo
+    exatamente o mesmo no primeiro instante: os canais que ja existiam levam os
+    pesos deles, os novos entram com peso zero (e normalizacao neutra). Uma
+    acao nova (um canal de saida novo) nasce com pesos e vies zero e o desvio
+    dado (new_log_std, um por canal da saida nova): a acao media dela e zero e
+    a politica antiga segue igual. So acrescentar: o que some ou muda de nome
+    nao migra (o treinador recusa antes)."""
+    old_actions = list(old_actions) if old_actions is not None else None
+    new_actions = list(new_actions) if new_actions is not None else None
+    actions_changed = old_actions is not None and new_actions is not None and old_actions != new_actions
+    action_size = len(new_actions) if actions_changed else model.action_size
+    fresh = ActorCritic(len(new_obs), len(new_critic), action_size, actor_hidden=model.actor_hidden,
                         critic_hidden=model.critic_hidden).to(next(model.parameters()).device)
-    fresh.load_state_dict({k: v for k, v in model.state_dict().items()
-                           if not (k.startswith("actor.0.") or k.startswith("critic.0.")
-                                   or k.startswith("obs_norm.") or k.startswith("critic_norm."))}, strict=False)
+    last_index = [i for i, m in enumerate(model.actor) if isinstance(m, nn.Linear)][-1]
+    skip = ("actor.0.", "critic.0.", "obs_norm.", "critic_norm.")
+    if actions_changed:
+        skip += (f"actor.{last_index}.", "log_std")
+    fresh.load_state_dict({k: v for k, v in model.state_dict().items() if not k.startswith(skip)}, strict=False)
+    if actions_changed:
+        fresh_last = fresh.actor[last_index]
+        last = model.actor[last_index]
+        fresh_last.weight.zero_()
+        fresh_last.bias.zero_()
+        if new_log_std is not None:
+            fresh.log_std.copy_(new_log_std.to(fresh.log_std.device))
+        position = {name: i for i, name in enumerate(old_actions)}
+        for j, name in enumerate(new_actions):
+            i = position.get(name)
+            if i is None:
+                continue
+            fresh_last.weight[j] = last.weight[i]
+            fresh_last.bias[j] = last.bias[i]
+            fresh.log_std[j] = model.log_std[i]
     for network, norm, fresh_network, fresh_norm, old, new in (
             (model.actor, model.obs_norm, fresh.actor, fresh.obs_norm, old_obs, new_obs),
             (model.critic, model.critic_norm, fresh.critic, fresh.critic_norm, old_critic, new_critic)):

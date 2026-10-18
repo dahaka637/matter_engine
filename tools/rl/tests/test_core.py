@@ -2,6 +2,7 @@
 persistencia e o canal de controle."""
 from __future__ import annotations
 
+import math
 import json
 import threading
 import time
@@ -102,6 +103,30 @@ def test_migration_preserves_function():
         c = torch.randn(10, 5)
         c2 = torch.cat([c, torch.randn(10, 1)], 1)
         assert torch.allclose(old.value(old.critic_norm(c)), fresh.value(fresh.critic_norm(c2)), atol=1e-5)
+
+
+def test_migration_adds_action_channels_without_changing_the_old_ones():
+    torch.manual_seed(5)
+    old = ActorCritic(4, 5, 2)
+    old.obs_norm.update(torch.randn(100, 4) * 2)
+    old_obs = ["a", "b", "c", "d"]
+    new_obs = ["a", "b", "c", "d", "turno.ativo", "antes_1.turno.ganho"]
+    old_critic = old_obs + ["e"]
+    new_critic = new_obs + ["e"]
+    old_actions = ["x", "y"]
+    new_actions = ["x", "y", "turno.ganho"]
+    fresh = migrate_inputs(old, old_obs, new_obs, old_critic, new_critic, old_actions, new_actions,
+                           torch.full((3,), math.log(0.3)))
+    x = torch.randn(10, 4)
+    y = torch.cat([x, torch.randn(10, 2)], 1)
+    with torch.no_grad():
+        a_old = old.actor(old.obs_norm(x))
+        a_new = fresh.actor(fresh.obs_norm(y))
+    assert a_new.shape == (10, 3)
+    assert torch.allclose(a_old, a_new[:, :2], atol=1e-5)   # os canais de antes saem iguais
+    assert torch.all(a_new[:, 2] == 0.0)                     # o novo pede zero (o professor inteiro)
+    assert torch.allclose(fresh.log_std[:2], old.log_std, atol=1e-6)
+    assert abs(float(fresh.log_std[2]) - math.log(0.3)) < 1e-6
 
 
 def test_rescale_actions_keeps_joint_targets():

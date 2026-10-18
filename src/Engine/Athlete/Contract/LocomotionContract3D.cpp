@@ -211,6 +211,18 @@ LocomotionContract3D::LocomotionContract3D(const RagdollProfile3D& profile) : m_
     addVec(o, "exec.vmc.resto", "g", 2);
     addChannel(o, "exec.margem", "m");
 
+    // A virada brusca (v3): o estado do professor e o que ele pede.
+    addChannel(o, "turno.ativo", "1");
+    for (const char* state : { "entrada", "freando", "corte", "saida" }) addChannel(o, std::string("turno.estado.") + state, "1");
+    addChannel(o, "turno.lado", "1");
+    addChannel(o, "turno.angulo", "pi");
+    addChannel(o, "turno.progresso", "1");
+    addChannel(o, "turno.entrada_vel", "8 m/s");
+    addChannel(o, "turno.prior.inclina_lado", "rad");
+    addChannel(o, "turno.prior.inclina_frente", "rad");
+    addChannel(o, "turno.prior.altura", "m");
+    addChannel(o, "turno.prior.freada", "1");
+
     // A saida (a unidade e a escala maxima do -1..1).
     RLVectorLayout3D& a = m_action;
     a.id = "locomocao.acao";
@@ -244,6 +256,10 @@ LocomotionContract3D::LocomotionContract3D(const RagdollProfile3D& profile) : m_
     action("ganho.pernas", "oitava", Channel::Gain, 0);
     action("ganho.tronco", "oitava", Channel::Gain, 1);
     action("ganho.bracos", "oitava", Channel::Gain, 2);
+    action("turno.ganho.equilibrio", "0..2 (1 + a)", Channel::TurnGate, 0);
+    action("turno.ganho.pes", "0..2 (1 + a)", Channel::TurnGate, 1);
+    action("turno.ganho.pose", "0..2 (1 + a)", Channel::TurnGate, 2);
+    action("turno.ganho.velocidade", "0..2 (1 + a)", Channel::TurnGate, 3);
 
     // O historico das acoes entra na entrada.
     for (std::size_t d = 0; d < HistoryDecisions; ++d)
@@ -428,6 +444,22 @@ LocomotionObservation3D LocomotionContract3D::observe(const RagdollState3D& body
     w.put2(h.in(exec.comAccelerationResidual) * (1.0f / Gravity));
     w.put(std::clamp(exec.balanceMargin, -1.0f, 1.0f));
 
+    // A virada brusca.
+    {
+        const AthleteControlView3D::Turn& turn = view.turn;
+        w.put(turn.active ? 1.0f : 0.0f);
+        // (TurnMoveState3D: entrada 1, plantio 3 = freando, corte 4, saida 5.)
+        for (const int state : { 1, 3, 4, 5 }) w.put(turn.active && turn.state == state ? 1.0f : 0.0f);
+        w.put(turn.active ? turn.side : 0.0f);
+        w.put(turn.active ? std::clamp(turn.remainingDegrees / 180.0f, 0.0f, 1.0f) : 0.0f);
+        w.put(turn.active ? turn.progress : 0.0f);
+        w.put(turn.active ? std::clamp(turn.entrySpeed * 0.125f, 0.0f, 2.0f) : 0.0f);
+        w.put(turn.active ? turn.priorLateralLean : 0.0f);
+        w.put(turn.active ? turn.priorForwardLean : 0.0f);
+        w.put(turn.active ? turn.priorPelvisHeight : 0.0f);
+        w.put(turn.active ? turn.priorBrake : 0.0f);
+    }
+
     // As decisoes anteriores.
     const std::size_t historySize = HistoryDecisions * actionSize();
     for (std::size_t i = 0; i < historySize; ++i) w.put(i < history.size() ? history[i] : 0.0f);
@@ -493,6 +525,9 @@ std::vector<float> LocomotionContract3D::physical(std::span<const float> action,
         case Channel::ContactY: both(ContactAcceleration, caps.contactAcceleration, authority.balance); break;
         case Channel::Joint: both(JointRadians, caps.jointRadians, authority.pose); break;
         case Channel::Gain: both(GainOctaves, caps.gainOctaves, authority.gain); break;
+        // O ganho da virada: a acao inteira (-1..1) e o teto 1; a cabeca e a do
+        // equilibrio (a rampa de autoridade a abre).
+        case Channel::TurnGate: both(1.0f, 1.0f, authority.balance); break;
         }
         const float value = v >= 0.0f ? std::min(v * up, std::max(0.0f, capUp)) : std::max(v * down, -std::max(0.0f, capDown));
         out[i] = value * unit(head);
@@ -515,6 +550,8 @@ PhysicalCorrections3D LocomotionContract3D::corrections(std::span<const float> v
         switch (m_specs[i].kind) {
         case Channel::Joint: out.pose = true; break;
         case Channel::Gain: out.gain = true; break;
+        // (O ganho da virada nao liga cabeca: so o atleta o le.)
+        case Channel::TurnGate: break;
         case Channel::LeanForward: case Channel::LeanLateral: case Channel::ComX: case Channel::ComY:
         case Channel::PelvisHeight: case Channel::ContactX: case Channel::ContactY: out.balance = true; break;
         default: out.footwork = true; break;
@@ -543,6 +580,7 @@ PhysicalCorrections3D LocomotionContract3D::corrections(std::span<const float> v
             if (index < out.jointResiduals.size()) out.jointResiduals[index] = value;
             break;
         case Channel::Gain: out.gainScale[index] = std::exp2(value); break;
+        case Channel::TurnGate: out.turnGate[index] = std::clamp(1.0f + value, 0.0f, 2.0f); break;
         }
     }
     return out;
@@ -635,7 +673,8 @@ LocomotionMirror3D LocomotionContract3D::mirror() const {
         const bool phase = name == "ref.fase.sen" || name == "ref.fase.cos" || name == "exec.ciclo.sen"
             || name == "exec.ciclo.cos" || (contains(name, "exec.pe_") && (endsWith(name, ".fase.sen")
                 || endsWith(name, ".fase.cos")));
-        if (name == "comando.olhar.sen" || phase || endsWith(name, "equilibrio.inclina.lado"))
+        if (name == "comando.olhar.sen" || phase || endsWith(name, "equilibrio.inclina.lado")
+            || endsWith(name, "turno.lado") || endsWith(name, "turno.prior.inclina_lado"))
             scale = -1.0f;
         if (contains(name, "junta.") || contains(name, "pose.")) {
             const std::size_t start = contains(name, "junta.") ? name.find("junta.") + 6 : name.find("pose.") + 5;
@@ -728,6 +767,7 @@ void LocomotionContract3D::follow(AthleteState3D& athlete, const LocomotionAutho
         case Channel::ContactX: case Channel::ContactY: rate = ContactRate; break;
         case Channel::Joint: rate = JointRate; break;
         case Channel::Gain: rate = GainRate; break;
+        case Channel::TurnGate: rate = TurnGateRate; break;
         }
         float& applied = athlete.policyApplied[i];
         if (!std::isfinite(applied)) applied = 0.0f;

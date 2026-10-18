@@ -67,6 +67,8 @@ AthleteRuntimeSettings3D runtimeFor(const LocomotionTask3D& task) {
     runtime.e5WalkingAssistPercent = task.walkingAssistPercent;
     runtime.physicalFeetAssistPercent = task.feetAssistPercent;
     runtime.getUpAssistPercent = task.getUpAssistPercent;
+    // A virada brusca: o episodio liga ou nao (o dropout, no recomeco).
+    runtime.dynamicTurnMoveSettings.amount = task.turnMove.amount;
     return runtime;
 }
 
@@ -113,6 +115,8 @@ struct LocomotionTraining3D::Impl {
     std::unique_ptr<LocomotionContract3D> contract;
     std::unique_ptr<LocomotionBatch3D> batch;
     LocomotionAuthority3D authority;
+    // A virada brusca nos episodios novos (setTurnMoveMode).
+    int turnMoveMode = 0;
     RLVectorLayout3D critic;
     std::size_t observationSize = 0;
     std::size_t criticSize = 0;
@@ -273,6 +277,14 @@ struct LocomotionTraining3D::Impl {
         worldDrills[index] = world.drill;
         scene.reset(AthleteStartMode3D::Physical);
         LocomotionContract3D::clear(scene.athlete());
+        // A virada brusca do episodio (so com a tarefa ligada: desligada, nem
+        // o sorteio acontece e o mundo e o de antes, bit a bit).
+        if (task.turnMove.enabled) {
+            const bool on = turnMoveMode == 1 ? false
+                : turnMoveMode == 2 || settings.evaluation ? true
+                : std::uniform_real_distribution<float>(0.0f, 1.0f)(world.rng) >= task.turnMove.dropout;
+            scene.runtimeSettings().dynamicTurnMove = on;
+        }
         const RagdollState3D& body = scene.body();
         const Vec3 pelvis = body.links.empty() ? Vec3 {} : body.links.front().position;
         world.start = planar(pelvis);
@@ -747,6 +759,12 @@ void LocomotionTraining3D::setAuthority(float footwork, float balance, float pos
     impl.authority.balance = balance;
     impl.authority.pose = pose;
     impl.authority.gain = gain;
+}
+
+void LocomotionTraining3D::setTurnMoveMode(int mode) { m_impl->turnMoveMode = std::clamp(mode, 0, 2); }
+
+bool LocomotionTraining3D::turnMoveActive(std::size_t world) const {
+    return world < m_impl->worlds.size() && m_impl->batch->world(world).runtimeSettings().dynamicTurnMove;
 }
 
 void LocomotionTraining3D::setDrillWeights(std::span<const float> weights) {

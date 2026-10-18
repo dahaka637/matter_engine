@@ -124,6 +124,7 @@ void DynamicTurnMove3D::synthesize(float degreesNow) {
     const float peak = std::max({ m_smoothLean, m_smoothSide, m_smoothBrake, m_smoothFoot, m_smoothExit });
     m_output.weight = peak < 1.0e-3f ? 0.0f : peak;
     m_output.progress = running ? done : 0.0f;
+    m_output.remainingDegrees = running ? degreesNow : 0.0f;
     if (m_output.weight <= 0.0f) {
         m_smoothLean = m_smoothSide = m_smoothBrake = m_smoothFoot = m_smoothExit = 0.0f;
         m_output.speedScale = 1.0f;
@@ -169,6 +170,30 @@ void addTurnMoveCorrections3D(PhysicalCorrections3D& target, const PhysicalCorre
     target.cadenceOctaves += move.cadenceOctaves;
     target.strideOctaves += move.strideOctaves;
     for (std::size_t side = 0; side < 2; ++side) target.feet[side].touchdownOffset += move.feet[side].touchdownOffset;
+}
+
+PhysicalCorrections3D gateTurnMoveCorrections3D(const PhysicalCorrections3D& move, const std::array<float, 4>& gate) {
+    PhysicalCorrections3D out = move;
+    const auto clean = [](float g) { return std::isfinite(g) ? std::clamp(g, 0.0f, 2.0f) : 1.0f; };
+    const float balance = clean(gate[0]), feet = clean(gate[1]), pose = clean(gate[2]);
+    out.forwardLean *= balance;
+    out.lateralLean *= balance;
+    out.comOffset = out.comOffset * balance;
+    out.pelvisHeight *= balance;
+    for (FootCorrection3D& foot : out.feet) {
+        foot.touchdownOffset = foot.touchdownOffset * feet;
+        foot.swingHeight *= feet;
+        foot.phaseLead *= feet;
+    }
+    out.cadenceOctaves *= feet;
+    out.strideOctaves *= feet;
+    for (float& residual : out.jointResiduals) residual *= pose;
+    return out;
+}
+
+float gateTurnMoveSpeedScale3D(float scale, float gate) {
+    const float g = std::isfinite(gate) ? std::clamp(gate, 0.0f, 2.0f) : 1.0f;
+    return std::clamp(1.0f - (1.0f - scale) * g, 0.0f, 1.0f);
 }
 
 } // namespace MatterEngine

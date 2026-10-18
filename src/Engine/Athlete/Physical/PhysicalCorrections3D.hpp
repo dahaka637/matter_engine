@@ -66,6 +66,11 @@ struct PhysicalCorrections3D {
     // A rigidez: a escala dos ganhos por grupo (0 pernas e pes, 1 tronco e
     // cabeca, 2 bracos e maos); 1 nao muda nada.
     std::array<float, 3> gainScale { 1.0f, 1.0f, 1.0f };
+    // O ganho da rede sobre a virada brusca (DynamicTurnMove3D, o professor):
+    // equilibrio, pes, pose e velocidade (0 descarta a parte do professor, 1 e
+    // ela inteira, 2 o dobro). 1 sem rede: o professor inteiro. Nao liga
+    // cabeca nenhuma (active() nao muda) - e lido direto pelo atleta.
+    std::array<float, 4> turnGate { 1.0f, 1.0f, 1.0f, 1.0f };
 
     // Alguma cabeca ligada (sem nenhuma, nem se passa adiante).
     [[nodiscard]] bool active() const { return footwork || balance || pose || gain; }

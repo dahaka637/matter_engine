@@ -46,6 +46,8 @@ struct LocomotionPolicy3D::Impl {
     std::string run;
     std::uint64_t iteration = 0;
     BodyForecast3D forecast;
+    bool turnMove = false;
+    float turnMoveAmount = 1.0f;
     std::vector<float> observation;
     std::vector<float> action;
 
@@ -94,6 +96,10 @@ LocomotionPolicy3D::LocomotionPolicy3D(const RagdollProfile3D& profile, const st
         read("jointRadians", caps.jointRadians);
         read("gainOctaves", caps.gainOctaves);
     }
+    if (header.contains("turnMove") && header["turnMove"].is_object()) {
+        impl.turnMove = header["turnMove"].value("enabled", false);
+        impl.turnMoveAmount = header["turnMove"].value("amount", 1.0f);
+    }
     impl.run = header.value("run", std::string());
     impl.iteration = header.value("iteration", std::uint64_t { 0 });
     impl.observation.assign(impl.contract.observationSize(), 0.0f);
@@ -106,6 +112,8 @@ const std::string& LocomotionPolicy3D::run() const { return m_impl->run; }
 std::uint64_t LocomotionPolicy3D::iteration() const { return m_impl->iteration; }
 float LocomotionPolicy3D::authority() const { return m_impl->authority.footwork; }
 const std::filesystem::path& LocomotionPolicy3D::file() const { return m_impl->file; }
+bool LocomotionPolicy3D::usesTurnMove() const { return m_impl->turnMove; }
+float LocomotionPolicy3D::turnMoveAmount() const { return m_impl->turnMoveAmount; }
 
 void LocomotionPolicy3D::before(AthleteState3D& athlete, const RagdollState3D& body, const AthleteCommand3D& command,
     float deltaTime) {

@@ -734,6 +734,13 @@ AthleteRuntimeSettings3D WorkbenchApp::athleteRuntimeSettings() const {
     // A virada brusca (experimento): so no Fisico total.
     settings.dynamicTurnMove = m_dynamicTurnMove && !m_defaultLocomotion && !m_locomotionPolicyOn;
     settings.dynamicTurnMoveSettings.amount = std::clamp(m_dynamicTurnMovePercent * 0.01f, 0.0f, 1.5f);
+    // Com a rede que treinou com o professor (Fisico com RL), ele entra, como
+    // no treino.
+    if (settings.locomotionPolicy && m_athleteRuntime.locomotionPolicy() != nullptr
+        && m_athleteRuntime.locomotionPolicy()->usesTurnMove()) {
+        settings.dynamicTurnMove = true;
+        settings.dynamicTurnMoveSettings.amount = m_athleteRuntime.locomotionPolicy()->turnMoveAmount();
+    }
     settings.fullPhysicalImpulse = m_fullPhysicalImpulse;
     settings.activeBodySettings.gameplayAssistAcceleration = m_activeAssistAcceleration;
     settings.newBallHandling = m_newBallHandling;

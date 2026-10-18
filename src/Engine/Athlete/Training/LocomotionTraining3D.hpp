@@ -117,6 +117,12 @@ public:
     void updateTask(LocomotionTask3D task);
     // As autoridades das cabecas (a rampa de entrada do treinador).
     void setAuthority(float footwork, float balance, float pose, float gain);
+    // A virada brusca nos episodios novos (a da tarefa, quando ligada): 0 a da
+    // tarefa (o sorteio do dropout no treino; sempre ligada na avaliacao), 1
+    // desligada, 2 ligada. Vale a partir do proximo recomeco (reset() inclusive).
+    void setTurnMoveMode(int mode);
+    // Se a virada brusca esta ligada no episodio de agora de um mundo.
+    [[nodiscard]] bool turnMoveActive(std::size_t world) const;
     // As fatias dos exercicios nos proximos comecos (uma por exercicio).
     void setDrillWeights(std::span<const float> weights);
     [[nodiscard]] std::span<const std::uint32_t> worldDrills() const;

@@ -32,6 +32,10 @@ public:
     [[nodiscard]] std::uint64_t iteration() const;
     [[nodiscard]] float authority() const;
     [[nodiscard]] const std::filesystem::path& file() const;
+    // Se treinou com a virada brusca (o professor, DynamicTurnMove3D): o jogo
+    // a liga com a rede (e a intensidade com que ela treinou).
+    [[nodiscard]] bool usesTurnMove() const;
+    [[nodiscard]] float turnMoveAmount() const;
 
     // Antes do passo do atleta (o corpo publicado no ultimo passo e o comando
     // deste tick): a decisao quando cabe e o tick da rampa.
