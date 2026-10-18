@@ -248,11 +248,13 @@ void LocomotionViewer3D::step() {
     impl.command = impl.pilotCommand();
     for (int k = 0; k < TicksPerDecision; ++k) impl.tick();
     ++impl.steps;
-    // Caido ha 2 s: recomeca (como um episodio novo).
-    const bool down = impl.body.links.empty()
-        || impl.body.links.front().position.z < 0.45f * impl.bundle->profile().standingRootHeightMeters;
+    // A queda como no treino (a pelve a menos de 0,45 m do chao ou o atleta
+    // "caido"): o episodio acaba. Fica meio segundo no chao para se ver a
+    // queda e recomeca - o levantar do classico (com a ajuda) nao esconde a queda.
+    const bool down = impl.body.links.empty() || impl.body.links.front().position.z < 0.45f
+        || athleteTelemetry3D(impl.athlete).fallen;
     impl.fallenSeconds = down ? impl.fallenSeconds + impl.policyStepSecondsValue() : 0.0f;
-    if (impl.fallenSeconds > 2.0f) impl.build(impl.rng());
+    if (impl.fallenSeconds > 0.5f) impl.build(impl.rng());
 }
 
 void LocomotionViewer3D::reset(std::uint64_t seed) { m_impl->build(seed); }
