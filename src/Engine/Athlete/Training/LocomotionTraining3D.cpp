@@ -552,6 +552,7 @@ struct LocomotionTraining3D::Impl {
 
         double velocityError2 = 0.0, facingError2 = 0.0, slip = 0.0, power = 0.0, posture = 0.0, assist = 0.0;
         double postureTrunk = 0.0, postureNeck = 0.0, neckBody = 0.0, neckRelative = 0.0, madeSpeed = 0.0;
+        double smoothError2 = 0.0;
         const float neckSlack = task.reward.neckSlackDegrees * (Pi / 180.0f);
         double shake = 0.0;
         const float weight = Gravity * std::max(1.0f, bundle->profile().totalMassKg);
@@ -593,6 +594,7 @@ struct LocomotionTraining3D::Impl {
                 world.feasibleSmooth += (world.feasible - world.feasibleSmooth) * blend;
                 const Vec3 smooth = world.comSmooth - world.feasibleSmooth;
                 world.windowError2 += smooth.x * smooth.x + smooth.y * smooth.y;
+                smoothError2 += smooth.x * smooth.x + smooth.y * smooth.y;
                 ++world.windowTicks;
                 const Vec3 gap = asked - world.feasible;
                 if (std::hypot(gap.x, gap.y) < 0.05f) {
@@ -701,7 +703,9 @@ struct LocomotionTraining3D::Impl {
         }
         if (!numeric && !fell && scene.telemetry().fallen) fell = true;
         const float tickCount = static_cast<float>(std::max(1, ticks));
-        measure.velocityError = static_cast<float>(std::sqrt(velocityError2 / tickCount));
+        const float smoothedError = static_cast<float>(std::sqrt(smoothError2 / tickCount));
+        measure.velocityError = task.reward.velocitySmoothed ? smoothedError
+                                                             : static_cast<float>(std::sqrt(velocityError2 / tickCount));
         measure.facingError = static_cast<float>(std::sqrt(facingError2 / tickCount));
         measure.slip = slipSamples > 0 ? static_cast<float>(slip / slipSamples) : 0.0f;
         measure.power = static_cast<float>(power / tickCount);
@@ -741,8 +745,11 @@ struct LocomotionTraining3D::Impl {
                     if (task.speedCurriculum.enabled && world.drill < task.speedCurriculum.caps.size()) {
                         const float cap = task.speedCurriculum.caps[world.drill][cell];
                         if (cap > 0.0f && askedSpeed >= cap - task.speedCurriculum.frontier) {
+                            // (O rastreio da fronteira pela velocidade suavizada em ~uma
+                            // passada: a oscilacao natural da passada nao e erro.)
+                            const float sigma = task.reward.velocitySigma;
                             world.cellFrontierCruise[cell] += 1.0;
-                            world.cellFrontierTracking[cell] += kernelValue;
+                            world.cellFrontierTracking[cell] += std::exp(-(smoothedError * smoothedError) / (sigma * sigma));
                         }
                     }
                 }

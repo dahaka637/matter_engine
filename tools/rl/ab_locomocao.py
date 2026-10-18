@@ -10,7 +10,7 @@ A especificacao (JSON):
    "fonte": "loco_p2v",                                 # o treino de onde vem o run.json e a tarefa
    "tarefa": "locomocao_f2t",                           # opcional: a tarefa dos assets em vez da copia
    "rodadas": 600,
-   "comum": {"run": {...}, "tarefa": {...}},            # o que os dois bracos levam
+   "comum": {"run": {...}, "tarefa": {...}, "exercicios": {"<id>": {...}}},  # o que os dois bracos levam
    "mudanca": {"run": {...}, "tarefa": {...}},          # so o braco B
    "ajuste_b": "recentrar" | "renormalizar" | null,     # um ajuste fora do laco antes do B
    "ajuste_comum": "renormalizar" | null}               # antes dos dois (a mesma partida)
@@ -55,11 +55,13 @@ def make_arm(spec: dict, name: str, change: bool) -> str:
     config = json.loads((source / "run.json").read_text())
     task = json.loads((paths.task_path(spec["tarefa"]) if spec.get("tarefa") else source / "tarefa.json").read_text())
     task.setdefault("drillWeights", {})["auto"] = False  # os bracos nao divergem pela mistura
-    config = merge(config, spec.get("comum", {}).get("run", {}))
-    task = merge(task, spec.get("comum", {}).get("tarefa", {}))
-    if change:
-        config = merge(config, spec.get("mudanca", {}).get("run", {}))
-        task = merge(task, spec.get("mudanca", {}).get("tarefa", {}))
+    parts = [spec.get("comum", {})] + ([spec.get("mudanca", {})] if change else [])
+    for part in parts:
+        config = merge(config, part.get("run", {}))
+        task = merge(task, part.get("tarefa", {}))
+        # Campos de um exercicio pelo id (a lista de exercicios nao se funde por chave).
+        for drill in task.get("drills", []):
+            drill.update(part.get("exercicios", {}).get(drill["id"], {}))
     config["end_reason"] = ""
     storage.write_json_atomic(target / "run.json", config)
     storage.write_json_atomic(target / "tarefa.json", task)
@@ -128,9 +130,11 @@ def main() -> int:
     report = {"spec": spec, "inicio": time.strftime("%Y-%m-%d %H:%M"), "bracos": {}}
     for name, change in (("a", False), ("b", True)):
         if not change and spec.get("controle_de"):
-            # O controle identico de outro A/B (o mesmo checkpoint, a mesma config, as mesmas rodadas).
-            previous = json.loads((HERE / "ab" / f"{spec['controle_de']}.json").read_text())
-            report["bracos"]["a"] = dict(previous["bracos"]["a"], reaproveitado_de=spec["controle_de"])
+            # O controle identico de outro A/B (o mesmo checkpoint, a mesma config, as mesmas
+            # rodadas): "nome" (o braco a dele) ou "nome:b".
+            name_of, _, arm_of = spec["controle_de"].partition(":")
+            previous = json.loads((HERE / "ab" / f"{name_of}.json").read_text())
+            report["bracos"]["a"] = dict(previous["bracos"][arm_of or "a"], reaproveitado_de=spec["controle_de"])
             continue
         run = make_arm(spec, name, change)
         for adjust in ([spec.get("ajuste_comum")] if spec.get("ajuste_comum") else []) + \

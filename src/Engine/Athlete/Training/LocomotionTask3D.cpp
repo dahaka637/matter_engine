@@ -106,6 +106,7 @@ LocomotionTask3D loadLocomotionTask3D(const std::filesystem::path& path) {
         w.neckRelative = r.value("neckRelative", w.neckRelative);
         w.assistIncludesTorque = r.value("assistIncludesTorque", w.assistIncludesTorque);
         w.contactPerCycle = r.value("contactPerCycle", w.contactPerCycle);
+        w.velocitySmoothed = r.value("velocitySmoothed", w.velocitySmoothed);
         if (!(w.velocitySigma > 0.0f) || !(w.facingSigma > 0.0f) || !(w.styleSigma > 0.0f) || !(w.contactSigma > 0.0f)
             || !(w.velocityTailSigma > 0.0f) || !(w.facingTailSigma > 0.0f))
             fail("sigma da nota invalido");

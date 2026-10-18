@@ -69,6 +69,11 @@ struct LocomotionRewardWeights3D {
     // meio ciclo da referencia que passou desde o pouso anterior (pisar mais
     // rapido que a referencia nao rende mais). false (o padrao): por pouso.
     bool contactPerCycle = false;
+    // A velocidade da nota suavizada em ~uma passada (0,25 s) em vez da instantanea
+    // (a de 18/10: o centro de massa oscila dentro da passada, ~0,25 m/s no trote, e a
+    // nota instantanea punia a oscilacao natural - um empurrao para o passo curto).
+    // false (o padrao): a instantanea.
+    bool velocitySmoothed = false;
 };
 
 // O curriculo de velocidade por celulas (vault .../pesquisas/04_curriculo_e_ajuda.md):
