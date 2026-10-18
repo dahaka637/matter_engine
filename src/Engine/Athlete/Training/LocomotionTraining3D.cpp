@@ -91,7 +91,7 @@ const std::vector<std::string>& locomotionEpisodeColumns3D() {
         std::vector<std::string> c { "mundo", "exercicio", "razao", "decisoes", "segundos", "retorno", "erro_velocidade",
             "erro_rumo", "erro_estilo", "contato_por_pouso", "pousos_por_segundo", "escorregar", "potencia", "ajuda",
             "postura", "residuo", "trancos", "pedido_medio", "velocidade_media", "distancia", "alvos_por_minuto",
-            "deriva_espera", "afastamento_curva", "erro_vel_janela", "erro_vel_cruzeiro" };
+            "deriva_espera", "afastamento_curva", "erro_vel_janela", "erro_vel_cruzeiro", "tremor" };
         for (const char* term : LocomotionRewardTermNames3D) c.push_back(std::string("nota_") + term);
         return c;
     }();
@@ -103,7 +103,7 @@ std::vector<float> locomotionEpisodeRow3D(const LocomotionEpisode3D& e) {
         static_cast<float>(static_cast<int>(e.reason)), static_cast<float>(e.steps), e.seconds, e.episodeReturn,
         e.velocityError, e.facingError, e.styleError, e.contactPerTouchdown, e.touchdownsPerSecond, e.slip, e.power,
         e.assist, e.posture, e.residual, e.jerk, e.meanRequested, e.meanSpeed, e.distance, e.targetsPerMinute,
-        e.holdDrift, e.arcError, e.velocityErrorWindow, e.velocityErrorCruise };
+        e.holdDrift, e.arcError, e.velocityErrorWindow, e.velocityErrorCruise, e.tremor };
     row.insert(row.end(), e.terms.begin(), e.terms.end());
     return row;
 }
@@ -172,6 +172,11 @@ struct LocomotionTraining3D::Impl {
         int contactGoals = 0;
         int touchdowns = 0;
         double slip = 0.0, power = 0.0, assist = 0.0, posture = 0.0, residual = 0.0, jerk = 0.0;
+        // A quietude: o tremor pesado pela quietude e o peso, no episodio; e o
+        // giro do peito do tick anterior (para a aceleracao dele).
+        double quietShake = 0.0, quietWeight = 0.0;
+        Vec3 lastChestOmega;
+        bool lastChestOmegaValid = false;
         double requested = 0.0, speed = 0.0;
         std::array<double, LocomotionRewardTermCount3D> terms {};
         bool hasEpisode = false;
@@ -322,6 +327,9 @@ struct LocomotionTraining3D::Impl {
         world.contactScore = 0.0;
         world.contactGoals = world.touchdowns = 0;
         world.slip = world.power = world.assist = world.posture = world.residual = world.jerk = 0.0;
+        world.quietShake = world.quietWeight = 0.0;
+        world.lastChestOmega = {};
+        world.lastChestOmegaValid = false;
         world.requested = world.speed = 0.0;
         world.terms = {};
         for (std::size_t side = 0; side < 2; ++side) world.contactTicks[side] = touching(body, side) ? SlipAfterTicks : 0;
@@ -386,6 +394,7 @@ struct LocomotionTraining3D::Impl {
         const float deceleration = std::max(0.5f, before.navigation.deceleration);
 
         double velocityError2 = 0.0, facingError2 = 0.0, slip = 0.0, power = 0.0, posture = 0.0, assist = 0.0;
+        double shake = 0.0;
         const float weight = Gravity * std::max(1.0f, bundle->profile().totalMassKg);
         int slipSamples = 0, ticks = 0;
         bool fell = false, numeric = false;
@@ -439,6 +448,23 @@ struct LocomotionTraining3D::Impl {
                 const Vec3 forward = r.rotate({ 1.0f, 0.0f, 0.0f });
                 const float facing = wrap(std::atan2(forward.y, forward.x) - world.command.facingYawRadians);
                 facingError2 += facing * facing;
+                // O tremor (a quietude): a pelve no plano, o giro horizontal do peito
+                // (o balanco e o cabeceio; o giro em torno do eixo de cima fica de fora:
+                // virar no lugar nao e tremer) e a aceleracao dele neste tick.
+                {
+                    const Vec3 omega = planar(body.links[static_cast<std::size_t>(chest)].angularVelocity);
+                    const Vec3 pelvisVelocity = planar(body.links.front().linearVelocity);
+                    float alpha = 0.0f;
+                    if (world.lastChestOmegaValid) {
+                        const Vec3 change = omega - world.lastChestOmega;
+                        alpha = std::hypot(change.x, change.y) / TickSeconds;
+                    }
+                    world.lastChestOmega = omega;
+                    world.lastChestOmegaValid = true;
+                    shake += 0.5 * std::clamp(std::hypot(pelvisVelocity.x, pelvisVelocity.y) / 0.10f, 0.0f, 3.0f)
+                        + 0.3 * std::clamp(std::hypot(omega.x, omega.y) / 0.5f, 0.0f, 3.0f)
+                        + 0.2 * std::clamp(alpha / 20.0f, 0.0f, 3.0f);
+                }
                 LocomotionPostureInput3D input;
                 input.chestUp = frame.in(r.rotate({ 0.0f, 0.0f, 1.0f }));
                 input.measuredAcceleration = frame.in(world.measuredAcceleration);
@@ -496,6 +522,21 @@ struct LocomotionTraining3D::Impl {
         measure.posture = static_cast<float>(posture / tickCount);
         measure.assist = static_cast<float>(assist / tickCount);
         measure.fell = fell;
+        {
+            // A quietude pedida: o pedido ~0 (0,1 a 0,4 m/s a liga e desliga) e sem
+            // frear (o pedido perto do viavel: frear nao e tremer).
+            const auto smoothstep = [](float a, float b, float x) {
+                const float t = std::clamp((x - a) / (b - a), 0.0f, 1.0f);
+                return t * t * (3.0f - 2.0f * t);
+            };
+            const Vec3 gap = asked - world.feasible;
+            const float quiet = (1.0f - smoothstep(0.10f, 0.40f, std::hypot(asked.x, asked.y)))
+                * (1.0f - smoothstep(0.20f, 0.60f, std::hypot(gap.x, gap.y)));
+            const float tremor = static_cast<float>(shake / tickCount);
+            measure.still = quiet * tremor;
+            world.quietShake += static_cast<double>(quiet) * tremor;
+            world.quietWeight += quiet;
+        }
 
         // A entrada de agora (e o que a nota le dela: o estilo e as metas de
         // pouso da referencia).
@@ -598,6 +639,7 @@ struct LocomotionTraining3D::Impl {
         e.posture = static_cast<float>(world.posture / steps);
         e.residual = static_cast<float>(world.residual / steps);
         e.jerk = static_cast<float>(world.jerk / steps);
+        e.tremor = world.quietWeight > 1.0 ? static_cast<float>(world.quietShake / world.quietWeight) : -1.0f;
         e.meanRequested = static_cast<float>(world.requested / steps);
         e.meanSpeed = static_cast<float>(world.speed / steps);
         const RagdollState3D& body = batch->world(index).body();

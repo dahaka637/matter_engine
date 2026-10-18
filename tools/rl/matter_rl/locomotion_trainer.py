@@ -172,6 +172,7 @@ def drill_summary(rows: np.ndarray, columns: list[str], drills: list[str], reaso
             "posture": float(part[:, col["postura"]].mean()),
             "residual": float(part[:, col["residuo"]].mean()),
             "jerk": float(part[:, col["trancos"]].mean()),
+            "tremor": mean_of("tremor"),
             "targets_per_minute": float(part[:, col["alvos_por_minuto"]].mean()),
             "hold_drift": mean_of("deriva_espera"),
             "arc_error": mean_of("afastamento_curva"),
@@ -639,7 +640,7 @@ class LocomotionTrainer:
         data = json.loads(self.live_task.read_text())
         reward = data.setdefault("reward", {})
         known = ("velocity", "facing", "style", "contact", "slip", "work", "smooth", "assist", "posture", "residual",
-                 "fall")
+                 "still", "fall")
         if component not in known:
             raise ValueError(f"parcela desconhecida: {component} (as da locomocao: {', '.join(known)})")
         old = reward.get(component, "padrao")

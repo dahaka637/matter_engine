@@ -37,6 +37,9 @@ struct LocomotionRewardWeights3D {
     float assist = 0.05f;
     float posture = 0.20f;
     float residual = 0.02f;
+    // A quietude: o tremor do corpo parado (a pelve, o peito e a aceleracao dele)
+    // quando o comando pede para ficar quieto; 0 (o padrao): sem o custo.
+    float still = 0.0f;
     float fall = 1.0f;
 };
 

@@ -90,6 +90,7 @@ LocomotionTask3D loadLocomotionTask3D(const std::filesystem::path& path) {
         read(r, "assist", w.assist);
         read(r, "posture", w.posture);
         read(r, "residual", w.residual);
+        read(r, "still", w.still);
         read(r, "fall", w.fall);
         if (!(w.velocitySigma > 0.0f) || !(w.facingSigma > 0.0f) || !(w.styleSigma > 0.0f) || !(w.contactSigma > 0.0f))
             fail("sigma da nota invalido");

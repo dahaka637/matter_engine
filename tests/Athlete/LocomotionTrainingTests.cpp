@@ -2,6 +2,7 @@
 // funcional, a tarefa e o lote - curto, com a acao zero (sem rede).
 #include "Engine/Athlete/Training/LocomotionTraining3D.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -36,6 +37,18 @@ void rewardTests() {
     expect(std::abs(locomotionReward3D(locomotionRewardTerms3D(fell, weights, 1.0f / 30.0f)) - (locomotionReward3D(best) - 1.0f))
             < 1e-6f,
         "a queda tira 1 de uma vez");
+    {
+        // A quietude: o tremor vezes a quietude pedida, por segundo; peso 0 (o padrao): nada.
+        LocomotionStepMeasure3D shaking = perfect;
+        shaking.still = 0.8f;
+        expect(std::abs(locomotionReward3D(locomotionRewardTerms3D(shaking, weights, 1.0f / 30.0f)) - locomotionReward3D(best)) < 1e-9f,
+            "o peso da quietude em 0 (o padrao): o tremor nao custa");
+        LocomotionRewardWeights3D withStill = weights;
+        withStill.still = 0.25f;
+        expect(std::abs(locomotionReward3D(locomotionRewardTerms3D(shaking, withStill, 1.0f / 30.0f))
+                   - (locomotionReward3D(best) - 0.25f * 0.8f / 30.0f)) < 1e-7f,
+            "a quietude custa peso x tremor x quietude x duracao");
+    }
     LocomotionStepMeasure3D touchdown = perfect;
     touchdown.contactScore = 2.0f;
     expect(std::abs(locomotionRewardTerms3D(touchdown, weights, 1.0f / 30.0f)[static_cast<std::size_t>(
@@ -74,6 +87,12 @@ void taskTests() {
     expect(std::abs(task.caps.touchdownMeters - 0.06f) < 1e-6f && std::abs(task.caps.jointRadians - 0.10f) < 1e-6f
             && std::abs(task.caps.leanRadians - 0.20f) < 1e-6f && std::abs(task.caps.pelvisDownMeters - 0.12f) < 1e-6f,
         "os tetos do consenso da etapa A, com a inclinacao e a pelve abertas para cobrir o professor da virada");
+    {
+        const std::vector<std::string>& columns = locomotionEpisodeColumns3D();
+        const auto has = [&](const char* name) { return std::find(columns.begin(), columns.end(), name) != columns.end(); };
+        expect(has("tremor") && has("nota_quietude"), "as colunas do episodio ganharam o tremor e a nota da quietude");
+        expect(task.reward.still > 0.0f && task.reward.still <= 0.31f, "a tarefa pesa a quietude (0,20 a 0,30)");
+    }
     expect(task.turnMove.enabled && std::abs(task.turnMove.dropout - 0.3f) < 1e-6f && task.turnMove.amount == 1.0f,
         "a virada brusca ligada na tarefa, com 30% de dropout");
 }

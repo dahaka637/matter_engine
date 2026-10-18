@@ -10,11 +10,11 @@ namespace MatterEngine {
 
 // Os termos da nota do treino da locomocao, na ordem das parcelas.
 enum class LocomotionRewardTerm3D : std::size_t {
-    Velocity = 0, Facing, Style, Contact, Slip, Work, Smooth, Assist, Posture, Residual, Fall, Count
+    Velocity = 0, Facing, Style, Contact, Slip, Work, Smooth, Assist, Posture, Residual, Still, Fall, Count
 };
 inline constexpr std::size_t LocomotionRewardTermCount3D = static_cast<std::size_t>(LocomotionRewardTerm3D::Count);
 inline constexpr std::array<const char*, LocomotionRewardTermCount3D> LocomotionRewardTermNames3D {
-    "velocidade", "rumo", "estilo", "contato", "escorregar", "trabalho", "trancos", "ajuda", "postura", "residuo", "queda"
+    "velocidade", "rumo", "estilo", "contato", "escorregar", "trabalho", "trancos", "ajuda", "postura", "residuo", "quietude", "queda"
 };
 // Os quatro primeiros somam; os outros (custos e a queda) subtraem.
 inline constexpr std::size_t LocomotionRewardPositiveTerms3D = 4;
@@ -42,6 +42,11 @@ struct LocomotionStepMeasure3D {
     float assist = 0.0f;
     float posture = 0.0f;
     float residual = 0.0f;
+    // A quietude (17/10): o tremor do corpo (0 parado de verdade; ~1 com a
+    // pelve a 0,1 m/s, o peito a 0,5 rad/s e a aceleracao dele a 20 rad/s2)
+    // vezes o quanto o comando pede para ficar quieto (1 com o pedido ~0 e sem
+    // frear; 0 andando ou freando). Zero quando nada pede quietude.
+    float still = 0.0f;
     bool fell = false;
 };
 

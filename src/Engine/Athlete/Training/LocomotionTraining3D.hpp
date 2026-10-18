@@ -64,6 +64,10 @@ struct LocomotionEpisode3D {
     // o afastamento da curva (m; -1 sem curva).
     float targetsPerMinute = 0.0f;
     float holdDrift = -1.0f;
+    // O tremor medio do corpo nos instantes em que o comando pedia quietude (a
+    // media pesada pela quietude; -1 sem nenhum): a medida da quietude, mesmo com
+    // o peso dela em zero.
+    float tremor = -1.0f;
     float arcError = -1.0f;
     // O diagnostico do erro de velocidade (fora da nota): filtrado em ~um passo, e so no cruzeiro.
     float velocityErrorWindow = -1.0f;
