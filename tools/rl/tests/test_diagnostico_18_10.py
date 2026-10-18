@@ -164,7 +164,19 @@ def test_std_tables_by_prefix_and_groups():
     assert [action_group(n) for n in names] == ["equilibrio", "equilibrio", "equilibrio", "pose", "pes"]
 
 
-def test_policy_smoothness_ignores_changes_beyond_the_bounds_and_trains_down():
+def test_policy_smoothness_gives_no_reason_to_saturate():
+    # Saturar o canal (a media toda alem do limite) nao zera o tranco da media crua.
+    class Shift:
+        def __init__(self, offset):
+            self.actor = lambda x: x + offset
+    lower, upper = -torch.ones(1), torch.ones(1)
+    now, after = torch.tensor([[0.2]]), torch.tensor([[0.8]])
+    inside = float(smoothness_loss(Shift(0.0), now, after, lower, upper))
+    beyond = float(smoothness_loss(Shift(3.0), now, after, lower, upper))
+    assert inside > 0.0 and abs(beyond - inside) < 1e-6
+
+
+def test_policy_smoothness_trains_down():
     model = _model()
     lower, upper = -torch.ones(5), torch.ones(5)
     now, after = torch.randn(512, 12), torch.randn(512, 12)

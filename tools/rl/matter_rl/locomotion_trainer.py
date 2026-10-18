@@ -52,11 +52,12 @@ def action_group(name: str) -> str:
 
 def smoothness_loss(model, now: torch.Tensor, after: torch.Tensor, lower: torch.Tensor,
                     upper: torch.Tensor) -> torch.Tensor:
-    """O tranco da media entre estados seguidos (CAPS temporal), com a media presa aos limites
-    do canal (fora deles a acao aplicada nao muda)."""
-    first = torch.maximum(torch.minimum(model.actor(now), upper), lower)
-    second = torch.maximum(torch.minimum(model.actor(after), upper), lower)
-    return (second - first).pow(2).mean()
+    """O tranco da media entre estados seguidos (CAPS temporal), na media crua. (A media presa
+    aos limites, a versao da Q4 de 18/10, premiava saturar: fora do limite ela fica constante
+    e nao paga tranco; os ganhos saturaram o dobro. A perda de limites e quem traz a media de
+    volta.) lower/upper ficam na assinatura para quem chama."""
+    del lower, upper
+    return (model.actor(after) - model.actor(now)).pow(2).mean()
 
 
 def channel_values(names: list[str], table: dict, default: float) -> np.ndarray:
