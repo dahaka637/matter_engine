@@ -55,6 +55,7 @@ struct LocomotionViewer3D::Impl {
     Vec3 pushForce;
     float pushSeconds = 0.0f;
     std::size_t chest = 0;
+    float groundHalfExtent = 60.0f;
 
     void build(std::uint64_t seed) {
         scene.reset();
@@ -69,7 +70,7 @@ struct LocomotionViewer3D::Impl {
         scene = engine->createScene(sceneSettings, materials);
         PhysicsShape3D ground;
         ground.type = PhysicsShapeType3D::Box;
-        ground.halfExtents = { 60.0f, 60.0f, 0.1f };
+        ground.halfExtents = { groundHalfExtent, groundHalfExtent, 0.1f };
         ground.materialId = "concrete";
         PhysicsBodyDefinition3D floor;
         floor.motionType = PhysicsMotionType3D::Static;
@@ -192,6 +193,16 @@ LocomotionViewer3D::LocomotionViewer3D(const std::filesystem::path& taskPath,
         impl.settings.physicalFeetAssistPercent = a.value("feet", 0.0f);
         impl.settings.getUpAssistPercent = a.value("getUp", 0.0f);
     }
+    // A tabela de velocidades e o chao da tarefa (como no treino).
+    if (task.contains("speeds")) {
+        const nlohmann::json& v = task["speeds"];
+        impl.settings.defaultTrotSpeed = v.value("trot", impl.settings.defaultTrotSpeed);
+        impl.settings.defaultSprintForwardSpeed = v.value("sprintForward", impl.settings.defaultSprintForwardSpeed);
+        impl.settings.defaultSprintSideSpeed = v.value("sprintSide", impl.settings.defaultSprintSideSpeed);
+        impl.settings.defaultSprintBackwardSpeed = v.value("sprintBackward", impl.settings.defaultSprintBackwardSpeed);
+    }
+    if (task.contains("termination"))
+        impl.groundHalfExtent = task["termination"].value("groundHalfExtentMeters", impl.groundHalfExtent);
     impl.bundle = AthleteBundle3D::shared(assetsDirectory.string());
     impl.scheduler = std::make_shared<TaskScheduler>(TaskSchedulerSettings { 1u });
     impl.engine = std::make_unique<PhysicsEngine3D>(impl.scheduler);

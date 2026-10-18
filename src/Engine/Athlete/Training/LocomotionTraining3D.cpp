@@ -69,6 +69,11 @@ AthleteRuntimeSettings3D runtimeFor(const LocomotionTask3D& task) {
     runtime.getUpAssistPercent = task.getUpAssistPercent;
     // A virada brusca: o episodio liga ou nao (o dropout, no recomeco).
     runtime.dynamicTurnMoveSettings.amount = task.turnMove.amount;
+    // A tabela de velocidades do padrao (o piloto e o atleta leem a mesma).
+    runtime.defaultTrotSpeed = task.speeds.trot;
+    runtime.defaultSprintForwardSpeed = task.speeds.sprintForward;
+    runtime.defaultSprintSideSpeed = task.speeds.sprintSide;
+    runtime.defaultSprintBackwardSpeed = task.speeds.sprintBackward;
     return runtime;
 }
 
@@ -713,6 +718,7 @@ LocomotionTraining3D::LocomotionTraining3D(const LocomotionTrainingSettings3D& s
     batchSettings.worlds = std::max(1u, settings.environments);
     batchSettings.threads = settings.threads;
     batchSettings.world.runtime = runtimeFor(impl.task);
+    batchSettings.world.groundHalfExtentMeters = impl.task.groundHalfExtentMeters;
     impl.batch = std::make_unique<LocomotionBatch3D>(impl.bundle->assets(), batchSettings);
     impl.computeCaps();
 

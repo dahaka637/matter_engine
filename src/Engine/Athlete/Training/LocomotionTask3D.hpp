@@ -96,6 +96,19 @@ struct LocomotionTask3D {
     // para cada lado).
     float fallPelvisHeight = 0.45f;
     float boundaryMeters = 50.0f;
+    // O chao (meia-largura, m): 60 m cobre o limite de 50 m; a corrida a 8 m/s
+    // pede mais (o limite sobe junto, sempre com folga dentro do chao).
+    float groundHalfExtentMeters = 60.0f;
+    // A tabela de velocidades do modo padrao que o piloto e o atleta usam (m/s;
+    // as da aba Velocidades do laboratorio): o trote em todos os rumos e a
+    // corrida para a frente, de lado e de costas. Padrao: o do motor (4,5 / 7,8 /
+    // 5,2 / 5,2); a meta do usuario (18/10) e 4,5 / 8 / 6 / 6.
+    struct Speeds {
+        float trot = 4.5f;
+        float sprintForward = 7.8f;
+        float sprintSide = 5.2f;
+        float sprintBackward = 5.2f;
+    } speeds;
     LocomotionDrillWeights3D drillWeights;
     std::vector<LocomotionDrill3D> drills;
 };

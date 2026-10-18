@@ -99,6 +99,19 @@ LocomotionTask3D loadLocomotionTask3D(const std::filesystem::path& path) {
         const nlohmann::json& t = document["termination"];
         read(t, "pelvisHeight", task.fallPelvisHeight);
         read(t, "boundaryMeters", task.boundaryMeters);
+        read(t, "groundHalfExtentMeters", task.groundHalfExtentMeters);
+        if (!(task.groundHalfExtentMeters > task.boundaryMeters))
+            fail("o chao (groundHalfExtentMeters) tem de passar do limite (boundaryMeters)");
+    }
+    if (document.contains("speeds")) {
+        const nlohmann::json& v = document["speeds"];
+        read(v, "trot", task.speeds.trot);
+        read(v, "sprintForward", task.speeds.sprintForward);
+        read(v, "sprintSide", task.speeds.sprintSide);
+        read(v, "sprintBackward", task.speeds.sprintBackward);
+        if (!(task.speeds.trot > 0.0f && task.speeds.sprintForward > 0.0f && task.speeds.sprintSide > 0.0f
+                && task.speeds.sprintBackward > 0.0f))
+            fail("velocidades invalidas em speeds");
     }
     if (document.contains("drillWeights")) {
         const nlohmann::json& d = document["drillWeights"];

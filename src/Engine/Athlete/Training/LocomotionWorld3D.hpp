@@ -14,7 +14,8 @@ class MaterialLibrary;
 
 // O chao dos mundos de treino e da sonda: uma laje de concreto de 120 x 120 m
 // com o topo em z = 0.
-void createLocomotionGround3D(PhysicsScene3D& scene);
+// halfExtentMeters: a meia-largura do chao (60 m: o de sempre; a corrida a 8 m/s pede mais).
+void createLocomotionGround3D(PhysicsScene3D& scene, float halfExtentMeters = 60.0f);
 
 // Uma caixa parada no mundo (parede, degrau, rampa, a barra escondida): o
 // centro, a meia-dimensao e a orientacao; de concreto.
@@ -45,6 +46,8 @@ void createLocomotionThrow3D(PhysicsScene3D& scene, const LocomotionThrow3D& ite
 struct LocomotionWorldSettings3D {
     // Os ajustes do jogo (a ajuda, a tabela de velocidades, as chaves).
     AthleteRuntimeSettings3D runtime;
+    // A meia-largura do chao (m).
+    float groundHalfExtentMeters = 60.0f;
     // O terreno alem do chao (criado depois dele, antes do corpo).
     std::vector<LocomotionStaticBox3D> statics;
     // A cena: as threads do passo (o lote roda uma cena por thread, inline).

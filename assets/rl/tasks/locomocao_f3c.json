@@ -1,30 +1,37 @@
 {
   "schema": "matter-rl-locomocao-1",
   "id": "locomocao_f3c",
-  "displayName": "Locomocao: fase 3c (sprint) a 0%",
-  "comment": "A fase 3 do plano antigo (vault 04_locomocao/exercicios_do_corpo_v2.md), uma novidade por vez (04_locomocao/cartao_fase3.md): o sprint na estrela (ate 7,5 m/s; o piloto segura a tecla acima do trote da tabela). Tudo o que veio antes continua na mistura.",
-  "episodeSeconds": 20.0,
+  "displayName": "Locomocao: 3c - curvas fechadas e em S",
+  "comment": "3c: soma as curvas fechadas e em S (trote e corrida; a velocidade limitada pelo raio). A ajuda auxiliar em 30%, o professor da virada e a quietude (iguais aos das fases 1-2); as velocidades do modo padrao (trote 4,5 todos os rumos; corrida 8 frente, 6 de lado e de costas), o chao de 180 m e o limite de 80 m. A ficha: vault 04_locomocao/cartao_fase3.md.",
+  "episodeSeconds": 12.0,
+  "comment_assist": "A ajuda auxiliar em 30% (decisao do usuario, 17/10): a rede aprende os movimentos dificeis (trote com curvas bruscas) com ajuda; depois, com a rede boa, a ajuda desce (20, 10, 5, 0) ate o 0% de verdade (regime B, vault 04_locomocao/ajuda_auxiliar.md).",
   "assist": {
-    "standing": 0.0,
-    "walking": 0.0,
-    "feet": 0.0,
-    "getUp": 0.0
+    "standing": 30.0,
+    "walking": 30.0,
+    "feet": 30.0,
+    "getUp": 30.0
+  },
+  "comment_turnMove": "A virada brusca (o professor, DynamicTurnMove3D, vault 04_locomocao/virada_brusca.md): ligada, a rede o ve, ganha sobre ele por familia (turno.ganho.*) e soma o residuo; em 'dropout' dos episodios ele fica desligado (a rede nao depende dele). A avaliacao usa sempre ligada e compara com e sem.",
+  "turnMove": {
+    "enabled": true,
+    "dropout": 0.3,
+    "amount": 1.0
   },
   "caps": {
-    "touchdownMeters": 0.06,
-    "swingUpMeters": 0.07,
+    "touchdownMeters": 0.08,
+    "swingUpMeters": 0.05,
     "swingDownMeters": 0.02,
-    "phaseLeadCycles": 0.06,
+    "phaseLeadCycles": 0.07,
     "recoveryUrgency": 0.5,
-    "cadenceOctaves": 0.3,
-    "strideOctaves": 0.3,
-    "leanRadians": 0.18,
+    "cadenceOctaves": 0.25,
+    "strideOctaves": 0.25,
+    "leanRadians": 0.28,
     "comMeters": 0.12,
     "pelvisUpMeters": 0.02,
-    "pelvisDownMeters": 0.04,
-    "contactAcceleration": 1.0,
+    "pelvisDownMeters": 0.12,
+    "contactAcceleration": 1.5,
     "jointRadians": 0.1,
-    "gainOctaves": 0.3
+    "gainOctaves": 0.35
   },
   "reward": {
     "velocity": 0.4,
@@ -41,24 +48,26 @@
     "assist": 0.05,
     "posture": 0.2,
     "residual": 0.02,
+    "still": 0.2,
     "fall": 1.0
   },
   "termination": {
     "pelvisHeight": 0.45,
-    "boundaryMeters": 50.0
+    "boundaryMeters": 80.0,
+    "groundHalfExtentMeters": 180.0
   },
   "drillWeights": {
     "auto": true,
     "gain": 2.0,
     "maximumFactor": 3.0,
-    "floor": 0.08
+    "floor": 0.12
   },
   "drills": [
     {
       "id": "parado",
       "displayName": "Parado",
       "phase": 1,
-      "weight": 0.08,
+      "weight": 0.15,
       "minimum": {
         "fallFraction": 0.02
       },
@@ -75,7 +84,7 @@
       "id": "estrela",
       "displayName": "Estrela de 8 pontas andando",
       "phase": 1,
-      "weight": 0.1,
+      "weight": 0.25,
       "minimum": {
         "fallFraction": 0.05,
         "velocityError": 0.35
@@ -110,22 +119,10 @@
         ],
         "arriveRadius": 0.6,
         "camera": {
-          "fixed": 0.35,
-          "follow": 0.35,
-          "turns": 0.3,
-          "followRate": 4.0,
-          "turnDegrees": [
-            45.0,
-            180.0
-          ],
-          "turnRate": [
-            0.4,
-            1.5
-          ],
-          "pauseSeconds": [
-            1.0,
-            3.0
-          ]
+          "fixed": 0.0,
+          "follow": 1.0,
+          "turns": 0.0,
+          "followRate": 4.0
         }
       }
     },
@@ -133,7 +130,7 @@
       "id": "giro",
       "displayName": "Parado com giro suave",
       "phase": 2,
-      "weight": 0.08,
+      "weight": 0.15,
       "minimum": {
         "fallFraction": 0.02
       },
@@ -160,12 +157,12 @@
     },
     {
       "id": "estrela_trote",
-      "displayName": "Estrela com trote leve (ponta a ponta)",
+      "displayName": "Estrela com trote",
       "phase": 2,
-      "weight": 0.1,
+      "weight": 0.3,
       "minimum": {
         "fallFraction": 0.05,
-        "velocityError": 0.45
+        "velocityError": 0.5
       },
       "pilot": {
         "kind": "star",
@@ -177,54 +174,54 @@
               1.4
             ],
             "distance": [
-              4.0,
-              8.0
+              4,
+              7
+            ],
+            "weight": 0.5
+          },
+          {
+            "name": "trote_A",
+            "speed": [
+              1.8,
+              3.0
+            ],
+            "distance": [
+              5,
+              8
             ],
             "weight": 1.0
           },
           {
-            "name": "trote",
+            "name": "trote_B",
             "speed": [
-              1.8,
-              2.5
+              3.0,
+              4.5
             ],
             "distance": [
-              6.0,
-              10.0
+              6,
+              10
             ],
             "weight": 1.0
           }
         ],
         "starDirections": 8,
-        "starJitterDegrees": 8.0,
+        "starJitterDegrees": 6.0,
         "continuousFraction": 0.35,
-        "stopFraction": 0.3,
+        "stopFraction": 0.25,
         "holdSeconds": [
-          1.0,
-          2.0
+          0.8,
+          1.5
         ],
         "brake": [
-          2.0,
-          4.0
+          3,
+          6
         ],
-        "arriveRadius": 0.6,
+        "arriveRadius": 0.7,
         "camera": {
-          "fixed": 0.35,
-          "follow": 0.35,
-          "turns": 0.3,
-          "followRate": 4.0,
-          "turnDegrees": [
-            45.0,
-            180.0
-          ],
-          "turnRate": [
-            0.4,
-            1.5
-          ],
-          "pauseSeconds": [
-            1.0,
-            3.0
-          ]
+          "fixed": 0.0,
+          "follow": 1.0,
+          "turns": 0.0,
+          "followRate": 4.0
         }
       }
     },
@@ -232,7 +229,7 @@
       "id": "curva",
       "displayName": "Curva suave (~15 m)",
       "phase": 2,
-      "weight": 0.1,
+      "weight": 0.2,
       "minimum": {
         "fallFraction": 0.05,
         "velocityError": 0.45
@@ -279,32 +276,20 @@
         ],
         "arriveRadius": 0.6,
         "camera": {
-          "fixed": 0.35,
-          "follow": 0.35,
-          "turns": 0.3,
-          "followRate": 4.0,
-          "turnDegrees": [
-            45.0,
-            180.0
-          ],
-          "turnRate": [
-            0.4,
-            1.5
-          ],
-          "pauseSeconds": [
-            1.0,
-            3.0
-          ]
+          "fixed": 0.0,
+          "follow": 1.0,
+          "turns": 0.0,
+          "followRate": 4.0
         }
       }
     },
     {
       "id": "giro_rapido",
-      "displayName": "Parado com giro rapido (ate ~180 graus/s)",
+      "displayName": "Giro rápido parado",
       "phase": 3,
       "weight": 0.15,
       "minimum": {
-        "fallFraction": 0.05
+        "fallFraction": 0.03
       },
       "pilot": {
         "kind": "hold",
@@ -313,119 +298,95 @@
           "follow": 0.0,
           "turns": 1.0,
           "turnDegrees": [
-            60.0,
-            240.0
+            60,
+            240
           ],
           "turnRate": [
             1.0,
             3.14
           ],
           "pauseSeconds": [
-            0.0,
-            1.5
+            1.0,
+            2.0
           ]
         }
       }
     },
     {
       "id": "estrela_corrida",
-      "displayName": "Estrela com corrida e sprint",
+      "displayName": "Estrela com corrida",
       "phase": 3,
       "weight": 0.22,
       "minimum": {
         "fallFraction": 0.05,
-        "velocityError": 1.0
+        "velocityError": 0.65
       },
       "pilot": {
         "kind": "star",
         "bands": [
           {
-            "name": "trote",
+            "name": "corrida1",
             "speed": [
-              1.8,
-              2.5
+              4.5,
+              6.0
             ],
             "distance": [
+              8,
+              12
+            ],
+            "weight": 1.0
+          },
+          {
+            "name": "corrida2",
+            "speed": [
               6.0,
-              10.0
+              7.0
+            ],
+            "distance": [
+              10,
+              14
             ],
             "weight": 1.0
           },
           {
-            "name": "trote_forte",
+            "name": "corrida3",
             "speed": [
-              2.5,
-              3.5
+              7.0,
+              8.0
             ],
             "distance": [
-              8.0,
-              12.0
-            ],
-            "weight": 1.0
-          },
-          {
-            "name": "corrida",
-            "speed": [
-              3.5,
-              4.5
-            ],
-            "distance": [
-              10.0,
-              14.0
-            ],
-            "weight": 1.0
-          },
-          {
-            "name": "sprint",
-            "speed": [
-              5.0,
-              7.5
-            ],
-            "distance": [
-              12.0,
-              18.0
+              12,
+              18
             ],
             "weight": 1.0
           }
         ],
         "starDirections": 8,
-        "starJitterDegrees": 8.0,
-        "continuousFraction": 0.35,
-        "stopFraction": 0.3,
+        "starJitterDegrees": 5.0,
+        "continuousFraction": 0.55,
+        "stopFraction": 0.15,
         "holdSeconds": [
-          1.0,
-          2.0
+          0.5,
+          1.0
         ],
         "brake": [
-          3.0,
-          6.0
+          5,
+          8
         ],
-        "arriveRadius": 0.8,
+        "arriveRadius": 0.9,
         "camera": {
-          "fixed": 0.35,
-          "follow": 0.35,
-          "turns": 0.3,
-          "followRate": 4.0,
-          "turnDegrees": [
-            45.0,
-            180.0
-          ],
-          "turnRate": [
-            0.4,
-            1.5
-          ],
-          "pauseSeconds": [
-            1.0,
-            3.0
-          ]
+          "fixed": 0.0,
+          "follow": 1.0,
+          "turns": 0.0,
+          "followRate": 5.0
         }
       }
     },
     {
       "id": "curva_fechada",
-      "displayName": "Curvas fechadas (3 a 8 m) e em S",
+      "displayName": "Curvas fechadas e em S",
       "phase": 3,
-      "weight": 0.18,
+      "weight": 0.15,
       "minimum": {
         "fallFraction": 0.05,
         "velocityError": 0.7
@@ -434,26 +395,18 @@
         "kind": "arc",
         "bands": [
           {
-            "name": "andar",
-            "speed": [
-              0.8,
-              1.4
-            ],
-            "weight": 1.0
-          },
-          {
             "name": "trote",
             "speed": [
-              1.8,
-              2.5
+              2.5,
+              4.5
             ],
             "weight": 1.0
           },
           {
             "name": "corrida",
             "speed": [
-              3.0,
-              4.5
+              4.5,
+              8.0
             ],
             "weight": 1.0
           }
@@ -467,37 +420,31 @@
           170.0
         ],
         "arcFlipFraction": 0.5,
-        "lateralAcceleration": 5.0,
-        "arcLookahead": 1.2,
-        "stopFraction": 0.25,
+        "lateralAcceleration": 4.0,
+        "arcLookahead": 1.5,
+        "stopFraction": 0.15,
         "holdSeconds": [
-          1.0,
-          2.0
+          0.5,
+          1.0
         ],
         "brake": [
-          3.0,
-          6.0
+          4.0,
+          8.0
         ],
         "arriveRadius": 0.8,
         "camera": {
-          "fixed": 0.35,
-          "follow": 0.35,
-          "turns": 0.3,
-          "followRate": 4.0,
-          "turnDegrees": [
-            45.0,
-            180.0
-          ],
-          "turnRate": [
-            0.4,
-            1.5
-          ],
-          "pauseSeconds": [
-            1.0,
-            3.0
-          ]
+          "fixed": 0.0,
+          "follow": 1.0,
+          "turns": 0.0,
+          "followRate": 5.0
         }
       }
     }
-  ]
+  ],
+  "speeds": {
+    "trot": 4.5,
+    "sprintForward": 8.0,
+    "sprintSide": 6.0,
+    "sprintBackward": 6.0
+  }
 }

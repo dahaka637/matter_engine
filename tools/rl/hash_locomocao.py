@@ -50,7 +50,7 @@ def main() -> int:
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--gravar", help="grava o ouro neste arquivo")
     group.add_argument("--conferir", help="confere contra este ouro")
-    parser.add_argument("--tarefa", default="locomocao_f3a1")
+    parser.add_argument("--tarefa", default="locomocao_f2t")
     parser.add_argument("--mundos", type=int, default=64)
     parser.add_argument("--passos", type=int, default=150)
     parser.add_argument("--semente", type=int, default=20261017)

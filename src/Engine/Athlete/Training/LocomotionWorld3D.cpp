@@ -11,10 +11,10 @@
 
 namespace MatterEngine {
 
-void createLocomotionGround3D(PhysicsScene3D& scene) {
+void createLocomotionGround3D(PhysicsScene3D& scene, float halfExtentMeters) {
     PhysicsShape3D shape;
     shape.type = PhysicsShapeType3D::Box;
-    shape.halfExtents = { 60.0f, 60.0f, 0.1f };
+    shape.halfExtents = { halfExtentMeters, halfExtentMeters, 0.1f };
     shape.materialId = "concrete";
     PhysicsBodyDefinition3D ground;
     ground.motionType = PhysicsMotionType3D::Static;
@@ -84,7 +84,7 @@ struct LocomotionWorld3D::Impl {
     void build() {
         scene.reset();
         scene = engine.createScene(settings.scene, materials);
-        createLocomotionGround3D(*scene);
+        createLocomotionGround3D(*scene, settings.groundHalfExtentMeters);
         for (const LocomotionStaticBox3D& box : settings.statics) createLocomotionStaticBox3D(*scene, box);
         handle = spawnLocomotionAthlete3D(*scene, *assets.profile);
         body = scene->ragdollState(handle);
