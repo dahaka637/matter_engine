@@ -40,39 +40,10 @@ float activeCaptureLimit(const AthleteRuntimeSettings3D& settings, const ActiveS
     return settings.activeHandoverCaptureStepping;
 }
 
-// Os ajustes do padrao pelos do runtime (o padrao do jogo e a sombra do
-// fisico usam os mesmos).
+// (Os ajustes do padrao pelos do runtime: athleteConfigureDefaultLocomotion3D,
+// no AthleteRuntime3D, que o rastreador tambem usa.)
 void configureDefaultLocomotion(DefaultLocomotionSettings3D& defaults, const AthleteRuntimeSettings3D& settings) {
-    defaults.adaptiveTransitions = settings.defaultAdaptiveTransitions;
-    defaults.toeRoll = settings.toeRoll;
-    defaults.smoothClipSampling = settings.defaultAdaptiveTransitions;
-    defaults.trunkMotion = settings.defaultTrunkMotion;
-    defaults.landingAbsorb = settings.defaultLandingAbsorb;
-    defaults.curveLeanDeadZone = settings.defaultCurveLeanDeadZone;
-    defaults.airTackle = settings.defaultAirTackle;
-    defaults.airTacklePitchDegrees = settings.defaultAirTacklePitch;
-    {
-        // As velocidades da aba "Velocidades" (0, 45, 90, 135 e 180 graus).
-        const float t = settings.defaultTrotSpeed;
-        defaults.trotSpeeds = { t, t, t, t, t };
-        defaults.sprintSpeeds = { settings.defaultSprintForwardSpeed, settings.defaultSprintForwardSpeed,
-            settings.defaultSprintSideSpeed, settings.defaultSprintBackwardSpeed, settings.defaultSprintBackwardSpeed };
-    }
-    defaults.trunkMotionAmount = settings.defaultTrunkMotionPercent * 0.01f;
-    // A arrancada (0 desliga): o gesto do idle_to_sprint e a inclinacao do corpo
-    // inteiro com a aceleracao (a de antes: ate 0,10 rad para a frente; a 100%,
-    // 2,5 vezes mais: ate 0,25 rad na arrancada e 0,20 para tras na freada).
-    {
-        const float start = std::max(0.0f, settings.defaultStartGesturePercent) * 0.01f;
-        defaults.startGesture = start > 0.0f;
-        defaults.startGestureAmount = start;
-        // (Dos valores de fabrica, nao do que ja esta: isto roda a cada tick.)
-        const DefaultLocomotionSettings3D factory;
-        const float lean = 1.0f + 1.5f * start;
-        defaults.forwardLeanShare = factory.forwardLeanShare * lean;
-        defaults.forwardLeanMinimum = factory.forwardLeanMinimum * lean;
-        defaults.forwardLeanMaximum = factory.forwardLeanMaximum * lean;
-    }
+    athleteConfigureDefaultLocomotion3D(defaults, settings);
 }
 } // namespace
 

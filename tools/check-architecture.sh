@@ -110,6 +110,11 @@ check_absent "Tela de RL fala com o treinador so pelo Supervisor (sem sockets ne
     '#include <(sys/|spawn\.h|unistd\.h)' src/Workbench
 check_absent "Tela de RL fala com a GPU so pelo CanvasTarget" \
     'RHI::|Renderer&|#include "Engine/(RHI|Render)/' src/Workbench/ReinforcementLearning
+check_absent "O rastreador (Engine/Tracking) nao depende de render, interface, audio, plataforma nem entrada" \
+    '#include "Engine/(Render|RHI|UI|Audio|Platform|Input)/|#include .imgui|#include <SDL' src/Engine/Tracking
+check_absent "O rastreador segue o padrao e o corpo do jogo: nem o legado, nem o treino da locomocao antiga, nem o RL do zero" \
+    '#include "Engine/Athlete/(Legacy|Training|Contract|Policy)/|#include "Engine/RL/(Environment|Style|Rewards|Imitation|Supervisor|Calibration|Brain|Commands)/' \
+    src/Engine/Tracking bindings/python/MatterTrackingNative.cpp
 check_absent "Identidade antiga e prototipos removidos nao podem retornar" \
     'SoccerFall|SOCCERFALL|LegacyFootworkRig|AnimatorScreen' \
     CMakeLists.txt src tests

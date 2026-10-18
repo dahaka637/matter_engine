@@ -20,8 +20,10 @@ Vec3 rotateZ(Vec3 v, float angle) {
     return { c * v.x - s * v.y, s * v.x + c * v.y, v.z };
 }
 
+} // namespace
+
 // Um passo da capsula no chao (a regra do controle de personagem, com o giro).
-Vec3 capsuleStep(Vec3 current, Vec3 desired, const BodyForecastInput3D& in, float dt) {
+Vec3 bodyForecastCapsuleStep3D(Vec3 current, Vec3 desired, const BodyForecastInput3D& in, float dt) {
     const float speed = current.length();
     const float wanted = desired.length();
     if (wanted < 1e-4f)
@@ -36,8 +38,6 @@ Vec3 capsuleStep(Vec3 current, Vec3 desired, const BodyForecastInput3D& in, floa
     const float next = speed + std::clamp(wanted - speed, -rate * dt, rate * dt);
     return rotateZ(from, turn) * next;
 }
-
-} // namespace
 
 void BodyForecast3D::build(const BodyForecastInput3D& input) {
     m_step = std::max(1e-3f, input.step);
@@ -55,7 +55,7 @@ void BodyForecast3D::build(const BodyForecastInput3D& input) {
         m_samples[static_cast<std::size_t>(i)] = s;
         // (A posicao pela velocidade media do passo.)
         const Vec3 desired = input.requestedTurnsWithFacing ? rotateZ(requested, s.yaw - input.facingYaw) : requested;
-        const Vec3 next = capsuleStep(s.velocity, desired, input, m_step);
+        const Vec3 next = bodyForecastCapsuleStep3D(s.velocity, desired, input, m_step);
         s.position += (s.velocity + next) * (0.5f * m_step);
         s.velocity = next;
         s.yaw += rate * m_step;

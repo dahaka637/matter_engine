@@ -426,6 +426,25 @@ if(MATTERENGINE_BUILD_RL)
         target_compile_options(MatterAthleteTraining PRIVATE -Wall -Wextra -Wpedantic)
     endif()
 
+    # O rastreador fisico (DReCon + DeepMimic, vault
+    # 04_locomocao/referencia/pesquisas/12_especificacao_rastreador.md): o
+    # lider (o padrao do jogo), o contrato, a nota e o lote de treino. Usa o
+    # atleta (o padrao, os recursos) e do RL so o corpo (RLBody3D).
+    add_library(MatterTracking STATIC
+        src/Engine/Tracking/TrackingLeader3D.cpp
+        src/Engine/Tracking/TrackingFeatures3D.cpp
+        src/Engine/Tracking/TrackingContract3D.cpp
+        src/Engine/Tracking/TrackingReward3D.cpp
+        src/Engine/Tracking/TrackingTraining3D.cpp
+    )
+    target_include_directories(MatterTracking PUBLIC src)
+    target_link_libraries(MatterTracking PUBLIC MatterAthlete MatterRLContract)
+    if(MSVC)
+        target_compile_options(MatterTracking PRIVATE /W4 /permissive- /utf-8)
+    else()
+        target_compile_options(MatterTracking PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+
     # Os mundos de treino do Corpo: a tarefa, a nota e o lote paralelo.
     # Depende so da fisica, dos clipes, do contrato e do piloto (nada de
     # janela, render ou Python).
@@ -465,6 +484,11 @@ if(MATTERENGINE_BUILD_RL)
         nanobind_add_module(matter_locomotion_native NB_STATIC bindings/python/MatterLocomotionNative.cpp)
         target_link_libraries(matter_locomotion_native PRIVATE MatterAthleteTraining)
         set_target_properties(matter_locomotion_native PROPERTIES
+            LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/python")
+        # O rastreador fisico (o lote do treino dele).
+        nanobind_add_module(matter_tracking_native NB_STATIC bindings/python/MatterTrackingNative.cpp)
+        target_link_libraries(matter_tracking_native PRIVATE MatterTracking)
+        set_target_properties(matter_tracking_native PROPERTIES
             LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/python")
     endif()
 endif()

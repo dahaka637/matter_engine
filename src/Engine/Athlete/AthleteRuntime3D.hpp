@@ -5,6 +5,7 @@
 #include "Engine/Character/BallOwnership3D.hpp"
 #include "Engine/Character/CharacterControlTypes3D.hpp"
 #include "Engine/Character/CharacterLocomotion3D.hpp"
+#include "Engine/Character/DefaultLocomotion3D.hpp"
 #include "Engine/Physics/PhysicsScene3D.hpp"
 
 #include <cstdint>
@@ -186,6 +187,10 @@ void athleteRestore3D(PhysicsScene3D& scene, RagdollHandle3D handle, const Athle
 // corrida a frente, de lado e de costas).
 [[nodiscard]] float athleteDefaultTravelSpeed3D(const AthleteRuntimeSettings3D& settings,
     float travelRelativeToLookRadians, bool sprinting);
+
+// Os ajustes do padrao pelos do runtime: o padrao do jogo, a sombra do fisico
+// e o lider do rastreador (Engine/Tracking) usam os mesmos.
+void athleteConfigureDefaultLocomotion3D(DefaultLocomotionSettings3D& defaults, const AthleteRuntimeSettings3D& settings);
 
 // A batida da capsula (m/s; AthleteControlInput3D::capsuleWallImpact): o
 // quanto a velocidade no plano caiu, no rumo que tinha, alem da frenagem dela

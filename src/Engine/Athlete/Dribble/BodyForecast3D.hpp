@@ -39,6 +39,11 @@ struct BodyForecastInput3D {
     float horizon = 1.0f;
 };
 
+// Um passo da capsula no chao pela regra acima (a velocidade no plano de agora
+// e a pedida; a resposta sai de `response`): a previsao e o lider do
+// rastreador (Engine/Tracking) usam a mesma.
+[[nodiscard]] Vec3 bodyForecastCapsuleStep3D(Vec3 current, Vec3 desired, const BodyForecastInput3D& response, float dt);
+
 class BodyForecast3D {
 public:
     void build(const BodyForecastInput3D& input);
