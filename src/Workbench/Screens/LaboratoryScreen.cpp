@@ -681,11 +681,13 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
         // Locomocao padrao: a capsula chega na velocidade definida quase na
         // hora e troca de direcao do mesmo jeito (como na Unreal) - o corpo e
         // so a animacao em cima dela.
-        const AthleteCapsuleResponse3D response = athleteCapsuleResponse3D(m_capsuleResponsePercent);
+        const AthleteCapsuleResponse3D response = athleteCapsuleResponse3D(m_capsuleResponsePercent, m_capsuleReversalPercent);
         activeSettings.groundAcceleration = response.acceleration;
         activeSettings.groundDeceleration = response.deceleration;
         activeSettings.groundTurnRate = response.turnRate;
         activeSettings.groundBrakeDeceleration = response.brake;
+        activeSettings.groundReverseKeepSpeed = response.reverseKeepSpeed;
+        activeSettings.groundReverseAccelerationScale = response.reverseAccelerationScale;
     } else if (controllingCharacter && m_adaptivePhysics) {
         activeSettings = adaptiveCharacterMotorSettings3D(activeSettings, stateBefore, command,
             m_physicalLocomotionV2 ? physicalNavigationAcceleration3D(m_e5WalkingAssistPercent * 0.01f) : 0.0f);
@@ -3082,6 +3084,11 @@ void WorkbenchApp::drawLaboratoryUi() {
                         ImGui::SliderFloat("##CapsuleResponse", &m_capsuleResponsePercent, 30.0f, 150.0f, "%.0f%%",
                             ImGuiSliderFlags_AlwaysClamp);
                         hint("O quanto o jogador acelera, freia e vira no modo padrão. 100%: 16 m/s² de aceleração, 22 de desaceleração, 30 de freada e 10 rad/s de giro. Menos, mais pesado e realista (perto de 40%); mais, mais arcade.");
+                        ImGui::TextUnformatted("Troca de direção");
+                        ImGui::SetNextItemWidth(-1.0f);
+                        ImGui::SliderFloat("##CapsuleReversal", &m_capsuleReversalPercent, 0.0f, 100.0f, "%.0f%%",
+                            ImGuiSliderFlags_AlwaysClamp);
+                        hint("Ao pedir o sentido contrário (ir para a esquerda e logo para a direita), o jogador freia só até 3 m/s e sai para o outro lado acelerando 2 vezes mais, em vez de parar e recomeçar do zero: perde menos velocidade e leva menos tempo. 0%: a troca de antes.");
                         ImGui::Dummy({ 1.0f, ui(6.0f) });
                         if (ImGui::Button("COPIAR PARÂMETROS", { -1.0f, ui(36.0f) })) {
                             char text[512];
@@ -3091,21 +3098,23 @@ void WorkbenchApp::drawLaboratoryUi() {
                                 "Corrida para a frente (e diagonais da frente): %.2f\n"
                                 "Corrida de lado: %.2f\n"
                                 "Corrida de costas (e diagonais de costas): %.2f\n"
-                                "Resposta: %.0f%%\n",
+                                "Resposta: %.0f%%\n"
+                                "Troca de direção: %.0f%%\n",
                                 m_defaultTrotSpeed, m_defaultSprintForwardSpeed, m_defaultSprintSideSpeed,
-                                m_defaultSprintBackwardSpeed, m_capsuleResponsePercent);
+                                m_defaultSprintBackwardSpeed, m_capsuleResponsePercent, m_capsuleReversalPercent);
                             ImGui::SetClipboardText(text);
                             m_defaultSpeedsCopiedTime = ImGui::GetTime();
                         }
                         if (ImGui::GetTime() - m_defaultSpeedsCopiedTime < 2.0)
                             ImGui::TextColored({ 0.38f, 0.82f, 0.62f, 1.0f }, "Copiado para a área de transferência.");
                         if (ImGui::Button("RESTAURAR PADRÕES", { -1.0f, ui(30.0f) })) {
-                            const DefaultLocomotionSettings3D defaults;
-                            m_capsuleResponsePercent = AthleteRuntimeSettings3D {}.capsuleResponsePercent;
-                            m_defaultTrotSpeed = defaults.trotSpeeds[0];
-                            m_defaultSprintForwardSpeed = defaults.sprintSpeeds[0];
-                            m_defaultSprintSideSpeed = defaults.sprintSpeeds[2];
-                            m_defaultSprintBackwardSpeed = defaults.sprintSpeeds[4];
+                            // (Os padrões calibrados do laboratório, 17/10.)
+                            m_capsuleResponsePercent = LabDefaultCapsuleResponsePercent;
+                            m_capsuleReversalPercent = LabDefaultCapsuleReversalPercent;
+                            m_defaultTrotSpeed = LabDefaultTrotSpeed;
+                            m_defaultSprintForwardSpeed = LabDefaultSprintForwardSpeed;
+                            m_defaultSprintSideSpeed = LabDefaultSprintSideSpeed;
+                            m_defaultSprintBackwardSpeed = LabDefaultSprintBackwardSpeed;
                         }
                         ImGui::EndTabItem();
                     }

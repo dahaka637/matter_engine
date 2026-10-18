@@ -24,7 +24,13 @@ struct AthleteCapsuleResponse3D {
     float deceleration = 22.0f;
     float brake = 30.0f;
     float turnRate = 10.0f;
+    // A troca de direcao viva (0: a de antes): a velocidade que fica ao inverter e
+    // quantas vezes mais forte acelera para o outro lado.
+    float reverseKeepSpeed = 0.0f;
+    float reverseAccelerationScale = 1.0f;
 };
-[[nodiscard]] AthleteCapsuleResponse3D athleteCapsuleResponse3D(float responsePercent);
+// reversalPercent (0 a 100, 0 = a troca de antes): 100 deixa 3 m/s na inversao e
+// acelera 2 vezes mais para o outro lado (a resposta escala a aceleracao).
+[[nodiscard]] AthleteCapsuleResponse3D athleteCapsuleResponse3D(float responsePercent, float reversalPercent = 0.0f);
 
 } // namespace MatterEngine

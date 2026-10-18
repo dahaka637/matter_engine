@@ -197,8 +197,17 @@ void PhysicsScene3D::moveCharacter(const CharacterMotorCommand3D& command,
                 const Vec3 to = desired * (1.0f / wanted);
                 const float angle = std::atan2(from.x * to.y - from.y * to.x, from.x * to.x + from.y * to.y);
                 if (std::abs(angle) > settings.groundReverseDegrees * 3.14159265f / 180.0f) {
-                    planar = currentPlanar * (std::max(0.0f, current - settings.groundBrakeDeceleration * deltaTime)
-                        / current);
+                    const float keep = settings.groundReverseKeepSpeed;
+                    if (keep > 0.0f && current <= keep + 1e-3f) {
+                        // Freou ate a velocidade que fica: vira para o outro lado dai,
+                        // acelerando mais forte.
+                        const float rate = settings.groundAcceleration * std::max(1.0f, settings.groundReverseAccelerationScale);
+                        const Vec3 to = desired * (1.0f / wanted);
+                        planar = to * std::min(wanted, current + rate * deltaTime);
+                    } else {
+                        planar = currentPlanar * (std::max(keep, current - settings.groundBrakeDeceleration * deltaTime)
+                            / current);
+                    }
                 } else {
                     const float turn = std::clamp(angle, -settings.groundTurnRate * deltaTime,
                         settings.groundTurnRate * deltaTime);

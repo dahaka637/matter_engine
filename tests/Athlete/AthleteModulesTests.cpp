@@ -5,6 +5,7 @@
 #include "Engine/Athlete/Modes/ContactClasses3D.hpp"
 #include "Engine/Athlete/Modes/ModeRules3D.hpp"
 #include "Engine/Athlete/Physical/DynamicTurnMove3D.hpp"
+#include "Engine/Athlete/Planning/MotionPlanner3D.hpp"
 #include "Engine/Athlete/Physical/PhysicalCorrections3D.hpp"
 #include "Engine/Athlete/Legacy/LegacyReference3D.hpp"
 #include "Engine/Athlete/Reference/PhaseLock3D.hpp"
@@ -992,6 +993,24 @@ void modeRulePropertyTests() {
     }
 }
 
+void capsuleReversalTests() {
+    // A troca de direcao viva da capsula: 0% e a de antes; 100% deixa 3 m/s e acelera 2x mais; a resposta escala
+    // a aceleracao, nao a velocidade que fica.
+    const AthleteCapsuleResponse3D before = athleteCapsuleResponse3D(150.0f);
+    expect(before.reverseKeepSpeed == 0.0f && before.reverseAccelerationScale == 1.0f,
+        "sem a troca viva (o padrao do motor), a resposta e a de antes");
+    expect(std::abs(before.acceleration - 24.0f) < 1e-4f && std::abs(before.brake - 45.0f) < 1e-4f
+            && std::abs(before.turnRate - 15.0f) < 1e-4f,
+        "a resposta a 150%: 24 m/s2, 45 de freada e 15 rad/s");
+    const AthleteCapsuleResponse3D lively = athleteCapsuleResponse3D(150.0f, 100.0f);
+    expect(std::abs(lively.reverseKeepSpeed - 3.0f) < 1e-5f && std::abs(lively.reverseAccelerationScale - 2.0f) < 1e-5f
+            && lively.acceleration == before.acceleration,
+        "a troca viva a 100%: 3 m/s ficam e a saida acelera 2 vezes mais");
+    const AthleteCapsuleResponse3D half = athleteCapsuleResponse3D(150.0f, 50.0f);
+    expect(std::abs(half.reverseKeepSpeed - 1.5f) < 1e-5f && std::abs(half.reverseAccelerationScale - 1.5f) < 1e-5f,
+        "a 50%: metade");
+}
+
 void turnMoveTests() {
     const float dt = 1.0f / 120.0f;
     // Reto: nunca dispara.
@@ -1076,6 +1095,7 @@ int main() {
         referenceFrameTests();
         correctionTests();
         turnMoveTests();
+        capsuleReversalTests();
         contractTests();
         phaseLockTests();
         modeRulePropertyTests();

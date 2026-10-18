@@ -1104,11 +1104,14 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
         previousJump = keys.jump;
         CharacterMotorSettings3D active = avatar;
         if (controlledAnimated) {
-            const AthleteCapsuleResponse3D response = athleteCapsuleResponse3D(settings.capsuleResponsePercent);
+            const AthleteCapsuleResponse3D response = athleteCapsuleResponse3D(settings.capsuleResponsePercent,
+                settings.capsuleReversalPercent);
             active.groundAcceleration = response.acceleration;
             active.groundDeceleration = response.deceleration;
             active.groundTurnRate = response.turnRate;
             active.groundBrakeDeceleration = response.brake;
+            active.groundReverseKeepSpeed = response.reverseKeepSpeed;
+            active.groundReverseAccelerationScale = response.reverseAccelerationScale;
         } else {
             active = adaptiveCharacterMotorSettings3D(active, before, command,
                 physicalNavigationAcceleration3D(settings.e5WalkingAssistPercent * 0.01f));
@@ -1275,6 +1278,10 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
             // XAUX=1: a ajuda auxiliar por canal (a medida do atleta).
             const AthleteExternalAssist3D& aux = athlete.externalAssist;
             auxStats.ticks += 1;
+            if (std::getenv("XTROCA") && step % 6 == 0 && t > 1.4f && t < 3.4f) {
+                const Vec3 v = scene->characterState().velocity;
+                std::printf("    t %.2f capsula %.2f %.2f (%.2f m/s)\n", t, v.x, v.y, std::hypot(v.x, v.y));
+            }
             {
                 const TurnMoveOutput3D& move = legacy.turnMove.output();
                 const float planarSpeed = std::hypot(bodyState.links.front().linearVelocity.x,
@@ -2707,6 +2714,7 @@ int main(int argc, char** argv) {
     int parity = -1;
     int baseline = -1;
     float response = AthleteRuntimeSettings3D {}.capsuleResponsePercent;
+    float reversal = AthleteRuntimeSettings3D {}.capsuleReversalPercent;
     bool newBall = false;
     bool noRequests = false;
     bool bridge = AthleteRuntimeSettings3D {}.physicalBridge;
@@ -2735,6 +2743,7 @@ int main(int argc, char** argv) {
         else if (arg == "--pegadas") footsteps = std::atoi(need()) != 0;
         else if (arg == "--passos") balanceSteps = std::atoi(need()) != 0;
         else if (arg == "--resposta") response = static_cast<float>(std::atof(need()));
+        else if (arg == "--troca-direcao") reversal = static_cast<float>(std::atof(need()));
         else if (arg == "--manejo") newBall = std::atoi(need()) != 0;
         else if (arg == "--sem-pedido") noRequests = true;
         else if (arg == "--ponte") bridge = std::atoi(need()) != 0;
@@ -2790,6 +2799,7 @@ int main(int argc, char** argv) {
     settings.footstepLocomotion = footsteps;
     settings.activeStanceSettings.balanceSteps = balanceSteps;
     settings.capsuleResponsePercent = response;
+    settings.capsuleReversalPercent = reversal;
     settings.newBallHandling = newBall;
     settings.dribbleV5 = dribbleV5;
     settings.physicalBridge = bridge;

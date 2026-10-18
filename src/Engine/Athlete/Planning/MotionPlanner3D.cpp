@@ -15,9 +15,12 @@ float athleteTravelSpeed3D(const std::array<float, 5>& trot, const std::array<fl
     return table[k] + (table[k + 1] - table[k]) * t;
 }
 
-AthleteCapsuleResponse3D athleteCapsuleResponse3D(float responsePercent) {
+AthleteCapsuleResponse3D athleteCapsuleResponse3D(float responsePercent, float reversalPercent) {
     const float scale = std::clamp(responsePercent, 10.0f, 300.0f) * 0.01f;
     AthleteCapsuleResponse3D response;
+    const float reversal = std::clamp(reversalPercent, 0.0f, 100.0f) * 0.01f;
+    response.reverseKeepSpeed = 3.0f * reversal;
+    response.reverseAccelerationScale = 1.0f + 1.0f * reversal;
     response.acceleration *= scale;
     response.deceleration *= scale;
     response.brake *= scale;

@@ -550,7 +550,17 @@ private:
     bool m_dribbleV5 = true;
     // A regua "Resposta" da capsula no modo padrao (%; 100 = 16 / 22 / 30 m/s2
     // e 10 rad/s, os aprovados).
-    float m_capsuleResponsePercent = 100.0f;
+    // Os padroes calibrados do modo padrao no laboratorio (17/10, escolha do
+    // usuario): o trote, a corrida para a frente, de lado e de costas (m/s), a
+    // resposta (%) e a troca de direcao viva (%).
+    static constexpr float LabDefaultTrotSpeed = 4.5f;
+    static constexpr float LabDefaultSprintForwardSpeed = 8.0f;
+    static constexpr float LabDefaultSprintSideSpeed = 6.0f;
+    static constexpr float LabDefaultSprintBackwardSpeed = 6.0f;
+    static constexpr float LabDefaultCapsuleResponsePercent = 150.0f;
+    static constexpr float LabDefaultCapsuleReversalPercent = 100.0f;
+    float m_capsuleResponsePercent = LabDefaultCapsuleResponsePercent;
+    float m_capsuleReversalPercent = LabDefaultCapsuleReversalPercent;
     // Transicoes adaptativas da locomocao padrao (05/10): giro da pelve com
     // aceleracao limitada, clipes misturados pelo movimento real e amostragem
     // suave. Desligada: o modo de antes (comparacao).
@@ -585,10 +595,10 @@ private:
     // personagem, 06/10): o trote em todos os rumos; a corrida para a frente
     // (vale para as diagonais da frente), de lado e de costas (vale para as
     // diagonais de costas). Os padroes sao os de DefaultLocomotionSettings3D.
-    float m_defaultTrotSpeed = 4.5f;
-    float m_defaultSprintForwardSpeed = 7.8f;
-    float m_defaultSprintSideSpeed = 5.2f;
-    float m_defaultSprintBackwardSpeed = 5.2f;
+    float m_defaultTrotSpeed = LabDefaultTrotSpeed;
+    float m_defaultSprintForwardSpeed = LabDefaultSprintForwardSpeed;
+    float m_defaultSprintSideSpeed = LabDefaultSprintSideSpeed;
+    float m_defaultSprintBackwardSpeed = LabDefaultSprintBackwardSpeed;
     // Quando os parametros foram copiados (ImGui::GetTime; o aviso some em 2 s).
     double m_defaultSpeedsCopiedTime = -10.0;
     // Levantar com pressa ja andando no padrao (05/10).
