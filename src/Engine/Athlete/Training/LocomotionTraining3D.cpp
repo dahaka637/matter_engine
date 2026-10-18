@@ -284,6 +284,11 @@ struct LocomotionTraining3D::Impl {
                 : turnMoveMode == 2 || settings.evaluation ? true
                 : std::uniform_real_distribution<float>(0.0f, 1.0f)(world.rng) >= task.turnMove.dropout;
             scene.runtimeSettings().dynamicTurnMove = on;
+            scene.runtimeSettings().dynamicTurnMoveSettings.amount = task.turnMove.amount;
+        } else {
+            // (Uma tarefa trocada andando, de ligada para desligada: o mundo
+            // volta ao classico no recomeco.)
+            scene.runtimeSettings().dynamicTurnMove = false;
         }
         const RagdollState3D& body = scene.body();
         const Vec3 pelvis = body.links.empty() ? Vec3 {} : body.links.front().position;

@@ -194,6 +194,16 @@ void turnMoveTests() {
         batch.reset(5);
         expect(count(batch) == 0, "tarefa sem a virada: nem o modo forcado a liga");
     }
+    {
+        // A tarefa trocada andando (a avaliacao troca o arquivo vivo): de ligada
+        // para desligada, o recomeco volta ao classico; e a intensidade nova chega.
+        settings.taskPath = write("matter_tm_swap_on.json", "\"turnMove\": { \"enabled\": true, \"dropout\": 0.0 },");
+        LocomotionTraining3D batch(settings);
+        expect(count(batch) == 40, "antes da troca: todos ligados");
+        batch.updateTask(loadLocomotionTask3D(write("matter_tm_swap_off.json", "\"turnMove\": { \"enabled\": false },").string()));
+        batch.reset(6);
+        expect(count(batch) == 0, "tarefa trocada para sem a virada: o recomeco desliga");
+    }
 }
 
 } // namespace
