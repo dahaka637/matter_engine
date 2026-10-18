@@ -50,6 +50,15 @@ def action_group(name: str) -> str:
     return "pes" if head == "passada" else head
 
 
+def smoothness_loss(model, now: torch.Tensor, after: torch.Tensor, lower: torch.Tensor,
+                    upper: torch.Tensor) -> torch.Tensor:
+    """O tranco da media entre estados seguidos (CAPS temporal), com a media presa aos limites
+    do canal (fora deles a acao aplicada nao muda)."""
+    first = torch.maximum(torch.minimum(model.actor(now), upper), lower)
+    second = torch.maximum(torch.minimum(model.actor(after), upper), lower)
+    return (second - first).pow(2).mean()
+
+
 def channel_values(names: list[str], table: dict, default: float) -> np.ndarray:
     """Um valor por canal pelo prefixo mais longo da tabela ("*" = o resto)."""
     keys = sorted((k for k in table if k != "*"), key=len, reverse=True)
@@ -136,6 +145,12 @@ class LocomotionRunConfig:
     # a memoria da normalizacao (amostras; 0 = sem limite, o de sempre).
     raw_extra_prefixes: list = field(default_factory=list)
     norm_max_count: float = 0.0
+    # A suavidade como regularizacao da politica (CAPS temporal, Mysore et al. 2021; vault
+    # .../pesquisas/02_recompensa_locomocao.md): coef x a media de (mu(s_t+1) - mu(s_t))^2 nos
+    # pares seguidos do mesmo episodio, com a media presa aos limites do canal (a acao
+    # aplicada). Pune o tranco da MEDIA, nao o ruido da exploracao (um custo de trancos
+    # na nota, sobre a acao sorteada, pesaria o ruido). 0 (o padrao): desligada.
+    smooth_policy_coef: float = 0.0
     end_reason: str = ""
 
     @staticmethod
@@ -859,14 +874,35 @@ class LocomotionTrainer:
             returns, values = rollout.returns.reshape(-1), rollout.values.reshape(-1)
             explained = float(1.0 - (returns - values).var() / returns.var().clamp(min=1e-8))
         auxiliary = None
+        terms = []
         if self.mirror is not None:
             raw = rollout.raw.reshape(-1, rollout.raw.shape[-1])
             weight = self.config.mirror_loss
 
-            def auxiliary():
+            def mirror_term():
                 index = torch.randint(0, raw.shape[0], (min(4096, raw.shape[0]),), device=raw.device,
                                       generator=self.update_generator)
                 return weight * self.mirror(self.model, raw[index], raw=True, norm=rollout.norm)
+            terms.append(mirror_term)
+        if self.config.smooth_policy_coef > 0.0:
+            # Os pares (t, t+1) do mesmo episodio (sem fim entre eles), na entrada ja normalizada.
+            steps, envs = rollout.obs.shape[0], rollout.obs.shape[1]
+            alive = (rollout.dones[:-1] < 0.5).reshape(-1)
+            now = rollout.obs[:-1].reshape(-1, rollout.obs.shape[-1])[alive]
+            after = rollout.obs[1:].reshape(-1, rollout.obs.shape[-1])[alive]
+            coef = self.config.smooth_policy_coef
+            lower, upper = self.action_lower, self.action_upper
+
+            def smooth_term():
+                if now.shape[0] == 0:
+                    return torch.zeros((), device=self.device)
+                index = torch.randint(0, now.shape[0], (min(4096, now.shape[0]),), device=now.device,
+                                      generator=self.update_generator)
+                return coef * smoothness_loss(self.model, now[index], after[index], lower, upper)
+            terms.append(smooth_term)
+        if terms:
+            def auxiliary():
+                return sum(term() for term in terms)
         stats = self.ppo.update(rollout, auxiliary=auxiliary)
         self.apply_std_bounds()
         stats["explained_variance"] = explained

@@ -127,6 +127,11 @@ def main() -> int:
     spec = json.loads(Path(args.spec).read_text())
     report = {"spec": spec, "inicio": time.strftime("%Y-%m-%d %H:%M"), "bracos": {}}
     for name, change in (("a", False), ("b", True)):
+        if not change and spec.get("controle_de"):
+            # O controle identico de outro A/B (o mesmo checkpoint, a mesma config, as mesmas rodadas).
+            previous = json.loads((HERE / "ab" / f"{spec['controle_de']}.json").read_text())
+            report["bracos"]["a"] = dict(previous["bracos"]["a"], reaproveitado_de=spec["controle_de"])
+            continue
         run = make_arm(spec, name, change)
         for adjust in ([spec.get("ajuste_comum")] if spec.get("ajuste_comum") else []) + \
                 ([spec["ajuste_b"]] if change and spec.get("ajuste_b") else []):

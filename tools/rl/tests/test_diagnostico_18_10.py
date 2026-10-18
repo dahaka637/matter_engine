@@ -7,7 +7,7 @@ import numpy as np
 import torch
 
 from matter_rl.curriculum import CELLS, SpeedCurriculum, band_maximum
-from matter_rl.locomotion_trainer import action_group, channel_values
+from matter_rl.locomotion_trainer import action_group, channel_values, smoothness_loss
 from matter_rl.model import ActorCritic, recenter_actor, refit_normalizer
 from matter_rl.ppo import PPO, PPOSettings, Rollout
 
@@ -162,3 +162,19 @@ def test_std_tables_by_prefix_and_groups():
     floor = channel_values(names, {"equilibrio.inclina": 0.10, "equilibrio.cm": 0.10, "*": 0.05}, 1e-3)
     assert floor.tolist() == [np.float32(0.10), np.float32(0.10), np.float32(0.05), np.float32(0.05), np.float32(0.05)]
     assert [action_group(n) for n in names] == ["equilibrio", "equilibrio", "equilibrio", "pose", "pes"]
+
+
+def test_policy_smoothness_ignores_changes_beyond_the_bounds_and_trains_down():
+    model = _model()
+    lower, upper = -torch.ones(5), torch.ones(5)
+    now, after = torch.randn(512, 12), torch.randn(512, 12)
+    loss = smoothness_loss(model, now, after, lower, upper)
+    assert float(loss) > 0.0
+    same = smoothness_loss(model, now, now, lower, upper)
+    assert float(same) == 0.0
+    optimizer = torch.optim.Adam(model.actor.parameters(), lr=1e-3)
+    for _ in range(200):
+        optimizer.zero_grad()
+        smoothness_loss(model, now, after, lower, upper).backward()
+        optimizer.step()
+    assert float(smoothness_loss(model, now, after, lower, upper)) < 0.5 * float(loss)
