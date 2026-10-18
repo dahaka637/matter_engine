@@ -178,3 +178,32 @@ def test_policy_smoothness_ignores_changes_beyond_the_bounds_and_trains_down():
         smoothness_loss(model, now, after, lower, upper).backward()
         optimizer.step()
     assert float(smoothness_loss(model, now, after, lower, upper)) < 0.5 * float(loss)
+
+
+def test_branch_to_a_new_task_keeps_the_opened_caps_of_the_shared_drills(tmp_path, monkeypatch):
+    import argparse
+    import json
+
+    from matter_rl import __main__ as cli
+    from matter_rl import paths
+
+    monkeypatch.setattr(paths, "RUNS", tmp_path / "runs")
+    source = tmp_path / "runs" / "velho"
+    (source / "checkpoints" / "ck-00000010").mkdir(parents=True)
+    (source / "checkpoints" / "ck-00000010" / "manifest.json").write_text("{}")
+    (source / "checkpoints" / "ck-00000010" / "model.pt").write_text("")
+    (source / "latest.json").write_text(json.dumps({"path": "ck-00000010", "iteration": 10}))
+    (source / "run.json").write_text(json.dumps({"task": "t1", "end_reason": "usuario"}))
+    (source / "tarefa.json").write_text(json.dumps({"speedCurriculum": {"enabled": True, "caps": {
+        "trote": [2.0] * CELLS, "saiu": [1.0] * CELLS}}, "drills": [{"id": "trote"}, {"id": "saiu"}]}))
+    new = tmp_path / "t2.json"
+    new.write_text(json.dumps({"speedCurriculum": {"enabled": True},
+                               "drills": [{"id": "trote"}, {"id": "corrida"}]}))
+    assert cli.command_branch(argparse.Namespace(de="velho", run="novo", tarefa=str(new))) == 0
+    task = json.loads((tmp_path / "runs" / "novo" / "tarefa.json").read_text())
+    # O exercicio em comum leva o teto aberto; o que saiu nao entra; o novo parte do inicio.
+    assert task["speedCurriculum"]["caps"] == {"trote": [2.0] * CELLS}
+    assert json.loads((tmp_path / "runs" / "novo" / "run.json").read_text())["task"] == str(new)
+    # A tarefa desconhecida nao deixa um treino pela metade.
+    assert cli.command_branch(argparse.Namespace(de="velho", run="outro", tarefa="nao_existe")) == 1
+    assert not (tmp_path / "runs" / "outro").exists()

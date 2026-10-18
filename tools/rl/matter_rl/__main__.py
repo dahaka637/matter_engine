@@ -184,6 +184,10 @@ def command_branch(args: argparse.Namespace) -> int:
     if target.exists() and any(target.iterdir()):
         print(f"o treino {args.run} ja existe", file=sys.stderr)
         return 1
+    task = paths.task_path(args.tarefa) if getattr(args, "tarefa", None) else None
+    if task is not None and not task.exists():
+        print(f"tarefa desconhecida: {args.tarefa}", file=sys.stderr)
+        return 1
     target.mkdir(parents=True, exist_ok=True)
     import shutil
     for name in ("run.json", "tarefa.json"):
@@ -193,13 +197,17 @@ def command_branch(args: argparse.Namespace) -> int:
         if reference.path.is_dir() else shutil.copy2(reference.path, target / reference.path.relative_to(source))
     config = json.loads((target / "run.json").read_text())
     config["end_reason"] = ""
-    if getattr(args, "tarefa", None):
+    if task is not None:
         # A tarefa nova dos assets (o mesmo id que o outro tinha nao trocaria a copia).
-        task = paths.task_path(args.tarefa)
-        if not task.exists():
-            print(f"tarefa desconhecida: {args.tarefa}", file=sys.stderr)
-            return 1
-        shutil.copy2(task, target / "tarefa.json")
+        fresh = json.loads(task.read_text())
+        # Os tetos ja abertos do curriculo (moram na copia da tarefa) seguem nos
+        # exercicios em comum: o degrau novo nao devolve o antigo ao teto de partida.
+        old = json.loads((source / "tarefa.json").read_text()) if (source / "tarefa.json").exists() else {}
+        old_caps = (old.get("speedCurriculum") or {}).get("caps", {})
+        ids = {d["id"] for d in fresh.get("drills", [])}
+        if old_caps and (fresh.get("speedCurriculum") or {}).get("enabled"):
+            fresh["speedCurriculum"].setdefault("caps", {}).update({d: c for d, c in old_caps.items() if d in ids})
+        storage.write_json_atomic(target / "tarefa.json", fresh)
         config["task"] = args.tarefa
     storage.write_json_atomic(target / "run.json", config)
     print(f"ramo {args.run} de {args.de} (rodada {reference.iteration})")
