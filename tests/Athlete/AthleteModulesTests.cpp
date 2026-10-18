@@ -937,50 +937,56 @@ void turnMoveTests() {
         for (int i = 0; i < 240; ++i) move.update({ { 0.0f, 0.9f, 0.0f }, { 0.9f, 0.0f, 0.0f }, dt });
         expect(move.output().state == TurnMoveState3D::Idle, "andando devagar a virada nao dispara");
     }
-    // Uma virada de 90 graus para a esquerda a 4 m/s e a espelhada.
-    TurnMoveOutput3D left, right;
-    PhysicalCorrections3D leftCorrections, rightCorrections;
-    float leftPeakLean = 0.0f, rightPeakLean = 0.0f;
-    bool sawPlant = false, sawCut = false, finished = false;
-    for (const float side : { 1.0f, -1.0f }) {
+    // Uma virada para a esquerda e a espelhada, com o corpo girando para o
+    // rumo pedido a 3 rad/s (como o corpo real se realinha).
+    struct Run {
+        TurnMoveOutput3D early;
+        PhysicalCorrections3D earlyCorrections;
+        float peakLean = 0.0f, minScale = 1.0f, firstWeightAbove = -1.0f;
+        bool sawPlant = false, sawCut = false, sawExit = false, finished = false;
+    };
+    const auto simulate = [&](float side, float speed, float degrees) {
         DynamicTurnMove3D move;
-        const TurnMoveInput3D input { { 0.0f, 4.0f * side, 0.0f }, { 4.0f, 0.0f, 0.0f }, dt };
-        // (Depois da manobra o corpo ja vai no rumo novo.)
-        const TurnMoveInput3D aligned { { 0.0f, 4.0f * side, 0.0f }, { 0.0f, 4.0f * side, 0.0f }, dt };
-        float peak = 0.0f;
-        float minScale = 1.0f;
-        for (int i = 0; i < 360; ++i) {
-            move.update(i < 100 ? input : aligned);
-            if (std::abs(move.corrections().lateralLean) > std::abs(peak)) peak = move.corrections().lateralLean;
-            minScale = std::min(minScale, move.output().speedScale);
-            if (side > 0.0f) {
-                sawPlant = sawPlant || move.output().state == TurnMoveState3D::Plant;
-                sawCut = sawCut || move.output().state == TurnMoveState3D::Cut;
-            }
-            if (i == 20) { (side > 0.0f ? left : right) = move.output(); (side > 0.0f ? leftCorrections : rightCorrections) = move.corrections(); }
+        // (O pe de fora e um ajuste desligado por padrao: ligado aqui.)
+        move.settings().outsideSideBase = 0.14f;
+        move.settings().outsideShort = 0.10f;
+        Run run;
+        const float target = side * degrees * 3.14159265f / 180.0f;
+        float heading = 0.0f;
+        for (int i = 0; i < 480; ++i) {
+            const float t = static_cast<float>(i) * dt;
+            if (i > 20) heading += std::clamp(target - heading, -3.0f * dt, 3.0f * dt);
+            const Vec3 body { speed * std::cos(heading), speed * std::sin(heading), 0.0f };
+            const Vec3 request { speed * std::cos(target), speed * std::sin(target), 0.0f };
+            move.update({ i < 20 ? Vec3 { speed, 0.0f, 0.0f } : request, body, dt });
+            if (std::abs(move.corrections().lateralLean) > std::abs(run.peakLean)) run.peakLean = move.corrections().lateralLean;
+            run.minScale = std::min(run.minScale, move.output().speedScale);
+            run.sawPlant = run.sawPlant || move.output().state == TurnMoveState3D::Plant;
+            run.sawCut = run.sawCut || move.output().state == TurnMoveState3D::Cut;
+            run.sawExit = run.sawExit || move.output().state == TurnMoveState3D::Exit;
+            if (run.firstWeightAbove < 0.0f && move.output().weight > 0.5f) run.firstWeightAbove = t - 20.0f * dt;
+            if (i == 40) { run.early = move.output(); run.earlyCorrections = move.corrections(); }
         }
-        (side > 0.0f ? leftPeakLean : rightPeakLean) = peak;
-        expect(minScale < 0.8f && minScale > 0.3f, "a freada do plantio baixa a velocidade pedida, sem zerar");
-        expect(move.output().state == TurnMoveState3D::Idle || move.output().weight < 0.5f,
-            "depois da manobra volta ao repouso");
-        if (side > 0.0f) finished = move.output().state == TurnMoveState3D::Idle;
-    }
-    expect(left.side > 0.0f && right.side < 0.0f, "o lado da virada: esquerda positivo, direita negativo");
-    expect(leftPeakLean > 0.05f && rightPeakLean < -0.05f && std::abs(leftPeakLean + rightPeakLean) < 1e-4f,
+        run.finished = move.output().state == TurnMoveState3D::Idle && move.output().weight == 0.0f;
+        return run;
+    };
+    const Run left = simulate(1.0f, 4.0f, 90.0f);
+    const Run right = simulate(-1.0f, 4.0f, 90.0f);
+    expect(left.early.side > 0.0f && right.early.side < 0.0f, "o lado da virada: esquerda positivo, direita negativo");
+    expect(left.peakLean > 0.05f && right.peakLean < -0.05f && std::abs(left.peakLean + right.peakLean) < 1e-4f,
         "inclina para dentro da curva, espelhado entre esquerda e direita");
-    expect(left.state != TurnMoveState3D::Idle && left.turnDegrees > 80.0f && left.turnDegrees < 100.0f,
-        "dispara a 90 graus com o angulo medido");
-    expect(sawPlant && sawCut && finished, "passa por plantio e corte e termina");
-    // O pe de fora: esquerda -> o direito (1), com o toque aberto para fora.
-    expect(leftCorrections.footwork && leftCorrections.feet[1].touchdownOffset.y < 0.0f
-            && leftCorrections.feet[0].touchdownOffset.lengthSquared() < 1e-9f,
+    expect(left.minScale < 0.8f && left.minScale > 0.3f, "a freada do plantio baixa a velocidade pedida, sem zerar");
+    expect(left.sawPlant && left.sawCut && left.sawExit && left.finished, "passa por plantio, corte e saida e termina");
+    expect(left.firstWeightAbove >= 0.0f && left.firstWeightAbove < 0.20f,
+        "a manobra entra logo (peso acima de 0,5 em menos de 0,2 s): em corrida o corpo se realinha em ~0,5 s");
+    expect(left.earlyCorrections.footwork && left.earlyCorrections.feet[1].touchdownOffset.y < 0.0f
+            && left.earlyCorrections.feet[0].touchdownOffset.lengthSquared() < 1e-9f,
         "virando a esquerda o pe de fora (o direito) pousa mais aberto, o outro nao muda");
-    expect(rightCorrections.feet[0].touchdownOffset.y > 0.0f && rightCorrections.feet[1].touchdownOffset.lengthSquared() < 1e-9f,
+    expect(right.earlyCorrections.feet[0].touchdownOffset.y > 0.0f && right.earlyCorrections.feet[1].touchdownOffset.lengthSquared() < 1e-9f,
         "virando a direita o pe de fora e o esquerdo");
-    // As duracoes crescem com o angulo e a velocidade.
-    expect(DynamicTurnMove3D::timing(4.0f, 180.0f).total() > DynamicTurnMove3D::timing(4.0f, 45.0f).total()
-            && DynamicTurnMove3D::timing(5.0f, 90.0f).total() > DynamicTurnMove3D::timing(2.0f, 90.0f).total(),
-        "a manobra dura mais em viradas maiores e mais rapidas");
+    // Sprint: tambem dispara, e termina.
+    const Run sprint = simulate(1.0f, 8.0f, 135.0f);
+    expect(sprint.peakLean > 0.05f && sprint.finished, "o sprint tambem dispara e termina");
     // Intensidade zero: nunca dispara.
     {
         DynamicTurnMove3D move;

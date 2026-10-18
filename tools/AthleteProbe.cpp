@@ -1279,6 +1279,16 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
                 const TurnMoveOutput3D& move = legacy.turnMove.output();
                 const float planarSpeed = std::hypot(bodyState.links.front().linearVelocity.x,
                     bodyState.links.front().linearVelocity.y);
+                if (std::getenv("XVIRADA") && std::string(std::getenv("XVIRADA")) == "2" && step % 6 == 0 && t > 2.0f && t < 4.0f) {
+                    const Vec3 bodyV = bodyState.links.front().linearVelocity;
+                    const Vec3 req = control.intent.requestedVelocityWorld;
+                    const float ang = (std::hypot(bodyV.x, bodyV.y) > 0.05f && std::hypot(req.x, req.y) > 0.05f)
+                        ? std::acos(std::clamp((bodyV.x * req.x + bodyV.y * req.y) / (std::hypot(bodyV.x, bodyV.y) * std::hypot(req.x, req.y)), -1.0f, 1.0f)) * 57.2958f
+                        : 0.0f;
+                    std::printf("    t %.2f estado %d peso %.2f | pedido %.2f corpo %.2f m/s angulo %.0f | escala %.2f lean %.3f\n", t,
+                        static_cast<int>(move.state), move.weight, std::hypot(req.x, req.y), std::hypot(bodyV.x, bodyV.y), ang,
+                        move.speedScale, legacy.turnCorrections.lateralLean);
+                }
                 if (move.weight > 0.0f) {
                     ++turnStats.ticks;
                     if (turnStats.firstAt < 0.0f) turnStats.firstAt = t;
