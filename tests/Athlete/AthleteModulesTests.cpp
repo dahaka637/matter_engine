@@ -994,21 +994,20 @@ void modeRulePropertyTests() {
 }
 
 void capsuleReversalTests() {
-    // A troca de direcao viva da capsula: 0% e a de antes; 100% deixa 3 m/s e acelera 2x mais; a resposta escala
-    // a aceleracao, nao a velocidade que fica.
+    // A troca de direcao viva da capsula: 0% e a de antes; 100% freia e arranca 1,5x mais forte.
     const AthleteCapsuleResponse3D before = athleteCapsuleResponse3D(150.0f);
-    expect(before.reverseKeepSpeed == 0.0f && before.reverseAccelerationScale == 1.0f,
+    expect(before.reverseBrakeScale == 1.0f && before.reverseAccelerationScale == 1.0f,
         "sem a troca viva (o padrao do motor), a resposta e a de antes");
     expect(std::abs(before.acceleration - 24.0f) < 1e-4f && std::abs(before.brake - 45.0f) < 1e-4f
             && std::abs(before.turnRate - 15.0f) < 1e-4f,
         "a resposta a 150%: 24 m/s2, 45 de freada e 15 rad/s");
     const AthleteCapsuleResponse3D lively = athleteCapsuleResponse3D(150.0f, 100.0f);
-    expect(std::abs(lively.reverseKeepSpeed - 3.0f) < 1e-5f && std::abs(lively.reverseAccelerationScale - 2.0f) < 1e-5f
+    expect(std::abs(lively.reverseBrakeScale - 1.5f) < 1e-5f && std::abs(lively.reverseAccelerationScale - 1.5f) < 1e-5f
             && lively.acceleration == before.acceleration,
-        "a troca viva a 100%: 3 m/s ficam e a saida acelera 2 vezes mais");
+        "a troca viva a 100%: freia e arranca 1,5 vez mais forte");
     const AthleteCapsuleResponse3D half = athleteCapsuleResponse3D(150.0f, 50.0f);
-    expect(std::abs(half.reverseKeepSpeed - 1.5f) < 1e-5f && std::abs(half.reverseAccelerationScale - 1.5f) < 1e-5f,
-        "a 50%: metade");
+    expect(std::abs(half.reverseBrakeScale - 1.25f) < 1e-5f && std::abs(half.reverseAccelerationScale - 1.25f) < 1e-5f,
+        "a 50%: metade do acrescimo");
 }
 
 void turnMoveTests() {

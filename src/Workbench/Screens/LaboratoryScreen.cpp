@@ -686,7 +686,7 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
         activeSettings.groundDeceleration = response.deceleration;
         activeSettings.groundTurnRate = response.turnRate;
         activeSettings.groundBrakeDeceleration = response.brake;
-        activeSettings.groundReverseKeepSpeed = response.reverseKeepSpeed;
+        activeSettings.groundReverseBrakeScale = response.reverseBrakeScale;
         activeSettings.groundReverseAccelerationScale = response.reverseAccelerationScale;
     } else if (controllingCharacter && m_adaptivePhysics) {
         activeSettings = adaptiveCharacterMotorSettings3D(activeSettings, stateBefore, command,
@@ -3088,7 +3088,7 @@ void WorkbenchApp::drawLaboratoryUi() {
                         ImGui::SetNextItemWidth(-1.0f);
                         ImGui::SliderFloat("##CapsuleReversal", &m_capsuleReversalPercent, 0.0f, 100.0f, "%.0f%%",
                             ImGuiSliderFlags_AlwaysClamp);
-                        hint("Ao pedir o sentido contrário (ir para a esquerda e logo para a direita), o jogador freia só até 3 m/s e sai para o outro lado acelerando 2 vezes mais, em vez de parar e recomeçar do zero: perde menos velocidade e leva menos tempo. 0%: a troca de antes.");
+                        hint("Ao pedir o sentido contrário (ir para a esquerda e logo para a direita), o jogador freia e arranca para o outro lado até 1,5 vez mais forte (a 100%), ainda parando antes de sair, para os pés trocarem a passada. 0%: a troca de antes.");
                         ImGui::Dummy({ 1.0f, ui(6.0f) });
                         if (ImGui::Button("COPIAR PARÂMETROS", { -1.0f, ui(36.0f) })) {
                             char text[512];

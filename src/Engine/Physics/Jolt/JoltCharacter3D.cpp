@@ -187,35 +187,31 @@ void PhysicsScene3D::moveCharacter(const CharacterMotorCommand3D& command,
             // modulo vai a pedida aos poucos; o sentido contrario freia antes.
             const float current = currentPlanar.length();
             const float wanted = desired.length();
+            // A troca viva: da inversao ate pegar a velocidade de novo, arranca mais forte.
+            const float reverseBoost = m_impl->characterReversing ? std::max(1.0f, settings.groundReverseAccelerationScale) : 1.0f;
             if (wanted < 1e-4f) {
+                m_impl->characterReversing = false;
                 planar = current > 1e-4f ? currentPlanar
                     * (std::max(0.0f, current - settings.groundDeceleration * deltaTime) / current) : Vec3 {};
             } else if (current < 0.3f) {
-                planar = moveToward(currentPlanar, desired, settings.groundAcceleration * deltaTime);
+                planar = moveToward(currentPlanar, desired, settings.groundAcceleration * reverseBoost * deltaTime);
             } else {
                 const Vec3 from = currentPlanar * (1.0f / current);
                 const Vec3 to = desired * (1.0f / wanted);
                 const float angle = std::atan2(from.x * to.y - from.y * to.x, from.x * to.x + from.y * to.y);
                 if (std::abs(angle) > settings.groundReverseDegrees * 3.14159265f / 180.0f) {
-                    const float keep = settings.groundReverseKeepSpeed;
-                    if (keep > 0.0f && current <= keep + 1e-3f) {
-                        // Freou ate a velocidade que fica: vira para o outro lado dai,
-                        // acelerando mais forte.
-                        const float rate = settings.groundAcceleration * std::max(1.0f, settings.groundReverseAccelerationScale);
-                        const Vec3 to = desired * (1.0f / wanted);
-                        planar = to * std::min(wanted, current + rate * deltaTime);
-                    } else {
-                        planar = currentPlanar * (std::max(keep, current - settings.groundBrakeDeceleration * deltaTime)
-                            / current);
-                    }
+                    m_impl->characterReversing = true;
+                    planar = currentPlanar * (std::max(0.0f, current - settings.groundBrakeDeceleration
+                        * std::max(1.0f, settings.groundReverseBrakeScale) * deltaTime) / current);
                 } else {
                     const float turn = std::clamp(angle, -settings.groundTurnRate * deltaTime,
                         settings.groundTurnRate * deltaTime);
                     const float c = std::cos(turn), s = std::sin(turn);
                     const Vec3 direction { from.x * c - from.y * s, from.x * s + from.y * c, 0.0f };
-                    const float rate = wanted > current ? settings.groundAcceleration : settings.groundDeceleration;
+                    const float rate = wanted > current ? settings.groundAcceleration * reverseBoost : settings.groundDeceleration;
                     const float speed = current + std::clamp(wanted - current, -rate * deltaTime, rate * deltaTime);
                     planar = direction * speed;
+                    if (speed >= 0.9f * wanted) m_impl->characterReversing = false;
                 }
             }
         }

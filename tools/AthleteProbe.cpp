@@ -730,6 +730,17 @@ std::vector<Scenario> scenarios() {
         // As viradas bruscas em movimento (XVIRADAS=1; o experimento
         // DynamicTurnMove3D): a camera salta o angulo a 2,2 s, ja na marcha.
         if (std::getenv("XVIRADAS")) {
+            // A troca de direcao correndo de lado (a esquerda e logo a direita) e para a frente e para tras.
+            list.push_back({ "lados_corre", 4.0f, [](float t) {
+                Keys k;
+                k.left = t < 0.3f ? 0.0f : t < 2.0f ? 1.0f : -1.0f;
+                k.sprint = true;
+                return k; } });
+            list.push_back({ "inverte_corre", 4.0f, [](float t) {
+                Keys k;
+                k.forward = t < 0.3f ? 0.0f : t < 2.0f ? 1.0f : -1.0f;
+                k.sprint = true;
+                return k; } });
             struct Gait { const char* name; float forward; bool sprint; };
             static const Gait gaits[3] = { { "trota", 0.5f, false }, { "corre", 1.0f, false }, { "sprint", 1.0f, true } };
             for (const Gait& gait : gaits)
@@ -1110,7 +1121,7 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
             active.groundDeceleration = response.deceleration;
             active.groundTurnRate = response.turnRate;
             active.groundBrakeDeceleration = response.brake;
-            active.groundReverseKeepSpeed = response.reverseKeepSpeed;
+            active.groundReverseBrakeScale = response.reverseBrakeScale;
             active.groundReverseAccelerationScale = response.reverseAccelerationScale;
         } else {
             active = adaptiveCharacterMotorSettings3D(active, before, command,

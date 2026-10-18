@@ -319,6 +319,8 @@ struct PhysicsScene3D::Impl final : public JPH::ContactListener,
     // Carga do pulo pedido (guardada com o buffer de pulo).
     float jumpChargeSeconds = 0.0f;
     Vec3 characterMoveVelocity;
+    // Invertendo o rumo (a troca viva): do freio da inversao ate pegar a velocidade.
+    bool characterReversing = false;
     bool characterIgnoreRagdolls = false;
     bool characterNavigationProxy = false;
 

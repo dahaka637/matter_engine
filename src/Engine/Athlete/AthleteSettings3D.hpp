@@ -88,8 +88,8 @@ struct AthleteRuntimeSettings3D {
     // athleteCapsuleResponse3D): 100 e o aprovado (16 / 22 / 30 m/s2, 10 rad/s).
     float capsuleResponsePercent = 100.0f;
     // A troca de direcao viva da capsula no padrao (0 a 100; 0: a de antes, o
-    // padrao do motor; o laboratorio liga em 100, 17/10): ao inverter o rumo ela
-    // freia so ate 3 m/s e sai para o outro lado acelerando 2 vezes mais.
+    // padrao do motor): ao inverter o rumo ela freia e arranca ate 1,5 vez mais
+    // forte (a 100%), ainda parando antes de sair para o outro lado.
     float capsuleReversalPercent = 0.0f;
     // Corpo Ativo (o estado intermediario, Etapa 2 do rework): ligado, as
     // pancadas leves, a parede e o membro no mundo levam ao Ativo (e nao ao

@@ -19,8 +19,8 @@ AthleteCapsuleResponse3D athleteCapsuleResponse3D(float responsePercent, float r
     const float scale = std::clamp(responsePercent, 10.0f, 300.0f) * 0.01f;
     AthleteCapsuleResponse3D response;
     const float reversal = std::clamp(reversalPercent, 0.0f, 100.0f) * 0.01f;
-    response.reverseKeepSpeed = 3.0f * reversal;
-    response.reverseAccelerationScale = 1.0f + 1.0f * reversal;
+    response.reverseBrakeScale = 1.0f + 0.5f * reversal;
+    response.reverseAccelerationScale = 1.0f + 0.5f * reversal;
     response.acceleration *= scale;
     response.deceleration *= scale;
     response.brake *= scale;

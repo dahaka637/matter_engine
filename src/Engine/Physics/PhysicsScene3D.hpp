@@ -85,11 +85,13 @@ struct CharacterMotorSettings3D {
     float groundTurnRate = 0.0f;
     float groundReverseDegrees = 120.0f;
     float groundBrakeDeceleration = 30.0f;
-    // A troca de direcao mais viva (17/10; 0 desliga, o de antes): ao pedir o
-    // sentido contrario ele freia so ate esta velocidade (m/s) - nao ate parar -
-    // e sai para o outro lado dai, acelerando groundReverseAccelerationScale
-    // vezes mais: perde menos velocidade e leva menos tempo.
-    float groundReverseKeepSpeed = 0.0f;
+    // A troca de direcao um pouco mais viva (ajuste fino, 17/10; 1 e 1 = a de
+    // antes): ao pedir o sentido contrario ele ainda para antes de sair para o
+    // outro lado (os pes precisam desse instante para trocar a passada; inverter
+    // sem parar embolava as pernas), mas freia groundReverseBrakeScale vezes
+    // mais e arranca groundReverseAccelerationScale vezes mais, ate pegar a
+    // velocidade de novo.
+    float groundReverseBrakeScale = 1.0f;
     float groundReverseAccelerationScale = 1.0f;
     float airAcceleration = 8.0f;
     float jumpSpeed = 3.8f;
