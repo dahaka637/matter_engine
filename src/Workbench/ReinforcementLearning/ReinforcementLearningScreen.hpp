@@ -144,6 +144,8 @@ private:
     // Os exercicios da tarefa do treino mostrado (ids e nomes) e o do visualizador.
     std::vector<std::string> m_drillIds;
     std::vector<std::string> m_drillNames;
+    // A fase de cada exercicio (0: sem fase, no estilo de sempre).
+    std::vector<int> m_drillPhases;
     std::string m_viewerDrill;
     // O treino e a tarefa de que o mundo do visualizador foi feito.
     std::string m_viewerRun;

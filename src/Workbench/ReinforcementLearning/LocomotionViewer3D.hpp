@@ -32,6 +32,8 @@ public:
     struct Drill {
         std::string id;
         std::string name;
+        // A fase do plano a que o exercicio pertence (1, 2, 3...; a tela agrupa por cor).
+        int phase = 1;
     };
 
     // Lanca std::runtime_error se a tarefa nao for da locomocao.

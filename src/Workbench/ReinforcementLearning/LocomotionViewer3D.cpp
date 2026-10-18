@@ -214,6 +214,7 @@ std::vector<LocomotionViewer3D::Drill> LocomotionViewer3D::drillsOf(const std::f
         Drill drill;
         drill.id = d.value("id", std::string());
         drill.name = d.value("displayName", drill.id);
+        drill.phase = d.value("phase", 1);
         if (!drill.id.empty()) out.push_back(std::move(drill));
     }
     return out;

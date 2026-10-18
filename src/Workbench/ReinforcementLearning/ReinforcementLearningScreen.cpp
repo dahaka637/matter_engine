@@ -116,6 +116,42 @@ Highlight cross(Vec3 at, float radius, Color color) {
     return marker;
 }
 
+// A cor de uma fase (1: verde, 2: ambar, 3: violeta, 4: rosa, 5: ciano; 0 ou alem: sem cor).
+bool phaseColor(int phase, ImVec4& color) {
+    switch (phase) {
+    case 1: color = { 0.25f, 0.78f, 0.52f, 1.0f }; return true;
+    case 2: color = { 0.96f, 0.66f, 0.22f, 1.0f }; return true;
+    case 3: color = { 0.66f, 0.50f, 0.96f, 1.0f }; return true;
+    case 4: color = { 0.94f, 0.44f, 0.66f, 1.0f }; return true;
+    case 5: color = { 0.30f, 0.80f, 0.92f, 1.0f }; return true;
+    default: return false;
+    }
+}
+
+// O botao de um exercicio, na cor da fase dele: o fundo e o texto na cor (mais forte
+// ativo) e uma barra cheia na borda esquerda. Sem fase, o botao de sempre.
+bool phaseButton(const char* label, bool active, ImVec2 size, int phase) {
+    ImVec4 color;
+    if (!phaseColor(phase, color)) return navigationButton(label, active, size);
+    const auto mix = [&](float amount) {
+        return ImVec4(0.055f + (color.x - 0.055f) * amount, 0.095f + (color.y - 0.095f) * amount,
+            0.14f + (color.z - 0.14f) * amount, 1.0f);
+    };
+    ImGui::PushStyleVar(ImGuiStyleVar_ButtonTextAlign, { 0.08f, 0.5f });
+    ImGui::PushStyleColor(ImGuiCol_Button, active ? mix(0.55f) : mix(0.14f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, active ? mix(0.68f) : mix(0.26f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, mix(0.80f));
+    ImGui::PushStyleColor(ImGuiCol_Text, active ? ImVec4(0.97f, 0.98f, 1.0f, 1.0f) : mix(0.78f));
+    const bool clicked = ImGui::Button(label, size);
+    ImGui::PopStyleColor(4);
+    ImGui::PopStyleVar();
+    const ImVec2 low = ImGui::GetItemRectMin(), high = ImGui::GetItemRectMax();
+    const float rounding = ImGui::GetStyle().FrameRounding;
+    ImGui::GetWindowDrawList()->AddRectFilled(low, { low.x + rounding + 4.0f, high.y },
+        ImGui::ColorConvertFloat4ToU32(color), rounding, ImDrawFlags_RoundCornersLeft);
+    return clicked;
+}
+
 // Um treino: o run.json do Corpo (contrato 2) ou o da locomocao.
 bool isTrainingRun(const std::filesystem::path& directory) {
     std::ifstream file(directory / "run.json");
@@ -191,18 +227,21 @@ std::filesystem::path ReinforcementLearningScreen::policyPath() const {
 void ReinforcementLearningScreen::loadDrills() {
     m_drillIds.clear();
     m_drillNames.clear();
+    m_drillPhases.clear();
     const std::filesystem::path path = taskPath();
     if (path.empty() || !std::filesystem::exists(path)) return;
     if (LocomotionViewer3D::isLocomotionTask(path)) {
         for (const LocomotionViewer3D::Drill& drill : LocomotionViewer3D::drillsOf(path)) {
             m_drillIds.push_back(drill.id);
             m_drillNames.push_back(drill.name);
+            m_drillPhases.push_back(drill.phase);
         }
     } else try {
         const BodyTask3D task = loadBodyTask3D(path);
         for (const BodyDrill3D& drill : task.drills) {
             m_drillIds.push_back(drill.id);
             m_drillNames.push_back(drill.displayName.empty() ? drill.id : drill.displayName);
+            m_drillPhases.push_back(0);
         }
     } catch (const std::exception& error) {
         m_viewerError = error.what();
@@ -754,9 +793,12 @@ void ReinforcementLearningScreen::drawDrills() {
     for (std::size_t i = 0; i < m_drillIds.size(); ++i) {
         const std::string label = UI::FontAwesome::label(UI::FontAwesome::Crosshairs, m_drillNames[i].c_str())
             + "##drill" + m_drillIds[i];
-        if (navigationButton(label.c_str(), m_drillIds[i] == m_viewerDrill, { -1.0f, ui(30.0f) }))
+        const int phase = i < m_drillPhases.size() ? m_drillPhases[i] : 0;
+        if (phaseButton(label.c_str(), m_drillIds[i] == m_viewerDrill, { -1.0f, ui(30.0f) }, phase))
             showDrill(m_drillIds[i]);
-        tooltip("Mostra este exercício no mundo (o treino sorteia todos pelos pesos).");
+        const std::string hint = (phase > 0 ? "Fase " + std::to_string(phase) + ": m" : std::string("M"))
+            + "ostra este exercício no mundo (o treino sorteia todos pelos pesos).";
+        tooltip(hint.c_str());
     }
 }
 
