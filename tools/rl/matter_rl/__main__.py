@@ -199,15 +199,9 @@ def command_branch(args: argparse.Namespace) -> int:
     config["end_reason"] = ""
     if task is not None:
         # A tarefa nova dos assets (o mesmo id que o outro tinha nao trocaria a copia).
-        fresh = json.loads(task.read_text())
-        # Os tetos ja abertos do curriculo (moram na copia da tarefa) seguem nos
-        # exercicios em comum: o degrau novo nao devolve o antigo ao teto de partida.
+        from .curriculum import carry_caps
         old = json.loads((source / "tarefa.json").read_text()) if (source / "tarefa.json").exists() else {}
-        old_caps = (old.get("speedCurriculum") or {}).get("caps", {})
-        ids = {d["id"] for d in fresh.get("drills", [])}
-        if old_caps and (fresh.get("speedCurriculum") or {}).get("enabled"):
-            fresh["speedCurriculum"].setdefault("caps", {}).update({d: c for d, c in old_caps.items() if d in ids})
-        storage.write_json_atomic(target / "tarefa.json", fresh)
+        storage.write_json_atomic(target / "tarefa.json", carry_caps(old, json.loads(task.read_text())))
         config["task"] = args.tarefa
     storage.write_json_atomic(target / "run.json", config)
     print(f"ramo {args.run} de {args.de} (rodada {reference.iteration})")

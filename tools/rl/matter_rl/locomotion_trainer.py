@@ -29,7 +29,7 @@ import torch
 
 from . import control, paths, storage, system
 from .body_trainer import balance_drills, choose_device, wilson_upper
-from .curriculum import SpeedCurriculum
+from .curriculum import SpeedCurriculum, carry_caps
 from .model import ActorCritic, export_policy, migrate_inputs, rescale_actions
 from .ppo import PPO, PPOSettings, Rollout
 from .symmetry import MirrorLoss
@@ -317,9 +317,10 @@ class LocomotionTrainer:
         self.switched_from = ""
         source_task = json.loads(self.task_path.read_text())
         if self.live_task.exists():
-            previous = json.loads(self.live_task.read_text()).get("id", "")
+            old_task = json.loads(self.live_task.read_text())
+            previous = old_task.get("id", "")
             if previous != source_task.get("id"):
-                storage.write_json_atomic(self.live_task, source_task)
+                storage.write_json_atomic(self.live_task, carry_caps(old_task, source_task))
                 self.switched_from = previous
         else:
             storage.write_json_atomic(self.live_task, source_task)

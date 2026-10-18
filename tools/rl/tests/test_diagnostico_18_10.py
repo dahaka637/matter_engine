@@ -241,3 +241,13 @@ def test_gate_clips_the_speed_bands_to_the_trained_part():
     assert [d["id"] for d in out["drills"]] == ["parado", "trote"]
     assert [b["speed"] for b in out["drills"][1]["pilot"]["bands"]] == [[0.8, 1.4], [1.8, 2.0]]
     assert task["drills"][1]["pilot"]["bands"][1]["speed"] == [1.8, 3.0]  # a original fica
+
+
+def test_task_switch_carries_the_opened_caps():
+    from matter_rl.curriculum import carry_caps
+
+    old = {"id": "f2t", "speedCurriculum": {"enabled": True, "caps": {"trote": [2.0] * CELLS, "saiu": [1.0] * CELLS}}}
+    new = {"id": "f3a", "speedCurriculum": {"enabled": True}, "drills": [{"id": "trote"}, {"id": "giro_rapido"}]}
+    assert carry_caps(old, new)["speedCurriculum"]["caps"] == {"trote": [2.0] * CELLS}
+    off = {"id": "f3a", "drills": [{"id": "trote"}]}
+    assert "speedCurriculum" not in carry_caps(old, off)  # sem curriculo na nova: nada muda

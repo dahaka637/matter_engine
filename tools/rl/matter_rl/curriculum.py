@@ -66,6 +66,16 @@ def band_maximum(drill: dict) -> float:
     return max(speeds) if speeds else 0.0
 
 
+def carry_caps(old: dict, new: dict) -> dict:
+    """A troca de tarefa (o degrau seguinte, o mesmo cerebro): os tetos ja abertos seguem
+    nos exercicios em comum, para o degrau novo nao devolver o antigo ao teto de partida."""
+    caps = (old.get("speedCurriculum") or {}).get("caps", {})
+    ids = {d["id"] for d in new.get("drills", [])}
+    if caps and (new.get("speedCurriculum") or {}).get("enabled"):
+        new["speedCurriculum"].setdefault("caps", {}).update({d: c for d, c in caps.items() if d in ids})
+    return new
+
+
 class SpeedCurriculum:
     def __init__(self, task: dict, drill_ids: list[str]):
         self.rule = CurriculumRule.from_task(task)
