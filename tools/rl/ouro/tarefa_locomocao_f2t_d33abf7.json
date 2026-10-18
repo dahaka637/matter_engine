@@ -1,0 +1,445 @@
+{
+  "schema": "matter-rl-locomocao-1",
+  "id": "locomocao_f2t",
+  "displayName": "Locomocao: 2T - o trote normal (4,5 m/s) a 0%",
+  "comment": "O degrau 2T: o trote leve da fase 2 vira o trote normal (1,8 a 4,5 m/s, todos os rumos). A ajuda auxiliar em 0%, o professor da virada e a quietude (iguais aos das fases 1-2); as velocidades do modo padrao (trote 4,5 todos os rumos; corrida 8 frente, 6 de lado e de costas), o chao de 180 m e o limite de 80 m. A ficha: vault 04_locomocao/cartao_fase3.md.",
+  "episodeSeconds": 12.0,
+  "comment_assist": "A ajuda auxiliar em 0% (decisao do usuario, 18/10: volta ao 0% de verdade, os mesmos exercicios; antes 30% desde 17/10): a rede aprende os movimentos dificeis (trote com curvas bruscas) com ajuda; depois, com a rede boa, a ajuda desce (20, 10, 5, 0) ate o 0% de verdade (regime B, vault 04_locomocao/ajuda_auxiliar.md).",
+  "assist": {
+    "standing": 0.0,
+    "walking": 0.0,
+    "feet": 0.0,
+    "getUp": 0.0
+  },
+  "comment_turnMove": "A virada brusca (o professor, DynamicTurnMove3D, vault 04_locomocao/virada_brusca.md): ligada, a rede o ve, ganha sobre ele por familia (turno.ganho.*) e soma o residuo; em 'dropout' dos episodios ele fica desligado (a rede nao depende dele). A avaliacao usa sempre ligada e compara com e sem.",
+  "turnMove": {
+    "enabled": true,
+    "dropout": 0.3,
+    "amount": 1.0
+  },
+  "caps": {
+    "touchdownMeters": 0.06,
+    "swingUpMeters": 0.05,
+    "swingDownMeters": 0.02,
+    "phaseLeadCycles": 0.05,
+    "recoveryUrgency": 0.5,
+    "cadenceOctaves": 0.2,
+    "strideOctaves": 0.2,
+    "leanRadians": 0.2,
+    "comMeters": 0.08,
+    "pelvisUpMeters": 0.02,
+    "pelvisDownMeters": 0.12,
+    "contactAcceleration": 1.0,
+    "jointRadians": 0.1,
+    "gainOctaves": 0.3
+  },
+  "reward": {
+    "velocity": 0.4,
+    "facing": 0.1,
+    "style": 0.2,
+    "contact": 0.1,
+    "velocitySigma": 0.5,
+    "facingSigma": 0.4,
+    "styleSigma": 0.15,
+    "contactSigma": 0.15,
+    "slip": 0.05,
+    "work": 0.02,
+    "smooth": 0.05,
+    "assist": 0.05,
+    "posture": 0.2,
+    "residual": 0.02,
+    "still": 0.2,
+    "fall": 1.0
+  },
+  "termination": {
+    "pelvisHeight": 0.45,
+    "boundaryMeters": 80.0,
+    "groundHalfExtentMeters": 180.0
+  },
+  "drillWeights": {
+    "auto": true,
+    "gain": 2.0,
+    "maximumFactor": 3.0,
+    "floor": 0.12
+  },
+  "drills": [
+    {
+      "id": "parado",
+      "displayName": "Parado",
+      "phase": 1,
+      "weight": 0.15,
+      "minimum": {
+        "fallFraction": 0.02
+      },
+      "pilot": {
+        "kind": "hold",
+        "camera": {
+          "fixed": 1.0,
+          "follow": 0.0,
+          "turns": 0.0
+        }
+      }
+    },
+    {
+      "id": "estrela",
+      "displayName": "Estrela de 8 pontas andando",
+      "phase": 1,
+      "weight": 0.25,
+      "minimum": {
+        "fallFraction": 0.05,
+        "velocityError": 0.35
+      },
+      "pilot": {
+        "kind": "star",
+        "bands": [
+          {
+            "name": "andar",
+            "speed": [
+              0.8,
+              1.4
+            ],
+            "distance": [
+              4.0,
+              8.0
+            ],
+            "weight": 1.0
+          }
+        ],
+        "starDirections": 8,
+        "starJitterDegrees": 8.0,
+        "continuousFraction": 0.0,
+        "stopFraction": 0.3,
+        "holdSeconds": [
+          1.0,
+          2.0
+        ],
+        "brake": [
+          2.0,
+          4.0
+        ],
+        "arriveRadius": 0.6,
+        "camera": {
+          "fixed": 0.0,
+          "follow": 1.0,
+          "turns": 0.0,
+          "followRate": 4.0
+        }
+      }
+    },
+    {
+      "id": "giro",
+      "displayName": "Parado com giro suave",
+      "phase": 2,
+      "weight": 0.15,
+      "minimum": {
+        "fallFraction": 0.02
+      },
+      "pilot": {
+        "kind": "hold",
+        "camera": {
+          "fixed": 0.0,
+          "follow": 0.0,
+          "turns": 1.0,
+          "turnDegrees": [
+            30.0,
+            120.0
+          ],
+          "turnRate": [
+            0.4,
+            0.6
+          ],
+          "pauseSeconds": [
+            1.5,
+            4.0
+          ]
+        }
+      }
+    },
+    {
+      "id": "estrela_trote",
+      "displayName": "Estrela com trote",
+      "phase": 2,
+      "weight": 0.3,
+      "minimum": {
+        "fallFraction": 0.05,
+        "velocityError": 0.5
+      },
+      "pilot": {
+        "kind": "star",
+        "bands": [
+          {
+            "name": "andar",
+            "speed": [
+              0.8,
+              1.4
+            ],
+            "distance": [
+              4,
+              7
+            ],
+            "weight": 0.5
+          },
+          {
+            "name": "trote_A",
+            "speed": [
+              1.8,
+              3.0
+            ],
+            "distance": [
+              5,
+              8
+            ],
+            "weight": 1.0
+          },
+          {
+            "name": "trote_B",
+            "speed": [
+              3.0,
+              4.5
+            ],
+            "distance": [
+              6,
+              10
+            ],
+            "weight": 1.0
+          }
+        ],
+        "starDirections": 8,
+        "starJitterDegrees": 6.0,
+        "continuousFraction": 0.35,
+        "stopFraction": 0.25,
+        "holdSeconds": [
+          0.8,
+          1.5
+        ],
+        "brake": [
+          3,
+          6
+        ],
+        "arriveRadius": 0.7,
+        "camera": {
+          "fixed": 0.0,
+          "follow": 1.0,
+          "turns": 0.0,
+          "followRate": 4.0
+        }
+      }
+    },
+    {
+      "id": "curva",
+      "displayName": "Curva suave (~15 m)",
+      "phase": 2,
+      "weight": 0.2,
+      "minimum": {
+        "fallFraction": 0.05,
+        "velocityError": 0.45
+      },
+      "pilot": {
+        "kind": "arc",
+        "bands": [
+          {
+            "name": "andar",
+            "speed": [
+              0.8,
+              1.4
+            ],
+            "weight": 1.0
+          },
+          {
+            "name": "trote",
+            "speed": [
+              1.8,
+              2.5
+            ],
+            "weight": 1.0
+          }
+        ],
+        "arcRadius": [
+          12.0,
+          18.0
+        ],
+        "arcDegrees": [
+          45.0,
+          120.0
+        ],
+        "arcFlipFraction": 0.4,
+        "lateralAcceleration": 4.0,
+        "arcLookahead": 1.5,
+        "stopFraction": 0.25,
+        "holdSeconds": [
+          1.0,
+          2.0
+        ],
+        "brake": [
+          2.0,
+          4.0
+        ],
+        "arriveRadius": 0.6,
+        "camera": {
+          "fixed": 0.0,
+          "follow": 1.0,
+          "turns": 0.0,
+          "followRate": 4.0
+        }
+      }
+    },
+    {
+      "id": "estrela_trote_fixo",
+      "displayName": "Estrela com trote, peito fixo",
+      "phase": 2,
+      "weight": 0.2,
+      "minimum": {
+        "fallFraction": 0.07,
+        "velocityError": 0.6
+      },
+      "pilot": {
+        "kind": "star",
+        "bands": [
+          {
+            "name": "andar",
+            "speed": [
+              0.8,
+              1.4
+            ],
+            "distance": [
+              4,
+              7
+            ],
+            "weight": 0.5
+          },
+          {
+            "name": "trote_A",
+            "speed": [
+              1.8,
+              3.0
+            ],
+            "distance": [
+              5,
+              8
+            ],
+            "weight": 1.0
+          },
+          {
+            "name": "trote_B",
+            "speed": [
+              3.0,
+              4.5
+            ],
+            "distance": [
+              6,
+              10
+            ],
+            "weight": 1.0
+          }
+        ],
+        "starDirections": 8,
+        "starJitterDegrees": 6.0,
+        "continuousFraction": 0.35,
+        "stopFraction": 0.25,
+        "holdSeconds": [
+          0.8,
+          1.5
+        ],
+        "brake": [
+          3,
+          6
+        ],
+        "arriveRadius": 0.7,
+        "camera": {
+          "fixed": 1.0,
+          "follow": 0.0,
+          "turns": 0.0,
+          "followRate": 4.0
+        }
+      }
+    },
+    {
+      "id": "estrela_trote_girando",
+      "displayName": "Estrela com trote, peito girando",
+      "phase": 2,
+      "weight": 0.2,
+      "minimum": {
+        "fallFraction": 0.07,
+        "velocityError": 0.6
+      },
+      "pilot": {
+        "kind": "star",
+        "bands": [
+          {
+            "name": "andar",
+            "speed": [
+              0.8,
+              1.4
+            ],
+            "distance": [
+              4,
+              7
+            ],
+            "weight": 0.5
+          },
+          {
+            "name": "trote_A",
+            "speed": [
+              1.8,
+              3.0
+            ],
+            "distance": [
+              5,
+              8
+            ],
+            "weight": 1.0
+          },
+          {
+            "name": "trote_B",
+            "speed": [
+              3.0,
+              4.5
+            ],
+            "distance": [
+              6,
+              10
+            ],
+            "weight": 1.0
+          }
+        ],
+        "starDirections": 8,
+        "starJitterDegrees": 6.0,
+        "continuousFraction": 0.35,
+        "stopFraction": 0.25,
+        "holdSeconds": [
+          0.8,
+          1.5
+        ],
+        "brake": [
+          3,
+          6
+        ],
+        "arriveRadius": 0.7,
+        "camera": {
+          "fixed": 0.0,
+          "follow": 0.0,
+          "turns": 1.0,
+          "turnDegrees": [
+            30,
+            120
+          ],
+          "turnRate": [
+            0.4,
+            1.0
+          ],
+          "pauseSeconds": [
+            0.5,
+            2.0
+          ],
+          "followRate": 4.0
+        }
+      }
+    }
+  ],
+  "speeds": {
+    "trot": 4.5,
+    "sprintForward": 8.0,
+    "sprintSide": 6.0,
+    "sprintBackward": 6.0
+  }
+}
