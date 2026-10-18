@@ -228,6 +228,8 @@ void ReinforcementLearningScreen::loadDrills() {
     m_drillIds.clear();
     m_drillNames.clear();
     m_drillPhases.clear();
+    m_futureNames.clear();
+    m_futurePhases.clear();
     const std::filesystem::path path = taskPath();
     if (path.empty() || !std::filesystem::exists(path)) return;
     if (LocomotionViewer3D::isLocomotionTask(path)) {
@@ -235,6 +237,15 @@ void ReinforcementLearningScreen::loadDrills() {
             m_drillIds.push_back(drill.id);
             m_drillNames.push_back(drill.name);
             m_drillPhases.push_back(drill.phase);
+        }
+        // A escada completa (a ultima tarefa): o que ainda nao esta no treino fica apagado.
+        const std::filesystem::path ladder = m_options.sourceRoot / "assets" / "rl" / "tasks" / "locomocao_f3f.json";
+        if (std::filesystem::exists(ladder)) {
+            for (const LocomotionViewer3D::Drill& drill : LocomotionViewer3D::drillsOf(ladder)) {
+                if (std::find(m_drillIds.begin(), m_drillIds.end(), drill.id) != m_drillIds.end()) continue;
+                m_futureNames.push_back(drill.name);
+                m_futurePhases.push_back(drill.phase);
+            }
         }
     } else try {
         const BodyTask3D task = loadBodyTask3D(path);
@@ -799,6 +810,14 @@ void ReinforcementLearningScreen::drawDrills() {
         const std::string hint = (phase > 0 ? "Fase " + std::to_string(phase) + ": m" : std::string("M"))
             + "ostra este exercício no mundo (o treino sorteia todos pelos pesos).";
         tooltip(hint.c_str());
+    }
+    for (std::size_t i = 0; i < m_futureNames.size(); ++i) {
+        const std::string label = UI::FontAwesome::label(UI::FontAwesome::Crosshairs, m_futureNames[i].c_str())
+            + "##future" + std::to_string(i);
+        ImGui::BeginDisabled();
+        phaseButton(label.c_str(), false, { -1.0f, ui(30.0f) }, m_futurePhases[i]);
+        ImGui::EndDisabled();
+        tooltip("Ainda não está no treino: entra quando a fase dele abrir.");
     }
 }
 

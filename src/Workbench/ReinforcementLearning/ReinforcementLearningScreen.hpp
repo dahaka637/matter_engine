@@ -146,6 +146,9 @@ private:
     std::vector<std::string> m_drillNames;
     // A fase de cada exercicio (0: sem fase, no estilo de sempre).
     std::vector<int> m_drillPhases;
+    // Os exercicios que a escada ainda vai ativar (nomes e fases): aparecem apagados e sem clique.
+    std::vector<std::string> m_futureNames;
+    std::vector<int> m_futurePhases;
     std::string m_viewerDrill;
     // O treino e a tarefa de que o mundo do visualizador foi feito.
     std::string m_viewerRun;
