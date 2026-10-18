@@ -368,8 +368,9 @@ void diagnosisTests() {
     // Os comecos guardados e a ajuda sorteada.
     {
         LocomotionTrainingSettings3D saved = settings;
-        saved.drill = "estrela";
-        saved.environments = 12;
+        // (A mistura: os mundos trocam de exercicio, e o banco tem de guardar cada instante no dele.)
+        saved.drill = "";
+        saved.environments = 24;
         saved.taskPath = editedTask("matter_diag_saved.json",
             { { "\"episodeSeconds\": 20.0,", "\"episodeSeconds\": 1.5, \"savedStarts\": { \"capacity\": 4, \"surviveSeconds\": 0.2, \"minimumSpeed\": 0.3 },"
                   " \"assistSchedule\": { \"enabled\": true, \"zeroFraction\": 0.5, \"minimum\": 5, \"maximum\": 30 }," },
@@ -397,6 +398,10 @@ void diagnosisTests() {
             if (task.drills[d].id == "estrela") star = d;
             if (task.drills[d].id == "estrela_trote") trot = d;
         }
+        std::size_t others = 0;
+        for (std::size_t d = 0; d < task.drills.size(); ++d)
+            if (d != star) others += batch.savedStartCount(d);
+        expect(others == 0, "o banco so guarda instantes no exercicio de onde vieram (nada nos outros)");
         expect(batch.savedStartCount(star) > 0 && batch.savedStartCount(star) <= 4 && batch.savedStartCount(trot) == 0,
             "o banco junta instantes do exercicio que pede (no teto da capacidade) e so dele");
         expect(fromSaved > 0, "episodios comecam de instantes guardados");

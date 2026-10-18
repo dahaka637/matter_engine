@@ -159,6 +159,8 @@ struct LocomotionTraining3D::Impl {
         std::vector<float> lastAction, lastActionCap;
         // O filtro do candidato: a celula e o rumo de quando ele nasceu.
         int cell = -1;
+        // O exercicio dele (o banco certo: o mundo pode ja ter recomecado noutro).
+        std::uint32_t drill = 0;
     };
     std::vector<std::vector<SavedStart>> savedBank;
     std::mt19937_64 bankRng;
@@ -868,6 +870,7 @@ struct LocomotionTraining3D::Impl {
                     world.pending.lastAction = world.lastAction;
                     world.pending.lastActionCap = world.lastActionCap;
                     world.pending.cell = world.currentCell;
+                    world.pending.drill = world.drill;
                     world.hasPending = true;
                     world.pendingAge = 0.0f;
                 }
@@ -1179,7 +1182,7 @@ void LocomotionTraining3D::step(std::span<const float> actions) {
         Impl::World& world = impl.worlds[i];
         if (!world.hasAccepted) continue;
         world.hasAccepted = false;
-        const std::size_t drill = impl.worldDrills[i];
+        const std::size_t drill = world.accepted.drill;
         if (drill >= impl.savedBank.size()) continue;
         std::vector<Impl::SavedStart>& bank = impl.savedBank[drill];
         if (bank.size() < impl.task.savedStarts.capacity) bank.push_back(std::move(world.accepted));
