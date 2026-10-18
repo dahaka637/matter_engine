@@ -284,6 +284,158 @@
       }
     },
     {
+      "id": "estrela_trote_fixo",
+      "displayName": "Estrela com trote, peito fixo",
+      "phase": 2,
+      "weight": 0.2,
+      "minimum": {
+        "fallFraction": 0.07,
+        "velocityError": 0.6
+      },
+      "pilot": {
+        "kind": "star",
+        "bands": [
+          {
+            "name": "andar",
+            "speed": [
+              0.8,
+              1.4
+            ],
+            "distance": [
+              4,
+              7
+            ],
+            "weight": 0.5
+          },
+          {
+            "name": "trote_A",
+            "speed": [
+              1.8,
+              3.0
+            ],
+            "distance": [
+              5,
+              8
+            ],
+            "weight": 1.0
+          },
+          {
+            "name": "trote_B",
+            "speed": [
+              3.0,
+              4.5
+            ],
+            "distance": [
+              6,
+              10
+            ],
+            "weight": 1.0
+          }
+        ],
+        "starDirections": 8,
+        "starJitterDegrees": 6.0,
+        "continuousFraction": 0.35,
+        "stopFraction": 0.25,
+        "holdSeconds": [
+          0.8,
+          1.5
+        ],
+        "brake": [
+          3,
+          6
+        ],
+        "arriveRadius": 0.7,
+        "camera": {
+          "fixed": 1.0,
+          "follow": 0.0,
+          "turns": 0.0,
+          "followRate": 4.0
+        }
+      }
+    },
+    {
+      "id": "estrela_trote_girando",
+      "displayName": "Estrela com trote, peito girando",
+      "phase": 2,
+      "weight": 0.2,
+      "minimum": {
+        "fallFraction": 0.07,
+        "velocityError": 0.6
+      },
+      "pilot": {
+        "kind": "star",
+        "bands": [
+          {
+            "name": "andar",
+            "speed": [
+              0.8,
+              1.4
+            ],
+            "distance": [
+              4,
+              7
+            ],
+            "weight": 0.5
+          },
+          {
+            "name": "trote_A",
+            "speed": [
+              1.8,
+              3.0
+            ],
+            "distance": [
+              5,
+              8
+            ],
+            "weight": 1.0
+          },
+          {
+            "name": "trote_B",
+            "speed": [
+              3.0,
+              4.5
+            ],
+            "distance": [
+              6,
+              10
+            ],
+            "weight": 1.0
+          }
+        ],
+        "starDirections": 8,
+        "starJitterDegrees": 6.0,
+        "continuousFraction": 0.35,
+        "stopFraction": 0.25,
+        "holdSeconds": [
+          0.8,
+          1.5
+        ],
+        "brake": [
+          3,
+          6
+        ],
+        "arriveRadius": 0.7,
+        "camera": {
+          "fixed": 0.0,
+          "follow": 0.0,
+          "turns": 1.0,
+          "turnDegrees": [
+            30,
+            120
+          ],
+          "turnRate": [
+            0.4,
+            1.0
+          ],
+          "pauseSeconds": [
+            0.5,
+            2.0
+          ],
+          "followRate": 4.0
+        }
+      }
+    },
+    {
       "id": "giro_rapido",
       "displayName": "Giro rápido parado",
       "phase": 3,
