@@ -251,3 +251,27 @@ def test_task_switch_carries_the_opened_caps():
     assert carry_caps(old, new)["speedCurriculum"]["caps"] == {"trote": [2.0] * CELLS}
     off = {"id": "f3a", "drills": [{"id": "trote"}]}
     assert "speedCurriculum" not in carry_caps(old, off)  # sem curriculo na nova: nada muda
+
+
+def test_speed_curriculum_counts_only_the_unaided_episodes():
+    task = {"assist": {"standing": 0.0},
+            "speedCurriculum": {"enabled": True, "start": 1.0, "minEpisodes": 4, "window": 8, "minCruise": 5},
+            "drills": [{"id": "trote", "pilot": {"kind": "star", "bands": [{"speed": [1.8, 4.5]}]}}]}
+    curriculum = SpeedCurriculum(task, ["trote"])
+    caps = curriculum.initial_caps(task)
+    columns = ["exercicio", "celula_queda", "ajuda_nivel"] + [
+        f"cel{k:02d}.{f}" for f in ("fronteira", "rastreio_fronteira") for k in range(CELLS)]
+    col = {name: i for i, name in enumerate(columns)}
+
+    def episode(aid: float) -> np.ndarray:
+        row = np.zeros(len(columns), dtype=np.float32)
+        row[col["celula_queda"]] = -1
+        row[col["ajuda_nivel"]] = aid
+        row[col["cel00.fronteira"]] = 10
+        row[col["cel00.rastreio_fronteira"]] = 9
+        return row
+
+    curriculum.observe(np.stack([episode(20.0) for _ in range(8)]), columns)
+    assert curriculum.advance(task) == [] and caps["trote"][0] == 1.0  # ajudado: nao abre
+    curriculum.observe(np.stack([episode(0.0) for _ in range(4)]), columns)
+    assert len(curriculum.advance(task)) == 1 and caps["trote"][0] == 1.25

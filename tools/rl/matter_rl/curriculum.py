@@ -82,6 +82,7 @@ class SpeedCurriculum:
         self.drill_ids = list(drill_ids)
         self.records = {d: [deque(maxlen=self.rule.window) for _ in range(CELLS)] for d in self.drill_ids}
         self.since = {d: [0] * CELLS for d in self.drill_ids}
+        self.base_aid = float((task.get("assist") or {}).get("standing", 0.0))
 
     def initial_caps(self, task: dict) -> dict:
         """Os tetos de partida dos exercicios que se movem (os que ja estao na tarefa ficam).
@@ -107,7 +108,12 @@ class SpeedCurriculum:
         if not len(rows):
             return
         col = {name: i for i, name in enumerate(columns)}
+        aid = col.get("ajuda_nivel")
         for row in rows:
+            # So os episodios na ajuda base da tarefa (a ajuda sorteada, S4, fica de fora): o
+            # teto abre pelo que o corpo faz sem ajuda, nao ajudado (o A/B S4 abriu 15 tetos contra 8).
+            if aid is not None and row[aid] > self.base_aid + 1e-3:
+                continue
             drill = self.drill_ids[int(row[col["exercicio"]])]
             fall_cell = int(row[col["celula_queda"]])
             for k in range(CELLS):
