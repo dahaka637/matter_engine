@@ -8,6 +8,7 @@
 #include "Engine/Athlete/Body/ActiveStance3D.hpp"
 #include "Engine/Athlete/Body/PhysicalFeetAssist3D.hpp"
 #include "Engine/Athlete/Modes/ModeRules3D.hpp"
+#include "Engine/Athlete/Physical/DynamicTurnMove3D.hpp"
 #include "Engine/Athlete/Planning/FootstepPlanner3D.hpp"
 #include "Engine/Character/BallControl3D.hpp"
 
@@ -46,6 +47,11 @@ struct AthleteRuntimeSettings3D {
     // (o regime B, 17/10). false: o regime A (classico), o par sempre
     // inteiro. Vault 04_locomocao/ajuda_auxiliar.md.
     bool postureCoupleFollowsAssist = true;
+    // A virada brusca em movimento (experimento do laboratorio, 17/10; so no
+    // Fisico total; vault 04_locomocao/virada_brusca.md). Desligada, o atleta
+    // e identico bit a bit. A intensidade (0..1) e dos testes.
+    bool dynamicTurnMove = false;
+    TurnMoveSettings3D dynamicTurnMoveSettings;
     bool getUpHitWeakens = true;
     float getUpHitAssistPercent = 25.0f;
     float getUpHitRecoverSeconds = 1.5f;

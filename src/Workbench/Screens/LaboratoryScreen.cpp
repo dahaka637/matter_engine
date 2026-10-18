@@ -2857,6 +2857,13 @@ void WorkbenchApp::drawLaboratoryUi() {
                             if (mode == 1)
                                 percent("Guiagem de ossos", "##BoneGuide", &m_physicalBoneGuidePercent, 0.0f, 100.0f,
                                     "Os ossos vão até a pose do modo padrão nesta fração: 0% é a locomoção física de sempre, 100% é como o padrão.");
+                            if (mode == 1) {
+                                ImGui::Checkbox("Virada brusca (experimento)", &m_dynamicTurnMove);
+                                hint("Ao mudar bruscamente de direção em movimento, o corpo faz uma manobra: inclina para dentro da curva, abaixa, encurta a passada, planta o pé de fora e corta. Só no Físico total; sem força de fora.");
+                                if (m_dynamicTurnMove)
+                                    percent("Intensidade da virada", "##TurnMoveAmount", &m_dynamicTurnMovePercent, 0.0f, 150.0f,
+                                        "Quanto da manobra entra (100% é o calculado).");
+                            }
                             if (mode == 2) {
                                 if (ImGui::Button("Recarregar a rede", { -1.0f, 0.0f })) reloadLocomotionPolicy();
                                 hint("Carrega a última rede que o treino exportou.");

@@ -731,6 +731,9 @@ AthleteRuntimeSettings3D WorkbenchApp::athleteRuntimeSettings() const {
     settings.locomotionPolicy = m_locomotionPolicyOn && m_athleteRuntime.locomotionPolicy() != nullptr;
     // (Com a rede, sem guiagem de ossos: como no treino.)
     settings.physicalBoneGuidePercent = m_locomotionPolicyOn ? 0.0f : m_physicalBoneGuidePercent;
+    // A virada brusca (experimento): so no Fisico total.
+    settings.dynamicTurnMove = m_dynamicTurnMove && !m_defaultLocomotion && !m_locomotionPolicyOn;
+    settings.dynamicTurnMoveSettings.amount = std::clamp(m_dynamicTurnMovePercent * 0.01f, 0.0f, 1.5f);
     settings.fullPhysicalImpulse = m_fullPhysicalImpulse;
     settings.activeBodySettings.gameplayAssistAcceleration = m_activeAssistAcceleration;
     settings.newBallHandling = m_newBallHandling;

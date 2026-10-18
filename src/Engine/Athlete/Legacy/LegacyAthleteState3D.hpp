@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Engine/Athlete/Physical/DynamicTurnMove3D.hpp"
 #include "Engine/Athlete/Reference/PhaseLock3D.hpp"
 #include "Engine/Character/BallControl3D.hpp"
 #include "Engine/Character/BiomechanicalBipedExperiment3D.hpp"
@@ -35,6 +36,10 @@ struct LegacyAthleteState3D {
     float guideFacingYawRadians = 0.0f;
     CharacterLocomotion3D locomotion;
     AdaptivePhysicalCharacter3D adaptivePhysics;
+    // A virada brusca (experimento): o gerador e as correcoes que o atleta
+    // le neste tick (as do RL somadas as dela).
+    DynamicTurnMove3D turnMove;
+    PhysicalCorrections3D turnCorrections;
     // Manejo de bola (so o personagem controlado usa) e a escala da
     // velocidade que ele pede (o chute correndo freia um pouco).
     BallControl3D ballControl;

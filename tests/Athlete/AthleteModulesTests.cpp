@@ -4,6 +4,7 @@
 #include "Engine/Athlete/Contract/LocomotionContract3D.hpp"
 #include "Engine/Athlete/Modes/ContactClasses3D.hpp"
 #include "Engine/Athlete/Modes/ModeRules3D.hpp"
+#include "Engine/Athlete/Physical/DynamicTurnMove3D.hpp"
 #include "Engine/Athlete/Physical/PhysicalCorrections3D.hpp"
 #include "Engine/Athlete/Legacy/LegacyReference3D.hpp"
 #include "Engine/Athlete/Reference/PhaseLock3D.hpp"
@@ -921,6 +922,74 @@ void modeRulePropertyTests() {
     }
 }
 
+void turnMoveTests() {
+    const float dt = 1.0f / 120.0f;
+    // Reto: nunca dispara.
+    {
+        DynamicTurnMove3D move;
+        for (int i = 0; i < 240; ++i) move.update({ { 4.0f, 0.0f, 0.0f }, { 4.0f, 0.0f, 0.0f }, dt });
+        expect(move.output().state == TurnMoveState3D::Idle && move.output().weight == 0.0f && !move.corrections().active(),
+            "sem mudar de direcao, a manobra nao dispara e nao ha correcao");
+    }
+    // Devagar: nao dispara (abaixo da velocidade minima).
+    {
+        DynamicTurnMove3D move;
+        for (int i = 0; i < 240; ++i) move.update({ { 0.0f, 0.9f, 0.0f }, { 0.9f, 0.0f, 0.0f }, dt });
+        expect(move.output().state == TurnMoveState3D::Idle, "andando devagar a virada nao dispara");
+    }
+    // Uma virada de 90 graus para a esquerda a 4 m/s e a espelhada.
+    TurnMoveOutput3D left, right;
+    PhysicalCorrections3D leftCorrections, rightCorrections;
+    float leftPeakLean = 0.0f, rightPeakLean = 0.0f;
+    bool sawPlant = false, sawCut = false, finished = false;
+    for (const float side : { 1.0f, -1.0f }) {
+        DynamicTurnMove3D move;
+        const TurnMoveInput3D input { { 0.0f, 4.0f * side, 0.0f }, { 4.0f, 0.0f, 0.0f }, dt };
+        // (Depois da manobra o corpo ja vai no rumo novo.)
+        const TurnMoveInput3D aligned { { 0.0f, 4.0f * side, 0.0f }, { 0.0f, 4.0f * side, 0.0f }, dt };
+        float peak = 0.0f;
+        float minScale = 1.0f;
+        for (int i = 0; i < 360; ++i) {
+            move.update(i < 100 ? input : aligned);
+            if (std::abs(move.corrections().lateralLean) > std::abs(peak)) peak = move.corrections().lateralLean;
+            minScale = std::min(minScale, move.output().speedScale);
+            if (side > 0.0f) {
+                sawPlant = sawPlant || move.output().state == TurnMoveState3D::Plant;
+                sawCut = sawCut || move.output().state == TurnMoveState3D::Cut;
+            }
+            if (i == 20) { (side > 0.0f ? left : right) = move.output(); (side > 0.0f ? leftCorrections : rightCorrections) = move.corrections(); }
+        }
+        (side > 0.0f ? leftPeakLean : rightPeakLean) = peak;
+        expect(minScale < 0.8f && minScale > 0.3f, "a freada do plantio baixa a velocidade pedida, sem zerar");
+        expect(move.output().state == TurnMoveState3D::Idle || move.output().weight < 0.5f,
+            "depois da manobra volta ao repouso");
+        if (side > 0.0f) finished = move.output().state == TurnMoveState3D::Idle;
+    }
+    expect(left.side > 0.0f && right.side < 0.0f, "o lado da virada: esquerda positivo, direita negativo");
+    expect(leftPeakLean > 0.05f && rightPeakLean < -0.05f && std::abs(leftPeakLean + rightPeakLean) < 1e-4f,
+        "inclina para dentro da curva, espelhado entre esquerda e direita");
+    expect(left.state != TurnMoveState3D::Idle && left.turnDegrees > 80.0f && left.turnDegrees < 100.0f,
+        "dispara a 90 graus com o angulo medido");
+    expect(sawPlant && sawCut && finished, "passa por plantio e corte e termina");
+    // O pe de fora: esquerda -> o direito (1), com o toque aberto para fora.
+    expect(leftCorrections.footwork && leftCorrections.feet[1].touchdownOffset.y < 0.0f
+            && leftCorrections.feet[0].touchdownOffset.lengthSquared() < 1e-9f,
+        "virando a esquerda o pe de fora (o direito) pousa mais aberto, o outro nao muda");
+    expect(rightCorrections.feet[0].touchdownOffset.y > 0.0f && rightCorrections.feet[1].touchdownOffset.lengthSquared() < 1e-9f,
+        "virando a direita o pe de fora e o esquerdo");
+    // As duracoes crescem com o angulo e a velocidade.
+    expect(DynamicTurnMove3D::timing(4.0f, 180.0f).total() > DynamicTurnMove3D::timing(4.0f, 45.0f).total()
+            && DynamicTurnMove3D::timing(5.0f, 90.0f).total() > DynamicTurnMove3D::timing(2.0f, 90.0f).total(),
+        "a manobra dura mais em viradas maiores e mais rapidas");
+    // Intensidade zero: nunca dispara.
+    {
+        DynamicTurnMove3D move;
+        move.settings().amount = 0.0f;
+        for (int i = 0; i < 120; ++i) move.update({ { 0.0f, 4.0f, 0.0f }, { 4.0f, 0.0f, 0.0f }, dt });
+        expect(move.output().state == TurnMoveState3D::Idle, "intensidade zero desliga a manobra");
+    }
+}
+
 } // namespace
 
 int main() {
@@ -930,6 +999,7 @@ int main() {
         pendulumTests();
         referenceFrameTests();
         correctionTests();
+        turnMoveTests();
         contractTests();
         phaseLockTests();
         modeRulePropertyTests();

@@ -1620,6 +1620,27 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         output.followVelocityWorld = {};
         return;
     }
+    // A virada brusca (experimento do laboratorio): desligada, nao roda e o
+    // atleta passa exato.
+    if (settings.dynamicTurnMove && adaptive) {
+        TurnMoveInput3D turn;
+        turn.requestedVelocity = command.intent.requestedVelocityWorld;
+        turn.bodyVelocity = root.linearVelocity;
+        turn.deltaTime = deltaTime;
+        state.turnMove.settings() = settings.dynamicTurnMoveSettings;
+        state.turnMove.update(turn);
+        if (state.turnMove.output().weight > 0.0f) {
+            state.turnCorrections = command.corrections != nullptr ? *command.corrections : PhysicalCorrections3D {};
+            state.turnCorrections.frame = Quaternion::fromAxisAngle({ 0.0f, 0.0f, 1.0f },
+                locomotionFrameYaw3D(profile, root.orientation));
+            addTurnMoveCorrections3D(state.turnCorrections, state.turnMove.corrections());
+            command.corrections = &state.turnCorrections;
+            command.intent.requestedVelocityWorld = command.intent.requestedVelocityWorld
+                * state.turnMove.output().speedScale;
+        }
+    } else if (state.turnMove.output().state != TurnMoveState3D::Idle || state.turnMove.output().weight > 0.0f) {
+        state.turnMove.reset();
+    }
     {
         const auto begin = std::chrono::steady_clock::now();
         state.locomotion.update(profile, clips, body, dynamics, command, deltaTime);

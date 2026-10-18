@@ -459,6 +459,9 @@ private:
     bool m_locomotionPolicyOn = false;
     // As ajudas: a regua unica ou as quatro (Avancado, desligado por padrao).
     bool m_assistAdvanced = false;
+    // A virada brusca (experimento, so no Fisico total): desligada por padrao.
+    bool m_dynamicTurnMove = false;
+    float m_dynamicTurnMovePercent = 100.0f;
     std::string m_locomotionPolicyLabel;
     bool m_ragdollAssetsLoadFailed = false;
     bool m_ragdollActive = true;

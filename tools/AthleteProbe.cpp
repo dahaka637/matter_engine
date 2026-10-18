@@ -727,6 +727,26 @@ std::vector<Scenario> scenarios() {
             k.forward = t > 0.3f ? 0.5f : 0.0f;
             k.cameraYaw = t > 1.6f ? Pi : 0.0f;
             return k; } });
+        // As viradas bruscas em movimento (XVIRADAS=1; o experimento
+        // DynamicTurnMove3D): a camera salta o angulo a 2,2 s, ja na marcha.
+        if (std::getenv("XVIRADAS")) {
+            struct Gait { const char* name; float forward; bool sprint; };
+            static const Gait gaits[3] = { { "trota", 0.5f, false }, { "corre", 1.0f, false }, { "sprint", 1.0f, true } };
+            for (const Gait& gait : gaits)
+                for (const int degrees : { 45, 90, 135, 180 })
+                    for (const float sign : { 1.0f, -1.0f }) {
+                        const Gait g = gait;
+                        const float angle = sign * static_cast<float>(degrees) * Pi / 180.0f;
+                        char name[64];
+                        std::snprintf(name, sizeof name, "virada_%s_%d%s", g.name, degrees, sign > 0.0f ? "e" : "d");
+                        list.push_back({ name, 4.5f, [g, angle](float t) {
+                            Keys k;
+                            k.forward = t > 0.3f ? g.forward : 0.0f;
+                            k.sprint = g.sprint;
+                            k.cameraYaw = t > 2.2f ? angle : 0.0f;
+                            return k; } });
+                    }
+        }
     }
     {
         Scenario s { "caixa_media", 3.0f, [](float) { return Keys {}; } };
@@ -942,6 +962,12 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
         float sliderMax = 0.0f, torqueMax = 0.0f, correctionMax = 0.0f, handoverTorqueMax = 0.0f;
         long handover = 0;
     } auxStats;
+    // XVIRADA=1: a manobra da virada brusca (DynamicTurnMove3D).
+    struct {
+        long ticks = 0;
+        float firstAt = -1.0f, lastAt = -1.0f, minScale = 1.0f, maxLean = 0.0f, degrees = 0.0f, entry = 0.0f;
+        float minSpeed = 1.0e9f, endSpeed = 0.0f;
+    } turnStats;
 
     AthleteRuntime3D runtime;
     // XREDE=<.mrlpolicy>: a rede da locomocao pelo runtime do jogo (como a
@@ -1249,6 +1275,22 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
             // XAUX=1: a ajuda auxiliar por canal (a medida do atleta).
             const AthleteExternalAssist3D& aux = athlete.externalAssist;
             auxStats.ticks += 1;
+            {
+                const TurnMoveOutput3D& move = legacy.turnMove.output();
+                const float planarSpeed = std::hypot(bodyState.links.front().linearVelocity.x,
+                    bodyState.links.front().linearVelocity.y);
+                if (move.weight > 0.0f) {
+                    ++turnStats.ticks;
+                    if (turnStats.firstAt < 0.0f) turnStats.firstAt = t;
+                    turnStats.lastAt = t;
+                    turnStats.minScale = std::min(turnStats.minScale, move.speedScale);
+                    turnStats.degrees = move.turnDegrees;
+                    turnStats.entry = move.entrySpeed;
+                    turnStats.minSpeed = std::min(turnStats.minSpeed, planarSpeed);
+                }
+                turnStats.maxLean = std::max(turnStats.maxLean, std::abs(legacy.turnCorrections.lateralLean));
+                turnStats.endSpeed = planarSpeed;
+            }
             auxStats.handover += aux.handover ? 1 : 0;
             // (A volta ao padrao sobe a ajuda ate a cheia: fora da regua.)
             if (aux.handover) {
@@ -2166,6 +2208,11 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
             effect.touchdowns / (n * Dt), effect.footPeak, effect.pelvis / n, legacy.locomotion.contactPlan().stepsStarted,
             metrics.fell ? "CAIU" : "de pe");
     }
+    if (std::getenv("XVIRADA") && auxStats.ticks > 0)
+        std::printf("  VIRADA: %s | manobra %ld ticks de %.2f a %.2f s | angulo %.0f entrada %.2f m/s | escala min %.2f | inclinacao max %.3f rad | vel min %.2f fim %.2f m/s\n",
+            metrics.fell ? "CAIU" : "de pe", turnStats.ticks, turnStats.firstAt, turnStats.lastAt, turnStats.degrees,
+            turnStats.entry, turnStats.minScale, turnStats.maxLean, turnStats.minSpeed < 1.0e8f ? turnStats.minSpeed : 0.0f,
+            turnStats.endSpeed);
     if (std::getenv("XAUX") && auxStats.ticks > 0) {
         const double weight = 9.81 * std::max(1.0f, profile.totalMassKg);
         const double n = static_cast<double>(auxStats.ticks);
@@ -2666,6 +2713,7 @@ int main(int argc, char** argv) {
     float walkingAssist = AthleteRuntimeSettings3D {}.e5WalkingAssistPercent;
     float getUpAssist = AthleteRuntimeSettings3D {}.getUpAssistPercent;
     bool postureCouple = AthleteRuntimeSettings3D {}.postureCoupleFollowsAssist;
+    float turnMove = 0.0f;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         const auto need = [&]() -> const char* { return i + 1 < argc ? argv[++i] : ""; };
@@ -2698,6 +2746,7 @@ int main(int argc, char** argv) {
         else if (arg == "--ajuda-levantar") getUpAssist = static_cast<float>(std::atof(need()));
         else if (arg == "--par-na-regua") postureCouple = true;
         else if (arg == "--par-fixo") postureCouple = false;
+        else if (arg == "--virada-brusca") turnMove = static_cast<float>(std::atof(need()));
         else if (arg == "--ajuda") {
             // A regua unica do laboratorio (Ajuda auxiliar): as quatro juntas.
             const float all = static_cast<float>(std::atof(need()));
@@ -2744,6 +2793,34 @@ int main(int argc, char** argv) {
     settings.e5WalkingAssistPercent = walkingAssist;
     settings.getUpAssistPercent = getUpAssist;
     settings.postureCoupleFollowsAssist = postureCouple;
+    settings.dynamicTurnMove = turnMove > 0.0f;
+    settings.dynamicTurnMoveSettings.amount = turnMove;
+    // XTM="campo=valor,campo=valor": os ajustes da manobra (nomes do TurnMoveSettings3D).
+    if (const char* overrides = std::getenv("XTM")) {
+        TurnMoveSettings3D& tm = settings.dynamicTurnMoveSettings;
+        const std::pair<const char*, float*> fields[] = { { "lateralLeanBase", &tm.lateralLeanBase },
+            { "lateralLeanPerSpeed", &tm.lateralLeanPerSpeed }, { "lateralLeanMaximum", &tm.lateralLeanMaximum },
+            { "brakeLean", &tm.brakeLean }, { "exitLean", &tm.exitLean }, { "comInsideBase", &tm.comInsideBase },
+            { "comInsidePerSpeed", &tm.comInsidePerSpeed }, { "comInsideMaximum", &tm.comInsideMaximum },
+            { "crouchBase", &tm.crouchBase }, { "crouchPerSpeed", &tm.crouchPerSpeed }, { "crouchMaximum", &tm.crouchMaximum },
+            { "cadenceOctaves", &tm.cadenceOctaves }, { "strideOctaves", &tm.strideOctaves },
+            { "outsideSideBase", &tm.outsideSideBase }, { "outsideSidePerSin", &tm.outsideSidePerSin },
+            { "outsideShort", &tm.outsideShort }, { "cutSpeedFraction", &tm.cutSpeedFraction },
+            { "cutSpeedFloor", &tm.cutSpeedFloor }, { "triggerDegrees", &tm.triggerDegrees },
+            { "minRequestedSpeed", &tm.minRequestedSpeed } };
+        std::string text(overrides);
+        std::size_t begin = 0;
+        while (begin < text.size()) {
+            std::size_t end = text.find(',', begin);
+            if (end == std::string::npos) end = text.size();
+            const std::string item = text.substr(begin, end - begin);
+            const std::size_t eq = item.find('=');
+            if (eq != std::string::npos)
+                for (const auto& [name, target] : fields)
+                    if (item.compare(0, eq, name) == 0 && std::strlen(name) == eq) *target = std::strtof(item.c_str() + eq + 1, nullptr);
+            begin = end + 1;
+        }
+    }
     if (totalPhysical) {
         settings.defaultLocomotion = false;
         startPhysical = true;
@@ -2765,7 +2842,7 @@ int main(int argc, char** argv) {
     FILE* dump = dumpPath.empty() ? nullptr : std::fopen(dumpPath.c_str(), "w");
     std::printf("cenario            | deslize pe no chao med/p95/max m/s | pico acel tronco+bracos / pernas | salto pose | modos (trocas; animado/ativo/fisico/volta s; ajuda N.s) | bola\n");
     for (const Scenario& scenario : scenarios()) {
-        if (!only.empty() && scenario.name != only) continue;
+        if (!only.empty() && scenario.name != only && !(only.back() == '*' && scenario.name.rfind(only.substr(0, only.size() - 1), 0) == 0)) continue;
         printMetrics(scenario, runScenario(context, scenario, settings, startPhysical, dump, every, noRequests),
             settings.footstepLocomotion);
     }
