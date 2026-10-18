@@ -3089,6 +3089,11 @@ void WorkbenchApp::drawLaboratoryUi() {
                         ImGui::SliderFloat("##CapsuleReversal", &m_capsuleReversalPercent, 0.0f, 100.0f, "%.0f%%",
                             ImGuiSliderFlags_AlwaysClamp);
                         hint("Ao pedir o sentido contrário (ir para a esquerda e logo para a direita), o jogador freia e arranca para o outro lado até 1,5 vez mais forte (a 100%), ainda parando antes de sair, para os pés trocarem a passada. 0%: a troca de antes.");
+                        ImGui::TextUnformatted("Arrancada");
+                        ImGui::SetNextItemWidth(-1.0f);
+                        ImGui::SliderFloat("##StartGesture", &m_defaultStartGesturePercent, 0.0f, 100.0f, "%.0f%%",
+                            ImGuiSliderFlags_AlwaysClamp);
+                        hint("Ao sair do parado, o corpo se joga para a frente (o gesto do Idle To Sprint no tronco, nos braços e na cabeça) e se inclina com a aceleração, até 2,5 vezes mais que antes (e para trás na freada). 0%: sem o gesto e a inclinação de antes.");
                         ImGui::Dummy({ 1.0f, ui(6.0f) });
                         if (ImGui::Button("COPIAR PARÂMETROS", { -1.0f, ui(36.0f) })) {
                             char text[512];
@@ -3099,9 +3104,10 @@ void WorkbenchApp::drawLaboratoryUi() {
                                 "Corrida de lado: %.2f\n"
                                 "Corrida de costas (e diagonais de costas): %.2f\n"
                                 "Resposta: %.0f%%\n"
-                                "Troca de direção: %.0f%%\n",
+                                "Troca de direção: %.0f%%\n"
+                                "Arrancada: %.0f%%\n",
                                 m_defaultTrotSpeed, m_defaultSprintForwardSpeed, m_defaultSprintSideSpeed,
-                                m_defaultSprintBackwardSpeed, m_capsuleResponsePercent, m_capsuleReversalPercent);
+                                m_defaultSprintBackwardSpeed, m_capsuleResponsePercent, m_capsuleReversalPercent, m_defaultStartGesturePercent);
                             ImGui::SetClipboardText(text);
                             m_defaultSpeedsCopiedTime = ImGui::GetTime();
                         }
@@ -3111,6 +3117,7 @@ void WorkbenchApp::drawLaboratoryUi() {
                             // (Os padrões calibrados do laboratório, 17/10.)
                             m_capsuleResponsePercent = LabDefaultCapsuleResponsePercent;
                             m_capsuleReversalPercent = LabDefaultCapsuleReversalPercent;
+                            m_defaultStartGesturePercent = LabDefaultStartGesturePercent;
                             m_defaultTrotSpeed = LabDefaultTrotSpeed;
                             m_defaultSprintForwardSpeed = LabDefaultSprintForwardSpeed;
                             m_defaultSprintSideSpeed = LabDefaultSprintSideSpeed;

@@ -78,6 +78,9 @@ struct AthleteRuntimeSettings3D {
     bool defaultAdaptiveTransitions = true;
     bool defaultTrunkMotion = true;
     float defaultTrunkMotionPercent = 100.0f;
+    // O gesto da arrancada no padrao (o idle_to_sprint no tronco, nos bracos e na
+    // cabeca ao sair do parado; 0 desliga, o padrao do motor).
+    float defaultStartGesturePercent = 0.0f;
     bool defaultLandingAbsorb = true;
     float defaultCurveLeanDeadZone = 3.5f;
     float defaultTrotSpeed = 4.5f;

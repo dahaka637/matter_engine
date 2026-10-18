@@ -712,6 +712,7 @@ AthleteRuntimeSettings3D WorkbenchApp::athleteRuntimeSettings() const {
     settings.defaultAdaptiveTransitions = m_defaultAdaptiveTransitions;
     settings.defaultTrunkMotion = m_defaultTrunkMotion;
     settings.defaultTrunkMotionPercent = m_defaultTrunkMotionPercent;
+    settings.defaultStartGesturePercent = m_defaultStartGesturePercent;
     settings.defaultLandingAbsorb = m_defaultLandingAbsorb;
     settings.defaultCurveLeanDeadZone = m_defaultCurveLeanDeadZone;
     settings.defaultTrotSpeed = m_defaultTrotSpeed;

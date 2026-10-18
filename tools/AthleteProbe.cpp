@@ -2726,6 +2726,7 @@ int main(int argc, char** argv) {
     int baseline = -1;
     float response = AthleteRuntimeSettings3D {}.capsuleResponsePercent;
     float reversal = AthleteRuntimeSettings3D {}.capsuleReversalPercent;
+    float startGesture = AthleteRuntimeSettings3D {}.defaultStartGesturePercent;
     bool newBall = false;
     bool noRequests = false;
     bool bridge = AthleteRuntimeSettings3D {}.physicalBridge;
@@ -2755,6 +2756,7 @@ int main(int argc, char** argv) {
         else if (arg == "--passos") balanceSteps = std::atoi(need()) != 0;
         else if (arg == "--resposta") response = static_cast<float>(std::atof(need()));
         else if (arg == "--troca-direcao") reversal = static_cast<float>(std::atof(need()));
+        else if (arg == "--arrancada") startGesture = static_cast<float>(std::atof(need()));
         else if (arg == "--manejo") newBall = std::atoi(need()) != 0;
         else if (arg == "--sem-pedido") noRequests = true;
         else if (arg == "--ponte") bridge = std::atoi(need()) != 0;
@@ -2811,6 +2813,7 @@ int main(int argc, char** argv) {
     settings.activeStanceSettings.balanceSteps = balanceSteps;
     settings.capsuleResponsePercent = response;
     settings.capsuleReversalPercent = reversal;
+    settings.defaultStartGesturePercent = startGesture;
     settings.newBallHandling = newBall;
     settings.dribbleV5 = dribbleV5;
     settings.physicalBridge = bridge;

@@ -109,7 +109,7 @@ void DefaultLocomotion3D::stepPose(Tick& t) {
                 const bool spine = id == "Abdomen" || id == "Chest" || id == "UpperChest";
                 const bool arm = id.find("UpperArm") != std::string::npos || id.find("Forearm") != std::string::npos;
                 const bool head = id == "Neck" || id == "Head";
-                const float weight = envelope * (spine ? (m_startSprint ? 0.55f : 0.28f)
+                const float weight = envelope * s.startGestureAmount * (spine ? (m_startSprint ? 0.55f : 0.28f)
                     : arm ? (m_startSprint ? 0.62f : 0.30f) : head ? (m_startSprint ? 0.25f : 0.12f) : 0.0f);
                 if (weight <= 0.0f) continue;
                 const AnimationTrack3D* track = findAnimationTrack3D(start, id);

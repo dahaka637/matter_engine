@@ -212,6 +212,8 @@ struct DefaultLocomotionSettings3D {
     float transitionDipMeters = 0.0f;
     float transitionDipSeconds = 0.09f;
     bool startGesture = false;
+    // A intensidade do gesto da arrancada (1 = o calculado).
+    float startGestureAmount = 1.0f;
     // Abaixo disto (m/s) entra a pose parada.
     float idleSpeed = 1.0f;
     // A passada na velocidade da capsula: o comprimento leva a raiz quadrada

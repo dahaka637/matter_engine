@@ -620,6 +620,10 @@ private:
     // balanco calibrados pelas referencias; a intensidade escala tudo.
     bool m_defaultTrunkMotion = true;
     float m_defaultTrunkMotionPercent = 100.0f;
+    // A arrancada do padrao (0 desliga): o gesto do idle_to_sprint e a
+    // inclinacao do corpo com a aceleracao (e com a freada). 100% no laboratorio.
+    static constexpr float LabDefaultStartGesturePercent = 100.0f;
+    float m_defaultStartGesturePercent = LabDefaultStartGesturePercent;
     bool m_controlledAnimated = false;
     // A escala da capsula pedida pelo runtime (o chute correndo freia).
     float m_controlledSpeedScale = 1.0f;
