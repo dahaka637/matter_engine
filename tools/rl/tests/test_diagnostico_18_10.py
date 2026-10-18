@@ -155,6 +155,14 @@ def test_speed_curriculum_opens_a_cell_that_tracks_and_never_passes_the_band():
               "drills": [{"id": "andar", "pilot": {"kind": "star", "bands": [{"speed": [0.8, 1.4]}]}}]}
     caps2 = SpeedCurriculum(by_bin, ["andar"]).initial_caps(by_bin)
     assert caps2["andar"][0] == 1.4 and caps2["andar"][1] == 1.4 and caps2["andar"][4] == 0.75 and caps2["andar"][15] == 1.4
+    # O exercicio novo de um degrau nasce na fronteira do corpo (o maior teto ja aberto), por celula.
+    ladder = {"speedCurriculum": {"enabled": True, "binStart": [1.5, 1.5, 0.75, 0.75, 0.75, 0.75, 0.75, 1.5],
+                                  "caps": {"trote": [2.5] + [1.0] * (CELLS - 1)}},
+              "drills": [{"id": "trote", "pilot": {"kind": "star", "bands": [{"speed": [1.8, 4.5]}]}},
+                         {"id": "corrida", "pilot": {"kind": "star", "bands": [{"speed": [4.5, 8.0]}]}}]}
+    caps3 = SpeedCurriculum(ladder, ["trote", "corrida"]).initial_caps(ladder)
+    assert caps3["corrida"][0] == 2.5 and caps3["corrida"][2] == 1.5 and caps3["corrida"][4] == 1.0
+    assert caps3["trote"][0] == 2.5  # o que ja estava fica
 
 
 def test_std_tables_by_prefix_and_groups():

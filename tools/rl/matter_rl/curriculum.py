@@ -74,18 +74,22 @@ class SpeedCurriculum:
         self.since = {d: [0] * CELLS for d in self.drill_ids}
 
     def initial_caps(self, task: dict) -> dict:
-        """Os tetos de partida dos exercicios que se movem (os que ja estao na tarefa ficam)."""
+        """Os tetos de partida dos exercicios que se movem (os que ja estao na tarefa ficam).
+        O exercicio novo de um degrau nasce na fronteira que o corpo ja tem em cada celula
+        (o maior teto dos que ja estao), nunca abaixo do teto de partida."""
         block = task.setdefault("speedCurriculum", {})
         caps = block.setdefault("caps", {})
+        frontier = [max((cells[k] for cells in caps.values()), default=0.0) for k in range(CELLS)]
         for drill in task.get("drills", []):
             top = band_maximum(drill)
             if top <= 0.0 or drill["id"] in caps:
                 continue
             start = float(self.rule.start.get(drill["id"], self.rule.start_default))
             if len(self.rule.bin_start) == CELLS // 2:
-                caps[drill["id"]] = [round(min(top, self.rule.bin_start[k // 2]), 4) for k in range(CELLS)]
+                first = [self.rule.bin_start[k // 2] for k in range(CELLS)]
             else:
-                caps[drill["id"]] = [round(min(top, start), 4)] * CELLS
+                first = [start] * CELLS
+            caps[drill["id"]] = [round(min(top, max(first[k], frontier[k])), 4) for k in range(CELLS)]
         return caps
 
     def observe(self, rows: np.ndarray, columns: list[str]) -> None:
