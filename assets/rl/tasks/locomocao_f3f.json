@@ -499,8 +499,8 @@
       }
     },
     {
-      "id": "inversoes",
-      "displayName": "Inversões e arrancadas em velocidade",
+      "id": "peito_girando",
+      "displayName": "Peito girando em deslocamento",
       "phase": 3,
       "weight": 0.15,
       "minimum": {
@@ -513,12 +513,12 @@
           {
             "name": "trote",
             "speed": [
-              3.0,
+              2.5,
               4.5
             ],
             "distance": [
-              3,
-              6
+              6,
+              10
             ],
             "weight": 1.0
           },
@@ -529,29 +529,41 @@
               8.0
             ],
             "distance": [
-              3,
-              6
+              8,
+              14
             ],
             "weight": 1.0
           }
         ],
         "starDirections": 8,
         "starJitterDegrees": 4.0,
-        "continuousFraction": 0.9,
-        "stopFraction": 0.05,
+        "continuousFraction": 0.5,
+        "stopFraction": 0.15,
         "holdSeconds": [
-          0.3,
-          0.8
+          0.6,
+          1.2
         ],
         "brake": [
-          6,
-          10
+          4,
+          8
         ],
-        "arriveRadius": 0.7,
+        "arriveRadius": 0.8,
         "camera": {
           "fixed": 0.0,
-          "follow": 1.0,
-          "turns": 0.0,
+          "follow": 0.0,
+          "turns": 1.0,
+          "turnDegrees": [
+            30,
+            120
+          ],
+          "turnRate": [
+            0.4,
+            1.0
+          ],
+          "pauseSeconds": [
+            0.5,
+            2.0
+          ],
           "followRate": 5.0
         }
       }
