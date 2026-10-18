@@ -21,6 +21,7 @@
 #include <nlohmann/json.hpp>
 #include <sqlite3.h>
 
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
@@ -201,6 +202,25 @@ int realRun(const std::filesystem::path& out) {
                 require(Modeling::writePng(screen.image(), file.string(), &error), error);
             }
         }
+    }
+    // O custo do visualizador (a fluidez da tela): a simulacao de 1 s (30
+    // decisoes) e um quadro desenhado, no tamanho da tela de verdade.
+    {
+        using Clock = std::chrono::steady_clock;
+        const auto seconds = [](Clock::time_point a, Clock::time_point b) { return std::chrono::duration<double>(b - a).count(); };
+        double simulate = 0.0, draw = 0.0;
+        constexpr int Rounds = 5;
+        for (int i = 0; i < Rounds; ++i) {
+            const auto a = Clock::now();
+            screen.advanceViewer(30);
+            const auto b = Clock::now();
+            screen.frameView(i % 2 == 0 ? 90.0f : 0.0f, 6.0f);
+            require(screen.renderViewport(1540, 660), "o visualizador renderiza");
+            draw += seconds(b, Clock::now());
+            simulate += seconds(a, b);
+        }
+        std::cout << "custo do visualizador: simular 1 s = " << 1000.0 * simulate / Rounds << " ms, um quadro (1540x660) = "
+                  << 1000.0 * draw / Rounds << " ms\n";
     }
     frame(screen, canvas, 3);
     snapshot(canvas, "rl_tela_treino_real");

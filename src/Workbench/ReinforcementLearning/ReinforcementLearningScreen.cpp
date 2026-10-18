@@ -556,8 +556,11 @@ bool ReinforcementLearningScreen::render(int width, int height) {
     style.hud = false;
     style.gizmo = false;
     style.scaleBar = false;
-    // O chao largo com passo de 0,5 m: andando, ele sai da grade fina logo.
-    style.gridExtent = 70.0f;
+    // O chao largo com passo de 0,5 m: andando, ele sai da grade fina logo. Ate
+    // 24 m em volta (a grade segue a camera): a de 70 m tinha 560 linhas de
+    // 140 m e custava 26 dos 40 ms do quadro (o custo cresce com o quadrado do
+    // alcance); alem de 24 m as linhas ja se juntam no horizonte.
+    style.gridExtent = 24.0f;
     style.gridStep = 0.5f;
     style.supersample = 1;
     OrbitCamera camera = m_camera;
@@ -858,8 +861,8 @@ void ReinforcementLearningScreen::drawViewport(CanvasTarget& canvas, float botto
     drawList->AddRectFilled(origin, end, IM_COL32(6, 8, 11, 255), ui(4.0f));
     const float scaleX = io.DisplayFramebufferScale.x > 0.0f ? io.DisplayFramebufferScale.x : 1.0f;
     const float scaleY = io.DisplayFramebufferScale.y > 0.0f ? io.DisplayFramebufferScale.y : 1.0f;
-    const int width = std::max(16, static_cast<int>(std::lround(size.x * scaleX)));
-    const int height = std::max(16, static_cast<int>(std::lround(size.y * scaleY)));
+    const int width = std::max(16, static_cast<int>(std::lround(size.x * scaleX * m_renderScale)));
+    const int height = std::max(16, static_cast<int>(std::lround(size.y * scaleY * m_renderScale)));
     const char* waiting = !m_viewerError.empty() ? m_viewerError.c_str()
         : !m_modelError.empty()                  ? m_modelError.c_str()
         : activeRun().empty()                    ? "SEM TREINO"
@@ -881,7 +884,30 @@ void ReinforcementLearningScreen::drawViewport(CanvasTarget& canvas, float botto
         m_dirty = true;
     }
     if (hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) frame(90.0f, 6.0f);
+    const auto renderBegin = std::chrono::steady_clock::now();
     const bool rendered = render(width, height);
+    if (rendered) {
+        const float milliseconds = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - renderBegin).count();
+        m_renderMilliseconds = m_renderMilliseconds <= 0.0f ? milliseconds : 0.85f * m_renderMilliseconds + 0.15f * milliseconds;
+        // (Degraus de escala, no maximo um a cada ~0,5 s: nao pisca.)
+        constexpr std::array<float, 4> Steps { 1.0f, 0.85f, 0.7f, 0.55f };
+        if (++m_renderScaleHold > 15) {
+            std::size_t at = 0;
+            for (std::size_t i = 0; i < Steps.size(); ++i)
+                if (std::abs(Steps[i] - m_renderScale) < 0.01f) at = i;
+            if (m_renderMilliseconds > 28.0f && at + 1 < Steps.size()) {
+                m_renderScale = Steps[at + 1];
+                m_renderScaleHold = 0;
+                m_renderMilliseconds = 0.0f;
+                m_dirty = true;
+            } else if (m_renderMilliseconds < 14.0f && at > 0) {
+                m_renderScale = Steps[at - 1];
+                m_renderScaleHold = 0;
+                m_renderMilliseconds = 0.0f;
+                m_dirty = true;
+            }
+        }
+    }
     const std::uint64_t id = canvas.present(m_image, rendered);
     drawList->AddImage(static_cast<ImTextureID>(id), origin, end);
     // A politica que esta no corpo (canto de cima), o pedido e a velocidade dele.
