@@ -4,7 +4,7 @@
   "displayName": "Locomocao: 3e - inversoes e arrancadas",
   "comment": "3e: soma as inversoes de 180 graus e as arrancadas em velocidade (a responsividade). Pesos congelados. A ajuda auxiliar em 0%, o professor da virada e a quietude (iguais aos das fases 1-2); as velocidades do modo padrao (trote 4,5 todos os rumos; corrida 8 frente, 6 de lado e de costas), o chao de 180 m e o limite de 80 m. A ficha: vault 04_locomocao/cartao_fase3.md.",
   "episodeSeconds": 10.0,
-  "comment_assist": "A ajuda auxiliar em 0% (decisao do usuario, 18/10: volta ao 0% de verdade, os mesmos exercicios; antes 30% desde 17/10): a rede aprende os movimentos dificeis (trote com curvas bruscas) com ajuda; depois, com a rede boa, a ajuda desce (20, 10, 5, 0) ate o 0% de verdade (regime B, vault 04_locomocao/ajuda_auxiliar.md).",
+  "comment_assist": "A ajuda auxiliar base em 0% (decisao do usuario, 18/10). Por cima, a ajuda sorteada por episodio (assistSchedule; decisao Claude + Codex delegada pelo usuario, plano de 18/10 4.2.1, A/B S4): 60% dos episodios em 0%, o resto uniforme em 5-30%; a avaliacao e o portao sempre em 0%.",
   "assist": {
     "standing": 0.0,
     "walking": 0.0,
@@ -53,9 +53,10 @@
     "contactPerCycle": true,
     "neckRelative": true,
     "neckSlackDegrees": 6.0,
-    "velocitySmoothed": true
+    "velocitySmoothed": true,
+    "assistIncludesTorque": true
   },
-  "comment_plano18": "O plano de 18/10 (vault 04_locomocao/referencia/pesquisas/08_plano_consenso.md; os A/B em 10_execucao.md): o curriculo de velocidade por celulas (S1, os tetos moram na copia da tarefa do treino), os comecos guardados (S2), a nota corrigida (Q4b: contato por ciclo, pescoco relativo a sombra com folga de 6 graus, velocidade suavizada na passada).",
+  "comment_plano18": "O plano de 18/10 (vault 04_locomocao/referencia/pesquisas/08_plano_consenso.md; os A/B em 10_execucao.md): o curriculo de velocidade por celulas (S1, os tetos moram na copia da tarefa do treino), os comecos guardados (S2), a nota corrigida (Q4b: contato por ciclo, pescoco relativo a sombra com folga de 6 graus, velocidade suavizada na passada) e a ajuda sorteada por episodio (S4: 60% em 0%, o resto de 5 a 30%; a avaliacao e o portao sempre em 0%; o custo da ajuda conta os torques).",
   "speedCurriculum": {
     "enabled": true,
     "binStart": [
@@ -80,6 +81,12 @@
     "capacity": 128,
     "surviveSeconds": 1.0,
     "minimumSpeed": 1.0
+  },
+  "assistSchedule": {
+    "enabled": true,
+    "zeroFraction": 0.6,
+    "minimum": 5.0,
+    "maximum": 30.0
   },
   "termination": {
     "pelvisHeight": 0.45,
