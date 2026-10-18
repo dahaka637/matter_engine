@@ -39,6 +39,7 @@ public:
 
     [[nodiscard]] TrackingRewardTerms3D evaluate(const TrackingLeaderState3D& leader,
         std::span<const PhysicsBodyState3D> bodyLinks, Vec3 bodyCenterOfMass, Vec3 bodyCenterOfMassVelocity);
+    [[nodiscard]] std::size_t headLink() const { return m_head; }
 
 private:
     const RagdollProfile3D* m_profile = nullptr;

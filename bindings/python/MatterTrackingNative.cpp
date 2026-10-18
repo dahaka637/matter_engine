@@ -127,18 +127,19 @@ NB_MODULE(matter_tracking_native, m) {
         .def("episode_columns",
             [](const TrackingTraining3D&) {
                 return std::vector<std::string> { "mundo", "segundos", "caiu", "nota_media", "erro_vel_cm",
-                    "vel_corpo", "vel_pedida", "dist_cabeca" };
+                    "vel_corpo", "vel_pedida", "dist_cabeca", "caiu_de_verdade", "altura_cabeca_fim" };
             })
         .def("finished_episodes",
             [](TrackingTraining3D& b) {
                 const std::vector<TrackingEpisode3D> episodes = b.takeEpisodes();
-                auto out = owned<float>({ episodes.size(), 8 });
+                auto out = owned<float>({ episodes.size(), 10 });
                 float* d = out.data();
                 for (std::size_t i = 0; i < episodes.size(); ++i) {
                     const TrackingEpisode3D& e = episodes[i];
-                    const float row[8] = { static_cast<float>(e.world), e.seconds, e.fell ? 1.0f : 0.0f, e.meanReward,
-                        e.centerOfMassSpeedError, e.bodySpeed, e.requestedSpeed, e.meanHeadDistance };
-                    std::copy(row, row + 8, d + i * 8);
+                    const float row[10] = { static_cast<float>(e.world), e.seconds, e.fell ? 1.0f : 0.0f, e.meanReward,
+                        e.centerOfMassSpeedError, e.bodySpeed, e.requestedSpeed, e.meanHeadDistance,
+                        e.fellDown ? 1.0f : 0.0f, e.endHeadHeight };
+                    std::copy(row, row + 10, d + i * 10);
                 }
                 return out;
             })

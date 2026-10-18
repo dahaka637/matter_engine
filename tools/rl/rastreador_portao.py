@@ -62,6 +62,11 @@ def main() -> int:
               "quedas": falls, "segundos_medio": float(rows[:, 1].mean()), "erro_vel_cm": error,
               "vel_corpo": float(rows[:, 5].mean()), "vel_pedida": float(rows[:, 6].mean()),
               "dist_cabeca": float(rows[:, 7].mean()), "passa_g1": passed, "hora": time.time()}
+    if rows.shape[1] >= 10:
+        # Dos fins antes dos 20 s: queda de verdade (a cabeca abaixo de 1,1 m) ou o
+        # corpo de pe que se afastou do lider.
+        result["quedas_de_verdade"] = float(rows[:, 8].mean())
+        result["afastou_de_pe"] = float((rows[:, 2] - rows[:, 8]).mean())
     print(json.dumps(result, ensure_ascii=False))
     if not args.zero:
         with open(run / "portao.jsonl", "a") as f:

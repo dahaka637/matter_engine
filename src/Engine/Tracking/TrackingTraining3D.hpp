@@ -40,6 +40,10 @@ struct TrackingEpisode3D {
     float seconds = 0.0f;
     // Acabou pela cabeca a mais de 1 m da do lider (a queda do DReCon).
     bool fell = false;
+    // Desses, quais foram queda de verdade (a cabeca abaixo de 1,1 m no fim) e
+    // quais o corpo de pe que ficou para tras (ou a frente) do lider.
+    bool fellDown = false;
+    float endHeadHeight = 0.0f;
     float meanReward = 0.0f;
     // A media por decisao do erro da velocidade do centro de massa no plano
     // (corpo contra lider, m/s), da velocidade do corpo e da pedida.

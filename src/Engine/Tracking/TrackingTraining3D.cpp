@@ -232,6 +232,12 @@ struct TrackingTraining3D::Impl {
             episode.world = static_cast<std::uint32_t>(index);
             episode.seconds = w.seconds;
             episode.fell = terminated != 0;
+            {
+                const std::size_t head = w.reward->headLink();
+                episode.endHeadHeight =
+                    head < body.links.size() ? rlLinkCenterOfMass3D(profile->links[head], body.links[head]).z : 0.0f;
+                episode.fellDown = episode.fell && episode.endHeadHeight < 1.1f;
+            }
             const double n = std::max<std::uint32_t>(1, w.decisions);
             episode.meanReward = static_cast<float>(w.rewardSum / n);
             episode.centerOfMassSpeedError = static_cast<float>(w.comErrorSum / n);
