@@ -72,6 +72,9 @@ private:
     std::size_t m_inverseStd = 0;
     float m_clip = 5.0f;
     float m_actionLimit = 10.0f;
+    // A ativacao das camadas escondidas: ELU (o padrao, as redes do Corpo e da
+    // locomocao) ou tanh (o rastreador, DReCon 6.6).
+    bool m_tanh = false;
     std::size_t m_observationSize = 0;
     std::size_t m_actionSize = 0;
     PolicyInfo3D m_info;

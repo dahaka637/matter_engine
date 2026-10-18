@@ -107,6 +107,10 @@ struct TrackingTraining3D::Impl {
         const RagdollState3D* body = nullptr;
         std::vector<float> observation;
         std::vector<float> finalObservation;
+        // Um empurrao (o visualizador): o link, a forca e o tempo que falta.
+        std::uint32_t pushLink = 0;
+        Vec3 pushForce;
+        float pushSeconds = 0.0f;
         // O episodio.
         float seconds = 0.0f;
         double rewardSum = 0.0, comErrorSum = 0.0, speedSum = 0.0, requestedSum = 0.0, headSum = 0.0;
@@ -134,7 +138,7 @@ struct TrackingTraining3D::Impl {
             w.relativeDirection = uniform(w.rng, -Pi, Pi);
             if (chance(w.rng, 0.5f)) w.command.facingYawRadians = uniform(w.rng, -Pi, Pi);
             w.turnRate = chance(w.rng, 0.3f) ? uniform(w.rng, -1.5f, 1.5f) : 0.0f;
-            w.sprint = chance(w.rng, 0.5f);
+            w.sprint = settings.allowSprint && chance(w.rng, 0.5f);
             const float top = athleteDefaultTravelSpeed3D(runtime, w.relativeDirection, w.sprint);
             w.speed = chance(w.rng, 0.15f) ? 0.0f : uniform(w.rng, 0.0f, top);
         }
@@ -144,6 +148,14 @@ struct TrackingTraining3D::Impl {
     // Um tick do lider com o jogador virtual (a troca a 60 Hz, o giro do olhar).
     void leaderTick(World& w) const {
         if (w.ticks % 2 == 0 && chance(w.rng, EventChancePerFrame)) changeCommand(w);
+        if (settings.evaluation && settings.evaluationMode == TrackingEvaluation3D::Switches && w.ticks > 0) {
+            // O protocolo do DReCon (7.1): um rumo novo a cada switchSeconds (o corpo vira e segue de frente).
+            const auto every = static_cast<std::uint64_t>(std::max(1.0f, settings.switchSeconds / TickSeconds));
+            if (w.ticks % every == 0) {
+                w.command.facingYawRadians = uniform(w.rng, -Pi, Pi);
+                composeCommand(w);
+            }
+        }
         if (w.turnRate != 0.0f) {
             w.command.facingYawRadians += w.turnRate * TickSeconds;
             composeCommand(w);
@@ -183,7 +195,8 @@ struct TrackingTraining3D::Impl {
         w.ticks = 0;
         w.command.facingYawRadians = uniform(w.rng, -Pi, Pi);
         if (settings.evaluation) {
-            w.relativeDirection = 0.0f;
+            w.relativeDirection = settings.evaluationMode == TrackingEvaluation3D::Headings
+                ? static_cast<float>(index % 8) * (Pi / 4.0f) : 0.0f;
             w.turnRate = 0.0f;
             w.sprint = false;
             w.speed = settings.evaluationSpeed;
@@ -206,6 +219,10 @@ struct TrackingTraining3D::Impl {
             leaderTick(w);
             contract->driveTargets(w.leader->state(), *w.body, w.filtered, w.drives);
             w.scene->setRagdollActiveDriveTargets(w.handle, w.drives, false);
+            if (w.pushSeconds > 0.0f) {
+                w.scene->applyRagdollLinkForce(w.handle, w.pushLink, w.pushForce, {});
+                w.pushSeconds -= TickSeconds;
+            }
             w.scene->simulate(TickSeconds);
             w.body = w.scene->ragdollStateView(w.handle);
         }
@@ -347,6 +364,21 @@ const TrackingLeaderState3D& TrackingTraining3D::leader(std::size_t world) const
 }
 
 const RagdollState3D& TrackingTraining3D::body(std::size_t world) const { return *m_impl->worlds.at(world).body; }
+
+void TrackingTraining3D::setCommand(std::size_t world, float speed, float relativeDirectionRadians) {
+    Impl::World& w = m_impl->worlds.at(world);
+    w.speed = std::max(0.0f, speed);
+    w.relativeDirection = relativeDirectionRadians;
+    w.turnRate = 0.0f;
+    m_impl->composeCommand(w);
+}
+
+void TrackingTraining3D::push(std::size_t world, std::uint32_t link, Vec3 force, float seconds) {
+    Impl::World& w = m_impl->worlds.at(world);
+    w.pushLink = link;
+    w.pushForce = force;
+    w.pushSeconds = std::max(0.0f, seconds);
+}
 
 std::string TrackingTraining3D::frameLines(std::size_t world, bool leader) const {
     const Impl& impl = *m_impl;

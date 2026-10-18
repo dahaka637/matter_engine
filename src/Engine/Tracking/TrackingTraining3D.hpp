@@ -16,6 +16,11 @@ namespace MatterEngine {
 // e estilo pela tabela do padrao).
 enum class TrackingScenario3D : std::uint8_t { Forward = 0, Full = 1 };
 
+// A avaliacao (os portoes): de frente; os 8 rumos em relacao ao olhar (o mundo i
+// no rumo i mod 8, de 45 em 45 graus); ou o protocolo de impacto do DReCon (7.1:
+// a velocidade dada, trocando de rumo a cada switchSeconds).
+enum class TrackingEvaluation3D : std::uint8_t { Forward = 0, Headings = 1, Switches = 2 };
+
 struct TrackingTrainingSettings3D {
     std::string assetsDirectory;
     std::uint32_t environments = 512;
@@ -29,6 +34,10 @@ struct TrackingTrainingSettings3D {
     // episodio acaba na queda ou no tempo.
     bool evaluation = false;
     float evaluationSpeed = 3.0f;
+    TrackingEvaluation3D evaluationMode = TrackingEvaluation3D::Forward;
+    float switchSeconds = 4.0f;
+    // O jogo inteiro com a corrida (false: so o trote, o G2).
+    bool allowSprint = true;
     // DReCon: 20 s por episodio, o filtro y = beta a + (1 - beta) y.
     float episodeSeconds = 20.0f;
     float actionFilterBeta = 0.2f;
@@ -92,6 +101,13 @@ public:
     // Para as previas: o lider e o corpo de um mundo.
     [[nodiscard]] const TrackingLeaderState3D& leader(std::size_t world) const;
     [[nodiscard]] const RagdollState3D& body(std::size_t world) const;
+    // O pedido de um mundo na mao (o visualizador): a velocidade (m/s) e o rumo
+    // em relacao ao olhar (rad); vale ate a proxima troca do jogador virtual (na
+    // avaliacao, nao ha trocas).
+    void setCommand(std::size_t world, float speed, float relativeDirectionRadians);
+    // Um empurrao (N, no mundo) num link de um mundo durante `seconds`.
+    void push(std::size_t world, std::uint32_t link, Vec3 force, float seconds);
+
     // As linhas de um quadro para as folhas (MatterModelInspector quadros: os
     // colisores no mundo, os contatos, o pedido e a velocidade), do corpo ou do
     // lider.

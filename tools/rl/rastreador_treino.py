@@ -8,7 +8,9 @@ O PPO e o do OpenAI Baselines (ppo1, o que o DReCon usou) nos valores dele que o
 artigo nao da: lambda 0,95, corte 0,2, 10 epocas, Adam 3e-4, desvio inicial 1
 (log 0) aprendido, normalizacao da entrada (media e desvio corridos, corte +-5).
 Declarado: minilotes de 4096 (o ppo1 usa 64; o mesmo gradiente esperado, bem
-mais rapido) e o fim pelo tempo com o valor do estado final (bootstrap).
+mais rapido); o fim pelo tempo com o valor do estado final (bootstrap); e a
+normalizacao da entrada atualizada a cada passo da coleta, antes de a rede ver a
+observacao (o ppo1 a atualiza com o lote inteiro antes da otimizacao).
 
   .venv/bin/python rastreador_treino.py --treino rast_g1 [--cenario frente] [--rodadas 0]
 """
@@ -17,9 +19,11 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import struct
 import os
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -31,7 +35,7 @@ REPO = HERE.parents[1]
 sys.path.insert(0, os.environ.get("MATTER_TRACKING_NATIVE", str(REPO / "build-rl" / "python")))
 import matter_tracking_native as native  # noqa: E402
 
-DATA = Path.home() / ".local" / "share" / "matter-engine" / "rl" / "rastreador"
+DATA = Path.home() / ".local" / "share" / "matter-engine" / "rl" / "runs"
 
 
 class RunningNorm(nn.Module):
@@ -78,6 +82,51 @@ class Policy(nn.Module):
         return self.critic(obs_n).squeeze(-1)
 
 
+def export_policy(model: Policy, path: Path, meta: dict) -> None:
+    """O .mrlpolicy que o motor le (PolicyRuntime3D: o ator, a normalizacao, tanh; a acao media)."""
+    floats: list[np.ndarray] = []
+    offset = 0
+
+    def push(array: torch.Tensor) -> int:
+        nonlocal offset
+        data = array.detach().to("cpu", torch.float32).contiguous().numpy().reshape(-1)
+        floats.append(data)
+        start = offset
+        offset += data.size
+        return start
+
+    mean_at = push(model.norm.mean.float())
+    inv_at = push(1.0 / torch.sqrt(model.norm.var.float() + 1e-8))
+    layers = [{"inputs": m.in_features, "outputs": m.out_features, "weights": push(m.weight), "bias": push(m.bias)}
+              for m in model.actor if isinstance(m, nn.Linear)]
+    header = dict(meta)
+    header.update({"schema": "matter-rl-policy-1", "observationSize": layers[0]["inputs"],
+                   "actionSize": layers[-1]["outputs"], "activation": "tanh",
+                   "normalizer": {"mean": mean_at, "invStd": inv_at, "clip": 5.0}, "actionLimit": 3.14159,
+                   "layers": layers, "observationLayout": "rastreador-v1", "actionLayout": "rastreador-v1",
+                   "createdUtc": datetime.now(timezone.utc).isoformat(timespec="seconds")})
+    text = json.dumps(header, ensure_ascii=False).encode("utf-8")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    with open(temporary, "wb") as handle:
+        handle.write(b"MRLPOL01")
+        handle.write(struct.pack("<I", len(text)))
+        handle.write(text)
+        handle.write(b"\0" * ((-(12 + len(text))) % 4))
+        for data in floats:
+            handle.write(data.astype("<f4").tobytes())
+    temporary.replace(path)
+
+
+def write_run_files(run: Path, cenario: str) -> None:
+    """O treino como a tela de Aprendizado o reconhece: run.json (kind rastreador) e tarefa.json."""
+    for name, data in (("run.json", {"kind": "rastreador", "task": f"rastreador_{cenario}"}),
+                       ("tarefa.json", {"schema": "matter-tracking-1", "id": f"rastreador_{cenario}",
+                                        "displayName": f"Rastreador fisico (DReCon), {cenario}"})):
+        if not (run / name).exists():
+            (run / name).write_text(json.dumps(data, ensure_ascii=False, indent=1))
+
+
 def save(path: Path, model: Policy, optimizer, counters: dict, settings: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
@@ -97,21 +146,31 @@ def main() -> int:
     parser.add_argument("--semente", type=int, default=1)
     parser.add_argument("--rodadas", type=int, default=0, help="0: ate parar")
     parser.add_argument("--salvar-cada", type=int, default=10)
+    parser.add_argument("--sem-corrida", action="store_true", help="o jogo inteiro so com o trote (o G2)")
+    parser.add_argument("--de", default="", help="comeca do ultimo checkpoint de outro treino (o degrau anterior)")
     args = parser.parse_args()
 
     run = DATA / args.treino
     run.mkdir(parents=True, exist_ok=True)
+    write_run_files(run, args.cenario)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     torch.manual_seed(args.semente)
     batch = native.TrackingBatch(str(REPO / "assets"), environments=args.mundos, threads=args.threads,
-                                 seed=args.semente, scenario=args.cenario, forward_maximum_speed=args.teto)
+                                 seed=args.semente, scenario=args.cenario, forward_maximum_speed=args.teto,
+                                 allow_sprint=not args.sem_corrida)
     n, obs_size, act_size = batch.num_envs, batch.obs_size, batch.action_size
     model = Policy(obs_size, act_size).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=3e-4)
     counters = {"rodada": 0, "decisoes": 0, "episodios": 0}
-    settings = {"cenario": args.cenario, "teto": args.teto, "mundos": n, "passos": args.passos,
+    settings = {"cenario": args.cenario, "teto": args.teto, "corrida": not args.sem_corrida, "mundos": n,
+                "passos": args.passos,
                 "observacao": batch.observation_names(), "acao": batch.action_names()}
     checkpoint = run / "ultimo.pt"
+    if not checkpoint.exists() and args.de:
+        # O degrau seguinte comeca do cerebro do anterior (a rede, a normalizacao e o otimizador).
+        source = DATA / args.de / "ultimo.pt"
+        checkpoint.write_bytes(source.read_bytes())
+        print(f"comecando de {args.de}", flush=True)
     if checkpoint.exists():
         state = torch.load(checkpoint, map_location=device, weights_only=False)
         model.load_state_dict(state["model"])
@@ -212,6 +271,10 @@ def main() -> int:
         if counters["rodada"] % args.salvar_cada == 0:
             save(checkpoint, model, optimizer, counters, settings)
             save(run / f"r{counters['rodada']:06d}.pt", model, optimizer, counters, settings)
+            export_policy(model, run / "exports" / "policy_latest.mrlpolicy",
+                          {"run": args.treino, "iteration": counters["rodada"], "steps": counters["decisoes"],
+                           "observationNames": settings["observacao"]})
+            (run / "latest.json").write_text(json.dumps({"iteration": counters["rodada"]}))
     save(checkpoint, model, optimizer, counters, settings)
     return 0
 

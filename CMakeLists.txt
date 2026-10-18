@@ -856,6 +856,7 @@ add_library(MatterWorkbench STATIC
     src/Workbench/Screens/ReinforcementLearningHost.cpp
     src/Workbench/ReinforcementLearning/ReinforcementLearningScreen.cpp
     src/Workbench/ReinforcementLearning/LocomotionViewer3D.cpp
+    src/Workbench/ReinforcementLearning/TrackingViewer3D.cpp
 )
 
 # A tela de Aprendizado por Reforco usa o modulo de RL inteiro (os mundos, a
@@ -866,7 +867,7 @@ endif()
 target_include_directories(MatterWorkbench PUBLIC src)
 target_link_libraries(MatterWorkbench
     PUBLIC MatterEngine MatterModelingRig MatterObjects
-    PRIVATE imgui meshoptimizer MatterRLEnvironment MatterRLPolicy MatterRLSupervisor MatterRLCalibration
+    PRIVATE imgui meshoptimizer MatterRLEnvironment MatterRLPolicy MatterRLSupervisor MatterRLCalibration MatterTracking
 )
 target_compile_definitions(MatterWorkbench PRIVATE MATTERENGINE_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
 

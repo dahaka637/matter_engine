@@ -53,7 +53,8 @@ NB_MODULE(matter_tracking_native, m) {
             "__init__",
             [](TrackingTraining3D* self, const std::string& assets, std::uint32_t environments, std::uint32_t threads,
                 std::uint64_t seed, const std::string& scenario, float forward_maximum_speed, bool evaluation,
-                float evaluation_speed, float episode_seconds) {
+                float evaluation_speed, float episode_seconds, bool allow_sprint, const std::string& evaluation_mode,
+                float switch_seconds) {
                 TrackingTrainingSettings3D settings;
                 settings.assetsDirectory = assets;
                 settings.environments = environments;
@@ -66,12 +67,19 @@ NB_MODULE(matter_tracking_native, m) {
                 settings.evaluation = evaluation;
                 settings.evaluationSpeed = evaluation_speed;
                 settings.episodeSeconds = episode_seconds;
+                settings.allowSprint = allow_sprint;
+                if (evaluation_mode == "frente") settings.evaluationMode = TrackingEvaluation3D::Forward;
+                else if (evaluation_mode == "rumos") settings.evaluationMode = TrackingEvaluation3D::Headings;
+                else if (evaluation_mode == "trocas") settings.evaluationMode = TrackingEvaluation3D::Switches;
+                else throw nb::value_error("avaliacao: 'frente', 'rumos' ou 'trocas'");
+                settings.switchSeconds = switch_seconds;
                 nb::gil_scoped_release release;
                 new (self) TrackingTraining3D(settings);
             },
             "assets"_a, "environments"_a = 512, "threads"_a = 0, "seed"_a = 1, "scenario"_a = "frente",
             "forward_maximum_speed"_a = 3.0f, "evaluation"_a = false, "evaluation_speed"_a = 3.0f,
-            "episode_seconds"_a = 20.0f)
+            "episode_seconds"_a = 20.0f, "allow_sprint"_a = true, "evaluation_mode"_a = "frente",
+            "switch_seconds"_a = 4.0f)
         .def_prop_ro("num_envs", &TrackingTraining3D::environmentCount)
         .def_prop_ro("obs_size", &TrackingTraining3D::observationSize)
         .def_prop_ro("action_size", &TrackingTraining3D::actionSize)

@@ -8,6 +8,7 @@
 #include "Engine/Physics/PhysicsEngine3D.hpp"
 #include "Engine/RL/Commands/CommandPilot3D.hpp"
 #include "Engine/RL/Environment/BodyTrainingBatch3D.hpp"
+#include "Workbench/ReinforcementLearning/ViewerWorld3D.hpp"
 
 #include <cstdint>
 #include <filesystem>
@@ -27,7 +28,7 @@ namespace MatterEngine {
 // pela mesma conta do analogico do jogo, com as ajudas da tarefa, e a rede
 // exportada pelo treino. Entrega a mesma vista (BodyWorldView3D) que o
 // visualizador do Corpo, para a tela desenhar igual.
-class LocomotionViewer3D final {
+class LocomotionViewer3D final : public ViewerWorld3D {
 public:
     struct Drill {
         std::string id;
@@ -39,7 +40,7 @@ public:
     // Lanca std::runtime_error se a tarefa nao for da locomocao.
     LocomotionViewer3D(const std::filesystem::path& taskPath, const std::filesystem::path& assetsDirectory,
         const std::string& drill, std::uint64_t seed);
-    ~LocomotionViewer3D();
+    ~LocomotionViewer3D() override;
     LocomotionViewer3D(const LocomotionViewer3D&) = delete;
     LocomotionViewer3D& operator=(const LocomotionViewer3D&) = delete;
 
@@ -49,21 +50,21 @@ public:
     [[nodiscard]] static bool isLocomotionTask(const std::filesystem::path& taskPath);
 
     // A rede (nula: o classico). O texto diz qual e, ou o erro.
-    void setPolicy(const std::filesystem::path& file, std::string& label);
-    void clearPolicy();
-    [[nodiscard]] bool hasPolicy() const;
+    void setPolicy(const std::filesystem::path& file, std::string& label) override;
+    void clearPolicy() override;
+    [[nodiscard]] bool hasPolicy() const override;
 
     // Uma decisao (30 Hz: 4 ticks de fisica).
-    void step();
-    [[nodiscard]] float policyStepSeconds() const { return 1.0f / 30.0f; }
-    void reset(std::uint64_t seed);
+    void step() override;
+    [[nodiscard]] float policyStepSeconds() const override { return 1.0f / 30.0f; }
+    void reset(std::uint64_t seed) override;
     // Velocidade manual para a frente (no lugar do piloto); nulo devolve o piloto.
-    void setManualSpeed(std::optional<float> metersPerSecond);
+    void setManualSpeed(std::optional<float> metersPerSecond) override;
     // Um empurrao no peito (N), por alguns decimos de segundo.
-    void push(Vec3 force, float seconds);
+    void push(Vec3 force, float seconds) override;
 
-    [[nodiscard]] BodyWorldView3D view() const;
-    [[nodiscard]] const RagdollProfile3D& profile() const;
+    [[nodiscard]] BodyWorldView3D view() const override;
+    [[nodiscard]] const RagdollProfile3D& profile() const override;
 
 private:
     struct Impl;

@@ -11,6 +11,7 @@
 #include "Engine/RL/Calibration/RagdollColliderWireframe3D.hpp"
 #include "Workbench/PlayerInspector/CanvasTarget.hpp"
 #include "Workbench/ReinforcementLearning/LocomotionViewer3D.hpp"
+#include "Workbench/ReinforcementLearning/TrackingViewer3D.hpp"
 
 #include <array>
 #include <filesystem>
@@ -157,7 +158,8 @@ private:
     // O mundo do visualizador e a politica dele.
     std::unique_ptr<BodyTrainingBatch3D> m_viewer;
     // Um treino da locomocao (o RL dentro dos modulos) no lugar do Corpo.
-    std::unique_ptr<LocomotionViewer3D> m_locomotion;
+    // O mundo mostrado quando o treino e da locomocao ou do rastreador.
+    std::unique_ptr<ViewerWorld3D> m_locomotion;
     // A escala de desenho do visualizador (1 = os pixels da tela; menos = o quadro
     // e desenhado menor e esticado): baixa sozinha quando o quadro passa de ~28 ms
     // (a tela grande ou de alta densidade, o treino disputando os nucleos) e sobe

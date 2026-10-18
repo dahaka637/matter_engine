@@ -158,7 +158,7 @@ bool isTrainingRun(const std::filesystem::path& directory) {
     if (!file) return false;
     const nlohmann::json config = nlohmann::json::parse(file, nullptr, false);
     if (config.is_discarded() || !config.is_object()) return false;
-    if (config.value("kind", std::string()) == "locomocao") return true;
+    if (config.value("kind", std::string()) == "locomocao" || config.value("kind", std::string()) == "rastreador") return true;
     const auto contract = config.find("contract");
     return contract != config.end() && contract->is_number() && contract->get<int>() == 2;
 }
@@ -322,7 +322,12 @@ void ReinforcementLearningScreen::loadDrills() {
     m_futurePhases.clear();
     const std::filesystem::path path = taskPath();
     if (path.empty() || !std::filesystem::exists(path)) return;
-    if (LocomotionViewer3D::isLocomotionTask(path)) {
+    if (TrackingViewer3D::isTrackingTask(path)) {
+        // O rastreador: o lider na velocidade da tela, de frente (o G1).
+        m_drillIds.push_back("frente");
+        m_drillNames.push_back("De frente (rastreador)");
+        m_drillPhases.push_back(1);
+    } else if (LocomotionViewer3D::isLocomotionTask(path)) {
         for (const LocomotionViewer3D::Drill& drill : LocomotionViewer3D::drillsOf(path)) {
             m_drillIds.push_back(drill.id);
             m_drillNames.push_back(drill.name);
@@ -379,11 +384,15 @@ void ReinforcementLearningScreen::ensureViewer() {
     }
     if (hasViewer() || !m_viewerError.empty() || run.empty()) return;
     const std::filesystem::path task = taskPath();
-    if (!task.empty() && LocomotionViewer3D::isLocomotionTask(task)) {
+    const bool tracking = !task.empty() && TrackingViewer3D::isTrackingTask(task);
+    if (tracking || (!task.empty() && LocomotionViewer3D::isLocomotionTask(task))) {
         try {
             m_viewerTask = task;
-            m_locomotion = std::make_unique<LocomotionViewer3D>(task, m_options.sourceRoot / "assets", m_viewerDrill,
-                static_cast<std::uint64_t>(std::time(nullptr)));
+            const auto seed = static_cast<std::uint64_t>(std::time(nullptr));
+            if (tracking) m_locomotion = std::make_unique<TrackingViewer3D>(m_options.sourceRoot / "assets", seed);
+            else
+                m_locomotion = std::make_unique<LocomotionViewer3D>(task, m_options.sourceRoot / "assets", m_viewerDrill,
+                    seed);
             m_colliders = buildRagdollColliderWireframe3D(m_locomotion->profile());
             applyManual();
             reloadPolicy(true);
