@@ -7,6 +7,7 @@
 #include <nanobind/stl/tuple.h>
 #include <nanobind/stl/vector.h>
 
+#include "Engine/Tracking/TrackingGetUpTraining3D.hpp"
 #include "Engine/Tracking/TrackingTraining3D.hpp"
 
 #include <algorithm>
@@ -54,7 +55,7 @@ NB_MODULE(matter_tracking_native, m) {
             [](TrackingTraining3D* self, const std::string& assets, std::uint32_t environments, std::uint32_t threads,
                 std::uint64_t seed, const std::string& scenario, float forward_maximum_speed, bool evaluation,
                 float evaluation_speed, float episode_seconds, bool allow_sprint, const std::string& evaluation_mode,
-                float switch_seconds) {
+                float switch_seconds, bool projectiles, float projectile_minimum_kg, float projectile_maximum_kg) {
                 TrackingTrainingSettings3D settings;
                 settings.assetsDirectory = assets;
                 settings.environments = environments;
@@ -73,13 +74,17 @@ NB_MODULE(matter_tracking_native, m) {
                 else if (evaluation_mode == "trocas") settings.evaluationMode = TrackingEvaluation3D::Switches;
                 else throw nb::value_error("avaliacao: 'frente', 'rumos' ou 'trocas'");
                 settings.switchSeconds = switch_seconds;
+                settings.projectiles = projectiles;
+                settings.projectileMinimumKg = projectile_minimum_kg;
+                settings.projectileMaximumKg = projectile_maximum_kg;
                 nb::gil_scoped_release release;
                 new (self) TrackingTraining3D(settings);
             },
             "assets"_a, "environments"_a = 512, "threads"_a = 0, "seed"_a = 1, "scenario"_a = "frente",
             "forward_maximum_speed"_a = 3.0f, "evaluation"_a = false, "evaluation_speed"_a = 3.0f,
             "episode_seconds"_a = 20.0f, "allow_sprint"_a = true, "evaluation_mode"_a = "frente",
-            "switch_seconds"_a = 4.0f)
+            "switch_seconds"_a = 4.0f, "projectiles"_a = false, "projectile_minimum_kg"_a = 0.01f,
+            "projectile_maximum_kg"_a = 8.0f)
         .def_prop_ro("num_envs", &TrackingTraining3D::environmentCount)
         .def_prop_ro("obs_size", &TrackingTraining3D::observationSize)
         .def_prop_ro("action_size", &TrackingTraining3D::actionSize)
@@ -156,4 +161,95 @@ NB_MODULE(matter_tracking_native, m) {
         .def("body_links", [](const TrackingTraining3D& b, std::size_t world) { return links(b.body(world).links); },
             "world"_a)
         .def("frame_lines", &TrackingTraining3D::frameLines, "world"_a, "leader"_a = false);
+
+    // O levantar sem ajuda (DeepMimic): o ragdoll do jogo imitando o clipe de levantar.
+    nb::class_<TrackingGetUpTraining3D>(m, "GetUpBatch")
+        .def(
+            "__init__",
+            [](TrackingGetUpTraining3D* self, const std::string& assets, const std::string& clip,
+                std::uint32_t environments, std::uint32_t threads, std::uint64_t seed, bool evaluation) {
+                TrackingGetUpSettings3D settings;
+                settings.assetsDirectory = assets;
+                settings.clip = clip;
+                settings.environments = environments;
+                settings.threads = threads;
+                settings.seed = seed;
+                settings.evaluation = evaluation;
+                nb::gil_scoped_release release;
+                new (self) TrackingGetUpTraining3D(settings);
+            },
+            "assets"_a, "clip"_a = "frente", "environments"_a = 512, "threads"_a = 0, "seed"_a = 1,
+            "evaluation"_a = false)
+        .def_prop_ro("num_envs", &TrackingGetUpTraining3D::environmentCount)
+        .def_prop_ro("obs_size", &TrackingGetUpTraining3D::observationSize)
+        .def_prop_ro("action_size", &TrackingGetUpTraining3D::actionSize)
+        .def_prop_ro("clip_seconds", &TrackingGetUpTraining3D::clipSeconds)
+        .def_prop_ro("policy_dt", [](const TrackingGetUpTraining3D&) {
+            return TrackingGetUpTraining3D::TicksPerDecision * TrackingGetUpTraining3D::TickSeconds;
+        })
+        .def("observation_names", &TrackingGetUpTraining3D::observationNames)
+        .def("action_names", &TrackingGetUpTraining3D::actionNames)
+        .def(
+            "reset",
+            [](TrackingGetUpTraining3D& b, std::uint64_t seed) {
+                nb::gil_scoped_release release;
+                b.reset(seed);
+            },
+            "seed"_a)
+        .def("observations",
+            [](const TrackingGetUpTraining3D& b) {
+                auto out = owned<float>({ b.environmentCount(), b.observationSize() });
+                b.observations(std::span<float>(out.data(), out.size()));
+                return out;
+            })
+        .def("final_observations",
+            [](const TrackingGetUpTraining3D& b) {
+                auto out = owned<float>({ b.environmentCount(), b.observationSize() });
+                b.finalObservations(std::span<float>(out.data(), out.size()));
+                return out;
+            })
+        .def("reference_actions",
+            [](const TrackingGetUpTraining3D& b) {
+                auto out = owned<float>({ b.environmentCount(), b.actionSize() });
+                b.referenceActions(std::span<float>(out.data(), out.size()));
+                return out;
+            })
+        .def(
+            "step",
+            [](TrackingGetUpTraining3D& b,
+                nb::ndarray<const float, nb::ndim<2>, nb::c_contig, nb::device::cpu> actions) {
+                const std::size_t n = b.environmentCount();
+                if (actions.shape(0) != n || actions.shape(1) != b.actionSize())
+                    throw nb::value_error("acoes com forma errada");
+                auto rewards = owned<float>({ n });
+                auto terminated = owned<std::uint8_t>({ n });
+                auto truncated = owned<std::uint8_t>({ n });
+                {
+                    const std::span<const float> a(actions.data(), actions.size());
+                    nb::gil_scoped_release release;
+                    b.step(a, std::span<float>(rewards.data(), n), std::span<std::uint8_t>(terminated.data(), n),
+                        std::span<std::uint8_t>(truncated.data(), n));
+                }
+                return std::make_tuple(rewards, terminated, truncated);
+            },
+            "actions"_a)
+        .def("episode_columns",
+            [](const TrackingGetUpTraining3D&) {
+                return std::vector<std::string> { "mundo", "inicio", "segundos", "nota_media", "altura_cabeca",
+                    "altura_pelve", "de_pe" };
+            })
+        .def("finished_episodes",
+            [](TrackingGetUpTraining3D& b) {
+                const std::vector<TrackingGetUpEpisode3D> episodes = b.takeEpisodes();
+                auto out = owned<float>({ episodes.size(), 7 });
+                float* d = out.data();
+                for (std::size_t i = 0; i < episodes.size(); ++i) {
+                    const TrackingGetUpEpisode3D& e = episodes[i];
+                    const float row[7] = { static_cast<float>(e.world), e.startSeconds, e.seconds, e.meanReward,
+                        e.headHeight, e.pelvisHeight, e.standing ? 1.0f : 0.0f };
+                    std::copy(row, row + 7, d + i * 7);
+                }
+                return out;
+            })
+        .def("frame_lines", &TrackingGetUpTraining3D::frameLines, "world"_a, "reference"_a = false);
 }

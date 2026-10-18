@@ -34,8 +34,10 @@ PolicyRuntime3D::PolicyRuntime3D(const std::filesystem::path& path) {
     m_observationSize = header.at("observationSize").get<std::size_t>();
     m_actionSize = header.at("actionSize").get<std::size_t>();
     const std::string activation = header.value("activation", std::string("elu"));
-    if (activation != "elu" && activation != "tanh") throw std::runtime_error("politica: ativacao nao suportada");
+    if (activation != "elu" && activation != "tanh" && activation != "relu")
+        throw std::runtime_error("politica: ativacao nao suportada");
     m_tanh = activation == "tanh";
+    m_relu = activation == "relu";
     const auto& normalizer = header.at("normalizer");
     m_mean = normalizer.at("mean").get<std::size_t>();
     m_inverseStd = normalizer.at("invStd").get<std::size_t>();
@@ -131,6 +133,8 @@ void PolicyRuntime3D::evaluate(std::span<const float> observation, std::span<flo
         denseLayer(m_transposed.data() + layer.transposed, m_data.data() + layer.bias, in, out, layer.inputs, outputs);
         if (hidden && m_tanh)
             for (std::size_t o = 0; o < outputs; ++o) out[o] = std::tanh(out[o]);
+        else if (hidden && m_relu)
+            for (std::size_t o = 0; o < outputs; ++o) out[o] = std::max(0.0f, out[o]);
         else if (hidden)
             for (std::size_t o = 0; o < outputs; ++o) out[o] = out[o] > 0.0f ? out[o] : std::expm1(out[o]);
         std::swap(in, out);
@@ -174,6 +178,8 @@ void PolicyRuntime3D::evaluateBatch(std::span<const float> observations, std::sp
         }
         if (hidden && m_tanh)
             for (std::size_t k = 0; k < count * outputs; ++k) out[k] = std::tanh(out[k]);
+        else if (hidden && m_relu)
+            for (std::size_t k = 0; k < count * outputs; ++k) out[k] = std::max(0.0f, out[k]);
         else if (hidden)
             for (std::size_t k = 0; k < count * outputs; ++k) out[k] = out[k] > 0.0f ? out[k] : std::expm1(out[k]);
         std::swap(in, out);

@@ -38,6 +38,14 @@ struct TrackingTrainingSettings3D {
     float switchSeconds = 4.0f;
     // O jogo inteiro com a corrida (false: so o trote, o G2).
     bool allowSprint = true;
+    // Os projeteis do DReCon (7.1, o G3): um cubo de 0,2 m a cada segundo, a 5
+    // m/s, contra um ponto sorteado de -0,5 a 0,5 m na vertical do centro de
+    // massa, com a massa sorteada entre os limites (o artigo: 0,01 a 8 kg; a
+    // avaliacao da Fig. 11 fixa a massa). Declarado (o artigo nao diz): sai a
+    // 2 m do corpo, num rumo sorteado, com a mira corrigindo a gravidade.
+    bool projectiles = false;
+    float projectileMinimumKg = 0.01f;
+    float projectileMaximumKg = 8.0f;
     // DReCon: 20 s por episodio, o filtro y = beta a + (1 - beta) y.
     float episodeSeconds = 20.0f;
     float actionFilterBeta = 0.2f;

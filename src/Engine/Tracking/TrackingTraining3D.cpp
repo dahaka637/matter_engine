@@ -7,6 +7,7 @@
 #include "Engine/RL/Body/RLBody3D.hpp"
 #include "Engine/Tracking/TrackingContract3D.hpp"
 #include "Engine/Tracking/TrackingReward3D.hpp"
+#include "Engine/Tracking/TrackingScene3D.hpp"
 
 #include <algorithm>
 #include <array>
@@ -28,52 +29,8 @@ constexpr float EventChancePerFrame = 0.001f;
 constexpr float RecenterDistance = 300.0f;
 constexpr float GroundHalfExtent = 400.0f;
 
-PhysicsSceneSettings3D trackingScene() {
-    PhysicsSceneSettings3D scene;
-    scene.workerThreadCount = 1;
-    scene.runJobsInline = true;
-    scene.maximumBodies = 128u;
-    scene.maximumBodyPairs = 4096u;
-    scene.maximumContactConstraints = 2048u;
-    scene.scratchBufferSizeBytes = 4u * 1024u * 1024u;
-    return scene;
-}
-
-void createGround(PhysicsScene3D& scene) {
-    PhysicsShape3D shape;
-    shape.type = PhysicsShapeType3D::Box;
-    shape.halfExtents = { GroundHalfExtent, GroundHalfExtent, 0.1f };
-    shape.materialId = "concrete";
-    PhysicsBodyDefinition3D ground;
-    ground.motionType = PhysicsMotionType3D::Static;
-    ground.position = { 0.0f, 0.0f, -0.1f };
-    ground.materialId = "concrete";
-    (void)scene.createBody(ground, std::span<const PhysicsShape3D>(&shape, 1));
-}
-
 float uniform(std::mt19937& rng, float lo, float hi) { return std::uniform_real_distribution<float>(lo, hi)(rng); }
 bool chance(std::mt19937& rng, float p) { return uniform(rng, 0.0f, 1.0f) < p; }
-
-// Puxada dinamica: cada participante pega o proximo mundo livre (como o lote
-// da locomocao); cada mundo e independente, a ordem nao muda nenhum bit.
-template <typename Body>
-void pullWorlds(TaskScheduler& scheduler, std::uint32_t participants, std::size_t count, Body body) {
-    struct Context {
-        std::atomic<std::size_t> next { 0 };
-        std::size_t count = 0;
-        Body* body = nullptr;
-    } context;
-    context.count = count;
-    context.body = &body;
-    scheduler.parallelFor(std::max<std::size_t>(1, std::min<std::size_t>(participants, count)), 1,
-        [](std::size_t, std::size_t, void* raw) noexcept {
-            auto* ctx = static_cast<Context*>(raw);
-            for (std::size_t i = ctx->next.fetch_add(1, std::memory_order_relaxed); i < ctx->count;
-                    i = ctx->next.fetch_add(1, std::memory_order_relaxed))
-                (*ctx->body)(i);
-        },
-        &context);
-}
 
 } // namespace
 
@@ -107,6 +64,10 @@ struct TrackingTraining3D::Impl {
         const RagdollState3D* body = nullptr;
         std::vector<float> observation;
         std::vector<float> finalObservation;
+        // O projetil do DReCon (7.1): o cubo da vez e o relogio dele.
+        PhysicsBodyHandle3D projectile;
+        bool hasProjectile = false;
+        float projectileClock = 0.0f;
         // Um empurrao (o visualizador): o link, a forca e o tempo que falta.
         std::uint32_t pushLink = 0;
         Vec3 pushForce;
@@ -119,6 +80,30 @@ struct TrackingTraining3D::Impl {
     std::vector<World> worlds;
     std::vector<TrackingEpisode3D> episodes;
     std::mutex episodeMutex;
+
+    // Relanca o cubo (DReCon 7.1): o de antes sai, um novo nasce a 2 m e voa a
+    // 5 m/s (na horizontal) ate um ponto de -0,5 a 0,5 m na vertical do centro de massa.
+    void launchProjectile(World& w) const {
+        if (w.hasProjectile) w.scene->destroyBody(w.projectile);
+        const Vec3 com = rlBodyCenterOfMass3D(*profile, w.body->links);
+        const float angle = uniform(w.rng, -Pi, Pi);
+        const Vec3 target = com + Vec3 { 0.0f, 0.0f, uniform(w.rng, -0.5f, 0.5f) };
+        const Vec3 start = target + Vec3 { 2.0f * std::cos(angle), 2.0f * std::sin(angle), 0.0f };
+        const float flight = 2.0f / 5.0f;
+        PhysicsShape3D shape;
+        shape.type = PhysicsShapeType3D::Box;
+        shape.halfExtents = { 0.1f, 0.1f, 0.1f };
+        shape.materialId = "wood";
+        PhysicsBodyDefinition3D box;
+        box.position = start;
+        // (A gravidade no voo: sobe g t / 2 para chegar no ponto.)
+        box.linearVelocity = (target - start) * (1.0f / flight) + Vec3 { 0.0f, 0.0f, 0.5f * 9.81f * flight };
+        box.massKg = uniform(w.rng, settings.projectileMinimumKg, settings.projectileMaximumKg);
+        box.materialId = "wood";
+        box.characteristicSizeMeters = 0.2f;
+        w.projectile = w.scene->createBody(box, std::span<const PhysicsShape3D>(&shape, 1));
+        w.hasProjectile = true;
+    }
 
     // O pedido do jogador virtual de agora em velocidade no mundo.
     void composeCommand(World& w) const {
@@ -223,6 +208,10 @@ struct TrackingTraining3D::Impl {
                 w.scene->applyRagdollLinkForce(w.handle, w.pushLink, w.pushForce, {});
                 w.pushSeconds -= TickSeconds;
             }
+            if (settings.projectiles && (w.projectileClock += TickSeconds) >= 1.0f) {
+                w.projectileClock = 0.0f;
+                launchProjectile(w);
+            }
             w.scene->simulate(TickSeconds);
             w.body = w.scene->ragdollStateView(w.handle);
         }
@@ -289,8 +278,8 @@ TrackingTraining3D::TrackingTraining3D(const TrackingTrainingSettings3D& setting
     impl.engine = std::make_unique<PhysicsEngine3D>(impl.scheduler);
     impl.worlds.resize(std::max(1u, settings.environments));
     for (Impl::World& w : impl.worlds) {
-        w.scene = impl.engine->createScene(trackingScene(), impl.materials);
-        createGround(*w.scene);
+        w.scene = impl.engine->createScene(trackingSceneSettings3D(), impl.materials);
+        createTrackingGround3D(*w.scene, GroundHalfExtent);
         RagdollSpawnDefinition3D spawn;
         spawn.entityId = 1;
         spawn.active = true;
@@ -320,7 +309,7 @@ const RagdollProfile3D& TrackingTraining3D::profile() const { return *m_impl->pr
 
 void TrackingTraining3D::reset(std::uint64_t seed) {
     Impl& impl = *m_impl;
-    pullWorlds(*impl.scheduler, impl.workers, impl.worlds.size(),
+    trackingPullWorlds3D(*impl.scheduler, impl.workers, impl.worlds.size(),
         [&impl, seed](std::size_t i) { impl.startWorld(impl.worlds[i], i, seed); });
     impl.episodes.clear();
 }
@@ -347,7 +336,7 @@ void TrackingTraining3D::step(std::span<const float> actions, std::span<float> r
     const std::size_t a = TrackingContract3D::ActionSize;
     if (actions.size() < n * a || rewards.size() < n || terminated.size() < n || truncated.size() < n)
         throw std::invalid_argument("rastreador: buffers pequenos no step");
-    pullWorlds(*impl.scheduler, impl.workers, n, [&](std::size_t i) {
+    trackingPullWorlds3D(*impl.scheduler, impl.workers, n, [&](std::size_t i) {
         impl.decide(impl.worlds[i], i, actions.subspan(i * a, a), rewards[i], terminated[i], truncated[i]);
     });
 }

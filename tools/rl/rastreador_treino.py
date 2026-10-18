@@ -147,6 +147,7 @@ def main() -> int:
     parser.add_argument("--rodadas", type=int, default=0, help="0: ate parar")
     parser.add_argument("--salvar-cada", type=int, default=10)
     parser.add_argument("--sem-corrida", action="store_true", help="o jogo inteiro so com o trote (o G2)")
+    parser.add_argument("--projeteis", action="store_true", help="os cubos do DReCon 7.1 (o G3)")
     parser.add_argument("--de", default="", help="comeca do ultimo checkpoint de outro treino (o degrau anterior)")
     args = parser.parse_args()
 
@@ -157,12 +158,13 @@ def main() -> int:
     torch.manual_seed(args.semente)
     batch = native.TrackingBatch(str(REPO / "assets"), environments=args.mundos, threads=args.threads,
                                  seed=args.semente, scenario=args.cenario, forward_maximum_speed=args.teto,
-                                 allow_sprint=not args.sem_corrida)
+                                 allow_sprint=not args.sem_corrida, projectiles=args.projeteis)
     n, obs_size, act_size = batch.num_envs, batch.obs_size, batch.action_size
     model = Policy(obs_size, act_size).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=3e-4)
     counters = {"rodada": 0, "decisoes": 0, "episodios": 0}
-    settings = {"cenario": args.cenario, "teto": args.teto, "corrida": not args.sem_corrida, "mundos": n,
+    settings = {"cenario": args.cenario, "teto": args.teto, "corrida": not args.sem_corrida, "projeteis": args.projeteis,
+                "mundos": n,
                 "passos": args.passos,
                 "observacao": batch.observation_names(), "acao": batch.action_names()}
     checkpoint = run / "ultimo.pt"

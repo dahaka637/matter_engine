@@ -36,12 +36,15 @@ def main() -> int:
     parser.add_argument("--modo", default="frente", choices=["frente", "rumos", "trocas"],
                         help="frente (G1); rumos: os 8 rumos em relacao ao olhar; trocas: o protocolo do DReCon (7.1)")
     parser.add_argument("--duracao", type=float, default=0.0, help="segundos por episodio (padrao: 20; trocas: 60)")
+    parser.add_argument("--cubo-kg", type=float, default=0.0, help="com os projeteis do DReCon nessa massa (a Fig. 11)")
     args = parser.parse_args()
     run = DATA / args.treino
     duration = args.duracao or (60.0 if args.modo == "trocas" else 20.0)
     batch = native.TrackingBatch(str(REPO / "assets"), environments=args.mundos, threads=args.threads, seed=20261018,
                                  scenario="frente", evaluation=True, evaluation_speed=args.velocidade,
-                                 episode_seconds=duration, evaluation_mode=args.modo)
+                                 episode_seconds=duration, evaluation_mode=args.modo,
+                                 projectiles=args.cubo_kg > 0.0, projectile_minimum_kg=max(args.cubo_kg, 0.01),
+                                 projectile_maximum_kg=max(args.cubo_kg, 0.01))
     model = Policy(batch.obs_size, batch.action_size)
     rodada = 0
     if not args.zero:
@@ -66,7 +69,7 @@ def main() -> int:
     falls = float(rows[:, 8].mean()) if rows.shape[1] >= 10 else float(rows[:, 2].mean())
     error = float(rows[:, 4].mean())
     passed = falls <= 0.10 and error <= 0.30
-    result = {"treino": args.treino, "rodada": rodada, "modo": args.modo, "duracao": duration,
+    result = {"treino": args.treino, "rodada": rodada, "modo": args.modo, "duracao": duration, "cubo_kg": args.cubo_kg,
               "velocidade": args.velocidade, "episodios": len(rows),
               "quedas": falls, "fins_antes_do_tempo": float(rows[:, 2].mean()), "segundos_medio": float(rows[:, 1].mean()), "erro_vel_cm": error,
               "vel_corpo": float(rows[:, 5].mean()), "vel_pedida": float(rows[:, 6].mean()),

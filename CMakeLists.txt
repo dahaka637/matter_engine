@@ -436,6 +436,10 @@ if(MATTERENGINE_BUILD_RL)
         src/Engine/Tracking/TrackingContract3D.cpp
         src/Engine/Tracking/TrackingReward3D.cpp
         src/Engine/Tracking/TrackingTraining3D.cpp
+        src/Engine/Tracking/TrackingScene3D.cpp
+        src/Engine/Tracking/TrackingClipReference3D.cpp
+        src/Engine/Tracking/TrackingGetUp3D.cpp
+        src/Engine/Tracking/TrackingGetUpTraining3D.cpp
     )
     target_include_directories(MatterTracking PUBLIC src)
     target_link_libraries(MatterTracking PUBLIC MatterAthlete MatterRLContract)
