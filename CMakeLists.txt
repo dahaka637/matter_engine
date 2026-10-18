@@ -924,6 +924,11 @@ if(MATTERENGINE_BUILD_TESTS)
         target_compile_definitions(MatterLocomotionTrainingTests PRIVATE
             MATTERENGINE_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
         add_test(NAME MatterEngine.LocomotionTraining COMMAND MatterLocomotionTrainingTests)
+        # O rastreador fisico: o contrato, a nota e o lote (curto, sem rede).
+        add_executable(MatterTrackingTests tests/Tracking/TrackingTests.cpp)
+        target_link_libraries(MatterTrackingTests PRIVATE MatterTracking)
+        target_compile_definitions(MatterTrackingTests PRIVATE MATTERENGINE_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
+        add_test(NAME MatterEngine.Tracking COMMAND MatterTrackingTests)
         add_executable(MatterRLCalibrationTests
             tests/RL/RagdollCalibrationAuditTests.cpp)
         target_link_libraries(MatterRLCalibrationTests
