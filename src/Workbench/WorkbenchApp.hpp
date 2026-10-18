@@ -557,8 +557,12 @@ private:
     static constexpr float LabDefaultSprintForwardSpeed = 8.0f;
     static constexpr float LabDefaultSprintSideSpeed = 6.0f;
     static constexpr float LabDefaultSprintBackwardSpeed = 6.0f;
-    static constexpr float LabDefaultCapsuleResponsePercent = 150.0f;
-    static constexpr float LabDefaultCapsuleReversalPercent = 40.0f;
+    // A "Resposta" do laboratorio e mostrada na escala do usuario (17/10): 100% e o
+    // que o motor chama de 150% (24 / 33 / 45 m/s2 e 15 rad/s); o motor recebe o
+    // valor vezes LabResponseScale.
+    static constexpr float LabResponseScale = 1.5f;
+    static constexpr float LabDefaultCapsuleResponsePercent = 100.0f;
+    static constexpr float LabDefaultCapsuleReversalPercent = 100.0f;
     float m_capsuleResponsePercent = LabDefaultCapsuleResponsePercent;
     float m_capsuleReversalPercent = LabDefaultCapsuleReversalPercent;
     // Transicoes adaptativas da locomocao padrao (05/10): giro da pelve com

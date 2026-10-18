@@ -745,7 +745,7 @@ AthleteRuntimeSettings3D WorkbenchApp::athleteRuntimeSettings() const {
     settings.activeBodySettings.gameplayAssistAcceleration = m_activeAssistAcceleration;
     settings.newBallHandling = m_newBallHandling;
     settings.dribbleV5 = m_dribbleV5;
-    settings.capsuleResponsePercent = m_capsuleResponsePercent;
+    settings.capsuleResponsePercent = m_capsuleResponsePercent * LabResponseScale;
     settings.capsuleReversalPercent = m_capsuleReversalPercent;
     return settings;
 }

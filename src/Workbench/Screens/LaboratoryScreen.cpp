@@ -681,7 +681,7 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
         // Locomocao padrao: a capsula chega na velocidade definida quase na
         // hora e troca de direcao do mesmo jeito (como na Unreal) - o corpo e
         // so a animacao em cima dela.
-        const AthleteCapsuleResponse3D response = athleteCapsuleResponse3D(m_capsuleResponsePercent, m_capsuleReversalPercent);
+        const AthleteCapsuleResponse3D response = athleteCapsuleResponse3D(m_capsuleResponsePercent * LabResponseScale, m_capsuleReversalPercent);
         activeSettings.groundAcceleration = response.acceleration;
         activeSettings.groundDeceleration = response.deceleration;
         activeSettings.groundTurnRate = response.turnRate;
@@ -3081,9 +3081,9 @@ void WorkbenchApp::drawLaboratoryUi() {
                             "A corrida para trás; vale também para as diagonais de costas.");
                         ImGui::TextUnformatted("Resposta");
                         ImGui::SetNextItemWidth(-1.0f);
-                        ImGui::SliderFloat("##CapsuleResponse", &m_capsuleResponsePercent, 30.0f, 150.0f, "%.0f%%",
+                        ImGui::SliderFloat("##CapsuleResponse", &m_capsuleResponsePercent, 20.0f, 150.0f, "%.0f%%",
                             ImGuiSliderFlags_AlwaysClamp);
-                        hint("O quanto o jogador acelera, freia e vira no modo padrão. 100%: 16 m/s² de aceleração, 22 de desaceleração, 30 de freada e 10 rad/s de giro. Menos, mais pesado e realista (perto de 40%); mais, mais arcade.");
+                        hint("O quanto o jogador acelera, freia e vira no modo padrão. 100%: 24 m/s² de aceleração, 33 de desaceleração, 45 de freada e 15 rad/s de giro. Menos, mais pesado e realista (perto de 27%); mais, mais arcade.");
                         ImGui::TextUnformatted("Troca de direção");
                         ImGui::SetNextItemWidth(-1.0f);
                         ImGui::SliderFloat("##CapsuleReversal", &m_capsuleReversalPercent, 0.0f, 100.0f, "%.0f%%",
