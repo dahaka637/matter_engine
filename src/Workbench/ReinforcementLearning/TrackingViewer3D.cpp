@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
 #include <fstream>
 #include <vector>
@@ -29,6 +30,13 @@ struct TrackingViewer3D::Impl {
     std::vector<std::uint8_t> terminated { 0 }, truncated { 0 };
     float speed = DefaultSpeed;
     float heading = 0.0f;
+    TrackingDrill3D drill = TrackingDrill3D::Move;
+
+    // O pedido do mundo do visualizador: andar no rumo, ou o exercicio parado.
+    void apply() {
+        if (drill == TrackingDrill3D::Move) batch->setCommand(0, speed, heading);
+        else batch->setDrill(0, drill);
+    }
     std::uint32_t steps = 0;
     std::uint32_t chest = 0;
     float pushSeconds = 0.0f;
@@ -61,7 +69,7 @@ TrainingHistory3D TrackingViewer3D::readHistory(const std::filesystem::path& run
                 TrainingDrillPoint3D drill;
                 drill.iteration = point.iteration;
                 drill.time = point.time;
-                drill.drill = "rumo" + key;
+                drill.drill = !key.empty() && std::isdigit(static_cast<unsigned char>(key[0])) ? "rumo" + key : key;
                 drill.episodes = data.value("n", 0.0);
                 drill.falls = 1.0 - data.value("sem_cair", 0.0);
                 drill.seconds = data.value("ep_segundos", 0.0);
@@ -91,10 +99,23 @@ TrainingHistory3D TrackingViewer3D::readHistory(const std::filesystem::path& run
     std::ifstream gate(runDirectory / "portao.jsonl");
     for (std::string line; std::getline(gate, line);) {
         nlohmann::json row = nlohmann::json::parse(line, nullptr, false);
-        if (!row.is_discarded() && row.is_object() && row.value("modo", std::string()) == "rumos"
-            && row.contains("por_rumo"))
+        if (row.is_discarded() || !row.is_object()) continue;
+        const std::string mode = row.value("modo", std::string());
+        if (mode == "parado" || mode == "giro" || mode == "giro_rapido") {
+            // Os exercicios parados: o portao inteiro e do exercicio (chegou ao fim ou nao).
+            TrainingEvaluationPoint3D point;
+            point.iteration = row.value("rodada", 0ull);
+            point.time = row.value("hora", 0.0);
+            point.drill = mode;
+            point.solver = "rede";
+            point.falls = row.value("fins_antes_do_tempo", 1.0);
+            history.evaluations.push_back(point);
+        } else if (mode == "rumos" && row.contains("por_rumo")) {
             gates.push_back(std::move(row));
+        }
     }
+    std::sort(history.evaluations.begin(), history.evaluations.end(),
+        [](const auto& a, const auto& b) { return a.iteration < b.iteration; });
     if (gates.empty()) return history;
     // A velocidade com mais portoes (empate: a do mais recente), para a curva comparar o mesmo teste.
     double speed = 0.0;
@@ -131,10 +152,19 @@ float TrackingViewer3D::headingOf(const std::string& drill) {
 }
 
 TrackingViewer3D::TrackingViewer3D(const std::filesystem::path& assetsDirectory, std::uint64_t seed,
-    float headingRadians)
+    const std::string& drill)
     : m_impl(std::make_unique<Impl>()) {
     Impl& impl = *m_impl;
-    impl.heading = headingRadians;
+    impl.heading = headingOf(drill);
+    impl.drill = drill == "parado" ? TrackingDrill3D::Idle
+        : drill == "giro"          ? TrackingDrill3D::Turn
+        : drill == "giro_rapido"   ? TrackingDrill3D::FastTurn
+                                   : TrackingDrill3D::Move;
+    // O modo de avaliacao do exercicio: o recomeco de cada episodio volta a ele.
+    const TrackingEvaluation3D mode = impl.drill == TrackingDrill3D::Idle ? TrackingEvaluation3D::Idle
+        : impl.drill == TrackingDrill3D::Turn                            ? TrackingEvaluation3D::Turn
+        : impl.drill == TrackingDrill3D::FastTurn                        ? TrackingEvaluation3D::FastTurn
+                                                                         : TrackingEvaluation3D::Forward;
     TrackingTrainingSettings3D settings;
     settings.assetsDirectory = assetsDirectory.string();
     settings.environments = 1;
@@ -142,6 +172,7 @@ TrackingViewer3D::TrackingViewer3D(const std::filesystem::path& assetsDirectory,
     settings.seed = seed;
     settings.evaluation = true;
     settings.evaluationSpeed = DefaultSpeed;
+    settings.evaluationMode = mode;
     // O visualizador nao recomeca pelo tempo (so pela queda ou o afastamento).
     settings.episodeSeconds = 1.0e6f;
     impl.batch = std::make_unique<TrackingTraining3D>(settings);
@@ -150,7 +181,7 @@ TrackingViewer3D::TrackingViewer3D(const std::filesystem::path& assetsDirectory,
     const RagdollProfile3D& p = impl.batch->profile();
     for (std::size_t i = 0; i < p.links.size(); ++i)
         if (p.links[i].id == "UpperChest") impl.chest = static_cast<std::uint32_t>(i);
-    impl.batch->setCommand(0, impl.speed, impl.heading);
+    impl.apply();
 }
 
 TrackingViewer3D::~TrackingViewer3D() = default;
@@ -198,14 +229,14 @@ void TrackingViewer3D::step() {
 void TrackingViewer3D::reset(std::uint64_t seed) {
     Impl& impl = *m_impl;
     impl.batch->reset(seed);
-    impl.batch->setCommand(0, impl.speed, impl.heading);
+    impl.apply();
     impl.steps = 0;
 }
 
 void TrackingViewer3D::setManualSpeed(std::optional<float> metersPerSecond) {
     Impl& impl = *m_impl;
     impl.speed = metersPerSecond.value_or(DefaultSpeed);
-    impl.batch->setCommand(0, impl.speed, impl.heading);
+    impl.apply();
 }
 
 void TrackingViewer3D::push(Vec3 force, float seconds) {

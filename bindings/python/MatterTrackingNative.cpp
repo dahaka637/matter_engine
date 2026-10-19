@@ -55,7 +55,8 @@ NB_MODULE(matter_tracking_native, m) {
             [](TrackingTraining3D* self, const std::string& assets, std::uint32_t environments, std::uint32_t threads,
                 std::uint64_t seed, const std::string& scenario, float forward_maximum_speed, bool evaluation,
                 float evaluation_speed, float episode_seconds, bool allow_sprint, const std::string& evaluation_mode,
-                float switch_seconds, bool projectiles, float projectile_minimum_kg, float projectile_maximum_kg) {
+                float switch_seconds, bool projectiles, float projectile_minimum_kg, float projectile_maximum_kg,
+                float idle_share, float turn_share, float fast_turn_share) {
                 TrackingTrainingSettings3D settings;
                 settings.assetsDirectory = assets;
                 settings.environments = environments;
@@ -72,7 +73,13 @@ NB_MODULE(matter_tracking_native, m) {
                 if (evaluation_mode == "frente") settings.evaluationMode = TrackingEvaluation3D::Forward;
                 else if (evaluation_mode == "rumos") settings.evaluationMode = TrackingEvaluation3D::Headings;
                 else if (evaluation_mode == "trocas") settings.evaluationMode = TrackingEvaluation3D::Switches;
-                else throw nb::value_error("avaliacao: 'frente', 'rumos' ou 'trocas'");
+                else if (evaluation_mode == "parado") settings.evaluationMode = TrackingEvaluation3D::Idle;
+                else if (evaluation_mode == "giro") settings.evaluationMode = TrackingEvaluation3D::Turn;
+                else if (evaluation_mode == "giro_rapido") settings.evaluationMode = TrackingEvaluation3D::FastTurn;
+                else throw nb::value_error("avaliacao: 'frente', 'rumos', 'trocas', 'parado', 'giro' ou 'giro_rapido'");
+                settings.idleShare = idle_share;
+                settings.turnShare = turn_share;
+                settings.fastTurnShare = fast_turn_share;
                 settings.switchSeconds = switch_seconds;
                 settings.projectiles = projectiles;
                 settings.projectileMinimumKg = projectile_minimum_kg;
@@ -84,7 +91,7 @@ NB_MODULE(matter_tracking_native, m) {
             "forward_maximum_speed"_a = 3.0f, "evaluation"_a = false, "evaluation_speed"_a = 3.0f,
             "episode_seconds"_a = 20.0f, "allow_sprint"_a = true, "evaluation_mode"_a = "frente",
             "switch_seconds"_a = 4.0f, "projectiles"_a = false, "projectile_minimum_kg"_a = 0.01f,
-            "projectile_maximum_kg"_a = 8.0f)
+            "projectile_maximum_kg"_a = 8.0f, "idle_share"_a = 0.0f, "turn_share"_a = 0.0f, "fast_turn_share"_a = 0.0f)
         .def_prop_ro("num_envs", &TrackingTraining3D::environmentCount)
         .def_prop_ro("obs_size", &TrackingTraining3D::observationSize)
         .def_prop_ro("action_size", &TrackingTraining3D::actionSize)
@@ -140,19 +147,19 @@ NB_MODULE(matter_tracking_native, m) {
         .def("episode_columns",
             [](const TrackingTraining3D&) {
                 return std::vector<std::string> { "mundo", "segundos", "caiu", "nota_media", "erro_vel_cm",
-                    "vel_corpo", "vel_pedida", "dist_cabeca", "caiu_de_verdade", "altura_cabeca_fim", "rumo" };
+                    "vel_corpo", "vel_pedida", "dist_cabeca", "caiu_de_verdade", "altura_cabeca_fim", "rumo", "exercicio" };
             })
         .def("finished_episodes",
             [](TrackingTraining3D& b) {
                 const std::vector<TrackingEpisode3D> episodes = b.takeEpisodes();
-                auto out = owned<float>({ episodes.size(), 11 });
+                auto out = owned<float>({ episodes.size(), 12 });
                 float* d = out.data();
                 for (std::size_t i = 0; i < episodes.size(); ++i) {
                     const TrackingEpisode3D& e = episodes[i];
-                    const float row[11] = { static_cast<float>(e.world), e.seconds, e.fell ? 1.0f : 0.0f, e.meanReward,
+                    const float row[12] = { static_cast<float>(e.world), e.seconds, e.fell ? 1.0f : 0.0f, e.meanReward,
                         e.centerOfMassSpeedError, e.bodySpeed, e.requestedSpeed, e.meanHeadDistance,
-                        e.fellDown ? 1.0f : 0.0f, e.endHeadHeight, e.relativeDirection };
-                    std::copy(row, row + 11, d + i * 11);
+                        e.fellDown ? 1.0f : 0.0f, e.endHeadHeight, e.relativeDirection, static_cast<float>(e.drill) };
+                    std::copy(row, row + 12, d + i * 12);
                 }
                 return out;
             })

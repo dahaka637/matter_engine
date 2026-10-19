@@ -169,6 +169,9 @@ def main() -> int:
     parser.add_argument("--sem-corrida", action="store_true", help="o jogo inteiro so com o trote (o G2)")
     parser.add_argument("--projeteis", action="store_true", help="os cubos do DReCon 7.1 (o G3)")
     parser.add_argument("--de", default="", help="comeca do ultimo checkpoint de outro treino (o degrau anterior)")
+    parser.add_argument("--parado", type=float, default=0.0, help="parte dos episodios parado no idle")
+    parser.add_argument("--giro", type=float, default=0.0, help="parte dos episodios parado com giro suave")
+    parser.add_argument("--giro-rapido", type=float, default=0.0, help="parte dos episodios com giro rapido parado")
     args = parser.parse_args()
 
     run = DATA / args.treino
@@ -178,7 +181,8 @@ def main() -> int:
     torch.manual_seed(args.semente)
     batch = native.TrackingBatch(str(REPO / "assets"), environments=args.mundos, threads=args.threads,
                                  seed=args.semente, scenario=args.cenario, forward_maximum_speed=args.teto,
-                                 allow_sprint=not args.sem_corrida, projectiles=args.projeteis)
+                                 allow_sprint=not args.sem_corrida, projectiles=args.projeteis,
+                                 idle_share=args.parado, turn_share=args.giro, fast_turn_share=args.giro_rapido)
     n, obs_size, act_size = batch.num_envs, batch.obs_size, batch.action_size
     model = Policy(obs_size, act_size).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=3e-4)
@@ -293,14 +297,18 @@ def main() -> int:
                         "erro_vel_cm": float(episodes[:, 4].mean()), "vel_corpo": float(episodes[:, 5].mean()),
                         "vel_pedida": float(episodes[:, 6].mean())})
             # Por direcao (8 rumos de 45 graus, 0 frente, 2 esquerda): os graficos da tela seguem o rumo mostrado.
+            # Os exercicios parados (coluna 11: 1 parado, 2 giro, 3 giro rapido) tem a chave propria.
             bins = np.round(np.mod(episodes[:, 10], 2 * math.pi) / (math.pi / 4)).astype(int) % 8
-            row["rumos"] = {str(b): {"n": int((bins == b).sum()), "sem_cair": float(1.0 - episodes[bins == b, 2].mean()),
-                                     "nota": float(episodes[bins == b, 3].mean()),
-                                     "ep_segundos": float(episodes[bins == b, 1].mean()),
-                                     "erro_vel_cm": float(episodes[bins == b, 4].mean()),
-                                     "vel_corpo": float(episodes[bins == b, 5].mean()),
-                                     "vel_pedida": float(episodes[bins == b, 6].mean())}
-                            for b in range(8) if (bins == b).any()}
+            keys = np.array([str(b) for b in bins], dtype=object)
+            for code, name in ((1, "parado"), (2, "giro"), (3, "giro_rapido")):
+                keys[episodes[:, 11] == code] = name
+            row["rumos"] = {k: {"n": int((keys == k).sum()), "sem_cair": float(1.0 - episodes[keys == k, 2].mean()),
+                                "nota": float(episodes[keys == k, 3].mean()),
+                                "ep_segundos": float(episodes[keys == k, 1].mean()),
+                                "erro_vel_cm": float(episodes[keys == k, 4].mean()),
+                                "vel_corpo": float(episodes[keys == k, 5].mean()),
+                                "vel_pedida": float(episodes[keys == k, 6].mean())}
+                            for k in sorted(set(keys))}
         log.write(json.dumps(row) + "\n")
         log.flush()
         print(" ".join(f"{k}={v:.4g}" if isinstance(v, float) else f"{k}={v}" for k, v in row.items()

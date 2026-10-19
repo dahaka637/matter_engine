@@ -16,6 +16,7 @@ inline constexpr char32_t House = 0xF015;
 inline constexpr char32_t VolumeHigh = 0xF028;
 inline constexpr char32_t Camera = 0xF030;
 inline constexpr char32_t Crosshairs = 0xF05B;
+inline constexpr char32_t Eye = 0xF06E;
 inline constexpr char32_t Play = 0xF04B;
 inline constexpr char32_t Pause = 0xF04C;
 inline constexpr char32_t Stop = 0xF04D;

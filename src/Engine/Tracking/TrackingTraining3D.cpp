@@ -58,6 +58,12 @@ struct TrackingTraining3D::Impl {
         float speed = 0.0f;
         float turnRate = 0.0f;
         bool sprint = false;
+        // O exercicio do episodio e, nos giros, o que falta girar (rad, com o
+        // sinal), a velocidade do giro e a pausa ate o proximo.
+        TrackingDrill3D drill = TrackingDrill3D::Move;
+        float turnLeft = 0.0f;
+        float turnSpeed = 0.0f;
+        float pauseLeft = 0.0f;
         std::uint64_t ticks = 0;
         std::array<float, TrackingContract3D::ActionSize> filtered {};
         std::vector<RagdollDriveTarget3D> drives;
@@ -130,9 +136,64 @@ struct TrackingTraining3D::Impl {
         composeCommand(w);
     }
 
+    // O exercicio de um episodio: o do modo na avaliacao; no treino, sorteado pelas partes.
+    TrackingDrill3D pickDrill(World& w) const {
+        if (settings.evaluation)
+            return settings.evaluationMode == TrackingEvaluation3D::Idle ? TrackingDrill3D::Idle
+                : settings.evaluationMode == TrackingEvaluation3D::Turn ? TrackingDrill3D::Turn
+                : settings.evaluationMode == TrackingEvaluation3D::FastTurn ? TrackingDrill3D::FastTurn
+                                                                             : TrackingDrill3D::Move;
+        const float r = uniform(w.rng, 0.0f, 1.0f);
+        if (r < settings.idleShare) return TrackingDrill3D::Idle;
+        if (r < settings.idleShare + settings.turnShare) return TrackingDrill3D::Turn;
+        if (r < settings.idleShare + settings.turnShare + settings.fastTurnShare) return TrackingDrill3D::FastTurn;
+        return TrackingDrill3D::Move;
+    }
+
+    // Os giros parados: a pausa de um e de outro (s).
+    float turnPause(World& w) const {
+        return w.drill == TrackingDrill3D::FastTurn ? uniform(w.rng, 1.0f, 2.0f) : uniform(w.rng, 1.5f, 4.0f);
+    }
+
+    // Entra num exercicio: os parados pedem velocidade zero (o idle do padrao) e o olhar parado ate o giro.
+    void enterDrill(World& w, TrackingDrill3D drill) const {
+        w.drill = drill;
+        w.turnLeft = 0.0f;
+        w.turnSpeed = 0.0f;
+        if (drill == TrackingDrill3D::Move) return;
+        w.pauseLeft = turnPause(w);
+        w.speed = 0.0f;
+        w.turnRate = 0.0f;
+        w.sprint = false;
+        composeCommand(w);
+    }
+
+    // Um tick dos giros parados: gira o olhar o angulo sorteado na velocidade sorteada e pausa.
+    void drillTick(World& w) const {
+        if (w.drill != TrackingDrill3D::Turn && w.drill != TrackingDrill3D::FastTurn) return;
+        const bool fast = w.drill == TrackingDrill3D::FastTurn;
+        if (w.turnLeft == 0.0f) {
+            if ((w.pauseLeft -= TickSeconds) > 0.0f) return;
+            const float degrees = fast ? uniform(w.rng, 60.0f, 240.0f) : uniform(w.rng, 30.0f, 120.0f);
+            w.turnLeft = degrees * (Pi / 180.0f) * (chance(w.rng, 0.5f) ? 1.0f : -1.0f);
+            w.turnSpeed = fast ? uniform(w.rng, 1.0f, 3.14f) : uniform(w.rng, 0.4f, 0.6f);
+        }
+        const float step = std::min(std::abs(w.turnLeft), w.turnSpeed * TickSeconds);
+        const float signed_ = w.turnLeft > 0.0f ? step : -step;
+        w.command.facingYawRadians += signed_;
+        w.turnLeft -= signed_;
+        if (std::abs(w.turnLeft) < 1e-6f) {
+            w.turnLeft = 0.0f;
+            w.pauseLeft = turnPause(w);
+        }
+        composeCommand(w);
+    }
+
     // Um tick do lider com o jogador virtual (a troca a 60 Hz, o giro do olhar).
     void leaderTick(World& w) const {
-        if (w.ticks % 2 == 0 && chance(w.rng, EventChancePerFrame)) changeCommand(w);
+        drillTick(w);
+        if (w.drill == TrackingDrill3D::Move && w.ticks % 2 == 0 && chance(w.rng, EventChancePerFrame))
+            changeCommand(w);
         if (settings.evaluation && settings.evaluationMode == TrackingEvaluation3D::Switches && w.ticks > 0) {
             // O protocolo do DReCon (7.1): um rumo novo a cada switchSeconds (o corpo vira e segue de frente).
             const auto every = static_cast<std::uint64_t>(std::max(1.0f, settings.switchSeconds / TickSeconds));
@@ -189,6 +250,7 @@ struct TrackingTraining3D::Impl {
         } else {
             changeCommand(w);
         }
+        enterDrill(w, pickDrill(w));
         // (Aquecimento sorteado: o comeco cai em fases diferentes da passada.)
         restartLeader(w, settings.evaluation ? 2.0f : uniform(w.rng, 1.0f, 3.0f));
         seedBody(w);
@@ -251,12 +313,17 @@ struct TrackingTraining3D::Impl {
             episode.requestedSpeed = static_cast<float>(w.requestedSum / n);
             episode.meanHeadDistance = static_cast<float>(w.headSum / n);
             episode.relativeDirection = w.relativeDirection;
+            episode.drill = static_cast<std::uint8_t>(w.drill);
             {
                 std::lock_guard lock(episodeMutex);
                 episodes.push_back(episode);
             }
             // O lider segue (DReCon: so o corpo recomeca); longe da origem, volta
             // para perto dela aquecendo de novo.
+            // O exercicio do episodio seguinte (de um parado de volta a andar, um pedido novo).
+            const TrackingDrill3D next = pickDrill(w);
+            if (next == TrackingDrill3D::Move && w.drill != TrackingDrill3D::Move) changeCommand(w);
+            enterDrill(w, next);
             const Vec3 at = w.leader->capsulePosition();
             if (std::hypot(at.x, at.y) > RecenterDistance) restartLeader(w, 2.0f);
             seedBody(w);
@@ -357,10 +424,15 @@ const RagdollState3D& TrackingTraining3D::body(std::size_t world) const { return
 
 void TrackingTraining3D::setCommand(std::size_t world, float speed, float relativeDirectionRadians) {
     Impl::World& w = m_impl->worlds.at(world);
+    w.drill = TrackingDrill3D::Move;
     w.speed = std::max(0.0f, speed);
     w.relativeDirection = relativeDirectionRadians;
     w.turnRate = 0.0f;
     m_impl->composeCommand(w);
+}
+
+void TrackingTraining3D::setDrill(std::size_t world, TrackingDrill3D drill) {
+    m_impl->enterDrill(m_impl->worlds.at(world), drill);
 }
 
 void TrackingTraining3D::push(std::size_t world, std::uint32_t link, Vec3 force, float seconds) {

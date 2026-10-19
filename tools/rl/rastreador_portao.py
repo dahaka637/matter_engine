@@ -33,8 +33,9 @@ def main() -> int:
     parser.add_argument("--mundos", type=int, default=64)
     parser.add_argument("--threads", type=int, default=6)
     parser.add_argument("--zero", action="store_true", help="sem rede (a malha aberta, a linha de base)")
-    parser.add_argument("--modo", default="frente", choices=["frente", "rumos", "trocas"],
-                        help="frente (G1); rumos: os 8 rumos em relacao ao olhar; trocas: o protocolo do DReCon (7.1)")
+    parser.add_argument("--modo", default="frente", choices=["frente", "rumos", "trocas", "parado", "giro", "giro_rapido"],
+                        help="frente (G1); rumos: os 8 rumos em relacao ao olhar; trocas: o protocolo do DReCon (7.1); "
+                             "parado, giro, giro_rapido: os exercicios parados (o G2 exige os tres)")
     parser.add_argument("--duracao", type=float, default=0.0, help="segundos por episodio (padrao: 20; trocas: 60)")
     parser.add_argument("--cubo-kg", type=float, default=0.0, help="com os projeteis do DReCon nessa massa (a Fig. 11)")
     args = parser.parse_args()
@@ -69,11 +70,14 @@ def main() -> int:
     falls = float(rows[:, 8].mean()) if rows.shape[1] >= 10 else float(rows[:, 2].mean())
     error = float(rows[:, 4].mean())
     passed = falls <= 0.10 and error <= 0.30
+    if args.modo in ("parado", "giro", "giro_rapido"):
+        # Parado (e girando parado): todos chegam ao fim, sem cair nem se afastar do lider.
+        passed = float(rows[:, 2].mean()) == 0.0
     result = {"treino": args.treino, "rodada": rodada, "modo": args.modo, "duracao": duration, "cubo_kg": args.cubo_kg,
               "velocidade": args.velocidade, "episodios": len(rows),
               "quedas": falls, "fins_antes_do_tempo": float(rows[:, 2].mean()), "segundos_medio": float(rows[:, 1].mean()), "erro_vel_cm": error,
               "vel_corpo": float(rows[:, 5].mean()), "vel_pedida": float(rows[:, 6].mean()),
-              "dist_cabeca": float(rows[:, 7].mean()), "passa_g1": passed, "hora": time.time()}
+              "dist_cabeca": float(rows[:, 7].mean()), "passa_g1": passed, "passa": passed, "hora": time.time()}
     if rows.shape[1] >= 10:
         # Dos fins antes dos 20 s: queda de verdade (a cabeca abaixo de 1,1 m) ou o
         # corpo de pe que se afastou do lider.

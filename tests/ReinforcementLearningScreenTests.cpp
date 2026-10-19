@@ -203,8 +203,14 @@ int realRun(const std::filesystem::path& out) {
     std::filesystem::create_directories(out);
     double requested = 0.0, measured = 0.0;
     int samples = 0;
+    double turned = 0.0;
     for (int second = 1; second <= 20; ++second) {
-        screen.advanceViewer(30);
+        // O giro do peito (os exercicios parados giram no lugar), decisao a decisao.
+        for (int k = 0; k < 30; ++k) {
+            const float before = screen.viewerChestHeading();
+            screen.advanceViewer(1);
+            turned += std::abs(std::remainder(screen.viewerChestHeading() - before, 6.28318531f));
+        }
         if (second > 4) {
             requested += screen.viewerRequestedSpeed();
             measured += screen.viewerSpeed();
@@ -212,7 +218,8 @@ int realRun(const std::filesystem::path& out) {
         }
         if (second % 4 == 0) {
             for (const auto& [name, yaw] : { std::pair<const char*, float> { "lado", 90.0f }, { "frente", 0.0f } }) {
-                screen.frameView(yaw, 6.0f);
+                const char* far = std::getenv("MATTER_RL_TEST_DISTANCE");
+                screen.frameView(yaw, far ? 25.0f : 6.0f, far ? std::strtof(far, nullptr) : 4.4f);
                 require(screen.renderViewport(720, 540), "o visualizador renderiza");
                 std::string error;
                 const std::filesystem::path file = out / (std::string("rl_") + name + "_" + std::to_string(second) + "s.png");
@@ -249,15 +256,19 @@ int realRun(const std::filesystem::path& out) {
         screen.scrubViewer(0.5f);
         const Vec3 half = screen.viewerPelvis();
         screen.scrubViewer(0.0f);
-        require((now - before).length() > 0.05f, "a gravacao deveria mostrar o quadro de 1 s atras");
+        // (Nos exercicios parados a pelve fica no lugar: so andando ela tem de ter andado.)
+        const char* shownDrill = std::getenv("MATTER_RL_TEST_DRILL");
+        const bool moving = shownDrill == nullptr || std::string(shownDrill).rfind("rumo", 0) == 0;
+        require(!moving || (now - before).length() > 0.05f, "a gravacao deveria mostrar o quadro de 1 s atras");
         require((screen.viewerPelvis() - now).length() < 1e-5f, "o fim da gravacao e o quadro de agora");
-        require((half - now).length() < (before - now).length(), "meio quadro atras fica perto de agora");
+        require(!moving || (half - now).length() < (before - now).length(), "meio quadro atras fica perto de agora");
         std::cout << "gravacao: a pelve andou " << (now - before).length() << " m no ultimo 1 s\n";
         // Com a gravacao cheia (mais de 30 s), o quadro mostrado segue o de agora (nao congela no 899).
         screen.advanceViewer(950);
         const Vec3 full = screen.viewerPelvis();
         screen.advanceViewer(30);
-        require((screen.viewerPelvis() - full).length() > 0.05f, "com a gravacao cheia o visualizador deveria seguir");
+        require(!moving || (screen.viewerPelvis() - full).length() > 0.05f,
+            "com a gravacao cheia o visualizador deveria seguir");
     }
     if (const char* mouse = std::getenv("MATTER_RL_TEST_MOUSE")) {
         // O mouse parado num ponto (x,y): a dica do grafico sob ele.
@@ -275,6 +286,7 @@ int realRun(const std::filesystem::path& out) {
         std::cout << "expandido: " << screen.history().iterations.size() << " rodadas na janela\n";
         snapshot(canvas, "rl_tela_graficos");
     }
+    std::cout << "giro do peito em 20 s: " << turned * 57.2957795 << " graus\n";
     std::cout << "treino " << screen.shownRun() << ": pedido medio " << requested / samples << " m/s, ele "
               << measured / samples << " m/s (de 5 a 20 s), passos " << screen.viewerSteps() << '\n';
     require(ui.errors().empty(), "o ImGui reclamou: " + (ui.errors().empty() ? std::string() : ui.errors().front()));

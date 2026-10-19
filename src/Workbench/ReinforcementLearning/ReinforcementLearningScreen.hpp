@@ -78,7 +78,9 @@ public:
         m_display = display;
         m_dirty = true;
     }
-    void frameView(float yawDegrees, float pitchDegrees) { frame(yawDegrees, pitchDegrees); }
+    void frameView(float yawDegrees, float pitchDegrees, float distance = 4.4f) {
+        frame(yawDegrees, pitchDegrees, distance);
+    }
     // Os treinos do Corpo na pasta de dados (o mais recente primeiro) e o mostrado.
     [[nodiscard]] const std::vector<std::string>& runs() const { return m_runs; }
     [[nodiscard]] std::string shownRun() const { return activeRun(); }
@@ -95,6 +97,7 @@ public:
         m_playhead = std::max(0.0f, static_cast<float>(m_replay.size() - 1) - decisionsBehind);
         updateShown();
     }
+    [[nodiscard]] float viewerChestHeading() const { return hasViewer() ? viewerView().chestHeading : 0.0f; }
     [[nodiscard]] Vec3 viewerPelvis() const {
         const BodyWorldView3D view = hasViewer() ? viewerView() : BodyWorldView3D {};
         return view.state && !view.state->links.empty() ? view.state->links[0].position : Vec3 {};
@@ -155,7 +158,7 @@ private:
     [[nodiscard]] bool render(int width, int height);
     void pollModel();
     void refreshHistory();
-    void frame(float yawDegrees, float pitchDegrees);
+    void frame(float yawDegrees, float pitchDegrees, float distance = 4.4f);
     void saveCapture();
     // O treino mostrado: o do treinador aberto no PC (so ha um; pode ter sido
     // aberto pelo terminal) ou, sem treinador, o escolhido nesta tela.
@@ -205,6 +208,8 @@ private:
     float m_accumulator = 0.0f;
     // Onde a pelve aparece no ultimo quadro (0 a 1 na imagem; -1 fora dela).
     std::array<float, 2> m_pelvisOnScreen { -1.0f, -1.0f };
+    // Onde o olho (o ponto para onde o comando manda olhar) aparece (0 a 1; -1 fora).
+    std::array<float, 2> m_lookOnScreen { -1.0f, -1.0f };
     bool m_paused = false;
     struct ReplayFrame {
         RagdollState3D state;

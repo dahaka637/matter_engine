@@ -25,10 +25,14 @@ public:
     // rodadas desse tanto antes da ultima (sem tanto treino, desde o comeco).
     [[nodiscard]] static TrainingHistory3D readHistory(const std::filesystem::path& runDirectory,
         std::size_t maximumPoints, double sinceSeconds = 0.0);
+    // Os exercicios parados (ids e nomes, na ordem da lista, depois dos rumos).
+    static constexpr std::array<std::array<const char*, 2>, 3> StillDrills { { { "parado", "Parado" },
+        { "giro", "Parado com giro suave" }, { "giro_rapido", "Giro rápido parado" } } };
     // O rumo (rad) do exercicio "rumoN" (outro: a frente).
     [[nodiscard]] static float headingOf(const std::string& drill);
 
-    TrackingViewer3D(const std::filesystem::path& assetsDirectory, std::uint64_t seed, float headingRadians = 0.0f);
+    // drill: "rumoN" (andar no rumo N) ou um dos parados.
+    TrackingViewer3D(const std::filesystem::path& assetsDirectory, std::uint64_t seed, const std::string& drill = {});
     ~TrackingViewer3D() override;
     TrackingViewer3D(const TrackingViewer3D&) = delete;
     TrackingViewer3D& operator=(const TrackingViewer3D&) = delete;

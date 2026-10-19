@@ -369,6 +369,11 @@ void ReinforcementLearningScreen::loadDrills() {
             m_drillNames.push_back(TrackingViewer3D::HeadingNames[i]);
             m_drillPhases.push_back(i == 0 ? 1 : 2);
         }
+        for (const auto& [id, name] : TrackingViewer3D::StillDrills) {
+            m_drillIds.push_back(id);
+            m_drillNames.push_back(name);
+            m_drillPhases.push_back(2);
+        }
     } else if (LocomotionViewer3D::isLocomotionTask(path)) {
         for (const LocomotionViewer3D::Drill& drill : LocomotionViewer3D::drillsOf(path)) {
             m_drillIds.push_back(drill.id);
@@ -433,7 +438,7 @@ void ReinforcementLearningScreen::ensureViewer() {
             m_viewerTask = task;
             const auto seed = static_cast<std::uint64_t>(std::time(nullptr));
             if (tracking) m_locomotion = std::make_unique<TrackingViewer3D>(m_options.sourceRoot / "assets", seed,
-                    TrackingViewer3D::headingOf(m_viewerDrill));
+                    m_viewerDrill);
             else
                 m_locomotion = std::make_unique<LocomotionViewer3D>(task, m_options.sourceRoot / "assets", m_viewerDrill,
                     seed);
@@ -858,15 +863,25 @@ bool ReinforcementLearningScreen::render(int width, int height) {
     m_pelvisOnScreen = shown.visible
         ? std::array<float, 2> { shown.x / static_cast<float>(width), shown.y / static_cast<float>(height) }
         : std::array<float, 2> { -1.0f, -1.0f };
+    {
+        // O olho (um icone na tela): para onde o comando manda olhar, a 2 m dele na altura dos olhos.
+        const float look = view.command.faceHeading;
+        const Vec3 point = Vec3 { positions.front().x, positions.front().y, 1.65f }
+            + Vec3 { std::cos(look), std::sin(look), 0.0f } * 2.0f;
+        const ScreenPoint eye = Projector(camera, width, height).project(m_skeleton->toSkeleton(point));
+        m_lookOnScreen = eye.visible
+            ? std::array<float, 2> { eye.x / static_cast<float>(width), eye.y / static_cast<float>(height) }
+            : std::array<float, 2> { -1.0f, -1.0f };
+    }
     m_image = renderInspection(scene, style, camera, width, height);
     m_dirty = false;
     return true;
 }
 
-void ReinforcementLearningScreen::frame(float yawDegrees, float pitchDegrees) {
+void ReinforcementLearningScreen::frame(float yawDegrees, float pitchDegrees, float distance) {
     m_camera.yaw = yawDegrees * DegreesToRadians;
     m_camera.pitch = pitchDegrees * DegreesToRadians;
-    m_camera.distance = 4.4f;
+    m_camera.distance = distance;
     m_dirty = true;
 }
 
@@ -1213,6 +1228,14 @@ void ReinforcementLearningScreen::drawViewport(CanvasTarget& canvas, float botto
     }
     const std::uint64_t id = canvas.present(m_image, rendered);
     drawList->AddImage(static_cast<ImTextureID>(id), origin, end);
+    if (m_lookOnScreen[0] >= 0.0f) {
+        const std::string eye = UI::FontAwesome::icon(UI::FontAwesome::Eye);
+        const float iconSize = ImGui::GetFontSize() * 1.1f;
+        const ImVec2 extent = ImGui::GetFont()->CalcTextSizeA(iconSize, FLT_MAX, 0.0f, eye.c_str());
+        const ImVec2 at { origin.x + m_lookOnScreen[0] * size.x - extent.x * 0.5f,
+            origin.y + m_lookOnScreen[1] * size.y - extent.y * 0.5f };
+        drawList->AddText(ImGui::GetFont(), iconSize, at, IM_COL32(110, 205, 255, 235), eye.c_str());
+    }
     // A politica que esta no corpo (canto de cima), o pedido e a velocidade dele.
     const std::string label = m_policyText + "\npedido " + decimal(viewerRequestedSpeed(), 1) + " m/s · ele "
         + decimal(viewerSpeed(), 1) + " m/s";
