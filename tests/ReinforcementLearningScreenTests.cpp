@@ -22,6 +22,7 @@
 #include <sqlite3.h>
 
 #include <chrono>
+#include <thread>
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
@@ -177,6 +178,11 @@ int realRun(const std::filesystem::path& out) {
     options.capturesDirectory = out;
     if (const char* run = std::getenv("MATTER_RL_TEST_RUN")) options.run = run;
     ReinforcementLearningScreen screen(std::move(options), {});
+    // Como o app: quadros desenhados desde o comeco, enquanto o jogador e a rede carregam.
+    for (int i = 0; i < 240; ++i) {
+        frame(screen, canvas);
+        std::this_thread::sleep_for(std::chrono::milliseconds(8));
+    }
     screen.waitUntilLoaded();
     if (const char* drill = std::getenv("MATTER_RL_TEST_DRILL")) {
         screen.showDrill(drill);
@@ -277,6 +283,13 @@ int main() {
         options.sourceRoot = sourceRoot();
         options.capturesDirectory = sandbox / "capturas";
         ReinforcementLearningScreen screen(std::move(options), {});
+        {
+            // Como o app: o primeiro quadro desenha antes de qualquer update (ainda sem visualizador).
+            ImGui::GetIO().DeltaTime = 1.0f / 60.0f;
+            ImGui::NewFrame();
+            screen.draw(canvas, 1.0f);
+            ImGui::Render();
+        }
         require(screen.runs() == std::vector<std::string> { "teste_v2" }, "a tela so lista os treinos do Corpo");
         require(screen.shownRun() == "teste_v2", "abre no treino mais recente");
         screen.waitUntilLoaded();

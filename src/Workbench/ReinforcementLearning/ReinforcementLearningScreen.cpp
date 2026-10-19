@@ -1248,7 +1248,9 @@ void ReinforcementLearningScreen::drawCommands() {
     ImGui::SetNextItemWidth(ui(420.0f));
     float scrub = head;
     char behind[48];
-    std::snprintf(behind, sizeof behind, "-%.2f s", static_cast<double>((last - head) * viewerStepSeconds()));
+    // (O primeiro quadro do app chega antes do visualizador.)
+    const float step = hasViewer() ? viewerStepSeconds() : 1.0f / 30.0f;
+    std::snprintf(behind, sizeof behind, "-%.2f s", static_cast<double>((last - head) * step));
     if (ImGui::SliderFloat("##RLTimeline", &scrub, 0.0f, std::max(last, 1e-3f), behind)) {
         m_paused = true;
         m_playhead = std::round(scrub);
