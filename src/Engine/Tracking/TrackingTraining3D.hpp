@@ -67,6 +67,12 @@ struct TrackingTrainingSettings3D {
     // da do lider, de 0,15 a 0,5 m, ou um tropeco: o pe do corpo no chao com o
     // do lider no ar, por 0,5 s) o peso das pernas e dos pes cai a 0,3.
     bool adaptiveLegs = false;
+    // Pernas livres (o usuario, 19/10: "muito mais liberdade para adaptar os
+    // passos, para nao cair e depois manter a velocidade"): o peso das pernas e
+    // dos pes na pose, sempre (1 = a receita), e o peso da velocidade do centro
+    // de massa (1 = a receita).
+    float legWeight = 1.0f;
+    float centerOfMassVelocityWeight = 1.0f;
     float idleShare = 0.0f;
     float turnShare = 0.0f;
     float fastTurnShare = 0.0f;

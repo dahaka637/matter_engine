@@ -36,7 +36,7 @@ TrackingReward3D::TrackingReward3D(const RagdollProfile3D& profile)
 
 TrackingRewardTerms3D TrackingReward3D::evaluate(const TrackingLeaderState3D& leader,
     std::span<const PhysicsBodyState3D> bodyLinks, Vec3 bodyCenterOfMass, Vec3 bodyCenterOfMassVelocity,
-    float legWeight) {
+    float legWeight, float centerOfMassVelocityWeight) {
     const RagdollProfile3D& profile = *m_profile;
     TrackingRewardTerms3D terms;
     const std::size_t count = std::min({ profile.links.size(), leader.links.size(), bodyLinks.size() });
@@ -79,7 +79,8 @@ TrackingRewardTerms3D TrackingReward3D::evaluate(const TrackingLeaderState3D& le
     terms.terminate = terms.headDistance > 1.0f;
     terms.total = terms.terminate
         ? 0.0f
-        : terms.fallFactor * (terms.position + terms.velocity + terms.localPose + terms.centerOfMassVelocity);
+        : terms.fallFactor
+            * (terms.position + terms.velocity + terms.localPose + centerOfMassVelocityWeight * terms.centerOfMassVelocity);
     return terms;
 }
 

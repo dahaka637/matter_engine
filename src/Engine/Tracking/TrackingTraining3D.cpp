@@ -302,7 +302,7 @@ struct TrackingTraining3D::Impl {
         const Vec3 com = rlBodyCenterOfMass3D(*profile, body.links);
         const Vec3 comVelocity = rlBodyCenterOfMassVelocity3D(*profile, body.links);
         const TrackingLeaderState3D& leader = w.leader->state();
-        float legWeight = 1.0f;
+        float legWeight = settings.legWeight;
         if (settings.adaptiveLegs) {
             // O tropeco: um pe do corpo tocando o chao com o mesmo pe do lider no ar (3 cm acima do apoio dele).
             for (std::size_t f = 0; f < 2; ++f) {
@@ -318,9 +318,10 @@ struct TrackingTraining3D::Impl {
             w.tripSeconds = std::max(0.0f, w.tripSeconds - TicksPerDecision * TickSeconds);
             const float drift = std::clamp((w.lastHeadDistance - 0.15f) / 0.35f, 0.0f, 1.0f);
             const float risk = std::max(drift * drift * (3.0f - 2.0f * drift), w.tripSeconds > 0.0f ? 1.0f : 0.0f);
-            legWeight = 1.0f - 0.7f * risk;
+            legWeight = std::min(legWeight, 1.0f - 0.7f * risk);
         }
-        const TrackingRewardTerms3D terms = w.reward->evaluate(leader, body.links, com, comVelocity, legWeight);
+        const TrackingRewardTerms3D terms = w.reward->evaluate(leader, body.links, com, comVelocity, legWeight,
+            settings.centerOfMassVelocityWeight);
         w.lastHeadDistance = terms.headDistance;
         reward = terms.total * smooth;
         w.seconds += TicksPerDecision * TickSeconds;

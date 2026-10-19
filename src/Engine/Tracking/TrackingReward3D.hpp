@@ -41,7 +41,7 @@ public:
     // (1 = a receita; menos deixa as pernas se adaptarem, as pernas adaptaveis).
     [[nodiscard]] TrackingRewardTerms3D evaluate(const TrackingLeaderState3D& leader,
         std::span<const PhysicsBodyState3D> bodyLinks, Vec3 bodyCenterOfMass, Vec3 bodyCenterOfMassVelocity,
-        float legWeight = 1.0f);
+        float legWeight = 1.0f, float centerOfMassVelocityWeight = 1.0f);
     [[nodiscard]] std::size_t headLink() const { return m_head; }
 
 private:
