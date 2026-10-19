@@ -125,21 +125,22 @@ DRIVE = {
     "LeftFoot": (360.0, 34.6, 420.0), "RightFoot": (360.0, 34.6, 420.0),
 }
 
-# Peak torque per axis (twist, swing1, swing2), N*m: the ranges of an adult
-# athlete (hip flexion/extension ~350, knee ~300, ankle plantarflexion ~250),
-# the same table as assets/rl/bodies/football_player_v2.json. The DRIVE
+# Peak torque per axis (twist, swing1, swing2), N*m: a well-trained adult,
+# calibrated by the user on 19/10/2026 to a ~200 kg deadlift (lumbar ~450) and
+# a ~350 kg 45-degree leg press (knee ~360); the same table as
+# assets/rl/bodies/football_player_v2.json. The DRIVE
 # torque above was 2.5-3x stronger than a human (18/10/2026) and is no longer
 # written.
 TORQUE = {
-    "Abdomen": (150.0, 300.0, 250.0), "Chest": (150.0, 300.0, 250.0),
-    "UpperChest": (150.0, 300.0, 250.0), "Neck": (60.0, 60.0, 60.0),
-    "Head": (40.0, 40.0, 40.0),
-    "LeftUpperArm": (120.0, 120.0, 120.0), "RightUpperArm": (120.0, 120.0, 120.0),
-    "LeftForearm": (90.0, 90.0), "RightForearm": (90.0, 90.0),
-    "LeftHand": (20.0, 20.0), "RightHand": (20.0, 20.0),
-    "LeftThigh": (150.0, 350.0, 250.0), "RightThigh": (150.0, 350.0, 250.0),
-    "LeftShin": (300.0,), "RightShin": (300.0,),
-    "LeftFoot": (250.0, 120.0), "RightFoot": (250.0, 120.0),
+    "Abdomen": (225.0, 450.0, 375.0), "Chest": (225.0, 450.0, 375.0),
+    "UpperChest": (225.0, 450.0, 375.0), "Neck": (70.0, 70.0, 70.0),
+    "Head": (50.0, 50.0, 50.0),
+    "LeftUpperArm": (150.0, 150.0, 150.0), "RightUpperArm": (150.0, 150.0, 150.0),
+    "LeftForearm": (110.0, 110.0), "RightForearm": (110.0, 110.0),
+    "LeftHand": (25.0, 25.0), "RightHand": (25.0, 25.0),
+    "LeftThigh": (180.0, 420.0, 300.0), "RightThigh": (180.0, 420.0, 300.0),
+    "LeftShin": (360.0,), "RightShin": (360.0,),
+    "LeftFoot": (300.0, 145.0), "RightFoot": (300.0, 145.0),
 }
 
 # Ranges are measured from the bind pose this profile defines. Spine, hips,
