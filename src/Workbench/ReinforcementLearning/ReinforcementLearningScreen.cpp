@@ -196,7 +196,8 @@ struct ChartSeries {
 // Um grafico de linha: fundo, grade, a serie principal com a area, a de referencia por tras, o valor de
 // agora grande no canto e a dica com o valor sob o mouse.
 void lineChart(const char* id, const std::vector<ChartSeries>& series, float minimum, float maximum, ImVec2 size,
-    const char* valueText, const char* unit, const std::vector<double>* times = nullptr, bool timeLabels = false) {
+    const char* valueText, const char* unit, const std::vector<double>* times = nullptr, bool timeLabels = false,
+    const char* emptyText = "sem dados") {
     ImGui::InvisibleButton(id, size);
     const bool hovered = ImGui::IsItemHovered();
     const ImVec2 low = ImGui::GetItemRectMin(), high = ImGui::GetItemRectMax();
@@ -267,11 +268,16 @@ void lineChart(const char* id, const std::vector<ChartSeries>& series, float min
         draw->AddText({ high.x - extent.x - 10.0f, low.y + 6.0f }, ImGui::ColorConvertFloat4ToU32(series.front().color),
             valueText);
     }
-    char range[32];
-    std::snprintf(range, sizeof range, "%.3g", maximum);
-    draw->AddText({ low.x + 10.0f, low.y + 6.0f }, IM_COL32(100, 120, 140, 200), range);
-    std::snprintf(range, sizeof range, "%.3g", minimum);
-    draw->AddText({ low.x + 10.0f, high.y - ImGui::GetTextLineHeight() - 6.0f }, IM_COL32(100, 120, 140, 200), range);
+    const bool empty = std::all_of(series.begin(), series.end(), [](const ChartSeries& s) { return s.values->empty(); });
+    if (!empty) {
+        // A escala so com dados (vazio, os numeros dos eixos nao dizem nada).
+        char range[32];
+        std::snprintf(range, sizeof range, "%.3g", maximum);
+        draw->AddText({ low.x + 10.0f, low.y + 6.0f }, IM_COL32(100, 120, 140, 200), range);
+        std::snprintf(range, sizeof range, "%.3g", minimum);
+        draw->AddText({ low.x + 10.0f, high.y - ImGui::GetTextLineHeight() - 6.0f }, IM_COL32(100, 120, 140, 200),
+            range);
+    }
     if (timeLabels && times && times->size() > 1) {
         // O comeco e o fim do trecho, embaixo nos cantos.
         const std::string first = clockText(times->front()), last = clockText(times->back());
@@ -280,10 +286,10 @@ void lineChart(const char* id, const std::vector<ChartSeries>& series, float min
         draw->AddText({ high.x - ImGui::CalcTextSize(last.c_str()).x - 10.0f, y }, IM_COL32(100, 120, 140, 200),
             last.c_str());
     }
-    if (std::all_of(series.begin(), series.end(), [](const ChartSeries& s) { return s.values->empty(); })) {
-        const ImVec2 extent = ImGui::CalcTextSize("sem dados");
+    if (empty) {
+        const ImVec2 extent = ImGui::CalcTextSize(emptyText);
         draw->AddText({ (low.x + high.x - extent.x) * 0.5f, (low.y + high.y - extent.y) * 0.5f },
-            IM_COL32(100, 120, 140, 200), "sem dados");
+            IM_COL32(100, 120, 140, 200), emptyText);
     }
 }
 
@@ -1444,10 +1450,13 @@ void ReinforcementLearningScreen::drawCharts(float height) {
     std::string gate;
     if (tracking)
         for (const TrainingEvaluationPoint3D& point : m_history.evaluations)
-            if (point.drill == m_viewerDrill) gate = drillName + " " + text(static_cast<float>((1.0 - point.falls) * 100.0), "%.0f%%");
-    std::string standValue = stand.empty() ? (tracking ? "sem treino neste rumo" : "")
-                                           : text(stand.back(), tracking ? "treino %.0f%%" : "%.0f%%");
-    if (!gate.empty()) standValue += " · teste " + gate;
+            if (point.drill == m_viewerDrill)
+                gate = "teste r" + std::to_string(point.iteration) + ": "
+                    + text(static_cast<float>((1.0 - point.falls) * 100.0), "%.0f%%");
+    std::string standValue = stand.empty() ? "" : text(stand.back(), tracking ? "treino %.0f%%" : "%.0f%%");
+    if (!gate.empty()) standValue += standValue.empty() ? gate : " · " + gate;
+    // Sem episodios do rumo no treino: o degrau nao treina essa direcao (o G1 so a frente).
+    const char* empty = tracking ? "não treinado neste degrau" : "sem dados";
     std::vector<Chart> charts { {
         { "Sem cair (%)" + inDrill, { { &standClassic, green, true }, { &stand, green, false } }, 0.0f, 100.0f,
             standValue, "%", tracking ? &seriesTimes : nullptr },
@@ -1517,7 +1526,7 @@ void ReinforcementLearningScreen::drawCharts(float height) {
             ImGui::PushID(static_cast<int>(i));
             lineChart("##chart", chart.series, chart.minimum, chart.maximum,
                 { ImGui::GetContentRegionAvail().x, each - ImGui::GetTextLineHeightWithSpacing() }, chart.value.c_str(),
-                chart.unit, chart.times, true);
+                chart.unit, chart.times, true, chart.times == &iterationTimes ? "sem dados" : empty);
             ImGui::PopID();
             ImGui::EndGroup();
         }
@@ -1534,7 +1543,7 @@ void ReinforcementLearningScreen::drawCharts(float height) {
         ImGui::PushID(static_cast<int>(i));
         lineChart("##chart", chart.series, chart.minimum, chart.maximum,
             { width, std::max(height - ImGui::GetTextLineHeightWithSpacing(), ui(40.0f)) }, chart.value.c_str(),
-            chart.unit, chart.times);
+            chart.unit, chart.times, false, chart.times == &iterationTimes ? "sem dados" : empty);
         ImGui::PopID();
         ImGui::EndGroup();
     }

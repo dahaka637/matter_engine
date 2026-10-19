@@ -114,7 +114,8 @@ TrainingHistory3D TrackingViewer3D::readHistory(const std::filesystem::path& run
             point.time = row.value("hora", 0.0);
             point.drill = "rumo" + std::to_string(i);
             point.solver = "rede";
-            point.falls = one.value("quedas_de_verdade", one.value("quedas", 0.0));
+            // Como o sem cair do treino: chegou ao fim (sem cair nem ficar para tras do lider) ou nao.
+            point.falls = one.value("quedas", 0.0);
             point.velocityError = one.value("erro_vel_cm", -1.0);
             history.evaluations.push_back(point);
         }

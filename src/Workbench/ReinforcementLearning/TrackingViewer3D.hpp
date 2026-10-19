@@ -20,7 +20,7 @@ public:
     static constexpr std::array<const char*, 8> HeadingNames { "Frente", "Diagonal frente-esquerda", "Esquerda",
         "Diagonal tras-esquerda", "Tras", "Diagonal tras-direita", "Direita", "Diagonal frente-direita" };
     // O historico dos graficos de um treino do rastreador (ele nao grava no rl.db):
-    // as rodadas do log.jsonl e, por rumo ("rumoN"), as quedas de verdade dos
+    // as rodadas do log.jsonl e, por rumo ("rumoN"), os episodios que nao chegaram ao fim nos
     // portoes de rumos na velocidade mais testada. Com sinceSeconds > 0, so as
     // rodadas desse tanto antes da ultima (sem tanto treino, desde o comeco).
     [[nodiscard]] static TrainingHistory3D readHistory(const std::filesystem::path& runDirectory,
