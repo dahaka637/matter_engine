@@ -23,7 +23,7 @@ void DefaultLocomotion3D::stepPose(Tick& t) {
     t.contact = {};
     std::array<float, 2>& contact = t.contact;
     const auto sampleInto = [&](const AnimationClip3D& clip, float time, bool loop, float weight,
-        float upperWeight, const Gait* gait = nullptr, float amplitude = 1.0f, bool rootAndContact = true) {
+        float upperWeight, const Gait* gait = nullptr, float amplitude = 1.0f) {
         if (weight <= 1e-4f && upperWeight <= 1e-4f) return;
         for (std::size_t i = 1; i < links; ++i) {
             const float w = i < m_upperLinks.size() && m_upperLinks[i] ? upperWeight : weight;
@@ -69,7 +69,7 @@ void DefaultLocomotion3D::stepPose(Tick& t) {
                 m_coordinates[i] += value * w;
             }
         }
-        if (weight <= 1e-4f || !rootAndContact) return;
+        if (weight <= 1e-4f) return;
         const AnimationTransformSample3D root = rootAt(profile, clip, time, loop, s.smoothClipSampling);
         rootOffset += root.translationOffsetMeters * weight;
         rootRotation.add(root.rotationDelta.normalized(), weight);
@@ -86,33 +86,44 @@ void DefaultLocomotion3D::stepPose(Tick& t) {
         sampleInto(clip, fraction(m_phase + m_gaits[g].touchdown) * clip.durationSeconds, true, m_weights[g] * ground,
             m_upperWeights[g] * ground, &m_gaits[g], gaitAmplitude(g));
     }
-    // O giro parado pelo clipe: as pernas dele no lugar das do idle, com a raiz dele (o deslocamento, feito no rumo
-    // do comeco do passo, trazido ao de agora, e a rotacao sem o giro, que ja e o rumo da pelve) e os contatos.
-    const float turnShare = m_turnClip != nullptr ? m_turnWeight : 0.0f;
     if (animations.idle != nullptr)
         sampleInto(*animations.idle, std::fmod(m_idleTime, std::max(0.1f, animations.idle->durationSeconds)), true,
-            m_idleWeight * ground * (1.0f - turnShare), upperIdleWeight * ground);
-    if (turnShare > 1e-4f) {
-        const AnimationClip3D& clip = *m_turnClip;
-        const float w = m_idleWeight * ground * turnShare;
-        sampleInto(clip, m_turnTime, false, w, 0.0f, nullptr, 1.0f, false);
-        const AnimationTransformSample3D root = rootAt(profile, clip, m_turnTime, false, s.smoothClipSampling);
-        const float back = -wrapAngle(m_yaw - m_turnStartYaw), c = std::cos(back), sn = std::sin(back);
-        const Vec3 offset = root.translationOffsetMeters;
-        rootOffset += Vec3 { offset.x * c - offset.y * sn, offset.x * sn + offset.y * c, offset.z } * w;
-        // (A rotacao da raiz dele sem o giro: sem ela, com o idle fora, a raiz saltava para a do bind.)
-        const Quaternion bind = profile.links.front().modelOrientation;
-        rootRotation.add((bind.conjugate() * Quaternion::fromAxisAngle({ 0.0f, 0.0f, 1.0f }, back) * bind
-            * root.rotationDelta.normalized()).normalized(), w);
-        contact[0] += (clip.leftFootContact.keyframes.empty() ? 1.0f
-            : sampleAnimationScalarTrack3D(clip.leftFootContact, m_turnTime, clip.durationSeconds, false)) * w;
-        contact[1] += (clip.rightFootContact.keyframes.empty() ? 1.0f
-            : sampleAnimationScalarTrack3D(clip.rightFootContact, m_turnTime, clip.durationSeconds, false)) * w;
+            m_idleWeight * ground, upperIdleWeight * ground);
+    // O giro parado: as pernas e os pes do clipe de giro no lugar das do idle (so as juntas; o giro e o de sempre).
+    std::vector<Vec3> idleLegs;
+    if (m_turnClip != nullptr && m_turnWeight > 1e-4f) {
+        idleLegs = m_coordinates;
+        const float k = m_turnWeight * m_idleWeight * ground;
+        for (std::size_t i = 1; i < links; ++i) {
+            const std::string& id = profile.links[i].id;
+            if (id.find("Thigh") == std::string::npos && id.find("Shin") == std::string::npos
+                && id.find("Foot") == std::string::npos && id.find("Toe") == std::string::npos)
+                continue;
+            if (const AnimationTrack3D* track = findAnimationTrack3D(*m_turnClip, id))
+                m_coordinates[i] += (sampleTrack(*track, m_turnTime, m_turnClip->durationSeconds, true,
+                    s.smoothClipSampling).jointPositionRadians - m_coordinates[i]) * k;
+        }
     }
     if (m_airClip != nullptr && m_airWeight > 1e-4f)
         sampleInto(*m_airClip, m_airPhase * m_airClip->durationSeconds, false, m_airWeight, m_airWeight);
     t.clipRootRotation = rootRotation.result();
     Quaternion& clipRootRotation = t.clipRootRotation;
+    // (E a sola mais baixa delas na altura da das pernas do idle: a pelve desce ou sobe o que falta - sem isso os pes
+    // flutuavam ~4 cm.)
+    if (!idleLegs.empty() && m_feet[0] != 0 && m_feet[1] != 0) {
+        const Quaternion up = profile.links.front().modelOrientation * clipRootRotation;
+        const auto lowest = [&](const std::vector<Vec3>& coordinates) {
+            RagdollAnimationPose3D chain;
+            buildRagdollChainPose3D(profile, coordinates, chain, m_feet[0]);
+            buildRagdollChainPose3D(profile, coordinates, chain, m_feet[1]);
+            float low = 1e9f;
+            for (const std::size_t foot : m_feet)
+                low = std::min(low, soleHeight(profile.links[foot], up.rotate(chain.linkPositions[foot]),
+                    (up * chain.linkOrientations[foot]).normalized(), s.toeRoll ? s.toeRollMeters : 0.0f));
+            return low;
+        };
+        rootOffset.z += lowest(idleLegs) - lowest(m_coordinates);
+    }
 
     // O gesto da arrancada (o idle_to_sprint como delta no tronco, nos bracos
     // e na cabeca, por cima do ciclo - o mesmo do fisico).

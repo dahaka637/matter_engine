@@ -146,15 +146,10 @@ struct DefaultLocomotionSettings3D {
     // Parado: a pelve vai a camera so quando o erro passa de standTurnStart
     // (rad), e para standTurnKeep (rad) dela - o resto e da coluna e da
     // cabeca -, nesta constante (s).
-    // Giro parado pelo clipe (o usuario, 19/10: "so tocar o clipe de mover o
-    // pe, de acordo com a direcao"): passado standTurnClipStart (rad), o
-    // turn_left ou o turn_right tocado inteiro, como e - as pernas, o giro e o
-    // deslocamento da raiz e os contatos dele -; falta giro no fim, outro.
-    // Sem ele (ou sem os clipes), a mola acima.
+    // Giro parado: as pernas e os pes tocam o turn_left/turn_right (pelo lado)
+    // no ritmo do giro da pelve; o giro em si e a mola (o usuario, 19/10: "so
+    // movimento dos pes/pernas, nao mexer na velocidade do giro").
     bool standTurnClips = true;
-    // (Mais da metade do passo de 90 graus: depois dele o resto fica na coluna
-    // e na cabeca, sem voltar.)
-    float standTurnClipStart = 0.87f;
     float standTurnStart = 0.55f;
     float standTurnKeep = 0.31f;
     float standTurnSeconds = 0.16f;
@@ -787,13 +782,9 @@ private:
     float m_headTurn = 0.0f;
     float m_upright = 1.0f;
     bool m_standTurning = false;
-    // O giro parado pelo clipe: o clipe, o tempo nele, o rumo da pelve no
-    // comeco e o peso na pose.
+    // O giro parado: o clipe das pernas, o tempo nele e o peso na pose.
     const AnimationClip3D* m_turnClip = nullptr;
-    float m_turnTime = 0.0f, m_turnStartYaw = 0.0f, m_turnWeight = 0.0f;
-    // (O olhar a frente da pelve, desenrolado, rad.)
-    float m_turnLead = 0.0f;
-    bool m_turnActive = false;
+    float m_turnTime = 0.0f, m_turnWeight = 0.0f;
     bool m_started = false;
     // A semente (seed): aplicada no proximo update.
     bool m_seedPending = false;

@@ -64,64 +64,15 @@ void DefaultLocomotion3D::stepGait(Tick& t) {
     // e para perto da camera.
     {
         float target = m_yaw;
-        bool clipDriven = false;
         float seconds = s.turnSeconds;
         float springSeconds = s.turnSpringSeconds;
         if (moving) {
             m_standTurning = false;
-            // (Andando, o giro pelo clipe acaba e sai da pose.)
-            m_turnActive = false;
-            m_turnWeight = std::max(0.0f, m_turnWeight - dt / 0.2f);
-            m_turnLead = wrapAngle(viewYaw - m_yaw);
             target = wrapAngle(travelYaw - clipHeading);
             if (frontSector(m_sector))
                 target = wrapAngle(target + std::clamp(s.pelvisCurveLeadSeconds * m_pathTurnRate,
                     -s.pelvisCurveLeadMaximum, s.pelvisCurveLeadMaximum) * smoothStep((speed - 1.5f) / 1.5f));
-        } else if (s.standTurnClips && t.animations.turnLeft != nullptr && t.animations.turnRight != nullptr
-            && !t.input.ballGesture.active) {
-            // O giro parado pelo clipe: o turn_left ou o turn_right inteiro, na velocidade dele; a pelve gira o que a
-            // raiz do clipe gira (nem mais, nem menos: as pernas sao as dele). Fora do clipe a pelve fica.
-            const Quaternion bind = profile.links.front().modelOrientation;
-            const auto clipYaw = [&](float time) {
-                const Quaternion delta = rootAt(profile, *m_turnClip, time, false, s.smoothClipSampling).rotationDelta;
-                const Vec3 f = (bind * delta.normalized() * bind.conjugate()).rotate({ 1.0f, 0.0f, 0.0f });
-                return std::atan2(f.y, f.x);
-            };
-            const auto begin = [&](float e) {
-                m_turnClip = e >= 0.0f ? t.animations.turnLeft : t.animations.turnRight;
-                m_turnTime = 0.0f;
-                m_turnStartYaw = m_yaw;
-                m_turnActive = true;
-            };
-            // O olhar a frente da pelve, desenrolado: passando um pouco de meia volta, o giro segue para o mesmo
-            // lado (sem trocar de lado no meio de uma volta rapida); mais que isso, o caminho curto (sem voltas
-            // atrasadas depois que a camera para).
-            const auto lead = [&] {
-                m_turnLead = std::clamp(m_turnLead + wrapAngle(wrapAngle(viewYaw - m_yaw) - m_turnLead), -1.25f * Pi,
-                    1.25f * Pi);
-                return m_turnLead;
-            };
-            if (!m_turnActive && std::abs(lead()) > s.standTurnClipStart) begin(m_turnLead);
-            if (m_turnActive) {
-                m_turnTime = std::min(m_turnClip->durationSeconds, m_turnTime + dt);
-                const float yaw = wrapAngle(m_turnStartYaw + clipYaw(m_turnTime));
-                m_yawRate = wrapAngle(yaw - m_yaw) / dt;
-                m_yaw = yaw;
-                if (m_turnTime >= m_turnClip->durationSeconds - 1e-4f) {
-                    m_turnActive = false;
-                    // Ainda falta: o proximo passo emenda.
-                    if (std::abs(lead()) > s.standTurnClipStart) begin(m_turnLead);
-                }
-                clipDriven = true;
-            }
-            m_turnWeight = m_turnActive ? std::min(1.0f, m_turnWeight + dt / 0.12f)
-                                        : std::max(0.0f, m_turnWeight - dt / 0.2f);
-            seconds = s.standTurnSeconds;
-            springSeconds = s.standTurnSpringSeconds;
         } else {
-            // (Com a bola, o giro pelo clipe acaba.)
-            m_turnActive = false;
-            m_turnWeight = std::max(0.0f, m_turnWeight - dt / 0.2f);
             const float error = wrapAngle(viewYaw - m_yaw);
             if (!m_standTurning && std::abs(error) > s.standTurnStart) m_standTurning = true;
             if (m_standTurning) {
@@ -131,9 +82,7 @@ void DefaultLocomotion3D::stepGait(Tick& t) {
             seconds = s.standTurnSeconds;
             springSeconds = s.standTurnSpringSeconds;
         }
-        if (clipDriven) {
-            // (O rumo ja veio do clipe.)
-        } else if (s.adaptiveTransitions) {
+        if (s.adaptiveTransitions) {
             // Mola de segunda ordem com aceleracao e velocidade limitadas.
             const float omega = 1.0f / std::max(0.01f, springSeconds);
             const float acceleration = std::clamp(omega * omega * wrapAngle(target - m_yaw) - 2.0f * omega * m_yawRate,
@@ -147,6 +96,20 @@ void DefaultLocomotion3D::stepGait(Tick& t) {
             step = std::clamp(step, -limit, limit);
             m_yawRate = step / dt;
             m_yaw = wrapAngle(m_yaw + step);
+        }
+        // O giro parado mexe so as pernas (o usuario, 19/10): o turn_left ou o turn_right, pelo lado do giro, no
+        // ritmo do giro da pelve (o giro e o da mola acima, o pe pode deslizar).
+        const AnimationClip3D* turnClip = m_yawRate >= 0.0f ? t.animations.turnLeft : t.animations.turnRight;
+        if (s.standTurnClips && !moving && turnClip != nullptr && std::abs(m_yawRate) > 0.3f) {
+            if (turnClip != m_turnClip && m_turnWeight < 0.05f) m_turnTime = 0.0f;
+            m_turnClip = turnClip;
+            const float duration = std::max(0.1f, turnClip->durationSeconds);
+            const float clipRate = std::max(0.3f, std::abs(turnClip->turnCycleRadians)) / duration;
+            // (Ate 2x o clipe: num giro rapido da camera o pe desliza em vez de as pernas se debaterem.)
+            m_turnTime = std::fmod(m_turnTime + dt * std::min(2.0f, std::abs(m_yawRate) / clipRate), duration);
+            m_turnWeight = std::min(1.0f, m_turnWeight + dt / 0.12f);
+        } else {
+            m_turnWeight = std::max(0.0f, m_turnWeight - dt / 0.2f);
         }
     }
 
