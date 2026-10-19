@@ -2,6 +2,7 @@
 
 #include "Workbench/ReinforcementLearning/ViewerWorld3D.hpp"
 
+#include <array>
 #include <filesystem>
 #include <memory>
 
@@ -10,11 +11,17 @@ namespace MatterEngine {
 // O visualizador de um treino do rastreador fisico (DReCon; vault
 // 04_locomocao/referencia/pesquisas/12_especificacao_rastreador.md) na tela de
 // Aprendizado: o ragdoll do jogo a 0% de ajuda seguindo o lider (o modo padrao
-// do jogo), de frente na velocidade da tela, com a rede exportada pelo treino
+// do jogo), num dos 8 rumos na velocidade da tela, com a rede exportada pelo treino
 // (a acao media, como no jogo).
 class TrackingViewer3D final : public ViewerWorld3D {
 public:
-    TrackingViewer3D(const std::filesystem::path& assetsDirectory, std::uint64_t seed);
+    // Os rumos de 45 em 45 graus a partir da frente, para a esquerda (como no portao).
+    static constexpr std::array<const char*, 8> HeadingNames { "Frente", "Diagonal frente-esquerda", "Esquerda",
+        "Diagonal tras-esquerda", "Tras", "Diagonal tras-direita", "Direita", "Diagonal frente-direita" };
+    // O rumo (rad) do exercicio "rumoN" (outro: a frente).
+    [[nodiscard]] static float headingOf(const std::string& drill);
+
+    TrackingViewer3D(const std::filesystem::path& assetsDirectory, std::uint64_t seed, float headingRadians = 0.0f);
     ~TrackingViewer3D() override;
     TrackingViewer3D(const TrackingViewer3D&) = delete;
     TrackingViewer3D& operator=(const TrackingViewer3D&) = delete;

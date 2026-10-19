@@ -26,15 +26,23 @@ struct TrackingViewer3D::Impl {
     std::vector<float> rewards { 0.0f };
     std::vector<std::uint8_t> terminated { 0 }, truncated { 0 };
     float speed = DefaultSpeed;
+    float heading = 0.0f;
     std::uint32_t steps = 0;
     std::uint32_t chest = 0;
     float pushSeconds = 0.0f;
     Vec3 pushForce;
 };
 
-TrackingViewer3D::TrackingViewer3D(const std::filesystem::path& assetsDirectory, std::uint64_t seed)
+float TrackingViewer3D::headingOf(const std::string& drill) {
+    if (drill.size() != 5 || drill.rfind("rumo", 0) != 0 || drill[4] < '0' || drill[4] > '7') return 0.0f;
+    return static_cast<float>(drill[4] - '0') * (3.14159265358979f / 4.0f);
+}
+
+TrackingViewer3D::TrackingViewer3D(const std::filesystem::path& assetsDirectory, std::uint64_t seed,
+    float headingRadians)
     : m_impl(std::make_unique<Impl>()) {
     Impl& impl = *m_impl;
+    impl.heading = headingRadians;
     TrackingTrainingSettings3D settings;
     settings.assetsDirectory = assetsDirectory.string();
     settings.environments = 1;
@@ -50,6 +58,7 @@ TrackingViewer3D::TrackingViewer3D(const std::filesystem::path& assetsDirectory,
     const RagdollProfile3D& p = impl.batch->profile();
     for (std::size_t i = 0; i < p.links.size(); ++i)
         if (p.links[i].id == "UpperChest") impl.chest = static_cast<std::uint32_t>(i);
+    impl.batch->setCommand(0, impl.speed, impl.heading);
 }
 
 TrackingViewer3D::~TrackingViewer3D() = default;
@@ -97,14 +106,14 @@ void TrackingViewer3D::step() {
 void TrackingViewer3D::reset(std::uint64_t seed) {
     Impl& impl = *m_impl;
     impl.batch->reset(seed);
-    impl.batch->setCommand(0, impl.speed, 0.0f);
+    impl.batch->setCommand(0, impl.speed, impl.heading);
     impl.steps = 0;
 }
 
 void TrackingViewer3D::setManualSpeed(std::optional<float> metersPerSecond) {
     Impl& impl = *m_impl;
     impl.speed = metersPerSecond.value_or(DefaultSpeed);
-    impl.batch->setCommand(0, impl.speed, 0.0f);
+    impl.batch->setCommand(0, impl.speed, impl.heading);
 }
 
 void TrackingViewer3D::push(Vec3 force, float seconds) {

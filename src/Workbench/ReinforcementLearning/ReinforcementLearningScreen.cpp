@@ -323,10 +323,12 @@ void ReinforcementLearningScreen::loadDrills() {
     const std::filesystem::path path = taskPath();
     if (path.empty() || !std::filesystem::exists(path)) return;
     if (TrackingViewer3D::isTrackingTask(path)) {
-        // O rastreador: o lider na velocidade da tela, de frente (o G1).
-        m_drillIds.push_back("frente");
-        m_drillNames.push_back("De frente (rastreador)");
-        m_drillPhases.push_back(1);
+        // O rastreador: o lider na velocidade da tela, num dos 8 rumos (os do portao).
+        for (std::size_t i = 0; i < TrackingViewer3D::HeadingNames.size(); ++i) {
+            m_drillIds.push_back("rumo" + std::to_string(i));
+            m_drillNames.push_back(TrackingViewer3D::HeadingNames[i]);
+            m_drillPhases.push_back(i == 0 ? 1 : 2);
+        }
     } else if (LocomotionViewer3D::isLocomotionTask(path)) {
         for (const LocomotionViewer3D::Drill& drill : LocomotionViewer3D::drillsOf(path)) {
             m_drillIds.push_back(drill.id);
@@ -389,7 +391,8 @@ void ReinforcementLearningScreen::ensureViewer() {
         try {
             m_viewerTask = task;
             const auto seed = static_cast<std::uint64_t>(std::time(nullptr));
-            if (tracking) m_locomotion = std::make_unique<TrackingViewer3D>(m_options.sourceRoot / "assets", seed);
+            if (tracking) m_locomotion = std::make_unique<TrackingViewer3D>(m_options.sourceRoot / "assets", seed,
+                    TrackingViewer3D::headingOf(m_viewerDrill));
             else
                 m_locomotion = std::make_unique<LocomotionViewer3D>(task, m_options.sourceRoot / "assets", m_viewerDrill,
                     seed);
