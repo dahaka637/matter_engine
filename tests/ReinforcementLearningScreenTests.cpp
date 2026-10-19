@@ -231,6 +231,19 @@ int realRun(const std::filesystem::path& out) {
     }
     frame(screen, canvas, 3);
     snapshot(canvas, "rl_tela_treino_real");
+    {
+        // A gravacao: 1 s atras a pelve esta em outro lugar; 0 atras volta a de agora; meio quadro fica entre os dois.
+        const Vec3 now = screen.viewerPelvis();
+        screen.scrubViewer(30.0f);
+        const Vec3 before = screen.viewerPelvis();
+        screen.scrubViewer(0.5f);
+        const Vec3 half = screen.viewerPelvis();
+        screen.scrubViewer(0.0f);
+        require((now - before).length() > 0.05f, "a gravacao deveria mostrar o quadro de 1 s atras");
+        require((screen.viewerPelvis() - now).length() < 1e-5f, "o fim da gravacao e o quadro de agora");
+        require((half - now).length() < (before - now).length(), "meio quadro atras fica perto de agora");
+        std::cout << "gravacao: a pelve andou " << (now - before).length() << " m no ultimo 1 s\n";
+    }
     if (const char* window = std::getenv("MATTER_RL_TEST_EXPAND")) {
         screen.setChartsExpanded(true, std::atoi(window));
         screen.waitUntilLoaded();

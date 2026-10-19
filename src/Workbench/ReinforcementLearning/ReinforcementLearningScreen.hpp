@@ -14,6 +14,7 @@
 #include "Workbench/ReinforcementLearning/TrackingViewer3D.hpp"
 
 #include <array>
+#include <deque>
 #include <filesystem>
 #include <functional>
 #include <future>
@@ -87,6 +88,17 @@ public:
     void showDrill(const std::string& drill);
     [[nodiscard]] float viewerRequestedSpeed() const;
     [[nodiscard]] float viewerSpeed() const;
+    // Pausa e mostra o quadro de tantas decisoes atras na gravacao (0: o ultimo).
+    void scrubViewer(float decisionsBehind) {
+        if (m_replay.empty()) return;
+        m_paused = true;
+        m_playhead = std::max(0.0f, static_cast<float>(m_replay.size() - 1) - decisionsBehind);
+        updateShown();
+    }
+    [[nodiscard]] Vec3 viewerPelvis() const {
+        const BodyWorldView3D view = hasViewer() ? viewerView() : BodyWorldView3D {};
+        return view.state && !view.state->links.empty() ? view.state->links[0].position : Vec3 {};
+    }
     [[nodiscard]] std::uint32_t viewerSteps() const { return hasViewer() ? viewerView().steps : 0u; }
     [[nodiscard]] std::array<float, 2> viewerPelvisOnScreen() const { return m_pelvisOnScreen; }
 
@@ -98,7 +110,19 @@ private:
 
     // O visualizador de agora (o do Corpo ou o da locomocao).
     [[nodiscard]] bool hasViewer() const { return m_viewer != nullptr || m_locomotion != nullptr; }
-    [[nodiscard]] BodyWorldView3D viewerView() const { return m_locomotion ? m_locomotion->view() : m_viewer->view(0); }
+    [[nodiscard]] BodyWorldView3D liveView() const { return m_locomotion ? m_locomotion->view() : m_viewer->view(0); }
+    // O quadro mostrado: o da gravacao (pausa, camera lenta, voltar) ou o de agora.
+    [[nodiscard]] BodyWorldView3D viewerView() const {
+        if (!m_shownValid) return liveView();
+        BodyWorldView3D view = m_shownView;
+        view.state = &m_shownState;
+        return view;
+    }
+    // A gravacao dos ultimos quadros (uma decisao cada) e o quadro mostrado.
+    void recordFrame();
+    void clearReplay();
+    void updateShown();
+    [[nodiscard]] float liveHead() const;
     [[nodiscard]] const RagdollProfile3D& viewerProfile() const {
         return m_locomotion ? m_locomotion->profile() : m_viewer->body().profile;
     }
@@ -182,6 +206,18 @@ private:
     // Onde a pelve aparece no ultimo quadro (0 a 1 na imagem; -1 fora dela).
     std::array<float, 2> m_pelvisOnScreen { -1.0f, -1.0f };
     bool m_paused = false;
+    struct ReplayFrame {
+        RagdollState3D state;
+        BodyWorldView3D view;
+    };
+    std::deque<ReplayFrame> m_replay;
+    // O quadro (fracionario) mostrado da gravacao; < 0: o de agora.
+    float m_playhead = -1.0f;
+    float m_shownHead = -1.0f;
+    float m_playbackSpeed = 1.0f;
+    bool m_shownValid = false;
+    RagdollState3D m_shownState;
+    BodyWorldView3D m_shownView;
     std::vector<float> m_action;
     std::string m_viewerError;
     // O comando na mao (no lugar do piloto) e a velocidade dele.
@@ -202,7 +238,6 @@ private:
     Display m_display = Display::Full;
     bool m_showCenterOfMass = true;
     bool m_showContacts = true;
-    float m_pushNewtons = 150.0f;
 
     // O historico (graficos) e os avisos.
     TrainingHistory3D m_history;

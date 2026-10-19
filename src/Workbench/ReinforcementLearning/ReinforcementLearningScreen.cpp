@@ -34,6 +34,16 @@ constexpr ImVec4 SuccessText { 0.36f, 0.85f, 0.55f, 1.0f };
 constexpr ImVec4 ErrorText { 1.0f, 0.38f, 0.45f, 1.0f };
 // Um passo da politica no visualizador; mais que isso por quadro so atrasa.
 constexpr int MaximumStepsPerFrame = 4;
+// A gravacao do visualizador: 30 s a 30 decisoes por segundo.
+constexpr std::size_t ReplayFrames = 900;
+constexpr std::array<float, 5> PlaybackSpeeds { 0.05f, 0.1f, 0.25f, 0.5f, 1.0f };
+
+Quaternion blendQuaternion(Quaternion a, Quaternion b, float t) {
+    // (O caminho curto; entre duas decisoes o giro e pequeno, a media normalizada basta.)
+    if (a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w < 0.0f) b = { -b.x, -b.y, -b.z, -b.w };
+    return Quaternion { a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t, a.w + (b.w - a.w) * t }
+        .normalized();
+}
 // O teto do comando na mao (m/s): o sprint do jogador.
 constexpr float MaximumManualSpeed = 6.5f;
 
@@ -388,6 +398,7 @@ void ReinforcementLearningScreen::showDrill(const std::string& drill) {
 }
 
 void ReinforcementLearningScreen::resetViewer() {
+    clearReplay();
     m_viewer.reset();
     m_locomotion.reset();
     m_policy.reset();
@@ -525,23 +536,96 @@ void ReinforcementLearningScreen::stepOnce() {
 }
 
 void ReinforcementLearningScreen::stepViewer(float deltaSeconds) {
-    if (!hasViewer() || m_paused) return;
-    const float step = viewerStepSeconds();
-    m_accumulator += deltaSeconds;
-    int steps = 0;
-    while (m_accumulator >= step && steps < MaximumStepsPerFrame) {
-        stepOnce();
-        m_accumulator -= step;
-        ++steps;
+    if (!hasViewer()) return;
+    if (m_replay.empty()) recordFrame();
+    if (!m_paused) {
+        const float step = viewerStepSeconds();
+        if (m_playhead >= 0.0f) {
+            // Tocando a gravacao (depois de voltar): no fim dela, segue ao vivo.
+            m_playhead += deltaSeconds * m_playbackSpeed / step;
+            if (m_playhead >= static_cast<float>(m_replay.size() - 1)) {
+                m_playhead = -1.0f;
+                m_accumulator = 0.0f;
+            }
+        } else {
+            m_accumulator += deltaSeconds * m_playbackSpeed;
+            int steps = 0;
+            while (m_accumulator >= step && steps < MaximumStepsPerFrame) {
+                stepOnce();
+                recordFrame();
+                m_accumulator -= step;
+                ++steps;
+            }
+            if (m_accumulator > step * MaximumStepsPerFrame) m_accumulator = 0.0f;
+        }
     }
-    if (m_accumulator > step * MaximumStepsPerFrame) m_accumulator = 0.0f;
-    if (steps > 0) m_dirty = true;
+    updateShown();
 }
 
 void ReinforcementLearningScreen::advanceViewer(int decisions) {
     ensureViewer();
     if (!hasViewer()) return;
-    for (int i = 0; i < decisions; ++i) stepOnce();
+    if (m_replay.empty()) recordFrame();
+    for (int i = 0; i < decisions; ++i) {
+        stepOnce();
+        recordFrame();
+    }
+    m_playhead = -1.0f;
+    m_accumulator = 0.0f;
+    updateShown();
+    m_dirty = true;
+}
+
+void ReinforcementLearningScreen::recordFrame() {
+    const BodyWorldView3D view = liveView();
+    if (!view.state) return;
+    m_replay.push_back({ *view.state, view });
+    m_replay.back().view.state = nullptr;
+    if (m_replay.size() > ReplayFrames) {
+        m_replay.pop_front();
+        if (m_playhead >= 0.0f) m_playhead = std::max(0.0f, m_playhead - 1.0f);
+    }
+}
+
+void ReinforcementLearningScreen::clearReplay() {
+    m_replay.clear();
+    m_playhead = -1.0f;
+    m_shownHead = -1.0f;
+    m_shownValid = false;
+}
+
+float ReinforcementLearningScreen::liveHead() const {
+    // Ao vivo em camera lenta, entre os dois ultimos quadros (uma decisao atras, sem pulos); em 1x, o ultimo.
+    const float last = static_cast<float>(m_replay.size()) - 1.0f;
+    if (m_playbackSpeed >= 1.0f || m_replay.size() < 2) return last;
+    return last - 1.0f + std::clamp(m_accumulator / viewerStepSeconds(), 0.0f, 1.0f);
+}
+
+void ReinforcementLearningScreen::updateShown() {
+    if (m_replay.empty()) {
+        m_shownValid = false;
+        return;
+    }
+    const float head = std::clamp(m_playhead >= 0.0f ? m_playhead : liveHead(), 0.0f,
+        static_cast<float>(m_replay.size() - 1));
+    if (m_shownValid && head == m_shownHead) return;
+    const std::size_t i = static_cast<std::size_t>(head);
+    const ReplayFrame& a = m_replay[i];
+    const ReplayFrame& b = m_replay[std::min(i + 1, m_replay.size() - 1)];
+    float t = head - static_cast<float>(i);
+    // Um recomeco do episodio entre os dois: sem misturar as poses.
+    if (!a.state.links.empty() && !b.state.links.empty()
+        && (a.state.links[0].position - b.state.links[0].position).length() > 0.5f)
+        t = std::round(t);
+    m_shownState = t < 0.5f ? a.state : b.state;
+    m_shownView = t < 0.5f ? a.view : b.view;
+    for (std::size_t k = 0; k < m_shownState.links.size() && k < a.state.links.size() && k < b.state.links.size(); ++k) {
+        m_shownState.links[k].position = a.state.links[k].position + (b.state.links[k].position - a.state.links[k].position) * t;
+        m_shownState.links[k].orientation = blendQuaternion(a.state.links[k].orientation, b.state.links[k].orientation, t);
+    }
+    m_shownView.origin = a.view.origin + (b.view.origin - a.view.origin) * t;
+    m_shownHead = head;
+    m_shownValid = true;
     m_dirty = true;
 }
 
@@ -1028,17 +1112,13 @@ void ReinforcementLearningScreen::drawToolbar() {
     }
     tooltip("O que aparece no mundo: o jogador inteiro, só o esqueleto ou só as caixas de colisão da física.");
     ImGui::SameLine();
-    const std::string pause = m_paused ? UI::FontAwesome::label(UI::FontAwesome::Play, "Continuar")
-                                       : UI::FontAwesome::label(UI::FontAwesome::Pause, "Congelar");
-    if (ImGui::Button(pause.c_str(), { ui(110.0f), ui(30.0f) })) m_paused = !m_paused;
-    tooltip("Congela só o visualizador (o treino segue).");
-    ImGui::SameLine();
     if (ImGui::Button(UI::FontAwesome::label(UI::FontAwesome::RotateLeft, "Recomeçar").c_str(), { ui(120.0f), ui(30.0f) })
         && hasViewer()) {
         const auto seed = static_cast<std::uint64_t>(std::time(nullptr));
         if (m_locomotion) m_locomotion->reset(seed);
         else m_viewer->reset(seed);
         applyManual();
+        clearReplay();
         m_dirty = true;
     }
     ImGui::SameLine();
@@ -1117,39 +1197,65 @@ void ReinforcementLearningScreen::drawViewport(CanvasTarget& canvas, float botto
 
 void ReinforcementLearningScreen::drawCommands() {
     ImGui::Dummy({ 1.0f, ui(2.0f) });
-    ImGui::AlignTextToFramePadding();
-    ImGui::TextColored(InfoText, "%s", UI::FontAwesome::label(UI::FontAwesome::Sliders, "Comando").c_str());
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(ui(150.0f));
-    if (ImGui::BeginCombo("##RLCommand", m_manual ? "Na mão" : "Piloto do treino")) {
-        if (ImGui::Selectable("Piloto do treino", !m_manual)) setManualSpeed(std::nullopt);
-        if (ImGui::Selectable("Na mão", m_manual)) setManualSpeed(m_manualSpeed);
-        ImGui::EndCombo();
+    // A reproducao do visualizador: pausar, a camera lenta, quadro a quadro e voltar na gravacao (o treino segue).
+    ImGui::BeginDisabled(!hasViewer());
+    const std::string pause = m_paused ? UI::FontAwesome::label(UI::FontAwesome::Play, "Continuar")
+                                       : UI::FontAwesome::label(UI::FontAwesome::Pause, "Pausar");
+    if (ImGui::Button(pause.c_str(), { ui(120.0f), ui(28.0f) })) {
+        // Pausando ao vivo, a gravacao fica no quadro mostrado.
+        if (!m_paused && m_playhead < 0.0f && !m_replay.empty()) m_playhead = liveHead();
+        m_paused = !m_paused;
     }
-    tooltip("Piloto: o roteiro de pedidos do exercício, como no treino. Na mão: andar para a frente na velocidade "
-            "escolhida.");
-    if (m_manual) {
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(ui(180.0f));
-        float speed = m_manualSpeed;
-        if (ImGui::SliderFloat("##RLManualSpeed", &speed, 0.0f, MaximumManualSpeed, "%.1f m/s")) setManualSpeed(speed);
-    }
-    ImGui::SameLine(0.0f, ui(24.0f));
-    ImGui::TextColored(InfoText, "%s", UI::FontAwesome::label(UI::FontAwesome::Hand, "Empurrão").c_str());
-    tooltip("Um empurrão no peito do jogador do visualizador, por 0,2 s (o treino não muda).");
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(ui(150.0f));
-    ImGui::SliderFloat("##RLPushForce", &m_pushNewtons, 50.0f, 800.0f, "%.0f N");
-    const std::array<const char*, 4> labels { "Frente", "Trás", "Esquerda", "Direita" };
-    // (Os rotulos repetem os das vistas, "Frente": IDs proprios.)
-    ImGui::PushID("RLPush");
-    for (int i = 0; i < 4; ++i) {
-        ImGui::SameLine();
-        ImGui::BeginDisabled(!hasViewer());
-        if (ImGui::Button(labels[static_cast<std::size_t>(i)], { ui(80.0f), ui(28.0f) })) push(i, m_pushNewtons);
-        ImGui::EndDisabled();
+    tooltip("Pausa só o visualizador (o treino segue).");
+    ImGui::SameLine(0.0f, ui(16.0f));
+    ImGui::PushID("RLPlaybackSpeed");
+    for (std::size_t i = 0; i < PlaybackSpeeds.size(); ++i) {
+        if (i > 0) ImGui::SameLine(0.0f, ui(4.0f));
+        const bool on = std::abs(PlaybackSpeeds[i] - m_playbackSpeed) < 1e-4f;
+        char label[16];
+        std::snprintf(label, sizeof label, "%gx", static_cast<double>(PlaybackSpeeds[i]));
+        if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+        if (ImGui::Button(label, { ui(56.0f), ui(28.0f) })) {
+            m_playbackSpeed = PlaybackSpeeds[i];
+            m_shownValid = false;
+        }
+        if (on) ImGui::PopStyleColor();
     }
     ImGui::PopID();
+    tooltip("A velocidade do visualizador (câmera lenta).");
+    ImGui::SameLine(0.0f, ui(16.0f));
+    const float last = m_replay.empty() ? 0.0f : static_cast<float>(m_replay.size() - 1);
+    const float head = m_playhead >= 0.0f ? m_playhead : (m_replay.empty() ? 0.0f : liveHead());
+    const auto stepTo = [&](float target) {
+        m_paused = true;
+        m_playhead = std::clamp(target, 0.0f, last);
+    };
+    if (ImGui::Button("<##RLFrameBack", { ui(32.0f), ui(28.0f) })) stepTo(std::ceil(head) - 1.0f);
+    tooltip("Um quadro para trás.");
+    ImGui::SameLine(0.0f, ui(4.0f));
+    if (ImGui::Button(">##RLFrameForward", { ui(32.0f), ui(28.0f) })) {
+        if (std::floor(head) + 1.0f <= last) stepTo(std::floor(head) + 1.0f);
+        else {
+            // No fim da gravacao: simula a proxima decisao.
+            stepOnce();
+            recordFrame();
+            m_paused = true;
+            m_playhead = static_cast<float>(m_replay.size() - 1);
+        }
+    }
+    tooltip("Um quadro para frente.");
+    ImGui::SameLine(0.0f, ui(8.0f));
+    ImGui::SetNextItemWidth(ui(420.0f));
+    float scrub = head;
+    char behind[48];
+    std::snprintf(behind, sizeof behind, "-%.2f s", static_cast<double>((last - head) * viewerStepSeconds()));
+    if (ImGui::SliderFloat("##RLTimeline", &scrub, 0.0f, std::max(last, 1e-3f), behind)) {
+        m_paused = true;
+        m_playhead = std::round(scrub);
+    }
+    tooltip("A gravação dos últimos 30 s do visualizador: arraste para o momento exato (o tempo é o quanto antes de "
+            "agora).");
+    ImGui::EndDisabled();
     ImGui::SameLine(0.0f, ui(24.0f));
     if (ImGui::Button(UI::FontAwesome::label(UI::FontAwesome::ChartLine, m_chartsExpanded ? "Recolher" : "Expandir").c_str(),
             { ui(120.0f), ui(28.0f) })) {
