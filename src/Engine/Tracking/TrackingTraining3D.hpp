@@ -21,10 +21,11 @@ enum class TrackingScenario3D : std::uint8_t { Forward = 0, Full = 1 };
 // a velocidade dada, trocando de rumo a cada switchSeconds).
 enum class TrackingEvaluation3D : std::uint8_t { Forward = 0, Headings = 1, Switches = 2, Idle = 3, Turn = 4, FastTurn = 5 };
 
-// Os exercicios parados (os da escada antiga, locomocao_f3f): ficar parado no
-// idle com o olhar fixo; parado com giro suave (30 a 120 graus a 0,4 a 0,6
-// rad/s, pausas de 1,5 a 4 s); giro rapido parado (60 a 240 graus a 1 a 3,14
-// rad/s, pausas de 1 a 2 s). Move e o jogador virtual do DReCon.
+// Os exercicios parados (da escada antiga, locomocao_f3f, com as voltas
+// completas que o usuario exige): ficar parado no idle com o olhar fixo;
+// parado com giro suave (30 a 450 graus a 0,4 a 0,8 rad/s, pausas de 1,5 a
+// 4 s); giro rapido parado (90 a 720 graus a 1 a 3,14 rad/s, pausas de 1 a
+// 2 s). Move e o jogador virtual do DReCon.
 enum class TrackingDrill3D : std::uint8_t { Move = 0, Idle = 1, Turn = 2, FastTurn = 3 };
 
 struct TrackingTrainingSettings3D {
@@ -56,6 +57,10 @@ struct TrackingTrainingSettings3D {
     float episodeSeconds = 20.0f;
     float actionFilterBeta = 0.2f;
     // A parte dos episodios do treino em cada exercicio parado (o resto anda).
+    // O custo de suavidade (desvio declarado do DReCon, 19/10: as pernas tremiam
+    // 14 a 90x o lider parado): a nota vezes exp(-actionRateWeight * media((a - a_anterior)^2))
+    // da acao crua. 0 = a receita do artigo.
+    float actionRateWeight = 0.0f;
     float idleShare = 0.0f;
     float turnShare = 0.0f;
     float fastTurnShare = 0.0f;
@@ -130,6 +135,8 @@ public:
     void setCommand(std::size_t world, float speed, float relativeDirectionRadians);
     // Um exercicio parado num mundo (o visualizador); Move volta ao pedido de setCommand.
     void setDrill(std::size_t world, TrackingDrill3D drill);
+    // O olhar pedido de um mundo (rad, sem dar a volta: acumula os giros).
+    [[nodiscard]] float lookYaw(std::size_t world) const;
     // Um empurrao (N, no mundo) num link de um mundo durante `seconds`.
     void push(std::size_t world, std::uint32_t link, Vec3 force, float seconds);
 

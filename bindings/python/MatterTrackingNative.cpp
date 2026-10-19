@@ -56,7 +56,7 @@ NB_MODULE(matter_tracking_native, m) {
                 std::uint64_t seed, const std::string& scenario, float forward_maximum_speed, bool evaluation,
                 float evaluation_speed, float episode_seconds, bool allow_sprint, const std::string& evaluation_mode,
                 float switch_seconds, bool projectiles, float projectile_minimum_kg, float projectile_maximum_kg,
-                float idle_share, float turn_share, float fast_turn_share) {
+                float idle_share, float turn_share, float fast_turn_share, float action_rate_weight) {
                 TrackingTrainingSettings3D settings;
                 settings.assetsDirectory = assets;
                 settings.environments = environments;
@@ -80,6 +80,7 @@ NB_MODULE(matter_tracking_native, m) {
                 settings.idleShare = idle_share;
                 settings.turnShare = turn_share;
                 settings.fastTurnShare = fast_turn_share;
+                settings.actionRateWeight = action_rate_weight;
                 settings.switchSeconds = switch_seconds;
                 settings.projectiles = projectiles;
                 settings.projectileMinimumKg = projectile_minimum_kg;
@@ -91,7 +92,8 @@ NB_MODULE(matter_tracking_native, m) {
             "forward_maximum_speed"_a = 3.0f, "evaluation"_a = false, "evaluation_speed"_a = 3.0f,
             "episode_seconds"_a = 20.0f, "allow_sprint"_a = true, "evaluation_mode"_a = "frente",
             "switch_seconds"_a = 4.0f, "projectiles"_a = false, "projectile_minimum_kg"_a = 0.01f,
-            "projectile_maximum_kg"_a = 8.0f, "idle_share"_a = 0.0f, "turn_share"_a = 0.0f, "fast_turn_share"_a = 0.0f)
+            "projectile_maximum_kg"_a = 8.0f, "idle_share"_a = 0.0f, "turn_share"_a = 0.0f, "fast_turn_share"_a = 0.0f,
+            "action_rate_weight"_a = 0.0f)
         .def_prop_ro("num_envs", &TrackingTraining3D::environmentCount)
         .def_prop_ro("obs_size", &TrackingTraining3D::observationSize)
         .def_prop_ro("action_size", &TrackingTraining3D::actionSize)
@@ -163,6 +165,9 @@ NB_MODULE(matter_tracking_native, m) {
                 }
                 return out;
             })
+        .def("look_yaw", &TrackingTraining3D::lookYaw, "world"_a)
+        .def("leader_heading", [](const TrackingTraining3D& b, std::size_t world) { return b.leader(world).headingYawRadians; },
+            "world"_a)
         .def("leader_links", [](const TrackingTraining3D& b, std::size_t world) { return links(b.leader(world).links); },
             "world"_a)
         .def("body_links", [](const TrackingTraining3D& b, std::size_t world) { return links(b.body(world).links); },

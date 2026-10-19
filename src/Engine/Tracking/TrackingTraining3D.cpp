@@ -66,6 +66,8 @@ struct TrackingTraining3D::Impl {
         float pauseLeft = 0.0f;
         std::uint64_t ticks = 0;
         std::array<float, TrackingContract3D::ActionSize> filtered {};
+        // A acao crua da decisao anterior (o custo de suavidade).
+        std::array<float, TrackingContract3D::ActionSize> lastAction {};
         std::vector<RagdollDriveTarget3D> drives;
         const RagdollState3D* body = nullptr;
         std::vector<float> observation;
@@ -174,9 +176,10 @@ struct TrackingTraining3D::Impl {
         const bool fast = w.drill == TrackingDrill3D::FastTurn;
         if (w.turnLeft == 0.0f) {
             if ((w.pauseLeft -= TickSeconds) > 0.0f) return;
-            const float degrees = fast ? uniform(w.rng, 60.0f, 240.0f) : uniform(w.rng, 30.0f, 120.0f);
+            // Voltas completas e mais de uma (o usuario, 19/10): o suave ate 1,25 volta, o rapido ate 2.
+            const float degrees = fast ? uniform(w.rng, 90.0f, 720.0f) : uniform(w.rng, 30.0f, 450.0f);
             w.turnLeft = degrees * (Pi / 180.0f) * (chance(w.rng, 0.5f) ? 1.0f : -1.0f);
-            w.turnSpeed = fast ? uniform(w.rng, 1.0f, 3.14f) : uniform(w.rng, 0.4f, 0.6f);
+            w.turnSpeed = fast ? uniform(w.rng, 1.0f, 3.14f) : uniform(w.rng, 0.4f, 0.8f);
         }
         const float step = std::min(std::abs(w.turnLeft), w.turnSpeed * TickSeconds);
         const float signed_ = w.turnLeft > 0.0f ? step : -step;
@@ -260,8 +263,17 @@ struct TrackingTraining3D::Impl {
     void decide(World& w, std::size_t index, std::span<const float> action, float& reward, std::uint8_t& terminated,
         std::uint8_t& truncated) {
         const float beta = settings.actionFilterBeta;
-        for (std::size_t a = 0; a < w.filtered.size(); ++a)
-            w.filtered[a] = beta * (std::isfinite(action[a]) ? action[a] : 0.0f) + (1.0f - beta) * w.filtered[a];
+        double actionRate = 0.0;
+        for (std::size_t a = 0; a < w.filtered.size(); ++a) {
+            const float raw = std::isfinite(action[a]) ? action[a] : 0.0f;
+            w.filtered[a] = beta * raw + (1.0f - beta) * w.filtered[a];
+            actionRate += (raw - w.lastAction[a]) * (raw - w.lastAction[a]);
+            w.lastAction[a] = raw;
+        }
+        actionRate /= static_cast<double>(w.filtered.size());
+        // (A primeira decisao do episodio nao tem anterior: sem custo.)
+        const float smooth = settings.actionRateWeight > 0.0f && w.decisions > 0
+            ? static_cast<float>(std::exp(-settings.actionRateWeight * actionRate)) : 1.0f;
         for (int k = 0; k < TicksPerDecision; ++k) {
             leaderTick(w);
             contract->driveTargets(w.leader->state(), *w.body, w.filtered, w.drives);
@@ -282,10 +294,10 @@ struct TrackingTraining3D::Impl {
         const Vec3 comVelocity = rlBodyCenterOfMassVelocity3D(*profile, body.links);
         const TrackingLeaderState3D& leader = w.leader->state();
         const TrackingRewardTerms3D terms = w.reward->evaluate(leader, body.links, com, comVelocity);
-        reward = terms.total;
+        reward = terms.total * smooth;
         w.seconds += TicksPerDecision * TickSeconds;
         ++w.decisions;
-        w.rewardSum += terms.total;
+        w.rewardSum += reward;
         const Vec3 error = comVelocity - leader.centerOfMassVelocity;
         w.comErrorSum += std::hypot(error.x, error.y);
         w.speedSum += std::hypot(comVelocity.x, comVelocity.y);
@@ -434,6 +446,8 @@ void TrackingTraining3D::setCommand(std::size_t world, float speed, float relati
 void TrackingTraining3D::setDrill(std::size_t world, TrackingDrill3D drill) {
     m_impl->enterDrill(m_impl->worlds.at(world), drill);
 }
+
+float TrackingTraining3D::lookYaw(std::size_t world) const { return m_impl->worlds.at(world).command.facingYawRadians; }
 
 void TrackingTraining3D::push(std::size_t world, std::uint32_t link, Vec3 force, float seconds) {
     Impl::World& w = m_impl->worlds.at(world);

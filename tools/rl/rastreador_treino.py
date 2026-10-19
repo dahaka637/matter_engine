@@ -172,6 +172,8 @@ def main() -> int:
     parser.add_argument("--parado", type=float, default=0.0, help="parte dos episodios parado no idle")
     parser.add_argument("--giro", type=float, default=0.0, help="parte dos episodios parado com giro suave")
     parser.add_argument("--giro-rapido", type=float, default=0.0, help="parte dos episodios com giro rapido parado")
+    parser.add_argument("--suavidade", type=float, default=0.0,
+                        help="custo de suavidade: a nota vezes exp(-k media((a - a_anterior)^2)); 0 = o DReCon")
     args = parser.parse_args()
 
     run = DATA / args.treino
@@ -182,7 +184,8 @@ def main() -> int:
     batch = native.TrackingBatch(str(REPO / "assets"), environments=args.mundos, threads=args.threads,
                                  seed=args.semente, scenario=args.cenario, forward_maximum_speed=args.teto,
                                  allow_sprint=not args.sem_corrida, projectiles=args.projeteis,
-                                 idle_share=args.parado, turn_share=args.giro, fast_turn_share=args.giro_rapido)
+                                 idle_share=args.parado, turn_share=args.giro, fast_turn_share=args.giro_rapido,
+                                 action_rate_weight=args.suavidade)
     n, obs_size, act_size = batch.num_envs, batch.obs_size, batch.action_size
     model = Policy(obs_size, act_size).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=3e-4)
