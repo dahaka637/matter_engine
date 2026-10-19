@@ -4,6 +4,7 @@
 #include "Engine/Character/BallGesturePose3D.hpp"
 #include "Engine/Character/CharacterLocomotion3D.hpp"
 #include "Engine/Character/PoseInertializer3D.hpp"
+#include "Engine/Character/StandTurnFeet3D.hpp"
 #include "Engine/Math/Quaternion.hpp"
 #include "Engine/Math/Vec3.hpp"
 #include "Engine/Physics/PhysicsScene3D.hpp"
@@ -146,10 +147,9 @@ struct DefaultLocomotionSettings3D {
     // Parado: a pelve vai a camera so quando o erro passa de standTurnStart
     // (rad), e para standTurnKeep (rad) dela - o resto e da coluna e da
     // cabeca -, nesta constante (s).
-    // Giro parado: as pernas e os pes tocam o turn_left/turn_right (pelo lado)
-    // no ritmo do giro da pelve; o giro em si e a mola (o usuario, 19/10: "so
-    // movimento dos pes/pernas, nao mexer na velocidade do giro").
-    bool standTurnClips = true;
+    // Giro parado: os pes dao os passos de giro do planejador do fisico
+    // (StandTurnFeet3D), so como gesto; o giro em si e a mola.
+    bool standTurnSteps = true;
     float standTurnStart = 0.55f;
     float standTurnKeep = 0.31f;
     float standTurnSeconds = 0.16f;
@@ -782,9 +782,9 @@ private:
     float m_headTurn = 0.0f;
     float m_upright = 1.0f;
     bool m_standTurning = false;
-    // O giro parado: o clipe das pernas, o tempo nele e o peso na pose.
-    const AnimationClip3D* m_turnClip = nullptr;
-    float m_turnTime = 0.0f, m_turnWeight = 0.0f;
+    // O giro parado: os passos dos pes e o alvo da pelve (rad).
+    StandTurnFeet3D m_standTurnFeet;
+    float m_standTurnTarget = 0.0f;
     bool m_started = false;
     // A semente (seed): aplicada no proximo update.
     bool m_seedPending = false;

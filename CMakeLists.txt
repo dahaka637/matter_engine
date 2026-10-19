@@ -758,6 +758,7 @@ add_library(MatterAthlete STATIC
     src/Engine/Character/DefaultLocomotion3D_Pose.cpp
     src/Engine/Character/DefaultLocomotion3D_Layers.cpp
     src/Engine/Character/DefaultLocomotion3D_Feet.cpp
+    src/Engine/Character/StandTurnFeet3D.cpp
     src/Engine/Character/DefaultLocomotion3D_Exits.cpp
     src/Engine/Character/DefaultLocomotion3D_Readout.cpp
     src/Engine/Character/PoseInertializer3D.cpp

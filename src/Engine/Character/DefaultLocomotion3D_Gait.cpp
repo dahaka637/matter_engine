@@ -97,20 +97,8 @@ void DefaultLocomotion3D::stepGait(Tick& t) {
             m_yawRate = step / dt;
             m_yaw = wrapAngle(m_yaw + step);
         }
-        // O giro parado mexe so as pernas (o usuario, 19/10): o turn_left ou o turn_right, pelo lado do giro, no
-        // ritmo do giro da pelve (o giro e o da mola acima, o pe pode deslizar).
-        const AnimationClip3D* turnClip = m_yawRate >= 0.0f ? t.animations.turnLeft : t.animations.turnRight;
-        if (s.standTurnClips && !moving && turnClip != nullptr && std::abs(m_yawRate) > 0.3f) {
-            if (turnClip != m_turnClip && m_turnWeight < 0.05f) m_turnTime = 0.0f;
-            m_turnClip = turnClip;
-            const float duration = std::max(0.1f, turnClip->durationSeconds);
-            const float clipRate = std::max(0.3f, std::abs(turnClip->turnCycleRadians)) / duration;
-            // (Ate 2x o clipe: num giro rapido da camera o pe desliza em vez de as pernas se debaterem.)
-            m_turnTime = std::fmod(m_turnTime + dt * std::min(2.0f, std::abs(m_yawRate) / clipRate), duration);
-            m_turnWeight = std::min(1.0f, m_turnWeight + dt / 0.12f);
-        } else {
-            m_turnWeight = std::max(0.0f, m_turnWeight - dt / 0.2f);
-        }
+        // (O alvo do giro, para os passos do giro parado.)
+        m_standTurnTarget = target;
     }
 
     // Transicoes adaptativas: frente, lados e costas pelo angulo entre o

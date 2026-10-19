@@ -151,6 +151,24 @@ void DefaultLocomotion3D::stepFeet(Tick& t) {
         // (O comprimento ao longo do rumo de cada ciclo, com o peso da forma
         // dele; some perto do parado.)
         const float strideAmount = (strideScale - 1.0f) * m_moving * smoothStep((speed - 0.3f) / 1.0f);
+        // O giro parado pelos passos (StandTurnFeet3D): parado, no chao, sem
+        // gesto de bola; andar devolve os pes a locomocao na hora.
+        {
+            StandTurnFeetInput3D turn;
+            turn.standing = s.standTurnSteps && speed <= 0.3f && requested.length() <= 0.1f && ground > 0.99f
+                && !input.ballGesture.active && !gestureFeet[0] && !gestureFeet[1];
+            turn.facingYawRadians = m_yaw;
+            turn.targetYawRadians = m_standTurnTarget;
+            turn.turnRateRadiansPerSecond = m_yawRate;
+            turn.rootWorld = rootPosition;
+            turn.groundHeight = feet.z;
+            for (std::size_t side = 0; side < 2; ++side)
+                if (m_feet[side] != 0)
+                    turn.reference[side] = { rootPosition + rootOrientation.rotate(local.linkPositions[m_feet[side]]),
+                        (rootOrientation * local.linkOrientations[m_feet[side]]).normalized() };
+            turn.deltaTime = dt;
+            m_standTurnFeet.update(profile, m_feet, turn);
+        }
         bool moved = false;
         for (std::size_t side = 0; side < 2; ++side) {
             const std::size_t index = m_feet[side];
@@ -252,6 +270,12 @@ void DefaultLocomotion3D::stepFeet(Tick& t) {
                 }
             } else {
                 m_footLocks[side] = {};
+            }
+            if (m_standTurnFeet.weight() > 0.0f && !ballFoot && !releaseFoot) {
+                const float w = m_standTurnFeet.weight();
+                const StandTurnFoot3D& turn = m_standTurnFeet.foot(side);
+                shifted += (turn.position - shifted) * w;
+                orientation = slerp3D(orientation, turn.orientation, w);
             }
             float groundZ = feet.z;
             if (input.groundAt) {

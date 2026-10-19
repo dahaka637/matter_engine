@@ -89,41 +89,10 @@ void DefaultLocomotion3D::stepPose(Tick& t) {
     if (animations.idle != nullptr)
         sampleInto(*animations.idle, std::fmod(m_idleTime, std::max(0.1f, animations.idle->durationSeconds)), true,
             m_idleWeight * ground, upperIdleWeight * ground);
-    // O giro parado: as pernas e os pes do clipe de giro no lugar das do idle (so as juntas; o giro e o de sempre).
-    std::vector<Vec3> idleLegs;
-    if (m_turnClip != nullptr && m_turnWeight > 1e-4f) {
-        idleLegs = m_coordinates;
-        const float k = m_turnWeight * m_idleWeight * ground;
-        for (std::size_t i = 1; i < links; ++i) {
-            const std::string& id = profile.links[i].id;
-            if (id.find("Thigh") == std::string::npos && id.find("Shin") == std::string::npos
-                && id.find("Foot") == std::string::npos && id.find("Toe") == std::string::npos)
-                continue;
-            if (const AnimationTrack3D* track = findAnimationTrack3D(*m_turnClip, id))
-                m_coordinates[i] += (sampleTrack(*track, m_turnTime, m_turnClip->durationSeconds, true,
-                    s.smoothClipSampling).jointPositionRadians - m_coordinates[i]) * k;
-        }
-    }
     if (m_airClip != nullptr && m_airWeight > 1e-4f)
         sampleInto(*m_airClip, m_airPhase * m_airClip->durationSeconds, false, m_airWeight, m_airWeight);
     t.clipRootRotation = rootRotation.result();
     Quaternion& clipRootRotation = t.clipRootRotation;
-    // (E a sola mais baixa delas na altura da das pernas do idle: a pelve desce ou sobe o que falta - sem isso os pes
-    // flutuavam ~4 cm.)
-    if (!idleLegs.empty() && m_feet[0] != 0 && m_feet[1] != 0) {
-        const Quaternion up = profile.links.front().modelOrientation * clipRootRotation;
-        const auto lowest = [&](const std::vector<Vec3>& coordinates) {
-            RagdollAnimationPose3D chain;
-            buildRagdollChainPose3D(profile, coordinates, chain, m_feet[0]);
-            buildRagdollChainPose3D(profile, coordinates, chain, m_feet[1]);
-            float low = 1e9f;
-            for (const std::size_t foot : m_feet)
-                low = std::min(low, soleHeight(profile.links[foot], up.rotate(chain.linkPositions[foot]),
-                    (up * chain.linkOrientations[foot]).normalized(), s.toeRoll ? s.toeRollMeters : 0.0f));
-            return low;
-        };
-        rootOffset.z += lowest(idleLegs) - lowest(m_coordinates);
-    }
 
     // O gesto da arrancada (o idle_to_sprint como delta no tronco, nos bracos
     // e na cabeca, por cima do ciclo - o mesmo do fisico).

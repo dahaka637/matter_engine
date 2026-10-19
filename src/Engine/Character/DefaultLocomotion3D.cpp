@@ -139,9 +139,8 @@ void defaultLocomotionPose3D(const RagdollProfile3D& profile, Vec3 rootPosition,
 
 void DefaultLocomotion3D::reset(float facingYawRadians) {
     m_sector = 0;
-    m_turnClip = nullptr;
-    m_turnWeight = 0.0f;
-    m_turnTime = 0.0f;
+    m_standTurnFeet.reset();
+    m_standTurnTarget = facingYawRadians;
     m_dribbleCadence = 1.0f;
     m_weights.fill(0.0f);
     m_shape.fill(0.0f);
