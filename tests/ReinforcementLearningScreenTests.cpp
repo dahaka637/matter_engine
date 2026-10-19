@@ -25,6 +25,7 @@
 #include <chrono>
 #include <thread>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -257,6 +258,15 @@ int realRun(const std::filesystem::path& out) {
         const Vec3 full = screen.viewerPelvis();
         screen.advanceViewer(30);
         require((screen.viewerPelvis() - full).length() > 0.05f, "com a gravacao cheia o visualizador deveria seguir");
+    }
+    if (const char* mouse = std::getenv("MATTER_RL_TEST_MOUSE")) {
+        // O mouse parado num ponto (x,y): a dica do grafico sob ele.
+        float x = 0.0f, y = 0.0f;
+        if (std::sscanf(mouse, "%f,%f", &x, &y) == 2) {
+            ImGui::GetIO().MousePos = { x, y };
+            frame(screen, canvas, 3);
+            snapshot(canvas, "rl_tela_mouse");
+        }
     }
     if (const char* window = std::getenv("MATTER_RL_TEST_EXPAND")) {
         screen.setChartsExpanded(true, std::atoi(window));

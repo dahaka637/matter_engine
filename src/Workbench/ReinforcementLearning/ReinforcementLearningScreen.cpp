@@ -196,7 +196,7 @@ struct ChartSeries {
 // Um grafico de linha: fundo, grade, a serie principal com a area, a de referencia por tras, o valor de
 // agora grande no canto e a dica com o valor sob o mouse.
 void lineChart(const char* id, const std::vector<ChartSeries>& series, float minimum, float maximum, ImVec2 size,
-    const char* valueText, const char* unit, const std::vector<double>* times = nullptr) {
+    const char* valueText, const char* unit, const std::vector<double>* times = nullptr, bool timeLabels = false) {
     ImGui::InvisibleButton(id, size);
     const bool hovered = ImGui::IsItemHovered();
     const ImVec2 low = ImGui::GetItemRectMin(), high = ImGui::GetItemRectMax();
@@ -212,14 +212,15 @@ void lineChart(const char* id, const std::vector<ChartSeries>& series, float min
         const float y = inner0.y + (inner1.y - inner0.y) * static_cast<float>(i) / 4.0f;
         draw->AddLine({ low.x + 1.0f, y }, { high.x - 1.0f, y }, IM_COL32(32, 48, 64, 140));
     }
-    int hoverIndex = -1;
+    // O mouse em fracao da largura: cada serie acha o proprio ponto (elas tem tamanhos diferentes).
+    float hoverAt = -1.0f;
     std::size_t hoverCount = 0;
     for (const ChartSeries& item : series) hoverCount = std::max(hoverCount, item.values->size());
-    if (hovered && hoverCount > 1) {
-        const float t = (ImGui::GetIO().MousePos.x - inner0.x) / std::max(inner1.x - inner0.x, 1.0f);
-        hoverIndex = std::clamp(static_cast<int>(std::lround(t * static_cast<float>(hoverCount - 1))), 0,
-            static_cast<int>(hoverCount) - 1);
-    }
+    if (hovered && hoverCount > 1)
+        hoverAt = std::clamp((ImGui::GetIO().MousePos.x - inner0.x) / std::max(inner1.x - inner0.x, 1.0f), 0.0f, 1.0f);
+    const auto indexAt = [hoverAt](std::size_t size) {
+        return static_cast<std::size_t>(std::lround(hoverAt * static_cast<float>(size - 1)));
+    };
     for (int pass = 0; pass < 2; ++pass) {
         for (const ChartSeries& item : series) {
             if ((pass == 0) != item.reference) continue;
@@ -246,18 +247,19 @@ void lineChart(const char* id, const std::vector<ChartSeries>& series, float min
             if (!item.reference) draw->AddCircleFilled(point(v.size() - 1), 3.2f, lineColor);
         }
     }
-    if (hoverIndex >= 0) {
-        const float x = inner0.x + (inner1.x - inner0.x) * static_cast<float>(hoverIndex)
-            / static_cast<float>(hoverCount - 1);
+    if (hoverAt >= 0.0f) {
+        const float x = inner0.x + (inner1.x - inner0.x) * hoverAt;
         draw->AddLine({ x, inner0.y }, { x, inner1.y }, IM_COL32(120, 150, 180, 120));
         ImGui::BeginTooltip();
-        if (times && static_cast<std::size_t>(hoverIndex) < times->size())
-            ImGui::TextDisabled("%s", clockText((*times)[static_cast<std::size_t>(hoverIndex)]).c_str());
-        for (const ChartSeries& item : series)
-            if (static_cast<std::size_t>(hoverIndex) < item.values->size())
-                ImGui::TextColored(item.color, "%s%.2f %s",
-                    !item.label.empty() ? (item.label + "  ").c_str() : item.reference ? "clássico  " : "",
-                    (*item.values)[static_cast<std::size_t>(hoverIndex)], unit);
+        if (times && !times->empty()) ImGui::TextDisabled("%s", clockText((*times)[indexAt(times->size())]).c_str());
+        for (const ChartSeries& item : series) {
+            if (item.values->empty()) continue;
+            const float v = (*item.values)[indexAt(item.values->size())];
+            // As casas pelo tamanho do numero (8862, 13,2, 0,265).
+            const char* format = std::abs(v) >= 100.0f ? "%s%.0f %s" : std::abs(v) >= 10.0f ? "%s%.1f %s" : "%s%.3g %s";
+            ImGui::TextColored(item.color, format,
+                !item.label.empty() ? (item.label + "  ").c_str() : item.reference ? "clássico  " : "", v, unit);
+        }
         ImGui::EndTooltip();
     }
     if (valueText[0]) {
@@ -270,7 +272,7 @@ void lineChart(const char* id, const std::vector<ChartSeries>& series, float min
     draw->AddText({ low.x + 10.0f, low.y + 6.0f }, IM_COL32(100, 120, 140, 200), range);
     std::snprintf(range, sizeof range, "%.3g", minimum);
     draw->AddText({ low.x + 10.0f, high.y - ImGui::GetTextLineHeight() - 6.0f }, IM_COL32(100, 120, 140, 200), range);
-    if (times && times->size() > 1) {
+    if (timeLabels && times && times->size() > 1) {
         // O comeco e o fim do trecho, embaixo nos cantos.
         const std::string first = clockText(times->front()), last = clockText(times->back());
         const float y = high.y - ImGui::GetTextLineHeight() - 6.0f;
@@ -1370,7 +1372,6 @@ void ReinforcementLearningScreen::drawCharts(float height) {
         float maximum;
         std::string value;
         const char* unit;
-        const char* tooltip;
         const std::vector<double>* times = nullptr;
         // Se cair e melhorar (as quedas, o erro): a cor da variacao no periodo.
         bool lowerIsBetter = false;
@@ -1412,24 +1413,15 @@ void ReinforcementLearningScreen::drawCharts(float height) {
         { tracking ? std::string("Sem cair (%) · treino")
                    : "Sem cair (%)" + (drillName.empty() ? std::string() : " · " + drillName),
             { { &standClassic, green, true }, { &stand, green, false } }, 0.0f, 100.0f, standValue, "%",
-            tracking ? "Os episódios do treino que chegaram ao fim sem cair nem ficar para trás, rodada a rodada. No canto, "
-                       "o último teste das 8 direções no rumo escolhido (só as quedas de verdade)."
-                     : "A avaliação do exercício mostrado (a rede; o traço apagado é o clássico, sem a rede).",
             tracking ? &iterationTimes : nullptr },
         { tracking ? std::string("Evolução · nota por decisão (todos os rumos)")
                    : "Evolução · recompensa por segundo" + (drillName.empty() ? std::string() : " · " + drillName),
             { { &bestLine, amber, true, "melhor" }, { &rate, amber, false } }, rateLow, rateHigh, rateValue,
-            tracking ? "" : "/s",
-            "Quanto o exercício mostrado é recompensado por segundo (as últimas 12 rodadas juntas; cair conta como perda, "
-            "então falhar derruba a curva). Entre parênteses, a variação em 30 rodadas; o traço apagado é o melhor nível "
-            "já alcançado neste treino.",
-            tracking ? &iterationTimes : nullptr },
+            tracking ? "" : "/s", tracking ? &iterationTimes : nullptr },
         { "Episódio (s)", { { &seconds, cyan, false } }, 0.0f, range({ &seconds }, 1.0f, 0.0f).second,
-            seconds.empty() ? "" : text(seconds.back(), "%.1f s"), "s", "Quanto dura um episódio do treino.",
-            &iterationTimes },
+            seconds.empty() ? "" : text(seconds.back(), "%.1f s"), "s", &iterationTimes },
         { "Decisões / s", { { &speed, violet, false } }, 0.0f, range({ &speed }, 1000.0f, 0.0f).second,
-            speed.empty() ? "" : text(speed.back(), "%.0f"), "", "A velocidade do treino (física + rede).",
-            &iterationTimes },
+            speed.empty() ? "" : text(speed.back(), "%.0f"), "", &iterationTimes },
     } };
     if (m_chartsExpanded) {
         // Expandido: tambem as quedas do treino (no rastreador o sem cair ja e o avesso delas) e, no rastreador, a
@@ -1437,17 +1429,16 @@ void ReinforcementLearningScreen::drawCharts(float height) {
         if (!tracking)
             charts.insert(charts.begin() + 3, { "Quedas no treino (%)", { { &falls, amber, false } }, 0.0f, 100.0f,
                 falls.empty() ? "" : text(falls.back(), "%.1f%%"), "%",
-                "A fatia dos episódios do treino que acabou em queda (todos os exercícios).", &iterationTimes, true });
+                &iterationTimes, true });
         if (!bodySpeed.empty())
             charts.insert(charts.end() - 1, { "Velocidade (m/s) · ele e, apagado, o pedido",
                 { { &requestedSpeed, cyan, true, "pedido" }, { &bodySpeed, cyan, false, "ele" } }, 0.0f,
                 range({ &bodySpeed, &requestedSpeed }, 1.0f, 0.0f).second, text(bodySpeed.back(), "%.2f m/s"), "m/s",
-                "A velocidade média do corpo nos episódios do treino e a pedida pelo líder.", &iterationTimes });
+                &iterationTimes });
         if (!velocityError.empty())
             charts.insert(charts.end() - 1, { "Erro de velocidade (m/s)", { { &velocityError, green, false } }, 0.0f,
                 range({ &velocityError }, 0.5f, 0.0f).second, text(velocityError.back(), "%.3f m/s"), "m/s",
-                "O erro médio entre a velocidade do centro de massa e a do líder (menor é melhor).", &iterationTimes,
-                true });
+                &iterationTimes, true });
     }
     const float spacing = ImGui::GetStyle().ItemSpacing.x;
     if (m_chartsExpanded) {
@@ -1489,10 +1480,9 @@ void ReinforcementLearningScreen::drawCharts(float height) {
             ImGui::PushID(static_cast<int>(i));
             lineChart("##chart", chart.series, chart.minimum, chart.maximum,
                 { ImGui::GetContentRegionAvail().x, each - ImGui::GetTextLineHeightWithSpacing() }, chart.value.c_str(),
-                chart.unit, chart.times);
+                chart.unit, chart.times, true);
             ImGui::PopID();
             ImGui::EndGroup();
-            tooltip(chart.tooltip);
         }
         return;
     }
@@ -1507,10 +1497,9 @@ void ReinforcementLearningScreen::drawCharts(float height) {
         ImGui::PushID(static_cast<int>(i));
         lineChart("##chart", chart.series, chart.minimum, chart.maximum,
             { width, std::max(height - ImGui::GetTextLineHeightWithSpacing(), ui(40.0f)) }, chart.value.c_str(),
-            chart.unit);
+            chart.unit, chart.times);
         ImGui::PopID();
         ImGui::EndGroup();
-        tooltip(chart.tooltip);
     }
 }
 
