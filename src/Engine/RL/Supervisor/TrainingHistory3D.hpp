@@ -17,6 +17,10 @@ struct TrainingIterationPoint3D {
     double episodeSeconds = 0.0;
     double fallFraction = 0.0;
     double sps = 0.0;
+    // O erro e as velocidades medias (m/s) do rastreador (NaN nos outros treinos).
+    double velocityError = std::numeric_limits<double>::quiet_NaN();
+    double bodySpeed = std::numeric_limits<double>::quiet_NaN();
+    double requestedSpeed = std::numeric_limits<double>::quiet_NaN();
 };
 
 struct TrainingEvaluationPoint3D {

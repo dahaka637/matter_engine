@@ -112,7 +112,7 @@ HeadlessUi::HeadlessUi(float width, float height) {
     // A mesma fonte e o mesmo tema do Workbench.
     UI::configureImGuiFonts();
     UI::applyMatterEngineStyle();
-    io.BackendFlags |= ImGuiBackendFlags_RendererHasTextures;
+    io.BackendFlags |= ImGuiBackendFlags_RendererHasTextures | ImGuiBackendFlags_RendererHasVtxOffset;
     io.IniFilename = nullptr;
     io.ConfigErrorRecoveryEnableAssert = false;
     GImGui->ErrorCallback = [](ImGuiContext*, void*, const char* message) { imguiErrors.emplace_back(message); };

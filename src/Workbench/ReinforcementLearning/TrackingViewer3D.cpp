@@ -35,7 +35,8 @@ struct TrackingViewer3D::Impl {
     Vec3 pushForce;
 };
 
-TrainingHistory3D TrackingViewer3D::readHistory(const std::filesystem::path& runDirectory, std::size_t maximumPoints) {
+TrainingHistory3D TrackingViewer3D::readHistory(const std::filesystem::path& runDirectory, std::size_t maximumPoints,
+    double sinceSeconds) {
     TrainingHistory3D history;
     std::ifstream log(runDirectory / "log.jsonl");
     for (std::string line; std::getline(log, line);) {
@@ -49,7 +50,14 @@ TrainingHistory3D TrackingViewer3D::readHistory(const std::filesystem::path& run
         point.episodeSeconds = row.value("ep_segundos", 0.0);
         point.fallFraction = row.value("quedas", 0.0);
         point.sps = row.value("dec_s", 0.0);
+        point.velocityError = row.value("erro_vel_cm", point.velocityError);
+        point.bodySpeed = row.value("vel_corpo", point.bodySpeed);
+        point.requestedSpeed = row.value("vel_pedida", point.requestedSpeed);
         history.iterations.push_back(point);
+    }
+    if (sinceSeconds > 0.0 && !history.iterations.empty()) {
+        const double from = history.iterations.back().time - sinceSeconds;
+        std::erase_if(history.iterations, [from](const TrainingIterationPoint3D& p) { return p.time < from; });
     }
     if (maximumPoints > 0 && history.iterations.size() > maximumPoints) {
         std::vector<TrainingIterationPoint3D> sampled;

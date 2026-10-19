@@ -63,6 +63,12 @@ public:
     [[nodiscard]] const Modeling::Image& image() const { return m_image; }
     [[nodiscard]] bool renderViewport(int width, int height) { return render(width, height); }
     [[nodiscard]] const TrainingHistory3D& history() const { return m_history; }
+    // Os graficos expandidos e a janela de tempo (0..3: 60 s, 60 min, 5 h, 24 h).
+    void setChartsExpanded(bool expanded, int window) {
+        m_chartsExpanded = expanded;
+        m_chartWindow = window;
+        m_historyWatch = 0.0f;
+    }
     void push(int direction, float newtons);
     // O comando na mao (m/s para a frente da camera do piloto) ou, com
     // std::nullopt, o piloto da tarefa.
@@ -205,6 +211,9 @@ private:
     std::optional<std::future<TrainingHistory3D>> m_historyPending;
     std::string m_historyRun;
     float m_historyWatch = 0.0f;
+    // Os graficos no lugar do visualizador, um embaixo do outro, e a janela de tempo deles.
+    bool m_chartsExpanded = false;
+    int m_chartWindow = 1;
     std::string m_notice;
     float m_noticeSeconds = 0.0f;
 };

@@ -231,6 +231,13 @@ int realRun(const std::filesystem::path& out) {
     }
     frame(screen, canvas, 3);
     snapshot(canvas, "rl_tela_treino_real");
+    if (const char* window = std::getenv("MATTER_RL_TEST_EXPAND")) {
+        screen.setChartsExpanded(true, std::atoi(window));
+        screen.waitUntilLoaded();
+        frame(screen, canvas, 3);
+        std::cout << "expandido: " << screen.history().iterations.size() << " rodadas na janela\n";
+        snapshot(canvas, "rl_tela_graficos");
+    }
     std::cout << "treino " << screen.shownRun() << ": pedido medio " << requested / samples << " m/s, ele "
               << measured / samples << " m/s (de 5 a 20 s), passos " << screen.viewerSteps() << '\n';
     require(ui.errors().empty(), "o ImGui reclamou: " + (ui.errors().empty() ? std::string() : ui.errors().front()));

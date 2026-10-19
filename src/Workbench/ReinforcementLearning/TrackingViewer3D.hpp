@@ -21,9 +21,10 @@ public:
         "Diagonal tras-esquerda", "Tras", "Diagonal tras-direita", "Direita", "Diagonal frente-direita" };
     // O historico dos graficos de um treino do rastreador (ele nao grava no rl.db):
     // as rodadas do log.jsonl e, por rumo ("rumoN"), as quedas de verdade dos
-    // portoes de rumos na velocidade mais testada.
+    // portoes de rumos na velocidade mais testada. Com sinceSeconds > 0, so as
+    // rodadas desse tanto antes da ultima (sem tanto treino, desde o comeco).
     [[nodiscard]] static TrainingHistory3D readHistory(const std::filesystem::path& runDirectory,
-        std::size_t maximumPoints);
+        std::size_t maximumPoints, double sinceSeconds = 0.0);
     // O rumo (rad) do exercicio "rumoN" (outro: a frente).
     [[nodiscard]] static float headingOf(const std::string& drill);
 
