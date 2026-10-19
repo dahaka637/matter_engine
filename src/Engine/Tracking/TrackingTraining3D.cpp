@@ -40,6 +40,8 @@ struct TrackingTraining3D::Impl {
     const RagdollProfile3D* profile = nullptr;
     AthleteRuntimeSettings3D runtime;
     std::unique_ptr<TrackingContract3D> contract;
+    // Os pes (LeftFoot, RightFoot): o tropeco das pernas adaptaveis.
+    std::array<std::uint32_t, 2> feet { ~0u, ~0u };
     std::uint32_t workers = 1;
     std::shared_ptr<TaskScheduler> scheduler;
     std::unique_ptr<PhysicsEngine3D> engine;
@@ -66,6 +68,11 @@ struct TrackingTraining3D::Impl {
         float pauseLeft = 0.0f;
         std::uint64_t ticks = 0;
         std::array<float, TrackingContract3D::ActionSize> filtered {};
+        // As pernas adaptaveis: o tropeco em andamento (s), a distancia da cabeca
+        // da decisao anterior e a altura do pe do lider apoiado (o minimo visto).
+        float tripSeconds = 0.0f;
+        float lastHeadDistance = 0.0f;
+        std::array<float, 2> leaderFootFloor { 1e6f, 1e6f };
         // A acao crua da decisao anterior (o custo de suavidade).
         std::array<float, TrackingContract3D::ActionSize> lastAction {};
         std::vector<RagdollDriveTarget3D> drives;
@@ -227,6 +234,8 @@ struct TrackingTraining3D::Impl {
         w.scene->resetRagdollState(w.handle, s.links);
         w.body = w.scene->ragdollStateView(w.handle);
         w.filtered.fill(0.0f);
+        w.tripSeconds = 0.0f;
+        w.lastHeadDistance = 0.0f;
         w.seconds = 0.0f;
         w.rewardSum = w.comErrorSum = w.speedSum = w.requestedSum = w.headSum = 0.0;
         w.decisions = 0;
@@ -293,7 +302,26 @@ struct TrackingTraining3D::Impl {
         const Vec3 com = rlBodyCenterOfMass3D(*profile, body.links);
         const Vec3 comVelocity = rlBodyCenterOfMassVelocity3D(*profile, body.links);
         const TrackingLeaderState3D& leader = w.leader->state();
-        const TrackingRewardTerms3D terms = w.reward->evaluate(leader, body.links, com, comVelocity);
+        float legWeight = 1.0f;
+        if (settings.adaptiveLegs) {
+            // O tropeco: um pe do corpo tocando o chao com o mesmo pe do lider no ar (3 cm acima do apoio dele).
+            for (std::size_t f = 0; f < 2; ++f) {
+                const std::uint32_t foot = feet[f];
+                if (foot >= leader.links.size()) continue;
+                const float z = leader.links[foot].position.z;
+                w.leaderFootFloor[f] = std::min(w.leaderFootFloor[f], z);
+                const bool leaderSwing = z > w.leaderFootFloor[f] + 0.03f;
+                bool touched = false;
+                for (const RagdollContactPoint3D& contact : body.contacts) touched = touched || contact.linkIndex == foot;
+                if (leaderSwing && touched) w.tripSeconds = 0.5f;
+            }
+            w.tripSeconds = std::max(0.0f, w.tripSeconds - TicksPerDecision * TickSeconds);
+            const float drift = std::clamp((w.lastHeadDistance - 0.15f) / 0.35f, 0.0f, 1.0f);
+            const float risk = std::max(drift * drift * (3.0f - 2.0f * drift), w.tripSeconds > 0.0f ? 1.0f : 0.0f);
+            legWeight = 1.0f - 0.7f * risk;
+        }
+        const TrackingRewardTerms3D terms = w.reward->evaluate(leader, body.links, com, comVelocity, legWeight);
+        w.lastHeadDistance = terms.headDistance;
         reward = terms.total * smooth;
         w.seconds += TicksPerDecision * TickSeconds;
         ++w.decisions;
@@ -352,6 +380,10 @@ TrackingTraining3D::TrackingTraining3D(const TrackingTrainingSettings3D& setting
     const AthleteRuntimeAssets3D& assets = impl.bundle->assets();
     if (assets.defaultClips == nullptr) throw std::runtime_error("rastreador: faltam os clipes do padrao");
     impl.contract = std::make_unique<TrackingContract3D>(*impl.profile);
+    for (std::size_t i = 0; i < impl.profile->links.size(); ++i) {
+        if (impl.profile->links[i].id == "LeftFoot") impl.feet[0] = static_cast<std::uint32_t>(i);
+        if (impl.profile->links[i].id == "RightFoot") impl.feet[1] = static_cast<std::uint32_t>(i);
+    }
     const std::uint32_t hardware = std::max(1u, std::thread::hardware_concurrency());
     impl.workers = settings.threads > 0 ? settings.threads : std::max(1u, hardware > 2 ? hardware - 2 : 1u);
     impl.scheduler = std::make_shared<TaskScheduler>(TaskSchedulerSettings { std::max(1u, impl.workers - 1) });

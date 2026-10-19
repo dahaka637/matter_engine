@@ -26,10 +26,17 @@ TrackingReward3D::TrackingReward3D(const RagdollProfile3D& profile)
             found = true;
         }
     if (!found) throw std::runtime_error("rastreador: o perfil nao tem a cabeca");
+    m_leg.resize(profile.links.size());
+    for (std::size_t i = 0; i < profile.links.size(); ++i) {
+        const std::string& id = profile.links[i].id;
+        m_leg[i] = id.find("Thigh") != std::string::npos || id.find("Shin") != std::string::npos
+            || id.find("Foot") != std::string::npos;
+    }
 }
 
 TrackingRewardTerms3D TrackingReward3D::evaluate(const TrackingLeaderState3D& leader,
-    std::span<const PhysicsBodyState3D> bodyLinks, Vec3 bodyCenterOfMass, Vec3 bodyCenterOfMassVelocity) {
+    std::span<const PhysicsBodyState3D> bodyLinks, Vec3 bodyCenterOfMass, Vec3 bodyCenterOfMassVelocity,
+    float legWeight) {
     const RagdollProfile3D& profile = *m_profile;
     TrackingRewardTerms3D terms;
     const std::size_t count = std::min({ profile.links.size(), leader.links.size(), bodyLinks.size() });
@@ -41,8 +48,10 @@ TrackingRewardTerms3D TrackingReward3D::evaluate(const TrackingLeaderState3D& le
     trackingSurfacePoints3D(profile, m_boxes, bodyLinks.first(count), m_simPoints, m_simVelocities);
     double positionSum = 0.0, velocitySum = 0.0;
     for (std::size_t p = 0; p < m_kinPoints.size(); ++p) {
-        positionSum += (kin.point(m_kinPoints[p]) - sim.point(m_simPoints[p])).length();
-        velocitySum += (kin.direction(m_kinVelocities[p]) - sim.direction(m_simVelocities[p])).length();
+        // (6 pontos por link, na ordem dos links.)
+        const double w = m_leg[p / 6] ? legWeight : 1.0;
+        positionSum += w * (kin.point(m_kinPoints[p]) - sim.point(m_simPoints[p])).length();
+        velocitySum += w * (kin.direction(m_kinVelocities[p]) - sim.direction(m_simVelocities[p])).length();
     }
     const double bodies = static_cast<double>(count);
     terms.position = static_cast<float>(std::exp(-10.0 / bodies * positionSum));
@@ -56,7 +65,7 @@ TrackingRewardTerms3D TrackingReward3D::evaluate(const TrackingLeaderState3D& le
         const std::size_t p = static_cast<std::size_t>(parent);
         const Quaternion kinLocal = leader.links[p].orientation.conjugate() * leader.links[j].orientation;
         const Quaternion simLocal = bodyLinks[p].orientation.conjugate() * bodyLinks[j].orientation;
-        localSum += rotationAngle(kinLocal.conjugate() * simLocal);
+        localSum += (m_leg[j] ? legWeight : 1.0) * rotationAngle(kinLocal.conjugate() * simLocal);
         ++localCount;
     }
     terms.localPose = localCount > 0

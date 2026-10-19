@@ -61,6 +61,12 @@ struct TrackingTrainingSettings3D {
     // 14 a 90x o lider parado): a nota vezes exp(-actionRateWeight * media((a - a_anterior)^2))
     // da acao crua. 0 = a receita do artigo.
     float actionRateWeight = 0.0f;
+    // As pernas adaptaveis (desvio declarado do DReCon, 19/10, o usuario: "segue
+    // a pose do clipe mas tropeca nela; precisa se adaptar"): fora de perigo as
+    // pernas seguem o clipe com o peso cheio; em perigo (a cabeca se afastando
+    // da do lider, de 0,15 a 0,5 m, ou um tropeco: o pe do corpo no chao com o
+    // do lider no ar, por 0,5 s) o peso das pernas e dos pes cai a 0,3.
+    bool adaptiveLegs = false;
     float idleShare = 0.0f;
     float turnShare = 0.0f;
     float fastTurnShare = 0.0f;

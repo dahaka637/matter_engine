@@ -37,14 +37,19 @@ class TrackingReward3D final {
 public:
     explicit TrackingReward3D(const RagdollProfile3D& profile);
 
+    // legWeight: o peso das pernas e dos pes na posicao, na velocidade e na pose
+    // (1 = a receita; menos deixa as pernas se adaptarem, as pernas adaptaveis).
     [[nodiscard]] TrackingRewardTerms3D evaluate(const TrackingLeaderState3D& leader,
-        std::span<const PhysicsBodyState3D> bodyLinks, Vec3 bodyCenterOfMass, Vec3 bodyCenterOfMassVelocity);
+        std::span<const PhysicsBodyState3D> bodyLinks, Vec3 bodyCenterOfMass, Vec3 bodyCenterOfMassVelocity,
+        float legWeight = 1.0f);
     [[nodiscard]] std::size_t headLink() const { return m_head; }
 
 private:
     const RagdollProfile3D* m_profile = nullptr;
     std::vector<TrackingSurfaceBox3D> m_boxes;
     std::uint32_t m_head = 0;
+    // As coxas, as canelas e os pes.
+    std::vector<bool> m_leg;
     // (Reaproveitados entre chamadas: a nota roda a cada decisao de cada mundo.)
     std::vector<Vec3> m_kinPoints, m_kinVelocities, m_simPoints, m_simVelocities;
 };
