@@ -48,6 +48,13 @@ struct TrainingDrillPoint3D {
     double falls = 0.0;
     double seconds = 0.0;
     double episodeReturn = std::numeric_limits<double>::quiet_NaN();
+    // Do rastreador (NaN nos outros): o horario, a nota media por decisao, o erro
+    // e as velocidades medias (m/s) dos episodios do exercicio na rodada.
+    double time = 0.0;
+    double reward = std::numeric_limits<double>::quiet_NaN();
+    double velocityError = std::numeric_limits<double>::quiet_NaN();
+    double bodySpeed = std::numeric_limits<double>::quiet_NaN();
+    double requestedSpeed = std::numeric_limits<double>::quiet_NaN();
 };
 
 struct TrainingEventPoint3D {

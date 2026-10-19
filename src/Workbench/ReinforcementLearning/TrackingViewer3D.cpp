@@ -54,10 +54,28 @@ TrainingHistory3D TrackingViewer3D::readHistory(const std::filesystem::path& run
         point.bodySpeed = row.value("vel_corpo", point.bodySpeed);
         point.requestedSpeed = row.value("vel_pedida", point.requestedSpeed);
         history.iterations.push_back(point);
+        // Por direcao ("rumos" do treinador): um exercicio "rumoN" por rumo com episodios na rodada.
+        if (const auto rumos = row.find("rumos"); rumos != row.end() && rumos->is_object())
+            for (const auto& [key, data] : rumos->items()) {
+                if (!data.is_object()) continue;
+                TrainingDrillPoint3D drill;
+                drill.iteration = point.iteration;
+                drill.time = point.time;
+                drill.drill = "rumo" + key;
+                drill.episodes = data.value("n", 0.0);
+                drill.falls = 1.0 - data.value("sem_cair", 0.0);
+                drill.seconds = data.value("ep_segundos", 0.0);
+                drill.reward = data.value("nota", drill.reward);
+                drill.velocityError = data.value("erro_vel_cm", drill.velocityError);
+                drill.bodySpeed = data.value("vel_corpo", drill.bodySpeed);
+                drill.requestedSpeed = data.value("vel_pedida", drill.requestedSpeed);
+                history.drills.push_back(drill);
+            }
     }
     if (sinceSeconds > 0.0 && !history.iterations.empty()) {
         const double from = history.iterations.back().time - sinceSeconds;
         std::erase_if(history.iterations, [from](const TrainingIterationPoint3D& p) { return p.time < from; });
+        std::erase_if(history.drills, [from](const TrainingDrillPoint3D& p) { return p.time < from; });
     }
     if (maximumPoints > 0 && history.iterations.size() > maximumPoints) {
         std::vector<TrainingIterationPoint3D> sampled;

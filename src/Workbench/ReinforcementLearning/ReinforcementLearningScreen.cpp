@@ -1321,12 +1321,41 @@ void ReinforcementLearningScreen::drawCharts(float height) {
     constexpr std::size_t Window = 12;
     std::vector<float> rate;
     const bool tracking = TrackingViewer3D::isTrackingTask(m_viewerTask);
+    // O rastreador: tudo (menos decisoes/s) dos episodios do treino no rumo mostrado, rodada a rodada, com as
+    // ultimas 12 rodadas juntas (pesadas pelos episodios); o sem cair conta os que chegaram ao fim sem cair nem
+    // ficar para tras. O ultimo portao do rumo vai no canto.
+    std::vector<float> directionSeconds, directionError, directionBody, directionRequested;
+    std::vector<double> directionTimes;
     if (tracking) {
-        // O rastreador: o sem cair do treino rodada a rodada (os episodios que chegaram ao fim sem cair nem ficar
-        // para tras; o ultimo portao do rumo mostrado vai no canto) e a nota por decisao (todos os rumos juntos).
-        for (const TrainingIterationPoint3D& point : m_history.iterations) {
-            stand.push_back(static_cast<float>((1.0 - point.fallFraction) * 100.0));
-            rate.push_back(static_cast<float>(point.reward));
+        struct Entry {
+            double episodes, stood, reward, seconds, error, body, requested;
+        };
+        std::vector<Entry> recent;
+        for (const TrainingDrillPoint3D& point : m_history.drills) {
+            if (point.drill != m_viewerDrill || point.episodes <= 0.0) continue;
+            const double n = point.episodes;
+            const auto weighted = [n](double v) { return std::isnan(v) ? 0.0 : v * n; };
+            recent.push_back({ n, (1.0 - point.falls) * n, weighted(point.reward), point.seconds * n,
+                weighted(point.velocityError), weighted(point.bodySpeed), weighted(point.requestedSpeed) });
+            if (recent.size() > Window) recent.erase(recent.begin());
+            Entry sum {};
+            for (const Entry& entry : recent) {
+                sum.episodes += entry.episodes;
+                sum.stood += entry.stood;
+                sum.reward += entry.reward;
+                sum.seconds += entry.seconds;
+                sum.error += entry.error;
+                sum.body += entry.body;
+                sum.requested += entry.requested;
+            }
+            const auto mean = [&sum](double v) { return static_cast<float>(v / sum.episodes); };
+            stand.push_back(mean(sum.stood) * 100.0f);
+            rate.push_back(mean(sum.reward));
+            directionSeconds.push_back(mean(sum.seconds));
+            directionError.push_back(mean(sum.error));
+            directionBody.push_back(mean(sum.body));
+            directionRequested.push_back(mean(sum.requested));
+            directionTimes.push_back(point.time);
         }
     } else {
         struct Entry {
@@ -1385,7 +1414,7 @@ void ReinforcementLearningScreen::drawCharts(float height) {
         cyan { 0.35f, 0.78f, 0.94f, 1.0f }, violet { 0.70f, 0.56f, 0.96f, 1.0f };
     // A evolucao: a recompensa por segundo do exercicio e, apagado, o melhor nivel que ela ja alcancou no treino.
     const float best = rate.empty() ? 0.0f : *std::max_element(rate.begin(), rate.end());
-    const std::vector<float> bestLine(2, best);
+    const std::vector<float> bestLine(rate.empty() ? 0 : 2, best);
     std::string rateValue;
     if (!rate.empty()) {
         rateValue = text(rate.back(), tracking ? "%.3f" : "%.2f/s");
@@ -1402,24 +1431,32 @@ void ReinforcementLearningScreen::drawCharts(float height) {
         if (!std::isnan(point.requestedSpeed)) requestedSpeed.push_back(static_cast<float>(point.requestedSpeed));
         if (!std::isnan(point.velocityError)) velocityError.push_back(static_cast<float>(point.velocityError));
     }
+    if (tracking) {
+        seconds.swap(directionSeconds);
+        velocityError.swap(directionError);
+        bodySpeed.swap(directionBody);
+        requestedSpeed.swap(directionRequested);
+    }
+    // Os horarios das series do exercicio mostrado (no rastreador, as do rumo).
+    const std::vector<double>& seriesTimes = tracking ? directionTimes : iterationTimes;
+    const std::string inDrill = drillName.empty() ? std::string() : " · " + drillName;
     // O ultimo portao do rumo mostrado (no rastreador, no canto do sem cair).
     std::string gate;
     if (tracking)
         for (const TrainingEvaluationPoint3D& point : m_history.evaluations)
             if (point.drill == m_viewerDrill) gate = drillName + " " + text(static_cast<float>((1.0 - point.falls) * 100.0), "%.0f%%");
-    std::string standValue = stand.empty() ? "" : text(stand.back(), tracking ? "treino %.0f%%" : "%.0f%%");
+    std::string standValue = stand.empty() ? (tracking ? "sem treino neste rumo" : "")
+                                           : text(stand.back(), tracking ? "treino %.0f%%" : "%.0f%%");
     if (!gate.empty()) standValue += " · teste " + gate;
     std::vector<Chart> charts { {
-        { tracking ? std::string("Sem cair (%) · treino")
-                   : "Sem cair (%)" + (drillName.empty() ? std::string() : " · " + drillName),
-            { { &standClassic, green, true }, { &stand, green, false } }, 0.0f, 100.0f, standValue, "%",
-            tracking ? &iterationTimes : nullptr },
-        { tracking ? std::string("Evolução · nota por decisão (todos os rumos)")
-                   : "Evolução · recompensa por segundo" + (drillName.empty() ? std::string() : " · " + drillName),
+        { "Sem cair (%)" + inDrill, { { &standClassic, green, true }, { &stand, green, false } }, 0.0f, 100.0f,
+            standValue, "%", tracking ? &seriesTimes : nullptr },
+        { (tracking ? "Evolução · nota por decisão" : "Evolução · recompensa por segundo") + inDrill,
             { { &bestLine, amber, true, "melhor" }, { &rate, amber, false } }, rateLow, rateHigh, rateValue,
-            tracking ? "" : "/s", tracking ? &iterationTimes : nullptr },
-        { "Episódio (s)", { { &seconds, cyan, false } }, 0.0f, range({ &seconds }, 1.0f, 0.0f).second,
-            seconds.empty() ? "" : text(seconds.back(), "%.1f s"), "s", &iterationTimes },
+            tracking ? "" : "/s", tracking ? &seriesTimes : nullptr },
+        { std::string("Episódio (s)") + (tracking ? inDrill : std::string()), { { &seconds, cyan, false } }, 0.0f,
+            range({ &seconds }, 1.0f, 0.0f).second, seconds.empty() ? "" : text(seconds.back(), "%.1f s"), "s",
+            &seriesTimes },
         { "Decisões / s", { { &speed, violet, false } }, 0.0f, range({ &speed }, 1000.0f, 0.0f).second,
             speed.empty() ? "" : text(speed.back(), "%.0f"), "", &iterationTimes },
     } };
@@ -1431,14 +1468,14 @@ void ReinforcementLearningScreen::drawCharts(float height) {
                 falls.empty() ? "" : text(falls.back(), "%.1f%%"), "%",
                 &iterationTimes, true });
         if (!bodySpeed.empty())
-            charts.insert(charts.end() - 1, { "Velocidade (m/s) · ele e, apagado, o pedido",
+            charts.insert(charts.end() - 1, { "Velocidade (m/s) · ele e, apagado, o pedido" + inDrill,
                 { { &requestedSpeed, cyan, true, "pedido" }, { &bodySpeed, cyan, false, "ele" } }, 0.0f,
                 range({ &bodySpeed, &requestedSpeed }, 1.0f, 0.0f).second, text(bodySpeed.back(), "%.2f m/s"), "m/s",
-                &iterationTimes });
+                &seriesTimes });
         if (!velocityError.empty())
-            charts.insert(charts.end() - 1, { "Erro de velocidade (m/s)", { { &velocityError, green, false } }, 0.0f,
+            charts.insert(charts.end() - 1, { "Erro de velocidade (m/s)" + inDrill, { { &velocityError, green, false } }, 0.0f,
                 range({ &velocityError }, 0.5f, 0.0f).second, text(velocityError.back(), "%.3f m/s"), "m/s",
-                &iterationTimes, true });
+                &seriesTimes, true });
     }
     const float spacing = ImGui::GetStyle().ItemSpacing.x;
     if (m_chartsExpanded) {

@@ -68,6 +68,9 @@ struct TrackingEpisode3D {
     float bodySpeed = 0.0f;
     float requestedSpeed = 0.0f;
     float meanHeadDistance = 0.0f;
+    // O rumo do pedido no fim do episodio em relacao ao olhar (rad; 0 frente,
+    // pi/2 esquerda): os graficos por direcao.
+    float relativeDirection = 0.0f;
 };
 
 // O lote de treino do rastreador (vault

@@ -292,9 +292,19 @@ def main() -> int:
             row.update({"ep_segundos": float(episodes[:, 1].mean()), "quedas": float(episodes[:, 2].mean()),
                         "erro_vel_cm": float(episodes[:, 4].mean()), "vel_corpo": float(episodes[:, 5].mean()),
                         "vel_pedida": float(episodes[:, 6].mean())})
+            # Por direcao (8 rumos de 45 graus, 0 frente, 2 esquerda): os graficos da tela seguem o rumo mostrado.
+            bins = np.round(np.mod(episodes[:, 10], 2 * math.pi) / (math.pi / 4)).astype(int) % 8
+            row["rumos"] = {str(b): {"n": int((bins == b).sum()), "sem_cair": float(1.0 - episodes[bins == b, 2].mean()),
+                                     "nota": float(episodes[bins == b, 3].mean()),
+                                     "ep_segundos": float(episodes[bins == b, 1].mean()),
+                                     "erro_vel_cm": float(episodes[bins == b, 4].mean()),
+                                     "vel_corpo": float(episodes[bins == b, 5].mean()),
+                                     "vel_pedida": float(episodes[bins == b, 6].mean())}
+                            for b in range(8) if (bins == b).any()}
         log.write(json.dumps(row) + "\n")
         log.flush()
-        print(" ".join(f"{k}={v:.4g}" if isinstance(v, float) else f"{k}={v}" for k, v in row.items() if k != "hora"),
+        print(" ".join(f"{k}={v:.4g}" if isinstance(v, float) else f"{k}={v}" for k, v in row.items()
+                       if k not in ("hora", "rumos")),
               flush=True)
         counters["segundos"] += elapsed
         write_status(run, "treinando", counters, row, args)

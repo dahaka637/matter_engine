@@ -250,6 +250,7 @@ struct TrackingTraining3D::Impl {
             episode.bodySpeed = static_cast<float>(w.speedSum / n);
             episode.requestedSpeed = static_cast<float>(w.requestedSum / n);
             episode.meanHeadDistance = static_cast<float>(w.headSum / n);
+            episode.relativeDirection = w.relativeDirection;
             {
                 std::lock_guard lock(episodeMutex);
                 episodes.push_back(episode);
