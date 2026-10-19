@@ -83,14 +83,24 @@ void DefaultLocomotion3D::stepGait(Tick& t) {
                 return std::atan2(2.0f * (q.w * q.z + q.x * q.y), 1.0f - 2.0f * (q.y * q.y + q.z * q.z));
             };
             const float error = wrapAngle(viewYaw - m_yaw);
+            // A rapidez do olhar (o giro da camera), filtrada.
+            if (m_lookSeen)
+                m_lookRate += (std::abs(wrapAngle(viewYaw - m_turnPreviousViewYaw)) / std::max(1e-4f, dt) - m_lookRate)
+                    * std::min(1.0f, dt / 0.15f);
+            m_turnPreviousViewYaw = viewYaw;
+            m_lookSeen = true;
             const auto begin = [&](float e) {
-                m_turnSign = e >= 0.0f ? 1.0f : -1.0f;
-                m_turnClip = e >= 0.0f ? t.animations.turnLeft : t.animations.turnRight;
-                m_turnSpan = std::max(0.3f, std::abs(clipYaw(*m_turnClip, m_turnClip->durationSeconds)));
+                const bool left = e >= 0.0f;
                 const float want = std::abs(e) - s.standTurnKeep;
+                // So o de 90 graus, emendado: o de 180 desloca a raiz ~20 cm e agacha 6 cm (sem a raiz, o pe escorrega).
+                m_turnClip = left ? t.animations.turnLeft : t.animations.turnRight;
+                m_turnSign = left ? 1.0f : -1.0f;
+                m_turnSpan = std::max(0.3f, std::abs(clipYaw(*m_turnClip, m_turnClip->durationSeconds)));
                 m_turnTotal = std::clamp(want, 0.3f, m_turnSpan);
-                // Com muito giro por fazer, o clipe mais rapido (ate 2x).
-                m_turnRate = std::clamp(want / m_turnSpan, 1.0f, 2.0f);
+                // O ritmo: o giro pedido (o olhar girando, ou o que falta em ~1 s) sobre o natural do clipe.
+                const float natural = m_turnSpan / std::max(0.1f, m_turnClip->durationSeconds);
+                const float desired = std::max(m_lookRate, want / 1.0f);
+                m_turnRate = std::clamp(desired / natural, 0.6f, 2.5f);
                 m_turnTime = 0.0f;
                 m_turnStartYaw = m_yaw;
                 m_turnActive = true;

@@ -90,7 +90,7 @@ struct RagdollCharacter3D {
     std::string jumpPrepClipId;
     std::string standUpFrontClipId, standUpBackClipId;
     // Giro parado (ajuda cheia): o clipe para a esquerda e para a direita.
-    std::string turnLeftClipId, turnRightClipId;
+    std::string turnLeftClipId, turnRightClipId, turnLeft180ClipId, turnRight180ClipId;
     // Carrinho (opcionais): um firmando cada pe.
     std::vector<std::string> tackleClipIds;
     // Locomocao padrao (manifesto: "defaultLocomotion", opcional): papel ->

@@ -143,6 +143,8 @@ void DefaultLocomotion3D::reset(float facingYawRadians) {
     m_turnClip = nullptr;
     m_turnWeight = 0.0f;
     m_turnTime = 0.0f;
+    m_lookRate = 0.0f;
+    m_lookSeen = false;
     m_dribbleCadence = 1.0f;
     m_weights.fill(0.0f);
     m_shape.fill(0.0f);

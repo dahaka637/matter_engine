@@ -24,8 +24,6 @@ TrackingLeader3D::TrackingLeader3D(const RagdollProfile3D& profile, const Charac
     m_response.brake = response.brake;
     m_response.turnRate = response.turnRate;
     athleteConfigureDefaultLocomotion3D(m_locomotion.settings(), settings);
-    // O giro parado com passos (os clipes de giro): o lider nao patina (19/10).
-    m_locomotion.settings().standTurnClips = true;
     reset({}, 0.0f);
 }
 

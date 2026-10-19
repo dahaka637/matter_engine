@@ -123,6 +123,8 @@ RagdollCharacter3D loadRagdollCharacter3D(const std::string& manifestPath) {
         result.standUpBackClipId=motion.value("standUpBack", std::string {});
         result.turnLeftClipId=motion.value("turnLeft", std::string {});
         result.turnRightClipId=motion.value("turnRight", std::string {});
+        result.turnLeft180ClipId=motion.value("turnLeft180", std::string {});
+        result.turnRight180ClipId=motion.value("turnRight180", std::string {});
         if(motion.contains("tackles"))
             for(const auto& id:motion.at("tackles"))result.tackleClipIds.push_back(id.get<std::string>());
     }
