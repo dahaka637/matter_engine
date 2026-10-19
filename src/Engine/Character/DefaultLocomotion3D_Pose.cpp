@@ -86,14 +86,29 @@ void DefaultLocomotion3D::stepPose(Tick& t) {
         sampleInto(clip, fraction(m_phase + m_gaits[g].touchdown) * clip.durationSeconds, true, m_weights[g] * ground,
             m_upperWeights[g] * ground, &m_gaits[g], gaitAmplitude(g));
     }
-    // O giro parado pelo clipe: as pernas dele no lugar das do idle (o giro da raiz ja e o rumo da pelve; sem
-    // contato, os pes sao os do clipe, sem a trava do pe parado).
+    // O giro parado pelo clipe: as pernas dele no lugar das do idle, com a raiz dele (o deslocamento, feito no rumo
+    // do comeco do passo, trazido ao de agora, e a rotacao sem o giro, que ja e o rumo da pelve) e os contatos.
     const float turnShare = m_turnClip != nullptr ? m_turnWeight : 0.0f;
     if (animations.idle != nullptr)
         sampleInto(*animations.idle, std::fmod(m_idleTime, std::max(0.1f, animations.idle->durationSeconds)), true,
             m_idleWeight * ground * (1.0f - turnShare), upperIdleWeight * ground);
-    if (turnShare > 1e-4f)
-        sampleInto(*m_turnClip, m_turnTime, false, m_idleWeight * ground * turnShare, 0.0f, nullptr, 1.0f, false);
+    if (turnShare > 1e-4f) {
+        const AnimationClip3D& clip = *m_turnClip;
+        const float w = m_idleWeight * ground * turnShare;
+        sampleInto(clip, m_turnTime, false, w, 0.0f, nullptr, 1.0f, false);
+        const AnimationTransformSample3D root = rootAt(profile, clip, m_turnTime, false, s.smoothClipSampling);
+        const float back = -wrapAngle(m_yaw - m_turnStartYaw), c = std::cos(back), sn = std::sin(back);
+        const Vec3 offset = root.translationOffsetMeters;
+        rootOffset += Vec3 { offset.x * c - offset.y * sn, offset.x * sn + offset.y * c, offset.z } * w;
+        // (A rotacao da raiz dele sem o giro: sem ela, com o idle fora, a raiz saltava para a do bind.)
+        const Quaternion bind = profile.links.front().modelOrientation;
+        rootRotation.add((bind.conjugate() * Quaternion::fromAxisAngle({ 0.0f, 0.0f, 1.0f }, back) * bind
+            * root.rotationDelta.normalized()).normalized(), w);
+        contact[0] += (clip.leftFootContact.keyframes.empty() ? 1.0f
+            : sampleAnimationScalarTrack3D(clip.leftFootContact, m_turnTime, clip.durationSeconds, false)) * w;
+        contact[1] += (clip.rightFootContact.keyframes.empty() ? 1.0f
+            : sampleAnimationScalarTrack3D(clip.rightFootContact, m_turnTime, clip.durationSeconds, false)) * w;
+    }
     if (m_airClip != nullptr && m_airWeight > 1e-4f)
         sampleInto(*m_airClip, m_airPhase * m_airClip->durationSeconds, false, m_airWeight, m_airWeight);
     t.clipRootRotation = rootRotation.result();

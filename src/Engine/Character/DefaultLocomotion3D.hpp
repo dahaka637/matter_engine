@@ -146,14 +146,15 @@ struct DefaultLocomotionSettings3D {
     // Parado: a pelve vai a camera so quando o erro passa de standTurnStart
     // (rad), e para standTurnKeep (rad) dela - o resto e da coluna e da
     // cabeca -, nesta constante (s).
-    // Giro parado pelos clipes de giro com passos (pedido do usuario, 19/10):
-    // quando o olhar passa do que a coluna e a cabeca cobrem, o passo de 90
-    // graus na velocidade do clipe (ate 1,3x com o olhar muito a frente),
-    // girando o que falta e emendado para voltas inteiras; a pelve gira no
-    // passo do clipe, entao o pe apoiado fica onde a captura o pos. (Tocado a
-    // ate 2,5x, misturado com o idle, com o de 180, que desloca a raiz, ou com
-    // a mola antiga nos giros pequenos, ficou ruim.)
+    // Giro parado pelo clipe (o usuario, 19/10: "so tocar o clipe de mover o
+    // pe, de acordo com a direcao"): passado standTurnClipStart (rad), o
+    // turn_left ou o turn_right tocado inteiro, como e - as pernas, o giro e o
+    // deslocamento da raiz e os contatos dele -; falta giro no fim, outro.
+    // Sem ele (ou sem os clipes), a mola acima.
     bool standTurnClips = true;
+    // (Mais da metade do passo de 90 graus: depois dele o resto fica na coluna
+    // e na cabeca, sem voltar.)
+    float standTurnClipStart = 0.87f;
     float standTurnStart = 0.55f;
     float standTurnKeep = 0.31f;
     float standTurnSeconds = 0.16f;
@@ -786,12 +787,12 @@ private:
     float m_headTurn = 0.0f;
     float m_upright = 1.0f;
     bool m_standTurning = false;
-    // O giro parado pelo clipe: o clipe, o tempo nele, o ritmo, o lado, o giro
-    // do clipe inteiro e o deste ciclo (rad), o rumo da pelve no comeco e o
-    // peso na pose.
+    // O giro parado pelo clipe: o clipe, o tempo nele, o rumo da pelve no
+    // comeco e o peso na pose.
     const AnimationClip3D* m_turnClip = nullptr;
-    float m_turnTime = 0.0f, m_turnRate = 1.0f, m_turnSign = 1.0f, m_turnSpan = 0.0f, m_turnTotal = 0.0f;
-    float m_turnStartYaw = 0.0f, m_turnWeight = 0.0f;
+    float m_turnTime = 0.0f, m_turnStartYaw = 0.0f, m_turnWeight = 0.0f;
+    // (O olhar a frente da pelve, desenrolado, rad.)
+    float m_turnLead = 0.0f;
     bool m_turnActive = false;
     bool m_started = false;
     // A semente (seed): aplicada no proximo update.

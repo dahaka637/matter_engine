@@ -156,9 +156,7 @@
    "tackle_slide"
   ],
   "turnLeft": "turn_left",
-  "turnLeft180": "giro_esquerda_180",
   "turnRight": "turn_right",
-  "turnRight180": "giro_direita_180",
   "walk": "jog",
   "walkBackward": "run_backward"
  },

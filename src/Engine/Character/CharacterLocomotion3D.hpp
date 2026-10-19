@@ -143,9 +143,6 @@ struct CharacterLocomotionAnimations3D {
     // parada girada, tocados na velocidade do giro pedido (pernas e pes).
     const AnimationClip3D* turnLeft = nullptr;
     const AnimationClip3D* turnRight = nullptr;
-    // E os de 180 graus (o giro parado do padrao escolhe pelo que falta girar).
-    const AnimationClip3D* turnLeft180 = nullptr;
-    const AnimationClip3D* turnRight180 = nullptr;
     // Carrinho (opcionais): da corrida ao chao deslizando e de volta em pe
     // (ou correndo). Cada um comeca firmando um pe (o motor le no primeiro
     // quadro); o pe que vai pousar quando o jogador pede escolhe qual.
