@@ -1,4 +1,5 @@
 #include "Engine/Tracking/TrackingContract3D.hpp"
+#include "Engine/Tracking/TrackingScene3D.hpp"
 
 #include "Engine/RL/Body/RLBody3D.hpp"
 #include "Engine/Tracking/TrackingFeatures3D.hpp"
@@ -106,6 +107,8 @@ void TrackingContract3D::driveTargets(const TrackingLeaderState3D& leader, const
             drive.positionRadians = component(target, axis);
             // (O mesmo limite do modo fisico: folga acima do joelho do sprint.)
             drive.velocityRadiansPerSecond = std::clamp(component(velocity, axis), -30.0f, 30.0f);
+            drive.stiffnessScale = TrackingStiffnessScale;
+            drive.dampingScale = TrackingDampingScale;
             out.push_back(drive);
         }
     }

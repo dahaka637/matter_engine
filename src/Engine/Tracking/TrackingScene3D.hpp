@@ -10,6 +10,12 @@
 
 namespace MatterEngine {
 
+// Os musculos do rastreador: o modo ativo do backend multiplica a rigidez por 5
+// e o amortecimento por 2 (JoltRagdollDrives3D); estas escalas devolvem os do
+// perfil, como no corpo v2. O teto de forca e o do perfil (os de um atleta).
+inline constexpr float TrackingStiffnessScale = 0.2f;
+inline constexpr float TrackingDampingScale = 0.5f;
+
 // A cena de um mundo dos lotes do rastreador: inline, uma thread, com as
 // reservas de um ragdoll, do chao e dos projeteis.
 [[nodiscard]] PhysicsSceneSettings3D trackingSceneSettings3D();

@@ -125,6 +125,23 @@ DRIVE = {
     "LeftFoot": (360.0, 34.6, 420.0), "RightFoot": (360.0, 34.6, 420.0),
 }
 
+# Peak torque per axis (twist, swing1, swing2), N*m: the ranges of an adult
+# athlete (hip flexion/extension ~350, knee ~300, ankle plantarflexion ~250),
+# the same table as assets/rl/bodies/football_player_v2.json. The DRIVE
+# torque above was 2.5-3x stronger than a human (18/10/2026) and is no longer
+# written.
+TORQUE = {
+    "Abdomen": (150.0, 300.0, 250.0), "Chest": (150.0, 300.0, 250.0),
+    "UpperChest": (150.0, 300.0, 250.0), "Neck": (60.0, 60.0, 60.0),
+    "Head": (40.0, 40.0, 40.0),
+    "LeftUpperArm": (120.0, 120.0, 120.0), "RightUpperArm": (120.0, 120.0, 120.0),
+    "LeftForearm": (90.0, 90.0), "RightForearm": (90.0, 90.0),
+    "LeftHand": (20.0, 20.0), "RightHand": (20.0, 20.0),
+    "LeftThigh": (150.0, 350.0, 250.0), "RightThigh": (150.0, 350.0, 250.0),
+    "LeftShin": (300.0,), "RightShin": (300.0,),
+    "LeftFoot": (250.0, 120.0), "RightFoot": (250.0, 120.0),
+}
+
 # Ranges are measured from the bind pose this profile defines. Spine, hips,
 # knees and ankles keep the values the controller was tuned with - their bind
 # direction is unchanged (spine up, thigh down, hinge sideways). Shoulders are
@@ -468,7 +485,7 @@ def main():
                 frame = quaternion_json(*frame_from_axis(collider_axis(link)))
             else:
                 frame = VERTICAL_FRAME
-            stiffness, damping, torque = DRIVE[link]
+            stiffness, damping, _ = DRIVE[link]
             entry["joint"] = {
                 "type": "spherical",
                 "anchor": vector_json(segment[link][0]),
@@ -476,8 +493,8 @@ def main():
                 "axes": [{"axis": name, "minimumDegrees": float(low),
                           "maximumDegrees": float(high),
                           "stiffness": stiffness, "damping": damping,
-                          "maximumTorque": torque}
-                         for name, low, high in LIMITS[link]],
+                          "maximumTorque": TORQUE[link][index]}
+                         for index, (name, low, high) in enumerate(LIMITS[link])],
             }
         entry["orientation"] = [0, 0, 0, 1]
         links.append(entry)

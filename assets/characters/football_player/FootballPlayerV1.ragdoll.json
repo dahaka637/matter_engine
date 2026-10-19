@@ -64,7 +64,7 @@
       "axis": "twist",
       "damping": 49.5,
       "maximumDegrees": 25.0,
-      "maximumTorque": 520.0,
+      "maximumTorque": 150.0,
       "minimumDegrees": -25.0,
       "stiffness": 440.0
      },
@@ -72,7 +72,7 @@
       "axis": "swing1",
       "damping": 49.5,
       "maximumDegrees": 45.0,
-      "maximumTorque": 520.0,
+      "maximumTorque": 300.0,
       "minimumDegrees": -35.0,
       "stiffness": 440.0
      },
@@ -80,7 +80,7 @@
       "axis": "swing2",
       "damping": 49.5,
       "maximumDegrees": 20.0,
-      "maximumTorque": 520.0,
+      "maximumTorque": 250.0,
       "minimumDegrees": -20.0,
       "stiffness": 440.0
      }
@@ -137,7 +137,7 @@
       "axis": "twist",
       "damping": 49.5,
       "maximumDegrees": 22.0,
-      "maximumTorque": 520.0,
+      "maximumTorque": 150.0,
       "minimumDegrees": -22.0,
       "stiffness": 440.0
      },
@@ -145,7 +145,7 @@
       "axis": "swing1",
       "damping": 49.5,
       "maximumDegrees": 38.0,
-      "maximumTorque": 520.0,
+      "maximumTorque": 300.0,
       "minimumDegrees": -28.0,
       "stiffness": 440.0
      },
@@ -153,7 +153,7 @@
       "axis": "swing2",
       "damping": 49.5,
       "maximumDegrees": 18.0,
-      "maximumTorque": 520.0,
+      "maximumTorque": 250.0,
       "minimumDegrees": -18.0,
       "stiffness": 440.0
      }
@@ -210,7 +210,7 @@
       "axis": "twist",
       "damping": 49.5,
       "maximumDegrees": 20.0,
-      "maximumTorque": 520.0,
+      "maximumTorque": 150.0,
       "minimumDegrees": -20.0,
       "stiffness": 440.0
      },
@@ -218,7 +218,7 @@
       "axis": "swing1",
       "damping": 49.5,
       "maximumDegrees": 35.0,
-      "maximumTorque": 520.0,
+      "maximumTorque": 300.0,
       "minimumDegrees": -25.0,
       "stiffness": 440.0
      },
@@ -226,7 +226,7 @@
       "axis": "swing2",
       "damping": 49.5,
       "maximumDegrees": 18.0,
-      "maximumTorque": 520.0,
+      "maximumTorque": 250.0,
       "minimumDegrees": -18.0,
       "stiffness": 440.0
      }
@@ -283,7 +283,7 @@
       "axis": "twist",
       "damping": 14.0,
       "maximumDegrees": 30.0,
-      "maximumTorque": 62.0,
+      "maximumTorque": 60.0,
       "minimumDegrees": -30.0,
       "stiffness": 82.0
      },
@@ -291,7 +291,7 @@
       "axis": "swing1",
       "damping": 14.0,
       "maximumDegrees": 22.0,
-      "maximumTorque": 62.0,
+      "maximumTorque": 60.0,
       "minimumDegrees": -18.0,
       "stiffness": 82.0
      },
@@ -299,7 +299,7 @@
       "axis": "swing2",
       "damping": 14.0,
       "maximumDegrees": 22.0,
-      "maximumTorque": 62.0,
+      "maximumTorque": 60.0,
       "minimumDegrees": -22.0,
       "stiffness": 82.0
      }
@@ -356,7 +356,7 @@
       "axis": "twist",
       "damping": 13.0,
       "maximumDegrees": 45.0,
-      "maximumTorque": 58.0,
+      "maximumTorque": 40.0,
       "minimumDegrees": -45.0,
       "stiffness": 76.0
      },
@@ -364,7 +364,7 @@
       "axis": "swing1",
       "damping": 13.0,
       "maximumDegrees": 34.0,
-      "maximumTorque": 58.0,
+      "maximumTorque": 40.0,
       "minimumDegrees": -28.0,
       "stiffness": 76.0
      },
@@ -372,7 +372,7 @@
       "axis": "swing2",
       "damping": 13.0,
       "maximumDegrees": 28.0,
-      "maximumTorque": 58.0,
+      "maximumTorque": 40.0,
       "minimumDegrees": -28.0,
       "stiffness": 76.0
      }
@@ -430,7 +430,7 @@
       "axis": "twist",
       "damping": 25.5,
       "maximumDegrees": 80.0,
-      "maximumTorque": 300.0,
+      "maximumTorque": 120.0,
       "minimumDegrees": -80.0,
       "stiffness": 240.0
      },
@@ -438,7 +438,7 @@
       "axis": "swing1",
       "damping": 25.5,
       "maximumDegrees": 115.0,
-      "maximumTorque": 300.0,
+      "maximumTorque": 120.0,
       "minimumDegrees": -115.0,
       "stiffness": 240.0
      },
@@ -446,7 +446,7 @@
       "axis": "swing2",
       "damping": 25.5,
       "maximumDegrees": 95.0,
-      "maximumTorque": 300.0,
+      "maximumTorque": 120.0,
       "minimumDegrees": -95.0,
       "stiffness": 240.0
      }
@@ -504,7 +504,7 @@
       "axis": "twist",
       "damping": 14.0,
       "maximumDegrees": 145.0,
-      "maximumTorque": 100.0,
+      "maximumTorque": 90.0,
       "minimumDegrees": -5.0,
       "stiffness": 90.0
      }
@@ -561,7 +561,7 @@
       "axis": "twist",
       "damping": 6.0,
       "maximumDegrees": 70.0,
-      "maximumTorque": 35.0,
+      "maximumTorque": 20.0,
       "minimumDegrees": -70.0,
       "stiffness": 32.0
      },
@@ -569,7 +569,7 @@
       "axis": "swing1",
       "damping": 6.0,
       "maximumDegrees": 35.0,
-      "maximumTorque": 35.0,
+      "maximumTorque": 20.0,
       "minimumDegrees": -35.0,
       "stiffness": 32.0
      }
@@ -627,7 +627,7 @@
       "axis": "twist",
       "damping": 25.5,
       "maximumDegrees": 80.0,
-      "maximumTorque": 300.0,
+      "maximumTorque": 120.0,
       "minimumDegrees": -80.0,
       "stiffness": 240.0
      },
@@ -635,7 +635,7 @@
       "axis": "swing1",
       "damping": 25.5,
       "maximumDegrees": 115.0,
-      "maximumTorque": 300.0,
+      "maximumTorque": 120.0,
       "minimumDegrees": -115.0,
       "stiffness": 240.0
      },
@@ -643,7 +643,7 @@
       "axis": "swing2",
       "damping": 25.5,
       "maximumDegrees": 95.0,
-      "maximumTorque": 300.0,
+      "maximumTorque": 120.0,
       "minimumDegrees": -95.0,
       "stiffness": 240.0
      }
@@ -701,7 +701,7 @@
       "axis": "twist",
       "damping": 14.0,
       "maximumDegrees": 145.0,
-      "maximumTorque": 100.0,
+      "maximumTorque": 90.0,
       "minimumDegrees": -5.0,
       "stiffness": 90.0
      }
@@ -758,7 +758,7 @@
       "axis": "twist",
       "damping": 6.0,
       "maximumDegrees": 70.0,
-      "maximumTorque": 35.0,
+      "maximumTorque": 20.0,
       "minimumDegrees": -70.0,
       "stiffness": 32.0
      },
@@ -766,7 +766,7 @@
       "axis": "swing1",
       "damping": 6.0,
       "maximumDegrees": 35.0,
-      "maximumTorque": 35.0,
+      "maximumTorque": 20.0,
       "minimumDegrees": -35.0,
       "stiffness": 32.0
      }
@@ -824,7 +824,7 @@
       "axis": "twist",
       "damping": 71.2,
       "maximumDegrees": 45.0,
-      "maximumTorque": 875.0,
+      "maximumTorque": 150.0,
       "minimumDegrees": -45.0,
       "stiffness": 750.0
      },
@@ -832,7 +832,7 @@
       "axis": "swing1",
       "damping": 71.2,
       "maximumDegrees": 30.0,
-      "maximumTorque": 875.0,
+      "maximumTorque": 350.0,
       "minimumDegrees": -120.0,
       "stiffness": 750.0
      },
@@ -840,7 +840,7 @@
       "axis": "swing2",
       "damping": 71.2,
       "maximumDegrees": 42.0,
-      "maximumTorque": 875.0,
+      "maximumTorque": 250.0,
       "minimumDegrees": -42.0,
       "stiffness": 750.0
      }
@@ -898,7 +898,7 @@
       "axis": "twist",
       "damping": 60.1,
       "maximumDegrees": 145.0,
-      "maximumTorque": 750.0,
+      "maximumTorque": 300.0,
       "minimumDegrees": -5.0,
       "stiffness": 650.0
      }
@@ -2033,7 +2033,7 @@
       "axis": "twist",
       "damping": 34.6,
       "maximumDegrees": 65.0,
-      "maximumTorque": 420.0,
+      "maximumTorque": 250.0,
       "minimumDegrees": -50.0,
       "stiffness": 360.0
      },
@@ -2041,7 +2041,7 @@
       "axis": "swing1",
       "damping": 34.6,
       "maximumDegrees": 35.0,
-      "maximumTorque": 420.0,
+      "maximumTorque": 120.0,
       "minimumDegrees": -35.0,
       "stiffness": 360.0
      }
@@ -2099,7 +2099,7 @@
       "axis": "twist",
       "damping": 71.2,
       "maximumDegrees": 45.0,
-      "maximumTorque": 875.0,
+      "maximumTorque": 150.0,
       "minimumDegrees": -45.0,
       "stiffness": 750.0
      },
@@ -2107,7 +2107,7 @@
       "axis": "swing1",
       "damping": 71.2,
       "maximumDegrees": 30.0,
-      "maximumTorque": 875.0,
+      "maximumTorque": 350.0,
       "minimumDegrees": -120.0,
       "stiffness": 750.0
      },
@@ -2115,7 +2115,7 @@
       "axis": "swing2",
       "damping": 71.2,
       "maximumDegrees": 42.0,
-      "maximumTorque": 875.0,
+      "maximumTorque": 250.0,
       "minimumDegrees": -42.0,
       "stiffness": 750.0
      }
@@ -2173,7 +2173,7 @@
       "axis": "twist",
       "damping": 60.1,
       "maximumDegrees": 145.0,
-      "maximumTorque": 750.0,
+      "maximumTorque": 300.0,
       "minimumDegrees": -5.0,
       "stiffness": 650.0
      }
@@ -3308,7 +3308,7 @@
       "axis": "twist",
       "damping": 34.6,
       "maximumDegrees": 65.0,
-      "maximumTorque": 420.0,
+      "maximumTorque": 250.0,
       "minimumDegrees": -50.0,
       "stiffness": 360.0
      },
@@ -3316,7 +3316,7 @@
       "axis": "swing1",
       "damping": 34.6,
       "maximumDegrees": 35.0,
-      "maximumTorque": 420.0,
+      "maximumTorque": 120.0,
       "minimumDegrees": -35.0,
       "stiffness": 360.0
      }

@@ -2,6 +2,7 @@
 
 #include "Engine/RL/Body/RLBody3D.hpp"
 #include "Engine/Tracking/TrackingFeatures3D.hpp"
+#include "Engine/Tracking/TrackingScene3D.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -75,6 +76,8 @@ void TrackingGetUpContract3D::driveTargets(std::span<const float> action, std::v
         drive.axis = static_cast<RagdollAxis3D>(m_axes[k].axis);
         drive.positionRadians = k < action.size() && std::isfinite(action[k]) ? action[k] : 0.0f;
         drive.velocityRadiansPerSecond = 0.0f;
+        drive.stiffnessScale = TrackingStiffnessScale;
+        drive.dampingScale = TrackingDampingScale;
         out.push_back(drive);
     }
 }
