@@ -178,6 +178,13 @@ int realRun(const std::filesystem::path& out) {
     if (const char* run = std::getenv("MATTER_RL_TEST_RUN")) options.run = run;
     ReinforcementLearningScreen screen(std::move(options), {});
     screen.waitUntilLoaded();
+    if (const char* drill = std::getenv("MATTER_RL_TEST_DRILL")) {
+        screen.showDrill(drill);
+        screen.waitUntilLoaded();
+    }
+    std::cout << "historico: " << screen.history().iterations.size() << " rodadas, "
+              << screen.history().evaluations.size() << " avaliacoes, " << screen.drills().size() << " exercicios\n";
+    require(!screen.history().iterations.empty(), "os graficos deveriam ter as rodadas do treino");
     require(screen.viewerReady(), "o visualizador deveria abrir o treino: " + screen.viewerError());
     require(screen.policyLoaded(), "a politica do treino deveria carregar");
     const char* speedText = std::getenv("MATTER_RL_TEST_SPEED");

@@ -246,7 +246,7 @@ void lineChart(const char* id, const std::vector<ChartSeries>& series, float min
     draw->AddText({ low.x + 10.0f, low.y + 6.0f }, IM_COL32(100, 120, 140, 200), range);
     std::snprintf(range, sizeof range, "%.3g", minimum);
     draw->AddText({ low.x + 10.0f, high.y - ImGui::GetTextLineHeight() - 6.0f }, IM_COL32(100, 120, 140, 200), range);
-    if (series.empty() || series.front().values->empty()) {
+    if (std::all_of(series.begin(), series.end(), [](const ChartSeries& s) { return s.values->empty(); })) {
         const ImVec2 extent = ImGui::CalcTextSize("sem dados");
         draw->AddText({ (low.x + high.x - extent.x) * 0.5f, (low.y + high.y - extent.y) * 0.5f },
             IM_COL32(100, 120, 140, 200), "sem dados");
@@ -584,7 +584,12 @@ void ReinforcementLearningScreen::refreshHistory() {
     }
     m_historyRun = activeRun();
     m_historyPending = std::async(std::launch::async,
-        [database = m_paths.database, run = m_historyRun] { return readTrainingHistory3D(database, run, 0.0, 400); });
+        [database = m_paths.database, directory = m_paths.run(m_historyRun), run = m_historyRun] {
+            // O rastreador grava os seus arquivos, nao o rl.db.
+            if (TrackingViewer3D::isTrackingTask(directory / "tarefa.json"))
+                return TrackingViewer3D::readHistory(directory, 400);
+            return readTrainingHistory3D(database, run, 0.0, 400);
+        });
 }
 
 void ReinforcementLearningScreen::update(float deltaSeconds) {
@@ -1136,7 +1141,14 @@ void ReinforcementLearningScreen::drawCharts(float height) {
     // queda como perda, entao cair derruba a curva).
     constexpr std::size_t Window = 12;
     std::vector<float> rate;
-    {
+    const bool tracking = TrackingViewer3D::isTrackingTask(m_viewerTask);
+    if (tracking) {
+        // O rastreador: o sem cair e o do portao no rumo mostrado (quedas de verdade); a evolucao, a nota por
+        // decisao do treino (todos os rumos juntos).
+        for (const TrainingEvaluationPoint3D& point : m_history.evaluations)
+            if (point.drill == m_viewerDrill) stand.push_back(static_cast<float>((1.0 - point.falls) * 100.0));
+        for (const TrainingIterationPoint3D& point : m_history.iterations) rate.push_back(static_cast<float>(point.reward));
+    } else {
         struct Entry {
             double episodes, fell, reward, seconds;
         };
@@ -1194,8 +1206,8 @@ void ReinforcementLearningScreen::drawCharts(float height) {
     const std::vector<float> bestLine(2, best);
     std::string rateValue;
     if (!rate.empty()) {
-        rateValue = text(rate.back(), "%.2f/s");
-        rateValue += text(rate.back() - rate[rate.size() > 30 ? rate.size() - 31 : 0], "  (%+.2f)");
+        rateValue = text(rate.back(), tracking ? "%.3f" : "%.2f/s");
+        rateValue += text(rate.back() - rate[rate.size() > 30 ? rate.size() - 31 : 0], tracking ? "  (%+.3f)" : "  (%+.2f)");
     }
     const auto [rateLow, rateHigh] = range({ &rate, &bestLine }, 0.0f, 0.0f);
     const std::array<Chart, 4> charts { {
@@ -1203,8 +1215,10 @@ void ReinforcementLearningScreen::drawCharts(float height) {
             { { &standClassic, green, true }, { &stand, green, false } }, 0.0f, 100.0f,
             stand.empty() ? "" : text(stand.back(), "%.0f%%"), "%",
             "A avaliação do exercício mostrado (a rede; o traço apagado é o clássico, sem a rede)." },
-        { "Evolução · recompensa por segundo" + (drillName.empty() ? std::string() : " · " + drillName),
-            { { &bestLine, amber, true, "melhor" }, { &rate, amber, false } }, rateLow, rateHigh, rateValue, "/s",
+        { tracking ? std::string("Evolução · nota por decisão (todos os rumos)")
+                   : "Evolução · recompensa por segundo" + (drillName.empty() ? std::string() : " · " + drillName),
+            { { &bestLine, amber, true, "melhor" }, { &rate, amber, false } }, rateLow, rateHigh, rateValue,
+            tracking ? "" : "/s",
             "Quanto o exercício mostrado é recompensado por segundo (as últimas 12 rodadas juntas; cair conta como perda, "
             "então falhar derruba a curva). Entre parênteses, a variação em 30 rodadas; o traço apagado é o melhor nível "
             "já alcançado neste treino." },

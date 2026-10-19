@@ -6,6 +6,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <fstream>
 #include <vector>
@@ -32,6 +34,69 @@ struct TrackingViewer3D::Impl {
     float pushSeconds = 0.0f;
     Vec3 pushForce;
 };
+
+TrainingHistory3D TrackingViewer3D::readHistory(const std::filesystem::path& runDirectory, std::size_t maximumPoints) {
+    TrainingHistory3D history;
+    std::ifstream log(runDirectory / "log.jsonl");
+    for (std::string line; std::getline(log, line);) {
+        const nlohmann::json row = nlohmann::json::parse(line, nullptr, false);
+        if (row.is_discarded() || !row.is_object()) continue;
+        TrainingIterationPoint3D point;
+        point.iteration = row.value("rodada", 0ull);
+        point.time = row.value("hora", 0.0);
+        point.steps = row.value("decisoes", 0.0);
+        point.reward = row.value("nota_passo", 0.0);
+        point.episodeSeconds = row.value("ep_segundos", 0.0);
+        point.fallFraction = row.value("quedas", 0.0);
+        point.sps = row.value("dec_s", 0.0);
+        history.iterations.push_back(point);
+    }
+    if (maximumPoints > 0 && history.iterations.size() > maximumPoints) {
+        std::vector<TrainingIterationPoint3D> sampled;
+        const double stride = static_cast<double>(history.iterations.size() - 1) / static_cast<double>(maximumPoints - 1);
+        for (std::size_t i = 0; i < maximumPoints; ++i)
+            sampled.push_back(history.iterations[static_cast<std::size_t>(std::lround(i * stride))]);
+        history.iterations.swap(sampled);
+    }
+    // Os portoes de rumos (a ordem dos nomes e a do portao: 45 graus para a esquerda).
+    static constexpr std::array<const char*, 8> Keys { "frente", "diag_esq", "esquerda", "tras_esq", "costas",
+        "tras_dir", "direita", "diag_dir" };
+    std::vector<nlohmann::json> gates;
+    std::ifstream gate(runDirectory / "portao.jsonl");
+    for (std::string line; std::getline(gate, line);) {
+        nlohmann::json row = nlohmann::json::parse(line, nullptr, false);
+        if (!row.is_discarded() && row.is_object() && row.value("modo", std::string()) == "rumos"
+            && row.contains("por_rumo"))
+            gates.push_back(std::move(row));
+    }
+    if (gates.empty()) return history;
+    // A velocidade com mais portoes (empate: a do mais recente), para a curva comparar o mesmo teste.
+    double speed = 0.0;
+    std::size_t most = 0;
+    for (auto it = gates.rbegin(); it != gates.rend(); ++it) {
+        const double v = it->value("velocidade", 0.0);
+        const auto same = static_cast<std::size_t>(std::count_if(gates.begin(), gates.end(),
+            [v](const nlohmann::json& g) { return std::abs(g.value("velocidade", 0.0) - v) <= 1e-3; }));
+        if (same > most) most = same, speed = v;
+    }
+    for (const nlohmann::json& row : gates) {
+        if (std::abs(row.value("velocidade", 0.0) - speed) > 1e-3) continue;
+        for (std::size_t i = 0; i < Keys.size(); ++i) {
+            const nlohmann::json& one = row["por_rumo"].value(Keys[i], nlohmann::json::object());
+            TrainingEvaluationPoint3D point;
+            point.iteration = row.value("rodada", 0ull);
+            point.time = row.value("hora", 0.0);
+            point.drill = "rumo" + std::to_string(i);
+            point.solver = "rede";
+            point.falls = one.value("quedas_de_verdade", one.value("quedas", 0.0));
+            point.velocityError = one.value("erro_vel_cm", -1.0);
+            history.evaluations.push_back(point);
+        }
+    }
+    std::sort(history.evaluations.begin(), history.evaluations.end(),
+        [](const auto& a, const auto& b) { return a.iteration < b.iteration; });
+    return history;
+}
 
 float TrackingViewer3D::headingOf(const std::string& drill) {
     if (drill.size() != 5 || drill.rfind("rumo", 0) != 0 || drill[4] < '0' || drill[4] > '7') return 0.0f;

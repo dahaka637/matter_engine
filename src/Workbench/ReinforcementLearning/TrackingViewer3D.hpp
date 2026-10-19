@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Engine/RL/Supervisor/TrainingHistory3D.hpp"
 #include "Workbench/ReinforcementLearning/ViewerWorld3D.hpp"
 
 #include <array>
@@ -18,6 +19,11 @@ public:
     // Os rumos de 45 em 45 graus a partir da frente, para a esquerda (como no portao).
     static constexpr std::array<const char*, 8> HeadingNames { "Frente", "Diagonal frente-esquerda", "Esquerda",
         "Diagonal tras-esquerda", "Tras", "Diagonal tras-direita", "Direita", "Diagonal frente-direita" };
+    // O historico dos graficos de um treino do rastreador (ele nao grava no rl.db):
+    // as rodadas do log.jsonl e, por rumo ("rumoN"), as quedas de verdade dos
+    // portoes de rumos na velocidade mais testada.
+    [[nodiscard]] static TrainingHistory3D readHistory(const std::filesystem::path& runDirectory,
+        std::size_t maximumPoints);
     // O rumo (rad) do exercicio "rumoN" (outro: a frente).
     [[nodiscard]] static float headingOf(const std::string& drill);
 
