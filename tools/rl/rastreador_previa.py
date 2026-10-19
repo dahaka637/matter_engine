@@ -31,11 +31,14 @@ def main() -> int:
     parser.add_argument("--quadros", type=int, default=16)
     parser.add_argument("--vista", default="direita")
     parser.add_argument("--saida", required=True)
+    parser.add_argument("--rumo", type=int, default=0, help="0..7 (de 45 em 45 graus a partir da frente, para a esquerda)")
     args = parser.parse_args()
     out = Path(args.saida)
     out.mkdir(parents=True, exist_ok=True)
-    batch = native.TrackingBatch(str(REPO / "assets"), environments=2, threads=2, seed=20261018, scenario="frente",
-                                 evaluation=True, evaluation_speed=args.velocidade)
+    batch = native.TrackingBatch(str(REPO / "assets"), environments=8, threads=2, seed=20261018, scenario="frente",
+                                 evaluation=True, evaluation_speed=args.velocidade,
+                                 evaluation_mode="rumos" if args.rumo else "frente")
+    w = args.rumo
     model = None
     who = "sem rede"
     if not args.zero:
@@ -50,18 +53,18 @@ def main() -> int:
     for step in range(steps):
         obs = torch.as_tensor(batch.observations())
         with torch.no_grad():
-            action = np.zeros((2, batch.action_size), np.float32) if model is None \
+            action = np.zeros((8, batch.action_size), np.float32) if model is None \
                 else model.actor(model.norm(obs)).numpy().astype(np.float32)
         batch.step(action)
         for row in batch.finished_episodes():
-            if int(row[0]) == 0 and ended is None:
+            if int(row[0]) == w and ended is None:
                 ended = f"{'caiu' if row[2] else 'tempo'} aos {row[1]:.1f} s"
         if ended is not None:
             break
         if step % 2 == 0:
             t = (step + 1) * batch.policy_dt
-            dumps["corpo"] += [f"F {t:.4f} 0", batch.frame_lines(0, False).rstrip()]
-            dumps["lider"] += [f"F {t:.4f} 0", batch.frame_lines(0, True).rstrip()]
+            dumps["corpo"] += [f"F {t:.4f} 0", batch.frame_lines(w, False).rstrip()]
+            dumps["lider"] += [f"F {t:.4f} 0", batch.frame_lines(w, True).rstrip()]
     inspector = paths.inspector()
     for name, lines in dumps.items():
         (out / f"{name}.dump").write_text("\n".join(lines) + "\n")
