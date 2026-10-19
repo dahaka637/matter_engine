@@ -17,6 +17,7 @@
 #include <ctime>
 #include <fstream>
 #include <thread>
+#include <string_view>
 #include <utility>
 
 namespace MatterEngine::Workbench {
@@ -1317,11 +1318,12 @@ void ReinforcementLearningScreen::drawCharts(float height) {
     std::vector<float> rate;
     const bool tracking = TrackingViewer3D::isTrackingTask(m_viewerTask);
     if (tracking) {
-        // O rastreador: o sem cair e o do portao no rumo mostrado (quedas de verdade); a evolucao, a nota por
-        // decisao do treino (todos os rumos juntos).
-        for (const TrainingEvaluationPoint3D& point : m_history.evaluations)
-            if (point.drill == m_viewerDrill) stand.push_back(static_cast<float>((1.0 - point.falls) * 100.0));
-        for (const TrainingIterationPoint3D& point : m_history.iterations) rate.push_back(static_cast<float>(point.reward));
+        // O rastreador: o sem cair do treino rodada a rodada (os episodios que chegaram ao fim sem cair nem ficar
+        // para tras; o ultimo portao do rumo mostrado vai no canto) e a nota por decisao (todos os rumos juntos).
+        for (const TrainingIterationPoint3D& point : m_history.iterations) {
+            stand.push_back(static_cast<float>((1.0 - point.fallFraction) * 100.0));
+            rate.push_back(static_cast<float>(point.reward));
+        }
     } else {
         struct Entry {
             double episodes, fell, reward, seconds;
@@ -1388,7 +1390,7 @@ void ReinforcementLearningScreen::drawCharts(float height) {
     }
     const auto [rateLow, rateHigh] = range({ &rate, &bestLine }, 0.0f, 0.0f);
     // Os horarios de cada ponto (as rodadas; no rastreador, os portoes do sem cair).
-    std::vector<double> iterationTimes, standTimes;
+    std::vector<double> iterationTimes;
     std::vector<float> falls, bodySpeed, requestedSpeed, velocityError;
     for (const TrainingIterationPoint3D& point : m_history.iterations) {
         iterationTimes.push_back(point.time);
@@ -1397,15 +1399,21 @@ void ReinforcementLearningScreen::drawCharts(float height) {
         if (!std::isnan(point.requestedSpeed)) requestedSpeed.push_back(static_cast<float>(point.requestedSpeed));
         if (!std::isnan(point.velocityError)) velocityError.push_back(static_cast<float>(point.velocityError));
     }
+    // O ultimo portao do rumo mostrado (no rastreador, no canto do sem cair).
+    std::string gate;
     if (tracking)
         for (const TrainingEvaluationPoint3D& point : m_history.evaluations)
-            if (point.drill == m_viewerDrill) standTimes.push_back(point.time);
+            if (point.drill == m_viewerDrill) gate = drillName + " " + text(static_cast<float>((1.0 - point.falls) * 100.0), "%.0f%%");
+    std::string standValue = stand.empty() ? "" : text(stand.back(), tracking ? "treino %.0f%%" : "%.0f%%");
+    if (!gate.empty()) standValue += " · teste " + gate;
     std::vector<Chart> charts { {
-        { "Sem cair (%)" + (drillName.empty() ? std::string() : " · " + drillName),
-            { { &standClassic, green, true }, { &stand, green, false } }, 0.0f, 100.0f,
-            stand.empty() ? "" : text(stand.back(), "%.0f%%"), "%",
-            "A avaliação do exercício mostrado (a rede; o traço apagado é o clássico, sem a rede).",
-            tracking ? &standTimes : nullptr },
+        { tracking ? std::string("Sem cair (%) · treino")
+                   : "Sem cair (%)" + (drillName.empty() ? std::string() : " · " + drillName),
+            { { &standClassic, green, true }, { &stand, green, false } }, 0.0f, 100.0f, standValue, "%",
+            tracking ? "Os episódios do treino que chegaram ao fim sem cair nem ficar para trás, rodada a rodada. No canto, "
+                       "o último teste das 8 direções no rumo escolhido (só as quedas de verdade)."
+                     : "A avaliação do exercício mostrado (a rede; o traço apagado é o clássico, sem a rede).",
+            tracking ? &iterationTimes : nullptr },
         { tracking ? std::string("Evolução · nota por decisão (todos os rumos)")
                    : "Evolução · recompensa por segundo" + (drillName.empty() ? std::string() : " · " + drillName),
             { { &bestLine, amber, true, "melhor" }, { &rate, amber, false } }, rateLow, rateHigh, rateValue,
@@ -1422,17 +1430,19 @@ void ReinforcementLearningScreen::drawCharts(float height) {
             &iterationTimes },
     } };
     if (m_chartsExpanded) {
-        // Expandido: tambem as quedas do treino e, no rastreador, a velocidade e o erro dela.
-        charts.insert(charts.begin() + 3, { "Quedas no treino (%)", { { &falls, amber, false } }, 0.0f, 100.0f,
-            falls.empty() ? "" : text(falls.back(), "%.1f%%"), "%",
-            "A fatia dos episódios do treino que acabou em queda (todos os exercícios).", &iterationTimes, true });
+        // Expandido: tambem as quedas do treino (no rastreador o sem cair ja e o avesso delas) e, no rastreador, a
+        // velocidade e o erro dela.
+        if (!tracking)
+            charts.insert(charts.begin() + 3, { "Quedas no treino (%)", { { &falls, amber, false } }, 0.0f, 100.0f,
+                falls.empty() ? "" : text(falls.back(), "%.1f%%"), "%",
+                "A fatia dos episódios do treino que acabou em queda (todos os exercícios).", &iterationTimes, true });
         if (!bodySpeed.empty())
-            charts.insert(charts.begin() + 4, { "Velocidade (m/s) · ele e, apagado, o pedido",
+            charts.insert(charts.end() - 1, { "Velocidade (m/s) · ele e, apagado, o pedido",
                 { { &requestedSpeed, cyan, true, "pedido" }, { &bodySpeed, cyan, false, "ele" } }, 0.0f,
                 range({ &bodySpeed, &requestedSpeed }, 1.0f, 0.0f).second, text(bodySpeed.back(), "%.2f m/s"), "m/s",
                 "A velocidade média do corpo nos episódios do treino e a pedida pelo líder.", &iterationTimes });
         if (!velocityError.empty())
-            charts.insert(charts.begin() + 5, { "Erro de velocidade (m/s)", { { &velocityError, green, false } }, 0.0f,
+            charts.insert(charts.end() - 1, { "Erro de velocidade (m/s)", { { &velocityError, green, false } }, 0.0f,
                 range({ &velocityError }, 0.5f, 0.0f).second, text(velocityError.back(), "%.3f m/s"), "m/s",
                 "O erro médio entre a velocidade do centro de massa e a do líder (menor é melhor).", &iterationTimes,
                 true });
@@ -1460,7 +1470,8 @@ void ReinforcementLearningScreen::drawCharts(float height) {
                 tail /= static_cast<double>(k);
                 const double delta = tail - head;
                 char line[128];
-                if (std::abs(head) > 1e-9)
+                // (Num grafico em %, a variacao em pontos; a relativa de quase zero nao diz nada.)
+                if (std::abs(head) > 1e-9 && std::string_view(chart.unit) != "%")
                     std::snprintf(line, sizeof line, "no período: %.3g → %.3g %s  (%+.3g, %+.1f%%)", head, tail, chart.unit,
                         delta, 100.0 * delta / std::abs(head));
                 else
