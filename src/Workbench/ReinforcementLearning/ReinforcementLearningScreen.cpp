@@ -1247,6 +1247,8 @@ void ReinforcementLearningScreen::drawCharts(float height) {
         const char* unit;
         const char* tooltip;
         const std::vector<double>* times = nullptr;
+        // Se cair e melhorar (as quedas, o erro): a cor da variacao no periodo.
+        bool lowerIsBetter = false;
     };
     const auto text = [](float v, const char* format) {
         char buffer[32];
@@ -1302,7 +1304,7 @@ void ReinforcementLearningScreen::drawCharts(float height) {
         // Expandido: tambem as quedas do treino e, no rastreador, a velocidade e o erro dela.
         charts.insert(charts.begin() + 3, { "Quedas no treino (%)", { { &falls, amber, false } }, 0.0f, 100.0f,
             falls.empty() ? "" : text(falls.back(), "%.1f%%"), "%",
-            "A fatia dos episódios do treino que acabou em queda (todos os exercícios).", &iterationTimes });
+            "A fatia dos episódios do treino que acabou em queda (todos os exercícios).", &iterationTimes, true });
         if (!bodySpeed.empty())
             charts.insert(charts.begin() + 4, { "Velocidade (m/s) · ele e, apagado, o pedido",
                 { { &requestedSpeed, cyan, true, "pedido" }, { &bodySpeed, cyan, false, "ele" } }, 0.0f,
@@ -1311,7 +1313,8 @@ void ReinforcementLearningScreen::drawCharts(float height) {
         if (!velocityError.empty())
             charts.insert(charts.begin() + 5, { "Erro de velocidade (m/s)", { { &velocityError, green, false } }, 0.0f,
                 range({ &velocityError }, 0.5f, 0.0f).second, text(velocityError.back(), "%.3f m/s"), "m/s",
-                "O erro médio entre a velocidade do centro de massa e a do líder (menor é melhor).", &iterationTimes });
+                "O erro médio entre a velocidade do centro de massa e a do líder (menor é melhor).", &iterationTimes,
+                true });
     }
     const float spacing = ImGui::GetStyle().ItemSpacing.x;
     if (m_chartsExpanded) {
@@ -1321,6 +1324,34 @@ void ReinforcementLearningScreen::drawCharts(float height) {
             const Chart& chart = charts[i];
             ImGui::BeginGroup();
             ImGui::TextColored(InfoText, "%s", chart.title.c_str());
+            // A variacao no periodo: a media dos primeiros e dos ultimos 5% dos pontos (o ruido nao engana).
+            const auto main = std::find_if(chart.series.begin(), chart.series.end(),
+                [](const ChartSeries& item) { return !item.reference; });
+            if (main != chart.series.end() && main->values->size() >= 2) {
+                const std::vector<float>& v = *main->values;
+                const std::size_t k = std::max<std::size_t>(1, v.size() / 20);
+                double head = 0.0, tail = 0.0;
+                for (std::size_t j = 0; j < k; ++j) {
+                    head += v[j];
+                    tail += v[v.size() - 1 - j];
+                }
+                head /= static_cast<double>(k);
+                tail /= static_cast<double>(k);
+                const double delta = tail - head;
+                char line[128];
+                if (std::abs(head) > 1e-9)
+                    std::snprintf(line, sizeof line, "no período: %.3g → %.3g %s  (%+.3g, %+.1f%%)", head, tail, chart.unit,
+                        delta, 100.0 * delta / std::abs(head));
+                else
+                    std::snprintf(line, sizeof line, "no período: %.3g → %.3g %s  (%+.3g)", head, tail, chart.unit, delta);
+                const bool flat = std::abs(delta) <= 0.01 * std::max(std::abs(head), 1e-6);
+                const bool better = chart.lowerIsBetter ? delta < 0.0 : delta > 0.0;
+                ImGui::SameLine(0.0f, ui(18.0f));
+                ImGui::TextColored(flat ? ImVec4 { 0.55f, 0.62f, 0.70f, 1.0f }
+                        : better         ? ImVec4 { 0.30f, 0.82f, 0.56f, 1.0f }
+                                         : ImVec4 { 0.95f, 0.42f, 0.42f, 1.0f },
+                    "%s", line);
+            }
             ImGui::PushID(static_cast<int>(i));
             lineChart("##chart", chart.series, chart.minimum, chart.maximum,
                 { ImGui::GetContentRegionAvail().x, each - ImGui::GetTextLineHeightWithSpacing() }, chart.value.c_str(),
