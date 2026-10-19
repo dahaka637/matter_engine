@@ -10,9 +10,11 @@ namespace MatterEngine {
 namespace {
 
 constexpr float Pi = 3.14159265358979323846f;
-// Os do ContactFootwork3D: a torcao (ou o que falta) que dispara o giro, o
-// giro maximo por passo, o empate de "mais atrasado" e o passo do segundo pe.
-constexpr float TwistTrigger = 0.21f;
+// Os do ContactFootwork3D, calibrados para o padrao (o usuario, 19/10: "so
+// bonitos, parecerem reais; o pe pode deslizar; suave nao e lento"): a torcao
+// (ou o que falta) que dispara o giro (12 graus no fisico), o giro maximo por
+// passo, o empate de "mais atrasado" e o passo do segundo pe.
+constexpr float TwistTrigger = 0.45f;
 constexpr float StepLimit = 1.25f;
 constexpr float BehindTie = 0.17f;
 constexpr float SecondStepDrift = 0.05f;
@@ -20,9 +22,15 @@ constexpr float SecondStepYaw = 0.17f;
 // Parado de novo: o pe mais fora da pose da um passo de acomodacao.
 constexpr float SettleDrift = 0.04f;
 constexpr float SettleYaw = 0.12f;
-// O pe apoiado nunca torce mais que isto contra a pelve: num giro mais rapido
-// que os passos ele roda sobre a bola do pe (desliza, nao trava a perna).
-constexpr float PlantedTwistLimit = 1.0f;
+// O pe apoiado acompanha esta parte do giro da pelve rodando sobre a bola
+// (desliza; menos passos, mais calmos) e nunca torce mais que o limite.
+constexpr float PlantedFollow = 0.5f;
+constexpr float PlantedTwistLimit = 0.8f;
+// O tempo do passo (s): o do planejador no giro lento (0,18 a 0,29 no fisico)
+// e no mais rapido (0,10 a 0,17 no fisico, sobre-humano no padrao).
+constexpr float StepSecondsMinimum = 0.28f;
+constexpr float StepSecondsMaximum = 0.40f;
+constexpr float StepSecondsFast = 0.22f;
 
 float wrap(float angle) { return std::remainder(angle, 2.0f * Pi); }
 
@@ -80,10 +88,11 @@ void StandTurnFeet3D::start(const RagdollProfile3D& profile, std::size_t link, c
     const RagdollLinkDefinition3D& definition = profile.links[link];
     const float distance = std::hypot(to.position.x - foot.from.position.x, to.position.y - foot.from.position.y);
     const float yaw = std::abs(wrap(footYaw3D(definition, to.orientation) - footYaw3D(definition, foot.from.orientation)));
-    const float base = std::clamp(0.16f + 0.24f * distance + 0.04f * yaw / (0.5f * Pi), 0.18f, 0.29f);
+    const float base = std::clamp(0.24f + 0.24f * distance + 0.06f * yaw / (0.5f * Pi), StepSecondsMinimum,
+        StepSecondsMaximum);
     const float need = std::clamp(std::abs(input.turnRateRadiansPerSecond) / 6.0f
         + std::abs(wrap(input.targetYawRadians - input.facingYawRadians)) / 1.5f, 0.0f, 1.0f);
-    foot.duration = base + (0.11f - base) * need;
+    foot.duration = base + (StepSecondsFast - base) * need;
 }
 
 void StandTurnFeet3D::update(const RagdollProfile3D& profile, std::array<std::size_t, 2> feet,
@@ -117,8 +126,17 @@ void StandTurnFeet3D::update(const RagdollProfile3D& profile, std::array<std::si
         }
         m_pending = -1;
         m_engaged = true;
+        m_lastFacing = input.facingYawRadians;
     }
     m_weight = std::min(1.0f, m_weight + dt / 0.08f);
+    // O pe apoiado acompanha parte do giro (deslizando sobre a bola).
+    {
+        const float turned = wrap(input.facingYawRadians - m_lastFacing) * PlantedFollow;
+        m_lastFacing = input.facingYawRadians;
+        for (std::size_t side = 0; side < 2; ++side)
+            if (!m_feet[side].swinging && std::abs(turned) > 1e-6f)
+                m_feet[side].anchor = onGround(side, pivotOnBall(profile.links[feet[side]], m_feet[side].anchor, turned));
+    }
 
     // O rumo de cada pe apoiado sem o quanto a pose parada o abre, e a base.
     std::array<float, 2> open {}, footFacing {};
@@ -236,7 +254,7 @@ void StandTurnFeet3D::update(const RagdollProfile3D& profile, std::array<std::si
             } else {
                 position = foot.from.position + (to.position - foot.from.position) * eased;
             }
-            position.z = foot.from.position.z + (to.position.z - foot.from.position.z) * eased + 0.075f * arch;
+            position.z = foot.from.position.z + (to.position.z - foot.from.position.z) * eased + 0.06f * arch;
             toeDown = 0.18f * std::sin(Pi * std::min(1.0f, progress * 1.4f));
         }
         if (toeDown > 0.0f) {

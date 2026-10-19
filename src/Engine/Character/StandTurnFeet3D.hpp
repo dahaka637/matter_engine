@@ -13,11 +13,11 @@ namespace MatterEngine {
 // planejamento de passos do fisico, "um movimento bonito com a rapidez
 // necessaria, sem travar a movimentacao, pois e apenas gesto"). E a logica de
 // giro do ContactFootwork3D sem a fisica: os pes ficam onde pousaram enquanto
-// a pelve (a mola do padrao, intocada) gira; passando de 12 graus de torcao,
-// sai o pe mais atrasado no giro e logo o outro, cada um pousando onde a pose
-// parada o quer no rumo final (ate 72 graus a frente por passo), mais rapido
-// quanto mais rapido o giro. So pose: nada aqui muda o rumo, a velocidade ou
-// a capsula.
+// a pelve (a mola do padrao, intocada) gira, acompanhando parte do giro
+// deslizando; passando de 20 graus de torcao, sai o pe mais atrasado no giro
+// e logo o outro, cada um pousando onde a pose parada o quer no rumo final
+// (ate 72 graus a frente por passo), em 0,22 a 0,40 s. So pose: nada aqui
+// muda o rumo, a velocidade ou a capsula.
 struct StandTurnFoot3D {
     Vec3 position;
     Quaternion orientation;
@@ -69,6 +69,8 @@ private:
     std::array<Foot, 2> m_feet {};
     std::array<StandTurnFoot3D, 2> m_pose {};
     int m_pending = -1;
+    // O rumo da pelve no tick anterior (o pe apoiado acompanha parte do giro).
+    float m_lastFacing = 0.0f;
     bool m_engaged = false;
     float m_weight = 0.0f;
 };
