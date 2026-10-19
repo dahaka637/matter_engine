@@ -76,56 +76,46 @@ void DefaultLocomotion3D::stepGait(Tick& t) {
             if (frontSector(m_sector))
                 target = wrapAngle(target + std::clamp(s.pelvisCurveLeadSeconds * m_pathTurnRate,
                     -s.pelvisCurveLeadMaximum, s.pelvisCurveLeadMaximum) * smoothStep((speed - 1.5f) / 1.5f));
-        } else if (s.standTurnClips && t.animations.turnLeft != nullptr && t.animations.turnRight != nullptr) {
-            // O giro do clipe ate um tempo (rad, em volta da vertical, desde o comeco).
+        } else if (s.standTurnClips && t.animations.turnLeft != nullptr && t.animations.turnRight != nullptr
+            && (m_turnActive || std::abs(wrapAngle(viewYaw - m_yaw)) > s.standTurnStart)) {
+            // O giro parado pelo clipe: o passo de 90 graus tocado na velocidade dele (ate 1,3x com o olhar muito a
+            // frente), girando o que falta (ate os 90 do clipe), quando o olhar passa do que a coluna e a cabeca
+            // cobrem. A pelve segue o giro do clipe, entao o pe apoiado fica onde a captura o pos (a mola antiga
+            // girava a pelve com os pes do idle presos a ela: patinava).
             const auto clipYaw = [&](const AnimationClip3D& clip, float time) {
                 const Quaternion q = rootAt(profile, clip, time, false, s.smoothClipSampling).rotationDelta.normalized();
                 return std::atan2(2.0f * (q.w * q.z + q.x * q.y), 1.0f - 2.0f * (q.y * q.y + q.z * q.z));
             };
-            const float error = wrapAngle(viewYaw - m_yaw);
-            // A rapidez do olhar (o giro da camera), filtrada.
-            if (m_lookSeen)
-                m_lookRate += (std::abs(wrapAngle(viewYaw - m_turnPreviousViewYaw)) / std::max(1e-4f, dt) - m_lookRate)
-                    * std::min(1.0f, dt / 0.15f);
-            m_turnPreviousViewYaw = viewYaw;
-            m_lookSeen = true;
             const auto begin = [&](float e) {
                 const bool left = e >= 0.0f;
                 const float want = std::abs(e) - s.standTurnKeep;
-                // So o de 90 graus, emendado: o de 180 desloca a raiz ~20 cm e agacha 6 cm (sem a raiz, o pe escorrega).
                 m_turnClip = left ? t.animations.turnLeft : t.animations.turnRight;
                 m_turnSign = left ? 1.0f : -1.0f;
                 m_turnSpan = std::max(0.3f, std::abs(clipYaw(*m_turnClip, m_turnClip->durationSeconds)));
                 m_turnTotal = std::clamp(want, 0.3f, m_turnSpan);
-                // O ritmo: o giro pedido (o olhar girando, ou o que falta em ~1 s) sobre o natural do clipe.
-                const float natural = m_turnSpan / std::max(0.1f, m_turnClip->durationSeconds);
-                const float desired = std::max(m_lookRate, want / 1.0f);
-                m_turnRate = std::clamp(desired / natural, 0.6f, 2.5f);
+                m_turnRate = want > 2.0f * m_turnSpan ? 1.3f : 1.0f;
                 m_turnTime = 0.0f;
                 m_turnStartYaw = m_yaw;
                 m_turnActive = true;
             };
-            if (!m_turnActive && std::abs(error) > s.standTurnStart) begin(error);
-            if (m_turnActive) {
-                const AnimationClip3D& clip = *m_turnClip;
-                m_turnTime = std::min(clip.durationSeconds, m_turnTime + dt * m_turnRate);
-                const float progress = std::clamp(std::abs(clipYaw(clip, m_turnTime)) / m_turnSpan, 0.0f, 1.0f);
-                const float yaw = wrapAngle(m_turnStartYaw + m_turnSign * m_turnTotal * progress);
-                m_yawRate = wrapAngle(yaw - m_yaw) / std::max(1e-4f, dt);
-                m_yaw = yaw;
-                if (m_turnTime >= clip.durationSeconds - 1e-4f) {
-                    m_turnActive = false;
-                    // Falta giro: o proximo ciclo emenda (voltas inteiras e mais).
-                    const float rest = wrapAngle(viewYaw - m_yaw);
-                    if (std::abs(rest) > s.standTurnStart) begin(rest);
-                }
-            } else {
-                m_yawRate = 0.0f;
+            if (!m_turnActive) begin(wrapAngle(viewYaw - m_yaw));
+            const AnimationClip3D& clip = *m_turnClip;
+            m_turnTime = std::min(clip.durationSeconds, m_turnTime + dt * m_turnRate);
+            const float progress = std::clamp(std::abs(clipYaw(clip, m_turnTime)) / m_turnSpan, 0.0f, 1.0f);
+            const float yaw = wrapAngle(m_turnStartYaw + m_turnSign * m_turnTotal * progress);
+            m_yawRate = wrapAngle(yaw - m_yaw) / std::max(1e-4f, dt);
+            m_yaw = yaw;
+            if (m_turnTime >= clip.durationSeconds - 1e-4f) {
+                m_turnActive = false;
+                // Falta giro de novo: o proximo passo emenda (voltas inteiras e mais).
+                const float rest = wrapAngle(viewYaw - m_yaw);
+                if (std::abs(rest) > s.standTurnStart) begin(rest);
             }
             m_turnWeight = m_turnActive ? std::min(1.0f, m_turnWeight + dt / 0.12f)
                                         : std::max(0.0f, m_turnWeight - dt / 0.2f);
             clipDriven = true;
         } else {
+            m_turnWeight = std::max(0.0f, m_turnWeight - dt / 0.2f);
             const float error = wrapAngle(viewYaw - m_yaw);
             if (!m_standTurning && std::abs(error) > s.standTurnStart) m_standTurning = true;
             if (m_standTurning) {

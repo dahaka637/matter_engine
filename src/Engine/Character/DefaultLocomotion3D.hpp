@@ -147,12 +147,12 @@ struct DefaultLocomotionSettings3D {
     // (rad), e para standTurnKeep (rad) dela - o resto e da coluna e da
     // cabeca -, nesta constante (s).
     // Giro parado pelos clipes de giro com passos (pedido do usuario, 19/10):
-    // o de 90 graus emendado (voltas inteiras; o de 180 desloca a raiz e
-    // agacha, e sem a raiz o pe escorrega); o ritmo pela rapidez do olhar
-    // (0,6 a 2,5x); num giro menor que o clipe, a pelve gira so o que falta
-    // (misturar as pernas com o idle arrastava o pe apoiado). A pelve gira no
-    // passo do clipe, entao o pe apoiado fica onde a captura o pos.
-    // Desligado, a pelve gira por mola e os pes do idle giram junto (deslizam).
+    // quando o olhar passa do que a coluna e a cabeca cobrem, o passo de 90
+    // graus na velocidade do clipe (ate 1,3x com o olhar muito a frente),
+    // girando o que falta e emendado para voltas inteiras; a pelve gira no
+    // passo do clipe, entao o pe apoiado fica onde a captura o pos. (Tocado a
+    // ate 2,5x, misturado com o idle, com o de 180, que desloca a raiz, ou com
+    // a mola antiga nos giros pequenos, ficou ruim.)
     bool standTurnClips = true;
     float standTurnStart = 0.55f;
     float standTurnKeep = 0.31f;
@@ -792,9 +792,6 @@ private:
     const AnimationClip3D* m_turnClip = nullptr;
     float m_turnTime = 0.0f, m_turnRate = 1.0f, m_turnSign = 1.0f, m_turnSpan = 0.0f, m_turnTotal = 0.0f;
     float m_turnStartYaw = 0.0f, m_turnWeight = 0.0f;
-    // A rapidez do olhar (rad/s, filtrada).
-    float m_lookRate = 0.0f, m_turnPreviousViewYaw = 0.0f;
-    bool m_lookSeen = false;
     bool m_turnActive = false;
     bool m_started = false;
     // A semente (seed): aplicada no proximo update.
