@@ -27,16 +27,25 @@ TrackingReward3D::TrackingReward3D(const RagdollProfile3D& profile)
         }
     if (!found) throw std::runtime_error("rastreador: o perfil nao tem a cabeca");
     m_leg.resize(profile.links.size());
+    m_arm.resize(profile.links.size());
+    m_trunk.resize(profile.links.size());
     for (std::size_t i = 0; i < profile.links.size(); ++i) {
         const std::string& id = profile.links[i].id;
         m_leg[i] = id.find("Thigh") != std::string::npos || id.find("Shin") != std::string::npos
             || id.find("Foot") != std::string::npos;
+        m_arm[i] = id.find("UpperArm") != std::string::npos || id.find("Forearm") != std::string::npos
+            || id.find("Hand") != std::string::npos;
+        m_trunk[i] = id == "Pelvis" || id == "Abdomen" || id == "Chest" || id == "UpperChest";
     }
 }
 
 TrackingRewardTerms3D TrackingReward3D::evaluate(const TrackingLeaderState3D& leader,
     std::span<const PhysicsBodyState3D> bodyLinks, Vec3 bodyCenterOfMass, Vec3 bodyCenterOfMassVelocity,
-    float legWeight, float centerOfMassVelocityWeight) {
+    float legWeight, float centerOfMassVelocityWeight, float armWeight, float trunkWeight) {
+    // O peso de cada link na posicao, na velocidade e na pose (a liberdade de cada parte).
+    const auto weightOf = [&](std::size_t link) {
+        return m_leg[link] ? legWeight : m_arm[link] ? armWeight : m_trunk[link] ? trunkWeight : 1.0f;
+    };
     const RagdollProfile3D& profile = *m_profile;
     TrackingRewardTerms3D terms;
     const std::size_t count = std::min({ profile.links.size(), leader.links.size(), bodyLinks.size() });
@@ -49,7 +58,7 @@ TrackingRewardTerms3D TrackingReward3D::evaluate(const TrackingLeaderState3D& le
     double positionSum = 0.0, velocitySum = 0.0;
     for (std::size_t p = 0; p < m_kinPoints.size(); ++p) {
         // (6 pontos por link, na ordem dos links.)
-        const double w = m_leg[p / 6] ? legWeight : 1.0;
+        const double w = weightOf(p / 6);
         positionSum += w * (kin.point(m_kinPoints[p]) - sim.point(m_simPoints[p])).length();
         velocitySum += w * (kin.direction(m_kinVelocities[p]) - sim.direction(m_simVelocities[p])).length();
     }
@@ -65,7 +74,7 @@ TrackingRewardTerms3D TrackingReward3D::evaluate(const TrackingLeaderState3D& le
         const std::size_t p = static_cast<std::size_t>(parent);
         const Quaternion kinLocal = leader.links[p].orientation.conjugate() * leader.links[j].orientation;
         const Quaternion simLocal = bodyLinks[p].orientation.conjugate() * bodyLinks[j].orientation;
-        localSum += (m_leg[j] ? legWeight : 1.0) * rotationAngle(kinLocal.conjugate() * simLocal);
+        localSum += weightOf(j) * rotationAngle(kinLocal.conjugate() * simLocal);
         ++localCount;
     }
     terms.localPose = localCount > 0

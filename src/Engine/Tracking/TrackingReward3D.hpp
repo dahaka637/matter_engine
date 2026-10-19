@@ -41,15 +41,17 @@ public:
     // (1 = a receita; menos deixa as pernas se adaptarem, as pernas adaptaveis).
     [[nodiscard]] TrackingRewardTerms3D evaluate(const TrackingLeaderState3D& leader,
         std::span<const PhysicsBodyState3D> bodyLinks, Vec3 bodyCenterOfMass, Vec3 bodyCenterOfMassVelocity,
-        float legWeight = 1.0f, float centerOfMassVelocityWeight = 1.0f);
+        float legWeight = 1.0f, float centerOfMassVelocityWeight = 1.0f, float armWeight = 1.0f,
+        float trunkWeight = 1.0f);
     [[nodiscard]] std::size_t headLink() const { return m_head; }
 
 private:
     const RagdollProfile3D* m_profile = nullptr;
     std::vector<TrackingSurfaceBox3D> m_boxes;
     std::uint32_t m_head = 0;
-    // As coxas, as canelas e os pes.
-    std::vector<bool> m_leg;
+    // As coxas, as canelas e os pes; os bracos (ombro, antebraco, mao); o tronco
+    // (pelve, abdomen, peito). O resto (pescoco, cabeca) fica com o peso cheio.
+    std::vector<bool> m_leg, m_arm, m_trunk;
     // (Reaproveitados entre chamadas: a nota roda a cada decisao de cada mundo.)
     std::vector<Vec3> m_kinPoints, m_kinVelocities, m_simPoints, m_simVelocities;
 };

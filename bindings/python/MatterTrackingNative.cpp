@@ -57,7 +57,8 @@ NB_MODULE(matter_tracking_native, m) {
                 float evaluation_speed, float episode_seconds, bool allow_sprint, const std::string& evaluation_mode,
                 float switch_seconds, bool projectiles, float projectile_minimum_kg, float projectile_maximum_kg,
                 float idle_share, float turn_share, float fast_turn_share, float action_rate_weight,
-                bool adaptive_legs, float leg_weight, float center_of_mass_velocity_weight) {
+                bool adaptive_legs, float leg_weight, float center_of_mass_velocity_weight, float arm_weight,
+                float trunk_weight) {
                 TrackingTrainingSettings3D settings;
                 settings.assetsDirectory = assets;
                 settings.environments = environments;
@@ -85,6 +86,8 @@ NB_MODULE(matter_tracking_native, m) {
                 settings.adaptiveLegs = adaptive_legs;
                 settings.legWeight = leg_weight;
                 settings.centerOfMassVelocityWeight = center_of_mass_velocity_weight;
+                settings.armWeight = arm_weight;
+                settings.trunkWeight = trunk_weight;
                 settings.switchSeconds = switch_seconds;
                 settings.projectiles = projectiles;
                 settings.projectileMinimumKg = projectile_minimum_kg;
@@ -98,7 +101,7 @@ NB_MODULE(matter_tracking_native, m) {
             "switch_seconds"_a = 4.0f, "projectiles"_a = false, "projectile_minimum_kg"_a = 0.01f,
             "projectile_maximum_kg"_a = 8.0f, "idle_share"_a = 0.0f, "turn_share"_a = 0.0f, "fast_turn_share"_a = 0.0f,
             "action_rate_weight"_a = 0.0f, "adaptive_legs"_a = false, "leg_weight"_a = 1.0f,
-            "center_of_mass_velocity_weight"_a = 1.0f)
+            "center_of_mass_velocity_weight"_a = 1.0f, "arm_weight"_a = 1.0f, "trunk_weight"_a = 1.0f)
         .def_prop_ro("num_envs", &TrackingTraining3D::environmentCount)
         .def_prop_ro("obs_size", &TrackingTraining3D::observationSize)
         .def_prop_ro("action_size", &TrackingTraining3D::actionSize)

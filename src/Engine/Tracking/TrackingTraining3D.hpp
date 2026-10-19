@@ -73,6 +73,9 @@ struct TrackingTrainingSettings3D {
     // de massa (1 = a receita).
     float legWeight = 1.0f;
     float centerOfMassVelocityWeight = 1.0f;
+    // E a liberdade do resto: o peso dos bracos e do tronco na pose (1 = a receita).
+    float armWeight = 1.0f;
+    float trunkWeight = 1.0f;
     float idleShare = 0.0f;
     float turnShare = 0.0f;
     float fastTurnShare = 0.0f;
