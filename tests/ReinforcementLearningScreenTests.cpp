@@ -252,6 +252,11 @@ int realRun(const std::filesystem::path& out) {
         require((screen.viewerPelvis() - now).length() < 1e-5f, "o fim da gravacao e o quadro de agora");
         require((half - now).length() < (before - now).length(), "meio quadro atras fica perto de agora");
         std::cout << "gravacao: a pelve andou " << (now - before).length() << " m no ultimo 1 s\n";
+        // Com a gravacao cheia (mais de 30 s), o quadro mostrado segue o de agora (nao congela no 899).
+        screen.advanceViewer(950);
+        const Vec3 full = screen.viewerPelvis();
+        screen.advanceViewer(30);
+        require((screen.viewerPelvis() - full).length() > 0.05f, "com a gravacao cheia o visualizador deveria seguir");
     }
     if (const char* window = std::getenv("MATTER_RL_TEST_EXPAND")) {
         screen.setChartsExpanded(true, std::atoi(window));

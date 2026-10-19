@@ -582,6 +582,8 @@ void ReinforcementLearningScreen::recordFrame() {
     if (!view.state) return;
     m_replay.push_back({ *view.state, view });
     m_replay.back().view.state = nullptr;
+    // (Com a gravacao cheia o indice do ultimo quadro nao muda: o conteudo sim, e o mostrado tem de ser refeito.)
+    m_shownHead = -1.0f;
     if (m_replay.size() > ReplayFrames) {
         m_replay.pop_front();
         if (m_playhead >= 0.0f) m_playhead = std::max(0.0f, m_playhead - 1.0f);
