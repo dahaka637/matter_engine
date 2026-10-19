@@ -41,7 +41,7 @@ void testDefinition() {
     }
     // Os tetos de atleta da definicao (o perfil do jogo segue com os dele).
     for (const RLBodyDof3D& dof : body.dofs)
-        if (dof.name == "LeftShin.twist") require(std::abs(dof.maximumTorque - 360.0f) < 1e-3f, "teto do joelho");
+        if (dof.name == "LeftShin.twist") require(std::abs(dof.maximumTorque - 400.0f) < 1e-3f, "teto do joelho");
     require(body.standingPelvisHeight > 0.85f && body.standingPelvisHeight < 1.1f, "altura da pelve de pe implausivel");
     require(body.standingHeadHeight > 1.5f && body.standingHeadHeight < 1.85f, "altura da cabeca de pe implausivel");
     require(body.hash != 0, "o corpo precisa de identidade");

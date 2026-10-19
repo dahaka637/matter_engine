@@ -125,22 +125,30 @@ DRIVE = {
     "LeftFoot": (360.0, 34.6, 420.0), "RightFoot": (360.0, 34.6, 420.0),
 }
 
-# Peak torque per axis (twist, swing1, swing2), N*m: a well-trained adult,
-# calibrated by the user on 19/10/2026 to a ~200 kg deadlift (lumbar ~450) and
-# a ~350 kg 45-degree leg press (knee ~360); the same table as
-# assets/rl/bodies/football_player_v2.json. The DRIVE
+# Peak torque per axis (twist, swing1, swing2), N*m: a strong trained adult,
+# calibrated by the user on 19/10/2026 to bench 180, deadlift 240 (lumbar
+# ~525), back squat 250 (hip ~450) and 45-degree leg press 450 kg (knee ~400);
+# the same table as assets/rl/bodies/football_player_v2.json. The DRIVE
 # torque above was 2.5-3x stronger than a human (18/10/2026) and is no longer
 # written.
 TORQUE = {
-    "Abdomen": (225.0, 450.0, 375.0), "Chest": (225.0, 450.0, 375.0),
-    "UpperChest": (225.0, 450.0, 375.0), "Neck": (70.0, 70.0, 70.0),
-    "Head": (50.0, 50.0, 50.0),
-    "LeftUpperArm": (150.0, 150.0, 150.0), "RightUpperArm": (150.0, 150.0, 150.0),
-    "LeftForearm": (110.0, 110.0), "RightForearm": (110.0, 110.0),
-    "LeftHand": (25.0, 25.0), "RightHand": (25.0, 25.0),
-    "LeftThigh": (180.0, 420.0, 300.0), "RightThigh": (180.0, 420.0, 300.0),
-    "LeftShin": (360.0,), "RightShin": (360.0,),
-    "LeftFoot": (300.0, 145.0), "RightFoot": (300.0, 145.0),
+    "Abdomen": (180.0, 525.0, 330.0),
+    "Chest": (180.0, 525.0, 330.0),
+    "UpperChest": (180.0, 525.0, 330.0),
+    "Neck": (80.0, 80.0, 80.0),
+    "Head": (55.0, 55.0, 55.0),
+    "LeftUpperArm": (160.0, 160.0, 160.0),
+    "RightUpperArm": (160.0, 160.0, 160.0),
+    "LeftForearm": (120.0, 120.0),
+    "RightForearm": (120.0, 120.0),
+    "LeftHand": (30.0, 30.0),
+    "RightHand": (30.0, 30.0),
+    "LeftThigh": (200.0, 450.0, 330.0),
+    "RightThigh": (200.0, 450.0, 330.0),
+    "LeftShin": (400.0,),
+    "RightShin": (400.0,),
+    "LeftFoot": (330.0, 160.0),
+    "RightFoot": (330.0, 160.0),
 }
 
 # Ranges are measured from the bind pose this profile defines. Spine, hips,
