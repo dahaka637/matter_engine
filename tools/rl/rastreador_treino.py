@@ -21,6 +21,7 @@ import json
 import math
 import struct
 import os
+import signal
 import sys
 import time
 from datetime import datetime, timezone
@@ -125,6 +126,25 @@ def write_run_files(run: Path, cenario: str) -> None:
                                         "displayName": f"Rastreador fisico (DReCon), {cenario}"})):
         if not (run / name).exists():
             (run / name).write_text(json.dumps(data, ensure_ascii=False, indent=1))
+    # O comando deste treinador: o "Continuar treino" da tela o reabre igual.
+    config = json.loads((run / "run.json").read_text())
+    config.update({"comando": [sys.executable, str(Path(__file__).resolve()), *sys.argv[1:]], "pasta": str(HERE)})
+    (run / "run.json").write_text(json.dumps(config, ensure_ascii=False, indent=1))
+
+
+def write_status(run: Path, state: str, counters: dict, row: dict, args) -> None:
+    """O estado do treinador para a tela (o status.json do supervisor; o pid diz que ele esta vivo)."""
+    status = {"run": args.treino, "task": f"rastreador_{args.cenario}",
+              "taskName": f"Rastreador, {args.cenario}" + (f" (de {args.de})" if args.de else ""),
+              "state": state, "pid": os.getpid(), "hora": time.time(), "iteration": counters["rodada"],
+              "steps": counters["decisoes"], "episodes": counters["episodios"],
+              "trainSeconds": counters.get("segundos", 0.0), "sps": row.get("dec_s", 0.0), "threads": args.threads,
+              "environments": args.mundos, "device": "cuda" if torch.cuda.is_available() else "cpu",
+              "last": {"reward": row.get("nota_passo", 0.0), "episode_seconds": row.get("ep_segundos", 0.0),
+                       "fall_fraction": row.get("quedas", -1.0)}}
+    tmp = run / "status.tmp"
+    tmp.write_text(json.dumps(status, ensure_ascii=False))
+    tmp.replace(run / "status.json")
 
 
 def save(path: Path, model: Policy, optimizer, counters: dict, settings: dict) -> None:
@@ -180,6 +200,12 @@ def main() -> int:
         counters = state["counters"]
         print(f"retomando {args.treino} da rodada {counters['rodada']}", flush=True)
     log = open(run / "log.jsonl", "a")
+    # Parar (SIGTERM, o "Parar" da tela) fecha a rodada, salva e sai; SIGUSR1 salva na proxima rodada.
+    requests = {"parar": False, "salvar": False}
+    signal.signal(signal.SIGTERM, lambda *_: requests.__setitem__("parar", True))
+    signal.signal(signal.SIGUSR1, lambda *_: requests.__setitem__("salvar", True))
+    counters.setdefault("segundos", 0.0)
+    write_status(run, "treinando", counters, {}, args)
 
     gamma, lam, clip, epochs, minibatch = 0.99, 0.95, 0.2, 10, 4096
     T = args.passos
@@ -270,14 +296,21 @@ def main() -> int:
         log.flush()
         print(" ".join(f"{k}={v:.4g}" if isinstance(v, float) else f"{k}={v}" for k, v in row.items() if k != "hora"),
               flush=True)
-        if counters["rodada"] % args.salvar_cada == 0:
+        counters["segundos"] += elapsed
+        write_status(run, "treinando", counters, row, args)
+        if counters["rodada"] % args.salvar_cada == 0 or requests["parar"] or requests["salvar"]:
+            requests["salvar"] = False
             save(checkpoint, model, optimizer, counters, settings)
             save(run / f"r{counters['rodada']:06d}.pt", model, optimizer, counters, settings)
             export_policy(model, run / "exports" / "policy_latest.mrlpolicy",
                           {"run": args.treino, "iteration": counters["rodada"], "steps": counters["decisoes"],
                            "observationNames": settings["observacao"]})
             (run / "latest.json").write_text(json.dumps({"iteration": counters["rodada"]}))
+        if requests["parar"]:
+            print(f"parado na rodada {counters['rodada']} (pedido de parar)", flush=True)
+            break
     save(checkpoint, model, optimizer, counters, settings)
+    write_status(run, "parado", counters, {}, args)
     return 0
 
 

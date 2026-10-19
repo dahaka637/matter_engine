@@ -13,6 +13,7 @@
 #include "Engine/Modeling/Raster/ImageIO.hpp"
 #include "Engine/RL/Environment/BodyTrainingBatch3D.hpp"
 #include "Engine/RL/Policy/PolicyRuntime3D.hpp"
+#include "Engine/RL/Supervisor/TrainerLink3D.hpp"
 #include "Support/HeadlessUi.hpp"
 #include "Workbench/ReinforcementLearning/ReinforcementLearningScreen.hpp"
 
@@ -188,6 +189,8 @@ int realRun(const std::filesystem::path& out) {
         screen.showDrill(drill);
         screen.waitUntilLoaded();
     }
+    std::cout << "status: " << (screen.status().alive ? "vivo" : "fechado") << ", " << screen.status().state << ", rodada "
+              << screen.status().iteration << ", pid " << screen.status().pid << '\n';
     std::cout << "historico: " << screen.history().iterations.size() << " rodadas, "
               << screen.history().evaluations.size() << " avaliacoes, " << screen.drills().size() << " exercicios\n";
     require(!screen.history().iterations.empty(), "os graficos deveriam ter as rodadas do treino");
@@ -263,6 +266,44 @@ int realRun(const std::filesystem::path& out) {
     return 0;
 }
 
+// O treinador de processo proprio (o rastreador): um Python de mentira que grava
+// o status.json com o pid e sai no SIGTERM. A ponte o abre pelo comando do
+// run.json, o ve vivo, o para pelo sinal e o ve parado.
+void processTrainer(const std::filesystem::path& data) {
+    const std::filesystem::path run = data / "runs" / "rast_teste";
+    std::filesystem::create_directories(run);
+    const std::string script = "import json,os,signal,sys,time\n"
+        "p=sys.argv[1]\n"
+        "def w(st): open(p+'/status.json','w').write(json.dumps({'run':'rast_teste','task':'rastreador_frente','state':st,'pid':os.getpid(),'iteration':7}))\n"
+        "signal.signal(signal.SIGTERM, lambda *a: (w('parado'), sys.exit(0)))\n"
+        "w('treinando')\n"
+        "while True: time.sleep(0.05)\n";
+    nlohmann::json config { { "kind", "rastreador" }, { "task", "rastreador_frente" },
+        { "comando", { "/usr/bin/python3", "-c", script, run.string(), "--treino", "rast_teste" } },
+        { "pasta", run.string() } };
+    std::ofstream(run / "run.json") << config.dump();
+    TrainerPaths3D paths = defaultTrainerPaths3D(sourceRoot());
+    paths.data = data;
+    TrainerLink3D link(paths, "rast_teste");
+    std::string error;
+    require(link.start("rastreador_frente", "equilibrado", &error), "a ponte abre o treinador do run.json: " + error);
+    const auto waitFor = [&](bool alive) {
+        for (int i = 0; i < 100; ++i) {
+            link.refresh();
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            if (link.status().alive == alive && link.status().known) return true;
+        }
+        return false;
+    };
+    require(waitFor(true), "o treinador aberto aparece vivo pelo pid do status.json");
+    require(link.status().pid > 0 && link.status().iteration == 7 && link.status().state == "treinando",
+        "o status do treinador de processo proprio chega a tela");
+    link.send("parar");
+    require(waitFor(false), "o parar fecha o treinador pelo sinal");
+    require(link.status().state == "parado", "parado depois do sinal");
+    std::cout << "treinador de processo proprio: abre, aparece vivo, para pelo sinal\n";
+}
+
 } // namespace
 
 int main() {
@@ -275,6 +316,7 @@ int main() {
         setenv("XDG_RUNTIME_DIR", (sandbox / "runtime").c_str(), 1);
         unsetenv("MATTER_RL_SOCKET");
         writeRuns(sandbox / "dados");
+        processTrainer(sandbox / "dados_processo");
         writeHistory(sandbox / "dados" / "rl.db");
 
         TestSupport::HeadlessUi ui;

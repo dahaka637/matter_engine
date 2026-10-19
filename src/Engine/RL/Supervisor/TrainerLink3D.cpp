@@ -3,6 +3,7 @@
 #include <nlohmann/json.hpp>
 
 #include <cerrno>
+#include <csignal>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -69,7 +70,34 @@ std::string TrainerLink3D::lastReply() const {
     return m_lastReply;
 }
 
+namespace {
+
+// O processo do status.json vivo e sendo o treinador deste treino (um pid
+// reaproveitado por outro programa nao conta).
+bool trainerProcessAlive(int pid, const std::string& run) {
+    if (pid <= 0 || ::kill(pid, 0) != 0) return false;
+    std::ifstream file("/proc/" + std::to_string(pid) + "/cmdline", std::ios::binary);
+    const std::string line { std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>() };
+    return line.find(std::string("--treino") + '\0' + run + '\0') != std::string::npos
+        || line.find("--treino=" + run) != std::string::npos;
+}
+
+} // namespace
+
 void TrainerLink3D::send(const std::string& command, const std::string& argumentsJson) {
+    {
+        // O treinador de processo proprio: parar (e pausar, que ele nao tem) e salvar por sinal.
+        const TrainerStatus3D now = status();
+        if (now.alive && now.pid > 0) {
+            if (command == "parar" || command == "pausar") ::kill(now.pid, SIGTERM);
+            else if (command == "salvar") ::kill(now.pid, SIGUSR1);
+            std::lock_guard lock(m_mutex);
+            m_lastReply = R"({"ok":true})";
+            m_refresh = true;
+            m_wake.notify_all();
+            return;
+        }
+    }
     nlohmann::json message;
     message["cmd"] = command;
     message["args"] = nlohmann::json::parse(argumentsJson.empty() ? "{}" : argumentsJson, nullptr, false);
@@ -136,16 +164,30 @@ bool TrainerLink3D::start(const std::string& task, const std::string& mode, std:
     const std::string& run) {
     if (status().alive) return true;
     const std::string& target = run.empty() ? m_run : run;
-    if (!std::filesystem::exists(m_paths.launcher)) {
-        if (error) *error = "treinador ausente: " + m_paths.launcher.string();
-        return false;
-    }
     const std::filesystem::path directory = m_paths.run(target);
     std::error_code code;
     std::filesystem::create_directories(directory, code);
-    const std::string log = (directory / "treinador.log").string();
-    const std::string launcher = m_paths.launcher.string();
+    std::string log = (directory / "treinador.log").string();
+    std::string launcher = m_paths.launcher.string();
     std::vector<std::string> arguments { launcher, "servir", "--run", target, "--tarefa", task, "--modo", mode };
+    std::string folder;
+    {
+        // Um treinador de processo proprio (o rastreador) guarda o comando dele no run.json.
+        std::ifstream file(directory / "run.json");
+        const nlohmann::json config = nlohmann::json::parse(file, nullptr, false);
+        if (!config.is_discarded() && config.is_object() && config.contains("comando") && config["comando"].is_array()
+            && !config["comando"].empty()) {
+            arguments.clear();
+            for (const auto& item : config["comando"]) arguments.push_back(item.get<std::string>());
+            launcher = arguments.front();
+            folder = config.value("pasta", std::string());
+            log = (directory / "treino.out").string();
+        }
+    }
+    if (!std::filesystem::exists(launcher)) {
+        if (error) *error = "treinador ausente: " + launcher;
+        return false;
+    }
     std::vector<char*> argv;
     for (std::string& argument : arguments) argv.push_back(argument.data());
     argv.push_back(nullptr);
@@ -157,6 +199,7 @@ bool TrainerLink3D::start(const std::string& task, const std::string& mode, std:
     posix_spawn_file_actions_adddup2(&actions, 1, 2);
     // O treinador nao herda o que a janela tem aberto (Vulkan, Wayland, audio).
     posix_spawn_file_actions_addclosefrom_np(&actions, 3);
+    if (!folder.empty()) posix_spawn_file_actions_addchdir_np(&actions, folder.c_str());
     posix_spawnattr_t attributes;
     posix_spawnattr_init(&attributes);
     // Sessao propria: o treino segue com a tela (e o terminal) fechados.
@@ -232,6 +275,7 @@ void TrainerLink3D::readStatus(const std::string& json, bool alive) {
     status.environments = static_cast<int>(number(s, "environments"));
     status.cpuTemperature = number(s, "cpuTemperature");
     status.policy = text(s, "policy");
+    status.pid = static_cast<int>(number(s, "pid"));
     if (const auto last = s.find("last"); last != s.end() && last->is_object()) {
         status.lastReward = number(*last, "reward");
         status.lastEpisodeSeconds = number(*last, "episode_seconds");
@@ -308,7 +352,16 @@ void TrainerLink3D::worker() {
         std::ifstream file(m_paths.run(m_run) / "status.json");
         if (file) {
             const std::string json { std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>() };
-            readStatus(json, false);
+            const nlohmann::json saved = nlohmann::json::parse(json, nullptr, false);
+            const int pid = !saved.is_discarded() && saved.is_object() ? saved.value("pid", 0) : 0;
+            const bool running = trainerProcessAlive(pid, m_run);
+            readStatus(json, running);
+            if (running) {
+                std::lock_guard lock(m_mutex);
+                m_opening = false;
+                m_failure.clear();
+                continue;
+            }
         } else {
             std::lock_guard lock(m_mutex);
             m_status = TrainerStatus3D {};

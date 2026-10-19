@@ -871,7 +871,7 @@ void ReinforcementLearningScreen::draw(CanvasTarget& canvas, float uiScale) {
     ImDrawList* drawList = ImGui::GetWindowDrawList();
     drawWorkbenchBackdrop(drawList, io.DisplaySize, uiScale);
     const TrainerStatus3D status = m_link->status();
-    drawWorkbenchHeader(drawList, io.DisplaySize, uiScale, "APRENDIZADO", stateLabel(status.state).label);
+    drawWorkbenchHeader(drawList, io.DisplaySize, uiScale, "TREINO RL", stateLabel(status.state).label);
 
     const float margin = ui(12.0f);
     const float top = headerHeight(uiScale) + margin;
@@ -965,6 +965,19 @@ void ReinforcementLearningScreen::drawControls(const TrainerStatus3D& status) {
         }
         ImGui::EndDisabled();
         tooltip("Abre o treino em segundo plano, do último checkpoint. Ele continua com o Matter Engine fechado.");
+        return;
+    }
+    if (status.pid > 0) {
+        // O rastreador (processo proprio): parar salva e fecha; nao tem pausa nem avaliacao pelo canal.
+        if (ImGui::Button(UI::FontAwesome::label(UI::FontAwesome::Stop, "Parar").c_str(), { half, ui(34.0f) }))
+            m_link->send("parar");
+        tooltip("Termina a rodada, salva e fecha o treinador. \"Continuar treino\" volta do mesmo ponto.");
+        ImGui::SameLine();
+        if (ImGui::Button(UI::FontAwesome::label(UI::FontAwesome::FloppyDisk, "Salvar").c_str(), { half, ui(34.0f) })) {
+            m_link->send("salvar");
+            notify("Checkpoint pedido");
+        }
+        tooltip("Grava um checkpoint no fim da rodada.");
         return;
     }
     const bool paused = status.state == "pausado";

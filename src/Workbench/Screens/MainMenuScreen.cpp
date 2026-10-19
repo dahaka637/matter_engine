@@ -37,7 +37,7 @@ void WorkbenchApp::drawMainMenu() {
     const std::string viewer = UI::FontAwesome::label(
         UI::FontAwesome::Cube, "Objetos");
     const std::string reinforcement = UI::FontAwesome::label(
-        UI::FontAwesome::Brain, "Aprendizado por Reforço");
+        UI::FontAwesome::Brain, "Treino RL");
     const std::string ballTouch = UI::FontAwesome::label(
         UI::FontAwesome::Futbol, "Toque na bola");
     const std::string playerInspector = UI::FontAwesome::label(

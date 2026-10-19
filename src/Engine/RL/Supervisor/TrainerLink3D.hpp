@@ -69,6 +69,9 @@ struct TrainerStatus3D {
     std::uint64_t evaluationIteration = 0;
     std::vector<DrillEvaluation> evaluation;
     std::string policy;
+    // Um treinador de processo proprio (o rastreador, sem o supervisor): o pid
+    // dele; parar e salvar vao por sinal.
+    int pid = 0;
 };
 
 // A ponte da tela com o treinador: abre o processo (que sobrevive a tela
