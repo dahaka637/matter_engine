@@ -178,6 +178,8 @@ def main() -> int:
     parser.add_argument("--peso-velocidade", type=float, default=1.0, help="peso da velocidade do centro de massa (1 = DReCon)")
     parser.add_argument("--peso-bracos", type=float, default=1.0, help="peso dos bracos na pose (1 = DReCon)")
     parser.add_argument("--peso-tronco", type=float, default=1.0, help="peso do tronco (pelve, abdomen, peito) na pose (1 = DReCon)")
+    parser.add_argument("--premio-de-pe", type=float, default=0.0, help="premio fixo por decisao de pe (0 = DReCon)")
+    parser.add_argument("--escala-velocidade", type=float, default=1.0, help="escala dos pedidos de velocidade no treino")
     parser.add_argument("--pernas-adaptaveis", action="store_true",
                         help="em perigo (a cabeca se afastando do lider ou um tropeco) as pernas pesam 0,3 na nota")
     args = parser.parse_args()
@@ -193,7 +195,8 @@ def main() -> int:
                                  idle_share=args.parado, turn_share=args.giro, fast_turn_share=args.giro_rapido,
                                  action_rate_weight=args.suavidade, adaptive_legs=args.pernas_adaptaveis,
                                  leg_weight=args.peso_pernas, center_of_mass_velocity_weight=args.peso_velocidade,
-                                 arm_weight=args.peso_bracos, trunk_weight=args.peso_tronco)
+                                 arm_weight=args.peso_bracos, trunk_weight=args.peso_tronco,
+                                 alive_bonus=args.premio_de_pe, speed_scale=args.escala_velocidade)
     n, obs_size, act_size = batch.num_envs, batch.obs_size, batch.action_size
     model = Policy(obs_size, act_size).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=3e-4)

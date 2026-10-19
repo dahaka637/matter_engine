@@ -133,13 +133,13 @@ struct TrackingTraining3D::Impl {
             w.relativeDirection = 0.0f;
             w.turnRate = 0.0f;
             w.sprint = false;
-            w.speed = uniform(w.rng, 0.0f, settings.forwardMaximumSpeed);
+            w.speed = uniform(w.rng, 0.0f, settings.forwardMaximumSpeed * settings.speedScale);
         } else {
             w.relativeDirection = uniform(w.rng, -Pi, Pi);
             if (chance(w.rng, 0.5f)) w.command.facingYawRadians = uniform(w.rng, -Pi, Pi);
             w.turnRate = chance(w.rng, 0.3f) ? uniform(w.rng, -1.5f, 1.5f) : 0.0f;
             w.sprint = settings.allowSprint && chance(w.rng, 0.5f);
-            const float top = athleteDefaultTravelSpeed3D(runtime, w.relativeDirection, w.sprint);
+            const float top = athleteDefaultTravelSpeed3D(runtime, w.relativeDirection, w.sprint) * settings.speedScale;
             w.speed = chance(w.rng, 0.15f) ? 0.0f : uniform(w.rng, 0.0f, top);
         }
         composeCommand(w);
@@ -323,7 +323,7 @@ struct TrackingTraining3D::Impl {
         const TrackingRewardTerms3D terms = w.reward->evaluate(leader, body.links, com, comVelocity, legWeight,
             settings.centerOfMassVelocityWeight, settings.armWeight, settings.trunkWeight);
         w.lastHeadDistance = terms.headDistance;
-        reward = terms.total * smooth;
+        reward = terms.total * smooth + (terms.terminate ? 0.0f : settings.aliveBonus);
         w.seconds += TicksPerDecision * TickSeconds;
         ++w.decisions;
         w.rewardSum += reward;

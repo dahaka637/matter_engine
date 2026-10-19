@@ -76,6 +76,12 @@ struct TrackingTrainingSettings3D {
     // E a liberdade do resto: o peso dos bracos e do tronco na pose (1 = a receita).
     float armWeight = 1.0f;
     float trunkWeight = 1.0f;
+    // Nao cair vale mais que a velocidade (o usuario, 19/10): um premio fixo por
+    // decisao de pe (somado a nota; cair perde os de depois) e a escala dos
+    // pedidos de velocidade no treino (1 = a tabela do padrao; sobe quando ele
+    // parar de cair).
+    float aliveBonus = 0.0f;
+    float speedScale = 1.0f;
     float idleShare = 0.0f;
     float turnShare = 0.0f;
     float fastTurnShare = 0.0f;
