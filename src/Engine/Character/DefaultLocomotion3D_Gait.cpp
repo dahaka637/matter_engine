@@ -64,14 +64,57 @@ void DefaultLocomotion3D::stepGait(Tick& t) {
     // e para perto da camera.
     {
         float target = m_yaw;
+        bool clipDriven = false;
         float seconds = s.turnSeconds;
         float springSeconds = s.turnSpringSeconds;
         if (moving) {
             m_standTurning = false;
+            // (Andando, o giro pelo clipe acaba e sai da pose.)
+            m_turnActive = false;
+            m_turnWeight = std::max(0.0f, m_turnWeight - dt / 0.2f);
             target = wrapAngle(travelYaw - clipHeading);
             if (frontSector(m_sector))
                 target = wrapAngle(target + std::clamp(s.pelvisCurveLeadSeconds * m_pathTurnRate,
                     -s.pelvisCurveLeadMaximum, s.pelvisCurveLeadMaximum) * smoothStep((speed - 1.5f) / 1.5f));
+        } else if (s.standTurnClips && t.animations.turnLeft != nullptr && t.animations.turnRight != nullptr) {
+            // O giro do clipe ate um tempo (rad, em volta da vertical, desde o comeco).
+            const auto clipYaw = [&](const AnimationClip3D& clip, float time) {
+                const Quaternion q = rootAt(profile, clip, time, false, s.smoothClipSampling).rotationDelta.normalized();
+                return std::atan2(2.0f * (q.w * q.z + q.x * q.y), 1.0f - 2.0f * (q.y * q.y + q.z * q.z));
+            };
+            const float error = wrapAngle(viewYaw - m_yaw);
+            const auto begin = [&](float e) {
+                m_turnSign = e >= 0.0f ? 1.0f : -1.0f;
+                m_turnClip = e >= 0.0f ? t.animations.turnLeft : t.animations.turnRight;
+                m_turnSpan = std::max(0.3f, std::abs(clipYaw(*m_turnClip, m_turnClip->durationSeconds)));
+                const float want = std::abs(e) - s.standTurnKeep;
+                m_turnTotal = std::clamp(want, 0.3f, m_turnSpan);
+                // Com muito giro por fazer, o clipe mais rapido (ate 2x).
+                m_turnRate = std::clamp(want / m_turnSpan, 1.0f, 2.0f);
+                m_turnTime = 0.0f;
+                m_turnStartYaw = m_yaw;
+                m_turnActive = true;
+            };
+            if (!m_turnActive && std::abs(error) > s.standTurnStart) begin(error);
+            if (m_turnActive) {
+                const AnimationClip3D& clip = *m_turnClip;
+                m_turnTime = std::min(clip.durationSeconds, m_turnTime + dt * m_turnRate);
+                const float progress = std::clamp(std::abs(clipYaw(clip, m_turnTime)) / m_turnSpan, 0.0f, 1.0f);
+                const float yaw = wrapAngle(m_turnStartYaw + m_turnSign * m_turnTotal * progress);
+                m_yawRate = wrapAngle(yaw - m_yaw) / std::max(1e-4f, dt);
+                m_yaw = yaw;
+                if (m_turnTime >= clip.durationSeconds - 1e-4f) {
+                    m_turnActive = false;
+                    // Falta giro: o proximo ciclo emenda (voltas inteiras e mais).
+                    const float rest = wrapAngle(viewYaw - m_yaw);
+                    if (std::abs(rest) > s.standTurnStart) begin(rest);
+                }
+            } else {
+                m_yawRate = 0.0f;
+            }
+            m_turnWeight = m_turnActive ? std::min(1.0f, m_turnWeight + dt / 0.12f)
+                                        : std::max(0.0f, m_turnWeight - dt / 0.2f);
+            clipDriven = true;
         } else {
             const float error = wrapAngle(viewYaw - m_yaw);
             if (!m_standTurning && std::abs(error) > s.standTurnStart) m_standTurning = true;
@@ -82,7 +125,9 @@ void DefaultLocomotion3D::stepGait(Tick& t) {
             seconds = s.standTurnSeconds;
             springSeconds = s.standTurnSpringSeconds;
         }
-        if (s.adaptiveTransitions) {
+        if (clipDriven) {
+            // (O rumo ja veio do clipe.)
+        } else if (s.adaptiveTransitions) {
             // Mola de segunda ordem com aceleracao e velocidade limitadas.
             const float omega = 1.0f / std::max(0.01f, springSeconds);
             const float acceleration = std::clamp(omega * omega * wrapAngle(target - m_yaw) - 2.0f * omega * m_yawRate,

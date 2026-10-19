@@ -146,6 +146,11 @@ struct DefaultLocomotionSettings3D {
     // Parado: a pelve vai a camera so quando o erro passa de standTurnStart
     // (rad), e para standTurnKeep (rad) dela - o resto e da coluna e da
     // cabeca -, nesta constante (s).
+    // Giro parado pelos clipes de giro com passos (turnLeft/turnRight, ~90 graus
+    // por ciclo, emendados): a pelve gira o que o clipe gira e as pernas sao as
+    // dele. Desligado, a pelve gira por mola e os pes do idle giram junto
+    // (deslizam). O lider do rastreador liga (19/10).
+    bool standTurnClips = false;
     float standTurnStart = 0.55f;
     float standTurnKeep = 0.31f;
     float standTurnSeconds = 0.16f;
@@ -778,6 +783,13 @@ private:
     float m_headTurn = 0.0f;
     float m_upright = 1.0f;
     bool m_standTurning = false;
+    // O giro parado pelo clipe: o clipe, o tempo nele, o ritmo, o lado, o giro
+    // do clipe inteiro e o deste ciclo (rad), o rumo da pelve no comeco e o
+    // peso na pose.
+    const AnimationClip3D* m_turnClip = nullptr;
+    float m_turnTime = 0.0f, m_turnRate = 1.0f, m_turnSign = 1.0f, m_turnSpan = 0.0f, m_turnTotal = 0.0f;
+    float m_turnStartYaw = 0.0f, m_turnWeight = 0.0f;
+    bool m_turnActive = false;
     bool m_started = false;
     // A semente (seed): aplicada no proximo update.
     bool m_seedPending = false;

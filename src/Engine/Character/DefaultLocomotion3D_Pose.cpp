@@ -23,7 +23,7 @@ void DefaultLocomotion3D::stepPose(Tick& t) {
     t.contact = {};
     std::array<float, 2>& contact = t.contact;
     const auto sampleInto = [&](const AnimationClip3D& clip, float time, bool loop, float weight,
-        float upperWeight, const Gait* gait = nullptr, float amplitude = 1.0f) {
+        float upperWeight, const Gait* gait = nullptr, float amplitude = 1.0f, bool rootAndContact = true) {
         if (weight <= 1e-4f && upperWeight <= 1e-4f) return;
         for (std::size_t i = 1; i < links; ++i) {
             const float w = i < m_upperLinks.size() && m_upperLinks[i] ? upperWeight : weight;
@@ -69,7 +69,7 @@ void DefaultLocomotion3D::stepPose(Tick& t) {
                 m_coordinates[i] += value * w;
             }
         }
-        if (weight <= 1e-4f) return;
+        if (weight <= 1e-4f || !rootAndContact) return;
         const AnimationTransformSample3D root = rootAt(profile, clip, time, loop, s.smoothClipSampling);
         rootOffset += root.translationOffsetMeters * weight;
         rootRotation.add(root.rotationDelta.normalized(), weight);
@@ -86,9 +86,14 @@ void DefaultLocomotion3D::stepPose(Tick& t) {
         sampleInto(clip, fraction(m_phase + m_gaits[g].touchdown) * clip.durationSeconds, true, m_weights[g] * ground,
             m_upperWeights[g] * ground, &m_gaits[g], gaitAmplitude(g));
     }
+    // O giro parado pelo clipe: as pernas dele no lugar das do idle (o giro da raiz ja e o rumo da pelve; sem
+    // contato, os pes sao os do clipe, sem a trava do pe parado).
+    const float turnShare = m_turnClip != nullptr ? m_turnWeight : 0.0f;
     if (animations.idle != nullptr)
         sampleInto(*animations.idle, std::fmod(m_idleTime, std::max(0.1f, animations.idle->durationSeconds)), true,
-            m_idleWeight * ground, upperIdleWeight * ground);
+            m_idleWeight * ground * (1.0f - turnShare), upperIdleWeight * ground);
+    if (turnShare > 1e-4f)
+        sampleInto(*m_turnClip, m_turnTime, false, m_idleWeight * ground * turnShare, 0.0f, nullptr, 1.0f, false);
     if (m_airClip != nullptr && m_airWeight > 1e-4f)
         sampleInto(*m_airClip, m_airPhase * m_airClip->durationSeconds, false, m_airWeight, m_airWeight);
     t.clipRootRotation = rootRotation.result();
