@@ -192,6 +192,10 @@ struct Stand {
     // Diagnostico: a forca horizontal pedida, a planejada pelo QP e a medida (m c'').
     Eigen::Vector2d lastCommandedForce = Eigen::Vector2d::Zero(), lastPlannedForce = Eigen::Vector2d::Zero();
     Eigen::Vector3d lastComVelocity = Eigen::Vector3d::Zero();
+    // A pancada pela forca externa horizontal: medida no CoM (m dv/dt) menos a de contato planejada.
+    Eigen::Vector2d plannedContactXY = Eigen::Vector2d::Zero();
+    double pushTimer = 0.0;
+    int pushesDetected = 0;
 };
 
 // A sola plana no chao, com o rumo atual do pe.
@@ -693,6 +697,16 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
             s.plannedFootForce[0].z() + s.plannedFootForce[1].z(), k.origin[0].z(), k.originVelocity[0].z(),
             state.jointCoordinates[static_cast<std::size_t>(s.model.links[s.feet[0]].parent)][0]);
     }
+    {
+        const Eigen::Vector2d external = s.model.totalMass * (comVelocityNow - s.lastComVelocity).head<2>() / Dt - s.plannedContactXY;
+        const double threshold = std::getenv("STANDPUSHFORCE") ? std::atof(std::getenv("STANDPUSHFORCE")) : 200.0;
+        if (s.clock > 0.5 && external.norm() > threshold) {
+            if (s.pushTimer <= 0.0) ++s.pushesDetected;
+            s.pushTimer = 0.6;
+        } else {
+            s.pushTimer = std::max(0.0, s.pushTimer - Dt);
+        }
+    }
     if (s.separationPending && s.stepping) {
         if (footTouching[s.swingFoot]) {
             ++s.separationTicks;
@@ -1104,8 +1118,12 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
                 if (!std::getenv("STANDTROTNOCAPTURE"))
                     s.swingLanding.head<2>() = capture + side * 0.5 * s.walkSettings.stepWidth * s.walkLeft
                         - (desired.norm() < 1e-6 ? homeGain : 0.0) * (s.trotHome - d.centerOfMass.head<2>());
-            } else if (!std::getenv("STANDNOADJUST") && s.stepTime < 0.7 * s.stepDuration)
-                s.swingLanding.head<2>() = adjustDcmLanding3D(s.walkSettings, s.walkPlan, DcmLandingLimits3D {}, xi,
+            } else if (const bool disturbed = s.pushTimer > 0.0 && std::getenv("STANDPUSHADJUST");
+                       !std::getenv("STANDNOADJUST") && s.stepTime < (disturbed && std::getenv("STANDPUSHLATE") ? 0.85 : 0.7) * s.stepDuration)
+                // Depois de uma pancada (forca externa > 200 N nos ultimos 0,6 s) o pouso pode ir ate 60 cm; sempre
+                // assim, ou disparado pelo erro do DCM, a diagonal caia.
+                s.swingLanding.head<2>() = adjustDcmLanding3D(s.walkSettings, s.walkPlan,
+                    DcmLandingLimits3D { disturbed ? 0.6 : 0.25, 0.12 }, xi,
                     s.voluntaryFoot == 1 ? +1 : -1, s.walkLeft, s.walkSettings.stepDuration - s.walkPlanTime);
         } else if (s.phase == Stand::Phase::Swing) {
             s.dcmReference = sole[1 - s.voluntaryFoot].head<2>();
@@ -1545,6 +1563,9 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
             for (std::size_t c = 0; c < input.contacts.size(); ++c) s.lastPlannedForce += result.contactForces.segment<2>(3 * static_cast<int>(c));
     }
     s.lastComVelocity = comVelocityNow;
+    s.plannedContactXY.setZero();
+    if (result.usable())
+        for (std::size_t c = 0; c < input.contacts.size(); ++c) s.plannedContactXY += result.contactForces.segment<2>(3 * static_cast<int>(c));
     if (std::getenv("STANDLOG") && (s.logTick++ % 30 == 0 || !result.usable())) {
         double worstRatio = 0.0;
         if (result.torque.size())
@@ -1777,6 +1798,7 @@ int main(int argc, char** argv) {
         if (topOnly + flat + weighted)
             std::printf("- QP em dois niveis: %d ticks com as de cima pesadas, %d so com o nivel de cima, %d no QP ponderado unico\n", weighted, topOnly, flat);
         if (s.trotFlightTime > 0.0) std::printf("- trote: %d apoios, %d voos\n", s.trotStances, s.trotFlights);
+        if (s.walking) std::printf("- pancadas detectadas: %d\n", s.pushesDetected);
         std::printf("- torque no referencial do motor: %d ticks acima do teto (recortados), pior %.2f do teto\n", s.motorClippedTicks, s.motorWorstRatio);
         if (s.hopping)
             std::printf("- salto: %d apoios, %d voos confirmados (retirada-carga %.0f ms de media, pedido %.0f), %d pousos perdidos, %d tentativas abortadas; pico de forca planejado/pedido %.2f (media)\n",
