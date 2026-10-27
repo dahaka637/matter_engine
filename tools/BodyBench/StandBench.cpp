@@ -146,6 +146,12 @@ struct Stand {
     int trotPhase = 0, trotFlights = 0, trotStances = 0;
     double trotTime = 0.0, trotEntrySpeed = 0.0, trotDeceleration = 0.0, trotEntryPelvis = 0.0, trotFlightTime = 0.0;
     double trotStandingZ = 0.0, trotPreviousVz = 0.0;
+    // O andar automatico (STANDGAITAUTO=limiar m/s): trote acima do limiar, marcha abaixo (histerese 0,15),
+    // com a cadencia e a largura de cada um.
+    bool trotActive = false;
+    // Passos de preparacao ao entrar no trote: estreitos e sem apoio duplo, mas sem empurrao nem voo.
+    int trotWarmup = 0;
+    double gaitThreshold = -1.0, walkStepDuration = 0.5, walkStepWidth = 0.2;
     Eigen::Vector2d trotHome = Eigen::Vector2d::Zero();
     Eigen::Vector3d trotHoldPoint = Eigen::Vector3d::Zero();
     double hopLandingPeak = 0.0, hopLandingPeakSum = 0.0, hopLandingTimer = -1.0;
@@ -372,6 +378,10 @@ void setup(Stand& s, const RagdollProfile3D& profile) {
         if (const char* ds = std::getenv("STANDWALKDS")) s.walkDoubleSupport = std::atof(ds);
         if (const char* travel = std::getenv("STANDCOPTRAVEL")) s.walkSettings.copTravel = std::atof(travel);
         if (const char* width = std::getenv("STANDSTEPWIDTH")) s.walkSettings.stepWidth = std::atof(width);
+        s.walkStepDuration = s.walkSettings.stepDuration;
+        s.walkStepWidth = s.walkSettings.stepWidth;
+        if (const char* gait = std::getenv("STANDGAITAUTO")) s.gaitThreshold = std::atof(gait);
+        s.trotActive = s.trotFlightTime > 0.0 && s.gaitThreshold < 0.0;
         s.walkSettings.comHeight = s.stepSettings.comHeight;
         s.swingDuration = duration;
         // Para a esquerda, sai o pe esquerdo (0); senao o direito (1).
@@ -884,7 +894,7 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
                 for (const Eigen::Vector3d& corner : s.corners[swing])
                     lowest = std::min(lowest, (k.origin[s.feet[swing]] + k.rotation[s.feet[swing]] * corner).z());
                 bool landed = s.phaseTime > 0.6 * s.swingDuration && footTouching[swing] && lowest < 0.01;
-                if (s.trotFlightTime > 0.0) s.trotHome += s.walkVelocity * Dt;
+                if (s.trotActive) s.trotHome += s.walkVelocity * Dt;
                 if (s.trotFlightTime > 0.0 && s.trotPhase != 0) {
                     s.trotTime += Dt;
                     const double v0 = 0.5 * 9.81 * s.trotFlightTime;
@@ -919,10 +929,38 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
                     // O pe que pousou vira o apoio; um apoio duplo curto leva o DCM ao comeco do
                     // plano do proximo passo (a transferencia) e so entao o outro pe sai.
                     const int next = stanceFoot;
+                    // Mudanca do pedido no meio (STANDWALKCHANGE=instante,vx,vy): passa a valer o novo alvo, alcancado
+                    // com no maximo STANDWALKACCEL m/s por passo (padrao 0,1).
+                    if (const char* change = std::getenv("STANDWALKCHANGE")) {
+                        double when = 0.0, vx = 0.0, vy = 0.0;
+                        std::sscanf(change, "%lf,%lf,%lf", &when, &vx, &vy);
+                        if (s.clock >= when) {
+                            s.walkTarget = vx * s.pelvisTarget.col(0).head<2>().normalized() + vy * s.walkLeft;
+                            s.walkRampSteps = 0;
+                        }
+                    }
                     if (s.walkRampSteps > 0) s.walkVelocity = s.walkTarget * std::min(1.0, double(s.steps + 2) / double(s.walkRampSteps));
+                    else {
+                        const double maxStep = std::getenv("STANDWALKACCEL") ? std::atof(std::getenv("STANDWALKACCEL")) : 0.1;
+                        Eigen::Vector2d delta = s.walkTarget - s.walkVelocity;
+                        if (delta.norm() > maxStep) delta *= maxStep / delta.norm();
+                        s.walkVelocity += delta;
+                    }
                     if (std::getenv("STANDTROTDBG"))
                         std::printf("   trote pouso t %.3f: alvo (%.3f %.3f) tocou (%.3f %.3f) CoM (%.3f %.3f)\n", s.clock, s.swingLanding.x(), s.swingLanding.y(),
                             sole[swing].x(), sole[swing].y(), comNow.x(), comNow.y());
+                    if (s.gaitThreshold >= 0.0 && s.trotFlightTime > 0.0) {
+                        const double speed = s.walkVelocity.norm();
+                        const bool trot = s.trotActive ? speed > s.gaitThreshold - 0.15 : speed >= s.gaitThreshold;
+                        if (trot != s.trotActive) {
+                            s.trotActive = trot;
+                            s.trotPhase = 0;
+                            s.walkSettings.stepDuration = trot ? 0.4 : s.walkStepDuration;
+                            s.walkSettings.stepWidth = trot ? 0.08 : s.walkStepWidth;
+                            s.trotWarmup = trot ? (std::getenv("STANDTROTWARMUP") ? std::atoi(std::getenv("STANDTROTWARMUP")) : 2) : 0;
+                            if (std::getenv("STANDSTEPLOG")) std::printf("   andar: %s a %.2f m/s (t %.2f)\n", trot ? "trote" : "marcha", speed, s.clock);
+                        }
+                    }
                     // Trote (STANDTROTPLANZERO): o plano do DCM fica parado no lugar; o avanco vem so de onde o pe pousa.
                     const Eigen::Vector2d planVelocity = s.trotFlightTime > 0.0 && std::getenv("STANDTROTPLANZERO") ? Eigen::Vector2d::Zero() : s.walkVelocity;
                     s.walkPlan = planDcmWalk3D(s.walkSettings, sole[swing].head<2>(), swing == 0 ? +1 : -1, s.walkLeft, planVelocity);
@@ -940,7 +978,7 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
                     s.transferTo = { start.x(), start.y(), s.comTarget.z() };
                     s.swingLanding = { s.walkPlan.footsteps[1].x(), s.walkPlan.footsteps[1].y(), sole[swing].z() - 0.01 };
                     s.swingRotation = flatSoleRotation(s, k, next);
-                    if (s.trotFlightTime > 0.0) {
+                    if (s.trotActive) {
                         // Trote: sem apoio duplo; o outro pe (no ar, se houve voo) ja balanca para o proximo passo,
                         // e o apoio absorve ate parar 3 cm abaixo do de pe e empurra.
                         s.phase = Stand::Phase::Swing;
@@ -949,7 +987,8 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
                         s.swingStart = sole[next];
                         s.stepTime = 0.0;
                         s.stepDuration = s.swingDuration = s.walkSettings.stepDuration + s.trotFlightTime;
-                        s.trotPhase = std::getenv("STANDTROTNOVERT") ? 0 : 5;
+                        s.trotPhase = std::getenv("STANDTROTNOVERT") || s.trotWarmup > 0 ? 0 : 5;
+                        if (s.trotWarmup > 0) --s.trotWarmup;
                         s.trotTime = 0.0;
                         s.trotEntrySpeed = comVelocityNow.z();
                         s.trotEntryPelvis = k.origin[0].z();
@@ -1118,7 +1157,7 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
             s.dcmReference = walk.position;
             s.dcmReferenceRate = walk.rate;
             // O pouso segue o DCM medido ate 70% do balanco (depois fica fixo).
-            if (s.trotPhase == 1 || s.trotPhase == 2 || (s.trotFlightTime > 0.0 && s.trotStances > 0 && s.trotPhase == 0)) {
+            if (s.trotPhase == 1 || s.trotPhase == 2 || (s.trotActive && s.trotStances > 0 && s.trotPhase == 0)) {
                 // Trote: no empurrao, no voo (e no apoio que nao decolou) o pe mira o ponto de captura previsto para o toque (o CoM segue
                 // balistico no voo, sem CoP), meia largura de passo para o lado dele.
                 const double remaining = (s.trotPhase == 1 ? std::max(0.0, 0.15 - s.trotTime) : 0.0)
