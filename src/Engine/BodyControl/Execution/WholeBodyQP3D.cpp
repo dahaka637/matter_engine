@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cmath>
 #include <optional>
+#include <tuple>
 
 namespace MatterEngine {
 namespace {
@@ -146,7 +147,7 @@ WholeBodyQPResult3D WholeBodyQP3D::solve(const WholeBodyQPInput3D& in) {
     }
 
     const auto built = std::chrono::steady_clock::now();
-    // A guarda dos batentes, na aceleracao do eixo.
+    // A guarda dos batentes, na aceleracao do eixo (recuperacao critica, nota 28).
     for (std::size_t g = 0; g < guarded.size(); ++g) {
         const int j = guarded[g];
         const int row = joints + 5 * contacts + static_cast<int>(g);
@@ -157,9 +158,10 @@ WholeBodyQPResult3D WholeBodyQP3D::solve(const WholeBodyQPInput3D& in) {
                 if (model.links[l].dof[static_cast<std::size_t>(a)] == dof) coordinate = in.state->jointCoordinates[l][a];
         const double v = in.state->velocity[dof];
         const double margin = in.jointMargin.size() == joints ? in.jointMargin[j] : in.jointGuardMargin;
-        inequality(row, dof) = in.timeStep;
-        lower[row] = std::isfinite(in.jointLower[j]) ? -in.jointGuardRate * (coordinate - in.jointLower[j] - margin) - v : -infinity;
-        upper[row] = std::isfinite(in.jointUpper[j]) ? in.jointGuardRate * (in.jointUpper[j] - margin - coordinate) - v : infinity;
+        const double rate = in.jointGuardRate;
+        inequality(row, dof) = 1.0;
+        lower[row] = std::isfinite(in.jointLower[j]) ? -rate * rate * (coordinate - in.jointLower[j] - margin) - 2.0 * rate * v : -infinity;
+        upper[row] = std::isfinite(in.jointUpper[j]) ? rate * rate * (in.jointUpper[j] - margin - coordinate) - 2.0 * rate * v : infinity;
         if (lower[row] > upper[row]) lower[row] = upper[row];
     }
     // Resolve um nivel numa instancia: reaproveita a anterior (precondicionador de
@@ -188,6 +190,7 @@ WholeBodyQPResult3D WholeBodyQP3D::solve(const WholeBodyQPInput3D& in) {
             slot.qp->update(H, g, E, e, inequality, lower, upper, refresh);
         }
         slot.qp->solve();
+        result.iterations += static_cast<int>(slot.qp->results.info.iter);
         const auto status = slot.qp->results.info.status;
         const bool failed = !slot.qp->results.x.allFinite() || status == proxsuite::proxqp::QPSolverOutput::PROXQP_PRIMAL_INFEASIBLE
             || status == proxsuite::proxqp::QPSolverOutput::PROXQP_DUAL_INFEASIBLE
@@ -195,17 +198,35 @@ WholeBodyQPResult3D WholeBodyQP3D::solve(const WholeBodyQPInput3D& in) {
         if (reuse && failed) {
             fresh();
             slot.qp->solve();
+            result.iterations += static_cast<int>(slot.qp->results.info.iter);
             result.coldRetry = true;
         }
         return slot.qp->results;
     };
-    const auto usableStatus = [](const proxsuite::proxqp::Results<double>& r) {
-        return r.x.allFinite() && (r.info.status == proxsuite::proxqp::QPSolverOutput::PROXQP_SOLVED
-            || r.info.status == proxsuite::proxqp::QPSolverOutput::PROXQP_MAX_ITER_REACHED);
+    // Aceita so com status bom E restricoes cumpridas (o teto de iteracoes devolvia
+    // solucoes com violacao 17 nas igualdades; nota 28).
+    const auto violations = [&](const Eigen::VectorXd& x, const Eigen::MatrixXd& E, const Eigen::VectorXd& e) {
+        const double equalityWorst = E.rows() ? (E * x - e).cwiseAbs().maxCoeff() : 0.0;
+        const Eigen::VectorXd product = inequality * x;
+        double inequalityWorst = 0.0;
+        for (int r = 0; r < inequalities; ++r) inequalityWorst = std::max({ inequalityWorst, lower[r] - product[r], product[r] - upper[r] });
+        return std::make_pair(equalityWorst, inequalityWorst);
+    };
+    const auto acceptable = [&](const proxsuite::proxqp::Results<double>& r, const Eigen::MatrixXd& E, const Eigen::VectorXd& e) {
+        if (!r.x.allFinite()) return false;
+        if (r.info.status != proxsuite::proxqp::QPSolverOutput::PROXQP_SOLVED
+            && r.info.status != proxsuite::proxqp::QPSolverOutput::PROXQP_MAX_ITER_REACHED) return false;
+        const auto [equalityWorst, inequalityWorst] = violations(r.x, E, e);
+        return equalityWorst <= in.acceptanceTolerance && inequalityWorst <= in.acceptanceTolerance;
     };
     Impl& impl = *m_impl;
     const auto updated = std::chrono::steady_clock::now();
     const proxsuite::proxqp::Results<double>* final = nullptr;
+    // As igualdades da solucao devolvida (as de baixo incluem as que guardam o nivel de cima).
+    const Eigen::MatrixXd* finalEquality = &equality;
+    const Eigen::VectorXd* finalTarget = &equalityTarget;
+    Eigen::MatrixXd lowerEquality;
+    Eigen::VectorXd lowerTarget;
     if (primaryRows > 0) {
         // Nivel de cima: so as tarefas de prioridade 0 (com as mesmas regularizacoes e restricoes).
         Eigen::MatrixXd topHessian = hessian;
@@ -221,10 +242,10 @@ WholeBodyQPResult3D WholeBodyQP3D::solve(const WholeBodyQPInput3D& in) {
                 * (point.desiredAcceleration - articulationPointBias3D(k, point.link, point.pointWorld));
         }
         const auto& top = runSlot(impl.slots[0], topHessian, topGradient, equality, equalityTarget);
-        if (usableStatus(top)) {
+        if (acceptable(top, equality, equalityTarget)) {
             // Nivel de baixo: tudo, com os valores alcancados em cima fixados.
-            Eigen::MatrixXd lowerEquality = Eigen::MatrixXd::Zero(equalities + primaryRows, dimension);
-            Eigen::VectorXd lowerTarget(equalities + primaryRows);
+            lowerEquality = Eigen::MatrixXd::Zero(equalities + primaryRows, dimension);
+            lowerTarget.resize(equalities + primaryRows);
             lowerEquality.topRows(equalities) = equality;
             lowerTarget.head(equalities) = equalityTarget;
             int row = equalities;
@@ -237,25 +258,44 @@ WholeBodyQPResult3D WholeBodyQP3D::solve(const WholeBodyQPInput3D& in) {
                 row += r;
             }
             const auto& bottom = runSlot(impl.slots[1], hessian, gradient, lowerEquality, lowerTarget);
-            if (usableStatus(bottom)) {
+            if (acceptable(bottom, lowerEquality, lowerTarget)) {
                 final = &bottom;
-                result.hierarchical = true;
+                finalEquality = &lowerEquality;
+                finalTarget = &lowerTarget;
+                result.path = WholeBodyQPPath3D::Hierarchical;
             } else {
-                final = &top;
+                // O de baixo falha por numero (nota 28: um LP acha o ponto). Antes de
+                // largar a altura e a postura, um nivel so com as de cima muito mais pesadas.
+                Eigen::MatrixXd heavyHessian = hessian;
+                Eigen::VectorXd heavyGradient = gradient;
+                heavyHessian.topLeftCorner(n, n) += (in.priorityWeightScale - 1.0) * primaryHessian;
+                heavyGradient.head(n) += (in.priorityWeightScale - 1.0) * primaryGradient;
+                const auto& heavy = runSlot(impl.slots[0], heavyHessian, heavyGradient, equality, equalityTarget);
+                if (acceptable(heavy, equality, equalityTarget)) {
+                    final = &heavy;
+                    result.path = WholeBodyQPPath3D::WeightedPriority;
+                } else {
+                    final = &top;
+                    result.path = WholeBodyQPPath3D::TopOnly;
+                }
             }
         }
     }
-    if (!final) final = &runSlot(impl.slots[0], hessian, gradient, equality, equalityTarget);
+    if (!final) {
+        final = &runSlot(impl.slots[0], hessian, gradient, equality, equalityTarget);
+        if (primaryRows > 0) result.path = WholeBodyQPPath3D::FlatFallback;
+    }
     result.buildMicros = std::chrono::duration<double, std::micro>(built - start).count();
-    result.updateMicros = 0.0;
     result.innerSolveMicros = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - updated).count();
     const auto& output = *final;
-    result.iterations = static_cast<int>(output.info.iter);
     switch (output.info.status) {
         case proxsuite::proxqp::QPSolverOutput::PROXQP_SOLVED: result.status = WholeBodyQPStatus3D::Solved; break;
         case proxsuite::proxqp::QPSolverOutput::PROXQP_MAX_ITER_REACHED: result.status = WholeBodyQPStatus3D::MaximumIterations; break;
         default: result.status = WholeBodyQPStatus3D::Infeasible; break;
     }
+    // A solucao fora da tolerancia nunca e usada (a politica de falha do chamador entra).
+    if (result.status != WholeBodyQPStatus3D::Infeasible && output.x.allFinite() && !acceptable(output, *finalEquality, *finalTarget))
+        result.status = WholeBodyQPStatus3D::Infeasible;
     const Eigen::VectorXd& x = output.x;
     if (!x.allFinite()) {
         result.status = WholeBodyQPStatus3D::NotFinite;
@@ -267,10 +307,7 @@ WholeBodyQPResult3D WholeBodyQP3D::solve(const WholeBodyQPInput3D& in) {
     result.torque = Eigen::VectorXd::Zero(n);
     result.torque.tail(joints) = inequality.topRows(joints) * x + offset;
     result.dynamicsResidual = (equality.topRows(6) * x - equalityTarget.head(6)).norm();
-    result.equalityViolation = (equality * x - equalityTarget).cwiseAbs().maxCoeff();
-    const Eigen::VectorXd product = inequality * x;
-    for (int r = 0; r < inequalities; ++r)
-        result.inequalityViolation = std::max({ result.inequalityViolation, lower[r] - product[r], product[r] - upper[r] });
+    std::tie(result.equalityViolation, result.inequalityViolation) = violations(x, *finalEquality, *finalTarget);
     result.solveMicros = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start).count();
     return result;
 }

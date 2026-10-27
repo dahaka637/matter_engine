@@ -341,6 +341,7 @@ const char* statusName(WholeBodyQPStatus3D status) {
 struct StepReport {
     bool fallen = false;
     WholeBodyQPStatus3D status = WholeBodyQPStatus3D::Solved;
+    WholeBodyQPPath3D path = WholeBodyQPPath3D::Single;
     double solveMicros = 0.0, slip = 0.0, pelvisSpeed = 0.0;
     int iterations = 0;
 };
@@ -1002,6 +1003,7 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
         }
     }
     report.status = result.status;
+    report.path = result.path;
     if (std::getenv("STANDSTEPDBG") && s.stepping) {
         const int foot = static_cast<int>(s.feet[s.swingFoot]);
         const Eigen::Vector3d predicted = result.usable() ? Eigen::Vector3d(articulationPointJacobian3D(k, foot, sole[s.swingFoot]) * result.acceleration
@@ -1012,7 +1014,7 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
             result.equalityViolation, result.inequalityViolation, int(result.coldRetry), predicted.x(), predicted.y(), predicted.z(), worstRatio);
     }
     if (std::getenv("STANDQPTIME") && s.logTick % 60 == 0)
-        std::printf("   QP: montar %.0f us, atualizar %.0f us, resolver %.0f us (it %d)\n", result.buildMicros, result.updateMicros, result.innerSolveMicros, result.iterations);
+        std::printf("   QP: montar %.0f us, resolver %.0f us (it %d, caminho %d)\n", result.buildMicros, result.innerSolveMicros, result.iterations, int(result.path));
     s.predictedAcceleration = result.usable() ? result.acceleration : Eigen::VectorXd();
     for (int f = 0; f < 2; ++f) { s.plannedFootForce[f].setZero(); s.plannedCop[f].setZero(); }
     if (result.usable())
@@ -1123,13 +1125,16 @@ int main(int argc, char** argv) {
         const Vec3 startPelvis = s.scene->ragdollStateView(s.ragdoll)->links[0].position;
         const int steps = static_cast<int>(seconds / Dt);
         double pelvisSquared = 0.0, worstSlip = 0.0, micros = 0.0, worstMicros = 0.0;
-        int failures = 0, samples = 0, iterations = 0;
+        int failures = 0, samples = 0, iterations = 0, topOnly = 0, flat = 0, weighted = 0;
         bool fallen = false;
         WholeBodyQPStatus3D lastFailure = WholeBodyQPStatus3D::Solved;
         for (int i = 0; i < steps; ++i) {
             const StepReport r = step(s, profile, Eigen::Vector3d::Zero(), 0);
             if (r.fallen) { fallen = true; std::printf("caiu em t = %.2f s\n", i * Dt); break; }
             if (r.status != WholeBodyQPStatus3D::Solved) { ++failures; lastFailure = r.status; }
+            topOnly += r.path == WholeBodyQPPath3D::TopOnly;
+            flat += r.path == WholeBodyQPPath3D::FlatFallback;
+            weighted += r.path == WholeBodyQPPath3D::WeightedPriority;
             if (i >= 120) {
                 pelvisSquared += r.pelvisSpeed * r.pelvisSpeed;
                 worstSlip = std::max(worstSlip, r.slip);
@@ -1144,6 +1149,8 @@ int main(int argc, char** argv) {
             fallen ? "SIM" : "nao", std::sqrt(pelvisSquared / std::max(1, samples)), worstSlip);
         std::printf("- QP: %d falhas (ultima: %s); %.0f us de media, %.0f us no pior; %.1f iteracoes de media\n", failures,
             statusName(lastFailure), micros / std::max(1, samples), worstMicros, double(iterations) / std::max(1, samples));
+        if (topOnly + flat + weighted)
+            std::printf("- QP em dois niveis: %d ticks com as de cima pesadas, %d so com o nivel de cima, %d no QP ponderado unico\n", weighted, topOnly, flat);
         if (std::getenv("STANDWALK")) {
             const Vec3 end = s.scene->ragdollStateView(s.ragdoll)->links[0].position;
             std::printf("- marcha: %d passos, pelve andou (%.2f %.2f) m, %s\n", s.steps, end.x - startPelvis.x, end.y - startPelvis.y,

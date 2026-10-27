@@ -73,18 +73,31 @@ struct WholeBodyQPInput3D {
     double accelerationRegularization = 1e-4;
     double forceRegularization = 1e-5;
     int maximumIterations = 200;
-    // A guarda dos batentes (nota 25 do vault): em cada eixo com limite
-    // (n - 6; infinito = sem guarda), -k (q - qmin - e) <= v + dt a <= k (qmax - e - q).
-    // So nos eixos em que a coordenada e o angulo do Jolt (juntas de um eixo).
+    // A guarda dos batentes (notas 25 e 28 do vault), em aceleracao de recuperacao:
+    // em cada eixo com limite (n - 6; infinito = sem guarda),
+    //   -k^2 (q - qmin - e) - 2 k v <= a <= k^2 (qmax - e - q) - 2 k v.
+    // (A forma em velocidade, v + dt a, exigia centenas de rad/s^2 depois de um
+    // transiente de contato e tornava o problema inviavel longe do batente.)
     Eigen::VectorXd jointLower, jointUpper;
     // Margem por eixo (n - 6; vazio = jointGuardMargin para todos).
     Eigen::VectorXd jointMargin;
-    double jointGuardRate = 10.0, jointGuardMargin = 0.015, timeStep = 1.0 / 120.0;
+    double jointGuardRate = 10.0, jointGuardMargin = 0.015;
     // De quantos em quantos ticks o precondicionador do ProxQP e refeito.
     int preconditionerRefreshTicks = 30;
+    // A maior violacao aceita nas restricoes (igualdades, inclusive as que guardam o
+    // nivel de cima, e desigualdades): acima disso a solucao e recusada (nota 28).
+    double acceptanceTolerance = 1e-3;
+    // O peso extra das tarefas de cima no recurso de um nivel so.
+    double priorityWeightScale = 1000.0;
 };
 
 enum class WholeBodyQPStatus3D { Solved, MaximumIterations, Infeasible, NotFinite, InvalidInput };
+
+// Qual caminho deu a solucao: um nivel (sem prioridade 0), os dois niveis, um nivel
+// so com as de cima priorityWeightScale vezes mais pesadas (o de baixo falhou por
+// numero), so o de cima (a postura e a altura de baixo nao entram), ou o QP
+// ponderado unico depois de o de cima falhar (as prioridades viram pesos).
+enum class WholeBodyQPPath3D { Single, Hierarchical, WeightedPriority, TopOnly, FlatFallback };
 
 struct WholeBodyQPResult3D {
     WholeBodyQPStatus3D status = WholeBodyQPStatus3D::InvalidInput;
@@ -93,19 +106,19 @@ struct WholeBodyQPResult3D {
     Eigen::VectorXd torque;
     // 3 por ponto de contato (mundo).
     Eigen::VectorXd contactForces;
+    // Somadas sobre todas as resolucoes do tick (os dois niveis e as tentativas a frio).
     int iterations = 0;
     double solveMicros = 0.0;
     // Resolvido de novo a frio depois de uma falha numerica do reaproveitado.
     bool coldRetry = false;
-    // Onde o tempo vai: montar as matrizes, atualizar o ProxQP e resolver.
-    double buildMicros = 0.0, updateMicros = 0.0, innerSolveMicros = 0.0;
+    // Onde o tempo vai: montar as matrizes; atualizar e resolver os niveis (com as tentativas a frio).
+    double buildMicros = 0.0, innerSolveMicros = 0.0;
     // O residuo das linhas da raiz com a solucao (N, N.m): a coerencia dinamica.
     double dynamicsResidual = 0.0;
     // A maior violacao das igualdades (raiz + pes rigidos) e das desigualdades.
     double equalityViolation = 0.0;
     double inequalityViolation = 0.0;
-    // Com tarefas de prioridade 0: o nivel de cima resolveu (senao, um nivel so).
-    bool hierarchical = false;
+    WholeBodyQPPath3D path = WholeBodyQPPath3D::Single;
     [[nodiscard]] bool usable() const {
         return status == WholeBodyQPStatus3D::Solved || status == WholeBodyQPStatus3D::MaximumIterations;
     }

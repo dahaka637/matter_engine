@@ -63,13 +63,13 @@ int main() {
     input.tasks = { jointTask(n, first, 5.0, 1.0, 1), jointTask(n, first, -5.0, 1000.0, 1), jointTask(n, second, 3.0, 1.0, 1) };
     WholeBodyQP3D flat;
     const WholeBodyQPResult3D single = flat.solve(input);
-    check(single.usable() && !single.hierarchical, "um nivel resolve");
+    check(single.usable() && single.path == WholeBodyQPPath3D::Single, "um nivel resolve");
     check(single.usable() && single.acceleration[first] < -4.9, "num nivel so, o peso maior ganha");
     // Em dois niveis: a de cima sai exata; a de baixo que nao conflita, tambem.
     input.tasks[0].priority = 0;
     WholeBodyQP3D layered;
     const WholeBodyQPResult3D result = layered.solve(input);
-    check(result.usable() && result.hierarchical, "dois niveis resolvem");
+    check(result.usable() && result.path == WholeBodyQPPath3D::Hierarchical, "dois niveis resolvem");
     check(result.usable() && std::abs(result.acceleration[first] - 5.0) < 1e-3, "a prioridade 0 sai exata");
     check(result.usable() && std::abs(result.acceleration[second] - 3.0) < 1e-2, "o que nao conflita embaixo e atendido");
     std::printf(failures ? "QP em dois niveis: %d falha(s)\n" : "QP em dois niveis: ok\n", failures);
