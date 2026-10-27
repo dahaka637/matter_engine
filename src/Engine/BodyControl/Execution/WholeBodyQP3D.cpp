@@ -32,9 +32,13 @@ void tangentBasis(const Eigen::Vector3d& normal, Eigen::Vector3d& first, Eigen::
 } // namespace
 
 struct WholeBodyQP3D::Impl {
-    std::optional<proxsuite::proxqp::dense::QP<double>> qp;
-    int dimension = -1, inequalities = -1, equalities = -1;
-    int updatesSincePreconditioner = 0;
+    // Uma instancia por nivel (as dimensoes diferem): 0 o de cima (ou o unico), 1 o de baixo.
+    struct Slot {
+        std::optional<proxsuite::proxqp::dense::QP<double>> qp;
+        int dimension = -1, inequalities = -1, equalities = -1;
+        int updatesSincePreconditioner = 0;
+    };
+    Slot slots[2];
 };
 
 WholeBodyQP3D::WholeBodyQP3D() : m_impl(std::make_unique<Impl>()) {}
@@ -61,10 +65,18 @@ WholeBodyQPResult3D WholeBodyQP3D::solve(const WholeBodyQPInput3D& in) {
 
     Eigen::MatrixXd hessian = Eigen::MatrixXd::Zero(dimension, dimension);
     Eigen::VectorXd gradient = Eigen::VectorXd::Zero(dimension);
+    // As tarefas do nivel de cima somam a parte deles a parte; as linhas delas viram igualdades embaixo.
+    Eigen::MatrixXd primaryHessian = Eigen::MatrixXd::Zero(n, n);
+    Eigen::VectorXd primaryGradient = Eigen::VectorXd::Zero(n);
+    int primaryRows = 0;
     for (const WholeBodyTask3D& task : in.tasks) {
         if (task.matrix.cols() != n || task.matrix.rows() != task.target.size() || task.weight <= 0.0) continue;
         hessian.topLeftCorner(n, n).noalias() += 2.0 * task.weight * task.matrix.transpose() * task.matrix;
         gradient.head(n).noalias() -= 2.0 * task.weight * task.matrix.transpose() * task.target;
+        if (task.priority != 0) continue;
+        primaryHessian.noalias() += 2.0 * task.weight * task.matrix.transpose() * task.matrix;
+        primaryGradient.noalias() -= 2.0 * task.weight * task.matrix.transpose() * task.target;
+        primaryRows += static_cast<int>(task.matrix.rows());
     }
     // Os Jacobianos dos pontos de contato (3 x n cada).
     Eigen::MatrixXd contactJacobian(3 * contacts, n);
@@ -150,49 +162,94 @@ WholeBodyQPResult3D WholeBodyQP3D::solve(const WholeBodyQPInput3D& in) {
         upper[row] = std::isfinite(in.jointUpper[j]) ? in.jointGuardRate * (in.jointUpper[j] - margin - coordinate) - v : infinity;
         if (lower[row] > upper[row]) lower[row] = upper[row];
     }
-    Impl& impl = *m_impl;
-    const bool reuse = impl.qp && impl.dimension == dimension && impl.inequalities == inequalities && impl.equalities == equalities;
-    if (!reuse) {
-        impl.qp.emplace(dimension, equalities, inequalities);
-        impl.qp->settings.eps_abs = 1e-5;
-        impl.qp->settings.max_iter = in.maximumIterations;
-        impl.qp->settings.initial_guess = proxsuite::proxqp::InitialGuessStatus::EQUALITY_CONSTRAINED_INITIAL_GUESS;
-        impl.qp->init(hessian, gradient, equality, equalityTarget, inequality, lower, upper);
-        impl.dimension = dimension;
-        impl.inequalities = inequalities;
-        impl.equalities = equalities;
-    } else {
-        impl.qp->settings.initial_guess = proxsuite::proxqp::InitialGuessStatus::WARM_START_WITH_PREVIOUS_RESULT;
-        // O precondicionador so e refeito de tempos em tempos (refaze-lo a cada
-        // tick custava ~170 us); a falha numerica refaz tudo a frio.
-        const bool refresh = (++impl.updatesSincePreconditioner >= in.preconditionerRefreshTicks);
-        if (refresh) impl.updatesSincePreconditioner = 0;
-        impl.qp->update(hessian, gradient, equality, equalityTarget, inequality, lower, upper, refresh);
-    }
-    const auto updated = std::chrono::steady_clock::now();
-    impl.qp->solve();
-    result.buildMicros = std::chrono::duration<double, std::micro>(built - start).count();
-    result.updateMicros = std::chrono::duration<double, std::micro>(updated - built).count();
-    result.innerSolveMicros = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - updated).count();
-    // Falha numerica (o problema e viavel: um LP achou o ponto; nota 24):
-    // reconstruir e resolver a frio uma vez antes da politica de falha.
-    const auto failed = [&] {
-        const auto status = impl.qp->results.info.status;
-        return !impl.qp->results.x.allFinite()
-            || status == proxsuite::proxqp::QPSolverOutput::PROXQP_PRIMAL_INFEASIBLE
+    // Resolve um nivel numa instancia: reaproveita a anterior (precondicionador de
+    // tempos em tempos: refaze-lo a cada tick custava ~170 us); a falha numerica
+    // (o problema e viavel: um LP achou o ponto; nota 24) reconstroi a frio uma vez.
+    const auto runSlot = [&](Impl::Slot& slot, const Eigen::MatrixXd& H, const Eigen::VectorXd& g, const Eigen::MatrixXd& E,
+                             const Eigen::VectorXd& e) -> const proxsuite::proxqp::Results<double>& {
+        const int rows = static_cast<int>(E.rows());
+        const auto fresh = [&] {
+            slot.qp.emplace(dimension, rows, inequalities);
+            slot.qp->settings.eps_abs = 1e-5;
+            slot.qp->settings.max_iter = in.maximumIterations;
+            slot.qp->settings.initial_guess = proxsuite::proxqp::InitialGuessStatus::EQUALITY_CONSTRAINED_INITIAL_GUESS;
+            slot.qp->init(H, g, E, e, inequality, lower, upper);
+            slot.dimension = dimension;
+            slot.inequalities = inequalities;
+            slot.equalities = rows;
+        };
+        const bool reuse = slot.qp && slot.dimension == dimension && slot.inequalities == inequalities && slot.equalities == rows;
+        if (!reuse) {
+            fresh();
+        } else {
+            slot.qp->settings.initial_guess = proxsuite::proxqp::InitialGuessStatus::WARM_START_WITH_PREVIOUS_RESULT;
+            const bool refresh = (++slot.updatesSincePreconditioner >= in.preconditionerRefreshTicks);
+            if (refresh) slot.updatesSincePreconditioner = 0;
+            slot.qp->update(H, g, E, e, inequality, lower, upper, refresh);
+        }
+        slot.qp->solve();
+        const auto status = slot.qp->results.info.status;
+        const bool failed = !slot.qp->results.x.allFinite() || status == proxsuite::proxqp::QPSolverOutput::PROXQP_PRIMAL_INFEASIBLE
             || status == proxsuite::proxqp::QPSolverOutput::PROXQP_DUAL_INFEASIBLE
             || status == proxsuite::proxqp::QPSolverOutput::PROXQP_SOLVED_CLOSEST_PRIMAL_FEASIBLE;
+        if (reuse && failed) {
+            fresh();
+            slot.qp->solve();
+            result.coldRetry = true;
+        }
+        return slot.qp->results;
     };
-    if (reuse && failed()) {
-        impl.qp.emplace(dimension, equalities, inequalities);
-        impl.qp->settings.eps_abs = 1e-5;
-        impl.qp->settings.max_iter = in.maximumIterations;
-        impl.qp->settings.initial_guess = proxsuite::proxqp::InitialGuessStatus::EQUALITY_CONSTRAINED_INITIAL_GUESS;
-        impl.qp->init(hessian, gradient, equality, equalityTarget, inequality, lower, upper);
-        impl.qp->solve();
-        result.coldRetry = true;
+    const auto usableStatus = [](const proxsuite::proxqp::Results<double>& r) {
+        return r.x.allFinite() && (r.info.status == proxsuite::proxqp::QPSolverOutput::PROXQP_SOLVED
+            || r.info.status == proxsuite::proxqp::QPSolverOutput::PROXQP_MAX_ITER_REACHED);
+    };
+    Impl& impl = *m_impl;
+    const auto updated = std::chrono::steady_clock::now();
+    const proxsuite::proxqp::Results<double>* final = nullptr;
+    if (primaryRows > 0) {
+        // Nivel de cima: so as tarefas de prioridade 0 (com as mesmas regularizacoes e restricoes).
+        Eigen::MatrixXd topHessian = hessian;
+        Eigen::VectorXd topGradient = gradient;
+        topHessian.topLeftCorner(n, n) = primaryHessian;
+        topGradient.head(n) = primaryGradient;
+        topHessian.topLeftCorner(n, n).diagonal().array() += 2.0 * in.accelerationRegularization;
+        for (int c = 0; c < contacts && in.contactWeight > 0.0; ++c) {
+            const WholeBodyContactPoint3D& point = in.contacts[static_cast<std::size_t>(c)];
+            const Eigen::MatrixXd jacobian = contactJacobian.middleRows(3 * c, 3);
+            topHessian.topLeftCorner(n, n).noalias() += 2.0 * in.contactWeight * jacobian.transpose() * jacobian;
+            topGradient.head(n).noalias() -= 2.0 * in.contactWeight * jacobian.transpose()
+                * (point.desiredAcceleration - articulationPointBias3D(k, point.link, point.pointWorld));
+        }
+        const auto& top = runSlot(impl.slots[0], topHessian, topGradient, equality, equalityTarget);
+        if (usableStatus(top)) {
+            // Nivel de baixo: tudo, com os valores alcancados em cima fixados.
+            Eigen::MatrixXd lowerEquality = Eigen::MatrixXd::Zero(equalities + primaryRows, dimension);
+            Eigen::VectorXd lowerTarget(equalities + primaryRows);
+            lowerEquality.topRows(equalities) = equality;
+            lowerTarget.head(equalities) = equalityTarget;
+            int row = equalities;
+            const Eigen::VectorXd topAcceleration = top.x.head(n);
+            for (const WholeBodyTask3D& task : in.tasks) {
+                if (task.priority != 0 || task.matrix.cols() != n || task.matrix.rows() != task.target.size() || task.weight <= 0.0) continue;
+                const int r = static_cast<int>(task.matrix.rows());
+                lowerEquality.block(row, 0, r, n) = task.matrix;
+                lowerTarget.segment(row, r) = task.matrix * topAcceleration;
+                row += r;
+            }
+            const auto& bottom = runSlot(impl.slots[1], hessian, gradient, lowerEquality, lowerTarget);
+            if (usableStatus(bottom)) {
+                final = &bottom;
+                result.hierarchical = true;
+            } else {
+                final = &top;
+            }
+        }
     }
-    const auto& output = impl.qp->results;
+    if (!final) final = &runSlot(impl.slots[0], hessian, gradient, equality, equalityTarget);
+    result.buildMicros = std::chrono::duration<double, std::micro>(built - start).count();
+    result.updateMicros = 0.0;
+    result.innerSolveMicros = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - updated).count();
+    const auto& output = *final;
     result.iterations = static_cast<int>(output.info.iter);
     switch (output.info.status) {
         case proxsuite::proxqp::QPSolverOutput::PROXQP_SOLVED: result.status = WholeBodyQPStatus3D::Solved; break;
@@ -202,7 +259,7 @@ WholeBodyQPResult3D WholeBodyQP3D::solve(const WholeBodyQPInput3D& in) {
     const Eigen::VectorXd& x = output.x;
     if (!x.allFinite()) {
         result.status = WholeBodyQPStatus3D::NotFinite;
-        impl.qp.reset();
+        for (Impl::Slot& slot : impl.slots) slot.qp.reset();
         return result;
     }
     result.acceleration = x.head(n);

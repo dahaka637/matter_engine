@@ -128,6 +128,8 @@ struct Stand {
     DcmWalkerSettings3D walkSettings;
     DcmWalkerPlan3D walkPlan;
     double walkDoubleSupport = 0.1;
+    // O relogio do plano: comeca no pouso (o apoio duplo conta dentro do T do passo).
+    double walkPlanTime = 0.0;
     // Diagnostico: a forca horizontal pedida, a planejada pelo QP e a medida (m c'').
     Eigen::Vector2d lastCommandedForce = Eigen::Vector2d::Zero(), lastPlannedForce = Eigen::Vector2d::Zero();
     Eigen::Vector3d lastComVelocity = Eigen::Vector3d::Zero();
@@ -540,6 +542,14 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
             s.dcmReferenceRate = path.velocity.head<2>();
         }
     }
+    if (s.walking) {
+        s.walkPlanTime += Dt;
+        if (s.phase == Stand::Phase::Transfer && s.steps > 0) {
+            const DcmReference3D walk = sampleDcmWalk3D(s.walkSettings, s.walkPlan, s.walkPlanTime);
+            s.dcmReference = walk.position;
+            s.dcmReferenceRate = walk.rate;
+        }
+    }
     if (s.landedTime >= 0.0) {
         s.landedTime += Dt;
         const double blend = std::min(1.0, s.landedTime / 0.6);
@@ -582,7 +592,8 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
                 const Eigen::Vector2d capture = comNow.head<2>() + comVelocityNow.head<2>() / stepRecoveryOmega3D(s.stepSettings);
                 ready = s.phaseTime >= s.transferMove + s.unloadDuration && stancePoints.size() >= 3
                     && polygonOutside3D(stancePoints, capture) < -0.02;
-                if (s.walking) ready = s.phaseTime >= s.transferMove && ((capture - s.transferTo.head<2>()).norm() < 0.03 || (s.steps > 0 && s.phaseTime >= s.transferMove + 0.1));
+                if (s.walking) ready = s.steps > 0 ? s.phaseTime >= s.transferMove
+                                                   : s.phaseTime >= s.transferMove && (capture - s.transferTo.head<2>()).norm() < 0.03;
             }
             if (s.phase == Stand::Phase::Transfer && (ready || s.phaseTime >= s.transferDuration)) {
                 if (!ready && std::getenv("STANDSTEPLOG")) std::printf("   transferencia: prazo esgotado sem o DCM no pe de apoio\n");
@@ -593,6 +604,11 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
                 s.swingFoot = swing;
                 s.stepTime = 0.0;
                 s.stepDuration = s.swingDuration;
+                if (s.walking) {
+                    if (s.steps == 0) s.walkPlanTime = 0.0;
+                    s.stepDuration = std::max(0.2, s.walkSettings.stepDuration - s.walkPlanTime);
+                    s.swingDuration = s.stepDuration;
+                }
             } else if (s.phase == Stand::Phase::Swing) {
                 s.stepTime = s.phaseTime;
                 double lowest = 1e9;
@@ -612,6 +628,7 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
                     s.phase = Stand::Phase::Transfer;
                     s.phaseTime = 0.0;
                     s.transferMove = s.walkDoubleSupport;
+                    s.walkPlanTime = 0.0;
                     s.transferFrom = { s.dcmReference.x(), s.dcmReference.y(), s.comTarget.z() };
                     const Eigen::Vector2d start = sampleDcmWalk3D(s.walkSettings, s.walkPlan, 0.0).position;
                     s.transferTo = { start.x(), start.y(), s.comTarget.z() };
@@ -728,13 +745,13 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
             s.dcmReference = s.comTarget.head<2>();
             s.dcmReferenceRate.setZero();
         } else if (s.phase == Stand::Phase::Swing && s.walking) {
-            const DcmReference3D walk = sampleDcmWalk3D(s.walkSettings, s.walkPlan, s.phaseTime);
+            const DcmReference3D walk = sampleDcmWalk3D(s.walkSettings, s.walkPlan, s.walkPlanTime);
             s.dcmReference = walk.position;
             s.dcmReferenceRate = walk.rate;
             // O pouso segue o DCM medido ate 70% do balanco (depois fica fixo).
-            if (!std::getenv("STANDNOADJUST") && s.phaseTime < 0.7 * s.walkSettings.stepDuration)
+            if (!std::getenv("STANDNOADJUST") && s.stepTime < 0.7 * s.stepDuration)
                 s.swingLanding.head<2>() = adjustDcmLanding3D(s.walkSettings, s.walkPlan, DcmLandingLimits3D {}, xi,
-                    s.voluntaryFoot == 1 ? +1 : -1, s.walkLeft, s.walkSettings.stepDuration - s.phaseTime);
+                    s.voluntaryFoot == 1 ? +1 : -1, s.walkLeft, s.walkSettings.stepDuration - s.walkPlanTime);
         } else if (s.phase == Stand::Phase::Swing) {
             s.dcmReference = sole[1 - s.voluntaryFoot].head<2>();
             s.dcmReferenceRate.setZero();
@@ -786,7 +803,46 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
     const Eigen::Vector3d angularMomentum = d.centroidalMatrix.bottomRows(3) * state.velocity;
     const double angularWeight = std::getenv("STANDLW") ? std::atof(std::getenv("STANDLW")) : 0.1;
     const double angularGain = std::getenv("STANDLG") ? std::atof(std::getenv("STANDLG")) : 2.0;
-    input.tasks.push_back(wholeBodyCentroidalTask3D(s.model, d, state, linearRate, -angularGain * angularMomentum, (std::getenv("STANDCW") ? std::atof(std::getenv("STANDCW")) : 1000.0), angularWeight * 1000.0));
+    const bool hierarchy = std::getenv("STANDHQP") != nullptr;
+    {
+        Eigen::Vector3d angularRate = -angularGain * angularMomentum;
+        if (const char* pose = std::getenv("STANDANGPOSE")) {
+            // O momento angular tambem endireita o tronco (Koolen): I kp theta, so rolagem e arfagem.
+            const Eigen::AngleAxisd error(s.pelvisTarget * k.rotation[0].transpose());
+            Eigen::Vector3d theta = error.axis() * error.angle();
+            theta.z() = 0.0;
+            angularRate += 10.0 * std::atof(pose) * theta;
+        }
+        WholeBodyTask3D centroidal = wholeBodyCentroidalTask3D(s.model, d, state, linearRate, angularRate,
+            (std::getenv("STANDCW") ? std::atof(std::getenv("STANDCW")) : 1000.0), angularWeight * 1000.0);
+        if (hierarchy) {
+            // Dois niveis (nota 27): a forca linear do DCM em cima; o momento angular embaixo (livre para o quadril).
+            WholeBodyTask3D linear = centroidal, angular = centroidal;
+            linear.name = "centroidal linear";
+            linear.matrix = centroidal.matrix.topRows(3);
+            linear.target = centroidal.target.head(3);
+            linear.priority = 0;
+            angular.name = "centroidal angular";
+            angular.matrix = centroidal.matrix.bottomRows(3);
+            angular.target = centroidal.target.tail(3);
+            if (std::getenv("STANDHQPANG")) angular.priority = 0;
+            if (std::getenv("STANDHQPXY")) {
+                // So a forca horizontal em cima; a vertical embaixo, com o angular.
+                WholeBodyTask3D vertical = linear;
+                vertical.name = "centroidal vertical";
+                vertical.matrix = centroidal.matrix.row(2);
+                vertical.target = centroidal.target.segment(2, 1);
+                vertical.priority = 1;
+                linear.matrix = centroidal.matrix.topRows(2);
+                linear.target = centroidal.target.head(2);
+                input.tasks.push_back(vertical);
+            }
+            input.tasks.push_back(linear);
+            input.tasks.push_back(angular);
+        } else {
+            input.tasks.push_back(centroidal);
+        }
+    }
     input.tasks.push_back(wholeBodyOrientationTask3D(k, 0, s.pelvisTarget, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(), 100.0 * gain * gain, 20.0 * gain, 5.0, "pelve"));
     input.tasks.push_back(wholeBodyOrientationTask3D(k, static_cast<int>(s.chest), s.chestTarget, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(), 100.0 * gain * gain, 20.0 * gain, 3.0, "peito"));
     input.tasks.push_back(wholeBodyOrientationTask3D(k, static_cast<int>(s.head), s.headTarget, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(), 100.0 * gain * gain, 20.0 * gain, 2.0, "cabeca"));
@@ -800,7 +856,8 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
                 sole[1 - s.swingFoot].head<2>(), outward, s.stepDuration - s.stepTime);
             if (s.stepTime < 0.8 * s.stepDuration) s.swingLanding.head<2>() = landing;
         }
-        const SwingSample3D swing = sampleSwing3D(s.swingStart, s.swingLanding, s.recovering ? 0.025 : 0.06, s.stepDuration, s.stepTime);
+        const SwingSample3D swing = sampleSwing3D(s.swingStart, s.swingLanding,
+            s.recovering ? 0.025 : (std::getenv("STANDSWINGH") ? std::atof(std::getenv("STANDSWINGH")) : 0.06), s.stepDuration, s.stepTime);
         const int foot = static_cast<int>(s.feet[s.swingFoot]);
         if (std::getenv("STANDSTEPDBG")) {
             const Eigen::Vector3d up = k.rotation[0].col(2);
@@ -811,6 +868,10 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
         }
         input.tasks.push_back(wholeBodyPointTask3D(k, foot, sole[s.swingFoot], swing.position, swing.velocity, swing.acceleration, 400.0, 40.0, 20.0, "pe no ar"));
         input.tasks.push_back(wholeBodyOrientationTask3D(k, foot, s.swingRotation, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(), 400.0, 40.0, 5.0, "pe no ar (orientacao)"));
+        if (hierarchy) {
+            input.tasks[input.tasks.size() - 2].priority = 0;
+            input.tasks[input.tasks.size() - 1].priority = 0;
+        }
     }
     const std::vector<Eigen::Vector3d> zero(s.model.links.size(), Eigen::Vector3d::Zero());
     {
@@ -839,8 +900,37 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
             }
         }
         input.tasks.push_back(posture);
+        if (s.walking && s.stepping && !std::getenv("STANDNOSWINGKNEE")) {
+            // A perna no ar prefere o joelho dobrado (configuracao privilegiada): sem isso o QP,
+            // que so ve o instante, ergue o pe pelo quadril com a perna reta contra o batente.
+            const double peak = std::getenv("STANDSWINGKNEE") ? std::atof(std::getenv("STANDSWINGKNEE")) : 0.9;
+            const double phase = std::clamp(s.stepTime / s.stepDuration, 0.0, 1.0);
+            std::vector<Eigen::Vector3d> swingPose = s.referencePose;
+            const std::size_t shin = static_cast<std::size_t>(s.model.links[s.feet[s.swingFoot]].parent);
+            swingPose[shin].x() = 0.1 + peak * std::sin(Pi * phase);
+            const WholeBodyTask3D knee = wholeBodyPostureTask3D(s.model, state, swingPose, zero, zero, 400.0, 40.0, 1.0);
+            const int dof = s.model.links[shin].dof[0];
+            WholeBodyTask3D row;
+            row.name = "joelho no ar";
+            row.matrix = knee.matrix.row(dof - 6);
+            row.target = knee.target.segment(dof - 6, 1);
+            row.weight = std::getenv("STANDSWINGKNEEW") ? std::atof(std::getenv("STANDSWINGKNEEW")) : 2.0;
+            input.tasks.push_back(row);
+        }
     }
     const WholeBodyQPResult3D result = s.qp.solve(input);
+    if (const char* when = std::getenv("STANDTASKDBG"); when && result.usable() && std::abs(s.clock - std::atof(when)) < 0.5 * Dt && input.jointLower.size()) {
+        for (std::size_t i = 1; i < s.model.links.size(); ++i) {
+            const std::string& id = profile.links[i].id;
+            if (id.find("Shin") == std::string::npos && id.find("Thigh") == std::string::npos && id.find("Foot") == std::string::npos) continue;
+            for (int a = 0; a < 3; ++a) {
+                const int dof = s.model.links[i].dof[static_cast<std::size_t>(a)];
+                if (dof < 0) continue;
+                std::printf("   junta %-10s eixo %d: q %.3f [%.3f %.3f] v %.2f a %.1f\n", id.c_str(), a, state.jointCoordinates[i][a],
+                    input.jointLower[dof - 6], input.jointUpper[dof - 6], state.velocity[dof], result.acceleration[dof]);
+            }
+        }
+    }
     if (const char* when = std::getenv("STANDTASKDBG"); when && result.usable() && std::abs(s.clock - std::atof(when)) < 0.5 * Dt) {
         for (const WholeBodyTask3D& task : input.tasks) {
             const Eigen::VectorXd residual = task.matrix * result.acceleration - task.target;

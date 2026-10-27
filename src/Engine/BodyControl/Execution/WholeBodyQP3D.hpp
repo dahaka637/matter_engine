@@ -50,6 +50,10 @@ struct WholeBodyTask3D {
     Eigen::MatrixXd matrix;
     Eigen::VectorXd target;
     double weight = 1.0;
+    // 0: o nivel de cima (equilibrio, captura), resolvido primeiro; os valores
+    // que ele alcanca viram igualdades do nivel 1, onde entra o resto (nota 27:
+    // a postura nao pode tirar do equilibrio o que ele precisa).
+    int priority = 1;
 };
 
 struct WholeBodyQPInput3D {
@@ -100,6 +104,8 @@ struct WholeBodyQPResult3D {
     // A maior violacao das igualdades (raiz + pes rigidos) e das desigualdades.
     double equalityViolation = 0.0;
     double inequalityViolation = 0.0;
+    // Com tarefas de prioridade 0: o nivel de cima resolveu (senao, um nivel so).
+    bool hierarchical = false;
     [[nodiscard]] bool usable() const {
         return status == WholeBodyQPStatus3D::Solved || status == WholeBodyQPStatus3D::MaximumIterations;
     }
