@@ -1118,7 +1118,9 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
     if (std::getenv("STANDCHESTTOP") && hierarchy) input.tasks.back().priority = 0;
     input.tasks.push_back(wholeBodyOrientationTask3D(k, static_cast<int>(s.head), s.headTarget, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(), 100.0 * gain * gain, 20.0 * gain,
         std::getenv("STANDHEADW") ? std::atof(std::getenv("STANDHEADW")) : 2.0, "cabeca"));
-    if (std::getenv("STANDHEADTOP") && hierarchy) input.tasks.back().priority = 0;
+    // A cabeca no nivel de cima (padrao; STANDHEADLOW desliga): embaixo ela girava a ~500 graus/s para
+    // produzir o momento angular fixado em cima (diario 31, 27/10 9h45).
+    if (!std::getenv("STANDHEADLOW") && hierarchy) input.tasks.back().priority = 0;
     if (s.stepping) {
         // O destino aceito fica fixo no balanco (nota 26: replanejar sem preservar derivadas derrubava).
         if (s.recovering && std::getenv("STANDREPLAN")) {
