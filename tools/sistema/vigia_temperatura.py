@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """O vigia de temperatura (27/10, pedido do usuario depois de um desligamento inesperado).
 
-A cada 3 s le a CPU (o Tctl do Ryzen, k10temp) e a GPU (nvidia-smi). Passando do
-limite, corta na hora os testes, as avaliacoes, as bancadas e as compilacoes do
-projeto, manda os treinos de RL salvarem e pararem (o SIGTERM do treinador salva o
-checkpoint "final") e, em seguida, DESLIGA o computador. Os treinos se recusam a
+A cada 3 s le a CPU (o Tctl do Ryzen, k10temp) e a GPU (nvidia-smi); uma leitura
+basta. No limite de parar, corta os testes, as avaliacoes, as bancadas e as
+compilacoes do projeto e manda os treinos de RL salvarem e pararem (o SIGTERM do
+treinador salva o checkpoint "final"); o PC fica ligado. No limite de desligar, faz o
+mesmo e, em seguida, DESLIGA o computador. Os treinos se recusam a
 abrir sem este vigia vivo (o batimento em $XDG_RUNTIME_DIR/vigia-temperatura.json)
 e param, salvando, se ele sumir.
 
@@ -12,8 +13,9 @@ Roda como servico do usuario (vigia-temperatura.service, sempre ligado).
 
   python3 tools/sistema/vigia_temperatura.py                 # o vigia
   python3 tools/sistema/vigia_temperatura.py --uma           # uma leitura e sai
-  python3 tools/sistema/vigia_temperatura.py --teste         # a emergencia simulada: corta so
-                                                             # processos de teste e nao desliga
+  python3 tools/sistema/vigia_temperatura.py --teste parar   # o limite de parar simulado
+  python3 tools/sistema/vigia_temperatura.py --teste desligar  # o de desligar simulado (nao desliga)
+  (os testes so cortam os processos marcados vigia-teste-alvo)
 """
 from __future__ import annotations
 
@@ -28,12 +30,11 @@ import time
 from pathlib import Path
 
 INTERVAL = 3.0
-# Os limites (graus C): passando do de cima em duas leituras seguidas (6 s), ou do
-# imediato numa so. Normal no treino: CPU 68-73, GPU 55-66. O Ryzen 5 3600 se protege
-# a 95; a GTX 1070 Ti mira 83 e se segura a 96.
-CPU_LIMIT, CPU_NOW = 85.0, 90.0
-GPU_LIMIT, GPU_NOW = 83.0, 88.0
-STRIKES = 2
+# Os limites (graus C, os do usuario em 27/10; uma leitura basta): parar (salva e para
+# o trabalho, o PC fica ligado) e desligar (salva, para e desliga o PC). Normal no
+# treino: CPU 68-73 (picos ate ~78), GPU 55-66.
+CPU_STOP, CPU_OFF = 83.0, 85.0
+GPU_STOP, GPU_OFF = 80.0, 83.0
 # Sem ler a temperatura por 30 s com trabalho pesado aberto: salva e para (nao desliga).
 BLIND_SECONDS = 30.0
 # Quanto os treinos tem para salvar antes do corte e do desligamento.
@@ -149,8 +150,8 @@ def alive(pids: list[int]) -> list[int]:
     return out
 
 
-def stop_work(test: bool) -> bool:
-    """Corta o pesado, salva e para os treinos. True: os treinos sairam salvos."""
+def signal_work(test: bool) -> tuple[list[int], list[int], list[int]]:
+    """Manda o SIGTERM: o pesado sai na hora, os treinos salvam e saem. (treinos, supervisores, pesado)."""
     procs = processes()
     if test:
         procs = [(p, a) for p, a in procs if TEST_MARK in " ".join(a)]
@@ -161,7 +162,14 @@ def stop_work(test: bool) -> bool:
     workers = [p for p, a in procs if kind(a) == "treino" and "treinar" in a]
     kill(supervisors, signal.SIGTERM)
     kill(workers, signal.SIGTERM)
-    log(f"cortados {len(heavy)} processos pesados; {len(workers)} treino(s) salvando")
+    if heavy or workers:
+        log(f"cortados {len(heavy)} processos pesados; {len(workers)} treino(s) salvando")
+    return workers, supervisors, heavy
+
+
+def stop_work(test: bool) -> bool:
+    """Corta o pesado, salva e para os treinos e espera (ate SAVE_SECONDS). True: os treinos sairam salvos."""
+    workers, supervisors, heavy = signal_work(test)
     deadline = time.time() + SAVE_SECONDS
     while time.time() < deadline and alive(workers + heavy):
         time.sleep(0.5)
@@ -179,7 +187,7 @@ def heavy_running() -> bool:
 
 def beat(cpu: float | None, gpu: float | None, state: str) -> None:
     data = {"time": time.time(), "cpu": cpu, "gpu": gpu, "state": state, "pid": os.getpid(),
-            "limits": {"cpu": CPU_LIMIT, "cpuNow": CPU_NOW, "gpu": GPU_LIMIT, "gpuNow": GPU_NOW}}
+            "limits": {"cpuStop": CPU_STOP, "cpuOff": CPU_OFF, "gpuStop": GPU_STOP, "gpuOff": GPU_OFF}}
     tmp = HEARTBEAT.with_suffix(".tmp")
     tmp.write_text(json.dumps(data))
     tmp.replace(HEARTBEAT)
@@ -200,32 +208,52 @@ def emergency(reason: str, test: bool, shutdown: list[str]) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--uma", action="store_true", help="uma leitura e sai")
-    ap.add_argument("--teste", action="store_true",
-                    help="a emergencia simulada (CPU acima do limite) contra os processos marcados de teste; nao desliga")
+    ap.add_argument("--teste", choices=["parar", "desligar"],
+                    help="o limite simulado (uma leitura) contra os processos marcados de teste; nunca desliga")
     a = ap.parse_args()
     shutdown = ["systemctl", "poweroff"]
     if a.uma:
         print(json.dumps({"cpu": cpu_temperature(), "gpu": gpu_temperature()}))
         return 0
-    log(f"vigia aberto (pid {os.getpid()}): a cada {INTERVAL:.0f} s; CPU {CPU_LIMIT:.0f}/{CPU_NOW:.0f}, "
-        f"GPU {GPU_LIMIT:.0f}/{GPU_NOW:.0f} graus" + (" [TESTE]" if a.teste else ""))
-    strikes = {"cpu": 0, "gpu": 0}
+    log(f"vigia aberto (pid {os.getpid()}): a cada {INTERVAL:.0f} s, uma leitura basta; parar CPU {CPU_STOP:.0f} "
+        f"GPU {GPU_STOP:.0f}, desligar CPU {CPU_OFF:.0f} GPU {GPU_OFF:.0f} graus" + (f" [TESTE {a.teste}]" if a.teste else ""))
     blind_since = None
     last_line = 0.0
+    # Os que receberam o SIGTERM no limite de parar: o prazo para sair (depois, SIGKILL).
+    pending: dict[int, float] = {}
+    first = True
     while True:
         started = time.time()
         cpu, gpu = cpu_temperature(), gpu_temperature()
-        if a.teste:
-            cpu = CPU_NOW + 1.0
-        reason = None
-        for name, value, limit, now in (("cpu", cpu, CPU_LIMIT, CPU_NOW), ("gpu", gpu, GPU_LIMIT, GPU_NOW)):
-            strikes[name] = strikes[name] + 1 if value is not None and value >= limit else 0
-            if value is not None and (value >= now or strikes[name] >= STRIKES):
-                reason = f"{name.upper()} a {value:.1f} graus (limite {limit:.0f}/{now:.0f})"
+        if a.teste and first:
+            cpu = (CPU_OFF if a.teste == "desligar" else CPU_STOP) + 0.5
+        first = False
         state = "ok"
-        if reason:
-            beat(cpu, gpu, "emergencia")
-            emergency(reason, a.teste, shutdown)
+        off = [f"{n} a {v:.1f} graus (desliga em {lim:.0f})" for n, v, lim in (("CPU", cpu, CPU_OFF), ("GPU", gpu, GPU_OFF))
+               if v is not None and v >= lim]
+        stop = [f"{n} a {v:.1f} graus (para em {lim:.0f})" for n, v, lim in (("CPU", cpu, CPU_STOP), ("GPU", gpu, GPU_STOP))
+                if v is not None and v >= lim]
+        if off:
+            beat(cpu, gpu, "desligando")
+            emergency(", ".join(off), bool(a.teste), shutdown)
+            return 0
+        if stop:
+            state = "quente: parando o trabalho"
+            workers, supervisors, heavy = signal_work(bool(a.teste))
+            if workers or heavy:
+                log(f"LIMITE DE PARAR: {', '.join(stop)}")
+                notify(f"{', '.join(stop)}: treinos salvos e parados (o PC fica ligado)")
+            for pid in workers + supervisors + heavy:
+                pending.setdefault(pid, started + SAVE_SECONDS)
+        for pid, deadline in list(pending.items()):
+            if not alive([pid]):
+                del pending[pid]
+            elif started >= deadline:
+                log(f"o processo {pid} nao saiu em {SAVE_SECONDS:.0f} s: SIGKILL")
+                kill([pid], signal.SIGKILL)
+                del pending[pid]
+        if a.teste and not first and not pending:
+            log("teste: o trabalho marcado parou e o vigia segue (o PC ficaria ligado)")
             return 0
         if cpu is None or gpu is None:
             blind_since = blind_since or started
