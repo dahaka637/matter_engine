@@ -567,6 +567,9 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
     // No empurrao e no voo do salto estendido a guarda freia mais tarde (taxa 40; nota 35: com 10
     // ela freava a extensao do joelho ~0,3 rad antes do batente).
     if (s.hopExtended && (s.hopPhase == 1 || s.hopPhase == 2)) input.jointGuardRate = 40.0;
+    // No trote, a mesma guarda mais rapida no apoio e no voo (STANDTROTGUARD=taxa; nota 36: a 2 m/s a guarda
+    // de taxa 10 tornava o nivel de cima inviavel).
+    if (const char* rate = std::getenv("STANDTROTGUARD"); rate && s.trotPhase != 0) input.jointGuardRate = std::atof(rate);
     // A caixa do motor (nota 33): o backend recorta cada eixo no referencial dele (STANDNOMOTORBOX desliga).
     const Eigen::MatrixXd motorMap = articulationMotorTorqueMap3D(s.model, state);
     if (!std::getenv("STANDNOMOTORBOX")) input.motorTorqueMap = motorMap;
