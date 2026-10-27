@@ -103,6 +103,13 @@ struct Stand {
     // A saida pela ponta (nota 29): quantas e a soma do angulo da sola na decolagem.
     int toeOffs = 0;
     double toeOffAngleSum = 0.0, toeOffLastAngle = 0.0;
+    // Quanto o CoP pedido pelo DCM fica fora do apoio (o corte da projecao), na marcha.
+    double copClampSum = 0.0, copClampWorst = 0.0;
+    // A decolagem (nota 31): a forca planejada no pe no tick anterior e quanto ele ainda toca depois.
+    int liftoffs = 0, separations = 0, separationTicks = 0, separationSum = 0;
+    double liftoffForceSum = 0.0;
+    bool separationPending = false;
+    int copClampTicks = 0;
     double stepTime = 0.0, stepDuration = 0.0;
     Eigen::Vector3d swingStart, swingLanding;
     Eigen::Matrix3d swingRotation;
@@ -483,6 +490,15 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
         sole[f] = k.origin[s.feet[f]] + k.rotation[s.feet[f]] * s.soleCenterLocal[f];
         for (const RagdollContactPoint3D& contact : raw.contacts) footTouching[f] |= contact.linkIndex == s.feet[f];
     }
+    if (s.separationPending && s.stepping) {
+        if (footTouching[s.swingFoot]) {
+            ++s.separationTicks;
+        } else {
+            s.separationSum += s.separationTicks;
+            ++s.separations;
+            s.separationPending = false;
+        }
+    }
     if (s.stepping && false) {
         s.stepTime += Dt;
         const bool landed = s.stepTime > 0.6 * s.stepDuration && footTouching[s.swingFoot];
@@ -611,6 +627,12 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
                 s.phaseTime = 0.0;
                 s.swingStart = sole[swing];
                 s.stepping = true;
+                if (s.walking && s.steps > 0) {
+                    ++s.liftoffs;
+                    s.liftoffForceSum += s.plannedFootForce[swing].z();
+                    s.separationPending = true;
+                    s.separationTicks = 0;
+                }
                 if (std::getenv("STANDTOEOFF") && s.walking && s.steps > 0) {
                     ++s.toeOffs;
                     s.toeOffAngleSum += s.toeOffLastAngle;
@@ -670,6 +692,11 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
     const Eigen::Vector2d walkForward = s.pelvisTarget.col(0).head<2>().normalized();
     const bool toeOff = toeOffDegrees > 0.0 && s.walking && s.phase == Stand::Phase::Transfer && s.steps > 0 && s.voluntaryFoot >= 0
         && s.walkVelocity.dot(walkForward) > 0.3;
+    // A descarga na marcha (nota 31): no apoio duplo o pe que vai sair perde o minimo normal e o
+    // teto cai a ~0 no fim, para o QP nao soltar um pe ainda carregado (antes: 144-244 N no tick
+    // anterior). A aquisicao espelhada no pe que pousa foi pior (a esquerda caiu): ele carrega ja.
+    const bool unloading = s.walking && s.phase == Stand::Phase::Transfer && s.steps > 0 && s.voluntaryFoot >= 0;
+    const double unloadCap = s.model.totalMass * 9.81 * (1.0 - std::clamp(s.phaseTime / std::max(1e-3, s.transferMove), 0.0, 1.0));
     Eigen::Vector3d toeA = Eigen::Vector3d::Zero(), toeB = Eigen::Vector3d::Zero(), heelMiddle = Eigen::Vector3d::Zero();
     if (toeOff) {
         const int f = s.voluntaryFoot;
@@ -687,6 +714,7 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
             point.friction = friction;
             point.constrained = true;
             if (e == 1) point.freeDirection = (toeB - toeA).normalized();
+            if (unloading) point.maximumNormalForce = std::max(1.0, unloadCap);
             const Eigen::Vector3d velocity = articulationPointJacobian3D(k, point.link, point.pointWorld) * state.velocity;
             point.desiredAcceleration = -20.0 * velocity;
             report.slip = std::max(report.slip, std::hypot(velocity.x(), velocity.y()));
@@ -758,6 +786,10 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
             point.constrained = pointContacts;
             point.minimumNormalForce = std::getenv("STANDMINN") ? std::atof(std::getenv("STANDMINN")) : 15.0;
             if (s.landedTime >= 0.0 && s.landedTime < 0.15 && (f == s.voluntaryFoot || f == s.landedFoot)) point.minimumNormalForce = 0.0;
+            if (unloading && f == s.voluntaryFoot) {
+                point.minimumNormalForce = 0.0;
+                point.maximumNormalForce = std::max(1.0, unloadCap);
+            }
             if (s.phase == Stand::Phase::Transfer && f == s.voluntaryFoot && !s.walking) {
                 // Descarrega o pe que vai subir so depois que o CoM chegou: sem minimo e
                 // com teto decrescente no fim da transferencia.
@@ -828,7 +860,14 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
             }
             share = std::min(share, 0.9);
             for (const WholeBodyContactPoint3D& point : input.contacts) support.push_back(fixed + (1.0 - share) * point.pointWorld.head<2>());
+            const Eigen::Vector2d wanted = cop;
             if (!support.empty()) cop = projectToPolygon3D(support, cop, 0.005);
+            if (s.walking) {
+                const double cut = (wanted - cop).norm();
+                s.copClampSum += cut;
+                s.copClampWorst = std::max(s.copClampWorst, cut);
+                ++s.copClampTicks;
+            }
         }
         if (std::getenv("STANDWALKDBG") && s.walking && s.logTick++ % 6 == 0)
             std::printf("   t %.2f fase %d pe %d: xi (%.3f %.3f) ref (%.3f %.3f) cop (%.3f %.3f) apoio (%.3f %.3f) pes L (%.3f %.3f) R (%.3f %.3f)\n", s.clock,
@@ -1222,6 +1261,9 @@ int main(int argc, char** argv) {
             const Vec3 end = s.scene->ragdollStateView(s.ragdoll)->links[0].position;
             std::printf("- marcha: %d passos, pelve andou (%.2f %.2f) m, %s\n", s.steps, end.x - startPelvis.x, end.y - startPelvis.y,
                 s.walking ? "ainda andando" : "parou");
+            if (s.liftoffs) std::printf("- decolagem: %d, forca planejada no pe no tick anterior %.0f N (media); ainda tocando %.0f ms depois (media)\n",
+                s.liftoffs, s.liftoffForceSum / s.liftoffs, s.separations ? 1000.0 * Dt * s.separationSum / s.separations : 0.0);
+            if (s.copClampTicks) std::printf("- CoP pedido fora do apoio: %.1f cm de media, %.1f cm no pior\n", 100.0 * s.copClampSum / s.copClampTicks, 100.0 * s.copClampWorst);
             if (s.toeOffs) std::printf("- saida pela ponta: %d, sola a %.1f graus na decolagem (media)\n", s.toeOffs, s.toeOffAngleSum / s.toeOffs * 180.0 / Pi);
         }
     }
