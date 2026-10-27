@@ -57,13 +57,19 @@ struct TrainingDrillPoint3D {
     double stood = std::numeric_limits<double>::quiet_NaN();
     double seconds = 0.0;
     double episodeReturn = std::numeric_limits<double>::quiet_NaN();
-    // Do rastreador (NaN nos outros): o horario, a nota media por decisao, o erro
-    // e as velocidades medias (m/s) dos episodios do exercicio na rodada.
+    // O horario da rodada; do rastreador (NaN nos outros), a nota media por decisao.
     double time = 0.0;
     double reward = std::numeric_limits<double>::quiet_NaN();
+    // O erro de velocidade (m/s; na locomocao, a mediana do erro suavizado em ~uma
+    // passada) e as velocidades medias, a do corpo e a pedida (NaN sem a medida).
     double velocityError = std::numeric_limits<double>::quiet_NaN();
     double bodySpeed = std::numeric_limits<double>::quiet_NaN();
     double requestedSpeed = std::numeric_limits<double>::quiet_NaN();
+    // Da locomocao (NaN nos outros): o erro do rumo do peito (rad), o pe apoiado
+    // escorregando (m/s) e o tronco e o pescoco fora do envelope da postura (rad).
+    double facingError = std::numeric_limits<double>::quiet_NaN();
+    double slip = std::numeric_limits<double>::quiet_NaN();
+    double postureError = std::numeric_limits<double>::quiet_NaN();
 };
 
 struct TrainingEventPoint3D {
@@ -83,6 +89,8 @@ struct TrainingHistory3D {
 
 // Le o historico de um treino no banco (rl.db), so leitura. As rodadas vem
 // amostradas para no maximo maximumPoints (os graficos nao carregam milhoes).
+// sinceSeconds > 0: so as ultimas sinceSeconds do treino, contadas da rodada
+// mais recente dele (um treino parado mostra o fim dele, nao um vazio).
 [[nodiscard]] TrainingHistory3D readTrainingHistory3D(const std::filesystem::path& database, const std::string& run,
     double sinceSeconds = 0.0, std::size_t maximumPoints = 600);
 

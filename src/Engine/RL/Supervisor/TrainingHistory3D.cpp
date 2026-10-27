@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <limits>
 
 namespace MatterEngine {
 namespace {
@@ -29,14 +30,24 @@ TrainingHistory3D readTrainingHistory3D(const std::filesystem::path& database, c
         return history;
     }
     sqlite3_busy_timeout(db, 500);
-    const double now = static_cast<double>(
-        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count());
-    const double since = sinceSeconds > 0.0 ? now - sinceSeconds : 0.0;
+    // O periodo conta da rodada mais recente do treino (vivo, e agora).
+    sqlite3_stmt* statement = nullptr;
+    double newest = 0.0;
+    if (sinceSeconds > 0.0
+        && sqlite3_prepare_v2(db, "SELECT MAX(time) FROM iterations WHERE run=?1", -1, &statement, nullptr) == SQLITE_OK) {
+        sqlite3_bind_text(statement, 1, run.c_str(), -1, SQLITE_TRANSIENT);
+        if (sqlite3_step(statement) == SQLITE_ROW && sqlite3_column_type(statement, 0) != SQLITE_NULL)
+            newest = sqlite3_column_double(statement, 0);
+        sqlite3_finalize(statement);
+    }
+    if (sinceSeconds > 0.0 && newest <= 0.0)
+        newest = static_cast<double>(
+            std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count());
+    const double since = sinceSeconds > 0.0 ? newest - sinceSeconds : 0.0;
 
     // A amostra e por tempo (a rodada mais recente de cada janela), e nao pelo
     // numero da rodada: as antigas, ja compactadas em uma a cada 10 min,
     // continuam no grafico.
-    sqlite3_stmt* statement = nullptr;
     double first = 0.0;
     double last = 0.0;
     bool any = false;
@@ -81,7 +92,10 @@ TrainingHistory3D readTrainingHistory3D(const std::filesystem::path& database, c
     // Cada exercicio em cada rodada (o treino, nao a avaliacao): json_each abre o details.drills.
     if (sqlite3_prepare_v2(db,
             "SELECT i.iteration, d.key, json_extract(d.value, '$.episodes'), json_extract(d.value, '$.falls'), "
-            "json_extract(d.value, '$.return'), json_extract(d.value, '$.seconds'), json_extract(d.value, '$.stood_fraction') FROM iterations i, json_each(i.details, '$.drills') d "
+            "json_extract(d.value, '$.return'), json_extract(d.value, '$.seconds'), json_extract(d.value, '$.stood_fraction'), "
+            "i.time, json_extract(d.value, '$.velocity_error_window_median'), json_extract(d.value, '$.speed'), "
+            "json_extract(d.value, '$.requested'), json_extract(d.value, '$.facing_error'), json_extract(d.value, '$.slip'), "
+            "json_extract(d.value, '$.posture') FROM iterations i, json_each(i.details, '$.drills') d "
             "WHERE i.run=?1 AND i.time>=?2 ORDER BY i.iteration",
             -1, &statement, nullptr)
         == SQLITE_OK) {
@@ -96,6 +110,17 @@ TrainingHistory3D readTrainingHistory3D(const std::filesystem::path& database, c
             if (sqlite3_column_type(statement, 4) != SQLITE_NULL) point.episodeReturn = columnDouble(statement, 4);
             point.seconds = columnDouble(statement, 5);
             if (sqlite3_column_type(statement, 6) != SQLITE_NULL) point.stood = columnDouble(statement, 6);
+            point.time = columnDouble(statement, 7);
+            const auto optional = [statement](int column) {
+                return sqlite3_column_type(statement, column) == SQLITE_NULL ? std::numeric_limits<double>::quiet_NaN()
+                                                                             : sqlite3_column_double(statement, column);
+            };
+            point.velocityError = optional(8);
+            point.bodySpeed = optional(9);
+            point.requestedSpeed = optional(10);
+            point.facingError = optional(11);
+            point.slip = optional(12);
+            point.postureError = optional(13);
             history.drills.push_back(point);
         }
         sqlite3_finalize(statement);

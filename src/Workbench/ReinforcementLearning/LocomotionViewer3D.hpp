@@ -39,6 +39,10 @@ public:
         // no treino (0: pronto, mas ainda fora do treino).
         std::string category;
         float weight = 1.0f;
+        // A velocidade-meta (m/s): a maior das faixas do piloto; 0 nos que nao andam.
+        float goalSpeed = 0.0f;
+        // O levantar do chao (conta o "levantou-se").
+        bool getUp = false;
     };
 
     // Lanca std::runtime_error se a tarefa nao for da locomocao.

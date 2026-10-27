@@ -422,18 +422,27 @@ void processTrainer(const std::filesystem::path& data) {
 }
 
 // O empurrao unico no visualizador (23/10, como no treino): o exercicio leve
-// recomeca settleSeconds (3 s) depois do empurrao, que vem entre 1,5 e 3 s.
+// recomeca settleSeconds (o da tarefa; 5 s desde 24/10) depois do fim do
+// empurrao, que comeca na janela da tarefa (1,5 a 3 s) e dura 0,1 a 0,2 s.
 void checkSinglePushViewer() {
-    LocomotionViewer3D viewer(sourceRoot() / "assets" / "rl" / "tasks" / "locomocao_e1.json", sourceRoot() / "assets",
-        "parado_empurrao", 7);
+    const std::filesystem::path task = sourceRoot() / "assets" / "rl" / "tasks" / "locomocao_e1.json";
+    float settle = 3.0f;
+    {
+        std::ifstream file(task);
+        const nlohmann::json json = nlohmann::json::parse(file);
+        for (const nlohmann::json& drill : json["drills"])
+            if (drill.value("id", std::string()) == "parado_empurrao") settle = drill.value("settleSeconds", settle);
+    }
+    LocomotionViewer3D viewer(task, sourceRoot() / "assets", "parado_empurrao", 7);
     float first = -1.0f;
-    for (int k = 0; k < 230 && first < 0.0f; ++k) {
+    for (int k = 0; k < 400 && first < 0.0f; ++k) {
         const std::uint32_t before = viewer.view().steps;
         viewer.step();
         if (viewer.view().steps < before) first = static_cast<float>(before + 1) * viewer.policyStepSeconds();
     }
-    require(first >= 4.6f - 1.0e-3f && first <= 6.2f + 0.07f,
-        "o visualizador recomeca 3 s depois do empurrao unico (recomecou em " + std::to_string(first) + " s)");
+    require(first >= 1.5f + 0.1f + settle - 0.05f && first <= 3.0f + 0.2f + settle + 0.07f,
+        "o visualizador recomeca " + std::to_string(settle) + " s depois do empurrao unico (recomecou em "
+            + std::to_string(first) + " s)");
     std::cout << "visualizador: empurrao unico, recomeca em " << first << " s\n";
 }
 

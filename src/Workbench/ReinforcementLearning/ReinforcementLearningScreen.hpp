@@ -7,12 +7,14 @@
 #include "Engine/RL/Environment/BodyTrainingBatch3D.hpp"
 #include "Engine/RL/Policy/PolicyRuntime3D.hpp"
 #include "Engine/RL/Supervisor/TrainerLink3D.hpp"
+#include "Engine/RL/Supervisor/TrainingEvolution3D.hpp"
 #include "Engine/RL/Supervisor/TrainingHistory3D.hpp"
 #include "Engine/RL/Calibration/RagdollColliderWireframe3D.hpp"
 #include "Workbench/PlayerInspector/CanvasTarget.hpp"
 #include "Workbench/ReinforcementLearning/LocomotionViewer3D.hpp"
 #include "Workbench/ReinforcementLearning/TrackingViewer3D.hpp"
 
+#include <algorithm>
 #include <array>
 #include <deque>
 #include <filesystem>
@@ -64,12 +66,15 @@ public:
     [[nodiscard]] const Modeling::Image& image() const { return m_image; }
     [[nodiscard]] bool renderViewport(int width, int height) { return render(width, height); }
     [[nodiscard]] const TrainingHistory3D& history() const { return m_history; }
-    // Os graficos expandidos e a janela de tempo (0..3: 60 s, 60 min, 5 h, 24 h).
+    // Os graficos expandidos e o periodo deles (o mesmo do recolhido; 0..5: 1, 3, 6,
+    // 12 e 24 horas e desde o inicio).
     void setChartsExpanded(bool expanded, int window) {
         m_chartsExpanded = expanded;
-        m_chartWindow = window;
+        m_chartWindow = std::clamp(window, 0, 5);
         m_historyWatch = 0.0f;
     }
+    // O que os graficos desenham agora (a evolucao e as series do exercicio mostrado).
+    [[nodiscard]] const TrainingCharts3D& chartData() { return charts(m_chartsExpanded ? 240 : 160); }
     void push(int direction, float newtons);
     // O comando na mao (m/s para a frente da camera do piloto) ou, com
     // std::nullopt, o piloto da tarefa.
@@ -143,6 +148,13 @@ private:
     void drawViewport(CanvasTarget& canvas, float bottomHeight);
     void drawCommands();
     void drawCharts(float height);
+    // A locomocao: recolhido, a evolucao; expandido, um grafico para cada coisa.
+    void drawLocomotionCharts(float height);
+    // Os treinos antigos (o Corpo, o motor, o rastreador): os graficos de antes.
+    void drawLegacyCharts(float height);
+    // O seletor do periodo dos graficos (o mesmo no recolhido e no expandido).
+    void drawChartWindow(float width);
+    [[nodiscard]] const TrainingCharts3D& charts(std::size_t slices);
     void drawFooter();
     void notify(std::string text);
     [[nodiscard]] float ui(float value) const { return value * m_uiScale; }
@@ -183,6 +195,9 @@ private:
     // A categoria de cada exercicio (vazia: a lista sem categorias) e o peso dele.
     std::vector<std::string> m_drillCategories;
     std::vector<float> m_drillWeights;
+    // Da locomocao: o peso, a velocidade-meta e o levantar de cada exercicio (a evolucao).
+    std::vector<TrainingDrillInfo3D> m_drillInfo;
+    bool m_locomotionTask = false;
     // Os exercicios que a escada ainda vai ativar (nomes e fases): aparecem apagados e sem clique.
     std::vector<std::string> m_futureNames;
     std::vector<int> m_futurePhases;
@@ -260,10 +275,17 @@ private:
     std::optional<std::future<TrainingHistory3D>> m_historyPending;
     std::string m_historyRun;
     float m_historyWatch = 0.0f;
-    // Os graficos no lugar do visualizador, um embaixo do outro, e a janela de tempo deles.
+    // Cada leitura nova do banco (os graficos refazem as series so quando muda).
+    std::uint64_t m_historyVersion = 0;
+    // As series dos graficos e o que as fez (a leitura, o exercicio, as fatias).
+    TrainingCharts3D m_chartData;
+    std::uint64_t m_chartDataVersion = ~std::uint64_t { 0 };
+    std::string m_chartDataDrill;
+    std::size_t m_chartDataSlices = 0;
+    // Os graficos no lugar do visualizador, um embaixo do outro, e o periodo deles
+    // (o mesmo recolhido e expandido; comeca em "desde o inicio").
     bool m_chartsExpanded = false;
-    bool m_chartsCompact = true; // expandido: todos os graficos cabendo na altura, sem rolar
-    int m_chartWindow = 1;
+    int m_chartWindow = 5;
     std::string m_notice;
     float m_noticeSeconds = 0.0f;
 };

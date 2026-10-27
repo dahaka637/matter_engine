@@ -15,6 +15,8 @@
 #include <cfloat>
 #include <chrono>
 #include <cmath>
+#include <limits>
+#include <optional>
 #include <ctime>
 #include <fstream>
 #include <thread>
@@ -177,9 +179,11 @@ bool isTrainingRun(const std::filesystem::path& directory) {
     return contract != config.end() && contract->is_number() && contract->get<int>() == 2;
 }
 
-// As janelas de tempo dos graficos expandidos.
-constexpr std::array<std::pair<const char*, double>, 4> ChartWindows { { { "60 s", 60.0 }, { "60 min", 3600.0 },
-    { "5 h", 5.0 * 3600.0 }, { "24 h", 24.0 * 3600.0 } } };
+// O periodo dos graficos (recolhidos e expandidos; 0 = desde o inicio do treino),
+// contado da rodada mais recente do treino.
+constexpr std::array<std::pair<const char*, double>, 6> ChartWindows { { { "1 hora", 3600.0 },
+    { "3 horas", 3.0 * 3600.0 }, { "6 horas", 6.0 * 3600.0 }, { "12 horas", 12.0 * 3600.0 },
+    { "24 horas", 24.0 * 3600.0 }, { "Desde o início", 0.0 } } };
 
 std::string clockText(double unixSeconds) {
     const std::time_t when = static_cast<std::time_t>(unixSeconds);
@@ -188,13 +192,94 @@ std::string clockText(double unixSeconds) {
     return text;
 }
 
-// Uma serie de um grafico: os valores, a cor e se e a de referencia (mais apagada, sem preenchimento).
+// Uma serie de um grafico: os valores (NaN: sem dado naquele ponto), a cor, se e a de referencia (mais
+// apagada, sem preenchimento) e se so aparece na dica (as partes de um indice).
 struct ChartSeries {
     const std::vector<float>* values;
     ImVec4 color;
     bool reference = false;
     std::string label;
+    bool hidden = false;
 };
+
+bool anyFinite(const std::vector<float>& values) {
+    return std::any_of(values.begin(), values.end(), [](float v) { return std::isfinite(v); });
+}
+
+// O ultimo valor com dado (NaN sem nenhum).
+float lastFinite(const std::vector<float>& values) {
+    for (auto it = values.rbegin(); it != values.rend(); ++it)
+        if (std::isfinite(*it)) return *it;
+    return std::numeric_limits<float>::quiet_NaN();
+}
+
+// A variacao no periodo: a media dos primeiros e dos ultimos 5% dos pontos com dado (o ruido nao engana).
+std::optional<std::pair<double, double>> periodChange(const std::vector<float>& values) {
+    std::vector<float> v;
+    for (const float x : values)
+        if (std::isfinite(x)) v.push_back(x);
+    if (v.size() < 2) return std::nullopt;
+    const std::size_t k = std::max<std::size_t>(1, v.size() / 20);
+    double head = 0.0, tail = 0.0;
+    for (std::size_t j = 0; j < k; ++j) {
+        head += v[j];
+        tail += v[v.size() - 1 - j];
+    }
+    return std::pair<double, double> { head / static_cast<double>(k), tail / static_cast<double>(k) };
+}
+
+// Um numero de grafico: inteiro de 1000 para cima (7450, nao 7.45e+03), uma casa de 10 a 1000, tres algarismos abaixo.
+std::string chartNumber(double v) {
+    char text[32];
+    const bool whole = std::abs(v - std::round(v)) < 1e-6;
+    std::snprintf(text, sizeof text, std::abs(v) >= 1000.0 || whole ? "%.0f" : std::abs(v) >= 10.0 ? "%.1f" : "%.3g", v);
+    return text;
+}
+
+// A escala de um indice ou de uma fatia (0 a 100): em volta dos dados, de 10 em 10, nunca menos de 20 pontos
+// (a tendencia aparece; o ruido nao vira montanha).
+std::pair<float, float> indexRange(std::initializer_list<const std::vector<float>*> lists) {
+    float lowest = FLT_MAX, highest = -FLT_MAX;
+    for (const std::vector<float>* list : lists)
+        for (const float v : *list) {
+            if (!std::isfinite(v)) continue;
+            lowest = std::min(lowest, v);
+            highest = std::max(highest, v);
+        }
+    if (lowest > highest) return { 0.0f, 100.0f };
+    float low = std::max(0.0f, std::floor((lowest - 3.0f) / 10.0f) * 10.0f);
+    float high = std::min(100.0f, std::ceil((highest + 3.0f) / 10.0f) * 10.0f);
+    while (high - low < 20.0f) {
+        if (low > 0.0f) low -= 10.0f;
+        if (high - low < 20.0f && high < 100.0f) high += 10.0f;
+    }
+    return { std::max(0.0f, low), std::min(100.0f, high) };
+}
+
+// A escala de um grafico: as bordas arredondadas para fora num numero redondo (1; 1,2; 1,5; 2; 2,5; 3; 4; 5; 6;
+// 8 x 10^k), com folga acima do maximo: a linha nunca encosta no topo. Ignora os pontos sem dado.
+std::pair<float, float> niceRange(std::initializer_list<const std::vector<float>*> lists, float floorTop,
+    float floorBottom) {
+    float lowest = floorBottom, highest = floorTop;
+    for (const std::vector<float>* list : lists)
+        for (const float v : *list) {
+            if (!std::isfinite(v)) continue;
+            lowest = std::min(lowest, v);
+            highest = std::max(highest, v);
+        }
+    const auto nice = [](float v) {
+        if (!(v > 0.0f)) return 0.0f;
+        const float power = std::pow(10.0f, std::floor(std::log10(v)));
+        for (const float step : { 1.0f, 1.2f, 1.5f, 2.0f, 2.5f, 3.0f, 4.0f, 5.0f, 6.0f, 8.0f, 10.0f })
+            if (step * power >= v * 0.9999f) return step * power;
+        return 10.0f * power;
+    };
+    const float pad = std::max((highest - lowest) * 0.10f, 1e-3f);
+    const float top = highest > 0.0f ? nice(highest + pad) : (highest < 0.0f ? 0.0f : nice(pad));
+    const float bottom = lowest >= 0.0f ? (floorBottom == 0.0f && lowest < 1e-6f ? 0.0f : std::max(0.0f, lowest - pad))
+                                        : -nice(-lowest + pad);
+    return { bottom, std::max(top, bottom + 1e-3f) };
+}
 
 // Um grafico de linha: fundo, grade, a serie principal com a area, a de referencia por tras, o valor de
 // agora grande no canto e a dica com o valor sob o mouse.
@@ -220,6 +305,7 @@ void lineChart(const char* id, const std::vector<ChartSeries>& series, float min
     float hoverAt = -1.0f;
     std::size_t hoverCount = 0;
     for (const ChartSeries& item : series) hoverCount = std::max(hoverCount, item.values->size());
+    const auto drawn = [](const ChartSeries& item) { return !item.hidden && anyFinite(*item.values); };
     if (hovered && hoverCount > 1)
         hoverAt = std::clamp((ImGui::GetIO().MousePos.x - inner0.x) / std::max(inner1.x - inner0.x, 1.0f), 0.0f, 1.0f);
     const auto indexAt = [hoverAt](std::size_t size) {
@@ -227,9 +313,10 @@ void lineChart(const char* id, const std::vector<ChartSeries>& series, float min
     };
     for (int pass = 0; pass < 2; ++pass) {
         for (const ChartSeries& item : series) {
-            if ((pass == 0) != item.reference) continue;
+            if (item.hidden || (pass == 0) != item.reference) continue;
             const std::vector<float>& v = *item.values;
             if (v.size() < 2) continue;
+            const auto has = [&v](std::size_t i) { return std::isfinite(v[i]); };
             const auto point = [&](std::size_t i) {
                 return ImVec2 { inner0.x + (inner1.x - inner0.x) * static_cast<float>(i) / static_cast<float>(v.size() - 1),
                     yOf(v[i]) };
@@ -242,13 +329,23 @@ void lineChart(const char* id, const std::vector<ChartSeries>& series, float min
                 fill.w = 0.16f;
                 const ImU32 fillColor = ImGui::ColorConvertFloat4ToU32(fill);
                 for (std::size_t i = 0; i + 1 < v.size(); ++i) {
+                    if (!has(i) || !has(i + 1)) continue;
                     const ImVec2 a = point(i), b = point(i + 1);
                     draw->AddQuadFilled(a, b, { b.x, inner1.y }, { a.x, inner1.y }, fillColor);
                 }
             }
             for (std::size_t i = 0; i + 1 < v.size(); ++i)
-                draw->AddLine(point(i), point(i + 1), lineColor, item.reference ? 1.2f : 2.0f);
-            if (!item.reference) draw->AddCircleFilled(point(v.size() - 1), 3.2f, lineColor);
+                if (has(i) && has(i + 1)) draw->AddLine(point(i), point(i + 1), lineColor, item.reference ? 1.2f : 2.0f);
+            // (Um ponto sozinho entre buracos vira um pingo; o ultimo com dado, o ponto de agora.)
+            for (std::size_t i = 0; i < v.size(); ++i)
+                if (has(i) && (i == 0 || !has(i - 1)) && (i + 1 == v.size() || !has(i + 1)))
+                    draw->AddCircleFilled(point(i), 1.8f, lineColor);
+            if (!item.reference)
+                for (std::size_t i = v.size(); i-- > 0;)
+                    if (has(i)) {
+                        draw->AddCircleFilled(point(i), 3.2f, lineColor);
+                        break;
+                    }
         }
     }
     if (hoverAt >= 0.0f) {
@@ -257,12 +354,16 @@ void lineChart(const char* id, const std::vector<ChartSeries>& series, float min
         ImGui::BeginTooltip();
         if (times && !times->empty()) ImGui::TextDisabled("%s", clockText((*times)[indexAt(times->size())]).c_str());
         for (const ChartSeries& item : series) {
-            if (item.values->empty()) continue;
+            if (item.values->empty() || !anyFinite(*item.values)) continue;
             const float v = (*item.values)[indexAt(item.values->size())];
+            const std::string name = !item.label.empty() ? item.label + "  " : item.reference ? "clássico  " : "";
+            if (!std::isfinite(v)) {
+                ImGui::TextColored(item.color, "%s—", name.c_str());
+                continue;
+            }
             // As casas pelo tamanho do numero (8862, 13,2, 0,265).
             const char* format = std::abs(v) >= 100.0f ? "%s%.0f %s" : std::abs(v) >= 10.0f ? "%s%.1f %s" : "%s%.3g %s";
-            ImGui::TextColored(item.color, format,
-                !item.label.empty() ? (item.label + "  ").c_str() : item.reference ? "clássico  " : "", v, unit);
+            ImGui::TextColored(item.color, format, name.c_str(), v, unit);
         }
         ImGui::EndTooltip();
     }
@@ -271,15 +372,12 @@ void lineChart(const char* id, const std::vector<ChartSeries>& series, float min
         draw->AddText({ high.x - extent.x - 10.0f, low.y + 6.0f }, ImGui::ColorConvertFloat4ToU32(series.front().color),
             valueText);
     }
-    const bool empty = std::all_of(series.begin(), series.end(), [](const ChartSeries& s) { return s.values->empty(); });
+    const bool empty = std::none_of(series.begin(), series.end(), drawn);
     if (!empty) {
         // A escala so com dados (vazio, os numeros dos eixos nao dizem nada).
-        char range[32];
-        std::snprintf(range, sizeof range, "%.3g", maximum);
-        draw->AddText({ low.x + 10.0f, low.y + 6.0f }, IM_COL32(100, 120, 140, 200), range);
-        std::snprintf(range, sizeof range, "%.3g", minimum);
+        draw->AddText({ low.x + 10.0f, low.y + 6.0f }, IM_COL32(100, 120, 140, 200), chartNumber(maximum).c_str());
         draw->AddText({ low.x + 10.0f, high.y - ImGui::GetTextLineHeight() - 6.0f }, IM_COL32(100, 120, 140, 200),
-            range);
+            chartNumber(minimum).c_str());
     }
     if (timeLabels && times && times->size() > 1) {
         // O comeco e o fim do trecho, embaixo nos cantos.
@@ -371,6 +469,9 @@ void ReinforcementLearningScreen::loadDrills() {
     m_drillPhases.clear();
     m_drillCategories.clear();
     m_drillWeights.clear();
+    m_drillInfo.clear();
+    m_locomotionTask = false;
+    m_chartDataVersion = ~std::uint64_t { 0 };
     m_futureNames.clear();
     m_futurePhases.clear();
     const std::filesystem::path path = taskPath();
@@ -394,12 +495,14 @@ void ReinforcementLearningScreen::loadDrills() {
             m_drillPhases.push_back(2);
         }
     } else if (LocomotionViewer3D::isLocomotionTask(path)) {
+        m_locomotionTask = true;
         for (const LocomotionViewer3D::Drill& drill : LocomotionViewer3D::drillsOf(path)) {
             m_drillIds.push_back(drill.id);
             m_drillNames.push_back(drill.name);
             m_drillPhases.push_back(drill.phase);
             m_drillCategories.push_back(drill.category);
             m_drillWeights.push_back(drill.weight);
+            m_drillInfo.push_back({ drill.id, drill.weight, drill.goalSpeed, drill.getUp });
         }
         // A escada completa (a ultima tarefa): o que ainda nao esta no treino fica
         // apagado (so nas tarefas sem categorias).
@@ -729,12 +832,13 @@ void ReinforcementLearningScreen::refreshHistory() {
         if (m_historyPending->wait_for(std::chrono::seconds(0)) != std::future_status::ready) return;
         m_history = m_historyPending->get();
         m_historyPending.reset();
+        ++m_historyVersion;
         return;
     }
     m_historyRun = activeRun();
     m_historyPending = std::async(std::launch::async,
         [database = m_paths.database, directory = m_paths.run(m_historyRun), run = m_historyRun,
-            since = m_chartsExpanded ? ChartWindows[static_cast<std::size_t>(m_chartWindow)].second : 0.0,
+            since = ChartWindows[static_cast<std::size_t>(m_chartWindow)].second,
             points = std::size_t { m_chartsExpanded ? 1200u : 400u }] {
             // O rastreador grava os seus arquivos, nao o rl.db.
             if (MotorViewer3D::isMotorTask(directory / "tarefa.json"))
@@ -988,42 +1092,20 @@ void ReinforcementLearningScreen::draw(CanvasTarget& canvas, float uiScale) {
     ImGui::BeginChild("RLWorkspace", { io.DisplaySize.x - left - margin, height }, true, ImGuiWindowFlags_NoScrollbar);
     const float charts = ui(150.0f);
     if (m_chartsExpanded) {
-        // Expandido: so os graficos. Na linha do titulo, a janela de tempo e o recolher, discretos no canto.
+        // Expandido: so os graficos. Na linha do titulo, no canto, o recolher e o periodo (o mesmo do recolhido).
         sectionLabel("GRÁFICOS");
-        const float button = ui(52.0f), gap = ui(4.0f), close = ui(26.0f);
-        const float compact = ui(110.0f);
-        const float total = compact + static_cast<float>(ChartWindows.size()) * (button + gap) + ui(10.0f) + close;
-        ImGui::SameLine(std::max(ImGui::GetCursorPosX(), ImGui::GetWindowContentRegionMax().x - total));
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, { ui(4.0f), ui(1.0f) });
-        ImGui::Checkbox("Compactado", &m_chartsCompact);
-        tooltip("Todos os gráficos cabendo na altura, sem rolar.");
-        ImGui::SameLine(0.0f, ui(12.0f));
-        ImGui::PushID("RLChartWindow");
-        for (int i = 0; i < static_cast<int>(ChartWindows.size()); ++i) {
-            if (i > 0) ImGui::SameLine(0.0f, gap);
-            const bool on = i == m_chartWindow;
-            ImGui::PushStyleColor(ImGuiCol_Button, on ? ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive) : ImVec4 { 0.0f, 0.0f, 0.0f, 0.0f });
-            if (ImGui::Button(ChartWindows[static_cast<std::size_t>(i)].first, { button, 0.0f }) && !on) {
-                m_chartWindow = i;
-                m_historyWatch = 0.0f;
-            }
-            ImGui::PopStyleColor();
-        }
-        ImGui::PopID();
-        tooltip("O trecho mais recente do treino nos gráficos.");
-        ImGui::SameLine(0.0f, ui(10.0f));
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4 { 0.0f, 0.0f, 0.0f, 0.0f });
-        if (ImGui::Button(UI::FontAwesome::label(UI::FontAwesome::Xmark, "").c_str(), { close, 0.0f })) {
+        const float back = ui(124.0f), window = ui(150.0f), gap = ui(8.0f);
+        ImGui::SameLine(std::max(ImGui::GetCursorPosX(), ImGui::GetWindowContentRegionMax().x - back - gap - window));
+        if (ImGui::Button(UI::FontAwesome::label(UI::FontAwesome::ArrowLeft, "Recolher").c_str(), { back, ui(28.0f) })) {
             m_chartsExpanded = false;
             m_historyWatch = 0.0f;
         }
-        ImGui::PopStyleColor();
-        ImGui::PopStyleVar();
-        tooltip("Recolher: volta o visualizador.");
+        tooltip("Volta o visualizador.");
+        ImGui::SameLine(0.0f, gap);
+        drawChartWindow(window);
         subtleSeparator();
-        // Sem rodape: a altura toda e dos graficos.
-        ImGui::BeginChild("RLChartsScroll", { 0.0f, std::max(ui(100.0f), ImGui::GetContentRegionAvail().y) }, false,
-            m_chartsCompact ? ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse : 0);
+        // Sem rodape: a altura toda e dos graficos (rolando so se nao couberem).
+        ImGui::BeginChild("RLChartsScroll", { 0.0f, std::max(ui(100.0f), ImGui::GetContentRegionAvail().y) }, false);
         drawCharts(ImGui::GetContentRegionAvail().y);
         ImGui::EndChild();
     } else {
@@ -1498,10 +1580,174 @@ void ReinforcementLearningScreen::drawCommands() {
         m_chartsExpanded = true;
         m_historyWatch = 0.0f;
     }
-    tooltip("Os gráficos no lugar do visualizador, maiores e com a janela de tempo.");
+    tooltip("Os gráficos detalhados no lugar do visualizador.");
+    ImGui::SameLine(0.0f, ui(8.0f));
+    drawChartWindow(ui(150.0f));
+}
+
+void ReinforcementLearningScreen::drawChartWindow(float width) {
+    // (Da altura dos botoes da linha: 28 px na escala.)
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding,
+        { ImGui::GetStyle().FramePadding.x, std::max(0.0f, (ui(28.0f) - ImGui::GetFontSize()) * 0.5f) });
+    ImGui::SetNextItemWidth(width);
+    if (ImGui::BeginCombo("##RLChartWindow", ChartWindows[static_cast<std::size_t>(m_chartWindow)].first)) {
+        for (int i = 0; i < static_cast<int>(ChartWindows.size()); ++i) {
+            const bool on = i == m_chartWindow;
+            if (ImGui::Selectable(ChartWindows[static_cast<std::size_t>(i)].first, on) && !on) {
+                m_chartWindow = i;
+                m_historyWatch = 0.0f;
+            }
+            if (on) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::PopStyleVar();
+    tooltip("O período dos gráficos.");
+}
+
+const TrainingCharts3D& ReinforcementLearningScreen::charts(std::size_t slices) {
+    if (m_chartDataVersion != m_historyVersion || m_chartDataDrill != m_viewerDrill || m_chartDataSlices != slices) {
+        m_chartData = trainingCharts3D(m_history, m_drillInfo, m_viewerDrill, slices);
+        m_chartDataVersion = m_historyVersion;
+        m_chartDataDrill = m_viewerDrill;
+        m_chartDataSlices = slices;
+    }
+    return m_chartData;
 }
 
 void ReinforcementLearningScreen::drawCharts(float height) {
+    if (m_locomotionTask && !MotorViewer3D::isMotorTask(m_viewerTask) && !TrackingViewer3D::isTrackingTask(m_viewerTask))
+        drawLocomotionCharts(height);
+    else
+        drawLegacyCharts(height);
+}
+
+void ReinforcementLearningScreen::drawLocomotionCharts(float height) {
+    ImGui::Dummy({ 1.0f, ui(4.0f) });
+    const TrainingCharts3D& data = charts(m_chartsExpanded ? 240 : 160);
+    const auto shown = std::find(m_drillIds.begin(), m_drillIds.end(), m_viewerDrill);
+    const std::string drillName
+        = shown == m_drillIds.end() ? std::string() : m_drillNames[static_cast<std::size_t>(shown - m_drillIds.begin())];
+    TrainingDrillInfo3D info;
+    for (const TrainingDrillInfo3D& candidate : m_drillInfo)
+        if (candidate.id == m_viewerDrill) info = candidate;
+    const auto text = [](float v, const char* format) {
+        if (!std::isfinite(v)) return std::string();
+        char buffer[48];
+        std::snprintf(buffer, sizeof buffer, format, v);
+        return std::string(buffer);
+    };
+    const ImVec4 green { 0.30f, 0.82f, 0.56f, 1.0f }, amber { 0.96f, 0.70f, 0.28f, 1.0f },
+        cyan { 0.35f, 0.78f, 0.94f, 1.0f }, violet { 0.70f, 0.56f, 0.96f, 1.0f }, blue { 0.47f, 0.62f, 0.98f, 1.0f };
+
+    if (!m_chartsExpanded) {
+        // Recolhido: so a evolucao (0 a 100) do treino todo e, apagada, a do exercicio mostrado; as partes na dica.
+        const bool drillLine = anyFinite(data.drillEvolution) && !drillName.empty();
+        std::string title = "Evolução (0 a 100) · o treino";
+        if (drillLine) title += " e, apagado, " + drillName;
+        std::string value = text(lastFinite(data.evolution), "%.0f");
+        if (const auto change = periodChange(data.evolution))
+            value += text(static_cast<float>(change->second - change->first), "  (%+.1f)");
+        std::vector<ChartSeries> series { { &data.evolution, green, false, "treino" } };
+        if (drillLine) series.push_back({ &data.drillEvolution, cyan, true, drillName });
+        series.push_back({ &data.standing, green, false, "sem cair", true });
+        series.push_back({ &data.tracking, cyan, false, "seguir o pedido", true });
+        series.push_back({ &data.stability, violet, false, "estabilidade", true });
+        series.push_back({ &data.reach, amber, false, "velocidade alcançada", true });
+        ImGui::TextColored(InfoText, "%s", title.c_str());
+        tooltip("Junta, por exercício, o sem cair (40%), o seguir o pedido (25%), a estabilidade (20%) e a velocidade "
+                "alcançada contra a meta (15%), pelos pesos da tarefa.");
+        const auto [low, high] = indexRange({ &data.evolution, &data.drillEvolution });
+        lineChart("##evolucao", series, low, high,
+            { ImGui::GetContentRegionAvail().x, std::max(height - ImGui::GetTextLineHeightWithSpacing(), ui(40.0f)) },
+            value.c_str(), "", &data.times, false, "sem dados no período");
+        return;
+    }
+
+    // Expandido: um grafico para cada coisa, do exercicio mostrado (as decisoes por segundo, do treino).
+    struct Chart {
+        std::string title;
+        std::vector<ChartSeries> series;
+        float minimum;
+        float maximum;
+        std::string value;
+        const char* unit;
+    };
+    const std::string inDrill = drillName.empty() ? std::string() : " · " + drillName;
+    float best = -FLT_MAX;
+    for (const float v : data.drillReward)
+        if (std::isfinite(v)) best = std::max(best, v);
+    const std::vector<float> bestLine(best > -FLT_MAX ? 2 : 0, best);
+    std::vector<Chart> list;
+    {
+        const auto [low, high] = indexRange({ &data.drillStanding, &data.drillTest });
+        Chart chart { std::string(info.getUp ? "Levantou-se (%)" : "Sem cair (%)") + inDrill,
+            { { &data.drillStanding, green, false, "treino" } }, low, high,
+            text(lastFinite(data.drillStanding), "%.0f%%"), "%" };
+        if (anyFinite(data.drillTest)) chart.series.push_back({ &data.drillTest, green, true, "teste sem ruído" });
+        list.push_back(std::move(chart));
+    }
+    // (A velocidade so nos exercicios que andam: parado, girando ou levando empurrao, ela nao diz nada.)
+    if (info.goalSpeed > 0.0)
+        list.push_back({ "Velocidade (m/s) · ele e, apagado, o pedido" + inDrill,
+            { { &data.drillSpeed, cyan, false, "ele" }, { &data.drillRequested, cyan, true, "pedido" } }, 0.0f,
+            niceRange({ &data.drillSpeed, &data.drillRequested }, 1.0f, 0.0f).second,
+            text(lastFinite(data.drillSpeed), "%.2f m/s"), "m/s" });
+    list.push_back({ "Estabilidade do movimento (0 a 100)" + inDrill,
+        { { &data.drillStability, violet, false, "estabilidade" }, { &data.drillFacing, violet, false, "rumo do peito", true },
+            { &data.drillFooting, violet, false, "pé firme", true }, { &data.drillTrunk, violet, false, "tronco", true } },
+        indexRange({ &data.drillStability }).first, indexRange({ &data.drillStability }).second,
+        text(lastFinite(data.drillStability), "%.0f"), "" });
+    {
+        const auto [low, high] = niceRange({ &data.drillReward, &bestLine }, 0.0f, 0.0f);
+        list.push_back({ "Recompensa por segundo" + inDrill,
+            { { &data.drillReward, amber, false, "" }, { &bestLine, amber, true, "melhor" } }, low, high,
+            text(lastFinite(data.drillReward), "%.2f/s"), "/s" });
+    }
+    list.push_back({ "Decisões / s · o treino", { { &data.decisions, blue, false, "" } }, 0.0f,
+        niceRange({ &data.decisions }, 1000.0f, 0.0f).second, text(lastFinite(data.decisions), "%.0f"), "" });
+
+    // Um embaixo do outro, na largura toda, dividindo a altura (rolando so abaixo de 150 px cada).
+    const float spacing = ImGui::GetStyle().ItemSpacing.y;
+    const float each = std::max(ui(150.0f), (height + spacing) / static_cast<float>(list.size()) - spacing);
+    for (std::size_t i = 0; i < list.size(); ++i) {
+        const Chart& chart = list[i];
+        ImGui::BeginGroup();
+        ImGui::TextColored(InfoText, "%s", chart.title.c_str());
+        if (i == 2) tooltip("A média do rumo do peito, do pé apoiado firme (sem escorregar) e do tronco dentro da postura.");
+        const auto main = std::find_if(chart.series.begin(), chart.series.end(),
+            [](const ChartSeries& item) { return !item.reference && !item.hidden; });
+        if (main != chart.series.end())
+            if (const auto change = periodChange(*main->values)) {
+                const auto [head, tail] = *change;
+                const double delta = tail - head;
+                const std::string_view unit = chart.unit;
+                std::string line = "no período: " + chartNumber(head) + " → " + chartNumber(tail)
+                    + (unit.empty() ? "" : " " + std::string(unit)) + "  (" + (delta >= 0.0 ? "+" : "") + chartNumber(delta);
+                // (Em %, a variacao em pontos; a relativa de quase zero nao diz nada.)
+                if (std::abs(head) > 1e-9 && unit != "%" && !unit.empty()) {
+                    char relative[32];
+                    std::snprintf(relative, sizeof relative, ", %+.1f%%", 100.0 * delta / std::abs(head));
+                    line += relative;
+                }
+                line += ")";
+                const bool flat = std::abs(delta) <= 0.01 * std::max(std::abs(head), 1e-6);
+                ImGui::SameLine(0.0f, ui(18.0f));
+                ImGui::TextColored(flat           ? ImVec4 { 0.55f, 0.62f, 0.70f, 1.0f }
+                        : delta > 0.0 ? ImVec4 { 0.30f, 0.82f, 0.56f, 1.0f }
+                                      : ImVec4 { 0.95f, 0.42f, 0.42f, 1.0f },
+                    "%s", line.c_str());
+            }
+        ImGui::PushID(static_cast<int>(i));
+        lineChart("##chart", chart.series, chart.minimum, chart.maximum,
+            { ImGui::GetContentRegionAvail().x, each - ImGui::GetTextLineHeightWithSpacing() }, chart.value.c_str(),
+            chart.unit, &data.times, true, "sem dados no período");
+        ImGui::PopID();
+        ImGui::EndGroup();
+    }
+}
+
+void ReinforcementLearningScreen::drawLegacyCharts(float height) {
     ImGui::Dummy({ 1.0f, ui(4.0f) });
     // A avaliacao do exercicio mostrado: a da rede (ou a do jogo, no Corpo) e, de referencia, a do classico.
     bool hasGame = false;
@@ -1732,10 +1978,9 @@ void ReinforcementLearningScreen::drawCharts(float height) {
     }
     const float spacing = ImGui::GetStyle().ItemSpacing.x;
     if (m_chartsExpanded) {
-        // Um embaixo do outro, na largura toda: compactado, todos dividindo a altura; senao ~4 por tela, o resto rolando.
-        const float each = m_chartsCompact
-            ? std::max(ui(60.0f), (ImGui::GetContentRegionAvail().y + ImGui::GetStyle().ItemSpacing.y) / static_cast<float>(charts.size()) - ImGui::GetStyle().ItemSpacing.y)
-            : std::max(ui(170.0f), height / 4.0f - ImGui::GetStyle().ItemSpacing.y);
+        // Um embaixo do outro, na largura toda, dividindo a altura (rolando so abaixo de 150 px cada).
+        const float each = std::max(ui(150.0f), (height + ImGui::GetStyle().ItemSpacing.y) / static_cast<float>(charts.size())
+            - ImGui::GetStyle().ItemSpacing.y);
         for (std::size_t i = 0; i < charts.size(); ++i) {
             const Chart& chart = charts[i];
             ImGui::BeginGroup();

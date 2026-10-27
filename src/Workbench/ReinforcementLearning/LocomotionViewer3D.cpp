@@ -308,6 +308,12 @@ std::vector<LocomotionViewer3D::Drill> LocomotionViewer3D::drillsOf(const std::f
         drill.phase = d.value("phase", 1);
         drill.category = d.value("category", std::string());
         drill.weight = d.value("weight", 1.0f);
+        drill.getUp = d.value("getUp", false);
+        if (d.contains("pilot") && d["pilot"].is_object() && d["pilot"].value("kind", std::string()) != "hold"
+            && d["pilot"].contains("bands") && d["pilot"]["bands"].is_array())
+            for (const nlohmann::json& band : d["pilot"]["bands"])
+                if (band.contains("speed") && band["speed"].is_array() && band["speed"].size() == 2)
+                    drill.goalSpeed = std::max(drill.goalSpeed, band["speed"][1].get<float>());
         if (!drill.id.empty()) out.push_back(std::move(drill));
     }
     return out;

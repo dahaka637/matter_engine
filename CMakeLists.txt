@@ -470,6 +470,7 @@ if(MATTERENGINE_BUILD_RL)
     add_library(MatterRLSupervisor STATIC
         src/Engine/RL/Supervisor/TrainerLink3D.cpp
         src/Engine/RL/Supervisor/TrainingHistory3D.cpp
+        src/Engine/RL/Supervisor/TrainingEvolution3D.cpp
     )
     target_include_directories(MatterRLSupervisor PUBLIC src)
     target_link_libraries(MatterRLSupervisor PRIVATE nlohmann_json::nlohmann_json sqlite3)
@@ -1189,6 +1190,10 @@ if(MATTERENGINE_BUILD_TESTS)
     target_compile_definitions(MatterReinforcementLearningScreenTests PRIVATE
         MATTERENGINE_TEST_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
     add_test(NAME MatterEngine.ReinforcementLearningScreen COMMAND MatterReinforcementLearningScreenTests)
+    # A evolucao do treino (o indice e as series dos graficos da tela), sem banco.
+    add_executable(MatterTrainingEvolutionTests tests/RL/TrainingEvolutionTests.cpp)
+    target_link_libraries(MatterTrainingEvolutionTests PRIVATE MatterRLSupervisor)
+    add_test(NAME MatterEngine.TrainingEvolution COMMAND MatterTrainingEvolutionTests)
 endif()
 
 # Smoke test manual: abre uma janela real e percorre resize, minimizar/restaurar
