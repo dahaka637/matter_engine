@@ -40,13 +40,13 @@ int main() {
     in.velocity = in.desiredVelocity = Eigen::Vector2d::Zero();
     in.remaining = 0.0;
     check(std::abs(runningLandingPoint3D(in).x() + 0.05) < 1e-12, "parado: atras do CoM, rumo a casa");
-    // Nao cruza: empurrado para o lado do pe de apoio, o pe esquerdo fica a pelo menos 5 cm a esquerda dele.
+    // Nao cruza: empurrado para o lado do pe de apoio, o pe esquerdo fica a pelo menos 2 cm a esquerda dele.
     RunningLandingInput3D cross;
     cross.velocity = Eigen::Vector2d(0.0, -1.0);
     cross.omega = 3.0;
     cross.hasStance = true;
     cross.stance = Eigen::Vector2d(0.0, -0.04);
-    check(std::abs(runningLandingPoint3D(cross).y() - 0.01) < 1e-12, "nao cruza o pe de apoio");
+    check(std::abs(runningLandingPoint3D(cross).y() + 0.02) < 1e-12, "nao cruza o pe de apoio");
     cross.velocity = Eigen::Vector2d::Zero();
     check(std::abs(runningLandingPoint3D(cross).y() - 0.04) < 1e-12, "sem empurrao, a trava nao age");
     // A decolagem.

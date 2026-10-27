@@ -951,8 +951,11 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
                         std::printf("   trote pouso t %.3f: alvo (%.3f %.3f) tocou (%.3f %.3f) CoM (%.3f %.3f)\n", s.clock, s.swingLanding.x(), s.swingLanding.y(),
                             sole[swing].x(), sole[swing].y(), comNow.x(), comNow.y());
                     if (s.gaitThreshold >= 0.0 && s.trotFlightTime > 0.0) {
-                        const double speed = s.walkVelocity.norm();
-                        const bool trot = runningGaitSelectTrot3D(speed, s.trotActive, s.gaitThreshold, 0.15);
+                        // O trote so para frente ou para tras (de lado ele cruzaria as pernas): a componente frontal
+                        // decide, e com mais de 0,3 m/s de lado fica a marcha.
+                        const double lateralSpeed = std::abs(s.walkVelocity.dot(s.walkLeft));
+                        const double speed = (s.walkVelocity - s.walkVelocity.dot(s.walkLeft) * s.walkLeft).norm();
+                        const bool trot = lateralSpeed <= 0.3 && runningGaitSelectTrot3D(speed, s.trotActive, s.gaitThreshold, 0.15);
                         if (trot != s.trotActive) {
                             s.trotActive = trot;
                             s.trotPhase = 0;
@@ -1175,6 +1178,7 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
                 landing.homeError = s.trotHome - d.centerOfMass.head<2>();
                 landing.hasStance = !std::getenv("STANDTROTCROSS");
                 landing.stance = sole[1 - s.swingFoot].head<2>();
+                if (const char* width = std::getenv("STANDTROTMINWIDTH")) landing.minimumWidth = std::atof(width);
                 if (const char* gain = std::getenv("STANDTROTHOME")) landing.homeGain = std::atof(gain);
                 if (!std::getenv("STANDTROTNOCAPTURE")) s.swingLanding.head<2>() = runningLandingPoint3D(landing);
             } else if (const bool disturbed = s.pushTimer > 0.0 && !std::getenv("STANDNOPUSHADJUST");

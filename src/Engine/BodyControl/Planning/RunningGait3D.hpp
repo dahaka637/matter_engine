@@ -24,11 +24,11 @@ struct RunningLandingInput3D {
     double side = 1.0;
     Eigen::Vector2d homeError = Eigen::Vector2d::Zero();
     double homeGain = 0.05;
-    // O pe de apoio e a largura minima: o pe que pousa nunca cruza para o outro lado dele (as pernas
+    // O pe de apoio e a largura minima (2 cm; com 5 cm, 1,5 m/s caia): o pe que pousa nunca cruza o de apoio (as pernas
     // colidiriam); o que faltar de captura o proximo passo, do outro pe, completa. Sem apoio, nao limita.
     bool hasStance = false;
     Eigen::Vector2d stance = Eigen::Vector2d::Zero();
-    double minimumWidth = 0.05;
+    double minimumWidth = 0.02;
 };
 [[nodiscard]] Eigen::Vector2d runningLandingPoint3D(const RunningLandingInput3D& input);
 
