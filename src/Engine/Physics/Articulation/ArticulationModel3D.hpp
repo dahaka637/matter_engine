@@ -94,6 +94,10 @@ struct ArticulationState3D {
     const ArticulationState3D& state, const std::vector<Eigen::Vector3d>& feedforward);
 [[nodiscard]] std::vector<Eigen::Vector3d> articulationFeedforwardFromGeneralized3D(
     const ArticulationModel3D& model, const ArticulationState3D& state, const Eigen::VectorXd& generalized);
+// O mesmo mapa como matriz linear K (juntas x juntas, bloco por link): o torque do motor
+// no eixo do dof j (o que o backend recorta no teto do eixo) e (K tau)_j, com tau o
+// generalizado das juntas (nota 33: as duas caixas diferem nas juntas multiaxiais).
+[[nodiscard]] Eigen::MatrixXd articulationMotorTorqueMap3D(const ArticulationModel3D& model, const ArticulationState3D& state);
 
 // Jacobianos esquerdo e direito do mapa exponencial: w = J qdot.
 [[nodiscard]] Eigen::Matrix3d exponentialLeftJacobian3D(const Eigen::Vector3d& q);

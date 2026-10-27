@@ -298,6 +298,21 @@ int main() {
         const ArticulationModel3D model = buildArticulationModel3D(profile, scene->ragdollEffectiveMass(ragdoll));
         std::printf("modelo: %zu links, %d graus de liberdade, %.2f kg\n", model.links.size(), model.dofCount, model.totalMass);
         check(model.dofCount == 45, "45 graus de liberdade (6 + 39)");
+        {
+            // O mapa K do motor bate com o conversor (nota 33).
+            const ArticulationState3D state = randomState(profile, model, rng, 0.35, 1.0, 0.5);
+            const Eigen::MatrixXd map = articulationMotorTorqueMap3D(model, state);
+            Eigen::VectorXd tau = Eigen::VectorXd::Zero(model.dofCount);
+            for (int j = 6; j < model.dofCount; ++j) tau[j] = std::sin(1.7 * j) * 50.0;
+            const std::vector<Eigen::Vector3d> feedforward = articulationFeedforwardFromGeneralized3D(model, state, tau);
+            const Eigen::VectorXd mapped = map * tau.tail(model.dofCount - 6);
+            double worst = 0.0;
+            for (std::size_t i = 1; i < model.links.size(); ++i)
+                for (int a = 0; a < 3; ++a)
+                    if (model.links[i].dof[static_cast<std::size_t>(a)] >= 0)
+                        worst = std::max(worst, std::abs(mapped[model.links[i].dof[static_cast<std::size_t>(a)] - 6] - feedforward[i][a]));
+            check(worst < 1e-9, "o mapa do motor bate com o conversor");
+        }
         modelOnlyChecks(profile, model, rng);
         // O custo de cada peca (informativo; o orcamento e medido na bancada).
         const ArticulationState3D timed = randomState(profile, model, rng, 0.35, 1.0, 0.5);

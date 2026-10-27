@@ -70,6 +70,9 @@ struct WholeBodyQPInput3D {
     std::vector<WholeBodyTask3D> tasks;
     // Teto de torque de cada eixo (n - 6, a ordem das juntas).
     Eigen::VectorXd torqueLimit;
+    // O mapa generalizado -> motor (articulationMotorTorqueMap3D; vazio = so a caixa
+    // generalizada): com ele, |K tau| <= torqueLimit tambem (o recorte real do backend).
+    Eigen::MatrixXd motorTorqueMap;
     // A forca externa estimada (generalizada, n), com a confianca ja aplicada.
     Eigen::VectorXd externalGeneralized;
     // Peso da tarefa mole de nao escorregar nos pontos (0 com os links rigidos).

@@ -144,6 +144,29 @@ std::vector<Eigen::Vector3d> articulationFeedforwardFromGeneralized3D(
     return feedforward;
 }
 
+Eigen::MatrixXd articulationMotorTorqueMap3D(const ArticulationModel3D& model, const ArticulationState3D& state) {
+    const int joints = model.dofCount - 6;
+    Eigen::MatrixXd map = Eigen::MatrixXd::Zero(joints, joints);
+    for (std::size_t i = 1; i < model.links.size(); ++i) {
+        const ArticulationLink3D& link = model.links[i];
+        const Eigen::Vector3d& c = state.jointCoordinates[i];
+        const Eigen::Matrix3d full = articulationJointSubspace3D(link, c).transpose() * articulationJointRotation3D(link, c);
+        std::array<int, 3> axes {};
+        int count = 0;
+        for (int a = 0; a < 3; ++a)
+            if (link.dof[static_cast<std::size_t>(a)] >= 0) axes[static_cast<std::size_t>(count++)] = a;
+        if (count == 0) continue;
+        Eigen::MatrixXd square(count, count);
+        for (int r = 0; r < count; ++r)
+            for (int col = 0; col < count; ++col) square(r, col) = full(axes[static_cast<std::size_t>(r)], axes[static_cast<std::size_t>(col)]);
+        const Eigen::MatrixXd inverse = square.inverse();
+        for (int r = 0; r < count; ++r)
+            for (int col = 0; col < count; ++col)
+                map(link.dof[static_cast<std::size_t>(axes[static_cast<std::size_t>(r)])] - 6, link.dof[static_cast<std::size_t>(axes[static_cast<std::size_t>(col)])] - 6) = inverse(r, col);
+    }
+    return map;
+}
+
 ArticulationModel3D buildArticulationModel3D(const RagdollProfile3D& profile, const RagdollEffectiveMass3D& mass) {
     if (!mass.valid || mass.links.size() != profile.links.size()) {
         throw std::invalid_argument("buildArticulationModel3D: massas efetivas ausentes ou de outro perfil");

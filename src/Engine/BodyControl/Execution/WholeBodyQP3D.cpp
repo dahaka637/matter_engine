@@ -59,7 +59,8 @@ WholeBodyQPResult3D WholeBodyQP3D::solve(const WholeBodyQPInput3D& in) {
     if (in.jointLower.size() == joints && in.jointUpper.size() == joints)
         for (int j = 0; j < joints; ++j)
             if (std::isfinite(in.jointLower[j]) || std::isfinite(in.jointUpper[j])) guarded.push_back(j);
-    const int inequalities = joints + 5 * contacts + static_cast<int>(guarded.size());
+    const bool motorBox = in.motorTorqueMap.rows() == joints && in.motorTorqueMap.cols() == joints;
+    const int inequalities = joints + 5 * contacts + static_cast<int>(guarded.size()) + (motorBox ? joints : 0);
     if (in.torqueLimit.size() != joints) return result;
     const Eigen::VectorXd external = in.externalGeneralized.size() == n ? in.externalGeneralized : Eigen::VectorXd::Zero(n);
     const auto start = std::chrono::steady_clock::now();
@@ -157,6 +158,14 @@ WholeBodyQPResult3D WholeBodyQP3D::solve(const WholeBodyQPInput3D& in) {
         }
     }
 
+    if (motorBox) {
+        // O teto no referencial do motor: K (M_j a - J_j^T lambda + offset) dentro de +-teto.
+        const int row = joints + 5 * contacts + static_cast<int>(guarded.size());
+        inequality.block(row, 0, joints, dimension) = in.motorTorqueMap * inequality.topRows(joints);
+        const Eigen::VectorXd shifted = in.motorTorqueMap * offset;
+        lower.segment(row, joints) = -in.torqueLimit - shifted;
+        upper.segment(row, joints) = in.torqueLimit - shifted;
+    }
     const auto built = std::chrono::steady_clock::now();
     // A guarda dos batentes, na aceleracao do eixo (recuperacao critica, nota 28).
     for (std::size_t g = 0; g < guarded.size(); ++g) {

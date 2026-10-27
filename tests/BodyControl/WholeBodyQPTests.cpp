@@ -116,6 +116,18 @@ int main() {
             check((atB - t.dot(atB) * t).norm() < 1e-4, "o outro extremo so anda ao longo da linha");
         }
     }
+    // A caixa do motor (nota 33): com K = 2 I, o torque generalizado fica na metade do teto.
+    {
+        WholeBodyQPInput3D motor = input;
+        motor.tasks = { jointTask(n, first, 1e4, 1.0, 1) };
+        motor.torqueLimit = Eigen::VectorXd::Constant(n - 6, 10.0);
+        WholeBodyQP3D plain, boxed;
+        const WholeBodyQPResult3D free = plain.solve(motor);
+        motor.motorTorqueMap = 2.0 * Eigen::MatrixXd::Identity(n - 6, n - 6);
+        const WholeBodyQPResult3D limited = boxed.solve(motor);
+        check(free.usable() && std::abs(free.torque[first]) > 9.9, "sem a caixa do motor, o teto generalizado");
+        check(limited.usable() && std::abs(limited.torque[first]) < 5.0 + 1e-3, "com K = 2 I, metade do teto");
+    }
     std::printf(failures ? "QP em dois niveis: %d falha(s)\n" : "QP em dois niveis: ok\n", failures);
     return failures ? 1 : 0;
 }
