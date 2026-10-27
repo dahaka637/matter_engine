@@ -133,6 +133,7 @@ struct Stand {
     // Retirada do vinculo nao e prova de voo: confirmar geometria e carga observadas.
     Eigen::Vector3d hopLandingPoint[2];
     Eigen::Matrix3d hopLandingRotation[2];
+    double hopLandingPeak = 0.0, hopLandingPeakSum = 0.0, hopLandingTimer = -1.0;
     double hopObservedVz = 0.0, hopObservedFz = 0.0, hopReleaseKneeSum = 0.0, hopReleaseDropSum = 0.0;
     double hopRecoveryZ = 0.0, hopHeightDelta = 0.0, hopReleaseZ = 0.0;
     double hopCrouchFrom = 0.0, hopPelvisEntry = 0.0, hopStandingPelvis = 0.0, hopCrouchFrom0 = 0.0;
@@ -547,6 +548,15 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
         double low[2];
         for (int f = 0; f < 2; ++f) low[f] = lowestColliderZ(profile.links[s.feet[f]].collider, raw.links[s.feet[f]]);
         const bool clear = low[0] > .004 && low[1] > .004;
+        // O pico da reacao observada nos 0,1 s depois do pouso (media a 120 Hz, nao o pico de um subpasso).
+        if (s.hopLandingTimer >= 0.0) {
+            s.hopLandingPeak = std::max(s.hopLandingPeak, s.hopObservedFz);
+            s.hopLandingTimer += Dt;
+            if (s.hopLandingTimer > 0.1) {
+                s.hopLandingPeakSum += s.hopLandingPeak;
+                s.hopLandingTimer = -1.0;
+            }
+        }
         auto startRecovery = [&]() {
             s.hopPhase = 3;
             s.hopTime = 0.;
@@ -607,10 +617,14 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
             const bool landed = s.airborneTicks > 0
                 && (s.hopObservedFz > .15 * s.model.totalMass * 9.81 && std::min(low[0], low[1]) < .004);
             if (landed) {
+                s.hopLandingTimer = 0.0;
+                s.hopLandingPeak = 0.0;
                 s.hopHeightDelta = z - s.hopReleaseZ;
                 ++s.flights;
                 s.flightSum += s.hopTime;
-                startRecovery();
+                // Continuo (STANDHOPCONT): o pouso ja e o comeco do proximo empurrao, com a velocidade medida.
+                if (std::getenv("STANDHOPCONT")) startPush();
+                else startRecovery();
             } else if (s.airborneTicks == 0 && s.hopTime >= 8. * Dt) {
                 ++s.failedTakeoffs;
                 startRecovery();
@@ -1029,8 +1043,10 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
     }
     if (s.hopping && s.hopPhase == 1) {
         // O apoio do salto: a vertical segue o meio seno, com realimentacao na trajetoria fechada.
-        const HopSample3D hop = s.hopExtended ? sampleHopPush3D(s.hopSettings, s.hopTime, s.hopEntrySpeed, hopTakeoffSpeed3D(s.hopSettings) + 0.03)
-                                              : sampleHopStance3D(s.hopSettings, s.hopTime, s.hopEntrySpeed);
+        // Do repouso, o empurrao crescente; vindo de um pouso (quique), o meio seno absorve e devolve.
+        const bool bounce = s.hopEntrySpeed < -0.1;
+        const HopSample3D hop = s.hopExtended && !bounce ? sampleHopPush3D(s.hopSettings, s.hopTime, s.hopEntrySpeed, hopTakeoffSpeed3D(s.hopSettings) + 0.03)
+                                                         : sampleHopStance3D(s.hopSettings, s.hopTime, s.hopEntrySpeed);
         linearRate.z() = m * (hop.acceleration + 20.0 * (hop.velocity - comVelocity.z()));
     }
     const Eigen::Vector3d angularMomentum = d.centroidalMatrix.bottomRows(3) * state.velocity;
@@ -1132,8 +1148,10 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
     }
     if (s.hopping && s.hopPhase == 1) {
         // A altura da pelve pela trajetoria fechada do apoio: a extensao da perna empurra.
-        const HopSample3D hop = s.hopExtended ? sampleHopPush3D(s.hopSettings, s.hopTime, s.hopEntrySpeed, hopTakeoffSpeed3D(s.hopSettings) + 0.03)
-                                              : sampleHopStance3D(s.hopSettings, s.hopTime, s.hopEntrySpeed);
+        // Do repouso, o empurrao crescente; vindo de um pouso (quique), o meio seno absorve e devolve.
+        const bool bounce = s.hopEntrySpeed < -0.1;
+        const HopSample3D hop = s.hopExtended && !bounce ? sampleHopPush3D(s.hopSettings, s.hopTime, s.hopEntrySpeed, hopTakeoffSpeed3D(s.hopSettings) + 0.03)
+                                                         : sampleHopStance3D(s.hopSettings, s.hopTime, s.hopEntrySpeed);
         WholeBodyTask3D pelvis = wholeBodyPointTask3D(k, 0, k.origin[0], Eigen::Vector3d(0.0, 0.0, s.hopPelvisEntry + hop.displacement),
             Eigen::Vector3d(0.0, 0.0, hop.velocity), Eigen::Vector3d(0.0, 0.0, hop.acceleration), 100.0, 20.0, 20.0, "pelve no salto");
         pelvis.matrix = Eigen::MatrixXd(pelvis.matrix.row(2));
@@ -1479,8 +1497,8 @@ int main(int argc, char** argv) {
                 s.hops, s.flights, s.flights ? 1000.0 * s.flightSum / s.flights : 0.0, 1000.0 * s.hopSettings.flightTime, s.missedLandings, s.failedTakeoffs,
                 s.hops ? s.hopPeakRatioSum / s.hops : 0.0);
         if (s.hopping && s.hops)
-            std::printf("- decolagem do salto: joelho a %.0f graus, CoM %.1f cm abaixo do de pe (medias)\n", s.hopReleaseKneeSum / s.hops * 180.0 / Pi,
-                100.0 * s.hopReleaseDropSum / s.hops);
+            std::printf("- decolagem do salto: joelho a %.0f graus, CoM %.1f cm abaixo do de pe (medias); pico da reacao no pouso %.0f N (media)\n",
+                s.hopReleaseKneeSum / s.hops * 180.0 / Pi, 100.0 * s.hopReleaseDropSum / s.hops, s.flights ? s.hopLandingPeakSum / s.flights : 0.0);
         if (std::getenv("STANDWALK")) {
             const Vec3 end = s.scene->ragdollStateView(s.ragdoll)->links[0].position;
             std::printf("- marcha: %d passos, pelve andou (%.2f %.2f) m, %s\n", s.steps, end.x - startPelvis.x, end.y - startPelvis.y,
