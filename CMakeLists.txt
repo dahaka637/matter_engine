@@ -405,6 +405,7 @@ add_library(MatterBodyControl STATIC
     src/Engine/BodyControl/Observation/ContactWrench3D.cpp
     src/Engine/BodyControl/Execution/WholeBodyQP3D.cpp
     src/Engine/BodyControl/Planning/StepRecovery3D.cpp
+    src/Engine/BodyControl/Planning/DcmWalker3D.cpp
 )
 target_include_directories(MatterBodyControl PUBLIC src)
 target_link_libraries(MatterBodyControl PUBLIC MatterArticulationDynamics PRIVATE MatterProxSuite)
@@ -1313,6 +1314,9 @@ if(MATTERENGINE_BUILD_TESTS)
     target_link_libraries(MatterContactWrenchTests PRIVATE MatterBodyControl)
     target_compile_definitions(MatterContactWrenchTests PRIVATE MATTERENGINE_TEST_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
     add_test(NAME MatterEngine.ContactWrench COMMAND MatterContactWrenchTests)
+    add_executable(MatterDcmWalkerTests tests/BodyControl/DcmWalkerTests.cpp)
+    target_link_libraries(MatterDcmWalkerTests PRIVATE MatterBodyControl)
+    add_test(NAME MatterEngine.DcmWalker COMMAND MatterDcmWalkerTests)
 endif()
 
 set_target_properties(MatterCore MatterRHI MatterPhysics MatterAudio MatterVulkan

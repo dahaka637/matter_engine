@@ -9,6 +9,7 @@
 #include "Engine/BodyControl/Execution/Actuation3D.hpp"
 #include "Engine/BodyControl/Execution/WholeBodyQP3D.hpp"
 #include "Engine/BodyControl/Observation/ContactWrench3D.hpp"
+#include "Engine/BodyControl/Planning/DcmWalker3D.hpp"
 #include "Engine/BodyControl/Planning/StepRecovery3D.hpp"
 #include "Engine/Materials/MaterialLibrary.hpp"
 #include "Engine/Physics/PhysicsEngine3D.hpp"
@@ -121,7 +122,25 @@ struct Stand {
     int voluntaryFoot = -1;
     Eigen::Vector2d voluntaryOffset = Eigen::Vector2d::Zero();
     double voluntaryStart = -1.0, clock = 0.0;
+    // A marcha (G3): pegadas e DCM pelo DcmWalker3D, um passo encadeado no pouso do outro.
+    bool walking = false;
+    Eigen::Vector2d walkVelocity = Eigen::Vector2d::Zero(), walkLeft = Eigen::Vector2d::UnitY();
+    DcmWalkerSettings3D walkSettings;
+    DcmWalkerPlan3D walkPlan;
+    double walkDoubleSupport = 0.1;
+    // Diagnostico: a forca horizontal pedida, a planejada pelo QP e a medida (m c'').
+    Eigen::Vector2d lastCommandedForce = Eigen::Vector2d::Zero(), lastPlannedForce = Eigen::Vector2d::Zero();
+    Eigen::Vector3d lastComVelocity = Eigen::Vector3d::Zero();
 };
+
+// A sola plana no chao, com o rumo atual do pe.
+Eigen::Matrix3d flatSoleRotation(const Stand& s, const ArticulationKinematics3D& k, int foot) {
+    const std::vector<Eigen::Vector3d>& c = s.corners[foot];
+    Eigen::Vector3d soleNormal = (c[1] - c[0]).cross(c[2] - c[0]).normalized();
+    if (soleNormal.dot(s.soleCenterLocal[foot]) < 0.0) soleNormal = -soleNormal;
+    const Eigen::Matrix3d current = k.rotation[s.feet[foot]];
+    return Eigen::Quaterniond::FromTwoVectors(current * soleNormal, Eigen::Vector3d(0.0, 0.0, -1.0)).toRotationMatrix() * current;
+}
 
 void setup(Stand& s, const RagdollProfile3D& profile) {
     PhysicsSceneSettings3D settings;
@@ -153,7 +172,8 @@ void setup(Stand& s, const RagdollProfile3D& profile) {
     if (const char* friction = std::getenv("STANDFRIC")) s.scene->setRagdollFrictionScale(s.ragdoll, static_cast<float>(std::atof(friction)));
     // A referencia: o primeiro quadro do idle alerta (a postura atletica aprovada),
     // nas coordenadas do modelo (maos e pes: swing-twist).
-    const AnimationClip3D idle = loadAnimationClip3D(std::string(MATTERENGINE_ASSETS_DIR) + "/animations/clips/alert_idle.matteranim.json");
+    const std::string referenceClip = std::getenv("STANDREF") ? std::getenv("STANDREF") : "alert_idle";
+    const AnimationClip3D idle = loadAnimationClip3D(std::string(MATTERENGINE_ASSETS_DIR) + "/animations/clips/" + referenceClip + ".matteranim.json");
     s.referencePose.assign(s.model.links.size(), Eigen::Vector3d::Zero());
     Eigen::Quaterniond rootOrientation = Eigen::Quaterniond::Identity();
     for (const AnimationTrack3D& track : idle.tracks) {
@@ -214,7 +234,7 @@ void setup(Stand& s, const RagdollProfile3D& profile) {
             for (const Eigen::Vector3d& corner : soleCorners(profile, foot))
                 feetLowest[f] = std::min(feetLowest[f], (k0.origin[foot] + k0.rotation[foot] * corner).z());
         }
-        std::printf("referencia: idle alerta; a sola esquerda %.1f mm e a direita %.1f mm acima da mais baixa\n",
+        std::printf("referencia: %s; a sola esquerda %.1f mm e a direita %.1f mm acima da mais baixa\n", referenceClip.c_str(),
             1000.0 * (feetLowest[0] - lowest), 1000.0 * (feetLowest[1] - lowest));
         const ArticulationKinematics3D k = computeArticulationKinematics3D(s.model, pose);
         std::vector<PhysicsBodyState3D> links(s.model.links.size());
@@ -256,7 +276,24 @@ void setup(Stand& s, const RagdollProfile3D& profile) {
     // A pose de repouso ja e de pe: o alvo e o centro de massa dela.
     s.comTarget = d.centerOfMass;
     s.stepSettings.comHeight = d.centerOfMass.z();
+    if (const char* margin = std::getenv("STANDTRIGGER")) s.stepSettings.triggerMargin = std::atof(margin);
+    if (const char* overshoot = std::getenv("STANDOVER")) s.stepSettings.overshoot = std::atof(overshoot);
     s.pelvisTarget = k.rotation[0];
+    if (const char* walk = std::getenv("STANDWALK")) {
+        double vx = 1.0, vy = 0.0, duration = 0.5, when = 1.0;
+        std::sscanf(walk, "%lf,%lf,%lf,%lf", &vx, &vy, &duration, &when);
+        const Eigen::Vector2d forward = s.pelvisTarget.col(0).head<2>().normalized();
+        s.walkLeft = s.pelvisTarget.col(1).head<2>().normalized();
+        s.walkVelocity = vx * forward + vy * s.walkLeft;
+        s.walking = true;
+        s.walkSettings.stepDuration = duration;
+        if (const char* ds = std::getenv("STANDWALKDS")) s.walkDoubleSupport = std::atof(ds);
+        s.walkSettings.comHeight = s.stepSettings.comHeight;
+        s.swingDuration = duration;
+        // Para a esquerda, sai o pe esquerdo (0); senao o direito (1).
+        s.voluntaryFoot = vy > 0.0 ? 0 : 1;
+        s.voluntaryStart = when;
+    }
     s.chestTarget = k.rotation[s.chest];
     s.headTarget = k.rotation[s.head];
     s.torqueLimit = Eigen::VectorXd::Zero(s.model.dofCount - 6);
@@ -444,7 +481,7 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
             s.comTarget = { middle.x(), middle.y(), s.comTarget.z() };
         }
     }
-    if (s.steppingEnabled && s.phase == Stand::Phase::Standing && (s.landedTime < 0.0 || s.landedTime > 0.05) && footTouching[0] && footTouching[1]) {
+    if (s.steppingEnabled && s.phase == Stand::Phase::Standing && (s.landedTime < 0.0 || s.landedTime > (std::getenv("STANDWAIT") ? std::atof(std::getenv("STANDWAIT")) : 0.05)) && footTouching[0] && footTouching[1]) {
         std::vector<Eigen::Vector2d> support;
         for (const RagdollContactPoint3D& contact : raw.contacts) support.emplace_back(contact.position.x, contact.position.y);
         const Eigen::Vector3d left = k.rotation[0] * Eigen::Vector3d::UnitY();
@@ -522,6 +559,13 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
             const Eigen::Vector3d sc = sole[stanceFoot];
             s.transferFrom = s.comTarget;
             s.transferTo = { sc.x(), sc.y(), s.comTarget.z() };
+            if (s.walking) {
+                // A partida: o DCM vai ao comeco do plano do primeiro passo.
+                s.walkPlan = planDcmWalk3D(s.walkSettings, sc.head<2>(), stanceFoot == 0 ? +1 : -1, s.walkLeft, s.walkVelocity);
+                s.swingLanding = { s.walkPlan.footsteps[1].x(), s.walkPlan.footsteps[1].y(), sc.z() - 0.01 };
+                const Eigen::Vector2d start = sampleDcmWalk3D(s.walkSettings, s.walkPlan, 0.0).position;
+                s.transferTo = { start.x(), start.y(), s.comTarget.z() };
+            }
             const std::vector<Eigen::Vector3d>& c = s.corners[swing];
             Eigen::Vector3d soleNormal = (c[1] - c[0]).cross(c[2] - c[0]).normalized();
             if (soleNormal.dot(s.soleCenterLocal[swing]) < 0.0) soleNormal = -soleNormal;
@@ -538,6 +582,7 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
                 const Eigen::Vector2d capture = comNow.head<2>() + comVelocityNow.head<2>() / stepRecoveryOmega3D(s.stepSettings);
                 ready = s.phaseTime >= s.transferMove + s.unloadDuration && stancePoints.size() >= 3
                     && polygonOutside3D(stancePoints, capture) < -0.02;
+                if (s.walking) ready = s.phaseTime >= s.transferMove && ((capture - s.transferTo.head<2>()).norm() < 0.03 || (s.steps > 0 && s.phaseTime >= s.transferMove + 0.1));
             }
             if (s.phase == Stand::Phase::Transfer && (ready || s.phaseTime >= s.transferDuration)) {
                 if (!ready && std::getenv("STANDSTEPLOG")) std::printf("   transferencia: prazo esgotado sem o DCM no pe de apoio\n");
@@ -554,8 +599,28 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
                 for (const Eigen::Vector3d& corner : s.corners[swing])
                     lowest = std::min(lowest, (k.origin[s.feet[swing]] + k.rotation[s.feet[swing]] * corner).z());
                 const bool landed = s.phaseTime > 0.6 * s.swingDuration && footTouching[swing] && lowest < 0.01;
-                if (landed || s.phaseTime > s.swingDuration + 0.3) {
-                    if (!landed && std::getenv("STANDSTEPLOG")) std::printf("   pouso FALHOU (tempo esgotado)\n");
+                if (s.walking && landed) {
+                    // O pe que pousou vira o apoio; um apoio duplo curto leva o DCM ao comeco do
+                    // plano do proximo passo (a transferencia) e so entao o outro pe sai.
+                    const int next = stanceFoot;
+                    s.walkPlan = planDcmWalk3D(s.walkSettings, sole[swing].head<2>(), swing == 0 ? +1 : -1, s.walkLeft, s.walkVelocity);
+                    ++s.steps;
+                    if (std::getenv("STANDSTEPLOG"))
+                        std::printf("   passo %d: pe %d pousou em (%.2f %.2f) aos %.2f s; sai o pe %d\n", s.steps, swing, sole[swing].x(), sole[swing].y(), s.phaseTime, next);
+                    s.voluntaryFoot = next;
+                    s.stepping = false;
+                    s.phase = Stand::Phase::Transfer;
+                    s.phaseTime = 0.0;
+                    s.transferMove = s.walkDoubleSupport;
+                    s.transferFrom = { s.dcmReference.x(), s.dcmReference.y(), s.comTarget.z() };
+                    const Eigen::Vector2d start = sampleDcmWalk3D(s.walkSettings, s.walkPlan, 0.0).position;
+                    s.transferTo = { start.x(), start.y(), s.comTarget.z() };
+                    s.swingLanding = { s.walkPlan.footsteps[1].x(), s.walkPlan.footsteps[1].y(), sole[swing].z() - 0.01 };
+                    s.swingRotation = flatSoleRotation(s, k, next);
+                } else if (landed || s.phaseTime > s.swingDuration + 0.3) {
+                    if (!landed && std::getenv("STANDSTEPLOG"))
+                        std::printf("   pouso FALHOU (tempo esgotado): tocando %d, quina mais baixa %.3f m\n", int(footTouching[swing]), lowest);
+                    s.walking = false;
                     s.phase = Stand::Phase::Standing;
                     s.stepping = false;
                     s.landedTime = 0.0;
@@ -631,7 +696,7 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
             point.constrained = pointContacts;
             point.minimumNormalForce = std::getenv("STANDMINN") ? std::atof(std::getenv("STANDMINN")) : 15.0;
             if (s.landedTime >= 0.0 && s.landedTime < 0.15 && (f == s.voluntaryFoot || f == s.landedFoot)) point.minimumNormalForce = 0.0;
-            if (s.phase == Stand::Phase::Transfer && f == s.voluntaryFoot) {
+            if (s.phase == Stand::Phase::Transfer && f == s.voluntaryFoot && !s.walking) {
                 // Descarrega o pe que vai subir so depois que o CoM chegou: sem minimo e
                 // com teto decrescente no fim da transferencia.
                 point.minimumNormalForce = 0.0;
@@ -662,6 +727,14 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
         if (s.phase == Stand::Phase::Standing) {
             s.dcmReference = s.comTarget.head<2>();
             s.dcmReferenceRate.setZero();
+        } else if (s.phase == Stand::Phase::Swing && s.walking) {
+            const DcmReference3D walk = sampleDcmWalk3D(s.walkSettings, s.walkPlan, s.phaseTime);
+            s.dcmReference = walk.position;
+            s.dcmReferenceRate = walk.rate;
+            // O pouso segue o DCM medido ate 70% do balanco (depois fica fixo).
+            if (!std::getenv("STANDNOADJUST") && s.phaseTime < 0.7 * s.walkSettings.stepDuration)
+                s.swingLanding.head<2>() = adjustDcmLanding3D(s.walkSettings, s.walkPlan, DcmLandingLimits3D {}, xi,
+                    s.voluntaryFoot == 1 ? +1 : -1, s.walkLeft, s.walkSettings.stepDuration - s.phaseTime);
         } else if (s.phase == Stand::Phase::Swing) {
             s.dcmReference = sole[1 - s.voluntaryFoot].head<2>();
             s.dcmReferenceRate.setZero();
@@ -675,11 +748,31 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
         Eigen::Vector2d cop = xi - (s.dcmReferenceRate - gainXi * (xi - s.dcmReference)) / omega;
         // Preso ao apoio (os contatos dos pes que apoiam), recuado 2 cm.
         std::vector<Eigen::Vector2d> support;
-        for (const RagdollContactPoint3D& contact : raw.contacts) {
-            const bool swingFootContact = s.stepping && static_cast<int>(contact.linkIndex) == static_cast<int>(s.feet[s.swingFoot]);
-            if (!swingFootContact) support.emplace_back(contact.position.x, contact.position.y);
+        if (std::getenv("STANDOLDPOLY")) {
+            for (const RagdollContactPoint3D& contact : raw.contacts) {
+                const bool swingFootContact = s.stepping && static_cast<int>(contact.linkIndex) == static_cast<int>(s.feet[s.swingFoot]);
+                if (!swingFootContact) support.emplace_back(contact.position.x, contact.position.y);
+            }
+            if (support.size() >= 3) cop = projectToPolygon3D(support, cop, 0.02);
+        } else {
+            // O mesmo apoio que o QP recebe (os pontos ja recuados), com os minimos de forca normal:
+            // o CoP possivel e sum(f_i/F) p_i + (1 - sum f_i/F) conv(p), com F o peso.
+            const double weight = m * 9.81;
+            double share = 0.0;
+            Eigen::Vector2d fixed = Eigen::Vector2d::Zero();
+            for (const WholeBodyContactPoint3D& point : input.contacts) {
+                share += point.minimumNormalForce / weight;
+                fixed += point.minimumNormalForce / weight * point.pointWorld.head<2>();
+            }
+            share = std::min(share, 0.9);
+            for (const WholeBodyContactPoint3D& point : input.contacts) support.push_back(fixed + (1.0 - share) * point.pointWorld.head<2>());
+            if (support.size() >= 3) cop = projectToPolygon3D(support, cop, 0.005);
         }
-        if (support.size() >= 3) cop = projectToPolygon3D(support, cop, 0.02);
+        if (std::getenv("STANDWALKDBG") && s.walking && s.logTick++ % 6 == 0)
+            std::printf("   t %.2f fase %d pe %d: xi (%.3f %.3f) ref (%.3f %.3f) cop (%.3f %.3f) apoio (%.3f %.3f) pes L (%.3f %.3f) R (%.3f %.3f)\n", s.clock,
+                int(s.phase), s.voluntaryFoot, xi.x(), xi.y(), s.dcmReference.x(), s.dcmReference.y(), cop.x(), cop.y(),
+                s.voluntaryFoot >= 0 ? sole[1 - s.voluntaryFoot].x() : 0.0, s.voluntaryFoot >= 0 ? sole[1 - s.voluntaryFoot].y() : 0.0,
+                sole[0].x(), sole[0].y(), sole[1].x(), sole[1].y());
         linearRate.x() = m * omega * omega * (d.centerOfMass.x() - cop.x());
         linearRate.y() = m * omega * omega * (d.centerOfMass.y() - cop.y());
     }
@@ -748,6 +841,26 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
         input.tasks.push_back(posture);
     }
     const WholeBodyQPResult3D result = s.qp.solve(input);
+    if (const char* when = std::getenv("STANDTASKDBG"); when && result.usable() && std::abs(s.clock - std::atof(when)) < 0.5 * Dt) {
+        for (const WholeBodyTask3D& task : input.tasks) {
+            const Eigen::VectorXd residual = task.matrix * result.acceleration - task.target;
+            std::printf("   tarefa %-22s custo %10.2f  |alvo| %8.2f  |residuo| %8.3f\n", task.name.c_str(), task.weight * residual.squaredNorm(),
+                task.target.norm(), residual.norm());
+            if (task.name.rfind("centroidal", 0) == 0 || task.name.rfind("centro", 0) == 0)
+                std::printf("      residuo por linha: %s\n", [&] { std::string t; for (int r = 0; r < residual.size(); ++r) { char b[32]; std::snprintf(b, 32, "%.3f ", residual[r]); t += b; } return t; }().c_str());
+        }
+    }
+    if (std::getenv("STANDFORCEDBG") && s.walking) {
+        const Eigen::Vector2d measured = s.model.totalMass * (comVelocityNow - s.lastComVelocity).head<2>() / Dt;
+        if (int(s.clock / Dt) % 6 == 0)
+            std::printf("   t %.2f forca horizontal: pedida (%.0f %.0f) planejada (%.0f %.0f) medida (%.0f %.0f)\n", s.clock, s.lastCommandedForce.x(),
+                s.lastCommandedForce.y(), s.lastPlannedForce.x(), s.lastPlannedForce.y(), measured.x(), measured.y());
+        s.lastCommandedForce = linearRate.head<2>();
+        s.lastPlannedForce.setZero();
+        if (result.usable())
+            for (std::size_t c = 0; c < input.contacts.size(); ++c) s.lastPlannedForce += result.contactForces.segment<2>(3 * static_cast<int>(c));
+    }
+    s.lastComVelocity = comVelocityNow;
     if (std::getenv("STANDLOG") && (s.logTick++ % 30 == 0 || !result.usable())) {
         double worstRatio = 0.0;
         if (result.torque.size())
@@ -917,6 +1030,7 @@ int main(int argc, char** argv) {
     {
         Stand s;
         setup(s, profile);
+        const Vec3 startPelvis = s.scene->ragdollStateView(s.ragdoll)->links[0].position;
         const int steps = static_cast<int>(seconds / Dt);
         double pelvisSquared = 0.0, worstSlip = 0.0, micros = 0.0, worstMicros = 0.0;
         int failures = 0, samples = 0, iterations = 0;
@@ -940,6 +1054,11 @@ int main(int argc, char** argv) {
             fallen ? "SIM" : "nao", std::sqrt(pelvisSquared / std::max(1, samples)), worstSlip);
         std::printf("- QP: %d falhas (ultima: %s); %.0f us de media, %.0f us no pior; %.1f iteracoes de media\n", failures,
             statusName(lastFailure), micros / std::max(1, samples), worstMicros, double(iterations) / std::max(1, samples));
+        if (std::getenv("STANDWALK")) {
+            const Vec3 end = s.scene->ragdollStateView(s.ragdoll)->links[0].position;
+            std::printf("- marcha: %d passos, pelve andou (%.2f %.2f) m, %s\n", s.steps, end.x - startPelvis.x, end.y - startPelvis.y,
+                s.walking ? "ainda andando" : "parou");
+        }
     }
     if (!dumpPath.empty()) {
         // Os cenarios das folhas: de pe 3 s; empurroes de frente, de lado e de costas.
@@ -948,6 +1067,7 @@ int main(int argc, char** argv) {
         struct Shot { const char* name; double angle; double impulse; };
         std::vector<Shot> shots = { { "de_pe", 0.0, 0.0 }, { "empurrao_frente_30", 0.0, 30.0 }, { "empurrao_lado_60", 90.0, 60.0 },
             { "empurrao_225_120", 225.0, 120.0 }, { "empurrao_frente_60_cai", 0.0, 60.0 } };
+        if (std::getenv("STANDWALK")) shots = { { "marcha", 0.0, 0.0 } };
         static std::string customName;
         if (const char* custom = std::getenv("STANDPUSH")) {
             double angle = 0.0, impulse = 0.0;
