@@ -554,7 +554,14 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
         // A pancada: forca horizontal fora dos apoios (na marcha normal, p99 de 1 N; num empurrao de 40 N.s, 151 N).
         const double threshold = std::getenv("STANDPUSHFORCE") ? std::atof(std::getenv("STANDPUSHFORCE")) : 40.0;
         if (unexplained.head<2>().norm() > threshold) {
-            if (s.pushTimer <= 0.0) ++s.pushesDetected;
+            if (s.pushTimer <= 0.0) {
+                ++s.pushesDetected;
+                // Apressar o passo (STANDPUSHHASTE=s): o pe em balanco pousa no maximo esse tempo depois da pancada.
+                if (const char* haste = std::getenv("STANDPUSHHASTE"); haste && s.stepping && s.trotPhase == 0) {
+                    const double limit = s.stepTime + std::atof(haste);
+                    if (s.stepDuration > limit) s.stepDuration = s.swingDuration = std::max(limit, 0.6 * s.stepDuration);
+                }
+            }
             s.pushTimer = 0.6;
         }
     }
@@ -1218,6 +1225,21 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
                 if (const char* width = std::getenv("STANDTROTMINWIDTH")) landing.minimumWidth = std::atof(width);
                 if (const char* gain = std::getenv("STANDTROTHOME")) landing.homeGain = std::atof(gain);
                 if (!std::getenv("STANDTROTNOCAPTURE")) s.swingLanding.head<2>() = runningLandingPoint3D(landing);
+            } else if (s.pushTimer > 0.0 && std::getenv("STANDPUSHCAPTURE") && s.stepTime < 0.85 * s.stepDuration) {
+                // Depois de uma pancada, o pe da marcha mira o ponto de captura previsto no toque (pendulo sobre o
+                // pe de apoio: xi_T = p + e^(omega tau)(xi - p)), meia largura para o lado dele, sem cruzar.
+                const Eigen::Vector2d stance = sole[1 - s.voluntaryFoot].head<2>();
+                const double tau = std::max(0.0, s.stepDuration - s.stepTime);
+                RunningLandingInput3D landing;
+                landing.centerOfMass = stance + std::exp(omega * tau) * (xi - stance);
+                landing.omega = omega;
+                landing.stepWidth = s.walkSettings.stepWidth;
+                landing.side = s.voluntaryFoot == 0 ? 1.0 : -1.0;
+                landing.left = s.walkLeft;
+                landing.hasStance = true;
+                landing.stance = stance;
+                landing.minimumWidth = 0.08;
+                s.swingLanding.head<2>() = runningLandingPoint3D(landing);
             } else if (const bool disturbed = s.pushTimer > 0.0 && !std::getenv("STANDNOPUSHADJUST");
                        !std::getenv("STANDNOADJUST") && s.stepTime < (disturbed && !std::getenv("STANDNOPUSHLATE") ? 0.85 : 0.7) * s.stepDuration)
                 // Depois de uma pancada (forca fora dos apoios > 40 N nos ultimos 0,6 s, pelo estimador de contato) o
