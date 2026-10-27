@@ -1428,11 +1428,27 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
     const std::vector<Eigen::Vector3d> zero(s.model.links.size(), Eigen::Vector3d::Zero());
     {
         // A postura por regiao: bracos, coluna e pescoco firmes; pernas livres para equilibrar.
-        WholeBodyTask3D posture = wholeBodyPostureTask3D(s.model, state, s.referencePose, zero, zero, 100.0 * gain * gain, 20.0 * gain, 1.0);
+        // Balanco de braco na marcha e no trote (STANDARMSWING=amplitude,eixo): o braco oposto a perna que
+        // balanca vai de tras para a frente junto com ela; o do mesmo lado, ao contrario.
+        std::vector<Eigen::Vector3d> pose = s.referencePose;
+        if (const char* swingArms = std::getenv("STANDARMSWING"); swingArms && s.walking && s.stepping) {
+            double amplitude = 0.3;
+            int axis = 1;
+            std::sscanf(swingArms, "%lf,%d", &amplitude, &axis);
+            const double u = std::clamp(s.stepTime / std::max(1e-3, s.stepDuration), 0.0, 1.0);
+            const double smooth = u * u * (3.0 - 2.0 * u);
+            const double opposite = -amplitude + 2.0 * amplitude * smooth;
+            const std::size_t leftArm = findLink(profile, "LeftUpperArm"), rightArm = findLink(profile, "RightUpperArm");
+            const bool leftLegSwings = s.swingFoot == 0;
+            // O braco direito acompanha a perna esquerda e vice-versa; os dois lados tem sinais espelhados no eixo.
+            pose[rightArm][static_cast<std::size_t>(axis)] += (leftLegSwings ? opposite : -opposite);
+            pose[leftArm][static_cast<std::size_t>(axis)] += (leftLegSwings ? opposite : -opposite) * (std::getenv("STANDARMMIRROR") ? -1.0 : 1.0);
+        }
+        WholeBodyTask3D posture = wholeBodyPostureTask3D(s.model, state, pose, zero, zero, 100.0 * gain * gain, 20.0 * gain, 1.0);
         // Bracos e coluna com ganhos proprios (omega 20 e 14 rad/s): o tronco empurrado nao os deixa para tras.
         const double armOmega = std::getenv("STANDARMW") ? std::atof(std::getenv("STANDARMW")) : 20.0;
         const double spineOmega = std::getenv("STANDSPINEW") ? std::atof(std::getenv("STANDSPINEW")) : 14.0;
-        const WholeBodyTask3D armPosture = wholeBodyPostureTask3D(s.model, state, s.referencePose, zero, zero, armOmega * armOmega, 2.0 * armOmega, 1.0);
+        const WholeBodyTask3D armPosture = wholeBodyPostureTask3D(s.model, state, pose, zero, zero, armOmega * armOmega, 2.0 * armOmega, 1.0);
         const WholeBodyTask3D spinePosture = wholeBodyPostureTask3D(s.model, state, s.referencePose, zero, zero, spineOmega * spineOmega, 2.0 * spineOmega, 1.0);
         const double armWeight = std::getenv("STANDARM") ? std::atof(std::getenv("STANDARM")) : 3.0;
         const double spineWeight = std::getenv("STANDSPINE") ? std::atof(std::getenv("STANDSPINE")) : 1.5;
