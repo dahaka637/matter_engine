@@ -29,13 +29,18 @@ DcmWalkerPlan3D planDcmWalk3D(const DcmWalkerSettings3D& settings, const Eigen::
         if (side * lateral > 0.0) center += 2.0 * settings.stepDuration * lateral * left;
         plan.footsteps.push_back(center + side * half * left);
     }
-    // De tras para frente: o ultimo pe e a parada (o DCM termina sobre ele).
+    if (forward.norm() > 1e-9) plan.copShift = settings.copTravel * std::min(1.0, forward.norm()) * forward.normalized();
+    // De tras para frente: o ultimo pe e a parada (o DCM termina sobre ele, o CoP parado);
+    // o DCM no fim do passo i e o do comeco do passo i + 1.
     const double decay = std::exp(-omegaOf(settings) * settings.stepDuration);
     plan.endOfStep.assign(plan.footsteps.size(), Eigen::Vector2d::Zero());
     plan.endOfStep.back() = plan.footsteps.back();
     for (int i = static_cast<int>(plan.footsteps.size()) - 2; i >= 0; --i) {
-        const Eigen::Vector2d& next = plan.footsteps[static_cast<std::size_t>(i + 1)];
-        plan.endOfStep[static_cast<std::size_t>(i)] = next + decay * (plan.endOfStep[static_cast<std::size_t>(i + 1)] - next);
+        const std::size_t next = static_cast<std::size_t>(i + 1);
+        const Eigen::Vector2d shift = next + 1 == plan.footsteps.size() ? Eigen::Vector2d::Zero() : plan.copShift;
+        const Eigen::Vector2d lead = shift / (omegaOf(settings) * settings.stepDuration);
+        const Eigen::Vector2d heel = plan.footsteps[next] - 0.5 * shift, toe = plan.footsteps[next] + 0.5 * shift;
+        plan.endOfStep[static_cast<std::size_t>(i)] = heel + lead + decay * (plan.endOfStep[next] - toe - lead);
     }
     return plan;
 }
@@ -44,10 +49,13 @@ DcmReference3D sampleDcmWalk3D(const DcmWalkerSettings3D& settings, const DcmWal
     DcmReference3D reference;
     if (plan.footsteps.empty()) return reference;
     const double omega = omegaOf(settings);
-    const Eigen::Vector2d& cop = plan.footsteps.front();
     const double t = std::clamp(time, 0.0, settings.stepDuration);
-    reference.position = cop + std::exp(omega * (t - settings.stepDuration)) * (plan.endOfStep.front() - cop);
-    reference.rate = omega * (reference.position - cop);
+    const Eigen::Vector2d shift = plan.footsteps.size() > 1 ? plan.copShift : Eigen::Vector2d::Zero();
+    const Eigen::Vector2d lead = shift / (omega * settings.stepDuration);
+    const Eigen::Vector2d toe = plan.footsteps.front() + 0.5 * shift;
+    reference.cop = plan.footsteps.front() - 0.5 * shift + (t / settings.stepDuration) * shift;
+    reference.position = reference.cop + lead + std::exp(omega * (t - settings.stepDuration)) * (plan.endOfStep.front() - toe - lead);
+    reference.rate = omega * (reference.position - reference.cop);
     return reference;
 }
 
@@ -55,7 +63,11 @@ Eigen::Vector2d adjustDcmLanding3D(const DcmWalkerSettings3D& settings, const Dc
     const DcmLandingLimits3D& limits, const Eigen::Vector2d& dcm, int stanceSide, const Eigen::Vector2d& left, double timeLeft) {
     if (plan.footsteps.size() < 2) return dcm;
     const Eigen::Vector2d& stance = plan.footsteps[0];
-    const Eigen::Vector2d predicted = stance + std::exp(omegaOf(settings) * std::max(0.0, timeLeft)) * (dcm - stance);
+    // O DCM previsto no toque com o CoP do plano andando no resto do apoio.
+    const double omega = omegaOf(settings), remaining = std::clamp(timeLeft, 0.0, settings.stepDuration);
+    const Eigen::Vector2d lead = plan.copShift / (omega * settings.stepDuration);
+    const Eigen::Vector2d copNow = stance - 0.5 * plan.copShift + (1.0 - remaining / settings.stepDuration) * plan.copShift;
+    const Eigen::Vector2d predicted = stance + 0.5 * plan.copShift + lead + std::exp(omega * remaining) * (dcm - copNow - lead);
     Eigen::Vector2d adjustment = predicted - plan.endOfStep[0];
     if (adjustment.norm() > limits.maximumAdjustment) adjustment *= limits.maximumAdjustment / adjustment.norm();
     Eigen::Vector2d landing = plan.footsteps[1] + adjustment;

@@ -56,6 +56,24 @@ int main() {
     }
     check(apart, "de lado, os pes nunca cruzam");
     check(std::abs(sideways.footsteps[4].y() - sideways.footsteps[0].y() - 4 * settings.stepDuration * 0.4) < 1e-9, "de lado, a media e v");
+    // O CoP do calcanhar a ponta (nota 29): anda s no apoio, a dinamica continua exata
+    // (diferenca finita), o fim do passo bate e o ajuste sem erro devolve o nominal.
+    DcmWalkerSettings3D rolling = settings;
+    rolling.copTravel = 0.08;
+    const DcmWalkerPlan3D roll = planDcmWalk3D(rolling, Eigen::Vector2d(0.0, 0.1), +1, left, velocity);
+    check((roll.copShift - Eigen::Vector2d(0.08, 0.0)).norm() < 1e-12, "rolando: o percurso na direcao da marcha");
+    check((sampleDcmWalk3D(rolling, roll, 0.0).cop - Eigen::Vector2d(-0.04, 0.1)).norm() < 1e-12
+        && (sampleDcmWalk3D(rolling, roll, rolling.stepDuration).cop - Eigen::Vector2d(0.04, 0.1)).norm() < 1e-12, "rolando: do calcanhar a ponta");
+    bool exact = true;
+    for (const double t : { 0.05, 0.2, 0.45 }) {
+        const DcmReference3D at = sampleDcmWalk3D(rolling, roll, t);
+        const Eigen::Vector2d numeric = (sampleDcmWalk3D(rolling, roll, t + 1e-6).position - sampleDcmWalk3D(rolling, roll, t - 1e-6).position) / 2e-6;
+        exact &= (at.rate - omega * (at.position - at.cop)).norm() < 1e-9 && (numeric - at.rate).norm() < 1e-5;
+    }
+    check(exact, "rolando: xi' = omega (xi - r(t))");
+    check((sampleDcmWalk3D(rolling, roll, rolling.stepDuration).position - roll.endOfStep.front()).norm() < 1e-9, "rolando: o fim do passo e o planejado");
+    const Eigen::Vector2d rollLanding = adjustDcmLanding3D(rolling, roll, limits, sampleDcmWalk3D(rolling, roll, 0.2).position, +1, left, 0.3);
+    check((rollLanding - roll.footsteps[1]).norm() < 1e-9, "rolando: sem erro, o pouso nominal");
     // O apoio numa linha (a ponta do pe): o CoP vai ao ponto mais perto do segmento, recuado das pontas.
     const std::vector<Eigen::Vector2d> toe = { { 0.1, -0.05 }, { 0.1, 0.05 }, { 0.1, 0.0 } };
     check((projectToPolygon3D(toe, Eigen::Vector2d(0.3, 0.02), 0.01) - Eigen::Vector2d(0.1, 0.02)).norm() < 1e-9, "linha: projeta no segmento");

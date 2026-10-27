@@ -100,6 +100,9 @@ struct Stand {
     bool stepping = false;
     int swingFoot = -1;
     int steps = 0;
+    // A saida pela ponta (nota 29): quantas e a soma do angulo da sola na decolagem.
+    int toeOffs = 0;
+    double toeOffAngleSum = 0.0, toeOffLastAngle = 0.0;
     double stepTime = 0.0, stepDuration = 0.0;
     Eigen::Vector3d swingStart, swingLanding;
     Eigen::Matrix3d swingRotation;
@@ -125,6 +128,9 @@ struct Stand {
     // A marcha (G3): pegadas e DCM pelo DcmWalker3D, um passo encadeado no pouso do outro.
     bool walking = false;
     Eigen::Vector2d walkVelocity = Eigen::Vector2d::Zero(), walkLeft = Eigen::Vector2d::UnitY();
+    // A velocidade pedida; a do plano chega a ela em walkRampSteps passos (partida).
+    Eigen::Vector2d walkTarget = Eigen::Vector2d::Zero();
+    int walkRampSteps = 0;
     DcmWalkerSettings3D walkSettings;
     DcmWalkerPlan3D walkPlan;
     double walkDoubleSupport = 0.1;
@@ -286,10 +292,13 @@ void setup(Stand& s, const RagdollProfile3D& profile) {
         std::sscanf(walk, "%lf,%lf,%lf,%lf", &vx, &vy, &duration, &when);
         const Eigen::Vector2d forward = s.pelvisTarget.col(0).head<2>().normalized();
         s.walkLeft = s.pelvisTarget.col(1).head<2>().normalized();
-        s.walkVelocity = vx * forward + vy * s.walkLeft;
+        s.walkTarget = vx * forward + vy * s.walkLeft;
+        s.walkRampSteps = std::getenv("STANDWALKRAMP") ? std::atoi(std::getenv("STANDWALKRAMP")) : 0;
+        s.walkVelocity = s.walkRampSteps > 0 ? Eigen::Vector2d(s.walkTarget / double(s.walkRampSteps)) : s.walkTarget;
         s.walking = true;
         s.walkSettings.stepDuration = duration;
         if (const char* ds = std::getenv("STANDWALKDS")) s.walkDoubleSupport = std::atof(ds);
+        if (const char* travel = std::getenv("STANDCOPTRAVEL")) s.walkSettings.copTravel = std::atof(travel);
         s.walkSettings.comHeight = s.stepSettings.comHeight;
         s.swingDuration = duration;
         // Para a esquerda, sai o pe esquerdo (0); senao o direito (1).
@@ -602,6 +611,10 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
                 s.phaseTime = 0.0;
                 s.swingStart = sole[swing];
                 s.stepping = true;
+                if (std::getenv("STANDTOEOFF") && s.walking && s.steps > 0) {
+                    ++s.toeOffs;
+                    s.toeOffAngleSum += s.toeOffLastAngle;
+                }
                 s.swingFoot = swing;
                 s.stepTime = 0.0;
                 s.stepDuration = s.swingDuration;
@@ -620,6 +633,7 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
                     // O pe que pousou vira o apoio; um apoio duplo curto leva o DCM ao comeco do
                     // plano do proximo passo (a transferencia) e so entao o outro pe sai.
                     const int next = stanceFoot;
+                    if (s.walkRampSteps > 0) s.walkVelocity = s.walkTarget * std::min(1.0, double(s.steps + 2) / double(s.walkRampSteps));
                     s.walkPlan = planDcmWalk3D(s.walkSettings, sole[swing].head<2>(), swing == 0 ? +1 : -1, s.walkLeft, s.walkVelocity);
                     ++s.steps;
                     if (std::getenv("STANDSTEPLOG"))
@@ -650,8 +664,38 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
             }
         }
     }
+    // A saida pela ponta (STANDTOEOFF=graus): no apoio duplo da marcha a frente, o pe de tras
+    // apoia so na linha da ponta (posto 5, sem minimo normal) e a arfagem segue uma quintica.
+    const double toeOffDegrees = std::getenv("STANDTOEOFF") ? std::atof(std::getenv("STANDTOEOFF")) : 0.0;
+    const Eigen::Vector2d walkForward = s.pelvisTarget.col(0).head<2>().normalized();
+    const bool toeOff = toeOffDegrees > 0.0 && s.walking && s.phase == Stand::Phase::Transfer && s.steps > 0 && s.voluntaryFoot >= 0
+        && s.walkVelocity.dot(walkForward) > 0.3;
+    Eigen::Vector3d toeA = Eigen::Vector3d::Zero(), toeB = Eigen::Vector3d::Zero(), heelMiddle = Eigen::Vector3d::Zero();
+    if (toeOff) {
+        const int f = s.voluntaryFoot;
+        std::vector<Eigen::Vector3d> corners;
+        for (const Eigen::Vector3d& corner : s.corners[f]) corners.push_back(k.origin[s.feet[f]] + k.rotation[s.feet[f]] * corner);
+        std::sort(corners.begin(), corners.end(), [&](const Eigen::Vector3d& a, const Eigen::Vector3d& b) { return a.head<2>().dot(walkForward) > b.head<2>().dot(walkForward); });
+        toeA = corners[0];
+        toeB = corners[1];
+        heelMiddle = 0.5 * (corners[2] + corners[3]);
+        for (int e = 0; e < 2; ++e) {
+            WholeBodyContactPoint3D point;
+            point.link = static_cast<int>(s.feet[f]);
+            point.pointWorld = e == 0 ? toeA : toeB;
+            point.normal = Eigen::Vector3d::UnitZ();
+            point.friction = friction;
+            point.constrained = true;
+            if (e == 1) point.freeDirection = (toeB - toeA).normalized();
+            const Eigen::Vector3d velocity = articulationPointJacobian3D(k, point.link, point.pointWorld) * state.velocity;
+            point.desiredAcceleration = -20.0 * velocity;
+            report.slip = std::max(report.slip, std::hypot(velocity.x(), velocity.y()));
+            input.contacts.push_back(point);
+        }
+    }
     for (int f = 0; f < 2; ++f) {
         if (s.stepping && f == s.swingFoot) continue;
+        if (toeOff && f == s.voluntaryFoot) continue;
         bool touching = false;
         for (const RagdollContactPoint3D& contact : raw.contacts)
             if (contact.linkIndex == s.feet[f]) touching = true;
@@ -873,6 +917,29 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
             input.tasks[input.tasks.size() - 2].priority = 0;
             input.tasks[input.tasks.size() - 1].priority = 0;
         }
+    }
+    if (toeOff) {
+        // A arfagem sobre a linha da ponta: positiva ergue o calcanhar; quintica de 0 ao alvo no apoio duplo.
+        const int foot = static_cast<int>(s.feet[s.voluntaryFoot]);
+        const Eigen::Vector3d middle = 0.5 * (toeA + toeB), back = heelMiddle - middle;
+        Eigen::Vector3d axis = (toeB - toeA).normalized();
+        if (axis.dot(back.cross(Eigen::Vector3d::UnitZ())) < 0.0) axis = -axis;
+        const double angle = std::asin(std::clamp(back.z() / back.norm(), -1.0, 1.0));
+        const double rate = axis.dot(k.angularVelocity[foot]);
+        const double duration = std::max(1e-3, s.transferMove), tau = std::clamp(s.phaseTime / duration, 0.0, 1.0);
+        const double goal = toeOffDegrees * Pi / 180.0;
+        const double shape = tau * tau * tau * (10.0 - 15.0 * tau + 6.0 * tau * tau);
+        const double shapeRate = 30.0 * tau * tau * (1.0 - tau) * (1.0 - tau) / duration;
+        const double shapeAcceleration = 60.0 * tau * (1.0 - tau) * (1.0 - 2.0 * tau) / (duration * duration);
+        WholeBodyTask3D pitch;
+        pitch.name = "saida pela ponta";
+        pitch.matrix = axis.transpose() * k.angularJacobian[static_cast<std::size_t>(foot)];
+        pitch.target = Eigen::VectorXd::Constant(1, goal * shapeAcceleration + 100.0 * (goal * shape - angle) + 20.0 * (goal * shapeRate - rate)
+            - axis.dot(k.angularBias[static_cast<std::size_t>(foot)]));
+        pitch.weight = 5.0;
+        pitch.priority = hierarchy ? 0 : 1;
+        input.tasks.push_back(pitch);
+        s.toeOffLastAngle = angle;
     }
     const std::vector<Eigen::Vector3d> zero(s.model.links.size(), Eigen::Vector3d::Zero());
     {
@@ -1155,6 +1222,7 @@ int main(int argc, char** argv) {
             const Vec3 end = s.scene->ragdollStateView(s.ragdoll)->links[0].position;
             std::printf("- marcha: %d passos, pelve andou (%.2f %.2f) m, %s\n", s.steps, end.x - startPelvis.x, end.y - startPelvis.y,
                 s.walking ? "ainda andando" : "parou");
+            if (s.toeOffs) std::printf("- saida pela ponta: %d, sola a %.1f graus na decolagem (media)\n", s.toeOffs, s.toeOffAngleSum / s.toeOffs * 180.0 / Pi);
         }
     }
     if (!dumpPath.empty()) {
