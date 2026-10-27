@@ -3,10 +3,10 @@
 namespace MatterEngine {
 
 // O apoio do salto e da corrida (G4 da locomocao fisica nova; notas 31-32 do vault):
-// um voo de duracao t_v pede a decolagem com v0 = g t_v / 2 (e o pouso com -v0); o
-// apoio de duracao T inverte a velocidade com a forca vertical em meio seno,
-//   F(t) = m g + A sin(pi t / T),   A = pi m (2 v0 + g T) / (2 T) - m g,
-// de modo que o impulso total e m (2 v0 + g T) e o CoM sai do apoio com +v0.
+// um voo de duracao t_v pede a decolagem com v0 = g t_v / 2. O apoio de duracao T leva
+// a velocidade vertical do CoM da de entrada (o pouso medido; -v0 no ciclo) a +v0 com a
+// forca de chao em meio seno, de zero a zero (o pe decola sem carga),
+//   F(t) = Fp sin(pi t / T),   Fp = pi m (v0 - v_entrada + g T) / (2 T).
 struct HopSettings3D {
     double flightTime = 0.1;
     double stanceTime = 0.25;
@@ -15,15 +15,18 @@ struct HopSettings3D {
 };
 
 struct HopSample3D {
-    // A forca vertical de chao e a aceleracao vertical do CoM nesse instante do apoio.
+    // A forca vertical de chao e a aceleracao, a velocidade e o deslocamento verticais
+    // do CoM (desde o comeco do apoio) nesse instante.
     double force = 0.0;
     double acceleration = 0.0;
+    double velocity = 0.0;
+    double displacement = 0.0;
 };
 
 [[nodiscard]] double hopTakeoffSpeed3D(const HopSettings3D& settings);
-// O pico da forca vertical do apoio (N).
-[[nodiscard]] double hopPeakForce3D(const HopSettings3D& settings);
-// t de 0 a T (fora disso, so a gravidade: o voo).
-[[nodiscard]] HopSample3D sampleHopStance3D(const HopSettings3D& settings, double time);
+// O pico da forca vertical do apoio (N), para a velocidade vertical de entrada dada.
+[[nodiscard]] double hopPeakForce3D(const HopSettings3D& settings, double entrySpeed);
+// t de 0 a T no apoio (fora disso, so a gravidade).
+[[nodiscard]] HopSample3D sampleHopStance3D(const HopSettings3D& settings, double time, double entrySpeed);
 
 } // namespace MatterEngine
