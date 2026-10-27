@@ -386,6 +386,20 @@ if(NOT MSVC)
     target_compile_options(MatterArticulationDynamics PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
+# A locomocao fisica nova (Engine/BodyControl): por ora o atuador (G0).
+add_library(MatterBodyControl STATIC
+    src/Engine/BodyControl/Execution/Actuation3D.cpp
+)
+target_include_directories(MatterBodyControl PUBLIC src)
+target_link_libraries(MatterBodyControl PUBLIC MatterArticulationDynamics)
+if(NOT MSVC)
+    target_compile_options(MatterBodyControl PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+# A bancada de atuacao (G0): A, A' e B com o controle de torque computado no laco.
+add_executable(MatterActuationBench tools/BodyBench/ActuationBench.cpp)
+target_link_libraries(MatterActuationBench PRIVATE MatterBodyControl)
+target_compile_definitions(MatterActuationBench PRIVATE MATTERENGINE_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
+
 # Os clipes de animacao no formato do ragdoll (matter-ragdoll-animation-1):
 # carregar, amostrar e projetar na articulacao. Saiu do MatterEngine para que
 # o treino de RL (sem janela) use os mesmos clipes que o jogo.

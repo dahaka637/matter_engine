@@ -183,6 +183,17 @@ ArticulationModel3D buildArticulationModel3D(const RagdollProfile3D& profile, co
         const int swings = int(link.axisEnabled[1]) + int(link.axisEnabled[2]);
         link.swingAfterTwist = link.axisEnabled[0] && swings == 1;
     }
+    model.chainDofs.resize(model.links.size());
+    for (std::size_t i = 0; i < model.links.size(); ++i) {
+        std::vector<int>& chain = model.chainDofs[i];
+        for (int r = 0; r < 6; ++r) chain.push_back(r);
+        for (int j = static_cast<int>(i); j > 0; j = model.links[static_cast<std::size_t>(j)].parent) {
+            for (int a = 0; a < 3; ++a) {
+                const int dof = model.links[static_cast<std::size_t>(j)].dof[static_cast<std::size_t>(a)];
+                if (dof >= 0) chain.push_back(dof);
+            }
+        }
+    }
     return model;
 }
 

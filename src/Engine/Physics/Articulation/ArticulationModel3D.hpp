@@ -47,6 +47,9 @@ struct ArticulationLink3D {
 
 struct ArticulationModel3D {
     std::vector<ArticulationLink3D> links;
+    // As colunas nao nulas dos Jacobianos de cada link: os 6 da raiz e os eixos
+    // dos ancestrais (a esparsidade que a montagem da dinamica usa).
+    std::vector<std::vector<int>> chainDofs;
     int dofCount = 6;
     double totalMass = 0.0;
     Eigen::Vector3d gravity { 0.0, 0.0, -9.81 };

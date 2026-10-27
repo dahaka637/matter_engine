@@ -110,22 +110,40 @@ ArticulationDynamics3D computeArticulationDynamics3D(
         d.centerOfMass += model.links[i].mass * k.centerOfMass[i];
     }
     d.centerOfMass /= model.totalMass;
+    // Cada link so depende da raiz e dos ancestrais: as contas usam so essas colunas.
+    Eigen::Matrix<double, 6, Eigen::Dynamic> compact(6, n);
     for (std::size_t i = 0; i < model.links.size(); ++i) {
         const ArticulationLink3D& link = model.links[i];
-        const ArticulationJacobian3D comJacobian = articulationPointJacobian3D(k, static_cast<int>(i), k.centerOfMass[i]);
-        const Eigen::Vector3d comBias = articulationPointBias3D(k, static_cast<int>(i), k.centerOfMass[i]);
-        const Eigen::Matrix3d inertia = k.rotation[i] * link.inertiaLocal * k.rotation[i].transpose();
-        const ArticulationJacobian3D& angular = k.angularJacobian[i];
+        const std::vector<int>& chain = model.chainDofs[i];
+        const int m = static_cast<int>(chain.size());
+        const Eigen::Vector3d r = k.centerOfMass[i] - k.origin[i];
+        const Eigen::Matrix3d rCross = skew(r);
+        // [J do centro de massa; J angular], so as colunas da cadeia.
+        for (int c = 0; c < m; ++c) {
+            const int dof = chain[static_cast<std::size_t>(c)];
+            const Eigen::Vector3d angular = k.angularJacobian[i].col(dof);
+            compact.block<3, 1>(0, c) = k.originJacobian[i].col(dof) - rCross * angular;
+            compact.block<3, 1>(3, c) = angular;
+        }
+        const auto comJacobian = compact.topLeftCorner(3, m);
+        const auto angular = compact.bottomLeftCorner(3, m);
         const Eigen::Vector3d& w = k.angularVelocity[i];
-        d.massMatrix.noalias() += link.mass * comJacobian.transpose() * comJacobian;
-        d.massMatrix.noalias() += angular.transpose() * inertia * angular;
+        const Eigen::Vector3d comBias = k.originBias[i] + k.angularBias[i].cross(r) + w.cross(w.cross(r));
+        const Eigen::Matrix3d inertia = k.rotation[i] * link.inertiaLocal * k.rotation[i].transpose();
+        const Eigen::MatrixXd block = link.mass * comJacobian.transpose() * comJacobian + angular.transpose() * inertia * angular;
         const Eigen::Vector3d angularBiasMoment = inertia * k.angularBias[i]
             + (model.gyroscopic ? Eigen::Vector3d(w.cross(inertia * w)) : Eigen::Vector3d::Zero());
-        d.bias.noalias() += comJacobian.transpose() * (link.mass * (comBias - model.gravity));
-        d.bias.noalias() += angular.transpose() * angularBiasMoment;
+        const Eigen::VectorXd force = comJacobian.transpose() * (link.mass * (comBias - model.gravity))
+            + angular.transpose() * angularBiasMoment;
         const Eigen::Vector3d arm = k.centerOfMass[i] - d.centerOfMass;
-        d.centroidalMatrix.topRows<3>() += link.mass * comJacobian;
-        d.centroidalMatrix.bottomRows<3>() += link.mass * skew(arm) * comJacobian + inertia * angular;
+        const Eigen::Matrix3d armCross = skew(arm);
+        for (int a = 0; a < m; ++a) {
+            const int row = chain[static_cast<std::size_t>(a)];
+            d.bias[row] += force[a];
+            for (int b = 0; b < m; ++b) d.massMatrix(row, chain[static_cast<std::size_t>(b)]) += block(a, b);
+            d.centroidalMatrix.block<3, 1>(0, row) += link.mass * comJacobian.col(a);
+            d.centroidalMatrix.block<3, 1>(3, row) += link.mass * armCross * comJacobian.col(a) + inertia * angular.col(a);
+        }
         d.centroidalBias.head<3>() += link.mass * comBias;
         d.centroidalBias.tail<3>() += arm.cross(link.mass * comBias) + angularBiasMoment;
     }

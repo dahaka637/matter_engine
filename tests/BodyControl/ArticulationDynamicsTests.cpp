@@ -8,6 +8,7 @@
 
 #include <Eigen/Dense>
 
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -298,6 +299,20 @@ int main() {
         std::printf("modelo: %zu links, %d graus de liberdade, %.2f kg\n", model.links.size(), model.dofCount, model.totalMass);
         check(model.dofCount == 45, "45 graus de liberdade (6 + 39)");
         modelOnlyChecks(profile, model, rng);
+        // O custo de cada peca (informativo; o orcamento e medido na bancada).
+        const ArticulationState3D timed = randomState(profile, model, rng, 0.35, 1.0, 0.5);
+        const auto micros = [](auto&& work) {
+            const auto start = std::chrono::steady_clock::now();
+            for (int i = 0; i < 2000; ++i) work();
+            return std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - start).count() / 2000.0;
+        };
+        ArticulationKinematics3D k = computeArticulationKinematics3D(model, timed);
+        ArticulationDynamics3D d = computeArticulationDynamics3D(model, k);
+        Eigen::VectorXd solved;
+        const double kinematicsMicros = micros([&] { k = computeArticulationKinematics3D(model, timed); });
+        const double dynamicsMicros = micros([&] { d = computeArticulationDynamics3D(model, k); });
+        const double solveMicros = micros([&] { solved = d.massMatrix.ldlt().solve(d.bias); });
+        std::printf("custo: cinematica %.1f us, dinamica %.1f us, LDLT 45x45 %.1f us\n", kinematicsMicros, dynamicsMicros, solveMicros);
     }
     joltChecks(profile, rng, false);
     joltChecks(profile, rng, true);
