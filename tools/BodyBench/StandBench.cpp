@@ -318,6 +318,10 @@ void setup(Stand& s, const RagdollProfile3D& profile) {
             const Eigen::Quaterniond q(k.rotation[i]);
             links[i].position = { float(k.origin[i].x()), float(k.origin[i].y()), float(k.origin[i].z()) };
             links[i].orientation = Quaternion(float(q.x()), float(q.y()), float(q.z()), float(q.w()));
+            // Entrar no modo fisico ja correndo (STANDINITVEL=vx): todos os segmentos com a mesma velocidade.
+            // Os pes (no chao) nascem parados, como o pe de apoio de quem ja corre.
+            if (const char* initial = std::getenv("STANDINITVEL"); initial && profile.links[i].id.find("Foot") == std::string::npos)
+                links[i].linearVelocity = { float(std::atof(initial)), 0.0f, 0.0f };
         }
         s.scene->resetRagdollState(s.ragdoll, links);
     }
