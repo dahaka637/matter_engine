@@ -857,7 +857,8 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
                     const double v0 = 0.5 * 9.81 * s.trotFlightTime;
                     const int stance = 1 - swing;
                     const double knee = state.jointCoordinates[static_cast<std::size_t>(s.model.links[s.feet[stance]].parent)][0];
-                    if (s.trotPhase == 5 && (comVelocityNow.z() >= 0.0 || s.trotTime > 0.12)) {
+                    const double pushZ = s.trotStandingZ - 0.03;
+                    if (s.trotPhase == 5 && ((std::abs(comVelocityNow.z()) < 0.05 && std::abs(comNow.z() - pushZ) < 0.01) || s.trotTime > 0.15)) {
                         s.trotPhase = 1;
                         s.trotTime = 0.0;
                         s.trotEntrySpeed = comVelocityNow.z();
@@ -905,7 +906,7 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
                         s.swingFoot = next;
                         s.swingStart = sole[next];
                         s.stepTime = 0.0;
-                        s.stepDuration = s.swingDuration = s.walkSettings.stepDuration;
+                        s.stepDuration = s.swingDuration = s.walkSettings.stepDuration + s.trotFlightTime;
                         s.trotPhase = std::getenv("STANDTROTNOVERT") ? 0 : 5;
                         s.trotTime = 0.0;
                         s.trotEntrySpeed = comVelocityNow.z();
@@ -1139,8 +1140,9 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
         linearRate.y() = -m * 4.0 * comVelocity.y();
     }
     if (s.trotPhase == 5) {
-        const double vRef = std::min(0.0, s.trotEntrySpeed + s.trotDeceleration * s.trotTime);
-        linearRate.z() = m * (s.trotDeceleration * (vRef < 0.0 ? 1.0 : 0.0) + 20.0 * (vRef - comVelocity.z()));
+        // Absorve levando o CoM parado a altura de partida do empurrao (PD critico, omega 10): cobre o pouso
+        // rapido e o pouso alto (um voo curto deixava o apoio comecar alto e sem curso).
+        linearRate.z() = m * (100.0 * (s.trotStandingZ - 0.03 - d.centerOfMass.z()) - 20.0 * comVelocity.z());
     } else if (s.trotPhase == 1) {
         HopSettings3D push;
         push.flightTime = s.trotFlightTime;
