@@ -889,6 +889,10 @@ bool ReinforcementLearningScreen::render(int width, int height) {
     scene.mesh = &model.mesh;
     scene.regions = &model.regions;
     scene.jointRegion = model.jointRegion;
+    // O uniforme novo (o sistema de aparencia), como no inspetor e no laboratorio:
+    // sem eles a imagem caia na textura antiga.
+    scene.surface = model.surface.get();
+    scene.kit = model.kit.get();
     scene.pose = &pose;
     scene.meshPositions = posed;
     scene.highlights = highlights;
