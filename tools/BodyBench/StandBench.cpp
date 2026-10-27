@@ -119,6 +119,9 @@ struct Stand {
     double copClampSum = 0.0, copClampWorst = 0.0;
     // O torque pedido no referencial do motor acima do teto (o backend recorta): ticks e pior razao.
     int motorClippedTicks = 0;
+    // A cabeca na marcha (regra dele: calma, p95 da velocidade angular ~55-60 graus/s).
+    std::vector<double> headRates, armRates;
+    double headPitchSum = 0.0;
     double motorWorstRatio = 0.0;
     // A decolagem (nota 31): a forca planejada no pe no tick anterior e quanto ele ainda toca depois.
     int liftoffs = 0, separations = 0, separationTicks = 0, separationSum = 0;
@@ -1093,6 +1096,18 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
                 input.tasks.push_back(vertical);
             }
             input.tasks.push_back(linear);
+            if (std::getenv("STANDANGXY") && angular.priority == 0) {
+                // So rolagem e arfagem do momento angular em cima; o yaw (o das pernas em balanco) embaixo,
+                // para cabeca e bracos nao girarem ao contrario a cada passo.
+                WholeBodyTask3D yaw = angular;
+                yaw.name = "centroidal angular (yaw)";
+                yaw.matrix = Eigen::MatrixXd(angular.matrix.row(2));
+                yaw.target = angular.target.segment(2, 1).eval();
+                yaw.priority = 1;
+                angular.matrix = Eigen::MatrixXd(angular.matrix.topRows(2));
+                angular.target = angular.target.head(2).eval();
+                input.tasks.push_back(yaw);
+            }
             input.tasks.push_back(angular);
         } else {
             input.tasks.push_back(centroidal);
@@ -1100,7 +1115,10 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
     }
     input.tasks.push_back(wholeBodyOrientationTask3D(k, 0, s.pelvisTarget, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(), 100.0 * gain * gain, 20.0 * gain, 5.0, "pelve"));
     input.tasks.push_back(wholeBodyOrientationTask3D(k, static_cast<int>(s.chest), s.chestTarget, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(), 100.0 * gain * gain, 20.0 * gain, 3.0, "peito"));
-    input.tasks.push_back(wholeBodyOrientationTask3D(k, static_cast<int>(s.head), s.headTarget, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(), 100.0 * gain * gain, 20.0 * gain, 2.0, "cabeca"));
+    if (std::getenv("STANDCHESTTOP") && hierarchy) input.tasks.back().priority = 0;
+    input.tasks.push_back(wholeBodyOrientationTask3D(k, static_cast<int>(s.head), s.headTarget, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(), 100.0 * gain * gain, 20.0 * gain,
+        std::getenv("STANDHEADW") ? std::atof(std::getenv("STANDHEADW")) : 2.0, "cabeca"));
+    if (std::getenv("STANDHEADTOP") && hierarchy) input.tasks.back().priority = 0;
     if (s.stepping) {
         // O destino aceito fica fixo no balanco (nota 26: replanejar sem preservar derivadas derrubava).
         if (s.recovering && std::getenv("STANDREPLAN")) {
@@ -1236,7 +1254,7 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
                 posture.target[dof - 6] *= std::sqrt(weight);
             }
         }
-        if (s.hopping && (s.hopPhase == 1 || s.hopPhase == 2 || s.hopPhase == 3)) {
+        if ((s.hopping && (s.hopPhase == 1 || s.hopPhase == 2 || s.hopPhase == 3)) || (s.walking && std::getenv("STANDUPPERTOP"))) {
             // No salto, a postura de cima (bracos, coluna, cabeca) vai ao nivel de cima: o CoM
             // sobe pelas pernas, nao erguendo os bracos (nota 33).
             WholeBodyTask3D upper = posture;
@@ -1245,6 +1263,8 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
             for (std::size_t i = 1; i < s.model.links.size(); ++i) {
                 const std::string& id = profile.links[i].id;
                 if (id.find("Thigh") != std::string::npos || id.find("Shin") != std::string::npos || id.find("Foot") != std::string::npos) continue;
+                // Na marcha com STANDUPPERARMS, so os bracos sobem (a coluna fica livre para o momento angular).
+                if (s.walking && std::getenv("STANDUPPERARMS") && id.find("Arm") == std::string::npos && id.find("Hand") == std::string::npos) continue;
                 for (int a = 0; a < 3; ++a)
                     if (s.model.links[i].dof[static_cast<std::size_t>(a)] >= 0) rows.push_back(s.model.links[i].dof[static_cast<std::size_t>(a)] - 6);
             }
@@ -1373,6 +1393,20 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
     if (std::getenv("STANDQPTIME") && s.logTick % 60 == 0)
         std::printf("   QP: montar %.0f us, resolver %.0f us (it %d, caminho %d)\n", result.buildMicros, result.innerSolveMicros, result.iterations, int(result.path));
     s.predictedAcceleration = result.usable() ? result.acceleration : Eigen::VectorXd();
+    if (s.walking && s.steps > 2) {
+        s.headRates.push_back(k.angularVelocity[s.head].norm() * 180.0 / Pi);
+        double arm = 0.0;
+        for (std::size_t i = 1; i < s.model.links.size(); ++i)
+            if (profile.links[i].id.find("ForeArm") != std::string::npos || profile.links[i].id.find("Hand") != std::string::npos)
+                arm = std::max(arm, (k.angularVelocity[i] - k.angularVelocity[0]).norm() * 180.0 / Pi);
+        s.armRates.push_back(arm);
+        if (std::getenv("STANDCHESTDBG") && s.clock > 15.0 && s.clock < 17.0) {
+            const Eigen::Vector3d relative = k.rotation[0].transpose() * (k.angularVelocity[s.chest] - k.angularVelocity[0]);
+            std::printf("   peito t %.3f: %.3f %.3f %.3f rad/s\n", s.clock, relative.x(), relative.y(), relative.z());
+        }
+        const Eigen::Vector3d forward = k.rotation[s.head] * (s.headTarget.transpose() * s.pelvisTarget.col(0));
+        s.headPitchSum += std::abs(std::asin(std::clamp(forward.z(), -1.0, 1.0))) * 180.0 / Pi;
+    }
     if (result.usable() && result.torque.size()) {
         const Eigen::VectorXd motor = motorMap * result.torque.tail(s.model.dofCount - 6);
         double worst = 0.0;
@@ -1529,6 +1563,15 @@ int main(int argc, char** argv) {
                 s.walking ? "ainda andando" : "parou");
             if (s.liftoffs) std::printf("- decolagem: %d, forca planejada no pe no tick anterior %.0f N (media); ainda tocando %.0f ms depois (media)\n",
                 s.liftoffs, s.liftoffForceSum / s.liftoffs, s.separations ? 1000.0 * Dt * s.separationSum / s.separations : 0.0);
+            if (!s.headRates.empty()) {
+                std::vector<double> rates = s.headRates;
+                std::sort(rates.begin(), rates.end());
+                std::vector<double> arms = s.armRates;
+                std::sort(arms.begin(), arms.end());
+                std::printf("- cabeca: velocidade angular p95 %.0f graus/s, arfagem fora do alvo %.1f graus (media); antebraco/mao contra a pelve p95 %.0f graus/s\n",
+                    rates[static_cast<std::size_t>(0.95 * double(rates.size() - 1))], s.headPitchSum / double(rates.size()),
+                    arms[static_cast<std::size_t>(0.95 * double(arms.size() - 1))]);
+            }
             if (s.copClampTicks) std::printf("- CoP pedido fora do apoio: %.1f cm de media, %.1f cm no pior\n", 100.0 * s.copClampSum / s.copClampTicks, 100.0 * s.copClampWorst);
             if (s.toeOffs) std::printf("- saida pela ponta: %d, sola a %.1f graus na decolagem (media)\n", s.toeOffs, s.toeOffAngleSum / s.toeOffs * 180.0 / Pi);
         }
