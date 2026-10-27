@@ -1173,6 +1173,8 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
                 landing.stepWidth = s.walkSettings.stepWidth;
                 landing.side = s.swingFoot == 0 ? 1.0 : -1.0;
                 landing.homeError = s.trotHome - d.centerOfMass.head<2>();
+                landing.hasStance = !std::getenv("STANDTROTCROSS");
+                landing.stance = sole[1 - s.swingFoot].head<2>();
                 if (const char* gain = std::getenv("STANDTROTHOME")) landing.homeGain = std::atof(gain);
                 if (!std::getenv("STANDTROTNOCAPTURE")) s.swingLanding.head<2>() = runningLandingPoint3D(landing);
             } else if (const bool disturbed = s.pushTimer > 0.0 && !std::getenv("STANDNOPUSHADJUST");
