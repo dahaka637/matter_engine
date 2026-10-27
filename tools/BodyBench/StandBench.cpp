@@ -153,7 +153,7 @@ void setup(Stand& s, const RagdollProfile3D& profile) {
     s.scene = s.engine.createScene(settings, s.materials);
     PhysicsShape3D shape;
     shape.type = PhysicsShapeType3D::Box;
-    shape.halfExtents = { 40.0f, 40.0f, 0.25f };
+    shape.halfExtents = { 500.0f, 500.0f, 0.25f }; // a marcha de 60 s passava da borda de 40 m (nota 29)
     shape.materialId = "grass";
     PhysicsBodyDefinition3D body;
     body.motionType = PhysicsMotionType3D::Static;

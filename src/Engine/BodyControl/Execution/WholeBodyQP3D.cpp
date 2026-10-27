@@ -222,6 +222,8 @@ WholeBodyQPResult3D WholeBodyQP3D::solve(const WholeBodyQPInput3D& in) {
     Impl& impl = *m_impl;
     const auto updated = std::chrono::steady_clock::now();
     const proxsuite::proxqp::Results<double>* final = nullptr;
+    // A tentativa pesada reusa o slot de cima: o resultado de cima e guardado antes (nota 29).
+    proxsuite::proxqp::Results<double> topSaved;
     // As igualdades da solucao devolvida (as de baixo incluem as que guardam o nivel de cima).
     const Eigen::MatrixXd* finalEquality = &equality;
     const Eigen::VectorXd* finalTarget = &equalityTarget;
@@ -266,6 +268,7 @@ WholeBodyQPResult3D WholeBodyQP3D::solve(const WholeBodyQPInput3D& in) {
             } else {
                 // O de baixo falha por numero (nota 28: um LP acha o ponto). Antes de
                 // largar a altura e a postura, um nivel so com as de cima muito mais pesadas.
+                topSaved = top;
                 Eigen::MatrixXd heavyHessian = hessian;
                 Eigen::VectorXd heavyGradient = gradient;
                 heavyHessian.topLeftCorner(n, n) += (in.priorityWeightScale - 1.0) * primaryHessian;
@@ -275,7 +278,7 @@ WholeBodyQPResult3D WholeBodyQP3D::solve(const WholeBodyQPInput3D& in) {
                     final = &heavy;
                     result.path = WholeBodyQPPath3D::WeightedPriority;
                 } else {
-                    final = &top;
+                    final = &topSaved;
                     result.path = WholeBodyQPPath3D::TopOnly;
                 }
             }
