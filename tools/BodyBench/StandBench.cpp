@@ -137,6 +137,8 @@ struct Stand {
     Eigen::Vector3d hopLandingPoint[2];
     Eigen::Matrix3d hopLandingRotation[2];
     double hopPreviousVz = 0.0;
+    // 5: absorvendo o pouso (STANDHOPABSORB): frenagem constante ate parar na altura de partida do empurrao.
+    double hopAbsorbDeceleration = 0.0;
     double hopLandingPeak = 0.0, hopLandingPeakSum = 0.0, hopLandingTimer = -1.0;
     double hopObservedVz = 0.0, hopObservedFz = 0.0, hopReleaseKneeSum = 0.0, hopReleaseDropSum = 0.0;
     double hopRecoveryZ = 0.0, hopHeightDelta = 0.0, hopReleaseZ = 0.0;
@@ -618,6 +620,10 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
                 ++s.failedTakeoffs;
                 startRecovery();
             }
+        } else if (s.hopPhase == 5) {
+            s.hopTime += Dt;
+            // Parou (ou passou do tempo previsto com folga): empurra dali, como do repouso.
+            if (vz >= 0.0 || s.hopTime > 2.0 * std::abs(s.hopEntrySpeed) / std::max(0.5, s.hopAbsorbDeceleration) + 0.05) startPush();
         } else if (s.hopPhase == 2) {
             s.hopTime += Dt;
             if (clear)
@@ -631,7 +637,16 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
                 ++s.flights;
                 s.flightSum += s.hopTime;
                 // Continuo (STANDHOPCONT): o pouso ja e o comeco do proximo empurrao, com a velocidade medida.
-                if (std::getenv("STANDHOPCONT")) startPush();
+                // Com STANDHOPABSORB, antes absorve ate parar na altura de partida do empurrao provado.
+                if (std::getenv("STANDHOPABSORB")) {
+                    s.hopPhase = 5;
+                    s.hopTime = 0.0;
+                    s.hopEntrySpeed = vz;
+                    s.hopEntryHeight = z;
+                    s.hopPelvisEntry = k.origin[0].z();
+                    const double distance = std::max(0.01, z - s.hopRecoveryZ);
+                    s.hopAbsorbDeceleration = std::min(2.0 * 9.81, vz * vz / (2.0 * distance));
+                } else if (std::getenv("STANDHOPCONT")) startPush();
                 else startRecovery();
             } else if (s.airborneTicks == 0 && s.hopTime >= 8. * Dt) {
                 ++s.failedTakeoffs;
@@ -949,7 +964,7 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
             point.friction = friction;
             point.constrained = pointContacts;
             point.minimumNormalForce = std::getenv("STANDMINN") ? std::atof(std::getenv("STANDMINN")) : 15.0;
-            if (s.hopping && s.hopPhase == 1) point.minimumNormalForce = 0.0;
+            if (s.hopping && (s.hopPhase == 1 || s.hopPhase == 5)) point.minimumNormalForce = 0.0;
             if (s.landedTime >= 0.0 && s.landedTime < 0.15 && (f == s.voluntaryFoot || f == s.landedFoot)) point.minimumNormalForce = 0.0;
             if (unloading && f == s.voluntaryFoot) {
                 point.minimumNormalForce = 0.0;
@@ -1049,6 +1064,10 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
         linearRate.x() = m * omega * omega * (d.centerOfMass.x() - stance.x());
         linearRate.y() = m * omega * omega * (d.centerOfMass.y() - stance.y());
     }
+    if (s.hopping && s.hopPhase == 5) {
+        const double vRef = std::min(0.0, s.hopEntrySpeed + s.hopAbsorbDeceleration * s.hopTime);
+        linearRate.z() = m * (s.hopAbsorbDeceleration * (vRef < 0.0 ? 1.0 : 0.0) + 20.0 * (vRef - comVelocity.z()));
+    }
     if (s.hopping && s.hopPhase == 1) {
         // O apoio do salto: a vertical segue o meio seno, com realimentacao na trajetoria fechada.
         // Do repouso, o empurrao crescente; vindo de um pouso (quique), o meio seno absorve e devolve.
@@ -1091,7 +1110,7 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
                 vertical.name = "centroidal vertical";
                 vertical.matrix = centroidal.matrix.row(2);
                 vertical.target = centroidal.target.segment(2, 1);
-                vertical.priority = s.hopping && s.hopPhase == 1 ? 0 : 1;
+                vertical.priority = s.hopping && (s.hopPhase == 1 || s.hopPhase == 5) ? 0 : 1;
                 linear.matrix = centroidal.matrix.topRows(2);
                 linear.target = centroidal.target.head(2);
                 input.tasks.push_back(vertical);
