@@ -551,7 +551,7 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
             }
         }
     }
-    const double friction = 0.75 * 0.8; // gramado x sola, com margem de 20%
+    const double friction = std::getenv("STANDQPFRIC") ? std::atof(std::getenv("STANDQPFRIC")) : 0.75 * 0.8; // gramado x sola, com margem de 20%
     const Eigen::Vector3d comNow = d.centerOfMass;
     const Eigen::Vector3d comVelocityNow = d.centroidalMatrix.topRows(3) * state.velocity / s.model.totalMass;
     Eigen::Vector3d sole[2];
