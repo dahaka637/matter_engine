@@ -198,6 +198,21 @@ FetchContent_MakeAvailable(
     SDL3 imgui sqlite_amalgamation cgltf stb meshoptimizer nlohmann_json
     vhacd_source openal-soft)
 
+# A algebra do modelo dinamico do corpo e do executor da locomocao fisica nova
+# (26/10). So os headers (Eigen e header-only); fica privada a
+# Physics/Articulation e BodyControl (check-architecture).
+FetchContent_Declare(
+    eigen
+    GIT_REPOSITORY https://gitlab.com/libeigen/eigen.git
+    GIT_TAG 3.4.0
+    GIT_SHALLOW TRUE
+    SOURCE_SUBDIR matterengine-headers-only
+)
+FetchContent_MakeAvailable(eigen)
+add_library(MatterEigen INTERFACE)
+target_include_directories(MatterEigen SYSTEM INTERFACE ${eigen_SOURCE_DIR})
+target_compile_definitions(MatterEigen INTERFACE EIGEN_MPL2_ONLY)
+
 add_library(vhacd INTERFACE)
 target_include_directories(vhacd INTERFACE ${vhacd_source_SOURCE_DIR}/include)
 
@@ -357,6 +372,18 @@ if(MSVC)
     target_compile_options(MatterPhysics PRIVATE /W4 /permissive- /utf-8)
 else()
     target_compile_options(MatterPhysics PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+# O modelo dinamico do corpo articulado (locomocao fisica nova, G0): matriz de
+# massa, bias, Jacobianos e momento centroidal com as massas efetivas do backend.
+add_library(MatterArticulationDynamics STATIC
+    src/Engine/Physics/Articulation/ArticulationModel3D.cpp
+    src/Engine/Physics/Articulation/ArticulationDynamics3D.cpp
+)
+target_include_directories(MatterArticulationDynamics PUBLIC src)
+target_link_libraries(MatterArticulationDynamics PUBLIC MatterPhysics MatterEigen)
+if(NOT MSVC)
+    target_compile_options(MatterArticulationDynamics PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
 # Os clipes de animacao no formato do ragdoll (matter-ragdoll-animation-1):
@@ -1235,6 +1262,11 @@ if(MATTERENGINE_BUILD_TESTS)
     target_link_libraries(MatterGestureTests PRIVATE MatterEngine)
     target_compile_definitions(MatterGestureTests PRIVATE MATTERENGINE_TEST_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
     add_test(NAME MatterEngine.Gesture COMMAND MatterGestureTests)
+    # O modelo dinamico contra diferencas finitas e contra o Jolt (G0).
+    add_executable(MatterArticulationTests tests/BodyControl/ArticulationDynamicsTests.cpp)
+    target_link_libraries(MatterArticulationTests PRIVATE MatterArticulationDynamics)
+    target_compile_definitions(MatterArticulationTests PRIVATE MATTERENGINE_TEST_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
+    add_test(NAME MatterEngine.Articulation COMMAND MatterArticulationTests)
 endif()
 
 set_target_properties(MatterCore MatterRHI MatterPhysics MatterAudio MatterVulkan

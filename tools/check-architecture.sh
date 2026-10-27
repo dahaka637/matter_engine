@@ -83,6 +83,11 @@ check_absent "Atletas: planejamento, sintese e bola trabalham com dados (sem a c
 check_absent "Os gestos de bola (Engine/Gesture) sao so matematica: nada de fisica, atleta, personagem, animacao, RL nem interface" \
     '#include "Engine/(Physics|Athlete|Character|Control|Locomotion|Animation|Render|RHI|UI|Audio|Platform|Input|RL|Tracking|Modeling)/|Jolt|#include .imgui|#include <SDL' \
     src/Engine/Gesture
+check_absent "A algebra (Eigen) fica no modelo dinamico (Physics/Articulation) e na locomocao fisica nova (Engine/BodyControl)" \
+    '#include <Eigen/' src -g '!src/Engine/Physics/Articulation/**' -g '!src/Engine/BodyControl/**'
+check_absent "O modelo dinamico (Physics/Articulation) e neutro: nada do Jolt, da cena, do atleta nem da interface" \
+    '#include "Engine/(Physics/Jolt|Athlete|Character|Control|BodyControl|Render|RHI|UI|Workbench)|#include <Jolt/|#include .imgui' \
+    src/Engine/Physics/Articulation
 check_absent "O corpo do jogador (Engine/Physique) e so a lei: nada da engine alem da matematica" \
     '#include "Engine/(Physics|Athlete|Character|Control|Locomotion|Animation|Modeling|Gesture|Appearance|Render|RHI|UI|Audio|Platform|Input|RL|Tracking|Workbench|Objects|Geometry|Data|Environment|Core)/|Jolt|#include .imgui|#include <SDL' \
     src/Engine/Physique
