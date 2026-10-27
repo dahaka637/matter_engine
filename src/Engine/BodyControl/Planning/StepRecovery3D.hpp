@@ -20,7 +20,7 @@ struct StepRecoverySettings3D {
     double stepDuration = 0.3;
     double minimumStepDuration = 0.22;
     // Alcance do pouso a partir do pe de apoio (m) e a largura minima entre os pes.
-    double maximumReach = 0.75;
+    double maximumReach = 0.6;
     double minimumWidth = 0.14;
     // O pouso passa um pouco do DCM previsto (m): o corpo fica capturado com folga.
     double overshoot = 0.03;
