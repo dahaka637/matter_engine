@@ -1146,7 +1146,7 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
         input.tasks.push_back(pitch);
         s.toeOffLastAngle = angle;
     }
-    if (s.hopping && s.hopPhase == 1) {
+    if (s.hopping && s.hopPhase == 1 && !(std::getenv("STANDHOPNOPELVIS") && s.hopEntrySpeed < -0.1)) {
         // A altura da pelve pela trajetoria fechada do apoio: a extensao da perna empurra.
         // Do repouso, o empurrao crescente; vindo de um pouso (quique), o meio seno absorve e devolve.
         const bool bounce = s.hopEntrySpeed < -0.1;
@@ -1164,7 +1164,14 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
         const double flight = std::max(0.05, s.hopSettings.flightTime), u = std::clamp(s.hopTime / flight, 0.0, 1.0);
         double lift = 0.03 * std::sin(Pi * u), liftRate = 0.03 * Pi / flight * std::cos(Pi * u);
         double liftAcceleration = -0.03 * (Pi / flight) * (Pi / flight) * std::sin(Pi * u);
-        if (s.hopExtended) {
+        if (s.hopExtended && std::getenv("STANDHOPREEXT")) {
+            // Quique: recolhe e reestende ate o voo esperado, para pousar na configuracao da decolagem.
+            const double expected = std::max(0.05, s.hopSettings.flightTime), v = std::clamp(s.hopTime / expected, 0.0, 1.0);
+            const double height = std::getenv("STANDHOPLIFT") ? std::atof(std::getenv("STANDHOPLIFT")) : 0.04;
+            lift = height * std::sin(Pi * v);
+            liftRate = s.hopTime < expected ? height * Pi / expected * std::cos(Pi * v) : 0.0;
+            liftAcceleration = s.hopTime < expected ? -height * (Pi / expected) * (Pi / expected) * std::sin(Pi * v) : 0.0;
+        } else if (s.hopExtended) {
             // Recolhe 4 cm em 0,15 s e conserva a configuracao de pouso (nao reestende por relogio no ar).
             const double rise = 0.15, height = 0.04, v = std::clamp(s.hopTime / rise, 0.0, 1.0);
             lift = 0.5 * height * (1.0 - std::cos(Pi * v));
@@ -1180,7 +1187,19 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
             // Embaixo: o nivel de cima ja determina a postura superior e os pontos dos pes.
             auto flat = wholeBodyOrientationTask3D(k, foot, s.hopLandingRotation[f], Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(), 100.0, 20.0, 5.0, "sola no voo");
             input.tasks.push_back(flat);
-            WholeBodyTask3D point = wholeBodyPointTask3D(k, foot, sole[f], target, targetVelocity, Eigen::Vector3d(0.0, 0.0, liftAcceleration - 9.81),
+            Eigen::Vector3d feedforward(0.0, 0.0, liftAcceleration - 9.81);
+            if (s.hopExtended && std::getenv("STANDHOPREEXT")) {
+                // Quique: o pe no referencial do MUNDO sai e volta ao chao com velocidade zero no voo esperado
+                // (z = chao + h sen^2(pi t / t_v)); a perna ja comprime no toque, sem o impacto rigido que
+                // matava a velocidade quando o pe chegava junto com a pelve.
+                const double expected = std::max(0.05, s.hopSettings.flightTime), v = std::clamp(s.hopTime / expected, 0.0, 1.0);
+                const double height = std::getenv("STANDHOPLIFT") ? std::atof(std::getenv("STANDHOPLIFT")) : 0.03;
+                const double w = Pi / expected, inside = s.hopTime < expected ? 1.0 : 0.0;
+                target.z() = s.hopLandingPoint[f].z() + height * std::sin(Pi * v) * std::sin(Pi * v);
+                targetVelocity.z() = inside * height * w * std::sin(2.0 * Pi * v);
+                feedforward.z() = inside * 2.0 * height * w * w * std::cos(2.0 * Pi * v);
+            }
+            WholeBodyTask3D point = wholeBodyPointTask3D(k, foot, sole[f], target, targetVelocity, feedforward,
                 400.0, 40.0, 20.0, "pe no voo");
             point.priority = hierarchy ? 0 : 1;
             input.tasks.push_back(point);
