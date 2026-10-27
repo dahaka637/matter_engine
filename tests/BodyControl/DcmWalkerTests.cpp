@@ -46,6 +46,15 @@ int main() {
     check(std::abs(ahead.x() - plan.footsteps[1].x() - 0.01 * std::exp(omega * settings.stepDuration)) < 1e-9, "DCM adiantado, pouso adiantado");
     const Eigen::Vector2d crossing = adjustDcmLanding3D(settings, plan, limits, start.position + Eigen::Vector2d(0.0, 0.05), +1, left, settings.stepDuration);
     check(crossing.y() <= 0.1 - limits.minimumWidth + 1e-9, "o pe nao cruza o de apoio");
+    // De lado (para a esquerda, saindo o pe esquerdo): os pes nunca cruzam e a media e v.
+    const DcmWalkerPlan3D sideways = planDcmWalk3D(settings, Eigen::Vector2d(0.0, -0.1), -1, left, Eigen::Vector2d(0.0, 0.4));
+    bool apart = true;
+    for (std::size_t i = 1; i < sideways.footsteps.size(); ++i) {
+        const double gap = (sideways.footsteps[i].y() - sideways.footsteps[i - 1].y()) * (i % 2 ? 1.0 : -1.0);
+        apart &= gap >= settings.stepWidth - 1e-9;
+    }
+    check(apart, "de lado, os pes nunca cruzam");
+    check(std::abs(sideways.footsteps[4].y() - sideways.footsteps[0].y() - 4 * settings.stepDuration * 0.4) < 1e-9, "de lado, a media e v");
     std::printf(failures ? "marcha DCM: %d falha(s)\n" : "marcha DCM: ok\n", failures);
     return failures ? 1 : 0;
 }

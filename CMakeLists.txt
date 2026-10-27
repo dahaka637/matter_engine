@@ -1317,6 +1317,10 @@ if(MATTERENGINE_BUILD_TESTS)
     add_executable(MatterDcmWalkerTests tests/BodyControl/DcmWalkerTests.cpp)
     target_link_libraries(MatterDcmWalkerTests PRIVATE MatterBodyControl)
     add_test(NAME MatterEngine.DcmWalker COMMAND MatterDcmWalkerTests)
+    add_executable(MatterWholeBodyQPTests tests/BodyControl/WholeBodyQPTests.cpp)
+    target_link_libraries(MatterWholeBodyQPTests PRIVATE MatterBodyControl)
+    target_compile_definitions(MatterWholeBodyQPTests PRIVATE MATTERENGINE_TEST_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
+    add_test(NAME MatterEngine.WholeBodyQP COMMAND MatterWholeBodyQPTests)
 endif()
 
 set_target_properties(MatterCore MatterRHI MatterPhysics MatterAudio MatterVulkan

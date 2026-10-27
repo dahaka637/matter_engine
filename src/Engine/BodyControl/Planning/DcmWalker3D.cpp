@@ -16,13 +16,18 @@ DcmWalkerPlan3D planDcmWalk3D(const DcmWalkerSettings3D& settings, const Eigen::
     const Eigen::Vector2d& left, const Eigen::Vector2d& velocity) {
     DcmWalkerPlan3D plan;
     const double half = 0.5 * settings.stepWidth;
-    // O centro do caminho passa entre os pes; cada passo anda v T.
-    const Eigen::Vector2d center = stance - stanceSide * half * left;
+    // O centro do caminho passa entre os pes; cada passo anda a parte de frente de v T.
+    // De lado, o pe que lidera abre 2 T v e o outro so fecha (passos iguais cruzariam as pernas).
+    const double lateral = velocity.dot(left);
+    const Eigen::Vector2d forward = velocity - lateral * left;
+    Eigen::Vector2d center = stance - stanceSide * half * left;
     plan.footsteps.push_back(stance);
     int side = stanceSide;
     for (int i = 1; i <= std::max(1, settings.horizon); ++i) {
         side = -side;
-        plan.footsteps.push_back(center + double(i) * settings.stepDuration * velocity + side * half * left);
+        center += settings.stepDuration * forward;
+        if (side * lateral > 0.0) center += 2.0 * settings.stepDuration * lateral * left;
+        plan.footsteps.push_back(center + side * half * left);
     }
     // De tras para frente: o ultimo pe e a parada (o DCM termina sobre ele).
     const double decay = std::exp(-omegaOf(settings) * settings.stepDuration);
