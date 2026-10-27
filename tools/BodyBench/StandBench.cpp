@@ -854,6 +854,7 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
                 for (const Eigen::Vector3d& corner : s.corners[swing])
                     lowest = std::min(lowest, (k.origin[s.feet[swing]] + k.rotation[s.feet[swing]] * corner).z());
                 bool landed = s.phaseTime > 0.6 * s.swingDuration && footTouching[swing] && lowest < 0.01;
+                if (s.trotFlightTime > 0.0) s.trotHome += s.walkVelocity * Dt;
                 if (s.trotFlightTime > 0.0 && s.trotPhase != 0) {
                     s.trotTime += Dt;
                     const double v0 = 0.5 * 9.81 * s.trotFlightTime;
@@ -1083,7 +1084,10 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
                 // balistico no voo, sem CoP), meia largura de passo para o lado dele.
                 const double remaining = (s.trotPhase == 1 ? std::max(0.0, 0.15 - s.trotTime) : 0.0)
                     + std::max(0.0, s.trotFlightTime - (s.trotPhase == 2 ? s.trotTime : 0.0));
-                const Eigen::Vector2d capture = d.centerOfMass.head<2>() + comVelocity.head<2>() * remaining + comVelocity.head<2>() / omega;
+                // Com velocidade pedida (Raibert): o pe pousa v_des T_apoio/2 a frente do CoM do toque, mais o erro (v - v_des)/omega.
+                const Eigen::Vector2d desired = s.walkVelocity;
+                const Eigen::Vector2d capture = d.centerOfMass.head<2>() + comVelocity.head<2>() * remaining + 0.5 * 0.15 * desired
+                    + (comVelocity.head<2>() - desired) / omega;
                 const double side = s.swingFoot == 0 ? 1.0 : -1.0;
                 // Posicao (Raibert): o pe pousa um pouco atras do ponto de captura, na direcao de casa.
                 const double homeGain = std::getenv("STANDTROTHOME") ? std::atof(std::getenv("STANDTROTHOME")) : 0.05;
@@ -1152,10 +1156,17 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
         linearRate.x() = -m * 4.0 * comVelocity.x();
         linearRate.y() = -m * 4.0 * comVelocity.y();
     }
+    if ((s.trotPhase == 5 || s.trotPhase == 1) && std::getenv("STANDTROTSOFTXY")) {
+        // Trote: no apoio a horizontal so segue de leve a velocidade pedida; quem equilibra e onde o pe pousa.
+        const double gainXY = std::atof(std::getenv("STANDTROTSOFTXY"));
+        linearRate.x() = m * gainXY * (s.walkVelocity.x() - comVelocity.x());
+        linearRate.y() = m * gainXY * (s.walkVelocity.y() - comVelocity.y());
+    }
     if (s.trotPhase == 5) {
         // Absorve levando o CoM parado a altura de partida do empurrao (PD critico, omega 10): cobre o pouso
         // rapido e o pouso alto (um voo curto deixava o apoio comecar alto e sem curso).
-        linearRate.z() = m * (100.0 * (s.trotStandingZ - 0.03 - d.centerOfMass.z()) - 20.0 * comVelocity.z());
+        const double stiffness = std::getenv("STANDTROTABSORBW") ? std::atof(std::getenv("STANDTROTABSORBW")) : 10.0;
+        linearRate.z() = m * (stiffness * stiffness * (s.trotStandingZ - 0.03 - d.centerOfMass.z()) - 2.0 * stiffness * comVelocity.z());
     } else if (s.trotPhase == 1) {
         HopSettings3D push;
         push.flightTime = s.trotFlightTime;
