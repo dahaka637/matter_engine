@@ -235,11 +235,72 @@ WholeBodyQPResult3D WholeBodyQP3D::solve(const WholeBodyQPInput3D& in) {
     const proxsuite::proxqp::Results<double>* final = nullptr;
     // A tentativa pesada reusa o slot de cima: o resultado de cima e guardado antes (nota 29).
     proxsuite::proxqp::Results<double> topSaved;
+    // O nivel de baixo no espaco nulo das igualdades (x = xp + Z y), reconstruido em x.
+    proxsuite::proxqp::Results<double> lowerSaved;
     // As igualdades da solucao devolvida (as de baixo incluem as que guardam o nivel de cima).
     const Eigen::MatrixXd* finalEquality = &equality;
     const Eigen::VectorXd* finalTarget = &equalityTarget;
     Eigen::MatrixXd lowerEquality;
     Eigen::VectorXd lowerTarget;
+    // O nivel de baixo sem igualdades (nota 29): com as de cima fixadas o ProxQP dava
+    // falso "primal inviavel" (custo com condicao ~1e8). Elimina E x = e pela QR de E^T
+    // com posto; o QP reduzido parte da solucao de cima, viavel e exata em qualquer base.
+    // Devolve nullptr se as igualdades forem inconsistentes (uma inviabilidade de verdade).
+    const auto runReduced = [&](Impl::Slot& slot, const Eigen::MatrixXd& E, const Eigen::VectorXd& e,
+                                const proxsuite::proxqp::Results<double>& seed) -> const proxsuite::proxqp::Results<double>* {
+        const Eigen::ColPivHouseholderQR<Eigen::MatrixXd> qr(E.transpose());
+        const int rank = static_cast<int>(qr.rank());
+        const Eigen::MatrixXd q = qr.householderQ();
+        // E^T P = Q R  =>  (P^T E) x = R^T Q^T x = P^T e: so as `rank` primeiras linhas definem xp.
+        const Eigen::VectorXd permuted = qr.colsPermutation().transpose() * e;
+        const Eigen::MatrixXd r = qr.matrixR().topLeftCorner(rank, rank).triangularView<Eigen::Upper>();
+        const Eigen::VectorXd particular = q.leftCols(rank) * r.transpose().triangularView<Eigen::Lower>().solve(permuted.head(rank));
+        if (E.rows() && (E * particular - e).cwiseAbs().maxCoeff() > in.acceptanceTolerance) return nullptr;
+        const int reduced = dimension - rank;
+        const Eigen::MatrixXd z = q.rightCols(reduced);
+        const Eigen::MatrixXd reducedHessian = z.transpose() * hessian * z;
+        const Eigen::VectorXd reducedGradient = z.transpose() * (hessian * particular + gradient);
+        const Eigen::MatrixXd reducedInequality = inequality * z;
+        const Eigen::VectorXd shift = inequality * particular;
+        const Eigen::VectorXd reducedLower = lower - shift, reducedUpper = upper - shift;
+        const Eigen::VectorXd start = z.transpose() * (seed.x - particular);
+        const Eigen::MatrixXd noEquality(0, reduced);
+        const Eigen::VectorXd noTarget(0);
+        const auto fresh = [&] {
+            slot.qp.emplace(reduced, 0, inequalities);
+            slot.qp->settings.eps_abs = 1e-5;
+            slot.qp->settings.max_iter = in.maximumIterations;
+            slot.qp->init(reducedHessian, reducedGradient, noEquality, noTarget, reducedInequality, reducedLower, reducedUpper);
+            slot.dimension = reduced;
+            slot.inequalities = inequalities;
+            slot.equalities = 0;
+        };
+        const bool reuse = slot.qp && slot.dimension == reduced && slot.inequalities == inequalities && slot.equalities == 0;
+        if (!reuse) {
+            fresh();
+        } else {
+            const bool refresh = (++slot.updatesSincePreconditioner >= in.preconditionerRefreshTicks);
+            if (refresh) slot.updatesSincePreconditioner = 0;
+            slot.qp->update(reducedHessian, reducedGradient, noEquality, noTarget, reducedInequality, reducedLower, reducedUpper, refresh);
+        }
+        Eigen::VectorXd startCopy = start, dualCopy = seed.z;
+        slot.qp->solve(startCopy, std::nullopt, dualCopy);
+        result.iterations += static_cast<int>(slot.qp->results.info.iter);
+        const auto status = slot.qp->results.info.status;
+        if (reuse && (!slot.qp->results.x.allFinite() || status == proxsuite::proxqp::QPSolverOutput::PROXQP_PRIMAL_INFEASIBLE
+            || status == proxsuite::proxqp::QPSolverOutput::PROXQP_DUAL_INFEASIBLE
+            || status == proxsuite::proxqp::QPSolverOutput::PROXQP_SOLVED_CLOSEST_PRIMAL_FEASIBLE)) {
+            fresh();
+            startCopy = start;
+            dualCopy = seed.z;
+            slot.qp->solve(startCopy, std::nullopt, dualCopy);
+            result.iterations += static_cast<int>(slot.qp->results.info.iter);
+            result.coldRetry = true;
+        }
+        lowerSaved = slot.qp->results;
+        lowerSaved.x = particular + z * slot.qp->results.x;
+        return &lowerSaved;
+    };
     if (primaryRows > 0) {
         // Nivel de cima: so as tarefas de prioridade 0 (com as mesmas regularizacoes e restricoes).
         Eigen::MatrixXd topHessian = hessian;
@@ -270,9 +331,9 @@ WholeBodyQPResult3D WholeBodyQP3D::solve(const WholeBodyQPInput3D& in) {
                 lowerTarget.segment(row, r) = task.matrix * topAcceleration;
                 row += r;
             }
-            const auto& bottom = runSlot(impl.slots[1], hessian, gradient, lowerEquality, lowerTarget);
-            if (acceptable(bottom, lowerEquality, lowerTarget)) {
-                final = &bottom;
+            const proxsuite::proxqp::Results<double>* bottom = runReduced(impl.slots[1], lowerEquality, lowerTarget, top);
+            if (bottom && acceptable(*bottom, lowerEquality, lowerTarget)) {
+                final = bottom;
                 finalEquality = &lowerEquality;
                 finalTarget = &lowerTarget;
                 result.path = WholeBodyQPPath3D::Hierarchical;
