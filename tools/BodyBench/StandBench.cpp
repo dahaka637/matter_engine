@@ -11,6 +11,7 @@
 #include "Engine/BodyControl/Observation/ContactWrench3D.hpp"
 #include "Engine/BodyControl/Planning/DcmWalker3D.hpp"
 #include "Engine/BodyControl/Planning/HopPlanner3D.hpp"
+#include "Engine/BodyControl/Planning/RunningGait3D.hpp"
 #include "Engine/BodyControl/Planning/StepRecovery3D.hpp"
 #include "Engine/Materials/MaterialLibrary.hpp"
 #include "Engine/Physics/PhysicsEngine3D.hpp"
@@ -906,8 +907,8 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
                         s.trotTime = 0.0;
                         s.trotEntrySpeed = comVelocityNow.z();
                         s.trotEntryPelvis = k.origin[0].z();
-                    } else if (s.trotPhase == 1 && knee <= (std::getenv("STANDTROTKNEE") ? std::atof(std::getenv("STANDTROTKNEE")) : 25.0) * Pi / 180.0
-                               && (comVelocityNow.z() >= v0 || (comVelocityNow.z() < s.trotPreviousVz && comVelocityNow.z() > 0.5 * v0))) {
+                    } else if (s.trotPhase == 1 && runningTakeoffReady3D(comVelocityNow.z(), s.trotPreviousVz, v0, knee,
+                                   (std::getenv("STANDTROTKNEE") ? std::atof(std::getenv("STANDTROTKNEE")) : 25.0) * Pi / 180.0)) {
                         // Sai com a velocidade atingida, ou no pico dela (a forca de chao ja caiu abaixo do peso) com a
                         // perna estendida: um limiar justo fazia um passo em vinte virar marcha e disparar.
                         s.trotPhase = 2;
@@ -951,7 +952,7 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
                             sole[swing].x(), sole[swing].y(), comNow.x(), comNow.y());
                     if (s.gaitThreshold >= 0.0 && s.trotFlightTime > 0.0) {
                         const double speed = s.walkVelocity.norm();
-                        const bool trot = s.trotActive ? speed > s.gaitThreshold - 0.15 : speed >= s.gaitThreshold;
+                        const bool trot = runningGaitSelectTrot3D(speed, s.trotActive, s.gaitThreshold, 0.15);
                         if (trot != s.trotActive) {
                             s.trotActive = trot;
                             s.trotPhase = 0;
@@ -1162,17 +1163,18 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
                 // balistico no voo, sem CoP), meia largura de passo para o lado dele.
                 const double remaining = (s.trotPhase == 1 ? std::max(0.0, 0.15 - s.trotTime) : 0.0)
                     + std::max(0.0, s.trotFlightTime - (s.trotPhase == 2 ? s.trotTime : 0.0));
-                // Com velocidade pedida (Raibert): o pe pousa v_des T_apoio/2 a frente do CoM do toque, mais o erro (v - v_des)/omega.
-                const Eigen::Vector2d desired = s.walkVelocity;
-                // (O apoio inteiro, absorcao + empurrao, dura ~0,25 s: o ponto neutro e v_des 0,25 / 2.)
-                const Eigen::Vector2d capture = d.centerOfMass.head<2>() + comVelocity.head<2>() * remaining + 0.5 * 0.25 * desired
-                    + (comVelocity.head<2>() - desired) / omega;
-                const double side = s.swingFoot == 0 ? 1.0 : -1.0;
-                // Posicao (Raibert): o pe pousa um pouco atras do ponto de captura, na direcao de casa.
-                const double homeGain = std::getenv("STANDTROTHOME") ? std::atof(std::getenv("STANDTROTHOME")) : 0.05;
-                if (!std::getenv("STANDTROTNOCAPTURE"))
-                    s.swingLanding.head<2>() = capture + side * 0.5 * s.walkSettings.stepWidth * s.walkLeft
-                        - (desired.norm() < 1e-6 ? homeGain : 0.0) * (s.trotHome - d.centerOfMass.head<2>());
+                RunningLandingInput3D landing;
+                landing.centerOfMass = d.centerOfMass.head<2>();
+                landing.velocity = comVelocity.head<2>();
+                landing.desiredVelocity = s.walkVelocity;
+                landing.left = s.walkLeft;
+                landing.remaining = remaining;
+                landing.omega = omega;
+                landing.stepWidth = s.walkSettings.stepWidth;
+                landing.side = s.swingFoot == 0 ? 1.0 : -1.0;
+                landing.homeError = s.trotHome - d.centerOfMass.head<2>();
+                if (const char* gain = std::getenv("STANDTROTHOME")) landing.homeGain = std::atof(gain);
+                if (!std::getenv("STANDTROTNOCAPTURE")) s.swingLanding.head<2>() = runningLandingPoint3D(landing);
             } else if (const bool disturbed = s.pushTimer > 0.0 && !std::getenv("STANDNOPUSHADJUST");
                        !std::getenv("STANDNOADJUST") && s.stepTime < (disturbed && !std::getenv("STANDNOPUSHLATE") ? 0.85 : 0.7) * s.stepDuration)
                 // Depois de uma pancada (forca fora dos apoios > 40 N nos ultimos 0,6 s, pelo estimador de contato) o
@@ -1250,7 +1252,7 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
         // Absorve levando o CoM parado a altura de partida do empurrao (PD critico, omega 10): cobre o pouso
         // rapido e o pouso alto (um voo curto deixava o apoio comecar alto e sem curso).
         const double stiffness = std::getenv("STANDTROTABSORBW") ? std::atof(std::getenv("STANDTROTABSORBW")) : 10.0;
-        linearRate.z() = m * (stiffness * stiffness * (s.trotStandingZ - 0.03 - d.centerOfMass.z()) - 2.0 * stiffness * comVelocity.z());
+        linearRate.z() = m * runningAbsorbAcceleration3D(d.centerOfMass.z(), comVelocity.z(), s.trotStandingZ - 0.03, stiffness);
     } else if (s.trotPhase == 1) {
         HopSettings3D push;
         push.flightTime = s.trotFlightTime;

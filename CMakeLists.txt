@@ -407,6 +407,7 @@ add_library(MatterBodyControl STATIC
     src/Engine/BodyControl/Planning/StepRecovery3D.cpp
     src/Engine/BodyControl/Planning/DcmWalker3D.cpp
     src/Engine/BodyControl/Planning/HopPlanner3D.cpp
+    src/Engine/BodyControl/Planning/RunningGait3D.cpp
 )
 target_include_directories(MatterBodyControl PUBLIC src)
 target_link_libraries(MatterBodyControl PUBLIC MatterArticulationDynamics PRIVATE MatterProxSuite)
@@ -1321,6 +1322,9 @@ if(MATTERENGINE_BUILD_TESTS)
     add_executable(MatterHopPlannerTests tests/BodyControl/HopPlannerTests.cpp)
     target_link_libraries(MatterHopPlannerTests PRIVATE MatterBodyControl)
     add_test(NAME MatterEngine.HopPlanner COMMAND MatterHopPlannerTests)
+    add_executable(MatterRunningGaitTests tests/BodyControl/RunningGaitTests.cpp)
+    target_link_libraries(MatterRunningGaitTests PRIVATE MatterBodyControl)
+    add_test(NAME MatterEngine.RunningGait COMMAND MatterRunningGaitTests)
     add_executable(MatterWholeBodyQPTests tests/BodyControl/WholeBodyQPTests.cpp)
     target_link_libraries(MatterWholeBodyQPTests PRIVATE MatterBodyControl)
     target_compile_definitions(MatterWholeBodyQPTests PRIVATE MATTERENGINE_TEST_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
