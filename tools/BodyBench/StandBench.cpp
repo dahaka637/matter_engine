@@ -133,6 +133,7 @@ struct Stand {
     // Retirada do vinculo nao e prova de voo: confirmar geometria e carga observadas.
     Eigen::Vector3d hopLandingPoint[2];
     Eigen::Matrix3d hopLandingRotation[2];
+    double hopPreviousVz = 0.0;
     double hopLandingPeak = 0.0, hopLandingPeakSum = 0.0, hopLandingTimer = -1.0;
     double hopObservedVz = 0.0, hopObservedFz = 0.0, hopReleaseKneeSum = 0.0, hopReleaseDropSum = 0.0;
     double hopRecoveryZ = 0.0, hopHeightDelta = 0.0, hopReleaseZ = 0.0;
@@ -595,7 +596,11 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
             s.hopPeakPlanned = std::max(s.hopPeakPlanned, s.plannedFootForce[0].z() + s.plannedFootForce[1].z());
             const auto kneeOf = [&](int f) { return state.jointCoordinates[static_cast<std::size_t>(s.model.links[s.feet[f]].parent)][0]; };
             const bool extended = !s.hopExtended || (kneeOf(0) <= 25.0 * Pi / 180.0 && kneeOf(1) <= 25.0 * Pi / 180.0);
-            if (vz >= hopTakeoffSpeed3D(s.hopSettings) + s.hopHeightDelta / s.hopSettings.flightTime && extended) {
+            // No quique (STANDHOPPEAK) tambem sai no pico da velocidade com a perna estendida: a forca de
+            // chao ja caiu abaixo do peso; seguir apoiado so deixa a guarda frear a perna contra o chao.
+            const bool peaked = std::getenv("STANDHOPPEAK") && s.hopEntrySpeed < -0.1 && vz < s.hopPreviousVz && vz > 0.3;
+            s.hopPreviousVz = vz;
+            if ((vz >= hopTakeoffSpeed3D(s.hopSettings) + s.hopHeightDelta / s.hopSettings.flightTime || peaked) && extended) {
                 s.hopPhase = 2;
                 s.hopTime = 0.;
                 s.hopReleaseZ = z;
