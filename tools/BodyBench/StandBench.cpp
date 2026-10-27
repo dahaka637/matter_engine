@@ -1083,7 +1083,8 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
             angular.name = "centroidal angular";
             angular.matrix = centroidal.matrix.bottomRows(3);
             angular.target = centroidal.target.tail(3);
-            if (std::getenv("STANDHQPANG")) angular.priority = 0;
+            // O momento angular em cima so na configuracao antiga da marcha (STANDOLDPRIO) ou fora dela.
+            if (std::getenv("STANDHQPANG") && !(s.walking && !std::getenv("STANDOLDPRIO"))) angular.priority = 0;
             if (std::getenv("STANDHQPXY")) {
                 // So a forca horizontal em cima; a vertical embaixo, com o angular.
                 WholeBodyTask3D vertical = linear;
@@ -1114,14 +1115,15 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
         }
     }
     input.tasks.push_back(wholeBodyOrientationTask3D(k, 0, s.pelvisTarget, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(), 100.0 * gain * gain, 20.0 * gain, 5.0, "pelve"));
-    if (std::getenv("STANDPELVISTOP") && hierarchy) input.tasks.back().priority = 0;
+    if ((std::getenv("STANDPELVISTOP") || (s.walking && !std::getenv("STANDOLDPRIO"))) && hierarchy) input.tasks.back().priority = 0;
     input.tasks.push_back(wholeBodyOrientationTask3D(k, static_cast<int>(s.chest), s.chestTarget, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(), 100.0 * gain * gain, 20.0 * gain, 3.0, "peito"));
     if (std::getenv("STANDCHESTTOP") && hierarchy) input.tasks.back().priority = 0;
     input.tasks.push_back(wholeBodyOrientationTask3D(k, static_cast<int>(s.head), s.headTarget, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(), 100.0 * gain * gain, 20.0 * gain,
         std::getenv("STANDHEADW") ? std::atof(std::getenv("STANDHEADW")) : 2.0, "cabeca"));
     // A cabeca no nivel de cima (padrao; STANDHEADLOW desliga): embaixo ela girava a ~500 graus/s para
     // produzir o momento angular fixado em cima (diario 31, 27/10 9h45).
-    if (!std::getenv("STANDHEADLOW") && hierarchy) input.tasks.back().priority = 0;
+    // (No salto a postura de cima ja segura a cabeca; as duas em cima impediam o empurrao.)
+    if (!std::getenv("STANDHEADLOW") && hierarchy && !s.hopping) input.tasks.back().priority = 0;
     if (s.stepping) {
         // O destino aceito fica fixo no balanco (nota 26: replanejar sem preservar derivadas derrubava).
         if (s.recovering && std::getenv("STANDREPLAN")) {
@@ -1257,7 +1259,10 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
                 posture.target[dof - 6] *= std::sqrt(weight);
             }
         }
-        if ((s.hopping && (s.hopPhase == 1 || s.hopPhase == 2 || s.hopPhase == 3)) || (s.walking && std::getenv("STANDUPPERTOP"))) {
+        // Na marcha, a postura de cima e a pelve vao ao nivel de cima por padrao (27/10, decidido sem o Codex:
+        // com o momento angular fixado em cima, tronco, bracos e cabeca oscilavam a ~3 Hz para produzi-lo).
+        const bool calmWalk = s.walking && !std::getenv("STANDOLDPRIO");
+        if ((s.hopping && (s.hopPhase == 1 || s.hopPhase == 2 || s.hopPhase == 3)) || (s.walking && std::getenv("STANDUPPERTOP")) || calmWalk) {
             // No salto, a postura de cima (bracos, coluna, cabeca) vai ao nivel de cima: o CoM
             // sobe pelas pernas, nao erguendo os bracos (nota 33).
             WholeBodyTask3D upper = posture;
