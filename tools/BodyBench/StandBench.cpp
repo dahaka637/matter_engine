@@ -356,6 +356,7 @@ void setup(Stand& s, const RagdollProfile3D& profile) {
         s.walkSettings.stepDuration = duration;
         if (const char* ds = std::getenv("STANDWALKDS")) s.walkDoubleSupport = std::atof(ds);
         if (const char* travel = std::getenv("STANDCOPTRAVEL")) s.walkSettings.copTravel = std::atof(travel);
+        if (const char* width = std::getenv("STANDSTEPWIDTH")) s.walkSettings.stepWidth = std::atof(width);
         s.walkSettings.comHeight = s.stepSettings.comHeight;
         s.swingDuration = duration;
         // Para a esquerda, sai o pe esquerdo (0); senao o direito (1).
