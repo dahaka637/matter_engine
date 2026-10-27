@@ -266,6 +266,15 @@ WholeBodyQPResult3D WholeBodyQP3D::solve(const WholeBodyQPInput3D& in) {
         const Eigen::VectorXd particular = q.leftCols(rank) * r.transpose().triangularView<Eigen::Lower>().solve(permuted.head(rank));
         if (E.rows() && (E * particular - e).cwiseAbs().maxCoeff() > in.acceptanceTolerance) return nullptr;
         const int reduced = dimension - rank;
+        if (reduced == 0) {
+            // As igualdades ja determinam tudo (nota 34: o ProxQP nao aceita dimensao zero); a
+            // aceitacao confere as desigualdades na solucao unica.
+            lowerSaved = seed;
+            lowerSaved.x = particular;
+            lowerSaved.info.status = proxsuite::proxqp::QPSolverOutput::PROXQP_SOLVED;
+            lowerSaved.info.iter = 0;
+            return &lowerSaved;
+        }
         const Eigen::MatrixXd z = q.rightCols(reduced);
         const Eigen::MatrixXd reducedHessian = z.transpose() * hessian * z;
         const Eigen::VectorXd reducedGradient = z.transpose() * (hessian * particular + gradient);
