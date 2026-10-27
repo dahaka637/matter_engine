@@ -6,14 +6,17 @@
 
 namespace MatterEngine {
 
-// O pedido de bola e o resultado aprovado (rework do manejo, 10/10/2026,
-// Etapa 5). O resultado e o modelo do golpe com atrito do V3 (keepBallMotion e
-// o toque pela barra), com os valores da aba "Forca na bola"; o que muda e
-// quem o chama: o encosto de verdade do pe na bola (o sensor), uma vez, como
-// impulso - sem impor a velocidade e sem segurar a bola.
-enum class BallActionKind3D : std::uint8_t { None, Dribble, Shot };
+// O pedido de bola e o resultado (a fisica do toque e do chute, nao o gesto):
+// o golpe com atrito (keepBallMotion) e o toque pela barra, com os valores da
+// aba "Forca na bola". Desde 24/10 a forca sai no comando, de uma vez, como
+// impulso (os gestos sao so animacao: Engine/Gesture).
+// (Raise: levantar a bola - o botao do meio, 24/10.)
+enum class BallActionKind3D : std::uint8_t { None, Dribble, Shot, Raise };
 // A parte do pe que toca (o calcanhar: a bola atras tocada para tras).
 enum class BallTouchSurface3D : std::uint8_t { Laces, Inside, Outside, Sole, Heel };
+// A parte do corpo (24/10, pedido do usuario): os pes, o torax (o dominio no
+// peito) e a cabeca (o cabeceio).
+enum class BallBodyPart3D : std::uint8_t { Foot, Chest, Head };
 
 // A forca na bola (07/10, pedido do usuario: uma aba no laboratorio para
 // ajustar tudo, o toque e o chute): os padroes sao os aprovados (T_Ball* e
@@ -21,56 +24,88 @@ enum class BallTouchSurface3D : std::uint8_t { Laces, Inside, Outside, Sole, Hee
 struct BallOutcomeSettings3D {
     // Toque (manejo): a velocidade que a barra da (m/s) = minimo + forca x
     // barra^curva (curva > 1: fraca embaixo e forte em cima; 1: reta).
-    float touchMinimum = 0.2f;
-    float touchPower = 13.0f;
-    float touchCurve = 2.65f;
-    // A sola (puxar e rolar): a mesma conta.
-    float soleMinimum = 0.4f;
-    float solePower = 2.6f;
-    float soleCurve = 2.2f;
-    // A velocidade do jogador: quanto da dele no rumo do toque a bola leva, a
-    // antecipacao dela (s; so no corpo animado), o empurrao a mais por m/s do
-    // corpo e o quanto da velocidade contra o rumo do toque - a do corpo e a
-    // que a bola trazia - volta nela.
-    float carry = 1.0f;
-    float carryAhead = 0.05f;
-    float speedPush = 0.05f;
-    float reverseBoost = 0.0f;
+    // (23/10: a calibragem do usuario na aba.)
+    float touchMinimum = 0.08f;
+    float touchPower = 15.30f;
+    float touchCurve = 2.35f;
+    // A velocidade do jogador: quanto da dele no rumo do toque a bola leva e o
+    // empurrao a mais por m/s do corpo.
+    float carry = 0.74f;
+    float speedPush = 0.3f;
+    // O poder de parada (24/10, pedido do usuario; era a "forca para inverter
+    // o rumo"): a bola vindo contra o manejo, o toque mais fraco que ela corta
+    // esta fracao do que sobraria dela seguindo (1: para no pe; 0: segue como
+    // antes); o mais forte inverte o rumo com o que sobra. No chute fraco, o
+    // quique vira amortecer pela barra.
+    float stopPower = 0.8f;
     // O atrito do toque: o que fica do movimento de lado da bola (em relacao
-    // ao corpo) e do excesso dela ja mais rapida no rumo do toque.
+    // ao corpo), do excesso dela ja mais rapida no rumo do toque e do que ela
+    // trazia contra o rumo (20/10, pedido do usuario: tocar contra a bola
+    // amortece - sai a pedida menos a que vinha; 1 = impulso puro).
     float touchSideKeep = 0.4f;
     float touchAheadKeep = 0.3f;
+    float touchAgainstKeep = 1.0f;
     // Chute: a velocidade (m/s) = minimo + forca x barra^curva.
-    float shotMinimum = 6.0f;
-    float shotPower = 24.0f;
-    float shotCurve = 0.6f;
+    float shotMinimum = 4.0f;
+    float shotPower = 38.0f;
+    float shotCurve = 0.77f;
     // A altura (graus): com a barra vazia, a mais com ela cheia, e os extremos
     // do gesto do mouse (para cima a bola alta, para baixo a rasteira).
-    float shotElevationMinimum = 4.0f;
-    float shotElevationPower = 8.0f;
+    float shotElevationMinimum = 4.5f;
+    float shotElevationPower = 4.5f;
     float shotHighElevation = 38.0f;
     float shotLowElevation = 0.5f;
     // O efeito: giro de lado no gesto cheio (rad/s), quanto a bola sai para
     // fora da mira para a curva voltar nela (graus), giro para tras na alta e
     // por cima na rasteira (rad/s).
-    float shotCurveSpin = 55.0f;
+    float shotCurveSpin = 120.0f;
     float shotCurveLaunch = 5.0f;
     float shotBackSpin = 25.0f;
-    float shotTopSpin = 20.0f;
+    float shotTopSpin = 25.0f;
     // O atrito do chute: o que fica do movimento de lado da bola, o quique do
     // que ela trazia contra o chute e o excesso dela ja mais rapida.
     float shotSideKeep = 0.4f;
     float shotBounce = 0.3f;
     float shotAheadKeep = 0.3f;
-    // Chute correndo: quanto o corpo freia (0..1 da velocidade).
-    float kickRunSlowdown = 0.3f;
-    // Depois do toque ou do chute: quanto tempo a bola fica na velocidade dele
-    // (o pe ainda encostando nao a muda; s).
-    float holdSeconds = 0.12f;
-    // A hitbox do pe: a caixa dele aumentada disto em cada lado (m; no corpo
-    // fisico, cujo pe atrasa o alvo, vezes 1,6).
-    float hitboxMargin = 0.07f;
+    // A recepcao (24/10, pedido do usuario: o toque ou o chute fraco na bola
+    // vindo para ele a param junto do corpo): o que fica no rumo das teclas
+    // (m/s) = minimo + forca x barra, sobre a velocidade do corpo (sem tecla,
+    // nada); e o quanto ela precisa vir no rumo dele (m/s) para ser recepcao.
+    float receiveMinimum = 0.3f;
+    float receivePower = 1.6f;
+    float receiveClosing = 2.5f;
+    // Quanto da velocidade do jogador a bola recebida herda (25/10, pedido do
+    // usuario: com a tecla apertada ela saia com a velocidade inteira do corpo
+    // e, soltando a tecla, voltava com forca; 0: ela para no chao e sai so o
+    // resto; 1: o de antes).
+    float receiveCarry = 0.0f;
+    // A recepcao espera a bola chegar: apertado com ela ainda longe, o pedido
+    // fica armado ate isto (s), e a forca sai com ela no alcance e a
+    // receiveArmDistance da pelve (m, no plano: onde o gesto pronto a para -
+    // parando onde estava no aperto, ela ficava ate meio metro a frente do
+    // pe), ou quando ela para de vir (passando de lado).
+    float receiveArmSeconds = 0.3f;
+    float receiveArmDistance = 0.45f;
+    // O peito e a cabeca (24/10, pedido do usuario), pelo maximo de agora do
+    // toque e do chute (minimo + forca): o peito vai ate chestShare dele e
+    // para a bola - tira chestStop do que ela trazia contra o corpo (1: o
+    // dominio perfeito; o jogador bom, depois) -; a cabeca e o toque e o
+    // chute de sempre ate headShare do maximo (o minimo igual).
+    float chestShare = 0.25f;
+    float chestStop = 1.0f;
+    float headShare = 0.5f;
+    // Levantar a bola (24/10, pedido do usuario: o botao do meio, a barra
+    // amarela): sobe a velocidade da barra (m/s) = minimo + forca x
+    // barra^curva; no rumo das teclas sai raiseAhead dela a frente (o chapeu),
+    // sobre a velocidade do corpo; sem tecla, reto para cima.
+    float raiseMinimum = 2.5f;
+    float raisePower = 5.0f;
+    float raiseCurve = 1.0f;
+    float raiseAhead = 0.5f;
 };
+
+// Os padroes (os de cima; T_Ball* e T_Shot* no ambiente os mudam).
+[[nodiscard]] BallOutcomeSettings3D defaultBallOutcomeSettings3D();
 
 // O que o pedido quer da bola.
 struct BallOutcomeRequest3D {
@@ -83,10 +118,14 @@ struct BallOutcomeRequest3D {
     float aimYawRadians = 0.0f;
     float lift = 0.0f;
     float curve = 0.0f;
-    // A sola (puxar e rolar) usa a conta dela.
+    // A parte do pe (o gesto que a mostra).
     BallTouchSurface3D surface = BallTouchSurface3D::Inside;
     // Drible com a velocidade exata (m/s; negativa: a da barra).
     float touchSpeed = -1.0f;
+    // A recepcao: a bola para junto do corpo (so o resto no rumo; sem rumo,
+    // nada).
+    bool receive = false;
+    BallBodyPart3D part = BallBodyPart3D::Foot;
 };
 
 struct BallOutcome3D {

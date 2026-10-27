@@ -5,6 +5,7 @@
 #include "Engine/Physics/PhysicsScene3D.hpp"
 
 #include <cstdint>
+#include <span>
 
 namespace MatterEngine {
 
@@ -50,6 +51,21 @@ struct AthleteControlView3D {
     float standingScale = 1.0f;
     Vec3 pelvisForceWorld;
     Vec3 pelvisTorqueWorld;
+    // (Contrato v4) a ajuda escolhida antes do impacto (parado, andando;
+    // 0..1), o estado da volta do impacto (o piso, o andamento 0..1 e a
+    // duracao, s), o cambaleio (0..1) e o tonus dos motores (media e minimo
+    // de jointStrength, 0..1).
+    float chosenStanding = 1.0f;
+    float chosenWalking = 1.0f;
+    float impactFloor = 1.0f;
+    float impactProgress = 1.0f;
+    float impactSeconds = 0.0f;
+    float stagger = 0.0f;
+    float muscleMean = 1.0f;
+    float muscleMinimum = 1.0f;
+    // A correcao da rede ja aplicada (o valor fisico por canal, depois da
+    // rampa e do limite de taxa; vazio sem rede).
+    std::span<const float> policyApplied;
     // O plano de navegacao que o corpo consegue cumprir (o do fisico).
     NavigationProfile3D navigation;
     // O que o classico propos: por pe, no balanco, onde ele pousa (no mundo)

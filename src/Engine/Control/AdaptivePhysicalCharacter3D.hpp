@@ -90,11 +90,6 @@ struct AdaptivePhysicalIntent3D {
     // a ajuda do pe.
     bool footPlantedValid = false;
     std::array<bool, 2> footPlanted {};
-    // Reforco de estabilidade de um gesto proprio (o toque e o chute na bola,
-    // V3 de 06/10 noite): 0..1, com entrada e saida suaves. So vale sem
-    // contato de fora recente (outro jogador, objeto, parede) - os impactos
-    // mandam - e nao segura uma queda que ja comecou.
-    float actionStability = 0.0f;
     // O RL (Athlete/Physical/PhysicalCorrections3D): a aceleracao a mais
     // pedida as pernas pelo contato (no mundo, no plano), so com `rlContact`.
     // Entra na parte das pernas e passa pelo mesmo alocador (centro de
@@ -132,16 +127,6 @@ struct AdaptivePhysicalSettings3D {
     // inclinacao e mais torque, e o reforco diminui aos poucos nestes
     // segundos - a ajuda do levantar nao some de uma vez.
     float recoveryBoostSeconds = 2.0f;
-    // O reforco do gesto proprio (actionStability, V3): o torque de postura
-    // cresce (vezes 1 + actionTorqueBoost) e a faixa de inclinacao aguentada
-    // se estende como no movimento proprio - ele nao fica rigido (a postura e
-    // a mesma, so com mais folga). actionAssist: a ajuda de parado e andando
-    // sobe ate ela (0 desligado: subir a ajuda no meio do gesto - 30% a 100%
-    // em 0,06 s - mexia na forca planar da pelve e derrubava mais, medido no
-    // sweepmanejo). Sem contato de fora ha actionQuietSeconds (s).
-    float actionAssist = 0.0f;
-    float actionTorqueBoost = 1.0f;
-    float actionQuietSeconds = 0.3f;
     // Envelope da ajuda: um contato externo tira ate assistContactDrop dela
     // na hora; volta a assistRecoveryPerSecond (por segundo, de 0 a 1).
     float assistContactDrop = 0.5f;
@@ -204,6 +189,13 @@ struct AdaptivePhysicalSettings3D {
     // sempre inteiro; o atleta liga com a regua no comando. Vault
     // 04_locomocao/ajuda_auxiliar.md.
     bool postureCoupleFollowsAssist = false;
+    // A regua historica (21/10, plano 04_locomocao/plano_rl_sobre_classico.md
+    // B): a lei de ajuda de antes de 5f2c4b6 (o "zero antigo": a 0% a pelve
+    // ainda leva parte do peso) no motor de hoje - o reforco por max, o peso
+    // e a sustentacao da pelve pela escala depois do impacto, a forma pulsada
+    // so acima de 50%, a alavanca e o pulo inteiros, o par sempre inteiro
+    // (regime A, ignora postureCoupleFollowsAssist). false: a regua linear.
+    bool historicalAssistRuler = false;
     // Quanto do PESO as pernas assumem quando carregam (a parte da fracao
     // delas; 1 = a E4). Com 0 o peso fica com a pelve e os motores, e as
     // pernas fazem so o equilibrio (centro de pressao) e a postura: o peso
@@ -290,9 +282,6 @@ struct AdaptivePhysicalOutput3D {
     float assistEnvelope = 1.0f;
     // Reforco de recem-levantado (1 na troca, 0 depois de recoveryBoostSeconds).
     float recoveryBoost = 0.0f;
-    // O reforco do gesto proprio que valeu neste tick (0..1; ver
-    // AdaptivePhysicalIntent3D::actionStability).
-    float actionStability = 0.0f;
     float secondsWithoutFootContact = 0.0f;
     float proxyErrorMeters = 0.0f;
     int supportCount = 0;
@@ -376,9 +365,6 @@ private:
     // 1 = inclinacao so do proprio movimento (sem contato externo recente,
     // jogador se movendo): a postura aguenta mais.
     float m_selfMotionCalm = 0.0f;
-    // Desde o ultimo contato de fora qualquer (encostar num jogador, num
-    // objeto, numa parede; s): o reforco do gesto proprio so vale sem ele.
-    float m_sinceExternalTouch = 10.0f;
 public:
     // Diagnostico: o movimento proprio (0..1) do ultimo tick.
     float selfMotionCalm() const { return m_selfMotionCalm; }

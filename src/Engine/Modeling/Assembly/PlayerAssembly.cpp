@@ -19,6 +19,7 @@
 #include "Engine/Modeling/Texture/UvAtlas.hpp"
 
 #include <algorithm>
+#include <array>
 #include <fstream>
 #include <optional>
 #include <sstream>
@@ -339,6 +340,25 @@ AssemblyResult assemblePlayer(const AssemblyRecipe& recipe, const std::filesyste
     clock.mark("uniforme");
     // O avesso que sobra nas poses do jogo, corrigido nos pontos medidos.
     relaxWeights(result.mesh, recipe.weightRelax, recipe.weightRelaxIterations);
+    // As meias-juntas: a parte dos dois ossos vai para a cadeia de cima - meia
+    // - de baixo no ponto da proporcao entre eles (o meio da passagem fica na
+    // auxiliar, que gira a metade). O quadril tem a faixa dele (Uniform) e o
+    // ombro o campo dele (ShoulderBand).
+    if (recipe.halfJoints)
+        for (const auto& [upper, half, lower] : { std::array<const char*, 3> { "RightThigh", "RightKneeHelper", "RightShin" },
+                 std::array<const char*, 3> { "RightShin", "RightAnkleHelper", "RightFoot" },
+                 std::array<const char*, 3> { "RightUpperArm", "RightElbowHelper", "RightForearm" },
+                 std::array<const char*, 3> { "RightForearm", "RightWristHelper", "RightHand" } }) {
+            const int chain[] { skeleton.find(upper), skeleton.find(half), skeleton.find(lower) };
+            for (std::uint32_t v = 0; v < result.mesh.positions.size(); ++v) {
+                const float a = weightFor(result.mesh.skin[v], chain[0]), b = weightFor(result.mesh.skin[v], chain[2]);
+                if (a > 1e-3f && b > 1e-3f) chainWeights(result.mesh, v, chain, b / (a + b));
+            }
+        }
+    {
+        const UniformLines lines = uniformLines(recipe, skeleton);
+        applyShoulderBand(result.mesh, skeleton, recipe.shoulderBand, [&](Vec3 p) { return lines.collarHeight(p); });
+    }
     mirrorHalf(result.mesh, skeleton, recipe.midlineBlend);
     clock.mark("pesos finos e espelho");
     if (recipe.textured) {

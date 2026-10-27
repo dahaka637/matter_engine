@@ -31,6 +31,20 @@ constexpr float GroundHalfExtent = 400.0f;
 
 float uniform(std::mt19937& rng, float lo, float hi) { return std::uniform_real_distribution<float>(lo, hi)(rng); }
 bool chance(std::mt19937& rng, float p) { return uniform(rng, 0.0f, 1.0f) < p; }
+float wrapAngle(float a) { return a - 2.0f * Pi * std::floor((a + Pi) / (2.0f * Pi)); }
+bool isStar(TrackingDrill3D d) { return d >= TrackingDrill3D::Star; }
+// O olhar do peito livre acompanha o rumo a no maximo isto (rad/s); o lider vira a 10.
+constexpr float FreeChestTurnRate = 6.0f;
+// Chegou ao ponto da estrela dentro disto (m); a espera dura de 1 a 2 s em 35% das chegadas.
+constexpr float StarArrival = 0.4f;
+constexpr float StarWaitChance = 0.35f;
+constexpr float StarWaitArrival = 0.12f;
+// A desaceleracao com que o piloto freia antes da quina (m/s2).
+constexpr float StarBrake = 1.5f;
+// E a aceleracao do pedido ao sair da quina ou da espera (m/s2).
+constexpr float StarAccelerate = 4.0f;
+// E a taxa maxima com que o rumo do pedido curva (rad/s).
+constexpr float StarTurnRate = 1.0f;
 
 } // namespace
 
@@ -66,6 +80,16 @@ struct TrackingTraining3D::Impl {
         float turnLeft = 0.0f;
         float turnSpeed = 0.0f;
         float pauseLeft = 0.0f;
+        // A estrela: o centro (a posicao da capsula no primeiro tick), a ponta
+        // de agora (-1: o centro) e a espera no ponto (s).
+        bool starReady = false;
+        Vec3 starCenter;
+        int starTarget = -1;
+        int starNext = -1;
+        float starHeading = 0.0f;
+        bool starHeadingReady = false;
+        bool starWaitAtEnd = false;
+        float starWait = 0.0f;
         std::uint64_t ticks = 0;
         std::array<float, TrackingContract3D::ActionSize> filtered {};
         // As pernas adaptaveis: o tropeco em andamento (s), a distancia da cabeca
@@ -151,11 +175,19 @@ struct TrackingTraining3D::Impl {
             return settings.evaluationMode == TrackingEvaluation3D::Idle ? TrackingDrill3D::Idle
                 : settings.evaluationMode == TrackingEvaluation3D::Turn ? TrackingDrill3D::Turn
                 : settings.evaluationMode == TrackingEvaluation3D::FastTurn ? TrackingDrill3D::FastTurn
+                : settings.evaluationMode == TrackingEvaluation3D::Star ? TrackingDrill3D::Star
+                : settings.evaluationMode == TrackingEvaluation3D::StarFixed ? TrackingDrill3D::StarFixed
+                : settings.evaluationMode == TrackingEvaluation3D::StarTurning ? TrackingDrill3D::StarTurning
                                                                              : TrackingDrill3D::Move;
         const float r = uniform(w.rng, 0.0f, 1.0f);
         if (r < settings.idleShare) return TrackingDrill3D::Idle;
         if (r < settings.idleShare + settings.turnShare) return TrackingDrill3D::Turn;
         if (r < settings.idleShare + settings.turnShare + settings.fastTurnShare) return TrackingDrill3D::FastTurn;
+        const float rest = r - settings.idleShare - settings.turnShare - settings.fastTurnShare;
+        if (rest < settings.starShare) return TrackingDrill3D::Star;
+        if (rest < settings.starShare + settings.starFixedShare) return TrackingDrill3D::StarFixed;
+        if (rest < settings.starShare + settings.starFixedShare + settings.starTurningShare)
+            return TrackingDrill3D::StarTurning;
         return TrackingDrill3D::Move;
     }
 
@@ -170,6 +202,20 @@ struct TrackingTraining3D::Impl {
         w.turnLeft = 0.0f;
         w.turnSpeed = 0.0f;
         if (drill == TrackingDrill3D::Move) return;
+        if (isStar(drill)) {
+            // A estrela parte do ponto onde o lider estiver (o centro e fixado no primeiro tick).
+            // Entrando com o lider ja andando (o episodio seguinte): o pedido continua com a mesma
+            // velocidade e o mesmo rumo, senao o lider freia de uma vez e o corpo recomeca caindo.
+            const Vec3 v = w.command.requestedVelocityWorld;
+            w.starHeadingReady = std::hypot(v.x, v.y) > 0.3f;
+            if (w.starHeadingReady) w.starHeading = std::atan2(v.y, v.x);
+            w.starReady = false;
+            w.starTarget = -1;
+            w.starWait = 0.0f;
+            w.sprint = false;
+            w.turnRate = 0.0f;
+            return;
+        }
         w.pauseLeft = turnPause(w);
         w.speed = 0.0f;
         w.turnRate = 0.0f;
@@ -199,6 +245,81 @@ struct TrackingTraining3D::Impl {
         composeCommand(w);
     }
 
+    // Um tick do piloto da estrela: o proximo ponto, a espera e o rumo do pedido
+    // (em relacao ao olhar, que depende do peito: livre, fixo ou girando). Ele
+    // freia antes do ponto (a quina: lento na espera ou na volta grande, como
+    // gente), porque o lider parando em 0,1 s nao e um movimento que o corpo siga.
+    void starTick(World& w) const {
+        if (!isStar(w.drill)) return;
+        const Vec3 at = w.leader->capsulePosition();
+        auto point = [&](int k) {
+            if (k < 0) return w.starCenter;
+            const float angle = static_cast<float>(k) * (Pi / 4.0f);
+            return Vec3 { w.starCenter.x + settings.starRadius * std::cos(angle),
+                w.starCenter.y + settings.starRadius * std::sin(angle), 0.0f };
+        };
+        // Do centro vai a uma ponta; de uma ponta volta ao centro (70%) ou vai a outra (virando de 45 a 180 graus).
+        auto planNext = [&] {
+            if (w.starTarget < 0) w.starNext = static_cast<int>(uniform(w.rng, 0.0f, 8.0f)) % 8;
+            else if (chance(w.rng, 0.3f)) w.starNext = (w.starTarget + 1 + static_cast<int>(uniform(w.rng, 0.0f, 7.0f)) % 7) % 8;
+            else w.starNext = -1;
+            w.starWaitAtEnd = chance(w.rng, StarWaitChance);
+        };
+        auto newLeg = [&] {
+            if (w.drill == TrackingDrill3D::StarTurning)
+                w.turnRate = chance(w.rng, 0.2f) ? 0.0f : uniform(w.rng, 0.3f, 1.2f) * (chance(w.rng, 0.5f) ? 1.0f : -1.0f);
+        };
+        if (!w.starReady) {
+            w.starReady = true;
+            w.starCenter = at;
+            w.starTarget = -1;
+            w.starWait = 0.0f;
+            w.starNext = -1;
+            planNext();
+            w.starTarget = w.starNext;
+            planNext();
+            newLeg();
+        }
+        const Vec3 goal = point(w.starTarget);
+        const float distance = std::hypot(goal.x - at.x, goal.y - at.y);
+        if (w.starWait > 0.0f) {
+            w.starWait -= TickSeconds;
+        } else if (distance < (w.starWaitAtEnd ? StarWaitArrival : StarArrival)) {
+            if (w.starWaitAtEnd) w.starWait = uniform(w.rng, 1.0f, 2.0f);
+            w.starTarget = w.starNext;
+            planNext();
+            newLeg();
+        }
+        const Vec3 now = point(w.starTarget);
+        const float wantedHeading = std::atan2(now.y - at.y, now.x - at.x);
+        // O rumo do pedido curva com taxa limitada (o jogador faz a curva, nao a quina): o lider virando
+        // o rumo de uma vez a 3 m/s deixava o corpo mais de 1 m para tras e o episodio acabava sem queda.
+        if (!w.starHeadingReady || w.speed < 0.3f) {
+            w.starHeading = wantedHeading;
+            w.starHeadingReady = true;
+        } else {
+            const float step = StarTurnRate * TickSeconds;
+            w.starHeading += std::clamp(wrapAngle(wantedHeading - w.starHeading), -step, step);
+        }
+        const float heading = w.starHeading;
+        if (w.drill == TrackingDrill3D::Star) {
+            // Peito livre: o olhar acompanha o rumo (limitado, como a camera do jogo).
+            const float step = FreeChestTurnRate * TickSeconds;
+            w.command.facingYawRadians += std::clamp(wrapAngle(heading - w.command.facingYawRadians), -step, step);
+        }
+        w.relativeDirection = wrapAngle(heading - w.command.facingYawRadians);
+        // A velocidade: o trote, freando para a velocidade da quina (esperando: quase parado; senao,
+        // quanto maior a volta, menor) com a desaceleracao confortavel de StarBrake.
+        const Vec3 after = point(w.starNext);
+        const float turn = std::abs(wrapAngle(std::atan2(after.y - now.y, after.x - now.x) - heading));
+        const float corner = w.starWaitAtEnd ? 0.3f : settings.starSpeed * std::max(0.5f, 1.0f - turn / (2.0f * Pi));
+        const float toGo = std::max(0.0f, std::hypot(now.x - at.x, now.y - at.y));
+        const float wanted = w.starWait > 0.0f ? 0.0f : std::min(settings.starSpeed, std::sqrt(corner * corner + 2.0f * StarBrake * toGo));
+        // Arranca devagar (o piloto acelera suave); frear segue o perfil acima.
+        w.speed = std::min(wanted, w.speed + StarAccelerate * TickSeconds);
+        composeCommand(w);
+    }
+
     // Um tick do lider com o jogador virtual (a troca a 60 Hz, o giro do olhar).
     void leaderTick(World& w) const {
         drillTick(w);
@@ -216,6 +337,7 @@ struct TrackingTraining3D::Impl {
             w.command.facingYawRadians += w.turnRate * TickSeconds;
             composeCommand(w);
         }
+        starTick(w);
         w.leader->step(w.command, TickSeconds);
         ++w.ticks;
     }
@@ -263,8 +385,15 @@ struct TrackingTraining3D::Impl {
             changeCommand(w);
         }
         enterDrill(w, pickDrill(w));
+        if (isStar(w.drill)) {
+            // O lider recomeca parado (reset): a estrela parte do repouso.
+            w.speed = 0.0f;
+            w.starHeadingReady = false;
+            composeCommand(w);
+        }
         // (Aquecimento sorteado: o comeco cai em fases diferentes da passada.)
-        restartLeader(w, settings.evaluation ? 2.0f : uniform(w.rng, 1.0f, 3.0f));
+        // (Na avaliacao a estrela aquece sorteado e mais longo: se nao, todos os mundos chegam a primeira quina juntos.)
+        restartLeader(w, isStar(w.drill) ? uniform(w.rng, 1.0f, 10.0f) : settings.evaluation ? 2.0f : uniform(w.rng, 1.0f, 3.0f));
         seedBody(w);
         observe(w);
     }
@@ -321,7 +450,7 @@ struct TrackingTraining3D::Impl {
             legWeight = std::min(legWeight, 1.0f - 0.7f * risk);
         }
         const TrackingRewardTerms3D terms = w.reward->evaluate(leader, body.links, com, comVelocity, legWeight,
-            settings.centerOfMassVelocityWeight, settings.armWeight, settings.trunkWeight);
+            settings.centerOfMassVelocityWeight, settings.armWeight, settings.trunkWeight, settings.realFallOnly);
         w.lastHeadDistance = terms.headDistance;
         reward = terms.total * smooth + (terms.terminate ? 0.0f : settings.aliveBonus);
         w.seconds += TicksPerDecision * TickSeconds;
@@ -478,6 +607,22 @@ void TrackingTraining3D::setCommand(std::size_t world, float speed, float relati
 
 void TrackingTraining3D::setDrill(std::size_t world, TrackingDrill3D drill) {
     m_impl->enterDrill(m_impl->worlds.at(world), drill);
+}
+
+bool TrackingTraining3D::starView(std::size_t world, std::vector<Vec3>& points, Vec3& target, bool& waiting) const {
+    const Impl& impl = *m_impl;
+    const Impl::World& w = impl.worlds.at(world);
+    if (!isStar(w.drill) || !w.starReady) return false;
+    points.clear();
+    points.push_back(w.starCenter);
+    for (int k = 0; k < 8; ++k) {
+        const float angle = static_cast<float>(k) * (Pi / 4.0f);
+        points.push_back({ w.starCenter.x + impl.settings.starRadius * std::cos(angle),
+            w.starCenter.y + impl.settings.starRadius * std::sin(angle), 0.0f });
+    }
+    target = points[static_cast<std::size_t>(w.starTarget + 1)];
+    waiting = w.starWaitAtEnd;
+    return true;
 }
 
 float TrackingTraining3D::lookYaw(std::size_t world) const { return m_impl->worlds.at(world).command.facingYawRadians; }

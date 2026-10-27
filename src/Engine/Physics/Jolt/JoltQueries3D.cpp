@@ -122,7 +122,7 @@ std::vector<RagdollWorldContact3D> PhysicsScene3D::ragdollPoseWorldContacts(Ragd
         JPH::AllHitCollisionCollector<JPH::CollideShapeCollector> collector;
         m_impl->system->GetNarrowPhaseQuery().CollideShape(shape, JPH::Vec3::sReplicate(1),
             world.PreTranslated(shape->GetCenterOfMass()), settings, JPH::RVec3::sZero(), collector, {},
-            Layers(1u << JoltObjectLayers::NonMoving));
+            Layers((1u << JoltObjectLayers::NonMoving) | (1u << JoltObjectLayers::PlayerBarrier)));
         RagdollWorldContact3D deepest;
         deepest.depthMeters = -1.0f;
         for (const auto& hit : collector.mHits) {
@@ -142,7 +142,8 @@ bool PhysicsScene3D::overlapsBox(Vec3 center, Vec3 halfExtents, Quaternion orien
     JPH::BoxShape shape(toJolt(halfExtents), 0);
     JPH::AnyHitCollisionCollector<JPH::CollideShapeCollector> collector;
     m_impl->system->GetNarrowPhaseQuery().CollideShape(&shape, JPH::Vec3::sReplicate(1),
-        JPH::RMat44::sRotationTranslation(toJolt(orientation), toJolt(center)), {}, JPH::RVec3::sZero(), collector);
+        JPH::RMat44::sRotationTranslation(toJolt(orientation), toJolt(center)), {}, JPH::RVec3::sZero(), collector, {},
+        Layers(~((1u << JoltObjectLayers::PlayerBarrier) | (1u << JoltObjectLayers::CapsuleBarrier))));
     return collector.HadHit();
 }
 GroundProbeResult3D PhysicsScene3D::probeGround(Vec3 center, float radius,

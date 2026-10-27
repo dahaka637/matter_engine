@@ -60,6 +60,9 @@ struct Mesh {
     std::vector<Triangle> triangles;
     std::vector<std::uint16_t> trianglePart;
     std::vector<std::uint16_t> triangleMaterial;
+    // O poligono de origem de cada triangulo (vazio, ou um por triangulo; a
+    // fonte Blender): o arame mostra o quad sem a diagonal de dentro.
+    std::vector<std::uint32_t> trianglePolygon;
     std::vector<MeshPart> parts;
     std::vector<MeshMaterial> materials;
     // O mapa de textura: vazio, ou os tres cantos de cada triangulo (a

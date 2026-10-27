@@ -99,8 +99,6 @@ const float TacklePlantStride = tuneTemp("T_TacklePlantStride", 0.10f);
 // TEMPTUNE: troca de dono do pe no ar (planejador <-> passada): o alvo novo
 // entra misturado a partir do ultimo neste tempo (s; 0 desliga).
 const float GoalHandoffSeconds = tuneTemp("T_GoalHandoff", 0.12f);
-// Repulsao do pe pela bola: folga entre a caixa do pe e a bola (m).
-const float BallRepelMargin = tuneTemp("T_BallRepelMargin", 0.025f);
 // TEMPTUNE: giro parado pelo clipe (ajuda cheia; pedido do usuario, 04/10):
 // liga com o giro pedido acima de ClipTurnEnter (rad); o ciclo do clipe dura o
 // giro sobre ClipTurnSpeed (rad/s), no minimo ClipTurnMinSeconds e no maximo a
@@ -111,16 +109,6 @@ const float ClipTurnSpeed = tuneTemp("T_ClipTurnSpeed", 6.0f);
 const float ClipTurnMinSeconds = tuneTemp("T_ClipTurnMin", 0.24f);
 const float ClipTurnBlendIn = tuneTemp("T_ClipTurnBlendIn", 0.03f);
 const float ClipTurnBlendOut = tuneTemp("T_ClipTurnBlendOut", 0.12f);
-// TEMPTUNE: corpo do chute (rad no chute cheio): giro do tronco, para tras no
-// armado, por cima da bola batendo, para o lado do apoio.
-const float KickTrunkTwist = tuneTemp("T_KickTwist", 0.30f);
-const float KickTrunkBack = tuneTemp("T_KickTrunkBack", 0.12f);
-const float KickTrunkOver = tuneTemp("T_KickTrunkOver", 0.12f);
-const float KickTrunkSide = tuneTemp("T_KickTrunkSide", 0.14f);
-// Bracos do chute pela forca (04/10): abaixo de KickArmFloor nao entram, em
-// KickArmFull o desenho inteiro.
-const float KickArmFloor = tuneTemp("T_KickArmFloor", 0.25f);
-const float KickArmFull = tuneTemp("T_KickArmFull", 0.95f);
 const float TacklePreBlend = tuneTemp("T_TacklePreBlend", 0.6f);
 const float TacklePrepMax = tuneTemp("T_TacklePrep", 0.40f);
 // Forca do carrinho pela velocidade: no chao ele desliza D = a * v^p (v a
@@ -799,10 +787,6 @@ inline Quaternion slerpQuaternion(Quaternion from, Quaternion to, float t) {
 // com prioridade para a sola (o vetor "para cima" do pe decide o contato
 // com o chao) e a ponta em segundo.
 inline Vec3 rotationVector(Quaternion value);
-
-// TEMPTUNE: iteracoes do IK do pe guiado pela bola (o resto, 7).
-const int BallFootIterations = static_cast<int>(std::getenv("T_BallIkIterations")
-    ? std::strtof(std::getenv("T_BallIkIterations"), nullptr) : 24.0f);
 
 inline void solveFootPose(const RagdollProfile3D& profile,
     std::vector<Vec3>& coordinates, std::size_t footIndex,
@@ -1641,133 +1625,6 @@ inline void applyBalanceReaction(const RagdollProfile3D& profile,
             solveChainPoint(profile, coordinates, hand, {}, 2,
                 rootInverse.rotate(target - root.position), 0.85f * amount);
         }
-    }
-}
-
-// Chute (04/10): o corpo do chute por cima da passada, pela forca. O braco
-// do lado do apoio abre para fora e para a frente (equilibrio) enquanto a
-// perna arma e varre para tras no acompanhamento; o do lado do chute vai para
-// tras no armado e vem para a frente depois. O tronco gira abrindo o ombro do
-// chute no armado e fecha batendo; inclina para o lado do apoio, para tras na
-// bola alta e por cima dela na rasteira. A cabeca olha a bola.
-// Repulsao do pe pela bola (04/10): quanto mover, no plano, o alvo do pe
-// (origem do link, com a orientacao dele) para a caixa do pe ficar fora da
-// bola com uma folga. So no plano: por cima ele pisaria nela.
-inline Vec3 footBallPushOut(const RagdollLinkDefinition3D& link, Vec3 position, Quaternion orientation,
-    Vec3 ball, float radius, float margin) {
-    const RagdollCapsuleDefinition3D& collider = link.collider;
-    if (!ragdollColliderHasBox3D(collider)) return {};
-    const Quaternion box = (orientation * collider.localOrientation).normalized();
-    Vec3 total {};
-    for (int pass = 0; pass < 3; ++pass) {
-        const Vec3 center = position + total + orientation.rotate(collider.localPosition);
-        // O ponto do pe (a casca da chuteira, ou a caixa) mais perto da bola,
-        // com a distancia com sinal: com o centro da bola dentro do pe, ele
-        // sai pela face mais perto.
-        const RagdollColliderClosest3D near = ragdollColliderClosestPoint3D(collider, box.conjugate().rotate(ball - center));
-        const float deficit = radius + margin - near.distance;
-        if (deficit <= 0.0f) break;
-        const Vec3 normal = box.rotate(near.normal);
-        Vec3 away { -normal.x, -normal.y, 0.0f };
-        if (away.lengthSquared() < 1e-6f) away = { center.x - ball.x, center.y - ball.y, 0.0f };
-        if (away.lengthSquared() < 1e-6f) away = { 1.0f, 0.0f, 0.0f };
-        total += away.normalized() * deficit;
-    }
-    return total;
-}
-
-inline void applyKickPose(const RagdollProfile3D& profile, const RagdollState3D& state,
-    std::vector<Vec3>& coordinates, std::array<std::size_t, 2> hands, const BallKickPose3D& kick) {
-    if (!kick.active || kick.weight <= 0.001f || state.links.size() != profile.links.size()) return;
-    const float w = std::clamp(kick.weight, 0.0f, 1.0f);
-    const float p = std::clamp(kick.power, 0.0f, 1.0f);
-    const float stage = kick.stage;
-    const float windup = stage < 1.0f ? smoothStep(stage) : stage < 2.0f ? 1.0f - smoothStep(stage - 1.0f) : 0.0f;
-    const float strike = stage < 1.0f ? 0.0f : stage < 2.0f ? smoothStep(stage - 1.0f) : 1.0f - smoothStep(stage - 2.0f);
-    const float follow = stage < 2.0f ? 0.0f : smoothStep((stage - 2.0f) / 0.6f);
-    const float open = stage < 1.0f ? smoothStep(stage) : stage < 2.0f ? 1.0f : 1.0f - 0.5f * smoothStep(stage - 2.0f);
-    const float k = kick.side == 0 ? 1.0f : -1.0f;  // lado do chute, + esquerda
-    const float high = std::max(0.0f, kick.lift), low = std::max(0.0f, -kick.lift);
-    // Tronco (twist + gira para a esquerda; swing1 + flexiona; swing2 +
-    // inclina para a esquerda), repartido nas tres juntas.
-    const float twist = (KickTrunkTwist * windup - KickTrunkTwist * 0.8f * follow) * k * (0.3f + 0.7f * p);
-    const float bend = (-KickTrunkBack * windup + (KickTrunkOver * (1.0f + low) - KickTrunkOver * 2.5f * high) * strike)
-        * (0.3f + 0.7f * p);
-    const float lateral = -k * KickTrunkSide * open * (0.3f + 0.7f * p);
-    for (const char* id : { "Abdomen", "Chest", "UpperChest" }) {
-        addJointCoordinate(profile, coordinates, id, 0, twist / 3.0f * w);
-        addJointCoordinate(profile, coordinates, id, 1, bend / 3.0f * w);
-        addJointCoordinate(profile, coordinates, id, 2, lateral / 3.0f * w);
-    }
-    addJointCoordinate(profile, coordinates, "Head", 1, 0.18f * (windup + strike) * w);
-    // Bracos.
-    const auto& root = state.links.front();
-    const Quaternion rootInverse = root.orientation.conjugate();
-    const Vec3 up { 0.0f, 0.0f, 1.0f };
-    Vec3 aim { kick.aim.x, kick.aim.y, 0.0f };
-    aim = aim.lengthSquared() > 1e-4f ? aim.normalized() : Vec3 { 1.0f, 0.0f, 0.0f };
-    const Vec3 left = cross(up, aim);
-    for (std::size_t side = 0; side < 2; ++side) {
-        const std::size_t hand = hands[side];
-        if (hand == 0 || hand >= profile.links.size()) continue;
-        const int forearm = profile.links[hand].parentIndex;
-        const int upper = forearm > 0 ? profile.links[static_cast<std::size_t>(forearm)].parentIndex : -1;
-        if (upper <= 0) continue;
-        const Vec3 shoulder = state.links[static_cast<std::size_t>(upper)].position;
-        const float s = side == 0 ? 1.0f : -1.0f;
-        // Bracos (04/10): o desenho da referencia (Goalkeeper Drop Kick - o
-        // do apoio abre para o lado armando, vem para a frente na batida e
-        // cruza acompanhando; o do chute vai para tras), mais contido e pela
-        // forca, a pedido do usuario: chute fraco quase nada (abaixo de
-        // KickArmFloor nem entra), so o forte abre de verdade; o rapido, menos.
-        // O punho em relacao ao ombro, na mira: frente, para fora, cima.
-        struct ArmKey { float forward; float out; float up; };
-        const bool supportArm = static_cast<int>(side) != kick.side;
-        const std::array<ArmKey, 4> support { ArmKey { 0.02f, 0.14f, -0.50f }, ArmKey { -0.12f, 0.34f, -0.12f },
-            ArmKey { 0.26f, 0.22f, -0.28f }, ArmKey { 0.28f, -0.06f, -0.30f } };
-        const std::array<ArmKey, 4> kicking { ArmKey { 0.02f, 0.14f, -0.50f }, ArmKey { -0.02f, 0.28f, -0.30f },
-            ArmKey { -0.26f, 0.20f, -0.36f }, ArmKey { -0.30f, 0.06f, -0.38f } };
-        const std::array<ArmKey, 4>& arm = supportArm ? support : kicking;
-        // No tempo do gesto (0..1 armando, 1..2 batendo, 2..2,6 acompanhando),
-        // por Catmull-Rom: o braco anda continuo, sem parar em cada quadro.
-        const float times[4] = { 0.0f, 1.0f, 2.0f, 2.6f };
-        const float at = std::clamp(stage, 0.0f, 2.6f);
-        int segment = at < 1.0f ? 0 : at < 2.0f ? 1 : 2;
-        const float h = times[segment + 1] - times[segment];
-        const float u = (at - times[segment]) / h;
-        const auto value = [&](int k, int which) {
-            const ArmKey& a = arm[static_cast<std::size_t>(k)];
-            return which == 0 ? a.forward : which == 1 ? a.out : a.up;
-        };
-        const auto tangent = [&](int k, int which) {
-            if (k <= 0 || k >= 3) return 0.0f;
-            return (value(k + 1, which) - value(k - 1, which)) / (times[k + 1] - times[k - 1]);
-        };
-        const float u2 = u * u, u3 = u2 * u;
-        float curve[3];
-        for (int which = 0; which < 3; ++which)
-            curve[which] = (2.0f * u3 - 3.0f * u2 + 1.0f) * value(segment, which)
-                + (u3 - 2.0f * u2 + u) * h * tangent(segment, which)
-                + (-2.0f * u3 + 3.0f * u2) * value(segment + 1, which)
-                + (u3 - u2) * h * tangent(segment + 1, which);
-        // Quanto do desenho: pela forca (e menos no rapido; no toque parado,
-        // quase nada).
-        float share = smoothStep((p - KickArmFloor) / (KickArmFull - KickArmFloor));
-        if (kick.quick) share *= 0.6f;
-        if (!kick.shot) share *= 0.35f;
-        const ArmKey rest = arm[0];
-        const ArmKey key { rest.forward + (curve[0] - rest.forward) * share, rest.out + (curve[1] - rest.out) * share,
-            rest.up + (curve[2] - rest.up) * share };
-        Vec3 target = shoulder + aim * key.forward + left * (s * key.out) + up * key.up;
-        const float amount = share;
-        const Vec3 reach = target - shoulder;
-        constexpr float ArmReach = 0.55f;
-        if (reach.length() > ArmReach) target = shoulder + reach * (ArmReach / reach.length());
-        const RagdollLinkDefinition3D& forearmLink = profile.links[static_cast<std::size_t>(forearm)];
-        const Vec3 wristInForearm = forearmLink.modelOrientation.conjugate().rotate(
-            profile.links[hand].inboundJoint.anchorModelPosition - forearmLink.modelPosition);
-        solveChainPoint(profile, coordinates, static_cast<std::size_t>(forearm), wristInForearm, 2,
-            rootInverse.rotate(target - root.position), std::clamp(amount * w, 0.0f, 1.0f), 10);
     }
 }
 

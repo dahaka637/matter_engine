@@ -26,8 +26,10 @@ public:
     [[nodiscard]] static TrainingHistory3D readHistory(const std::filesystem::path& runDirectory,
         std::size_t maximumPoints, double sinceSeconds = 0.0);
     // Os exercicios parados (ids e nomes, na ordem da lista, depois dos rumos).
-    static constexpr std::array<std::array<const char*, 2>, 3> StillDrills { { { "parado", "Parado" },
-        { "giro", "Parado com giro suave" }, { "giro_rapido", "Giro rápido parado" } } };
+    static constexpr std::array<std::array<const char*, 2>, 6> StillDrills { { { "parado", "Parado" },
+        { "giro", "Parado com giro suave" }, { "giro_rapido", "Giro rápido parado" },
+        { "estrela", "Estrela, peito livre" }, { "estrela_fixo", "Estrela, peito fixo" },
+        { "estrela_girando", "Estrela, peito girando" } } };
     // O rumo (rad) do exercicio "rumoN" (outro: a frente).
     [[nodiscard]] static float headingOf(const std::string& drill);
 

@@ -389,8 +389,6 @@ void CharacterLocomotion3D::stepCycle(Tick& t) {
                 m_phaseRateScale += (wanted - m_phaseRateScale) * (1.0f - std::exp(-deltaTime / std::max(0.005f, tau)));
                 phaseRate = playbackRate * m_phaseRateScale;
             }
-            // Chute: o ciclo mais devagar (o apoio no chao durante o golpe).
-            phaseRate *= std::clamp(input.ballGaitRate, 0.2f, 1.0f);
             m_cyclePhase = std::fmod(m_cyclePhase + deltaTime * phaseRate
                 / std::max(0.1f, selectedClip->durationSeconds), 1.0f);
             // TEMPTUNE: os bracos andam numa fase propria, suave: seguem o

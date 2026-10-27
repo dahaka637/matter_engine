@@ -1,0 +1,75 @@
+{
+ "checkpoint": "/home/dahaka/.local/share/matter-engine/rl/protegidos/loco_r2_ck23719_recentrado",
+ "fonte": "ab_q2_recentrar_b",
+ "rodadas": 1200,
+ "nome": "s4_ajuda",
+ "controle_de": "q4b_nota:b",
+ "comum": {
+  "run": {
+   "ppo": {
+    "kl_exclude_saturated": true,
+    "bound_loss_coef": 0.001
+   }
+  },
+  "tarefa": {
+   "speedCurriculum": {
+    "enabled": true,
+    "binStart": [
+     1.5,
+     1.5,
+     0.75,
+     0.75,
+     0.75,
+     0.75,
+     0.75,
+     1.5
+    ],
+    "step": 0.25,
+    "minEpisodes": 32,
+    "window": 64,
+    "tracking": 0.8,
+    "maxFalls": 0.15,
+    "minCruise": 15,
+    "frontier": 0.25
+   },
+   "savedStarts": {
+    "capacity": 128,
+    "surviveSeconds": 1.0,
+    "minimumSpeed": 1.0
+   },
+   "reward": {
+    "contactPerCycle": true,
+    "neckRelative": true,
+    "neckSlackDegrees": 6.0,
+    "velocitySmoothed": true
+   }
+  },
+  "exercicios": {
+   "estrela_trote": {
+    "savedStartFraction": 0.4
+   },
+   "estrela_trote_fixo": {
+    "savedStartFraction": 0.4
+   },
+   "estrela_trote_girando": {
+    "savedStartFraction": 0.4
+   },
+   "estrela": {
+    "savedStartFraction": 0.3
+   }
+  }
+ },
+ "mudanca": {
+  "tarefa": {
+   "assistSchedule": {
+    "enabled": true,
+    "zeroFraction": 0.6,
+    "minimum": 5.0,
+    "maximum": 30.0
+   },
+   "reward": {
+    "assistIncludesTorque": true
+   }
+  }
+ }
+}

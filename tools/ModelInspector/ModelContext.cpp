@@ -15,6 +15,8 @@ InspectionScene ModelContext::scene() const {
     scene.mesh = &m.mesh;
     scene.regions = &m.regions;
     scene.jointRegion = m.jointRegion;
+    scene.surface = m.surface.get();
+    scene.kit = m.kit.get();
     if (pose) {
         scene.pose = &*pose;
         if (!posedPositions.empty()) scene.meshPositions = posedPositions;
@@ -150,12 +152,26 @@ std::optional<SkeletonPose> poseFromSpec(const LoadedPlayerModel& loaded, const 
 std::optional<ModelContext> loadModelContext(const CommandLine& line, std::string* error) {
     PlayerModelOptions options;
     options.meshSource = line.text("malha");
+    options.kit = line.text("uniforme");
     const std::filesystem::path manifest = line.has("modelo") ? std::filesystem::path(line.text("modelo"))
                                                               : defaultPlayerModelManifest();
     std::optional<LoadedPlayerModel> loaded = loadPlayerModel(manifest, options, error);
     if (!loaded) return std::nullopt;
     ModelContext context;
     context.loaded = std::move(*loaded);
+    if (line.has("corpo")) {
+        const std::optional<PlayerBody3D> body = parseBody3D(line.text("corpo"));
+        if (!body) {
+            if (error != nullptr) *error = "--corpo <cm>,<kg> (de 170 a 200 cm, de 60 a 100 kg): " + line.text("corpo");
+            return std::nullopt;
+        }
+        try {
+            applyPlayerBody(context.loaded, *body);
+        } catch (const std::exception& exception) {
+            if (error != nullptr) *error = std::string("corpo: ") + exception.what();
+            return std::nullopt;
+        }
+    }
     context.outputDirectory = line.has("saida-dir") ? std::filesystem::path(line.text("saida-dir"))
                                                     : std::filesystem::current_path() / "inspecao";
     if (line.has("pose")) {

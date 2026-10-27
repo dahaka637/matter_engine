@@ -22,6 +22,8 @@
 
 #include "imgui.h"
 
+#include <nlohmann/json.hpp>
+
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -71,7 +73,9 @@ void testPlayerModel() {
         // Leve: o calcao subdividido (a dobra do quadril em curva, 10/10/2026:
         // o usuario liberou mais poligonos no uniforme) passou de 4,7 para
         // 6,1 mil.
-        require(model.mesh.triangles.size() < 6500, "leve: menos de 6500 triangulos (" + std::to_string(model.mesh.triangles.size()) + ")");
+        // Camisa e calcao em quads densos (22/10: a malha grossa nao dobrava):
+        // 22 jogadores dao ~290 mil triangulos, folgado ate numa GTX 750.
+        require(model.mesh.triangles.size() < 13000, "leve: menos de 13000 triangulos (" + std::to_string(model.mesh.triangles.size()) + ")");
         require(std::abs(model.mesh.bounds().maximum.z - model.mesh.bounds().minimum.z - 1.8f) < 0.005f, "1,80 m do chao ao alto");
     }
     const Report procedural = validateModel(model.mesh, &skeleton, &model.regions, model.jointRegion);
@@ -95,10 +99,12 @@ void testPlayerModel() {
         require(mirrored, "simetria exata do modelo");
     }
     // A textura: um atlas para todos os materiais, cada triangulo mapeado; a
-    // pintura no lugar (lida no atlas pelo ponto 3D da superficie).
+    // pintura no lugar (lida no atlas pelo ponto 3D da superficie). O atlas tem
+    // a cabeca na metade direita (4096 x 2048).
     {
         const Mesh& mesh = model.mesh;
-        require(mesh.hasUv() && mesh.textures.size() == 1 && mesh.textures.front().image.width() == 2048, "um atlas de 2048");
+        require(mesh.hasUv() && mesh.textures.size() == 1 && mesh.textures.front().image.width() == 4096
+                && mesh.textures.front().image.height() == 2048, "um atlas de 4096 x 2048");
         for (const MeshMaterial& material : mesh.materials) require(material.texture == 0, "material com a textura: " + material.name);
         // A cor no atlas no ponto da peca mais perto de "point" na direcao "facing".
         const auto paintAt = [&](std::string_view part, Vec3 point, Vec3 facing) {
@@ -139,28 +145,39 @@ void testPlayerModel() {
         const Color knee = paintAt("corpo", { 0.3f, -0.13f, ground + 0.5f }, { 1.0f, 0.0f, 0.0f });
         require(knee.r > knee.b + 0.15f, "o joelho e pele");
         // O rosto pintado: a pupila escura no olho, a pele no meio da testa.
-        require(dark(paintAt("cabeca", { 0.3f, -0.0381f, ground + 1.6923f }, { 1.0f, 0.0f, 0.0f })), "a pupila do olho direito");
-        require(dark(paintAt("cabeca", { 0.3f, 0.0381f, ground + 1.6923f }, { 1.0f, 0.0f, 0.0f })), "a pupila do olho esquerdo");
-        const Color forehead = paintAt("cabeca", { 0.3f, 0.0f, ground + 1.75f }, { 1.0f, 0.0f, 0.0f });
+        require(dark(paintAt("cabeca", { 0.3f, -0.033f, ground + 1.6795f }, { 1.0f, 0.0f, 0.0f })), "a pupila do olho direito");
+        require(dark(paintAt("cabeca", { 0.3f, 0.033f, ground + 1.6795f }, { 1.0f, 0.0f, 0.0f })), "a pupila do olho esquerdo");
+        const Color forehead = paintAt("cabeca", { 0.3f, 0.0f, ground + 1.72f }, { 1.0f, 0.0f, 0.0f });
         require(forehead.r > forehead.b + 0.15f, "a testa e pele");
-        // A orelha (a camada do desenho no espaco da placa medida na malha):
-        // o ponto mais escuro da placa fica na metade da frente (o buraco nao
-        // e no meio), bem mais escuro que a beira de cima, no mesmo lugar nos
-        // dois lados.
+        // A orelha (a pintura no espaco da placa medida na malha): o ponto mais
+        // escuro da placa fica na metade da frente (o canal nao e no meio), bem
+        // mais escuro que a beira de cima, no mesmo lugar nos dois lados. (A
+        // orelha da cabeca low-poly e uma placa de 3 triangulos: 5 pontos.)
         const FacePaintShape faceShape;
         const EarPlate plate = earPlate(mesh, mesh.findPart("cabeca"), faceShape.earOutside, ground);
-        require(plate.outline.size() >= 6 && plate.major > 0.02f && plate.major < 0.06f && plate.minor > 0.01f && plate.minor < 0.04f
+        require(plate.outline.size() >= 5 && plate.major > 0.02f && plate.major < 0.06f && plate.minor > 0.01f && plate.minor < 0.04f
                 && plate.center[1] > 1.6f && plate.center[1] < 1.75f,
             "a placa da orelha medida (" + std::to_string(plate.major) + " x " + std::to_string(plate.minor) + " m)");
         float minX = 1.0f, maxX = -1.0f, minH = 9.0f, maxH = -9.0f;
         for (const auto& q : plate.outline)
             minX = std::min(minX, q[0]), maxX = std::max(maxX, q[0]), minH = std::min(minH, q[1]), maxH = std::max(maxH, q[1]);
         const auto sum = [](Color c) { return c.r + c.g + c.b; };
+        // So a grade dentro do contorno: a caixa da placa de 5 pontos pega o cabelo atras da orelha.
+        const auto onPlate = [&](float x, float h) {
+            bool inside = false;
+            for (std::size_t i = 0, j = plate.outline.size() - 1; i < plate.outline.size(); j = i++) {
+                const auto& a = plate.outline[i];
+                const auto& b = plate.outline[j];
+                if ((a[1] > h) != (b[1] > h) && x < (b[0] - a[0]) * (h - a[1]) / (b[1] - a[1]) + a[0]) inside = !inside;
+            }
+            return inside;
+        };
         const auto darkest = [&](float side) {
             float best = 9.0f, bestU = 0.0f, bestV = 0.0f;
             for (int i = 1; i < 20; ++i)
                 for (int j = 1; j < 20; ++j) {
                     const float u = static_cast<float>(i) / 20.0f, v = static_cast<float>(j) / 20.0f;
+                    if (!onPlate(minX + u * (maxX - minX), minH + v * (maxH - minH))) continue;
                     const float value = sum(paintAt("cabeca", { minX + u * (maxX - minX), side * 0.3f, ground + minH + v * (maxH - minH) }, { 0.0f, side, 0.0f }));
                     if (value < best) {
                         best = value;
@@ -175,9 +192,10 @@ void testPlayerModel() {
         require(right[1] > 0.5f && right[0] < 0.75f * rim, "o canal da orelha escuro e na frente (u " + std::to_string(right[1]) + ")");
         require(std::abs(left[1] - right[1]) < 0.06f && std::abs(left[2] - right[2]) < 0.06f && std::abs(left[0] - right[0]) < 0.08f,
             "a orelha esquerda e o espelho da direita");
-        // A faixa do lado do calcao e o lado do tronco (a faixa da camisa).
-        require(dark(paintAt("calcao", { -0.03f, -0.3f, ground + 0.75f }, { 0.0f, -1.0f, 0.0f })), "a faixa do lado do calcao");
-        require(dark(paintAt("camisa", { -0.03f, -0.3f, ground + 1.05f }, { 0.0f, -1.0f, 0.0f })), "a faixa do lado da camisa");
+        // Sem as faixas pretas do lado (23/10/2026, pedido do usuario: o contraste com o fundo): o lado
+        // do calcao e da camisa e branco.
+        require(light(paintAt("calcao", { -0.03f, -0.3f, ground + 0.75f }, { 0.0f, -1.0f, 0.0f })), "o lado do calcao branco (sem faixa)");
+        require(light(paintAt("camisa", { -0.03f, -0.3f, ground + 1.05f }, { 0.0f, -1.0f, 0.0f })), "o lado da camisa branco (sem faixa)");
     }
     require(skeleton.validate().empty(), "esqueleto sem problemas de estrutura");
     require(model.regions.regions.size() == 18, "18 partes no menu");
@@ -196,12 +214,15 @@ void testPlayerModel() {
     require(tips == 13, "pontas: cabeca, 10 dedos e 2 pes");
     // No quadril, tres (1/4, 1/2 e 3/4 do giro: os aneis do calcao giram
     // inteiros em volta da junta) e a da dobra da frente (so a flexao).
-    require(helpers == 18 && skeleton.find("RightKneeHelper") >= 0 && skeleton.find("LeftHipHelper") >= 0
+    require(helpers == 26 && skeleton.find("RightClavicleHelper") >= 0 && skeleton.find("LeftClavicleHelper") >= 0 && skeleton.find("RightKneeHelper") >= 0 && skeleton.find("LeftHipHelper") >= 0
             && skeleton.find("RightHipHelper25") >= 0 && skeleton.find("LeftHipHelper75") >= 0
             && skeleton.find("RightHipLift") >= 0 && skeleton.find("LeftHipLift") >= 0
+            && skeleton.find("RightGluteHelper") >= 0 && skeleton.find("LeftGluteHelper") >= 0
             && skeleton.find("RightAnkleHelper") >= 0 && skeleton.find("LeftShoulderHelper") >= 0
+            && skeleton.find("RightArmpitHelper") >= 0 && skeleton.find("LeftArmpitHelper") >= 0
+            && skeleton.find("RightArmpitFill") >= 0 && skeleton.find("LeftArmpitFill") >= 0
             && skeleton.find("RightElbowHelper") >= 0 && skeleton.find("LeftWristHelper") >= 0,
-        "auxiliares: joelhos, quadris (quatro), tornozelos, ombros, cotovelos e pulsos");
+        "auxiliares: joelhos, quadris (cinco), tornozelos, ombros, axilas, claviculas, cotovelos e pulsos");
     // Os dedos da esquerda sao o espelho exato dos da direita (a malha e
     // espelhada; no jogo eles diferem uns milimetros).
     for (const Joint& joint : skeleton.joints) {
@@ -254,10 +275,103 @@ void testPlayerModel() {
             updateDerivedJoints(skeleton, pose);
             return angleBetween(pose.joints[static_cast<std::size_t>(lift)].orientation, helper.bind.orientation);
         };
+        // A clavicula leva o braco: erguido (girar em volta de y para a frente), o
+        // ombro sobe; baixado (encostar no corpo), nada muda.
+        {
+            const int arm = skeleton.find("RightUpperArm"), hand = skeleton.find("RightHand");
+            const auto raised = [&](Quaternion turn) {
+                SkeletonPose pose = bindPose(skeleton);
+                const Vec3 pivot = pose.joints[static_cast<std::size_t>(arm)].position;
+                for (std::size_t j = 0; j < skeleton.joints.size(); ++j) {
+                    int k = static_cast<int>(j);
+                    while (k >= 0 && k != arm) k = skeleton.joints[static_cast<std::size_t>(k)].parent;
+                    if (k != arm || skeleton.joints[j].kind == JointKind::Helper) continue;
+                    pose.joints[j].position = pivot + turn.rotate(pose.joints[j].position - pivot);
+                    pose.joints[j].orientation = (turn * pose.joints[j].orientation).normalized();
+                }
+                const Vec3 handBefore = pose.joints[static_cast<std::size_t>(hand)].position;
+                const Quaternion armBefore = pose.joints[static_cast<std::size_t>(arm)].orientation;
+                updateDerivedJoints(skeleton, pose);
+                // (A clavicula leva o ombro sem girar o braco: a direcao e a pedida, 25/10.)
+                require(angleBetween(pose.joints[static_cast<std::size_t>(arm)].orientation, armBefore) < 1e-4f,
+                    "a clavicula leva o ombro sem girar a direcao do braco");
+                const int clavicle = skeleton.find("RightClavicleHelper");
+                return std::tuple { pose.joints[static_cast<std::size_t>(arm)].position.z - pivot.z,
+                    (pose.joints[static_cast<std::size_t>(hand)].position - handBefore).z,
+                    angleBetween(pose.joints[static_cast<std::size_t>(clavicle)].orientation, skeleton.joints[static_cast<std::size_t>(clavicle)].bind.orientation) };
+            };
+            const auto [up, handUp, lift] = raised(Quaternion::fromAxisAngle({ 0.0f, 1.0f, 0.0f }, -2.6f));
+            const auto [down, handDown, rest] = raised(Quaternion::fromAxisAngle({ 1.0f, 0.0f, 0.0f }, 0.6f));
+            require(up > 0.02f && handUp > 0.02f, "a clavicula sobe o ombro e leva o braco com o braco erguido");
+            require(std::abs(down) < 1e-5f && std::abs(handDown) < 1e-5f && rest < 1e-4f, "com o braco baixado a clavicula fica");
+            // O teto (25/10): erguido, ela nao passa de 28 graus (sem ele, ate 44) e ainda sobe bastante.
+            const float cap = skeleton.joints[static_cast<std::size_t>(skeleton.find("RightClavicleHelper"))].derivedCap;
+            require(cap > 0.0f && lift <= cap + 1e-3f && lift > 0.5f * cap, "a subida da clavicula fica no teto com o braco erguido");
+            // A meia-junta do ombro (25/10): 50% do giro com o braco pouco erguido, perto de 65% na vertical
+            // (a fracao pela diferenca entre o giro dela e o do braco: a clavicula leva os dois igual).
+            const int shoulder = skeleton.find("RightShoulderHelper"), armpit = skeleton.find("RightArmpitHelper");
+            const auto raisedPose = [&](float degrees) {
+                SkeletonPose pose = bindPose(skeleton);
+                const Quaternion turn = Quaternion::fromAxisAngle({ 1.0f, 0.0f, 0.0f }, -degrees * DegreesToRadians);
+                const Vec3 pivot = pose.joints[static_cast<std::size_t>(arm)].position;
+                for (std::size_t j = 0; j < skeleton.joints.size(); ++j) {
+                    int k = static_cast<int>(j);
+                    while (k >= 0 && k != arm) k = skeleton.joints[static_cast<std::size_t>(k)].parent;
+                    if (k != arm || skeleton.joints[j].kind == JointKind::Helper) continue;
+                    pose.joints[j].position = pivot + turn.rotate(pose.joints[j].position - pivot);
+                    pose.joints[j].orientation = (turn * pose.joints[j].orientation).normalized();
+                }
+                updateDerivedJoints(skeleton, pose);
+                return pose;
+            };
+            const auto shareAt = [&](int helper, float degrees) {
+                const SkeletonPose pose = raisedPose(degrees);
+                const auto skin = [&](int j) {
+                    return (pose.joints[static_cast<std::size_t>(j)].orientation * skeleton.joints[static_cast<std::size_t>(j)].bind.orientation.conjugate()).normalized();
+                };
+                return 1.0f - angleBetween(skin(helper), skin(arm)) / (degrees * DegreesToRadians);
+            };
+            require(std::abs(shareAt(shoulder, 40.0f) - 0.5f) < 0.01f && std::abs(shareAt(shoulder, 146.0f) - 0.65f) < 0.02f,
+                "a meia-junta do ombro gira metade com o braco pouco erguido e 65% na vertical");
+            // A da axila (26/10): igual a meia-junta com o braco pouco erguido, o braco inteiro na vertical.
+            require(armpit >= 0 && std::abs(shareAt(armpit, 40.0f) - 0.5f) < 0.01f && shareAt(armpit, 146.0f) > 0.98f,
+                "a junta da axila gira metade com o braco pouco erguido e com o braco inteiro na vertical");
+            // A do volume (26/10): fica com o peito e so anda (para fora) com o braco erguido.
+            const int fill = skeleton.find("RightArmpitFill"), chest = skeleton.find("UpperChest");
+            const auto fillShift = [&](float degrees) {
+                const SkeletonPose pose = raisedPose(degrees);
+                const Transform chestSkin = pose.joints[static_cast<std::size_t>(chest)] * skeleton.joints[static_cast<std::size_t>(chest)].bind.inverse();
+                return pose.joints[static_cast<std::size_t>(fill)].position - chestSkin.apply(skeleton.joints[static_cast<std::size_t>(fill)].bind.position);
+            };
+            const Vec3 low = fillShift(40.0f), high = fillShift(146.0f);
+            require(fill >= 0 && low.length() < 1e-5f && high.y < -0.03f,
+                "a junta do volume fica com o peito com o braco pouco erguido e anda para fora com ele na vertical");
+        }
         const Quaternion flexion = Quaternion::fromAxisAngle({ 0.0f, 1.0f, 0.0f }, -1.4f);
         const Quaternion abduction = Quaternion::fromAxisAngle({ 1.0f, 0.0f, 0.0f }, 0.5f);
         require(std::abs(turned(flexion) - helper.derivedFraction * 1.4f) < 1e-3f, "a da dobra gira a fracao da flexao");
         require(turned(abduction) < 1e-3f, "abrir a coxa de lado nao mexe na da dobra");
+        require(turned(Quaternion::fromAxisAngle({ 0.0f, 1.0f, 0.0f }, 0.7f)) < 1e-3f, "a coxa atras nao mexe na da dobra");
+        // A do gluteo e o contrario: so a extensao.
+        const int glute = skeleton.find("RightGluteHelper");
+        const auto gluteTurned = [&](Quaternion turn) {
+            SkeletonPose pose = bindPose(skeleton);
+            const Vec3 pivot = pose.joints[static_cast<std::size_t>(thigh)].position;
+            for (std::size_t j = 0; j < skeleton.joints.size(); ++j) {
+                int k = static_cast<int>(j);
+                while (k >= 0 && k != thigh) k = skeleton.joints[static_cast<std::size_t>(k)].parent;
+                if (k != thigh || skeleton.joints[j].kind == JointKind::Helper) continue;
+                pose.joints[j].position = pivot + turn.rotate(pose.joints[j].position - pivot);
+                pose.joints[j].orientation = (turn * pose.joints[j].orientation).normalized();
+            }
+            updateDerivedJoints(skeleton, pose);
+            return angleBetween(pose.joints[static_cast<std::size_t>(glute)].orientation,
+                skeleton.joints[static_cast<std::size_t>(glute)].bind.orientation);
+        };
+        require(glute >= 0 && gluteTurned(flexion) < 1e-3f, "a coxa a frente nao mexe na do gluteo");
+        require(std::abs(gluteTurned(Quaternion::fromAxisAngle({ 0.0f, 1.0f, 0.0f }, 0.7f))
+                    - skeleton.joints[static_cast<std::size_t>(glute)].derivedFraction * 0.7f) < 1e-3f,
+            "a do gluteo gira a fracao da extensao");
         const Quaternion both = (abduction * flexion).normalized();
         const float twist = angleBetween(twistAbout(both, { 0.0f, 1.0f, 0.0f }), {});
         require(twist > 1.0f && std::abs(turned(both) - helper.derivedFraction * twist) < 1e-3f, "levantada e aberta: so a parte da flexao");
@@ -294,8 +408,14 @@ void testPlayerModel() {
         const int parent = skeleton.joints[j].parent;
         if (parent < 0 || skeleton.joints[j].kind == JointKind::Helper) continue;
         const Transform local = skeleton.joints[static_cast<std::size_t>(parent)].bind.inverse() * skeleton.joints[j].bind;
-        const Vec3 expected = (pose.joints[static_cast<std::size_t>(parent)] * local).position;
-        require(distance(expected, pose.joints[j].position) < 1e-4f, "junta no lugar na pose: " + skeleton.joints[j].name);
+        Transform placed = pose.joints[static_cast<std::size_t>(parent)] * local;
+        // (O braco e filho da clavicula: ela o leva.)
+        for (std::size_t h = 0; h < skeleton.joints.size(); ++h)
+            if (skeleton.joints[h].derivedCarry && skeleton.joints[h].derivedTo == static_cast<int>(j)) {
+                const Transform chest = pose.joints[static_cast<std::size_t>(parent)] * skeleton.joints[static_cast<std::size_t>(parent)].bind.inverse();
+                placed = pose.joints[h] * skeleton.joints[h].bind.inverse() * chest.inverse() * placed;
+            }
+        require(distance(placed.position, pose.joints[j].position) < 1e-4f, "junta no lugar na pose: " + skeleton.joints[j].name);
     }
     const int foot = skeleton.find("LeftFoot");
     require(distance(pose.joints[static_cast<std::size_t>(foot)].position,
@@ -305,8 +425,7 @@ void testPlayerModel() {
 
     // A deformacao nas poses do jogo, dobrando a coluna, o ombro, o
     // cotovelo, o pulso e os dedos, com a mao aberta e fechada: nenhum
-    // triangulo virado a vista e o calcao nunca atravessa a camisa (a barra
-    // anda junto com ele).
+    // triangulo virado a vista.
     {
         std::vector<PoseSample> samples;
         for (const char* id : { "natural_idle", "jog", "sprint", "alert_idle" }) {
@@ -403,12 +522,102 @@ void testPlayerModel() {
         for (const Finding& finding : deformation.findings()) {
             // Nada vira a vista em parte nenhuma (dentro das pregas da axila,
             // do cotovelo e do joelho dobrados e so observacao).
-            require(finding.code != "virou_pose", "virado a vista: " + finding.message + " (" + finding.part + ")");
-            require(!(finding.code == "partes_se_cruzam_pose"
-                        && ((finding.part == "calcao" && finding.otherPart == "camisa")
-                            || (finding.part == "camisa" && finding.otherPart == "calcao"))),
-                "o calcao atravessa a camisa: " + finding.message);
+            std::string where;
+            for (const std::uint32_t t : finding.triangles) where += " T" + std::to_string(t);
+            if (finding.hasLocation)
+                where += " em (" + std::to_string(finding.location.x) + "; " + std::to_string(finding.location.y) + "; "
+                    + std::to_string(finding.location.z) + ")";
+            require(finding.code != "virou_pose", "virado a vista: " + finding.message + " (" + finding.part + ")" + where);
         }
+    }
+
+    // A camisa so no tronco (22/10/2026, decisao do usuario: mexer a perna
+    // nunca deforma a camisa; o calcao pode entrar na barra): nenhum vertice
+    // da camisa com peso das juntas da coxa.
+    {
+        const Mesh& mesh = model.mesh;
+        const int shirt = mesh.findPart("camisa");
+        std::vector<bool> thigh(skeleton.joints.size(), false);
+        for (std::size_t j = 0; j < skeleton.joints.size(); ++j)
+            for (const char* end : { "HipLift", "HipHelper", "HipHelper25", "HipHelper75", "Thigh", "GluteHelper" })
+                thigh[j] = thigh[j] || skeleton.joints[j].name.ends_with(end);
+        std::size_t touched = 0;
+        for (std::size_t t = 0; t < mesh.triangles.size(); ++t) {
+            if (mesh.partOf(t) != shirt) continue;
+            for (const std::uint32_t v : mesh.triangles[t])
+                for (std::size_t k = 0; k < 4; ++k)
+                    touched += mesh.skin[v].weights[k] > 1e-4f && thigh[mesh.skin[v].joints[k]] ? 1 : 0;
+        }
+        require(shirt >= 0 && mesh.hasSkin() && touched == 0, "a camisa so no tronco (" + std::to_string(touched) + " pesos da coxa)");
+    }
+
+    // O braco so mexe a camisa perto dele (22/10/2026, pedido do usuario: erguer o
+    // braco deformava o peito, a barriga e as costas): a mais de 14 cm do segmento
+    // ombro-cotovelo dos dois lados, nenhum peso do braco nem da clavicula.
+    {
+        const Mesh& mesh = model.mesh;
+        const int shirt = mesh.findPart("camisa");
+        std::vector<bool> arm(skeleton.joints.size(), false);
+        for (std::size_t j = 0; j < skeleton.joints.size(); ++j) {
+            const std::string& name = skeleton.joints[j].name;
+            if (!name.starts_with("Left") && !name.starts_with("Right")) continue;
+            for (const char* piece : { "UpperArm", "ShoulderHelper", "ArmpitHelper", "ClavicleHelper", "Forearm", "ElbowHelper", "Hand", "WristHelper", "Thumb",
+                                       "Index", "Middle", "Ring", "Pinky" })
+                arm[j] = arm[j] || name.find(piece) != std::string::npos;
+        }
+        const auto at = [&](const char* name) { return skeleton.joints[static_cast<std::size_t>(skeleton.find(name))].bind.position; };
+        const auto toSegment = [](Vec3 p, Vec3 a, Vec3 b) {
+            const float t = std::clamp(dot(p - a, b - a) / dot(b - a, b - a), 0.0f, 1.0f);
+            return distance(p, a + (b - a) * t);
+        };
+        const Vec3 rightShoulder = at("RightUpperArm"), rightElbow = at("RightForearm"), leftShoulder = at("LeftUpperArm"), leftElbow = at("LeftForearm");
+        std::vector<bool> seen(mesh.positions.size(), false);
+        std::size_t touched = 0;
+        for (std::size_t t = 0; t < mesh.triangles.size(); ++t) {
+            if (mesh.partOf(t) != shirt) continue;
+            for (const std::uint32_t v : mesh.triangles[t]) {
+                if (seen[v]) continue;
+                seen[v] = true;
+                const Vec3 p = mesh.positions[v];
+                if (std::min(toSegment(p, rightShoulder, rightElbow), toSegment(p, leftShoulder, leftElbow)) <= 0.14f) continue;
+                for (std::size_t k = 0; k < 4; ++k)
+                    touched += mesh.skin[v].weights[k] > 1e-4f && arm[mesh.skin[v].joints[k]] ? 1 : 0;
+            }
+        }
+        require(shirt >= 0 && touched == 0, "o braco so mexe a camisa perto dele (" + std::to_string(touched) + " pesos do braco longe dele)");
+    }
+
+    // O calcao com as pernas abertas (23/10/2026, pedido do usuario: o meio do calcao virava cortina entre as coxas;
+    // a forma parada fica - o gancho alto foi desfeito): a parede de dentro de cada perna, da barra ate 5 cm abaixo
+    // do gancho, segue a coxa do lado (fora a dobra de baixo do gluteo, atras).
+    {
+        const Mesh& mesh = model.mesh;
+        const int shorts = mesh.findPart("calcao");
+        const int rightThigh = skeleton.find("RightThigh"), leftThigh = skeleton.find("LeftThigh");
+        const float hip = skeleton.joints[static_cast<std::size_t>(rightThigh)].bind.position.z;
+        std::vector<bool> inShorts(mesh.positions.size(), false);
+        for (std::size_t t = 0; t < mesh.triangles.size(); ++t)
+            if (mesh.partOf(t) == shorts)
+                for (const std::uint32_t v : mesh.triangles[t]) inShorts[v] = true;
+        float crotch = 1.0e9f;
+        for (std::size_t v = 0; v < mesh.positions.size(); ++v)
+            if (inShorts[v] && std::abs(mesh.positions[v].y) < 0.004f && mesh.positions[v].z > hip - 0.20f)
+                crotch = std::min(crotch, mesh.positions[v].z);
+        std::size_t inner = 0, loose = 0;
+        for (std::size_t v = 0; v < mesh.positions.size(); ++v) {
+            const Vec3 p = mesh.positions[v];
+            if (!inShorts[v] || std::abs(p.y) < 0.025f || std::abs(p.y) > 0.055f || p.x < -0.08f || p.z > crotch - 0.05f
+                || p.z < hip - 0.26f)
+                continue;
+            const int thigh = p.y < 0.0f ? rightThigh : leftThigh;
+            float w = 0.0f;
+            for (std::size_t k = 0; k < 4; ++k)
+                if (mesh.skin[v].joints[k] == thigh) w += mesh.skin[v].weights[k];
+            ++inner;
+            loose += w < 0.95f ? 1 : 0;
+        }
+        require(shorts >= 0 && inner > 0 && loose == 0, "a parede de dentro da perna do calcao segue a coxa (" + std::to_string(loose) + " de "
+            + std::to_string(inner) + " vertices soltos)");
     }
 
     // O polegar fecha atravessando a palma, rente a ela (o eixo de cada
@@ -535,12 +744,163 @@ void testPlayerModel() {
             poses += samples.size();
             Report report;
             checkDeformation(model.mesh, skeleton, samples, report, settings);
-            for (const Finding& finding : report.findings())
-                require(finding.code != "virou_pose", "virado a vista: " + finding.message + " (" + finding.part + ")");
+            for (const Finding& finding : report.findings()) {
+                std::string where;
+                for (const std::uint32_t t : finding.triangles) where += " T" + std::to_string(t);
+                if (finding.hasLocation)
+                    where += " em (" + std::to_string(finding.location.x) + "; " + std::to_string(finding.location.y) + "; "
+                        + std::to_string(finding.location.z) + ")";
+                require(finding.code != "virou_pose", "virado a vista: " + finding.message + " (" + finding.part + ")" + where);
+            }
         }
         require(poses >= 400, "as animacoes do jogo carregadas: " + std::to_string(poses) + " poses");
     }
 
+}
+
+// A pele de um personagem do jogo (skin) contra a malha posada da modelagem:
+// cada vertice da pele e os da modelagem na mesma posicao da ligacao (twins),
+// o jogo com a pelve na origem (lift acima do modelo). As poses: o repouso,
+// quatro animacoes e os bracos erguidos de lado e a frente (nenhuma animacao os
+// ergue tanto: a rampa e o volume da axila e a clavicula). game e rig posam a
+// modelagem; na pele os clipes andam a raiz x clipScale e abrem o braco em
+// armOpening (bodyAnimationClip3D, como o jogo num corpo). O pior desvio de cada pose (m) e o mais baixo da pele
+// no repouso (no espaco do jogo).
+struct SkinParity {
+    std::vector<std::pair<std::string, float>> worst;
+    float lowest = std::numeric_limits<float>::max();
+};
+
+SkinParity skinParity(const RagdollCharacter3D& skin, const RagdollCharacter3D& game, const GameRig& rig, const Mesh& mesh,
+    const std::vector<std::vector<std::size_t>>& twins, Vec3 lift, float clipScale, float armOpening = 0.0f) {
+    SkinParity result;
+    std::vector<Quaternion> visual(skin.visualBones.size());
+    for (std::size_t v = 0; v < visual.size(); ++v) visual[v] = skin.visualBones[v].restRotation;
+    const auto compare = [&](const std::string& name, const RagdollAnimationPose3D& links, const SkeletonPose& pose, bool atRest) {
+        const std::vector<Mat4> palette = buildRagdollSkinMatrices3D(skin, links.linkPositions, links.linkOrientations, visual);
+        const std::vector<Vec3> posed = mesh.posedPositions(skinningTransforms(rig.skeleton, pose));
+        float worst = 0.0f;
+        for (std::size_t g = 0; g < skin.mesh.vertices.size(); ++g) {
+            const Vec3 at = skinVertexPosition3D(skin.mesh.vertices[g], palette) - lift;
+            float best = std::numeric_limits<float>::max();
+            for (const std::size_t twin : twins[g]) best = std::min(best, distance(at, posed[twin]));
+            worst = std::max(worst, best);
+            if (atRest) result.lowest = std::min(result.lowest, at.z + lift.z);
+        }
+        result.worst.push_back({ name, worst });
+    };
+    const struct {
+        const char* clip;
+        float time;
+    } poses[] = { { "", 0.0f }, { "alert_idle", 0.4f }, { "sprint", 0.15f }, { "tackle_slide", 0.6f }, { "stand_up_back_kimodo", 1.2f } };
+    for (const auto& entry : poses) {
+        std::optional<AnimationClip3D> clip, scaled;
+        if (entry.clip[0] != '\0') {
+            std::string error;
+            clip = loadCharacterClip(entry.clip, &error);
+            require(clip.has_value(), error);
+            scaled = bodyAnimationClip3D(*clip, skin.profile, clipScale, armOpening, 0.0f);
+        }
+        compare(entry.clip[0] ? entry.clip : "repouso", sampleRagdollAnimationPose3D(skin.profile, scaled ? &*scaled : nullptr, entry.time, true),
+            sampleGameRigPose(game, rig, clip ? &*clip : nullptr, entry.time, RigHandPose::Relaxed, false), entry.clip[0] == '\0');
+    }
+    const auto link = [&](const std::string& id) {
+        for (std::size_t i = 0; i < skin.profile.links.size(); ++i)
+            if (skin.profile.links[i].id == id) return i;
+        throw std::runtime_error("sem o link " + id);
+    };
+    const RagdollAnimationPose3D standing = sampleRagdollAnimationPose3D(skin.profile, nullptr, 0.0f, true);
+    for (const auto& [name, axis, degrees] : { std::tuple { "bracos erguidos de lado", Vec3 { -1.0f, 0.0f, 0.0f }, 150.0f },
+             std::tuple { "bracos erguidos a frente", Vec3 { 0.0f, -1.0f, 0.0f }, 120.0f } }) {
+        RagdollAnimationPose3D links = standing;
+        for (const std::string side : { "Right", "Left" }) {
+            // O esquerdo e o espelho (o eixo de giro espelhado em y).
+            const Quaternion turn = Quaternion::fromAxisAngle(side == "Right" ? axis : Vec3 { -axis.x, axis.y, -axis.z }, degrees * DegreesToRadians);
+            const Vec3 pivot = skin.profile.links[link(side + "UpperArm")].inboundJoint.anchorModelPosition;
+            for (const char* part : { "UpperArm", "Forearm", "Hand" }) {
+                const std::size_t i = link(side + part);
+                links.linkPositions[i] = pivot + turn.rotate(links.linkPositions[i] - pivot);
+                links.linkOrientations[i] = (turn * links.linkOrientations[i]).normalized();
+            }
+        }
+        compare(name, links, gameRigPoseFromLinks(game, rig, links, visual, false, true), false);
+    }
+    return result;
+}
+
+// O corpo variavel (26/10): em cada corpo a pele do jogo (o personagem do
+// corpo) deforma igual a modelagem com o corpo (cada vertice da pele contra o
+// da modelagem de onde ele saiu) nas poses da paridade, a sola fica no chao do
+// perfil do corpo e a altura vai na escala. No corpo de hoje nada muda.
+void testBodyVariants() {
+    std::string error;
+    const std::optional<LoadedPlayerModel> base = loadPlayerModel(defaultPlayerModelManifest(), {}, &error);
+    require(base.has_value(), "modelo do jogador carregado: " + error);
+    {
+        LoadedPlayerModel same = *base;
+        applyPlayerBody(same, PlayerBody3D {});
+        // Os mesmos objetos: bit a bit.
+        require(same.character == base->character && same.rig == base->rig && same.model == base->model, "o corpo de hoje nao muda nada");
+    }
+    const std::optional<AnimationClip3D> sprint = loadCharacterClip("sprint", &error);
+    require(sprint.has_value(), error);
+    const PlayerBody3D bodies[] = { { 1.70f, 60.0f }, { 1.70f, 100.0f }, { 2.00f, 60.0f }, { 2.00f, 100.0f }, { 1.87f, 72.0f }, { 1.80f, 60.0f } };
+    for (const PlayerBody3D& body : bodies) {
+        LoadedPlayerModel loaded = *base;
+        applyPlayerBody(loaded, body);
+        const float s = bodyScale3D(body);
+        const RagdollCharacter3D& skin = *loaded.character;
+        const GameRig& rig = *loaded.rig;
+        const InspectionModel& model = *loaded.model;
+        char label[48];
+        std::snprintf(label, sizeof label, "%.2f m %.0f kg", static_cast<double>(body.heightMeters), static_cast<double>(body.massKg));
+        require(skin.surfaceVertices.size() == skin.mesh.vertices.size() && model.mesh.positions.size() == base->model->mesh.positions.size(),
+            std::string("a pele com a origem dos vertices: ") + label);
+        std::vector<std::vector<std::size_t>> twins(skin.mesh.vertices.size());
+        for (std::size_t g = 0; g < twins.size(); ++g) twins[g] = { skin.surfaceVertices[g].source };
+        const SkeletonPose rest = sampleGameRigPose(skin, rig, nullptr, 0.0f, RigHandPose::Bind, true);
+        const Vec3 lift = skin.profile.links.front().modelPosition - rest.joints[static_cast<std::size_t>(rig.skeleton.find("Pelvis"))].position;
+        const SkinParity parity = skinParity(skin, skin, rig, model.mesh, twins, lift, s, bodyArmOpening3D(bodyTone3D(body)));
+        std::string line = std::string("corpo ") + label + ":";
+        for (const auto& [pose, worst] : parity.worst) line += " " + pose + " " + std::to_string(worst * 1000.0f) + " mm;";
+        const float sole = parity.lowest + skin.profile.standingRootHeightMeters;
+        const float skeletonHeight = model.skeleton.height(), meshHeight = model.mesh.bounds().maximum.z - model.skeleton.groundHeight;
+        line += " sola " + std::to_string(sole * 1000.0f) + " mm; altura " + std::to_string(skeletonHeight) + " m (malha "
+            + std::to_string(meshHeight) + ", esperado " + std::to_string(1.7995f * s) + ")";
+        std::cout << line << '\n';
+        for (const auto& [pose, worst] : parity.worst)
+            require(worst < 0.0005f, std::string("a pele do corpo ") + label + " difere da modelagem em " + pose + ": " + std::to_string(worst * 1000.0f) + " mm");
+        require(std::abs(sole) < 0.003f * s, std::string("a sola no chao do perfil do corpo ") + label);
+        // O volume da malha e o da curva de Engine/Physique (medida nela) e,
+        // entre os joelhos e nos baixos e medios, o do peso (nos altos, peso / s^2:
+        // a forma e a do olho dele, mais encorpada que o peso).
+        const float volume = model.mesh.signedVolume() / base->model->mesh.signedVolume();
+        const float curve = s * s * s * bodyToneVolume3D(bodyTone3D(body));
+        std::cout << "  volume " << volume << " (curva " << curve << ", peso/80 " << body.massKg / 80.0f << ")\n";
+        require(std::abs(volume / curve - 1.0f) < 0.003f, std::string("o volume da malha na curva do tonus: ") + label);
+        if (bodyTone3D(body) > -2.4f && bodyTone3D(body) < 0.9f && s <= 1.0f)
+            require(std::abs(volume / (body.massKg / 80.0f) - 1.0f) < 0.003f, std::string("o volume da malha no peso do corpo ") + label);
+        require(std::abs(skeletonHeight - 1.7995f * s) < 0.005f && std::abs(meshHeight - 1.7995f * s) < 0.005f,
+            std::string("a altura da modelagem do corpo ") + label);
+        // O chao da modelagem fica; o esqueleto e o de hoje em escala em volta dele, junta a junta (as
+        // pontas e os auxiliares inclusive), no repouso e num clipe (a raiz dele x s).
+        const Vec3 ground { 0.0f, 0.0f, model.skeleton.groundHeight };
+        require(ground.z == base->model->skeleton.groundHeight && std::abs(model.mesh.bounds().minimum.z - ground.z) < 0.001f,
+            std::string("o chao da modelagem no lugar: ") + label);
+        // (O de hoje com o mesmo braco aberto do corpo, sem a escala.)
+        GameRig opened = *base->rig;
+        opened.bodyArmOpening = rig.bodyArmOpening;
+        for (const AnimationClip3D* clip : { static_cast<const AnimationClip3D*>(nullptr), &*sprint }) {
+            const SkeletonPose today = sampleGameRigPose(*base->character, opened, clip, 0.15f, RigHandPose::Relaxed, false);
+            const SkeletonPose scaled = sampleGameRigPose(skin, rig, clip, 0.15f, RigHandPose::Relaxed, false);
+            for (std::size_t j = 0; j < today.joints.size(); ++j)
+                require(distance(scaled.joints[j].position, ground + (today.joints[j].position - ground) * s) < 1e-4f
+                        && angleBetween(scaled.joints[j].orientation, today.joints[j].orientation) < 2e-3f,
+                    std::string("o esqueleto do corpo ") + label + " em escala: " + rig.skeleton.joints[j].name + " ("
+                        + std::to_string(distance(scaled.joints[j].position, ground + (today.joints[j].position - ground) * s) * 1000.0f)
+                        + " mm, " + std::to_string(angleBetween(scaled.joints[j].orientation, today.joints[j].orientation)) + " rad)");
+        }
+    }
 }
 
 // O jogador levado ao jogo (exportar-jogo): o personagem do laboratorio em
@@ -555,24 +915,30 @@ void testGameCharacterExport() {
         / ("matter_jogador_" + std::to_string(std::random_device {}()));
     GameCharacterExportReport report;
     require(exportGameCharacter(*loaded, out, {}, report, error), "exportar o jogador: " + error);
-    require(report.bones == 68 && report.triangles == loaded->model->mesh.triangles.size(), "a pele com 68 ossos e os triangulos do modelo");
+    require(report.bones == 76 && report.triangles == loaded->model->mesh.triangles.size(), "a pele com 76 ossos e os triangulos do modelo");
     const RagdollCharacter3D exported = loadRagdollCharacter3D((out / "character.json").string());
-    require(exported.helperBones.size() == 18 && exported.visualBones.size() == 32, "os auxiliares e os dedos na pele");
+    require(exported.helperBones.size() == 26 && exported.visualBones.size() == 32, "os auxiliares e os dedos na pele");
     require(!exported.flatShaded && std::abs(exported.facet - 0.5f) < 1e-3f, "o sombreamento do jogo: facetado 0,5");
 
-    // O do laboratorio e o de agora: o mesmo perfil (senao o modelo mudou e o
-    // jogo ficou para tras).
+    // O do laboratorio e o de agora: o mesmo rig (senao o modelo mudou e o jogo
+    // ficou para tras). Os colisores do perfil fisico instalado sao congelados
+    // de proposito (a fisica e a prova do RL ficam iguais; a exportacao instala
+    // so a pele, a superficie, o manifesto e o atlas): eles derivam dos pesos, e
+    // o desvirar dos corpos variaveis (26/10) mexeu ~5 mm no comprimento do
+    // UpperChest. A diferenca sai no log, sem falhar ate 1 cm.
     const RagdollCharacter3D& game = *loaded->character;
     const auto close = [](Vec3 a, Vec3 b) { return distance(a, b) < 2e-4f; };
     require(game.profile.links.size() == exported.profile.links.size(), "os mesmos links");
     for (std::size_t i = 0; i < game.profile.links.size(); ++i) {
         const RagdollLinkDefinition3D& a = game.profile.links[i];
         const RagdollLinkDefinition3D& b = exported.profile.links[i];
-        const bool same = close(a.modelPosition, b.modelPosition) && close(a.inboundJoint.anchorModelPosition, b.inboundJoint.anchorModelPosition)
-            && close(a.collider.localPosition, b.collider.localPosition) && std::abs(a.collider.radiusMeters - b.collider.radiusMeters) < 2e-4f
-            && std::abs(a.collider.lengthMeters - b.collider.lengthMeters) < 2e-4f && close(a.collider.boxHalfExtents, b.collider.boxHalfExtents);
-        require(same, "o personagem do jogo esta desatualizado (" + a.id
-            + "): MatterModelInspector exportar-jogo --destino assets/characters/football_player");
+        require(close(a.modelPosition, b.modelPosition) && close(a.inboundJoint.anchorModelPosition, b.inboundJoint.anchorModelPosition),
+            "o personagem do jogo esta desatualizado (" + a.id + "): MatterModelInspector exportar-jogo --destino assets/characters/football_player");
+        const float drift = std::max({ distance(a.collider.localPosition, b.collider.localPosition),
+            std::abs(a.collider.radiusMeters - b.collider.radiusMeters), std::abs(a.collider.lengthMeters - b.collider.lengthMeters),
+            distance(a.collider.boxHalfExtents, b.collider.boxHalfExtents) });
+        if (drift >= 2e-4f) std::cout << "  colisor congelado " << a.id << ": a exportacao difere " << drift * 1000.0f << " mm\n";
+        require(drift < 0.01f, "o colisor congelado de " + a.id + " longe demais da exportacao: " + std::to_string(drift * 1000.0f) + " mm");
     }
     require(std::abs(game.profile.standingRootHeightMeters - exported.profile.standingRootHeightMeters) < 2e-4f, "a altura de pe em dia");
 
@@ -599,35 +965,78 @@ void testGameCharacterExport() {
                 }
         require(!twins[g].empty(), "vertice do jogo sem par na modelagem");
     }
-    float lowest = std::numeric_limits<float>::max();
-    const struct {
-        const char* clip;
-        float time;
-    } poses[] = { { "", 0.0f }, { "alert_idle", 0.4f }, { "sprint", 0.15f }, { "tackle_slide", 0.6f }, { "stand_up_back_kimodo", 1.2f } };
-    for (const auto& entry : poses) {
-        std::optional<AnimationClip3D> clip;
-        if (entry.clip[0] != '\0') {
-            clip = loadCharacterClip(entry.clip, &error);
-            require(clip.has_value(), error);
+    const SkinParity parity = skinParity(exported, game, rig, mesh, twins, lift, 1.0f);
+    for (const auto& [name, worst] : parity.worst)
+        require(worst < 0.0005f, "a pele do jogo difere da modelagem em " + name + ": " + std::to_string(worst * 1000.0f) + " mm");
+    require(std::abs(parity.lowest + exported.profile.standingRootHeightMeters) < 0.003f, "a sola no chao do perfil no repouso");
+
+    // O template de superficie (o sistema de aparencia) chega a pele do jogo: em
+    // cada canto de cada triangulo (a mesma ordem), a origem, a regiao, a zona, o
+    // UV0 e o UV1 do template; e o template do jogo le igual ao da modelagem.
+    const std::shared_ptr<const Appearance::SurfaceTemplate>& surface = loaded->model->surface;
+    require(surface != nullptr, "o modelo com o template de superficie");
+    require(exported.surface != nullptr && exported.surfaceVertices.size() == exported.mesh.vertices.size(), "a superficie no personagem exportado");
+    const auto same = [](Vec2 a, Vec2 b) { return std::abs(a.x - b.x) < 2e-7f && std::abs(a.y - b.y) < 2e-7f; };
+    for (std::size_t t = 0; t < mesh.triangles.size(); ++t)
+        for (std::size_t k = 0; k < 3; ++k) {
+            const RagdollCharacter3D::SurfaceVertex& vertex = exported.surfaceVertices[exported.mesh.indices[t * 3 + k]];
+            require(vertex.source == mesh.triangles[t][k], "a origem do vertice da pele");
+            require(vertex.region == surface->triangleRegion[t] && vertex.identity == surface->triangleIdentity[t], "a regiao e a zona na pele");
+            if (surface->trianglePanel[t] >= 0) require(same(vertex.kitUv, surface->triangleKitUv[t][k]), "o UV0 na pele");
+            if (surface->triangleIdentity[t] >= 0) require(same(vertex.identityUv, surface->triangleIdentityUv[t][k]), "o UV1 na pele");
         }
-        const AnimationClip3D* used = clip ? &*clip : nullptr;
-        const RagdollAnimationPose3D links = sampleRagdollAnimationPose3D(exported.profile, used, entry.time, true);
-        std::vector<Quaternion> visual(exported.visualBones.size());
-        for (std::size_t v = 0; v < visual.size(); ++v) visual[v] = exported.visualBones[v].restRotation;
-        const std::vector<Mat4> palette = buildRagdollSkinMatrices3D(exported, links.linkPositions, links.linkOrientations, visual);
-        const std::vector<Vec3> posed = mesh.posedPositions(skinningTransforms(rig.skeleton, sampleGameRigPose(game, rig, used, entry.time, RigHandPose::Relaxed, false)));
-        float worst = 0.0f;
-        for (std::size_t g = 0; g < exported.mesh.vertices.size(); ++g) {
-            const Vec3 at = skinVertexPosition3D(exported.mesh.vertices[g], palette) - lift;
-            float best = std::numeric_limits<float>::max();
-            for (const std::size_t twin : twins[g]) best = std::min(best, distance(at, posed[twin]));
-            worst = std::max(worst, best);
-            if (entry.clip[0] == '\0') lowest = std::min(lowest, at.z + lift.z);
+    require(exported.surface->trianglePanel == surface->trianglePanel && exported.surface->seams.size() == surface->seams.size()
+            && exported.surface->storageLayout.texelsPerMeter == surface->storageLayout.texelsPerMeter,
+        "o template do jogo igual ao da modelagem");
+
+    // As recusas do carregador: uma pele que nao bate com o template para (o atributo
+    // faltando, a classificacao trocada, o UV divergente, fora da faixa, sem o template).
+    using Json = nlohmann::json;
+    const auto readFile = [](const std::filesystem::path& path) {
+        Json value;
+        std::ifstream(path) >> value;
+        return value;
+    };
+    const Json manifest = readFile(out / "character.json");
+    const std::filesystem::path skinPath = out / manifest.at("skin").get<std::string>();
+    const Json skin = readFile(skinPath);
+    std::size_t withKit = 0, withIdentity = 0;
+    while (!skin["vertices"][withKit].contains("kitUv")) ++withKit;
+    while (!skin["vertices"][withIdentity].contains("identity")) ++withIdentity;
+    const auto rejected = [&](const char* what, const std::string& fragment, const auto& change, bool inManifest = false) {
+        Json broken = inManifest ? manifest : skin;
+        change(broken);
+        std::ofstream(inManifest ? out / "character.json" : skinPath) << broken;
+        std::string message;
+        try {
+            (void)loadRagdollCharacter3D((out / "character.json").string());
+        } catch (const std::exception& failure) {
+            message = failure.what();
         }
-        require(worst < 0.0005f, std::string("a pele do jogo difere da modelagem em ") + (entry.clip[0] ? entry.clip : "repouso") + ": "
-            + std::to_string(worst * 1000.0f) + " mm");
-    }
-    require(std::abs(lowest + exported.profile.standingRootHeightMeters) < 0.003f, "a sola no chao do perfil no repouso");
+        std::ofstream(inManifest ? out / "character.json" : skinPath) << (inManifest ? manifest : skin);
+        require(!message.empty(), std::string("o carregador aceitou ") + what);
+        require(message.find(fragment) != std::string::npos, std::string(what) + ": " + message);
+    };
+    rejected("o UV0 faltando", "disagrees", [&](Json& d) { d["vertices"][withKit].erase("kitUv"); });
+    rejected("a regiao faltando", "region", [&](Json& d) { d["vertices"][withKit].erase("region"); });
+    rejected("a regiao trocada", "disagrees", [&](Json& d) {
+        d["vertices"][withKit]["region"] = (d["vertices"][withKit]["region"].get<int>() + 1) % static_cast<int>(surface->regions.size());
+    });
+    rejected("uma zona onde nao ha", "disagrees", [&](Json& d) {
+        d["vertices"][withKit]["identity"] = 0;
+        d["vertices"][withKit]["identityUv"] = Json::array({ 0.5, 0.5 });
+    });
+    rejected("o UV0 divergente", "disagrees", [&](Json& d) {
+        d["vertices"][withKit]["kitUv"][0] = d["vertices"][withKit]["kitUv"][0].get<double>() + 1e-3;
+    });
+    rejected("o UV1 divergente", "disagrees", [&](Json& d) {
+        d["vertices"][withIdentity]["identityUv"][1] = d["vertices"][withIdentity]["identityUv"][1].get<double>() + 1e-3;
+    });
+    rejected("a regiao fora da faixa", "Invalid skin surface region", [&](Json& d) { d["vertices"][withKit]["region"] = 70000; });
+    rejected("o UV0 fora do atlas", "Invalid skin surface kitUv", [&](Json& d) { d["vertices"][withKit]["kitUv"][0] = 1.5; });
+    rejected("a zona sem o UV1", "without its UV", [&](Json& d) { d["vertices"][withIdentity].erase("identityUv"); });
+    rejected("a superficie sem o template", "without a surface template", [&](Json& d) { d.erase("surface"); }, true);
+    (void)loadRagdollCharacter3D((out / "character.json").string());
     std::filesystem::remove_all(out);
 }
 
@@ -696,7 +1105,11 @@ void testPaintExample() {
     std::string error;
     const std::optional<AssemblyRecipe> recipe = parseAssemblyRecipe(text.str(), &error);
     require(recipe.has_value(), "a receita: " + error);
-    const std::optional<LoadedPlayerModel> loaded = loadPlayerModel(defaultPlayerModelManifest(), {}, &error);
+    // A montagem (a malha do jogo vem do Blender desde 22/10; a montagem gera
+    // a troca e a pintura).
+    PlayerModelOptions assembled;
+    assembled.meshSource = "montagem";
+    const std::optional<LoadedPlayerModel> loaded = loadPlayerModel(defaultPlayerModelManifest(), assembled, &error);
     require(loaded.has_value(), "o modelo: " + error);
     // A carga diz o que leu (a tela recarrega quando a pintura muda) e quanto
     // levou cada etapa (o bake em paralelo: a montagem inteira em ~1 s).
@@ -741,6 +1154,25 @@ void testScreenWithoutWindow() {
     frame(screen, canvas);
     screen.waitUntilLoaded();
     require(screen.loaded() && screen.error().empty(), "a tela carrega o modelo: " + screen.error());
+    {
+        // O corpo (a secao "CORPO"): 2,00 m remonta o modelo x 2,00/1,80 (a
+        // cabeca sobre o pe: a escala e em volta do chao).
+        const auto headZ = [&] {
+            const InspectionModel& model = *screen.session().model();
+            const auto z = [&](const char* id) {
+                return model.skeleton.joints[static_cast<std::size_t>(model.skeleton.find(id))].bind.position.z;
+            };
+            return z("Head") - z("LeftFoot");
+        };
+        const float base = headZ();
+        screen.setBody(200.0f, 100.0f);
+        screen.waitUntilLoaded();
+        require(screen.error().empty() && std::abs(headZ() / base - 2.0f / 1.8f) < 0.01f,
+            "a tela remonta o modelo no corpo de 2,00 m: " + screen.error());
+        screen.setBody(180.0f, 80.0f);
+        screen.waitUntilLoaded();
+        require(std::abs(headZ() - base) < 1e-6f, "e volta ao corpo de hoje");
+    }
     for (int i = 0; i < 30; ++i) frame(screen, canvas);
     snapshot(canvas, "tela_visao_geral.png");
     require(canvas.width > 800 && canvas.height > 500, "o viewport recebe a imagem no tamanho dele");
@@ -885,11 +1317,13 @@ void testScreenWithoutWindow() {
 
 int main() {
     try {
-        testPlayerModel();
+        // (A tela primeiro: o avesso antigo do calcao em testPlayerModel nao a esconde.)
+        testScreenWithoutWindow();
         testGameCharacterExport();
+        testBodyVariants();
+        testPlayerModel();
         testReferenceFit();
         testPaintExample();
-        testScreenWithoutWindow();
     } catch (const std::exception& exception) {
         std::cerr << "MatterPlayerModel test failure: " << exception.what() << '\n';
         return 1;

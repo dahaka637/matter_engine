@@ -1,8 +1,8 @@
 #pragma once
 
 #include "Engine/Animation/AnimationClip3D.hpp"
-#include "Engine/Character/BallGesturePose3D.hpp"
 #include "Engine/Character/CharacterLocomotion3D.hpp"
+#include "Engine/Gesture/GesturePlayer3D.hpp"
 #include "Engine/Character/PoseInertializer3D.hpp"
 #include "Engine/Character/StandTurnFeet3D.hpp"
 #include "Engine/Math/Quaternion.hpp"
@@ -62,6 +62,18 @@ struct DefaultTrunkMotion3D {
 };
 
 struct DefaultLocomotionSettings3D {
+    // A altura do corpo (26/10, corpo variavel): altura/1,80. As distancias do
+    // corpo (a busca do degrau a frente do pe) andam x ela; as do mundo (o
+    // degrau, a folga) nao. No corpo de hoje, 1.
+    float bodyScale = 1.0f;
+    // O IK do pe de novo com o joelho dobrado quando ele nao chega (26/10): da
+    // perna esticada ele nao dobrava, e o pe levantado pelo degrau ficava ate
+    // 37 cm abaixo do alvo (a canela dentro dele). So no pe levantado pelo
+    // terreno (mais de 5 cm): no plano, os empurroes de lado (nao cruzar, o
+    // giro parado) erravam ate 16 cm, e acertar mudava a marcha aprovada.
+    // Desligado na sombra de referencia do RL (o treino parado foi feito com o
+    // IK de antes).
+    bool footBentRetry = true;
     // Rumo da pelve: constante (s) andando e velocidade maxima (rad/s).
     float turnSeconds = 0.10f;
     float maximumTurnRateRadiansPerSecond = 10.0f;
@@ -127,6 +139,15 @@ struct DefaultLocomotionSettings3D {
     // m/s2) e mais deslize. Desligada ate ser refeita.
     bool footLock = false;
     float footLockReleaseMeters = 0.18f;
+    // As pernas nao se cruzam (22/10, pedido do usuario: o corte de 90 graus e
+    // o correr de lado cruzavam os pes): o pe no balanco que vai pousar do lado
+    // errado do outro (mais perto de uncrossAlong m no rumo) e empurrado para o
+    // proprio lado ate uncrossGap m, numa mola de uncrossSeconds; apoiado, o
+    // empurrao fica (o pe nao escorrega) e so sai no balanco seguinte.
+    bool uncrossFeet = true;
+    float uncrossGap = 0.06f;
+    float uncrossAlong = 0.35f;
+    float uncrossSeconds = 0.05f;
     // Os dedos do pe dobram no chao (07/10, pedido do usuario): a sola conta so
     // ate a base dos dedos - toeRollMeters atras da frente da caixa do pe (no
     // jogador, 8 cm) -; no fim do apoio o pe gira ali, nao na ponta, e os dedos
@@ -175,6 +196,9 @@ struct DefaultLocomotionSettings3D {
     // costas.
     std::array<float, 5> trotSpeeds { 4.5f, 4.5f, 4.5f, 4.5f, 4.5f };
     std::array<float, 5> sprintSpeeds { 7.8f, 7.8f, 5.2f, 5.2f, 5.2f };
+    // O sprint maximo (24/10, pedido do usuario): acima da corrida, ate esta
+    // velocidade, o clipe dele entra no lugar do da corrida.
+    float maxSprintSpeed = 10.0f;
     // A marcha em outra velocidade que a do clipe (pedido do usuario, 06/10:
     // o trote a 4,5 m/s, com o clipe feito para ~3, era um "movimentinho
     // curtinho e rapidinho"; depois tambem a corrida, sobretudo de lado): o
@@ -194,15 +218,6 @@ struct DefaultLocomotionSettings3D {
     float sprintAmplitudeSide = 1.0f;
     // A amplitude muda no maximo neste tempo (s, filtro).
     float gaitAmplitudeSeconds = 0.25f;
-    // Plano v5: a passada de conducao (entrada dribbleStyle). A cadencia sobe
-    // ate os pousos alternados ficarem a dribbleHalfCycle (s) - no maximo
-    // dribbleCadenceMaximum vezes - e a amplitude divide pelo mesmo: passos
-    // curtos e rapidos, sem o pe escorregar (andando a 1 m/s o trote pousava a
-    // cada 0,63 s e cada perna so tocava a bola uma vez por 1,3 s). Muda no
-    // maximo em dribbleCadenceSeconds.
-    float dribbleHalfCycle = 0.30f;
-    float dribbleCadenceMaximum = 2.2f;
-    float dribbleCadenceSeconds = 0.25f;
     // Mistura das marchas (s, molas criticamente amortecidas): a forma do
     // ciclo (setor, trote/sprint) e o parado <-> andando.
     float gaitBlendSeconds = 0.12f;
@@ -371,26 +386,18 @@ struct DefaultLocomotionInput3D {
     // voadora pede os tres juntos, em qualquer ordem).
     bool tackleHeld = false;
     bool airTackleCombo = false;
-    // O contrato do gesto (a reescrita, R4): a camada de pose que uma acao
-    // poe por cima da locomocao - hoje o gesto do corpo inteiro do manejo de
-    // bola (rework de 06/10). A locomocao nao conhece a bola: so esta camada.
-    BallGesturePose3D ballGesture;
+    // O gesto de bola (24/10, Engine/Gesture): o pedido (borda) comeca o
+    // gesto neste tick - a animacao procedural por cima da locomocao. A
+    // locomocao nao conhece a bola: so o gesto.
+    GestureSpec3D gesture;
+    bool gestureRequested = false;
     // "Vida" (0..2; 0 desliga) e a semente do jeito de cada um.
     float motionVariety = 0.0f;
     std::uint32_t varietySeed = 0;
-    // O ritmo da passada vezes isto (o gesto com a bola entra na passada: o
-    // pe do toque pousa no clipe quando o gesto volta). 1: o normal.
+    // O ritmo da passada vezes isto (a sombra de referencia do contrato do RL
+    // segue o corpo fisico por aqui: Athlete/Reference/PhaseLock3D). 1: o
+    // normal.
     float phaseRateScale = 1.0f;
-    // Plano v5: a passada de conducao (0..1: a cadencia sobe com os passos
-    // mais curtos, como num drible).
-    float dribbleStyle = 0.0f;
-};
-
-// Plano v5: uma janela de balanco de um pe (s a partir de agora, no ritmo
-// aplicado: do pe sair do chao ao pouso).
-struct DefaultSwingWindow3D {
-    float start = 0.0f;
-    float end = 0.0f;
 };
 
 struct DefaultLocomotionOutput3D {
@@ -403,6 +410,8 @@ struct DefaultLocomotionOutput3D {
     std::vector<Vec3> coordinates;
     // Rumo da pelve.
     float facingYawRadians = 0.0f;
+    // As pernas num gesto de bola agora.
+    std::array<bool, 2> gestureLegs {};
     // Fase do ciclo (0..1; 0 = pouso do pe esquerdo) e o quanto o corpo
     // anda (0 parado, 1 andando).
     float cyclePhase = 0.0f;
@@ -426,29 +435,15 @@ struct DefaultLocomotionOutput3D {
     std::array<float, 2> secondsToLiftoff { -1.0f, -1.0f };
     std::array<float, 2> cycleSecondsToTouchdown { -1.0f, -1.0f };
     std::array<float, 2> swingSeconds { -1.0f, -1.0f };
-    // Os pes do estilo antes do gesto da bola, no mundo (o manejo novo,
-    // correndo, toca a bola no balanco deles).
-    std::array<Vec3, 2> styleFootPosition {};
-    std::array<Quaternion, 2> styleFootOrientation {};
-    // Cada pe como a locomocao o poria sem o gesto (o do estilo com a passada
-    // e o chao) e para onde o joelho do estilo aponta (mundo): o gesto volta a
-    // eles (plano v4).
-    std::array<Vec3, 2> locomotionFootPosition {};
-    std::array<Quaternion, 2> locomotionFootOrientation {};
-    std::array<Vec3, 2> styleKneeDirection { Vec3 { 1.0f, 0.0f, 0.0f }, Vec3 { 1.0f, 0.0f, 0.0f } };
-    // Plano v5 (o manejo refeito): andando (cycling), as janelas de balanco de
-    // cada pe - a atual, se no ar (comeco negativo), e as proximas -, o ciclo
-    // (s) e o pe do estilo no futuro (a origem do link e a orientacao), no
-    // referencial do corpo: a pelve no chao, o rumo dela (x frente, y
-    // esquerda), a cada forecastStep s a partir de agora (o primeiro e agora),
-    // pela tabela das marchas (sem a amplitude) com a passada de agora.
-    static constexpr int SwingWindowCount = 3;
+    // Andando (cycling): o ciclo (s) e o pe do estilo no futuro (a origem do
+    // link), no referencial do corpo: a pelve no chao, o rumo dela (x frente,
+    // y esquerda), a cada forecastStep s a partir de agora (o primeiro e
+    // agora), pela tabela das marchas com a passada de agora (a referencia do
+    // contrato do RL).
     static constexpr int ForecastCount = 16;
-    std::array<std::array<DefaultSwingWindow3D, SwingWindowCount>, 2> swingWindows {};
     float cycleSeconds = -1.0f;
     float forecastStep = 0.04f;
     std::array<std::array<Vec3, ForecastCount>, 2> footForecast {};
-    std::array<std::array<Quaternion, ForecastCount>, 2> footForecastOrientation {};
     // Inclinacao aplicada (rad: x para a esquerda, y para a frente).
     Vec3 lean;
     // Carrinho: em andamento (a pelve vai pelo clipe; a capsula vai embaixo
@@ -498,6 +493,10 @@ struct TackleClipShape3D {
 // (lateralTravel: seno do rumo contra a camera, + esquerda); senao, ao acaso.
 [[nodiscard]] int chooseTackleClip3D(const std::array<const AnimationClip3D*, 2>& clips,
     const std::array<TackleClipShape3D, 2>& shapes, float cameraTurnRate, float lateralTravel, std::uint32_t random);
+
+// O esqueleto para os gestos de bola (Engine/Gesture): as pernas no
+// referencial da pelve de pe, pelo perfil.
+[[nodiscard]] GestureRig3D defaultGestureRig3D(const RagdollProfile3D& profile);
 
 // A pose no mundo a partir da raiz e das coordenadas de junta.
 void defaultLocomotionPose3D(const RagdollProfile3D& profile, Vec3 rootPosition, Quaternion rootOrientation,
@@ -556,10 +555,12 @@ public:
     [[nodiscard]] DefaultLocomotionSettings3D& settings() { return m_settings; }
 
 private:
-    // As dezesseis marchas: trote (0..7) e sprint (8..15) nos oito rumos, de
-    // 45 em 45 graus a partir da frente, para a esquerda.
+    // As marchas: trote (0..7), sprint (8..15) e sprint maximo (16..23; so a
+    // frente e as diagonais da frente) nos oito rumos, de 45 em 45 graus a
+    // partir da frente, para a esquerda.
     static constexpr std::size_t Directions = 8;
-    static constexpr std::size_t GaitCount = 2 * Directions;
+    static constexpr std::size_t Tiers = 3;
+    static constexpr std::size_t GaitCount = Tiers * Directions;
     struct Gait {
         const AnimationClip3D* clip = nullptr;
         float speed = 0.0f;
@@ -574,11 +575,10 @@ private:
         // A fase (do ciclo) em que os pes passam um pelo outro embaixo do
         // corpo - a mais perto da pose parada: a saida do parado comeca nela.
         float crossing = 0.0f;
-        // Plano v5: os pes pelo ciclo (a origem do link e a orientacao em
-        // relacao a pelve, no rumo dela) em FeetSamples fases - a previsao.
+        // Os pes pelo ciclo (a origem do link em relacao a pelve, no rumo
+        // dela) em FeetSamples fases - a previsao.
         static constexpr int FeetSamples = 48;
         std::array<std::array<Vec3, FeetSamples>, 2> feet {};
-        std::array<std::array<Quaternion, FeetSamples>, 2> feetTurn {};
         // (E a media de cada pe no ciclo: a amplitude da marcha escala o pe
         // em volta dela.)
         std::array<Vec3, 2> feetMean {};
@@ -590,12 +590,10 @@ private:
         std::vector<Vec3> minimum, maximum;
     };
     // O quanto cada link entra na amplitude da marcha (quadril, joelhos e
-    // bracos 1, a coluna gaitAmplitudeSpine, o resto 0) e a do tick, do trote
-    // e da corrida.
+    // bracos 1, a coluna gaitAmplitudeSpine, o resto 0) e a do tick, do trote,
+    // da corrida e do sprint maximo.
     std::vector<float> m_amplitudeShare;
-    std::array<float, 2> m_gaitAmplitude { 1.0f, 1.0f };
-    // A cadencia da passada de conducao (1: a normal).
-    float m_dribbleCadence = 1.0f;
+    std::array<float, Tiers> m_gaitAmplitude { 1.0f, 1.0f, 1.0f };
     void prepare(const RagdollProfile3D& profile, const CharacterLocomotionAnimations3D& animations);
     // As tabelas do prepare sao funcao so do perfil e dos clipes: feitas uma
     // vez por processo e copiadas (antes, cada atleta e cada episodio do treino
@@ -652,6 +650,11 @@ private:
     void stepAir(Tick& t);
     void stepPose(Tick& t);
     void stepLayers(Tick& t);
+    // Os gestos de bola (DefaultLocomotion3D_Gesture.cpp): comeca o pedido,
+    // toca os em andamento por cima da pose (a perna do gesto, a pelve, a
+    // coluna, a cabeca e os bracos) e guarda onde o pe de apoio estava antes.
+    void stepGesture(Tick& t);
+    void recordGestureShown(float dt);
     void stepFeet(Tick& t);
     void stepExits(Tick& t);
     void stepReadout(Tick& t);
@@ -784,6 +787,10 @@ private:
     bool m_standTurning = false;
     // O giro parado: os passos dos pes e o alvo da pelve (rad).
     StandTurnFeet3D m_standTurnFeet;
+    // Os pes como sairam no tick anterior (mundo; o giro parado e a
+    // acomodacao comecam dali).
+    std::array<StandTurnFoot3D, 2> m_feetShown {};
+    bool m_feetShownValid = false;
     float m_standTurnTarget = 0.0f;
     bool m_started = false;
     // A semente (seed): aplicada no proximo update.
@@ -831,6 +838,8 @@ private:
     // O pe no balanco por cima do degrau a frente: o quanto a sola sobe (m) e
     // a velocidade disso, por pe.
     std::array<float, 2> m_stepClear {};
+    std::array<float, 2> m_uncross {};
+    std::array<float, 2> m_uncrossRate {};
     std::array<float, 2> m_stepClearRate {};
     float m_previousBase = 0.0f;
     bool m_previousBaseKnown = false;
@@ -880,10 +889,19 @@ private:
     Vec3 m_exitRootOffset;
     Quaternion m_exitRootOrientation;
     std::vector<Vec3> m_coordinates;
-    // O corpo do chute com o peso suavizado (a pose de bracos e tronco entra
-    // e sai sem salto) e o ultimo pedido dela.
-    // As pernas e bracos para o gesto com a bola (IK analitico).
-    BallGestureLegs3D m_gestureLegs;
+    // Os gestos de bola: o esqueleto deles, um tocador por perna, os links de
+    // cada perna (coxa, canela, pe), a mostrada no tick anterior e a
+    // velocidade dela (de onde o gesto sai) e o pe de apoio antes do gesto
+    // mexer na pelve.
+    GestureRig3D m_gestureRig;
+    std::array<GesturePlayer3D, 2> m_gesturePlayers {};
+    std::array<std::array<std::size_t, 3>, 2> m_gestureLegLinks {};
+    std::array<GestureLegPose3D, 2> m_gestureShown {};
+    std::array<GestureLegPose3D, 2> m_gestureShownVelocity {};
+    std::array<bool, 2> m_gestureShownValid {};
+    struct FootPose { Vec3 position; Quaternion orientation; };
+    std::array<FootPose, 2> m_gestureSupport {};
+    std::array<bool, 2> m_gestureSupportValid {};
 };
 
 } // namespace MatterEngine

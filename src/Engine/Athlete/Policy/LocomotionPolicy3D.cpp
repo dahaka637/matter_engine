@@ -1,7 +1,7 @@
 #include "Engine/Athlete/Policy/LocomotionPolicy3D.hpp"
 
 #include "Engine/Athlete/AthleteTelemetry3D.hpp"
-#include "Engine/Athlete/Dribble/BodyForecast3D.hpp"
+#include "Engine/Athlete/Reference/BodyForecast3D.hpp"
 #include "Engine/RL/Policy/PolicyRuntime3D.hpp"
 
 #include <nlohmann/json.hpp>
@@ -40,8 +40,13 @@ nlohmann::json readHeader(const std::filesystem::path& file) {
 
 struct LocomotionPolicy3D::Impl {
     std::filesystem::path file;
-    LocomotionContract3D contract;
     PolicyRuntime3D runtime;
+    // O corpo variavel: com as entradas "jogador." a rede le o corpo do
+    // atleta; o contrato e o do perfil e do corpo de agora (refeito na troca).
+    bool playerChannels = false;
+    const RagdollProfile3D* profile = nullptr;
+    PlayerBody3D player;
+    std::unique_ptr<LocomotionContract3D> contract;
     LocomotionAuthority3D authority;
     std::string run;
     std::uint64_t iteration = 0;
@@ -51,24 +56,30 @@ struct LocomotionPolicy3D::Impl {
     std::vector<float> observation;
     std::vector<float> action;
 
-    Impl(const RagdollProfile3D& profile, const std::filesystem::path& path)
-        : file(path), contract(profile), runtime(path) {}
+    Impl(const RagdollProfile3D& profileIn, const std::filesystem::path& path, const PlayerBody3D& body)
+        : file(path), runtime(path), profile(&profileIn), player(body) {
+        const std::vector<std::string>& names = runtime.info().observationNames;
+        playerChannels = std::find(names.begin(), names.end(), "jogador.altura") != names.end();
+        rebuild();
+    }
+    void rebuild() { contract = std::make_unique<LocomotionContract3D>(*profile, playerChannels ? &player : nullptr); }
 };
 
-LocomotionPolicy3D::LocomotionPolicy3D(const RagdollProfile3D& profile, const std::filesystem::path& file)
-    : m_impl(std::make_unique<Impl>(profile, file)) {
+LocomotionPolicy3D::LocomotionPolicy3D(const RagdollProfile3D& profile, const std::filesystem::path& file,
+    const PlayerBody3D& body)
+    : m_impl(std::make_unique<Impl>(profile, file, body)) {
     Impl& impl = *m_impl;
     const nlohmann::json header = readHeader(file);
     if (header.value("observationLayout", std::string()) != "locomocao.observacao"
-        || header.value("contractHash", std::string()) != hex(impl.contract.hash()))
+        || header.value("contractHash", std::string()) != hex(impl.contract->hash()))
         throw std::runtime_error("politica da locomocao: de outro contrato (o deste corpo e "
-            + hex(impl.contract.hash()) + "): " + file.string());
-    if (impl.runtime.observationSize() != impl.contract.observationSize()
-        || impl.runtime.actionSize() != impl.contract.actionSize())
+            + hex(impl.contract->hash()) + "): " + file.string());
+    if (impl.runtime.observationSize() != impl.contract->observationSize()
+        || impl.runtime.actionSize() != impl.contract->actionSize())
         throw std::runtime_error("politica da locomocao: tamanhos diferentes do contrato: " + file.string());
     const std::vector<std::string>& names = impl.runtime.info().observationNames;
     if (!names.empty()) {
-        const RLVectorLayout3D& layout = impl.contract.observationLayout();
+        const RLVectorLayout3D& layout = impl.contract->observationLayout();
         for (std::size_t i = 0; i < names.size() && i < layout.channels.size(); ++i)
             if (names[i] != layout.channels[i].name)
                 throw std::runtime_error("politica da locomocao: a entrada " + names[i] + " nao e a do contrato");
@@ -102,8 +113,8 @@ LocomotionPolicy3D::LocomotionPolicy3D(const RagdollProfile3D& profile, const st
     }
     impl.run = header.value("run", std::string());
     impl.iteration = header.value("iteration", std::uint64_t { 0 });
-    impl.observation.assign(impl.contract.observationSize(), 0.0f);
-    impl.action.assign(impl.contract.actionSize(), 0.0f);
+    impl.observation.assign(impl.contract->observationSize(), 0.0f);
+    impl.action.assign(impl.contract->actionSize(), 0.0f);
 }
 
 LocomotionPolicy3D::~LocomotionPolicy3D() = default;
@@ -116,8 +127,15 @@ bool LocomotionPolicy3D::usesTurnMove() const { return m_impl->turnMove; }
 float LocomotionPolicy3D::turnMoveAmount() const { return m_impl->turnMoveAmount; }
 
 void LocomotionPolicy3D::before(AthleteState3D& athlete, const RagdollState3D& body, const AthleteCommand3D& command,
-    float deltaTime) {
+    float deltaTime, const AthleteRuntimeAssets3D& assets) {
     Impl& impl = *m_impl;
+    // O atleta de outro perfil ou de outro corpo: o contrato dele (os canais do
+    // jogador, o peso e as escalas em metros; o mesmo layout).
+    if (assets.profile != nullptr && (assets.profile != impl.profile || !(assets.body == impl.player))) {
+        impl.profile = assets.profile;
+        impl.player = assets.body;
+        impl.rebuild();
+    }
     // A rede so conhece o tick de 120 Hz do treino (o contato dos pes vira
     // fracao do peso por ele; 4 ticks por decisao): com outro tick ela nao
     // dirige e o atleta fica no classico exato.
@@ -128,14 +146,14 @@ void LocomotionPolicy3D::before(AthleteState3D& athlete, const RagdollState3D& b
     // A decisao: como no treino, a entrada do instante (o corpo publicado no
     // fim do passo anterior) e a acao media da rede, a cada TicksPerDecision
     // ticks.
-    if (athlete.policyTo.size() != impl.contract.actionSize()
+    if (athlete.policyTo.size() != impl.contract->actionSize()
         || athlete.policyTicks >= LocomotionContract3D::TicksPerDecision) {
-        (void)impl.contract.observe(body, command, athleteControlView3D(athlete), athlete.policyHistory, impl.forecast,
+        (void)impl.contract->observe(body, command, athleteControlView3D(athlete), athlete.policyHistory, impl.forecast,
             impl.observation);
         impl.runtime.evaluate(impl.observation, impl.action);
-        impl.contract.decide(athlete, impl.action);
+        impl.contract->decide(athlete, impl.action);
     }
-    impl.contract.follow(athlete, impl.authority, deltaTime);
+    impl.contract->follow(athlete, impl.authority, deltaTime);
 }
 
 } // namespace MatterEngine

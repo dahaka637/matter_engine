@@ -2,6 +2,7 @@
 // modelagem, analise, cortes, camera, renderizador, regioes, skin e sessao.
 // Linkado so contra MatterModeling: prova que o nucleo nao depende da engine.
 
+#include "Engine/Appearance/Compose/KitMaterial.hpp"
 #include "Engine/Modeling/Analysis/ConnectivityCheck.hpp"
 #include "Engine/Modeling/Analysis/CrossSection.hpp"
 #include "Engine/Modeling/Analysis/DeformationCheck.hpp"
@@ -56,6 +57,10 @@ void testGeometry() {
     require(trianglesIntersect(a, b, c, { 0.2f, 0.2f, -1.0f }, { 0.2f, 0.2f, 1.0f }, { 0.4f, 0.1f, 0.0f }),
         "triangulos que se cruzam");
     require(!trianglesIntersect(a, b, c, { 0, 0, 1 }, { 1, 0, 1 }, { 0, 1, 1 }), "triangulos paralelos nao se cruzam");
+    // O comprimento do cruzamento: o de pe em x = 0,2 corta o do chao de y = 0,1 a 0,5.
+    require(std::abs(triangleIntersectionLength(a, b, c, { 0.2f, 0.1f, -1.0f }, { 0.2f, 0.1f, 1.0f }, { 0.2f, 0.5f, 0.0f }) - 0.4f) < 1e-4f,
+        "comprimento do cruzamento");
+    require(triangleIntersectionLength(a, b, c, { 0, 0, 1 }, { 1, 0, 1 }, { 0, 1, 1 }) == 0.0f, "paralelos: cruzamento zero");
     // Quase no mesmo plano (um quarto de grau), lado a lado com uma fresta
     // de 0,2 mm e um vertice encostado no plano do outro: vizinhos, nao se
     // cruzam (a reta de intersecao de planos assim e so ruido).
@@ -601,6 +606,135 @@ void testRenderingAndCamera() {
         "silhueta da referencia");
 }
 
+// O nivel do uniforme por pixel no inspetor (kitPixelLevel) contra a conta
+// analitica: um plano de frente ou inclinado de theta com 0,25 de UV por metro
+// (256 texels por metro numa textura de 1024), visto no centro da imagem a 2 m.
+// Na perspectiva e na ortografica; com um canto atras do olho e com um canto
+// entre o olho e o plano proximo (a projecao presa no plano daria derivadas de
+// outro triangulo); de lado para o olho, a media. E a CPU contra a GPU: a GPU
+// usa a diferenca para a frente ou para tras (o par do quad 2x2, conforme o
+// hardware); o nivel da CPU (a diferenca central) fica entre os dois em todo
+// pixel, e o pior afastamento e medido.
+void testKitPixelLevel() {
+    constexpr int Size = 400;
+    constexpr float TexelsPerMeter = 256.0f, Pi = 3.14159265f;
+    const auto plane = [](float theta, float u, float v) {
+        return Vec3 { -std::sin(theta) * v, u, std::cos(theta) * v };
+    };
+    const auto triangle = [&](float theta, std::array<Vec2, 3> uvMeters, std::array<Vec3, 3>& corners, std::array<Vec2, 3>& uv) {
+        for (std::size_t k = 0; k < 3; ++k) {
+            corners[k] = plane(theta, uvMeters[k].x, uvMeters[k].y);
+            uv[k] = { 0.5f + 0.25f * uvMeters[k].x, 0.5f + 0.25f * uvMeters[k].y };
+        }
+    };
+    OrbitCamera camera;
+    camera.pitch = 0.0f;
+    camera.distance = 2.0f;
+    for (const bool orthographic : { false, true }) {
+        camera.orthographic = orthographic;
+        camera.orthoHalfHeight = 1.0f;
+        const Projector projector(camera, Size, Size);
+        const float metersPerPixel = orthographic ? 2.0f / Size : 2.0f * 2.0f * std::tan(0.5f * camera.verticalFov) / Size;
+        for (const float degrees : { 0.0f, 60.0f }) {
+            const float theta = degrees * Pi / 180.0f;
+            const float expected = std::log2(TexelsPerMeter * metersPerPixel / std::cos(theta));
+            // Um triangulo comum, um com um canto atras do olho e um com um canto
+            // entre o olho e o plano proximo (so na perspectiva inclinada).
+            std::vector<std::array<Vec2, 3>> cases { { Vec2 { -1.0f, -1.0f }, Vec2 { 1.0f, -1.0f }, Vec2 { 0.0f, 1.0f } } };
+            if (!orthographic && degrees > 0.0f) {
+                cases.push_back({ Vec2 { -1.0f, -4.0f }, Vec2 { 2.0f, 1.0f }, Vec2 { -2.0f, 2.0f } });
+                const float nearV = -(2.0f - 0.001f) / std::sin(theta);
+                cases.push_back({ Vec2 { 0.0f, nearV }, Vec2 { 2.0f, 1.0f }, Vec2 { -2.0f, 2.0f } });
+            }
+            for (std::size_t i = 0; i < cases.size(); ++i) {
+                std::array<Vec3, 3> corners {};
+                std::array<Vec2, 3> uv {};
+                triangle(theta, cases[i], corners, uv);
+                if (i == 1) require(projector.toCamera(corners[0]).z < 0.0f, "o canto atras do olho");
+                if (i == 2) {
+                    const float z = projector.toCamera(corners[0]).z;
+                    require(z > 0.0f && z < projector.nearPlane(), "o canto antes do plano proximo");
+                }
+                std::array<float, 3> w {};
+                require(projector.barycentricAt(corners[0], corners[1], corners[2], 0.5f * Size, 0.5f * Size, w) && w[0] >= 0.0f && w[1] >= 0.0f
+                        && w[2] >= 0.0f,
+                    "o centro da imagem cai no triangulo");
+                const float level = kitPixelLevel(projector, corners, uv, 1024, 1024, 0.5f * Size - 0.5f, 0.5f * Size - 0.5f, 1.0f);
+                require(std::abs(level - expected) < 0.01f, std::string(orthographic ? "ortografica" : "perspectiva") + ", " + std::to_string(degrees)
+                        + " graus, caso " + std::to_string(i) + ": nivel " + std::to_string(level) + " (esperado " + std::to_string(expected) + ")");
+            }
+        }
+        // De lado para o olho: o plano horizontal pelo eixo da camera.
+        const std::array<Vec3, 3> flat { Vec3 { 0.0f, -1.0f, 0.0f }, Vec3 { -1.0f, 1.0f, 0.0f }, Vec3 { 1.0f, 1.0f, 0.0f } };
+        const std::array<Vec2, 3> flatUv { Vec2 { 0.0f, 0.0f }, Vec2 { 1.0f, 0.0f }, Vec2 { 0.0f, 1.0f } };
+        require(kitPixelLevel(projector, flat, flatUv, 1024, 1024, 0.5f * Size - 0.5f, 0.5f * Size - 0.5f, 1.0f) == EdgeOnKitLevel,
+            "de lado para o olho, a media");
+    }
+    // A CPU contra a GPU. A GPU tira as derivadas do quad 2x2: dx de um par de
+    // pixels vizinhos numa linha do quad e dy de um par numa coluna (fina: a
+    // linha e a coluna do proprio pixel; grossa: as do canto do quad), com o
+    // quad alinhado de um jeito ou de outro. No pixel (x, y) isso da dx de (x-1,
+    // x) ou (x, x+1) nas linhas y-1, y e y+1, e dy do mesmo jeito: 36
+    // combinacoes, todas possiveis em alguma GPU. O nivel da CPU (a diferenca
+    // central) tem de ficar entre o menor e o maior delas em todo pixel; o pior
+    // afastamento e limitado a 1/4 de nivel. Tres closes: inclinado num eixo
+    // (0,4 m, 75 graus) e obliquos nos dois (a camera girada, de cima e rasante).
+    struct View {
+        float yaw, pitch, distance, degrees;
+    };
+    for (const View view : { View { 0.0f, 0.0f, 0.4f, 75.0f }, View { 0.5f, 0.35f, 0.5f, 70.0f }, View { 0.8f, 0.12f, 0.4f, 75.0f } }) {
+        camera.orthographic = false;
+        camera.yaw = view.yaw;
+        camera.pitch = view.pitch;
+        camera.distance = view.distance;
+        const Projector projector(camera, Size, Size);
+        std::array<Vec3, 3> corners {};
+        std::array<Vec2, 3> uv {};
+        triangle(view.degrees * Pi / 180.0f, { Vec2 { -3.0f, -3.0f }, Vec2 { 3.0f, -3.0f }, Vec2 { 0.0f, 3.0f } }, corners, uv);
+        float spread = 0.0f, worst = 0.0f;
+        int pixels = 0;
+        std::array<std::array<std::array<float, 2>, 3>, 3> near {};
+        for (int y = 1; y < Size - 1; ++y)
+            for (int x = 1; x < Size - 1; ++x) {
+                bool inside = true;
+                for (int j = -1; j <= 1 && inside; ++j)
+                    for (int i = -1; i <= 1 && inside; ++i) {
+                        std::array<float, 3> w {};
+                        inside = projector.barycentricAt(corners[0], corners[1], corners[2], x + i + 0.5f, y + j + 0.5f, w) && w[0] >= 0.0f
+                            && w[1] >= 0.0f && w[2] >= 0.0f;
+                        near[j + 1][i + 1] = { w[0] * uv[0].x + w[1] * uv[1].x + w[2] * uv[2].x, w[0] * uv[0].y + w[1] * uv[1].y + w[2] * uv[2].y };
+                    }
+                if (!inside) continue;
+                std::array<std::array<float, 2>, 6> dxs {}, dys {};
+                for (int r = 0; r < 3; ++r)
+                    for (int side = 0; side < 2; ++side) {
+                        const std::array<float, 2>& a0 = near[r][side], & a1 = near[r][side + 1];
+                        dxs[r * 2 + side] = { a1[0] - a0[0], a1[1] - a0[1] };
+                        const std::array<float, 2>& b0 = near[side][r], & b1 = near[side + 1][r];
+                        dys[r * 2 + side] = { b1[0] - b0[0], b1[1] - b0[1] };
+                    }
+                float lowest = 1e9f, highest = -1e9f;
+                for (const auto& dx : dxs)
+                    for (const auto& dy : dys) {
+                        const float level = Appearance::kitLevelOfDetail(dx, dy, 1024, 1024);
+                        lowest = std::min(lowest, level);
+                        highest = std::max(highest, level);
+                    }
+                const float cpu = kitPixelLevel(projector, corners, uv, 1024, 1024, static_cast<float>(x), static_cast<float>(y), 1.0f);
+                require(cpu >= lowest - 1e-3f && cpu <= highest + 1e-3f,
+                    "o nivel da CPU entre os da GPU no pixel " + std::to_string(x) + ", " + std::to_string(y));
+                spread = std::max(spread, highest - lowest);
+                worst = std::max({ worst, cpu - lowest, highest - cpu });
+                ++pixels;
+            }
+        require(pixels > 20000, "o close cobre a imagem");
+        std::printf("nivel do uniforme (close %.0f graus, camera %.2f/%.2f): %d pixels; a GPU varia ate %.3f entre as 36 combinacoes do quad, "
+                    "a CPU fica entre elas e se afasta ate %.3f\n",
+            view.degrees, view.yaw, view.pitch, pixels, spread, worst);
+        require(worst <= 0.25f, "a CPU a menos de 1/4 de nivel de qualquer GPU");
+    }
+}
+
 // O sombreamento liso: as normais dos cantos por grupo (a quina separa), a
 // mistura com a face, a pose girando as normais e o render liso.
 void testShadingNormals() {
@@ -720,6 +854,7 @@ int main() {
         testBendTools();
         testSurfaceFit();
         testFoldVisibility();
+        testKitPixelLevel();
         testRenderingAndCamera();
         testShadingNormals();
         testSession();

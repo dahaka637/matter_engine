@@ -37,12 +37,16 @@ class TrackingReward3D final {
 public:
     explicit TrackingReward3D(const RagdollProfile3D& profile);
 
+    // realFallOnly (o usuario, 19/10: "precisa esperar ele cair de verdade para falhar, senao
+    // nao aprende a se corrigir"): o episodio so acaba na queda de verdade (a cabeca abaixo de
+    // 1,1 m); a distancia da cabeca ao lider deixa de acabar e passa a contar no referencial do
+    // centro de massa (a cabeca fora do lugar em relacao ao corpo, nao o atraso no mundo).
     // legWeight: o peso das pernas e dos pes na posicao, na velocidade e na pose
     // (1 = a receita; menos deixa as pernas se adaptarem, as pernas adaptaveis).
     [[nodiscard]] TrackingRewardTerms3D evaluate(const TrackingLeaderState3D& leader,
         std::span<const PhysicsBodyState3D> bodyLinks, Vec3 bodyCenterOfMass, Vec3 bodyCenterOfMassVelocity,
         float legWeight = 1.0f, float centerOfMassVelocityWeight = 1.0f, float armWeight = 1.0f,
-        float trunkWeight = 1.0f);
+        float trunkWeight = 1.0f, bool realFallOnly = false);
     [[nodiscard]] std::size_t headLink() const { return m_head; }
 
 private:

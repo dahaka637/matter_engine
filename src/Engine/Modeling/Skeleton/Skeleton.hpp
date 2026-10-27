@@ -41,6 +41,35 @@ struct Joint {
     // Com eixo (no espaco do modelo), so a parte do giro em volta dele (a
     // flexao do quadril: a coxa que abre de lado ou torce nao mexe nela).
     Vec3 derivedAxis {};
+    // So um sentido do giro em volta do eixo (+1 o positivo, -1 o negativo, 0
+    // os dois): a do gluteo (GluteHelper) gira so na extensao.
+    float derivedSign = 0.0f;
+    // A clavicula (derivedCarry): o quanto o osso de baixo (derivedAxis, a
+    // direcao dele na ligacao) sobe acima da ligacao, em volta do eixo
+    // frente-tras, so para cima, e em volta de derivedPivot (a junta
+    // esterno-clavicular); e o ombro vai junto - o osso de baixo, os filhos
+    // dele e os auxiliares que acabam neles sao levados (so a posicao: a
+    // direcao do braco e a pedida em relacao ao peito).
+    bool derivedCarry = false;
+    Vec3 derivedPivot {};
+    // O teto suave da subida dela (radianos; 0 sem teto): cap * tanh(giro / cap).
+    float derivedCap = 0.0f;
+    // A rampa da fracao (a meia-junta do ombro): com o osso de baixo erguido
+    // acima da ligacao (a direcao dele, derivedRampAlong) de rampStart ate
+    // rampEnd (radianos), a fracao vai de derivedFraction a derivedRampFraction
+    // (suave); 0 sem rampa.
+    float derivedRampFraction = 0.0f;
+    float derivedRampStart = 0.0f;
+    float derivedRampEnd = 0.0f;
+    Vec3 derivedRampAlong {};
+    // E o deslocamento da junta no fim da rampa (no referencial do osso de
+    // cima, vezes a mesma rampa; zero sem): uma correcao que so age com o osso
+    // de baixo erguido (o volume da axila).
+    Vec3 derivedRampOffset {};
+    // Na escolha dos pontos dos colisores (exportar-jogo), a parte do peso do
+    // auxiliar que conta para o osso de baixo (o resto para o de cima): metade
+    // na meia-junta; a do gluteo e da pelve (o perfil fisico nao muda).
+    float physicalShare = 0.5f;
 };
 
 class Skeleton {
@@ -70,9 +99,12 @@ struct SkeletonPose {
 // Uma junta auxiliar entre "from" (a de cima) e "to" (a de baixo): a pose
 // dela vem das duas (updateDerivedJoints); com "axis", so do giro em volta
 // dele. Devolve o indice.
-int addHelperJoint(Skeleton& skeleton, std::string name, int from, int to, float fraction, Vec3 axis = {});
+int addHelperJoint(Skeleton& skeleton, std::string name, int from, int to, float fraction, Vec3 axis = {},
+    float sign = 0.0f);
 // Recalcula as juntas auxiliares de uma pose (depois de todas as outras).
-void updateDerivedJoints(const Skeleton& skeleton, SkeletonPose& pose);
+// clavicleCarry = false: a clavicula fica no peito e nao leva o braco (o
+// repouso do corpo fisico, que nao tem cintura escapular: exportar-jogo).
+void updateDerivedJoints(const Skeleton& skeleton, SkeletonPose& pose, bool clavicleCarry = true);
 
 // O eixo de flexao de um dedo no referencial dado (o da junta): o -y do osso
 // (os dedos, como no jogo); no polegar, o meio entre o -y e o z (o polegar e

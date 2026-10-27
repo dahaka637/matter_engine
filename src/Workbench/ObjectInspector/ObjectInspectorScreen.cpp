@@ -117,6 +117,21 @@ void boxSegments(Vec3 center, Quaternion orientation, Vec3 half, std::vector<std
             if ((a & bit) == 0) segments.emplace_back(corners[static_cast<std::size_t>(a)], corners[static_cast<std::size_t>(a | bit)]);
 }
 
+// O contorno de um cilindro ou capsula (o eixo no z local): quatro linhas ao
+// comprido e um anel em cada ponta.
+void capsuleSegments(Vec3 center, Quaternion orientation, float radius, float halfHeight, std::vector<std::pair<Vec3, Vec3>>& segments) {
+    const Vec3 axis = orientation.rotate({ 0.0f, 0.0f, halfHeight });
+    const Vec3 side = orientation.rotate({ radius, 0.0f, 0.0f }), other = orientation.rotate({ 0.0f, radius, 0.0f });
+    for (const Vec3 offset : { side, side * -1.0f, other, other * -1.0f }) segments.emplace_back(center - axis + offset, center + axis + offset);
+    constexpr int Ring = 12;
+    for (const float end : { -1.0f, 1.0f })
+        for (int k = 0; k < Ring; ++k) {
+            const float a = 2.0f * Pi * static_cast<float>(k) / Ring, b = 2.0f * Pi * static_cast<float>(k + 1) / Ring;
+            segments.emplace_back(center + axis * end + side * std::cos(a) + other * std::sin(a),
+                center + axis * end + side * std::cos(b) + other * std::sin(b));
+        }
+}
+
 // A sombra de um corpo no laboratorio: o contorno dele visto de cima,
 // projetado no chao (um leque de ShadowRim lados logo acima do chao). Sem
 // ela, no ar e no chao parecem iguais.
@@ -202,6 +217,10 @@ void ObjectInspectorScreen::reload() {
         }
     }
     m_files = std::move(files);
+    // O que a trave pode receber atirado: os objetos sem rede (a caixa).
+    m_throwables.clear();
+    for (const ObjectRecipe& recipe : m_recipes)
+        if (std::optional<ProceduralObject> object = generateObject(recipe); object && !object->net) m_throwables.push_back(std::move(*object));
     m_selected = m_recipes.empty() ? 0 : std::min(m_selected, m_recipes.size() - 1);
     regenerate();
     frame(m_yawDegrees, m_pitchDegrees, false);
@@ -239,8 +258,28 @@ void ObjectInspectorScreen::regenerate() {
     // De pe no chao: a base em z = 0.
     m_display = m_object->mesh;
     for (Vec3& position : m_display.positions) position.z += m_object->size.z * 0.5f;
+    // A trave: a cena dela recomeca (ja na primeira vez; mexendo num
+    // parametro, um instante depois, para a rede nao reassentar a cada quadro).
+    if (goalMode()) {
+        if (m_lab && m_lab->active()) stopTest();
+        m_goalRestartSeconds = m_netView && m_netView->active() ? 0.3f : 0.0f;
+        return;
+    }
+    if (m_netView) m_netView->stop();
+    m_goalRestartSeconds = -1.0f;
     // Mudou com a fisica rodando: o roteiro recomeca com o objeto novo.
     if (m_lab && m_lab->active()) launchTest(false);
+}
+
+void ObjectInspectorScreen::startGoal() {
+    m_goalRestartSeconds = -1.0f;
+    if (!goalMode() || m_options.physics == nullptr || m_options.materials == nullptr) return;
+    if (!m_netView) m_netView = std::make_unique<NetLabView>(*m_options.physics, *m_options.materials);
+    std::string error;
+    if (!m_netView->start(*m_object, &error)) notify("A trave não começou: " + error);
+    m_paused = false;
+    m_dirty = true;
+    if (!m_userAdjusted) frame(m_yawDegrees, m_pitchDegrees, true);
 }
 
 bool ObjectInspectorScreen::save(std::string* error) {
@@ -433,6 +472,7 @@ void ObjectInspectorScreen::poseLabScene() {
 }
 
 Box3 ObjectInspectorScreen::sceneBounds() const {
+    if (goalMode() && m_netView && m_netView->active()) return m_netView->bounds();
     Box3 box;
     if (!m_object) {
         box.include({ -0.5f, -0.5f, 0.0f });
@@ -509,6 +549,11 @@ void ObjectInspectorScreen::update(float deltaSeconds) {
         m_lab->advance(deltaSeconds * m_timeScale);
         poseLabScene();
     }
+    if (m_goalRestartSeconds >= 0.0f) {
+        m_goalRestartSeconds -= deltaSeconds;
+        if (m_goalRestartSeconds <= 0.0f) startGoal();
+    }
+    if (goalMode() && m_netView && m_netView->active() && !m_paused && m_netView->update(deltaSeconds * m_timeScale)) m_dirty = true;
 }
 
 Image ObjectInspectorScreen::renderTexture(int width, int height) const {
@@ -541,7 +586,8 @@ bool ObjectInspectorScreen::render(int width, int height) {
         m_image = renderTexture(width, height);
         return true;
     }
-    const bool lab = m_lab && m_lab->active() && !m_labMesh.empty();
+    const bool goal = goalMode() && m_netView && m_netView->active();
+    const bool lab = !goal && m_lab && m_lab->active() && !m_labMesh.empty();
     InspectionStyle style;
     style.surface = surfaceFor(m_view);
     style.skeleton = false;
@@ -549,18 +595,21 @@ bool ObjectInspectorScreen::render(int width, int height) {
     style.grid = m_grid;
     // A grade cobre o roteiro inteiro (o arremesso vai longe); as sombras
     // vistas de baixo nao sao avesso.
-    if (lab) {
+    if (lab || goal) {
         style.backfaces = false;
         const Box3 bounds = sceneBounds();
         const Vec3 size = bounds.size();
         style.gridExtent = std::max(2.5f, 0.5f * std::max(size.x, size.y) + 1.0f);
     }
+    if (goal) style.gridStep = 0.5f;
     style.hud = false;
     style.gizmoLegend = false;
     style.supersample = fast ? 1 : 2;
     InspectionScene scene;
     scene.skeleton = &m_ground;
-    if (lab) {
+    if (goal) {
+        m_netView->fill(scene);
+    } else if (lab) {
         scene.mesh = &m_labMesh;
         scene.meshPositions = m_labPositions;
     } else if (m_object) {
@@ -571,12 +620,17 @@ bool ObjectInspectorScreen::render(int width, int height) {
         Highlight collider;
         collider.color = rgb(64, 214, 255);
         const auto add = [&](Vec3 position, Quaternion orientation) {
-            for (const ObjectCollider& shape : m_object->physics.colliders)
-                if (shape.shape == ObjectColliderShape::Box)
-                    boxSegments(position + orientation.rotate(shape.center), (orientation * shape.orientation).normalized(),
-                        shape.halfExtents, collider.segments);
+            for (const ObjectCollider& shape : m_object->physics.colliders) {
+                const Vec3 center = position + orientation.rotate(shape.center);
+                const Quaternion turned = (orientation * shape.orientation).normalized();
+                if (shape.shape == ObjectColliderShape::Box) boxSegments(center, turned, shape.halfExtents, collider.segments);
+                else if (shape.shape == ObjectColliderShape::Cylinder || shape.shape == ObjectColliderShape::Capsule)
+                    capsuleSegments(center, turned, shape.radius, shape.halfHeight, collider.segments);
+            }
         };
-        if (lab) {
+        if (goal) {
+            add(m_netView->lab().objectPosition(), {});
+        } else if (lab) {
             for (const ObjectTestBody3D& body : m_lab->bodies())
                 if (!body.ball) add(body.position, body.orientation);
         } else {
@@ -636,13 +690,14 @@ void ObjectInspectorScreen::drawSidebar(float height) {
     const float half = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
     if (tabButton("Propriedades", m_tab == 0, { half, ui(30.0f) })) m_tab = 0;
     ImGui::SameLine();
-    if (tabButton("Teste físico", m_tab == 1, { half, ui(30.0f) })) m_tab = 1;
+    if (tabButton(goalMode() ? "Trave" : "Teste físico", m_tab == 1, { half, ui(30.0f) })) m_tab = 1;
     ImGui::Dummy({ 1.0f, ui(2.0f) });
     // A aba rola; os botoes dela e a volta ficam embaixo.
-    const float actions = m_tab == 0 ? ui(44.0f) : ui(84.0f);
+    const float actions = m_tab == 0 ? ui(44.0f) : goalMode() ? ui(124.0f) : ui(84.0f);
     const float bottom = actions + ui(58.0f);
     ImGui::BeginChild("ObjectInspectorTab", { -1.0f, std::max(ui(120.0f), ImGui::GetContentRegionAvail().y - bottom) }, false);
     if (m_tab == 0) drawProperties();
+    else if (goalMode()) drawGoal();
     else drawPhysics();
     ImGui::EndChild();
     ImGui::SetCursorPosY(std::max(ImGui::GetCursorPosY(), height - bottom));
@@ -840,6 +895,58 @@ void ObjectInspectorScreen::drawPhysics() {
     }
 }
 
+void ObjectInspectorScreen::drawGoal() {
+    NetLabView* view = netView();
+    if (view == nullptr) return;
+    NetShotSettings3D& shot = view->shot();
+    const float spacing = ImGui::GetStyle().ItemSpacing.x;
+    ImGui::Dummy({ 1.0f, ui(4.0f) });
+    sectionLabel("Chute");
+    if (beginPropertyTable("##chute", ui(104.0f))) {
+        const auto slider = [&](const char* label, float* value, float minimum, float maximum, const char* format, const char* tip) {
+            ImGui::PushID(label);
+            propertyRow(label);
+            ImGui::SliderFloat("##valor", value, minimum, maximum, format, ImGuiSliderFlags_AlwaysClamp);
+            if (tip != nullptr && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
+            ImGui::PopID();
+        };
+        slider("Velocidade", &shot.speed, 3.0f, 40.0f, "%.1f m/s", nullptr);
+        slider("Distância", &shot.distance, 2.0f, 30.0f, "%.1f m", "Da linha do gol até onde a bola sai (11 m: o pênalti).");
+        slider("Ângulo", &shot.angleDegrees, -60.0f, 60.0f, "%.0f°", "De onde a bola vem: 0 de frente para o gol.");
+        slider("Mira (lado)", &shot.aimAcross, -1.0f, 1.0f, "%.2f", "-1 no poste da direita, 1 no da esquerda.");
+        slider("Mira (altura)", &shot.aimHeight, 0.0f, 1.0f, "%.2f", "0 rente ao chão, 1 no travessão.");
+        slider("Efeito", &shot.sideSpin, -40.0f, 40.0f, "%.0f rad/s", "O giro em volta da vertical: a bola faz a curva.");
+        slider("Por cima", &shot.topSpin, -40.0f, 40.0f, "%.0f rad/s", "O giro para a frente: a bola cai mais rápido.");
+        propertyRow("Ritmo");
+        const std::array<std::pair<const char*, float>, 4> scales { { { "1×", 1.0f }, { "½×", 0.5f }, { "¼×", 0.25f }, { "1/8×", 0.125f } } };
+        const float width = (ImGui::GetContentRegionAvail().x - 3.0f * spacing) / 4.0f;
+        for (std::size_t i = 0; i < scales.size(); ++i) {
+            if (i > 0) ImGui::SameLine();
+            if (tabButton(scales[i].first, std::abs(m_timeScale - scales[i].second) < 1e-3f, { width, ui(24.0f) }))
+                m_timeScale = scales[i].second;
+        }
+        ImGui::EndTable();
+    }
+    ImGui::Dummy({ 1.0f, ui(6.0f) });
+    sectionLabel("Medidas");
+    const NetShotMetrics3D& metrics = view->lab().metrics();
+    const NetStatus3D status = view->lab().netStatus();
+    if (beginPropertyTable("##medidas", ui(132.0f))) {
+        metricRow("Chutes", std::to_string(metrics.shots));
+        if (metrics.shots > 0) {
+            metricRow("Na linha", speedText(metrics.speedAtLine));
+            metricRow("Gol", metrics.goal ? "sim" : (metrics.crossed ? "não" : "-"));
+            metricRow("A rede estufou", formatLength(metrics.bulge));
+            metricRow("Parou", metrics.stopTime >= 0.0f ? "em " + secondsText(metrics.stopTime) : std::string("-"));
+            metricRow("Fio mais esticado", formatNumber(metrics.peakStrain * 100.0f, 1) + "%");
+        }
+        metricRow("Rede", status.sleeping ? "parada (dormindo)" : "em movimento");
+        metricRow("Custo da rede", formatNumber(metrics.netMilliseconds, 2) + " ms");
+        if (metrics.shots > 0) metricRow("Média / pico", formatNumber(metrics.netAverageMilliseconds, 2) + " / " + formatNumber(metrics.netPeakMilliseconds, 2) + " ms");
+        ImGui::EndTable();
+    }
+}
+
 void ObjectInspectorScreen::drawActions() {
     const float spacing = ImGui::GetStyle().ItemSpacing.x;
     const float half = (ImGui::GetContentRegionAvail().x - spacing) * 0.5f;
@@ -848,6 +955,40 @@ void ObjectInspectorScreen::drawActions() {
         if (ImGui::Button(UI::FontAwesome::label(UI::FontAwesome::FloppyDisk, "Salvar receita").c_str(), { half, ui(34.0f) })) save();
         ImGui::SameLine();
         if (ImGui::Button(UI::FontAwesome::label(UI::FontAwesome::RotateLeft, "Desfazer").c_str(), { half, ui(34.0f) })) revert();
+        ImGui::EndDisabled();
+        return;
+    }
+    if (goalMode()) {
+        NetLabView* view = netView();
+        ImGui::BeginDisabled(view == nullptr);
+        if (ImGui::Button(UI::FontAwesome::label(UI::FontAwesome::Play, "Chutar").c_str(), { half, ui(34.0f) }) && view) {
+            view->shoot();
+            m_paused = false;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Chute aleatório", { half, ui(34.0f) }) && view) {
+            view->shootRandom();
+            m_paused = false;
+        }
+        const std::string pauseLabel = m_paused ? UI::FontAwesome::label(UI::FontAwesome::Play, "Continuar")
+                                                : UI::FontAwesome::label(UI::FontAwesome::Pause, "Pausar");
+        if (ImGui::Button(pauseLabel.c_str(), { half, ui(34.0f) })) m_paused = !m_paused;
+        ImGui::SameLine();
+        ImGui::BeginDisabled(m_throwables.empty());
+        if (ImGui::Button("Atirar caixa", { half, ui(34.0f) }) && view && !m_throwables.empty()) {
+            view->throwObject(m_throwables.front());
+            m_paused = false;
+        }
+        ImGui::EndDisabled();
+        if (ImGui::Button(UI::FontAwesome::label(UI::FontAwesome::Stop, "Limpar").c_str(), { half, ui(34.0f) }) && view) {
+            view->clearBodies();
+            m_dirty = true;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(UI::FontAwesome::label(UI::FontAwesome::RotateLeft, "Reassentar").c_str(), { half, ui(34.0f) }) && view) {
+            view->resetNet();
+            m_dirty = true;
+        }
         ImGui::EndDisabled();
         return;
     }
@@ -983,6 +1124,19 @@ void ObjectInspectorScreen::drawFooter() {
     }
     if (!m_object) return;
     const ProceduralObject& object = *m_object;
+    if (object.net) {
+        float mass = 0.0f;
+        for (const float knot : object.net->masses) mass += knot;
+        ImGui::TextColored(InfoText, "%s × %s × %s m  |  %s  |  %zu triângulos  |  rede: %zu nós, %zu fios, %s kg",
+            formatNumber(object.size.x, 2).c_str(), formatNumber(object.size.y, 2).c_str(), formatNumber(object.size.z, 2).c_str(),
+            materialName(object.physics.material).c_str(), object.mesh.triangles.size(), object.net->drawnKnots.size(),
+            object.net->drawnSegments.size(), formatNumber(mass, 1).c_str());
+        if (modified()) {
+            ImGui::SameLine(0.0f, ui(18.0f));
+            ImGui::TextColored(WarningText, "receita não salva");
+        }
+        return;
+    }
     ImGui::TextColored(InfoText, "%s × %s × %s m  |  %s kg  |  %s  |  %zu triângulos  |  textura %d × %d px",
         formatNumber(object.size.x, 2).c_str(), formatNumber(object.size.y, 2).c_str(), formatNumber(object.size.z, 2).c_str(),
         formatNumber(object.physics.massKg, 1).c_str(), materialName(object.physics.material).c_str(), object.mesh.triangles.size(),

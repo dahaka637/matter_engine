@@ -214,7 +214,6 @@ void AdaptivePhysicalCharacter3D::reset(const RagdollProfile3D& profile) {
     m_wasSuspended = false;
     m_sinceSuspended = 10.0f;
     m_sinceExternalHit = 10.0f;
-    m_sinceExternalTouch = 10.0f;
     m_assistEnvelope = 1.0f;
     m_wasAirborne = false;
     m_sinceAirborne = 10.0f;
@@ -366,7 +365,6 @@ void AdaptivePhysicalCharacter3D::update(const RagdollProfile3D& profile,
     out.strongestImpulse = 0;
     out.strongestInteractionLink = RagdollDynamics3D::InvalidIndex;
     float disturbance = 0;
-    bool externalTouch = false;
     for (auto& c : m_compliance) c = approach(c, 0, 5, dt);
     for (const auto& contact : state.interactions) {
         if (contact.linkIndex >= profile.links.size()) continue;
@@ -378,8 +376,6 @@ void AdaptivePhysicalCharacter3D::update(const RagdollProfile3D& profile,
         // "perturbado" (autoridade cortada ate 70%) e ele reagia como quem
         // vai cair.
         if (m_sinceSuspended < 1.0f && contact.normalWorld.z > 0.62f) continue;
-        // Encostando em algo de fora (a bola, leve, quase nao conta).
-        if (contact.normalImpulseNewtonSeconds > 0.3f) externalTouch = true;
         if (contact.normalImpulseNewtonSeconds > out.strongestImpulse) {
             out.strongestImpulse = contact.normalImpulseNewtonSeconds;
             out.strongestInteractionLink = contact.linkIndex;
@@ -415,7 +411,6 @@ void AdaptivePhysicalCharacter3D::update(const RagdollProfile3D& profile,
     static const float hitCalm = tuneTempApc("T_HitCalm", 0.5f);
     m_sinceExternalHit = disturbance > hitCalm ? 0.0f
         : std::min(10.0f, m_sinceExternalHit + dt);
-    m_sinceExternalTouch = externalTouch ? 0.0f : std::min(10.0f, m_sinceExternalTouch + dt);
     // Falling needs physical loss of viability sustained in time. A big
     // impact alone cannot trigger it, nor can an ordinary airborne stride.
     // Caido de vez: tronco/joelho/mao no chao com a pelve tombada, a pelve
@@ -462,15 +457,6 @@ void AdaptivePhysicalCharacter3D::update(const RagdollProfile3D& profile,
         const float x = saturate(m_sinceSuspended
             / std::max(0.01f, m_settings.recoveryBoostSeconds));
         out.recoveryBoost = 1.0f - x * x * (3 - 2 * x);
-    }
-    // O reforco do gesto proprio (o toque/chute na bola): so sem contato de
-    // fora recente, sem queda em curso, nem suspenso ou agarrado.
-    {
-        const float quiet = std::max(0.01f, m_settings.actionQuietSeconds);
-        const float touchQuiet = saturate((m_sinceExternalTouch - quiet) / 0.15f);
-        const float hitQuiet = saturate((m_sinceExternalHit - quiet) / 0.15f);
-        out.actionStability = intent.suspended || intent.manipulated ? 0.0f
-            : saturate(intent.actionStability) * touchQuiet * hitQuiet * (1.0f - m_falling);
     }
     const float captureRisk = balanceRecoveryEnabled
         ? saturate((out.captureErrorMeters - 0.025f) / 0.25f) : 0;
@@ -547,7 +533,7 @@ void AdaptivePhysicalCharacter3D::update(const RagdollProfile3D& profile,
         const float quiet = saturate((m_sinceExternalHit - 1.5f) / 0.7f);
         const float calm = quiet * quiet * (3 - 2 * quiet) * commanded;
         m_selfMotionCalm = calm;
-        const float extra = std::max({ out.recoveryBoost, calm, out.actionStability });
+        const float extra = std::max(out.recoveryBoost, calm);
         const float start = m_settings.uprightAssistStartDegrees + 15.0f * extra;
         const float end = m_settings.uprightAssistEndDegrees + 25.0f * extra;
         const float span = std::max(1.0f, end - start);
@@ -564,7 +550,7 @@ void AdaptivePhysicalCharacter3D::update(const RagdollProfile3D& profile,
         // faixa absoluta tambem se estende - correndo, um mergulho de 40-55
         // graus (curva, zigue-zague, pe enganchado) ainda e recuperavel.
         static const float calmAbsoluteExtra = tuneTempApc("T_UprightCalmAbs", 15.0f);
-        const float absoluteStart = 38.0f + calmAbsoluteExtra * std::max(calm, out.actionStability);
+        const float absoluteStart = 38.0f + calmAbsoluteExtra * calm;
         const float absoluteX = saturate((absoluteTilt - absoluteStart) / 18.0f);
         const float absoluteShare = 1.0f
             - absoluteX * absoluteX * (3.0f - 2.0f * absoluteX);
@@ -747,22 +733,11 @@ void AdaptivePhysicalCharacter3D::update(const RagdollProfile3D& profile,
     // As pernas assumem ate (1 - legsAssistRetained): o resto da ajuda segue
     // na pelve.
     static const bool walkShareDecouple = tuneTempApc("T_WalkDecouple", 1.0f) > 0.5f;  // TEMPTUNE
-    // (O gesto proprio reforcado: a ajuda vai ate actionAssist - so com as
-    // pernas carregando o corpo, onde ela e a escolhida pelo jogador; sem
-    // isso a "ajuda parado" e outra coisa (0 desliga a forca planar da pelve)
-    // e subi-la empurrava o corpo no meio do gesto. O torque de postura e a
-    // faixa de inclinacao valem sempre.)
-    const float actionAssist = m_settings.jointSupport || m_settings.jointWhileWalking
-        ? std::clamp(m_settings.actionAssist, 0.0f, 1.0f) * out.actionStability : 0.0f;
     // A ajuda auxiliar (17/10, consenso Claude + Codex; vault
     // 04_locomocao/ajuda_auxiliar.md): so as forcas de FORA (sem reacao no
-    // corpo), e 0% e zero de verdade em todo canal. O reforco do gesto proprio
-    // nao fura o zero: ele leva a ajuda escolhida a actionAssist na proporcao
-    // dela (igual quando o reforco e 0, o caso de hoje).
-    const auto withAction = [&](float chosen) {
-        chosen = std::clamp(chosen, 0.0f, 1.0f);
-        return chosen + (std::max(chosen, actionAssist) - chosen) * chosen;
-    };
+    // corpo), e 0% e zero de verdade em todo canal.
+    const bool historical = m_settings.historicalAssistRuler;
+    const auto withAction = [](float chosen) { return std::clamp(chosen, 0.0f, 1.0f); };
     const float legsMaximumShare = 1.0f - withAction(m_settings.legsAssistRetained);
     const auto share = [&](float& value, bool enabled, bool wanted) {
         // Andando, a parte das pernas e a da ajuda andando (o peso, a postura
@@ -796,8 +771,10 @@ void AdaptivePhysicalCharacter3D::update(const RagdollProfile3D& profile,
     // de uma parede o corpo andava com 100%.)
     const float runningAssist = discreet;
     // (O peso andando: a ajuda escolhida sem a queda do impacto.)
-    const float weightRunning = m_settings.walkingWeightAssistScale >= 0.0f
+    const float weightRunning = !historical && m_settings.walkingWeightAssistScale >= 0.0f
         ? withAction(m_settings.walkingWeightAssistScale) : runningAssist;
+    // (Na historica, o peso, o pulo e a sustentacao usam a lei inteira de antes.)
+    const bool weightFull = historical || weightRunning >= 1.0f;
     const float walkingAssist = !legsWalking ? standingAssist
         : brakeRunShare > 0.001f ? standingAssist + (runningAssist - standingAssist) * brakeRunShare
         : runningAssist;
@@ -858,7 +835,7 @@ void AdaptivePhysicalCharacter3D::update(const RagdollProfile3D& profile,
     const float legsWeightFull = std::max({ std::clamp(m_settings.legsWeightFraction, 0.0f, 1.0f),
         weightWalk * (1.0f - 1.0f), weightWalkFloor * std::clamp((1.0f - 0.5f) / 0.4f, 0.0f, 1.0f) });
     const float legsWeight = !legsWalking ? 1.0f
-        : weightRunning >= 1.0f ? std::max({ std::clamp(m_settings.legsWeightFraction, 0.0f, 1.0f),
+        : weightFull ? std::max({ std::clamp(m_settings.legsWeightFraction, 0.0f, 1.0f),
             weightWalk * (1.0f - weightRunning),
             weightWalkFloor * std::clamp((weightRunning - 0.5f) / 0.4f, 0.0f, 1.0f) })
         : 1.0f - weightRunning * (1.0f - legsWeightFull);
@@ -870,7 +847,7 @@ void AdaptivePhysicalCharacter3D::update(const RagdollProfile3D& profile,
     const float floorAssist = std::clamp((weightRunning - 0.5f) / 0.4f, 0.0f, 1.0f);
     m_walkCarryShare = approach(m_walkCarryShare,
         legsWalking && legsCanCarry && m_settings.jointSupport
-            ? (weightRunning >= 1.0f ? weightWalkFloor * floorAssist * floorAssist * (3.0f - 2.0f * floorAssist)
+            ? (weightFull ? weightWalkFloor * floorAssist * floorAssist * (3.0f - 2.0f * floorAssist)
                 : legsWeight) : 0.0f, 7.0f, dt);
     const float weightByLegs = std::max(weightShare * legsWeight, m_walkCarryShare);
     legVerticalAcceleration = legVerticalAcceleration * weightByLegs;
@@ -886,11 +863,11 @@ void AdaptivePhysicalCharacter3D::update(const RagdollProfile3D& profile,
         const float weightAssist = legsWalking && brakeRunShare <= 0.001f ? weightRunning : walkingAssist;
         const float allowed = !legsCanCarry ? weightAssist
             : legsWalking ? weightAssist * (1.0f - legsWeightFull) : weightAssist;
-        out.supportAcceleration *= weightAssist >= 1.0f ? pelvisShare : std::min(pelvisShare, allowed);
+        out.supportAcceleration *= historical || weightAssist >= 1.0f ? pelvisShare : std::min(pelvisShare, allowed);
     }
     // O impulso do pulo na pelve tambem e forca de fora: segue a ajuda andando
     // escolhida (a 0% o pulo e so das pernas; a 100%, o de sempre).
-    if (jumpPushing && weightRunning < 1.0f) out.supportAcceleration *= std::max(0.0f, weightRunning);
+    if (jumpPushing && !weightFull) out.supportAcceleration *= std::max(0.0f, weightRunning);
     // Andando pela passada, a ajuda discreta usa um unico envelope para
     // propulsao, correcao de posicao e postura. Deixar a intencao inteira
     // enquanto a postura era reduzida fazia "30%" empurrar a pelve com a
@@ -992,7 +969,8 @@ void AdaptivePhysicalCharacter3D::update(const RagdollProfile3D& profile,
         // (A forma da ajuda no apoio e a do 100% em qualquer nivel: a regua so
         // muda a intensidade - antes ela mudava de continua para pulsada a
         // partir de 50%.)
-        const float highAssist = runningAssist > 0.0f ? 1.0f : 0.0f;
+        const float highAssist = historical ? std::clamp((runningAssist - 0.5f) / 0.4f, 0.0f, 1.0f)
+            : runningAssist > 0.0f ? 1.0f : 0.0f;
         const float share = contactShare * (1.0f - m_contactTurning)
             * highAssist * highAssist * (3.0f - 2.0f * highAssist);
         // (Experimento v2, T_LandNoBoost = s: logo depois do pouso de um
@@ -1103,7 +1081,7 @@ void AdaptivePhysicalCharacter3D::update(const RagdollProfile3D& profile,
         correctionLever = cross(ground - root.position, correctionAcceleration * mass)
             * (saturate(m_perturbation) * (1.0f - balanceShare))
             // (De fora, so na proporcao da ajuda: a 0% o corpo empurrado se vira sozinho.)
-            * (walkingAssist >= 1.0f ? 1.0f : walkingAssist);
+            * (historical || walkingAssist >= 1.0f ? 1.0f : walkingAssist);
         correctionLever.z = 0;
     }
     // Pes que tocam algo agora dividem a correcao (sem contato, nada: no ar
@@ -1122,8 +1100,7 @@ void AdaptivePhysicalCharacter3D::update(const RagdollProfile3D& profile,
     const Vec3 torque = (error * 35 + rate * 5) * mass;
     const float tiltTorquePerKg = m_settings.v2 ? m_settings.v2TiltTorquePerKg : m_settings.maximumTiltTorquePerKg;
     Vec3 postureRaw = limit(planar(torque), mass * tiltTorquePerKg
-        * (1.0f + std::max({ out.recoveryBoost, 0.75f * m_selfMotionCalm,
-            m_settings.actionTorqueBoost * out.actionStability }))) * m_assistEnvelope;
+        * (1.0f + std::max(out.recoveryBoost, 0.75f * m_selfMotionCalm))) * m_assistEnvelope;
     postureRaw.z = std::clamp(torque.z, -mass * m_settings.maximumYawTorquePerKg,
         mass * m_settings.maximumYawTorquePerKg);
     // Andando, walkingAssist limita diretamente a postura auxiliar. Parado,
@@ -1189,7 +1166,7 @@ void AdaptivePhysicalCharacter3D::update(const RagdollProfile3D& profile,
     out.legPostureRequested = legPosture;
     out.legPostureDelivered = {};
     posture = posture * (1.0f - postureShare);
-    if (m_settings.postureCoupleFollowsAssist) {
+    if (m_settings.postureCoupleFollowsAssist && !historical) {
         // A escolhida (sem a queda do impacto, como o peso).
         const float standingChosen = m_settings.standingWeightAssistScale >= 0.0f
             ? withAction(m_settings.standingWeightAssistScale) : standingAssist;

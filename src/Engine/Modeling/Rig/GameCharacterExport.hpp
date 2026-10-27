@@ -35,6 +35,9 @@ struct GameCharacterExportSettings {
     float facet = 0.5f;
     std::string skinFile = "jogador.skin.json";
     std::string albedoFile = "jogador_atlas.png";
+    // O template de superficie (com o modelo que o tem): os triangulos na ordem da
+    // pele e as costuras nos vertices da modelagem ("source" de cada vertice da pele).
+    std::string surfaceFile = "jogador.superficie.json";
     std::string displayName = "Jogador";
 };
 

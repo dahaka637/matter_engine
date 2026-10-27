@@ -1,5 +1,6 @@
 #include "Engine/Modeling/Objects/ProceduralObject.hpp"
 
+#include "Engine/Modeling/Objects/GoalFrame.hpp"
 #include "Engine/Modeling/Objects/WoodCrate.hpp"
 
 #include <algorithm>
@@ -14,8 +15,8 @@ const ObjectParameterSpec* ObjectType::find(std::string_view key) const {
 }
 
 const std::vector<ObjectType>& objectTypes() {
-    // Um tipo novo (a trave, a rede...) entra aqui, com o gerador dele.
-    static const std::vector<ObjectType> types { woodCrateObjectType() };
+    // Um tipo novo entra aqui, com o gerador dele.
+    static const std::vector<ObjectType> types { woodCrateObjectType(), goalFrameObjectType() };
     return types;
 }
 
@@ -77,6 +78,15 @@ std::optional<ProceduralObject> generateObject(const ObjectRecipe& recipe, std::
         return std::nullopt;
     }
     return object;
+}
+
+void drawnNetKnots(const ObjectNet& net, std::span<const Vec3> knots, std::vector<Vec3>& out) {
+    out.resize(net.drawnWeights.size());
+    for (std::size_t i = 0; i < net.drawnWeights.size(); ++i) {
+        const ObjectNetWeight& w = net.drawnWeights[i];
+        out[i] = knots[w.knots[0]] * w.weights[0] + knots[w.knots[1]] * w.weights[1] + knots[w.knots[2]] * w.weights[2]
+            + knots[w.knots[3]] * w.weights[3];
+    }
 }
 
 } // namespace MatterEngine::Modeling

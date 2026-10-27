@@ -81,6 +81,13 @@ PolicyRuntime3D::PolicyRuntime3D(const std::filesystem::path& path) {
     m_info.steps = header.value("steps", std::uint64_t { 0 });
     m_info.createdUtc = header.value("createdUtc", std::string());
     if (header.contains("observationNames")) m_info.observationNames = header["observationNames"].get<std::vector<std::string>>();
+    if (header.contains("explorationStd")) {
+        m_info.explorationStd = header.at("explorationStd").get<std::vector<float>>();
+        if (m_info.explorationStd.size() != m_actionSize ||
+            !std::all_of(m_info.explorationStd.begin(), m_info.explorationStd.end(),
+                         [](float v) { return std::isfinite(v) && v > 0.f && v <= std::exp(1.5f); }))
+            throw std::runtime_error("politica: ruido exploratorio invalido");
+    }
     m_scratchA.resize(std::max(widest, m_observationSize));
     m_scratchB.resize(std::max(widest, m_observationSize));
 }

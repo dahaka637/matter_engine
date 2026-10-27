@@ -535,6 +535,34 @@ public:
         bool alive = false;
     };
 
+    // O material do personagem (CharacterMaterial.hpp): os dois arrays (cada um
+    // com o sampler proprio, clamp e trilinear ate o nivel seguro), o buffer
+    // por vertice (lido no vertex shader) e os parametros, num set proprio (o
+    // set 4 do pipeline do personagem; os sets 0 a 3 sao os da malha).
+    struct CharacterArrayImage {
+        VkImage image = VK_NULL_HANDLE;
+        VmaAllocation allocation = VK_NULL_HANDLE;
+        VkImageView view = VK_NULL_HANDLE;
+        VkSampler sampler = VK_NULL_HANDLE;
+        Extent2D extent {};
+        std::uint32_t layers = 0;
+        std::uint32_t levels = 0;
+    };
+    struct CharacterMaterialResource {
+        CharacterArrayImage kit;
+        CharacterArrayImage identity;
+        VkBuffer vertexBuffer = VK_NULL_HANDLE;
+        VmaAllocation vertexAllocation = VK_NULL_HANDLE;
+        void* vertexMapped = nullptr;
+        std::size_t vertexCount = 0;
+        VkBuffer parameterBuffer = VK_NULL_HANDLE;
+        VmaAllocation parameterAllocation = VK_NULL_HANDLE;
+        void* parameterMapped = nullptr;
+        VkDescriptorSet descriptor = VK_NULL_HANDLE;
+        std::uint32_t generation = 1;
+        bool alive = false;
+    };
+
     void initialize(SDL_Window* newWindow, bool enableVsync, const std::string& applicationName) {
         window = newWindow;
         vsync = enableVsync;
@@ -1503,6 +1531,297 @@ public:
         ++resource.generation;
     }
 
+    // Um envio de uma vez (os uploads do personagem): grava, envia e espera so a
+    // cerca dele. Com a barreira de ALL_COMMANDS na mesma fila, a copia vem
+    // depois dos quadros ja enviados - nunca se espera o dispositivo inteiro.
+    template <typename Record> void submitOnce(const char* what, const Record& record) {
+        VkCommandPool pool = VK_NULL_HANDLE;
+        VkFence fence = VK_NULL_HANDLE;
+        const auto cleanup = [&] {
+            if (fence != VK_NULL_HANDLE) vkDestroyFence(device, fence, nullptr);
+            if (pool != VK_NULL_HANDLE) vkDestroyCommandPool(device, pool, nullptr);
+        };
+        try {
+            VkCommandPoolCreateInfo poolInfo { VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
+            poolInfo.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+            poolInfo.queueFamilyIndex = queueFamilies.graphics;
+            check(vkCreateCommandPool(device, &poolInfo, nullptr, &pool), what);
+            VkCommandBuffer commandBuffer = VK_NULL_HANDLE;
+            VkCommandBufferAllocateInfo commandInfo { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+            commandInfo.commandPool = pool;
+            commandInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+            commandInfo.commandBufferCount = 1;
+            check(vkAllocateCommandBuffers(device, &commandInfo, &commandBuffer), what);
+            VkCommandBufferBeginInfo beginInfo { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+            beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+            check(vkBeginCommandBuffer(commandBuffer, &beginInfo), what);
+            record(commandBuffer);
+            check(vkEndCommandBuffer(commandBuffer), what);
+            VkFenceCreateInfo fenceInfo { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
+            check(vkCreateFence(device, &fenceInfo, nullptr, &fence), what);
+            VkCommandBufferSubmitInfo commandSubmit { VK_STRUCTURE_TYPE_COMMAND_BUFFER_SUBMIT_INFO };
+            commandSubmit.commandBuffer = commandBuffer;
+            VkSubmitInfo2 submit { VK_STRUCTURE_TYPE_SUBMIT_INFO_2 };
+            submit.commandBufferInfoCount = 1;
+            submit.pCommandBufferInfos = &commandSubmit;
+            check(vkQueueSubmit2(graphicsQueue, 1, &submit, fence), what);
+            check(vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX), what);
+        } catch (...) {
+            cleanup();
+            throw;
+        }
+        cleanup();
+    }
+
+    // Os quadros em voo (os ja enviados, fora o que se grava agora): antes de
+    // reescrever um buffer mapeado que eles leem.
+    void waitSubmittedFrames() {
+        std::array<VkFence, FramesInFlight> pending {};
+        std::uint32_t count = 0;
+        for (std::uint32_t i = 0; i < FramesInFlight; ++i)
+            if (i != currentFrame && frames[i].fence != VK_NULL_HANDLE) pending[count++] = frames[i].fence;
+        if (count > 0) check(vkWaitForFences(device, count, pending.data(), VK_TRUE, UINT64_MAX), "vkWaitForFences(character)");
+    }
+
+    // Copia os niveis de [firstLayer, firstLayer + layerCount) de um array a
+    // partir de um staging (camada a camada, nivel a nivel).
+    void copyCharacterLayers(const CharacterArrayImage& array, std::uint32_t firstLayer, std::uint32_t layerCount,
+        std::span<const std::byte> pixels, bool fresh) {
+        if (pixels.size() != layerCount * characterLayerBytes(array.extent, array.levels))
+            throw std::runtime_error("Character array data does not match its layers and levels");
+        VkBuffer staging = VK_NULL_HANDLE;
+        VmaAllocation stagingAllocation = VK_NULL_HANDLE;
+        VkBufferCreateInfo stagingInfo { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
+        stagingInfo.size = pixels.size();
+        stagingInfo.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+        VmaAllocationCreateInfo stagingAllocationInfo {};
+        stagingAllocationInfo.usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST;
+        stagingAllocationInfo.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+        VmaAllocationInfo mapped {};
+        check(vmaCreateBuffer(allocator, &stagingInfo, &stagingAllocationInfo, &staging, &stagingAllocation, &mapped),
+            "vmaCreateBuffer(character staging)");
+        try {
+            std::memcpy(mapped.pMappedData, pixels.data(), pixels.size());
+            check(vmaFlushAllocation(allocator, stagingAllocation, 0, pixels.size()), "vmaFlushAllocation(character staging)");
+            std::vector<VkBufferImageCopy> copies;
+            VkDeviceSize offset = 0;
+            for (std::uint32_t layer = 0; layer < layerCount; ++layer)
+                for (std::uint32_t level = 0; level < array.levels; ++level) {
+                    VkBufferImageCopy copy {};
+                    copy.bufferOffset = offset;
+                    copy.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, level, firstLayer + layer, 1 };
+                    copy.imageExtent = { std::max(1u, array.extent.width >> level), std::max(1u, array.extent.height >> level), 1 };
+                    copies.push_back(copy);
+                    offset += characterLevelBytes(array.extent, level);
+                }
+            submitOnce("character upload", [&](VkCommandBuffer commandBuffer) {
+                const auto barrier = [&](VkImageLayout from, VkImageLayout to, VkPipelineStageFlags2 srcStage, VkAccessFlags2 srcAccess,
+                                         VkPipelineStageFlags2 dstStage, VkAccessFlags2 dstAccess) {
+                    VkImageMemoryBarrier2 b { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2 };
+                    b.image = array.image;
+                    b.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, array.levels, firstLayer, layerCount };
+                    b.oldLayout = from;
+                    b.newLayout = to;
+                    b.srcStageMask = srcStage;
+                    b.srcAccessMask = srcAccess;
+                    b.dstStageMask = dstStage;
+                    b.dstAccessMask = dstAccess;
+                    VkDependencyInfo dependency { VK_STRUCTURE_TYPE_DEPENDENCY_INFO };
+                    dependency.imageMemoryBarrierCount = 1;
+                    dependency.pImageMemoryBarriers = &b;
+                    vkCmdPipelineBarrier2(commandBuffer, &dependency);
+                };
+                // (Uma camada viva: as leituras dos quadros ja enviados antes da copia.)
+                barrier(fresh ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                    fresh ? VK_PIPELINE_STAGE_2_NONE : VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
+                    fresh ? VK_ACCESS_2_NONE : VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_PIPELINE_STAGE_2_COPY_BIT,
+                    VK_ACCESS_2_TRANSFER_WRITE_BIT);
+                vkCmdCopyBufferToImage(commandBuffer, staging, array.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                    static_cast<std::uint32_t>(copies.size()), copies.data());
+                barrier(VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_PIPELINE_STAGE_2_COPY_BIT,
+                    VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+            });
+        } catch (...) {
+            vmaDestroyBuffer(allocator, staging, stagingAllocation);
+            throw;
+        }
+        vmaDestroyBuffer(allocator, staging, stagingAllocation);
+    }
+
+    // Um array com os niveis prontos (sem blit) e o sampler proprio: clamp,
+    // trilinear, sem anisotropia, ate o nivel seguro.
+    CharacterArrayImage createCharacterArray(const CharacterMaterialDesc::Array& desc) {
+        if (desc.extent.width == 0 || desc.extent.height == 0 || desc.layers == 0 || desc.levels == 0
+            || desc.levels > std::bit_width(std::max(desc.extent.width, desc.extent.height)))
+            throw std::runtime_error("Invalid character array");
+        CharacterArrayImage array;
+        array.extent = desc.extent;
+        array.layers = desc.layers;
+        array.levels = desc.levels;
+        try {
+            VkImageCreateInfo imageInfo { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
+            imageInfo.imageType = VK_IMAGE_TYPE_2D;
+            imageInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+            imageInfo.extent = { desc.extent.width, desc.extent.height, 1 };
+            imageInfo.mipLevels = desc.levels;
+            imageInfo.arrayLayers = desc.layers;
+            imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+            imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+            imageInfo.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
+            imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+            imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+            VmaAllocationCreateInfo imageAllocationInfo {};
+            imageAllocationInfo.usage = VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
+            check(vmaCreateImage(allocator, &imageInfo, &imageAllocationInfo, &array.image, &array.allocation, nullptr),
+                "vmaCreateImage(character array)");
+            VkImageViewCreateInfo viewInfo { VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
+            viewInfo.image = array.image;
+            viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+            viewInfo.format = imageInfo.format;
+            viewInfo.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, desc.levels, 0, desc.layers };
+            check(vkCreateImageView(device, &viewInfo, nullptr, &array.view), "vkCreateImageView(character array)");
+            VkSamplerCreateInfo samplerInfo { VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO };
+            samplerInfo.magFilter = VK_FILTER_LINEAR;
+            samplerInfo.minFilter = VK_FILTER_LINEAR;
+            samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+            samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+            samplerInfo.anisotropyEnable = VK_FALSE;
+            samplerInfo.minLod = 0.0f;
+            samplerInfo.maxLod = std::clamp(desc.maxLod, 0.0f, static_cast<float>(desc.levels - 1));
+            check(vkCreateSampler(device, &samplerInfo, nullptr, &array.sampler), "vkCreateSampler(character array)");
+            copyCharacterLayers(array, 0, desc.layers, desc.pixels, true);
+        } catch (...) {
+            releaseCharacterArray(array);
+            throw;
+        }
+        return array;
+    }
+
+    void releaseCharacterArray(CharacterArrayImage& array) {
+        if (array.sampler != VK_NULL_HANDLE) vkDestroySampler(device, array.sampler, nullptr);
+        if (array.view != VK_NULL_HANDLE) vkDestroyImageView(device, array.view, nullptr);
+        if (array.image != VK_NULL_HANDLE) vmaDestroyImage(allocator, array.image, array.allocation);
+        array = {};
+    }
+
+    void releaseCharacterMaterial(CharacterMaterialResource& resource) {
+        releaseCharacterArray(resource.kit);
+        releaseCharacterArray(resource.identity);
+        if (resource.vertexBuffer != VK_NULL_HANDLE) vmaDestroyBuffer(allocator, resource.vertexBuffer, resource.vertexAllocation);
+        if (resource.parameterBuffer != VK_NULL_HANDLE) vmaDestroyBuffer(allocator, resource.parameterBuffer, resource.parameterAllocation);
+        resource.vertexBuffer = VK_NULL_HANDLE;
+        resource.parameterBuffer = VK_NULL_HANDLE;
+        resource.vertexMapped = resource.parameterMapped = nullptr;
+    }
+
+    CharacterMaterialHandle createCharacterMaterial(const CharacterMaterialDesc& desc) {
+        // (Sem o pipeline do personagem - menos de 5 sets -, nada: o atlas antigo.)
+        if (characterDescriptorPool == VK_NULL_HANDLE) return {};
+        const TextureResource& body = checkedResource(textures, desc.body, "character body texture");
+        if (desc.vertices.empty() || desc.kit.layers > CharacterKitMaxLayers)
+            throw std::runtime_error("Character material without vertices or with too many kit layers");
+        CharacterMaterialResource made;
+        try {
+            made.kit = createCharacterArray(desc.kit);
+            made.identity = createCharacterArray(desc.identity);
+            const auto mappedBuffer = [&](VkDeviceSize size, VkBufferUsageFlags usage, VkBuffer& buffer, VmaAllocation& allocation,
+                                          void*& out, const char* what) {
+                VkBufferCreateInfo info { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
+                info.size = size;
+                info.usage = usage;
+                VmaAllocationCreateInfo allocationInfo {};
+                allocationInfo.usage = VMA_MEMORY_USAGE_AUTO;
+                allocationInfo.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+                VmaAllocationInfo mapped {};
+                check(vmaCreateBuffer(allocator, &info, &allocationInfo, &buffer, &allocation, &mapped), what);
+                out = mapped.pMappedData;
+            };
+            made.vertexCount = desc.vertices.size();
+            const VkDeviceSize vertexBytes = desc.vertices.size_bytes();
+            mappedBuffer(vertexBytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, made.vertexBuffer, made.vertexAllocation, made.vertexMapped,
+                "vmaCreateBuffer(character vertices)");
+            std::memcpy(made.vertexMapped, desc.vertices.data(), vertexBytes);
+            check(vmaFlushAllocation(allocator, made.vertexAllocation, 0, vertexBytes), "vmaFlushAllocation(character vertices)");
+            mappedBuffer(sizeof(CharacterKitParametersGpu), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, made.parameterBuffer,
+                made.parameterAllocation, made.parameterMapped, "vmaCreateBuffer(character parameters)");
+            std::memcpy(made.parameterMapped, &desc.parameters, sizeof(CharacterKitParametersGpu));
+            check(vmaFlushAllocation(allocator, made.parameterAllocation, 0, sizeof(CharacterKitParametersGpu)),
+                "vmaFlushAllocation(character parameters)");
+            VkDescriptorSetAllocateInfo allocInfo { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO };
+            allocInfo.descriptorPool = characterDescriptorPool;
+            allocInfo.descriptorSetCount = 1;
+            allocInfo.pSetLayouts = &characterDescriptorSetLayout;
+            check(vkAllocateDescriptorSets(device, &allocInfo, &made.descriptor), "vkAllocateDescriptorSets(character)");
+            const VkDescriptorImageInfo kitImage { made.kit.sampler, made.kit.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+            const VkDescriptorImageInfo identityImage { made.identity.sampler, made.identity.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL };
+            const VkDescriptorBufferInfo vertexInfo { made.vertexBuffer, 0, vertexBytes };
+            const VkDescriptorBufferInfo parameterInfo { made.parameterBuffer, 0, sizeof(CharacterKitParametersGpu) };
+            std::array<VkWriteDescriptorSet, 4> writes {};
+            for (std::uint32_t i = 0; i < writes.size(); ++i) {
+                writes[i].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+                writes[i].dstSet = made.descriptor;
+                writes[i].dstBinding = i;
+                writes[i].descriptorCount = 1;
+            }
+            writes[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[0].pImageInfo = &kitImage;
+            writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            writes[1].pImageInfo = &identityImage;
+            writes[2].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            writes[2].pBufferInfo = &vertexInfo;
+            writes[3].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            writes[3].pBufferInfo = &parameterInfo;
+            vkUpdateDescriptorSets(device, static_cast<std::uint32_t>(writes.size()), writes.data(), 0, nullptr);
+        } catch (...) {
+            releaseCharacterMaterial(made);
+            if (made.descriptor != VK_NULL_HANDLE) vkFreeDescriptorSets(device, characterDescriptorPool, 1, &made.descriptor);
+            throw;
+        }
+        (void)body;
+        const std::uint32_t index = acquireSlot(characterMaterials);
+        CharacterMaterialResource& resource = characterMaterials[index];
+        const std::uint32_t generation = resource.generation;
+        resource = made;
+        resource.generation = generation;
+        resource.alive = true;
+        return { index, generation };
+    }
+
+    void updateCharacterKitLayer(CharacterMaterialHandle handle, std::uint32_t layer, std::span<const std::byte> levels,
+        std::span<const float> regionAverages) {
+        CharacterMaterialResource& resource = checkedResource(characterMaterials, handle, "character material");
+        if (layer >= resource.kit.layers || regionAverages.size() != CharacterKitMaxRegions * 4)
+            throw std::runtime_error("Character kit layer out of range or region averages of the wrong size");
+        copyCharacterLayers(resource.kit, layer, 1, levels, false);
+        // (As medias da camada: os quadros ja enviados as leem.)
+        waitSubmittedFrames();
+        auto* parameters = static_cast<CharacterKitParametersGpu*>(resource.parameterMapped);
+        std::memcpy(parameters->regionAverage[layer * CharacterKitMaxRegions], regionAverages.data(), regionAverages.size_bytes());
+        check(vmaFlushAllocation(allocator, resource.parameterAllocation, 0, sizeof(CharacterKitParametersGpu)),
+            "vmaFlushAllocation(character parameters)");
+    }
+
+    void updateCharacterVertices(CharacterMaterialHandle handle, std::span<const CharacterKitVertexGpu> vertices) {
+        CharacterMaterialResource& resource = checkedResource(characterMaterials, handle, "character material");
+        if (vertices.size() != resource.vertexCount) throw std::runtime_error("Character vertices of another mesh");
+        waitSubmittedFrames();
+        std::memcpy(resource.vertexMapped, vertices.data(), vertices.size_bytes());
+        check(vmaFlushAllocation(allocator, resource.vertexAllocation, 0, vertices.size_bytes()), "vmaFlushAllocation(character vertices)");
+    }
+
+    void destroyCharacterMaterial(CharacterMaterialHandle handle) {
+        CharacterMaterialResource& resource = checkedResource(characterMaterials, handle, "character material");
+        // (Raro, como destroyTexture: espera o dispositivo.)
+        vkDeviceWaitIdle(device);
+        releaseCharacterMaterial(resource);
+        if (resource.descriptor != VK_NULL_HANDLE) vkFreeDescriptorSets(device, characterDescriptorPool, 1, &resource.descriptor);
+        resource.descriptor = VK_NULL_HANDLE;
+        resource.alive = false;
+        ++resource.generation;
+    }
+
     void writeBuffer(BufferHandle handle, std::size_t offset, std::span<const std::byte> data) {
         BufferResource& resource = checkedResource(buffers, handle, "buffer");
         if (resource.mapped == nullptr) {
@@ -2040,6 +2359,7 @@ public:
                 mesh->albedoTexture.index, mesh->albedoTexture.generation,
                 mesh->metallicRoughnessTexture.index,
                 mesh->metallicRoughnessTexture.generation,
+                mesh->characterMaterial.index, mesh->characterMaterial.generation,
                 mesh->castsShadow, mesh->visibleInCamera,
                 mesh->planarReflection,
                 mesh->shadowCascadeMask
@@ -2085,8 +2405,9 @@ public:
                 orientationX.z, 0.0f };
             gpuInstance.orientationY = { orientationY.x, orientationY.y,
                 orientationY.z, 0.0f };
+            // (w: o raio da geometria fina, so o passe de sombra le.)
             gpuInstance.orientationZ = { orientationZ.x, orientationZ.y,
-                orientationZ.z, 0.0f };
+                orientationZ.z, mesh->thinShadowRadius };
             if (!mesh->skinMatrices.empty()) {
                 gpuInstance.orientationX[3] = static_cast<float>(skinMatrices.size());
                 skinMatrices.insert(skinMatrices.end(),
@@ -2118,8 +2439,11 @@ public:
                 previousOrientationX.y, previousOrientationX.z, 0.0f };
             gpuInstance.previousOrientationY = { previousOrientationY.x,
                 previousOrientationY.y, previousOrientationY.z, 0.0f };
+            // (w: as camadas do uniforme e da identificacao do personagem, so o
+            // shader do personagem le.)
             gpuInstance.previousOrientationZ = { previousOrientationZ.x,
-                previousOrientationZ.y, previousOrientationZ.z, 0.0f };
+                previousOrientationZ.y, previousOrientationZ.z,
+                static_cast<float>(mesh->kitLayer + 256u * mesh->identityLayer) };
             gpuInstance.tintColor = { mesh->tintColor.x, mesh->tintColor.y,
                 mesh->tintColor.z, 1.0f };
             meshInstances.push_back(gpuInstance);
@@ -2153,6 +2477,12 @@ public:
                     ? meshObject.shadowIndexCount : meshObject.indexCount;
             BufferResource& indexBuffer =
                 checkedResource(buffers, selectedIndexHandle, "mesh index buffer");
+            // O personagem com o uniforme: nos passes de cor, o pipeline dele e o
+            // set 4 (os sets 0 a 3 ligados pelo passe continuam validos); depois
+            // do desenho, o da malha de volta.
+            const bool character = bindMaterial && meshObject.characterMaterial.valid()
+                && sceneCharacterPipeline != VK_NULL_HANDLE;
+            if (character) vkCmdBindPipeline(frame.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, sceneCharacterPipeline);
             if (bindMaterial) {
                 const TextureResource& materialTexture = meshObject.albedoTexture.valid()
                     ? checkedResource(textures, meshObject.albedoTexture, "mesh albedo texture")
@@ -2172,6 +2502,13 @@ public:
                     &metallicRoughnessTexture.materialDescriptor,
                     0, nullptr);
             }
+            if (character) {
+                // (Depois dos sets 1 e 2: ligar um set de indice menor nunca o desfaz.)
+                const CharacterMaterialResource& material =
+                    checkedResource(characterMaterials, meshObject.characterMaterial, "character material");
+                vkCmdBindDescriptorSets(frame.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                    sceneCharacterPipelineLayout, 4, 1, &material.descriptor, 0, nullptr);
+            }
             const std::array<VkBuffer, 2> vertexBuffers {
                 vertexBuffer.buffer,
                 sceneMeshInstanceBuffers[currentFrame]
@@ -2187,6 +2524,7 @@ public:
             vkCmdBindIndexBuffer(frame.commandBuffer, indexBuffer.buffer, 0, VK_INDEX_TYPE_UINT32);
             vkCmdDrawIndexed(frame.commandBuffer, selectedIndexCount,
                 batch.instanceCount, 0, 0, 0);
+            if (character) vkCmdBindPipeline(frame.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, sceneMeshPipeline);
         };
 
         // O primeiro uso inicializa o recurso para manter o descriptor valido.
@@ -2233,11 +2571,28 @@ public:
                     scenePipelineLayout, 0, 1, &sceneDescriptorSets[currentFrame], 0, nullptr);
                 vkCmdPushConstants(frame.commandBuffer, scenePipelineLayout,
                     VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(std::uint32_t), &cascade);
+                bool anyThin = false;
                 for (const MeshBatch& batch : meshBatches) {
                     if (batch.prototype->castsShadow
                         && (batch.prototype->shadowCascadeMask
                             & (1u << cascade)) != 0u) {
+                        if (batch.prototype->thinShadowRadius > 0.0f) {
+                            anyThin = true;
+                            continue;
+                        }
                         pushMeshBatch(batch, false, true);
+                    }
+                }
+                // A geometria fina (os fios) no pipeline dela, com o mesmo
+                // layout, descritores e indice de cascata.
+                if (anyThin) {
+                    vkCmdBindPipeline(frame.commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS,
+                        sceneMeshThinShadowPipeline);
+                    for (const MeshBatch& batch : meshBatches) {
+                        if (batch.prototype->castsShadow && batch.prototype->thinShadowRadius > 0.0f
+                            && (batch.prototype->shadowCascadeMask & (1u << cascade)) != 0u) {
+                            pushMeshBatch(batch, false, true);
+                        }
                     }
                 }
             }
@@ -4207,6 +4562,7 @@ public:
         if (sceneSkyPipeline != VK_NULL_HANDLE) vkDestroyPipeline(device, sceneSkyPipeline, nullptr);
         if (sceneMeshPipeline != VK_NULL_HANDLE) vkDestroyPipeline(device, sceneMeshPipeline, nullptr);
         if (sceneMeshShadowPipeline != VK_NULL_HANDLE) vkDestroyPipeline(device, sceneMeshShadowPipeline, nullptr);
+        if (sceneMeshThinShadowPipeline != VK_NULL_HANDLE) vkDestroyPipeline(device, sceneMeshThinShadowPipeline, nullptr);
         if (sceneMeshDepthPrepassPipeline != VK_NULL_HANDLE) vkDestroyPipeline(device, sceneMeshDepthPrepassPipeline, nullptr);
         if (sceneTonemapPipeline != VK_NULL_HANDLE) vkDestroyPipeline(device, sceneTonemapPipeline, nullptr);
         if (sceneAutoExposurePipeline != VK_NULL_HANDLE) vkDestroyPipeline(device, sceneAutoExposurePipeline, nullptr);
@@ -4226,6 +4582,22 @@ public:
         if (sceneSsrCompositePipelineLayout != VK_NULL_HANDLE) vkDestroyPipelineLayout(device, sceneSsrCompositePipelineLayout, nullptr);
         if (sceneOceanPipelineLayout != VK_NULL_HANDLE) vkDestroyPipelineLayout(device, sceneOceanPipelineLayout, nullptr);
         if (materialDescriptorPool != VK_NULL_HANDLE) vkDestroyDescriptorPool(device, materialDescriptorPool, nullptr);
+        // (Os materiais do personagem: as imagens e os buffers; os sets vao com o pool.)
+        for (CharacterMaterialResource& resource : characterMaterials)
+            if (resource.alive) releaseCharacterMaterial(resource);
+        characterMaterials.clear();
+        if (sceneCharacterPipeline != VK_NULL_HANDLE) vkDestroyPipeline(device, sceneCharacterPipeline, nullptr);
+        if (sceneCharacterPipelineLayout != VK_NULL_HANDLE) vkDestroyPipelineLayout(device, sceneCharacterPipelineLayout, nullptr);
+        if (characterDescriptorPool != VK_NULL_HANDLE) vkDestroyDescriptorPool(device, characterDescriptorPool, nullptr);
+        if (characterDescriptorSetLayout != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device, characterDescriptorSetLayout, nullptr);
+        if (sceneCharacterVertexModule != VK_NULL_HANDLE) vkDestroyShaderModule(device, sceneCharacterVertexModule, nullptr);
+        if (sceneCharacterFragmentModule != VK_NULL_HANDLE) vkDestroyShaderModule(device, sceneCharacterFragmentModule, nullptr);
+        sceneCharacterPipeline = VK_NULL_HANDLE;
+        sceneCharacterPipelineLayout = VK_NULL_HANDLE;
+        characterDescriptorPool = VK_NULL_HANDLE;
+        characterDescriptorSetLayout = VK_NULL_HANDLE;
+        sceneCharacterVertexModule = VK_NULL_HANDLE;
+        sceneCharacterFragmentModule = VK_NULL_HANDLE;
         if (scenePlanarReflectionDescriptorPool != VK_NULL_HANDLE) vkDestroyDescriptorPool(device, scenePlanarReflectionDescriptorPool, nullptr);
         if (materialDescriptorSetLayout != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(device, materialDescriptorSetLayout, nullptr);
         if (materialSampler != VK_NULL_HANDLE) vkDestroySampler(device, materialSampler, nullptr);
@@ -4254,6 +4626,7 @@ public:
         if (sceneMeshVertexModule != VK_NULL_HANDLE) vkDestroyShaderModule(device, sceneMeshVertexModule, nullptr);
         if (sceneMeshFragmentModule != VK_NULL_HANDLE) vkDestroyShaderModule(device, sceneMeshFragmentModule, nullptr);
         if (sceneMeshShadowVertexModule != VK_NULL_HANDLE) vkDestroyShaderModule(device, sceneMeshShadowVertexModule, nullptr);
+        if (sceneMeshThinShadowFragmentModule != VK_NULL_HANDLE) vkDestroyShaderModule(device, sceneMeshThinShadowFragmentModule, nullptr);
         if (sceneMeshDepthVertexModule != VK_NULL_HANDLE) vkDestroyShaderModule(device, sceneMeshDepthVertexModule, nullptr);
         if (sceneTonemapVertexModule != VK_NULL_HANDLE) vkDestroyShaderModule(device, sceneTonemapVertexModule, nullptr);
         if (sceneTonemapFragmentModule != VK_NULL_HANDLE) vkDestroyShaderModule(device, sceneTonemapFragmentModule, nullptr);
@@ -4292,6 +4665,7 @@ public:
         sceneSkyPipeline = VK_NULL_HANDLE;
         sceneMeshPipeline = VK_NULL_HANDLE;
         sceneMeshShadowPipeline = VK_NULL_HANDLE;
+        sceneMeshThinShadowPipeline = VK_NULL_HANDLE;
         sceneMeshDepthPrepassPipeline = VK_NULL_HANDLE;
         sceneTonemapPipeline = VK_NULL_HANDLE;
         sceneAutoExposurePipeline = VK_NULL_HANDLE;
@@ -4358,6 +4732,7 @@ public:
         sceneMeshVertexModule = VK_NULL_HANDLE;
         sceneMeshFragmentModule = VK_NULL_HANDLE;
         sceneMeshShadowVertexModule = VK_NULL_HANDLE;
+        sceneMeshThinShadowFragmentModule = VK_NULL_HANDLE;
         sceneMeshDepthVertexModule = VK_NULL_HANDLE;
         sceneTonemapVertexModule = VK_NULL_HANDLE;
         sceneTonemapFragmentModule = VK_NULL_HANDLE;
@@ -4680,7 +5055,10 @@ public:
         createModule("scene3d_sky.frag.spv", sceneSkyFragmentModule);
         createModule("scene3d_mesh.vert.spv", sceneMeshVertexModule);
         createModule("scene3d_mesh.frag.spv", sceneMeshFragmentModule);
+        createModule("scene3d_character.vert.spv", sceneCharacterVertexModule);
+        createModule("scene3d_character.frag.spv", sceneCharacterFragmentModule);
         createModule("scene3d_mesh_shadow.vert.spv", sceneMeshShadowVertexModule);
+        createModule("scene3d_mesh_shadow_thin.frag.spv", sceneMeshThinShadowFragmentModule);
         createModule("scene3d_mesh_depth.vert.spv", sceneMeshDepthVertexModule);
         createModule("tonemap.vert.spv", sceneTonemapVertexModule);
         createModule("tonemap.frag.spv", sceneTonemapFragmentModule);
@@ -5946,6 +6324,58 @@ public:
         check(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &meshPipelineInfo,
             nullptr, &sceneMeshPipeline), "vkCreateGraphicsPipelines(scene mesh)");
 
+        // O personagem com o uniforme (CharacterMaterial.hpp): o set 4 (os dois
+        // arrays, o buffer por vertice e os parametros) depois dos quatro da
+        // malha - os sets 0 a 3 ligados pelo passe continuam validos ao trocar
+        // para este pipeline (layouts compativeis ate o set 3, sem push). Sem 5
+        // sets no dispositivo, nada: o personagem fica no atlas antigo.
+        if (deviceProperties.limits.maxBoundDescriptorSets >= 5) {
+            const std::array<VkDescriptorSetLayoutBinding, 4> characterBindings { {
+                { 0, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr },
+                { 1, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1, VK_SHADER_STAGE_FRAGMENT_BIT, nullptr },
+                { 2, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT, nullptr },
+                { 3, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, nullptr },
+            } };
+            VkDescriptorSetLayoutCreateInfo characterLayoutInfo { VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO };
+            characterLayoutInfo.bindingCount = static_cast<std::uint32_t>(characterBindings.size());
+            characterLayoutInfo.pBindings = characterBindings.data();
+            check(vkCreateDescriptorSetLayout(device, &characterLayoutInfo, nullptr, &characterDescriptorSetLayout),
+                "vkCreateDescriptorSetLayout(character)");
+            constexpr std::uint32_t MaxCharacterMaterials = 16;
+            const std::array<VkDescriptorPoolSize, 3> characterPoolSizes { {
+                { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 * MaxCharacterMaterials },
+                { VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, MaxCharacterMaterials },
+                { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, MaxCharacterMaterials },
+            } };
+            VkDescriptorPoolCreateInfo characterPoolInfo { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
+            characterPoolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+            characterPoolInfo.maxSets = MaxCharacterMaterials;
+            characterPoolInfo.poolSizeCount = static_cast<std::uint32_t>(characterPoolSizes.size());
+            characterPoolInfo.pPoolSizes = characterPoolSizes.data();
+            check(vkCreateDescriptorPool(device, &characterPoolInfo, nullptr, &characterDescriptorPool),
+                "vkCreateDescriptorPool(character)");
+            const std::array<VkDescriptorSetLayout, 5> characterSetLayouts {
+                sceneDescriptorSetLayout, materialDescriptorSetLayout, materialDescriptorSetLayout,
+                materialDescriptorSetLayout, characterDescriptorSetLayout
+            };
+            VkPipelineLayoutCreateInfo characterPipelineLayoutInfo { VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
+            characterPipelineLayoutInfo.setLayoutCount = static_cast<std::uint32_t>(characterSetLayouts.size());
+            characterPipelineLayoutInfo.pSetLayouts = characterSetLayouts.data();
+            check(vkCreatePipelineLayout(device, &characterPipelineLayoutInfo, nullptr, &sceneCharacterPipelineLayout),
+                "vkCreatePipelineLayout(scene character)");
+            VkPipelineShaderStageCreateInfo characterVertexStage = meshVertexStage;
+            characterVertexStage.module = sceneCharacterVertexModule;
+            VkPipelineShaderStageCreateInfo characterFragmentStage = meshFragmentStage;
+            characterFragmentStage.module = sceneCharacterFragmentModule;
+            const std::array<VkPipelineShaderStageCreateInfo, 2> characterStages { characterVertexStage, characterFragmentStage };
+            VkGraphicsPipelineCreateInfo characterPipelineInfo = meshPipelineInfo;
+            characterPipelineInfo.stageCount = static_cast<std::uint32_t>(characterStages.size());
+            characterPipelineInfo.pStages = characterStages.data();
+            characterPipelineInfo.layout = sceneCharacterPipelineLayout;
+            check(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &characterPipelineInfo, nullptr, &sceneCharacterPipeline),
+                "vkCreateGraphicsPipelines(scene character)");
+        }
+
         // Depth-only shadow variant: no color attachment, so the pipeline
         // can legally omit the fragment stage entirely. It never samples a
         // material texture, so it keeps the plain (set=0 only) scene layout.
@@ -5961,6 +6391,23 @@ public:
         meshShadowPipelineInfo.pStages = &meshShadowVertexStage;
         check(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &meshShadowPipelineInfo,
             nullptr, &sceneMeshShadowPipeline), "vkCreateGraphicsPipelines(scene mesh shadow)");
+        // A variante da geometria fina: o mesmo vertice, com o fragment shader
+        // que descarta a parte do fio engrossado que nao e fio de verdade (so
+        // ela tem fragmento: o resto da sombra continua so de vertice).
+        VkPipelineShaderStageCreateInfo meshThinShadowFragmentStage {
+            VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO
+        };
+        meshThinShadowFragmentStage.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+        meshThinShadowFragmentStage.module = sceneMeshThinShadowFragmentModule;
+        meshThinShadowFragmentStage.pName = "main";
+        const std::array<VkPipelineShaderStageCreateInfo, 2> meshThinShadowStages {
+            meshShadowVertexStage, meshThinShadowFragmentStage
+        };
+        VkGraphicsPipelineCreateInfo meshThinShadowPipelineInfo = meshShadowPipelineInfo;
+        meshThinShadowPipelineInfo.stageCount = static_cast<std::uint32_t>(meshThinShadowStages.size());
+        meshThinShadowPipelineInfo.pStages = meshThinShadowStages.data();
+        check(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &meshThinShadowPipelineInfo,
+            nullptr, &sceneMeshThinShadowPipeline), "vkCreateGraphicsPipelines(scene mesh thin shadow)");
 
         // Pre-pass de profundidade da cena principal (nao da sombra): mesma
         // ideia do shadow acima (so vertice, sem estagio de fragmento,
@@ -6940,6 +7387,10 @@ public:
     VkShaderModule sceneMeshVertexModule = VK_NULL_HANDLE;
     VkShaderModule sceneMeshFragmentModule = VK_NULL_HANDLE;
     VkShaderModule sceneMeshShadowVertexModule = VK_NULL_HANDLE;
+    // A sombra da geometria fina (os fios): o mesmo vertice e um fragment
+    // shader que deixa so a fracao do fio de verdade bloquear a luz.
+    VkShaderModule sceneMeshThinShadowFragmentModule = VK_NULL_HANDLE;
+    VkPipeline sceneMeshThinShadowPipeline = VK_NULL_HANDLE;
     VkShaderModule sceneMeshDepthVertexModule = VK_NULL_HANDLE;
     // Per-material albedo texture binding (set=1) for sceneMeshPipeline -
     // sceneMeshShadowPipeline never needs it, it stays on scenePipelineLayout.
@@ -6947,6 +7398,16 @@ public:
     VkSampler materialSampler = VK_NULL_HANDLE;
     VkDescriptorSetLayout materialDescriptorSetLayout = VK_NULL_HANDLE;
     VkDescriptorPool materialDescriptorPool = VK_NULL_HANDLE;
+    // O personagem com o uniforme (CharacterMaterial.hpp): o set 4, o pool
+    // (sets liberaveis), o layout {0..3 da malha, 4} e o pipeline dos passes de
+    // cor (os shaders da malha com MATTER_CHARACTER).
+    VkDescriptorSetLayout characterDescriptorSetLayout = VK_NULL_HANDLE;
+    VkDescriptorPool characterDescriptorPool = VK_NULL_HANDLE;
+    VkPipelineLayout sceneCharacterPipelineLayout = VK_NULL_HANDLE;
+    VkPipeline sceneCharacterPipeline = VK_NULL_HANDLE;
+    VkShaderModule sceneCharacterVertexModule = VK_NULL_HANDLE;
+    VkShaderModule sceneCharacterFragmentModule = VK_NULL_HANDLE;
+    std::vector<CharacterMaterialResource> characterMaterials;
     VkDescriptorPool scenePlanarReflectionDescriptorPool = VK_NULL_HANDLE;
     std::array<VkDescriptorSet, FramesInFlight>
         scenePlanarReflectionDescriptorSets {};
@@ -7278,6 +7739,17 @@ TextureHandle VulkanDevice::createRenderTarget(const TextureDesc& desc) { return
 TextureHandle VulkanDevice::createTexture2D(Extent2D extent, std::span<const std::byte> rgbaPixels) {
     return m_impl->createTexture2D(extent, rgbaPixels);
 }
+CharacterMaterialHandle VulkanDevice::createCharacterMaterial(const CharacterMaterialDesc& desc) {
+    return m_impl->createCharacterMaterial(desc);
+}
+void VulkanDevice::updateCharacterKitLayer(CharacterMaterialHandle handle, std::uint32_t layer, std::span<const std::byte> levels,
+    std::span<const float> regionAverages) {
+    m_impl->updateCharacterKitLayer(handle, layer, levels, regionAverages);
+}
+void VulkanDevice::updateCharacterVertices(CharacterMaterialHandle handle, std::span<const CharacterKitVertexGpu> vertices) {
+    m_impl->updateCharacterVertices(handle, vertices);
+}
+void VulkanDevice::destroyCharacterMaterial(CharacterMaterialHandle handle) { m_impl->destroyCharacterMaterial(handle); }
 void VulkanDevice::destroyBuffer(BufferHandle handle) { m_impl->destroyBuffer(handle); }
 void VulkanDevice::destroyShader(ShaderHandle handle) { m_impl->destroyShader(handle); }
 void VulkanDevice::destroyPipeline(PipelineHandle handle) { m_impl->destroyPipeline(handle); }

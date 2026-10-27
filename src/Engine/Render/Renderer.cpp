@@ -314,6 +314,23 @@ RHI::TextureHandle Renderer::createTexture2D(RHI::Extent2D extent, std::span<con
     return m_vulkan->createTexture2D(extent, rgbaPixels);
 }
 
+RHI::CharacterMaterialHandle Renderer::createCharacterMaterial(const RHI::CharacterMaterialDesc& desc) {
+    return m_vulkan->createCharacterMaterial(desc);
+}
+
+void Renderer::updateCharacterKitLayer(RHI::CharacterMaterialHandle handle, std::uint32_t layer, std::span<const std::byte> levels,
+    std::span<const float> regionAverages) {
+    m_vulkan->updateCharacterKitLayer(handle, layer, levels, regionAverages);
+}
+
+void Renderer::updateCharacterVertices(RHI::CharacterMaterialHandle handle, std::span<const RHI::CharacterKitVertexGpu> vertices) {
+    m_vulkan->updateCharacterVertices(handle, vertices);
+}
+
+void Renderer::destroyCharacterMaterial(RHI::CharacterMaterialHandle handle) {
+    m_vulkan->destroyCharacterMaterial(handle);
+}
+
 void Renderer::destroyTexture(RHI::TextureHandle handle) {
     m_vulkan->destroyTexture(handle);
 }

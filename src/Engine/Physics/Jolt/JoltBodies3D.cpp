@@ -25,7 +25,9 @@ PhysicsBodyHandle3D PhysicsScene3D::createBody(const PhysicsBodyDefinition3D& de
         : def.motionType == PhysicsMotionType3D::Kinematic ? JPH::EMotionType::Kinematic : JPH::EMotionType::Dynamic;
     auto shape = createJoltBodyShape(shapes, motion == JPH::EMotionType::Static);
     JPH::BodyCreationSettings settings(shape, toJolt(def.position), toJolt(def.orientation), motion,
-        motion == JPH::EMotionType::Static ? JoltObjectLayers::NonMoving : JoltObjectLayers::Moving);
+        motion != JPH::EMotionType::Static ? JoltObjectLayers::Moving
+            : def.barrier == PhysicsBarrier3D::Players ? JoltObjectLayers::PlayerBarrier
+            : def.barrier == PhysicsBarrier3D::Capsule ? JoltObjectLayers::CapsuleBarrier : JoltObjectLayers::NonMoving);
     settings.mAllowDynamicOrKinematic = motion != JPH::EMotionType::Static;
     settings.mLinearVelocity = toJolt(def.linearVelocity);
     settings.mAngularVelocity = toJolt(def.angularVelocity);

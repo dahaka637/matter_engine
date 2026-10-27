@@ -87,6 +87,7 @@ int runMeasure(const ModelContext& context, const CommandLine& line) {
     std::printf("  %-34s %s x %s x %s\n", "caixa (frente x lado x altura)", formatLength(bounds.size().x).c_str(),
         formatLength(bounds.size().y).c_str(), formatLength(bounds.size().z).c_str());
     std::printf("  %-34s %s\n", "area da superficie", (formatNumber(model.mesh.surfaceArea(), 3) + " m2").c_str());
+    std::printf("  %-34s %s\n", "volume (fechada)", (formatNumber(model.mesh.signedVolume() * 1000.0f, 2) + " L").c_str());
     std::cout << "\nCortes perpendiculares aos ossos (t: 0 na junta, 1 na filha):\n";
     const char* joints[] = { "Pelvis", "Abdomen", "Chest", "UpperChest", "Neck", "Head", "LeftUpperArm", "LeftForearm",
         "LeftHand", "LeftThigh", "LeftShin", "LeftFoot", "RightUpperArm", "RightForearm", "RightHand", "RightThigh",

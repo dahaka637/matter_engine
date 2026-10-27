@@ -1,6 +1,7 @@
 // O treino da locomocao (a etapa B do plano do RL): a nota, a postura
 // funcional, a tarefa e o lote - curto, com a acao zero (sem rede).
 #include "Engine/Athlete/Training/LocomotionTraining3D.hpp"
+#include "Engine/Athlete/AthleteAssets3D.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -122,8 +123,9 @@ void batchTests() {
             && mirror.action.source.size() == actions,
         "o espelho cobre a entrada, o critico e a acao");
     const std::vector<float> fractions = batch.actionCapFractions();
-    expect(fractions.size() == actions && fractions[0] > 0.19f && fractions[0] < 0.21f,
-        "o teto do pouso e 0,06 de 0,30 m");
+    expect(fractions.size() == actions
+            && std::abs(fractions[0] - 0.06f / LocomotionContract3D::TouchdownMeters) < 1e-4f,
+        "o teto do pouso e 0,06 da escala do contrato");
     const std::vector<float> zero(worlds * actions, 0.0f);
     std::size_t episodes = 0;
     bool finite = true;
@@ -410,15 +412,168 @@ void diagnosisTests() {
     }
 }
 
+// Um empurrao por episodio (23/10, pedido do usuario): o episodio do exercicio
+// de empurrao acaba numa queda ou settleSeconds depois do empurrao unico.
+void singlePushTests() {
+    LocomotionTrainingSettings3D settings;
+    settings.taskPath = Assets + "/rl/tasks/locomocao_e1.json";
+    settings.assetsDirectory = Assets;
+    settings.environments = 8;
+    settings.threads = 2;
+    settings.seed = 23;
+    settings.drill = "parado_empurrao";
+    LocomotionTraining3D batch(settings);
+    batch.setAuthority(1.0f, 1.0f, 1.0f, 1.0f);
+    const LocomotionTask3D& task = batch.task();
+    const auto drill = std::find_if(task.drills.begin(), task.drills.end(),
+        [](const LocomotionDrill3D& d) { return d.id == "parado_empurrao"; });
+    expect(drill != task.drills.end() && drill->singlePush, "o empurrao leve e de um empurrao so");
+    // (O empurrao comeca na primeira decisao depois do instante sorteado, e o fim e checado por decisao.)
+    const float step = batch.policyStepSeconds();
+    const float earliest = task.pushes.startSeconds + task.pushes.minimumSeconds + drill->settleSeconds - 1.0e-3f;
+    const float latest = task.pushes.startSeconds + task.pushes.windowSeconds + task.pushes.maximumSeconds
+        + drill->settleSeconds + 2.0f * step;
+    const std::vector<float> zero(batch.environmentCount() * batch.actionSize(), 0.0f);
+    std::size_t stood = 0;
+    for (int k = 0; k < static_cast<int>(std::ceil((latest + 0.5f) / step)); ++k) {
+        batch.step(zero);
+        for (const LocomotionEpisode3D& e : batch.finishedEpisodes()) {
+            expect(e.reason == LocomotionEnd3D::TimeLimit || e.reason == LocomotionEnd3D::Fall,
+                std::string("o empurrao unico acaba por tempo ou queda: ") + locomotionEndName3D(e.reason));
+            if (e.reason != LocomotionEnd3D::TimeLimit) continue;
+            ++stood;
+            expect(e.seconds >= earliest && e.seconds <= latest,
+                "aguentou: o episodio acaba settleSeconds depois do empurrao (" + std::to_string(e.seconds) + " s)");
+        }
+    }
+    expect(stood > 0, "algum mundo aguentou o empurrao no teste");
+}
+
+// O corpo variavel (26/10): o bloco "body" da tarefa, a grade, os canais do
+// jogador e os corpos fixos da avaliacao.
+void bodyTests() {
+    {
+        LocomotionBodyRange3D range;
+        range.enabled = true;
+        range.minimumHeight = MinimumBodyHeightMeters;
+        range.maximumHeight = MaximumBodyHeightMeters;
+        range.minimumMass = MinimumBodyMassKg;
+        range.maximumMass = MaximumBodyMassKg;
+        const std::vector<PlayerBody3D> grid = locomotionBodyGrid3D(range);
+        const auto has = [&](PlayerBody3D body) { return std::find(grid.begin(), grid.end(), body) != grid.end(); };
+        expect(grid.size() == 63, "a grade de 1,70 a 2,00 m (0,05) e 60 a 100 kg (5): 7 x 9 corpos");
+        expect(has({}) && has({ 1.70f, 60.0f }) && has({ 1.70f, 100.0f }) && has({ 2.00f, 60.0f }) && has({ 2.00f, 100.0f }),
+            "o corpo de hoje exato (1,80 / 80) e os 4 cantos na grade");
+        expect(locomotionBodyGrid3D({}).size() == 1 && isBaseBody3D(locomotionBodyGrid3D({}).front()),
+            "sem o bloco, so o corpo de hoje");
+    }
+    // A tarefa do E1 com o bloco (a faixa pequena: 4 corpos, o teste curto).
+    std::ifstream in(Assets + "/rl/tasks/locomocao_e1.json", std::ios::binary);
+    std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    const std::filesystem::path base = std::filesystem::temp_directory_path() / "matter_corpo_base.json";
+    const std::filesystem::path varied = std::filesystem::temp_directory_path() / "matter_corpo_variado.json";
+    const auto write = [&](const std::filesystem::path& path, const std::string& block) {
+        std::string copy = text;
+        copy.insert(copy.find('{') + 1, block);
+        std::ofstream(path, std::ios::binary) << copy;
+    };
+    write(base, "\"body\": {\"heightMeters\": [1.80, 1.80], \"massKg\": 80},");
+    write(varied, "\"body\": {\"heightMeters\": [1.80, 1.90], \"massKg\": [80, 90], \"heightStep\": 0.10, \"massStep\": 10},");
+    expect(!loadLocomotionTask3D(base).body.enabled, "a faixa so no corpo de hoje e o mesmo que sem o bloco");
+    LocomotionTrainingSettings3D settings;
+    settings.taskPath = Assets + "/rl/tasks/locomocao_e1.json";
+    settings.assetsDirectory = Assets;
+    settings.environments = 4;
+    settings.threads = 2;
+    settings.seed = 5;
+    settings.evaluation = true;
+    settings.evaluationSeconds = 1.0f;
+    settings.drill = "parado";
+    LocomotionTraining3D plain(settings);
+    settings.taskPath = varied;
+    LocomotionTraining3D batch(settings);
+    const RLVectorLayout3D& layout = batch.contract().observationLayout();
+    expect(batch.observationSize() == plain.observationSize() + 2 && layout.channels.back().name == "jogador.massa"
+            && layout.channels[layout.size() - 2].name == "jogador.altura",
+        "com o bloco, a entrada ganha jogador.altura e jogador.massa no fim");
+    expect(batch.contract().hash() != plain.contract().hash()
+            && plain.contract().hash() == LocomotionContract3D(plain.athlete().profile()).hash(),
+        "com o bloco, outro contrato; sem ele, a impressao de sempre");
+    expect(batch.bodyGrid().size() == 4, "a faixa pequena: 4 corpos");
+    const std::vector<float> zero(batch.environmentCount() * batch.actionSize(), 0.0f);
+    std::vector<PlayerBody3D> seen(batch.environmentCount());
+    bool finite = true;
+    for (int step = 0; step < 31; ++step) {
+        batch.step(zero);
+        for (float v : batch.observations()) finite &= std::isfinite(v);
+        for (const LocomotionEpisode3D& e : batch.finishedEpisodes()) seen[e.environment] = { e.bodyHeight, e.bodyMass };
+    }
+    expect(finite, "a entrada sempre finita nos outros corpos");
+    expect(isBaseBody3D(seen[0]) && seen[1] == PlayerBody3D { 1.80f, 90.0f } && seen[2] == PlayerBody3D { 1.90f, 80.0f }
+            && seen[3] == PlayerBody3D { 1.90f, 90.0f },
+        "a avaliacao com a grade: o padrao e os cantos, fixos pelo indice do mundo");
+    const std::span<const float> obs = batch.observations();
+    const std::size_t width = batch.observationSize();
+    expect(obs[width - 2] == 0.0f && obs[width - 1] == 0.0f
+            && std::abs(obs[3 * width + width - 2] - 1.0f) < 1e-5f && std::abs(obs[3 * width + width - 1] - 1.0f) < 1e-5f,
+        "jogador.altura e jogador.massa: 0 no corpo de hoje, 1 no de 1,90 m e 90 kg");
+    std::filesystem::remove(base);
+    std::filesystem::remove(varied);
+}
+
 } // namespace
+
+// As contraprovas da nota do E1 (plano RL sobre o classico F, antes do PPO):
+// pedindo 3 m/s, andar vence ficar parado, patinar, saltitar, andar devagar e
+// mergulhar; parado sob pedido rende nada de positivo.
+void counterproofTests() {
+    const LocomotionTask3D task = loadLocomotionTask3D(Assets + "/rl/tasks/locomocao_c1.json");
+    expect(task.reward.progress && task.reward.forbiddenContact && task.historicalAssistRuler
+            && task.reward.smooth == 0.0f && task.reward.residual == 0.0f,
+        "a tarefa do E1: progresso, contato proibido, regua historica, sem tranco nem residuo");
+    const float dt = 1.0f / 30.0f;
+    const auto perSecond = [&](float error, float style, float touchdownsPerSecond, float score, float slip, float power,
+                               float posture) {
+        LocomotionStepMeasure3D m;
+        m.velocityError = error;
+        m.targetSpeed = 3.0f;
+        m.facingError = 0.2f;
+        m.styleValid = true;
+        m.styleError = style;
+        m.contactScore = touchdownsPerSecond * score * dt;
+        m.slip = slip;
+        m.power = power;
+        m.posture = posture;
+        m.assist = 0.4f;
+        return locomotionReward3D(locomotionRewardTerms3D(m, task.reward, dt)) * 30.0f;
+    };
+    const float walk = perSecond(0.4f, 0.10f, 2.5f, 0.7f, 0.10f, 30.0f, 0.02f);
+    const float still = perSecond(3.0f, 0.35f, 0.0f, 0.0f, 0.0f, 8.0f, 0.0f);
+    const float skate = perSecond(0.5f, 0.30f, 0.0f, 0.0f, 2.5f, 15.0f, 0.02f);
+    const float hop = perSecond(1.5f, 0.35f, 4.0f, 0.2f, 0.3f, 50.0f, 0.05f);
+    const float slow = perSecond(2.0f, 0.15f, 2.0f, 0.7f, 0.10f, 15.0f, 0.02f);
+    std::printf("contraprovas (nota/s pedindo 3 m/s): andar %.3f, parado %.3f, patinar %.3f, saltitar %.3f, devagar %.3f\n",
+        static_cast<double>(walk), static_cast<double>(still), static_cast<double>(skate), static_cast<double>(hop),
+        static_cast<double>(slow));
+    expect(still <= 0.0f, "parado sob pedido de movimento nao rende nada de positivo");
+    expect(walk > skate && walk > hop && walk > slow && slow > still, "andar vence patinar, saltitar e andar devagar");
+    LocomotionStepMeasure3D fall;
+    fall.fell = true;
+    const float dive = walk * 1.0f - task.reward.fall;
+    expect(walk * 10.0f > dive, "andar 10 s vence mergulhar depois de 1 s");
+    (void)fall;
+}
 
 int main() {
     try {
         rewardTests();
         taskTests();
+        counterproofTests();
         batchTests();
         turnMoveTests();
         diagnosisTests();
+        singlePushTests();
+        bodyTests();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "treino da locomocao: FALHOU: %s (%d checagens antes)\n", error.what(), checks);
         return 1;

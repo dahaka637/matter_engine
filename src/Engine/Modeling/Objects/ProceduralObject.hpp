@@ -5,8 +5,10 @@
 #include "Engine/Modeling/Objects/ObjectRecipe.hpp"
 #include "Engine/Modeling/Raster/Image.hpp"
 
+#include <array>
 #include <functional>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -44,6 +46,66 @@ struct ObjectPhysics {
     bool fixed = false;
 };
 
+// Uma rede de fios presa no objeto (a rede do gol), no espaco do objeto, em
+// duas malhas da mesma rede:
+//  - a da fisica (a rede de Engine/Physics/Net): os nos, quais estao presos
+//    na estrutura, o peso de cada um, os fios (o comprimento solto, a rigidez
+//    EA e o peso por metro), as celulas em triangulos (a bola toca a rede
+//    por elas) e o fio de verdade que cada no carrega (o arrasto do ar). Ela
+//    pode ser mais grossa que a de verdade: cada fio dela vale pelos fios
+//    paralelos que representa (a rigidez somada), e o peso e o fio de cada no
+//    sao os da malha de verdade em volta dele;
+//  - a desenhada (a malha de verdade): cada no dela e uma media fixa de ate
+//    quatro nos da fisica (os pesos do repouso, como a pele nos ossos).
+struct ObjectNetSegment {
+    std::uint32_t a = 0;
+    std::uint32_t b = 0;
+    float restLength = 0.0f;
+    float stiffness = 10000.0f;
+    float linearDensity = 0.007f;
+    // O cabo tensor (nao um fio da malha).
+    bool cord = false;
+};
+
+// Um no desenhado: os nos da fisica e os pesos (somam 1).
+struct ObjectNetWeight {
+    std::array<std::uint32_t, 4> knots {};
+    std::array<float, 4> weights {};
+};
+
+struct ObjectNet {
+    std::vector<Vec3> knots;
+    std::vector<std::uint8_t> pinned;
+    std::vector<float> masses;
+    std::vector<ObjectNetSegment> segments;
+    std::vector<std::array<std::uint32_t, 3>> faces;
+    // m
+    std::vector<float> twineLengths;
+    // A malha desenhada: os nos no repouso, os fios e os pesos de cada no.
+    std::vector<Vec3> drawnKnots;
+    std::vector<std::array<std::uint32_t, 2>> drawnSegments;
+    std::vector<ObjectNetWeight> drawnWeights;
+    // A barreira invisivel dos jogadores (a trave: os lados inteiros, o teto e
+    // uma parede reta na barra de tras; a boca aberta): os pontos da casca convexa de
+    // cada placa. O corpo do boneco e a capsula param nela; a bola e os
+    // objetos so na rede.
+    std::vector<std::vector<Vec3>> barrier;
+    // As placas so da capsula do personagem (a trave: o fundo inclinado - com
+    // o corpo batendo nele, o boneco caido embaixo nao levantava).
+    std::vector<std::vector<Vec3>> capsuleBarrier;
+    // A escala de massa dos nos da fisica no contato com os corpos (a da
+    // malha grossa e menor: os nos dela ja sao mais pesados).
+    float contactMassScale = 6.0f;
+    float twineDiameter = 0.006f;
+    Color color = rgb(240, 240, 236);
+};
+
+// Os nos desenhados a partir dos nos da fisica de agora (no espaco deles: os
+// pesos valem em qualquer um). Cada no desenhado fica num triangulo de
+// colisao, entao fica fora da bola e dos membros que a fisica afasta (nos
+// chutes da grade, o fio encosta na bola sem entrar).
+void drawnNetKnots(const ObjectNet& net, std::span<const Vec3> knots, std::vector<Vec3>& out);
+
 struct ProceduralObject {
     std::string id;
     std::string displayName;
@@ -55,6 +117,8 @@ struct ProceduralObject {
     Image pixelArt;
     ObjectPhysics physics;
     Vec3 size;
+    // A rede presa nele (so os objetos com rede: a trave).
+    std::optional<ObjectNet> net;
 };
 
 struct ObjectType {

@@ -38,6 +38,7 @@ int main(int argc, char** argv) {
     if (command == "avesso") return runInverted(*context, line);
     if (command == "pintura") return runPaint(*context, line);
     if (command == "exportar-jogo") return runExport(*context, line);
+    if (command == "exportar-blender") return runBlenderExport(*context, line);
     if (command == "uniforme") return runUniform(*context, line);
     if (command == "postura") return runPosture(*context, line);
     if (command == "pesos") return runWeights(*context, line);

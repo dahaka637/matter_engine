@@ -50,10 +50,10 @@ def main() -> int:
     if not args.treino and not args.classico:
         parser.error("--treino ou --classico")
 
-    module = native()
+    run_dir = paths.run_dir(args.treino) if args.treino else None
+    module = native(run_dir)
     out = Path(args.saida)
     out.mkdir(parents=True, exist_ok=True)
-    run_dir = paths.run_dir(args.treino) if args.treino else None
     if args.tarefa:
         task = Path(args.tarefa) if Path(args.tarefa).exists() else paths.task_path(args.tarefa)
     elif run_dir is not None:

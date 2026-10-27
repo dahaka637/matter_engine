@@ -76,6 +76,10 @@ struct PilotScript3D {
     float keysFraction = 0.7f;
     float syncFraction = 0.3f;
     float leashMeters = 40.0f;
+    // As direcoes permitidas do segurar (rad, em relacao a camera; vazio: as 8
+    // teclas e o analogico): as retas do basico (frente, tras, os lados, as
+    // diagonais sorteando o lado).
+    std::vector<float> stickDirections;
     // A estrela.
     std::uint32_t starDirections = 8;
     float starJitterDegrees = 8.0f;

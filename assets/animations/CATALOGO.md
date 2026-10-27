@@ -14,7 +14,7 @@ tarefas do RL e o personagem do jogo que citam o arquivo.
 
 | Clipe | Nome | s | Ciclo | Vel. | Dir. | Fonte | Usado em |
 |---|---|---:|---|---:|---:|---|---|
-| `alert_idle` | Parado em alerta | 10.00 | sim | — | 0° | autoral (`tools/animation/clips/alert_idle.py`) | personagem (football_player), corpo |
+| `alert_idle` | Parado em alerta | 10.00 | sim | — | 0° | autoral (`tools/animation/clips/alert_idle.py`) | personagem (football_player) |
 | `cc0_idle` | Parado natural | 2.50 | sim | — | — | `UAL1_Standard_RM.glb` | — |
 | `natural_idle` | Parado natural | 4.00 | sim | — | 0° | autoral (`tools/animation/clips/natural_idle.py`) | — |
 
@@ -22,24 +22,24 @@ tarefas do RL e o personagem do jogo que citam o arquivo.
 
 | Clipe | Nome | s | Ciclo | Vel. | Dir. | Fonte | Usado em |
 |---|---|---:|---|---:|---:|---|---|
-| `turn_left` | Giro parado para a esquerda (Mixamo) | 1.00 | não | — | — | autoral (`assets/animations/source/mixamo/giros_parado/LeftTurn.fbx`) | personagem (football_player), corpo |
-| `turn_right` | Giro parado para a direita (Mixamo) | 1.00 | não | — | — | autoral (`assets/animations/source/mixamo/giros_parado/RightTurn.fbx`) | personagem (football_player), corpo |
+| `turn_left` | Giro parado para a esquerda (Mixamo) | 1.00 | não | — | — | autoral (`assets/animations/source/mixamo/giros_parado/LeftTurn.fbx`) | personagem (football_player) |
+| `turn_right` | Giro parado para a direita (Mixamo) | 1.00 | não | — | — | autoral (`assets/animations/source/mixamo/giros_parado/RightTurn.fbx`) | personagem (football_player) |
 
 ## Andar
 
 | Clipe | Nome | s | Ciclo | Vel. | Dir. | Fonte | Usado em |
 |---|---|---:|---|---:|---:|---|---|
-| `ual_walk` | Andar (UAL1 CC0) | 1.33 | sim | 1.1 | 0° | `UAL1_Standard_RM.glb` | corpo, h3b_caminhar_alvo |
-| `walk_backward` | Andar de costas (Mixamo) | 1.20 | sim | 1.2 | -179° | `Walking Backwards.fbx` | corpo |
-| `walk_strafe_left` | Andar de lado para a esquerda (Mixamo, espelhado) | 1.47 | sim | 0.6 | 89° | `Walk Strafe Right.fbx` | corpo |
-| `walk_strafe_right` | Andar de lado para a direita (Mixamo) | 1.47 | sim | 0.6 | -89° | `Walk Strafe Right.fbx` | corpo |
+| `ual_walk` | Andar (UAL1 CC0) | 1.33 | sim | 1.1 | 0° | `UAL1_Standard_RM.glb` | — |
+| `walk_backward` | Andar de costas (Mixamo) | 1.20 | sim | 1.2 | -179° | `Walking Backwards.fbx` | — |
+| `walk_strafe_left` | Andar de lado para a esquerda (Mixamo, espelhado) | 1.47 | sim | 0.6 | 89° | `Walk Strafe Right.fbx` | — |
+| `walk_strafe_right` | Andar de lado para a direita (Mixamo) | 1.47 | sim | 0.6 | -89° | `Walk Strafe Right.fbx` | — |
 
 ## Arrancar e frear
 
 | Clipe | Nome | s | Ciclo | Vel. | Dir. | Fonte | Usado em |
 |---|---|---:|---|---:|---:|---|---|
 | `crouched_to_sprint` | Arrancada agachada (Crouched To Sprinting) | 0.50 | não | — | -2° | autoral (`crouched_to_sprint`) | personagem (football_player) |
-| `idle_to_sprint` | Idle para sprint | 0.80 | não | 3.9 | 1° | `Idle To Sprint.fbx` | personagem (football_player), h3_andar |
+| `idle_to_sprint` | Idle para sprint | 0.80 | não | 3.9 | 1° | `Idle To Sprint.fbx` | personagem (football_player) |
 
 ## Curvas e cortes
 
@@ -59,31 +59,32 @@ tarefas do RL e o personagem do jogo que citam o arquivo.
 | Clipe | Nome | s | Ciclo | Vel. | Dir. | Fonte | Usado em |
 |---|---|---:|---|---:|---:|---|---|
 | `jog` | Corrida leve | 0.73 | sim | 3.0 | 0° | autoral (`tools/animation/clips/jog.py`) | personagem (football_player) |
-| `jog_strafe_left` | Corrida de lado (esquerda) | 0.70 | sim | 2.9 | 90° | autoral (`tools/animation/clips/strafe.py`) | personagem (football_player), corpo, h4_direcoes, h5_pontos, h6_peito, h7_tiro |
-| `jog_strafe_right` | Corrida de lado (direita) | 0.70 | sim | 2.9 | -90° | autoral (`tools/animation/clips/strafe.py`) | personagem (football_player), corpo, h4_direcoes, h5_pontos, h6_peito, h7_tiro |
-| `mixamo_running` | Corrida (analise Mixamo) | 0.83 | sim | 2.5 | 1° | `Running.fbx` | corpo, h4_direcoes, h5_pontos, h6_peito, h7_tiro |
-| `trot_backward` | Trote de costas | 0.80 | sim | 2.4 | 180° | autoral (`tools/animation/clips/trot.py`) | corpo, h4_direcoes, h5_pontos, h6_peito, h7_tiro |
-| `trot_backward_left` | Trote de costas diagonal (esquerda) | 0.83 | sim | 2.6 | 135° | autoral (`tools/animation/clips/trot.py`) | corpo, h4_direcoes, h5_pontos, h6_peito, h7_tiro |
-| `trot_backward_right` | Trote de costas diagonal (direita) | 0.83 | sim | 2.6 | -135° | autoral (`tools/animation/clips/trot.py`) | corpo, h4_direcoes, h5_pontos, h6_peito, h7_tiro |
+| `jog_strafe_left` | Corrida de lado (esquerda) | 0.70 | sim | 2.9 | 90° | autoral (`tools/animation/clips/strafe.py`) | personagem (football_player) |
+| `jog_strafe_right` | Corrida de lado (direita) | 0.70 | sim | 2.9 | -90° | autoral (`tools/animation/clips/strafe.py`) | personagem (football_player) |
+| `mixamo_running` | Corrida (analise Mixamo) | 0.83 | sim | 2.5 | 1° | `Running.fbx` | — |
+| `trot_backward` | Trote de costas | 0.80 | sim | 2.4 | 180° | autoral (`tools/animation/clips/trot.py`) | — |
+| `trot_backward_left` | Trote de costas diagonal (esquerda) | 0.83 | sim | 2.6 | 135° | autoral (`tools/animation/clips/trot.py`) | — |
+| `trot_backward_right` | Trote de costas diagonal (direita) | 0.83 | sim | 2.6 | -135° | autoral (`tools/animation/clips/trot.py`) | — |
 | `trot_forward` | Trote | 0.83 | sim | 2.6 | 0° | autoral (`tools/animation/clips/trot.py`) | — |
-| `trot_forward_left` | Trote diagonal (esquerda) | 0.83 | sim | 2.8 | 45° | autoral (`tools/animation/clips/trot.py`) | corpo, h4_direcoes, h5_pontos, h6_peito, h7_tiro |
-| `trot_forward_right` | Trote diagonal (direita) | 0.83 | sim | 2.8 | -45° | autoral (`tools/animation/clips/trot.py`) | corpo, h4_direcoes, h5_pontos, h6_peito, h7_tiro |
+| `trot_forward_left` | Trote diagonal (esquerda) | 0.83 | sim | 2.8 | 45° | autoral (`tools/animation/clips/trot.py`) | — |
+| `trot_forward_right` | Trote diagonal (direita) | 0.83 | sim | 2.8 | -45° | autoral (`tools/animation/clips/trot.py`) | — |
 
 ## Corrida e sprint
 
 | Clipe | Nome | s | Ciclo | Vel. | Dir. | Fonte | Usado em |
 |---|---|---:|---|---:|---:|---|---|
-| `mixamo_sprint` | Sprint (analise Mixamo) | 0.57 | sim | 6.0 | 1° | `Sprint.fbx` | corpo, h3_andar, h7_tiro |
+| `mixamo_sprint` | Sprint (analise Mixamo) | 0.57 | sim | 6.0 | 1° | `Sprint.fbx` | — |
 | `run_backward` | Corrida de costas | 0.63 | sim | 2.9 | 180° | autoral (`tools/animation/clips/run_backward.py`) | personagem (football_player) |
-| `run_forward_medium` | Corrida media (Mixamo, 4,2 m/s) | 0.70 | sim | 4.3 | 1° | `Running(2).fbx` | corpo |
-| `sprint` | Sprint | 0.47 | sim | 7.5 | 0° | autoral (`tools/animation/clips/sprint.py`) | personagem (football_player), corpo, h3_andar, h7_tiro |
-| `sprint_backward` | Sprint de costas | 0.56 | sim | 4.4 | 180° | autoral (`tools/animation/clips/sprint_backward.py`) | personagem (football_player), corpo |
-| `sprint_backward_left` | Sprint de costas diagonal (esquerda) | 0.57 | sim | 3.8 | 135° | autoral (`tools/animation/clips/trot.py`) | corpo |
+| `run_forward_medium` | Corrida media (Mixamo, 4,2 m/s) | 0.70 | sim | 4.3 | 1° | `Running(2).fbx` | — |
+| `sprint` | Sprint | 0.47 | sim | 7.5 | 0° | autoral (`tools/animation/clips/sprint.py`) | personagem (football_player) |
+| `sprint_backward` | Sprint de costas | 0.56 | sim | 4.4 | 180° | autoral (`tools/animation/clips/sprint_backward.py`) | personagem (football_player) |
+| `sprint_backward_left` | Sprint de costas diagonal (esquerda) | 0.57 | sim | 3.8 | 135° | autoral (`tools/animation/clips/trot.py`) | — |
 | `sprint_backward_long` | Sprint de costas (longo) | 0.43 | sim | 7.0 | 180° | autoral (`tools/animation/clips/sprint_backward_long.py`) | personagem (football_player) |
-| `sprint_backward_right` | Sprint de costas diagonal (direita) | 0.57 | sim | 3.8 | -135° | autoral (`tools/animation/clips/trot.py`) | corpo |
+| `sprint_backward_right` | Sprint de costas diagonal (direita) | 0.57 | sim | 3.8 | -135° | autoral (`tools/animation/clips/trot.py`) | — |
 | `sprint_forward` | Sprint | 0.63 | sim | 6.0 | 0° | autoral (`tools/animation/clips/trot.py`) | — |
-| `sprint_strafe_left` | Sprint de lado (esquerda) | 0.50 | sim | 4.1 | 90° | autoral (`tools/animation/clips/strafe.py`) | personagem (football_player), corpo |
-| `sprint_strafe_right` | Sprint de lado (direita) | 0.50 | sim | 4.1 | -90° | autoral (`tools/animation/clips/strafe.py`) | personagem (football_player), corpo |
+| `sprint_maximo` | Sprint maximo | 0.47 | sim | 8.6 | 0° | autoral (`tools/animation/clips/sprint_maximo.py`) | personagem (football_player) |
+| `sprint_strafe_left` | Sprint de lado (esquerda) | 0.50 | sim | 4.1 | 90° | autoral (`tools/animation/clips/strafe.py`) | personagem (football_player) |
+| `sprint_strafe_right` | Sprint de lado (direita) | 0.50 | sim | 4.1 | -90° | autoral (`tools/animation/clips/strafe.py`) | personagem (football_player) |
 
 ## Pulos
 
@@ -118,5 +119,5 @@ tarefas do RL e o personagem do jogo que citam o arquivo.
 
 | Clipe | Nome | s | Ciclo | Vel. | Dir. | Fonte | Usado em |
 |---|---|---:|---|---:|---:|---|---|
-| `giro_direita_180` | Giro parado 180 para a direita (Mixamo) | 2.07 | não | 0.2 | -135° | `Right Turn(6).fbx` | corpo |
-| `giro_esquerda_180` | Giro parado 180 para a esquerda (Mixamo) | 2.07 | não | 0.1 | 110° | `Left Turn(2).fbx` | corpo |
+| `giro_direita_180` | Giro parado 180 para a direita (Mixamo) | 2.07 | não | 0.2 | -135° | `Right Turn(6).fbx` | — |
+| `giro_esquerda_180` | Giro parado 180 para a esquerda (Mixamo) | 2.07 | não | 0.1 | 110° | `Left Turn(2).fbx` | — |

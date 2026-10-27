@@ -37,14 +37,19 @@ void DefaultLocomotion3D::stepGait(Tick& t) {
     std::array<float, GaitCount>& wanted = t.wanted;
     t.sprint = 0.0f;
     float& sprint = t.sprint;
+    // O sprint maximo: acima da corrida, a parte dela vai para o clipe dele.
+    float top = 0.0f;
     {
         const std::size_t d = static_cast<std::size_t>(m_sector);
         const float trotSpeed = defaultLocomotionSpeed3D(s, fromView, false);
         const float sprintSpeed = defaultLocomotionSpeed3D(s, fromView, true);
         sprint = sprintSpeed > trotSpeed + 0.1f
             ? std::clamp((speed - trotSpeed) / (sprintSpeed - trotSpeed), 0.0f, 1.0f) : 0.0f;
+        if (m_gaits[d + 2 * Directions].clip != nullptr && s.maxSprintSpeed > sprintSpeed + 0.1f)
+            top = std::clamp((speed - sprintSpeed) / (s.maxSprintSpeed - sprintSpeed), 0.0f, 1.0f);
         wanted[d] = 1.0f - sprint;
-        wanted[d + Directions] = sprint;
+        wanted[d + Directions] = sprint * (1.0f - top);
+        wanted[d + 2 * Directions] = sprint * top;
     }
     // O rumo dos clipes do setor, para a pelve.
     float clipHeading = 0.0f;
@@ -112,8 +117,8 @@ void DefaultLocomotion3D::stepGait(Tick& t) {
             return angle - turn * std::floor(angle / turn);
         };
         wanted.fill(0.0f);
-        for (std::size_t tier = 0; tier < 2; ++tier) {
-            const float share = tier == 0 ? 1.0f - sprint : sprint;
+        for (std::size_t tier = 0; tier < Tiers; ++tier) {
+            const float share = tier == 0 ? 1.0f - sprint : tier == 1 ? sprint * (1.0f - top) : sprint * top;
             if (share <= 0.0f) continue;
             // O clipe logo antes e o logo depois do angulo (anti-horario).
             std::size_t below = GaitCount, above = GaitCount;
@@ -213,7 +218,7 @@ void DefaultLocomotion3D::stepGait(Tick& t) {
     // A passada na velocidade da capsula: ritmo e comprimento (os pes nao
     // escorregam: quem anda mais rapido que o clipe da passos mais longos e
     // um pouco mais rapidos).
-    // A amplitude de cada marcha (trote 0..7, corrida 8..15); de lado (2 e 6)
+    // A amplitude de cada marcha (trote 0..7, corrida 8..15, sprint maximo 16..23); de lado (2 e 6)
     // a parte trotAmplitudeSide / sprintAmplitudeSide.
     const auto gaitAmplitude = [this](std::size_t g) { return gaitAmplitudeOf(g); };
     t.rate = 0.0f;
@@ -237,7 +242,7 @@ void DefaultLocomotion3D::stepGait(Tick& t) {
         // ela pulava na troca -, e suavizada no tempo: mudando de uma vez, a
         // pose das pernas e dos bracos saltava - picos de ~900 m/s2 contra
         // ~300 ao parar e ao trocar de marcha.)
-        for (std::size_t kind = 0; kind < 2; ++kind) {
+        for (std::size_t kind = 0; kind < Tiers; ++kind) {
             float kindWeight = 0.0f, kindNatural = 0.0f;
             for (std::size_t d = 0; d < Directions; ++d) {
                 const std::size_t g = kind * Directions + d;
@@ -255,25 +260,9 @@ void DefaultLocomotion3D::stepGait(Tick& t) {
         for (std::size_t g = 0; g < GaitCount; ++g)
             amplitudeShare += m_weights[g] * (gaitAmplitude(g) - 1.0f);
         amplitudeShare = 1.0f + amplitudeShare / total;
-        // (A passada de conducao fora do limite do ritmo: a amplitude ja vem
-        // dividida pela cadencia, que multiplica o ritmo depois do limite.)
-        const float cadence = std::max(1.0f, m_dribbleCadence);
-        const float playRate = std::clamp(ratio / (strideScale * amplitudeShare * cadence), s.minimumPlayRate,
+        const float playRate = std::clamp(ratio / (strideScale * amplitudeShare), s.minimumPlayRate,
             s.maximumPlayRate);
-        rate = frequency * playRate * cadence;
-        // Plano v5: a passada de conducao - a cadencia ate os pousos
-        // alternados a dribbleHalfCycle (o ritmo de agora sem ela: meio ciclo
-        // em 0,5 / ritmo).
-        float wanted = 1.0f;
-        const float style = std::clamp(input.dribbleStyle, 0.0f, 1.0f);
-        if (style > 0.0f && frequency * playRate > 1e-3f) {
-            const float half = 0.5f / (frequency * playRate);
-            wanted = 1.0f + style * (std::clamp(half / std::max(0.1f, s.dribbleHalfCycle), 1.0f,
-                std::max(1.0f, s.dribbleCadenceMaximum)) - 1.0f);
-        }
-        m_dribbleCadence += (wanted - m_dribbleCadence) * (1.0f - std::exp(-dt / std::max(0.01f, s.dribbleCadenceSeconds)));
-    } else {
-        m_dribbleCadence = 1.0f;
+        rate = frequency * playRate;
     }
     // Parando: o passo termina no proximo cruzamento das pernas, freando (o pe
     // apoiado fica travado; o de tras vem para baixo do corpo).
@@ -359,10 +348,12 @@ void DefaultLocomotion3D::stepGait(Tick& t) {
         }
     }
     {
-        // (O gesto com a bola acelera um pouco a passada: o pe do toque pousa
-        // no clipe quando o gesto volta - plano v4; os tempos dos pes na
-        // saida vem neste ritmo.)
+        // (A sombra do RL acompanha o corpo pelo ritmo: PhaseLock3D.)
         rate *= std::clamp(input.phaseRateScale, 0.3f, 3.0f);
+        // (O gesto de bola andando nao mexe na passada: ele tem o tempo do menu
+        // e a perna dele volta pela inercia para onde a passada estiver. Com a
+        // perna atrasada e o apoio apressado para caber no passo, o gesto saia
+        // rapido demais e o passo se embolava - 24/10, pedido do usuario.)
         const float before = m_phase;
         m_phase = fraction(m_phase + rate * dt);
         m_strides += m_phase < before ? 1.0f : 0.0f;

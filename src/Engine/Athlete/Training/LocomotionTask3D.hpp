@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Engine/Athlete/Contract/LocomotionContract3D.hpp"
+#include "Engine/Physique/PlayerPhysique3D.hpp"
 #include "Engine/RL/Commands/CommandPilot3D.hpp"
 
 #include <array>
@@ -43,6 +44,8 @@ struct LocomotionRewardWeights3D {
     // quando o comando pede para ficar quieto; 0 (o padrao): sem o custo.
     float still = 0.0f;
     float fall = 1.0f;
+    // O levantar (so nos exercicios dele): o quanto esta de pe por segundo.
+    float getUp = 0.0f;
     // A cauda larga da velocidade e do rumo (vault 04_locomocao/referencia/
     // pesquisas/02_recompensa_locomocao.md): a fracao do termo que vem de
     // exp(-|e|/sigmaCauda) (a forma do DReCon e do Siekmann: o gradiente nao
@@ -74,6 +77,20 @@ struct LocomotionRewardWeights3D {
     // nota instantanea punia a oscilacao natural - um empurrao para o passo curto).
     // false (o padrao): a instantanea.
     bool velocitySmoothed = false;
+    // (v4, plano RL sobre o classico F) O progresso relativo ao parado: com
+    // pedido de movimento, P = rho(|v*|) - rho(|v - v*|) sobre rho(max(|v*|,
+    // 0,5)) (rho pseudo-Huber de delta progressDelta): parado vale 0, o
+    // pedido feito vale 1, ir para o outro lado e negativo; com o pedido ~0,
+    // o nucleo de sempre (o parado tem objetivo proprio). O estilo e o rumo
+    // so pagam na proporcao do progresso (parado sob pedido nao compra nada).
+    bool progress = false;
+    float progressDelta = 0.5f;
+    // A queda por contato proibido: qualquer link que nao seja pe tocando o
+    // chao (normal para cima, corpo estatico), checado a cada tick.
+    bool forbiddenContact = false;
+    // O erro de estilo pela metade media e metade pior parte (bracos certos
+    // nao compram a coluna dobrada).
+    bool styleWorstPart = false;
 };
 
 // O curriculo de velocidade por celulas (vault .../pesquisas/04_curriculo_e_ajuda.md):
@@ -116,10 +133,27 @@ struct LocomotionAssistSchedule3D {
     float zeroFraction = 0.6f;
     float minimumPercent = 5.0f;
     float maximumPercent = 30.0f;
+    // Quantas vezes por segundo o nivel e sorteado de novo no meio do
+    // episodio (so no treino; 0: so no comeco).
+    float changesPerSecond = 0.0f;
 };
 
 // Um exercicio: o roteiro do piloto (o mesmo formato do Corpo v2), a fase do
 // plano e o peso na mistura.
+// As pancadas do exercicio (v4, plano G): empurroes horizontais na pelve e no
+// tronco (a divisao da sonda, 0,20/0,32/0,48), de forca e duracao sorteadas, a
+// partir de startSeconds, na taxa do exercicio (pushRate, por segundo).
+struct LocomotionPushes3D {
+    float minimumNewtons = 150.0f;
+    float maximumNewtons = 600.0f;
+    float minimumSeconds = 0.10f;
+    float maximumSeconds = 0.20f;
+    float startSeconds = 1.0f;
+    // O empurrao unico (singlePush): o instante sorteado entre startSeconds e
+    // startSeconds + windowSeconds.
+    float windowSeconds = 1.5f;
+};
+
 struct LocomotionDrill3D {
     std::string id;
     std::string displayName;
@@ -133,7 +167,56 @@ struct LocomotionDrill3D {
     // A fracao dos episodios deste exercicio que comeca de um estado guardado
     // (0: sempre parado, o de sempre).
     float savedStartFraction = 0.0f;
+    // As pancadas por segundo (0: nenhuma) e a forca delas (N; < 0: a da tarefa).
+    float pushRate = 0.0f;
+    float pushMinimumNewtons = -1.0f;
+    float pushMaximumNewtons = -1.0f;
+    // O empurrao continuo (22/10, pedido do usuario): por segundo (0: nenhum),
+    // a forca (N) e a duracao (s) dele; entra e sai em 0,2 s. Um empurrao de
+    // cada vez (o curto ou o continuo).
+    float holdRate = 0.0f;
+    float holdMinimumNewtons = 150.0f;
+    float holdMaximumNewtons = 350.0f;
+    float holdMinimumSeconds = 1.0f;
+    float holdMaximumSeconds = 3.0f;
+    // Um empurrao por episodio (23/10, pedido do usuario: aguentava 3 a 5 e a
+    // queda num levava o episodio inteiro). O curto ou o continuo, na proporcao
+    // de pushRate e holdRate; o episodio acaba (fim por tempo) settleSeconds
+    // depois do fim do empurrao.
+    bool singlePush = false;
+    float settleSeconds = 3.0f;
+    // O levantar: o episodio comeca com uma pancada que derruba (knockdown,
+    // N, por 0,25 s), cair nao encerra e a nota paga por ficar de pe.
+    bool getUp = false;
+    float knockdownMinimumNewtons = 1600.0f;
+    float knockdownMaximumNewtons = 2400.0f;
+    // A categoria na tela (basico, compostos, ...).
+    std::string category;
 };
+
+// Os corpos do treino (26/10, o corpo variavel; Engine/Physique), o bloco
+// "body": {"heightMeters": [1.70, 2.00], "massKg": [65, 95], "heightStep":
+// 0.05, "massStep": 5.0, "evaluationGrid": true}. Cada mundo sorteia o corpo
+// por episodio na grade (os passos; os cantos inclusos) e usa o pacote dele
+// (o perfil, os clipes, a capsula); a entrada e o critico ganham
+// "jogador.altura" ((H - 1,80)/0,10) e "jogador.massa" ((M - 80)/10). Na
+// avaliacao com evaluationGrid, o corpo e fixo pelo indice do mundo: o padrao,
+// os 4 cantos e os meios das bordas. Sem o bloco (ou com a faixa so em
+// 1,80 m / 80 kg): o treino de antes, sem sorteio nem canal.
+struct LocomotionBodyRange3D {
+    bool enabled = false;
+    float minimumHeight = BaseBodyHeightMeters;
+    float maximumHeight = BaseBodyHeightMeters;
+    float minimumMass = BaseBodyMassKg;
+    float maximumMass = BaseBodyMassKg;
+    float heightStep = 0.05f;
+    float massStep = 5.0f;
+    bool evaluationGrid = true;
+    bool operator==(const LocomotionBodyRange3D&) const = default;
+};
+// Os corpos da grade, a altura por fora (em cm e decimos de kg inteiros: 1,80
+// e 80 caem exatos no corpo de hoje). Sem o bloco: so o corpo de hoje.
+[[nodiscard]] std::vector<PlayerBody3D> locomotionBodyGrid3D(const LocomotionBodyRange3D& range);
 
 // A mistura dos exercicios pela dificuldade (o plano antigo: as fatias seguem
 // a dificuldade, com um piso). Quem calcula e o treinador; aqui so os ajustes.
@@ -157,6 +240,9 @@ struct LocomotionTask3D {
     float walkingAssistPercent = 0.0f;
     float feetAssistPercent = 0.0f;
     float getUpAssistPercent = 0.0f;
+    // A rigidez e a forca do proprio levantar (os padroes do jogo).
+    float getUpStiffnessPercent = 55.0f;
+    float getUpStrengthPercent = 70.0f;
     // A virada brusca (o professor, DynamicTurnMove3D): ligada na tarefa, o
     // episodio a usa (menos o sorteio do dropout: a fracao dos episodios em que
     // ela fica desligada, para a rede nao depender dela) e a intensidade dela.
@@ -191,6 +277,10 @@ struct LocomotionTask3D {
     LocomotionSpeedCurriculum3D speedCurriculum;
     LocomotionSavedStarts3D savedStarts;
     LocomotionAssistSchedule3D assistSchedule;
+    LocomotionPushes3D pushes;
+    LocomotionBodyRange3D body;
+    // A regua de ajuda do mundo ("assistRuler": "historical" | "linear").
+    bool historicalAssistRuler = true;
     std::vector<LocomotionDrill3D> drills;
 };
 

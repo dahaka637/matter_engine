@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Engine/Materials/MaterialLibrary.hpp"
+#include "Engine/Objects/ObjectAsset3D.hpp"
 #include "Engine/Physics/PhysicsEngine3D.hpp"
 #include "Engine/Render/Renderer.hpp"
 
@@ -71,6 +72,8 @@ private:
 
 [[nodiscard]] GpuModel3D loadGpuModel3D(Renderer& renderer,
     const std::string& path, bool recenter = true);
+// Um objeto procedural na GPU: um pedaco so, com a textura dele.
+[[nodiscard]] GpuModel3D uploadProceduralObject(Renderer& renderer, const ObjectRenderData3D& data);
 void releaseGpuModel3D(Renderer& renderer, GpuModel3D& model);
 
 // Acrescenta todas as partes de um modelo à lista de renderização sem copiar

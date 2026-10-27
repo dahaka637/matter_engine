@@ -178,6 +178,32 @@ Quaternion twistAbout(Quaternion q, Vec3 axis) {
     return { twist.x / norm, twist.y / norm, twist.z / norm, twist.w / norm };
 }
 
+Quaternion twistAbout(Quaternion q, Vec3 axis, float sign) {
+    const Quaternion twist = twistAbout(q, axis);
+    if (sign == 0.0f || axis.lengthSquared() < 1e-12f) return twist;
+    // (O sentido pelo eixo do giro com w >= 0.)
+    const float along = (twist.x * axis.x + twist.y * axis.y + twist.z * axis.z) * (twist.w < 0.0f ? -1.0f : 1.0f);
+    return along * sign < 0.0f ? Quaternion {} : twist;
+}
+
+Quaternion elevationTurn(Quaternion relative, Vec3 along) {
+    const Vec3 before = safeNormalized(along, {});
+    if (before.lengthSquared() == 0.0f) return {};
+    const Vec3 after = relative.rotate(before);
+    const float rise = std::asin(std::clamp(after.z, -1.0f, 1.0f)) - std::asin(std::clamp(before.z, -1.0f, 1.0f));
+    if (rise <= 0.0f) return {};
+    return Quaternion::fromAxisAngle({ before.y >= 0.0f ? 1.0f : -1.0f, 0.0f, 0.0f }, rise);
+}
+
+Quaternion clavicleTurn(Quaternion turn, float fraction, float cap) {
+    Quaternion q = partialRotation(turn, fraction).normalized();
+    if (cap <= 0.0f) return q;
+    if (q.w < 0.0f) q = { -q.x, -q.y, -q.z, -q.w };
+    const float half = std::acos(std::clamp(q.w, -1.0f, 1.0f)), sine = std::sin(half);
+    if (sine < 1e-6f) return q;
+    return Quaternion::fromAxisAngle({ q.x / sine, q.y / sine, q.z / sine }, cap * std::tanh(2.0f * half / cap));
+}
+
 float pointSegmentDistance(Vec3 point, Vec3 a, Vec3 b, float* t) {
     const Vec3 ab = b - a;
     const float lengthSquared = ab.lengthSquared();
@@ -283,6 +309,31 @@ bool overlapAlong(Vec3 normal, const std::array<Vec3, 3>& first, const std::arra
 }
 
 } // namespace
+
+float triangleIntersectionLength(Vec3 a0, Vec3 a1, Vec3 a2, Vec3 b0, Vec3 b1, Vec3 b2) {
+    const Vec3 na = safeNormalized(cross(a1 - a0, a2 - a0), {}), nb = safeNormalized(cross(b1 - b0, b2 - b0), {});
+    const Vec3 line = cross(na, nb);
+    if (na.lengthSquared() == 0.0f || nb.lengthSquared() == 0.0f || line.lengthSquared() < 1e-12f) return 0.0f;
+    // O trecho da reta comum dentro de cada triangulo (onde as arestas dele
+    // cruzam o plano do outro), na coordenada ao longo da reta.
+    const auto span = [&](const std::array<Vec3, 3>& t, Vec3 normal, Vec3 origin, float& from, float& to) {
+        std::array<float, 3> d {};
+        for (std::size_t i = 0; i < 3; ++i) d[i] = dot(normal, t[i] - origin);
+        bool any = false;
+        for (std::size_t i = 0; i < 3; ++i) {
+            const std::size_t j = (i + 1) % 3;
+            if ((d[i] > 0.0f) == (d[j] > 0.0f) || d[i] == d[j]) continue;
+            const float s = dot(line, t[i] + (t[j] - t[i]) * (d[i] / (d[i] - d[j])));
+            from = any ? std::min(from, s) : s;
+            to = any ? std::max(to, s) : s;
+            any = true;
+        }
+        return any;
+    };
+    float a = 0.0f, b = 0.0f, c = 0.0f, e = 0.0f;
+    if (!span({ a0, a1, a2 }, nb, b0, a, b) || !span({ b0, b1, b2 }, na, a0, c, e)) return 0.0f;
+    return std::max(0.0f, std::min(b, e) - std::max(a, c)) / line.length();
+}
 
 bool trianglesIntersect(Vec3 v0, Vec3 v1, Vec3 v2, Vec3 u0, Vec3 u1, Vec3 u2) {
     // Distancias de verdade (normais unitarias): o limiar e de 1 micrometro.

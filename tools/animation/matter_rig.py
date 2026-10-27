@@ -336,9 +336,16 @@ class Skin:
         self.helper_fraction = [float(h.get("fraction", 0.5)) for h in helpers]
         self.helper_pivot = [np.array(h["pivot"], dtype=np.float64) for h in helpers]
         self.helper_axis = [np.array(h.get("axis", [0.0, 0.0, 0.0]), dtype=np.float64) for h in helpers]
+        # So um sentido do giro em volta do eixo (+1, -1; 0 os dois).
+        self.helper_sign = [float(h.get("sign", 0.0)) for h in helpers]
+        # A clavicula: so a elevacao do braco, em volta do pivo fixo, e leva os
+        # ossos de "carry" (o braco) - a mesma do motor.
+        self.helper_carry = [h.get("carry") for h in helpers]
+
         for h, lower in zip(helpers, self.helper_lower):
             names.append(h["name"])
             links.append(links[lower])
+        self.helper_carry = [[names.index(n) for n in c] if c else None for c in self.helper_carry]
         self.bone_link = np.array(links)
         self.bone_names = names
         vertices = data["vertices"]
@@ -385,16 +392,41 @@ class Skin:
                   for b in range(len(world_p))]
         skin_p = [world_p[b] - qrotate(skin_q[b], self.bind_position[b])
                   for b in range(len(world_p))]
-        for upper, lower, fraction, pivot_hint, axis in zip(
+        carries = []
+        for upper, lower, fraction, pivot_hint, axis, sign, carry in zip(
                 self.helper_upper, self.helper_lower, self.helper_fraction,
-                self.helper_pivot, self.helper_axis):
+                self.helper_pivot, self.helper_axis, self.helper_sign, self.helper_carry):
             uq, up = skin_q[upper], skin_p[upper]
             relative_q = qnormalize(qmul(qconj(uq), skin_q[lower]))
             relative_p = qrotate(qconj(uq), skin_p[lower] - up)
-            part = _partial_rotation(_twist_about(relative_q, axis), fraction)
+            if carry is not None:
+                before = axis / max(1e-9, float(np.linalg.norm(axis)))
+                after = qrotate(relative_q, before)
+                rise = math.asin(min(1.0, max(-1.0, float(after[2])))) - math.asin(min(1.0, max(-1.0, float(before[2]))))
+                side = 1.0 if before[1] >= 0.0 else -1.0
+                turn = np.array([side * math.sin(rise / 2.0), 0.0, 0.0, math.cos(rise / 2.0)]) if rise > 0.0 else quat()
+                part = _partial_rotation(turn, fraction)
+                cq = qnormalize(qmul(uq, part))
+                cp = up + qrotate(uq, pivot_hint - qrotate(part, pivot_hint))
+                skin_q.append(cq)
+                skin_p.append(cp)
+                # o braco vai junto: C = clavicula * inverso do peito
+                carry_q = qnormalize(qmul(cq, qconj(uq)))
+                carries.append((carry, carry_q, cp - qrotate(carry_q, up)))
+                continue
+            twist = _twist_about(relative_q, axis)
+            if sign != 0.0:
+                along = float(np.dot(twist[:3], axis)) * (-1.0 if twist[3] < 0.0 else 1.0)
+                if along * sign < 0.0:
+                    twist = quat()
+            part = _partial_rotation(twist, fraction)
             pivot = _rotation_pivot(relative_q, relative_p, pivot_hint)
             skin_q.append(qnormalize(qmul(uq, part)))
             skin_p.append(up + qrotate(uq, pivot - qrotate(part, pivot)))
+        for carried, carry_q, carry_p in carries:
+            for b in carried:
+                skin_p[b] = carry_p + qrotate(carry_q, skin_p[b])
+                skin_q[b] = qnormalize(qmul(carry_q, skin_q[b]))
         return np.array(skin_p), np.array(skin_q)
 
     def pose(self, positions: np.ndarray, orientations: np.ndarray,

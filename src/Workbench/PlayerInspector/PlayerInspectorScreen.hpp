@@ -59,6 +59,8 @@ public:
     // A aba da lateral: 0 as partes do corpo, 1 as animacoes (o tocador
     // aparece embaixo do viewport).
     void setTab(int tab);
+    // O corpo (cm, kg), como a secao "CORPO": o modelo remontado nele.
+    void setBody(float heightCm, float massKg);
     [[nodiscard]] int tab() const { return m_tab; }
     [[nodiscard]] PlayerAnimations& animations() { return m_animations; }
 
@@ -84,6 +86,9 @@ private:
     [[nodiscard]] std::vector<std::filesystem::path> watchedFiles() const;
     void drawSidebar(float height);
     void drawRegionList(float height);
+    // A altura e o peso do jogador (o corpo variavel): o modelo remontado no
+    // corpo ao soltar o controle.
+    void drawBodyPanel();
     // As dobras de teste (joelho, quadril, tornozelo): a malha deformada.
     void drawBendPanel();
     void applyBends();
@@ -130,6 +135,8 @@ private:
     // dedos, polegar); a cabeca (o pescoco de lado e girando, a cabeca para a
     // frente, de lado e girando). O grupo na tela (as maos sao o 3).
     std::array<float, 29> m_bends {};
+    float m_bodyHeightCm = BaseBodyHeightMeters * 100.0f;
+    float m_bodyMassKg = BaseBodyMassKg;
     int m_bendGroup = 0;
     // A mao de partida das dobras: reta (a ligacao), solta (a de repouso),
     // aberta ou punho (as do jogo).

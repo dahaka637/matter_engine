@@ -622,4 +622,43 @@ RagdollAnimationPose3D sampleRagdollAnimationPose3D(
     return pose;
 }
 
+AnimationClip3D bodyAnimationClip3D(const AnimationClip3D& clip, const RagdollProfile3D& profile, float scale,
+    float armOpeningRadians, float legOpeningRadians) {
+    AnimationClip3D result = scaledAnimationClip3D(clip, scale);
+    if (armOpeningRadians == 0.0f && legOpeningRadians == 0.0f) return result;
+    for (AnimationTrack3D& track : result.tracks) {
+        if (track.space != AnimationTrackSpace3D::Joint) continue;
+        const std::string& id = track.targetLinkId;
+        const bool arm = id == "LeftUpperArm" || id == "RightUpperArm", leg = id == "LeftThigh" || id == "RightThigh";
+        const float angle = arm ? armOpeningRadians : leg ? legOpeningRadians : 0.0f;
+        if (angle == 0.0f) continue;
+        const auto link = std::find_if(profile.links.begin(), profile.links.end(), [&](const auto& l) { return l.id == id; });
+        if (link == profile.links.end() || link->parentIndex < 0) continue;
+        // Para fora: o esquerdo (y > 0) gira em volta de +x, o direito de -x. No
+        // referencial da junta: exp(c') = F^-1 A F exp(c).
+        const Quaternion frame = link->inboundJoint.frameModelOrientation.normalized();
+        const float side = link->inboundJoint.anchorModelPosition.y >= 0.0f ? 1.0f : -1.0f;
+        const Quaternion open = (frame.conjugate() * Quaternion::fromAxisAngle({ 1.0f, 0.0f, 0.0f }, side * angle) * frame).normalized();
+        for (AnimationKeyframe3D& key : track.keyframes) {
+            Quaternion q = (open * quaternionExponential(key.jointPositionRadians)).normalized();
+            if (q.w < 0.0f) q = { -q.x, -q.y, -q.z, -q.w };
+            const float sine = std::sqrt(q.x * q.x + q.y * q.y + q.z * q.z);
+            const float turn = 2.0f * std::atan2(sine, q.w);
+            key.jointPositionRadians = sine > 1e-9f ? Vec3 { q.x, q.y, q.z } * (turn / sine) : Vec3 {};
+        }
+    }
+    return result;
+}
+
+AnimationClip3D scaledAnimationClip3D(const AnimationClip3D& clip, float scale) {
+    AnimationClip3D result = clip;
+    if (scale == 1.0f) return result;
+    for (AnimationTrack3D& track : result.tracks)
+        if (track.space == AnimationTrackSpace3D::Root)
+            for (AnimationKeyframe3D& key : track.keyframes) key.translationOffsetMeters = key.translationOffsetMeters * scale;
+    result.sourceRootDisplacementMeters = result.sourceRootDisplacementMeters * scale;
+    result.nominalSpeedMetersPerSecond *= scale;
+    return result;
+}
+
 } // namespace MatterEngine

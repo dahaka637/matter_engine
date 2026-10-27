@@ -42,6 +42,8 @@
   "hipLiftRise": [0.02, 0.2],
   "hipLiftFront": [0.3, 0.8],
   "hipLiftMidline": [0.02, 0.08],
+  "hipGluteRise": 0.045,
+  "halfJoints": true,
   "shortsSubdivision": 2,
   "shortsCoarseCrotch": 0.06,
   "shortsCoarseTop": 0.06,

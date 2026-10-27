@@ -62,6 +62,8 @@ void PhysicsScene3D::clear() {
         if (slot.record) destroyBody(slot.record->handle);
     for (auto& slot : m_impl->inflatedBallSlots)
         if (slot.record) destroyInflatedBall(slot.record->handle);
+    for (auto& slot : m_impl->netSlots)
+        if (slot.record) destroyNet(slot.record->handle);
     m_impl->pendingRagdollCommands.clear();
     m_impl->pendingBodyWrenches.clear();
     m_impl->contactImpacts.clear();

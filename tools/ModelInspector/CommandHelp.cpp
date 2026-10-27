@@ -53,6 +53,7 @@ COMANDOS
               --cenario <nome|indice>  --instantes t0,t1 | --de A --ate B --quadros K
               --seguir 0|1  --distancia <m>  --colunas C  (bola amarela; vermelha no toque)
               --colisores 1 as shapes fisicas por cima (com BUILD_RL); contatos P em cruz vermelha
+              o corpo do cenario pela linha "corpo" do dump (--corpo sobrepoe)
   colisores   o perfil fisico sobre a malha, em repouso ou num clipe (com BUILD_RL):
               --perfil <ragdoll.json> --pose sprint@0.3
               --poses repouso,sprint@0.3,jump_standing@0.35 (uma matriz)
@@ -63,11 +64,18 @@ COMANDOS
               medido no corpo novo (ancoras, links e colisores), a pele e o atlas
               --destino <pasta> (assets/characters/football_player troca o do jogo)
               --quinas 45 (graus)  --facetado 0.5 (o sombreamento do jogo)
+  exportar-blender  o jogador para o Blender: jogador.troca.json (esqueleto, malha,
+              partes, mapa e pesos) e as texturas; tools/blender/importar_troca.py
+              monta o .blend   --saida <pasta>
+              --poses N (o skin de cada junta em N instantes de cada clipe)
+              --amplitude (e as poses da amplitude das juntas, no treino do assado)
 
 OPCOES COMUNS
   --modelo <model.json>     padrao: assets/characters/player_model/model.json
   --malha montagem|procedural|nenhuma   montagem = o modelo novo (padrao do manifesto);
                             procedural = o corpo antigo (model_antigo.json); nenhuma = so os ossos
+  --corpo <cm>,<kg>         o corpo (170 a 200 cm, 60 a 100 kg; padrao 180,80): a malha, o esqueleto
+                            e o personagem do jogo nele (ex.: --corpo 200,95)
   --pose <animacao>@<s>     a cena numa pose (repouso, ligacao, sprint@0.3 ...)
                             ou dobra:RightShin=90+RightThigh=-60 (graus em volta do lado:
                             joelho + dobra, quadril - leva a coxa a frente;

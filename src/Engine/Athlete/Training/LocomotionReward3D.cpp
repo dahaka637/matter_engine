@@ -28,11 +28,28 @@ std::array<float, LocomotionRewardTermCount3D> locomotionRewardTerms3D(const Loc
         if (!(tail > 0.0f)) return core;
         return (1.0f - tail) * core + tail * std::exp(-std::abs(error) / tailSigma);
     };
-    set(LocomotionRewardTerm3D::Velocity,
-        w.velocity * tracked(m.velocityError, w.velocitySigma, w.velocityTail, w.velocityTailSigma) * dt);
+    float velocity = tracked(m.velocityError, w.velocitySigma, w.velocityTail, w.velocityTailSigma);
+    // (O progresso, v4: o parado sob pedido vale zero e compra so isso.)
+    float gate = 1.0f;
+    if (w.progress) {
+        const float d = w.progressDelta;
+        const auto rho = [d](float x) { return d * d * (std::sqrt(1.0f + (x / d) * (x / d)) - 1.0f); };
+        const float speed = std::max(0.0f, finiteOr(m.targetSpeed));
+        const float progress = std::clamp((rho(speed) - rho(m.velocityError)) / rho(std::max(speed, 0.5f)), -1.0f, 1.0f);
+        const float t = std::clamp((speed - 0.2f) / 0.3f, 0.0f, 1.0f);
+        const float moving = t * t * (3.0f - 2.0f * t);
+        velocity = (1.0f - moving) * velocity + moving * progress;
+        gate = (1.0f - moving) + moving * std::max(0.0f, progress);
+    }
+    // (No levantar, deitado nada paga: tudo vezes o quanto esta de pe.)
+    const float upright = std::clamp(finiteOr(m.upright), 0.0f, 1.0f);
+    velocity *= upright;
+    gate *= upright;
+    set(LocomotionRewardTerm3D::GetUp, m.getUpDrill ? w.getUp * upright * dt : 0.0f);
+    set(LocomotionRewardTerm3D::Velocity, w.velocity * velocity * dt);
     set(LocomotionRewardTerm3D::Facing,
-        w.facing * tracked(m.facingError, w.facingSigma, w.facingTail, w.facingTailSigma) * dt);
-    set(LocomotionRewardTerm3D::Style, m.styleValid ? w.style * kernel(m.styleError, w.styleSigma) * dt : 0.0f);
+        w.facing * gate * tracked(m.facingError, w.facingSigma, w.facingTail, w.facingTailSigma) * dt);
+    set(LocomotionRewardTerm3D::Style, m.styleValid ? w.style * gate * kernel(m.styleError, w.styleSigma) * dt : 0.0f);
     // (Por pouso, nao por segundo.)
     set(LocomotionRewardTerm3D::Contact, w.contact * m.contactScore);
     set(LocomotionRewardTerm3D::Slip, w.slip * m.slip * dt);

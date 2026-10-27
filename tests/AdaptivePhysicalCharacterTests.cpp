@@ -1,8 +1,8 @@
 #include "Engine/Animation/RagdollCharacter3D.hpp"
+#include "Engine/Athlete/AthleteAssets3D.hpp"
 #include "Engine/Character/BallOwnership3D.hpp"
 #include "Engine/Character/CharacterControlApplication3D.hpp"
 #include "Engine/Character/CharacterLocomotion3D.hpp"
-#include "Engine/Character/BallTouchPreview3D.hpp"
 #include "Engine/Character/DefaultLocomotion3D.hpp"
 #include "Engine/Character/RagdollPoseKinematics3D.hpp"
 #include "Engine/Character/CharacterFootGeometry3D.hpp"
@@ -375,23 +375,13 @@ struct Scenario {
     // Tropeco correndo (sweeptropeco): o obstaculo em x = stumbleX; mede a
     // partir de o centro de massa chegar 0,6 m antes dele.
     float stumbleX = -1.0f;
-    // Manejo de bola (sweepmanejo): a bola (criada no build) e o roteiro dos
-    // pedidos (devolve o tipo no tick do pedido; forca e direcao no mundo).
+    // A bola (sweepdono, sweeprepulsa; criada no build).
     std::shared_ptr<InflatedBallHandle3D> ball;
-    // (Recebe a bola, a pelve e se o manejo esta livre: o jogador do teste
-    // toca quando a bola volta para perto.)
-    std::function<BallActionKind3D(float t, Vec3 ball, Vec3 pelvis, bool idle, float& power, Vec3& direction)> ballScript;
-    // Gesto do chute (-1..1): altura e efeito.
-    float shotLift = 0.0f, shotCurve = 0.0f;
-    // Chute correndo (sweepchutecorre): em ballPlaceAt a bola vai para
-    // ballPlaceOffset (no referencial do corpo: x a frente, y a esquerda) e o
-    // toque e pelo pe.
+    // Em ballPlaceAt a bola vai para ballPlaceOffset (no referencial do corpo:
+    // x a frente, y a esquerda).
     float ballPlaceAt = -1.0f;
     Vec3 ballPlaceOffset;
     Vec3 ballPlaceVelocity;
-    // Estresse: a bola volta para perto do corpo a cada isto (s; 0 nunca).
-    float ballReplaceEvery = 0.0f;
-    int ballReplaceSeed = 0;
     // A bola colide com o corpo como no laboratorio: pe e canela deixam de
     // colidir no primeiro contato ou com acao e a bola a 0,4 m deles.
     bool ballCollides = false;
@@ -606,29 +596,6 @@ struct ScenarioResult {
     // No chao (pelve abaixo de 0,35 m no carrinho): tempo e distancia, e a
     // velocidade ao tocar o chao.
     float slideGroundSeconds = 0, slideGroundDistance = 0, slideLandSpeed = -1;
-    // Manejo de bola: pedidos, toques, os que nao tocaram (bola longe; o pe
-    // nao chegou), a distancia da bola a pelve (maior e media com o corpo
-    // andando), e o chute: a velocidade da bola e o erro de rumo (graus).
-    int ballRequests = 0, ballTouches = 0, ballMissFar = 0, ballMissLate = 0;
-    // Contatos do corpo com a bola que nao foram toques pedidos (a passada
-    // chutando a bola sem querer).
-    int ballAccidental = 0;
-    bool ballContactPrevious = false;
-    float ballTouchAt = -1;
-    float ballMaxDistance = 0, ballDistanceSum = 0, shotSpeed = -1, shotYawError = 0, shotElevation = 0;
-    int ballDistanceSamples = 0;
-    float shotAt = -1;
-    // Chute: onde estava o pe de apoio no toque (em relacao a bola, na mira:
-    // a frente / de lado), do pedido ao toque (s), giro, altura maxima da
-    // bola e o desvio lateral dela ao passar 20 m (ou no fim).
-    float shotRequestAt = -1, shotPlantAlong = 0, shotPlantAcross = 0, shotDelay = -1, shotSpin = 0;
-    float shotApex = 0, shotLateral20 = 0, shotTravel = 0;
-    int shotKickSide = -1;
-    bool shotLateralDone = false;
-    Vec3 shotStart;
-    std::array<int, 5> ballSurfaces {};
-    // O maior reforco de estabilidade do gesto que valeu (V3).
-    float ballStabilityPeak = 0.0f;
     Vec3 slidePrevious {};
     bool slideOnGround = false;
     float tackleArmedAt = -1;
@@ -1090,17 +1057,6 @@ ScenarioResult runScenario(const Scenario& scenario) {
     auto scene = engine.createScene({}, materials);
     staticBox(*scene, {0, 0, -0.1f}, {60, 60, 0.1f});
     if (scenario.build) scenario.build(*scene);
-    BallControl3D ballControl;
-    // O reforco de estabilidade do gesto com a bola (V3; XSEMREFORCO desliga).
-    float ballActionStability = 0.0f;
-    // O roteiro do pe do manejo no tick (rastro do contrato dos pes).
-    BallFootScript3D lastBallScript;
-    int lastBallPhase = 0;
-    // Segurando o rumo (manejo automatico): a capsula vai assim no proximo
-    // tick.
-    bool autoSteerActive = false;
-    Vec3 autoSteerVelocity {};
-    // (O toque por area saiu no rework de 06/10: footTouch e o padrao.)
     bool ballPlaced = false;
     // O dono da bola (como no laboratorio; BallOwnership3D).
     BallOwnership3D ballOwnership;
@@ -1616,11 +1572,6 @@ ScenarioResult runScenario(const Scenario& scenario) {
                 locomotion.physicalState().centerOfMassVelocityWorld,
                 physicalNavigationLead3D(controller.settings().walkingAssistScale));
         }
-        if (autoSteerActive && !std::getenv("XAUTONOHOLD")) {
-            const float v = autoSteerVelocity.length();
-            command.moveDirection = v > 1e-3f ? autoSteerVelocity * (1.0f / v) : Vec3 {};
-            command.speedScale = v / (wanted.sprint ? settings.sprintSpeed : settings.walkSpeed);
-        }
         // Experimento v2 (XNAVPOWER = W/kg): a velocidade da capsula vem de um
         // plano viavel - ganhar velocidade ate P/v (a potencia de quem corre:
         // ~3 m/s2 a 7 m/s), frear e virar ate XNAVACC (10) - e, andando, a no
@@ -1982,7 +1933,7 @@ ScenarioResult runScenario(const Scenario& scenario) {
         input.getUpStrength = std::getenv("XGUFORCA") ? std::strtof(std::getenv("XGUFORCA"), nullptr) : 0.7f;
         input.getUpHurry = std::getenv("XLEVPRESSA") != nullptr;
         input.standingAssist = controller.settings().legsAssistRetained;
-        if (scenario.ballScript && scenario.ball && scene->contains(*scenario.ball)) {
+        if (scenario.ball && scene->contains(*scenario.ball)) {
             if (!ballPlaced && scenario.ballPlaceAt >= 0.0f && t >= scenario.ballPlaceAt) {
                 ballPlaced = true;
                 if (scenario.ballClaimAtPlace) ballOwnership.interact(9101);
@@ -1998,21 +1949,12 @@ ScenarioResult runScenario(const Scenario& scenario) {
                     { pelvis.x + c * o.x - sn * o.y, pelvis.y + sn * o.x + c * o.y,
                         scenario.ballPlaceHeight > 0.0f ? scenario.ballPlaceHeight : was.position.z }, velocity, spin);
             }
-            if (scenario.ballReplaceEvery > 0.0f && std::fmod(t, scenario.ballReplaceEvery) < dt) {
-                const int k = static_cast<int>(t / scenario.ballReplaceEvery) + 31 * scenario.ballReplaceSeed;
-                const float a = static_cast<float>((k * 2654435761u) % 6283u) / 1000.0f;
-                const float d = 0.5f + static_cast<float>((k * 40503u) % 1500u) / 1000.0f;
-                const Vec3 pelvis = state.links.front().position;
-                scene->setInflatedBallMotion(*scenario.ball,
-                    { pelvis.x + d * std::cos(a), pelvis.y + d * std::sin(a), 0.11f }, {}, {});
-            }
             const InflatedBallState3D ball = scene->inflatedBallState(*scenario.ball);
             if (scenario.ballProbe) scenario.ballProbe(t, ball.position, ball.linearVelocity, state);
             if (scenario.ballCollides && !std::getenv("XSEMDONO")) {
                 // Como no laboratorio: o dono da bola (quem a toca ou interage
                 // com ela) nao colide com ela; longe dela, solta.
-                if (ballControl.phase() != BallControlPhase3D::Idle || scenario.forcePassThrough)
-                    ballOwnership.interact(9101);
+                if (scenario.forcePassThrough) ballOwnership.interact(9101);
                 const Vec3 playerPelvis = state.links.front().position;
                 Vec3 npcPelvis {};
                 if (scenario.npc) npcPelvis = scene->ragdollState(npcHandle).links.front().position;
@@ -2025,170 +1967,6 @@ ScenarioResult runScenario(const Scenario& scenario) {
                 scene->setInflatedBallOwner(*scenario.ball, ballOwnership.owner() == 9101 ? handle
                     : ballOwnership.owner() == 9102 && scenario.npc ? npcHandle : RagdollHandle3D {});
                 result.ballOwnedTicks += ballOwnership.owner() == 9101 ? 1 : 0;
-            }
-            BallControlInput3D request;
-            float power = 0.0f;
-            Vec3 direction {};
-            const bool controlReady = ballControl.phase() == BallControlPhase3D::Idle
-                || ballControl.phase() == BallControlPhase3D::FollowThrough;
-            if (scenario.ballScript)
-                request.request = scenario.ballScript(t, ball.position, state.links.front().position,
-                    controlReady, power, direction);
-            if (request.request != BallActionKind3D::None) ++result.ballRequests;
-            if (request.request == BallActionKind3D::Shot) {
-                request.shotLift = scenario.shotLift;
-                request.shotCurve = scenario.shotCurve;
-                result.shotRequestAt = t;
-            }
-            request.power = power;
-            request.direction = direction;
-            request.lookYawRadians = wanted.lookYaw;
-            request.ballValid = true;
-            request.ballPosition = ball.position;
-            request.ballVelocity = ball.linearVelocity;
-            request.profile = &profile;
-            request.state = &state;
-            request.facingYawRadians = wanted.lookYaw;
-            request.bodyYawRadians = locomotion.telemetry().facingYawRadians;
-            request.bodyYawValid = true;
-            request.groundHeight = 0.0f;
-            request.requestedVelocity = input.intent.requestedVelocityWorld;
-            // (A velocidade do corpo: no fisico, a da pelve - como no
-            // laboratorio; a capsula vai a frente do corpo que atrasa.)
-            request.bodyVelocityValid = false;
-            if (const char* factor = std::getenv("XFATOR")) request.contactTimingFactor = std::strtof(factor, nullptr);
-            // (XSEMHITBOX: a forca pelo tempo da V3, sem a hitbox do pe.)
-            request.hitboxContact = std::getenv("XSEMHITBOX") == nullptr;
-            for (std::size_t side = 0; side < 2; ++side) {
-                request.swingProgress[side] = locomotion.telemetry().footSwingProgress[side];
-                request.footPlanted[side] = locomotion.telemetry().footPlanted[side];
-                request.footLanding[side] = locomotion.telemetry().footLandingWorld[side];
-                request.secondsToTouchdown[side] = locomotion.telemetry().footSecondsToTouchdown[side];
-            }
-            {
-                const CharacterLocomotionState3D now = locomotion.telemetry().state;
-                request.standing = (now == CharacterLocomotionState3D::Idle || now == CharacterLocomotionState3D::Turning)
-                    && input.intent.requestedVelocityWorld.lengthSquared() < 0.01f;
-            }
-            request.deltaTime = dt;
-            BallControlOutput3D touch;
-            ballControl.update(request, touch);
-            lastBallScript = touch.script;
-            lastBallPhase = static_cast<int>(touch.phase);
-            if (std::getenv("XMANEJOVEL") && tick % 12 == 0)
-                std::printf("VEL %.2f pelve (%.2f %.2f %.2f) v (%.2f %.2f) bola (%.2f %.2f) vb %.2f fase %d estado %d\n", t,
-                    state.links.front().position.x, state.links.front().position.y, state.links.front().position.z,
-                    state.links.front().linearVelocity.x, state.links.front().linearVelocity.y, ball.position.x,
-                    ball.position.y, ball.linearVelocity.length(), static_cast<int>(touch.phase),
-                    static_cast<int>(locomotion.telemetry().state));
-            // O reforco (como no laboratorio: cortado na volta de um impacto).
-            ballActionStability = std::getenv("XSEMREFORCO") || (impactAssistModel && playerImpact.recovering())
-                ? 0.0f : touch.stability;
-            result.ballStabilityPeak = std::max(result.ballStabilityPeak, ballActionStability);
-            // (O manejo nunca leva o corpo ate a bola - rework de 06/10; o
-            // chute correndo so freia um pouco.)
-            autoSteerActive = false;
-            input.intent.requestedVelocityWorld = input.intent.requestedVelocityWorld * touch.speedScale;
-            input.ballGesture = touch.gesture;
-            input.ballFoot = touch.foot;
-            input.ballScript = touch.script;
-            input.ballBody = touch.body;
-            input.ballRepel = touch.repel;
-            input.ballAvoid = touch.avoid;
-            input.ballPlant = touch.plant;
-            input.ballGaitRate = touch.gaitRate;
-            input.ballKick = touch.kick;
-            if (touch.setMotion)
-                scene->setInflatedBallMotion(*scenario.ball, ball.position, touch.ballVelocity, touch.ballSpin);
-            {
-                bool contact = false;
-                for (std::uint32_t k = 0; k < ball.contactCount; ++k) contact = contact || ball.contacts[k].otherDynamic;
-                if (contact && !result.ballContactPrevious && (result.ballTouchAt < 0.0f || t - result.ballTouchAt > 0.15f)
-                    && !touch.touched)
-                    ++result.ballAccidental;
-                result.ballContactPrevious = contact;
-            }
-            if (touch.touched) {
-                result.ballTouchAt = t;
-                ++result.ballTouches;
-                ++result.ballSurfaces[static_cast<std::size_t>(touch.surface)];
-                if (touch.kind == BallActionKind3D::Shot) {
-                    result.shotAt = t;
-                    result.shotDelay = t - result.shotRequestAt;
-                    result.shotSpin = touch.ballSpin.length();
-                    result.shotKickSide = touch.side;
-                    result.shotStart = ball.position;
-                    if (touch.plant.active) {
-                        const Vec3 plant = state.links[feet[static_cast<std::size_t>(touch.plant.side)]].position;
-                        const Vec3 aim { std::cos(wanted.lookYaw), std::sin(wanted.lookYaw), 0.0f };
-                        const Vec3 off { plant.x - ball.position.x, plant.y - ball.position.y, 0.0f };
-                        result.shotPlantAlong = dot(off, aim);
-                        result.shotPlantAcross = off.x * -aim.y + off.y * aim.x;
-                    }
-                }
-            }
-            if (touch.missReason == 1) ++result.ballMissFar;
-            if (touch.missReason == 2) ++result.ballMissLate;
-            if (std::getenv("XCHUTETRACE") && (tick % 3 == 0 || touch.touched) && touch.kind == BallActionKind3D::Shot)
-                std::printf("CHU %.3f fase %d chute %d apoio %d(%d) estagio %.2f peso %.2f ritmo %.2f gap %.3f | prog %.2f %.2f plant %d %d | pouso apoio (%.2f %.2f) alvo (%.2f %.2f) | pe chute (%.2f %.2f %.2f) alvo (%.2f %.2f %.2f) | bola (%.2f %.2f) v %.1f%s\n",
-                    t,
-                    static_cast<int>(touch.phase), touch.side, touch.plant.side, touch.plant.active ? 1 : 0, touch.kick.stage,
-                    touch.kick.weight, touch.gaitRate, touch.footGap, request.swingProgress[0], request.swingProgress[1],
-                    request.footPlanted[0] ? 1 : 0, request.footPlanted[1] ? 1 : 0,
-                    touch.plant.side >= 0 ? request.footLanding[static_cast<std::size_t>(touch.plant.side)].x : 0.0f,
-                    touch.plant.side >= 0 ? request.footLanding[static_cast<std::size_t>(touch.plant.side)].y : 0.0f,
-                    touch.plant.position.x, touch.plant.position.y,
-                    touch.side >= 0 ? state.links[feet[static_cast<std::size_t>(touch.side)]].position.x : 0.0f,
-                    touch.side >= 0 ? state.links[feet[static_cast<std::size_t>(touch.side)]].position.y : 0.0f,
-                    touch.side >= 0 ? state.links[feet[static_cast<std::size_t>(touch.side)]].position.z : 0.0f,
-                    touch.foot.position.x, touch.foot.position.y, touch.foot.position.z,
-                    ball.position.x, ball.position.y, ball.linearVelocity.length(), touch.touched ? " TOQUE" : "");
-            if (std::getenv("XGESTOTRACE") && touch.gesture.active && tick % 2 == 0) {
-                const int side = touch.gesture.side;
-                const Vec3 actual = state.links[feet[static_cast<std::size_t>(side)]].position;
-                std::printf("GES %.3f fase %d pe %d peso %.2f alvo (%.2f %.2f %.2f) real (%.2f %.2f %.2f) erro %.2f gap %.3f planted %d %d prog %.2f %.2f%s\n",
-                    t, static_cast<int>(touch.phase), side, touch.foot.weight, touch.foot.position.x, touch.foot.position.y,
-                    touch.foot.position.z, actual.x, actual.y, actual.z, (touch.foot.position - actual).length(), touch.footGap,
-                    request.footPlanted[0] ? 1 : 0, request.footPlanted[1] ? 1 : 0, request.swingProgress[0],
-                    request.swingProgress[1], touch.touched ? " TOQUE" : "");
-            }
-            if (std::getenv("XMANEJOTRACE") && tick % 6 == 0)
-                std::printf("MAN %.2f fase %d pe %d sup %d gap %.3f peso %.2f | desvio E (%.2f %.2f %.2f) D (%.2f %.2f %.2f) | prog %.2f %.2f | bola (%.2f %.2f %.2f) v %.2f a frente %.2f | corpo v %.2f | pe (%.2f %.2f %.2f)%s\n",
-                    t, static_cast<int>(touch.phase), touch.side, static_cast<int>(touch.surface), touch.footGap, touch.foot.weight,
-                    touch.avoid[0].x, touch.avoid[0].y, touch.avoid[0].z, touch.avoid[1].x, touch.avoid[1].y, touch.avoid[1].z,
-                    request.swingProgress[0], request.swingProgress[1],
-                    ball.position.x, ball.position.y, ball.position.z, ball.linearVelocity.length(),
-                    std::hypot(ball.position.x - state.links.front().position.x, ball.position.y - state.links.front().position.y),
-                    std::hypot(state.links.front().linearVelocity.x, state.links.front().linearVelocity.y),
-                    touch.side >= 0 ? state.links[feet[static_cast<std::size_t>(touch.side)]].position.x : 0.0f,
-                    touch.side >= 0 ? state.links[feet[static_cast<std::size_t>(touch.side)]].position.y : 0.0f,
-                    touch.side >= 0 ? state.links[feet[static_cast<std::size_t>(touch.side)]].position.z : 0.0f,
-                    touch.touched ? " TOQUE" : "");
-            // Distancia da bola a pelve com o corpo andando; o chute.
-            const Vec3 pelvis = state.links.front().position;
-            if (std::hypot(state.links.front().linearVelocity.x, state.links.front().linearVelocity.y) > 1.0f
-                && result.shotAt < 0.0f) {
-                const float d = std::hypot(ball.position.x - pelvis.x, ball.position.y - pelvis.y);
-                result.ballMaxDistance = std::max(result.ballMaxDistance, d);
-                result.ballDistanceSum += d;
-                ++result.ballDistanceSamples;
-            }
-            if (result.shotAt >= 0.0f) {
-                const Vec3 aim { std::cos(wanted.lookYaw), std::sin(wanted.lookYaw), 0.0f };
-                const Vec3 off = ball.position - result.shotStart;
-                result.shotApex = std::max(result.shotApex, ball.position.z);
-                result.shotTravel = dot(Vec3 { off.x, off.y, 0.0f }, aim);
-                if (!result.shotLateralDone) {
-                    result.shotLateral20 = off.x * -aim.y + off.y * aim.x;
-                    result.shotLateralDone = result.shotTravel >= 20.0f;
-                }
-            }
-            if (result.shotAt >= 0.0f && t - result.shotAt < 0.2f && ball.linearVelocity.length() > result.shotSpeed) {
-                result.shotSpeed = ball.linearVelocity.length();
-                const float yaw = std::atan2(ball.linearVelocity.y, ball.linearVelocity.x);
-                result.shotYawError = std::remainder(yaw - wanted.lookYaw, 6.2831853f) * 57.2958f;
-                result.shotElevation = std::atan2(ball.linearVelocity.z,
-                    std::hypot(ball.linearVelocity.x, ball.linearVelocity.y)) * 57.2958f;
             }
         }
         // Cambaleio (como no laboratorio; XSEMCAMBALEIO desliga): a ajuda e
@@ -2289,7 +2067,6 @@ ScenarioResult runScenario(const Scenario& scenario) {
         intent.targetPose = &output.targetPose;
         intent.footPlantedValid = true;
         intent.footPlanted = locomotion.telemetry().footPlanted;
-        intent.actionStability = ballActionStability;
         controller.update(profile, state, output.guide, intent, dt);
         const auto& physical = controller.output();
         // Invariante do modo fisico: o guia nunca escreve transform (pose e
@@ -5258,9 +5035,8 @@ ScenarioResult runScenario(const Scenario& scenario) {
                     if (telemetry.footPlanted[side] != planted) {
                         ++result.ownerMismatch;
                         if (std::getenv("XDONOTRACE"))
-                            std::printf("DONO %.3f pe %zu fase %d plantado %d | bola fase %d roteiro %d pe %d swing %d\n", t,
-                                side, static_cast<int>(foot.phase), telemetry.footPlanted[side] ? 1 : 0, lastBallPhase,
-                                lastBallScript.active ? 1 : 0, lastBallScript.side, lastBallScript.swing ? 1 : 0);
+                            std::printf("DONO %.3f pe %zu fase %d plantado %d\n", t,
+                                side, static_cast<int>(foot.phase), telemetry.footPlanted[side] ? 1 : 0);
                     }
                 }
                 if (owned && previousOwned[side] && wasInAir && foot.phase == FootPhase3D::Stance)
@@ -7513,11 +7289,9 @@ void stumbleSweep() {
 // pose do padrao ao corpo (juntas das pernas, pes em relacao a pelve, rumo)
 // e o pico de velocidade das juntas das pernas na mistura.
 void modeSwitchSweep() {
-    const BallPreviewAssets3D assets = loadBallPreviewAssets3D(MATTERENGINE_TEST_ASSETS_DIR);
-    const RagdollProfile3D& profile = assets.character.profile;
-    const CharacterLocomotionAnimations3D animations = defaultLocomotionAnimations3D(
-        mapCharacterAnimations3D(assets.character, assets.clips), assets.character.defaultLocomotionClipIds,
-        assets.clips);
+    const std::shared_ptr<const AthleteBundle3D> bundle = AthleteBundle3D::shared(MATTERENGINE_TEST_ASSETS_DIR);
+    const RagdollProfile3D& profile = bundle->profile();
+    const CharacterLocomotionAnimations3D animations = *bundle->assets().defaultClips;
     std::size_t feet[2] = { 0, 0 };
     std::vector<bool> leg(profile.links.size(), false);
     for (std::size_t i = 0; i < profile.links.size(); ++i) {
@@ -7664,10 +7438,8 @@ void modeSwitchSweep() {
 // semente). Mede o alvo dos motores contra o corpo na troca, o giro do alvo
 // e do corpo nas pernas depois (e o do corpo antes) e a velocidade perdida.
 void switchToPhysicalSweep() {
-    const BallPreviewAssets3D assets = loadBallPreviewAssets3D(MATTERENGINE_TEST_ASSETS_DIR);
-    const CharacterLocomotionAnimations3D animations = defaultLocomotionAnimations3D(
-        mapCharacterAnimations3D(assets.character, assets.clips), assets.character.defaultLocomotionClipIds,
-        assets.clips);
+    const std::shared_ptr<const AthleteBundle3D> bundle = AthleteBundle3D::shared(MATTERENGINE_TEST_ASSETS_DIR);
+    const CharacterLocomotionAnimations3D animations = *bundle->assets().defaultClips;
     struct Case { const char* name; Vec3 move; bool sprint; };
     const Case cases[] = { { "trote", { 1, 0, 0 }, false }, { "trote lado", { 0, 1, 0 }, false },
         { "trote costas", { -1, 0, 0 }, false }, { "sprint", { 1, 0, 0 }, true } };
@@ -7710,10 +7482,8 @@ void switchToPhysicalSweep() {
 // do zero, como antes). Mede se ele termina de pe, quando, e o membro mais
 // rapido.
 void tackleSwitchSweep() {
-    const BallPreviewAssets3D assets = loadBallPreviewAssets3D(MATTERENGINE_TEST_ASSETS_DIR);
-    const CharacterLocomotionAnimations3D animations = defaultLocomotionAnimations3D(
-        mapCharacterAnimations3D(assets.character, assets.clips), assets.character.defaultLocomotionClipIds,
-        assets.clips);
+    const std::shared_ptr<const AthleteBundle3D> bundle = AthleteBundle3D::shared(MATTERENGINE_TEST_ASSETS_DIR);
+    const CharacterLocomotionAnimations3D animations = *bundle->assets().defaultClips;
     int standing = 0, total = 0;
     for (const bool sprint : { true, false }) {
         for (const float after : { 0.08f, 0.2f, 0.35f, 0.5f, 0.7f }) {
@@ -7745,10 +7515,8 @@ void tackleSwitchSweep() {
 // usuario, 05/10 noite: no padrao o choque nao era o do fisico). Mede quando
 // troca, se cai, quando, e se termina de pe.
 void impactSweep() {
-    const BallPreviewAssets3D assets = loadBallPreviewAssets3D(MATTERENGINE_TEST_ASSETS_DIR);
-    const CharacterLocomotionAnimations3D animations = defaultLocomotionAnimations3D(
-        mapCharacterAnimations3D(assets.character, assets.clips), assets.character.defaultLocomotionClipIds,
-        assets.clips);
+    const std::shared_ptr<const AthleteBundle3D> bundle = AthleteBundle3D::shared(MATTERENGINE_TEST_ASSETS_DIR);
+    const CharacterLocomotionAnimations3D animations = *bundle->assets().defaultClips;
     if (!std::getenv("XGOLPE")) setenv("XGOLPE", "4", 1);
     struct Case { const char* name; float jumpX; float height; };
     const Case cases[] = { { "parede", -1.0f, 1.0f }, { "mureta", -1.0f, 0.35f },
@@ -7799,10 +7567,8 @@ void impactSweep() {
 // (dinamico levado a pose). Mede o erro dos links contra a pose (antes e
 // depois da correcao do fim do passo) e o maior pico de aceleracao de um link.
 void guidedBodySweep() {
-    const BallPreviewAssets3D assets = loadBallPreviewAssets3D(MATTERENGINE_TEST_ASSETS_DIR);
-    const CharacterLocomotionAnimations3D animations = defaultLocomotionAnimations3D(
-        mapCharacterAnimations3D(assets.character, assets.clips), assets.character.defaultLocomotionClipIds,
-        assets.clips);
+    const std::shared_ptr<const AthleteBundle3D> bundle = AthleteBundle3D::shared(MATTERENGINE_TEST_ASSETS_DIR);
+    const CharacterLocomotionAnimations3D animations = *bundle->assets().defaultClips;
     struct Case { const char* name; std::function<ScenarioCommand(float)> script; };
     const Case cases[] = {
         { "sprint reto", [](float t) { ScenarioCommand c; if (t > 0.3f) c.move = { 1, 0, 0 }; c.sprint = true; return c; } },
@@ -7840,10 +7606,8 @@ void guidedBodySweep() {
 // fisico. Com o corpo guiado (o do laboratorio) ou o cinematico (XGUIADO=0,
 // massa infinita).
 void bumpSweep() {
-    const BallPreviewAssets3D assets = loadBallPreviewAssets3D(MATTERENGINE_TEST_ASSETS_DIR);
-    const CharacterLocomotionAnimations3D animations = defaultLocomotionAnimations3D(
-        mapCharacterAnimations3D(assets.character, assets.clips), assets.character.defaultLocomotionClipIds,
-        assets.clips);
+    const std::shared_ptr<const AthleteBundle3D> bundle = AthleteBundle3D::shared(MATTERENGINE_TEST_ASSETS_DIR);
+    const CharacterLocomotionAnimations3D animations = *bundle->assets().defaultClips;
     if (!std::getenv("XGOLPE")) setenv("XGOLPE", "4", 1);
     int playerFalls = 0, npcFalls = 0, hits = 0, total = 0;
     float npcSpeed = 0;
@@ -7906,10 +7670,8 @@ void bumpSweep() {
 // 5 s) - no modo fisico (padrao) e no padrao (XVELPADRAO). Para calibrar as
 // velocidades do padrao pelas do fisico.
 void gaitSpeedSweep() {
-    const BallPreviewAssets3D assets = loadBallPreviewAssets3D(MATTERENGINE_TEST_ASSETS_DIR);
-    const CharacterLocomotionAnimations3D animations = defaultLocomotionAnimations3D(
-        mapCharacterAnimations3D(assets.character, assets.clips), assets.character.defaultLocomotionClipIds,
-        assets.clips);
+    const std::shared_ptr<const AthleteBundle3D> bundle = AthleteBundle3D::shared(MATTERENGINE_TEST_ASSETS_DIR);
+    const CharacterLocomotionAnimations3D animations = *bundle->assets().defaultClips;
     const bool defaultMode = std::getenv("XVELPADRAO") != nullptr;
     for (const bool sprint : { false, true }) {
         for (const float degrees : { 0.0f, 45.0f, 90.0f, 135.0f, 180.0f }) {
@@ -7934,10 +7696,8 @@ void gaitSpeedSweep() {
 }
 
 void airTackleSwitchSweep() {
-    const BallPreviewAssets3D assets = loadBallPreviewAssets3D(MATTERENGINE_TEST_ASSETS_DIR);
-    const CharacterLocomotionAnimations3D animations = defaultLocomotionAnimations3D(
-        mapCharacterAnimations3D(assets.character, assets.clips), assets.character.defaultLocomotionClipIds,
-        assets.clips);
+    const std::shared_ptr<const AthleteBundle3D> bundle = AthleteBundle3D::shared(MATTERENGINE_TEST_ASSETS_DIR);
+    const CharacterLocomotionAnimations3D animations = *bundle->assets().defaultClips;
     struct Case { const char* name; bool sprint; float crouchAt, crouchUntil, sprintFrom; };
     constexpr float JumpAt = 1.6f;
     const Case cases[] = {
@@ -7989,10 +7749,8 @@ void airTackleSwitchSweep() {
 // Pulo no padrao que vira fisico na decolagem (sweeppuloida): o giro da
 // pelve no voo (XYAWTRACE para o trace).
 void jumpSwitchSweep() {
-    const BallPreviewAssets3D assets = loadBallPreviewAssets3D(MATTERENGINE_TEST_ASSETS_DIR);
-    const CharacterLocomotionAnimations3D animations = defaultLocomotionAnimations3D(
-        mapCharacterAnimations3D(assets.character, assets.clips), assets.character.defaultLocomotionClipIds,
-        assets.clips);
+    const std::shared_ptr<const AthleteBundle3D> bundle = AthleteBundle3D::shared(MATTERENGINE_TEST_ASSETS_DIR);
+    const CharacterLocomotionAnimations3D animations = *bundle->assets().defaultClips;
     const float switchDelay = std::getenv("XPULOATRASO") ? std::strtof(std::getenv("XPULOATRASO"), nullptr) : 0.05f;
     for (const bool sprint : { false, true }) {
         for (int k = 0; k < 6; ++k) {
@@ -8055,11 +7813,9 @@ void tackledNpcSweep() {
 // frente, lado e tras do corpo. Mede o pico de giro das juntas das pernas e
 // a pelve; XENTREGAPOSES=prefixo grava as poses (previa).
 void getUpHandoffSweep() {
-    const BallPreviewAssets3D assets = loadBallPreviewAssets3D(MATTERENGINE_TEST_ASSETS_DIR);
-    const RagdollProfile3D& profile = assets.character.profile;
-    const CharacterLocomotionAnimations3D animations = defaultLocomotionAnimations3D(
-        mapCharacterAnimations3D(assets.character, assets.clips), assets.character.defaultLocomotionClipIds,
-        assets.clips);
+    const std::shared_ptr<const AthleteBundle3D> bundle = AthleteBundle3D::shared(MATTERENGINE_TEST_ASSETS_DIR);
+    const RagdollProfile3D& profile = bundle->profile();
+    const CharacterLocomotionAnimations3D animations = *bundle->assets().defaultClips;
     const bool shift = std::getenv("XLEVSHIFT") != nullptr;
     setenv("XLEVTECLAS", "1", 1);
     std::size_t feet[2] = { 0, 0 };
@@ -8390,194 +8146,8 @@ void tackleSweep() {
     }
 }
 
-// Manejo de bola (sweepmanejo): a bola a frente, ele corre (trote ou
-// sprint) para a frente ou de lado, e dribla (um toque a cada intervalo, na
-// direcao do movimento) ou chuta (forca 0,5 e 1) quando a bola esta a
-// frente. Mede toques por pedido, quantas vezes a bola fugiu, a distancia
-// dela, quedas e o chute. XMANEJOCASO=k roda so o caso k; XMANEJOTRACE
-// imprime o toque.
-void ballHandlingSweep() {
-    int part = 0, parts = 1;
-    if (const char* p = std::getenv("XSWEEPPART")) std::sscanf(p, "%d/%d", &part, &parts);
-    const int only = std::getenv("XMANEJOCASO") ? std::atoi(std::getenv("XMANEJOCASO")) : -1;
-    struct Case { const char* name; bool sprint; float moveDegrees; float interval; float power; float shotPower; };
-    const std::vector<Case> cases = {
-        {"frente-trote", false, 0, 0.95f, 0.25f, -1}, {"frente-trote-forte", false, 0, 1.2f, 0.6f, -1},
-        {"frente-sprint", true, 0, 0.95f, 0.3f, -1}, {"esquerda-trote", false, 90, 0.95f, 0.25f, -1},
-        {"direita-trote", false, -90, 0.95f, 0.25f, -1}, {"diag-esq", false, 45, 0.95f, 0.25f, -1},
-        {"chute-trote-50", false, 0, 0.0f, 0.0f, 0.5f}, {"chute-trote-100", false, 0, 0.0f, 0.0f, 1.0f},
-        {"chute-sprint-100", true, 0, 0.0f, 0.0f, 1.0f}};
-    int index = -1;
-    for (const Case& c : cases) {
-        ++index;
-        if (only >= 0 ? index != only : index % parts != part) continue;
-        const float yaw = c.moveDegrees * 3.14159265f / 180.0f;
-        const Vec3 move { std::cos(yaw), std::sin(yaw), 0.0f };
-        auto handle = std::make_shared<InflatedBallHandle3D>();
-        auto lastRequest = std::make_shared<float>(-10.0f);
-        // Driblando, a bola comeca perto; no chute, a frente (ele chega
-        // correndo e o pedido sai antes).
-        const float ahead = c.shotPower >= 0.0f ? (c.sprint ? 4.0f : 2.4f) : 0.75f;
-        Scenario scenario {"manejo", 6.0f, [=](PhysicsScene3D& scene) {
-            InflatedBallDefinition3D ball;
-            ball.position = { ahead * move.x, ahead * move.y, ball.profile.radiusMeters };
-            ball.entityId = 778;
-            *handle = scene.createInflatedBall(ball);
-        }, [=](float t) {
-            ScenarioCommand command;
-            if (t >= 0.6f) command.move = move;
-            command.sprint = c.sprint;
-            command.lookYaw = 0.0f;
-            return command;
-        }, {}};
-        scenario.ball = handle;
-        // (XDONO: a bola como no laboratorio - o dono atravessa com as pernas.
-        // Sem ela, a bola colide com o corpo inteiro o tempo todo.)
-        scenario.ballCollides = std::getenv("XDONO") != nullptr;
-        scenario.ballScript = [=](float t, Vec3 ball, Vec3 pelvis, bool idle, float& power, Vec3& direction) {
-            if (c.shotPower >= 0.0f) {
-                // (Rework de 06/10: o pedido so vale com a bola no alcance -
-                // o jogador aperta quando chega nela.)
-                const float near = dot(Vec3 { ball.x - pelvis.x, ball.y - pelvis.y, 0.0f }, move);
-                if (t >= 1.0f && *lastRequest < 0.0f && near < 0.85f && near > 0.2f) {
-                    *lastRequest = t;
-                    power = c.shotPower;
-                    direction = { 1.0f, 0.0f, 0.0f };
-                    return BallActionKind3D::Shot;
-                }
-                return BallActionKind3D::None;
-            }
-            // O jogador toca quando a bola esta a frente, perto (entre 0,35 e
-            // 1,1 m da pelve na direcao do movimento), com o toque anterior
-            // terminado.
-            const float ahead = dot(Vec3 { ball.x - pelvis.x, ball.y - pelvis.y, 0.0f }, move);
-            if (t >= 0.6f && idle && t - *lastRequest >= 0.25f && ahead > 0.35f && ahead < 0.8f) {
-                *lastRequest = t;
-                power = c.power;
-                direction = move;
-                return BallActionKind3D::Dribble;
-            }
-            return BallActionKind3D::None;
-        };
-        const ScenarioResult r = runScenario(scenario);
-        std::printf("MANEJO %d %-18s | pedidos %d toques %d (longe %d atrasado %d) acidentais %d sup %d/%d/%d/%d | bola max %.2f m media %.2f m | quedas %d (%.2f s) | chute v %.1f m/s rumo %+.1f elev %.1f\n",
-            index, c.name, r.ballRequests, r.ballTouches, r.ballMissFar, r.ballMissLate, r.ballAccidental,
-            r.ballSurfaces[0], r.ballSurfaces[1], r.ballSurfaces[2], r.ballSurfaces[3],
-            r.ballMaxDistance, r.ballDistanceSamples ? r.ballDistanceSum / r.ballDistanceSamples : 0.0f,
-            r.falls, r.firstFallSeconds, r.shotSpeed, r.shotYawError, r.shotElevation);
-    }
-}
 
-// Manejo como impacto (sweepmanejoimpacto, 06/10): o jogador parado, a bola
-// vindo nele a 4 m/s; um toque contra ela (o rumo de onde ela vem) na forca
-// do caso. Mede a velocidade dela 0,15 a 0,45 s depois do toque (+ = devolvida,
-// - = ainda vindo).
-void ballImpactSweep() {
-    for (const float power : { 0.0f, 0.1f, 0.4f, 1.0f }) {
-        auto handle = std::make_shared<InflatedBallHandle3D>();
-        auto touchAt = std::make_shared<float>(-1.0f);
-        auto samples = std::make_shared<std::vector<std::pair<float, Vec3>>>();
-        Scenario scenario {"manejo impacto", 3.0f, [=](PhysicsScene3D& scene) {
-            InflatedBallDefinition3D ball;
-            ball.position = { 5.0f, 0.0f, ball.profile.radiusMeters };
-            ball.entityId = 780;
-            *handle = scene.createInflatedBall(ball);
-            // (Rolando: giro = (cima x v) / R.)
-            scene.setInflatedBallMotion(*handle, ball.position, { -4.0f, 0.0f, 0.0f },
-                { 0.0f, -4.0f / ball.profile.radiusMeters, 0.0f });
-        }, [=](float) { ScenarioCommand command; command.lookYaw = 0.0f; return command; }, {}};
-        scenario.ball = handle;
-        // (XDONO: a bola como no laboratorio - o dono atravessa com as pernas.)
-        scenario.ballCollides = std::getenv("XDONO") != nullptr;
-        scenario.ballScript = [=](float t, Vec3 ball, Vec3 pelvis, bool idle, float& p, Vec3& direction) {
-            samples->push_back({ t, ball });
-            if (*touchAt < 0.0f && idle && ball.x - pelvis.x < 1.0f) {
-                *touchAt = t;
-                p = power;
-                direction = { 1.0f, 0.0f, 0.0f };
-                return BallActionKind3D::Dribble;
-            }
-            return BallActionKind3D::None;
-        };
-        const ScenarioResult r = runScenario(scenario);
-        float after = 0.0f;
-        if (*touchAt > 0.0f) {
-            const auto at = [&](float when) {
-                Vec3 best {};
-                float gap = 1e9f;
-                for (const auto& [t, ball] : *samples)
-                    if (std::abs(t - when) < gap) { gap = std::abs(t - when); best = ball; }
-                return best;
-            };
-            after = (at(*touchAt + 0.45f).x - at(*touchAt + 0.15f).x) / 0.3f;
-        }
-        std::printf("MANEJOIMPACTO forca %.1f | toques %d | toque %.2f s | bola depois %+.2f m/s (+ devolvida)\n",
-            power, r.ballTouches, *touchAt, after);
-    }
-}
 
-// Recuo correndo (sweepmanejorecuo, 06/10): ele trota para a frente com a
-// bola; com ela a frente (0,3 a 1 m), um toque para tras na forca do caso,
-// o corpo ainda indo para a frente. Mede a velocidade da bola para tras (+)
-// 0,15 a 0,45 s depois.
-void ballRetractionSweep() {
-    for (const float power : { 0.1f, 0.25f, 0.5f }) {
-        auto handle = std::make_shared<InflatedBallHandle3D>();
-        auto lastRequest = std::make_shared<float>(-10.0f);
-        auto retractAt = std::make_shared<float>(-1.0f);
-        auto samples = std::make_shared<std::vector<std::pair<float, Vec3>>>();
-        Scenario scenario {"manejo recuo", 3.5f, [=](PhysicsScene3D& scene) {
-            InflatedBallDefinition3D ball;
-            ball.position = { 0.75f, 0.0f, ball.profile.radiusMeters };
-            ball.entityId = 781;
-            *handle = scene.createInflatedBall(ball);
-        }, [=](float t) {
-            ScenarioCommand command;
-            if (t >= 0.6f && *retractAt < 0.0f) command.move = { 1, 0, 0 };
-            command.lookYaw = 0.0f;
-            return command;
-        }, {}};
-        scenario.ball = handle;
-        // (XDONO: a bola como no laboratorio - o dono atravessa com as pernas.)
-        scenario.ballCollides = std::getenv("XDONO") != nullptr;
-        scenario.ballScript = [=](float t, Vec3 ball, Vec3 pelvis, bool idle, float& p, Vec3& direction) {
-            samples->push_back({ t, ball });
-            const float ahead = ball.x - pelvis.x;
-            if (*retractAt >= 0.0f || !idle || t - *lastRequest < 0.3f) return BallActionKind3D::None;
-            // (O primeiro toque fraco: desde 06/10 noite o toque andando empurra
-            // mais pela velocidade e o de 0,25 deixava a bola alem do alcance do
-            // recuo.)
-            if (t >= 0.6f && t < 1.2f && ahead > 0.35f && ahead < 0.8f) {
-                *lastRequest = t;
-                p = 0.1f;
-                direction = { 1, 0, 0 };
-                return BallActionKind3D::Dribble;
-            }
-            if (t >= 1.2f && ahead > 0.3f && ahead < 0.95f) {
-                *retractAt = t;
-                p = power;
-                direction = { -1, 0, 0 };
-                return BallActionKind3D::Dribble;
-            }
-            return BallActionKind3D::None;
-        };
-        const ScenarioResult r = runScenario(scenario);
-        float before = 0.0f, after = 0.0f;
-        if (*retractAt > 0.0f) {
-            const auto at = [&](float when) {
-                Vec3 best {};
-                float gap = 1e9f;
-                for (const auto& [t, ball] : *samples)
-                    if (std::abs(t - when) < gap) { gap = std::abs(t - when); best = ball; }
-                return best;
-            };
-            before = (at(*retractAt).x - at(*retractAt - 0.2f).x) / 0.2f;
-            after = -(at(*retractAt + 0.45f).x - at(*retractAt + 0.15f).x) / 0.3f;
-        }
-        std::printf("MANEJORECUO forca %.2f | toques %d | recuo %.2f s | bola antes %+.2f m/s (frente) depois %+.2f m/s"
-            " (+ para tras)\n", power, r.ballTouches, *retractAt, before, after);
-    }
-}
 
 // Fluidez (sweepfluidez, 04/10): a movimentacao com a ajuda do laboratorio
 // (padrao 100%) - o corpo contra a pose da animacao em cada manobra (o tronco
@@ -8737,174 +8307,7 @@ void standingTurnSweep() {
     }
 }
 
-// Chute correndo (sweepchutecorre, pedido do usuario 04/10: "ele precisa
-// acertar sempre, inclusive com a bola mais distante"): o jogador correndo
-// de varios jeitos (reto, sprint, zigue, corte, de lado, curva, parando,
-// virando do recuo); em 2 s a bola aparece num ponto em relacao ao corpo
-// (0,8/1,6/2,6 m; 0, +-40, +-80 graus) e o chute e pedido na hora, pelo pe.
-// Acerto: tocou em ate 1,5 s. XCORRECASO=padrao roda so ele.
-void runningShotSweep() {
-    const char* only = std::getenv("XCORRECASO");
-    int part = 0, parts = 1;
-    if (const char* p = std::getenv("XSWEEPPART")) std::sscanf(p, "%d/%d", &part, &parts);
-    constexpr float Pi = 3.14159265f;
-    constexpr float Request = 2.0f;
-    const std::vector<std::string> patterns = { "reto", "sprint", "zigue", "corte", "lado", "curva", "para", "vira",
-        "sprintzigue" };
-    // Variacoes: forca (XCORREFORCA), bola rolando no pedido (XCORREBOLAV
-    // "vx,vy" no referencial do corpo) e distancias (XCORREDIST "a,b,c").
-    const float shotPower = std::getenv("XCORREFORCA") ? std::strtof(std::getenv("XCORREFORCA"), nullptr) : 0.8f;
-    Vec3 ballVelocityBody {};
-    if (const char* v = std::getenv("XCORREBOLAV")) std::sscanf(v, "%f,%f", &ballVelocityBody.x, &ballVelocityBody.y);
-    std::vector<float> distances { 0.8f, 1.6f, 2.6f };
-    if (const char* v = std::getenv("XCORREDIST")) {
-        distances.clear();
-        std::string text = v;
-        std::size_t at = 0;
-        while (at < text.size()) {
-            const std::size_t comma = text.find(',', at);
-            distances.push_back(std::strtof(text.substr(at, comma - at).c_str(), nullptr));
-            if (comma == std::string::npos) break;
-            at = comma + 1;
-        }
-    }
-    int index = -1, hits = 0, runs = 0, falls = 0;
-    for (const std::string& pattern : patterns) {
-        if (only && pattern != only) continue;
-        for (const float distance : distances) {
-            for (const float degrees : { 0.0f, 40.0f, -40.0f, 80.0f, -80.0f }) {
-                ++index;
-                if (index % parts != part) continue;
-                auto handle = std::make_shared<InflatedBallHandle3D>();
-                auto requested = std::make_shared<bool>(false);
-                const float window = std::getenv("XCORREJANELA") ? std::strtof(std::getenv("XCORREJANELA"), nullptr) : 2.5f;
-                Scenario scenario {"chutecorre", Request + window + 0.1f, [=](PhysicsScene3D& scene) {
-                    InflatedBallDefinition3D ball;
-                    ball.position = { -30.0f, -30.0f, ball.profile.radiusMeters };
-                    ball.entityId = 779;
-                    ball.collidesWithRagdolls = false;
-                    *handle = scene.createInflatedBall(ball);
-                }, [=](float t) {
-                    ScenarioCommand c;
-                    if (t < 0.6f) return c;
-                    float yaw = 0.0f, look = 0.0f;
-                    bool lookFollows = true, move = true;
-                    if (pattern == "sprint") c.sprint = true;
-                    else if (pattern == "sprintzigue") {
-                        c.sprint = true;
-                        yaw = t < 1.5f ? 0.0f : (static_cast<int>((t - 1.5f) / 0.5f) % 2 == 0 ? 0.6f : -0.6f);
-                    } else if (pattern == "zigue") yaw = t < 1.5f ? 0.0f : (static_cast<int>((t - 1.5f) / 0.5f) % 2 == 0 ? 0.8f : -0.8f);
-                    else if (pattern == "corte") yaw = t < Request ? 0.0f : -Pi / 2.0f;
-                    else if (pattern == "lado") { yaw = Pi / 2.0f; lookFollows = false; }
-                    else if (pattern == "curva") yaw = 0.9f * (t - 0.6f);
-                    else if (pattern == "para") move = t < Request;
-                    else if (pattern == "vira") { yaw = t < Request ? Pi : 0.0f; lookFollows = false; }
-                    if (move) c.move = { std::cos(yaw), std::sin(yaw), 0.0f };
-                    c.lookYaw = lookFollows ? yaw : look;
-                    return c;
-                }, {}};
-                scenario.ball = handle;
-                scenario.footTouch = true;
-                scenario.ballPlaceAt = Request;
-                scenario.ballPlaceOffset = { distance * std::cos(degrees * Pi / 180.0f),
-                    distance * std::sin(degrees * Pi / 180.0f), 0.0f };
-                scenario.ballPlaceVelocity = ballVelocityBody;
-                scenario.ballScript = [=](float t, Vec3, Vec3, bool, float& power, Vec3& direction) {
-                    if (*requested || t < Request) return BallActionKind3D::None;
-                    *requested = true;
-                    power = shotPower;
-                    direction = {};
-                    return BallActionKind3D::Shot;
-                };
-                const ScenarioResult r = runScenario(scenario);
-                const bool hit = r.shotDelay >= 0.0f && r.shotDelay <= window;
-                hits += hit ? 1 : 0;
-                ++runs;
-                falls += r.falls;
-                std::printf("CHUTECORRE %-6s d %.1f a %+4.0f | %s em %.2f s pe %d | quedas %d\n", pattern.c_str(), distance,
-                    degrees, hit ? "TOCOU" : "falhou", r.shotDelay, r.shotKickSide, r.falls);
-                std::fflush(stdout);
-            }
-        }
-    }
-    std::printf("CHUTECORRE total: %d/%d, quedas %d\n", hits, runs, falls);
-}
 
-// Estresse do manejo (sweepbolaestresse, 04/10 - o crash ao chutar no
-// laboratorio): movimento aleatorio (8 rumos, paradas, sprint), a bola
-// reposta perto do corpo a cada ~1 s e pedidos de toque e chute a cada
-// 0,1-0,5 s, um substituindo o outro (parado e correndo). Passa se nao cai
-// nem quebra. XESTRESSESEMENTE escolhe a sequencia.
-void ballStressSweep() {
-    const int seed = std::getenv("XESTRESSESEMENTE") ? std::atoi(std::getenv("XESTRESSESEMENTE")) : 1;
-    constexpr float Pi = 3.14159265f;
-    struct Event { float at; int kind; float power; Vec3 place; bool movePlace; };
-    struct Segment { float until; bool move; float yaw; bool sprint; };
-    auto events = std::make_shared<std::vector<Event>>();
-    auto segments = std::make_shared<std::vector<Segment>>();
-    std::uint32_t state = 2166136261u ^ static_cast<std::uint32_t>(seed * 16777619u);
-    const auto next = [&]() {
-        state ^= state << 13; state ^= state >> 17; state ^= state << 5;
-        return static_cast<float>(state % 10000u) / 10000.0f;
-    };
-    for (float at = 0.8f; at < 12.0f;) {
-        Segment seg;
-        at += 0.3f + 0.9f * next();
-        seg.until = at;
-        seg.move = next() > 0.2f;
-        seg.yaw = std::floor(next() * 8.0f) * Pi / 4.0f;
-        seg.sprint = next() < 0.3f;
-        segments->push_back(seg);
-    }
-    for (float at = 1.0f; at < 12.0f;) {
-        Event e;
-        at += 0.1f + 0.4f * next();
-        e.at = at;
-        e.kind = next() < 0.45f ? 2 : 1;  // 2 chute, 1 toque
-        e.power = next();
-        e.movePlace = next() < 0.35f;
-        const float a = next() * 2.0f * Pi, d = 0.4f + 1.6f * next();
-        e.place = { d * std::cos(a), d * std::sin(a), 0.0f };
-        events->push_back(e);
-    }
-    auto handle = std::make_shared<InflatedBallHandle3D>();
-    auto cursor = std::make_shared<std::size_t>(0);
-    auto requests = std::make_shared<int>(0);
-    const bool collides = std::getenv("XESTRESSECOLIDE") != nullptr;
-    Scenario scenario {"estresse", 12.5f, [=](PhysicsScene3D& scene) {
-        InflatedBallDefinition3D ball;
-        ball.position = { 0.6f, 0.0f, ball.profile.radiusMeters };
-        ball.entityId = 779;
-        ball.collidesWithRagdolls = collides;
-        *handle = scene.createInflatedBall(ball);
-    }, [=](float t) {
-        ScenarioCommand c;
-        if (t < 0.8f) return c;
-        const Segment* seg = &segments->back();
-        for (const Segment& item : *segments) if (t < item.until) { seg = &item; break; }
-        if (seg->move) c.move = { std::cos(seg->yaw), std::sin(seg->yaw), 0.0f };
-        c.lookYaw = seg->yaw;
-        c.sprint = seg->sprint;
-        return c;
-    }, {}};
-    scenario.ball = handle;
-    scenario.footTouch = true;
-    scenario.ballScript = [=](float t, Vec3, Vec3, bool, float& power, Vec3& direction) {
-        if (*cursor >= events->size() || t < (*events)[*cursor].at) return BallActionKind3D::None;
-        const Event e = (*events)[(*cursor)++];
-        ++*requests;
-        power = e.power;
-        direction = { std::cos(e.place.x), std::sin(e.place.x), 0.0f };
-        return e.kind == 2 ? BallActionKind3D::Shot : BallActionKind3D::Dribble;
-    };
-    // A bola reposta perto do corpo a cada ~1 s (o chute a manda longe).
-    scenario.ballReplaceEvery = 1.0f;
-    scenario.ballReplaceSeed = seed;
-    scenario.ballCollides = collides;
-    const ScenarioResult r = runScenario(scenario);
-    std::printf("ESTRESSE semente %d | pedidos %d toques %d | quedas %d (%.2f s)\n", seed, *requests, r.ballTouches, r.falls,
-        r.firstFallSeconds);
-}
 
 // Repulsao macia (sweeprepulsa, 04/10): o corpo liberado (como depois do
 // primeiro contato) parado; a bola chega rolando em varias alturas de corpo
@@ -8937,7 +8340,6 @@ void ballRepelSweep() {
                 scenario.ballPlaceVelocity = { -speed, 0.0f, 0.0f };
                 scenario.ballPlaceHeight = height;
                 scenario.forcePassThrough = true;
-                scenario.ballScript = [](float, Vec3, Vec3, bool, float&, Vec3&) { return BallActionKind3D::None; };
                 scenario.ballProbe = [=](float t, Vec3 ball, Vec3 velocity, const RagdollState3D& state) {
                     if (t < 1.5f) return;
                     for (const auto& link : state.links) *worst = std::min(*worst, (link.position - ball).length());
@@ -9258,7 +8660,6 @@ void ballOwnerSweep() {
         scenario.ballPlaceOffset = c.offset;
         scenario.ballPlaceVelocity = { c.speed, 0.0f, 0.0f };
         scenario.ballClaimAtPlace = c.claim;
-        scenario.ballScript = [](float, Vec3, Vec3, bool, float&, Vec3&) { return BallActionKind3D::None; };
         if (c.npc) {
             scenario.npc = true;
             scenario.npcLabAssist = true;
@@ -9276,135 +8677,7 @@ void ballOwnerSweep() {
     }
 }
 
-// Chute (sweepchute): chegando na bola parada a frente (trote/sprint), o
-// pedido sai cedo; a bola em distancias que caem em fases diferentes da
-// passada e de lado. Mede o toque, onde o pe de apoio estava, do pedido ao
-// toque, quedas, a bola (velocidade, rumo, elevacao, curva) e o gesto.
-// XCHUTECASO=k roda so o caso k; XCHUTETRACE imprime o chute tick a tick.
-void shotSweep() {
-    int part = 0, parts = 1;
-    if (const char* p = std::getenv("XSWEEPPART")) std::sscanf(p, "%d/%d", &part, &parts);
-    const int only = std::getenv("XCHUTECASO") ? std::atoi(std::getenv("XCHUTECASO")) : -1;
-    struct Gesture { const char* name; float lift; float curve; };
-    const Gesture gestures[] = { { "normal", 0.0f, 0.0f }, { "alta", 1.0f, 0.0f }, { "rasteira", -1.0f, 0.0f },
-        { "curva-dir", 0.0f, 1.0f }, { "curva-esq", 0.0f, -1.0f } };
-    int index = -1, touched = 0, runs = 0, falls = 0;
-    for (const bool sprint : { false, true }) {
-        for (const float power : { 0.5f, 1.0f }) {
-            for (int phase = 0; phase < 3; ++phase) {
-                for (const float lateral : { -0.12f, 0.0f, 0.12f }) {
-                    for (int g = 0; g < 5; ++g) {
-                        // O gesto so no caso do meio (sem desvio lateral, fase 0).
-                        if (g > 0 && (lateral != 0.0f || phase != 0)) continue;
-                        ++index;
-                        if (only >= 0 ? index != only : index % parts != part) continue;
-                        const Gesture gesture = gestures[g];
-                        const float step = sprint ? 1.74f : 1.10f;
-                        const float x = (sprint ? 4.0f : 2.4f) + step * phase / 3.0f;
-                        auto handle = std::make_shared<InflatedBallHandle3D>();
-                        auto requested = std::make_shared<bool>(false);
-                        Scenario scenario {"chute", 4.5f, [=](PhysicsScene3D& scene) {
-                            InflatedBallDefinition3D ball;
-                            ball.position = { x, lateral, ball.profile.radiusMeters };
-                            ball.entityId = 779;
-                            *handle = scene.createInflatedBall(ball);
-                        }, [=](float t) {
-                            ScenarioCommand command;
-                            if (t >= 0.6f) command.move = { 1.0f, 0.0f, 0.0f };
-                            command.sprint = sprint;
-                            command.lookYaw = 0.0f;
-                            return command;
-                        }, {}};
-                        scenario.ball = handle;
-                        scenario.shotLift = gesture.lift;
-                        scenario.shotCurve = gesture.curve;
-                        scenario.ballScript = [=](float t, Vec3, Vec3, bool, float& p, Vec3& direction) {
-                            if (t >= 1.0f && !*requested) {
-                                *requested = true;
-                                p = power;
-                                direction = { 1.0f, 0.0f, 0.0f };
-                                return BallActionKind3D::Shot;
-                            }
-                            return BallActionKind3D::None;
-                        };
-                        const ScenarioResult r = runScenario(scenario);
-                        ++runs;
-                        falls += r.falls;
-                        if (r.ballTouches > 0) ++touched;
-                        std::printf("CHUTE %2d %-6s %3.0f%% fase %d y %+.2f %-9s | toque %d (longe %d tarde %d acid %d) pe %d em %.2f s | apoio frente %+.2f lado %+.2f | quedas %d | bola %.1f m/s rumo %+.1f elev %.1f giro %.0f alto %.2f m curva20 %+.2f m\n",
-                            index, sprint ? "sprint" : "trote", power * 100.0f, phase, lateral, gesture.name,
-                            r.ballTouches, r.ballMissFar, r.ballMissLate, r.ballAccidental, r.shotKickSide, r.shotDelay,
-                            r.shotPlantAlong, r.shotPlantAcross, r.falls, r.shotSpeed, r.shotYawError, r.shotElevation,
-                            r.shotSpin, r.shotApex, r.shotLateral20);
-                    }
-                }
-            }
-        }
-    }
-    std::printf("CHUTE total: %d/%d com toque, %d quedas\n", touched, runs, falls);
-}
 
-// Bola no caminho (sweepbola): correndo em linha reta (trote ou sprint) para
-// uma bola de futebol parada, com desvios laterais e fases da passada. Mede
-// quedas, a freada do corpo ao bater na bola (como no tropeco) e o que a bola
-// fez: maior velocidade (o chute pelo pe) e onde parou. XBOLAMARCHA filtra.
-void ballSweep() {
-    int part = 0, parts = 1;
-    if (const char* p = std::getenv("XSWEEPPART")) std::sscanf(p, "%d/%d", &part, &parts);
-    const char* onlyGait = std::getenv("XBOLAMARCHA");
-    struct BallProbe {
-        InflatedBallHandle3D ball;
-        float maximumSpeed = 0.0f;
-        float firstTouch = -1.0f;
-        int touches = 0;
-        bool touching = false;
-        Vec3 position;
-    };
-    int index = 0, totalFalls = 0, runs = 0, kicked = 0;
-    for (const bool sprint : { false, true }) {
-        if (onlyGait && std::string(onlyGait) != (sprint ? "sprint" : "trote")) continue;
-        for (const float lateral : { -0.24f, -0.12f, 0.0f, 0.12f, 0.24f }) {
-            for (int phase = 0; phase < 3; ++phase) {
-                if (index++ % parts != part) continue;
-                const float step = sprint ? 1.74f : 1.10f;
-                const float x = (sprint ? 11.0f : 5.0f) + step * phase / 3.0f;
-                auto probe = std::make_shared<BallProbe>();
-                Scenario scenario {"bola", sprint ? 5.5f : 7.0f, [=](PhysicsScene3D& scene) {
-                    InflatedBallDefinition3D ball;
-                    ball.position = { x, lateral, ball.profile.radiusMeters };
-                    ball.entityId = 777;
-                    probe->ball = scene.createInflatedBall(ball);
-                }, [=](float t) {
-                    ScenarioCommand c;
-                    if (t >= 0.5f) c.move = { 1.0f, 0.0f, 0.0f };
-                    c.sprint = sprint;
-                    return c;
-                }, [=](PhysicsScene3D& scene, float t, const RagdollState3D&) {
-                    const InflatedBallState3D state = scene.inflatedBallState(probe->ball);
-                    probe->position = state.position;
-                    probe->maximumSpeed = std::max(probe->maximumSpeed, state.linearVelocity.length());
-                    bool touching = false;
-                    for (std::uint32_t k = 0; k < state.contactCount; ++k) touching = touching || state.contacts[k].otherDynamic;
-                    if (touching && !probe->touching) {
-                        ++probe->touches;
-                        if (probe->firstTouch < 0.0f) probe->firstTouch = t;
-                    }
-                    probe->touching = touching;
-                }};
-                scenario.stumbleX = x;
-                const ScenarioResult r = runScenario(scenario);
-                ++runs;
-                totalFalls += r.falls;
-                if (probe->maximumSpeed > 1.0f) ++kicked;
-                std::printf("BOLA %-6s y %+.2f fase %d: quedas %d | v antes %.2f min %.2f depois %.2f | bola vmax %.2f toques %d (1o %.2f s) parou x %+.2f y %+.2f\n",
-                    sprint ? "sprint" : "trote", lateral, phase, r.falls, r.stSpeedBefore,
-                    r.stSpeedMin < 1e8f ? r.stSpeedMin : -1.0f, r.stSpeedAfter, probe->maximumSpeed, probe->touches,
-                    probe->firstTouch, probe->position.x - x, probe->position.y);
-            }
-        }
-    }
-    std::printf("BOLA total: %d quedas em %d corridas, bola chutada em %d\n", totalFalls, runs, kicked);
-}
 
 // Arrancada (sweeparrancada): parado e, num instante que varre a fase do
 // idle (8), sai correndo (trote ou sprint) para um rumo em relacao ao olhar
@@ -9752,8 +9025,6 @@ int main() {
         if (which == "sweepcarrinhoida") tackleSwitchSweep();
         if (which == "sweepvoadoraida") airTackleSwitchSweep();
         if (which == "sweepvelocidades") gaitSpeedSweep();
-        if (which == "sweepmanejoimpacto") ballImpactSweep();
-        if (which == "sweepmanejorecuo") ballRetractionSweep();
         if (which == "sweepguiado") guidedBodySweep();
         if (which == "sweepimpacto") impactSweep();
         if (which == "sweepdono") ballOwnerSweep();
@@ -9761,14 +9032,9 @@ int main() {
         if (which == "sweepapoio") braceRecoverySweep();
         if (which == "sweeptrombada") bumpSweep();
         if (which == "sweeparrancada") startSweep();
-        if (which == "sweepbola") ballSweep();
         if (which == "sweeplevantar") getUpSweep();
         if (which == "sweepbrucos") proneGetUpSweep();
         if (which == "sweepcarrinho") tackleSweep();
-        if (which == "sweepmanejo") ballHandlingSweep();
-        if (which == "sweepchute") shotSweep();
-        if (which == "sweepchutecorre") runningShotSweep();
-        if (which == "sweepbolaestresse") ballStressSweep();
         if (which == "sweeprepulsa") ballRepelSweep();
         if (which == "sweepfluidez") fluiditySweep();
         if (which == "sweepgiro") standingTurnSweep();

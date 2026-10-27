@@ -1589,9 +1589,11 @@ principal virou uma aba desta.
   - o chão do espaço do modelo (o do `model.json`) e o repouso em pé nele
     com a pelve na altura de pé do perfil;
   - o jogador para o jogo (`exportar-jogo` numa pasta temporária): o
-    personagem do jogo em dia com o modelo, os 62 ossos (12 auxiliares, 32
+    personagem do jogo em dia com o modelo, os 76 ossos (26 auxiliares, 32
     dedos), o sombreamento 0,5, a pele do jogo igual à malha posada da
-    modelagem em cinco poses (menos de 0,5 mm) e a sola no chão do perfil;
+    modelagem em sete poses, duas com os braços erguidos (de lado e à
+    frente: a rampa e o volume da axila e a clavícula; menos de 0,5 mm) e a
+    sola no chão do perfil. Roda antes das outras checagens;
   - o molde da cabeça de referência: o alinhamento (erro médio abaixo de
     4 mm, a referência quase de pé), os vértices que vão inteiros para o
     molde em cima da superfície dela (a menos de 0,5 mm) e a junta da cabeça
@@ -1621,3 +1623,13 @@ principal virou uma aba desta.
   software. O contexto, o canvas falso e a foto ficam em
   `tests/Support/HeadlessUi` (a biblioteca `MatterTestHeadlessUi`). A tela
   "Objetos" usa o mesmo apoio (`MatterObjectInspectorTests`).
+
+## A fonte Blender (22/10/2026)
+
+A malha e os pesos do jogador passaram a ser modelados no Blender.
+- `assets/characters/player_model/blender/jogador.blend` é a fonte e `jogador.troca.json` é o que o motor lê (`model.json`: `"source": "blender"`; leitor em `Engine/Modeling/Import/BlenderExchange`).
+- **Ida:** `MatterModelInspector exportar-blender --saida <pasta>` e depois `tools/blender/importar_troca.py`.
+- **Volta e checagens:** `tools/blender/sincronizar.sh`.
+- **No Blender:** os auxiliares são pré-visualização (restrições). As regras que valem são as do `GameRig`.
+- **A montagem por código** continua para gerar trocas novas (uniforme, pintura).
+- **O template de superfície** (26/10, o sistema de aparência novo): a etapa 01 grava o molde de cada face (atributo `molde`), a troca leva os moldes e `tools/blender/superficie.py` acrescenta o template (painéis, cartas, regiões, costuras, âncoras, zonas, UV0 e UV1). O contrato está em `docs/SISTEMA_DE_APARENCIA.md`; o `exportar-jogo` leva o template ao jogo.

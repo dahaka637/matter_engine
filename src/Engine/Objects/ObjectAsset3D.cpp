@@ -113,4 +113,106 @@ ObjectBodyData3D objectBodyData3D(const Modeling::ProceduralObject& object, cons
     return result;
 }
 
+ObjectNetRenderData3D objectNetRenderData3D(const Modeling::ProceduralObject& object, Vec3 position, Quaternion orientation) {
+    ObjectNetRenderData3D result;
+    if (!object.net) return result;
+    const Modeling::ObjectNet& net = *object.net;
+    for (const Vec3& knot : net.knots) result.restKnots.push_back(position + orientation.rotate(knot));
+    // (O tubo de 3 lados e mais estreito que o redondo: com 1,25 x o raio do
+    // fio ele cobre a largura do fio de qualquer lado.)
+    const float radius = 0.625f * net.twineDiameter;
+    const Vec3 color { net.color.r, net.color.g, net.color.b };
+    constexpr float Third = 2.0943951f;
+    result.mesh.vertices.reserve(net.drawnSegments.size() * 6);
+    result.mesh.indices.reserve(net.drawnSegments.size() * 18);
+    for (const auto& [a, b] : net.drawnSegments) {
+        const Vec3 from = position + orientation.rotate(net.drawnKnots[a]);
+        const Vec3 to = position + orientation.rotate(net.drawnKnots[b]);
+        const Vec3 along = to - from;
+        const float length = std::sqrt(along.lengthSquared());
+        if (length < 1e-6f) continue;
+        const Vec3 direction = along * (1.0f / length);
+        const Vec3 reference = std::abs(direction.z) < 0.9f ? Vec3 { 0.0f, 0.0f, 1.0f } : Vec3 { 1.0f, 0.0f, 0.0f };
+        Vec3 side = cross(direction, reference);
+        side = side * (1.0f / std::sqrt(side.lengthSquared()));
+        const Vec3 up = cross(direction, side);
+        const auto first = static_cast<std::uint32_t>(result.mesh.vertices.size());
+        for (const std::uint32_t end : { a, b }) {
+            const Modeling::ObjectNetWeight& weight = net.drawnWeights[end];
+            const Vec3 center = end == a ? from : to;
+            for (int k = 0; k < 3; ++k) {
+                const float angle = Third * static_cast<float>(k);
+                const Vec3 out = side * std::cos(angle) + up * std::sin(angle);
+                MeshVertex3D vertex;
+                vertex.position = center + out * radius;
+                vertex.normal = out;
+                vertex.color = color;
+                vertex.joints = weight.knots;
+                vertex.weights = weight.weights;
+                result.mesh.vertices.push_back(vertex);
+            }
+        }
+        for (std::uint32_t k = 0; k < 3; ++k) {
+            const std::uint32_t next = (k + 1) % 3;
+            for (const std::uint32_t index : { first + k, first + 3 + k, first + 3 + next, first + k, first + 3 + next, first + next })
+                result.mesh.indices.push_back(index);
+        }
+    }
+    recomputeBounds(result.mesh);
+    return result;
+}
+
+void objectNetSkin3D(std::span<const Vec3> knots, std::span<const Vec3> restKnots, std::vector<Mat4>& out) {
+    out.resize(std::min(knots.size(), restKnots.size()));
+    for (std::size_t i = 0; i < out.size(); ++i) out[i] = Mat4::translation(knots[i] - restKnots[i]);
+}
+
+NetDescription3D objectNetDescription3D(const Modeling::ProceduralObject& object, Vec3 position, Quaternion orientation,
+    float groundHeight) {
+    NetDescription3D result;
+    if (!object.net) return result;
+    const Modeling::ObjectNet& net = *object.net;
+    result.positions.reserve(net.knots.size());
+    for (const Vec3& knot : net.knots) result.positions.push_back(position + orientation.rotate(knot));
+    result.masses = net.masses;
+    result.pinned = net.pinned;
+    result.segments.reserve(net.segments.size());
+    for (const Modeling::ObjectNetSegment& segment : net.segments)
+        result.segments.push_back({ segment.a, segment.b, segment.restLength, segment.stiffness, segment.cord });
+    result.faces = net.faces;
+    for (const Modeling::ObjectNetWeight& w : net.drawnWeights) result.samples.push_back({ w.knots, w.weights });
+    for (const float length : net.twineLengths) result.dragAreas.push_back(net.twineDiameter * length);
+    for (const Modeling::ObjectCollider& collider : object.physics.colliders) {
+        if (collider.shape != Modeling::ObjectColliderShape::Cylinder && collider.shape != Modeling::ObjectColliderShape::Capsule) continue;
+        const Vec3 center = position + orientation.rotate(collider.center);
+        const Vec3 axis = (orientation * collider.orientation).rotate({ 0.0f, 0.0f, collider.halfHeight });
+        result.colliders.push_back({ center - axis, center + axis, collider.radius });
+    }
+    result.settings.twineRadius = 0.5f * net.twineDiameter;
+    result.settings.contactMassScale = net.contactMassScale;
+    result.settings.groundHeight = groundHeight;
+    return result;
+}
+
+std::vector<ObjectBodyData3D> objectNetBarrier3D(const Modeling::ProceduralObject& object) {
+    std::vector<ObjectBodyData3D> result;
+    if (!object.net) return result;
+    const auto add = [&](const std::vector<std::vector<Vec3>>& hulls, PhysicsBarrier3D role) {
+        if (hulls.empty()) return;
+        ObjectBodyData3D& body = result.emplace_back();
+        body.body.motionType = PhysicsMotionType3D::Static;
+        body.body.barrier = role;
+        body.dimensions = object.size;
+        for (const std::vector<Vec3>& hull : hulls) {
+            PhysicsShape3D shape;
+            shape.type = PhysicsShapeType3D::ConvexHull;
+            shape.hullPoints = hull;
+            body.shapes.push_back(std::move(shape));
+        }
+    };
+    add(object.net->barrier, PhysicsBarrier3D::Players);
+    add(object.net->capsuleBarrier, PhysicsBarrier3D::Capsule);
+    return result;
+}
+
 } // namespace MatterEngine

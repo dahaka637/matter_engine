@@ -6,6 +6,7 @@
 #include "Engine/Animation/RagdollCharacter3D.hpp"
 #include "Engine/Character/CharacterLocomotion3D.hpp"
 #include "Engine/Physics/PhysicsScene3D.hpp"
+#include "Engine/Physique/PlayerPhysique3D.hpp"
 #include "Engine/Athlete/AthleteRuntime3D.hpp"
 
 #include <string>
@@ -31,6 +32,9 @@ namespace MatterEngine {
 // A capsula de navegacao do jogador (medidas e respostas do laboratorio; as
 // velocidades de andar e correr saem dos clipes em quem chama).
 [[nodiscard]] CharacterMotorSettings3D athleteAvatarMotorSettings3D();
+// A de um corpo: o raio e as alturas x s; o degrau x s, nunca abaixo do de
+// hoje (o baixo ainda sobe a escada de 18 cm); o pulo igual para todos.
+[[nodiscard]] CharacterMotorSettings3D athleteAvatarMotorSettings3D(const PlayerBody3D& body);
 
 // O atleta inteiro carregado de uma pasta de recursos (como a sonda o monta):
 // o personagem, a biblioteca de clipes, os papeis do fisico e do padrao, as
@@ -38,15 +42,22 @@ namespace MatterEngine {
 // assets() apontam para dentro dele.
 class AthleteBundle3D final {
 public:
-    // Um pacote por pasta, compartilhado no processo (imutavel depois de
-    // carregado): os lotes do treino e das avaliacoes leem os mesmos clipes.
+    // Um pacote por pasta e corpo, compartilhado no processo (imutavel depois
+    // de carregado): os lotes do treino e das avaliacoes leem os mesmos
+    // clipes. O do corpo de hoje e o mesmo objeto de shared(pasta).
     [[nodiscard]] static std::shared_ptr<const AthleteBundle3D> shared(const std::string& assetsDirectory);
+    [[nodiscard]] static std::shared_ptr<const AthleteBundle3D> shared(const std::string& assetsDirectory,
+        const PlayerBody3D& body);
 
     // assetsDirectory: a pasta assets do repositorio (characters/, animations/).
-    explicit AthleteBundle3D(const std::string& assetsDirectory);
+    // body: o personagem do corpo (o perfil e o esqueleto x s; a malha x s
+    // sem o tonus - quem le o pacote nao a desenha), os clipes com a raiz x s
+    // (o pe pousa sem escorregar), as velocidades deles e a capsula do corpo.
+    explicit AthleteBundle3D(const std::string& assetsDirectory, const PlayerBody3D& body = {});
     AthleteBundle3D(const AthleteBundle3D&) = delete;
     AthleteBundle3D& operator=(const AthleteBundle3D&) = delete;
 
+    [[nodiscard]] const PlayerBody3D& body() const { return m_body; }
     [[nodiscard]] const RagdollCharacter3D& character() const { return m_character; }
     [[nodiscard]] const RagdollProfile3D& profile() const { return m_character.profile; }
     [[nodiscard]] const CharacterGaitSpeeds3D& gaitSpeeds() const { return m_gaitSpeeds; }
@@ -55,6 +66,7 @@ public:
     [[nodiscard]] const std::vector<std::string>& clipErrors() const { return m_clipErrors; }
 
 private:
+    PlayerBody3D m_body;
     RagdollCharacter3D m_character;
     std::vector<std::string> m_clipErrors;
     std::vector<AnimationClip3D> m_clipLibrary;

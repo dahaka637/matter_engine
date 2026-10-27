@@ -54,6 +54,26 @@ struct LocomotionViewer3D::Impl {
     float fallenSeconds = 0.0f;
     Vec3 pushForce;
     float pushSeconds = 0.0f;
+    // As pancadas do exercicio (como no treino: pelve, abdomen e peito) e o
+    // levantar (a pancada que derruba no comeco; recomeca depois de ficar de pe).
+    float drillPushRate = 0.0f;
+    // O empurrao continuo do exercicio (como no treino).
+    float holdRate = 0.0f, holdLow = 150.0f, holdHigh = 350.0f, holdSecondsLow = 1.0f, holdSecondsHigh = 3.0f;
+    float drillTotal = 0.0f;
+    float drillPushLow = 150.0f, drillPushHigh = 600.0f;
+    float drillPushSecondsLow = 0.10f, drillPushSecondsHigh = 0.20f, drillPushStart = 1.0f;
+    // O empurrao unico (como no treino): quando vem e quando recomeca (s; < 0: nada marcado).
+    bool singlePush = false;
+    float pushWindow = 1.5f, settleSeconds = 3.0f, pushAt = -1.0f, settleEnd = -1.0f;
+    bool getUp = false;
+    float knockdownLow = 1600.0f, knockdownHigh = 2400.0f;
+    Vec3 drillForce;
+    float drillSeconds = 0.0f;
+    float standingSeconds = 0.0f;
+    // O ultimo empurrao (o desenho): a forca, o link e ha quanto acabou (s).
+    Vec3 shownForce;
+    int shownLink = -1;
+    float shownAfter = 99.0f;
     std::size_t chest = 0;
     float groundHalfExtent = 60.0f;
 
@@ -95,6 +115,19 @@ struct LocomotionViewer3D::Impl {
         steps = 0;
         fallenSeconds = 0.0f;
         pushSeconds = 0.0f;
+        drillSeconds = 0.0f;
+        standingSeconds = 0.0f;
+        shownLink = -1;
+        shownAfter = 99.0f;
+        if (getUp) {
+            std::uniform_real_distribution<float> unit(0.0f, 1.0f);
+            const float angle = unit(rng) * 6.28318530718f;
+            const float newtons = knockdownLow + (knockdownHigh - knockdownLow) * unit(rng);
+            drillForce = { std::cos(angle) * newtons, std::sin(angle) * newtons, 0.0f };
+            drillSeconds = 0.25f;
+        }
+        settleEnd = -1.0f;
+        pushAt = singlePush ? drillPushStart + pushWindow * std::uniform_real_distribution<float>(0.0f, 1.0f)(rng) : -1.0f;
     }
 
     [[nodiscard]] Vec3 centerOfMassVelocity() const {
@@ -164,6 +197,26 @@ struct LocomotionViewer3D::Impl {
             scene->applyRagdollLinkForce(handle, static_cast<std::uint32_t>(chest), pushForce, {});
             pushSeconds -= TickSeconds;
         }
+        if (pushSeconds > 0.0f) {
+            shownForce = pushForce;
+            shownLink = static_cast<int>(chest);
+            shownAfter = 0.0f;
+        } else if (drillSeconds > 0.0f) {
+            shownForce = drillForce;
+            shownLink = 2;
+            shownAfter = 0.0f;
+        } else {
+            shownAfter += TickSeconds;
+        }
+        if (drillSeconds > 0.0f && body.links.size() > 3) {
+            // (O empurrao longo entra e sai em 0,2 s, como no treino.)
+            const float scale = drillTotal > 0.6f
+                ? std::min({ 1.0f, (drillTotal - drillSeconds + TickSeconds) / 0.2f, drillSeconds / 0.2f }) : 1.0f;
+            scene->applyRagdollLinkForce(handle, 0u, drillForce * (0.20f * scale), {});
+            scene->applyRagdollLinkForce(handle, 2u, drillForce * (0.32f * scale), {});
+            scene->applyRagdollLinkForce(handle, 3u, drillForce * (0.48f * scale), {});
+            drillSeconds -= TickSeconds;
+        }
         scene->simulate(TickSeconds);
         body = scene->ragdollState(handle);
     }
@@ -181,6 +234,29 @@ LocomotionViewer3D::LocomotionViewer3D(const std::filesystem::path& taskPath,
         if (drills[i].value("id", std::string()) == drill) impl.drillIndex = static_cast<std::uint32_t>(i);
     const nlohmann::json& chosen = drills.at(impl.drillIndex);
     impl.pilot = pilotScriptFromJson3D(chosen.value("pilot", nlohmann::json::object()), chosen.value("id", std::string()));
+    // As pancadas e o levantar do exercicio (como no treino).
+    if (task.contains("pushes")) {
+        const nlohmann::json& p = task["pushes"];
+        impl.drillPushLow = p.value("minimumNewtons", impl.drillPushLow);
+        impl.drillPushHigh = p.value("maximumNewtons", impl.drillPushHigh);
+        impl.drillPushSecondsLow = p.value("minimumSeconds", impl.drillPushSecondsLow);
+        impl.drillPushSecondsHigh = p.value("maximumSeconds", impl.drillPushSecondsHigh);
+        impl.drillPushStart = p.value("startSeconds", impl.drillPushStart);
+        impl.pushWindow = p.value("windowSeconds", impl.pushWindow);
+    }
+    impl.drillPushRate = chosen.value("pushRate", 0.0f);
+    impl.holdRate = chosen.value("holdRate", 0.0f);
+    impl.holdLow = chosen.value("holdMinimumNewtons", impl.holdLow);
+    impl.holdHigh = chosen.value("holdMaximumNewtons", impl.holdHigh);
+    impl.holdSecondsLow = chosen.value("holdMinimumSeconds", impl.holdSecondsLow);
+    impl.holdSecondsHigh = chosen.value("holdMaximumSeconds", impl.holdSecondsHigh);
+    if (chosen.value("pushMinimumNewtons", -1.0f) >= 0.0f) impl.drillPushLow = chosen.value("pushMinimumNewtons", 0.0f);
+    if (chosen.value("pushMaximumNewtons", -1.0f) >= 0.0f) impl.drillPushHigh = chosen.value("pushMaximumNewtons", 0.0f);
+    impl.getUp = chosen.value("getUp", false);
+    impl.singlePush = chosen.value("singlePush", false);
+    impl.settleSeconds = chosen.value("settleSeconds", impl.settleSeconds);
+    impl.knockdownLow = chosen.value("knockdownMinimumNewtons", impl.knockdownLow);
+    impl.knockdownHigh = chosen.value("knockdownMaximumNewtons", impl.knockdownHigh);
     // As ajudas da tarefa e o fisico total com a referencia a sombra (como no treino).
     impl.settings.defaultLocomotion = false;
     impl.settings.physicalReference = true;
@@ -192,6 +268,8 @@ LocomotionViewer3D::LocomotionViewer3D(const std::filesystem::path& taskPath,
         impl.settings.e5WalkingAssistPercent = a.value("walking", 0.0f);
         impl.settings.physicalFeetAssistPercent = a.value("feet", 0.0f);
         impl.settings.getUpAssistPercent = a.value("getUp", 0.0f);
+        impl.settings.getUpStiffnessPercent = a.value("getUpStiffness", 55.0f);
+        impl.settings.getUpStrengthPercent = a.value("getUpStrength", 70.0f);
     }
     // A tabela de velocidades e o chao da tarefa (como no treino).
     if (task.contains("speeds")) {
@@ -201,6 +279,8 @@ LocomotionViewer3D::LocomotionViewer3D(const std::filesystem::path& taskPath,
         impl.settings.defaultSprintSideSpeed = v.value("sprintSide", impl.settings.defaultSprintSideSpeed);
         impl.settings.defaultSprintBackwardSpeed = v.value("sprintBackward", impl.settings.defaultSprintBackwardSpeed);
     }
+    // A regua de ajuda da tarefa (o zero antigo, se historica).
+    impl.settings.historicalAssistRuler = task.value("assistRuler", std::string("historical")) != "linear";
     if (task.contains("termination"))
         impl.groundHalfExtent = task["termination"].value("groundHalfExtentMeters", impl.groundHalfExtent);
     impl.bundle = AthleteBundle3D::shared(assetsDirectory.string());
@@ -226,13 +306,16 @@ std::vector<LocomotionViewer3D::Drill> LocomotionViewer3D::drillsOf(const std::f
         drill.id = d.value("id", std::string());
         drill.name = d.value("displayName", drill.id);
         drill.phase = d.value("phase", 1);
+        drill.category = d.value("category", std::string());
+        drill.weight = d.value("weight", 1.0f);
         if (!drill.id.empty()) out.push_back(std::move(drill));
     }
     return out;
 }
 
 bool LocomotionViewer3D::isLocomotionTask(const std::filesystem::path& taskPath) {
-    return readTask(taskPath).value("schema", std::string()) == Schema;
+    const auto task = readTask(taskPath);
+    return task.is_object() && task.value("schema", std::string()) == Schema;
 }
 
 void LocomotionViewer3D::setPolicy(const std::filesystem::path& file, std::string& label) {
@@ -258,18 +341,64 @@ bool LocomotionViewer3D::hasPolicy() const { return m_impl->policy != nullptr; }
 void LocomotionViewer3D::step() {
     Impl& impl = *m_impl;
     impl.command = impl.pilotCommand();
+    const float decision = impl.policyStepSecondsValue();
+    const float now = static_cast<float>(impl.steps) * decision;
+    std::uniform_real_distribution<float> unit(0.0f, 1.0f);
+    // 0: nenhum, 1: o curto, 2: o continuo (o sorteio do treino).
+    int kind = 0;
+    if (impl.singlePush) {
+        if (impl.pushAt >= 0.0f && now >= impl.pushAt) {
+            impl.pushAt = -1.0f;
+            const float rates = impl.holdRate + impl.drillPushRate;
+            kind = rates > 0.0f && unit(impl.rng) * rates < impl.holdRate ? 2 : 1;
+        }
+    } else if ((impl.drillPushRate > 0.0f || impl.holdRate > 0.0f) && impl.drillSeconds <= 0.0f && now >= impl.drillPushStart) {
+        const float hold = 1.0f - std::exp(-impl.holdRate * decision);
+        const float impulse = 1.0f - std::exp(-impl.drillPushRate * decision);
+        const float u = unit(impl.rng);
+        if (u < hold + impulse) kind = u < hold ? 2 : 1;
+    }
+    if (kind != 0) {
+        const bool continuous = kind == 2;
+        const float angle = unit(impl.rng) * 6.28318530718f;
+        const float newtons = continuous ? impl.holdLow + (impl.holdHigh - impl.holdLow) * unit(impl.rng)
+                                         : impl.drillPushLow + (impl.drillPushHigh - impl.drillPushLow) * unit(impl.rng);
+        impl.drillForce = { std::cos(angle) * newtons, std::sin(angle) * newtons, 0.0f };
+        impl.drillSeconds = continuous
+            ? impl.holdSecondsLow + (impl.holdSecondsHigh - impl.holdSecondsLow) * unit(impl.rng)
+            : impl.drillPushSecondsLow + (impl.drillPushSecondsHigh - impl.drillPushSecondsLow) * unit(impl.rng);
+        impl.drillTotal = impl.drillSeconds;
+        if (impl.singlePush) impl.settleEnd = now + impl.drillSeconds + impl.settleSeconds;
+    }
     for (int k = 0; k < TicksPerDecision; ++k) impl.tick();
     ++impl.steps;
+    if (impl.getUp) {
+        // O levantar: recomeca 2 s depois de ficar de pe (ou em 16 s).
+        const bool standing = !impl.body.links.empty() && impl.body.links.front().position.z > 0.8f
+            && !athleteTelemetry3D(impl.athlete).fallen;
+        impl.standingSeconds = standing && impl.steps * decision > 1.0f ? impl.standingSeconds + decision : 0.0f;
+        if (impl.standingSeconds > 2.0f || static_cast<float>(impl.steps) * decision > 16.0f) impl.build(impl.rng());
+        return;
+    }
     // A queda como no treino (a pelve a menos de 0,45 m do chao ou o atleta
     // "caido"): o episodio acaba. Fica meio segundo no chao para se ver a
     // queda e recomeca - o levantar do classico (com a ajuda) nao esconde a queda.
     const bool down = impl.body.links.empty() || impl.body.links.front().position.z < 0.45f
         || athleteTelemetry3D(impl.athlete).fallen;
     impl.fallenSeconds = down ? impl.fallenSeconds + impl.policyStepSecondsValue() : 0.0f;
-    if (impl.fallenSeconds > 0.5f) impl.build(impl.rng());
+    // (O empurrao unico aguentado: recomeca settleSeconds depois dele, como o fim do episodio no treino.)
+    const bool settled = !down && impl.settleEnd >= 0.0f && static_cast<float>(impl.steps) * decision >= impl.settleEnd - 1.0e-4f;
+    if (impl.fallenSeconds > 0.5f || settled) impl.build(impl.rng());
 }
 
 void LocomotionViewer3D::reset(std::uint64_t seed) { m_impl->build(seed); }
+
+void LocomotionViewer3D::setAssist(float percent) {
+    const float p = std::clamp(percent, 0.0f, 100.0f);
+    m_impl->settings.e5StandingAssistPercent = m_impl->settings.e5WalkingAssistPercent = p;
+    m_impl->settings.physicalFeetAssistPercent = p;
+    m_impl->settings.getUpAssistPercent = p;
+}
 
 void LocomotionViewer3D::setManualSpeed(std::optional<float> metersPerSecond) { m_impl->manual = metersPerSecond; }
 
@@ -297,9 +426,12 @@ BodyWorldView3D LocomotionViewer3D::view() const {
         const Vec3 forward = r.rotate({ 1.0f, 0.0f, 0.0f });
         view.chestHeading = std::atan2(forward.y, forward.x);
     }
-    if (impl.pushSeconds > 0.0f) {
-        view.pushLink = static_cast<int>(impl.chest);
-        view.pushForce = impl.pushForce;
+    // O empurrao de agora (ou o ultimo, sumindo em 0,8 s).
+    if (impl.shownLink >= 0 && static_cast<std::size_t>(impl.shownLink) < impl.body.links.size()
+        && impl.shownAfter < 0.8f) {
+        view.pushLink = impl.shownLink;
+        view.pushForce = impl.shownForce;
+        view.pushFade = 1.0f - impl.shownAfter / 0.8f;
     }
     return view;
 }

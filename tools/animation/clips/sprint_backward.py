@@ -47,6 +47,13 @@ SPRINT_BACKWARD = GaitSpec(
     spine_flexion=4.0,
     shoulder_turn=14.0,
     head_nod=2.0,
+    # O tronco vivo e o pescoco mais reto (24/10, pedido do usuario: os mesmos
+    # do trote).
+    spine_bounce=4.0,
+    head_bob=1.0,
+    chest_level=0.4,
+    head_steady=0.85,
+    neck_upright=6.0,
     arm_lowered=RUNNING_ARM_LOWERED,
     arm_inward_roll=RUNNING_ARM_INWARD_ROLL,
     wrist_flexion=RUNNING_WRIST_FLEXION,

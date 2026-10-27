@@ -350,6 +350,9 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
         || !m_physicsScene || !m_physicsScene->hasCharacter()) {
         return;
     }
+    // O corpo pedido no painel (ao soltar): antes da capsula ser lida e dos
+    // atletas andarem.
+    if (m_bodyApplyRequested) applyLaboratoryBody();
 
     const PhysicsCharacterState3D stateBefore =
         m_physicsScene->characterState();
@@ -486,6 +489,7 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
         ? m_characterDesiredFacingYaw : m_laboratoryCameraYaw;
     const bool acceptsMovement = !m_laboratoryDebugVisible
         && !m_spawnMenuOpen && !cameraOnly;
+    bool maxSprint = false;
     if (acceptsMovement) {
         const Vec3 planarForward = cameraForward(movementReferenceYaw, 0.0f);
         const Vec3 viewForward = cameraForward(movementReferenceYaw,
@@ -507,6 +511,16 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
             command.moveDirection = m_ballStressMove;
             command.sprint = m_ballStressSprint;
         }
+        // O sprint maximo: armado pelo Shift duplo, so com o W (a frente e as diagonais da frente) e so no modo
+        // padrao; soltar o Shift desarma.
+        if (!command.sprint) m_maxSprintArmed = false;
+        // Sair do cone (sem W, ou com S) com ele ja ativo o corta (25/10, pedido do usuario): voltando para a
+        // frente, e a corrida normal ate o proximo Shift duplo.
+        const bool forwardCone = input().keyDown(Key::W) && !input().keyDown(Key::S);
+        if (m_maxSprintActive && !forwardCone) m_maxSprintArmed = false;
+        maxSprint = controllingCharacter && m_controlledAnimated && command.sprint && m_maxSprintArmed && !m_ballStress
+            && forwardCone;
+        m_maxSprintActive = maxSprint;
         // O personagem olha para a câmera e anda em qualquer direção; para
         // trás ele recua, e recuar tem a velocidade do recuo, não a da
         // caminhada nem a do sprint (ver characterGaitSpeed3D).
@@ -527,9 +541,11 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
             // No modo padrao, a tabela dele (oito rumos; de costas na
             // diagonal perde menos).
             // (No fisico tambem, com a chave "Velocidades do padrao no fisico".)
-            const float wanted = (m_controlledAnimated || m_physicalDefaultSpeeds) && controlled != m_spawnedRagdolls.end()
-                ? athleteDefaultTravelSpeed3D(athleteRuntimeSettings(), travelRelative, command.sprint)
-                : characterGaitSpeed3D(m_avatarGaitSpeeds, travelRelative, command.sprint);
+            const bool defaultTable = (m_controlledAnimated || m_physicalDefaultSpeeds) && controlled != m_spawnedRagdolls.end();
+            const float wanted = !defaultTable
+                ? characterGaitSpeed3D(m_avatarGaitSpeeds, travelRelative, command.sprint)
+                : maxSprint ? m_defaultMaxSprintSpeed
+                : athleteDefaultTravelSpeed3D(athleteRuntimeSettings(), travelRelative, command.sprint);
             const float nominal = command.sprint
                 ? m_avatarCharacterSettings.sprintSpeed
                 : m_avatarCharacterSettings.walkSpeed;
@@ -580,6 +596,8 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
                 command.moveDirection.z -= 1.0f;
             }
             m_laboratoryJumpCharging = false;
+            // (Voando ou nadando, o espaco sobe: o pulo instantaneo nao sai.)
+            m_laboratoryJumpRequested = false;
         } else {
             command.crouch = control && !controlRunningTackle;
         }
@@ -595,19 +613,33 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
                 m_laboratoryJumpRequested = true;
             }
         }
+        // O pulo instantaneo: sai ja, na altura media.
+        if (m_instantJumpPressed) {
+            m_instantJumpPressed = false;
+            m_laboratoryJumpChargeSeconds = characterJumpHoldForScale3D(m_avatarCharacterSettings, 1.0f);
+            m_laboratoryJumpRequested = true;
+        }
         command.jumpPressed = m_laboratoryJumpRequested;
         command.jumpChargeSeconds = m_laboratoryJumpChargeSeconds;
         // Carga do manejo de bola: o chute enche em ~1 s, o drible em ~0,6 s (a
         // aba "Força na bola" muda os dois).
-        if (m_ballShotHeld || m_ballDribbleHeld)
+        if (m_ballShotHeld || m_ballDribbleHeld || m_ballRaiseHeld)
             m_ballCharge = std::min(1.0f, m_ballCharge
-                + deltaTime / std::max(0.05f, m_ballShotHeld ? m_ballShotChargeSeconds : m_ballTouchChargeSeconds));
+                + deltaTime / std::max(0.05f, m_ballShotHeld ? m_ballShotChargeSeconds
+                    : m_ballRaiseHeld ? m_ballRaiseChargeSeconds : m_ballTouchChargeSeconds));
         // O gesto do chute esquece o puxao antigo (~0,15 s): vale o de logo
         // antes de soltar.
         m_ballFlick = m_ballShotHeld ? m_ballFlick * std::exp(-deltaTime / 0.15f) : Vec2 {};
+        if (m_ballShotHeld) {
+            m_shotLiftShown = ballFlickShape(-m_ballFlick.y * m_shotLiftSensitivity);
+            m_shotCurveShown = ballFlickShape(m_ballFlick.x * m_shotCurveSensitivity);
+        }
         // A camera mais lenta carregando o chute: entra em ~0,15 s e sai em
         // ~0,25 s depois de soltar.
         m_shotCameraSlow = std::clamp(m_shotCameraSlow + (m_ballShotHeld ? deltaTime / 0.15f : -deltaTime / 0.25f),
+            0.0f, 1.0f);
+        // E no sprint maximo: entra em ~0,4 s (com a arrancada) e sai em ~0,3 s.
+        m_maxSprintCameraSlow = std::clamp(m_maxSprintCameraSlow + (maxSprint ? deltaTime / 0.4f : -deltaTime / 0.3f),
             0.0f, 1.0f);
         command.toggleFlight = !controllingCharacter
             && m_laboratoryFlightToggleRequested;
@@ -663,9 +695,10 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
                         return item.entityId == m_controlledCharacterEntityId;
                     });
                 const float relative = std::atan2(direction.y, direction.x) - movementReferenceYaw;
-                float speed = (m_controlledAnimated || m_physicalDefaultSpeeds) && controlled != m_spawnedRagdolls.end()
-                    ? athleteDefaultTravelSpeed3D(athleteRuntimeSettings(), relative, sprint)
-                    : characterGaitSpeed3D(m_avatarGaitSpeeds, relative, sprint);
+                const bool defaultTable = (m_controlledAnimated || m_physicalDefaultSpeeds) && controlled != m_spawnedRagdolls.end();
+                float speed = !defaultTable ? characterGaitSpeed3D(m_avatarGaitSpeeds, relative, sprint)
+                    : maxSprint ? m_defaultMaxSprintSpeed
+                    : athleteDefaultTravelSpeed3D(athleteRuntimeSettings(), relative, sprint);
                 if (controlled != m_spawnedRagdolls.end() && !m_controlledAnimated) {
                     speed = std::min(speed, controlled->athlete.legacy.locomotion.telemetry().terrainSpeedLimit);
                 }
@@ -1074,7 +1107,9 @@ void WorkbenchApp::ensureLaboratoryMapLoaded(Renderer& activeRenderer) {
     // inside the stairs' own footprint — that was the "wall inside the
     // staircase," not a separate object, and also why it was never
     // visible as its own thing).
-    addDevBox("FloatingBeam", { 0.0f, -18.0f, 1.2f },
+    // (25/10: o arco e a viga sairam de x = 0, y = -18/-22 para o lado
+    // leste, a pedido do usuario: no lugar deles fica a trave com rede.)
+    addDevBox("FloatingBeam", { 22.0f, 4.0f, 1.2f },
         { 1.0f, 0.15f, 0.15f }, {}, false);
 
     // Ramp: a tilted slab whose low edge sits on the ground and high edge
@@ -1112,11 +1147,11 @@ void WorkbenchApp::ensureLaboratoryMapLoaded(Renderer& activeRenderer) {
     addDevBox("Pillar_Short", { -20.0f, -20.0f, 0.75f },
         { 0.5f, 0.5f, 0.75f }, {}, false);
 
-    addDevBox("ArchPost_Left", { -1.2f, -22.0f, 1.25f },
+    addDevBox("ArchPost_Left", { 20.8f, -4.0f, 1.25f },
         { 0.25f, 0.25f, 1.25f }, {}, false);
-    addDevBox("ArchPost_Right", { 1.2f, -22.0f, 1.25f },
+    addDevBox("ArchPost_Right", { 23.2f, -4.0f, 1.25f },
         { 0.25f, 0.25f, 1.25f }, {}, false);
-    addDevBox("ArchLintel", { 0.0f, -22.0f, 2.65f },
+    addDevBox("ArchLintel", { 22.0f, -4.0f, 2.65f },
         { 1.45f, 0.25f, 0.15f }, {}, false);
 
     addDevBox("Crate_Small", { 19.0f, -20.0f, 0.3f },
@@ -1137,6 +1172,12 @@ void WorkbenchApp::ensureLaboratoryMapLoaded(Renderer& activeRenderer) {
     addDevBox("TunnelRoof", { -20.0f, 20.0f, 2.1f },
         { 1.35f, 1.5f, 0.1f }, {}, false);
     if (obstacleCreationFailed) return;
+
+    // A trave com rede (25/10, pedido do usuario: para treinar chutes e
+    // colisoes): no lugar do arco e da viga, a linha do gol em y = -18 e a
+    // boca virada para o centro do mapa (o nascimento do jogador), com ~11 m
+    // livres na frente (o penalti).
+    createLaboratoryGoal(activeRenderer, { 0.0f, -18.0f, 0.0f }, 1.5707963f);
 
     m_laboratorySpawnPosition = { 0.0f, 0.0f, 1.0f };
     m_laboratorySpawnYaw = 0.0f;
@@ -1258,6 +1299,7 @@ void WorkbenchApp::releaseLaboratoryAssets(Renderer& activeRenderer) {
         }
         m_physicsScene->destroyCharacter();
     }
+    releaseLaboratoryGoal(activeRenderer);
     m_spawnedRagdolls.clear();
     m_spawnedProps.clear();
     m_spawnedPropByBodyIndex.clear();
@@ -1272,6 +1314,7 @@ void WorkbenchApp::releaseLaboratoryAssets(Renderer& activeRenderer) {
     m_propCatalog.release(activeRenderer);
     releaseGpuModel3D(activeRenderer, m_soccerBallVisual);
     m_soccerBallCage.clear();
+    if (m_characterKit.valid()) activeRenderer.destroyCharacterMaterial(std::exchange(m_characterKit, {}));
     releaseGpuModel3D(activeRenderer, m_characterVisual);
     for (GpuModel3D& visual : m_ragdollLinkVisuals) {
         releaseGpuModel3D(activeRenderer, visual);
@@ -1279,7 +1322,7 @@ void WorkbenchApp::releaseLaboratoryAssets(Renderer& activeRenderer) {
     m_ragdollLinkVisuals.clear();
     releaseGpuModel3D(activeRenderer, m_ragdollJointVisual);
     m_ragdollJointLocalPositions.clear();
-    m_humanRagdollProfile.reset();
+    m_humanRagdollProfile = nullptr;
     m_ragdollAssetsLoadFailed = false;
     releaseGpuModel3D(activeRenderer, m_physGunVisual);
     m_physGunVisualLoaded = false;
@@ -1831,6 +1874,8 @@ void WorkbenchApp::renderLaboratory3D(Renderer& activeRenderer) {
         const bool previousStateValid = temporalHistoryValid
             && instance.previousPhysicsState.links.size() >= linkCount;
         if (instance.kind == ArticulatedRigKind::Human && m_ragdollCharacter) {
+            // O personagem do corpo do laboratorio (a paleta e os ossos visuais).
+            const RagdollCharacter3D& character = laboratoryCharacter();
             std::vector<Vec3> positions, previousPositions;
             std::vector<Quaternion> orientations, previousOrientations;
             // Always the simulated body: there is exactly one character here,
@@ -1900,21 +1945,21 @@ void WorkbenchApp::renderLaboratory3D(Renderer& activeRenderer) {
                 visualInput.linkOrientations = orientations;
                 for (std::size_t side = 0; side < 2; ++side) {
                     const char* id = side == 0 ? "LeftFoot" : "RightFoot";
-                    for (std::size_t link = 0; link < m_ragdollCharacter->profile.links.size(); ++link)
-                        if (link < positions.size() && m_ragdollCharacter->profile.links[link].id == id)
+                    for (std::size_t link = 0; link < character.profile.links.size(); ++link)
+                        if (link < positions.size() && character.profile.links[link].id == id)
                             visualInput.groundHeight[side] = ragdollGroundHeight(positions[link]);
                 }
                 visualInput.handPose = { m_handPose, m_handPose };
                 visualInput.toesFollowGround = m_toeRoll;
                 visualInput.deltaTime = poseDt;
                 instance.previousVisualRotations = instance.visualRotations;
-                instance.visualRotations = instance.visualPose.update(*m_ragdollCharacter, visualInput);
+                instance.visualRotations = instance.visualPose.update(character, visualInput);
                 if (instance.previousVisualRotations.size() != instance.visualRotations.size())
                     instance.previousVisualRotations = instance.visualRotations;
             }
-            instance.skinMatrices=buildRagdollSkinMatrices3D(*m_ragdollCharacter,positions,orientations,
+            instance.skinMatrices=buildRagdollSkinMatrices3D(character,positions,orientations,
                 instance.visualRotations);
-            instance.previousSkinMatrices=buildRagdollSkinMatrices3D(*m_ragdollCharacter,previousPositions,
+            instance.previousSkinMatrices=buildRagdollSkinMatrices3D(character,previousPositions,
                 previousOrientations,instance.previousVisualRotations);
             const auto first=meshes.size();
             appendGpuModelRenderables(m_characterVisual, {}, {}, {}, {},
@@ -1922,12 +1967,15 @@ void WorkbenchApp::renderLaboratory3D(Renderer& activeRenderer) {
             for (std::size_t i=first; i<meshes.size(); ++i) {
                 meshes[i].skinMatrices=instance.skinMatrices;
                 meshes[i].previousSkinMatrices=instance.previousSkinMatrices;
-                meshes[i].flatShaded=m_ragdollCharacter->flatShaded;
-                meshes[i].facet=m_ragdollCharacter->facet;
+                meshes[i].flatShaded=character.flatShaded;
+                meshes[i].facet=character.facet;
                 meshes[i].pixelArtHighDetail=true;
                 meshes[i].visibleInCamera=ragdollVisible;
                 meshes[i].shadowCascadeMask=ragdollShadowMask;
                 meshes[i].tintColor=instance.tintColor;
+                // O uniforme do sistema de aparencia (camada 0: um uniforme e
+                // um numero para todos, por enquanto).
+                meshes[i].characterMaterial=m_characterKit;
             }
             continue;
         }
@@ -1975,6 +2023,8 @@ void WorkbenchApp::renderLaboratory3D(Renderer& activeRenderer) {
     }
 
     appendInflatedBallRenderables(meshes, cameraFrustum, lightFrustums,
+        temporalHistoryValid);
+    appendLaboratoryGoalRenderables(meshes, cameraFrustum, lightFrustums,
         temporalHistoryValid);
 
     Vec3 renderedWeaponPosition;
@@ -2153,6 +2203,7 @@ void WorkbenchApp::renderLaboratory3D(Renderer& activeRenderer) {
             instance.previousPhysicsState = instance.physicsState;
         }
         finishInflatedBallFrame();
+        finishLaboratoryGoalFrame();
         if (renderedWeapon) {
             m_previousPhysGunWeaponPosition = renderedWeaponPosition;
             m_previousPhysGunWeaponOrientation = renderedWeaponOrientation;
@@ -2273,7 +2324,7 @@ void WorkbenchApp::drawSpawnMenu() {
     ImGui::InvisibleButton("RagdollCard", { cardWidth, cardHeight });
     const bool hovered = ImGui::IsItemHovered();
     const bool clicked = ImGui::IsItemClicked(ImGuiMouseButton_Left);
-    const bool available = m_humanRagdollProfile.has_value()
+    const bool available = m_humanRagdollProfile != nullptr
         && !m_ragdollAssetsLoadFailed;
     const ImVec2 cardMax {
         cardMin.x + cardWidth, cardMin.y + cardHeight
@@ -2422,11 +2473,124 @@ void WorkbenchApp::drawLaboratoryUi() {
         "LABORATÓRIO", headerStatus);
 
 
+    // A bola escondida atras do proprio corpo (25/10, pedidos do usuario): o
+    // contorno branco quando o corpo do jogador controlado fica entre a camera e
+    // ela (os raios da camera batem nele) - o circulo inteiro com o centro dela
+    // coberto, ou so os trechos cobertos do contorno; e o ponto no centro,
+    // sempre (opcional). As opacidades do painel; entram e saem suaves.
+    if (m_physicsScene) {
+        const auto controlled = std::find_if(m_spawnedRagdolls.begin(), m_spawnedRagdolls.end(),
+            [&](const SpawnedRagdollInstance& item) { return item.entityId == m_controlledCharacterEntityId; });
+        const Vec3 eye = m_laboratoryCameraPosition;
+        const auto covered = [&](Vec3 point, float shorten) {
+            const Vec3 ray = point - eye;
+            const float length = ray.length();
+            PhysicsRagdollRayHit3D hit;
+            return controlled != m_spawnedRagdolls.end() && length > shorten + 1e-3f
+                && m_physicsScene->raycastRagdoll({ eye, ray * (1.0f / length) }, length - shorten, hit)
+                && hit.ragdoll == controlled->physicsRagdoll;
+        };
+        constexpr int Points = 32;
+        for (SpawnedInflatedBallInstance& ball : m_inflatedBalls) {
+            const Vec3 toBall = ball.renderedPosition - eye;
+            const float distance = toBall.length();
+            const float radius = m_physicsScene->contains(ball.physicsBall)
+                ? m_physicsScene->inflatedBallProfile(ball.physicsBall).radiusMeters : 0.11f;
+            const bool near = controlled != m_spawnedRagdolls.end() && distance > radius && distance < 25.0f;
+            const bool hidden = near && covered(ball.renderedPosition, radius);
+            // O contorno da esfera na tela: o circulo perpendicular a visada.
+            Vec3 across = cross(toBall, Vec3 { 0.0f, 0.0f, 1.0f });
+            if (across.lengthSquared() < 1e-8f) across = Vec3 { 1.0f, 0.0f, 0.0f };
+            across = across.normalized();
+            const Vec3 upward = cross(across, toBall).normalized();
+            std::array<Vec3, Points> rim {};
+            std::array<bool, Points> rimCovered {};
+            bool anyCovered = false;
+            for (int i = 0; i < Points; ++i) {
+                const float angle = 2.0f * Pi * static_cast<float>(i) / Points;
+                rim[i] = ball.renderedPosition + (across * std::cos(angle) + upward * std::sin(angle)) * radius;
+                rimCovered[i] = near && m_hiddenBallCoveredOnly && covered(rim[i], 0.005f);
+                anyCovered = anyCovered || rimCovered[i];
+            }
+            const bool showOutline = m_hiddenBallCoveredOnly ? anyCovered : hidden;
+            ball.hiddenOutline = std::clamp(ball.hiddenOutline + (showOutline ? io.DeltaTime / 0.12f : -io.DeltaTime / 0.2f),
+                0.0f, 1.0f);
+            ball.centerDot = std::clamp(ball.centerDot + (m_ballDot ? io.DeltaTime / 0.12f : -io.DeltaTime / 0.2f),
+                0.0f, 1.0f);
+            ImVec2 center, edge;
+            if (!projectToScreen(m_laboratoryViewProjection, ball.renderedPosition, io.DisplaySize, center)
+                || !projectToScreen(m_laboratoryViewProjection, ball.renderedPosition + across * radius, io.DisplaySize, edge))
+                continue;
+            const float screenRadius = std::hypot(edge.x - center.x, edge.y - center.y);
+            const float opacity = std::clamp(m_hiddenBallOpacity, 0.0f, 1.0f);
+            if (ball.hiddenOutline > 0.01f) {
+                const ImU32 color = IM_COL32(255, 255, 255, static_cast<int>(255.0f * opacity * ball.hiddenOutline));
+                if (!m_hiddenBallCoveredOnly) {
+                    foreground->AddCircle(center, screenRadius + ui(1.0f), color, 48, ui(1.5f));
+                } else {
+                    // So os trechos com as duas pontas cobertas.
+                    std::array<ImVec2, Points> screen {};
+                    std::array<bool, Points> visible {};
+                    for (int i = 0; i < Points; ++i)
+                        visible[i] = projectToScreen(m_laboratoryViewProjection, rim[i], io.DisplaySize, screen[i]);
+                    for (int i = 0; i < Points; ++i) {
+                        const int j = (i + 1) % Points;
+                        if (rimCovered[i] && rimCovered[j] && visible[i] && visible[j])
+                            foreground->AddLine(screen[i], screen[j], color, ui(1.5f));
+                    }
+                }
+            }
+            if (ball.centerDot > 0.01f) {
+                // Bem pequeno de perto, maior de longe; nunca maior que a bola na tela.
+                const float dot = std::clamp(ui(0.35f) * distance, ui(1.0f), std::max(ui(1.0f), screenRadius));
+                foreground->AddCircleFilled(center, dot,
+                    IM_COL32(255, 255, 255, static_cast<int>(255.0f * std::clamp(m_ballDotOpacity, 0.0f, 1.0f)
+                        * ball.centerDot)), 16);
+            }
+        }
+    }
+
+    // As areas de alcance (menu do jogador, 24/10): as caixas em que o centro
+    // da bola precisa estar, no referencial da escolha do gesto (a pelve no
+    // chao, o rumo do corpo) - os pes (e, acima de highBall, o gesto alto), o
+    // peito e a cabeca (pela altura da pelve: sobem com o pulo).
+    if (m_showReachAreas && m_reachValid && m_controlledCharacterEntityId != 0) {
+        // O alcance do corpo (o mesmo do runtime: os pes x s, o peito pelo
+        // tronco, a cabeca so na posicao).
+        const PlayerBody3D body = laboratoryBody();
+        const GestureReach3D reach = gestureReachForBody3D(athleteRuntimeSettings().gestureReach, bodyScale3D(body),
+            bodyGirth3D(PhysiqueRegion3D::Chest, bodyTone3D(body)) - 1.0f);
+        const Vec3 forward { std::cos(m_reachYaw), std::sin(m_reachYaw), 0.0f };
+        const Vec3 left { -forward.y, forward.x, 0.0f };
+        const auto box = [&](float x0, float x1, float y0, float y1, float z0, float z1, ImU32 color) {
+            ImVec2 corner[8];
+            bool visible[8];
+            for (int i = 0; i < 8; ++i) {
+                const Vec3 point = m_reachOrigin + forward * ((i & 1) ? x1 : x0) + left * ((i & 2) ? y1 : y0)
+                    + Vec3 { 0.0f, 0.0f, (i & 4) ? z1 : z0 };
+                visible[i] = projectToScreen(m_laboratoryViewProjection, point, io.DisplaySize, corner[i]);
+            }
+            for (int i = 0; i < 8; ++i)
+                for (const int bit : { 1, 2, 4 })
+                    if ((i & bit) == 0 && visible[i] && visible[i | bit])
+                        foreground->AddLine(corner[i], corner[i | bit], color, ui(1.5f));
+        };
+        box(-reach.back, reach.front, -reach.side, reach.side, -reach.below, reach.highBall, IM_COL32(90, 220, 120, 200));
+        box(-reach.back, reach.front, -reach.side, reach.side, reach.highBall, reach.height, IM_COL32(230, 220, 110, 200));
+        const float hip = m_reachPelvisHeight;
+        box(-reach.bodyBack, reach.bodyFront, -reach.bodySide, reach.bodySide, hip + reach.chestBottom, hip + reach.chestTop,
+            IM_COL32(90, 160, 240, 200));
+        box(-reach.headBack, reach.headFront, -reach.headSide, reach.headSide, hip + reach.chestTop, hip + reach.headTop,
+            IM_COL32(245, 150, 60, 200));
+    }
+
     // Barra de forca do manejo de bola: centro, embaixo; vermelha no chute,
-    // azul no drible. Aparece carregando e um instante depois de soltar.
+    // azul no drible, amarela no levantar. Aparece carregando e um instante
+    // depois de soltar.
     if (m_controlledCharacterEntityId != 0) {
         m_ballBarSeconds = std::max(0.0f, m_ballBarSeconds - io.DeltaTime);
-        const bool charging = m_ballShotHeld || m_ballDribbleHeld;
+        const bool charging = m_ballShotHeld || m_ballDribbleHeld || m_ballRaiseHeld;
+        const bool shotBar = m_ballBarKind == BallActionKind3D::Shot;
         if (charging || m_ballBarSeconds > 0.0f) {
             const float width = ui(360.0f), height = ui(14.0f);
             const ImVec2 from { io.DisplaySize.x * 0.5f - width * 0.5f, io.DisplaySize.y - ui(58.0f) };
@@ -2436,17 +2600,18 @@ void WorkbenchApp::drawLaboratoryUi() {
             foreground->AddRectFilled({ from.x - ui(3.0f), from.y - ui(3.0f) }, { to.x + ui(3.0f), to.y + ui(3.0f) },
                 IM_COL32(10, 14, 20, a(190)), ui(4.0f));
             const float level = charging ? m_ballCharge : m_ballRequestPower;
-            const ImU32 fill = m_ballBarShot ? IM_COL32(222, 52, 46, a(240)) : IM_COL32(52, 128, 232, a(240));
+            const ImU32 fill = shotBar ? IM_COL32(222, 52, 46, a(240))
+                : m_ballBarKind == BallActionKind3D::Raise ? IM_COL32(240, 200, 40, a(240)) : IM_COL32(52, 128, 232, a(240));
             if (level > 0.001f)
                 foreground->AddRectFilled(from, { from.x + width * level, to.y }, fill, ui(3.0f));
             foreground->AddRect(from, to, IM_COL32(220, 230, 240, a(150)), ui(3.0f));
-            const char* label = m_ballBarShot ? "CHUTE" : "DRIBLE";
+            const char* label = shotBar ? "CHUTE" : m_ballBarKind == BallActionKind3D::Raise ? "LEVANTAR" : "DRIBLE";
             foreground->AddText({ from.x, from.y - ui(20.0f) }, IM_COL32(230, 236, 244, a(220)), label);
             // Chute: o gesto (quadradinho a direita) - o ponto sobe para bola
             // alta, desce para rasteira, vai ao lado do efeito.
-            if (m_ballBarShot) {
-                const float lift = charging ? ballFlickShape(-m_ballFlick.y) : m_ballRequestLift;
-                const float curve = charging ? ballFlickShape(m_ballFlick.x) : m_ballRequestCurve;
+            if (shotBar) {
+                const float lift = charging ? m_shotLiftShown : m_ballRequestLift;
+                const float curve = charging ? m_shotCurveShown : m_ballRequestCurve;
                 const float half = ui(17.0f);
                 const ImVec2 middle { to.x + ui(14.0f) + half, (from.y + to.y) * 0.5f - ui(6.0f) };
                 foreground->AddRectFilled({ middle.x - half, middle.y - half }, { middle.x + half, middle.y + half },
@@ -2455,71 +2620,6 @@ void WorkbenchApp::drawLaboratoryUi() {
                 foreground->AddLine({ middle.x, middle.y - half }, { middle.x, middle.y + half }, IM_COL32(220, 230, 240, a(60)));
                 foreground->AddCircleFilled({ middle.x + curve * (half - ui(4.0f)), middle.y - lift * (half - ui(4.0f)) },
                     ui(3.5f), IM_COL32(250, 210, 80, a(240)));
-            }
-        }
-    }
-
-    // A area do manejo de bola e o contato previsto (opcao do menu do
-    // personagem, V3): o circulo no chao e na cintura, o ponto onde o pe vai
-    // encontrar a bola (laranja ate a forca sair) e o pedido guardado.
-    if (m_showBallReach && m_controlledCharacterEntityId != 0) {
-        for (const SpawnedRagdollInstance& instance : m_spawnedRagdolls) {
-            if (instance.entityId != m_controlledCharacterEntityId || instance.physicsState.links.empty()) continue;
-            const BallReachZone3D& zone = instance.athlete.legacy.ballControl.reachZone();
-            const BallControlOutput3D& last = instance.athlete.legacy.ballLastOutput;
-            const Vec3 pelvis = instance.physicsState.links.front().position;
-            float ground = pelvis.z;
-            for (const auto& link : instance.physicsState.links) ground = std::min(ground, link.position.z - 0.07f);
-            const float waist = pelvis.z + zone.waistAbovePelvis;
-            // (Mais forte com o pedido guardado esperando a bola.)
-            const ImU32 zoneColor = last.pending ? IM_COL32(255, 200, 90, 190) : IM_COL32(90, 200, 255, 150);
-            const auto line3 = [&](Vec3 a, Vec3 b, ImU32 color, float thickness) {
-                ImVec2 sa, sb;
-                if (projectToScreen(m_laboratoryViewProjection, a, io.DisplaySize, sa)
-                    && projectToScreen(m_laboratoryViewProjection, b, io.DisplaySize, sb))
-                    background->AddLine(sa, sb, color, thickness);
-            };
-            constexpr int Segments = 40;
-            for (int k = 0; k < Segments; ++k) {
-                const float a0 = 6.2831853f * k / Segments, a1 = 6.2831853f * (k + 1) / Segments;
-                const Vec3 d0 { std::cos(a0) * zone.radius, std::sin(a0) * zone.radius, 0.0f };
-                const Vec3 d1 { std::cos(a1) * zone.radius, std::sin(a1) * zone.radius, 0.0f };
-                line3({ pelvis.x + d0.x, pelvis.y + d0.y, ground }, { pelvis.x + d1.x, pelvis.y + d1.y, ground },
-                    zoneColor, ui(1.6f));
-                line3({ pelvis.x + d0.x, pelvis.y + d0.y, waist }, { pelvis.x + d1.x, pelvis.y + d1.y, waist },
-                    IM_COL32(90, 200, 255, 80), ui(1.0f));
-                if (k % 10 == 0)
-                    line3({ pelvis.x + d0.x, pelvis.y + d0.y, ground }, { pelvis.x + d0.x, pelvis.y + d0.y, waist },
-                        IM_COL32(90, 200, 255, 60), ui(1.0f));
-            }
-            // A hitbox de cada pe (a caixa dele aumentada da folga): amarela no
-            // pe que joga.
-            if (last.hitboxMargin > 0.0f) {
-                for (int side = 0; side < 2; ++side) {
-                    Vec3 center, half;
-                    Quaternion orientation;
-                    if (!instance.athlete.legacy.ballControl.footBox(instance.physicsState, side, center, orientation, half)) continue;
-                    half += Vec3 { last.hitboxMargin, last.hitboxMargin, last.hitboxMargin };
-                    Vec3 corners[8];
-                    for (int k = 0; k < 8; ++k)
-                        corners[k] = center + orientation.rotate({ (k & 1) ? half.x : -half.x, (k & 2) ? half.y : -half.y,
-                            (k & 4) ? half.z : -half.z });
-                    const ImU32 boxColor = side == last.side ? IM_COL32(255, 220, 70, 220) : IM_COL32(90, 200, 255, 120);
-                    for (int a = 0; a < 8; ++a)
-                        for (int bit = 1; bit < 8; bit <<= 1)
-                            if (!(a & bit)) line3(corners[a], corners[a | bit], boxColor, ui(1.3f));
-                }
-            }
-            if (last.contactValid) {
-                // O contato previsto: uma cruz no ponto e a linha ate o chao.
-                const Vec3 p = last.contactPoint;
-                const float r = 0.11f;
-                const ImU32 contactColor = last.secondsToForce >= 0.0f ? IM_COL32(255, 150, 50, 230)
-                    : IM_COL32(120, 255, 140, 200);
-                line3({ p.x - r, p.y, p.z }, { p.x + r, p.y, p.z }, contactColor, ui(2.0f));
-                line3({ p.x, p.y - r, p.z }, { p.x, p.y + r, p.z }, contactColor, ui(2.0f));
-                line3({ p.x, p.y, p.z - r }, { p.x, p.y, p.z + r }, contactColor, ui(2.0f));
-                line3({ p.x, p.y, ground }, { p.x, p.y, p.z }, IM_COL32(255, 150, 50, 90), ui(1.0f));
             }
         }
     }
@@ -2866,6 +2966,10 @@ void WorkbenchApp::drawLaboratoryUi() {
                                     percent("Intensidade da virada", "##TurnMoveAmount", &m_dynamicTurnMovePercent, 0.0f, 150.0f,
                                         "Quanto da manobra entra (100% é o calculado).");
                             }
+                            ImGui::Checkbox("Pulo instantâneo", &m_instantJump);
+                            hint("Ligado: pula ao apertar o espaço, na altura média. Desligado: segurar carrega e pula ao soltar (mais alto quanto mais segura).");
+                            ImGui::Checkbox("Áreas de alcance", &m_showReachAreas);
+                            hint("Desenha onde a bola precisa estar para cada parte: verde os pés (o amarelo mais claro é a bola alta, pé na altura do joelho), azul o peito, laranja a cabeça. É o centro da bola que conta.");
                             if (mode == 2) {
                                 if (ImGui::Button("Recarregar a rede", { -1.0f, 0.0f })) reloadLocomotionPolicy();
                                 hint("Carrega a última rede que o treino exportou.");
@@ -2902,15 +3006,49 @@ void WorkbenchApp::drawLaboratoryUi() {
                             "Rigidez e força de todos os músculos no físico (100% é a calibrada).");
                         percent("Rigidez ao levantar", "##GetUpStiffness", &m_getUpStiffnessPercent, 20.0f, 150.0f,
                             "Rigidez dos músculos enquanto ele levanta; menos, mais relaxado.");
-                        // (A regua do tempo ate o contato saiu: a forca sai sempre
-                        // na hora do clique - pedido do usuario, 10/10 noite.)
+                        // (24/10, pedido do usuario: a forca sai no clique; so o
+                        // tempo do gesto se configura, o do manejo e o do chute.)
+                        panelHeader("BOLA");
+                        const auto milliseconds = [&](const char* label, const char* id, float* value, float minimum,
+                                                      float maximum, const char* text) {
+                            ImGui::TextUnformatted(label);
+                            ImGui::SetNextItemWidth(-1.0f);
+                            ImGui::SliderFloat(id, value, minimum, maximum, "%.0f ms", ImGuiSliderFlags_AlwaysClamp);
+                            hint(text);
+                        };
+                        milliseconds("Tempo do manejo", "##TouchGestureTime", &m_touchGestureMilliseconds, 150.0f, 900.0f,
+                            "A duração do gesto do manejo inteiro, do toque à volta. A força sai no clique.");
+                        milliseconds("Tempo do chute", "##ShotGestureTime", &m_shotGestureMilliseconds, 250.0f, 1200.0f,
+                            "A duração do gesto do chute inteiro, da batida à volta. A força sai no clique.");
+                        ImGui::EndTabItem();
+                    }
+                    // O corpo (26/10, pedido do usuario): um so para todos os bonecos
+                    // humanos do laboratorio; vale ao soltar.
+                    if (ImGui::BeginTabItem("Corpo")) {
+                        ImGui::TextUnformatted("Altura");
+                        ImGui::SetNextItemWidth(-1.0f);
+                        ImGui::SliderFloat("##BodyHeight", &m_bodyHeightCm, 170.0f, 200.0f, "%.0f cm",
+                            ImGuiSliderFlags_AlwaysClamp);
+                        if (ImGui::IsItemDeactivatedAfterEdit()) m_bodyApplyRequested = true;
+                        hint("A altura do jogador. Vale ao soltar.");
+                        ImGui::TextUnformatted("Peso");
+                        ImGui::SetNextItemWidth(-1.0f);
+                        ImGui::SliderFloat("##BodyMass", &m_bodyMassKg, MinimumBodyMassKg, MaximumBodyMassKg, "%.0f kg",
+                            ImGuiSliderFlags_AlwaysClamp);
+                        if (ImGui::IsItemDeactivatedAfterEdit()) m_bodyApplyRequested = true;
+                        hint("O peso do jogador: com a altura, decide se ele é franzino ou encorpado. Vale ao soltar.");
+                        if (ImGui::Button("RESTAURAR PADRÕES##Body", { -1.0f, ui(30.0f) })) {
+                            m_bodyHeightCm = 180.0f;
+                            m_bodyMassKg = 80.0f;
+                            m_bodyApplyRequested = true;
+                        }
                         ImGui::EndTabItem();
                     }
                     // A forca na bola (07/10, pedido do usuario: "uma tab no menu do
                     // personagem para configuracoes da forca na bola, a de manejo e de
                     // chute ... e um botao de copiar parametros").
                     if (ImGui::BeginTabItem("Força na bola")) {
-                        BallForceSettings3D& f = m_ballForce;
+                        BallOutcomeSettings3D& f = m_ballForce;
                         const auto value = [&](const char* label, const char* id, float* v, float minimum,
                                 float maximum, const char* format, const char* text) {
                             ImGui::TextUnformatted(label);
@@ -2931,52 +3069,31 @@ void WorkbenchApp::drawLaboratoryUi() {
                                 { -1.0f, ui(52.0f) });
                             hint("A velocidade que a barra dá à bola, de vazia (esquerda) a cheia (direita), parado. Correndo, a bola ainda leva a velocidade do jogador no rumo do toque e o empurrão da corrida.");
                         };
-                        panelHeader("TOQUE (MANEJO)");
-                        value("Mínimo do toque", "##ForceTouchMinimum", &f.touchMinimum, 0.0f, 3.0f, "%.2f m/s",
-                            "A velocidade que o toque dá à bola com a barra vazia (o clique rápido), parado.");
-                        value("Força da barra cheia", "##ForceTouchPower", &f.touchPower, 0.0f, 30.0f, "%.1f m/s",
-                            "Quanto a barra cheia soma ao mínimo (o passe forte).");
-                        value("Curva da barra", "##ForceTouchCurve", &f.touchCurve, 0.5f, 5.0f, "%.2f",
-                            "O formato da barra: acima de 1, fraca embaixo e forte em cima (mais controle nos toques curtos); 1, reta; abaixo de 1, forte já no começo.");
-                        curve("##ForceTouchPlot", f.touchMinimum, f.touchPower, f.touchCurve);
-                        value("Tempo para encher a barra", "##ForceTouchCharge", &m_ballTouchChargeSeconds, 0.2f, 2.0f,
-                            "%.2f s", "Quanto tempo segurando o botão direito leva para a barra do toque encher.");
-                        panelHeader("SOLA (PUXAR E ROLAR)");
-                        value("Mínimo da sola", "##ForceSoleMinimum", &f.soleMinimum, 0.0f, 3.0f, "%.2f m/s",
-                            "A sola puxando ou rolando a bola (o toque para trás com a bola à frente), com a barra vazia.");
-                        value("Força da barra cheia", "##ForceSolePower", &f.solePower, 0.0f, 15.0f, "%.1f m/s",
-                            "Quanto a barra cheia soma ao mínimo da sola.");
-                        value("Curva da barra", "##ForceSoleCurve", &f.soleCurve, 0.5f, 5.0f, "%.2f",
-                            "O formato da barra na sola (como no toque).");
-                        curve("##ForceSolePlot", f.soleMinimum, f.solePower, f.soleCurve);
-                        panelHeader("VELOCIDADE DO JOGADOR NO TOQUE");
-                        value("Velocidade levada no rumo do toque", "##ForceCarry", &f.carry, 0.0f, 1.5f, "%.2f",
-                            "A fração da velocidade do jogador no rumo do toque que a bola leva (1: ela acompanha a corrida; menos, fica para trás).");
-                        value("Antecipação da velocidade", "##ForceCarryAhead", &f.carryAhead, 0.0f, 1.0f, "%.2f s",
-                            "A bola leva a velocidade que o jogador vai ter daqui a este tempo, indo para a que as teclas pedem: arrancando ou mudando de rumo, ele não passa por ela. 0: só a de agora. (Só no corpo animado.)");
-                        value("Toque mais forte correndo", "##ForceSpeedPush", &f.speedPush, 0.0f, 0.4f, "%.2f",
-                            "Quanto o toque empurra a bola a mais por m/s da velocidade do jogador (somado à força da barra): correndo, o mesmo clique leva a bola mais à frente.");
-                        value("Força para inverter o rumo", "##ForceReverse", &f.reverseBoost, 0.0f, 1.0f, "%.2f",
-                            "Tocando contra o movimento (indo para a frente e mandando a bola para trás): a fração da velocidade do jogador e da bola no rumo contrário que volta na bola. Parado, é o quique da bola que vem contra o pé.");
-                        panelHeader("ATRITO DO TOQUE");
-                        value("Movimento de lado que fica", "##ForceTouchSide", &f.touchSideKeep, 0.0f, 1.0f, "%.2f",
-                            "Do movimento da bola de lado em relação ao toque (o que ela anda em relação ao jogador), quanto fica depois dele: 0, ela vai limpa no rumo do toque; 1, guarda tudo.");
-                        value("Excesso no rumo que fica", "##ForceTouchAhead", &f.touchAheadKeep, 0.0f, 1.0f, "%.2f",
-                            "A bola já indo no rumo do toque mais rápido que ele: quanto do excesso fica.");
+                        // A barra: o minimo (vazia) e a cheia (o total); guardada como minimo + forca.
+                        const auto bar = [&](const char* tag, float& minimum, float& power, float& exponent,
+                                             float maximumFull, float* chargeSeconds, float maximumCharge) {
+                            const std::string id = std::string("##") + tag;
+                            value("Barra mínima", (id + "Min").c_str(), &minimum, 0.0f, std::min(20.0f, maximumFull), "%.2f m/s",
+                                "A velocidade que a bola sai com a barra vazia (o clique rápido), parado.");
+                            float full = minimum + power;
+                            value("Barra cheia", (id + "Full").c_str(), &full, 0.0f, maximumFull, "%.1f m/s",
+                                "A velocidade que a bola sai com a barra cheia, parado.");
+                            power = std::max(0.0f, full - minimum);
+                            value("Inclinação da curva", (id + "Curve").c_str(), &exponent, 0.5f, 5.0f, "%.2f",
+                                "O formato da barra: acima de 1, fraca embaixo e forte em cima; 1, reta; abaixo de 1, forte já no começo.");
+                            curve((id + "Plot").c_str(), minimum, power, exponent);
+                            value("Tempo para encher a barra", (id + "Charge").c_str(), chargeSeconds, 0.2f, maximumCharge,
+                                "%.2f s", "Quanto tempo segurando o botão leva para a barra encher.");
+                        };
                         panelHeader("CHUTE");
-                        value("Mínimo do chute", "##ForceShotMinimum", &f.shotMinimum, 0.0f, 20.0f, "%.1f m/s",
-                            "A velocidade do chute com a barra vazia.");
-                        value("Força da barra cheia", "##ForceShotPower", &f.shotPower, 0.0f, 40.0f, "%.1f m/s",
-                            "Quanto a barra cheia soma ao mínimo do chute.");
-                        value("Curva da barra", "##ForceShotCurve", &f.shotCurve, 0.5f, 4.0f, "%.2f",
-                            "O formato da barra do chute: 1, reta; acima de 1, fraca embaixo e forte em cima; abaixo de 1, forte já no começo.");
-                        curve("##ForceShotPlot", f.shotMinimum, f.shotPower, f.shotCurve);
-                        value("Tempo para encher a barra", "##ForceShotCharge", &m_ballShotChargeSeconds, 0.2f, 3.0f,
-                            "%.2f s", "Quanto tempo segurando o botão esquerdo leva para a barra do chute encher.");
+                        bar("ForceShot", f.shotMinimum, f.shotPower, f.shotCurve, 45.0f, &m_ballShotChargeSeconds, 3.0f);
                         value("Sensibilidade da câmera carregando o chute", "##ShotCameraSensitivity",
                             &m_shotCameraSensitivity, 0.3f, 1.0f, "%.2f",
-                            "Segurando o chute, a câmera gira esta fração da sensibilidade normal (1: igual), para mirar com calma enquanto o gesto do mouse ajusta a altura e o efeito. Entra e sai suave; o gesto não muda.");
-                        panelHeader("ALTURA DO CHUTE");
+                            "Segurando o chute, a câmera gira esta fração da sensibilidade normal (1: igual), para mirar com calma enquanto o gesto do mouse ajusta a altura e o efeito.");
+                        value("Sensibilidade vertical do efeito", "##ShotLiftSensitivity", &m_shotLiftSensitivity, 0.25f, 3.0f,
+                            "%.2f", "Quanto o puxão do mouse para cima ou para baixo vale na altura e no giro para trás ou por cima (1: como antes; maior: o mesmo puxão dá mais).");
+                        value("Sensibilidade horizontal do efeito", "##ShotCurveSensitivity", &m_shotCurveSensitivity, 0.25f,
+                            3.0f, "%.2f", "Quanto o puxão do mouse para os lados vale no efeito de lado (1: como antes; maior: o mesmo puxão curva mais).");
                         value("Altura com a barra vazia", "##ForceShotElevationMinimum", &f.shotElevationMinimum, 0.0f,
                             30.0f, "%.1f°", "O ângulo de saída do chute fraco, sem gesto do mouse.");
                         value("Altura a mais com a barra cheia", "##ForceShotElevationPower", &f.shotElevationPower, 0.0f,
@@ -2985,8 +3102,7 @@ void WorkbenchApp::drawLaboratoryUi() {
                             "O ângulo com o gesto do mouse todo para cima.");
                         value("Rasteira (gesto para baixo)", "##ForceShotLow", &f.shotLowElevation, 0.0f, 10.0f, "%.1f°",
                             "O ângulo com o gesto do mouse todo para baixo.");
-                        panelHeader("EFEITO DO CHUTE");
-                        value("Giro de lado (efeito)", "##ForceShotCurveSpin", &f.shotCurveSpin, 0.0f, 120.0f, "%.0f rad/s",
+                        value("Giro de lado (efeito)", "##ForceShotCurveSpin", &f.shotCurveSpin, 0.0f, 200.0f, "%.0f rad/s",
                             "O giro com o gesto do mouse todo para o lado: quanto a bola curva.");
                         value("Saída para fora da mira", "##ForceShotCurveLaunch", &f.shotCurveLaunch, 0.0f, 15.0f, "%.1f°",
                             "Com efeito, a bola sai este tanto para o lado contrário da curva, para voltar na mira.");
@@ -2994,15 +3110,32 @@ void WorkbenchApp::drawLaboratoryUi() {
                             "%.0f rad/s", "O giro para trás com o gesto todo para cima (a bola alta flutua).");
                         value("Giro por cima na rasteira", "##ForceShotTopSpin", &f.shotTopSpin, 0.0f, 60.0f, "%.0f rad/s",
                             "O giro por cima com o gesto todo para baixo (a rasteira desce e corre).");
-                        panelHeader("ATRITO DO CHUTE E CORRIDA");
-                        value("Movimento de lado que fica", "##ForceShotSide", &f.shotSideKeep, 0.0f, 1.0f, "%.2f",
-                            "Do movimento da bola de lado em relação ao chute, quanto fica depois dele.");
-                        value("Quique contra o chute", "##ForceShotBounce", &f.shotBounce, 0.0f, 1.0f, "%.2f",
-                            "A bola vindo contra o chute: quanto da velocidade dela volta somada.");
-                        value("Excesso no rumo que fica", "##ForceShotAhead", &f.shotAheadKeep, 0.0f, 1.0f, "%.2f",
-                            "A bola já indo no rumo do chute mais rápido que ele: quanto do excesso fica.");
-                        value("Freada do corpo no chute correndo", "##ForceKickSlowdown", &f.kickRunSlowdown, 0.0f, 0.8f,
-                            "%.2f", "Chutando correndo, o quanto da velocidade o corpo perde durante o chute (no chute cheio).");
+                        panelHeader("MANEJO");
+                        bar("ForceTouch", f.touchMinimum, f.touchPower, f.touchCurve, 30.0f, &m_ballTouchChargeSeconds, 2.0f);
+                        value("Toque mais forte correndo", "##ForceSpeedPush", &f.speedPush, 0.0f, 1.0f, "%.2f",
+                            "Quanto o toque empurra a bola a mais por m/s da velocidade do jogador: correndo, o mesmo clique leva a bola mais à frente.");
+                        value("Poder de parada", "##ForceStop", &f.stopPower, 0.0f, 1.0f, "%.2f",
+                            "A bola vindo contra o manejo: o toque mais fraco que ela corta esta fração do que sobraria dela seguindo (1: ela para no pé; 0: segue como antes, mais devagar). O toque mais forte que ela inverte o rumo com o que sobra da força.");
+                        panelHeader("RECEPÇÃO");
+                        value("Bola vindo a partir de", "##ForceReceiveClosing", &f.receiveClosing, 0.5f, 10.0f,
+                            "%.1f m/s", "O manejo ou o chute fraco com a bola vindo para o jogador mais rápido que isto vira recepção: a bola para junto dele.");
+                        value("Resto com a barra vazia", "##ForceReceiveMinimum", &f.receiveMinimum, 0.0f, 3.0f,
+                            "%.2f m/s", "Na recepção, a bola para e sai com isto no rumo das teclas (sem tecla, ela fica).");
+                        value("Resto a mais com a barra cheia", "##ForceReceivePower", &f.receivePower, 0.0f, 10.0f,
+                            "%.2f m/s", "Quanto o resto da recepção cresce da barra vazia à cheia.");
+                        value("Herdar a velocidade do jogador", "##ForceReceiveCarry", &f.receiveCarry, 0.0f, 1.0f, "%.2f",
+                            "Quanto da velocidade do jogador a bola recebida leva junto (0: ela para no chão e sai só o resto; 1: ela corre com ele).");
+                        panelHeader("LEVANTAR");
+                        bar("ForceRaise", f.raiseMinimum, f.raisePower, f.raiseCurve, 12.0f, &m_ballRaiseChargeSeconds, 2.0f);
+                        value("Para a frente com as teclas", "##ForceRaiseAhead", &f.raiseAhead, 0.0f, 1.5f, "%.2f",
+                            "Com uma tecla de direção, a bola sai também nesse rumo: esta fração da velocidade de subida (o chapéu). Sem tecla, sobe reto.");
+                        panelHeader("PEITO E CABEÇA");
+                        value("Força do peito", "##ForceChestShare", &f.chestShare, 0.0f, 1.0f, "%.2f",
+                            "O peito vai até esta fração da barra cheia do manejo e do chute (os valores de cima, lidos na hora).");
+                        value("Parada no peito", "##ForceChestStop", &f.chestStop, 0.0f, 1.0f, "%.2f",
+                            "Quanto da velocidade que a bola trazia contra o corpo o peito tira: 1 é o domínio perfeito, ela cai a frente dele.");
+                        value("Força da cabeça", "##ForceHeadShare", &f.headShare, 0.0f, 1.0f, "%.2f",
+                            "O cabeceio vai até esta fração da barra cheia do manejo e do chute (os valores de cima, lidos na hora); a barra vazia fica igual.");
                         // (A bola presa e a hitbox do pe eram do manejo V3: sairam com
                         // ele.)
                         ImGui::Dummy({ 1.0f, ui(6.0f) });
@@ -3014,51 +3147,56 @@ void WorkbenchApp::drawLaboratoryUi() {
                                     unit[0] != '\0' ? " " : "", unit);
                                 text += buffer;
                             };
-                            text += "[toque]\n";
-                            line("T_BallBase", "mínimo do toque", f.touchMinimum, "m/s");
-                            line("T_BallPower", "força da barra cheia", f.touchPower, "m/s");
-                            line("T_BallCurve", "curva da barra", f.touchCurve, "");
-                            line("barra_toque_s", "tempo para encher a barra", m_ballTouchChargeSeconds, "s");
-                            text += "[sola]\n";
-                            line("T_BallSoleBase", "mínimo da sola", f.soleMinimum, "m/s");
-                            line("T_BallSolePower", "força da barra cheia", f.solePower, "m/s");
-                            line("T_BallSoleCurve", "curva da barra", f.soleCurve, "");
-                            text += "[velocidade do jogador]\n";
-                            line("T_BallCarry", "velocidade levada no rumo do toque", f.carry, "");
-                            line("T_BallCarryAhead", "antecipação da velocidade", f.carryAhead, "s");
-                            line("T_BallSpeedPush", "toque mais forte correndo", f.speedPush, "");
-                            line("T_BallReverseBoost", "força para inverter o rumo", f.reverseBoost, "");
-                            text += "[atrito do toque]\n";
-                            line("T_BallKeepSide", "movimento de lado que fica", f.touchSideKeep, "");
-                            line("T_BallKeepAhead", "excesso no rumo que fica", f.touchAheadKeep, "");
                             text += "[chute]\n";
-                            line("T_ShotMin", "mínimo do chute", f.shotMinimum, "m/s");
-                            line("T_ShotPower", "força da barra cheia", f.shotPower, "m/s");
-                            line("T_ShotCurve", "curva da barra", f.shotCurve, "");
-                            line("barra_chute_s", "tempo para encher a barra", m_ballShotChargeSeconds, "s");
-                            line("camera_chute", "sensibilidade da câmera carregando o chute", m_shotCameraSensitivity, "");
-                            line("T_ShotElevMin", "altura com a barra vazia", f.shotElevationMinimum, "graus");
-                            line("T_ShotElev", "altura a mais com a barra cheia", f.shotElevationPower, "graus");
-                            line("T_ShotHigh", "bola alta (gesto para cima)", f.shotHighElevation, "graus");
-                            line("T_ShotLow", "rasteira (gesto para baixo)", f.shotLowElevation, "graus");
-                            line("T_ShotCurveSpin", "giro de lado (efeito)", f.shotCurveSpin, "rad/s");
-                            line("T_ShotCurveLaunch", "saída para fora da mira", f.shotCurveLaunch, "graus");
-                            line("T_ShotBackSpin", "giro para trás na bola alta", f.shotBackSpin, "rad/s");
-                            line("T_ShotTopSpin", "giro por cima na rasteira", f.shotTopSpin, "rad/s");
-                            line("T_ShotKeepSide", "atrito do chute: movimento de lado que fica", f.shotSideKeep, "");
-                            line("T_BallKeepBounce", "atrito do chute: quique contra o chute", f.shotBounce, "");
-                            line("T_ShotKeepAhead", "atrito do chute: excesso no rumo que fica", f.shotAheadKeep, "");
-                            line("T_KickRunSlowdown", "freada do corpo no chute correndo", f.kickRunSlowdown, "");
+                            line("barra_minima", "barra mínima", f.shotMinimum, "m/s");
+                            line("barra_cheia", "barra cheia", f.shotMinimum + f.shotPower, "m/s");
+                            line("curva", "inclinação da curva", f.shotCurve, "");
+                            line("barra_s", "tempo para encher a barra", m_ballShotChargeSeconds, "s");
+                            line("camera", "sensibilidade da câmera carregando o chute", m_shotCameraSensitivity, "");
+                            line("sens_vertical", "sensibilidade vertical do efeito", m_shotLiftSensitivity, "");
+                            line("sens_horizontal", "sensibilidade horizontal do efeito", m_shotCurveSensitivity, "");
+                            line("altura_vazia", "altura com a barra vazia", f.shotElevationMinimum, "graus");
+                            line("altura_cheia", "altura a mais com a barra cheia", f.shotElevationPower, "graus");
+                            line("alta", "bola alta (gesto para cima)", f.shotHighElevation, "graus");
+                            line("rasteira", "rasteira (gesto para baixo)", f.shotLowElevation, "graus");
+                            line("efeito", "giro de lado (efeito)", f.shotCurveSpin, "rad/s");
+                            line("saida_efeito", "saída para fora da mira", f.shotCurveLaunch, "graus");
+                            line("giro_tras", "giro para trás na bola alta", f.shotBackSpin, "rad/s");
+                            line("giro_cima", "giro por cima na rasteira", f.shotTopSpin, "rad/s");
+                            text += "[manejo]\n";
+                            line("barra_minima", "barra mínima", f.touchMinimum, "m/s");
+                            line("barra_cheia", "barra cheia", f.touchMinimum + f.touchPower, "m/s");
+                            line("curva", "inclinação da curva", f.touchCurve, "");
+                            line("barra_s", "tempo para encher a barra", m_ballTouchChargeSeconds, "s");
+                            line("correndo", "toque mais forte correndo", f.speedPush, "");
+                            line("parada", "poder de parada", f.stopPower, "");
+                            text += "[recepcao]\n";
+                            line("vindo", "bola vindo a partir de", f.receiveClosing, "m/s");
+                            line("resto_minimo", "resto com a barra vazia", f.receiveMinimum, "m/s");
+                            line("resto_cheia", "resto a mais com a barra cheia", f.receivePower, "m/s");
+                            line("herdar", "herdar a velocidade do jogador", f.receiveCarry, "");
+                            text += "[levantar]\n";
+                            line("barra_minima", "barra mínima (subida)", f.raiseMinimum, "m/s");
+                            line("barra_cheia", "barra cheia (subida)", f.raiseMinimum + f.raisePower, "m/s");
+                            line("curva", "inclinação da curva", f.raiseCurve, "");
+                            line("barra_s", "tempo para encher a barra", m_ballRaiseChargeSeconds, "s");
+                            line("frente", "para a frente com as teclas", f.raiseAhead, "");
+                            text += "[peito_cabeca]\n";
+                            line("peito", "força do peito", f.chestShare, "da barra cheia");
+                            line("parada_peito", "parada no peito", f.chestStop, "");
+                            line("cabeca", "força da cabeça", f.headShare, "da barra cheia");
                             ImGui::SetClipboardText(text.c_str());
                             m_ballForceCopiedTime = ImGui::GetTime();
                         }
                         if (ImGui::GetTime() - m_ballForceCopiedTime < 2.0)
                             ImGui::TextColored({ 0.38f, 0.82f, 0.62f, 1.0f }, "Copiado para a área de transferência.");
                         if (ImGui::Button("RESTAURAR PADRÕES##BallForce", { -1.0f, ui(30.0f) })) {
-                            m_ballForce = defaultBallForceSettings3D();
+                            m_ballForce = defaultBallOutcomeSettings3D();
                             m_ballTouchChargeSeconds = 0.6f;
                             m_ballShotChargeSeconds = 1.0f;
+                            m_ballRaiseChargeSeconds = 0.6f;
                             m_shotCameraSensitivity = 0.6f;
+                            m_shotLiftSensitivity = m_shotCurveSensitivity = 1.0f;
                         }
                         ImGui::EndTabItem();
                     }
@@ -3079,6 +3217,13 @@ void WorkbenchApp::drawLaboratoryUi() {
                             "A corrida para a esquerda e para a direita.");
                         speed("Corrida de costas", "##SpeedSprintBackward", &m_defaultSprintBackwardSpeed, 2.0f, 9.0f,
                             "A corrida para trás; vale também para as diagonais de costas.");
+                        speed("Sprint máximo", "##SpeedMaxSprint", &m_defaultMaxSprintSpeed, 6.0f, 12.0f,
+                            "Shift duas vezes rápido e segurado: só para a frente e nas diagonais da frente.");
+                        ImGui::TextUnformatted("Câmera no sprint máximo");
+                        ImGui::SetNextItemWidth(-1.0f);
+                        ImGui::SliderFloat("##MaxSprintCamera", &m_maxSprintCameraSensitivity, 0.1f, 1.0f, "%.2f",
+                            ImGuiSliderFlags_AlwaysClamp);
+                        hint("A fração da sensibilidade da câmera que fica no sprint máximo (1: igual).");
                         ImGui::TextUnformatted("Resposta");
                         ImGui::SetNextItemWidth(-1.0f);
                         ImGui::SliderFloat("##CapsuleResponse", &m_capsuleResponsePercent, 20.0f, 150.0f, "%.0f%%",
@@ -3103,11 +3248,14 @@ void WorkbenchApp::drawLaboratoryUi() {
                                 "Corrida para a frente (e diagonais da frente): %.2f\n"
                                 "Corrida de lado: %.2f\n"
                                 "Corrida de costas (e diagonais de costas): %.2f\n"
+                                "Sprint máximo: %.2f\n"
+                                "Câmera no sprint máximo: %.2f\n"
                                 "Resposta: %.0f%%\n"
                                 "Troca de direção: %.0f%%\n"
                                 "Arrancada: %.0f%%\n",
                                 m_defaultTrotSpeed, m_defaultSprintForwardSpeed, m_defaultSprintSideSpeed,
-                                m_defaultSprintBackwardSpeed, m_capsuleResponsePercent, m_capsuleReversalPercent, m_defaultStartGesturePercent);
+                                m_defaultSprintBackwardSpeed, m_defaultMaxSprintSpeed, m_maxSprintCameraSensitivity,
+                                m_capsuleResponsePercent, m_capsuleReversalPercent, m_defaultStartGesturePercent);
                             ImGui::SetClipboardText(text);
                             m_defaultSpeedsCopiedTime = ImGui::GetTime();
                         }
@@ -3122,6 +3270,8 @@ void WorkbenchApp::drawLaboratoryUi() {
                             m_defaultSprintForwardSpeed = LabDefaultSprintForwardSpeed;
                             m_defaultSprintSideSpeed = LabDefaultSprintSideSpeed;
                             m_defaultSprintBackwardSpeed = LabDefaultSprintBackwardSpeed;
+                            m_defaultMaxSprintSpeed = LabDefaultMaxSprintSpeed;
+                            m_maxSprintCameraSensitivity = LabDefaultMaxSprintCameraSensitivity;
                         }
                         ImGui::EndTabItem();
                     }

@@ -1,0 +1,238 @@
+{
+ "ombro": {
+  "Left_braco_T": {
+   "esticou_camisa": 18.8
+  },
+  "Left_braco_cima150": {
+   "amassou_camisa": 203.2,
+   "auto_camisa": 13.8,
+   "esticou_camisa": 22.0
+  },
+  "Left_braco_frente90": {
+   "amassou_camisa": 25.3,
+   "auto_camisa": 0.2
+  },
+  "Left_braco_lado135": {
+   "amassou_camisa": 93.2,
+   "auto_camisa": 11.2,
+   "esticou_camisa": 164.8
+  },
+  "Left_braco_tras40": {},
+  "Right_braco_T": {
+   "esticou_camisa": 18.8
+  },
+  "Right_braco_cima150": {
+   "amassou_camisa": 203.2,
+   "auto_camisa": 13.8,
+   "esticou_camisa": 22.0
+  },
+  "Right_braco_frente90": {
+   "amassou_camisa": 25.3,
+   "auto_camisa": 0.2
+  },
+  "Right_braco_lado135": {
+   "amassou_camisa": 93.2,
+   "auto_camisa": 11.2,
+   "esticou_camisa": 164.8
+  },
+  "Right_braco_tras40": {},
+  "repouso": {
+   "cruza_chuteira_cabedal_direita_corpo": 0.1,
+   "cruza_chuteira_cabedal_esquerda_corpo": 0.1,
+   "esticou_camisa": 50.3
+  },
+  "sprint_bracos@0.15": {
+   "amassou_calcao": 77.1,
+   "amassou_camisa": 22.8,
+   "amassou_corpo": 65.2,
+   "auto_calcao": 8.0,
+   "auto_corpo": 4.9,
+   "cruza_chuteira_cabedal_direita_corpo": 0.8,
+   "esticou_calcao": 200.1,
+   "esticou_corpo": 12.7
+  },
+  "sprint_bracos@0.45": {
+   "amassou_calcao": 6.6,
+   "amassou_camisa": 10.0,
+   "amassou_corpo": 89.0,
+   "auto_corpo": 5.7,
+   "cruza_chuteira_cabedal_esquerda_corpo": 2.9,
+   "esticou_calcao": 77.7,
+   "esticou_corpo": 28.2
+  }
+ },
+ "quadril": {
+  "Left_abertura45": {
+   "esticou_calcao": 78.3
+  },
+  "Left_extensao20": {
+   "esticou_calcao": 1.8
+  },
+  "Left_extensao40": {
+   "amassou_calcao": 12.8,
+   "esticou_calcao": 27.6
+  },
+  "Left_flexao110": {
+   "amassou_calcao": 75.4,
+   "amassou_camisa": 36.8,
+   "amassou_corpo": 23.5,
+   "auto_calcao": 32.0,
+   "auto_corpo": 16.3,
+   "cruza_calcao_camisa": 11.6,
+   "esticou_calcao": 233.1
+  },
+  "Left_flexao30": {
+   "amassou_calcao": 3.5,
+   "esticou_calcao": 18.0
+  },
+  "Left_flexao60": {
+   "amassou_calcao": 15.5,
+   "auto_calcao": 3.6,
+   "esticou_calcao": 143.2
+  },
+  "Left_flexao60_abertura30": {
+   "amassou_calcao": 23.6,
+   "auto_calcao": 10.7,
+   "esticou_calcao": 139.7
+  },
+  "Left_flexao90": {
+   "amassou_calcao": 71.3,
+   "amassou_camisa": 36.8,
+   "amassou_corpo": 29.9,
+   "auto_calcao": 26.5,
+   "auto_corpo": 6.8,
+   "esticou_calcao": 199.7
+  },
+  "Left_passada": {
+   "amassou_calcao": 8.9,
+   "auto_calcao": 0.6,
+   "esticou_calcao": 100.6
+  },
+  "Right_abertura45": {
+   "esticou_calcao": 78.3
+  },
+  "Right_extensao20": {
+   "esticou_calcao": 1.8
+  },
+  "Right_extensao40": {
+   "amassou_calcao": 12.8,
+   "esticou_calcao": 27.6
+  },
+  "Right_flexao110": {
+   "amassou_calcao": 75.4,
+   "amassou_camisa": 36.8,
+   "amassou_corpo": 23.5,
+   "auto_calcao": 31.9,
+   "auto_corpo": 16.3,
+   "cruza_calcao_camisa": 11.6,
+   "esticou_calcao": 233.1
+  },
+  "Right_flexao30": {
+   "amassou_calcao": 3.5,
+   "esticou_calcao": 18.0
+  },
+  "Right_flexao60": {
+   "amassou_calcao": 15.5,
+   "auto_calcao": 3.6,
+   "esticou_calcao": 143.2
+  },
+  "Right_flexao60_abertura30": {
+   "amassou_calcao": 23.6,
+   "auto_calcao": 10.7,
+   "esticou_calcao": 139.7
+  },
+  "Right_flexao90": {
+   "amassou_calcao": 71.3,
+   "amassou_camisa": 36.8,
+   "amassou_corpo": 29.9,
+   "auto_calcao": 26.5,
+   "auto_corpo": 6.8,
+   "esticou_calcao": 199.7
+  },
+  "Right_passada": {
+   "amassou_calcao": 8.9,
+   "auto_calcao": 0.6,
+   "esticou_calcao": 100.6
+  },
+  "agachamento": {
+   "amassou_calcao": 87.2,
+   "amassou_camisa": 73.7,
+   "amassou_corpo": 47.1,
+   "auto_calcao": 42.6,
+   "auto_corpo": 52.3,
+   "esticou_calcao": 333.3
+  },
+  "carrinho@0.40": {
+   "amassou_calcao": 101.2,
+   "amassou_camisa": 36.8,
+   "amassou_corpo": 63.3,
+   "auto_calcao": 15.0,
+   "auto_corpo": 22.0,
+   "cruza_calcao_camisa": 0.2,
+   "cruza_chuteira_cabedal_direita_corpo": 11.6,
+   "cruza_chuteira_cabedal_esquerda_corpo": 2.7,
+   "esticou_calcao": 352.6,
+   "esticou_corpo": 52.8
+  },
+  "chute@0.25": {
+   "esticou_calcao": 1.8
+  },
+  "chute@0.40": {
+   "amassou_camisa": 14.5,
+   "cruza_calcao_corpo": 8.6,
+   "cruza_chuteira_cabedal_direita_corpo": 0.0
+  },
+  "sprint@0.05": {
+   "amassou_calcao": 10.6,
+   "amassou_corpo": 70.5,
+   "auto_corpo": 30.9,
+   "esticou_calcao": 92.9
+  },
+  "sprint@0.15": {
+   "amassou_calcao": 77.1,
+   "amassou_camisa": 22.8,
+   "amassou_corpo": 65.2,
+   "auto_calcao": 8.0,
+   "auto_corpo": 4.9,
+   "cruza_chuteira_cabedal_direita_corpo": 0.8,
+   "esticou_calcao": 200.1,
+   "esticou_corpo": 12.7
+  },
+  "sprint@0.25": {
+   "amassou_calcao": 8.4,
+   "amassou_corpo": 78.7,
+   "auto_corpo": 15.1,
+   "cruza_calcao_corpo": 4.6,
+   "esticou_calcao": 69.8,
+   "esticou_corpo": 12.7
+  },
+  "sprint@0.35": {
+   "amassou_calcao": 52.0,
+   "amassou_camisa": 46.9,
+   "amassou_corpo": 77.1,
+   "auto_calcao": 24.0,
+   "auto_corpo": 13.6,
+   "cruza_chuteira_cabedal_esquerda_corpo": 0.1,
+   "esticou_calcao": 200.5,
+   "esticou_corpo": 12.7
+  },
+  "sprint@0.45": {
+   "amassou_calcao": 6.6,
+   "amassou_camisa": 10.0,
+   "amassou_corpo": 89.0,
+   "auto_corpo": 5.7,
+   "cruza_chuteira_cabedal_esquerda_corpo": 2.9,
+   "esticou_calcao": 77.7,
+   "esticou_corpo": 28.2
+  },
+  "sprint@0.55": {
+   "amassou_calcao": 62.6,
+   "amassou_camisa": 14.7,
+   "amassou_corpo": 69.6,
+   "auto_calcao": 11.2,
+   "auto_corpo": 29.4,
+   "esticou_calcao": 162.6,
+   "esticou_corpo": 12.7
+  }
+ }
+}

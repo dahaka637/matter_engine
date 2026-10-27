@@ -102,6 +102,12 @@ public:
     [[nodiscard]] RHI::TextureHandle createTexture2D(RHI::Extent2D extent,
         std::span<const std::byte> rgbaPixels);
     void destroyTexture(RHI::TextureHandle handle);
+    // O material do personagem (RHI/CharacterMaterial.hpp).
+    [[nodiscard]] RHI::CharacterMaterialHandle createCharacterMaterial(const RHI::CharacterMaterialDesc& desc);
+    void updateCharacterKitLayer(RHI::CharacterMaterialHandle handle, std::uint32_t layer, std::span<const std::byte> levels,
+        std::span<const float> regionAverages);
+    void updateCharacterVertices(RHI::CharacterMaterialHandle handle, std::span<const RHI::CharacterKitVertexGpu> vertices);
+    void destroyCharacterMaterial(RHI::CharacterMaterialHandle handle);
     void setMouseCaptured(bool captured);
     [[nodiscard]] bool mouseCaptured() const { return m_mouseCaptured; }
 

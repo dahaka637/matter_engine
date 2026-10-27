@@ -149,10 +149,9 @@ RagdollColliderWireframe3D alignedToRig(const RagdollColliderWireframe3D& wirefr
 } // namespace
 
 int runColliders(const ModelContext& context, const CommandLine& line) {
-    const std::string profilePath = line.has("perfil")
-        ? line.text("perfil")
-        : std::string(MATTERENGINE_ASSETS_DIR) + "/characters/football_player/FootballPlayerV1.ragdoll.json";
-    const RagdollProfile3D profile = loadRagdollProfile3D(profilePath);
+    // Sem --perfil, o do personagem carregado (o do corpo, com --corpo).
+    const RagdollProfile3D profile =
+        line.has("perfil") ? loadRagdollProfile3D(line.text("perfil")) : context.loaded.character->profile;
     RagdollColliderWireframe3D wireframe = buildRagdollColliderWireframe3D(
         profile, std::clamp(line.integer("radiais", 16), 8, 128), std::clamp(line.integer("tampas", 4), 2, 32));
 

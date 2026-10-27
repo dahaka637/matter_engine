@@ -4,7 +4,8 @@ namespace MatterEngine {
 
 JPH::BroadPhaseLayer JoltBroadPhaseLayerInterface::GetBroadPhaseLayer(
     JPH::ObjectLayer layer) const {
-    if (layer == JoltObjectLayers::NonMoving) {
+    if (layer == JoltObjectLayers::NonMoving || layer == JoltObjectLayers::PlayerBarrier
+        || layer == JoltObjectLayers::CapsuleBarrier) {
         return JoltBroadPhaseLayers::NonMoving;
     }
     // Os links de ragdoll numa arvore so deles (as sondas de chao nao os veem).
@@ -30,6 +31,8 @@ bool JoltObjectVsBroadPhaseLayerFilter::ShouldCollide(
     if (layer == JoltObjectLayers::NonMoving) {
         return broadPhaseLayer == JoltBroadPhaseLayers::Moving || broadPhaseLayer == JoltBroadPhaseLayers::Ragdoll;
     }
+    if (layer == JoltObjectLayers::PlayerBarrier) return broadPhaseLayer == JoltBroadPhaseLayers::Ragdoll;
+    if (layer == JoltObjectLayers::CapsuleBarrier) return false;
     return true;
 }
 
@@ -39,6 +42,11 @@ bool JoltObjectLayerPairFilter::ShouldCollide(JPH::ObjectLayer first,
         && second == JoltObjectLayers::NonMoving) {
         return false;
     }
+    // A barreira dos jogadores so com os links, a da capsula com nada (a
+    // capsula as ve pelo filtro da varredura dela).
+    if (first == JoltObjectLayers::CapsuleBarrier || second == JoltObjectLayers::CapsuleBarrier) return false;
+    if (first == JoltObjectLayers::PlayerBarrier || second == JoltObjectLayers::PlayerBarrier)
+        return first == JoltObjectLayers::Ragdoll || second == JoltObjectLayers::Ragdoll;
     // Todo o resto colide. O personagem contra ragdoll tambem: a excecao de
     // ignoreRagdolls e por CHAMADA, num filtro passado ao ExtendedUpdate, e nao
     // uma regra global - o personagem controlado precisa ignorar a propria

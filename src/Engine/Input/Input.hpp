@@ -38,6 +38,8 @@ enum class MouseButton {
     Left,
     Right,
     Middle,
+    // O lateral de tras (mouse 4).
+    Back,
     Unknown
 };
 

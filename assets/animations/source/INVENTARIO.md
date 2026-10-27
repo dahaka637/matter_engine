@@ -24,6 +24,7 @@ ao último quadro (m); perto de 0 com "máx" pequeno = veio no lugar (In Place).
 | `chao_e_levantar/Prone Roll.fbx` | 3.27 | 1.04 | 1.05 | 0 | 186 |
 | `chao_e_levantar/Prone To Crouch Transition.fbx` | 1.80 | 0.03 | 0.05 | -40 | 47 |
 | `chao_e_levantar/Standing Up.fbx` | 2.97 | 0.11 | 0.23 | 5 | 8 |
+| `corrida/Female Locomotion Pose.fbx` | 0.03 | 0.00 | 0.00 | 0 | 0 |
 | `corrida/Running(2).fbx` | 0.70 | 2.94 | 2.94 | -0 | 6 |
 | `corrida/Running(3).fbx` | 0.63 | 3.36 | 3.36 | 0 | 14 |
 | `corrida/Running(4).fbx` | 0.63 | 3.36 | 3.36 | 0 | 14 |
@@ -59,6 +60,7 @@ ao último quadro (m); perto de 0 com "máx" pequeno = veio no lugar (In Place).
 | `giros_parado/Right Turn.fbx` | 1.00 | 0.13 | 0.13 | -96 | 96 |
 | `giros_parado/RightTurn.fbx` | 1.03 | 0.01 | 0.17 | -90 | 90 |
 | `giros_parado/Turn 90 Right (rifle).fbx` | 1.00 | 0.01 | 0.16 | -90 | 90 |
+| `giros_parado/Turning Right.fbx` | 2.80 | 0.01 | 0.06 | -90 | 95 |
 | `goleiro/Goalkeeper Drop Kick(1).fbx` | 2.77 | 2.76 | 2.76 | 63 | 133 |
 | `goleiro/Goalkeeper Drop Kick.fbx` | 3.90 | 3.11 | 3.11 | 2 | 72 |
 | `parado/Idle.fbx` | 10.00 | 0.00 | 0.01 | 0 | 1 |

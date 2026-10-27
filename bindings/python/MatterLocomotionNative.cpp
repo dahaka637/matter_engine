@@ -85,6 +85,13 @@ NB_MODULE(matter_locomotion_native, m) {
         .def_prop_ro("contract_version", [](const LocomotionTraining3D&) { return LocomotionContract3D::Version; })
         .def_prop_ro("contract_hash", [](const LocomotionTraining3D& b) { return hex(b.contract().hash()); })
         .def_prop_ro("body_id", [](const LocomotionTraining3D& b) { return b.athlete().profile().id; })
+        // Os corpos que os mundos sorteiam ((altura m, massa kg); sem o bloco "body", so o de hoje).
+        .def_prop_ro("body_grid",
+            [](const LocomotionTraining3D& b) {
+                std::vector<std::pair<float, float>> grid;
+                for (const PlayerBody3D& body : b.bodyGrid()) grid.emplace_back(body.heightMeters, body.massKg);
+                return grid;
+            })
         .def_prop_ro("task_id", [](const LocomotionTraining3D& b) { return b.task().id; })
         .def_prop_ro("task_name", [](const LocomotionTraining3D& b) { return b.task().displayName; })
         .def_prop_ro("task_hash", [](const LocomotionTraining3D& b) { return hex(b.task().hash); })
@@ -142,6 +149,7 @@ NB_MODULE(matter_locomotion_native, m) {
                 return out;
             })
         .def("action_cap_fractions", &LocomotionTraining3D::actionCapFractions)
+        .def("action_scales", &LocomotionTraining3D::actionScales)
         .def("action_bounds", [](const LocomotionTraining3D& self) {
             const LocomotionTraining3D::ActionBounds bounds = self.actionBounds();
             return std::make_pair(bounds.lower, bounds.upper);

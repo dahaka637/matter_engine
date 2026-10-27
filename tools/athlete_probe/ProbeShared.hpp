@@ -7,7 +7,8 @@
 #include "Engine/Athlete/AthleteTelemetry3D.hpp"
 #include "Engine/Athlete/Contract/LocomotionContract3D.hpp"
 #include "Engine/Athlete/Training/LocomotionWorld3D.hpp"
-#include "Engine/Athlete/Dribble/BodyForecast3D.hpp"
+#include "Engine/Athlete/Reference/BodyForecast3D.hpp"
+#include "Engine/Physique/PlayerPhysique3D.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -27,6 +28,8 @@ struct Keys {
     float forward = 0.0f;
     float left = 0.0f;
     bool sprint = false;
+    // O sprint maximo (o Shift duplo do laboratorio: so no padrao, com sprint).
+    bool maxSprint = false;
     float cameraYaw = 0.0f;
     bool jump = false;
     bool crouch = false;
@@ -86,6 +89,11 @@ struct Scenario {
     // instante em que o movimento pedido muda depois dele (-1 nenhum).
     float placeAt = -1.0f;
     Vec3 placeOffset;
+    // A bola posta ja vindo (a recepcao): a velocidade dela no mundo, no
+    // referencial do corpo (zero: a da capsula, andando junto).
+    Vec3 placeVelocity;
+    // Mais bolas postas do mesmo jeito (o teste sorteado): o instante e o lugar.
+    std::vector<std::pair<float, Vec3>> placements;
     float changeAt = -1.0f;
     // Comeca no fisico (o empurrao so age no corpo fisico).
     bool startPhysical = false;
@@ -123,11 +131,6 @@ struct Metrics {
     int earlyLifts = 0;
     int catchSteps = 0;
     int startSteps = 0;
-    // Manejo novo: os desfechos dos pedidos, o maior atraso ate o gesto (s) e
-    // os ticks com as pernas cruzadas no gesto.
-    std::string outcomes;
-    float worstLatency = 0.0f;
-    int crossings = 0;
     // Os modos por onde passou ("animado>ativo>volta>animado") e o do fim.
     std::string trail;
     // O joelho: a maior velocidade de esticar (graus/s) no modo padrao, no
@@ -136,18 +139,26 @@ struct Metrics {
     float peakKneeExtension = 0.0f;
     float peakKneeExtensionTarget = 0.0f;
     float peakKneeAcceleration = 0.0f;
-    // Manejo v2: o pedido, o aceite e a forca (s; -1 nao houve), a forca
-    // planejada pela regua (do aceite) e o contato estimado, o gesto na bola
-    // imaginada, o tempo ate a perna sair do gesto depois de mudar o
-    // movimento (s; -1 nao medido) e o caminho da capsula.
+    // A bola: o primeiro pedido e a primeira forca (s; -1 nao houve) e o
+    // caminho da capsula; e os ticks com cada perna num gesto (a animacao de
+    // fato tocando).
     float requestTime = -1.0f;
-    float acceptTime = -1.0f;
     float forceTime = -1.0f;
-    // O movimento do primeiro toque: a perna, o tipo e o setor.
-    int moveSide = -1;
-    int moveTouch = -1;
-    int moveSector = -1;
-    float legReturn = -1.0f;
+    // A base mais alta das areas de alcance dos pes (m; sobe com o pulo).
+    float reachBaseMax = 0.0f;
+    std::array<int, 2> gestureTicks {};
+    // Ticks com as duas pernas em gesto (nenhum pe de apoio) e a sequencia dos
+    // gestos (a perna e o instante de cada um).
+    int bothGestureTicks = 0;
+    std::string gestureSequence;
+    // Os pes parados (no plano, em relacao a pelve, no rumo) no comeco e no
+    // fim: o corpo fisico e a animacao (o "perna deslocada" depois do gesto).
+    bool stanceValid = false;
+    std::array<Vec3, 2> stanceStart {}, stanceEnd {}, animatedStart {}, animatedEnd {};
+    // Parado de verdade (sem tecla, sem giro da camera, sem gesto) ha mais de
+    // 1 s: o pior pe fora do lugar e quando.
+    float stillWorst = 0.0f, stillWorstTime = -1.0f, stillSeconds = 0.0f;
+    std::array<Vec3, 2> stillWorstFeet {};
     std::vector<Vec3> capsulePath;
     // O levantar: no comeco (o primeiro Rising) a frente do peito e a da
     // pelve (z: + de costas, - de brucos) e o lado escolhido; quando acabou
@@ -180,8 +191,10 @@ struct Metrics {
     // (m, a sola contra o chao embaixo); o pe no ar longe do estilo (m,
     // depois de 0,15 s no ar).
     int legCrossTicks = 0;
+    // Sem o limite de frente: o pe ou o joelho esquerdo a direita do outro (21/10).
+    int legOrderTicks = 0;
+    int kneeOrderTicks = 0;
     float legOverlap = 0.0f;
-    float gestureOverlap = 0.0f;
     // A troca fisico -> padrao: a maior diferenca de velocidade pelve x
     // capsula e o maior pico de aceleracao dos links nela.
     float transitionSpeedGap = 0.0f;
@@ -189,39 +202,12 @@ struct Metrics {
     // E a pelve mais rapida nela e o quanto o peito inclinou em 0,1 s.
     float transitionSpeedMax = 0.0f;
     float transitionTrunkRate = 0.0f;
-    // O movimento com a bola: a perna dele mais esticada no ar, antes do pouso
-    // (fracao do comprimento, do quadril ao tornozelo, no corpo) e os ticks com o pe dele
-    // arrastando no chao (a sola a menos de 2 cm do chao, andando mais que 1
-    // m/s no plano, antes do pouso).
-    float moveReach = 0.0f;
-    // Por fase do movimento (0 parado .. 5 a volta): o alcance maximo da
-    // perna e os ticks com ela quase reta (> 0,95).
-    std::array<float, 6> phaseReach {};
-    std::array<int, 6> phaseStraightTicks {};
-    // (E os ticks com ela mais reta que a do clipe no mesmo quadril.)
-    std::array<int, 6> phaseBeyondClipTicks {};
-    // O pe do gesto andando para tras no mundo com o corpo andando (m/s; na
-    // passada o pe nunca volta - o "chicote").
-    std::array<float, 6> phaseBackSpeed {};
-    int moveDragTicks = 0;
-    // Plano v5 (E0): a folga entre o pe (a caixa dele, a mais perto da bola
-    // dos dois) e a bola no instante da forca (m), o atraso do clique a forca
-    // (s), a "perna louca" (ticks com coxa ou canela girando a mais de 30
-    // rad/s; e com o joelho virando de lado mais de 60 graus num tick) e o
-    // maior voo (os dois pes no ar, s).
-    std::vector<float> contactGaps;
-    // (Os toques da garantia - a forca sem o pe chegar - a parte.)
-    std::vector<float> guaranteedGaps;
+    // O atraso do clique a forca (s), a "perna louca" (ticks com coxa ou
+    // canela girando a mais de 30 rad/s; e com o joelho virando de lado mais
+    // de 60 graus num tick) e o maior voo (os dois pes no ar, s).
     int lostRequests = 0;
-    int abortedTouches = 0;
-    int missedTouches = 0;
-    int mergedRequests = 0;
-    // Ticks com um pe apoiado em cima da bola (o centro dela a menos de 0,15 m
-    // do pe no chao).
+    // Ticks com um pe entrando mais de 2 cm na bola.
     int footOnBallTicks = 0;
-    int swingFootOnBallTicks = 0;
-    // O quanto o pe esta dentro da bola na forca (m, o pior).
-    float contactInside = 0.0f;
     std::vector<float> latencies;
     std::vector<float> pendingRequests;
     int crazyLegTicks = 0;
@@ -253,6 +239,8 @@ struct ProbeContext {
     bool noCapsule = false;
     CharacterMotorSettings3D avatar;
     AthleteRuntimeAssets3D runtimeAssets;
+    // O corpo do atleta (--corpo; sem a opcao, o de hoje).
+    PlayerBody3D body;
 };
 
 // A paridade do contrato da rede (o degrau 1): a acao fixa de cada decisao
@@ -291,5 +279,9 @@ void stepScenarioWorld(const ProbeContext& context, const AthleteRuntimeSettings
 std::vector<LocomotionStaticBox3D> scenarioStatics(const Scenario& scenario);
 int runParity(const ProbeContext& context, int limit, int restores);
 int runBaseline(const ProbeContext& context, int threads);
+// A prova da acao zero do contrato com autoridade plena (plano RL sobre o
+// classico, ordem 4): por roteiro e nivel de ajuda, o classico sem rede contra
+// o contrato decidindo zero com as cabecas todas ligadas, bit a bit por tick.
+int runZeroProof(const ProbeContext& context, int threads);
 
 } // namespace MatterEngine::Probe

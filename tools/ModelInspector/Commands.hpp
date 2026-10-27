@@ -41,6 +41,7 @@ int runMold(const ModelContext& context, const CommandLine& line);
 int runInverted(const ModelContext& context, const CommandLine& line);
 int runPaint(const ModelContext& context, const CommandLine& line);
 int runExport(const ModelContext& context, const CommandLine& line);
+int runBlenderExport(const ModelContext& context, const CommandLine& line);
 int runUniform(const ModelContext& context, const CommandLine& line);
 int runPosture(const ModelContext& context, const CommandLine& line);
 int runWeights(const ModelContext& context, const CommandLine& line);

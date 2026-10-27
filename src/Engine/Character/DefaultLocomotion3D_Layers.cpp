@@ -208,53 +208,8 @@ void DefaultLocomotion3D::stepLayers(Tick& t) {
         rootPosition.z -= std::max(0.0f, lowest - feet.z) * smoothStep(m_crouch / 0.15f);
     }
 
-    // Manejo de bola (rework de 06/10): o gesto do corpo inteiro por cima da
-    // locomocao - a pelve gira e desce em volta do apoio (preso onde a
-    // locomocao o pos), tronco, bracos e cabeca, e a perna que joga pelo IK
-    // analitico (armada com o joelho dobrado, desdobrando ate a bola).
-    int ballSide = -1;
-    // (Plano v5: as duas pernas podem estar num toque.)
     t.gestureFeet = {};
-    std::array<bool, 2>& gestureFeet = t.gestureFeet;
-    if (m_feet[0] != 0 && m_feet[1] != 0) {
-        // (So os pes e as coxas sao lidos: as cadeias ate os pes, levadas ao
-        // mundo pela mesma conta de defaultLocomotionPose3D.)
-        RagdollAnimationPose3D style;
-        buildRagdollChainPose3D(profile, m_coordinates, style, m_feet[0]);
-        buildRagdollChainPose3D(profile, m_coordinates, style, m_feet[1]);
-        if (m_gestureLegs.valid)
-            for (std::size_t side = 0; side < 2; ++side)
-                buildRagdollChainPose3D(profile, m_coordinates, style, m_gestureLegs.thigh[side]);
-        for (std::size_t side = 0; side < 2; ++side) {
-            const std::size_t thigh = m_gestureLegs.valid ? m_gestureLegs.thigh[side] : 0;
-            for (const std::size_t i : { m_feet[side], thigh }) {
-                if (i == 0) continue;
-                style.linkPositions[i] = rootPosition + rootOrientation.rotate(style.linkPositions[i]);
-                style.linkOrientations[i] = (rootOrientation * style.linkOrientations[i]).normalized();
-            }
-        }
-        for (std::size_t side = 0; side < 2; ++side) {
-            m_output.styleFootPosition[side] = style.linkPositions[m_feet[side]];
-            m_output.styleFootOrientation[side] = style.linkOrientations[m_feet[side]];
-            m_output.locomotionFootPosition[side] = m_output.styleFootPosition[side];
-            m_output.locomotionFootOrientation[side] = m_output.styleFootOrientation[side];
-            if (m_gestureLegs.valid) {
-                const std::size_t thigh = m_gestureLegs.thigh[side];
-                m_output.styleKneeDirection[side] = (style.linkOrientations[thigh]
-                    * profile.links[thigh].modelOrientation.conjugate()).rotate({ 1.0f, 0.0f, 0.0f });
-            }
-        }
-    }
-    if (input.ballGesture.active && m_gestureLegs.valid) {
-        applyBallGesturePose3D(profile, m_gestureLegs, input.ballGesture, m_coordinates, rootPosition,
-            rootOrientation, true, true);
-        if (input.ballGesture.perLeg) {
-            for (std::size_t side = 0; side < 2; ++side) gestureFeet[side] = input.ballGesture.legs[side].weight > 0.3f;
-        } else if (input.ballGesture.legWeight > 0.3f) {
-            ballSide = input.ballGesture.side;
-            gestureFeet[static_cast<std::size_t>(ballSide)] = true;
-        }
-    }
+    stepGesture(t);
     t.rootInverse = rootOrientation.conjugate();
     const Quaternion& rootInverse = t.rootInverse;
 

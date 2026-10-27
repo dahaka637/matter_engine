@@ -246,7 +246,7 @@ file(MAKE_DIRECTORY "${MATTERENGINE_SHADER_OUTPUT_DIR}")
 set(MATTERENGINE_SHADER_OUTPUTS)
 foreach(shader render2d.vert render2d.frag sprite.vert sprite.frag
         scene3d_sky.vert scene3d_sky.frag
-        scene3d_mesh.vert scene3d_mesh.frag scene3d_mesh_shadow.vert
+        scene3d_mesh.vert scene3d_mesh.frag scene3d_mesh_shadow.vert scene3d_mesh_shadow_thin.frag
         scene3d_mesh_depth.vert
         tonemap.vert tonemap.frag auto_exposure.frag
         gtao.frag bloom_glare.frag
@@ -260,6 +260,20 @@ foreach(shader render2d.vert render2d.frag sprite.vert sprite.frag
         COMMAND $<TARGET_FILE:glslang-standalone> -V --target-env vulkan1.4 -o "${shader_output}" "${shader_source}"
         DEPENDS glslang-standalone "${shader_source}"
         COMMENT "Compiling Vulkan shader ${shader}"
+        VERBATIM
+    )
+    list(APPEND MATTERENGINE_SHADER_OUTPUTS "${shader_output}")
+endforeach()
+# O personagem com o uniforme (RHI/CharacterMaterial.hpp): os shaders da malha
+# com MATTER_CHARACTER.
+foreach(stage vert frag)
+    set(shader_source "${CMAKE_SOURCE_DIR}/assets/shaders/scene3d_mesh.${stage}")
+    set(shader_output "${MATTERENGINE_SHADER_OUTPUT_DIR}/scene3d_character.${stage}.spv")
+    add_custom_command(
+        OUTPUT "${shader_output}"
+        COMMAND $<TARGET_FILE:glslang-standalone> -V --target-env vulkan1.4 -DMATTER_CHARACTER -o "${shader_output}" "${shader_source}"
+        DEPENDS glslang-standalone "${shader_source}"
+        COMMENT "Compiling Vulkan shader scene3d_character.${stage}"
         VERBATIM
     )
     list(APPEND MATTERENGINE_SHADER_OUTPUTS "${shader_output}")
@@ -288,13 +302,42 @@ target_include_directories(MatterCore PUBLIC src)
 add_library(MatterRHI INTERFACE)
 target_include_directories(MatterRHI INTERFACE src)
 
+# O sistema de aparencia (docs/SISTEMA_DE_APARENCIA.md): o template de
+# superficie (onde a pintura mora). So dados e a conferencia deles: a
+# modelagem (a troca do Blender), a exportacao e o personagem do jogo leem por
+# ele, e ele nao conhece nenhum deles.
+add_library(MatterAppearance STATIC
+    src/Engine/Appearance/Surface/SurfaceTemplate.cpp
+    src/Engine/Appearance/Compose/VectorShape.cpp
+    src/Engine/Appearance/Compose/KitDesign.cpp
+    src/Engine/Appearance/Compose/TrueTypeFont.cpp
+    src/Engine/Appearance/Compose/KitCompositor.cpp
+    src/Engine/Appearance/Compose/KitMaterial.cpp
+    src/Engine/Appearance/Compose/FootprintCoverage.cpp
+)
+target_include_directories(MatterAppearance PUBLIC src)
+# (O stb_truetype estatico da aparencia: TrueTypeFont.cpp.)
+target_include_directories(MatterAppearance PRIVATE ${stb_SOURCE_DIR})
+target_link_libraries(MatterAppearance PUBLIC MatterCore nlohmann_json::nlohmann_json)
+
+# O corpo do jogador (26/10/2026): a lei da altura e do peso (a escala, o
+# tonus de cada regiao, as massas, os motores). So matematica: a fisica (o
+# perfil), o personagem (a malha) e o atleta aplicam.
+add_library(MatterPhysique STATIC
+    src/Engine/Physique/PlayerPhysique3D.cpp
+)
+target_include_directories(MatterPhysique PUBLIC src)
+target_link_libraries(MatterPhysique PUBLIC MatterCore)
+
 # API publica neutra + backend Jolt privado. Nenhum consumidor recebe os
 # includes ou tipos nativos do SDK; trocar/configurar o backend nao contamina a
 # camada Workbench nem o restante da engine.
 add_library(MatterPhysics STATIC
     src/Engine/Physics/PhysicalBodyBuilder3D.cpp
     src/Engine/Physics/InflatedBall3D.cpp
+    src/Engine/Physics/Net/NetSolver3D.cpp
     src/Engine/Physics/RagdollProfile3D.cpp
+    src/Engine/Physics/RagdollProfileBody3D.cpp
     src/Engine/Physics/WindShelter3D.cpp
     src/Engine/Physics/Articulation/ArticulationIndexing3D.cpp
     src/Engine/Physics/Articulation/ArticulationGravity3D.cpp
@@ -302,7 +345,7 @@ add_library(MatterPhysics STATIC
 )
 target_include_directories(MatterPhysics PUBLIC src)
 target_link_libraries(MatterPhysics
-    PUBLIC MatterCore
+    PUBLIC MatterCore MatterPhysique
     PRIVATE ${MATTERENGINE_PHYSICS_BACKEND_LIBRARIES} vhacd
             nlohmann_json::nlohmann_json
 )
@@ -378,6 +421,13 @@ if(MATTERENGINE_BUILD_RL)
         target_compile_options(MatterRLContract PRIVATE /W4 /permissive- /utf-8)
     else()
         target_compile_options(MatterRLContract PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+
+    add_library(MatterMotor STATIC src/Engine/RL/Motor/MotorTraining3D.cpp)
+    target_include_directories(MatterMotor PUBLIC src)
+    target_link_libraries(MatterMotor PUBLIC MatterRLContract MatterPhysics MatterCore PRIVATE nlohmann_json::nlohmann_json)
+    if(NOT MSVC)
+        target_compile_options(MatterMotor PRIVATE -Wall -Wextra -Wpedantic)
     endif()
 
     # O cerebro do Corpo no jogo: o contrato v2 e a politica exportada (sem
@@ -489,6 +539,11 @@ if(MATTERENGINE_BUILD_RL)
         target_link_libraries(matter_locomotion_native PRIVATE MatterAthleteTraining)
         set_target_properties(matter_locomotion_native PROPERTIES
             LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/python")
+        # O lote do motor autonomo (motor-v4).
+        nanobind_add_module(matter_motor_native NB_STATIC bindings/python/MatterMotorNative.cpp)
+        target_link_libraries(matter_motor_native PRIVATE MatterMotor)
+        set_target_properties(matter_motor_native PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/python")
+
         # O rastreador fisico (o lote do treino dele).
         nanobind_add_module(matter_tracking_native NB_STATIC bindings/python/MatterTrackingNative.cpp)
         target_link_libraries(matter_tracking_native PRIVATE MatterTracking)
@@ -568,6 +623,7 @@ set(MATTERMODELING_SOURCES
     src/Engine/Modeling/Mesh/MeshSculpt.cpp
     src/Engine/Modeling/Mesh/SurfaceFit.cpp
     src/Engine/Modeling/Import/GltfImport.cpp
+    src/Engine/Modeling/Import/BlenderExchange.cpp
     src/Engine/Modeling/Analysis/Report.cpp
     src/Engine/Modeling/Analysis/TopologyCheck.cpp
     src/Engine/Modeling/Analysis/ConnectivityCheck.cpp
@@ -621,6 +677,7 @@ set(MATTERMODELING_SOURCES
     src/Engine/Modeling/Assembly/Uniform.cpp
     src/Engine/Modeling/Assembly/NeckShortening.cpp
     src/Engine/Modeling/Assembly/NeckBand.cpp
+    src/Engine/Modeling/Assembly/ShoulderBand.cpp
     src/Engine/Modeling/Assembly/ReferenceFit.cpp
     src/Engine/Modeling/Assembly/PlayerPaint.cpp
     src/Engine/Modeling/Assembly/FacePaint.cpp
@@ -628,6 +685,7 @@ set(MATTERMODELING_SOURCES
     src/Engine/Modeling/Texture/IslandPacking.cpp
     src/Engine/Modeling/Texture/UvAtlas.cpp
     src/Engine/Modeling/Texture/TextureBake.cpp
+    src/Engine/Modeling/Objects/GoalFrame.cpp
     src/Engine/Modeling/Objects/ObjectMesh.cpp
     src/Engine/Modeling/Objects/ObjectRecipe.cpp
     src/Engine/Modeling/Objects/PixelCanvas.cpp
@@ -647,7 +705,7 @@ add_library(MatterModeling STATIC ${MATTERMODELING_SOURCES})
 target_include_directories(MatterModeling PUBLIC src)
 find_package(Threads REQUIRED)
 target_link_libraries(MatterModeling
-    PUBLIC MatterCore Threads::Threads
+    PUBLIC MatterCore MatterAppearance Threads::Threads
     PRIVATE nlohmann_json::nlohmann_json stb_image cgltf
 )
 target_compile_definitions(MatterModeling PRIVATE
@@ -678,30 +736,28 @@ else()
         $<$<NOT:$<CONFIG:Debug>>:-O3>)
 endif()
 
+# Os gestos de bola (24/10/2026): animacoes procedurais nas juntas, escolhidas
+# pela bola no comando - so matematica (nada de fisica, atleta ou personagem;
+# a locomocao padrao os toca e o atleta os escolhe).
+add_library(MatterGesture STATIC
+    src/Engine/Gesture/GestureCatalog3D.cpp
+    src/Engine/Gesture/GestureChoice3D.cpp
+    src/Engine/Gesture/GesturePlayer3D.cpp
+)
+target_include_directories(MatterGesture PUBLIC src)
+target_link_libraries(MatterGesture PUBLIC MatterCore)
+
 # O atleta (o runtime, o controle fisico e o padrao, os planejadores, a ajuda,
 # o contrato da rede e o mundo de treino): sem render, janela nem audio - o
 # jogo, as sondas e o treino de RL (a ponte Python) usam a mesma biblioteca.
 add_library(MatterAthlete STATIC
     src/Engine/Animation/RagdollCharacter3D.cpp
+    src/Engine/Animation/RagdollCharacterBody3D.cpp
     src/Engine/Athlete/AthleteAssets3D.cpp
     src/Engine/Athlete/AthleteRuntime3D.cpp
     src/Engine/Athlete/AthleteTelemetry3D.cpp
-    src/Engine/Athlete/Actions/BallActionPlanner3D.cpp
-    src/Engine/Athlete/Actions/BallGesture3D.cpp
-    src/Engine/Athlete/Actions/BallHandling3D.cpp
-    src/Engine/Athlete/Actions/BallMove3D.cpp
-    src/Engine/Athlete/Actions/BallPlay3D.cpp
     src/Engine/Athlete/Ball/BallOutcome3D.cpp
-    src/Engine/Athlete/Dribble/BodyForecast3D.cpp
-    src/Engine/Athlete/Dribble/ContactPose3D.cpp
-    src/Engine/Athlete/Dribble/DribbleBall3D.cpp
-    src/Engine/Athlete/Dribble/Dribble3D.cpp
-    src/Engine/Athlete/Dribble/SwingTouch3D.cpp
-    src/Engine/Athlete/Dribble/TouchBody3D.cpp
-    src/Engine/Athlete/Dribble/TouchPlanner3D.cpp
-    src/Engine/Athlete/Intent/ActionQueue3D.cpp
-    src/Engine/Athlete/Sensing/BallPredictor3D.cpp
-    src/Engine/Athlete/Legacy/LegacyBallBridge3D.cpp
+    src/Engine/Athlete/Reference/BodyForecast3D.cpp
     src/Engine/Athlete/Body/ActiveBodyController3D.cpp
     src/Engine/Athlete/Body/ActiveStance3D.cpp
     src/Engine/Athlete/Body/PhysicalFeetAssist3D.cpp
@@ -746,10 +802,7 @@ add_library(MatterAthlete STATIC
     src/Engine/Character/CharacterLocomotion3D_Outputs.cpp
     src/Engine/Character/RagdollPoseKinematics3D.cpp
     src/Engine/Character/BodilyGetUp3D.cpp
-    src/Engine/Character/BallControl3D.cpp
-    src/Engine/Character/BallGesturePose3D.cpp
     src/Engine/Character/BallOwnership3D.cpp
-    src/Engine/Character/BallTouchPreview3D.cpp
     src/Engine/Character/DefaultLocomotion3D.cpp
     src/Engine/Character/DefaultLocomotion3D_Travel.cpp
     src/Engine/Character/DefaultLocomotion3D_Tackle.cpp
@@ -757,6 +810,7 @@ add_library(MatterAthlete STATIC
     src/Engine/Character/DefaultLocomotion3D_Air.cpp
     src/Engine/Character/DefaultLocomotion3D_Pose.cpp
     src/Engine/Character/DefaultLocomotion3D_Layers.cpp
+    src/Engine/Character/DefaultLocomotion3D_Gesture.cpp
     src/Engine/Character/DefaultLocomotion3D_Feet.cpp
     src/Engine/Character/StandTurnFeet3D.cpp
     src/Engine/Character/DefaultLocomotion3D_Exits.cpp
@@ -773,7 +827,7 @@ add_library(MatterAthlete STATIC
 )
 target_include_directories(MatterAthlete PUBLIC src)
 target_link_libraries(MatterAthlete
-    PUBLIC MatterCore MatterPhysics MatterAnimationClips MatterRLPolicy
+    PUBLIC MatterCore MatterPhysics MatterAnimationClips MatterRLPolicy MatterGesture MatterAppearance
     PRIVATE nlohmann_json::nlohmann_json
 )
 
@@ -820,6 +874,7 @@ target_compile_definitions(MatterEngine PRIVATE
 # engine): a malha da GPU, o corpo fisico e o laboratorio de fisica deles.
 add_library(MatterObjects STATIC
     src/Engine/Objects/ObjectAsset3D.cpp
+    src/Engine/Objects/ObjectNetLab3D.cpp
     src/Engine/Objects/ObjectPhysicsLab3D.cpp
 )
 target_include_directories(MatterObjects PUBLIC src)
@@ -844,7 +899,9 @@ add_library(MatterWorkbench STATIC
     src/Workbench/Audio/WorldAudioController.cpp
     src/Workbench/Laboratory/PropRuntime.cpp
     src/Workbench/Laboratory/BallRuntime.cpp
+    src/Workbench/Laboratory/GoalRuntime.cpp
     src/Workbench/Laboratory/RagdollRuntime.cpp
+    src/Workbench/Laboratory/LaboratoryBody.cpp
     src/Workbench/Laboratory/PhysicsBenchmark.cpp
     src/Workbench/Laboratory/RenderMotionSmoke.cpp
     src/Workbench/Props/PropCatalog.cpp
@@ -852,8 +909,8 @@ add_library(MatterWorkbench STATIC
     src/Workbench/Screens/MainMenuScreen.cpp
     src/Workbench/Screens/LaboratoryScreen.cpp
     src/Workbench/Screens/ObjectInspectorHost.cpp
+    src/Workbench/ObjectInspector/NetLabView.cpp
     src/Workbench/ObjectInspector/ObjectInspectorScreen.cpp
-    src/Workbench/Screens/BallTouchViewerScreen.cpp
     src/Workbench/Screens/PlayerInspectorHost.cpp
     src/Workbench/PlayerInspector/PlayerInspectorScreen.cpp
     src/Workbench/PlayerInspector/PlayerAnimations.cpp
@@ -861,6 +918,7 @@ add_library(MatterWorkbench STATIC
     src/Workbench/Screens/ReinforcementLearningHost.cpp
     src/Workbench/ReinforcementLearning/ReinforcementLearningScreen.cpp
     src/Workbench/ReinforcementLearning/LocomotionViewer3D.cpp
+    src/Workbench/ReinforcementLearning/MotorViewer3D.cpp
     src/Workbench/ReinforcementLearning/TrackingViewer3D.cpp
 )
 
@@ -872,7 +930,7 @@ endif()
 target_include_directories(MatterWorkbench PUBLIC src)
 target_link_libraries(MatterWorkbench
     PUBLIC MatterEngine MatterModelingRig MatterObjects
-    PRIVATE imgui meshoptimizer MatterRLEnvironment MatterRLPolicy MatterRLSupervisor MatterRLCalibration MatterTracking
+    PRIVATE MatterMotor imgui meshoptimizer MatterRLEnvironment MatterRLPolicy MatterRLSupervisor MatterRLCalibration MatterTracking
 )
 target_compile_definitions(MatterWorkbench PRIVATE MATTERENGINE_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
 
@@ -931,6 +989,10 @@ if(MATTERENGINE_BUILD_TESTS)
             MATTERENGINE_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
         add_test(NAME MatterEngine.LocomotionTraining COMMAND MatterLocomotionTrainingTests)
         # O rastreador fisico: o contrato, a nota e o lote (curto, sem rede).
+        add_executable(MatterMotorTests tests/RL/MotorTests.cpp)
+        target_link_libraries(MatterMotorTests PRIVATE MatterMotor)
+        target_compile_definitions(MatterMotorTests PRIVATE MATTERENGINE_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
+        add_test(NAME MatterEngine.Motor COMMAND MatterMotorTests)
         add_executable(MatterTrackingTests tests/Tracking/TrackingTests.cpp)
         target_link_libraries(MatterTrackingTests PRIVATE MatterTracking)
         target_compile_definitions(MatterTrackingTests PRIVATE MATTERENGINE_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
@@ -979,6 +1041,19 @@ if(MATTERENGINE_BUILD_TESTS)
     # Modelagem do personagem: o nucleo (linkado so contra MatterModeling,
     # provando que ele nao depende da engine) e a ponte com o jogo, com a tela
     # "Inspecao de jogador" rodando sem janela.
+    # O template de superficie (o sistema de aparencia): a leitura, as recusas e as
+    # provas na troca instalada (so contra MatterAppearance).
+    add_executable(MatterAppearanceTests tests/Appearance/SurfaceTemplateTests.cpp)
+    target_link_libraries(MatterAppearanceTests PRIVATE MatterAppearance nlohmann_json::nlohmann_json)
+    target_compile_definitions(MatterAppearanceTests PRIVATE
+        MATTERENGINE_TEST_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
+    add_test(NAME MatterEngine.Appearance COMMAND MatterAppearanceTests)
+    # O compositor do uniforme (etapa 2): na troca instalada, com os desenhos de assets/appearance.
+    add_executable(MatterKitComposerTests tests/Appearance/KitComposerTests.cpp)
+    target_link_libraries(MatterKitComposerTests PRIVATE MatterAppearance nlohmann_json::nlohmann_json)
+    target_compile_definitions(MatterKitComposerTests PRIVATE
+        MATTERENGINE_TEST_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
+    add_test(NAME MatterEngine.KitComposer COMMAND MatterKitComposerTests)
     add_executable(MatterModelingTests tests/Modeling/ModelingTests.cpp)
     target_link_libraries(MatterModelingTests PRIVATE MatterModeling)
     add_test(NAME MatterEngine.Modeling COMMAND MatterModelingTests)
@@ -1000,6 +1075,10 @@ if(MATTERENGINE_BUILD_TESTS)
     target_compile_definitions(MatterObjectPhysicsTests PRIVATE
         MATTERENGINE_TEST_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
     add_test(NAME MatterEngine.ObjectPhysics COMMAND MatterObjectPhysicsTests)
+    # A rede de fios sozinha (Engine/Physics/Net, sem o motor de fisica).
+    add_executable(MatterNetSolverTests tests/Physics/NetSolverTests.cpp)
+    target_link_libraries(MatterNetSolverTests PRIVATE MatterPhysics)
+    add_test(NAME MatterEngine.NetSolver COMMAND MatterNetSolverTests)
     add_executable(MatterModelingPaintTests tests/Modeling/PaintTests.cpp)
     target_link_libraries(MatterModelingPaintTests PRIVATE MatterModeling)
     target_compile_definitions(MatterModelingPaintTests PRIVATE
@@ -1024,6 +1103,12 @@ if(MATTERENGINE_BUILD_TESTS)
     target_compile_definitions(MatterObjectInspectorTests PRIVATE
         MATTERENGINE_TEST_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
     add_test(NAME MatterEngine.ObjectInspector COMMAND MatterObjectInspectorTests)
+    # O corpo variavel do laboratorio (os corpos feitos e a capsula do corpo).
+    add_executable(MatterLaboratoryBodyTests tests/LaboratoryBodyTests.cpp)
+    target_link_libraries(MatterLaboratoryBodyTests PRIVATE MatterWorkbench)
+    target_compile_definitions(MatterLaboratoryBodyTests PRIVATE
+        MATTERENGINE_TEST_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
+    add_test(NAME MatterEngine.LaboratoryBody COMMAND MatterLaboratoryBodyTests)
     # A tela "Aprendizado por Reforco" sem janela (um treino de mentira numa
     # pasta temporaria).
     add_executable(MatterReinforcementLearningScreenTests tests/ReinforcementLearningScreenTests.cpp)
@@ -1042,6 +1127,10 @@ target_link_libraries(MatterVulkanSmoke PRIVATE MatterEngine SDL3::SDL3-static)
 # Benchmark manual e reproduzivel da carga-alvo atual. Publica percentis; nao
 # entra no CTest porque desempenho e dependente do hardware e da configuracao
 # da build.
+# A rede da trave sob medida (o custo por cenario e o desenho na tela Objetos).
+add_executable(MatterNetBenchmark EXCLUDE_FROM_ALL tools/NetBenchmark.cpp)
+target_link_libraries(MatterNetBenchmark PRIVATE MatterObjects)
+target_compile_definitions(MatterNetBenchmark PRIVATE MATTERENGINE_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
 add_executable(MatterPhysicsBenchmark EXCLUDE_FROM_ALL
     tools/PhysicsBenchmark.cpp)
 target_link_libraries(MatterPhysicsBenchmark PRIVATE MatterEngine)
@@ -1074,9 +1163,6 @@ if(MATTERENGINE_BUILD_RL)
     target_link_libraries(MatterRLPolicyBench PRIVATE MatterRLPolicy)
 endif()
 
-# Visualizador de toque na bola na linha de comando (a mesma simulacao da
-# tela "Toque na bola" do Workbench; os desenhos saem de
-# tools/analysis/ball_touch_preview.py).
 # Sonda da locomocao padrao (o boneco pela capsula, sem fisica): roteiros
 # de teclas, medidas e quadros para os desenhos.
 add_executable(MatterLocomotionProbe tools/DefaultLocomotionProbe.cpp)
@@ -1108,6 +1194,7 @@ add_executable(MatterModelInspector
     tools/ModelInspector/CommandInverted.cpp
     tools/ModelInspector/CommandPaint.cpp
     tools/ModelInspector/CommandExport.cpp
+    tools/ModelInspector/CommandBlender.cpp
     tools/ModelInspector/CommandHelp.cpp
     tools/ModelInspector/CommandFrames.cpp
 )
@@ -1125,7 +1212,7 @@ endif()
 # com a fisica de verdade, sem janela; o dump vai para MatterModelInspector quadros.
 add_executable(MatterAthleteProbe tools/AthleteProbe.cpp tools/athlete_probe/ProbeL0.cpp)
 target_include_directories(MatterAthleteProbe PRIVATE tools)
-target_link_libraries(MatterAthleteProbe PRIVATE MatterEngine)
+target_link_libraries(MatterAthleteProbe PRIVATE MatterEngine MatterObjects)
 target_compile_definitions(MatterAthleteProbe PRIVATE
     MATTERENGINE_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets"
 )
@@ -1137,12 +1224,18 @@ if(MATTERENGINE_BUILD_TESTS)
     add_executable(MatterAthleteModulesTests tests/Athlete/AthleteModulesTests.cpp)
     target_link_libraries(MatterAthleteModulesTests PRIVATE MatterEngine)
     add_test(NAME MatterEngine.AthleteModules COMMAND MatterAthleteModulesTests)
+    # Os gestos de bola (24/10): a perna de dois ossos no esqueleto do jogador,
+    # o tocador sem salto e a escolha dos baldes.
+    # O corpo variavel (26/10): a lei, o perfil e o personagem do corpo.
+    add_executable(MatterPhysiqueTests tests/Physique/PlayerPhysiqueTests.cpp)
+    target_link_libraries(MatterPhysiqueTests PRIVATE MatterAthlete)
+    target_compile_definitions(MatterPhysiqueTests PRIVATE MATTERENGINE_TEST_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
+    add_test(NAME MatterEngine.Physique COMMAND MatterPhysiqueTests)
+    add_executable(MatterGestureTests tests/Gesture/GestureTests.cpp)
+    target_link_libraries(MatterGestureTests PRIVATE MatterEngine)
+    target_compile_definitions(MatterGestureTests PRIVATE MATTERENGINE_TEST_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
+    add_test(NAME MatterEngine.Gesture COMMAND MatterGestureTests)
 endif()
-
-add_executable(MatterBallPreview tools/BallTouchPreview.cpp)
-target_link_libraries(MatterBallPreview PRIVATE MatterEngine)
-target_compile_definitions(MatterBallPreview PRIVATE
-    MATTERENGINE_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
 
 set_target_properties(MatterCore MatterRHI MatterPhysics MatterAudio MatterVulkan
     MatterEngine MatterEngineShaders MatterModeling PROPERTIES FOLDER "MatterEngine")

@@ -172,6 +172,12 @@ def main() -> int:
     parser.add_argument("--parado", type=float, default=0.0, help="parte dos episodios parado no idle")
     parser.add_argument("--giro", type=float, default=0.0, help="parte dos episodios parado com giro suave")
     parser.add_argument("--giro-rapido", type=float, default=0.0, help="parte dos episodios com giro rapido parado")
+    parser.add_argument("--estrela", type=float, default=0.0, help="parte dos episodios na estrela de 8 pontas, peito livre")
+    parser.add_argument("--estrela-fixo", type=float, default=0.0, help="parte na estrela com o peito fixo (lado, costas, diagonais)")
+    parser.add_argument("--estrela-girando", type=float, default=0.0, help="parte na estrela com o peito girando (a camera)")
+    parser.add_argument("--estrela-velocidade", type=float, default=3.0, help="o trote da estrela (m/s; hoje 3, meta do jogo 4,5)")
+    parser.add_argument("--estrela-raio", type=float, default=10.0, help="o raio da estrela (m)")
+    parser.add_argument("--so-queda-real", action="store_true", help="o episodio so acaba na queda de verdade (cabeca abaixo de 1,1 m), nao pela distancia ao lider")
     parser.add_argument("--suavidade", type=float, default=0.0,
                         help="custo de suavidade: a nota vezes exp(-k media((a - a_anterior)^2)); 0 = o DReCon")
     parser.add_argument("--peso-pernas", type=float, default=1.0, help="peso das pernas e pes na pose, sempre (1 = DReCon)")
@@ -196,7 +202,10 @@ def main() -> int:
                                  action_rate_weight=args.suavidade, adaptive_legs=args.pernas_adaptaveis,
                                  leg_weight=args.peso_pernas, center_of_mass_velocity_weight=args.peso_velocidade,
                                  arm_weight=args.peso_bracos, trunk_weight=args.peso_tronco,
-                                 alive_bonus=args.premio_de_pe, speed_scale=args.escala_velocidade)
+                                 alive_bonus=args.premio_de_pe, speed_scale=args.escala_velocidade,
+                                 star_share=args.estrela, star_fixed_share=args.estrela_fixo,
+                                 star_turning_share=args.estrela_girando, star_speed=args.estrela_velocidade,
+                                 star_radius=args.estrela_raio, real_fall_only=args.so_queda_real)
     n, obs_size, act_size = batch.num_envs, batch.obs_size, batch.action_size
     model = Policy(obs_size, act_size).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=3e-4)
@@ -311,10 +320,11 @@ def main() -> int:
                         "erro_vel_cm": float(episodes[:, 4].mean()), "vel_corpo": float(episodes[:, 5].mean()),
                         "vel_pedida": float(episodes[:, 6].mean())})
             # Por direcao (8 rumos de 45 graus, 0 frente, 2 esquerda): os graficos da tela seguem o rumo mostrado.
-            # Os exercicios parados (coluna 11: 1 parado, 2 giro, 3 giro rapido) tem a chave propria.
+            # Os exercicios parados (coluna 11: 1 parado, 2 giro, 3 giro rapido, 4 a 6 as estrelas) tem a chave propria.
             bins = np.round(np.mod(episodes[:, 10], 2 * math.pi) / (math.pi / 4)).astype(int) % 8
             keys = np.array([str(b) for b in bins], dtype=object)
-            for code, name in ((1, "parado"), (2, "giro"), (3, "giro_rapido")):
+            for code, name in ((1, "parado"), (2, "giro"), (3, "giro_rapido"), (4, "estrela"),
+                              (5, "estrela_fixo"), (6, "estrela_girando")):
                 keys[episodes[:, 11] == code] = name
             row["rumos"] = {k: {"n": int((keys == k).sum()), "sem_cair": float(1.0 - episodes[keys == k, 2].mean()),
                                 "nota": float(episodes[keys == k, 3].mean()),

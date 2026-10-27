@@ -35,6 +35,8 @@ class RunContext:
             found = self.reference.iteration if self.reference else None
             raise RuntimeError(f"o ultimo checkpoint de {run} e a rodada {found}, nao a {iteration} pedida")
         self.state = storage.load_checkpoint(self.reference, "cpu")
+        if self.config.native:  # (o modulo nativo do treino, como o treinador)
+            paths.NATIVE_DIR = Path(self.config.native)
         self.module = native()
         self.batch = self.module.LocomotionBatch(str(self.directory / "tarefa.json"), str(paths.ASSETS),
                                                  environments=environments, threads=threads, seed=seed)

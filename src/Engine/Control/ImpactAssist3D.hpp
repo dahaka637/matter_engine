@@ -1,5 +1,7 @@
 #pragma once
 
+#include <algorithm>
+
 #include "Engine/Physics/PhysicsScene3D.hpp"
 #include "Engine/Physics/RagdollProfile3D.hpp"
 
@@ -44,6 +46,13 @@ public:
     // O quanto da ajuda escolhida vale agora (0..1).
     [[nodiscard]] float level() const { return m_level; }
     [[nodiscard]] bool recovering() const { return m_level < 0.995f; }
+    // O estado da volta (a entrada do RL): o piso do ultimo choque, o
+    // andamento da volta (0..1; 1 sem choque) e a duracao dela (s).
+    [[nodiscard]] float floorLevel() const { return m_floor; }
+    [[nodiscard]] float recoverProgress() const {
+        return m_level >= 1.0f ? 1.0f : std::min(1.0f, m_elapsed / std::max(0.05f, m_seconds));
+    }
+    [[nodiscard]] float recoverSeconds() const { return m_seconds; }
     [[nodiscard]] ImpactAssistSettings3D& settings() { return m_settings; }
 
 private:

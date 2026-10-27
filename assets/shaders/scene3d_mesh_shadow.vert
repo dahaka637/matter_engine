@@ -28,6 +28,7 @@ layout(push_constant) uniform ShadowCascadePush {
 // mesh pipeline uses (see scene3d_mesh.vert), this pipeline just declares
 // fewer attributes over the same stride.
 layout(location = 0) in vec3 inPosition;
+layout(location = 1) in vec3 inNormal;
 layout(location = 13) in uvec4 inJoints;
 layout(location = 14) in vec4 inWeights;
 layout(set = 0, binding = 4, std430) readonly buffer SkinPalette {
@@ -44,6 +45,11 @@ layout(location = 4) in vec4 instancePositionScale;
 layout(location = 5) in vec4 instanceOrientationX;
 layout(location = 6) in vec4 instanceOrientationY;
 layout(location = 7) in vec4 instanceOrientationZ;
+// Para o pipeline da geometria fina (scene3d_mesh_shadow_thin.frag): a posicao
+// no mundo e a fracao do fio engrossado que bloqueia a luz. O pipeline normal
+// de sombra nao tem fragment shader e ignora as duas.
+layout(location = 0) out vec3 outWorldPosition;
+layout(location = 1) flat out float outCoverage;
 
 void main() {
     mat3 orientation = mat3(instanceOrientationX.xyz,
@@ -51,10 +57,26 @@ void main() {
     float scale = instancePositionScale.w;
     vec3 worldPosition = instancePositionScale.xyz
         + orientation * (inPosition * scale);
+    vec3 worldNormal = orientation * inNormal;
     if (instanceOrientationX.w > 0.5) {
-        worldPosition = (skinTransform(uint(instanceOrientationX.w))
-            * vec4(inPosition, 1.0)).xyz;
+        mat4 deform = skinTransform(uint(instanceOrientationX.w));
+        worldPosition = (deform * vec4(inPosition, 1.0)).xyz;
+        worldNormal = mat3(deform) * inNormal;
     }
+    // Geometria fina (os fios da rede, w = o raio de verdade): engrossa ate
+    // ~0,7 texel desta cascata. Mais fina que o texel, ela so cobria o centro
+    // de um texel aqui e ali, e a sombra virava pontilhado piscando.
+    float thinRadius = instanceOrientationZ.w;
+    outCoverage = 1.0;
+    if (thinRadius > 0.0 && dot(worldNormal, worldNormal) > 1e-8) {
+        float target = 0.7 * scene.cascadeTexelWorldSizes[cascadePush.cascadeIndex];
+        worldPosition += normalize(worldNormal) * max(0.0, target - thinRadius);
+        // So a fracao do fio de verdade bloqueia a luz (e a metade dela: a
+        // sombra da rede e sutil; as camadas do teto, do fundo e dos lados se
+        // somam no chao).
+        outCoverage = 0.5 * thinRadius / max(thinRadius, target);
+    }
+    outWorldPosition = worldPosition;
     gl_Position = scene.cascadeViewProjections[cascadePush.cascadeIndex]
         * vec4(worldPosition, 1.0);
     gl_Position.y = -gl_Position.y;

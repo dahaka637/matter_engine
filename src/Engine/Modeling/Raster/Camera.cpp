@@ -91,6 +91,21 @@ void Projector::ray(float pixelX, float pixelY, Vec3& origin, Vec3& direction) c
     }
 }
 
+bool Projector::barycentricAt(Vec3 a, Vec3 b, Vec3 c, float pixelX, float pixelY, std::array<float, 3>& out) const {
+    const Vec3 e1 = b - a, e2 = c - a, normal = cross(e1, e2);
+    const float d11 = dot(e1, e1), d12 = dot(e1, e2), d22 = dot(e2, e2), gram = d11 * d22 - d12 * d12;
+    if (gram <= 0.0f) return false;
+    Vec3 origin, direction;
+    ray(pixelX, pixelY, origin, direction);
+    const float facing = dot(normal, direction);
+    if (std::abs(facing) <= 1e-6f * std::sqrt(gram)) return false;
+    const Vec3 p = origin + direction * (dot(normal, a - origin) / facing) - a;
+    const float p1 = dot(p, e1), p2 = dot(p, e2);
+    const float u = (d22 * p1 - d12 * p2) / gram, v = (d11 * p2 - d12 * p1) / gram;
+    out = { 1.0f - u - v, u, v };
+    return true;
+}
+
 Vec3 Projector::viewDirection(Vec3 world) const {
     return m_orthographic ? m_forward : safeNormalized(world - m_eye, m_forward);
 }

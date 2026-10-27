@@ -278,6 +278,46 @@ struct PhysicsScene3D::Impl final : public JPH::ContactListener,
     [[nodiscard]] InflatedBallRecord* inflatedBall(InflatedBallHandle3D handle);
     [[nodiscard]] const InflatedBallRecord* inflatedBall(InflatedBallHandle3D handle) const;
     void stepInflatedBalls(float deltaTime);
+
+    // Redes de fios (ver JoltNets3D.cpp): a cada tick, os corpos perto de cada
+    // uma viram proxies; ela anda nos subpassos da bola.
+    struct NetRecord {
+        NetHandle3D handle;
+        std::unique_ptr<NetSolver3D> solver;
+        // Os corpos e proxies deste tick; de onde cada corpo veio (a bola, o
+        // corpo do Jolt).
+        std::vector<NetBody3D> bodies;
+        std::vector<NetProxy3D> proxies;
+        std::vector<std::uint32_t> bodyBall;
+        std::vector<JPH::BodyID> bodyJolt;
+        // Anda neste tick, acoplada a bola (todos os subpassos dela) ou
+        // sozinha (a cada `stride` subpassos).
+        bool active = false;
+        bool coupled = false;
+        std::uint32_t stride = 1;
+        // A bola mais rapida perto dela (m/s): o impacto pede todos os
+        // subpassos; a bola devagar, menos.
+        float fastestBall = 0.0f;
+        // O corpo do Jolt mais rapido perto (m/s) e os subpassos que ele pede.
+        float fastestBody = 0.0f;
+        std::uint32_t bodySubsteps = 4;
+        NetStatus3D status;
+    };
+    struct NetSlot {
+        std::uint32_t generation = 1;
+        std::unique_ptr<NetRecord> record;
+    };
+    std::vector<NetSlot> netSlots;
+    std::vector<std::uint32_t> freeNetSlots;
+    [[nodiscard]] NetRecord* net(NetHandle3D handle);
+    [[nodiscard]] const NetRecord* net(NetHandle3D handle) const;
+    // Prepara as redes do tick (os corpos perto, acordar) e devolve quantos
+    // subpassos elas pedem (0 nenhuma ativa).
+    std::uint32_t prepareNets(float deltaTime, std::uint32_t ballSubsteps);
+    // Um subpasso (step de substeps) das redes, com as bolas no estado de
+    // agora (a rede corrige a posicao e as velocidades delas).
+    void substepNets(float h, std::uint32_t step, std::uint32_t substeps);
+    void finishNets(float deltaTime);
     std::vector<RagdollCommand> pendingRagdollCommands;
 
     std::vector<ContactImpactEvent3D> contactImpacts;

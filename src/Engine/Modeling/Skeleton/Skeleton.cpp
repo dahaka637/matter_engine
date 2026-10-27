@@ -79,7 +79,7 @@ SkeletonPose bindPose(const Skeleton& skeleton) {
     return pose;
 }
 
-int addHelperJoint(Skeleton& skeleton, std::string name, int from, int to, float fraction, Vec3 axis) {
+int addHelperJoint(Skeleton& skeleton, std::string name, int from, int to, float fraction, Vec3 axis, float sign) {
     const int count = static_cast<int>(skeleton.joints.size());
     if (from < 0 || to < 0 || from >= count || to >= count) return -1;
     const Joint& lower = skeleton.joints[static_cast<std::size_t>(to)];
@@ -94,6 +94,7 @@ int addHelperJoint(Skeleton& skeleton, std::string name, int from, int to, float
     helper.derivedTo = to;
     helper.derivedFraction = fraction;
     helper.derivedAxis = axis;
+    helper.derivedSign = sign;
     skeleton.joints.push_back(std::move(helper));
     return count;
 }
@@ -119,11 +120,30 @@ Vec3 rotationPivot(const Transform& relative, Vec3 fallback) {
 
 } // namespace
 
-void updateDerivedJoints(const Skeleton& skeleton, SkeletonPose& pose) {
+void updateDerivedJoints(const Skeleton& skeleton, SkeletonPose& pose, bool clavicleCarry) {
     if (pose.joints.size() < skeleton.joints.size()) return;
+    // As claviculas pela pose de antes (o giro do braco em relacao ao peito);
+    // o braco vai junto no fim.
+    std::vector<std::pair<std::size_t, Transform>> carries;
     for (std::size_t h = 0; h < skeleton.joints.size(); ++h) {
         const Joint& helper = skeleton.joints[h];
-        if (helper.kind != JointKind::Helper || helper.derivedFrom < 0 || helper.derivedTo < 0) continue;
+        if (helper.kind != JointKind::Helper || !helper.derivedCarry || helper.derivedFrom < 0 || helper.derivedTo < 0) continue;
+        const auto from = static_cast<std::size_t>(helper.derivedFrom), to = static_cast<std::size_t>(helper.derivedTo);
+        const Transform upper = pose.joints[from] * skeleton.joints[from].bind.inverse();
+        if (!clavicleCarry) {
+            pose.joints[h] = upper * helper.bind;
+            continue;
+        }
+        const Transform lower = pose.joints[to] * skeleton.joints[to].bind.inverse();
+        const Quaternion part = clavicleTurn(elevationTurn((upper.inverse() * lower).orientation, helper.derivedAxis),
+            helper.derivedFraction, helper.derivedCap);
+        const Transform partial { helper.derivedPivot - part.rotate(helper.derivedPivot), part };
+        pose.joints[h] = upper * partial * helper.bind;
+        carries.push_back({ h, upper * partial * upper.inverse() });
+    }
+    for (std::size_t h = 0; h < skeleton.joints.size(); ++h) {
+        const Joint& helper = skeleton.joints[h];
+        if (helper.kind != JointKind::Helper || helper.derivedCarry || helper.derivedFrom < 0 || helper.derivedTo < 0) continue;
         const auto from = static_cast<std::size_t>(helper.derivedFrom), to = static_cast<std::size_t>(helper.derivedTo);
         // O skin das duas (pose vezes a inversa da ligacao) e o giro de "to"
         // em relacao a "from", em volta do pivo desse giro (a junta "to" nas
@@ -131,10 +151,37 @@ void updateDerivedJoints(const Skeleton& skeleton, SkeletonPose& pose) {
         const Transform upper = pose.joints[from] * skeleton.joints[from].bind.inverse();
         const Transform lower = pose.joints[to] * skeleton.joints[to].bind.inverse();
         const Transform relative = upper.inverse() * lower;
-        const Quaternion part = partialRotation(twistAbout(relative.orientation, helper.derivedAxis), helper.derivedFraction);
+        float fraction = helper.derivedFraction, ramp = 0.0f;
+        if (helper.derivedRampEnd > helper.derivedRampStart) {
+            const Quaternion lift = elevationTurn(relative.orientation, helper.derivedRampAlong);
+            const float rise = 2.0f * std::acos(std::clamp(std::abs(lift.w), 0.0f, 1.0f));
+            const float t = std::clamp((rise - helper.derivedRampStart) / (helper.derivedRampEnd - helper.derivedRampStart), 0.0f, 1.0f);
+            ramp = t * t * (3.0f - 2.0f * t);
+            if (helper.derivedRampFraction > 0.0f) fraction += (helper.derivedRampFraction - fraction) * ramp;
+        }
+        const Quaternion part = partialRotation(twistAbout(relative.orientation, helper.derivedAxis, helper.derivedSign), fraction);
         const Vec3 pivot = rotationPivot(relative, skeleton.joints[to].bind.position);
         const Transform partial { pivot - part.rotate(pivot), part };
         pose.joints[h] = upper * partial * helper.bind;
+        pose.joints[h].position = pose.joints[h].position + upper.orientation.rotate(helper.derivedRampOffset) * ramp;
+    }
+    // A clavicula leva o ombro, sem girar o braco (25/10): a direcao dele vem
+    // pronta em relacao ao peito (a animacao, a dobra da tela, o corpo fisico).
+    // Girando o braco junto, como filho, ela somava o giro dela ao pedido e o
+    // braco erguido passava da vertical por cima da cabeca.
+    for (const auto& [h, carry] : carries) {
+        const int arm = skeleton.joints[h].derivedTo;
+        const Vec3 root = pose.joints[static_cast<std::size_t>(arm)].position;
+        const Vec3 shift = carry.apply(root) - root;
+        for (std::size_t j = 0; j < skeleton.joints.size(); ++j) {
+            const Joint& joint = skeleton.joints[j];
+            if (j == h) continue;
+            // (Uma auxiliar que nao gira com o braco fica com o peito: o volume da axila.)
+            if (joint.kind == JointKind::Helper && joint.derivedFraction <= 0.0f && joint.derivedRampFraction <= 0.0f) continue;
+            int up = joint.kind == JointKind::Helper ? joint.derivedTo : static_cast<int>(j);
+            while (up >= 0 && up != arm) up = skeleton.joints[static_cast<std::size_t>(up)].parent;
+            if (up == arm) pose.joints[j].position = pose.joints[j].position + shift;
+        }
     }
 }
 

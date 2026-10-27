@@ -372,17 +372,6 @@ void CharacterLocomotion3D::stepLook(Tick& t) {
             braced, m_balanceReaction * (gaitMoving && BalanceGaitNoLegs ? 0.0f : gaitReaction));
         m_telemetry.balanceReaction = m_balanceReaction;
     }
-    // Chute: bracos e tronco do chute por cima.
-    applyKickPose(profile, state, m_coordinates, m_handLinks, input.ballKick);
-    // Manejo de bola (rework de 06/10): tronco, bracos e cabeca do gesto por
-    // cima (os pes vao pelo planejador: ballFoot/ballScript).
-    if (input.ballGesture.active && !state.links.empty()) {
-        if (!m_gestureLegs.valid) m_gestureLegs = resolveBallGestureLegs3D(profile);
-        Vec3 rootPosition = state.links.front().position;
-        Quaternion rootOrientation = state.links.front().orientation;
-        applyBallGesturePose3D(profile, m_gestureLegs, input.ballGesture, m_coordinates, rootPosition,
-            rootOrientation, false, false);
-    }
 
     // Banking into a turn: a runner carving a curve leans into it and
     // leans forward a little more, roughly in line with the lean/twist

@@ -83,6 +83,16 @@ struct Plane {
 // giro so nesse eixo, sem o resto. Sem eixo, o giro inteiro; giro todo fora
 // do eixo (meia volta), nenhum.
 [[nodiscard]] Quaternion twistAbout(Quaternion q, Vec3 axis);
+// O mesmo so num sentido: sign > 0 so o giro positivo em volta do eixo (o
+// outro sentido vira nenhum), sign < 0 so o negativo, 0 os dois.
+[[nodiscard]] // O quanto o osso de direcao "along" (na ligacao) sobe com o giro relativo,
+// em volta do eixo frente-tras do lado dele (x+ a esquerda, x- a direita);
+// para baixo, nada (a clavicula).
+[[nodiscard]] Quaternion elevationTurn(Quaternion relative, Vec3 along);
+// A fracao do giro com o teto suave da clavicula (cap em radianos; 0 sem teto):
+// o angulo vira cap * tanh(angulo / cap).
+[[nodiscard]] Quaternion clavicleTurn(Quaternion turn, float fraction, float cap);
+Quaternion twistAbout(Quaternion q, Vec3 axis, float sign);
 
 // Distancia de um ponto ao segmento; t recebe o parametro do mais proximo.
 [[nodiscard]] float pointSegmentDistance(Vec3 point, Vec3 a, Vec3 b, float* t = nullptr);
@@ -91,5 +101,9 @@ struct Plane {
 [[nodiscard]] float triangleArea(Vec3 a, Vec3 b, Vec3 c);
 // Se dois triangulos se cruzam (Moller); coplanares contam como nao.
 [[nodiscard]] bool trianglesIntersect(Vec3 a0, Vec3 a1, Vec3 a2, Vec3 b0, Vec3 b1, Vec3 b2);
+// O comprimento do segmento em que dois triangulos se cruzam (0 se nao se
+// cruzam ou sao coplanares): a medida do cruzamento que nao depende da
+// densidade da malha.
+[[nodiscard]] float triangleIntersectionLength(Vec3 a0, Vec3 a1, Vec3 a2, Vec3 b0, Vec3 b1, Vec3 b2);
 
 } // namespace MatterEngine::Modeling

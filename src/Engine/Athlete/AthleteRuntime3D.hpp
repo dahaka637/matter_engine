@@ -7,6 +7,7 @@
 #include "Engine/Character/CharacterLocomotion3D.hpp"
 #include "Engine/Character/DefaultLocomotion3D.hpp"
 #include "Engine/Physics/PhysicsScene3D.hpp"
+#include "Engine/Physique/PlayerPhysique3D.hpp"
 
 #include <cstdint>
 #include <memory>
@@ -26,6 +27,9 @@ struct AthleteRuntimeAssets3D {
     const AnimationClip3D* idleReferenceClip = nullptr;
     const AnimationClip3D* walkReferenceClip = nullptr;
     CharacterMotorSettings3D avatarSettings;
+    // O corpo (altura e peso) do perfil e dos clipes acima: o alcance da bola e
+    // as medidas do passo seguem ele.
+    PlayerBody3D body;
 };
 
 // Um atleta na cena (um ragdoll humano): a identidade, o corpo publicado no
@@ -89,6 +93,7 @@ struct AthleteControlInput3D {
     float ballRequestCurve = 0.0f;
     bool ballShotHeld = false;
     bool ballDribbleHeld = false;
+    bool ballRaiseHeld = false;
     // Experimento biomecanico: a velocidade pedida.
     Vec3 biomechanicalRequestedVelocity;
 };
@@ -103,10 +108,19 @@ struct AthleteRuntimeOutput3D {
     bool controlledAnimatedSet = false;
     bool controlledAnimated = false;
     // A escala da velocidade da capsula do controlado no proximo movimento
-    // dela (o chute correndo do manejo novo freia o corpo de verdade).
+    // dela (a volta do fisico sai da velocidade do corpo).
     float controlledSpeedScale = 1.0f;
-    // O pedido de bola deste tick foi consumido.
+    // O pedido de bola deste tick foi consumido e, com a bola no alcance, a
+    // forca saiu neste tick (o toque).
     bool ballRequestConsumed = false;
+    bool ballTouched = false;
+    // O referencial das areas de alcance do controlado (o da escolha do gesto):
+    // a pelve no chao, o rumo do corpo e a altura da pelve (o laboratorio as
+    // desenha).
+    bool reachValid = false;
+    Vec3 reachOrigin;
+    float reachYaw = 0.0f;
+    float reachPelvisHeight = 0.0f;
 };
 
 // O runtime dos atletas: por tick fixo, antes do PhysicsScene3D::simulate, com

@@ -125,6 +125,13 @@ void correctDriveTargets3D(std::vector<RagdollDriveTarget3D>& targets, const Rag
                 + static_cast<std::size_t>(target.axis);
             if (key < corrections->jointResiduals.size())
                 target.positionRadians += finiteOr(corrections->jointResiduals[key], 0.0f);
+            // (A velocidade-alvo do caminho corrigido, no limite da marcha, 30
+            // rad/s, depois de somar; sem velocidade da correcao, a de antes.)
+            if (key < corrections->jointResidualVelocities.size()) {
+                const float rate = finiteOr(corrections->jointResidualVelocities[key], 0.0f);
+                if (rate != 0.0f)
+                    target.velocityRadiansPerSecond = std::clamp(target.velocityRadiansPerSecond + rate, -30.0f, 30.0f);
+            }
         }
         if (corrections->gain && target.linkIndex < profile.links.size()) {
             const int group = physicalGainGroup3D(profile.links[target.linkIndex].id);

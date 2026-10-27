@@ -1,0 +1,8 @@
+{"nome": "q2_recentrar",
+ "checkpoint": "/home/dahaka/.local/share/matter-engine/rl/protegidos/loco_r2_ck23718_base_ab",
+ "fonte": "loco_r2",
+ "rodadas": 600,
+ "controle_de": "q1_piso",
+ "comum": {},
+ "ajuste_b": "recentrar",
+ "mudanca": {"run": {"ppo": {"bound_loss_coef": 0.0001, "kl_exclude_saturated": true}}}}

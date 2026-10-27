@@ -1,5 +1,7 @@
 #include "Workbench/WorkbenchApp.hpp"
 
+#include "Engine/Appearance/Compose/KitCompositor.hpp"
+
 #include "Engine/Athlete/AthleteAssets3D.hpp"
 #include "Engine/Athlete/Policy/LocomotionPolicy3D.hpp"
 #include "Engine/Character/CharacterControlApplication3D.hpp"
@@ -17,6 +19,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace MatterEngine::Workbench {
@@ -266,9 +269,87 @@ GpuModel3D uploadRagdollMesh(
     return model;
 }
 
+// O uniforme do sistema de aparencia no personagem (RHI/CharacterMaterial.hpp):
+// o kit composto sobre o template da pele (as costuras pelos vertices de
+// origem), os arrays com os niveis prontos, a entrada por vertice e os
+// parametros. Sem template ou se a composicao falhar, nada (o atlas antigo).
+RHI::CharacterMaterialHandle uploadCharacterKit(Renderer& renderer, const RagdollCharacter3D& character, RHI::TextureHandle body,
+    const std::string& kitId) {
+    if (!character.surface || character.surfaceVertices.size() != character.mesh.vertices.size() || !body.valid()) return {};
+    const Appearance::SurfaceTemplate& surface = *character.surface;
+    std::vector<std::array<std::uint32_t, 3>> triangles(character.mesh.indices.size() / 3);
+    for (std::size_t i = 0; i < character.mesh.indices.size(); ++i)
+        triangles[i / 3][i % 3] = character.surfaceVertices[character.mesh.indices[i]].source;
+    std::string error;
+    const std::optional<Appearance::LoadedKit> kit =
+        Appearance::loadKit(std::string(MATTERENGINE_ASSETS_DIR) + "/appearance", kitId, surface, &error);
+    std::optional<Appearance::ComposedKit> composed;
+    if (kit) composed = Appearance::composeKit(surface, triangles, *kit->design, kit->kit, {}, &error);
+    if (!composed) {
+        Log::error("Uniforme " + kitId + " nao composto (fica o atlas antigo): " + error);
+        return {};
+    }
+    const auto packed = [](const std::vector<Appearance::KitTexture>& levels) {
+        std::vector<std::byte> bytes;
+        for (const Appearance::KitTexture& level : levels)
+            bytes.insert(bytes.end(), reinterpret_cast<const std::byte*>(level.rgba.data()),
+                reinterpret_cast<const std::byte*>(level.rgba.data() + level.rgba.size()));
+        return bytes;
+    };
+    const std::vector<std::byte> kitPixels = packed(composed->kit), identityPixels = packed(composed->identity);
+    std::vector<RHI::CharacterKitVertexGpu> vertices(character.surfaceVertices.size());
+    for (std::size_t v = 0; v < vertices.size(); ++v) {
+        const RagdollCharacter3D::SurfaceVertex& source = character.surfaceVertices[v];
+        vertices[v].kitUv[0] = source.kitUv.x;
+        vertices[v].kitUv[1] = source.kitUv.y;
+        vertices[v].identityUv[0] = source.identityUv.x;
+        vertices[v].identityUv[1] = source.identityUv.y;
+        vertices[v].region = source.region >= 0 ? static_cast<std::uint32_t>(source.region) : RHI::CharacterKitNone;
+        vertices[v].zone = source.identity >= 0 ? static_cast<std::uint32_t>(source.identity) : RHI::CharacterKitNone;
+    }
+    RHI::CharacterMaterialDesc desc;
+    desc.kit = { { static_cast<std::uint32_t>(composed->kit.front().width), static_cast<std::uint32_t>(composed->kit.front().height) }, 1,
+        static_cast<std::uint32_t>(composed->kit.size()), static_cast<float>(composed->kitSafeLevel), kitPixels };
+    desc.identity = { { static_cast<std::uint32_t>(composed->identity.front().width), static_cast<std::uint32_t>(composed->identity.front().height) },
+        1, static_cast<std::uint32_t>(composed->identity.size()), static_cast<float>(composed->identitySafeLevel), identityPixels };
+    desc.body = body;
+    desc.vertices = vertices;
+    desc.parameters.levels[0] = static_cast<float>(composed->kitSafeLevel);
+    desc.parameters.levels[1] = static_cast<float>(composed->identitySafeLevel);
+    for (std::size_t r = 0; r < std::min(composed->regionAverage.size(), RHI::CharacterKitMaxRegions); ++r)
+        for (std::size_t k = 0; k < 4; ++k) desc.parameters.regionAverage[r][k] = composed->regionAverage[r][k];
+    const float width = static_cast<float>(surface.identityLayout.width), height = static_cast<float>(surface.identityLayout.height);
+    for (std::size_t z = 0; z < std::min(surface.zones.size(), RHI::CharacterKitMaxZones); ++z) {
+        const Appearance::SurfaceZone& zone = surface.zones[z];
+        desc.parameters.zoneRect[z][0] = static_cast<float>(zone.block[0] + zone.inset) / width;
+        desc.parameters.zoneRect[z][1] = static_cast<float>(zone.block[1] + zone.inset) / height;
+        desc.parameters.zoneRect[z][2] = static_cast<float>(zone.block[0] + zone.block[2] - zone.inset) / width;
+        desc.parameters.zoneRect[z][3] = static_cast<float>(zone.block[1] + zone.block[3] - zone.inset) / height;
+    }
+    try {
+        const RHI::CharacterMaterialHandle handle = renderer.createCharacterMaterial(desc);
+        Log::info("Uniforme " + kitId + " composto em " + std::to_string(static_cast<int>(composed->milliseconds.total)) + " ms"
+            + (handle.valid() ? "" : " (sem o pipeline do personagem: fica o atlas antigo)"));
+        return handle;
+    } catch (const std::exception& exception) {
+        Log::error("Uniforme " + kitId + " sem material na GPU (fica o atlas antigo): " + exception.what());
+        return {};
+    }
+}
+
 } // namespace
 
 void WorkbenchApp::ensureRagdollAssetsLoaded(Renderer& activeRenderer) {
+    // O corpo mudou (applyLaboratoryBody): a malha dele no lugar da de antes;
+    // os indices e a textura sao os mesmos.
+    if (m_characterVisualDirty && m_ragdollCharacter && !m_characterVisual.parts.empty()) {
+        GpuModel3D visual = uploadRagdollMesh(activeRenderer, laboratoryCharacter().mesh);
+        visual.parts.front().albedoTexture = m_characterVisual.parts.front().albedoTexture;
+        visual.textures = std::exchange(m_characterVisual.textures, {});
+        releaseGpuModel3D(activeRenderer, m_characterVisual);
+        m_characterVisual = std::move(visual);
+    }
+    m_characterVisualDirty = false;
     if ((m_humanRagdollProfile && !m_characterVisual.parts.empty())
         || m_ragdollAssetsLoadFailed
         || !m_physicsScene) {
@@ -279,30 +360,9 @@ void WorkbenchApp::ensureRagdollAssetsLoaded(Renderer& activeRenderer) {
             m_ragdollCharacter = loadRagdollCharacter3D(
                 std::string(MATTERENGINE_ASSETS_DIR) + "/" + m_characterAssetPath);
         }
-        m_humanRagdollProfile = m_ragdollCharacter->profile;
-        Vec3 minimum=m_ragdollCharacter->mesh.boundsMin;
-        Vec3 maximum=m_ragdollCharacter->mesh.boundsMax;
-        const auto absolute=[](Vec3 value) {return Vec3{std::abs(value.x),std::abs(value.y),std::abs(value.z)};};
-        for (const auto& link : m_humanRagdollProfile->links) {
-            const auto rotation=link.modelOrientation*link.collider.localOrientation;
-            Vec3 extents;
-            if (ragdollColliderHasBox3D(link.collider)) {
-                const auto half=link.collider.boxHalfExtents;
-                extents=absolute(rotation.rotate({half.x,0,0}))
-                    +absolute(rotation.rotate({0,half.y,0}))+absolute(rotation.rotate({0,0,half.z}));
-            } else {
-                const auto radius=link.collider.radiusMeters;
-                extents=absolute(rotation.rotate({std::max(0.0f,link.collider.lengthMeters*0.5f-radius),0,0}))
-                    +Vec3{radius,radius,radius};
-            }
-            const auto center=link.modelPosition+link.modelOrientation.rotate(link.collider.localPosition);
-            const auto lo=center-extents, hi=center+extents;
-            minimum={std::min(minimum.x,lo.x),std::min(minimum.y,lo.y),std::min(minimum.z,lo.z)};
-            maximum={std::max(maximum.x,hi.x),std::max(maximum.y,hi.y),std::max(maximum.z,hi.z)};
-        }
-        m_characterSpawnHalfExtents=(maximum-minimum)*0.5f;
-        m_characterSpawnCenter=(maximum+minimum)*0.5f;
-        m_characterVisual = uploadRagdollMesh(activeRenderer, m_ragdollCharacter->mesh);
+        m_humanRagdollProfile = &laboratoryCharacter().profile;
+        updateCharacterSpawnBox();
+        m_characterVisual = uploadRagdollMesh(activeRenderer, laboratoryCharacter().mesh);
         if (!m_ragdollCharacter->albedoPath.empty()) {
             const auto image=loadImageRgba3D(m_ragdollCharacter->albedoPath);
             const auto texture=activeRenderer.createTexture2D(
@@ -310,6 +370,8 @@ void WorkbenchApp::ensureRagdollAssetsLoaded(Renderer& activeRenderer) {
                 image.rgbaPixels);
             m_characterVisual.textures.push_back(texture);
             m_characterVisual.parts.front().albedoTexture=texture;
+            // O uniforme novo por cima (o atlas antigo fica como o corpo).
+            m_characterKit = uploadCharacterKit(activeRenderer, *m_ragdollCharacter, texture, "branco_10");
         }
         if (!m_characterThumbnail && !m_ragdollCharacter->thumbnailPath.empty())
             m_characterThumbnail = activeRenderer.loadUiTexture(m_ragdollCharacter->thumbnailPath);
@@ -326,7 +388,8 @@ void WorkbenchApp::ensureRagdollAssetsLoaded(Renderer& activeRenderer) {
     } catch (const std::exception& error) {
         Log::error(std::string("Falha ao carregar articulation: ")
             + error.what());
-        m_humanRagdollProfile.reset();
+        m_humanRagdollProfile = nullptr;
+        if (m_characterKit.valid()) activeRenderer.destroyCharacterMaterial(std::exchange(m_characterKit, {}));
         releaseGpuModel3D(activeRenderer, m_characterVisual);
         for (GpuModel3D& visual : m_ragdollLinkVisuals) {
             releaseGpuModel3D(activeRenderer, visual);
@@ -337,6 +400,31 @@ void WorkbenchApp::ensureRagdollAssetsLoaded(Renderer& activeRenderer) {
         m_ragdollAssetsLoadFailed = true;
         m_laboratoryStatus = "Falha ao carregar articulation";
     }
+}
+
+void WorkbenchApp::updateCharacterSpawnBox() {
+    Vec3 minimum=laboratoryCharacter().mesh.boundsMin;
+    Vec3 maximum=laboratoryCharacter().mesh.boundsMax;
+    const auto absolute=[](Vec3 value) {return Vec3{std::abs(value.x),std::abs(value.y),std::abs(value.z)};};
+    for (const auto& link : m_humanRagdollProfile->links) {
+        const auto rotation=link.modelOrientation*link.collider.localOrientation;
+        Vec3 extents;
+        if (ragdollColliderHasBox3D(link.collider)) {
+            const auto half=link.collider.boxHalfExtents;
+            extents=absolute(rotation.rotate({half.x,0,0}))
+                +absolute(rotation.rotate({0,half.y,0}))+absolute(rotation.rotate({0,0,half.z}));
+        } else {
+            const auto radius=link.collider.radiusMeters;
+            extents=absolute(rotation.rotate({std::max(0.0f,link.collider.lengthMeters*0.5f-radius),0,0}))
+                +Vec3{radius,radius,radius};
+        }
+        const auto center=link.modelPosition+link.modelOrientation.rotate(link.collider.localPosition);
+        const auto lo=center-extents, hi=center+extents;
+        minimum={std::min(minimum.x,lo.x),std::min(minimum.y,lo.y),std::min(minimum.z,lo.z)};
+        maximum={std::max(maximum.x,hi.x),std::max(maximum.y,hi.y),std::max(maximum.z,hi.z)};
+    }
+    m_characterSpawnHalfExtents=(maximum-minimum)*0.5f;
+    m_characterSpawnCenter=(maximum+minimum)*0.5f;
 }
 
 void WorkbenchApp::spawnHumanRagdoll() {
@@ -454,7 +542,7 @@ CharacterLocomotionAnimations3D
 WorkbenchApp::characterLocomotionAnimations() const {
     if(!m_ragdollCharacter)return {};
     // O levantar de brucos e o de costas escolhidos no painel (para comparar).
-    return athleteLocomotionClips3D(*m_ragdollCharacter,m_animationClips,m_getUpFrontClip,m_getUpBackClip);
+    return athleteLocomotionClips3D(laboratoryCharacter(),laboratoryClips(),m_getUpFrontClip,m_getUpBackClip);
 }
 
 float WorkbenchApp::ragdollGroundHeight(Vec3 position) const {
@@ -508,8 +596,8 @@ void WorkbenchApp::takeControlOfLatestCharacter() {
         ? "Experimento biomecânico ativo"
         : "Controle do personagem ativo";
     m_notification = { m_biomechanicalExperiment
-            ? "WASD: passada física | Alt: câmera livre | U: congelar"
-            : "WASD mover | Alt: câmera livre | U: congelar",
+            ? "WASD: passada física | Alt: câmera livre | mouse 4: congelar"
+            : "WASD mover | Alt: câmera livre | mouse 4: congelar",
         4.0f, 4.0f };
     syncLaboratoryMouseCapture();
 }
@@ -612,6 +700,80 @@ void WorkbenchApp::resetControlledCharacterPose() {
     }
 }
 
+void WorkbenchApp::applyLaboratoryBody() {
+    m_bodyApplyRequested = false;
+    if (!m_ragdollCharacter) return;
+    const LaboratoryBody* body = m_laboratoryBodies.select(*m_ragdollCharacter, m_animationClips,
+        m_bodyHeightCm, m_bodyMassKg);
+    if (body == m_laboratoryBody) return;
+    m_laboratoryBody = body;
+    // A capsula do corpo, com o andar e o sprint dos clipes dele (como o
+    // AthleteBundle3D).
+    m_avatarGaitSpeeds = characterGaitSpeeds3D(characterLocomotionAnimations());
+    m_avatarCharacterSettings = athleteAvatarMotorSettings3D(laboratoryBody());
+    if (m_avatarGaitSpeeds.walk > 0.0f) {
+        m_avatarCharacterSettings.walkSpeed = m_avatarGaitSpeeds.walk;
+        m_avatarCharacterSettings.sprintSpeed = m_avatarGaitSpeeds.sprint;
+    }
+    // (Sem os recursos carregados, ensureRagdollAssetsLoaded ja usa o corpo.)
+    if (!m_humanRagdollProfile || !m_physicsScene) return;
+    endPhysGunGrab();
+    m_humanRagdollProfile = &laboratoryCharacter().profile;
+    updateCharacterSpawnBox();
+    m_characterVisualDirty = true;
+    m_laboratoryTaaHistoryValid = false;
+    // Os bonecos humanos de novo no perfil do corpo, de pe onde estavam, com o
+    // atleta do zero: a locomocao padrao guarda o esqueleto dos gestos do
+    // primeiro perfil que viu (o reset nao o zera). O controlado volta pela
+    // pose inicial (a capsula nova).
+    for (SpawnedRagdollInstance& instance : m_spawnedRagdolls) {
+        if (instance.physicsState.links.empty()) continue;
+        const PhysicsBodyState3D root = instance.physicsState.links.front();
+        const Vec3 forward = root.orientation.rotate({ 1.0f, 0.0f, 0.0f });
+        const bool controlled = instance.entityId == m_controlledCharacterEntityId;
+        const float yaw = controlled ? m_characterDesiredFacingYaw : std::atan2(forward.y, forward.x);
+        instance.athlete = AthleteState3D {};
+        instance.athlete.legacy.guideFacingYawRadians = yaw;
+        instance.skinMatrices.clear();
+        instance.previousSkinMatrices.clear();
+        instance.visualPose = {};
+        instance.visualRotations.clear();
+        instance.previousVisualRotations.clear();
+        instance.visualPoseTime = -1.0;
+        instance.simulationPreviousState = {};
+        instance.renderedPositions.clear();
+        instance.renderedOrientations.clear();
+        if (controlled) continue;
+        RagdollSpawnDefinition3D spawn;
+        spawn.entityId = instance.entityId;
+        spawn.pelvisPosition = { root.position.x, root.position.y,
+            ragdollGroundHeight(root.position) + m_humanRagdollProfile->standingRootHeightMeters };
+        spawn.orientation = Quaternion::fromAxisAngle({ 0.0f, 0.0f, 1.0f }, yaw);
+        spawn.rigidityPercent = m_ragdollRigidityPercent;
+        spawn.active = instance.active;
+        m_physicsScene->destroyRagdoll(instance.physicsRagdoll);
+        try {
+            instance.physicsRagdoll = m_physicsScene->createRagdoll(*m_humanRagdollProfile, spawn);
+        } catch (const std::exception& error) {
+            Log::error(std::string("Falha ao recriar ragdoll no corpo novo: ") + error.what());
+            instance.entityId = 0;
+            continue;
+        }
+        const RagdollState3D initial = m_physicsScene->ragdollState(instance.physicsRagdoll);
+        instance.physicsState = initial;
+        instance.previousPhysicsState = initial;
+        instance.frozen = false;
+        LegacyAthleteState3D& legacy = instance.athlete.legacy;
+        legacy.locomotion.reset(*m_humanRagdollProfile, initial);
+        legacy.adaptivePhysics.reset(*m_humanRagdollProfile);
+        legacy.biomechanics.reset(*m_humanRagdollProfile, initial,
+            m_physicsScene->ragdollDynamics(instance.physicsRagdoll));
+    }
+    // (Os que nao renasceram saem; o id 0 nunca e o controlado.)
+    std::erase_if(m_spawnedRagdolls, [](const SpawnedRagdollInstance& instance) { return instance.entityId == 0; });
+    resetControlledCharacterPose();
+}
+
 void WorkbenchApp::toggleControlledCharacterFrozen() {
     if (!m_physicsScene || m_controlledCharacterEntityId == 0) return;
     const auto controlled = std::find_if(m_spawnedRagdolls.begin(),
@@ -628,6 +790,25 @@ void WorkbenchApp::toggleControlledCharacterFrozen() {
     controlled->frozen = frozen;
     controlled->previousPhysicsState = controlled->physicsState;
     m_physicsScene->setRagdollFrozen(controlled->physicsRagdoll, frozen);
+    // A bola mais perto congela junto (e a mesma descongela depois).
+    if (frozen) {
+        m_frozenSceneBallEntityId = 0;
+        float best = std::numeric_limits<float>::max();
+        const Vec3 at = controlled->physicsState.links.empty() ? Vec3 {} : controlled->physicsState.links.front().position;
+        for (const SpawnedInflatedBallInstance& ball : m_inflatedBalls) {
+            if (!m_physicsScene->contains(ball.physicsBall)) continue;
+            const Vec3 d = m_physicsScene->inflatedBallState(ball.physicsBall).position - at;
+            const float distance = d.x * d.x + d.y * d.y + d.z * d.z;
+            if (distance < best) {
+                best = distance;
+                m_frozenSceneBallEntityId = ball.entityId;
+            }
+        }
+    }
+    for (const SpawnedInflatedBallInstance& ball : m_inflatedBalls)
+        if (ball.entityId == m_frozenSceneBallEntityId && m_physicsScene->contains(ball.physicsBall))
+            m_physicsScene->setInflatedBallFrozen(ball.physicsBall, frozen);
+    if (!frozen) m_frozenSceneBallEntityId = 0;
     m_characterProxyVelocityWorld = {};
     m_characterSprinting = false;
     m_laboratoryTaaHistoryValid = false;
@@ -635,7 +816,7 @@ void WorkbenchApp::toggleControlledCharacterFrozen() {
         ? "Ragdoll congelado para inspeção"
         : "Ragdoll descongelado";
     m_notification = {
-        frozen ? "RAGDOLL CONGELADO | U para descongelar"
+        frozen ? "CENA CONGELADA | mouse 4 para descongelar"
                : "RAGDOLL DESCONGELADO",
         2.4f, 2.4f
     };
@@ -719,11 +900,10 @@ AthleteRuntimeSettings3D WorkbenchApp::athleteRuntimeSettings() const {
     settings.defaultSprintForwardSpeed = m_defaultSprintForwardSpeed;
     settings.defaultSprintSideSpeed = m_defaultSprintSideSpeed;
     settings.defaultSprintBackwardSpeed = m_defaultSprintBackwardSpeed;
-    settings.ballContactTiming = m_ballContactTiming;
-    settings.ballHitboxContact = m_ballHitboxContact;
+    settings.defaultMaxSprintSpeed = m_defaultMaxSprintSpeed;
     settings.ballForce = m_ballForce;
-    settings.ballForceOnly = m_ballForceOnly;
-    settings.ballStabilityAssist = m_ballStabilityAssist;
+    settings.touchGestureSeconds = m_touchGestureMilliseconds / 1000.0f;
+    settings.shotGestureSeconds = m_shotGestureMilliseconds / 1000.0f;
     settings.activeBody = m_activeBody;
     settings.physicalBridge = m_physicalBridge;
     settings.modeTable = m_modeTable;
@@ -744,8 +924,6 @@ AthleteRuntimeSettings3D WorkbenchApp::athleteRuntimeSettings() const {
     }
     settings.fullPhysicalImpulse = m_fullPhysicalImpulse;
     settings.activeBodySettings.gameplayAssistAcceleration = m_activeAssistAcceleration;
-    settings.newBallHandling = m_newBallHandling;
-    settings.dribbleV5 = m_dribbleV5;
     settings.capsuleResponsePercent = m_capsuleResponsePercent * LabResponseScale;
     settings.capsuleReversalPercent = m_capsuleReversalPercent;
     return settings;
@@ -757,20 +935,21 @@ void WorkbenchApp::updateActiveRagdolls(float deltaTime) {
     // O modo padrao com os clipes dele (o trote e o sprint das referencias e
     // as diagonais) por cima dos da locomocao fisica.
     const auto defaultClips=m_ragdollCharacter
-        ?defaultLocomotionAnimations3D(clips,m_ragdollCharacter->defaultLocomotionClipIds,m_animationClips):clips;
+        ?defaultLocomotionAnimations3D(clips,m_ragdollCharacter->defaultLocomotionClipIds,laboratoryClips()):clips;
     AthleteRuntimeAssets3D assets;
     assets.profile = &*m_humanRagdollProfile;
     assets.clips = &clips;
     assets.defaultClips = &defaultClips;
     // As poses de referencia do experimento biomecanico: o parado e o andar
     // do proprio personagem (clipes ja validados contra o perfil).
-    for (const AnimationClip3D& candidate : m_animationClips) {
+    for (const AnimationClip3D& candidate : laboratoryClips()) {
         if (m_ragdollCharacter && candidate.id == m_ragdollCharacter->idleClipId)
             assets.idleReferenceClip = &candidate;
         else if (m_ragdollCharacter && candidate.id == m_ragdollCharacter->walkClipId)
             assets.walkReferenceClip = &candidate;
     }
     assets.avatarSettings = m_avatarCharacterSettings;
+    assets.body = laboratoryBody();
     std::vector<AthleteSlot3D> athletes;
     athletes.reserve(m_spawnedRagdolls.size());
     for (SpawnedRagdollInstance& instance : m_spawnedRagdolls)
@@ -799,6 +978,7 @@ void WorkbenchApp::updateActiveRagdolls(float deltaTime) {
     control.ballRequestCurve = m_ballRequestCurve;
     control.ballShotHeld = m_ballShotHeld;
     control.ballDribbleHeld = m_ballDribbleHeld;
+    control.ballRaiseHeld = m_ballRaiseHeld;
     control.biomechanicalRequestedVelocity = m_biomechanicalRequestedVelocity;
     AthleteRuntimeOutput3D output;
     m_athleteRuntime.update(*m_physicsScene, assets, athletes, balls, athleteRuntimeSettings(), control, deltaTime,
@@ -807,6 +987,12 @@ void WorkbenchApp::updateActiveRagdolls(float deltaTime) {
     if (output.controlledAnimatedSet) m_controlledAnimated = output.controlledAnimated;
     m_controlledSpeedScale = output.controlledSpeedScale;
     if (output.ballRequestConsumed) m_ballRequest = BallActionKind3D::None;
+    m_reachValid = output.reachValid;
+    if (output.reachValid) {
+        m_reachOrigin = output.reachOrigin;
+        m_reachYaw = output.reachYaw;
+        m_reachPelvisHeight = output.reachPelvisHeight;
+    }
     updateRagdollImpactLab(deltaTime);
 }
 

@@ -2,11 +2,14 @@
 #include <mutex>
 #include <map>
 
+#include "Engine/Animation/RagdollCharacterBody3D.hpp"
 #include "Engine/Character/DefaultLocomotion3D.hpp"
 
 #include <algorithm>
 #include <exception>
+#include <string>
 #include <filesystem>
+#include <tuple>
 
 namespace MatterEngine {
 
@@ -102,10 +105,14 @@ CharacterMotorSettings3D athleteAvatarMotorSettings3D() {
     settings.groundAcceleration = 14.0f;
     settings.groundDeceleration = 18.0f;
     settings.airAcceleration = 4.5f;
-    settings.jumpSpeed = 4.6f;
-    // O toque rapido e um pulo baixo (pedido do usuario, 05/10 noite: a
+    // O pulo de um jogador de verdade (24/10): 3,3 m/s sobe 0,56 m, 0,67 s no
+    // ar (era 4,6: 1,08 m; depois 3,0: 0,46 m, e o usuario pediu um pouco mais
+    // alto). O toque rapido e um pulo baixo (pedido do usuario, 05/10 noite: a
     // altura pelo tempo segurado): 0,72 da velocidade; segurando, sobe ate o
-    // padrao em ~0,35 s e ate 1,16 em 0,55 s.
+    // padrao em ~0,35 s e ate 1,16 em 0,55 s. (25/10, pedido do usuario: todos
+    // os pulos um pouco mais altos - 3,6 m/s sobe 0,66 m; o toque 0,34 m, o
+    // carregado cheio 0,89 m.)
+    settings.jumpSpeed = 3.6f;
     settings.jumpTapSeconds = 0.06f;
     settings.jumpFullChargeSeconds = 0.55f;
     settings.jumpTapSpeedScale = 0.72f;
@@ -129,13 +136,32 @@ CharacterMotorSettings3D athleteAvatarMotorSettings3D() {
     return settings;
 }
 
-AthleteBundle3D::AthleteBundle3D(const std::string& assetsDirectory)
-    : m_character(loadRagdollCharacter3D(assetsDirectory + "/characters/football_player/character.json")) {
+CharacterMotorSettings3D athleteAvatarMotorSettings3D(const PlayerBody3D& body) {
+    CharacterMotorSettings3D settings = athleteAvatarMotorSettings3D();
+    const float s = bodyScale3D(body);
+    settings.radius *= s;
+    settings.standingHeight *= s;
+    settings.crouchedHeight *= s;
+    settings.maximumStepHeight = std::max(settings.maximumStepHeight, settings.maximumStepHeight * s);
+    return settings;
+}
+
+AthleteBundle3D::AthleteBundle3D(const std::string& assetsDirectory, const PlayerBody3D& body)
+    : m_body(clampedBody3D(body)),
+      m_character(loadRagdollCharacter3D(assetsDirectory + "/characters/football_player/character.json")) {
     m_clipLibrary = loadAthleteClipLibrary3D(assetsDirectory + "/animations/clips", m_character.profile, &m_clipErrors);
+    if (!isBaseBody3D(m_body)) {
+        // O corpo: o perfil com a folga nos clipes de locomocao e cada clipe
+        // no corpo (a raiz x s, o braco aberto), antes de os papeis apontarem
+        // para a biblioteca.
+        const RagdollCharacter3D base = std::move(m_character);
+        m_character = bodyRagdollCharacter3D(base, m_body, nullptr, ragdollClearanceClips3D(base, m_clipLibrary));
+        for (AnimationClip3D& clip : m_clipLibrary) clip = bodyRagdollClip3D(clip, base.profile, m_body);
+    }
     m_clips = athleteLocomotionClips3D(m_character, m_clipLibrary);
     m_defaultClips = defaultLocomotionAnimations3D(m_clips, m_character.defaultLocomotionClipIds, m_clipLibrary);
     m_gaitSpeeds = characterGaitSpeeds3D(m_clips);
-    CharacterMotorSettings3D avatar = athleteAvatarMotorSettings3D();
+    CharacterMotorSettings3D avatar = athleteAvatarMotorSettings3D(m_body);
     if (m_gaitSpeeds.walk > 0.0f) {
         avatar.walkSpeed = m_gaitSpeeds.walk;
         avatar.sprintSpeed = m_gaitSpeeds.sprint;
@@ -144,15 +170,22 @@ AthleteBundle3D::AthleteBundle3D(const std::string& assetsDirectory)
     m_assets.clips = &m_clips;
     m_assets.defaultClips = &m_defaultClips;
     m_assets.avatarSettings = avatar;
+    m_assets.body = m_body;
 }
 
 std::shared_ptr<const AthleteBundle3D> AthleteBundle3D::shared(const std::string& assetsDirectory) {
+    return shared(assetsDirectory, PlayerBody3D {});
+}
+
+std::shared_ptr<const AthleteBundle3D> AthleteBundle3D::shared(const std::string& assetsDirectory,
+    const PlayerBody3D& requested) {
     static std::mutex mutex;
-    static std::map<std::string, std::weak_ptr<const AthleteBundle3D>> bundles;
+    static std::map<std::tuple<std::string, float, float>, std::weak_ptr<const AthleteBundle3D>> bundles;
+    const PlayerBody3D body = clampedBody3D(requested);
     std::lock_guard<std::mutex> lock(mutex);
-    std::weak_ptr<const AthleteBundle3D>& slot = bundles[assetsDirectory];
+    std::weak_ptr<const AthleteBundle3D>& slot = bundles[{ assetsDirectory, body.heightMeters, body.massKg }];
     if (auto existing = slot.lock()) return existing;
-    auto created = std::make_shared<const AthleteBundle3D>(assetsDirectory);
+    auto created = std::make_shared<const AthleteBundle3D>(assetsDirectory, body);
     slot = created;
     return created;
 }

@@ -2,11 +2,13 @@
 
 #include "Engine/Math/Ray3D.hpp"
 #include "Engine/Physics/InflatedBall3D.hpp"
+#include "Engine/Physics/Net/NetSolver3D.hpp"
 #include "Engine/Physics/PhysicsEngine3D.hpp"
 #include "Engine/Physics/RagdollProfile3D.hpp"
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -143,6 +145,16 @@ inline float characterJumpSpeed3D(const CharacterMotorSettings3D& settings,
     return settings.jumpSpeed * (settings.jumpTapSpeedScale
         + (settings.jumpChargedSpeedScale - settings.jumpTapSpeedScale)
         * characterJumpCharge3D(settings, heldSeconds));
+}
+
+// O tempo segurado que da a saida jumpSpeed x scale (o pulo instantaneo, ao
+// apertar, usa o medio: scale 1).
+inline float characterJumpHoldForScale3D(const CharacterMotorSettings3D& settings, float scale) {
+    const float range = settings.jumpChargedSpeedScale - settings.jumpTapSpeedScale;
+    const float charge = std::clamp(range > 1e-4f ? (scale - settings.jumpTapSpeedScale) / range : 0.0f, 0.0f, 1.0f);
+    // (O inverso do degrau suave x^2 (3 - 2x).)
+    const float x = 0.5f - std::sin(std::asin(1.0f - 2.0f * charge) / 3.0f);
+    return settings.jumpTapSeconds + x * std::max(0.01f, settings.jumpFullChargeSeconds - settings.jumpTapSeconds);
 }
 
 struct PhysicsCharacterState3D {
@@ -401,6 +413,31 @@ struct RagdollEffectiveMass3D {
 // Cena autoritativa: atores, consultas, CCT e eventos pertencem ao mesmo
 // broad phase. A aplicacao guarda handles e le snapshots depois de simulate /
 // fetchResults; ela nunca integra corpos nem escreve transforms diretamente.
+// Uma rede de fios na cena (ver NetSolver3D.hpp).
+struct NetHandle3D {
+    std::uint32_t index = std::numeric_limits<std::uint32_t>::max();
+    std::uint32_t generation = 0;
+
+    [[nodiscard]] constexpr bool valid() const {
+        return index != std::numeric_limits<std::uint32_t>::max();
+    }
+    constexpr explicit operator bool() const { return valid(); }
+    constexpr bool operator==(const NetHandle3D&) const = default;
+};
+
+struct NetStatus3D {
+    bool sleeping = false;
+    // O ultimo tick: quanto custou (ms), os subpassos, os contatos com corpos,
+    // a maior velocidade de um no e o fio mais esticado.
+    float stepMilliseconds = 0.0f;
+    std::uint32_t substeps = 0;
+    std::uint32_t contacts = 0;
+    float maximumSpeed = 0.0f;
+    float maximumStrain = 0.0f;
+    // Quantos corpos (bolas e corpos da cena) estavam perto dela.
+    std::uint32_t nearbyBodies = 0;
+};
+
 class PhysicsScene3D final {
 public:
     struct Impl;
@@ -437,10 +474,9 @@ public:
     [[nodiscard]] bool contains(InflatedBallHandle3D ball) const;
     [[nodiscard]] InflatedBallState3D inflatedBallState(
         InflatedBallHandle3D ball) const;
-    // Dono da bola (ver BallOwnership3D): o quadril e as pernas dele
-    // atravessam esta bola; tronco, cabeca e bracos so a repelem se ela entrar
-    // neles (mola macia, sem atrito). Os outros bonecos colidem com ela. Sem
-    // dono (handle invalido), todos colidem.
+    // Dono da bola (ver BallOwnership3D): o corpo todo dele atravessa esta
+    // bola. Os outros bonecos colidem com ela. Sem dono (handle invalido),
+    // todos colidem.
     void setInflatedBallOwner(InflatedBallHandle3D ball, RagdollHandle3D owner);
     [[nodiscard]] RagdollHandle3D inflatedBallOwner(InflatedBallHandle3D ball) const;
     // Teleporta/lanca (ferramentas, reposicionar): posicao e velocidades.
@@ -469,6 +505,23 @@ public:
     [[nodiscard]] bool raycastInflatedBall(const Ray3D& ray,
         float maximumDistance, InflatedBallHandle3D& outBall,
         float& outDistance) const;
+
+    // Rede de fios (a rede do gol; ver Net/NetSolver3D.hpp): nos e fios no
+    // mundo, presos na estrutura dela (a trave, um corpo parado criado a
+    // parte). Ela anda nos subpassos da bola: a bola bate nos fios e a rede a
+    // freia; os corpos da cena perto dela (dinamicos, cinematicos, os links
+    // dos bonecos) empurram os nos e os dinamicos levam o impulso de volta.
+    // Parada, ela dorme (custo zero) e segura o que esta apoiado nela.
+    [[nodiscard]] NetHandle3D createNet(const NetDescription3D& description);
+    void destroyNet(NetHandle3D net);
+    [[nodiscard]] bool contains(NetHandle3D net) const;
+    // Os nos agora (no indice da descricao).
+    [[nodiscard]] std::span<const Vec3> netPositions(NetHandle3D net) const;
+    [[nodiscard]] NetStatus3D netStatus(NetHandle3D net) const;
+    void wakeNet(NetHandle3D net);
+    // Deixa a rede assentar sozinha (sem a cena) ate dormir ou maximumSeconds:
+    // a rede recem-criada pendurada como fica parada. Devolve o tempo usado.
+    float settleNet(NetHandle3D net, float maximumSeconds);
 
     // Uma articulation é um recurso único, não vinte rigid bodies expostos.
     // O handle e os snapshots mantêm PhysX confinado ao backend.
@@ -550,9 +603,10 @@ public:
     void setRagdollGuidePose(RagdollHandle3D ragdoll, std::span<const Vec3> positions,
         std::span<const Quaternion> orientations, std::span<const float> authority = {});
     // Os colisores do boneco numa pose (origem e orientacao de cada link, no
-    // mundo) contra o mundo estatico (paredes, degraus, meio-fio): cada link
-    // que entra mais que minimumDepth, com a normal da superficie. Os links
-    // cinematicos nao colidem com o estatico; o modo animado pergunta aqui.
+    // mundo) contra o mundo estatico (paredes, degraus, meio-fio, a barreira
+    // dos jogadores): cada link que entra mais que minimumDepth, com a normal
+    // da superficie. Os links cinematicos nao colidem com o estatico; o modo
+    // animado pergunta aqui.
     [[nodiscard]] std::vector<RagdollWorldContact3D> ragdollPoseWorldContacts(RagdollHandle3D ragdoll,
         std::span<const Vec3> positions, std::span<const Quaternion> orientations,
         float minimumDepthMeters) const;

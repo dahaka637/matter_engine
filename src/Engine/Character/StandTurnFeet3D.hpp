@@ -17,7 +17,10 @@ namespace MatterEngine {
 // deslizando; passando de 20 graus de torcao, sai o pe mais atrasado no giro
 // e logo o outro, cada um pousando onde a pose parada o quer no rumo final
 // (ate 72 graus a frente por passo), em 0,22 a 0,40 s. So pose: nada aqui
-// muda o rumo, a velocidade ou a capsula.
+// muda o rumo, a velocidade ou a capsula. Parado, um pe fora da pose parada
+// (por qualquer coisa: o empurrao de nao cruzar, a parada no meio da passada,
+// um gesto) tambem da o passo de acomodacao ate ela (24/10, pedido do usuario:
+// a perna ficava aberta para sempre depois do manejo e do chute).
 struct StandTurnFoot3D {
     Vec3 position;
     Quaternion orientation;
@@ -36,6 +39,11 @@ struct StandTurnFeetInput3D {
     float groundHeight = 0.0f;
     // Onde a pose parada poe cada pe agora (mundo; 0 = esquerdo).
     std::array<StandTurnFoot3D, 2> reference {};
+    // Onde cada pe esta de fato (mundo; o do tick anterior, com o que a
+    // locomocao somou a pose): os passos comecam dali, e um pe longe da pose
+    // parada da o passo de acomodacao.
+    std::array<StandTurnFoot3D, 2> shown {};
+    bool shownValid = false;
     float deltaTime = 0.0f;
 };
 
@@ -60,7 +68,13 @@ private:
         // O rumo da pelve no comeco do passo e o sentido do giro.
         float fromFacing = 0.0f;
         float sign = 1.0f;
+        // O rumo do pouso, que no ar so anda ate o pedido a uma taxa limitada
+        // (o alvo do giro pula quando a camera passa por tras).
+        float goalYaw = 0.0f;
     };
+    [[nodiscard]] float landingYaw(const StandTurnFeetInput3D& input, const Foot& foot) const;
+    [[nodiscard]] StandTurnFoot3D landingAt(const RagdollProfile3D& profile, std::size_t link,
+        const StandTurnFeetInput3D& input, std::size_t side, float finalYaw) const;
     [[nodiscard]] StandTurnFoot3D landing(const RagdollProfile3D& profile, std::size_t link,
         const StandTurnFeetInput3D& input, std::size_t side, const Foot& foot) const;
     void start(const RagdollProfile3D& profile, std::size_t link, const StandTurnFeetInput3D& input,

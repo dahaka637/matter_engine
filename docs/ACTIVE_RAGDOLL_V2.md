@@ -2,7 +2,7 @@
 
 Atualizado em 17/09/2026. **Etapa experimental, não locomoção aprovada.**
 O relato de resultados da sessão fica em `DESENVOLVIMENTO_ATUAL.md`.
-Passagem final detalhada no brain: `30_Projects/matter_engine/HANDOFF_2026-09-17_Ragdoll_Ativo.md`.
+Passagem final detalhada no brain: `IA_Brain/HANDOFF_2026-09-17_Ragdoll_Ativo.md`.
 O estudo que fundamenta as decisões está em
 [`ACTIVE_RAGDOLL_ROBOTICS_STUDY.md`](ACTIVE_RAGDOLL_ROBOTICS_STUDY.md).
 Este documento descreve o código novo; não reativa os controladores arquivados.

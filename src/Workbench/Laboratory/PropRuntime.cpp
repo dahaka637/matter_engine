@@ -738,6 +738,7 @@ void WorkbenchApp::updateDynamicProps(float deltaTime) {
     m_physicsScene->simulate(deltaTime);
     ++m_laboratoryPhysicsStep;
     readInflatedBallStates(deltaTime);
+    captureLaboratoryGoalNet();
     for (const PhysicsBodyStateUpdate3D& update :
         m_physicsScene->activeBodyStates()) {
         const auto found = m_spawnedPropByBodyIndex.find(update.body.index);

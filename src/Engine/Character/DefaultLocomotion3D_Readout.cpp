@@ -33,11 +33,15 @@ void DefaultLocomotion3D::stepReadout(Tick& t) {
         again.deltaTime = 1e-4f;
         m_exitInertiaDt = dt;
         again.tackleRequest = false;
+        // (O gesto de bola ja comecou no primeiro passe: de novo, o tocador
+        // recomecava.)
+        again.gestureRequested = false;
         update(profile, animations, again);
         return;
     }
     m_output.facingYawRadians = m_yaw;
     m_output.cyclePhase = m_phase;
+    for (std::size_t side = 0; side < 2; ++side) m_output.gestureLegs[side] = m_gesturePlayers[side].movesLeg();
     m_output.movingShare = total;
     m_output.landingIntensity = m_landTime >= 0.0f ? m_landIntensity : 0.0f;
     m_output.landingSink = m_landingSink;
@@ -64,26 +68,10 @@ void DefaultLocomotion3D::stepReadout(Tick& t) {
         m_output.swingProgress[side] = std::clamp(fraction(m_phase - gait.liftOff[side]) / span, 0.0f, 1.0f);
         m_output.secondsToTouchdown[side] = fraction(gait.land[side] - m_phase) / rate;
     }
-    // Plano v5: as janelas de balanco, o ciclo e o pe no futuro (o manejo
-    // planeja o toque dentro do balanco - a janela do pe que toca e o pouso
-    // dele vem daqui).
+    // O ciclo e o pe no futuro (a referencia do contrato do RL).
     {
         const bool cycling = m_output.cycling && rate > 1e-3f;
-        const Gait& gait = m_gaits[dominant];
         m_output.cycleSeconds = cycling ? 1.0f / rate : -1.0f;
-        for (std::size_t side = 0; side < 2; ++side) {
-            for (auto& window : m_output.swingWindows[side]) window = { -1.0f, -1.0f };
-            if (!cycling) continue;
-            const float span = std::max(0.05f, fraction(gait.land[side] - gait.liftOff[side]));
-            // (O comeco do balanco atual, ou do proximo: a fase do pe sair do
-            // chao contada para tras dentro do balanco.)
-            float since = fraction(m_phase - gait.liftOff[side]);
-            float start = since < span ? -since : fraction(gait.liftOff[side] - m_phase);
-            for (auto& window : m_output.swingWindows[side]) {
-                window = { start / rate, (start + span) / rate };
-                start += 1.0f;
-            }
-        }
         // O pe no futuro: a tabela das marchas (pelos pesos), com a passada de
         // agora (o comprimento no rumo de cada marcha) e a altura da pelve.
         const float height = rootPosition.z - feet.z;
@@ -95,7 +83,6 @@ void DefaultLocomotion3D::stepReadout(Tick& t) {
             const float phase = fraction(m_phase + rate * ahead);
             for (std::size_t side = 0; side < 2; ++side) {
                 Vec3 position {};
-                QuaternionSum turn;
                 float used = 0.0f;
                 for (std::size_t g = 0; g < GaitCount && total > 1e-3f; ++g) {
                     const float weight = m_weights[g] / total;
@@ -111,18 +98,14 @@ void DefaultLocomotion3D::stepReadout(Tick& t) {
                     const Vec3 axis { std::cos(m_gaits[g].heading), std::sin(m_gaits[g].heading), 0.0f };
                     foot += axis * (dot(Vec3 { foot.x, foot.y, 0.0f }, axis) * stride);
                     position += foot * weight;
-                    turn.add(m_gaits[g].feetTurn[side][static_cast<std::size_t>(a)], weight * (1.0f - f));
-                    turn.add(m_gaits[g].feetTurn[side][static_cast<std::size_t>(b)], weight * f);
                     used += weight;
                 }
                 if (used > 1e-3f) {
                     position = position * (1.0f / used);
                     position.z += height;
                     m_output.footForecast[side][static_cast<std::size_t>(k)] = position;
-                    m_output.footForecastOrientation[side][static_cast<std::size_t>(k)] = turn.result();
                 } else {
                     m_output.footForecast[side][static_cast<std::size_t>(k)] = {};
-                    m_output.footForecastOrientation[side][static_cast<std::size_t>(k)] = {};
                 }
             }
         }

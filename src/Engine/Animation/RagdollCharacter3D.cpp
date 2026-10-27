@@ -5,6 +5,7 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <stdexcept>
 #include <unordered_set>
 
@@ -268,8 +269,31 @@ RagdollCharacter3D loadRagdollCharacter3D(const std::string& manifestPath) {
                 throw std::runtime_error("Helper bone fraction must be in [0, 1]: " + helper.name);
             helper.pivot = vector3(bone.at("pivot"));
             if (bone.contains("axis")) helper.axis = vector3(bone.at("axis"));
+            helper.sign = bone.value("sign", 0.0f);
+            helper.carry = bone.contains("carry");
+            helper.cap = bone.value("capDegrees", 0.0f) * 3.14159265f / 180.0f;
+            if (bone.contains("root")) helper.root = vector3(bone.at("root"));
+            if (bone.contains("ramp")) {
+                const auto& ramp = bone.at("ramp");
+                helper.rampFraction = ramp.at("fraction").get<float>();
+                helper.rampStart = ramp.at("startDegrees").get<float>() * 3.14159265f / 180.0f;
+                helper.rampEnd = ramp.at("endDegrees").get<float>() * 3.14159265f / 180.0f;
+                helper.rampAlong = vector3(ramp.at("along"));
+                if (ramp.contains("offset")) helper.rampOffset = vector3(ramp.at("offset"));
+            }
             boneNames.push_back(helper.name);
             result.helperBones.push_back(std::move(helper));
+        }
+        // (Os que a clavicula leva podem ser auxiliares de depois dela.)
+        std::size_t k = 0;
+        for (const auto& bone : skin.at("helperBones")) {
+            RagdollHelperBone3D& helper = result.helperBones[k++];
+            if (!helper.carry) continue;
+            for (const auto& name : bone.at("carry")) {
+                const auto found = std::find(boneNames.begin(), boneNames.end(), name.get<std::string>());
+                if (found == boneNames.end()) throw std::runtime_error("Clavicle carries an unknown bone: " + name.get<std::string>());
+                helper.carried.push_back(static_cast<std::size_t>(found - boneNames.begin()));
+            }
         }
     }
     const std::size_t paletteSize = boneNames.size();
@@ -294,6 +318,39 @@ RagdollCharacter3D loadRagdollCharacter3D(const std::string& manifestPath) {
         }
         if (std::abs(total-1.0f) > 0.0001f || vertex.normal.length() < 0.9f)
             throw std::runtime_error("Invalid skin weight sum or normal");
+        // O sistema de aparencia: todos os vertices com a origem, ou nenhum.
+        const bool surfaceData = item.contains("source");
+        if (!result.mesh.vertices.empty() && surfaceData == result.surfaceVertices.empty())
+            throw std::runtime_error("Skin vertices mix surface data and none");
+        if (surfaceData) {
+            // (A faixa conferida antes de estreitar; o resto, contra o template, depois.)
+            const auto integer = [&](const char* key, std::int64_t highest) {
+                const auto& value = item.at(key);
+                if (!value.is_number_integer() || value.get<std::int64_t>() < 0 || value.get<std::int64_t>() > highest)
+                    throw std::runtime_error(std::string("Invalid skin surface ") + key);
+                return value.get<std::int64_t>();
+            };
+            // (O UV0 dentro do atlas; o UV1 pode passar um pouco do bloco: o triangulo da zona
+            // atravessa a borda do retangulo dela.)
+            const auto uv = [&](const char* key, bool atlas) {
+                const auto& value = item.at(key);
+                if (!value.is_array() || value.size() != 2) throw std::runtime_error(std::string("Invalid skin surface ") + key);
+                const Vec2 p { value[0].get<float>(), value[1].get<float>() };
+                if (!std::isfinite(p.x) || !std::isfinite(p.y) || (atlas && (p.x < 0.0f || p.x > 1.0f || p.y < 0.0f || p.y > 1.0f)))
+                    throw std::runtime_error(std::string("Invalid skin surface ") + key);
+                return p;
+            };
+            RagdollCharacter3D::SurfaceVertex extra;
+            extra.source = static_cast<std::uint32_t>(integer("source", std::numeric_limits<std::uint32_t>::max() - 1));
+            extra.region = static_cast<std::int16_t>(integer("region", std::numeric_limits<std::int16_t>::max()));
+            if (item.contains("kitUv")) extra.kitUv = uv("kitUv", true);
+            if (item.contains("identity") != item.contains("identityUv")) throw std::runtime_error("Skin surface identity without its UV");
+            if (item.contains("identity")) {
+                extra.identity = static_cast<std::int8_t>(integer("identity", std::numeric_limits<std::int8_t>::max()));
+                extra.identityUv = uv("identityUv", false);
+            }
+            result.surfaceVertices.push_back(extra);
+        }
         result.mesh.vertices.push_back(vertex);
     }
     result.mesh.indices = skin.at("indices").get<std::vector<std::uint32_t>>();
@@ -303,6 +360,38 @@ RagdollCharacter3D loadRagdollCharacter3D(const std::string& manifestPath) {
     for (auto index : result.mesh.indices)
         if (index >= result.mesh.vertices.size()) throw std::runtime_error("Invalid skin triangle index");
     recomputeBounds(result.mesh);
+    // O template de superficie: os triangulos da pele pelos vertices de origem (as
+    // costuras do template sao arestas da modelagem).
+    if (manifest.contains("surface")) {
+        if (result.surfaceVertices.size() != result.mesh.vertices.size())
+            throw std::runtime_error("Character surface without per-vertex surface data");
+        std::vector<std::array<std::uint32_t, 3>> sources(result.mesh.indices.size() / 3);
+        std::uint32_t count = 0;
+        for (std::size_t i = 0; i < result.mesh.indices.size(); ++i) {
+            const std::uint32_t source = result.surfaceVertices[result.mesh.indices[i]].source;
+            sources[i / 3][i % 3] = source;
+            count = std::max(count, source + 1);
+        }
+        std::string message;
+        std::optional<Appearance::SurfaceTemplate> surface = Appearance::parseSurfaceTemplate(
+            readJson(path.parent_path() / manifest.at("surface").get<std::string>()), sources, count, &message);
+        if (!surface) throw std::runtime_error(message);
+        // Cada canto da pele igual ao template: a regiao, a zona, o UV0 (presente so onde ha
+        // painel) e o UV1 (so onde ha zona). O que a pele leva ao render e o que o template diz.
+        const auto same = [](Vec2 a, Vec2 b) { return std::abs(a.x - b.x) <= 1e-6f && std::abs(a.y - b.y) <= 1e-6f; };
+        for (std::size_t i = 0; i < result.mesh.indices.size(); ++i) {
+            const std::size_t t = i / 3, k = i % 3;
+            const RagdollCharacter3D::SurfaceVertex& vertex = result.surfaceVertices[result.mesh.indices[i]];
+            const bool panel = surface->trianglePanel[t] >= 0;
+            if (vertex.region != surface->triangleRegion[t] || vertex.identity != surface->triangleIdentity[t]
+                || (vertex.kitUv.x >= 0.0f) != panel || (panel && !same(vertex.kitUv, surface->triangleKitUv[t][k]))
+                || (vertex.identity >= 0 && !same(vertex.identityUv, surface->triangleIdentityUv[t][k])))
+                throw std::runtime_error("Skin corner " + std::to_string(i) + " disagrees with the surface template");
+        }
+        result.surface = std::make_shared<const Appearance::SurfaceTemplate>(std::move(*surface));
+    } else if (!result.surfaceVertices.empty()) {
+        throw std::runtime_error("Skin surface data without a surface template");
+    }
     return result;
 }
 
@@ -341,13 +430,50 @@ std::vector<Mat4> buildRagdollSkinMatrices3D(const RagdollCharacter3D& character
         const Rigid pose { boneOrientations[bone], bonePositions[bone] };
         return pose.then(Rigid { character.bindOrientations[bone], character.bindPositions[bone] }.inverse());
     };
+    std::vector<std::pair<const RagdollHelperBone3D*, Rigid>> carries;
     for (const RagdollHelperBone3D& helper : character.helperBones) {
         const Rigid upper = skin(helper.upperBone), lower = skin(helper.lowerBone);
         const Rigid relative = upper.inverse().then(lower);
-        const Quaternion part = partialRotation(twistAbout(relative.orientation, helper.axis), helper.fraction);
+        if (helper.carry) {
+            const Vec3 before = helper.axis.lengthSquared() > 0.0f ? helper.axis.normalized() : Vec3 {};
+            const Vec3 after = relative.orientation.rotate(before);
+            const float rise = std::asin(std::clamp(after.z, -1.0f, 1.0f)) - std::asin(std::clamp(before.z, -1.0f, 1.0f));
+            const float turn = rise * helper.fraction;
+            const float angle = helper.cap > 0.0f ? helper.cap * std::tanh(turn / helper.cap) : turn;
+            const Quaternion part = rise > 0.0f ? Quaternion::fromAxisAngle({ before.y >= 0.0f ? 1.0f : -1.0f, 0.0f, 0.0f }, angle) : Quaternion {};
+            const Rigid moved = upper.then(Rigid { part, helper.pivot - part.rotate(helper.pivot) });
+            carries.push_back({ &helper, moved.then(upper.inverse()) });
+            result.push_back(Mat4::translation(moved.position) * Mat4::rotation(moved.orientation));
+            continue;
+        }
+        Quaternion twist = twistAbout(relative.orientation, helper.axis);
+        // (So um sentido: o outro nao gira - a mesma da modelagem.)
+        if (helper.sign != 0.0f) {
+            const float along = (twist.x * helper.axis.x + twist.y * helper.axis.y + twist.z * helper.axis.z)
+                * (twist.w < 0.0f ? -1.0f : 1.0f);
+            if (along * helper.sign < 0.0f) twist = {};
+        }
+        float fraction = helper.fraction, ramp = 0.0f;
+        if (helper.rampEnd > helper.rampStart) {
+            const Vec3 before = helper.rampAlong.lengthSquared() > 0.0f ? helper.rampAlong.normalized() : Vec3 {};
+            const Vec3 after = relative.orientation.rotate(before);
+            const float rise = std::max(0.0f, std::asin(std::clamp(after.z, -1.0f, 1.0f)) - std::asin(std::clamp(before.z, -1.0f, 1.0f)));
+            const float t = std::clamp((rise - helper.rampStart) / (helper.rampEnd - helper.rampStart), 0.0f, 1.0f);
+            ramp = t * t * (3.0f - 2.0f * t);
+            if (helper.rampFraction > 0.0f) fraction += (helper.rampFraction - fraction) * ramp;
+        }
+        const Quaternion part = partialRotation(twist, fraction);
         const Vec3 pivot = rotationPivot(relative, helper.pivot);
         const Rigid moved = upper.then(Rigid { part, pivot - part.rotate(pivot) });
-        result.push_back(Mat4::translation(moved.position) * Mat4::rotation(moved.orientation));
+        result.push_back(Mat4::translation(moved.position + upper.orientation.rotate(helper.rampOffset) * ramp) * Mat4::rotation(moved.orientation));
+    }
+    // O ombro vai com a clavicula, sem girar o braco (a direcao dele e a do
+    // corpo fisico) - a mesma da modelagem.
+    for (const auto& [helper, carry] : carries) {
+        const Rigid arm = skin(helper->lowerBone);
+        const Vec3 root = helper->root ? arm.position + arm.orientation.rotate(*helper->root) : bonePositions[helper->lowerBone];
+        const Mat4 by = Mat4::translation(carry.position + carry.orientation.rotate(root) - root);
+        for (const std::size_t bone : helper->carried) result[bone] = by * result[bone];
     }
     return result;
 }

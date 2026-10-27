@@ -21,8 +21,10 @@ namespace MatterEngine {
 class LocomotionPolicy3D final {
 public:
     // Lanca std::runtime_error se o arquivo nao serve (outro contrato, outro
-    // corpo, as entradas diferentes).
-    LocomotionPolicy3D(const RagdollProfile3D& profile, const std::filesystem::path& file);
+    // corpo, as entradas diferentes). Se a rede treinou com os corpos variados
+    // (as entradas "jogador.altura" e "jogador.massa"), o contrato as tem e as
+    // le do corpo dado (e, no passo, do corpo do atleta).
+    LocomotionPolicy3D(const RagdollProfile3D& profile, const std::filesystem::path& file, const PlayerBody3D& body = {});
     ~LocomotionPolicy3D();
     LocomotionPolicy3D(const LocomotionPolicy3D&) = delete;
     LocomotionPolicy3D& operator=(const LocomotionPolicy3D&) = delete;
@@ -38,8 +40,10 @@ public:
     [[nodiscard]] float turnMoveAmount() const;
 
     // Antes do passo do atleta (o corpo publicado no ultimo passo e o comando
-    // deste tick): a decisao quando cabe e o tick da rampa.
-    void before(AthleteState3D& athlete, const RagdollState3D& body, const AthleteCommand3D& command, float deltaTime);
+    // deste tick): a decisao quando cabe e o tick da rampa. assets: os do
+    // atleta (outro perfil ou outro corpo refaz o contrato para ele).
+    void before(AthleteState3D& athlete, const RagdollState3D& body, const AthleteCommand3D& command, float deltaTime,
+        const AthleteRuntimeAssets3D& assets);
 
 private:
     struct Impl;

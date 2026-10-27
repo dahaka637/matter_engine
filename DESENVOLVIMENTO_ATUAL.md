@@ -5,7 +5,868 @@
 > registrar não apenas *o que* mudou, mas também *por que*, como foi validado e
 > quais limitações ainda existem.
 
-**Última atualização:** 14 de outubro de 2026
+**Última atualização:** 26 de outubro de 2026
+
+## O corpo variável no treino da locomoção (Claude, 26/10 tarde)
+
+Pedido: o RL da locomoção (contrato v4) treinando com corpos variados (1,70–2,00 m, 65–95 kg), sem mexer no treino parado (`classico_rota_f2`, rodada 27249, o `.so` do `build-rl`). Nenhum treino rodou.
+- **A tarefa:** o bloco opcional `body` (documentado em `LocomotionTask3D.hpp`): a faixa, os passos e `evaluationGrid`. Sem ele (ou só em 1,80/80) nada muda, nem sorteio. A grade é feita em cm e décimos de kg inteiros (1,80/80 caem exatos no corpo de hoje).
+- **O ambiente:** cada mundo sorteia o corpo por episódio num gerador só dele (`bodyRng`) e recomeça com o pacote daquele corpo (`LocomotionWorld3D::setAssets`: perfil, clipes, cápsula). O começo guardado leva o corpo do instante. A avaliação com a grade fixa o corpo pelo índice do mundo (o padrão, os 4 cantos, os meios das bordas). Um contrato por corpo (a mesma impressão; o perfil dá o peso e o quadril). × s: a queda pela pelve, a altura de deitado do levantar, o `contactSigma` e o `styleSigma`. A massa da nota (potência por kg, ajuda em fração do peso) e o centro de massa são os do corpo do mundo. Empurrões em N absolutos. Os episódios ganham `corpo_altura`/`corpo_massa`.
+- **O contrato:** com o corpo, `jogador.altura` ((H−1,80)/0,10) e `jogador.massa` ((M−80)/10) no fim da entrada (e do crítico), e as escalas, os tetos e as taxas das ações em metros (pouso, altura do balanço, centro de massa, altura da pelve) × s. O jogo (`LocomotionPolicy3D`) liga os canais se a rede os tiver e refaz o contrato quando o perfil ou o corpo do atleta muda (`before` recebe os assets).
+- **O treinador:** `jogador.` cru (`RAW_PREFIXES`); as quedas por corpo em `details.bodies` e nas avaliações (só com corpos variados); recusa a tarefa com `body` num módulo sem `body_grid`; `native` no `run.json` aponta o módulo (`build-rl-corpos`). Tarefa pronta: `assets/rl/tasks/locomocao_e2_corpos.json` (a cópia da tarefa viva + o bloco).
+- **Validação:** a prova bit a bit sem o bloco (`prova_corpo_base_e2`, 1 e 12 threads) igual ao ouro; com o bloco, 128 mundos × 900 decisões finitos, 49 corpos, 1 = 12 threads, a ação zero com autoridade 1 igual ao clássico bit a bit; ctest LocomotionTraining (100 checagens) e AthleteModules ok, Athlete com as mesmas 9 falhas de antes; pytest 85; vazão 512 mundos/12 threads ~8970 → ~8490 decisões/s com o bloco; carga dos 49 pacotes ~10 s, 310 MB.
+- **Pendente:** o `floor_noise` do treinador (metros) não escala; o banco de começos guardados é por exercício (o corpo vai junto), não por corpo.
+
+## O corpo variável no laboratório (Claude, 26/10 tarde)
+
+Pedido: o laboratório com o corpo variável (1,70–2,00 m, 65–95 kg), um corpo só para todos os bonecos humanos; no 180/80 tudo como antes, sem refazer nada na abertura.
+- **Painel Personagem, aba Corpo** (depois de Geral): Altura (170–200 cm), Peso (65–95 kg) e RESTAURAR PADRÕES; sem persistir; vale ao soltar (o pedido pendente é tratado no `updateLaboratory`, antes dos atletas).
+- **Os corpos** (`Workbench/Laboratory/LaboratoryBody`): a receita do `AthleteBundle3D` (o personagem do corpo com a folga nos clipes de locomoção, cada clipe por `bodyRagdollClip3D`), com a malha no tônus (os deltas uma vez, no primeiro corpo). Cada corpo feito fica vivo até fechar o programa (~3 MB; 25 ms o primeiro, ~8 ms os seguintes): as tabelas da locomoção padrão e da cinemática são por endereço do perfil e dos clipes, e um endereço nunca volta com outro corpo. No 180/80, os objetos originais (`m_ragdollCharacter`, `m_animationClips`).
+- **Aplicar:** o perfil dos bonecos (`m_humanRagdollProfile` virou ponteiro para o perfil do personagem ativo), a cápsula (`athleteAvatarMotorSettings3D(corpo)` com o andar e o sprint dos clipes do corpo; a cópia da cápsula em `WorkbenchApp.hpp` saiu: era igual campo a campo, o teste confere os bits), `AthleteRuntimeAssets3D.body`, a caixa de spawn, os bonecos recriados de pé onde estavam com o atleta do zero (a locomoção padrão guardava o esqueleto dos gestos do primeiro perfil), o controlado pela pose inicial, as paletas limpas, o TAA invalidado e a malha da GPU refeita no render (a textura fica). As áreas de alcance usam o alcance do corpo (a conta do runtime) e a caixa própria da cabeça.
+- **Validação:** `MatterEngine.LaboratoryBody` (novo): 180/80 devolve os originais; 200/95 com 95 kg, a altura de pé e a cápsula × s, a malha no tônus e os mesmos índices; cada corpo um objeto, a volta reaproveita o mesmo. ctest (ObjectInspector, ReinforcementLearningScreen, PlayerModel, Physique, Gesture, LaboratoryBody): só as 2 falhas antigas, com as mesmas mensagens (o visualizador do RL recomeça em 6,87 s; T6265 do calção). `check-architecture` ok.
+- **Não testado (sem janela, regra dele):** o painel, a troca com bonecos na cena, a malha nova na GPU e a imagem. No "Físico com RL", a rede guarda o perfil com que foi carregada (o contrato aponta para ele) — depois, no treino com corpos variados, o `before` passou a refazer o contrato pelo perfil e pelo corpo do atleta.
+
+## A rede: a freada pela física, o fio de 6 mm e a sombra (Claude, 26/10 manhã)
+
+Os pedidos dele, logo depois da etapa 1 da pintura:
+- "a rede para a bola de forma artificial... parece haver algo por trás";
+- o fio com 6 mm;
+- a sombra dos fios. Depois: "não tem problema se a bola acabar saindo da boca da trave... em hipótese alguma pode a bola atravessar a rede", e "a sombra da rede pode ser algo bem mais sutil";
+- no fim, "mínimos ajustes": o cabo entre o teto e o caimento "levemente menos flexionado", a folga 6 (o teto ~2,5) e os lados ~8.
+
+- **O estudo** (com o Codex; o traço do chute agora dá a velocidade e o giro exatos da bola):
+  - a bola tinha três freios artificiais: o freio de giro desacoplado (29 rad/s viravam 0 em 2 ticks), a desaceleração constante de 6 m/s² e a escala de massa de contato 4, que tirava 3/4 da reação dos nós. A escala era o "algo por trás": a bola perdia metade da velocidade nos primeiros ~25 cm, antes de a rede esticar;
+  - as medidas que guiaram: com a escala 1, a freada fica progressiva, mas a bola descia a rede de 24 cm como uma rampa lisa e saía do gol rolando até 15 m. A histerese nos fios e nas amarras, o amortecimento viscoso e mais passadas não mudam o rebote (os fios são quase rígidos para o solver).
+- **O contato da bola** (`NetSolver3D`; caixa e cápsula ficam como estavam):
+  - massas de verdade;
+  - o nó apoiado num tubo não cede na direção do tubo;
+  - a resposta física separada da recuperação de penetração: só a aproximação do subpasso (contra o ponto material da rede) vira velocidade; a recuperação é só posição, na bola e nos nós (o `m_previous` dos nós anda junto);
+  - o atrito nas velocidades depois das correções: só o Coulomb, com o giro e reação nos nós;
+  - sem a desaceleração constante e sem o freio de giro;
+  - o atrito interno da rede de 1,5 para 5/s (o teto ficava balançando sem dormir).
+- **A revisão do Codex** reprovou a primeira versão, e saíram dois atalhos: a escala ×8 no nó de fio esticado e a resistência ao rolamento de 0,4. No lugar da escala entraram as rodadas do acoplamento fio-bola (`ballContactRounds` = 2: com a bola encostando, os fios, os tubos e o contato passam de novo no subpasso; no canto do poste o fio esticava 42% sem elas e 14% com 2, já com o conserto do XPBD abaixo). Também:
+  - os cruzamentos de tubo e de chão medidos da posição do começo do subpasso (`m_start`): com o `m_previous` deslocado pela recuperação, o nó passava para o outro lado do tubo (o teste novo mede −0,083 m antes e −0,012 depois);
+  - a velocidade da superfície medida nos nós de agora ((posição − anterior)/h; zero na rede parada), e não na do começo do subpasso, e sem os 0,5 m/s de tolerância contados como impulso físico (davam orçamento ao atrito);
+  - a grade passou a julgar a travessia por fora do contato: a paridade do segmento da bola até a boca contra as células da física, mais as caixas e valor não finito; e ganhou 24 lances de duas bolas (a segunda na rede ainda estufada).
+- **A segunda revisão do Codex** reprovou de novo, com 4 itens, todos corrigidos com teste que falha no código anterior:
+  1. as rodadas recalculavam a correção elástica sem o multiplicador acumulado: cada passada repetida encolhia o fio de novo e o deixava mais rígido (num fio isolado, 5 passadas levavam 1,556 mm de alongamento a 0,001 mm), inclusive as passadas extras do cabo. Agora o multiplicador de cada fio acumula no subpasso (XPBD; `m_linkLambda`, comum às duas ordens de visita), o total nunca empurra, e a primeira visita é a mesma conta de antes;
+  2. a paridade contava duas vezes o cruzamento numa diagonal comum: agora os nós vão para o plano do segmento uma vez e o zero é desempatado pelo ponto deslocado (ε, ε²), com uma conferência num quadrado e num leque antes da grade;
+  3. o valor não finito só reprovava com a bola "dentro": agora a posição e as velocidades das bolas e os nós da rede reprovam sempre;
+  4. o `stride` só dividia o tick com contagens potência de 2: agora sempre divide (uma bola de 18 subpassos dava 16/18 do tick à rede).
+- **Os ajustes dele:** a folga por pano (`folga` 6% no fundo, `folga_teto` 2,5%, `folga_lados` 8%; era 5% em todos) e o cabo esticado 0,75% (~225 N; era 0,5%, ~150 N), um pouco mais reto.
+- **O custo:** com uma bola rolando longe da rede (16 subpassos na cena), a rede sozinha e acordada andava nos 16 em vez de 4, porque o `stride` (`JoltNets3D`) contava só os subpassos pedidos pelas redes. Depois do chute que volta pela boca, a rede assentando custava 4× mais. Agora conta os do tick inteiro: o chute de 35 m/s no canto alto foi de 0,243 para 0,131 ms/tick (3 rodadas alternadas, os outros cenários iguais). Rodar as rodadas só com fio acima de 5% não mudou o custo e saiu.
+- **Medido no final:**
+  - o chute central de 25 m/s estufa ~0,95 m, freia ao longo de ~1 m e volta a ~1,7 m/s; o fio no máximo 4,3%;
+  - o giro: de topspin 29 → 36 rad/s 10 ticks depois do contato (vira rolamento rede acima); em espiral 29 → 25;
+  - grade forte (816 chutes de 30–45 m/s): **0 atravessam**; 535 de 688 gols voltam pela boca;
+  - no canto do poste de perto (30–45 m/s, 4 m), o fio no máximo 14,3%;
+  - o cabo parado: flecha de 11,0 mm com os parâmetros antigos → 7,4 mm com os dele; o teto desce 108 → 78 mm; a dobra do pano no cabo (o que aparece "flexionado" na foto dele, de dentro do gol olhando para cima), no meio do vão, 99,5° → 95,0°. Quem muda a dobra é a folga do teto (só ela em 5%: 100,3°); o cabo mais esticado só deixa o próprio cabo mais reto (com 0,5%: 94,9°);
+  - o boneco guiado contra a rede esticada relata ~250 N s (o atleta reage);
+  - custo, ms/tick da rede acordada (média): chute central 0,10, canto alto 0,11, rajada de 6 bolas 0,21, duas traves 0,17; dormindo 0;
+  - as 14 sondas `rede_*` e a parede: nada entra, a cápsula não sobe, as trocas de modo como em 25/10 (3–4 pela frente, 1–4 pela lateral, 10 por trás, 1 na parede).
+- **O fio de 6 mm:** o padrão da trave (`GoalFrame`, faixa até 8). Ele entra também na física (o arrasto e o alcance do contato).
+- **A sombra dos fios:**
+  - o fio de milímetros, mais fino que o texel da sombra (~2 cm na primeira cascata), virava pontilhado; no passe de sombra ele engrossa até ~0,7 texel (`MeshRender3D::thinShadowRadius`, a normal do vértice);
+  - um pipeline próprio (`scene3d_mesh_shadow_thin.frag`) deixa só a metade da fração do fio de verdade bloquear a luz, sorteada por um hash da posição no mundo; o filtro da sombra a junta numa linha fraca;
+  - a primeira versão (sem a fração) deixava o chão do gol escuro como uma trama; foi na foto dele.
+- **As provas:**
+  - `ObjectPhysicsTests` (299): o chute no meio para na frente da rede (no gol ou fora, pela boca, nunca atrás); o giro de topspin mantém mais de 20% e o em espiral mais de 60% 10 ticks depois do contato (o antigo dava 0); o fio fica abaixo de 16% no canto do poste; a bola pousada no teto fica; a rede sozinha, com uma bola rolando longe, anda 4 subpassos (falhava com 16 no código antigo), e com uma bola de 18 subpassos os dela dividem os 18;
+  - `NetSolverTests` (36): a recuperação de penetração não passa o nó para o outro lado do tubo; repetir a passada num fio isolado não o endurece (também além do limite de 15%); o fio que afrouxa no subpasso devolve o que puxou;
+  - `ObjectModelingTests`: cada fio com a folga do seu pano; `ObjectInspectorTests`: a folga do teto pela tela;
+  - `MatterNetBenchmark --grade-forte` imprime onde os gols terminam;
+  - suíte geral 21/26 (as mesmas 5 falhas antigas, fora da rede; o atleta com as mesmas 9), arquitetura OK.
+- **A terceira revisão do Codex: "REDE: aprova"** (ele rodou a grade e chegou à mesma impressão digital). As recomendações dela: o teste do XPBD também além do limite e com o fio que afrouxa (feito) e manter anotadas duas limitações sem caso reproduzido: a lista de candidatos não varre o movimento das células no tick, e o nó contra o tubo é conferido em 7 amostras do caminho, não de forma contínua.
+- **Fica:** essas duas limitações; o vaivém de ~0,17 mm por subpasso do nó do cabo perto da ponta (entre a reta do cabo e os elos), que já existia; e a imagem da sombra e dos ajustes, que eu não vejo (o Vulkan só na janela). Sem commit.
+
+## O sistema de aparência, etapa 1: o template de superfície (Claude, 26/10 madrugada)
+
+Ele aprovou o plano ("pode começar, capricha nisso"). O contrato técnico está em `docs/SISTEMA_DE_APARENCIA.md`.
+- **Os moldes com nome:**
+  - a construção (`retopo_moldes.py` e a etapa 01) grava o molde de cada face no atributo `molde` (a tabela fica no texto `matter_moldes`);
+  - as faixas do recuo levam o nome da abertura.
+- **A malha aprovada recebeu os rótulos sem mudar nada:**
+  - a etapa 01 refeita com as mesmas entradas dá os mesmos vértices, na mesma ordem (diferença 0,0) e o mesmo conjunto de faces;
+  - `tools/blender/rotular_moldes.py` leva os rótulos por correspondência exata de faces;
+  - a troca tem posições, triângulos, UV, partes e juntas idênticos aos de antes, e os pesos iguais até 1,4e-8 (o float32 do .blend).
+- **O gerador** (`tools/blender/superficie.py`) e os arquivos dele (`assets/characters/player_model/superficie/`):
+  - **as versões:** `definicoes.json` (as regras e as versões em uso), `referencia_p1.json` (a referência canônica: por polígono da construção, o painel, a região, a zona, o desenho e as cartas; a posição 3D; os cortes) e `layout_s1.json` (o UV0);
+  - **o modo padrão só aplica a referência:** um corpo diferente com a mesma construção dá o template igual bit a bit. `--nova-referencia` e `--novo-layout` gravam versões novas só depois de tudo conferido, e as anteriores ficam;
+  - **painéis:** planificados perto da isometria (LSCM e depois ARAP), orientados pelos marcos da construção; os de lado são o espelho exato e a frente e as costas são simétricas;
+  - **a borda da meia:** a fileira de triângulos finos acima da costura com o cabedal, desdobrada triângulo a triângulo (estiramento 1,00). O ARAP sobrepunha as lascas dela, e o retângulo de Tutte da primeira correção a achatava 4× na vertical;
+  - **cartas:** por campos de direção (Poisson). As de volta seguem o eixo (p95 de 0,4° a 2,9°); a do meião passa pela borda até a chuteira. A planificação isométrica de um tubo cortado girava a orientação: o aro inclinava nas costas, a listra sobre o ombro saía 40° torta e a meia, 14°;
+  - **cortes:** o da manga é estrutural (a coluna da grade a partir da axila). Os outros foram escolhidos uma vez e gravados na referência; o da borda continua o do meião;
+  - **as costuras:** todas as arestas das fronteiras (o fechamento de cada anel inclusive), conferidas por igualdade;
+  - **o resto:** as regiões, as aberturas, as âncoras e as zonas pelo desenho aprovado, o UV0 (587 texels/m no atlas de 1024) e o UV1 (608×448).
+- **A ida e volta pelo Blender:** `importar_troca.py` refaz os polígonos originais (os quads) e `exportar_troca.py` os devolve. A grade estrutural da manga sobrevive, e o gerador dá o mesmo desenho em cada polígono.
+- **O motor:**
+  - a biblioteca nova `MatterAppearance` (`Engine/Appearance/Surface/SurfaceTemplate`) lê e confere o template contra a malha. Ela exige a fronteira completa, a referência 3D e o método e o campo de cada carta;
+  - a troca do Blender devolve a malha com o template;
+  - a exportação para o jogo grava, por vértice da pele, a origem, a região, a zona, o UV0 e o UV1 (na chave de separação), e o `jogador.superficie.json`;
+  - o personagem do jogo confere cada canto da pele contra o template (a faixa antes de estreitar os tipos, o UV0 só onde há painel, o UV1 só onde há zona). O render continua no atlas antigo até a etapa 3;
+  - `tools/check-architecture.sh` e `.ps1`: o `Engine/Appearance` não inclui física, atleta, personagem, animação, modelagem, render, RHI, RL nem interface.
+- **As provas:**
+  - `MatterAppearanceTests`, com 57.127 checagens, inclui:
+    - a injetividade triângulo a triângulo (o desenho de cada painel, cada carta e o UV0);
+    - a orientação das cartas de volta;
+    - a referência 3D;
+    - 14 recusas, inclusive a fronteira esquecida e a carta sem método;
+  - a troca de antes da correção tinha 287 texels sobrepostos no meião pelo mesmo critério, e o teste falha nela;
+  - `MatterPlayerModelTests`: cada canto da pele do jogo traz os dados do template, e o carregador recusa 10 peles erradas;
+  - `tools/blender/superficie_teste.py` (6.314 checagens) prova:
+    - o determinismo e a canonicidade (o corpo 0,5% mais largo com um calombo de 2 mm dá o template igual bit a bit);
+    - a parada com outra topologia;
+    - as versões pelo comando de verdade;
+    - o layout como endereço;
+    - a ida e volta pelo Blender.
+- **Instalado:**
+  - o `jogador.blend` rotulado e a troca com o template (as cópias de antes estão em `~/.local/share/matter-engine/backups/player_model_antes_superficie_26_10`);
+  - o jogo reexportado: a pele com 6088 vértices (eram 5816; as costuras novas separam) e a superfície;
+  - o perfil físico continua o da manhã de 26/10, byte a byte. A reexportação mudava 2 coordenadas em ~3 µm, por isso só a pele, a superfície, o manifesto e o atlas foram copiados;
+  - o módulo do RL de 24/10 carrega o personagem (ele só usa o perfil físico).
+- **A suíte:** as mesmas 5 falhas de antes do sistema de aparência (Character, AdaptivePhysics, a tela do RL, o T6265 do calção e o Athlete). As 9 falhas do Athlete são iguais até nos números às das 03:20 (o perfil da manhã).
+- **Para o olho:** `tools/blender/superficie_previa.py`, o xadrez por painel ou por carta e o layout do UV0. Ela não passa pelo atlas; a prova pelo UV0 é o comando `molde` do inspetor, na etapa 2, com o compositor.
+- **O portão:** a segunda revisão do Codex deu **"PORTÃO: passa"**. Ele conferiu os 11 itens por conta própria: as 424 arestas de fronteira, a ida e volta pelo Blender, os 6088 vértices da pele e as razões de comprimento da borda (0,999994–1,000010). As quatro recomendações dele foram aplicadas:
+  - a injetividade passou a ser exata (a área da interseção de cada par, recusando os degenerados), no gerador e no teste; a amostragem por grade perdia um triângulo pequeno inteiro dentro de outro;
+  - uma face da roupa sem o molde para o gerador;
+  - o desdobramento da borda recusa o que não é fileira e confere os comprimentos;
+  - o Blender roda isolado nas provas, sem preferências, complementos nem áudio e com tempo limite.
+
+  Depois disso, o gerador refaz a p1, a s1 e a troca instaladas byte a byte, `MatterAppearanceTests` passa com 57.127 checagens e `superficie_teste.py` com 6.341.
+
+## O sistema de aparência novo: o plano (Claude + Codex, 26/10 madrugada)
+
+Pedido dele: refazer do zero a pintura do uniforme e do corpo ("NADA, absolutamente nada dele pode ser reaproveitável"), com customização ampla, modelos de camisa com cores trocáveis pelo jogador e, no futuro, pintura à mão. O plano está no vault (`06_render/plano_sistema_de_aparencia.md`), fechado com o Codex em três rodadas e uma revisão. Nada foi implementado ainda.
+- **Diagnóstico do atual:** o atlas é assado pelo C++ na malha da montagem, e a malha do Blender herdou o UV pelo ponto mais perto (cantos na borda das ilhas pegam o fundo: punho/gola serrilhados, mancha do lado), com margem de 8 px e pixels editados por cima; os espaços são achados fatiando a malha; o número está assado no atlas.
+- **O desenho:**
+  - um template de superfície gerado pela construção dos moldes (painel, coordenada de desenho e região por canto; cartas costuradas; referência 3D; costuras pareadas; âncoras; zonas de identificação), com a coordenada de desenho separada do endereço no atlas (UV0);
+  - corte, modelo de desenho (pilha de camadas com vagas de cor) e uniforme escolhido como documentos separados;
+  - um compositor único na CPU, com mipmaps por ilha, assíncrono e com cache por aparência resolvida;
+  - número e nome numa textura pequena por jogador (zonas canônicas, UV1, 608×448);
+  - corpo por regiões, máscaras e cores por jogador;
+  - material de personagem com arrays e dados por buffer;
+  - captura do renderizador real em PNG.
+- **Medido:** compositor CPU (microbench), 1024² × 20 camadas: 99 ms numa thread, 15 ms em 12 (Ryzen 5 3600).
+- **Etapas da V1:** template + exportação de ida e volta → compositor → material real → identificação + seletor de modelo/cores → corpo → pipeline oficial e remoção do sistema antigo.
+
+## O laboratório com o modelo de agora (Claude, 26/10 madrugada)
+
+Pedido dele: "garanta que no laboratório in-game ele usa esse nosso modelo atual". O laboratório (e o RL) carregavam a pele de 23/10 (antes dos moldes em quadrados, do teto da clavícula e da axila).
+- **Conta do jogo = conta da modelagem:** a subida do braço, a rampa, o volume da axila (`ramp.offset`) e o teto da clavícula de `buildRagdollSkinMatrices3D` conferidos com `updateDerivedJoints` (as mesmas fórmulas). O `testGameCharacterExport` ganhou os braços erguidos de lado (150°) e à frente (120°), feitos direto nos links (`gameRigPoseFromLinks`): o pior vértice difere 0,002–0,003 mm nas sete poses. As contagens foram para 76 ossos / 26 auxiliares, e o teste passou a rodar antes do `testPlayerModel`, que para na falha antiga do calção (T6265, `change_direction`), por isso a exportação nunca era conferida.
+- **Instalado:** `exportar-jogo --destino assets/characters/football_player` (pele de 5816 vértices, 76 ossos; o `character.json` sai igual). No perfil físico só os colisores mudam (até 2 mm de raio e 1 cm de comprimento, medidos no corpo de agora); links, âncoras, massas e limites iguais. Cópia dos quatro arquivos de antes em `~/.local/share/matter-engine/backups/football_player_23_10`.
+- **RL:** o módulo nativo de 24/10 (`build-rl`) carrega o personagem novo (766 observações, 62 ações). O treino está parado por ordem dele (26/10 01:59) e treina nesses colisores quando ele mandar retomar.
+- O Workbench aberto antes da troca segue com a pele antiga até ser reaberto.
+- **A suíte inteira (`check-architecture` ok; ctest no build-profile), com os arquivos de 23/10 e com os de hoje:**
+  - **Atleta:** 4 → 9 falhas. Saiu `queda_levanta_corre`. Entraram 6:
+    - `caixa_media` (não derruba, volta ao padrão);
+    - `degrau_35_anda` (lançamento: pelve 0,30 m sobre a cápsula);
+    - `ponte, caixa_media`;
+    - `ponte, parede_pulo`;
+    - `levantar, queda_000` e `levantar, quedacorre_000` (alinhado; de pé em 2,41 s e 2,33 s).
+
+    São efeitos dos colisores medidos no corpo de hoje. Em 23/10 ele mandou o jogo e o RL usarem os colisores do modelo novo, e a recalibração dos impactos para o corpo novo segue pendente desde então.
+  - **Foundation:** a lista de auxiliares passou de 22 para 26 (os da axila); com o teste atualizado, passa.
+  - **Iguais nas duas** (falhas antigas, não vêm da troca):
+    - Character ("pé travado escorregou no chão");
+    - AdaptivePhysics ("Floating baseline is not ready");
+    - ReinforcementLearningScreen (espera 3 s depois do empurrão, e a janela é de 5 s desde 24/10);
+    - PlayerModel (o T6265 do calção, depois da exportação, que agora passa).
+
+## O cotovelo esticando no seletor (Claude, 26/10 madrugada)
+
+Pedido dele (com o ombro aprovado: "agora ficou bom!"): "nos seletores eu não consigo esticar completamente o cotovelo, nos limites anatômicos humanos".
+- **Causa:** o seletor "Cotovelo" da Inspeção de jogador ia de 0 a 140 somados à ligação, que já tem o cotovelo dobrado 32,7°. Em 0 o braço continuava dobrado, e 140 dava ~173°, além do humano.
+- **Correção:** o seletor mostra a dobra do cotovelo (0 = reto, até 145; −5 um pouco além de reto) e guarda a diferença para a ligação, como o "Baixar braço" (`PlayerInspectorScreen::drawBendPanel`, `elbowBend` pela ligação do modelo). "Zerar dobras" volta à ligação (o seletor mostra 33).
+- **Conferido no render:** reto, −5 e 145 (a malha do cotovelo dobra sem amassar). build-profile e build-performance recompilados. A tela não foi aberta.
+
+## O ombro com o braço erguido: o teto da clavícula (Claude, 25/10 noite)
+
+Pedido do usuário: corrigir a deformação "quando o braço está muito levantado inclinado" (o alto da manga dobrando em bico junto do pescoço; os dois braços erguidos com os ombros encolhidos).
+
+- **Medido antes:**
+  - o denso aprovado de 24/10 tem o mesmo defeito (é do rig, não da malha nova);
+  - o controle "Baixar braço" da tela para na vertical (−146 de dobra a partir da ligação);
+  - os clipes do jogo erguem o braço até 127° da ligação.
+- **Causa:** a clavícula derivada subia 30% da elevação sem teto (44° com o braço na vertical; uma de verdade sobe ~30°), em volta da junta esterno-clavicular. Ela levava o ombro para cima e para dentro, o braço passava por cima da cabeça e o alto da manga dobrava.
+- **Correção:**
+  - teto suave de 28° (`ângulo = cap · tanh(ângulo / cap)`): `Joint::derivedCap` e `clavicleTurn` na modelagem, `RagdollHelperBone3D::cap` no jogo, `capDegrees` na pele exportada, `cap` na troca do Blender;
+  - os pesos não mudaram;
+  - é só visual (a clavícula não tem parte física), então o RL não muda.
+- **Medido** (cruzamentos em cm, amassado em cm², pregas e o avesso nas 684 poses do jogo; poses do alcance da tela):
+  - a camisa cruzando ela mesma, 377 → 56 cm;
+  - o cruzamento entre partes, 222 → 52 cm;
+  - as pregas, 79 → 36;
+  - o amassado, 557 → 515 cm²;
+  - o avesso no jogo, 8 → 7.
+  - Na imagem, o braço no máximo fica ao lado da cabeça e o ombro sobe redondo. Com 25°, um triângulo virava à vista no alto do ombro com o cotovelo dobrado; com 28° ele some.
+- **Testes:**
+  - `MatterModelingTests` (937) e `MatterEngineTests` passam;
+  - `MatterPlayerModelTests` cobra o teto (a subida não passa de 28° e ainda sobe bastante), passa as poses severas e para na mesma falha de antes (1 triângulo do calção em `change_direction@0.72`);
+  - arquitetura OK.
+- **Rejeitado por medida:**
+  - pesos por anéis da manga (avesso do jogo 61–78);
+  - remapear os pesos para frações do giro;
+  - skin por dual quaternion (o alto do ombro vira do avesso; avesso 49);
+  - re-assar com o Delta Mush e as poses extremas;
+  - alvos automáticos para uma correção por pose (o Delta Mush vira faces na axila; o ARAP cai num mínimo ruim).
+- **O canto da gola:** 4 triângulos da tira escondida dobravam com o braço erguido (a pintinha magenta). `tools/blender/alisar_canto_gola.py` alisa os pesos de 4 vértices só da camisa de cada lado, perto do canto, e entrou no `moldes.sh` antes do `desvirar`. Prega e virado zeram nas poses do braço no máximo, as pregas do portão vão de 36 para 14 e o avesso do jogo fica em 7. Instalado (`jogador.blend` e troca).
+- **A manga acompanhando o braço** (a queixa seguinte: "o braço de uma pessoa não dobra assim quando ergue": a manga em pé e o braço inclinado acima do punho).
+  - Com o braço erguido de lado, o lado da axila da manga vira o lado de fora do braço, e ele pesava com o tronco.
+  - Entraram:
+    - a rampa da meia-junta do ombro: 50% até 60° de subida, 65% na vertical (com 75%, a base da manga abria uma asa atrás da axila); `Joint::derivedRamp*`, `RagdollHelperBone3D::ramp*` e `ramp` na pele exportada, com teste;
+    - os pesos do ombro reescritos em frações do giro (`tools/blender/fracao_ombro.py`, no `moldes.sh`), só na manga e na costura da cava.
+  - No portão: amassado 554 → 391 cm², virados 0, avesso do jogo 7; a camisa cruza mais a si mesma (45 → 84 cm, nas costas do ombro; no máximo com o braço para trás abre uma fresta vista de cima) e as pregas vão de 14 a 29.
+  - Nas poses comuns o esticado sobe um pouco (braço à frente a 90°: 29 → 48 cm²) sem defeito visível na folha antes/depois.
+  - Rejeitados: a manga rígida (58 virados no jogo), o deltoide ou a axila pelo ângulo em volta do braço (sem efeito na imagem), a transição na lateral do tronco (a regra do braço perto corta).
+- **A clavícula só leva o ombro** (a terceira queixa: a lateral do tronco em S embaixo do braço erguido e a referência dele com o braço na vertical ao lado da cabeça).
+  - A clavícula girava o braço como pai dele e somava o giro dela à direção pedida, que já vem em relação ao peito (o braço no máximo passava por cima da cabeça; no jogo, a pele ficava mais erguida que o corpo físico).
+  - Agora os ossos que ela leva só andam o que a junta do ombro anda, na modelagem e no jogo, com teste.
+  - O remapeamento ficou só nos anéis da manga: com a cava, a axila saía com o braço e fazia o S.
+  - No portão, contra antes desta noite (com a rampa em 65%): braço na cabeça 324 → 0 cm; a camisa cruzando ela mesma 377 → 44 cm; o cruzamento entre partes 222 → 40 cm; amassado 557 → 417 cm²; pregas 79 → 14; avesso do jogo 6; pose T com o esticado 55 → 9 cm².
+- **A junta da axila** (26/10, madrugada; a quarta queixa, com uma imagem marcando em verde o contorno embaixo do braço erguido, e a referência "CORRETO" e a edição de costas dele):
+  - **Medido:** a silhueta de frente com o braço na vertical (raster da malha posada, 1 mm por pixel) descia reta 9 cm abaixo do punho da manga e só então entrava em diagonal para a lateral do tronco: uma quina 22 mm para fora da reta (20 cm² para fora dela). Na referência, a linha é reta do punho à lateral.
+  - **Causa:** o lado de baixo do ombro (a axila e as dobras da frente e de trás) pesava na meia-junta, que gira 65% do braço na vertical. Esse lado rodava em volta do ombro a distância fixa dele, inchava para fora e a manga ficava longe do braço; de costas, era a asa atrás da axila.
+  - **Correção:** `ArmpitHelper` no `GameRig` (a mesma meia-junta, com rampa até 100% na vertical: igual a ela até 60° de subida, então as poses do jogo com o braço baixo não mudam). `tools/blender/axila_ombro.py` (no `moldes.sh`, depois do `fracao_ombro.py`) passa a parte da meia-junta para ela pelo ângulo em volta do braço (toda até 60° da direção de baixo, nada a partir de 110°), só até 4–8 cm para dentro do ombro; num vértice com 4 pesos ela passa inteira ou não passa. A etapa 04 grava as juntas novas nas regras do `.blend` (sem isso a exportação recusa os grupos). `ArmpitHelper` entrou no `ARM_CHAIN` da regra do braço perto. Teste: a junta da axila gira metade com o braço pouco erguido e o braço inteiro na vertical; a contagem das auxiliares vai a 24.
+  - **Medido depois:** a quina sai 5 mm da reta (6,7 cm² para fora). Portão igual ao de antes (cruzando ela mesma 44 cm, entre partes 40 → 42, amassado 417 → 412 cm², esticado 1408 → 1377 cm², virados 0, pregas 14); avesso do jogo 6, os mesmos triângulos de antes (o da dobra da frente da axila, na pose de levantar do chão, o desvirar alisou). Poses comuns iguais na folha. Na imagem, de frente bate com a referência e de costas com a edição dele.
+  - **Rejeitado:** deixar o `desvirar` mexer no calção (ele tirava 2 triângulos do jogo, mas o T5209 passava a virar na pose severa "coxa à frente e joelho 130" do teste): o calção voltou aos pesos de antes.
+  - **O alto da manga** (26/10, a queixa seguinte, no modo argila: "essa parte aqui fica muito fina, anatomicamente incorreto; ele deveria jogar a malha para lá", com a linha do lado da cabeça descendo reta do punho da manga ao ombro): de frente, a borda do braço do lado da cabeça ia de 125 mm no punho a 143 mm junto do ombro (o braço afinava 2 cm). Eram os vértices do alto da manga junto da junta, com ~57% de meia-junta (113° de giro na vertical em vez de 146°). Agora o `axila_ombro.py` passa para a junta da axila também o alto da manga (de 90° a 130° da direção de baixo em volta do braço, de −2 a +3 cm além da junta ao longo dele): a borda fica entre 113 e 117 mm até o ombro. Com a manga inteira em volta, a frente e a trás pela metade viravam 2 triângulos no levantar do chão; só o alto, não. Portão: avesso do jogo 6 (os mesmos); as pregas escondidas vão de 14 a 29 e a camisa cruzando ela mesma de 44 a 58 cm, todas na junta do alto da manga com o canto da gola (escondidas, nada aparece na imagem de perto); de lado a 120° o amassado vai de 34 a 87 cm². Começando a transição 2 cm adiante, o portão volta ao de antes, mas o braço afina de novo nos últimos 3 cm: ficou o contorno dele.
+  - **O volume da axila** (26/10; ele: "melhorou consideravelmente; agora tu precisa trabalhar na axila quando o braço está erguido", com uma imagem ERRADO/CORRETO: na nossa, o braço e o peito viravam um plano liso).
+    - Peso sozinho não muda isso (estreitar a parte da axila só devolvia a barriga do contorno). Entrou uma correção por pose no motor: `Joint::derivedRampOffset` (modelagem), `RagdollHelperBone3D::rampOffset` (jogo) e `offset` na rampa da pele exportada. É o deslocamento da junta no referencial do osso de cima, vezes a mesma rampa (0 até 60° de subida, 1 na vertical). A rampa agora vale sem fração (a junta pode só se deslocar), e a auxiliar que não gira fica fora do carregamento da clavícula.
+    - **Primeiro, o oco (rejeitado):** a junta andando 8 cm para dentro fez um buraco enorme embaixo do braço. Ele: "ficou ao contrário do que queríamos, bizarro, um oco gigantesco, horrível; deixa como tava antes, só aumenta o volume para fora um pouco".
+    - **Ficou: `ArmpitFill` no `GameRig`.** A junta fica com o peito e, com o braço na vertical, anda 4 cm para fora e 1 para cima. O `axila_ombro.py` passa para ela o peso de peito do fundo da axila: o anel da cava e os de baixo, no tronco, até 15 cm do centro (1,9 cm para dentro e 8 abaixo da junta), em queda linear. Num vértice com 4 pesos o peso passa inteiro ou nada; com 5, o corte mudava a pele de braço baixo (a pose T esticava de 9 para 55 cm²). O peso na junta chega a ~0,4.
+    - Medido com 4 cm: o contorno embaixo do braço sai 5 → 7 mm da reta; avesso do jogo 6 (os mesmos); pose T, braço à frente, corrida e pulo iguais; portão igual ao de antes, só o esticado 1377 → 1408 cm². Teste: a junta do volume fica com o peito a 40° e anda para fora na vertical; auxiliares 26.
+    - Ele: "está melhorando, pode ser mais". Subiu para 8 cm para fora e 2 para cima (o contorno sai 12 mm; o portão continua sem virado e o avesso 6). Com 10 cm, a lateral fazia uma quina.
+  - **O braço erguido pela frente** (a rampa nova também age nele; o portão não cobre): a 120°, o triângulo virado à vista na frente da axila some (1 → 0), a camisa cruza menos a si mesma (18 → 15 cm) e amassa menos (18 → 8 cm²); a 150°, o esticado sobe 99 → 134 cm² e as pregas escondidas 6 → 7, e sobra um risquinho magenta na dobra da frente da axila, menor que antes (os clipes do jogo erguem até 127°).
+  - **A pintinha magenta do canto da gola** continua (a pior falha que sobra no ombro): aparece já com o braço a 45°, na pose T, no braço à frente e no pulo. É a faixa da gola escondida sob a camisa: ela liga a borda da gola à costura com a pele (vértices 41 e 43, 3–5 cm para fora), 1,6 cm abaixo do anel de fora da faixa visível (2529), que pesa 18% na clavícula, enquanto a costura não pesa nada. Com o ombro subindo, a faixa visível se aproxima da escondida e a escondida aparece pelo avesso. Tentado e rejeitado: alisar num raio maior (a mancha cresce); tirar a clavícula da gola (não muda); a costura do canto com os pesos de quem a cobre (some no braço erguido, na T, no pulo e a 150°, mas aparece na corrida e no braço para trás, onde não havia); com metade deles (pior). Peso só troca a pintinha de pose: o conserto é na geometria da gola no `retopo_moldes.py` (a faixa escondida mais funda, ou a faixa visível direto na costura).
+  - Instalado (`jogador.blend` e troca; o anterior em backup no rascunho). Rodar com o `build-profile` ou o `build-performance` (recompilados): um binário antigo não conhece a junta nova e recusa a troca.
+- **Falta:**
+  - a pele do jogo (a densa antiga) ainda não tem o teto, a rampa, a clavícula nova nem a junta da axila. A pele nova, exportada num rascunho, já leva `capDegrees: 28` e a `ramp`;
+  - comparar número a número as contas do jogo (`RagdollCharacter3D`: teto, rampa e a clavícula só levando o ombro) com as da modelagem numa pose erguida, antes de exportar a pele.
+- Sem commit.
+
+## A camisa e o calção em quadrados: os moldes da roupa (Claude, 25/10 noite)
+
+Pedido do usuário: reduzir os vértices da camisa e do calção e trabalhar com quadrados, como num modelo de referência. Eram 2.523 e 1.540 vértices, 66% do jogador. Depois ele apontou os relevos nos cantos da gola e uma lasca na junta da manga com o tronco, e mandou ignorar as falhas de pintura (vai refazer o sistema de pintura).
+
+- **Os moldes** (`tools/blender/etapas/retopo_moldes.py`; etapa 01 com `moldes ... final`):
+  - a peça é refeita como roupa costurada (camisa: frente, costas e mangas; calção: frente e trás de cada perna), cada molde uma grade de Coons levada à superfície da peça densa aprovada (`historico/jogador_12_calcao_v.blend`) e espelhada;
+  - mapa e pesos pelo ponto mais perto;
+  - as barras seguem os anéis da pele (a faixa vira uma tira de quadrados).
+- **A tira do lado:** cada molde do tronco são dois retalhos. As colunas junto da costura do lado acabam no fundo da cava (a parte quase deitada, embaixo do braço). Num molde só, a axila era uma quina no meio da borda: as colunas de cima se espremiam a 0,9-1,4 cm junto da cava e torciam, e daí vinha a lasca.
+  - O pé da divisa fica onde as colunas da barra saem iguais, e o plano dela contém a direção radial do tronco.
+  - O ombro passou a 2 divisões.
+- **O canto da gola:**
+  - a fileira de cima dos moldes fica a 12 mm da borda;
+  - a folga (`push_clear`) empurra os vizinhos a 3,5 cm junto, cada vez menos (um domo, sem chifre), e com o par do espelho (o `desvirar` exige simetria).
+  - Sem folga, um único par se cruza de cada lado: o triângulo da faixa sobre o salto de 5,7 cm do anel do pescoço. Nenhuma regra de diagonal mudou isso.
+- **No inspetor:** o arame mostra os quadrados sem a diagonal (`trianglePolygon` da troca, lido em `BlenderExchange` e usado em `InspectionRenderer`).
+- **Medido no instalado:**
+  - 3.144 vértices e 6.284 triângulos (eram 12.280 triângulos); camisa com 616 quadrados, calção com 260; análise 0/0; simetria a 0,0001 mm;
+  - relevo máximo sobre a forma densa de 6,0 mm (era 11,4 na primeira versão);
+  - quinas acima de 45° na camisa: 14, contra 20 da densa;
+  - avesso nas 684 poses do jogo: 8, com as regras de peso do `desvirar` aplicadas (`--passadas 0 --braco-perto camisa --calcao-coxa`), contra 14 da densa reparada.
+- **Testes:** `MatterPlayerModelTests` passa a trava do braço e para na do avesso (1 triângulo do calção em `change_direction@0.72`), a mesma classe de falha da densa. `build-profile` recompilado (app, inspetor, testes do modelo).
+- **Rejeitado por medida:**
+  - o QuadriFlow com alvo baixo (fecha as mangas);
+  - os moldes sobre a peça grossa original (o Phong afunda o canto da gola);
+  - o ombro em 2 num molde só (a grade dobra, 40 cruzamentos);
+  - um anel de apoio na manga junto da cava (lascas de 7 × 54 mm, e a quina da axila, que a densa também tem, ficou igual);
+  - re-assar o atlas (limpava o punho e quebrava a gola; a pintura vai ser refeita).
+- **Falta:**
+  - o `desvirar` completo e a etapa 04 depois que ele aprovar a forma;
+  - a pele e o atlas do jogo (o laboratório ainda mostra o jogador denso).
+- Sem commit.
+
+## O custo da rede, consolidado (Claude, 25/10 noite)
+
+Pedido do usuário: "da mais uma consolidada na performance da rede, garantindo que ela tem performance e otimização máxima (mantendo qualidade)".
+
+- **Prova de qualidade:** o `MatterNetBenchmark` imprime em cada linha uma impressão digital da cena (os nós e os corpos a cada tick) e a grade forte, uma no fim. Toda otimização adotada deixa as duas iguais às do solver de antes: o mesmo resultado bit a bit (0 de 768 escapam, 686 gols, 207 voltam pela boca).
+- **Medido antes de mexer:** linhas novas do boneco guiado no benchmark. A linha que corria pelas duas laterais foi trocada: o boneco era teletransportado e atravessava as redes do lado (nós a km/s, pico de 4 ms), o que a barreira não deixa acontecer no jogo. Por subpasso com o boneco encostado: fios 43%, contato com os membros 31%, integração 11%.
+- **Adotado:** dormindo, só contam o corpo com massa a menos de 1 cm de uma célula (mais o que anda no tick) e o rápido, com a lista de candidatos da folga antiga; a primeira versão, com a folga pela velocidade, acordava a rede um tick mais cedo e mudava 1 chute da grade. Os candidatos numa passada só pelas células contra a caixa de todos os corpos perto, com as caixas das células guardadas enquanto ela dorme. Na cápsula, a célula cujo plano está mais longe que o alcance sai antes da conta exata.
+- **Rejeitado por medida:** o laço dos fios sem desvio (+20% no chute) e em duas passadas por nível (+10%): metade dos fios está frouxa, e pular sai mais barato que a conta. Adiar as raízes e divisões do contato: sem ganho. SIMD: a troca de arranjo dos nós custa o que a conta economiza.
+- **Resultado** (ms por tick da rede, build-profile, média de 3 rodadas alternadas): boneco parado no gol sem encostar 0,060 → 0,009; encostado no fundo 0,210 → 0,145; correndo rente ao fundo 0,375 → 0,287; casos da bola iguais (chute no meio 0,079 → 0,080, dentro do ruído). Com o atleta de verdade (`MatterAthleteProbe`): empurrando o fundo 0,173 → 0,112, as mesmas medidas, nada entra no gol. NetSolver 32, ObjectPhysics 295 (o custo do boneco parado no gol agora abaixo de 0,03 ms), build completo, arquitetura OK, suíte geral 20/25 (as mesmas 5 falhas). Sem commit.
+
+## A barreira dos jogadores, a bola que escapava e o sono da rede (Claude, 25/10 tarde)
+
+Pedidos do usuário (testando no laboratório): "se eu for com força na direção da rede eu atravesso ela" e uma barreira física invisível, só para o corpo do boneco, onde está a rede (a imagem dele: as laterais, o fundo e o teto); "se eu chutar com força a bola às vezes escapa da rede" (de perto, na diagonal, a 40 m/s, na rede do lado); e a rede dormir sem interação, sem perder a reação.
+
+- **Reproduzido antes de mexer:** sondas novas `rede_max` (sprint máximo, `Keys::maxSprint`), `rede_lado_fora`/`rede_lado_max` (de fora pela lateral) e `rede_carrinho`: com o núcleo e as linhas da manhã, os membros passavam até 57 cm da rede do lado e 86 cm além da barra de trás no carrinho; no sprint máximo pela lateral, 19 trocas de modo.
+- **A barreira** (`ObjectNet::barrier`/`capsuleBarrier` no `GoalFrame`, `objectNetBarrier3D`, `PhysicsBodyDefinition3D::barrier`, camadas `PlayerBarrier` e `CapsuleBarrier` em `JoltLayers`): placas estáticas convexas de 3 cm para dentro da rede a 12 cm para fora; a bola (`BallObjectLayerFilter`), os props (filtro de pares), as consultas e o espaço livre (`overlapsBox`) passam; a cápsula (também no modo de navegação) e os links batem; o atleta a vê como parede (`ragdollPoseWorldContacts`). Laterais inteiras (do poste à parede de trás, do chão ao teto), teto e uma parede reta na barra de trás para o corpo e a cápsula; o fundo inclinado só para a cápsula. A lateral só até a diagonal (a primeira versão) deixava, de fora perto do canto de trás (o lugar da foto dele), a cápsula subir na placa de ~40 cm e o corpo entrar no gol por cima, e no sprint máximo atravessar o gol inteiro. Rejeitados por medida: o fundo inclinado também para o corpo (no sprint máximo ele caía embaixo dele e não levantava: a cabeça na placa, 141 trocas em 10 s); um meio-fio de 35 cm no pé do fundo (o corpo físico empurrando passou o pé por cima e saiu por baixo da rede, 2 de 4 largadas; por trás ele tropeçava). O núcleo da cápsula na rede e as linhas no chão (`setNetCharacterBoundary`, `holdCharacterAtBoundary`) saíram.
+- **A bola que escapava** (`MatterNetBenchmark --grade-forte`, 480 chutes de 30 a 45 m/s): 3 saíam, de perto, na diagonal, no canto do poste, catapultadas a 130 m. Causa (rastro tick a tick, `XCHUTE`): a bola espremia a rede contra o tubo do lado, o contato final passava um nó para o outro lado do tubo, ele ficava preso (fio a 33% para sempre) e a rede explodia (nós a 500 m/s); e a esfera, ao contrário da cápsula e da caixa, não tinha limite na separação (1 cm de correção num subpasso viram 19 m/s). Correção no `NetSolver3D`: os tubos de novo depois do contato final, e o limite de separação (0,5 m/s além de parar) também na bola. Agora 0 de 480; estufada e quique iguais (0,78 m; 118-122 bolas voltam pela boca, eram 119). Rejeitado: todos os subpassos com a rede esticada (explodia igual). Com 288 chutes de muito perto (2-3 m, 45-60°, 35-45 m/s, o que ele descreveu), ainda saíam 10: o "rechicote" de verdade - a rede voltando do estufado mais rápido que a bola passava por cima dela, e o teste de lado (o centro no começo do tick contra a célula de agora) não via. O lado de antes passou a ser medido na célula do começo do tick (`m_tickStart`): 0 de 768. Sem o limite na bola eram 21 dos 288. Efeito colateral medido: o boneco guiado contra a rede esticada recebe ~235 N s (era ~100) e esse caso custa 0,36 ms/tick (era 0,25).
+- **O sono:** a rede dormindo acordava com qualquer corpo rápido na caixa dela (o gol inteiro): o jogador dentro do gol ou encostado na barreira a mantinha acordada sem tocar (0,1-0,25 ms/tick). Agora acorda só com o corpo a menos do raio, mais o que anda no tick, de uma célula (a conta do contato). Encostado por fora: dorme 100%, 0,004 ms/tick. Encostado por dentro, com a cabeça ou os braços na rede: tocada de verdade, acordada (0,2-0,25 ms).
+- **Medido:** varredura de 60 rodadas (14 roteiros `rede_*`, com os de fora perto do canto de trás, e a parede, largadas em 0, 3, 7 e 13 mm): nada entrou nem saiu (de fora, o critério é um link ou a cápsula dentro do gol, com a cunha debaixo do fundo), a cápsula nunca subiu; trocas de modo com a tecla segura 0 a 4 pela frente (eram 16-20), 1 a 7 por fora pela lateral, 7 a 10 por trás (o atleta, com a ponte, volta ao padrão encostado e bate de novo), 1 na parede; o sprint máximo contra o fundo volta animado sem cair; só os carrinhos terminam no chão. Custo do chute 0,071-0,078 ms/tick (pico 0,30), dormindo 0. Testes: NetSolver 32, ObjectModeling 37.197, ObjectPhysics 295 (as linhas e o núcleo trocados pelo teste da barreira; os três chutes de perto), ObjectInspector 49; build completo e arquitetura OK; suíte geral 20/25, as mesmas 5 falhas com as mesmas mensagens (cenários sem trave nem barreira). A imagem no Vulkan não foi vista por mim. Sem commit.
+
+## A trave no laboratório (Claude, 25/10 manhã)
+
+(O núcleo da cápsula e as linhas no chão desta entrada foram trocados à tarde pela barreira; ver acima.)
+
+Pedido do usuário: a rede desenhada no Vulkan e tudo o que falta, a rede forte (nada passa, nem objeto forte), os jogadores colidindo com ela, realista, desempenho máximo; no mapa de teste, o arco e a viga para outro lugar e a trave no lugar deles, para treinar chutes e colisões.
+
+- **Mapa:** o arco e a viga foram para x = 22 (y -4 e 4); a trave no lugar deles, linha do gol em y = -18, boca para o centro (`createLaboratoryGoal` no fim de `ensureLaboratoryMapLoaded`; `releaseLaboratoryGoal` em `releaseLaboratoryAssets`; os nós guardados depois de cada `simulate`).
+- **Desenho:** sem pipeline nova: os fios são uma malha com esqueleto (`objectNetRenderData3D` / `objectNetSkin3D`, em `Engine/Objects`), o caminho do jogador e da bola (sombra desligada, TAA com o quadro anterior). Os nós desenhados agora ficam nos triângulos de colisão (baricêntrico também na célula inteira): nos chutes, o fio encosta na bola sem entrar, e o empurrão para fora da bola saiu.
+- **Física:** cápsula contra célula (os membros; a afunilada e a chuteira viram cápsula); o centro que passaria por uma célula desde o começo do tick volta (a rede não é atravessada); o corpo guiado empurra a rede e recebe o impulso que sentiria solto, como empurrão de fora no link (o atleta vira físico contra a rede esticada); o link físico recebe só o impulso (o boneco caído encostado não lê empurrão); o núcleo da cápsula do personagem (raio 16 cm, 80 kg) empurra a rede e é segurado por ela, como a parede segura a cápsula (sem isso, andando com a tecla segura ele atravessava a rede no modo padrão; a rede nunca empurra a cápsula no rumo em que ela anda, no máximo 5 cm por tick); e a barreira: as barras do chão da trave (o fundo e os lados) são linhas que a cápsula nunca cruza (`setNetCharacterBoundary`), porque só o núcleo deixava 5 de 15 largadas atravessarem; o objeto solto recebe também o empurrão de posição; até 16 subpassos com corpo rápido perto; o teste barato da caixa antes da conta do eixo (o boneco empurrando: 0,55 → 0,25 ms/tick).
+- **Testes:** NetSolver 32, ObjectModeling 37.197, ObjectPhysics 289 (boneco físico a 9 m/s, caixa a 30 m/s, caixa de 100 kg, bola a 40 m/s: nada passa; o empurrão no guiado: 0 / 0,06 / ~100 N s, no físico encostado 0; a cápsula do personagem com a tecla segura 8 s para antes do quadro de trás e, com a barreira, no raio da barra; a pele da GPU com erro de 0,03 mm), ObjectInspector 49; build completo e arquitetura OK; suíte geral 20/25 (as 4 falhas conhecidas e ReinforcementLearningScreen, que mudou com os arquivos de RL de 24/10 e não tem rede). Sondas `rede_*` (sprint, andando e correndo com a tecla segura, no canto, por trás) com 4 largadas cada (20 rodadas): a pelve nunca passou da rede; no sprint ele termina animado sem cair; com a tecla segura troca de modo 16-20 vezes em 10 s (contra 1 na parede, `parede_empurra`): defeito conhecido, o atleta não vê o contato da rede como o da parede. O fio desenhado (~4 mm) fica abaixo de 1 pixel a mais de ~3 m em 1080p: sem TAA (perfil Desempenho, o padrão) pode piscar; o Equilibrado liga o TAA, que deve suavizar (não visto). A imagem no Vulkan não foi vista por mim (sem janela: a regra do usuário); a pele é a mesma conta do shader, testada na CPU. Sem commit.
+
+## A trave e a rede (Claude, 25/10)
+
+Pedido do usuário: a trave como objeto procedural de metal e a rede com física real (a bola e qualquer corpo), performática; na tela Objetos, uma aba para ver a trave e arremessar bolas. Registro completo no brain: `diario/reescrita/26_trave_e_rede_25_10.md`; doc: `docs/OBJETOS_PROCEDURAIS.md`.
+
+- **Trave** (`Modeling/Objects/GoalFrame`, `buildTube` em `ObjectMesh`): vão de 7,32 × 2,44 m, quadro de trás dobrado (0,80 m em cima, 2,00 m no chão), aço, fixa; a rede (`ObjectNet`; desenhada 2.311 nós, física 623) e o cabo tensor.
+- **Rede** (`Engine/Physics/Net/NetSolver3D`, pura): XPBD, fio de um lado só com limite de 15%, amarras de longo alcance, cabo pela tração, contato com escala de massa 6, sono. Na cena (`JoltNets3D`), nos subpassos da bola (16/8/4 conforme a bola). Corrigido de passagem: a bola lia o material de corpo composto fora do vetor (crash com a trave).
+- **Tela:** `NetLabView` + `ObjectNetLab3D`, a aba "Trave"; fios com profundidade no renderizador de inspeção. A trave fica fora do spawn do laboratório (falta a rede no Vulkan).
+- **Validação:** NetSolver 21, ObjectModeling 23.333, ObjectPhysics 269 (gol a 25 m/s estufa 69 cm e para no gol; grade de 30 chutes sem passar, fio ≤ 12,1%), ObjectInspector 49 com fotos; arquitetura OK. Falhas conhecidas de antes: Character (pé travado; igual com o código antigo) e Athlete (4 de impacto). Custo: 0,0004 ms dormindo, ~0,6–0,7 ms/tick num lance, pico ~2 ms. Sem commit.
+- **Otimização (madrugada de 25/10, pedido do usuário: "extremamente otimizada e leve", sem perder o realismo):** a rede em duas malhas: a física com a célula de 2 malhas (623 nós, EA × 2, peso e arrasto da malha de verdade repartidos, escala de contato 4) e a desenhada de 12 cm por pesos fixos (`drawnNetKnots`, empurrada para fora da bola). A bola toca as células (triângulos, diagonal espelhada, colunas pares: sem isso o chute no meio saía até 1 m para o lado); caixa e cápsula, os nós virtuais (os da malha de verdade), girando no tick e com a separação limitada (a caixa era lançada a 23 m). No solver: Gauss-Seidel reordenado por níveis (o mesmo resultado bit a bit), amortecimento viscoso na passada dos fios (a fração fixa por fio amortecia 4× mais a malha grossa), pares nó-tubo fixos com a lista refeita a cada 5 cm, candidatos pelos nós perto, laços só nos nós soltos, cabo com 1 passada, sono em 0,3 s; na cena, 4 subpassos com a bola abaixo de 3 m/s. Rejeitados por medida: o impacto a 8 subpassos (bolas voltavam para fora), a cauda a 2 (a rede balançava o dobro), a malha de 3 (bolso facetado), o teto com as linhas finas (não mudou o teto), a física fina na vertical (meio caminho pelo dobro de nós), a raiz aproximada (sem ganho). `MatterNetBenchmark` (Ryzen 5 3600): chute no meio 0,09 ms/tick (era 0,80), pico 0,32 (2,3), o lance inteiro 38 ms (~333), duas traves 0,16 (1,89), montar a cena 18 ms (230); estufa 0,75 m e dorme em 3,95 s, como antes. Grade de 27 chutes: estufada 0,71 m (igual), 4 bolas voltam para fora (6 na malha de 12 cm). Teto: mais que antes no chute a meia altura, ~35% menos nos altos. Testes: NetSolver 21, ObjectModeling 37.197, ObjectPhysics 269, ObjectInspector 49; build completo OK. Sem commit.
+
+## Estado atual: Motor v4 — reinício do zero (Claude, 19/10 noite)
+
+Pedido do usuário: zerar o aprendizado, nascer no IDLE alerta, recompensa com estabilidade da pelve, faixas da coluna/cabeça e semelhança com o clipe, professor que ensina no começo e sai depois, e mais vazão. Plano e diagnóstico no brain: `04_locomocao/plano_reinicio_motor_v4.md`; lições de todas as tentativas: `04_locomocao/licoes_de_todas_as_tentativas_rl.md`. Treino antigo arquivado (não apagado) em `~/.local/share/matter-engine/rl/arquivo/motor_autonomo_v3_ate_19_10`.
+
+- **Contrato motor-v4** (`MotorTraining3D`): 39 alvos absolutos por tanh; o zero latente é o IDLE alerta quadro 0 (antes `neutral.json`, removido); nascimento no IDLE em fase sorteada; observação v3 com o comando em v/2 (era v/6, invisível para a rede). Sem apoio, sem professor de demonstrações, sem migração: o código dessas fases saiu (`MatterMotorTeacherNative.cpp`, `motor_ensino.py`, `parado_giro.json`, `postureOnly`, métricas v1/v2).
+- **Quedas:** qualquer link que não seja pé tocando o chão (fim do andar de quatro), pelve < 0,55 do IDLE por 0,1 s, tronco > 65° por 0,2 s. A recompensa do passo da queda soma os custos do passo e −1.
+- **Recompensa v3** (`assets/rl/motor/basico.json`, esquema `matter-motor-2`): renda ≤ ~1/s = postura P × (vida + tarefa + β·imitação); no trote tudo × progresso g (parado = 0) e custo 0,1/s de imobilidade; postura relativa ao IDLE com faixas livres abertas por demanda assinada (pelve, linha do tronco, curvatura, torção, cabeça, pescoço) e custo pseudo-Huber fora; imitação DeepMimic na fase com os clipes do modo padrão (`jog`, `run_backward`, `jog_strafe_*`, `turn_*`, `alert_idle`; os `trot_*` rejeitados pelo usuário saíram).
+- **Professor:** ensino inicial estilo DAgger (rótulo = pose do clipe nos estados da própria aluna; perda 0,092 → 0,020), prior com faixa livre de 0,05 rad medido na transformação real do atuador (λ 0,1 até 20 M, zero aos 60 M), β na receita (retirada manual).
+- **Treinador** (`motor_treino.py` reescrito): ruído fixo por grupo (pernas 0,06, braços 0,05, tronco 0,02 rad), ator 2e-5 adaptativo por KL, currículo de mistura (base 60/20/20 → final 10/10/80 quando parado e giro passam, o giro exigindo erro do peito ≤ 20°) e de velocidade do trote por rumo (1,0 m/s +0,25). Ruído correlacionado recusado até ter a probabilidade condicional (revisão do Codex).
+- **Ferramentas:** `tools/rl/motor_previa.py` (folhas de quadros do motor). Tela: postura e semelhança num gráfico, prévia no teto do currículo (`curriculo.json`), sem "sustentação".
+- **Validação:** `MatterMotorTests` (zero = IDLE, joelho no chão = queda por contato, IDLE paga, parado no trote não paga, envergado rende menos, determinismo 1×4 threads, validações), `MatterReinforcementLearningScreenTests` 314 checks, `test_motor.py` 13 passaram; os demais arquivos Python passam isolados (a suíte inteira numa só sessão trava; pendente). Arquitetura OK.
+- **Medidas:** sonda do IDLE sustentado sem rede: coluna cede ~2°, cai em ~3,0 s. Vazão do treino completo ~13,8–14,7 mil decisões/s (física ~89% da rodada). Fumaças: com 10% de parado nada muda em 120 rodadas; com 40%, em 260 rodadas o parado vai de 3,1 s para 3,9 s, postura 0,80 → 0,85. Equilíbrio ainda não adquirido; nada homologado visualmente.
+
+## Estado atual: IDLE temporário em todos os exercícios — 19/10
+
+Receita13 `postureOnly:true` ativa r8672: dez exercícios usam apenas IDLE, comandos de deslocamento/giro0, gate dos trotes inativo nesta fase. Caminhos/escalas individuais preservados; restaurar manualmente por false, sem reset físico/da rede. Laboratório exibe fase IDLE e desabilita alvo manual. Auxiliares0/BC0/ruído2, reference40/métrica regional2, gravidade e39motores mantidos. Avaliação anterior invalidada na troca; histórico de testes IDLE não aprova giro/trotes. Hotreload atualiza observações antes da primeira decisão e salva imediatamente a nova receita/avaliação vazia/warmup5.
+
+Backup `antes_idle_temporario_8672_1792451237409375763`: TODOS pesos/Adam/contadores/RNG CPU/CUDA exatamente preservados. Retomado PID28094.24Python passaram45,87s, builds nativa/Debug/profile/arquitetura/diff-check passaram. Regressão compara10drills×90decisões idênticas, comandos/forças0, troca atômica e restauração sem transform/reset; preparação preserva rede e limpa avaliação. Fixture UI verifica fase IDLE ao selecionar trote_frente. Captura real /tmp/motor-idle-only-ui/rl_tela_treino_real inspecionada: fase/pedido0/sustentação0, corpo ainda envergado. Não homologar aprendizado. Validação final:24Python45,87s, builds nativa/Debug/profile, arquitetura e diff-check passaram. Suíte geral19/23 em219,56s; mesmas4falhas conhecidas:Character/câmera,AdaptivePhysics/floating baseline,PlayerModel5064ms,Athlete timeout180s. Motor6,89s/RLTraining138,03s/tela47,15s passaram. Treinador PID28094 pausado apenas durante testes e retomado ao terminar. Vazão durante concorrência com suíte não é benchmark; meta14k segue aberta. Nenhum reset de aprendizagem realizado. Brain diário15/plano23; Beads1zr e qualidade/SPS0g0.
+
+Pergunta posterior: usuário considera zerar o aprendido. Recomendação: sim neste caso, arquivar antigo e reiniciar ator/crítico/Adam/normalização com incentivo corrigido, sem reconstruir sistema. NÃO houve reset só por essa pergunta; política atual continua preservada. Não garantir que reinício resolva comportamento; medir postura. Sem commit/push.
+
+
+Verificação viva final r8702/PID28094 treinando/salvar confirmado:30rodadas da fase IDLE registradas, todos10drills com vel_pedida0 e contribuições não-reference0; semelhança média≈1,33–1,34%, ainda sem evidência de desentortar. SPS pontual11777/s não atende14k e não é benchmark sustentado.
+
+## Estado atual: nota regional de postura corrigida — 19/10
+
+Usuário autorizou corrigir o critério antes de aumentar exploração. Implementada métrica2: ângulos locais entre quaternions por6regiões, pior junta por região e orientações globais de pelve/peito/cabeça. Config referenceMetric: tolerâncias emgraus10/10/10/12/25/20(pelve/coluna/peito/cabeça/braços/pernas), pés10cm,altura5cm,velocidade180°/s. Nota base1/(1+soma erros regionais normalizados²); pés/altura/velocidade multiplicam[0,75,1]. Sem média39eixos nem bônus independente de quietude/altura. Cauda gradual para desvios grandes. Gráfico só série versão2; métricas angulares têm definição nova, não comparar com versão1.
+
+Contraposes articuladas: IDLE≈100%, coluna10/20/40graus=>27,079/8,495/2,268%; cabeça/peito/altura certos não compram coluna local dobrada. Testados q/−q, regiões(inclusive Forearm), pés longe com aproximações pequenas, fronteiras inválidas e nenhum transform escrito. API de avaliação hipotética somente leitura serve à calibração, não controla o corpo. Probe política preservada envergada≈1,22% após10s: isso é mudar a régua, não comprovar desentortar.
+
+Receita viva revision12, r8405 backup antes_metrica_regional_8405_1792450479109175333; TODOS pesos/Adam/contadores/RNG CPU/CUDA preservados na preparação. settings.reference_metric2 detecta retomadas de algoritmo antigo e adapta crítico5rodadas. Treino retomado PID22795: mesmos156obs/39ações/10drills, único bônusclipe40, outros termos/velocityWeight/idlePenalty0, gate trote e queda0,5 mantidos; apoios/torques externos0, professorBC0, ruído2. NÃO aumentar ruído ainda. 23Python35,25s/builds/arquitetura/diff-check passaram; geral19/23 em276,70s,mesmas4falhas conhecidas(Character/câmera,AdaptivePhysics/floating,PlayerModel7849ms,Athlete timeout180); Motor11,33s/RLTraining156,02s/tela68,92s passaram. Captura final /tmp/motor-region-final-ui/rl_tela_treino_real r8538 inspecionada: corpo ainda envergado,auxílio0%,nota nova≈1,4%/recompensa0,552/s; história antiga não é costurada na métrica2. Dados de6regiões/10drills ativos e demais bônus0 confirmados. Autoeval8500 mantémquedas0 estáticos e100%trote_frente,sem homologar desentortar. Treino ativo PID22795/salvar confirmado após8558; vazão≈13k ainda<14k. Brain diário14/plano22, Beads g6q; qualidade/SPS continuam0g0. Sem commit/push.
+
+## Diagnóstico anterior: nota de semelhanca permissiva; revisar antes de aumentar ruido
+
+Usuario mostrou r8099 muito envergado com57,8%/23,105porsegundo e pediu entender/melhorar mecanica antes de explorar mais. Ruido segue2, recompensa e treino nao alterados nesta auditoria. Probe checkpoint8100/IDLE10s reproduz57,22pontos: juntas21,58/35, velocidades15/15, orientacao10,59/25,pes0,30/15,altura9,75/10. Soma compensa postura ruim por quietude/altura; media39eixos dilui erro localizado da coluna; exponencial de pes31cm fora quase satura. Nota nao e percentual literal de corpo correto. Proposta em discussao: tolerancias por regioes, erros angulares locais e combinacao que limite compensacoes sem perder sinal gradual. Exigir contraprovas ideal/desvios/compensacoes antes de ativar. Beads matter_engine-g6q aberto; detalhes no diario13 do brain. Nao mudar ruido nem colocar ajuda fisica para mascarar esse problema.
+
+## Estado atual: fase temporária SOMENTE recompensa do clipe — pedido posterior19/10
+
+Usuário propôs zerar recompensas concorrentes para tentar desentortar. Receita viva revision11: reference exp/weight40/scale1, outros10termos0, trot.velocityWeight0 e idlePenalty0. Validador aceita0 e recusa negativo; zerar feet_speed sozinho não bastava porque trote usa peso próprio. Dez exercícios continuam juntos com gate de progresso nos trotes, queda encerra/penaliza−0,5; apoio/torque auxiliares0, professor supervisionado0, ruído2. Esta fase é temporária e manual; depois retornar gradualmente aos objetivos de tarefa.
+
+Backup antes_somente_clipe_7370_1792448651484260716. Preparação manteve exatamente pesos/Adam/contadores/RNG; só receita e warmup5 do crítico. Corrigido salvar recipe_changed imediatamente ao preparar/retomar, inclusive sem outras mudanças. Nova regressão mede10drills: contribuições concorrentes0, retorno não terminal igual ao termo reference e auxiliares0. Primeira etapa anterior r7234→7370 não mostrou melhora clara(16mundos/20s/semente1911): parado57,81→57,43%, giro50,16→50,23%; todos8trotes ainda caem. Resultados em motor_autonomo/comparacao_imitacao.json. Não tratar aumento da nota como desentortar.
+
+Validação anterior:21Python passaram46,56s +2migração2,02s, arquitetura/builds nativa/Debug/profile e tela real passaram. Geral19/23 em316,21s, mesmas4falhas conhecidas Character/câmera, AdaptivePhysics/floating baseline, PlayerModel/orçamento8473ms, Athlete/timeout180s; Motor8,87s/tela74,73s passaram. Tela final41,28s e captura /tmp/motor-clip-final-ui/rl_tela_treino_real confirmam gráfico de semelhança nos quatro visíveis e sustentação0%. Fase sóclipe:22Python passaram57,44s, builds nativa/Debug/profile/arquitetura/diff-check passaram; retomado PID14152/r7370. Logs7371–7395 cobrem10drills com TODAS contribuições não-reference0; captura real /tmp/motor-clip-only-ui/rl_tela_treino_real carregou política156D e sustentação0%. Geral final19/23 em331,69s, mesmas4falhas conhecidas; Motor7,84s/tela65,13s passaram. Logs7371–7515: demais termos0 em todos10drills; avaliação automática7500 ainda não prova desentortar(parado57,58%,giro49,49%,semelhança composta;semquedas nos32mundos30s estáticos, trotes ainda caem). Treino segue PID14152, salvar confirmado após7515. Vazão recente11,3–12,9k/mediana12,47k, abaixo14k; qualidade/SPS pendentes0g0, l8t implementado/ativado. Beads l8t, qualidade/vazão continuam0g0; diário13/plano§21 no brain.
+
+## Estado atual: imitação física forte por fase, sem força auxiliar — 19/10
+
+Pedido posterior: professor sem efeito visível; recompensar fortemente o movimento do clipe. Implementada comparação temporal do estado físico nos dez exercícios, desde a primeira decisão: juntas/velocidades, orientação pelve/peito/cabeça, pés e altura. Reference exp/weight40/scale1; escalas por exercício1; bônus positivo nos trotes ainda condicionado ao progresso na velocidade/direção pedida. Nenhuma força auxiliar: practiceAssistance0. Professor supervisionado antigo desativado(peso0), exemplos preservados. Não reativar apoio sem pedido explícito.
+
+Motor-v3 acrescenta apenas fase sin/cos(156obs/39ações). Cadência numérica persistida na receita continua sem recompensa/clipes; clipes são removíveis depois. Cache65quadros/clipe carregado uma vez; runtime interpola estado/velocidade da fase, não procura pose mais próxima. Altura do quadro0 com pés apoiados + deslocamentoZ do clipe; sem trajetóriaXY forçada. Forma/escala/peso e calibrações existentes continuam ajustáveis. Histórico tem similaridade/erros e gráfico próprio.
+
+Migração real r7234 preservou pesos anteriores, Adam ator/crítico, contadores e RNG CPU/CUDA; novas colunas/momentos0. Backup completo antes_imitacao_fase_7234_1792448125784736396 em motor_autonomo. Receita viva revision10, noise_scale2 preservado, cinco rodadas de adaptação do crítico antes do ator. Treino retomado. Detalhes no brain: [[13_imitacao_forte_por_fase_19_10]], plano§20. Beads l8t; qualidade/SPS no0g0. Validação final/comparação abaixo serão preenchidas ao encerrar verificações; não há aprovação comportamental antecipada.
+
+## Estado atual: força auxiliar totalmente DESLIGADA — decisão final de19/10
+
+Usuário pediu remover TODO apoio físico por prejudicar a locomoção. Decisão
+supera o apoio70% descrito abaixo: não reativar sem novo pedido explícito.
+Tarefa viva `practiceAssistance=0,0`, revision9; receita de fábrica também0.
+PPO, laboratório e juiz ficam sem força/torque auxiliares. Não há mecanismo
+que volte a ligá-los por currículo, aprovação do IDLE, professor ou retomada.
+Implementação do apoio fica inativa; código não executa a ramificação em0.
+
+Mantidos: nascimento no IDLE alerta, professor supervisionado4 nos10drills,
+reference weight1,0/idleScale1/turnScale1 nos estáticos, postura−0,6 e
+inclinação peito/cabeça15°. Esses são incentivos de aprendizado: NÃO aplicam
+força nem substituem os39comandos da política. Professor ainda removível por
+avaliação sem ajuda. Mantida a recuperação dos pesos/Adam pré-erro e o arquivo
+das métricas inválidas, descritos na etapa12.
+
+Hotreload confirmado r6832/PID352958; checkpoint salvo r6833 confirmou força0
+na recipe e settings e professor[4,0]×10. Prova direta com o mesmo lote/receita
+PPO:10drills×60decisões, support_forces e teaching_wrench EXATAMENTE zero em
+todos os passos. Captura real `/tmp/motor-sem-auxilio-ui/rl_tela_treino_real`
+inspecionada r6852: "sustentacao0%", pés no chão, postura ainda torta; não
+homologar a pose nem locomoção. Política continua atualizando. Prévia é nova
+tentativa local, não streaming literal de mundo de treino. O estado de
+implementação `pelvis_height_70` no JSON é só identificador do código inativo;
+practice_assistance0 determina a ausência de forças.
+
+Validação da correção:18Python passaram28,02s; Motor direcionado3,91s; tela
+profile6,16s; Debug final19/23 em319,48s (Motor6,48s/tela51,84s passaram),
+mesmas4falhas gerais já registradas: Character/câmera, AdaptivePhysics,
+PlayerModel/orçamento, Athlete/timeout180s. Builds nativa/Debug/profile,
+arquitetura, py_compile e diff-check passaram. Não testar só soma de força:
+a regressão nova de lançamento verifica gravidade/voo balístico normal.
+Modo ativo não usa auxílio; não há nova prova de aprendizado/14k sustentado.
+Beads matter_engine-iqd concluído; qualidade/vazão continuam em0g0.
+
+## Correção do apoio: gravidade normal, teto70% e pose reforçada — 19/10/2026
+
+O usuário rejeitou a flutuação da etapa11: cancelar mg em todos os segmentos
+foi um ERRO de implementação, não uma configuração aceitável de apoio100%.
+Ele esclareceu que100% da régua do laboratório corresponde a aproximadamente
+70% de ajuda de sustentação, nunca gravidade zero, e pediu incentivo muito
+mais forte para seguir os clipes/poses e desentortar o corpo. Esta seção e
+[[12_correcao_apoio_pose_19_10]] SUPERAM a etapa11 e §17 do plano. Não voltar
+a aplicar peso inverso em cada link nem arrastar/girar o corpo pelo alvo.
+
+Física final: gravidade normal de9,81m/s² em TODOS os segmentos. Só a pelve
+recebe força vertical de apoio, sem forçaXY/torque. Alvo de altura fixo no
+nascimento IDLE, não segue clipe oscilante/direção/velocidade. Mola amortecida
+vertical12rad/s (mesma forma do suporte do laboratório), bias0,25g e teto0,7g,
+vezes a massa efetiva do corpo e a fração da régua. Acima do alvo+2cm a ajuda
+zera: subida/voo é balístico. Em100%, máximo70% do peso;50% máximo35%;0% zero.
+Ator continua todos39alvos absolutos; as pernas precisam produzir apoio,
+avanço, freada e giro. Gravidade/120Hz/30Hz/solver20+20/manifest não mudaram.
+Massa efetiva do perfil atual80kg: teto549,36N, não735/784N constantes. Não
+confundir o default75kg do tipo C++ com a massa real do asset80kg.
+
+Aprendizado reforçado no treino vivo: professor/peso supervisionado4,0 em
+cada um dos10drills (4× nominal; IDLE era0,5 e agora é4,0). Referência de pose
+parado/giro: weight0,2→1,0 (5×), idleScale=turnScale=1,0. No giro antes a
+turnScale era0,25; o aumento efetivo ali também inclui essa diferença.
+Posture weight−0,15→−0,6; tolerância inclinação peito25°→15°, cabeça20°→15°.
+Nos trotes a imitação vem dos exemplos supervisionados; não afirmar que a
+recompensa reference passou a incluir clipes de trote (ela é dos estáticos).
+Recompensa de deslocamento ainda depende de progresso, sem bônus de ficar
+parado. Nada trava juntas ou substitui ações por clipe. Retirada do professor
+e priors por avaliações SEM auxílio permanece; usar intensidade4 nesta fase
+é temporário e pode reduzir depois. PPO mantém limiteKL/gradiente.
+
+Recuperação: parou a fase errada na r6739; guardou checkpoint e histórico em
+`fase_invalida_auxilio_6437_6739_1792409677717745227` dentro da sessão.
+Restaurou modelo, Adam ator/crítico e RNG de
+`antes_apoio_idle_6436_1792408440195622591.pt`, antes de TODO auxílio incorreto,
+com comparação tensor a tensor. Não criou política nova nem perdeu esse
+aprendizado anterior. Contadores totais6739/110411776 decisões foram mantidos
+como registro do trabalho real; parâmetros aprendidos voltaram à r6436.
+Excluiu r6437–6739 das curvas ativas e avaliações posteriores a6436, com cópia
+integral no arquivo, para não exibir flutuação como sucesso. `recovery.json`
+e evento em recipes.jsonl explicam a lacuna de rodadas. Aquecimento crítico5.
+Professor/exemplos preservados e pesos redefinidos4,0 com passes zerados.
+Modo persistido `pelvis_height_70`; fases weight_only/fullpropulsion inválidas.
+
+Prévia usa o mesmo MotorTraining, apoio, ruído, spawn e episódios do PPO;
+juiz permanece0%. Label "sustentacao100% (teto70% do peso)". É nova tentativa
+local com política publicada, não streaming literal dos512mundos. Captura
+real ANTES de retomar: `/tmp/motor-harness-idle-ui/rl_tela_treino_real`, rodada
+6739 com pesos restaurados, pés no chão e tronco ainda inclinado; não corpo
+flutuando. Viu também20s de execução/capturas laterais. Custo simular1s20,67ms,
+quadro1540×66014,96ms sem treinador. Isso NÃO homologa postura nem equilíbrio:
+diagnóstico determinístico4mundos por drill ainda caiu em todos; altura
+normalizada máxima ficou~1,01 e apoio máximo549,36N. Nova imitação precisa
+aprender no ambiente corrigido. Não prometer que só mudar recompensa resolveu.
+
+Treino retomado PID352958 a partir do totalr6739, depois da inspeção visual,
+com apoio1,0/teto70%/professor4 e todas10tarefas. Builds nativa Release,
+Debug completa e profile passaram;18Python passaram28,02s, Motor3,91s e tela
+profile6,16s. Teste físico novo lança corpo para o alto: apoio fica0 acima da
+âncora e velocidade vertical do centro de massa perde>2,5m/s em1/3s sob
+gravidade normal. Testes de forças agora exigem apoio só na pelve e teto70%,
+não cancelamento integral. Teste entre metas compara até o primeiro reset:
+giro consome RNG nos alvos, então heading do episódio seguinte pode diferir.
+Arquitetura/py_compile/diff-check passaram. Suíte Debug final19/23 em319,48s, mesmas4falhas gerais anteriores.
+Beads matter_engine-iqd; metas de qualidade/vazão continuam em0g0.
+
+## Prática com sustentação vertical e nascimento no IDLE alerta — 19/10/2026
+
+Pedido adicional e correção explícita do usuário: a própria rede pratica com
+ajuda100%, mas a ajuda NÃO pode propulsionar nem girar o corpo. Implementação
+final substitui o apoio completo do controlador por compensação de peso pura:
+F=(0,0,m_link*9,81*practiceAssistance), no centro de massa de cada link,
+usando massas efetivas lidas do backend. Sem força horizontal, torque auxiliar,
+alvo de trajetória, servo de pose, correção de velocidade ou pé levado pelo
+planejador. Em100% compensa todo o peso (75kg→735,75N);50% metade;0% zero.
+Não confundir sustentação com equilíbrio adquirido: em100% o corpo fica
+aliviado de todo o peso e pode flutuar; os movimentos/contatos vêm da rede.
+
+Motor continua39ações/154entradas e física120Hz/decisão30Hz/solver20+20.
+Apenas o reset usa o primeiro quadro alert_idle; todas as juntas nascem nessa
+pose, com pés a3mm do chão e orientação global aleatória. Bias/ranges/neutro
+das ações, normalização de altura e identidade do corpo NÃO foram trocados:
+checkpoint antigo continua significando os mesmos comandos. Não trava o IDLE
+nem escreve transforms durante a simulação. Arquivo IDLE é necessário para
+nascer, mesmo se o prior de recompensa do clipe tiver sido retirado.
+
+MotorSettings.allowAssistance=false por padrão. Binding opta só no PPO
+normal, nunca em evaluation=True nem no gerador de exemplos. Juiz fica em0%
+mesmo lendo receita com100%. Prévia opta no mesmo caminho de sustentação e
+agora usa episódios de treino20s×[0,8;1,2], mesma pose/ruído/ações. A política
+exportada continua sem controlador. Tela identifica "sustentacao 100%";
+mostra novas tentativas locais da política publicada, não streaming literal
+de um dos512mundos nem a reprodução do professor. Atualiza rede a cada~2s.
+
+Controle atual: `practiceAssistance` na tarefa da sessão é1.0; receita de
+fábrica fica0.0 (opt-in removível). Fração [0,1] validada; alteração é lida na
+fronteira do rollout, preservando ator/Adam e com aquecimento do crítico.
+Sem retirada automática nesta fase: usuário pediu100% por enquanto. Pode
+reduzir gradualmente esse único valor até0; a prévia acompanha a receita
+quando atualiza a política. Status/checkpoint/log registram
+practice_assistance, practice_assistance_mode=weight_only e spawn_pose=alert_idle.
+
+Ativação final: r6500, PID347518. Backup
+`antes_sustentacao_pura_6500_1792408880853381963.pt`. Antes do primeiro rollout
+comparou tensor a tensor rede, Adam ator/crítico, contadores, manifest e
+estado do professor: todos idênticos. Aquecimento do crítico5rollouts.
+Ruído2 e exemplos215.750/pesos supervisionados foram preservados.
+
+O protótipo anterior usou AdaptivePhysicalCharacter+PhysicalFeetAssist em
+PPO/prévia nas r6437–6500, com forças horizontais/torques. Foi interrompido
+assim que o usuário proibiu impulsão e SUBSTITUÍDO, não está ativo. Seu A/B
+31/32trotes×10s e velocidades~4m/s dependiam dessa propulsão e NÃO validam o
+modo final. Não restaurar o protótipo. Professor de demonstrações histórico
+continua apartado, conforme diário10; dados são exemplos de ações, nunca
+transições PPO sob essas forças antigas. A sustentação da aluna não chama
+CharacterLocomotion, AdaptivePhysicalCharacter nem PhysicalFeetAssist.
+
+Validação final até aqui: build nativa Release/Debug completa/profile,
+arquitetura, py_compile e diff-check passaram.18testes Python passaram29,37s;
+tela profile passou14,91s. Testes comparam cada junta do nascimento ao quadro0
+do IDLE; preservação dos39alvos do ator; força sóZ, soma igual ao peso real,
+meia ajuda linear,0% e juiz sem ajuda; mesma evolução física ao trocar
+parado/giro/trote mantendo ações; paridade serial/4threads e resets repetidos;
+persistência e modo do treinador; rótulo/retirada do apoio na tela. Suíte
+Debug final19/23 passou288,23s, incluindo Motor5,27s e tela56,48s; mesmas
+quatro falhas gerais anteriores (Character, AdaptivePhysics, orçamento
+PlayerModel, Athlete timeout180s), mantidas em matter_engine-lav.
+
+Captura real passou e foi inspecionada:
+`/tmp/motor-weight-ui/rl_tela_treino_real`, aluna r6548, sustentacao100%,
+gráficos e dez exercícios. Corpo ficou suspenso/tombado no ar: o alívio total
+de peso NÃO mantém a postura nem é uma marcha. No trecho5–20s dessa tentativa,
+velocidade média0,0713m/s para pedido4,106m/s, sem arrasto para cumprir o alvo.
+A métrica atual de queda usa contato/altura: com100% pode mostrar sem-cair100%
+mesmo suspenso; observar também orientação/altura/velocidade e o juiz livre.
+Não anunciar o "zero quedas" assistido como domínio de equilíbrio. Custo da
+prévia32,02ms por segundo simulado e21,79ms/quadro1540×660 sob verificações.
+Build profile religada por último para launcher abrir versão otimizada.
+Vazão da sessão sob verificações~6–10k/s, subindo~12–13k quando liberou CPU;
+sem benchmark sustentado14k homologado. Beads matter_engine-q1f concluído;
+14k/s e habilidades independentes continuam em matter_engine-0g0. Sem
+commit/push, limpeza do trabalho alheio ou teste com sanitizadores.
+
+## Verificação do aprendizado do professor — 19/10/2026
+
+Usuário não observou mudança no laboratório. Auditoria sem alterar o treino:
+comparou os mesmos 2.048 exemplos por drill (seed831) nos backups r5203/r5643
+e no checkpoint atual próximo de r6080. Huber nos oito trotes caiu18–32%
+desde r5643; IDLE0,05329→0,043187 e giro0,062844→0,051770. Isso comprova
+melhor ajuste aos exemplos coletados, NÃO aquisição das habilidades nem
+generalização. Perda média registrada r5643–5667:0,3160; r6056–6080:0,2384
+(com peso IDLE já reduzido, portanto não comparação isolada de aptidão).
+
+Juiz sem assistência r6000: IDLE32/32 completaram30s; giro31/32, erro peito26°,
+derivaP90~55cm; todos oito trotes32/32 caíram, duração média2,11–2,31s.
+IDLE já tinha equilíbrio antes do professor; não atribuir ganho causal ao ensino.
+O laboratório mostra a aluna explorando, não o professor. A ajuda100% foi
+usada SOMENTE na coleta de demonstrações; a própria aluna nunca passou por
+uma fase de prática com apoio físico. Copiar alvos gerados sob forças externas
+não garante sustentação sem essas forças; estados da aluna também podem sair
+da distribuição das demonstrações. São limitações do método atual, não
+problema comprovado de atualização do visualizador. Recomenda-se investigar
+prática assistida da própria política com retirada gradual e juiz sempre livre,
+antes de apenas aumentar o peso de imitação. Não implementado nesta auditoria.
+
+## Professor temporário de todo o Básico — 19/10/2026
+
+Usuário autorizou primeiro IDLE/giro, reforçou o footplanner dinâmico existente
+com ajuda auxiliar100%, e depois ampliou aos oito rumos do trote. Implementado
+e ativo na sessão. Beads `matter_engine-3hf`; diário completo do brain
+`diario/reescrita/10_professor_basico_19_10.md` e §16 do plano_rl_final.
+
+Professor externo na ponte Python usa CharacterLocomotion3D/ContactFootwork3D
+mais AdaptivePhysicalCharacter3D/PhysicalFeetAssist3D: os modelos do
+laboratório, não um servo novo. Giro usa apoios/passos medidos; na marcha o
+planejador acompanha o ciclo dos clipes frente/costas/strafe e a orientação.
+Sem guia aplicado, transform escrito ou corpo cinemático. Professor/forças
+leem física fresca a120Hz,39alvos de junta ficam segurados4subpassos a30Hz
+nos ganhos originais do motor. Inverso do tanh gera os comandos rotulados.
+
+MotorSettings.teaching=false por padrão; coleta exige flag explícita e drill
+fixo0..9, nunca mistura implícita. Callback devolve ações/forças por link, sem
+acesso à cena. Coleta serial propaga erros com segurança. Nenhum callback ou
+força auxiliar existe nos mundos PPO, juiz ou visualizador. A ponte e o
+gerador ficam no MESMO módulo matter_motor_native: dois módulos estaticamente
+ligados ao Jolt falharam no protótipo ao simular cena da outra cópia. Não
+separar sem física compartilhada. Mundo/ator continuam sem incluir Athlete;
+check de arquitetura agora cobre também src/Engine/RL/Motor.
+
+`motor_ensino.py` gera NPZ validado sem pickle (contrato/corpo/canais/IDs,
+ações e métricas); filtra corpo tombado/baixo, velocidade explosiva e passo
+de queda. Coleta45s×16mundos por drill, ajuda100%, seed701+drill:215.750amostras,
+312episódios encerrados com zero quedas. Média do corpo~4,27m/s nos trotes
+acompanha média do pedido, com rampa inicial2s até4,5m/s. Erro vetorial médio
+~0,16–0,48m/s. Peito nas laterais~27° fora do alvo: professor imperfeito,
+sem homologar postura. Arquivo vivo `demonstracoes_basico_100.npz` da sessão.
+Arquivo inicial `demonstracoes_idle_giro_100.npz` preservado como histórico.
+
+Treinador `--demonstracoes <NPZ>` soma Huber supervisionada ao PPO; exemplos
+NUNCA viram transições on-policy nem recebem logprob da aluna. ~512exemplos
+por minibatch, balanceados pelos drills, média por grupo para não inflar a
+escala ao passar2→10. Critico/GAE usam somente experiências próprias. Todos
+dez exercícios seguem juntos; nenhuma junta ou fase é travada. Corpo/contrato
+motor-v2/154entradas/39ações inalterados; sem pesos dos RLs antigos.
+
+Por drill: duas avaliações consecutivas SEM assistência com quedas≤5%,
+peito/cabeça≤15°, erro de velocidade≤0,1m/s nos estáticos ou≤0,35m/s nos trotes,
+derivaP90≤20cm ou lateral≤30cm. Giro também exige rotação acumulada≤30°.
+Cada aprovação dupla reduz peso à metade; abaixo0,03 zera. Na retirada
+automática de IDLE/giro também zera o prior de clipe correspondente. Caminho,
+IDs, pesos e contadores persistem na retomada. `--peso-professor 0` retira
+imediatamente a perda e permite remover o NPZ; priors de recompensa são
+configurados separadamente se a retirada for manual. Não há dependência do
+professor na política exportada. Retirada/redução são testadas, não alegação
+de que as habilidades já foram adquiridas sem ajuda.
+
+Ativação inicial r5203/PID332645; ampliação r5643/PID336558. Antes de cada
+primeiro rollout comparou TENSOR A TENSOR modelo completo, Adam ator/crítico
+e contadores: idênticos. Backups `antes_ensino_5203_1792406475170521011.pt` e
+`antes_ensino_5643_1792407193314177540.pt`. Preservou pesos do professor e
+aprovação1 do IDLE ao adicionar os8rumos. Ruído permanece escala2. Em r5726
+logs confirmam dez pesos ativos, perda supervisionada~0,306 e KL~0,014;
+prévia publicada r5725, sem forçar a demonstração no visualizador.
+
+Validação: builds nativa Python/Debug completa/profile app+tela, arquitetura
+e diff-check passaram.16testes Python passaram39,38s; integração final2/2
+passou11,42s. Motor/tela Debug finais2/2passaram30,68s. Suíte geral da etapa
+19/23passou500,19s: Character/AdaptivePhysics/PlayerModel falharam nas mesmas
+verificações anteriores, Athlete timeout180s (matter_engine-lav). Ampliação
+final teve rebuild e testes direcionados, sem repetir a suíte geral toda.
+Tela real pós-ampliação passou, captura
+`/tmp/motor-professor-basico-ui/rl_tela_treino_real` inspecionada (aluna r5731,
+ruído, gráficos e dez exercícios). Não é aprovação visual do usuário.
+
+Limites: professor IDLE/giro sem auxílio cai~2,2s. Aluna já aguentava20s×8
+antes do ensino; em diagnóstico após72rollouts, ajuste aos mesmos exemplos
+melhorou~34%, mas erro de peito aumentou um pouco. Não inferir ganho causal
+nem declarar giro/trote adquiridos. Vazão instantânea pós-ativação~10,9k/s
+sob carga de verificação; meta sustentada14k ainda pendente. Sem PPO
+sobreposto, redução de fidelidade, commit/push ou limpeza de trabalho alheio.
+
+## Ruído normalizado após a fase10× — 19/10/2026
+
+Pedido do usuário: normalizar pelo recomendado e preservar aprendizado.
+Escala reduzida10→2 usando CLI existente, sem mudança de código. Escolha
+moderada experimental, não um ótimo comprovado. Na rodada4197 foi preparado
+checkpoint com log_std+log(0,2), mantendo todos os demais pesos, estados Adam
+do ator/crítico e contadores (conferência tensor a tensor). Backup anterior:
+`antes_ruido_4197_1792405015608460204.pt`. Desvio equivalente perto da postura
+neutra: mediana2,55°, mínimo1,44°, máximo3,31°; amplitude real depende da pose
+e do tanh. Intensidade ainda aprendida dentro dos limites da escala2.
+
+Sessão retomada PID324362 e prévia conferida com39desvios atuais. Escala2
+persistida no checkpoint, status e comando de retomada; laboratório recebe
+a mudança automaticamente. Não exige reabrir o app se já estiver na build da
+prévia exploratória. Beads matter_engine-4re. Sem nova suíte/build porque
+só se usou configuração existente; efeito sobre aprendizado ainda não medido.
+
+## Prévia exploratória recente no laboratório — 19/10/2026
+
+Beads `matter_engine-8rq`. O usuário quer ver o que a rede está tentando e
+como isso muda com o treino, sem precisar escolher modos adicionais. A prévia
+Motor agora amostra Normal(média da rede, desvio aprendido) em cada um dos39
+eixos a30Hz, antes do mesmo tanh físico. É uma tentativa nova local com a rede
+recente e o mesmo ruído, não replay/transmissão de um dos512 mundos. Roteiro
+do exercício selecionado preservado; reset também reinicia o gerador de ruído.
+Legenda da política indica `rodada N · exploracao`. Arquivos antigos sem
+metadados continuam carregando e indicam ausência de ruído exportado.
+
+Pesos e `explorationStd` são publicados atomicamente no MESMO .mrlpolicy;
+PolicyRuntime valida dimensão, finitude, positividade e teto exp(1,5). Avaliação
+padrão do runtime e juiz do treino continuam determinísticos. Publicação da
+prévia separada do checkpoint: entre rollouts, se transcorreram2s desde a
+última exportação; tela verifica a cada2s. Atualização normal em poucos
+segundos, dependendo da duração do rollout, avaliações e carga. Não exporta
+a cada decisão nem copia checkpoint/Adam a cada publicação. Checkpoints
+seguem a cada25rollouts e em comandos de salvar/parar. Pesos podem atualizar
+no meio de uma tentativa da prévia sem reiniciar o personagem.
+
+Sessão preservada até r3857 e retomada PID320774, escala de ruído10 herdada
+sem reamplificar. Conferência viva r3863: arquivo de prévia também r3863,
+39desvios presentes. Builds Debug completa e profile do app/tela passaram;
+13testes Python passaram em31,76s. Conferência headless com sessão real e trote
+frente passou, captura inspecionada em
+`/tmp/motor-exploracao-ui/rl_tela_treino_real`: legenda r3896/exploracao e
+status r3897, variação física e gráficos presentes. Não é homologação do trote.
+Teste da tela Debug passou em47,19s, incluindo efeito físico do ruído,
+reprodução por semente/reset, runtime médio sem ruído, arquivos antigos e
+recusa de metadados inválidos. Motor também passou. Suíte geral final:19/23 passaram (544,19s, timeout180s, paralelo2).
+Character/AdaptivePhysics repetiram falhas conhecidas de câmera/floating;
+PlayerModel falhou no orçamento de tempo da carga (6902ms), e Athlete excedeu
+180s. Esses resultados estão registrados em `matter_engine-lav` para reproduzir
+com carga controlada; não foram corrigidos nesta entrega. Não atribuir a causa
+à prévia nem prometer ausência de regressão sem essa investigação. Precisa reabrir
+aplicação para carregar binário novo; treinador já publica prévias recentes.
+
+## Exploração ampliada por pedido do usuário — 19/10/2026
+
+Beads `matter_engine-t6o`. O usuário pediu exagerar no ruído inicial: escala10
+aplicada à distribuição aprendida e aos seus limites (antes~1,4° de desvio
+padrão equivalente no alvo perto da postura neutra, agora~14°). A transformação
+tanh continua respeitando os limites das juntas; esse número é aproximação
+local, não deslocamento garantido nem amplitude máxima. Os dez exercícios
+recebem a mesma escala; não há sequências de ruído temporalmente coordenadas.
+
+`motor_treino.py --ruido-escala 10` ajusta `log_std` uma vez pela razão entre
+escala nova/salva, guarda `antes_ruido_<rodada>_<timestamp>.pt` e salva antes
+do primeiro rollout. Pesos médios/critic/Adam e contadores são preservados.
+Escala ausente herda checkpoint; retomadas não multiplicam repetidamente.
+A escala é persistida em settings, comando do menu, status e log; log inclui
+estimativa média do desvio em graus na postura neutra. Para reduzir depois,
+usar o mesmo argumento com escala menor, sem descartar o aprendizado.
+Teto latente exp(1,5), igual ao da distribuição, evita limites inefetivos.
+
+Maior exploração pode elevar quedas e prejudicar equilíbrio durante a busca.
+Não há evidência ainda de ganho de qualidade por tempo/decisão. Avaliações e
+visualização continuam determinísticas (sem ruído). Validação:13 testes Python passaram em24,74s, incluindo ampliação10×,
+retomada sem repetição, redução e valores inválidos, preservação dos pesos
+médios e backup. Arquitetura/diff-check passaram. Nenhuma alteração C++;
+build/ctest gerais não repetidos nesta mudança do treinador Python.
+
+Sessão parada graciosamente em r1166 e retomada com PID314767/escala10.
+Checkpoint inicial conferido contra o backup: apenas log_std alterado;
+todos os demais pesos idênticos. Log r1172: desvio equivalente médio14,37°,
+KL0,00975 e12,1k decisões/s (instantâneo, não meta homologada). Primeiros
+episódios de Parado tiveram muitas quedas, compatível com a perturbação forte;
+não concluir benefício de aprendizado a partir disso.
+
+## Básico recolhível e trote nos oito rumos — 19/10/2026
+
+Ampliação solicitada pelo usuário após a etapa inicial: categorias recolhíveis
+**Básico** e **Compostos**, esta última vazia. Básico contém parado/giro e trote
+nas oito direções. Os dez exercícios treinam juntos na política `motor_autonomo`,
+com cerca de 10% dos 512 mundos para cada um. São cotas por decisões, sem
+esperar a aprovação de um exercício para iniciar outro. Beads `matter_engine-3f0`;
+diário do brain `diario/reescrita/09_basico_trote_oito_rumos_19_10.md`.
+
+Trote alvo 4,5 m/s (padrão do projeto), rampa inicial 2 s. O deslocamento é
+relativo ao rumo inicial e peito/visão mantêm o alvo no horizonte, permitindo
+costas e strafe. Diagonais normalizadas. A deriva no trote é desvio lateral,
+sem custo pela distância percorrida corretamente. Chão ampliado para cobrir
+30 s de avaliação, mantendo 120 Hz / 30 Hz / solver 20/20 e as forças do corpo.
+
+**Correção pedida durante a execução:** a primeira composição ainda pagava
+sustentação/peito/cabeça sem avanço. No deslocamento, todos os bônus positivos
+agora dependem de progresso vetorial útil para a velocidade pedida; parado
+recebe zero desses bônus e custo de inatividade 0,1/s. Progresso parcial melhora
+a nota; direção errada e excesso de velocidade custam. Parado/giro mantêm suas
+regras específicas. Nenhum prior IDLE puxa a pose durante o trote. Não confundir
+essa correção com prova de que a rede já aprendeu a marcha ou ficará livre de
+todo atalho futuro de recompensa.
+
+Contrato motor-v2: duas entradas de comando horizontal acrescentadas ao fim,
+154 observações, mesmas 39 ações/corpo/forças. Migração explícita da rodada691
+preservou pesos, saídas antigas, normalização, contadores e momentos Adam,
+ampliando primeiras matrizes com colunas zero. Cópia anterior em
+`antes_trote_motor_v1_691.pt`; receita viva revisão5 em
+`~/.local/share/matter-engine/rl/runs/motor_autonomo/tarefa.json`. Backups por
+mudança de receita também incluem hash para não sobrescrever duas calibrações
+feitas na mesma rodada. Só se usaram pesos da nova base autônoma, não dos
+sistemas antigos descartados.
+
+Menu, prévia, avaliações e histórico compartilham os dez IDs; o gráfico normal
+de trote mostra velocidade real/pedida, e o expandido inclui erro vetorial e
+desvio lateral. Avaliação lateral filtrada pelo exercício selecionado.
+Categorias recolhidas/abertas conferidas em capturas headless. A sessão
+conjunta foi iniciada e os logs registraram episódios de todos os dez tipos.
+Avaliação r700 inclui os dez, sem declarar trote adquirido. Avaliação automática
+passa a 500 rollouts (32 mundos × até30s por exercício); botão Avaliar continua
+sob demanda. Isso mantém o orçamento de avaliação proporcional ao aumentar de
+2 para10 exercícios; gráficos de episódios continuam em todas as rodadas.
+
+Validação: arquitetura, builds Python nativa/Debug/profile, treze testes Python
+(12 motor+compatibilidade de exportação), Motor/tela em Debug (2/2,34,21s),
+Motor em profile e tela real com dez exercícios/política migrada passaram.
+Testes cobrem oito vetores, diagonais, ausência de força automática, cotas,
+migração/Adam, progresso contra direção oposta e sustentação subordinada ao
+progresso com Parado legítimo. Suíte geral Debug, timeout180s:20/23 passaram;
+Character/AdaptivePhysics falharam nos controladores antigos e Athlete excedeu
+o limite; PlayerModel passou. Não equivale a aprovação visual do usuário.
+Nenhum commit/push; trabalho sujo anterior preservado.
+
+Sessão retomada com os dez exercícios, receita5 e avaliação a cada500 rodadas.
+As primeiras rodadas oscilaram~13,3k–14,7k decisões/s de coleta+PPO; a meta
+sustentada de vazão continua sem homologação. PPO sobreposto ainda não adotado
+(`matter_engine-55j`). Próximo acompanhamento: progresso real, direção, velocidade,
+quedas e postura em cada rumo, sem abrir Compostos automaticamente.
+
+## RL motor autônomo — 19/10/2026 (Codex)
+
+O usuário autorizou reconstruir o RL e entregar controle no Workbench, somente
+**Ficar parado** e **Girar parado**. A direção atual é o plano no brain
+`04_locomocao/plano_rl_final.md`; diário `diario/reescrita/08_motor_autonomo_19_10.md`.
+Os estados abaixo deste registro são histórico. Beads: `matter_engine-0g0`.
+
+- Runtime próprio `Engine/RL/Motor`, 39 eixos atuados do perfil do jogo, sem
+  líder, residual de animação, imobilização de cabeça/mãos ou ajuda cinemática.
+  Motor absoluto via tanh fixo, física 120 Hz, decisões 30 Hz, solver 20/20.
+  Perfil/forças físicos preservados. Pesos inteiramente novos.
+- Ponte `matter_motor_native`, treinador `tools/rl/motor_treino.py`, receitas
+  em `assets/rl/motor`. PPO síncrono 256×256 ELU em GPU, ator/crítico separados,
+  escala física fixa de observação, razão no latente, bootstrap de timeout e
+  limite de KL. Exportação permite latentes além do corte legado de 10; o
+  tanh do ambiente continua sendo a transformação física final.
+- Recompensas calibráveis por JSON: pesos/formas/escalas, faixa de quadril,
+  inclinações máximas de tronco/cabeça, base e faixas opcionais de eixos
+  `jointRangesDegrees`. Alterações entre rollouts guardam checkpoint anterior,
+  registram receita/hash e aquecem só o crítico por cinco rollouts. Isso não
+  garante ausência de esquecimento. Mudanças do corpo/contrato são recusadas
+  na retomada, não confundidas com ajustes da recompensa.
+- A primeira sessão usou referência neutra estática. A pedido adicional do
+  usuário, a receita v3 prepara 16 poses de `alert_idle`, `turn_left` e
+  `turn_right` por carga de receita e prefere a pose mais próxima. Sem fase
+  obrigatória nem posição/rumo global de animação; ajuda só na recompensa.
+  Peso global 0,2, escalas separadas idle 1 e turn 0,25. Peso global zero
+  elimina inclusive a dependência dos arquivos de clipes. Preferência de
+  pose não ensina por si só a sequência dos passos.
+- Workbench usa visualizador/política novos, lista apenas os dois exercícios
+  quando existe sessão motor, mostra gráficos por exercício e permite alvo
+  manual no horizonte, pausar/retomar/parar/salvar/avaliar e modos 12/8/4
+  threads. Treinos antigos permanecem no disco. O atalho continua em
+  `tools/run.sh`, com a build profile atualizada ao fim da sessão.
+
+Sessão nova: `~/.local/share/matter-engine/rl/runs/motor_autonomo`, 512 mundos,
+modo máximo. Em r100 o parado ainda caía (~4,81 s). Em r200, 32/32 mundos
+completaram 30 s: velocidade mediana 0,00245 m/s, deriva P90 0,049 m, erro de
+peito 0,83°. O giro entrou em 50% dos mundos. Em r400 o parado manteve 32/32;
+o giro continuava de pé, mas com erro de peito ~70,4°: **giro não aprovado**.
+Esses resultados precedem a ajuda dos clipes. Receita v3 entrou na retomada
+após r433, com cópia `antes_receita_433.pt`; não atribuir resultados anteriores
+aos clipes. Checkpoints retomam rede/otimizadores/contadores/RNG, não o estado
+físico exato dos mundos. A sessão foi retomada ao fim da implementação.
+
+Vazão: benchmark inicial ~16,4k decisões/s de simulação e ~14,2k de coleta+PPO
+no fim de 25 rollouts. A repetição final ficou em ~12,9–13,1k de coleta+PPO;
+**piso sustentado de 14k e alvo 16k não homologados**. A/B alternado sem treino,
+mesmas ações/física: estática [14.080,14.746,14.716] e clipes
+[14.400,14.504,14.933] decisões/s. Sem regressão mensurável atribuível à ajuda.
+Os números de rollout excluem avaliação/gravação periódica. O pedido de usar
+ociosidade da GPU corresponde ao pipeline-16 antigo (PPO desacoplado):
+comparação da candidata no novo motor está registrada em `matter_engine-55j`.
+Não transplantar a primeira sobreposição ingênua que prejudicou KL/LR, nem
+confundir mais épocas/ocupação com mais aprendizado. O treinador novo
+**continua síncrono**.
+
+Validação: arquitetura, builds Python nativa/Debug/profile, oito testes Python
+(sete do motor + compatibilidade de exportação), testes Motor e tela em Debug
+(2/2, 33,88 s) e profile passaram. Tela renderizada sem janela nos dois
+exercícios e na sessão real ativa, com rede, curvas e avaliação. Não equivale
+à aprovação visual do usuário. Suíte Debug geral: 19/23 passaram; Character e
+AdaptivePhysics falharam nos controladores antigos; PlayerModel falhou um
+orçamento de carga sob concorrência (6.053 ms); a sonda antiga Athlete foi
+limitada manualmente após >5 min e não foi homologada. Não chamar esse último
+resultado de falha lógica provada. O build Debug inicial tinha 38 objetos
+vazios de execuções anteriores; foram removidos somente esses artefatos e
+recompilados. Nenhum commit/push; trabalho sujo anterior preservado.
+
+Continuidade: verificar sessão/processo vivo, acompanhar giro, calibrar com o
+usuário e comparar ajuda progressivamente reduzida a zero em avaliação com
+sementes reservadas. Medir a candidata de pipeline por qualidade/decisões e
+por tempo real antes de adotá-la. Não abrir exercícios futuros automaticamente.
 
 ## A recuperação do RL do Corpo (14/10/2026, noite): o R1
 
@@ -126,7 +987,7 @@ no `docs/REINFORCEMENT_LEARNING.md` ("A reformulação do Corpo").
 
 ## Aprendizado por Reforço (12/10/2026)
 
-O plano está no vault (`30_Projects/matter_engine/Aprendizado_por_Reforco/
+O plano está no vault (`IA_Brain/Aprendizado_por_Reforco/
 Plano_Claude.md`) e o diário de cada etapa em `Execucao_Claude.md`, ao lado
 dele. Ele substitui o início feito pelo Codex em 11/10.
 
@@ -193,7 +1054,7 @@ dele. Ele substitui o início feito pelo Codex em 11/10.
 
 ## Novo controle do atleta: Etapas 0 a 2 (10/10/2026, noite)
 
-O rework segue o plano do vault (`30_Projects/matter_engine/Novo_Controle/
+O rework segue o plano do vault (`IA_Brain/Novo_Controle/
 Plano_Claude.md`); o diário detalhado de cada etapa fica em
 `Execucao_Claude.md`, ao lado dele.
 
@@ -2787,7 +3648,7 @@ a 5 m/s 17.
 
 A pedido do usuário, concluído estudo do caminho ativo para implementação
 posterior pelo Claude. Plano em
-[`astra_planejamento/00_LEIA_PRIMEIRO.md`](</home/dahaka/Área de trabalho/IA_Brain/brain/30_Projects/matter_engine/diagnostico_reconstrucao_locomocao/astra_planejamento/00_LEIA_PRIMEIRO.md>).
+[`astra_planejamento/00_LEIA_PRIMEIRO.md`](</home/dahaka/Área de trabalho/IA_Brain/diagnostico_reconstrucao_locomocao/astra_planejamento/00_LEIA_PRIMEIRO.md>).
 Nenhuma fonte, perfil ou animação do runtime foi alterado nesta investigação.
 
 - Confirmados: intenção misturada à velocidade da cápsula; alvos do
@@ -3030,7 +3891,7 @@ esbarrar em outro boneco, ser empurrado por uma caixa — sem uma mecânica
 específica para cada caso. Começado pelo Codex (observação de contatos de
 todos os links, `AdaptivePhysicalCharacter3D`), continuado aqui. Diário
 completo de pesquisa, ensaios e decisões no Vault:
-`30_Projects/matter_engine/Atualizacao_de_Locomocao_e_Fisica_do_Ragdoll.md`.
+`IA_Brain/Atualizacao_de_Locomocao_e_Fisica_do_Ragdoll.md`.
 
 Na época, o caminho padrão do personagem não mudou (desde 28/09 o modo
 físico é o padrão). No laboratório, a opção **"Física adaptativa
@@ -3901,7 +4762,7 @@ embora ambos os caches locais estejam em Jolt. PhysX não foi removido e o
 arquivo ZIP ainda está untracked; nenhum commit foi feito nesta continuação.
 
 Handoff detalhado reescrito pelo Codex, a pedido do usuário, em
-`/home/dahaka/Área de trabalho/IA_Brain/brain/30_Projects/matter_engine/Em_Desenvolvimento.md`.
+`/home/dahaka/Área de trabalho/IA_Brain/Em_Desenvolvimento.md`.
 Ele lista módulos, correções de convenções, comandos reproduzíveis, logs,
 limitações e revisão de qualidade pendente. O Claude dará continuidade.
 
@@ -6023,7 +6884,7 @@ que esse foi todo o material recebido e autorizou usá-lo.
 
 O usuário rejeitou integralmente o controlador anterior de equilíbrio,
 assistência, locomoção, footwork e get-up. A nova especificação está em
-`IA_Brain/brain/30_Projects/matter_engine/Matter_Biped_Controller_Study_v2_academic/`;
+`IA_Brain/Matter_Biped_Controller_Study_v2_academic/`;
 o código de integração veio de `Matter_Physical_Biped_CleanRoom_v1/PATCH_ONLY`.
 O código V2 rejeitado não foi usado como fonte de algoritmos.
 
@@ -6084,7 +6945,7 @@ autoridade muscular de forma direcionada.
 
 **Encerramento a pedido do usuário, para continuar com outro modelo/IA.**
 Passagem completa no brain:
-`/home/dahaka/Área de trabalho/IA_Brain/brain/30_Projects/matter_engine/HANDOFF_2026-09-17_Ragdoll_Ativo.md`.
+`/home/dahaka/Área de trabalho/IA_Brain/HANDOFF_2026-09-17_Ragdoll_Ativo.md`.
 Contém mapa de arquivos, parâmetros, diagnóstico, logs e próximo passo curto.
 Sem commit/push nesta sessão; preservar alterações locais anteriores misturadas.
 

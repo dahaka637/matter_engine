@@ -113,6 +113,7 @@ CharacterLocomotionAnimations3D defaultLocomotionAnimations3D(CharacterLocomotio
         { "sprintForwardRight", &CharacterLocomotionAnimations3D::sprintForwardRight },
         { "sprintBackwardLeft", &CharacterLocomotionAnimations3D::sprintBackwardLeft },
         { "sprintBackwardRight", &CharacterLocomotionAnimations3D::sprintBackwardRight },
+        { "maxSprint", &CharacterLocomotionAnimations3D::maxSprint },
     };
     for (const auto& [role, id] : roles) {
         const auto found = std::find_if(clips.begin(), clips.end(),
@@ -140,8 +141,8 @@ void defaultLocomotionPose3D(const RagdollProfile3D& profile, Vec3 rootPosition,
 void DefaultLocomotion3D::reset(float facingYawRadians) {
     m_sector = 0;
     m_standTurnFeet.reset();
+    m_feetShownValid = false;
     m_standTurnTarget = facingYawRadians;
-    m_dribbleCadence = 1.0f;
     m_weights.fill(0.0f);
     m_shape.fill(0.0f);
     m_shapeRates.fill(0.0f);
@@ -194,6 +195,8 @@ void DefaultLocomotion3D::reset(float facingYawRadians) {
     m_previousBaseKnown = false;
     m_stepClear = {};
     m_stepClearRate = {};
+    m_uncross = {};
+    m_uncrossRate = {};
     m_airTime = 0.0f;
     m_takeoffSpeed = 0.0f;
     m_airWeight = 0.0f;
@@ -213,6 +216,10 @@ void DefaultLocomotion3D::reset(float facingYawRadians) {
     m_crouchStartPending = false;
     m_crouchStarting = false;
     m_exitInertia.stop();
+    // (Os gestos de bola e a passada deles recomecam do zero.)
+    for (GesturePlayer3D& player : m_gesturePlayers) player.stop();
+    m_gestureShownValid = {};
+    m_gestureSupportValid = {};
     m_landTackleInertia.stop();
     m_airTackleClip = nullptr;
     m_airTackleWeight = 0.0f;
@@ -253,7 +260,6 @@ struct DefaultLocomotion3D::PreparedTables {
     std::array<std::size_t, 2> hands {};
     std::vector<char> upperLinks;
     std::vector<float> amplitudeShare;
-    BallGestureLegs3D gestureLegs;
 };
 
 namespace {
@@ -321,7 +327,6 @@ void DefaultLocomotion3D::prepare(const RagdollProfile3D& profile, const Charact
         entry->hands = m_hands;
         entry->upperLinks = m_upperLinks;
         entry->amplitudeShare = m_amplitudeShare;
-        entry->gestureLegs = m_gestureLegs;
         std::lock_guard<std::mutex> lock(preparedMutex());
         if (cache.size() >= 32) cache.erase(cache.begin());
         cache.push_back(std::move(entry));
@@ -337,7 +342,6 @@ void DefaultLocomotion3D::prepare(const RagdollProfile3D& profile, const Charact
         m_hands = found->hands;
         m_upperLinks = found->upperLinks;
         m_amplitudeShare = found->amplitudeShare;
-        m_gestureLegs = found->gestureLegs;
     }
     m_preparedFor = animations.walk;
     m_preparedAnimations = animations;
@@ -365,6 +369,9 @@ void DefaultLocomotion3D::computePrepared(const RagdollProfile3D& profile,
         if (sprint == nullptr) sprint = trot;
         m_gaits[d].clip = trot;
         m_gaits[d + Directions].clip = sprint;
+        // O sprint maximo so na frente e nas diagonais da frente, com o clipe
+        // dele (sem ele, a faixa fica vazia).
+        m_gaits[d + 2 * Directions].clip = frontSector(static_cast<int>(d)) ? animations.maxSprint : nullptr;
     }
     for (Gait& gait : m_gaits) {
         if (gait.clip == nullptr) continue;
@@ -413,7 +420,6 @@ void DefaultLocomotion3D::computePrepared(const RagdollProfile3D& profile,
                 const std::size_t feet[2] = { leftFoot, rightFoot };
                 for (std::size_t side = 0; side < 2; ++side) {
                     gait.feet[side][static_cast<std::size_t>(k)] = back.rotate(pose.linkPositions[feet[side]] - pose.linkPositions.front());
-                    gait.feetTurn[side][static_cast<std::size_t>(k)] = (back * pose.linkOrientations[feet[side]]).normalized();
                 }
             }
             for (std::size_t side = 0; side < 2; ++side) {
@@ -433,7 +439,6 @@ void DefaultLocomotion3D::computePrepared(const RagdollProfile3D& profile,
     }
     m_feet = { findLink(profile, "LeftFoot"), findLink(profile, "RightFoot") };
     m_hands = { findLink(profile, "LeftHand"), findLink(profile, "RightHand") };
-    m_gestureLegs = resolveBallGestureLegs3D(profile);
     m_upperLinks.assign(profile.links.size(), 0);
     for (std::size_t i = 1; i < profile.links.size(); ++i) {
         const std::string& id = profile.links[i].id;
@@ -494,10 +499,11 @@ void DefaultLocomotion3D::computePrepared(const RagdollProfile3D& profile,
 
 float DefaultLocomotion3D::gaitAmplitudeOf(std::size_t g) const {
     const DefaultLocomotionSettings3D& s = m_settings;
-    const bool sprint = g >= Directions;
+    const std::size_t tier = g / Directions;
+    const bool sprint = tier > 0;
     const std::size_t d = g % Directions;
     const float share = d == 2 || d == 6 ? (sprint ? s.sprintAmplitudeSide : s.trotAmplitudeSide) : 1.0f;
-    return (1.0f + (m_gaitAmplitude[sprint ? 1 : 0] - 1.0f) * share) / std::max(1.0f, m_dribbleCadence);
+    return 1.0f + (m_gaitAmplitude[tier] - 1.0f) * share;
 }
 
 void DefaultLocomotion3D::update(const RagdollProfile3D& profile,

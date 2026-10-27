@@ -1,16 +1,14 @@
 #pragma once
 
 #include "Engine/Athlete/Synthesis/LegClearance3D.hpp"
-#include "Engine/Athlete/Actions/BallHandling3D.hpp"
-#include "Engine/Athlete/Actions/BallPlay3D.hpp"
-#include "Engine/Athlete/Dribble/DribbleTypes3D.hpp"
 #include "Engine/Athlete/Body/ActiveBodyController3D.hpp"
 #include "Engine/Athlete/Body/ActiveStance3D.hpp"
 #include "Engine/Athlete/Body/PhysicalFeetAssist3D.hpp"
 #include "Engine/Athlete/Modes/ModeRules3D.hpp"
 #include "Engine/Athlete/Physical/DynamicTurnMove3D.hpp"
 #include "Engine/Athlete/Planning/FootstepPlanner3D.hpp"
-#include "Engine/Character/BallControl3D.hpp"
+#include "Engine/Athlete/Ball/BallOutcome3D.hpp"
+#include "Engine/Gesture/GestureChoice3D.hpp"
 
 namespace MatterEngine {
 
@@ -47,6 +45,11 @@ struct AthleteRuntimeSettings3D {
     // (o regime B, 17/10). false: o regime A (classico), o par sempre
     // inteiro. Vault 04_locomocao/ajuda_auxiliar.md.
     bool postureCoupleFollowsAssist = true;
+    // A regua de ajuda: true = a historica (o "zero antigo", a lei de antes de
+    // 5f2c4b6 no motor de hoje, o par sempre inteiro; padrao do jogo e do RL
+    // desde 21/10, plano 04_locomocao/plano_rl_sobre_classico.md B); false = a
+    // linear de 17/10 (0% = zero de verdade). O levantar e normalizado nas duas.
+    bool historicalAssistRuler = true;
     // A virada brusca em movimento (experimento do laboratorio, 17/10; so no
     // Fisico total; vault 04_locomocao/virada_brusca.md). Desligada, o atleta
     // e identico bit a bit. A intensidade (0..1) e dos testes.
@@ -87,6 +90,8 @@ struct AthleteRuntimeSettings3D {
     float defaultSprintForwardSpeed = 7.8f;
     float defaultSprintSideSpeed = 5.2f;
     float defaultSprintBackwardSpeed = 5.2f;
+    // O sprint maximo (Shift duplo; so a frente e as diagonais da frente).
+    float defaultMaxSprintSpeed = 10.0f;
     // A regua "Resposta" da capsula no modo padrao (%; ver
     // athleteCapsuleResponse3D): 100 e o aprovado (16 / 22 / 30 m/s2, 10 rad/s).
     float capsuleResponsePercent = 100.0f;
@@ -197,30 +202,16 @@ struct AthleteRuntimeSettings3D {
     // movimentos roboticos e ruins") - so a sonda ainda a liga.
     bool footstepLocomotion = false;
     FootstepSettings3D footsteps;
-    // Manejo novo (a chave A/B "Manejo novo"): desde o plano v2 (fase C), o
-    // BallPlay3D - a acao pela bola na area, a forca pela regua do tempo ate o
-    // contato, o gesto so visual. Com ou sem as pegadas. (O manejo da Etapa
-    // 5, BallHandling3D, fica no codigo ate a limpeza, fora do caminho.)
-    bool newBallHandling = false;
-    // No Ativo, o manejo da Etapa 5 so agia com o centro de massa a menos
-    // disto (m/s) da velocidade da capsula.
-    float ballActiveReadySpeed = 0.35f;
-    [[nodiscard]] bool newBallHandlingActive() const { return newBallHandling; }
-    BallHandlingSettings3D ballHandling;
-    BallPlaySettings3D ballPlay;
-    // Plano v5 (11/10 noite): o manejo refeito do zero (Athlete/Dribble) - o
-    // pe vai ate a bola dentro de um balanco da perna, a forca no contato,
-    // manejo continuo e intercalado. Com o manejo novo ligado.
-    bool dribbleV5 = false;
-    DribbleSettings3D dribble;
     // As pernas nunca se atravessam na pose do padrao (plano v4).
     LegClearanceSettings3D legClearance;
-    // Manejo de bola.
-    float ballContactTiming = 0.0f;
-    bool ballHitboxContact = true;
-    BallForceSettings3D ballForce = defaultBallForceSettings3D();
-    bool ballForceOnly = false;
-    bool ballStabilityAssist = true;
+    // A bola (24/10, a reescrita dos gestos): a forca (a aba "Forca na
+    // bola"), o alcance e os baldes da escolha do gesto e o tempo de cada
+    // gesto (s; o laboratorio tem os dois).
+    BallOutcomeSettings3D ballForce = defaultBallOutcomeSettings3D();
+    GestureReach3D gestureReach;
+    // (24/10: os tempos que o usuario calibrou no laboratorio.)
+    float touchGestureSeconds = 0.45f;
+    float shotGestureSeconds = 0.58f;
 };
 
 } // namespace MatterEngine

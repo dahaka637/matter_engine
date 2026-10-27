@@ -1,0 +1,8 @@
+{
+  "schema": "matter.object.v1",
+  "id": "trave",
+  "displayName": "Trave",
+  "type": "trave",
+  "material": "steel",
+  "parameters": {}
+}

@@ -15,6 +15,7 @@ namespace MatterEngine::ModelInspector {
 // O modelo que os comandos usam, carregado pelas opcoes comuns:
 //   --modelo <model.json>   (padrao: assets/characters/player_model/model.json)
 //   --malha montagem|procedural|nenhuma  (troca a origem da malha)
+//   --corpo <cm>,<kg>       (o corpo: o modelo e o personagem do jogo nele; ex.: 200,95)
 //   --pose <animacao>@<s>   (a malha e os ossos numa pose; ex.: sprint@0.3)
 //   --saida-dir <pasta>     (onde gravar; padrao ./inspecao)
 struct ModelContext {

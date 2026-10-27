@@ -111,6 +111,7 @@ std::vector<std::string> Mesh::validateLayout() const {
     if (triangleMaterial.size() != triangles.size()) problems.push_back("triangleMaterial com tamanho diferente");
     if (!skin.empty() && skin.size() != positions.size()) problems.push_back("skin com tamanho diferente");
     if (!triangleUv.empty() && triangleUv.size() != triangles.size()) problems.push_back("triangleUv com tamanho diferente");
+    if (!trianglePolygon.empty() && trianglePolygon.size() != triangles.size()) problems.push_back("trianglePolygon com tamanho diferente");
     for (const MeshMaterial& material : materials)
         if (material.texture >= static_cast<int>(textures.size()))
             problems.push_back("material " + material.name + " com textura inexistente");

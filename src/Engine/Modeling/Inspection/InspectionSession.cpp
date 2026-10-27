@@ -34,6 +34,8 @@ InspectionScene InspectionSession::scene() const {
     scene.mesh = &m_model->mesh;
     scene.regions = &m_model->regions;
     scene.jointRegion = m_model->jointRegion;
+    scene.surface = m_model->surface.get();
+    scene.kit = m_model->kit.get();
     if (m_pose) {
         scene.pose = &*m_pose;
         if (!m_posedPositions.empty()) scene.meshPositions = m_posedPositions;

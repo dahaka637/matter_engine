@@ -109,10 +109,20 @@ class ActorCritic(nn.Module):
         self.log_std = nn.Parameter(std.clamp(0.02, 2.0).log())
         self.obs_norm = RunningNorm(obs_size)
         self.critic_norm = RunningNorm(critic_size)
+        self.floor_noise: tuple | None = None
 
     def distribution(self, obs_n: torch.Tensor) -> torch.distributions.Normal:
         mean = self.actor(obs_n)
         std = self.log_std.clamp(-5.0, 1.5).exp().expand_as(mean)
+        if self.floor_noise is not None:
+            # Mais exploracao perto do chao (o levantar): o desvio sobe com a pelve baixa.
+            index, high, low, factor, body = self.floor_noise
+            height = obs_n[..., index] * torch.sqrt(self.obs_norm.var[index] + 1e-8) + self.obs_norm.mean[index]
+            if body is not None:
+                # (O corpo variavel: os limiares em metros x s; jogador.altura = (H - 1,80)/0,10, cru.)
+                height = height / (1.0 + obs_n[..., body] * (0.10 / 1.80))
+            near = ((high - height) / max(high - low, 1e-3)).clamp(0.0, 1.0)
+            std = std * (1.0 + (factor - 1.0) * near).unsqueeze(-1)
         return torch.distributions.Normal(mean, std)
 
     def value(self, critic_n: torch.Tensor) -> torch.Tensor:
@@ -126,7 +136,7 @@ class ActorCritic(nn.Module):
 
 
 # --- exportacao para o C++ ----------------------------------------------------------
-def export_policy(model: ActorCritic, path: Path, meta: dict) -> None:
+def export_policy(model: ActorCritic, path: Path, meta: dict, *, action_limit: float = ACTION_LIMIT) -> None:
     """Escreve o .mrlpolicy que o PolicyRuntime3D le (o ator + a normalizacao)."""
     floats: list[np.ndarray] = []
     offset = 0
@@ -153,7 +163,7 @@ def export_policy(model: ActorCritic, path: Path, meta: dict) -> None:
         "actionSize": model.action_size,
         "activation": "elu",
         "normalizer": {"mean": mean_at, "invStd": inv_at, "clip": model.obs_norm.clip},
-        "actionLimit": ACTION_LIMIT,
+        "actionLimit": action_limit,
         "layers": layers,
         "createdUtc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     })

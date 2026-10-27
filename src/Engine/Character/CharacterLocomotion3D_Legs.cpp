@@ -76,19 +76,6 @@ void CharacterLocomotion3D::stepLegs(Tick& t) {
     // feeding the support shift back into it would integrate a displacement.
     if (!input.controlled && !input.rootAnchored) standingShift.x = standingShift.y = 0.0f;
     targetRootPosition += standingShift;
-    // Toque parado na bola com passo de apoio: a pelve vai junto (absoluto,
-    // com peso, suavizado). A ancora da capsula nao inclui isto: a capsula
-    // segue o corpo ate la.
-    {
-        Vec3 wanted {};
-        if (input.controlled && input.ballBody.active && input.ballBody.weight > 0.0f) {
-            const float w = std::clamp(input.ballBody.weight, 0.0f, 1.0f);
-            wanted = { (input.ballBody.position.x - targetRootPosition.x) * w,
-                (input.ballBody.position.y - targetRootPosition.y) * w, 0.0f };
-        }
-        m_ballBodyDelta += (wanted - m_ballBodyDelta) * (1.0f - std::exp(-deltaTime / 0.10f));
-        targetRootPosition += m_ballBodyDelta;
-    }
 
     // Pelve pelo alcance das pernas: desce o que for preciso para o quadril
     // alcancar cada pe apoiado (ou pousando) com a perna a 94% de esticada -
@@ -839,22 +826,6 @@ void CharacterLocomotion3D::stepLegs(Tick& t) {
         if (StanceRiseLimit < 1.0f && input.forceDrivenRoot && gaitMoving && m_feet[side].planted
             && !m_footwork.owns(side) && measured <= 0.0f && physical.feet[side].supporting)
             ikRootPosition[side].z = std::min(ikRootPosition[side].z, measuredPelvis.position.z + StanceRiseLimit);
-        // Manejo de bola: o pe no ar vai a bola (o alvo do toque por cima do
-        // da passada, com o peso do toque).
-        if (!m_feet[side].planted && input.ballAvoid[side].lengthSquared() > 1e-8f)
-            goals[side].position += input.ballAvoid[side];
-        if (input.ballFoot.active && input.ballFoot.side == static_cast<int>(side)
-            && input.ballFoot.weight > 0.0f && !m_feet[side].planted
-            && !(input.ballScript.active && input.ballScript.side == static_cast<int>(side))) {
-            const float w = std::clamp(input.ballFoot.weight, 0.0f, 1.0f);
-            goals[side].position += (input.ballFoot.position - goals[side].position) * w;
-            goals[side].orientation = slerpQuaternion(goals[side].orientation, input.ballFoot.orientation, w);
-        }
-        // O pe no ar nunca entra na bola nem pousa nela (ela nao colide com o
-        // pe): o alvo sai dela no plano. O pe que vai tocar fica de fora.
-        if (input.ballRepel.active && !m_feet[side].planted && input.ballRepel.exemptSide != static_cast<int>(side))
-            goals[side].position += footBallPushOut(profile.links[m_feet[side].linkIndex], goals[side].position,
-                goals[side].orientation, input.ballRepel.position, input.ballRepel.radius, BallRepelMargin);
         // O gancho dos pes (o RL): a altura do balanco e, no pe da passada, o
         // pouso, somados ao alvo do classico (sem correcao, o mesmo alvo; o
         // pouso de um passo do planejador vai no plano dele). Antes da
@@ -896,14 +867,6 @@ void CharacterLocomotion3D::stepLegs(Tick& t) {
             m_lastFootGoalOrientation[side] = goals[side].orientation;
         }
         const Quaternion rootInverse = ikRootOrientation[side].conjugate();
-        // O pe da bola (toque e chute) sai longe da pose do clipe: o IK
-        // limitado a ~52 graus por tick (7 iteracoes de 0,13 rad) deixava o
-        // joelho do chute sem dobrar no armado e o pe 6-25 cm aquem do alvo.
-        // So no chute: no drible as 7 de sempre (com mais, o pe chegava
-        // diferente e 3 de 32 toques no trote se perdiam).
-        const bool ballDriven = input.ballKick.active && input.ballKick.shot && input.ballKick.side == static_cast<int>(side)
-            && ((input.ballScript.active && input.ballScript.side == static_cast<int>(side))
-                || (input.ballFoot.active && input.ballFoot.side == static_cast<int>(side) && input.ballFoot.weight > 0.0f));
         solveFootPose(profile, m_coordinates, m_feet[side].linkIndex,
             rootInverse.rotate(goals[side].position - ikRootPosition[side]),
             (rootInverse * goals[side].orientation).normalized(), 1.0f,
@@ -918,7 +881,7 @@ void CharacterLocomotion3D::stepLegs(Tick& t) {
                 || (GaitStanceHoldYaw && m_feet[side].planted)
                 || (GaitHoldYaw > 0.5f && lowAssist > GaitHoldYawFrom
                     && (m_feet[side].planted || GaitHoldYaw > 1.5f)),
-            ballDriven ? BallFootIterations : 7);
+            7);
     }
     // Alcance das pernas com o pe no chao (R3): quadril pela pelve (fisica
     // e do IK), tornozelo pelo pe (fisico e alvo).

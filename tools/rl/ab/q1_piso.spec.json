@@ -1,0 +1,6 @@
+{"nome": "q1_piso",
+ "checkpoint": "/home/dahaka/.local/share/matter-engine/rl/protegidos/loco_r2_ck23718_base_ab",
+ "fonte": "loco_r2",
+ "rodadas": 600,
+ "comum": {},
+ "mudanca": {"run": {"std_floor": {"equilibrio.inclina": 0.10, "equilibrio.cm": 0.10, "*": 0.05}}}}

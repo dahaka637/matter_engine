@@ -4,6 +4,7 @@
 #include "Engine/Modeling/Assembly/FacePaint.hpp"
 #include "Engine/Modeling/Assembly/NeckShortening.hpp"
 #include "Engine/Modeling/Assembly/ReferenceFit.hpp"
+#include "Engine/Modeling/Assembly/ShoulderBand.hpp"
 #include "Engine/Modeling/Geometry/ModelGeometry.hpp"
 #include "Engine/Modeling/Mesh/MeshSculpt.hpp"
 #include "Engine/Modeling/Raster/Color.hpp"
@@ -152,6 +153,12 @@ struct AssemblyRecipe {
     std::array<float, 2> hipLiftRise { 0.0f, 0.0f };
     std::array<float, 2> hipLiftFront { 0.3f, 0.8f };
     std::array<float, 2> hipLiftMidline { 0.02f, 0.08f };
+    // O gluteo na extensao (21/10/2026): atras, o peso da pelve da faixa e
+    // de "hipGluteRise" metros acima dela passa para a auxiliar GluteHelper
+    // (uma fracao so da extensao): a coxa que vai para tras leva junto a
+    // parte de baixo do gluteo e a borda da perna do calcao nao entalha nele.
+    // Na flexao a auxiliar fica com a pelve: nada muda. 0: desligado.
+    float hipGluteRise = 0.0f;
     int shortsSubdivision = 0;
     // O gancho fica com a malha base: a menos disso do meio, abaixo da junta
     // do quadril (0: o calcao todo). Denso ali, o agachamento fundo (as duas
@@ -161,6 +168,14 @@ struct AssemblyRecipe {
     // alto): grosso como a camisa, os dois dobram juntos (denso por baixo da
     // camisa grossa, um atravessava o outro) e a costura nao faz agulhas.
     float shortsCoarseTop = 0.04f;
+    // As meias-juntas (21/10/2026): onde o vertice tem os dois ossos de uma
+    // junta (joelho, tornozelo, cotovelo, pulso), a parte deles passa
+    // pela auxiliar que gira a metade (a dobra nao amassa). Os auxiliares
+    // estavam sem peso desde a troca para a montagem (08/10).
+    bool halfJoints = false;
+    // O ombro desenhado (ShoulderBand): os pesos da regiao por um campo no
+    // referencial do braco. Larguras zero: desligado (os pesos de calor).
+    ShoulderBand shoulderBand;
     // O meio do gancho preso na pelve: o raio em volta do ponto mais baixo
     // da costura do meio e a fracao dos pesos das coxas (pinWeights).
     float crotchPinRadius = 0.06f;

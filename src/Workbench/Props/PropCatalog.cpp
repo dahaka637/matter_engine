@@ -203,8 +203,8 @@ GpuModel3D uploadModel(Renderer& renderer, LoadedGltfModel& model,
     return result;
 }
 
+} // namespace
 
-// Um objeto procedural na GPU: um pedaco so, com a textura dele.
 GpuModel3D uploadProceduralObject(Renderer& renderer, const ObjectRenderData3D& data) {
     GpuModel3D result;
     result.dimensionsMeters = data.mesh.boundsMax - data.mesh.boundsMin;
@@ -231,7 +231,6 @@ GpuModel3D uploadProceduralObject(Renderer& renderer, const ObjectRenderData3D& 
     return result;
 }
 
-} // namespace
 
 void PropCatalog::load(Renderer& renderer, const MaterialLibrary& materials, std::string_view assetsDirectory) {
     if (m_loaded) return;
@@ -246,6 +245,9 @@ void PropCatalog::load(Renderer& renderer, const MaterialLibrary& materials, std
                 Log::error("Objeto procedural: " + error);
                 continue;
             }
+            // A trave (objeto com rede) entra no laboratorio pelo mapa (GoalRuntime: parada no chao, com a rede
+            // na cena), nao pelo menu de props.
+            if (object->net) continue;
             const ObjectBodyData3D body = objectBodyData3D(*object, materials);
             PropDefinition3D definition;
             definition.id = object->id;

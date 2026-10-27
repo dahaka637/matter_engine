@@ -150,12 +150,16 @@ struct BodyWorldView3D {
     bool hasTarget = false;
     Vec3 target;
     bool targetStop = false;
+    // Os pontos da estrela (o centro e as 8 pontas) no chao, quando o exercicio e a estrela.
+    std::vector<Vec3> starPoints;
     // A velocidade do centro de massa e o rumo do peito (rad).
     Vec3 velocity;
     float chestHeading = 0.0f;
     // O empurrao de agora (push; -1 sem).
     int pushLink = -1;
     Vec3 pushForce;
+    // O quanto o desenho dele aparece (1 durante; some depois que acaba).
+    float pushFade = 1.0f;
 };
 
 // Os mundos de treino do Corpo v2: centenas de bonecos sem janela, avancados

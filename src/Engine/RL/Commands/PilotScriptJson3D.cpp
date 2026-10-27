@@ -61,6 +61,8 @@ PilotScript3D pilotScriptFromJson3D(const nlohmann::json& p, const std::string& 
     script.keysFraction = p.value("keysFraction", script.keysFraction);
     script.syncFraction = p.value("syncFraction", script.syncFraction);
     script.leashMeters = p.value("leashMeters", script.leashMeters);
+    if (p.contains("directions"))
+        for (const nlohmann::json& d : p["directions"]) script.stickDirections.push_back(d.get<float>() * Degrees);
     script.starDirections = p.value("starDirections", script.starDirections);
     script.starJitterDegrees = p.value("starJitterDegrees", script.starJitterDegrees);
     script.continuousFraction = p.value("continuousFraction", script.continuousFraction);

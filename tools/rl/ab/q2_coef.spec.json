@@ -1,0 +1,6 @@
+{"nome": "q2_coef",
+ "checkpoint": "/home/dahaka/.local/share/matter-engine/rl/protegidos/loco_r2_ck23719_recentrado",
+ "fonte": "ab_q2_recentrar_b",
+ "rodadas": 1200,
+ "comum": {"run": {"ppo": {"kl_exclude_saturated": true}}},
+ "mudanca": {"run": {"ppo": {"bound_loss_coef": 0.001}}}}

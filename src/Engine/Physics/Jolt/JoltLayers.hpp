@@ -32,8 +32,14 @@ inline constexpr JPH::ObjectLayer Ragdoll = 2;
 // Corpo interno do character controller. Existe para que consultas e outros
 // corpos VEJAM o personagem, como o ator cinematico do CCT do PhysX fazia.
 inline constexpr JPH::ObjectLayer Character = 3;
+// A barreira invisivel dos jogadores (a rede do gol): estatica, so os links
+// dos bonecos e a capsula batem nela; bola, props e consultas passam.
+inline constexpr JPH::ObjectLayer PlayerBarrier = 4;
+// A mesma, so para a capsula (o fundo inclinado da rede: com os links batendo
+// nele, o boneco caido embaixo nao levantava).
+inline constexpr JPH::ObjectLayer CapsuleBarrier = 5;
 
-inline constexpr JPH::uint Count = 4;
+inline constexpr JPH::uint Count = 6;
 
 } // namespace JoltObjectLayers
 

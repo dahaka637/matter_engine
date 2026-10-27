@@ -1,5 +1,8 @@
 #include "Engine/Modeling/Rig/PlayerModelAsset.hpp"
 
+#include "Engine/Animation/RagdollCharacterBody3D.hpp"
+#include "Engine/Modeling/Import/BlenderExchange.hpp"
+
 #include "Engine/Modeling/Assembly/PlayerAssembly.hpp"
 #include "Engine/Modeling/Mesh/MeshBuilder.hpp"
 #include "Engine/Modeling/Parts/PartLibrary.hpp"
@@ -7,6 +10,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <fstream>
 #include <map>
@@ -71,6 +75,13 @@ std::optional<PlayerModelManifest> loadPlayerModelManifest(const std::filesystem
                     manifest.parts.push_back((manifest.directory / part.get<std::string>()).lexically_normal());
             if (mesh.contains("assembly"))
                 manifest.assemblyPath = (manifest.directory / mesh.at("assembly").get<std::string>()).lexically_normal();
+            if (mesh.contains("blender"))
+                manifest.blenderPath = (manifest.directory / mesh.at("blender").get<std::string>()).lexically_normal();
+        }
+        if (document.contains("appearance")) {
+            const nlohmann::json& appearance = document.at("appearance");
+            manifest.appearanceDirectory = (manifest.directory / appearance.value("directory", std::string("../../appearance"))).lexically_normal();
+            manifest.kit = appearance.value("kit", std::string());
         }
         if (document.contains("skeleton")) {
             const nlohmann::json& skeleton = document.at("skeleton");
@@ -182,6 +193,26 @@ std::optional<LoadedPlayerModel> loadPlayerModel(const std::filesystem::path& ma
             model->source += ", textura " + std::to_string(model->mesh.textures.front().image.width()) + " px, "
                 + std::to_string(static_cast<int>(std::lround(assembled.texelsPerMeter))) + " texels/m";
         model->source += ")";
+    } else if (meshSource == "blender") {
+        std::optional<BlenderExchange> exchange = loadBlenderExchange(manifest->blenderPath, model->skeleton, error);
+        if (!exchange) return std::nullopt;
+        model->mesh = std::move(exchange->mesh);
+        model->surface = std::move(exchange->surface);
+        loaded.sourceFiles.push_back(manifest->blenderPath);
+        // O uniforme novo sobre o template (o kit do manifesto ou o pedido).
+        const std::string kitId = options.kit.empty() ? manifest->kit : options.kit;
+        if (model->surface && !kitId.empty() && kitId != "antigo") {
+            const auto kitStart = std::chrono::steady_clock::now();
+            std::optional<Appearance::LoadedKit> kit = Appearance::loadKit(manifest->appearanceDirectory, kitId, *model->surface, error);
+            if (!kit) return std::nullopt;
+            std::optional<Appearance::ComposedKit> composed = Appearance::composeKit(*model->surface, model->mesh.triangles, *kit->design,
+                kit->kit, {}, error);
+            if (!composed) return std::nullopt;
+            model->kit = std::make_shared<const Appearance::ComposedKit>(std::move(*composed));
+            loaded.timings.push_back({ "uniforme " + kitId,
+                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - kitStart).count() });
+        }
+        model->source = manifest->displayName + " (Blender, " + std::to_string(model->mesh.triangles.size()) + " triangulos)";
     } else if (meshSource == "procedural") {
         std::optional<Mesh> mesh = buildProceduralParts(manifest->parts, model->skeleton, error);
         if (!mesh) return std::nullopt;
@@ -195,12 +226,60 @@ std::optional<LoadedPlayerModel> loadPlayerModel(const std::filesystem::path& ma
     return loaded;
 }
 
+void applyPlayerBody(LoadedPlayerModel& loaded, const PlayerBody3D& body) {
+    if (isBaseBody3D(body)) return;
+    const RagdollCharacter3D& game = *loaded.character;
+    const RagdollToneDeltas3D tone = computeRagdollToneDeltas3D(game);
+    const float s = bodyScale3D(body), w = bodyTone3D(body);
+    auto rig = std::make_shared<GameRig>(*loaded.rig);
+    auto model = std::make_shared<InspectionModel>(*loaded.model);
+    // Com o esqueleto medido o chao do modelo fica; sem ele o modelo e o
+    // espaco do jogo (a pelve na origem).
+    const Vec3 fixed = rig->fitted ? Vec3 { 0.0f, 0.0f, rig->skeleton.groundHeight } : Vec3 {};
+    std::vector<Vec3>& positions = model->mesh.positions;
+    if (!positions.empty()) {
+        // O tonus de cada vertice e o do vertice da pele que saiu dele (a
+        // pele e a malha exportada, so subida ate a pelve na origem).
+        const auto& surface = game.surfaceVertices;
+        if (surface.size() != game.mesh.vertices.size() || surface.empty())
+            throw std::runtime_error("o personagem do jogo sem a origem dos vertices da pele (exportar-jogo)");
+        const Vec3 lift = game.mesh.vertices.front().position - positions.at(surface.front().source);
+        std::vector<Vec3> delta(positions.size());
+        for (std::size_t g = 0; g < surface.size(); ++g) {
+            const std::uint32_t source = surface[g].source;
+            if (source >= positions.size() || distance(positions[source] + lift, game.mesh.vertices[g].position) > 1e-4f)
+                throw std::runtime_error("a malha da modelagem nao e a do personagem do jogo (o corpo precisa da malha exportada)");
+            delta[source] = ragdollTonePosition3D(tone, g, {}, w);
+        }
+        for (std::size_t v = 0; v < positions.size(); ++v) positions[v] = fixed + (positions[v] + delta[v] - fixed) * s;
+    }
+    scaleGameRig(*rig, s, fixed);
+    rig->bodyArmOpening = bodyArmOpening3D(w);
+    model->skeleton = rig->skeleton;
+    // A folga do perfil nos clipes de locomocao do jogo (a mesma do pacote do atleta).
+    std::vector<AnimationClip3D> library;
+    for (const std::string& id : { game.idleClipId, game.walkClipId, game.walkBackwardClipId, game.sprintClipId, game.idleToSprintClipId,
+             game.runForwardArcLeftClipId, game.runForwardArcRightClipId, game.runBackwardArcRightClipId, game.sprintBackwardClipId,
+             game.strafeLeftClipId, game.strafeRightClipId, game.sprintStrafeLeftClipId, game.sprintStrafeRightClipId,
+             game.jumpStandingClipId, game.jumpForwardClipId, game.jumpBackwardClipId, game.jumpLeftClipId, game.jumpRightClipId,
+             game.jumpPrepClipId, game.turnLeftClipId, game.turnRightClipId })
+        if (!id.empty())
+            if (std::optional<AnimationClip3D> clip = loadCharacterClip(id)) library.push_back(std::move(*clip));
+    for (const auto& [role, id] : game.defaultLocomotionClipIds)
+        if (std::optional<AnimationClip3D> clip = loadCharacterClip(id)) library.push_back(std::move(*clip));
+    const std::vector<const AnimationClip3D*> clips = ragdollClearanceClips3D(game, library);
+    loaded.character = std::make_shared<const RagdollCharacter3D>(bodyRagdollCharacter3D(game, body, &tone, clips));
+    loaded.rig = std::move(rig);
+    loaded.model = std::move(model);
+}
+
 std::vector<std::filesystem::path> playerModelFiles(const PlayerModelManifest& manifest) {
     std::vector<std::filesystem::path> files { manifest.directory / "model.json", manifest.regionsPath,
         manifest.characterPath };
     if (!manifest.skeletonFitPath.empty()) files.push_back(manifest.skeletonFitPath);
     files.insert(files.end(), manifest.parts.begin(), manifest.parts.end());
     if (!manifest.assemblyPath.empty()) files.push_back(manifest.assemblyPath);
+    if (!manifest.blenderPath.empty()) files.push_back(manifest.blenderPath);
     return files;
 }
 

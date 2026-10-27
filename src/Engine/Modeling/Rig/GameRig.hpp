@@ -78,11 +78,22 @@ struct GameRig {
     float rootRestLift = 0.0f;
     float rootScale = 1.0f;
     std::vector<std::string> fitMissing;
+    // O corpo (scaleGameRig): os clipes andam a raiz x bodyScale, como no jogo
+    // (scaledAnimationClip3D); o perfil do corpo ja vem em escala.
+    float bodyScale = 1.0f;
+    // E o braco aberto do corpo encorpado (bodyArmOpening3D), como no jogo.
+    float bodyArmOpening = 0.0f;
 };
 
 // O esqueleto a partir do personagem do jogo, na pose de ligacao (T, mao
 // aberta como no FBX). Pontas: HeadTop, <Dedo>Tip e <Lado>ToeTip.
 [[nodiscard]] GameRig buildGameRig(const RagdollCharacter3D& character, const GameRigAdjustments& adjustments = {});
+
+// O rig de um corpo em escala (o do personagem x scale): o espaco do modelo em
+// volta de "fixed" (com o esqueleto medido, o chao: ele fica), o do jogo (o
+// que veio do perfil: a pelve na origem) em volta da origem, os deslocamentos
+// locais x scale; giros, fracoes e angulos ficam.
+void scaleGameRig(GameRig& rig, float scale, Vec3 fixed);
 
 // A mao numa pose: a da ligacao (dedos retos), a de repouso do jogo, ou a
 // aberta e a fechada do jogo (as tabelas de RagdollVisualPose3D).
@@ -94,13 +105,14 @@ enum class RigHandPose : std::uint8_t { Bind, Relaxed, Open, Fist };
     const AnimationClip3D* clip, float timeSeconds, bool relaxedFingers = true, bool inPlace = true);
 // O mesmo com a mao pedida (as duas maos).
 [[nodiscard]] SkeletonPose sampleGameRigPose(const RagdollCharacter3D& character, const GameRig& rig,
-    const AnimationClip3D* clip, float timeSeconds, RigHandPose hand, bool inPlace = true);
+    const AnimationClip3D* clip, float timeSeconds, RigHandPose hand, bool inPlace = true, bool clavicleCarry = true);
 // A pose a partir dos links fisicos ja postos (no espaco do modelo do jogo: a
 // pelve do repouso na origem, o chao em -standingRootHeightMeters) e do giro
 // de cada osso visual desde a ligacao (vazio = o repouso do jogo). E o que
 // as folhas de quadros usam para desenhar uma gravacao do jogo.
 [[nodiscard]] SkeletonPose gameRigPoseFromLinks(const RagdollCharacter3D& character, const GameRig& rig,
-    const RagdollAnimationPose3D& links, std::span<const Quaternion> visualRotation, bool inPlace = false);
+    const RagdollAnimationPose3D& links, std::span<const Quaternion> visualRotation, bool inPlace = false,
+    bool clavicleCarry = true);
 
 // Uma pose com os dedos (polegar incluido) da mao do jogo: o giro de cada um
 // na mao, como no jogo; o resto fica como esta (os testes de dobra partem da

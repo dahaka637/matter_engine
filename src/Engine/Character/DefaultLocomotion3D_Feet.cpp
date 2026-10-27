@@ -117,7 +117,8 @@ void DefaultLocomotion3D::stepFeet(Tick& t) {
             const RagdollLinkDefinition3D& pelvisLink = profile.links.front();
             for (std::size_t side = 0; side < 2; ++side) {
                 const std::size_t index = m_feet[side];
-                if (index == 0) continue;
+                // (A perna do gesto de bola fica com o gesto.)
+                if (index == 0 || gestureFeet[side]) continue;
                 const bool rear = leadSide >= 0 && static_cast<int>(side) != leadSide;
                 const RagdollLinkDefinition3D& footLink = profile.links[index];
                 const int shin = footLink.parentIndex;
@@ -156,7 +157,7 @@ void DefaultLocomotion3D::stepFeet(Tick& t) {
         {
             StandTurnFeetInput3D turn;
             turn.standing = s.standTurnSteps && speed <= 0.3f && requested.length() <= 0.1f && ground > 0.99f
-                && !input.ballGesture.active && !gestureFeet[0] && !gestureFeet[1];
+                && !gestureFeet[0] && !gestureFeet[1];
             turn.facingYawRadians = m_yaw;
             turn.targetYawRadians = m_standTurnTarget;
             turn.turnRateRadiansPerSecond = m_yawRate;
@@ -166,16 +167,31 @@ void DefaultLocomotion3D::stepFeet(Tick& t) {
                 if (m_feet[side] != 0)
                     turn.reference[side] = { rootPosition + rootOrientation.rotate(local.linkPositions[m_feet[side]]),
                         (rootOrientation * local.linkOrientations[m_feet[side]]).normalized() };
+            turn.shown = m_feetShown;
+            turn.shownValid = m_feetShownValid;
             turn.deltaTime = dt;
             m_standTurnFeet.update(profile, m_feet, turn);
         }
         bool moved = false;
+        // (Os pes de agora, para a trava de nao cruzar.)
+        std::array<Vec3, 2> footNow {};
+        for (std::size_t side = 0; side < 2; ++side)
+            if (m_feet[side] != 0)
+                footNow[side] = m_gestureSupportValid[side] ? m_gestureSupport[side].position
+                    : rootPosition + rootOrientation.rotate(local.linkPositions[m_feet[side]]);
         for (std::size_t side = 0; side < 2; ++side) {
             const std::size_t index = m_feet[side];
             if (index == 0) continue;
             const RagdollLinkDefinition3D& link = profile.links[index];
             Vec3 position = rootPosition + rootOrientation.rotate(local.linkPositions[index]);
             Quaternion orientation = (rootOrientation * local.linkOrientations[index]).normalized();
+            const Vec3 posed = position;
+            // O pe de apoio de um gesto de bola: onde a locomocao o poria (o
+            // gesto mexe na pelve, nao nele).
+            if (m_gestureSupportValid[side]) {
+                position = m_gestureSupport[side].position;
+                orientation = m_gestureSupport[side].orientation;
+            }
             const float footContact = std::clamp(contact[side], 0.0f, 1.0f);
             const bool ballFoot = gestureFeet[side];
             const auto strideShift = [&](Vec3 at) {
@@ -192,28 +208,6 @@ void DefaultLocomotion3D::stepFeet(Tick& t) {
                 return result;
             };
             const Vec3 shift = ballFoot ? Vec3 {} : strideShift(position);
-            // (A perna ainda saindo do gesto anterior tambem: a pose ja traz o
-            // pe dela - lido dali, o "pe do clipe" era o proprio pe e a volta
-            // corria atras de si mesma, ate 1 m de altura.)
-            const bool releaseFoot = !ballFoot && input.ballGesture.active && input.ballGesture.releaseWeight > 0.0f
-                && static_cast<int>(side) == input.ballGesture.releaseSide;
-            if (ballFoot || releaseFoot) {
-                // O pe do gesto: onde a locomocao o poria sem ele (o do estilo
-                // com a passada e o chao) - o gesto volta para ele.
-                const Vec3 style = m_output.styleFootPosition[side];
-                const Quaternion styleOrientation = m_output.styleFootOrientation[side];
-                Vec3 clip = style + strideShift(style);
-                clip.z -= (m_trunkHeight - m_landingSink) * std::clamp(m_plantWeight[side], 0.0f, 1.0f);
-                float clipGround = feet.z;
-                if (input.groundAt) {
-                    const GroundProbeResult3D probe = input.groundAt(clip);
-                    if (probe.hasSurface && std::abs(probe.pointWorld.z - feet.z) < 0.6f) clipGround = probe.pointWorld.z;
-                }
-                clip.z += std::max(0.0f,
-                    clipGround - soleHeight(link, clip, styleOrientation, s.toeRoll ? s.toeRollMeters : 0.0f));
-                m_output.locomotionFootPosition[side] = clip;
-                m_output.locomotionFootOrientation[side] = styleOrientation;
-            }
             // Na curva o pe pousa girado para dentro dela, o de dentro mais,
             // pela curva que o corpo faz de fato (como no fisico): gira no
             // balanco e fica assim no apoio; freando, parado ou com a bola, o
@@ -271,11 +265,53 @@ void DefaultLocomotion3D::stepFeet(Tick& t) {
             } else {
                 m_footLocks[side] = {};
             }
-            if (m_standTurnFeet.weight() > 0.0f && !ballFoot && !releaseFoot) {
+            if (m_standTurnFeet.weight() > 0.0f && !ballFoot) {
                 const float w = m_standTurnFeet.weight();
                 const StandTurnFoot3D& turn = m_standTurnFeet.foot(side);
                 shifted += (turn.position - shifted) * w;
                 orientation = slerp3D(orientation, turn.orientation, w);
+            }
+            // As pernas nao se cruzam (ver uncrossFeet): so o pe no balanco
+            // empurra; apoiado o empurrao fica.
+            if (s.uncrossFeet && m_feet[1 - side] != 0) {
+                const Vec3 forward { std::cos(m_yaw), std::sin(m_yaw), 0.0f };
+                const Vec3 left { -forward.y, forward.x, 0.0f };
+                const float sign = side == 0 ? 1.0f : -1.0f;
+                if (footContact < 0.5f) {
+                    float wanted = 0.0f;
+                    // (O pe do gesto de bola nao conta: ele cruza de proposito, no
+                    // ar, e empurrava o apoio para longe.)
+                    if (!ballFoot && !gestureFeet[1 - side] && m_standTurnFeet.weight() <= 0.0f) {
+                        const Vec3 apart = planar(position + shift - footNow[1 - side]);
+                        if (std::abs(dot(apart, forward)) < s.uncrossAlong)
+                            wanted = std::max(0.0f, s.uncrossGap - sign * dot(apart, left));
+                    }
+                    spring(m_uncross[side], m_uncrossRate[side], wanted, s.uncrossSeconds, dt);
+                }
+                // (O giro parado - e o passo de acomodacao - leva os pes de onde
+                // estao, com o empurrao: ele sai pelo peso do giro. Apoiado e
+                // parado, ficava para sempre: a perna aberta ate 46 cm.)
+                // (A perna do gesto de bola e do gesto, que ja parte da pose
+                // mostrada - com o empurrao: somado de novo e sumindo na mola, o
+                // pe dava trancos de 5.000 m/s2.)
+                const float own = 1.0f - m_standTurnFeet.weight();
+                if (own <= 0.0f || ballFoot) m_uncross[side] = m_uncrossRate[side] = 0.0f;
+                if (m_uncross[side] > 1e-4f) {
+                    // (Sem esticar a perna alem do que ela ja estica ou de 95% do
+                    // comprimento: reta, o joelho perdia o rumo e girava.)
+                    Vec3 pushed = shifted + left * (sign * m_uncross[side] * own);
+                    const int shin = profile.links[index].parentIndex;
+                    const int thigh = shin >= 0 ? profile.links[static_cast<std::size_t>(shin)].parentIndex : -1;
+                    if (thigh >= 0) {
+                        const Vec3 hip = rootPosition + rootOrientation.rotate(local.linkPositions[static_cast<std::size_t>(thigh)]);
+                        const Vec3 knee = rootPosition + rootOrientation.rotate(local.linkPositions[static_cast<std::size_t>(shin)]);
+                        const float length = (knee - hip).length() + (position - knee).length();
+                        const float limit = std::max((shifted - hip).length(), 0.95f * length);
+                        const Vec3 away = pushed - hip;
+                        if (away.length() > limit) pushed = hip + away * (limit / away.length());
+                    }
+                    shifted = pushed;
+                }
             }
             float groundZ = feet.z;
             if (input.groundAt) {
@@ -286,7 +322,9 @@ void DefaultLocomotion3D::stepFeet(Tick& t) {
             // (Nunca dentro do chao; descendo um degrau quem desce e a pelve,
             // abaixo.)
             // (Com os dedos dobrando no chao, a sola so ate a base deles.)
-            const float sole = soleHeight(link, shifted, orientation, s.toeRoll ? s.toeRollMeters : 0.0f);
+            // (O pe do gesto de bola, inteiro: com a ponta para baixo no chute
+            // os dedos entravam no chao.)
+            const float sole = soleHeight(link, shifted, orientation, s.toeRoll && !ballFoot ? s.toeRollMeters : 0.0f);
             float lift = std::max(0.0f, groundZ - sole);
             {
                 // O pe no balanco passa por cima do degrau a frente (os dedos
@@ -304,7 +342,7 @@ void DefaultLocomotion3D::stepFeet(Tick& t) {
                     const float reachScale = std::clamp(planar(velocity).length() / 2.5f, 1.0f, 2.2f);
                     float ahead = groundZ;
                     for (const float d : { 0.12f, 0.24f, 0.36f }) {
-                        const GroundProbeResult3D probe = input.groundAt(shifted + travel * (d * reachScale));
+                        const GroundProbeResult3D probe = input.groundAt(shifted + travel * (d * reachScale * s.bodyScale));
                         if (probe.hasSurface && probe.pointWorld.z - feet.z < 0.45f && probe.pointWorld.z - feet.z > -0.6f)
                             ahead = std::max(ahead, probe.pointWorld.z);
                     }
@@ -320,25 +358,28 @@ void DefaultLocomotion3D::stepFeet(Tick& t) {
                 lift = (groundZ - sole) * pull;
             }
             const Vec3 target = shifted + Vec3 { 0.0f, 0.0f, lift };
-            if (!ballFoot && !releaseFoot) {
-                m_output.locomotionFootPosition[side] = target;
-                m_output.locomotionFootOrientation[side] = orientation;
-            }
-            if ((target - position).lengthSquared() < 1e-8f && std::abs(m_footYaw[side]) < 1e-4f) continue;
+            m_feetShown[side] = { target, orientation };
+            if ((target - posed).lengthSquared() < 1e-8f && std::abs(m_footYaw[side]) < 1e-4f
+                && !m_gestureSupportValid[side])
+                continue;
             // (Com giro de curva o rumo do pe vem da coxa; o tornozelo sozinho
             // nao gira o pe em volta da vertical e cortava quase todo o giro.)
-            if (std::abs(m_footYaw[side]) > 0.03f)
+            // (O pe de apoio de um gesto tambem: a pelve gira no gesto e, so pelo
+            // tornozelo, o pe pivotava ate 3 cm.)
+            if (std::abs(m_footYaw[side]) > 0.03f || m_gestureSupportValid[side])
                 characterSolveFootPose3D(profile, m_coordinates, index, rootInverse.rotate(target - rootPosition),
                     (rootInverse * orientation).normalized(), 1.0f, true);
             else
                 solveFoot(profile, m_coordinates, index, rootInverse.rotate(target - rootPosition),
-                    (rootInverse * orientation).normalized(), 1.0f);
+                    (rootInverse * orientation).normalized(), 1.0f, s.footBentRetry && (lift > 0.05f || (ballFoot && lift > 0.0f)));
             moved = true;
         }
         (void)moved;
+        m_feetShownValid = m_feet[0] != 0 && m_feet[1] != 0;
     } else {
         // (No ar nada fica travado: no pouso, cada pe trava onde pousar.)
         m_footLocks = {};
+        m_feetShownValid = false;
     }
     // A pelve desce o que um pe apoiado num chao mais baixo nao alcanca (o
     // proximo tick ja vem com ela).

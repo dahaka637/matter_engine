@@ -126,6 +126,43 @@ bool WorkbenchApp::spawnInflatedBallAt(Vec3 position) {
     return true;
 }
 
+void WorkbenchApp::teleportLatestBallToFront() {
+    if (!m_physicsScene || m_inflatedBalls.empty()) {
+        m_notification = { "Nenhuma bola para trazer", 1.6f, 1.6f };
+        return;
+    }
+    SpawnedInflatedBallInstance& ball = m_inflatedBalls.back();
+    if (!m_physicsScene->contains(ball.physicsBall)) return;
+    if (m_physGunGrabbedEntityId == ball.entityId) endPhysGunGrab();
+    // A frente do jogador controlado (a pelve, no rumo do corpo) ou, sem ele, a
+    // da camera; no chao embaixo.
+    Vec3 base = m_laboratoryCameraPosition;
+    float yaw = m_laboratoryCameraYaw;
+    float ahead = 2.0f;
+    const auto controlled = std::find_if(m_spawnedRagdolls.begin(), m_spawnedRagdolls.end(),
+        [&](const SpawnedRagdollInstance& item) { return item.entityId == m_controlledCharacterEntityId; });
+    if (m_controlledCharacterEntityId != 0 && controlled != m_spawnedRagdolls.end()) {
+        const RagdollState3D state = m_physicsScene->ragdollState(controlled->physicsRagdoll);
+        if (!state.links.empty()) {
+            base = state.links.front().position;
+            yaw = m_characterDesiredFacingYaw;
+            ahead = 0.6f;
+        }
+    }
+    const float radius = m_physicsScene->inflatedBallProfile(ball.physicsBall).radiusMeters;
+    Vec3 position = base + Vec3 { std::cos(yaw), std::sin(yaw), 0.0f } * ahead;
+    PhysicsRayHit3D ground;
+    if (m_physicsScene->raycastStatic({ position + Vec3 { 0.0f, 0.0f, 1.5f }, { 0.0f, 0.0f, -1.0f } }, 20.0f, ground))
+        position.z = ground.position.z + radius + 0.01f;
+    m_physicsScene->setInflatedBallFrozen(ball.physicsBall, false);
+    m_physicsScene->setInflatedBallMotion(ball.physicsBall, position, {}, {});
+    ball.physicsState = m_physicsScene->inflatedBallState(ball.physicsBall);
+    ball.simulationPreviousState = ball.physicsState;
+    ball.renderedPosition = ball.previousRenderedPosition = position;
+    ball.renderedOrientation = ball.previousRenderedOrientation = ball.physicsState.orientation;
+    m_notification = { "Bola trazida", 1.2f, 1.2f };
+}
+
 void WorkbenchApp::readInflatedBallStates(float deltaTime) {
     if (!m_physicsScene) return;
     for (SpawnedInflatedBallInstance& ball : m_inflatedBalls) {
@@ -367,6 +404,25 @@ void WorkbenchApp::drawInflatedBallPanel() {
         ImGui::TextColored({ 0.45f, 0.55f, 0.65f, 1.0f }, "%.1f cm, %.0f g, %.2f bar",
             preview.radiusMeters * 200.0f, preview.massKg * 1000.0f, preview.gaugePressurePascals / 100000.0f);
     }
+    // A bola escondida atras do proprio corpo (25/10, pedido do usuario).
+    const auto tip = [](const char* text) {
+        if (!ImGui::IsItemHovered()) return;
+        ImGui::BeginTooltip();
+        ImGui::PushTextWrapPos(ImGui::GetFontSize() * 24.0f);
+        ImGui::TextUnformatted(text);
+        ImGui::PopTextWrapPos();
+        ImGui::EndTooltip();
+    };
+    ImGui::Checkbox("Contorno só na parte coberta", &m_hiddenBallCoveredOnly);
+    tip("A bola atrás do corpo do seu jogador: o contorno branco só no pedaço dela que o corpo cobre. Desligado: o círculo inteiro, com o centro dela coberto.");
+    ImGui::TextColored({ 0.50f, 0.62f, 0.72f, 1.0f }, "Opacidade do contorno");
+    ImGui::SetNextItemWidth(-1.0f);
+    ImGui::SliderFloat("##HiddenBallOpacity", &m_hiddenBallOpacity, 0.05f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+    ImGui::Checkbox("Ponto no centro", &m_ballDot);
+    tip("Um ponto branco no centro da bola, sempre: bem pequeno de perto, maior de longe, nunca maior que a bola.");
+    ImGui::TextColored({ 0.50f, 0.62f, 0.72f, 1.0f }, "Opacidade do ponto");
+    ImGui::SetNextItemWidth(-1.0f);
+    ImGui::SliderFloat("##BallDotOpacity", &m_ballDotOpacity, 0.05f, 1.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
     if (m_inflatedBalls.empty()) {
         ImGui::TextColored({ 0.45f, 0.55f, 0.65f, 1.0f },
             "Nenhuma bola nova no mapa.");

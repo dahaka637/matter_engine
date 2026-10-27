@@ -3,8 +3,10 @@
 #include "Engine/Modeling/Mesh/Mesh.hpp"
 
 #include <array>
+#include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 // As formas dos objetos procedurais na malha da modelagem, ja com o mapa de
 // textura (um retangulo do atlas por face). Fechadas e orientadas para fora:
@@ -32,5 +34,14 @@ struct BoxFaceUvs {
 // textura: quem chama liga a dela).
 bool buildTexturedBox(Mesh& mesh, Vec3 size, const BoxFaceUvs& uvs, std::string_view part, std::string_view material,
     std::string& error);
+
+// Um tubo redondo pelo caminho (os pontos do eixo), com "sides" lados, na
+// parte (raiz) e no material dados. Cada canto do caminho tem o raio da dobra
+// dele (bendRadii, um por ponto do meio; vazio = todos 0): 0 e o canto
+// soldado em meia-esquadria (o corte exato na bissetriz), mais que 0 a dobra
+// em arco. As pontas fecham com tampas (malha fechada, para fora). Devolve o
+// eixo final (com os arcos) em "axis" se pedido.
+bool buildTube(Mesh& mesh, std::span<const Vec3> path, float radius, int sides, std::span<const float> bendRadii,
+    std::string_view part, std::string_view material, std::string& error, std::vector<Vec3>* axis = nullptr);
 
 } // namespace MatterEngine::Modeling

@@ -13,15 +13,19 @@
 #include "Engine/Modeling/Raster/ImageIO.hpp"
 #include "Engine/RL/Environment/BodyTrainingBatch3D.hpp"
 #include "Engine/RL/Policy/PolicyRuntime3D.hpp"
+#include "Engine/RL/Motor/MotorTraining3D.hpp"
+#include "Workbench/ReinforcementLearning/MotorViewer3D.hpp"
 #include "Engine/RL/Supervisor/TrainerLink3D.hpp"
 #include "Support/HeadlessUi.hpp"
 #include "Workbench/ReinforcementLearning/ReinforcementLearningScreen.hpp"
 
 #include "imgui.h"
+#include "imgui_internal.h"
 
 #include <nlohmann/json.hpp>
 #include <sqlite3.h>
 
+#include <algorithm>
 #include <chrono>
 #include <thread>
 #include <cmath>
@@ -66,7 +70,7 @@ std::filesystem::path sourceRoot() { return std::filesystem::path(MATTERENGINE_T
 // Uma politica de mentira no formato do treinador, com as entradas da tarefa
 // pelos nomes: pesos zero (a acao zero segura a pose base).
 void writePolicy(const std::filesystem::path& path, std::uint64_t iteration, const std::vector<std::string>& names,
-    std::size_t actions) {
+    std::size_t actions, const nlohmann::json& meta = nlohmann::json::object()) {
     const std::size_t obs = names.size(), hidden = 8;
     std::vector<float> data;
     const std::size_t mean = data.size();
@@ -92,6 +96,7 @@ void writePolicy(const std::filesystem::path& path, std::uint64_t iteration, con
         { "layers", nlohmann::json::array({ { { "inputs", obs }, { "outputs", hidden }, { "weights", w1 }, { "bias", b1 } },
                         { { "inputs", hidden }, { "outputs", actions }, { "weights", w2 }, { "bias", b2 } } }) },
     };
+    header.update(meta);
     const std::string text = header.dump();
     std::filesystem::create_directories(path.parent_path());
     std::ofstream out(path, std::ios::binary);
@@ -102,6 +107,76 @@ void writePolicy(const std::filesystem::path& path, std::uint64_t iteration, con
     const std::size_t pad = (4 - (12 + text.size()) % 4) % 4;
     for (std::size_t i = 0; i < pad; ++i) out.put('\0');
     out.write(reinterpret_cast<const char*>(data.data()), static_cast<std::streamsize>(data.size() * 4));
+}
+
+void writeJson(const std::filesystem::path& path, const nlohmann::json& value);
+
+void checkMotorExploration(const std::filesystem::path& folder) {
+    const auto assets = sourceRoot() / "assets";
+    const auto task = assets / "rl/motor/basico.json";
+    MotorSettings3D settings;
+    settings.assetsDirectory = assets;
+    settings.taskPath = task;
+    settings.environments = 1;
+    settings.threads = 1;
+    MotorTraining3D batch(settings);
+    std::filesystem::create_directories(folder);
+    std::ofstream historyLog(folder / "log.jsonl");
+    historyLog << R"({"rodada":1,"hora":1,"rumos":{"parado":{"n":1,"erro_peito_graus":2,"deriva":0.1,"imitacao_versao":2,"imitacao":{"similaridade":0.99}}}})" << '\n';
+    historyLog << R"({"rodada":2,"hora":2,"rumos":{"parado":{"n":1,"ep_segundos":1,"nota":0.5,"erro_peito_graus":2,"deriva":0.1,"postura":0.8,"imitacao_versao":3,"imitacao":{"similaridade":0.75}}}})" << '\n';
+    historyLog.close();
+    const auto history = MotorViewer3D::readHistory(folder, 600, 0);
+    require(history.drills.size() == 2 && std::isnan(history.drills[0].imitation) &&
+            std::abs(history.drills[1].imitation - .75) < 1e-6 && std::abs(history.drills[1].posture - .8) < 1e-6,
+            "grafico le a semelhanca e a postura do motor-v4, nao as notas antigas");
+    const auto path = folder / "exploration.mrlpolicy";
+    nlohmann::json meta {{"observationLayout","motor-v4"},{"bodyHash",batch.identity()},
+                         {"explorationStd",std::vector<float>(batch.actionSize(),.4f)}};
+    writePolicy(path,7,batch.observationNames(),batch.actionSize(),meta);
+    PolicyRuntime3D policy(path);
+    require(policy.info().explorationStd.size()==batch.actionSize(), "ruido por eixo exportado");
+    std::vector<float> obs(batch.observationSize()),mean(batch.actionSize());
+    policy.evaluate(obs,mean);
+    require(std::all_of(mean.begin(),mean.end(),[](float v){return v==0.f;}), "runtime medio continua sem ruido");
+    MotorViewer3D first(assets,task,"parado",42),same(assets,task,"parado",42),quiet(assets,task,"parado",42);
+    std::string label;
+    first.setPolicy(path,label);
+    require(first.hasPolicy() && label.find("exploracao")!=std::string::npos && label.find("sustentacao")==std::string::npos,
+            "previa identifica exploracao, sem apoio");
+    same.setPolicy(path,label);
+    meta.erase("explorationStd");
+    writePolicy(folder/"quiet.mrlpolicy",7,batch.observationNames(),batch.actionSize(),meta);
+    quiet.setPolicy(folder/"quiet.mrlpolicy",label);
+    float difference=0.f;
+    for(int k=0;k<12;++k) {
+        first.step();same.step();quiet.step();
+        const auto& a=first.view().state->links;
+        const auto& b=same.view().state->links;
+        const auto& c=quiet.view().state->links;
+        for(std::size_t i=0;i<a.size();++i) {
+            require((a[i].position-b[i].position).length()<1e-6f,"mesma semente reproduz tentativas");
+            difference+=(a[i].position-c[i].position).lengthSquared();
+        }
+    }
+    require(difference>1e-5f,"ruido altera as tentativas fisicas da previa");
+    first.reset(42);same.reset(42);
+    first.step();same.step();
+    require((first.view().state->links[0].position-same.view().state->links[0].position).length()<1e-6f,"reset reproduz exploracao");
+    for(const auto& bad : {std::vector<float>{.4f},std::vector<float>(batch.actionSize(),-1.f)}) {
+        meta["explorationStd"]=bad;
+        writePolicy(path,8,batch.observationNames(),batch.actionSize(),meta);
+        first.setPolicy(path,label);
+        require(!first.hasPolicy(),"ruido invalido recusado na fronteira");
+    }
+    // A previa pede o trote no teto atual do curriculo (curriculo.json ao lado da tarefa).
+    const auto runTask = folder / "tarefa.json";
+    std::filesystem::copy_file(task, runTask, std::filesystem::copy_options::overwrite_existing);
+    writeJson(folder / "curriculo.json", nlohmann::json{{"limits", std::vector<float>(8, .4f)}, {"stage", 0}});
+    MotorViewer3D trot(assets,runTask,"trote_frente",42);
+    trot.setPolicy(folder/"quiet.mrlpolicy",label);
+    for(int k=0;k<70;++k) trot.step();
+    const float requested = trot.view().command.moveVelocity.length();
+    require(requested > .25f && requested < .41f, "previa do trote usa o teto do curriculo");
 }
 
 void writeJson(const std::filesystem::path& path, const nlohmann::json& value) {
@@ -194,6 +269,8 @@ int realRun(const std::filesystem::path& out) {
               << screen.status().iteration << ", pid " << screen.status().pid << '\n';
     std::cout << "historico: " << screen.history().iterations.size() << " rodadas, "
               << screen.history().evaluations.size() << " avaliacoes, " << screen.drills().size() << " exercicios\n";
+    if (screen.status().task == "motor_basico")
+        require(screen.drills() == std::vector<std::string>(MotorTraining3D::drillIds().begin(),MotorTraining3D::drillIds().end()), "o motor mostra os dez exercicios do Basico");
     require(!screen.history().iterations.empty(), "os graficos deveriam ter as rodadas do treino");
     require(screen.viewerReady(), "o visualizador deveria abrir o treino: " + screen.viewerError());
     require(screen.policyLoaded(), "a politica do treino deveria carregar");
@@ -248,6 +325,19 @@ int realRun(const std::filesystem::path& out) {
     }
     frame(screen, canvas, 3);
     snapshot(canvas, "rl_tela_treino_real");
+    if (std::getenv("MATTER_RL_TEST_CATEGORIES")) {
+        ImGuiWindow* sidebar = nullptr;
+        for (auto* window : ImGui::GetCurrentContext()->Windows)
+            if (std::string(window->Name).find("RLSidebar") != std::string::npos) sidebar = window;
+        require(sidebar != nullptr, "a lateral de exercicios existe");
+        const int expandedVertices = ImGui::GetDrawData()->TotalVtxCount;
+        sidebar->StateStorage.SetInt(sidebar->GetID("Básico"),0);
+        sidebar->StateStorage.SetInt(sidebar->GetID("Compostos"),1);
+        frame(screen,canvas,2);
+        require(ImGui::GetDrawData()->TotalVtxCount < expandedVertices, "recolher Basico esconde os exercicios");
+        snapshot(canvas,"rl_categorias_recolhidas");
+        sidebar->StateStorage.SetInt(sidebar->GetID("Básico"),1);
+    }
     {
         // A gravacao: 1 s atras a pelve esta em outro lugar; 0 atras volta a de agora; meio quadro fica entre os dois.
         const Vec3 now = screen.viewerPelvis();
@@ -331,6 +421,22 @@ void processTrainer(const std::filesystem::path& data) {
     std::cout << "treinador de processo proprio: abre, aparece vivo, para pelo sinal\n";
 }
 
+// O empurrao unico no visualizador (23/10, como no treino): o exercicio leve
+// recomeca settleSeconds (3 s) depois do empurrao, que vem entre 1,5 e 3 s.
+void checkSinglePushViewer() {
+    LocomotionViewer3D viewer(sourceRoot() / "assets" / "rl" / "tasks" / "locomocao_e1.json", sourceRoot() / "assets",
+        "parado_empurrao", 7);
+    float first = -1.0f;
+    for (int k = 0; k < 230 && first < 0.0f; ++k) {
+        const std::uint32_t before = viewer.view().steps;
+        viewer.step();
+        if (viewer.view().steps < before) first = static_cast<float>(before + 1) * viewer.policyStepSeconds();
+    }
+    require(first >= 4.6f - 1.0e-3f && first <= 6.2f + 0.07f,
+        "o visualizador recomeca 3 s depois do empurrao unico (recomecou em " + std::to_string(first) + " s)");
+    std::cout << "visualizador: empurrao unico, recomeca em " << first << " s\n";
+}
+
 } // namespace
 
 int main() {
@@ -342,6 +448,9 @@ int main() {
         setenv("MATTER_RL_DATA", (sandbox / "dados").c_str(), 1);
         setenv("XDG_RUNTIME_DIR", (sandbox / "runtime").c_str(), 1);
         unsetenv("MATTER_RL_SOCKET");
+        require(!LocomotionViewer3D::isLocomotionTask(sandbox / "ausente.json"), "tarefa ausente nao pode derrubar a tela");
+        checkSinglePushViewer();
+        checkMotorExploration(sandbox / "motor");
         writeRuns(sandbox / "dados");
         processTrainer(sandbox / "dados_processo");
         writeHistory(sandbox / "dados" / "rl.db");

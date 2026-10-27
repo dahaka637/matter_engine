@@ -1,0 +1,17 @@
+{
+ "nome": "q6_autoridade",
+ "checkpoint": "/home/dahaka/.local/share/matter-engine/rl/protegidos/loco_v5_ck34073_antes_autoridade",
+ "fonte": "loco_v5",
+ "rodadas": 800,
+ "ajuste_comum": "recentrar",
+ "comum": {},
+ "mudanca": {
+  "tarefa": {
+   "caps": {
+    "cadenceOctaves": 0.4,
+    "strideOctaves": 0.4,
+    "gainOctaves": 0.6
+   }
+  }
+ }
+}

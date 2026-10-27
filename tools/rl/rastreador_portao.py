@@ -32,10 +32,13 @@ def main() -> int:
     parser.add_argument("--velocidade", type=float, default=3.0)
     parser.add_argument("--mundos", type=int, default=64)
     parser.add_argument("--threads", type=int, default=6)
+    parser.add_argument("--so-queda-real", action="store_true", help="falhar so na queda de verdade (como o treino com --so-queda-real)")
     parser.add_argument("--zero", action="store_true", help="sem rede (a malha aberta, a linha de base)")
-    parser.add_argument("--modo", default="frente", choices=["frente", "rumos", "trocas", "parado", "giro", "giro_rapido"],
+    parser.add_argument("--modo", default="frente", choices=["frente", "rumos", "trocas", "parado", "giro", "giro_rapido",
+                                                           "estrela", "estrela_fixo", "estrela_girando"],
                         help="frente (G1); rumos: os 8 rumos em relacao ao olhar; trocas: o protocolo do DReCon (7.1); "
-                             "parado, giro, giro_rapido: os exercicios parados (o G2 exige os tres)")
+                             "parado, giro, giro_rapido: os exercicios parados (o G2 exige os tres); "
+                             "estrela, estrela_fixo, estrela_girando: a estrela de 8 pontas na velocidade --velocidade")
     parser.add_argument("--duracao", type=float, default=0.0, help="segundos por episodio (padrao: 20; trocas: 60)")
     parser.add_argument("--cubo-kg", type=float, default=0.0, help="com os projeteis do DReCon nessa massa (a Fig. 11)")
     args = parser.parse_args()
@@ -44,7 +47,7 @@ def main() -> int:
     batch = native.TrackingBatch(str(REPO / "assets"), environments=args.mundos, threads=args.threads, seed=20261018,
                                  scenario="frente", evaluation=True, evaluation_speed=args.velocidade,
                                  episode_seconds=duration, evaluation_mode=args.modo,
-                                 projectiles=args.cubo_kg > 0.0, projectile_minimum_kg=max(args.cubo_kg, 0.01),
+                                 real_fall_only=args.so_queda_real, projectiles=args.cubo_kg > 0.0, projectile_minimum_kg=max(args.cubo_kg, 0.01),
                                  projectile_maximum_kg=max(args.cubo_kg, 0.01))
     model = Policy(batch.obs_size, batch.action_size)
     rodada = 0

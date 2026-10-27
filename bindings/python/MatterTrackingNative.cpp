@@ -58,7 +58,8 @@ NB_MODULE(matter_tracking_native, m) {
                 float switch_seconds, bool projectiles, float projectile_minimum_kg, float projectile_maximum_kg,
                 float idle_share, float turn_share, float fast_turn_share, float action_rate_weight,
                 bool adaptive_legs, float leg_weight, float center_of_mass_velocity_weight, float arm_weight,
-                float trunk_weight, float alive_bonus, float speed_scale) {
+                float trunk_weight, float alive_bonus, float speed_scale, float star_share, float star_fixed_share,
+                float star_turning_share, float star_speed, float star_radius, bool real_fall_only) {
                 TrackingTrainingSettings3D settings;
                 settings.assetsDirectory = assets;
                 settings.environments = environments;
@@ -78,7 +79,16 @@ NB_MODULE(matter_tracking_native, m) {
                 else if (evaluation_mode == "parado") settings.evaluationMode = TrackingEvaluation3D::Idle;
                 else if (evaluation_mode == "giro") settings.evaluationMode = TrackingEvaluation3D::Turn;
                 else if (evaluation_mode == "giro_rapido") settings.evaluationMode = TrackingEvaluation3D::FastTurn;
-                else throw nb::value_error("avaliacao: 'frente', 'rumos', 'trocas', 'parado', 'giro' ou 'giro_rapido'");
+                else if (evaluation_mode == "estrela") settings.evaluationMode = TrackingEvaluation3D::Star;
+                else if (evaluation_mode == "estrela_fixo") settings.evaluationMode = TrackingEvaluation3D::StarFixed;
+                else if (evaluation_mode == "estrela_girando") settings.evaluationMode = TrackingEvaluation3D::StarTurning;
+                else throw nb::value_error("avaliacao: 'frente', 'rumos', 'trocas', 'parado', 'giro', 'giro_rapido', 'estrela', 'estrela_fixo' ou 'estrela_girando'");
+                settings.starShare = star_share;
+                settings.starFixedShare = star_fixed_share;
+                settings.starTurningShare = star_turning_share;
+                settings.starSpeed = star_speed;
+                settings.starRadius = star_radius;
+                settings.realFallOnly = real_fall_only;
                 settings.idleShare = idle_share;
                 settings.turnShare = turn_share;
                 settings.fastTurnShare = fast_turn_share;
@@ -104,7 +114,8 @@ NB_MODULE(matter_tracking_native, m) {
             "projectile_maximum_kg"_a = 8.0f, "idle_share"_a = 0.0f, "turn_share"_a = 0.0f, "fast_turn_share"_a = 0.0f,
             "action_rate_weight"_a = 0.0f, "adaptive_legs"_a = false, "leg_weight"_a = 1.0f,
             "center_of_mass_velocity_weight"_a = 1.0f, "arm_weight"_a = 1.0f, "trunk_weight"_a = 1.0f,
-            "alive_bonus"_a = 0.0f, "speed_scale"_a = 1.0f)
+            "alive_bonus"_a = 0.0f, "speed_scale"_a = 1.0f, "star_share"_a = 0.0f, "star_fixed_share"_a = 0.0f,
+            "star_turning_share"_a = 0.0f, "star_speed"_a = 3.0f, "star_radius"_a = 10.0f, "real_fall_only"_a = false)
         .def_prop_ro("num_envs", &TrackingTraining3D::environmentCount)
         .def_prop_ro("obs_size", &TrackingTraining3D::observationSize)
         .def_prop_ro("action_size", &TrackingTraining3D::actionSize)

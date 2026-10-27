@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Engine/RHI/CharacterMaterial.hpp"
 #include "Engine/RHI/RHICommandList.hpp"
 #include <array>
 #include <cstddef>
@@ -21,6 +22,15 @@ public:
     // to sample. Used by GltfLoader and anything else bringing in authored
     // textures - not the game's per-frame render path.
     virtual TextureHandle createTexture2D(Extent2D extent, std::span<const std::byte> rgbaPixels) = 0;
+    // O material do personagem (CharacterMaterial.hpp): os arrays com os niveis
+    // prontos e o sampler proprio, o buffer por vertice e os parametros. A troca
+    // de uma camada (um uniforme novo) e a dos vertices (outro corpo) respeitam
+    // os quadros em voo, sem esperar o dispositivo inteiro.
+    virtual CharacterMaterialHandle createCharacterMaterial(const CharacterMaterialDesc& desc) = 0;
+    virtual void updateCharacterKitLayer(CharacterMaterialHandle handle, std::uint32_t layer, std::span<const std::byte> levels,
+        std::span<const float> regionAverages) = 0;
+    virtual void updateCharacterVertices(CharacterMaterialHandle handle, std::span<const CharacterKitVertexGpu> vertices) = 0;
+    virtual void destroyCharacterMaterial(CharacterMaterialHandle handle) = 0;
 
     virtual void destroyBuffer(BufferHandle handle) = 0;
     virtual void destroyShader(ShaderHandle handle) = 0;

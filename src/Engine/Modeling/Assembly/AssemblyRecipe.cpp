@@ -57,6 +57,10 @@ void validateRecipe(const AssemblyRecipe& r) {
         "hipLiftFront: cossenos de -1 a 1, o primeiro menor");
     check(r.hipLiftMidline[0] >= 0.0f && r.hipLiftMidline[1] > r.hipLiftMidline[0] && r.hipLiftMidline[1] < 0.2f,
         "hipLiftMidline: de 0 a 20 cm do meio, o primeiro menor");
+    check(r.hipGluteRise >= 0.0f && r.hipGluteRise < 0.3f, "hipGluteRise de 0 a 30 cm");
+    for (std::size_t k = 0; k < 4; ++k)
+        check(!r.shoulderBand.enabled() || (r.shoulderBand.width[k] > 0.0f && r.shoulderBand.end[k] > r.shoulderBand.full[k] && r.shoulderBand.full[k] >= 0.0f),
+            "shoulderBand: larguras positivas e o fim (end) depois do inteiro (full) nas quatro direcoes");
     check(r.shortsLooseTop < r.shirtLooseHem, "o alto do calcao tem que ficar dentro da camisa (folga menor que a da barra dela)");
     check(r.recess > 0.003f && r.recess < 0.06f && r.clothRelax >= 0 && r.clothRelax < 40 && r.shoulderRelax >= 0.0f
             && r.shoulderRelax <= 1.0f && r.clothSteps >= 1 && r.clothSteps < 40
@@ -184,9 +188,22 @@ std::optional<AssemblyRecipe> parseAssemblyRecipe(std::string_view json, std::st
         if (document.contains("hipLiftRise")) recipe.hipLiftRise = document.at("hipLiftRise").get<std::array<float, 2>>();
         if (document.contains("hipLiftFront")) recipe.hipLiftFront = document.at("hipLiftFront").get<std::array<float, 2>>();
         if (document.contains("hipLiftMidline")) recipe.hipLiftMidline = document.at("hipLiftMidline").get<std::array<float, 2>>();
+        readValue(document, "hipGluteRise", recipe.hipGluteRise);
         readValue(document, "shortsSubdivision", recipe.shortsSubdivision);
         readValue(document, "shortsCoarseCrotch", recipe.shortsCoarseCrotch);
         readValue(document, "shortsCoarseTop", recipe.shortsCoarseTop);
+        readValue(document, "halfJoints", recipe.halfJoints);
+        if (document.contains("shoulderBand")) {
+            const auto& band = document.at("shoulderBand");
+            ShoulderBand& out = recipe.shoulderBand;
+            out.center = band.at("center").get<std::array<float, 4>>();
+            out.width = band.at("width").get<std::array<float, 4>>();
+            out.full = band.at("full").get<std::array<float, 4>>();
+            out.end = band.at("end").get<std::array<float, 4>>();
+            if (band.contains("midline")) out.midline = band.at("midline").get<std::array<float, 2>>();
+            readValue(band, "rigidUntil", out.rigidUntil);
+            if (band.contains("collarGuard")) out.collarGuard = band.at("collarGuard").get<std::array<float, 2>>();
+        }
         if (document.contains("weightRelax")) {
             const nlohmann::json& relax = document.at("weightRelax");
             readValue(relax, "iterations", recipe.weightRelaxIterations);

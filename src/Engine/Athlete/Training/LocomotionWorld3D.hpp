@@ -93,6 +93,9 @@ public:
     void throwBox(const LocomotionThrow3D& item);
     // O terreno do proximo comeco (reset ou restore).
     void setStatics(std::vector<LocomotionStaticBox3D> statics);
+    // Os recursos do proximo comeco (o corpo variavel: o perfil, os clipes e a
+    // capsula de outro corpo); valem do reset ou restore seguinte em diante.
+    void setAssets(const AthleteRuntimeAssets3D& assets);
 
     // Um tick: o comando, o passo do atleta pelo runtime, os empurroes e a
     // fisica.

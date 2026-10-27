@@ -2,7 +2,11 @@
 
 This file provides instructions and context for AI coding agents working on this project.
 
-<!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:1105d646 -->
+## Memória do projeto (o vault)
+
+Decisões, planos, diários e lições ficam no vault do Obsidian `/home/dahaka/Área de trabalho/IA_Brain` (comece por `LEIA_PRIMEIRO.md`; regras no `CLAUDE.md` de lá). Consulte-o pelo MCP **Basic Memory** (projeto `matter-engine`: `search_notes`, `build_context`, `read_note`) antes de decidir sobre algo já discutido. Arquitetura do código: **Graphify** (`graphify query --graph "/home/dahaka/Área de trabalho/IA_Brain/graphify/graph.json"`).
+
+<!-- BEGIN BEADS INTEGRATION v:1 profile:minimal hash:46cd31e7 -->
 ## Beads Issue Tracker
 
 This project uses **bd (beads)** for issue tracking. Run `bd prime` to see full workflow context and commands.
@@ -46,6 +50,7 @@ This protocol applies when ending a Beads implementation workflow. It is subordi
 
    # Team-maintainer opt-in only, unless current instructions forbid it:
    git pull --rebase
+   bd dolt push
    git push
    git status
    ```

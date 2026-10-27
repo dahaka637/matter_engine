@@ -7,6 +7,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <functional>
 #include <vector>
 
 namespace MatterEngine::Modeling {
@@ -81,6 +82,13 @@ public:
     void triangleLit(Vec3 a, Vec3 b, Vec3 c, const std::array<Vec3, 3>& normals, Color color, const PixelLight& light);
     void triangleTexturedLit(Vec3 a, Vec3 b, Vec3 c, Uv uvA, Uv uvB, Uv uvC, const std::array<Vec3, 3>& normals, const Image& texture,
         const PixelLight& light);
+    // A cor de cada pixel por uma funcao das baricentricas do triangulo
+    // original (corrigidas pela perspectiva e pelo recorte), sob a mesma luz:
+    // o material da roupa do sistema de aparencia.
+    // (x, y: o pixel, para as derivadas do material.)
+    using PixelShader = std::function<Color(float b0, float b1, float b2, int x, int y)>;
+    void triangleShadedLit(Vec3 a, Vec3 b, Vec3 c, const std::array<Vec3, 3>& normals, const PixelShader& shader,
+        const PixelLight& light);
     // So a profundidade (o arame sem superficie esconde as arestas de tras).
     void depthOnly(Vec3 a, Vec3 b, Vec3 c);
     // Por cima de uma superficie ja desenhada (destaques): misturado, sem
@@ -104,6 +112,7 @@ private:
     const Projector& m_projector;
     int m_rowBegin = 0;
     int m_rowEnd = 0;
+    const PixelShader* m_pixelShader = nullptr;
 };
 
 // 2D na imagem final (rotulos, gizmo, regua): bordas suaves.

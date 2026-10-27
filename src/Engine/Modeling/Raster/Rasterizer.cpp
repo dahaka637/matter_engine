@@ -11,7 +11,7 @@ namespace {
 
 constexpr float NoDepth = -std::numeric_limits<float>::infinity();
 
-enum Kind : int { Flat = 0, Gradient = 1, DepthOnly = 2, Accumulate = 3, Overlay = 4, Textured = 5, Lit = 6, TexturedLit = 7 };
+enum Kind : int { Flat = 0, Gradient = 1, DepthOnly = 2, Accumulate = 3, Overlay = 4, Textured = 5, Lit = 6, TexturedLit = 7, ShadedLit = 8 };
 
 Pixel packed(Color color) {
     // (Arredonda como lround: os valores sao positivos.)
@@ -163,6 +163,16 @@ void Rasterizer::triangleTexturedLit(Vec3 a, Vec3 b, Vec3 c, Uv uvA, Uv uvB, Uv 
         0.0f, nullptr, true, 0.0f, &texture, &normals, &light);
 }
 
+void Rasterizer::triangleShadedLit(Vec3 a, Vec3 b, Vec3 c, const std::array<Vec3, 3>& normals, const PixelShader& shader,
+    const PixelLight& light) {
+    // (As baricentricas viajam nas cores dos cantos: o recorte e a perspectiva
+    // as interpolam como interpolam o UV.)
+    m_pixelShader = &shader;
+    rasterClipped(a, b, c, ShadedLit, { 1.0f, 0.0f, 0.0f, 1.0f }, { 0.0f, 1.0f, 0.0f, 1.0f }, { 0.0f, 0.0f, 1.0f, 1.0f }, 0.0f, nullptr, true,
+        0.0f, nullptr, &normals, &light);
+    m_pixelShader = nullptr;
+}
+
 void Rasterizer::depthOnly(Vec3 a, Vec3 b, Vec3 c) {
     rasterClipped(a, b, c, DepthOnly, {}, {}, {}, 0.0f, nullptr, true);
 }
@@ -243,10 +253,13 @@ void Rasterizer::rasterClipped(Vec3 a, Vec3 b, Vec3 c, int kind, Color color, Co
                 pixels[index] = packed({ texel.r * amount, texel.g * amount, texel.b * amount, 1.0f });
                 return;
             }
-            if (kind == Lit || kind == TexturedLit) {
+            if (kind == Lit || kind == TexturedLit || kind == ShadedLit) {
                 const float k = light->intensity(safeNormalized(n0 * u0 + n1 * u1 + n2 * u2, n0));
                 const Color base = kind == TexturedLit
-                    ? texture->sample({ c0.r * u0 + c1.r * u1 + c2.r * u2, c0.g * u0 + c1.g * u1 + c2.g * u2 }) : color;
+                    ? texture->sample({ c0.r * u0 + c1.r * u1 + c2.r * u2, c0.g * u0 + c1.g * u1 + c2.g * u2 })
+                    : kind == ShadedLit ? (*m_pixelShader)(c0.r * u0 + c1.r * u1 + c2.r * u2, c0.g * u0 + c1.g * u1 + c2.g * u2,
+                                              c0.b * u0 + c1.b * u1 + c2.b * u2, x, y)
+                                        : color;
                 pixels[index] = packed({ base.r * k, base.g * k, base.b * k, 1.0f });
                 return;
             }

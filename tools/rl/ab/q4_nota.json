@@ -1,0 +1,235 @@
+{
+ "spec": {
+  "nome": "q4_nota",
+  "checkpoint": "/home/dahaka/.local/share/matter-engine/rl/protegidos/loco_r2_ck23719_recentrado",
+  "fonte": "ab_q2_recentrar_b",
+  "rodadas": 1200,
+  "controle_de": "s2_comecos:b",
+  "comum": {
+   "run": {
+    "ppo": {
+     "kl_exclude_saturated": true,
+     "bound_loss_coef": 0.001
+    }
+   },
+   "tarefa": {
+    "speedCurriculum": {
+     "enabled": true,
+     "binStart": [
+      1.5,
+      1.5,
+      0.75,
+      0.75,
+      0.75,
+      0.75,
+      0.75,
+      1.5
+     ],
+     "step": 0.25,
+     "minEpisodes": 32,
+     "window": 64,
+     "tracking": 0.8,
+     "maxFalls": 0.15,
+     "minCruise": 15,
+     "frontier": 0.25
+    },
+    "savedStarts": {
+     "capacity": 128,
+     "surviveSeconds": 1.0,
+     "minimumSpeed": 1.0
+    }
+   },
+   "exercicios": {
+    "estrela_trote": {
+     "savedStartFraction": 0.4
+    },
+    "estrela_trote_fixo": {
+     "savedStartFraction": 0.4
+    },
+    "estrela_trote_girando": {
+     "savedStartFraction": 0.4
+    },
+    "estrela": {
+     "savedStartFraction": 0.3
+    }
+   }
+  },
+  "mudanca": {
+   "run": {
+    "smooth_policy_coef": 1.0
+   },
+   "tarefa": {
+    "reward": {
+     "contactPerCycle": true,
+     "neckRelative": true,
+     "neckSlackDegrees": 6.0,
+     "velocitySmoothed": true
+    }
+   }
+  }
+ },
+ "inicio": "2026-10-18 09:02",
+ "bracos": {
+  "a": {
+   "run": "ab_s2_comecos_b",
+   "minutos": 41.65936185916265,
+   "medidas": {
+    "quedas_treino": 0.20579097314841963,
+    "taxa": 4.7072027821000006e-05,
+    "kl": 0.026871168584912085,
+    "corte": 0.3332232666015625,
+    "desvio": 0.6703308564424515,
+    "decisoes_s": 8262.063296394603,
+    "saturacao": {
+     "pose": 0.4273608270287514,
+     "pes": 0.4800681674480438,
+     "equilibrio": 0.18027309626340865,
+     "ganho": 0.4060005795955658,
+     "turno": 0.17179611206054687
+    },
+    "trancos_media": 0.014756884248927236,
+    "kl_top": [
+     [
+      "equilibrio.inclina.lado",
+      0.007308617718517782
+     ],
+     [
+      "equilibrio.inclina.frente",
+      0.006276047045830637
+     ],
+     [
+      "equilibrio.altura",
+      0.0017668590985704222
+     ],
+     [
+      "pes.dir.pouso.x",
+      0.0005981798280845394
+     ],
+     [
+      "pes.esq.pouso.x",
+      0.00026748694130219515
+     ]
+    ],
+    "exercicios": {
+     "parado": {
+      "quedas": 0.0,
+      "feita": 0.06531072265560717,
+      "pedida": 0.0
+     },
+     "estrela": {
+      "quedas": 0.21525423728813559,
+      "feita": 0.7870824164758294,
+      "pedida": 0.9890388906002044
+     },
+     "giro": {
+      "quedas": 0.0,
+      "feita": 0.08920670504034575,
+      "pedida": 0.0
+     },
+     "estrela_trote": {
+      "quedas": 0.3336397058823529,
+      "feita": 0.9477525178123923,
+      "pedida": 1.2449429627946194
+     },
+     "curva": {
+      "quedas": 0.017488076311605722,
+      "feita": 1.326944776862528,
+      "pedida": 1.5010869389308086
+     },
+     "estrela_trote_fixo": {
+      "quedas": 0.1498028909329829,
+      "feita": 0.7641709727307343,
+      "pedida": 0.9494770654867576
+     },
+     "estrela_trote_girando": {
+      "quedas": 0.5399484536082474,
+      "feita": 0.7317102850251591,
+      "pedida": 0.9519651707300206
+     }
+    }
+   },
+   "portao": "portao: ab_s2_comecos_b rodada 24919 · tarefa locomocao_f2t · 64 episodios de 20 s por exercicio e solver\n  parado          passa  rede: quedas 0% (ate 6%) vel 0.03/0.00 erro 0.05 estilo 0.072 ajuda 0.00 | sem pose/rigidez erro 0.10 | classico: quedas 9% vel 0.13 erro 0.18\n  estrela         NAO   rede: quedas 11% (ate 21%) vel 0.81/1.02 erro 0.41 estilo 0.138 ajuda 0.00 | sem pose/rigidez erro 0.73 | classico: quedas 100% vel 0.65 erro 0.90\n      frente    pedida 1.08 feita 0.90 erro 0.43 quedas 7/64 (30389 decisoes de cruzeiro)\n      diag_esq  pedida 1.11 feita 0.32 erro 0.87 quedas 0/52 (360 decisoes de cruzeiro)\n      esquerda  pedida 1.11 feita 0.29 erro 0.81 quedas 0/51 (159 decisoes de cruzeiro)\n      tras_esq  pedida 1.10 feita 0.40 erro 0.82 quedas 0/49 (21 decisoes de cruzeiro)\n      costas    pedida 1.05 feita 0.65 erro 0.00 quedas 0/64 (0 decisoes de cruzeiro)\n      tras_dir  pedida 1.10 feita 0.39 erro 1.09 quedas 0/35 (6 decisoes de cruzeiro)\n      direita   pedida 1.10 feita 0.22 erro 1.00 quedas 0/38 (104 decisoes de cruzeiro)\n      diag_dir  pedida 1.10 feita 0.37 erro 0.88 quedas 0/47 (272 decisoes de cruzeiro)\n  giro            passa  rede: quedas 0% (ate 6%) vel 0.05/0.00 erro 0.07 estilo 0.071 ajuda 0.00 | sem pose/rigidez erro 0.10 | classico: quedas 0% vel 0.12 erro 0.17\n  estrela_trote   NAO   rede: quedas 73% (ate 83%) vel 1.08/2.48 erro 1.40 estilo 0.196 ajuda 0.00 | sem pose/rigidez erro 1.64 | classico: quedas 100% vel 0.69 erro 1.79\n      frente    pedida 2.46 feita 1.21 erro 1.57 quedas 41/64 (17022 decisoes de cruzeiro)\n      diag_esq  pedida 2.45 feita 0.51 erro 1.23 quedas 3/45 (79 decisoes de cruzeiro)\n      esquerda  pedida 2.26 feita 0.57 erro 0.89 quedas 0/44 (37 decisoes de cruzeiro)\n      tras_esq  pedida 2.08 feita 0.68 erro 0.88 quedas 0/41 (4 decisoes de cruzeiro)\n      costas    pedida 2.11 feita 0.85 erro 0.00 quedas 0/45 (0 decisoes de cruzeiro)\n      tras_dir  pedida 2.49 feita 0.70 erro 0.00 quedas 0/37 (0 decisoes de cruzeiro)\n      direita   pedida 2.61 feita 0.50 erro 1.02 quedas 0/40 (10 decisoes de cruzeiro)\n      diag_dir  pedida 2.63 feita 0.52 erro 1.12 quedas 3/45 (54 decisoes de cruzeiro)\n  curva           NAO   rede: quedas 3% (ate 11%) vel 1.30/1.44 erro 0.22 estilo 0.091 ajuda 0.00 | sem pose/rigidez erro 0.53 | classico: quedas 100% vel 0.72 erro 1.08\n      frente    pedida 1.47 feita 1.32 erro 0.26 quedas 2/64 (36188 decisoes de cruzeiro)\n      diag_esq  pedida 1.04 feita 0.20 erro 1.11 quedas 0/14 (1 decisoes de cruzeiro)\n      esquerda  pedida 0.81 feita 0.42 erro 0.00 quedas 0/4 (0 decisoes de cruzeiro)\n      tras_esq  pedida 0.80 feita 0.62 erro 0.00 quedas 0/5 (0 decisoes de cruzeiro)\n      costas    pedida 0.80 feita 0.73 erro 0.00 quedas 0/2 (0 decisoes de cruzeiro)\n      tras_dir  pedida 0.80 feita 0.62 erro 0.00 quedas 0/12 (0 decisoes de cruzeiro)\n      direita   pedida 0.80 feita 0.54 erro 0.00 quedas 0/4 (0 decisoes de cruzeiro)\n      diag_dir  pedida 1.24 feita 0.41 erro 0.00 quedas 0/8 (0 decisoes de cruzeiro)\n  estrela_trote_fixo NAO   rede: quedas 55% (ate 66%) vel 0.97/2.47 erro 1.51 estilo 0.191 ajuda 0.00 | sem pose/rigidez erro 1.66 | classico: quedas 80% vel 0.65 erro 1.77\n      frente    pedida 2.44 feita 1.32 erro 1.35 quedas 3/19 (2212 decisoes de cruzeiro)\n      diag_esq  pedida 2.67 feita 1.31 erro 1.54 quedas 6/22 (2023 decisoes de cruzeiro)\n      esquerda  pedida 2.70 feita 0.78 erro 2.22 quedas 3/30 (4181 decisoes de cruzeiro)\n      tras_esq  pedida 2.47 feita 0.75 erro 2.05 quedas 5/32 (3014 decisoes de cruzeiro)\n      costas    pedida 2.58 feita 0.87 erro 2.05 quedas 2/21 (3511 decisoes de cruzeiro)\n      tras_dir  pedida 2.53 feita 0.85 erro 1.86 quedas 7/31 (3330 decisoes de cruzeiro)\n      direita   pedida 2.45 feita 0.81 erro 1.95 quedas 9/34 (2784 decisoes de cruzeiro)\n      diag_dir  pedida 2.22 feita 1.36 erro 1.04 quedas 0/18 (2283 decisoes de cruzeiro)\n  estrela_trote_girando NAO   rede: quedas 86% (ate 92%) vel 0.94/2.56 erro 1.60 estilo 0.214 ajuda 0.00 | sem pose/rigidez erro 1.71 | classico: quedas 100% vel 0.68 erro 1.74\n      frente    pedida 2.47 feita 1.25 erro 1.55 quedas 5/35 (1948 decisoes de cruzeiro)\n      diag_esq  pedida 2.87 feita 1.11 erro 2.19 quedas 2/35 (1846 decisoes de cruzeiro)\n      esquerda  pedida 2.85 feita 0.74 erro 2.44 quedas 7/29 (1613 decisoes de cruzeiro)\n      tras_esq  pedida 2.64 feita 0.73 erro 2.30 quedas 7/33 (1468 decisoes de cruzeiro)\n      costas    pedida 2.48 feita 0.78 erro 2.09 quedas 3/29 (2033 decisoes de cruzeiro)\n      tras_dir  pedida 2.43 feita 0.79 erro 2.00 quedas 7/32 (1734 decisoes de cruzeiro)\n      direita   pedida 2.37 feita 0.77 erro 1.91 quedas 18/46 (2372 decisoes de cruzeiro)\n      diag_dir  pedida 2.32 feita 1.05 erro 1.69 quedas 6/46 (2453 decisoes de cruzeiro)\nPORTAO: nao passa\n  - estrela: quedas 11% acima do minimo 5%\n  - estrela: quedas: o limite superior de 95% e 21% (ate 10%)\n  - estrela: erro de velocidade 0.41 acima de 0.35\n  - estrela: rumo frente: erro de cruzeiro 0.43 acima de 0.35\n  - estrela: rumo frente: 7 quedas em 64 episodios\n  - estrela: rumo diag_esq: erro de cruzeiro 0.87 acima de 0.35\n  - estrela: rumo esquerda: erro de cruzeiro 0.81 acima de 0.35\n  - estrela: rumo direita: erro de cruzeiro 1.00 acima de 0.35\n  - estrela: rumo diag_dir: erro de cruzeiro 0.88 acima de 0.35\n  - estrela_trote: quedas 73% acima do minimo 5%\n  - estrela_trote: quedas: o limite superior de 95% e 83% (ate 10%)\n  - estrela_trote: erro de velocidade 1.40 acima de 0.50\n  - estrela_trote: rumo frente: erro de cruzeiro 1.57 acima de 0.50\n  - estrela_trote: rumo frente: 41 quedas em 64 episodios\n  - estrela_trote: rumo diag_esq: erro de cruzeiro 1.23 acima de 0.50\n  - estrela_trote: rumo diag_esq: 3 quedas em 45 episodios\n  - curva: quedas: o limite superior de 95% e 11% (ate 10%)\n  - estrela_trote_fixo: quedas 55% acima do minimo 7%\n  - estrela_trote_fixo: quedas: o limite superior de 95% e 66% (ate 10%)\n  - estrela_trote_fixo: erro de velocidade 1.51 acima de 0.60\n  - estrela_trote_fixo: rumo frente: erro de cruzeiro 1.35 acima de 0.60\n  - estrela_trote_fixo: rumo frente: 3 quedas em 19 episodios\n  - estrela_trote_fixo: rumo diag_esq: erro de cruzeiro 1.54 acima de 0.60\n  - estrela_trote_fixo: rumo diag_esq: 6 quedas em 22 episodios\n  - estrela_trote_fixo: rumo esquerda: erro de cruzeiro 2.22 acima de 0.60\n  - estrela_trote_fixo: rumo esquerda: 3 quedas em 30 episodios\n  - estrela_trote_fixo: rumo tras_esq: erro de cruzeiro 2.05 acima de 0.60\n  - estrela_trote_fixo: rumo tras_esq: 5 quedas em 32 episodios\n  - estrela_trote_fixo: rumo costas: erro de cruzeiro 2.05 acima de 0.60\n  - estrela_trote_fixo: rumo costas: 2 quedas em 21 episodios\n  - estrela_trote_fixo: rumo tras_dir: erro de cruzeiro 1.86 acima de 0.60\n  - estrela_trote_fixo: rumo tras_dir: 7 quedas em 31 episodios\n  - estrela_trote_fixo: rumo direita: erro de cruzeiro 1.95 acima de 0.60\n  - estrela_trote_fixo: rumo direita: 9 quedas em 34 episodios\n  - estrela_trote_fixo: rumo diag_dir: erro de cruzeiro 1.04 acima de 0.60\n  - estrela_trote_girando: quedas 86% acima do minimo 7%\n  - estrela_trote_girando: quedas: o limite superior de 95% e 92% (ate 10%)\n  - estrela_trote_girando: erro de velocidade 1.60 acima de 0.60\n  - estrela_trote_girando: rumo frente: erro de cruzeiro 1.55 acima de 0.60\n  - estrela_trote_girando: rumo frente: 5 quedas em 35 episodios\n  - estrela_trote_girando: rumo diag_esq: erro de cruzeiro 2.19 acima de 0.60\n  - estrela_trote_girando: rumo esquerda: erro de cruzeiro 2.44 acima de 0.60\n  - estrela_trote_girando: rumo esquerda: 7 quedas em 29 episodios\n  - estrela_trote_girando: rumo tras_esq: erro de cruzeiro 2.30 acima de 0.60\n  - estrela_trote_girando: rumo tras_esq: 7 quedas em 33 episodios\n  - estrela_trote_girando: rumo costas: erro de cruzeiro 2.09 acima de 0.60\n  - estrela_trote_girando: rumo costas: 3 quedas em 29 episodios\n  - estrela_trote_girando: rumo tras_dir: erro de cruzeiro 2.00 acima de 0.60\n  - estrela_trote_girando: rumo tras_dir: 7 quedas em 32 episodios\n  - estrela_trote_girando: rumo direita: erro de cruzeiro 1.91 acima de 0.60\n  - estrela_trote_girando: rumo direita: 18 quedas em 46 episodios\n  - estrela_trote_girando: rumo diag_dir: erro de cruzeiro 1.69 acima de 0.60\n  - estrela_trote_girando: rumo diag_dir: 6 quedas em 46 episodios\nDOIS SEGUIDOS: ainda nao",
+   "reaproveitado_de": "s2_comecos:b"
+  },
+  "b": {
+   "run": "ab_q4_nota_b",
+   "minutos": 42.34796432654063,
+   "medidas": {
+    "quedas_treino": 0.18309717460429756,
+    "taxa": 4.2232102051e-05,
+    "kl": 0.024052996915270342,
+    "corte": 0.3112738037109375,
+    "desvio": 0.6699912464618683,
+    "decisoes_s": 8155.818264986354,
+    "saturacao": {
+     "pose": 0.4334364265203476,
+     "pes": 0.4079109299182892,
+     "equilibrio": 0.07574105739593506,
+     "ganho": 0.8151904505491256,
+     "turno": 0.09831268310546876
+    },
+    "trancos_media": 0.007020847285166383,
+    "kl_top": [
+     [
+      "equilibrio.inclina.frente",
+      0.006607254077680408
+     ],
+     [
+      "equilibrio.inclina.lado",
+      0.005978540163487195
+     ],
+     [
+      "equilibrio.altura",
+      0.0018460240785498176
+     ],
+     [
+      "pes.dir.pouso.x",
+      0.0003496312937932088
+     ],
+     [
+      "pes.esq.pouso.x",
+      0.0002213938828208484
+     ]
+    ],
+    "exercicios": {
+     "parado": {
+      "quedas": 0.0,
+      "feita": 0.07283470327021567,
+      "pedida": 0.0
+     },
+     "estrela": {
+      "quedas": 0.23420647149460708,
+      "feita": 0.7666460516272782,
+      "pedida": 0.9765471046437467
+     },
+     "giro": {
+      "quedas": 0.0,
+      "feita": 0.09579669212426373,
+      "pedida": 0.0
+     },
+     "estrela_trote": {
+      "quedas": 0.2846580406654344,
+      "feita": 0.933316057634001,
+      "pedida": 1.2327913413867493
+     },
+     "curva": {
+      "quedas": 0.010471204188481676,
+      "feita": 1.2425436002005665,
+      "pedida": 1.4126111868164302
+     },
+     "estrela_trote_fixo": {
+      "quedas": 0.08066759388038942,
+      "feita": 0.7257883191440301,
+      "pedida": 0.8982059837879823
+     },
+     "estrela_trote_girando": {
+      "quedas": 0.4993197278911565,
+      "feita": 0.6985475181722317,
+      "pedida": 0.9253730398457066
+     }
+    }
+   },
+   "portao": "portao: ab_q4_nota_b rodada 24919 · tarefa locomocao_f2t · 64 episodios de 20 s por exercicio e solver\n  parado          passa  rede: quedas 0% (ate 6%) vel 0.04/0.00 erro 0.04 estilo 0.074 ajuda 0.00 | sem pose/rigidez erro 0.05 | classico: quedas 9% vel 0.13 erro 0.13\n  estrela         NAO   rede: quedas 25% (ate 37%) vel 0.78/1.01 erro 0.42 estilo 0.146 ajuda 0.00 | sem pose/rigidez erro 0.70 | classico: quedas 100% vel 0.65 erro 0.72\n      frente    pedida 1.07 feita 0.85 erro 0.45 quedas 16/64 (28078 decisoes de cruzeiro)\n      diag_esq  pedida 1.10 feita 0.32 erro 0.61 quedas 0/49 (333 decisoes de cruzeiro)\n      esquerda  pedida 1.11 feita 0.29 erro 0.55 quedas 0/47 (156 decisoes de cruzeiro)\n      tras_esq  pedida 1.11 feita 0.40 erro 0.39 quedas 0/45 (16 decisoes de cruzeiro)\n      costas    pedida 1.05 feita 0.61 erro 0.00 quedas 0/64 (0 decisoes de cruzeiro)\n      tras_dir  pedida 1.07 feita 0.36 erro 0.44 quedas 0/30 (12 decisoes de cruzeiro)\n      direita   pedida 1.08 feita 0.25 erro 0.57 quedas 0/33 (101 decisoes de cruzeiro)\n      diag_dir  pedida 1.09 feita 0.37 erro 0.62 quedas 0/40 (234 decisoes de cruzeiro)\n  giro            passa  rede: quedas 2% (ate 8%) vel 0.07/0.00 erro 0.06 estilo 0.076 ajuda 0.00 | sem pose/rigidez erro 0.06 | classico: quedas 0% vel 0.12 erro 0.10\n  estrela_trote   NAO   rede: quedas 75% (ate 84%) vel 1.16/2.47 erro 1.30 estilo 0.187 ajuda 0.00 | sem pose/rigidez erro 1.60 | classico: quedas 100% vel 0.69 erro 1.42\n      frente    pedida 2.49 feita 1.23 erro 1.59 quedas 35/64 (17111 decisoes de cruzeiro)\n      diag_esq  pedida 2.44 feita 0.49 erro 0.79 quedas 3/48 (71 decisoes de cruzeiro)\n      esquerda  pedida 2.29 feita 0.60 erro 0.59 quedas 2/46 (31 decisoes de cruzeiro)\n      tras_esq  pedida 2.12 feita 0.76 erro 0.42 quedas 0/39 (4 decisoes de cruzeiro)\n      costas    pedida 2.15 feita 0.92 erro 0.00 quedas 0/46 (0 decisoes de cruzeiro)\n      tras_dir  pedida 2.52 feita 0.76 erro 0.00 quedas 0/38 (0 decisoes de cruzeiro)\n      direita   pedida 2.66 feita 0.57 erro 0.68 quedas 0/41 (14 decisoes de cruzeiro)\n      diag_dir  pedida 2.62 feita 0.55 erro 0.89 quedas 8/45 (54 decisoes de cruzeiro)\n  curva           NAO   rede: quedas 8% (ate 17%) vel 1.27/1.44 erro 0.20 estilo 0.100 ajuda 0.00 | sem pose/rigidez erro 0.40 | classico: quedas 100% vel 0.72 erro 0.94\n      frente    pedida 1.47 feita 1.29 erro 0.26 quedas 5/64 (35500 decisoes de cruzeiro)\n      diag_esq  pedida 1.06 feita 0.36 erro 0.00 quedas 0/13 (0 decisoes de cruzeiro)\n      esquerda  pedida 0.80 feita 0.52 erro 0.00 quedas 0/8 (0 decisoes de cruzeiro)\n      tras_esq  pedida 0.80 feita 0.60 erro 0.00 quedas 0/9 (0 decisoes de cruzeiro)\n      costas    pedida 0.80 feita 0.72 erro 0.00 quedas 0/1 (0 decisoes de cruzeiro)\n      tras_dir  pedida 0.80 feita 0.56 erro 0.00 quedas 0/4 (0 decisoes de cruzeiro)\n      direita   pedida 0.83 feita 0.36 erro 0.00 quedas 0/6 (0 decisoes de cruzeiro)\n      diag_dir  pedida 1.26 feita 0.41 erro 0.36 quedas 0/12 (2 decisoes de cruzeiro)\n  estrela_trote_fixo NAO   rede: quedas 55% (ate 66%) vel 0.96/2.48 erro 1.46 estilo 0.198 ajuda 0.00 | sem pose/rigidez erro 1.65 | classico: quedas 80% vel 0.65 erro 1.53\n      frente    pedida 2.55 feita 1.34 erro 1.42 quedas 0/17 (2327 decisoes de cruzeiro)\n      diag_esq  pedida 2.63 feita 1.33 erro 1.43 quedas 2/18 (2126 decisoes de cruzeiro)\n      esquerda  pedida 2.71 feita 0.76 erro 2.25 quedas 1/30 (4772 decisoes de cruzeiro)\n      tras_esq  pedida 2.55 feita 0.79 erro 2.05 quedas 7/29 (2864 decisoes de cruzeiro)\n      costas    pedida 2.91 feita 0.92 erro 2.27 quedas 2/20 (3188 decisoes de cruzeiro)\n      tras_dir  pedida 2.46 feita 0.88 erro 1.78 quedas 8/29 (3215 decisoes de cruzeiro)\n      direita   pedida 2.43 feita 0.80 erro 1.88 quedas 12/33 (3272 decisoes de cruzeiro)\n      diag_dir  pedida 2.12 feita 1.37 erro 0.94 quedas 0/18 (2156 decisoes de cruzeiro)\n  estrela_trote_girando NAO   rede: quedas 94% (ate 98%) vel 0.96/2.53 erro 1.38 estilo 0.218 ajuda 0.00 | sem pose/rigidez erro 1.50 | classico: quedas 100% vel 0.68 erro 1.48\n      frente    pedida 2.61 feita 1.27 erro 1.68 quedas 9/38 (1485 decisoes de cruzeiro)\n      diag_esq  pedida 2.92 feita 1.06 erro 2.24 quedas 3/32 (1494 decisoes de cruzeiro)\n      esquerda  pedida 2.87 feita 0.74 erro 2.36 quedas 6/28 (1469 decisoes de cruzeiro)\n      tras_esq  pedida 2.52 feita 0.81 erro 2.08 quedas 7/31 (1486 decisoes de cruzeiro)\n      costas    pedida 2.20 feita 0.82 erro 1.52 quedas 6/26 (1447 decisoes de cruzeiro)\n      tras_dir  pedida 2.30 feita 0.77 erro 1.71 quedas 6/27 (1347 decisoes de cruzeiro)\n      direita   pedida 2.12 feita 0.76 erro 1.55 quedas 18/43 (2255 decisoes de cruzeiro)\n      diag_dir  pedida 2.34 feita 1.03 erro 1.66 quedas 4/43 (2031 decisoes de cruzeiro)\nPORTAO: nao passa\n  - estrela: quedas 25% acima do minimo 5%\n  - estrela: quedas: o limite superior de 95% e 37% (ate 10%)\n  - estrela: erro de velocidade 0.42 acima de 0.35\n  - estrela: rumo frente: erro de cruzeiro 0.45 acima de 0.35\n  - estrela: rumo frente: 16 quedas em 64 episodios\n  - estrela: rumo diag_esq: erro de cruzeiro 0.61 acima de 0.35\n  - estrela: rumo esquerda: erro de cruzeiro 0.55 acima de 0.35\n  - estrela: rumo direita: erro de cruzeiro 0.57 acima de 0.35\n  - estrela: rumo diag_dir: erro de cruzeiro 0.62 acima de 0.35\n  - estrela_trote: quedas 75% acima do minimo 5%\n  - estrela_trote: quedas: o limite superior de 95% e 84% (ate 10%)\n  - estrela_trote: erro de velocidade 1.30 acima de 0.50\n  - estrela_trote: sem pose e rigidez, nao melhora o classico (a melhora vem so delas)\n  - estrela_trote: rumo frente: erro de cruzeiro 1.59 acima de 0.50\n  - estrela_trote: rumo frente: 35 quedas em 64 episodios\n  - estrela_trote: rumo diag_esq: erro de cruzeiro 0.79 acima de 0.50\n  - estrela_trote: rumo diag_esq: 3 quedas em 48 episodios\n  - curva: quedas 8% acima do minimo 5%\n  - curva: quedas: o limite superior de 95% e 17% (ate 10%)\n  - curva: rumo frente: 5 quedas em 64 episodios\n  - estrela_trote_fixo: quedas 55% acima do minimo 7%\n  - estrela_trote_fixo: quedas: o limite superior de 95% e 66% (ate 10%)\n  - estrela_trote_fixo: erro de velocidade 1.46 acima de 0.60\n  - estrela_trote_fixo: sem pose e rigidez, nao melhora o classico (a melhora vem so delas)\n  - estrela_trote_fixo: rumo frente: erro de cruzeiro 1.42 acima de 0.60\n  - estrela_trote_fixo: rumo diag_esq: erro de cruzeiro 1.43 acima de 0.60\n  - estrela_trote_fixo: rumo diag_esq: 2 quedas em 18 episodios\n  - estrela_trote_fixo: rumo esquerda: erro de cruzeiro 2.25 acima de 0.60\n  - estrela_trote_fixo: rumo tras_esq: erro de cruzeiro 2.05 acima de 0.60\n  - estrela_trote_fixo: rumo tras_esq: 7 quedas em 29 episodios\n  - estrela_trote_fixo: rumo costas: erro de cruzeiro 2.27 acima de 0.60\n  - estrela_trote_fixo: rumo costas: 2 quedas em 20 episodios\n  - estrela_trote_fixo: rumo tras_dir: erro de cruzeiro 1.78 acima de 0.60\n  - estrela_trote_fixo: rumo tras_dir: 8 quedas em 29 episodios\n  - estrela_trote_fixo: rumo direita: erro de cruzeiro 1.88 acima de 0.60\n  - estrela_trote_fixo: rumo direita: 12 quedas em 33 episodios\n  - estrela_trote_fixo: rumo diag_dir: erro de cruzeiro 0.94 acima de 0.60\n  - estrela_trote_girando: quedas 94% acima do minimo 7%\n  - estrela_trote_girando: quedas: o limite superior de 95% e 98% (ate 10%)\n  - estrela_trote_girando: erro de velocidade 1.38 acima de 0.60\n  - estrela_trote_girando: sem pose e rigidez, nao melhora o classico (a melhora vem so delas)\n  - estrela_trote_girando: rumo frente: erro de cruzeiro 1.68 acima de 0.60\n  - estrela_trote_girando: rumo frente: 9 quedas em 38 episodios\n  - estrela_trote_girando: rumo diag_esq: erro de cruzeiro 2.24 acima de 0.60\n  - estrela_trote_girando: rumo diag_esq: 3 quedas em 32 episodios\n  - estrela_trote_girando: rumo esquerda: erro de cruzeiro 2.36 acima de 0.60\n  - estrela_trote_girando: rumo esquerda: 6 quedas em 28 episodios\n  - estrela_trote_girando: rumo tras_esq: erro de cruzeiro 2.08 acima de 0.60\n  - estrela_trote_girando: rumo tras_esq: 7 quedas em 31 episodios\n  - estrela_trote_girando: rumo costas: erro de cruzeiro 1.52 acima de 0.60\n  - estrela_trote_girando: rumo costas: 6 quedas em 26 episodios\n  - estrela_trote_girando: rumo tras_dir: erro de cruzeiro 1.71 acima de 0.60\n  - estrela_trote_girando: rumo tras_dir: 6 quedas em 27 episodios\n  - estrela_trote_girando: rumo direita: erro de cruzeiro 1.55 acima de 0.60\n  - estrela_trote_girando: rumo direita: 18 quedas em 43 episodios\n  - estrela_trote_girando: rumo diag_dir: erro de cruzeiro 1.66 acima de 0.60\n  - estrela_trote_girando: rumo diag_dir: 4 quedas em 43 episodios\nDOIS SEGUIDOS: ainda nao"
+  }
+ }
+}

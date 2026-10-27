@@ -87,8 +87,12 @@ struct InflatedBallProfile3D {
     float airKinematicViscosity = 1.5e-5f;
     float dragSubcritical = 0.47f;
     float dragSupercritical = 0.18f;
-    float criticalReynolds = 2.2e5f;
-    float criticalReynoldsSpan = 0.8e5f;
+    // A crise do arrasto entre ~11 e 15 m/s (Re 1,65e5 a 2,25e5; Asai 2007,
+    // Goff e Carre 2009). (24/10: de 15 a 20,5 m/s, a bola a 20 m/s e 30 graus
+    // caia a 24,5 m chegando a 9,6 m/s - a de tunel de vento, 28 m e 12,5 m/s:
+    // freava demais e "boiava".)
+    float criticalReynolds = 1.65e5f;
+    float criticalReynoldsSpan = 0.6e5f;
     // Com giro o arrasto sobe (~0,25-0,3 em Sp 0,2-0,4).
     float dragSpinGain = 0.25f;
     // Coeficiente de Magnus: inclinacao em Sp e teto.

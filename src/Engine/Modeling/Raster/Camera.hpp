@@ -2,6 +2,7 @@
 
 #include "Engine/Modeling/Geometry/ModelGeometry.hpp"
 
+#include <array>
 #include <span>
 #include <string_view>
 
@@ -61,6 +62,10 @@ public:
     [[nodiscard]] float pixelsPerMeter(float cameraZ) const;
     // Raio do olho pelo pixel (escolher juntas com o mouse).
     void ray(float pixelX, float pixelY, Vec3& origin, Vec3& direction) const;
+    // As baricentricas (a, b, c) do ponto do plano do triangulo visto no pixel:
+    // o raio contra o plano, exato na perspectiva e com cantos atras do olho ou
+    // cortados pelo plano proximo. Falso com o plano de lado para o olho.
+    [[nodiscard]] bool barycentricAt(Vec3 a, Vec3 b, Vec3 c, float pixelX, float pixelY, std::array<float, 3>& out) const;
     // A direcao do olho ate um ponto (para iluminar e para o fresnel).
     [[nodiscard]] Vec3 viewDirection(Vec3 world) const;
 

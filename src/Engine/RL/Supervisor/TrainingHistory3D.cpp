@@ -81,7 +81,7 @@ TrainingHistory3D readTrainingHistory3D(const std::filesystem::path& database, c
     // Cada exercicio em cada rodada (o treino, nao a avaliacao): json_each abre o details.drills.
     if (sqlite3_prepare_v2(db,
             "SELECT i.iteration, d.key, json_extract(d.value, '$.episodes'), json_extract(d.value, '$.falls'), "
-            "json_extract(d.value, '$.return'), json_extract(d.value, '$.seconds') FROM iterations i, json_each(i.details, '$.drills') d "
+            "json_extract(d.value, '$.return'), json_extract(d.value, '$.seconds'), json_extract(d.value, '$.stood_fraction') FROM iterations i, json_each(i.details, '$.drills') d "
             "WHERE i.run=?1 AND i.time>=?2 ORDER BY i.iteration",
             -1, &statement, nullptr)
         == SQLITE_OK) {
@@ -95,6 +95,7 @@ TrainingHistory3D readTrainingHistory3D(const std::filesystem::path& database, c
             point.falls = columnDouble(statement, 3);
             if (sqlite3_column_type(statement, 4) != SQLITE_NULL) point.episodeReturn = columnDouble(statement, 4);
             point.seconds = columnDouble(statement, 5);
+            if (sqlite3_column_type(statement, 6) != SQLITE_NULL) point.stood = columnDouble(statement, 6);
             history.drills.push_back(point);
         }
         sqlite3_finalize(statement);
@@ -102,7 +103,7 @@ TrainingHistory3D readTrainingHistory3D(const std::filesystem::path& database, c
     // As medidas de cada exercicio ficam num JSON (o treinador acrescenta outras sem mudar o banco).
     const char* evaluations = "SELECT iteration, time, steps, solver, drill, json_extract(data, '$.falls'), "
                               "json_extract(data, '$.velocity_error_median'), json_extract(data, '$.useful_steps'), "
-                              "json_extract(data, '$.return') "
+                              "json_extract(data, '$.return'), json_extract(data, '$.stood_fraction') "
                               "FROM body_evaluations WHERE run=?1 AND time>=?2 ORDER BY iteration, drill, solver";
     if (sqlite3_prepare_v2(db, evaluations, -1, &statement, nullptr) == SQLITE_OK) {
         sqlite3_bind_text(statement, 1, run.c_str(), -1, SQLITE_TRANSIENT);
@@ -118,6 +119,7 @@ TrainingHistory3D readTrainingHistory3D(const std::filesystem::path& database, c
             point.velocityError = sqlite3_column_type(statement, 6) == SQLITE_NULL ? -1.0 : columnDouble(statement, 6);
             point.usefulSteps = sqlite3_column_type(statement, 7) == SQLITE_NULL ? -1.0 : columnDouble(statement, 7);
             if (sqlite3_column_type(statement, 8) != SQLITE_NULL) point.episodeReturn = columnDouble(statement, 8);
+            if (sqlite3_column_type(statement, 9) != SQLITE_NULL) point.stood = columnDouble(statement, 9);
             history.evaluations.push_back(point);
         }
         sqlite3_finalize(statement);

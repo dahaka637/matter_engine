@@ -1,6 +1,7 @@
 // Os testes dos modulos novos do atleta (a reescrita da locomocao; vault:
 // 04_locomocao/reescrita_da_locomocao.md). Modulos puros: unidade, a tabela de
 // trocas linha a linha e propriedades com sinais aleatorios.
+#include "Engine/Athlete/Ball/BallOutcome3D.hpp"
 #include "Engine/Athlete/Contract/LocomotionContract3D.hpp"
 #include "Engine/Athlete/Modes/ContactClasses3D.hpp"
 #include "Engine/Athlete/Modes/ModeRules3D.hpp"
@@ -513,6 +514,11 @@ RagdollProfile3D contractProfile() {
             link.inboundJoint.axes[1].enabled = name.find("Hand") == std::string::npos;
             link.inboundJoint.axes[2].enabled = name.find("Thigh") != std::string::npos
                 || name.find("UpperArm") != std::string::npos;
+            // (A amplitude de cada eixo: a escala da pose v4 e 0,6 dela, 1,2 rad.)
+            for (RagdollAxisDefinition3D& axis : link.inboundJoint.axes) {
+                axis.minimumRadians = -1.0f;
+                axis.maximumRadians = 1.0f;
+            }
         }
         if (name == "LeftThigh") link.inboundJoint.anchorModelPosition = { 0.0f, 0.1f, 0.9f };
         if (name == "RightThigh") link.inboundJoint.anchorModelPosition = { 0.0f, -0.1f, 0.9f };
@@ -547,12 +553,12 @@ void contractTests() {
         for (const RagdollAxisDefinition3D& axis : profile.links[i].inboundJoint.axes) axes += axis.enabled ? 1 : 0;
     expect(contract.actuatedAxes().size() == axes, "os eixos atuados sao os habilitados no perfil");
     const std::size_t links = profile.links.size();
-    expect(contract.actionSize() == 12 + 7 + axes + 3 + 4,
-        "a saida: os pes (12), o equilibrio (7), um residuo por eixo, os ganhos e o ganho da virada (4)");
+    expect(contract.actionSize() == 12 + 7 + axes + 4,
+        "a saida (v4): os pes (12), o equilibrio (7), um residuo por eixo e o ganho da virada (4); sem ganhos");
     expect(contract.observationSize()
-            == 1 + links * 12 + (links - 1) * 3 + 2 * axes + 4 + 7 + 50 + 28 + 9 + 53 + 13
-                + LocomotionContract3D::HistoryDecisions * contract.actionSize(),
-        "a entrada: o tamanho de cada bloco (o executor com 53, a virada com 13)");
+            == 1 + links * 12 + (links - 1) * 3 + 2 * axes + 4 + 7 + 50 + 28 + 9 + 8 + 53 + 13
+                + (1 + LocomotionContract3D::HistoryDecisions) * contract.actionSize(),
+        "a entrada: o tamanho de cada bloco (a ajuda v4 com 8 a mais, o executor com 53, a virada com 13, a aplicada)");
 
     // O que observe escreve e o layout, na mesma conta (sem deriva).
     std::vector<float> out(contract.observationSize());
@@ -700,17 +706,16 @@ void contractTests() {
             && near(most[actionIndex("pes.dir.altura")], 0.05f * 0.5f)
             && near(most[actionIndex("pes.esq.recupera")], 0.5f * 0.5f),
         "os pes: NaN vira zero; o teto da fase corta (pouso 0,06 m, altura 0,05 m, urgencia 0,5) e a autoridade multiplica");
-    expect(near(most[actionIndex("equilibrio.inclina.frente")], 0.12f * 0.25f)
-            && near(most[actionIndex("ganho.tronco")], 0.3f * 0.75f),
-        "o equilibrio e os ganhos: o teto e a autoridade de cada cabeca");
+    expect(near(most[actionIndex("equilibrio.inclina.frente")], 0.12f * 0.25f),
+        "o equilibrio: o teto e a autoridade da cabeca");
     bool onAxes = true;
     for (std::uint32_t key : contract.actuatedAxes())
         onAxes &= near(most[actionIndex("pose." + profile.links[key / 3].id + "."
             + (key % 3 == 0 ? "twist" : key % 3 == 1 ? "swing1" : "swing2"))], 0.10f);
     expect(onAxes, "a pose: o residuo de cada eixo atuado ate o teto (0,10 rad)");
     const PhysicalCorrections3D mostCorrections = contract.corrections(most, partial);
-    expect(near(mostCorrections.gainScale[1], std::exp2(0.225f)) && mostCorrections.jointResiduals.size() == links * 3,
-        "as correcoes: o ganho em oitavas vira escala");
+    expect(mostCorrections.gainScale[1] == 1.0f && mostCorrections.jointResiduals.size() == links * 3,
+        "as correcoes (v4): sem a cabeca de ganho, a rigidez fica a calibrada");
     std::vector<float> low(contract.actionSize(), -5.0f);
     most = contract.physical(low, partial);
     expect(near(most[actionIndex("equilibrio.altura")], -0.04f * 0.25f)
@@ -718,7 +723,13 @@ void contractTests() {
         "os canais assimetricos: o lado de baixo com o teto dele; a urgencia so na metade positiva");
     partial.caps = LocomotionCaps3D::full();
     most = contract.physical(big, partial);
-    expect(near(most[actionIndex("pes.esq.pouso.y")], 0.30f * 0.5f), "com os tetos abertos, a escala maxima");
+    expect(near(most[actionIndex("pes.esq.pouso.y")], LocomotionContract3D::TouchdownMeters * 0.5f),
+        "com os tetos abertos, a escala maxima");
+    bool axisScale = true;
+    for (std::uint32_t k : contract.actuatedAxes())
+        axisScale &= near(most[actionIndex("pose." + profile.links[k / 3].id + "."
+            + (k % 3 == 0 ? "twist" : k % 3 == 1 ? "swing1" : "swing2"))], 0.6f * 2.0f);
+    expect(axisScale, "a pose v4: a escala de cada eixo e 0,6 do intervalo da junta");
 
     // A decisao, o historico, a rampa e o limite de taxa.
     AthleteState3D athlete;
@@ -726,22 +737,26 @@ void contractTests() {
     contract.decide(athlete, first);
     const std::uint32_t key = contract.actuatedAxes().front();
     const float dt = 1.0f / 120.0f;
+    const float firstUnit = std::tanh(0.8f), secondUnit = std::tanh(-2.0f);
     for (int tick = 1; tick <= LocomotionContract3D::TicksPerDecision; ++tick) {
         contract.follow(athlete, full, dt);
-        expect(near(athlete.corrections.feet[0].recoveryUrgency, 0.8f * static_cast<float>(tick) / 4.0f),
-            "a rampa vai da acao de antes (zero) a nova em 4 ticks (a urgencia, sem limite de taxa)");
+        expect(near(athlete.corrections.feet[0].recoveryUrgency, firstUnit * static_cast<float>(tick) / 4.0f),
+            "a rampa vai da acao de antes (zero) a nova (tanh do latente) em 4 ticks (a urgencia, sem limite de taxa)");
         expect(std::abs(athlete.corrections.jointResiduals[key] - LocomotionContract3D::JointRate * dt * static_cast<float>(tick))
                 < 1e-5f,
             "o residuo da junta anda no maximo o limite de taxa por tick");
+        expect(athlete.corrections.jointResidualVelocities.size() == links * 3
+                && near(athlete.corrections.jointResidualVelocities[key], LocomotionContract3D::JointRate),
+            "a velocidade da correcao (v4): a mudanca do aplicado por tick, para a velocidade-alvo");
     }
     contract.decide(athlete, second);
     const std::size_t a = contract.actionSize();
     expect(athlete.policyHistory.size() == LocomotionContract3D::HistoryDecisions * a
-            && athlete.policyHistory[0] == -1.0f && std::abs(athlete.policyHistory[a] - 0.8f) < 1e-6f
+            && near(athlete.policyHistory[0], secondUnit) && near(athlete.policyHistory[a], firstUnit)
             && athlete.policyHistory[2 * a] == 0.0f,
-        "o historico: a mais nova primeiro, guardada no -1..1");
+        "o historico: a mais nova primeiro, guardada no -1..1 (o tanh do latente)");
     contract.follow(athlete, full, dt);
-    expect(near(athlete.corrections.feet[0].recoveryUrgency, 0.8f + (-1.0f - 0.8f) * 0.25f),
+    expect(near(athlete.corrections.feet[0].recoveryUrgency, firstUnit + (secondUnit - firstUnit) * 0.25f),
         "a rampa nova parte de onde a anterior estava");
     // Sem autoridade de repente: a cabeca segue ligada ate o valor voltar a
     // zero pelo limite de taxa (desligada de uma vez, saltava).
@@ -1086,9 +1101,136 @@ void turnMoveTests() {
 
 } // namespace
 
+// Tocar contra a bola amortece: sai a pedida menos a que ela trazia contra.
+void ballCushionTests() {
+    BallOutcomeSettings3D f;
+    f.stopPower = 0.0f;
+    BallOutcomeRequest3D back;
+    back.direction = { -1.0f, 0.0f, 0.0f };
+    back.power = 0.5f;
+    const Vec3 still = computeBallOutcome3D(back, {}, {}, {}, 0.11f, f).velocity;
+    const Vec3 rolling = computeBallOutcome3D(back, { 4.0f, 0.0f, 0.0f }, {}, {}, 0.11f, f).velocity;
+    expect(std::abs(rolling.x - (still.x + 4.0f)) < 1e-3f, "toque contra a bola: pedida menos a que vinha");
+    f.touchAgainstKeep = 0.0f;
+    const Vec3 full = computeBallOutcome3D(back, { 4.0f, 0.0f, 0.0f }, {}, {}, 0.11f, f).velocity;
+    expect(std::abs(full.x - still.x) < 1e-3f, "sem amortecer: forca cheia");
+    // (A bola correndo junto com o jogador volta inteira: amortece so o que ela
+    // anda em relacao a ele.)
+    f.touchAgainstKeep = 1.0f;
+    f.speedPush = 0.0f;
+    const Vec3 carried = computeBallOutcome3D(back, { 4.0f, 0.0f, 0.0f }, { 4.0f, 0.0f, 0.0f }, {}, 0.11f, f).velocity;
+    expect(std::abs(carried.x - still.x) < 1e-3f, "bola junto com o jogador: forca cheia");
+    // O poder de parada (24/10): o toque mais fraco que a bola que vem contra ele
+    // corta stopPower do que sobraria dela seguindo (1: para; 0: o de antes); o
+    // mais forte inverte o rumo com o que sobra da forca, sem reforco.
+    f.stopPower = 0.75f;
+    const Vec3 slowed = computeBallOutcome3D(back, { 8.0f, 0.0f, 0.0f }, {}, {}, 0.11f, f).velocity;
+    expect(std::abs(slowed.x - 0.25f * (still.x + 8.0f)) < 1e-3f && slowed.x > 0.0f,
+        "parada: o toque fraco deixa so um quarto do que sobraria dela seguindo");
+    f.stopPower = 1.0f;
+    const Vec3 killed = computeBallOutcome3D(back, { 8.0f, 0.0f, 0.0f }, {}, {}, 0.11f, f).velocity;
+    expect(std::abs(killed.x) < 1e-4f, "parada cheia: o toque mais fraco que a bola a para no pe");
+    back.power = 1.0f;
+    const Vec3 hard = computeBallOutcome3D(back, {}, {}, {}, 0.11f, f).velocity;
+    const Vec3 inverted = computeBallOutcome3D(back, { 8.0f, 0.0f, 0.0f }, {}, {}, 0.11f, f).velocity;
+    expect(std::abs(inverted.x - (hard.x + 8.0f)) < 1e-3f && inverted.x < 0.0f,
+        "barra cheia: a forca menos a que ela trazia (inverte o rumo)");
+    back.power = 0.5f;
+    // No chute: o fraco amortece a bola que vem, o forte a devolve com o quique.
+    BallOutcomeRequest3D kick;
+    kick.kind = BallActionKind3D::Shot;
+    const auto kickSpeed = [&](float bar, Vec3 ball) {
+        kick.power = bar;
+        return computeBallOutcome3D(kick, ball, {}, {}, 0.11f, f).velocity.length();
+    };
+    expect(kickSpeed(0.0f, { -6.0f, 0.0f, 0.0f }) < kickSpeed(0.0f, {}) && kickSpeed(1.0f, { -6.0f, 0.0f, 0.0f }) > kickSpeed(1.0f, {}),
+        "chute contra a bola: o fraco amortece, o forte devolve com o quique");
+    // A recepcao (24/10; 25/10 sem herdar o corpo): a bola perde a que trazia
+    // (alta ou rasteira), herda receiveCarry da velocidade do corpo (o padrao 0:
+    // para no chao) e sai com o resto no rumo das teclas; sem tecla, so o que
+    // herdou. O giro e o de quem rola.
+    BallOutcomeRequest3D receive;
+    receive.receive = true;
+    receive.power = 0.5f;
+    receive.direction = { 0.0f, 1.0f, 0.0f };
+    const BallOutcome3D received = computeBallOutcome3D(receive, { -7.0f, 1.0f, 2.0f }, { 3.0f, 0.0f, 0.0f }, {}, 0.11f, f);
+    const float rest = f.receiveMinimum + f.receivePower * 0.5f;
+    expect((received.velocity - Vec3 { 3.0f * f.receiveCarry, rest, 0.0f }).length() < 1e-4f,
+        "recepcao: a bola com o que herda do corpo mais o resto no rumo das teclas");
+    expect(f.receiveCarry == 0.0f && std::abs(received.velocity.x) < 1e-4f,
+        "recepcao (padrao): a bola nao herda a corrida do jogador");
+    expect(std::abs(received.spin.z) < 1e-6f && received.spin.length() > 1.0f, "recepcao: a bola sai rolando");
+    receive.direction = {};
+    receive.kind = BallActionKind3D::Shot;
+    const Vec3 dead = computeBallOutcome3D(receive, { -7.0f, 1.0f, 2.0f }, { 3.0f, 0.0f, 0.0f }, {}, 0.11f, f).velocity;
+    expect((dead - Vec3 { 3.0f * f.receiveCarry, 0.0f, 0.0f }).length() < 1e-4f,
+        "recepcao sem tecla (tambem o chute fraco): so o que herda do corpo (o padrao: parada)");
+    // O peito e a cabeca (24/10): a cabeca vai ate headShare do maximo de agora
+    // (lido dos valores: dobrou o chute, dobra o teto), o toque de cabeca sai no
+    // rumo pedido subindo um pouco; o peito para a bola (chestStop) e so empurra
+    // ate chestShare.
+    BallOutcomeSettings3D g = defaultBallOutcomeSettings3D();
+    BallOutcomeRequest3D head;
+    head.part = BallBodyPart3D::Head;
+    head.kind = BallActionKind3D::Shot;
+    head.power = 1.0f;
+    const auto speedOf = [&](const BallOutcomeRequest3D& r, Vec3 ball, const BallOutcomeSettings3D& s) {
+        return computeBallOutcome3D(r, ball, {}, {}, 0.11f, s).velocity.length();
+    };
+    expect(std::abs(speedOf(head, {}, g) - g.headShare * (g.shotMinimum + g.shotPower)) < 1e-3f,
+        "cabeca: o chute cheio vai a metade do maximo do chute");
+    BallOutcomeSettings3D doubled = g;
+    doubled.shotPower = 2.0f * g.shotPower + g.shotMinimum;
+    expect(std::abs(speedOf(head, {}, doubled) - g.headShare * (doubled.shotMinimum + doubled.shotPower)) < 1e-3f,
+        "cabeca: o teto acompanha o maximo de agora");
+    head.power = 0.0f;
+    expect(std::abs(speedOf(head, {}, g) - g.shotMinimum) < 1e-3f, "cabeca: a barra vazia igual a do pe");
+    head.kind = BallActionKind3D::Dribble;
+    head.power = 1.0f;
+    head.direction = { 0.0f, -1.0f, 0.0f };
+    const Vec3 nod = computeBallOutcome3D(head, { -6.0f, 0.0f, 0.5f }, {}, {}, 0.11f, g).velocity;
+    expect(nod.y < 0.0f && std::abs(nod.x) < 1e-4f && nod.z > 0.0f
+            && std::abs(std::hypot(nod.x, nod.y) - g.headShare * (g.touchMinimum + g.touchPower)) < 1e-3f,
+        "cabeca: o toque no rumo pedido, ate a metade do maximo do manejo, subindo um pouco");
+    BallOutcomeRequest3D chest;
+    chest.part = BallBodyPart3D::Chest;
+    chest.power = 1.0f;
+    chest.direction = {};
+    const Vec3 trapped = computeBallOutcome3D(chest, { -6.0f, 1.0f, 2.0f }, { 1.0f, 0.0f, 0.0f }, {}, 0.11f, g).velocity;
+    expect((trapped - Vec3 { 1.0f, 0.0f, 0.0f }).length() < 1e-4f, "peito: sem tecla, a bola para (fica com a do corpo)");
+    chest.direction = { 1.0f, 0.0f, 0.0f };
+    const Vec3 pushed = computeBallOutcome3D(chest, { -6.0f, 1.0f, 2.0f }, {}, {}, 0.11f, g).velocity;
+    expect(std::abs(pushed.x - g.chestShare * (g.touchMinimum + g.touchPower)) < 1e-3f && std::abs(pushed.z) < 1e-4f,
+        "peito: o toque empurra ate a fracao do maximo do manejo");
+    chest.kind = BallActionKind3D::Shot;
+    expect(std::abs(speedOf(chest, {}, g) - g.chestShare * (g.shotMinimum + g.shotPower)) < 1e-3f,
+        "peito: o chute ate a fracao do maximo do chute");
+    g.chestStop = 0.5f;
+    chest.kind = BallActionKind3D::Dribble;
+    chest.direction = {};
+    const Vec3 half = computeBallOutcome3D(chest, { -6.0f, 0.0f, 2.0f }, {}, {}, 0.11f, g).velocity;
+    expect((half - Vec3 { -3.0f, 0.0f, 1.0f }).length() < 1e-4f, "peito: a parada pela metade deixa metade do que ela trazia");
+    // Levantar (24/10): sem tecla, reto para cima pela barra (a bola que vinha
+    // nao conta); com tecla, a frente raiseAhead da subida, sobre o corpo.
+    BallOutcomeSettings3D r = defaultBallOutcomeSettings3D();
+    BallOutcomeRequest3D raise;
+    raise.kind = BallActionKind3D::Raise;
+    raise.power = 1.0f;
+    raise.direction = {};
+    const Vec3 straight = computeBallOutcome3D(raise, { -3.0f, 1.0f, 0.0f }, {}, {}, 0.11f, r).velocity;
+    expect((straight - Vec3 { 0.0f, 0.0f, r.raiseMinimum + r.raisePower }).length() < 1e-4f,
+        "levantar: sem tecla, reto para cima com a barra cheia");
+    raise.power = 0.0f;
+    raise.direction = { 0.0f, 1.0f, 0.0f };
+    const Vec3 lob = computeBallOutcome3D(raise, {}, { 2.0f, 0.0f, 0.0f }, {}, 0.11f, r).velocity;
+    expect((lob - Vec3 { 2.0f, r.raiseAhead * r.raiseMinimum, r.raiseMinimum }).length() < 1e-4f,
+        "levantar: com tecla, a frente (sobre a velocidade do corpo), com a barra vazia");
+}
+
 int main() {
     try {
         contactClassTests();
+        ballCushionTests();
         modeRuleTests();
         pendulumTests();
         referenceFrameTests();

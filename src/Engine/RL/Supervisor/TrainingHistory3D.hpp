@@ -33,6 +33,8 @@ struct TrainingEvaluationPoint3D {
     // A fatia dos mundos que cairam, a mediana do erro de velocidade (m/s) e
     // os passos uteis por segundo (< 0 sem a medida).
     double falls = 0.0;
+    // So no levantar (NaN nos outros): a fatia que ficou de pe.
+    double stood = std::numeric_limits<double>::quiet_NaN();
     double velocityError = -1.0;
     double usefulSteps = -1.0;
     // O retorno medio dos episodios do exercicio na avaliacao (NaN sem a medida).
@@ -44,8 +46,15 @@ struct TrainingEvaluationPoint3D {
 struct TrainingDrillPoint3D {
     std::uint64_t iteration = 0;
     std::string drill;
+    double imitation = std::numeric_limits<double>::quiet_NaN();
+    // Do motor (NaN nos outros): o fator de postura medio dos episodios, de 0 a 1.
+    double posture = std::numeric_limits<double>::quiet_NaN();
+    double chestErrorDegrees = std::numeric_limits<double>::quiet_NaN();
+    double drift = std::numeric_limits<double>::quiet_NaN();
     double episodes = 0.0;
     double falls = 0.0;
+    // So no levantar (NaN nos outros): a fatia que ficou de pe.
+    double stood = std::numeric_limits<double>::quiet_NaN();
     double seconds = 0.0;
     double episodeReturn = std::numeric_limits<double>::quiet_NaN();
     // Do rastreador (NaN nos outros): o horario, a nota media por decisao, o erro

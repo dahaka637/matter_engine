@@ -141,6 +141,42 @@ void batchTests() {
     expect(!episodes.empty() && episodes.front().fell, "o episodio da queda e registrado");
 }
 
+// A estrela: o piloto anda no trote pedido (nunca acima dele), o peito fixo nao gira, o girando gira e
+// o livre acompanha o rumo; o exercicio do episodio e o da estrela.
+void starTests() {
+    const TrackingDrill3D drills[3] = { TrackingDrill3D::Star, TrackingDrill3D::StarFixed, TrackingDrill3D::StarTurning };
+    for (const TrackingDrill3D drill : drills) {
+        TrackingTrainingSettings3D settings;
+        settings.assetsDirectory = Assets;
+        settings.environments = 1;
+        settings.threads = 1;
+        settings.starSpeed = 3.0f;
+        settings.starShare = drill == TrackingDrill3D::Star ? 1.0f : 0.0f;
+        settings.starFixedShare = drill == TrackingDrill3D::StarFixed ? 1.0f : 0.0f;
+        settings.starTurningShare = drill == TrackingDrill3D::StarTurning ? 1.0f : 0.0f;
+        TrackingTraining3D batch(settings);
+        std::vector<float> actions(21, 0.0f), rewards(1);
+        std::vector<std::uint8_t> terminated(1), truncated(1);
+        float maxSpeed = 0.0f, yawTravel = 0.0f, last = batch.lookYaw(0);
+        Vec3 first = batch.leader(0).links[0].position;
+        float farthest = 0.0f;
+        for (int step = 0; step < 240; ++step) {
+            batch.step(actions, rewards, terminated, truncated);
+            const Vec3 v = batch.leader(0).requestedVelocityWorld;
+            maxSpeed = std::max(maxSpeed, std::hypot(v.x, v.y));
+            yawTravel += std::abs(batch.lookYaw(0) - last);
+            last = batch.lookYaw(0);
+            farthest = std::max(farthest, (batch.leader(0).links[0].position - first).length());
+        }
+        expect(maxSpeed <= 3.0f + 1e-3f && maxSpeed > 1.0f, "a estrela pede o trote, nunca acima dele");
+        expect(farthest > 2.0f, "a estrela leva o lider para longe do comeco");
+        if (drill == TrackingDrill3D::StarFixed) expect(yawTravel < 1e-4f, "estrela de peito fixo: o olhar nao gira");
+        else expect(yawTravel > 0.3f, "estrela de peito livre ou girando: o olhar gira");
+        for (const TrackingEpisode3D& episode : batch.takeEpisodes())
+            expect(episode.drill == static_cast<std::uint8_t>(drill), "o episodio registra a estrela");
+    }
+}
+
 } // namespace
 
 int main() {
@@ -149,6 +185,7 @@ int main() {
         contractTests(*bundle);
         rewardTests(*bundle);
         batchTests();
+        starTests();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "rastreador: FALHOU: %s (%d checagens antes)\n", error.what(), checks);
         return 1;

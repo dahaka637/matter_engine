@@ -30,6 +30,6 @@ cmake -S "$root" -B "$root/build-rl" -G Ninja -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_C_FLAGS="-march=native" -DCMAKE_CXX_FLAGS="-march=native" \
     -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON -DINTERPROCEDURAL_OPTIMIZATION=ON \
     -DPython_EXECUTABLE="$python" "${reuse[@]}"
-cmake --build "$root/build-rl" --parallel "${CMAKE_BUILD_PARALLEL_LEVEL:-6}" --target matter_rl_native matter_locomotion_native
+cmake --build "$root/build-rl" --parallel "${CMAKE_BUILD_PARALLEL_LEVEL:-6}" --target matter_rl_native matter_locomotion_native matter_motor_native
 
 "$here/matter-rl" doctor

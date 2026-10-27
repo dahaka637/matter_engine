@@ -155,8 +155,11 @@ void CharacterLocomotion3D::stepGestures(Tick& t) {
                 // proprio dela, somado ao do contato (a perna que espera o
                 // toque so adianta).
                 const float own = legPhaseLead3D(input.corrections, side, m_waitingLeg == static_cast<int>(side));
-                legSampleTime[side] = std::fmod(sampleTime + (m_legPhaseLead[side] + own) * selectedClip->durationSeconds
-                    + cycle, cycle);
+                // (Sem avanco, a conta do classico exata: o ciclo somado mudava
+                // o arredondamento e o sinal - a acao zero precisa ser o classico.)
+                legSampleTime[side] = own == 0.0f
+                    ? std::fmod(sampleTime + m_legPhaseLead[side] * selectedClip->durationSeconds, cycle)
+                    : std::fmod(sampleTime + (m_legPhaseLead[side] + own) * selectedClip->durationSeconds + cycle, cycle);
             }
         }
         for (std::size_t side = 0; side < 2; ++side)

@@ -31,6 +31,12 @@ enum class PhysicsMotionType3D : std::uint8_t {
     Kinematic
 };
 
+enum class PhysicsBarrier3D : std::uint8_t {
+    None,
+    Players,
+    Capsule
+};
+
 enum class PhysicsCollisionMode3D : std::uint8_t {
     Discrete,
     Continuous
@@ -75,6 +81,11 @@ struct PhysicsBodyDefinition3D {
     PhysicsCollisionMode3D collisionMode = PhysicsCollisionMode3D::Discrete;
     bool allowSleeping = true;
     bool startAwake = true;
+    // A barreira invisivel dos jogadores (a rede do gol), num corpo estatico:
+    // Players, o corpo dos bonecos e a capsula do personagem batem nela;
+    // Capsule, so a capsula. A bola, os objetos e as consultas (chao, raios,
+    // espaco livre) passam.
+    PhysicsBarrier3D barrier = PhysicsBarrier3D::None;
     // Ja existiu aqui um par collisionLayer/collisionMask de 32 bits. Nenhum
     // chamador jamais o definiu - todo corpo usava layer 1 / mask 0xFFFFFFFF -
     // e a unica distincao real (link de ragdoll) era interna ao backend. Os

@@ -96,6 +96,17 @@ struct LocomotionEpisode3D {
     // no cruzeiro, e as somas da velocidade pedida e da feita; e a celula da
     // queda (-1: sem queda ou parado).
     float fallCell = -1.0f;
+    // O levantar: os segundos ate ficar de pe 0,5 s seguidos depois de cair
+    // (-1 nunca; so nos exercicios do levantar).
+    float stoodSeconds = -1.0f;
+    // O empurrao do episodio (so medida; o curriculo do empurrao le): 0 nenhum, 1 o
+    // curto, 2 o continuo; a forca (N) e a duracao (s) sorteadas.
+    float pushKind = 0.0f;
+    float pushNewtons = 0.0f;
+    float pushSeconds = 0.0f;
+    // O corpo do episodio (o corpo variavel; sem o bloco, o de hoje).
+    float bodyHeight = BaseBodyHeightMeters;
+    float bodyMass = BaseBodyMassKg;
     std::array<float, LocomotionCommandCells3D> cellDecisions {};
     std::array<float, LocomotionCommandCells3D> cellCruise {};
     std::array<float, LocomotionCommandCells3D> cellTracking {};
@@ -143,10 +154,16 @@ public:
     };
     [[nodiscard]] Mirror mirror() const;
     [[nodiscard]] const LocomotionTask3D& task() const;
+    // O atleta do corpo de hoje (o do contrato e do id do corpo).
     [[nodiscard]] const AthleteBundle3D& athlete() const;
+    // Os corpos que os mundos sorteiam (task.body; sem o bloco, so o de hoje).
+    [[nodiscard]] const std::vector<PlayerBody3D>& bodyGrid() const;
     // As escalas da saida: o teto da fase de cada canal sobre a escala maxima
     // (o desvio inicial da exploracao parte dele).
     [[nodiscard]] std::vector<float> actionCapFractions() const;
+    // A escala de cada canal da saida (o valor fisico do +1; v4: o sigma da
+    // exploracao em unidade fisica vira latente por ela).
+    [[nodiscard]] std::vector<float> actionScales() const;
     // Os limites de cada canal na unidade da rede (a acao aplicada para de mudar
     // fora deles: o teto de cada lado; o canal sem lado negativo tem 0 embaixo).
     // Simetrico: -1 e +1.

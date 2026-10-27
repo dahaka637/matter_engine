@@ -100,12 +100,16 @@ WorkbenchApp::WorkbenchApp()
     // clarear ou escurecer a cena com base no conteúdo visível.
     m_laboratoryToneMapping.automaticExposureEnabled = false;
     applyLaboratoryGraphicsPreset(0);
+    // O tamanho padrao da bola vale desde a primeira (o perfil nasce no da oficial).
+    applySoccerBallSize();
+    m_soccerBallVisualDirty = false;
 }
 
 float WorkbenchApp::ballFlickShape(float pixels) {
-    constexpr float FlickDead = 25.0f, FlickFull = 180.0f;
+    // 21/10 (pedido do usuario): menos sensivel - os extremos pedem um gesto mais brusco.
+    constexpr float FlickDead = 30.0f, FlickFull = 250.0f;
     const float amount = std::clamp((std::abs(pixels) - FlickDead) / (FlickFull - FlickDead), 0.0f, 1.0f);
-    return std::copysign(amount, pixels);
+    return std::copysign(std::pow(amount, 1.3f), pixels);
 }
 
 void WorkbenchApp::applyLaboratoryGraphicsPreset(int preset) {
@@ -230,7 +234,6 @@ void WorkbenchApp::applyAutostartIfRequested() {
         enterLaboratory(true);
         if (mode == "laboratory-ball-stress") {
             m_ballStress = true;
-            m_ballFootTouch = true;
             m_takeCharacterControlWhenReady = true;
             m_spawnPropWhenReadyId = "soccer_ball";
             m_automaticQuitSeconds = environmentFloat("MATTERENGINE_STRESS_SECONDS", 90.0f, 5.0f, 3600.0f);
@@ -331,21 +334,6 @@ void WorkbenchApp::applyAutostartIfRequested() {
     } else if (mode == "object-viewer" || mode == "object-viewer-smoke") {
         m_screen = Screen::ObjectInspector;
         if (mode == "object-viewer-smoke") m_automaticQuitSeconds = 6.0f;
-    } else if (mode == "ball-viewer" || mode == "ball-viewer-smoke") {
-        m_screen = Screen::BallTouchViewer;
-        // Inspecao automatica: parado num instante (s em relacao ao pedido),
-        // de uma vista (yaw/pitch em radianos).
-        if (!environmentValue("MATTERENGINE_BALL_TIME").empty()) {
-            m_ballViewerPlaying = false;
-            m_ballViewerPlaybackSeconds = environmentFloat("MATTERENGINE_BALL_TIME", 0.0f, -2.0f, 4.0f);
-        }
-        m_ballViewerCameraYaw = environmentFloat("MATTERENGINE_BALL_YAW", m_ballViewerCameraYaw, -6.3f, 6.3f);
-        m_ballViewerCameraPitch = environmentFloat("MATTERENGINE_BALL_PITCH", m_ballViewerCameraPitch, -0.2f, 1.45f);
-        if (!environmentValue("MATTERENGINE_BALL_DIRECTION").empty())
-            m_ballViewerSettings.directionDegrees = environmentFloat("MATTERENGINE_BALL_DIRECTION", 0.0f, -180.0f, 180.0f);
-        if (environmentValue("MATTERENGINE_BALL_ACTION") == "chute")
-            m_ballViewerSettings.kind = BallActionKind3D::Shot;
-        if (mode == "ball-viewer-smoke") m_automaticQuitSeconds = 6.0f;
     } else if (mode == "reinforcement-learning" || mode == "reinforcement-learning-smoke") {
         m_screen = Screen::ReinforcementLearning;
         if (mode == "reinforcement-learning-smoke") m_automaticQuitSeconds = 6.0f;
@@ -402,16 +390,15 @@ void WorkbenchApp::onEvent(const Event& event) {
                 resetControlledCharacterPose();
                 return;
             }
-            if (event.key == Key::U && !m_laboratoryPaused
-                && !m_spawnMenuOpen
-                && m_controlledCharacterEntityId != 0) {
-                toggleControlledCharacterFrozen();
-                return;
-            }
             if (event.key == Key::Space && !m_laboratoryPaused
                 && !m_laboratoryDebugVisible && !m_spawnMenuOpen) {
-                // O pulo sai ao soltar (ver updateLaboratory): aqui so comeca
-                // a carregar.
+                // O pulo instantaneo sai ja, com a altura media; o de antes sai
+                // ao soltar (ver updateLaboratory): aqui so comeca a carregar.
+                if (m_instantJump) {
+                    m_laboratoryJumpCharging = false;
+                    m_instantJumpPressed = true;
+                    return;
+                }
                 m_laboratoryJumpCharging = true;
                 m_laboratoryJumpChargeSeconds = 0.0f;
                 return;
@@ -441,6 +428,12 @@ void WorkbenchApp::onEvent(const Event& event) {
             }
             if (event.key == Key::R && !m_laboratoryPaused
                 && !m_laboratoryDebugVisible && !m_spawnMenuOpen) {
+                teleportLatestBallToFront();
+                return;
+            }
+            // (O descongelar saiu do R para o U em 25/10: o R traz a bola.)
+            if (event.key == Key::U && !m_laboratoryPaused
+                && !m_laboratoryDebugVisible && !m_spawnMenuOpen) {
                 constexpr float DoublePressWindowSeconds = 0.32f;
                 if (m_laboratoryElapsedTime - m_lastUnfreezePressSeconds
                     <= DoublePressWindowSeconds) {
@@ -452,6 +445,12 @@ void WorkbenchApp::onEvent(const Event& event) {
                 }
                 return;
             }
+            // O segundo Shift rapido arma o sprint maximo (o laboratorio desarma ao soltar).
+            if (event.key == Key::LeftShift || event.key == Key::RightShift) {
+                constexpr float DoubleTapWindowSeconds = 0.32f;
+                m_maxSprintArmed = m_laboratoryElapsedTime - m_lastShiftPressSeconds <= DoubleTapWindowSeconds;
+                m_lastShiftPressSeconds = m_maxSprintArmed ? -10.0f : m_laboratoryElapsedTime;
+            }
             if (event.key == Key::E && m_physGunGrabbedEntityId != 0
                 && !m_laboratoryPaused && !m_laboratoryDebugVisible
                 && !m_spawnMenuOpen) {
@@ -461,26 +460,38 @@ void WorkbenchApp::onEvent(const Event& event) {
                 return;
             }
         }
+        // Mouse 4 congela a cena para inspecao: o corpo e a bola mais perto.
+        if (event.type == EventType::MouseButtonDown && event.button == MouseButton::Back
+            && m_controlledCharacterEntityId != 0 && !m_laboratoryPaused && !m_spawnMenuOpen) {
+            toggleControlledCharacterFrozen();
+            return;
+        }
         // Manejo de bola, com o personagem controlado: segurar carrega,
-        // soltar pede (esquerdo o chute, direito o drible).
+        // soltar pede (esquerdo o chute, direito o drible, o do meio levanta a
+        // bola - 24/10).
         if (m_controlledCharacterEntityId != 0 && renderer().mouseCaptured()
             && !m_laboratoryPaused && !m_laboratoryDebugVisible && !m_spawnMenuOpen
             && (event.type == EventType::MouseButtonDown || event.type == EventType::MouseButtonUp)
-            && (event.button == MouseButton::Left || event.button == MouseButton::Right)) {
+            && (event.button == MouseButton::Left || event.button == MouseButton::Right
+                || event.button == MouseButton::Middle)) {
             const bool shot = event.button == MouseButton::Left;
+            const BallActionKind3D kind = shot ? BallActionKind3D::Shot
+                : event.button == MouseButton::Middle ? BallActionKind3D::Raise : BallActionKind3D::Dribble;
+            bool& held = shot ? m_ballShotHeld : kind == BallActionKind3D::Raise ? m_ballRaiseHeld : m_ballDribbleHeld;
             if (event.type == EventType::MouseButtonDown) {
-                if (!m_ballShotHeld && !m_ballDribbleHeld) m_ballCharge = 0.0f;
-                (shot ? m_ballShotHeld : m_ballDribbleHeld) = true;
-                m_ballBarShot = shot;
-            } else if (shot ? m_ballShotHeld : m_ballDribbleHeld) {
-                (shot ? m_ballShotHeld : m_ballDribbleHeld) = false;
-                m_ballRequest = shot ? BallActionKind3D::Shot : BallActionKind3D::Dribble;
+                if (!m_ballShotHeld && !m_ballDribbleHeld && !m_ballRaiseHeld) m_ballCharge = 0.0f;
+                if (shot) m_shotLiftShown = m_shotCurveShown = 0.0f;
+                held = true;
+                m_ballBarKind = kind;
+            } else if (held) {
+                held = false;
+                m_ballRequest = kind;
                 m_ballRequestPower = m_ballCharge;
                 m_ballBarSeconds = 0.6f;
                 // O gesto: para cima (y negativo) bola alta, para os lados o
                 // efeito.
-                m_ballRequestLift = shot ? ballFlickShape(-m_ballFlick.y) : 0.0f;
-                m_ballRequestCurve = shot ? ballFlickShape(m_ballFlick.x) : 0.0f;
+                m_ballRequestLift = shot ? m_shotLiftShown : 0.0f;
+                m_ballRequestCurve = shot ? m_shotCurveShown : 0.0f;
                 // A mira do chute e a camera (pedido do usuario, 04/10): a
                 // camera ja girou com o puxao do mouse; somar o gesto de novo
                 // (com o sinal trocado) deixava a bola atras de onde ela
@@ -585,9 +596,12 @@ void WorkbenchApp::onEvent(const Event& event) {
             // Carregando o chute, a camera gira menos (mirar ajustando a
             // altura e o efeito; entra e sai suave). O puxao do mouse e o
             // gesto, inteiro (a sensibilidade nao muda o gesto).
+            // (E no sprint maximo, bem menos.)
             const float slow = m_shotCameraSlow * m_shotCameraSlow * (3.0f - 2.0f * m_shotCameraSlow);
+            const float sprintSlow = m_maxSprintCameraSlow * m_maxSprintCameraSlow * (3.0f - 2.0f * m_maxSprintCameraSlow);
             const float Sensitivity = LaboratoryLookSensitivity
-                * (1.0f - (1.0f - std::clamp(m_shotCameraSensitivity, 0.1f, 1.0f)) * slow);
+                * (1.0f - (1.0f - std::clamp(m_shotCameraSensitivity, 0.1f, 1.0f)) * slow)
+                * (1.0f - (1.0f - std::clamp(m_maxSprintCameraSensitivity, 0.1f, 1.0f)) * sprintSlow);
             if (m_ballShotHeld) m_ballFlick = m_ballFlick + event.mouseDelta;
             m_laboratoryCameraYaw -= event.mouseDelta.x * Sensitivity;
             m_laboratoryCameraPitch = std::clamp(
@@ -603,7 +617,6 @@ void WorkbenchApp::onEvent(const Event& event) {
             m_screen = m_settingsReturnScreen;
         } else if (m_screen == Screen::ObjectInspector
             || m_screen == Screen::ReinforcementLearning
-            || m_screen == Screen::BallTouchViewer
             || m_screen == Screen::PlayerInspector) {
             m_screen = Screen::MainMenu;
         }
@@ -747,9 +760,6 @@ void WorkbenchApp::onUpdate(float deltaTime) {
     if (m_screen == Screen::Laboratory && !m_laboratoryPaused) {
         updateLaboratory(deltaTime);
     }
-    if (m_screen == Screen::BallTouchViewer) {
-        updateBallTouchViewer(deltaTime);
-    }
     if (m_screen == Screen::PlayerInspector && m_playerInspector) {
         m_playerInspector->update(deltaTime);
     }
@@ -780,13 +790,6 @@ void WorkbenchApp::onRender(Renderer& activeRenderer) {
             return;
         }
         renderLaboratory3D(activeRenderer);
-    } else if (m_screen == Screen::BallTouchViewer) {
-        ensureRagdollAssetsLoaded(activeRenderer);
-        ensureSoccerBallVisual(activeRenderer);
-        if (m_humanRagdollProfile && !m_characterVisual.parts.empty()) {
-            m_ballViewerPreview = renderBallTouchViewerPreview(activeRenderer);
-            m_propPreviewAtlas = {};
-        }
     }
 }
 
@@ -824,9 +827,6 @@ void WorkbenchApp::onGui(Renderer& activeRenderer) {
     case Screen::ReinforcementLearning:
         drawReinforcementLearning(activeRenderer);
         break;
-    case Screen::BallTouchViewer:
-        drawBallTouchViewer();
-        break;
     case Screen::PlayerInspector:
         drawPlayerInspector(activeRenderer);
         break;
@@ -852,7 +852,6 @@ void WorkbenchApp::onGui(Renderer& activeRenderer) {
 }
 
 void WorkbenchApp::onStop() {
-    stopBallTouchSimulation();
     renderer().setMouseCaptured(false);
     m_worldAudio.shutdown();
     releaseLaboratoryAssets(renderer());

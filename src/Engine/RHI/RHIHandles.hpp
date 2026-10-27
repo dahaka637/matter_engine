@@ -22,10 +22,13 @@ struct BufferTag;
 struct ShaderTag;
 struct PipelineTag;
 struct TextureTag;
+struct CharacterMaterialTag;
 
 using BufferHandle = Handle<BufferTag>;
 using ShaderHandle = Handle<ShaderTag>;
 using PipelineHandle = Handle<PipelineTag>;
 using TextureHandle = Handle<TextureTag>;
+// O material do personagem (CharacterMaterial.hpp).
+using CharacterMaterialHandle = Handle<CharacterMaterialTag>;
 
 } // namespace MatterEngine::RHI

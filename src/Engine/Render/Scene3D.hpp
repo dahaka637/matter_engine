@@ -66,6 +66,12 @@ struct MeshRender3D {
     Vec3 tintColor { 1.0f, 1.0f, 1.0f };
     RHI::TextureHandle albedoTexture;
     RHI::TextureHandle metallicRoughnessTexture;
+    // O personagem com o uniforme do sistema de aparencia (RHI/CharacterMaterial.hpp):
+    // nos passes de cor, o pipeline do personagem; albedoTexture e o corpo por
+    // baixo. As camadas do uniforme e da identificacao deste jogador.
+    RHI::CharacterMaterialHandle characterMaterial;
+    std::uint32_t kitLayer = 0;
+    std::uint32_t identityLayer = 0;
     // Fatores multiplicam o mapa metallicRoughness por pixel, como exige o
     // contrato glTF. Sem mapa, uma textura branca neutra preserva os fatores.
     float metallic = 0.0f;
@@ -93,6 +99,10 @@ struct MeshRender3D {
     // quando ele so pode afetar uma cascata. Geometria sem culling explicito
     // (como o mapa estatico) conserva o default de todas as cascatas.
     std::uint8_t shadowCascadeMask = 0x0Fu;
+    // Geometria fina (os fios da rede): o raio de verdade (m). No passe de
+    // sombra ela engrossa ate ~0,7 texel da cascata (pela normal do vertice):
+    // mais fina que o texel, a sombra virava pontilhado piscando. 0: normal.
+    float thinShadowRadius = 0.0f;
     // World-space deformation matrices (current * inverse bind). Consumed
     // immediately, copied into fence-protected GPU storage by the backend.
     std::span<const Mat4> skinMatrices;

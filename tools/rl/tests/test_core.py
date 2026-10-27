@@ -105,6 +105,60 @@ def test_migration_preserves_function():
         assert torch.allclose(old.value(old.critic_norm(c)), fresh.value(fresh.critic_norm(c2)), atol=1e-5)
 
 
+def test_migration_with_player_channels_keeps_the_policy():
+    """O corpo variavel (26/10): a rede migrada ganha jogador.altura e jogador.massa no
+    fim da entrada (e antes do drill.* no critico), crus e com peso zero, e da a mesma
+    saida - no corpo de hoje (os canais em zero) e, no comeco, em qualquer outro."""
+    from matter_rl.locomotion_trainer import RAW_PREFIXES
+    assert "jogador." in RAW_PREFIXES
+    torch.manual_seed(7)
+    old_obs = ["corpo.pelve.altura", "comando.vel.x", "antes_1.pes.esq.pouso.x"]
+    new_obs = old_obs + ["jogador.altura", "jogador.massa"]
+    old_critic = old_obs + ["drill.parado", "pilot.alvo.x"]
+    new_critic = new_obs + ["drill.parado", "pilot.alvo.x"]
+    old = ActorCritic(len(old_obs), len(old_critic), 2)
+    for norm, names in ((old.obs_norm, old_obs), (old.critic_norm, old_critic)):
+        norm.fix_channels(torch.tensor([n.startswith(RAW_PREFIXES) for n in names]))
+        norm.update(torch.randn(200, len(names)) * 2 + 0.5)
+    # (A ordem do treinador: restore migra, depois fix_raw_channels.)
+    fresh = migrate_inputs(old, old_obs, new_obs, old_critic, new_critic)
+    for norm, names in ((fresh.obs_norm, new_obs), (fresh.critic_norm, new_critic)):
+        norm.fix_channels(torch.tensor([n.startswith(RAW_PREFIXES) for n in names]))
+    assert torch.all(fresh.obs_norm.mean[-2:] == 0.0) and torch.all(fresh.obs_norm.var[-2:] == 1.0)  # crus
+    x, c = torch.randn(10, len(old_obs)), torch.randn(10, len(old_critic))
+    with torch.no_grad():
+        for player in (torch.zeros(10, 2), torch.tensor([[2.0, 1.5]]).repeat(10, 1)):
+            y = torch.cat([x, player], 1)
+            c2 = torch.cat([c[:, :len(old_obs)], player, c[:, len(old_obs):]], 1)
+            assert torch.allclose(old.actor(old.obs_norm(x)), fresh.actor(fresh.obs_norm(y)), atol=1e-6)
+            assert torch.allclose(old.value(old.critic_norm(c)), fresh.value(fresh.critic_norm(c2)), atol=1e-6)
+
+
+def test_body_strata_only_with_varied_bodies():
+    """As quedas por corpo vao para o banco so com corpos variados (sem o bloco, o
+    resumo de antes)."""
+    from matter_rl.locomotion_trainer import body_strata
+    columns = ["razao", "segundos", "retorno", "erro_velocidade", "corpo_altura", "corpo_massa"]
+    reasons = ["nenhum", "queda", "numerico", "tempo", "limite", "falha"]
+    base = np.array([[1, 2.0, 0.5, 0.3, 1.8, 80.0], [3, 16.0, 4.0, 0.2, 1.8, 80.0]], dtype=np.float32)
+    assert body_strata(base, columns, reasons) == {}
+    assert body_strata(base[:, :4], columns[:4], reasons) == {}
+    varied = np.vstack([base, np.array([[1, 1.0, 0.1, 0.5, 2.0, 95.0]], dtype=np.float32)])
+    strata = body_strata(varied, columns, reasons)
+    assert set(strata) == {"1.80x80", "2.00x95"}
+    assert strata["1.80x80"]["falls"] == 0.5 and strata["2.00x95"]["falls"] == 1.0 and strata["1.80x80"]["episodes"] == 2
+
+
+def test_run_config_native_only_when_set(tmp_path):
+    """O modulo nativo do treino no run.json: so quando dado (o run.json de antes fica igual)."""
+    from matter_rl.locomotion_trainer import LocomotionRunConfig
+    path = tmp_path / "run.json"
+    LocomotionRunConfig().save(path)
+    assert "native" not in json.loads(path.read_text())
+    LocomotionRunConfig(native="/x/build-rl-corpos/python").save(path)
+    assert LocomotionRunConfig.load(path).native == "/x/build-rl-corpos/python"
+
+
 def test_migration_adds_action_channels_without_changing_the_old_ones():
     torch.manual_seed(5)
     old = ActorCritic(4, 5, 2)
@@ -275,3 +329,16 @@ def test_control_roundtrip(tmp_path: Path):
     assert answer["echo"] == ["pausar", {"autor": "teste"}]
     server.close()
     assert control.request("status", path=socket_path) is None
+
+
+def test_floor_noise_scales_with_body_height():
+    """O ruido perto do chao em metros x s: a pelve a 0,60 x s m de um corpo de 2,00 m e o
+    limiar alto dele (sem ruido extra), como 0,60 m no de 1,80."""
+    model = ActorCritic(2, 1, 1, np.array([0.5], dtype=np.float32))
+    model.floor_noise = (0, 0.60, 0.35, 2.5, 1)
+    base = model.log_std.clamp(-5.0, 1.5).exp()
+    s = 2.0 / 1.8
+    obs = torch.tensor([[0.60 * s, 2.0], [0.60, 0.0], [0.35 * s, 2.0]])
+    std = model.distribution(model.obs_norm(obs)).stddev[:, 0]
+    assert torch.allclose(std[:2], base.expand(2), atol=1e-5)
+    assert float(std[2]) == pytest.approx(float(base) * 2.5, rel=1e-4)

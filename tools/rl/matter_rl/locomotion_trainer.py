@@ -29,17 +29,20 @@ import torch
 
 from . import control, paths, storage, system
 from .body_trainer import balance_drills, choose_device, wilson_upper
-from .curriculum import SpeedCurriculum, carry_caps
+from .curriculum import PushCurriculum, SpeedCurriculum, carry_caps
 from .model import ActorCritic, export_policy, migrate_inputs, rescale_actions
 from .ppo import PPO, PPOSettings, Rollout
 from .symmetry import MirrorLoss
 
 TASK_SCHEMA = "matter-rl-locomocao-1"
 KIND = "locomocao"
+# O desvio da saida da rede no contrato v4 (latent_tanh com fixed_std).
+LATENT_UNIT_STD = 0.5
 NETWORK = {"actor": [512, 512, 256], "critic": [512, 512, 256]}
 # Os canais da entrada que passam crus pela normalizacao: os do critico que so o
-# treino sabe (o exercicio, um-quente) - os outros normalizam.
-RAW_PREFIXES = ("drill.",)
+# treino sabe (o exercicio, um-quente) e o corpo do jogador (o corpo variavel: a
+# altura e a massa ja vem em escala, -1,5..2) - os outros normalizam.
+RAW_PREFIXES = ("drill.", "jogador.")
 # Os grupos das saidas (a telemetria da saturacao e do desvio; vault
 # .../pesquisas/03_otimizacao_ppo.md). Os prefixos mais longos primeiro.
 ACTION_GROUPS = ("pose", "pes", "passada", "equilibrio", "ganho", "turno")
@@ -75,7 +78,13 @@ PPO_DEFAULTS = {"steps_per_env": 32, "epochs": 5, "minibatches": 4, "gamma": 0.9
                 "critic_learning_rate": 3e-4, "max_std": 1.0}
 
 
-def native():
+def native(run: Path | None = None):
+    # (Com o treino, o modulo dele: o "native" do run.json - o do corpo variavel e
+    # o build-rl-corpos; a variavel MATTER_RL_NATIVE ainda manda.)
+    if run is not None and "MATTER_RL_NATIVE" not in os.environ and (run / "run.json").exists():
+        chosen = json.loads((run / "run.json").read_text()).get("native")
+        if chosen:
+            paths.NATIVE_DIR = Path(chosen)
     directory = str(paths.NATIVE_DIR)
     if directory not in sys.path:
         sys.path.insert(0, directory)
@@ -152,7 +161,26 @@ class LocomotionRunConfig:
     # aplicada). Pune o tranco da MEDIA, nao o ruido da exploracao (um custo de trancos
     # na nota, sobre a acao sorteada, pesaria o ruido). 0 (o padrao): desligada.
     smooth_policy_coef: float = 0.0
+    # O contrato v4 (21/10, vault 04_locomocao/plano_rl_sobre_classico.md C e H): a
+    # rede sai em latente e o tanh e do C++ (a razao do PPO no latente); o desvio e
+    # fixo (sem aprender, sem entropia), dado em unidade fisica por prefixo do canal
+    # e levado ao latente pela escala do canal (sigma_z ~ sigma_fisico / escala); a
+    # ultima camada nasce zerada (pesos e vies): a rede nasce o classico.
+    latent_tanh: bool = False
+    fixed_std: dict = field(default_factory=dict)
+    zero_last_layer: bool = False
+    # O ruido sobe perto do chao (o levantar): {"obs", "high_m", "low_m", "factor"}; {} desliga.
+    floor_noise: dict = field(default_factory=dict)
+    # As saidas travadas em zero, por prefixo do canal (a linha da ultima camada zerada e
+    # sem gradiente): a correcao fica a do classico. 24/10 (pedido do usuario): os bracos -
+    # sem nada que puxe de volta, a correcao deles derivava (0,16 -> 0,33 rad no ombro de
+    # 4185 a 10062) e torcia o braco, sem mudar as quedas (medido com os bracos zerados).
+    frozen_actions: list = field(default_factory=list)
     end_reason: str = ""
+    # O modulo nativo deste treino (a pasta do matter_locomotion_native; vazio: o de
+    # MATTER_RL_NATIVE ou o build-rl). O corpo variavel (26/10) roda no build-rl-corpos
+    # sem mexer no .so dos treinos de antes.
+    native: str = ""
 
     @staticmethod
     def load(path: Path) -> "LocomotionRunConfig":
@@ -163,7 +191,10 @@ class LocomotionRunConfig:
         return config
 
     def save(self, path: Path) -> None:
-        storage.write_json_atomic(path, asdict(self))
+        data = asdict(self)
+        if not data["native"]:
+            del data["native"]  # (o run.json de antes fica igual)
+        storage.write_json_atomic(path, data)
 
 
 def drill_summary(rows: np.ndarray, columns: list[str], drills: list[str], reasons: list[str]) -> dict:
@@ -221,6 +252,11 @@ def drill_summary(rows: np.ndarray, columns: list[str], drills: list[str], reaso
             "hold_drift": mean_of("deriva_espera"),
             "arc_error": mean_of("afastamento_curva"),
         }
+        if "levantou_s" in col:
+            # O levantar: a fracao que ficou de pe e a mediana do tempo ate isso.
+            stood = part[:, col["levantou_s"]]
+            out[drill]["stood_fraction"] = float((stood >= 0.0).mean())
+            out[drill]["stood_seconds_median"] = float(np.median(stood[stood >= 0.0])) if (stood >= 0.0).any() else None
         if "postura_tronco" in col:
             seconds = np.maximum(part[:, col["segundos"]], 1e-6)
             fell_rows = part[np.isin(ended, fall_codes)]
@@ -265,6 +301,27 @@ def drill_summary(rows: np.ndarray, columns: list[str], drills: list[str], reaso
     return out
 
 
+def body_strata(rows: np.ndarray, columns: list[str], reasons: list[str]) -> dict:
+    """As quedas e as medidas por corpo (o corpo variavel, para estratificar); vazio
+    sem as colunas do corpo ou so com o corpo de hoje (o resumo de antes)."""
+    col = {name: i for i, name in enumerate(columns)}
+    if not len(rows) or "corpo_altura" not in col:
+        return {}
+    heights, masses = rows[:, col["corpo_altura"]], rows[:, col["corpo_massa"]]
+    if np.all(np.abs(heights - 1.8) < 1e-4) and np.all(np.abs(masses - 80.0) < 1e-4):
+        return {}
+    fall_codes = [reasons.index(name) for name in ("queda", "numerico", "falha") if name in reasons]
+    out: dict = {}
+    for height, mass in sorted(set(zip(np.round(heights, 2).tolist(), np.round(masses, 1).tolist()))):
+        part = rows[(np.abs(heights - height) < 1e-3) & (np.abs(masses - mass) < 1e-2)]
+        falls = int(np.isin(part[:, col["razao"]].astype(int), fall_codes).sum())
+        out[f"{height:.2f}x{mass:g}"] = {
+            "episodes": int(len(part)), "falls": falls / len(part), "falls_upper95": wilson_upper(falls, len(part)),
+            "seconds": float(part[:, col["segundos"]].mean()), "return": float(part[:, col["retorno"]].mean()),
+            "velocity_error": float(part[:, col["erro_velocidade"]].mean())}
+    return out
+
+
 class LocomotionTrainer:
     def __init__(self, run: str, task: str | None = None, mode: str | None = None, environments: int | None = None,
                  device: str = "auto", seed: int | None = None, socket_path: Path | None = None,
@@ -305,6 +362,8 @@ class LocomotionTrainer:
         self.threads = system.threads_for(self.mode)
         torch.set_num_threads(2)
         self.device = choose_device(device)
+        if self.config.native:
+            paths.NATIVE_DIR = Path(self.config.native)
         self.native = native()
         self.task_path = paths.task_path(self.config.task)
         if not is_locomotion_task(self.task_path):
@@ -334,23 +393,60 @@ class LocomotionTrainer:
         self.episode_columns = self.batch.episode_columns()
         self.end_reasons = self.batch.end_reasons()
         self.drill_ids = list(self.batch.drill_ids)
+        # (Um modulo de antes ignora o bloco "body" em silencio: o treino sairia sem
+        # corpos variados.)
+        if "body" in json.loads(self.live_task.read_text()) and not hasattr(self.batch, "body_grid"):
+            raise RuntimeError("a tarefa tem o bloco body (corpos variados) e o modulo nativo nao o conhece "
+                               f"({paths.NATIVE_DIR}): aponte o treino para o build-rl-corpos "
+                               "(\"native\" no run.json ou MATTER_RL_NATIVE)")
         self.episode_seconds = float(json.loads(self.live_task.read_text()).get("episodeSeconds", 20.0))
         # A rede age em unidades do teto da fase (+-1 = o teto de cada canal); o
         # lote recebe a acao na escala maxima do contrato (vezes a fracao do
         # teto). Assim o desvio e o KL ficam bem condicionados, e abrir um teto
         # num portao e reescalar a ultima camada (model.rescale_actions).
         fractions = np.asarray(self.batch.action_cap_fractions(), dtype=np.float32)
-        self.action_scale = torch.as_tensor(fractions, device=self.device)
+        if self.config.latent_tanh:
+            # (O latente vai cru ao lote: o tanh e a escala sao do contrato.)
+            fractions = np.ones_like(fractions)
         std0 = np.full(len(fractions), self.config.initial_std_of_cap, dtype=np.float32)
+        if self.config.latent_tanh and self.config.fixed_std:
+            scales = np.asarray(self.batch.action_scales(), dtype=np.float32)
+            physical = channel_values(self.action_names, self.config.fixed_std, 0.05)
+            latent = np.where(scales > 0.0, physical / np.maximum(scales, 1e-6), 0.05).astype(np.float32)
+            # (A rede sai em unidades do desvio: desvio LATENT_UNIT_STD fixo na saida e o
+            # latente = saida x latent / LATENT_UNIT_STD. Com o desvio pequeno direto no
+            # latente, um passo do Adam movia a media muitas vezes o desvio: KL 2,4 com a
+            # taxa no piso, medido 21/10.)
+            fractions = (latent / LATENT_UNIT_STD).astype(np.float32)
+            std0 = np.full(len(fractions), LATENT_UNIT_STD, dtype=np.float32)
+        self.action_scale = torch.as_tensor(fractions, device=self.device)
         network = self.config.network
         self.model = ActorCritic(self.batch.obs_size, self.batch.critic_size, self.batch.action_size, std0,
                                  actor_hidden=network["actor"], critic_hidden=network["critic"]).to(self.device)
+        if self.config.latent_tanh:
+            with torch.no_grad():
+                self.model.log_std.copy_(torch.as_tensor(np.log(np.maximum(std0, 1e-4)), device=self.device))
+                if self.config.zero_last_layer:  # (um checkpoint, se houver, sobrescreve no restore)
+                    last = [m for m in self.model.actor.modules() if isinstance(m, torch.nn.Linear)][-1]
+                    last.weight.zero_()
+                    last.bias.zero_()
+            if self.config.fixed_std:
+                self.model.log_std.requires_grad_(False)
+        if self.config.floor_noise:
+            f = self.config.floor_noise
+            self.model.floor_noise = (self.obs_names.index(f.get("obs", "corpo.pelve.altura")),
+                                      float(f.get("high_m", 0.60)), float(f.get("low_m", 0.35)), float(f.get("factor", 2.5)),
+                                      self.obs_names.index("jogador.altura") if "jogador.altura" in self.obs_names else None)
         self.settings = PPOSettings.from_dict(self.config.ppo)
         self.ppo = PPO(self.model, self.settings)
         self.mirror = MirrorLoss(self.batch.mirror_maps(), self.device) if self.config.mirror_loss > 0.0 else None
         # Os limites de cada canal na unidade da rede (a acao aplicada para de mudar
         # fora deles) e os grupos das saidas (a telemetria; a perda de limites).
         lower, upper = self.batch.action_bounds()
+        if self.config.latent_tanh:
+            # (No latente, "saturado" e tanh acima de 0,96: |z| > 2, na unidade da rede.)
+            reach = 2.0 / np.maximum(np.asarray(fractions, dtype=np.float32), 1e-6)
+            lower, upper = list(-reach), list(reach)
         self.action_lower = torch.as_tensor(np.asarray(lower, dtype=np.float32), device=self.device)
         self.action_upper = torch.as_tensor(np.asarray(upper, dtype=np.float32), device=self.device)
         self.action_groups = [action_group(name) for name in self.action_names]
@@ -364,6 +460,7 @@ class LocomotionTrainer:
         if self.tuned_environment:
             self.db.event(run, "ambiente", "rodando com T_* definidas: " + json.dumps(self.tuned_environment))
         self.restore()
+        self.freeze_actions(hook=True)
         self.fix_raw_channels()
         self.configure_ppo()
         self.apply_std_bounds()
@@ -388,6 +485,8 @@ class LocomotionTrainer:
             if json.dumps(live["speedCurriculum"]["caps"], sort_keys=True) != before:
                 storage.write_json_atomic(self.live_task, live)
                 self.batch.update_task(str(self.live_task))
+        # O curriculo do empurrao por tipo (as faixas moram nos exercicios da copia da tarefa).
+        self.push_curriculum = PushCurriculum(live, self.drill_ids)
 
         self.state = "treinando"
         self.message = ""
@@ -469,6 +568,24 @@ class LocomotionTrainer:
                 "obs_names": self.obs_names, "critic_names": self.critic_names, "action_names": self.action_names,
                 "seed": self.config.seed, "ppo": self.config.ppo, "network": self.config.network,
                 "authority": self.authority(), "torch": torch.__version__}
+
+    def freeze_actions(self, hook: bool = False) -> None:
+        """Zera as linhas das saidas travadas (frozen_actions); hook: tambem o gradiente delas
+        (uma vez; o resto do embalo do Adam antigo e apagado no zero de cada atualizacao)."""
+        rows = [j for j, name in enumerate(self.action_names)
+                if any(name.startswith(prefix) for prefix in self.config.frozen_actions)]
+        if not rows:
+            return
+        last = [m for m in self.model.actor.modules() if isinstance(m, torch.nn.Linear)][-1]
+        with torch.no_grad():
+            last.weight[rows] = 0.0
+            last.bias[rows] = 0.0
+        if hook:
+            mask = torch.ones(len(self.action_names), device=self.device)
+            mask[rows] = 0.0
+            last.weight.register_hook(lambda grad: grad * mask[:, None])
+            last.bias.register_hook(lambda grad: grad * mask)
+            self.restore_notes.append(f"{len(rows)} saidas travadas em zero ({', '.join(self.config.frozen_actions)})")
 
     def checkpoint_state(self) -> dict:
         return {"model": self.model.state_dict(), "ppo": self.ppo.state_dict(), "network": self.config.network,
@@ -638,7 +755,12 @@ class LocomotionTrainer:
         task_key = hashlib.sha256(Path(self.live_task).read_bytes()).hexdigest()[:16] + self.batch.contract_hash
         if not hasattr(self, "classic_cache"):
             self.classic_cache = {}
+        # (Os exercicios com peso 0 ainda nao treinam: ficam fora da avaliacao.)
+        live_weights = {d.get("id"): float(d.get("weight", 1.0))
+                        for d in json.loads(Path(self.live_task).read_text()).get("drills", [])}
         for drill in self.drill_ids:
+            if live_weights.get(drill, 1.0) <= 0.0:
+                continue
             batch = self.evaluation_batches.get(drill)
             if batch is None:
                 batch = self.native.LocomotionBatch(str(self.live_task), self.assets,
@@ -687,6 +809,9 @@ class LocomotionTrainer:
                 rows = np.array(list(first.values())) if first else np.zeros((0, len(self.episode_columns)))
                 summary = drill_summary(rows, self.episode_columns, self.drill_ids, self.end_reasons).get(drill, {})
                 summary["worlds"] = worlds
+                bodies = body_strata(rows, self.episode_columns, self.end_reasons)
+                if bodies:
+                    summary["bodies"] = bodies
                 if solver == "classico":
                     self.classic_cache[(task_key, drill)] = summary
                 results.setdefault(solver, {})[drill] = summary
@@ -907,6 +1032,7 @@ class LocomotionTrainer:
                 return sum(term() for term in terms)
         stats = self.ppo.update(rollout, auxiliary=auxiliary)
         self.apply_std_bounds()
+        self.freeze_actions()
         stats["explained_variance"] = explained
         if self.device.type == "cuda":
             torch.cuda.synchronize()
@@ -943,6 +1069,9 @@ class LocomotionTrainer:
         details = {"authority": self.authority(), "fall_risk": fall_risk, "bootstrap": info["bootstrap"], "ppo": ppo,
                    "turn_gate": info.get("turn_gate", []),
                    "drills": drill_summary(rows, self.episode_columns, self.drill_ids, self.end_reasons)}
+        bodies = body_strata(rows, self.episode_columns, self.end_reasons)
+        if bodies:
+            details["bodies"] = bodies
         # O diagnostico de 18/10 (vault .../pesquisas/08_plano_consenso.md, Q0).
         std = self.model.log_std.detach().exp().cpu().numpy()
         kl_channels = stats.get("kl_per_channel") or []
@@ -968,6 +1097,15 @@ class LocomotionTrainer:
                 self.batch.update_task(str(self.live_task))
                 self.db.event(self.run, "curriculo", "; ".join(opened))
             details["curriculum"] = self.curriculum.snapshot(live)
+        if self.push_curriculum.enabled:
+            self.push_curriculum.observe(rows, self.episode_columns, fall_codes)
+            live = json.loads(self.live_task.read_text())
+            moved = self.push_curriculum.advance(live)
+            if moved:
+                storage.write_json_atomic(self.live_task, live)
+                self.batch.update_task(str(self.live_task))
+                self.db.event(self.run, "curriculo_empurrao", "; ".join(moved))
+            details["push_curriculum"] = self.push_curriculum.snapshot(live)
         result = {
             "run": self.run, "iteration": self.counters["iteration"], "time": time.time(),
             "steps": self.counters["steps"], "sps": sps, "reward": info["reward"], "episodes": int(len(rows)),

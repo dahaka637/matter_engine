@@ -10,14 +10,14 @@ namespace MatterEngine {
 
 // Os termos da nota do treino da locomocao, na ordem das parcelas.
 enum class LocomotionRewardTerm3D : std::size_t {
-    Velocity = 0, Facing, Style, Contact, Slip, Work, Smooth, Assist, Posture, Residual, Still, Fall, Count
+    Velocity = 0, Facing, Style, Contact, GetUp, Slip, Work, Smooth, Assist, Posture, Residual, Still, Fall, Count
 };
 inline constexpr std::size_t LocomotionRewardTermCount3D = static_cast<std::size_t>(LocomotionRewardTerm3D::Count);
 inline constexpr std::array<const char*, LocomotionRewardTermCount3D> LocomotionRewardTermNames3D {
-    "velocidade", "rumo", "estilo", "contato", "escorregar", "trabalho", "trancos", "ajuda", "postura", "residuo", "quietude", "queda"
+    "velocidade", "rumo", "estilo", "contato", "levantar", "escorregar", "trabalho", "trancos", "ajuda", "postura", "residuo", "quietude", "queda"
 };
-// Os quatro primeiros somam; os outros (custos e a queda) subtraem.
-inline constexpr std::size_t LocomotionRewardPositiveTerms3D = 4;
+// Os cinco primeiros somam; os outros (custos e a queda) subtraem.
+inline constexpr std::size_t LocomotionRewardPositiveTerms3D = 5;
 
 // O que uma decisao mediu (a media dos ticks dela).
 struct LocomotionStepMeasure3D {
@@ -25,6 +25,8 @@ struct LocomotionStepMeasure3D {
     // peito contra a camera (rad, RMS).
     float velocityError = 0.0f;
     float facingError = 0.0f;
+    // A rapidez viavel pedida (m/s, a media da decisao): o progresso.
+    float targetSpeed = 0.0f;
     // O erro das partes-chave contra a pose de estilo (m, RMS; so com a
     // referencia valida).
     bool styleValid = false;
@@ -47,6 +49,10 @@ struct LocomotionStepMeasure3D {
     // vezes o quanto o comando pede para ficar quieto (1 com o pedido ~0 e sem
     // frear; 0 andando ou freando). Zero quando nada pede quietude.
     float still = 0.0f;
+    // O quanto esta de pe (0 deitado .. 1 em pe: a pelve e o peito); fora do
+    // levantar fica 1 (nao muda nada). getUpDrill: o exercicio paga o levantar.
+    float upright = 1.0f;
+    bool getUpDrill = false;
     bool fell = false;
 };
 

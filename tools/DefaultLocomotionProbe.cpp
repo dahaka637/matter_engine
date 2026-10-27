@@ -11,12 +11,19 @@
 //
 // uso: MatterLocomotionProbe [--cenario nome] [--acel 50] [--desacel 60]
 //      [--dump arquivo] [--cada 4]
-// Sem --cenario roda todos. O dump e o formato do MatterBallPreview: os
-// desenhos saem de tools/analysis/ball_touch_preview.py --ler arquivo.
+//      [--gestos] [--tempo-manejo 0.35] [--tempo-chute 0.55]
+//      [--corpo cm,kg] (o perfil e os clipes de outro corpo; o dump ganha "corpo <m> <kg>")
+// --gestos: a bateria dos gestos de bola (24/10) - os 36 manejos e os 6
+// chutes em 3 forcas, parado, trotando e correndo; mede o tranco, o joelho
+// invertido, o pe no chao, as pernas cruzando, o apoio escorregando e o voo
+// no gesto (nomes g_<marcha>_toque_<perna><alcance><frente-tras>_<dentro|fora>
+// e g_<marcha>_chute_<perna><alcance>_<forca>).
+// Sem --cenario roda todos. O dump vai para MatterModelInspector quadros.
 #include "Engine/Animation/RagdollVisualPose3D.hpp"
-#include "Engine/Character/BallTouchPreview3D.hpp"
+#include "Engine/Athlete/AthleteAssets3D.hpp"
 #include "Engine/Character/DefaultLocomotion3D.hpp"
 #include "Engine/Character/RagdollPoseKinematics3D.hpp"
+#include "Engine/Gesture/GestureCatalog3D.hpp"
 
 #include <algorithm>
 #include <array>
@@ -42,20 +49,13 @@ struct Keys {
     float forward = 0.0f;
     float left = 0.0f;
     bool sprint = false;
+    // O sprint maximo (o Shift duplo do laboratorio): pede maxSprintSpeed.
+    bool maxSprint = false;
     float cameraYaw = 0.0f;
     bool jump = false;
     // A velocidade do pulo (m/s; a do laboratorio e 4,6, carregado 5,3).
-    float jumpSpeed = 4.6f;
-    // Manejo de bola: o pedido (borda), a forca e a direcao das teclas.
-    BallActionKind3D request = BallActionKind3D::None;
-    float power = 0.5f;
-    // A direcao do pedido em relacao a camera (rad), sem andar (o teste do
-    // gesto parado nas oito direcoes); NAN usa as teclas/o olhar.
-    float touchYaw = NAN;
-    // Chute: a mira em relacao a camera (rad), a altura e o efeito (-1..1).
-    float aimYaw = 0.0f;
-    float lift = 0.0f;
-    float curve = 0.0f;
+    // (A do jogo: 3,0 m/s, 24/10.)
+    float jumpSpeed = 3.0f;
     // Carrinho (a borda do agachar correndo).
     bool tackle = false;
     // Carga do pulo parado (0..1): o agachar de preparo.
@@ -66,32 +66,78 @@ struct Scenario {
     const char* name;
     float seconds;
     std::function<Keys(float)> keys;
-    // A bola (no inicio, em relacao a capsula; sem bola: nenhuma).
-    bool ball = false;
-    Vec3 ballStart;
-    // Velocidade inicial da bola e se ela fica parada no ar ate o toque (o
-    // teste da bola alta).
-    Vec3 ballVelocity {};
-    bool ballFloat = false;
-    // Pedido automatico (o jogador aperta quando a bola esta perto): a menos
-    // disto (m, da pelve no plano), no maximo um a cada autoInterval s; a
-    // direcao do toque em relacao a camera (NAN: a das teclas).
-    float autoDistance = 0.0f;
-    BallActionKind3D autoKind = BallActionKind3D::Dribble;
-    float autoPower = 0.35f;
-    float autoInterval = 0.45f;
-    float autoYaw = NAN;
-    float autoFrom = 0.0f;
-    int autoCount = 1000;
-    // (A garantia, 06/10 noite: so com a bola a pelo menos isto - a borda da
-    // area - e, com autoBehind, atras do corpo andando.)
-    float autoMinimum = 0.0f;
-    bool autoBehind = false;
-    // (A forca, 06/10 noite: a bola levada junto, nos pes - a esta distancia
-    // da capsula - ate o primeiro pedido; e a medida depois do toque.)
-    bool ballCarried = false;
-    Vec3 carriedOffset { 0.45f, -0.10f, 0.0f };
+    // O gesto de bola pedido em gestureAt (s; < 0 nenhum).
+    GestureSpec3D gesture {};
+    float gestureAt = -1.0f;
 };
+
+// A bateria dos gestos (--gestos).
+std::vector<Scenario> gestureScenarios(float touchSeconds, float shotSeconds) {
+    static std::deque<std::string> names;
+    std::vector<Scenario> list;
+    const char* gaits[3] = { "parado", "trote", "corre" };
+    for (int gait = 0; gait < 3; ++gait) {
+        // Andando, para 0,3 s depois do gesto e fica parado (os pes tem que
+        // voltar ao lugar: o "perna deslocada" depois do gesto).
+        // Parado, a camera girando (o corpo vira com ela): durante o gesto
+        // (comeca 0,1 s antes) e na volta dele, 70 graus para cada lado.
+        const auto addTurns = [&](const GestureSpec3D& spec, float seconds) {
+            const std::string base = names.back();
+            for (const float from : { 0.9f, 1.0f + 0.6f * seconds })
+                for (const float angle : { 1.22f, -1.22f }) {
+                    names.push_back(base + (from < 0.95f ? "_gira" : "_giradepois") + (angle > 0.0f ? "E" : "D"));
+                    const auto keys = [from, angle](float t) {
+                        Keys k;
+                        k.cameraYaw = angle * std::clamp((t - from) / 0.5f, 0.0f, 1.0f);
+                        return k;
+                    };
+                    list.push_back({ names.back().c_str(), 1.0f + seconds + 2.2f, keys, spec, 1.0f });
+                }
+        };
+        const auto keysFor = [gait](float stopAt) {
+            return [gait, stopAt](float t) {
+                Keys k;
+                if (gait > 0 && t > 0.2f && t < stopAt) k.forward = 1.0f;
+                k.sprint = gait == 2;
+                return k;
+            };
+        };
+        for (int side = 0; side < 2; ++side) {
+            for (int reach = 0; reach < 3; ++reach) {
+                for (int depth = 0; depth < 3; ++depth)
+                    for (int move = 0; move < 2; ++move) {
+                        GestureSpec3D spec;
+                        spec.kind = GestureKind3D::Touch;
+                        spec.side = side;
+                        spec.reach = reach;
+                        spec.depth = depth;
+                        spec.move = move == 0 ? GestureMove3D::In : GestureMove3D::Out;
+                        spec.power = 0.4f;
+                        spec.seconds = touchSeconds;
+                        spec.seed = static_cast<std::uint32_t>(1 + list.size());
+                        names.push_back(std::string("g_") + gaits[gait] + "_toque_" + (side == 0 ? "E" : "D")
+                            + std::to_string(reach) + std::to_string(depth) + (move == 0 ? "_dentro" : "_fora"));
+                        list.push_back({ names.back().c_str(), 1.0f + touchSeconds + 2.2f, keysFor(1.3f + touchSeconds), spec, 1.0f });
+                        if (gait == 0) addTurns(spec, touchSeconds);
+                    }
+                for (const float power : { 0.2f, 0.6f, 1.0f }) {
+                    GestureSpec3D spec;
+                    spec.kind = GestureKind3D::Shot;
+                    spec.side = side;
+                    spec.reach = reach;
+                    spec.power = power;
+                    spec.seconds = shotSeconds;
+                    spec.seed = static_cast<std::uint32_t>(1 + list.size());
+                    names.push_back(std::string("g_") + gaits[gait] + "_chute_" + (side == 0 ? "E" : "D")
+                        + std::to_string(reach) + "_" + std::to_string(static_cast<int>(power * 10.0f + 0.5f)));
+                    list.push_back({ names.back().c_str(), 1.0f + shotSeconds + 2.2f, keysFor(1.3f + shotSeconds), spec, 1.0f });
+                    if (gait == 0) addTurns(spec, shotSeconds);
+                }
+            }
+        }
+    }
+    return list;
+}
 
 bool pulse(float t, float at) { return t >= at && t < at + 0.008f; }
 
@@ -189,13 +235,20 @@ std::vector<Scenario> scenarios() {
             Keys k;
             if (t > 0.3f && t < 3.0f) k.forward = 1.0f;
             k.jump = t > 1.2f && t < 1.22f;
-            k.jumpSpeed = 2.5f;
+            k.jumpSpeed = 2.2f;
             return k; } },
         { "pulo alto", 3.5f, [](float t) {
             Keys k;
             if (t > 0.3f && t < 3.0f) k.forward = 1.0f;
             k.jump = t > 1.2f && t < 1.22f;
-            k.jumpSpeed = 5.3f;
+            k.jumpSpeed = 3.5f;
+            return k; } },
+        // O pulo instantaneo parado (24/10): sai ao apertar, sem o agachar de
+        // preparo, na altura media.
+        { "pulo instantaneo", 3.0f, [](float t) {
+            Keys k;
+            k.jump = t >= 1.2f && t < 1.22f;
+            k.jumpSpeed = 3.0f;
             return k; } },
         { "pulo parado", 3.5f, [](float t) {
             Keys k;
@@ -252,7 +305,7 @@ std::vector<Scenario> scenarios() {
                 k.jumpCrouch = x * x * (3.0f - 2.0f * x);
             }
             k.jump = t >= 1.6f && t < 1.62f;
-            k.jumpSpeed = 5.3f;
+            k.jumpSpeed = 3.5f;
             return k; } },
         { "voadora parado", 4.0f, [](float t) {
             Keys k;
@@ -273,357 +326,15 @@ std::vector<Scenario> scenarios() {
             else if (t >= 2.2f && t < 2.6f) k.cameraYaw = 0.7f + (t - 2.2f) / 0.4f * 2.1f;
             else if (t >= 2.6f) k.cameraYaw = 2.8f;
             return k; } },
-        { "toqueparado", 2.5f, [](float t) {
-            Keys k;
-            if (pulse(t, 0.6f)) { k.request = BallActionKind3D::Dribble; k.power = 0.3f; }
-            return k; }, true, { 0.55f, 0.10f, 0.11f } },
-        { "toquecorre", 4.0f, [](float t) {
-            Keys k;
-            if (t > 0.3f) k.forward = 1.0f;
-            for (float at : { 0.9f, 1.6f, 2.3f, 3.0f })
-                if (pulse(t, at)) { k.request = BallActionKind3D::Dribble; k.power = 0.3f; }
-            return k; }, true, { 1.6f, 0.05f, 0.11f } },
-        { "chuteparado", 2.5f, [](float t) {
-            Keys k;
-            if (pulse(t, 0.6f)) { k.request = BallActionKind3D::Shot; k.power = 0.8f; }
-            return k; }, true, { 0.55f, 0.10f, 0.11f } },
-        { "chutecorre", 3.0f, [](float t) {
-            Keys k;
-            if (t > 0.3f) k.forward = 1.0f;
-            k.sprint = t > 0.3f;
-            if (pulse(t, 0.6f)) { k.request = BallActionKind3D::Shot; k.power = 1.0f; }
-            return k; }, true, { 3.5f, -0.10f, 0.11f } },
+        // O sprint maximo reto (24/10).
+        { "sprintmax", 4.5f, [](float t) {
+            Keys k; if (t > 0.5f && t < 4.0f) { k.forward = 1.0f; k.sprint = k.maxSprint = true; } return k; } },
     };
 }
 
 // Os gestos com a bola para a revisao visual (rework de 06/10): parado, nas
 // oito direcoes, passe, chutes pela forca, sola, bola alta, bola longe e
 // andando. O pedido em 0,6 s.
-std::vector<Scenario> ballScenarios() {
-    std::vector<Scenario> list;
-    static const char* names[8] = { "frente", "frente_esq", "esq", "tras_esq", "tras", "tras_dir", "dir", "frente_dir" };
-    static std::vector<std::string> keep;
-    keep.reserve(512);
-    const auto add = [&](std::string name, float seconds, std::function<Keys(float)> keys, Vec3 ball,
-        Vec3 velocity = {}, bool floating = false) {
-        keep.push_back(name);
-        Scenario sc { keep.back().c_str(), seconds, keys, true, ball };
-        sc.ballVelocity = velocity;
-        sc.ballFloat = floating;
-        list.push_back(sc);
-    };
-    for (int k = 0; k < 8; ++k) {
-        const float yaw = k * Pi * 0.25f;
-        add(std::string("toque_") + names[k], 1.8f, [yaw](float t) {
-            Keys keys;
-            if (pulse(t, 0.6f)) { keys.request = BallActionKind3D::Dribble; keys.power = 0.35f; keys.touchYaw = yaw; }
-            return keys; }, { 0.40f, -0.12f, 0.11f });
-    }
-    for (int k = 0; k < 8; ++k) {
-        const float yaw = k * Pi * 0.25f;
-        add(std::string("toqueesq_") + names[k], 1.8f, [yaw](float t) {
-            Keys keys;
-            if (pulse(t, 0.6f)) { keys.request = BallActionKind3D::Dribble; keys.power = 0.35f; keys.touchYaw = yaw; }
-            return keys; }, { 0.40f, 0.12f, 0.11f });
-    }
-    add("passe", 2.0f, [](float t) {
-        Keys keys;
-        if (pulse(t, 0.6f)) { keys.request = BallActionKind3D::Dribble; keys.power = 0.85f; keys.touchYaw = 0.0f; }
-        return keys; }, { 0.38f, -0.14f, 0.11f });
-    add("passe_esq", 2.0f, [](float t) {
-        Keys keys;
-        if (pulse(t, 0.6f)) { keys.request = BallActionKind3D::Dribble; keys.power = 0.85f; keys.touchYaw = 0.8f; }
-        return keys; }, { 0.38f, -0.14f, 0.11f });
-    for (float power : { 0.3f, 0.6f, 1.0f }) {
-        add("chute_" + std::to_string(static_cast<int>(power * 100.0f)), 2.2f, [power](float t) {
-            Keys keys;
-            if (pulse(t, 0.6f)) { keys.request = BallActionKind3D::Shot; keys.power = power; }
-            return keys; }, { 0.42f, -0.16f, 0.11f });
-    }
-    add("chute_diag", 2.2f, [](float t) {
-        Keys keys;
-        keys.aimYaw = 0.5f;
-        if (pulse(t, 0.6f)) { keys.request = BallActionKind3D::Shot; keys.power = 0.8f; }
-        return keys; }, { 0.42f, -0.16f, 0.11f });
-    add("chute_esq", 2.2f, [](float t) {
-        Keys keys;
-        if (pulse(t, 0.6f)) { keys.request = BallActionKind3D::Shot; keys.power = 0.8f; }
-        return keys; }, { 0.42f, 0.16f, 0.11f });
-    // Chutes com efeito (o lado de dentro curvando para a esquerda com o
-    // direito, a trivela para a direita) e alto/rasteiro.
-    for (const auto& [name, lift, curve] : std::vector<std::tuple<const char*, float, float>> {
-            { "chute_curva", 0.0f, -0.7f }, { "chute_trivela", 0.0f, 0.7f }, { "chute_alto", 0.8f, 0.0f },
-            { "chute_rasteiro", -0.8f, 0.0f } }) {
-        add(name, 2.2f, [lift, curve](float t) {
-            Keys keys;
-            keys.lift = lift;
-            keys.curve = curve;
-            if (pulse(t, 0.6f)) { keys.request = BallActionKind3D::Shot; keys.power = 0.85f; }
-            return keys; }, { 0.42f, -0.16f, 0.11f });
-    }
-    add("bola_longe", 1.8f, [](float t) {
-        Keys keys;
-        if (pulse(t, 0.6f)) { keys.request = BallActionKind3D::Dribble; keys.power = 0.35f; keys.touchYaw = 0.0f; }
-        return keys; }, { 0.78f, -0.25f, 0.11f });
-    add("alta_canela", 1.8f, [](float t) {
-        Keys keys;
-        if (pulse(t, 0.6f)) { keys.request = BallActionKind3D::Dribble; keys.power = 0.35f; keys.touchYaw = 0.0f; }
-        return keys; }, { 0.40f, -0.14f, 0.30f }, {}, true);
-    add("alta_joelho", 1.8f, [](float t) {
-        Keys keys;
-        if (pulse(t, 0.6f)) { keys.request = BallActionKind3D::Dribble; keys.power = 0.35f; keys.touchYaw = 0.0f; }
-        return keys; }, { 0.42f, -0.14f, 0.50f }, {}, true);
-    add("alta_cintura", 1.8f, [](float t) {
-        Keys keys;
-        if (pulse(t, 0.6f)) { keys.request = BallActionKind3D::Dribble; keys.power = 0.35f; keys.touchYaw = 0.0f; }
-        return keys; }, { 0.45f, -0.16f, 0.85f }, {}, true);
-    add("voleio", 2.2f, [](float t) {
-        Keys keys;
-        if (pulse(t, 0.6f)) { keys.request = BallActionKind3D::Shot; keys.power = 0.8f; }
-        return keys; }, { 0.45f, -0.16f, 0.55f }, {}, true);
-    const auto run = [&](std::string name, float seconds, bool sprint, float yaw, BallActionKind3D kind, float power,
-        float distance, float interval, Vec3 ball, int count = 1000, float from = 0.3f) {
-        add(name, seconds, [sprint](float t) {
-            Keys keys;
-            if (t > 0.3f) { keys.forward = 1.0f; keys.sprint = sprint; }
-            return keys; }, ball);
-        Scenario& sc = list.back();
-        sc.autoDistance = distance;
-        sc.autoKind = kind;
-        sc.autoPower = power;
-        sc.autoInterval = interval;
-        sc.autoYaw = yaw;
-        sc.autoCount = count;
-        sc.autoFrom = from;
-    };
-    run("corre_toques", 5.0f, false, 0.0f, BallActionKind3D::Dribble, 0.2f, 0.85f, 0.5f, { 1.2f, -0.10f, 0.11f });
-    run("sprint_toques", 5.0f, true, 0.0f, BallActionKind3D::Dribble, 0.2f, 0.9f, 0.45f, { 1.5f, -0.10f, 0.11f });
-    run("corre_chute", 3.0f, false, NAN, BallActionKind3D::Shot, 0.9f, 0.9f, 1.0f, { 2.2f, -0.10f, 0.11f }, 1);
-    run("sprint_chute", 3.0f, true, NAN, BallActionKind3D::Shot, 0.9f, 0.9f, 1.0f, { 3.0f, -0.10f, 0.11f }, 1);
-    run("corre_esq", 3.0f, false, Pi * 0.5f, BallActionKind3D::Dribble, 0.35f, 0.85f, 1.0f, { 2.0f, -0.10f, 0.11f }, 1);
-    run("corre_dir", 3.0f, false, -Pi * 0.5f, BallActionKind3D::Dribble, 0.35f, 0.85f, 1.0f, { 2.0f, -0.10f, 0.11f }, 1);
-    run("corre_diag", 3.0f, false, Pi * 0.25f, BallActionKind3D::Dribble, 0.35f, 0.85f, 1.0f, { 2.0f, -0.10f, 0.11f }, 1);
-    run("corre_puxa", 3.0f, false, Pi, BallActionKind3D::Dribble, 0.35f, 0.85f, 1.0f, { 2.0f, -0.10f, 0.11f }, 1);
-    run("corre_passe", 3.0f, false, 0.0f, BallActionKind3D::Dribble, 0.85f, 0.85f, 1.0f, { 2.0f, -0.10f, 0.11f }, 1);
-    // De lado (strafe para a esquerda) e de costas, tocando no rumo do
-    // movimento.
-    add("lado_toques", 4.0f, [](float t) {
-        Keys keys;
-        if (t > 0.3f) keys.left = 1.0f;
-        return keys; }, { 0.05f, 1.0f, 0.11f });
-    {
-        Scenario& sc = list.back();
-        sc.autoDistance = 0.85f; sc.autoKind = BallActionKind3D::Dribble; sc.autoPower = 0.2f;
-        sc.autoInterval = 0.5f; sc.autoYaw = Pi * 0.5f; sc.autoFrom = 0.3f;
-    }
-    add("costas_toques", 4.0f, [](float t) {
-        Keys keys;
-        if (t > 0.3f) keys.forward = -1.0f;
-        return keys; }, { -1.0f, -0.05f, 0.11f });
-    {
-        Scenario& sc = list.back();
-        sc.autoDistance = 0.85f; sc.autoKind = BallActionKind3D::Dribble; sc.autoPower = 0.2f;
-        sc.autoInterval = 0.5f; sc.autoYaw = Pi; sc.autoFrom = 0.3f;
-    }
-    // Arrancando com a bola (o caso do laboratorio): parado, ele aperta a
-    // direcao e o toque juntos - o corpo comeca a andar e o toque sai.
-    for (int k = 0; k < 4; ++k) {
-        static const char* names4[4] = { "arranca_frente", "arranca_esq", "arranca_dir", "arranca_tras" };
-        const float fx = k == 0 ? 1.0f : k == 3 ? -1.0f : 0.0f;
-        const float fy = k == 1 ? 1.0f : k == 2 ? -1.0f : 0.0f;
-        add(names4[k], 2.0f, [fx, fy](float t) {
-            Keys keys;
-            if (t >= 0.6f) { keys.forward = fx; keys.left = fy; }
-            if (pulse(t, 0.6f)) { keys.request = BallActionKind3D::Dribble; keys.power = 0.4f; }
-            return keys; }, { 0.40f, -0.12f, 0.11f });
-    }
-    // Recepcao: parado, a bola vindo de frente a 4 e a 8 m/s; o toque sai
-    // quando ela entra no alcance (para o lado e para a frente).
-    for (float speed : { 4.0f, 8.0f }) {
-        for (int k = 0; k < 2; ++k) {
-            const float yaw = k == 0 ? Pi * 0.5f : 0.0f;
-            add(std::string("recebe_") + std::to_string(static_cast<int>(speed)) + (k == 0 ? "_lado" : "_frente"), 2.0f,
-                [](float) { return Keys {}; }, { 3.0f, -0.12f, 0.11f }, { -speed, 0.0f, 0.0f });
-            Scenario& sc = list.back();
-            sc.autoDistance = 0.9f; sc.autoKind = BallActionKind3D::Dribble; sc.autoPower = 0.3f;
-            sc.autoInterval = 1.0f; sc.autoYaw = yaw; sc.autoCount = 1; sc.autoFrom = 0.0f;
-        }
-    }
-    // A bola atras do corpo: calcanhar (para tras) e a sola trazendo-a (para
-    // a frente e para o lado).
-    add("calcanhar", 1.8f, [](float t) {
-        Keys keys;
-        if (pulse(t, 0.6f)) { keys.request = BallActionKind3D::Dribble; keys.power = 0.35f; keys.touchYaw = Pi; }
-        return keys; }, { -0.30f, -0.12f, 0.11f });
-    add("sola_frente", 1.8f, [](float t) {
-        Keys keys;
-        if (pulse(t, 0.6f)) { keys.request = BallActionKind3D::Dribble; keys.power = 0.35f; keys.touchYaw = 0.0f; }
-        return keys; }, { -0.25f, -0.15f, 0.11f });
-    add("sola_lado", 1.8f, [](float t) {
-        Keys keys;
-        if (pulse(t, 0.6f)) { keys.request = BallActionKind3D::Dribble; keys.power = 0.35f; keys.touchYaw = Pi * 0.5f; }
-        return keys; }, { -0.25f, -0.15f, 0.11f });
-    // V3 (06/10 noite): a bola atras tocada para o lado (a perna para tras e
-    // para fora, Pro Soccer Online; e para dentro, a sola curta), um pouco
-    // atras (o gesto de frente com ela imaginada a frente), a antecipacao (o
-    // pedido antes da bola chegar: guardado e sincronizado) e de lado com a
-    // bola do lado contrario (as pernas nao cruzam).
-    for (const auto& [name, ball, yaw] : std::vector<std::tuple<const char*, Vec3, float>> {
-            { "tras_fora_dir", { -0.26f, -0.30f, 0.11f }, -Pi * 0.5f },
-            { "tras_fora_longe", { -0.42f, -0.40f, 0.11f }, -Pi * 0.5f },
-            { "tras_fora_longe_esq", { -0.42f, 0.40f, 0.11f }, Pi * 0.5f },
-            { "tras_fora_esq", { -0.26f, 0.30f, 0.11f }, Pi * 0.5f },
-            { "tras_fora_diag", { -0.30f, -0.26f, 0.11f }, -Pi * 0.75f },
-            { "tras_dentro", { -0.26f, -0.22f, 0.11f }, Pi * 0.5f },
-            { "atras_leve", { -0.14f, -0.14f, 0.11f }, 0.0f },
-            { "atras_leve_esq", { -0.18f, 0.14f, 0.11f }, Pi * 0.25f } }) {
-        const float touchYaw = yaw;
-        add(name, 1.8f, [touchYaw](float t) {
-            Keys keys;
-            if (pulse(t, 0.6f)) { keys.request = BallActionKind3D::Dribble; keys.power = 0.4f; keys.touchYaw = touchYaw; }
-            return keys; }, ball);
-    }
-    add("atras_chute", 2.2f, [](float t) {
-        Keys keys;
-        if (pulse(t, 0.6f)) { keys.request = BallActionKind3D::Shot; keys.power = 0.8f; }
-        return keys; }, { -0.12f, -0.14f, 0.11f });
-    // Antecipacao: parado, a bola vindo de longe; o pedido sai cedo (bola a
-    // 2,2 m) e fica guardado ate o gesto poder encontra-la.
-    add("antecipa_frente", 2.0f, [](float t) {
-        Keys keys;
-        if (pulse(t, 0.3f)) { keys.request = BallActionKind3D::Dribble; keys.power = 0.3f; keys.touchYaw = Pi * 0.5f; }
-        return keys; }, { 3.4f, -0.12f, 0.11f }, { -5.0f, 0.0f, 0.0f });
-    add("antecipa_lado", 2.0f, [](float t) {
-        Keys keys;
-        if (pulse(t, 0.3f)) { keys.request = BallActionKind3D::Dribble; keys.power = 0.3f; keys.touchYaw = 0.0f; }
-        return keys; }, { 0.35f, -2.6f, 0.11f }, { 0.0f, 4.5f, 0.0f });
-    add("antecipa_chute", 2.2f, [](float t) {
-        Keys keys;
-        if (pulse(t, 0.3f)) { keys.request = BallActionKind3D::Shot; keys.power = 0.9f; }
-        return keys; }, { 2.6f, -0.16f, 0.11f }, { -3.5f, 0.0f, 0.0f });
-    // Correndo ao encontro da bola parada: o pedido sai com ela a 1,4 m (fora
-    // da area) - o toque sai no encontro.
-    add("corre_encontro", 2.4f, [](float t) {
-        Keys keys;
-        if (t > 0.2f) keys.forward = 1.0f;
-        if (pulse(t, 0.75f)) { keys.request = BallActionKind3D::Dribble; keys.power = 0.25f; keys.touchYaw = 0.0f; }
-        return keys; }, { 3.0f, -0.10f, 0.11f });
-    add("corre_encontro_chute", 2.4f, [](float t) {
-        Keys keys;
-        if (t > 0.2f) keys.forward = 1.0f;
-        if (pulse(t, 0.75f)) { keys.request = BallActionKind3D::Shot; keys.power = 0.9f; }
-        return keys; }, { 3.0f, -0.10f, 0.11f });
-    // De lado para a direita com a bola do lado esquerdo a frente (o pe
-    // direito cruzaria): toques no rumo do movimento.
-    add("lado_cruzado", 3.0f, [](float t) {
-        Keys keys;
-        if (t > 0.3f) keys.left = -1.0f;
-        return keys; }, { 0.30f, -0.9f, 0.11f });
-    {
-        Scenario& sc = list.back();
-        sc.autoDistance = 0.85f; sc.autoKind = BallActionKind3D::Dribble; sc.autoPower = 0.2f;
-        sc.autoInterval = 0.5f; sc.autoYaw = -Pi * 0.5f; sc.autoFrom = 0.3f;
-    }
-    add("lado_dir_toques", 3.0f, [](float t) {
-        Keys keys;
-        if (t > 0.3f) keys.left = -1.0f;
-        return keys; }, { 0.05f, -1.0f, 0.11f });
-    {
-        Scenario& sc = list.back();
-        sc.autoDistance = 0.85f; sc.autoKind = BallActionKind3D::Dribble; sc.autoPower = 0.2f;
-        sc.autoInterval = 0.5f; sc.autoYaw = -Pi * 0.5f; sc.autoFrom = 0.3f;
-    }
-    // Diagonal para a frente e a direita com a bola a frente e a esquerda (a
-    // segunda imagem do usuario).
-    add("diag_toques", 3.0f, [](float t) {
-        Keys keys;
-        if (t > 0.3f) { keys.forward = 0.7071f; keys.left = -0.7071f; }
-        return keys; }, { 0.9f, -0.5f, 0.11f });
-    {
-        Scenario& sc = list.back();
-        sc.autoDistance = 0.85f; sc.autoKind = BallActionKind3D::Dribble; sc.autoPower = 0.2f;
-        sc.autoInterval = 0.5f; sc.autoYaw = -Pi * 0.25f; sc.autoFrom = 0.3f;
-    }
-    add("fora_alcance", 1.5f, [](float t) {
-        Keys keys;
-        if (pulse(t, 0.6f)) { keys.request = BallActionKind3D::Shot; keys.power = 0.8f; }
-        return keys; }, { 1.4f, 0.0f, 0.11f });
-    // A garantia (06/10 noite, pedido do usuario: "estou correndo sprint e a
-    // bola esta dentro da area mas na beira, atras, e eu tento manejar, ele
-    // nao deixa"): o pedido com a bola na borda da area, atras do corpo
-    // correndo (ele passou por ela) - o toque sai sempre (o gesto na bola
-    // imaginada a frente).
-    const auto edge = [&](std::string name, bool sprint, float side, BallActionKind3D kind, float power, float yaw,
-        float leftKey = 0.0f) {
-        add(name, 3.2f, [sprint, leftKey](float t) {
-            Keys keys;
-            if (t > 0.3f) { keys.forward = leftKey == 0.0f ? 1.0f : 0.0f; keys.left = leftKey; keys.sprint = sprint; }
-            return keys; }, leftKey == 0.0f ? Vec3 { 5.0f, side, 0.11f } : Vec3 { side, 3.0f * leftKey, 0.11f });
-        Scenario& sc = list.back();
-        sc.autoDistance = 0.95f; sc.autoMinimum = 0.80f; sc.autoBehind = true; sc.autoKind = kind;
-        sc.autoPower = power; sc.autoYaw = yaw; sc.autoCount = 1; sc.autoFrom = 0.3f;
-    };
-    edge("borda_sprint", true, -0.20f, BallActionKind3D::Dribble, 0.3f, 0.0f);
-    edge("borda_sprint_esq", true, 0.25f, BallActionKind3D::Dribble, 0.3f, 0.0f);
-    edge("borda_sprint_lado", true, -0.20f, BallActionKind3D::Dribble, 0.4f, -Pi * 0.5f);
-    edge("borda_sprint_puxa", true, -0.20f, BallActionKind3D::Dribble, 0.4f, Pi);
-    edge("borda_sprint_chute", true, -0.20f, BallActionKind3D::Shot, 0.9f, NAN);
-    edge("borda_corre", false, -0.20f, BallActionKind3D::Dribble, 0.3f, 0.0f);
-    edge("borda_corre_chute", false, 0.20f, BallActionKind3D::Shot, 0.8f, NAN);
-    // De lado (para a esquerda) com a bola ficando para tras do movimento.
-    edge("borda_lado", false, 0.25f, BallActionKind3D::Dribble, 0.3f, Pi * 0.5f, 1.0f);
-    // Clique duplo parado (o segundo durante o primeiro gesto, para outro
-    // lado) e pedidos seguidos correndo rapido (no intervalo entre pedidos):
-    // cada um tem o seu toque.
-    add("duplo_clique", 2.2f, [](float t) {
-        Keys keys;
-        if (pulse(t, 0.6f)) { keys.request = BallActionKind3D::Dribble; keys.power = 0.3f; keys.touchYaw = 0.0f; }
-        if (pulse(t, 0.7f)) { keys.request = BallActionKind3D::Dribble; keys.power = 0.3f; keys.touchYaw = Pi * 0.5f; }
-        return keys; }, { 0.40f, -0.12f, 0.11f });
-    add("duplo_chute", 2.4f, [](float t) {
-        Keys keys;
-        if (pulse(t, 0.6f)) { keys.request = BallActionKind3D::Dribble; keys.power = 0.2f; keys.touchYaw = 0.0f; }
-        if (pulse(t, 0.68f)) { keys.request = BallActionKind3D::Shot; keys.power = 0.8f; }
-        return keys; }, { 0.40f, -0.12f, 0.11f });
-    // Chute e logo depois um clique de toque (no armado): o chute sai e a bola
-    // vai embora por ele - o toque nao a pega na saida.
-    add("chute_e_toque", 2.4f, [](float t) {
-        Keys keys;
-        if (pulse(t, 0.6f)) { keys.request = BallActionKind3D::Shot; keys.power = 0.8f; }
-        if (pulse(t, 0.7f)) { keys.request = BallActionKind3D::Dribble; keys.power = 0.3f; keys.touchYaw = Pi * 0.5f; }
-        return keys; }, { 0.42f, -0.16f, 0.11f });
-    // A forca no toque (06/10 noite, pedido do usuario: "falta de forca
-    // quando tento fazer a bola ir em direcao contraria quando em movimento" e
-    // "levar em consideracao a velocidade do meu boneco"): correndo com a
-    // bola nos pes, em 1,6 s ele aperta a direcao do toque (W, S, D) junto
-    // com o clique - como no laboratorio, as teclas dao a direcao e a corrida.
-    const auto forceTest = [&](std::string name, int speed, float forwardKey, float leftKey, float power) {
-        add(name, 4.2f, [speed, forwardKey, leftKey, power](float t) {
-            Keys keys;
-            if (t >= 1.6f) {
-                keys.forward = forwardKey;
-                keys.left = leftKey;
-                keys.sprint = speed == 2;
-            } else if (t > 0.3f && speed > 0) {
-                keys.forward = 1.0f;
-                keys.sprint = speed == 2;
-            }
-            if (pulse(t, 1.6f)) { keys.request = BallActionKind3D::Dribble; keys.power = power; }
-            return keys; }, { 0.45f, -0.10f, 0.11f });
-        list.back().ballCarried = true;
-    };
-    for (const auto& [speed, label] : std::vector<std::pair<int, const char*>> { { 0, "parado" }, { 1, "trote" }, { 2, "sprint" } }) {
-        const std::string tag = label;
-        forceTest("forca_frente_" + tag, speed, 1.0f, 0.0f, 0.15f);
-        forceTest("forca_tras_" + tag, speed, -1.0f, 0.0f, 0.15f);
-        forceTest("forca_tras_meia_" + tag, speed, -1.0f, 0.0f, 0.5f);
-        forceTest("forca_lado_" + tag, speed, 0.0f, -1.0f, 0.15f);
-        forceTest("forca_diag_tras_" + tag, speed, -0.7071f, -0.7071f, 0.15f);
-    }
-    run("sprint_rapidos", 4.0f, true, 0.0f, BallActionKind3D::Dribble, 0.15f, 0.95f, 0.12f, { 1.5f, -0.10f, 0.11f });
-    run("corre_rapidos", 4.0f, false, 0.0f, BallActionKind3D::Dribble, 0.15f, 0.95f, 0.12f, { 1.2f, -0.10f, 0.11f });
-    return list;
-}
 
 void dumpFrame(FILE* file, const RagdollProfile3D& profile, const RagdollAnimationPose3D& pose, float t,
     const DefaultLocomotionOutput3D& out) {
@@ -751,18 +462,29 @@ void writeCapture(const std::string& path, const char* name, const RagdollProfil
 
 int main(int argc, char** argv) {
     std::string only, dumpPath, capturePath;
+    bool gestures = false;
+    float touchSeconds = 0.35f, shotSeconds = 0.55f;
     float captureFrom = 1.5f;
     float acceleration = 16.0f, deceleration = 22.0f, turnRate = 10.0f, brake = 30.0f;
     int every = 4;
     std::vector<std::pair<std::string, float>> tweaks;
+    PlayerBody3D body;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         const auto need = [&]() -> const char* { return i + 1 < argc ? argv[++i] : ""; };
         if (arg == "--cenario") only = need();
+        else if (arg == "--corpo") {
+            const auto parsed = parseBody3D(need());
+            if (!parsed) { std::fprintf(stderr, "--corpo cm,kg (170 a 200 cm, 60 a 100 kg)\n"); return 2; }
+            body = *parsed;
+        }
         else if (arg == "--acel") acceleration = std::strtof(need(), nullptr);
         else if (arg == "--desacel") deceleration = std::strtof(need(), nullptr);
         else if (arg == "--giro") turnRate = std::strtof(need(), nullptr);
         else if (arg == "--dump") dumpPath = need();
+        else if (arg == "--gestos") gestures = true;
+        else if (arg == "--tempo-manejo") touchSeconds = std::strtof(need(), nullptr);
+        else if (arg == "--tempo-chute") shotSeconds = std::strtof(need(), nullptr);
         else if (arg == "--cada") every = std::max(1, std::atoi(need()));
         // Um ciclo inteiro (de um pouso do pe esquerdo ao seguinte) a partir
         // de --captura-de s, no formato de reference_capture.py.
@@ -776,8 +498,11 @@ int main(int argc, char** argv) {
         }
         else { std::fprintf(stderr, "argumento desconhecido: %s\n", arg.c_str()); return 2; }
     }
-    const BallPreviewAssets3D assets = loadBallPreviewAssets3D(MATTERENGINE_ASSETS_DIR);
-    const RagdollProfile3D& profile = assets.character.profile;
+    const std::shared_ptr<const AthleteBundle3D> bundle = AthleteBundle3D::shared(MATTERENGINE_ASSETS_DIR, body);
+    const RagdollProfile3D& profile = bundle->profile();
+    if (!isBaseBody3D(body))
+        std::printf("corpo %.2f m %.1f kg (escala %.4f, perfil %.1f kg)\n", body.heightMeters, body.massKg,
+            bodyScale3D(body), profile.totalMassKg);
     // Os ossos visuais (07/10): a mao relaxada tem de ser a exportada.
     {
         RagdollVisualPose3D check;
@@ -792,10 +517,10 @@ int main(int argc, char** argv) {
         input.linkOrientations = orientations;
         input.handPose = { RagdollHandPose3D::Relaxed, RagdollHandPose3D::Relaxed };
         input.groundHeight = { -profile.standingRootHeightMeters, -profile.standingRootHeightMeters };
-        const auto& rotations = check.update(assets.character, input);
+        const auto& rotations = check.update(bundle->character(), input);
         float worst = 0.0f;
         for (std::size_t k = 0; k < rotations.size(); ++k) {
-            const Quaternion a = rotations[k], b = assets.character.visualBones[k].restRotation;
+            const Quaternion a = rotations[k], b = bundle->character().visualBones[k].restRotation;
             const float d = std::abs(a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w);
             worst = std::max(worst, 2.0f * std::acos(std::min(1.0f, d)) * 180.0f / Pi);
         }
@@ -804,9 +529,7 @@ int main(int argc, char** argv) {
     }
     // Os clipes do modo padrao (os do manifesto por cima dos do fisico), como
     // no laboratorio.
-    const CharacterLocomotionAnimations3D animations = defaultLocomotionAnimations3D(
-        mapCharacterAnimations3D(assets.character, assets.clips), assets.character.defaultLocomotionClipIds,
-        assets.clips);
+    const CharacterLocomotionAnimations3D animations = *bundle->assets().defaultClips;
     std::size_t feet[2] = { 0, 0 };
     for (std::size_t i = 0; i < profile.links.size(); ++i) {
         if (profile.links[i].id == "LeftFoot") feet[0] = i;
@@ -814,38 +537,25 @@ int main(int argc, char** argv) {
     }
     std::printf("%-10s | %-17s | %-23s | %-27s | %-14s | %s\n", "cenario", "sola min/apoio max", "deslize apoio med/p95/max",
         "pico acel tronco/bracos (t)", "pico pernas", "giro/tick max | pelve-capsula max");
-    std::vector<Scenario> all = scenarios();
-    for (const Scenario& extra : ballScenarios()) all.push_back(extra);
+    std::vector<Scenario> all = gestures ? gestureScenarios(touchSeconds, shotSeconds) : scenarios();
+    std::size_t shins[2] = { 0, 0 }, thighs[2] = { 0, 0 };
+    for (std::size_t i = 0; i < profile.links.size(); ++i) {
+        if (profile.links[i].id == "LeftShin") shins[0] = i;
+        if (profile.links[i].id == "RightShin") shins[1] = i;
+        if (profile.links[i].id == "LeftThigh") thighs[0] = i;
+        if (profile.links[i].id == "RightThigh") thighs[1] = i;
+    }
+    // O pior de cada medida da bateria dos gestos (e o cenario).
+    struct Worst { float value = -1e9f; std::string name; void take(float v, const char* n) { if (v > value) { value = v; name = n; } } };
+    Worst worstLegPeak, worstLegTurn, worstKnee, worstSole, worstSupportSlip, worstCrossing, worstFlight, worstPop, worstStance;
+    int gestureRuns = 0;
+    bool dumpOpened = false;
     for (const Scenario& scenario : all) {
         if (!only.empty() && only != scenario.name
             && !(only.back() == '*' && std::string(scenario.name).rfind(only.substr(0, only.size() - 1), 0) == 0))
             continue;
         DefaultLocomotion3D locomotion;
         locomotion.reset(0.0f);
-        BallControl3D ballControl;
-        BallControlOutput3D ballOutput;
-        Vec3 ballPosition = scenario.ballStart, ballVelocity = scenario.ballVelocity;
-        bool ballHeld = scenario.ballFloat;
-        float autoLast = -10.0f;
-        int autoDone = 0;
-        int ballPhase = 0, ballTouchedFlag = 0;
-        RagdollState3D bodyState;
-        int touches = 0;
-        float firstTouch = -1.0f;
-        // A garantia: cada pedido (o instante e se a bola estava na area) ate
-        // o toque dele, o descarte ou ser substituido por um novo guardado.
-        struct Asked { float at; bool inArea; };
-        std::deque<Asked> asked;
-        int askedInArea = 0, servedInArea = 0, replacedInArea = 0, failedInArea = 0;
-        // A forca: a bola levada ate o pedido; depois do toque, onde ela esta
-        // em relacao a capsula (+0,5, +1, +1,5 s) e quando ele a alcanca.
-        bool carryReleased = false;
-        float forceTouchAt = -1.0f, forceReach = -1.0f, forceBodySpeed = 0.0f;
-        Vec3 forceTouchVelocity, forceBodyVelocity;
-        std::array<Vec3, 3> forceRel {};
-        float worstWait = 0.0f;
-        bool wasPending = false;
-        std::string failures;
         DefaultLocomotionSettings3D& settings = locomotion.settings();
         float variety = 1.0f;
         for (const auto& [key, value] : tweaks) {
@@ -902,9 +612,12 @@ int main(int argc, char** argv) {
         }
         FILE* dump = nullptr;
         if (!dumpPath.empty()) {
-            dump = std::fopen(dumpPath.c_str(), "w");
+            // (Um arquivo para todos os cenarios: o primeiro abre, os outros somam.)
+            dump = std::fopen(dumpPath.c_str(), dumpOpened ? "a" : "w");
+            dumpOpened = true;
             std::fprintf(dump, "S padrao %s\n", scenario.name);
-            std::fprintf(dump, "I pedido 0 toque -1 pe -1 superficie 0 falha 0 rumo 0 direcao 1 0 pelve 0 0 1 bola 0 0 0\n");
+            // (O corpo so fora do de hoje: o dump dele fica o de sempre.)
+            if (!isBaseBody3D(body)) std::fprintf(dump, "corpo %.4f %.2f\n", body.heightMeters, body.massKg);
         }
         std::vector<std::vector<Vec3>> history;
         int captureState = 0;
@@ -938,26 +651,25 @@ int main(int argc, char** argv) {
         }
         std::string peakLink;
         std::vector<float> slides;
+        // O gesto: a bola de referencia e as medidas na janela dele.
+        Vec3 nominalBall;
+        const float gestureEnd = scenario.gestureAt >= 0.0f ? scenario.gestureAt + scenario.gesture.seconds + 0.05f : -1.0f;
+        float gLegPeak = 0.0f, gLegTurn = 0.0f, gKneeMin = 10.0f, gSoleMin = 10.0f, gSupportSlip = 0.0f, gFlight = 0.0f,
+              gFlightRun = 0.0f, gPop = 0.0f;
+        int gCrossing = 0;
+        // O pe de apoio: onde estava no comando e o quanto saiu dali (m, no
+        // plano; parado ele nao sai); e o tranco por grupo (a perna do gesto,
+        // a de apoio e o corpo de cima, m/s2).
+        Vec3 gSupportStart;
+        bool gSupportStartValid = false;
+        float gSupportDrift = 0.0f, gPeakGestureLeg = 0.0f, gPeakSupportLeg = 0.0f, gPeakUpper = 0.0f;
+        // Os pes parados (no plano, em relacao a pelve, no rumo): no comeco
+        // (antes de andar) e no fim - o quanto ficaram fora do lugar.
+        std::array<Vec3, 2> stanceStart {}, stanceEnd {};
         const int steps = static_cast<int>(scenario.seconds / Dt);
         for (int step = 0; step < steps; ++step) {
             const float t = step * Dt;
-            Keys keys = scenario.keys(t);
-            if (scenario.autoDistance > 0.0f && !bodyState.links.empty() && autoDone < scenario.autoCount
-                && t >= scenario.autoFrom && t - autoLast >= scenario.autoInterval) {
-                const Vec3 pelvis = bodyState.links.front().position;
-                const float away = std::hypot(ballPosition.x - pelvis.x, ballPosition.y - pelvis.y);
-                const bool behind = (ballPosition.x - pelvis.x) * velocity.x + (ballPosition.y - pelvis.y) * velocity.y < 0.0f
-                    && std::hypot(velocity.x, velocity.y) > 1.0f;
-                if (away < scenario.autoDistance && away >= scenario.autoMinimum && (!scenario.autoBehind || behind)) {
-                    keys.request = scenario.autoKind;
-                    keys.power = scenario.autoPower;
-                    keys.touchYaw = scenario.autoYaw;
-                    autoLast = t;
-                    ++autoDone;
-                    std::printf("           pedido automatico em %.2f s (bola a %.2f m)\n", t,
-                        std::hypot(ballPosition.x - pelvis.x, ballPosition.y - pelvis.y));
-                }
-            }
+            const Keys keys = scenario.keys(t);
             // A capsula: velocidade definida, aceleracao alta (Unreal).
             Vec3 move { keys.forward * std::cos(keys.cameraYaw) - keys.left * std::sin(keys.cameraYaw),
                 keys.forward * std::sin(keys.cameraYaw) + keys.left * std::cos(keys.cameraYaw), 0.0f };
@@ -965,9 +677,8 @@ int main(int argc, char** argv) {
             if (move.lengthSquared() > 1e-4f) {
                 move = move.normalized();
                 const float relative = std::atan2(move.y, move.x) - keys.cameraYaw;
-                wanted = move * defaultLocomotionSpeed3D(settings, relative, keys.sprint);
-                // (O chute correndo freia um pouco - a escala do manejo.)
-                wanted = wanted * ballOutput.speedScale;
+                wanted = move * (keys.maxSprint ? settings.maxSprintSpeed
+                    : defaultLocomotionSpeed3D(settings, relative, keys.sprint));
             }
             if (grounded) {
                 // O mesmo motor da capsula no modo padrao (JoltCharacter3D com
@@ -1007,132 +718,26 @@ int main(int argc, char** argv) {
                 velocity.z = 0.0f;
                 grounded = true;
             }
-            if (scenario.ballCarried && !carryReleased) {
-                ballPosition = { position.x + scenario.carriedOffset.x, position.y + scenario.carriedOffset.y, 0.11f };
-                ballVelocity = { velocity.x, velocity.y, 0.0f };
-                if (keys.request != BallActionKind3D::None) carryReleased = true;
-            }
-            if (forceTouchAt >= 0.0f) {
-                const Vec3 rel { ballPosition.x - position.x, ballPosition.y - position.y, 0.0f };
-                for (int k = 0; k < 3; ++k)
-                    if (std::abs(t - forceTouchAt - 0.5f * static_cast<float>(k + 1)) < Dt * 0.5f) forceRel[static_cast<std::size_t>(k)] = rel;
-                if (forceReach < 0.0f && t - forceTouchAt > 0.3f && rel.length() < 0.5f) forceReach = t - forceTouchAt;
-            }
-            // O manejo de bola sobre o corpo do tick anterior (como no
-            // laboratorio).
-            if (scenario.ball && !bodyState.links.empty()) {
-                BallControlInput3D ballInput;
-                ballInput.request = keys.request;
-                ballInput.power = keys.power;
-                ballInput.direction = !std::isnan(keys.touchYaw)
-                    ? Vec3 { std::cos(keys.cameraYaw + keys.touchYaw), std::sin(keys.cameraYaw + keys.touchYaw), 0.0f }
-                    : wanted.lengthSquared() > 1e-4f ? wanted.normalized()
-                    : Vec3 { std::cos(keys.cameraYaw), std::sin(keys.cameraYaw), 0.0f };
-                ballInput.lookYawRadians = keys.cameraYaw + keys.aimYaw;
-                ballInput.shotLift = keys.lift;
-                ballInput.shotCurve = keys.curve;
-                ballInput.ballValid = true;
-                ballInput.ballPosition = ballPosition;
-                ballInput.ballVelocity = ballVelocity;
-                ballInput.profile = &profile;
-                ballInput.state = &bodyState;
-                ballInput.facingYawRadians = keys.cameraYaw;
-                ballInput.bodyYawRadians = locomotion.output().facingYawRadians;
-                ballInput.bodyYawValid = true;
-                ballInput.requestedVelocity = wanted;
-                ballInput.bodyVelocity = velocity;
-                ballInput.bodyVelocityValid = true;
-                if (const char* factor = std::getenv("XFATOR")) ballInput.contactTimingFactor = std::strtof(factor, nullptr);
-                ballInput.forceOnly = std::getenv("XSOFORCA") != nullptr;
-                // (XSEMHITBOX: a forca pelo tempo da V3, sem a hitbox do pe.)
-                ballInput.hitboxContact = std::getenv("XSEMHITBOX") == nullptr;
-                ballInput.standing = std::hypot(velocity.x, velocity.y) < 0.3f && wanted.lengthSquared() < 0.01f;
-                ballInput.animatedBody = true;
-                ballInput.deltaTime = Dt;
-                for (std::size_t side = 0; side < 2; ++side) {
-                    ballInput.swingProgress[side] = locomotion.output().swingProgress[side];
-                    ballInput.footPlanted[side] = locomotion.output().footPlanted[side];
-                    ballInput.secondsToTouchdown[side] = locomotion.output().secondsToTouchdown[side];
-                }
-                bool requestInArea = false;
-                if (keys.request != BallActionKind3D::None) {
-                    const Vec3 pelvis = bodyState.links.front().position;
-                    const BallReachZone3D& zone = ballControl.reachZone();
-                    requestInArea = ballPosition.z - 0.11f <= pelvis.z + zone.waistAbovePelvis
-                        && std::hypot(ballPosition.x - pelvis.x, ballPosition.y - pelvis.y) <= zone.radius;
-                    // (O guardado de antes foi substituido por este.)
-                    if (wasPending && !asked.empty()) {
-                        if (asked.back().inArea) ++replacedInArea;
-                        asked.pop_back();
-                    }
-                    asked.push_back({ t, requestInArea });
-                    if (requestInArea) ++askedInArea;
-                    std::printf("           pedido em %.2f s (bola %s da area, a %.2f m)\n", t,
-                        requestInArea ? "dentro" : "fora", std::hypot(ballPosition.x - pelvis.x, ballPosition.y - pelvis.y));
-                }
-                ballControl.update(ballInput, ballOutput);
-                wasPending = ballOutput.pending;
-                ballPhase = static_cast<int>(ballOutput.phase);
-                if (ballOutput.missReason != 0 && !asked.empty()) {
-                    if (asked.front().inArea) {
-                        ++failedInArea;
-                        char text[96];
-                        std::snprintf(text, sizeof text, " %.2f s (motivo %d)", asked.front().at, ballOutput.missReason);
-                        failures += text;
-                    }
-                    asked.pop_front();
-                }
-                if (ballOutput.touched && !asked.empty()) {
-                    if (asked.front().inArea) {
-                        ++servedInArea;
-                        worstWait = std::max(worstWait, t - asked.front().at);
-                    }
-                    asked.pop_front();
-                }
-                if (ballOutput.missReason != 0 && keys.request != BallActionKind3D::None)
-                    std::printf("           pedido em %.2f s descartado (motivo %d)\n", t, ballOutput.missReason);
-                else if (ballOutput.missReason != 0)
-                    std::printf("           gesto sem toque em %.2f s (motivo %d)\n", t, ballOutput.missReason);
-                if (ballOutput.setMotion) {
-                    ballVelocity = ballOutput.ballVelocity;
-                    ballHeld = false;
-                    if (ballOutput.touched && scenario.ballCarried && forceTouchAt < 0.0f) {
-                        forceTouchAt = t;
-                        forceTouchVelocity = ballOutput.ballVelocity;
-                        forceBodyVelocity = { velocity.x, velocity.y, 0.0f };
-                        forceBodySpeed = std::hypot(velocity.x, velocity.y);
-                    }
-                    if (ballOutput.touched) {
-                        ++touches;
-                        ballTouchedFlag = 1;
-                        if (firstTouch < 0.0f) firstTouch = t;
-                        std::printf("           toque em %.2f s: pe %d superficie %d, bola %.2f m/s (%.2f %.2f %.2f) pe-bola %.3f m\n", t,
-                            ballOutput.side, static_cast<int>(ballOutput.surface), ballVelocity.length(),
-                            ballVelocity.x, ballVelocity.y, ballVelocity.z, ballOutput.footGap);
-                    }
-                }
-            }
-            // A bola: rola (freio de 0,6 m/s2), voa e quica.
-            if (scenario.ball && ballHeld) {
-                ballVelocity = {};
-            } else if (scenario.ball) {
-                if (ballPosition.z > 0.111f || ballVelocity.z > 0.0f) {
-                    ballVelocity.z -= 9.81f * Dt;
-                } else {
-                    ballPosition.z = 0.11f;
-                    if (ballVelocity.z < -1.0f) ballVelocity.z *= -0.6f; else ballVelocity.z = 0.0f;
-                    const float planarSpeed = std::hypot(ballVelocity.x, ballVelocity.y);
-                    if (planarSpeed > 1e-4f) {
-                        const float slower = std::max(0.0f, planarSpeed - 0.6f * Dt) / planarSpeed;
-                        ballVelocity.x *= slower; ballVelocity.y *= slower;
-                    }
-                }
-                ballPosition += ballVelocity * Dt;
-                if (ballPosition.z < 0.11f) ballPosition.z = 0.11f;
-            }
             DefaultLocomotionInput3D input;
-            input.ballGesture = ballOutput.gesture;
             input.requestedVelocityWorld = wanted;
+            const bool gestureTick = scenario.gestureAt >= 0.0f && t >= scenario.gestureAt && t < scenario.gestureAt + 0.5f * Dt;
+            // (XSEMGESTO: a mesma janela sem o pedido - a regua da passada sozinha.)
+            if (gestureTick && !std::getenv("XSEMGESTO")) {
+                input.gesture = scenario.gesture;
+                // (XGESTOSEMENTE: o mesmo gesto com outro jeito sorteado.)
+                if (const char* seed = std::getenv("XGESTOSEMENTE")) input.gesture.seed = static_cast<std::uint32_t>(std::atoi(seed));
+                // (XGESTOFORCA: a barra, 0..1.)
+                if (const char* power = std::getenv("XGESTOFORCA")) input.gesture.power = std::strtof(power, nullptr);
+                // (XGESTOGIRO: o rumo da bola no chute, graus para a esquerda.)
+                if (const char* turn = std::getenv("XGESTOGIRO")) input.gesture.turn = std::strtof(turn, nullptr) * Pi / 180.0f;
+                input.gestureRequested = true;
+                // A bola de referencia do balde, parada no mundo onde estava no
+                // comando (so o desenho).
+                const Vec3 local = gestureNominalBall3D(scenario.gesture);
+                const float yaw = locomotion.output().valid ? locomotion.output().facingYawRadians : 0.0f;
+                nominalBall = { position.x + std::cos(yaw) * local.x - std::sin(yaw) * local.y,
+                    position.y + std::sin(yaw) * local.x + std::cos(yaw) * local.y, position.z + local.z };
+            }
             input.tackleRequest = keys.tackle;
             // (A voadora: o Ctrl com Shift + W no ar.)
             input.tackleHeld = keys.tackle;
@@ -1225,19 +830,86 @@ int main(int argc, char** argv) {
                 std::printf("  t %.2f rumo %+.2f camera %+.2f v %.2f carrinho %d fase %.2f\n", t, out.facingYawRadians,
                     keys.cameraYaw, std::hypot(velocity.x, velocity.y), out.tackling ? 1 : 0, out.cyclePhase);
             const RagdollAnimationPose3D& pose = out.pose;
-            {
-                // O corpo deste tick (para o manejo do proximo).
-                const bool first = bodyState.links.empty();
-                bodyState.links.resize(pose.linkPositions.size());
-                for (std::size_t i = 0; i < pose.linkPositions.size(); ++i) {
-                    PhysicsBodyState3D& link = bodyState.links[i];
-                    link.linearVelocity = first ? Vec3 {} : (pose.linkPositions[i] - link.position) * (1.0f / Dt);
-                    link.position = pose.linkPositions[i];
-                    link.orientation = pose.linkOrientations[i];
+            if (scenario.gestureAt >= 0.0f && ((t >= 0.15f && t < 0.15f + 0.5f * Dt) || step == steps - 1)) {
+                const float c = std::cos(out.facingYawRadians), s = std::sin(out.facingYawRadians);
+                for (std::size_t side = 0; side < 2; ++side) {
+                    const Vec3 d = pose.linkPositions[feet[side]] - pose.linkPositions[0];
+                    (step == steps - 1 ? stanceEnd : stanceStart)[side] = { c * d.x + s * d.y, -s * d.x + c * d.y, 0.0f };
                 }
             }
             history.push_back(pose.linkPositions);
             rotations.push_back(pose.linkOrientations);
+            if (std::getenv("XGESTORASTRO") && gestureEnd > 0.0f && t >= scenario.gestureAt - 0.05f && t <= gestureEnd) {
+                const Vec3 l = pose.linkPositions[feet[0]], r = pose.linkPositions[feet[1]], p0 = pose.linkPositions[0];
+                std::printf("  t %.3f pelve %.3f %.3f %.3f | E %.3f %.3f %.3f | D %.3f %.3f %.3f | contato %.2f %.2f fase %.3f\n",
+                    t, p0.x - position.x, p0.y - position.y, p0.z, l.x - position.x, l.y - position.y, l.z,
+                    r.x - position.x, r.y - position.y, r.z, out.footContact[0], out.footContact[1], out.cyclePhase);
+            }
+            if (gestureEnd > 0.0f && t >= scenario.gestureAt - 0.5f * Dt && t <= gestureEnd && history.size() >= 3) {
+                const int g = scenario.gesture.side == 1 ? 1 : 0, support = 1 - g;
+                if (std::getenv("XGESTOJUNTAS") && t <= scenario.gestureAt + 0.45f) {
+                    const Vec3 th = out.coordinates[thighs[g]], sh = out.coordinates[shins[g]], ft = out.coordinates[feet[g]];
+                    const Vec3 fp = pose.linkPositions[feet[g]];
+                    std::printf("  J %.3f coxa %+.3f %+.3f %+.3f joelho %+.3f pe %+.3f %+.3f | pe %.3f %.3f %.3f | fase %.3f\n",
+                        t - scenario.gestureAt, th.x, th.y, th.z, sh.x, ft.x, ft.y, fp.x - position.x, fp.y - position.y, fp.z,
+                        out.cyclePhase);
+                }
+                const std::size_t k = history.size() - 1;
+                // O tranco das pernas (aceleracao dos links, m/s2), o giro da
+                // coxa e da canela (graus/s) e o salto de pose (m: a posicao
+                // contra a prevista pela velocidade do tick anterior).
+                for (const std::size_t i : { thighs[0], thighs[1], shins[0], shins[1], feet[0], feet[1] }) {
+                    const Vec3 a = history[k - 2][i], b = history[k - 1][i], c = history[k][i];
+                    const float accel = (c - b * 2.0f + a).length() / (Dt * Dt);
+                    gLegPeak = std::max(gLegPeak, accel);
+                    gPop = std::max(gPop, (c - b * 2.0f + a).length());
+                    const float turn = angleBetween(rotations[k - 1][i], rotations[k][i]) / Dt * 180.0f / Pi;
+                    if (std::getenv("XGIRO") && turn > std::atof(std::getenv("XGIRO")))
+                        std::printf("  giro %s %.0f graus/s em %.3f s do gesto\n", profile.links[i].id.c_str(), turn,
+                            t - scenario.gestureAt);
+                    gLegTurn = std::max(gLegTurn, turn);
+                    const bool gestureLink = i == thighs[g] || i == shins[g] || i == feet[g];
+                    if (std::getenv("XGESTOPERNA") && accel > (gestureLink ? gPeakGestureLeg : gPeakSupportLeg))
+                        std::printf("  perna %s %s %.0f m/s2 em %.3f s do gesto (fim %.3f)\n", gestureLink ? "gesto" : "apoio",
+                            profile.links[i].id.c_str(), accel, t - scenario.gestureAt, gestureEnd - scenario.gestureAt);
+                    (gestureLink ? gPeakGestureLeg : gPeakSupportLeg)
+                        = std::max(gestureLink ? gPeakGestureLeg : gPeakSupportLeg, accel);
+                }
+                for (std::size_t i = 1; i < pose.linkPositions.size(); ++i) {
+                    if (i == thighs[0] || i == thighs[1] || i == shins[0] || i == shins[1] || i == feet[0] || i == feet[1])
+                        continue;
+                    const Vec3 a = history[k - 2][i], b = history[k - 1][i], c = history[k][i];
+                    const float accel = (c - b * 2.0f + a).length() / (Dt * Dt);
+                    if (accel > gPeakUpper && std::getenv("XGESTOCIMA"))
+                        std::printf("  cima %s %.0f m/s2 em %.3f s (gesto %.3f)\n", profile.links[i].id.c_str(), accel, t,
+                            t - scenario.gestureAt);
+                    gPeakUpper = std::max(gPeakUpper, accel);
+                }
+                {
+                    const Vec3 foot = pose.linkPositions[feet[support]];
+                    if (!gSupportStartValid) { gSupportStart = foot; gSupportStartValid = true; }
+                    gSupportDrift = std::max(gSupportDrift, std::hypot(foot.x - gSupportStart.x, foot.y - gSupportStart.y));
+                }
+                for (int side = 0; side < 2; ++side)
+                    gKneeMin = std::min(gKneeMin, out.coordinates[shins[side]].x * 180.0f / Pi);
+                const float gestureSole = soleHeight(profile.links[feet[g]], pose.linkPositions[feet[g]],
+                    pose.linkOrientations[feet[g]]) - position.z;
+                gSoleMin = std::min(gSoleMin, gestureSole);
+                const float supportSole = soleHeight(profile.links[feet[support]], pose.linkPositions[feet[support]],
+                    pose.linkOrientations[feet[support]]) - position.z;
+                if (supportSole < 0.02f) {
+                    const Vec3 a = history[k - 1][feet[support]], b = history[k][feet[support]];
+                    gSupportSlip = std::max(gSupportSlip, std::hypot(b.x - a.x, b.y - a.y) / Dt);
+                }
+                gFlightRun = gestureSole > 0.03f && supportSole > 0.03f ? gFlightRun + Dt : 0.0f;
+                gFlight = std::max(gFlight, gFlightRun);
+                // As pernas cruzando: o pe esquerdo a direita do direito (no rumo
+                // da pelve) com os dois lado a lado.
+                const float yaw = out.facingYawRadians;
+                const Vec3 fwd { std::cos(yaw), std::sin(yaw), 0.0f }, lft { -fwd.y, fwd.x, 0.0f };
+                const Vec3 apart = pose.linkPositions[feet[0]] - pose.linkPositions[feet[1]];
+                if (dot(apart, lft) < 0.0f && std::abs(dot(apart, fwd)) < 0.20f) ++gCrossing;
+            }
             for (std::size_t side = 0; side < 2; ++side) {
                 const float sole = soleHeight(profile.links[feet[side]], pose.linkPositions[feet[side]],
                     pose.linkOrientations[feet[side]]) - position.z;
@@ -1279,8 +951,8 @@ int main(int argc, char** argv) {
                     {
                         const float turn = angleBetween(rotations[rotations.size() - 2][i], pose.linkOrientations[i]);
                         if (std::getenv("XPROBEGIRO") && turn > std::strtof(std::getenv("XPROBEGIRO"), nullptr) * Pi / 180.0f)
-                            std::printf("           GIRO %.1f graus em %.3f s no %s (fase da bola %d)\n", turn * 180.0f / Pi, t,
-                                profile.links[i].id.c_str(), ballPhase);
+                            std::printf("           GIRO %.1f graus em %.3f s no %s\n", turn * 180.0f / Pi, t,
+                                profile.links[i].id.c_str());
                         turnPeak = std::max(turnPeak, turn);
                     }
                 }
@@ -1325,7 +997,7 @@ int main(int argc, char** argv) {
                 visualInput.handPose = { handPose, handPose };
                 visualInput.toesFollowGround = !std::getenv("XSEMDEDOSPE");
                 visualInput.deltaTime = Dt;
-                visualPose.update(assets.character, visualInput);
+                visualPose.update(bundle->character(), visualInput);
             }
             if (const char* path = std::getenv("XPROBEPOSES")) {
                 // Poses dos links (origem, orientacao xyzw) de XPROBEDE a
@@ -1334,9 +1006,7 @@ int main(int argc, char** argv) {
                 const float to = std::getenv("XPROBEATE") ? std::strtof(std::getenv("XPROBEATE"), nullptr) : 1e9f;
                 if (t >= from && t <= to) {
                     if (FILE* file = std::fopen(path, "a")) {
-                        std::fprintf(file, "{\"t\": %.4f, \"z\": %.4f, \"b\": [%.4f, %.4f, %.4f], \"ph\": %d, \"tc\": %d, \"p\": [",
-                            t, position.z, ballPosition.x, ballPosition.y, ballPosition.z, ballPhase, ballTouchedFlag);
-                        ballTouchedFlag = 0;
+                        std::fprintf(file, "{\"t\": %.4f, \"z\": %.4f, \"p\": [", t, position.z);
                         for (std::size_t i = 0; i < pose.linkPositions.size(); ++i)
                             std::fprintf(file, "%s[%.5f, %.5f, %.5f]", i ? ", " : "", pose.linkPositions[i].x,
                                 pose.linkPositions[i].y, pose.linkPositions[i].z);
@@ -1384,16 +1054,33 @@ int main(int argc, char** argv) {
             }
             if (dump != nullptr && step % every == 0) {
                 dumpFrame(dump, profile, pose, t, out);
-                if (scenario.ball)
-                    std::fprintf(dump, "K %.4f %.4f %.4f %.3f %.3f %.3f\n", ballPosition.x, ballPosition.y,
-                        ballPosition.z, ballVelocity.x, ballVelocity.y, ballVelocity.z);
-                if (ballOutput.foot.active)
-                    std::fprintf(dump, "Q %d %.4f %.4f %.4f %.3f\n", ballOutput.foot.side, ballOutput.foot.position.x,
-                        ballOutput.foot.position.y, ballOutput.foot.position.z, ballOutput.foot.weight);
-                if (ballOutput.touched) std::fprintf(dump, "T\n");
+                if (gestureEnd > 0.0f && t >= scenario.gestureAt - 0.5f * Dt && t <= gestureEnd)
+                    std::fprintf(dump, "K %.4f %.4f %.4f\n", nominalBall.x, nominalBall.y, nominalBall.z);
+                if (gestureTick) std::fprintf(dump, "T\n");
             }
         }
         if (dump != nullptr) std::fclose(dump);
+        if (gestureEnd > 0.0f) {
+            ++gestureRuns;
+            const float stanceError = std::max((stanceEnd[0] - stanceStart[0]).length(), (stanceEnd[1] - stanceStart[1]).length());
+            std::printf("           PES %-28s parado no fim: fora do lugar %.3f m (E %+.3f %+.3f -> %+.3f %+.3f | D %+.3f %+.3f -> %+.3f %+.3f)\n",
+                scenario.name, stanceError, stanceStart[0].x, stanceStart[0].y, stanceEnd[0].x, stanceEnd[0].y,
+                stanceStart[1].x, stanceStart[1].y, stanceEnd[1].x, stanceEnd[1].y);
+            worstStance.take(stanceError, scenario.name);
+            std::printf("           GESTO %-28s pernas %5.0f m/s2 giro %5.0f graus/s salto %.3f m | joelho min %+5.1f graus |"
+                " pe do gesto %+.3f m | apoio escorrega %.2f m/s | cruzou %d | voo %.3f s | apoio saiu %.3f m |"
+                " tranco gesto %.0f apoio %.0f cima %.0f\n", scenario.name, gLegPeak,
+                gLegTurn, gPop, gKneeMin, gSoleMin, gSupportSlip, gCrossing, gFlight, gSupportDrift, gPeakGestureLeg,
+                gPeakSupportLeg, gPeakUpper);
+            worstLegPeak.take(gLegPeak, scenario.name);
+            worstLegTurn.take(gLegTurn, scenario.name);
+            worstPop.take(gPop, scenario.name);
+            worstKnee.take(-gKneeMin, scenario.name);
+            worstSole.take(-gSoleMin, scenario.name);
+            worstSupportSlip.take(gSupportSlip, scenario.name);
+            worstCrossing.take(static_cast<float>(gCrossing), scenario.name);
+            worstFlight.take(gFlight, scenario.name);
+        }
         if (landTouch >= 0.0f)
             std::printf("           no pouso (0,6 s): pico tronco/bracos %.1f m/s2 (%s), pernas %.1f m/s2\n", landPeak,
                 landPeakLink.c_str(), landLegPeak);
@@ -1423,23 +1110,17 @@ int main(int argc, char** argv) {
                 footTurnCount[0] ? footTurnSum[0] / footTurnCount[0] : 0.0f, footTurnPeak[0],
                 footTurnCount[1] ? footTurnSum[1] / footTurnCount[1] : 0.0f, footTurnPeak[1]);
         }
-        if (scenario.ball) {
-            std::printf("           bola: %d toques, primeiro em %.2f s, bola agora a %.2f m/s, %.2f m da capsula\n", touches,
-                firstTouch, ballVelocity.length(), std::hypot(ballPosition.x - position.x, ballPosition.y - position.y));
-            int open = 0;
-            for (const Asked& a : asked) if (a.inArea) ++open;
-            if (scenario.ballCarried) {
-                const Vec3 rel = forceTouchVelocity - forceBodyVelocity;
-                std::printf("           FORCA %-24s corpo %.1f m/s | bola (%+.2f %+.2f) %.2f m/s, rel corpo %.2f |"
-                    " +0,5 s (%+.2f %+.2f) +1 s (%+.2f %+.2f) +1,5 s (%+.2f %+.2f) | alcanca %.2f s\n", scenario.name,
-                    forceBodySpeed, forceTouchVelocity.x, forceTouchVelocity.y, std::hypot(forceTouchVelocity.x, forceTouchVelocity.y),
-                    std::hypot(rel.x, rel.y), forceRel[0].x, forceRel[0].y, forceRel[1].x, forceRel[1].y, forceRel[2].x,
-                    forceRel[2].y, forceReach);
-            }
-            std::printf("           GARANTIA %s: %d pedidos com a bola na area -> %d tocados (espera max %.2f s), %d substituidos,"
-                " %d falhas%s, %d sem resposta no fim\n", scenario.name, askedInArea, servedInArea, worstWait, replacedInArea,
-                failedInArea, failures.c_str(), open);
-        }
+    }
+    if (gestureRuns > 0) {
+        std::printf("\nGESTOS (%d): pior tranco das pernas %.0f m/s2 (%s) | giro %.0f graus/s (%s) | salto %.3f m (%s)\n",
+            gestureRuns, worstLegPeak.value, worstLegPeak.name.c_str(), worstLegTurn.value, worstLegTurn.name.c_str(),
+            worstPop.value, worstPop.name.c_str());
+        std::printf("        joelho min %+.1f graus (%s) | pe do gesto mais baixo %+.3f m (%s) | apoio escorrega %.2f m/s (%s)\n",
+            -worstKnee.value, worstKnee.name.c_str(), -worstSole.value, worstSole.name.c_str(), worstSupportSlip.value,
+            worstSupportSlip.name.c_str());
+        std::printf("        cruzou %.0f ticks (%s) | voo %.3f s (%s)\n", worstCrossing.value, worstCrossing.name.c_str(),
+            worstFlight.value, worstFlight.name.c_str());
+        std::printf("        pe fora do lugar parado no fim %.3f m (%s)\n", worstStance.value, worstStance.name.c_str());
     }
     return 0;
 }

@@ -9,6 +9,8 @@
 #include "Engine/Modeling/Objects/PixelCanvas.hpp"
 #include "Engine/Modeling/Objects/ProceduralObject.hpp"
 
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <filesystem>
 #include <iostream>
@@ -16,6 +18,7 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
 using namespace MatterEngine;
 using namespace MatterEngine::Modeling;
@@ -178,12 +181,179 @@ void testPixelCanvas() {
 
 } // namespace
 
+// A trave com quadro de fundo (assets/objects/trave.json): o vao da regra
+// medido nos cilindros dos postes e do travessao, os pes no chao, cada tubo
+// fechado e para fora, e a rede (presa nos tubos, o cabo do alto, o peso, a
+// folga de cada pano pela receita).
+void testGoal() {
+    std::string error;
+    const auto recipe = readObjectRecipe(Objects / "trave.json", &error);
+    require(recipe.has_value(), "a receita da trave: " + error);
+    const auto goal = generateObject(*recipe, &error);
+    require(goal.has_value(), "a trave gera: " + error);
+    const Mesh& mesh = goal->mesh;
+    require(mesh.validateLayout().empty(), "a malha da trave consistente");
+    const float ground = -0.5f * goal->size.z;
+    require(near(mesh.bounds().minimum.z, ground, 1e-4f), "os pes no chao");
+    // Os postes (cilindros em pe, grossos) e o travessao (deitado ao longo de y).
+    float postInner = 1e9f, crossbarBottom = 1e9f;
+    int posts = 0, crossbars = 0;
+    for (const ObjectCollider& collider : goal->physics.colliders) {
+        const Vec3 axis = collider.orientation.rotate({ 0.0f, 0.0f, 1.0f });
+        if (collider.radius < 0.055f) continue;
+        if (std::abs(axis.z) > 0.99f) {
+            ++posts;
+            postInner = std::min(postInner, std::abs(collider.center.y) - collider.radius);
+        } else if (std::abs(axis.y) > 0.99f) {
+            ++crossbars;
+            crossbarBottom = std::min(crossbarBottom, collider.center.z - collider.radius - ground);
+        }
+    }
+    require(posts == 2 && crossbars == 1, "dois postes e um travessao de 12 cm");
+    require(near(2.0f * postInner, 7.32f, 1e-3f), "o vao de 7,32 m entre as faces de dentro (" + std::to_string(2.0f * postInner) + ")");
+    require(near(crossbarBottom, 2.44f, 1e-3f), "o travessao a 2,44 m do chao (" + std::to_string(crossbarBottom) + ")");
+    require(goal->physics.fixed && goal->physics.material == "steel", "fixa no chao, de aco");
+    require(goal->size.x > 2.0f && goal->size.x < 2.2f && near(goal->size.y, 7.56f, 1e-3f), "2 m de fundo no chao e os postes por fora do vao");
+    // Cada tubo (uma parte) fechado e orientado para fora.
+    for (int part = 0; part < static_cast<int>(mesh.parts.size()); ++part) {
+        std::map<std::pair<std::uint32_t, std::uint32_t>, int> edges;
+        float volume = 0.0f;
+        for (const std::uint32_t t : mesh.partTriangles(part)) {
+            const Triangle& tri = mesh.triangles[t];
+            for (int k = 0; k < 3; ++k) {
+                const std::uint32_t a = tri[k], b = tri[(k + 1) % 3];
+                ++edges[{ std::min(a, b), std::max(a, b) }];
+            }
+            volume += dot(mesh.positions[tri[0]], cross(mesh.positions[tri[1]], mesh.positions[tri[2]])) / 6.0f;
+        }
+        for (const auto& [edge, uses] : edges) require(uses == 2, "o tubo " + mesh.parts[part].name + " fechado");
+        require(volume > 0.0f, "o tubo " + mesh.parts[part].name + " para fora");
+    }
+    // A rede: a da fisica (a celula de 2 malhas) e a de verdade desenhada nela.
+    require(goal->net.has_value(), "a trave tem rede");
+    const ObjectNet& net = *goal->net;
+    require(net.drawnKnots.size() > 2000 && net.drawnWeights.size() == net.drawnKnots.size(), "os nos da rede de verdade (malha de 12 cm)");
+    require(net.knots.size() * 3 < net.drawnKnots.size() && net.knots.size() == net.pinned.size() && net.knots.size() == net.masses.size()
+            && net.knots.size() == net.twineLengths.size(),
+        "a fisica com perto da quarta parte dos nos (" + std::to_string(net.knots.size()) + ")");
+    float mass = 0.0f;
+    std::size_t pinned = 0;
+    const Box3 frame = mesh.bounds();
+    const auto inside = [&](Vec3 p) {
+        return p.x >= frame.minimum.x && p.x <= frame.maximum.x && p.y >= frame.minimum.y && p.y <= frame.maximum.y && p.z >= frame.minimum.z
+            && p.z <= frame.maximum.z;
+    };
+    for (std::size_t i = 0; i < net.knots.size(); ++i) {
+        mass += net.masses[i];
+        pinned += net.pinned[i];
+        require(inside(net.knots[i]), "a rede dentro da trave");
+    }
+    for (const Vec3& p : net.drawnKnots) require(inside(p), "a rede desenhada dentro da trave");
+    require(mass > 3.0f && mass < 6.0f, "o peso da rede (fio de 7 g/m): " + std::to_string(mass) + " kg");
+    require(pinned > 100, "a rede presa nos tubos (" + std::to_string(pinned) + " nos)");
+    // Cada no desenhado e a media dos nos da fisica: no repouso, cai nele.
+    float worst = 0.0f;
+    for (std::size_t i = 0; i < net.drawnKnots.size(); ++i) {
+        const ObjectNetWeight& w = net.drawnWeights[i];
+        Vec3 p;
+        float sum = 0.0f;
+        for (int k = 0; k < 4; ++k) {
+            require(w.knots[k] < net.knots.size() && w.weights[k] >= 0.0f, "o peso de um no desenhado");
+            p = p + net.knots[w.knots[k]] * w.weights[k];
+            sum += w.weights[k];
+        }
+        require(near(sum, 1.0f, 1e-5f), "os pesos de um no desenhado somam 1");
+        worst = std::max(worst, std::sqrt((p - net.drawnKnots[i]).lengthSquared()));
+    }
+    require(worst < 1e-4f, "a malha desenhada sai da fisica parada: " + std::to_string(worst) + " m");
+    for (const auto& [a, b] : net.drawnSegments) require(a < net.drawnKnots.size() && b < net.drawnKnots.size() && a != b, "o fio desenhado liga dois nos");
+    std::size_t cords = 0;
+    std::vector<int> degree(net.knots.size(), 0);
+    // A folga de cada pano (o teto 2,5%, o fundo 6%, as laterais 8%): o fio na
+    // divisa de dois panos pode ser de qualquer um deles.
+    float roofZ = 0.0f, sideY = 0.0f;
+    for (const Vec3& p : net.knots) {
+        roofZ = std::max(roofZ, p.z);
+        sideY = std::max(sideY, std::abs(p.y));
+    }
+    const std::array<float, 3> slacks { 0.025f, 0.06f, 0.08f };
+    std::array<std::size_t, 3> own {};
+    for (const ObjectNetSegment& segment : net.segments) {
+        require(segment.a < net.knots.size() && segment.b < net.knots.size() && segment.a != segment.b, "o fio liga dois nos");
+        ++degree[segment.a];
+        ++degree[segment.b];
+        const float span = std::sqrt((net.knots[segment.b] - net.knots[segment.a]).lengthSquared());
+        if (segment.cord) {
+            ++cords;
+            require(segment.restLength < span, "o cabo do alto esticado (mais curto que o vao)");
+        } else {
+            const Vec3 pa = net.knots[segment.a], pb = net.knots[segment.b];
+            const bool roof = std::abs(pa.z - roofZ) < 1e-4f && std::abs(pb.z - roofZ) < 1e-4f;
+            const bool side = std::abs(std::abs(pa.y) - sideY) < 1e-4f && std::abs(std::abs(pb.y) - sideY) < 1e-4f;
+            const bool diagonal = std::abs(pa.x - pb.x) > 1e-4f && std::abs(pa.z - pb.z) > 1e-4f;
+            const std::array<bool, 3> can { roof, !roof && (!side || diagonal), side };
+            bool matches = false;
+            for (std::size_t k = 0; k < 3; ++k) matches = matches || (can[k] && near(segment.restLength, span * (1.0f + slacks[k]), 1e-4f));
+            require(matches, "cada fio com a folga do seu pano (teto 2,5%, fundo 6%, laterais 8%)");
+            if (can[0] + can[1] + can[2] == 1) ++own[can[0] ? 0 : can[1] ? 1 : 2];
+            require(near(segment.stiffness, 20000.0f, 1e-2f), "o fio da fisica vale pelos 2 fios paralelos (a rigidez somada)");
+            // (O debrum numa borda inclinada vai de cruzamento a cruzamento:
+            // ate a diagonal da celula.)
+            require(segment.restLength < 0.24f * std::sqrt(2.0f) * 1.06f, "nenhum fio maior que a diagonal da celula: "
+                + std::to_string(segment.restLength));
+        }
+    }
+    require(cords > 25, "o cabo do alto, de ponta a ponta");
+    require(own[0] > 50 && own[1] > 50 && own[2] > 50, "fios so do teto, so do fundo e so das laterais");
+    for (const int links : degree) require(links >= 1, "nenhum no solto");
+    // As celulas cobrem a rede: a mesma area com a celula de 1 malha (a fisica
+    // e a propria malha de verdade, cada no desenhado num no dela).
+    const auto areaOf = [](const ObjectNet& n) {
+        float area = 0.0f;
+        for (const auto& face : n.faces) {
+            require(face[0] < n.knots.size() && face[1] < n.knots.size() && face[2] < n.knots.size(), "a celula liga tres nos");
+            area += 0.5f * cross(n.knots[face[1]] - n.knots[face[0]], n.knots[face[2]] - n.knots[face[0]]).length();
+        }
+        return area;
+    };
+    ObjectRecipe single = *recipe;
+    single.numbers["malha_fisica"] = 1.0f;
+    const auto fine = generateObject(single, &error);
+    require(fine && fine->net->knots.size() == fine->net->drawnKnots.size(), "com 1 malha, a fisica e a malha de verdade");
+    require(near(net.contactMassScale, 4.0f, 1e-6f) && near(fine->net->contactMassScale, 6.0f, 1e-6f),
+        "a escala de contato menor na malha grossa (nos mais pesados)");
+    for (std::size_t i = 0; i < fine->net->drawnKnots.size(); ++i) {
+        const ObjectNetWeight& w = fine->net->drawnWeights[i];
+        const int heaviest = static_cast<int>(std::max_element(w.weights.begin(), w.weights.end()) - w.weights.begin());
+        require(w.weights[heaviest] > 0.9999f
+                && (fine->net->knots[w.knots[heaviest]] - fine->net->drawnKnots[i]).lengthSquared() < 1e-10f,
+            "com 1 malha, cada no desenhado e um no da fisica");
+    }
+    const float area = areaOf(net), fineArea = areaOf(*fine->net);
+    require(area > 25.0f && near(area, fineArea, 1e-3f * fineArea),
+        "as celulas cobrem a rede: " + std::to_string(area) + " m2 (com 1 malha, " + std::to_string(fineArea) + ")");
+    const auto again = generateObject(*recipe);
+    require(again && again->net->knots.size() == net.knots.size() && again->net->segments.size() == net.segments.size()
+            && again->net->drawnKnots.size() == net.drawnKnots.size(),
+        "a mesma rede");
+    for (std::size_t i = 0; i < net.knots.size(); ++i) require(again->net->knots[i].x == net.knots[i].x, "a mesma rede, no a no");
+    for (std::size_t i = 0; i < net.drawnKnots.size(); ++i) require(again->net->drawnKnots[i].x == net.drawnKnots[i].x, "a mesma rede desenhada");
+    // Outro vao: a rede e a estrutura acompanham.
+    ObjectRecipe small = *recipe;
+    small.numbers["largura"] = 5.0f;
+    small.numbers["altura"] = 2.0f;
+    const auto smaller = generateObject(small, &error);
+    require(smaller.has_value() && near(smaller->size.y, 5.24f, 1e-3f) && smaller->net->knots.size() < net.knots.size(),
+        "a trave de 5 x 2 m gera junto com a rede");
+}
+
 int main() {
     try {
         testRecipes();
         testCrate();
         testLongCrate();
         testPixelCanvas();
+        testGoal();
     } catch (const std::exception& exception) {
         std::cerr << "MatterObjectModeling test failure: " << exception.what() << '\n';
         return 1;

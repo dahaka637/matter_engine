@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Engine/Math/Vec2.hpp"
 #include "Engine/Modeling/Analysis/Report.hpp"
 #include "Engine/Modeling/Mesh/Mesh.hpp"
 #include "Engine/Modeling/Mesh/ShadingNormals.hpp"
@@ -7,12 +8,18 @@
 #include "Engine/Modeling/Raster/Image.hpp"
 #include "Engine/Modeling/Skeleton/BodyRegions.hpp"
 
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <span>
 #include <string>
 #include <string_view>
 #include <vector>
+
+namespace MatterEngine::Appearance {
+struct SurfaceTemplate;
+struct ComposedKit;
+} // namespace MatterEngine::Appearance
 
 namespace MatterEngine::Modeling {
 
@@ -135,6 +142,16 @@ struct InspectionEye {
     Color color = rgb(120, 200, 255);
 };
 
+// Fios finos com profundidade (a rede do gol): os pontos aos pares (a, b), com
+// a largura de verdade (m). Abaixo de um pixel o traco fica com um pixel e mais
+// transparente (a parte do pixel que o fio cobre): de longe a rede vira um veu,
+// sem serrilhar.
+struct InspectionWires {
+    std::span<const Vec3> points;
+    Color color = rgb(236, 236, 232);
+    float widthMeters = 0.004f;
+};
+
 struct InspectionScene {
     const Skeleton* skeleton = nullptr;
     // Nulo = pose de ligacao.
@@ -148,9 +165,16 @@ struct InspectionScene {
     std::span<const InspectionMarker> markers;
     std::span<const InspectionArrow> arrows;
     std::span<const InspectionEye> eyes;
+    std::span<const InspectionWires> wires;
     // Os grupos do sombreamento liso da malha, se ja feitos (na quina do
     // estilo); nulo = feitos a cada imagem.
     const ShadingNormals* shading = nullptr;
+    // O uniforme do sistema de aparencia (o contrato das etapas 2 e 3): o
+    // template da malha e as texturas compostas. A roupa le o atlas pelo UV0
+    // (trilinear ate o nivel seguro, depois a media da regiao) e a
+    // identificacao por cima, recortada pela zona; o resto, a textura antiga.
+    const Appearance::SurfaceTemplate* surface = nullptr;
+    const Appearance::ComposedKit* kit = nullptr;
     // Imagem ao fundo (a referencia, ja no enquadramento da camera).
     const Image* backdrop = nullptr;
     float backdropOpacity = 0.55f;
@@ -158,6 +182,17 @@ struct InspectionScene {
 
 [[nodiscard]] Image renderInspection(const InspectionScene& scene, const InspectionStyle& style,
     const OrbitCamera& camera, int width, int height);
+
+// O nivel de textura do uniforme no pixel (x, y) do render, pela formula de
+// referencia da GPU (log2 do maior comprimento das derivadas do UV em texels):
+// as diferencas centrais do UV entre os vizinhos a "step" pixels (um pixel da
+// imagem final), pelas baricentricas do raio contra o plano do triangulo. A GPU
+// usa a diferenca de um lado ou do outro (o par do quad 2x2, conforme o
+// hardware); a central fica entre as duas. De lado para o olho: EdgeOnKitLevel
+// (a media da regiao).
+inline constexpr float EdgeOnKitLevel = 64.0f;
+[[nodiscard]] float kitPixelLevel(const Projector& projector, const std::array<Vec3, 3>& corners, const std::array<MatterEngine::Vec2, 3>& uv,
+    int width, int height, float x, float y, float step);
 
 // A posicao de cada junta na pose da cena.
 [[nodiscard]] std::vector<Vec3> sceneJointPositions(const InspectionScene& scene);

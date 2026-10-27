@@ -3,6 +3,7 @@
 #include "Engine/Modeling/Mesh/TriangleBvh.hpp"
 
 #include <algorithm>
+#include <cstdio>
 #include <map>
 #include <utility>
 
@@ -13,6 +14,7 @@ void checkIntersections(const Mesh& mesh, std::span<const Vec3> positions, Repor
     if (mesh.triangles.empty() || positions.size() != mesh.positions.size()) return;
     const TriangleBvh bvh(positions, mesh.triangles);
     std::map<std::pair<int, int>, Finding> groups;
+    std::map<std::pair<int, int>, float> lengths;
     std::size_t total = 0;
     bvh.overlappingPairs([&](std::uint32_t a, std::uint32_t b) {
         const Triangle& ta = mesh.triangles[a];
@@ -26,6 +28,8 @@ void checkIntersections(const Mesh& mesh, std::span<const Vec3> positions, Repor
         const int partA = mesh.partOf(a), partB = mesh.partOf(b);
         ++total;
         Finding& finding = groups[{ std::min(partA, partB), std::max(partA, partB) }];
+        lengths[{ std::min(partA, partB), std::max(partA, partB) }] += triangleIntersectionLength(positions[ta[0]],
+            positions[ta[1]], positions[ta[2]], positions[tb[0]], positions[tb[1]], positions[tb[2]]);
         if (finding.triangles.size() < 4000) {
             finding.triangles.push_back(a);
             finding.triangles.push_back(b);
@@ -44,12 +48,15 @@ void checkIntersections(const Mesh& mesh, std::span<const Vec3> positions, Repor
     for (auto& [pair, finding] : groups) {
         const bool same = pair.first == pair.second;
         const std::size_t pairs = finding.triangles.size() / 2;
+        // Os pares e o comprimento das linhas de cruzamento (cm: nao depende
+        // da densidade da malha).
+        char counted[64];
+        std::snprintf(counted, sizeof(counted), " (%zu pares; %.1f cm)", pairs, lengths[pair] * 100.0f);
         finding.severity = context.empty() ? Severity::Error : Severity::Warning;
         finding.code = same ? "autointersecao" : "partes_se_cruzam";
         if (!context.empty()) finding.code += "_pose";
-        finding.message = same ? "a parte cruza ela mesma" + suffix + " (" + std::to_string(pairs) + " pares)"
-                               : name(pair.first) + " atravessa " + name(pair.second) + suffix + " ("
-                + std::to_string(pairs) + " pares)";
+        finding.message = same ? "a parte cruza ela mesma" + suffix + counted
+                               : name(pair.first) + " atravessa " + name(pair.second) + suffix + counted;
         finding.part = name(pair.first);
         if (!same) finding.otherPart = name(pair.second);
         if (pair.first >= 0 && static_cast<std::size_t>(pair.first) < mesh.parts.size())

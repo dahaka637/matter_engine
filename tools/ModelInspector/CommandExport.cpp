@@ -14,6 +14,11 @@ int runExport(const ModelContext& context, const CommandLine& line) {
                      "assets/characters/football_player)\n";
         return 2;
     }
+    // O jogo guarda so o corpo de hoje (os outros saem dele): exportar um corpo trocaria o molde.
+    if (line.has("corpo")) {
+        std::cerr << "exportar-jogo: so o corpo de hoje (sem --corpo)\n";
+        return 2;
+    }
     GameCharacterExportSettings settings;
     settings.creaseDegrees = line.number("quinas", settings.creaseDegrees);
     settings.facet = line.number("facetado", settings.facet);

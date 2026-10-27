@@ -10,8 +10,14 @@
     "mirrorFingersFrom": "Right",
     "ground": -0.9775526
   },
+  "appearance": {
+    "comment": "O sistema de aparencia (docs/SISTEMA_DE_APARENCIA.md): o uniforme composto sobre o template da malha. O inspetor aceita --uniforme <id> ou antigo.",
+    "directory": "../../appearance",
+    "kit": "branco_10"
+  },
   "mesh": {
-    "source": "montagem",
+    "source": "blender",
+    "blender": "blender/jogador.troca.json",
     "assembly": "montagem.json"
   },
   "references": [

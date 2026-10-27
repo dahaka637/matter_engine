@@ -21,6 +21,7 @@
 using namespace MatterEngine;
 using TestSupport::FakeCanvas;
 using TestSupport::snapshot;
+using Workbench::NetLabView;
 using Workbench::ObjectInspectorScreen;
 
 namespace {
@@ -202,6 +203,120 @@ void testScreen(const std::filesystem::path& objects) {
     require(context.errors().empty(), "ImGui reclamou: " + (context.errors().empty() ? std::string() : context.errors().front()));
 }
 
+// A trave pela tela: a cena dela no viewport (a rede assentada ja nas
+// propriedades), a aba "Trave" no lugar do teste fisico, o chute entrando e
+// estufando a rede (fotos do impacto de lado e de tras, em camera lenta), a
+// caixa atirada, e mexer num parametro reassenta a rede.
+void testGoalScreen(const std::filesystem::path& objects) {
+    TestSupport::HeadlessUi context;
+    PhysicsEngine3D physics;
+    const MaterialLibrary materials;
+    ObjectInspectorScreen::Options options;
+    options.objectsDirectory = objects;
+    options.capturesDirectory = objects.parent_path() / "capturas";
+    options.physics = &physics;
+    options.materials = &materials;
+    ObjectInspectorScreen screen(options, [] {});
+    FakeCanvas canvas;
+    require(screen.objectCount() == 2, "a trave e a caixa na pasta");
+    std::size_t goal = 0;
+    while (goal < screen.objectCount()) {
+        screen.select(goal);
+        if (screen.goalMode()) break;
+        ++goal;
+    }
+    require(screen.goalMode(), "a trave e o objeto com rede");
+    frame(screen, canvas, 20);
+    require(screen.netView() != nullptr, "a cena da trave comecou");
+    require(screen.netView()->lab().netStatus().sleeping, "a rede assentada (dormindo)");
+    snapshot(canvas, "trave_propriedades.png");
+    screen.setTab(1);
+    frame(screen, canvas, 10);
+    snapshot(canvas, "trave_aba.png");
+    // O chute no meio, a 25 m/s do penalti, em camera lenta: as fotos do
+    // impacto (de lado e de tras).
+    NetLabView& view = *screen.netView();
+    view.shot().speed = 25.0f;
+    view.shot().distance = 11.0f;
+    view.shot().aimAcross = 0.2f;
+    view.shot().aimHeight = 0.5f;
+    screen.setTimeScale(0.125f);
+    screen.setCameraAngle(-90.0f, 6.0f);
+    view.shoot();
+    int guard = 0;
+    while (!view.lab().metrics().crossed && guard++ < 2000) frame(screen, canvas);
+    require(view.lab().metrics().crossed, "a bola chega ao gol");
+    const float crossed = view.lab().metrics().elapsed;
+    struct Shot {
+        float after;
+        float yaw;
+        float pitch;
+        const char* name;
+    };
+    const Shot shots[] { { 0.0f, -90.0f, 6.0f, "trave_chute_lado_000ms.png" }, { 0.02f, -90.0f, 6.0f, "trave_chute_lado_020ms.png" },
+        { 0.04f, -90.0f, 6.0f, "trave_chute_lado_040ms.png" }, { 0.08f, -90.0f, 6.0f, "trave_chute_lado_080ms.png" },
+        { 0.16f, -90.0f, 6.0f, "trave_chute_lado_160ms.png" }, { 0.3f, -90.0f, 6.0f, "trave_chute_lado_300ms.png" } };
+    for (const Shot& shot : shots) {
+        guard = 0;
+        while (view.lab().metrics().elapsed < crossed + shot.after && guard++ < 2000) frame(screen, canvas);
+        screen.setCameraAngle(shot.yaw, shot.pitch);
+        // Mais perto (a roda): o fundo do gol enche a imagem.
+        ImGui::GetIO().AddMousePosEvent(ViewportX, ViewportY);
+        ImGui::GetIO().AddMouseWheelEvent(0.0f, 3.0f);
+        frame(screen, canvas);
+        snapshot(canvas, shot.name);
+    }
+    screen.setTimeScale(1.0f);
+    frame(screen, canvas, 240);
+    const NetShotMetrics3D& metrics = view.lab().metrics();
+    require(metrics.goal && metrics.bulge > 0.15f, "pela tela: gol, e a rede estufou (" + std::to_string(metrics.bulge) + " m)");
+    screen.setCameraAngle(150.0f, 18.0f);
+    frame(screen, canvas, 2);
+    snapshot(canvas, "trave_depois_de_tras.png");
+    // O mesmo chute visto de tras, na hora do impacto.
+    view.resetNet();
+    screen.setTimeScale(0.125f);
+    screen.setCameraAngle(180.0f, 8.0f);
+    view.shoot();
+    guard = 0;
+    while (!view.lab().metrics().crossed && guard++ < 2000) frame(screen, canvas);
+    const float second = view.lab().metrics().elapsed;
+    for (const float after : { 0.04f, 0.08f, 0.16f }) {
+        guard = 0;
+        while (view.lab().metrics().elapsed < second + after && guard++ < 2000) frame(screen, canvas);
+        screen.setCameraAngle(180.0f, 8.0f);
+        frame(screen, canvas);
+        const std::string name = "trave_chute_tras_" + std::to_string(static_cast<int>(after * 1000.0f)) + "ms.png";
+        snapshot(canvas, name.c_str());
+    }
+    screen.setTimeScale(1.0f);
+    // A caixa atirada.
+    std::string error;
+    const auto crateRecipe = Modeling::readObjectRecipe(objects / "wood_crate.json", &error);
+    const auto crate = crateRecipe ? Modeling::generateObject(*crateRecipe, &error) : std::nullopt;
+    require(crate.has_value(), "a caixa: " + error);
+    view.clearBodies();
+    view.shot().speed = 9.0f;
+    view.shot().distance = 6.0f;
+    view.shot().aimHeight = 0.4f;
+    view.throwObject(*crate);
+    screen.setCameraAngle(35.0f, 18.0f);
+    frame(screen, canvas, 50);
+    snapshot(canvas, "trave_caixa.png");
+    require(view.lab().bodies().size() == 1, "a caixa na cena");
+    // Mexer num parametro (a folga do teto, o pano do primeiro fio): a rede
+    // reassenta um instante depois.
+    const float before = screen.object()->net->segments.front().restLength;
+    screen.recipe()->numbers["folga_teto"] = 10.0f;
+    screen.regenerate();
+    frame(screen, canvas, 40);
+    require(screen.netView() != nullptr && screen.object()->net->segments.front().restLength > before, "a folga nova na rede");
+    require(screen.netView()->lab().bodies().empty(), "a cena recomecou sem a caixa");
+    snapshot(canvas, "trave_folga_10.png");
+    screen.revert();
+    require(context.errors().empty(), "ImGui reclamou: " + (context.errors().empty() ? std::string() : context.errors().front()));
+}
+
 } // namespace
 
 int main() {
@@ -211,9 +326,13 @@ int main() {
     std::filesystem::create_directories(work / "objetos");
     std::filesystem::copy_file(std::filesystem::path(MATTERENGINE_TEST_ASSETS_DIR) / "objects" / "wood_crate.json",
         work / "objetos" / "wood_crate.json");
+    std::filesystem::create_directories(work / "trave");
+    for (const char* name : { "trave.json", "wood_crate.json" })
+        std::filesystem::copy_file(std::filesystem::path(MATTERENGINE_TEST_ASSETS_DIR) / "objects" / name, work / "trave" / name);
     int result = 0;
     try {
         testScreen(work / "objetos");
+        testGoalScreen(work / "trave");
     } catch (const std::exception& exception) {
         std::cerr << "MatterObjectInspector test failure: " << exception.what() << '\n';
         result = 1;

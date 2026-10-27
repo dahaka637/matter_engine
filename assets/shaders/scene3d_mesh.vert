@@ -59,6 +59,30 @@ layout(location = 12) in vec4 instancePreviousOrientationZ;
 // as a distinct, faint color instead of all looking identical.
 layout(location = 15) in vec4 instanceTintColor;
 
+#ifdef MATTER_CHARACTER
+// O personagem com o uniforme (RHI/CharacterMaterial.hpp, compilado como
+// scene3d_character.vert): a entrada deste vertice (gl_VertexIndex -
+// baseVertex) e as camadas do jogador (instancePreviousOrientationZ.w).
+struct CharacterKitVertex {
+    vec2 kitUv;
+    vec2 identityUv;
+    uint region;
+    uint zone;
+};
+layout(set = 4, binding = 2, std430) readonly buffer CharacterKitVertices {
+    CharacterKitVertex entries[];
+} characterVertices;
+layout(set = 4, binding = 3, std140) uniform CharacterKitParameters {
+    vec4 levels;
+    vec4 regionAverage[256];
+    vec4 zoneRect[4];
+    uvec4 info;
+} characterParameters;
+layout(location = 10) out vec2 characterKitUv;
+layout(location = 11) out vec2 characterIdentityUv;
+layout(location = 12) flat out uvec4 characterIds;
+#endif
+
 layout(location = 0) out vec3 worldPosition;
 layout(location = 1) out vec3 worldNormal;
 layout(location = 2) out vec2 vertexUv;
@@ -101,6 +125,13 @@ void main() {
     }
     vertexUv = inUv;
     vertexColor = inColor;
+#ifdef MATTER_CHARACTER
+    CharacterKitVertex entry = characterVertices.entries[uint(gl_VertexIndex) - characterParameters.info.x];
+    characterKitUv = entry.kitUv;
+    characterIdentityUv = entry.identityUv;
+    uint layers = uint(round(instancePreviousOrientationZ.w));
+    characterIds = uvec4(entry.region, entry.zone, layers & 255u, layers >> 8);
+#endif
     objectTint = instanceTintColor.rgb;
     mat3 previousOrientation = mat3(
         instancePreviousOrientationX.xyz,

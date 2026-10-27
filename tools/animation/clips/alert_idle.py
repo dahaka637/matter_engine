@@ -23,6 +23,12 @@ que o corpo e o jogo pedem:
     estica a perna de tras de vez; mais alto, ~9/10 graus, a perna de tras
     trava reta em parte da respiracao.)
 
+  - RETO DE LADO (23/10, pedido do usuario: "a coluna e torta, fica
+    inclinada; no idle a coluna, a linha da cintura e a cabeca ficam retas"):
+    o Idle.fbx inclina a pelve e curva a coluna para o lado. A pelve, a
+    coluna, o pescoco e a cabeca ficam sem a inclinacao de lado (cada elo
+    guarda o rumo e a inclinacao para a frente/tras); os pes sao plantados
+    de novo por baixo.
   - POSTURA (09/10, pedido do usuario: "o pescoco reto, tipo postura
     ergonomica"): o Idle.fbx curva o alto das costas e baixa a cabeca 20
     graus; a correcao e a de pose.ergonomic_posture (a mesma dos giros): o
@@ -42,7 +48,7 @@ import numpy as np
 from authoring import ClipDefinition
 from matter_clip import load_clip
 from matter_rig import REPO_ROOT, Rig, qconj, qfrom_axis_angle, qmul, qrotate
-from matter_rig import qnormalize
+from matter_rig import qlog, qnormalize
 from pose import LegSpec, Pose, PoseBuilder, ergonomic_posture
 from validate import lowest_point
 
@@ -51,12 +57,54 @@ DISPLAY_NAME = "Parado em alerta"
 SOURCE = (REPO_ROOT / "assets" / "animations" / "source" / "retargeted"
           / "alert_idle.retarget.json")
 SIDES = ("Left", "Right")
-PELVIS_RISE = 0.03
+PELVIS_RISE = 0.034   # (23/10: +3,5 mm, o quadril que desceu ao nivelar a cintura volta a altura de antes)
 PELVIS_TOWARD_REAR_FOOT = 0.055
 
 
 def _rz(degrees: float) -> np.ndarray:
     return qfrom_axis_angle([0.0, 0.0, 1.0], math.radians(degrees))
+
+
+STRAIGHT = ("Abdomen", "Chest", "UpperChest", "Neck", "Head")
+
+
+def _without_side_tilt(delta: np.ndarray) -> np.ndarray:
+    """A rotacao (do mundo, em relacao a ligacao) sem a inclinacao de lado:
+    o rumo do elo e a inclinacao dele para a frente ou para tras ficam."""
+    forward = qrotate(delta, np.array([1.0, 0.0, 0.0]))
+    up = qrotate(delta, np.array([0.0, 0.0, 1.0]))
+    yaw = math.atan2(forward[1], forward[0])
+    c, s = math.cos(-yaw), math.sin(-yaw)
+    pitch = math.atan2(c * up[0] - s * up[1], up[2])
+    return qnormalize(qmul(qfrom_axis_angle([0.0, 0.0, 1.0], yaw),
+                           qfrom_axis_angle([0.0, 1.0, 0.0], pitch)))
+
+
+def straighten(rig: Rig, builder) -> None:
+    """A pelve, a coluna, o pescoco e a cabeca sem a inclinacao de lado (no
+    builder, antes das pernas)."""
+    pelvis = rig.links[0]
+    world = qmul(qmul(pelvis.model_orientation, builder.root_rotation),
+                 qconj(pelvis.model_orientation))
+    builder.root_rotation = qnormalize(qmul(qmul(
+        qconj(pelvis.model_orientation), _without_side_tilt(world)),
+        pelvis.model_orientation))
+    for link_id in STRAIGHT:
+        i = rig.index(link_id)
+        link = rig.links[i]
+        parent = rig.links[link.parent]
+        _, orientations = rig.forward_kinematics(builder.root_offset,
+                                                 builder.root_rotation,
+                                                 builder.coordinates)
+        delta = qmul(orientations[i], qconj(link.model_orientation))
+        wanted = qmul(_without_side_tilt(delta), link.model_orientation)
+        local = qmul(qconj(orientations[link.parent]), wanted)
+        parent_frame = qnormalize(qmul(qconj(parent.model_orientation),
+                                       link.frame))
+        child_frame = qnormalize(qmul(qconj(link.model_orientation),
+                                      link.frame))
+        builder.coordinates[i] = rig.clamp(i, qlog(qmul(qmul(
+            qconj(parent_frame), local), child_frame)))
 
 
 class AlertIdle:
@@ -138,8 +186,9 @@ class AlertIdle:
         builder.root_offset = np.array(offset, dtype=float)
         builder.root_rotation = np.array(rotation, dtype=float)
         builder.coordinates = self.coordinates[f].copy()
-        # A postura ergonomica (ver o topo).
+        # A postura ergonomica e o reto de lado (ver o topo).
         ergonomic_posture(self.rig, builder.coordinates)
+        straighten(self.rig, builder)
         for side in SIDES:
             hip = self.anchor(positions, orientations, f"{side}Thigh")
             knee = self.anchor(positions, orientations, f"{side}Shin")

@@ -312,15 +312,22 @@ bool buildUniform(Mesh& mesh, const AssemblyRecipe& recipe, const Skeleton& skel
         const int chain[] { skeleton.find("Pelvis"), skeleton.find("RightHipHelper25"), skeleton.find("RightHipHelper"),
             skeleton.find("RightHipHelper75"), skeleton.find("RightThigh") };
         const int pelvis[] { chain[0] };
+        const int gluteJoint = recipe.hipGluteRise > 0.0f ? skeleton.find("RightGluteHelper") : -1;
         for (std::uint32_t v = 0; v < shorts.positions.size(); ++v) {
             const Vec3 p = shorts.positions[v];
             const Crease crease = creaseAt(p);
-            const float band = std::clamp(0.5f + (dot(p - hip, legAlong) - crease.center) / crease.width, 0.0f, 1.0f);
+            const float along = dot(p - hip, legAlong);
+            const float band = std::clamp(0.5f + (along - crease.center) / crease.width, 0.0f, 1.0f);
             const float lift = liftAt(p);
             // Na dobra da frente a passagem tambem e direta: da cintura
             // dobrada para a coxa, sem aneis girando menos que ela.
             chainWeights(shorts, v, chain, band, 1.0f, crease.straight + (1.0f - crease.straight) * smoothstep(0.0f, 0.3f, lift));
             if (lift > 0.0f) moveWeights(shorts, v, pelvis, liftJoint, lift);
+            // Atras, a pelve da faixa e de hipGluteRise acima dela para a
+            // GluteHelper (some subindo).
+            const float top = crease.center - 0.5f * crease.width;
+            if (gluteJoint >= 0)
+                moveWeights(shorts, v, pelvis, gluteJoint, crease.straight * smoothstep(top - recipe.hipGluteRise, top, along));
         }
         // A barra da camisa por cima: o peso da coxa que ela tinha (o da
         // pele) vai para a pelve e a mesma fracao da pelve para a HipLift.

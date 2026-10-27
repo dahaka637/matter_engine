@@ -1,0 +1,303 @@
+{
+  "schema": "matter.surface.v1",
+  "parametrization": 1,
+  "storage": 2,
+  "notes": "As regras do template de superficie (docs/SISTEMA_DE_APARENCIA.md). Coordenada de desenho em metros, olhando a face de fora com y para cima: x para a direita de quem olha, origem no meio da barra do painel. Os marcos (gola_frente, gola_costas, topo, numero_calcao) vem da construcao. parametrization e storage: as versoes em uso (referencia_pN.json, layout_sN.json). Cartas: method \"campo\" (Poisson pelos campos de direcao: field tronco = para cima e em volta, membro = ao longo do eixo do membro e em volta, lateral = a posicao de um lado ao outro por cima do ombro) ou \"isometrica\" (ARAP, orientada pelos marcos).",
+  "panels": [
+    "camisa_frente",
+    "camisa_costas",
+    "manga_direita",
+    "manga_esquerda",
+    "calcao_frente_direita",
+    "calcao_costas_direita",
+    "calcao_frente_esquerda",
+    "calcao_costas_esquerda",
+    "recuo_gola",
+    "recuo_barra",
+    "recuo_punho_direito",
+    "recuo_punho_esquerdo",
+    "recuo_cos",
+    "recuo_barra_direita",
+    "recuo_barra_esquerda",
+    "meiao_direito",
+    "meiao_esquerdo",
+    "meiao_borda_direito",
+    "meiao_borda_esquerdo"
+  ],
+  "regions": [
+    "camisa",
+    "camisa_recuo",
+    "calcao",
+    "calcao_recuo",
+    "meiao",
+    "pele",
+    "pe_oculto",
+    "chuteira"
+  ],
+  "meiao": {
+    "note": "a pele da perna da costura com o cabedal ate o joelho (a junta da canela); a fileira que encosta na costura e a borda (meiao_borda_*): outro painel (desdobrada triangulo a triangulo), o mesmo tecido (a costura borda_meiao_*)",
+    "aboveBoot": 0.0,
+    "belowKnee": 0.0
+  },
+  "charts": [
+    {
+      "id": "volta_tronco",
+      "panels": [
+        "camisa_frente",
+        "camisa_costas"
+      ],
+      "joined": [
+        "lado_direito",
+        "lado_esquerdo"
+      ],
+      "cut": "meio_costas",
+      "method": "campo",
+      "field": "tronco"
+    },
+    {
+      "id": "sobre_ombro",
+      "panels": [
+        "camisa_frente",
+        "camisa_costas"
+      ],
+      "joined": [
+        "ombro_direito",
+        "ombro_esquerdo"
+      ],
+      "cut": "meio_costas",
+      "method": "campo",
+      "field": "lateral"
+    },
+    {
+      "id": "ombro_manga_direita",
+      "panels": [
+        "manga_direita",
+        "camisa_frente",
+        "camisa_costas"
+      ],
+      "torsoReach": 0.12,
+      "joined": [
+        "cava_frente_direito",
+        "cava_costas_direito",
+        "ombro_direito"
+      ],
+      "cut": "coluna_manga",
+      "method": "isometrica"
+    },
+    {
+      "id": "ombro_manga_esquerda",
+      "panels": [
+        "manga_esquerda",
+        "camisa_frente",
+        "camisa_costas"
+      ],
+      "torsoReach": 0.12,
+      "joined": [
+        "cava_frente_esquerdo",
+        "cava_costas_esquerdo",
+        "ombro_esquerdo"
+      ],
+      "cut": "coluna_manga",
+      "method": "isometrica"
+    },
+    {
+      "id": "volta_manga_direita",
+      "panels": [
+        "manga_direita"
+      ],
+      "joined": [],
+      "cut": "coluna_manga",
+      "method": "campo",
+      "field": "membro"
+    },
+    {
+      "id": "volta_manga_esquerda",
+      "panels": [
+        "manga_esquerda"
+      ],
+      "joined": [],
+      "cut": "coluna_manga",
+      "method": "campo",
+      "field": "membro"
+    },
+    {
+      "id": "volta_perna_direita",
+      "panels": [
+        "calcao_frente_direita",
+        "calcao_costas_direita"
+      ],
+      "joined": [
+        "calcao_lado_direito"
+      ],
+      "cut": null,
+      "method": "campo",
+      "field": "membro"
+    },
+    {
+      "id": "volta_perna_esquerda",
+      "panels": [
+        "calcao_frente_esquerda",
+        "calcao_costas_esquerda"
+      ],
+      "joined": [
+        "calcao_lado_esquerdo"
+      ],
+      "cut": null,
+      "method": "campo",
+      "field": "membro"
+    },
+    {
+      "id": "volta_meiao_direito",
+      "panels": [
+        "meiao_direito",
+        "meiao_borda_direito"
+      ],
+      "joined": [
+        "borda_meiao_direito"
+      ],
+      "cut": "linha_tras",
+      "method": "campo",
+      "field": "membro"
+    },
+    {
+      "id": "volta_meiao_esquerdo",
+      "panels": [
+        "meiao_esquerdo",
+        "meiao_borda_esquerdo"
+      ],
+      "joined": [
+        "borda_meiao_esquerdo"
+      ],
+      "cut": "linha_tras",
+      "method": "campo",
+      "field": "membro"
+    }
+  ],
+  "anchors": [
+    {
+      "id": "escudo",
+      "panel": "camisa_frente",
+      "landmark": "gola_frente",
+      "offset": [
+        0.085,
+        -0.075
+      ],
+      "size": [
+        0.09,
+        0.1
+      ]
+    },
+    {
+      "id": "marca",
+      "panel": "camisa_frente",
+      "landmark": "gola_frente",
+      "offset": [
+        -0.085,
+        -0.075
+      ],
+      "size": [
+        0.06,
+        0.06
+      ]
+    },
+    {
+      "id": "patrocinio",
+      "panel": "camisa_frente",
+      "landmark": "gola_frente",
+      "offset": [
+        0.0,
+        -0.235
+      ],
+      "size": [
+        0.28,
+        0.12
+      ]
+    },
+    {
+      "id": "manga_direita",
+      "panel": "manga_direita",
+      "landmark": "topo",
+      "offset": [
+        0.0,
+        -0.08
+      ],
+      "size": [
+        0.07,
+        0.07
+      ]
+    },
+    {
+      "id": "manga_esquerda",
+      "panel": "manga_esquerda",
+      "landmark": "topo",
+      "offset": [
+        0.0,
+        -0.08
+      ],
+      "size": [
+        0.07,
+        0.07
+      ]
+    }
+  ],
+  "zones": [
+    {
+      "id": "costas",
+      "panel": "camisa_costas",
+      "landmark": "gola_costas",
+      "rect": [
+        -0.2,
+        -0.51,
+        0.2,
+        -0.06
+      ],
+      "block": [
+        0,
+        0,
+        384,
+        432
+      ]
+    },
+    {
+      "id": "frente",
+      "panel": "camisa_frente",
+      "landmark": "gola_frente",
+      "rect": [
+        -0.1,
+        -0.244,
+        0.1,
+        -0.044
+      ],
+      "block": [
+        384,
+        0,
+        208,
+        208
+      ]
+    },
+    {
+      "id": "calcao",
+      "panel": "calcao_frente_esquerda",
+      "landmark": "numero_calcao",
+      "rect": [
+        -0.07,
+        -0.07,
+        0.07,
+        0.07
+      ],
+      "block": [
+        384,
+        208,
+        160,
+        160
+      ]
+    }
+  ],
+  "identityLayout": {
+    "size": [
+      608,
+      448
+    ],
+    "inset": 16
+  }
+}

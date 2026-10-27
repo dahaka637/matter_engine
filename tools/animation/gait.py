@@ -41,7 +41,7 @@ import numpy as np
 
 from authoring import ClipDefinition
 from matter_rig import Rig, qfrom_axis_angle, qmul, qrotate
-from pose import ArmSpec, LegSpec, Pose, PoseBuilder
+from pose import ArmSpec, LegSpec, Pose, PoseBuilder, degrees_vector
 from validate import lowest_point, world_colliders, _box_axes
 
 SIDES = (("Left", 1.0), ("Right", -1.0))
@@ -129,6 +129,20 @@ class GaitSpec:
     # referencias de corrida os ombros giram 10-35 graus com a pelve em 3-6.
     shoulder_turn: float = 3.0
     head_nod: float = 4.0
+    # O tronco vivo (24/10, pedido do usuario: no trote a coluna, a cabeca e o
+    # dorso ficavam estaticos, roboticos). Os padroes sao o de antes (tronco
+    # estabilizado): spine_bounce e head_bob (graus, duas vezes por ciclo; a
+    # coluna flexiona no meio do apoio, quando a pelve desce, e a cabeca acena
+    # um pouco depois); chest_level, o quanto a coluna devolve da queda do
+    # quadril (1: o peito nivelado); head_steady, o quanto a cabeca devolve do
+    # giro dos ombros (1: a cabeca travada olhando para a frente).
+    spine_bounce: float = 0.0
+    head_bob: float = 0.0
+    chest_level: float = 0.8
+    head_steady: float = 1.0
+    # A cabeca mais reta (24/10, pedido do usuario): o pescoco estende estes
+    # graus e a cabeca vai junto.
+    neck_upright: float = 0.0
     # Bracos. A postura de corrida e uma so em todas as passadas (ver
     # RUNNING_ARM_*); cada passada muda o balanco, o cotovelo e o quanto o
     # braco vive atras do tronco.
@@ -391,11 +405,19 @@ class Gait:
         # a esquerda), contra a pelve; a coluna leva a diferenca e devolve a
         # queda lateral do quadril.
         chest_yaw = spec.shoulder_turn * spread
-        b.spine(flexion=spec.spine_flexion,
-                lateral=0.8 * roll,
+        bounce = spec.spine_bounce * math.cos(2.0 * mid)
+        b.spine(flexion=spec.spine_flexion + bounce,
+                lateral=spec.chest_level * roll,
                 axial=chest_yaw - yaw)
-        b.head(nod=spec.head_nod - 0.7 * (pitch + spec.spine_flexion),
-               turn=-chest_yaw, tilt=0.2 * roll)
+        # (A cabeca segura o olhar: devolve a inclinacao media e o balanco da
+        # coluna - com metade, ela acenava rapido demais; o aceno vem um pouco
+        # depois.)
+        b.head(nod=spec.head_nod - 0.7 * (pitch + spec.spine_flexion) - bounce
+               + spec.head_bob * math.cos(2.0 * mid - 0.6),
+               turn=-spec.head_steady * chest_yaw, tilt=0.2 * roll)
+        if spec.neck_upright:
+            index = self.rig.index("Neck")
+            b.coordinates[index] = b.coordinates[index] + degrees_vector(0.0, -spec.neck_upright, 0.0)
         for side, s in SIDES:
             ankle, foot_pitch, _ = states[side]
             foot_yaw = s * spec.toe_out + self.foot_yaw

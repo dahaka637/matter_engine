@@ -2,7 +2,6 @@
 
 #include "Engine/Athlete/Physical/DynamicTurnMove3D.hpp"
 #include "Engine/Athlete/Reference/PhaseLock3D.hpp"
-#include "Engine/Character/BallControl3D.hpp"
 #include "Engine/Character/BiomechanicalBipedExperiment3D.hpp"
 #include "Engine/Character/CharacterLocomotion3D.hpp"
 #include "Engine/Character/DefaultLocomotion3D.hpp"
@@ -40,17 +39,6 @@ struct LegacyAthleteState3D {
     // le neste tick (as do RL somadas as dela).
     DynamicTurnMove3D turnMove;
     PhysicalCorrections3D turnCorrections;
-    // Manejo de bola (so o personagem controlado usa) e a escala da
-    // velocidade que ele pede (o chute correndo freia um pouco).
-    BallControl3D ballControl;
-    float ballSpeedScale = 1.0f;
-    // A velocidade pedida pelo jogador neste tick, antes das escalas (o
-    // manejo novo ajusta a corrida para o chute a partir dela).
-    Vec3 requestedVelocityRaw;
-    // A ultima saida do manejo (o desenho de depuracao) e o reforco de
-    // estabilidade do gesto (modo fisico, V3).
-    BallControlOutput3D ballLastOutput;
-    float ballStability = 0.0f;
     DefaultLocomotion3D defaultLocomotion;
     // O padrao a sombra no fisico (AthleteRuntimeSettings3D::physicalReference):
     // a referencia de estilo do contrato do RL, so calculando a pose. Uma

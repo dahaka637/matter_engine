@@ -611,11 +611,6 @@ void characterSolveFootPose3D(const RagdollProfile3D& profile, std::vector<Vec3>
     solveFootPose(profile, coordinates, footIndex, targetPosition, targetOrientation, weight, holdYaw);
 }
 
-void characterKickPose3D(const RagdollProfile3D& profile, const RagdollState3D& state,
-    std::vector<Vec3>& coordinates, std::array<std::size_t, 2> hands, const BallKickPose3D& kick) {
-    applyKickPose(profile, state, coordinates, hands, kick);
-}
-
 void characterGaitVariety3D(const RagdollProfile3D& profile, const AnimationClip3D& clip, float cyclePhase,
     float armPhase, float strides, std::uint32_t seed, float amount, std::vector<Vec3>& coordinates) {
     // (Locomocao padrao: somada, nas fases do clipe - substituindo, o tronco e

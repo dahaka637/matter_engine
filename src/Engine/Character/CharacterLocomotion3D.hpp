@@ -2,7 +2,6 @@
 
 #include "Engine/Athlete/Physical/PhysicalCorrections3D.hpp"
 #include "Engine/Animation/AnimationClip3D.hpp"
-#include "Engine/Character/BallControl3D.hpp"
 #include "Engine/Character/BodilyGetUp3D.hpp"
 #include "Engine/Character/CharacterStateEstimator3D.hpp"
 #include "Engine/Locomotion/ContactFootwork3D.hpp"
@@ -126,6 +125,9 @@ struct CharacterLocomotionAnimations3D {
     const AnimationClip3D* sprintForwardRight = nullptr;
     const AnimationClip3D* sprintBackwardLeft = nullptr;
     const AnimationClip3D* sprintBackwardRight = nullptr;
+    // Opcional, so da locomocao padrao: o sprint maximo (24/10; a frente e as
+    // diagonais da frente). Sem ele, o sprint maximo e a corrida mais rapida.
+    const AnimationClip3D* maxSprint = nullptr;
     // Pulos (opcionais): o voo, da decolagem (inicio do clipe) ao toque no
     // chao (fim), tocado pela fase do voo. Sem eles, o voo e procedural.
     const AnimationClip3D* jumpStanding = nullptr;
@@ -180,8 +182,6 @@ struct CharacterGaitSpeeds3D {
 // giro vertical) - o mesmo do modo fisico.
 void characterSolveFootPose3D(const RagdollProfile3D& profile, std::vector<Vec3>& coordinates,
     std::size_t footIndex, Vec3 targetPosition, Quaternion targetOrientation, float weight, bool holdYaw);
-void characterKickPose3D(const RagdollProfile3D& profile, const RagdollState3D& state,
-    std::vector<Vec3>& coordinates, std::array<std::size_t, 2> hands, const BallKickPose3D& kick);
 void characterGaitVariety3D(const RagdollProfile3D& profile, const AnimationClip3D& clip, float cyclePhase,
     float armPhase, float strides, std::uint32_t seed, float amount, std::vector<Vec3>& coordinates);
 void characterIdleVariety3D(const RagdollProfile3D& profile, float seconds, std::uint32_t seed, float amount,
@@ -302,27 +302,6 @@ struct CharacterLocomotionInput3D {
     // Carrinho no ar (a voadora): no ar, Ctrl com Shift + W (intent.crouch,
     // effort e a direcao pedida para a frente do olhar), uma por voo.
     bool airTackleEnabled = true;
-    // Manejo de bola (BallControl3D): o alvo do pe que vai a bola, por cima
-    // do alvo da passada desse pe enquanto ele esta no ar.
-    BallFootGoal3D ballFoot;
-    // E o desvio dos pes que nao tocam (somado ao alvo do pe no ar).
-    std::array<Vec3, 2> ballAvoid {};
-    // Chute: o pe de apoio pousa ao lado da bola (o pouso previsto dele vai
-    // ate o ponto, ate um limite), o ritmo do ciclo (abaixo de 1 durante o
-    // chute: o apoio fica no chao enquanto a outra perna arma, bate e
-    // acompanha) e a pose de cima (bracos e tronco).
-    BallPlant3D ballPlant;
-    float ballGaitRate = 1.0f;
-    BallKickPose3D ballKick;
-    // O gesto do corpo inteiro (rework de 06/10): aqui so tronco, bracos e
-    // cabeca (os pes vao pelo ballFoot/ballScript no planejador).
-    BallGesturePose3D ballGesture;
-    // Toque parado: o pe dirigido pelo manejo (o planejador o segue) e a
-    // pelve indo com o passo de apoio (fora da ancora: a capsula segue).
-    BallFootScript3D ballScript;
-    BallBodyGoal3D ballBody;
-    // A bola repele o alvo dos pes no ar (pe e canela nao colidem com ela).
-    BallRepulsion3D ballRepel;
     bool manipulated = false;
     std::uint32_t grabbedLink = RagdollDynamics3D::InvalidIndex;
     float poseAuthority = 1.0f;
@@ -1018,12 +997,6 @@ private:
     std::array<float, 2> m_landingReach {};
     // Pe que espera o toque: quanto ja deslizou para tras (mundo).
     std::array<Vec3, 2> m_waitPawShift {};
-    // Chute: o desvio do pouso do pe de apoio (ao lado da bola), suavizado.
-    std::array<Vec3, 2> m_ballPlantShift {};
-    // As pernas e bracos para o gesto com a bola (BallGesturePose3D).
-    BallGestureLegs3D m_gestureLegs;
-    // A pelve do toque parado (planar, suavizada ~0,1 s).
-    Vec3 m_ballBodyDelta;
     // O centro dos pes na pose (referencial da raiz, tick anterior): parado
     // com a ajuda cheia, o corpo se assenta sobre a base real.
     // Giro parado pelo clipe (ajuda cheia): o ciclo atual (clipe, tempo,

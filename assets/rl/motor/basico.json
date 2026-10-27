@@ -1,0 +1,147 @@
+{
+  "schema": "matter-motor-2",
+  "id": "motor_basico",
+  "displayName": "Motor autônomo · Básico",
+  "revision": 1,
+  "shares": {
+    "parado": 0.1,
+    "giro": 0.1,
+    "trote": 0.8
+  },
+  "stages": {
+    "base": {
+      "shares": {
+        "parado": 0.6,
+        "giro": 0.2,
+        "trote": 0.2
+      },
+      "window": 64,
+      "maximumFalls": 0.1,
+      "turnMaximumFalls": 0.2,
+      "turnMaximumChestErrorDegrees": 20,
+      "minimumPosture": 0.85
+    }
+  },
+  "turn": {
+    "speed": [
+      0.4,
+      0.8
+    ],
+    "angleDegrees": [
+      30,
+      450
+    ],
+    "pauseSeconds": [
+      1.5,
+      4.0
+    ]
+  },
+  "trot": {
+    "targetSpeed": 4.5,
+    "minimumSpeed": 0.3,
+    "rampSeconds": 2.0,
+    "curriculum": {
+      "start": 1.0,
+      "step": 0.25,
+      "window": 64,
+      "maximumFalls": 0.15,
+      "minimumTracking": 0.8,
+      "minimumPosture": 0.8
+    }
+  },
+  "fall": {
+    "pelvisHeight": 0.55,
+    "pelvisSeconds": 0.1,
+    "trunkDegrees": 65,
+    "trunkSeconds": 0.2
+  },
+  "posture": {
+    "pelvisTiltDegrees": {
+      "free": 10,
+      "sigma": 10
+    },
+    "pelvisHeight": {
+      "min": 0.88,
+      "max": 1.04,
+      "sigma": 0.06
+    },
+    "pelvisRate": {
+      "free": 1.0,
+      "sigma": 1.0
+    },
+    "trunkDegrees": {
+      "forward": 15,
+      "back": 8,
+      "side": 8,
+      "sigma": 10,
+      "perMeterPerSecond": 1.5,
+      "accelerationScale": 1.0
+    },
+    "spineDegrees": {
+      "free": 12,
+      "sigma": 10
+    },
+    "twistDegrees": {
+      "free": 30,
+      "sigma": 20,
+      "diagonal": 25
+    },
+    "headDegrees": {
+      "free": 12,
+      "sigma": 10
+    },
+    "neckDegrees": {
+      "free": 15,
+      "sigma": 10
+    }
+  },
+  "imitation": {
+    "weight": 1.0,
+    "idle": "animations/clips/alert_idle.matteranim.json",
+    "turnLeft": "animations/clips/turn_left.matteranim.json",
+    "turnRight": "animations/clips/turn_right.matteranim.json",
+    "trots": [
+      "animations/clips/jog.matteranim.json",
+      "animations/clips/jog.matteranim.json",
+      "animations/clips/jog_strafe_left.matteranim.json",
+      "animations/clips/run_backward.matteranim.json",
+      "animations/clips/run_backward.matteranim.json",
+      "animations/clips/run_backward.matteranim.json",
+      "animations/clips/jog_strafe_right.matteranim.json",
+      "animations/clips/jog.matteranim.json"
+    ],
+    "turnDegreesPerCycle": 90,
+    "fullBlendSpeed": 1.5,
+    "cadence": [
+      0.6,
+      1.5
+    ],
+    "kernels": {
+      "pose": 2.0,
+      "velocity": 0.1,
+      "ends": 40.0,
+      "heightMeters": 0.05
+    }
+  },
+  "teacher": {
+    "priorWeight": 0.1,
+    "freeRadians": 0.05,
+    "fullUntilDecisions": 20000000,
+    "zeroAtDecisions": 60000000
+  },
+  "weights": {
+    "alive": 0.25,
+    "task": 0.35,
+    "imitation": 0.4,
+    "idle": 0.1,
+    "posture": 0.15,
+    "actionRate": 0.1,
+    "slip": 0.3,
+    "still": 0.3,
+    "fall": 1.0
+  },
+  "actuator": {
+    "stiffness": 2.0,
+    "damping": 0.5
+  }
+}

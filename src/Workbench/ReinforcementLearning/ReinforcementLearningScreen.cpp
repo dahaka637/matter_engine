@@ -1,3 +1,4 @@
+#include "Workbench/ReinforcementLearning/MotorViewer3D.hpp"
 #include "Workbench/ReinforcementLearning/ReinforcementLearningScreen.hpp"
 
 #include "Engine/Modeling/Inspection/InspectionRenderer.hpp"
@@ -26,6 +27,8 @@ using namespace Modeling;
 
 namespace {
 
+// O exercicio do levantar do chao: o grafico dele mostra quantos levantaram.
+constexpr const char* GetUpDrill = "levantar";
 constexpr ImVec4 MutedText { 0.47f, 0.54f, 0.60f, 1.0f };
 constexpr ImVec4 InfoText { 0.62f, 0.72f, 0.80f, 1.0f };
 constexpr ImVec4 ValueText { 0.84f, 0.89f, 0.94f, 1.0f };
@@ -169,7 +172,7 @@ bool isTrainingRun(const std::filesystem::path& directory) {
     if (!file) return false;
     const nlohmann::json config = nlohmann::json::parse(file, nullptr, false);
     if (config.is_discarded() || !config.is_object()) return false;
-    if (config.value("kind", std::string()) == "locomocao" || config.value("kind", std::string()) == "rastreador") return true;
+    if (config.value("kind", std::string()) == "motor" || config.value("kind", std::string()) == "locomocao" || config.value("kind", std::string()) == "rastreador") return true;
     const auto contract = config.find("contract");
     return contract != config.end() && contract->is_number() && contract->get<int>() == 2;
 }
@@ -325,6 +328,12 @@ void ReinforcementLearningScreen::scanRuns() {
         found.emplace_back(std::filesystem::last_write_time(stamp, timeCode), entry.path().filename().string());
     }
     std::sort(found.begin(), found.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+    const bool hasMotor = std::any_of(found.begin(), found.end(), [&](const auto& item) {
+        return MotorViewer3D::isMotorTask(m_paths.run(item.second) / "tarefa.json");
+    });
+    if (hasMotor) std::erase_if(found, [&](const auto& item) {
+        return !MotorViewer3D::isMotorTask(m_paths.run(item.second) / "tarefa.json");
+    });
     m_runs.clear();
     for (auto& [time, name] : found) m_runs.push_back(std::move(name));
 }
@@ -347,6 +356,8 @@ std::filesystem::path ReinforcementLearningScreen::taskPath() const {
     if (std::filesystem::exists(live)) return live;
     const TrainerStatus3D status = m_link->status();
     if (status.task.empty()) return {};
+    if (status.task == "motor_basico")
+        return m_options.sourceRoot / "assets" / "rl" / "motor" / "basico.json";
     return m_options.sourceRoot / "assets" / "rl" / "tasks" / (status.task + ".json");
 }
 
@@ -358,11 +369,19 @@ void ReinforcementLearningScreen::loadDrills() {
     m_drillIds.clear();
     m_drillNames.clear();
     m_drillPhases.clear();
+    m_drillCategories.clear();
+    m_drillWeights.clear();
     m_futureNames.clear();
     m_futurePhases.clear();
     const std::filesystem::path path = taskPath();
     if (path.empty() || !std::filesystem::exists(path)) return;
-    if (TrackingViewer3D::isTrackingTask(path)) {
+    if (MotorViewer3D::isMotorTask(path)) {
+        const auto& ids = MotorTraining3D::drillIds();
+        const auto& names = MotorTraining3D::drillNames();
+        m_drillIds.assign(ids.begin(),ids.end());
+        m_drillNames.assign(names.begin(),names.end());
+        m_drillPhases.assign(ids.size(),1);
+    } else if (TrackingViewer3D::isTrackingTask(path)) {
         // O rastreador: o lider na velocidade da tela, num dos 8 rumos (os do portao).
         for (std::size_t i = 0; i < TrackingViewer3D::HeadingNames.size(); ++i) {
             m_drillIds.push_back("rumo" + std::to_string(i));
@@ -379,10 +398,15 @@ void ReinforcementLearningScreen::loadDrills() {
             m_drillIds.push_back(drill.id);
             m_drillNames.push_back(drill.name);
             m_drillPhases.push_back(drill.phase);
+            m_drillCategories.push_back(drill.category);
+            m_drillWeights.push_back(drill.weight);
         }
-        // A escada completa (a ultima tarefa): o que ainda nao esta no treino fica apagado.
+        // A escada completa (a ultima tarefa): o que ainda nao esta no treino fica
+        // apagado (so nas tarefas sem categorias).
+        const bool categorized = std::any_of(m_drillCategories.begin(), m_drillCategories.end(),
+            [](const std::string& c) { return !c.empty(); });
         const std::filesystem::path ladder = m_options.sourceRoot / "assets" / "rl" / "tasks" / "locomocao_f3f.json";
-        if (std::filesystem::exists(ladder)) {
+        if (!categorized && std::filesystem::exists(ladder)) {
             for (const LocomotionViewer3D::Drill& drill : LocomotionViewer3D::drillsOf(ladder)) {
                 if (std::find(m_drillIds.begin(), m_drillIds.end(), drill.id) != m_drillIds.end()) continue;
                 m_futureNames.push_back(drill.name);
@@ -432,17 +456,21 @@ void ReinforcementLearningScreen::ensureViewer() {
     }
     if (hasViewer() || !m_viewerError.empty() || run.empty()) return;
     const std::filesystem::path task = taskPath();
+    const bool motor = !task.empty() && MotorViewer3D::isMotorTask(task);
     const bool tracking = !task.empty() && TrackingViewer3D::isTrackingTask(task);
-    if (tracking || (!task.empty() && LocomotionViewer3D::isLocomotionTask(task))) {
+    if (motor || tracking || (!task.empty() && LocomotionViewer3D::isLocomotionTask(task))) {
         try {
             m_viewerTask = task;
             const auto seed = static_cast<std::uint64_t>(std::time(nullptr));
-            if (tracking) m_locomotion = std::make_unique<TrackingViewer3D>(m_options.sourceRoot / "assets", seed,
+            if (motor) m_locomotion = std::make_unique<MotorViewer3D>(m_options.sourceRoot / "assets", task,
+                    m_viewerDrill, seed);
+            else if (tracking) m_locomotion = std::make_unique<TrackingViewer3D>(m_options.sourceRoot / "assets", seed,
                     m_viewerDrill);
             else
                 m_locomotion = std::make_unique<LocomotionViewer3D>(task, m_options.sourceRoot / "assets", m_viewerDrill,
                     seed);
             m_colliders = buildRagdollColliderWireframe3D(m_locomotion->profile());
+            if (auto* locomotion = dynamic_cast<LocomotionViewer3D*>(m_locomotion.get())) locomotion->setAssist(m_locomotionAssist);
             applyManual();
             reloadPolicy(true);
         } catch (const std::exception& error) {
@@ -709,6 +737,8 @@ void ReinforcementLearningScreen::refreshHistory() {
             since = m_chartsExpanded ? ChartWindows[static_cast<std::size_t>(m_chartWindow)].second : 0.0,
             points = std::size_t { m_chartsExpanded ? 1200u : 400u }] {
             // O rastreador grava os seus arquivos, nao o rl.db.
+            if (MotorViewer3D::isMotorTask(directory / "tarefa.json"))
+                return MotorViewer3D::readHistory(directory, points, since);
             if (TrackingViewer3D::isTrackingTask(directory / "tarefa.json"))
                 return TrackingViewer3D::readHistory(directory, points, since);
             TrainingHistory3D history = readTrainingHistory3D(database, run, since, points);
@@ -783,21 +813,53 @@ bool ReinforcementLearningScreen::render(int width, int height) {
     if (m_showContacts)
         for (const RagdollContactPoint3D& contact : state.contacts)
             highlights.push_back(cross(m_skeleton->toSkeleton(contact.position), 0.025f, Palette::Error));
-    if (view.pushLink >= 0) {
-        const Vec3 from = positions[static_cast<std::size_t>(view.pushLink)];
-        Highlight arrow;
-        arrow.color = Palette::Warning;
-        arrow.segments.push_back({ m_skeleton->toSkeleton(from - view.pushForce * 0.002f), m_skeleton->toSkeleton(from) });
-        highlights.push_back(std::move(arrow));
-    }
-
     std::vector<InspectionMarker> markers;
     std::vector<InspectionArrow> arrows;
-    // O ponto do piloto (a estrela): laranja quando e para parar nele.
+    // O empurrao (pedido do usuario, 21/10): a seta vem de onde ele chega e
+    // aponta para o corpo; comprimento e espessura crescem com a forca, a cor
+    // diz a faixa (verde ate 300 N, amarelo ate 700, laranja ate 1400, vermelho
+    // acima), os newtons ficam escritos e a seta some em 0,8 s depois do fim.
+    m_pushLabel = {};
+    Vec3 pushLabelPoint;
+    if (view.pushLink >= 0 && static_cast<std::size_t>(view.pushLink) < positions.size()) {
+        const Vec3 force = view.pushForce;
+        const float newtons = std::hypot(force.x, force.y);
+        if (newtons > 1.0f) {
+            const Vec3 direction { force.x / newtons, force.y / newtons, 0.0f };
+            const Vec3 at = positions[static_cast<std::size_t>(view.pushLink)];
+            const float length = 0.35f + std::min(newtons, 2500.0f) / 1500.0f;
+            const Vec3 tip = at - direction * 0.12f;
+            const Vec3 tail = tip - direction * length;
+            const float fade = std::clamp(view.pushFade, 0.0f, 1.0f);
+            InspectionArrow push;
+            push.from = m_skeleton->toSkeleton(tail);
+            push.to = m_skeleton->toSkeleton(tip);
+            push.color = newtons < 300.0f ? rgb(120, 220, 90, fade) : newtons < 700.0f ? rgb(250, 210, 60, fade)
+                : newtons < 1400.0f ? rgb(250, 140, 40, fade) : rgb(235, 60, 50, fade);
+            push.width = 0.05f + std::min(newtons, 2500.0f) / 25000.0f;
+            push.lineWidthPixels = 3.0f + std::min(newtons, 2500.0f) / 300.0f;
+            arrows.push_back(push);
+            // (O rotulo e projetado depois, com a camera do quadro.)
+            pushLabelPoint = m_skeleton->toSkeleton(tail + Vec3 { 0.0f, 0.0f, 0.12f });
+            m_pushLabel.newtons = newtons;
+            m_pushLabel.fade = fade;
+        }
+    }
+    // Os pontos da estrela no chao (azuis); o de agora vai por cima, em verde (laranja: ele espera la).
+    for (const Vec3& point : view.starPoints) {
+        InspectionMarker mark;
+        mark.center = m_skeleton->toSkeleton({ point.x, point.y, 0.0f });
+        mark.radius = 0.3f;
+        mark.color = rgb(70, 140, 230);
+        mark.strength = 0.7f;
+        markers.push_back(mark);
+    }
+    // O ponto do piloto (a estrela): verde, ou laranja quando e para parar nele.
     if (view.hasTarget) {
         InspectionMarker target;
         target.center = m_skeleton->toSkeleton({ view.target.x, view.target.y, 0.0f });
         target.radius = 0.35f;
+        if (!view.starPoints.empty()) target.color = rgb(60, 210, 120);
         if (view.targetStop) target.color = rgb(245, 160, 40);
         markers.push_back(target);
     }
@@ -858,6 +920,15 @@ bool ReinforcementLearningScreen::render(int width, int height) {
         const Vec3 ahead = m_skeleton->toSkeleton(base + Vec3 { std::cos(heading), std::sin(heading), 0.0f });
         camera.yaw = std::atan2(ahead.y - aim.y, ahead.x - aim.x) + m_camera.yaw;
     }
+    if (m_pushLabel.newtons > 0.0f) {
+        const ScreenPoint label = Projector(camera, width, height).project(pushLabelPoint);
+        if (label.visible) {
+            m_pushLabel.x = label.x / static_cast<float>(width);
+            m_pushLabel.y = label.y / static_cast<float>(height);
+        } else {
+            m_pushLabel = {};
+        }
+    }
     // Onde ele aparece (os testes conferem que a camera nao o corta).
     const ScreenPoint shown = Projector(camera, width, height).project(pelvis);
     m_pelvisOnScreen = shown.visible
@@ -911,18 +982,54 @@ void ReinforcementLearningScreen::draw(CanvasTarget& canvas, float uiScale) {
     const float left = margin * 2.0f + sidebar;
     ImGui::SetCursorPos({ left, top });
     ImGui::BeginChild("RLWorkspace", { io.DisplaySize.x - left - margin, height }, true, ImGuiWindowFlags_NoScrollbar);
-    panelHeader("VISUALIZADOR");
-    drawToolbar();
     const float charts = ui(150.0f);
     if (m_chartsExpanded) {
-        drawCommands();
-        drawCharts(ImGui::GetContentRegionAvail().y - ui(30.0f));
+        // Expandido: so os graficos. Na linha do titulo, a janela de tempo e o recolher, discretos no canto.
+        sectionLabel("GRÁFICOS");
+        const float button = ui(52.0f), gap = ui(4.0f), close = ui(26.0f);
+        const float compact = ui(110.0f);
+        const float total = compact + static_cast<float>(ChartWindows.size()) * (button + gap) + ui(10.0f) + close;
+        ImGui::SameLine(std::max(ImGui::GetCursorPosX(), ImGui::GetWindowContentRegionMax().x - total));
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, { ui(4.0f), ui(1.0f) });
+        ImGui::Checkbox("Compactado", &m_chartsCompact);
+        tooltip("Todos os gráficos cabendo na altura, sem rolar.");
+        ImGui::SameLine(0.0f, ui(12.0f));
+        ImGui::PushID("RLChartWindow");
+        for (int i = 0; i < static_cast<int>(ChartWindows.size()); ++i) {
+            if (i > 0) ImGui::SameLine(0.0f, gap);
+            const bool on = i == m_chartWindow;
+            ImGui::PushStyleColor(ImGuiCol_Button, on ? ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive) : ImVec4 { 0.0f, 0.0f, 0.0f, 0.0f });
+            if (ImGui::Button(ChartWindows[static_cast<std::size_t>(i)].first, { button, 0.0f }) && !on) {
+                m_chartWindow = i;
+                m_historyWatch = 0.0f;
+            }
+            ImGui::PopStyleColor();
+        }
+        ImGui::PopID();
+        tooltip("O trecho mais recente do treino nos gráficos.");
+        ImGui::SameLine(0.0f, ui(10.0f));
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4 { 0.0f, 0.0f, 0.0f, 0.0f });
+        if (ImGui::Button(UI::FontAwesome::label(UI::FontAwesome::Xmark, "").c_str(), { close, 0.0f })) {
+            m_chartsExpanded = false;
+            m_historyWatch = 0.0f;
+        }
+        ImGui::PopStyleColor();
+        ImGui::PopStyleVar();
+        tooltip("Recolher: volta o visualizador.");
+        subtleSeparator();
+        // Sem rodape: a altura toda e dos graficos.
+        ImGui::BeginChild("RLChartsScroll", { 0.0f, std::max(ui(100.0f), ImGui::GetContentRegionAvail().y) }, false,
+            m_chartsCompact ? ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse : 0);
+        drawCharts(ImGui::GetContentRegionAvail().y);
+        ImGui::EndChild();
     } else {
-        drawViewport(canvas, charts + ui(78.0f));
+        panelHeader("VISUALIZADOR");
+        drawToolbar();
+        drawViewport(canvas, charts + ui(106.0f));
         drawCommands();
         drawCharts(charts);
     }
-    drawFooter();
+    if (!m_chartsExpanded) drawFooter();
     ImGui::EndChild();
     ImGui::End();
 }
@@ -993,7 +1100,7 @@ void ReinforcementLearningScreen::drawControls(const TrainerStatus3D& status) {
         tooltip("Abre o treino em segundo plano, do último checkpoint. Ele continua com o Matter Engine fechado.");
         return;
     }
-    if (status.pid > 0) {
+    if (status.pid > 0 && status.task != "motor_basico") {
         // O rastreador (processo proprio): parar salva e fecha; nao tem pausa nem avaliacao pelo canal.
         if (ImGui::Button(UI::FontAwesome::label(UI::FontAwesome::Stop, "Parar").c_str(), { half, ui(34.0f) }))
             m_link->send("parar");
@@ -1025,7 +1132,8 @@ void ReinforcementLearningScreen::drawControls(const TrainerStatus3D& status) {
         m_link->send("avaliar");
         notify("Avaliação pedida");
     }
-    tooltip("Roda a avaliação dos exercícios agora (nos dois solvers).");
+    tooltip(status.task == "motor_basico" ? "Avalia os dez exercícios por até 30 s cada, com a física do jogo."
+        : "Roda a avaliação dos exercícios agora (nos dois solvers).");
 }
 
 void ReinforcementLearningScreen::drawModes(const TrainerStatus3D& status) {
@@ -1041,12 +1149,18 @@ void ReinforcementLearningScreen::drawModes(const TrainerStatus3D& status) {
             m_mode = mode.key;
             if (status.alive) {
                 m_link->send("modo", std::string("{\"modo\":\"") + mode.key + "\"}");
-                notify(std::string("Modo ") + mode.label + ": o treinador reabre em alguns segundos");
+                notify(std::string("Modo ") + mode.label + (status.task == "motor_basico"
+                    ? ": aplicado entre rodadas" : ": o treinador reabre em alguns segundos"));
             }
         }
-        tooltip(mode.tooltip);
+        tooltip(status.task == "motor_basico"
+            ? (i == 0 ? "12 threads de física: prioriza a velocidade do treino."
+                : i == 1 ? "8 threads de física: reduz o uso do processador."
+                         : "4 threads de física: deixa mais processador para outros programas.")
+            : mode.tooltip);
     }
     ImGui::Dummy({ 1.0f, ui(2.0f) });
+    if (status.task == "motor_basico") return;
     bool boot = m_link->resumesAtBoot();
     if (ImGui::Checkbox("Retomar ao ligar o PC", &boot)) {
         std::string error;
@@ -1062,7 +1176,36 @@ void ReinforcementLearningScreen::drawDrills() {
     ImGui::Dummy({ 1.0f, ui(8.0f) });
     panelHeader("EXERCÍCIOS");
     ImGui::Dummy({ 1.0f, ui(2.0f) });
-    for (std::size_t i = 0; i < m_drillIds.size(); ++i) {
+    const bool motor = MotorViewer3D::isMotorTask(m_viewerTask);
+    const bool categorized = std::any_of(m_drillCategories.begin(), m_drillCategories.end(),
+        [](const std::string& c) { return !c.empty(); });
+    if (categorized) {
+        // As categorias (o pedido do usuario, 21/10): Basico e Compostos com os
+        // exercicios; Avancados e Manejo ainda em elaboracao (apagados).
+        static const std::array<std::pair<const char*, const char*>, 2> groups {
+            std::pair { "basico", "Básico" }, std::pair { "compostos", "Compostos" } };
+        for (const auto& [id, title] : groups) {
+            if (!ImGui::CollapsingHeader(title, id == std::string("basico") ? ImGuiTreeNodeFlags_DefaultOpen : 0)) continue;
+            for (std::size_t i = 0; i < m_drillIds.size(); ++i) {
+                if (i >= m_drillCategories.size() || m_drillCategories[i] != id) continue;
+                const std::string label = UI::FontAwesome::label(UI::FontAwesome::Crosshairs, m_drillNames[i].c_str())
+                    + "##drill" + m_drillIds[i];
+                const bool training = i >= m_drillWeights.size() || m_drillWeights[i] > 0.0f;
+                if (phaseButton(label.c_str(), m_drillIds[i] == m_viewerDrill, { -1.0f, ui(30.0f) }, training ? 1 : 0))
+                    showDrill(m_drillIds[i]);
+                tooltip(training ? "Mostra este exercício no mundo (o treino sorteia todos pelos pesos)."
+                                 : "Pronto, mas ainda fora do treino. Mostra este exercício no mundo.");
+            }
+        }
+        ImGui::BeginDisabled();
+        ImGui::CollapsingHeader("Avançados", ImGuiTreeNodeFlags_Leaf);
+        ImGui::CollapsingHeader("Manejo", ImGuiTreeNodeFlags_Leaf);
+        ImGui::EndDisabled();
+        tooltip("Em elaboração.");
+        return;
+    }
+    const bool basicOpen = !motor || ImGui::CollapsingHeader("Básico", ImGuiTreeNodeFlags_DefaultOpen);
+    if (basicOpen) for (std::size_t i = 0; i < m_drillIds.size(); ++i) {
         const std::string label = UI::FontAwesome::label(UI::FontAwesome::Crosshairs, m_drillNames[i].c_str())
             + "##drill" + m_drillIds[i];
         const int phase = i < m_drillPhases.size() ? m_drillPhases[i] : 0;
@@ -1070,8 +1213,11 @@ void ReinforcementLearningScreen::drawDrills() {
             showDrill(m_drillIds[i]);
         const std::string hint = (phase > 0 ? "Fase " + std::to_string(phase) + ": m" : std::string("M"))
             + "ostra este exercício no mundo (o treino sorteia todos pelos pesos).";
-        tooltip(hint.c_str());
+        tooltip(motor
+            ? "Mostra este exercício. Os exercícios do Básico treinam juntos na mesma política."
+            : hint.c_str());
     }
+    if (motor && ImGui::CollapsingHeader("Compostos")) ImGui::TextDisabled("Nenhum exercício por enquanto.");
     for (std::size_t i = 0; i < m_futureNames.size(); ++i) {
         const std::string label = UI::FontAwesome::label(UI::FontAwesome::Crosshairs, m_futureNames[i].c_str())
             + "##future" + std::to_string(i);
@@ -1094,6 +1240,7 @@ void ReinforcementLearningScreen::drawEvaluation(const TrainerStatus3D& status) 
     std::size_t shown = 0;
     for (const TrainerStatus3D::DrillEvaluation& entry : status.evaluation) {
         if (entry.solver != "jogo") continue;
+        if (status.task == "motor_basico" && entry.drill != m_viewerDrill) continue;
         if (++shown > 1 || m_drillIds.size() > 1) {
             const auto it = std::find(m_drillIds.begin(), m_drillIds.end(), entry.drill);
             const std::string name = it == m_drillIds.end() ? entry.drill
@@ -1101,11 +1248,15 @@ void ReinforcementLearningScreen::drawEvaluation(const TrainerStatus3D& status) 
             ImGui::TextColored(InfoText, "%s", name.c_str());
         }
         infoRow("Sem cair", decimal((1.0 - entry.falls) * 100.0, 0) + "%");
-        tooltip("Os mundos da avaliação que não caíram em 20 s, sem ruído e com a física do jogo (20/20).");
+        tooltip(status.task == "motor_basico"
+            ? "Mundos que completaram 30 s sem cair, sem ruído e com a física do jogo (20/20)."
+            : "Os mundos da avaliação que não caíram em 20 s, sem ruído e com a física do jogo (20/20).");
         if (entry.velocityError >= 0.0) {
             infoRow("Erro vel.", decimal(entry.velocityError, 2) + " m/s");
             tooltip("A mediana da diferença entre a velocidade pedida e a dele.");
         }
+        if (entry.chestErrorDegrees >= 0.0) infoRow("Erro peito", decimal(entry.chestErrorDegrees, 1) + "°");
+        if (entry.drift >= 0.0) infoRow("Deriva P90", decimal(entry.drift, 2) + " m");
         if (entry.usefulSteps >= 0.0) {
             infoRow("Passos úteis", decimal(entry.usefulSteps, 2) + " /s");
             tooltip("Os toques de um pé que ficou ao menos 0,12 s no ar e andou ao menos 10 cm.");
@@ -1236,6 +1387,18 @@ void ReinforcementLearningScreen::drawViewport(CanvasTarget& canvas, float botto
             origin.y + m_lookOnScreen[1] * size.y - extent.y * 0.5f };
         drawList->AddText(ImGui::GetFont(), iconSize, at, IM_COL32(110, 205, 255, 235), eye.c_str());
     }
+    if (m_pushLabel.newtons > 0.0f) {
+        const std::string text = std::to_string(static_cast<int>(std::lround(m_pushLabel.newtons))) + " N";
+        const float n = m_pushLabel.newtons;
+        const int alpha = static_cast<int>(255.0f * std::clamp(m_pushLabel.fade, 0.0f, 1.0f));
+        const ImU32 color = n < 300.0f ? IM_COL32(120, 220, 90, alpha) : n < 700.0f ? IM_COL32(250, 210, 60, alpha)
+            : n < 1400.0f ? IM_COL32(250, 140, 40, alpha) : IM_COL32(235, 60, 50, alpha);
+        const float textSize = ImGui::GetFontSize() * 1.15f;
+        const ImVec2 extent = ImGui::GetFont()->CalcTextSizeA(textSize, FLT_MAX, 0.0f, text.c_str());
+        const ImVec2 at { origin.x + m_pushLabel.x * size.x - extent.x * 0.5f, origin.y + m_pushLabel.y * size.y - extent.y };
+        drawList->AddText(ImGui::GetFont(), textSize, { at.x + 1.0f, at.y + 1.0f }, IM_COL32(0, 0, 0, alpha), text.c_str());
+        drawList->AddText(ImGui::GetFont(), textSize, at, color, text.c_str());
+    }
     // A politica que esta no corpo (canto de cima), o pedido e a velocidade dele.
     const std::string label = m_policyText + "\npedido " + decimal(viewerRequestedSpeed(), 1) + " m/s · ele "
         + decimal(viewerSpeed(), 1) + " m/s";
@@ -1243,6 +1406,27 @@ void ReinforcementLearningScreen::drawViewport(CanvasTarget& canvas, float botto
 }
 
 void ReinforcementLearningScreen::drawCommands() {
+    if (auto* locomotion = dynamic_cast<LocomotionViewer3D*>(m_locomotion.get())) {
+        ImGui::SetNextItemWidth(ui(220.0f));
+        if (ImGui::SliderFloat("Ajuda auxiliar", &m_locomotionAssist, 0.0f, 100.0f, "%.0f%%")) {
+            locomotion->setAssist(m_locomotionAssist);
+            m_dirty = true;
+        }
+        tooltip("A régua do jogo (0% = o zero antigo). No jogo ela cai com as pancadas e volta.");
+    }
+    if (auto* motor = dynamic_cast<MotorViewer3D*>(m_locomotion.get())) {
+        ImGui::SetNextItemWidth(ui(220.0f));
+        if (ImGui::SliderAngle("Alvo no horizonte", &m_motorLook, -180.0f, 180.0f)) {
+            motor->setLook(m_motorLook);
+            m_dirty = true;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Alvo automático")) {
+            motor->reset(static_cast<std::uint64_t>(std::time(nullptr)));
+            clearReplay();
+            m_dirty = true;
+        }
+    }
     ImGui::Dummy({ 1.0f, ui(2.0f) });
     // A reproducao do visualizador: pausar, a camera lenta, quadro a quadro e voltar na gravacao (o treino segue).
     ImGui::BeginDisabled(!hasViewer());
@@ -1306,27 +1490,11 @@ void ReinforcementLearningScreen::drawCommands() {
             "agora).");
     ImGui::EndDisabled();
     ImGui::SameLine(0.0f, ui(24.0f));
-    if (ImGui::Button(UI::FontAwesome::label(UI::FontAwesome::ChartLine, m_chartsExpanded ? "Recolher" : "Expandir").c_str(),
-            { ui(120.0f), ui(28.0f) })) {
-        m_chartsExpanded = !m_chartsExpanded;
+    if (ImGui::Button(UI::FontAwesome::label(UI::FontAwesome::ChartLine, "Expandir").c_str(), { ui(120.0f), ui(28.0f) })) {
+        m_chartsExpanded = true;
         m_historyWatch = 0.0f;
     }
-    tooltip(m_chartsExpanded ? "Volta o visualizador." : "Os gráficos no lugar do visualizador, maiores e com a janela de tempo.");
-    if (!m_chartsExpanded) return;
-    ImGui::SameLine(0.0f, ui(24.0f));
-    ImGui::PushID("RLChartWindow");
-    for (int i = 0; i < static_cast<int>(ChartWindows.size()); ++i) {
-        if (i > 0) ImGui::SameLine();
-        const bool on = i == m_chartWindow;
-        if (on) ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
-        if (ImGui::Button(ChartWindows[static_cast<std::size_t>(i)].first, { ui(70.0f), ui(28.0f) }) && !on) {
-            m_chartWindow = i;
-            m_historyWatch = 0.0f;
-        }
-        if (on) ImGui::PopStyleColor();
-    }
-    ImGui::PopID();
-    tooltip("O trecho mais recente do treino nos gráficos (sem tanto treino, desde o começo).");
+    tooltip("Os gráficos no lugar do visualizador, maiores e com a janela de tempo.");
 }
 
 void ReinforcementLearningScreen::drawCharts(float height) {
@@ -1338,7 +1506,10 @@ void ReinforcementLearningScreen::drawCharts(float height) {
     std::vector<float> stand, standClassic, seconds, speed;
     for (const TrainingEvaluationPoint3D& point : m_history.evaluations) {
         if (!m_viewerDrill.empty() && point.drill != m_viewerDrill) continue;
-        if (point.solver == "classico") standClassic.push_back(static_cast<float>((1.0 - point.falls) * 100.0));
+        // (No levantar do chao o que conta e o quanto levantou, nao o quanto nao caiu.)
+        if (point.solver == "classico")
+            standClassic.push_back(static_cast<float>((std::isnan(point.stood) || m_viewerDrill != GetUpDrill
+                                                           ? 1.0 - point.falls : point.stood) * 100.0));
     }
     for (const TrainingIterationPoint3D& point : m_history.iterations) {
         seconds.push_back(static_cast<float>(point.episodeSeconds));
@@ -1349,7 +1520,8 @@ void ReinforcementLearningScreen::drawCharts(float height) {
     // queda como perda, entao cair derruba a curva).
     constexpr std::size_t Window = 12;
     std::vector<float> rate;
-    const bool tracking = TrackingViewer3D::isTrackingTask(m_viewerTask);
+    const bool motor = MotorViewer3D::isMotorTask(m_viewerTask);
+    const bool tracking = motor || TrackingViewer3D::isTrackingTask(m_viewerTask);
     // O rastreador: tudo (menos decisoes/s) dos episodios do treino no rumo mostrado, rodada a rodada, com as
     // ultimas 12 rodadas juntas (pesadas pelos episodios); o sem cair conta os que chegaram ao fim sem cair nem
     // ficar para tras. O ultimo portao do rumo vai no canto.
@@ -1393,7 +1565,8 @@ void ReinforcementLearningScreen::drawCharts(float height) {
         std::vector<Entry> recent;
         for (const TrainingDrillPoint3D& point : m_history.drills) {
             if (point.drill != m_viewerDrill) continue;
-            recent.push_back({ point.episodes, point.falls * point.episodes,
+            const double notStood = std::isnan(point.stood) || m_viewerDrill != GetUpDrill ? point.falls : 1.0 - point.stood;
+            recent.push_back({ point.episodes, notStood * point.episodes,
                 std::isnan(point.episodeReturn) ? 0.0 : point.episodeReturn * point.episodes,
                 point.seconds * point.episodes });
             if (recent.size() > Window) recent.erase(recent.begin());
@@ -1416,8 +1589,20 @@ void ReinforcementLearningScreen::drawCharts(float height) {
                 lowest = std::min(lowest, v);
                 highest = std::max(highest, v);
             }
-        const float pad = std::max((highest - lowest) * 0.08f, 1e-3f);
-        return std::pair<float, float> { lowest - (lowest < floorBottom + 1e-6f && floorBottom == 0.0f ? 0.0f : pad), highest + pad };
+        // As bordas arredondadas para fora num numero redondo (1; 1,2; 1,5; 2; 2,5; 3; 4; 5; 6; 8 x 10^k), com
+        // folga acima do maximo historico: a linha nunca encosta no topo e a escala da a ordem de grandeza.
+        const auto nice = [](float v) {
+            if (!(v > 0.0f)) return 0.0f;
+            const float power = std::pow(10.0f, std::floor(std::log10(v)));
+            for (const float step : { 1.0f, 1.2f, 1.5f, 2.0f, 2.5f, 3.0f, 4.0f, 5.0f, 6.0f, 8.0f, 10.0f })
+                if (step * power >= v * 0.9999f) return step * power;
+            return 10.0f * power;
+        };
+        const float pad = std::max((highest - lowest) * 0.10f, 1e-3f);
+        const float top = highest > 0.0f ? nice(highest + pad) : (highest < 0.0f ? 0.0f : nice(pad));
+        const float bottom = lowest >= 0.0f ? (floorBottom == 0.0f && lowest < 1e-6f ? 0.0f : std::max(0.0f, lowest - pad))
+                                            : -nice(-lowest + pad);
+        return std::pair<float, float> { bottom, std::max(top, bottom + 1e-3f) };
     };
     const std::string drillName = [&] {
         const auto it = std::find(m_drillIds.begin(), m_drillIds.end(), m_viewerDrill);
@@ -1479,19 +1664,51 @@ void ReinforcementLearningScreen::drawCharts(float height) {
     std::string standValue = stand.empty() ? "" : text(stand.back(), tracking ? "treino %.0f%%" : "%.0f%%");
     if (!gate.empty()) standValue += standValue.empty() ? gate : " · " + gate;
     // Sem episodios do rumo no treino: o degrau nao treina essa direcao (o G1 so a frente).
-    const char* empty = tracking ? "não treinado neste degrau" : "sem dados";
+    const char* empty = motor ? "aguardando episódios deste exercício" : tracking ? "não treinado neste degrau" : "sem dados";
     std::vector<Chart> charts { {
-        { "Sem cair (%)" + inDrill, { { &standClassic, green, true }, { &stand, green, false } }, 0.0f, 100.0f,
+        { std::string(m_viewerDrill == GetUpDrill ? "Levantou (%)" : "Sem cair (%)") + inDrill, { { &standClassic, green, true }, { &stand, green, false } }, 0.0f, 100.0f,
             standValue, "%", tracking ? &seriesTimes : nullptr },
-        { (tracking ? "Evolução · nota por decisão" : "Evolução · recompensa por segundo") + inDrill,
+        { (tracking && !motor ? "Evolução · nota por decisão" : "Evolução · recompensa por segundo") + inDrill,
             { { &bestLine, amber, true, "melhor" }, { &rate, amber, false } }, rateLow, rateHigh, rateValue,
-            tracking ? "" : "/s", tracking ? &seriesTimes : nullptr },
+            tracking && !motor ? "" : "/s", tracking ? &seriesTimes : nullptr },
         { std::string("Episódio (s)") + (tracking ? inDrill : std::string()), { { &seconds, cyan, false } }, 0.0f,
             range({ &seconds }, 1.0f, 0.0f).second, seconds.empty() ? "" : text(seconds.back(), "%.1f s"), "s",
             &seriesTimes },
         { "Decisões / s", { { &speed, violet, false } }, 0.0f, range({ &speed }, 1000.0f, 0.0f).second,
             speed.empty() ? "" : text(speed.back(), "%.0f"), "", &iterationTimes },
     } };
+    std::vector<float> motorChest, motorDrift, motorImitation, motorPosture;
+    std::vector<double> imitationTimes;
+    std::vector<double> motorTimes;
+    if (motor) {
+        for (const auto& p : m_history.drills) {
+            if (p.drill != m_viewerDrill || !std::isfinite(p.chestErrorDegrees) || !std::isfinite(p.drift)) continue;
+            if (std::isfinite(p.imitation) && std::isfinite(p.posture)) {
+                motorImitation.push_back(static_cast<float>(p.imitation * 100));
+                motorPosture.push_back(static_cast<float>(p.posture * 100));
+                imitationTimes.push_back(p.time);
+            }
+            motorChest.push_back(static_cast<float>(p.chestErrorDegrees));
+            motorDrift.push_back(static_cast<float>(p.drift));
+            motorTimes.push_back(p.time);
+        }
+        charts.insert(charts.end()-1, { "Erro do peito (graus)" + inDrill, { { &motorChest, cyan, false } }, 0.0f,
+            range({ &motorChest }, 10.0f, 0.0f).second, motorChest.empty() ? "" : text(motorChest.back(), "%.1f°"),
+            "°", &motorTimes, true });
+        charts.insert(charts.begin()+3, { "Postura e semelhança com o clipe (%)" + inDrill,
+            { { &motorPosture, green, false, "postura" }, { &motorImitation, violet, false, "clipe" } }, 0.f, 100.f,
+            motorPosture.empty() ? "" : text(motorPosture.back(), "postura %.0f%%") + " · " + text(motorImitation.back(), "clipe %.0f%%"),
+            "%", &imitationTimes });
+        if (m_chartsExpanded) charts.insert(charts.end()-1, { (m_viewerDrill.starts_with("trote_") ? "Desvio lateral (m)" : "Deriva (m)") + inDrill, { { &motorDrift, amber, false } }, 0.0f,
+            range({ &motorDrift }, 0.3f, 0.0f).second, motorDrift.empty() ? "" : text(motorDrift.back(), "%.2f m"),
+            "m", &motorTimes, true });
+    }
+    if (motor && m_viewerDrill.starts_with("trote_") && !m_chartsExpanded) {
+        charts[2] = { "Velocidade (m/s) · real e pedida" + inDrill,
+            { { &requestedSpeed, cyan, true, "pedido" }, { &bodySpeed, cyan, false, "ele" } }, 0.0f,
+            range({ &bodySpeed, &requestedSpeed }, 4.5f, 0.0f).second,
+            bodySpeed.empty() ? "" : text(bodySpeed.back(), "%.2f m/s"), "m/s", &seriesTimes };
+    }
     if (m_chartsExpanded) {
         // Expandido: tambem as quedas do treino (no rastreador o sem cair ja e o avesso delas) e, no rastreador, a
         // velocidade e o erro dela.
@@ -1511,8 +1728,10 @@ void ReinforcementLearningScreen::drawCharts(float height) {
     }
     const float spacing = ImGui::GetStyle().ItemSpacing.x;
     if (m_chartsExpanded) {
-        // Um embaixo do outro, na largura toda, dividindo a altura.
-        const float each = std::max(ui(80.0f), height / static_cast<float>(charts.size()) - ImGui::GetStyle().ItemSpacing.y);
+        // Um embaixo do outro, na largura toda: compactado, todos dividindo a altura; senao ~4 por tela, o resto rolando.
+        const float each = m_chartsCompact
+            ? std::max(ui(60.0f), (ImGui::GetContentRegionAvail().y + ImGui::GetStyle().ItemSpacing.y) / static_cast<float>(charts.size()) - ImGui::GetStyle().ItemSpacing.y)
+            : std::max(ui(170.0f), height / 4.0f - ImGui::GetStyle().ItemSpacing.y);
         for (std::size_t i = 0; i < charts.size(); ++i) {
             const Chart& chart = charts[i];
             ImGui::BeginGroup();
@@ -1555,7 +1774,9 @@ void ReinforcementLearningScreen::drawCharts(float height) {
         }
         return;
     }
-    const float width = (ImGui::GetContentRegionAvail().x - 3.0f * spacing) / 4.0f;
+    // Recolhido: so "Sem cair" e "Evolucao", lado a lado, sem nada cortado.
+    if (charts.size() > 2) charts.resize(2);
+    const float width = (ImGui::GetContentRegionAvail().x - spacing) / static_cast<float>(charts.size());
     const float rowTop = ImGui::GetCursorPosY();
     for (std::size_t i = 0; i < charts.size(); ++i) {
         if (i > 0) ImGui::SameLine();

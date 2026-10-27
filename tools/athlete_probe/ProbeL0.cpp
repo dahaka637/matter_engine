@@ -508,6 +508,107 @@ int runParity(const ProbeContext& context, int limit, int restores) {
     return failures == 0 ? 0 : 1;
 }
 
+int runZeroProof(const ProbeContext& context, int threads) {
+    std::vector<Scenario> list;
+    for (const Scenario& scenario : scenarios()) {
+        if (scenario.ball) continue;
+        Scenario capped = scenario;
+        capped.seconds = std::min(capped.seconds, 6.0f);
+        list.push_back(capped);
+    }
+    // (XROTEIROS=N: so os N primeiros.)
+    if (const char* limit = std::getenv("XROTEIROS"); limit != nullptr && std::atoi(limit) > 0)
+        list.resize(std::min(list.size(), static_cast<std::size_t>(std::atoi(limit))));
+    const float levels[5] = { 100.0f, 75.0f, 50.0f, 25.0f, 0.0f };
+    const LocomotionContract3D contract(*context.profile);
+    LocomotionAuthority3D authority = LocomotionAuthority3D::uniform(1.0f, LocomotionCaps3D::full());
+    // (XCABECAS=pebg: so as cabecas pedidas - p pes, e equilibrio, b pose, g ganho.)
+    if (const char* heads = std::getenv("XCABECAS")) {
+        const std::string h = heads;
+        authority.footwork = h.find('p') != std::string::npos ? 1.0f : 0.0f;
+        authority.balance = h.find('e') != std::string::npos ? 1.0f : 0.0f;
+        authority.pose = h.find('b') != std::string::npos ? 1.0f : 0.0f;
+        authority.gain = h.find('g') != std::string::npos ? 1.0f : 0.0f;
+    }
+    const std::vector<float> zero(contract.actionSize(), 0.0f);
+    AthleteRuntimeSettings3D base;
+    base.defaultLocomotion = false;
+    base.physicalReference = true;
+    // Um lote por bloco de roteiros (a memoria): pares classico / contrato zero.
+    const std::size_t block = 40;
+    int failures = 0, runs = 0;
+    for (std::size_t first = 0; first < list.size(); first += block) {
+        const std::size_t scenarioCount = std::min(block, list.size() - first);
+        const std::size_t pairs = scenarioCount * 5;
+        LocomotionBatchSettings3D batchSettings;
+        batchSettings.worlds = static_cast<std::uint32_t>(pairs * 2);
+        batchSettings.threads = static_cast<std::uint32_t>(std::max(0, threads));
+        batchSettings.world.runtime = base;
+        LocomotionBatch3D batch(context.runtimeAssets, batchSettings);
+        for (std::size_t w = 0; w < pairs * 2; ++w) {
+            const std::size_t pair = w / 2;
+            const Scenario& scenario = list[first + pair / 5];
+            LocomotionWorld3D& world = batch.world(w);
+            const float level = levels[pair % 5];
+            world.runtimeSettings().e5StandingAssistPercent = level;
+            world.runtimeSettings().e5WalkingAssistPercent = level;
+            world.runtimeSettings().physicalFeetAssistPercent = level;
+            world.runtimeSettings().getUpAssistPercent = level;
+            world.setStatics(scenarioStatics(scenario));
+            world.reset(AthleteStartMode3D::Physical);
+            LocomotionContract3D::clear(world.athlete());
+        }
+        std::vector<int> split(pairs, -1);
+        std::vector<const char*> part(pairs, "");
+        float longest = 0.0f;
+        for (std::size_t s = 0; s < scenarioCount; ++s) longest = std::max(longest, list[first + s].seconds);
+        const int ticks = static_cast<int>(longest / Dt);
+        for (int step = 0; step < ticks; ++step) {
+            const float t = static_cast<float>(step) * Dt;
+            for (std::size_t w = 0; w < pairs * 2; ++w) {
+                const Scenario& scenario = list[first + (w / 2) / 5];
+                LocomotionWorld3D& world = batch.world(w);
+                batch.commands()[w] = scenarioCommand(context, world.runtimeSettings(),
+                    t < scenario.seconds ? scenario.keys(t) : Keys {}, world.telemetry().terrainSpeedLimit);
+                if (w % 2 == 1) {
+                    if (step % LocomotionContract3D::TicksPerDecision == 0) contract.decide(world.athlete(), zero);
+                    contract.follow(world.athlete(), authority, Dt);
+                }
+                if (t >= scenario.seconds) continue;
+                for (const Throw& item : scenario.throws)
+                    if (t >= item.at && t < item.at + Dt) world.throwBox({ item.start, item.velocity, item.massKg, item.halfExtents });
+                for (const Push& push : scenario.pushes)
+                    if (t >= push.at && t < push.at + push.seconds) {
+                        world.push(0, push.force * 0.20f);
+                        world.push(2, push.force * 0.32f);
+                        world.push(3, push.force * 0.48f);
+                    }
+            }
+            batch.step(1);
+            for (std::size_t pair = 0; pair < pairs; ++pair) {
+                if (split[pair] >= 0) continue;
+                const AthleteTickDigest3D a = athleteTickDigest3D(batch.world(2 * pair).athlete(), batch.world(2 * pair).body());
+                const AthleteTickDigest3D b = athleteTickDigest3D(batch.world(2 * pair + 1).athlete(), batch.world(2 * pair + 1).body());
+                if (a == b) continue;
+                split[pair] = step;
+                part[pair] = a.decisions != b.decisions ? "decisoes" : a.navigation != b.navigation ? "navegacao"
+                    : a.targets != b.targets ? "alvos" : a.assist != b.assist ? "ajuda" : "corpo";
+            }
+        }
+        for (std::size_t pair = 0; pair < pairs; ++pair) {
+            ++runs;
+            if (split[pair] < 0) continue;
+            ++failures;
+            std::printf("  FALHOU %-22s ajuda %3.0f%%: a acao zero separa no tick %d (%s)\n",
+                list[first + pair / 5].name.c_str(), static_cast<double>(levels[pair % 5]), split[pair], part[pair]);
+        }
+    }
+    std::printf("prova da acao zero (contrato v%u, autoridade plena, regua %s): %d de %d roteiros x ajuda %s\n",
+        static_cast<unsigned>(LocomotionContract3D::Version), base.historicalAssistRuler ? "historica" : "linear",
+        runs - failures, runs, failures == 0 ? "iguais ao classico bit a bit" : "DIFEREM");
+    return failures == 0 ? 0 : 1;
+}
+
 // A linha de base do classico por nivel de ajuda (a L0 do plano do RL: o que
 // o RL tem de bater) e a vazao do lote: a bateria sem bola - retas em 8 rumos
 // e 4 marchas, as manobras, as pancadas e o terreno - num lote de mundos de
@@ -567,6 +668,8 @@ int runBaseline(const ProbeContext& context, int threads) {
     const std::size_t count = drills.size() * 5;
     AthleteRuntimeSettings3D base;
     base.defaultLocomotion = false;
+    // (XREGUA=linear: a regua linear de 17/10; o padrao e a historica.)
+    if (const char* ruler = std::getenv("XREGUA")) base.historicalAssistRuler = std::string(ruler) != "linear";
     LocomotionBatchSettings3D batchSettings;
     batchSettings.worlds = static_cast<std::uint32_t>(count);
     batchSettings.threads = static_cast<std::uint32_t>(std::max(0, threads));

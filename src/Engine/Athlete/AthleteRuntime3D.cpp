@@ -137,7 +137,7 @@ void AthleteRuntime3D::update(PhysicsScene3D& scene, const AthleteRuntimeAssets3
             } else {
                 command = *slot.command;
             }
-            m_locomotionPolicy->before(athlete, *slot.state, command, deltaTime);
+            m_locomotionPolicy->before(athlete, *slot.state, command, deltaTime, assets);
             athlete.policyFromRuntime = true;
         } else if (athlete.policyFromRuntime) {
             LocomotionContract3D::clear(athlete);
@@ -179,6 +179,7 @@ void athleteConfigureDefaultLocomotion3D(DefaultLocomotionSettings3D& defaults, 
         defaults.trotSpeeds = { t, t, t, t, t };
         defaults.sprintSpeeds = { settings.defaultSprintForwardSpeed, settings.defaultSprintForwardSpeed,
             settings.defaultSprintSideSpeed, settings.defaultSprintBackwardSpeed, settings.defaultSprintBackwardSpeed };
+        defaults.maxSprintSpeed = settings.defaultMaxSprintSpeed;
     }
     defaults.trunkMotionAmount = settings.defaultTrunkMotionPercent * 0.01f;
     // A arrancada (0 desliga): o gesto do idle_to_sprint e a inclinacao do corpo

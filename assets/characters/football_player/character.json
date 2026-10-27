@@ -11,9 +11,10 @@
   },
   "defaultLocomotion": {
    "license": "autoral (MatterEngine)",
-   "note": "Modo padrao (05/10): o sprint de costas longo e ereto (desenho medido no Sprint Backward.fbx fornecido pelo usuario, sem copiar a pose).",
+   "note": "Modo padrao (05/10): o sprint de costas longo e ereto (desenho medido no Sprint Backward.fbx fornecido pelo usuario, sem copiar a pose). 24/10: o sprint maximo (Shift duplo), a corrida com o tronco mais inclinado e a passada mais longa.",
    "sources": [
     "tools/animation/clips/sprint_backward_long.py",
+    "tools/animation/clips/sprint_maximo.py",
     "tools/animation/gait.py"
    ]
   },
@@ -124,6 +125,7 @@
  },
  "creaseDegrees": 45.000003814697266,
  "defaultLocomotion": {
+  "maxSprint": "sprint_maximo",
   "sprintBackward": "sprint_backward_long"
  },
  "displayName": "Jogador",
@@ -165,5 +167,6 @@
   "note": "O rig e o do perfil calibrado (as juntas, os eixos, os limites, os motores e as massas); as ancoras, os links e os colisores foram medidos no corpo novo na pose T dele, com a pelve na origem. As animacoes mantem os mesmos tracks (o movimento da raiz como esta: a pelve do repouso fica 1,5% mais baixa que a do corpo anterior)."
  },
  "schema": "matter-ragdoll-character-1",
- "skin": "jogador.skin.json"
+ "skin": "jogador.skin.json",
+ "surface": "jogador.superficie.json"
 }

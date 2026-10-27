@@ -19,14 +19,21 @@ enum class TrackingScenario3D : std::uint8_t { Forward = 0, Full = 1 };
 // A avaliacao (os portoes): de frente; os 8 rumos em relacao ao olhar (o mundo i
 // no rumo i mod 8, de 45 em 45 graus); ou o protocolo de impacto do DReCon (7.1:
 // a velocidade dada, trocando de rumo a cada switchSeconds).
-enum class TrackingEvaluation3D : std::uint8_t { Forward = 0, Headings = 1, Switches = 2, Idle = 3, Turn = 4, FastTurn = 5 };
+enum class TrackingEvaluation3D : std::uint8_t {
+    Forward = 0, Headings = 1, Switches = 2, Idle = 3, Turn = 4, FastTurn = 5, Star = 6, StarFixed = 7, StarTurning = 8
+};
 
 // Os exercicios parados (da escada antiga, locomocao_f3f, com as voltas
 // completas que o usuario exige): ficar parado no idle com o olhar fixo;
 // parado com giro suave (30 a 450 graus a 0,4 a 0,8 rad/s, pausas de 1,5 a
 // 4 s); giro rapido parado (90 a 720 graus a 1 a 3,14 rad/s, pausas de 1 a
-// 2 s). Move e o jogador virtual do DReCon.
-enum class TrackingDrill3D : std::uint8_t { Move = 0, Idle = 1, Turn = 2, FastTurn = 3 };
+// 2 s). Move e o jogador virtual do DReCon. As estrelas (o usuario, 19/10): o
+// piloto leva o corpo do centro a uma das 8 pontas (de 45 em 45 graus) e de
+// volta, as vezes de ponta a ponta, as vezes esperando 1 a 2 s no ponto, em
+// trote normal (starSpeed). Star: o peito livre (o olhar vai para onde ele
+// anda); StarFixed: o peito fixo no mundo (anda de lado, de costas e nas
+// diagonais); StarTurning: o peito girando como a camera do jogo.
+enum class TrackingDrill3D : std::uint8_t { Move = 0, Idle = 1, Turn = 2, FastTurn = 3, Star = 4, StarFixed = 5, StarTurning = 6 };
 
 struct TrackingTrainingSettings3D {
     std::string assetsDirectory;
@@ -85,6 +92,15 @@ struct TrackingTrainingSettings3D {
     float idleShare = 0.0f;
     float turnShare = 0.0f;
     float fastTurnShare = 0.0f;
+    // As partes das estrelas (peito livre, fixo e girando), o trote da estrela
+    // (m/s; hoje 3, a meta do jogo e 4,5) e o raio dela (m).
+    float starShare = 0.0f;
+    float starFixedShare = 0.0f;
+    float starTurningShare = 0.0f;
+    float starSpeed = 3.0f;
+    float starRadius = 10.0f;
+    // Falhar so na queda de verdade (a cabeca abaixo de 1,1 m), sem acabar pela distancia ao lider.
+    bool realFallOnly = false;
 };
 
 // Um episodio que acabou.
@@ -158,6 +174,9 @@ public:
     void setDrill(std::size_t world, TrackingDrill3D drill);
     // O olhar pedido de um mundo (rad, sem dar a volta: acumula os giros).
     [[nodiscard]] float lookYaw(std::size_t world) const;
+    // A estrela de um mundo (o visualizador): o centro e as 8 pontas no chao, o
+    // ponto de agora e se ele espera la. Falso fora dos exercicios da estrela.
+    [[nodiscard]] bool starView(std::size_t world, std::vector<Vec3>& points, Vec3& target, bool& waiting) const;
     // Um empurrao (N, no mundo) num link de um mundo durante `seconds`.
     void push(std::size_t world, std::uint32_t link, Vec3 force, float seconds);
 

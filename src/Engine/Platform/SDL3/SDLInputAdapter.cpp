@@ -40,6 +40,7 @@ MouseButton toMouseButton(Uint8 button) {
     case SDL_BUTTON_LEFT: return MouseButton::Left;
     case SDL_BUTTON_RIGHT: return MouseButton::Right;
     case SDL_BUTTON_MIDDLE: return MouseButton::Middle;
+    case SDL_BUTTON_X1: return MouseButton::Back;
     default: return MouseButton::Unknown;
     }
 }

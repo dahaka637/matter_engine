@@ -59,10 +59,22 @@ $checks = @(
             "-g", "!src/Engine/Athlete/AthleteSettings3D.hpp", "-g", "!src/Engine/Athlete/AthleteAssets3D.*")
     }
     @{
-        Name = "Atletas: planejamento, sintese, acoes, pedidos e bola trabalham com dados (sem a cena fisica nem o Jolt; so os sentidos leem a fisica)"
+        Name = "Atletas: planejamento, sintese e bola trabalham com dados (sem a cena fisica nem o Jolt; so os sentidos leem a fisica)"
         Arguments = @("-n", '#include "Engine/Physics/(PhysicsScene3D|PhysicsEngine3D)|Jolt', "src/Engine/Athlete/Planning",
-            "src/Engine/Athlete/Synthesis", "src/Engine/Athlete/Actions", "src/Engine/Athlete/Intent",
-            "src/Engine/Athlete/Ball", "src/Engine/Athlete/Core")
+            "src/Engine/Athlete/Synthesis", "src/Engine/Athlete/Ball", "src/Engine/Athlete/Core")
+    }
+    @{
+        Name = "Os gestos de bola (Engine/Gesture) sao so matematica: nada de fisica, atleta, personagem, animacao, RL nem interface"
+        Arguments = @("-n", '#include "Engine/(Physics|Athlete|Character|Control|Locomotion|Animation|Render|RHI|UI|Audio|Platform|Input|RL|Tracking|Modeling)/|Jolt|#include .imgui|#include <SDL', "src/Engine/Gesture")
+    }
+    @{
+        Name = "O sistema de aparencia (Engine/Appearance) e so dados e o compositor: nada de fisica, atleta, personagem, animacao, modelagem, render, RHI, RL nem interface"
+        Arguments = @("-n", '#include "Engine/(Physics|Athlete|Character|Control|Locomotion|Animation|Modeling|Gesture|Render|RHI|UI|Audio|Platform|Input|RL|Tracking|Workbench)/|Jolt|#include .imgui|#include <SDL|#include .vulkan', "src/Engine/Appearance")
+    }
+    @{
+        Name = "O sistema de gestos antigo (o pe indo ate a bola) foi removido em 24/10 e nao volta"
+        Arguments = @("-n", '\b(QuickTouch3D|LateralTouch3D|TouchPlanner3D|SwingTouch3D|TouchBody3D|ContactPose3D|DribbleBall3D|Dribble3D|BallPlay3D|BallMove3D|BallHandling3D|BallActionPlanner3D|BallControl3D|BallGesturePose3D|BallGestureLegs3D|LegacyBallBridge3D|BallTouchPreview3D|BallPredictor3D)\b',
+            "src", "tests", "tools", "bindings", "-g", "!tools/check-architecture.*")
     }
     @{
         Name = "Nucleo de RL nao depende de render, interface, audio, plataforma nem entrada"

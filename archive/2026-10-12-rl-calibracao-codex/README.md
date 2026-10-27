@@ -6,7 +6,7 @@ pendentes), os landmarks anatômicos (candidatos na malha, resolver e o comando
 `MatterModelInspector landmarks`) e os testes deles.
 
 Saiu do build em 12/10/2026, no plano de Aprendizado por Reforço do Claude
-(vault: `30_Projects/matter_engine/Aprendizado_por_Reforco/Plano_Claude.md`,
+(vault: `IA_Brain/Aprendizado_por_Reforco/Plano_Claude.md`,
 seção 3). Ela bloqueava o treino até uma "versão aprovada" da calibração, e as
 pendências dela não mudam se o personagem aprende a ficar em pé.
 

@@ -1,6 +1,7 @@
 #include "Engine/Modeling/Rig/GameCharacterExport.hpp"
 
 #include "Engine/Animation/AnimationClip3D.hpp"
+#include "Engine/Appearance/Surface/SurfaceTemplate.hpp"
 #include "Engine/Geometry/ConvexHull3D.hpp"
 #include "Engine/Modeling/Mesh/ShadingNormals.hpp"
 #include "Engine/Modeling/Raster/ImageIO.hpp"
@@ -377,7 +378,10 @@ bool exportGameCharacter(const LoadedPlayerModel& loaded, const std::filesystem:
         char line[256];
 
         // ---- O repouso: a pose T do esqueleto medido e a malha nela ----
-        const SkeletonPose rest = sampleGameRigPose(character, rig, nullptr, 0.0f, RigHandPose::Bind, true);
+        // (Sem a clavicula: o corpo fisico nao tem cintura escapular e o jogo
+        // poe a clavicula por cima, no skin, pela subida do braco. Com ela no
+        // repouso, os bracos do perfil subiam 17 graus e ela contava duas vezes.)
+        const SkeletonPose rest = sampleGameRigPose(character, rig, nullptr, 0.0f, RigHandPose::Bind, true, false);
         const std::vector<Vec3> restMesh = mesh.posedPositions(skinningTransforms(skeleton, rest));
         const auto restOf = [&](const std::string& name) -> std::optional<Vec3> {
             const int joint = skeleton.find(name);
@@ -476,7 +480,8 @@ bool exportGameCharacter(const LoadedPlayerModel& loaded, const std::filesystem:
 
         // ---- Os colisores medidos na malha em repouso ----
         // A parte de cada link em cada vertice (os dedos contam para a mao e
-        // para o pe; os auxiliares, metade para cada lado).
+        // para o pe; os auxiliares pela physicalShare: metade para cada lado
+        // na meia-junta).
         std::vector<int> jointLink(skeleton.joints.size(), -1);
         for (std::size_t j = 0; j < skeleton.joints.size(); ++j) {
             int at = static_cast<int>(j);
@@ -493,8 +498,8 @@ bool exportGameCharacter(const LoadedPlayerModel& loaded, const std::filesystem:
                 if (joint.kind == JointKind::Helper && joint.derivedFrom >= 0 && joint.derivedTo >= 0) {
                     const int upper = jointLink[static_cast<std::size_t>(joint.derivedFrom)];
                     const int lower = jointLink[static_cast<std::size_t>(joint.derivedTo)];
-                    if (upper >= 0) share[upper] += 0.5f * weights.weights[k];
-                    if (lower >= 0) share[lower] += 0.5f * weights.weights[k];
+                    if (upper >= 0) share[upper] += (1.0f - joint.physicalShare) * weights.weights[k];
+                    if (lower >= 0) share[lower] += joint.physicalShare * weights.weights[k];
                 } else if (const int link = jointLink[weights.joints[k]]; link >= 0) {
                     share[link] += weights.weights[k];
                 }
@@ -900,27 +905,70 @@ bool exportGameCharacter(const LoadedPlayerModel& loaded, const std::filesystem:
             };
             Json entry { { "name", helper.name }, { "upper", name(helper.derivedFrom) }, { "lower", name(helper.derivedTo) },
                 { "fraction", helper.derivedFraction },
-                { "pivot", vector3(skeleton.joints[static_cast<std::size_t>(helper.derivedTo)].bind.position + lift) } };
+                { "pivot", vector3((helper.derivedCarry ? helper.derivedPivot
+                                                        : skeleton.joints[static_cast<std::size_t>(helper.derivedTo)].bind.position) + lift) } };
             // So a parte do giro em volta do eixo (o espaco da malha e o do
             // modelo girado nada: so a origem muda).
             if (helper.derivedAxis.lengthSquared() > 0.0f) entry["axis"] = vector3(helper.derivedAxis);
+            if (helper.derivedSign != 0.0f) entry["sign"] = helper.derivedSign;
+            if (helper.derivedCap > 0.0f) entry["capDegrees"] = helper.derivedCap / DegreesToRadians;
+            // (A clavicula leva o ombro: a junta dele na ligacao, o ponto que anda.)
+            if (helper.derivedCarry) entry["root"] = vector3(skeleton.joints[static_cast<std::size_t>(helper.derivedTo)].bind.position + lift);
+            if (helper.derivedRampEnd > helper.derivedRampStart) {
+                entry["ramp"] = Json { { "fraction", helper.derivedRampFraction }, { "startDegrees", helper.derivedRampStart / DegreesToRadians },
+                    { "endDegrees", helper.derivedRampEnd / DegreesToRadians }, { "along", vector3(helper.derivedRampAlong) } };
+                if (helper.derivedRampOffset.lengthSquared() > 0.0f) entry["ramp"]["offset"] = vector3(helper.derivedRampOffset);
+            }
+            // A clavicula: os ossos da paleta que ela leva (o braco, os filhos e
+            // os auxiliares que acabam neles).
+            if (helper.derivedCarry) {
+                Json carried = Json::array();
+                for (std::size_t j = 0; j < skeleton.joints.size(); ++j) {
+                    const Joint& joint = skeleton.joints[j];
+                    if (static_cast<int>(j) == h || palette[j] < 0) continue;
+                    if (joint.kind == JointKind::Helper && joint.derivedFraction <= 0.0f && joint.derivedRampFraction <= 0.0f) continue;
+                    int up = joint.kind == JointKind::Helper ? joint.derivedTo : static_cast<int>(j);
+                    while (up >= 0 && up != helper.derivedTo) up = skeleton.joints[static_cast<std::size_t>(up)].parent;
+                    if (up != helper.derivedTo) continue;
+                    const auto at = static_cast<std::size_t>(palette[j]);
+                    const std::string bone = at < links ? profile.links[at].id
+                        : at < links + visuals ? character.visualBones[at - links].name
+                                               : skeleton.joints[static_cast<std::size_t>(helpers[at - links - visuals])].name;
+                    if (std::find(carried.begin(), carried.end(), bone) == carried.end()) carried.push_back(bone);
+                }
+                entry["carry"] = carried;
+            }
             helperJson.push_back(std::move(entry));
         }
         skin["helperBones"] = helperJson;
 
         // Os vertices: um por (vertice, grupo do sombreamento, coordenada do
-        // atlas) - a quina e a costura do atlas separam, o resto e liso.
+        // atlas e, com o template de superficie, UV0, UV1, regiao e zona) - a quina,
+        // as costuras dos mapas e as bordas de regiao separam, o resto e liso.
         const ShadingNormals shading(mesh, settings.creaseDegrees);
         std::vector<Vec3> corners;
         shading.compute(mesh.positions, mesh.triangles, 0.0f, corners);
-        std::map<std::tuple<std::uint32_t, std::uint32_t, std::int32_t, std::int32_t>, std::uint32_t> unique;
+        const Appearance::SurfaceTemplate* surface = loaded.model->surface.get();
+        if (surface != nullptr && surface->trianglePanel.size() != mesh.triangles.size())
+            throw std::runtime_error("o template de superficie nao e desta malha");
+        const auto fixed = [](float value) { return static_cast<std::int32_t>(std::lround(value * 1048576.0f)); };
+        using VertexKey = std::tuple<std::uint32_t, std::uint32_t, std::int32_t, std::int32_t, std::int32_t, std::int32_t, std::int32_t, std::int32_t, int, int>;
+        std::map<VertexKey, std::uint32_t> unique;
         Json vertices = Json::array(), indices = Json::array();
         for (std::size_t t = 0; t < mesh.triangles.size(); ++t)
             for (int k = 0; k < 3; ++k) {
                 const std::uint32_t source = mesh.triangles[t][static_cast<std::size_t>(k)];
                 const Uv uv = mesh.triangleUv[t][static_cast<std::size_t>(k)];
-                const auto key = std::make_tuple(source, shading.group(t, k), static_cast<std::int32_t>(std::lround(uv.u * 1048576.0f)),
-                    static_cast<std::int32_t>(std::lround(uv.v * 1048576.0f)));
+                Vec2 kitUv { -1.0f, -1.0f }, identityUv { -1.0f, -1.0f };
+                int region = -1, zone = -1;
+                if (surface != nullptr) {
+                    region = surface->triangleRegion[t];
+                    zone = surface->triangleIdentity[t];
+                    if (surface->trianglePanel[t] >= 0) kitUv = surface->triangleKitUv[t][static_cast<std::size_t>(k)];
+                    if (zone >= 0) identityUv = surface->triangleIdentityUv[t][static_cast<std::size_t>(k)];
+                }
+                const VertexKey key { source, shading.group(t, k), fixed(uv.u), fixed(uv.v), fixed(kitUv.x), fixed(kitUv.y), fixed(identityUv.x),
+                    fixed(identityUv.y), region, zone };
                 auto found = unique.find(key);
                 if (found == unique.end()) {
                     // Os pesos na paleta (somados quando duas juntas caem no
@@ -949,9 +997,19 @@ bool exportGameCharacter(const LoadedPlayerModel& loaded, const std::filesystem:
                     share[0] = rounded(share[0] + (1.0f - written));
                     Vec3 normal = corners[t * 3 + static_cast<std::size_t>(k)];
                     if (normal.length() < 0.5f) normal = { 0.0f, 0.0f, 1.0f };
-                    vertices.push_back({ { "position", vector3(mesh.positions[source] + lift) }, { "normal", vector3(normal) },
+                    Json vertex { { "position", vector3(mesh.positions[source] + lift) }, { "normal", vector3(normal) },
                         { "color", Json::array({ 1.0, 1.0, 1.0 }) }, { "uv", Json::array({ rounded(uv.u, 1e-7f), rounded(uv.v, 1e-7f) }) },
-                        { "joints", joints }, { "weights", Json::array({ share[0], share[1], share[2], share[3] }) } });
+                        { "joints", joints }, { "weights", Json::array({ share[0], share[1], share[2], share[3] }) } };
+                    if (surface != nullptr) {
+                        vertex["source"] = source;
+                        vertex["region"] = region;
+                        if (kitUv.x >= 0.0f) vertex["kitUv"] = Json::array({ rounded(kitUv.x, 1e-7f), rounded(kitUv.y, 1e-7f) });
+                        if (zone >= 0) {
+                            vertex["identity"] = zone;
+                            vertex["identityUv"] = Json::array({ rounded(identityUv.x, 1e-7f), rounded(identityUv.y, 1e-7f) });
+                        }
+                    }
+                    vertices.push_back(std::move(vertex));
                     found = unique.emplace(key, static_cast<std::uint32_t>(vertices.size() - 1)).first;
                 }
                 indices.push_back(found->second);
@@ -972,6 +1030,10 @@ bool exportGameCharacter(const LoadedPlayerModel& loaded, const std::filesystem:
         manifest["displayName"] = settings.displayName;
         manifest["skin"] = settings.skinFile;
         manifest["albedo"] = settings.albedoFile;
+        if (surface != nullptr) {
+            manifest["surface"] = settings.surfaceFile;
+            writeJson(outputDirectory / settings.surfaceFile, Appearance::surfaceTemplateDocument(*surface));
+        }
         manifest["flatShaded"] = false;
         manifest["facet"] = rounded(settings.facet, 1e-3f);
         manifest["creaseDegrees"] = rounded(settings.creaseDegrees, 1e-3f);

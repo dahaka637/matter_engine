@@ -1,5 +1,7 @@
 #include "Engine/Modeling/Inspection/InspectionRenderer.hpp"
 
+#include "Engine/Appearance/Compose/KitMaterial.hpp"
+
 #include "Engine/Modeling/Geometry/Parallel.hpp"
 #include "Engine/Modeling/Mesh/MeshSkinning.hpp"
 #include "Engine/Modeling/Raster/Rasterizer.hpp"
@@ -9,6 +11,7 @@
 #include <array>
 #include <cmath>
 #include <functional>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace MatterEngine::Modeling {
@@ -286,6 +289,40 @@ void drawSurfaces(const InspectionScene& scene, const InspectionStyle& style, co
         std::array<Vec3, 3> normals {};
         if (smooth)
             for (std::size_t k = 0; k < 3; ++k) normals[k] = front ? (*corners)[t * 3 + k] : -(*corners)[t * 3 + k];
+        // O uniforme novo (a roupa): o material do sistema de aparencia.
+        if (scene.kit != nullptr && scene.surface != nullptr && (mode == SurfaceMode::Solid || mode == SurfaceMode::SolidWire)
+            && (!style.backfaces || front) && t < scene.surface->trianglePanel.size() && scene.surface->trianglePanel[t] >= 0) {
+            const Appearance::SurfaceTemplate& surface = *scene.surface;
+            const Appearance::ComposedKit& kit = *scene.kit;
+            // Os niveis pelas derivadas do UV por pixel (um pixel da imagem
+            // final sao "pixel" pixels do render).
+            const std::array<Vec3, 3> corners { a, b, c };
+            const auto levelOf = [&](const std::array<Vec2, 3>& uv, const Appearance::KitTexture& base, float x, float y) {
+                return kitPixelLevel(projector, corners, uv, base.width, base.height, x, y, pixel);
+            };
+            const int zone = surface.triangleIdentity[t];
+            // (Por baixo do uniforme, o corpo: a textura antiga, onde o desenho nao pinta.)
+            const Color materialColor = base;
+            const Image* bodyTexture = material != nullptr && material->texture >= 0
+                    && static_cast<std::size_t>(material->texture) < mesh.textures.size() && mesh.hasUv()
+                ? &mesh.textures[static_cast<std::size_t>(material->texture)].image : nullptr;
+            const Rasterizer::PixelShader shader = [&](float b0, float b1, float b2, int x, int y) {
+                const float kitLod = levelOf(surface.triangleKitUv[t], kit.kit.front(), static_cast<float>(x), static_cast<float>(y));
+                const float identityLod = zone >= 0 && !kit.identity.empty()
+                    ? levelOf(surface.triangleIdentityUv[t], kit.identity.front(), static_cast<float>(x), static_cast<float>(y)) : 0.0f;
+                const Appearance::Rgba cloth = Appearance::kitMaterialColor(kit, surface, t, { b0, b1, b2 }, kitLod, identityLod);
+                // (Pre-multiplicado: o uniforme por cima do corpo.)
+                Color body = materialColor;
+                if (cloth[3] < 0.999f && bodyTexture != nullptr) {
+                    const std::array<Uv, 3>& old = mesh.triangleUv[t];
+                    body = bodyTexture->sample({ b0 * old[0].u + b1 * old[1].u + b2 * old[2].u, b0 * old[0].v + b1 * old[1].v + b2 * old[2].v });
+                }
+                return Color { cloth[0] + body.r * (1.0f - cloth[3]), cloth[1] + body.g * (1.0f - cloth[3]), cloth[2] + body.b * (1.0f - cloth[3]), 1.0f };
+            };
+            const std::array<Vec3, 3> flat { litNormal, litNormal, litNormal };
+            raster.triangleShadedLit(a, b, c, smooth ? normals : flat, shader, lights.at(view));
+            continue;
+        }
         // A textura do material (solido): a pintura do atlas sob a mesma luz.
         if ((mode == SurfaceMode::Solid || mode == SurfaceMode::SolidWire) && (!style.backfaces || front) && material != nullptr
             && material->texture >= 0 && static_cast<std::size_t>(material->texture) < mesh.textures.size() && mesh.hasUv()) {
@@ -303,12 +340,27 @@ void drawSurfaces(const InspectionScene& scene, const InspectionStyle& style, co
         std::unordered_set<std::uint64_t> drawn;
         const Color color = mode == SurfaceMode::Wire ? rgb(150, 205, 255, 0.95f) : Palette::Wire;
         const float thickness = (mode == SurfaceMode::Wire ? 1.25f : 1.0f) * pixel;
+        const auto edgeKey = [](std::uint32_t va, std::uint32_t vb) {
+            return (static_cast<std::uint64_t>(std::min(va, vb)) << 32) | std::max(va, vb);
+        };
+        // (Com o poligono de origem, a aresta entre dois triangulos do mesmo
+        // poligono - a diagonal de dentro do quad - fica de fora.)
+        if (mesh.trianglePolygon.size() == mesh.triangles.size()) {
+            std::unordered_map<std::uint64_t, std::uint32_t> polygonOf;
+            for (std::size_t t = 0; t < mesh.triangles.size(); ++t)
+                for (int i = 0; i < 3; ++i) {
+                    const Triangle& tri = mesh.triangles[t];
+                    const std::uint64_t key = edgeKey(tri[static_cast<std::size_t>(i)], tri[static_cast<std::size_t>((i + 1) % 3)]);
+                    const auto [found, fresh] = polygonOf.emplace(key, mesh.trianglePolygon[t]);
+                    if (!fresh && found->second == mesh.trianglePolygon[t]) drawn.insert(key);
+                }
+        }
         for (std::size_t t = 0; t < mesh.triangles.size(); ++t) {
             if (!shown(t)) continue;
             const Triangle& tri = mesh.triangles[t];
             for (int i = 0; i < 3; ++i) {
                 const std::uint32_t va = tri[static_cast<std::size_t>(i)], vb = tri[static_cast<std::size_t>((i + 1) % 3)];
-                const std::uint64_t key = (static_cast<std::uint64_t>(std::min(va, vb)) << 32) | std::max(va, vb);
+                const std::uint64_t key = edgeKey(va, vb);
                 if (!drawn.insert(key).second) continue;
                 raster.line(positions[va], positions[vb], thickness, color, DepthMode::Test, 0.0f, 0.0015f);
             }
@@ -574,6 +626,21 @@ void drawHud(Image& image, const InspectionStyle& style, float titleSize, float 
 
 } // namespace
 
+float kitPixelLevel(const Projector& projector, const std::array<Vec3, 3>& corners, const std::array<Vec2, 3>& uv, int width, int height,
+    float x, float y, float step) {
+    bool ok = true;
+    const auto at = [&](float px, float py) {
+        std::array<float, 3> w {};
+        ok = projector.barycentricAt(corners[0], corners[1], corners[2], px, py, w) && ok;
+        return std::array<float, 2> { w[0] * uv[0].x + w[1] * uv[1].x + w[2] * uv[2].x, w[0] * uv[0].y + w[1] * uv[1].y + w[2] * uv[2].y };
+    };
+    const std::array<float, 2> right = at(x + 0.5f + step, y + 0.5f), left = at(x + 0.5f - step, y + 0.5f);
+    const std::array<float, 2> down = at(x + 0.5f, y + 0.5f + step), up = at(x + 0.5f, y + 0.5f - step);
+    if (!ok) return EdgeOnKitLevel;
+    return Appearance::kitLevelOfDetail({ 0.5f * (right[0] - left[0]), 0.5f * (right[1] - left[1]) },
+        { 0.5f * (down[0] - up[0]), 0.5f * (down[1] - up[1]) }, width, height);
+}
+
 Image renderInspection(const InspectionScene& scene, const InspectionStyle& style, const OrbitCamera& camera, int width,
     int height) {
     width = std::max(16, width);
@@ -633,6 +700,18 @@ Image renderInspection(const InspectionScene& scene, const InspectionStyle& styl
         }
     });
 
+    // Os fios (escondidos atras das superficies).
+    for (const InspectionWires& wires : scene.wires) {
+        for (std::size_t k = 0; k + 1 < wires.points.size(); k += 2) {
+            const Vec3 a = wires.points[k], b = wires.points[k + 1];
+            const float cameraZ = projector.toCamera((a + b) * 0.5f).z;
+            if (cameraZ < projector.nearPlane()) continue;
+            const float width = wires.widthMeters * projector.pixelsPerMeter(cameraZ);
+            const float thickness = std::max(width, pixel);
+            const Color color = withAlpha(wires.color, wires.color.a * std::clamp(width / pixel, 0.3f, 1.0f));
+            raster.line(a, b, thickness, color, DepthMode::Test, 0.0f, 0.004f);
+        }
+    }
     drawMarkers(scene, raster, pixel);
     drawArrows(scene, raster, pixel);
     drawEyes(scene, camera, raster, pixel);

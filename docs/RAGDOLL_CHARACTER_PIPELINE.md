@@ -193,6 +193,6 @@ testada e retirada a pedido do usuário. Saíram:
 
 - `MatterPlayerModelTests`: exporta para uma pasta temporária, compara com o
   personagem do jogo (em dia) e compara a pele do jogo
-  com a malha posada da modelagem em cinco poses (repouso, parado, sprint,
-  carrinho, levantar: menos de 0,5 mm; medido 0,02 mm), e a sola no chão do
-  perfil.
+  com a malha posada da modelagem em sete poses (repouso, parado, sprint,
+  carrinho, levantar e os braços erguidos de lado e à frente: menos de
+  0,5 mm; medido 0,003 mm em 26/10), e a sola no chão do perfil.

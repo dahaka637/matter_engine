@@ -1,0 +1,280 @@
+{
+  "schema": "matter.design.v1",
+  "id": "tortura",
+  "name": "Tortura",
+  "templates": [
+    {
+      "parametrization": 1,
+      "storage": 1
+    },
+    {
+      "parametrization": 1,
+      "storage": 2
+    }
+  ],
+  "slots": [
+    {
+      "id": "base",
+      "name": "Base",
+      "default": "#ececec"
+    },
+    {
+      "id": "detalhes",
+      "name": "Detalhes",
+      "default": "#1e1e21"
+    },
+    {
+      "id": "meiao",
+      "name": "Meião",
+      "default": "#eeeeee"
+    },
+    {
+      "id": "degrade_baixo",
+      "name": "Degradê inferior",
+      "default": "#648e98"
+    },
+    {
+      "id": "degrade_alto",
+      "name": "Degradê superior",
+      "default": "#b89579"
+    },
+    {
+      "id": "manga_direita",
+      "name": "Manga direita",
+      "default": "#8873a3"
+    },
+    {
+      "id": "manga_esquerda",
+      "name": "Manga esquerda",
+      "default": "#69947c"
+    },
+    {
+      "id": "listras",
+      "name": "Listras finas",
+      "default": "#777b85"
+    },
+    {
+      "id": "diagonal",
+      "name": "Faixa sobre o ombro",
+      "default": "#b66c72"
+    },
+    {
+      "id": "estampa",
+      "name": "Losango na cava",
+      "default": "#c3ad68"
+    }
+  ],
+  "layers": [
+    {
+      "id": "roupa",
+      "target": {
+        "regions": [
+          "camisa",
+          "camisa_recuo",
+          "calcao",
+          "calcao_recuo"
+        ],
+        "panels": []
+      },
+      "space": "panel",
+      "content": {
+        "type": "fill"
+      },
+      "color": "base"
+    },
+    {
+      "id": "degrade_continuo",
+      "target": {
+        "regions": [
+          "camisa",
+          "camisa_recuo",
+          "calcao",
+          "calcao_recuo"
+        ],
+        "panels": []
+      },
+      "space": "reference",
+      "content": {
+        "type": "gradient",
+        "from": [
+          0,
+          -0.32
+        ],
+        "to": [
+          0,
+          0.55
+        ],
+        "colors": [
+          "degrade_baixo",
+          "degrade_alto"
+        ]
+      }
+    },
+    {
+      "id": "manga_direita",
+      "target": {
+        "regions": [],
+        "panels": [
+          "manga_direita",
+          "recuo_punho_direito"
+        ]
+      },
+      "space": "panel",
+      "content": {
+        "type": "fill"
+      },
+      "color": "manga_direita"
+    },
+    {
+      "id": "manga_esquerda",
+      "target": {
+        "regions": [],
+        "panels": [
+          "manga_esquerda",
+          "recuo_punho_esquerdo"
+        ]
+      },
+      "space": "panel",
+      "content": {
+        "type": "fill"
+      },
+      "color": "manga_esquerda"
+    },
+    {
+      "id": "listras_frente",
+      "target": {
+        "regions": [],
+        "panels": [
+          "camisa_frente"
+        ]
+      },
+      "space": "panel",
+      "content": {
+        "type": "stripes",
+        "period": 0.014,
+        "width": 0.002,
+        "angle": 0,
+        "phase": 0
+      },
+      "color": "listras",
+      "opacity": 0.65
+    },
+    {
+      "id": "diagonal_ombro",
+      "target": {
+        "regions": [],
+        "panels": [
+          "camisa_frente",
+          "camisa_costas"
+        ]
+      },
+      "space": "chart:sobre_ombro",
+      "content": {
+        "type": "path",
+        "d": "M -0.24 -0.1 L -0.18 -0.1 L 0.12 1.35 L 0.06 1.35 Z",
+        "rule": "nonzero"
+      },
+      "color": "diagonal"
+    },
+    {
+      "id": "losango_cava",
+      "target": {
+        "regions": [],
+        "panels": [
+          "camisa_frente",
+          "camisa_costas",
+          "manga_direita"
+        ]
+      },
+      "space": "chart:ombro_manga_direita",
+      "content": {
+        "type": "path",
+        "d": "M 0 0.145 L 0.1 0.245 L 0 0.345 L -0.1 0.245 Z",
+        "rule": "nonzero"
+      },
+      "color": "estampa",
+      "opacity": 0.8
+    },
+    {
+      "id": "meiao_fundo",
+      "target": {
+        "regions": [
+          "meiao"
+        ],
+        "panels": []
+      },
+      "space": "reference",
+      "content": {
+        "type": "bands",
+        "axis": "y",
+        "from": "base",
+        "bands": [
+          [
+            -2.0,
+            -0.532111474
+          ]
+        ]
+      },
+      "color": "meiao"
+    },
+    {
+      "id": "faixa_meiao",
+      "target": {
+        "regions": [],
+        "panels": [
+          "meiao_direito",
+          "meiao_esquerdo"
+        ]
+      },
+      "space": "reference",
+      "content": {
+        "type": "bands",
+        "axis": "y",
+        "from": "base",
+        "bands": [
+          [
+            -0.587811474,
+            -0.532111474
+          ]
+        ]
+      },
+      "color": "detalhes"
+    }
+  ],
+  "identity": {
+    "font": "numeros_bloco",
+    "color": "detalhes",
+    "zones": {
+      "frente": {
+        "height": 0.097,
+        "offset": [
+          0,
+          -0.0003
+        ],
+        "spacing": 0.072,
+        "stretch": 1,
+        "rotate": 0
+      },
+      "costas": {
+        "height": 0.165,
+        "offset": [
+          0,
+          0.0847
+        ],
+        "spacing": 0.072,
+        "stretch": 1,
+        "rotate": 0
+      },
+      "calcao": {
+        "height": 0.083,
+        "offset": [
+          0,
+          0
+        ],
+        "spacing": 0.072,
+        "stretch": 0.82,
+        "rotate": 5
+      }
+    }
+  }
+}

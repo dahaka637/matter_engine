@@ -1,9 +1,7 @@
 #pragma once
 
-#include "Engine/Athlete/Actions/BallHandling3D.hpp"
-#include "Engine/Athlete/Actions/BallPlay3D.hpp"
-#include "Engine/Athlete/Dribble/Dribble3D.hpp"
 #include "Engine/Athlete/Body/ActiveBodyController3D.hpp"
+#include "Engine/Gesture/GestureTypes3D.hpp"
 #include "Engine/Athlete/Body/ActiveStance3D.hpp"
 #include "Engine/Athlete/Body/PhysicalFeetAssist3D.hpp"
 #include "Engine/Athlete/Legacy/LegacyAthleteState3D.hpp"
@@ -13,6 +11,8 @@
 #include "Engine/Athlete/Sensing/BodyObservation3D.hpp"
 #include "Engine/Athlete/Synthesis/LegClearance3D.hpp"
 #include "Engine/Athlete/Synthesis/LegSynthesis3D.hpp"
+
+#include <cstdint>
 
 namespace MatterEngine {
 
@@ -68,14 +68,33 @@ struct AthleteState3D {
     LegSynthesisResult3D legSynthesis;
     // As pernas nunca se atravessam na pose do padrao (plano v4).
     LegClearance3D legClearance;
-    // Manejo novo: o v2 (BallPlay3D, plano v2) e a ultima saida dele (o pe
-    // que joga, telemetria). (O da Etapa 5 fica ate a limpeza.)
-    BallHandling3D ballHandling;
-    BallPlay3D ballPlay;
-    // Plano v5: o manejo refeito e a ultima saida dele.
-    Dribble3D dribble;
-    DribbleOutput3D dribbleOutput;
-    BallHandlingOutput3D ballOutput;
+    // Quantos gestos de bola ele ja fez (a semente do jeito de cada um), a
+    // perna do ultimo e o tempo desde ele (s; conduzindo, as pernas se
+    // alternam).
+    std::uint32_t gestureCount = 0;
+    int lastGestureSide = -1;
+    float sinceGesture = 1e9f;
+    // Conduzindo, o toque e do passo seguinte da perna dele: com ela
+    // plantada, a animacao espera ela sair do chao (a forca ja saiu no
+    // comando) - o gesto guardado e o tempo esperado (s).
+    struct PendingGesture {
+        bool active = false;
+        GestureSpec3D spec;
+        float waited = 0.0f;
+    } pendingGesture;
+    // A recepcao armada (24/10, pedido do usuario): o toque ou o chute fraco
+    // apertado com a bola vindo e ainda fora do alcance espera ate o tempo
+    // dela (left, s) com o que foi pedido; a forca sai no tick em que a bola
+    // entra no alcance. So na recepcao.
+    struct ArmedReception {
+        bool active = false;
+        bool shot = false;
+        float power = 0.0f;
+        float lift = 0.0f;
+        float curve = 0.0f;
+        float aimYaw = 0.0f;
+        float left = 0.0f;
+    } armedReception;
     // A reescrita (R3): o corpo da classificacao de contatos, as regras de
     // troca de modo e o ultimo tick delas (a telemetria neutra: o que bateu,
     // a ultima troca e o motivo).

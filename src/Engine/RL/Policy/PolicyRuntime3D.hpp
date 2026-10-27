@@ -32,6 +32,8 @@ struct PolicyInfo3D {
     // uma tarefa com outras entradas (as que faltam entram com zero, como na
     // migracao do treinador).
     std::vector<std::string> observationNames;
+    // Opcional: desvio gaussiano latente para a previa exploratoria; evaluate continua deterministico.
+    std::vector<float> explorationStd;
 };
 
 class PolicyRuntime3D final {

@@ -360,16 +360,6 @@ void CharacterLocomotion3D::stepFeet(Tick& t) {
                 script.orientationWorld = footInput.reference[side].poseOrientationWorld;
             }
         }
-        // Toque parado na bola: o pe dirigido pelo manejo.
-        if (input.ballScript.active && input.ballScript.side >= 0 && input.ballScript.side < 2
-            && m_feet[static_cast<std::size_t>(input.ballScript.side)].valid) {
-            ScriptedFoot3D& script = footInput.scripted[static_cast<std::size_t>(input.ballScript.side)];
-            script.active = true;
-            script.swing = input.ballScript.swing;
-            script.positionWorld = input.ballScript.position;
-            script.orientationWorld = input.ballScript.orientation;
-            script.supportShift = input.ballScript.supportShift;
-        }
         footInput.surfaceAt = [&](std::size_t side, Vec3 at, Vec3 forward) {
             const GroundSample ground = groundUnder(side, at, forward);
             return FootSurface3D { ground.valid, ground.height, ground.normal };
@@ -1012,26 +1002,9 @@ void CharacterLocomotion3D::stepFeet(Tick& t) {
             // corpo inclinado.
             landingWorld += heading.rotate({ 0.0f,
                 -CurveLeanHeight * std::sin(CurveFootShare * m_bodyCurveLean), 0.0f });
-            // Chute: o pouso natural (telemetria, para o manejo planejar) e o
-            // pe de apoio indo para o lado da bola, ate um limite.
+            // O pouso natural (telemetria).
             m_telemetry.footLandingWorld[side] = landingWorld;
             m_telemetry.footSecondsToTouchdown[side] = secondsToTouchdown;
-            {
-                Vec3 wanted;
-                if (input.ballPlant.active && input.ballPlant.side == static_cast<int>(side)) {
-                    const Vec3 ahead = heading.rotate({ 1.0f, 0.0f, 0.0f });
-                    const Vec3 aside = heading.rotate({ 0.0f, 1.0f, 0.0f });
-                    const Vec3 offset { input.ballPlant.position.x - landingWorld.x,
-                        input.ballPlant.position.y - landingWorld.y, 0.0f };
-                    wanted = (ahead * std::clamp(dot(offset, ahead), -0.35f, 0.30f)
-                        + aside * std::clamp(dot(offset, aside), -0.25f, 0.25f))
-                        * std::clamp(input.ballPlant.weight, 0.0f, 1.0f);
-                }
-                Vec3& plantShift = m_ballPlantShift[side];
-                const float tau = wanted.lengthSquared() > 1e-6f ? 0.05f : 0.15f;
-                plantShift += (wanted - plantShift) * (1.0f - std::exp(-deltaTime / tau));
-                landingWorld += plantShift;
-            }
             const Quaternion touchdownTurn = Quaternion::fromAxisAngle(
                 {0.0f, 0.0f, 1.0f}, m_turningRate * secondsToTouchdown);
             Vec3 landingForward = touchdownTurn.rotate(
@@ -1134,7 +1107,6 @@ void CharacterLocomotion3D::stepFeet(Tick& t) {
         // O deslocamento do equilibrio entra ao longo do passo (sem salto na
         // saida); a trava do pouso o inclui (activeShift), o pe nao escorrega.
         if (next != nullptr) shift += balanceShift * smoothStep(progress / 0.6f);
-        if (next != nullptr) shift += m_ballPlantShift[side];
         // TEMPTUNE: passada pelo contato - o pe que espera o toque desce no
         // lugar: desliza para tras em relacao ao corpo na velocidade dele (no
         // chao, quase parado), como o corredor puxa o pe no fim do balanco.

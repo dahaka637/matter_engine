@@ -37,7 +37,7 @@ def main() -> int:
     model.load_state_dict(state["model"])
     model.eval()
     scale = torch.as_tensor(np.asarray(state["action_scale"], dtype=np.float32))
-    nat = native()
+    nat = native(run)
     print(f"{args.treino} rodada {state.get('counters', {}).get('iteration')} · {args.exercicio} · {args.mundos} mundos x {args.segundos:.0f} s")
     for solver, authority in (("rede", (1, 1, 1, 1)), ("classico", (0, 0, 0, 0))):
         batch = nat.LocomotionBatch(str(run / "tarefa.json"), str(paths.ASSETS), environments=args.mundos, threads=3,

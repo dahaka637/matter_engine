@@ -63,6 +63,8 @@ struct LocomotionWorld3D::Impl {
     PhysicsEngine3D& engine;
     const MaterialLibrary& materials;
     AthleteRuntimeAssets3D assets;
+    // Os do proximo comeco (setAssets).
+    AthleteRuntimeAssets3D nextAssets;
     LocomotionWorldSettings3D settings;
     std::unique_ptr<PhysicsScene3D> scene;
     RagdollHandle3D handle;
@@ -77,11 +79,12 @@ struct LocomotionWorld3D::Impl {
 
     Impl(PhysicsEngine3D& engineIn, const MaterialLibrary& materialsIn, const AthleteRuntimeAssets3D& assetsIn,
         const LocomotionWorldSettings3D& settingsIn)
-        : engine(engineIn), materials(materialsIn), assets(assetsIn), settings(settingsIn) {}
+        : engine(engineIn), materials(materialsIn), assets(assetsIn), nextAssets(assetsIn), settings(settingsIn) {}
 
     // A cena nova: o chao e o corpo (a mesma ordem da sonda: os ids dos
     // corpos e a ordem do solver iguais).
     void build() {
+        assets = nextAssets;
         scene.reset();
         scene = engine.createScene(settings.scene, materials);
         createLocomotionGround3D(*scene, settings.groundHalfExtentMeters);
@@ -125,6 +128,11 @@ void LocomotionWorld3D::push(std::uint32_t link, Vec3 force) { m_impl->pushes.pu
 void LocomotionWorld3D::throwBox(const LocomotionThrow3D& item) { m_impl->throws.push_back(item); }
 void LocomotionWorld3D::setStatics(std::vector<LocomotionStaticBox3D> statics) {
     m_impl->settings.statics = std::move(statics);
+}
+void LocomotionWorld3D::setAssets(const AthleteRuntimeAssets3D& assets) {
+    if (assets.profile == nullptr || assets.clips == nullptr || assets.defaultClips == nullptr)
+        throw std::invalid_argument("LocomotionWorld3D: faltam o perfil ou os clipes");
+    m_impl->nextAssets = assets;
 }
 
 void LocomotionWorld3D::step(const AthleteCommand3D& command) {

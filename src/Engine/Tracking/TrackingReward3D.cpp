@@ -15,6 +15,9 @@ float rotationAngle(Quaternion q) {
     return 2.0f * std::acos(w);
 }
 
+// A cabeca abaixo disto (m) e queda de verdade (a mesma medida do fellDown do episodio).
+constexpr float RealFallHeadHeight = 1.1f;
+
 } // namespace
 
 TrackingReward3D::TrackingReward3D(const RagdollProfile3D& profile)
@@ -41,7 +44,7 @@ TrackingReward3D::TrackingReward3D(const RagdollProfile3D& profile)
 
 TrackingRewardTerms3D TrackingReward3D::evaluate(const TrackingLeaderState3D& leader,
     std::span<const PhysicsBodyState3D> bodyLinks, Vec3 bodyCenterOfMass, Vec3 bodyCenterOfMassVelocity,
-    float legWeight, float centerOfMassVelocityWeight, float armWeight, float trunkWeight) {
+    float legWeight, float centerOfMassVelocityWeight, float armWeight, float trunkWeight, bool realFallOnly) {
     // O peso de cada link na posicao, na velocidade e na pose (a liberdade de cada parte).
     const auto weightOf = [&](std::size_t link) {
         return m_leg[link] ? legWeight : m_arm[link] ? armWeight : m_trunk[link] ? trunkWeight : 1.0f;
@@ -83,9 +86,10 @@ TrackingRewardTerms3D TrackingReward3D::evaluate(const TrackingLeaderState3D& le
 
     const Vec3 kinHead = rlLinkCenterOfMass3D(profile.links[m_head], leader.links[m_head]);
     const Vec3 simHead = rlLinkCenterOfMass3D(profile.links[m_head], bodyLinks[m_head]);
-    terms.headDistance = (kinHead - simHead).length();
+    terms.headDistance = realFallOnly
+        ? ((kinHead - leader.centerOfMass) - (simHead - bodyCenterOfMass)).length() : (kinHead - simHead).length();
     terms.fallFactor = std::clamp(1.3f - 1.4f * terms.headDistance, 0.0f, 1.0f);
-    terms.terminate = terms.headDistance > 1.0f;
+    terms.terminate = realFallOnly ? simHead.z < RealFallHeadHeight : terms.headDistance > 1.0f;
     terms.total = terms.terminate
         ? 0.0f
         : terms.fallFactor

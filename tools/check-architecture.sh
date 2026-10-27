@@ -59,6 +59,9 @@ check_absent "Tela de objetos fala com a GPU so pelo CanvasTarget" \
     '#include "Engine/(Render|RHI)/' src/Workbench/ObjectInspector
 check_absent "Objetos procedurais (modelagem) nao dependem da montagem, das pecas, do rig nem da inspecao" \
     '#include "Engine/Modeling/(Assembly|Rig|Parts|Inspection)/' src/Engine/Modeling/Objects
+check_absent "A rede de fios (Engine/Physics/Net) e so matematica: nada do Jolt, da cena, da modelagem nem da interface" \
+    '#include "Engine/(Physics/(Jolt|PhysicsScene3D|PhysicsEngine3D)|Modeling|Render|RHI|UI|Workbench)|Jolt|#include .imgui' \
+    src/Engine/Physics/Net
 check_absent "Atletas (Engine/Athlete) nao dependem de render, interface, audio, plataforma nem entrada" \
     '#include "Engine/(Render|RHI|UI|Audio|Platform|Input)/|#include .imgui|#include <SDL' src/Engine/Athlete
 check_absent "Atletas: so o legado e a casca de migracao incluem os controladores antigos" \
@@ -74,18 +77,29 @@ check_absent "O treino da locomocao nao fala com o treinador, o estilo nem a int
 check_absent "O treino da locomocao usa do RL so o piloto e o layout (nunca o lote, o corpo, a imitacao nem a politica do RL do zero: o ReferenceMotion3D deles e outro)" \
     '#include "Engine/RL/(Environment|Body|Imitation|Policy|Rewards|Brain|Calibration)/' src/Engine/Athlete/Training \
     bindings/python/MatterLocomotionNative.cpp
-check_absent "Atletas: planejamento, sintese, acoes, pedidos e bola trabalham com dados (sem a cena fisica nem o Jolt; so os sentidos leem a fisica)" \
+check_absent "Atletas: planejamento, sintese e bola trabalham com dados (sem a cena fisica nem o Jolt; so os sentidos leem a fisica)" \
     '#include "Engine/Physics/(PhysicsScene3D|PhysicsEngine3D)|Jolt' src/Engine/Athlete/Planning src/Engine/Athlete/Synthesis \
-    src/Engine/Athlete/Actions src/Engine/Athlete/Intent src/Engine/Athlete/Ball src/Engine/Athlete/Core \
-    src/Engine/Athlete/Dribble
+    src/Engine/Athlete/Ball src/Engine/Athlete/Core
+check_absent "Os gestos de bola (Engine/Gesture) sao so matematica: nada de fisica, atleta, personagem, animacao, RL nem interface" \
+    '#include "Engine/(Physics|Athlete|Character|Control|Locomotion|Animation|Render|RHI|UI|Audio|Platform|Input|RL|Tracking|Modeling)/|Jolt|#include .imgui|#include <SDL' \
+    src/Engine/Gesture
+check_absent "O corpo do jogador (Engine/Physique) e so a lei: nada da engine alem da matematica" \
+    '#include "Engine/(Physics|Athlete|Character|Control|Locomotion|Animation|Modeling|Gesture|Appearance|Render|RHI|UI|Audio|Platform|Input|RL|Tracking|Workbench|Objects|Geometry|Data|Environment|Core)/|Jolt|#include .imgui|#include <SDL' \
+    src/Engine/Physique
+check_absent "O sistema de aparencia (Engine/Appearance) e so dados e o compositor: nada de fisica, atleta, personagem, animacao, modelagem, render, RHI, RL nem interface" \
+    '#include "Engine/(Physics|Athlete|Character|Control|Locomotion|Animation|Modeling|Gesture|Render|RHI|UI|Audio|Platform|Input|RL|Tracking|Workbench)/|Jolt|#include .imgui|#include <SDL|#include .vulkan' \
+    src/Engine/Appearance
+check_absent "O sistema de gestos antigo (o pe indo ate a bola) foi removido em 24/10 e nao volta" \
+    '\b(QuickTouch3D|LateralTouch3D|TouchPlanner3D|SwingTouch3D|TouchBody3D|ContactPose3D|DribbleBall3D|Dribble3D|BallPlay3D|BallMove3D|BallHandling3D|BallActionPlanner3D|BallControl3D|BallGesturePose3D|BallGestureLegs3D|LegacyBallBridge3D|BallTouchPreview3D|BallPredictor3D)\b' \
+    src tests tools bindings -g '!tools/check-architecture.*'
 check_absent "Nucleo de RL nao depende de render, interface, audio, plataforma nem entrada" \
     '#include "Engine/(Render|RHI|UI|Audio|Platform|Input)/|#include .imgui|#include <SDL' src/Engine/RL
 check_absent "So a ponte do treinador (bindings/python) inclui Python" \
     '#include .(Python\.h|pybind11|nanobind)' src tests tools -g '!tools/rl/**'
 check_absent "Mundos de treino e politica do RL nao dependem da interface nem do treinador" \
-    '#include "(Workbench|Engine/RL/Supervisor)/' src/Engine/RL/Environment src/Engine/RL/Body src/Engine/RL/Policy src/Engine/RL/Imitation
+    '#include "(Workbench|Engine/RL/Supervisor)/' src/Engine/RL/Environment src/Engine/RL/Body src/Engine/RL/Policy src/Engine/RL/Imitation src/Engine/RL/Motor
 check_absent "Mundos de treino e politica do RL nao dependem do atleta nem da locomocao do jogo" \
-    '#include "Engine/(Athlete|Character|Control|Locomotion)/' src/Engine/RL/Environment src/Engine/RL/Body src/Engine/RL/Policy src/Engine/RL/Imitation
+    '#include "Engine/(Athlete|Character|Control|Locomotion)/' src/Engine/RL/Environment src/Engine/RL/Body src/Engine/RL/Policy src/Engine/RL/Imitation src/Engine/RL/Motor
 check_absent "A politica exportada (RL/Policy) nao depende da fisica" \
     '#include "Engine/(Physics|RL/Environment|RL/Body)/' src/Engine/RL/Policy
 check_absent "Contrato do Corpo e corpo de RL (vao para o jogo) nao dependem dos mundos de treino, do estilo, das notas, do piloto, da imitacao nem do treinador" \

@@ -1,0 +1,197 @@
+{
+  "schema": "matter.design.v1",
+  "id": "branco",
+  "name": "Branco",
+  "templates": [
+    {
+      "parametrization": 1,
+      "storage": 1
+    },
+    {
+      "parametrization": 1,
+      "storage": 2
+    }
+  ],
+  "slots": [
+    {
+      "id": "base",
+      "name": "Base",
+      "default": "#ececec"
+    },
+    {
+      "id": "detalhes",
+      "name": "Detalhes",
+      "default": "#1e1e21"
+    },
+    {
+      "id": "meiao",
+      "name": "Meião",
+      "default": "#eeeeee"
+    }
+  ],
+  "layers": [
+    {
+      "id": "roupa",
+      "target": {
+        "regions": [
+          "camisa",
+          "camisa_recuo",
+          "calcao",
+          "calcao_recuo"
+        ],
+        "panels": []
+      },
+      "space": "panel",
+      "content": {
+        "type": "fill"
+      },
+      "color": "base"
+    },
+    {
+      "id": "recuos_gola_punhos",
+      "target": {
+        "regions": [],
+        "panels": [
+          "recuo_gola",
+          "recuo_punho_direito",
+          "recuo_punho_esquerdo"
+        ]
+      },
+      "space": "panel",
+      "content": {
+        "type": "fill"
+      },
+      "color": "detalhes"
+    },
+    {
+      "id": "gola",
+      "target": {
+        "regions": [],
+        "panels": [
+          "camisa_frente",
+          "camisa_costas"
+        ]
+      },
+      "space": "panel",
+      "content": {
+        "type": "border",
+        "seam": "gola",
+        "width": 0.018
+      },
+      "color": "detalhes"
+    },
+    {
+      "id": "punho_direito",
+      "target": {
+        "regions": [],
+        "panels": [
+          "manga_direita"
+        ]
+      },
+      "space": "panel",
+      "content": {
+        "type": "border",
+        "seam": "punho_direito",
+        "width": 0.026
+      },
+      "color": "detalhes"
+    },
+    {
+      "id": "punho_esquerdo",
+      "target": {
+        "regions": [],
+        "panels": [
+          "manga_esquerda"
+        ]
+      },
+      "space": "panel",
+      "content": {
+        "type": "border",
+        "seam": "punho_esquerdo",
+        "width": 0.026
+      },
+      "color": "detalhes"
+    },
+    {
+      "id": "meiao_fundo",
+      "target": {
+        "regions": [
+          "meiao"
+        ],
+        "panels": []
+      },
+      "space": "reference",
+      "content": {
+        "type": "bands",
+        "axis": "y",
+        "from": "base",
+        "bands": [
+          [
+            -2.0,
+            -0.532111474
+          ]
+        ]
+      },
+      "color": "meiao"
+    },
+    {
+      "id": "faixa_meiao",
+      "target": {
+        "regions": [],
+        "panels": [
+          "meiao_direito",
+          "meiao_esquerdo"
+        ]
+      },
+      "space": "reference",
+      "content": {
+        "type": "bands",
+        "axis": "y",
+        "from": "base",
+        "bands": [
+          [
+            -0.587811474,
+            -0.532111474
+          ]
+        ]
+      },
+      "color": "detalhes"
+    }
+  ],
+  "identity": {
+    "font": "numeros_bloco",
+    "color": "detalhes",
+    "zones": {
+      "frente": {
+        "height": 0.097,
+        "offset": [
+          0,
+          -0.0003
+        ],
+        "spacing": 0.072,
+        "stretch": 1,
+        "rotate": 0
+      },
+      "costas": {
+        "height": 0.165,
+        "offset": [
+          0,
+          0.0847
+        ],
+        "spacing": 0.072,
+        "stretch": 1,
+        "rotate": 0
+      },
+      "calcao": {
+        "height": 0.083,
+        "offset": [
+          0,
+          0
+        ],
+        "spacing": 0.072,
+        "stretch": 0.82,
+        "rotate": 5
+      }
+    }
+  }
+}

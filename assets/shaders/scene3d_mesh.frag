@@ -57,6 +57,52 @@ layout(set = 2, binding = 0) uniform sampler2D metallicRoughnessMap;
 // binding; os demais materiais usam somente o ambiente analitico barato.
 layout(set = 3, binding = 0) uniform sampler2D planarReflectionMap;
 
+#ifdef MATTER_CHARACTER
+// O personagem com o uniforme (RHI/CharacterMaterial.hpp; compilado como
+// scene3d_character.frag): o uniforme e a identificacao (pre-multiplicados,
+// cada um com o sampler proprio ate o nivel seguro) por cima do corpo (o
+// albedoMap, o atlas antigo). A mesma conta do inspetor (InspectionRenderer).
+layout(set = 4, binding = 0) uniform sampler2DArray characterKitMap;
+layout(set = 4, binding = 1) uniform sampler2DArray characterIdentityMap;
+layout(set = 4, binding = 3, std140) uniform CharacterKitParameters {
+    vec4 levels;
+    vec4 regionAverage[256];
+    vec4 zoneRect[4];
+    uvec4 info;
+} characterParameters;
+layout(location = 10) in vec2 characterKitUv;
+layout(location = 11) in vec2 characterIdentityUv;
+layout(location = 12) flat in uvec4 characterIds;
+
+vec3 characterAlbedo(vec3 body) {
+    // (Os niveis pelas derivadas, antes de qualquer desvio.)
+    float kitLod = textureQueryLod(characterKitMap, characterKitUv).y;
+    float identityLod = textureQueryLod(characterIdentityMap, characterIdentityUv).y;
+    uint region = characterIds.x;
+    if (region == 0xFFFFFFFFu || characterKitUv.x < 0.0) {
+        return body;
+    }
+    // O uniforme ate o nivel seguro; depois, suave ate a media da regiao.
+    float safe = characterParameters.levels.x;
+    vec4 kit = textureLod(characterKitMap, vec3(characterKitUv, float(characterIds.z)), min(kitLod, safe));
+    kit = mix(kit, characterParameters.regionAverage[characterIds.z * 32u + region], clamp(kitLod - safe, 0.0, 1.0));
+    // A identificacao so dentro do retangulo da zona (o limite exato), sumindo
+    // para alfa zero depois do nivel seguro dela.
+    uint zone = characterIds.y;
+    if (zone != 0xFFFFFFFFu) {
+        vec4 rect = characterParameters.zoneRect[zone];
+        if (all(greaterThanEqual(characterIdentityUv, rect.xy)) && all(lessThanEqual(characterIdentityUv, rect.zw))) {
+            float identitySafe = characterParameters.levels.y;
+            vec4 ink = textureLod(characterIdentityMap, vec3(characterIdentityUv, float(characterIds.w)),
+                min(identityLod, identitySafe));
+            ink *= 1.0 - clamp(identityLod - identitySafe, 0.0, 1.0);
+            kit = ink + kit * (1.0 - ink.a);
+        }
+    }
+    return kit.rgb + body * (1.0 - kit.a);
+}
+#endif
+
 layout(location = 0) in vec3 worldPosition;
 layout(location = 1) in vec3 worldNormal;
 layout(location = 2) in vec2 vertexUv;
@@ -502,7 +548,11 @@ void main() {
     }
     vec3 viewDirection = normalize(scene.cameraPosition.xyz - worldPosition);
     vec2 materialUv = vertexUv;
+#ifdef MATTER_CHARACTER
+    vec3 albedo = characterAlbedo(texture(albedoMap, materialUv).rgb) * vertexColor * objectTint;
+#else
     vec3 albedo = texture(albedoMap, materialUv).rgb * vertexColor * objectTint;
+#endif
     if (objectParameters.z != 0) {
         albedo = mix(albedo, vec3(1.0, 0.62, 0.08), 0.24);
     }

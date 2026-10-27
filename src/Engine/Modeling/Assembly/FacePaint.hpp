@@ -54,8 +54,9 @@ struct FacePaintShape {
     std::vector<std::array<float, 2>> mouthSlit { { 0.0f, 1.6223f }, { 0.0088f, 1.6215f }, { 0.0266f, 1.6163f } };
     std::vector<std::array<float, 2>> upperLipTop { { 0.0f, 1.6269f }, { 0.0067f, 1.6289f }, { 0.0266f, 1.6163f } };
     // A orelha: a placa de fora e o que fica mais longe do meio que isso
-    // (earPlate; a pintura dela e uma camada do desenho, PaintDesign).
-    float earOutside = 0.076f;
+    // (earPlate; a pintura dela e uma camada do desenho, PaintDesign). 23/10: 0,076 x 1,04 - a cabeca ficou 4%
+    // mais larga (proporcao_cabeca) e o lado dela passava do limite antigo, entrando na placa.
+    float earOutside = 0.079f;
 
     Color sclera = rgb(214, 206, 194);
     Color iris = rgb(70, 48, 32);

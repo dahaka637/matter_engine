@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Engine/Appearance/Compose/KitCompositor.hpp"
+#include "Engine/Appearance/Surface/SurfaceTemplate.hpp"
 #include "Engine/Modeling/Inspection/InspectionRenderer.hpp"
 
 #include <cstdint>
@@ -15,6 +17,11 @@ struct InspectionModel {
     BodyRegions regions;
     Mesh mesh;
     std::vector<int> jointRegion;
+    // O template de superficie da malha (o sistema de aparencia; vazio sem ele),
+    // por triangulo na ordem de mesh.triangles.
+    std::shared_ptr<const Appearance::SurfaceTemplate> surface;
+    // O uniforme composto sobre o template (vazio: a textura antiga).
+    std::shared_ptr<const Appearance::ComposedKit> kit;
     // Uma linha de onde veio (mostrada na tela).
     std::string source;
 };

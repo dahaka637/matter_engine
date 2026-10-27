@@ -89,6 +89,7 @@ void DefaultLocomotion3D::stepExits(Tick& t) {
     m_output.rootPosition = rootPosition;
     m_output.rootOrientation = rootOrientation;
     m_output.coordinates = m_coordinates;
+    recordGestureShown(t.dt);
 }
 
 } // namespace MatterEngine

@@ -4,6 +4,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 
 namespace MatterEngine {
 
@@ -26,6 +28,17 @@ constexpr float SettleYaw = 0.12f;
 // (desliza; menos passos, mais calmos) e nunca torce mais que o limite.
 constexpr float PlantedFollow = 0.5f;
 constexpr float PlantedTwistLimit = 0.8f;
+// A coleira (21/10, pedido do usuario: girando muito rapido as pernas
+// embolavam; "os pes podem deslizar de forma artificial, o movimento so
+// precisa ser bonito e limitado"): a base dos pes nunca fica mais que isto
+// atras da pelve - o excesso leva os dois pes deslizando em volta do corpo, e
+// os passos seguem no ritmo deles.
+constexpr float StanceLeash = 0.9f;
+// A ultima trava: o pe esquerdo sempre ao menos isto a esquerda do direito,
+// pela frente da pelve (m); o que falta desliza os dois para fora.
+constexpr float SideGap = 0.12f;
+// O pouso do pe no ar anda ate o pedido no maximo a isto (rad/s).
+constexpr float GoalYawRate = 6.0f;
 // O tempo do passo (s): o do planejador no giro lento (0,18 a 0,29 no fisico)
 // e no mais rapido (0,10 a 0,17 no fisico, sobre-humano no padrao).
 constexpr float StepSecondsMinimum = 0.28f;
@@ -35,6 +48,16 @@ constexpr float StepSecondsFast = 0.22f;
 float wrap(float angle) { return std::remainder(angle, 2.0f * Pi); }
 
 Quaternion spinZ(float radians) { return Quaternion::fromAxisAngle({ 0.0f, 0.0f, 1.0f }, radians); }
+
+// O pe levado em volta do corpo (a vertical pela raiz).
+StandTurnFoot3D orbit(StandTurnFoot3D foot, Vec3 root, float radians) {
+    const Quaternion spin = spinZ(radians);
+    const Vec3 offset = spin.rotate(Vec3 { foot.position.x - root.x, foot.position.y - root.y, 0.0f });
+    foot.position.x = root.x + offset.x;
+    foot.position.y = root.y + offset.y;
+    foot.orientation = (spin * foot.orientation).normalized();
+    return foot;
+}
 
 // O pe girado em volta da vertical sobre a bola dele (ela fica; o calcanhar roda).
 StandTurnFoot3D pivotOnBall(const RagdollLinkDefinition3D& link, StandTurnFoot3D foot, float radians) {
@@ -56,14 +79,22 @@ void StandTurnFeet3D::reset() {
     m_weight = 0.0f;
 }
 
-StandTurnFoot3D StandTurnFeet3D::landing(const RagdollProfile3D& profile, std::size_t link,
-    const StandTurnFeetInput3D& input, std::size_t side, const Foot& foot) const {
+float StandTurnFeet3D::landingYaw(const StandTurnFeetInput3D& input, const Foot& foot) const {
     // A pose parada ja no rumo final da pelve, ate StepLimit a partir do rumo
     // em que o passo comecou, no sentido em que ele comecou.
     float remaining = wrap(input.targetYawRadians - foot.fromFacing);
     if (foot.sign > 0.0f && remaining < -0.5f * Pi) remaining += 2.0f * Pi;
     if (foot.sign < 0.0f && remaining > 0.5f * Pi) remaining -= 2.0f * Pi;
-    const float finalYaw = foot.fromFacing + std::clamp(remaining, -StepLimit, StepLimit);
+    return foot.fromFacing + std::clamp(remaining, -StepLimit, StepLimit);
+}
+
+StandTurnFoot3D StandTurnFeet3D::landing(const RagdollProfile3D& profile, std::size_t link,
+    const StandTurnFeetInput3D& input, std::size_t side, const Foot& foot) const {
+    return landingAt(profile, link, input, side, landingYaw(input, foot));
+}
+
+StandTurnFoot3D StandTurnFeet3D::landingAt(const RagdollProfile3D& profile, std::size_t link,
+    const StandTurnFeetInput3D& input, std::size_t side, float finalYaw) const {
     const Quaternion spin = spinZ(wrap(finalYaw - input.facingYawRadians));
     const StandTurnFoot3D& reference = input.reference[side];
     StandTurnFoot3D result;
@@ -84,7 +115,8 @@ void StandTurnFeet3D::start(const RagdollProfile3D& profile, std::size_t link, c
     foot.sign = wrap(input.targetYawRadians - input.facingYawRadians) >= 0.0f ? 1.0f : -1.0f;
     // O tempo do passo de giro do planejador, pela distancia e pelo giro do
     // pe, e mais curto quanto mais rapido o giro (o da ajuda cheia).
-    const StandTurnFoot3D to = landing(profile, link, input, side, foot);
+    foot.goalYaw = landingYaw(input, foot);
+    const StandTurnFoot3D to = landingAt(profile, link, input, side, foot.goalYaw);
     const RagdollLinkDefinition3D& definition = profile.links[link];
     const float distance = std::hypot(to.position.x - foot.from.position.x, to.position.y - foot.from.position.y);
     const float yaw = std::abs(wrap(footYaw3D(definition, to.orientation) - footYaw3D(definition, foot.from.orientation)));
@@ -108,7 +140,17 @@ void StandTurnFeet3D::update(const RagdollProfile3D& profile, std::array<std::si
     };
     const float ahead = wrap(input.targetYawRadians - input.facingYawRadians);
     const bool turning = std::abs(input.turnRateRadiansPerSecond) > 0.25f || std::abs(ahead) > 0.05f;
-    if (!input.standing || (!m_engaged && !turning)) {
+    // Um pe fora da pose parada (mais do que o passo de acomodacao tolera).
+    bool displaced = false;
+    for (std::size_t side = 0; side < 2 && input.shownValid; ++side) {
+        const RagdollLinkDefinition3D& link = profile.links[feet[side]];
+        const StandTurnFoot3D& shown = input.shown[side];
+        const StandTurnFoot3D& reference = input.reference[side];
+        displaced = displaced
+            || std::hypot(shown.position.x - reference.position.x, shown.position.y - reference.position.y) > SettleDrift
+            || std::abs(wrap(footYaw3D(link, shown.orientation) - footYaw3D(link, reference.orientation))) > SettleYaw;
+    }
+    if (!input.standing || (!m_engaged && !turning && !displaced)) {
         // Andando (ou parado sem giro): os pes sao os da locomocao; o que
         // estava aqui sai em 0,08 s (andando) ou 0,15 s (assentado).
         m_engaged = false;
@@ -118,10 +160,10 @@ void StandTurnFeet3D::update(const RagdollProfile3D& profile, std::array<std::si
         return;
     }
     if (!m_engaged) {
-        // O giro comeca: os pes apoiados onde a pose parada os tem agora.
+        // O giro (ou a acomodacao) comeca: os pes apoiados onde estao.
         for (std::size_t side = 0; side < 2; ++side) {
             m_feet[side] = {};
-            m_feet[side].anchor = onGround(side, input.reference[side]);
+            m_feet[side].anchor = onGround(side, input.shownValid ? input.shown[side] : input.reference[side]);
             m_pose[side] = m_feet[side].anchor;
         }
         m_pending = -1;
@@ -140,15 +182,37 @@ void StandTurnFeet3D::update(const RagdollProfile3D& profile, std::array<std::si
 
     // O rumo de cada pe apoiado sem o quanto a pose parada o abre, e a base.
     std::array<float, 2> open {}, footFacing {};
-    float sine = 0.0f, cosine = 0.0f;
-    for (std::size_t side = 0; side < 2; ++side) {
-        const RagdollLinkDefinition3D& link = profile.links[feet[side]];
-        open[side] = wrap(footYaw3D(link, input.reference[side].orientation) - input.facingYawRadians);
-        footFacing[side] = footYaw3D(link, m_feet[side].anchor.orientation) - open[side];
-        sine += std::sin(footFacing[side]);
-        cosine += std::cos(footFacing[side]);
+    float stance = 0.0f;
+    const auto measure = [&]() {
+        float sine = 0.0f, cosine = 0.0f;
+        for (std::size_t side = 0; side < 2; ++side) {
+            const RagdollLinkDefinition3D& link = profile.links[feet[side]];
+            open[side] = wrap(footYaw3D(link, input.reference[side].orientation) - input.facingYawRadians);
+            footFacing[side] = footYaw3D(link, m_feet[side].anchor.orientation) - open[side];
+            sine += std::sin(footFacing[side]);
+            cosine += std::cos(footFacing[side]);
+        }
+        stance = std::atan2(sine, cosine);
+    };
+    measure();
+    // A coleira: a base atrasada demais desliza com a pelve (o pe no ar leva
+    // o comeco e o alvo do passo junto).
+    {
+        const float lag = wrap(input.facingYawRadians - stance);
+        if (std::abs(lag) > StanceLeash) {
+            const float excess = lag - std::copysign(StanceLeash, lag);
+            for (std::size_t side = 0; side < 2; ++side) {
+                Foot& foot = m_feet[side];
+                foot.anchor = onGround(side, orbit(foot.anchor, input.rootWorld, excess));
+                if (foot.swinging) {
+                    foot.from = orbit(foot.from, input.rootWorld, excess);
+                    foot.fromFacing += excess;
+                    foot.goalYaw += excess;
+                }
+            }
+            measure();
+        }
     }
-    const float stance = std::atan2(sine, cosine);
     const float twist = wrap(input.facingYawRadians - stance);
     const float remaining = wrap(input.targetYawRadians - stance);
 
@@ -212,6 +276,11 @@ void StandTurnFeet3D::update(const RagdollProfile3D& profile, std::array<std::si
         }
     }
 
+    if (std::getenv("XGIRO"))
+        std::printf("XGIRO rumo %.2f alvo %.2f base %.2f torcao %.2f taxa %.1f | E %d %d %.2f/%.2f | D %d %d %.2f/%.2f\n",
+            input.facingYawRadians, input.targetYawRadians, stance, twist, input.turnRateRadiansPerSecond,
+            m_feet[0].swinging, static_cast<int>(m_feet[0].path), m_feet[0].seconds, m_feet[0].duration,
+            m_feet[1].swinging, static_cast<int>(m_feet[1].path), m_feet[1].seconds, m_feet[1].duration);
     // O balanco de cada pe (os caminhos do planejador) e a pose.
     for (std::size_t side = 0; side < 2; ++side) {
         Foot& foot = m_feet[side];
@@ -224,7 +293,8 @@ void StandTurnFeet3D::update(const RagdollProfile3D& profile, std::array<std::si
         const float progress = std::clamp(foot.seconds / std::max(0.05f, foot.duration), 0.0f, 1.0f);
         const float eased = progress * progress * progress * (10.0f + progress * (-15.0f + 6.0f * progress));
         const float arch = std::sin(Pi * progress);
-        const StandTurnFoot3D to = landing(profile, feet[side], input, side, foot);
+        foot.goalYaw += std::clamp(wrap(landingYaw(input, foot) - foot.goalYaw), -GoalYawRate * dt, GoalYawRate * dt);
+        const StandTurnFoot3D to = landingAt(profile, feet[side], input, side, foot.goalYaw);
         Quaternion orientation = slerp3D(foot.from.orientation, to.orientation, eased);
         const Vec3 ball = footBallLocal3D(link);
         Vec3 position;
@@ -270,6 +340,19 @@ void StandTurnFeet3D::update(const RagdollProfile3D& profile, std::array<std::si
         if (progress >= 1.0f) {
             foot.swinging = false;
             foot.anchor = to;
+        }
+    }
+    // As pernas nunca cruzam (o pe apoiado leva o deslize junto).
+    {
+        const Vec3 left { -std::sin(input.facingYawRadians), std::cos(input.facingYawRadians), 0.0f };
+        const float apart = dot(m_pose[0].position - m_pose[1].position, left);
+        if (apart < SideGap) {
+            const Vec3 push = left * (0.5f * (SideGap - apart));
+            for (std::size_t side = 0; side < 2; ++side) {
+                const Vec3 move = side == 0 ? push : push * -1.0f;
+                m_pose[side].position = m_pose[side].position + move;
+                if (!m_feet[side].swinging) m_feet[side].anchor.position = m_feet[side].anchor.position + move;
+            }
         }
     }
 }

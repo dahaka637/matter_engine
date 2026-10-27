@@ -6,6 +6,8 @@
 #include <Jolt/Physics/Collision/CollideShape.h>
 #include <Jolt/Physics/Collision/CollisionCollectorImpl.h>
 #include <Jolt/Physics/Collision/CollisionDispatch.h>
+#include <Jolt/Physics/Collision/Shape/CompoundShape.h>
+#include <Jolt/Physics/Collision/Shape/DecoratedShape.h>
 #include <Jolt/Physics/Collision/Shape/SphereShape.h>
 
 #include <algorithm>
@@ -45,13 +47,32 @@ const float SoftDamping = softTune("T_BallSoftDamping", 15.0f);
 const float SoftMaximumForce = softTune("T_BallSoftMax", 300.0f);
 
 // O corpo interno do character controller nao toca a bola: quem chuta e o
-// corpo (ragdoll), nao a capsula de navegacao.
+// corpo (ragdoll), nao a capsula de navegacao. A barreira dos jogadores
+// tambem nao (a bola bate na rede).
 class BallObjectLayerFilter final : public JPH::ObjectLayerFilter {
 public:
     bool ShouldCollide(JPH::ObjectLayer layer) const override {
-        return layer != JoltObjectLayers::Character;
+        return layer != JoltObjectLayers::Character && layer != JoltObjectLayers::PlayerBarrier
+            && layer != JoltObjectLayers::CapsuleBarrier;
     }
 };
+
+// O material de uma forma: num composto (a trave: um tubo por cilindro), o da
+// primeira peca - o ID de sub-forma vazio nao vale para o composto e lia fora
+// do vetor de pecas.
+const JPH::PhysicsMaterial* firstShapeMaterial(const JPH::Shape* shape) {
+    for (;;) {
+        if (shape->GetType() == JPH::EShapeType::Compound) {
+            const auto* compound = static_cast<const JPH::CompoundShape*>(shape);
+            if (compound->GetNumSubShapes() == 0) return nullptr;
+            shape = compound->GetSubShape(0).mShape;
+        } else if (shape->GetType() == JPH::EShapeType::Decorated) {
+            shape = static_cast<const JPH::DecoratedShape*>(shape)->GetInnerShape();
+        } else {
+            return shape->GetMaterial(JPH::SubShapeID());
+        }
+    }
+}
 
 struct BallCandidate {
     JPH::BodyID id;
@@ -238,7 +259,7 @@ bool PhysicsScene3D::raycastInflatedBall(const Ray3D& ray, float maximumDistance
 }
 
 void PhysicsScene3D::Impl::stepInflatedBalls(float deltaTime) {
-    if (inflatedBallSlots.empty()) return;
+    if (inflatedBallSlots.empty() && netSlots.empty()) return;
     auto& bodies = system->GetBodyInterface();
     const BallObjectLayerFilter layerFilter;
     const Vec3 gravity = fromJolt(system->GetGravity());
@@ -331,13 +352,10 @@ void PhysicsScene3D::Impl::stepInflatedBalls(float deltaTime) {
                             && (ball.record->sensorLinks >> identity.linkIndex & 1u) != 0;
                         if (sensed) {
                             candidate.sensor = true;
-                        // O dono da bola: quadril e pernas a atravessam; os
-                        // links de cima so a repelem.
+                        // O dono da bola: o corpo todo a atravessa (21/10, pedido do
+                        // usuario; antes o tronco, a cabeca e os bracos a repeliam).
                         } else if (owner->handle == ball.record->owner) {
-                            const bool upper = identity.linkIndex < 64
-                                && (owner->ballUpperBodyLinks >> identity.linkIndex & 1u) != 0;
-                            if (!upper) continue;
-                            candidate.soft = true;
+                            continue;
                         }
                         candidate.ragdoll = true;
                         candidate.entityId = owner->entityId;
@@ -353,7 +371,7 @@ void PhysicsScene3D::Impl::stepInflatedBalls(float deltaTime) {
                 candidate.dynamic = body.IsDynamic() && !guidedLink;
                 candidate.inverseMass = candidate.dynamic ? body.GetMotionProperties()->GetInverseMass() : 0.0f;
                 candidate.friction = body.GetFriction();
-                candidate.material = std::string(joltShapeMaterialId(body.GetShape()->GetMaterial(JPH::SubShapeID())));
+                candidate.material = std::string(joltShapeMaterialId(firstShapeMaterial(body.GetShape())));
                 candidate.surface = contactMaterial(candidate.material).ball;
                 ball.candidates.push_back(std::move(candidate));
             }
@@ -363,6 +381,9 @@ void PhysicsScene3D::Impl::stepInflatedBalls(float deltaTime) {
         balls.push_back(std::move(ball));
     }
 
+    // As redes (JoltNets3D.cpp) andam nos mesmos subpassos: acopladas a bola,
+    // pelo menos os dela.
+    substeps = std::max(substeps, prepareNets(deltaTime, substeps));
     const float h = deltaTime / static_cast<float>(substeps);
     std::vector<BallPair> pairs;
     for (std::uint32_t step = 0; step < substeps; ++step) {
@@ -647,7 +668,9 @@ void PhysicsScene3D::Impl::stepInflatedBalls(float deltaTime) {
                 -0.5f * h * (w.x * q.x + w.y * q.y + w.z * q.z) };
             state.orientation = Quaternion { q.x + spin.x, q.y + spin.y, q.z + spin.z, q.w + spin.w }.normalized();
         }
+        substepNets(h, step, substeps);
     }
+    finishNets(deltaTime);
 
     for (BallWork& ball : balls) {
         auto& record = *ball.record;

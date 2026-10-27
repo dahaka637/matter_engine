@@ -2,9 +2,10 @@
 
 #include "Engine/Athlete/AthleteRuntime3D.hpp"
 #include "Engine/Athlete/AthleteTelemetry3D.hpp"
-#include "Engine/Athlete/Dribble/BodyForecast3D.hpp"
+#include "Engine/Athlete/Reference/BodyForecast3D.hpp"
 #include "Engine/Athlete/Physical/PhysicalCorrections3D.hpp"
 #include "Engine/Physics/RagdollProfile3D.hpp"
+#include "Engine/Physique/PlayerPhysique3D.hpp"
 #include "Engine/RL/Contract/VectorLayout3D.hpp"
 
 #include <array>
@@ -121,38 +122,52 @@ struct LocomotionAuthority3D {
 //   virada e o que o professor pede; sem ele (ou desligado), tudo zero.
 class LocomotionContract3D {
 public:
-    static constexpr std::uint32_t Version = 3;
+    // v4 (21/10, plano 04_locomocao/plano_rl_sobre_classico.md C): a acao chega
+    // como latente e o tanh e aplicado aqui (decide); sem a cabeca de ganho;
+    // escalas e taxas maiores; a pose com escala por eixo (0,6 do intervalo
+    // da junta); a velocidade-alvo segue a correcao; a entrada ganha o estado
+    // do impacto, o cambaleio, o tonus e a correcao aplicada.
+    static constexpr std::uint32_t Version = 4;
     static constexpr std::size_t HistoryDecisions = 3;
     // A decisao a 30 Hz (o seguimento a 120 Hz): a rampa entre decisoes.
     static constexpr int TicksPerDecision = 4;
     // As escalas maximas (o -1..1 da rede no corpo) e os limites de taxa
     // (por segundo), por canal.
-    static constexpr float TouchdownMeters = 0.30f;
-    static constexpr float SwingUpMeters = 0.10f;
-    static constexpr float SwingDownMeters = 0.03f;
-    static constexpr float PhaseLeadCycles = 0.10f;
-    static constexpr float CadenceOctaves = 0.5f;
-    static constexpr float StrideOctaves = 0.5f;
-    static constexpr float LeanRadians = 0.30f;
-    static constexpr float ComMeters = 0.20f;
-    static constexpr float PelvisUpMeters = 0.05f;
-    static constexpr float PelvisDownMeters = 0.15f;
-    static constexpr float ContactAcceleration = 4.0f;
-    static constexpr float JointRadians = 0.6f;
+    static constexpr float TouchdownMeters = 0.40f;
+    static constexpr float SwingUpMeters = 0.15f;
+    static constexpr float SwingDownMeters = 0.05f;
+    static constexpr float PhaseLeadCycles = 0.15f;
+    static constexpr float CadenceOctaves = 1.0f;
+    static constexpr float StrideOctaves = 1.0f;
+    static constexpr float LeanRadians = 0.50f;
+    static constexpr float ComMeters = 0.25f;
+    static constexpr float PelvisUpMeters = 0.08f;
+    static constexpr float PelvisDownMeters = 0.20f;
+    static constexpr float ContactAcceleration = 6.0f;
+    // A pose: a escala de cada eixo e JointRangeShare x o intervalo da junta;
+    // JointRadians e so o teto da fase cheia (nao corta nada).
+    static constexpr float JointRangeShare = 0.60f;
+    static constexpr float JointRadians = 3.2f;
     static constexpr float GainOctaves = 1.0f;
-    static constexpr float TouchdownRate = 1.5f;
-    static constexpr float SwingRate = 0.5f;
-    static constexpr float PhaseLeadRate = 0.5f;
-    static constexpr float OctaveRate = 1.0f;
-    static constexpr float LeanRate = 1.5f;
-    static constexpr float ComRate = 0.6f;
-    static constexpr float PelvisRate = 0.3f;
-    static constexpr float ContactRate = 10.0f;
-    static constexpr float JointRate = 2.0f;
+    static constexpr float TouchdownRate = 4.0f;
+    static constexpr float SwingRate = 1.5f;
+    static constexpr float PhaseLeadRate = 1.5f;
+    static constexpr float OctaveRate = 4.0f;
+    static constexpr float LeanRate = 3.0f;
+    static constexpr float ComRate = 2.0f;
+    static constexpr float PelvisRate = 1.0f;
+    static constexpr float ContactRate = 30.0f;
+    static constexpr float JointRate = 8.0f;
     static constexpr float GainRate = 2.0f;
     static constexpr float TurnGateRate = 4.0f;
 
-    explicit LocomotionContract3D(const RagdollProfile3D& profile);
+    // player (o corpo variavel, 26/10): a entrada ganha no fim "jogador.altura"
+    // ((H - 1,80)/0,10) e "jogador.massa" ((M - 80)/10) desse corpo, e as
+    // escalas, os tetos e as taxas das acoes em metros (o pouso, a altura do
+    // balanco, o centro de massa, a altura da pelve) vao x s (altura/1,80; a
+    // mesma acao e o mesmo gesto no corpo em escala). O perfil e o desse corpo.
+    // Sem ele: o contrato de antes (a mesma impressao).
+    explicit LocomotionContract3D(const RagdollProfile3D& profile, const PlayerBody3D* player = nullptr);
 
     [[nodiscard]] const RLVectorLayout3D& observationLayout() const { return m_observation; }
     [[nodiscard]] const RLVectorLayout3D& actionLayout() const { return m_action; }
@@ -161,6 +176,8 @@ public:
     // A impressao do contrato (os nomes e unidades dos canais, a versao e o
     // corpo): vai no checkpoint; um checkpoint de outro contrato nao carrega.
     [[nodiscard]] std::uint64_t hash() const { return m_hash; }
+    // A escala do canal no lado do sinal (o -1..1 no valor fisico).
+    [[nodiscard]] float channelScale(std::size_t channel, bool positive) const;
     // Os eixos atuados (link * 3 + eixo), na ordem dos canais.
     [[nodiscard]] std::span<const std::uint32_t> actuatedAxes() const { return m_axes; }
 
@@ -212,7 +229,12 @@ private:
     struct ChannelSpec {
         Channel kind = Channel::Joint;
         std::uint32_t index = 0;
+        // (A pose: a escala do eixo, rad.)
+        float scale = 0.0f;
     };
+    // Os canais em metros (vao x s no corpo variavel).
+    [[nodiscard]] static bool metric(Channel kind);
+
     const RagdollProfile3D* m_profile = nullptr;
     std::vector<ChannelSpec> m_specs;
     RLVectorLayout3D m_observation;
@@ -224,6 +246,10 @@ private:
     // cabeca (-1 sem o link).
     std::array<int, 6> m_keyParts { -1, -1, -1, -1, -1, -1 };
     std::array<Vec3, 2> m_hipInBody {};
+    // O corpo variavel: os dois canais (os valores) e a escala dos metros.
+    bool m_player = false;
+    std::array<float, 2> m_playerInput {};
+    float m_length = 1.0f;
     std::uint64_t m_hash = 0;
 };
 

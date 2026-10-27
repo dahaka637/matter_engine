@@ -80,10 +80,19 @@ void PlayerInspectorScreen::load(bool keepView) {
     PlayerModelOptions options;
     options.meshSource = m_meshSource;
     const std::filesystem::path manifest = m_options.manifest;
+    const PlayerBody3D body { m_bodyHeightCm * 0.01f, m_bodyMassKg };
     m_pending = PendingLoad { std::async(std::launch::async,
-                                  [manifest, options] {
+                                  [manifest, options, body] {
                                       LoadOutcome outcome;
                                       outcome.loaded = loadPlayerModel(manifest, options, &outcome.error);
+                                      if (outcome.loaded && !isBaseBody3D(body)) {
+                                          try {
+                                              applyPlayerBody(*outcome.loaded, body);
+                                          } catch (const std::exception& exception) {
+                                              outcome.loaded.reset();
+                                              outcome.error = std::string("corpo: ") + exception.what();
+                                          }
+                                      }
                                       return outcome;
                                   }),
         keepView };
@@ -253,7 +262,7 @@ void PlayerInspectorScreen::drawSidebar(float height) {
 
 void PlayerInspectorScreen::drawRegionList(float height) {
     const InspectionModel* model = m_session.model();
-    const float listHeight = std::max(ui(120.0f), height - ui(552.0f));
+    const float listHeight = std::max(ui(120.0f), height - ui(640.0f));
     ImGui::BeginChild("InspectorRegionList", { -1.0f, listHeight }, false);
     if (model == nullptr) {
         ImGui::PushTextWrapPos(0.0f);
@@ -272,6 +281,7 @@ void PlayerInspectorScreen::drawRegionList(float height) {
         }
     }
     ImGui::EndChild();
+    drawBodyPanel();
     drawBendPanel();
 }
 
@@ -342,6 +352,29 @@ void PlayerInspectorScreen::drawPlayerBar() {
     ImGui::EndDisabled();
 }
 
+void PlayerInspectorScreen::drawBodyPanel() {
+    ImGui::Dummy({ 1.0f, ui(6.0f) });
+    panelHeader("CORPO");
+    ImGui::BeginDisabled(m_session.model() == nullptr);
+    bool released = false;
+    ImGui::SetNextItemWidth(-ui(108.0f));
+    ImGui::SliderFloat("Altura", &m_bodyHeightCm, MinimumBodyHeightMeters * 100.0f, MaximumBodyHeightMeters * 100.0f,
+        "%.0f cm", ImGuiSliderFlags_AlwaysClamp);
+    released |= ImGui::IsItemDeactivatedAfterEdit();
+    ImGui::SetNextItemWidth(-ui(108.0f));
+    ImGui::SliderFloat("Peso", &m_bodyMassKg, MinimumBodyMassKg, MaximumBodyMassKg, "%.0f kg",
+        ImGuiSliderFlags_AlwaysClamp);
+    released |= ImGui::IsItemDeactivatedAfterEdit();
+    ImGui::EndDisabled();
+    if (released) setBody(std::round(m_bodyHeightCm), std::round(m_bodyMassKg));
+}
+
+void PlayerInspectorScreen::setBody(float heightCm, float massKg) {
+    m_bodyHeightCm = std::clamp(heightCm, MinimumBodyHeightMeters * 100.0f, MaximumBodyHeightMeters * 100.0f);
+    m_bodyMassKg = std::clamp(massKg, MinimumBodyMassKg, MaximumBodyMassKg);
+    load(true);
+}
+
 void PlayerInspectorScreen::drawBendPanel() {
     ImGui::Dummy({ 1.0f, ui(6.0f) });
     panelHeader("DOBRAR (TESTE)");
@@ -356,7 +389,7 @@ void PlayerInspectorScreen::drawBendPanel() {
         { "Quadril E", -30.0f, 130.0f }, { "Abrir D", 0.0f, 60.0f }, { "Abrir E", 0.0f, 60.0f },
         { "Tornozelo D", -45.0f, 45.0f }, { "Tornozelo E", -45.0f, 45.0f }, { "Baixar braço D", -60.0f, 90.0f },
         { "Baixar braço E", -60.0f, 90.0f }, { "Braço à frente D", -45.0f, 90.0f }, { "Braço à frente E", -45.0f, 90.0f },
-        { "Cotovelo D", 0.0f, 140.0f }, { "Cotovelo E", 0.0f, 140.0f }, { "Coluna", -30.0f, 45.0f },
+        { "Cotovelo D", -5.0f, 145.0f }, { "Cotovelo E", -5.0f, 145.0f }, { "Coluna", -30.0f, 45.0f },
         { "Pescoço", -30.0f, 40.0f }, { "Pulso D", -80.0f, 80.0f }, { "Pulso E", -80.0f, 80.0f },
         { "Pulso de lado D", -30.0f, 30.0f }, { "Pulso de lado E", -30.0f, 30.0f }, { "Dedos D", 0.0f, 100.0f },
         { "Dedos E", 0.0f, 100.0f }, { "Polegar D", -20.0f, 80.0f }, { "Polegar E", -20.0f, 80.0f },
@@ -399,6 +432,20 @@ void PlayerInspectorScreen::drawBendPanel() {
             - model->skeleton.joints[static_cast<std::size_t>(upper)].bind.position;
         return std::atan2(-along.z, std::abs(along.y)) / DegreesToRadians;
     };
+    // O cotovelo mostra a dobra dele (0 = reto, ate 145; -5 um pouco alem): a
+    // ligacao ja vem com ele dobrado (~33 graus) e somar por cima dela nao
+    // deixava esticar.
+    const auto elbowBend = [&](bool right) {
+        const InspectionModel* model = m_session.model();
+        if (model == nullptr) return 0.0f;
+        const int upper = model->skeleton.find(right ? "RightUpperArm" : "LeftUpperArm");
+        const int lower = model->skeleton.find(right ? "RightForearm" : "LeftForearm");
+        const int hand = model->skeleton.find(right ? "RightHand" : "LeftHand");
+        if (upper < 0 || lower < 0 || hand < 0) return 0.0f;
+        const auto at = [&](int j) { return model->skeleton.joints[static_cast<std::size_t>(j)].bind.position; };
+        const float cosine = dot(safeNormalized(at(lower) - at(upper), {}), safeNormalized(at(hand) - at(lower), {}));
+        return std::acos(std::clamp(cosine, -1.0f, 1.0f)) / DegreesToRadians;
+    };
     for (const int member : Members[static_cast<std::size_t>(std::clamp(m_bendGroup, 0, 3))]) {
         if (member < 0) continue;
         const std::size_t index = static_cast<std::size_t>(member);
@@ -409,6 +456,13 @@ void PlayerInspectorScreen::drawBendPanel() {
             float shown = drop + m_bends[index];
             if (ImGui::SliderFloat(Controls[index].label, &shown, -90.0f, 85.0f, "%.0f°")) {
                 m_bends[index] = shown - drop;
+                changed = true;
+            }
+        } else if (index == 12 || index == 13) {
+            const float bind = elbowBend(index == 12);
+            float shown = bind + m_bends[index];
+            if (ImGui::SliderFloat(Controls[index].label, &shown, Controls[index].minimum, Controls[index].maximum, "%.0f°")) {
+                m_bends[index] = shown - bind;
                 changed = true;
             }
         } else {

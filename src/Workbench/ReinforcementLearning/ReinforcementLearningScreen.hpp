@@ -172,7 +172,7 @@ private:
     std::unique_ptr<TrainerLink3D> m_link;
     std::vector<std::string> m_runs;
     std::string m_run;
-    std::string m_mode = "equilibrado";
+    std::string m_mode = "maximo";
     float m_uiScale = 1.0f;
 
     // Os exercicios da tarefa do treino mostrado (ids e nomes) e o do visualizador.
@@ -180,6 +180,9 @@ private:
     std::vector<std::string> m_drillNames;
     // A fase de cada exercicio (0: sem fase, no estilo de sempre).
     std::vector<int> m_drillPhases;
+    // A categoria de cada exercicio (vazia: a lista sem categorias) e o peso dele.
+    std::vector<std::string> m_drillCategories;
+    std::vector<float> m_drillWeights;
     // Os exercicios que a escada ainda vai ativar (nomes e fases): aparecem apagados e sem clique.
     std::vector<std::string> m_futureNames;
     std::vector<int> m_futurePhases;
@@ -210,6 +213,10 @@ private:
     std::array<float, 2> m_pelvisOnScreen { -1.0f, -1.0f };
     // Onde o olho (o ponto para onde o comando manda olhar) aparece (0 a 1; -1 fora).
     std::array<float, 2> m_lookOnScreen { -1.0f, -1.0f };
+    // O rotulo do empurrao na tela (fracao da imagem; newtons 0 sem empurrao).
+    struct PushLabel {
+        float x = 0.0f, y = 0.0f, newtons = 0.0f, fade = 0.0f;
+    } m_pushLabel;
     bool m_paused = false;
     struct ReplayFrame {
         RagdollState3D state;
@@ -226,6 +233,8 @@ private:
     std::vector<float> m_action;
     std::string m_viewerError;
     // O comando na mao (no lugar do piloto) e a velocidade dele.
+    float m_motorLook = 0.0f;
+    float m_locomotionAssist = 0.0f;
     bool m_manual = false;
     float m_manualSpeed = 1.0f;
 
@@ -253,6 +262,7 @@ private:
     float m_historyWatch = 0.0f;
     // Os graficos no lugar do visualizador, um embaixo do outro, e a janela de tempo deles.
     bool m_chartsExpanded = false;
+    bool m_chartsCompact = true; // expandido: todos os graficos cabendo na altura, sem rolar
     int m_chartWindow = 1;
     std::string m_notice;
     float m_noticeSeconds = 0.0f;

@@ -101,7 +101,8 @@ TrainingHistory3D TrackingViewer3D::readHistory(const std::filesystem::path& run
         nlohmann::json row = nlohmann::json::parse(line, nullptr, false);
         if (row.is_discarded() || !row.is_object()) continue;
         const std::string mode = row.value("modo", std::string());
-        if (mode == "parado" || mode == "giro" || mode == "giro_rapido") {
+        if (mode == "parado" || mode == "giro" || mode == "giro_rapido" || mode == "estrela" || mode == "estrela_fixo"
+            || mode == "estrela_girando") {
             // Os exercicios parados: o portao inteiro e do exercicio (chegou ao fim ou nao).
             TrainingEvaluationPoint3D point;
             point.iteration = row.value("rodada", 0ull);
@@ -159,11 +160,17 @@ TrackingViewer3D::TrackingViewer3D(const std::filesystem::path& assetsDirectory,
     impl.drill = drill == "parado" ? TrackingDrill3D::Idle
         : drill == "giro"          ? TrackingDrill3D::Turn
         : drill == "giro_rapido"   ? TrackingDrill3D::FastTurn
+        : drill == "estrela"       ? TrackingDrill3D::Star
+        : drill == "estrela_fixo"  ? TrackingDrill3D::StarFixed
+        : drill == "estrela_girando" ? TrackingDrill3D::StarTurning
                                    : TrackingDrill3D::Move;
     // O modo de avaliacao do exercicio: o recomeco de cada episodio volta a ele.
     const TrackingEvaluation3D mode = impl.drill == TrackingDrill3D::Idle ? TrackingEvaluation3D::Idle
         : impl.drill == TrackingDrill3D::Turn                            ? TrackingEvaluation3D::Turn
         : impl.drill == TrackingDrill3D::FastTurn                        ? TrackingEvaluation3D::FastTurn
+        : impl.drill == TrackingDrill3D::Star                            ? TrackingEvaluation3D::Star
+        : impl.drill == TrackingDrill3D::StarFixed                       ? TrackingEvaluation3D::StarFixed
+        : impl.drill == TrackingDrill3D::StarTurning                     ? TrackingEvaluation3D::StarTurning
                                                                          : TrackingEvaluation3D::Forward;
     TrackingTrainingSettings3D settings;
     settings.assetsDirectory = assetsDirectory.string();
@@ -171,6 +178,7 @@ TrackingViewer3D::TrackingViewer3D(const std::filesystem::path& assetsDirectory,
     settings.threads = 1;
     settings.seed = seed;
     settings.evaluation = true;
+    settings.realFallOnly = true;
     settings.evaluationSpeed = DefaultSpeed;
     settings.evaluationMode = mode;
     // O visualizador nao recomeca pelo tempo (so pela queda ou o afastamento).
@@ -263,6 +271,13 @@ BodyWorldView3D TrackingViewer3D::view() const {
             (body.links[impl.chest].orientation * profile.links[impl.chest].modelOrientation.conjugate()).normalized();
         const Vec3 forward = r.rotate({ 1.0f, 0.0f, 0.0f });
         view.chestHeading = std::atan2(forward.y, forward.x);
+    }
+    Vec3 target;
+    bool waiting = false;
+    if (impl.batch->starView(0, view.starPoints, target, waiting)) {
+        view.hasTarget = true;
+        view.target = target;
+        view.targetStop = waiting;
     }
     if (impl.pushSeconds > 0.0f) {
         view.pushLink = static_cast<int>(impl.chest);

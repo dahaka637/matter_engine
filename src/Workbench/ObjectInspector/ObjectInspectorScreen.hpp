@@ -7,6 +7,7 @@
 #include "Engine/Modeling/Skeleton/Skeleton.hpp"
 #include "Engine/Objects/ObjectPhysicsLab3D.hpp"
 #include "Engine/Physics/PhysicsEngine3D.hpp"
+#include "Workbench/ObjectInspector/NetLabView.hpp"
 #include "Workbench/PlayerInspector/CanvasTarget.hpp"
 
 #include <cstdint>
@@ -66,11 +67,21 @@ public:
     [[nodiscard]] const ObjectPhysicsLab3D* lab() const { return m_lab.get(); }
     [[nodiscard]] const Modeling::Image& image() const { return m_image; }
     [[nodiscard]] const Modeling::OrbitCamera& camera() const { return m_camera; }
+    // A trave (um objeto com rede): a aba dela no lugar do teste fisico, com a
+    // cena da rede e os chutes.
+    [[nodiscard]] bool goalMode() const { return m_object && m_object->net; }
+    [[nodiscard]] NetLabView* netView() { return m_netView && m_netView->active() ? m_netView.get() : nullptr; }
+    void setTimeScale(float scale) { m_timeScale = scale; }
+    // A camera no angulo dado, enquadrando a cena (os botoes de vista).
+    void setCameraAngle(float yawDegrees, float pitchDegrees) { frame(yawDegrees, pitchDegrees, false); }
 
 private:
     void drawSidebar(float height);
     void drawProperties();
     void drawPhysics();
+    void drawGoal();
+    // A cena da trave recomeca (a rede assenta) com o objeto de agora.
+    void startGoal();
     // Os botoes de baixo da lateral (os da aba).
     void drawActions();
     void drawToolbar();
@@ -143,6 +154,13 @@ private:
     std::vector<std::size_t> m_labShadows;
     std::vector<Vec3> m_labLocal;
     std::vector<Vec3> m_labPositions;
+
+    // A trave: a cena dela, a espera para recomecar depois de mexer num
+    // parametro (o slider nao reassenta a rede a cada quadro) e os objetos
+    // sem rede que ela pode receber (a caixa).
+    std::unique_ptr<NetLabView> m_netView;
+    float m_goalRestartSeconds = -1.0f;
+    std::vector<Modeling::ProceduralObject> m_throwables;
 
     std::string m_notice;
     float m_noticeSeconds = 0.0f;

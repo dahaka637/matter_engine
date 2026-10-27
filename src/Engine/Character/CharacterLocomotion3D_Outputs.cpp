@@ -74,7 +74,7 @@ void CharacterLocomotion3D::stepOutputs(Tick& t) {
     guide.rootRotationAuthority = rootAuthority;
     guide.releaseOnInteraction = true;
     guide.rootPositionWorld = targetRootPosition;
-    m_output.navigationAnchorWorld = targetRootPosition - m_ballBodyDelta
+    m_output.navigationAnchorWorld = targetRootPosition
         + Vec3 { input.rootPositionWorld.x - navigationRoot.x,
             input.rootPositionWorld.y - navigationRoot.y, 0.0f };
     guide.rootOrientationWorld = targetRootOrientation;

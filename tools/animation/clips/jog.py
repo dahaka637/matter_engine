@@ -56,6 +56,15 @@ JOG = GaitSpec(
     spine_flexion=3.0,
     shoulder_turn=16.0,
     head_nod=2.0,
+    # O tronco vivo (24/10, pedido do usuario: estatico demais, robotico): a
+    # coluna balanca na passada, o peito acompanha parte da queda do quadril e
+    # a cabeca vai um pouco com os ombros - numeros perto da referencia Mixamo
+    # Running medida (coluna 5-13 graus por eixo, cabeca 3-4 sobre o peito).
+    spine_bounce=4.0,
+    head_bob=1.0,
+    chest_level=0.4,
+    head_steady=0.85,
+    neck_upright=6.0,
     arm_lowered=RUNNING_ARM_LOWERED,
     arm_inward_roll=RUNNING_ARM_INWARD_ROLL,
     wrist_flexion=RUNNING_WRIST_FLEXION,

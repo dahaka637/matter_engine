@@ -38,8 +38,6 @@ void WorkbenchApp::drawMainMenu() {
         UI::FontAwesome::Cube, "Objetos");
     const std::string reinforcement = UI::FontAwesome::label(
         UI::FontAwesome::Brain, "Treino RL");
-    const std::string ballTouch = UI::FontAwesome::label(
-        UI::FontAwesome::Futbol, "Toque na bola");
     const std::string playerInspector = UI::FontAwesome::label(
         UI::FontAwesome::MagnifyingGlass, "Inspeção de jogador");
     const std::string settings = UI::FontAwesome::label(
@@ -58,10 +56,6 @@ void WorkbenchApp::drawMainMenu() {
     if (navigationButton(reinforcement.c_str(), false,
             { -1.0f, buttonHeight })) {
         m_screen = Screen::ReinforcementLearning;
-    }
-    if (navigationButton(ballTouch.c_str(), false,
-            { -1.0f, buttonHeight })) {
-        m_screen = Screen::BallTouchViewer;
     }
     if (navigationButton(playerInspector.c_str(), false,
             { -1.0f, buttonHeight })) {

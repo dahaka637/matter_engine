@@ -16,7 +16,8 @@ class CharacterLayers final : public JPH::ObjectLayerFilter {
 public:
     explicit CharacterLayers(bool ignore, bool proxy = false) : ignore(ignore), proxy(proxy) {}
     bool ShouldCollide(JPH::ObjectLayer layer) const override {
-        if (proxy) return layer == JoltObjectLayers::NonMoving;
+        if (proxy) return layer == JoltObjectLayers::NonMoving || layer == JoltObjectLayers::PlayerBarrier
+            || layer == JoltObjectLayers::CapsuleBarrier;
         return layer != JoltObjectLayers::Character && (!ignore || layer != JoltObjectLayers::Ragdoll);
     }
     bool ignore;

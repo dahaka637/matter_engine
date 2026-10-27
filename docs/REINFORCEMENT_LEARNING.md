@@ -5,7 +5,7 @@ aprende a se mover sozinho: PPO com o juiz de estilo (AMP) como peso que o
 usuário abaixa até zero. O contrato 1 (a imitação residual, o professor, as
 tarefas H1 a H7 e o Corpo v15) foi removido em 15/10/2026: só o Corpo v2
 existe. O plano, a escada de recuperação e o diário ficam no vault
-(`30_Projects/matter_engine/legado/rl_v1/` e `diario/rl_locomocao/`);
+(`IA_Brain/legado/rl_v1/` e `diario/rl_locomocao/`);
 aqui fica o que está implementado e como usar.
 
 ## A recuperação: o R1 (14/10/2026, noite)

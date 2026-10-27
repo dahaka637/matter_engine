@@ -44,6 +44,27 @@ AthleteControlView3D athleteControlView3D(const AthleteState3D& athlete) {
     view.standingScale = adaptive.settings().legsAssistRetained;
     view.pelvisForceWorld = adaptive.output().rootForceWorld;
     view.pelvisTorqueWorld = adaptive.output().rootTorqueWorld;
+    view.chosenStanding = adaptive.settings().standingWeightAssistScale >= 0.0f
+        ? adaptive.settings().standingWeightAssistScale : view.standingScale;
+    view.chosenWalking = adaptive.settings().walkingWeightAssistScale >= 0.0f
+        ? adaptive.settings().walkingWeightAssistScale : view.walkingScale;
+    view.impactFloor = legacy.impactAssist.floorLevel();
+    view.impactProgress = legacy.impactAssist.recoverProgress();
+    view.impactSeconds = legacy.impactAssist.recoverSeconds();
+    view.stagger = legacy.locomotion.telemetry().stagger;
+    {
+        const std::vector<float>& strength = adaptive.output().jointStrength;
+        if (!strength.empty()) {
+            float sum = 0.0f, low = 1.0f;
+            for (float s : strength) {
+                sum += s;
+                low = std::min(low, s);
+            }
+            view.muscleMean = sum / static_cast<float>(strength.size());
+            view.muscleMinimum = low;
+        }
+    }
+    view.policyApplied = athlete.policyApplied;
     const float acceleration = physicalNavigationAcceleration3D(view.walkingScale);
     view.navigation = { acceleration, acceleration, acceleration, 10.0f };
     const CharacterContactPlan3D& plan = legacy.locomotion.contactPlan();

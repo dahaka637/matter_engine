@@ -1,9 +1,12 @@
 #pragma once
 
+#include "Engine/Appearance/Surface/SurfaceTemplate.hpp"
 #include "Engine/Geometry/MeshData3D.hpp"
 #include "Engine/Math/Mat4.hpp"
 #include "Engine/Physics/RagdollProfile3D.hpp"
 #include <cstdint>
+#include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <utility>
@@ -52,8 +55,30 @@ struct RagdollHelperBone3D {
     // na ligacao da malha).
     Vec3 pivot;
     // Com eixo (no espaco da malha), so a parte do giro em volta dele (a
-    // flexao do quadril); sem, o giro inteiro.
+    // flexao do quadril); sem, o giro inteiro. sign: so um sentido desse giro
+    // (+1 o positivo, -1 o negativo; 0 os dois).
     Vec3 axis;
+    float sign = 0.0f;
+    // A clavicula: so o quanto o osso de baixo (axis, a direcao dele na
+    // ligacao) sobe acima da ligacao, em volta do eixo frente-tras, em volta
+    // do pivo (fixo: a junta esterno-clavicular); e leva junto os ossos da
+    // paleta em "carried" (o braco) - a mesma da modelagem (derivedCarry).
+    bool carry = false;
+    std::vector<std::size_t> carried;
+    // O teto suave da subida (radianos; 0 sem teto) - o da modelagem (derivedCap).
+    float cap = 0.0f;
+    // A junta do ombro na ligacao (no espaco da malha): o ponto que a clavicula
+    // leva; sem ela, a origem do osso de baixo.
+    std::optional<Vec3> root;
+    // A rampa da fracao com o osso de baixo erguido (rampAlong, a direcao dele
+    // na ligacao; radianos) - a da modelagem (derivedRamp*); rampFraction 0 sem.
+    float rampFraction = 0.0f;
+    float rampStart = 0.0f;
+    float rampEnd = 0.0f;
+    Vec3 rampAlong;
+    // E o deslocamento no fim da rampa (no referencial do osso de cima, vezes a
+    // rampa) - o da modelagem (derivedRampOffset).
+    Vec3 rampOffset;
 };
 
 // A character pairs a physical profile with a weighted visual surface.
@@ -113,6 +138,19 @@ struct RagdollCharacter3D {
     // facetado (a normal de cada face), no meio a mistura. Sem ele, o de
     // flatShaded.
     float facet = 1.0f;
+    // O sistema de aparencia (com a pele que o tem; vazios sem ele): por vertice
+    // da pele, o endereco no atlas do uniforme (UV0), o da identificacao (UV1), a
+    // regiao, a zona e o vertice de origem na modelagem; e o template de
+    // superficie (manifesto "surface"), por triangulo na ordem da pele.
+    struct SurfaceVertex {
+        Vec2 kitUv { -1.0f, -1.0f };
+        Vec2 identityUv { -1.0f, -1.0f };
+        std::int16_t region = -1;
+        std::int8_t identity = -1;
+        std::uint32_t source = 0;
+    };
+    std::vector<SurfaceVertex> surfaceVertices;
+    std::shared_ptr<const Appearance::SurfaceTemplate> surface;
 };
 
 [[nodiscard]] RagdollCharacter3D loadRagdollCharacter3D(const std::string& manifestPath);

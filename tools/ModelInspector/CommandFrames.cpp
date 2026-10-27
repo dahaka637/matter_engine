@@ -27,6 +27,7 @@ using namespace Modeling;
 // MatterRLJointProbe) ou de um episodio do treino (matter-rl folha). Formato
 // (linhas):
 //   S <nome do cenario>
+//   corpo <altura m> <massa kg>   (logo depois do S, so fora do corpo de hoje)
 //   F <t> <estado> <fase>
 //   C|B <link> <centro x y z> <orientacao x y z w> ...   (o colisor do link)
 //   K <bola x y z> [velocidade x y z]
@@ -89,6 +90,7 @@ struct DumpFrame {
 
 struct DumpScenario {
     std::string name;
+    std::optional<PlayerBody3D> body;
     std::vector<DumpFrame> frames;
 };
 
@@ -107,6 +109,9 @@ std::vector<DumpScenario> readDump(const std::string& path) {
             if (!scenario.name.empty() && scenario.name.front() == ' ') scenario.name.erase(0, 1);
             scenarios.push_back(std::move(scenario));
             frame = nullptr;
+        } else if (tag == "corpo") {
+            PlayerBody3D body;
+            if (!scenarios.empty() && in >> body.heightMeters >> body.massKg) scenarios.back().body = body;
         } else if (tag == "F") {
             if (scenarios.empty()) scenarios.push_back({ "?", {} });
             DumpFrame next;
@@ -230,7 +235,7 @@ std::size_t nearestFrame(const DumpScenario& scenario, float t) {
 
 } // namespace
 
-int runFrames(const ModelContext& context, const CommandLine& line) {
+int runFrames(const ModelContext& loadedContext, const CommandLine& line) {
     if (!line.has("dump")) {
         std::cerr << "quadros: --dump <arquivo> (a gravacao da sonda ou do harness)\n";
         return 2;
@@ -263,6 +268,18 @@ int runFrames(const ModelContext& context, const CommandLine& line) {
         std::cerr << "quadros: cenario sem quadros\n";
         return 2;
     }
+    // O corpo do cenario (o perfil dele inverte os colisores do dump), se --corpo nao pedir outro.
+    std::optional<ModelContext> bodied;
+    if (scenario->body && !line.has("corpo")) {
+        bodied = loadedContext;
+        try {
+            applyPlayerBody(bodied->loaded, *scenario->body);
+        } catch (const std::exception& exception) {
+            std::cerr << "quadros: corpo do cenario: " << exception.what() << '\n';
+            return 2;
+        }
+    }
+    const ModelContext& context = bodied ? *bodied : loadedContext;
 
     const RagdollCharacter3D& character = *context.loaded.character;
     const InspectionModel& model = context.model();

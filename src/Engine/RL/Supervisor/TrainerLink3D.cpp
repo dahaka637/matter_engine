@@ -88,7 +88,7 @@ void TrainerLink3D::send(const std::string& command, const std::string& argument
     {
         // O treinador de processo proprio: parar (e pausar, que ele nao tem) e salvar por sinal.
         const TrainerStatus3D now = status();
-        if (now.alive && now.pid > 0) {
+        if (now.alive && now.pid > 0 && now.task != "motor_basico") {
             if (command == "parar" || command == "pausar") ::kill(now.pid, SIGTERM);
             else if (command == "salvar") ::kill(now.pid, SIGUSR1);
             std::lock_guard lock(m_mutex);
@@ -179,6 +179,10 @@ bool TrainerLink3D::start(const std::string& task, const std::string& mode, std:
             && !config["comando"].empty()) {
             arguments.clear();
             for (const auto& item : config["comando"]) arguments.push_back(item.get<std::string>());
+            if (config.value("kind", std::string()) == "motor") {
+                for (std::size_t i = 0; i + 1 < arguments.size(); ++i)
+                    if (arguments[i] == "--modo") arguments[i + 1] = mode;
+            }
             launcher = arguments.front();
             folder = config.value("pasta", std::string());
             log = (directory / "treino.out").string();
@@ -299,6 +303,8 @@ void TrainerLink3D::readStatus(const std::string& json, bool alive) {
                     entry.solver = solver;
                     entry.falls = number(metrics, "falls");
                     entry.velocityError = number(metrics, "velocity_error_median", -1.0);
+                    entry.chestErrorDegrees = number(metrics, "chest_error_degrees", -1.0);
+                    entry.drift = number(metrics, "drift_p90", -1.0);
                     entry.usefulSteps = number(metrics, "useful_steps", -1.0);
                     entry.sustained = number(metrics, "sustained", -1.0);
                     entry.slip = number(metrics, "slip", -1.0);

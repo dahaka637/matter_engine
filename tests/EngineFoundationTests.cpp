@@ -170,10 +170,12 @@ void testRagdollCharacterSkin() {
   require(character.visualBones.size() == fingerBones + toeBones,
           "Osso visual sem tipo");
   // No quadril, quatro (1/4, 1/2 e 3/4 do giro e a da dobra da frente, so
-  // a flexao): 18 no total.
-  require(character.helperBones.size() == 18,
-          "Pele sem os auxiliares do joelho, quadril (quatro), tornozelo, "
-          "ombro, cotovelo e pulso");
+  // a flexao), mais o do gluteo, a clavicula (que leva o braco, 23/10) e as
+  // duas da axila de cada lado (a junta da axila e a do volume, 26/10): 26
+  // no total.
+  require(character.helperBones.size() == 26,
+          "Pele sem os auxiliares do joelho, quadril (quatro), gluteo, "
+          "tornozelo, ombro, axila, clavicula, cotovelo e pulso");
   require(palette.size() == character.boneLinkIndices.size() +
                                 character.visualBones.size() +
                                 character.helperBones.size(),

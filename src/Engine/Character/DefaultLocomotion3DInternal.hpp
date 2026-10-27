@@ -138,7 +138,7 @@ inline AnimationTransformSample3D rootAt(const RagdollProfile3D& profile, const 
 // e a canela levam o tornozelo, o tornozelo orienta o pe (dentro dos
 // limites). weight mistura com a pose de antes.
 inline void solveFoot(const RagdollProfile3D& profile, std::vector<Vec3>& coordinates, std::size_t footIndex,
-    Vec3 target, Quaternion targetOrientation, float weight) {
+    Vec3 target, Quaternion targetOrientation, float weight, bool bentRetry = false) {
     if (weight <= 0.0f || footIndex == 0 || footIndex >= profile.links.size()) return;
     const RagdollLinkDefinition3D& foot = profile.links[footIndex];
     if (foot.parentIndex <= 0) return;
@@ -149,11 +149,36 @@ inline void solveFoot(const RagdollProfile3D& profile, std::vector<Vec3>& coordi
     const Vec3 anchorInShin = shin.modelOrientation.conjugate().rotate(anchor - shin.modelPosition);
     std::vector<Vec3> before;
     if (weight < 1.0f) before = coordinates;
-    solveRagdollChainPoint3D(profile, coordinates, shinIndex, anchorInShin, 2,
-        target + targetOrientation.rotate(anchorInFoot), 1.0f, 12);
+    const Vec3 ankle = target + targetOrientation.rotate(anchorInFoot);
+    solveRagdollChainPoint3D(profile, coordinates, shinIndex, anchorInShin, 2, ankle, 1.0f, 12);
     // (So le a canela: a cadeia ate ela.)
     RagdollAnimationPose3D pose;
     buildRagdollChainPose3D(profile, coordinates, pose, shinIndex);
+    // (A perna esticada e um ponto morto do IK: do joelho reto ele nao dobra, e
+    // o pe ficava ate 37 cm abaixo do alvo - o de 2,00 m subindo a escada
+    // correndo, a canela dentro do degrau (26/10). Se o tornozelo nao chega,
+    // de novo com o joelho dobrado a 60 graus, misturada pelo erro (nada ate 1
+    // cm, inteira a partir de 4): trocar de uma vez dava trancos no gesto.)
+    const auto miss = [&](const RagdollAnimationPose3D& p) {
+        return (p.linkPositions[shinIndex] + p.linkOrientations[shinIndex].rotate(anchorInShin) - ankle).length();
+    };
+    if (const float first = bentRetry ? miss(pose) : 0.0f; first > 0.01f) {
+        std::vector<Vec3> bent = coordinates;
+        for (std::size_t axis = 0; axis < 3; ++axis)
+            if (shin.inboundJoint.axes[axis].enabled)
+                setComponent(bent[shinIndex], axis, std::clamp(1.05f, shin.inboundJoint.axes[axis].minimumRadians,
+                    shin.inboundJoint.axes[axis].maximumRadians));
+        solveRagdollChainPoint3D(profile, bent, shinIndex, anchorInShin, 2, ankle, 1.0f, 12);
+        RagdollAnimationPose3D retry;
+        buildRagdollChainPose3D(profile, bent, retry, shinIndex);
+        if (miss(retry) < first) {
+            const float w = smoothStep((first - 0.01f) / 0.03f);
+            for (const int link : { shin.parentIndex, foot.parentIndex })
+                coordinates[static_cast<std::size_t>(link)] += (bent[static_cast<std::size_t>(link)]
+                    - coordinates[static_cast<std::size_t>(link)]) * w;
+            buildRagdollChainPose3D(profile, coordinates, pose, shinIndex);
+        }
+    }
     // orient_pe = orient_canela * canela^-1 * quadro * R * quadro^-1 * pe
     const Quaternion frame = foot.inboundJoint.frameModelOrientation;
     const Quaternion joint = frame.conjugate() * shin.modelOrientation * pose.linkOrientations[shinIndex].conjugate()

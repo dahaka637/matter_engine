@@ -63,6 +63,9 @@ struct PhysicalCorrections3D {
     // A pose: a correcao de cada eixo atuado (rad), indice link * 3 + eixo
     // (twist 0, swing1 1, swing2 2). Vazio: nenhuma.
     std::vector<float> jointResiduals;
+    // A velocidade da correcao (rad/s, o mesmo indice; vazio: nenhuma): a
+    // velocidade-alvo do motor segue o alvo corrigido (v4).
+    std::vector<float> jointResidualVelocities;
     // A rigidez: a escala dos ganhos por grupo (0 pernas e pes, 1 tronco e
     // cabeca, 2 bracos e maos); 1 nao muda nada.
     std::array<float, 3> gainScale { 1.0f, 1.0f, 1.0f };

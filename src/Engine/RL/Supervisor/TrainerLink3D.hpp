@@ -57,6 +57,8 @@ struct TrainerStatus3D {
     double lastStyle = 0.0;
     // A ultima avaliacao: as medidas de cada exercicio em cada solver.
     struct DrillEvaluation {
+        double chestErrorDegrees = -1.0;
+        double drift = -1.0;
         std::string drill;
         std::string solver;
         double falls = 0.0;

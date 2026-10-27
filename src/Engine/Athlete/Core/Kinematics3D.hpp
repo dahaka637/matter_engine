@@ -13,9 +13,8 @@ namespace MatterEngine {
 
 // Cinematica do corpo para o controle dos atletas: coordenadas de junta (o
 // vetor de rotacao no referencial de cada junta, como os clipes e os
-// motores), pose direta e o IK analitico da perna. Portado de
-// RagdollPoseKinematics3D e BallGesturePose3D (rework de 10/10/2026); os
-// antigos saem com o legado e fica esta copia.
+// motores), pose direta e o IK analitico da perna (as pegadas). Portado de
+// RagdollPoseKinematics3D (rework de 10/10/2026).
 
 [[nodiscard]] Quaternion athleteJointRotation3D(Vec3 coordinates);
 // A variacao da rotacao para uma variacao das coordenadas.

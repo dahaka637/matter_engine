@@ -420,25 +420,48 @@ GameRig buildGameRig(const RagdollCharacter3D& character, const GameRigAdjustmen
     // da camisa para tras e a barra fica em cima da perna levantada a 90
     // graus (menos que ~43%, a perna atravessava a barra); abrir de lado ou
     // torcer nao mexe nelas (girando junto, o pano virava no trote de lado).
-    constexpr float LiftFraction = 0.45f;
+    // So o sentido da flexao (o giro negativo em volta de y): com a coxa
+    // atras ela fica parada (antes girava ~18 graus a 40 graus de extensao).
+    // A do gluteo (GluteHelper) e o contrario: metade so da extensao - a coxa
+    // que vai para tras leva junto a parte de baixo do gluteo (hipGluteRise);
+    // na flexao ela fica com a pelve e o gluteo nao desce.
+    constexpr float LiftFraction = 0.45f, GluteFraction = 0.5f, Flexion = -1.0f, Extension = 1.0f;
     for (const char* side : { "Left", "Right" }) {
         const std::string prefix(side);
         const Vec3 none {}, across { 0.0f, 1.0f, 0.0f };
-        const std::array<std::tuple<std::string, std::string, std::string, float, Vec3>, 9> helpers { {
-            { prefix + "KneeHelper", prefix + "Thigh", prefix + "Shin", 0.5f, none },
-            { prefix + "HipHelper", "Pelvis", prefix + "Thigh", 0.5f, none },
-            { prefix + "HipHelper25", "Pelvis", prefix + "Thigh", 0.25f, none },
-            { prefix + "HipHelper75", "Pelvis", prefix + "Thigh", 0.75f, none },
-            { prefix + "HipLift", "Pelvis", prefix + "Thigh", LiftFraction, across },
-            { prefix + "AnkleHelper", prefix + "Shin", prefix + "Foot", 0.5f, none },
-            { prefix + "ShoulderHelper", "UpperChest", prefix + "UpperArm", 0.5f, none },
-            { prefix + "ElbowHelper", prefix + "UpperArm", prefix + "Forearm", 0.5f, none },
-            { prefix + "WristHelper", prefix + "Forearm", prefix + "Hand", 0.5f, none } } };
-        for (const auto& [name, from, to, fraction, axis] : helpers) {
+        const std::array<std::tuple<std::string, std::string, std::string, float, Vec3, float>, 10> helpers { {
+            { prefix + "KneeHelper", prefix + "Thigh", prefix + "Shin", 0.5f, none, 0.0f },
+            { prefix + "HipHelper", "Pelvis", prefix + "Thigh", 0.5f, none, 0.0f },
+            { prefix + "HipHelper25", "Pelvis", prefix + "Thigh", 0.25f, none, 0.0f },
+            { prefix + "HipHelper75", "Pelvis", prefix + "Thigh", 0.75f, none, 0.0f },
+            { prefix + "HipLift", "Pelvis", prefix + "Thigh", LiftFraction, across, Flexion },
+            { prefix + "AnkleHelper", prefix + "Shin", prefix + "Foot", 0.5f, none, 0.0f },
+            { prefix + "ShoulderHelper", "UpperChest", prefix + "UpperArm", 0.5f, none, 0.0f },
+            { prefix + "ElbowHelper", prefix + "UpperArm", prefix + "Forearm", 0.5f, none, 0.0f },
+            { prefix + "WristHelper", prefix + "Forearm", prefix + "Hand", 0.5f, none, 0.0f },
+            { prefix + "GluteHelper", "Pelvis", prefix + "Thigh", GluteFraction, across, Extension } } };
+        for (const auto& [name, from, to, fraction, axis, sign] : helpers) {
             const int upper = skeleton.find(from), lower = skeleton.find(to);
             if (upper < 0 || lower < 0) continue;
-            const int helper = addHelperJoint(skeleton, name, upper, lower, fraction, axis);
+            const int helper = addHelperJoint(skeleton, name, upper, lower, fraction, axis, sign);
             if (helper < 0) continue;
+            if (name == prefix + "GluteHelper") skeleton.joints[static_cast<std::size_t>(helper)].physicalShare = 0.0f;
+            // A do ombro gira mais com o braco muito erguido (25/10): 50% ate 60
+            // graus acima da ligacao, 65% na vertical (146). Com 50% fixos, a
+            // metade de baixo da manga ficava para tras e o braco erguido parecia
+            // dobrar no punho dela; com 75%, a base da manga abria uma asa atras
+            // da axila.
+            if (name == prefix + "ShoulderHelper") {
+                Joint& shoulder = skeleton.joints[static_cast<std::size_t>(helper)];
+                const int elbow = skeleton.find(prefix + "Forearm");
+                if (elbow >= 0) {
+                    shoulder.derivedRampFraction = 0.65f;
+                    shoulder.derivedRampStart = 60.0f * DegreesToRadians;
+                    shoulder.derivedRampEnd = 146.0f * DegreesToRadians;
+                    shoulder.derivedRampAlong = safeNormalized(skeleton.joints[static_cast<std::size_t>(elbow)].bind.position
+                        - skeleton.joints[static_cast<std::size_t>(lower)].bind.position, { 0.0f, 1.0f, 0.0f });
+                }
+            }
             rig.link.push_back(-1);
             rig.visualBone.push_back(-1);
             rig.tipLocal.push_back({});
@@ -446,8 +469,116 @@ GameRig buildGameRig(const RagdollCharacter3D& character, const GameRigAdjustmen
             rig.jointInFrame.push_back({});
         }
     }
+    // A clavicula (ClavicleHelper): o corpo fisico ainda nao tem cintura
+    // escapular; ela sai da elevacao do braco (ClavicleFraction do quanto ele
+    // sobe acima da ligacao) em volta da junta esterno-clavicular e leva o
+    // ombro junto (so a posicao: a direcao do braco e a pedida). Quando a
+    // fisica ganhar a clavicula, ela vira um osso e os pesos continuam.
+    for (const char* side : { "Left", "Right" }) {
+        const std::string prefix(side);
+        const int chest = skeleton.find("UpperChest"), arm = skeleton.find(prefix + "UpperArm"), forearm = skeleton.find(prefix + "Forearm");
+        if (chest < 0 || arm < 0 || forearm < 0) continue;
+        constexpr float ClavicleFraction = 0.3f;
+        // O teto da subida (25/10): sem ele a clavicula subia 44 graus com o
+        // braco na vertical (uma de verdade sobe ~30), empurrava o ombro para
+        // cima e para dentro, o braco passava por cima da cabeca e o alto da
+        // manga dobrava em bico. Com 28, o braco fica ao lado da cabeca (25
+        // virava um triangulo no alto do ombro com o cotovelo dobrado).
+        constexpr float ClavicleCap = 28.0f * DegreesToRadians;
+        const Vec3 shoulder = skeleton.joints[static_cast<std::size_t>(arm)].bind.position;
+        const Vec3 sternum = skeleton.joints[static_cast<std::size_t>(chest)].bind.position;
+        const Vec3 along = safeNormalized(skeleton.joints[static_cast<std::size_t>(forearm)].bind.position - shoulder, { 0.0f, 1.0f, 0.0f });
+        const int helper = addHelperJoint(skeleton, prefix + "ClavicleHelper", chest, arm, ClavicleFraction, along, 0.0f);
+        if (helper < 0) continue;
+        Joint& clavicle = skeleton.joints[static_cast<std::size_t>(helper)];
+        clavicle.derivedCarry = true;
+        clavicle.derivedCap = ClavicleCap;
+        // A junta esterno-clavicular: no alto do esterno, a 2,5 cm do meio, 1 cm
+        // abaixo do ombro.
+        clavicle.derivedPivot = { sternum.x + 0.065f, shoulder.y > 0.0f ? 0.025f : -0.025f, shoulder.z - 0.01f };
+        // (A junta desenhada no meio da clavicula, sobre o ombro: o skin usa o pivo.)
+        clavicle.bind.position = (clavicle.derivedPivot + shoulder) * 0.5f + Vec3 { 0.0f, 0.0f, 0.03f };
+        clavicle.physicalShare = 0.0f;
+        rig.link.push_back(-1);
+        rig.visualBone.push_back(-1);
+        rig.tipLocal.push_back({});
+        rig.frame.push_back(clavicle.bind);
+        rig.jointInFrame.push_back({});
+    }
+    // A da axila (ArmpitHelper, 26/10): o lado de baixo do ombro (a axila e as
+    // dobras da frente e de tras) e o alto da manga giram como a meia-junta ate
+    // 60 graus acima da ligacao e com o braco inteiro na vertical. Na meia-junta
+    // (65% na vertical) esse lado rodava em volta do ombro a distancia fixa e o
+    // contorno embaixo do braco erguido inchava para fora; seguindo o braco, a
+    // manga abraca ele e a camisa desce do braco a lateral do tronco em reta.
+    // E a do volume (ArmpitFill): fica com o peito e, com o braco erguido, anda
+    // um pouco para fora (a rampa com deslocamento): o fundo da axila ganha
+    // volume em vez de um plano liso entre o braco e o peito.
+    for (const char* side : { "Left", "Right" }) {
+        const std::string prefix(side);
+        const int chest = skeleton.find("UpperChest"), arm = skeleton.find(prefix + "UpperArm"), forearm = skeleton.find(prefix + "Forearm");
+        if (chest < 0 || arm < 0 || forearm < 0) continue;
+        const int helper = addHelperJoint(skeleton, prefix + "ArmpitHelper", chest, arm, 0.5f, {}, 0.0f);
+        if (helper < 0) continue;
+        Joint& armpit = skeleton.joints[static_cast<std::size_t>(helper)];
+        armpit.derivedRampFraction = 1.0f;
+        armpit.derivedRampStart = 60.0f * DegreesToRadians;
+        armpit.derivedRampEnd = 146.0f * DegreesToRadians;
+        armpit.derivedRampAlong = safeNormalized(skeleton.joints[static_cast<std::size_t>(forearm)].bind.position
+            - skeleton.joints[static_cast<std::size_t>(arm)].bind.position, { 0.0f, 1.0f, 0.0f });
+        rig.link.push_back(-1);
+        rig.visualBone.push_back(-1);
+        rig.tipLocal.push_back({});
+        rig.frame.push_back(armpit.bind);
+        rig.jointInFrame.push_back({});
+        const Joint follow = armpit;
+        const int fillIndex = addHelperJoint(skeleton, prefix + "ArmpitFill", chest, arm, 0.0f, {}, 0.0f);
+        if (fillIndex < 0) continue;
+        Joint& fill = skeleton.joints[static_cast<std::size_t>(fillIndex)];
+        fill.derivedRampStart = follow.derivedRampStart;
+        fill.derivedRampEnd = follow.derivedRampEnd;
+        fill.derivedRampAlong = follow.derivedRampAlong;
+        // O oco (26/10): com o braco na vertical, a junta anda 8 cm para dentro e
+        // 3 para cima; os vertices do fundo da axila pesam nela ate ~0,4 (o
+        // peso de peito deles, pelo axila_ombro.py). Com 10, viravam triangulos
+        // no braco erguido para tras.
+        // O volume (26/10): com o braco na vertical a junta anda 8 cm para fora e
+        // 2 para cima; os vertices do fundo da axila pesam nela ate ~0,4 (o peso
+        // de peito deles, pelo axila_ombro.py). Com 10, a lateral fazia quina;
+        // para dentro (o oco) ficou um buraco enorme, rejeitado por ele.
+        fill.derivedRampOffset = { 0.0f, side[0] == 'L' ? 0.08f : -0.08f, 0.02f };
+        rig.link.push_back(-1);
+        rig.visualBone.push_back(-1);
+        rig.tipLocal.push_back({});
+        rig.frame.push_back(fill.bind);
+        rig.jointInFrame.push_back({});
+    }
     if (rig.fitted) standRestOnGround(character, rig, -profile.standingRootHeightMeters);
     return rig;
+}
+
+void scaleGameRig(GameRig& rig, float scale, Vec3 fixed) {
+    const auto model = [&](Vec3 p) { return fixed + (p - fixed) * scale; };
+    Skeleton& skeleton = rig.skeleton;
+    for (std::size_t j = 0; j < skeleton.joints.size(); ++j) {
+        Joint& joint = skeleton.joints[j];
+        joint.bind.position = model(joint.bind.position);
+        joint.radius *= scale;
+        if (joint.derivedCarry) joint.derivedPivot = model(joint.derivedPivot);
+        joint.derivedRampOffset = joint.derivedRampOffset * scale;
+        // O referencial dos auxiliares saiu do esqueleto (o modelo); o dos
+        // outros, do perfil antes do esqueleto medido (o jogo).
+        Transform& frame = rig.frame[j];
+        frame.position = joint.kind == JointKind::Helper ? model(frame.position) : frame.position * scale;
+        rig.tipLocal[j].position = rig.tipLocal[j].position * scale;
+        rig.jointInFrame[j].position = rig.jointInFrame[j].position * scale;
+    }
+    skeleton.groundHeight = model({ 0.0f, 0.0f, skeleton.groundHeight }).z;
+    for (Vec3& offset : rig.linkOffset) offset = offset * scale;
+    for (Transform& local : rig.visualLocal) local.position = local.position * scale;
+    rig.rootGameBind.position = rig.rootGameBind.position * scale;
+    rig.rootRestLift *= scale;
+    rig.bodyScale *= scale;
 }
 
 SkeletonPose withGameHands(const RagdollCharacter3D& character, const GameRig& rig, const SkeletonPose& base, RigHandPose hand) {
@@ -469,7 +600,10 @@ SkeletonPose sampleGameRigPose(const RagdollCharacter3D& character, const GameRi
 }
 
 SkeletonPose sampleGameRigPose(const RagdollCharacter3D& character, const GameRig& rig, const AnimationClip3D* clip,
-    float timeSeconds, RigHandPose hand, bool inPlace) {
+    float timeSeconds, RigHandPose hand, bool inPlace, bool clavicleCarry) {
+    std::optional<AnimationClip3D> scaled;
+    if (clip != nullptr && (rig.bodyScale != 1.0f || rig.bodyArmOpening != 0.0f))
+        clip = &scaled.emplace(bodyAnimationClip3D(*clip, character.profile, rig.bodyScale, rig.bodyArmOpening, 0.0f));
     const RagdollAnimationPose3D links = sampleRagdollAnimationPose3D(character.profile, clip, timeSeconds, true);
     // O giro de cada osso visual (dedos e dedos do pe) desde a ligacao.
     std::vector<Quaternion> visualRotation(character.visualBones.size());
@@ -489,11 +623,11 @@ SkeletonPose sampleGameRigPose(const RagdollCharacter3D& character, const GameRi
             if (character.visualBones[v].kind != RagdollVisualBone3D::Kind::Finger)
                 visualRotation[v] = character.visualBones[v].restRotation;
     }
-    return gameRigPoseFromLinks(character, rig, links, visualRotation, inPlace);
+    return gameRigPoseFromLinks(character, rig, links, visualRotation, inPlace, clavicleCarry);
 }
 
 SkeletonPose gameRigPoseFromLinks(const RagdollCharacter3D& character, const GameRig& rig,
-    const RagdollAnimationPose3D& links, std::span<const Quaternion> visualRotationIn, bool inPlace) {
+    const RagdollAnimationPose3D& links, std::span<const Quaternion> visualRotationIn, bool inPlace, bool clavicleCarry) {
     std::vector<Quaternion> visualRotation(visualRotationIn.begin(), visualRotationIn.end());
     if (visualRotation.size() != character.visualBones.size()) {
         visualRotation.resize(character.visualBones.size());
@@ -560,7 +694,7 @@ SkeletonPose gameRigPoseFromLinks(const RagdollCharacter3D& character, const Gam
             pose.joints[j] = skeleton.joints[j].bind;
         }
     }
-    updateDerivedJoints(skeleton, pose);
+    updateDerivedJoints(skeleton, pose, clavicleCarry);
     return pose;
 }
 

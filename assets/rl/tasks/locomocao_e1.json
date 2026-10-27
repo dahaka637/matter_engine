@@ -1,0 +1,1538 @@
+{
+  "schema": "matter-rl-locomocao-1",
+  "id": "locomocao_e1",
+  "displayName": "RL sobre o clássico: E1, o Básico",
+  "comment": "E1 do plano RL sobre o classico (vault 04_locomocao/plano_rl_sobre_classico.md). Exercicios por categoria (pedido do usuario 21/10): o Basico treina (parado, giros com voltas completas, as 6 retas com o peito fixo, trote em curva suave, empurrao leve a moderado e o levantar); os Compostos ficam prontos com peso 0 (estrelas e curvas fechadas em trote e corrida com as variantes de peito fixo e girando, empurrao forte parado e girando). Avancados e Manejo: o usuario elabora depois.",
+  "episodeSeconds": 16.0,
+  "assistRuler": "linear",
+  "comment_ruler": "22/10 (pedido do usuario): regua LINEAR = zero de verdade (0% sem forca de fora) para a rede se adaptar sem a ajuda. Para voltar o zero antigo: \"assistRuler\": \"historical\" (nada mais muda).",
+  "comment_assist": "Comeco (pedido do usuario 21/10): tudo no 0% da regua historica (o zero antigo), sem sorteio, inclusive o levantar (0%: ele aprende a corrigir o proprio levantar; o classico sozinho levanta em 2 de 24 a 0%). O sorteio de 0 a 100% (20% no 0%, novo sorteio a cada ~10 s) volta quando o usuario pedir.",
+  "assist": {
+    "standing": 0.0,
+    "walking": 0.0,
+    "feet": 0.0,
+    "getUp": 0.0,
+    "getUpStiffness": 45
+  },
+  "turnMove": {
+    "enabled": false
+  },
+  "caps": {
+    "touchdownMeters": 0.4,
+    "swingUpMeters": 0.15,
+    "swingDownMeters": 0.05,
+    "phaseLeadCycles": 0.15,
+    "recoveryUrgency": 1.0,
+    "cadenceOctaves": 1.0,
+    "strideOctaves": 1.0,
+    "leanRadians": 0.5,
+    "comMeters": 0.25,
+    "pelvisUpMeters": 0.08,
+    "pelvisDownMeters": 0.2,
+    "contactAcceleration": 6.0,
+    "jointRadians": 3.2,
+    "gainOctaves": 0.0
+  },
+  "reward": {
+    "velocity": 0.4,
+    "facing": 0.1,
+    "style": 0.0,
+    "contact": 0.0,
+    "velocitySigma": 0.5,
+    "facingSigma": 0.4,
+    "styleSigma": 0.15,
+    "contactSigma": 0.15,
+    "slip": 0.0,
+    "work": 0.0,
+    "smooth": 0.0,
+    "assist": 0.0,
+    "posture": 0.0,
+    "residual": 0.0,
+    "still": 0.0,
+    "fall": 1.0,
+    "contactPerCycle": true,
+    "neckRelative": true,
+    "neckSlackDegrees": 6.0,
+    "velocitySmoothed": true,
+    "assistIncludesTorque": true,
+    "progress": true,
+    "progressDelta": 0.5,
+    "forbiddenContact": true,
+    "styleWorstPart": true,
+    "getUp": 0.0
+  },
+  "comment_reward": "22/10 (pedido do usuario): nota simples. Velocidade de locomocao: paga seguir a velocidade de deslocamento pedida, direcao e tamanho (velocity, com o progresso; pedido ~0 paga ficar no lugar). Rumo: paga o peito virado para onde o comando pede (facing; o giro dos exercicios de girar e o peito fixo andando de lado). Nao cair: a queda custa 1 e encerra o episodio (inclusive qualquer link que nao seja pe tocando o chao). Todos os outros termos em 0. O levantar fica fora do treino (peso 0).",
+  "savedStarts": {
+    "capacity": 128,
+    "surviveSeconds": 1.0,
+    "minimumSpeed": 1.0
+  },
+  "assistSchedule": {
+    "enabled": false,
+    "zeroFraction": 0.2,
+    "minimum": 0.0,
+    "maximum": 100.0,
+    "changesPerSecond": 0.1
+  },
+  "pushes": {
+    "minimumNewtons": 100.0,
+    "maximumNewtons": 350.0,
+    "minimumSeconds": 0.1,
+    "maximumSeconds": 0.2,
+    "startSeconds": 1.5,
+    "windowSeconds": 1.5
+  },
+  "termination": {
+    "pelvisHeight": 0.45,
+    "boundaryMeters": 80.0,
+    "groundHalfExtentMeters": 180.0
+  },
+  "drillWeights": {
+    "auto": false,
+    "gain": 2.0,
+    "maximumFactor": 3.0,
+    "floor": 0.08
+  },
+  "speeds": {
+    "trot": 4.5,
+    "sprintForward": 8.0,
+    "sprintSide": 6.0,
+    "sprintBackward": 6.0
+  },
+  "speedCurriculum": {
+    "enabled": true,
+    "binStart": [
+      1.5,
+      1.5,
+      0.75,
+      0.75,
+      0.75,
+      0.75,
+      0.75,
+      1.5
+    ],
+    "step": 0.25,
+    "minEpisodes": 32,
+    "window": 64,
+    "tracking": 0.8,
+    "maxFalls": 0.15,
+    "minCruise": 15,
+    "frontier": 0.25
+  },
+  "drills": [
+    {
+      "id": "parado",
+      "displayName": "Parado",
+      "category": "basico",
+      "weight": 0.04,
+      "minimum": {
+        "fallFraction": 0.02
+      },
+      "pilot": {
+        "kind": "hold",
+        "camera": {
+          "fixed": 1.0,
+          "follow": 0.0,
+          "turns": 0.0
+        }
+      }
+    },
+    {
+      "id": "giro",
+      "displayName": "Parado girando suave",
+      "category": "basico",
+      "weight": 0.08,
+      "minimum": {
+        "fallFraction": 0.02
+      },
+      "pilot": {
+        "kind": "hold",
+        "camera": {
+          "fixed": 0.0,
+          "follow": 0.0,
+          "turns": 1.0,
+          "turnDegrees": [
+            30,
+            450
+          ],
+          "turnRate": [
+            0.4,
+            0.8
+          ],
+          "pauseSeconds": [
+            1.0,
+            3.0
+          ]
+        }
+      }
+    },
+    {
+      "id": "giro_rapido",
+      "displayName": "Parado girando rápido",
+      "category": "basico",
+      "weight": 0.08,
+      "minimum": {
+        "fallFraction": 0.03
+      },
+      "pilot": {
+        "kind": "hold",
+        "camera": {
+          "fixed": 0.0,
+          "follow": 0.0,
+          "turns": 1.0,
+          "turnDegrees": [
+            90,
+            720
+          ],
+          "turnRate": [
+            1.0,
+            3.14
+          ],
+          "pauseSeconds": [
+            0.8,
+            2.0
+          ]
+        }
+      }
+    },
+    {
+      "id": "frente",
+      "displayName": "Frente",
+      "category": "basico",
+      "weight": 0.0,
+      "minimum": {
+        "fallFraction": 0.05
+      },
+      "pilot": {
+        "kind": "stick",
+        "bands": [
+          {
+            "name": "andar",
+            "speed": [
+              0.8,
+              1.4
+            ],
+            "weight": 0.5
+          },
+          {
+            "name": "trote_A",
+            "speed": [
+              1.8,
+              3.0
+            ],
+            "weight": 1.0
+          },
+          {
+            "name": "trote_B",
+            "speed": [
+              3.0,
+              4.5
+            ],
+            "weight": 1.0
+          }
+        ],
+        "directions": [
+          0
+        ],
+        "stickSeconds": [
+          2.0,
+          5.0
+        ],
+        "releaseFraction": 0.2,
+        "keysFraction": 1.0,
+        "syncFraction": 0.0,
+        "leashMeters": 1000.0,
+        "camera": {
+          "fixed": 1.0,
+          "follow": 0.0,
+          "turns": 0.0
+        }
+      }
+    },
+    {
+      "id": "tras",
+      "displayName": "Trás",
+      "category": "basico",
+      "weight": 0.0,
+      "minimum": {
+        "fallFraction": 0.05
+      },
+      "pilot": {
+        "kind": "stick",
+        "bands": [
+          {
+            "name": "andar",
+            "speed": [
+              0.8,
+              1.4
+            ],
+            "weight": 0.5
+          },
+          {
+            "name": "trote_A",
+            "speed": [
+              1.8,
+              3.0
+            ],
+            "weight": 1.0
+          },
+          {
+            "name": "trote_B",
+            "speed": [
+              3.0,
+              4.5
+            ],
+            "weight": 1.0
+          }
+        ],
+        "directions": [
+          180
+        ],
+        "stickSeconds": [
+          2.0,
+          5.0
+        ],
+        "releaseFraction": 0.2,
+        "keysFraction": 1.0,
+        "syncFraction": 0.0,
+        "leashMeters": 1000.0,
+        "camera": {
+          "fixed": 1.0,
+          "follow": 0.0,
+          "turns": 0.0
+        }
+      }
+    },
+    {
+      "id": "direita",
+      "displayName": "Direita",
+      "category": "basico",
+      "weight": 0.0,
+      "minimum": {
+        "fallFraction": 0.05
+      },
+      "pilot": {
+        "kind": "stick",
+        "bands": [
+          {
+            "name": "andar",
+            "speed": [
+              0.8,
+              1.4
+            ],
+            "weight": 0.5
+          },
+          {
+            "name": "trote_A",
+            "speed": [
+              1.8,
+              3.0
+            ],
+            "weight": 1.0
+          },
+          {
+            "name": "trote_B",
+            "speed": [
+              3.0,
+              4.5
+            ],
+            "weight": 1.0
+          }
+        ],
+        "directions": [
+          -90
+        ],
+        "stickSeconds": [
+          2.0,
+          5.0
+        ],
+        "releaseFraction": 0.2,
+        "keysFraction": 1.0,
+        "syncFraction": 0.0,
+        "leashMeters": 1000.0,
+        "camera": {
+          "fixed": 1.0,
+          "follow": 0.0,
+          "turns": 0.0
+        }
+      }
+    },
+    {
+      "id": "esquerda",
+      "displayName": "Esquerda",
+      "category": "basico",
+      "weight": 0.0,
+      "minimum": {
+        "fallFraction": 0.05
+      },
+      "pilot": {
+        "kind": "stick",
+        "bands": [
+          {
+            "name": "andar",
+            "speed": [
+              0.8,
+              1.4
+            ],
+            "weight": 0.5
+          },
+          {
+            "name": "trote_A",
+            "speed": [
+              1.8,
+              3.0
+            ],
+            "weight": 1.0
+          },
+          {
+            "name": "trote_B",
+            "speed": [
+              3.0,
+              4.5
+            ],
+            "weight": 1.0
+          }
+        ],
+        "directions": [
+          90
+        ],
+        "stickSeconds": [
+          2.0,
+          5.0
+        ],
+        "releaseFraction": 0.2,
+        "keysFraction": 1.0,
+        "syncFraction": 0.0,
+        "leashMeters": 1000.0,
+        "camera": {
+          "fixed": 1.0,
+          "follow": 0.0,
+          "turns": 0.0
+        }
+      }
+    },
+    {
+      "id": "diagonal_frente",
+      "displayName": "Diagonal frente (lado sorteado)",
+      "category": "basico",
+      "weight": 0.0,
+      "minimum": {
+        "fallFraction": 0.05
+      },
+      "pilot": {
+        "kind": "stick",
+        "bands": [
+          {
+            "name": "andar",
+            "speed": [
+              0.8,
+              1.4
+            ],
+            "weight": 0.5
+          },
+          {
+            "name": "trote_A",
+            "speed": [
+              1.8,
+              3.0
+            ],
+            "weight": 1.0
+          },
+          {
+            "name": "trote_B",
+            "speed": [
+              3.0,
+              4.5
+            ],
+            "weight": 1.0
+          }
+        ],
+        "directions": [
+          45,
+          -45
+        ],
+        "stickSeconds": [
+          2.0,
+          5.0
+        ],
+        "releaseFraction": 0.2,
+        "keysFraction": 1.0,
+        "syncFraction": 0.0,
+        "leashMeters": 1000.0,
+        "camera": {
+          "fixed": 1.0,
+          "follow": 0.0,
+          "turns": 0.0
+        }
+      }
+    },
+    {
+      "id": "diagonal_costas",
+      "displayName": "Diagonal costas (lado sorteado)",
+      "category": "basico",
+      "weight": 0.0,
+      "minimum": {
+        "fallFraction": 0.05
+      },
+      "pilot": {
+        "kind": "stick",
+        "bands": [
+          {
+            "name": "andar",
+            "speed": [
+              0.8,
+              1.4
+            ],
+            "weight": 0.5
+          },
+          {
+            "name": "trote_A",
+            "speed": [
+              1.8,
+              3.0
+            ],
+            "weight": 1.0
+          },
+          {
+            "name": "trote_B",
+            "speed": [
+              3.0,
+              4.5
+            ],
+            "weight": 1.0
+          }
+        ],
+        "directions": [
+          135,
+          -135
+        ],
+        "stickSeconds": [
+          2.0,
+          5.0
+        ],
+        "releaseFraction": 0.2,
+        "keysFraction": 1.0,
+        "syncFraction": 0.0,
+        "leashMeters": 1000.0,
+        "camera": {
+          "fixed": 1.0,
+          "follow": 0.0,
+          "turns": 0.0
+        }
+      }
+    },
+    {
+      "id": "curva",
+      "displayName": "Trote em curva suave",
+      "weight": 0.0,
+      "minimum": {
+        "fallFraction": 0.05,
+        "velocityError": 0.45
+      },
+      "pilot": {
+        "kind": "arc",
+        "bands": [
+          {
+            "name": "andar",
+            "speed": [
+              0.8,
+              1.4
+            ],
+            "weight": 0.5
+          },
+          {
+            "name": "trote",
+            "speed": [
+              1.8,
+              3.5
+            ],
+            "weight": 1.0
+          }
+        ],
+        "arcRadius": [
+          12.0,
+          18.0
+        ],
+        "arcDegrees": [
+          45.0,
+          120.0
+        ],
+        "arcFlipFraction": 0.4,
+        "lateralAcceleration": 4.0,
+        "arcLookahead": 1.5,
+        "stopFraction": 0.25,
+        "holdSeconds": [
+          1.0,
+          2.0
+        ],
+        "brake": [
+          2.0,
+          4.0
+        ],
+        "arriveRadius": 0.6,
+        "camera": {
+          "fixed": 0.0,
+          "follow": 1.0,
+          "turns": 0.0,
+          "followRate": 4.0
+        }
+      },
+      "category": "basico"
+    },
+    {
+      "id": "corrida_reta",
+      "displayName": "Corrida reta em velocidade máxima",
+      "category": "basico",
+      "weight": 0.0,
+      "minimum": {
+        "fallFraction": 0.05,
+        "velocityError": 0.65
+      },
+      "pilot": {
+        "kind": "stick",
+        "forwardOnly": true,
+        "bands": [
+          {
+            "name": "maxima",
+            "speed": [
+              8.0,
+              8.0
+            ],
+            "weight": 1.0
+          }
+        ],
+        "stickSeconds": [
+          30.0,
+          30.0
+        ],
+        "releaseFraction": 0.0,
+        "keysFraction": 1.0,
+        "syncFraction": 0.0,
+        "leashMeters": 1000.0,
+        "camera": {
+          "fixed": 1.0,
+          "follow": 0.0,
+          "turns": 0.0
+        }
+      }
+    },
+    {
+      "id": "parado_empurrao",
+      "displayName": "Parado com empurrão leve a moderado",
+      "category": "basico",
+      "weight": 0.16,
+      "pilot": {
+        "kind": "hold",
+        "camera": {
+          "fixed": 1.0,
+          "follow": 0.0,
+          "turns": 0.0
+        }
+      },
+      "pushRate": 0.4,
+      "pushMinimumNewtons": 150.0,
+      "pushMaximumNewtons": 600.0,
+      "singlePush": true,
+      "settleSeconds": 5.0
+    },
+    {
+      "id": "levantar",
+      "displayName": "Levantar do chão",
+      "category": "basico",
+      "weight": 0.0,
+      "pilot": {
+        "kind": "hold",
+        "camera": {
+          "fixed": 1.0,
+          "follow": 0.0,
+          "turns": 0.0
+        }
+      },
+      "getUp": true,
+      "knockdownMinimumNewtons": 1600.0,
+      "knockdownMaximumNewtons": 2400.0
+    },
+    {
+      "id": "estrela_trote",
+      "displayName": "Estrela de 8 pontas, trote",
+      "weight": 0.0,
+      "minimum": {
+        "fallFraction": 0.05,
+        "velocityError": 0.5
+      },
+      "pilot": {
+        "kind": "star",
+        "bands": [
+          {
+            "name": "andar",
+            "speed": [
+              0.8,
+              1.4
+            ],
+            "distance": [
+              4,
+              7
+            ],
+            "weight": 0.5
+          },
+          {
+            "name": "trote_A",
+            "speed": [
+              1.8,
+              3.0
+            ],
+            "distance": [
+              5,
+              8
+            ],
+            "weight": 1.0
+          },
+          {
+            "name": "trote_B",
+            "speed": [
+              3.0,
+              4.5
+            ],
+            "distance": [
+              6,
+              10
+            ],
+            "weight": 1.0
+          }
+        ],
+        "starDirections": 8,
+        "starJitterDegrees": 6.0,
+        "continuousFraction": 0.35,
+        "stopFraction": 0.25,
+        "holdSeconds": [
+          0.8,
+          1.5
+        ],
+        "brake": [
+          3,
+          6
+        ],
+        "arriveRadius": 0.7,
+        "camera": {
+          "fixed": 0.0,
+          "follow": 1.0,
+          "turns": 0.0,
+          "followRate": 4.0
+        }
+      },
+      "savedStartFraction": 0.4,
+      "category": "compostos"
+    },
+    {
+      "id": "estrela_trote_fixo",
+      "displayName": "Estrela de 8 pontas, trote, peito fixo",
+      "weight": 0.0,
+      "minimum": {
+        "fallFraction": 0.05,
+        "velocityError": 0.5
+      },
+      "pilot": {
+        "kind": "star",
+        "bands": [
+          {
+            "name": "andar",
+            "speed": [
+              0.8,
+              1.4
+            ],
+            "distance": [
+              4,
+              7
+            ],
+            "weight": 0.5
+          },
+          {
+            "name": "trote_A",
+            "speed": [
+              1.8,
+              3.0
+            ],
+            "distance": [
+              5,
+              8
+            ],
+            "weight": 1.0
+          },
+          {
+            "name": "trote_B",
+            "speed": [
+              3.0,
+              4.5
+            ],
+            "distance": [
+              6,
+              10
+            ],
+            "weight": 1.0
+          }
+        ],
+        "starDirections": 8,
+        "starJitterDegrees": 6.0,
+        "continuousFraction": 0.35,
+        "stopFraction": 0.25,
+        "holdSeconds": [
+          0.8,
+          1.5
+        ],
+        "brake": [
+          3,
+          6
+        ],
+        "arriveRadius": 0.7,
+        "camera": {
+          "fixed": 1.0,
+          "follow": 0.0,
+          "turns": 0.0
+        }
+      },
+      "savedStartFraction": 0.4,
+      "category": "compostos"
+    },
+    {
+      "id": "estrela_trote_girando",
+      "displayName": "Estrela de 8 pontas, trote, peito girando",
+      "weight": 0.0,
+      "minimum": {
+        "fallFraction": 0.05,
+        "velocityError": 0.5
+      },
+      "pilot": {
+        "kind": "star",
+        "bands": [
+          {
+            "name": "andar",
+            "speed": [
+              0.8,
+              1.4
+            ],
+            "distance": [
+              4,
+              7
+            ],
+            "weight": 0.5
+          },
+          {
+            "name": "trote_A",
+            "speed": [
+              1.8,
+              3.0
+            ],
+            "distance": [
+              5,
+              8
+            ],
+            "weight": 1.0
+          },
+          {
+            "name": "trote_B",
+            "speed": [
+              3.0,
+              4.5
+            ],
+            "distance": [
+              6,
+              10
+            ],
+            "weight": 1.0
+          }
+        ],
+        "starDirections": 8,
+        "starJitterDegrees": 6.0,
+        "continuousFraction": 0.35,
+        "stopFraction": 0.25,
+        "holdSeconds": [
+          0.8,
+          1.5
+        ],
+        "brake": [
+          3,
+          6
+        ],
+        "arriveRadius": 0.7,
+        "camera": {
+          "fixed": 0.0,
+          "follow": 0.0,
+          "turns": 1.0,
+          "turnDegrees": [
+            30,
+            120
+          ],
+          "turnRate": [
+            0.4,
+            1.0
+          ],
+          "pauseSeconds": [
+            0.5,
+            2.0
+          ],
+          "followRate": 4.0
+        }
+      },
+      "savedStartFraction": 0.4,
+      "category": "compostos"
+    },
+    {
+      "id": "estrela_corrida",
+      "displayName": "Estrela de 8 pontas, corrida",
+      "weight": 0.0,
+      "minimum": {
+        "fallFraction": 0.05,
+        "velocityError": 0.65
+      },
+      "pilot": {
+        "kind": "star",
+        "bands": [
+          {
+            "name": "corrida1",
+            "speed": [
+              4.5,
+              6.0
+            ],
+            "distance": [
+              8,
+              12
+            ],
+            "weight": 1.0
+          },
+          {
+            "name": "corrida2",
+            "speed": [
+              6.0,
+              7.0
+            ],
+            "distance": [
+              10,
+              14
+            ],
+            "weight": 1.0
+          },
+          {
+            "name": "corrida3",
+            "speed": [
+              7.0,
+              8.0
+            ],
+            "distance": [
+              12,
+              18
+            ],
+            "weight": 1.0
+          }
+        ],
+        "starDirections": 8,
+        "starJitterDegrees": 5.0,
+        "continuousFraction": 0.55,
+        "stopFraction": 0.15,
+        "holdSeconds": [
+          0.5,
+          1.0
+        ],
+        "brake": [
+          5,
+          8
+        ],
+        "arriveRadius": 0.9,
+        "camera": {
+          "fixed": 0.0,
+          "follow": 1.0,
+          "turns": 0.0,
+          "followRate": 4.0
+        }
+      },
+      "savedStartFraction": 0.4,
+      "category": "compostos"
+    },
+    {
+      "id": "estrela_corrida_fixo",
+      "displayName": "Estrela de 8 pontas, corrida, peito fixo",
+      "weight": 0.0,
+      "minimum": {
+        "fallFraction": 0.05,
+        "velocityError": 0.65
+      },
+      "pilot": {
+        "kind": "star",
+        "bands": [
+          {
+            "name": "corrida1",
+            "speed": [
+              4.5,
+              6.0
+            ],
+            "distance": [
+              8,
+              12
+            ],
+            "weight": 1.0
+          },
+          {
+            "name": "corrida2",
+            "speed": [
+              6.0,
+              7.0
+            ],
+            "distance": [
+              10,
+              14
+            ],
+            "weight": 1.0
+          },
+          {
+            "name": "corrida3",
+            "speed": [
+              7.0,
+              8.0
+            ],
+            "distance": [
+              12,
+              18
+            ],
+            "weight": 1.0
+          }
+        ],
+        "starDirections": 8,
+        "starJitterDegrees": 5.0,
+        "continuousFraction": 0.55,
+        "stopFraction": 0.15,
+        "holdSeconds": [
+          0.5,
+          1.0
+        ],
+        "brake": [
+          5,
+          8
+        ],
+        "arriveRadius": 0.9,
+        "camera": {
+          "fixed": 1.0,
+          "follow": 0.0,
+          "turns": 0.0
+        }
+      },
+      "savedStartFraction": 0.4,
+      "category": "compostos"
+    },
+    {
+      "id": "estrela_corrida_girando",
+      "displayName": "Estrela de 8 pontas, corrida, peito girando",
+      "weight": 0.0,
+      "minimum": {
+        "fallFraction": 0.05,
+        "velocityError": 0.65
+      },
+      "pilot": {
+        "kind": "star",
+        "bands": [
+          {
+            "name": "corrida1",
+            "speed": [
+              4.5,
+              6.0
+            ],
+            "distance": [
+              8,
+              12
+            ],
+            "weight": 1.0
+          },
+          {
+            "name": "corrida2",
+            "speed": [
+              6.0,
+              7.0
+            ],
+            "distance": [
+              10,
+              14
+            ],
+            "weight": 1.0
+          },
+          {
+            "name": "corrida3",
+            "speed": [
+              7.0,
+              8.0
+            ],
+            "distance": [
+              12,
+              18
+            ],
+            "weight": 1.0
+          }
+        ],
+        "starDirections": 8,
+        "starJitterDegrees": 5.0,
+        "continuousFraction": 0.55,
+        "stopFraction": 0.15,
+        "holdSeconds": [
+          0.5,
+          1.0
+        ],
+        "brake": [
+          5,
+          8
+        ],
+        "arriveRadius": 0.9,
+        "camera": {
+          "fixed": 0.0,
+          "follow": 0.0,
+          "turns": 1.0,
+          "turnDegrees": [
+            30,
+            120
+          ],
+          "turnRate": [
+            0.4,
+            1.0
+          ],
+          "pauseSeconds": [
+            0.5,
+            2.0
+          ],
+          "followRate": 4.0
+        }
+      },
+      "savedStartFraction": 0.4,
+      "category": "compostos"
+    },
+    {
+      "id": "curva_trote_fechada",
+      "displayName": "Curva fechada e em S, trote",
+      "weight": 0.0,
+      "minimum": {
+        "fallFraction": 0.05,
+        "velocityError": 0.7
+      },
+      "pilot": {
+        "kind": "arc",
+        "bands": [
+          {
+            "name": "trote",
+            "speed": [
+              2.5,
+              4.5
+            ],
+            "weight": 1.0
+          }
+        ],
+        "arcRadius": [
+          3.0,
+          8.0
+        ],
+        "arcDegrees": [
+          60.0,
+          170.0
+        ],
+        "arcFlipFraction": 0.5,
+        "lateralAcceleration": 4.0,
+        "arcLookahead": 1.5,
+        "stopFraction": 0.15,
+        "holdSeconds": [
+          0.5,
+          1.0
+        ],
+        "brake": [
+          4.0,
+          8.0
+        ],
+        "arriveRadius": 0.8,
+        "camera": {
+          "fixed": 0.0,
+          "follow": 1.0,
+          "turns": 0.0,
+          "followRate": 4.0
+        }
+      },
+      "category": "compostos"
+    },
+    {
+      "id": "curva_trote_fechada_fixo",
+      "displayName": "Curva fechada e em S, trote, peito fixo",
+      "weight": 0.0,
+      "minimum": {
+        "fallFraction": 0.05,
+        "velocityError": 0.7
+      },
+      "pilot": {
+        "kind": "arc",
+        "bands": [
+          {
+            "name": "trote",
+            "speed": [
+              2.5,
+              4.5
+            ],
+            "weight": 1.0
+          }
+        ],
+        "arcRadius": [
+          3.0,
+          8.0
+        ],
+        "arcDegrees": [
+          60.0,
+          170.0
+        ],
+        "arcFlipFraction": 0.5,
+        "lateralAcceleration": 4.0,
+        "arcLookahead": 1.5,
+        "stopFraction": 0.15,
+        "holdSeconds": [
+          0.5,
+          1.0
+        ],
+        "brake": [
+          4.0,
+          8.0
+        ],
+        "arriveRadius": 0.8,
+        "camera": {
+          "fixed": 1.0,
+          "follow": 0.0,
+          "turns": 0.0
+        }
+      },
+      "category": "compostos"
+    },
+    {
+      "id": "curva_trote_fechada_girando",
+      "displayName": "Curva fechada e em S, trote, peito girando",
+      "weight": 0.0,
+      "minimum": {
+        "fallFraction": 0.05,
+        "velocityError": 0.7
+      },
+      "pilot": {
+        "kind": "arc",
+        "bands": [
+          {
+            "name": "trote",
+            "speed": [
+              2.5,
+              4.5
+            ],
+            "weight": 1.0
+          }
+        ],
+        "arcRadius": [
+          3.0,
+          8.0
+        ],
+        "arcDegrees": [
+          60.0,
+          170.0
+        ],
+        "arcFlipFraction": 0.5,
+        "lateralAcceleration": 4.0,
+        "arcLookahead": 1.5,
+        "stopFraction": 0.15,
+        "holdSeconds": [
+          0.5,
+          1.0
+        ],
+        "brake": [
+          4.0,
+          8.0
+        ],
+        "arriveRadius": 0.8,
+        "camera": {
+          "fixed": 0.0,
+          "follow": 0.0,
+          "turns": 1.0,
+          "turnDegrees": [
+            30,
+            120
+          ],
+          "turnRate": [
+            0.4,
+            1.0
+          ],
+          "pauseSeconds": [
+            0.5,
+            2.0
+          ],
+          "followRate": 4.0
+        }
+      },
+      "category": "compostos"
+    },
+    {
+      "id": "curva_corrida_fechada",
+      "displayName": "Curva fechada e em S, corrida",
+      "weight": 0.0,
+      "minimum": {
+        "fallFraction": 0.05,
+        "velocityError": 0.7
+      },
+      "pilot": {
+        "kind": "arc",
+        "bands": [
+          {
+            "name": "corrida",
+            "speed": [
+              4.5,
+              8.0
+            ],
+            "weight": 1.0
+          }
+        ],
+        "arcRadius": [
+          6.0,
+          15.0
+        ],
+        "arcDegrees": [
+          60.0,
+          170.0
+        ],
+        "arcFlipFraction": 0.5,
+        "lateralAcceleration": 4.0,
+        "arcLookahead": 1.5,
+        "stopFraction": 0.15,
+        "holdSeconds": [
+          0.5,
+          1.0
+        ],
+        "brake": [
+          4.0,
+          8.0
+        ],
+        "arriveRadius": 0.8,
+        "camera": {
+          "fixed": 0.0,
+          "follow": 1.0,
+          "turns": 0.0,
+          "followRate": 4.0
+        }
+      },
+      "category": "compostos"
+    },
+    {
+      "id": "curva_corrida_fechada_fixo",
+      "displayName": "Curva fechada e em S, corrida, peito fixo",
+      "weight": 0.0,
+      "minimum": {
+        "fallFraction": 0.05,
+        "velocityError": 0.7
+      },
+      "pilot": {
+        "kind": "arc",
+        "bands": [
+          {
+            "name": "corrida",
+            "speed": [
+              4.5,
+              8.0
+            ],
+            "weight": 1.0
+          }
+        ],
+        "arcRadius": [
+          6.0,
+          15.0
+        ],
+        "arcDegrees": [
+          60.0,
+          170.0
+        ],
+        "arcFlipFraction": 0.5,
+        "lateralAcceleration": 4.0,
+        "arcLookahead": 1.5,
+        "stopFraction": 0.15,
+        "holdSeconds": [
+          0.5,
+          1.0
+        ],
+        "brake": [
+          4.0,
+          8.0
+        ],
+        "arriveRadius": 0.8,
+        "camera": {
+          "fixed": 1.0,
+          "follow": 0.0,
+          "turns": 0.0
+        }
+      },
+      "category": "compostos"
+    },
+    {
+      "id": "curva_corrida_fechada_girando",
+      "displayName": "Curva fechada e em S, corrida, peito girando",
+      "weight": 0.0,
+      "minimum": {
+        "fallFraction": 0.05,
+        "velocityError": 0.7
+      },
+      "pilot": {
+        "kind": "arc",
+        "bands": [
+          {
+            "name": "corrida",
+            "speed": [
+              4.5,
+              8.0
+            ],
+            "weight": 1.0
+          }
+        ],
+        "arcRadius": [
+          6.0,
+          15.0
+        ],
+        "arcDegrees": [
+          60.0,
+          170.0
+        ],
+        "arcFlipFraction": 0.5,
+        "lateralAcceleration": 4.0,
+        "arcLookahead": 1.5,
+        "stopFraction": 0.15,
+        "holdSeconds": [
+          0.5,
+          1.0
+        ],
+        "brake": [
+          4.0,
+          8.0
+        ],
+        "arriveRadius": 0.8,
+        "camera": {
+          "fixed": 0.0,
+          "follow": 0.0,
+          "turns": 1.0,
+          "turnDegrees": [
+            30,
+            120
+          ],
+          "turnRate": [
+            0.4,
+            1.0
+          ],
+          "pauseSeconds": [
+            0.5,
+            2.0
+          ],
+          "followRate": 4.0
+        }
+      },
+      "category": "compostos"
+    },
+    {
+      "id": "parado_empurrao_forte",
+      "displayName": "Parado com empurrão forte",
+      "category": "basico",
+      "weight": 0.7,
+      "pilot": {
+        "kind": "hold",
+        "camera": {
+          "fixed": 1.0,
+          "follow": 0.0,
+          "turns": 0.0
+        }
+      },
+      "pushRate": 0.28,
+      "pushMinimumNewtons": 900.0,
+      "pushMaximumNewtons": 1200.0,
+      "holdRate": 0.12,
+      "holdMinimumNewtons": 150.0,
+      "holdMaximumNewtons": 220.0,
+      "holdMinimumSeconds": 1.0,
+      "holdMaximumSeconds": 3.0,
+      "singlePush": true,
+      "settleSeconds": 5.0,
+      "pushCurriculum": {
+        "enabled": true,
+        "window": 256,
+        "raiseBelow": 0.15,
+        "lowerAbove": 0.35,
+        "short": {
+          "start": [
+            900,
+            1200
+          ],
+          "step": 100,
+          "maximum": 1400
+        },
+        "hold": {
+          "start": [
+            150,
+            220
+          ],
+          "step": 25,
+          "maximum": 350,
+          "seconds": [
+            1.0,
+            3.0
+          ],
+          "secondsStep": 0.5,
+          "secondsMaximum": 5.0
+        }
+      }
+    },
+    {
+      "id": "parado_empurrao_forte_girando",
+      "displayName": "Parado girando com empurrão forte",
+      "category": "compostos",
+      "weight": 0.0,
+      "pilot": {
+        "kind": "hold",
+        "camera": {
+          "fixed": 0.0,
+          "follow": 0.0,
+          "turns": 1.0,
+          "turnDegrees": [
+            30,
+            450
+          ],
+          "turnRate": [
+            0.4,
+            1.0
+          ],
+          "pauseSeconds": [
+            1.0,
+            3.0
+          ]
+        }
+      },
+      "pushRate": 0.3,
+      "pushMinimumNewtons": 900.0,
+      "pushMaximumNewtons": 1200.0,
+      "singlePush": true,
+      "settleSeconds": 5.0,
+      "pushCurriculum": {
+        "enabled": true,
+        "window": 256,
+        "raiseBelow": 0.15,
+        "lowerAbove": 0.35,
+        "short": {
+          "start": [
+            900,
+            1200
+          ],
+          "step": 100,
+          "maximum": 1400
+        },
+        "hold": {
+          "start": [
+            150,
+            220
+          ],
+          "step": 25,
+          "maximum": 350,
+          "seconds": [
+            1.0,
+            3.0
+          ],
+          "secondsStep": 0.5,
+          "secondsMaximum": 5.0
+        }
+      }
+    }
+  ],
+  "comment_drills": "22/10 (pedido do usuario): so o equilibrio - parado, giro suave e rapido, empurrao leve a moderado e forte - para consolidar a estabilidade basica e o auto-equilibrio; a marcha volta quando ele pedir (pesos 0,08/0,1). 23/10 (pedido do usuario): um empurrao por episodio nos exercicios de empurrao (singlePush): o curto ou o continuo, na proporcao das taxas, num instante sorteado entre startSeconds e startSeconds + windowSeconds; o episodio acaba settleSeconds depois do fim do empurrao (fim por tempo). Os episodios ficaram ~3x mais curtos: o peso dos dois exercicios de empurrao subiu de 0,1 para 0,3 para manter a fatia do tempo. 24/10 (pedido do usuario): corrida reta em velocidade maxima (corrida_reta): so para a frente, pedido de 8 m/s o episodio inteiro, peito fixo; no treino o curriculo de velocidade corta pelo teto da celula da frente, como nos outros (a avaliacao pede os 8 m/s); acaba no limite de 80 m (fim por tempo). 24/10 (pedido do usuario: o empurrao forte sem plato): o forte parado e o girando ganham o curriculo do empurrao por tipo (pushCurriculum; matter_rl/curriculum.py PushCurriculum): comeca na faixa aprendivel medida na rodada 10062 (curto 900-1200 N por 0,10-0,20 s; continuo 150-220 N por 1-3 s; 70/30) e anda +100 N / +25 N quando as quedas do tipo ficam abaixo de 15% em duas janelas de 256 episodios, volta um passo acima de 35%; topo 1400 N e 350 N, depois o continuo alonga 0,5 s por vez ate 5 s. Fase 1 da rota de 24/10: pesos 0,04/0,08/0,08/0,16/0,70 (os giros de volta a 0,08 aos 26 min: o giro rapido caiu de 2% para 11% com 0,05) (o forte com ~metade das decisoes). 24/10 noite (pedido do usuario: o episodio cortava na hora em que ele ia cair): a janela depois do empurrao de 3 para 5 s nos tres exercicios de empurrao (medido: sem ruido, nenhuma queda depois de 3 s; com o ruido do treino, diferenca dentro do sorteio)."
+}

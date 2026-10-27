@@ -6,6 +6,7 @@
 #include "Engine/Modeling/Mesh/TriangleBvh.hpp"
 
 #include <algorithm>
+#include <cstdio>
 #include <array>
 #include <atomic>
 #include <cmath>
@@ -104,6 +105,8 @@ void checkDeformation(const Mesh& mesh, const Skeleton& skeleton, std::span<cons
         struct Group {
             Finding finding;
             std::size_t count = 0;
+            // A area na ligacao (m2): a medida que nao depende da densidade.
+            float area = 0.0f;
         };
         std::map<std::pair<std::string, int>, Group> groups;
         for (std::size_t t = 0; t < mesh.triangles.size(); ++t) {
@@ -154,6 +157,7 @@ void checkDeformation(const Mesh& mesh, const Skeleton& skeleton, std::span<cons
             if (code == nullptr) continue;
             Group& group = groups[{ code, mesh.partOf(t) }];
             ++group.count;
+            group.area += before;
             group.finding.triangles.push_back(static_cast<std::uint32_t>(t));
             const Vec3 at = (posed[tri[0]] + posed[tri[1]] + posed[tri[2]]) / 3.0f;
             if (group.finding.points.size() < 40) group.finding.points.push_back(at);
@@ -174,7 +178,9 @@ void checkDeformation(const Mesh& mesh, const Skeleton& skeleton, std::span<cons
                 : key.first == "prega"              ? Severity::Info
                                                     : Severity::Warning;
             finding.code = key.first + "_pose";
-            finding.message = messages.at(key.first) + " na pose " + sample.name + " (" + std::to_string(group.count) + ")";
+            char counted[64];
+            std::snprintf(counted, sizeof(counted), " (%zu; %.1f cm2)", group.count, group.area * 1e4f);
+            finding.message = messages.at(key.first) + " na pose " + sample.name + counted;
             if (key.second >= 0 && static_cast<std::size_t>(key.second) < mesh.parts.size()) {
                 finding.part = mesh.parts[static_cast<std::size_t>(key.second)].name;
                 finding.region = mesh.parts[static_cast<std::size_t>(key.second)].region;

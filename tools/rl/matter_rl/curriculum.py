@@ -163,3 +163,99 @@ class SpeedCurriculum:
                                                       if self.records[drill][k] else None)}
                           for k in range(CELLS)}
         return out
+
+
+# O tipo do empurrao na coluna empurrao_tipo do episodio.
+PUSH_KINDS = {1: "curto", 2: "continuo"}
+
+
+class PushCurriculum:
+    """O curriculo do empurrao por tipo (24/10, pedido do usuario: o empurrao forte sem plato;
+    desenho com o Codex). Nos exercicios com pushCurriculum, cada tipo (o curto e o continuo)
+    anda a faixa um passo quando as quedas dele ficam abaixo de raiseBelow em duas janelas
+    seguidas e volta um passo quando passam de lowerAbove (nunca abaixo da faixa de partida).
+    O curto anda a forca ate maximum; o continuo anda a forca e, no topo, a duracao maxima.
+    As faixas moram nos campos do exercicio na copia da tarefa (o lote le em update_task);
+    as janelas se refazem numa retomada."""
+
+    def __init__(self, task: dict, drill_ids: list[str]):
+        self.drill_ids = list(drill_ids)
+        self.rules = {d["id"]: d["pushCurriculum"] for d in task.get("drills", [])
+                      if (d.get("pushCurriculum") or {}).get("enabled") and d["id"] in self.drill_ids}
+        self.records = {(d, k): [] for d in self.rules for k in PUSH_KINDS}
+        self.good = {key: 0 for key in self.records}
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.rules)
+
+    def observe(self, rows: np.ndarray, columns: list[str], fall_codes: list[int]) -> None:
+        if not self.rules or not len(rows):
+            return
+        col = {name: i for i, name in enumerate(columns)}
+        for row in rows:
+            key = (self.drill_ids[int(row[col["exercicio"]])], int(row[col["empurrao_tipo"]]))
+            if key in self.records:
+                self.records[key].append(int(row[col["razao"]]) in fall_codes)
+
+    def advance(self, task: dict) -> list[str]:
+        """Anda as faixas que fecharam janela; devolve o que mudou (texto)."""
+        drills = {d["id"]: d for d in task.get("drills", [])}
+        moved = []
+        for (drill, kind), record in self.records.items():
+            rule = self.rules[drill]
+            if len(record) < int(rule.get("window", 256)) or drill not in drills:
+                continue
+            rate = sum(record) / len(record)
+            record.clear()
+            step = 0
+            if rate > float(rule.get("lowerAbove", 0.35)):
+                self.good[(drill, kind)], step = 0, -1
+            elif rate < float(rule.get("raiseBelow", 0.15)):
+                self.good[(drill, kind)] += 1
+                if self.good[(drill, kind)] >= 2:
+                    self.good[(drill, kind)], step = 0, 1
+            else:
+                self.good[(drill, kind)] = 0
+            text = self.step(drills[drill], kind, rule, step) if step else None
+            if text:
+                moved.append(f"{drill} {PUSH_KINDS[kind]}: {text} (quedas {rate:.0%})")
+        return moved
+
+    @staticmethod
+    def step(drill: dict, kind: int, rule: dict, sign: int) -> str | None:
+        part = rule["short" if kind == 1 else "hold"]
+        low_key, high_key = ("pushMinimumNewtons", "pushMaximumNewtons") if kind == 1 \
+            else ("holdMinimumNewtons", "holdMaximumNewtons")
+        low, high = float(drill[low_key]), float(drill[high_key])
+        top, start_low = float(part["maximum"]), float(part["start"][0])
+        if kind == 2:
+            # (Sobe: a forca ate o topo, depois a duracao; desce: a duracao primeiro.)
+            seconds, first = float(drill["holdMaximumSeconds"]), float(part["seconds"][1])
+            if (sign > 0 and high >= top - 1e-6) or (sign < 0 and seconds > first + 1e-6):
+                limit = float(part["secondsMaximum"]) if sign > 0 else first
+                new = min(limit, seconds + float(part["secondsStep"])) if sign > 0 \
+                    else max(limit, seconds - float(part["secondsStep"]))
+                if abs(new - seconds) < 1e-6:
+                    return None
+                drill["holdMaximumSeconds"] = round(new, 3)
+                return f"duracao ate {seconds:.1f} -> {new:.1f} s"
+        shift = min(float(part["step"]), top - high) if sign > 0 else max(-float(part["step"]), start_low - low)
+        if abs(shift) < 1e-6:
+            return None
+        drill[low_key], drill[high_key] = round(low + shift, 2), round(high + shift, 2)
+        return f"{low:.0f}-{high:.0f} -> {low + shift:.0f}-{high + shift:.0f} N"
+
+    def snapshot(self, task: dict) -> dict:
+        """O estado para a telemetria: as faixas de cada tipo e a janela atual."""
+        out = {}
+        for d in task.get("drills", []):
+            if d["id"] not in self.rules:
+                continue
+            out[d["id"]] = {
+                "curto": [d.get("pushMinimumNewtons"), d.get("pushMaximumNewtons")],
+                "continuo": [d.get("holdMinimumNewtons"), d.get("holdMaximumNewtons"), d.get("holdMaximumSeconds")],
+                "janela": {PUSH_KINDS[k]: [len(self.records[(d["id"], k)]),
+                                          (sum(self.records[(d["id"], k)]) / len(self.records[(d["id"], k)])
+                                           if self.records[(d["id"], k)] else None)] for k in PUSH_KINDS}}
+        return out

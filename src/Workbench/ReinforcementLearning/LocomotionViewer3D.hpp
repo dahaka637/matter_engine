@@ -35,6 +35,10 @@ public:
         std::string name;
         // A fase do plano a que o exercicio pertence (1, 2, 3...; a tela agrupa por cor).
         int phase = 1;
+        // A categoria (basico, compostos...; vazia nas tarefas antigas) e o peso
+        // no treino (0: pronto, mas ainda fora do treino).
+        std::string category;
+        float weight = 1.0f;
     };
 
     // Lanca std::runtime_error se a tarefa nao for da locomocao.
@@ -62,6 +66,8 @@ public:
     void setManualSpeed(std::optional<float> metersPerSecond) override;
     // Um empurrao no peito (N), por alguns decimos de segundo.
     void push(Vec3 force, float seconds) override;
+    // A ajuda auxiliar do mundo (0..100%, as quatro como a regua do laboratorio).
+    void setAssist(float percent);
 
     [[nodiscard]] BodyWorldView3D view() const override;
     [[nodiscard]] const RagdollProfile3D& profile() const override;

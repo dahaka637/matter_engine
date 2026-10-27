@@ -135,5 +135,16 @@ struct AnimationClipValidationIssue3D {
 [[nodiscard]] RagdollAnimationPose3D sampleRagdollAnimationPose3D(
     const RagdollProfile3D& profile, const AnimationClip3D* clip,
     float timeSeconds, bool loop);
+// O clipe num corpo de outra altura (26/10, o corpo variavel): a raiz anda
+// x s (a translacao das chaves, o deslocamento da fonte e a velocidade
+// nominal); as juntas, os giros e os tempos nao mudam. Com o perfil x s, a
+// pose sai a do corpo de hoje x s e o pe pousa sem escorregar.
+[[nodiscard]] AnimationClip3D scaledAnimationClip3D(const AnimationClip3D& clip, float scale);
+// E, no corpo encorpado, os bracos e as coxas um pouco abertos (o braco grosso
+// encostava no tronco grosso nos clipes; o encorpado de verdade anda assim): o
+// ombro e o quadril giram em volta do eixo frente-tras do corpo, para fora,
+// por cima do clipe (nas coordenadas da junta).
+[[nodiscard]] AnimationClip3D bodyAnimationClip3D(const AnimationClip3D& clip, const RagdollProfile3D& profile, float scale,
+    float armOpeningRadians, float legOpeningRadians);
 
 } // namespace MatterEngine

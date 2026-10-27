@@ -130,8 +130,8 @@ def main() -> int:
 
     from matter_rl import system
     system.refuse_tuned_environment("portao")
-    module = native()
     run = paths.run_dir(args.treino)
+    module = native(run)
     task = (Path(args.tarefa) if Path(args.tarefa).exists() else paths.task_path(args.tarefa)) if args.tarefa \
         else run / "tarefa.json"
     reference = storage.latest_checkpoint(run)

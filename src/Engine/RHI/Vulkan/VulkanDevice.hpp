@@ -27,6 +27,11 @@ public:
     PipelineHandle createGraphicsPipeline(const GraphicsPipelineDesc& desc) override;
     TextureHandle createRenderTarget(const TextureDesc& desc) override;
     TextureHandle createTexture2D(Extent2D extent, std::span<const std::byte> rgbaPixels) override;
+    CharacterMaterialHandle createCharacterMaterial(const CharacterMaterialDesc& desc) override;
+    void updateCharacterKitLayer(CharacterMaterialHandle handle, std::uint32_t layer, std::span<const std::byte> levels,
+        std::span<const float> regionAverages) override;
+    void updateCharacterVertices(CharacterMaterialHandle handle, std::span<const CharacterKitVertexGpu> vertices) override;
+    void destroyCharacterMaterial(CharacterMaterialHandle handle) override;
     void destroyBuffer(BufferHandle handle) override;
     void destroyShader(ShaderHandle handle) override;
     void destroyPipeline(PipelineHandle handle) override;
