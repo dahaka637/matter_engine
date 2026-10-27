@@ -24,7 +24,13 @@ struct StepRecoverySettings3D {
     double minimumWidth = 0.14;
     // O pouso passa um pouco do DCM previsto (m): o corpo fica capturado com folga.
     double overshoot = 0.03;
+    // Tempos candidatos do passo e o teto da aceleracao de pico do pe (quintica: 5,774 d / T^2).
+    std::vector<double> durations { 0.14, 0.16, 0.18, 0.20, 0.22, 0.25, 0.30 };
+    double maximumSwingAcceleration = 60.0;
 };
+
+// O ponto do poligono (convexo) mais proximo, recuado `margin` para dentro.
+[[nodiscard]] Eigen::Vector2d projectToPolygon3D(const std::vector<Eigen::Vector2d>& polygon, const Eigen::Vector2d& point, double margin);
 
 struct StepRecoveryFoot3D {
     // Centro da sola no chao (mundo) e a direcao "para fora" do corpo (unitaria,
@@ -32,6 +38,8 @@ struct StepRecoveryFoot3D {
     Eigen::Vector2d center = Eigen::Vector2d::Zero();
     Eigen::Vector2d outward = Eigen::Vector2d::UnitY();
     bool supporting = true;
+    // Os pontos de apoio observados deste pe (o CoP util fica neles).
+    std::vector<Eigen::Vector2d> support;
 };
 
 struct StepRecoveryPlan3D {
@@ -42,6 +50,8 @@ struct StepRecoveryPlan3D {
     // Diagnostico: o DCM e a distancia dele para fora do apoio.
     Eigen::Vector2d capturePoint = Eigen::Vector2d::Zero();
     double outside = 0.0;
+    // O CoP do pe de apoio usado na previsao (o balanco o comanda).
+    Eigen::Vector2d stanceCop = Eigen::Vector2d::Zero();
 };
 
 [[nodiscard]] double stepRecoveryOmega3D(const StepRecoverySettings3D& settings);

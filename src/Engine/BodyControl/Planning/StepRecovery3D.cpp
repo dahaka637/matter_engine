@@ -65,6 +65,33 @@ Eigen::Vector2d replanLanding3D(const StepRecoverySettings3D& settings, const Ei
     return stanceCenter + offset;
 }
 
+Eigen::Vector2d projectToPolygon3D(const std::vector<Eigen::Vector2d>& polygon, const Eigen::Vector2d& point, double margin) {
+    const std::vector<Eigen::Vector2d> hull = convexHull(polygon);
+    if (hull.empty()) return point;
+    Eigen::Vector2d center = Eigen::Vector2d::Zero();
+    for (const Eigen::Vector2d& p : hull) center += p / double(hull.size());
+    if (hull.size() < 3) return center;
+    // O poligono recuado: cada vertice puxado `margin` para o centro (aproximacao do offset).
+    std::vector<Eigen::Vector2d> inner;
+    for (const Eigen::Vector2d& p : hull) {
+        const Eigen::Vector2d toCenter = center - p;
+        const double length = toCenter.norm();
+        inner.push_back(length > margin ? Eigen::Vector2d(p + toCenter * (margin / length)) : center);
+    }
+    if (polygonOutside3D(inner, point) <= 0.0) return point;
+    Eigen::Vector2d best = center;
+    double bestDistance = std::numeric_limits<double>::infinity();
+    for (std::size_t i = 0; i < inner.size(); ++i) {
+        const Eigen::Vector2d a = inner[i], b = inner[(i + 1) % inner.size()];
+        const Eigen::Vector2d edge = b - a;
+        const double t = std::clamp((point - a).dot(edge) / std::max(1e-12, edge.squaredNorm()), 0.0, 1.0);
+        const Eigen::Vector2d candidate = a + t * edge;
+        const double distance = (point - candidate).norm();
+        if (distance < bestDistance) { bestDistance = distance; best = candidate; }
+    }
+    return best;
+}
+
 StepRecoveryPlan3D planRecoveryStep3D(const StepRecoverySettings3D& settings, const Eigen::Vector2d& com,
     const Eigen::Vector2d& comVelocity, const std::vector<Eigen::Vector2d>& support,
     const std::array<StepRecoveryFoot3D, 2>& feet) {
@@ -73,29 +100,32 @@ StepRecoveryPlan3D planRecoveryStep3D(const StepRecoverySettings3D& settings, co
     plan.capturePoint = com + comVelocity / omega;
     plan.outside = polygonOutside3D(support, plan.capturePoint);
     if (plan.outside < settings.triggerMargin || !feet[0].supporting || !feet[1].supporting) return plan;
-    // O passo mais curto quanto mais fora (o corpo cai mais depressa).
-    const double duration = std::clamp(settings.stepDuration - 0.4 * std::max(0.0, plan.outside - 0.1),
-        settings.minimumStepDuration, settings.stepDuration);
+    // Pe e tempo escolhidos juntos (nota 26 do vault): o CoP util e a projecao do DCM
+    // no pe que fica; a previsao usa esse CoP; alcance excedido rejeita (nao recorta).
     double best = std::numeric_limits<double>::infinity();
     for (int swing = 0; swing < 2; ++swing) {
         const StepRecoveryFoot3D& stance = feet[static_cast<std::size_t>(1 - swing)];
         const StepRecoveryFoot3D& moving = feet[static_cast<std::size_t>(swing)];
-        const Eigen::Vector2d cop = stance.center;
-        const Eigen::Vector2d predicted = cop + std::exp(omega * duration) * (plan.capturePoint - cop);
-        Eigen::Vector2d offset = predicted - cop;
-        if (offset.norm() > 1e-6) offset += settings.overshoot * offset.normalized();
-        // Sem cruzar: o pe que pisa fica do lado dele, a pelo menos a largura minima.
-        const double width = offset.dot(moving.outward);
-        if (width < settings.minimumWidth) offset += (settings.minimumWidth - width) * moving.outward;
-        if (offset.norm() > settings.maximumReach) offset *= settings.maximumReach / offset.norm();
-        const Eigen::Vector2d landing = cop + offset;
-        const double cost = (landing - moving.center).norm() + 0.5 * (plan.capturePoint - cop).norm();
-        if (cost < best) {
-            best = cost;
-            plan.step = true;
-            plan.swingFoot = swing;
-            plan.landing = landing;
-            plan.duration = duration;
+        const Eigen::Vector2d cop = stance.support.size() >= 3 ? projectToPolygon3D(stance.support, plan.capturePoint, 0.02) : stance.center;
+        for (const double duration : settings.durations) {
+            const Eigen::Vector2d predicted = cop + std::exp(omega * duration) * (plan.capturePoint - cop);
+            Eigen::Vector2d offset = predicted - stance.center;
+            const Eigen::Vector2d direction = predicted - cop;
+            if (direction.norm() > 1e-6) offset += settings.overshoot * direction.normalized();
+            const double width = offset.dot(moving.outward);
+            if (width < settings.minimumWidth) offset += (settings.minimumWidth - width) * moving.outward;
+            if (offset.norm() > settings.maximumReach) continue;
+            const Eigen::Vector2d landing = stance.center + offset;
+            const double peak = 5.774 * (landing - moving.center).norm() / (duration * duration);
+            if (peak > settings.maximumSwingAcceleration) continue;
+            if (peak < best) {
+                best = peak;
+                plan.step = true;
+                plan.swingFoot = swing;
+                plan.landing = landing;
+                plan.duration = duration;
+                plan.stanceCop = cop;
+            }
         }
     }
     return plan;

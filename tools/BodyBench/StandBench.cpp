@@ -113,6 +113,7 @@ struct Stand {
     Eigen::Vector2d dcmReference = Eigen::Vector2d::Zero(), dcmReferenceRate = Eigen::Vector2d::Zero();
     bool dcmInitialized = false;
     bool recovering = false;
+    Eigen::Vector2d recoveryCop = Eigen::Vector2d::Zero();
     int landedFoot = -1;
     // Depois do pouso: o pe novo entra aos poucos e o alvo do CoM migra.
     double landedTime = -1.0;
@@ -452,9 +453,12 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
             feetInfo[static_cast<std::size_t>(f)].center = sole[f].head<2>();
             const Eigen::Vector2d side = Eigen::Vector2d(left.x(), left.y()).normalized();
             feetInfo[static_cast<std::size_t>(f)].outward = f == 0 ? side : Eigen::Vector2d(-side);
+            for (const RagdollContactPoint3D& contact : raw.contacts)
+                if (contact.linkIndex == s.feet[f]) feetInfo[static_cast<std::size_t>(f)].support.emplace_back(contact.position.x, contact.position.y);
         }
         const StepRecoveryPlan3D plan = planRecoveryStep3D(s.stepSettings, comNow.head<2>(), comVelocityNow.head<2>(), support, feetInfo);
         if (plan.step) {
+            s.recoveryCop = plan.stanceCop;
             // O passo de recuperacao usa a mesma maquina do voluntario, direto no balanco.
             s.landedTime = -1.0;
             s.landedFoot = -1;
@@ -665,7 +669,7 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
         if (s.recovering) {
             // No balanco da recuperacao o CoP fica no pe de apoio: o corpo cai para o pouso.
             s.dcmReference = xi;
-            s.dcmReferenceRate = omega * (xi - sole[1 - s.voluntaryFoot].head<2>());
+            s.dcmReferenceRate = omega * (xi - s.recoveryCop);
         }
         const double gainXi = 3.0;
         Eigen::Vector2d cop = xi - (s.dcmReferenceRate - gainXi * (xi - s.dcmReference)) / omega;
@@ -675,14 +679,7 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
             const bool swingFootContact = s.stepping && static_cast<int>(contact.linkIndex) == static_cast<int>(s.feet[s.swingFoot]);
             if (!swingFootContact) support.emplace_back(contact.position.x, contact.position.y);
         }
-        if (support.size() >= 3) {
-            const double outside = polygonOutside3D(support, cop);
-            if (outside > -0.02) {
-                Eigen::Vector2d center = Eigen::Vector2d::Zero();
-                for (const Eigen::Vector2d& p : support) center += p / double(support.size());
-                for (int iteration = 0; iteration < 20 && polygonOutside3D(support, cop) > -0.02; ++iteration) cop = center + 0.9 * (cop - center);
-            }
-        }
+        if (support.size() >= 3) cop = projectToPolygon3D(support, cop, 0.02);
         linearRate.x() = m * omega * omega * (d.centerOfMass.x() - cop.x());
         linearRate.y() = m * omega * omega * (d.centerOfMass.y() - cop.y());
     }
@@ -701,8 +698,8 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
     input.tasks.push_back(wholeBodyOrientationTask3D(k, static_cast<int>(s.chest), s.chestTarget, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(), 100.0 * gain * gain, 20.0 * gain, 3.0, "peito"));
     input.tasks.push_back(wholeBodyOrientationTask3D(k, static_cast<int>(s.head), s.headTarget, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(), 100.0 * gain * gain, 20.0 * gain, 2.0, "cabeca"));
     if (s.stepping) {
-        // O pouso replanejado a cada tick (o DCM de agora e o tempo que falta).
-        if (s.recovering) {
+        // O destino aceito fica fixo no balanco (nota 26: replanejar sem preservar derivadas derrubava).
+        if (s.recovering && std::getenv("STANDREPLAN")) {
             const Eigen::Vector3d left = k.rotation[0] * Eigen::Vector3d::UnitY();
             Eigen::Vector2d outward = Eigen::Vector2d(left.x(), left.y()).normalized();
             if (s.swingFoot == 1) outward = -outward;
@@ -710,7 +707,7 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
                 sole[1 - s.swingFoot].head<2>(), outward, s.stepDuration - s.stepTime);
             if (s.stepTime < 0.8 * s.stepDuration) s.swingLanding.head<2>() = landing;
         }
-        const SwingSample3D swing = sampleSwing3D(s.swingStart, s.swingLanding, 0.06, s.stepDuration, s.stepTime);
+        const SwingSample3D swing = sampleSwing3D(s.swingStart, s.swingLanding, s.recovering ? 0.025 : 0.06, s.stepDuration, s.stepTime);
         const int foot = static_cast<int>(s.feet[s.swingFoot]);
         if (std::getenv("STANDSTEPDBG")) {
             const Eigen::Vector3d up = k.rotation[0].col(2);
