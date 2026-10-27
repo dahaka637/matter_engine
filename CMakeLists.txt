@@ -389,6 +389,7 @@ endif()
 # A locomocao fisica nova (Engine/BodyControl): por ora o atuador (G0).
 add_library(MatterBodyControl STATIC
     src/Engine/BodyControl/Execution/Actuation3D.cpp
+    src/Engine/BodyControl/Observation/ContactWrench3D.cpp
 )
 target_include_directories(MatterBodyControl PUBLIC src)
 target_link_libraries(MatterBodyControl PUBLIC MatterArticulationDynamics)
@@ -1281,6 +1282,10 @@ if(MATTERENGINE_BUILD_TESTS)
     target_link_libraries(MatterArticulationTests PRIVATE MatterArticulationDynamics)
     target_compile_definitions(MatterArticulationTests PRIVATE MATTERENGINE_TEST_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
     add_test(NAME MatterEngine.Articulation COMMAND MatterArticulationTests)
+    add_executable(MatterContactWrenchTests tests/BodyControl/ContactWrenchTests.cpp)
+    target_link_libraries(MatterContactWrenchTests PRIVATE MatterBodyControl)
+    target_compile_definitions(MatterContactWrenchTests PRIVATE MATTERENGINE_TEST_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
+    add_test(NAME MatterEngine.ContactWrench COMMAND MatterContactWrenchTests)
 endif()
 
 set_target_properties(MatterCore MatterRHI MatterPhysics MatterAudio MatterVulkan

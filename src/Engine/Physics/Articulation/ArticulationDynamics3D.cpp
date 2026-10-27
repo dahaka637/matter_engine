@@ -133,8 +133,10 @@ ArticulationDynamics3D computeArticulationDynamics3D(
         const Eigen::MatrixXd block = link.mass * comJacobian.transpose() * comJacobian + angular.transpose() * inertia * angular;
         const Eigen::Vector3d angularBiasMoment = inertia * k.angularBias[i]
             + (model.gyroscopic ? Eigen::Vector3d(w.cross(inertia * w)) : Eigen::Vector3d::Zero());
-        const Eigen::VectorXd force = comJacobian.transpose() * (link.mass * (comBias - model.gravity))
-            + angular.transpose() * angularBiasMoment;
+        // O arrasto do backend entra como forca dependente da velocidade (no bias).
+        const Eigen::Vector3d comVelocity = k.originVelocity[i] + w.cross(r);
+        const Eigen::VectorXd force = comJacobian.transpose() * (link.mass * (comBias - model.gravity + model.linearDamping * comVelocity))
+            + angular.transpose() * (angularBiasMoment + model.angularDamping * (inertia * w));
         const Eigen::Vector3d arm = k.centerOfMass[i] - d.centerOfMass;
         const Eigen::Matrix3d armCross = skew(arm);
         for (int a = 0; a < m; ++a) {

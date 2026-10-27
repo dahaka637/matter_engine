@@ -56,6 +56,10 @@ struct ArticulationModel3D {
     // O Jolt nao aplica o torque giroscopico (w x Iw) nos corpos do ragdoll
     // (ApplyGyroscopicForce desligado): o modelo segue o corpo simulado.
     bool gyroscopic = false;
+    // O amortecimento de cada corpo no backend (1/s; Jolt: v *= 1 - c dt), que
+    // age como um arrasto externo: 0,04 linear e 0,16 angular (JoltRagdoll3D).
+    double linearDamping = 0.04;
+    double angularDamping = 0.16;
 };
 
 struct ArticulationState3D {
