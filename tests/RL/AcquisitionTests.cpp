@@ -423,6 +423,7 @@ void testPilotChange() {
         std::mt19937_64 rng(follow ? 7 : 3);
         PilotState3D state;
         CommandPilot3D::start(script, state, {}, 0.0f, rng);
+        if (follow) require(near(state.stickWorld, state.camera, 1.0e-4f), "acompanhando, a troca sai para a frente");
         float last = state.stickWorld, smallest = 9.0f, largest = 0.0f, settled = 9.0f;
         int changes = 0;
         for (int i = 0; i < 30 * 40; ++i) {

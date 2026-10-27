@@ -88,7 +88,8 @@ struct PilotScript3D {
     // pedido depois do primeiro vira a direcao do anterior (no mundo) por um
     // angulo sorteado nesta faixa (rad), para um lado sorteado: as trocas se
     // encadeiam de qualquer direcao. Com a camera fixa, o rumo troca e o peito
-    // fica; acompanhando, o corpo vira junto (a meia-volta). 0: desligada.
+    // fica; acompanhando, o corpo vira junto (a meia-volta) e o primeiro
+    // pedido e para a frente. 0: desligada.
     PilotRange3D changeRadians { 0.0f, 0.0f };
     // A estrela.
     std::uint32_t starDirections = 8;

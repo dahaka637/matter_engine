@@ -124,6 +124,12 @@ void pickStick(const PilotScript3D& script, PilotState3D& state, const PilotView
     const bool change = script.changeRadians.maximum > 0.0f && state.cutNext;
     if (script.forwardOnly) {
         relative = 0.0f;
+    } else if (script.changeRadians.maximum > 0.0f && !state.cutNext
+        && state.cameraMode == PilotCameraMode3D::Follow) {
+        // (A troca acompanhando sai para a frente: a meia-volta e de quem ja
+        // corre; de pe, um primeiro pedido para tras era um giro inteiro saindo
+        // do lugar, e ele caia ali, antes de qualquer troca - 27/10.)
+        relative = 0.0f;
     } else if (change) {
         const float size = pick(rng, script.changeRadians);
         relative = wrap(state.stickWorld + (chance(rng, 0.5f) ? size : -size) - state.camera);
