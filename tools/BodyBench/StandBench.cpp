@@ -224,6 +224,26 @@ void setup(Stand& s, const RagdollProfile3D& profile) {
         }
 }
 
+// O quadro no formato do MatterModelInspector quadros (os colisores dos links e os contatos).
+void dumpFrame(FILE* file, const RagdollProfile3D& profile, const RagdollState3D& state, double t) {
+    std::fprintf(file, "F %.4f 0 0\n", t);
+    for (std::size_t i = 0; i < profile.links.size() && i < state.links.size(); ++i) {
+        const auto& collider = profile.links[i].collider;
+        const Vec3 center = state.links[i].position + state.links[i].orientation.rotate(collider.localPosition);
+        const Quaternion q = (state.links[i].orientation * collider.localOrientation).normalized();
+        if (ragdollColliderHasBox3D(collider)) {
+            std::fprintf(file, "B %s %.4f %.4f %.4f %.5f %.5f %.5f %.5f %.4f %.4f %.4f\n", profile.links[i].id.c_str(), center.x, center.y,
+                center.z, q.x, q.y, q.z, q.w, collider.boxHalfExtents.x, collider.boxHalfExtents.y, collider.boxHalfExtents.z);
+        } else {
+            std::fprintf(file, "C %s %.4f %.4f %.4f %.5f %.5f %.5f %.5f %.4f %.4f %.4f\n", profile.links[i].id.c_str(), center.x, center.y,
+                center.z, q.x, q.y, q.z, q.w, ragdollCapsuleHalfSegment3D(collider), collider.radiusMeters, ragdollCapsuleRadiusAtPositiveX3D(collider));
+        }
+    }
+    for (const RagdollContactPoint3D& c : state.contacts)
+        std::fprintf(file, "P %.4f %.4f %.4f %s %.3f %.3f %.3f\n", c.position.x, c.position.y, c.position.z,
+            profile.links[c.linkIndex].id.c_str(), c.normal.x, c.normal.y, c.normal.z);
+}
+
 const char* statusName(WholeBodyQPStatus3D status) {
     switch (status) {
         case WholeBodyQPStatus3D::Solved: return "resolvido";
@@ -415,12 +435,40 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
     const Eigen::Vector3d comVelocity = d.centroidalMatrix.topRows(3) * state.velocity / m;
     const Eigen::Vector3d linearRate = m * (40.0 * gain * gain * (s.comTarget - d.centerOfMass) - 2.0 * std::sqrt(40.0) * gain * comVelocity);
     const Eigen::Vector3d angularMomentum = d.centroidalMatrix.bottomRows(3) * state.velocity;
-    input.tasks.push_back(wholeBodyCentroidalTask3D(s.model, d, state, linearRate, -10.0 * angularMomentum, 10.0, 1.0));
+    const double angularWeight = std::getenv("STANDLW") ? std::atof(std::getenv("STANDLW")) : 0.1;
+    const double angularGain = std::getenv("STANDLG") ? std::atof(std::getenv("STANDLG")) : 2.0;
+    input.tasks.push_back(wholeBodyCentroidalTask3D(s.model, d, state, linearRate, -angularGain * angularMomentum, 10.0, angularWeight));
     input.tasks.push_back(wholeBodyOrientationTask3D(k, 0, s.pelvisTarget, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(), 100.0 * gain * gain, 20.0 * gain, 5.0, "pelve"));
     input.tasks.push_back(wholeBodyOrientationTask3D(k, static_cast<int>(s.chest), s.chestTarget, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(), 100.0 * gain * gain, 20.0 * gain, 3.0, "peito"));
     input.tasks.push_back(wholeBodyOrientationTask3D(k, static_cast<int>(s.head), s.headTarget, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(), 100.0 * gain * gain, 20.0 * gain, 2.0, "cabeca"));
     const std::vector<Eigen::Vector3d> zero(s.model.links.size(), Eigen::Vector3d::Zero());
-    input.tasks.push_back(wholeBodyPostureTask3D(s.model, state, s.referencePose, zero, zero, 100.0 * gain * gain, 20.0 * gain, 0.5));
+    {
+        // A postura por regiao: bracos, coluna e pescoco firmes; pernas livres para equilibrar.
+        WholeBodyTask3D posture = wholeBodyPostureTask3D(s.model, state, s.referencePose, zero, zero, 100.0 * gain * gain, 20.0 * gain, 1.0);
+        // Bracos e coluna com ganhos proprios (omega 20 e 14 rad/s): o tronco empurrado nao os deixa para tras.
+        const double armOmega = std::getenv("STANDARMW") ? std::atof(std::getenv("STANDARMW")) : 20.0;
+        const double spineOmega = std::getenv("STANDSPINEW") ? std::atof(std::getenv("STANDSPINEW")) : 14.0;
+        const WholeBodyTask3D armPosture = wholeBodyPostureTask3D(s.model, state, s.referencePose, zero, zero, armOmega * armOmega, 2.0 * armOmega, 1.0);
+        const WholeBodyTask3D spinePosture = wholeBodyPostureTask3D(s.model, state, s.referencePose, zero, zero, spineOmega * spineOmega, 2.0 * spineOmega, 1.0);
+        const double armWeight = std::getenv("STANDARM") ? std::atof(std::getenv("STANDARM")) : 3.0;
+        const double spineWeight = std::getenv("STANDSPINE") ? std::atof(std::getenv("STANDSPINE")) : 1.5;
+        const double legWeight = std::getenv("STANDLEG") ? std::atof(std::getenv("STANDLEG")) : 0.2;
+        for (std::size_t i = 1; i < s.model.links.size(); ++i) {
+            const std::string& id = profile.links[i].id;
+            const bool arm = id.find("Arm") != std::string::npos || id.find("Hand") != std::string::npos;
+            const bool leg = id.find("Thigh") != std::string::npos || id.find("Shin") != std::string::npos || id.find("Foot") != std::string::npos;
+            const double weight = arm ? armWeight : leg ? legWeight : spineWeight;
+            for (int a = 0; a < 3; ++a) {
+                const int dof = s.model.links[i].dof[static_cast<std::size_t>(a)];
+                if (dof < 0) continue;
+                if (arm) posture.target[dof - 6] = armPosture.target[dof - 6];
+                else if (!leg) posture.target[dof - 6] = spinePosture.target[dof - 6];
+                posture.matrix.row(dof - 6) *= std::sqrt(weight);
+                posture.target[dof - 6] *= std::sqrt(weight);
+            }
+        }
+        input.tasks.push_back(posture);
+    }
     const WholeBodyQPResult3D result = s.qp.solve(input);
     if (std::getenv("STANDLOG") && (s.logTick++ % 30 == 0 || !result.usable())) {
         double worstRatio = 0.0;
@@ -559,10 +607,12 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
 int main(int argc, char** argv) {
     double seconds = 60.0;
     bool pushes = false;
+    std::string dumpPath;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         if (arg == "--segundos" && i + 1 < argc) seconds = std::stod(argv[++i]);
         else if (arg == "--empurroes") pushes = true;
+        else if (arg == "--dump" && i + 1 < argc) dumpPath = argv[++i];
         else {
             std::fprintf(stderr, "uso: MatterStandBench [--segundos 60] [--empurroes]\n");
             return 2;
@@ -601,6 +651,32 @@ int main(int argc, char** argv) {
             fallen ? "SIM" : "nao", std::sqrt(pelvisSquared / std::max(1, samples)), worstSlip);
         std::printf("- QP: %d falhas (ultima: %s); %.0f us de media, %.0f us no pior; %.1f iteracoes de media\n", failures,
             statusName(lastFailure), micros / std::max(1, samples), worstMicros, double(iterations) / std::max(1, samples));
+    }
+    if (!dumpPath.empty()) {
+        // Os cenarios das folhas: de pe 3 s; empurroes de frente, de lado e de costas.
+        FILE* file = std::fopen(dumpPath.c_str(), "w");
+        if (!file) { std::fprintf(stderr, "nao abriu %s\n", dumpPath.c_str()); return 1; }
+        struct Shot { const char* name; double angle; double impulse; };
+        const Shot shots[] = { { "de_pe", 0.0, 0.0 }, { "empurrao_frente_30", 0.0, 30.0 }, { "empurrao_lado_60", 90.0, 60.0 },
+            { "empurrao_225_120", 225.0, 120.0 }, { "empurrao_frente_60_cai", 0.0, 60.0 } };
+        for (const Shot& shot : shots) {
+            Stand s;
+            setup(s, profile);
+            std::fprintf(file, "S %s\n", shot.name);
+            const double angle = shot.angle * Pi / 180.0;
+            for (int i = 0; i < 360; ++i) {
+                const bool pushing = shot.impulse > 0.0 && i >= 120 && i < 132;
+                if (i == 120 && shot.impulse > 0.0) std::fprintf(file, "E empurrao %.0f N.s\n", shot.impulse);
+                const Eigen::Vector3d force = pushing ? Eigen::Vector3d(Eigen::Vector3d(std::cos(angle), std::sin(angle), 0.0) * (shot.impulse / 0.1))
+                                                      : Eigen::Vector3d(Eigen::Vector3d::Zero());
+                const bool fallen = step(s, profile, force, s.chest).fallen;
+                if (i % 4 == 0) dumpFrame(file, profile, *s.scene->ragdollStateView(s.ragdoll), i * Dt);
+                if (fallen && i > 200) break;
+            }
+        }
+        std::fclose(file);
+        std::printf("dump: %s\n", dumpPath.c_str());
+        return 0;
     }
     if (pushes) {
         std::printf("\n# Empurrao de 0,1 s no peito (sem passo), o maior impulso aguentado por direcao\n");
