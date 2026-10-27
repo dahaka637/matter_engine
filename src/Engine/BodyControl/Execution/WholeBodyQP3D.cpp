@@ -34,6 +34,7 @@ void tangentBasis(const Eigen::Vector3d& normal, Eigen::Vector3d& first, Eigen::
 struct WholeBodyQP3D::Impl {
     std::optional<proxsuite::proxqp::dense::QP<double>> qp;
     int dimension = -1, inequalities = -1, equalities = -1;
+    int updatesSincePreconditioner = 0;
 };
 
 WholeBodyQP3D::WholeBodyQP3D() : m_impl(std::make_unique<Impl>()) {}
@@ -128,6 +129,7 @@ WholeBodyQPResult3D WholeBodyQP3D::solve(const WholeBodyQPInput3D& in) {
         }
     }
 
+    const auto built = std::chrono::steady_clock::now();
     Impl& impl = *m_impl;
     const bool reuse = impl.qp && impl.dimension == dimension && impl.inequalities == inequalities && impl.equalities == equalities;
     if (!reuse) {
@@ -141,9 +143,17 @@ WholeBodyQPResult3D WholeBodyQP3D::solve(const WholeBodyQPInput3D& in) {
         impl.equalities = equalities;
     } else {
         impl.qp->settings.initial_guess = proxsuite::proxqp::InitialGuessStatus::WARM_START_WITH_PREVIOUS_RESULT;
-        impl.qp->update(hessian, gradient, equality, equalityTarget, inequality, lower, upper, true);
+        // O precondicionador so e refeito de tempos em tempos (refaze-lo a cada
+        // tick custava ~170 us); a falha numerica refaz tudo a frio.
+        const bool refresh = (++impl.updatesSincePreconditioner >= in.preconditionerRefreshTicks);
+        if (refresh) impl.updatesSincePreconditioner = 0;
+        impl.qp->update(hessian, gradient, equality, equalityTarget, inequality, lower, upper, refresh);
     }
+    const auto updated = std::chrono::steady_clock::now();
     impl.qp->solve();
+    result.buildMicros = std::chrono::duration<double, std::micro>(built - start).count();
+    result.updateMicros = std::chrono::duration<double, std::micro>(updated - built).count();
+    result.innerSolveMicros = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - updated).count();
     // Falha numerica (o problema e viavel: um LP achou o ponto; nota 24):
     // reconstruir e resolver a frio uma vez antes da politica de falha.
     const auto failed = [&] {
@@ -197,6 +207,20 @@ WholeBodyTask3D wholeBodyOrientationTask3D(const ArticulationKinematics3D& k, in
     task.matrix = k.angularJacobian[i];
     task.target = feedforward + stiffness * rotationVector(desiredRotation * k.rotation[i].transpose())
         + damping * (desiredAngularVelocity - k.angularVelocity[i]) - k.angularBias[i];
+    task.weight = weight;
+    return task;
+}
+
+WholeBodyTask3D wholeBodyPointTask3D(const ArticulationKinematics3D& k, int link, const Eigen::Vector3d& pointWorld,
+    const Eigen::Vector3d& desiredPosition, const Eigen::Vector3d& desiredVelocity, const Eigen::Vector3d& feedforward,
+    double stiffness, double damping, double weight, std::string name) {
+    WholeBodyTask3D task;
+    task.name = std::move(name);
+    task.matrix = articulationPointJacobian3D(k, link, pointWorld);
+    const std::size_t i = static_cast<std::size_t>(link);
+    const Eigen::Vector3d velocity = k.originVelocity[i] + k.angularVelocity[i].cross(pointWorld - k.origin[i]);
+    task.target = feedforward + stiffness * (desiredPosition - pointWorld) + damping * (desiredVelocity - velocity)
+        - articulationPointBias3D(k, link, pointWorld);
     task.weight = weight;
     return task;
 }

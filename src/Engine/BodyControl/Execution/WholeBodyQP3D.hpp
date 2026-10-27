@@ -69,6 +69,8 @@ struct WholeBodyQPInput3D {
     double accelerationRegularization = 1e-4;
     double forceRegularization = 1e-5;
     int maximumIterations = 200;
+    // De quantos em quantos ticks o precondicionador do ProxQP e refeito.
+    int preconditionerRefreshTicks = 30;
 };
 
 enum class WholeBodyQPStatus3D { Solved, MaximumIterations, Infeasible, NotFinite, InvalidInput };
@@ -84,6 +86,8 @@ struct WholeBodyQPResult3D {
     double solveMicros = 0.0;
     // Resolvido de novo a frio depois de uma falha numerica do reaproveitado.
     bool coldRetry = false;
+    // Onde o tempo vai: montar as matrizes, atualizar o ProxQP e resolver.
+    double buildMicros = 0.0, updateMicros = 0.0, innerSolveMicros = 0.0;
     // O residuo das linhas da raiz com a solucao (N, N.m): a coerencia dinamica.
     double dynamicsResidual = 0.0;
     // A maior violacao das igualdades (raiz + pes rigidos) e das desigualdades.
@@ -114,6 +118,9 @@ private:
     const Eigen::Matrix3d& desiredRotation, const Eigen::Vector3d& desiredAngularVelocity,
     const Eigen::Vector3d& feedforwardAngularAcceleration, double stiffness, double damping, double weight,
     std::string name);
+[[nodiscard]] WholeBodyTask3D wholeBodyPointTask3D(const ArticulationKinematics3D& kinematics, int link,
+    const Eigen::Vector3d& pointWorld, const Eigen::Vector3d& desiredPosition, const Eigen::Vector3d& desiredVelocity,
+    const Eigen::Vector3d& feedforwardAcceleration, double stiffness, double damping, double weight, std::string name);
 [[nodiscard]] WholeBodyTask3D wholeBodyCentroidalTask3D(const ArticulationModel3D& model,
     const ArticulationDynamics3D& dynamics, const ArticulationState3D& state,
     const Eigen::Vector3d& desiredLinearMomentumRate, const Eigen::Vector3d& desiredAngularMomentumRate,

@@ -9,6 +9,7 @@
 #include "Engine/BodyControl/Execution/Actuation3D.hpp"
 #include "Engine/BodyControl/Execution/WholeBodyQP3D.hpp"
 #include "Engine/BodyControl/Observation/ContactWrench3D.hpp"
+#include "Engine/BodyControl/Planning/StepRecovery3D.hpp"
 #include "Engine/Materials/MaterialLibrary.hpp"
 #include "Engine/Physics/PhysicsEngine3D.hpp"
 
@@ -92,6 +93,16 @@ struct Stand {
     Eigen::Vector3d plannedCop[2];
     int debugTicks = 0;
     int logTick = 0;
+    // O passo de recuperacao (G3).
+    bool steppingEnabled = false;
+    bool stepping = false;
+    int swingFoot = -1;
+    int steps = 0;
+    double stepTime = 0.0, stepDuration = 0.0;
+    Eigen::Vector3d swingStart, swingLanding;
+    Eigen::Matrix3d swingRotation;
+    Eigen::Vector3d soleCenterLocal[2];
+    StepRecoverySettings3D stepSettings;
 };
 
 void setup(Stand& s, const RagdollProfile3D& profile) {
@@ -206,13 +217,19 @@ void setup(Stand& s, const RagdollProfile3D& profile) {
     s.feet[1] = findLink(profile, "RightFoot");
     s.chest = findLink(profile, "UpperChest");
     s.head = findLink(profile, "Head");
-    for (int f = 0; f < 2; ++f) s.corners[f] = soleCorners(profile, s.feet[f]);
+    for (int f = 0; f < 2; ++f) {
+        s.corners[f] = soleCorners(profile, s.feet[f]);
+        s.soleCenterLocal[f].setZero();
+        for (const Eigen::Vector3d& corner : s.corners[f]) s.soleCenterLocal[f] += corner / 4.0;
+    }
+    s.steppingEnabled = std::getenv("STANDSTEP") != nullptr;
     const ArticulationState3D state = articulationStateFromRagdoll3D(s.model, *s.scene->ragdollStateView(s.ragdoll));
     const ArticulationKinematics3D k = computeArticulationKinematics3D(s.model, state);
     const ArticulationDynamics3D d = computeArticulationDynamics3D(s.model, k);
     // O centro de massa sobre o meio dos pes, na altura de agora.
     // A pose de repouso ja e de pe: o alvo e o centro de massa dela.
     s.comTarget = d.centerOfMass;
+    s.stepSettings.comHeight = d.centerOfMass.z();
     s.pelvisTarget = k.rotation[0];
     s.chestTarget = k.rotation[s.chest];
     s.headTarget = k.rotation[s.head];
@@ -362,7 +379,60 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
     input.state = &state;
     input.torqueLimit = s.torqueLimit;
     const double friction = 0.75 * 0.8; // gramado x sola, com margem de 20%
+    const Eigen::Vector3d comNow = d.centerOfMass;
+    const Eigen::Vector3d comVelocityNow = d.centroidalMatrix.topRows(3) * state.velocity / s.model.totalMass;
+    Eigen::Vector3d sole[2];
+    bool footTouching[2] = { false, false };
     for (int f = 0; f < 2; ++f) {
+        sole[f] = k.origin[s.feet[f]] + k.rotation[s.feet[f]] * s.soleCenterLocal[f];
+        for (const RagdollContactPoint3D& contact : raw.contacts) footTouching[f] |= contact.linkIndex == s.feet[f];
+    }
+    if (s.stepping) {
+        s.stepTime += Dt;
+        const bool landed = s.stepTime > 0.6 * s.stepDuration && footTouching[s.swingFoot];
+        if (landed || s.stepTime > s.stepDuration + 0.2) {
+            s.stepping = false;
+            // O apoio novo: o centro de massa vai para o meio dos pes.
+            const Eigen::Vector3d middle = 0.5 * (sole[0] + sole[1]);
+            s.comTarget = { middle.x(), middle.y(), s.comTarget.z() };
+        }
+    }
+    if (s.steppingEnabled && !s.stepping && footTouching[0] && footTouching[1]) {
+        std::vector<Eigen::Vector2d> support;
+        for (const RagdollContactPoint3D& contact : raw.contacts) support.emplace_back(contact.position.x, contact.position.y);
+        const Eigen::Vector3d left = k.rotation[0] * Eigen::Vector3d::UnitY();
+        std::array<StepRecoveryFoot3D, 2> feetInfo;
+        for (int f = 0; f < 2; ++f) {
+            feetInfo[static_cast<std::size_t>(f)].center = sole[f].head<2>();
+            const Eigen::Vector2d side = Eigen::Vector2d(left.x(), left.y()).normalized();
+            feetInfo[static_cast<std::size_t>(f)].outward = f == 0 ? side : Eigen::Vector2d(-side);
+        }
+        const StepRecoveryPlan3D plan = planRecoveryStep3D(s.stepSettings, comNow.head<2>(), comVelocityNow.head<2>(), support, feetInfo);
+        if (plan.step) {
+            s.stepping = true;
+            ++s.steps;
+            s.swingFoot = plan.swingFoot;
+            s.stepTime = 0.0;
+            s.stepDuration = plan.duration;
+            s.swingStart = sole[plan.swingFoot];
+            s.swingLanding = { plan.landing.x(), plan.landing.y(), sole[plan.swingFoot].z() };
+            // O pe no ar nivelado, com o rumo de agora.
+            const Eigen::Vector3d forward = k.rotation[s.feet[plan.swingFoot]] * Eigen::Vector3d::UnitX();
+            const double yaw = std::atan2(forward.y(), forward.x());
+            const Eigen::Matrix3d level = Eigen::AngleAxisd(yaw, Eigen::Vector3d::UnitZ()).toRotationMatrix();
+            // Preserva a orientacao do pe em relacao ao seu rumo (so tira a inclinacao).
+            const Eigen::Matrix3d current = k.rotation[s.feet[plan.swingFoot]];
+            const Eigen::Vector3d down = current * (s.soleCenterLocal[plan.swingFoot].normalized());
+            const Eigen::Matrix3d fix = Eigen::Quaterniond::FromTwoVectors(down, Eigen::Vector3d(0.0, 0.0, -1.0)).toRotationMatrix();
+            s.swingRotation = fix * current;
+            (void)level;
+            if (std::getenv("STANDSTEPLOG"))
+                std::printf("   passo %d: pe %d, DCM %.3f m fora, pouso (%.2f %.2f), %.2f s\n", s.steps, plan.swingFoot, plan.outside,
+                    plan.landing.x(), plan.landing.y(), plan.duration);
+        }
+    }
+    for (int f = 0; f < 2; ++f) {
+        if (s.stepping && f == s.swingFoot) continue;
         bool touching = false;
         for (const RagdollContactPoint3D& contact : raw.contacts)
             if (contact.linkIndex == s.feet[f]) touching = true;
@@ -433,7 +503,14 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
     const double m = s.model.totalMass;
     const double gain = std::getenv("STANDGAIN") ? std::atof(std::getenv("STANDGAIN")) : 1.0;
     const Eigen::Vector3d comVelocity = d.centroidalMatrix.topRows(3) * state.velocity / m;
-    const Eigen::Vector3d linearRate = m * (40.0 * gain * gain * (s.comTarget - d.centerOfMass) - 2.0 * std::sqrt(40.0) * gain * comVelocity);
+    Eigen::Vector3d linearRate = m * (40.0 * gain * gain * (s.comTarget - d.centerOfMass) - 2.0 * std::sqrt(40.0) * gain * comVelocity);
+    if (s.stepping) {
+        // No passo, o centro de massa segue o pendulo sobre o pe de apoio (nao briga).
+        const double omega = stepRecoveryOmega3D(s.stepSettings);
+        const Eigen::Vector3d stance = sole[1 - s.swingFoot];
+        linearRate.x() = m * omega * omega * (d.centerOfMass.x() - stance.x());
+        linearRate.y() = m * omega * omega * (d.centerOfMass.y() - stance.y());
+    }
     const Eigen::Vector3d angularMomentum = d.centroidalMatrix.bottomRows(3) * state.velocity;
     const double angularWeight = std::getenv("STANDLW") ? std::atof(std::getenv("STANDLW")) : 0.1;
     const double angularGain = std::getenv("STANDLG") ? std::atof(std::getenv("STANDLG")) : 2.0;
@@ -441,6 +518,21 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
     input.tasks.push_back(wholeBodyOrientationTask3D(k, 0, s.pelvisTarget, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(), 100.0 * gain * gain, 20.0 * gain, 5.0, "pelve"));
     input.tasks.push_back(wholeBodyOrientationTask3D(k, static_cast<int>(s.chest), s.chestTarget, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(), 100.0 * gain * gain, 20.0 * gain, 3.0, "peito"));
     input.tasks.push_back(wholeBodyOrientationTask3D(k, static_cast<int>(s.head), s.headTarget, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(), 100.0 * gain * gain, 20.0 * gain, 2.0, "cabeca"));
+    if (s.stepping) {
+        // O pouso replanejado a cada tick (o DCM de agora e o tempo que falta).
+        {
+            const Eigen::Vector3d left = k.rotation[0] * Eigen::Vector3d::UnitY();
+            Eigen::Vector2d outward = Eigen::Vector2d(left.x(), left.y()).normalized();
+            if (s.swingFoot == 1) outward = -outward;
+            const Eigen::Vector2d landing = replanLanding3D(s.stepSettings, comNow.head<2>(), comVelocityNow.head<2>(),
+                sole[1 - s.swingFoot].head<2>(), outward, s.stepDuration - s.stepTime);
+            if (s.stepTime < 0.8 * s.stepDuration) s.swingLanding.head<2>() = landing;
+        }
+        const SwingSample3D swing = sampleSwing3D(s.swingStart, s.swingLanding, 0.06, s.stepDuration, s.stepTime);
+        const int foot = static_cast<int>(s.feet[s.swingFoot]);
+        input.tasks.push_back(wholeBodyPointTask3D(k, foot, sole[s.swingFoot], swing.position, swing.velocity, swing.acceleration, 400.0, 40.0, 20.0, "pe no ar"));
+        input.tasks.push_back(wholeBodyOrientationTask3D(k, foot, s.swingRotation, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(), 400.0, 40.0, 5.0, "pe no ar (orientacao)"));
+    }
     const std::vector<Eigen::Vector3d> zero(s.model.links.size(), Eigen::Vector3d::Zero());
     {
         // A postura por regiao: bracos, coluna e pescoco firmes; pernas livres para equilibrar.
@@ -521,6 +613,8 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
         }
     }
     report.status = result.status;
+    if (std::getenv("STANDQPTIME") && s.logTick % 60 == 0)
+        std::printf("   QP: montar %.0f us, atualizar %.0f us, resolver %.0f us (it %d)\n", result.buildMicros, result.updateMicros, result.innerSolveMicros, result.iterations);
     s.predictedAcceleration = result.usable() ? result.acceleration : Eigen::VectorXd();
     for (int f = 0; f < 2; ++f) { s.plannedFootForce[f].setZero(); s.plannedCop[f].setZero(); }
     if (result.usable())
@@ -657,8 +751,15 @@ int main(int argc, char** argv) {
         FILE* file = std::fopen(dumpPath.c_str(), "w");
         if (!file) { std::fprintf(stderr, "nao abriu %s\n", dumpPath.c_str()); return 1; }
         struct Shot { const char* name; double angle; double impulse; };
-        const Shot shots[] = { { "de_pe", 0.0, 0.0 }, { "empurrao_frente_30", 0.0, 30.0 }, { "empurrao_lado_60", 90.0, 60.0 },
+        std::vector<Shot> shots = { { "de_pe", 0.0, 0.0 }, { "empurrao_frente_30", 0.0, 30.0 }, { "empurrao_lado_60", 90.0, 60.0 },
             { "empurrao_225_120", 225.0, 120.0 }, { "empurrao_frente_60_cai", 0.0, 60.0 } };
+        static std::string customName;
+        if (const char* custom = std::getenv("STANDPUSH")) {
+            double angle = 0.0, impulse = 0.0;
+            std::sscanf(custom, "%lf,%lf", &angle, &impulse);
+            customName = "empurrao_" + std::to_string(int(angle)) + "_" + std::to_string(int(impulse));
+            shots = { { customName.c_str(), angle, impulse } };
+        }
         for (const Shot& shot : shots) {
             Stand s;
             setup(s, profile);

@@ -404,6 +404,7 @@ add_library(MatterBodyControl STATIC
     src/Engine/BodyControl/Execution/Actuation3D.cpp
     src/Engine/BodyControl/Observation/ContactWrench3D.cpp
     src/Engine/BodyControl/Execution/WholeBodyQP3D.cpp
+    src/Engine/BodyControl/Planning/StepRecovery3D.cpp
 )
 target_include_directories(MatterBodyControl PUBLIC src)
 target_link_libraries(MatterBodyControl PUBLIC MatterArticulationDynamics PRIVATE MatterProxSuite)
