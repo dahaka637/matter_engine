@@ -50,7 +50,8 @@ tarefas do RL e o personagem do jogo que citam o arquivo.
 | `run_forward_arc_left` | Trote em arco para esquerda (referencia inferior) | 0.73 | não | 3.0 | 32° | `Run Forward Arc Left.fbx` | personagem (football_player) |
 | `run_forward_arc_right` | Corrida em arco para direita | 0.90 | não | 4.0 | -18° | `Run Forward Arc Right.fbx` | personagem (football_player) |
 | `running_to_turn` | Correr, frear e virar (Mixamo) | 2.27 | não | 1.8 | 6° | `RunningToTurn.fbx` | — |
-| `running_turn_180` | Meia-volta correndo, no lugar (Mixamo) | 0.67 | não | 0.1 | — | `RunningTurn180.fbx` | — |
+| `running_turn_180` | Meia-volta correndo, no lugar (Mixamo) | 0.67 | não | 0.1 | — | `RunningTurn180.fbx` | personagem (football_player) |
+| `running_turn_180_esquerda` | Meia-volta correndo para a esquerda (Mixamo RunningTurn180, espelhado) | 0.67 | não | 0.1 | — | `RunningTurn180.fbx` | personagem (football_player) |
 | `running_turn_180_loop` | Vai e volta correndo, em ciclo, no lugar (Mixamo) | 1.87 | sim | — | — | `RunningTurn180Longo.fbx` | — |
 | `turn_to_running` | Virar e sair correndo (Mixamo) | 1.70 | não | 1.9 | -90° | `TurnToRunning.fbx` | — |
 

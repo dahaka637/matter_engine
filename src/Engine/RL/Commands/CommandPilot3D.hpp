@@ -80,6 +80,16 @@ struct PilotScript3D {
     // teclas e o analogico): as retas do basico (frente, tras, os lados, as
     // diagonais sorteando o lado).
     std::vector<float> stickDirections;
+    // O corte (27/10, a mudanca brusca do basico): com desvios, os pedidos do
+    // segurar alternam a direcao da reta e ela mais um desvio sorteado (rad),
+    // sem soltar no meio. Vazio: o segurar de sempre (nenhum sorteio a mais).
+    std::vector<float> cutOffsets;
+    // A troca de direcao em movimento (27/10): com o maximo acima de 0, cada
+    // pedido depois do primeiro vira a direcao do anterior (no mundo) por um
+    // angulo sorteado nesta faixa (rad), para um lado sorteado: as trocas se
+    // encadeiam de qualquer direcao. Com a camera fixa, o rumo troca e o peito
+    // fica; acompanhando, o corpo vira junto (a meia-volta). 0: desligada.
+    PilotRange3D changeRadians { 0.0f, 0.0f };
     // A estrela.
     std::uint32_t starDirections = 8;
     float starJitterDegrees = 8.0f;
@@ -127,6 +137,10 @@ struct PilotState3D {
     float stickWorld = 0.0f;
     float speed = 0.0f;
     float stickTime = 0.0f;
+    // O corte: a direcao da reta de agora (rad, em relacao a camera) e se o
+    // proximo pedido e o desvio.
+    float cutBase = 0.0f;
+    bool cutNext = false;
     // A estrela: o ponto de agora e se e para parar nele; a velocidade da ida;
     // a ultima foi uma ponta (e qual); parado no ponto, quanto falta.
     Vec3 target;

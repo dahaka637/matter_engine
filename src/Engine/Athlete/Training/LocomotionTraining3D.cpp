@@ -95,6 +95,7 @@ AthleteRuntimeSettings3D runtimeFor(const LocomotionTask3D& task) {
     runtime.getUpStrengthPercent = task.getUpStrengthPercent;
     // A virada brusca: o episodio liga ou nao (o dropout, no recomeco).
     runtime.dynamicTurnMoveSettings.amount = task.turnMove.amount;
+    runtime.runningTurnClip = task.runningTurn;
     // A tabela de velocidades do padrao (o piloto e o atleta leem a mesma).
     runtime.defaultTrotSpeed = task.speeds.trot;
     runtime.defaultSprintForwardSpeed = task.speeds.sprintForward;

@@ -206,9 +206,13 @@ void CharacterLocomotion3D::stepHeading(Tick& t) {
             // (O giro pelo clipe so existia com a ajuda cheia, removida em
             // 04/10: o modo fisico gira pelos passos do planejador.)
             const bool allowed = false;
-            if (!allowed) m_clipTurn.active = false;
+            // A meia-volta correndo (27/10) vai ate o fim do clipe; parando de
+            // andar ou levantando, solta.
+            if (m_clipTurn.running && (!moving || getUpActive)) m_clipTurn.active = m_clipTurn.running = false;
+            if (!allowed && !m_clipTurn.running) m_clipTurn.active = false;
             const auto begin = [&](float error) {
                 m_clipTurn.active = true;
+                m_clipTurn.running = false;
                 m_clipTurn.sign = error >= 0.0f ? 1.0f : -1.0f;
                 m_clipTurn.clip = error >= 0.0f ? animations.turnLeft : animations.turnRight;
                 m_clipTurn.span = std::max(0.3f, std::abs(clipRootYaw(*m_clipTurn.clip, profile,
@@ -220,18 +224,51 @@ void CharacterLocomotion3D::stepHeading(Tick& t) {
             };
             if (allowed && !m_clipTurn.active && std::abs(pelvisYawError) > ClipTurnEnter)
                 begin(pelvisYawError);
+            // A meia-volta correndo (27/10, pedido do usuario: o Running Turn 180
+            // adaptado a qualquer angulo): correndo, o rumo pedido vira mais de
+            // ~100 graus contra a velocidade e o olhar vai junto (a camera ja
+            // perto do rumo novo ou girando para ele; com ela parada e o
+            // pedido para tras, ele recua como sempre). O giro do clipe e
+            // escalado ao que falta da pelve ate o rumo novo.
+            if (input.runningTurn && !m_clipTurn.active && moving && !getUpActive
+                && animations.runningTurnLeft != nullptr && animations.runningTurnRight != nullptr) {
+                const Vec3 wanted { input.intent.requestedDirectionWorld.x, input.intent.requestedDirectionWorld.y, 0.0f };
+                const Vec3 body { m_filteredCenterOfMassVelocity.x, m_filteredCenterOfMassVelocity.y, 0.0f };
+                if (wanted.length() > 0.5f && body.length() > RunningTurnMinSpeed) {
+                    const float wantedYaw = std::atan2(wanted.y, wanted.x);
+                    const float reversal = std::abs(wrapAngle(wantedYaw - std::atan2(body.y, body.x)));
+                    const float fromView = wrapAngle(wantedYaw - viewYaw);
+                    const bool viewFollows = std::abs(fromView) < RunningTurnViewWindow
+                        || (m_viewTurnRate * fromView > 0.0f && std::abs(m_viewTurnRate) > RunningTurnViewRate);
+                    const float error = wrapAngle(wantedYaw - m_facingYaw);
+                    if (reversal > RunningTurnReversal && viewFollows && std::abs(error) > RunningTurnMinAngle) {
+                        m_clipTurn.active = true;
+                        m_clipTurn.running = true;
+                        m_clipTurn.sign = error >= 0.0f ? 1.0f : -1.0f;
+                        m_clipTurn.clip = error >= 0.0f ? animations.runningTurnLeft : animations.runningTurnRight;
+                        m_clipTurn.span = std::max(0.3f, std::abs(clipRootYaw(*m_clipTurn.clip, profile,
+                            m_clipTurn.clip->durationSeconds)));
+                        m_clipTurn.total = std::min(std::abs(error), m_clipTurn.span);
+                        m_clipTurn.time = 0.0f;
+                        m_clipTurn.startYaw = m_facingYaw;
+                        m_clipTurn.startPelvisYaw = m_facingYaw + m_clipPelvisYaw;
+                    }
+                }
+            }
             if (m_clipTurn.active) {
                 clipTurnControl = true;
                 const AnimationClip3D& clip = *m_clipTurn.clip;
                 const float duration = std::max(0.05f, clip.durationSeconds);
                 // A camera seguiu girando no comeco do ciclo: ele gira mais
                 // (nunca menos, nem para o outro lado).
-                if (m_clipTurn.time < 0.5f * duration) {
+                if (!m_clipTurn.running && m_clipTurn.time < 0.5f * duration) {
                     const float wanted = wrapAngle(targetPelvisYaw - m_clipTurn.startYaw) * m_clipTurn.sign;
                     m_clipTurn.total = std::clamp(wanted, m_clipTurn.total, m_clipTurn.span);
                 }
-                const float cycleSeconds = std::clamp(m_clipTurn.total / std::max(0.5f, ClipTurnSpeed),
-                    ClipTurnMinSeconds, duration);
+                // (Correndo, o clipe inteiro; uma virada menor o toca mais curto.)
+                const float cycleSeconds = m_clipTurn.running
+                    ? duration * std::clamp(m_clipTurn.total / m_clipTurn.span, RunningTurnShortest, 1.0f)
+                    : std::clamp(m_clipTurn.total / std::max(0.5f, ClipTurnSpeed), ClipTurnMinSeconds, duration);
                 m_clipTurn.time = std::min(duration, m_clipTurn.time + deltaTime * duration / cycleSeconds);
                 const float progress = std::clamp(std::abs(clipRootYaw(clip, profile, m_clipTurn.time))
                     / m_clipTurn.span, 0.0f, 1.0f);
@@ -249,7 +286,8 @@ void CharacterLocomotion3D::stepHeading(Tick& t) {
                     // Falta giro: o proximo ciclo (a base no fim e a do comeco,
                     // girada).
                     const float rest = wrapAngle(targetPelvisYaw - m_facingYaw);
-                    if (allowed && std::abs(rest) > ClipTurnEnter) begin(rest);
+                    // (running fica: a saida da pose do clipe e a da meia-volta.)
+                    if (allowed && !m_clipTurn.running && std::abs(rest) > ClipTurnEnter) begin(rest);
                 }
                 pelvisYawError = wrapAngle(targetPelvisYaw - m_facingYaw);
             } else {

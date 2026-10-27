@@ -73,6 +73,8 @@ CharacterLocomotionAnimations3D athleteLocomotionClips3D(const RagdollCharacter3
         if (clip.id == character.standUpFrontClipId) roles.standUpFront = &clip;
         if (clip.id == character.turnLeftClipId) roles.turnLeft = &clip;
         if (clip.id == character.turnRightClipId) roles.turnRight = &clip;
+        if (clip.id == character.runningTurnLeftClipId) roles.runningTurnLeft = &clip;
+        if (clip.id == character.runningTurnRightClipId) roles.runningTurnRight = &clip;
         for (std::size_t k = 0; k < character.tackleClipIds.size() && k < roles.tackles.size(); ++k)
             if (clip.id == character.tackleClipIds[k]) roles.tackles[k] = &clip;
     }

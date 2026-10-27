@@ -54,6 +54,8 @@ struct AthleteRuntimeSettings3D {
     // Fisico total; vault 04_locomocao/virada_brusca.md). Desligada, o atleta
     // e identico bit a bit. A intensidade (0..1) e dos testes.
     bool dynamicTurnMove = false;
+    // A meia-volta correndo pelo clipe (27/10; CharacterLocomotionInput3D::runningTurn).
+    bool runningTurnClip = false;
     TurnMoveSettings3D dynamicTurnMoveSettings;
     bool getUpHitWeakens = true;
     float getUpHitAssistPercent = 25.0f;

@@ -152,6 +152,7 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         groundHeight(root.position) + profile.standingRootHeightMeters };
     command.rootVelocityWorld = root.linearVelocity;
     command.facingYawRadians = state.guideFacingYawRadians;
+    command.runningTurn = settings.runningTurnClip;
     command.grounded = true;
     command.controlled = slot.entityId == control.controlledEntityId;
     if (command.controlled && scene.hasCharacter()) {

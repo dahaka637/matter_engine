@@ -221,14 +221,17 @@ void CharacterLocomotion3D::stepGestures(Tick& t) {
         };
         // Giro parado pelo clipe: as pernas sao as do clipe (o tronco fica com
         // a pose parada e o olhar).
-        if (m_clipTurnWeight > 0.001f && m_clipTurn.clip != nullptr && !gaitMoving && !jumpPose
+        // Correndo (a meia-volta), o corpo todo e o do clipe, menos o pescoco e
+        // a cabeca (o olhar).
+        if (m_clipTurnWeight > 0.001f && m_clipTurn.clip != nullptr && (!gaitMoving || m_clipTurn.running) && !jumpPose
                 && !getUpActive && standUpClip == nullptr) {
             const AnimationClip3D& clip = *m_clipTurn.clip;
             for (std::size_t index = 1; index < profile.links.size(); ++index) {
                 const std::string& id = profile.links[index].id;
                 const bool leg = id.find("Thigh") != std::string::npos || id.find("Shin") != std::string::npos
                     || id.find("Foot") != std::string::npos;
-                if (!leg) continue;
+                const bool look = id.find("Neck") != std::string::npos || id.find("Head") != std::string::npos;
+                if (m_clipTurn.running ? look : !leg) continue;
                 const AnimationTrack3D* track = findAnimationTrack3D(clip, id);
                 if (track == nullptr) continue;
                 const Vec3 pose = sampleAnimationTrack3D(*track, m_clipTurn.time, clip.durationSeconds, false)

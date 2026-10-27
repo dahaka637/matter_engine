@@ -145,6 +145,10 @@ struct CharacterLocomotionAnimations3D {
     // parada girada, tocados na velocidade do giro pedido (pernas e pes).
     const AnimationClip3D* turnLeft = nullptr;
     const AnimationClip3D* turnRight = nullptr;
+    // Meia-volta correndo (27/10, opcionais): o Running Turn 180 de cada lado,
+    // o giro escalado ao angulo pedido (CharacterLocomotionInput3D::runningTurn).
+    const AnimationClip3D* runningTurnLeft = nullptr;
+    const AnimationClip3D* runningTurnRight = nullptr;
     // Carrinho (opcionais): da corrida ao chao deslizando e de volta em pe
     // (ou correndo). Cada um comeca firmando um pe (o motor le no primeiro
     // quadro); o pe que vai pousar quando o jogador pede escolhe qual.
@@ -197,6 +201,10 @@ struct CharacterLocomotionInput3D {
     // o equilibrio, a pose e a rigidez; Athlete/Physical/PhysicalCorrections3D).
     // Nulo (o padrao): o classico, exato.
     const PhysicalCorrections3D* corrections = nullptr;
+    // A meia-volta correndo pelo clipe (27/10): correndo, com o rumo pedido
+    // virando forte e o olhar indo junto, os passos sao os do Running Turn 180
+    // com o giro escalado ao angulo. false (o padrao): o de sempre, exato.
+    bool runningTurn = false;
     Vec3 rootPositionWorld;
     Vec3 rootVelocityWorld;
     // Locomocao fisica v2 (06/10/2026): a postura dada como perdida na
@@ -1011,6 +1019,8 @@ private:
         float span = 1.5f;
         float startYaw = 0.0f;
         float startPelvisYaw = 0.0f;
+        // A meia-volta correndo (o clipe inteiro: pernas, tronco e bracos).
+        bool running = false;
     };
     ClipTurn m_clipTurn;
     float m_clipTurnWeight = 0.0f;

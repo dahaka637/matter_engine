@@ -109,6 +109,16 @@ const float ClipTurnSpeed = tuneTemp("T_ClipTurnSpeed", 6.0f);
 const float ClipTurnMinSeconds = tuneTemp("T_ClipTurnMin", 0.24f);
 const float ClipTurnBlendIn = tuneTemp("T_ClipTurnBlendIn", 0.03f);
 const float ClipTurnBlendOut = tuneTemp("T_ClipTurnBlendOut", 0.12f);
+// A meia-volta correndo (27/10): a velocidade minima do corpo (m/s), quanto o rumo
+// pedido vira contra a velocidade (rad, ~100 graus), a janela do olhar ao rumo novo
+// (rad) ou a taxa da camera girando para ele (rad/s), o giro minimo da pelve
+// (rad, ~80 graus) e a fracao mais curta do clipe (uma virada menor, mais rapida).
+const float RunningTurnMinSpeed = tuneTemp("T_RunningTurnMinSpeed", 0.8f);
+const float RunningTurnReversal = tuneTemp("T_RunningTurnReversal", 1.75f);
+const float RunningTurnViewWindow = tuneTemp("T_RunningTurnViewWindow", 1.75f);
+const float RunningTurnViewRate = tuneTemp("T_RunningTurnViewRate", 1.5f);
+const float RunningTurnMinAngle = tuneTemp("T_RunningTurnMinAngle", 1.4f);
+const float RunningTurnShortest = tuneTemp("T_RunningTurnShortest", 0.6f);
 const float TacklePreBlend = tuneTemp("T_TacklePreBlend", 0.6f);
 const float TacklePrepMax = tuneTemp("T_TacklePrep", 0.40f);
 // Forca do carrinho pela velocidade: no chao ele desliza D = a * v^p (v a

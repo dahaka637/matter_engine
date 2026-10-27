@@ -159,6 +159,8 @@
   ],
   "turnLeft": "turn_left",
   "turnRight": "turn_right",
+  "runningTurnLeft": "running_turn_180_esquerda",
+  "runningTurnRight": "running_turn_180",
   "walk": "jog",
   "walkBackward": "run_backward"
  },

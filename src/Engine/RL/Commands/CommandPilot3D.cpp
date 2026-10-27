@@ -121,10 +121,20 @@ void pickStick(const PilotScript3D& script, PilotState3D& state, const PilotView
     const bool keys = chance(rng, script.keysFraction);
     float relative = 0.0f;
     const float awayX = view.position.x - state.origin.x, awayY = view.position.y - state.origin.y;
+    const bool change = script.changeRadians.maximum > 0.0f && state.cutNext;
     if (script.forwardOnly) {
         relative = 0.0f;
+    } else if (change) {
+        const float size = pick(rng, script.changeRadians);
+        relative = wrap(state.stickWorld + (chance(rng, 0.5f) ? size : -size) - state.camera);
+    } else if (!script.cutOffsets.empty() && state.cutNext) {
+        relative = wrap(state.cutBase
+            + script.cutOffsets[std::uniform_int_distribution<std::size_t>(0, script.cutOffsets.size() - 1)(rng)]);
+        state.cutNext = false;
     } else if (!script.stickDirections.empty()) {
         relative = script.stickDirections[std::uniform_int_distribution<std::size_t>(0, script.stickDirections.size() - 1)(rng)];
+        state.cutBase = relative;
+        state.cutNext = !script.cutOffsets.empty();
     } else if (std::hypot(awayX, awayY) > script.leashMeters) {
         // Longe da origem: uma direcao de volta (ate 60 graus de lado).
         const float home = std::atan2(-awayY, -awayX) + std::uniform_real_distribution<float>(-Pi / 3.0f, Pi / 3.0f)(rng);
@@ -133,8 +143,9 @@ void pickStick(const PilotScript3D& script, PilotState3D& state, const PilotView
         relative = keys ? static_cast<float>(std::uniform_int_distribution<int>(0, 7)(rng)) * Pi / 4.0f
                         : std::uniform_real_distribution<float>(-Pi, Pi)(rng);
     }
-    if (keys && !script.forwardOnly && script.stickDirections.empty())
+    if (keys && !script.forwardOnly && script.stickDirections.empty() && !change)
         relative = std::round(relative / (Pi / 4.0f)) * (Pi / 4.0f);
+    if (script.changeRadians.maximum > 0.0f) state.cutNext = true;
     state.stickForward = std::cos(relative);
     state.stickLeft = std::sin(relative);
     state.stickWorld = wrap(state.camera + relative);

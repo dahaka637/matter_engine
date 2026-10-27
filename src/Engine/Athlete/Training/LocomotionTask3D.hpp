@@ -252,6 +252,8 @@ struct LocomotionTask3D {
         float dropout = 0.3f;
         float amount = 1.0f;
     } turnMove;
+    // A meia-volta correndo pelo clipe no classico (27/10). false: nada muda.
+    bool runningTurn = false;
     // Os tetos da fase (as autoridades vem do treinador: a rampa de entrada).
     LocomotionCaps3D caps;
     LocomotionRewardWeights3D reward;

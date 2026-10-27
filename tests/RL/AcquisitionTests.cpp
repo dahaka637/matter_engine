@@ -362,6 +362,93 @@ void testPilotWindow() {
     require(highest > 2.0f && highest <= 2.501f, "a janela maior vale");
 }
 
+// O corte (27/10): a reta e um desvio sorteado se alternam, sem soltar no meio.
+void testPilotCut() {
+    PilotScript3D script;
+    script.kind = "stick";
+    script.bands.push_back({ "fixa", { 2.0f, 2.0f }, {}, 1.0f });
+    script.stickSeconds = { 1.0f, 1.0f };
+    script.releaseFraction = 0.0f;
+    script.keysFraction = 1.0f;
+    script.syncFraction = 0.0f;
+    script.camera.fixedWeight = 1.0f;
+    script.camera.followWeight = script.camera.turnsWeight = 0.0f;
+    script.stickDirections = { 0.0f };
+    const float right = -3.14159265f / 2.0f;
+    script.cutOffsets = { right, 3.14159265f };
+    std::mt19937_64 rng(11);
+    PilotState3D state;
+    CommandPilot3D::start(script, state, {}, 0.0f, rng);
+    std::vector<float> segments;
+    float last = 99.0f;
+    for (int i = 0; i < 30 * 12; ++i) {
+        const ControlInput3D input = CommandPilot3D::update(script, state, { {}, {} }, 1.0f / 30.0f, rng);
+        require(near(input.speed, 2.0f), "o corte nunca solta o direcional");
+        const float direction = std::atan2(input.stickLeft, input.stickForward);
+        if (std::abs(direction - last) > 1.0e-3f) segments.push_back(direction);
+        last = direction;
+    }
+    require(segments.size() >= 10, "um pedido novo por segundo");
+    bool sawRight = false, sawBack = false;
+    for (std::size_t i = 0; i < segments.size(); ++i) {
+        if (i % 2 == 0) {
+            require(near(segments[i], 0.0f, 1.0e-3f), "os pedidos pares sao a reta");
+        } else {
+            sawRight = sawRight || near(segments[i], right, 1.0e-3f);
+            sawBack = sawBack || near(std::abs(segments[i]), 3.14159265f, 1.0e-3f);
+            require(near(segments[i], right, 1.0e-3f) || near(std::abs(segments[i]), 3.14159265f, 1.0e-3f),
+                "os impares sao a reta mais um desvio");
+        }
+    }
+    require(sawRight && sawBack, "os dois desvios saem no sorteio");
+}
+
+// A troca de direcao em movimento (27/10): cada pedido vira o anterior (no mundo)
+// por um angulo da faixa, sem soltar; acompanhando, a camera (o peito) vira junto.
+void testPilotChange() {
+    const float pi = 3.14159265f, deg = pi / 180.0f;
+    for (const bool follow : { false, true }) {
+        PilotScript3D script;
+        script.kind = "stick";
+        script.bands.push_back({ "fixa", { 2.0f, 2.0f }, {}, 1.0f });
+        script.stickSeconds = { 1.0f, 1.0f };
+        script.releaseFraction = 0.0f;
+        script.keysFraction = 1.0f;
+        script.syncFraction = 0.0f;
+        script.camera.fixedWeight = follow ? 0.0f : 1.0f;
+        script.camera.followWeight = follow ? 1.0f : 0.0f;
+        script.camera.turnsWeight = 0.0f;
+        script.camera.followRate = 4.0f;
+        script.changeRadians = { 20.0f * deg, 180.0f * deg };
+        std::mt19937_64 rng(follow ? 7 : 3);
+        PilotState3D state;
+        CommandPilot3D::start(script, state, {}, 0.0f, rng);
+        float last = state.stickWorld, smallest = 9.0f, largest = 0.0f, settled = 9.0f;
+        int changes = 0;
+        for (int i = 0; i < 30 * 40; ++i) {
+            const ControlInput3D input = CommandPilot3D::update(script, state, { {}, {} }, 1.0f / 30.0f, rng);
+            require(near(input.speed, 2.0f), "a troca nunca solta o direcional");
+            const float world = std::atan2(std::sin(input.cameraHeading + std::atan2(input.stickLeft, input.stickForward)),
+                std::cos(input.cameraHeading + std::atan2(input.stickLeft, input.stickForward)));
+            if (std::abs(std::remainder(state.stickWorld - last, 2.0f * pi)) > 1.0e-4f) {
+                const float turn = std::abs(std::remainder(state.stickWorld - last, 2.0f * pi));
+                smallest = std::min(smallest, turn);
+                largest = std::max(largest, turn);
+                last = state.stickWorld;
+                ++changes;
+            }
+            require(near(std::remainder(world - state.stickWorld, 2.0f * pi), 0.0f, 1.0e-3f), "o pedido segue a direcao sorteada");
+            if (follow && state.clock > 0.0f && std::abs(std::remainder(state.camera - state.stickWorld, 2.0f * pi)) < 1.0e-3f)
+                settled = 0.0f;
+        }
+        require(changes >= 35, "uma troca por segundo, encadeadas");
+        require(smallest >= 20.0f * deg - 1.0e-3f && largest <= pi + 1.0e-3f, "o angulo fica na faixa");
+        require(largest > 150.0f * deg && smallest < 50.0f * deg, "e cobre a faixa");
+        if (follow) require(settled == 0.0f, "acompanhando, a camera alcanca o rumo novo");
+        else require(near(state.camera, 0.0f), "com a camera fixa, o peito nao vira");
+    }
+}
+
 struct LayoutIndex {
     std::vector<std::string> names;
     [[nodiscard]] std::size_t find(const std::string& name) const {
@@ -600,6 +687,8 @@ void runAcquisitionTests() {
     testDiveDoesNotPay();
     testGateOnClips();
     testPilotWindow();
+    testPilotCut();
+    testPilotChange();
     testAcquisitionBatch();
     testClipStartsFollowTheCurriculum();
 }

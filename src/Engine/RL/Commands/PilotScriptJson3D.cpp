@@ -63,6 +63,9 @@ PilotScript3D pilotScriptFromJson3D(const nlohmann::json& p, const std::string& 
     script.leashMeters = p.value("leashMeters", script.leashMeters);
     if (p.contains("directions"))
         for (const nlohmann::json& d : p["directions"]) script.stickDirections.push_back(d.get<float>() * Degrees);
+    script.changeRadians = range(p, "changeDegrees", script.changeRadians, Degrees);
+    if (p.contains("cutOffsets"))
+        for (const nlohmann::json& d : p["cutOffsets"]) script.cutOffsets.push_back(d.get<float>() * Degrees);
     script.starDirections = p.value("starDirections", script.starDirections);
     script.starJitterDegrees = p.value("starJitterDegrees", script.starJitterDegrees);
     script.continuousFraction = p.value("continuousFraction", script.continuousFraction);
