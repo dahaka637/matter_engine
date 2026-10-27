@@ -572,6 +572,7 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
     input.torqueLimit = s.torqueLimit;
     if (const char* rate = std::getenv("STANDGUARDRATE")) input.jointGuardRate = std::atof(rate);
     if (const char* inner = std::getenv("STANDQPINNER")) input.maximumInnerIterations = std::atoi(inner);
+    if (const char* fallback = std::getenv("STANDQPFALLBACK")) input.fallbackIterations = std::atoi(fallback);
     // No empurrao e no voo do salto estendido a guarda freia mais tarde (taxa 40; nota 35: com 10
     // ela freava a extensao do joelho ~0,3 rad antes do batente).
     if (s.hopExtended && (s.hopPhase == 1 || s.hopPhase == 2)) input.jointGuardRate = 40.0;

@@ -188,12 +188,13 @@ WholeBodyQPResult3D WholeBodyQP3D::solve(const WholeBodyQPInput3D& in) {
     // tempos em tempos: refaze-lo a cada tick custava ~170 us); a falha numerica
     // (o problema e viavel: um LP achou o ponto; nota 24) reconstroi a frio uma vez.
     const auto runSlot = [&](Impl::Slot& slot, const Eigen::MatrixXd& H, const Eigen::VectorXd& g, const Eigen::MatrixXd& E,
-                             const Eigen::VectorXd& e) -> const proxsuite::proxqp::Results<double>& {
+                             const Eigen::VectorXd& e, int iterationCap = -1) -> const proxsuite::proxqp::Results<double>& {
         const int rows = static_cast<int>(E.rows());
+        const int cap = iterationCap > 0 ? iterationCap : in.maximumIterations;
         const auto fresh = [&] {
             slot.qp.emplace(dimension, rows, inequalities);
             slot.qp->settings.eps_abs = 1e-5;
-            slot.qp->settings.max_iter = in.maximumIterations;
+            slot.qp->settings.max_iter = cap;
             slot.qp->settings.max_iter_in = in.maximumInnerIterations;
             slot.qp->settings.initial_guess = proxsuite::proxqp::InitialGuessStatus::EQUALITY_CONSTRAINED_INITIAL_GUESS;
             slot.qp->init(H, g, E, e, inequality, lower, upper);
@@ -209,6 +210,7 @@ WholeBodyQPResult3D WholeBodyQP3D::solve(const WholeBodyQPInput3D& in) {
             const bool refresh = (++slot.updatesSincePreconditioner >= in.preconditionerRefreshTicks);
             if (refresh) slot.updatesSincePreconditioner = 0;
             slot.qp->update(H, g, E, e, inequality, lower, upper, refresh);
+            slot.qp->settings.max_iter = cap;
         }
         slot.qp->solve();
         result.iterations += static_cast<int>(slot.qp->results.info.iter);
@@ -365,7 +367,7 @@ WholeBodyQPResult3D WholeBodyQP3D::solve(const WholeBodyQPInput3D& in) {
                 Eigen::VectorXd heavyGradient = gradient;
                 heavyHessian.topLeftCorner(n, n) += (in.priorityWeightScale - 1.0) * primaryHessian;
                 heavyGradient.head(n) += (in.priorityWeightScale - 1.0) * primaryGradient;
-                const auto& heavy = runSlot(impl.slots[0], heavyHessian, heavyGradient, equality, equalityTarget);
+                const auto& heavy = runSlot(impl.slots[0], heavyHessian, heavyGradient, equality, equalityTarget, in.fallbackIterations);
                 if (acceptable(heavy, equality, equalityTarget)) {
                     final = &heavy;
                     result.path = WholeBodyQPPath3D::WeightedPriority;
@@ -377,7 +379,7 @@ WholeBodyQPResult3D WholeBodyQP3D::solve(const WholeBodyQPInput3D& in) {
         }
     }
     if (!final) {
-        final = &runSlot(impl.slots[0], hessian, gradient, equality, equalityTarget);
+        final = &runSlot(impl.slots[0], hessian, gradient, equality, equalityTarget, primaryRows > 0 ? in.fallbackIterations : -1);
         if (primaryRows > 0) result.path = WholeBodyQPPath3D::FlatFallback;
     }
     result.buildMicros = std::chrono::duration<double, std::micro>(built - start).count();

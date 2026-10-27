@@ -82,6 +82,9 @@ struct WholeBodyQPInput3D {
     int maximumIterations = 200;
     // O teto do laco interno do ProxQP (o padrao dele, 1500, deixava ticks de ate 0,5 s na absorcao do salto).
     int maximumInnerIterations = 30;
+    // O teto de iteracoes externas dos recursos (de cima pesadas, ponderado unico depois de falha): com os
+    // 200 do caminho normal eles davam ticks de 100-180 ms (diario 31, 27/10).
+    int fallbackIterations = 50;
     // A guarda dos batentes (notas 25 e 28 do vault), em aceleracao de recuperacao:
     // em cada eixo com limite (n - 6; infinito = sem guarda),
     //   -k^2 (q - qmin - e) - 2 k v <= a <= k^2 (qmax - e - q) - 2 k v.
