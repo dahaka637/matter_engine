@@ -415,6 +415,10 @@ endif()
 add_executable(MatterActuationBench tools/BodyBench/ActuationBench.cpp)
 target_link_libraries(MatterActuationBench PRIVATE MatterBodyControl)
 target_compile_definitions(MatterActuationBench PRIVATE MATTERENGINE_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
+# A matriz de custo da fisica (G0): N atletas, 1 e 4 subpassos.
+add_executable(MatterBodyCostBench tools/BodyBench/CostBench.cpp)
+target_link_libraries(MatterBodyCostBench PRIVATE MatterPhysics)
+target_compile_definitions(MatterBodyCostBench PRIVATE MATTERENGINE_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
 # A bancada de ficar de pe (G2): o QP no laco, ajuda zero.
 add_executable(MatterStandBench tools/BodyBench/StandBench.cpp)
 target_link_libraries(MatterStandBench PRIVATE MatterBodyControl MatterAnimationClips)
