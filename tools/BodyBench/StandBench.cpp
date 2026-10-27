@@ -514,6 +514,31 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
                 s.plannedFootForce[f].x(), s.plannedFootForce[f].y(), s.plannedFootForce[f].z(), footLinear.norm());
         }
     }
+    if (s.walking && s.previousState && s.previousTorque.size()) {
+        // O resto que os pes nao explicam (a forca externa fora dos apoios: uma pancada).
+        const ArticulationKinematics3D pk = computeArticulationKinematics3D(s.model, *s.previousState);
+        const ArticulationDynamics3D pd = computeArticulationDynamics3D(s.model, pk);
+        std::vector<ContactSupport3D> supports;
+        for (int f = 0; f < 2; ++f) {
+            Eigen::Vector3d soleLocal = Eigen::Vector3d::Zero();
+            for (const Eigen::Vector3d& corner : s.corners[f]) soleLocal += corner / 4.0;
+            bool touching = false;
+            for (const RagdollContactPoint3D& contact : raw.contacts) touching |= contact.linkIndex == s.feet[f];
+            supports.push_back({ static_cast<int>(s.feet[f]), soleLocal, touching });
+        }
+        const ContactWrenchEstimate3D estimate = estimateContactWrench3D(s.model, *s.previousState, pk, pd, state, s.previousTorque, supports, Dt);
+        Eigen::Vector3d supportForce = Eigen::Vector3d::Zero();
+        for (const SupportWrench3D& w : estimate.supports) supportForce += w.force;
+        const Eigen::Vector3d unexplained = estimate.totalForce - supportForce;
+        if (std::getenv("STANDRESIDUALDBG"))
+            std::printf("   residuo t %.3f: %.1f | forca fora dos apoios (%.0f %.0f %.0f)\n", s.clock, estimate.residual, unexplained.x(), unexplained.y(), unexplained.z());
+        // A pancada: forca horizontal fora dos apoios (na marcha normal, p99 de 1 N; num empurrao de 40 N.s, 151 N).
+        const double threshold = std::getenv("STANDPUSHFORCE") ? std::atof(std::getenv("STANDPUSHFORCE")) : 40.0;
+        if (unexplained.head<2>().norm() > threshold) {
+            if (s.pushTimer <= 0.0) ++s.pushesDetected;
+            s.pushTimer = 0.6;
+        }
+    }
     s.previousVelocity = state.velocity;
     s.previousState = state;
     if (raw.links[0].position.z < 0.55f) {
@@ -697,16 +722,7 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
             s.plannedFootForce[0].z() + s.plannedFootForce[1].z(), k.origin[0].z(), k.originVelocity[0].z(),
             state.jointCoordinates[static_cast<std::size_t>(s.model.links[s.feet[0]].parent)][0]);
     }
-    {
-        const Eigen::Vector2d external = s.model.totalMass * (comVelocityNow - s.lastComVelocity).head<2>() / Dt - s.plannedContactXY;
-        const double threshold = std::getenv("STANDPUSHFORCE") ? std::atof(std::getenv("STANDPUSHFORCE")) : 200.0;
-        if (s.clock > 0.5 && external.norm() > threshold) {
-            if (s.pushTimer <= 0.0) ++s.pushesDetected;
-            s.pushTimer = 0.6;
-        } else {
-            s.pushTimer = std::max(0.0, s.pushTimer - Dt);
-        }
-    }
+    s.pushTimer = std::max(0.0, s.pushTimer - Dt);
     if (s.separationPending && s.stepping) {
         if (footTouching[s.swingFoot]) {
             ++s.separationTicks;
@@ -1118,10 +1134,10 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
                 if (!std::getenv("STANDTROTNOCAPTURE"))
                     s.swingLanding.head<2>() = capture + side * 0.5 * s.walkSettings.stepWidth * s.walkLeft
                         - (desired.norm() < 1e-6 ? homeGain : 0.0) * (s.trotHome - d.centerOfMass.head<2>());
-            } else if (const bool disturbed = s.pushTimer > 0.0 && std::getenv("STANDPUSHADJUST");
-                       !std::getenv("STANDNOADJUST") && s.stepTime < (disturbed && std::getenv("STANDPUSHLATE") ? 0.85 : 0.7) * s.stepDuration)
-                // Depois de uma pancada (forca externa > 200 N nos ultimos 0,6 s) o pouso pode ir ate 60 cm; sempre
-                // assim, ou disparado pelo erro do DCM, a diagonal caia.
+            } else if (const bool disturbed = s.pushTimer > 0.0 && !std::getenv("STANDNOPUSHADJUST");
+                       !std::getenv("STANDNOADJUST") && s.stepTime < (disturbed && !std::getenv("STANDNOPUSHLATE") ? 0.85 : 0.7) * s.stepDuration)
+                // Depois de uma pancada (forca fora dos apoios > 40 N nos ultimos 0,6 s, pelo estimador de contato) o
+                // pouso pode ir ate 60 cm; sempre assim, ou pelo erro do DCM ou por m dv/dt, a diagonal caia.
                 s.swingLanding.head<2>() = adjustDcmLanding3D(s.walkSettings, s.walkPlan,
                     DcmLandingLimits3D { disturbed ? 0.6 : 0.25, 0.12 }, xi,
                     s.voluntaryFoot == 1 ? +1 : -1, s.walkLeft, s.walkSettings.stepDuration - s.walkPlanTime);
