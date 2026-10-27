@@ -70,7 +70,13 @@ Eigen::Vector2d projectToPolygon3D(const std::vector<Eigen::Vector2d>& polygon, 
     if (hull.empty()) return point;
     Eigen::Vector2d center = Eigen::Vector2d::Zero();
     for (const Eigen::Vector2d& p : hull) center += p / double(hull.size());
-    if (hull.size() < 3) return center;
+    if (hull.size() < 3) {
+        // Um ponto ou um segmento (o pe numa linha, nota 29): o mais perto, recuado `margin` das pontas.
+        const Eigen::Vector2d a = hull.front(), edge = hull.back() - a;
+        const double length = edge.norm();
+        if (length <= 2.0 * margin) return center;
+        return a + std::clamp((point - a).dot(edge) / (length * length), margin / length, 1.0 - margin / length) * edge;
+    }
     // O poligono recuado: cada vertice puxado `margin` para o centro (aproximacao do offset).
     std::vector<Eigen::Vector2d> inner;
     for (const Eigen::Vector2d& p : hull) {
@@ -106,7 +112,7 @@ StepRecoveryPlan3D planRecoveryStep3D(const StepRecoverySettings3D& settings, co
     for (int swing = 0; swing < 2; ++swing) {
         const StepRecoveryFoot3D& stance = feet[static_cast<std::size_t>(1 - swing)];
         const StepRecoveryFoot3D& moving = feet[static_cast<std::size_t>(swing)];
-        const Eigen::Vector2d cop = stance.support.size() >= 3 ? projectToPolygon3D(stance.support, plan.capturePoint, 0.02) : stance.center;
+        const Eigen::Vector2d cop = !stance.support.empty() ? projectToPolygon3D(stance.support, plan.capturePoint, 0.02) : stance.center;
         for (const double duration : settings.durations) {
             const Eigen::Vector2d predicted = cop + std::exp(omega * duration) * (plan.capturePoint - cop);
             Eigen::Vector2d offset = predicted - stance.center;

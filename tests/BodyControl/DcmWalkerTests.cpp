@@ -1,6 +1,7 @@
 // A marcha pelo DCM (G3): as pegadas alternam os lados com a largura certa, a
 // referencia do DCM e continua entre os passos e segue a dinamica xi' = omega (xi - p).
 #include "Engine/BodyControl/Planning/DcmWalker3D.hpp"
+#include "Engine/BodyControl/Planning/StepRecovery3D.hpp"
 
 #include <cmath>
 #include <cstdio>
@@ -55,6 +56,11 @@ int main() {
     }
     check(apart, "de lado, os pes nunca cruzam");
     check(std::abs(sideways.footsteps[4].y() - sideways.footsteps[0].y() - 4 * settings.stepDuration * 0.4) < 1e-9, "de lado, a media e v");
+    // O apoio numa linha (a ponta do pe): o CoP vai ao ponto mais perto do segmento, recuado das pontas.
+    const std::vector<Eigen::Vector2d> toe = { { 0.1, -0.05 }, { 0.1, 0.05 }, { 0.1, 0.0 } };
+    check((projectToPolygon3D(toe, Eigen::Vector2d(0.3, 0.02), 0.01) - Eigen::Vector2d(0.1, 0.02)).norm() < 1e-9, "linha: projeta no segmento");
+    check((projectToPolygon3D(toe, Eigen::Vector2d(0.0, 0.2), 0.01) - Eigen::Vector2d(0.1, 0.04)).norm() < 1e-9, "linha: recua da ponta");
+    check((projectToPolygon3D({ { 0.2, 0.1 } }, Eigen::Vector2d(1.0, 1.0), 0.01) - Eigen::Vector2d(0.2, 0.1)).norm() < 1e-9, "um ponto so");
     std::printf(failures ? "marcha DCM: %d falha(s)\n" : "marcha DCM: ok\n", failures);
     return failures ? 1 : 0;
 }

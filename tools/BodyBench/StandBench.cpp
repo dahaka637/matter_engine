@@ -771,7 +771,7 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
                 const bool swingFootContact = s.stepping && static_cast<int>(contact.linkIndex) == static_cast<int>(s.feet[s.swingFoot]);
                 if (!swingFootContact) support.emplace_back(contact.position.x, contact.position.y);
             }
-            if (support.size() >= 3) cop = projectToPolygon3D(support, cop, 0.02);
+            if (!support.empty()) cop = projectToPolygon3D(support, cop, 0.02);
         } else {
             // O mesmo apoio que o QP recebe (os pontos ja recuados), com os minimos de forca normal:
             // o CoP possivel e sum(f_i/F) p_i + (1 - sum f_i/F) conv(p), com F o peso.
@@ -784,7 +784,7 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
             }
             share = std::min(share, 0.9);
             for (const WholeBodyContactPoint3D& point : input.contacts) support.push_back(fixed + (1.0 - share) * point.pointWorld.head<2>());
-            if (support.size() >= 3) cop = projectToPolygon3D(support, cop, 0.005);
+            if (!support.empty()) cop = projectToPolygon3D(support, cop, 0.005);
         }
         if (std::getenv("STANDWALKDBG") && s.walking && s.logTick++ % 6 == 0)
             std::printf("   t %.2f fase %d pe %d: xi (%.3f %.3f) ref (%.3f %.3f) cop (%.3f %.3f) apoio (%.3f %.3f) pes L (%.3f %.3f) R (%.3f %.3f)\n", s.clock,

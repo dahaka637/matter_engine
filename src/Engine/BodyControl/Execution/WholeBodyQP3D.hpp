@@ -33,6 +33,10 @@ struct WholeBodyContactPoint3D {
     // dele e uma igualdade (3 linhas). Com o pe todo apoiado ele fica rigido;
     // apoiado numa quina, gira sobre ela - o grau que o pe rigido 6D nao tem.
     bool constrained = false;
+    // Nao zero (unitaria): a igualdade so nas 2 direcoes perpendiculares a ela. O pe
+    // numa linha (ponta, calcanhar) e um ponto completo num extremo e este no outro:
+    // posto 5, a rotacao sobre a linha livre (dois pontos 3D seriam redundantes; nota 29).
+    Eigen::Vector3d freeDirection = Eigen::Vector3d::Zero();
 };
 
 // Um link apoiado como corpo rigido (o pe com a sola no chao): a aceleracao

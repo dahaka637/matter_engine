@@ -97,7 +97,7 @@ WholeBodyQPResult3D WholeBodyQP3D::solve(const WholeBodyQPInput3D& in) {
     // Igualdades: as 6 linhas da raiz da dinamica e a aceleracao 6D dos links apoiados.
     const int rigid = static_cast<int>(in.contactLinks.size());
     int pointRows = 0;
-    for (const WholeBodyContactPoint3D& point : in.contacts) pointRows += point.constrained ? 3 : 0;
+    for (const WholeBodyContactPoint3D& point : in.contacts) pointRows += point.constrained ? (point.freeDirection.isZero() ? 3 : 2) : 0;
     const int equalities = 6 + 6 * rigid + pointRows;
     Eigen::MatrixXd equality = Eigen::MatrixXd::Zero(equalities, dimension);
     Eigen::VectorXd equalityTarget(equalities);
@@ -115,9 +115,20 @@ WholeBodyQPResult3D WholeBodyQP3D::solve(const WholeBodyQPInput3D& in) {
     for (int c = 0, row = 6 + 6 * rigid; c < contacts; ++c) {
         const WholeBodyContactPoint3D& point = in.contacts[static_cast<std::size_t>(c)];
         if (!point.constrained) continue;
-        equality.block(row, 0, 3, n) = contactJacobian.middleRows(3 * c, 3);
-        equalityTarget.segment<3>(row) = point.desiredAcceleration - articulationPointBias3D(k, point.link, point.pointWorld);
-        row += 3;
+        const Eigen::Vector3d target = point.desiredAcceleration - articulationPointBias3D(k, point.link, point.pointWorld);
+        if (point.freeDirection.isZero()) {
+            equality.block(row, 0, 3, n) = contactJacobian.middleRows(3 * c, 3);
+            equalityTarget.segment<3>(row) = target;
+            row += 3;
+            continue;
+        }
+        const Eigen::Vector3d free = point.freeDirection.normalized();
+        const Eigen::Vector3d first = free.unitOrthogonal(), second = free.cross(first);
+        for (const Eigen::Vector3d& axis : { first, second }) {
+            equality.row(row).head(n) = axis.transpose() * contactJacobian.middleRows(3 * c, 3);
+            equalityTarget[row] = axis.dot(target);
+            ++row;
+        }
     }
 
     // Desigualdades: o torque de cada eixo e a piramide de atrito.
