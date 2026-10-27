@@ -7,6 +7,29 @@ from pathlib import Path
 
 RESTART_CODE = 75  # o supervisor reabre o treino (troca de modo)
 
+# O vigia de temperatura (tools/sistema/vigia_temperatura.py, servico vigia-temperatura;
+# 27/10): o batimento dele a cada 3 s. Sem ele vivo, nenhum treino abre, e o treino
+# aberto salva e para.
+WATCHDOG = Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")) / "vigia-temperatura.json"
+WATCHDOG_STALE_SECONDS = 15.0
+
+
+def watchdog_age() -> float | None:
+    """Quantos segundos desde o ultimo batimento do vigia (None: sem vigia)."""
+    import json
+    import time
+    try:
+        return time.time() - float(json.loads(WATCHDOG.read_text())["time"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def require_watchdog() -> None:
+    age = watchdog_age()
+    if age is None or age > WATCHDOG_STALE_SECONDS:
+        raise SystemExit("o vigia de temperatura nao esta rodando (systemctl --user start vigia-temperatura): "
+                         "sem ele nenhum treino abre")
+
 
 @dataclass(frozen=True)
 class Mode:

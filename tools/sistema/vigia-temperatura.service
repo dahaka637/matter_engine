@@ -1,0 +1,13 @@
+# O vigia de temperatura (tools/sistema/vigia_temperatura.py). Instalar:
+#   cp tools/sistema/vigia-temperatura.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now vigia-temperatura
+[Unit]
+Description=Vigia de temperatura do Matter Engine (salva, para e desliga acima do limite)
+
+[Service]
+ExecStart=/usr/bin/python3 /home/dahaka/Projetos/matter_engine/tools/sistema/vigia_temperatura.py
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=default.target

@@ -351,6 +351,7 @@ class LocomotionTrainer:
         self.config.end_reason = ""
         # (Nenhuma constante T_* do motor no ambiente sem querer.)
         self.tuned_environment = system.refuse_tuned_environment("treino da locomocao")
+        system.require_watchdog()
         self.config.save(config_path)
         self.max_iterations = iterations
         random.seed(self.config.seed)
@@ -1214,6 +1215,12 @@ class LocomotionTrainer:
                 if now - last_status >= 2.0:
                     self.write_status()
                     last_status = now
+                    # Sem o vigia de temperatura, salva e para (o finally salva).
+                    age = system.watchdog_age()
+                    if age is None or age > system.WATCHDOG_STALE_SECONDS:
+                        self.stop_requested = True
+                        self.stop_reason = "vigia"
+                        self.db.event(self.run, "parada", "o vigia de temperatura sumiu: salvo e parado", "sistema")
             code = system.RESTART_CODE if self.restart_requested and not self.stop_requested else 0
             if self.max_iterations and not self.stop_requested:
                 self.stop_reason = "rodadas"

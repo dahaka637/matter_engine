@@ -209,6 +209,8 @@ def command_branch(args: argparse.Namespace) -> int:
 
 
 def command_start(args: argparse.Namespace) -> int:
+    from .system import require_watchdog
+    require_watchdog()
     if control.ping():
         print("ja existe um treinador aberto (matter-rl status)")
         return 0
