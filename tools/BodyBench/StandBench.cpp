@@ -142,6 +142,11 @@ struct Stand {
     // Trote no lugar (STANDHOPALT): o pe de apoio (-1: os dois) e o que pousa no proximo voo.
     int hopStance = -1, hopNextLanding = 0;
     Eigen::Vector3d hopRaibertPoint = Eigen::Vector3d::Zero();
+    // O trote (STANDTROT=voo): a marcha com o apoio duplo trocado pelo voo. 0 marcha, 5 absorvendo, 1 empurrando, 2 voo.
+    int trotPhase = 0, trotFlights = 0, trotStances = 0;
+    double trotTime = 0.0, trotEntrySpeed = 0.0, trotDeceleration = 0.0, trotEntryPelvis = 0.0, trotFlightTime = 0.0;
+    double trotStandingZ = 0.0;
+    Eigen::Vector3d trotHoldPoint = Eigen::Vector3d::Zero();
     double hopLandingPeak = 0.0, hopLandingPeakSum = 0.0, hopLandingTimer = -1.0;
     double hopObservedVz = 0.0, hopObservedFz = 0.0, hopReleaseKneeSum = 0.0, hopReleaseDropSum = 0.0;
     double hopRecoveryZ = 0.0, hopHeightDelta = 0.0, hopReleaseZ = 0.0;
@@ -350,6 +355,10 @@ void setup(Stand& s, const RagdollProfile3D& profile) {
         const Eigen::Vector2d forward = s.pelvisTarget.col(0).head<2>().normalized();
         s.walkLeft = s.pelvisTarget.col(1).head<2>().normalized();
         s.walkTarget = vx * forward + vy * s.walkLeft;
+        if (const char* trot = std::getenv("STANDTROT")) {
+            s.trotFlightTime = std::atof(trot);
+            s.trotStandingZ = d.centerOfMass.z();
+        }
         s.walkRampSteps = std::getenv("STANDWALKRAMP") ? std::atoi(std::getenv("STANDWALKRAMP")) : 0;
         s.walkVelocity = s.walkRampSteps > 0 ? Eigen::Vector2d(s.walkTarget / double(s.walkRampSteps)) : s.walkTarget;
         s.walking = true;
@@ -842,7 +851,32 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
                 double lowest = 1e9;
                 for (const Eigen::Vector3d& corner : s.corners[swing])
                     lowest = std::min(lowest, (k.origin[s.feet[swing]] + k.rotation[s.feet[swing]] * corner).z());
-                const bool landed = s.phaseTime > 0.6 * s.swingDuration && footTouching[swing] && lowest < 0.01;
+                bool landed = s.phaseTime > 0.6 * s.swingDuration && footTouching[swing] && lowest < 0.01;
+                if (s.trotFlightTime > 0.0 && s.trotPhase != 0) {
+                    s.trotTime += Dt;
+                    const double v0 = 0.5 * 9.81 * s.trotFlightTime;
+                    const int stance = 1 - swing;
+                    const double knee = state.jointCoordinates[static_cast<std::size_t>(s.model.links[s.feet[stance]].parent)][0];
+                    if (s.trotPhase == 5 && (comVelocityNow.z() >= 0.0 || s.trotTime > 0.12)) {
+                        s.trotPhase = 1;
+                        s.trotTime = 0.0;
+                        s.trotEntrySpeed = comVelocityNow.z();
+                        s.trotEntryPelvis = k.origin[0].z();
+                    } else if (s.trotPhase == 1 && comVelocityNow.z() >= v0 && knee <= (std::getenv("STANDTROTKNEE") ? std::atof(std::getenv("STANDTROTKNEE")) : 25.0) * Pi / 180.0) {
+                        s.trotPhase = 2;
+                        s.trotTime = 0.0;
+                        s.trotHoldPoint = sole[stance];
+                        ++s.trotFlights;
+                    } else if (s.trotPhase == 1 && s.trotTime > 0.25) {
+                        s.trotPhase = 0;  // nao decolou: o passo segue como marcha
+                    }
+                    if (std::getenv("STANDTROTDBG"))
+                        std::printf("   trote t %.3f fase %d: vz %.2f z %.3f | joelho apoio %.2f | CoM-pe (%.3f %.3f) v xy (%.2f %.2f) | pelve %.1f graus | Fz %.0f\n", s.clock, s.trotPhase,
+                            comVelocityNow.z(), comNow.z(), knee, comNow.x() - sole[stance].x(), comNow.y() - sole[stance].y(), comVelocityNow.x(), comVelocityNow.y(),
+                            std::acos(std::clamp(k.rotation[0].col(2).dot(s.pelvisTarget.col(2)), -1.0, 1.0)) * 180.0 / Pi, s.plannedFootForce[stance].z());
+                    // No voo, o pouso vale ao tocar (sem esperar 60% do balanco).
+                    if (s.trotPhase == 2) landed = footTouching[swing] && lowest < 0.01 && s.trotTime > 0.03;
+                }
                 if (s.walking && landed) {
                     // O pe que pousou vira o apoio; um apoio duplo curto leva o DCM ao comeco do
                     // plano do proximo passo (a transferencia) e so entao o outro pe sai.
@@ -863,6 +897,23 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
                     s.transferTo = { start.x(), start.y(), s.comTarget.z() };
                     s.swingLanding = { s.walkPlan.footsteps[1].x(), s.walkPlan.footsteps[1].y(), sole[swing].z() - 0.01 };
                     s.swingRotation = flatSoleRotation(s, k, next);
+                    if (s.trotFlightTime > 0.0) {
+                        // Trote: sem apoio duplo; o outro pe (no ar, se houve voo) ja balanca para o proximo passo,
+                        // e o apoio absorve ate parar 3 cm abaixo do de pe e empurra.
+                        s.phase = Stand::Phase::Swing;
+                        s.stepping = true;
+                        s.swingFoot = next;
+                        s.swingStart = sole[next];
+                        s.stepTime = 0.0;
+                        s.stepDuration = s.swingDuration = s.walkSettings.stepDuration;
+                        s.trotPhase = std::getenv("STANDTROTNOVERT") ? 0 : 5;
+                        s.trotTime = 0.0;
+                        s.trotEntrySpeed = comVelocityNow.z();
+                        s.trotEntryPelvis = k.origin[0].z();
+                        const double distance = std::max(0.01, comNow.z() - (s.trotStandingZ - 0.03));
+                        s.trotDeceleration = std::min(2.0 * 9.81, std::max(s.trotEntrySpeed * s.trotEntrySpeed / (2.0 * distance), std::abs(s.trotEntrySpeed) / 0.08));
+                        ++s.trotStances;
+                    }
                 } else if (landed || s.phaseTime > s.swingDuration + 0.3) {
                     if (!landed && std::getenv("STANDSTEPLOG"))
                         std::printf("   pouso FALHOU (tempo esgotado): tocando %d, quina mais baixa %.3f m\n", int(footTouching[swing]), lowest);
@@ -916,8 +967,9 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
     for (int f = 0; f < 2; ++f) {
         if (s.stepping && f == s.swingFoot) continue;
         if (toeOff && f == s.voluntaryFoot) continue;
-        // No voo do salto nenhum pe tem forca nem vinculo (balistico).
+        // No voo do salto (e do trote) nenhum pe tem forca nem vinculo (balistico).
         if (s.hopping && s.hopPhase == 2) continue;
+        if (s.trotPhase == 2) continue;
         // No trote, so o pe de apoio toca no apoio e na absorcao.
         if (s.hopping && (s.hopPhase == 1 || s.hopPhase == 5) && s.hopStance >= 0 && f != s.hopStance) continue;
         bool touching = false;
@@ -1086,6 +1138,17 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
         linearRate.x() = -m * 4.0 * comVelocity.x();
         linearRate.y() = -m * 4.0 * comVelocity.y();
     }
+    if (s.trotPhase == 5) {
+        const double vRef = std::min(0.0, s.trotEntrySpeed + s.trotDeceleration * s.trotTime);
+        linearRate.z() = m * (s.trotDeceleration * (vRef < 0.0 ? 1.0 : 0.0) + 20.0 * (vRef - comVelocity.z()));
+    } else if (s.trotPhase == 1) {
+        HopSettings3D push;
+        push.flightTime = s.trotFlightTime;
+        push.stanceTime = 0.15;
+        push.mass = m;
+        const HopSample3D hop = sampleHopPush3D(push, s.trotTime, s.trotEntrySpeed, 0.5 * 9.81 * s.trotFlightTime + 0.03);
+        linearRate.z() = m * (hop.acceleration + 20.0 * (hop.velocity - comVelocity.z()));
+    }
     if (s.hopping && s.hopPhase == 5) {
         const double vRef = std::min(0.0, s.hopEntrySpeed + s.hopAbsorbDeceleration * s.hopTime);
         linearRate.z() = m * (s.hopAbsorbDeceleration * (vRef < 0.0 ? 1.0 : 0.0) + 20.0 * (vRef - comVelocity.z()));
@@ -1103,7 +1166,7 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
     const double angularGain = std::getenv("STANDLG") ? std::atof(std::getenv("STANDLG")) : 2.0;
     const bool hierarchy = std::getenv("STANDHQP") != nullptr;
     // No voo, nenhuma tarefa centroidal: o momento e balistico.
-    if (!(s.hopping && s.hopPhase == 2)) {
+    if (!(s.hopping && s.hopPhase == 2) && s.trotPhase != 2) {
         Eigen::Vector3d angularRate = -angularGain * angularMomentum;
         if (const char* pose = std::getenv("STANDANGPOSE")) {
             // O momento angular tambem endireita o tronco (Koolen): I kp theta, so rolagem e arfagem.
@@ -1132,7 +1195,7 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
                 vertical.name = "centroidal vertical";
                 vertical.matrix = centroidal.matrix.row(2);
                 vertical.target = centroidal.target.segment(2, 1);
-                vertical.priority = s.hopping && (s.hopPhase == 1 || s.hopPhase == 5) ? 0 : 1;
+                vertical.priority = (s.hopping && (s.hopPhase == 1 || s.hopPhase == 5)) || s.trotPhase == 1 || s.trotPhase == 5 ? 0 : 1;
                 linear.matrix = centroidal.matrix.topRows(2);
                 linear.target = centroidal.target.head(2);
                 input.tasks.push_back(vertical);
@@ -1227,6 +1290,15 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
         pelvis.target = pelvis.target.segment(2, 1).eval();
         pelvis.priority = hierarchy ? 0 : 1;
         input.tasks.push_back(pelvis);
+    }
+    if (s.trotPhase == 2) {
+        // Voo do trote: o pe que decolou recolhe 5 cm sobre onde decolou (ele balanca no proximo pouso).
+        const int f = 1 - s.swingFoot, foot = static_cast<int>(s.feet[f]);
+        const double v = std::clamp(s.trotTime / 0.08, 0.0, 1.0), q = v * v * v * (10.0 - 15.0 * v + 6.0 * v * v);
+        WholeBodyTask3D point = wholeBodyPointTask3D(k, foot, sole[f], s.trotHoldPoint + Eigen::Vector3d(0.0, 0.0, 0.05 * q),
+            Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(), 400.0, 40.0, 20.0, "pe que decolou");
+        point.priority = hierarchy ? 0 : 1;
+        input.tasks.push_back(point);
     }
     if (s.hopping && (s.hopPhase == 1 || s.hopPhase == 5) && s.hopStance >= 0) {
         // O pe livre no apoio do trote: recolhido 6 cm sobre o seu ponto de pouso (mundo).
@@ -1644,6 +1716,7 @@ int main(int argc, char** argv) {
             statusName(lastFailure), micros / std::max(1, samples), worstMicros, double(iterations) / std::max(1, samples));
         if (topOnly + flat + weighted)
             std::printf("- QP em dois niveis: %d ticks com as de cima pesadas, %d so com o nivel de cima, %d no QP ponderado unico\n", weighted, topOnly, flat);
+        if (s.trotFlightTime > 0.0) std::printf("- trote: %d apoios, %d voos\n", s.trotStances, s.trotFlights);
         std::printf("- torque no referencial do motor: %d ticks acima do teto (recortados), pior %.2f do teto\n", s.motorClippedTicks, s.motorWorstRatio);
         if (s.hopping)
             std::printf("- salto: %d apoios, %d voos confirmados (retirada-carga %.0f ms de media, pedido %.0f), %d pousos perdidos, %d tentativas abortadas; pico de forca planejado/pedido %.2f (media)\n",
