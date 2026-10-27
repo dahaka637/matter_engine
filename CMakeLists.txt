@@ -209,9 +209,22 @@ FetchContent_Declare(
     SOURCE_SUBDIR matterengine-headers-only
 )
 FetchContent_MakeAvailable(eigen)
+# O QP do executor de corpo inteiro: ProxQP (BSD-2), so headers, o mesmo commit
+# de setembro (0.7.3); o config.hpp local evita o CMake amplo do projeto.
+FetchContent_Declare(
+    proxsuite_source
+    GIT_REPOSITORY https://github.com/Simple-Robotics/proxsuite.git
+    GIT_TAG b93d7778ffc3299d84b5cb0851022a29bf24a596
+    SOURCE_SUBDIR matterengine-header-only
+)
+FetchContent_MakeAvailable(proxsuite_source)
 add_library(MatterEigen INTERFACE)
 target_include_directories(MatterEigen SYSTEM INTERFACE ${eigen_SOURCE_DIR})
 target_compile_definitions(MatterEigen INTERFACE EIGEN_MPL2_ONLY)
+add_library(MatterProxSuite INTERFACE)
+target_include_directories(MatterProxSuite SYSTEM INTERFACE
+    ${proxsuite_source_SOURCE_DIR}/include ${CMAKE_SOURCE_DIR}/cmake/third_party)
+target_link_libraries(MatterProxSuite INTERFACE MatterEigen)
 
 add_library(vhacd INTERFACE)
 target_include_directories(vhacd INTERFACE ${vhacd_source_SOURCE_DIR}/include)
@@ -390,9 +403,10 @@ endif()
 add_library(MatterBodyControl STATIC
     src/Engine/BodyControl/Execution/Actuation3D.cpp
     src/Engine/BodyControl/Observation/ContactWrench3D.cpp
+    src/Engine/BodyControl/Execution/WholeBodyQP3D.cpp
 )
 target_include_directories(MatterBodyControl PUBLIC src)
-target_link_libraries(MatterBodyControl PUBLIC MatterArticulationDynamics)
+target_link_libraries(MatterBodyControl PUBLIC MatterArticulationDynamics PRIVATE MatterProxSuite)
 if(NOT MSVC)
     target_compile_options(MatterBodyControl PRIVATE -Wall -Wextra -Wpedantic)
 endif()
@@ -400,6 +414,10 @@ endif()
 add_executable(MatterActuationBench tools/BodyBench/ActuationBench.cpp)
 target_link_libraries(MatterActuationBench PRIVATE MatterBodyControl)
 target_compile_definitions(MatterActuationBench PRIVATE MATTERENGINE_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
+# A bancada de ficar de pe (G2): o QP no laco, ajuda zero.
+add_executable(MatterStandBench tools/BodyBench/StandBench.cpp)
+target_link_libraries(MatterStandBench PRIVATE MatterBodyControl MatterAnimationClips)
+target_compile_definitions(MatterStandBench PRIVATE MATTERENGINE_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
 
 # Os clipes de animacao no formato do ragdoll (matter-ragdoll-animation-1):
 # carregar, amostrar e projetar na articulacao. Saiu do MatterEngine para que

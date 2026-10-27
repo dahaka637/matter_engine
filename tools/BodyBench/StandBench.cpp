@@ -1,0 +1,626 @@
+// A bancada de ficar de pe (G2 da locomocao fisica nova): o executor de corpo
+// inteiro (QP) no laco, ajuda ZERO (nenhuma forca externa do controle), o
+// atuador A (torque explicito), sobre o gramado. Mede a pelve, o escorregar
+// dos pes, o QP (status, iteracoes, tempo) e, com --empurroes, o maior impulso
+// aguentado sem cair em 8 direcoes (sem passo ainda).
+//
+// uso: MatterStandBench [--segundos 60] [--empurroes] [--dump arquivo --cada 4]
+#include "Engine/Animation/AnimationClip3D.hpp"
+#include "Engine/BodyControl/Execution/Actuation3D.hpp"
+#include "Engine/BodyControl/Execution/WholeBodyQP3D.hpp"
+#include "Engine/BodyControl/Observation/ContactWrench3D.hpp"
+#include "Engine/Materials/MaterialLibrary.hpp"
+#include "Engine/Physics/PhysicsEngine3D.hpp"
+
+#include <Eigen/Dense>
+
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <optional>
+#include <fstream>
+#include <string>
+#include <vector>
+
+using namespace MatterEngine;
+
+namespace {
+
+constexpr double Dt = 1.0 / 120.0;
+constexpr double Pi = 3.14159265358979323846;
+
+Eigen::Vector3d toEigen(Vec3 v) { return { v.x, v.y, v.z }; }
+
+std::size_t findLink(const RagdollProfile3D& profile, const std::string& id) {
+    for (std::size_t i = 0; i < profile.links.size(); ++i)
+        if (profile.links[i].id == id) return i;
+    return profile.links.size();
+}
+
+// Os 4 cantos da sola (no frame do link do pe): o retangulo dos pontos da sola.
+std::vector<Eigen::Vector3d> soleCorners(const RagdollProfile3D& profile, std::size_t link) {
+    const RagdollCapsuleDefinition3D& collider = profile.links[link].collider;
+    std::vector<Eigen::Vector3d> points;
+    for (const Vec3& p : ragdollColliderSolePoints3D(collider)) {
+        const Vec3 local = collider.localPosition + collider.localOrientation.rotate(p);
+        points.emplace_back(local.x, local.y, local.z);
+    }
+    Eigen::Vector3d minimum = points.front(), maximum = points.front();
+    for (const Eigen::Vector3d& p : points) {
+        minimum = minimum.cwiseMin(p);
+        maximum = maximum.cwiseMax(p);
+    }
+    // O pe: x para a frente no link? Usa os dois eixos de maior extensao.
+    std::vector<Eigen::Vector3d> corners;
+    double meanZ = 0.0;
+    for (const Eigen::Vector3d& p : points) meanZ += p.z();
+    meanZ /= double(points.size());
+    (void)meanZ;
+    const Eigen::Vector3d extent = maximum - minimum;
+    int thin = 0;
+    for (int a = 1; a < 3; ++a) if (extent[a] < extent[thin]) thin = a;
+    const int first = (thin + 1) % 3, second = (thin + 2) % 3;
+    for (int i = 0; i < 4; ++i) {
+        Eigen::Vector3d corner = 0.5 * (minimum + maximum);
+        corner[thin] = (thin == 2 || true) ? (std::abs(minimum[thin]) > std::abs(maximum[thin]) ? minimum[thin] : maximum[thin]) : corner[thin];
+        corner[first] = (i & 1) ? maximum[first] : minimum[first];
+        corner[second] = (i & 2) ? maximum[second] : minimum[second];
+        corners.push_back(corner);
+    }
+    return corners;
+}
+
+struct Stand {
+    PhysicsEngine3D engine;
+    MaterialLibrary materials;
+    std::unique_ptr<PhysicsScene3D> scene;
+    RagdollHandle3D ragdoll;
+    ArticulationModel3D model;
+    WholeBodyQP3D qp;
+    std::size_t feet[2] {};
+    std::vector<Eigen::Vector3d> corners[2];
+    Eigen::Vector3d comTarget;
+    Eigen::Matrix3d pelvisTarget, chestTarget, headTarget;
+    std::size_t chest = 0, head = 0;
+    Eigen::VectorXd torqueLimit;
+    std::vector<Eigen::Vector3d> referencePose;
+    Eigen::VectorXd predictedAcceleration, previousVelocity, previousTorque;
+    std::optional<ArticulationState3D> previousState;
+    std::optional<ArticulationState3D> positionHistory;
+    Eigen::Vector3d plannedFootForce[2];
+    Eigen::Vector3d plannedCop[2];
+    int debugTicks = 0;
+    int logTick = 0;
+};
+
+void setup(Stand& s, const RagdollProfile3D& profile) {
+    PhysicsSceneSettings3D settings;
+    const bool free = std::getenv("STANDFREE") != nullptr;
+    settings.gravity = free ? Vec3 {} : Vec3 { 0.0f, 0.0f, -9.81f };
+    settings.workerThreadCount = 1;
+    settings.collisionSteps = std::getenv("STANDSTEPS") ? static_cast<std::uint32_t>(std::atoi(std::getenv("STANDSTEPS"))) : 4;
+    s.scene = s.engine.createScene(settings, s.materials);
+    PhysicsShape3D shape;
+    shape.type = PhysicsShapeType3D::Box;
+    shape.halfExtents = { 40.0f, 40.0f, 0.25f };
+    shape.materialId = "grass";
+    PhysicsBodyDefinition3D body;
+    body.motionType = PhysicsMotionType3D::Static;
+    body.position = { 0.0f, 0.0f, -0.25f };
+    body.materialId = "grass";
+    (void)s.scene->createBody(body, std::span<const PhysicsShape3D>(&shape, 1));
+    RagdollSpawnDefinition3D spawn;
+    spawn.entityId = 1;
+    spawn.pelvisPosition = { 0.0f, 0.0f, profile.standingRootHeightMeters + 0.005f };
+    spawn.active = true;
+    if (const char* iterations = std::getenv("STANDITER")) {
+        spawn.solverVelocityIterations = static_cast<std::uint32_t>(std::atoi(iterations));
+        spawn.solverPositionIterations = static_cast<std::uint32_t>(std::atoi(iterations));
+    }
+    s.ragdoll = s.scene->createRagdoll(profile, spawn);
+    s.model = buildArticulationModel3D(profile, s.scene->ragdollEffectiveMass(s.ragdoll));
+    if (free) s.model.gravity.setZero();
+    if (const char* friction = std::getenv("STANDFRIC")) s.scene->setRagdollFrictionScale(s.ragdoll, static_cast<float>(std::atof(friction)));
+    // A referencia: o primeiro quadro do idle alerta (a postura atletica aprovada),
+    // nas coordenadas do modelo (maos e pes: swing-twist).
+    const AnimationClip3D idle = loadAnimationClip3D(std::string(MATTERENGINE_ASSETS_DIR) + "/animations/clips/alert_idle.matteranim.json");
+    s.referencePose.assign(s.model.links.size(), Eigen::Vector3d::Zero());
+    Eigen::Quaterniond rootOrientation = Eigen::Quaterniond::Identity();
+    for (const AnimationTrack3D& track : idle.tracks) {
+        const std::size_t link = findLink(profile, track.targetLinkId);
+        if (track.space != AnimationTrackSpace3D::Joint) {
+            const Quaternion q = sampleAnimationTrackSmooth3D(track, 0.0f, idle.durationSeconds, idle.loops).rotationDelta;
+            rootOrientation = Eigen::Quaterniond(q.w, q.x, q.y, q.z).normalized();
+            continue;
+        }
+        if (link == 0 || link >= profile.links.size()) continue;
+        const Vec3 v = sampleAnimationTrackSmooth3D(track, 0.0f, idle.durationSeconds, idle.loops).jointPositionRadians;
+        s.referencePose[link] = articulationJointCoordinates3D(s.model.links[link], exponentialRotation3D(Eigen::Vector3d(v.x, v.y, v.z)));
+    }
+    // As solas niveladas: o idle tem a sola inclinada alguns mm, e o pe pousava
+    // numa quina (o Jolt o girava ate assentar enquanto o QP o tratava rigido).
+    if (!std::getenv("STANDNOLEVEL")) {
+        for (int pass = 0; pass < 3; ++pass) {
+            ArticulationState3D pose;
+            pose.rootOrientation = rootOrientation;
+            pose.jointCoordinates = s.referencePose;
+            pose.velocity = Eigen::VectorXd::Zero(s.model.dofCount);
+            const ArticulationKinematics3D k0 = computeArticulationKinematics3D(s.model, pose);
+            for (const char* footName : { "LeftFoot", "RightFoot" }) {
+                const std::size_t foot = findLink(profile, footName);
+                const std::vector<Eigen::Vector3d> corners = soleCorners(profile, foot);
+                // A normal da sola (para baixo) pelo plano dos cantos.
+                Eigen::Vector3d normal = (corners[1] - corners[0]).cross(corners[2] - corners[0]).normalized();
+                Eigen::Vector3d center = Eigen::Vector3d::Zero();
+                for (const Eigen::Vector3d& c : corners) center += c / 4.0;
+                if (normal.dot(center) < 0.0) normal = -normal;
+                const Eigen::Vector3d down = k0.rotation[foot] * normal;
+                const Eigen::Matrix3d fix = Eigen::Quaterniond::FromTwoVectors(down, Eigen::Vector3d(0.0, 0.0, -1.0)).toRotationMatrix();
+                const Eigen::Matrix3d footWorld = fix * k0.rotation[foot];
+                const ArticulationLink3D& link = s.model.links[foot];
+                const Eigen::Matrix3d relative = link.jointInParent.transpose() * k0.rotation[static_cast<std::size_t>(link.parent)].transpose()
+                    * footWorld * link.jointInChild;
+                s.referencePose[foot] = articulationJointCoordinates3D(link, relative);
+            }
+        }
+    }
+    // O corpo nasce na referencia, com a sola mais baixa 2 mm acima do chao.
+    {
+        ArticulationState3D pose;
+        pose.rootOrientation = rootOrientation;
+        pose.jointCoordinates = s.referencePose;
+        pose.velocity = Eigen::VectorXd::Zero(s.model.dofCount);
+        const ArticulationKinematics3D k0 = computeArticulationKinematics3D(s.model, pose);
+        double lowest = 1e9;
+        for (const char* footName : { "LeftFoot", "RightFoot" }) {
+            const std::size_t foot = findLink(profile, footName);
+            for (const Eigen::Vector3d& corner : soleCorners(profile, foot))
+                lowest = std::min(lowest, (k0.origin[foot] + k0.rotation[foot] * corner).z());
+        }
+        pose.rootPosition.z() = 0.0005 - lowest + (free ? 1.0 : 0.0);
+        double feetLowest[2] = { 1e9, 1e9 };
+        for (int f = 0; f < 2; ++f) {
+            const std::size_t foot = findLink(profile, f ? "RightFoot" : "LeftFoot");
+            for (const Eigen::Vector3d& corner : soleCorners(profile, foot))
+                feetLowest[f] = std::min(feetLowest[f], (k0.origin[foot] + k0.rotation[foot] * corner).z());
+        }
+        std::printf("referencia: idle alerta; a sola esquerda %.1f mm e a direita %.1f mm acima da mais baixa\n",
+            1000.0 * (feetLowest[0] - lowest), 1000.0 * (feetLowest[1] - lowest));
+        const ArticulationKinematics3D k = computeArticulationKinematics3D(s.model, pose);
+        std::vector<PhysicsBodyState3D> links(s.model.links.size());
+        for (std::size_t i = 0; i < links.size(); ++i) {
+            const Eigen::Quaterniond q(k.rotation[i]);
+            links[i].position = { float(k.origin[i].x()), float(k.origin[i].y()), float(k.origin[i].z()) };
+            links[i].orientation = Quaternion(float(q.x()), float(q.y()), float(q.z()), float(q.w()));
+        }
+        s.scene->resetRagdollState(s.ragdoll, links);
+    }
+    if (free) {
+        // Um degrau na referencia para o QP gerar movimento (o ensaio da previsao).
+        s.referencePose[findLink(profile, "LeftThigh")][1] += 0.4;
+        s.referencePose[findLink(profile, "Chest")][1] += 0.3;
+        s.referencePose[findLink(profile, "RightUpperArm")][2] += 0.5;
+    }
+    s.feet[0] = findLink(profile, "LeftFoot");
+    s.feet[1] = findLink(profile, "RightFoot");
+    s.chest = findLink(profile, "UpperChest");
+    s.head = findLink(profile, "Head");
+    for (int f = 0; f < 2; ++f) s.corners[f] = soleCorners(profile, s.feet[f]);
+    const ArticulationState3D state = articulationStateFromRagdoll3D(s.model, *s.scene->ragdollStateView(s.ragdoll));
+    const ArticulationKinematics3D k = computeArticulationKinematics3D(s.model, state);
+    const ArticulationDynamics3D d = computeArticulationDynamics3D(s.model, k);
+    // O centro de massa sobre o meio dos pes, na altura de agora.
+    // A pose de repouso ja e de pe: o alvo e o centro de massa dela.
+    s.comTarget = d.centerOfMass;
+    s.pelvisTarget = k.rotation[0];
+    s.chestTarget = k.rotation[s.chest];
+    s.headTarget = k.rotation[s.head];
+    s.torqueLimit = Eigen::VectorXd::Zero(s.model.dofCount - 6);
+    for (std::size_t i = 1; i < s.model.links.size(); ++i)
+        for (int a = 0; a < 3; ++a) {
+            const int dof = s.model.links[i].dof[static_cast<std::size_t>(a)];
+            if (dof >= 0) s.torqueLimit[dof - 6] = profile.links[i].inboundJoint.axes[static_cast<std::size_t>(a)].maximumTorque;
+        }
+}
+
+const char* statusName(WholeBodyQPStatus3D status) {
+    switch (status) {
+        case WholeBodyQPStatus3D::Solved: return "resolvido";
+        case WholeBodyQPStatus3D::MaximumIterations: return "teto de iteracoes";
+        case WholeBodyQPStatus3D::Infeasible: return "inviavel";
+        case WholeBodyQPStatus3D::NotFinite: return "nao finito";
+        case WholeBodyQPStatus3D::InvalidInput: return "entrada invalida";
+    }
+    return "?";
+}
+
+
+struct StepReport {
+    bool fallen = false;
+    WholeBodyQPStatus3D status = WholeBodyQPStatus3D::Solved;
+    double solveMicros = 0.0, slip = 0.0, pelvisSpeed = 0.0;
+    int iterations = 0;
+};
+
+StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d& push, std::size_t pushLink) {
+    StepReport report;
+    const RagdollState3D& raw = *s.scene->ragdollStateView(s.ragdoll);
+    ArticulationState3D state = articulationStateFromRagdoll3D(s.model, raw);
+    if (std::getenv("STANDFDVEL") && s.positionHistory) {
+        // A velocidade pelas posicoes (que o backend corrige), nao pela publicada.
+        const ArticulationState3D& before = *s.positionHistory;
+        Eigen::VectorXd velocity = Eigen::VectorXd::Zero(s.model.dofCount);
+        velocity.head<3>() = (state.rootPosition - before.rootPosition) / Dt;
+        const Eigen::AngleAxisd spin(state.rootOrientation * before.rootOrientation.conjugate());
+        velocity.segment<3>(3) = spin.axis() * spin.angle() / Dt;
+        for (std::size_t i = 1; i < s.model.links.size(); ++i)
+            for (int a = 0; a < 3; ++a) {
+                const int dof = s.model.links[i].dof[static_cast<std::size_t>(a)];
+                if (dof >= 0) velocity[dof] = (state.jointCoordinates[i][a] - before.jointCoordinates[i][a]) / Dt;
+            }
+        s.positionHistory = state;
+        state.velocity = velocity;
+    } else {
+        s.positionHistory = state;
+    }
+    const ArticulationKinematics3D k = computeArticulationKinematics3D(s.model, state);
+    const ArticulationDynamics3D d = computeArticulationDynamics3D(s.model, k);
+    report.pelvisSpeed = state.velocity.head<3>().norm();
+    if (std::getenv("STANDLIMITS") && s.logTick % 20 == 0 && s.logTick < 200) {
+        for (std::size_t i = 1; i < raw.joints.size(); ++i)
+            for (int a = 0; a < 3; ++a) {
+                const RagdollAxisDefinition3D& axis = profile.links[i].inboundJoint.axes[static_cast<std::size_t>(a)];
+                if (!axis.enabled) continue;
+                const float c = raw.joints[i].constraintTorqueNewtonMeters[static_cast<std::size_t>(a)];
+                const float q = raw.joints[i].positionRadians[static_cast<std::size_t>(a)];
+                if (std::abs(c) > 2.0f || q < axis.minimumRadians + 0.03f || q > axis.maximumRadians - 0.03f)
+                    std::printf("   t %.2f %s eixo %d: q %.3f (limites %.3f %.3f) restricao %.1f N.m\n", s.logTick * Dt, profile.links[i].id.c_str(), a, q,
+                        axis.minimumRadians, axis.maximumRadians, c);
+            }
+    }
+    if (std::getenv("STANDDELIV") && s.previousState && s.logTick < 8) {
+        const ActuationDelivery3D delivery = actuationDelivery3D(profile, raw);
+        const Eigen::VectorXd delivered = articulationGeneralizedFromFeedforward3D(s.model, *s.previousState, delivery.muscleTorque);
+        double worst = 0.0;
+        for (int j = 6; j < s.model.dofCount; ++j) worst = std::max(worst, std::abs(s.previousTorque[j] - delivered[j]));
+        std::printf("   tick %d: maior diferenca pedido x entregue %.4f N.m\n", s.logTick, worst);
+        for (std::size_t i = 1; i < s.model.links.size(); ++i)
+            for (int a = 0; a < 3; ++a) {
+                const int dof = s.model.links[i].dof[static_cast<std::size_t>(a)];
+                if (dof < 0 || std::abs(s.previousTorque[dof] - delivered[dof]) < 0.5) continue;
+                std::printf("   tick %d %s eixo %d: pedido %.2f entregue %.2f (motor %.2f ff %.2f, restricao %.2f)\n", s.logTick, profile.links[i].id.c_str(), a,
+                    s.previousTorque[dof], delivered[dof], raw.joints[i].motorTorqueNewtonMeters[static_cast<std::size_t>(a)],
+                    raw.joints[i].feedforwardTorqueNewtonMeters[static_cast<std::size_t>(a)], raw.joints[i].constraintTorqueNewtonMeters[static_cast<std::size_t>(a)]);
+            }
+    }
+    if (std::getenv("STANDFEET") && s.logTick < 40) {
+        for (int f = 0; f < 2; ++f) {
+            const PhysicsBodyState3D& foot = raw.links[s.feet[f]];
+            std::printf("   tick %d pe %d: v (%.3f %.3f %.3f) w (%.2f %.2f %.2f) z %.4f\n", s.logTick, f, foot.linearVelocity.x, foot.linearVelocity.y,
+                foot.linearVelocity.z, foot.angularVelocity.x, foot.angularVelocity.y, foot.angularVelocity.z, foot.position.z);
+        }
+    }
+    if (std::getenv("STANDPRED") && s.predictedAcceleration.size() && (s.logTick % 15 == 0 || s.logTick < 4)) {
+        const Eigen::VectorXd measured = (state.velocity - s.previousVelocity) / Dt;
+        std::printf("   pelve: alfa previsto (%.2f %.2f %.2f) medido (%.2f %.2f %.2f); a previsto (%.2f %.2f %.2f) medido (%.2f %.2f %.2f)\n",
+            s.predictedAcceleration[3], s.predictedAcceleration[4], s.predictedAcceleration[5], measured[3], measured[4], measured[5],
+            s.predictedAcceleration[0], s.predictedAcceleration[1], s.predictedAcceleration[2], measured[0], measured[1], measured[2]);
+    }
+    if (std::getenv("STANDPRED") && s.previousState && (s.logTick % 15 == 0 || s.logTick < 4)) {
+        const ArticulationKinematics3D pk = computeArticulationKinematics3D(s.model, *s.previousState);
+        const ArticulationDynamics3D pd = computeArticulationDynamics3D(s.model, pk);
+        std::vector<ContactSupport3D> supports;
+        for (int f = 0; f < 2; ++f) {
+            Eigen::Vector3d sole = Eigen::Vector3d::Zero();
+            for (const Eigen::Vector3d& corner : s.corners[f]) sole += corner / 4.0;
+            supports.push_back({ static_cast<int>(s.feet[f]), sole, true });
+        }
+        const ContactWrenchEstimate3D estimate = estimateContactWrench3D(s.model, *s.previousState, pk, pd, state, s.previousTorque, supports, Dt);
+        for (int f = 0; f < 2; ++f) {
+            const Eigen::VectorXd footAcc = (state.velocity - s.previousVelocity) / Dt;
+            const Eigen::Vector3d footLinear = pk.originJacobian[s.feet[f]] * footAcc + pk.originBias[s.feet[f]];
+            const auto& real = estimate.supports[static_cast<std::size_t>(f)];
+            if (real.hasCenterOfPressure)
+                std::printf("   pe %d: CoP real (%.3f %.3f) planejado (%.3f %.3f)\n", f, real.centerOfPressure.x(), real.centerOfPressure.y(),
+                    s.plannedCop[f].x(), s.plannedCop[f].y());
+            std::printf("   pe %d: forca real (%.0f %.0f %.0f) planejada (%.0f %.0f %.0f); aceleracao do pe %.2f m/s2\n", f,
+                estimate.supports[static_cast<std::size_t>(f)].force.x(), estimate.supports[static_cast<std::size_t>(f)].force.y(), estimate.supports[static_cast<std::size_t>(f)].force.z(),
+                s.plannedFootForce[f].x(), s.plannedFootForce[f].y(), s.plannedFootForce[f].z(), footLinear.norm());
+        }
+    }
+    s.previousVelocity = state.velocity;
+    s.previousState = state;
+    if (raw.links[0].position.z < 0.55f) {
+        report.fallen = true;
+        return report;
+    }
+    WholeBodyQPInput3D input;
+    input.model = &s.model;
+    input.kinematics = &k;
+    input.dynamics = &d;
+    input.state = &state;
+    input.torqueLimit = s.torqueLimit;
+    const double friction = 0.75 * 0.8; // gramado x sola, com margem de 20%
+    for (int f = 0; f < 2; ++f) {
+        bool touching = false;
+        for (const RagdollContactPoint3D& contact : raw.contacts)
+            if (contact.linkIndex == s.feet[f]) touching = true;
+        // O apoio tambem pela geometria: a sola a menos de 4 mm do chao (o backend
+        // so publica contatos depois do primeiro passo).
+        if (!touching && std::getenv("STANDGEOM"))
+            for (const Eigen::Vector3d& corner : s.corners[f])
+                if ((k.origin[s.feet[f]] + k.rotation[s.feet[f]] * corner).z() < 0.004) touching = true;
+        if (!touching) continue;
+        // O pe apoiado e rigido: aceleracao 6D = - amortecimento da velocidade dele.
+        WholeBodyContactLink3D rigid;
+        rigid.link = static_cast<int>(s.feet[f]);
+        const double footDamping = std::getenv("STANDFOOTD") ? std::atof(std::getenv("STANDFOOTD")) : 20.0;
+        rigid.desiredAcceleration.head<3>() = -footDamping * k.angularVelocity[s.feet[f]];
+        rigid.desiredAcceleration.tail<3>() = -footDamping * k.originVelocity[s.feet[f]];
+        const bool pointContacts = std::getenv("STANDPOINTS") != nullptr;
+        if (!pointContacts) input.contactLinks.push_back(rigid);
+        // Executar pelo apoio observado: os pontos de contato reais da bota (o
+        // poligono do Jolt e menor que o retangulo da sola).
+        std::vector<Eigen::Vector3d> observed, normals;
+        bool anyObserved = false;
+        for (const RagdollContactPoint3D& contact : raw.contacts) anyObserved |= contact.linkIndex == s.feet[f];
+        if (!anyObserved)
+            for (const Eigen::Vector3d& corner : s.corners[f]) {
+                Eigen::Vector3d center = Eigen::Vector3d::Zero();
+                for (const Eigen::Vector3d& c : s.corners[f]) center += c / 4.0;
+                observed.push_back(k.origin[s.feet[f]] + k.rotation[s.feet[f]] * (center + 0.5 * (corner - center)));
+                normals.push_back(Eigen::Vector3d::UnitZ());
+            }
+        for (const RagdollContactPoint3D& contact : raw.contacts) {
+            if (contact.linkIndex != s.feet[f]) continue;
+            observed.push_back(toEigen(contact.position));
+            normals.push_back(toEigen(contact.normal));
+        }
+        if (!std::getenv("STANDRECT") && !observed.empty()) {
+            // O apoio observado (o losango do Jolt) recuado para o centro: margem.
+            const double shrink = std::getenv("STANDSHRINK") ? std::atof(std::getenv("STANDSHRINK")) : 0.7;
+            Eigen::Vector3d center = Eigen::Vector3d::Zero();
+            for (const Eigen::Vector3d& point : observed) center += point / double(observed.size());
+            for (Eigen::Vector3d& point : observed) point = center + shrink * (point - center);
+        } else if (std::getenv("STANDRECT")) {
+            // O poligono conservador: os cantos da sola recuados para o centro.
+            const double shrink = std::getenv("STANDSHRINK") ? std::atof(std::getenv("STANDSHRINK")) : 0.6;
+            Eigen::Vector3d center = Eigen::Vector3d::Zero();
+            for (const Eigen::Vector3d& corner : s.corners[f]) center += corner / 4.0;
+            observed.clear();
+            normals.clear();
+            for (const Eigen::Vector3d& corner : s.corners[f]) {
+                observed.push_back(k.origin[s.feet[f]] + k.rotation[s.feet[f]] * (center + shrink * (corner - center)));
+                normals.push_back(Eigen::Vector3d::UnitZ());
+            }
+        }
+        for (std::size_t c = 0; c < observed.size(); ++c) {
+            WholeBodyContactPoint3D point;
+            point.link = static_cast<int>(s.feet[f]);
+            point.pointWorld = observed[c];
+            point.normal = normals[c].normalized();
+            point.friction = friction;
+            point.constrained = pointContacts;
+            point.minimumNormalForce = std::getenv("STANDMINN") ? std::atof(std::getenv("STANDMINN")) : 15.0;
+            // Amortece qualquer escorregar do ponto.
+            const Eigen::Vector3d velocity = articulationPointJacobian3D(k, point.link, point.pointWorld) * state.velocity;
+            point.desiredAcceleration = -20.0 * velocity;
+            report.slip = std::max(report.slip, std::hypot(velocity.x(), velocity.y()));
+            input.contacts.push_back(point);
+        }
+    }
+    const double m = s.model.totalMass;
+    const double gain = std::getenv("STANDGAIN") ? std::atof(std::getenv("STANDGAIN")) : 1.0;
+    const Eigen::Vector3d comVelocity = d.centroidalMatrix.topRows(3) * state.velocity / m;
+    const Eigen::Vector3d linearRate = m * (40.0 * gain * gain * (s.comTarget - d.centerOfMass) - 2.0 * std::sqrt(40.0) * gain * comVelocity);
+    const Eigen::Vector3d angularMomentum = d.centroidalMatrix.bottomRows(3) * state.velocity;
+    input.tasks.push_back(wholeBodyCentroidalTask3D(s.model, d, state, linearRate, -10.0 * angularMomentum, 10.0, 1.0));
+    input.tasks.push_back(wholeBodyOrientationTask3D(k, 0, s.pelvisTarget, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(), 100.0 * gain * gain, 20.0 * gain, 5.0, "pelve"));
+    input.tasks.push_back(wholeBodyOrientationTask3D(k, static_cast<int>(s.chest), s.chestTarget, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(), 100.0 * gain * gain, 20.0 * gain, 3.0, "peito"));
+    input.tasks.push_back(wholeBodyOrientationTask3D(k, static_cast<int>(s.head), s.headTarget, Eigen::Vector3d::Zero(), Eigen::Vector3d::Zero(), 100.0 * gain * gain, 20.0 * gain, 2.0, "cabeca"));
+    const std::vector<Eigen::Vector3d> zero(s.model.links.size(), Eigen::Vector3d::Zero());
+    input.tasks.push_back(wholeBodyPostureTask3D(s.model, state, s.referencePose, zero, zero, 100.0 * gain * gain, 20.0 * gain, 0.5));
+    const WholeBodyQPResult3D result = s.qp.solve(input);
+    if (std::getenv("STANDLOG") && (s.logTick++ % 30 == 0 || !result.usable())) {
+        double worstRatio = 0.0;
+        if (result.torque.size())
+            for (int j = 0; j < s.model.dofCount - 6; ++j) worstRatio = std::max(worstRatio, std::abs(result.torque[j + 6]) / s.torqueLimit[j]);
+        const Eigen::Vector3d up = k.rotation[0].col(2);
+        std::printf("   violacoes: igualdade %.2e, desigualdade %.2e\n", result.equalityViolation, result.inequalityViolation);
+        std::printf("t %.2f: %s it %d, contatos %zu, CoM erro (%.3f %.3f %.3f), vel CoM %.3f, pelve inclinada %.1f graus, escorregar %.3f, torque %.2f\n",
+            s.logTick * Dt, statusName(result.status), result.iterations, input.contacts.size(), (s.comTarget - d.centerOfMass).x(),
+            (s.comTarget - d.centerOfMass).y(), (s.comTarget - d.centerOfMass).z(), (d.centroidalMatrix.topRows(3) * state.velocity / s.model.totalMass).norm(),
+            std::acos(std::clamp(up.dot(s.pelvisTarget.col(2)), -1.0, 1.0)) * 180.0 / Pi, report.slip, worstRatio);
+    }
+    if (std::getenv("STANDMARGIN") && s.logTick % 30 == 1 && raw.contacts.size() >= 3) {
+        // O centro de massa no chao contra o poligono dos contatos (fecho convexo 2D).
+        std::vector<Eigen::Vector2d> points;
+        for (const RagdollContactPoint3D& contact : raw.contacts) points.emplace_back(contact.position.x, contact.position.y);
+        std::sort(points.begin(), points.end(), [](const auto& a, const auto& b) { return a.x() < b.x() || (a.x() == b.x() && a.y() < b.y()); });
+        std::vector<Eigen::Vector2d> hull;
+        const auto cross = [](const Eigen::Vector2d& o, const Eigen::Vector2d& a, const Eigen::Vector2d& b) { return (a - o).x() * (b - o).y() - (a - o).y() * (b - o).x(); };
+        for (int pass = 0; pass < 2; ++pass) {
+            const std::size_t start = hull.size();
+            for (std::size_t i = 0; i < points.size(); ++i) {
+                const Eigen::Vector2d& p = pass == 0 ? points[i] : points[points.size() - 1 - i];
+                while (hull.size() >= start + 2 && cross(hull[hull.size() - 2], hull.back(), p) <= 0) hull.pop_back();
+                hull.push_back(p);
+            }
+            hull.pop_back();
+        }
+        const Eigen::Vector2d com(d.centerOfMass.x(), d.centerOfMass.y());
+        double margin = 1e9;
+        for (std::size_t i = 0; i < hull.size(); ++i) {
+            const Eigen::Vector2d a = hull[i], b = hull[(i + 1) % hull.size()];
+            const Eigen::Vector2d edge = (b - a).normalized();
+            margin = std::min(margin, edge.x() * (com - a).y() - edge.y() * (com - a).x());
+        }
+        std::printf("   margem do CoM dentro do apoio: %.3f m (%zu pontos, %zu no fecho)\n", margin, points.size(), hull.size());
+    }
+    if (std::getenv("STANDDBG") && s.debugTicks++ < std::atoi(std::getenv("STANDDBG"))) {
+        double sumZ = 0.0;
+        for (int c = 0; c < int(input.contacts.size()); ++c) sumZ += result.contactForces.size() ? result.contactForces[3 * c + 2] : 0.0;
+        double worstRatio = 0.0;
+        if (result.torque.size())
+            for (int j = 0; j < s.model.dofCount - 6; ++j) worstRatio = std::max(worstRatio, std::abs(result.torque[j + 6]) / s.torqueLimit[j]);
+        std::printf("tick %3d: contatos %zu, %s, it %d, %.0f us, soma Fz %.1f N (peso %.1f), torque max %.2f do teto, CoM erro %.3f m, pelve z %.3f, residuo %.2e\n",
+            s.debugTicks, input.contacts.size(), statusName(result.status), result.iterations, result.solveMicros, sumZ, s.model.totalMass * 9.81,
+            worstRatio, (s.comTarget - d.centerOfMass).norm(), double(raw.links[0].position.z), result.dynamicsResidual);
+        if (s.debugTicks == 3) {
+            for (const auto& p : input.contacts) std::printf("   canto suposto link %d em (%.3f %.3f %.3f)\n", p.link, p.pointWorld.x(), p.pointWorld.y(), p.pointWorld.z());
+            for (const auto& c : raw.contacts) std::printf("   contato Jolt link %u em (%.3f %.3f %.3f) normal (%.2f %.2f %.2f) J %.3f\n", c.linkIndex, c.position.x, c.position.y, c.position.z, c.normal.x, c.normal.y, c.normal.z, c.normalImpulseNewtonSeconds);
+        }
+    }
+    report.status = result.status;
+    s.predictedAcceleration = result.usable() ? result.acceleration : Eigen::VectorXd();
+    for (int f = 0; f < 2; ++f) { s.plannedFootForce[f].setZero(); s.plannedCop[f].setZero(); }
+    if (result.usable())
+        for (int f = 0; f < 2; ++f) {
+            double total = 0.0;
+            for (std::size_t c = 0; c < input.contacts.size(); ++c)
+                if (input.contacts[c].link == static_cast<int>(s.feet[f])) {
+                    const double fz = result.contactForces[3 * static_cast<int>(c) + 2];
+                    s.plannedCop[f] += fz * input.contacts[c].pointWorld;
+                    total += fz;
+                }
+            if (total > 1.0) s.plannedCop[f] /= total;
+        }
+    if (result.usable())
+        for (std::size_t c = 0; c < input.contacts.size(); ++c)
+            for (int f = 0; f < 2; ++f)
+                if (input.contacts[c].link == static_cast<int>(s.feet[f])) s.plannedFootForce[f] += result.contactForces.segment<3>(3 * static_cast<int>(c));
+    report.solveMicros = result.solveMicros;
+    report.iterations = result.iterations;
+    Eigen::VectorXd torque = Eigen::VectorXd::Zero(s.model.dofCount);
+    if (result.usable()) {
+        torque = result.torque;
+    } else {
+        // A politica de falha: amortecimento articular limitado, nunca forca salvadora.
+        torque.tail(s.model.dofCount - 6) = (-5.0 * state.velocity.tail(s.model.dofCount - 6)).cwiseMax(-s.torqueLimit).cwiseMin(s.torqueLimit);
+    }
+    ActuationSettings3D settings;
+    settings.mode = ActuationMode3D::ExplicitTorque;
+    ActuationReference3D reference;
+    if (const char* act = std::getenv("STANDACT")) {
+        if (std::string(act) == "B") settings.mode = ActuationMode3D::LowImpedance;
+        if (std::string(act) == "D") settings.mode = ActuationMode3D::ExplicitTorqueImplicitDamping;
+        settings.stiffnessPerInertia = std::getenv("STANDK") ? std::atof(std::getenv("STANDK")) : 150.0;
+        settings.dampingPerInertia = std::getenv("STANDD") ? std::atof(std::getenv("STANDD")) : 20.0;
+        settings.profileStiffnessFraction = std::getenv("STANDKP") ? std::atof(std::getenv("STANDKP")) : 0.0;
+        // O alvo da mola: a configuracao prevista para o fim do passo (a mola nao briga com o QP).
+        reference.coordinates.assign(s.model.links.size(), Eigen::Vector3d::Zero());
+        reference.rates.assign(s.model.links.size(), Eigen::Vector3d::Zero());
+        const Eigen::VectorXd planned = result.usable() ? Eigen::VectorXd(result.acceleration) : Eigen::VectorXd::Zero(s.model.dofCount);
+        for (std::size_t i = 1; i < s.model.links.size(); ++i)
+            for (int a = 0; a < 3; ++a) {
+                const int dof = s.model.links[i].dof[static_cast<std::size_t>(a)];
+                if (dof < 0) continue;
+                reference.rates[i][a] = state.velocity[dof] + planned[dof] * Dt;
+                reference.coordinates[i][a] = state.jointCoordinates[i][a] + reference.rates[i][a] * Dt;
+            }
+    }
+    const std::vector<RagdollDriveTarget3D> targets = actuationTargets3D(profile, s.model, state, torque,
+        reference, d.massMatrix.diagonal(), settings);
+    std::vector<RagdollDriveTarget3D> finalTargets = targets;
+    if (const char* ankle = std::getenv("STANDANKLE")) {
+        // So os tornozelos com mola implicita rigida na configuracao prevista do fim do passo.
+        const double fraction = std::atof(ankle);
+        const Eigen::VectorXd planned = result.usable() ? Eigen::VectorXd(result.acceleration) : Eigen::VectorXd::Zero(s.model.dofCount);
+        for (RagdollDriveTarget3D& target : finalTargets) {
+            if (target.linkIndex != s.feet[0] && target.linkIndex != s.feet[1]) continue;
+            const ArticulationLink3D& link = s.model.links[target.linkIndex];
+            Eigen::Vector3d next = state.jointCoordinates[target.linkIndex];
+            for (int a = 0; a < 3; ++a) {
+                const int dof = link.dof[static_cast<std::size_t>(a)];
+                if (dof >= 0) next[a] += (state.velocity[dof] + planned[dof] * Dt) * Dt;
+            }
+            const Eigen::Matrix3d rotation = articulationJointRotation3D(link, next);
+            const Eigen::AngleAxisd axisAngle(rotation);
+            const Eigen::Vector3d vector = axisAngle.axis() * axisAngle.angle();
+            const int a = static_cast<int>(target.axis);
+            const RagdollAxisDefinition3D& axis = profile.links[target.linkIndex].inboundJoint.axes[static_cast<std::size_t>(a)];
+            target.positionRadians = static_cast<float>(vector[a]);
+            target.stiffnessScale = static_cast<float>(std::clamp(fraction / 5.0, 0.0, 2.0));
+            target.dampingScale = static_cast<float>(std::clamp(fraction / 2.0, 0.0, 2.5));
+            (void)axis;
+        }
+    }
+    s.scene->setRagdollActiveDriveTargets(s.ragdoll, finalTargets, false);
+    s.previousTorque = torque;
+    if (push.squaredNorm() > 0.0)
+        s.scene->applyRagdollLinkForce(s.ragdoll, static_cast<std::uint32_t>(pushLink), { float(push.x()), float(push.y()), float(push.z()) }, {});
+    s.scene->simulate(static_cast<float>(Dt));
+    return report;
+}
+
+} // namespace
+
+int main(int argc, char** argv) {
+    double seconds = 60.0;
+    bool pushes = false;
+    for (int i = 1; i < argc; ++i) {
+        const std::string arg = argv[i];
+        if (arg == "--segundos" && i + 1 < argc) seconds = std::stod(argv[++i]);
+        else if (arg == "--empurroes") pushes = true;
+        else {
+            std::fprintf(stderr, "uso: MatterStandBench [--segundos 60] [--empurroes]\n");
+            return 2;
+        }
+    }
+    RagdollProfile3D profile = loadRagdollProfile3D(
+        std::string(MATTERENGINE_ASSETS_DIR) + "/characters/football_player/FootballPlayerV1.ragdoll.json");
+    if (std::getenv("STANDBOX")) {
+        // Ensaio: o pe como caixa simples (a caixa justa da bota), no lugar da casca convexa.
+        for (RagdollLinkDefinition3D& link : profile.links)
+            if (link.id == "LeftFoot" || link.id == "RightFoot") link.collider.shape = RagdollColliderShape3D::Box;
+    }
+    {
+        Stand s;
+        setup(s, profile);
+        const int steps = static_cast<int>(seconds / Dt);
+        double pelvisSquared = 0.0, worstSlip = 0.0, micros = 0.0, worstMicros = 0.0;
+        int failures = 0, samples = 0, iterations = 0;
+        bool fallen = false;
+        WholeBodyQPStatus3D lastFailure = WholeBodyQPStatus3D::Solved;
+        for (int i = 0; i < steps; ++i) {
+            const StepReport r = step(s, profile, Eigen::Vector3d::Zero(), 0);
+            if (r.fallen) { fallen = true; std::printf("caiu em t = %.2f s\n", i * Dt); break; }
+            if (r.status != WholeBodyQPStatus3D::Solved) { ++failures; lastFailure = r.status; }
+            if (i >= 120) {
+                pelvisSquared += r.pelvisSpeed * r.pelvisSpeed;
+                worstSlip = std::max(worstSlip, r.slip);
+                micros += r.solveMicros;
+                worstMicros = std::max(worstMicros, r.solveMicros);
+                iterations += r.iterations;
+                ++samples;
+            }
+        }
+        std::printf("# De pe, ajuda zero, %.0f s\n", seconds);
+        std::printf("- caiu: %s\n- pelve RMS: %.4f m/s (portao < 0,05)\n- escorregar maximo no apoio: %.4f m/s (portao <= 0,05)\n",
+            fallen ? "SIM" : "nao", std::sqrt(pelvisSquared / std::max(1, samples)), worstSlip);
+        std::printf("- QP: %d falhas (ultima: %s); %.0f us de media, %.0f us no pior; %.1f iteracoes de media\n", failures,
+            statusName(lastFailure), micros / std::max(1, samples), worstMicros, double(iterations) / std::max(1, samples));
+    }
+    if (pushes) {
+        std::printf("\n# Empurrao de 0,1 s no peito (sem passo), o maior impulso aguentado por direcao\n");
+        for (int direction = 0; direction < 8; ++direction) {
+            const double angle = direction * Pi / 4.0;
+            double held = 0.0;
+            for (double impulse = 10.0; impulse <= 120.0; impulse += 10.0) {
+                Stand s;
+                setup(s, profile);
+                bool fallen = false;
+                for (int i = 0; i < 360 && !fallen; ++i) {
+                    const bool pushing = i >= 120 && i < 132;
+                    const Eigen::Vector3d force = pushing ? Eigen::Vector3d(Eigen::Vector3d(std::cos(angle), std::sin(angle), 0.0) * (impulse / 0.1)) : Eigen::Vector3d(Eigen::Vector3d::Zero());
+                    fallen = step(s, profile, force, s.chest).fallen;
+                }
+                if (fallen) break;
+                held = impulse;
+            }
+            std::printf("- direcao %3.0f graus: aguentou %.0f N.s\n", angle * 180.0 / Pi, held);
+        }
+    }
+    return 0;
+}

@@ -11,6 +11,11 @@ void PhysicsScene3D::Impl::OnStep(const JPH::PhysicsStepListenerContext& context
         if (context.mIsFirstStep) {
             applyPendingWrenches();
             applyAerodynamicDrag(stepDeltaTime);
+        } else {
+            // Com subpassos, so o apoio do ultimo vale como contato publicado
+            // (quatro amostras nao sao quatro apoios simultaneos); as
+            // interacoes do tick continuam somando.
+            for (auto& slot : ragdollSlots) if (slot.record) slot.record->stepContacts.clear();
         }
         applyBuoyancy(context.mDeltaTime);
     } catch (...) { callbackFailed = true; }

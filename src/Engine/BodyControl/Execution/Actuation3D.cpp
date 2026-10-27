@@ -74,8 +74,9 @@ std::vector<RagdollDriveTarget3D> actuationTargets3D(const RagdollProfile3D& pro
                     damping / (ActiveDampingMultiplier * std::max(1e-6, double(axis.damping))), 0.0, 2.5));
                 target.velocityRadiansPerSecond = static_cast<float>(childOmega[a]);
             } else if (settings.mode == ActuationMode3D::LowImpedance) {
-                const double stiffness = settings.stiffnessPerInertia * inertia;
-                const double damping = settings.dampingPerInertia * inertia;
+                const bool profileScaled = settings.profileStiffnessFraction > 0.0;
+                const double stiffness = profileScaled ? settings.profileStiffnessFraction * axis.stiffness : settings.stiffnessPerInertia * inertia;
+                const double damping = profileScaled ? settings.profileStiffnessFraction * axis.damping : settings.dampingPerInertia * inertia;
                 const float stiffnessScale = static_cast<float>(std::clamp(
                     stiffness / (ActiveStiffnessMultiplier * std::max(1e-6, double(axis.stiffness))), 0.0, 2.0));
                 const float dampingScale = static_cast<float>(std::clamp(

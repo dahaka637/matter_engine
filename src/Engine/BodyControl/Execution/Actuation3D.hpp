@@ -30,6 +30,10 @@ struct ActuationSettings3D {
     // por kg.m2 de inercia efetiva do eixo: a impedancia acompanha o corpo.
     double dampingPerInertia = 20.0;
     double stiffnessPerInertia = 150.0;
+    // (B) com a rigidez em fracao da do perfil (e nao por inercia): a mola
+    // implicita estabiliza o laco fechado pe-chao dentro do solver. Maior que
+    // zero liga este modo; o amortecimento segue a mesma fracao.
+    double profileStiffnessFraction = 0.0;
     double timeStep = 1.0 / 120.0;
 };
 

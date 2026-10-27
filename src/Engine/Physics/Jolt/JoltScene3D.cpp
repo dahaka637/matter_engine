@@ -91,7 +91,7 @@ void PhysicsScene3D::simulate(float dt) {
     // P95 8,7 ms - acima do orcamento de 8,33 ms por tick, o lag visto no
     // aplicativo. Coesao das juntas e resolvida por iteracoes (ver
     // JoltRagdoll3D), que custam bem menos que refazer o passo inteiro.
-    impl.collisionSteps = 1;
+    impl.collisionSteps = static_cast<int>(std::max<std::uint32_t>(1u, impl.settings.collisionSteps));
     impl.contactImpacts.clear();
     impl.contactSlides.clear();
     for (auto& slot : impl.ragdollSlots) if (slot.record) {

@@ -126,6 +126,12 @@ struct PhysicsSceneSettings3D {
     // chama simulate(). Zero usa toda a capacidade do TaskScheduler. Um e util
     // para executar varias cenas pequenas em paralelo sem paralelismo aninhado.
     std::uint32_t workerThreadCount = 0;
+    // Subpassos de colisao por tick (simulate). 1 e o do jogo (o custo de 22
+    // bonecos). O controle por torque com os pes apoiados (a locomocao fisica
+    // nova, G2) precisa de 4: com 1, a solucao discreta acoplada de contato e
+    // juntas a 8,33 ms se afasta do modelo e derruba o corpo (diagnostico do
+    // Codex, 27/10, nota 24 do vault). Os contatos publicados sao os do ultimo.
+    std::uint32_t collisionSteps = 1;
     // Os jobs do passo rodam na propria thread que chama simulate(), sem
     // passar pelo TaskScheduler (nenhum pool novo: nao ha threads). Para
     // cenas pequenas que o chamador ja avanca em paralelo, uma por thread (os
