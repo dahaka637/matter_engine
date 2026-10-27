@@ -16,6 +16,7 @@ Roda como servico do usuario (vigia-temperatura.service, sempre ligado).
   python3 tools/sistema/vigia_temperatura.py --teste parar   # o limite de parar simulado
   python3 tools/sistema/vigia_temperatura.py --teste desligar  # o de desligar simulado (nao desliga)
   (os testes so cortam os processos marcados vigia-teste-alvo)
+  echo 86 > $XDG_RUNTIME_DIR/vigia-simular                  # o teste de verdade no servico: DESLIGA
 """
 from __future__ import annotations
 
@@ -42,6 +43,9 @@ SAVE_SECONDS = 40.0
 
 RUNTIME = Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}"))
 HEARTBEAT = RUNTIME / "vigia-temperatura.json"
+# O teste de verdade (27/10): uma temperatura neste arquivo vira a leitura da CPU uma
+# vez, no proprio servico (o caminho real, ate o desligamento); o arquivo some ao ser lido.
+SIMULATE = RUNTIME / "vigia-simular"
 LOG = Path.home() / ".local" / "share" / "matter-engine" / "vigia_temperatura.log"
 
 # O trabalho pesado do projeto (o que o vigia corta na hora; os treinos saem a parte),
@@ -225,6 +229,13 @@ def main() -> int:
     while True:
         started = time.time()
         cpu, gpu = cpu_temperature(), gpu_temperature()
+        try:
+            fake = float(SIMULATE.read_text())
+            SIMULATE.unlink()
+            log(f"SIMULACAO: a CPU lida como {fake:.1f} graus (a real: {cpu})")
+            cpu = fake
+        except (OSError, ValueError):
+            pass
         if a.teste and first:
             cpu = (CPU_OFF if a.teste == "desligar" else CPU_STOP) + 0.5
         first = False
