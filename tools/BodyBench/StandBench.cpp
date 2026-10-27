@@ -508,6 +508,7 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
     input.state = &state;
     input.torqueLimit = s.torqueLimit;
     if (const char* rate = std::getenv("STANDGUARDRATE")) input.jointGuardRate = std::atof(rate);
+    if (const char* inner = std::getenv("STANDQPINNER")) input.maximumInnerIterations = std::atoi(inner);
     // No empurrao e no voo do salto estendido a guarda freia mais tarde (taxa 40; nota 35: com 10
     // ela freava a extensao do joelho ~0,3 rad antes do batente).
     if (s.hopExtended && (s.hopPhase == 1 || s.hopPhase == 2)) input.jointGuardRate = 40.0;
@@ -1419,6 +1420,10 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
     }
     if (std::getenv("STANDQPTIME") && s.logTick % 60 == 0)
         std::printf("   QP: montar %.0f us, resolver %.0f us (it %d, caminho %d)\n", result.buildMicros, result.innerSolveMicros, result.iterations, int(result.path));
+    if (std::getenv("STANDSLOWQP") && result.buildMicros + result.innerSolveMicros > 50000.0)
+        std::printf("   QP LENTO t %.3f: montar %.0f us, resolver %.0f us, it %d, caminho %d, status %d, frio %d, fase salto %d, contatos %zu, tarefas %zu\n",
+            s.clock, result.buildMicros, result.innerSolveMicros, result.iterations, int(result.path), int(result.status), int(result.coldRetry),
+            s.hopPhase, input.contacts.size(), input.tasks.size());
     s.predictedAcceleration = result.usable() ? result.acceleration : Eigen::VectorXd();
     if (s.walking && s.steps > 2) {
         s.headRates.push_back(k.angularVelocity[s.head].norm() * 180.0 / Pi);

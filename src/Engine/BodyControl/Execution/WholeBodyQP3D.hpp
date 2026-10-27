@@ -80,6 +80,8 @@ struct WholeBodyQPInput3D {
     double accelerationRegularization = 1e-4;
     double forceRegularization = 1e-5;
     int maximumIterations = 200;
+    // O teto do laco interno do ProxQP (o padrao dele, 1500, deixava ticks de ate 0,5 s na absorcao do salto).
+    int maximumInnerIterations = 30;
     // A guarda dos batentes (notas 25 e 28 do vault), em aceleracao de recuperacao:
     // em cada eixo com limite (n - 6; infinito = sem guarda),
     //   -k^2 (q - qmin - e) - 2 k v <= a <= k^2 (qmax - e - q) - 2 k v.

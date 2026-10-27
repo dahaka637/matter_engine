@@ -194,6 +194,7 @@ WholeBodyQPResult3D WholeBodyQP3D::solve(const WholeBodyQPInput3D& in) {
             slot.qp.emplace(dimension, rows, inequalities);
             slot.qp->settings.eps_abs = 1e-5;
             slot.qp->settings.max_iter = in.maximumIterations;
+            slot.qp->settings.max_iter_in = in.maximumInnerIterations;
             slot.qp->settings.initial_guess = proxsuite::proxqp::InitialGuessStatus::EQUALITY_CONSTRAINED_INITIAL_GUESS;
             slot.qp->init(H, g, E, e, inequality, lower, upper);
             slot.dimension = dimension;
@@ -288,6 +289,7 @@ WholeBodyQPResult3D WholeBodyQP3D::solve(const WholeBodyQPInput3D& in) {
             slot.qp.emplace(reduced, 0, inequalities);
             slot.qp->settings.eps_abs = 1e-5;
             slot.qp->settings.max_iter = in.maximumIterations;
+            slot.qp->settings.max_iter_in = in.maximumInnerIterations;
             slot.qp->init(reducedHessian, reducedGradient, noEquality, noTarget, reducedInequality, reducedLower, reducedUpper);
             slot.dimension = reduced;
             slot.inequalities = inequalities;
