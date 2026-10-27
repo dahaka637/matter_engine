@@ -146,6 +146,7 @@ struct Stand {
     int trotPhase = 0, trotFlights = 0, trotStances = 0;
     double trotTime = 0.0, trotEntrySpeed = 0.0, trotDeceleration = 0.0, trotEntryPelvis = 0.0, trotFlightTime = 0.0;
     double trotStandingZ = 0.0;
+    Eigen::Vector2d trotHome = Eigen::Vector2d::Zero();
     Eigen::Vector3d trotHoldPoint = Eigen::Vector3d::Zero();
     double hopLandingPeak = 0.0, hopLandingPeakSum = 0.0, hopLandingTimer = -1.0;
     double hopObservedVz = 0.0, hopObservedFz = 0.0, hopReleaseKneeSum = 0.0, hopReleaseDropSum = 0.0;
@@ -358,6 +359,7 @@ void setup(Stand& s, const RagdollProfile3D& profile) {
         if (const char* trot = std::getenv("STANDTROT")) {
             s.trotFlightTime = std::atof(trot);
             s.trotStandingZ = d.centerOfMass.z();
+            s.trotHome = d.centerOfMass.head<2>();
         }
         s.walkRampSteps = std::getenv("STANDWALKRAMP") ? std::atoi(std::getenv("STANDWALKRAMP")) : 0;
         s.walkVelocity = s.walkRampSteps > 0 ? Eigen::Vector2d(s.walkTarget / double(s.walkRampSteps)) : s.walkTarget;
@@ -1076,7 +1078,18 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
             s.dcmReference = walk.position;
             s.dcmReferenceRate = walk.rate;
             // O pouso segue o DCM medido ate 70% do balanco (depois fica fixo).
-            if (!std::getenv("STANDNOADJUST") && s.stepTime < 0.7 * s.stepDuration)
+            if (s.trotPhase == 1 || s.trotPhase == 2) {
+                // Trote: no empurrao e no voo o pe mira o ponto de captura previsto para o toque (o CoM segue
+                // balistico no voo, sem CoP), meia largura de passo para o lado dele.
+                const double remaining = (s.trotPhase == 1 ? std::max(0.0, 0.15 - s.trotTime) : 0.0)
+                    + std::max(0.0, s.trotFlightTime - (s.trotPhase == 2 ? s.trotTime : 0.0));
+                const Eigen::Vector2d capture = d.centerOfMass.head<2>() + comVelocity.head<2>() * remaining + comVelocity.head<2>() / omega;
+                const double side = s.swingFoot == 0 ? 1.0 : -1.0;
+                // Posicao (Raibert): o pe pousa um pouco atras do ponto de captura, na direcao de casa.
+                const double homeGain = std::getenv("STANDTROTHOME") ? std::atof(std::getenv("STANDTROTHOME")) : 0.05;
+                if (!std::getenv("STANDTROTNOCAPTURE"))
+                    s.swingLanding.head<2>() = capture + side * 0.5 * s.walkSettings.stepWidth * s.walkLeft - homeGain * (s.trotHome - d.centerOfMass.head<2>());
+            } else if (!std::getenv("STANDNOADJUST") && s.stepTime < 0.7 * s.stepDuration)
                 s.swingLanding.head<2>() = adjustDcmLanding3D(s.walkSettings, s.walkPlan, DcmLandingLimits3D {}, xi,
                     s.voluntaryFoot == 1 ? +1 : -1, s.walkLeft, s.walkSettings.stepDuration - s.walkPlanTime);
         } else if (s.phase == Stand::Phase::Swing) {
