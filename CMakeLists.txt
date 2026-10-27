@@ -419,6 +419,10 @@ target_compile_definitions(MatterActuationBench PRIVATE MATTERENGINE_ASSETS_DIR=
 add_executable(MatterBodyCostBench tools/BodyBench/CostBench.cpp)
 target_link_libraries(MatterBodyCostBench PRIVATE MatterPhysics)
 target_compile_definitions(MatterBodyCostBench PRIVATE MATTERENGINE_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
+# O analisador de viabilidade da referencia (G1): o QP offline sobre a locomocao padrao.
+add_executable(MatterFeasibilityBench tools/BodyBench/FeasibilityBench.cpp)
+target_link_libraries(MatterFeasibilityBench PRIVATE MatterBodyControl)
+target_compile_definitions(MatterFeasibilityBench PRIVATE MATTERENGINE_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets")
 # A bancada de ficar de pe (G2): o QP no laco, ajuda zero.
 add_executable(MatterStandBench tools/BodyBench/StandBench.cpp)
 target_link_libraries(MatterStandBench PRIVATE MatterBodyControl MatterAnimationClips)
