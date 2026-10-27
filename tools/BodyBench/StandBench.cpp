@@ -145,6 +145,10 @@ struct Stand {
     Eigen::Vector3d hopRaibertPoint = Eigen::Vector3d::Zero();
     // O trote (STANDTROT=voo): a marcha com o apoio duplo trocado pelo voo. 0 marcha, 5 absorvendo, 1 empurrando, 2 voo.
     int trotPhase = 0, trotFlights = 0, trotStances = 0;
+    // O contrato do voo (nota 36): o pe que decola so sai do QP com a separacao geometrica confirmada; voo
+    // conta so assim. trotAirborneTicks: ticks com os dois pes acima de 4 mm (a medida honesta).
+    bool trotSeparated = false;
+    int trotGeometricFlights = 0, trotAirborneTicks = 0, trotTakeoffAborts = 0;
     double trotTime = 0.0, trotEntrySpeed = 0.0, trotDeceleration = 0.0, trotEntryPelvis = 0.0, trotFlightTime = 0.0;
     double trotStandingZ = 0.0, trotPreviousVz = 0.0;
     // O andar automatico (STANDGAITAUTO=limiar m/s): trote acima do limiar, marcha abaixo (histerese 0,15),
@@ -917,6 +921,7 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
                         s.trotPhase = 2;
                         s.trotTime = 0.0;
                         s.trotHoldPoint = sole[stance];
+                        s.trotSeparated = false;
                         ++s.trotFlights;
                     } else if (s.trotPhase == 1 && s.trotTime > 0.25) {
                         s.trotPhase = 0;  // nao decolou: o passo segue como marcha
@@ -927,6 +932,21 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
                             std::acos(std::clamp(k.rotation[0].col(2).dot(s.pelvisTarget.col(2)), -1.0, 1.0)) * 180.0 / Pi, s.plannedFootForce[stance].z());
                     s.trotPreviousVz = comVelocityNow.z();
                     // No voo, o pouso vale ao tocar (sem esperar 60% do balanco).
+                    if (s.trotPhase == 2) {
+                        // A separacao pelo colisor real do pe que decolou; sem ela em 8 ticks, volta ao apoio.
+                        const double takeoffLow = lowestColliderZ(profile.links[s.feet[stance]].collider, raw.links[s.feet[stance]]);
+                        if (!s.trotSeparated && takeoffLow > 0.004) {
+                            s.trotSeparated = true;
+                            ++s.trotGeometricFlights;
+                        }
+                        if (!s.trotSeparated && s.trotTime >= 8.0 * Dt && std::getenv("STANDTROTREALFLIGHT")) {
+                            s.trotPhase = 1;
+                            s.trotTime = 0.25;  // sem nova janela: o passo segue como marcha no proximo tick
+                            ++s.trotTakeoffAborts;
+                        }
+                        const double swingLow = lowestColliderZ(profile.links[s.feet[swing]].collider, raw.links[s.feet[swing]]);
+                        if (takeoffLow > 0.004 && swingLow > 0.004) ++s.trotAirborneTicks;
+                    }
                     if (s.trotPhase == 2) landed = footTouching[swing] && lowest < 0.01 && s.trotTime > 0.03;
                 }
                 if (s.walking && landed) {
@@ -1058,7 +1078,9 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
         if (toeOff && f == s.voluntaryFoot) continue;
         // No voo do salto (e do trote) nenhum pe tem forca nem vinculo (balistico).
         if (s.hopping && s.hopPhase == 2) continue;
-        if (s.trotPhase == 2) continue;
+        // Padrao (corrida rasteira): na "fase de voo" o pe descarregado sai do QP e desliza; com STANDTROTREALFLIGHT
+        // ele fica ate a separacao geometrica (o contrato honesto; hoje o empurrao de uma perna nao chega a separar).
+        if (s.trotPhase == 2 && (s.trotSeparated || f == s.swingFoot || !std::getenv("STANDTROTREALFLIGHT"))) continue;
         // No trote, so o pe de apoio toca no apoio e na absorcao.
         if (s.hopping && (s.hopPhase == 1 || s.hopPhase == 5) && s.hopStance >= 0 && f != s.hopStance) continue;
         bool touching = false;
@@ -1078,7 +1100,9 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
         rigid.desiredAcceleration.tail<3>() = -footDamping * k.originVelocity[s.feet[f]];
         const bool pointContacts = std::getenv("STANDPOINTS") != nullptr;
         const bool justLanded = s.landedTime >= 0.0 && s.landedTime < 0.15 && (f == s.voluntaryFoot || f == s.landedFoot);
-        if (!pointContacts && !justLanded) input.contactLinks.push_back(rigid);
+        // Decolando no trote: sem a igualdade rigida (o pe precisa subir); so os pontos de forca, com teto caindo.
+        const bool takingOff = s.trotPhase == 2 && !s.trotSeparated && std::getenv("STANDTROTREALFLIGHT");
+        if (!pointContacts && !justLanded && !takingOff) input.contactLinks.push_back(rigid);
         // Executar pelo apoio observado: os pontos de contato reais da bota (o
         // poligono do Jolt e menor que o retangulo da sola).
         std::vector<Eigen::Vector3d> observed, normals;
@@ -1123,6 +1147,11 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
             point.constrained = pointContacts;
             point.minimumNormalForce = std::getenv("STANDMINN") ? std::atof(std::getenv("STANDMINN")) : 15.0;
             if (s.hopping && (s.hopPhase == 1 || s.hopPhase == 5)) point.minimumNormalForce = 0.0;
+            if (s.trotPhase == 2) {
+                // Decolando sem separar ainda: o pe fica no QP, sem minimo e com teto caindo a zero em 3 ticks.
+                point.minimumNormalForce = 0.0;
+                point.maximumNormalForce = std::max(1.0, s.model.totalMass * 9.81 * (1.0 - std::clamp(s.trotTime / (3.0 * Dt), 0.0, 1.0)));
+            }
             if (s.landedTime >= 0.0 && s.landedTime < 0.15 && (f == s.voluntaryFoot || f == s.landedFoot)) point.minimumNormalForce = 0.0;
             if (unloading && f == s.voluntaryFoot) {
                 point.minimumNormalForce = 0.0;
@@ -1863,7 +1892,9 @@ int main(int argc, char** argv) {
             statusName(lastFailure), micros / std::max(1, samples), worstMicros, double(iterations) / std::max(1, samples));
         if (topOnly + flat + weighted)
             std::printf("- QP em dois niveis: %d ticks com as de cima pesadas, %d so com o nivel de cima, %d no QP ponderado unico\n", weighted, topOnly, flat);
-        if (s.trotFlightTime > 0.0) std::printf("- trote: %d apoios, %d voos\n", s.trotStances, s.trotFlights);
+        if (s.trotFlightTime > 0.0)
+            std::printf("- trote: %d apoios, %d saidas, %d voos com separacao (pe acima de 4 mm), %d abortadas; %d ticks com os dois pes no ar\n",
+                s.trotStances, s.trotFlights, s.trotGeometricFlights, s.trotTakeoffAborts, s.trotAirborneTicks);
         if (s.walking) std::printf("- pancadas detectadas: %d\n", s.pushesDetected);
         std::printf("- torque no referencial do motor: %d ticks acima do teto (recortados), pior %.2f do teto\n", s.motorClippedTicks, s.motorWorstRatio);
         if (s.hopping)
