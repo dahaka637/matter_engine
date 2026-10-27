@@ -1746,8 +1746,15 @@ int main(int argc, char** argv) {
         int failures = 0, samples = 0, iterations = 0, topOnly = 0, flat = 0, weighted = 0;
         bool fallen = false;
         WholeBodyQPStatus3D lastFailure = WholeBodyQPStatus3D::Solved;
+        // Empurrao no meio da marcha ou do trote (STANDPUSHAT=instante,angulo graus,impulso N.s; 0,1 s no peito).
+        double pushAt = -1.0, pushAngle = 0.0, pushImpulse = 0.0;
+        if (const char* push = std::getenv("STANDPUSHAT")) std::sscanf(push, "%lf,%lf,%lf", &pushAt, &pushAngle, &pushImpulse);
         for (int i = 0; i < steps; ++i) {
-            const StepReport r = step(s, profile, Eigen::Vector3d::Zero(), 0);
+            const double clock = i * Dt;
+            const bool pushing = pushAt >= 0.0 && clock >= pushAt && clock < pushAt + 0.1;
+            const Eigen::Vector3d pushForce = pushing ? Eigen::Vector3d(Eigen::Vector3d(std::cos(pushAngle * Pi / 180.0), std::sin(pushAngle * Pi / 180.0), 0.0) * (pushImpulse / 0.1))
+                                                      : Eigen::Vector3d(Eigen::Vector3d::Zero());
+            const StepReport r = step(s, profile, pushForce, s.chest);
             if (r.fallen) { fallen = true; std::printf("caiu em t = %.2f s\n", i * Dt); break; }
             if (r.status != WholeBodyQPStatus3D::Solved) { ++failures; lastFailure = r.status; }
             topOnly += r.path == WholeBodyQPPath3D::TopOnly;
