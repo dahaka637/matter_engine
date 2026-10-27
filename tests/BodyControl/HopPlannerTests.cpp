@@ -39,6 +39,20 @@ int main() {
     }
     check(std::abs(sampleHopStance3D(settings, T, -v0).displacement) < 1e-9, "no ciclo a altura volta");
     check(std::abs(sampleHopStance3D(settings, 0.5 * T, -v0).force - hopPeakForce3D(settings, -v0)) < 1e-9, "pico no meio");
+    // O empurrao de perna estendida: chega a velocidade de saida em T, a forma fechada bate.
+    {
+        double velocity = -0.1, height = 0.0;
+        const int steps = 20000;
+        for (int i = 0; i < steps; ++i) {
+            const double a = sampleHopPush3D(settings, (i + 0.5) * T / steps, -0.1, 0.8).acceleration;
+            height += (velocity + 0.5 * a * T / steps) * T / steps;
+            velocity += a * T / steps;
+        }
+        const HopSample3D end = sampleHopPush3D(settings, T, -0.1, 0.8);
+        check(std::abs(velocity - 0.8) < 1e-6 && std::abs(end.velocity - 0.8) < 1e-12, "empurrao: chega a saida");
+        check(std::abs(height - end.displacement) < 1e-6, "empurrao: a forma fechada bate");
+        check(std::abs(sampleHopPush3D(settings, 0.0, -0.1, 0.8).force - settings.mass * settings.gravity) < 1e-9, "empurrao: comeca no peso");
+    }
     std::printf(failures ? "salto: %d falha(s)\n" : "salto: ok\n", failures);
     return failures ? 1 : 0;
 }

@@ -31,4 +31,16 @@ HopSample3D sampleHopStance3D(const HopSettings3D& settings, double time, double
     return sample;
 }
 
+HopSample3D sampleHopPush3D(const HopSettings3D& settings, double time, double entrySpeed, double exitSpeed) {
+    HopSample3D sample;
+    const double T = settings.stanceTime;
+    if (T <= 0.0) return sample;
+    const double t = std::clamp(time, 0.0, T), u = t / T, dv = exitSpeed - entrySpeed;
+    sample.acceleration = time > T ? 0.0 : 3.0 * dv * u * u / T;
+    sample.velocity = entrySpeed + dv * u * u * u;
+    sample.displacement = entrySpeed * t + dv * T * u * u * u * u / 4.0;
+    sample.force = settings.mass * (settings.gravity + sample.acceleration);
+    return sample;
+}
+
 } // namespace MatterEngine

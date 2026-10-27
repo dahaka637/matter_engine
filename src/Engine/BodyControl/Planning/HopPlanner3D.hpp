@@ -28,5 +28,10 @@ struct HopSample3D {
 [[nodiscard]] double hopPeakForce3D(const HopSettings3D& settings, double entrySpeed);
 // t de 0 a T no apoio (fora disso, so a gravidade).
 [[nodiscard]] HopSample3D sampleHopStance3D(const HopSettings3D& settings, double time, double entrySpeed);
+// O empurrao de perna estendida (nota 35): a aceleracao do CoM cresce ate a saida,
+//   a(t) = 3 dv u^2 / T,  u = t/T,  dv = v_saida - v_entrada,
+// sem a cauda do meio seno (que devolvia momento ao chao com a perna ja no batente). A saida
+// e por estado (velocidade atingida, joelhos estendidos), nao pelo fim de T.
+[[nodiscard]] HopSample3D sampleHopPush3D(const HopSettings3D& settings, double time, double entrySpeed, double exitSpeed);
 
 } // namespace MatterEngine

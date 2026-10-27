@@ -36,6 +36,17 @@ constexpr double Pi = 3.14159265358979323846;
 
 Eigen::Vector3d toEigen(Vec3 v) { return { v.x, v.y, v.z }; }
 
+// A sola mais baixa pelo colisor real da bota (os cantos do retangulo da sola ficam fora dela; nota 35).
+double lowestColliderZ(const RagdollCapsuleDefinition3D& collider, const PhysicsBodyState3D& body) {
+    const Eigen::Matrix3d rotation = Eigen::Quaterniond(body.orientation.w, body.orientation.x, body.orientation.y, body.orientation.z).toRotationMatrix();
+    double result = std::numeric_limits<double>::infinity();
+    for (const Vec3& point : ragdollColliderCorners3D(collider)) {
+        const Vec3 local = collider.localPosition + collider.localOrientation.rotate(point);
+        result = std::min(result, (toEigen(body.position) + rotation * toEigen(local)).z());
+    }
+    return result;
+}
+
 std::size_t findLink(const RagdollProfile3D& profile, const std::string& id) {
     for (std::size_t i = 0; i < profile.links.size(); ++i)
         if (profile.links[i].id == id) return i;
@@ -114,7 +125,7 @@ struct Stand {
     double liftoffForceSum = 0.0;
     bool separationPending = false;
     // O salto no lugar (G4, STANDHOP=voo,apoio,quando): 0 esperando, 1 apoio, 2 voo.
-    bool hopping = false;
+    bool hopping = false, hopExtended = false;
     HopSettings3D hopSettings;
     double hopStart = 1.0, hopTime = 0.0, hopEntrySpeed = 0.0, hopEntryHeight = 0.0;
     // 3: agachando antes do primeiro (de pe, a perna ja esta quase esticada: nao ha alcance para empurrar).
@@ -317,6 +328,7 @@ void setup(Stand& s, const RagdollProfile3D& profile) {
         double flight = 0.1, stance = 0.25, when = 1.0;
         std::sscanf(hop, "%lf,%lf,%lf", &flight, &stance, &when);
         s.hopping = true;
+        s.hopExtended = std::getenv("STANDHOPEXT") != nullptr;
         s.hopSettings.flightTime = flight;
         s.hopSettings.stanceTime = stance;
         s.hopSettings.mass = s.model.totalMass;
@@ -489,6 +501,9 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
     input.state = &state;
     input.torqueLimit = s.torqueLimit;
     if (const char* rate = std::getenv("STANDGUARDRATE")) input.jointGuardRate = std::atof(rate);
+    // No empurrao e no voo do salto estendido a guarda freia mais tarde (taxa 40; nota 35: com 10
+    // ela freava a extensao do joelho ~0,3 rad antes do batente).
+    if (s.hopExtended && (s.hopPhase == 1 || s.hopPhase == 2)) input.jointGuardRate = 40.0;
     // A caixa do motor (nota 33): o backend recorta cada eixo no referencial dele (STANDNOMOTORBOX desliga).
     const Eigen::MatrixXd motorMap = articulationMotorTorqueMap3D(s.model, state);
     if (!std::getenv("STANDNOMOTORBOX")) input.motorTorqueMap = motorMap;
@@ -529,10 +544,8 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
             rawVz += s.model.links[i].mass * raw.links[i].linearVelocity.z / s.model.totalMass;
         s.hopObservedFz = s.model.totalMass * ((rawVz - s.hopObservedVz) / Dt + 9.81 + .04 * s.hopObservedVz);
         s.hopObservedVz = rawVz;
-        double low[2] = { 1e9, 1e9 };
-        for (int f = 0; f < 2; ++f)
-            for (auto& c : s.corners[f])
-                low[f] = std::min(low[f], (k.origin[s.feet[f]] + k.rotation[s.feet[f]] * c).z());
+        double low[2];
+        for (int f = 0; f < 2; ++f) low[f] = lowestColliderZ(profile.links[s.feet[f]].collider, raw.links[s.feet[f]]);
         const bool clear = low[0] > .004 && low[1] > .004;
         auto startRecovery = [&]() {
             s.hopPhase = 3;
@@ -545,14 +558,16 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
             s.hopEntrySpeed = vz;
             s.hopEntryHeight = z;
             s.hopPelvisEntry = k.origin[0].z();
-            s.hopPeakAsked = hopPeakForce3D(s.hopSettings, vz);
+            s.hopPeakAsked = s.hopExtended ? s.hopSettings.mass * (s.hopSettings.gravity + 3.0 * (hopTakeoffSpeed3D(s.hopSettings) + 0.03 - vz) / s.hopSettings.stanceTime)
+                                           : hopPeakForce3D(s.hopSettings, vz);
             s.hopPeakPlanned = 0.;
         };
         if (s.hopPhase == 0 && s.clock >= s.hopStart) {
             s.hopCrouchFrom0 = s.comTarget.z();
-            s.hopRecoveryZ = s.comTarget.z()
-                - (.5 * hopTakeoffSpeed3D(s.hopSettings) * s.hopSettings.stanceTime
-                    + (std::getenv("STANDHOPMARGIN") ? std::atof(std::getenv("STANDHOPMARGIN")) : .02));
+            // Estendido (nota 35): agacha so 3 cm (medido no corpo base) e empurra ate esticar.
+            s.hopRecoveryZ = s.hopExtended ? s.comTarget.z() - (std::getenv("STANDHOPCROUCH") ? std::atof(std::getenv("STANDHOPCROUCH")) : 0.03)
+                                           : s.comTarget.z() - (.5 * hopTakeoffSpeed3D(s.hopSettings) * s.hopSettings.stanceTime
+                                               + (std::getenv("STANDHOPMARGIN") ? std::atof(std::getenv("STANDHOPMARGIN")) : .02));
             for (int f = 0; f < 2; ++f) {
                 s.hopLandingPoint[f] = sole[f];
                 s.hopLandingRotation[f] = flatSoleRotation(s, k, f);
@@ -568,7 +583,9 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
         } else if (s.hopPhase == 1) {
             s.hopTime += Dt;
             s.hopPeakPlanned = std::max(s.hopPeakPlanned, s.plannedFootForce[0].z() + s.plannedFootForce[1].z());
-            if (vz >= hopTakeoffSpeed3D(s.hopSettings) + s.hopHeightDelta / s.hopSettings.flightTime) {
+            const auto kneeOf = [&](int f) { return state.jointCoordinates[static_cast<std::size_t>(s.model.links[s.feet[f]].parent)][0]; };
+            const bool extended = !s.hopExtended || (kneeOf(0) <= 25.0 * Pi / 180.0 && kneeOf(1) <= 25.0 * Pi / 180.0);
+            if (vz >= hopTakeoffSpeed3D(s.hopSettings) + s.hopHeightDelta / s.hopSettings.flightTime && extended) {
                 s.hopPhase = 2;
                 s.hopTime = 0.;
                 s.hopReleaseZ = z;
@@ -1012,7 +1029,8 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
     }
     if (s.hopping && s.hopPhase == 1) {
         // O apoio do salto: a vertical segue o meio seno, com realimentacao na trajetoria fechada.
-        const HopSample3D hop = sampleHopStance3D(s.hopSettings, s.hopTime, s.hopEntrySpeed);
+        const HopSample3D hop = s.hopExtended ? sampleHopPush3D(s.hopSettings, s.hopTime, s.hopEntrySpeed, hopTakeoffSpeed3D(s.hopSettings) + 0.03)
+                                              : sampleHopStance3D(s.hopSettings, s.hopTime, s.hopEntrySpeed);
         linearRate.z() = m * (hop.acceleration + 20.0 * (hop.velocity - comVelocity.z()));
     }
     const Eigen::Vector3d angularMomentum = d.centroidalMatrix.bottomRows(3) * state.velocity;
@@ -1114,7 +1132,8 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
     }
     if (s.hopping && s.hopPhase == 1) {
         // A altura da pelve pela trajetoria fechada do apoio: a extensao da perna empurra.
-        const HopSample3D hop = sampleHopStance3D(s.hopSettings, s.hopTime, s.hopEntrySpeed);
+        const HopSample3D hop = s.hopExtended ? sampleHopPush3D(s.hopSettings, s.hopTime, s.hopEntrySpeed, hopTakeoffSpeed3D(s.hopSettings) + 0.03)
+                                              : sampleHopStance3D(s.hopSettings, s.hopTime, s.hopEntrySpeed);
         WholeBodyTask3D pelvis = wholeBodyPointTask3D(k, 0, k.origin[0], Eigen::Vector3d(0.0, 0.0, s.hopPelvisEntry + hop.displacement),
             Eigen::Vector3d(0.0, 0.0, hop.velocity), Eigen::Vector3d(0.0, 0.0, hop.acceleration), 100.0, 20.0, 20.0, "pelve no salto");
         pelvis.matrix = Eigen::MatrixXd(pelvis.matrix.row(2));
@@ -1125,8 +1144,15 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
     if (s.hopping && s.hopPhase == 2) {
         // No voo os pes seguem a pelve (sem a postura esticar a perna contra o chao), recolhidos 3 cm em meio seno.
         const double flight = std::max(0.05, s.hopSettings.flightTime), u = std::clamp(s.hopTime / flight, 0.0, 1.0);
-        const double lift = 0.03 * std::sin(Pi * u), liftRate = 0.03 * Pi / flight * std::cos(Pi * u);
-        const double liftAcceleration = -0.03 * (Pi / flight) * (Pi / flight) * std::sin(Pi * u);
+        double lift = 0.03 * std::sin(Pi * u), liftRate = 0.03 * Pi / flight * std::cos(Pi * u);
+        double liftAcceleration = -0.03 * (Pi / flight) * (Pi / flight) * std::sin(Pi * u);
+        if (s.hopExtended) {
+            // Recolhe 4 cm em 0,15 s e conserva a configuracao de pouso (nao reestende por relogio no ar).
+            const double rise = 0.15, height = 0.04, v = std::clamp(s.hopTime / rise, 0.0, 1.0);
+            lift = 0.5 * height * (1.0 - std::cos(Pi * v));
+            liftRate = s.hopTime < rise ? 0.5 * height * Pi / rise * std::sin(Pi * v) : 0.0;
+            liftAcceleration = s.hopTime < rise ? 0.5 * height * (Pi / rise) * (Pi / rise) * std::cos(Pi * v) : 0.0;
+        }
         for (int f = 0; f < 2; ++f) {
             const int foot = static_cast<int>(s.feet[f]);
             Eigen::Vector3d target = k.origin[0] + s.hopFootOffset[f] + Eigen::Vector3d(0.0, 0.0, lift);
