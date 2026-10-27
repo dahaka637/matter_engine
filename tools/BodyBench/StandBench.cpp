@@ -10,6 +10,7 @@
 #include "Engine/BodyControl/Execution/WholeBodyQP3D.hpp"
 #include "Engine/BodyControl/Observation/ContactWrench3D.hpp"
 #include "Engine/BodyControl/Planning/DcmWalker3D.hpp"
+#include "Engine/BodyControl/Planning/HopPlanner3D.hpp"
 #include "Engine/BodyControl/Planning/StepRecovery3D.hpp"
 #include "Engine/Materials/MaterialLibrary.hpp"
 #include "Engine/Physics/PhysicsEngine3D.hpp"
@@ -105,10 +106,23 @@ struct Stand {
     double toeOffAngleSum = 0.0, toeOffLastAngle = 0.0;
     // Quanto o CoP pedido pelo DCM fica fora do apoio (o corte da projecao), na marcha.
     double copClampSum = 0.0, copClampWorst = 0.0;
+    // O torque pedido no referencial do motor acima do teto (o backend recorta): ticks e pior razao.
+    int motorClippedTicks = 0;
+    double motorWorstRatio = 0.0;
     // A decolagem (nota 31): a forca planejada no pe no tick anterior e quanto ele ainda toca depois.
     int liftoffs = 0, separations = 0, separationTicks = 0, separationSum = 0;
     double liftoffForceSum = 0.0;
     bool separationPending = false;
+    // O salto no lugar (G4, STANDHOP=voo,apoio,quando): 0 esperando, 1 apoio, 2 voo.
+    bool hopping = false;
+    HopSettings3D hopSettings;
+    double hopStart = 1.0, hopTime = 0.0, hopEntrySpeed = 0.0, hopEntryHeight = 0.0;
+    // 3: agachando antes do primeiro (de pe, a perna ja esta quase esticada: nao ha alcance para empurrar).
+    int hopPhase = 0, hops = 0, airborneTicks = 0, flights = 0, missedLandings = 0, failedTakeoffs = 0;
+    double hopCrouchFrom = 0.0;
+    // A posicao de cada sola em relacao a pelve na decolagem (o voo a conserva, com um recolhimento).
+    Eigen::Vector3d hopFootOffset[2];
+    double flightSum = 0.0, hopPeakAsked = 0.0, hopPeakPlanned = 0.0, hopPeakRatioSum = 0.0;
     int copClampTicks = 0;
     double stepTime = 0.0, stepDuration = 0.0;
     Eigen::Vector3d swingStart, swingLanding;
@@ -294,6 +308,15 @@ void setup(Stand& s, const RagdollProfile3D& profile) {
     if (const char* margin = std::getenv("STANDTRIGGER")) s.stepSettings.triggerMargin = std::atof(margin);
     if (const char* overshoot = std::getenv("STANDOVER")) s.stepSettings.overshoot = std::atof(overshoot);
     s.pelvisTarget = k.rotation[0];
+    if (const char* hop = std::getenv("STANDHOP")) {
+        double flight = 0.1, stance = 0.25, when = 1.0;
+        std::sscanf(hop, "%lf,%lf,%lf", &flight, &stance, &when);
+        s.hopping = true;
+        s.hopSettings.flightTime = flight;
+        s.hopSettings.stanceTime = stance;
+        s.hopSettings.mass = s.model.totalMass;
+        s.hopStart = when;
+    }
     if (const char* walk = std::getenv("STANDWALK")) {
         double vx = 1.0, vy = 0.0, duration = 0.5, when = 1.0;
         std::sscanf(walk, "%lf,%lf,%lf,%lf", &vx, &vy, &duration, &when);
@@ -460,6 +483,9 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
     input.dynamics = &d;
     input.state = &state;
     input.torqueLimit = s.torqueLimit;
+    // A caixa do motor (nota 33): o backend recorta cada eixo no referencial dele (STANDNOMOTORBOX desliga).
+    const Eigen::MatrixXd motorMap = articulationMotorTorqueMap3D(s.model, state);
+    if (!std::getenv("STANDNOMOTORBOX")) input.motorTorqueMap = motorMap;
     if (!std::getenv("STANDNOGUARD")) {
         // A guarda dos batentes nas juntas de um eixo (joelhos e cotovelos).
         const double inf = std::numeric_limits<double>::infinity();
@@ -490,6 +516,71 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
         sole[f] = k.origin[s.feet[f]] + k.rotation[s.feet[f]] * s.soleCenterLocal[f];
         for (const RagdollContactPoint3D& contact : raw.contacts) footTouching[f] |= contact.linkIndex == s.feet[f];
     }
+    if (s.hopping) {
+        const double comZ = d.centerOfMass.z(), comVz = comVelocityNow.z();
+        // O toque pela geometria: o backend publica contato especulativo ~10 ticks depois de separar.
+        bool touching = false;
+        for (int f = 0; f < 2; ++f)
+            for (const Eigen::Vector3d& corner : s.corners[f])
+                touching |= footTouching[f] && (k.origin[s.feet[f]] + k.rotation[s.feet[f]] * corner).z() < 0.004;
+        const double crouchTime = 0.6;
+        if (s.hopPhase == 0 && s.clock >= s.hopStart) {
+            s.hopPhase = 3;
+            s.hopTime = 0.0;
+            s.hopCrouchFrom = s.comTarget.z();
+        } else if (s.hopPhase == 3) {
+            // Agacha v0 T / 2 + 2 cm (o que o apoio sobe partindo do repouso) por uma quintica.
+            s.hopTime += Dt;
+            const double depth = 0.5 * hopTakeoffSpeed3D(s.hopSettings) * s.hopSettings.stanceTime + (std::getenv("STANDHOPMARGIN") ? std::atof(std::getenv("STANDHOPMARGIN")) : 0.02);
+            const double u = std::clamp(s.hopTime / crouchTime, 0.0, 1.0);
+            s.comTarget.z() = s.hopCrouchFrom - depth * u * u * u * (10.0 - 15.0 * u + 6.0 * u * u);
+            if (s.hopTime >= crouchTime + 0.2) s.hopPhase = 4;
+        } else if (s.hopPhase == 4) {
+            s.hopPhase = 1;
+            s.hopTime = 0.0;
+            s.hopEntrySpeed = comVz;
+            s.hopEntryHeight = comZ;
+            s.hopPeakAsked = hopPeakForce3D(s.hopSettings, comVz);
+            s.hopPeakPlanned = 0.0;
+        } else if (s.hopPhase == 1) {
+            s.hopTime += Dt;
+            s.hopPeakPlanned = std::max(s.hopPeakPlanned, s.plannedFootForce[0].z() + s.plannedFootForce[1].z());
+            if (s.hopTime >= s.hopSettings.stanceTime) {
+                s.hopPhase = 2;
+                s.hopTime = 0.0;
+                s.airborneTicks = 0;
+                for (int f = 0; f < 2; ++f) s.hopFootOffset[f] = sole[f] - k.origin[0];
+                ++s.hops;
+                if (s.hopPeakAsked > 1.0) s.hopPeakRatioSum += s.hopPeakPlanned / s.hopPeakAsked;
+            }
+        } else if (s.hopPhase == 2) {
+            s.hopTime += Dt;
+            if (!touching) ++s.airborneTicks;
+            // Sem separacao observada em 3 ticks nao houve decolagem: volta ao apoio (com a velocidade medida).
+            const bool noTakeoff = s.airborneTicks == 0 && s.hopTime >= 3.0 * Dt;
+            if (noTakeoff) ++s.failedTakeoffs;
+            const bool landed = touching && s.airborneTicks > 0 && s.hopTime > 0.5 * s.hopSettings.flightTime;
+            if (noTakeoff || landed || s.hopTime > s.hopSettings.flightTime + 0.3) {
+                if (noTakeoff) {
+                } else if (landed) {
+                    s.flightSum += s.airborneTicks * Dt;
+                    ++s.flights;
+                } else {
+                    ++s.missedLandings;
+                }
+                s.hopPhase = 1;
+                s.hopTime = 0.0;
+                s.hopEntrySpeed = comVz;
+                s.hopEntryHeight = comZ;
+                s.hopPeakAsked = hopPeakForce3D(s.hopSettings, comVz);
+                s.hopPeakPlanned = 0.0;
+            }
+        }
+    }
+    if (s.hopping && std::getenv("STANDHOPDBG") && s.clock >= s.hopStart + 0.75 && s.clock < s.hopStart + 2.5)
+        std::printf("   salto t %.3f fase %d: CoM z %.3f vz %.2f | toca %d %d | Fz planejada %.0f | pelve z %.3f\n", s.clock, s.hopPhase,
+            d.centerOfMass.z(), comVelocityNow.z(), int(footTouching[0]), int(footTouching[1]),
+            s.plannedFootForce[0].z() + s.plannedFootForce[1].z(), k.origin[0].z());
     if (s.separationPending && s.stepping) {
         if (footTouching[s.swingFoot]) {
             ++s.separationTicks;
@@ -724,6 +815,8 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
     for (int f = 0; f < 2; ++f) {
         if (s.stepping && f == s.swingFoot) continue;
         if (toeOff && f == s.voluntaryFoot) continue;
+        // No voo do salto nenhum pe tem forca nem vinculo (balistico).
+        if (s.hopping && s.hopPhase == 2) continue;
         bool touching = false;
         for (const RagdollContactPoint3D& contact : raw.contacts)
             if (contact.linkIndex == s.feet[f]) touching = true;
@@ -785,6 +878,7 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
             point.friction = friction;
             point.constrained = pointContacts;
             point.minimumNormalForce = std::getenv("STANDMINN") ? std::atof(std::getenv("STANDMINN")) : 15.0;
+            if (s.hopping && s.hopPhase == 1) point.minimumNormalForce = 0.0;
             if (s.landedTime >= 0.0 && s.landedTime < 0.15 && (f == s.voluntaryFoot || f == s.landedFoot)) point.minimumNormalForce = 0.0;
             if (unloading && f == s.voluntaryFoot) {
                 point.minimumNormalForce = 0.0;
@@ -884,11 +978,18 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
         linearRate.x() = m * omega * omega * (d.centerOfMass.x() - stance.x());
         linearRate.y() = m * omega * omega * (d.centerOfMass.y() - stance.y());
     }
+    if (s.hopping && s.hopPhase == 1) {
+        // O apoio do salto: a vertical segue o meio seno, com realimentacao na trajetoria fechada.
+        const HopSample3D hop = sampleHopStance3D(s.hopSettings, s.hopTime, s.hopEntrySpeed);
+        linearRate.z() = m * (hop.acceleration + 100.0 * (s.hopEntryHeight + hop.displacement - d.centerOfMass.z())
+            + 20.0 * (hop.velocity - comVelocity.z()));
+    }
     const Eigen::Vector3d angularMomentum = d.centroidalMatrix.bottomRows(3) * state.velocity;
     const double angularWeight = std::getenv("STANDLW") ? std::atof(std::getenv("STANDLW")) : 0.1;
     const double angularGain = std::getenv("STANDLG") ? std::atof(std::getenv("STANDLG")) : 2.0;
     const bool hierarchy = std::getenv("STANDHQP") != nullptr;
-    {
+    // No voo, nenhuma tarefa centroidal: o momento e balistico.
+    if (!(s.hopping && s.hopPhase == 2)) {
         Eigen::Vector3d angularRate = -angularGain * angularMomentum;
         if (const char* pose = std::getenv("STANDANGPOSE")) {
             // O momento angular tambem endireita o tronco (Koolen): I kp theta, so rolagem e arfagem.
@@ -916,7 +1017,7 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
                 vertical.name = "centroidal vertical";
                 vertical.matrix = centroidal.matrix.row(2);
                 vertical.target = centroidal.target.segment(2, 1);
-                vertical.priority = 1;
+                vertical.priority = s.hopping && s.hopPhase == 1 ? 0 : 1;
                 linear.matrix = centroidal.matrix.topRows(2);
                 linear.target = centroidal.target.head(2);
                 input.tasks.push_back(vertical);
@@ -979,6 +1080,21 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
         pitch.priority = hierarchy ? 0 : 1;
         input.tasks.push_back(pitch);
         s.toeOffLastAngle = angle;
+    }
+    if (s.hopping && s.hopPhase == 2) {
+        // No voo os pes seguem a pelve (sem a postura esticar a perna contra o chao), recolhidos 3 cm em meio seno.
+        const double flight = std::max(0.05, s.hopSettings.flightTime), u = std::clamp(s.hopTime / flight, 0.0, 1.0);
+        const double lift = 0.03 * std::sin(Pi * u), liftRate = 0.03 * Pi / flight * std::cos(Pi * u);
+        const double liftAcceleration = -0.03 * (Pi / flight) * (Pi / flight) * std::sin(Pi * u);
+        for (int f = 0; f < 2; ++f) {
+            const int foot = static_cast<int>(s.feet[f]);
+            const Eigen::Vector3d target = k.origin[0] + s.hopFootOffset[f] + Eigen::Vector3d(0.0, 0.0, lift);
+            const Eigen::Vector3d targetVelocity = k.originVelocity[0] + Eigen::Vector3d(0.0, 0.0, liftRate);
+            WholeBodyTask3D point = wholeBodyPointTask3D(k, foot, sole[f], target, targetVelocity, Eigen::Vector3d(0.0, 0.0, liftAcceleration - 9.81),
+                400.0, 40.0, 20.0, "pe no voo");
+            point.priority = hierarchy ? 0 : 1;
+            input.tasks.push_back(point);
+        }
     }
     const std::vector<Eigen::Vector3d> zero(s.model.links.size(), Eigen::Vector3d::Zero());
     {
@@ -1122,6 +1238,13 @@ StepReport step(Stand& s, const RagdollProfile3D& profile, const Eigen::Vector3d
     if (std::getenv("STANDQPTIME") && s.logTick % 60 == 0)
         std::printf("   QP: montar %.0f us, resolver %.0f us (it %d, caminho %d)\n", result.buildMicros, result.innerSolveMicros, result.iterations, int(result.path));
     s.predictedAcceleration = result.usable() ? result.acceleration : Eigen::VectorXd();
+    if (result.usable() && result.torque.size()) {
+        const Eigen::VectorXd motor = motorMap * result.torque.tail(s.model.dofCount - 6);
+        double worst = 0.0;
+        for (int j = 0; j < s.model.dofCount - 6; ++j) worst = std::max(worst, std::abs(motor[j]) / s.torqueLimit[j]);
+        s.motorWorstRatio = std::max(s.motorWorstRatio, worst);
+        if (worst > 1.001) ++s.motorClippedTicks;
+    }
     for (int f = 0; f < 2; ++f) { s.plannedFootForce[f].setZero(); s.plannedCop[f].setZero(); }
     if (result.usable())
         for (int f = 0; f < 2; ++f) {
@@ -1257,6 +1380,11 @@ int main(int argc, char** argv) {
             statusName(lastFailure), micros / std::max(1, samples), worstMicros, double(iterations) / std::max(1, samples));
         if (topOnly + flat + weighted)
             std::printf("- QP em dois niveis: %d ticks com as de cima pesadas, %d so com o nivel de cima, %d no QP ponderado unico\n", weighted, topOnly, flat);
+        std::printf("- torque no referencial do motor: %d ticks acima do teto (recortados), pior %.2f do teto\n", s.motorClippedTicks, s.motorWorstRatio);
+        if (s.hopping)
+            std::printf("- salto: %d apoios, %d voos medidos (%.0f ms de media, pedido %.0f), %d pousos perdidos, %d decolagens sem separacao; pico de forca planejado/pedido %.2f (media)\n",
+                s.hops, s.flights, s.flights ? 1000.0 * s.flightSum / s.flights : 0.0, 1000.0 * s.hopSettings.flightTime, s.missedLandings, s.failedTakeoffs,
+                s.hops ? s.hopPeakRatioSum / s.hops : 0.0);
         if (std::getenv("STANDWALK")) {
             const Vec3 end = s.scene->ragdollStateView(s.ragdoll)->links[0].position;
             std::printf("- marcha: %d passos, pelve andou (%.2f %.2f) m, %s\n", s.steps, end.x - startPelvis.x, end.y - startPelvis.y,
