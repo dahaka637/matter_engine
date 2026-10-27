@@ -50,7 +50,11 @@ WholeBodyQPResult3D WholeBodyQP3D::solve(const WholeBodyQPInput3D& in) {
     const int joints = n - 6;
     const int contacts = static_cast<int>(in.contacts.size());
     const int dimension = n + 3 * contacts;
-    const int inequalities = joints + 5 * contacts;
+    std::vector<int> guarded;
+    if (in.jointLower.size() == joints && in.jointUpper.size() == joints)
+        for (int j = 0; j < joints; ++j)
+            if (std::isfinite(in.jointLower[j]) || std::isfinite(in.jointUpper[j])) guarded.push_back(j);
+    const int inequalities = joints + 5 * contacts + static_cast<int>(guarded.size());
     if (in.torqueLimit.size() != joints) return result;
     const Eigen::VectorXd external = in.externalGeneralized.size() == n ? in.externalGeneralized : Eigen::VectorXd::Zero(n);
     const auto start = std::chrono::steady_clock::now();
@@ -130,6 +134,22 @@ WholeBodyQPResult3D WholeBodyQP3D::solve(const WholeBodyQPInput3D& in) {
     }
 
     const auto built = std::chrono::steady_clock::now();
+    // A guarda dos batentes, na aceleracao do eixo.
+    for (std::size_t g = 0; g < guarded.size(); ++g) {
+        const int j = guarded[g];
+        const int row = joints + 5 * contacts + static_cast<int>(g);
+        const int dof = j + 6;
+        double coordinate = 0.0;
+        for (std::size_t l = 1; l < model.links.size(); ++l)
+            for (int a = 0; a < 3; ++a)
+                if (model.links[l].dof[static_cast<std::size_t>(a)] == dof) coordinate = in.state->jointCoordinates[l][a];
+        const double v = in.state->velocity[dof];
+        const double margin = in.jointMargin.size() == joints ? in.jointMargin[j] : in.jointGuardMargin;
+        inequality(row, dof) = in.timeStep;
+        lower[row] = std::isfinite(in.jointLower[j]) ? -in.jointGuardRate * (coordinate - in.jointLower[j] - margin) - v : -infinity;
+        upper[row] = std::isfinite(in.jointUpper[j]) ? in.jointGuardRate * (in.jointUpper[j] - margin - coordinate) - v : infinity;
+        if (lower[row] > upper[row]) lower[row] = upper[row];
+    }
     Impl& impl = *m_impl;
     const bool reuse = impl.qp && impl.dimension == dimension && impl.inequalities == inequalities && impl.equalities == equalities;
     if (!reuse) {
@@ -228,7 +248,6 @@ WholeBodyTask3D wholeBodyPointTask3D(const ArticulationKinematics3D& k, int link
 WholeBodyTask3D wholeBodyCentroidalTask3D(const ArticulationModel3D& model, const ArticulationDynamics3D& d,
     const ArticulationState3D& state, const Eigen::Vector3d& linearRate, const Eigen::Vector3d& angularRate,
     double linearWeight, double angularWeight) {
-    (void)model;
     (void)state;
     WholeBodyTask3D task;
     task.name = "centroidal";
@@ -236,8 +255,11 @@ WholeBodyTask3D wholeBodyCentroidalTask3D(const ArticulationModel3D& model, cons
     Eigen::Matrix<double, 6, 1> target;
     target << linearRate, angularRate;
     task.target = target - d.centroidalBias;
-    // Pesos por bloco pela escala das linhas.
-    const double linearScale = std::sqrt(linearWeight), angularScale = std::sqrt(angularWeight);
+    // Pesos por bloco pela escala das linhas, com as unidades normalizadas pela
+    // massa (linear em m/s2, angular por m * 1 m2): sem isso o custo carregava m2
+    // e a tarefa centroidal dominava o tronco e a cabeca (nota 25).
+    const double mass = model.totalMass;
+    const double linearScale = std::sqrt(linearWeight) / mass, angularScale = std::sqrt(angularWeight) / mass;
     task.matrix.topRows(3) *= linearScale;
     task.matrix.bottomRows(3) *= angularScale;
     task.target.head(3) *= linearScale;

@@ -69,6 +69,13 @@ struct WholeBodyQPInput3D {
     double accelerationRegularization = 1e-4;
     double forceRegularization = 1e-5;
     int maximumIterations = 200;
+    // A guarda dos batentes (nota 25 do vault): em cada eixo com limite
+    // (n - 6; infinito = sem guarda), -k (q - qmin - e) <= v + dt a <= k (qmax - e - q).
+    // So nos eixos em que a coordenada e o angulo do Jolt (juntas de um eixo).
+    Eigen::VectorXd jointLower, jointUpper;
+    // Margem por eixo (n - 6; vazio = jointGuardMargin para todos).
+    Eigen::VectorXd jointMargin;
+    double jointGuardRate = 10.0, jointGuardMargin = 0.015, timeStep = 1.0 / 120.0;
     // De quantos em quantos ticks o precondicionador do ProxQP e refeito.
     int preconditionerRefreshTicks = 30;
 };
