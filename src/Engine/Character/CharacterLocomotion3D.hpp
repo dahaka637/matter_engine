@@ -128,6 +128,9 @@ struct CharacterLocomotionAnimations3D {
     // Opcional, so da locomocao padrao: o sprint maximo (24/10; a frente e as
     // diagonais da frente). Sem ele, o sprint maximo e a corrida mais rapida.
     const AnimationClip3D* maxSprint = nullptr;
+    // Opcional, so da locomocao padrao: o parado espelhado (28/10; o apoio no
+    // outro pe, escolhido pela ultima passada).
+    const AnimationClip3D* idleMirror = nullptr;
     // Pulos (opcionais): o voo, da decolagem (inicio do clipe) ao toque no
     // chao (fim), tocado pela fase do voo. Sem eles, o voo e procedural.
     const AnimationClip3D* jumpStanding = nullptr;

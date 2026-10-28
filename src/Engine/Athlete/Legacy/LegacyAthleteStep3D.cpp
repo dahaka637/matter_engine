@@ -1335,6 +1335,7 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         input.gestureRequested = gestureRequested;
         input.motionVariety = command.motionVariety;
         input.varietySeed = command.varietySeed;
+        input.leading = defaultMode && state.bodyMode == BodyMode::Animated;
         configureDefaultLocomotion(state.defaultLocomotion.settings(), settings, assets.body);
         return input;
     };
@@ -1706,6 +1707,9 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         }
         configureDefaultLocomotion(state.referenceShadow.settings(), settings, assets.body);
         state.referenceShadow.settings().footBentRetry = false;
+        // (O parado pela ultima passada tambem: o treino parado e o do parado
+        // de sempre - 28/10.)
+        state.referenceShadow.settings().idleFromLastStride = false;
         DefaultLocomotionInput3D input;
         input.feetPositionWorld = command.rootPositionWorld - Vec3 { 0.0f, 0.0f, profile.standingRootHeightMeters };
         input.velocityWorld = command.rootVelocityWorld;

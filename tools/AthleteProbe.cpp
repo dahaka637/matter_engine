@@ -389,6 +389,15 @@ std::vector<Scenario> scenarios() {
                 list.push_back(s);
             }
         }
+        // A parada andando, em quatro instantes do passo (28/10, pedido do usuario:
+        // o pe de apoio do parado e o que terminou a ultima passada).
+        for (int stopAt = 100; stopAt <= 160; stopAt += 5) {
+            Scenario stop { "parada_" + std::to_string(stopAt), 3.6f, [stopAt](float t) {
+                Keys k;
+                k.forward = t > 0.2f && t < static_cast<float>(stopAt) * 0.01f ? 0.6f : 0.0f;
+                return k; } };
+            list.push_back(stop);
+        }
         // Dois toques seguidos com a mesma perna (28/10, pedido do usuario: "estou
         // manuseando a bola para o lado com a perna direita.. ai quero ja em
         // seguida manusear para frente.. ele aproveita a posicao da perna"): para
@@ -582,7 +591,9 @@ std::vector<Scenario> scenarios() {
             const float at = std::getenv("XCARRINHO") ? static_cast<float>(std::atof(std::getenv("XCARRINHO"))) : 0.9f;
             k.crouch = t > at && t < at + 0.1f;
             return k; } });
-        Scenario paredePulo { "parede_pulo", 5.0f, [](float t) {
+        // (7 s: a volta do fisico leva de 3,0 a 3,4 s conforme a pancada - a
+        // fisica do choque e caotica -, e em 5 s a ponte as vezes nao acabava.)
+        Scenario paredePulo { "parede_pulo", 7.0f, [](float t) {
             Keys k;
             k.forward = t > 0.3f && t < 2.5f ? 1.0f : 0.0f;
             k.jump = t > 1.05f && t < 1.25f;
@@ -1654,7 +1665,7 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
                     100.0f * static_cast<float>(netTouched) / (5.0f / Dt),
                     netMilliseconds / (5.0f / Dt), entered, entered > 0 ? " ENTROU" : "", capsuleRise, capsuleRise > 0.1f ? " SUBIU" : "");
         }
-        if (scenario.name.rfind("gesto_", 0) == 0 && leftFoot < bodyState.links.size() && rightFoot < bodyState.links.size()) {
+        if ((scenario.name.rfind("gesto_", 0) == 0 || scenario.name.rfind("parada_", 0) == 0) && leftFoot < bodyState.links.size() && rightFoot < bodyState.links.size()) {
             const DefaultLocomotionOutput3D& o = legacy.defaultLocomotion.output();
             const float c = std::cos(o.facingYawRadians), s = std::sin(o.facingYawRadians);
             const auto local = [&](Vec3 p, Vec3 pelvis) {
@@ -1688,7 +1699,13 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
             if (metrics.stillSeconds > 1.0f) {
                 const std::array<Vec3, 2> now { local(bodyState.links[leftFoot].position, bodyState.links[0].position),
                     local(bodyState.links[rightFoot].position, bodyState.links[0].position) };
-                const float off = std::max((now[0] - metrics.stanceStart[0]).length(), (now[1] - metrics.stanceStart[1]).length());
+                // (O parado ou o espelho dele, a base mais perto - 28/10: o parado
+                // pela ultima passada.)
+                const auto mirrored = [](Vec3 v) { return Vec3 { v.x, -v.y, v.z }; };
+                const float off = std::min(
+                    std::max((now[0] - metrics.stanceStart[0]).length(), (now[1] - metrics.stanceStart[1]).length()),
+                    std::max((now[0] - mirrored(metrics.stanceStart[1])).length(),
+                        (now[1] - mirrored(metrics.stanceStart[0])).length()));
                 if (off > metrics.stillWorst) {
                     metrics.stillWorst = off;
                     metrics.stillWorstTime = t;
@@ -2686,6 +2703,27 @@ int runChecks(const ProbeContext& context) {
                             && (kick ? m.ballSpeedAfter > 11.0f : m.ballSpeedAfter < 8.5f), line, m);
                 }
             }
+        }
+        // O parado pela ultima passada (28/10, pedido do usuario: "o ultimo
+        // movimento determina qual o menor custo para a proxima perna de apoio"):
+        // parando em varios instantes do passo, as duas bases aparecem (o parado e
+        // o espelho) e toda parada e suave (as pernas e o pe de apoio como antes).
+        {
+            int mirrored = 0, total = 0;
+            float worstLeg = 0.0f, worstSlide = 0.0f;
+            for (const Scenario& scenario : scenarios()) {
+                if (scenario.name.rfind("parada_", 0) != 0) continue;
+                const Metrics m = runScenario(context, scenario, gestures, false, nullptr, 1);
+                ++total;
+                if (m.stanceValid && m.stanceEnd[1].x > m.stanceEnd[0].x) ++mirrored;
+                worstLeg = std::max(worstLeg, m.peakLegAcceleration);
+                worstSlide = std::max(worstSlide, percentile(m.plantedSlide, 1.0f));
+            }
+            char line[200];
+            std::snprintf(line, sizeof(line), "paradas: %d de %d no espelho, pernas ate %.0f m/s2, pe de apoio ate %.1f m/s", mirrored,
+                total, worstLeg, worstSlide);
+            Metrics none;
+            expect(total > 0 && mirrored > 0 && mirrored < total && worstLeg < 200.0f && worstSlide < 4.0f, line, none);
         }
         // Dois toques seguidos na mesma perna (28/10, pedido do usuario: aproveitar
         // o movimento em vez de recomecar do zero): a mesma perna continua, o corpo

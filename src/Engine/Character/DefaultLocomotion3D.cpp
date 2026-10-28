@@ -114,6 +114,7 @@ CharacterLocomotionAnimations3D defaultLocomotionAnimations3D(CharacterLocomotio
         { "sprintBackwardLeft", &CharacterLocomotionAnimations3D::sprintBackwardLeft },
         { "sprintBackwardRight", &CharacterLocomotionAnimations3D::sprintBackwardRight },
         { "maxSprint", &CharacterLocomotionAnimations3D::maxSprint },
+        { "idleMirror", &CharacterLocomotionAnimations3D::idleMirror },
     };
     for (const auto& [role, id] : roles) {
         const auto found = std::find_if(clips.begin(), clips.end(),
@@ -158,6 +159,7 @@ void DefaultLocomotion3D::reset(float facingYawRadians) {
     m_dip = 0.0f;
     m_dipRate = 0.0f;
     m_idleWeight = 1.0f;
+    m_idleMirror = m_idleMirrorTarget = 0.0f;
     m_phase = 0.0f;
     m_strides = 0.0f;
     m_idleTime = 0.0f;

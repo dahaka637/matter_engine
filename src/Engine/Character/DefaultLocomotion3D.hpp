@@ -171,6 +171,12 @@ struct DefaultLocomotionSettings3D {
     // Giro parado: os pes dao os passos de giro do planejador do fisico
     // (StandTurnFeet3D), so como gesto; o giro em si e a mola.
     bool standTurnSteps = true;
+    // O parado pela ultima passada (28/10, pedido do usuario: "o ultimo
+    // movimento determina qual o menor custo para a proxima perna de apoio ao
+    // ficar parado"): o parado (o apoio no pe direito, atras) ou o espelho dele
+    // (idleMirror), o de base mais perto dos pes da passada quando ele para.
+    // Desligado, sempre o parado.
+    bool idleFromLastStride = true;
     float standTurnStart = 0.55f;
     float standTurnKeep = 0.31f;
     float standTurnSeconds = 0.16f;
@@ -365,6 +371,11 @@ struct DefaultLocomotionSettings3D {
 };
 
 struct DefaultLocomotionInput3D {
+    // O padrao conduz o corpo (o modo padrao). No fisico, na ponte, no Ativo e
+    // na volta ele segue por baixo: o parado e o de sempre (28/10: o parado pela
+    // ultima passada so escolhe conduzindo - escolhido por baixo, a volta mirava
+    // a outra base e demorava).
+    bool leading = true;
     // A capsula: os pes (a base dela), a velocidade e se esta no chao.
     Vec3 feetPositionWorld;
     Vec3 velocityWorld;
@@ -744,6 +755,12 @@ private:
     // Links do corpo de cima (tronco, bracos, cabeca).
     std::vector<char> m_upperLinks;
     float m_idleWeight = 1.0f;
+    // O parado espelhado (o apoio no pe esquerdo): o quanto (0..1, misturado
+    // so enquanto o parado quase nao pesa) e as bases dos dois (os pes no rumo
+    // do corpo, a partir da raiz; calculadas uma vez).
+    float m_idleMirror = 0.0f, m_idleMirrorTarget = 0.0f;
+    std::array<std::array<Vec3, 2>, 2> m_idleStances {};
+    bool m_idleStancesValid = false;
     float m_phase = 0.0f;
     float m_strides = 0.0f;
     float m_idleTime = 0.0f;

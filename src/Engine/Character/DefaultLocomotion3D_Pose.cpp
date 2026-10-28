@@ -86,9 +86,58 @@ void DefaultLocomotion3D::stepPose(Tick& t) {
         sampleInto(clip, fraction(m_phase + m_gaits[g].touchdown) * clip.durationSeconds, true, m_weights[g] * ground,
             m_upperWeights[g] * ground, &m_gaits[g], gaitAmplitude(g));
     }
+    // O parado pela ultima passada (28/10, pedido do usuario: "o ultimo
+    // movimento determina qual o menor custo para a proxima perna de apoio"):
+    // enquanto o parado ainda quase nao pesa, vale o de base mais perto dos pes
+    // da passada de agora - o parado ou o espelho dele; pesando, fica. (Trocado
+    // com o parado ja pesando, os pes saltavam meia base num tick.)
+    const bool mirrorable = s.idleFromLastStride && animations.idle != nullptr && animations.idleMirror != nullptr
+        && m_feet[0] != 0 && m_feet[1] != 0;
+    if (mirrorable) {
+        // Os pes de uma pose no rumo do corpo, a partir da raiz.
+        const auto feetOf = [&](const std::vector<Vec3>& coordinates, Quaternion turn) {
+            RagdollAnimationPose3D chain;
+            buildRagdollChainPose3D(profile, coordinates, chain, m_feet[0]);
+            buildRagdollChainPose3D(profile, coordinates, chain, m_feet[1]);
+            return std::array<Vec3, 2> { planar(turn.rotate(chain.linkPositions[m_feet[0]])),
+                planar(turn.rotate(chain.linkPositions[m_feet[1]])) };
+        };
+        if (!m_idleStancesValid) {
+            const AnimationClip3D* clips[2] = { animations.idle, animations.idleMirror };
+            for (std::size_t k = 0; k < 2; ++k) {
+                std::vector<Vec3> coordinates(links);
+                for (std::size_t i = 1; i < links; ++i)
+                    if (const AnimationTrack3D* track = findAnimationTrack3D(*clips[k], profile.links[i].id))
+                        coordinates[i] = sampleTrack(*track, 0.0f, clips[k]->durationSeconds, true, s.smoothClipSampling)
+                                             .jointPositionRadians;
+                m_idleStances[k] = feetOf(coordinates, rootAt(profile, *clips[k], 0.0f, true, s.smoothClipSampling)
+                                                           .rotationDelta.normalized());
+            }
+            m_idleStancesValid = true;
+        }
+        if (!input.leading) {
+            m_idleMirrorTarget = 0.0f;
+        } else if (m_idleWeight < 0.15f) {
+            const std::array<Vec3, 2> now = feetOf(m_coordinates, rootRotation.result());
+            float cost[2] = {};
+            for (std::size_t k = 0; k < 2; ++k)
+                for (std::size_t side = 0; side < 2; ++side) cost[k] += (now[side] - m_idleStances[k][side]).lengthSquared();
+            m_idleMirrorTarget = cost[1] < cost[0] ? 1.0f : 0.0f;
+        }
+        // (A mistura vai sempre ate o fim - parada no meio, os pes ficavam entre
+        // as duas bases -, rapida com o parado leve e devagar com ele pesando: o
+        // pe nunca desliza mais que ~1 m/s pela troca, numa base de ~0,5 m.)
+        const float rate = std::clamp(2.0f / std::max(1e-3f, m_idleWeight), 2.0f, 20.0f);
+        m_idleMirror += std::clamp(m_idleMirrorTarget - m_idleMirror, -rate * dt, rate * dt);
+    } else {
+        m_idleMirror = m_idleMirrorTarget = 0.0f;
+    }
     if (animations.idle != nullptr)
         sampleInto(*animations.idle, std::fmod(m_idleTime, std::max(0.1f, animations.idle->durationSeconds)), true,
-            m_idleWeight * ground, upperIdleWeight * ground);
+            m_idleWeight * ground * (1.0f - m_idleMirror), upperIdleWeight * ground * (1.0f - m_idleMirror));
+    if (mirrorable && m_idleMirror > 0.0f)
+        sampleInto(*animations.idleMirror, std::fmod(m_idleTime, std::max(0.1f, animations.idleMirror->durationSeconds)), true,
+            m_idleWeight * ground * m_idleMirror, upperIdleWeight * ground * m_idleMirror);
     if (m_airClip != nullptr && m_airWeight > 1e-4f)
         sampleInto(*m_airClip, m_airPhase * m_airClip->durationSeconds, false, m_airWeight, m_airWeight);
     t.clipRootRotation = rootRotation.result();

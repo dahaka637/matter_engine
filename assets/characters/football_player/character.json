@@ -125,6 +125,7 @@
  },
  "creaseDegrees": 45.000003814697266,
  "defaultLocomotion": {
+  "idleMirror": "alert_idle_espelho",
   "maxSprint": "sprint_maximo",
   "sprintBackward": "sprint_backward_long"
  },
