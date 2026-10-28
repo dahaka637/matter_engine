@@ -359,7 +359,12 @@ GestureKeys3D gestureKeys3D(const GestureSpec3D& spec, const GestureRig3D& rig) 
         keys.contactTime = std::clamp(0.10f * seconds, 0.035f, 0.06f);
         // (O acompanhamento curto e a volta longa: a perna sobe e ja desce; com
         // 40% do tempo ela ficava parada no alto.)
-        keys.followTime = keys.contactTime + 0.28f * seconds;
+        // A continuidade do chute fraco e do medio-fraco (28/10, pedido do
+        // usuario: "um pouco mais de continuidade da perna apos o chute... nao
+        // para os fortes"): o acompanhamento mais longo e um pouco mais alto,
+        // cheio no mais fraco e sumindo ate 0,6 da barra.
+        const float soft = 1.0f - std::clamp(power / 0.6f, 0.0f, 1.0f);
+        keys.followTime = keys.contactTime + (0.28f + 0.10f * soft) * seconds;
         keys.duration = seconds;
         const float twists[3] = { 8.0f, 16.0f, 26.0f };
         body.drop = 0.020f + 0.020f * power + 0.012f * r;
@@ -436,7 +441,7 @@ GestureKeys3D gestureKeys3D(const GestureSpec3D& spec, const GestureRig3D& rig) 
         // chute: guarda 35% do quanto o contato ficou para o lado do quadril
         // (24/10, pedido do usuario: cruzando para a linha do corpo, ate 32
         // graus, a perna ia demais para o outro lado).
-        const float elevation = (-50.0f + 60.0f * reachOfMotion + 8.0f * lift + 18.0f * high) * Degree;
+        const float elevation = (-50.0f + 60.0f * reachOfMotion + 12.0f * soft + 8.0f * lift + 18.0f * high) * Degree;
         const float length = 0.985f * (leg.thigh + leg.shin), horizontal = std::cos(elevation) * length;
         const float outward = std::clamp(0.15f * (ballOut - s * leg.hip.y), -0.3f * horizontal, 0.3f * horizontal);
         // (No referencial da pelve: o quadril nao anda com a descida dela. E

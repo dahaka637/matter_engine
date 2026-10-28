@@ -412,6 +412,59 @@ void bodyPartTests(const RagdollProfile3D& profile) {
         "cabeca: vai ao rumo da bola (a esquerda) e acena mais na bola para baixo");
 }
 
+// O acompanhamento do chute pela barra (28/10, pedido do usuario: "um pouco
+// mais de continuidade da perna apos o chute... nao para os fortes, mais para
+// os fracos e medianos-fraco"): de pe, depois do contato, o quanto o
+// tornozelo ainda anda a frente e sobe, e em quanto tempo chega la.
+struct Follow { float forward = 0.0f, rise = 0.0f, seconds = 0.0f; };
+Follow shotFollow(const RagdollProfile3D& profile, float power) {
+    const GestureRig3D rig = defaultGestureRig3D(profile);
+    GestureSpec3D spec;
+    spec.kind = GestureKind3D::Shot;
+    spec.power = power;
+    spec.seconds = 0.58f;
+    const GestureLegPose3D standing;
+    GesturePlayer3D player;
+    player.start(spec, rig, standing, {});
+    constexpr float dt = 1.0f / 240.0f;
+    Follow follow;
+    Vec3 contact;
+    bool after = false;
+    for (int tick = 0; tick < 2000 && player.active(); ++tick) {
+        const GestureFrame3D frame = player.update(dt, standing);
+        if (!frame.active) break;
+        const Vec3 ankle = legPoint(profile, 0, frame.leg).ankle;
+        if (!after && frame.time >= player.keys().contactTime) {
+            after = true;
+            contact = ankle;
+        }
+        if (after && ankle.x - contact.x > follow.forward) {
+            follow.forward = ankle.x - contact.x;
+            follow.rise = ankle.z - contact.z;
+            follow.seconds = frame.time - player.keys().contactTime;
+        }
+    }
+    return follow;
+}
+
+void followTests(const RagdollProfile3D& profile) {
+    // (Medido em 28/10: antes, a barra 0,2 andava 0,37 m e subia 0,06 m em 0,12 s;
+    // a cheia, 0,65 m e 0,65 m em 0,21 s, e fica igual.)
+    const Follow weak = shotFollow(profile, 0.2f), full = shotFollow(profile, 1.0f);
+    char what[200];
+    std::snprintf(what, sizeof what, "o chute fraco acompanha mais (barra 0,2: %.2f m a frente, %.2f m acima, %.2f s)", weak.forward,
+        weak.rise, weak.seconds);
+    expect(weak.forward > 0.45f && weak.rise > 0.12f && weak.seconds > 0.15f, what);
+    std::snprintf(what, sizeof what, "o chute forte fica como era (%.3f m a frente, %.3f m acima)", full.forward, full.rise);
+    expect(std::abs(full.forward - 0.654f) < 0.01f && std::abs(full.rise - 0.650f) < 0.01f, what);
+    if (std::getenv("MATTER_GESTO_MEDIDAS"))
+        for (const float power : { 0.1f, 0.2f, 0.3f, 0.45f, 0.6f, 0.8f, 1.0f }) {
+            const Follow f = shotFollow(profile, power);
+            std::printf("acompanhamento barra %.2f: %.3f m a frente, %.3f m acima, em %.3f s\n", power, f.forward, f.rise,
+                f.seconds);
+        }
+}
+
 } // namespace
 
 int main() {
@@ -423,6 +476,7 @@ int main() {
         choiceTests();
         highAndReceiveTests(character.profile);
         bodyPartTests(character.profile);
+        followTests(character.profile);
     } catch (const std::exception& error) {
         std::cerr << "gestos: " << error.what() << "\n";
         return 1;

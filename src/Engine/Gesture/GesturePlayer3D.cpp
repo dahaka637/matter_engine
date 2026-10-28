@@ -319,7 +319,13 @@ GestureFrame3D GesturePlayer3D::update(float dt, const GestureLegPose3D& live, f
             for (std::size_t i = 0; i < 7; ++i) m_startOffset.value[i] = m_startLeg.value[i] - live.value[i];
             m_startOffsetValid = true;
         }
-        const float weight = m_keys.legWeight * gestureBump(t, 0.0f, std::max(0.02f, t1), end);
+        // (No chute fraco o pe segue no acompanhamento ate o meio dele antes de
+        // ceder ao passo: 28/10, a continuidade.)
+        const float hold = m_spec.kind == GestureKind3D::Shot ? t1 + 0.5f * std::max(0.0f, t2 - t1) : t1;
+        const float weight = m_keys.legWeight
+            * (t <= t1     ? gestureBump(t, 0.0f, std::max(0.02f, t1), end)
+                : t <= hold ? 1.0f
+                            : 1.0f - gestureSmoothStep5((t - hold) / std::max(1e-3f, end - hold)));
         const float keep = 1.0f - gestureSmoothStep5(t / std::max(1e-3f, end));
         for (std::size_t i = 0; i < 7; ++i) {
             const float base = live.value[i] + m_startOffset.value[i] * keep;

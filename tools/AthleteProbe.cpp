@@ -134,6 +134,9 @@ std::vector<Scenario> scenarios() {
             { "gesto_parado_chute_frente", 0.0f, false, BallActionKind3D::Shot, 0.7f, { 0.45f, 0.05f, 0.11f } },
             { "gesto_trote_chute_frente", 1.0f, false, BallActionKind3D::Shot, 0.7f, { 0.50f, 0.03f, 0.11f } },
             { "gesto_corre_chute_frente", 1.0f, true, BallActionKind3D::Shot, 0.8f, { 0.60f, -0.04f, 0.11f } },
+            // (O chute fraco e o medio-fraco trotando: a continuidade da perna - 28/10.)
+            { "gesto_trote_chute_fraco", 1.0f, false, BallActionKind3D::Shot, 0.15f, { 0.45f, 0.14f, 0.11f } },
+            { "gesto_trote_chute_medio", 1.0f, false, BallActionKind3D::Shot, 0.4f, { 0.45f, -0.14f, 0.11f } },
         };
         for (const Gesture& g : gestures) {
             const float forward = g.forward;
