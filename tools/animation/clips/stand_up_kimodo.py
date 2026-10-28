@@ -14,8 +14,8 @@ limpeza para o nosso corpo:
   - o fim mistura para a pose de pe limpa e grava os canais de apoio.
 
 Uso:
-  python3 tools/animation/clips/stand_up_kimodo.py front
-  python3 tools/animation/clips/stand_up_kimodo.py back
+  python3 tools/animation/clips/stand_up_kimodo.py front [id de saida]
+  python3 tools/animation/clips/stand_up_kimodo.py back [id de saida]
 """
 
 from __future__ import annotations
@@ -70,7 +70,11 @@ def tilt_only(rotation: np.ndarray) -> np.ndarray:
 
 
 def main() -> None:
-    variant = VARIANTS[sys.argv[1] if len(sys.argv) > 1 else "front"]
+    variant = dict(VARIANTS[sys.argv[1] if len(sys.argv) > 1 else "front"])
+    # (Um id de saida a parte: 28/10, os do levantar pelo padrao, no corpo de
+    # hoje, sem mexer nos do levantar fisico.)
+    if len(sys.argv) > 2:
+        variant["id"] = sys.argv[2]
     rig = Rig(g.PROFILE)
     ref = load_clip(SOURCES / variant["source"], rig)
     old = load_clip(CLIPS / "stand_up_front.matteranim.json", rig)

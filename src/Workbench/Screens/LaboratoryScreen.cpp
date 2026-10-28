@@ -2984,6 +2984,10 @@ void WorkbenchApp::drawLaboratoryUi() {
                                     hint("1 é o exato da animação; menos, mais embalo e atraso. Abaixo de ~0,8 a cabeça passa do calmo nos cortes.");
                                 }
                             }
+                            if (mode == 0) {
+                                ImGui::Checkbox("Levantar pelo padrão", &m_animatedGetUp);
+                                hint("Caído de bruços ou de costas, com o chão plano e nada no caminho, levanta pelo clipe com a postura certa; um contato no meio volta ao físico. Sem base, o levantar físico.");
+                            }
                             ImGui::Checkbox("Pulo instantâneo", &m_instantJump);
                             hint("Ligado: pula ao apertar o espaço, na altura média. Desligado: segurar carrega e pula ao soltar (mais alto quanto mais segura).");
                             ImGui::Checkbox("Áreas de alcance", &m_showReachAreas);

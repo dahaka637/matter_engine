@@ -600,6 +600,14 @@ std::vector<Scenario> scenarios() {
                 q.throws.push_back({ running ? 1.5f : 1.0f, 140.0f, { 0.3f, 0.3f, 0.3f },
                     at + from * 1.4f + Vec3 { 0.0f, 0.0f, 1.0f }, from * -9.0f });
                 list.push_back(q);
+                // O levantar pelo padrao (28/10, item 16): a queda de brucos com
+                // um empurrao no meio dele.
+                if (!running && k == 4) {
+                    Scenario pushed = q;
+                    pushed.name = "levanta_padrao_empurrao";
+                    pushed.pushes.push_back({ 3.0f, 0.15f, { 0.0f, 450.0f, 0.0f } });
+                    list.push_back(pushed);
+                }
             }
         // Terreno (plano v2, fase E): um degrau de 10, 18, 25 e 35 cm (uma
         // plataforma a partir de x = 3 m), a escada (8 degraus de 17 por 30
@@ -1882,6 +1890,16 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
         if (trace != nullptr && step >= 0) trace->push_back(athleteTickDigest3D(athlete, bodyState));
         if (step >= 0 && context.noCapsule) contractAfter(hooks, athlete, bodyState, slotCommand);
         if (scenario.ball && step >= 0) ballState = scene->inflatedBallState(ballHandle);
+        // O levantar pelo padrao: os comecos, os que acabam no padrao e os que voltam ao fisico.
+        if (step >= 0) {
+            const bool getUpNow = athlete.animatedGetUp.active();
+            if (getUpNow && !metrics.animatedGetUpWas) ++metrics.animatedGetUpStarts;
+            if (!getUpNow && metrics.animatedGetUpWas) {
+                if (mode() == BodyModeKind3D::Physical) ++metrics.animatedGetUpAborts;
+                else ++metrics.animatedGetUpCompleted;
+            }
+            metrics.animatedGetUpWas = getUpNow;
+        }
         // A conducao: os ticks conduzindo e o rumo e o giro da bola 0,15 s depois do chute.
         if (scenario.ball && step >= 0 && scenario.name.rfind("conducao_", 0) == 0) {
             if (athlete.conduction.active) ++metrics.conductionTicks;
@@ -2653,6 +2671,9 @@ void printMetrics(const Scenario& scenario, const Metrics& metrics, bool footste
         std::printf("%-18s   corpo: cabeca p95 %.0f graus/s (max %.0f) | filtrados em 0,3 s: peito x pelve ate %.1f graus da media, maos ate %.3f m\n",
             "", percentile(metrics.headSpeed, 0.95f), percentile(metrics.headSpeed, 1.0f), trunk, handsAway);
     }
+    if (metrics.animatedGetUpStarts > 0)
+        std::printf("%-18s   levantar pelo padrao: %d comecos, %d no padrao, %d de volta ao fisico\n", "",
+            metrics.animatedGetUpStarts, metrics.animatedGetUpCompleted, metrics.animatedGetUpAborts);
     if (metrics.conductionValid)
         std::printf("%-18s   conducao: rumo %+.2f graus da mira, giro de lado %+.1f rad/s, %d ticks conduzindo\n", "",
             metrics.conductionHeading, metrics.conductionSpin, metrics.conductionTicks);
@@ -2775,6 +2796,35 @@ int runChecks(const ProbeContext& context) {
         expect(!m.fell && m.relapses == 0
                 && (m.finalMode == BodyModeKind3D::Animated || m.finalMode == BodyModeKind3D::Returning),
             what, m);
+    }
+    {
+        // O levantar pelo padrao (28/10, item 16): de brucos e de costas no chao
+        // plano ele levanta pelo clipe guiado e acaba no padrao, sem ajuda de
+        // fora; um empurrao no meio o volta ao fisico; com a caixa que o
+        // derrubou parada no caminho (queda_225) ele nem comeca. E de pe no fim.
+        AthleteRuntimeSettings3D getUpOn = settings;
+        getUpOn.animatedGetUp = true;
+        for (const char* name : { "queda_180", "queda_270" }) {
+            const Metrics m = run(name, getUpOn, false);
+            char what[160];
+            std::snprintf(what, sizeof(what), "levantar pelo padrao, %s: pelo clipe, no padrao, ajuda %.1f N.s", name,
+                m.assistImpulse);
+            expect(m.animatedGetUpCompleted >= 1 && m.animatedGetUpAborts == 0 && m.finalMode == BodyModeKind3D::Animated
+                    && m.assistImpulse < 1.0f,
+                what, m);
+        }
+        {
+            const Metrics m = run("levanta_padrao_empurrao", getUpOn, false);
+            expect(m.animatedGetUpAborts >= 1
+                    && (m.finalMode == BodyModeKind3D::Animated || m.finalMode == BodyModeKind3D::Returning),
+                "levantar pelo padrao: o empurrao no meio volta ao fisico e ele acaba de pe", m);
+        }
+        {
+            const Metrics m = run("queda_225", getUpOn, false);
+            expect(m.animatedGetUpStarts == 0
+                    && (m.finalMode == BodyModeKind3D::Animated || m.finalMode == BodyModeKind3D::Returning),
+                "levantar pelo padrao: com a caixa no caminho levanta pelo fisico", m);
+        }
     }
     {
         const Metrics m = run("caixa_leve", activeOn, false);
@@ -3186,6 +3236,8 @@ int main(int argc, char** argv) {
     if (const char* feel = std::getenv("XCORPOFISICO")) settings.physicalFeel = std::atoi(feel);
     if (const char* guide = std::getenv("XGUIACIMA")) settings.physicalUpperAuthority = static_cast<float>(std::atof(guide));
     if (const char* springs = std::getenv("XMOLAS")) settings.physicalReactionPercent = static_cast<float>(std::atof(springs));
+    // XLEVANTAR=1: o levantar pelo padrao (item 16).
+    if (std::getenv("XLEVANTAR")) settings.animatedGetUp = true;
     settings.footstepLocomotion = footsteps;
     settings.activeStanceSettings.balanceSteps = balanceSteps;
     settings.capsuleResponsePercent = response;

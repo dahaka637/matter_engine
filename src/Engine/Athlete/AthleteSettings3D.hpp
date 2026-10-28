@@ -81,6 +81,11 @@ struct AthleteRuntimeSettings3D {
     float physicalUpperAuthority = 0.85f;
     // As molas: a intensidade das reacoes (%, sobre as do BodyReaction3D).
     float physicalReactionPercent = 100.0f;
+    // O levantar pelo padrao (28/10, item 16): caido no fisico, com base
+    // solida, o corpo guiado segue o clipe de levantar; contato volta ao
+    // fisico. Desligado no runtime (o levantar e o treino dele); o
+    // laboratorio liga.
+    bool animatedGetUp = false;
     // "Vida", pes e tornozelos.
     bool motionVariety = true;
     float motionVarietyPercent = 100.0f;

@@ -702,6 +702,8 @@ private:
     int m_physicalFeel = 1;
     float m_physicalReactionPercent = 100.0f;
     float m_physicalUpperAuthority = 0.85f;
+    // O levantar pelo padrao (28/10, item 16): ligado no laboratorio.
+    bool m_animatedGetUp = true;
     // A arrancada do padrao (0 desliga): o gesto do idle_to_sprint e a
     // inclinacao do corpo com a aceleracao (e com a freada). 100% no laboratorio.
     static constexpr float LabDefaultStartGesturePercent = 100.0f;

@@ -78,6 +78,11 @@ CharacterLocomotionAnimations3D athleteLocomotionClips3D(const RagdollCharacter3
         for (std::size_t k = 0; k < character.tackleClipIds.size() && k < roles.tackles.size(); ++k)
             if (clip.id == character.tackleClipIds[k]) roles.tackles[k] = &clip;
     }
+    // O levantar pelo padrao (28/10): os clipes do corpo de hoje.
+    for (const auto& clip : clips) {
+        if (clip.id == "stand_up_front_guided") roles.standUpFrontGuided = &clip;
+        if (clip.id == "stand_up_back_guided") roles.standUpBackGuided = &clip;
+    }
     // O levantar de brucos e o de costas escolhidos no painel (para comparar).
     {
         const char* ids[2] = { "stand_up_front_kimodo", "stand_up_front" };

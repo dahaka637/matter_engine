@@ -1678,6 +1678,174 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         output.followVelocityWorld = {};
         return;
     }
+    // O levantar pelo padrao (28/10, item 16; Athlete/Body/AnimatedGetUp3D):
+    // caido e assentado no fisico, de brucos ou de costas, com base solida - o
+    // chao plano embaixo do caminho do clipe inteiro, nada estatico no caminho
+    // e nenhuma bola perto (guiado, o corpo atravessaria tudo) -, o corpo
+    // guiado segue o clipe de levantar do corpo de hoje. Um contato ou um
+    // empurrao no meio volta ao fisico; no fim ele entrega ao padrao de pe (a
+    // volta de sempre). De lado, o fisico rola antes.
+    {
+        AnimatedGetUp3D& getUp = athlete.animatedGetUp;
+        const bool allowed = settings.animatedGetUp && defaultMode && state.bodyMode == BodyMode::Physical
+            && body.links.size() == profile.links.size() && body.joints.size() == profile.links.size();
+        // (A pose do tick no corpo guiado, com a capsula parada embaixo da pelve.)
+        const auto drive = [&]() {
+            RagdollAnimationPose3D pose;
+            getUp.step(profile, deltaTime, pose);
+            scene.setRagdollGuidePose(slot.handle, pose.linkPositions, pose.linkOrientations);
+            const Vec3 pelvisNow = pose.linkPositions.front();
+            scene.placeCharacter({ pelvisNow.x, pelvisNow.y, groundHeight(pelvisNow) }, assets.avatarSettings);
+            scene.setCharacterVelocity({});
+            output.followVelocitySet = true;
+            output.followVelocityWorld = {};
+        };
+        // (O que encosta fora o chao firme, e o empurrao de fora: guiado, o
+        // corpo nao bate no chao, entao qualquer contato e de outra coisa.)
+        constexpr float AbortImpulse = 1.0f;
+        float touched = body.externalPushNewtonSeconds;
+        for (const RagdollInteraction3D& contact : body.interactions)
+            if (contact.otherMotion != RagdollContactMotion3D::Static || contact.normalWorld.z < 0.6f)
+                touched += contact.normalImpulseNewtonSeconds;
+        if (!allowed) {
+            getUp.stop();
+            athlete.animatedGetUpCalm = 0.0f;
+        } else if (getUp.active()) {
+            if (touched > AbortImpulse) {
+                getUp.stop();
+                scene.setRagdollGuided(slot.handle, false);
+                state.guided = false;
+                state.locomotion.reset(profile, body);
+                state.adaptivePhysics.reset(profile);
+                // (E espera 1 s antes de tentar de novo: comecando e saindo a
+                // cada tick, ele nunca levantava.)
+                athlete.animatedGetUpCalm = -1.0f;
+                Log::info("corpo: levantar pelo padrao -> fisico (contato)");
+            } else {
+                drive();
+                if (getUp.finished()) {
+                    // De pe: a volta de sempre ao padrao (a pose guiada indo a
+                    // dele pela inercia, o padrao comecando do corpo).
+                    getUp.stop();
+                    const PhysicsBodyState3D& pelvis = body.links.front();
+                    state.returnCoordinates.assign(profile.links.size(), {});
+                    std::vector<Vec3> velocities(profile.links.size());
+                    for (std::size_t i = 1; i < profile.links.size(); ++i) {
+                        const auto& joint = body.joints[i].positionRadians;
+                        const auto& rate = body.joints[i].velocityRadiansPerSecond;
+                        state.returnCoordinates[i] = { joint[0], joint[1], joint[2] };
+                        velocities[i] = { rate[0], rate[1], rate[2] };
+                    }
+                    state.defaultLocomotion.reset(control.facingYawRadians);
+                    DefaultLocomotionSeed3D seed;
+                    const Vec3 forward = (pelvis.orientation * profile.links.front().modelOrientation.conjugate())
+                        .rotate({ 1.0f, 0.0f, 0.0f });
+                    seed.pelvisYawRadians = std::atan2(forward.y, forward.x);
+                    seed.pelvisWorld = pelvis.position;
+                    state.defaultLocomotion.seed(seed);
+                    state.returnInertia.start(state.returnCoordinates, velocities, pelvis.position, pelvis.orientation,
+                        {}, {}, ReturnHalfLife, ReturnSeconds);
+                    state.bodyMode = BodyMode::Returning;
+                    state.bodyModeSeconds = 0.0f;
+                    state.guidedExitLeft = 0.0f;
+                    state.airSeconds = 0.0f;
+                    athlete.animatedGetUpCalm = 0.0f;
+                    Log::info("corpo: levantar pelo padrao -> padrao");
+                }
+                return;
+            }
+        } else {
+            // Deitado de brucos ou de costas (o peito a menos de 40 graus), o
+            // fisico ainda sem levantar - ou no comeco do levantar, com a pelve
+            // ainda perto do chao (com as teclas ele comeca logo) - e o corpo
+            // parado, por um tempo.
+            const CharacterLocomotionTelemetry3D& telemetry = state.locomotion.telemetry();
+            const bool low = body.links.front().position.z - groundHeight(body.links.front().position) < 0.30f;
+            const bool down = telemetry.state == CharacterLocomotionState3D::Fallen
+                || (telemetry.state == CharacterLocomotionState3D::GettingUp
+                    && (telemetry.getUpPhase == CharacterGetUpPhase3D::Settling || low));
+            std::size_t chest = 0, head = 0;
+            for (std::size_t i = 0; i < profile.links.size(); ++i) {
+                if (profile.links[i].id == "Chest") chest = i;
+                if (profile.links[i].id == "Head") head = i;
+            }
+            const Vec3 chestForward = (body.links[chest].orientation * profile.links[chest].modelOrientation.conjugate())
+                .rotate({ 1.0f, 0.0f, 0.0f });
+            const bool prone = chestForward.z < -0.766f, supine = chestForward.z > 0.766f;
+            // (Parado e o nucleo - a pelve e o peito: assentando, o fisico ja
+            // mexe os bracos para levantar, e eles entram pela inercia.)
+            const float fastest = body.links[chest].linearVelocity.length();
+            const bool still = body.links.front().linearVelocity.length() < 0.4f && fastest < 0.6f;
+            // (Com algo encostando - o obstaculo que o derrubou, outro jogador
+            // -, nao comeca.)
+            if (!down || !(prone || supine) || !still || touched > 0.1f)
+                athlete.animatedGetUpCalm = std::min(athlete.animatedGetUpCalm, 0.0f);
+            athlete.animatedGetUpCalm += deltaTime;
+            const AnimationClip3D* clip = prone ? clips.standUpFrontGuided : clips.standUpBackGuided;
+            constexpr float CalmSeconds = 0.15f;
+            if (down && (prone || supine) && still && touched <= 0.1f && athlete.animatedGetUpCalm > CalmSeconds
+                && clip != nullptr) {
+                std::vector<Vec3> coordinates(profile.links.size()), velocities(profile.links.size());
+                for (std::size_t i = 1; i < profile.links.size(); ++i) {
+                    const auto& joint = body.joints[i].positionRadians;
+                    const auto& rate = body.joints[i].velocityRadiansPerSecond;
+                    coordinates[i] = { joint[0], joint[1], joint[2] };
+                    velocities[i] = { rate[0], rate[1], rate[2] };
+                }
+                const PhysicsBodyState3D& pelvis = body.links.front();
+                AnimatedGetUp3D::Body lying;
+                lying.coordinates = &coordinates;
+                lying.coordinateVelocities = &velocities;
+                lying.pelvisPosition = pelvis.position;
+                lying.pelvisOrientation = pelvis.orientation;
+                lying.pelvisVelocity = pelvis.linearVelocity;
+                lying.pelvisAngularVelocity = pelvis.angularVelocity;
+                lying.headPosition = body.links[head].position;
+                lying.groundHeight = groundHeight(pelvis.position);
+                getUp.start(profile, *clip, lying);
+                // A base: nenhuma bola perto; e no caminho do clipe inteiro, o
+                // chao plano embaixo de cada link e nada entre a pelve e ele.
+                bool solid = true;
+                for (const AthleteBall3D& ball : balls)
+                    if (ball.state != nullptr && std::hypot(ball.state->position.x - pelvis.position.x,
+                            ball.state->position.y - pelvis.position.y) < 1.2f)
+                        solid = false;
+                const Vec3 center = pelvis.position + Vec3 { 0.0f, 0.0f, 0.25f };
+                RagdollAnimationPose3D sample;
+                constexpr int Samples = 8;
+                for (int k = 0; k <= Samples && solid; ++k) {
+                    getUp.poseAt(profile, getUp.durationSeconds() * static_cast<float>(k) / Samples, sample);
+                    for (const Vec3& point : sample.linkPositions) {
+                        if (std::abs(groundHeight(point) - lying.groundHeight) > 0.04f) { solid = false; break; }
+                        // (O raio passa 15 cm do centro do link: a grossura do
+                        // membro e a folga - so ate o centro, a parede a 40 cm do
+                        // lado passava e o braco batia nela.)
+                        const Vec3 toward = point - center;
+                        const float length = toward.length();
+                        PhysicsRayHit3D hit;
+                        // (E o que se move parado no caminho: a caixa que o derrubou.)
+                        const Ray3D ray { center, toward * (1.0f / std::max(length, 1e-4f)) };
+                        if (length > 0.05f
+                            && ((scene.raycastStatic(ray, length + 0.15f, hit) && hit.normal.z < 0.7f)
+                                || scene.raycastDynamic(ray, length + 0.15f, hit))) {
+                            solid = false;
+                            break;
+                        }
+                    }
+                }
+                if (solid) {
+                    scene.setRagdollGuided(slot.handle, true);
+                    state.guided = true;
+                    Log::info(prone ? "corpo: levantar pelo padrao (de brucos)" : "corpo: levantar pelo padrao (de costas)");
+                    drive();
+                    return;
+                }
+                // (Sem base: o fisico levanta; olha de novo daqui a 1 s.)
+                getUp.stop();
+                athlete.animatedGetUpCalm = -1.0f;
+            }
+        }
+    }
     // A virada brusca (experimento do laboratorio): desligada, nao roda e o
     // atleta passa exato.
     if (settings.dynamicTurnMove && adaptive) {

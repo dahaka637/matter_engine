@@ -134,6 +134,10 @@ struct CharacterLocomotionAnimations3D {
     // Opcional, so da locomocao padrao: o trote de costas como o da frente
     // (28/10; sem ele, a corrida de costas - walkBackward).
     const AnimationClip3D* trotBackward = nullptr;
+    // Opcionais: o levantar pelo padrao (28/10), os clipes de levantar no
+    // corpo de hoje (o chao sem atravessar: o corpo guiado nao bate nele).
+    const AnimationClip3D* standUpFrontGuided = nullptr;
+    const AnimationClip3D* standUpBackGuided = nullptr;
     // Pulos (opcionais): o voo, da decolagem (inicio do clipe) ao toque no
     // chao (fim), tocado pela fase do voo. Sem eles, o voo e procedural.
     const AnimationClip3D* jumpStanding = nullptr;

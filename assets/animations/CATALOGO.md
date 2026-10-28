@@ -104,10 +104,12 @@ tarefas do RL e o personagem do jogo que citam o arquivo.
 | Clipe | Nome | s | Ciclo | Vel. | Dir. | Fonte | Usado em |
 |---|---|---:|---|---:|---:|---|---|
 | `stand_up_back` | Levantar de costas | 2.67 | não | 0.0 | — | `Getting Up.fbx` | — |
+| `stand_up_back_guided` | Levantar de costas (Kimodo) | 2.30 | não | — | — | autoral (`Kimodo-SOMA-RP-v1.1`) | — |
 | `stand_up_back_kimodo` | Levantar de costas (Kimodo) | 2.30 | não | — | — | autoral (`Kimodo-SOMA-RP-v1.1`) | personagem (football_player) |
 | `stand_up_front` | Levantar de bruços | 2.97 | não | 0.0 | — | `Standing Up.fbx` | — |
 | `stand_up_front_crouch` | Levantar de bruços pelo agachado | 4.83 | não | — | — | autoral (`Prone`) | — |
 | `stand_up_front_getup` | Levantar de bruços (Getting Up limpo) | 4.30 | não | — | — | autoral (`Getting`) | — |
+| `stand_up_front_guided` | Levantar de bruços (Kimodo) | 2.10 | não | — | — | autoral (`Kimodo-SOMA-RP-v1.1`) | — |
 | `stand_up_front_kimodo` | Levantar de bruços (Kimodo) | 2.10 | não | — | — | autoral (`Kimodo-SOMA-RP-v1.1`) | personagem (football_player) |
 
 ## Futebol

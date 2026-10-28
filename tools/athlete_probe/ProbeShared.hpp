@@ -242,6 +242,9 @@ struct Metrics {
     std::vector<float> headSpeed;
     std::vector<Quaternion> trunkTurns;
     std::array<std::vector<Vec3>, 2> handOffsets;
+    // O levantar pelo padrao (item 16).
+    int animatedGetUpStarts = 0, animatedGetUpCompleted = 0, animatedGetUpAborts = 0;
+    bool animatedGetUpWas = false;
     Quaternion trunkFilter;
     std::array<Vec3, 2> handFilter {};
     bool trunkFilterValid = false;

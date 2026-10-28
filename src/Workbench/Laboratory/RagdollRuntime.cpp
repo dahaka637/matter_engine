@@ -901,6 +901,7 @@ AthleteRuntimeSettings3D WorkbenchApp::athleteRuntimeSettings() const {
     settings.physicalFeel = m_physicalFeel;
     settings.physicalReactionPercent = m_physicalReactionPercent;
     settings.physicalUpperAuthority = m_physicalUpperAuthority;
+    settings.animatedGetUp = m_animatedGetUp;
     settings.defaultStartGesturePercent = m_defaultStartGesturePercent;
     settings.defaultLandingAbsorb = m_defaultLandingAbsorb;
     settings.defaultCurveLeanDeadZone = m_defaultCurveLeanDeadZone;

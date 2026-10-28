@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Engine/Athlete/Ball/ShotConduction3D.hpp"
+#include "Engine/Athlete/Body/AnimatedGetUp3D.hpp"
 #include "Engine/Athlete/Body/ActiveBodyController3D.hpp"
 #include "Engine/Gesture/GestureTypes3D.hpp"
 #include "Engine/Athlete/Body/ActiveStance3D.hpp"
@@ -113,6 +114,10 @@ struct AthleteState3D {
     // O corpo fisico do padrao (28/10, item 10): a guia de cada link (1 nas
     // pernas e na pelve, a do corpo de cima nos outros).
     std::vector<float> guideAuthority;
+    // O levantar pelo padrao (28/10, item 16): o clipe guiado e quanto tempo
+    // ele esta deitado e assentado (s; < 0 espera depois de uma base ruim).
+    AnimatedGetUp3D animatedGetUp;
+    float animatedGetUpCalm = 0.0f;
     // A reescrita (R3): o corpo da classificacao de contatos, as regras de
     // troca de modo e o ultimo tick delas (a telemetria neutra: o que bateu,
     // a ultima troca e o motivo).
