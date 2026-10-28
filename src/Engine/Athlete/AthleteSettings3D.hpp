@@ -71,6 +71,16 @@ struct AthleteRuntimeSettings3D {
     bool defaultAirTackle = true;
     float defaultAirTacklePitch = 30.0f;
     bool defaultVoadoraContactOnly = true;
+    // O corpo fisico do padrao (28/10, item 10; ele escolhe na pratica): 0
+    // desligado, 1 a camada de reacoes por molas, 2 a fisica de verdade sem
+    // exagero (o corpo de cima com a guia mais solta).
+    int physicalFeel = 0;
+    // A fisica: a guia do corpo de cima (coluna, pescoco, cabeca e bracos; 1 o
+    // exato, como as pernas) - abaixo de 1 o link carrega o proprio embalo e
+    // atrasa (0,9 ~28 ms, 0,8 ~50 ms).
+    float physicalUpperAuthority = 0.85f;
+    // As molas: a intensidade das reacoes (%, sobre as do BodyReaction3D).
+    float physicalReactionPercent = 100.0f;
     // "Vida", pes e tornozelos.
     bool motionVariety = true;
     float motionVarietyPercent = 100.0f;

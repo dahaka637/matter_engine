@@ -151,6 +151,7 @@ void DefaultLocomotion3D::reset(float facingYawRadians) {
     m_moving = 0.0f;
     m_movingRate = 0.0f;
     m_quickStart = false;
+    m_reaction = {};
     m_upperShape.fill(0.0f);
     m_upperShapeRates.fill(0.0f);
     m_upperWeights.fill(0.0f);

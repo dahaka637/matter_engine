@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Engine/Animation/AnimationClip3D.hpp"
+#include "Engine/Character/BodyReaction3D.hpp"
 #include "Engine/Character/CharacterLocomotion3D.hpp"
 #include "Engine/Gesture/GesturePlayer3D.hpp"
 #include "Engine/Character/PoseInertializer3D.hpp"
@@ -191,6 +192,12 @@ struct DefaultLocomotionSettings3D {
     // (28/10, pedido do usuario: "nao gosto da forma como ele anda para tras
     // 'sentado'"; o clipe trotBackward). Desligado, a corrida de costas.
     bool backTrotLikeForward = true;
+    // A camada de reacoes por molas (28/10, item 10; BodyReaction3D): o tronco
+    // e os bracos com a inercia do corpo, e a cabeca devolvendo
+    // reactionHeadReturn do balanco do tronco. Desligada, como antes.
+    bool bodyReaction = false;
+    BodyReactionSettings3D reaction;
+    float reactionHeadReturn = 0.7f;
     float standTurnStart = 0.55f;
     float standTurnKeep = 0.31f;
     float standTurnSeconds = 0.16f;
@@ -756,6 +763,8 @@ private:
     float m_movingRate = 0.0f;
     // (A arrancada: a mola rapida das pernas ate a marcha pesar.)
     bool m_quickStart = false;
+    // (A camada de reacoes por molas.)
+    BodyReaction3D m_reaction;
     // O corpo de cima (tronco, bracos, cabeca), mais devagar.
     std::array<float, GaitCount> m_upperShape {};
     std::array<float, GaitCount> m_upperShapeRates {};

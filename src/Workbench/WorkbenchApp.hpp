@@ -697,6 +697,11 @@ private:
     // balanco calibrados pelas referencias; a intensidade escala tudo.
     bool m_defaultTrunkMotion = true;
     float m_defaultTrunkMotionPercent = 100.0f;
+    // O corpo fisico do padrao (28/10, item 10): 0 desligado, 1 molas, 2 fisica
+    // (ele escolhe na pratica).
+    int m_physicalFeel = 1;
+    float m_physicalReactionPercent = 100.0f;
+    float m_physicalUpperAuthority = 0.85f;
     // A arrancada do padrao (0 desliga): o gesto do idle_to_sprint e a
     // inclinacao do corpo com a aceleracao (e com a freada). 100% no laboratorio.
     static constexpr float LabDefaultStartGesturePercent = 100.0f;

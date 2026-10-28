@@ -1652,7 +1652,23 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                     athlete.legClearance.apply(profile, coordinates, rootPosition, rootOrientation, pose, swinging,
                         deltaTime, settings.legClearance);
             }
-            scene.setRagdollGuidePose(slot.handle, pose.linkPositions, pose.linkOrientations);
+            if (settings.physicalFeel == 2) {
+                // O corpo fisico (28/10, item 10): a coluna e os bracos com a guia
+                // mais solta carregam o proprio embalo; as pernas, a pelve, o
+                // pescoco e a cabeca exatos (solta, a cabeca ia de p95 80 a 109
+                // graus/s no corte - a regra e a cabeca calma).
+                athlete.guideAuthority.assign(profile.links.size(), 1.0f);
+                const float upper = std::clamp(settings.physicalUpperAuthority, 0.0f, 1.0f);
+                for (std::size_t i = 1; i < profile.links.size(); ++i) {
+                    const std::string& id = profile.links[i].id;
+                    if (id == "Abdomen" || id == "Chest" || id == "UpperChest" || id.find("Arm") != std::string::npos
+                        || id.find("Hand") != std::string::npos)
+                        athlete.guideAuthority[i] = upper;
+                }
+                scene.setRagdollGuidePose(slot.handle, pose.linkPositions, pose.linkOrientations, athlete.guideAuthority);
+            } else {
+                scene.setRagdollGuidePose(slot.handle, pose.linkPositions, pose.linkOrientations);
+            }
             state.previousAnimationPose = state.animationPose.linkPositions.empty() ? pose : state.animationPose;
             state.animationPose = pose;
             state.physicsBlend = 0.0f;
@@ -1751,11 +1767,12 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         }
         configureDefaultLocomotion(state.referenceShadow.settings(), settings, assets.body);
         state.referenceShadow.settings().footBentRetry = false;
-        // (O parado pela ultima passada, a arrancada pela base dele e o trote de
-        // costas novo tambem: o treino e o de sempre - 28/10.)
+        // (O parado pela ultima passada, a arrancada pela base dele, o trote de
+        // costas novo e as molas do corpo tambem: o treino e o de sempre - 28/10.)
         state.referenceShadow.settings().idleFromLastStride = false;
         state.referenceShadow.settings().startFromStance = false;
         state.referenceShadow.settings().backTrotLikeForward = false;
+        state.referenceShadow.settings().bodyReaction = false;
         DefaultLocomotionInput3D input;
         input.feetPositionWorld = command.rootPositionWorld - Vec3 { 0.0f, 0.0f, profile.standingRootHeightMeters };
         input.velocityWorld = command.rootVelocityWorld;

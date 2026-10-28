@@ -3,6 +3,7 @@
 // trocas linha a linha e propriedades com sinais aleatorios.
 #include "Engine/Athlete/Ball/BallOutcome3D.hpp"
 #include "Engine/Athlete/Ball/ShotConduction3D.hpp"
+#include "Engine/Character/BodyReaction3D.hpp"
 #include "Engine/Athlete/Contract/LocomotionContract3D.hpp"
 #include "Engine/Athlete/Modes/ContactClasses3D.hpp"
 #include "Engine/Athlete/Modes/ModeRules3D.hpp"
@@ -1126,6 +1127,33 @@ void shotConductionTests() {
         "conducao: a barra cheia nao conduz");
 }
 
+// A camada de reacoes por molas (28/10, item 10): parado, nada; acelerando para
+// a frente, o tronco fica para tras e assenta no giro da inercia (da aceleracao
+// saturada suave); quando ela acaba, ele passa do ponto e volta; com teto.
+void bodyReactionTests() {
+    BodyReactionSettings3D s;
+    BodyReaction3D still;
+    for (int k = 0; k < 240; ++k) still.step(0.0f, 0.0f, 1.0f / 120.0f, s);
+    expect(std::abs(still.trunkPitch) + std::abs(still.armSide) < 1e-6f, "reacao: parado, nada");
+    BodyReaction3D pushed;
+    for (int k = 0; k < 240; ++k) pushed.step(10.0f, 0.0f, 1.0f / 120.0f, s);
+    const float degree = 3.14159265f / 180.0f;
+    const float felt = s.accelerationSoftLimit * std::tanh(10.0f / s.accelerationSoftLimit);
+    expect(std::abs(pushed.trunkPitch + felt * s.trunkDegreesPerAcceleration * degree) < 0.05f * degree,
+        "reacao: acelerando para a frente, o tronco assenta para tras no giro da inercia (a aceleracao saturada suave)");
+    expect(pushed.armSwing < 0.0f && std::abs(pushed.trunkRoll) < 1e-6f, "reacao: os bracos para tras, sem giro de lado");
+    float overshoot = 0.0f;
+    for (int k = 0; k < 120; ++k) {
+        pushed.step(0.0f, 0.0f, 1.0f / 120.0f, s);
+        overshoot = std::max(overshoot, pushed.trunkPitch);
+    }
+    expect(overshoot > 0.2f * degree, "reacao: quando a aceleracao acaba, o tronco passa do ponto");
+    BodyReaction3D hard;
+    for (int k = 0; k < 240; ++k) hard.step(0.0f, -100.0f, 1.0f / 120.0f, s);
+    expect(hard.trunkRoll <= s.trunkMaximumDegrees * degree + 1e-6f && hard.trunkRoll > 0.0f,
+        "reacao: a curva para a direita leva o tronco para a esquerda, com teto");
+}
+
 void ballCushionTests() {
     BallOutcomeSettings3D f;
     f.stopPower = 0.0f;
@@ -1256,6 +1284,7 @@ int main() {
         contactClassTests();
         ballCushionTests();
         shotConductionTests();
+        bodyReactionTests();
         modeRuleTests();
         pendulumTests();
         referenceFrameTests();

@@ -110,6 +110,9 @@ struct AthleteState3D {
         InflatedBallHandle3D ball;
         ShotConduction3D shot;
     } conduction;
+    // O corpo fisico do padrao (28/10, item 10): a guia de cada link (1 nas
+    // pernas e na pelve, a do corpo de cima nos outros).
+    std::vector<float> guideAuthority;
     // A reescrita (R3): o corpo da classificacao de contatos, as regras de
     // troca de modo e o ultimo tick delas (a telemetria neutra: o que bateu,
     // a ultima troca e o motivo).

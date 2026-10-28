@@ -630,12 +630,18 @@ void PhysicsScene3D::Impl::finishRagdollGuidePoses() {
         RagdollRecord& r = *slot.record;
         r.state.guideErrorMeters = 0.0f;
         if (!r.guidePoseApplied || r.frozen) continue;
-        float error = 0.0f;
-        for (std::size_t i = 0; i < r.links.size(); ++i)
-            if (r.guideAuthority[i] > 0.0f)
-                error = std::max(error, (fromJolt(bi.GetPosition(r.links[i])) - r.guidePositions[i]).length());
+        // (O encaixe e decidido so pelos links que encaixam: com o corpo de cima
+        // mais solto - o corpo fisico do padrao, 28/10 -, o atraso dele nao tira
+        // o encaixe das pernas. O erro informado e o de todos.)
+        float error = 0.0f, exact = 0.0f;
+        for (std::size_t i = 0; i < r.links.size(); ++i) {
+            if (r.guideAuthority[i] <= 0.0f) continue;
+            const float off = (fromJolt(bi.GetPosition(r.links[i])) - r.guidePositions[i]).length();
+            error = std::max(error, off);
+            if (r.guideAuthority[i] >= 0.999f) exact = std::max(exact, off);
+        }
         r.state.guideErrorMeters = error;
-        if (!r.guided || r.guideTouched || r.externalForceMagnitude > 0.0f || error > 0.05f) continue;
+        if (!r.guided || r.guideTouched || r.externalForceMagnitude > 0.0f || exact > 0.05f) continue;
         for (std::size_t i = 0; i < r.links.size(); ++i)
             if (r.guideAuthority[i] >= 0.999f)
                 bi.SetPositionAndRotation(r.links[i], toJolt(r.guidePositions[i]),

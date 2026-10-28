@@ -152,6 +152,34 @@ void DefaultLocomotion3D::stepLayers(Tick& t) {
         }
     }
 
+    // A camada de reacoes por molas (28/10, item 10; BodyReaction3D): a inercia
+    // do corpo de cima - o tronco e os bracos pela aceleracao do corpo no
+    // referencial dele, a cabeca devolvendo parte do balanco do tronco. (Os
+    // eixos, medidos: na coluna, 1 + para a frente e 2 + para a esquerda; nos
+    // ombros, 1 + aproxima o braco do corpo e 2 + leva o esquerdo para tras e o
+    // direito para a frente.)
+    if (s.bodyReaction) {
+        m_reaction.step(dot(m_acceleration, forward), dot(m_acceleration, left), dt, s.reaction);
+        const float pitch = m_reaction.trunkPitch, roll = m_reaction.trunkRoll;
+        const float head = -std::clamp(s.reactionHeadReturn, 0.0f, 1.0f);
+        addCoordinate(profile, m_coordinates, "Abdomen", 1, pitch * 0.30f);
+        addCoordinate(profile, m_coordinates, "Chest", 1, pitch * 0.35f);
+        addCoordinate(profile, m_coordinates, "UpperChest", 1, pitch * 0.35f);
+        addCoordinate(profile, m_coordinates, "Abdomen", 2, roll * 0.30f);
+        addCoordinate(profile, m_coordinates, "Chest", 2, roll * 0.35f);
+        addCoordinate(profile, m_coordinates, "UpperChest", 2, roll * 0.35f);
+        addCoordinate(profile, m_coordinates, "Neck", 1, pitch * head * 0.40f);
+        addCoordinate(profile, m_coordinates, "Head", 1, pitch * head * 0.60f);
+        addCoordinate(profile, m_coordinates, "Neck", 2, roll * head * 0.40f);
+        addCoordinate(profile, m_coordinates, "Head", 2, roll * head * 0.60f);
+        addCoordinate(profile, m_coordinates, "LeftUpperArm", 2, -m_reaction.armSwing);
+        addCoordinate(profile, m_coordinates, "RightUpperArm", 2, m_reaction.armSwing);
+        addCoordinate(profile, m_coordinates, "LeftUpperArm", 1, -m_reaction.armSide);
+        addCoordinate(profile, m_coordinates, "RightUpperArm", 1, m_reaction.armSide);
+    } else {
+        m_reaction = {};
+    }
+
     // A raiz no mundo: a base da capsula mais a altura da pelve em pe (a
     // origem do modelo e a pelve), girada pelo rumo, mais o que o clipe move
     // a pelve; descida do terreno; inclinacao em volta dos pes.

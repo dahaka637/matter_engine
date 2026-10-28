@@ -237,6 +237,14 @@ struct Metrics {
     float conductionHeading = 0.0f, conductionSpin = 0.0f;
     int conductionTicks = 0;
     bool conductionValid = false;
+    // O corpo vivo (item 10): a velocidade angular da cabeca (graus/s), o giro
+    // do peito em relacao a pelve e as maos em relacao ao peito, por tick.
+    std::vector<float> headSpeed;
+    std::vector<Quaternion> trunkTurns;
+    std::array<std::vector<Vec3>, 2> handOffsets;
+    Quaternion trunkFilter;
+    std::array<Vec3, 2> handFilter {};
+    bool trunkFilterValid = false;
     std::array<bool, 2> cyclePlantedBefore { true, true };
     float gesturePelvisMin = 10.0f;
     std::array<float, 2> gestureGapNow { 1e9f, 1e9f };

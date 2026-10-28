@@ -2966,6 +2966,24 @@ void WorkbenchApp::drawLaboratoryUi() {
                                     percent("Intensidade da virada", "##TurnMoveAmount", &m_dynamicTurnMovePercent, 0.0f, 150.0f,
                                         "Quanto da manobra entra (100% é o calculado).");
                             }
+                            if (mode == 0) {
+                                // O corpo fisico do padrao (28/10, item 10): as duas
+                                // variantes, para ele escolher na pratica.
+                                const char* feels[] = { "Corpo físico: desligado", "Corpo físico: molas", "Corpo físico: física" };
+                                ImGui::SetNextItemWidth(-1.0f);
+                                ImGui::Combo("##PhysicalFeel", &m_physicalFeel, feels, 3);
+                                hint("Molas: o tronco e os braços reagem à aceleração do corpo com inércia (atrasam e passam um pouco do ponto nas arrancadas, freadas e cortes), a cabeça calma. Física: a coluna e os braços seguem a animação com a guia mais solta e carregam o próprio embalo; as pernas, o pescoço e a cabeça exatos.");
+                                if (m_physicalFeel == 1)
+                                    percent("Intensidade das molas", "##PhysicalReaction", &m_physicalReactionPercent, 0.0f, 200.0f,
+                                        "Quanto o tronco e os braços reagem (100% é o calculado).");
+                                if (m_physicalFeel == 2) {
+                                    ImGui::TextUnformatted("Guia do corpo de cima");
+                                    ImGui::SetNextItemWidth(-1.0f);
+                                    ImGui::SliderFloat("##PhysicalUpperGuide", &m_physicalUpperAuthority, 0.6f, 1.0f, "%.2f",
+                                        ImGuiSliderFlags_AlwaysClamp);
+                                    hint("1 é o exato da animação; menos, mais embalo e atraso. Abaixo de ~0,8 a cabeça passa do calmo nos cortes.");
+                                }
+                            }
                             ImGui::Checkbox("Pulo instantâneo", &m_instantJump);
                             hint("Ligado: pula ao apertar o espaço, na altura média. Desligado: segurar carrega e pula ao soltar (mais alto quanto mais segura).");
                             ImGui::Checkbox("Áreas de alcance", &m_showReachAreas);

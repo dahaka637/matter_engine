@@ -1076,6 +1076,9 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
     RagdollState3D bodyState = scene->ragdollState(handle);
     std::size_t leftFoot = profile.links.size(), rightFoot = profile.links.size();
     std::size_t chestLink = profile.links.size();
+    // O corpo vivo (item 10): a cabeca, o peito de cima e as maos.
+    std::size_t headLink = profile.links.size(), upperChestLink = profile.links.size();
+    std::array<std::size_t, 2> hands { profile.links.size(), profile.links.size() };
     std::array<std::size_t, 2> thighs { profile.links.size(), profile.links.size() };
     std::array<std::size_t, 2> shins { profile.links.size(), profile.links.size() };
     for (std::size_t i = 0; i < profile.links.size(); ++i) {
@@ -1084,6 +1087,10 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
         if (profile.links[i].id == "LeftThigh") thighs[0] = i;
         if (profile.links[i].id == "RightThigh") thighs[1] = i;
         if (profile.links[i].id == "Chest") chestLink = i;
+        if (profile.links[i].id == "Head") headLink = i;
+        if (profile.links[i].id == "UpperChest") upperChestLink = i;
+        if (profile.links[i].id == "LeftHand") hands[0] = i;
+        if (profile.links[i].id == "RightHand") hands[1] = i;
         if (profile.links[i].id == "LeftShin") shins[0] = i;
         if (profile.links[i].id == "RightShin") shins[1] = i;
     }
@@ -1884,6 +1891,36 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
                 metrics.conductionValid = true;
             }
         }
+        // O corpo vivo (28/10, item 10), no padrao depois de 1 s: a cabeca no mundo,
+        // o giro do peito em relacao a pelve e as maos em relacao ao peito (o
+        // afastamento da media de cada um sai no fim, sem depender dos eixos do repouso).
+        if (step >= 0 && t > 1.0f && mode() == BodyModeKind3D::Animated && headLink < bodyState.links.size()
+            && upperChestLink < bodyState.links.size() && hands[0] < bodyState.links.size()
+            && hands[1] < bodyState.links.size()) {
+            metrics.headSpeed.push_back(bodyState.links[headLink].angularVelocity.length() * 180.0f / Pi);
+            // (Filtrados em 0,3 s: sai a oscilacao da passada e fica a reacao.)
+            const float alpha = 1.0f - std::exp(-Dt / 0.3f);
+            const Quaternion chest = bodyState.links[upperChestLink].orientation;
+            const Quaternion turn = (bodyState.links.front().orientation.conjugate() * chest).normalized();
+            std::array<Vec3, 2> offsets;
+            for (std::size_t side = 0; side < 2; ++side)
+                offsets[side] = chest.conjugate().rotate(bodyState.links[hands[side]].position
+                    - bodyState.links[upperChestLink].position);
+            if (!metrics.trunkFilterValid) {
+                metrics.trunkFilter = turn;
+                metrics.handFilter = offsets;
+                metrics.trunkFilterValid = true;
+            } else {
+                Quaternion& f = metrics.trunkFilter;
+                const float sign = f.x * turn.x + f.y * turn.y + f.z * turn.z + f.w * turn.w < 0.0f ? -1.0f : 1.0f;
+                f = Quaternion { f.x + (sign * turn.x - f.x) * alpha, f.y + (sign * turn.y - f.y) * alpha,
+                    f.z + (sign * turn.z - f.z) * alpha, f.w + (sign * turn.w - f.w) * alpha }.normalized();
+                for (std::size_t side = 0; side < 2; ++side)
+                    metrics.handFilter[side] += (offsets[side] - metrics.handFilter[side]) * alpha;
+            }
+            metrics.trunkTurns.push_back(metrics.trunkFilter);
+            for (std::size_t side = 0; side < 2; ++side) metrics.handOffsets[side].push_back(metrics.handFilter[side]);
+        }
         if (receptionReport && step >= 0 && !bodyState.links.empty()) {
             const DefaultLocomotionOutput3D& o = legacy.defaultLocomotion.output();
             for (std::size_t side = 0; side < 2; ++side) {
@@ -2594,6 +2631,28 @@ void printMetrics(const Scenario& scenario, const Metrics& metrics, bool footste
     if (metrics.startPress >= 0.0f)
         std::printf("%-18s   arrancada: pe no chao desliza ate %.2f m/s, o primeiro pe sai do chao %.3f s depois do aperto\n", "",
             metrics.startSlide, metrics.startLiftoff);
+    if (!metrics.headSpeed.empty()) {
+        // (A media do giro: a soma no mesmo hemisferio, normalizada.)
+        Quaternion mean { 0.0f, 0.0f, 0.0f, 0.0f };
+        for (const Quaternion& q : metrics.trunkTurns) {
+            const float sign = mean.x * q.x + mean.y * q.y + mean.z * q.z + mean.w * q.w < 0.0f ? -1.0f : 1.0f;
+            mean = { mean.x + sign * q.x, mean.y + sign * q.y, mean.z + sign * q.z, mean.w + sign * q.w };
+        }
+        mean = mean.normalized();
+        float trunk = 0.0f;
+        for (const Quaternion& q : metrics.trunkTurns) {
+            const float dotted = std::min(1.0f, std::abs(mean.x * q.x + mean.y * q.y + mean.z * q.z + mean.w * q.w));
+            trunk = std::max(trunk, 2.0f * std::acos(dotted) * 180.0f / Pi);
+        }
+        float handsAway = 0.0f;
+        for (const auto& offsets : metrics.handOffsets) {
+            Vec3 center;
+            for (const Vec3& o : offsets) center += o * (1.0f / static_cast<float>(offsets.size()));
+            for (const Vec3& o : offsets) handsAway = std::max(handsAway, (o - center).length());
+        }
+        std::printf("%-18s   corpo: cabeca p95 %.0f graus/s (max %.0f) | filtrados em 0,3 s: peito x pelve ate %.1f graus da media, maos ate %.3f m\n",
+            "", percentile(metrics.headSpeed, 0.95f), percentile(metrics.headSpeed, 1.0f), trunk, handsAway);
+    }
     if (metrics.conductionValid)
         std::printf("%-18s   conducao: rumo %+.2f graus da mira, giro de lado %+.1f rad/s, %d ticks conduzindo\n", "",
             metrics.conductionHeading, metrics.conductionSpin, metrics.conductionTicks);
@@ -3123,6 +3182,10 @@ int main(int argc, char** argv) {
     if (std::getenv("XSEMVIDA")) settings.motionVariety = false;
     // XSEMCONDUCAO=1: a conducao do chute desligada (o A/B do item 1).
     if (std::getenv("XSEMCONDUCAO")) settings.ballForce.conduction = false;
+    // XCORPOFISICO=0|1|2: o corpo fisico do padrao (desligado, molas, fisica; item 10).
+    if (const char* feel = std::getenv("XCORPOFISICO")) settings.physicalFeel = std::atoi(feel);
+    if (const char* guide = std::getenv("XGUIACIMA")) settings.physicalUpperAuthority = static_cast<float>(std::atof(guide));
+    if (const char* springs = std::getenv("XMOLAS")) settings.physicalReactionPercent = static_cast<float>(std::atof(springs));
     settings.footstepLocomotion = footsteps;
     settings.activeStanceSettings.balanceSteps = balanceSteps;
     settings.capsuleResponsePercent = response;

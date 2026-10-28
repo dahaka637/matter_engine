@@ -182,6 +182,16 @@ void athleteConfigureDefaultLocomotion3D(DefaultLocomotionSettings3D& defaults, 
         defaults.maxSprintSpeed = settings.defaultMaxSprintSpeed;
     }
     defaults.trunkMotionAmount = settings.defaultTrunkMotionPercent * 0.01f;
+    defaults.bodyReaction = settings.physicalFeel == 1;
+    {
+        // (As molas pela intensidade: os ganhos e os tetos juntos.)
+        const BodyReactionSettings3D base;
+        const float amount = std::max(0.0f, settings.physicalReactionPercent) * 0.01f;
+        defaults.reaction.trunkDegreesPerAcceleration = base.trunkDegreesPerAcceleration * amount;
+        defaults.reaction.trunkMaximumDegrees = base.trunkMaximumDegrees * amount;
+        defaults.reaction.armDegreesPerAcceleration = base.armDegreesPerAcceleration * amount;
+        defaults.reaction.armMaximumDegrees = base.armMaximumDegrees * amount;
+    }
     // A arrancada (0 desliga): o gesto do idle_to_sprint e a inclinacao do corpo
     // inteiro com a aceleracao (a de antes: ate 0,10 rad para a frente; a 100%,
     // 2,5 vezes mais: ate 0,25 rad na arrancada e 0,20 para tras na freada).
