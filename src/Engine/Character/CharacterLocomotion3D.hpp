@@ -205,6 +205,11 @@ struct CharacterLocomotionInput3D {
     // virando forte e o olhar indo junto, os passos sao os do Running Turn 180
     // com o giro escalado ao angulo. false (o padrao): o de sempre, exato.
     bool runningTurn = false;
+    // A virada no tempo do corpo (27/10, pedido do usuario: nada de virada
+    // arcade num corpo fisico): andando, a pelve so gira o que o quadril gira
+    // sobre o pe apoiado, como parado; o resto vem nos passos seguintes.
+    // false (o padrao): o de sempre, exato.
+    bool movingHipTurn = false;
     Vec3 rootPositionWorld;
     Vec3 rootVelocityWorld;
     // Locomocao fisica v2 (06/10/2026): a postura dada como perdida na

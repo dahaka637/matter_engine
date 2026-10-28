@@ -96,6 +96,7 @@ AthleteRuntimeSettings3D runtimeFor(const LocomotionTask3D& task) {
     // A virada brusca: o episodio liga ou nao (o dropout, no recomeco).
     runtime.dynamicTurnMoveSettings.amount = task.turnMove.amount;
     runtime.runningTurnClip = task.runningTurn;
+    runtime.movingHipTurn = task.movingHipTurn;
     // A tabela de velocidades do padrao (o piloto e o atleta leem a mesma).
     runtime.defaultTrotSpeed = task.speeds.trot;
     runtime.defaultSprintForwardSpeed = task.speeds.sprintForward;
@@ -289,6 +290,11 @@ struct LocomotionTraining3D::Impl {
         int pushKind = 0;
         float pushNewtons = 0.0f;
         float pushSeconds = 0.0f;
+        // A quietude (27/10): quando comecou o ultimo empurrao (s no episodio) e o
+        // rumo da camera da decisao anterior (a taxa dela).
+        float lastPushSeconds = -1.0e9f;
+        float lastFacingYaw = 0.0f;
+        bool lastFacingValid = false;
         // O levantar: ja esteve deitado, ha quanto esta de pe e quando levantou.
         bool wasDown = false;
         float uprightSeconds = 0.0f;
@@ -503,6 +509,8 @@ struct LocomotionTraining3D::Impl {
         world.pushAt = world.settleEnd = -1.0f;
         world.pushKind = 0;
         world.pushNewtons = world.pushSeconds = 0.0f;
+        world.lastPushSeconds = -1.0e9f;
+        world.lastFacingValid = false;
         world.wasDown = false;
         world.uprightSeconds = 0.0f;
         world.stoodSeconds = -1.0f;
@@ -731,6 +739,7 @@ struct LocomotionTraining3D::Impl {
                 world.pushNewtons = newtons;
                 world.pushSeconds = seconds;
                 if (drill.singlePush) world.settleEnd = world.seconds + seconds + drill.settleSeconds;
+                world.lastPushSeconds = world.seconds;
             }
         }
         const AthleteControlView3D before = athleteControlView3D(athlete);
@@ -1014,7 +1023,17 @@ struct LocomotionTraining3D::Impl {
             const float quiet = (1.0f - smoothstep(0.10f, 0.40f, std::hypot(asked.x, asked.y)))
                 * (1.0f - smoothstep(0.20f, 0.60f, std::hypot(gap.x, gap.y)));
             const float tremor = static_cast<float>(shake / tickCount);
-            measure.still = quiet * tremor;
+            // A nota (27/10, o parado limpo) so cobra longe de um empurrao - os passos
+            // de recuperacao ficam livres por 3 s desde o comeco dele - e com a camera
+            // quieta (girar no lugar pede passos). A medida do episodio fica a de antes.
+            const float facing = world.command.facingYawRadians;
+            const float facingRate = world.lastFacingValid
+                ? std::abs(std::remainder(facing - world.lastFacingYaw, 6.28318530718f)) / decisionSeconds : 0.0f;
+            world.lastFacingYaw = facing;
+            world.lastFacingValid = true;
+            const float settled = (world.seconds - world.lastPushSeconds > 3.0f ? 1.0f : 0.0f)
+                * (1.0f - smoothstep(0.3f, 1.0f, facingRate));
+            measure.still = quiet * tremor * settled;
             world.quietShake += static_cast<double>(quiet) * tremor;
             world.quietWeight += quiet;
         }

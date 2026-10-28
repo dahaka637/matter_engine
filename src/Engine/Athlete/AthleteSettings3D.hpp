@@ -56,6 +56,8 @@ struct AthleteRuntimeSettings3D {
     bool dynamicTurnMove = false;
     // A meia-volta correndo pelo clipe (27/10; CharacterLocomotionInput3D::runningTurn).
     bool runningTurnClip = false;
+    // A virada no tempo do corpo (27/10; CharacterLocomotionInput3D::movingHipTurn).
+    bool movingHipTurn = false;
     TurnMoveSettings3D dynamicTurnMoveSettings;
     bool getUpHitWeakens = true;
     float getUpHitAssistPercent = 25.0f;

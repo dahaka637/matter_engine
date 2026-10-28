@@ -254,6 +254,8 @@ struct LocomotionTask3D {
     } turnMove;
     // A meia-volta correndo pelo clipe no classico (27/10). false: nada muda.
     bool runningTurn = false;
+    // A virada no tempo do corpo no classico (27/10). false: nada muda.
+    bool movingHipTurn = false;
     // Os tetos da fase (as autoridades vem do treinador: a rampa de entrada).
     LocomotionCaps3D caps;
     LocomotionRewardWeights3D reward;

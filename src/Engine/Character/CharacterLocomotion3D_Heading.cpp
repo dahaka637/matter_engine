@@ -417,6 +417,27 @@ void CharacterLocomotion3D::stepHeading(Tick& t) {
                 }
             }
         }
+        // Andando, com a virada no tempo do corpo (movingHipTurn, 27/10,
+        // pedido do usuario: nada de virada arcade num corpo fisico), a mesma
+        // regra sobre o pe que de fato apoia o corpo (o contato e a orientacao
+        // fisicos: andando, o registro de pes plantados quase nao marca apoio
+        // - 133 em 11 mil). Sem ela, o alvo da pelve pulava 90 graus a cada
+        // troca de setor e a referencia girava a 3,8 rad/s sobre um pe preso,
+        // que o corpo nao acompanhava: na meia-volta a pelve fisica ficava parada.
+        if (moving && input.movingHipTurn && std::abs(yawStep) > 0.0f) {
+            constexpr float MovingHipTwistLimit = 0.48f;
+            for (std::size_t side = 0; side < physical.feet.size(); ++side) {
+                const FootSupportEstimate3D& support = physical.feet[side];
+                if (!support.supporting || support.linkIndex >= t.state.links.size()) continue;
+                const Vec3 forward = t.state.links[support.linkIndex].orientation.rotate(
+                    profile.links[support.linkIndex].modelOrientation.conjugate().rotate({ 1.0f, 0.0f, 0.0f }));
+                const float twist = wrapAngle(m_facingYaw + m_clipPelvisYaw
+                    - std::atan2(forward.y, forward.x) - m_clipPelvisToFootYaw[side]);
+                if (std::abs(twist) > MovingHipTwistLimit && twist * yawStep > 0.0f)
+                    m_facingYaw = wrapAngle(m_facingYaw - std::copysign(
+                        std::min(std::abs(yawStep), std::abs(twist) - MovingHipTwistLimit), twist));
+            }
+        }
         }
         if (std::abs(pelvisYawError) < 0.001f
             && std::abs(m_turningRate) < 0.02f && !clipTurnControl) {
