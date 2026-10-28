@@ -69,11 +69,7 @@ void GesturePlayer3D::start(const GestureSpec3D& spec, const GestureRig3D& rig, 
     const bool calm = m_spec.receive || (m_spec.high && !shot);
     const float limit = shot ? 26.0f : calm ? 10.0f : 14.0f;
     const float accelerationLimit = shot ? 900.0f : calm ? 260.0f : 450.0f;
-    // (O contato marcado leva o gesto junto: o acompanhamento e a volta cabem
-    // depois dele.)
-    if (m_spec.contactAt > 0.0f)
-        m_keys.duration = std::max(m_keys.duration, m_spec.contactAt + 0.3f * m_keys.duration);
-    const float duration = m_keys.duration;
+    float duration = m_keys.duration;
     const float back = calm ? std::clamp(0.35f * duration, 0.10f, 0.18f) : std::clamp(0.35f * duration, 0.06f, 0.12f);
     m_lift = {};
     const float nominalFollow = m_keys.followTime - m_keys.contactTime;
@@ -164,11 +160,17 @@ void GesturePlayer3D::start(const GestureSpec3D& spec, const GestureRig3D& rig, 
         if (worst <= 1.0f) break;
     }
     build(strike);
+    // (O contato marcado leva o gesto inteiro junto: o acompanhamento e a volta
+    // guardam o tempo deles depois do contato - espremidos, a canela voltava a
+    // 33 rad/s no chute de primeira da bola lenta.)
     if (m_spec.contactAt > windup + strike) {
+        duration += m_spec.contactAt - (windup + strike);
+        m_keys.duration = duration;
         if (windup > 0.0f)
             windup = m_spec.contactAt - strike;
         else
-            build(strike = m_spec.contactAt);
+            strike = m_spec.contactAt;
+        build(strike);
     }
     for (std::size_t i = 0; i < 7 && windup > 0.0f; ++i)
         m_windup[i] = { current.value[i], std::clamp(currentVelocity.value[i], -VelocityLimit, VelocityLimit), 0.0f,

@@ -88,9 +88,11 @@ void DefaultLocomotion3D::stepPose(Tick& t) {
     }
     // O parado pela ultima passada (28/10, pedido do usuario: "o ultimo
     // movimento determina qual o menor custo para a proxima perna de apoio"):
-    // enquanto o parado ainda quase nao pesa, vale o de base mais perto dos pes
-    // da passada de agora - o parado ou o espelho dele; pesando, fica. (Trocado
-    // com o parado ja pesando, os pes saltavam meia base num tick.)
+    // uma vez por parada, quando o parado comeca a pesar, o de base mais perto
+    // dos pes da passada - o parado ou o espelho dele. (Trocado com o parado ja
+    // pesando, os pes saltavam meia base num tick; reavaliado a cada tick, a
+    // pitada de parado nas freadas e nas arrancadas trocava de base a cada meio
+    // passo e mexia no corpo andando.)
     const bool mirrorable = s.idleFromLastStride && animations.idle != nullptr && animations.idleMirror != nullptr
         && m_feet[0] != 0 && m_feet[1] != 0;
     if (mirrorable) {
@@ -117,7 +119,7 @@ void DefaultLocomotion3D::stepPose(Tick& t) {
         }
         if (!input.leading) {
             m_idleMirrorTarget = 0.0f;
-        } else if (m_idleWeight < 0.15f) {
+        } else if (input.grounded && m_idleWeight >= 0.02f && m_walkingLed) {
             const std::array<Vec3, 2> now = feetOf(m_coordinates, rootRotation.result());
             float cost[2] = {};
             for (std::size_t k = 0; k < 2; ++k)
@@ -129,6 +131,9 @@ void DefaultLocomotion3D::stepPose(Tick& t) {
         // pe nunca desliza mais que ~1 m/s pela troca, numa base de ~0,5 m.)
         const float rate = std::clamp(2.0f / std::max(1e-3f, m_idleWeight), 2.0f, 20.0f);
         m_idleMirror += std::clamp(m_idleMirrorTarget - m_idleMirror, -rate * dt, rate * dt);
+        // (A parada de verdade vem de uma caminhada conduzida pelo padrao: logo
+        // depois de uma volta do fisico, trocar a base desequilibrava o corpo.)
+        m_walkingLed = input.leading && input.grounded && m_idleWeight < 0.02f;
     } else {
         m_idleMirror = m_idleMirrorTarget = 0.0f;
     }

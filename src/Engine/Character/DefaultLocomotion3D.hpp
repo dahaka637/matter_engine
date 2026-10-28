@@ -759,6 +759,7 @@ private:
     // so enquanto o parado quase nao pesa) e as bases dos dois (os pes no rumo
     // do corpo, a partir da raiz; calculadas uma vez).
     float m_idleMirror = 0.0f, m_idleMirrorTarget = 0.0f;
+    bool m_walkingLed = false;
     std::array<std::array<Vec3, 2>, 2> m_idleStances {};
     bool m_idleStancesValid = false;
     float m_phase = 0.0f;

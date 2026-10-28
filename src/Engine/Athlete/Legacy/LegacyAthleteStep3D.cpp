@@ -1170,9 +1170,18 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             const bool fires = upper || (choice.inReach && (!waits || !coming || offset.length() <= armDistance));
             // (O gesto do pedido guardado ja comecou: na chegada, so a forca.)
             const bool started = fromArmed && armed.started;
-            if (!fires && !fromArmed && (receive || (coming && (request == BallActionKind3D::Shot || raising))))
+            // (O chute e o levantar guardados esperam tambem o caminho da bola da
+            // distancia da recepcao ate a deles: a janela e a mesma da recepcao,
+            // contada ate o ponto dela - com 0,3 s a partir do aperto, a bola a 4
+            // m/s apertada a 1,5 m chegava depois e o chute se perdia.)
+            if (!fires && !fromArmed && (receive || (coming && (request == BallActionKind3D::Shot || raising)))) {
+                const float extra = kickWaits
+                    ? std::max(0.0f, settings.ballForce.receiveArmDistance * bodyScale3D(assets.body) - armDistance)
+                        / std::max(1.0f, closing)
+                    : 0.0f;
                 armed = { true, request == BallActionKind3D::Shot, requestPower, requestLift, requestCurve, requestAimYaw,
-                    settings.ballForce.receiveArmSeconds, receive, false, raising };
+                    settings.ballForce.receiveArmSeconds + extra, receive, false, raising };
+            }
             if (fromArmed && !choice.inReach && !coming) armed.active = false;
             const Vec3 aimedInBody { dot(aimed, forward), dot(aimed, left), 0.0f };
             // O gesto do pe de um balde: o tempo, a semente, o rumo em que a bola

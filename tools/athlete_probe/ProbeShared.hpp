@@ -218,6 +218,10 @@ struct Metrics {
     // E a do joelho da outra perna (a de apoio) durante o gesto, e a pelve mais
     // baixa nele (m).
     float supportKneeMax = 0.0f;
+    // O ultimo pe que pousou andando (0 esquerdo, 1 direito; -1 nenhum) e o
+    // apoio de cada um no tick anterior (28/10: o parado pela ultima passada).
+    int lastLanded = -1;
+    std::array<bool, 2> cyclePlantedBefore { true, true };
     float gesturePelvisMin = 10.0f;
     std::array<float, 2> gestureGapNow { 1e9f, 1e9f };
     std::vector<float> latencies;

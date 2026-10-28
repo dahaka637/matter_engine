@@ -160,6 +160,7 @@ void DefaultLocomotion3D::reset(float facingYawRadians) {
     m_dipRate = 0.0f;
     m_idleWeight = 1.0f;
     m_idleMirror = m_idleMirrorTarget = 0.0f;
+    m_walkingLed = false;
     m_phase = 0.0f;
     m_strides = 0.0f;
     m_idleTime = 0.0f;

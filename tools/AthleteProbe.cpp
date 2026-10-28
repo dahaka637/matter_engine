@@ -591,9 +591,7 @@ std::vector<Scenario> scenarios() {
             const float at = std::getenv("XCARRINHO") ? static_cast<float>(std::atof(std::getenv("XCARRINHO"))) : 0.9f;
             k.crouch = t > at && t < at + 0.1f;
             return k; } });
-        // (7 s: a volta do fisico leva de 3,0 a 3,4 s conforme a pancada - a
-        // fisica do choque e caotica -, e em 5 s a ponte as vezes nao acabava.)
-        Scenario paredePulo { "parede_pulo", 7.0f, [](float t) {
+        Scenario paredePulo { "parede_pulo", 5.0f, [](float t) {
             Keys k;
             k.forward = t > 0.3f && t < 2.5f ? 1.0f : 0.0f;
             k.jump = t > 1.05f && t < 1.25f;
@@ -1515,6 +1513,11 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
                 metrics.gestureSequence += item;
             }
         for (std::size_t side = 0; side < 2; ++side) gestureWas[side] = legacy.defaultLocomotion.output().gestureLegs[side];
+        for (std::size_t side = 0; side < 2; ++side) {
+            const DefaultLocomotionOutput3D& gait = legacy.defaultLocomotion.output();
+            if (gait.cycling && gait.cyclePlanted[side] && !metrics.cyclePlantedBefore[side]) metrics.lastLanded = static_cast<int>(side);
+            metrics.cyclePlantedBefore[side] = gait.cyclePlanted[side];
+        }
         if (output.ballTouched && receptionReport && receptionAt < 0.0f && !bodyState.links.empty()) {
             receptionAt = t;
             receptionBallBefore = ballState.linearVelocity;
@@ -2686,21 +2689,24 @@ int runChecks(const ProbeContext& context) {
         // abaixo de receiveShotBar, o chute ainda e recepcao (ela para).
         {
             const float bar = defaultBallOutcomeSettings3D().receiveShotBar;
-            for (const float power : { 0.6f, 0.2f, 0.5f * bar }) {
+            // (E a bola lenta, a 4 m/s: a janela vai ate o ponto da recepcao.)
+            for (const float power : { 0.6f, 0.2f, 0.5f * bar, -0.6f }) {
                 for (const Scenario& scenario : scenarios()) {
                     if (scenario.name != "recepcao_chute_fraco") continue;
                     Scenario early = scenario;
                     early.autoDistance = 1.5f;
-                    early.autoPower = power;
+                    if (power < 0.0f) early.placeVelocity = scenario.placeVelocity * 0.5f;
+                    early.autoPower = std::abs(power);
                     const Metrics m = runScenario(context, early, gestures, false, nullptr, 1);
                     const float waited = m.forceTime - m.requestTime;
-                    const bool kick = power >= bar;
-                    char line[220];
+                    const bool kick = std::abs(power) >= bar;
+                    char line[240];
                     std::snprintf(line, sizeof(line),
-                        "chute apertado a 1,5 m com a bola vindo (barra %.3f, %s): %d toque de %d pedido, a forca %.3f s depois, bola ate %.1f m/s",
-                        power, kick ? "chute" : "recepcao", m.touches, m.requests, waited, m.ballSpeedAfter);
-                    expect(m.requests == 1 && m.touches == 1 && waited > 0.05f && waited < 0.3f && !m.fell
-                            && (kick ? m.ballSpeedAfter > 11.0f : m.ballSpeedAfter < 8.5f), line, m);
+                        "chute apertado a 1,5 m com a bola vindo%s (barra %.3f, %s): %d toque de %d pedido, a forca %.3f s depois, bola ate %.1f m/s, perna louca %d",
+                        power < 0.0f ? " devagar" : "", std::abs(power), kick ? "chute" : "recepcao", m.touches, m.requests, waited,
+                        m.ballSpeedAfter, m.crazyLegTicks);
+                    expect(m.requests == 1 && m.touches == 1 && waited > 0.05f && waited < (power < 0.0f ? 0.4f : 0.3f) && !m.fell
+                            && m.crazyLegTicks == 0 && (kick ? m.ballSpeedAfter > 11.0f : m.ballSpeedAfter < 8.5f), line, m);
                 }
             }
         }
@@ -2709,19 +2715,24 @@ int runChecks(const ProbeContext& context) {
         // parando em varios instantes do passo, as duas bases aparecem (o parado e
         // o espelho) e toda parada e suave (as pernas e o pe de apoio como antes).
         {
-            int mirrored = 0, total = 0;
+            int mirrored = 0, total = 0, literal = 0;
             float worstLeg = 0.0f, worstSlide = 0.0f;
             for (const Scenario& scenario : scenarios()) {
                 if (scenario.name.rfind("parada_", 0) != 0) continue;
                 const Metrics m = runScenario(context, scenario, gestures, false, nullptr, 1);
                 ++total;
-                if (m.stanceValid && m.stanceEnd[1].x > m.stanceEnd[0].x) ++mirrored;
+                const bool mirror = m.stanceValid && m.stanceEnd[1].x > m.stanceEnd[0].x;
+                if (mirror) ++mirrored;
+                // (A regra ao pe da letra: o apoio - o pe de tras no parado; o
+                // direito no parado, o esquerdo no espelho - e o ultimo a pousar.)
+                if (m.lastLanded == (mirror ? 0 : 1)) ++literal;
                 worstLeg = std::max(worstLeg, m.peakLegAcceleration);
                 worstSlide = std::max(worstSlide, percentile(m.plantedSlide, 1.0f));
             }
             char line[200];
-            std::snprintf(line, sizeof(line), "paradas: %d de %d no espelho, pernas ate %.0f m/s2, pe de apoio ate %.1f m/s", mirrored,
-                total, worstLeg, worstSlide);
+            std::snprintf(line, sizeof(line),
+                "paradas: %d de %d no espelho (%d de %d com o apoio no ultimo pe a pousar), pernas ate %.0f m/s2, pe de apoio ate %.1f m/s",
+                mirrored, total, literal, total, worstLeg, worstSlide);
             Metrics none;
             expect(total > 0 && mirrored > 0 && mirrored < total && worstLeg < 200.0f && worstSlide < 4.0f, line, none);
         }
