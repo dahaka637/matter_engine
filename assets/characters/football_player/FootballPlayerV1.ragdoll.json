@@ -10,7 +10,7 @@
      -0.4538376033306122,
      -0.5477429032325745,
      -0.5422466993331909,
-     0.44718891382217407
+     0.4471889138221741
     ],
     "position": [
      0.00329799996688962,
@@ -66,7 +66,21 @@
       "maximumDegrees": 25.0,
       "maximumTorque": 180.0,
       "minimumDegrees": -25.0,
-      "stiffness": 440.0
+      "stiffness": 440.0,
+      "passive": {
+       "upper": {
+        "startDegrees": 0.0,
+        "endDegrees": 7.0,
+        "scaleDegrees": 2.9,
+        "endTorque": 12.0
+       },
+       "lower": {
+        "startDegrees": -0.0,
+        "endDegrees": -7.0,
+        "scaleDegrees": 2.9,
+        "endTorque": 12.0
+       }
+      }
      },
      {
       "axis": "swing1",
@@ -74,7 +88,21 @@
       "maximumDegrees": 45.0,
       "maximumTorque": 525.0,
       "minimumDegrees": -35.0,
-      "stiffness": 440.0
+      "stiffness": 440.0,
+      "passive": {
+       "upper": {
+        "startDegrees": 0.0,
+        "endDegrees": 55.0,
+        "scaleDegrees": 21.5,
+        "endTorque": 100.0
+       },
+       "lower": {
+        "startDegrees": -0.0,
+        "endDegrees": -20.0,
+        "scaleDegrees": 10.0,
+        "endTorque": 20.0
+       }
+      }
      },
      {
       "axis": "swing2",
@@ -82,7 +110,21 @@
       "maximumDegrees": 20.0,
       "maximumTorque": 330.0,
       "minimumDegrees": -20.0,
-      "stiffness": 440.0
+      "stiffness": 440.0,
+      "passive": {
+       "upper": {
+        "startDegrees": 0.0,
+        "endDegrees": 25.0,
+        "scaleDegrees": 6.8,
+        "endTorque": 50.0
+       },
+       "lower": {
+        "startDegrees": -0.0,
+        "endDegrees": -25.0,
+        "scaleDegrees": 6.8,
+        "endTorque": 50.0
+       }
+      }
      }
     ],
     "frameOrientation": [
@@ -139,7 +181,21 @@
       "maximumDegrees": 22.0,
       "maximumTorque": 180.0,
       "minimumDegrees": -22.0,
-      "stiffness": 440.0
+      "stiffness": 440.0,
+      "passive": {
+       "upper": {
+        "startDegrees": 0.0,
+        "endDegrees": 14.0,
+        "scaleDegrees": 5.7,
+        "endTorque": 12.0
+       },
+       "lower": {
+        "startDegrees": -0.0,
+        "endDegrees": -14.0,
+        "scaleDegrees": 5.7,
+        "endTorque": 12.0
+       }
+      }
      },
      {
       "axis": "swing1",
@@ -147,7 +203,21 @@
       "maximumDegrees": 38.0,
       "maximumTorque": 525.0,
       "minimumDegrees": -28.0,
-      "stiffness": 440.0
+      "stiffness": 440.0,
+      "passive": {
+       "upper": {
+        "startDegrees": 0.0,
+        "endDegrees": 11.0,
+        "scaleDegrees": 4.3,
+        "endTorque": 100.0
+       },
+       "lower": {
+        "startDegrees": -0.0,
+        "endDegrees": -6.0,
+        "scaleDegrees": 3.0,
+        "endTorque": 20.0
+       }
+      }
      },
      {
       "axis": "swing2",
@@ -155,7 +225,21 @@
       "maximumDegrees": 18.0,
       "maximumTorque": 330.0,
       "minimumDegrees": -18.0,
-      "stiffness": 440.0
+      "stiffness": 440.0,
+      "passive": {
+       "upper": {
+        "startDegrees": 0.0,
+        "endDegrees": 10.0,
+        "scaleDegrees": 2.7,
+        "endTorque": 50.0
+       },
+       "lower": {
+        "startDegrees": -0.0,
+        "endDegrees": -10.0,
+        "scaleDegrees": 2.7,
+        "endTorque": 50.0
+       }
+      }
      }
     ],
     "frameOrientation": [
@@ -212,7 +296,21 @@
       "maximumDegrees": 20.0,
       "maximumTorque": 180.0,
       "minimumDegrees": -20.0,
-      "stiffness": 440.0
+      "stiffness": 440.0,
+      "passive": {
+       "upper": {
+        "startDegrees": 0.0,
+        "endDegrees": 11.0,
+        "scaleDegrees": 4.5,
+        "endTorque": 12.0
+       },
+       "lower": {
+        "startDegrees": -0.0,
+        "endDegrees": -11.0,
+        "scaleDegrees": 4.5,
+        "endTorque": 12.0
+       }
+      }
      },
      {
       "axis": "swing1",
@@ -220,7 +318,21 @@
       "maximumDegrees": 35.0,
       "maximumTorque": 525.0,
       "minimumDegrees": -25.0,
-      "stiffness": 440.0
+      "stiffness": 440.0,
+      "passive": {
+       "upper": {
+        "startDegrees": 0.0,
+        "endDegrees": 7.0,
+        "scaleDegrees": 2.7,
+        "endTorque": 100.0
+       },
+       "lower": {
+        "startDegrees": -0.0,
+        "endDegrees": -4.0,
+        "scaleDegrees": 2.0,
+        "endTorque": 20.0
+       }
+      }
      },
      {
       "axis": "swing2",
@@ -228,7 +340,21 @@
       "maximumDegrees": 18.0,
       "maximumTorque": 330.0,
       "minimumDegrees": -18.0,
-      "stiffness": 440.0
+      "stiffness": 440.0,
+      "passive": {
+       "upper": {
+        "startDegrees": 0.0,
+        "endDegrees": 6.0,
+        "scaleDegrees": 1.6,
+        "endTorque": 50.0
+       },
+       "lower": {
+        "startDegrees": -0.0,
+        "endDegrees": -6.0,
+        "scaleDegrees": 1.6,
+        "endTorque": 50.0
+       }
+      }
      }
     ],
     "frameOrientation": [
@@ -285,7 +411,21 @@
       "maximumDegrees": 30.0,
       "maximumTorque": 80.0,
       "minimumDegrees": -30.0,
-      "stiffness": 82.0
+      "stiffness": 82.0,
+      "passive": {
+       "upper": {
+        "startDegrees": 2.0,
+        "endDegrees": 32.0,
+        "scaleDegrees": 10.0,
+        "endTorque": 4.0
+       },
+       "lower": {
+        "startDegrees": -2.0,
+        "endDegrees": -32.0,
+        "scaleDegrees": 10.0,
+        "endTorque": 4.0
+       }
+      }
      },
      {
       "axis": "swing1",
@@ -293,7 +433,21 @@
       "maximumDegrees": 22.0,
       "maximumTorque": 80.0,
       "minimumDegrees": -18.0,
-      "stiffness": 82.0
+      "stiffness": 82.0,
+      "passive": {
+       "upper": {
+        "startDegrees": 10.0,
+        "endDegrees": 75.0,
+        "scaleDegrees": 21.6,
+        "endTorque": 8.0
+       },
+       "lower": {
+        "startDegrees": -0.0,
+        "endDegrees": -45.0,
+        "scaleDegrees": 28.5,
+        "endTorque": 6.0
+       }
+      }
      },
      {
       "axis": "swing2",
@@ -301,7 +455,21 @@
       "maximumDegrees": 22.0,
       "maximumTorque": 80.0,
       "minimumDegrees": -22.0,
-      "stiffness": 82.0
+      "stiffness": 82.0,
+      "passive": {
+       "upper": {
+        "startDegrees": 5.0,
+        "endDegrees": 35.0,
+        "scaleDegrees": 10.0,
+        "endTorque": 6.0
+       },
+       "lower": {
+        "startDegrees": -5.0,
+        "endDegrees": -35.0,
+        "scaleDegrees": 10.0,
+        "endTorque": 6.0
+       }
+      }
      }
     ],
     "frameOrientation": [
@@ -358,7 +526,21 @@
       "maximumDegrees": 45.0,
       "maximumTorque": 55.0,
       "minimumDegrees": -45.0,
-      "stiffness": 76.0
+      "stiffness": 76.0,
+      "passive": {
+       "upper": {
+        "startDegrees": 30.0,
+        "endDegrees": 45.0,
+        "scaleDegrees": 5.0,
+        "endTorque": 4.0
+       },
+       "lower": {
+        "startDegrees": -30.0,
+        "endDegrees": -45.0,
+        "scaleDegrees": 5.0,
+        "endTorque": 4.0
+       }
+      }
      },
      {
       "axis": "swing1",
@@ -366,7 +548,21 @@
       "maximumDegrees": 34.0,
       "maximumTorque": 55.0,
       "minimumDegrees": -28.0,
-      "stiffness": 76.0
+      "stiffness": 76.0,
+      "passive": {
+       "upper": {
+        "startDegrees": 0.0,
+        "endDegrees": 15.0,
+        "scaleDegrees": 11.6,
+        "endTorque": 8.0
+       },
+       "lower": {
+        "startDegrees": -17.7,
+        "endDegrees": -30.0,
+        "scaleDegrees": 4.1,
+        "endTorque": 6.0
+       }
+      }
      },
      {
       "axis": "swing2",
@@ -374,7 +570,21 @@
       "maximumDegrees": 28.0,
       "maximumTorque": 55.0,
       "minimumDegrees": -28.0,
-      "stiffness": 76.0
+      "stiffness": 76.0,
+      "passive": {
+       "upper": {
+        "startDegrees": 0.0,
+        "endDegrees": 12.0,
+        "scaleDegrees": 4.0,
+        "endTorque": 6.0
+       },
+       "lower": {
+        "startDegrees": -0.0,
+        "endDegrees": -12.0,
+        "scaleDegrees": 4.0,
+        "endTorque": 6.0
+       }
+      }
      }
     ],
     "frameOrientation": [
@@ -432,7 +642,21 @@
       "maximumDegrees": 80.0,
       "maximumTorque": 160.0,
       "minimumDegrees": -80.0,
-      "stiffness": 240.0
+      "stiffness": 240.0,
+      "passive": {
+       "lower": {
+        "startDegrees": -70.0,
+        "endDegrees": -90.0,
+        "scaleDegrees": 7.0,
+        "endTorque": 5.0
+       },
+       "upper": {
+        "startDegrees": 45.0,
+        "endDegrees": 62.0,
+        "scaleDegrees": 5.0,
+        "endTorque": 5.0
+       }
+      }
      },
      {
       "axis": "swing1",
@@ -440,7 +664,15 @@
       "maximumDegrees": 115.0,
       "maximumTorque": 160.0,
       "minimumDegrees": -115.0,
-      "stiffness": 240.0
+      "stiffness": 240.0,
+      "passive": {
+       "lower": {
+        "startDegrees": -70.0,
+        "endDegrees": -90.0,
+        "scaleDegrees": 7.0,
+        "endTorque": 10.0
+       }
+      }
      },
      {
       "axis": "swing2",
@@ -448,7 +680,21 @@
       "maximumDegrees": 95.0,
       "maximumTorque": 160.0,
       "minimumDegrees": -95.0,
-      "stiffness": 240.0
+      "stiffness": 240.0,
+      "passive": {
+       "lower": {
+        "startDegrees": -105.0,
+        "endDegrees": -130.0,
+        "scaleDegrees": 8.0,
+        "endTorque": 10.0
+       },
+       "upper": {
+        "startDegrees": 30.0,
+        "endDegrees": 45.0,
+        "scaleDegrees": 5.0,
+        "endTorque": 10.0
+       }
+      }
      }
     ],
     "frameOrientation": [
@@ -476,7 +722,7 @@
   {
    "capsule": {
     "contactSensor": true,
-    "length": 0.28716999292373657,
+    "length": 0.2871699929237366,
     "material": "body",
     "orientation": [
      0.0,
@@ -506,7 +752,21 @@
       "maximumDegrees": 145.0,
       "maximumTorque": 120.0,
       "minimumDegrees": -5.0,
-      "stiffness": 90.0
+      "stiffness": 90.0,
+      "passive": {
+       "upper": {
+        "startDegrees": 120.0,
+        "endDegrees": 145.0,
+        "scaleDegrees": 8.0,
+        "endTorque": 10.0
+       },
+       "lower": {
+        "startDegrees": 1.0,
+        "endDegrees": -5.0,
+        "scaleDegrees": 2.0,
+        "endTorque": 10.0
+       }
+      }
      }
     ],
     "frameOrientation": [
@@ -563,7 +823,21 @@
       "maximumDegrees": 70.0,
       "maximumTorque": 30.0,
       "minimumDegrees": -70.0,
-      "stiffness": 32.0
+      "stiffness": 32.0,
+      "passive": {
+       "upper": {
+        "startDegrees": 65.0,
+        "endDegrees": 85.0,
+        "scaleDegrees": 5.0,
+        "endTorque": 2.0
+       },
+       "lower": {
+        "startDegrees": -65.0,
+        "endDegrees": -85.0,
+        "scaleDegrees": 5.0,
+        "endTorque": 2.0
+       }
+      }
      },
      {
       "axis": "swing1",
@@ -571,7 +845,21 @@
       "maximumDegrees": 35.0,
       "maximumTorque": 30.0,
       "minimumDegrees": -35.0,
-      "stiffness": 32.0
+      "stiffness": 32.0,
+      "passive": {
+       "upper": {
+        "startDegrees": 75.0,
+        "endDegrees": 90.0,
+        "scaleDegrees": 5.0,
+        "endTorque": 1.0
+       },
+       "lower": {
+        "startDegrees": -75.0,
+        "endDegrees": -90.0,
+        "scaleDegrees": 5.0,
+        "endTorque": 1.0
+       }
+      }
      }
     ],
     "frameOrientation": [
@@ -629,7 +917,21 @@
       "maximumDegrees": 80.0,
       "maximumTorque": 160.0,
       "minimumDegrees": -80.0,
-      "stiffness": 240.0
+      "stiffness": 240.0,
+      "passive": {
+       "upper": {
+        "startDegrees": 70.0,
+        "endDegrees": 90.0,
+        "scaleDegrees": 7.0,
+        "endTorque": 5.0
+       },
+       "lower": {
+        "startDegrees": -45.0,
+        "endDegrees": -62.0,
+        "scaleDegrees": 5.0,
+        "endTorque": 5.0
+       }
+      }
      },
      {
       "axis": "swing1",
@@ -637,7 +939,15 @@
       "maximumDegrees": 115.0,
       "maximumTorque": 160.0,
       "minimumDegrees": -115.0,
-      "stiffness": 240.0
+      "stiffness": 240.0,
+      "passive": {
+       "lower": {
+        "startDegrees": -70.0,
+        "endDegrees": -90.0,
+        "scaleDegrees": 7.0,
+        "endTorque": 10.0
+       }
+      }
      },
      {
       "axis": "swing2",
@@ -645,7 +955,21 @@
       "maximumDegrees": 95.0,
       "maximumTorque": 160.0,
       "minimumDegrees": -95.0,
-      "stiffness": 240.0
+      "stiffness": 240.0,
+      "passive": {
+       "upper": {
+        "startDegrees": 105.0,
+        "endDegrees": 130.0,
+        "scaleDegrees": 8.0,
+        "endTorque": 10.0
+       },
+       "lower": {
+        "startDegrees": -30.0,
+        "endDegrees": -45.0,
+        "scaleDegrees": 5.0,
+        "endTorque": 10.0
+       }
+      }
      }
     ],
     "frameOrientation": [
@@ -673,7 +997,7 @@
   {
    "capsule": {
     "contactSensor": true,
-    "length": 0.28716999292373657,
+    "length": 0.2871699929237366,
     "material": "body",
     "orientation": [
      0.0,
@@ -703,7 +1027,21 @@
       "maximumDegrees": 145.0,
       "maximumTorque": 120.0,
       "minimumDegrees": -5.0,
-      "stiffness": 90.0
+      "stiffness": 90.0,
+      "passive": {
+       "upper": {
+        "startDegrees": 120.0,
+        "endDegrees": 145.0,
+        "scaleDegrees": 8.0,
+        "endTorque": 10.0
+       },
+       "lower": {
+        "startDegrees": 1.0,
+        "endDegrees": -5.0,
+        "scaleDegrees": 2.0,
+        "endTorque": 10.0
+       }
+      }
      }
     ],
     "frameOrientation": [
@@ -760,7 +1098,21 @@
       "maximumDegrees": 70.0,
       "maximumTorque": 30.0,
       "minimumDegrees": -70.0,
-      "stiffness": 32.0
+      "stiffness": 32.0,
+      "passive": {
+       "upper": {
+        "startDegrees": 65.0,
+        "endDegrees": 85.0,
+        "scaleDegrees": 5.0,
+        "endTorque": 2.0
+       },
+       "lower": {
+        "startDegrees": -65.0,
+        "endDegrees": -85.0,
+        "scaleDegrees": 5.0,
+        "endTorque": 2.0
+       }
+      }
      },
      {
       "axis": "swing1",
@@ -768,7 +1120,21 @@
       "maximumDegrees": 35.0,
       "maximumTorque": 30.0,
       "minimumDegrees": -35.0,
-      "stiffness": 32.0
+      "stiffness": 32.0,
+      "passive": {
+       "upper": {
+        "startDegrees": 75.0,
+        "endDegrees": 90.0,
+        "scaleDegrees": 5.0,
+        "endTorque": 1.0
+       },
+       "lower": {
+        "startDegrees": -75.0,
+        "endDegrees": -90.0,
+        "scaleDegrees": 5.0,
+        "endTorque": 1.0
+       }
+      }
      }
     ],
     "frameOrientation": [
@@ -826,7 +1192,21 @@
       "maximumDegrees": 45.0,
       "maximumTorque": 200.0,
       "minimumDegrees": -45.0,
-      "stiffness": 750.0
+      "stiffness": 750.0,
+      "passive": {
+       "lower": {
+        "startDegrees": -23.0,
+        "endDegrees": -38.0,
+        "scaleDegrees": 5.0,
+        "endTorque": 40.0
+       },
+       "upper": {
+        "startDegrees": 27.0,
+        "endDegrees": 42.0,
+        "scaleDegrees": 5.0,
+        "endTorque": 40.0
+       }
+      }
      },
      {
       "axis": "swing1",
@@ -834,7 +1214,21 @@
       "maximumDegrees": 30.0,
       "maximumTorque": 450.0,
       "minimumDegrees": -120.0,
-      "stiffness": 750.0
+      "stiffness": 750.0,
+      "passive": {
+       "lower": {
+        "startDegrees": -50.0,
+        "endDegrees": -125.0,
+        "scaleDegrees": 25.0,
+        "endTorque": 15.0
+       },
+       "upper": {
+        "startDegrees": -24.5,
+        "endDegrees": 25.0,
+        "scaleDegrees": 16.5,
+        "endTorque": 34.5
+       }
+      }
      },
      {
       "axis": "swing2",
@@ -842,7 +1236,21 @@
       "maximumDegrees": 42.0,
       "maximumTorque": 330.0,
       "minimumDegrees": -42.0,
-      "stiffness": 750.0
+      "stiffness": 750.0,
+      "passive": {
+       "lower": {
+        "startDegrees": -32.0,
+        "endDegrees": -50.0,
+        "scaleDegrees": 6.0,
+        "endTorque": 40.0
+       },
+       "upper": {
+        "startDegrees": 12.0,
+        "endDegrees": 30.0,
+        "scaleDegrees": 6.0,
+        "endTorque": 40.0
+       }
+      }
      }
     ],
     "frameOrientation": [
@@ -900,7 +1308,21 @@
       "maximumDegrees": 145.0,
       "maximumTorque": 400.0,
       "minimumDegrees": -5.0,
-      "stiffness": 650.0
+      "stiffness": 650.0,
+      "passive": {
+       "upper": {
+        "startDegrees": 73.0,
+        "endDegrees": 145.0,
+        "scaleDegrees": 24.0,
+        "endTorque": 29.5
+       },
+       "lower": {
+        "startDegrees": 16.0,
+        "endDegrees": -5.0,
+        "scaleDegrees": 7.0,
+        "endTorque": 22.0
+       }
+      }
      }
     ],
     "frameOrientation": [
@@ -2035,7 +2457,21 @@
       "maximumDegrees": 65.0,
       "maximumTorque": 330.0,
       "minimumDegrees": -50.0,
-      "stiffness": 360.0
+      "stiffness": 360.0,
+      "passive": {
+       "lower": {
+        "startDegrees": -2.0,
+        "endDegrees": -35.0,
+        "scaleDegrees": 11.0,
+        "endTorque": 30.0
+       },
+       "upper": {
+        "startDegrees": 41.5,
+        "endDegrees": 58.0,
+        "scaleDegrees": 5.5,
+        "endTorque": 30.0
+       }
+      }
      },
      {
       "axis": "swing1",
@@ -2043,7 +2479,21 @@
       "maximumDegrees": 35.0,
       "maximumTorque": 160.0,
       "minimumDegrees": -35.0,
-      "stiffness": 360.0
+      "stiffness": 360.0,
+      "passive": {
+       "upper": {
+        "startDegrees": 19.5,
+        "endDegrees": 30.0,
+        "scaleDegrees": 3.5,
+        "endTorque": 40.0
+       },
+       "lower": {
+        "startDegrees": -9.5,
+        "endDegrees": -20.0,
+        "scaleDegrees": 3.5,
+        "endTorque": 20.0
+       }
+      }
      }
     ],
     "frameOrientation": [
@@ -2101,7 +2551,21 @@
       "maximumDegrees": 45.0,
       "maximumTorque": 200.0,
       "minimumDegrees": -45.0,
-      "stiffness": 750.0
+      "stiffness": 750.0,
+      "passive": {
+       "upper": {
+        "startDegrees": 23.0,
+        "endDegrees": 38.0,
+        "scaleDegrees": 5.0,
+        "endTorque": 40.0
+       },
+       "lower": {
+        "startDegrees": -27.0,
+        "endDegrees": -42.0,
+        "scaleDegrees": 5.0,
+        "endTorque": 40.0
+       }
+      }
      },
      {
       "axis": "swing1",
@@ -2109,7 +2573,21 @@
       "maximumDegrees": 30.0,
       "maximumTorque": 450.0,
       "minimumDegrees": -120.0,
-      "stiffness": 750.0
+      "stiffness": 750.0,
+      "passive": {
+       "lower": {
+        "startDegrees": -50.0,
+        "endDegrees": -125.0,
+        "scaleDegrees": 25.0,
+        "endTorque": 15.0
+       },
+       "upper": {
+        "startDegrees": -24.5,
+        "endDegrees": 25.0,
+        "scaleDegrees": 16.5,
+        "endTorque": 34.5
+       }
+      }
      },
      {
       "axis": "swing2",
@@ -2117,7 +2595,21 @@
       "maximumDegrees": 42.0,
       "maximumTorque": 330.0,
       "minimumDegrees": -42.0,
-      "stiffness": 750.0
+      "stiffness": 750.0,
+      "passive": {
+       "upper": {
+        "startDegrees": 32.0,
+        "endDegrees": 50.0,
+        "scaleDegrees": 6.0,
+        "endTorque": 40.0
+       },
+       "lower": {
+        "startDegrees": -12.0,
+        "endDegrees": -30.0,
+        "scaleDegrees": 6.0,
+        "endTorque": 40.0
+       }
+      }
      }
     ],
     "frameOrientation": [
@@ -2175,7 +2667,21 @@
       "maximumDegrees": 145.0,
       "maximumTorque": 400.0,
       "minimumDegrees": -5.0,
-      "stiffness": 650.0
+      "stiffness": 650.0,
+      "passive": {
+       "upper": {
+        "startDegrees": 73.0,
+        "endDegrees": 145.0,
+        "scaleDegrees": 24.0,
+        "endTorque": 29.5
+       },
+       "lower": {
+        "startDegrees": 16.0,
+        "endDegrees": -5.0,
+        "scaleDegrees": 7.0,
+        "endTorque": 22.0
+       }
+      }
      }
     ],
     "frameOrientation": [
@@ -3310,7 +3816,21 @@
       "maximumDegrees": 65.0,
       "maximumTorque": 330.0,
       "minimumDegrees": -50.0,
-      "stiffness": 360.0
+      "stiffness": 360.0,
+      "passive": {
+       "lower": {
+        "startDegrees": -2.0,
+        "endDegrees": -35.0,
+        "scaleDegrees": 11.0,
+        "endTorque": 30.0
+       },
+       "upper": {
+        "startDegrees": 41.5,
+        "endDegrees": 58.0,
+        "scaleDegrees": 5.5,
+        "endTorque": 30.0
+       }
+      }
      },
      {
       "axis": "swing1",
@@ -3318,7 +3838,21 @@
       "maximumDegrees": 35.0,
       "maximumTorque": 160.0,
       "minimumDegrees": -35.0,
-      "stiffness": 360.0
+      "stiffness": 360.0,
+      "passive": {
+       "lower": {
+        "startDegrees": -19.5,
+        "endDegrees": -30.0,
+        "scaleDegrees": 3.5,
+        "endTorque": 40.0
+       },
+       "upper": {
+        "startDegrees": 9.5,
+        "endDegrees": 20.0,
+        "scaleDegrees": 3.5,
+        "endTorque": 20.0
+       }
+      }
      }
     ],
     "frameOrientation": [
@@ -3369,5 +3903,8 @@
  ],
  "standingRootHeightMeters": 0.9478840231895447,
  "totalMassKg": 80.0,
- "uniformRadiusMeters": 0.055
+ "uniformRadiusMeters": 0.055,
+ "limitTension": {
+  "enabled": true
+ }
 }

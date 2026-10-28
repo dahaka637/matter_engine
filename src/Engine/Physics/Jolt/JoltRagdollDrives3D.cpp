@@ -1,6 +1,7 @@
 #include "Engine/Physics/Jolt/JoltInternals3D.hpp"
 #include <algorithm>
 #include <cmath>
+#include <utility>
 #include <vector>
 
 namespace MatterEngine {
@@ -305,14 +306,15 @@ void PhysicsScene3D::Impl::applyRagdollDrives() {
                 pendingBodyWrenches.push_back({r.links[i], {}, torque});
                 pendingBodyWrenches.push_back({r.links[static_cast<std::size_t>(link.parentIndex)], {}, -torque});
             }
-            // A tensao nos limites (RagdollLimitTension3D): na zona do fim de cada
-            // eixo, a mola sobe com o quadrado do quanto entrou e o amortecimento
-            // freia so o movimento rumo ao limite. O torque e explicito (calculado
-            // uma vez por passo): a rigidez e o amortecimento ficam abaixo do que a
-            // inercia reduzida do par aguenta no passo - sem o teto, um osso leve
-            // como o pe, com a forca do musculo dele, oscilava.
+            // A tensao nos limites (RagdollLimitTension3D): as paredes de cada eixo
+            // (a pesquisa de 28/10: exponenciais, dezenas de N.m no fim real). O
+            // torque entra na forma implicita de um grau de liberdade - o mesmo
+            // principio do stable PD e das molas do Jolt: tau = (f - (h kt + c) w) /
+            // (1 + h (h kt + c) / I), com I a inercia reduzida do par no eixo -,
+            // estavel com a parede ingreme num osso leve (o pe); o explicito, com a
+            // parede real, oscilava. c da amortecimento numerico (zeta 0,5); o tecido
+            // quase nao amortece. A parede nunca puxa rumo ao limite.
             if (r.profile.limitTension.enabled) {
-                const RagdollLimitTension3D& tension = r.profile.limitTension;
                 auto q = constraint.GetRotationInConstraintSpace();
                 if (q.GetW() < 0) q = -q;
                 const JPH::Vec3 v = q.GetXYZ();
@@ -324,32 +326,37 @@ void PhysicsScene3D::Impl::applyRagdollDrives() {
                     fromJolt(bi.GetAngularVelocity(r.links[i]) - bi.GetAngularVelocity(parentId)));
                 const JPH::Mat44 childInverse = bi.GetInverseInertia(r.links[i]);
                 const JPH::Mat44 parentInverse = bi.GetInverseInertia(parentId);
-                const float dt = std::max(1e-4f, stepDeltaTime);
+                const float h = std::max(1e-4f, stepDeltaTime);
                 JPH::Vec3 passiveTorque = JPH::Vec3::sZero();
                 for (int a = 0; a < 3; ++a) {
                     const auto& limit = link.inboundJoint.axes[a];
-                    if (!limit.enabled) continue;
-                    const float width = tension.zone * (limit.maximumRadians - limit.minimumRadians);
-                    if (!(width > 1e-4f)) continue;
-                    const float upper = rotation[a] - (limit.maximumRadians - width);
-                    const float lower = (limit.minimumRadians + width) - rotation[a];
-                    const float depth = std::max(upper, lower);
-                    if (depth <= 0.0f) continue;
-                    const float inward = upper > 0.0f ? -1.0f : 1.0f;
-                    const float s = std::min(1.0f, depth / width);
+                    if (!limit.enabled || !(limit.passiveLower.valid || limit.passiveUpper.valid)) continue;
                     const JPH::Vec3 axisWorld = toJolt(frame.rotate(a == 0 ? Vec3 { 1, 0, 0 } : a == 1 ? Vec3 { 0, 1, 0 } : Vec3 { 0, 0, 1 }));
                     const float inverse = axisWorld.Dot(childInverse.Multiply3x3(axisWorld))
                         + axisWorld.Dot(parentInverse.Multiply3x3(axisWorld));
                     if (!(inverse > 0.0f)) continue;
                     const float inertia = 1.0f / inverse;
-                    const float strongest = tension.strength * limit.maximumTorque;
-                    float spring = strongest * s * s;
-                    const float slope = 2.0f * strongest * s / width;
-                    if (slope > inertia / (dt * dt)) spring *= inertia / (dt * dt) / slope;
                     const float omega = a == 0 ? relative.x : a == 1 ? relative.y : relative.z;
-                    const float toward = inward < 0.0f ? std::max(0.0f, omega) : std::min(0.0f, omega);
-                    const float damping = std::min(tension.damping * limit.maximumTorque * s, 0.5f * inertia / dt);
-                    passiveTorque.SetComponent(a, inward * spring - damping * toward);
+                    float total = 0.0f;
+                    for (const auto& [end, side] : { std::pair { &limit.passiveLower, -1.0f }, std::pair { &limit.passiveUpper, 1.0f } }) {
+                        if (!end->valid) continue;
+                        // d: o quanto entrou desde o comeco, no sentido da ponta.
+                        const float d = (rotation[a] - end->startRadians) * side;
+                        if (d <= 0.0f) continue;
+                        const float span = (end->endRadians - end->startRadians) * side;
+                        // (O expoente limitado: a 60 escalas o momento ja e de batente.)
+                        const float x = std::min(d / end->scaleRadians, 60.0f);
+                        const float full = std::expm1(std::min(span / end->scaleRadians, 60.0f));
+                        const float moment = end->endTorque * std::expm1(x) / full;
+                        const float stiffness = end->endTorque * std::exp(x) / (end->scaleRadians * full);
+                        const float damping = std::sqrt(stiffness * inertia);
+                        const float f = -side * moment;
+                        const float gain = h * stiffness + damping;
+                        float tau = (f - gain * omega) / (1.0f + h * gain / inertia);
+                        if (tau * side > 0.0f) tau = 0.0f;
+                        total += tau;
+                    }
+                    if (total != 0.0f && std::isfinite(total)) passiveTorque.SetComponent(a, total);
                 }
                 if (!passiveTorque.IsNearZero()) {
                     const Vec3 torque = frame.rotate(fromJolt(passiveTorque));

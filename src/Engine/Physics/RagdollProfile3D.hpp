@@ -72,6 +72,21 @@ struct RagdollColliderClosest3D {
 // mais longe em cada rumo, em volta). A capsula: as duas tampas por baixo.
 [[nodiscard]] std::vector<Vec3> ragdollColliderSolePoints3D(const RagdollCapsuleDefinition3D& collider);
 
+// A parede passiva de uma ponta do eixo (RagdollLimitTension3D; 28/10, a pesquisa
+// de biomecanica no vault, 05_fisica/pesquisa_tensao_passiva_juntas): o tecido
+// comeca a resistir em startRadians (o angulo do eixo, com sinal), vale
+// endTorque (N.m) no fim anatomico endRadians e o momento se multiplica por e a
+// cada scaleRadians - M = fim x (e^(d/escala) - 1) / (e^(vao/escala) - 1), d o
+// quanto entrou desde o comeco e vao a distancia do comeco ao fim. Passa do fim
+// anatomico subindo (o batente real), mesmo com o limite duro mais longe.
+struct RagdollPassiveEnd3D {
+    bool valid = false;
+    float startRadians = 0.0f;
+    float endRadians = 0.0f;
+    float scaleRadians = 0.0f;
+    float endTorque = 0.0f;
+};
+
 struct RagdollAxisDefinition3D {
     bool enabled = false;
     float minimumRadians = 0.0f;
@@ -79,6 +94,9 @@ struct RagdollAxisDefinition3D {
     float stiffness = 0.0f;
     float damping = 0.0f;
     float maximumTorque = 0.0f;
+    // A parede de cada ponta (a do minimo e a do maximo); sem ela, nada naquela ponta.
+    RagdollPassiveEnd3D passiveLower;
+    RagdollPassiveEnd3D passiveUpper;
 };
 
 struct RagdollCapsuleDefinition3D {
@@ -145,22 +163,15 @@ struct RagdollIgnoredCollisionPair3D {
 };
 
 // A tensao nos limites das juntas (27/10, pedido do usuario: "soft limits +
-// tension"). Perto do fim de cada eixo, o tecido (ligamento, musculo
-// esticado) resiste com um torque passivo que cresce ate o limite e amortece
-// a velocidade rumo a ele: o osso desacelera antes de chegar ao fim, em vez
-// de bater seco no limite duro, que fica de rede de seguranca. E um torque
-// interno (filho e pai, opostos), nao gasta a forca do musculo (o motor) e
-// vale tambem com o corpo mole. Desligada (o padrao), nada muda.
+// tension"; 28/10, os niveis pela pesquisa). Perto do fim de cada eixo, o
+// tecido (ligamento, capsula, musculo esticado) resiste com um torque passivo
+// exponencial - dezenas de N.m no fim real, nao a forca do musculo - e o osso
+// desacelera antes do fim em vez de bater seco no limite duro, que fica de
+// rede de seguranca. E um torque interno (filho e pai, opostos), nao gasta a
+// forca do musculo (o motor) e vale tambem com o corpo mole. As paredes moram
+// em cada eixo (RagdollPassiveEnd3D); desligada, nada muda.
 struct RagdollLimitTension3D {
     bool enabled = false;
-    // A fracao do intervalo de cada eixo, em cada ponta, em que a tensao age.
-    float zone = 0.15f;
-    // O torque no limite, em fracao do torque maximo do musculo do eixo (sobe
-    // com o quadrado do quanto entrou na zona).
-    float strength = 1.0f;
-    // O amortecimento no limite (N.m.s/rad por N.m do musculo; sobe com o
-    // quanto entrou na zona e so freia o movimento rumo ao limite).
-    float damping = 0.08f;
 };
 
 struct RagdollProfile3D {

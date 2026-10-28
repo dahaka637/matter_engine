@@ -268,6 +268,27 @@ RagdollProfile3D loadRagdollProfile3D(std::string_view filePath) {
                     destination.damping = axis.at("damping").get<float>();
                     destination.maximumTorque =
                         axis.at("maximumTorque").get<float>();
+                    // As paredes passivas do eixo (opcionais; graus com o sinal do
+                    // eixo): o comeco, o fim anatomico, a escala da exponencial e o
+                    // torque no fim (N.m). A de baixo fica abaixo do comeco, a de cima acima.
+                    if (axis.contains("passive")) {
+                        const Json& passive = axis.at("passive");
+                        const auto end = [&](const char* key, RagdollPassiveEnd3D& out, float side) {
+                            if (!passive.contains(key)) return;
+                            const Json& e = passive.at(key);
+                            out.startRadians = e.at("startDegrees").get<float>() * DegreesToRadians;
+                            out.endRadians = e.at("endDegrees").get<float>() * DegreesToRadians;
+                            out.scaleRadians = e.at("scaleDegrees").get<float>() * DegreesToRadians;
+                            out.endTorque = e.at("endTorque").get<float>();
+                            if (!(out.scaleRadians > 0.0f) || !(out.endTorque >= 0.0f)
+                                || !((out.endRadians - out.startRadians) * side > 0.0f))
+                                throw std::runtime_error(path + ".passive." + key
+                                    + ": escala > 0, torque >= 0 e o fim depois do comeco no sentido da ponta");
+                            out.valid = true;
+                        };
+                        end("lower", destination.passiveLower, -1.0f);
+                        end("upper", destination.passiveUpper, 1.0f);
+                    }
                 }
             }
             profile.links.push_back(std::move(link));
@@ -290,11 +311,6 @@ RagdollProfile3D loadRagdollProfile3D(std::string_view filePath) {
             const Json& t = root.at("limitTension");
             RagdollLimitTension3D& tension = profile.limitTension;
             tension.enabled = t.value("enabled", tension.enabled);
-            tension.zone = t.value("zone", tension.zone);
-            tension.strength = t.value("strength", tension.strength);
-            tension.damping = t.value("damping", tension.damping);
-            if (!(tension.zone > 0.0f && tension.zone <= 0.5f) || !(tension.strength >= 0.0f) || !(tension.damping >= 0.0f))
-                throw std::runtime_error("limitTension: zone em (0, 0,5], strength e damping >= 0");
         }
     } catch (const Json::exception& error) {
         throw std::runtime_error("Perfil de ragdoll incompleto em "

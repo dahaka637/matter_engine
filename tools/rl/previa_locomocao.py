@@ -46,6 +46,7 @@ def main() -> int:
     parser.add_argument("--folha", action="store_true")
     parser.add_argument("--quadros", type=int, default=16)
     parser.add_argument("--vista", default="34")
+    parser.add_argument("--assets", default="", help="outra pasta de assets (ex.: o perfil do corpo mudado)")
     args = parser.parse_args()
     if not args.treino and not args.classico:
         parser.error("--treino ou --classico")
@@ -60,7 +61,7 @@ def main() -> int:
         task = run_dir / "tarefa.json"
     else:
         parser.error("--tarefa (sem treino)")
-    batch = module.LocomotionBatch(str(task), str(paths.ASSETS), environments=args.mundos_total, threads=4,
+    batch = module.LocomotionBatch(str(task), args.assets or str(paths.ASSETS), environments=args.mundos_total, threads=4,
                                    seed=args.semente, evaluation=True, evaluation_seconds=args.segundos + 2.0,
                                    drill=args.exercicio)
     model = None

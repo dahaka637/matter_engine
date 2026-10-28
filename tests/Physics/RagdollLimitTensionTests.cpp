@@ -93,12 +93,39 @@ Fall fall(RagdollProfile3D profile, bool tension, const std::string& dump) {
     return result;
 }
 
+// Os sinais das paredes espelhadas: girar a coxa no sentido da parede de aducao leva o
+// joelho para o meio do corpo nas duas pernas (pela geometria do perfil: o eixo da junta
+// no modelo e o rumo do osso); o sinal da aducao e oposto entre a esquerda e a direita.
+void requireMirroredAdduction(const RagdollProfile3D& profile) {
+    float signs[2] = { 0.0f, 0.0f };
+    for (std::size_t i = 0; i < profile.links.size(); ++i) {
+        const RagdollLinkDefinition3D& link = profile.links[i];
+        const bool left = link.id == "LeftThigh";
+        if (!left && link.id != "RightThigh") continue;
+        const RagdollAxisDefinition3D& axis = link.inboundJoint.axes[2];
+        require(axis.passiveLower.valid && axis.passiveUpper.valid, link.id + ": sem as paredes de abducao e aducao");
+        // A parede de aducao e a de 40 N.m com o fim mais perto do neutro (30 graus).
+        const bool upperIsAdduction = std::abs(axis.passiveUpper.endRadians) < std::abs(axis.passiveLower.endRadians);
+        const float adductionSign = upperIsAdduction ? 1.0f : -1.0f;
+        // Girar o osso (que aponta para baixo) em torno do eixo da junta no modelo, no sentido da aducao.
+        const Vec3 axisModel = link.inboundJoint.frameModelOrientation.rotate({ 0.0f, 0.0f, 1.0f });
+        const Vec3 bone { 0.0f, 0.0f, -1.0f };
+        const Vec3 moved = Quaternion::fromAxisAngle(axisModel, adductionSign * 0.3f).rotate(bone);
+        // (Y e a esquerda do corpo: o meio fica para -Y na perna esquerda e +Y na direita.)
+        const float towardMiddle = left ? -moved.y : moved.y;
+        require(towardMiddle > 0.05f, link.id + ": a parede de aducao gira o joelho para fora");
+        signs[left ? 0 : 1] = adductionSign;
+    }
+    require(signs[0] != 0.0f && signs[0] == -signs[1], "a aducao deveria ter sinais opostos nas duas pernas");
+}
+
 } // namespace
 
 int main() {
     try {
         const std::string assets = MATTERENGINE_TEST_ASSETS_DIR;
         const auto character = loadRagdollCharacter3D(assets + "/characters/football_player/character.json");
+        requireMirroredAdduction(character.profile);
         const char* dir = std::getenv("MATTER_DUMP_DIR");
         const std::string base = dir ? std::string(dir) + "/" : std::string();
         const Fall off = fall(character.profile, false, dir ? base + "sem.dump" : std::string());

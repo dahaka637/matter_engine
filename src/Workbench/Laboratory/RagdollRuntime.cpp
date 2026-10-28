@@ -361,6 +361,8 @@ void WorkbenchApp::ensureRagdollAssetsLoaded(Renderer& activeRenderer) {
                 std::string(MATTERENGINE_ASSETS_DIR) + "/" + m_characterAssetPath);
         }
         m_humanRagdollProfile = &laboratoryCharacter().profile;
+        // (A caixa nasce com a tensao do perfil do corpo: ligada, o padrao desde 28/10.)
+        m_ragdollLimitTension = m_humanRagdollProfile->limitTension.enabled;
         updateCharacterSpawnBox();
         m_characterVisual = uploadRagdollMesh(activeRenderer, laboratoryCharacter().mesh);
         if (!m_ragdollCharacter->albedoPath.empty()) {
