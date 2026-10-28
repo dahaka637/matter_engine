@@ -43,6 +43,8 @@ LocomotionBatch3D::LocomotionBatch3D(const AthleteRuntimeAssets3D& assets, const
     impl.engine = std::make_unique<PhysicsEngine3D>(impl.scheduler);
     LocomotionWorldSettings3D world = settings.world;
     world.scene = locomotionBatchScene3D();
+    // (A tracao dos pares e da tarefa, nao da cena do lote.)
+    world.scene.pairFrictions = settings.world.scene.pairFrictions;
     impl.worlds.reserve(settings.worlds);
     for (std::uint32_t i = 0; i < settings.worlds; ++i)
         impl.worlds.push_back(std::make_unique<LocomotionWorld3D>(*impl.engine, impl.materials, assets, world));
