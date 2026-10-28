@@ -319,6 +319,8 @@ std::vector<Scenario> scenarios() {
                 { "cabeceio_toque", 0.0f, BallActionKind3D::Dribble, 0.5f, { 1.8f, -0.05f, 1.95f }, { -6.0f, 0.0f, 1.0f } },
                 { "cabeceio_chute", 0.0f, BallActionKind3D::Shot, 1.0f, { 1.8f, -0.05f, 1.95f }, { -6.0f, 0.0f, 1.0f } },
                 { "cabeceio_correndo", 1.0f, BallActionKind3D::Shot, 0.7f, { 5.0f, 0.0f, 1.95f }, { -6.0f, 0.0f, 1.2f } },
+                // (Levantar de cabeca a bola caindo nele: 28/10.)
+                { "cabeceio_levantar", 0.0f, BallActionKind3D::Raise, 0.4f, { 0.9f, 0.0f, 2.6f }, { -1.0f, 0.0f, -1.5f } },
             };
             // A bola em balao caindo na frente dele (o teste natural sozinho no
             // laboratorio): solta a 1,5 m quase parada, o pedido com ela a ~0,6 m
@@ -334,6 +336,19 @@ std::vector<Scenario> scenarios() {
                 lob.placements.push_back({ 1.0f, { 0.75f, 0.05f, 1.5f } });
                 lob.placeVelocity = { -0.6f, 0.0f, -0.01f };
                 list.push_back(lob);
+            }
+            // O cabeceio de manejo sem tecla com o olhar girado 46 graus (28/10: a
+            // bola vai para onde ele olha, nao para um rumo fixo do mundo).
+            {
+                Scenario look { "cabeceio_toque_olhar", 3.0f, [](float) { Keys k; k.cameraYaw = 0.8f; return k; } };
+                look.ball = true;
+                look.ballStart = { 0.0f, 8.0f, 0.11f };
+                look.placements.push_back({ 1.0f, { 1.8f, -0.05f, 1.95f } });
+                look.placeVelocity = { -6.0f, 0.0f, 1.0f };
+                look.autoDistance = 0.6f;
+                look.autoKind = BallActionKind3D::Dribble;
+                look.autoPower = 0.5f;
+                list.push_back(look);
             }
             // (A varredura da recepcao no ambiente: XRECEP_POT a barra, XRECEP_TECLA "frente,lado" seguradas,
             // XRECEP_VEL a escala da bola e XRECEP_LADO o quanto ela passa de lado, em m.)
@@ -1671,9 +1686,10 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
             const Vec3 offset = ballState.position - bodyState.links.front().position;
             if (receptionAt >= 0.0f && !receptionAfterShown) {
                 receptionAfterShown = true;
-                std::printf("  RECEPCAO %s: depois da forca, bola %.2f m/s (antes %.2f), relativa ao corpo %.2f m/s, vertical %.2f\n",
+                std::printf("  RECEPCAO %s: depois da forca, bola %.2f m/s (antes %.2f), relativa ao corpo %.2f m/s, vertical %.2f, rumo %.0f graus\n",
                     scenario.name.c_str(), std::hypot(ballState.linearVelocity.x, ballState.linearVelocity.y),
-                    std::hypot(receptionBallBefore.x, receptionBallBefore.y), relative.length(), ballState.linearVelocity.z);
+                    std::hypot(receptionBallBefore.x, receptionBallBefore.y), relative.length(), ballState.linearVelocity.z,
+                    std::atan2(ballState.linearVelocity.y, ballState.linearVelocity.x) * 57.2958f);
             }
             if (receptionAt >= 0.0f && !receptionHalfShown && t >= receptionAt + 0.5f) {
                 receptionHalfShown = true;

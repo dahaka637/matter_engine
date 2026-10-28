@@ -39,7 +39,7 @@ RAPIDO = [
     "gesto_alta_parado_toque_longe", "gesto_levantar_parado", "gesto_levantar_andando",
     "recepcao_balao", "recepcao_frente", "recepcao_frente_lenta", "recepcao_lado", "recepcao_trote",
     "recepcao_chute_fraco", "recepcao_alta", "peito_dominio", "peito_passe", "cabeceio_toque", "cabeceio_chute",
-    "cabeceio_correndo",
+    "cabeceio_correndo", "cabeceio_levantar", "cabeceio_toque_olhar",
 ]
 
 # As medidas: (nome, expressao, maior e pior?, folga para marcar piora).

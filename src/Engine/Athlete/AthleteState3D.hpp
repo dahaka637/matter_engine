@@ -98,6 +98,8 @@ struct AthleteState3D {
         bool receive = true;
         // O gesto ja comecou, antes da bola chegar (28/10, a previsao).
         bool started = false;
+        // O levantar guardado (28/10: o de cabeca na bola que cai).
+        bool raise = false;
     } armedReception;
     // A reescrita (R3): o corpo da classificacao de contatos, as regras de
     // troca de modo e o ultimo tick delas (a telemetria neutra: o que bateu,

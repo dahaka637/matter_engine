@@ -269,6 +269,21 @@ GestureKeys3D bodyPartKeys(const GestureSpec3D& spec, const GestureRig3D& rig) {
     }
     const float down = std::max(0.0f, -lift), up = std::max(0.0f, lift);
     keys.windupTime = std::clamp((0.08f + 0.10f * power) * seconds, 0.04f, 0.14f);
+    // Levantar de cabeca (28/10, pedido do usuario: a bola no ar levantada com
+    // a cabeca): a cabeca baixa um pouco olhando a bola e empurra para cima, o
+    // tronco um pouco para tras, os bracos abrindo para equilibrar.
+    if (spec.kind == GestureKind3D::Raise) {
+        keys.contactTime = keys.windupTime + std::clamp(0.10f * seconds, 0.04f, 0.07f);
+        keys.followTime = keys.contactTime + 0.30f * seconds;
+        body.windupHead = -(6.0f + 4.0f * power) * Degree;
+        body.headPitch = -(16.0f + 10.0f * power) * Degree;
+        body.spinePitch = -(3.0f + 5.0f * power) * Degree;
+        body.drop = 0.02f;
+        body.armForward = { 8.0f * Degree, 8.0f * Degree };
+        body.armOut = { 25.0f * Degree, 25.0f * Degree };
+        body.elbow = { 25.0f * Degree, 25.0f * Degree };
+        return keys;
+    }
     keys.contactTime = keys.windupTime + std::clamp(0.10f * seconds, 0.04f, 0.07f);
     keys.followTime = keys.contactTime + 0.30f * seconds;
     body.windupBack = (6.0f + 14.0f * power) * Degree;

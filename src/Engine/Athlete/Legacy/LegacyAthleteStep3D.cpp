@@ -1006,7 +1006,9 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         if (pressed != BallActionKind3D::None || nearest == nullptr) armed.active = false;
         else if (armed.active && (armed.left -= deltaTime) <= 0.0f) armed.active = false;
         const bool fromArmed = pressed == BallActionKind3D::None && armed.active;
-        const BallActionKind3D request = fromArmed ? (armed.shot ? BallActionKind3D::Shot : BallActionKind3D::Dribble)
+        const BallActionKind3D request = fromArmed ? (armed.shot ? BallActionKind3D::Shot
+                                                         : armed.raise ? BallActionKind3D::Raise
+                                                                       : BallActionKind3D::Dribble)
                                                    : pressed;
         const float requestPower = fromArmed ? armed.power : control.ballRequestPower;
         const float requestLift = fromArmed ? armed.lift : control.ballRequestLift;
@@ -1133,11 +1135,13 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             // O peito e a cabeca (24/10, pedido do usuario): fora do alcance dos
             // pes, a bola na altura do tronco ou da cabeca (acima da pelve: sobe
             // com o pulo) e perto do corpo - o toque e o chute com uma fracao da
-            // forca (BallOutcome3D), na hora (nao armam).
+            // forca (BallOutcome3D). O levantar tambem vai de cabeca (28/10, pedido
+            // do usuario: "levantar a bola com a cabeca quando ela esta no ar"), mas
+            // nao de peito.
             const GestureReach3D& reach = bodyReach;
             const float aboveHip = ballPosition.z - pelvis.z;
-            const bool free = !raising && !choice.inReach;
-            const bool nearBody = free && ballInBody.x < reach.bodyFront && ballInBody.x > -reach.bodyBack
+            const bool free = !choice.inReach;
+            const bool nearBody = free && !raising && ballInBody.x < reach.bodyFront && ballInBody.x > -reach.bodyBack
                 && std::abs(ballInBody.y) < reach.bodySide;
             const bool nearHead = free && ballInBody.x < reach.headFront && ballInBody.x > -reach.headBack
                 && std::abs(ballInBody.y) < reach.headSide;
@@ -1147,9 +1151,9 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                                                                                      : BallBodyPart3D::Foot;
             const bool upper = part != BallBodyPart3D::Foot;
             const bool waits = receive || fromArmed;
-            // (O chute guardado bate onde o chute bate - a bola do balde dele, ao
-            // lado do pe de apoio -, nao onde a recepcao a para.)
-            const bool kickWaits = fromArmed ? !armed.receive : !receive && request == BallActionKind3D::Shot;
+            // (O chute e o levantar guardados batem onde o chute bate - a bola do
+            // balde dele, ao lado do pe de apoio -, nao onde a recepcao a para.)
+            const bool kickWaits = fromArmed ? !armed.receive : !receive && (request == BallActionKind3D::Shot || raising);
             GestureSpec3D strike;
             strike.kind = GestureKind3D::Shot;
             strike.high = high;
@@ -1159,9 +1163,9 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             const bool fires = upper || (choice.inReach && (!waits || !coming || offset.length() <= armDistance));
             // (O gesto do pedido guardado ja comecou: na chegada, so a forca.)
             const bool started = fromArmed && armed.started;
-            if (!fires && !fromArmed && (receive || (coming && request == BallActionKind3D::Shot)))
+            if (!fires && !fromArmed && (receive || (coming && (request == BallActionKind3D::Shot || raising))))
                 armed = { true, request == BallActionKind3D::Shot, requestPower, requestLift, requestCurve, requestAimYaw,
-                    settings.ballForce.receiveArmSeconds, receive, false };
+                    settings.ballForce.receiveArmSeconds, receive, false, raising };
             if (fromArmed && !choice.inReach && !coming) armed.active = false;
             const Vec3 aimedInBody { dot(aimed, forward), dot(aimed, left), 0.0f };
             // O gesto do pe de um balde: o tempo, a semente, o rumo em que a bola
@@ -1235,7 +1239,11 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                 // tecla, a bola para.)
                 // (No peito, o toque e a parada: o resto no rumo das teclas.)
                 // (Levantar: no rumo das teclas; sem tecla, reto para cima.)
-                outcomeRequest.direction = receive || raising || (part == BallBodyPart3D::Chest && kind == GestureKind3D::Touch)
+                // (A cabecada com o manejo vai no rumo das teclas ou, sem tecla, no
+                // do olhar, como o manejo - 28/10, pedido do usuario: na bola
+                // vindo, ela ia so pelas teclas e, sem tecla, para um rumo fixo.)
+                outcomeRequest.direction = (receive && part != BallBodyPart3D::Head) || raising
+                        || (part == BallBodyPart3D::Chest && kind == GestureKind3D::Touch)
                     ? keys : aimed;
                 outcomeRequest.receive = receive && !upper;
                 outcomeRequest.part = part;
