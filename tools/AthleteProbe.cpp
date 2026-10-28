@@ -425,6 +425,33 @@ std::vector<Scenario> scenarios() {
                 diagonal.placeOffset = { 0.40f, side * 0.30f, 0.11f };
                 list.push_back(diagonal);
             }
+        // A arrancada do parado (28/10, pedido do usuario: os pes arrastam no
+        // comeco): do parado de sempre e do espelho (andando ate 1,45 s e parando
+        // antes), para o trote e para a caminhada.
+        for (const float pace : { 1.0f, 0.6f })
+            for (const bool mirror : { false, true }) {
+                Scenario go { std::string("arrancada_") + (pace < 1.0f ? "anda" : "trote") + (mirror ? "_espelho" : ""), 4.6f,
+                    [pace, mirror](float t) {
+                        Keys k;
+                        if (mirror && t > 0.2f && t < 1.45f) k.forward = 0.6f;
+                        if (t > 3.0f) k.forward = pace;
+                        return k; } };
+                list.push_back(go);
+            }
+        // ... e para os outros rumos e o sprint (a mola rapida e a base do parado
+        // valem para todos).
+        for (const char* way : { "lado", "tras", "diagonal", "sprint" }) {
+            const std::string name(way);
+            Scenario go { "arrancada_" + name, 4.6f, [name](float t) {
+                Keys k;
+                if (t > 3.0f) {
+                    k.forward = name == "lado" ? 0.0f : name == "tras" ? -1.0f : 1.0f;
+                    k.left = name == "lado" || name == "diagonal" ? 1.0f : 0.0f;
+                    k.sprint = name == "sprint";
+                }
+                return k; } };
+            list.push_back(go);
+        }
         // A parada andando, em quatro instantes do passo (28/10, pedido do usuario:
         // o pe de apoio do parado e o que terminou a ultima passada).
         for (int stopAt = 100; stopAt <= 160; stopAt += 5) {
@@ -433,6 +460,16 @@ std::vector<Scenario> scenarios() {
                 k.forward = t > 0.2f && t < static_cast<float>(stopAt) * 0.01f ? 0.6f : 0.0f;
                 return k; } };
             list.push_back(stop);
+        }
+        // Um passo so (28/10, pedido do usuario: "ao dar um passo so, se eu
+        // parasse ja deveria trocar a perna de apoio"): do parado, a tecla por
+        // pouco tempo (ms) e solta.
+        for (const int hold : { 100, 150, 200, 250, 300, 400 }) {
+            Scenario single { "passo_" + std::to_string(hold), 5.0f, [hold](float t) {
+                Keys k;
+                k.forward = t > 2.5f && t < 2.5f + static_cast<float>(hold) * 0.001f ? 1.0f : 0.0f;
+                return k; } };
+            list.push_back(single);
         }
         // Dois toques seguidos com a mesma perna (28/10, pedido do usuario: "estou
         // manuseando a bola para o lado com a perna direita.. ai quero ja em
@@ -1117,7 +1154,8 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
         const float c = std::cos(angle), s = std::sin(angle);
         return Vec3 { c * v.x - s * v.y, s * v.x + c * v.y, v.z };
     };
-    const int ticks = static_cast<int>(scenario.seconds / Dt);
+    const float gestureDelay = std::getenv("XGESTO_ATRASO") ? static_cast<float>(std::atof(std::getenv("XGESTO_ATRASO"))) : 0.0f;
+    const int ticks = static_cast<int>((scenario.seconds + gestureDelay) / Dt);
     // Aquecimento (0,1 s antes do roteiro, sem teclas e sem pegadas): o corpo
     // nasce na pose de ligacao e assenta na do parado - com as pegadas, os
     // pes travados viriam dela. (Na volta do fisico, nao.)
@@ -1149,6 +1187,17 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
     for (int step = -warmTicks; step < ticks; ++step) {
         const float t = static_cast<float>(step) * Dt;
         Keys keys = step < 0 ? Keys {} : scenario.keys(t);
+        // XATRASO=s: as teclas de andar so depois deste tempo (a fase da passada
+        // no gesto muda; a regua dos gestos em varias fases - 28/10).
+        if (const char* delay = std::getenv("XATRASO"); delay != nullptr && t < static_cast<float>(std::atof(delay)))
+            keys.forward = keys.left = 0.0f;
+        // XGESTO_ATRASO=s: a bola e os pedidos de bola este tempo depois (a
+        // caminhada igual; a regua dos gestos em varias fases da passada - 28/10).
+        if (gestureDelay > 0.0f && step >= 0) {
+            const Keys later = scenario.keys(std::max(0.0f, t - gestureDelay));
+            keys.ball = t >= gestureDelay ? later.ball : BallActionKind3D::None;
+            keys.power = later.power;
+        }
         if (suppressRequests) keys.ball = BallActionKind3D::None;
         // (Manejo v2: a bola posta em relacao a pelve, andando com o corpo.)
         const auto placeBall = [&](Vec3 offset) {
@@ -1164,12 +1213,12 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
             scene->setInflatedBallMotion(ballHandle, position, velocity, cross(Vec3 { 0.0f, 0.0f, 1.0f }, velocity) * (1.0f / radius));
             ballState = scene->inflatedBallState(ballHandle);
         };
-        if (step >= 0 && scenario.ball && scenario.placeAt >= 0.0f && t >= scenario.placeAt && t < scenario.placeAt + Dt
-            && !bodyState.links.empty())
+        if (step >= 0 && scenario.ball && scenario.placeAt >= 0.0f && t >= scenario.placeAt + gestureDelay
+            && t < scenario.placeAt + gestureDelay + Dt && !bodyState.links.empty())
             placeBall(scenario.placeOffset);
         if (step >= 0 && scenario.ball && !bodyState.links.empty())
             for (const auto& [at, offset] : scenario.placements)
-                if (t >= at && t < at + Dt) placeBall(offset);
+                if (t >= at + gestureDelay && t < at + gestureDelay + Dt) placeBall(offset);
         if (step == 0 && scenario.ball) {
             InflatedBallDefinition3D definition;
             definition.position = scenario.ballStart;
@@ -1383,6 +1432,8 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
             }
             ++metrics.requests;
             if (metrics.requestTime < 0.0f) metrics.requestTime = t;
+            if (legacy.defaultLocomotion.output().cycleSeconds > 0.0f)
+                metrics.strideSeconds = legacy.defaultLocomotion.output().cycleSeconds;
             metrics.pendingRequests.push_back(t);
         }
         if (std::getenv("XPAREDE")) {
@@ -1405,6 +1456,8 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
         // (rad), passo (m, os pes abrindo), joelho (rad), cm_x/cm_y (m),
         // altura (m), contato_x/contato_y (m/s2), cadencia/passada (oitavas),
         // ritmo_esq (ciclo), balanco (m), recupera_esq (0..1).
+        // XSEMARRANCADA=1: a arrancada de antes (sem a base do parado nem a mola rapida; o A/B do 2b).
+        if (std::getenv("XSEMARRANCADA") && step == 0) legacy.defaultLocomotion.settings().startFromStance = false;
         if (const char* hook = std::getenv("XCORRECAO"); hook != nullptr && step == 0) {
             const std::string which(hook);
             const char* given = std::getenv("XVALOR");
@@ -1549,6 +1602,24 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
                 metrics.gestureSequence += item;
             }
         for (std::size_t side = 0; side < 2; ++side) gestureWas[side] = legacy.defaultLocomotion.output().gestureLegs[side];
+        // A arrancada: do aperto ate 0,5 s depois, o pe no chao (a menos de 3 cm)
+        // que mais desliza e o primeiro que sai dele.
+        if (step >= 0 && leftFoot < bodyState.links.size() && rightFoot < bodyState.links.size()) {
+            const bool pressed = std::abs(keys.forward) > 0.05f || std::abs(keys.left) > 0.05f;
+            // (A ultima saida do parado de verdade: sem teclas e com a capsula parada no tick antes.)
+            const Vec3 capsule = scene->characterState().velocity;
+            if (pressed && metrics.startIdle && t > 0.3f && scenario.name.rfind("arrancada", 0) == 0) {
+                metrics.startPress = t;
+                metrics.startSlide = 0.0f;
+                metrics.startLiftoff = -1.0f;
+            }
+            metrics.startIdle = !pressed && std::hypot(capsule.x, capsule.y) < 0.05f;
+            // (O primeiro pe que o estilo tira do chao; o deslize do apoio, abaixo,
+            // na medida do pe apoiado.)
+            if (metrics.startPress >= 0.0f && t <= metrics.startPress + 0.5f && metrics.startLiftoff < 0.0f)
+                for (std::size_t side = 0; side < 2; ++side)
+                    if (!legacy.defaultLocomotion.output().footPlanted[side]) metrics.startLiftoff = t - metrics.startPress;
+        }
         // XTRONCO=1: o rumo da pelve e do peito (do corpo, graus no mundo) e o da
         // bola em relacao a pelve, a cada 0,05 s (28/10: o chute na diagonal).
         if (std::getenv("XTRONCO") && step >= 0 && step % 6 == 0 && !bodyState.links.empty()) {
@@ -1720,7 +1791,7 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
                     100.0f * static_cast<float>(netTouched) / (5.0f / Dt),
                     netMilliseconds / (5.0f / Dt), entered, entered > 0 ? " ENTROU" : "", capsuleRise, capsuleRise > 0.1f ? " SUBIU" : "");
         }
-        if ((scenario.name.rfind("gesto_", 0) == 0 || scenario.name.rfind("parada_", 0) == 0) && leftFoot < bodyState.links.size() && rightFoot < bodyState.links.size()) {
+        if ((scenario.name.rfind("gesto_", 0) == 0 || scenario.name.rfind("parada_", 0) == 0 || scenario.name.rfind("arrancada", 0) == 0 || scenario.name.rfind("passo_", 0) == 0) && leftFoot < bodyState.links.size() && rightFoot < bodyState.links.size()) {
             const DefaultLocomotionOutput3D& o = legacy.defaultLocomotion.output();
             const float c = std::cos(o.facingYawRadians), s = std::sin(o.facingYawRadians);
             const auto local = [&](Vec3 p, Vec3 pelvis) {
@@ -2210,9 +2281,12 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
                     && (mode() == BodyModeKind3D::Animated || mode() == BodyModeKind3D::Returning)) {
                     const float slide = std::hypot(contact.x - before.x, contact.y - before.y) / Dt;
                     metrics.plantedSlide.push_back(slide);
+                    if (metrics.startPress >= 0.0f && t <= metrics.startPress + 0.5f)
+                        metrics.startSlide = std::max(metrics.startSlide, slide);
                     if (std::getenv("XDESLIZE") && slide > 0.3f)
-                        std::printf("  t %.3f %s desliza %.2f m/s (%s) alcance %.3f\n", t, id.c_str(), slide,
-                            heel.z < toe.z ? "calcanhar" : "dedos", athlete.legSynthesis.reachError[side]);
+                        std::printf("  t %.3f %s desliza %.2f m/s (%s a %.3f m do chao) alcance %.3f\n", t, id.c_str(), slide,
+                            heel.z < toe.z ? "calcanhar" : "dedos", contact.z - athlete.groundHeight,
+                            athlete.legSynthesis.reachError[side]);
                 }
             }
             if (id == "LeftFoot" || id == "RightFoot") {
@@ -2457,8 +2531,9 @@ void printMetrics(const Scenario& scenario, const Metrics& metrics, bool footste
         metrics.physicalSeconds, metrics.returningSeconds, metrics.assistImpulse, metrics.fell ? "CAIU, " : "",
         metrics.requests, metrics.touches, metrics.ballSpeedAfter);
     if (metrics.gestureTicks[0] + metrics.gestureTicks[1] > 0)
-        std::printf("%-18s   gestos: perna esquerda %d ticks, direita %d (as duas juntas %d) | sequencia %s\n", "",
-            metrics.gestureTicks[0], metrics.gestureTicks[1], metrics.bothGestureTicks, metrics.gestureSequence.c_str());
+        std::printf("%-18s   gestos: perna esquerda %d ticks, direita %d (as duas juntas %d) | sequencia %s | ciclo da passada %.3f s\n", "",
+            metrics.gestureTicks[0], metrics.gestureTicks[1], metrics.bothGestureTicks, metrics.gestureSequence.c_str(),
+            metrics.strideSeconds);
     if (metrics.stillWorstTime >= 0.0f)
         std::printf("%-18s   PARADO (mais de 1 s): pior pe fora do lugar %.3f m em %.2f s (E %+.2f %+.2f D %+.2f %+.2f) | as duas pernas em gesto %d ticks\n", "",
             metrics.stillWorst, metrics.stillWorstTime, metrics.stillWorstFeet[0].x, metrics.stillWorstFeet[0].y,
@@ -2475,6 +2550,9 @@ void printMetrics(const Scenario& scenario, const Metrics& metrics, bool footste
     }
     std::printf("%-18s   andou %.2f m, recaidas %d, %s, fim %s (%s)\n", "", metrics.travel, metrics.relapses,
         metrics.fell ? "CAIU" : "de pe", bodyModeName3D(metrics.finalMode), metrics.trail.c_str());
+    if (metrics.startPress >= 0.0f)
+        std::printf("%-18s   arrancada: pe no chao desliza ate %.2f m/s, o primeiro pe sai do chao %.3f s depois do aperto\n", "",
+            metrics.startSlide, metrics.startLiftoff);
     std::printf("%-18s   joelho esticando max %.0f graus/s (alvo %.0f), acel max %.0f graus/s2\n", "",
         metrics.peakKneeExtension, metrics.peakKneeExtensionTarget, metrics.peakKneeAcceleration);
     std::printf("%-18s   apoio %5.2f / %5.2f / %5.2f m/s%s", "", percentile(metrics.plantedSlide, 0.5f),
@@ -2996,6 +3074,9 @@ int main(int argc, char** argv) {
     }
     AthleteRuntimeSettings3D settings;
     settings.activeBody = activeBody;
+    // XSEMVIDA=1: sem a variacao passada a passada (a "vida"): a passada se
+    // repete a cada ciclo, e a regua de fases compara A/B so pela fase - 28/10.
+    if (std::getenv("XSEMVIDA")) settings.motionVariety = false;
     settings.footstepLocomotion = footsteps;
     settings.activeStanceSettings.balanceSteps = balanceSteps;
     settings.capsuleResponsePercent = response;

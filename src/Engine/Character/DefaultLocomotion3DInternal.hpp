@@ -134,6 +134,22 @@ inline AnimationTransformSample3D rootAt(const RagdollProfile3D& profile, const 
     return {};
 }
 
+// Os pes de um clipe num instante, no rumo do corpo a partir da raiz (no
+// plano): as cadeias ate eles, giradas pelo giro da raiz do clipe (28/10: a
+// base do parado e a arrancada).
+inline std::array<Vec3, 2> clipFeetInBody(const RagdollProfile3D& profile, const AnimationClip3D& clip, float time,
+    const std::array<std::size_t, 2>& feet, bool smooth) {
+    std::vector<Vec3> coordinates(profile.links.size());
+    for (std::size_t i = 1; i < profile.links.size(); ++i)
+        if (const AnimationTrack3D* track = findAnimationTrack3D(clip, profile.links[i].id))
+            coordinates[i] = sampleTrack(*track, time, clip.durationSeconds, true, smooth).jointPositionRadians;
+    RagdollAnimationPose3D chain;
+    buildRagdollChainPose3D(profile, coordinates, chain, feet[0]);
+    buildRagdollChainPose3D(profile, coordinates, chain, feet[1]);
+    const Quaternion turn = rootAt(profile, clip, time, true, smooth).rotationDelta.normalized();
+    return { planar(turn.rotate(chain.linkPositions[feet[0]])), planar(turn.rotate(chain.linkPositions[feet[1]])) };
+}
+
 // O pe (origem e orientacao, no referencial da raiz) aonde se pede: a coxa
 // e a canela levam o tornozelo, o tornozelo orienta o pe (dentro dos
 // limites). weight mistura com a pose de antes.

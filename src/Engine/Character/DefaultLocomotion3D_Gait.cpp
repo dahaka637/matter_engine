@@ -167,7 +167,9 @@ void DefaultLocomotion3D::stepGait(Tick& t) {
     }
     if (shapeTotal < 1e-4f) { m_shape[0] = 1.0f; shapeTotal = 1.0f; }
     const float movingWanted = input.grounded ? smoothStep(speed / std::max(0.05f, s.idleSpeed)) : 0.0f;
-    spring(m_moving, m_movingRate, movingWanted, s.idleBlendSeconds, dt);
+    if (s.startFromStance && m_moving < 0.03f && movingWanted > 0.05f) m_quickStart = true;
+    else if (movingWanted < 0.05f || m_moving > 0.95f) m_quickStart = false;
+    spring(m_moving, m_movingRate, movingWanted, m_quickStart ? s.startBlendSeconds : s.idleBlendSeconds, dt);
     m_moving = std::clamp(m_moving, 0.0f, 1.0f);
     t.total = 0.0f;
     float& total = t.total;
@@ -286,6 +288,49 @@ void DefaultLocomotion3D::stepGait(Tick& t) {
     if (m_moving < 0.03f && movingWanted > 0.05f) {
         const int sector = std::clamp(m_sector, 0, static_cast<int>(Directions) - 1);
         m_phase = m_gaits[static_cast<std::size_t>(sector)].crossing;
+        // (A arrancada pela base do parado: a fase de pes mais parecidos com os
+        // do parado de agora, o de sempre ou o espelho.)
+        if (s.startFromStance && m_idleStancesValid && m_feet[0] != 0 && m_feet[1] != 0) {
+            std::array<Vec3, 2> stance;
+            for (std::size_t side = 0; side < 2; ++side)
+                stance[side] = m_idleStances[0][side] + (m_idleStances[1][side] - m_idleStances[0][side]) * m_idleMirror;
+            float share = 0.0f;
+            for (std::size_t g = 0; g < GaitCount; ++g)
+                if (m_gaits[g].clip != nullptr && wanted[g] >= 0.05f) share += wanted[g];
+            if (share > 0.0f) {
+                // (So nas fases com um pe na primeira metade do apoio pela marcha
+                // que mais pesa - o pe da frente que fica; no voo do trote ele ia
+                // arrastado ate pousar -, e o outro pe pesando menos.)
+                std::size_t lead = GaitCount;
+                for (std::size_t g = 0; g < GaitCount; ++g)
+                    if (m_gaits[g].clip != nullptr && (lead == GaitCount || wanted[g] > wanted[lead])) lead = g;
+                constexpr int Samples = 48;
+                constexpr float SwingWeight = 0.3f;
+                float best = 1e9f;
+                for (int k = 0; k < Samples; ++k) {
+                    const float phase = static_cast<float>(k) / static_cast<float>(Samples);
+                    std::array<bool, 2> planted {};
+                    for (std::size_t side = 0; side < 2; ++side) {
+                        const Gait& leadGait = m_gaits[lead];
+                        const float stance = std::max(0.05f, fraction(leadGait.liftOff[side] - leadGait.land[side]));
+                        planted[side] = fraction(phase - leadGait.land[side]) < 0.5f * stance;
+                    }
+                    if (!planted[0] && !planted[1]) continue;
+                    std::array<Vec3, 2> feetAt {};
+                    for (std::size_t g = 0; g < GaitCount; ++g) {
+                        if (m_gaits[g].clip == nullptr || wanted[g] < 0.05f) continue;
+                        const AnimationClip3D& clip = *m_gaits[g].clip;
+                        const auto feet = clipFeetInBody(profile, clip, fraction(phase + m_gaits[g].touchdown) * clip.durationSeconds,
+                            m_feet, s.smoothClipSampling);
+                        for (std::size_t side = 0; side < 2; ++side) feetAt[side] += feet[side] * (wanted[g] / share);
+                    }
+                    float error = 0.0f;
+                    for (std::size_t side = 0; side < 2; ++side)
+                        error += (feetAt[side] - stance[side]).lengthSquared() * (planted[side] ? 1.0f : SwingWeight);
+                    if (error < best) { best = error; m_phase = phase; }
+                }
+            }
+        }
         if (m_startTime < 0.0f && s.startGesture) {
             m_startTime = 0.0f;
             m_startSprint = requested.length() > defaultLocomotionSpeed3D(s, fromView, false) + 0.5f;

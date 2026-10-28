@@ -177,6 +177,16 @@ struct DefaultLocomotionSettings3D {
     // (idleMirror), o de base mais perto dos pes da passada quando ele para.
     // Desligado, sempre o parado.
     bool idleFromLastStride = true;
+    // A arrancada pela base do parado (28/10, pedido do usuario: "no inicio do
+    // movimento do parado para trotando os pes dao uma arrastada"): o ciclo
+    // comeca na fase em que os pes da marcha mais se parecem com os do parado
+    // de agora - o pe da frente fica e o de tras da o primeiro passo. Desligado,
+    // no cruzamento dos pes (os dois arrastavam ate la).
+    bool startFromStance = true;
+    // ... e as pernas entram na marcha neste tempo (s: a mola do parado ->
+    // andando so na arrancada, ate a marcha pesar 0,95). Pela de sempre
+    // (idleBlendSeconds) a marcha so passava da metade 0,2 s depois do comando.
+    float startBlendSeconds = 0.05f;
     float standTurnStart = 0.55f;
     float standTurnKeep = 0.31f;
     float standTurnSeconds = 0.16f;
@@ -740,6 +750,8 @@ private:
     std::array<float, GaitCount> m_shapeRates {};
     float m_moving = 0.0f;
     float m_movingRate = 0.0f;
+    // (A arrancada: a mola rapida das pernas ate a marcha pesar.)
+    bool m_quickStart = false;
     // O corpo de cima (tronco, bracos, cabeca), mais devagar.
     std::array<float, GaitCount> m_upperShape {};
     std::array<float, GaitCount> m_upperShapeRates {};

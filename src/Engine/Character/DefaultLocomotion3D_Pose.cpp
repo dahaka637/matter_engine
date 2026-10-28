@@ -88,11 +88,14 @@ void DefaultLocomotion3D::stepPose(Tick& t) {
     }
     // O parado pela ultima passada (28/10, pedido do usuario: "o ultimo
     // movimento determina qual o menor custo para a proxima perna de apoio"):
-    // uma vez por parada, quando o parado comeca a pesar, o de base mais perto
-    // dos pes da passada - o parado ou o espelho dele. (Trocado com o parado ja
-    // pesando, os pes saltavam meia base num tick; reavaliado a cada tick, a
-    // pitada de parado nas freadas e nas arrancadas trocava de base a cada meio
-    // passo e mexia no corpo andando.)
+    // uma vez por parada - soltas as teclas, quando a marcha comeca a cair, de
+    // um passo so que seja -, o de base mais perto dos pes da pose, onde eles
+    // pararam - o parado ou o espelho dele ("fica mais natural se for tipo onde
+    // o pe parou ao parar de se movimentar"; as pisadas da marcha andavam com a
+    // distancia no mundo). (Trocado com o parado ja pesando, os pes saltavam
+    // meia base num tick; reavaliado a cada tick, a pitada de parado nas
+    // freadas e nas arrancadas trocava de base a cada meio passo e mexia no
+    // corpo andando.)
     const bool mirrorable = s.idleFromLastStride && animations.idle != nullptr && animations.idleMirror != nullptr
         && m_feet[0] != 0 && m_feet[1] != 0;
     if (mirrorable) {
@@ -105,35 +108,33 @@ void DefaultLocomotion3D::stepPose(Tick& t) {
                 planar(turn.rotate(chain.linkPositions[m_feet[1]])) };
         };
         if (!m_idleStancesValid) {
-            const AnimationClip3D* clips[2] = { animations.idle, animations.idleMirror };
-            for (std::size_t k = 0; k < 2; ++k) {
-                std::vector<Vec3> coordinates(links);
-                for (std::size_t i = 1; i < links; ++i)
-                    if (const AnimationTrack3D* track = findAnimationTrack3D(*clips[k], profile.links[i].id))
-                        coordinates[i] = sampleTrack(*track, 0.0f, clips[k]->durationSeconds, true, s.smoothClipSampling)
-                                             .jointPositionRadians;
-                m_idleStances[k] = feetOf(coordinates, rootAt(profile, *clips[k], 0.0f, true, s.smoothClipSampling)
-                                                           .rotationDelta.normalized());
-            }
+            m_idleStances[0] = clipFeetInBody(profile, *animations.idle, 0.0f, m_feet, s.smoothClipSampling);
+            m_idleStances[1] = clipFeetInBody(profile, *animations.idleMirror, 0.0f, m_feet, s.smoothClipSampling);
             m_idleStancesValid = true;
         }
+        const bool stopping = t.requested.length() < 0.1f;
         if (!input.leading) {
             m_idleMirrorTarget = 0.0f;
-        } else if (input.grounded && m_idleWeight >= 0.02f && m_walkingLed) {
+        } else if (input.grounded && stopping && m_walkingLed && m_movingRate < 0.0f) {
             const std::array<Vec3, 2> now = feetOf(m_coordinates, rootRotation.result());
             float cost[2] = {};
             for (std::size_t k = 0; k < 2; ++k)
                 for (std::size_t side = 0; side < 2; ++side) cost[k] += (now[side] - m_idleStances[k][side]).lengthSquared();
             m_idleMirrorTarget = cost[1] < cost[0] ? 1.0f : 0.0f;
+            m_walkingLed = false;
         }
         // (A mistura vai sempre ate o fim - parada no meio, os pes ficavam entre
         // as duas bases -, rapida com o parado leve e devagar com ele pesando: o
-        // pe nunca desliza mais que ~1 m/s pela troca, numa base de ~0,5 m.)
-        const float rate = std::clamp(2.0f / std::max(1e-3f, m_idleWeight), 2.0f, 20.0f);
+        // pe nunca desliza mais que ~1 m/s pela troca, numa base de ~0,5 m. Pelo
+        // mais pesado das pernas e do corpo de cima: num passo so, o de cima
+        // ainda no parado trocava os bracos de lado num relance.)
+        const float rate = std::clamp(2.0f / std::max(1e-3f, std::max(m_idleWeight, upperIdleWeight)), 2.0f, 20.0f);
         m_idleMirror += std::clamp(m_idleMirrorTarget - m_idleMirror, -rate * dt, rate * dt);
-        // (A parada de verdade vem de uma caminhada conduzida pelo padrao: logo
-        // depois de uma volta do fisico, trocar a base desequilibrava o corpo.)
-        m_walkingLed = input.leading && input.grounded && m_idleWeight < 0.02f;
+        // (A parada de verdade vem de uma caminhada conduzida pelo padrao, de um
+        // passo que seja: logo depois de uma volta do fisico, trocar a base
+        // desequilibrava o corpo.)
+        if (!input.leading || !input.grounded) m_walkingLed = false;
+        else if (!stopping && m_moving > 0.1f) m_walkingLed = true;
     } else {
         m_idleMirror = m_idleMirrorTarget = 0.0f;
     }

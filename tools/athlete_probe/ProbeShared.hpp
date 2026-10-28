@@ -151,6 +151,8 @@ struct Metrics {
     // gestos (a perna e o instante de cada um).
     int bothGestureTicks = 0;
     std::string gestureSequence;
+    // O ciclo da passada no ultimo pedido de bola andando (s; -1 nenhum): a regua de fases.
+    float strideSeconds = -1.0f;
     // Os pes parados (no plano, em relacao a pelve, no rumo) no comeco e no
     // fim: o corpo fisico e a animacao (o "perna deslocada" depois do gesto).
     bool stanceValid = false;
@@ -224,6 +226,12 @@ struct Metrics {
     // O rumo da bola logo depois da primeira forca (graus no mundo; 28/10, a
     // cabecada pela intencao).
     float ballHeadingAfter = 0.0f;
+    // A arrancada (28/10, pedido do usuario: "no inicio do movimento do parado
+    // para trotando os pes dao uma arrastada"): depois do primeiro aperto de
+    // tecla com ele parado, o quanto um pe no chao desliza (m/s, o maior) e
+    // quando o primeiro pe sai do chao (s depois do aperto; -1 nao saiu).
+    float startPress = -1.0f, startSlide = 0.0f, startLiftoff = -1.0f;
+    bool startIdle = false;
     std::array<bool, 2> cyclePlantedBefore { true, true };
     float gesturePelvisMin = 10.0f;
     std::array<float, 2> gestureGapNow { 1e9f, 1e9f };
