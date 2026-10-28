@@ -137,6 +137,10 @@ std::vector<Scenario> scenarios() {
             // (O chute fraco e o medio-fraco trotando: a continuidade da perna - 28/10.)
             { "gesto_trote_chute_fraco", 1.0f, false, BallActionKind3D::Shot, 0.15f, { 0.45f, 0.14f, 0.11f } },
             { "gesto_trote_chute_medio", 1.0f, false, BallActionKind3D::Shot, 0.4f, { 0.45f, -0.14f, 0.11f } },
+            // (Andando para a frente com a bola de lado: o peito e a cintura viram
+            // para ela - 28/10.)
+            { "gesto_anda_chute_lado", 0.5f, false, BallActionKind3D::Shot, 0.6f, { 0.30f, -0.40f, 0.11f } },
+            { "gesto_trote_chute_lado", 1.0f, false, BallActionKind3D::Shot, 0.6f, { 0.35f, 0.42f, 0.11f } },
         };
         for (const Gesture& g : gestures) {
             const float forward = g.forward;
@@ -1833,12 +1837,11 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
             || mode() == BodyModeKind3D::Returning;
         if (t > 0.35f && defaultMode && leftFoot < bodyState.links.size() && rightFoot < bodyState.links.size()
             && shins[0] < bodyState.links.size() && shins[1] < bodyState.links.size()) {
-            const Vec3 forward = [&] {
-                const Vec3 f = (bodyState.links.front().orientation * profile.links.front().modelOrientation.conjugate())
-                                   .rotate({ 1.0f, 0.0f, 0.0f });
-                const Vec3 flat { f.x, f.y, 0.0f };
-                return flat.lengthSquared() > 1e-6f ? flat.normalized() : Vec3 { 1.0f, 0.0f, 0.0f };
-            }();
+            // (No rumo do corpo, o da locomocao: a pelve gira de proposito nos
+            // gestos - o chute vira para a bola, 28/10 - e no referencial dela o pe
+            // la na frente "trocava de lado" sem cruzar.)
+            const float heading = legacy.defaultLocomotion.output().facingYawRadians;
+            const Vec3 forward { std::cos(heading), std::sin(heading), 0.0f };
             const Vec3 leftward { -forward.y, forward.x, 0.0f };
             const Vec3 apart = bodyState.links[leftFoot].position - bodyState.links[rightFoot].position;
             if (dot(apart, leftward) < -0.02f && std::abs(dot(apart, forward)) < 0.25f) ++metrics.legCrossTicks;

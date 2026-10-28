@@ -1166,8 +1166,8 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             const Vec3 aimedInBody { dot(aimed, forward), dot(aimed, left), 0.0f };
             // O gesto do pe de um balde: o tempo, a semente, o rumo em que a bola
             // vem (na recepcao) e o giro da cintura ate o rumo em que ela vai
-            // (flight, no chute).
-            const auto footGesture = [&](const GestureSpec3D& spec, Vec3 flight) {
+            // (flight, no chute) e ate onde ela esta (at, no referencial do corpo).
+            const auto footGesture = [&](const GestureSpec3D& spec, Vec3 flight, Vec3 at) {
                 gestureStart = spec;
                 gestureStart.power = std::clamp(requestPower, 0.0f, 1.0f);
                 // (Andando, o pe de apoio pousa perto do meio do corpo: o chute no
@@ -1188,6 +1188,16 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                 // contrario (pedido do usuario).
                 if (kind == GestureKind3D::Shot && !receive && flight.lengthSquared() > 1e-4f)
                     gestureStart.turn = std::atan2(dot(flight, left), dot(flight, forward));
+                // O peito e a cintura viram para a bola de lado (28/10, pedido do
+                // usuario: andando para a frente com ela de lado, o chute ficava
+                // esquisito): 40% do angulo dela alem de 15 graus, ate 25 graus.
+                // (So andando: parado, o giro a mais subiu o pico das pernas ate
+                // 26% e o chute longe ganhou perna louca. Com a bola quase a
+                // frente, 5 graus nao se viam e o pico do sprint subia 16%.)
+                if (kind == GestureKind3D::Shot && !receive && gait.valid && gait.cycling && at.x * at.x + at.y * at.y > 1e-4f) {
+                    const float angle = std::atan2(at.y, at.x);
+                    gestureStart.face = std::clamp(0.4f * (angle - std::clamp(angle, -0.26f, 0.26f)), -0.44f, 0.44f);
+                }
                 gestureRequested = true;
                 athlete.lastGestureSide = gestureStart.side;
                 athlete.sinceGesture = 0.0f;
@@ -1209,7 +1219,7 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                     const GestureChoice3D early = chooseGesture3D(kind, { dot(at, forward), dot(at, left), height - feetBase },
                         aimedInBody, preferredSide, bodyReach, -1, receive);
                     if (early.inReach) {
-                        footGesture(early.spec, aimed);
+                        footGesture(early.spec, aimed, { dot(at, forward), dot(at, left), 0.0f });
                         gestureStart.contactAt = arrival;
                         armed.started = true;
                     }
@@ -1269,7 +1279,7 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                     // previsao no toque na hora - o balde da bola quando o pe
                     // chega la - foi medida em 28/10 e piorou: o pe entrava mais
                     // na bola.)
-                    footGesture(choice.spec, { outcome.velocity.x, outcome.velocity.y, 0.0f });
+                    footGesture(choice.spec, { outcome.velocity.x, outcome.velocity.y, 0.0f }, ballInBody);
                     if (carrying && gait.cyclePlanted[gestureStart.side == 1 ? 1 : 0]) {
                         athlete.pendingGesture = { true, gestureStart, 0.0f };
                         gestureRequested = false;

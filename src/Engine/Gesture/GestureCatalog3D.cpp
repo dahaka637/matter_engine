@@ -374,7 +374,8 @@ GestureKeys3D gestureKeys3D(const GestureSpec3D& spec, const GestureRig3D& rig) 
         // de lado, o chute parecia ir para o lado contrario). A perna vai com
         // ela: a batida e o acompanhamento saem no rumo da bola; o contato e a
         // armada ficam onde estavam (girados de volta pelo quanto ela ja girou).
-        body.turn = std::clamp(spec.turn, -70.0f * Degree, 70.0f * Degree);
+        body.turn = std::clamp(spec.turn + spec.face, -70.0f * Degree, 70.0f * Degree);
+        const float faced = body.turn - std::clamp(spec.turn, -70.0f * Degree, 70.0f * Degree);
         body.roll = s * 2.5f * r * Degree;
         body.spineTwist = -0.6f * body.yaw;
         // (A inclinacao para o lado do apoio maior: 24/10, ele sentiu falta.)
@@ -449,7 +450,7 @@ GestureKeys3D gestureKeys3D(const GestureSpec3D& spec, const GestureRig3D& rig) 
         // perna cruzava para o outro lado.)
         const Vec3 followAnkle = leg.hip
             + rig.bodyToPelvis.rotate(rotateZ({ std::sqrt(std::max(0.0f, horizontal * horizontal - outward * outward)),
-                s * outward, std::sin(elevation) * length }, -0.9f * body.yaw));
+                s * outward, std::sin(elevation) * length }, -0.9f * body.yaw - faced));
         keys.follow = gestureLegPose3D(leg, side, followAnkle, 4.0f * Degree, 35.0f * Degree, 0.0f, rig.bodyToPelvis);
         // O pe passa pela bola no mais rapido do gesto, em arco em volta do
         // quadril (para a frente) e com o joelho esticando - a chicotada da

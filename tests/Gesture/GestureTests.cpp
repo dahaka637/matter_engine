@@ -447,6 +447,33 @@ Follow shotFollow(const RagdollProfile3D& profile, float power) {
     return follow;
 }
 
+// O peito e a cintura virando para a bola (28/10): o contato e o fim do
+// acompanhamento ficam no mesmo lugar do mundo - a pelve gira e a perna e
+// contra-girada (no quadril, ate uns centimetros).
+void faceTests(const RagdollProfile3D& profile) {
+    const GestureRig3D rig = defaultGestureRig3D(profile);
+    GestureSpec3D spec;
+    spec.kind = GestureKind3D::Shot;
+    spec.side = 1;
+    spec.reach = 1;
+    spec.power = 0.6f;
+    spec.seconds = 0.58f;
+    const GestureKeys3D straight = gestureKeys3D(spec, rig);
+    spec.face = -0.3f;
+    const GestureKeys3D faced = gestureKeys3D(spec, rig);
+    const auto world = [&](const GestureLegPose3D& leg, const GestureKeys3D& keys) {
+        const Vec3 a = legPoint(profile, 1, limitedLeg(profile, 1, leg)).ankle;
+        const float c = std::cos(keys.body.turn), s = std::sin(keys.body.turn);
+        return Vec3 { c * a.x - s * a.y, s * a.x + c * a.y, a.z };
+    };
+    char what[200];
+    const float contact = (world(faced.contact, faced) - world(straight.contact, straight)).length();
+    const float follow = (world(faced.follow, faced) - world(straight.follow, straight)).length();
+    std::snprintf(what, sizeof what, "o giro ate a bola: o pe bate e acompanha no mesmo lugar (contato %.3f m, fim %.3f m)",
+        contact, follow);
+    expect(std::abs(faced.body.turn + 0.3f) < 1e-4f && contact < 0.02f && follow < 0.05f, what);
+}
+
 void followTests(const RagdollProfile3D& profile) {
     // (Medido em 28/10: antes, a barra 0,2 andava 0,37 m e subia 0,06 m em 0,12 s;
     // a cheia, 0,65 m e 0,65 m em 0,21 s, e fica igual.)
@@ -477,6 +504,7 @@ int main() {
         highAndReceiveTests(character.profile);
         bodyPartTests(character.profile);
         followTests(character.profile);
+        faceTests(character.profile);
     } catch (const std::exception& error) {
         std::cerr << "gestos: " << error.what() << "\n";
         return 1;

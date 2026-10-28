@@ -46,6 +46,11 @@ struct GestureSpec3D {
     // O chute: o giro da cintura ate o rumo em que a bola vai (rad, + para a
     // esquerda, no referencial do corpo; ate 70 graus).
     float turn = 0.0f;
+    // E o giro do peito e da cintura ate a bola (28/10, pedido do usuario:
+    // andando para a frente com a bola de lado, "o peito e a cintura precisam
+    // se reposicionar mais em relacao a posicao da bola"): soma no giro da
+    // cintura, e o acompanhamento segue no rumo em que a bola vai.
+    float face = 0.0f;
     // O chute no meio (28/10): o balde curto do chute com o contato no meio do
     // corpo (1) em vez do lado da perna (0).
     float inward = 0.0f;
