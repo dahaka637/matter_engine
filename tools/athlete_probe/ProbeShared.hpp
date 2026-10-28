@@ -221,6 +221,9 @@ struct Metrics {
     // O ultimo pe que pousou andando (0 esquerdo, 1 direito; -1 nenhum) e o
     // apoio de cada um no tick anterior (28/10: o parado pela ultima passada).
     int lastLanded = -1;
+    // O rumo da bola logo depois da primeira forca (graus no mundo; 28/10, a
+    // cabecada pela intencao).
+    float ballHeadingAfter = 0.0f;
     std::array<bool, 2> cyclePlantedBefore { true, true };
     float gesturePelvisMin = 10.0f;
     std::array<float, 2> gestureGapNow { 1e9f, 1e9f };

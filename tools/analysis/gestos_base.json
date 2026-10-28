@@ -63,6 +63,22 @@
   "toques": 1.0,
   "voo": 0.0
  },
+ "cabeceio_toque_lado": {
+  "balancos": 0.0,
+  "cruzadas": 0.0,
+  "deslize": 0.0,
+  "gestos": 0.0,
+  "giro": 8.4,
+  "joelho": 0.0,
+  "louca": 0.0,
+  "ordem": 30.0,
+  "pe_na_bola": 0.0,
+  "pedidos": 1.0,
+  "perdidos": 0.0,
+  "pico_pernas": 204.4,
+  "toques": 1.0,
+  "voo": 0.158
+ },
  "cabeceio_toque_olhar": {
   "balancos": 0.0,
   "cruzadas": 0.0,
@@ -78,6 +94,22 @@
   "pico_pernas": 83.3,
   "toques": 1.0,
   "voo": 0.0
+ },
+ "cabeceio_toque_tras": {
+  "balancos": 0.0,
+  "cruzadas": 0.0,
+  "deslize": 0.46,
+  "gestos": 0.0,
+  "giro": 7.2,
+  "joelho": 0.0,
+  "louca": 0.0,
+  "ordem": 0.0,
+  "pe_na_bola": 6.0,
+  "pedidos": 1.0,
+  "perdidos": 0.0,
+  "pico_pernas": 264.1,
+  "toques": 1.0,
+  "voo": 0.075
  },
  "gesto_alta_corre_chute": {
   "balancos": 0.0,

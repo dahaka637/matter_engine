@@ -364,6 +364,25 @@ std::vector<Scenario> scenarios() {
                 look.autoPower = 0.5f;
                 list.push_back(look);
             }
+            // A cabecada com o manejo vai pela intencao (28/10, pedido do usuario:
+            // "se estou andando para tras e cabeceio com manejo ele joga a bola para
+            // tras... igual e na conducao por manejo"): andando para tras e de lado.
+            for (const int way : { 0, 1 }) {
+                Scenario intent { way == 0 ? "cabeceio_toque_tras" : "cabeceio_toque_lado", 3.0f, [way](float t) {
+                    Keys k;
+                    // (De lado so pouco antes da bola: andando de lado desde o comeco,
+                    // ele saia da linha dela.)
+                    if (t > (way == 0 ? 0.2f : 1.12f)) (way == 0 ? k.forward : k.left) = way == 0 ? -0.6f : 0.6f;
+                    return k; } };
+                intent.ball = true;
+                intent.ballStart = { 0.0f, 8.0f, 0.11f };
+                intent.placements.push_back({ 1.0f, { 1.8f, -0.05f, 1.95f } });
+                intent.placeVelocity = { -6.0f, 0.0f, 1.0f };
+                intent.autoDistance = 0.6f;
+                intent.autoKind = BallActionKind3D::Dribble;
+                intent.autoPower = 0.5f;
+                list.push_back(intent);
+            }
             // (A varredura da recepcao no ambiente: XRECEP_POT a barra, XRECEP_TECLA "frente,lado" seguradas,
             // XRECEP_VEL a escala da bola e XRECEP_LADO o quanto ela passa de lado, em m.)
             const auto knob = [](const char* name, float fallback) {
@@ -1744,6 +1763,7 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
             const Vec3 offset = ballState.position - bodyState.links.front().position;
             if (receptionAt >= 0.0f && !receptionAfterShown) {
                 receptionAfterShown = true;
+                metrics.ballHeadingAfter = std::atan2(ballState.linearVelocity.y, ballState.linearVelocity.x) * 57.2958f;
                 std::printf("  RECEPCAO %s: depois da forca, bola %.2f m/s (antes %.2f), relativa ao corpo %.2f m/s, vertical %.2f, rumo %.0f graus\n",
                     scenario.name.c_str(), std::hypot(ballState.linearVelocity.x, ballState.linearVelocity.y),
                     std::hypot(receptionBallBefore.x, receptionBallBefore.y), relative.length(), ballState.linearVelocity.z,
@@ -2708,6 +2728,22 @@ int runChecks(const ProbeContext& context) {
                     expect(m.requests == 1 && m.touches == 1 && waited > 0.05f && waited < (power < 0.0f ? 0.4f : 0.3f) && !m.fell
                             && m.crazyLegTicks == 0 && (kick ? m.ballSpeedAfter > 11.0f : m.ballSpeedAfter < 8.5f), line, m);
                 }
+            }
+        }
+        // A cabecada com o manejo vai pela intencao (28/10, pedido do usuario):
+        // andando para tras, para tras; de lado, de lado; sem tecla, para onde
+        // ele olha.
+        for (const auto& [name, heading] : { std::pair<const char*, float> { "cabeceio_toque_tras", 180.0f },
+                 std::pair<const char*, float> { "cabeceio_toque_lado", 90.0f },
+                 std::pair<const char*, float> { "cabeceio_toque_olhar", 45.8f } }) {
+            for (const Scenario& scenario : scenarios()) {
+                if (scenario.name != name) continue;
+                const Metrics m = runScenario(context, scenario, gestures, false, nullptr, 1);
+                const float off = std::abs(std::remainder(m.ballHeadingAfter - heading, 360.0f));
+                char line[200];
+                std::snprintf(line, sizeof(line), "cabecada de manejo, %s: a bola a %.0f graus (pedida %.0f)", name,
+                    m.ballHeadingAfter, heading);
+                expect(m.touches == 1 && off < 15.0f, line, m);
             }
         }
         // O parado pela ultima passada (28/10, pedido do usuario: "o ultimo
