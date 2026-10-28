@@ -286,6 +286,16 @@ RagdollProfile3D loadRagdollProfile3D(std::string_view filePath) {
                 });
             }
         }
+        if (root.contains("limitTension")) {
+            const Json& t = root.at("limitTension");
+            RagdollLimitTension3D& tension = profile.limitTension;
+            tension.enabled = t.value("enabled", tension.enabled);
+            tension.zone = t.value("zone", tension.zone);
+            tension.strength = t.value("strength", tension.strength);
+            tension.damping = t.value("damping", tension.damping);
+            if (!(tension.zone > 0.0f && tension.zone <= 0.5f) || !(tension.strength >= 0.0f) || !(tension.damping >= 0.0f))
+                throw std::runtime_error("limitTension: zone em (0, 0,5], strength e damping >= 0");
+        }
     } catch (const Json::exception& error) {
         throw std::runtime_error("Perfil de ragdoll incompleto em "
             + std::string(filePath) + ": " + error.what());

@@ -299,6 +299,58 @@ void PhysicsScene3D::Impl::applyRagdollDrives() {
                 pendingBodyWrenches.push_back({r.links[i], {}, torque});
                 pendingBodyWrenches.push_back({r.links[static_cast<std::size_t>(link.parentIndex)], {}, -torque});
             }
+            // A tensao nos limites (RagdollLimitTension3D): na zona do fim de cada
+            // eixo, a mola sobe com o quadrado do quanto entrou e o amortecimento
+            // freia so o movimento rumo ao limite. O torque e explicito (calculado
+            // uma vez por passo): a rigidez e o amortecimento ficam abaixo do que a
+            // inercia reduzida do par aguenta no passo - sem o teto, um osso leve
+            // como o pe, com a forca do musculo dele, oscilava.
+            if (r.profile.limitTension.enabled) {
+                const RagdollLimitTension3D& tension = r.profile.limitTension;
+                auto q = constraint.GetRotationInConstraintSpace();
+                if (q.GetW() < 0) q = -q;
+                const JPH::Vec3 v = q.GetXYZ();
+                const float n = v.Length();
+                const JPH::Vec3 rotation = n > 1e-7f ? v * (2 * std::atan2(n, q.GetW()) / n) : JPH::Vec3::sZero();
+                const auto parentId = r.links[static_cast<std::size_t>(link.parentIndex)];
+                const auto frame = r.gravityPoses[i].orientation * link.modelOrientation.conjugate() * link.inboundJoint.frameModelOrientation;
+                const Vec3 relative = frame.conjugate().rotate(
+                    fromJolt(bi.GetAngularVelocity(r.links[i]) - bi.GetAngularVelocity(parentId)));
+                const JPH::Mat44 childInverse = bi.GetInverseInertia(r.links[i]);
+                const JPH::Mat44 parentInverse = bi.GetInverseInertia(parentId);
+                const float dt = std::max(1e-4f, stepDeltaTime);
+                JPH::Vec3 passiveTorque = JPH::Vec3::sZero();
+                for (int a = 0; a < 3; ++a) {
+                    const auto& limit = link.inboundJoint.axes[a];
+                    if (!limit.enabled) continue;
+                    const float width = tension.zone * (limit.maximumRadians - limit.minimumRadians);
+                    if (!(width > 1e-4f)) continue;
+                    const float upper = rotation[a] - (limit.maximumRadians - width);
+                    const float lower = (limit.minimumRadians + width) - rotation[a];
+                    const float depth = std::max(upper, lower);
+                    if (depth <= 0.0f) continue;
+                    const float inward = upper > 0.0f ? -1.0f : 1.0f;
+                    const float s = std::min(1.0f, depth / width);
+                    const JPH::Vec3 axisWorld = toJolt(frame.rotate(a == 0 ? Vec3 { 1, 0, 0 } : a == 1 ? Vec3 { 0, 1, 0 } : Vec3 { 0, 0, 1 }));
+                    const float inverse = axisWorld.Dot(childInverse.Multiply3x3(axisWorld))
+                        + axisWorld.Dot(parentInverse.Multiply3x3(axisWorld));
+                    if (!(inverse > 0.0f)) continue;
+                    const float inertia = 1.0f / inverse;
+                    const float strongest = tension.strength * limit.maximumTorque;
+                    float spring = strongest * s * s;
+                    const float slope = 2.0f * strongest * s / width;
+                    if (slope > inertia / (dt * dt)) spring *= inertia / (dt * dt) / slope;
+                    const float omega = a == 0 ? relative.x : a == 1 ? relative.y : relative.z;
+                    const float toward = inward < 0.0f ? std::max(0.0f, omega) : std::min(0.0f, omega);
+                    const float damping = std::min(tension.damping * limit.maximumTorque * s, 0.5f * inertia / dt);
+                    passiveTorque.SetComponent(a, inward * spring - damping * toward);
+                }
+                if (!passiveTorque.IsNearZero()) {
+                    const Vec3 torque = frame.rotate(fromJolt(passiveTorque));
+                    pendingBodyWrenches.push_back({r.links[i], {}, torque});
+                    pendingBodyWrenches.push_back({parentId, {}, -torque});
+                }
+            }
         }
         if (r.stagedActiveTargetsDirty) r.ragdoll->Activate(!settings.runJobsInline);
         r.stagedActiveTargetsDirty = false;

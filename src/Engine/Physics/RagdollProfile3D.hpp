@@ -144,6 +144,25 @@ struct RagdollIgnoredCollisionPair3D {
     std::string reason;
 };
 
+// A tensao nos limites das juntas (27/10, pedido do usuario: "soft limits +
+// tension"). Perto do fim de cada eixo, o tecido (ligamento, musculo
+// esticado) resiste com um torque passivo que cresce ate o limite e amortece
+// a velocidade rumo a ele: o osso desacelera antes de chegar ao fim, em vez
+// de bater seco no limite duro, que fica de rede de seguranca. E um torque
+// interno (filho e pai, opostos), nao gasta a forca do musculo (o motor) e
+// vale tambem com o corpo mole. Desligada (o padrao), nada muda.
+struct RagdollLimitTension3D {
+    bool enabled = false;
+    // A fracao do intervalo de cada eixo, em cada ponta, em que a tensao age.
+    float zone = 0.15f;
+    // O torque no limite, em fracao do torque maximo do musculo do eixo (sobe
+    // com o quadrado do quanto entrou na zona).
+    float strength = 1.0f;
+    // O amortecimento no limite (N.m.s/rad por N.m do musculo; sobe com o
+    // quanto entrou na zona e so freia o movimento rumo ao limite).
+    float damping = 0.08f;
+};
+
 struct RagdollProfile3D {
     std::string id;
     float totalMassKg = 75.0f;
@@ -156,6 +175,7 @@ struct RagdollProfile3D {
     float standingRootHeightMeters = 0.98f;
     std::vector<RagdollLinkDefinition3D> links;
     std::vector<RagdollIgnoredCollisionPair3D> selfCollisionIgnoredPairs;
+    RagdollLimitTension3D limitTension;
 };
 
 struct RagdollProfileValidationIssue3D {
