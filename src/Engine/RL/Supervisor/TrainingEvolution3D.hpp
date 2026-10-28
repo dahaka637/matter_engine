@@ -102,4 +102,22 @@ inline constexpr double TrainingChartMinimumCoverage = 0.5;
 [[nodiscard]] TrainingCharts3D trainingCharts3D(const TrainingHistory3D& history,
     const std::vector<TrainingDrillInfo3D>& task, const std::string& drill, std::size_t slices);
 
+// A evolucao real (28/10, pedido do usuario: o indice do treino "e confuso e nao
+// reflete a evolucao real"): a avaliacao da rede sem ruido que o treinador roda
+// de tempos em tempos (a faixa inteira de velocidade de cada exercicio com peso),
+// um ponto por avaliacao, 0 a 100 (mais alto e melhor). Uma avaliacao com menos
+// da metade dos exercicios medidos nao vira ponto.
+struct TrainingEvaluationCharts3D {
+    std::vector<double> times;
+    std::vector<std::uint64_t> iterations;
+    // Sem cair: a media dos exercicios e o pior deles (e qual).
+    std::vector<float> standing, worstStanding;
+    std::vector<std::string> worstDrill;
+    // A velocidade atendida: a media de feita sobre pedida (ate 1) nos que andam.
+    std::vector<float> reach;
+};
+
+[[nodiscard]] TrainingEvaluationCharts3D trainingEvaluationCharts3D(const TrainingHistory3D& history,
+    const std::vector<TrainingDrillInfo3D>& task);
+
 } // namespace MatterEngine

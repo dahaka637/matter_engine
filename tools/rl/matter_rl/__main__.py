@@ -204,6 +204,8 @@ def command_branch(args: argparse.Namespace) -> int:
         storage.write_json_atomic(target / "tarefa.json", carry_caps(old, json.loads(task.read_text())))
         config["task"] = args.tarefa
     storage.write_json_atomic(target / "run.json", config)
+    # A linhagem (28/10): o laboratorio emenda o historico do pai ate esta rodada (o grafico nao recomeca a cada ramo).
+    storage.write_json_atomic(target / "linhagem.json", {"de": args.de, "rodada": int(reference.iteration)})
     print(f"ramo {args.run} de {args.de} (rodada {reference.iteration})")
     return 0
 

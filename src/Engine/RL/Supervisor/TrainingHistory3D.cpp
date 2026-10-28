@@ -1,10 +1,13 @@
 #include "Engine/RL/Supervisor/TrainingHistory3D.hpp"
 
+#include <nlohmann/json.hpp>
 #include <sqlite3.h>
 
 #include <algorithm>
 #include <chrono>
+#include <fstream>
 #include <limits>
+#include <type_traits>
 
 namespace MatterEngine {
 namespace {
@@ -128,7 +131,8 @@ TrainingHistory3D readTrainingHistory3D(const std::filesystem::path& database, c
     // As medidas de cada exercicio ficam num JSON (o treinador acrescenta outras sem mudar o banco).
     const char* evaluations = "SELECT iteration, time, steps, solver, drill, json_extract(data, '$.falls'), "
                               "json_extract(data, '$.velocity_error_median'), json_extract(data, '$.useful_steps'), "
-                              "json_extract(data, '$.return'), json_extract(data, '$.stood_fraction') "
+                              "json_extract(data, '$.return'), json_extract(data, '$.stood_fraction'), "
+                              "json_extract(data, '$.speed'), json_extract(data, '$.requested') "
                               "FROM body_evaluations WHERE run=?1 AND time>=?2 ORDER BY iteration, drill, solver";
     if (sqlite3_prepare_v2(db, evaluations, -1, &statement, nullptr) == SQLITE_OK) {
         sqlite3_bind_text(statement, 1, run.c_str(), -1, SQLITE_TRANSIENT);
@@ -145,6 +149,8 @@ TrainingHistory3D readTrainingHistory3D(const std::filesystem::path& database, c
             point.usefulSteps = sqlite3_column_type(statement, 7) == SQLITE_NULL ? -1.0 : columnDouble(statement, 7);
             if (sqlite3_column_type(statement, 8) != SQLITE_NULL) point.episodeReturn = columnDouble(statement, 8);
             if (sqlite3_column_type(statement, 9) != SQLITE_NULL) point.stood = columnDouble(statement, 9);
+            if (sqlite3_column_type(statement, 10) != SQLITE_NULL) point.bodySpeed = columnDouble(statement, 10);
+            if (sqlite3_column_type(statement, 11) != SQLITE_NULL) point.requestedSpeed = columnDouble(statement, 11);
             history.evaluations.push_back(point);
         }
         sqlite3_finalize(statement);
@@ -159,6 +165,32 @@ TrainingHistory3D readTrainingHistory3D(const std::filesystem::path& database, c
     }
     sqlite3_close(db);
     return history;
+}
+
+std::optional<TrainingLineageLink3D> readTrainingLineage3D(const std::filesystem::path& runDirectory) {
+    std::ifstream file(runDirectory / "linhagem.json");
+    if (!file) return std::nullopt;
+    const nlohmann::json json = nlohmann::json::parse(file, nullptr, false);
+    if (json.is_discarded() || !json.is_object() || !json.contains("de") || !json["de"].is_string()
+        || !json.contains("rodada") || !json["rodada"].is_number_integer())
+        return std::nullopt;
+    TrainingLineageLink3D link { json["de"].get<std::string>(), json["rodada"].get<std::uint64_t>() };
+    if (link.run.empty()) return std::nullopt;
+    return link;
+}
+
+void prependTrainingAncestor3D(TrainingHistory3D& history, const TrainingHistory3D& parent,
+    std::uint64_t untilIteration, double since) {
+    const auto prepend = [&](auto& into, const auto& from) {
+        std::remove_cvref_t<decltype(into)> merged;
+        for (const auto& point : from)
+            if (point.iteration <= untilIteration && point.time >= since) merged.push_back(point);
+        merged.insert(merged.end(), into.begin(), into.end());
+        into = std::move(merged);
+    };
+    prepend(history.iterations, parent.iterations);
+    prepend(history.evaluations, parent.evaluations);
+    prepend(history.drills, parent.drills);
 }
 
 } // namespace MatterEngine

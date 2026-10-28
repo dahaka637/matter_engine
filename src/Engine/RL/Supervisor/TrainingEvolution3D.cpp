@@ -288,4 +288,48 @@ TrainingCharts3D trainingCharts3D(const TrainingHistory3D& history, const std::v
     return out;
 }
 
+TrainingEvaluationCharts3D trainingEvaluationCharts3D(const TrainingHistory3D& history,
+    const std::vector<TrainingDrillInfo3D>& task) {
+    TrainingEvaluationCharts3D out;
+    std::unordered_map<std::string, const TrainingDrillInfo3D*> weighted;
+    for (const TrainingDrillInfo3D& info : task)
+        if (info.weight > 0.0) weighted[info.id] = &info;
+    if (weighted.empty()) return out;
+    const std::vector<TrainingEvaluationPoint3D>& points = history.evaluations;
+    for (std::size_t i = 0; i < points.size();) {
+        const std::uint64_t iteration = points[i].iteration;
+        double time = points[i].time, standing = 0.0, worst = 2.0, reach = 0.0;
+        std::size_t measured = 0, moving = 0;
+        std::string worstDrill;
+        for (; i < points.size() && points[i].iteration == iteration; ++i) {
+            const TrainingEvaluationPoint3D& p = points[i];
+            const auto found = weighted.find(p.drill);
+            if (p.solver != "rede" || found == weighted.end()) continue;
+            const TrainingDrillInfo3D& info = *found->second;
+            const double stood = info.getUp ? p.stood : 1.0 - p.falls;
+            if (!std::isfinite(stood)) continue;
+            time = std::max(time, p.time);
+            standing += stood;
+            ++measured;
+            if (stood < worst) {
+                worst = stood;
+                worstDrill = p.drill;
+            }
+            if (info.goalSpeed > 0.0 && std::isfinite(p.bodySpeed) && std::isfinite(p.requestedSpeed)
+                && p.requestedSpeed > 0.1) {
+                reach += std::min(1.0, p.bodySpeed / p.requestedSpeed);
+                ++moving;
+            }
+        }
+        if (measured * 2 < weighted.size()) continue;
+        out.times.push_back(time);
+        out.iterations.push_back(iteration);
+        out.standing.push_back(static_cast<float>(100.0 * standing / static_cast<double>(measured)));
+        out.worstStanding.push_back(static_cast<float>(100.0 * worst));
+        out.worstDrill.push_back(worstDrill);
+        out.reach.push_back(moving > 0 ? static_cast<float>(100.0 * reach / static_cast<double>(moving)) : NoneFloat);
+    }
+    return out;
+}
+
 } // namespace MatterEngine

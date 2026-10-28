@@ -848,6 +848,19 @@ void ReinforcementLearningScreen::refreshHistory() {
             TrainingHistory3D history = readTrainingHistory3D(database, run, since, points);
             // (Um treino parado ha mais que a janela: o fim dele.)
             if (since > 0.0 && history.iterations.empty()) history = readTrainingHistory3D(database, run, 0.0, points);
+            // A linhagem (28/10): os treinos de onde este ramo saiu, ate a rodada de cada ramo - o grafico nao
+            // recomeca a cada ramo. Na janela de tempo, contada da rodada mais recente deste.
+            double newest = 0.0;
+            for (const TrainingIterationPoint3D& point : history.iterations) newest = std::max(newest, point.time);
+            const double from = since > 0.0 && newest > 0.0 ? newest - since : 0.0;
+            std::filesystem::path at = directory;
+            for (int depth = 0; depth < 16; ++depth) {
+                const std::optional<TrainingLineageLink3D> link = readTrainingLineage3D(at);
+                if (!link) break;
+                prependTrainingAncestor3D(history, readTrainingHistory3D(database, link->run, 0.0, points),
+                    link->iteration, from);
+                at = directory.parent_path() / link->run;
+            }
             return history;
         });
 }
@@ -1615,6 +1628,14 @@ const TrainingCharts3D& ReinforcementLearningScreen::charts(std::size_t slices) 
     return m_chartData;
 }
 
+const TrainingEvaluationCharts3D& ReinforcementLearningScreen::evaluationCharts() {
+    if (m_evaluationDataVersion != m_historyVersion) {
+        m_evaluationData = trainingEvaluationCharts3D(m_history, m_drillInfo);
+        m_evaluationDataVersion = m_historyVersion;
+    }
+    return m_evaluationData;
+}
+
 void ReinforcementLearningScreen::drawCharts(float height) {
     if (m_locomotionTask && !MotorViewer3D::isMotorTask(m_viewerTask) && !TrackingViewer3D::isTrackingTask(m_viewerTask))
         drawLocomotionCharts(height);
@@ -1641,26 +1662,45 @@ void ReinforcementLearningScreen::drawLocomotionCharts(float height) {
         cyan { 0.35f, 0.78f, 0.94f, 1.0f }, violet { 0.70f, 0.56f, 0.96f, 1.0f }, blue { 0.47f, 0.62f, 0.98f, 1.0f };
 
     if (!m_chartsExpanded) {
-        // Recolhido: so a evolucao (0 a 100) do treino todo e, apagada, a do exercicio mostrado; as partes na dica.
-        const bool drillLine = anyFinite(data.drillEvolution) && !drillName.empty();
-        std::string title = "Evolução (0 a 100) · o treino";
-        if (drillLine) title += " e, apagado, " + drillName;
-        std::string value = text(lastFinite(data.evolution), "%.0f");
-        if (const auto change = periodChange(data.evolution))
-            value += text(static_cast<float>(change->second - change->first), "  (%+.1f)");
-        std::vector<ChartSeries> series { { &data.evolution, green, false, "treino" } };
-        if (drillLine) series.push_back({ &data.drillEvolution, cyan, true, drillName });
-        series.push_back({ &data.standing, green, false, "sem cair", true });
-        series.push_back({ &data.tracking, cyan, false, "seguir o pedido", true });
-        series.push_back({ &data.stability, violet, false, "estabilidade", true });
-        series.push_back({ &data.reach, amber, false, "velocidade alcançada", true });
-        ImGui::TextColored(InfoText, "%s", title.c_str());
-        tooltip("Junta, por exercício, o sem cair (40%), o seguir o pedido (25%), a estabilidade (20%) e a velocidade "
-                "alcançada contra a meta (15%), pelos pesos da tarefa.");
-        const auto [low, high] = indexRange({ &data.evolution, &data.drillEvolution });
-        lineChart("##evolucao", series, low, high,
-            { ImGui::GetContentRegionAvail().x, std::max(height - ImGui::GetTextLineHeightWithSpacing(), ui(40.0f)) },
-            value.c_str(), "", &data.times, false, "sem dados no período");
+        // Recolhido (28/10, pedido do usuario: o indice do treino era confuso e nao mostrava a evolucao real): a
+        // avaliacao da rede sem ruido, um ponto por avaliacao, a linhagem inteira (os ramos emendados), lado a lado
+        // o sem cair e a velocidade atendida - 0 a 100, mais alto e melhor.
+        const TrainingEvaluationCharts3D& real = evaluationCharts();
+        const auto nameOf = [&](const std::string& id) {
+            const auto it = std::find(m_drillIds.begin(), m_drillIds.end(), id);
+            return it == m_drillIds.end() ? id : m_drillNames[static_cast<std::size_t>(it - m_drillIds.begin())];
+        };
+        const auto percent = [&](const std::vector<float>& values) {
+            std::string value = text(lastFinite(values), "%.0f%%");
+            if (const auto change = periodChange(values))
+                value += text(static_cast<float>(change->second - change->first), "  (%+.0f)");
+            return value;
+        };
+        const float spacing = ImGui::GetStyle().ItemSpacing.x;
+        const ImVec2 size { (ImGui::GetContentRegionAvail().x - spacing) * 0.5f,
+            std::max(height - ImGui::GetTextLineHeightWithSpacing(), ui(40.0f)) };
+        const float rowTop = ImGui::GetCursorPosY();
+        ImGui::BeginGroup();
+        std::string standingTitle = "Sem cair (%) · a média e, apagado, o pior exercício";
+        if (!real.worstDrill.empty() && !real.worstDrill.back().empty())
+            standingTitle += " (" + nameOf(real.worstDrill.back()) + ")";
+        ImGui::TextColored(InfoText, "%s", standingTitle.c_str());
+        tooltip("A avaliação da rede sem ruído, de tempos em tempos: em cada exercício do treino, a fatia que terminou "
+                "de pé, com a faixa inteira de velocidade dele. A linha é a média dos exercícios; a apagada, o pior.");
+        const auto [standingLow, standingHigh] = indexRange({ &real.standing, &real.worstStanding });
+        lineChart("##semcair", { { &real.standing, green, false, "média" }, { &real.worstStanding, amber, true, "pior" } },
+            standingLow, standingHigh, size, percent(real.standing).c_str(), "%", &real.times, false,
+            "sem avaliação no período");
+        ImGui::EndGroup();
+        ImGui::SameLine();
+        ImGui::SetCursorPosY(rowTop);
+        ImGui::BeginGroup();
+        ImGui::TextColored(InfoText, "%s", "Velocidade atendida (%)");
+        tooltip("Na mesma avaliação, nos exercícios que andam: a velocidade feita sobre a pedida (até 100%), a média.");
+        const auto [reachLow, reachHigh] = indexRange({ &real.reach });
+        lineChart("##velocidade", { { &real.reach, cyan, false, "velocidade" } }, reachLow, reachHigh, size,
+            percent(real.reach).c_str(), "%", &real.times, false, "sem avaliação no período");
+        ImGui::EndGroup();
         return;
     }
 

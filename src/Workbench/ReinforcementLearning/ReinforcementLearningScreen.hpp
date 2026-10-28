@@ -155,6 +155,8 @@ private:
     // O seletor do periodo dos graficos (o mesmo no recolhido e no expandido).
     void drawChartWindow(float width);
     [[nodiscard]] const TrainingCharts3D& charts(std::size_t slices);
+    // A evolucao real: a avaliacao da rede (um ponto por avaliacao, a linhagem inteira).
+    [[nodiscard]] const TrainingEvaluationCharts3D& evaluationCharts();
     void drawFooter();
     void notify(std::string text);
     [[nodiscard]] float ui(float value) const { return value * m_uiScale; }
@@ -282,6 +284,8 @@ private:
     std::uint64_t m_chartDataVersion = ~std::uint64_t { 0 };
     std::string m_chartDataDrill;
     std::size_t m_chartDataSlices = 0;
+    TrainingEvaluationCharts3D m_evaluationData;
+    std::uint64_t m_evaluationDataVersion = ~std::uint64_t { 0 };
     // Os graficos no lugar do visualizador, um embaixo do outro, e o periodo deles
     // (o mesmo recolhido e expandido; comeca em "desde o inicio").
     bool m_chartsExpanded = false;

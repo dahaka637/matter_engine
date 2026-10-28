@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <limits>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -37,6 +38,9 @@ struct TrainingEvaluationPoint3D {
     double stood = std::numeric_limits<double>::quiet_NaN();
     double velocityError = -1.0;
     double usefulSteps = -1.0;
+    // A velocidade media do corpo e a pedida (m/s; NaN sem a medida).
+    double bodySpeed = std::numeric_limits<double>::quiet_NaN();
+    double requestedSpeed = std::numeric_limits<double>::quiet_NaN();
     // O retorno medio dos episodios do exercicio na avaliacao (NaN sem a medida).
     double episodeReturn = std::numeric_limits<double>::quiet_NaN();
 };
@@ -93,5 +97,18 @@ struct TrainingHistory3D {
 // mais recente dele (um treino parado mostra o fim dele, nao um vazio).
 [[nodiscard]] TrainingHistory3D readTrainingHistory3D(const std::filesystem::path& database, const std::string& run,
     double sinceSeconds = 0.0, std::size_t maximumPoints = 600);
+
+// A linhagem (28/10): um ramo (matter-rl ramo) segue o cerebro de outro treino a
+// partir de uma rodada (linhagem.json na pasta do treino: {"de", "rodada"}).
+struct TrainingLineageLink3D {
+    std::string run;
+    std::uint64_t iteration = 0;
+};
+[[nodiscard]] std::optional<TrainingLineageLink3D> readTrainingLineage3D(const std::filesystem::path& runDirectory);
+
+// O historico do pai ate a rodada do ramo vai antes do do filho (o grafico nao
+// recomeca a cada ramo). since > 0: so o que for desse horario em diante.
+void prependTrainingAncestor3D(TrainingHistory3D& history, const TrainingHistory3D& parent,
+    std::uint64_t untilIteration, double since = 0.0);
 
 } // namespace MatterEngine

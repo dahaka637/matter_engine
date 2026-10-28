@@ -187,6 +187,57 @@ void testTrail() {
     require(empty.times.empty() && empty.evolution.empty(), "sem rodadas, nenhum ponto");
 }
 
+TrainingEvaluationPoint3D evaluation(std::uint64_t iteration, const std::string& drill, const std::string& solver,
+    double falls, double speed, double requested) {
+    TrainingEvaluationPoint3D p;
+    p.iteration = iteration;
+    p.time = 1000.0 + static_cast<double>(iteration);
+    p.drill = drill;
+    p.solver = solver;
+    p.falls = falls;
+    p.bodySpeed = speed;
+    p.requestedSpeed = requested;
+    return p;
+}
+
+// A evolucao real (28/10): a avaliacao da rede, um ponto por avaliacao.
+void testEvaluation() {
+    const std::vector<TrainingDrillInfo3D> task { { "frente", 1.0, 4.8, false }, { "corte", 1.0, 4.8, false },
+        { "parado", 1.0, 0.0, false }, { "fora", 0.0, 4.8, false } };
+    TrainingHistory3D history;
+    // Avaliacao 100: frente nao cai e faz 90% (pedido 3), o corte cai 25% e faz 120% (vale 1), o parado
+    // cai 50% (sem velocidade); o classico e o exercicio sem peso nao contam.
+    history.evaluations.push_back(evaluation(100, "corte", "rede", 0.25, 3.6, 3.0));
+    history.evaluations.push_back(evaluation(100, "fora", "rede", 1.0, 0.0, 3.0));
+    history.evaluations.push_back(evaluation(100, "frente", "classico", 1.0, 0.0, 3.0));
+    history.evaluations.push_back(evaluation(100, "frente", "rede", 0.0, 2.7, 3.0));
+    history.evaluations.push_back(evaluation(100, "parado", "rede", 0.5, 0.1, 0.0));
+    // Avaliacao 200 pela metade (so 1 dos 3): nao vira ponto.
+    history.evaluations.push_back(evaluation(200, "frente", "rede", 0.0, 3.0, 3.0));
+    const TrainingEvaluationCharts3D charts = trainingEvaluationCharts3D(history, task);
+    require(charts.standing.size() == 1 && charts.iterations.front() == 100, "uma avaliacao pela metade nao vira ponto");
+    require(near(charts.standing.front(), 100.0 * (1.0 + 0.75 + 0.5) / 3.0, 1e-4), "sem cair: a media dos exercicios");
+    require(near(charts.worstStanding.front(), 50.0, 1e-4) && charts.worstDrill.front() == "parado", "o pior e qual");
+    require(near(charts.reach.front(), 100.0 * (0.9 + 1.0) / 2.0, 1e-4), "a velocidade: feita/pedida ate 1, so os que andam");
+    require(trainingEvaluationCharts3D(TrainingHistory3D {}, task).times.empty(), "sem avaliacao, nenhum ponto");
+}
+
+// A linhagem (28/10): o historico do pai ate a rodada do ramo vai antes do do filho.
+void testLineage() {
+    TrainingHistory3D parent, child;
+    for (std::uint64_t i : { 10u, 20u, 30u }) parent.evaluations.push_back(evaluation(i, "frente", "rede", 0.5, 1.0, 1.0));
+    for (std::uint64_t i : { 10u, 20u, 30u }) parent.drills.push_back(point(i, "frente", 10.0, 0.5));
+    child.evaluations.push_back(evaluation(25, "frente", "rede", 0.0, 1.0, 1.0));
+    prependTrainingAncestor3D(child, parent, 20);
+    require(child.evaluations.size() == 3 && child.evaluations[0].iteration == 10 && child.evaluations[1].iteration == 20
+            && child.evaluations[2].iteration == 25,
+        "o pai ate a rodada do ramo, antes do filho");
+    require(child.drills.size() == 2, "as rodadas do pai depois do ramo ficam de fora");
+    TrainingHistory3D recent;
+    prependTrainingAncestor3D(recent, parent, 30, 1015.0);
+    require(recent.evaluations.size() == 2 && recent.evaluations.front().iteration == 20, "so desde o horario pedido");
+}
+
 } // namespace
 
 int main() {
@@ -194,6 +245,8 @@ int main() {
         testParts();
         testCharts();
         testTrail();
+        testEvaluation();
+        testLineage();
     } catch (const std::exception& error) {
         std::cerr << "Training evolution tests failed: " << error.what() << '\n';
         return 1;
