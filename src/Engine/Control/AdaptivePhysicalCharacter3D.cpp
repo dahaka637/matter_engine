@@ -668,9 +668,12 @@ void AdaptivePhysicalCharacter3D::update(const RagdollProfile3D& profile,
         // afundado de uma vez (ate 0,9 g na pelve) - junto com a perna que
         // estende, ela lancava o corpo nas curvas (os saltinhos).
         static const float runSpringUpCap = tuneTempApc("T_RunSpringCap", -1.0f);
+        // (28/10: a partir de que pedido, m/s - nas viradas a 1 m/s com a ajuda
+        // em 30% o corpo voava ate 0,4 s.)
+        static const float runSpringFrom = tuneTempApc("T_RunSpringFrom", 2.5f);
         float heightSpring = positionError.z * hf * hf + velocityError.z * 2 * hf;
         if (runSpringUpCap >= 0.0f && legsWalking && !intent.airborne
-            && requestedVelocity.length() > 2.5f && brakeRunShare <= 0.001f)
+            && requestedVelocity.length() > runSpringFrom && brakeRunShare <= 0.001f)
             heightSpring = std::min(heightSpring, runSpringUpCap);
         out.supportAcceleration = std::clamp(
             Gravity * saturate(m_settings.gravityAssistFraction)
@@ -1024,8 +1027,10 @@ void AdaptivePhysicalCharacter3D::update(const RagdollProfile3D& profile,
         // virando forte) ela segurava o corpo no ar no zigue-zague - ate 0,4 s
         // de voo sem pulo, "pendurado". (Cortada desde o comeco do voo, o
         // zigue-zague caia: ela segura o corpo enquanto o pe chega.)
+        static const float flightGrace = tuneTempApc("T_FlightGrace", 0.18f);
+        static const float flightFade = tuneTempApc("T_FlightFade", 0.06f);
         if (m_settings.v2 && moving && out.supportAcceleration > 0.0f)
-            verticalFactor *= 1.0f - saturate((m_secondsWithoutFootContact - 0.18f) / 0.06f);
+            verticalFactor *= 1.0f - saturate((m_secondsWithoutFootContact - flightGrace) / std::max(0.01f, flightFade));
         out.supportAcceleration *= verticalFactor;
         m_apcDebugGate = gate;
     }
