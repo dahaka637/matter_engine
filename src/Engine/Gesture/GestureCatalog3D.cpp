@@ -164,9 +164,13 @@ GestureKeys3D receptionKeys(const GestureSpec3D& spec, const GestureRig3D& rig) 
     const float softness = 0.6f + 0.4f * power;
     body.drop = (spec.high ? 0.015f : 0.035f) * softness;
     body.forward = 0.02f * softness;
-    body.roll = s * 2.0f * Degree;
-    body.spineRoll = -s * (5.0f + (spec.high ? 6.0f : 0.0f)) * Degree;
-    body.spinePitch = (spec.high ? 4.0f : 12.0f) * Degree;
+    // (A recepcao longe inclina a coluna e a pelve pelo alcance - 28/10, pedido
+    // do usuario: "sinto falta de melhor inclinacao da coluna nos... recebimentos
+    // de bola"; era 5 graus em qualquer alcance.)
+    body.left = s * 0.015f * static_cast<float>(reach);
+    body.roll = s * (2.0f + 2.0f * static_cast<float>(reach)) * Degree;
+    body.spineRoll = -s * (5.0f + 7.0f * static_cast<float>(reach) + (spec.high ? 6.0f : 0.0f)) * Degree;
+    body.spinePitch = ((spec.high ? 4.0f : 12.0f) + 2.0f * static_cast<float>(reach)) * Degree;
     body.spineBack = (spec.high ? 8.0f : 0.0f) * Degree;
     body.headPitch = 18.0f * Degree;
     body.armForward = { -6.0f * softness * Degree, 10.0f * softness * Degree };
@@ -519,7 +523,10 @@ GestureKeys3D gestureKeys3D(const GestureSpec3D& spec, const GestureRig3D& rig) 
     body.left = s * 0.015f * r * softness;
     // (O toque curto tambem com o corpo: so a perna mexendo, ele sumia.)
     body.roll = s * 2.0f * r * softness * Degree;
-    body.spineRoll = -s * (6.0f + 8.0f * r) * softness * Degree;
+    // (A inclinacao pelo alcance cede so 30% com a forca: o toque longo pede o
+    // equilibrio mesmo fraco - 28/10, pedido do usuario: "melhor inclinacao da
+    // coluna nos manuseios longos".)
+    body.spineRoll = -s * (6.0f * softness + 12.0f * r * (0.7f + 0.3f * softness)) * Degree;
     body.spinePitch = (8.0f + 4.0f * r) * (0.5f + 0.5f * softness) * Degree;
     body.headPitch = 14.0f * Degree;
     body.armForward = { -10.0f * softness * Degree, 12.0f * softness * Degree };
