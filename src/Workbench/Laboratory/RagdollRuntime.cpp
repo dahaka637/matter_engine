@@ -10,10 +10,13 @@
 #include "Engine/Geometry/GltfLoader.hpp"
 #include "Engine/RHI/RHITypes.hpp"
 
+#include <nlohmann/json.hpp>
+
 #include <algorithm>
 #include <cstdio>
 #include <memory>
 #include <filesystem>
+#include <fstream>
 #include <cstdlib>
 #include <cmath>
 #include <span>
@@ -836,7 +839,21 @@ void WorkbenchApp::reloadLocomotionPolicy() {
         fs::path data;
         if (const char* root = std::getenv("MATTER_RL_DATA"); root != nullptr && *root != '\0') data = root;
         else if (const char* home = std::getenv("HOME"); home != nullptr) data = fs::path(home) / ".local/share/matter-engine/rl";
-        file = data / "runs" / "loco_f1f2" / "exports" / "policy_latest.mrlpolicy";
+        // A do treino de locomocao exportada por ultimo (28/10, pedido do usuario: o modelo
+        // mais recente; era o loco_f1f2 fixo).
+        std::error_code error;
+        fs::file_time_type newest {};
+        for (const auto& entry : fs::directory_iterator(data / "runs", error)) {
+            const fs::path candidate = entry.path() / "exports" / "policy_latest.mrlpolicy";
+            std::ifstream run(entry.path() / "run.json");
+            const nlohmann::json info = nlohmann::json::parse(run, nullptr, false);
+            if (!info.is_object() || info.value("kind", std::string()) != "locomocao") continue;
+            const auto time = fs::last_write_time(candidate, error);
+            if (!error && (file.empty() || time > newest)) {
+                file = candidate;
+                newest = time;
+            }
+        }
     }
     if (!m_humanRagdollProfile) {
         m_locomotionPolicyLabel = "sem o corpo do jogador";
@@ -850,6 +867,24 @@ void WorkbenchApp::reloadLocomotionPolicy() {
         m_locomotionPolicyLabel = label;
         Log::info("rede da locomocao: " + m_locomotionPolicyLabel + " (" + file.string() + ")");
         m_athleteRuntime.setLocomotionPolicy(std::move(policy));
+        // As condicoes com que ela treinou (a tarefa do treino, ao lado da exportacao): a ajuda
+        // entra na regua do personagem (ele muda depois); a regua e as viradas, com a rede.
+        m_locomotionPolicyConditions.reset();
+        std::ifstream taskFile(file.parent_path().parent_path() / "tarefa.json");
+        const nlohmann::json task = nlohmann::json::parse(taskFile, nullptr, false);
+        if (task.is_object()) {
+            LocomotionPolicyConditions conditions;
+            conditions.historicalAssistRuler = task.value("assistRuler", std::string("historical")) != "linear";
+            if (task.contains("movingHipTurn")) conditions.movingHipTurn = task["movingHipTurn"].value("enabled", false);
+            if (task.contains("runningTurn")) conditions.runningTurnClip = task["runningTurn"].value("enabled", false);
+            if (task.contains("assist")) {
+                const nlohmann::json& assist = task["assist"];
+                m_e5StandingAssistPercent = assist.value("standing", m_e5StandingAssistPercent);
+                m_e5WalkingAssistPercent = assist.value("walking", m_e5WalkingAssistPercent);
+                m_physicalFeetAssistPercent = assist.value("feet", m_physicalFeetAssistPercent);
+            }
+            m_locomotionPolicyConditions = conditions;
+        }
     } catch (const std::exception& error) {
         m_locomotionPolicyLabel = "nao carregou";
         Log::warn(std::string("rede da locomocao: ") + error.what());
@@ -920,6 +955,12 @@ AthleteRuntimeSettings3D WorkbenchApp::athleteRuntimeSettings() const {
     settings.physicalUsesDefaultSpeeds = m_physicalDefaultSpeeds;
     settings.physicalFeetAssistPercent = m_physicalFeetAssistPercent;
     settings.locomotionPolicy = m_locomotionPolicyOn && m_athleteRuntime.locomotionPolicy() != nullptr;
+    // Com a rede, a regua e as viradas do treino dela.
+    if (settings.locomotionPolicy && m_locomotionPolicyConditions) {
+        settings.historicalAssistRuler = m_locomotionPolicyConditions->historicalAssistRuler;
+        settings.movingHipTurn = m_locomotionPolicyConditions->movingHipTurn;
+        settings.runningTurnClip = m_locomotionPolicyConditions->runningTurnClip;
+    }
     // (Com a rede, sem guiagem de ossos: como no treino.)
     settings.physicalBoneGuidePercent = m_locomotionPolicyOn ? 0.0f : m_physicalBoneGuidePercent;
     // A virada brusca (experimento): so no Fisico total.

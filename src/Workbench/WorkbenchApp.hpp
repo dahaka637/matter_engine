@@ -523,6 +523,13 @@ private:
     // A rede da locomocao: ligada no menu do personagem, e o que foi
     // carregado (a rodada do treino, ou o erro).
     bool m_locomotionPolicyOn = false;
+    // As condicoes do treino da rede carregada (a tarefa dele): so valem com a rede.
+    struct LocomotionPolicyConditions {
+        bool historicalAssistRuler = true;
+        bool movingHipTurn = false;
+        bool runningTurnClip = false;
+    };
+    std::optional<LocomotionPolicyConditions> m_locomotionPolicyConditions;
     // As ajudas: a regua unica ou as quatro (Avancado, desligado por padrao).
     bool m_assistAdvanced = false;
     // A virada brusca (experimento, so no Fisico total): desligada por padrao.

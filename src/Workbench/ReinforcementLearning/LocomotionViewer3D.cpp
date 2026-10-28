@@ -281,6 +281,9 @@ LocomotionViewer3D::LocomotionViewer3D(const std::filesystem::path& taskPath,
     }
     // A regua de ajuda da tarefa (o zero antigo, se historica).
     impl.settings.historicalAssistRuler = task.value("assistRuler", std::string("historical")) != "linear";
+    // As viradas da tarefa: a no tempo do corpo e a da corrida (como no treino).
+    if (task.contains("movingHipTurn")) impl.settings.movingHipTurn = task["movingHipTurn"].value("enabled", false);
+    if (task.contains("runningTurn")) impl.settings.runningTurnClip = task["runningTurn"].value("enabled", false);
     if (task.contains("termination"))
         impl.groundHalfExtent = task["termination"].value("groundHalfExtentMeters", impl.groundHalfExtent);
     impl.bundle = AthleteBundle3D::shared(assetsDirectory.string());

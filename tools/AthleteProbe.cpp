@@ -1171,6 +1171,11 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
     if (const char* rede = std::getenv("XREDE"); rede != nullptr && *rede != '\0') {
         runtime.setLocomotionPolicy(std::make_shared<LocomotionPolicy3D>(*context.profile, rede));
         policySettings.locomotionPolicy = true;
+        // XTREINO=1: a regua linear e as viradas do treino (como o Fisico com RL desde 28/10).
+        if (std::getenv("XTREINO")) {
+            policySettings.historicalAssistRuler = false;
+            policySettings.movingHipTurn = policySettings.runningTurnClip = true;
+        }
     }
     Vec3 followVelocity {};
     bool controlledAnimated = !startPhysical;

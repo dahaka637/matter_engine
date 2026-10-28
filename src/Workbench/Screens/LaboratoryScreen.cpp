@@ -2946,8 +2946,8 @@ void WorkbenchApp::drawLaboratoryUi() {
                             if (ImGui::Combo("##LocomotionMode", &mode, modes, 3)) {
                                 m_defaultLocomotion = mode == 0;
                                 m_locomotionPolicyOn = mode == 2;
-                                if (m_locomotionPolicyOn && m_athleteRuntime.locomotionPolicy() == nullptr)
-                                    reloadLocomotionPolicy();
+                                // (A cada escolha, a rede mais nova e as condicoes do treino dela.)
+                                if (m_locomotionPolicyOn) reloadLocomotionPolicy();
                             }
                             hint("Padrão: o corpo segue a animação (com massa) e vai ao físico numa pancada, parede ou queda, voltando quando assenta. Físico total: sempre pelos músculos e pelas ajudas. Físico com RL: o físico com a rede treinada corrigindo os pés, o equilíbrio, a pose e a rigidez.");
                             // (A locomocao fisica v2 e o "tentar se manter em pe no
@@ -2994,7 +2994,7 @@ void WorkbenchApp::drawLaboratoryUi() {
                             hint("Desenha onde a bola precisa estar para cada parte: verde os pés (o amarelo mais claro é a bola alta, pé na altura do joelho), azul o peito, laranja a cabeça. É o centro da bola que conta.");
                             if (mode == 2) {
                                 if (ImGui::Button("Recarregar a rede", { -1.0f, 0.0f })) reloadLocomotionPolicy();
-                                hint("Carrega a última rede que o treino exportou.");
+                                hint("Carrega a rede mais recente dos treinos, com a ajuda, a régua e as viradas com que ela treinou.");
                                 if (!m_locomotionPolicyLabel.empty()) ImGui::TextDisabled("%s", m_locomotionPolicyLabel.c_str());
                             }
                         }
