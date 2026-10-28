@@ -237,49 +237,57 @@ void CharacterLocomotion3D::stepAir(Tick& t) {
         m_startDoseCap += (m_startDoseCap < StartSpeedBase + StartSpeedRate * StartDoseSeconds
             ? StartSpeedRate : 30.0f) * deltaTime;
 
+    // O primeiro passo e do pe de tras (no rumo pedido), como na referencia
+    // Idle To Sprint: o ciclo comeca quando o contato dele cai no clipe.
+    const auto startFromRearFoot = [&](const AnimationClip3D* startClip) {
+        const Vec3 wanted { input.intent.requestedDirectionWorld.x, input.intent.requestedDirectionWorld.y, 0.0f };
+        if (!input.forceDrivenRoot || startClip == nullptr || startClip->durationSeconds <= 0.0f
+            || wanted.lengthSquared() <= 0.01f || !physical.valid)
+            return;
+        const Vec3 direction = wanted.normalized();
+        const float back[2] = {
+            dot(physical.feet[0].soleCenterWorld - physical.centerOfMassWorld, direction),
+            dot(physical.feet[1].soleCenterWorld - physical.centerOfMassWorld, direction) };
+        // Quase lado a lado: sai o menos carregado.
+        const int rear = std::abs(back[0] - back[1]) > 0.05f ? (back[0] < back[1] ? 0 : 1)
+            : (physical.feet[0].loadNewtons < physical.feet[1].loadNewtons ? 0 : 1);
+        const AnimationScalarTrack3D& contact = rear == 0 ? startClip->leftFootContact : startClip->rightFootContact;
+        const float duration = startClip->durationSeconds;
+        constexpr int Samples = 240;
+        float liftoff = -1.0f;
+        float previous = sampleAnimationScalarTrack3D(contact, duration * (Samples - 1) / Samples, duration, true);
+        for (int i = 0; i < Samples; ++i) {
+            const float now = sampleAnimationScalarTrack3D(contact, duration * i / Samples, duration, true);
+            if (previous >= 0.5f && now < 0.5f) { liftoff = static_cast<float>(i) / Samples; break; }
+            previous = now;
+        }
+        if (liftoff >= 0.0f) {
+            // Fase do ciclo (a do clipe menos o deslocamento do apoio do
+            // esquerdo - ver stanceAlignedPhase).
+            const float offset = stanceAlignedPhase(*startClip, 0.0f);
+            m_cyclePhase = std::fmod(liftoff - offset - StartPhaseLead + 2.0f, 1.0f);
+        }
+    };
     if (enteredForwardGait) {
         m_startClipActive = true;
         m_startClipSprint = desiredState == CharacterLocomotionState3D::Running;
         m_startClipSeconds = 0.0f;
         m_cyclePhase = 0.0f;
-        // O primeiro passo e do pe de tras (no rumo pedido), como na
-        // referencia Idle To Sprint: o ciclo comeca quando o contato dele cai
-        // no clipe. Na fase 0 o direito ja estava a 42% do balanco - o alvo o
-        // queria no ar com o pe ainda carregado no chao, e ele saia
-        // arrastado; com o direito na frente, o pe da frente dava o passo.
-        const AnimationClip3D* startClip = desiredState == CharacterLocomotionState3D::Running
-            && animations.sprint != nullptr && m_sprintClipAllowed ? animations.sprint : animations.walk;
-        const Vec3 wanted { input.intent.requestedDirectionWorld.x, input.intent.requestedDirectionWorld.y, 0.0f };
-        if (StartFromRearFoot && input.forceDrivenRoot && startClip != nullptr && startClip->durationSeconds > 0.0f
-            && wanted.lengthSquared() > 0.01f && physical.valid) {
-            const Vec3 direction = wanted.normalized();
-            const float back[2] = {
-                dot(physical.feet[0].soleCenterWorld - physical.centerOfMassWorld, direction),
-                dot(physical.feet[1].soleCenterWorld - physical.centerOfMassWorld, direction) };
-            // Quase lado a lado: sai o menos carregado.
-            const int rear = std::abs(back[0] - back[1]) > 0.05f ? (back[0] < back[1] ? 0 : 1)
-                : (physical.feet[0].loadNewtons < physical.feet[1].loadNewtons ? 0 : 1);
-            const AnimationScalarTrack3D& contact = rear == 0 ? startClip->leftFootContact : startClip->rightFootContact;
-            const float duration = startClip->durationSeconds;
-            constexpr int Samples = 240;
-            float liftoff = -1.0f;
-            float previous = sampleAnimationScalarTrack3D(contact, duration * (Samples - 1) / Samples, duration, true);
-            for (int i = 0; i < Samples; ++i) {
-                const float now = sampleAnimationScalarTrack3D(contact, duration * i / Samples, duration, true);
-                if (previous >= 0.5f && now < 0.5f) { liftoff = static_cast<float>(i) / Samples; break; }
-                previous = now;
-            }
-            if (liftoff >= 0.0f) {
-                // Fase do ciclo (a do clipe menos o deslocamento do apoio do
-                // esquerdo - ver stanceAlignedPhase).
-                const float offset = stanceAlignedPhase(*startClip, 0.0f);
-                m_cyclePhase = std::fmod(liftoff - offset - StartPhaseLead + 2.0f, 1.0f);
-            }
-        }
+        // Na fase 0 o direito ja estava a 42% do balanco - o alvo o queria no
+        // ar com o pe ainda carregado no chao, e ele saia arrastado; com o
+        // direito na frente, o pe da frente dava o passo.
+        if (StartFromRearFoot)
+            startFromRearFoot(desiredState == CharacterLocomotionState3D::Running
+                && animations.sprint != nullptr && m_sprintClipAllowed ? animations.sprint : animations.walk);
     } else if (desiredState != CharacterLocomotionState3D::Walking
         && desiredState != CharacterLocomotionState3D::Running) {
         m_startClipActive = false;
     }
+    if (SideStartFromRearFoot
+        && (previousState == CharacterLocomotionState3D::Idle || previousState == CharacterLocomotionState3D::Turning)
+        && (desiredState == CharacterLocomotionState3D::Walking || desiredState == CharacterLocomotionState3D::Running)
+        && (m_gaitDirection == CharacterGaitDirection3D::Left || m_gaitDirection == CharacterGaitDirection3D::Right))
+        startFromRearFoot(m_gaitDirection == CharacterGaitDirection3D::Left ? animations.strafeLeft : animations.strafeRight);
     // Pouso: a velocidade de queda do corpo no toque decide quanto ele
     // agacha e por quanto tempo (0,18 s num degrau; ~0,5 s caindo de um
     // pulo alto). Medida no voo, antes do toque (no tick do toque ela ja

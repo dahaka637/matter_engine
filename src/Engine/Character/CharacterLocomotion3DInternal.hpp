@@ -262,6 +262,12 @@ const bool GaitStanceHoldYaw = tuneTemp("T_StanceHoldYaw", 0.0f) > 0.5f;  // TEM
 // Arrancada: o ciclo comeca com o pe de tras saindo do chao (fase do clipe
 // em que o contato dele cai), nao na fase 0.
 const bool StartFromRearFoot = tuneTemp("T_StartRear", 0.0f) > 0.5f;  // TEMPTUNE
+// ... e saindo de lado (28/10): parado a fase zera, e nos dois strafes
+// (espelhados) a fase 0 e o apoio maximo do esquerdo - para a direita o
+// direito saia a 46% do balanco e o classico caia ~1 s antes que para a
+// esquerda. Com ele: 3,0/3,4 s na reta e 2,2/2,4 no corte a 1 m/s (antes
+// 2,3/3,2 e 1,2/2,2), o clássico sozinho, direita/esquerda.
+const bool SideStartFromRearFoot = tuneTemp("T_SideStartRear", 1.0f) > 0.5f;  // TEMPTUNE
 // Perna da passada no ar pela altura da pelve de verdade quando ela esta
 // abaixo da de referencia (fracao; 0 desliga).
 const float SwingFromLowBody = tuneTemp("T_SwingLow", 0.7f);  // TEMPTUNE
