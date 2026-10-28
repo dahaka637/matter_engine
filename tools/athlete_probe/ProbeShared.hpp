@@ -245,6 +245,8 @@ struct Metrics {
     // O levantar pelo padrao (item 16).
     int animatedGetUpStarts = 0, animatedGetUpCompleted = 0, animatedGetUpAborts = 0;
     bool animatedGetUpWas = false;
+    // O ultimo comeco e o ultimo fim no padrao (s; < 0 sem).
+    float animatedGetUpStartAt = -1.0f, animatedGetUpEndAt = -1.0f;
     // O levantar fisico subindo (item 16b): a pelve de lado (|z| do eixo esquerdo) e escorregando (m/s).
     float risingSideways = 0.0f, risingSlide = 0.0f;
     // E os picos na janela do levantar (o pelo padrao ou o fisico subindo, e 0,5 s depois).

@@ -86,6 +86,9 @@ struct AthleteRuntimeSettings3D {
     // fisico. Desligado no runtime (o levantar e o treino dele); o
     // laboratorio liga.
     bool animatedGetUp = false;
+    // O ritmo do clipe dele (28/10, pedido do usuario: "levantar-se rapido no
+    // geral"; era 1).
+    float animatedGetUpSpeed = 1.3f;
     // O levantar fisico torto zera e tenta de novo (28/10, item 16b; ver
     // CharacterLocomotionInput3D::getUpRetryCrooked). Desligado no runtime (o
     // levantar e o treino dele); o laboratorio liga.

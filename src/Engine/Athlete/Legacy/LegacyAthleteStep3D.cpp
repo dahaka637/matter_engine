@@ -1708,7 +1708,7 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         // (A pose do tick no corpo guiado, com a capsula parada embaixo da pelve.)
         const auto drive = [&]() {
             RagdollAnimationPose3D pose;
-            getUp.step(profile, deltaTime, pose);
+            getUp.step(profile, deltaTime * std::max(0.1f, settings.animatedGetUpSpeed), pose);
             scene.setRagdollGuidePose(slot.handle, pose.linkPositions, pose.linkOrientations);
             const Vec3 pelvisNow = pose.linkPositions.front();
             scene.placeCharacter({ pelvisNow.x, pelvisNow.y, groundHeight(pelvisNow) }, assets.avatarSettings);

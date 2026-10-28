@@ -1919,10 +1919,17 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
         // O levantar pelo padrao: os comecos, os que acabam no padrao e os que voltam ao fisico.
         if (step >= 0) {
             const bool getUpNow = athlete.animatedGetUp.active();
-            if (getUpNow && !metrics.animatedGetUpWas) ++metrics.animatedGetUpStarts;
+            if (getUpNow && !metrics.animatedGetUpWas) {
+                ++metrics.animatedGetUpStarts;
+                metrics.animatedGetUpStartAt = t;
+            }
             if (!getUpNow && metrics.animatedGetUpWas) {
-                if (mode() == BodyModeKind3D::Physical) ++metrics.animatedGetUpAborts;
-                else ++metrics.animatedGetUpCompleted;
+                if (mode() == BodyModeKind3D::Physical) {
+                    ++metrics.animatedGetUpAborts;
+                } else {
+                    ++metrics.animatedGetUpCompleted;
+                    metrics.animatedGetUpEndAt = t;
+                }
             }
             metrics.animatedGetUpWas = getUpNow;
         }
@@ -2723,8 +2730,9 @@ void printMetrics(const Scenario& scenario, const Metrics& metrics, bool footste
         std::printf("%-18s   levantar fisico subindo: a pelve tomba de lado ate %.0f graus, escorrega ate %.2f m/s\n", "",
             std::asin(std::min(1.0f, metrics.risingSideways)) * 180.0f / Pi, metrics.risingSlide);
     if (metrics.animatedGetUpStarts > 0)
-        std::printf("%-18s   levantar pelo padrao: %d comecos, %d no padrao, %d de volta ao fisico\n", "",
-            metrics.animatedGetUpStarts, metrics.animatedGetUpCompleted, metrics.animatedGetUpAborts);
+        std::printf("%-18s   levantar pelo padrao: %d comecos, %d no padrao, %d de volta ao fisico (ultimo de %.2f a %.2f s)\n",
+            "", metrics.animatedGetUpStarts, metrics.animatedGetUpCompleted, metrics.animatedGetUpAborts,
+            metrics.animatedGetUpStartAt, metrics.animatedGetUpEndAt);
     if (metrics.conductionValid)
         std::printf("%-18s   conducao: rumo %+.2f graus da mira, giro de lado %+.1f rad/s, %d ticks conduzindo\n", "",
             metrics.conductionHeading, metrics.conductionSpin, metrics.conductionTicks);
@@ -3306,6 +3314,8 @@ int main(int argc, char** argv) {
     if (const char* springs = std::getenv("XMOLAS")) settings.physicalReactionPercent = static_cast<float>(std::atof(springs));
     // XLEVANTAR=1: o levantar pelo padrao (item 16).
     if (std::getenv("XLEVANTAR")) settings.animatedGetUp = true;
+    // XLEVANTAR_RITMO=<x>: o ritmo do clipe do levantar pelo padrao (28/10).
+    if (const char* rate = std::getenv("XLEVANTAR_RITMO")) settings.animatedGetUpSpeed = static_cast<float>(std::atof(rate));
     // XTORTO=1: o levantar fisico torto zera e tenta de novo (item 16b).
     if (std::getenv("XTORTO")) settings.getUpRetryCrooked = true;
     settings.footstepLocomotion = footsteps;
