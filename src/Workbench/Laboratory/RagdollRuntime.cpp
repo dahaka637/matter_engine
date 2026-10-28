@@ -502,6 +502,7 @@ bool WorkbenchApp::spawnHumanRagdollAt(Vec3 pelvisPosition,
     try {
         const RagdollHandle3D handle =
             m_physicsScene->createRagdoll(*m_humanRagdollProfile, spawn);
+        m_physicsScene->setRagdollLimitTension(handle, m_ragdollLimitTension);
         const RagdollState3D initial =
             m_physicsScene->ragdollState(handle);
         SpawnedRagdollInstance instance;
@@ -650,6 +651,7 @@ void WorkbenchApp::resetControlledCharacterPose() {
         spawn.active = true;
         controlled->physicsRagdoll = m_physicsScene->createRagdoll(
             *m_humanRagdollProfile, spawn);
+        m_physicsScene->setRagdollLimitTension(controlled->physicsRagdoll, m_ragdollLimitTension);
         const RagdollState3D initial = m_physicsScene->ragdollState(
             controlled->physicsRagdoll);
         controlled->physicsState = initial;
@@ -754,6 +756,7 @@ void WorkbenchApp::applyLaboratoryBody() {
         m_physicsScene->destroyRagdoll(instance.physicsRagdoll);
         try {
             instance.physicsRagdoll = m_physicsScene->createRagdoll(*m_humanRagdollProfile, spawn);
+            m_physicsScene->setRagdollLimitTension(instance.physicsRagdoll, m_ragdollLimitTension);
         } catch (const std::exception& error) {
             Log::error(std::string("Falha ao recriar ragdoll no corpo novo: ") + error.what());
             instance.entityId = 0;

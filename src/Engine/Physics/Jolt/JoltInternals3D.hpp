@@ -217,7 +217,8 @@ struct PhysicsScene3D::Impl final : public JPH::ContactListener,
         SetFrictionScale,
         SetKinematic,
         RemoveVerticalSpin,
-        SetGuided
+        SetGuided,
+        SetLimitTension
     };
 
     struct RagdollCommand {

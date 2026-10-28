@@ -3747,6 +3747,12 @@ void WorkbenchApp::drawLaboratoryUi() {
                 }
             }
             ImGui::SetItemTooltip("Ativo: músculos, torque corporal e contatos. Passivo: só juntas, limites e colisões.");
+            if (ImGui::Checkbox("Tensão nos limites", &m_ragdollLimitTension) && m_physicsScene) {
+                for (SpawnedRagdollInstance& instance : m_spawnedRagdolls)
+                    if (instance.kind == ArticulatedRigKind::Human)
+                        m_physicsScene->setRagdollLimitTension(instance.physicsRagdoll, m_ragdollLimitTension);
+            }
+            ImGui::SetItemTooltip("Perto do fim de cada junta, o tecido resiste como mola e amortece: o osso desacelera antes do limite em vez de bater seco.");
             panelHeader("FORÇA AUXILIAR E MUSCULAR");
             ImGui::Checkbox("Forçar alteração dos valores", &m_ragdollForceControlOverride);
             ImGui::BeginDisabled(!m_ragdollForceControlOverride);

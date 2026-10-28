@@ -716,6 +716,9 @@ public:
     // Escala do atrito de todos os corpos de um ragdoll (1 = o do material).
     // Carrinho: deslizando, o corpo escorrega na grama.
     void setRagdollFrictionScale(RagdollHandle3D ragdoll, float scale);
+    // A tensao nos limites das juntas (RagdollLimitTension3D) ligada ou nao neste
+    // boneco, com os parametros do perfil dele.
+    void setRagdollLimitTension(RagdollHandle3D ragdoll, bool enabled);
     // A velocidade da capsula (ao sair de um estado em que ela foi levada
     // pelo corpo, como o carrinho: sai com o embalo dele).
     void setCharacterVelocity(Vec3 velocity);

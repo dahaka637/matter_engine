@@ -531,6 +531,8 @@ private:
     std::string m_locomotionPolicyLabel;
     bool m_ragdollAssetsLoadFailed = false;
     bool m_ragdollActive = true;
+    // A tensao nos limites das juntas nos bonecos humanos (27/10; desligada: o de antes).
+    bool m_ragdollLimitTension = false;
     float m_ragdollRigidityPercent = 0.0f;
     // Explicit bounded physical assistance; the previous balance/WBC is archived.
     bool m_manualRagdollInspection = false;

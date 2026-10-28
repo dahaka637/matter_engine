@@ -14,6 +14,7 @@ void PhysicsScene3D::captureRagdollPose(RagdollHandle3D h) { m_impl->pendingRagd
 void PhysicsScene3D::setRagdollNeutralPose(RagdollHandle3D h) { m_impl->pendingRagdollCommands.push_back({h, Impl::RagdollCommandType::NeutralPose, 0}); }
 void PhysicsScene3D::releaseRagdollDrives(RagdollHandle3D h) { m_impl->pendingRagdollCommands.push_back({h, Impl::RagdollCommandType::Release, 0}); }
 void PhysicsScene3D::setRagdollActive(RagdollHandle3D h, bool v) { m_impl->pendingRagdollCommands.push_back({h, Impl::RagdollCommandType::SetActive, v ? 1.0f : 0.0f}); }
+void PhysicsScene3D::setRagdollLimitTension(RagdollHandle3D h, bool v) { m_impl->pendingRagdollCommands.push_back({h, Impl::RagdollCommandType::SetLimitTension, v ? 1.0f : 0.0f}); }
 void PhysicsScene3D::setRagdollFrictionScale(RagdollHandle3D h, float v) { if (std::isfinite(v)) m_impl->pendingRagdollCommands.push_back({h, Impl::RagdollCommandType::SetFrictionScale, std::clamp(v,0.0f,2.0f)}); }
 void PhysicsScene3D::setRagdollFrozen(RagdollHandle3D h, bool v) { m_impl->pendingRagdollCommands.push_back({h, Impl::RagdollCommandType::SetFrozen, v ? 1.0f : 0.0f}); }
 void PhysicsScene3D::setRagdollKinematic(RagdollHandle3D h, bool v) { m_impl->pendingRagdollCommands.push_back({h, Impl::RagdollCommandType::SetKinematic, v ? 1.0f : 0.0f}); }
@@ -109,6 +110,11 @@ void PhysicsScene3D::Impl::applyPendingRagdollCommands() {
         // de contatos - ver recordContact.)
         if (command.type == RagdollCommandType::SetFrictionScale) {
             r->frictionScale = command.value;
+            continue;
+        }
+        // (A tensao nos limites mora na copia do perfil do boneco: os motores a leem a cada passo.)
+        if (command.type == RagdollCommandType::SetLimitTension) {
+            r->profile.limitTension.enabled = command.value != 0.0f;
             continue;
         }
         switch (command.type) {
