@@ -103,7 +103,10 @@ void DefaultLocomotion3D::stepGesture(Tick& t) {
         // apoiava.)
         m_gesturePlayers[1 - side].finishSoon(0.1f);
     }
-    if (!m_gesturePlayers[0].active() && !m_gesturePlayers[1].active()) return;
+    if (!m_gesturePlayers[0].active() && !m_gesturePlayers[1].active()) {
+        m_gestureArmTake = 0.0f;
+        return;
+    }
     // O pe de apoio fica onde a locomocao o pos: a pose dele no mundo antes do
     // gesto mexer na pelve (os pes vao para la em stepFeet).
     for (std::size_t side = 0; side < 2; ++side) {
@@ -177,6 +180,9 @@ void DefaultLocomotion3D::stepGesture(Tick& t) {
     // Andando, o balanco da corrida nos bracos cede para a media dele durante o
     // gesto (70% no meio): os bracos fazem o do gesto. (Por cima do balanco,
     // os dois brigavam: a mao subia ao queixo e o braco cruzava o peito.)
+    // (Cede no maximo em 0,15 s: o gesto novo na mesma perna recomeca o pulso.)
+    armTake = std::max(armTake, m_gestureArmTake - dt / 0.15f);
+    m_gestureArmTake = armTake;
     const float settle = 0.7f * armTake * std::clamp(m_moving, 0.0f, 1.0f);
     if (settle > 1e-4f) {
         float total = 0.0f;

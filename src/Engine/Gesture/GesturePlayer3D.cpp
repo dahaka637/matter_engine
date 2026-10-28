@@ -43,6 +43,9 @@ float liftBumpCurve(float s) {
 
 void GesturePlayer3D::start(const GestureSpec3D& spec, const GestureRig3D& rig, const GestureLegPose3D& current,
     const GestureLegPose3D& currentVelocity) {
+    m_carrySpan = m_active && m_lastBodyValid ? 0.15f : 0.0f;
+    if (m_carrySpan > 0.0f) m_carry = m_lastBody;
+    m_lastBodyValid = false;
     m_spec = spec;
     m_spec.side = spec.side == 1 ? 1 : 0;
     m_keys = gestureKeys3D(m_spec, rig);
@@ -409,6 +412,25 @@ GestureFrame3D GesturePlayer3D::update(float dt, const GestureLegPose3D& live, f
             body.elbow[arm] *= keep;
         }
     }
+    if (t < m_carrySpan) {
+        const float w = 1.0f - gestureSmoothStep5(t / m_carrySpan);
+        body.pelvisDrop += m_carry.pelvisDrop * w;
+        body.pelvisForward += m_carry.pelvisForward * w;
+        body.pelvisLeft += m_carry.pelvisLeft * w;
+        body.pelvisYaw += m_carry.pelvisYaw * w;
+        body.pelvisRoll += m_carry.pelvisRoll * w;
+        for (std::size_t i = 0; i < 3; ++i) body.spine[i] += m_carry.spine[i] * w;
+        body.neck += m_carry.neck * w;
+        body.head += m_carry.head * w;
+        for (std::size_t arm = 0; arm < 2; ++arm) {
+            body.armForward[arm] += m_carry.armForward[arm] * w;
+            body.armOut[arm] += m_carry.armOut[arm] * w;
+            body.armAcross[arm] += m_carry.armAcross[arm] * w;
+            body.elbow[arm] += m_carry.elbow[arm] * w;
+        }
+    }
+    m_lastBody = body;
+    m_lastBodyValid = true;
     return frame;
 }
 

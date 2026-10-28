@@ -389,6 +389,30 @@ std::vector<Scenario> scenarios() {
                 list.push_back(s);
             }
         }
+        // Dois toques seguidos com a mesma perna (28/10, pedido do usuario: "estou
+        // manuseando a bola para o lado com a perna direita.. ai quero ja em
+        // seguida manusear para frente.. ele aproveita a posicao da perna"): para
+        // a direita e, 0,2 s depois, com a bola ainda junto do pe direito, para a
+        // frente - parado, andando e trotando.
+        for (const float walk : { 0.0f, 0.5f, 1.0f }) {
+            Scenario twice { std::string("seguido_") + (walk == 0.0f ? "parado" : walk < 1.0f ? "anda" : "trote"), 2.6f,
+                [walk](float t) {
+                    Keys k;
+                    k.forward = t > 0.2f ? walk : 0.0f;
+                    if (t >= 1.2f && t < 1.2f + Dt) { k.ball = BallActionKind3D::Dribble; k.power = 0.35f; k.left = -1.0f; }
+                    if (t >= 1.4f && t < 1.4f + Dt) { k.ball = BallActionKind3D::Dribble; k.power = 0.35f; k.forward = 1.0f; }
+                    return k; } };
+            twice.ball = true;
+            twice.ballStart = { 0.0f, 8.0f, 0.11f };
+            twice.placements.push_back({ 1.2f, { 0.20f, -0.28f, 0.11f } });
+            twice.placements.push_back({ 1.4f, { 0.30f, -0.30f, 0.11f } });
+            list.push_back(twice);
+            // (E com a bola deixada perto do meio, ainda do lado da direita.)
+            Scenario middle = twice;
+            middle.name = std::string("seguido_meio_") + (walk == 0.0f ? "parado" : walk < 1.0f ? "anda" : "trote");
+            middle.placements[1].second = { 0.30f, -0.12f, 0.11f };
+            list.push_back(middle);
+        }
         // Toques alternados rapidos (esquerda, direita a cada 0,15 s): o gesto
         // da outra perna termina logo (as duas no ar, nenhum pe apoiava).
         {
@@ -2662,6 +2686,21 @@ int runChecks(const ProbeContext& context) {
                             && (kick ? m.ballSpeedAfter > 11.0f : m.ballSpeedAfter < 8.5f), line, m);
                 }
             }
+        }
+        // Dois toques seguidos na mesma perna (28/10, pedido do usuario: aproveitar
+        // o movimento em vez de recomecar do zero): a mesma perna continua, o corpo
+        // nao salta (era 6,5 cm num tick e 4.800 m/s2 no tronco e nos bracos) e as
+        // duas pernas nunca ficam no gesto juntas.
+        for (const Scenario& scenario : scenarios()) {
+            if (scenario.name.rfind("seguido_", 0) != 0) continue;
+            const Metrics m = runScenario(context, scenario, gestures, false, nullptr, 1);
+            char line[220];
+            std::snprintf(line, sizeof(line),
+                "toques seguidos, %s: perna E %d D %d ticks, juntas %d, salto %.3f m, tronco e bracos ate %.0f m/s2",
+                scenario.name.c_str(), m.gestureTicks[0], m.gestureTicks[1], m.bothGestureTicks, m.worstPoseJump,
+                m.peakUpperAcceleration);
+            expect(m.touches == 2 && m.gestureTicks[0] == 0 && m.bothGestureTicks == 0 && m.worstPoseJump < 0.01f
+                    && m.peakUpperAcceleration < 600.0f && !m.fell, line, m);
         }
         // Pulando, as areas dos pes sobem com ele (24/10, o usuario viu elas no chao).
         {

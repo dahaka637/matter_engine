@@ -1088,10 +1088,17 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             // as pernas se alternam (24/10, pedido do usuario). (Na recepcao, na
             // bola vindo, no pedido armado e na bola alta, nao.)
             const bool conducting = gentle && !coming && !fromArmed;
-            const bool sequence = athlete.sinceGesture < 2.5f && athlete.lastGestureSide >= 0 && conducting && !high;
+            // A perna do ultimo toque ainda no gesto, com a bola do lado dela,
+            // continua (28/10, pedido do usuario: "aproveita a posicao da perna
+            // para continuar o movimento"); nao alterna.
+            const int lastSide = athlete.lastGestureSide;
+            const bool continuing = lastSide >= 0 && (animated || active) && gait.valid
+                && gait.gestureLegs[static_cast<std::size_t>(lastSide)]
+                && (lastSide == 0 ? ballInBody.y > -bodyReach.centerBand : ballInBody.y < bodyReach.centerBand);
+            const bool sequence = athlete.sinceGesture < 2.5f && lastSide >= 0 && conducting && !high && !continuing;
             // (Na recepcao parado, a bola perto do meio vai ao pe da frente: o de
             // tras corria 75 cm ate ela.)
-            int preferredSide = freeSide;
+            int preferredSide = continuing ? lastSide : freeSide;
             // O pe mais a frente (front) ou mais atras (rear) agora.
             const auto footAt = [&](bool front) {
                 int side = -1;

@@ -59,6 +59,13 @@ private:
     GestureLegPose3D m_startLeg, m_startOffset;
     bool m_startOffsetValid = false;
     float m_fadeStart = -1.0f, m_fadeEnd = -1.0f;
+    // O corpo do gesto que este substituiu na mesma perna (28/10, pedido do
+    // usuario: os gestos seguidos aproveitam o movimento em vez de recomecar do
+    // zero - os pulsos novos nascem em zero e o corpo saltava 6,5 cm num tick):
+    // ele sai aos poucos por baixo do novo. E o corpo do ultimo tick.
+    GestureBody3D m_lastBody, m_carry;
+    bool m_lastBodyValid = false;
+    float m_carrySpan = 0.0f;
     float m_time = 0.0f;
     GestureSpec3D m_spec;
     GestureKeys3D m_keys;

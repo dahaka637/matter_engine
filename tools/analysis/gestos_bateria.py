@@ -39,7 +39,8 @@ RAPIDO = [
     "gesto_alta_parado_toque_longe", "gesto_levantar_parado", "gesto_levantar_andando",
     "recepcao_balao", "recepcao_frente", "recepcao_frente_lenta", "recepcao_lado", "recepcao_trote",
     "recepcao_chute_fraco", "recepcao_alta", "peito_dominio", "peito_passe", "cabeceio_toque", "cabeceio_chute",
-    "cabeceio_correndo", "cabeceio_levantar", "cabeceio_toque_olhar",
+    "cabeceio_correndo", "cabeceio_levantar", "cabeceio_toque_olhar", "seguido_parado", "seguido_anda", "seguido_trote",
+    "seguido_meio_parado", "seguido_meio_anda", "seguido_meio_trote",
 ]
 # As diagonais longe do manejo (28/10): parado, andando e trotando, os quatro cantos.
 DIAGONAIS = [f"diag_{a}_{c}" for a in ("parado", "anda", "trote") for c in ("fe", "fd", "te", "td")]

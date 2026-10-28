@@ -902,6 +902,10 @@ private:
     struct FootPose { Vec3 position; Quaternion orientation; };
     std::array<FootPose, 2> m_gestureSupport {};
     std::array<bool, 2> m_gestureSupportValid {};
+    // O quanto o gesto toma os bracos no tick anterior (28/10: num gesto novo na
+    // mesma perna o pulso recomecava em zero e o balanco da passada voltava aos
+    // bracos de uma vez).
+    float m_gestureArmTake = 0.0f;
 };
 
 } // namespace MatterEngine
