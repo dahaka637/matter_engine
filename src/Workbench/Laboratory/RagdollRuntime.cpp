@@ -935,6 +935,7 @@ AthleteRuntimeSettings3D WorkbenchApp::athleteRuntimeSettings() const {
     settings.defaultTrunkMotionPercent = m_defaultTrunkMotionPercent;
     settings.physicalFeel = m_physicalFeel;
     settings.physicalReactionPercent = m_physicalReactionPercent;
+    settings.defaultReturnRate = m_defaultReturnRatePercent * 0.01f;
     settings.physicalUpperAuthority = m_physicalUpperAuthority;
     settings.animatedGetUp = m_animatedGetUp;
     settings.getUpRetryCrooked = true;

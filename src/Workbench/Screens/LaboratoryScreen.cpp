@@ -2987,6 +2987,9 @@ void WorkbenchApp::drawLaboratoryUi() {
                             if (mode == 0) {
                                 ImGui::Checkbox("Levantar pelo padrão", &m_animatedGetUp);
                                 hint("Caído de bruços ou de costas, com o chão plano e nada no caminho, levanta pelo clipe com a postura certa; um contato no meio volta ao físico. Sem base, o levantar físico.");
+                                // (28/10, pedido do usuario: calibrar na pratica.)
+                                percent("Volta ao padrão", "##DefaultReturnRate", &m_defaultReturnRatePercent, 50.0f, 300.0f,
+                                    "A rapidez da volta do físico ao padrão depois de um impacto, quando o corpo já se aprumou. 100% é a calibrada; 200%, as esperas pela metade.");
                             }
                             ImGui::Checkbox("Pulo instantâneo", &m_instantJump);
                             hint("Ligado: pula ao apertar o espaço, na altura média. Desligado: segurar carrega e pula ao soltar (mais alto quanto mais segura).");

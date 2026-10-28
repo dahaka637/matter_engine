@@ -121,8 +121,17 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             curve.fullImpulse = modeTable ? settings.impactFullImpulse : plain.fullImpulse;
             curve.maximumDrop = modeTable ? settings.impactMaximumDrop : plain.maximumDrop;
         }
+        // (28/10, pedido do usuario: "quando pela propria locomocao fisica o corpo
+        // voltar a pose normal, voltar mais rapido". No padrao, assentado de pe
+        // desde o tick anterior, a ajuda volta defaultCalmRecoverSpeedup vezes
+        // mais rapido, vezes a rapidez dele; caindo ou cambaleando, no tempo de
+        // sempre - mais rapida ali, ela segurava a queda e o levantar pelo clipe
+        // nao comecava.)
+        const float recoverSpeedup = settings.defaultLocomotion && state.calmSeconds > 0.0f
+            ? settings.defaultCalmRecoverSpeedup * std::max(0.25f, settings.defaultReturnRate)
+            : 1.0f;
         state.impactAssist.update(modeTable ? impactWindowed : impactImpulse3D(body),
-            tackled && settings.tackledAssistLow, impulse, deltaTime);
+            tackled && settings.tackledAssistLow, impulse, deltaTime * recoverSpeedup);
         // (Com a tabela: caido ou levantando, o choque ja foi gasto no tombo -
         // a ajuda volta inteira e, de pe, ele volta ao padrao como antes. A
         // pancada no levantar tem a regra dela, getUpHitWeakens.)
@@ -629,13 +638,18 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                 // curta: depois de um encostao, andar no fisico mais de 1 s era
                 // onde o tombo acontecia.)
                 const bool bridged = settings.physicalBridge;
-                const float minimumSeconds = state.physicalFromJump || hurried ? 0.0f : bridged ? 0.5f : 0.8f;
-                const float calmSeconds = hurried ? 0.08f : state.physicalFromJump ? 0.15f : bridged ? 0.25f : 0.4f;
+                // (28/10, pedido do usuario - a volta ao padrao demorava: com a
+                // ponte, 0,3 s no minimo e 0,15 de calma; eram 0,5 e 0,25. A
+                // rapidez dele, defaultReturnRate, divide as esperas.)
+                const float rate = std::max(0.25f, settings.defaultReturnRate);
+                const float minimumSeconds = (state.physicalFromJump || hurried ? 0.0f : bridged ? 0.3f : 0.8f) / rate;
+                const float calmSeconds
+                    = (hurried ? 0.08f : state.physicalFromJump ? 0.15f : bridged ? 0.15f : 0.4f) / rate;
                 const bool landedLongEnough = !state.physicalFromJump || state.landedSeconds > 1.0f;
                 // Pronto para voltar: a ajuda sobe ate a cheia em
                 // ReturnBoostSeconds e so entao ele volta (se deixar de
                 // estar assentado no meio, a ajuda desce de novo).
-                const float ReturnBoostSeconds = hurried ? 0.15f : bridged ? 0.25f : 0.4f;
+                const float ReturnBoostSeconds = (hurried ? 0.15f : bridged ? 0.15f : 0.4f) / rate;
                 // (E com a ajuda de volta inteira depois do impacto - 06/10.)
                 const bool ready = state.bodyModeSeconds > minimumSeconds
                     && state.calmSeconds > calmSeconds && landedLongEnough
@@ -757,7 +771,8 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                         state.bridge = true;
                         state.bridgeSeconds = 0.0f;
                         const bool moving = handoff || command.intent.requestedVelocityWorld.lengthSquared() > 0.25f;
-                        state.bridgeDuration = moving ? settings.bridgeMovingSeconds : settings.bridgeSeconds;
+                        state.bridgeDuration = (moving ? settings.bridgeMovingSeconds : settings.bridgeSeconds)
+                            / std::max(0.25f, settings.defaultReturnRate);
                         if (!settings.returnSmoothing) state.bridgeDuration = moving ? 0.30f : 0.45f;
                     } else {
                         scene.setRagdollGuided(slot.handle, true);

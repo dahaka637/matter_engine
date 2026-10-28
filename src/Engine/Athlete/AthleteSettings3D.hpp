@@ -168,6 +168,17 @@ struct AthleteRuntimeSettings3D {
     float impactKneeDrop = 0.2f;
     float impactFullImpulse = 40.0f;
     float impactMaximumDrop = 0.9f;
+    // A volta da ajuda depois do choque no padrao (28/10, pedido do usuario:
+    // "ir do fisico -> default mais rapidamente"): com o corpo ja assentado de
+    // pe, ela volta este tanto de vezes mais rapido (a volta ao padrao espera
+    // por ela). Caindo ou cambaleando, e no fisico total (e no treino do RL),
+    // a de sempre (ImpactAssistSettings3D: 0,5 + 3 x a queda).
+    float defaultCalmRecoverSpeedup = 2.5f;
+    // A rapidez da volta ao padrao (28/10, pedido do usuario: "permitir eu
+    // ajustar manualmente"): divide as esperas da volta - a da ajuda (ja
+    // assentado), o minimo no fisico, a calma, a subida da ajuda e a ponte.
+    // 1: a calibrada.
+    float defaultReturnRate = 1.0f;
     // A janela curta dos impulsos (s): o choque espalhado por alguns ticks e
     // o empurrao que dura contam inteiros (na ajuda e na troca de modo).
     float impactWindowSeconds = 0.03f;
@@ -178,8 +189,9 @@ struct AthleteRuntimeSettings3D {
     // subindo de bridgeAuthorityStart a cheio - e entao o guiado. Contato
     // no padrao nao entra nela.
     bool physicalBridge = true;
-    float bridgeSeconds = 0.45f;
-    float bridgeMovingSeconds = 0.45f;
+    // (0,45 ate 28/10: a volta ao padrao mais rapida, pedido do usuario.)
+    float bridgeSeconds = 0.30f;
+    float bridgeMovingSeconds = 0.30f;
     float bridgeAuthorityStart = 0.15f;
     // A volta suave (plano v4, etapa C; desligada, a de antes): a capsula
     // embaixo do corpo e com a velocidade dele, a pedida subindo aos poucos,

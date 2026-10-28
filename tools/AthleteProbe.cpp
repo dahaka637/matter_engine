@@ -3294,6 +3294,14 @@ int main(int argc, char** argv) {
     if (std::getenv("XSEMCONDUCAO")) settings.ballForce.conduction = false;
     // XCORPOFISICO=0|1|2: o corpo fisico do padrao (desligado, molas, fisica; item 10).
     if (const char* feel = std::getenv("XCORPOFISICO")) settings.physicalFeel = std::atoi(feel);
+    // XVOLTA=<x>: a rapidez da volta do fisico ao padrao (1 = a calibrada; 28/10).
+    if (const char* rate = std::getenv("XVOLTA")) settings.defaultReturnRate = static_cast<float>(std::atof(rate));
+    // XPONTE=<s>: a duracao da ponte fisico -> padrao (parado e andando).
+    if (const char* bridge = std::getenv("XPONTE"))
+        settings.bridgeSeconds = settings.bridgeMovingSeconds = static_cast<float>(std::atof(bridge));
+    // XAJUDA_CALMA=<x>: quantas vezes mais rapido a ajuda volta no padrao, ja assentado.
+    if (const char* speedup = std::getenv("XAJUDA_CALMA"))
+        settings.defaultCalmRecoverSpeedup = static_cast<float>(std::atof(speedup));
     if (const char* guide = std::getenv("XGUIACIMA")) settings.physicalUpperAuthority = static_cast<float>(std::atof(guide));
     if (const char* springs = std::getenv("XMOLAS")) settings.physicalReactionPercent = static_cast<float>(std::atof(springs));
     // XLEVANTAR=1: o levantar pelo padrao (item 16).
