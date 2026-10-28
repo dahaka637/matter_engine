@@ -549,9 +549,22 @@ void CharacterLocomotion3D::stepGetUp(Tick& t) {
                 m_getUpClipSeconds = duration;
                 m_getUpHoldSeconds += deltaTime;
             }
+            // Torto: a pelve tombada de lado ou escorregando (ver
+            // getUpRetryCrooked; os levantares bons tombam ate ~46 graus e
+            // escorregam ate ~1,7 m/s).
+            if (input.getUpRetryCrooked && !state.links.empty()) {
+                const PhysicsBodyState3D& pelvis = state.links.front();
+                const Vec3 left = (pelvis.orientation * profile.links.front().modelOrientation.conjugate())
+                    .rotate({ 0.0f, 1.0f, 0.0f });
+                const bool crooked = std::abs(left.z) > 0.82f
+                    || std::hypot(pelvis.linearVelocity.x, pelvis.linearVelocity.y) > 2.5f;
+                m_getUpCrookedSeconds = crooked ? m_getUpCrookedSeconds + deltaTime : 0.0f;
+            } else {
+                m_getUpCrookedSeconds = 0.0f;
+            }
             // (E um teto: oscilando para sempre sem terminar, tenta de novo.)
             if (m_getUpStallSeconds > 3.0f || m_getUpHoldSeconds > 1.5f
-                || m_getUpPhaseSeconds > 9.0f) {
+                || m_getUpPhaseSeconds > 9.0f || (m_getUpCrookedSeconds > 0.3f && m_getUpAttempt < 3)) {
                 // Nao deu: volta a deitar e tenta de novo (pode escolher o
                 // outro clipe, se rolou).
                 classifyFallOrientation();
@@ -561,6 +574,7 @@ void CharacterLocomotion3D::stepGetUp(Tick& t) {
                 m_settlePoseValid = false;
                 m_getUpStallSeconds = 0.0f;
                 m_getUpHoldSeconds = 0.0f;
+                m_getUpCrookedSeconds = 0.0f;
                 m_getUpStruggle = 0.0f;
             } else if ((m_getUpClipSeconds >= duration && upright) || hurryExit) {
                 m_getUpPhase = CharacterGetUpPhase3D::None;

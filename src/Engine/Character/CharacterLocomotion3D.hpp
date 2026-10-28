@@ -247,6 +247,12 @@ struct CharacterLocomotionInput3D {
     // Pressa para levantar alem das teclas de andar (no laboratorio, o
     // espaco segurado): o levantar acelera.
     bool getUpHurry = false;
+    // O levantar torto zera e tenta de novo (28/10, item 16b, pedido do
+    // usuario: "durante o levantamento ele ficar zuado ele zera o levantar-se e
+    // tenta de novo do zero"): subindo com a pelve tombada de lado alem de 55
+    // graus, ou escorregando a mais de 2,5 m/s, por 0,3 s, ele volta a deitar
+    // (ate a terceira tentativa).
+    bool getUpRetryCrooked = false;
     // Cambaleio (pedido do usuario, 05/10 noite): um choque forte amolece o
     // corpo, mas de pe ele tenta se manter - o tonus volta em ~1,5 s, os
     // passos de equilibrio seguem e so vai ao chao se cair de fato.
@@ -1495,6 +1501,7 @@ private:
     Vec3 m_balanceDirection { 1.0f, 0.0f, 0.0f };
     float m_getUpStallSeconds = 0.0f;
     float m_getUpHoldSeconds = 0.0f;
+    float m_getUpCrookedSeconds = 0.0f;
     float m_getUpSupportAge = 1.0f;
     float m_getUpExpectedHeight = 0.0f;
     float m_getUpExpectedTilt = 0.0f;

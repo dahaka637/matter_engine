@@ -442,6 +442,7 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
     command.getUpStrength = std::clamp(settings.getUpStrengthPercent * 0.01f, 0.2f, 1.5f);
     // (O espaco segurado tambem e pressa para levantar.)
     command.getUpHurry = command.controlled && control.spaceHeld;
+    command.getUpRetryCrooked = settings.getUpRetryCrooked;
     command.tackleEnabled = settings.tackleEnabled;
     // A voadora tambem no fisico (06/10), pela mesma opcao do padrao.
     command.airTackleEnabled = settings.defaultAirTackle;

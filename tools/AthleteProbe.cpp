@@ -1890,6 +1890,18 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
         if (trace != nullptr && step >= 0) trace->push_back(athleteTickDigest3D(athlete, bodyState));
         if (step >= 0 && context.noCapsule) contractAfter(hooks, athlete, bodyState, slotCommand);
         if (scenario.ball && step >= 0) ballState = scene->inflatedBallState(ballHandle);
+        // O levantar fisico subindo (item 16b): o quanto a pelve tomba de lado e escorrega.
+        if (step >= 0 && !bodyState.links.empty()) {
+            const CharacterLocomotionTelemetry3D& telemetry = legacy.locomotion.telemetry();
+            if (mode() == BodyModeKind3D::Physical && telemetry.state == CharacterLocomotionState3D::GettingUp
+                && telemetry.getUpPhase == CharacterGetUpPhase3D::Rising) {
+                const PhysicsBodyState3D& pelvis = bodyState.links.front();
+                const Vec3 left = (pelvis.orientation * profile.links.front().modelOrientation.conjugate()).rotate({ 0.0f, 1.0f, 0.0f });
+                metrics.risingSideways = std::max(metrics.risingSideways, std::abs(left.z));
+                metrics.risingSlide = std::max(metrics.risingSlide, std::hypot(pelvis.linearVelocity.x, pelvis.linearVelocity.y));
+                metrics.risingValid = true;
+            }
+        }
         // O levantar pelo padrao: os comecos, os que acabam no padrao e os que voltam ao fisico.
         if (step >= 0) {
             const bool getUpNow = athlete.animatedGetUp.active();
@@ -2671,6 +2683,9 @@ void printMetrics(const Scenario& scenario, const Metrics& metrics, bool footste
         std::printf("%-18s   corpo: cabeca p95 %.0f graus/s (max %.0f) | filtrados em 0,3 s: peito x pelve ate %.1f graus da media, maos ate %.3f m\n",
             "", percentile(metrics.headSpeed, 0.95f), percentile(metrics.headSpeed, 1.0f), trunk, handsAway);
     }
+    if (metrics.risingValid)
+        std::printf("%-18s   levantar fisico subindo: a pelve tomba de lado ate %.0f graus, escorrega ate %.2f m/s\n", "",
+            std::asin(std::min(1.0f, metrics.risingSideways)) * 180.0f / Pi, metrics.risingSlide);
     if (metrics.animatedGetUpStarts > 0)
         std::printf("%-18s   levantar pelo padrao: %d comecos, %d no padrao, %d de volta ao fisico\n", "",
             metrics.animatedGetUpStarts, metrics.animatedGetUpCompleted, metrics.animatedGetUpAborts);
@@ -2818,6 +2833,15 @@ int runChecks(const ProbeContext& context) {
             expect(m.animatedGetUpAborts >= 1
                     && (m.finalMode == BodyModeKind3D::Animated || m.finalMode == BodyModeKind3D::Returning),
                 "levantar pelo padrao: o empurrao no meio volta ao fisico e ele acaba de pe", m);
+        }
+        {
+            // (16b: no laboratorio, a subida torta zera, ele volta a deitar e a
+            // nova tentativa vai pelo clipe.)
+            AthleteRuntimeSettings3D lab = getUpOn;
+            lab.getUpRetryCrooked = true;
+            const Metrics m = run("quedacorre_225", lab, false);
+            expect(m.animatedGetUpCompleted >= 1 && m.finalMode == BodyModeKind3D::Animated,
+                "levantar torto: zera, deita de novo e levanta pelo clipe", m);
         }
         {
             const Metrics m = run("queda_225", getUpOn, false);
@@ -3238,6 +3262,8 @@ int main(int argc, char** argv) {
     if (const char* springs = std::getenv("XMOLAS")) settings.physicalReactionPercent = static_cast<float>(std::atof(springs));
     // XLEVANTAR=1: o levantar pelo padrao (item 16).
     if (std::getenv("XLEVANTAR")) settings.animatedGetUp = true;
+    // XTORTO=1: o levantar fisico torto zera e tenta de novo (item 16b).
+    if (std::getenv("XTORTO")) settings.getUpRetryCrooked = true;
     settings.footstepLocomotion = footsteps;
     settings.activeStanceSettings.balanceSteps = balanceSteps;
     settings.capsuleResponsePercent = response;

@@ -245,6 +245,9 @@ struct Metrics {
     // O levantar pelo padrao (item 16).
     int animatedGetUpStarts = 0, animatedGetUpCompleted = 0, animatedGetUpAborts = 0;
     bool animatedGetUpWas = false;
+    // O levantar fisico subindo (item 16b): a pelve de lado (|z| do eixo esquerdo) e escorregando (m/s).
+    float risingSideways = 0.0f, risingSlide = 0.0f;
+    bool risingValid = false;
     Quaternion trunkFilter;
     std::array<Vec3, 2> handFilter {};
     bool trunkFilterValid = false;

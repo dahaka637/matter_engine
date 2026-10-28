@@ -86,6 +86,10 @@ struct AthleteRuntimeSettings3D {
     // fisico. Desligado no runtime (o levantar e o treino dele); o
     // laboratorio liga.
     bool animatedGetUp = false;
+    // O levantar fisico torto zera e tenta de novo (28/10, item 16b; ver
+    // CharacterLocomotionInput3D::getUpRetryCrooked). Desligado no runtime (o
+    // levantar e o treino dele); o laboratorio liga.
+    bool getUpRetryCrooked = false;
     // "Vida", pes e tornozelos.
     bool motionVariety = true;
     float motionVarietyPercent = 100.0f;
