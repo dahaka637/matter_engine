@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Engine/Athlete/Ball/ShotConduction3D.hpp"
 #include "Engine/Athlete/Body/ActiveBodyController3D.hpp"
 #include "Engine/Gesture/GestureTypes3D.hpp"
 #include "Engine/Athlete/Body/ActiveStance3D.hpp"
@@ -11,6 +12,7 @@
 #include "Engine/Athlete/Sensing/BodyObservation3D.hpp"
 #include "Engine/Athlete/Synthesis/LegClearance3D.hpp"
 #include "Engine/Athlete/Synthesis/LegSynthesis3D.hpp"
+#include "Engine/Physics/InflatedBall3D.hpp"
 
 #include <cstdint>
 
@@ -101,6 +103,13 @@ struct AthleteState3D {
         // O levantar guardado (28/10: o de cabeca na bola que cai).
         bool raise = false;
     } armedReception;
+    // A conducao do chute (28/10, pedido do usuario; Ball/ShotConduction3D):
+    // a bola chutada, enquanto ela esta no alcance.
+    struct Conduction {
+        bool active = false;
+        InflatedBallHandle3D ball;
+        ShotConduction3D shot;
+    } conduction;
     // A reescrita (R3): o corpo da classificacao de contatos, as regras de
     // troca de modo e o ultimo tick delas (a telemetria neutra: o que bateu,
     // a ultima troca e o motivo).

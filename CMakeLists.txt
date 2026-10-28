@@ -830,6 +830,7 @@ add_library(MatterAthlete STATIC
     src/Engine/Athlete/AthleteRuntime3D.cpp
     src/Engine/Athlete/AthleteTelemetry3D.cpp
     src/Engine/Athlete/Ball/BallOutcome3D.cpp
+    src/Engine/Athlete/Ball/ShotConduction3D.cpp
     src/Engine/Athlete/Reference/BodyForecast3D.cpp
     src/Engine/Athlete/Body/ActiveBodyController3D.cpp
     src/Engine/Athlete/Body/ActiveStance3D.cpp

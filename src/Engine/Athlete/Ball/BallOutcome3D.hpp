@@ -106,6 +106,12 @@ struct BallOutcomeSettings3D {
     float raisePower = 5.0f;
     float raiseCurve = 1.0f;
     float raiseAhead = 0.5f;
+    // A conducao do chute (28/10, pedido do usuario; ShotConduction3D): o giro
+    // maximo do rumo no chute de barra vazia (graus; com a barra b, (1 - b^2)
+    // disto) e o giro de lado que ele poe (rad/s por radiano girado).
+    bool conduction = true;
+    float conductionDegrees = 6.0f;
+    float conductionSpin = 400.0f;
 };
 
 // Os padroes (os de cima; T_Ball* e T_Shot* no ambiente os mudam).

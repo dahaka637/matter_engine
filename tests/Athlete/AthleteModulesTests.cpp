@@ -2,6 +2,7 @@
 // 04_locomocao/reescrita_da_locomocao.md). Modulos puros: unidade, a tabela de
 // trocas linha a linha e propriedades com sinais aleatorios.
 #include "Engine/Athlete/Ball/BallOutcome3D.hpp"
+#include "Engine/Athlete/Ball/ShotConduction3D.hpp"
 #include "Engine/Athlete/Contract/LocomotionContract3D.hpp"
 #include "Engine/Athlete/Modes/ContactClasses3D.hpp"
 #include "Engine/Athlete/Modes/ModeRules3D.hpp"
@@ -1102,6 +1103,29 @@ void turnMoveTests() {
 } // namespace
 
 // Tocar contra a bola amortece: sai a pedida menos a que ela trazia contra.
+// A conducao do chute (28/10): sem o olhar mudar, nada muda; o giro segue o
+// olhar ate o limite do chute (menor no forte) e poe giro de lado no mesmo sentido.
+void shotConductionTests() {
+    BallOutcomeSettings3D f;
+    f.conductionDegrees = 6.0f;
+    f.conductionSpin = 400.0f;
+    const float degree = 3.14159265f / 180.0f;
+    ShotConduction3D weak = startShotConduction3D(0.3f, 0.0f, f);
+    const Vec3 kicked { 19.0f, 0.0f, 1.5f };
+    const ShotConductionStep3D same = stepShotConduction3D(weak, kicked, {}, 0.3f, f);
+    expect((same.velocity - kicked).length() < 1e-5f && same.spin.length() < 1e-5f, "conducao: sem o olhar mudar, nada muda");
+    const ShotConductionStep3D left = stepShotConduction3D(weak, kicked, {}, 0.3f + 10.0f * degree, f);
+    expect(std::abs(std::atan2(left.velocity.y, left.velocity.x) - 6.0f * degree) < 1e-4f
+            && std::abs(left.velocity.z - kicked.z) < 1e-5f && std::abs(left.velocity.length() - kicked.length()) < 1e-3f,
+        "conducao: gira o rumo ate o limite, sem mudar a velocidade nem a subida");
+    expect(std::abs(left.spin.z - 400.0f * 6.0f * degree) < 1e-3f, "conducao: giro de lado no sentido girado (+z, esquerda)");
+    const ShotConductionStep3D held = stepShotConduction3D(weak, left.velocity, left.spin, 0.3f + 12.0f * degree, f);
+    expect((held.velocity - left.velocity).length() < 1e-4f, "conducao: no limite, o olhar a mais nao gira");
+    ShotConduction3D strong = startShotConduction3D(0.0f, 1.0f, f);
+    expect((stepShotConduction3D(strong, kicked, {}, 10.0f * degree, f).velocity - kicked).length() < 1e-5f,
+        "conducao: a barra cheia nao conduz");
+}
+
 void ballCushionTests() {
     BallOutcomeSettings3D f;
     f.stopPower = 0.0f;
@@ -1231,6 +1255,7 @@ int main() {
     try {
         contactClassTests();
         ballCushionTests();
+        shotConductionTests();
         modeRuleTests();
         pendulumTests();
         referenceFrameTests();

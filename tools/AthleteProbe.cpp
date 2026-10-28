@@ -452,6 +452,23 @@ std::vector<Scenario> scenarios() {
                 return k; } };
             list.push_back(go);
         }
+        // A conducao do chute (28/10, pedido do usuario): o chute parado com a
+        // bola a frente e a camera girando para a direita a 300 graus/s ao soltar
+        // (o "flick") ou parada, nas barras 0,3, 0,6 e 0,9.
+        for (const float bar : { 0.3f, 0.6f, 0.9f })
+            for (const bool flick : { false, true }) {
+                Scenario kick { "conducao_" + std::to_string(static_cast<int>(bar * 10.0f + 0.5f)) + (flick ? "_flick" : ""),
+                    2.0f, [bar, flick](float t) {
+                        Keys k;
+                        if (t >= 1.2f && t < 1.2f + Dt) { k.ball = BallActionKind3D::Shot; k.power = bar; }
+                        if (flick && t >= 1.2f) k.cameraYaw = -std::min(t - 1.2f, 0.15f) * 300.0f * Pi / 180.0f;
+                        return k; } };
+                kick.ball = true;
+                kick.ballStart = { 0.0f, 8.0f, 0.11f };
+                kick.placeAt = 1.0f;
+                kick.placeOffset = { 0.40f, -0.10f, 0.11f };
+                list.push_back(kick);
+            }
         // A parada andando, em quatro instantes do passo (28/10, pedido do usuario:
         // o pe de apoio do parado e o que terminou a ultima passada).
         for (int stopAt = 100; stopAt <= 160; stopAt += 5) {
@@ -1843,6 +1860,15 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
         if (trace != nullptr && step >= 0) trace->push_back(athleteTickDigest3D(athlete, bodyState));
         if (step >= 0 && context.noCapsule) contractAfter(hooks, athlete, bodyState, slotCommand);
         if (scenario.ball && step >= 0) ballState = scene->inflatedBallState(ballHandle);
+        // A conducao: os ticks conduzindo e o rumo e o giro da bola 0,15 s depois do chute.
+        if (scenario.ball && step >= 0 && scenario.name.rfind("conducao_", 0) == 0) {
+            if (athlete.conduction.active) ++metrics.conductionTicks;
+            if (t >= 1.35f && t < 1.35f + Dt) {
+                metrics.conductionHeading = std::atan2(ballState.linearVelocity.y, ballState.linearVelocity.x) * 180.0f / Pi;
+                metrics.conductionSpin = ballState.angularVelocity.z;
+                metrics.conductionValid = true;
+            }
+        }
         if (receptionReport && step >= 0 && !bodyState.links.empty()) {
             const DefaultLocomotionOutput3D& o = legacy.defaultLocomotion.output();
             for (std::size_t side = 0; side < 2; ++side) {
@@ -2553,6 +2579,9 @@ void printMetrics(const Scenario& scenario, const Metrics& metrics, bool footste
     if (metrics.startPress >= 0.0f)
         std::printf("%-18s   arrancada: pe no chao desliza ate %.2f m/s, o primeiro pe sai do chao %.3f s depois do aperto\n", "",
             metrics.startSlide, metrics.startLiftoff);
+    if (metrics.conductionValid)
+        std::printf("%-18s   conducao: rumo %+.2f graus da mira, giro de lado %+.1f rad/s, %d ticks conduzindo\n", "",
+            metrics.conductionHeading, metrics.conductionSpin, metrics.conductionTicks);
     std::printf("%-18s   joelho esticando max %.0f graus/s (alvo %.0f), acel max %.0f graus/s2\n", "",
         metrics.peakKneeExtension, metrics.peakKneeExtensionTarget, metrics.peakKneeAcceleration);
     std::printf("%-18s   apoio %5.2f / %5.2f / %5.2f m/s%s", "", percentile(metrics.plantedSlide, 0.5f),
@@ -3077,6 +3106,8 @@ int main(int argc, char** argv) {
     // XSEMVIDA=1: sem a variacao passada a passada (a "vida"): a passada se
     // repete a cada ciclo, e a regua de fases compara A/B so pela fase - 28/10.
     if (std::getenv("XSEMVIDA")) settings.motionVariety = false;
+    // XSEMCONDUCAO=1: a conducao do chute desligada (o A/B do item 1).
+    if (std::getenv("XSEMCONDUCAO")) settings.ballForce.conduction = false;
     settings.footstepLocomotion = footsteps;
     settings.activeStanceSettings.balanceSteps = balanceSteps;
     settings.capsuleResponsePercent = response;

@@ -3110,6 +3110,13 @@ void WorkbenchApp::drawLaboratoryUi() {
                             "%.0f rad/s", "O giro para trás com o gesto todo para cima (a bola alta flutua).");
                         value("Giro por cima na rasteira", "##ForceShotTopSpin", &f.shotTopSpin, 0.0f, 60.0f, "%.0f rad/s",
                             "O giro por cima com o gesto todo para baixo (a rasteira desce e corre).");
+                        panelHeader("CONDUÇÃO DO CHUTE");
+                        ImGui::Checkbox("Conduzir o chute", &f.conduction);
+                        hint("No chute de pé, enquanto a bola ainda está no alcance, girar a câmera gira um pouco o rumo dela e põe efeito no mesmo sentido, como se o pé ainda estivesse na bola. O chute sai do alcance em poucos centésimos de segundo: quem conduz é o mouse que já está girando ao soltar.");
+                        value("Giro máximo do rumo", "##ForceConductionDegrees", &f.conductionDegrees, 0.0f, 15.0f, "%.1f°",
+                            "No chute de barra vazia; com a barra b, (1 - b²) disto: no forte, quase nada.");
+                        value("Efeito da condução", "##ForceConductionSpin", &f.conductionSpin, 0.0f, 1000.0f, "%.0f rad/s por rad",
+                            "O giro de lado que a condução põe por radiano girado: a bola continua curvando para o lado conduzido.");
                         panelHeader("MANEJO");
                         bar("ForceTouch", f.touchMinimum, f.touchPower, f.touchCurve, 30.0f, &m_ballTouchChargeSeconds, 2.0f);
                         value("Toque mais forte correndo", "##ForceSpeedPush", &f.speedPush, 0.0f, 1.0f, "%.2f",
@@ -3165,6 +3172,10 @@ void WorkbenchApp::drawLaboratoryUi() {
                             line("saida_efeito", "saída para fora da mira", f.shotCurveLaunch, "graus");
                             line("giro_tras", "giro para trás na bola alta", f.shotBackSpin, "rad/s");
                             line("giro_cima", "giro por cima na rasteira", f.shotTopSpin, "rad/s");
+                            text += "[conducao]\n";
+                            line("ligada", "conduzir o chute", f.conduction ? 1.0f : 0.0f, "");
+                            line("giro", "giro máximo do rumo", f.conductionDegrees, "graus");
+                            line("efeito", "efeito da condução", f.conductionSpin, "rad/s por rad");
                             text += "[manejo]\n";
                             line("barra_minima", "barra mínima", f.touchMinimum, "m/s");
                             line("barra_cheia", "barra cheia", f.touchMinimum + f.touchPower, "m/s");

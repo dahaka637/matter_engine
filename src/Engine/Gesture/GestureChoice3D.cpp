@@ -7,12 +7,15 @@
 
 namespace MatterEngine {
 
+bool inGestureReach3D(Vec3 ball, const GestureReach3D& reach) {
+    return ball.x <= reach.front && ball.x >= -reach.back && std::abs(ball.y) <= reach.side && ball.z <= reach.height
+        && ball.z >= -reach.below;
+}
+
 GestureChoice3D chooseGesture3D(GestureKind3D kind, Vec3 ball, Vec3 direction, int preferredSide,
     const GestureReach3D& reach, int alternateSide, bool receive) {
     GestureChoice3D choice;
-    if (ball.x > reach.front || ball.x < -reach.back || std::abs(ball.y) > reach.side || ball.z > reach.height
-        || ball.z < -reach.below)
-        return choice;
+    if (!inGestureReach3D(ball, reach)) return choice;
     choice.inReach = true;
     GestureSpec3D& spec = choice.spec;
     spec.kind = kind;

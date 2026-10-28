@@ -232,6 +232,11 @@ struct Metrics {
     // quando o primeiro pe sai do chao (s depois do aperto; -1 nao saiu).
     float startPress = -1.0f, startSlide = 0.0f, startLiftoff = -1.0f;
     bool startIdle = false;
+    // A conducao do chute (28/10): o rumo (graus) e o giro de lado (rad/s) da
+    // bola 0,15 s depois do chute e os ticks conduzindo.
+    float conductionHeading = 0.0f, conductionSpin = 0.0f;
+    int conductionTicks = 0;
+    bool conductionValid = false;
     std::array<bool, 2> cyclePlantedBefore { true, true };
     float gesturePelvisMin = 10.0f;
     std::array<float, 2> gestureGapNow { 1e9f, 1e9f };

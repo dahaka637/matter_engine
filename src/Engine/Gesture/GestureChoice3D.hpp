@@ -90,4 +90,7 @@ struct GestureChoice3D {
 [[nodiscard]] GestureChoice3D chooseGesture3D(GestureKind3D kind, Vec3 ball, Vec3 direction, int preferredSide,
     const GestureReach3D& reach, int alternateSide = -1, bool receive = false);
 
+// A bola (no referencial do corpo) na area de alcance dos pes.
+[[nodiscard]] bool inGestureReach3D(Vec3 ball, const GestureReach3D& reach);
+
 } // namespace MatterEngine

@@ -1036,6 +1036,38 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         output.reachOrigin = { pelvis.x, pelvis.y, feetBase };
         output.reachYaw = bodyYaw;
         output.reachPelvisHeight = pelvis.z - output.reachOrigin.z;
+        // O alcance deste corpo (os pes x s, o peito pelo tronco, a cabeca so na posicao).
+        const GestureReach3D bodyReach = gestureReachForBody3D(settings.gestureReach, bodyScale3D(assets.body),
+            bodyGirth3D(PhysiqueRegion3D::Chest, bodyTone3D(assets.body)) - 1.0f);
+        // A conducao do chute (Ball/ShotConduction3D): a bola chutada ainda no
+        // alcance dos pes gira com o olhar. Um aperto novo, a bola fora do
+        // alcance ou sumida, ou a chave desligada a encerram.
+        if (athlete.conduction.active) {
+            const AthleteBall3D* kicked = nullptr;
+            for (const AthleteBall3D& ball : balls)
+                if (ball.handle == athlete.conduction.ball && scene.contains(ball.handle) && ball.state != nullptr)
+                    kicked = &ball;
+            bool inReach = false;
+            if (kicked != nullptr) {
+                const Vec3 forward { std::cos(bodyYaw), std::sin(bodyYaw), 0.0f };
+                const Vec3 left { -forward.y, forward.x, 0.0f };
+                const Vec3 at = kicked->state->position;
+                const Vec3 offset { at.x - pelvis.x, at.y - pelvis.y, 0.0f };
+                inReach = inGestureReach3D({ dot(offset, forward), dot(offset, left), at.z - feetBase }, bodyReach);
+            }
+            if (!inReach || pressed != BallActionKind3D::None || !settings.ballForce.conduction) {
+                athlete.conduction.active = false;
+            } else {
+                const InflatedBallProfile3D ballProfile = scene.inflatedBallProfile(kicked->handle);
+                const float mass = ballProfile.massKg;
+                const float inertia = (2.0f / 3.0f) * mass * ballProfile.radiusMeters * ballProfile.radiusMeters;
+                const ShotConductionStep3D next = stepShotConduction3D(athlete.conduction.shot,
+                    kicked->state->linearVelocity, kicked->state->angularVelocity, command.facingYawRadians,
+                    settings.ballForce);
+                scene.applyInflatedBallImpulses(kicked->handle, (next.velocity - kicked->state->linearVelocity) * mass,
+                    (next.spin - kicked->state->angularVelocity) * inertia);
+            }
+        }
         if (request != BallActionKind3D::None) {
             const Vec3 forward { std::cos(bodyYaw), std::sin(bodyYaw), 0.0f };
             const Vec3 left { -forward.y, forward.x, 0.0f };
@@ -1068,9 +1100,6 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             // ele (so no mundo, a bola que corre junto atras dele contava), ou a
             // alta caindo nele (o balao) - e o toque ou o chute fraco: a forca a
             // para junto do corpo e o gesto amortece.
-            // O alcance deste corpo (os pes x s, o peito pelo tronco, a cabeca so na posicao).
-            const GestureReach3D bodyReach = gestureReachForBody3D(settings.gestureReach, bodyScale3D(assets.body),
-                bodyGirth3D(PhysiqueRegion3D::Chest, bodyTone3D(assets.body)) - 1.0f);
             const bool high = ballInBody.z > bodyReach.highBall;
             const Vec3 ballVelocity = nearest->state->linearVelocity;
             const Vec3 flatBall { ballVelocity.x, ballVelocity.y, 0.0f };
@@ -1274,6 +1303,12 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                 scene.applyInflatedBallImpulses(nearest->handle, (outcome.velocity - nearest->state->linearVelocity) * mass,
                     (outcome.spin - nearest->state->angularVelocity) * inertia);
                 output.ballTouched = true;
+                if (request == BallActionKind3D::Shot && part == BallBodyPart3D::Foot && !outcomeRequest.receive
+                    && settings.ballForce.conduction) {
+                    athlete.conduction.active = true;
+                    athlete.conduction.ball = nearest->handle;
+                    athlete.conduction.shot = startShotConduction3D(command.facingYawRadians, requestPower, settings.ballForce);
+                }
                 if (started) {
                     // (O gesto guardado ja esta batendo: so a forca.)
                 } else if (animated && upper) {
