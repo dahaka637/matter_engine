@@ -71,6 +71,18 @@ Vec3 pelvisFrame(const GestureRig3D& rig, int side, float x, float out, float z,
         rotateZ({ x - body.forward, y - body.left, z - (rig.pelvisHeight - body.drop) }, -turned));
 }
 
+// A perna do manejo e da recepcao nunca toda esticada (28/10, pedido do
+// usuario: nos gestos longos "evitar pernas 100% [esticadas]... mesmo que acabe
+// encurtando um pouco o gesto"): o tornozelo ate 96,5% do comprimento dela a
+// partir do quadril - o joelho fica com ao menos uns 30 graus (o teto de
+// gestureLegPose3D, 99,5%, deixava 11). O chute nao: o acompanhamento reto e
+// dele.
+Vec3 withinReach(const GestureLegRig3D& leg, Vec3 ankle) {
+    const Vec3 fromHip = ankle - leg.hip;
+    const float most = 0.965f * (leg.thigh + leg.shin), length = fromHip.length();
+    return length > most ? leg.hip + fromHip * (most / length) : ankle;
+}
+
 // A velocidade das juntas (a coxa e o joelho) por metro do tornozelo andando
 // em direction: a diferenca central na perna de dois ossos.
 GestureLegPose3D legTangent(const GestureLegRig3D& leg, int side, Vec3 ankle, Vec3 direction, float twist,
@@ -162,11 +174,11 @@ GestureKeys3D receptionKeys(const GestureSpec3D& spec, const GestureRig3D& rig) 
     body.elbow = { 15.0f * Degree, 15.0f * Degree };
     const float contactX = ballX + surface.dx * size, contactOut = ballOut + surface.dout * size,
                 contactZ = height + surface.dz * size;
-    const Vec3 contactAnkle = pelvisFrame(rig, side, contactX, contactOut, contactZ, body);
+    const Vec3 contactAnkle = withinReach(leg, pelvisFrame(rig, side, contactX, contactOut, contactZ, body));
     keys.contact = gestureLegPose3D(leg, side, contactAnkle, surface.twist * Degree, surface.plantar * Degree,
         surface.inversion * Degree, rig.bodyToPelvis);
-    const Vec3 liftAnkle = pelvisFrame(rig, side, contactX + surface.lx * size,
-        std::max(0.02f * size, contactOut + surface.lout * size), std::max(0.13f * size, contactZ + surface.lz * size), body);
+    const Vec3 liftAnkle = withinReach(leg, pelvisFrame(rig, side, contactX + surface.lx * size,
+        std::max(0.02f * size, contactOut + surface.lout * size), std::max(0.13f * size, contactZ + surface.lz * size), body));
     keys.lift = gestureLegPose3D(leg, side, liftAnkle, surface.twist * Degree, surface.plantar * Degree,
         surface.inversion * Degree, rig.bodyToPelvis);
     keys.liftValid = true;
@@ -175,7 +187,7 @@ GestureKeys3D receptionKeys(const GestureSpec3D& spec, const GestureRig3D& rig) 
     const float followZ = std::max(0.13f * size, contactZ + surface.drop * size);
     followOut = std::max(followOut, followX > 0.25f * size ? -0.05f * size : 0.02f * size);
     followX = std::clamp(followX, -0.40f * size, 0.65f * size);
-    const Vec3 followAnkle = pelvisFrame(rig, side, followX, followOut, followZ, body);
+    const Vec3 followAnkle = withinReach(leg, pelvisFrame(rig, side, followX, followOut, followZ, body));
     keys.follow = gestureLegPose3D(leg, side, followAnkle, surface.twist * Degree, surface.plantar * Degree,
         surface.inversion * Degree, rig.bodyToPelvis);
     keys.contactTangent = legTangent(leg, side, contactAnkle, normalizedOr(followAnkle - contactAnkle, { -1.0f, 0.0f, 0.0f }),
@@ -542,14 +554,14 @@ GestureKeys3D gestureKeys3D(const GestureSpec3D& spec, const GestureRig3D& rig) 
     // bola alta, o pe no meio dela.)
     const float contactX = ballX + t.dx * size, contactOut = ballOut + t.dout * size,
                 contactZ = spec.high ? ballZ - 0.02f * size : ballZ + (t.dz + 0.02f) * size;
-    const Vec3 contactAnkle = pelvisFrame(rig, side, contactX, contactOut, contactZ, body);
+    const Vec3 contactAnkle = withinReach(leg, pelvisFrame(rig, side, contactX, contactOut, contactZ, body));
     keys.contact = gestureLegPose3D(leg, side, contactAnkle, t.twist * Degree, t.plantar * Degree, t.inversion * Degree,
         rig.bodyToPelvis);
     // (Na bola alta o joelho sobe primeiro e a canela estica ate ela: reto, o pe
     // ia rente ao chao a 18 m/s e so subia no fim.)
     if (spec.high) {
-        const Vec3 liftAnkle = pelvisFrame(rig, side, 0.45f * contactX, std::max(0.02f * size, 0.85f * contactOut),
-            contactZ - 0.06f * size, body);
+        const Vec3 liftAnkle = withinReach(leg, pelvisFrame(rig, side, 0.45f * contactX, std::max(0.02f * size, 0.85f * contactOut),
+            contactZ - 0.06f * size, body));
         keys.lift = gestureLegPose3D(leg, side, liftAnkle, t.twist * Degree, t.plantar * Degree, t.inversion * Degree,
             rig.bodyToPelvis);
         keys.liftValid = true;
@@ -563,7 +575,7 @@ GestureKeys3D gestureKeys3D(const GestureSpec3D& spec, const GestureRig3D& rig) 
     // do corpo; a frente dele pode passar um pouco.
     followOut = std::max(followOut, followX > 0.25f * size ? -0.05f * size : 0.02f * size);
     followX = std::clamp(followX, -0.40f * size, 0.65f * size);
-    const Vec3 followAnkle = pelvisFrame(rig, side, followX, followOut, followZ, body);
+    const Vec3 followAnkle = withinReach(leg, pelvisFrame(rig, side, followX, followOut, followZ, body));
     keys.follow = gestureLegPose3D(leg, side, followAnkle, t.twist * Degree, t.plantar * Degree, t.inversion * Degree,
         rig.bodyToPelvis);
     // O pe passa pela bola andando no rumo do acompanhamento.

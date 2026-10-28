@@ -137,6 +137,20 @@ std::vector<Scenario> scenarios() {
             // (O chute fraco e o medio-fraco trotando: a continuidade da perna - 28/10.)
             { "gesto_trote_chute_fraco", 1.0f, false, BallActionKind3D::Shot, 0.15f, { 0.45f, 0.14f, 0.11f } },
             { "gesto_trote_chute_medio", 1.0f, false, BallActionKind3D::Shot, 0.4f, { 0.45f, -0.14f, 0.11f } },
+            // (As diagonais longe do manejo - frente e tras, esquerda e direita -,
+            // parado, andando e trotando: a perna maluca e o joelho dobrado - 28/10.)
+            { "diag_parado_fe", 0.0f, false, BallActionKind3D::Dribble, 0.5f, { 0.45f, 0.62f, 0.11f } },
+            { "diag_parado_fd", 0.0f, false, BallActionKind3D::Dribble, 0.5f, { 0.45f, -0.62f, 0.11f } },
+            { "diag_parado_te", 0.0f, false, BallActionKind3D::Dribble, 0.5f, { -0.22f, 0.60f, 0.11f } },
+            { "diag_parado_td", 0.0f, false, BallActionKind3D::Dribble, 0.5f, { -0.22f, -0.60f, 0.11f } },
+            { "diag_anda_fe", 0.5f, false, BallActionKind3D::Dribble, 0.5f, { 0.45f, 0.62f, 0.11f } },
+            { "diag_anda_fd", 0.5f, false, BallActionKind3D::Dribble, 0.5f, { 0.45f, -0.62f, 0.11f } },
+            { "diag_anda_te", 0.5f, false, BallActionKind3D::Dribble, 0.5f, { -0.22f, 0.60f, 0.11f } },
+            { "diag_anda_td", 0.5f, false, BallActionKind3D::Dribble, 0.5f, { -0.22f, -0.60f, 0.11f } },
+            { "diag_trote_fe", 1.0f, false, BallActionKind3D::Dribble, 0.5f, { 0.50f, 0.62f, 0.11f } },
+            { "diag_trote_fd", 1.0f, false, BallActionKind3D::Dribble, 0.5f, { 0.50f, -0.62f, 0.11f } },
+            { "diag_trote_te", 1.0f, false, BallActionKind3D::Dribble, 0.5f, { -0.20f, 0.60f, 0.11f } },
+            { "diag_trote_td", 1.0f, false, BallActionKind3D::Dribble, 0.5f, { -0.20f, -0.60f, 0.11f } },
             // (Andando para a frente com a bola de lado: o peito e a cintura viram
             // para ela - 28/10.)
             { "gesto_anda_chute_lado", 0.5f, false, BallActionKind3D::Shot, 0.6f, { 0.30f, -0.40f, 0.11f } },
@@ -2205,6 +2219,18 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
                     };
                     Vec3 before, now;
                     if (pole(previousLinks, before) && pole(bodyState.links, now) && dot(before, now) < 0.5f) flipped = true;
+                    const auto& gestureLegs = legacy.defaultLocomotion.output().gestureLegs;
+                    if (gestureLegs[0] || gestureLegs[1]) {
+                        const Vec3 hip = bodyState.links.front().position + bodyState.links.front().orientation.rotate(legs.hipInPelvis[side]);
+                        const Vec3 knee = bodyState.links[legs.shin[side]].position;
+                        const Vec3 ankle = bodyState.links[legs.foot[side]].position
+                            + bodyState.links[legs.foot[side]].orientation.rotate(legs.ankleInFoot[side]);
+                        const float a = (knee - hip).length(), b = (ankle - knee).length(), c = (ankle - hip).length();
+                        const float bend = 180.0f - 57.2958f * std::acos(std::clamp((a * a + b * b - c * c) / (2.0f * a * b), -1.0f, 1.0f));
+                        float& worst = gestureLegs[side] ? metrics.gestureKneeMax : metrics.supportKneeMax;
+                        worst = std::max(worst, bend);
+                        metrics.gesturePelvisMin = std::min(metrics.gesturePelvisMin, bodyState.links.front().position.z);
+                    }
                     if (std::getenv("XLOUCA")) {
                         // (Os giros da coxa e da canela e o joelho deste lado.)
                         float spin[2] {};
@@ -2367,6 +2393,9 @@ void printMetrics(const Scenario& scenario, const Metrics& metrics, bool footste
             "", metrics.requests, metrics.touches, latencyMax, metrics.crazyLegTicks, metrics.kneeFlipTicks,
             metrics.legSpinMax, metrics.longestFlight, metrics.lostRequests + static_cast<int>(metrics.pendingRequests.size()),
             metrics.footOnBallTicks);
+        if (metrics.gestureKneeMax > 0.0f)
+            std::printf("%-18s   joelho do gesto ate %.0f graus, o de apoio ate %.0f, pelve no gesto ate %.3f m\n", "",
+                metrics.gestureKneeMax, metrics.supportKneeMax, metrics.gesturePelvisMin);
         if (!metrics.gestureGaps.empty())
             std::printf("%-18s   folga pe-bola no gesto med %.3f max %.3f m (%zu gestos)\n", "",
                 percentile(metrics.gestureGaps, 0.5f), percentile(metrics.gestureGaps, 1.0f), metrics.gestureGaps.size());

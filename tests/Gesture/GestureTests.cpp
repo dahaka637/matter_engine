@@ -447,6 +447,95 @@ Follow shotFollow(const RagdollProfile3D& profile, float power) {
     return follow;
 }
 
+// Os baldes do manejo e da recepcao (28/10, pedido do usuario: "os gestos de
+// manuseio nas diagonais distantes... sensacao de perna maluca... evitar pernas
+// 100% flexionadas... (o mesmo vale para recepcao)"): de pe, a perna esquerda,
+// a maior dobra do joelho e o maior giro e aceleracao das juntas da perna.
+struct BucketMotion { float knee = 0.0f, speed = 0.0f, acceleration = 0.0f, contactKnee = 0.0f, reach = 0.0f; };
+BucketMotion bucketMotion(const RagdollProfile3D& profile, const GestureSpec3D& spec) {
+    const GestureRig3D rig = defaultGestureRig3D(profile);
+    const GestureLegPose3D standing;
+    GesturePlayer3D player;
+    player.start(spec, rig, standing, {});
+    constexpr float dt = 1.0f / 240.0f;
+    BucketMotion m;
+    // (O joelho e o alcance da perna na pose de contato: a fracao do
+    // comprimento dela entre o quadril e o tornozelo.)
+    {
+        const GestureLegPose3D contact = limitedLeg(profile, spec.side, gestureKeys3D(spec, rig).contact);
+        m.contactKnee = contact.knee() * 57.2958f;
+        const LegPoint point = legPoint(profile, spec.side, contact);
+        const GestureLegRig3D& leg = rig.legs[static_cast<std::size_t>(spec.side)];
+        m.reach = (point.ankle - legPoint(profile, spec.side, GestureLegPose3D {}).ankle
+                      + Vec3 { 0.0f, 0.0f, leg.thigh + leg.shin }).length() / (leg.thigh + leg.shin);
+    }
+    GestureLegPose3D previous = standing, previousRate {};
+    for (int tick = 0; tick < 2000 && player.active(); ++tick) {
+        const GestureFrame3D frame = player.update(dt, standing);
+        if (!frame.active) break;
+        const GestureLegPose3D leg = limitedLeg(profile, spec.side, frame.leg);
+        m.knee = std::max(m.knee, leg.knee() * 57.2958f);
+        for (std::size_t i = 0; i < 4; ++i) {
+            const float rate = (leg.value[i] - previous.value[i]) / dt;
+            m.speed = std::max(m.speed, std::abs(rate));
+            if (tick > 0 && std::abs(rate - previousRate.value[i]) / dt > m.acceleration) {
+                m.acceleration = std::abs(rate - previousRate.value[i]) / dt;
+                if (std::getenv("MATTER_GESTO_PICO"))
+                    std::printf("  pico %.0f rad/s2 na junta %zu em %.3f s (contato %.3f, fim do acompanhamento %.3f, fim %.3f)\n",
+                        m.acceleration, i, frame.time, player.keys().contactTime, player.keys().followTime, frame.duration);
+            }
+            previousRate.value[i] = rate;
+        }
+        previous = leg;
+    }
+    return m;
+}
+
+void bucketTests(const RagdollProfile3D& profile) {
+    // Nenhum manejo nem recepcao com a perna toda esticada no contato (28/10:
+    // o joelho com ao menos ~30 graus; antes, 11 nos baldes longe).
+    for (int receive = 0; receive < 2; ++receive)
+        for (int reach = 0; reach < 3; ++reach)
+            for (int depth = 0; depth < 3; ++depth)
+                for (int move = 0; move < 2; ++move) {
+                    GestureSpec3D spec;
+                    spec.kind = GestureKind3D::Touch;
+                    spec.reach = reach;
+                    spec.depth = depth;
+                    spec.move = move == 0 ? GestureMove3D::Out : GestureMove3D::In;
+                    spec.receive = receive != 0;
+                    spec.incoming = { -6.0f, 0.0f, 0.0f };
+                    spec.seconds = 0.45f;
+                    const float knee = limitedLeg(profile, 0, gestureKeys3D(spec, defaultGestureRig3D(profile)).contact).knee();
+                    char what[160];
+                    std::snprintf(what, sizeof what, "%s alcance %d frente-tras %d: a perna nao fica reta no contato (joelho %.0f graus)",
+                        receive ? "recepcao" : "manejo", reach, depth, knee * 57.2958f);
+                    expect(knee * 57.2958f > 28.0f, what);
+                }
+    if (!std::getenv("MATTER_GESTO_MEDIDAS")) return;
+    const char* depths[3] = { "atras", "meio", "frente" };
+    const char* reaches[3] = { "curto", "medio", "longe" };
+    for (int receive = 0; receive < 2; ++receive)
+        for (int reach = 0; reach < 3; ++reach)
+            for (int depth = 0; depth < 3; ++depth)
+                for (int move = 0; move < (receive ? 1 : 2); ++move) {
+                    GestureSpec3D spec;
+                    spec.kind = GestureKind3D::Touch;
+                    spec.side = 0;
+                    spec.reach = reach;
+                    spec.depth = depth;
+                    spec.move = move == 0 ? GestureMove3D::Out : GestureMove3D::In;
+                    spec.power = 0.5f;
+                    spec.receive = receive != 0;
+                    spec.incoming = { -6.0f, 0.0f, 0.0f };
+                    spec.seconds = receive ? 0.54f : 0.45f;
+                    const BucketMotion m = bucketMotion(profile, spec);
+                    std::printf("balde %s %s %s%s: contato com o joelho a %.0f graus; joelho ate %.0f graus, juntas ate %.1f rad/s e %.0f rad/s2\n",
+                        receive ? "recepcao" : "manejo", reaches[reach], depths[depth],
+                        receive ? "" : move == 0 ? " fora" : " dentro", m.contactKnee, m.knee, m.speed, m.acceleration);
+                }
+}
+
 // O peito e a cintura virando para a bola (28/10): o contato e o fim do
 // acompanhamento ficam no mesmo lugar do mundo - a pelve gira e a perna e
 // contra-girada (no quadril, ate uns centimetros).
@@ -505,6 +594,7 @@ int main() {
         bodyPartTests(character.profile);
         followTests(character.profile);
         faceTests(character.profile);
+        bucketTests(character.profile);
     } catch (const std::exception& error) {
         std::cerr << "gestos: " << error.what() << "\n";
         return 1;

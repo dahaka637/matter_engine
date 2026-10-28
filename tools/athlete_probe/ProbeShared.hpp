@@ -212,6 +212,13 @@ struct Metrics {
     // bola esta): a menor folga entre o pe e a bola em cada gesto do pe (m; <= 0
     // encostou) e a do gesto em andamento de cada lado.
     std::vector<float> gestureGaps;
+    // A maior dobra do joelho da perna do gesto (graus; 28/10: "evitar pernas
+    // 100% flexionadas" nos gestos longos).
+    float gestureKneeMax = 0.0f;
+    // E a do joelho da outra perna (a de apoio) durante o gesto, e a pelve mais
+    // baixa nele (m).
+    float supportKneeMax = 0.0f;
+    float gesturePelvisMin = 10.0f;
     std::array<float, 2> gestureGapNow { 1e9f, 1e9f };
     std::vector<float> latencies;
     std::vector<float> pendingRequests;

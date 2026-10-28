@@ -41,10 +41,15 @@ RAPIDO = [
     "recepcao_chute_fraco", "recepcao_alta", "peito_dominio", "peito_passe", "cabeceio_toque", "cabeceio_chute",
     "cabeceio_correndo", "cabeceio_levantar", "cabeceio_toque_olhar",
 ]
+# As diagonais longe do manejo (28/10): parado, andando e trotando, os quatro cantos.
+DIAGONAIS = [f"diag_{a}_{c}" for a in ("parado", "anda", "trote") for c in ("fe", "fd", "te", "td")]
 
 # As medidas: (nome, expressao, maior e pior?, folga para marcar piora).
 MEDIDAS = [
     ("pedidos", r"pedidos (\d+)", None, 0),
+    ("joelho_max", r"joelho do gesto ate ([\d.]+) graus", True, 8.0),
+    ("joelho_apoio", r"o de apoio ate ([\d.]+),", True, 8.0),
+    ("pelve_min", r"pelve no gesto ate ([\d.]+) m", False, 0.03),
     ("toques", r"toques (\d+)", False, 0),
     ("louca", r"perna louca (\d+)", True, 2),
     ("joelho", r"joelho virando (\d+)", True, 1),
@@ -168,7 +173,9 @@ def main():
     sonda = os.path.join(a.build, "MatterAthleteProbe")
     inspetor = os.path.join(a.build, "MatterModelInspector")
     os.makedirs(a.saida, exist_ok=True)
-    if a.cenarios:
+    if a.cenarios == "diagonais":
+        cenarios = list(DIAGONAIS)
+    elif a.cenarios:
         cenarios = a.cenarios.split(",")
     else:
         cenarios = list(RAPIDO)
