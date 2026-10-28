@@ -32,6 +32,7 @@ BASE_PADRAO = os.path.join(REPO, "tools", "analysis", "gestos_base.json")
 RAPIDO = [
     "gesto_parado_toque", "gesto_parado_toque_tras", "gesto_parado_chute", "gesto_parado_chute_longe",
     "gesto_trote_toque", "gesto_trote_chute", "gesto_corre_toque", "gesto_corre_chute", "gesto_fora", "gesto_conduz",
+    "gesto_parado_chute_frente", "gesto_trote_chute_frente", "gesto_corre_chute_frente",
     "gesto_rapido", "gesto_brinca", "gesto_brinca_anda", "gesto_brinca_chute", "gesto_brinca_chute_anda",
     "gesto_alta_parado_toque", "gesto_alta_parado_chute", "gesto_alta_trote_toque", "gesto_alta_corre_chute",
     "gesto_alta_parado_toque_longe", "gesto_levantar_parado", "gesto_levantar_andando",

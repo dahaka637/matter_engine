@@ -1,5 +1,7 @@
 #include "Engine/Gesture/GestureChoice3D.hpp"
 
+#include "Engine/Gesture/GestureCatalog3D.hpp"
+
 #include <algorithm>
 #include <cmath>
 
@@ -16,11 +18,13 @@ GestureChoice3D chooseGesture3D(GestureKind3D kind, Vec3 ball, Vec3 direction, i
     spec.kind = kind;
     const float lateral = std::abs(ball.y);
     const float band = receive ? std::max(reach.centerBand, reach.receiveBand) : reach.centerBand;
+    const bool rear = kind == GestureKind3D::Shot && !receive && ball.x > reach.shotAhead && preferredSide >= 0
+        && (preferredSide == 0 ? ball.y : -ball.y) >= -reach.shotAcross;
     // (Conduzindo, as pernas se alternam: a bola a frente, perto do meio.)
     const bool alternating = alternateSide >= 0 && lateral <= reach.alternateBand && ball.x > reach.depthBack;
     if (alternating)
         spec.side = alternateSide == 1 ? 1 : 0;
-    else if (lateral <= band)
+    else if (rear || lateral <= band)
         spec.side = preferredSide == 1 ? 1 : 0;
     else
         spec.side = ball.y > 0.0f ? 0 : 1;
@@ -28,6 +32,13 @@ GestureChoice3D chooseGesture3D(GestureKind3D kind, Vec3 ball, Vec3 direction, i
     const float outward = std::max(0.0f, spec.side == 0 ? ball.y : -ball.y);
     spec.reach = outward < reach.reachMid ? 0 : outward < reach.reachFar ? 1 : 2;
     spec.depth = ball.x < reach.depthBack ? 0 : ball.x < reach.depthFront ? 1 : 2;
+    // O chute no meio (28/10: a perna de tras na bola do meio - o balde curto
+    // ficava 17 cm para fora dela): a bola mais perto do meio do corpo que do
+    // balde curto vai ao balde do meio.
+    if (kind == GestureKind3D::Shot && spec.reach == 0) {
+        const float bucket = std::abs(gestureNominalBall3D(spec).y) * (reach.reachMid / GestureReach3D {}.reachMid);
+        spec.inward = (spec.side == 0 ? ball.y : -ball.y) < 0.5f * bucket ? 1.0f : 0.0f;
+    }
     // A bola alta: o gesto com o pe na altura do joelho, e atras vira o meio (o
     // calcanhar na altura do joelho fica feio).
     spec.high = ball.z > reach.highBall;
@@ -65,7 +76,8 @@ GestureReach3D gestureReachForBody3D(const GestureReach3D& base, float scale, fl
     if (scale == 1.0f && chestGrowth == 0.0f) return base;
     GestureReach3D reach = base;
     for (float* field : { &reach.front, &reach.back, &reach.side, &reach.height, &reach.highBall, &reach.below, &reach.reachMid,
-             &reach.reachFar, &reach.depthBack, &reach.depthFront, &reach.centerBand, &reach.receiveBand, &reach.alternateBand })
+             &reach.reachFar, &reach.depthBack, &reach.depthFront, &reach.centerBand, &reach.receiveBand, &reach.shotAhead,
+             &reach.shotAcross, &reach.alternateBand })
         *field *= scale;
     // O tronco do corpo de hoje: a meia profundidade e a meia largura (m).
     constexpr float HalfDepth = 0.12f, HalfWidth = 0.17f;

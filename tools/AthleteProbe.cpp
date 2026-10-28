@@ -130,6 +130,10 @@ std::vector<Scenario> scenarios() {
             { "gesto_trote_chute", 1.0f, false, BallActionKind3D::Shot, 0.9f, { 0.45f, -0.15f, 0.11f } },
             { "gesto_corre_toque", 1.0f, true, BallActionKind3D::Dribble, 0.4f, { 0.50f, -0.10f, 0.11f } },
             { "gesto_corre_chute", 1.0f, true, BallActionKind3D::Shot, 1.0f, { 0.55f, 0.15f, 0.11f } },
+            // (A bola a frente, perto do meio: a perna de tras chuta - 28/10.)
+            { "gesto_parado_chute_frente", 0.0f, false, BallActionKind3D::Shot, 0.7f, { 0.45f, 0.05f, 0.11f } },
+            { "gesto_trote_chute_frente", 1.0f, false, BallActionKind3D::Shot, 0.7f, { 0.50f, 0.03f, 0.11f } },
+            { "gesto_corre_chute_frente", 1.0f, true, BallActionKind3D::Shot, 0.8f, { 0.60f, -0.04f, 0.11f } },
         };
         for (const Gesture& g : gestures) {
             const float forward = g.forward;
@@ -2524,11 +2528,18 @@ int runChecks(const ProbeContext& context) {
             if (!outside && (m.forceTime < 0.0f || std::abs(m.forceTime - m.requestTime) > 0.5f * Dt))
                 problems.push_back("a forca nao saiu no pedido");
             // O gesto toca de fato, na perna do lado da bola (a bola posta a
-            // esquerda, + y, e a perna esquerda), e nada fora do alcance.
+            // esquerda, + y, e a perna esquerda), e nada fora do alcance. O chute
+            // com a bola a frente perto do meio vai com a perna de tras (28/10),
+            // que depende do passo: uma so, sem cruzar as pernas.
             const int expected = scenario.placeOffset.y > 0.0f ? 0 : 1;
             const int played = m.gestureTicks[0] + m.gestureTicks[1];
+            const bool rear = name.find("_chute_frente") != std::string::npos;
             if (outside && played != 0) problems.push_back("gesto fora do alcance");
-            if (!outside && (m.gestureTicks[static_cast<std::size_t>(expected)] < 12
+            if (rear && (played < 12 || (m.gestureTicks[0] != 0 && m.gestureTicks[1] != 0) || m.legCrossTicks != 0))
+                problems.push_back("chute com a perna de tras: duas pernas, parado ou cruzando (E "
+                    + std::to_string(m.gestureTicks[0]) + ", D " + std::to_string(m.gestureTicks[1]) + ", cruzadas "
+                    + std::to_string(m.legCrossTicks) + ")");
+            if (!outside && !rear && (m.gestureTicks[static_cast<std::size_t>(expected)] < 12
                     || m.gestureTicks[static_cast<std::size_t>(1 - expected)] != 0))
                 problems.push_back("gesto na perna errada ou parado (E " + std::to_string(m.gestureTicks[0]) + ", D "
                     + std::to_string(m.gestureTicks[1]) + ")");

@@ -400,7 +400,7 @@ GestureKeys3D gestureKeys3D(const GestureSpec3D& spec, const GestureRig3D& rig) 
                 body.elbow[arm] *= held;
             }
         }
-        const float ballOut = ShotOut[reach] * size;
+        const float ballOut = ShotOut[reach] * size * (1.0f - spec.inward);
         const float ballX = (spec.high ? HighShotX : ShotX) * size;
         // A pegada de impulso (24/10, pedido do usuario: "deve existir, de
         // acordo com a potencia", sem exagero): a perna arma para tras na linha

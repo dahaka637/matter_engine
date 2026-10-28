@@ -32,6 +32,12 @@ struct GestureReach3D {
     // recepcao o meio e mais largo (parado, a preferida e o pe da frente).
     float centerBand = 0.06f;
     float receiveBand = 0.16f;
+    // O chute com a bola a frente (x acima de shotAhead, a frente do pe de
+    // apoio) vai com a perna pedida - a de tras (28/10, pedido do usuario: "a
+    // perna mais recuada... daria um movimento mais bonito") - se a bola esta
+    // do lado dela ou ate shotAcross alem do meio (sem cruzar as pernas).
+    float shotAhead = 0.30f;
+    float shotAcross = 0.05f;
     // Conduzindo (toques em sequencia com a bola a frente): ate isto do meio,
     // as pernas se alternam.
     float alternateBand = 0.22f;
@@ -78,8 +84,9 @@ struct GestureChoice3D {
 // que esta no ar na passada; -1 nenhuma) para a bola no meio; alternateSide,
 // a perna da vez num toque em sequencia (a outra do ultimo; -1 nenhuma), que
 // vale com a bola a frente ate alternateBand do meio; receive, a recepcao
-// (a bola vindo para ele). Fora do alcance, inReach falso. A forca, o tempo e
-// a semente ficam com quem chama.
+// (a bola vindo para ele). No chute com a bola a frente, preferredSide vale
+// ate shotAcross alem do meio (quem chama pede a perna de tras). Fora do alcance,
+// inReach falso. A forca, o tempo e a semente ficam com quem chama.
 [[nodiscard]] GestureChoice3D chooseGesture3D(GestureKind3D kind, Vec3 ball, Vec3 direction, int preferredSide,
     const GestureReach3D& reach, int alternateSide = -1, bool receive = false);
 

@@ -1090,14 +1090,33 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             // (Na recepcao parado, a bola perto do meio vai ao pe da frente: o de
             // tras corria 75 cm ate ela.)
             int preferredSide = freeSide;
-            if (receive && preferredSide < 0) {
-                float ahead = -1e9f;
+            // O pe mais a frente (front) ou mais atras (rear) agora.
+            const auto footAt = [&](bool front) {
+                int side = -1;
+                float best = front ? -1e9f : 1e9f;
                 for (std::size_t i = 0; i < profile.links.size() && i < body.links.size(); ++i) {
                     const int foot = profile.links[i].id == "LeftFoot" ? 0 : profile.links[i].id == "RightFoot" ? 1 : -1;
-                    if (foot >= 0 && dot(body.links[i].position - pelvis, forward) > ahead) {
-                        ahead = dot(body.links[i].position - pelvis, forward);
-                        preferredSide = foot;
+                    const float along = dot(body.links[i].position - pelvis, forward);
+                    if (foot >= 0 && (front ? along > best : along < best)) {
+                        best = along;
+                        side = foot;
                     }
+                }
+                return side;
+            };
+            if (receive && preferredSide < 0) preferredSide = footAt(true);
+            // O chute com a bola a frente vai com a perna de tras (28/10, pedido
+            // do usuario: "a perna mais recuada... daria um movimento mais
+            // bonito"): parado, a do pe de tras; andando, a do ar enquanto ela
+            // ainda vem de tras (a primeira metade do balanco) e, com ela perto de
+            // pousar a frente, a apoiada - a do ar pousa e apoia o chute.
+            if (kind == GestureKind3D::Shot && !receive && ballInBody.x > bodyReach.shotAhead) {
+                if (freeSide >= 0) {
+                    const float swing = gait.swingSeconds[static_cast<std::size_t>(freeSide)];
+                    const float landing = gait.cycleSecondsToTouchdown[static_cast<std::size_t>(freeSide)];
+                    preferredSide = swing > 0.0f && landing < 0.5f * swing ? 1 - freeSide : freeSide;
+                } else {
+                    preferredSide = footAt(false);
                 }
             }
             const GestureChoice3D choice = chooseGesture3D(kind, ballInBody,
@@ -1151,6 +1170,9 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             const auto footGesture = [&](const GestureSpec3D& spec, Vec3 flight) {
                 gestureStart = spec;
                 gestureStart.power = std::clamp(requestPower, 0.0f, 1.0f);
+                // (Andando, o pe de apoio pousa perto do meio do corpo: o chute no
+                // meio cruzava as pernas. So parado, com a base aberta.)
+                if (gait.valid && gait.cycling) gestureStart.inward = 0.0f;
                 // (A recepcao tem o tempo do manejo, mesmo no chute fraco; ela
                 // e o toque na bola alta, um pouco mais: a perna sobe e cede -
                 // 1,2 e 1,15 vezes.)

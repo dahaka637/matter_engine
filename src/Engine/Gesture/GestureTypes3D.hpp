@@ -46,6 +46,9 @@ struct GestureSpec3D {
     // O chute: o giro da cintura ate o rumo em que a bola vai (rad, + para a
     // esquerda, no referencial do corpo; ate 70 graus).
     float turn = 0.0f;
+    // O chute no meio (28/10): o balde curto do chute com o contato no meio do
+    // corpo (1) em vez do lado da perna (0).
+    float inward = 0.0f;
     // A bola alta (o centro de pouco abaixo do joelho para cima): o gesto com o
     // pe na altura do joelho. E a recepcao (a bola vindo para ele): o gesto de
     // parada, amortecendo. Gestos prontos: a bola so escolhe (o pe nunca vai
