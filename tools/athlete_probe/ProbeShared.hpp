@@ -208,6 +208,11 @@ struct Metrics {
     int lostRequests = 0;
     // Ticks com um pe entrando mais de 2 cm na bola.
     int footOnBallTicks = 0;
+    // O pe do gesto e a bola (28/10, a previsao: o gesto coincidir com onde a
+    // bola esta): a menor folga entre o pe e a bola em cada gesto do pe (m; <= 0
+    // encostou) e a do gesto em andamento de cada lado.
+    std::vector<float> gestureGaps;
+    std::array<float, 2> gestureGapNow { 1e9f, 1e9f };
     std::vector<float> latencies;
     std::vector<float> pendingRequests;
     int crazyLegTicks = 0;

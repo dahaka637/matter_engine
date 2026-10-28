@@ -227,6 +227,17 @@ void playerTests(const RagdollProfile3D& profile) {
 
 void choiceTests() {
     const GestureReach3D reach;
+    // A chegada da bola (28/10, a previsao): vindo de frente a 8 m/s de 1,5 m,
+    // entra a 0,45 m em 1,05/8 s; passando de lado (a 0,6 m), a hora da maior
+    // aproximacao; indo embora ou parada, nunca; ja dentro, agora.
+    expect(std::abs(gestureBallArrival3D({ 1.5f, 0.0f, 0.0f }, { -8.0f, 0.0f, 0.0f }, 0.45f) - 1.05f / 8.0f) < 1e-4f,
+        "a bola vindo de frente chega a 0,45 m em 0,131 s");
+    expect(std::abs(gestureBallArrival3D({ 1.0f, 0.6f, 0.11f }, { -5.0f, 0.0f, 0.0f }, 0.45f) - 0.2f) < 1e-4f,
+        "a bola passando de lado: a hora da maior aproximacao");
+    expect(gestureBallArrival3D({ 1.0f, 0.0f, 0.0f }, { 3.0f, 0.0f, 0.0f }, 0.45f) < 0.0f
+            && gestureBallArrival3D({ 1.0f, 0.0f, 0.0f }, {}, 0.45f) < 0.0f,
+        "a bola indo embora ou parada nunca chega");
+    expect(gestureBallArrival3D({ 0.3f, 0.1f, 0.0f }, { -3.0f, 0.0f, 0.0f }, 0.45f) == 0.0f, "a bola ja dentro chega agora");
     const GestureChoice3D left = chooseGesture3D(GestureKind3D::Touch, { 0.10f, 0.20f, 0.11f }, { 0.0f, -1.0f, 0.0f }, -1, reach);
     expect(left.inReach && left.spec.side == 0 && left.spec.reach == 0 && left.spec.depth == 1
             && left.spec.move == GestureMove3D::In,

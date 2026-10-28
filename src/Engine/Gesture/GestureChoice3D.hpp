@@ -55,6 +55,12 @@ struct GestureReach3D {
     float headSide = 0.45f;
 };
 
+// A chegada da bola (28/10, a previsao): o tempo (s) ate ela entrar a radius
+// de um ponto no plano, no movimento relativo de agora (reto, sem atrito), ou
+// o da maior aproximacao se ela passa de lado; 0 ja dentro; -1 nao vem.
+// offset e velocity no plano (z ignorado).
+[[nodiscard]] float gestureBallArrival3D(Vec3 offset, Vec3 velocity, float radius);
+
 // O alcance num corpo (26/10, pedido do usuario): os pes na mesma proporcao
 // da altura (scale = altura/1,80); o peito acompanha o corpo (as alturas x
 // scale; no plano, x scale mais o quanto o tronco engrossou, chestGrowth = a

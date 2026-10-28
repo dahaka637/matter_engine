@@ -58,6 +58,11 @@ struct GestureSpec3D {
     GesturePart3D part = GesturePart3D::Foot;
     // O jeito de cada gesto (o corpo procedural sorteia por ela).
     std::uint32_t seed = 0;
+    // O contato marcado (s desde o comeco; 0: o natural). O pedido guardado
+    // (28/10, pedido do usuario: o gesto coincidir com a bola) comeca antes de
+    // ela chegar e bate na chegada: a armada - ou, sem ela, a batida - se
+    // alonga ate la.
+    float contactAt = 0.0f;
 };
 
 // Uma perna nas coordenadas de junta do esqueleto (os vetores de rotacao de

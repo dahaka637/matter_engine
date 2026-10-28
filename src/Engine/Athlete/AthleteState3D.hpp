@@ -96,6 +96,8 @@ struct AthleteState3D {
         float aimYaw = 0.0f;
         float left = 0.0f;
         bool receive = true;
+        // O gesto ja comecou, antes da bola chegar (28/10, a previsao).
+        bool started = false;
     } armedReception;
     // A reescrita (R3): o corpo da classificacao de contatos, as regras de
     // troca de modo e o ultimo tick delas (a telemetria neutra: o que bateu,

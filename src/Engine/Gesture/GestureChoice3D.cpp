@@ -51,6 +51,16 @@ GestureChoice3D chooseGesture3D(GestureKind3D kind, Vec3 ball, Vec3 direction, i
     return choice;
 }
 
+float gestureBallArrival3D(Vec3 offset, Vec3 velocity, float radius) {
+    offset.z = velocity.z = 0.0f;
+    const float c = dot(offset, offset) - radius * radius;
+    if (c <= 0.0f) return 0.0f;
+    const float vv = dot(velocity, velocity), ov = dot(offset, velocity);
+    if (vv < 1e-6f || ov >= 0.0f) return -1.0f;
+    const float disc = ov * ov - vv * c;
+    return disc >= 0.0f ? (-ov - std::sqrt(disc)) / vv : -ov / vv;
+}
+
 GestureReach3D gestureReachForBody3D(const GestureReach3D& base, float scale, float chestGrowth) {
     if (scale == 1.0f && chestGrowth == 0.0f) return base;
     GestureReach3D reach = base;

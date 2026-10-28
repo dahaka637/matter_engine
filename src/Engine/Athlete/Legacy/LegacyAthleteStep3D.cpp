@@ -1,5 +1,6 @@
 #include "Engine/Athlete/Legacy/LegacyAthleteStep3D.hpp"
 
+#include "Engine/Gesture/GestureCatalog3D.hpp"
 #include "Engine/Gesture/GestureChoice3D.hpp"
 #include "Engine/Athlete/Planning/MotionPlanner3D.hpp"
 #include "Engine/Athlete/Synthesis/LegSynthesis3D.hpp"
@@ -1127,12 +1128,71 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                                                                                      : BallBodyPart3D::Foot;
             const bool upper = part != BallBodyPart3D::Foot;
             const bool waits = receive || fromArmed;
-            const bool fires = upper || (choice.inReach
-                && (!waits || !coming || offset.length() <= settings.ballForce.receiveArmDistance * bodyScale3D(assets.body)));
+            // (O chute guardado bate onde o chute bate - a bola do balde dele, ao
+            // lado do pe de apoio -, nao onde a recepcao a para.)
+            const bool kickWaits = fromArmed ? !armed.receive : !receive && request == BallActionKind3D::Shot;
+            GestureSpec3D strike;
+            strike.kind = GestureKind3D::Shot;
+            strike.high = high;
+            const Vec3 strikeBall = gestureNominalBall3D(strike);
+            const float armDistance = bodyScale3D(assets.body)
+                * (kickWaits ? std::hypot(strikeBall.x, strikeBall.y) : settings.ballForce.receiveArmDistance);
+            const bool fires = upper || (choice.inReach && (!waits || !coming || offset.length() <= armDistance));
+            // (O gesto do pedido guardado ja comecou: na chegada, so a forca.)
+            const bool started = fromArmed && armed.started;
             if (!fires && !fromArmed && (receive || (coming && request == BallActionKind3D::Shot)))
                 armed = { true, request == BallActionKind3D::Shot, requestPower, requestLift, requestCurve, requestAimYaw,
-                    settings.ballForce.receiveArmSeconds, receive };
+                    settings.ballForce.receiveArmSeconds, receive, false };
             if (fromArmed && !choice.inReach && !coming) armed.active = false;
+            const Vec3 aimedInBody { dot(aimed, forward), dot(aimed, left), 0.0f };
+            // O gesto do pe de um balde: o tempo, a semente, o rumo em que a bola
+            // vem (na recepcao) e o giro da cintura ate o rumo em que ela vai
+            // (flight, no chute).
+            const auto footGesture = [&](const GestureSpec3D& spec, Vec3 flight) {
+                gestureStart = spec;
+                gestureStart.power = std::clamp(requestPower, 0.0f, 1.0f);
+                // (A recepcao tem o tempo do manejo, mesmo no chute fraco; ela
+                // e o toque na bola alta, um pouco mais: a perna sobe e cede -
+                // 1,2 e 1,15 vezes.)
+                gestureStart.seconds = kind == GestureKind3D::Shot && !receive ? settings.shotGestureSeconds
+                    : settings.touchGestureSeconds * (receive ? 1.2f : spec.high ? 1.15f : 1.0f);
+                if (receive) {
+                    const Vec3 relative { ballVelocity.x - bodyVelocity.x, ballVelocity.y - bodyVelocity.y, 0.0f };
+                    gestureStart.incoming = { dot(relative, forward), dot(relative, left), 0.0f };
+                }
+                gestureStart.seed = ++athlete.gestureCount * 2654435761u + static_cast<std::uint32_t>(slot.entityId);
+                // A cintura gira ate o rumo em que a bola vai (no referencial
+                // do corpo): andando de lado, o chute parecia ir para o lado
+                // contrario (pedido do usuario).
+                if (kind == GestureKind3D::Shot && !receive && flight.lengthSquared() > 1e-4f)
+                    gestureStart.turn = std::atan2(dot(flight, left), dot(flight, forward));
+                gestureRequested = true;
+                athlete.lastGestureSide = gestureStart.side;
+                athlete.sinceGesture = 0.0f;
+                athlete.pendingGesture.active = false;
+            };
+            // A previsao (28/10, pedido do usuario: o gesto coincidir com onde a
+            // bola vai estar): o pedido guardado comeca o gesto ja, no balde de
+            // onde ela vai chegar - andando no movimento relativo de agora ate
+            // entrar a armDistance da pelve, ou passar mais perto -, com o
+            // contato marcado na chegada: a batida coincide com a forca.
+            if (animated && armed.active && !armed.started && !fires && !upper) {
+                const Vec3 relative { flatBall.x - bodyVelocity.x, flatBall.y - bodyVelocity.y, 0.0f };
+                const float arrival = gestureBallArrival3D(offset, relative, armDistance);
+                if (arrival > 0.0f && arrival <= armed.left) {
+                    const Vec3 at = offset + relative * arrival;
+                    const float radius = scene.inflatedBallProfile(nearest->handle).radiusMeters;
+                    const float height
+                        = std::max(radius, ballPosition.z + ballVelocity.z * arrival - 4.905f * arrival * arrival);
+                    const GestureChoice3D early = chooseGesture3D(kind, { dot(at, forward), dot(at, left), height - feetBase },
+                        aimedInBody, preferredSide, bodyReach, -1, receive);
+                    if (early.inReach) {
+                        footGesture(early.spec, aimed);
+                        gestureStart.contactAt = arrival;
+                        armed.started = true;
+                    }
+                }
+            }
             if (fires) {
                 armed.active = false;
                 const InflatedBallProfile3D ballProfile = scene.inflatedBallProfile(nearest->handle);
@@ -1158,7 +1218,9 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                 scene.applyInflatedBallImpulses(nearest->handle, (outcome.velocity - nearest->state->linearVelocity) * mass,
                     (outcome.spin - nearest->state->angularVelocity) * inertia);
                 output.ballTouched = true;
-                if (animated && upper) {
+                if (started) {
+                    // (O gesto guardado ja esta batendo: so a forca.)
+                } else if (animated && upper) {
                     // O gesto so do corpo, no lado da bola, virado ao rumo dela.
                     gestureStart = {};
                     gestureStart.kind = kind;
@@ -1173,27 +1235,6 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                     gestureRequested = true;
                     athlete.pendingGesture.active = false;
                 } else if (animated) {
-                    gestureStart = choice.spec;
-                    gestureStart.power = std::clamp(requestPower, 0.0f, 1.0f);
-                    // (A recepcao tem o tempo do manejo, mesmo no chute fraco; ela
-                    // e o toque na bola alta, um pouco mais: a perna sobe e cede -
-                    // 1,2 e 1,15 vezes.)
-                    gestureStart.seconds = kind == GestureKind3D::Shot && !receive ? settings.shotGestureSeconds
-                        : settings.touchGestureSeconds * (receive ? 1.2f : high ? 1.15f : 1.0f);
-                    if (receive) {
-                        const Vec3 relative { ballVelocity.x - bodyVelocity.x, ballVelocity.y - bodyVelocity.y, 0.0f };
-                        gestureStart.incoming = { dot(relative, forward), dot(relative, left), 0.0f };
-                    }
-                    gestureStart.seed = ++athlete.gestureCount * 2654435761u + static_cast<std::uint32_t>(slot.entityId);
-                    // A cintura gira ate o rumo em que a bola vai (no referencial
-                    // do corpo): andando de lado, o chute parecia ir para o lado
-                    // contrario (pedido do usuario).
-                    const Vec3 flight { outcome.velocity.x, outcome.velocity.y, 0.0f };
-                    if (kind == GestureKind3D::Shot && !receive && flight.lengthSquared() > 1e-4f)
-                        gestureStart.turn = std::atan2(dot(flight, left), dot(flight, forward));
-                    gestureRequested = true;
-                    athlete.lastGestureSide = gestureStart.side;
-                    athlete.sinceGesture = 0.0f;
                     // Conduzindo (andando, o toque - ou o chute fraco - com a bola
                     // a frente), o toque e do passo seguinte da perna escolhida
                     // (24/10, pedido do usuario: "como se ele planejasse no proprio
@@ -1201,7 +1242,12 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                     const bool carrying = gait.valid && gait.cycling && conducting && !high
                         && std::abs(ballInBody.y) <= bodyReach.alternateBand
                         && ballInBody.x > bodyReach.depthBack;
-                    athlete.pendingGesture.active = false;
+                    // (Na hora, o balde e o da bola de agora: a forca sai no
+                    // aperto e o caminho dela depois e o do proprio toque. A
+                    // previsao no toque na hora - o balde da bola quando o pe
+                    // chega la - foi medida em 28/10 e piorou: o pe entrava mais
+                    // na bola.)
+                    footGesture(choice.spec, { outcome.velocity.x, outcome.velocity.y, 0.0f });
                     if (carrying && gait.cyclePlanted[gestureStart.side == 1 ? 1 : 0]) {
                         athlete.pendingGesture = { true, gestureStart, 0.0f };
                         gestureRequested = false;

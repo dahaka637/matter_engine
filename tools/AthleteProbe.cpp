@@ -2214,6 +2214,12 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
                         const Vec3 local = q.conjugate().rotate(ballState.position - center);
                         const float radius = scene->inflatedBallProfile(ballHandle).radiusMeters;
                         const float inside = radius - ragdollColliderClosestPoint3D(collider, local).distance;
+                        if (legacy.defaultLocomotion.output().gestureLegs[side])
+                            metrics.gestureGapNow[side] = std::min(metrics.gestureGapNow[side], -inside);
+                        else if (metrics.gestureGapNow[side] < 1e8f) {
+                            metrics.gestureGaps.push_back(metrics.gestureGapNow[side]);
+                            metrics.gestureGapNow[side] = 1e9f;
+                        }
                         if (inside > 0.02f) {
                             ++metrics.footOnBallTicks;
                             if (std::getenv("XPEBOLA"))
@@ -2289,6 +2295,8 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
         std::printf("  CUSTO do runtime por tick (us): p50 %.0f p95 %.0f p99 %.0f max %.0f\n", at(0.5), at(0.95), at(0.99),
             runtimeCost.back() * 1.0e6);
     }
+    for (std::size_t side = 0; side < 2; ++side)
+        if (metrics.gestureGapNow[side] < 1e8f) metrics.gestureGaps.push_back(metrics.gestureGapNow[side]);
     return metrics;
 }
 
@@ -2333,6 +2341,9 @@ void printMetrics(const Scenario& scenario, const Metrics& metrics, bool footste
             "", metrics.requests, metrics.touches, latencyMax, metrics.crazyLegTicks, metrics.kneeFlipTicks,
             metrics.legSpinMax, metrics.longestFlight, metrics.lostRequests + static_cast<int>(metrics.pendingRequests.size()),
             metrics.footOnBallTicks);
+        if (!metrics.gestureGaps.empty())
+            std::printf("%-18s   folga pe-bola no gesto med %.3f max %.3f m (%zu gestos)\n", "",
+                percentile(metrics.gestureGaps, 0.5f), percentile(metrics.gestureGaps, 1.0f), metrics.gestureGaps.size());
     }
     if (!metrics.bodyForecastErrors.empty())
         std::printf("%-18s   previsao do corpo (0,3 s antes): %zu | med %.3f p95 %.3f max %.3f m\n", "",
