@@ -406,6 +406,8 @@ void LocomotionViewer3D::setAssist(float percent) {
     m_impl->settings.getUpAssistPercent = p;
 }
 
+float LocomotionViewer3D::assist() const { return m_impl->settings.e5WalkingAssistPercent; }
+
 void LocomotionViewer3D::setManualSpeed(std::optional<float> metersPerSecond) { m_impl->manual = metersPerSecond; }
 
 void LocomotionViewer3D::push(Vec3 force, float seconds) {

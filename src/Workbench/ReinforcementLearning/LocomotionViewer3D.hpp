@@ -72,6 +72,8 @@ public:
     void push(Vec3 force, float seconds) override;
     // A ajuda auxiliar do mundo (0..100%, as quatro como a regua do laboratorio).
     void setAssist(float percent);
+    // A de andar agora (ao abrir, a do treino: a tarefa).
+    [[nodiscard]] float assist() const;
 
     [[nodiscard]] BodyWorldView3D view() const override;
     [[nodiscard]] const RagdollProfile3D& profile() const override;

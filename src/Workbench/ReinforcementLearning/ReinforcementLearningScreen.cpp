@@ -311,9 +311,10 @@ void lineChart(const char* id, const std::vector<ChartSeries>& series, float min
     const auto indexAt = [hoverAt](std::size_t size) {
         return static_cast<std::size_t>(std::lround(hoverAt * static_cast<float>(size - 1)));
     };
-    for (int pass = 0; pass < 2; ++pass) {
+    // As areas, as referencias e as linhas, nessa ordem: nenhuma linha fica por baixo da area de outra.
+    for (int pass = 0; pass < 3; ++pass) {
         for (const ChartSeries& item : series) {
-            if (item.hidden || (pass == 0) != item.reference) continue;
+            if (item.hidden || (pass == 1) != item.reference) continue;
             const std::vector<float>& v = *item.values;
             if (v.size() < 2) continue;
             const auto has = [&v](std::size_t i) { return std::isfinite(v[i]); };
@@ -321,10 +322,7 @@ void lineChart(const char* id, const std::vector<ChartSeries>& series, float min
                 return ImVec2 { inner0.x + (inner1.x - inner0.x) * static_cast<float>(i) / static_cast<float>(v.size() - 1),
                     yOf(v[i]) };
             };
-            ImVec4 line = item.color;
-            if (item.reference) line.w = 0.45f;
-            const ImU32 lineColor = ImGui::ColorConvertFloat4ToU32(line);
-            if (!item.reference) {
+            if (pass == 0) {
                 ImVec4 fill = item.color;
                 fill.w = 0.16f;
                 const ImU32 fillColor = ImGui::ColorConvertFloat4ToU32(fill);
@@ -333,7 +331,11 @@ void lineChart(const char* id, const std::vector<ChartSeries>& series, float min
                     const ImVec2 a = point(i), b = point(i + 1);
                     draw->AddQuadFilled(a, b, { b.x, inner1.y }, { a.x, inner1.y }, fillColor);
                 }
+                continue;
             }
+            ImVec4 line = item.color;
+            if (item.reference) line.w = 0.8f;
+            const ImU32 lineColor = ImGui::ColorConvertFloat4ToU32(line);
             for (std::size_t i = 0; i + 1 < v.size(); ++i)
                 if (has(i) && has(i + 1)) draw->AddLine(point(i), point(i + 1), lineColor, item.reference ? 1.2f : 2.0f);
             // (Um ponto sozinho entre buracos vira um pingo; o ultimo com dado, o ponto de agora.)
@@ -554,6 +556,7 @@ void ReinforcementLearningScreen::ensureViewer() {
         // Outro treino: a tarefa, os exercicios e o mundo dele.
         m_viewerRun = run;
         m_viewerDrill.clear();
+        m_assistChosen = false;
         resetViewer();
         loadDrills();
     }
@@ -573,7 +576,11 @@ void ReinforcementLearningScreen::ensureViewer() {
                 m_locomotion = std::make_unique<LocomotionViewer3D>(task, m_options.sourceRoot / "assets", m_viewerDrill,
                     seed);
             m_colliders = buildRagdollColliderWireframe3D(m_locomotion->profile());
-            if (auto* locomotion = dynamic_cast<LocomotionViewer3D*>(m_locomotion.get())) locomotion->setAssist(m_locomotionAssist);
+            // (28/10: o 0% fixo da regua mostrava a rede numa ajuda em que ela nao treina.)
+            if (auto* locomotion = dynamic_cast<LocomotionViewer3D*>(m_locomotion.get())) {
+                if (m_assistChosen) locomotion->setAssist(m_locomotionAssist);
+                else m_locomotionAssist = locomotion->assist();
+            }
             applyManual();
             reloadPolicy(true);
         } catch (const std::exception& error) {
@@ -1509,9 +1516,10 @@ void ReinforcementLearningScreen::drawCommands() {
         ImGui::SetNextItemWidth(ui(220.0f));
         if (ImGui::SliderFloat("Ajuda auxiliar", &m_locomotionAssist, 0.0f, 100.0f, "%.0f%%")) {
             locomotion->setAssist(m_locomotionAssist);
+            m_assistChosen = true;
             m_dirty = true;
         }
-        tooltip("A régua do jogo (0% = o zero antigo). No jogo ela cai com as pancadas e volta.");
+        tooltip("Começa na do treino. No jogo ela cai com as pancadas e volta.");
     }
     if (auto* motor = dynamic_cast<MotorViewer3D*>(m_locomotion.get())) {
         ImGui::SetNextItemWidth(ui(220.0f));
@@ -1681,24 +1689,26 @@ void ReinforcementLearningScreen::drawLocomotionCharts(float height) {
             std::max(height - ImGui::GetTextLineHeightWithSpacing(), ui(40.0f)) };
         const float rowTop = ImGui::GetCursorPosY();
         ImGui::BeginGroup();
-        std::string standingTitle = "Sem cair (%) · a média e, apagado, o pior exercício";
-        if (!real.worstDrill.empty() && !real.worstDrill.back().empty())
-            standingTitle += " (" + nameOf(real.worstDrill.back()) + ")";
-        ImGui::TextColored(InfoText, "%s", standingTitle.c_str());
-        tooltip("A avaliação da rede sem ruído, de tempos em tempos: em cada exercício do treino, a fatia que terminou "
-                "de pé, com a faixa inteira de velocidade dele. A linha é a média dos exercícios; a apagada, o pior.");
-        const auto [standingLow, standingHigh] = indexRange({ &real.standing, &real.worstStanding });
+        const char* standingTip = "A avaliação da rede sem ruído, de tempos em tempos: em cada exercício do treino, a "
+                                  "fatia que terminou de pé, com a faixa inteira de velocidade dele. A linha verde é a "
+                                  "média dos exercícios; a laranja, o pior.";
+        ImGui::TextColored(InfoText, "%s", "Sem cair (%)");
+        tooltip(standingTip);
+        if (!real.worstDrill.empty() && !real.worstDrill.back().empty()) {
+            ImGui::SameLine();
+            ImGui::TextColored(amber, "pior: %s", nameOf(real.worstDrill.back()).c_str());
+            tooltip(standingTip);
+        }
+        // (0 a 100 fixo nos dois: a meta e o teto, e as alturas se comparam.)
         lineChart("##semcair", { { &real.standing, green, false, "média" }, { &real.worstStanding, amber, true, "pior" } },
-            standingLow, standingHigh, size, percent(real.standing).c_str(), "%", &real.times, false,
-            "sem avaliação no período");
+            0.0f, 100.0f, size, percent(real.standing).c_str(), "%", &real.times, false, "sem avaliação no período");
         ImGui::EndGroup();
         ImGui::SameLine();
         ImGui::SetCursorPosY(rowTop);
         ImGui::BeginGroup();
         ImGui::TextColored(InfoText, "%s", "Velocidade atendida (%)");
         tooltip("Na mesma avaliação, nos exercícios que andam: a velocidade feita sobre a pedida (até 100%), a média.");
-        const auto [reachLow, reachHigh] = indexRange({ &real.reach });
-        lineChart("##velocidade", { { &real.reach, cyan, false, "velocidade" } }, reachLow, reachHigh, size,
+        lineChart("##velocidade", { { &real.reach, cyan, false, "velocidade" } }, 0.0f, 100.0f, size,
             percent(real.reach).c_str(), "%", &real.times, false, "sem avaliação no período");
         ImGui::EndGroup();
         return;

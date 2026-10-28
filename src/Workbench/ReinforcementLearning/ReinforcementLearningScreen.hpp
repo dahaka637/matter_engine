@@ -252,6 +252,8 @@ private:
     // O comando na mao (no lugar do piloto) e a velocidade dele.
     float m_motorLook = 0.0f;
     float m_locomotionAssist = 0.0f;
+    // A regua so manda depois que ele mexe nela (antes, a do treino).
+    bool m_assistChosen = false;
     bool m_manual = false;
     float m_manualSpeed = 1.0f;
 
