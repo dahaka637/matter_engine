@@ -112,8 +112,8 @@
       1.5
     ],
     "step": 0.25,
-    "minEpisodes": 32,
-    "window": 64,
+    "minEpisodes": 128,
+    "window": 128,
     "tracking": 0.8,
     "maxFalls": 0.15,
     "minCruise": 15,
@@ -2165,7 +2165,7 @@
       }
     }
   ],
-  "comment_drills": "27/10 (ordem do usuario): de volta ao basico. Os compostos param (peso 0) ate a movimentacao basica estar boa; cada reta ganha a variante de corte (a direcao da reta e um desvio sorteado, sem soltar). Movimento ~80%, equilibrio ~20%. Cartao: vault 04_locomocao/cartao_rl_basico_27_10.md. B2 (27/10, pedido do usuario): mais a troca de direcao em movimento (troca_direcao): cada 1-2,5 s o rumo vira 20-180 graus para um lado sorteado, encadeado de qualquer direcao, sem soltar; metade com a camera fixa (o rumo troca, o peito fica) e metade acompanhando (o corpo vira junto, a meia-volta). B3 (27/10): a meia-volta com o corpo virando caia 100% depois de 1 h (so ~3% dos episodios pediam troca forte acompanhando); exercicio proprio meia_volta: camera acompanhando, trocas de 120-180 graus, comecando pelo andar. B4 (27/10, ordem do usuario): a meia-volta correndo pelo clipe Running Turn 180 escalado ao angulo (runningTurn); a pelve so desce 10 cm (a rede agachava ~10,6 cm o tempo todo: o andar de lado \"sentado\"); os lados com mais peso. B5 (27/10): a meia-volta caia 95% com trocas de 120-180 graus (sem sinal para aprender; acompanhando, 45 graus 0%, 90 37,5%, 135 94%) e o clipe nunca disparava (o corpo a ~0,5 m/s, o clipe so acima de 0,8): a meia-volta passa a 90-135 graus; abre para 120-180 quando as quedas dela ficarem abaixo de ~30%. B6 (27/10, decidido por mim com a autonomia dele): o curriculo de velocidade nao abria nada desde 20h22 (rastreio na fronteira 0,27-0,67 contra 0,8: a rede anda 30-35% abaixo do pedido e o erro aceito era ~0,24 m/s em qualquer teto); passa a abrir com o erro tipico ate 35% do teto (relativeError).",
+  "comment_drills": "27/10 (ordem do usuario): de volta ao basico. Os compostos param (peso 0) ate a movimentacao basica estar boa; cada reta ganha a variante de corte (a direcao da reta e um desvio sorteado, sem soltar). Movimento ~80%, equilibrio ~20%. Cartao: vault 04_locomocao/cartao_rl_basico_27_10.md. B2 (27/10, pedido do usuario): mais a troca de direcao em movimento (troca_direcao): cada 1-2,5 s o rumo vira 20-180 graus para um lado sorteado, encadeado de qualquer direcao, sem soltar; metade com a camera fixa (o rumo troca, o peito fica) e metade acompanhando (o corpo vira junto, a meia-volta). B3 (27/10): a meia-volta com o corpo virando caia 100% depois de 1 h (so ~3% dos episodios pediam troca forte acompanhando); exercicio proprio meia_volta: camera acompanhando, trocas de 120-180 graus, comecando pelo andar. B4 (27/10, ordem do usuario): a meia-volta correndo pelo clipe Running Turn 180 escalado ao angulo (runningTurn); a pelve so desce 10 cm (a rede agachava ~10,6 cm o tempo todo: o andar de lado \"sentado\"); os lados com mais peso. B5 (27/10): a meia-volta caia 95% com trocas de 120-180 graus (sem sinal para aprender; acompanhando, 45 graus 0%, 90 37,5%, 135 94%) e o clipe nunca disparava (o corpo a ~0,5 m/s, o clipe so acima de 0,8): a meia-volta passa a 90-135 graus; abre para 120-180 quando as quedas dela ficarem abaixo de ~30%. B6 (27/10, decidido por mim com a autonomia dele): o curriculo de velocidade nao abria nada desde 20h22 (rastreio na fronteira 0,27-0,67 contra 0,8: a rede anda 30-35% abaixo do pedido e o erro aceito era ~0,24 m/s em qualquer teto); passa a abrir com o erro tipico ate 35% do teto (relativeError). Janela de 128 episodios (era 32): logo depois de abrir, os episodios que ainda rodavam no teto velho contavam no degrau novo e o curriculo abriu em cascata (os lados de 1,0 a 1,5 m/s em 1 min, 29 celulas em 3 min).",
   "runningTurn": {
     "enabled": true
   }
