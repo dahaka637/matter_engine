@@ -247,6 +247,9 @@ struct Metrics {
     bool animatedGetUpWas = false;
     // O levantar fisico subindo (item 16b): a pelve de lado (|z| do eixo esquerdo) e escorregando (m/s).
     float risingSideways = 0.0f, risingSlide = 0.0f;
+    // E os picos na janela do levantar (o pelo padrao ou o fisico subindo, e 0,5 s depois).
+    float getUpPeakUpper = 0.0f, getUpPeakLeg = 0.0f, getUpHeadSpeed = 0.0f, getUpPoseJump = 0.0f, getUpWindowLeft = 0.0f;
+    bool getUpWindow = false;
     bool risingValid = false;
     Quaternion trunkFilter;
     std::array<Vec3, 2> handFilter {};

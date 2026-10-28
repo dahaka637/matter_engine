@@ -9,9 +9,10 @@ namespace MatterEngine {
 
 namespace {
 
-// (A inercia da entrada: a pose fisica deitada vai ao clipe nisto.)
-constexpr float EntryHalfLifeSeconds = 0.12f;
-constexpr float EntrySeconds = 0.45f;
+// (A inercia da entrada: a pose fisica deitada vai ao clipe nisto - com 0,12
+// s a cabeca girava a 666 graus/s.)
+constexpr float EntryHalfLifeSeconds = 0.16f;
+constexpr float EntrySeconds = 0.55f;
 
 void worldPose(const RagdollProfile3D& profile, Vec3 rootPosition, Quaternion rootOrientation,
     const std::vector<Vec3>& coordinates, RagdollAnimationPose3D& pose) {

@@ -465,6 +465,15 @@ std::vector<Scenario> scenarios() {
                 return k; } };
             list.push_back(back);
         }
+        // E o resto de costas (o item 17 mexe so no trote; a corrida fica): o
+        // sprint, o trote -> sprint -> trote e o andar devagar.
+        list.push_back({ "costas_sprint", 4.0f, [](float t) { Keys k; if (t > 0.5f) { k.forward = -1.0f; k.sprint = true; } return k; } });
+        list.push_back({ "costas_transicao", 4.5f, [](float t) {
+            Keys k;
+            if (t > 0.5f) k.forward = -1.0f;
+            k.sprint = t > 1.6f && t < 2.8f;
+            return k; } });
+        list.push_back({ "costas_anda", 4.0f, [](float t) { Keys k; if (t > 0.5f) k.forward = -0.33f; return k; } });
         // A conducao do chute (28/10, pedido do usuario): o chute parado com a
         // bola a frente e a camera girando para a direita a 300 graus/s ao soltar
         // (o "flick") ou parada, nas barras 0,3, 0,6 e 0,9.
@@ -2346,10 +2355,29 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
             : mode() == BodyModeKind3D::Physical ? metrics.physicalSeconds
             : isActive() ? metrics.activeSeconds : metrics.returningSeconds) += Dt;
         metrics.assistImpulse = athlete.activeOutput.assistImpulseTotal;
+        // A janela do levantar (item 16): o pelo padrao ou o fisico subindo, e 0,5 s depois.
+        {
+            const CharacterLocomotionTelemetry3D& telemetry = legacy.locomotion.telemetry();
+            const bool rising = athlete.animatedGetUp.active()
+                || (mode() == BodyModeKind3D::Physical && telemetry.state == CharacterLocomotionState3D::GettingUp
+                    && telemetry.getUpPhase == CharacterGetUpPhase3D::Rising);
+            metrics.getUpWindowLeft = rising ? 0.5f : std::max(0.0f, metrics.getUpWindowLeft - Dt);
+            metrics.getUpWindow = rising || metrics.getUpWindowLeft > 0.0f;
+        }
         for (std::size_t i = 0; i < bodyState.links.size() && i < profile.links.size(); ++i) {
             const PhysicsBodyState3D& link = bodyState.links[i];
             const std::string& id = profile.links[i].id;
             const Vec3 acceleration = (link.linearVelocity - previousVelocities[i]) * (1.0f / Dt);
+            if (metrics.getUpWindow && step >= 0) {
+                const bool leg = id.find("Thigh") != std::string::npos || id.find("Shin") != std::string::npos
+                    || id.find("Foot") != std::string::npos;
+                (leg ? metrics.getUpPeakLeg : metrics.getUpPeakUpper) = std::max(
+                    leg ? metrics.getUpPeakLeg : metrics.getUpPeakUpper, acceleration.length());
+                if (id == "Head")
+                    metrics.getUpHeadSpeed = std::max(metrics.getUpHeadSpeed, link.angularVelocity.length() * 180.0f / Pi);
+                metrics.getUpPoseJump = std::max(metrics.getUpPoseJump,
+                    (link.position - (previousLinks[i].position + link.linearVelocity * Dt)).length());
+            }
             if (t > 0.35f) {
                 const bool leg = id.find("Thigh") != std::string::npos || id.find("Shin") != std::string::npos
                     || id.find("Foot") != std::string::npos;
@@ -2683,6 +2711,9 @@ void printMetrics(const Scenario& scenario, const Metrics& metrics, bool footste
         std::printf("%-18s   corpo: cabeca p95 %.0f graus/s (max %.0f) | filtrados em 0,3 s: peito x pelve ate %.1f graus da media, maos ate %.3f m\n",
             "", percentile(metrics.headSpeed, 0.95f), percentile(metrics.headSpeed, 1.0f), trunk, handsAway);
     }
+    if (metrics.getUpPeakLeg > 0.0f)
+        std::printf("%-18s   no levantar (e 0,5 s depois): pico tronco+bracos %.0f / pernas %.0f m/s2, cabeca ate %.0f graus/s, salto de pose %.3f m\n",
+            "", metrics.getUpPeakUpper, metrics.getUpPeakLeg, metrics.getUpHeadSpeed, metrics.getUpPoseJump);
     if (metrics.risingValid)
         std::printf("%-18s   levantar fisico subindo: a pelve tomba de lado ate %.0f graus, escorrega ate %.2f m/s\n", "",
             std::asin(std::min(1.0f, metrics.risingSideways)) * 180.0f / Pi, metrics.risingSlide);

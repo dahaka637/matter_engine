@@ -1709,6 +1709,15 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             if (contact.otherMotion != RagdollContactMotion3D::Static || contact.normalWorld.z < 0.6f)
                 touched += contact.normalImpulseNewtonSeconds;
         if (!allowed) {
+            // (Desligado no meio - a chave, o padrao desligado: o corpo guiado
+            // volta ao fisico como no contato, se ninguem mais o guia.)
+            if (getUp.active() && state.bodyMode == BodyMode::Physical && state.guided) {
+                scene.setRagdollGuided(slot.handle, false);
+                state.guided = false;
+                state.locomotion.reset(profile, body);
+                state.adaptivePhysics.reset(profile);
+                Log::info("corpo: levantar pelo padrao -> fisico (desligado)");
+            }
             getUp.stop();
             athlete.animatedGetUpCalm = 0.0f;
         } else if (getUp.active()) {
@@ -1744,8 +1753,13 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                     seed.pelvisYawRadians = std::atan2(forward.y, forward.x);
                     seed.pelvisWorld = pelvis.position;
                     state.defaultLocomotion.seed(seed);
+                    // (Mais devagar que a volta de sempre: o clipe acaba com a
+                    // cabeca um pouco para tras, e com 0,14 s ela voltava a 955
+                    // graus/s.)
+                    constexpr float GetUpExitHalfLife = 0.25f;
+                    constexpr float GetUpExitSeconds = 0.90f;
                     state.returnInertia.start(state.returnCoordinates, velocities, pelvis.position, pelvis.orientation,
-                        {}, {}, ReturnHalfLife, ReturnSeconds);
+                        {}, {}, GetUpExitHalfLife, GetUpExitSeconds);
                     state.bodyMode = BodyMode::Returning;
                     state.bodyModeSeconds = 0.0f;
                     state.guidedExitLeft = 0.0f;
