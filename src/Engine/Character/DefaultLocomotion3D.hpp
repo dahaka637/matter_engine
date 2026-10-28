@@ -187,6 +187,10 @@ struct DefaultLocomotionSettings3D {
     // andando so na arrancada, ate a marcha pesar 0,95). Pela de sempre
     // (idleBlendSeconds) a marcha so passava da metade 0,2 s depois do comando.
     float startBlendSeconds = 0.05f;
+    // O trote de costas e as diagonais de costas como o trote para a frente
+    // (28/10, pedido do usuario: "nao gosto da forma como ele anda para tras
+    // 'sentado'"; o clipe trotBackward). Desligado, a corrida de costas.
+    bool backTrotLikeForward = true;
     float standTurnStart = 0.55f;
     float standTurnKeep = 0.31f;
     float standTurnSeconds = 0.16f;

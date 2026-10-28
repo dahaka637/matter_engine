@@ -60,6 +60,7 @@ tarefas do RL e o personagem do jogo que citam o arquivo.
 | Clipe | Nome | s | Ciclo | Vel. | Dir. | Fonte | Usado em |
 |---|---|---:|---|---:|---:|---|---|
 | `jog` | Corrida leve | 0.73 | sim | 3.0 | 0° | autoral (`tools/animation/clips/jog.py`) | personagem (football_player) |
+| `jog_backward` | Trote de costas | 0.73 | sim | 3.0 | 180° | autoral (`tools/animation/clips/jog_backward.py`) | personagem (football_player) |
 | `jog_strafe_left` | Corrida de lado (esquerda) | 0.70 | sim | 2.9 | 90° | autoral (`tools/animation/clips/strafe.py`) | personagem (football_player) |
 | `jog_strafe_right` | Corrida de lado (direita) | 0.70 | sim | 2.9 | -90° | autoral (`tools/animation/clips/strafe.py`) | personagem (football_player) |
 | `mixamo_running` | Corrida (analise Mixamo) | 0.83 | sim | 2.5 | 1° | `Running.fbx` | — |
@@ -120,5 +121,6 @@ tarefas do RL e o personagem do jogo que citam o arquivo.
 
 | Clipe | Nome | s | Ciclo | Vel. | Dir. | Fonte | Usado em |
 |---|---|---:|---|---:|---:|---|---|
+| `alert_idle_espelho` | Parado em alerta, espelhado (o apoio no pe esquerdo) | 10.00 | sim | — | -0° | autoral (`tools/animation/clips/alert_idle.py`) | personagem (football_player) |
 | `giro_direita_180` | Giro parado 180 para a direita (Mixamo) | 2.07 | não | 0.2 | -135° | `Right Turn(6).fbx` | — |
 | `giro_esquerda_180` | Giro parado 180 para a esquerda (Mixamo) | 2.07 | não | 0.1 | 110° | `Left Turn(2).fbx` | — |

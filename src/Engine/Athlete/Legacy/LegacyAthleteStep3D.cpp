@@ -1751,10 +1751,11 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         }
         configureDefaultLocomotion(state.referenceShadow.settings(), settings, assets.body);
         state.referenceShadow.settings().footBentRetry = false;
-        // (O parado pela ultima passada e a arrancada pela base dele tambem: o
-        // treino e o do parado e da arrancada de sempre - 28/10.)
+        // (O parado pela ultima passada, a arrancada pela base dele e o trote de
+        // costas novo tambem: o treino e o de sempre - 28/10.)
         state.referenceShadow.settings().idleFromLastStride = false;
         state.referenceShadow.settings().startFromStance = false;
+        state.referenceShadow.settings().backTrotLikeForward = false;
         DefaultLocomotionInput3D input;
         input.feetPositionWorld = command.rootPositionWorld - Vec3 { 0.0f, 0.0f, profile.standingRootHeightMeters };
         input.velocityWorld = command.rootVelocityWorld;

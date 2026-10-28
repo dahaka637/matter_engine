@@ -131,6 +131,9 @@ struct CharacterLocomotionAnimations3D {
     // Opcional, so da locomocao padrao: o parado espelhado (28/10; o apoio no
     // outro pe, escolhido pela ultima passada).
     const AnimationClip3D* idleMirror = nullptr;
+    // Opcional, so da locomocao padrao: o trote de costas como o da frente
+    // (28/10; sem ele, a corrida de costas - walkBackward).
+    const AnimationClip3D* trotBackward = nullptr;
     // Pulos (opcionais): o voo, da decolagem (inicio do clipe) ao toque no
     // chao (fim), tocado pela fase do voo. Sem eles, o voo e procedural.
     const AnimationClip3D* jumpStanding = nullptr;

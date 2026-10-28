@@ -115,6 +115,7 @@ CharacterLocomotionAnimations3D defaultLocomotionAnimations3D(CharacterLocomotio
         { "sprintBackwardRight", &CharacterLocomotionAnimations3D::sprintBackwardRight },
         { "maxSprint", &CharacterLocomotionAnimations3D::maxSprint },
         { "idleMirror", &CharacterLocomotionAnimations3D::idleMirror },
+        { "trotBackward", &CharacterLocomotionAnimations3D::trotBackward },
     };
     for (const auto& [role, id] : roles) {
         const auto found = std::find_if(clips.begin(), clips.end(),
@@ -354,8 +355,8 @@ void DefaultLocomotion3D::prepare(const RagdollProfile3D& profile, const Charact
 void DefaultLocomotion3D::computePrepared(const RagdollProfile3D& profile,
     const CharacterLocomotionAnimations3D& animations) {
     const AnimationClip3D* trots[Directions] = { animations.walk, animations.walkForwardLeft, animations.strafeLeft,
-        animations.walkBackwardLeft, animations.walkBackward, animations.walkBackwardRight, animations.strafeRight,
-        animations.walkForwardRight };
+        animations.walkBackwardLeft, animations.trotBackward != nullptr ? animations.trotBackward : animations.walkBackward,
+        animations.walkBackwardRight, animations.strafeRight, animations.walkForwardRight };
     const AnimationClip3D* sprints[Directions] = { animations.sprint, animations.sprintForwardLeft,
         animations.sprintStrafeLeft, animations.sprintBackwardLeft, animations.sprintBackward,
         animations.sprintBackwardRight, animations.sprintStrafeRight, animations.sprintForwardRight };
@@ -515,15 +516,24 @@ void DefaultLocomotion3D::update(const RagdollProfile3D& profile,
     // A reescrita (R4): o update em blocos, um arquivo por bloco
     // (DefaultLocomotion3D_<bloco>.cpp), com a mesma conta de antes; o que um
     // bloco passa para os seguintes mora no Tick.
-    Tick t { profile, animations, input };
+    // (O trote de costas como o da frente so com a chave: sem ela, o de antes.
+    // Pelo conjunto de clipes, e nao dentro do preparo - a tabela preparada e
+    // guardada por ele.)
+    CharacterLocomotionAnimations3D chosen;
+    const CharacterLocomotionAnimations3D* clips = &animations;
+    if (!m_settings.backTrotLikeForward && animations.trotBackward != nullptr) {
+        chosen = animations;
+        chosen.trotBackward = nullptr;
+        clips = &chosen;
+    }
+    Tick t { profile, *clips, input };
     t.dt = std::max(1e-4f, input.deltaTime);
     t.links = profile.links.size();
     m_output.valid = false;
     m_output.tackleEnded = false;
-    if (t.links == 0 || animations.walk == nullptr) return;
-    if (m_preparedFor != animations.walk
-        || std::memcmp(&m_preparedAnimations, &animations, sizeof animations) != 0)
-        prepare(profile, animations);
+    if (t.links == 0 || clips->walk == nullptr) return;
+    if (m_preparedFor != clips->walk || std::memcmp(&m_preparedAnimations, clips, sizeof *clips) != 0)
+        prepare(profile, *clips);
     m_tackleCooldown = std::max(0.0f, m_tackleCooldown - t.dt);
     t.rootLink = &profile.links.front();
     t.viewYaw = input.facingYawRadians;

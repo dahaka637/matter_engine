@@ -452,6 +452,19 @@ std::vector<Scenario> scenarios() {
                 return k; } };
             list.push_back(go);
         }
+        // O trote de costas e as diagonais de costas (28/10, pedido do usuario:
+        // como o trote para a frente, sem andar "sentado").
+        for (const char* way : { "tras", "tras_esq", "tras_dir" }) {
+            const std::string name(way);
+            Scenario back { "costas_" + name, 4.0f, [name](float t) {
+                Keys k;
+                if (t > 0.5f) {
+                    k.forward = -1.0f;
+                    k.left = name == "tras_esq" ? 1.0f : name == "tras_dir" ? -1.0f : 0.0f;
+                }
+                return k; } };
+            list.push_back(back);
+        }
         // A conducao do chute (28/10, pedido do usuario): o chute parado com a
         // bola a frente e a camera girando para a direita a 300 graus/s ao soltar
         // (o "flick") ou parada, nas barras 0,3, 0,6 e 0,9.
@@ -1475,6 +1488,8 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
         // ritmo_esq (ciclo), balanco (m), recupera_esq (0..1).
         // XSEMARRANCADA=1: a arrancada de antes (sem a base do parado nem a mola rapida; o A/B do 2b).
         if (std::getenv("XSEMARRANCADA") && step == 0) legacy.defaultLocomotion.settings().startFromStance = false;
+        // XCOSTASANTIGO=1: o trote de costas de antes (a corrida de costas; o A/B do 17).
+        if (std::getenv("XCOSTASANTIGO") && step == 0) legacy.defaultLocomotion.settings().backTrotLikeForward = false;
         if (const char* hook = std::getenv("XCORRECAO"); hook != nullptr && step == 0) {
             const std::string which(hook);
             const char* given = std::getenv("XVALOR");

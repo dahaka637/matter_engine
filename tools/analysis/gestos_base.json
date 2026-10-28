@@ -98,18 +98,18 @@
  "cabeceio_toque_tras": {
   "balancos": 0.0,
   "cruzadas": 0.0,
-  "deslize": 0.12,
+  "deslize": 0.14,
   "gestos": 0.0,
-  "giro": 7.0,
+  "giro": 8.5,
   "joelho": 0.0,
   "louca": 0.0,
   "ordem": 0.0,
-  "pe_na_bola": 6.0,
+  "pe_na_bola": 14.0,
   "pedidos": 1.0,
   "perdidos": 0.0,
-  "pico_pernas": 263.0,
+  "pico_pernas": 123.4,
   "toques": 1.0,
-  "voo": 0.083
+  "voo": 0.092
  },
  "gesto_alta_corre_chute": {
   "balancos": 0.0,

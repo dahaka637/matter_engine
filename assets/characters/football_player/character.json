@@ -11,11 +11,12 @@
   },
   "defaultLocomotion": {
    "license": "autoral (MatterEngine)",
-   "note": "Modo padrao (05/10): o sprint de costas longo e ereto (desenho medido no Sprint Backward.fbx fornecido pelo usuario, sem copiar a pose). 24/10: o sprint maximo (Shift duplo), a corrida com o tronco mais inclinado e a passada mais longa.",
+   "note": "Modo padrao (05/10): o sprint de costas longo e ereto (desenho medido no Sprint Backward.fbx fornecido pelo usuario, sem copiar a pose). 24/10: o sprint maximo (Shift duplo), a corrida com o tronco mais inclinado e a passada mais longa. 28/10: o trote de costas como o trote para a frente (jog_backward: a receita do jog invertida no tempo, sem andar sentado).",
    "sources": [
     "tools/animation/clips/sprint_backward_long.py",
     "tools/animation/clips/sprint_maximo.py",
-    "tools/animation/gait.py"
+    "tools/animation/gait.py",
+    "tools/animation/clips/jog_backward.py"
    ]
   },
   "idle": {
@@ -127,7 +128,8 @@
  "defaultLocomotion": {
   "idleMirror": "alert_idle_espelho",
   "maxSprint": "sprint_maximo",
-  "sprintBackward": "sprint_backward_long"
+  "sprintBackward": "sprint_backward_long",
+  "trotBackward": "jog_backward"
  },
  "displayName": "Jogador",
  "facet": 0.5,

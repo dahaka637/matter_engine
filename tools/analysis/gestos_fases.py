@@ -104,7 +104,7 @@ def main():
             rows = [r[3] for r in res if r[0] == c and r[1] == v]
             linha += (f" | {v}: louca {sum(r['louca'] or 0 for r in rows):.0f}"
                       f" pe_bola {sum(r['pe_bola'] or 0 for r in rows):.0f}"
-                      f" picomax {max(r['pico'] or 0 for r in rows):.0f}")
+                      f" picomax {max((r['pico'] or 0 for r in rows), default=0):.0f}")
         print(linha)
         if a.por_atraso:
             for v in variantes:
