@@ -275,3 +275,15 @@ def test_speed_curriculum_counts_only_the_unaided_episodes():
     assert curriculum.advance(task) == [] and caps["trote"][0] == 1.0  # ajudado: nao abre
     curriculum.observe(np.stack([episode(0.0) for _ in range(4)]), columns)
     assert len(curriculum.advance(task)) == 1 and caps["trote"][0] == 1.25
+
+
+def test_speed_curriculum_relative_error_scales_with_the_cap():
+    """Com relativeError, o limiar e o do erro relativo no teto: o mesmo nucleo (0,30) nao
+    abre 1,0 m/s com 35% (pede 0,61) e abre 2,0 m/s (pede 0,22); sem ele, o 0,8 fixo."""
+    base = {"assist": {"standing": 0.0}, "reward": {"velocitySigma": 0.5},
+            "drills": [{"id": "trote", "pilot": {"kind": "star", "bands": [{"speed": [1.8, 4.5]}]}}]}
+    fixed = SpeedCurriculum({**base, "speedCurriculum": {"enabled": True}}, ["trote"])
+    assert fixed.threshold(1.0) == 0.8 and fixed.threshold(4.0) == 0.8
+    relative = SpeedCurriculum({**base, "speedCurriculum": {"enabled": True, "relativeError": 0.35}}, ["trote"])
+    assert abs(relative.threshold(1.0) - np.exp(-0.49)) < 1e-6
+    assert relative.threshold(1.0) > 0.30 > relative.threshold(2.0)

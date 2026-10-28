@@ -35,6 +35,12 @@ class CurriculumRule:
     min_episodes: int = 32
     window: int = 64
     tracking: float = 0.8
+    # O erro relativo (27/10): > 0 troca o tracking fixo por um limiar do teto de cada
+    # celula - abre com o erro tipico ate relative_error x teto. Com o fixo, o erro aceito
+    # era ~0,24 m/s em qualquer teto (24% a 1 m/s, 6% a 4 m/s) e o curriculo parou: a
+    # rede anda 30-35% abaixo do pedido e nada abria desde 20h22.
+    relative_error: float = 0.0
+    sigma: float = 0.5
     max_falls: float = 0.15
     # O minimo de decisoes de cruzeiro (30 Hz) para um episodio contar numa celula.
     min_cruise: int = 15
@@ -53,6 +59,8 @@ class CurriculumRule:
             enabled=bool(block.get("enabled", False)), step=float(block.get("step", 0.25)),
             min_episodes=int(block.get("minEpisodes", 32)), window=int(block.get("window", 64)),
             tracking=float(block.get("tracking", 0.8)), max_falls=float(block.get("maxFalls", 0.15)),
+            relative_error=float(block.get("relativeError", 0.0)),
+            sigma=float((task.get("reward") or {}).get("velocitySigma", 0.5)),
             min_cruise=int(block.get("minCruise", 15)),
             start=dict(start) if isinstance(start, dict) else {},
             start_default=float(start) if not isinstance(start, dict) else float(block.get("startDefault", 1.0)),
@@ -126,6 +134,13 @@ class SpeedCurriculum:
                 self.records[drill][k].append((tracking, fall_cell == k))
                 self.since[drill][k] += 1
 
+    def threshold(self, cap: float) -> float:
+        """O nucleo medio que abre o teto: o fixo, ou o do erro relativo naquele teto (o nucleo
+        e exp(-(erro/sigma)^2) na fronteira)."""
+        if self.rule.relative_error <= 0.0:
+            return self.rule.tracking
+        return float(np.exp(-((self.rule.relative_error * cap / self.rule.sigma) ** 2)))
+
     def advance(self, task: dict) -> list[str]:
         """Abre os tetos que passaram na regra; devolve o que abriu (texto)."""
         if not self.rule.enabled:
@@ -142,7 +157,7 @@ class SpeedCurriculum:
                     continue
                 tracking = float(np.mean([t for t, _ in window]))
                 falls = float(np.mean([f for _, f in window]))
-                if tracking >= self.rule.tracking and falls <= self.rule.max_falls:
+                if tracking >= self.threshold(cells[k]) and falls <= self.rule.max_falls:
                     old = cells[k]
                     cells[k] = round(min(tops[drill], old + self.rule.step), 4)
                     window.clear()
