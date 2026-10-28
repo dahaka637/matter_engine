@@ -1052,7 +1052,8 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             const bool raising = request == BallActionKind3D::Raise;
             const GestureKind3D kind = request == BallActionKind3D::Shot ? GestureKind3D::Shot
                 : raising ? GestureKind3D::Raise : GestureKind3D::Touch;
-            // (Levantar nunca e recepcao nem toque de conducao.)
+            // O toque ou o chute fraco: o de conduzir. (Levantar nunca e recepcao
+            // nem toque de conducao.)
             const bool gentle = !raising && (kind == GestureKind3D::Touch || requestPower < 0.3f);
             // A velocidade do corpo: no padrao, a da capsula (a da pelve tem o
             // balanco da passada); no fisico, a da pelve.
@@ -1073,14 +1074,18 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             const Vec3 toward = offset.lengthSquared() > 1e-6f ? offset * (-1.0f / offset.length()) : forward * -1.0f;
             const float closing = std::max(std::min(dot(flatBall, toward), dot(flatBall - bodyVelocity, toward)),
                 high ? -ballVelocity.z : 0.0f);
-            // (O pedido armado e sempre recepcao.)
+            // O chute na bola vindo so e recepcao abaixo de receiveShotBar (28/10,
+            // pedido do usuario: o chute fraco de primeira sai como chute); o
+            // pedido armado e o que era no aperto.
             const bool coming = closing > settings.ballForce.receiveClosing;
-            const bool receive = fromArmed || (gentle && coming);
+            const bool receive = fromArmed ? armed.receive
+                : coming && !raising
+                    && (kind == GestureKind3D::Touch || requestPower < settings.ballForce.receiveShotBar);
             // Conduzindo (o toque ou o chute fraco ate 2,5 s depois de outro),
-            // as pernas se alternam (24/10, pedido do usuario). (Na recepcao e
-            // na bola alta, nao.)
-            const bool sequence = athlete.sinceGesture < 2.5f && athlete.lastGestureSide >= 0 && gentle && !receive
-                && !high;
+            // as pernas se alternam (24/10, pedido do usuario). (Na recepcao, na
+            // bola vindo, no pedido armado e na bola alta, nao.)
+            const bool conducting = gentle && !coming && !fromArmed;
+            const bool sequence = athlete.sinceGesture < 2.5f && athlete.lastGestureSide >= 0 && conducting && !high;
             // (Na recepcao parado, a bola perto do meio vai ao pe da frente: o de
             // tras corria 75 cm ate ela.)
             int preferredSide = freeSide;
@@ -1100,9 +1105,11 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             // A recepcao armada (24/10, pedido do usuario): com a bola vindo e
             // ainda longe, o pedido espera ate receiveArmSeconds e a forca sai
             // quando ela chega - no alcance, a receiveArmDistance da pelve (onde
-            // o gesto pronto a para) ou parando de vir. So na recepcao: no manejo
-            // e no chute normais a forca sai no aperto (fora do alcance, o pedido
-            // se perde); armado, se ela deixou de vir fora do alcance, cai.
+            // o gesto pronto a para) ou parando de vir. O chute na bola vindo
+            // arma do mesmo jeito (28/10, pedido do usuario: o chute de
+            // primeira). No manejo e no chute normais a forca sai no aperto (fora
+            // do alcance, o pedido se perde); armado, se ela deixou de vir fora
+            // do alcance, cai.
             // O peito e a cabeca (24/10, pedido do usuario): fora do alcance dos
             // pes, a bola na altura do tronco ou da cabeca (acima da pelve: sobe
             // com o pulo) e perto do corpo - o toque e o chute com uma fracao da
@@ -1119,11 +1126,12 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                 : nearHead && aboveHip > reach.chestTop && aboveHip <= reach.headTop ? BallBodyPart3D::Head
                                                                                      : BallBodyPart3D::Foot;
             const bool upper = part != BallBodyPart3D::Foot;
+            const bool waits = receive || fromArmed;
             const bool fires = upper || (choice.inReach
-                && (!receive || !coming || offset.length() <= settings.ballForce.receiveArmDistance * bodyScale3D(assets.body)));
-            if (!fires && receive && !fromArmed)
+                && (!waits || !coming || offset.length() <= settings.ballForce.receiveArmDistance * bodyScale3D(assets.body)));
+            if (!fires && !fromArmed && (receive || (coming && request == BallActionKind3D::Shot)))
                 armed = { true, request == BallActionKind3D::Shot, requestPower, requestLift, requestCurve, requestAimYaw,
-                    settings.ballForce.receiveArmSeconds };
+                    settings.ballForce.receiveArmSeconds, receive };
             if (fromArmed && !choice.inReach && !coming) armed.active = false;
             if (fires) {
                 armed.active = false;
@@ -1190,7 +1198,7 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                     // a frente), o toque e do passo seguinte da perna escolhida
                     // (24/10, pedido do usuario: "como se ele planejasse no proprio
                     // passo"): plantada, ela espera sair do chao; no ar, ja vai.
-                    const bool carrying = gait.valid && gait.cycling && gentle && !receive && !high
+                    const bool carrying = gait.valid && gait.cycling && conducting && !high
                         && std::abs(ballInBody.y) <= bodyReach.alternateBand
                         && ballInBody.x > bodyReach.depthBack;
                     athlete.pendingGesture.active = false;

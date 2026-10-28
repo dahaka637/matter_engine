@@ -74,6 +74,10 @@ struct BallOutcomeSettings3D {
     float receiveMinimum = 0.3f;
     float receivePower = 1.6f;
     float receiveClosing = 2.5f;
+    // O chute na bola vindo e recepcao so com a barra abaixo disto (28/10,
+    // pedido do usuario: era 0,3 - o chute mais fraco que chutava saia a ~19
+    // m/s -; mais baixo, o chute fraco de primeira sai como chute).
+    float receiveShotBar = 0.1f;
     // Quanto da velocidade do jogador a bola recebida herda (25/10, pedido do
     // usuario: com a tecla apertada ela saia com a velocidade inteira do corpo
     // e, soltando a tecla, voltava com forca; 0: ela para no chao e sai so o

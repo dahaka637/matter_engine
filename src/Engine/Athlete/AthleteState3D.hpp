@@ -85,7 +85,8 @@ struct AthleteState3D {
     // A recepcao armada (24/10, pedido do usuario): o toque ou o chute fraco
     // apertado com a bola vindo e ainda fora do alcance espera ate o tempo
     // dela (left, s) com o que foi pedido; a forca sai no tick em que a bola
-    // entra no alcance. So na recepcao.
+    // entra no alcance. Desde 28/10 (pedido do usuario) tambem o chute na bola
+    // vindo (receive falso): sai como chute, o de primeira.
     struct ArmedReception {
         bool active = false;
         bool shot = false;
@@ -94,6 +95,7 @@ struct AthleteState3D {
         float curve = 0.0f;
         float aimYaw = 0.0f;
         float left = 0.0f;
+        bool receive = true;
     } armedReception;
     // A reescrita (R3): o corpo da classificacao de contatos, as regras de
     // troca de modo e o ultimo tick delas (a telemetria neutra: o que bateu,

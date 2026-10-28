@@ -298,7 +298,8 @@ std::vector<Scenario> scenarios() {
                 { "recepcao_frente_lenta", 0.0f, BallActionKind3D::Dribble, 0.2f, { 2.0f, -0.12f, 0.11f }, { -5.0f, 0.0f, 0.0f } },
                 { "recepcao_lado", 0.0f, BallActionKind3D::Dribble, 0.2f, { 0.25f, 3.0f, 0.11f }, { 0.0f, -7.0f, 0.0f } },
                 { "recepcao_trote", 1.0f, BallActionKind3D::Dribble, 0.2f, { 5.0f, 0.12f, 0.11f }, { -6.0f, 0.0f, 0.0f } },
-                { "recepcao_chute_fraco", 0.0f, BallActionKind3D::Shot, 0.15f, { 3.0f, -0.10f, 0.11f }, { -8.0f, 0.0f, 0.0f } },
+                // (O chute bem fraco: abaixo de receiveShotBar - 0,1 desde 28/10 - ainda e recepcao.)
+                { "recepcao_chute_fraco", 0.0f, BallActionKind3D::Shot, 0.05f, { 3.0f, -0.10f, 0.11f }, { -8.0f, 0.0f, 0.0f } },
                 { "recepcao_alta", 0.0f, BallActionKind3D::Dribble, 0.2f, { 1.6f, 0.08f, 0.80f }, { -5.0f, 0.0f, 0.5f } },
                 // O peito e a cabeca (24/10, pedido do usuario): a bola chegando na
                 // altura do tronco (~1,3 m no aperto) e da cabeca (~1,95 m).
@@ -2563,6 +2564,30 @@ int runChecks(const ProbeContext& context) {
                     distance, m.touches, m.requests, waited);
                 expect(m.requests == 1 && m.touches == 1 && m.forceTime >= 0.0f && waited >= -0.5f * Dt && waited < 0.3f
                         && (distance < 1.0f || waited > 0.05f) && !m.fell, line, m);
+            }
+        }
+        // O chute de primeira (28/10, pedido do usuario): o chute na bola vindo,
+        // apertado antes do alcance (a 1,5 m), espera como a recepcao e sai uma
+        // vez quando ela chega, antes de 0,3 s - como chute (ela volta rapida);
+        // abaixo de receiveShotBar, o chute ainda e recepcao (ela para).
+        {
+            const float bar = defaultBallOutcomeSettings3D().receiveShotBar;
+            for (const float power : { 0.6f, 0.2f, 0.5f * bar }) {
+                for (const Scenario& scenario : scenarios()) {
+                    if (scenario.name != "recepcao_chute_fraco") continue;
+                    Scenario early = scenario;
+                    early.autoDistance = 1.5f;
+                    early.autoPower = power;
+                    const Metrics m = runScenario(context, early, gestures, false, nullptr, 1);
+                    const float waited = m.forceTime - m.requestTime;
+                    const bool kick = power >= bar;
+                    char line[220];
+                    std::snprintf(line, sizeof(line),
+                        "chute apertado a 1,5 m com a bola vindo (barra %.3f, %s): %d toque de %d pedido, a forca %.3f s depois, bola ate %.1f m/s",
+                        power, kick ? "chute" : "recepcao", m.touches, m.requests, waited, m.ballSpeedAfter);
+                    expect(m.requests == 1 && m.touches == 1 && waited > 0.05f && waited < 0.3f && !m.fell
+                            && (kick ? m.ballSpeedAfter > 11.0f : m.ballSpeedAfter < 8.5f), line, m);
+                }
             }
         }
         // Pulando, as areas dos pes sobem com ele (24/10, o usuario viu elas no chao).

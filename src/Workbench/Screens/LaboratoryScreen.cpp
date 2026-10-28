@@ -3119,6 +3119,8 @@ void WorkbenchApp::drawLaboratoryUi() {
                         panelHeader("RECEPÇÃO");
                         value("Bola vindo a partir de", "##ForceReceiveClosing", &f.receiveClosing, 0.5f, 10.0f,
                             "%.1f m/s", "O manejo ou o chute fraco com a bola vindo para o jogador mais rápido que isto vira recepção: a bola para junto dele.");
+                        value("Chute que ainda recebe (barra até)", "##ForceReceiveShotBar", &f.receiveShotBar, 0.0f, 0.5f,
+                            "%.2f", "Com a bola vindo, o chute com a barra abaixo disto é recepção; acima, é chute. Apertado antes de ela chegar, os dois esperam a bola entrar no alcance.");
                         value("Resto com a barra vazia", "##ForceReceiveMinimum", &f.receiveMinimum, 0.0f, 3.0f,
                             "%.2f m/s", "Na recepção, a bola para e sai com isto no rumo das teclas (sem tecla, ela fica).");
                         value("Resto a mais com a barra cheia", "##ForceReceivePower", &f.receivePower, 0.0f, 10.0f,
@@ -3172,6 +3174,7 @@ void WorkbenchApp::drawLaboratoryUi() {
                             line("parada", "poder de parada", f.stopPower, "");
                             text += "[recepcao]\n";
                             line("vindo", "bola vindo a partir de", f.receiveClosing, "m/s");
+                            line("chute_recebe", "chute que ainda recebe (barra até)", f.receiveShotBar, "");
                             line("resto_minimo", "resto com a barra vazia", f.receiveMinimum, "m/s");
                             line("resto_cheia", "resto a mais com a barra cheia", f.receivePower, "m/s");
                             line("herdar", "herdar a velocidade do jogador", f.receiveCarry, "");

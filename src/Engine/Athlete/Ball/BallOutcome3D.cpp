@@ -81,6 +81,7 @@ BallOutcomeSettings3D buildDefaults() {
     f.receivePower = tune("T_ReceivePower", f.receivePower);
     f.receiveCarry = tune("T_ReceiveCarry", f.receiveCarry);
     f.receiveClosing = tune("T_ReceiveClosing", f.receiveClosing);
+    f.receiveShotBar = tune("T_ReceiveShotBar", f.receiveShotBar);
     f.chestShare = tune("T_ChestShare", f.chestShare);
     f.chestStop = tune("T_ChestStop", f.chestStop);
     f.headShare = tune("T_HeadShare", f.headShare);

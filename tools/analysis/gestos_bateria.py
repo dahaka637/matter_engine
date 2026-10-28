@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Bateria de qualidade dos gestos de bola (manejo e chute).
 
-Roda os cenarios de bola da sonda (MatterAthleteProbe, o toque de agora:
---manejo 1 --v6 1), le as medidas de cada um e, com --quadros, desenha uma
+Roda os cenarios de bola da sonda (MatterAthleteProbe, os gestos animados de
+24/10), le as medidas de cada um e, com --quadros, desenha uma
 folha de quadros em volta do primeiro toque (MatterModelInspector quadros).
 Compara com uma base aprovada e marca o que piorou: cada mudanca nos gestos
 vem com o antes e depois pronto, e uma piora em outro cenario aparece na hora.
@@ -26,16 +26,18 @@ import sys
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 BASE_PADRAO = os.path.join(REPO, "tools", "analysis", "gestos_base.json")
 
-# O conjunto rapido: conduzir, rajadas, toques, chutes e voleios.
+# O conjunto rapido: os cenarios de bola dos gestos animados (24/10; o manejo
+# antigo e os cenarios dele sairam com a reescrita): parado, trote e corrida,
+# conduzindo, sorteados, bola alta, levantar, recepcoes, peito e cabeca.
 RAPIDO = [
-    "conduz_anda", "conduz_corre", "conduz_sprint", "conduz_lado", "conduz_lado_anda", "conduz_diagonal",
-    "conduz_zigue", "conduz_corte", "conduz_inverte", "conduz_volta", "conduz_volta_sprint", "conduz_para",
-    "rajada_parado", "rajada_anda", "rajada_corre", "rajada_vira_corre", "continuo_direita_parado",
-    "continuo_direita_anda", "continuo_direita_corre", "intercala_corre", "intercala_parado", "para_toca_sai",
-    "toque_parado", "toque_lado", "toque_corre", "toque_gira", "toque_ativo", "puxa_lado_parado", "puxa_lado_anda",
-    "corte_corre", "atras_fora", "atras_tras", "chute_parado", "chute_corre", "chute_corre_cedo", "chute_lado",
-    "chute_gira", "chute_alto_parado", "chute_alto_corre", "voleio_parado", "voleio_toque", "voleio_corre",
-    "voleio_lado", "bola_vindo", "bola_rapida",
+    "gesto_parado_toque", "gesto_parado_toque_tras", "gesto_parado_chute", "gesto_parado_chute_longe",
+    "gesto_trote_toque", "gesto_trote_chute", "gesto_corre_toque", "gesto_corre_chute", "gesto_fora", "gesto_conduz",
+    "gesto_rapido", "gesto_brinca", "gesto_brinca_anda", "gesto_brinca_chute", "gesto_brinca_chute_anda",
+    "gesto_alta_parado_toque", "gesto_alta_parado_chute", "gesto_alta_trote_toque", "gesto_alta_corre_chute",
+    "gesto_alta_parado_toque_longe", "gesto_levantar_parado", "gesto_levantar_andando",
+    "recepcao_balao", "recepcao_frente", "recepcao_frente_lenta", "recepcao_lado", "recepcao_trote",
+    "recepcao_chute_fraco", "recepcao_alta", "peito_dominio", "peito_passe", "cabeceio_toque", "cabeceio_chute",
+    "cabeceio_correndo",
 ]
 
 # As medidas: (nome, expressao, maior e pior?, folga para marcar piora).
@@ -67,7 +69,7 @@ def lista(sonda):
 
 def medir(sonda, inspetor, cenario, saida, quadros):
     dump = os.path.join(saida, cenario + ".dump") if quadros else None
-    comando = [sonda, "--manejo", "1", "--v6", "1", "--cenario", cenario]
+    comando = [sonda, "--cenario", cenario]
     if dump:
         comando += ["--dump", dump, "--cada", "1"]
     # (XQT: as linhas do toque, para o tipo de gesto e o desvio do pe.)
@@ -168,7 +170,8 @@ def main():
     else:
         cenarios = list(RAPIDO)
         if a.conjunto == "completo":
-            cenarios += [c for c in lista(sonda) if c.startswith(("v2_", "bola_")) and c not in cenarios]
+            cenarios += [c for c in lista(sonda) if c.startswith(("gesto_", "recepcao_", "peito_", "cabeceio_"))
+                     and c not in cenarios]
     resultado = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=a.trabalhos) as fila:
         for cenario, valores in fila.map(lambda c: medir(sonda, inspetor, c, a.saida, a.quadros), cenarios):
