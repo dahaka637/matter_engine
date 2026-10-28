@@ -274,14 +274,20 @@ def balance_drills(drills: list[dict], evaluation: dict, rule: dict) -> dict[str
     gain = float(rule.get("gain", 2.0))
     factor = float(rule.get("maximumFactor", 3.0))
     floor = float(rule.get("floor", 0.08))
-    base = {d["id"]: float(d.get("baseWeight", d.get("weight", 1.0))) for d in drills}
+    every = {d["id"]: float(d.get("baseWeight", d.get("weight", 1.0))) for d in drills}
+    # (Peso de base 0 e exercicio fora do treino - os compostos pausados, o levantar - e o
+    # piso nao o traz de volta: em 28/10 ele ligou 16 deles.)
+    off = {d: 0.0 for d, w in every.items() if w <= 0.0}
+    base = {d: w for d, w in every.items() if d not in off}
+    if not base:
+        return every
     difficulty = {d: drill_difficulty(evaluation[d]) for d in base if d in evaluation}
     best = min(difficulty.values()) if difficulty else 0.0
     weights = {d: base[d] * min(factor, 1.0 + gain * (difficulty[d] - best)) if d in difficulty else base[d]
                for d in base}
     total = sum(weights.values())
     if total <= 0.0:
-        return base
+        return every
     # O piso: quem fica abaixo dele vai para o piso, e o resto se divide entre os
     # outros na proporcao deles (repete ate ninguem novo cair abaixo).
     floor = min(floor, 1.0 / len(weights))
@@ -293,7 +299,7 @@ def balance_drills(drills: list[dict], evaluation: dict, rule: dict) -> dict[str
         shares = {d: floor for d in pinned} | {d: room * w / free_total for d, w in free.items()}
         low = {d for d, share in shares.items() if share < floor - 1e-12 and d not in pinned}
         if not low:
-            return {d: shares[d] * total for d in shares}
+            return {d: shares[d] * total for d in shares} | off
         pinned |= low
 
 

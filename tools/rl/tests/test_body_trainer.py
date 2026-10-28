@@ -503,3 +503,6 @@ def test_drill_balance_follows_difficulty_with_a_floor():
     base = balance_drills([{"id": "parado", "weight": 2.0, "baseWeight": 1.0}, {"id": "estrela", "weight": 1.0}],
                           {"estrela": {"falls": 0.0}}, rule)
     assert abs(base["parado"] - 1.0) < 1e-6                              # sem medida: o peso de base
+    paused = balance_drills([{"id": "parado", "weight": 1.0}, {"id": "estrela", "weight": 0.0}],
+                            {"parado": {"falls": 0.0}, "estrela": {"falls": 1.0, "velocity_error_median": 1.0}}, rule)
+    assert paused["estrela"] == 0.0 and abs(paused["parado"] - 1.0) < 1e-6  # peso 0 fica fora (28/10)
