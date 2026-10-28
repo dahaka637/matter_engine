@@ -536,6 +536,68 @@ void bucketTests(const RagdollProfile3D& profile) {
                 }
 }
 
+// Os bracos no manejo (28/10, pedido do usuario: "os braços se movessem mais
+// durante os manuseios, e de forma mais diversificada ao invés de sempre os
+// mesmos movimentos"): em 24 toques de sementes diferentes, o pico de cada
+// braco (a frente, para fora, o cotovelo) - a media do tamanho e o quanto
+// varia de um toque para outro.
+struct ArmSpread { float size = 0.0f, spread = 0.0f; };
+ArmSpread armSpread(const RagdollProfile3D& profile, float power, bool moving) {
+    const GestureRig3D rig = defaultGestureRig3D(profile);
+    std::vector<std::array<float, 6>> peaks;
+    for (std::uint32_t seed = 1; seed <= 24; ++seed) {
+        GestureSpec3D spec;
+        spec.kind = GestureKind3D::Touch;
+        spec.side = static_cast<int>(seed % 2);
+        spec.reach = static_cast<int>(seed % 3);
+        spec.depth = static_cast<int>((seed / 3) % 3);
+        spec.power = power;
+        spec.seconds = 0.45f;
+        spec.seed = seed * 2654435761u;
+        GesturePlayer3D player;
+        player.start(spec, rig, GestureLegPose3D {}, {});
+        std::array<float, 6> peak {};
+        for (int tick = 0; tick < 2000 && player.active(); ++tick) {
+            const GestureFrame3D frame = player.update(1.0f / 240.0f, GestureLegPose3D {}, moving ? 1.0f : 0.0f);
+            if (!frame.active) break;
+            for (std::size_t arm = 0; arm < 2; ++arm) {
+                const float values[3] = { frame.body.armForward[arm], frame.body.armOut[arm], frame.body.elbow[arm] };
+                for (std::size_t k = 0; k < 3; ++k)
+                    if (std::abs(values[k]) > std::abs(peak[3 * arm + k])) peak[3 * arm + k] = values[k];
+            }
+        }
+        peaks.push_back(peak);
+    }
+    ArmSpread result;
+    for (std::size_t k = 0; k < 6; ++k) {
+        float mean = 0.0f, square = 0.0f;
+        for (const auto& p : peaks) mean += p[k] / static_cast<float>(peaks.size());
+        for (const auto& p : peaks) square += (p[k] - mean) * (p[k] - mean) / static_cast<float>(peaks.size());
+        float size = 0.0f;
+        for (const auto& p : peaks) size += std::abs(p[k]) / static_cast<float>(peaks.size());
+        result.size += size * 57.2958f / 6.0f;
+        result.spread += std::sqrt(square) * 57.2958f / 6.0f;
+    }
+    return result;
+}
+
+void armTests(const RagdollProfile3D& profile) {
+    // (Medido em 28/10: antes, barra 0,5 - parado 12 graus de pico e 6 de
+    // variacao; andando 7 e 3.)
+    const ArmSpread still = armSpread(profile, 0.5f, false), moving = armSpread(profile, 0.5f, true);
+    char what[200];
+    std::snprintf(what, sizeof what, "os bracos no manejo mexem e variam (parado %.0f/%.0f, andando %.0f/%.0f graus)", still.size,
+        still.spread, moving.size, moving.spread);
+    expect(still.size > 18.0f && still.spread > 9.0f && moving.size > 12.0f && moving.spread > 6.0f, what);
+    if (std::getenv("MATTER_GESTO_MEDIDAS"))
+        for (const float power : { 0.15f, 0.5f, 0.9f })
+            for (const bool moving : { false, true }) {
+                const ArmSpread a = armSpread(profile, power, moving);
+                std::printf("bracos no manejo (barra %.2f, %s): pico medio %.1f graus, variacao entre toques %.1f graus\n", power,
+                    moving ? "andando" : "parado", a.size, a.spread);
+            }
+}
+
 // O peito e a cintura virando para a bola (28/10): o contato e o fim do
 // acompanhamento ficam no mesmo lugar do mundo - a pelve gira e a perna e
 // contra-girada (no quadril, ate uns centimetros).
@@ -595,6 +657,7 @@ int main() {
         followTests(character.profile);
         faceTests(character.profile);
         bucketTests(character.profile);
+        armTests(character.profile);
     } catch (const std::exception& error) {
         std::cerr << "gestos: " << error.what() << "\n";
         return 1;

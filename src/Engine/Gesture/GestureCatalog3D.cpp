@@ -529,9 +529,13 @@ GestureKeys3D gestureKeys3D(const GestureSpec3D& spec, const GestureRig3D& rig) 
     body.spineRoll = -s * (6.0f * softness + 12.0f * r * (0.7f + 0.3f * softness)) * Degree;
     body.spinePitch = (8.0f + 4.0f * r) * (0.5f + 0.5f * softness) * Degree;
     body.headPitch = 14.0f * Degree;
-    body.armForward = { -10.0f * softness * Degree, 12.0f * softness * Degree };
-    body.armOut = { (10.0f + 9.0f * r) * softness * Degree, (14.0f + 12.0f * r) * softness * Degree };
-    body.elbow = { 10.0f * softness * Degree, 14.0f * softness * Degree };
+    // (Os bracos mexem mais e o toque fraco nao os some: 28/10, pedido do
+    // usuario - "os braços se movessem mais durante os manuseios... uso dos
+    // braços para equilíbrio"; eram cerca da metade, 35% no mais fraco.)
+    const float arms = 0.55f + 0.45f * softness;
+    body.armForward = { -18.0f * arms * Degree, 20.0f * arms * Degree };
+    body.armOut = { (18.0f + 12.0f * r) * arms * Degree, (22.0f + 14.0f * r) * arms * Degree };
+    body.elbow = { 22.0f * arms * Degree, 28.0f * arms * Degree };
     // O tornozelo em relacao a bola no contato, a pose da perna e o
     // acompanhamento (x frente, "fora", z), por frente-tras e movimento.
     struct Touch { float dx, dout, dz, twist, plantar, inversion, fx, fout, fz, yaw; };

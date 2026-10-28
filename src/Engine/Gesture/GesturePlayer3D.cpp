@@ -207,12 +207,27 @@ void GesturePlayer3D::start(const GestureSpec3D& spec, const GestureRig3D& rig, 
     // "procedural aleatorio, nao sempre a mesma coisa, sutil mas bonito"): o
     // quanto vai a frente e abre, o instante (um adianta, o outro atrasa), um
     // desvio de lado e o antebraco chegando um pouco depois do ombro.
+    // E o jeito dos bracos no manejo (28/10, pedido do usuario: "de forma mais
+    // diversificada ao invés de sempre os mesmos movimentos"): cada toque
+    // sorteia um - abrir os dois; contrabalancar (o do lado do gesto para tras e
+    // o outro a frente); erguer o do outro lado; ou soltos, com a equilibrada
+    // maior. ([0] o braco do lado da perna do gesto.)
+    std::array<float, 2> forwardStyle { 1.0f, 1.0f }, outStyle { 1.0f, 1.0f };
+    float wobble = 1.0f;
+    if (m_spec.kind == GestureKind3D::Touch && !m_spec.receive && m_spec.part == GesturePart3D::Foot) {
+        switch (static_cast<int>(random.range(0.0f, 3.999f))) {
+        case 0: forwardStyle = { 0.5f, 0.5f }; outStyle = { 1.35f, 1.35f }; break;
+        case 1: forwardStyle = { 1.4f, 1.4f }; outStyle = { 0.8f, 0.8f }; break;
+        case 2: forwardStyle = { 0.6f, 1.0f }; outStyle = { 0.6f, 1.7f }; break;
+        default: forwardStyle = { 0.75f, 0.75f }; outStyle = { 0.75f, 0.75f }; wobble = 2.2f; break;
+        }
+    }
     for (std::size_t arm = 0; arm < 2; ++arm) {
         const float lead = random.range(-0.25f, 0.25f) * std::max(0.1f, t2 - t1);
         m_channels[10 + arm] = channel(b.armForward[arm], t2 + lead);
-        m_channels[10 + arm].peak = b.armForward[arm] * random.range(0.45f, 1.15f);
+        m_channels[10 + arm].peak = b.armForward[arm] * forwardStyle[arm] * random.range(0.45f, 1.15f);
         m_channels[12 + arm] = channel(b.armOut[arm], mid + lead);
-        m_channels[12 + arm].peak = b.armOut[arm] * random.range(0.6f, 1.2f);
+        m_channels[12 + arm].peak = b.armOut[arm] * outStyle[arm] * random.range(0.6f, 1.2f);
         m_channels[14 + arm] = channel(b.elbow[arm] * random.range(0.6f, 1.5f) + random.range(0.0f, 0.25f),
             mid + lead + random.range(0.03f, 0.09f));
         m_channels[16 + arm] = channel(random.range(-10.0f, 10.0f) * Degree, mid + lead);
@@ -239,7 +254,7 @@ void GesturePlayer3D::start(const GestureSpec3D& spec, const GestureRig3D& rig, 
         for (std::size_t part = 0; part < 2; ++part) {
             const float base = std::abs(part == 0 ? b.armOut[arm] : b.armForward[arm]) + 4.0f * Degree;
             Channel c;
-            c.peak = random.range(-0.4f, 0.4f) * base;
+            c.peak = random.range(-0.4f, 0.4f) * base * wobble;
             c.start = random.range(0.25f, 0.45f) * end;
             c.top = std::min(c.start + random.range(0.15f, 0.3f) * end, 0.75f * end);
             c.end = end;
@@ -366,12 +381,15 @@ GestureFrame3D GesturePlayer3D::update(float dt, const GestureLegPose3D& live, f
     body.head = { -0.4f * twist + 0.6f * aim, 0.6f * head - 0.3f * pitch, -0.3f * roll };
     // Os bracos: [0] o do lado da perna do gesto, [1] o outro.
     const std::size_t gestureArm = static_cast<std::size_t>(m_spec.side), otherArm = 1 - gestureArm;
-    body.armForward[gestureArm] = (m_channels[10].at(t) + m_channels[20].at(t)) * dose(0.2f);
-    body.armForward[otherArm] = (m_channels[11].at(t) + m_channels[22].at(t)) * dose(0.35f);
+    // (No manejo os bracos entram mais por cima da passada - 28/10, pedido do
+    // usuario: andando eles quase sumiam.)
+    const bool touch = m_spec.kind == GestureKind3D::Touch && !m_spec.receive && m_spec.part == GesturePart3D::Foot;
+    body.armForward[gestureArm] = (m_channels[10].at(t) + m_channels[20].at(t)) * dose(touch ? 0.45f : 0.2f);
+    body.armForward[otherArm] = (m_channels[11].at(t) + m_channels[22].at(t)) * dose(touch ? 0.55f : 0.35f);
     body.armOut[gestureArm] = m_channels[12].at(t) + m_channels[19].at(t);
     body.armOut[otherArm] = m_channels[13].at(t) + m_channels[21].at(t);
-    body.elbow[gestureArm] = m_channels[14].at(t) * dose(0.3f);
-    body.elbow[otherArm] = m_channels[15].at(t) * dose(0.3f);
+    body.elbow[gestureArm] = m_channels[14].at(t) * dose(touch ? 0.5f : 0.3f);
+    body.elbow[otherArm] = m_channels[15].at(t) * dose(touch ? 0.5f : 0.3f);
     body.armAcross[gestureArm] = m_channels[16].at(t) * dose(0.8f);
     body.armAcross[otherArm] = m_channels[17].at(t) * dose(0.8f);
     if (m_fadeStart >= 0.0f) {
