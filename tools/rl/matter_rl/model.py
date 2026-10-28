@@ -110,6 +110,7 @@ class ActorCritic(nn.Module):
         self.obs_norm = RunningNorm(obs_size)
         self.critic_norm = RunningNorm(critic_size)
         self.floor_noise: tuple | None = None
+        self.turn_noise: tuple | None = None
 
     def distribution(self, obs_n: torch.Tensor) -> torch.distributions.Normal:
         mean = self.actor(obs_n)
@@ -123,6 +124,14 @@ class ActorCritic(nn.Module):
                 height = height / (1.0 + obs_n[..., body] * (0.10 / 1.80))
             near = ((high - height) / max(high - low, 1e-3)).clamp(0.0, 1.0)
             std = std * (1.0 + (factor - 1.0) * near).unsqueeze(-1)
+        if self.turn_noise is not None:
+            # Mais exploracao na virada (27/10): com o olhar longe do rumo do corpo, o
+            # desvio dos canais da mascara (o giro do quadril, da canela e do pe) sobe.
+            sin_at, cos_at, start, end, factor, mask = self.turn_noise
+            def raw(i):
+                return obs_n[..., i] * torch.sqrt(self.obs_norm.var[i] + 1e-8) + self.obs_norm.mean[i]
+            need = ((torch.atan2(raw(sin_at), raw(cos_at)).abs() - start) / max(end - start, 1e-3)).clamp(0.0, 1.0)
+            std = std * (1.0 + (factor - 1.0) * need.unsqueeze(-1) * mask)
         return torch.distributions.Normal(mean, std)
 
     def value(self, critic_n: torch.Tensor) -> torch.Tensor:

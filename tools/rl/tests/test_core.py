@@ -342,3 +342,18 @@ def test_floor_noise_scales_with_body_height():
     std = model.distribution(model.obs_norm(obs)).stddev[:, 0]
     assert torch.allclose(std[:2], base.expand(2), atol=1e-5)
     assert float(std[2]) == pytest.approx(float(base) * 2.5, rel=1e-4)
+
+
+def test_turn_noise_grows_with_the_view_off_the_body():
+    """O ruido da virada: so nos canais da mascara, cheio com o olhar a 120 graus ou mais do
+    rumo do corpo (para qualquer lado), nada abaixo de 45, no meio entre os dois."""
+    model = ActorCritic(2, 1, 2, np.array([0.5, 0.5], dtype=np.float32))
+    model.turn_noise = (0, 1, math.radians(45.0), math.radians(120.0), 4.0, torch.tensor([1.0, 0.0]))
+    base = float(model.log_std.clamp(-5.0, 1.5).exp()[0])
+    angles = [0.0, 30.0, 82.5, -150.0, 180.0]
+    obs = torch.tensor([[math.sin(math.radians(a)), math.cos(math.radians(a))] for a in angles])
+    std = model.distribution(model.obs_norm(obs)).stddev
+    assert torch.allclose(std[:, 1], torch.full((5,), base), atol=1e-5)
+    assert std[:2, 0].tolist() == pytest.approx([base, base], rel=1e-4)
+    assert float(std[2, 0]) == pytest.approx(base * 2.5, rel=1e-4)
+    assert std[3:, 0].tolist() == pytest.approx([base * 4.0, base * 4.0], rel=1e-4)

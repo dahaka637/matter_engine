@@ -171,6 +171,10 @@ class LocomotionRunConfig:
     zero_last_layer: bool = False
     # O ruido sobe perto do chao (o levantar): {"obs", "high_m", "low_m", "factor"}; {} desliga.
     floor_noise: dict = field(default_factory=dict)
+    # O ruido sobe na virada (27/10): com o olhar (comando.olhar) a mais de from_degrees do
+    # rumo do corpo, o desvio dos canais com os prefixos de "channels" cresce ate "factor"
+    # vezes em to_degrees; {} desliga.
+    turn_noise: dict = field(default_factory=dict)
     # As saidas travadas em zero, por prefixo do canal (a linha da ultima camada zerada e
     # sem gradiente): a correcao fica a do classico. 24/10 (pedido do usuario): os bracos -
     # sem nada que puxe de volta, a correcao deles derivava (0,16 -> 0,33 rad no ombro de
@@ -438,6 +442,13 @@ class LocomotionTrainer:
             self.model.floor_noise = (self.obs_names.index(f.get("obs", "corpo.pelve.altura")),
                                       float(f.get("high_m", 0.60)), float(f.get("low_m", 0.35)), float(f.get("factor", 2.5)),
                                       self.obs_names.index("jogador.altura") if "jogador.altura" in self.obs_names else None)
+        if self.config.turn_noise:
+            f = self.config.turn_noise
+            mask = channel_values(self.action_names, {p: 1.0 for p in f["channels"]}, 0.0)
+            self.model.turn_noise = (self.obs_names.index("comando.olhar.sen"), self.obs_names.index("comando.olhar.cos"),
+                                     math.radians(float(f.get("from_degrees", 45.0))),
+                                     math.radians(float(f.get("to_degrees", 120.0))), float(f.get("factor", 3.0)),
+                                     torch.as_tensor(mask, device=self.device))
         self.settings = PPOSettings.from_dict(self.config.ppo)
         self.ppo = PPO(self.model, self.settings)
         self.mirror = MirrorLoss(self.batch.mirror_maps(), self.device) if self.config.mirror_loss > 0.0 else None
