@@ -12,6 +12,7 @@
 #include "Engine/Physics/RagdollProfile3D.hpp"
 
 #include <array>
+#include <optional>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -765,6 +766,10 @@ private:
     bool m_quickStart = false;
     // (A camada de reacoes por molas.)
     BodyReaction3D m_reaction;
+    // O giro do peito (a pelve mais a torcao do olhar) do passo anterior e a
+    // taxa dele, para a aceleracao do giro das molas (sem: o primeiro passo).
+    std::optional<float> m_reactionChestYaw;
+    float m_reactionChestYawRate = 0.0f;
     // O corpo de cima (tronco, bracos, cabeca), mais devagar.
     std::array<float, GaitCount> m_upperShape {};
     std::array<float, GaitCount> m_upperShapeRates {};

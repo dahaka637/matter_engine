@@ -169,6 +169,7 @@ void DefaultLocomotion3D::reset(float facingYawRadians) {
     m_idleTime = 0.0f;
     m_yaw = facingYawRadians;
     m_yawRate = 0.0f;
+    m_reactionChestYaw.reset();
     m_torsoTwist = 0.0f;
     m_headTurn = 0.0f;
     m_torsoTwistRate = 0.0f;
@@ -246,6 +247,7 @@ void DefaultLocomotion3D::seed(const DefaultLocomotionSeed3D& seed) {
     m_seedPending = true;
     m_yaw = seed.pelvisYawRadians;
     m_yawRate = 0.0f;
+    m_reactionChestYaw.reset();
     m_previousVelocity = planar(seed.velocityWorld);
     m_started = true;
 }

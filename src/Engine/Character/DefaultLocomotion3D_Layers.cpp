@@ -159,7 +159,22 @@ void DefaultLocomotion3D::stepLayers(Tick& t) {
     // ombros, 1 + aproxima o braco do corpo e 2 + leva o esquerdo para tras e o
     // direito para a frente.)
     if (s.bodyReaction) {
-        m_reaction.step(dot(m_acceleration, forward), dot(m_acceleration, left), dt, s.reaction);
+        // O giro do pivo so parado ou devagar (inteiro ate 0,5 m/s, nada de 2
+        // m/s em diante): correndo, o giro vem dos cortes, e o pedido foi menos
+        // balanco neles. Um salto de rumo (o padrao assumindo um rumo novo) nao
+        // conta como giro.
+        const float chestYaw = wrapAngle(m_yaw + m_torsoTwist);
+        float yawAcceleration = 0.0f;
+        if (m_reactionChestYaw && dt > 0.0f) {
+            const float turned = wrapAngle(chestYaw - *m_reactionChestYaw);
+            if (std::abs(turned) < 0.5f) {
+                const float rate = turned / dt;
+                yawAcceleration = (rate - m_reactionChestYawRate) / dt * (1.0f - smoothStep((speed - 0.5f) / 1.5f));
+                m_reactionChestYawRate = rate;
+            }
+        }
+        m_reactionChestYaw = chestYaw;
+        m_reaction.step(dot(m_acceleration, forward), dot(m_acceleration, left), yawAcceleration, dt, s.reaction);
         const float pitch = m_reaction.trunkPitch, roll = m_reaction.trunkRoll;
         const float head = -std::clamp(s.reactionHeadReturn, 0.0f, 1.0f);
         addCoordinate(profile, m_coordinates, "Abdomen", 1, pitch * 0.30f);
@@ -176,8 +191,12 @@ void DefaultLocomotion3D::stepLayers(Tick& t) {
         addCoordinate(profile, m_coordinates, "RightUpperArm", 2, m_reaction.armSwing);
         addCoordinate(profile, m_coordinates, "LeftUpperArm", 1, -m_reaction.armSide);
         addCoordinate(profile, m_coordinates, "RightUpperArm", 1, m_reaction.armSide);
+        addCoordinate(profile, m_coordinates, "LeftUpperArm", 2, m_reaction.armTwist);
+        addCoordinate(profile, m_coordinates, "RightUpperArm", 2, m_reaction.armTwist);
     } else {
         m_reaction = {};
+        m_reactionChestYaw.reset();
+        m_reactionChestYawRate = 0.0f;
     }
 
     // A raiz no mundo: a base da capsula mais a altura da pelve em pe (a

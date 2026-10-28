@@ -1133,10 +1133,10 @@ void shotConductionTests() {
 void bodyReactionTests() {
     BodyReactionSettings3D s;
     BodyReaction3D still;
-    for (int k = 0; k < 240; ++k) still.step(0.0f, 0.0f, 1.0f / 120.0f, s);
-    expect(std::abs(still.trunkPitch) + std::abs(still.armSide) < 1e-6f, "reacao: parado, nada");
+    for (int k = 0; k < 240; ++k) still.step(0.0f, 0.0f, 0.0f, 1.0f / 120.0f, s);
+    expect(std::abs(still.trunkPitch) + std::abs(still.armSide) + std::abs(still.armTwist) < 1e-6f, "reacao: parado, nada");
     BodyReaction3D pushed;
-    for (int k = 0; k < 240; ++k) pushed.step(10.0f, 0.0f, 1.0f / 120.0f, s);
+    for (int k = 0; k < 240; ++k) pushed.step(10.0f, 0.0f, 0.0f, 1.0f / 120.0f, s);
     const float degree = 3.14159265f / 180.0f;
     const float felt = s.accelerationSoftLimit * std::tanh(10.0f / s.accelerationSoftLimit);
     expect(std::abs(pushed.trunkPitch + felt * s.trunkDegreesPerAcceleration * degree) < 0.05f * degree,
@@ -1144,14 +1144,34 @@ void bodyReactionTests() {
     expect(pushed.armSwing < 0.0f && std::abs(pushed.trunkRoll) < 1e-6f, "reacao: os bracos para tras, sem giro de lado");
     float overshoot = 0.0f;
     for (int k = 0; k < 120; ++k) {
-        pushed.step(0.0f, 0.0f, 1.0f / 120.0f, s);
+        pushed.step(0.0f, 0.0f, 0.0f, 1.0f / 120.0f, s);
         overshoot = std::max(overshoot, pushed.trunkPitch);
     }
     expect(overshoot > 0.2f * degree, "reacao: quando a aceleracao acaba, o tronco passa do ponto");
     BodyReaction3D hard;
-    for (int k = 0; k < 240; ++k) hard.step(0.0f, -100.0f, 1.0f / 120.0f, s);
+    for (int k = 0; k < 240; ++k) hard.step(0.0f, -100.0f, 0.0f, 1.0f / 120.0f, s);
     expect(hard.trunkRoll <= s.trunkMaximumDegrees * degree + 1e-6f && hard.trunkRoll > 0.0f,
         "reacao: a curva para a direita leva o tronco para a esquerda, com teto");
+    // (28/10) De lado, os bracos sem vaivem: soltos depois de um empurrao, quase
+    // nao passam do ponto.
+    BodyReaction3D side;
+    for (int k = 0; k < 120; ++k) side.step(0.0f, 10.0f, 0.0f, 1.0f / 120.0f, s);
+    const float sidePeak = std::abs(side.armSide);
+    float sideBack = 0.0f;
+    for (int k = 0; k < 120; ++k) {
+        side.step(0.0f, 0.0f, 0.0f, 1.0f / 120.0f, s);
+        sideBack = std::max(sideBack, side.armSide);
+    }
+    expect(side.armSide <= 0.0f || sideBack < 0.1f * sidePeak, "reacao: de lado, os bracos voltam sem vaivem");
+    // O giro do pivo: girando para a esquerda, o esquerdo vai para a frente e o
+    // direito para tras (twist < 0), com teto.
+    BodyReaction3D turn;
+    for (int k = 0; k < 30; ++k) turn.step(0.0f, 0.0f, 20.0f, 1.0f / 120.0f, s);
+    expect(turn.armTwist < 0.0f && std::abs(turn.trunkPitch) + std::abs(turn.armSide) < 1e-6f,
+        "reacao: o giro para a esquerda atrasa os bracos (o esquerdo para a frente), sem mexer no resto");
+    BodyReaction3D spun;
+    for (int k = 0; k < 240; ++k) spun.step(0.0f, 0.0f, 1000.0f, 1.0f / 120.0f, s);
+    expect(std::abs(spun.armTwist) <= s.armTwistMaximumDegrees * degree + 1e-6f, "reacao: o giro com teto");
 }
 
 void ballCushionTests() {

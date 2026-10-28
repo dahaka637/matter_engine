@@ -23,20 +23,24 @@ void pendulum(float& angle, float& rate, float acceleration, float hertz, float 
 
 } // namespace
 
-void BodyReaction3D::step(float forwardAcceleration, float leftAcceleration, float deltaTime,
+void BodyReaction3D::step(float forwardAcceleration, float leftAcceleration, float yawAcceleration, float deltaTime,
     const BodyReactionSettings3D& s) {
     const float dt = std::clamp(deltaTime, 0.0f, 0.05f);
     const float soft = std::max(0.1f, s.accelerationSoftLimit);
     forwardAcceleration = soft * std::tanh(forwardAcceleration / soft);
     leftAcceleration = soft * std::tanh(leftAcceleration / soft);
+    const float yawSoft = std::max(0.1f, s.yawAccelerationSoftLimit);
+    yawAcceleration = yawSoft * std::tanh(yawAcceleration / yawSoft);
     pendulum(trunkPitch, trunkPitchRate, forwardAcceleration, s.trunkHertz, s.trunkDamping, s.trunkDegreesPerAcceleration,
         s.trunkMaximumDegrees, dt);
     pendulum(trunkRoll, trunkRollRate, leftAcceleration, s.trunkHertz, s.trunkDamping, s.trunkDegreesPerAcceleration,
         s.trunkMaximumDegrees, dt);
     pendulum(armSwing, armSwingRate, forwardAcceleration, s.armHertz, s.armDamping, s.armDegreesPerAcceleration,
         s.armMaximumDegrees, dt);
-    pendulum(armSide, armSideRate, leftAcceleration, s.armHertz, s.armDamping, s.armDegreesPerAcceleration,
-        s.armMaximumDegrees, dt);
+    pendulum(armSide, armSideRate, leftAcceleration, s.armSideHertz, s.armSideDamping, s.armSideDegreesPerAcceleration,
+        s.armSideMaximumDegrees, dt);
+    pendulum(armTwist, armTwistRate, yawAcceleration, s.armTwistHertz, s.armTwistDamping,
+        s.armTwistDegreesPerYawAcceleration, s.armTwistMaximumDegrees, dt);
 }
 
 } // namespace MatterEngine

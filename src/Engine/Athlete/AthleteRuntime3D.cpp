@@ -191,6 +191,10 @@ void athleteConfigureDefaultLocomotion3D(DefaultLocomotionSettings3D& defaults, 
         defaults.reaction.trunkMaximumDegrees = base.trunkMaximumDegrees * amount;
         defaults.reaction.armDegreesPerAcceleration = base.armDegreesPerAcceleration * amount;
         defaults.reaction.armMaximumDegrees = base.armMaximumDegrees * amount;
+        defaults.reaction.armSideDegreesPerAcceleration = base.armSideDegreesPerAcceleration * amount;
+        defaults.reaction.armSideMaximumDegrees = base.armSideMaximumDegrees * amount;
+        defaults.reaction.armTwistDegreesPerYawAcceleration = base.armTwistDegreesPerYawAcceleration * amount;
+        defaults.reaction.armTwistMaximumDegrees = base.armTwistMaximumDegrees * amount;
     }
     // A arrancada (0 desliga): o gesto do idle_to_sprint e a inclinacao do corpo
     // inteiro com a aceleracao (a de antes: ate 0,10 rad para a frente; a 100%,
