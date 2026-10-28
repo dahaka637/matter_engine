@@ -72,6 +72,11 @@ void PhysicsScene3D::Impl::recordContact(const JPH::Body& a, const JPH::Body& b,
     const auto& materialA = contactMaterial(ma);
     const auto& materialB = contactMaterial(mb);
     contact.mCombinedFriction = (materialA.dynamicFriction + materialB.dynamicFriction) * 0.5f;
+    for (const PhysicsPairFriction3D& pair : settings.pairFrictions)
+        if ((pair.materialA == ma && pair.materialB == mb) || (pair.materialA == mb && pair.materialB == ma)) {
+            contact.mCombinedFriction = pair.friction;
+            break;
+        }
     // Escala de atrito do ragdoll (setRagdollFrictionScale: o carrinho
     // escorrega na grama). O atrito do contato e o dos materiais - o do corpo
     // no Jolt nao conta aqui.

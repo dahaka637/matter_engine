@@ -111,7 +111,18 @@ struct StaticTriangleMeshCookingSettings3D {
     std::uint32_t maximumOutputTriangles = 2'000'000;
 };
 
+// A tracao de um par de materiais (28/10): o atrito do contato entre os dois,
+// no lugar da media deles (a chuteira com cravos na grama segura mais que a
+// media da borracha com a grama).
+struct PhysicsPairFriction3D {
+    std::string materialA;
+    std::string materialB;
+    float friction = 0.0f;
+};
+
 struct PhysicsSceneSettings3D {
+    // Os pares com tracao propria (vazio: a media dos materiais, a de sempre).
+    std::vector<PhysicsPairFriction3D> pairFrictions;
     Vec3 gravity { 0.0f, 0.0f, -9.81f };
     Vec3 airVelocity;
     float airDensityKgPerCubicMeter = 1.225f;

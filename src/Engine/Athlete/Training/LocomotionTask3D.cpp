@@ -175,6 +175,13 @@ LocomotionTask3D loadLocomotionTask3D(const std::filesystem::path& path) {
         if (!(task.groundHalfExtentMeters > task.boundaryMeters))
             fail("o chao (groundHalfExtentMeters) tem de passar do limite (boundaryMeters)");
     }
+    if (document.contains("ground")) {
+        const nlohmann::json& g = document["ground"];
+        task.groundMaterial = g.value("material", task.groundMaterial);
+        read(g, "shoeTraction", task.shoeTraction);
+        if (task.groundMaterial.empty() || !std::isfinite(task.shoeTraction) || task.shoeTraction > 3.0f)
+            fail("ground invalido (material vazio ou shoeTraction acima de 3)");
+    }
     if (document.contains("speeds")) {
         const nlohmann::json& v = document["speeds"];
         read(v, "trot", task.speeds.trot);
@@ -202,6 +209,7 @@ LocomotionTask3D loadLocomotionTask3D(const std::filesystem::path& path) {
         read(d, "weight", drill.weight);
         if (!(drill.weight >= 0.0f)) fail("peso invalido em " + drill.id);
         read(d, "savedStartFraction", drill.savedStartFraction);
+        read(d, "failureStartFraction", drill.failureStartFraction);
         read(d, "pushRate", drill.pushRate);
         read(d, "pushMinimumNewtons", drill.pushMinimumNewtons);
         read(d, "pushMaximumNewtons", drill.pushMaximumNewtons);
@@ -230,6 +238,9 @@ LocomotionTask3D loadLocomotionTask3D(const std::filesystem::path& path) {
         // (O piloto do arco nao segue a velocidade de um instante guardado.)
         if (drill.savedStartFraction > 0.0f && drill.pilot.kind == "arc")
             fail("savedStartFraction nao vale para o arco (" + drill.id + ")");
+        if (!(drill.failureStartFraction >= 0.0f && drill.failureStartFraction <= 1.0f)
+            || (drill.failureStartFraction > 0.0f && drill.pilot.kind == "arc"))
+            fail("failureStartFraction fora de 0..1 ou no arco (" + drill.id + ")");
         if (d.contains("minimum")) {
             read(d["minimum"], "fallFraction", drill.maximumFallFraction);
             read(d["minimum"], "velocityError", drill.maximumVelocityError);
@@ -244,6 +255,16 @@ LocomotionTask3D loadLocomotionTask3D(const std::filesystem::path& path) {
         read(g, "surviveSeconds", task.savedStarts.surviveSeconds);
         read(g, "minimumSpeed", task.savedStarts.minimumSpeed);
         if (task.savedStarts.capacity == 0 || !(task.savedStarts.surviveSeconds > 0.0f)) fail("savedStarts invalido");
+    }
+    if (document.contains("failureStarts")) {
+        const nlohmann::json& g = document["failureStarts"];
+        LocomotionFailureStarts3D& f = task.failureStarts;
+        f.capacity = g.value("capacity", f.capacity);
+        read(g, "everySeconds", f.everySeconds);
+        read(g, "minimumBefore", f.minimumBefore);
+        read(g, "maximumBefore", f.maximumBefore);
+        if (f.capacity == 0 || !(f.everySeconds > 0.0f) || !(f.minimumBefore >= 0.0f) || !(f.maximumBefore > f.minimumBefore))
+            fail("failureStarts invalido");
     }
     if (document.contains("assistSchedule")) {
         const nlohmann::json& a = document["assistSchedule"];

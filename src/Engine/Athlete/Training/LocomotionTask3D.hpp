@@ -125,6 +125,19 @@ struct LocomotionSavedStarts3D {
     float minimumSpeed = 1.0f;
 };
 
+// Os comecos de antes da queda (28/10, pedido do usuario: 0% de quedas em todo
+// movimento): o treino guarda o instante de cada mundo a cada everySeconds e,
+// quando ele cai, o de minimumBefore a maximumBefore antes da queda vai para o
+// banco do exercicio - a rede treina o momento em que perde. A fracao dos
+// episodios que comeca deles fica no exercicio (failureStartFraction). Nunca
+// na avaliacao.
+struct LocomotionFailureStarts3D {
+    std::uint32_t capacity = 128;
+    float everySeconds = 0.25f;
+    float minimumBefore = 0.4f;
+    float maximumBefore = 1.0f;
+};
+
 // A ajuda sorteada por episodio (so no treino): a fracao dos episodios a 0% e,
 // nos outros, o nivel uniforme entre o minimo e o maximo (%), nos controles
 // parado, andando e pes (o levantar fica no da tarefa). Desligada: a da tarefa.
@@ -167,6 +180,8 @@ struct LocomotionDrill3D {
     // A fracao dos episodios deste exercicio que comeca de um estado guardado
     // (0: sempre parado, o de sempre).
     float savedStartFraction = 0.0f;
+    // ... e de um instante de antes de uma queda (LocomotionFailureStarts3D).
+    float failureStartFraction = 0.0f;
     // As pancadas por segundo (0: nenhuma) e a forca delas (N; < 0: a da tarefa).
     float pushRate = 0.0f;
     float pushMinimumNewtons = -1.0f;
@@ -267,6 +282,10 @@ struct LocomotionTask3D {
     // O chao (meia-largura, m): 60 m cobre o limite de 50 m; a corrida a 8 m/s
     // pede mais (o limite sobe junto, sempre com folga dentro do chao).
     float groundHalfExtentMeters = 60.0f;
+    // O chao (28/10): o material e a tracao da chuteira nele (o atrito do par
+    // shoe_sole x material; <= 0: a media dos dois, a de sempre).
+    std::string groundMaterial = "concrete";
+    float shoeTraction = -1.0f;
     // A tabela de velocidades do modo padrao que o piloto e o atleta usam (m/s;
     // as da aba Velocidades do laboratorio): o trote em todos os rumos e a
     // corrida para a frente, de lado e de costas. Padrao: o do motor (4,5 / 7,8 /
@@ -280,6 +299,7 @@ struct LocomotionTask3D {
     LocomotionDrillWeights3D drillWeights;
     LocomotionSpeedCurriculum3D speedCurriculum;
     LocomotionSavedStarts3D savedStarts;
+    LocomotionFailureStarts3D failureStarts;
     LocomotionAssistSchedule3D assistSchedule;
     LocomotionPushes3D pushes;
     LocomotionBodyRange3D body;

@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <deque>
 #include <random>
 #include <sstream>
 #include <stdexcept>
@@ -204,6 +205,8 @@ struct LocomotionTraining3D::Impl {
         std::size_t body = 0;
     };
     std::vector<std::vector<SavedStart>> savedBank;
+    // Os comecos de antes da queda (LocomotionFailureStarts3D), por exercicio.
+    std::vector<std::vector<SavedStart>> failureBank;
     std::mt19937_64 bankRng;
     // Os links e os canais da entrada que a nota le.
     int chest = -1;
@@ -306,6 +309,13 @@ struct LocomotionTraining3D::Impl {
         float pendingAge = 0.0f;
         bool hasAccepted = false;
         SavedStart accepted;
+        // Os comecos de antes da queda: os instantes recentes (o tempo do
+        // episodio e o instante, o mais velho primeiro) e o que vai para o
+        // banco nesta decisao (a queda de agora).
+        std::deque<std::pair<float, SavedStart>> recent;
+        float sinceRecent = 0.0f;
+        bool hasFailure = false;
+        SavedStart failure;
     };
     std::vector<World> worlds;
     std::vector<std::uint32_t> worldDrills;
@@ -367,6 +377,9 @@ struct LocomotionTraining3D::Impl {
         savedBank.resize(task.drills.size());
         for (std::vector<SavedStart>& bank : savedBank)
             if (bank.size() > task.savedStarts.capacity) bank.resize(task.savedStarts.capacity);
+        failureBank.resize(task.drills.size());
+        for (std::vector<SavedStart>& bank : failureBank)
+            if (bank.size() > task.failureStarts.capacity) bank.resize(task.failureStarts.capacity);
     }
 
     std::uint32_t pickDrill(World& world) {
@@ -459,24 +472,29 @@ struct LocomotionTraining3D::Impl {
             drawn = evaluationBodies.empty()
                 ? std::uniform_int_distribution<std::size_t>(0, bodyBundles.size() - 1)(world.bodyRng)
                 : evaluationBodies[index % evaluationBodies.size()];
+        const auto pick = [&](const std::vector<SavedStart>& bank) -> const SavedStart* {
+            if (bodyBundles.empty())
+                return &bank[std::uniform_int_distribution<std::size_t>(0, bank.size() - 1)(world.rng)];
+            // (So os instantes do corpo sorteado: o banco enche dos corpos
+            // que sobrevivem, e herdar o corpo do instante enviesava a faixa
+            // para eles. Sem nenhum do corpo, comeca do zero.)
+            std::vector<const SavedStart*> same;
+            for (const SavedStart& entry : bank)
+                if (entry.body == drawn) same.push_back(&entry);
+            return same.empty() ? nullptr : same[std::uniform_int_distribution<std::size_t>(0, same.size() - 1)(world.rng)];
+        };
         const SavedStart* saved = nullptr;
-        if (!settings.evaluation && task.drills[world.drill].savedStartFraction > 0.0f
+        // (Primeiro o de antes da queda; desligado, nem sorteia: o mundo e o de antes.)
+        if (!settings.evaluation && task.drills[world.drill].failureStartFraction > 0.0f
+            && world.drill < failureBank.size() && !failureBank[world.drill].empty()
+            && std::uniform_real_distribution<float>(0.0f, 1.0f)(world.rng) < task.drills[world.drill].failureStartFraction)
+            saved = pick(failureBank[world.drill]);
+        if (saved == nullptr && !settings.evaluation && task.drills[world.drill].savedStartFraction > 0.0f
             && world.drill < savedBank.size() && !savedBank[world.drill].empty()
-            && std::uniform_real_distribution<float>(0.0f, 1.0f)(world.rng) < task.drills[world.drill].savedStartFraction) {
-            const std::vector<SavedStart>& bank = savedBank[world.drill];
-            if (bodyBundles.empty()) {
-                saved = &bank[std::uniform_int_distribution<std::size_t>(0, bank.size() - 1)(world.rng)];
-            } else {
-                // (So os instantes do corpo sorteado: o banco enche dos corpos
-                // que sobrevivem, e herdar o corpo do instante enviesava a faixa
-                // para eles. Sem nenhum do corpo, comeca do zero.)
-                std::vector<const SavedStart*> same;
-                for (const SavedStart& entry : bank)
-                    if (entry.body == drawn) same.push_back(&entry);
-                if (!same.empty())
-                    saved = same[std::uniform_int_distribution<std::size_t>(0, same.size() - 1)(world.rng)];
-            }
-        }
+            && std::uniform_real_distribution<float>(0.0f, 1.0f)(world.rng) < task.drills[world.drill].savedStartFraction)
+            saved = pick(savedBank[world.drill]);
+        world.recent.clear();
+        world.sinceRecent = 0.0f;
         if (!bodyBundles.empty()) {
             world.body = drawn;
             scene.setAssets(bodyBundles[world.body]->assets());
@@ -1157,6 +1175,35 @@ struct LocomotionTraining3D::Impl {
             }
         }
 
+        // Os comecos de antes da queda: o instante a cada everySeconds; na queda,
+        // o de minimumBefore a maximumBefore antes vai para o banco (no fim do lote).
+        if (!settings.evaluation && task.drills[world.drill].failureStartFraction > 0.0f && !numeric) {
+            const LocomotionFailureStarts3D& f = task.failureStarts;
+            if (fell) {
+                for (auto it = world.recent.rbegin(); it != world.recent.rend(); ++it) {
+                    const float before = world.seconds - it->first;
+                    if (before >= f.minimumBefore && before <= f.maximumBefore) {
+                        world.failure = std::move(it->second);
+                        world.hasFailure = true;
+                        break;
+                    }
+                }
+            } else if ((world.sinceRecent += decisionSeconds) >= f.everySeconds) {
+                world.sinceRecent = 0.0f;
+                SavedStart now;
+                now.snapshot = scene.snapshot();
+                now.camera = world.command.facingYawRadians;
+                now.lastAction = world.lastAction;
+                now.lastActionCap = world.lastActionCap;
+                now.cell = world.currentCell;
+                now.drill = world.drill;
+                now.body = world.body;
+                world.recent.emplace_back(world.seconds, std::move(now));
+                while (!world.recent.empty() && world.seconds - world.recent.front().first > f.maximumBefore + f.everySeconds)
+                    world.recent.pop_front();
+            }
+        }
+
         LocomotionEnd3D end = LocomotionEnd3D::None;
         const RagdollState3D& body = scene.body();
         const Vec3 pelvis = body.links.empty() ? Vec3 {} : body.links.front().position;
@@ -1316,6 +1363,9 @@ LocomotionTraining3D::LocomotionTraining3D(const LocomotionTrainingSettings3D& s
     batchSettings.threads = settings.threads;
     batchSettings.world.runtime = runtimeFor(impl.task);
     batchSettings.world.groundHalfExtentMeters = impl.task.groundHalfExtentMeters;
+    batchSettings.world.groundMaterial = impl.task.groundMaterial;
+    if (impl.task.shoeTraction > 0.0f)
+        batchSettings.world.scene.pairFrictions.push_back({ "shoe_sole", impl.task.groundMaterial, impl.task.shoeTraction });
     impl.batch = std::make_unique<LocomotionBatch3D>(impl.bundle->assets(), batchSettings);
     impl.computeCaps();
 
@@ -1500,6 +1550,17 @@ void LocomotionTraining3D::step(std::span<const float> actions) {
         std::vector<Impl::SavedStart>& bank = impl.savedBank[drill];
         if (bank.size() < impl.task.savedStarts.capacity) bank.push_back(std::move(world.accepted));
         else bank[std::uniform_int_distribution<std::size_t>(0, bank.size() - 1)(impl.bankRng)] = std::move(world.accepted);
+    }
+    // ... e os de antes da queda (o mesmo sorteio do lote; desligados, nenhum).
+    for (std::size_t i = 0; i < impl.worlds.size(); ++i) {
+        Impl::World& world = impl.worlds[i];
+        if (!world.hasFailure) continue;
+        world.hasFailure = false;
+        const std::size_t drill = world.failure.drill;
+        if (drill >= impl.failureBank.size()) continue;
+        std::vector<Impl::SavedStart>& bank = impl.failureBank[drill];
+        if (bank.size() < impl.task.failureStarts.capacity) bank.push_back(std::move(world.failure));
+        else bank[std::uniform_int_distribution<std::size_t>(0, bank.size() - 1)(impl.bankRng)] = std::move(world.failure);
     }
     impl.lastStepMilliseconds = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - begin).count();
 }
