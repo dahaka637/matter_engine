@@ -251,6 +251,9 @@ void GesturePlayer3D::start(const GestureSpec3D& spec, const GestureRig3D& rig, 
     m_channels[23] = { b.windupBack, 0.0f, armed, std::max(armed + 0.02f, t1), -1.0f };
     m_channels[24] = { b.windupHead, 0.0f, armed, std::max(armed + 0.02f, t1), -1.0f };
     m_channels[25] = { b.headYaw, 0.0f, std::max(0.02f, t1), end, std::max(t1, t2) };
+    // O peito alinhado com a cintura no chute (o tempo do giro dela).
+    const bool kick = m_spec.kind == GestureKind3D::Shot && !m_spec.receive && m_spec.part == GesturePart3D::Foot;
+    m_channels[26] = { kick ? 1.0f : 0.0f, 0.0f, std::max(0.02f, t1), end, std::max(t1, t2) };
     // A equilibrada (24/10, pedido do usuario: "como se ele quisesse dar uma
     // equilibrada, algo suave"): depois do pico, cada braco ainda faz um pulso
     // pequeno sorteado - para fora ou para dentro, a frente ou atras -, suave e
@@ -397,6 +400,7 @@ GestureFrame3D GesturePlayer3D::update(float dt, const GestureLegPose3D& live, f
     body.elbow[otherArm] = m_channels[15].at(t) * dose(touch ? 0.5f : 0.3f);
     body.armAcross[gestureArm] = m_channels[16].at(t) * dose(0.8f);
     body.armAcross[otherArm] = m_channels[17].at(t) * dose(0.8f);
+    body.torsoAlign = m_channels[26].at(t);
     if (m_fadeStart >= 0.0f) {
         const float keep = 1.0f - gestureSmoothStep5((t - m_fadeStart) / std::max(1e-3f, m_fadeEnd - m_fadeStart));
         body.pelvisDrop *= keep;
@@ -413,6 +417,7 @@ GestureFrame3D GesturePlayer3D::update(float dt, const GestureLegPose3D& live, f
             body.armAcross[arm] *= keep;
             body.elbow[arm] *= keep;
         }
+        body.torsoAlign *= keep;
     }
     if (t < m_carrySpan) {
         const float w = 1.0f - gestureSmoothStep5(t / m_carrySpan);
@@ -430,6 +435,7 @@ GestureFrame3D GesturePlayer3D::update(float dt, const GestureLegPose3D& live, f
             body.armAcross[arm] += m_carry.armAcross[arm] * w;
             body.elbow[arm] += m_carry.elbow[arm] * w;
         }
+        body.torsoAlign = std::max(body.torsoAlign, m_carry.torsoAlign * w);
     }
     m_lastBody = body;
     m_lastBodyValid = true;

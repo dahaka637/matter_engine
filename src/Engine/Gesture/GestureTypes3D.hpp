@@ -106,6 +106,11 @@ struct GestureBody3D {
     std::array<float, 2> armOut {};
     std::array<float, 2> armAcross {};
     std::array<float, 2> elbow {};
+    // O quanto o peito se alinha com a cintura (0..1): desfaz a torcao do olhar
+    // da locomocao. No chute, cheio no contato e seguro no acompanhamento
+    // (28/10, pedido do usuario: andando na diagonal, a cintura girava ate a
+    // mira e o peito, ja torcido para a camera, ia alem dela).
+    float torsoAlign = 0.0f;
 };
 
 // O gesto neste tick: ativo, a perna dele, a pose dela (inteira, ja com a

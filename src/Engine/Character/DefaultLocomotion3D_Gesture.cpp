@@ -159,6 +159,7 @@ void DefaultLocomotion3D::stepGesture(Tick& t) {
             body.armAcross[arm] += b.armAcross[arm];
             body.elbow[arm] += b.elbow[arm];
         }
+        body.torsoAlign = std::max(body.torsoAlign, b.torsoAlign);
     }
     // A pelve: desce, anda no rumo do corpo e gira (em volta da vertical e do
     // rumo); a coluna, o pescoco e a cabeca somam; os bracos giram no ombro (no
@@ -171,6 +172,12 @@ void DefaultLocomotion3D::stepGesture(Tick& t) {
     const char* spine[3] = { "Abdomen", "Chest", "UpperChest" };
     for (std::size_t i = 0; i < 3; ++i)
         for (std::size_t axis = 0; axis < 3; ++axis) addCoordinate(profile, m_coordinates, spine[i], axis, component(body.spine[i], axis));
+    // (No chute o peito se alinha com a cintura: a torcao do olhar sai da
+    // coluna nas mesmas partes em que entrou - 0,30, 0,35, 0,35.)
+    if (body.torsoAlign > 0.0f) {
+        const float shares[3] = { 0.30f, 0.35f, 0.35f };
+        for (std::size_t i = 0; i < 3; ++i) addCoordinate(profile, m_coordinates, spine[i], 0, -m_torsoTwist * shares[i] * body.torsoAlign);
+    }
     for (std::size_t axis = 0; axis < 3; ++axis) {
         addCoordinate(profile, m_coordinates, "Neck", axis, component(body.neck, axis));
         addCoordinate(profile, m_coordinates, "Head", axis, component(body.head, axis));

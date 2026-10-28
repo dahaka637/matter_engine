@@ -408,6 +408,23 @@ std::vector<Scenario> scenarios() {
                 list.push_back(s);
             }
         }
+        // O chute andando e trotando na diagonal para a frente (28/10, pedido do
+        // usuario: "andando na vertical" e W+D ou W+A), com a bola a frente no rumo
+        // da diagonal, como conduzindo; a mira e a camera.
+        for (const float pace : { 0.6f, 1.0f })
+            for (const float side : { -1.0f, 1.0f }) {
+                Scenario diagonal { std::string("gesto_diag_") + (pace < 1.0f ? "anda" : "trote") + (side < 0.0f ? "_d" : "_e"),
+                    2.6f, [pace, side](float t) {
+                        Keys k;
+                        if (t > 0.2f) { k.forward = pace; k.left = side * pace; }
+                        if (t >= 1.2f && t < 1.2f + Dt) { k.ball = BallActionKind3D::Shot; k.power = 0.6f; }
+                        return k; } };
+                diagonal.ball = true;
+                diagonal.ballStart = { 0.0f, 8.0f, 0.11f };
+                diagonal.placeAt = 1.2f;
+                diagonal.placeOffset = { 0.40f, side * 0.30f, 0.11f };
+                list.push_back(diagonal);
+            }
         // A parada andando, em quatro instantes do passo (28/10, pedido do usuario:
         // o pe de apoio do parado e o que terminou a ultima passada).
         for (int stopAt = 100; stopAt <= 160; stopAt += 5) {
@@ -1532,6 +1549,22 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
                 metrics.gestureSequence += item;
             }
         for (std::size_t side = 0; side < 2; ++side) gestureWas[side] = legacy.defaultLocomotion.output().gestureLegs[side];
+        // XTRONCO=1: o rumo da pelve e do peito (do corpo, graus no mundo) e o da
+        // bola em relacao a pelve, a cada 0,05 s (28/10: o chute na diagonal).
+        if (std::getenv("XTRONCO") && step >= 0 && step % 6 == 0 && !bodyState.links.empty()) {
+            const auto heading = [&](const char* id) {
+                for (std::size_t i = 0; i < profile.links.size() && i < bodyState.links.size(); ++i)
+                    if (profile.links[i].id == id) {
+                        const Vec3 f = (bodyState.links[i].orientation * profile.links[i].modelOrientation.conjugate()).rotate({ 1.0f, 0.0f, 0.0f });
+                        return std::atan2(f.y, f.x) * 57.2958f;
+                    }
+                return 0.0f;
+            };
+            const Vec3 pelvis = bodyState.links.front().position;
+            std::printf("  TRONCO t %.2f pelve %+5.0f peito %+5.0f bola %+5.0f gesto %d%d\n", t, heading("Pelvis"),
+                heading("UpperChest"), std::atan2(ballState.position.y - pelvis.y, ballState.position.x - pelvis.x) * 57.2958f,
+                legacy.defaultLocomotion.output().gestureLegs[0] ? 1 : 0, legacy.defaultLocomotion.output().gestureLegs[1] ? 1 : 0);
+        }
         for (std::size_t side = 0; side < 2; ++side) {
             const DefaultLocomotionOutput3D& gait = legacy.defaultLocomotion.output();
             if (gait.cycling && gait.cyclePlanted[side] && !metrics.cyclePlantedBefore[side]) metrics.lastLanded = static_cast<int>(side);
@@ -2648,7 +2681,9 @@ int runChecks(const ProbeContext& context) {
             // que depende do passo: uma so, sem cruzar as pernas.
             const int expected = scenario.placeOffset.y > 0.0f ? 0 : 1;
             const int played = m.gestureTicks[0] + m.gestureTicks[1];
-            const bool rear = name.find("_chute_frente") != std::string::npos;
+            // (Na diagonal a pelve ja vai virada para ela e a bola fica a frente:
+            // tambem a perna de tras - 28/10.)
+            const bool rear = name.find("_chute_frente") != std::string::npos || name.rfind("gesto_diag_", 0) == 0;
             if (outside && played != 0) problems.push_back("gesto fora do alcance");
             if (rear && (played < 12 || (m.gestureTicks[0] != 0 && m.gestureTicks[1] != 0) || m.legCrossTicks != 0))
                 problems.push_back("chute com a perna de tras: duas pernas, parado ou cruzando (E "

@@ -79,7 +79,8 @@ private:
     // flexao, para tras, inclinacao), cabeca, bracos (frente, fora, cotovelo
     // e de lado, de cada lado), o giro da cintura ate o rumo da bola e a
     // equilibrada de cada braco (fora, frente).
-    std::array<Channel, 26> m_channels {};
+    // E o alinhamento do peito com a cintura no chute (o ultimo).
+    std::array<Channel, 27> m_channels {};
 };
 
 } // namespace MatterEngine
