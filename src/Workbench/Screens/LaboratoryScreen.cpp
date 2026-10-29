@@ -760,6 +760,9 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
     if (controllingCharacter && m_adaptivePhysics) {
         command.followVelocity = m_characterFollowVelocity;
         command.navigationProxy = true;
+        // (28/10, item 4: no padrao quem bate na parede, no pilar e na trave e
+        // o corpo, nao a capsula.)
+        command.passWalls = m_capsulePassesWalls && m_defaultLocomotion;
     }
     // A voadora animada no ar (o padrao, ate encostar em algo): a capsula
     // segue no embalo do pulo. Com o carrinho em andamento o jogador conta como
@@ -2990,6 +2993,8 @@ void WorkbenchApp::drawLaboratoryUi() {
                                 // (28/10, pedido do usuario: calibrar na pratica.)
                                 percent("Volta ao padrão", "##DefaultReturnRate", &m_defaultReturnRatePercent, 50.0f, 300.0f,
                                     "A rapidez da volta do físico ao padrão depois de um impacto, quando o corpo já se aprumou. 100% é a calibrada; 200%, as esperas pela metade.");
+                                ImGui::Checkbox("Cápsula atravessa paredes", &m_capsulePassesWalls);
+                                hint("Paredes, pilares e traves não seguram a cápsula: quem bate é o corpo, e o esbarrão de lado, a cabeça ou o peito levam ao físico. Chão, rampa, degrau e meio-fio seguram como antes.");
                             }
                             ImGui::Checkbox("Pulo instantâneo", &m_instantJump);
                             hint("Ligado: pula ao apertar o espaço, na altura média. Desligado: segurar carrega e pula ao soltar (mais alto quanto mais segura).");

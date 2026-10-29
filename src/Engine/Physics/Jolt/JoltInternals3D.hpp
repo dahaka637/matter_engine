@@ -364,7 +364,9 @@ struct PhysicsScene3D::Impl final : public JPH::ContactListener,
     bool characterReversing = false;
     bool characterIgnoreRagdolls = false;
     bool characterNavigationProxy = false;
+    bool characterPassWalls = false;
 
+    bool OnContactValidate(const JPH::CharacterVirtual*, const JPH::CharacterContact&) override;
     void OnContactAdded(const JPH::CharacterVirtual*, const JPH::CharacterContact&,
         JPH::CharacterContactSettings&) override;
     void OnContactPersisted(const JPH::CharacterVirtual*, const JPH::CharacterContact&,

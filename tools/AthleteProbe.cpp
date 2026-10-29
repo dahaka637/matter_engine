@@ -783,6 +783,35 @@ std::vector<Scenario> scenarios() {
         Scenario alta { "pulo_alta", 3.5f, jumpRun(0.95f) };
         alta.statics.push_back({ { 4.6f, 0.0f, 0.3f }, { 0.35f, 2.0f, 0.3f }, {} });
         list.push_back(alta);
+        // Os contatos do item 4 (28/10, pedido do usuario: "esbarroes como
+        // laterais que nao sao impactos diretos, tipo se esbarrar em uma parede,
+        // nao mudam o estado... bater a cabeca em um pilar ao pular"): o raspao
+        // de lado numa parede (trotando e puxando para ela), o pilar passando
+        // de raspao no ombro, a cabeca na trave no pulo e o peito na quina.
+        {
+            Scenario s { "raspa_parede", 4.0f, [](float t) {
+                Keys k;
+                k.forward = t > 0.3f ? 0.5f : 0.0f;
+                k.left = t > 0.8f ? 0.25f : 0.0f;
+                return k; } };
+            s.statics.push_back({ { 6.0f, 0.75f, 1.2f }, { 6.0f, 0.1f, 1.2f }, {} });
+            list.push_back(s);
+        }
+        {
+            Scenario s { "raspa_pilar", 3.5f, [](float t) { Keys k; k.forward = t > 0.3f ? 0.5f : 0.0f; return k; } };
+            s.statics.push_back({ { 4.0f, 0.42f, 1.2f }, { 0.15f, 0.15f, 1.2f }, {} });
+            list.push_back(s);
+        }
+        {
+            Scenario s { "pulo_trave", 3.5f, jumpRun(0.95f) };
+            s.statics.push_back({ { 4.4f, 0.0f, 1.98f }, { 0.08f, 2.0f, 0.08f }, {} });
+            list.push_back(s);
+        }
+        {
+            Scenario s { "peito_pilar", 3.5f, [](float t) { Keys k; k.forward = t > 0.3f ? 0.5f : 0.0f; return k; } };
+            s.statics.push_back({ { 4.0f, 0.24f, 1.2f }, { 0.12f, 0.12f, 1.2f }, {} });
+            list.push_back(s);
+        }
         const auto stairs = [](Scenario& scenario) {
             for (int k = 0; k < 8; ++k) {
                 const float from = 3.0f + 0.30f * static_cast<float>(k);
@@ -1424,6 +1453,12 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
         }
         command.followVelocity = followVelocity;
         command.navigationProxy = true;
+        // A capsula atravessa paredes, pilares e tetos no padrao, como no jogo
+        // (item 4, 28/10); XCAPSULA_ATRAVESSA=0, a de antes.
+        {
+            const char* pass = std::getenv("XCAPSULA_ATRAVESSA");
+            command.passWalls = (pass == nullptr || pass[0] != '0') && settings.defaultLocomotion;
+        }
         scene->moveCharacter(command, active, Dt);
         const PhysicsCharacterState3D& capsule = scene->characterState();
         {
@@ -2162,6 +2197,25 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
         // apoiado nao treme, so trava no chao e no ar segue o estilo.
         const bool defaultMode = mode() == BodyModeKind3D::Animated
             || mode() == BodyModeKind3D::Returning;
+        if (std::getenv("XPENETRA") && step >= 0 && mode() == BodyModeKind3D::Animated && !bodyState.links.empty()) {
+            std::vector<Vec3> positions;
+            std::vector<Quaternion> orientations;
+            for (const PhysicsBodyState3D& link : bodyState.links) {
+                positions.push_back(link.position);
+                orientations.push_back(link.orientation);
+            }
+            for (const RagdollWorldContact3D& hit : scene->ragdollPoseWorldContacts(handle, positions, orientations, 0.001f)) {
+                if (hit.normalWorld.z >= 0.6f || hit.linkIndex >= profile.links.size()) continue;
+                const BodyRegion3D region = bodyRegion3D(profile.links[hit.linkIndex].id);
+                if (region == BodyRegion3D::Arm) metrics.penetrationArm = std::max(metrics.penetrationArm, hit.depthMeters);
+                if (region == BodyRegion3D::Leg) metrics.penetrationLeg = std::max(metrics.penetrationLeg, hit.depthMeters);
+                if (region == BodyRegion3D::Trunk && hit.depthMeters > metrics.penetrationTrunk) {
+                    metrics.penetrationTrunk = hit.depthMeters;
+                    metrics.penetrationTrunkLink = profile.links[hit.linkIndex].id;
+                    metrics.penetrationTrunkAt = t;
+                }
+            }
+        }
         if (t > 0.35f && defaultMode && leftFoot < bodyState.links.size() && rightFoot < bodyState.links.size()
             && shins[0] < bodyState.links.size() && shins[1] < bodyState.links.size()) {
             // (No rumo do corpo, o da locomocao: a pelve gira de proposito nos
@@ -2783,6 +2837,10 @@ void printMetrics(const Scenario& scenario, const Metrics& metrics, bool footste
     if (metrics.transitionPeak > 0.0f)
         std::printf("%-18s   troca fisico>padrao: pelve max %.2f m/s, pelve x capsula max %.2f m/s, pico %.0f m/s2, peito %.3f em 0,1 s\n",
             "", metrics.transitionSpeedMax, metrics.transitionSpeedGap, metrics.transitionPeak, metrics.transitionTrunkRate);
+    if (std::getenv("XPENETRA"))
+        std::printf("%-18s   no padrao, dentro do mundo: tronco %.3f m (%s, %.2f s), pernas %.3f, bracos %.3f\n", "",
+            metrics.penetrationTrunk, metrics.penetrationTrunkLink.c_str(), metrics.penetrationTrunkAt,
+            metrics.penetrationLeg, metrics.penetrationArm);
     std::printf("%-18s   pernas: cruzadas %d ticks, sobreposicao %.3f m, ordem trocada pes %d joelhos %d", "",
         metrics.legCrossTicks, metrics.legOverlap, metrics.legOrderTicks, metrics.kneeOrderTicks);
     if (footsteps)
@@ -2927,6 +2985,16 @@ int runChecks(const ProbeContext& context) {
     {
         const Metrics m = run("parede_corre", settings, false);
         expect(m.finalMode != BodyModeKind3D::Physical, "terreno, parede_corre: encostado na parede volta ao padrao", m);
+    }
+    // A capsula que atravessa paredes (28/10, item 4): o raspao no pilar, a
+    // cabeca na trave no pulo e a canela na quina levam ao fisico - com a
+    // capsula batendo, ela desviava e o corpo nem encostava - e ele volta ao
+    // padrao.
+    for (const char* name : { "raspa_pilar", "pulo_trave", "peito_pilar" }) {
+        const Metrics m = run(name, settings, false);
+        char what[160];
+        std::snprintf(what, sizeof(what), "capsula atravessa, %s: o corpo bate, vai ao fisico e volta ao padrao", name);
+        expect(has(m, "fisico") && m.finalMode == BodyModeKind3D::Animated, what, m);
     }
     // A ponte fisico -> padrao (plano v2, fase D): toda volta do fisico passa
     // por ela e acaba no padrao, sem salto nos pes na troca; o levantar comeca

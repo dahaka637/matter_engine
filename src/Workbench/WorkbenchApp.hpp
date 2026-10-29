@@ -711,6 +711,8 @@ private:
     float m_physicalUpperAuthority = 0.85f;
     // A rapidez da volta do fisico ao padrao (%, 100 = a calibrada; 28/10).
     float m_defaultReturnRatePercent = 100.0f;
+    // A capsula atravessa paredes, pilares e tetos no padrao (28/10, item 4).
+    bool m_capsulePassesWalls = true;
     // O levantar pelo padrao (28/10, item 16): ligado no laboratorio.
     bool m_animatedGetUp = true;
     // A arrancada do padrao (0 desliga): o gesto do idle_to_sprint e a

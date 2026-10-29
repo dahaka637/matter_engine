@@ -67,6 +67,12 @@ struct CharacterMotorCommand3D {
     // alem do cenario estatico. Quem colide com o mundo movel e o corpo
     // fisico do personagem (modo fisico adaptativo). Hoje so no Jolt.
     bool navigationProxy = false;
+    // A capsula atravessa parede, pilar e teto do cenario parado (28/10,
+    // pedido do usuario: ela segurava o corpo longe e os esbarroes nao
+    // chegavam a ele): quem bate e o corpo. O chao, a rampa, o que cabe num
+    // degrau (o topo ate maximumStepHeight acima dos pes) e as barreiras
+    // seguram como antes. Hoje so no Jolt.
+    bool passWalls = false;
 };
 
 struct CharacterMotorSettings3D {

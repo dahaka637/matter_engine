@@ -254,6 +254,7 @@ void PhysicsScene3D::moveCharacter(const CharacterMotorCommand3D& command,
     m_impl->characterDeltaTime = deltaTime;
     m_impl->characterIgnoreRagdolls = command.ignoreRagdolls;
     m_impl->characterNavigationProxy = command.navigationProxy;
+    m_impl->characterPassWalls = command.passWalls;
     m_impl->callbackFailed = false;
     auto& character=*m_impl->character;
     if (state.flying) {
@@ -306,6 +307,21 @@ void PhysicsScene3D::moveCharacter(const CharacterMotorCommand3D& command,
 }
 bool PhysicsScene3D::hasCharacter() const { return m_impl->character!=nullptr; }
 const PhysicsCharacterState3D& PhysicsScene3D::characterState() const { return m_impl->characterState; }
+bool PhysicsScene3D::Impl::OnContactValidate(const JPH::CharacterVirtual* who, const JPH::CharacterContact& contact) {
+    // (A capsula que atravessa paredes: o cenario parado que nao e chao - a
+    // normal sem apontar para cima - e mais alto que o joelho nao a segura.
+    // Meio-fio, degrau e mureta baixa seguram como antes: com o corte na
+    // altura de degrau da capsula, 0,19 m, o degrau de 25 cm travava.)
+    constexpr float PassWallsAboveFeetMeters = 0.5f;
+    if (!characterPassWalls || who == nullptr || contact.mMotionTypeB != JPH::EMotionType::Static
+        || contact.mContactNormal.GetZ() >= 0.6f)
+        return true;
+    const JPH::BodyInterface& bodies = system->GetBodyInterfaceNoLock();
+    if (bodies.GetObjectLayer(contact.mBodyB) != JoltObjectLayers::NonMoving) return true;
+    const float top = bodies.GetTransformedShape(contact.mBodyB).GetWorldSpaceBounds().mMax.GetZ();
+    return top - static_cast<float>(who->GetPosition().GetZ())
+        <= std::max(PassWallsAboveFeetMeters, characterSettings.maximumStepHeight);
+}
 void PhysicsScene3D::Impl::OnContactAdded(const JPH::CharacterVirtual*,
     const JPH::CharacterContact& contact, JPH::CharacterContactSettings& config) {
     try { pushCharacterContact(contact, config); } catch (...) { callbackFailed = true; }

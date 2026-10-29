@@ -193,6 +193,11 @@ struct Metrics {
     // (m, a sola contra o chao embaixo); o pe no ar longe do estilo (m,
     // depois de 0,15 s no ar).
     int legCrossTicks = 0;
+    // XPENETRA=1 (item 4, 28/10): o corpo no padrao entrando no mundo parado, o
+    // mais fundo por regiao (m; tronco, pernas, bracos) e o link e o instante
+    // do tronco.
+    float penetrationTrunk = 0.0f, penetrationLeg = 0.0f, penetrationArm = 0.0f, penetrationTrunkAt = -1.0f;
+    std::string penetrationTrunkLink;
     // Sem o limite de frente: o pe ou o joelho esquerdo a direita do outro (21/10).
     int legOrderTicks = 0;
     int kneeOrderTicks = 0;
