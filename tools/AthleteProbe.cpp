@@ -784,6 +784,19 @@ std::vector<Scenario> scenarios() {
             s.pushes.push_back({ 1.5f, 1.5f, { 0.0f, -250.0f, 0.0f } });
             list.push_back(s);
         }
+        // (O outro jogador de verdade: um boneco solto no padrao, de pe no
+        // caminho - de costas, passando de ombro andando e correndo, e de frente
+        // na corrida.)
+        const auto rival = [&](const char* name, float forward, Vec3 start, float yaw) {
+            Scenario s { name, 5.0f, runKeys(forward) };
+            s.rival = true;
+            s.rivalStart = start;
+            s.rivalYaw = yaw;
+            list.push_back(s);
+        };
+        rival("boneco_ombro_anda", 0.5f, { 5.0f, 0.4f, 0.0f }, 0.0f);
+        rival("boneco_ombro_corre", 1.0f, { 8.0f, 0.4f, 0.0f }, 0.0f);
+        rival("boneco_frente_corre", 1.0f, { 8.0f, 0.0f, 0.0f }, Pi);
     }
     // Pegadas novas (plano v3, etapa 2): os casos do teste do usuario. O pulo
     // que pousa numa plataforma curta e sai dela correndo, o pulo que raspa o
@@ -1047,9 +1060,16 @@ float percentile(std::vector<float> values, float q) {
     return values[index];
 }
 
-void dumpFrame(FILE* file, const RagdollProfile3D& profile, const RagdollState3D& state, float t, int mode) {
-    std::fprintf(file, "F %.4f %d 0\n", t, mode);
+void dumpLinks(FILE* file, const RagdollProfile3D& profile, const RagdollState3D& state, bool other = false) {
     for (std::size_t i = 0; i < profile.links.size() && i < state.links.size(); ++i) {
+        if (other) {
+            // (O segundo corpo: so o centro e a orientacao de cada link.)
+            const Vec3 at = state.links[i].position;
+            const Quaternion q = state.links[i].orientation;
+            std::fprintf(file, "D %s %.4f %.4f %.4f %.5f %.5f %.5f %.5f\n", profile.links[i].id.c_str(), at.x, at.y, at.z,
+                q.x, q.y, q.z, q.w);
+            continue;
+        }
         const auto& collider = profile.links[i].collider;
         const Vec3 center = state.links[i].position + state.links[i].orientation.rotate(collider.localPosition);
         const Quaternion q = (state.links[i].orientation * collider.localOrientation).normalized();
@@ -1063,6 +1083,11 @@ void dumpFrame(FILE* file, const RagdollProfile3D& profile, const RagdollState3D
                 collider.radiusMeters, ragdollCapsuleRadiusAtPositiveX3D(collider));
         }
     }
+}
+
+void dumpFrame(FILE* file, const RagdollProfile3D& profile, const RagdollState3D& state, float t, int mode) {
+    std::fprintf(file, "F %.4f %d 0\n", t, mode);
+    dumpLinks(file, profile, state);
 }
 
 
@@ -1208,6 +1233,23 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
     // como ao assumir o boneco, no fisico ate ele assentar.)
     athleteStart3D(*scene, handle, profile, bodyState, athlete,
         startPhysical ? AthleteStartMode3D::Physical : AthleteStartMode3D::Default);
+    // O boneco solto no caminho (Scenario::rival): nasce no fisico, como os do
+    // laboratorio, e o padrao dos bonecos o leva ao padrao assim que assenta.
+    RagdollHandle3D rivalHandle;
+    RagdollState3D rivalState;
+    AthleteState3D rivalAthlete;
+    if (scenario.rival) {
+        RagdollSpawnDefinition3D spawn;
+        spawn.entityId = 2;
+        spawn.active = true;
+        spawn.pelvisPosition = { scenario.rivalStart.x, scenario.rivalStart.y,
+            scenario.rivalStart.z + profile.standingRootHeightMeters };
+        spawn.orientation = Quaternion::fromAxisAngle({ 0.0f, 0.0f, 1.0f }, scenario.rivalYaw);
+        rivalHandle = scene->createRagdoll(profile, spawn);
+        rivalState = scene->ragdollState(rivalHandle);
+        athleteStart3D(*scene, rivalHandle, profile, rivalState, rivalAthlete, AthleteStartMode3D::Physical);
+    }
+    BodyModeKind3D rivalPrevious = athleteTelemetry3D(rivalAthlete).mode;
     InflatedBallHandle3D ballHandle;
     InflatedBallState3D ballState;
     BallOwnership3D ownership;
@@ -1262,6 +1304,7 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
         return bodyModeName3D(mode());
     };
     metrics.trail = modeOf();
+    if (scenario.rival) metrics.rivalTrail = bodyModeName3D(athleteTelemetry3D(rivalAthlete).mode);
     BodyModeKind3D previousMode = mode();
     float transitionStart = -1.0f, transitionGuided = -1.0f;
     std::vector<float> transitionChest;
@@ -1316,6 +1359,9 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
     for (const Push& push : scenario.pushes) hitAt = hitAt < 0.0f ? push.at : std::min(hitAt, push.at);
     double speedBeforeSum = 0.0, speedAfterSum = 0.0;
     int speedBeforeCount = 0, speedAfterCount = 0;
+    // (Com o boneco no caminho, o choque e o primeiro contato com o que se
+    // move: a velocidade antes sai dos ultimos 0,5 s guardados.)
+    std::vector<float> recentSpeeds;
     for (int step = -warmTicks; step < ticks; ++step) {
         const float t = static_cast<float>(step) * Dt;
         Keys keys = step < 0 ? Keys {} : scenario.keys(t);
@@ -1661,8 +1707,11 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
         AthleteRuntimeOutput3D output;
         if (step >= 0) contractBefore(hooks, athlete, step);
         const auto runtimeBegin = std::chrono::steady_clock::now();
-        runtime.update(*scene, runtimeAssets, std::span<AthleteSlot3D>(&slot, 1), balls, step < 0 ? warmSettings : policySettings,
-            control, Dt, output);
+        std::array<AthleteSlot3D, 2> slots { slot, AthleteSlot3D { 2, rivalHandle, &rivalState, true, false, &rivalAthlete } };
+        AthleteRuntimeSettings3D tickSettings = step < 0 ? warmSettings : policySettings;
+        if (scenario.rival) tickSettings.looseDefaultLocomotion = true;
+        runtime.update(*scene, runtimeAssets, std::span<AthleteSlot3D>(slots.data(), scenario.rival ? 2 : 1), balls,
+            tickSettings, control, Dt, output);
         // (XREACH: a base das areas de alcance dos pes e a altura da pelve sobre ela,
         // a cada 0,05 s - no pulo, a base sobe com ele.)
         if (output.reachValid && step >= 0) metrics.reachBaseMax = std::max(metrics.reachBaseMax, output.reachOrigin.z);
@@ -1897,6 +1946,32 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
             }
         scene->simulate(Dt);
         bodyState = scene->ragdollState(handle);
+        if (scenario.rival) {
+            rivalState = scene->ragdollState(rivalHandle);
+            const BodyModeKind3D now = athleteTelemetry3D(rivalAthlete).mode;
+            if (now != rivalPrevious && step >= 0) metrics.rivalTrail += std::string(">") + bodyModeName3D(now);
+            rivalPrevious = now;
+            if (!rivalState.links.empty() && step >= 0) {
+                const Vec3 pelvis = rivalState.links.front().position;
+                if (pelvis.z < 0.5f) metrics.rivalFell = true;
+                metrics.rivalPushed = std::max(metrics.rivalPushed,
+                    std::hypot(pelvis.x - scenario.rivalStart.x, pelvis.y - scenario.rivalStart.y));
+            }
+            metrics.rivalFinalMode = now;
+        }
+        if (scenario.rival && step >= 0 && !bodyState.links.empty()) {
+            const Vec3 v = bodyState.links.front().linearVelocity;
+            recentSpeeds.push_back(std::hypot(v.x, v.y));
+            if (recentSpeeds.size() > 60) recentSpeeds.erase(recentSpeeds.begin());
+            bool touched = false;
+            for (const RagdollInteraction3D& contact : bodyState.interactions)
+                touched = touched || contact.otherMotion != RagdollContactMotion3D::Static;
+            if (touched && hitAt < 0.0f) {
+                hitAt = t;
+                for (const float speed : recentSpeeds) speedBeforeSum += speed;
+                speedBeforeCount = static_cast<int>(recentSpeeds.size());
+            }
+        }
         if (hitAt >= 0.0f && step >= 0 && !bodyState.links.empty()) {
             if (athlete.contactBody.massKg > 0.0f)
                 metrics.peakWindowDeltaV
@@ -2738,6 +2813,7 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
         if (scenario.ball) metrics.ballSpeedAfter = std::max(metrics.ballSpeedAfter, ballState.linearVelocity.length());
         if (dump != nullptr && step % every == 0) {
             dumpFrame(dump, profile, bodyState, t, athleteDumpModeCode3D(mode()));
+            if (scenario.rival) dumpLinks(dump, profile, rivalState, true);
             if (scenario.ball)
                 std::fprintf(dump, "K %.4f %.4f %.4f %.3f %.3f %.3f\n", ballState.position.x, ballState.position.y,
                     ballState.position.z, ballState.linearVelocity.x, ballState.linearVelocity.y,
@@ -2826,6 +2902,9 @@ void printMetrics(const Scenario& scenario, const Metrics& metrics, bool footste
     }
     std::printf("%-18s   andou %.2f m, recaidas %d, %s, fim %s (%s)\n", "", metrics.travel, metrics.relapses,
         metrics.fell ? "CAIU" : "de pe", bodyModeName3D(metrics.finalMode), metrics.trail.c_str());
+    if (scenario.rival)
+        std::printf("%-18s   boneco: %s, %s, empurrado ate %.2f m, fim %s\n", "", metrics.rivalTrail.c_str(),
+            metrics.rivalFell ? "CAIU" : "de pe", metrics.rivalPushed, bodyModeName3D(metrics.rivalFinalMode));
     if (metrics.speedBefore >= 0.0f && metrics.speedAfter >= 0.0f)
         std::printf("%-18s   velocidade antes/depois do choque %.2f / %.2f m/s (%.0f%%), Dv da janela ate %.2f m/s, golpe"
                     " pendente ate %.2f m/s\n", "",
@@ -3035,6 +3114,23 @@ int runChecks(const ProbeContext& context) {
         // (A ponte de contato entra solta e decide em 25 ms: "ponte>fisico".)
         expect(has(side, "fisico") && side.finalMode == BodyModeKind3D::Animated,
             "pancada forte (a caixa de lado que derruba): vai ao fisico, levanta e volta ao padrao", side);
+    }
+    {
+        // (O boneco solto no padrao, de pe no caminho: os dois passam pela ponte
+        // de contato e voltam ao padrao, ninguem cai; de frente na corrida, o
+        // corredor pode perder a base, mas fica de pe.)
+        for (const char* name : { "boneco_ombro_anda", "boneco_ombro_corre" }) {
+            const Metrics m = run(name, settings, false);
+            char what[224];
+            std::snprintf(what, sizeof(what), "%s: corredor sem o fisico (%.0f%% da velocidade), boneco %s", name,
+                m.speedBefore > 0.05f ? 100.0f * m.speedAfter / m.speedBefore : 100.0f, m.rivalTrail.c_str());
+            expect(!has(m, "fisico") && !m.fell && m.speedAfter >= 0.8f * m.speedBefore && !m.rivalFell
+                    && m.rivalTrail.find("animado>ponte") != std::string::npos
+                    && (m.rivalFinalMode == BodyModeKind3D::Animated || m.rivalFinalMode == BodyModeKind3D::Returning),
+                what, m);
+        }
+        const Metrics m = run("boneco_frente_corre", settings, false);
+        expect(!m.fell && !m.rivalFell, "boneco_frente_corre: de frente na corrida, os dois de pe", m);
     }
     {
         // (O carrinho fica no padrao, deslizando e levantando pelo clipe: a pelve

@@ -715,6 +715,12 @@ private:
     // e se o corpo esta no padrao puro agora (a saida do atleta).
     bool m_capsulePassesWalls = true;
     bool m_controlledPassWalls = false;
+    // Os contatos inteligentes (28/10): o contato de quem se move pela ponte de
+    // contato (o fisico parcial), a pancada forte que vai ao fisico (m/s) e os
+    // bonecos soltos tambem no padrao, com as mesmas trocas do controlado.
+    bool m_contactBridge = true;
+    float m_contactBridgeHardDeltaV = 1.2f;
+    bool m_looseDefaultLocomotion = true;
     // O levantar pelo padrao (28/10, item 16): ligado no laboratorio.
     bool m_animatedGetUp = true;
     // A arrancada do padrao (0 desliga): o gesto do idle_to_sprint e a

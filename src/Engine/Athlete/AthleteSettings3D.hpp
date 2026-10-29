@@ -20,6 +20,14 @@ struct AthleteRuntimeSettings3D {
     // Modo do corpo: o padrao (animado, pela capsula) e o fisico adaptativo.
     bool defaultLocomotion = true;
     bool adaptivePhysics = true;
+    // Os bonecos soltos (nao controlados e sem comando) tambem no padrao, cada
+    // um com a sua capsula virtual (de dados: sem colisao, como a do jogador no
+    // padrao puro), com as mesmas trocas de modo do controlado - os contatos,
+    // a ponte, o fisico, o levantar e a volta (28/10, pedido do usuario: "faca
+    // os outros bonecos estarem na locomocao padrao, e sofrerem as mesmas
+    // transformacoes que eu"). Desligado, eles ficam no fisico como antes (o
+    // treino do RL e a sonda nao mudam).
+    bool looseDefaultLocomotion = false;
     // Assistencias e musculos (o menu do personagem e o painel Ragdoll).
     bool ragdollForceControlOverride = false;
     float ragdollAuxiliaryPercent = 100.0f;

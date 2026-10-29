@@ -3016,6 +3016,16 @@ void WorkbenchApp::drawLaboratoryUi() {
                                     "A rapidez da volta do físico ao padrão depois de um impacto, quando o corpo já se aprumou. 100% é a calibrada; 200%, as esperas pela metade.");
                                 ImGui::Checkbox("Cápsula atravessa paredes", &m_capsulePassesWalls);
                                 hint("Paredes, pilares e traves não seguram a cápsula: quem bate é o corpo, e o esbarrão de lado, a cabeça ou o peito levam ao físico. Chão, rampa, degrau e meio-fio seguram como antes.");
+                                // (28/10, os contatos inteligentes.)
+                                ImGui::Checkbox("Contato pela ponte", &m_contactBridge);
+                                hint("O contato com outro jogador, um objeto ou um empurrão leva ao físico parcial: o corpo leva o golpe com física e a locomoção padrão continua correndo, sem perder velocidade. Vai ao físico pleno só na pancada forte, quando perde a base, no carrinho levado, no agarrão e no ar. Desligado, qualquer contato leva ao físico, como antes.");
+                                ImGui::TextUnformatted("Pancada forte");
+                                ImGui::SetNextItemWidth(-1.0f);
+                                ImGui::SliderFloat("##ContactBridgeHard", &m_contactBridgeHardDeltaV, 0.5f, 4.0f, "%.2f m/s",
+                                    ImGuiSliderFlags_AlwaysClamp);
+                                hint("A partir de quanto o choque vai ao físico pleno: a mudança de velocidade que ele daria ao corpo inteiro. 1,2 m/s é a calibrada; menos, mais choques derrubam.");
+                                ImGui::Checkbox("Bonecos no padrão", &m_looseDefaultLocomotion);
+                                hint("Os outros bonecos ficam na locomoção padrão e passam pelas mesmas trocas que o jogador: o contato, a ponte, o físico, o levantar e a volta.");
                             }
                             ImGui::Checkbox("Câmera suave", &m_cameraSmoothFollow);
                             hint("A câmera segue o peito por uma mola: sem atraso em velocidade constante, sem o tranco de um passo nas trocas do físico ao padrão.");

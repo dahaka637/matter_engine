@@ -105,6 +105,12 @@ struct Scenario {
     Vec3 wallCenter;
     Vec3 wallHalf;
     std::vector<StaticBox> statics;
+    // Um boneco solto no caminho (os contatos inteligentes, 28/10): de pe em
+    // rivalStart (no chao), virado para rivalYaw (rad), com o padrao dos bonecos
+    // ligado (looseDefaultLocomotion) - o encostao entre dois corpos guiados.
+    bool rival = false;
+    Vec3 rivalStart;
+    float rivalYaw = 0.0f;
 };
 
 struct Metrics {
@@ -198,6 +204,13 @@ struct Metrics {
     float speedAfter = -1.0f;
     int relapses = 0;
     BodyModeKind3D finalMode = BodyModeKind3D::Animated;
+    // O boneco solto (Scenario::rival): os modos por onde passou, se caiu
+    // (pelve abaixo de 0,5 m), o quanto foi empurrado (m, no plano) e o modo
+    // no fim.
+    std::string rivalTrail;
+    bool rivalFell = false;
+    float rivalPushed = 0.0f;
+    BodyModeKind3D rivalFinalMode = BodyModeKind3D::Physical;
     // Pegadas novas (plano v3): as pernas cruzadas (ticks com um tornozelo do
     // lado errado do outro, lado a lado, no rumo da pelve) e a maior
     // sobreposicao entre as pernas (m, as capsulas e as caixas dos pes, acima

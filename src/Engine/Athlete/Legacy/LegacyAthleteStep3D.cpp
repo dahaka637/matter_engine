@@ -3,6 +3,7 @@
 #include "Engine/Gesture/GestureCatalog3D.hpp"
 #include "Engine/Gesture/GestureChoice3D.hpp"
 #include "Engine/Athlete/Planning/MotionPlanner3D.hpp"
+#include "Engine/Athlete/Reference/BodyForecast3D.hpp"
 #include "Engine/Athlete/Synthesis/LegSynthesis3D.hpp"
 
 #include "Engine/Character/CharacterControlApplication3D.hpp"
@@ -192,6 +193,75 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             return scenePointer->probeTerrain(point + Vec3 { 0.0f, 0.0f, 0.55f }, 0.03f, 0.0f, 1.5f, 60.0f);
         };
     }
+    // O boneco solto no padrao (looseDefaultLocomotion, 28/10): a capsula
+    // virtual dele, de dados, anda aqui antes do passo, como a do jogador anda
+    // antes dele - sem pedido, a velocidade so se gasta pela resposta da capsula
+    // do jogador, mais o quanto ela foi atras do corpo no tick anterior; o chao
+    // embaixo. O rumo e o do corpo quando ela nasce.
+    const bool looseNavigation = !command.controlled && slot.command == nullptr && settings.looseDefaultLocomotion
+        && settings.defaultLocomotion && settings.adaptivePhysics;
+    if (looseNavigation) {
+        PhysicsCharacterState3D& capsule = state.virtualCapsule;
+        const float half = 0.5f * assets.avatarSettings.standingHeight;
+        if (!state.virtualCapsuleValid) {
+            capsule = {};
+            capsule.position = { root.position.x, root.position.y, groundHeight(root.position) + half };
+            state.virtualFollowVelocity = {};
+            state.guideFacingYawRadians = locomotionFrameYaw3D(profile, root.orientation);
+            state.virtualCapsuleValid = true;
+        }
+        BodyForecastInput3D response;
+        response.acceleration = assets.avatarSettings.groundAcceleration;
+        response.deceleration = assets.avatarSettings.groundDeceleration;
+        response.brake = assets.avatarSettings.groundBrakeDeceleration;
+        const Vec3 planar = bodyForecastCapsuleStep3D({ capsule.velocity.x, capsule.velocity.y, 0.0f }, {}, response,
+            deltaTime);
+        capsule.velocity = { planar.x, planar.y, 0.0f };
+        capsule.position += (capsule.velocity + Vec3 { state.virtualFollowVelocity.x, state.virtualFollowVelocity.y, 0.0f })
+            * deltaTime;
+        capsule.position.z = groundHeight(capsule.position) + half;
+        capsule.grounded = true;
+        capsule.crouched = false;
+        state.virtualFollowVelocity = {};
+        command.rootPositionWorld = { capsule.position.x, capsule.position.y,
+            capsule.position.z - half + profile.standingRootHeightMeters };
+        command.rootVelocityWorld = capsule.velocity;
+        command.proxyVelocityWorld = capsule.velocity;
+        command.facingYawRadians = state.guideFacingYawRadians;
+        PhysicsScene3D* scenePointer = &scene;
+        command.groundAt = [scenePointer](Vec3 point) {
+            return scenePointer->probeTerrain(point + Vec3 { 0.0f, 0.0f, 0.55f }, 0.03f, 0.0f, 1.5f, 60.0f);
+        };
+    } else {
+        state.virtualCapsuleValid = false;
+    }
+    // A navegacao do padrao: a capsula do jogador (o controlado) ou a virtual do
+    // boneco solto.
+    const auto nav = [&]() -> const PhysicsCharacterState3D& {
+        return looseNavigation ? state.virtualCapsule : scene.characterState();
+    };
+    const auto placeNav = [&](Vec3 feet) {
+        if (looseNavigation)
+            state.virtualCapsule.position = { feet.x, feet.y, feet.z + 0.5f * assets.avatarSettings.standingHeight };
+        else
+            scene.placeCharacter(feet, assets.avatarSettings);
+    };
+    const auto setNavVelocity = [&](Vec3 velocity) {
+        if (looseNavigation)
+            state.virtualCapsule.velocity = velocity;
+        else
+            scene.setCharacterVelocity(velocity);
+    };
+    // (O quanto a capsula vai atras do corpo: a do jogador pela saida - quem a
+    // move -, a virtual no proximo tick.)
+    const auto setFollow = [&](Vec3 velocity) {
+        if (looseNavigation) {
+            state.virtualFollowVelocity = velocity;
+            return;
+        }
+        output.followVelocitySet = true;
+        output.followVelocityWorld = velocity;
+    };
     command.manipulated = grabbed;
     // Comandado sem a capsula do jogador (o treino do RL, muitos atletas na
     // mesma cena): a intencao e o olhar vem do slot.
@@ -216,7 +286,8 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         athlete.commandDirectionValid = false;
         athlete.commandTurnRate = 0.0f;
     }
-    if (!command.controlled && settings.adaptivePhysics) {
+    if (!command.controlled && settings.adaptivePhysics
+        && !(looseNavigation && state.bodyMode != LegacyBodyMode3D::Physical)) {
         // Capsula virtual dos bonecos nao controlados (modo fisico).
         if (!state.navigationAnchorValid) {
             state.navigationAnchor = root.position;
@@ -462,7 +533,8 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
     command.varietySeed = static_cast<std::uint32_t>(slot.entityId * 0x9E3779B97F4A7C15ull >> 32);
     // Locomocao padrao: o modo do corpo do personagem controlado.
     using BodyMode = LegacyBodyMode3D;
-    const bool defaultMode = settings.defaultLocomotion && command.controlled && adaptive && scene.hasCharacter();
+    const bool defaultMode = settings.defaultLocomotion && adaptive
+        && ((command.controlled && scene.hasCharacter()) || looseNavigation);
     const auto toPhysical = [&](const char* why) {
             if (state.bodyMode != BodyMode::Physical) Log::info(std::string("corpo: modo fisico (") + why + ")");
             if (state.guided) {
@@ -489,12 +561,12 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                 state.adaptivePhysics.reset(profile);
                 // (Do pulo, ou de um esbarrao no ar: o pouso e fisico e a
                 // volta vem ~1 s depois dele.)
-                state.physicalFromJump = std::string(why) == "pulo" || !scene.characterState().grounded;
+                state.physicalFromJump = std::string(why) == "pulo" || !nav().grounded;
                 if (settings.defaultSeedFromBody) {
                     // O fisico continua a marcha de onde o padrao estava
                     // (fase pelos pes, sem a arrancada).
                     CharacterLocomotionSeed3D seed;
-                    const Vec3 velocity = scene.characterState().velocity;
+                    const Vec3 velocity = nav().velocity;
                     seed.moving = std::hypot(velocity.x, velocity.y) > 0.3f
                         || command.intent.requestedVelocityWorld.lengthSquared() > 0.01f;
                     // No meio do carrinho (a pancada nele mesmo, ao
@@ -602,7 +674,7 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         if (!defaultMode) {
             toPhysical("padrao desligado");
         } else {
-            const PhysicsCharacterState3D& capsule = scene.characterState();
+            const PhysicsCharacterState3D& capsule = nav();
             // Pancada: contato com algo que se move (outro boneco, objeto)
             // acima de DefaultHitImpulse, ou agarrado.
             float hitImpulse = 0.0f;
@@ -743,7 +815,12 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                         const auto& joint = body.joints[i].positionRadians;
                         state.returnCoordinates[i] = { joint[0], joint[1], joint[2] };
                     }
-                    state.defaultLocomotion.reset(control.facingYawRadians);
+                    // (O boneco solto volta olhando para onde o corpo esta.)
+                    if (looseNavigation) {
+                        state.guideFacingYawRadians = locomotionFrameYaw3D(profile, pelvis.orientation);
+                        command.facingYawRadians = state.guideFacingYawRadians;
+                    }
+                    state.defaultLocomotion.reset(command.facingYawRadians);
                     if (settings.defaultSeedFromBody) {
                         // O padrao comeca de onde o corpo esta: pelve no
                         // rumo dela, na velocidade e na fase dos pes.
@@ -792,12 +869,11 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                     // nela, comeca onde o corpo esta - a capsula a frente
                     // puxava o corpo atras dela.)
                     if (settings.returnSmoothing && settings.physicalBridge && !settings.activeBody)
-                        scene.placeCharacter({ pelvis.position.x, pelvis.position.y, groundHeight(pelvis.position) },
-                            assets.avatarSettings);
+                        placeNav({ pelvis.position.x, pelvis.position.y, groundHeight(pelvis.position) });
                     if (!handoff && settings.returnSmoothing) {
                         state.returnVelocity = { pelvis.linearVelocity.x, pelvis.linearVelocity.y, 0.0f };
                         state.returnRampLeft = settings.returnRampSeconds;
-                        scene.setCharacterVelocity({ state.returnVelocity.x, state.returnVelocity.y, capsule.velocity.z });
+                        setNavVelocity({ state.returnVelocity.x, state.returnVelocity.y, capsule.velocity.z });
                     }
                     if (settings.activeBody) {
                         // A volta pelo Corpo Ativo: o corpo fisico vai a pose
@@ -817,7 +893,7 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                             if (left > 0 && right > 0 && left < body.links.size() && right < body.links.size())
                                 base = (body.links[left].position + body.links[right].position) * 0.5f;
                         }
-                        scene.placeCharacter({ base.x, base.y, groundHeight(pelvis.position) }, assets.avatarSettings);
+                        placeNav({ base.x, base.y, groundHeight(pelvis.position) });
                     } else if (settings.physicalBridge) {
                         // A ponte fisico -> padrao (plano v2, fase D): o corpo
                         // segue fisico (gravidade, juntas, chao) por um tempo
@@ -848,7 +924,7 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                         // para onde as teclas pedem.
                         const Vec3 keys = command.intent.requestedVelocityWorld;
                         const float travelYaw = keys.lengthSquared() > 1e-4f ? std::atan2(keys.y, keys.x)
-                            : control.facingYawRadians;
+                            : command.facingYawRadians;
                         state.defaultLocomotion.startCrouchSprint(travelYaw, true);
                     }
                     Log::info(handoff ? "corpo: levantando - arrancada agachada (padrao)" : "corpo: voltando ao padrao");
@@ -861,7 +937,7 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                 // tropeca) - e no pulo (o voo e o pouso com fisica; volta
                 // logo depois do pouso).
                 constexpr float WallImpact = 1.5f;
-                const bool wall = control.capsuleWallImpact > WallImpact;
+                const bool wall = (command.controlled ? control.capsuleWallImpact : 0.0f) > WallImpact;
                 bool penetrating = false;
                 std::string penetratingLink;
                 // (No carrinho, qualquer encostada: 5 mm.)
@@ -937,7 +1013,7 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                     // dele: a "batida" que a capsula mede ali e a propria
                     // colocacao - 7,55 m/s no comeco de todo carrinho, 28/10 -, nao
                     // uma parede. A parede de verdade e o corpo que bate.)
-                    signals.capsuleWallImpact = defaultTackling ? 0.0f : control.capsuleWallImpact;
+                    signals.capsuleWallImpact = defaultTackling || !command.controlled ? 0.0f : control.capsuleWallImpact;
                     // (Na ponte de contato a guia nao cai com a ajuda do impacto:
                     // a regra "ponte: ajuda caiu" nao vale.)
                     signals.assistLevel = state.contactBridge ? 1.0f : state.impactAssist.level();
@@ -1082,7 +1158,7 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                     if (grabbed || tackleHit || airTackle || hitImpulse > settings.fullPhysicalImpulse)
                         toPhysical(grabbed ? "agarrado" : airTackle ? "voadora" : "pancada forte");
                 } else if (grabbed || tackleHit || airTackle || jumped || hitImpulse > settings.fullPhysicalImpulse
-                    || control.capsuleWallImpact > settings.fullPhysicalWallImpact) {
+                    || (command.controlled ? control.capsuleWallImpact : 0.0f) > settings.fullPhysicalWallImpact) {
                     toPhysical(grabbed ? "agarrado" : airTackle ? "voadora" : tackleHit ? "pancada"
                         : jumped ? "pulo" : hitImpulse > settings.fullPhysicalImpulse ? "pancada forte" : "parede");
                 } else if (hitImpulse > settings.activeEnterImpulse || wall || wallHit || penetrating) {
@@ -1498,13 +1574,13 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
     // laboratorio; tambem na saida do corpo guiado, com o padrao rodando
     // junto do fisico.
     const auto defaultLocomotionInput = [&]() {
-        const PhysicsCharacterState3D& capsule = scene.characterState();
+        const PhysicsCharacterState3D& capsule = nav();
         DefaultLocomotionInput3D input;
         input.feetPositionWorld = command.rootPositionWorld - Vec3 { 0.0f, 0.0f, profile.standingRootHeightMeters };
         input.velocityWorld = capsule.velocity;
         input.grounded = capsule.grounded;
         input.requestedVelocityWorld = command.intent.requestedVelocityWorld;
-        input.facingYawRadians = control.facingYawRadians;
+        input.facingYawRadians = command.facingYawRadians;
         input.lookPitchRadians = command.lookPitchRadians;
         input.groundAt = command.groundAt;
         input.deltaTime = deltaTime;
@@ -1515,8 +1591,8 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         input.tackleHeld = command.intent.crouch;
         {
             const Vec3 keys = command.intent.requestedDirectionWorld;
-            const float forward = keys.x * std::cos(control.facingYawRadians)
-                + keys.y * std::sin(control.facingYawRadians);
+            const float forward = keys.x * std::cos(command.facingYawRadians)
+                + keys.y * std::sin(command.facingYawRadians);
             input.airTackleCombo = command.intent.effort > 0.5f && forward > 0.7f;
         }
         state.crouchHeld = command.intent.crouch;
@@ -1551,10 +1627,9 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         state.defaultLocomotion.update(profile, defaultClips, input);
         const DefaultLocomotionOutput3D& out = state.defaultLocomotion.output();
         if (out.rootScripted) {
-            scene.placeCharacter({ out.tackleRootWorld.x, out.tackleRootWorld.y,
-                groundHeight(out.tackleRootWorld) }, assets.avatarSettings);
+            placeNav({ out.tackleRootWorld.x, out.tackleRootWorld.y, groundHeight(out.tackleRootWorld) });
         }
-        if (out.tackleEnded) scene.setCharacterVelocity({ out.tackleVelocity.x, out.tackleVelocity.y, 0.0f });
+        if (out.tackleEnded) setNavVelocity({ out.tackleVelocity.x, out.tackleVelocity.y, 0.0f });
         state.defaultTackling = out.tackling;
         if (out.valid) {
             RagdollAnimationPose3D pose = out.pose;
@@ -1568,7 +1643,7 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             const Vec3 plannedRoot = rootPosition;
             const BodyObservation3D observation = athlete.observer.observe(profile, body, deltaTime);
             // Os pes onde estao no chao (e a acomodacao de volta a base).
-            const Vec3 capsuleVelocity = scene.characterState().velocity;
+            const Vec3 capsuleVelocity = nav().velocity;
             std::array<bool, 2> planted = out.footPlanted;
             // (Na ponte parado tambem: o pe apoiado fica onde esta no chao - a
             // pose do padrao o arrastava ate o lugar do clipe, o atrito nao
@@ -1638,15 +1713,14 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             // plano (pancada, parede): a pose ancora onde o corpo esta.
             // Parado, a raiz-alvo fica sobre os pes (ActiveStance3D): a
             // capsula vai para onde a base real a quer.
-            output.followVelocitySet = true;
-            output.followVelocityWorld = athlete.stance.baseShift().lengthSquared() > 1e-8f
+            Vec3 follow = athlete.stance.baseShift().lengthSquared() > 1e-8f
                 ? navigationFollowVelocity3D(rootPosition, plannedRoot, 0.0f)
                 : navigationFollowVelocity3D(body.links.front().position, rootPosition,
                     state.contactBridge ? settings.contactBridgeFollowSlack : settings.activeFollowSlack);
             // (Na ponte de contato a capsula leva o golpe pendente junto com o
             // corpo: fora da inercia do controlador, que o anularia num tick.)
-            if (state.contactBridge)
-                output.followVelocityWorld += Vec3 { state.contactKick.x, state.contactKick.y, 0.0f };
+            if (state.contactBridge) follow += Vec3 { state.contactKick.x, state.contactKick.y, 0.0f };
+            setFollow(follow);
             if (activeOutput.knockout) {
                 toPhysical(("nocaute: " + activeOutput.knockoutReason).c_str());
             } else if (!state.bridge && !athlete.active.handingOver()
@@ -1710,10 +1784,9 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         // Carrinho: a capsula vai embaixo da pelve do clipe; no fim sai
         // com o embalo dela.
         if (out.rootScripted) {
-            scene.placeCharacter({ out.tackleRootWorld.x, out.tackleRootWorld.y,
-                groundHeight(out.tackleRootWorld) }, assets.avatarSettings);
+            placeNav({ out.tackleRootWorld.x, out.tackleRootWorld.y, groundHeight(out.tackleRootWorld) });
         }
-        if (out.tackleEnded) scene.setCharacterVelocity({ out.tackleVelocity.x, out.tackleVelocity.y, 0.0f });
+        if (out.tackleEnded) setNavVelocity({ out.tackleVelocity.x, out.tackleVelocity.y, 0.0f });
         if (out.tackling && !state.defaultTackling) Log::info("corpo: carrinho (padrao)");
         state.defaultTackling = out.tackling;
         if (out.valid) {
@@ -1785,7 +1858,7 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                     }
                     style.rootPosition = rootPosition;
                     style.rootOrientation = rootOrientation;
-                    style.velocity = scene.characterState().velocity;
+                    style.velocity = nav().velocity;
                     style.grounded = !out.airborne;
                     style.scripted = out.rootScripted || out.tackling || out.airTackle || out.crouchStarting;
                     style.movingShare = out.movingShare;
@@ -1846,8 +1919,7 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             state.physicsBlend = 0.0f;
         }
         // A capsula manda: nada de ir atras do corpo.
-        output.followVelocitySet = true;
-        output.followVelocityWorld = {};
+        setFollow({});
         return;
     }
     // O levantar pelo padrao (28/10, item 16; Athlete/Body/AnimatedGetUp3D):
@@ -1867,10 +1939,9 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             getUp.step(profile, deltaTime * std::max(0.1f, settings.animatedGetUpSpeed) * pace, pose);
             scene.setRagdollGuidePose(slot.handle, pose.linkPositions, pose.linkOrientations);
             const Vec3 pelvisNow = pose.linkPositions.front();
-            scene.placeCharacter({ pelvisNow.x, pelvisNow.y, groundHeight(pelvisNow) }, assets.avatarSettings);
-            scene.setCharacterVelocity({});
-            output.followVelocitySet = true;
-            output.followVelocityWorld = {};
+            placeNav({ pelvisNow.x, pelvisNow.y, groundHeight(pelvisNow) });
+            setNavVelocity({});
+            setFollow({});
         };
         // (O que encosta fora o chao firme, e o empurrao de fora: guiado, o
         // corpo nao bate no chao, entao qualquer contato e de outra coisa.)
@@ -1931,7 +2002,11 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                         state.returnCoordinates[i] = { joint[0], joint[1], joint[2] };
                         velocities[i] = { rate[0], rate[1], rate[2] };
                     }
-                    state.defaultLocomotion.reset(control.facingYawRadians);
+                    if (looseNavigation) {
+                        state.guideFacingYawRadians = locomotionFrameYaw3D(profile, pelvis.orientation);
+                        command.facingYawRadians = state.guideFacingYawRadians;
+                    }
+                    state.defaultLocomotion.reset(command.facingYawRadians);
                     DefaultLocomotionSeed3D seed;
                     const Vec3 forward = (pelvis.orientation * profile.links.front().modelOrientation.conjugate())
                         .rotate({ 1.0f, 0.0f, 0.0f });
@@ -2226,19 +2301,18 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
     // what the camera follows, and leaving it standing where the fall
     // started is what made the character snap back across the floor the
     // moment a recovery finished.
-    if (command.controlled && scene.hasCharacter()) {
+    if ((command.controlled && scene.hasCharacter()) || looseNavigation) {
         const CharacterLocomotionState3D locomotionState = state.locomotion.telemetry().state;
         if (locomotionState == CharacterLocomotionState3D::Fallen
             || locomotionState == CharacterLocomotionState3D::GettingUp
             || locomotionState == CharacterLocomotionState3D::Tackling) {
             const Vec3 rootPosition = body.links.front().position;
-            scene.placeCharacter({ rootPosition.x, rootPosition.y, groundHeight(rootPosition) },
-                assets.avatarSettings);
+            placeNav({ rootPosition.x, rootPosition.y, groundHeight(rootPosition) });
             // No carrinho a capsula vai com o embalo do corpo: ao sair
             // dele (correndo), ela continua com essa velocidade.
             if (locomotionState == CharacterLocomotionState3D::Tackling) {
                 const Vec3 velocity = body.links.front().linearVelocity;
-                scene.setCharacterVelocity({ velocity.x, velocity.y, 0.0f });
+                setNavVelocity({ velocity.x, velocity.y, 0.0f });
             }
         }
     }

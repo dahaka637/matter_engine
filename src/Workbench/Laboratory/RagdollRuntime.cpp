@@ -952,6 +952,9 @@ AthleteRuntimeSettings3D WorkbenchApp::athleteRuntimeSettings() const {
     settings.shotGestureSeconds = m_shotGestureMilliseconds / 1000.0f;
     settings.activeBody = m_activeBody;
     settings.physicalBridge = m_physicalBridge;
+    settings.contactBridge = m_contactBridge;
+    settings.contactBridgeHardDeltaV = m_contactBridgeHardDeltaV;
+    settings.looseDefaultLocomotion = m_looseDefaultLocomotion;
     settings.modeTable = m_modeTable;
     settings.physicalUsesDefaultSpeeds = m_physicalDefaultSpeeds;
     settings.physicalFeetAssistPercent = m_physicalFeetAssistPercent;

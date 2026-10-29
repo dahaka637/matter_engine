@@ -8,6 +8,7 @@
 #include "Engine/Character/PoseInertializer3D.hpp"
 #include "Engine/Control/AdaptivePhysicalCharacter3D.hpp"
 #include "Engine/Control/ImpactAssist3D.hpp"
+#include "Engine/Physics/PhysicsScene3D.hpp"
 
 #include <cstdint>
 #include <vector>
@@ -98,6 +99,12 @@ struct LegacyAthleteState3D {
     // O golpe pendente (m/s, no plano): o impulso dos contatos com o que se
     // move sobre a massa, ainda nao absorvido.
     Vec3 contactKick;
+    // A capsula virtual do boneco solto no padrao (looseDefaultLocomotion): o
+    // estado dela (o centro, como a do jogador) e o quanto ela vai atras do
+    // corpo no proximo tick (a do jogador recebe isso de quem a move).
+    PhysicsCharacterState3D virtualCapsule;
+    bool virtualCapsuleValid = false;
+    Vec3 virtualFollowVelocity;
     // Neste fisico ele ja esteve levantando (o fim do levantar vai direto a
     // ponte).
     bool getUpSeen = false;

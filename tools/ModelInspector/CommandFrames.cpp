@@ -55,6 +55,9 @@ struct DumpFrame {
     float t = 0.0f;
     int state = 0;
     std::vector<DumpLink> links;
+    // Um segundo corpo (D: o boneco no caminho da sonda, 28/10), desenhado como
+    // palitos dos centros dos links aos dos pais.
+    std::vector<DumpLink> otherLinks;
     bool ballValid = false;
     Vec3 ball;
     std::vector<Vec3> footGoals;
@@ -120,12 +123,12 @@ std::vector<DumpScenario> readDump(const std::string& path) {
             frame = &scenarios.back().frames.back();
         } else if (frame == nullptr) {
             continue;
-        } else if (tag == "C" || tag == "B") {
+        } else if (tag == "C" || tag == "B" || tag == "D") {
             DumpLink link;
             link.box = tag == "B";
             in >> link.id >> link.center.x >> link.center.y >> link.center.z >> link.orientation.x >> link.orientation.y
                 >> link.orientation.z >> link.orientation.w;
-            frame->links.push_back(std::move(link));
+            (tag == "D" ? frame->otherLinks : frame->links).push_back(std::move(link));
         } else if (tag == "K") {
             in >> frame->ball.x >> frame->ball.y >> frame->ball.z;
             frame->ballValid = static_cast<bool>(in);
@@ -350,6 +353,24 @@ int runFrames(const ModelContext& loadedContext, const CommandLine& line) {
             highlights.push_back(circle(ball, radius, { 1, 0, 0 }, { 0, 1, 0 }, color));
             highlights.push_back(circle(ball, radius, { 1, 0, 0 }, { 0, 0, 1 }, color));
             highlights.push_back(circle(ball, radius, { 0, 1, 0 }, { 0, 0, 1 }, color));
+        }
+        if (!frame.otherLinks.empty()) {
+            // (O segundo corpo: cada link ligado ao pai, pelos centros.)
+            Highlight other;
+            other.color = Palette::Focus;
+            for (std::size_t i = 0; i < profile.links.size(); ++i) {
+                const int parent = profile.links[i].parentIndex;
+                if (parent < 0) continue;
+                const DumpLink* child = nullptr;
+                const DumpLink* top = nullptr;
+                for (const DumpLink& link : frame.otherLinks) {
+                    if (link.id == profile.links[i].id) child = &link;
+                    if (link.id == profile.links[static_cast<std::size_t>(parent)].id) top = &link;
+                }
+                if (child != nullptr && top != nullptr)
+                    other.segments.push_back({ toSkeleton(top->center), toSkeleton(child->center) });
+            }
+            highlights.push_back(std::move(other));
         }
         for (const Vec3 goal : frame.footGoals) {
             Highlight marker;
