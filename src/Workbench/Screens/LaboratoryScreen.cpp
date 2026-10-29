@@ -762,7 +762,7 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
         command.navigationProxy = true;
         // (28/10, item 4: no padrao quem bate na parede, no pilar e na trave e
         // o corpo, nao a capsula.)
-        command.passWalls = m_capsulePassesWalls && m_defaultLocomotion;
+        command.passWalls = m_capsulePassesWalls && m_defaultLocomotion && m_controlledPassWalls;
     }
     // A voadora animada no ar (o padrao, ate encostar em algo): a capsula
     // segue no embalo do pulo. Com o carrinho em andamento o jogador conta como

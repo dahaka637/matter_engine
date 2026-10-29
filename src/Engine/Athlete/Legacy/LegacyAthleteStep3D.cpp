@@ -972,6 +972,7 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         // velocidades; ela vai atras do corpo quando ele se afasta.)
         output.controlledAnimatedSet = true;
         output.controlledAnimated = animated || active;
+        output.controlledPassWalls = defaultMode && state.bodyMode == BodyMode::Animated;
     }
     // A bola (24/10/2026, a reescrita dos gestos): o pedido com a bola no
     // alcance aplica a forca na hora, sempre (computeBallOutcome3D, como

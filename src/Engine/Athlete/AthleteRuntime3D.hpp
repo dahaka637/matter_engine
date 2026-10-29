@@ -107,6 +107,11 @@ struct AthleteRuntimeOutput3D {
     // O controlado esta no modo animado (o padrao).
     bool controlledAnimatedSet = false;
     bool controlledAnimated = false;
+    // So no padrao puro (nem na ponte, nem na volta, nem no fisico): a capsula
+    // pode atravessar paredes (CharacterMotorCommand3D::passWalls; 28/10). Fora
+    // dele ela fica com o corpo - atravessando, ia ate 0,55 m para dentro da
+    // parede com o corpo preso nela.
+    bool controlledPassWalls = false;
     // A escala da velocidade da capsula do controlado no proximo movimento
     // dela (a volta do fisico sai da velocidade do corpo).
     float controlledSpeedScale = 1.0f;

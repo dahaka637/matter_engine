@@ -1457,7 +1457,8 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
         // (item 4, 28/10); XCAPSULA_ATRAVESSA=0, a de antes.
         {
             const char* pass = std::getenv("XCAPSULA_ATRAVESSA");
-            command.passWalls = (pass == nullptr || pass[0] != '0') && settings.defaultLocomotion;
+            command.passWalls = (pass == nullptr || pass[0] != '0') && settings.defaultLocomotion
+                && mode() == BodyModeKind3D::Animated;
         }
         scene->moveCharacter(command, active, Dt);
         const PhysicsCharacterState3D& capsule = scene->characterState();
@@ -2197,6 +2198,12 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
         // apoiado nao treme, so trava no chao e no ar segue o estilo.
         const bool defaultMode = mode() == BodyModeKind3D::Animated
             || mode() == BodyModeKind3D::Returning;
+        if (std::getenv("XPENETRA") && step >= 0 && !bodyState.links.empty()) {
+            const Vec3 gap = scene->characterState().position - bodyState.links.front().position;
+            metrics.capsuleGapEnd = std::hypot(gap.x, gap.y);
+            if (mode() != BodyModeKind3D::Animated)
+                metrics.capsuleGapOutside = std::max(metrics.capsuleGapOutside, metrics.capsuleGapEnd);
+        }
         if (std::getenv("XPENETRA") && step >= 0 && mode() == BodyModeKind3D::Animated && !bodyState.links.empty()) {
             std::vector<Vec3> positions;
             std::vector<Quaternion> orientations;
@@ -2838,9 +2845,10 @@ void printMetrics(const Scenario& scenario, const Metrics& metrics, bool footste
         std::printf("%-18s   troca fisico>padrao: pelve max %.2f m/s, pelve x capsula max %.2f m/s, pico %.0f m/s2, peito %.3f em 0,1 s\n",
             "", metrics.transitionSpeedMax, metrics.transitionSpeedGap, metrics.transitionPeak, metrics.transitionTrunkRate);
     if (std::getenv("XPENETRA"))
-        std::printf("%-18s   no padrao, dentro do mundo: tronco %.3f m (%s, %.2f s), pernas %.3f, bracos %.3f\n", "",
+        std::printf("%-18s   no padrao, dentro do mundo: tronco %.3f m (%s, %.2f s), pernas %.3f, bracos %.3f | capsula longe "
+                    "da pelve: fora do padrao ate %.2f m, no fim %.2f m\n", "",
             metrics.penetrationTrunk, metrics.penetrationTrunkLink.c_str(), metrics.penetrationTrunkAt,
-            metrics.penetrationLeg, metrics.penetrationArm);
+            metrics.penetrationLeg, metrics.penetrationArm, metrics.capsuleGapOutside, metrics.capsuleGapEnd);
     std::printf("%-18s   pernas: cruzadas %d ticks, sobreposicao %.3f m, ordem trocada pes %d joelhos %d", "",
         metrics.legCrossTicks, metrics.legOverlap, metrics.legOrderTicks, metrics.kneeOrderTicks);
     if (footsteps)

@@ -1036,7 +1036,10 @@ void WorkbenchApp::updateActiveRagdolls(float deltaTime) {
     m_athleteRuntime.update(*m_physicsScene, assets, athletes, balls, athleteRuntimeSettings(), control, deltaTime,
         output);
     if (output.followVelocitySet) m_characterFollowVelocity = output.followVelocityWorld;
-    if (output.controlledAnimatedSet) m_controlledAnimated = output.controlledAnimated;
+    if (output.controlledAnimatedSet) {
+        m_controlledAnimated = output.controlledAnimated;
+        m_controlledPassWalls = output.controlledPassWalls;
+    }
     m_controlledSpeedScale = output.controlledSpeedScale;
     if (output.ballRequestConsumed) m_ballRequest = BallActionKind3D::None;
     m_reachValid = output.reachValid;

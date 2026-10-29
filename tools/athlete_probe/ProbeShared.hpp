@@ -198,6 +198,8 @@ struct Metrics {
     // do tronco.
     float penetrationTrunk = 0.0f, penetrationLeg = 0.0f, penetrationArm = 0.0f, penetrationTrunkAt = -1.0f;
     std::string penetrationTrunkLink;
+    // E a capsula longe da pelve no plano (m): a maior fora do padrao e a do fim.
+    float capsuleGapOutside = 0.0f, capsuleGapEnd = 0.0f;
     // Sem o limite de frente: o pe ou o joelho esquerdo a direita do outro (21/10).
     int legOrderTicks = 0;
     int kneeOrderTicks = 0;
