@@ -7,6 +7,24 @@
 
 **Última atualização:** 29 de outubro de 2026
 
+## O carrinho entre corpos (Claude, 29/10 madrugada, `677346f`)
+
+Relato do usuário, testando: "as vezes ele buga quando dou carrinho nos outros e vice versa... ou trava ou joga longe ou trava e depois joga longe".
+
+- **Medido** (sonda: `carrinho_boneco_lado`/`_frente`, `boneco_carrinho_em_mim`/`_de_frente`, com `XCARRINHO=1`):
+  - grudados 1,1–1,7 s;
+  - o atingido levado 4–6 m;
+  - o boneco dando carrinho em quem estava parado o levava 3,5 m.
+- **Causa 1** (`CharacterLocomotion3D`): no físico, o carrinho seguia com o empurrão do mergulho (a entrada ×1,15, ~11,7 m/s com o impulso de 30%) e o atrito baixo do deslize depois de pegar alguém. Os dois iam juntos 5 m.
+  - **Agora:** um impulso do que se move acima de `T_TackleBodyHit` (15 N.s, somado no carrinho) corta os dois. A bola não entra nos contatos do corpo: ela empurra por fora.
+- **Causa 2** (`LegacyAthleteStep3D`): o carrinho animado mede um golpe pequeno num corpo (Dv 0,2 m/s chegando a 5,5 m/s) e ia à ponte de contato, onde a locomoção seguia correndo por cima do outro.
+  - **Agora:** chegando num corpo acima de 1,5 m/s, ele vai ao físico.
+- **Depois:**
+  - grudados 0,6–0,8 s;
+  - o boneco dando carrinho em quem está parado o leva 1,8 m;
+  - o atingido ainda vai ~4 m com o impulso de 30% (2–3 m com 0%): é o mergulho a 10–11 m/s.
+- **Conferência:** contratos com as 3 falhas antigas; a prova e2 igual.
+
 ## A IA de captura, para o teste dos contatos (Claude, 29/10 madrugada)
 
 Pedido do usuário: uma aba de IA em que os bonecos, "limitados a usar as mesmas mecânicas que eu... como se fosse uma pessoa controlando", busquem a bola, tentem ficar com ela a 2–5 m dele e tentem roubá-la dele; "só para eu fazer um teste rápido, não vai ser a IA definitiva"; "meio humanizado... para não parecer um míssil teleguiado".
