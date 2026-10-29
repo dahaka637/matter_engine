@@ -213,8 +213,20 @@ float TrackingViewer3D::filterBetaOf(const std::filesystem::path& trackingTask) 
     return task.is_object() ? task.value("filtroBeta", 0.2f) : 0.2f;
 }
 
+TrackingViewer3D::Conditions TrackingViewer3D::conditionsOf(const std::filesystem::path& trackingTask) {
+    Conditions out;
+    std::ifstream file(trackingTask);
+    if (!file) return out;
+    const nlohmann::json task = nlohmann::json::parse(file, nullptr, false);
+    if (!task.is_object()) return out;
+    out.followSlack = task.value("seguirCorpo", out.followSlack);
+    out.realFallOnly = task.value("soQuedaReal", out.realFallOnly);
+    return out;
+}
+
 TrackingViewer3D::TrackingViewer3D(const std::filesystem::path& assetsDirectory, std::uint64_t seed,
-    const std::string& drill, const std::filesystem::path& locomotionTask, float speedScale, float filterBeta)
+    const std::string& drill, const std::filesystem::path& locomotionTask, float speedScale, float filterBeta,
+    Conditions conditions)
     : m_impl(std::make_unique<Impl>()) {
     Impl& impl = *m_impl;
     impl.heading = headingOf(drill);
@@ -239,10 +251,10 @@ TrackingViewer3D::TrackingViewer3D(const std::filesystem::path& assetsDirectory,
     settings.threads = 1;
     settings.seed = seed;
     settings.evaluation = true;
-    settings.realFallOnly = true;
-    // (As condicoes do treino de 29/10: o lider do laboratorio indo atras do corpo.)
+    // (As condicoes do treino: o lider do laboratorio, indo ou nao atras do corpo, e o fim.)
+    settings.realFallOnly = conditions.realFallOnly;
     settings.labLeader = true;
-    settings.leaderFollowSlack = 0.15f;
+    settings.leaderFollowSlack = conditions.followSlack;
     settings.evaluationSpeed = DefaultSpeed;
     settings.evaluationMode = mode;
     settings.actionFilterBeta = filterBeta;

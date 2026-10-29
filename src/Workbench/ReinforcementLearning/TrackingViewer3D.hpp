@@ -9,6 +9,14 @@
 
 namespace MatterEngine {
 
+// O lider indo atras do corpo (a folga, m; < 0 nao vai) e se so a queda real acaba o
+// episodio, como no treino ("seguirCorpo" e "soQuedaReal" do tarefa.json; sem eles, os de
+// 29/10 de madrugada: 0,15 e so a queda).
+struct TrackingViewerConditions3D {
+    float followSlack = 0.15f;
+    bool realFallOnly = true;
+};
+
 // O visualizador de um treino do rastreador fisico (DReCon; vault
 // 04_locomocao/referencia/pesquisas/12_especificacao_rastreador.md) na tela de
 // Aprendizado: o ragdoll do jogo a 0% de ajuda seguindo o lider (o modo padrao
@@ -41,11 +49,14 @@ public:
     [[nodiscard]] static float speedScaleOf(const std::filesystem::path& trackingTask);
     // O filtro da acao do treino ("filtroBeta"; 0,2, o do DReCon, sem ele).
     [[nodiscard]] static float filterBetaOf(const std::filesystem::path& trackingTask);
+    using Conditions = TrackingViewerConditions3D;
+    [[nodiscard]] static Conditions conditionsOf(const std::filesystem::path& trackingTask);
 
     // drill: "rumoN" (andar no rumo N) ou um dos parados; com locomotionTask, o id de um
     // exercicio dela (vazio: o primeiro com peso), levado pelo piloto dele.
     TrackingViewer3D(const std::filesystem::path& assetsDirectory, std::uint64_t seed, const std::string& drill = {},
-        const std::filesystem::path& locomotionTask = {}, float speedScale = 1.0f, float filterBeta = 0.2f);
+        const std::filesystem::path& locomotionTask = {}, float speedScale = 1.0f, float filterBeta = 0.2f,
+        TrackingViewerConditions3D conditions = {});
     ~TrackingViewer3D() override;
     TrackingViewer3D(const TrackingViewer3D&) = delete;
     TrackingViewer3D& operator=(const TrackingViewer3D&) = delete;

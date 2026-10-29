@@ -586,7 +586,8 @@ void ReinforcementLearningScreen::ensureViewer() {
                     m_viewerDrill, seed);
             else if (tracking) m_locomotion = std::make_unique<TrackingViewer3D>(m_options.sourceRoot / "assets", seed,
                     m_viewerDrill, TrackingViewer3D::locomotionTaskOf(task, m_options.sourceRoot / "assets"),
-                    TrackingViewer3D::speedScaleOf(task), TrackingViewer3D::filterBetaOf(task));
+                    TrackingViewer3D::speedScaleOf(task), TrackingViewer3D::filterBetaOf(task),
+                    TrackingViewer3D::conditionsOf(task));
             else
                 m_locomotion = std::make_unique<LocomotionViewer3D>(task, m_options.sourceRoot / "assets", m_viewerDrill,
                     seed);

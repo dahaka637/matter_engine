@@ -131,7 +131,8 @@ def task_path(name: str) -> str:
     return str(path)
 
 
-def write_run_files(run: Path, cenario: str, tarefa: str = "", escala: float = 1.0, beta: float = 0.2) -> None:
+def write_run_files(run: Path, cenario: str, tarefa: str = "", escala: float = 1.0, beta: float = 0.2,
+                    seguir: float = -1.0, so_queda: bool = False) -> None:
     """O treino como a tela de Aprendizado o reconhece: run.json (kind rastreador) e tarefa.json."""
     for name, data in (("run.json", {"kind": "rastreador", "task": f"rastreador_{cenario}"}),
                        ("tarefa.json", {"schema": "matter-tracking-1", "id": f"rastreador_{cenario}",
@@ -149,6 +150,8 @@ def write_run_files(run: Path, cenario: str, tarefa: str = "", escala: float = 1
         task["displayName"] = f"Rastreador com os exercicios de {path.stem}"
     task["escalaVelocidade"] = escala
     task["filtroBeta"] = beta
+    task["seguirCorpo"] = seguir
+    task["soQuedaReal"] = so_queda
     (run / "tarefa.json").write_text(json.dumps(task, ensure_ascii=False, indent=1))
     # O comando deste treinador: o "Continuar treino" da tela o reabre igual.
     config = json.loads((run / "run.json").read_text())
@@ -253,7 +256,8 @@ def main() -> int:
 
     run = DATA / args.treino
     run.mkdir(parents=True, exist_ok=True)
-    write_run_files(run, args.cenario, args.tarefa, args.escala_velocidade, args.filtro_beta)
+    write_run_files(run, args.cenario, args.tarefa, args.escala_velocidade, args.filtro_beta, args.seguir_corpo,
+                    args.so_queda_real)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     torch.manual_seed(args.semente)
     batch = native.TrackingBatch(str(REPO / "assets"), environments=args.mundos, threads=args.threads,
