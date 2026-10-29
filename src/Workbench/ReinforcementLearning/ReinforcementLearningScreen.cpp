@@ -491,7 +491,6 @@ void ReinforcementLearningScreen::loadDrills() {
         // O rastreador com os exercicios de uma tarefa da locomocao (29/10): a lista dela,
         // com as categorias e os pesos (o resto da tela do classico fica de fora).
         for (const LocomotionViewer3D::Drill& drill : LocomotionViewer3D::drillsOf(exercises)) {
-            if (drill.getUp) continue;
             m_drillIds.push_back(drill.id);
             m_drillNames.push_back(drill.name);
             m_drillPhases.push_back(drill.phase);
@@ -1313,10 +1312,16 @@ void ReinforcementLearningScreen::drawDrills() {
                 const std::string label = UI::FontAwesome::label(UI::FontAwesome::Crosshairs, m_drillNames[i].c_str())
                     + "##drill" + m_drillIds[i];
                 const bool training = i >= m_drillWeights.size() || m_drillWeights[i] > 0.0f;
+                // (No rastreador o levantar e outra rede, o DeepMimic: fica na lista, desligado.)
+                const bool apart = TrackingViewer3D::isTrackingTask(m_viewerTask) && i < m_drillInfo.size()
+                    && m_drillInfo[i].getUp;
+                ImGui::BeginDisabled(apart);
                 if (phaseButton(label.c_str(), m_drillIds[i] == m_viewerDrill, { -1.0f, ui(30.0f) }, training ? 1 : 0))
                     showDrill(m_drillIds[i]);
-                tooltip(training ? "Mostra este exercício no mundo (o treino sorteia todos pelos pesos)."
-                                 : "Pronto, mas ainda fora do treino. Mostra este exercício no mundo.");
+                ImGui::EndDisabled();
+                tooltip(apart ? "Desligado: o levantar treina à parte, numa rede própria (de bruços e de costas)."
+                    : training ? "Mostra este exercício no mundo (o treino sorteia todos pelos pesos)."
+                               : "Pronto, mas ainda fora do treino. Mostra este exercício no mundo.");
             }
         }
         ImGui::BeginDisabled();

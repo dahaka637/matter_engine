@@ -30,12 +30,15 @@ void TrackingClipReference3D::pose(float t, Vec3 ground, float yawRadians, std::
     }
     // A raiz no modelo (como sampleRagdollAnimationPose3D: o modelPosition da
     // pelve mais o deslocamento; a orientacao do modelo vezes o delta), depois
-    // girada pelo rumo e posta no ponto do chao.
+    // girada pelo rumo e posta no ponto do chao mais a altura da pelve em pe (a
+    // regra do padrao, DefaultLocomotion3D_Tackle: o modelo tem a pelve na
+    // origem; sem ela o clipe comecava 0,95 m abaixo do chao, 29/10).
     const AnimationTransformSample3D sample =
         sampleAnimationTrackSmooth3D(*m_tracks[m_root], time, m_clip->durationSeconds, false);
     const RagdollLinkDefinition3D& link = profile.links[m_root];
     const Quaternion yaw = Quaternion::fromAxisAngle({ 0.0f, 0.0f, 1.0f }, yawRadians);
-    root = ground + yaw.rotate(link.modelPosition + sample.translationOffsetMeters);
+    root = ground + Vec3 { 0.0f, 0.0f, profile.standingRootHeightMeters }
+        + yaw.rotate(link.modelPosition + sample.translationOffsetMeters);
     orientation = (yaw * link.modelOrientation * sample.rotationDelta).normalized();
 }
 

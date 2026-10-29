@@ -661,10 +661,13 @@ struct TrackingTraining3D::Impl {
             const Vec3 at = w.leader->capsulePosition();
             const bool recenter = std::hypot(at.x, at.y) > RecenterDistance;
             if (task) {
-                // (O piloto recomeca no lider, ou na origem com ele.)
+                // O lider recomeca do repouso e aquece 1 a 3 s no exercicio novo,
+                // como no primeiro episodio: continuando, o parado (o piloto
+                // soltando) freava de uma vez o lider a 3 m/s sob o corpo recem-
+                // posto, e o parado caia em ~70% dos episodios do treino contra 0%
+                // no portao (29/10).
                 w.taskDrill = pickTaskDrill(w);
-                if (recenter) restartLeader(w, 2.0f);
-                else startPilot(w);
+                restartLeader(w, uniform(w.rng, 1.0f, 3.0f));
             } else {
                 // O exercicio do episodio seguinte (de um parado de volta a andar, um pedido novo).
                 const TrackingDrill3D next = pickDrill(w);

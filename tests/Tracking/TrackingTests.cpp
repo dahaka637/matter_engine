@@ -4,6 +4,7 @@
 #include "Engine/Athlete/AthleteAssets3D.hpp"
 #include "Engine/RL/Body/RLBody3D.hpp"
 #include "Engine/Tracking/TrackingContract3D.hpp"
+#include "Engine/Tracking/TrackingGetUpTraining3D.hpp"
 #include "Engine/Tracking/TrackingLeader3D.hpp"
 #include "Engine/Tracking/TrackingReward3D.hpp"
 #include "Engine/Tracking/TrackingTraining3D.hpp"
@@ -222,6 +223,34 @@ void taskTests() {
         "o episodio registra o exercicio da tarefa");
 }
 
+// O levantar (DeepMimic): o clipe comeca deitado no chao, e nao debaixo dele (29/10:
+// sem a altura da pelve em pe a referencia comecava 0,95 m abaixo e o corpo caia no
+// vazio), e o corpo seguindo a referencia em malha aberta fica sobre o chao.
+void getUpTests() {
+    for (const char* clip : { "frente", "costas" }) {
+        TrackingGetUpSettings3D settings;
+        settings.assetsDirectory = Assets;
+        settings.clip = clip;
+        settings.environments = 1;
+        settings.threads = 1;
+        settings.evaluation = true;
+        TrackingGetUpTraining3D batch(settings);
+        std::vector<float> action(batch.actionSize()), rewards(1);
+        std::vector<std::uint8_t> terminated(1), truncated(1);
+        float lowest = 1.0e9f;
+        for (int step = 0; step < 90; ++step) {
+            batch.referenceActions(action);
+            batch.step(action, rewards, terminated, truncated);
+            for (const std::string& line : { batch.frameLines(0, false) }) {
+                // A pelve e a primeira linha: "C Pelvis x y z ...".
+                float x = 0.0f, y = 0.0f, z = 0.0f;
+                if (std::sscanf(line.c_str(), "%*s %*s %f %f %f", &x, &y, &z) == 3) lowest = std::min(lowest, z);
+            }
+        }
+        expect(lowest > 0.0f, std::string("levantar ") + clip + ": a pelve fica sobre o chao (" + std::to_string(lowest) + " m)");
+    }
+}
+
 // A estrela: o piloto anda no trote pedido (nunca acima dele), o peito fixo nao gira, o girando gira e
 // o livre acompanha o rumo; o exercicio do episodio e o da estrela.
 void starTests() {
@@ -269,6 +298,7 @@ int main() {
         starTests();
         followTests(*bundle);
         taskTests();
+        getUpTests();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "rastreador: FALHOU: %s (%d checagens antes)\n", error.what(), checks);
         return 1;
