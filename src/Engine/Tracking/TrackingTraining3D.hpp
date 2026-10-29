@@ -101,6 +101,15 @@ struct TrackingTrainingSettings3D {
     float starRadius = 10.0f;
     // Falhar so na queda de verdade (a cabeca abaixo de 1,1 m), sem acabar pela distancia ao lider.
     bool realFallOnly = false;
+    // O lider com os valores do laboratorio (29/10: as molas, a arrancada, a
+    // resposta e a reversao da capsula e a corrida 8/6), e nao os de fabrica
+    // do atleta. false: os de fabrica (o rastreador de 19/10).
+    bool labLeader = false;
+    // O lider vai atras do corpo quando a pelve se afasta mais que isto (m) da
+    // dele, pela regra da capsula do jogo (navigationFollowVelocity3D), so na
+    // posicao: a velocidade do lider continua a pedida, entao ficar lento
+    // continua custando na nota. < 0: nao vai (o DReCon).
+    float leaderFollowSlack = -1.0f;
 };
 
 // Um episodio que acabou.

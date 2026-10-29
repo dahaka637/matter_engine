@@ -188,7 +188,14 @@ def main() -> int:
     parser.add_argument("--escala-velocidade", type=float, default=1.0, help="escala dos pedidos de velocidade no treino")
     parser.add_argument("--pernas-adaptaveis", action="store_true",
                         help="em perigo (a cabeca se afastando do lider ou um tropeco) as pernas pesam 0,3 na nota")
+    parser.add_argument("--lider-laboratorio", action="store_true",
+                        help="o lider com os valores do laboratorio (molas, arrancada, resposta 150%%, reversao, corrida 8/6)")
+    parser.add_argument("--seguir-corpo", type=float, default=-1.0,
+                        help="o lider vai atras do corpo alem desta folga (m), so na posicao (< 0: nao vai)")
     args = parser.parse_args()
+    # (Como os outros treinadores: sem o vigia de temperatura, nao treina.)
+    from matter_rl.system import require_watchdog
+    require_watchdog()
 
     run = DATA / args.treino
     run.mkdir(parents=True, exist_ok=True)
@@ -205,12 +212,14 @@ def main() -> int:
                                  alive_bonus=args.premio_de_pe, speed_scale=args.escala_velocidade,
                                  star_share=args.estrela, star_fixed_share=args.estrela_fixo,
                                  star_turning_share=args.estrela_girando, star_speed=args.estrela_velocidade,
-                                 star_radius=args.estrela_raio, real_fall_only=args.so_queda_real)
+                                 star_radius=args.estrela_raio, real_fall_only=args.so_queda_real,
+                                 lab_leader=args.lider_laboratorio, follow_slack=args.seguir_corpo)
     n, obs_size, act_size = batch.num_envs, batch.obs_size, batch.action_size
     model = Policy(obs_size, act_size).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=3e-4)
     counters = {"rodada": 0, "decisoes": 0, "episodios": 0}
     settings = {"cenario": args.cenario, "teto": args.teto, "corrida": not args.sem_corrida, "projeteis": args.projeteis,
+                "lider_laboratorio": args.lider_laboratorio, "seguir_corpo": args.seguir_corpo,
                 "mundos": n,
                 "passos": args.passos,
                 "observacao": batch.observation_names(), "acao": batch.action_names()}

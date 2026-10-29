@@ -179,6 +179,9 @@ TrackingViewer3D::TrackingViewer3D(const std::filesystem::path& assetsDirectory,
     settings.seed = seed;
     settings.evaluation = true;
     settings.realFallOnly = true;
+    // (As condicoes do treino de 29/10: o lider do laboratorio indo atras do corpo.)
+    settings.labLeader = true;
+    settings.leaderFollowSlack = 0.15f;
     settings.evaluationSpeed = DefaultSpeed;
     settings.evaluationMode = mode;
     // O visualizador nao recomeca pelo tempo (so pela queda ou o afastamento).

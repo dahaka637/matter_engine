@@ -41,6 +41,10 @@ def main() -> int:
                              "estrela, estrela_fixo, estrela_girando: a estrela de 8 pontas na velocidade --velocidade")
     parser.add_argument("--duracao", type=float, default=0.0, help="segundos por episodio (padrao: 20; trocas: 60)")
     parser.add_argument("--cubo-kg", type=float, default=0.0, help="com os projeteis do DReCon nessa massa (a Fig. 11)")
+    parser.add_argument("--lider-laboratorio", action="store_true",
+                        help="o lider com os valores do laboratorio (molas, arrancada, resposta 150%%, reversao, corrida 8/6)")
+    parser.add_argument("--seguir-corpo", type=float, default=-1.0,
+                        help="o lider vai atras do corpo alem desta folga (m), so na posicao (< 0: nao vai)")
     args = parser.parse_args()
     run = DATA / args.treino
     duration = args.duracao or (60.0 if args.modo == "trocas" else 20.0)
@@ -48,7 +52,8 @@ def main() -> int:
                                  scenario="frente", evaluation=True, evaluation_speed=args.velocidade,
                                  episode_seconds=duration, evaluation_mode=args.modo,
                                  real_fall_only=args.so_queda_real, projectiles=args.cubo_kg > 0.0, projectile_minimum_kg=max(args.cubo_kg, 0.01),
-                                 projectile_maximum_kg=max(args.cubo_kg, 0.01))
+                                 projectile_maximum_kg=max(args.cubo_kg, 0.01),
+                                 lab_leader=args.lider_laboratorio, follow_slack=args.seguir_corpo)
     model = Policy(batch.obs_size, batch.action_size)
     rodada = 0
     if not args.zero:
@@ -76,7 +81,7 @@ def main() -> int:
     if args.modo in ("parado", "giro", "giro_rapido"):
         # Parado (e girando parado): todos chegam ao fim, sem cair nem se afastar do lider.
         passed = float(rows[:, 2].mean()) == 0.0
-    result = {"treino": args.treino, "rodada": rodada, "modo": args.modo, "duracao": duration, "cubo_kg": args.cubo_kg,
+    result = {"treino": args.treino, "rodada": rodada, "modo": args.modo, "duracao": duration, "cubo_kg": args.cubo_kg, "lider_laboratorio": args.lider_laboratorio, "seguir_corpo": args.seguir_corpo, "zero": args.zero,
               "velocidade": args.velocidade, "episodios": len(rows),
               "quedas": falls, "fins_antes_do_tempo": float(rows[:, 2].mean()), "segundos_medio": float(rows[:, 1].mean()), "erro_vel_cm": error,
               "vel_corpo": float(rows[:, 5].mean()), "vel_pedida": float(rows[:, 6].mean()),

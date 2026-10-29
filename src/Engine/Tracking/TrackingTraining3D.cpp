@@ -1,6 +1,7 @@
 #include "Engine/Tracking/TrackingTraining3D.hpp"
 
 #include "Engine/Athlete/AthleteAssets3D.hpp"
+#include "Engine/Character/CharacterControlApplication3D.hpp"
 #include "Engine/Core/TaskScheduler.hpp"
 #include "Engine/Materials/MaterialLibrary.hpp"
 #include "Engine/Physics/PhysicsEngine3D.hpp"
@@ -45,6 +46,8 @@ constexpr float StarBrake = 1.5f;
 constexpr float StarAccelerate = 4.0f;
 // E a taxa maxima com que o rumo do pedido curva (rad/s).
 constexpr float StarTurnRate = 1.0f;
+// O lider indo atras do corpo: no maximo isto (m/s).
+constexpr float MaximumFollowSpeed = 2.0f;
 
 } // namespace
 
@@ -342,6 +345,18 @@ struct TrackingTraining3D::Impl {
         ++w.ticks;
     }
 
+    // O lider vai atras do corpo (leaderFollowSlack), so na posicao.
+    void followBody(World& w) const {
+        if (settings.leaderFollowSlack < 0.0f || !w.leader->state().valid || w.body->links.empty()) return;
+        Vec3 follow = navigationFollowVelocity3D(w.body->links.front().position, w.leader->state().rootPosition,
+            settings.leaderFollowSlack);
+        // (No maximo 2 m/s, e nao os 6 do jogo: a capsula deslocada sem
+        // velocidade arrasta os pes que o padrao prende no chao.)
+        const float speed = follow.length();
+        if (speed > MaximumFollowSpeed) follow = follow * (MaximumFollowSpeed / speed);
+        w.leader->shift(follow * TickSeconds);
+    }
+
     // O lider recomeca parado perto da origem e aquece pelo jogador virtual.
     void restartLeader(World& w, float warmSeconds) const {
         w.leader->reset({}, w.command.facingYawRadians);
@@ -413,6 +428,7 @@ struct TrackingTraining3D::Impl {
         const float smooth = settings.actionRateWeight > 0.0f && w.decisions > 0
             ? static_cast<float>(std::exp(-settings.actionRateWeight * actionRate)) : 1.0f;
         for (int k = 0; k < TicksPerDecision; ++k) {
+            followBody(w);
             leaderTick(w);
             contract->driveTargets(w.leader->state(), *w.body, w.filtered, w.drives);
             w.scene->setRagdollActiveDriveTargets(w.handle, w.drives, false);
@@ -510,6 +526,20 @@ TrackingTraining3D::TrackingTraining3D(const TrackingTrainingSettings3D& setting
     const AthleteRuntimeAssets3D& assets = impl.bundle->assets();
     if (assets.defaultClips == nullptr) throw std::runtime_error("rastreador: faltam os clipes do padrao");
     impl.contract = std::make_unique<TrackingContract3D>(*impl.profile);
+    if (settings.labLeader) {
+        // Os do laboratorio (WorkbenchApp.hpp, LabDefault* e o m_physicalFeel).
+        // shortcut: copiados a mao; mudando la, mudar aqui (ou passar a uma funcao comum quando o jogo rodar o rastreador).
+        AthleteRuntimeSettings3D& r = impl.runtime;
+        r.physicalFeel = 1;
+        r.defaultStartGesturePercent = 100.0f;
+        r.capsuleResponsePercent = 100.0f * 1.5f;
+        r.capsuleReversalPercent = 100.0f;
+        r.defaultTrotSpeed = 4.5f;
+        r.defaultSprintForwardSpeed = 8.0f;
+        r.defaultSprintSideSpeed = 6.0f;
+        r.defaultSprintBackwardSpeed = 6.0f;
+        r.defaultMaxSprintSpeed = 10.0f;
+    }
     for (std::size_t i = 0; i < impl.profile->links.size(); ++i) {
         if (impl.profile->links[i].id == "LeftFoot") impl.feet[0] = static_cast<std::uint32_t>(i);
         if (impl.profile->links[i].id == "RightFoot") impl.feet[1] = static_cast<std::uint32_t>(i);

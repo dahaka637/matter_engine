@@ -35,6 +35,12 @@ void TrackingLeader3D::reset(Vec3 groundPosition, float facingYawRadians) {
     m_state = TrackingLeaderState3D {};
 }
 
+void TrackingLeader3D::shift(Vec3 delta) {
+    const Vec3 d = planar(delta);
+    m_capsulePosition += d;
+    m_previousRoot += d;
+}
+
 void TrackingLeader3D::step(const TrackingCommand3D& command, float deltaTime) {
     const RagdollProfile3D& profile = *m_profile;
     const float dt = std::max(1e-4f, deltaTime);

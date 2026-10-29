@@ -141,6 +141,43 @@ void batchTests() {
     expect(!episodes.empty() && episodes.front().fell, "o episodio da queda e registrado");
 }
 
+// O lider indo atras do corpo: o deslocamento move a raiz sem virar velocidade
+// (a nota da velocidade continua contra o pedido); e no lote, com o corpo
+// parado para tras, o lider fica perto dele em vez de ir embora.
+void followTests(const AthleteBundle3D& bundle) {
+    TrackingLeader3D leader = warmLeader(bundle, 3.0f);
+    TrackingCommand3D command;
+    command.requestedVelocityWorld = { 3.0f, 0.0f, 0.0f };
+    const Vec3 before = leader.state().rootPosition;
+    leader.shift({ -0.05f, 0.0f, 0.0f });
+    leader.step(command, 1.0f / 120.0f);
+    const Vec3 moved = leader.state().rootPosition - before;
+    expect(moved.x < 0.0f, "o deslocamento move a raiz");
+    expect(std::abs(leader.state().centerOfMassVelocity.x - 3.0f) < 1.0f,
+        "o deslocamento nao vira velocidade do lider");
+
+    TrackingTrainingSettings3D settings;
+    settings.assetsDirectory = Assets;
+    settings.environments = 1;
+    settings.threads = 1;
+    settings.evaluation = true;
+    settings.evaluationSpeed = 3.0f;
+    settings.realFallOnly = true;
+    settings.labLeader = true;
+    settings.leaderFollowSlack = 0.15f;
+    TrackingTraining3D batch(settings);
+    std::vector<float> actions(21, 0.0f), rewards(1);
+    std::vector<std::uint8_t> terminated(1), truncated(1);
+    float farthest = 0.0f;
+    for (int step = 0; step < 90; ++step) {
+        batch.step(actions, rewards, terminated, truncated);
+        if (terminated[0] != 0) break;
+        const Vec3 d = batch.leader(0).rootPosition - batch.body(0).links.front().position;
+        farthest = std::max(farthest, std::hypot(d.x, d.y));
+    }
+    expect(farthest < 1.0f, "o lider fica perto do corpo (" + std::to_string(farthest) + " m)");
+}
+
 // A estrela: o piloto anda no trote pedido (nunca acima dele), o peito fixo nao gira, o girando gira e
 // o livre acompanha o rumo; o exercicio do episodio e o da estrela.
 void starTests() {
@@ -186,6 +223,7 @@ int main() {
         rewardTests(*bundle);
         batchTests();
         starTests();
+        followTests(*bundle);
     } catch (const std::exception& error) {
         std::fprintf(stderr, "rastreador: FALHOU: %s (%d checagens antes)\n", error.what(), checks);
         return 1;

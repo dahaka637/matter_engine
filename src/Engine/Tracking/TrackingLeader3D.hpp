@@ -51,6 +51,10 @@ public:
     void reset(Vec3 groundPosition, float facingYawRadians);
     // Um tick: a capsula anda pelo pedido e o padrao poe o corpo sobre ela.
     void step(const TrackingCommand3D& command, float deltaTime);
+    // Desloca o lider no plano sem mudar a velocidade dele (o lider indo atras
+    // do corpo): a capsula e a raiz anterior andam juntas, entao a diferenca
+    // finita do proximo tick continua sendo so a do pedido.
+    void shift(Vec3 delta);
 
     [[nodiscard]] const TrackingLeaderState3D& state() const { return m_state; }
     [[nodiscard]] Vec3 capsulePosition() const { return m_capsulePosition; }
