@@ -70,8 +70,13 @@ check_absent "Atletas: so o legado e a casca de migracao incluem os controladore
     -g '!src/Engine/Athlete/AthleteSettings3D.hpp' -g '!src/Engine/Athlete/AthleteAssets3D.*'
 check_absent "O treino da locomocao (Athlete/Training) usa o atleta so pelo runtime: nem o legado nem os controladores antigos" \
     '#include "Engine/(Character|Control|Locomotion)/|#include "Engine/Athlete/Legacy/' src/Engine/Athlete/Training
+# (O rastreador le os exercicios da tarefa - LocomotionTask3D.hpp, so os dados -, pedido do usuario
+# de 29/10: o rastreador treinado com os exercicios do RL sobre o classico. Ver a regra dele abaixo.)
 check_absent "O treino da locomocao nao entra no jogo: o motor e o laboratorio nao o incluem" \
-    '#include "Engine/Athlete/Training/' src/Engine src/Workbench -g '!src/Engine/Athlete/Training/**'
+    '#include "Engine/Athlete/Training/' src/Engine src/Workbench -g '!src/Engine/Athlete/Training/**' \
+    -g '!src/Engine/Tracking/TrackingTraining3D.cpp'
+check_absent "Do treino da locomocao, o rastreador le so a tarefa (os exercicios)" \
+    -P '#include "Engine/Athlete/Training/(?!LocomotionTask3D\.hpp)' src/Engine/Tracking bindings/python/MatterTrackingNative.cpp
 check_absent "O treino da locomocao nao fala com o treinador, o estilo nem a interface" \
     '#include "(Workbench|Engine/RL/(Supervisor|Style))/' src/Engine/Athlete/Training
 check_absent "O treino da locomocao usa do RL so o piloto e o layout (nunca o lote, o corpo, a imitacao nem a politica do RL do zero: o ReferenceMotion3D deles e outro)" \
@@ -132,7 +137,7 @@ check_absent "Tela de RL fala com a GPU so pelo CanvasTarget" \
 check_absent "O rastreador (Engine/Tracking) nao depende de render, interface, audio, plataforma nem entrada" \
     '#include "Engine/(Render|RHI|UI|Audio|Platform|Input)/|#include .imgui|#include <SDL' src/Engine/Tracking
 check_absent "O rastreador segue o padrao e o corpo do jogo: nem o legado, nem o treino da locomocao antiga, nem o RL do zero" \
-    '#include "Engine/Athlete/(Legacy|Training|Contract|Policy)/|#include "Engine/RL/(Environment|Style|Rewards|Imitation|Supervisor|Calibration|Brain|Commands)/' \
+    '#include "Engine/Athlete/(Legacy|Contract|Policy)/|#include "Engine/RL/(Environment|Style|Rewards|Imitation|Supervisor|Calibration|Brain)/' \
     src/Engine/Tracking bindings/python/MatterTrackingNative.cpp
 check_absent "Identidade antiga e prototipos removidos nao podem retornar" \
     'SoccerFall|SOCCERFALL|LegacyFootworkRig|AnimatorScreen' \
