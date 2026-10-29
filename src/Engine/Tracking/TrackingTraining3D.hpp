@@ -110,6 +110,15 @@ struct TrackingTrainingSettings3D {
     // posicao: a velocidade do lider continua a pedida, entao ficar lento
     // continua custando na nota. < 0: nao vai (o DReCon).
     float leaderFollowSlack = -1.0f;
+    // Os exercicios de uma tarefa da locomocao (assets/rl/tasks/*.json, os do
+    // RL sobre o classico; 29/10, pedido do usuario): o piloto deles
+    // (CommandPilot3D) leva o lider e os empurroes deles vao no corpo; o
+    // jogador virtual e os exercicios acima saem. O sorteio e pelo peso de
+    // cada um (o levantar fica de fora: e outra rede). Vazio: o jogador
+    // virtual de 19/10.
+    std::string taskPath;
+    // Na avaliacao com a tarefa: o exercicio (o id) de todos os mundos.
+    std::string evaluationDrill;
 };
 
 // Um episodio que acabou.
@@ -134,6 +143,8 @@ struct TrackingEpisode3D {
     float relativeDirection = 0.0f;
     // O exercicio do episodio (TrackingDrill3D).
     std::uint8_t drill = 0;
+    // Com a tarefa: o indice do exercicio dela (taskDrillIds); -1 sem tarefa.
+    std::int32_t taskDrill = -1;
 };
 
 // O lote de treino do rastreador (vault
@@ -157,6 +168,8 @@ public:
     [[nodiscard]] const std::vector<std::string>& observationNames() const;
     [[nodiscard]] const std::vector<std::string>& actionNames() const;
     [[nodiscard]] const RagdollProfile3D& profile() const;
+    // Os ids dos exercicios da tarefa (vazio sem tarefa).
+    [[nodiscard]] const std::vector<std::string>& taskDrillIds() const;
 
     // Recomeca todos os mundos (lider aquecido, corpo sobre ele).
     void reset(std::uint64_t seed);

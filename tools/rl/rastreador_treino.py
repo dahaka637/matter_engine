@@ -119,6 +119,18 @@ def export_policy(model: Policy, path: Path, meta: dict) -> None:
     temporary.replace(path)
 
 
+def task_path(name: str) -> str:
+    """A tarefa pelo nome (assets/rl/tasks/NOME.json) ou pelo caminho; vazio: sem tarefa."""
+    if not name:
+        return ""
+    path = Path(name)
+    if not path.exists():
+        path = REPO / "assets" / "rl" / "tasks" / (name if name.endswith(".json") else name + ".json")
+    if not path.exists():
+        raise SystemExit(f"tarefa nao encontrada: {name}")
+    return str(path)
+
+
 def write_run_files(run: Path, cenario: str) -> None:
     """O treino como a tela de Aprendizado o reconhece: run.json (kind rastreador) e tarefa.json."""
     for name, data in (("run.json", {"kind": "rastreador", "task": f"rastreador_{cenario}"}),
@@ -188,6 +200,8 @@ def main() -> int:
     parser.add_argument("--escala-velocidade", type=float, default=1.0, help="escala dos pedidos de velocidade no treino")
     parser.add_argument("--pernas-adaptaveis", action="store_true",
                         help="em perigo (a cabeca se afastando do lider ou um tropeco) as pernas pesam 0,3 na nota")
+    parser.add_argument("--tarefa", default="",
+                        help="os exercicios de uma tarefa da locomocao (assets/rl/tasks/NOME.json ou um caminho)")
     parser.add_argument("--lider-laboratorio", action="store_true",
                         help="o lider com os valores do laboratorio (molas, arrancada, resposta 150%%, reversao, corrida 8/6)")
     parser.add_argument("--seguir-corpo", type=float, default=-1.0,
@@ -213,13 +227,15 @@ def main() -> int:
                                  star_share=args.estrela, star_fixed_share=args.estrela_fixo,
                                  star_turning_share=args.estrela_girando, star_speed=args.estrela_velocidade,
                                  star_radius=args.estrela_raio, real_fall_only=args.so_queda_real,
-                                 lab_leader=args.lider_laboratorio, follow_slack=args.seguir_corpo)
+                                 lab_leader=args.lider_laboratorio, follow_slack=args.seguir_corpo,
+                                 task_path=task_path(args.tarefa))
+    drill_ids = list(batch.drill_ids())
     n, obs_size, act_size = batch.num_envs, batch.obs_size, batch.action_size
     model = Policy(obs_size, act_size).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=3e-4)
     counters = {"rodada": 0, "decisoes": 0, "episodios": 0}
     settings = {"cenario": args.cenario, "teto": args.teto, "corrida": not args.sem_corrida, "projeteis": args.projeteis,
-                "lider_laboratorio": args.lider_laboratorio, "seguir_corpo": args.seguir_corpo,
+                "lider_laboratorio": args.lider_laboratorio, "seguir_corpo": args.seguir_corpo, "tarefa": args.tarefa,
                 "mundos": n,
                 "passos": args.passos,
                 "observacao": batch.observation_names(), "acao": batch.action_names()}
@@ -342,10 +358,20 @@ def main() -> int:
                                 "vel_corpo": float(episodes[keys == k, 5].mean()),
                                 "vel_pedida": float(episodes[keys == k, 6].mean())}
                             for k in sorted(set(keys))}
+            if drill_ids and episodes.shape[1] > 12:
+                # Com a tarefa: por exercicio (coluna 12, o indice dele).
+                row["exercicios"] = {
+                    drill_ids[int(d)]: {"n": int((episodes[:, 12] == d).sum()),
+                                        "quedas": float(episodes[episodes[:, 12] == d, 2].mean()),
+                                        "ep_segundos": float(episodes[episodes[:, 12] == d, 1].mean()),
+                                        "erro_vel_cm": float(episodes[episodes[:, 12] == d, 4].mean()),
+                                        "vel_corpo": float(episodes[episodes[:, 12] == d, 5].mean()),
+                                        "vel_pedida": float(episodes[episodes[:, 12] == d, 6].mean())}
+                    for d in sorted(set(episodes[:, 12].tolist())) if d >= 0}
         log.write(json.dumps(row) + "\n")
         log.flush()
         print(" ".join(f"{k}={v:.4g}" if isinstance(v, float) else f"{k}={v}" for k, v in row.items()
-                       if k not in ("hora", "rumos")),
+                       if k not in ("hora", "rumos", "exercicios")),
               flush=True)
         counters["segundos"] += elapsed
         write_status(run, "treinando", counters, row, args)

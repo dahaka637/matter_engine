@@ -18,7 +18,7 @@ import torch
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from matter_rl import paths  # noqa: E402
-from rastreador_treino import DATA, REPO, Policy, native  # noqa: E402
+from rastreador_treino import DATA, REPO, Policy, native, task_path  # noqa: E402
 
 
 def main() -> int:
@@ -32,6 +32,10 @@ def main() -> int:
     parser.add_argument("--vista", default="direita")
     parser.add_argument("--saida", required=True)
     parser.add_argument("--rumo", type=int, default=0, help="0..7 (de 45 em 45 graus a partir da frente, para a esquerda)")
+    parser.add_argument("--tarefa", default="",
+                        help="os exercicios de uma tarefa da locomocao (assets/rl/tasks/NOME.json ou um caminho)")
+    parser.add_argument("--exercicio", default="", help="com a tarefa: o exercicio (id)")
+    parser.add_argument("--escala-velocidade", type=float, default=1.0)
     parser.add_argument("--lider-laboratorio", action="store_true", help="o lider com os valores do laboratorio")
     parser.add_argument("--seguir-corpo", type=float, default=-1.0, help="o lider vai atras do corpo alem desta folga (m)")
     parser.add_argument("--so-queda-real", action="store_true", help="o episodio so acaba na queda de verdade")
@@ -42,7 +46,8 @@ def main() -> int:
                                  evaluation=True, evaluation_speed=args.velocidade,
                                  evaluation_mode="rumos" if args.rumo else "frente",
                                  lab_leader=args.lider_laboratorio, follow_slack=args.seguir_corpo,
-                                 real_fall_only=args.so_queda_real)
+                                 real_fall_only=args.so_queda_real, task_path=task_path(args.tarefa),
+                                 evaluation_drill=args.exercicio, speed_scale=args.escala_velocidade)
     w = args.rumo
     model = None
     who = "sem rede"

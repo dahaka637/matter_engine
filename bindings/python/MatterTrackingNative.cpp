@@ -60,7 +60,7 @@ NB_MODULE(matter_tracking_native, m) {
                 bool adaptive_legs, float leg_weight, float center_of_mass_velocity_weight, float arm_weight,
                 float trunk_weight, float alive_bonus, float speed_scale, float star_share, float star_fixed_share,
                 float star_turning_share, float star_speed, float star_radius, bool real_fall_only, bool lab_leader,
-                float follow_slack) {
+                float follow_slack, const std::string& task_path, const std::string& evaluation_drill) {
                 TrackingTrainingSettings3D settings;
                 settings.assetsDirectory = assets;
                 settings.environments = environments;
@@ -92,6 +92,8 @@ NB_MODULE(matter_tracking_native, m) {
                 settings.realFallOnly = real_fall_only;
                 settings.labLeader = lab_leader;
                 settings.leaderFollowSlack = follow_slack;
+                settings.taskPath = task_path;
+                settings.evaluationDrill = evaluation_drill;
                 settings.idleShare = idle_share;
                 settings.turnShare = turn_share;
                 settings.fastTurnShare = fast_turn_share;
@@ -119,7 +121,8 @@ NB_MODULE(matter_tracking_native, m) {
             "center_of_mass_velocity_weight"_a = 1.0f, "arm_weight"_a = 1.0f, "trunk_weight"_a = 1.0f,
             "alive_bonus"_a = 0.0f, "speed_scale"_a = 1.0f, "star_share"_a = 0.0f, "star_fixed_share"_a = 0.0f,
             "star_turning_share"_a = 0.0f, "star_speed"_a = 3.0f, "star_radius"_a = 10.0f, "real_fall_only"_a = false,
-            "lab_leader"_a = false, "follow_slack"_a = -1.0f)
+            "lab_leader"_a = false, "follow_slack"_a = -1.0f,
+            "task_path"_a = "", "evaluation_drill"_a = "")
         .def_prop_ro("num_envs", &TrackingTraining3D::environmentCount)
         .def_prop_ro("obs_size", &TrackingTraining3D::observationSize)
         .def_prop_ro("action_size", &TrackingTraining3D::actionSize)
@@ -180,17 +183,19 @@ NB_MODULE(matter_tracking_native, m) {
         .def("finished_episodes",
             [](TrackingTraining3D& b) {
                 const std::vector<TrackingEpisode3D> episodes = b.takeEpisodes();
-                auto out = owned<float>({ episodes.size(), 12 });
+                auto out = owned<float>({ episodes.size(), 13 });
                 float* d = out.data();
                 for (std::size_t i = 0; i < episodes.size(); ++i) {
                     const TrackingEpisode3D& e = episodes[i];
-                    const float row[12] = { static_cast<float>(e.world), e.seconds, e.fell ? 1.0f : 0.0f, e.meanReward,
+                    const float row[13] = { static_cast<float>(e.world), e.seconds, e.fell ? 1.0f : 0.0f, e.meanReward,
                         e.centerOfMassSpeedError, e.bodySpeed, e.requestedSpeed, e.meanHeadDistance,
-                        e.fellDown ? 1.0f : 0.0f, e.endHeadHeight, e.relativeDirection, static_cast<float>(e.drill) };
-                    std::copy(row, row + 12, d + i * 12);
+                        e.fellDown ? 1.0f : 0.0f, e.endHeadHeight, e.relativeDirection, static_cast<float>(e.drill),
+                        static_cast<float>(e.taskDrill) };
+                    std::copy(row, row + 13, d + i * 13);
                 }
                 return out;
             })
+        .def("drill_ids", &TrackingTraining3D::taskDrillIds)
         .def("look_yaw", &TrackingTraining3D::lookYaw, "world"_a)
         .def("leader_heading", [](const TrackingTraining3D& b, std::size_t world) { return b.leader(world).headingYawRadians; },
             "world"_a)

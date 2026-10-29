@@ -22,7 +22,7 @@ import torch
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from rastreador_treino import DATA, REPO, Policy, native  # noqa: E402
+from rastreador_treino import DATA, REPO, Policy, native, task_path  # noqa: E402
 
 
 def main() -> int:
@@ -41,6 +41,10 @@ def main() -> int:
                              "estrela, estrela_fixo, estrela_girando: a estrela de 8 pontas na velocidade --velocidade")
     parser.add_argument("--duracao", type=float, default=0.0, help="segundos por episodio (padrao: 20; trocas: 60)")
     parser.add_argument("--cubo-kg", type=float, default=0.0, help="com os projeteis do DReCon nessa massa (a Fig. 11)")
+    parser.add_argument("--tarefa", default="",
+                        help="os exercicios de uma tarefa da locomocao (assets/rl/tasks/NOME.json ou um caminho)")
+    parser.add_argument("--exercicio", default="", help="com a tarefa: o exercicio (id) de todos os mundos")
+    parser.add_argument("--escala-velocidade", type=float, default=1.0, help="com a tarefa: a escala dos pedidos (a do treino)")
     parser.add_argument("--lider-laboratorio", action="store_true",
                         help="o lider com os valores do laboratorio (molas, arrancada, resposta 150%%, reversao, corrida 8/6)")
     parser.add_argument("--seguir-corpo", type=float, default=-1.0,
@@ -53,7 +57,9 @@ def main() -> int:
                                  episode_seconds=duration, evaluation_mode=args.modo,
                                  real_fall_only=args.so_queda_real, projectiles=args.cubo_kg > 0.0, projectile_minimum_kg=max(args.cubo_kg, 0.01),
                                  projectile_maximum_kg=max(args.cubo_kg, 0.01),
-                                 lab_leader=args.lider_laboratorio, follow_slack=args.seguir_corpo)
+                                 lab_leader=args.lider_laboratorio, follow_slack=args.seguir_corpo,
+                                 task_path=task_path(args.tarefa), evaluation_drill=args.exercicio,
+                                 speed_scale=args.escala_velocidade)
     model = Policy(batch.obs_size, batch.action_size)
     rodada = 0
     if not args.zero:
@@ -81,7 +87,7 @@ def main() -> int:
     if args.modo in ("parado", "giro", "giro_rapido"):
         # Parado (e girando parado): todos chegam ao fim, sem cair nem se afastar do lider.
         passed = float(rows[:, 2].mean()) == 0.0
-    result = {"treino": args.treino, "rodada": rodada, "modo": args.modo, "duracao": duration, "cubo_kg": args.cubo_kg, "lider_laboratorio": args.lider_laboratorio, "seguir_corpo": args.seguir_corpo, "zero": args.zero,
+    result = {"treino": args.treino, "rodada": rodada, "modo": args.modo, "duracao": duration, "cubo_kg": args.cubo_kg, "lider_laboratorio": args.lider_laboratorio, "seguir_corpo": args.seguir_corpo, "zero": args.zero, "tarefa": args.tarefa, "exercicio": args.exercicio, "escala": args.escala_velocidade,
               "velocidade": args.velocidade, "episodios": len(rows),
               "quedas": falls, "fins_antes_do_tempo": float(rows[:, 2].mean()), "segundos_medio": float(rows[:, 1].mean()), "erro_vel_cm": error,
               "vel_corpo": float(rows[:, 5].mean()), "vel_pedida": float(rows[:, 6].mean()),

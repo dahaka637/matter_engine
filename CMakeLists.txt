@@ -565,7 +565,7 @@ if(MATTERENGINE_BUILD_RL)
         src/Engine/Tracking/TrackingGetUpTraining3D.cpp
     )
     target_include_directories(MatterTracking PUBLIC src)
-    target_link_libraries(MatterTracking PUBLIC MatterAthlete MatterRLContract)
+    target_link_libraries(MatterTracking PUBLIC MatterAthlete MatterRLContract MatterAthleteTraining)
     if(MSVC)
         target_compile_options(MatterTracking PRIVATE /W4 /permissive- /utf-8)
     else()

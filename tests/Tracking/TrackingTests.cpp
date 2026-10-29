@@ -178,6 +178,50 @@ void followTests(const AthleteBundle3D& bundle) {
     expect(farthest < 1.0f, "o lider fica perto do corpo (" + std::to_string(farthest) + " m)");
 }
 
+// A tarefa (os exercicios do classico): todo exercicio com peso faz o lider
+// andar ou ficar como o piloto pede, o empurrao forte empurra o corpo e o
+// episodio registra o exercicio.
+void taskTests() {
+    const std::string path = std::string(Assets) + "/rl/tasks/locomocao_b16.json";
+    TrackingTrainingSettings3D settings;
+    settings.assetsDirectory = Assets;
+    settings.environments = 1;
+    settings.threads = 1;
+    settings.evaluation = true;
+    settings.realFallOnly = true;
+    settings.labLeader = true;
+    settings.leaderFollowSlack = 0.15f;
+    settings.taskPath = path;
+    for (const char* id : { "frente", "direita_corte", "troca_direcao", "curva" }) {
+        settings.evaluationDrill = id;
+        TrackingTraining3D batch(settings);
+        expect(!batch.taskDrillIds().empty(), "a tarefa carrega os exercicios");
+        const Vec3 start = batch.leader(0).rootPosition;
+        std::vector<float> actions(21, 0.0f), rewards(1);
+        std::vector<std::uint8_t> terminated(1), truncated(1);
+        for (int step = 0; step < 30; ++step) batch.step(actions, rewards, terminated, truncated);
+        const Vec3 moved = batch.leader(0).rootPosition - start;
+        expect(std::hypot(moved.x, moved.y) > 0.3f, std::string("o piloto leva o lider em ") + id);
+    }
+    settings.evaluationDrill = "parado_empurrao_forte";
+    settings.episodeSeconds = 12.0f;
+    TrackingTraining3D pushed(settings);
+    std::vector<float> actions(21, 0.0f), rewards(1);
+    std::vector<std::uint8_t> terminated(1), truncated(1);
+    // (Parado, com a ajuda do lider indo atras e a rede em zero o corpo cai em ~1 s: o
+    // que se confere e que o episodio acaba e diz qual exercicio era.)
+    bool ended = false;
+    for (int step = 0; step < 400 && !ended; ++step) {
+        pushed.step(actions, rewards, terminated, truncated);
+        ended = terminated[0] != 0 || truncated[0] != 0;
+    }
+    const auto episodes = pushed.takeEpisodes();
+    const auto& ids = pushed.taskDrillIds();
+    expect(!episodes.empty() && episodes.front().taskDrill >= 0
+            && ids[static_cast<std::size_t>(episodes.front().taskDrill)] == "parado_empurrao_forte",
+        "o episodio registra o exercicio da tarefa");
+}
+
 // A estrela: o piloto anda no trote pedido (nunca acima dele), o peito fixo nao gira, o girando gira e
 // o livre acompanha o rumo; o exercicio do episodio e o da estrela.
 void starTests() {
@@ -224,6 +268,7 @@ int main() {
         batchTests();
         starTests();
         followTests(*bundle);
+        taskTests();
     } catch (const std::exception& error) {
         std::fprintf(stderr, "rastreador: FALHOU: %s (%d checagens antes)\n", error.what(), checks);
         return 1;
