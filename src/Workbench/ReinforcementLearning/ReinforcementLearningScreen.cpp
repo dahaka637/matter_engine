@@ -1314,13 +1314,15 @@ void ReinforcementLearningScreen::drawDrills() {
                     + "##drill" + m_drillIds[i];
                 const bool training = i >= m_drillWeights.size() || m_drillWeights[i] > 0.0f;
                 // (No rastreador o levantar e outra rede, o DeepMimic: fica na lista, desligado.)
-                const bool apart = TrackingViewer3D::isTrackingTask(m_viewerTask) && i < m_drillInfo.size()
+                const bool getUp = TrackingViewer3D::isTrackingTask(m_viewerTask) && i < m_drillInfo.size()
                     && m_drillInfo[i].getUp;
+                const bool apart = getUp && !TrackingViewer3D::getUpReady();
                 ImGui::BeginDisabled(apart);
                 if (phaseButton(label.c_str(), m_drillIds[i] == m_viewerDrill, { -1.0f, ui(30.0f) }, training ? 1 : 0))
                     showDrill(m_drillIds[i]);
                 ImGui::EndDisabled();
                 tooltip(apart ? "Desligado: o levantar treina à parte, numa rede própria (de bruços e de costas)."
+                    : getUp ? "Mostra o levantar do chão, com as redes próprias (de bruços e de costas), alternando."
                     : training ? "Mostra este exercício no mundo (o treino sorteia todos pelos pesos)."
                                : "Pronto, mas ainda fora do treino. Mostra este exercício no mundo.");
             }

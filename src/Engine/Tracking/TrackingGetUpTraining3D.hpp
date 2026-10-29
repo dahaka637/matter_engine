@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Engine/Physics/PhysicsScene3D.hpp"
+#include "Engine/Physics/RagdollProfile3D.hpp"
 
 #include <cstdint>
 #include <memory>
@@ -66,6 +67,9 @@ public:
     // segue o clipe em malha aberta).
     void referenceActions(std::span<float> out) const;
     [[nodiscard]] std::string frameLines(std::size_t world, bool reference) const;
+    // O corpo de um mundo e o perfil (o visualizador do laboratorio).
+    [[nodiscard]] const RagdollState3D& body(std::size_t world) const;
+    [[nodiscard]] const RagdollProfile3D& profile() const;
 
 private:
     struct Impl;

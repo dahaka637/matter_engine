@@ -231,4 +231,8 @@ std::string TrackingGetUpTraining3D::frameLines(std::size_t world, bool referenc
     return out.str();
 }
 
+const RagdollState3D& TrackingGetUpTraining3D::body(std::size_t world) const { return *m_impl->worlds.at(world).body; }
+
+const RagdollProfile3D& TrackingGetUpTraining3D::profile() const { return *m_impl->profile; }
+
 } // namespace MatterEngine

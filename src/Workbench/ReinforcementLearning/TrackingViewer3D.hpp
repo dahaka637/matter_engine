@@ -56,6 +56,11 @@ public:
     // O filtro da acao do treino ("filtroBeta"; 0,2, o do DReCon, sem ele).
     [[nodiscard]] static float filterBetaOf(const std::filesystem::path& trackingTask);
     using Conditions = TrackingViewerConditions3D;
+    // O levantar do chao (o exercicio "levantar", 29/10): as redes de brucos e de costas, as ultimas exportadas
+    // pelos treinos levantar_frente e levantar_costas (vazio: sem a rede).
+    static constexpr const char* GetUpDrill = "levantar";
+    [[nodiscard]] static std::filesystem::path getUpExport(std::size_t clip);
+    [[nodiscard]] static bool getUpReady();
     [[nodiscard]] static Conditions conditionsOf(const std::filesystem::path& trackingTask);
 
     // drill: "rumoN" (andar no rumo N) ou um dos parados; com locomotionTask, o id de um

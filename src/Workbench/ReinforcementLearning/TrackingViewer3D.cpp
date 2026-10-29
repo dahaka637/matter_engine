@@ -2,6 +2,7 @@
 
 #include "Engine/RL/Body/RLBody3D.hpp"
 #include "Engine/RL/Policy/PolicyRuntime3D.hpp"
+#include "Engine/Tracking/TrackingGetUpTraining3D.hpp"
 #include "Engine/Tracking/TrackingTraining3D.hpp"
 #include "Workbench/ReinforcementLearning/LocomotionViewer3D.hpp"
 
@@ -11,6 +12,7 @@
 #include <array>
 #include <cctype>
 #include <cmath>
+#include <cstdlib>
 #include <fstream>
 #include <vector>
 
@@ -40,6 +42,27 @@ struct TrackingViewer3D::Impl {
         if (task) return;
         if (drill == TrackingDrill3D::Move) batch->setCommand(0, speed, heading);
         else batch->setDrill(0, drill);
+    }
+    // O levantar: o lote do DeepMimic com um mundo, comecando deitado, e as redes de brucos (0) e de costas (1),
+    // alternando a cada levantada (o fim do clipe).
+    std::unique_ptr<TrackingGetUpTraining3D> getUp;
+    std::array<std::unique_ptr<PolicyRuntime3D>, 2> getUpPolicies;
+    std::size_t getUpClip = 0;
+    std::filesystem::path assets;
+    std::uint64_t seed = 1;
+    std::vector<float> getUpObservation, getUpAction;
+    void startGetUp() {
+        TrackingGetUpSettings3D s;
+        s.assetsDirectory = assets.string();
+        s.clip = getUpClip == 0 ? "frente" : "costas";
+        s.environments = 1;
+        s.threads = 1;
+        s.seed = seed;
+        s.evaluation = true;
+        getUp = std::make_unique<TrackingGetUpTraining3D>(s);
+        getUp->reset(seed);
+        getUpObservation.assign(getUp->observationSize(), 0.0f);
+        getUpAction.assign(getUp->actionSize(), 0.0f);
     }
     std::uint32_t steps = 0;
     std::uint32_t chest = 0;
@@ -271,7 +294,7 @@ TrackingViewer3D::TrackingViewer3D(const std::filesystem::path& assetsDirectory,
         settings.taskPath = locomotionTask.string();
         settings.speedScale = speedScale;
         const auto drills = LocomotionViewer3D::drillsOf(locomotionTask);
-        const bool known = std::any_of(drills.begin(), drills.end(), [&](const auto& d) { return d.id == drill; });
+        const bool known = std::any_of(drills.begin(), drills.end(), [&](const auto& d) { return d.id == drill && !d.getUp; });
         for (const auto& d : drills)
             if (known ? d.id == drill : d.weight > 0.0f && !d.getUp) {
                 settings.evaluationDrill = d.id;
@@ -287,6 +310,31 @@ TrackingViewer3D::TrackingViewer3D(const std::filesystem::path& assetsDirectory,
     for (std::size_t i = 0; i < p.links.size(); ++i)
         if (p.links[i].id == "UpperChest") impl.chest = static_cast<std::uint32_t>(i);
     impl.apply();
+    if (drill == GetUpDrill) {
+        impl.assets = assetsDirectory;
+        impl.seed = seed;
+        impl.startGetUp();
+        for (std::size_t clip = 0; clip < 2; ++clip) {
+            try {
+                auto policy = std::make_unique<PolicyRuntime3D>(getUpExport(clip));
+                if (policy->observationSize() == impl.getUp->observationSize()
+                    && policy->actionSize() == impl.getUp->actionSize())
+                    impl.getUpPolicies[clip] = std::move(policy);
+            } catch (const std::exception&) {
+            }
+        }
+    }
+}
+
+std::filesystem::path TrackingViewer3D::getUpExport(std::size_t clip) {
+    const char* home = std::getenv("HOME");
+    return std::filesystem::path(home != nullptr ? home : ".") / ".local/share/matter-engine/rl/runs"
+        / (clip == 0 ? "levantar_frente" : "levantar_costas") / "exports/policy_latest.mrlpolicy";
+}
+
+bool TrackingViewer3D::getUpReady() {
+    std::error_code error;
+    return std::filesystem::exists(getUpExport(0), error) || std::filesystem::exists(getUpExport(1), error);
 }
 
 TrackingViewer3D::~TrackingViewer3D() = default;
@@ -300,6 +348,14 @@ bool TrackingViewer3D::isTrackingTask(const std::filesystem::path& taskPath) {
 
 void TrackingViewer3D::setPolicy(const std::filesystem::path& file, std::string& label) {
     Impl& impl = *m_impl;
+    if (impl.getUp) {
+        // (O levantar usa as redes proprias, nao a do rastreador.)
+        label.clear();
+        for (std::size_t clip = 0; clip < 2; ++clip)
+            label += std::string(clip == 0 ? "de bruços " : " · de costas ")
+                + (impl.getUpPolicies[clip] ? "r" + std::to_string(impl.getUpPolicies[clip]->info().iteration) : "sem rede");
+        return;
+    }
     try {
         auto policy = std::make_unique<PolicyRuntime3D>(file);
         if (policy->observationSize() != impl.batch->observationSize() || policy->actionSize() != impl.batch->actionSize()
@@ -317,10 +373,27 @@ void TrackingViewer3D::setPolicy(const std::filesystem::path& file, std::string&
 }
 
 void TrackingViewer3D::clearPolicy() { m_impl->policy.reset(); }
-bool TrackingViewer3D::hasPolicy() const { return m_impl->policy != nullptr; }
+bool TrackingViewer3D::hasPolicy() const {
+    return m_impl->getUp ? m_impl->getUpPolicies[0] || m_impl->getUpPolicies[1] : m_impl->policy != nullptr;
+}
 
 void TrackingViewer3D::step() {
     Impl& impl = *m_impl;
+    if (impl.getUp) {
+        // Sem a rede do lado: o clipe nos motores (malha aberta).
+        impl.getUp->observations(impl.getUpObservation);
+        if (PolicyRuntime3D* policy = impl.getUpPolicies[impl.getUpClip].get())
+            policy->evaluate(impl.getUpObservation, impl.getUpAction);
+        else
+            impl.getUp->referenceActions(impl.getUpAction);
+        impl.getUp->step(impl.getUpAction, impl.rewards, impl.terminated, impl.truncated);
+        if (!impl.getUp->takeEpisodes().empty()) {
+            impl.getUpClip = 1 - impl.getUpClip;
+            impl.startGetUp();
+        }
+        ++impl.steps;
+        return;
+    }
     impl.batch->observations(impl.observation);
     // Sem rede, o lider puro (a correcao zero): o corpo cai em ~1 s.
     if (impl.policy) impl.policy->evaluate(impl.observation, impl.action);
@@ -346,6 +419,12 @@ void TrackingViewer3D::step() {
 
 void TrackingViewer3D::reset(std::uint64_t seed) {
     Impl& impl = *m_impl;
+    if (impl.getUp) {
+        impl.seed = seed;
+        impl.startGetUp();
+        impl.steps = 0;
+        return;
+    }
     impl.batch->reset(seed);
     impl.apply();
     impl.steps = 0;
@@ -361,6 +440,7 @@ void TrackingViewer3D::setManualSpeed(std::optional<float> metersPerSecond) {
 
 void TrackingViewer3D::push(Vec3 force, float seconds) {
     Impl& impl = *m_impl;
+    if (impl.getUp) return;
     impl.batch->push(0, impl.chest, force, seconds);
     impl.pushForce = force;
     impl.pushSeconds = seconds;
@@ -368,6 +448,15 @@ void TrackingViewer3D::push(Vec3 force, float seconds) {
 
 BodyWorldView3D TrackingViewer3D::view() const {
     const Impl& impl = *m_impl;
+    if (impl.getUp) {
+        const RagdollState3D& body = impl.getUp->body(0);
+        BodyWorldView3D view;
+        view.state = &body;
+        view.steps = impl.steps;
+        const Vec3 velocity = rlBodyCenterOfMassVelocity3D(impl.getUp->profile(), body.links);
+        view.velocity = { velocity.x, velocity.y, 0.0f };
+        return view;
+    }
     const RagdollState3D& body = impl.batch->body(0);
     const TrackingLeaderState3D& leader = impl.batch->leader(0);
     const RagdollProfile3D& profile = impl.batch->profile();
