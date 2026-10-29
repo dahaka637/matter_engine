@@ -1519,17 +1519,23 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                 // (recomecada do corpo andando, a pelve voltava um quadro).
                 if (!state.bridge || state.bridgeStance) {
                     const PhysicsBodyState3D& pelvis = body.links.front();
+                    // (Da ponte, a partida e o alvo deste passo - o corpo, colado
+                    // nele, termina o passo ali -, nao o corpo publicado, um passo
+                    // atras: a primeira pose da volta so sai no passo seguinte e
+                    // voltava o que ele andou, ~0,25 m/s ao contrario num tick, o
+                    // tranco que a camera presa ao peito mostrava; 28/10.)
+                    const bool fromTarget = state.bridge && coordinates.size() == profile.links.size();
                     state.returnCoordinates.assign(profile.links.size(), {});
                     std::vector<Vec3> velocities(profile.links.size());
                     for (std::size_t i = 1; i < profile.links.size() && i < body.joints.size(); ++i) {
                         const auto& joint = body.joints[i].positionRadians;
                         const auto& rate = body.joints[i].velocityRadiansPerSecond;
-                        state.returnCoordinates[i] = { joint[0], joint[1], joint[2] };
+                        state.returnCoordinates[i] = fromTarget ? coordinates[i] : Vec3 { joint[0], joint[1], joint[2] };
                         velocities[i] = { rate[0], rate[1], rate[2] };
                     }
-                    state.returnInertia.start(state.returnCoordinates, velocities, pelvis.position, pelvis.orientation,
-                        pelvis.linearVelocity, pelvis.angularVelocity, settings.returnSmoothing ? ActiveExitHalfLife : 0.10f,
-                        settings.returnSmoothing ? ActiveExitSeconds : 0.40f);
+                    state.returnInertia.start(state.returnCoordinates, velocities, fromTarget ? rootPosition : pelvis.position,
+                        fromTarget ? rootOrientation : pelvis.orientation, pelvis.linearVelocity, pelvis.angularVelocity,
+                        settings.returnSmoothing ? ActiveExitHalfLife : 0.10f, settings.returnSmoothing ? ActiveExitSeconds : 0.40f);
                 }
                 scene.setRagdollGuided(slot.handle, true);
                 state.guided = true;

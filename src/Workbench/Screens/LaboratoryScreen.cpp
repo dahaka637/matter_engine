@@ -752,7 +752,7 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
         updateDynamicProps(deltaTime);
         // Depois da simulacao: camera e malha leem exatamente o mesmo par
         // de snapshots fisicos neste quadro.
-        updateControlledPhysicalCameraFocus();
+        updateControlledPhysicalCameraFocus(deltaTime);
         return;
     }
     // Fisica adaptativa: a capsula vai atras do corpo (calculado no tick
@@ -848,11 +848,11 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
     updateDynamicProps(deltaTime);
     if (controllingCharacter) {
         // updateDynamicProps acabou de buscar o estado novo do ragdoll.
-        updateControlledPhysicalCameraFocus();
+        updateControlledPhysicalCameraFocus(deltaTime);
     }
 }
 
-bool WorkbenchApp::updateControlledPhysicalCameraFocus() {
+bool WorkbenchApp::updateControlledPhysicalCameraFocus(float deltaTime) {
     if (!m_humanRagdollProfile || m_controlledCharacterEntityId == 0) {
         return false;
     }
@@ -868,23 +868,44 @@ bool WorkbenchApp::updateControlledPhysicalCameraFocus() {
     // A capsula e apenas uma referencia de navegacao. O alvo e o centro do
     // corpo rigido UpperChest que acabou de sair do solver e que tambem sera
     // usado para desenhar a malha neste quadro.
-    const auto linkPosition = [&](const char* id, Vec3& position) {
+    const auto linkPosition = [&](const char* id, Vec3& position, Vec3& velocity) {
         for (std::size_t i = 0;
             i < m_humanRagdollProfile->links.size()
                 && i < controlled->physicsState.links.size(); ++i) {
             if (m_humanRagdollProfile->links[i].id == id) {
                 position = controlled->physicsState.links[i].position;
+                velocity = controlled->physicsState.links[i].linearVelocity;
                 return true;
             }
         }
         return false;
     };
-    Vec3 physicalFocus;
-    const bool hasUpperChest = linkPosition("UpperChest", physicalFocus);
+    Vec3 physicalFocus, focusVelocity;
+    const bool hasUpperChest = linkPosition("UpperChest", physicalFocus, focusVelocity);
     if (!hasUpperChest) {
         physicalFocus = controlled->physicsState.links.front().position;
+        focusVelocity = controlled->physicsState.links.front().linearVelocity;
     }
-    setLaboratoryCameraFocus(physicalFocus,
+    // A camera suave (28/10, pedido do usuario: o tranco da camera na troca
+    // do fisico ao padrao): o foco segue o peito por uma mola criticamente
+    // amortecida da posicao e da velocidade dele. Em velocidade constante nao
+    // atrasa; a mudanca brusca de um passo vira uma curva de ~0,1 s. Na sonda,
+    // o tranco do foco nas trocas cai 2-3 vezes e o atraso fica em ~2 cm
+    // parado e ate ~8 cm correndo. Um salto de mais de 1 m (teleporte) nao se
+    // segue: o foco vai direto.
+    constexpr float SmoothFollowOmega = 18.0f;
+    if (m_cameraSmoothFollow && m_cameraTrackValid && deltaTime > 0.0f
+        && (physicalFocus - m_cameraTrackPosition).length() < 1.0f) {
+        const float dt = std::min(deltaTime, 0.05f);
+        m_cameraTrackVelocity += ((physicalFocus - m_cameraTrackPosition) * (SmoothFollowOmega * SmoothFollowOmega)
+            + (focusVelocity - m_cameraTrackVelocity) * (2.0f * SmoothFollowOmega)) * dt;
+        m_cameraTrackPosition += m_cameraTrackVelocity * dt;
+    } else {
+        m_cameraTrackPosition = physicalFocus;
+        m_cameraTrackVelocity = focusVelocity;
+    }
+    m_cameraTrackValid = true;
+    setLaboratoryCameraFocus(m_cameraSmoothFollow ? m_cameraTrackPosition : physicalFocus,
         LaboratoryCameraMode::ThirdPerson);
     return true;
 }
@@ -2996,6 +3017,8 @@ void WorkbenchApp::drawLaboratoryUi() {
                                 ImGui::Checkbox("Cápsula atravessa paredes", &m_capsulePassesWalls);
                                 hint("Paredes, pilares e traves não seguram a cápsula: quem bate é o corpo, e o esbarrão de lado, a cabeça ou o peito levam ao físico. Chão, rampa, degrau e meio-fio seguram como antes.");
                             }
+                            ImGui::Checkbox("Câmera suave", &m_cameraSmoothFollow);
+                            hint("A câmera segue o peito por uma mola: sem atraso em velocidade constante, sem o tranco de um passo nas trocas do físico ao padrão.");
                             ImGui::Checkbox("Pulo instantâneo", &m_instantJump);
                             hint("Ligado: pula ao apertar o espaço, na altura média. Desligado: segurar carrega e pula ao soltar (mais alto quanto mais segura).");
                             ImGui::Checkbox("Áreas de alcance", &m_showReachAreas);

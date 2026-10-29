@@ -289,7 +289,7 @@ private:
         ThirdPerson
     };
     void setLaboratoryCameraFocus(Vec3 focus, LaboratoryCameraMode mode);
-    bool updateControlledPhysicalCameraFocus();
+    bool updateControlledPhysicalCameraFocus(float deltaTime);
     void updateLaboratoryCamera(float fixedStepAlpha);
     // Smokes de suavidade de movimento; ver Laboratory/RenderMotionSmoke.cpp.
     void sampleRenderMotionSmoke(float viewportWidth, float viewportHeight);
@@ -1001,6 +1001,11 @@ private:
     std::uint64_t m_laboratoryPhysicsStep = 0;
     Vec3 m_laboratoryCameraFocusPrevious;
     Vec3 m_laboratoryCameraFocus;
+    // A camera suave: o foco segue o peito por uma mola (28/10).
+    bool m_cameraSmoothFollow = true;
+    bool m_cameraTrackValid = false;
+    Vec3 m_cameraTrackPosition;
+    Vec3 m_cameraTrackVelocity;
     struct RenderMotionSmoke {
         enum class Mode : std::uint8_t { Disabled, CameraOrbit, PropMotion };
         Mode mode = Mode::Disabled;
