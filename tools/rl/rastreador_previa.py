@@ -32,12 +32,17 @@ def main() -> int:
     parser.add_argument("--vista", default="direita")
     parser.add_argument("--saida", required=True)
     parser.add_argument("--rumo", type=int, default=0, help="0..7 (de 45 em 45 graus a partir da frente, para a esquerda)")
+    parser.add_argument("--lider-laboratorio", action="store_true", help="o lider com os valores do laboratorio")
+    parser.add_argument("--seguir-corpo", type=float, default=-1.0, help="o lider vai atras do corpo alem desta folga (m)")
+    parser.add_argument("--so-queda-real", action="store_true", help="o episodio so acaba na queda de verdade")
     args = parser.parse_args()
     out = Path(args.saida)
     out.mkdir(parents=True, exist_ok=True)
     batch = native.TrackingBatch(str(REPO / "assets"), environments=8, threads=2, seed=20261018, scenario="frente",
                                  evaluation=True, evaluation_speed=args.velocidade,
-                                 evaluation_mode="rumos" if args.rumo else "frente")
+                                 evaluation_mode="rumos" if args.rumo else "frente",
+                                 lab_leader=args.lider_laboratorio, follow_slack=args.seguir_corpo,
+                                 real_fall_only=args.so_queda_real)
     w = args.rumo
     model = None
     who = "sem rede"
