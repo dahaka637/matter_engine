@@ -390,6 +390,11 @@ struct DefaultLocomotionSettings3D {
     float tackleCooldownSeconds = 0.35f;
     float tackleBlendInSeconds = 0.18f;
     float tackleExitSeconds = 0.30f;
+    // O impulso extra do carrinho (29/10, pedido do usuario: "no momento do
+    // carrinho ele recebesse um impulso extra (relativo a velocidade que estava
+    // e claro) para ficar mais potente"): o deslize pela velocidade de entrada
+    // anda esta fracao a mais no mesmo tempo - mais rapido e mais longe.
+    float tackleBoost = 0.3f;
 };
 
 struct DefaultLocomotionInput3D {

@@ -78,6 +78,8 @@ struct AthleteRuntimeSettings3D {
     float tackledRecoverSeconds = 2.5f;
     bool defaultAirTackle = true;
     float defaultAirTacklePitch = 30.0f;
+    // O impulso extra do carrinho no padrao (%, da velocidade de entrada; 29/10).
+    float defaultTackleBoostPercent = 30.0f;
     bool defaultVoadoraContactOnly = true;
     // O corpo fisico do padrao (28/10, item 10; ele escolhe na pratica): 0
     // desligado, 1 a camada de reacoes por molas, 2 a fisica de verdade sem

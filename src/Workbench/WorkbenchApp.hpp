@@ -721,6 +721,8 @@ private:
     bool m_contactBridge = true;
     float m_contactBridgeHardDeltaV = 1.2f;
     bool m_looseDefaultLocomotion = true;
+    // O impulso extra do carrinho (%, 29/10).
+    float m_defaultTackleBoostPercent = 30.0f;
     // O levantar pelo padrao (28/10, item 16): ligado no laboratorio.
     bool m_animatedGetUp = true;
     // A arrancada do padrao (0 desliga): o gesto do idle_to_sprint e a

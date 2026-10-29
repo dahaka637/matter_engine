@@ -1004,7 +1004,13 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                     const bool belowHard = settings.contactBridge && hitDeltaV < settings.contactBridgeHardDeltaV;
                     // (No carrinho, o contato com quem se move so leva ao fisico na
                     // pancada forte - pedido do usuario, 28/10: "o carrinho deve
-                    // ocorrer em locomocao default"; a parede, como antes.)
+                    // ocorrer em locomocao default (ai entra em fisico se houver
+                    // pancada forte o suficiente, o levantar dele tambem se estiver
+                    // livre de contato)"; o mais leve vai a ponte de contato, e a
+                    // parede, como antes. Varrer de sprint quem esta de pe ja e
+                    // pancada forte: o fisico continua o carrinho com a massa de
+                    // verdade (com uma regua mais alta, o deslize roteirizado
+                    // carregava o outro 7 m).)
                     signals.actionContact = defaultTackling
                         && ((hitImpulse > TackleHitImpulse && !belowHard) || wallImpulse > TackleHitImpulse);
                     signals.airTackleStart = airTackle;
@@ -1020,7 +1026,8 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                     if (state.bridge) {
                         const BodyObservation3D observation = athlete.observer.observe(profile, body, deltaTime);
                         signals.supported = observation.supportCount > 0;
-                        signals.airborneByDesign = !capsule.grounded;
+                        // (No carrinho o corpo desliza no chao: sem apoio por desenho.)
+                        signals.airborneByDesign = !capsule.grounded || defaultTackling;
                         const RagdollAnimationPose3D& pose = state.animationPose;
                         // O peito tombando fora do que a pose faz (rad/s): a
                         // velocidade do "para cima" do peito do corpo menos a
@@ -1082,11 +1089,12 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                     const ContactAssessment3D& hitNow = signals.contacts;
                     const bool movingOnly = hitNow.impact && !hitNow.fromPenetration && hitNow.fromMoving
                         && !hitNow.fromStatic && hitNow.penetrationMeters <= 0.0f && !grabbed;
-                    const bool softContact = belowHard && settings.physicalBridge && movingOnly && capsule.grounded
-                        && !tackled && !defaultTackling;
-                    const bool tackleContact = belowHard && movingOnly && defaultTackling;
+                    // (No carrinho o contato leve tambem vai a ponte - o corpo fisico
+                    // seguindo o clipe -: guiado ele nao cede.)
+                    const bool softContact = belowHard && settings.physicalBridge && movingOnly && !tackled
+                        && (capsule.grounded || defaultTackling);
                     ModeSignals3D tableSignals = signals;
-                    if (softContact || tackleContact) tableSignals.contacts.impact = false;
+                    if (softContact) tableSignals.contacts.impact = false;
                     const ModeDecision3D decision = athlete.modeRules.decide(kind, tableSignals, settings.modeRules, deltaTime);
                     athlete.lastContacts = signals.contacts;
                     if (softContact && !decision.change) {
@@ -1171,6 +1179,9 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
     const bool animated = defaultMode
         && (state.bodyMode == BodyMode::Animated || state.bodyMode == BodyMode::Returning);
     const bool active = defaultMode && state.bodyMode == BodyMode::Active;
+    // (O gesto de bola anima o corpo do padrao e tambem o da ponte de contato,
+    // que segue a mesma pose: a conducao na disputa de ombro, 28/10.)
+    const bool gestureBody = animated || (active && state.contactBridge);
     if (command.controlled) {
         // (No Ativo a capsula segue como no padrao: a mesma tabela de
         // velocidades; ela vai atras do corpo quando ele se afasta.)
@@ -1196,9 +1207,9 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         const DefaultLocomotionOutput3D& gait = state.defaultLocomotion.output();
         const std::size_t side = pending.spec.side == 1 ? 1 : 0;
         pending.waited += deltaTime;
-        if (!animated || !gait.valid || !gait.cycling || !gait.cyclePlanted[side] || pending.waited > 0.4f) {
+        if (!gestureBody || !gait.valid || !gait.cycling || !gait.cyclePlanted[side] || pending.waited > 0.4f) {
             pending.active = false;
-            if (animated) {
+            if (gestureBody) {
                 gestureStart = pending.spec;
                 gestureRequested = true;
             }
@@ -1478,7 +1489,7 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             // onde ela vai chegar - andando no movimento relativo de agora ate
             // entrar a armDistance da pelve, ou passar mais perto -, com o
             // contato marcado na chegada: a batida coincide com a forca.
-            if (animated && armed.active && !armed.started && !fires && !upper) {
+            if (gestureBody && armed.active && !armed.started && !fires && !upper) {
                 const Vec3 relative { flatBall.x - bodyVelocity.x, flatBall.y - bodyVelocity.y, 0.0f };
                 const float arrival = gestureBallArrival3D(offset, relative, armDistance);
                 if (arrival > 0.0f && arrival <= armed.left) {
@@ -1532,7 +1543,7 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                 }
                 if (started) {
                     // (O gesto guardado ja esta batendo: so a forca.)
-                } else if (animated && upper) {
+                } else if (gestureBody && upper) {
                     // O gesto so do corpo, no lado da bola, virado ao rumo dela.
                     gestureStart = {};
                     gestureStart.kind = kind;
@@ -1546,7 +1557,7 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                     gestureStart.seed = ++athlete.gestureCount * 2654435761u + static_cast<std::uint32_t>(slot.entityId);
                     gestureRequested = true;
                     athlete.pendingGesture.active = false;
-                } else if (animated) {
+                } else if (gestureBody) {
                     // Conduzindo (andando, o toque - ou o chute fraco - com a bola
                     // a frente), o toque e do passo seguinte da perna escolhida
                     // (24/10, pedido do usuario: "como se ele planejasse no proprio

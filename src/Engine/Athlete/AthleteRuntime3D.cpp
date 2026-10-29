@@ -172,6 +172,7 @@ void athleteConfigureDefaultLocomotion3D(DefaultLocomotionSettings3D& defaults, 
     defaults.landingAbsorb = settings.defaultLandingAbsorb;
     defaults.curveLeanDeadZone = settings.defaultCurveLeanDeadZone;
     defaults.airTackle = settings.defaultAirTackle;
+    defaults.tackleBoost = std::max(0.0f, settings.defaultTackleBoostPercent) * 0.01f;
     defaults.airTacklePitchDegrees = settings.defaultAirTacklePitch;
     {
         // As velocidades da aba "Velocidades" (0, 45, 90, 135 e 180 graus).

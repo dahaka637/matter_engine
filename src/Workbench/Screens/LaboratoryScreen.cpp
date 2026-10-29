@@ -3024,6 +3024,8 @@ void WorkbenchApp::drawLaboratoryUi() {
                                 ImGui::SliderFloat("##ContactBridgeHard", &m_contactBridgeHardDeltaV, 0.5f, 4.0f, "%.2f m/s",
                                     ImGuiSliderFlags_AlwaysClamp);
                                 hint("A partir de quanto o choque vai ao físico pleno: a mudança de velocidade que ele daria ao corpo inteiro. 1,2 m/s é a calibrada; menos, mais choques derrubam.");
+                                percent("Impulso do carrinho", "##TackleBoost", &m_defaultTackleBoostPercent, 0.0f, 100.0f,
+                                    "O quanto o carrinho desliza a mais que a velocidade que ele trazia, no mesmo tempo: mais rápido e mais longe. 0% é o de antes.");
                                 ImGui::Checkbox("Bonecos no padrão", &m_looseDefaultLocomotion);
                                 hint("Os outros bonecos ficam na locomoção padrão e passam pelas mesmas trocas que o jogador: o contato, a ponte, o físico, o levantar e a volta.");
                             }

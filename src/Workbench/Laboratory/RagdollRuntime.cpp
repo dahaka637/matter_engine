@@ -681,6 +681,12 @@ void WorkbenchApp::resetControlledCharacterPose() {
         legacy.defaultTackling = false;
         legacy.guided = m_defaultLocomotion;
         legacy.guidedExitLeft = 0.0f;
+        // (No meio de uma ponte - a de contato tambem -, ela acaba aqui.)
+        legacy.bridge = false;
+        legacy.contactBridge = false;
+        legacy.contactKick = {};
+        legacy.contactDecisionLeft = 0.0f;
+        legacy.virtualCapsuleValid = false;
         legacy.bodyMode = m_defaultLocomotion ? LegacyBodyMode3D::Animated : LegacyBodyMode3D::Physical;
         if (legacy.guided)
             m_physicsScene->setRagdollGuided(controlled->physicsRagdoll, true);
@@ -955,6 +961,7 @@ AthleteRuntimeSettings3D WorkbenchApp::athleteRuntimeSettings() const {
     settings.contactBridge = m_contactBridge;
     settings.contactBridgeHardDeltaV = m_contactBridgeHardDeltaV;
     settings.looseDefaultLocomotion = m_looseDefaultLocomotion;
+    settings.defaultTackleBoostPercent = m_defaultTackleBoostPercent;
     settings.modeTable = m_modeTable;
     settings.physicalUsesDefaultSpeeds = m_physicalDefaultSpeeds;
     settings.physicalFeetAssistPercent = m_physicalFeetAssistPercent;

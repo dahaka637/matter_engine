@@ -225,6 +225,10 @@ bool DefaultLocomotion3D::stepTackle(Tick& t) {
                 if (count > 0 && m_tackleShape[k].slideMeters > 0.5f && s.tackleEqualSlide)
                     m_tackleScale *= (sum / static_cast<float>(count)) / m_tackleShape[k].slideMeters;
             }
+            // O impulso extra: o mesmo deslize, mais rapido e mais longe (no
+            // deslize igual, pela velocidade dele, abaixo; sem ele, pela escala).
+            const float boost = 1.0f + std::max(0.0f, s.tackleBoost);
+            m_tackleScale *= boost;
             m_tackleYaw = viewYaw;
             m_tackleTime = 0.0f;
             m_tackleEnterStart = 0.0f;
@@ -245,7 +249,7 @@ bool DefaultLocomotion3D::stepTackle(Tick& t) {
                 m_tackleCommonLowSeconds = count > 0 ? seconds / static_cast<float>(count) : 0.0f;
                 m_tackleCommonDrop = count > 0 ? drop / static_cast<float>(count) : 0.0f;
             }
-            m_tackleEntrySpeedSlide = std::max(2.0f, dot(velocity, viewForward));
+            m_tackleEntrySpeedSlide = std::max(2.0f, dot(velocity, viewForward)) * boost;
             m_tacklePathDirection = viewForward;
             const AnimationTransformSample3D r0 = rootAt(profile, *m_tackleClip, 0.0f, false, s.smoothClipSampling);
             const Vec3 first = yawRotation(m_tackleYaw).rotate({ r0.translationOffsetMeters.x * m_tackleScale,

@@ -200,6 +200,12 @@ std::vector<Scenario> scenarios() {
         drive.autoCooldown = 0.45f;
         drive.autoPower = 0.2f;
         list.push_back(drive);
+        // (A conducao na disputa de ombro: o empurrao de lado de 250 N por 1,5 s
+        // no meio - os contatos inteligentes, 28/10.)
+        Scenario driveDuel = drive;
+        driveDuel.name = "gesto_conduz_duelo";
+        driveDuel.pushes.push_back({ 2.0f, 1.5f, { 0.0f, -250.0f, 0.0f } });
+        list.push_back(driveDuel);
         // O teste sorteado (24/10, o "perna deslocada" do usuario): teclas,
         // corrida, giros da camera, toques e chutes sorteados por 30 s, com
         // pausas paradas longas - em cada pausa os pes tem que voltar ao lugar.
@@ -797,6 +803,20 @@ std::vector<Scenario> scenarios() {
         rival("boneco_ombro_anda", 0.5f, { 5.0f, 0.4f, 0.0f }, 0.0f);
         rival("boneco_ombro_corre", 1.0f, { 8.0f, 0.4f, 0.0f }, 0.0f);
         rival("boneco_frente_corre", 1.0f, { 8.0f, 0.0f, 0.0f }, Pi);
+        {
+            // (O carrinho no boneco parado de costas: o carrinho fica no padrao, o
+            // boneco leva o carrinho e vai ao fisico.)
+            Scenario s { "boneco_carrinho", 7.0f, [](float t) {
+                Keys k;
+                k.forward = t > 0.3f ? 1.0f : 0.0f;
+                k.sprint = true;
+                k.crouch = t > 1.6f && t < 1.7f;
+                return k; } };
+            s.rival = true;
+            s.rivalStart = { 9.5f, 0.0f, 0.0f };
+            s.rivalYaw = 0.0f;
+            list.push_back(s);
+        }
     }
     // Pegadas novas (plano v3, etapa 2): os casos do teste do usuario. O pulo
     // que pousa numa plataforma curta e sai dela correndo, o pulo que raspa o
@@ -2773,6 +2793,7 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
                     }
                 }
                 if (crazy) ++metrics.crazyLegTicks;
+                if (crazy && std::getenv("XLOUCA_T")) std::printf("  perna louca em t %.3f (giro max %.1f rad/s)\n", t, metrics.legSpinMax);
                 if (flipped) ++metrics.kneeFlipTicks;
                 if (scenario.ball)
                     for (std::size_t side = 0; side < 2; ++side) {
@@ -3131,6 +3152,15 @@ int runChecks(const ProbeContext& context) {
         }
         const Metrics m = run("boneco_frente_corre", settings, false);
         expect(!m.fell && !m.rivalFell, "boneco_frente_corre: de frente na corrida, os dois de pe", m);
+        // (O carrinho de sprint no boneco de pe: o boneco leva o carrinho e cai; a
+        // varrida e pancada forte para quem da o carrinho - o fisico o continua -,
+        // e ele levanta pelo clipe, livre de contato, de volta ao padrao.)
+        AthleteRuntimeSettings3D lab = settings;
+        lab.animatedGetUp = true;
+        const Metrics tackle = run("boneco_carrinho", lab, false);
+        expect(tackle.rivalFell && tackle.rivalTrail.find("animado>fisico") != std::string::npos
+                && (tackle.finalMode == BodyModeKind3D::Animated || tackle.finalMode == BodyModeKind3D::Returning),
+            "boneco_carrinho: o boneco leva o carrinho e cai; quem deu levanta e volta ao padrao", tackle);
     }
     {
         // (O carrinho fica no padrao, deslizando e levantando pelo clipe: a pelve
@@ -3642,6 +3672,8 @@ int main(int argc, char** argv) {
         settings.defaultCalmRecoverSpeedup = static_cast<float>(std::atof(speedup));
     if (const char* guide = std::getenv("XGUIACIMA")) settings.physicalUpperAuthority = static_cast<float>(std::atof(guide));
     if (const char* springs = std::getenv("XMOLAS")) settings.physicalReactionPercent = static_cast<float>(std::atof(springs));
+    // XIMPULSO=<%>: o impulso extra do carrinho (29/10).
+    if (const char* boost = std::getenv("XIMPULSO")) settings.defaultTackleBoostPercent = static_cast<float>(std::atof(boost));
     // XLEVANTAR=1: o levantar pelo padrao (item 16).
     if (std::getenv("XLEVANTAR")) settings.animatedGetUp = true;
     // XLEVANTAR_RITMO=<x>: o ritmo do clipe do levantar pelo padrao (28/10).
