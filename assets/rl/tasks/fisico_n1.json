@@ -5,9 +5,9 @@
  "episodeSeconds": 16.0,
  "assistRuler": "linear",
  "assist": {
-  "standing": 30.0,
-  "walking": 30.0,
-  "feet": 30.0,
+  "standing": 0.0,
+  "walking": 0.0,
+  "feet": 0.0,
   "getUp": 0.0,
   "getUpStiffness": 45
  },
@@ -1795,7 +1795,7 @@
  "movingHipTurn": {
   "enabled": true
  },
- "comment": "29/10 (ordem dele: rede nova sobre a locomocao FISICA, sem cair, postura e autoequilibrio, velocidade, empurroes parado e andando; andares so de 3,0 a 4,5 m/s). Do zero (ultima camada zerada: a rodada 0 e o fisico puro), ajuda 30%. Cartao: vault 04_locomocao/plano_rede_nova_fisico_29_10.md.",
+ "comment": "29/10 (ordem dele: rede nova sobre a locomocao FISICA, sem cair, postura e autoequilibrio, velocidade, empurroes parado e andando; andares so de 3,0 a 4,5 m/s). Do zero (ultima camada zerada: a rodada 0 e o fisico puro), SEM forca auxiliar (0%, regua linear: zero de verdade; ordem dele 29/10: \"Ninguem mandou treinar com forca auxiliar\"). Cartao: vault 04_locomocao/plano_rede_nova_fisico_29_10.md.",
  "comment_caps": "A b16 ficou feia com a pose quase sem teto (3,2 rad) e a nota sem ancora: aqui a pose vai a 0,15 rad, a pelve a -3/+4 cm, o pe sobe 6 cm, a inclinacao 0,3 rad; o pouso, a recuperacao, o centro de massa e o contato ficam largos (o equilibrio e os movimentos novos saem deles).",
  "comment_reward": "A ancora e o proprio fisico: residuo 0,1 (o aplicado sobre o teto), postura funcional 0,2, quietude parada 0,15, rumo 0,15; velocidade 0,4 com o progresso; queda 3. Sem o estilo contra a sombra (o braco de 27/10 perdeu nos cortes e nao mudou o visual).",
  "comment_speeds": "Andares so de 3,0 a 4,5 m/s (ordem dele, 29/10): sem a faixa de andar e sem o curriculo de velocidade.",
