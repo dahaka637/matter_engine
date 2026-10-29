@@ -115,6 +115,9 @@ struct Scenario {
     // com a faixa padrao do controlado; e se pode dar carrinho.
     bool rivalPilot = false;
     bool rivalTackles = true;
+    // O boneco pelas teclas (o carrinho dele em quem e controlado, 29/10): o
+    // mesmo comando do jogador, pelo piloto (sem a IA).
+    std::function<Keys(float)> rivalKeys;
 };
 
 struct Metrics {
@@ -226,6 +229,18 @@ struct Metrics {
     float pilotBandSeconds = 0.0f;
     float pilotClosest = 1.0e9f;
     float pilotFarthest = 0.0f;
+    // O choque entre os dois corpos (o carrinho, 29/10): o primeiro contato (s;
+    // -1 nenhum: algo que se move com as pelves a menos de 1,6 m), os picos de
+    // velocidade plana das pelves depois dele (m/s), o tempo grudados (as
+    // pelves a menos de 0,8 m, s), o pico no 1 s depois de se soltarem (m/s)
+    // e o quanto cada um foi levado no 1,5 s depois do contato (m).
+    float bodiesTouchAt = -1.0f;
+    float peakSelfAfter = 0.0f;
+    float peakRivalAfter = 0.0f;
+    float stuckSeconds = 0.0f;
+    float peakAfterStuck = 0.0f;
+    float selfCarried = 0.0f;
+    float rivalCarried = 0.0f;
     // Pegadas novas (plano v3): as pernas cruzadas (ticks com um tornozelo do
     // lado errado do outro, lado a lado, no rumo da pelve) e a maior
     // sobreposicao entre as pernas (m, as capsulas e as caixas dos pes, acima

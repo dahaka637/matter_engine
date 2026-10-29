@@ -1043,8 +1043,22 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                     // pancada forte: o fisico continua o carrinho com a massa de
                     // verdade (com uma regua mais alta, o deslize roteirizado
                     // carregava o outro 7 m).)
+                    // (29/10, "ou trava ou joga longe": o carrinho que pega um corpo
+                    // de verdade - chegando nele acima de TackleBodyApproach - vai ao
+                    // fisico tambem abaixo da regua. No corpo animado o golpe medido
+                    // e pequeno - Dv 0,2 m/s chegando a 5,5 m/s -, e na ponte a
+                    // locomocao dele seguia correndo por cima do outro, levando-o
+                    // 3,5 m. A bola nao entra aqui: ela empurra o corpo por fora dos
+                    // contatos.)
+                    constexpr float TackleBodyApproach = 1.5f;
+                    float tackleApproach = 0.0f;
+                    if (defaultTackling)
+                        for (const RagdollInteraction3D& contact : body.interactions)
+                            if (contact.otherMotion != RagdollContactMotion3D::Static)
+                                tackleApproach = std::max(tackleApproach, contactApproachSpeed3D(contact));
+                    const bool tackleBody = tackleApproach > TackleBodyApproach;
                     signals.actionContact = defaultTackling
-                        && ((hitImpulse > TackleHitImpulse && !belowHard) || wallImpulse > TackleHitImpulse);
+                        && ((hitImpulse > TackleHitImpulse && (!belowHard || tackleBody)) || wallImpulse > TackleHitImpulse);
                     signals.airTackleStart = airTackle;
                     signals.jumped = jumped;
                     // (No carrinho do padrao o clipe poe a capsula embaixo da pelve
@@ -1124,7 +1138,7 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                     // (No carrinho o contato leve tambem vai a ponte - o corpo fisico
                     // seguindo o clipe -: guiado ele nao cede.)
                     const bool softContact = belowHard && settings.physicalBridge && movingOnly && !tackled
-                        && (capsule.grounded || defaultTackling);
+                        && (capsule.grounded || defaultTackling) && !tackleBody;
                     ModeSignals3D tableSignals = signals;
                     if (softContact) tableSignals.contacts.impact = false;
                     const ModeDecision3D decision = athlete.modeRules.decide(kind, tableSignals, settings.modeRules, deltaTime);

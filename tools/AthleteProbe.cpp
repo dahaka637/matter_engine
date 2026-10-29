@@ -818,6 +818,42 @@ std::vector<Scenario> scenarios() {
             s.rivalYaw = 0.0f;
             list.push_back(s);
         }
+        {
+            // (O carrinho entre os corpos, 29/10 - "ou trava ou joga longe ou trava
+            // e depois joga longe": no boneco de lado e de frente, e o boneco dando
+            // carrinho em quem e controlado, parado e vindo de frente.)
+            const auto sprintTackle = [](float t) {
+                Keys k;
+                k.forward = t > 0.3f ? 1.0f : 0.0f;
+                k.sprint = true;
+                k.crouch = t > 1.6f && t < 1.7f;
+                return k;
+            };
+            Scenario side { "carrinho_boneco_lado", 7.0f, sprintTackle };
+            side.rival = true;
+            side.rivalStart = { 9.5f, 0.0f, 0.0f };
+            side.rivalYaw = 0.5f * Pi;
+            list.push_back(side);
+            Scenario front = side;
+            front.name = "carrinho_boneco_frente";
+            front.rivalYaw = Pi;
+            list.push_back(front);
+            Scenario mine { "boneco_carrinho_em_mim", 7.0f, [](float) { return Keys {}; } };
+            mine.rival = true;
+            mine.rivalStart = { 12.0f, 0.0f, 0.0f };
+            mine.rivalYaw = Pi;
+            mine.rivalKeys = [sprintTackle](float t) {
+                Keys k = sprintTackle(t);
+                k.cameraYaw = Pi;
+                return k;
+            };
+            list.push_back(mine);
+            Scenario meeting = mine;
+            meeting.name = "boneco_carrinho_de_frente";
+            meeting.keys = [](float t) { Keys k; k.forward = t > 0.3f ? 1.0f : 0.0f; return k; };
+            meeting.rivalStart = { 16.0f, 0.0f, 0.0f };
+            list.push_back(meeting);
+        }
         // (A IA de captura, 29/10: o boneco joga pelo piloto. A bola solta com o
         // controlado parado - ela pega e fica na faixa dele -, e o controlado
         // conduzindo para cima dela - ela tenta roubar; com e sem carrinho.)
@@ -1302,6 +1338,9 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
     // (A IA de captura no boneco: o piloto e a posse do tick anterior.)
     CapturePilot3D rivalPilot;
     std::uint64_t pilotLastOwner = 0;
+    // (O choque entre os corpos: onde estavam no contato e o tempo grudados.)
+    Vec3 touchSelf, touchRival;
+    float stuckRun = 0.0f, unstuckAt = -1.0f;
     InflatedBallHandle3D ballHandle;
     InflatedBallState3D ballState;
     BallOwnership3D ownership;
@@ -1795,6 +1834,24 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
             if (pilotCommand.ballRequest != BallActionKind3D::None) ++metrics.pilotTouches;
             slots[1].command = &pilotCommand;
         }
+        if (scenario.rivalKeys && step >= 0 && !rivalState.links.empty()) {
+            // O boneco pelas teclas: o rumo pelo olhar dele, a tabela do padrao.
+            const Keys rk = scenario.rivalKeys(t);
+            const Vec3 ahead { std::cos(rk.cameraYaw), std::sin(rk.cameraYaw), 0.0f };
+            const Vec3 side { -ahead.y, ahead.x, 0.0f };
+            AthleteStickInput3D stick;
+            stick.moveWorld = ahead * rk.forward + side * rk.left;
+            stick.cameraYawRadians = rk.cameraYaw;
+            stick.sprint = rk.sprint;
+            stick.crouch = rk.crouch;
+            pilotCommand = athleteStickCommand3D(stick, tickSettings, gaitSpeeds, 1.0e9f);
+            const Vec3 move = stick.moveWorld;
+            if (move.lengthSquared() > 1e-4f && athleteTelemetry3D(rivalAthlete).mode != BodyModeKind3D::Physical)
+                pilotCommand.intent.requestedVelocityWorld = move.normalized()
+                    * athleteDefaultTravelSpeed3D(tickSettings, std::atan2(move.y, move.x) - rk.cameraYaw, rk.sprint);
+            pilotCommand.pilot = true;
+            slots[1].command = &pilotCommand;
+        }
         runtime.update(*scene, runtimeAssets, std::span<AthleteSlot3D>(slots.data(), scenario.rival ? 2 : 1), balls,
             tickSettings, control, Dt, output);
         if (scenario.rivalPilot && scenario.ball && step >= 0 && !rivalState.links.empty() && !bodyState.links.empty()) {
@@ -2069,6 +2126,46 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
                     std::hypot(pelvis.x - scenario.rivalStart.x, pelvis.y - scenario.rivalStart.y));
             }
             metrics.rivalFinalMode = now;
+        }
+        if (scenario.rival && step >= 0 && !bodyState.links.empty() && !rivalState.links.empty()) {
+            const Vec3 a = bodyState.links.front().position, b = rivalState.links.front().position;
+            const Vec3 va = bodyState.links.front().linearVelocity, vb = rivalState.links.front().linearVelocity;
+            const float apart = std::hypot(a.x - b.x, a.y - b.y);
+            const float sa = std::hypot(va.x, va.y), sb = std::hypot(vb.x, vb.y);
+            bool moving = false;
+            for (const RagdollInteraction3D& contact : bodyState.interactions)
+                moving = moving || contact.otherMotion != RagdollContactMotion3D::Static;
+            for (const RagdollInteraction3D& contact : rivalState.interactions)
+                moving = moving || contact.otherMotion != RagdollContactMotion3D::Static;
+            if (metrics.bodiesTouchAt < 0.0f && moving && apart < 1.6f) {
+                metrics.bodiesTouchAt = t;
+                touchSelf = a;
+                touchRival = b;
+            }
+            if (metrics.bodiesTouchAt >= 0.0f) {
+                metrics.peakSelfAfter = std::max(metrics.peakSelfAfter, sa);
+                metrics.peakRivalAfter = std::max(metrics.peakRivalAfter, sb);
+                if (t <= metrics.bodiesTouchAt + 1.5f) {
+                    metrics.selfCarried = std::max(metrics.selfCarried, std::hypot(a.x - touchSelf.x, a.y - touchSelf.y));
+                    metrics.rivalCarried
+                        = std::max(metrics.rivalCarried, std::hypot(b.x - touchRival.x, b.y - touchRival.y));
+                }
+                if (apart < 0.8f) {
+                    metrics.stuckSeconds += Dt;
+                    stuckRun += Dt;
+                } else {
+                    if (stuckRun >= 0.3f) unstuckAt = t;
+                    stuckRun = 0.0f;
+                }
+                if (unstuckAt >= 0.0f && t <= unstuckAt + 1.0f)
+                    metrics.peakAfterStuck = std::max(metrics.peakAfterStuck, std::max(sa, sb));
+            }
+            // XCARRINHO=1: a cada 0,1 s, os dois corpos (pelve, altura, velocidade, modo) e a distancia.
+            if (std::getenv("XCARRINHO") && step % 12 == 0)
+                std::printf("  CARR t %.2f  eu (%.2f, %.2f) z %.2f %.1f m/s %-8s | boneco (%.2f, %.2f) z %.2f %.1f m/s %-8s"
+                            " | %.2f m%s\n", t, a.x, a.y, a.z, sa, bodyModeName3D(athleteTelemetry3D(athlete).mode),
+                    b.x, b.y, b.z, sb, bodyModeName3D(athleteTelemetry3D(rivalAthlete).mode), apart,
+                    moving ? " contato" : "");
         }
         if (scenario.rival && step >= 0 && !bodyState.links.empty()) {
             const Vec3 v = bodyState.links.front().linearVelocity;
@@ -3017,6 +3114,11 @@ void printMetrics(const Scenario& scenario, const Metrics& metrics, bool footste
     if (scenario.rival)
         std::printf("%-18s   boneco: %s, %s, empurrado ate %.2f m, fim %s\n", "", metrics.rivalTrail.c_str(),
             metrics.rivalFell ? "CAIU" : "de pe", metrics.rivalPushed, bodyModeName3D(metrics.rivalFinalMode));
+    if (scenario.rival && metrics.bodiesTouchAt >= 0.0f)
+        std::printf("%-18s   choque em %.2f s: picos depois %.1f (controlado) e %.1f m/s (boneco); grudados %.2f s, "
+                    "pico ao soltar %.1f m/s; levados em 1,5 s %.2f e %.2f m\n", "", metrics.bodiesTouchAt,
+            metrics.peakSelfAfter, metrics.peakRivalAfter, metrics.stuckSeconds, metrics.peakAfterStuck,
+            metrics.selfCarried, metrics.rivalCarried);
     if (scenario.rivalPilot)
         std::printf("%-18s   IA: com a bola %.1f s (a primeira em %.2f s), tomou %d vez(es), %d toques; com ela, %.0f%% "
                     "na faixa de 2 a 5 m (o mais longe %.1f m); pelves a %.2f m no mais perto\n", "", metrics.pilotOwnedSeconds,

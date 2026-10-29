@@ -316,6 +316,8 @@ void CharacterLocomotion3D::seedMotion(const RagdollProfile3D& profile, const Ra
         m_tackling = true;
         m_tacklePending = false;
         m_tackleLandSpeed = -1.0f;
+        m_tackleHitImpulse = 0.0f;
+        m_tackleConnected = false;
         m_tackleBehindSeconds = 0.0f;
         m_tackleHoldSeconds = 0.0f;
         // (Como enterGetUpPhase em update.)

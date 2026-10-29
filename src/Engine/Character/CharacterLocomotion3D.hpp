@@ -1156,6 +1156,10 @@ private:
     float m_tackleExpectedRise = 0.0f;
     // Velocidade no plano quando a pelve chegou ao chao (-1 antes).
     float m_tackleLandSpeed = -1.0f;
+    // O que se move bateu nele neste carrinho (N.s, somado) e se ja e um corpo
+    // (o carrinho pegou alguem: acaba o embalo de mentira).
+    float m_tackleHitImpulse = 0.0f;
+    bool m_tackleConnected = false;
     bool m_previousCrouchIntent = false;
     // Preparo: armado (esperando o pouso do pe com que o clipe comeca
     // apoiado), ha quanto tempo, que pe e o ultimo estado dos pes.

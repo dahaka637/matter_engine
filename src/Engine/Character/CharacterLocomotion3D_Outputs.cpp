@@ -123,11 +123,18 @@ void CharacterLocomotion3D::stepOutputs(Tick& t) {
             const Vec3 orientationError = rotationVector(wanted * pelvis.orientation.conjugate());
             m_output.rootControlTorqueWorld = clampMagnitude(orientationError * (mass * 9.0f)
                 + (wantedSpin - pelvis.angularVelocity) * (mass * 1.2f), mass * 8.0f) * TackleAttitude;
+            // Pegou alguem: o que se move bateu nele (o chao e parado; a bola nao
+            // chega la).
+            for (const RagdollInteraction3D& contact : state.interactions)
+                if (contact.otherMotion != RagdollContactMotion3D::Static)
+                    m_tackleHitImpulse += contact.normalImpulseNewtonSeconds;
+            m_tackleConnected = m_tackleConnected || m_tackleHitImpulse > TackleBodyHitImpulse;
             // O impulso do mergulho: o pe de apoio ainda no chao, o corpo no
             // alto e o clipe descendo (a saida), a perna empurra na direcao
             // do carrinho - sem ele o corpo chegava ao chao com metade da
-            // velocidade de entrada (o carrinho lento e curto).
-            {
+            // velocidade de entrada (o carrinho lento e curto). Depois de
+            // pegar alguem, nao: a perna seguia empurrando o outro corpo.
+            if (!m_tackleConnected) {
                 const std::size_t plant = static_cast<std::size_t>(m_tackleStartSide);
                 const float bodyHeight = pelvis.position.z - groundHeightGuess;
                 const bool takeoff = feetGroundContact[plant] && bodyHeight > 0.40f
@@ -480,7 +487,8 @@ void CharacterLocomotion3D::stepOutputs(Tick& t) {
         const float slideScale = std::clamp(mu / TackleBaseFriction, 0.10f, 1.0f);
         const float slide = smoothStep((0.70f - m_tackleExpectedHeight) / 0.15f)
             * (1.0f - smoothStep((m_tackleExpectedRise - 0.10f) / 0.20f));
-        m_output.bodyFrictionScale = 1.0f - (1.0f - slideScale) * slide;
+        // (Pegou alguem: o atrito de sempre - no deslize, os dois iam juntos 5 m.)
+        m_output.bodyFrictionScale = m_tackleConnected ? 1.0f : 1.0f - (1.0f - slideScale) * slide;
     }
 
     m_telemetry.localVelocity = localVelocity;

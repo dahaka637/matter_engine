@@ -134,6 +134,11 @@ const float TackleBaseFriction = tuneTemp("T_TackleBaseMu", 0.93f);
 const float TackleImpulseShare = tuneTemp("T_TackleImpulse", 1.15f);
 const float TackleImpulseForce = tuneTemp("T_TackleImpulseForce", 0.8f);
 const float TackleSlideHeight = tuneTemp("T_TackleSlideH", 0.55f);
+// O carrinho que pegou outro corpo (29/10, "ou trava ou joga longe"): acima
+// disto de impulso do que se move (N.s, somado no carrinho; a bola chutada
+// forte da ~9) ele perde o impulso do mergulho e o atrito baixo do deslize - o
+// choque e so fisica, e eles nao vao juntos metros no deslize.
+const float TackleBodyHitImpulse = tuneTemp("T_TackleBodyHit", 15.0f);
 const float TackleSlideRelease = tuneTemp("T_TackleSlideV", 2.2f);
 const float TackleHandoffHeight = tuneTemp("T_TackleHandoff", 0.74f);
 // Atitude da pelve no carrinho (torque para a inclinacao do clipe; 0 sem).

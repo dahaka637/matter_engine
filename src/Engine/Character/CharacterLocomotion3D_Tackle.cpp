@@ -212,6 +212,8 @@ void CharacterLocomotion3D::stepTackle(Tick& t) {
             m_tackleStart = { pelvis.x - first.x, pelvis.y - first.y, pelvis.z };
             m_tackling = true;
             m_tackleLandSpeed = -1.0f;
+            m_tackleHitImpulse = 0.0f;
+            m_tackleConnected = false;
             m_tackleBehindSeconds = 0.0f;
             m_tackleHoldSeconds = 0.0f;
             enterGetUpPhase(CharacterGetUpPhase3D::Rising);
