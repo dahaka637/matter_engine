@@ -158,8 +158,10 @@ def write_run_files(run: Path, cenario: str, tarefa: str = "", escala: float = 1
 
 def write_status(run: Path, state: str, counters: dict, row: dict, args) -> None:
     """O estado do treinador para a tela (o status.json do supervisor; o pid diz que ele esta vivo)."""
-    status = {"run": args.treino, "task": f"rastreador_{args.cenario}",
-              "taskName": f"Rastreador, {args.cenario}" + (f" (de {args.de})" if args.de else ""),
+    # (Com a tarefa, a tela mostra os exercicios dela, e nao o cenario do jogador virtual.)
+    name = f"Rastreador: {Path(args.tarefa).stem}" if args.tarefa else f"Rastreador, {args.cenario}"
+    status = {"run": args.treino, "task": Path(args.tarefa).stem if args.tarefa else f"rastreador_{args.cenario}",
+              "taskName": name + (f" (de {args.de})" if args.de else ""),
               "state": state, "pid": os.getpid(), "hora": time.time(), "iteration": counters["rodada"],
               "steps": counters["decisoes"], "episodes": counters["episodios"],
               "trainSeconds": counters.get("segundos", 0.0), "sps": row.get("dec_s", 0.0), "threads": args.threads,
