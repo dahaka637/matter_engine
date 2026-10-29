@@ -213,6 +213,10 @@ def main() -> int:
                         help="em perigo (a cabeca se afastando do lider ou um tropeco) as pernas pesam 0,3 na nota")
     parser.add_argument("--tarefa", default="",
                         help="os exercicios de uma tarefa da locomocao (assets/rl/tasks/NOME.json ou um caminho)")
+    parser.add_argument("--taxa", type=float, default=3e-4, help="a taxa de aprendizado (Adam)")
+    parser.add_argument("--kl-alvo", type=float, default=0.0,
+                        help="> 0: a taxa se ajusta pelo KL de cada rodada (acima do dobro, /1,5; abaixo da metade, x1,5; "
+                             "entre 1e-5 e 1e-3), como no PPO do rsl_rl. 0: a taxa fixa (a receita de 19/10)")
     parser.add_argument("--lider-laboratorio", action="store_true",
                         help="o lider com os valores do laboratorio (molas, arrancada, resposta 150%%, reversao, corrida 8/6)")
     parser.add_argument("--seguir-corpo", type=float, default=-1.0,
@@ -243,7 +247,7 @@ def main() -> int:
     drill_ids = list(batch.drill_ids())
     n, obs_size, act_size = batch.num_envs, batch.obs_size, batch.action_size
     model = Policy(obs_size, act_size).to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=3e-4)
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.taxa)
     counters = {"rodada": 0, "decisoes": 0, "episodios": 0}
     settings = {"cenario": args.cenario, "teto": args.teto, "corrida": not args.sem_corrida, "projeteis": args.projeteis,
                 "lider_laboratorio": args.lider_laboratorio, "seguir_corpo": args.seguir_corpo, "tarefa": args.tarefa,
@@ -260,6 +264,10 @@ def main() -> int:
         state = torch.load(checkpoint, map_location=device, weights_only=False)
         model.load_state_dict(state["model"])
         optimizer.load_state_dict(state["optimizer"])
+        # (Com a taxa fixa, a da linha de comando; pelo KL, a guardada no otimizador segue de onde estava.)
+        if args.kl_alvo <= 0:
+            for group in optimizer.param_groups:
+                group["lr"] = args.taxa
         counters = state["counters"]
         print(f"retomando {args.treino} da rodada {counters['rodada']}", flush=True)
     log = open(run / "log.jsonl", "a")
@@ -343,6 +351,15 @@ def main() -> int:
                 updates += 1
         for k in stats:
             stats[k] /= max(1, updates)
+        if args.kl_alvo > 0:
+            # 29/10 (vigilia): o KL de 0,10-0,13 por rodada com a taxa fixa (o desvio encolheu de 0,14 para 0,10).
+            lr = optimizer.param_groups[0]["lr"]
+            if stats["kl"] > 2.0 * args.kl_alvo:
+                lr = max(1e-5, lr / 1.5)
+            elif stats["kl"] < 0.5 * args.kl_alvo:
+                lr = min(1e-3, lr * 1.5)
+            for group in optimizer.param_groups:
+                group["lr"] = lr
         episodes = batch.finished_episodes()
         counters["rodada"] += 1
         counters["decisoes"] += T * n
@@ -350,7 +367,8 @@ def main() -> int:
         elapsed = time.time() - begin
         row = {"rodada": counters["rodada"], "decisoes": counters["decisoes"], "hora": time.time(),
                "nota_passo": float(buf_rew.mean()), "desvio": float(model.log_std.exp().mean()),
-               "episodios": int(len(episodes)), "dec_s": T * n / elapsed, "sim_s": sim_seconds, "total_s": elapsed, **stats}
+               "episodios": int(len(episodes)), "dec_s": T * n / elapsed, "sim_s": sim_seconds, "total_s": elapsed,
+               "taxa": optimizer.param_groups[0]["lr"], **stats}
         if len(episodes):
             row.update({"ep_segundos": float(episodes[:, 1].mean()), "quedas": float(episodes[:, 2].mean()),
                         "erro_vel_cm": float(episodes[:, 4].mean()), "vel_corpo": float(episodes[:, 5].mean()),
