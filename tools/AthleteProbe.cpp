@@ -754,6 +754,36 @@ std::vector<Scenario> scenarios() {
         Scenario encostaCorre { "encostao_correndo", 4.0f, [](float t) { Keys k; k.forward = t > 0.3f ? 1.0f : 0.0f; return k; } };
         encostaCorre.throws.push_back({ 1.5f, 6.0f, { 0.15f, 0.15f, 0.15f }, { 5.5f, 1.2f, 1.2f }, { 0.0f, -5.0f, 0.0f } });
         list.push_back(encostaCorre);
+        // Os contatos inteligentes (28/10, pedido do usuario: "qualquer encostao ja
+        // leva ao modo de locomocao fisica... nao perca velocidade"): um corpo de
+        // jogador (80 kg, 0,4 x 0,3 x 0,9 m, quadril ao ombro) correndo junto e
+        // entrando de lado no ombro, de frente, e a disputa de ombro sustentada (o
+        // empurrao de lado por 1,5 s).
+        const auto runKeys = [](float forward) {
+            return [forward](float t) { Keys k; k.forward = t > 0.3f ? forward : 0.0f; return k; };
+        };
+        const auto shoulder = [&](const char* name, float forward, float lateral) {
+            Scenario s { name, 4.0f, runKeys(forward) };
+            Throw body { 1.5f, 80.0f, { 0.2f, 0.15f, 0.45f }, { 0.0f, 0.75f, 1.15f }, { 0.0f, -lateral, 0.0f } };
+            body.fromBody = true;
+            s.throws.push_back(body);
+            list.push_back(s);
+        };
+        shoulder("ombro_anda", 0.5f, 1.5f);
+        shoulder("ombro_corre", 1.0f, 2.5f);
+        shoulder("ombro_forte", 1.0f, 4.0f);
+        {
+            Scenario s { "trombada_frente", 4.0f, runKeys(1.0f) };
+            Throw body { 1.5f, 80.0f, { 0.15f, 0.2f, 0.45f }, { 1.0f, 0.0f, 1.15f }, { -3.0f, 0.0f, 0.0f } };
+            body.fromBody = true;
+            s.throws.push_back(body);
+            list.push_back(s);
+        }
+        {
+            Scenario s { "duelo_ombro", 4.0f, runKeys(1.0f) };
+            s.pushes.push_back({ 1.5f, 1.5f, { 0.0f, -250.0f, 0.0f } });
+            list.push_back(s);
+        }
     }
     // Pegadas novas (plano v3, etapa 2): os casos do teste do usuario. O pulo
     // que pousa numa plataforma curta e sai dela correndo, o pulo que raspa o
@@ -1280,6 +1310,12 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
     float receptionAt = -1.0f, receptionFootPeak = 0.0f;
     Vec3 receptionBallBefore {}, receptionBodyVelocity {};
     bool receptionAfterShown = false, receptionHalfShown = false;
+    // (O primeiro choque do roteiro: a velocidade antes e depois dele.)
+    float hitAt = -1.0f;
+    for (const Throw& item : scenario.throws) hitAt = hitAt < 0.0f ? item.at : std::min(hitAt, item.at);
+    for (const Push& push : scenario.pushes) hitAt = hitAt < 0.0f ? push.at : std::min(hitAt, push.at);
+    double speedBeforeSum = 0.0, speedAfterSum = 0.0;
+    int speedBeforeCount = 0, speedAfterCount = 0;
     for (int step = -warmTicks; step < ticks; ++step) {
         const float t = static_cast<float>(step) * Dt;
         Keys keys = step < 0 ? Keys {} : scenario.keys(t);
@@ -1843,7 +1879,14 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
         }
         for (const Throw& item : scenario.throws)
             if (t >= item.at && t < item.at + Dt) {
-                createLocomotionThrow3D(*scene, { item.start, item.velocity, item.massKg, item.halfExtents });
+                Vec3 start = item.start;
+                Vec3 velocity = item.velocity;
+                if (item.fromBody && !bodyState.links.empty()) {
+                    const PhysicsBodyState3D& pelvis = bodyState.links.front();
+                    start += Vec3 { pelvis.position.x, pelvis.position.y, 0.0f };
+                    velocity += Vec3 { pelvis.linearVelocity.x, pelvis.linearVelocity.y, 0.0f };
+                }
+                createLocomotionThrow3D(*scene, { start, velocity, item.massKg, item.halfExtents });
                 if (dump != nullptr) std::fprintf(dump, "E caixa\n");
             }
         for (const Push& push : scenario.pushes)
@@ -1854,6 +1897,20 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
             }
         scene->simulate(Dt);
         bodyState = scene->ragdollState(handle);
+        if (hitAt >= 0.0f && step >= 0 && !bodyState.links.empty()) {
+            if (athlete.contactBody.massKg > 0.0f)
+                metrics.peakWindowDeltaV
+                    = std::max(metrics.peakWindowDeltaV, athlete.impactWindow.value / athlete.contactBody.massKg);
+            metrics.peakKickDeltaV = std::max(metrics.peakKickDeltaV, legacy.contactKick.length());
+            const Vec3 v = bodyState.links.front().linearVelocity;
+            if (t >= hitAt - 0.5f && t < hitAt) {
+                speedBeforeSum += std::hypot(v.x, v.y);
+                ++speedBeforeCount;
+            } else if (t >= hitAt && t < hitAt + 1.0f) {
+                speedAfterSum += std::hypot(v.x, v.y);
+                ++speedAfterCount;
+            }
+        }
         if (goalScenario && !bodyState.links.empty()) {
             static float deepest = 0.0f, rebound = 0.0f, firstPhysical = -1.0f, firstPush = -1.0f, peakPush = 0.0f, widest = 0.0f, pelvisDeepest = 0.0f;
             static float capsuleDeepest = 0.0f, netMilliseconds = 0.0f, capsuleRise = 0.0f;
@@ -2697,6 +2754,8 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
     }
     if (!bodyState.links.empty())
         metrics.travel = std::hypot(bodyState.links.front().position.x, bodyState.links.front().position.y);
+    if (speedBeforeCount > 0) metrics.speedBefore = static_cast<float>(speedBeforeSum / speedBeforeCount);
+    if (speedAfterCount > 0) metrics.speedAfter = static_cast<float>(speedAfterSum / speedAfterCount);
     metrics.worstLiftCorrection = athlete.footsteps.telemetry().worstLiftCorrection;
     metrics.settleSteps = athlete.footsteps.telemetry().settleSteps;
     metrics.earlyLifts = athlete.footsteps.telemetry().earlyLifts;
@@ -2767,6 +2826,12 @@ void printMetrics(const Scenario& scenario, const Metrics& metrics, bool footste
     }
     std::printf("%-18s   andou %.2f m, recaidas %d, %s, fim %s (%s)\n", "", metrics.travel, metrics.relapses,
         metrics.fell ? "CAIU" : "de pe", bodyModeName3D(metrics.finalMode), metrics.trail.c_str());
+    if (metrics.speedBefore >= 0.0f && metrics.speedAfter >= 0.0f)
+        std::printf("%-18s   velocidade antes/depois do choque %.2f / %.2f m/s (%.0f%%), Dv da janela ate %.2f m/s, golpe"
+                    " pendente ate %.2f m/s\n", "",
+            metrics.speedBefore, metrics.speedAfter,
+            metrics.speedBefore > 0.05f ? 100.0f * metrics.speedAfter / metrics.speedBefore : 100.0f,
+            metrics.peakWindowDeltaV, metrics.peakKickDeltaV);
     if (metrics.startPress >= 0.0f)
         std::printf("%-18s   arrancada: pe no chao desliza ate %.2f m/s, o primeiro pe sai do chao %.3f s depois do aperto\n", "",
             metrics.startSlide, metrics.startLiftoff);
@@ -2900,14 +2965,23 @@ int runChecks(const ProbeContext& context) {
         expect(m.modeSwitches == 0, "sprint: fica no padrao", m);
     }
     {
+        // (Desde os contatos inteligentes, 28/10: a caixa leve vai a ponte de
+        // contato, nao ao fisico.)
         const Metrics m = run("caixa_leve", settings, false);
-        expect(has(m, "fisico") && !has(m, "ativo")
+        expect(!has(m, "fisico") && has(m, "ponte") && !has(m, "ativo")
                 && (m.finalMode == BodyModeKind3D::Animated || m.finalMode == BodyModeKind3D::Returning),
-            "caixa leve: o fisico e a volta ao padrao", m);
+            "caixa leve: a ponte de contato e a volta ao padrao", m);
     }
     {
+        // (A caixa forte - 60 kg a 6 m/s, golpe pendente ~1 m/s - fica abaixo da
+        // pancada forte: a ponte a segura e o corpo cede de pe; com a ponte de
+        // contato desligada, o fisico pleno de antes.)
         const Metrics m = run("caixa_forte", settings, false);
-        expect(has(m, "fisico"), "caixa forte: vai ao fisico pleno", m);
+        expect(!has(m, "fisico") && has(m, "ponte") && !m.fell, "caixa forte: a ponte de contato segura, de pe", m);
+        AthleteRuntimeSettings3D off = settings;
+        off.contactBridge = false;
+        const Metrics before = run("caixa_forte", off, false);
+        expect(has(before, "fisico"), "caixa forte, sem a ponte de contato: vai ao fisico pleno", before);
     }
     // Os casos do teste do usuario (10/10, noite): derrubado, ele levanta e
     // volta ao padrao - parado e com as teclas apertadas desde o fim do
@@ -2930,6 +3004,45 @@ int runChecks(const ProbeContext& context) {
                 && (m.finalMode == BodyModeKind3D::Animated || m.finalMode == BodyModeKind3D::Returning),
             what, m);
     }
+    // Os contatos inteligentes (28/10, pedido do usuario: "qualquer encostao ja leva
+    // ao modo de locomocao fisica... nao perca velocidade"): o contato de quem se
+    // move vai a ponte de contato - sem o fisico pleno, sem cair, de volta ao padrao,
+    // na velocidade de antes e sem piscar entre os modos (a disputa de ombro
+    // sustentada tambem) -; a pancada forte e a perda de base ainda levam ao fisico;
+    // o carrinho fica inteiro no padrao.
+    for (const char* name : { "encostao_andando", "encostao_correndo", "caixa_leve", "caixa_media", "caixa_correndo",
+             "pancada_anda", "pancada_corre", "ombro_anda", "ombro_corre", "ombro_forte", "duelo_ombro" }) {
+        const Metrics m = run(name, settings, false);
+        const bool keeps = m.speedBefore < 0.5f || m.speedAfter >= 0.9f * m.speedBefore;
+        char what[192];
+        std::snprintf(what, sizeof(what), "%s: ponte de contato sem o fisico, de pe, %.0f%% da velocidade, %d trocas", name,
+            m.speedBefore > 0.05f ? 100.0f * m.speedAfter / m.speedBefore : 100.0f, m.modeSwitches);
+        expect(!has(m, "fisico") && has(m, "ponte") && !m.fell && keeps && m.modeSwitches <= 4
+                && (m.finalMode == BodyModeKind3D::Animated || m.finalMode == BodyModeKind3D::Returning),
+            what, m);
+    }
+    {
+        // (De frente a 3 m/s contra 80 kg: a fisica tira um pouco da velocidade.)
+        const Metrics m = run("trombada_frente", settings, false);
+        expect(!has(m, "fisico") && !m.fell && m.speedAfter >= 0.75f * m.speedBefore
+                && m.finalMode == BodyModeKind3D::Animated,
+            "trombada de frente: ponte de contato, de pe, ao menos 75% da velocidade", m);
+    }
+    {
+        const Metrics m = run("queda_frente", settings, false);
+        expect(has(m, "fisico"), "pancada forte (queda de frente): vai ao fisico pleno", m);
+        const Metrics side = run("queda_levanta", settings, false);
+        // (A ponte de contato entra solta e decide em 25 ms: "ponte>fisico".)
+        expect(has(side, "fisico") && side.finalMode == BodyModeKind3D::Animated,
+            "pancada forte (a caixa de lado que derruba): vai ao fisico, levanta e volta ao padrao", side);
+    }
+    {
+        // (O carrinho fica no padrao, deslizando e levantando pelo clipe: a pelve
+        // vai abaixo de 0,5 m no deslize, por isso o "caiu" da regua nao vale.)
+        const Metrics m = run("carrinho", settings, false);
+        expect(!has(m, "fisico") && m.finalMode == BodyModeKind3D::Animated && m.travel > 10.0f,
+            "carrinho: inteiro no padrao, sem o fisico", m);
+    }
     {
         // O levantar pelo padrao (28/10, item 16): de brucos e de costas no chao
         // plano ele levanta pelo clipe guiado e acaba no padrao, sem ajuda de
@@ -2937,6 +3050,15 @@ int runChecks(const ProbeContext& context) {
         // derrubou parada no caminho (queda_225) ele nem comeca. E de pe no fim.
         AthleteRuntimeSettings3D getUpOn = settings;
         getUpOn.animatedGetUp = true;
+        // (Os casos da caixa que derruba dependem de onde ela para em relacao ao
+        // corpo caido, e a queda e caotica: com a ponte de contato o corpo leva o
+        // choque um tick depois - 8 ms - e cai noutro lugar. Estes contratos
+        // guardam a logica do levantar, entao rodam na entrada de antes; os
+        // resultados com a ponte de contato ficam nos contratos dela, abaixo.)
+        AthleteRuntimeSettings3D getUpOld = getUpOn;
+        getUpOld.contactBridge = false;
+        AthleteRuntimeSettings3D physicalOld = settings;
+        physicalOld.contactBridge = false;
         for (const char* name : { "queda_180", "queda_270" }) {
             const Metrics m = run(name, getUpOn, false);
             char what[160];
@@ -2957,12 +3079,13 @@ int runChecks(const ProbeContext& context) {
             // nova tentativa vai pelo clipe.)
             AthleteRuntimeSettings3D lab = getUpOn;
             lab.getUpRetryCrooked = true;
+            lab.contactBridge = false;
             const Metrics m = run("quedacorre_225", lab, false);
             expect(m.animatedGetUpCompleted >= 1 && m.finalMode == BodyModeKind3D::Animated,
                 "levantar torto: zera, deita de novo e levanta pelo clipe", m);
         }
         {
-            const Metrics m = run("queda_225", getUpOn, false);
+            const Metrics m = run("queda_225", getUpOld, false);
             expect(m.animatedGetUpStarts == 0
                     && (m.finalMode == BodyModeKind3D::Animated || m.finalMode == BodyModeKind3D::Returning),
                 "levantar pelo padrao: com a caixa no caminho levanta pelo fisico", m);
@@ -2972,15 +3095,27 @@ int runChecks(const ProbeContext& context) {
             // ele passa a arrancada agachada do padrao e corre; pelo fisico, a
             // ponte da arrancada nao cai mais no nocaute (corpo baixo, postura)
             // em laco - antes ele nunca saia correndo.
-            const Metrics clip = run("queda_levanta_arranca", getUpOn, false);
+            const Metrics clip = run("queda_levanta_arranca", getUpOld, false);
             char what[160];
             std::snprintf(what, sizeof(what), "levantar com arrancada, pelo clipe: corre (andou %.1f m)", clip.travel);
             expect(clip.animatedGetUpCompleted >= 1 && clip.finalMode == BodyModeKind3D::Animated && clip.travel > 15.0f,
                 what, clip);
-            const Metrics physical = run("queda_levanta_arranca", settings, false);
+            const Metrics physical = run("queda_levanta_arranca", physicalOld, false);
             std::snprintf(what, sizeof(what), "levantar com arrancada, pelo fisico: corre sem o laco (andou %.1f m)",
                 physical.travel);
             expect(physical.finalMode == BodyModeKind3D::Animated && physical.travel > 10.0f, what, physical);
+        }
+        // (Com a ponte de contato: a caixa derruba, ele levanta - pelo clipe ou
+        // pelo fisico, conforme onde ela parou -, volta ao padrao e corre.)
+        for (const char* name : { "queda_225", "quedacorre_225", "queda_levanta_arranca" }) {
+            const Metrics m = run(name, getUpOn, false);
+            const bool runs = std::string(name) != "queda_levanta_arranca" || m.travel > 10.0f;
+            char what[160];
+            std::snprintf(what, sizeof(what), "ponte de contato, %s: derrubado, levanta e volta ao padrao (andou %.1f m)", name,
+                m.travel);
+            expect(has(m, "fisico") && runs
+                    && (m.finalMode == BodyModeKind3D::Animated || m.finalMode == BodyModeKind3D::Returning),
+                what, m);
         }
     }
     {

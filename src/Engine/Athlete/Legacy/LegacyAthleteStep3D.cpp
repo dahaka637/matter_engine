@@ -86,13 +86,14 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         impactWindowed = athlete.impactWindow.add(contacts.impactImpulse + body.externalPushNewtonSeconds, deltaTime,
             settings.impactWindowSeconds);
     }
+    // (Fora do bloco: a ponte de contato nao vale para quem levou carrinho.)
+    bool tackled = false;
     {
         // Levou carrinho: pancada de algo que se move e uma perna de quem
         // da o carrinho a menos de 45 cm de um link dele.
         float impulse = 0.0f;
         for (const RagdollInteraction3D& contact : body.interactions)
             if (contact.otherMotion != RagdollContactMotion3D::Static) impulse += contact.normalImpulseNewtonSeconds;
-        bool tackled = false;
         if (impulse > 2.0f)
             for (const auto& [entity, leg] : tacklerLegs) {
                 if (entity == slot.entityId) continue;
@@ -515,6 +516,9 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             state.returnBoost = 0.0f;
             state.landedSeconds = 0.0f;
             state.bridge = false;
+            state.contactBridge = false;
+            state.contactKick = {};
+            state.contactDecisionLeft = 0.0f;
             state.getUpSeen = false;
             state.bodyMode = BodyMode::Physical;
             state.bodyModeSeconds = 0.0f;
@@ -534,9 +538,65 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         athlete.active.enter();
         athlete.stance.enter();
         state.bridge = false;
+        state.contactBridge = false;
+        state.contactDecisionLeft = 0.0f;
         state.bodyMode = BodyMode::Active;
         state.bodyModeSeconds = 0.0f;
         state.calmSeconds = 0.0f;
+    };
+    // A ponte de contato (os contatos inteligentes, 28/10): o corpo fica fisico
+    // seguindo o padrao, que continua rodando na mesma passada e na mesma
+    // velocidade (sem recomecar nem semear). Ela entra solta
+    // (bridgeAuthorityStart: o choque bate num corpo fisico, como no fisico
+    // pleno) e, em contactDecisionSeconds - o choque ja medido inteiro -, ou
+    // vai ao fisico (a pancada forte) ou a guia sobe a proporcao do choque: de
+    // quase cheia no encostao a solta perto da pancada forte; dali ela sobe a
+    // cheia num tempo que cresce com ele. Outro contato depois so a baixa
+    // (nunca a sobe de uma vez) e recomeca a subida.
+    const float bridgeStart = std::clamp(settings.bridgeAuthorityStart, 0.0f, 1.0f);
+    const auto contactFloor = [&](float deltaV) {
+        const float hard = std::max(0.1f, settings.contactBridgeHardDeltaV);
+        return bridgeStart + (1.0f - bridgeStart) * std::clamp(1.0f - std::max(0.0f, deltaV) / hard, 0.0f, 1.0f);
+    };
+    const auto contactDuration = [&](float deltaV) {
+        const float base = std::max(0.05f, settings.contactBridgeBaseSeconds);
+        return std::clamp(base + settings.contactBridgeSecondsPerDeltaV * std::max(0.0f, deltaV), base,
+            std::max(base, settings.contactBridgeMaxSeconds));
+    };
+    const auto toContactBridge = [&](float deltaV) {
+        if (state.bridge && state.contactBridge && state.contactDecisionLeft > 0.0f) {
+            // (Ainda decidindo: segue solta.)
+        } else if (state.bridge) {
+            // (A guia de agora: a mesma conta da ponte, abaixo.)
+            const float from = state.contactBridge ? state.bridgeAuthorityFloor : bridgeStart;
+            const float share = std::clamp(state.bridgeSeconds / std::max(0.05f, state.bridgeDuration), 0.0f, 1.0f);
+            const float now = from + (1.0f - from) * share * share * (3.0f - 2.0f * share);
+            state.bridgeAuthorityFloor = std::min(now, contactFloor(deltaV));
+            state.bridgeDuration = contactDuration(deltaV);
+            state.bridgeSeconds = 0.0f;
+        } else {
+            state.bridgeAuthorityFloor = bridgeStart;
+            state.bridgeDuration = contactDuration(deltaV);
+            state.bridgeSeconds = 0.0f;
+            state.contactDecisionLeft = std::max(0.0f, settings.contactDecisionSeconds);
+        }
+        if (!state.bridge) {
+            char why[96];
+            std::snprintf(why, sizeof(why), "corpo: ponte de contato (Dv %.2f m/s)", deltaV);
+            Log::info(why);
+            if (state.guided) {
+                scene.setRagdollGuided(slot.handle, false);
+                state.guided = false;
+            }
+            state.guidedExitLeft = 0.0f;
+            athlete.active.enter(false);
+            athlete.stance.enter();
+            state.bodyMode = BodyMode::Active;
+            state.bodyModeSeconds = 0.0f;
+            state.calmSeconds = 0.0f;
+        }
+        state.bridge = true;
+        state.contactBridge = true;
     };
     {
         if (!defaultMode) {
@@ -769,6 +829,7 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                         athlete.stance.enter();
                         state.bodyMode = BodyMode::Active;
                         state.bridge = true;
+                        state.contactBridge = false;
                         state.bridgeSeconds = 0.0f;
                         const bool moving = handoff || command.intent.requestedVelocityWorld.lengthSquared() > 0.25f;
                         state.bridgeDuration = (moving ? settings.bridgeMovingSeconds : settings.bridgeSeconds)
@@ -848,12 +909,38 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                     signals.grabbed = grabbed;
                     signals.contacts = assessContacts3D(body.interactions, worldContacts, athlete.contactBody, {},
                         contactBase, classes, pushWindowed);
+                    // (A regua da pancada forte: a janela de impulsos sobre a massa
+                    // e o golpe pendente - o impulso no plano dos contatos com o
+                    // que se move, que se gasta em contactBridgeKickSeconds; um
+                    // choque espalhado por varios ticks conta inteiro.)
+                    const float bodyMass = std::max(1.0f, athlete.contactBody.massKg);
+                    const float windowDeltaV = athlete.impactWindow.value / bodyMass;
+                    state.contactKick = state.contactKick
+                        * std::exp(-deltaTime / std::max(0.02f, settings.contactBridgeKickSeconds));
+                    // (Na ponte de contato todo contato com o que se move empurra,
+                    // tambem os ticks do mesmo choque abaixo do limiar.)
+                    if ((signals.contacts.impact && signals.contacts.fromMoving) || state.contactBridge)
+                        for (const RagdollInteraction3D& contact : body.interactions)
+                            if (contact.otherMotion != RagdollContactMotion3D::Static)
+                                state.contactKick += Vec3 { contact.normalImpulseWorld.x, contact.normalImpulseWorld.y, 0.0f }
+                                    * (1.0f / bodyMass);
+                    const float hitDeltaV = std::max(windowDeltaV, state.contactKick.length());
+                    const bool belowHard = settings.contactBridge && hitDeltaV < settings.contactBridgeHardDeltaV;
+                    // (No carrinho, o contato com quem se move so leva ao fisico na
+                    // pancada forte - pedido do usuario, 28/10: "o carrinho deve
+                    // ocorrer em locomocao default"; a parede, como antes.)
                     signals.actionContact = defaultTackling
-                        && (hitImpulse > TackleHitImpulse || wallImpulse > TackleHitImpulse);
+                        && ((hitImpulse > TackleHitImpulse && !belowHard) || wallImpulse > TackleHitImpulse);
                     signals.airTackleStart = airTackle;
                     signals.jumped = jumped;
-                    signals.capsuleWallImpact = control.capsuleWallImpact;
-                    signals.assistLevel = state.impactAssist.level();
+                    // (No carrinho do padrao o clipe poe a capsula embaixo da pelve
+                    // dele: a "batida" que a capsula mede ali e a propria
+                    // colocacao - 7,55 m/s no comeco de todo carrinho, 28/10 -, nao
+                    // uma parede. A parede de verdade e o corpo que bate.)
+                    signals.capsuleWallImpact = defaultTackling ? 0.0f : control.capsuleWallImpact;
+                    // (Na ponte de contato a guia nao cai com a ajuda do impacto:
+                    // a regra "ponte: ajuda caiu" nao vale.)
+                    signals.assistLevel = state.contactBridge ? 1.0f : state.impactAssist.level();
                     if (state.bridge) {
                         const BodyObservation3D observation = athlete.observer.observe(profile, body, deltaTime);
                         signals.supported = observation.supportCount > 0;
@@ -910,8 +997,43 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                     }
                     const BodyModeKind3D kind = state.bridge ? BodyModeKind3D::Bridge
                         : state.bodyMode == BodyMode::Returning ? BodyModeKind3D::Returning : BodyModeKind3D::Animated;
-                    const ModeDecision3D decision = athlete.modeRules.decide(kind, signals, settings.modeRules, deltaTime);
+                    // Os contatos inteligentes (28/10): o impacto do que se move
+                    // abaixo da pancada forte - no chao, fora do carrinho e sem o
+                    // mundo parado - vai a ponte de contato (ou a recomeca), nao ao
+                    // fisico; no carrinho do padrao ele nao tira o corpo do
+                    // padrao. A tabela decide o resto sem ele (a perda de base da
+                    // ponte, o pulo, o agarrao).
+                    const ContactAssessment3D& hitNow = signals.contacts;
+                    const bool movingOnly = hitNow.impact && !hitNow.fromPenetration && hitNow.fromMoving
+                        && !hitNow.fromStatic && hitNow.penetrationMeters <= 0.0f && !grabbed;
+                    const bool softContact = belowHard && settings.physicalBridge && movingOnly && capsule.grounded
+                        && !tackled && !defaultTackling;
+                    const bool tackleContact = belowHard && movingOnly && defaultTackling;
+                    ModeSignals3D tableSignals = signals;
+                    if (softContact || tackleContact) tableSignals.contacts.impact = false;
+                    const ModeDecision3D decision = athlete.modeRules.decide(kind, tableSignals, settings.modeRules, deltaTime);
                     athlete.lastContacts = signals.contacts;
+                    if (softContact && !decision.change) {
+                        athlete.modeRules.noteImpact();
+                        toContactBridge(hitDeltaV);
+                    }
+                    // (A ponte de contato decidindo: com o golpe medido, a pancada
+                    // forte vai ao fisico; senao, a guia sobe a proporcao dele.)
+                    if (state.contactBridge && state.contactDecisionLeft > 0.0f && !decision.change) {
+                        if (!belowHard) {
+                            char strong[96];
+                            std::snprintf(strong, sizeof(strong), "pancada forte (golpe %.2f m/s)", hitDeltaV);
+                            toPhysical(strong);
+                        } else {
+                            state.contactDecisionLeft -= deltaTime;
+                            if (state.contactDecisionLeft <= 0.0f) {
+                                state.contactDecisionLeft = 0.0f;
+                                state.bridgeAuthorityFloor = contactFloor(hitDeltaV);
+                                state.bridgeDuration = contactDuration(hitDeltaV);
+                                state.bridgeSeconds = 0.0f;
+                            }
+                        }
+                    }
                     if (decision.change) {
                         athlete.modeRules.noteTransition(kind, decision, settings.modeRules);
                         athlete.lastDecision = decision;
@@ -921,6 +1043,12 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                         if (decision.event == ModeEvent3D::Impact || decision.event == ModeEvent3D::Penetration) {
                             const std::uint32_t link = signals.contacts.link;
                             if (link < profile.links.size()) why += ": " + profile.links[link].id;
+                            if (decision.event == ModeEvent3D::Impact) {
+                                char detail[80];
+                                std::snprintf(detail, sizeof(detail), " Dv %.2f m/s (janela %.0f N.s)",
+                                    signals.contacts.bodyDeltaV, athlete.impactWindow.value);
+                                why += detail;
+                            }
                             // (A penetracao nao tem impulso medido: o que o
                             // mundo parado vai tirar da parte - a velocidade
                             // dela contra a superficie x a massa - entra na
@@ -1462,16 +1590,26 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             target.rootOrientation = rootOrientation;
             target.intendedSpeed = std::hypot(command.intent.requestedVelocityWorld.x,
                 command.intent.requestedVelocityWorld.y);
-            athlete.active.update(profile, body, observation, target, settings.activeBodySettings, deltaTime,
-                athlete.activeOutput);
+            // (Na ponte de contato, o nocaute por pancada e a pancada forte dela:
+            // o encostao abaixo disso fica na ponte.)
+            ActiveBodySettings3D activeSettings = settings.activeBodySettings;
+            if (state.contactBridge)
+                activeSettings.knockoutImpulse = std::max(activeSettings.knockoutImpulse,
+                    settings.contactBridgeHardDeltaV * std::max(1.0f, athlete.contactBody.massKg));
+            athlete.active.update(profile, body, observation, target, activeSettings, deltaTime, athlete.activeOutput);
             const ActiveBodyOutput3D& activeOutput = athlete.activeOutput;
             scene.setRagdollActiveDriveTargets(slot.handle, activeOutput.drives, true);
             scene.setRagdollFrictionScale(slot.handle, 1.0f);
+            // (Na ponte de contato decidindo, so os musculos: sem a ajuda nem a
+            // guia o choque bate num corpo fisico de verdade, e a pancada forte
+            // cai como no fisico pleno.)
+            const bool deciding = state.contactBridge && state.contactDecisionLeft > 0.0f;
             for (const LinkWrench3D& wrench : activeOutput.wrenches) {
+                if (deciding) break;
                 scene.applyRagdollControlLinkForce(slot.handle, wrench.link, wrench.force, wrench.torque);
                 athlete.externalAssist.activeNewtons += wrench.force.length();
             }
-            if (activeOutput.assistForce.lengthSquared() > 1e-6f) {
+            if (!deciding && activeOutput.assistForce.lengthSquared() > 1e-6f) {
                 scene.applyRagdollControlRootForce(slot.handle, activeOutput.assistForce, {});
                 athlete.externalAssist.activeNewtons += activeOutput.assistForce.length();
             }
@@ -1481,11 +1619,15 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             if (state.bridge) {
                 state.bridgeSeconds += deltaTime;
                 bridgeShare = std::clamp(state.bridgeSeconds / std::max(0.05f, state.bridgeDuration), 0.0f, 1.0f);
-                const float start = std::clamp(settings.bridgeAuthorityStart, 0.0f, 1.0f);
+                // (A de contato parte da guia que o choque deixou.)
+                const float start = state.contactBridge ? std::clamp(state.bridgeAuthorityFloor, 0.0f, 1.0f)
+                                                        : std::clamp(settings.bridgeAuthorityStart, 0.0f, 1.0f);
                 // (Com a tabela, a guia cai junto com a ajuda do impacto: a
-                // ponte nao segura um corpo que levou pancada.)
-                const float authority = (start + (1.0f - start) * bridgeShare * bridgeShare * (3.0f - 2.0f * bridgeShare))
-                    * (modeTable ? state.impactAssist.level() : 1.0f);
+                // ponte nao segura um corpo que levou pancada. A de contato
+                // segura: a pancada forte e a perda de base a levam ao fisico.)
+                const float authority = deciding ? 0.0f
+                    : (start + (1.0f - start) * bridgeShare * bridgeShare * (3.0f - 2.0f * bridgeShare))
+                        * (modeTable && !state.contactBridge ? state.impactAssist.level() : 1.0f);
                 const std::vector<float> authorities(profile.links.size(), authority);
                 scene.setRagdollGuidePose(slot.handle, pose.linkPositions, pose.linkOrientations, authorities);
             }
@@ -1499,7 +1641,12 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             output.followVelocitySet = true;
             output.followVelocityWorld = athlete.stance.baseShift().lengthSquared() > 1e-8f
                 ? navigationFollowVelocity3D(rootPosition, plannedRoot, 0.0f)
-                : navigationFollowVelocity3D(body.links.front().position, rootPosition, settings.activeFollowSlack);
+                : navigationFollowVelocity3D(body.links.front().position, rootPosition,
+                    state.contactBridge ? settings.contactBridgeFollowSlack : settings.activeFollowSlack);
+            // (Na ponte de contato a capsula leva o golpe pendente junto com o
+            // corpo: fora da inercia do controlador, que o anularia num tick.)
+            if (state.contactBridge)
+                output.followVelocityWorld += Vec3 { state.contactKick.x, state.contactKick.y, 0.0f };
             if (activeOutput.knockout) {
                 toPhysical(("nocaute: " + activeOutput.knockoutReason).c_str());
             } else if (!state.bridge && !athlete.active.handingOver()
@@ -1543,6 +1690,8 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                 state.bodyModeSeconds = 0.0f;
                 Log::info(state.bridge ? "corpo: ponte -> padrao" : "corpo: ativo -> padrao");
                 state.bridge = false;
+                state.contactBridge = false;
+                state.contactDecisionLeft = 0.0f;
             }
         }
         return;

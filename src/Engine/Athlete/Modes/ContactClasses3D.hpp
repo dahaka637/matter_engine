@@ -97,6 +97,11 @@ struct ContactAssessment3D {
     // quanto (N.s; fora de impactImpulse, que e so dos contatos).
     bool fromPush = false;
     float pushImpulse = 0.0f;
+    // De onde vieram os impactos de contato: algo que se move (outro boneco, um
+    // objeto; o empurrao conta junto) e o mundo parado (os contatos
+    // inteligentes, 28/10: so o primeiro vai a ponte).
+    bool fromMoving = false;
+    bool fromStatic = false;
     // O contato da acao (a acao decide o que fazer com ele).
     bool intentional = false;
     float intentionalImpulse = 0.0f;

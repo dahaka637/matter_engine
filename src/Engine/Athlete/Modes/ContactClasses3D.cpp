@@ -142,6 +142,7 @@ ContactAssessment3D assessContacts3D(std::span<const RagdollInteraction3D> inter
     if (push > 0.0f && movingImpact) {
         out.impact = true;
         out.fromPush = true;
+        out.fromMoving = true;
         out.pushImpulse = push;
     }
     const bool staticImpact = staticSum / body.massKg >= params.staticBodyDeltaV;
@@ -160,6 +161,7 @@ ContactAssessment3D assessContacts3D(std::span<const RagdollInteraction3D> inter
             continue;
         }
         out.impact = true;
+        (moving(contact.otherMotion) ? out.fromMoving : out.fromStatic) = true;
         out.impactImpulse += impulse;
         out.linkDeltaV = std::max(out.linkDeltaV, linkMass > 0.0f ? impulse / linkMass : 0.0f);
         if (impulse > strongest) {

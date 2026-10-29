@@ -139,6 +139,9 @@ public:
     // O fisico pode comecar a voltar? (A trava depois de abortar e o ultimo
     // impacto recente seguram.)
     [[nodiscard]] bool returnAllowed(const ModeRuleParams3D& params) const;
+    // O impacto que a ponte de contato absorveu (fora da tabela) tambem zera
+    // o relogio do ultimo impacto.
+    void noteImpact() { m_sinceImpact = 0.0f; }
     [[nodiscard]] float secondsSinceImpact() const { return m_sinceImpact; }
     [[nodiscard]] float lockoutLeft() const { return m_lockout; }
 

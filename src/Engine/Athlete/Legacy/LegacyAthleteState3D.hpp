@@ -88,6 +88,16 @@ struct LegacyAthleteState3D {
     bool bridge = false;
     float bridgeSeconds = 0.0f;
     float bridgeDuration = 0.45f;
+    // A ponte nasceu (ou recomecou) de um contato no padrao: a guia nao cai com
+    // a ajuda do impacto e parte de bridgeAuthorityFloor, mais baixa quanto
+    // mais forte o choque (os contatos inteligentes, 28/10).
+    bool contactBridge = false;
+    float bridgeAuthorityFloor = 0.15f;
+    // A ponte de contato ainda decidindo (s): solta, o choque sendo medido.
+    float contactDecisionLeft = 0.0f;
+    // O golpe pendente (m/s, no plano): o impulso dos contatos com o que se
+    // move sobre a massa, ainda nao absorvido.
+    Vec3 contactKick;
     // Neste fisico ele ja esteve levantando (o fim do levantar vai direto a
     // ponte).
     bool getUpSeen = false;

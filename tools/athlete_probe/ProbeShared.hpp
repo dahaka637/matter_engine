@@ -62,6 +62,9 @@ struct Throw {
     Vec3 halfExtents { 0.2f, 0.2f, 0.2f };
     Vec3 start;
     Vec3 velocity;
+    // (28/10, os contatos: o outro jogador correndo junto - `start` em relacao
+    // a pelve no instante, no plano, e a velocidade plana dela somada.)
+    bool fromBody = false;
 };
 
 struct Scenario {
@@ -183,6 +186,16 @@ struct Metrics {
     // O quanto a pelve andou no plano (m), e as idas ao fisico depois de ja
     // ter voltado uma vez ao padrao (a recaida).
     float travel = 0.0f;
+    // Os contatos inteligentes (28/10): a velocidade plana media da pelve
+    // (m/s) 0,5 s antes do primeiro arremesso ou empurrao e 1 s depois dele
+    // (-1 sem choque no roteiro). E o maior Dv da janela de impulsos (a janela
+    // sobre a massa, m/s): a regua da pancada forte.
+    float peakWindowDeltaV = 0.0f;
+    // O maior golpe pendente (m/s): o impulso dos contatos com o que se move
+    // ainda nao absorvido.
+    float peakKickDeltaV = 0.0f;
+    float speedBefore = -1.0f;
+    float speedAfter = -1.0f;
     int relapses = 0;
     BodyModeKind3D finalMode = BodyModeKind3D::Animated;
     // Pegadas novas (plano v3): as pernas cruzadas (ticks com um tornozelo do

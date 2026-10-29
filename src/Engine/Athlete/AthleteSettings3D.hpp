@@ -189,13 +189,42 @@ struct AthleteRuntimeSettings3D {
     // do levantar, o pouso de pe), o corpo segue fisico por bridgeSeconds
     // (bridgeMovingSeconds com as teclas) - os musculos do Ativo indo a pose
     // do padrao, que ja roda, a ajuda de passagem e o guiamento dos ossos
-    // subindo de bridgeAuthorityStart a cheio - e entao o guiado. Contato
-    // no padrao nao entra nela.
+    // subindo de bridgeAuthorityStart a cheio - e entao o guiado. O contato
+    // no padrao entra nela pela ponte de contato (abaixo).
     bool physicalBridge = true;
     // (0,45 ate 28/10: a volta ao padrao mais rapida, pedido do usuario.)
     float bridgeSeconds = 0.30f;
     float bridgeMovingSeconds = 0.30f;
     float bridgeAuthorityStart = 0.15f;
+    // Os contatos inteligentes (28/10, pedido do usuario: "nao perca
+    // velocidade... um modo fisico parcial que pode evoluir para fisico se
+    // houver perda de base"): o impacto de algo que se move (outro boneco, um
+    // objeto, um empurrao), no chao e fora do carrinho, leva o padrao a ponte
+    // de contato - o corpo fisico seguindo o padrao, que continua rodando sem
+    // recomecar a passada - e nao ao fisico pleno; na ponte, outro contato
+    // assim recomeca a guia. O fisico pleno so na perda de base (as regras da
+    // ponte), na pancada forte (a janela de impulsos acima de
+    // contactBridgeHardDeltaV x a massa), no agarrao, no carrinho, no ar e com
+    // o mundo parado. A guia sobe em contactBridgeBaseSeconds +
+    // contactBridgeSecondsPerDeltaV x Dv (m/s), ate contactBridgeMaxSeconds.
+    bool contactBridge = true;
+    float contactBridgeHardDeltaV = 1.2f;
+    float contactBridgeBaseSeconds = 0.25f;
+    float contactBridgeSecondsPerDeltaV = 0.25f;
+    float contactBridgeMaxSeconds = 0.8f;
+    // (A navegacao leva o golpe: o impulso do contato com o que se move sobre a
+    // massa soma no golpe pendente (m/s), que empurra a capsula junto com o
+    // corpo e se gasta em contactBridgeKickSeconds - o atleta absorve o
+    // empurrao em uns passos, a locomocao segue na velocidade pedida -; ele
+    // tambem e a regua da pancada forte, com a janela. A capsula segue o corpo
+    // com a folga contactBridgeFollowSlack (m; a do Ativo e activeFollowSlack).)
+    float contactBridgeKickSeconds = 0.3f;
+    float contactBridgeFollowSlack = 0.03f;
+    // (A decisao (s): a ponte de contato entra solta - o choque bate num corpo
+    // fisico - e, passado este tempo com o golpe medido, vai ao fisico na
+    // pancada forte ou sobe a guia na proporcao dele. No primeiro tick o golpe
+    // ainda nao se formou: 0,2 m/s da caixa que derruba.)
+    float contactDecisionSeconds = 0.025f;
     // A volta suave (plano v4, etapa C; desligada, a de antes): a capsula
     // embaixo do corpo e com a velocidade dele, a pedida subindo aos poucos,
     // a pose saindo do corpo mais devagar.
