@@ -205,6 +205,21 @@ NB_MODULE(matter_tracking_native, m) {
             "world"_a)
         .def("body_links", [](const TrackingTraining3D& b, std::size_t world) { return links(b.body(world).links); },
             "world"_a)
+        // O torque medio do motor de cada junta no ultimo passo e o limite dele, por eixo (links x 6:
+        // os 3 torques e os 3 limites, N.m; a raiz em zero): a saturacao dos motores (29/10).
+        .def("body_joint_torques",
+            [](const TrackingTraining3D& b, std::size_t world) {
+                const auto& joints = b.body(world).joints;
+                auto out = owned<float>({ joints.size(), 6 });
+                float* d = out.data();
+                for (std::size_t i = 0; i < joints.size(); ++i)
+                    for (int k = 0; k < 3; ++k) {
+                        d[i * 6 + k] = joints[i].motorTorqueNewtonMeters[k];
+                        d[i * 6 + 3 + k] = joints[i].motorTorqueLimitNewtonMeters[k];
+                    }
+                return out;
+            },
+            "world"_a)
         .def("frame_lines", &TrackingTraining3D::frameLines, "world"_a, "leader"_a = false);
 
     // O levantar sem ajuda (DeepMimic): o ragdoll do jogo imitando o clipe de levantar.
