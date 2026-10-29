@@ -131,13 +131,24 @@ def task_path(name: str) -> str:
     return str(path)
 
 
-def write_run_files(run: Path, cenario: str) -> None:
+def write_run_files(run: Path, cenario: str, tarefa: str = "", escala: float = 1.0) -> None:
     """O treino como a tela de Aprendizado o reconhece: run.json (kind rastreador) e tarefa.json."""
     for name, data in (("run.json", {"kind": "rastreador", "task": f"rastreador_{cenario}"}),
                        ("tarefa.json", {"schema": "matter-tracking-1", "id": f"rastreador_{cenario}",
                                         "displayName": f"Rastreador fisico (DReCon), {cenario}"})):
         if not (run / name).exists():
             (run / name).write_text(json.dumps(data, ensure_ascii=False, indent=1))
+    # Com os exercicios de uma tarefa: a tela mostra a lista dela e o visualizador roda o
+    # exercicio escolhido na escala do treino (TrackingViewer3D::locomotionTaskOf).
+    task = json.loads((run / "tarefa.json").read_text())
+    task.pop("tarefaLocomocao", None)
+    if tarefa:
+        path = Path(task_path(tarefa))
+        assets = REPO / "assets"
+        task["tarefaLocomocao"] = str(path.relative_to(assets)) if path.is_relative_to(assets) else str(path)
+        task["displayName"] = f"Rastreador com os exercicios de {path.stem}"
+    task["escalaVelocidade"] = escala
+    (run / "tarefa.json").write_text(json.dumps(task, ensure_ascii=False, indent=1))
     # O comando deste treinador: o "Continuar treino" da tela o reabre igual.
     config = json.loads((run / "run.json").read_text())
     config.update({"comando": [sys.executable, str(Path(__file__).resolve()), *sys.argv[1:]], "pasta": str(HERE)})
@@ -213,7 +224,7 @@ def main() -> int:
 
     run = DATA / args.treino
     run.mkdir(parents=True, exist_ok=True)
-    write_run_files(run, args.cenario)
+    write_run_files(run, args.cenario, args.tarefa, args.escala_velocidade)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     torch.manual_seed(args.semente)
     batch = native.TrackingBatch(str(REPO / "assets"), environments=args.mundos, threads=args.threads,

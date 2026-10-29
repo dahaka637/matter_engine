@@ -33,8 +33,17 @@ public:
     // O rumo (rad) do exercicio "rumoN" (outro: a frente).
     [[nodiscard]] static float headingOf(const std::string& drill);
 
-    // drill: "rumoN" (andar no rumo N) ou um dos parados.
-    TrackingViewer3D(const std::filesystem::path& assetsDirectory, std::uint64_t seed, const std::string& drill = {});
+    // O treino com os exercicios de uma tarefa da locomocao (29/10): o arquivo dela (o
+    // campo "tarefaLocomocao" do tarefa.json, relativo aos assets ou absoluto; vazio sem
+    // ela) e a escala dos pedidos do treino ("escalaVelocidade"; 1 sem ela).
+    [[nodiscard]] static std::filesystem::path locomotionTaskOf(const std::filesystem::path& trackingTask,
+        const std::filesystem::path& assetsDirectory);
+    [[nodiscard]] static float speedScaleOf(const std::filesystem::path& trackingTask);
+
+    // drill: "rumoN" (andar no rumo N) ou um dos parados; com locomotionTask, o id de um
+    // exercicio dela (vazio: o primeiro com peso), levado pelo piloto dele.
+    TrackingViewer3D(const std::filesystem::path& assetsDirectory, std::uint64_t seed, const std::string& drill = {},
+        const std::filesystem::path& locomotionTask = {}, float speedScale = 1.0f);
     ~TrackingViewer3D() override;
     TrackingViewer3D(const TrackingViewer3D&) = delete;
     TrackingViewer3D& operator=(const TrackingViewer3D&) = delete;

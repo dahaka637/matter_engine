@@ -3,6 +3,7 @@
 #include "Engine/RL/Body/RLBody3D.hpp"
 #include "Engine/RL/Policy/PolicyRuntime3D.hpp"
 #include "Engine/Tracking/TrackingTraining3D.hpp"
+#include "Workbench/ReinforcementLearning/LocomotionViewer3D.hpp"
 
 #include <nlohmann/json.hpp>
 
@@ -31,9 +32,12 @@ struct TrackingViewer3D::Impl {
     float speed = DefaultSpeed;
     float heading = 0.0f;
     TrackingDrill3D drill = TrackingDrill3D::Move;
+    // Com a tarefa, quem pede e o piloto do exercicio (a velocidade da tela nao entra).
+    bool task = false;
 
     // O pedido do mundo do visualizador: andar no rumo, ou o exercicio parado.
     void apply() {
+        if (task) return;
         if (drill == TrackingDrill3D::Move) batch->setCommand(0, speed, heading);
         else batch->setDrill(0, drill);
     }
@@ -79,6 +83,22 @@ TrainingHistory3D TrackingViewer3D::readHistory(const std::filesystem::path& run
                 drill.requestedSpeed = data.value("vel_pedida", drill.requestedSpeed);
                 history.drills.push_back(drill);
             }
+        // Com a tarefa ("exercicios" do treinador): um ponto por exercicio com episodios na rodada.
+        if (const auto drills = row.find("exercicios"); drills != row.end() && drills->is_object())
+            for (const auto& [key, data] : drills->items()) {
+                if (!data.is_object()) continue;
+                TrainingDrillPoint3D drill;
+                drill.iteration = point.iteration;
+                drill.time = point.time;
+                drill.drill = key;
+                drill.episodes = data.value("n", 0.0);
+                drill.falls = data.value("quedas", 0.0);
+                drill.seconds = data.value("ep_segundos", 0.0);
+                drill.velocityError = data.value("erro_vel_cm", drill.velocityError);
+                drill.bodySpeed = data.value("vel_corpo", drill.bodySpeed);
+                drill.requestedSpeed = data.value("vel_pedida", drill.requestedSpeed);
+                history.drills.push_back(drill);
+            }
     }
     if (sinceSeconds > 0.0 && !history.iterations.empty()) {
         const double from = history.iterations.back().time - sinceSeconds;
@@ -101,7 +121,17 @@ TrainingHistory3D TrackingViewer3D::readHistory(const std::filesystem::path& run
         nlohmann::json row = nlohmann::json::parse(line, nullptr, false);
         if (row.is_discarded() || !row.is_object()) continue;
         const std::string mode = row.value("modo", std::string());
-        if (mode == "parado" || mode == "giro" || mode == "giro_rapido" || mode == "estrela" || mode == "estrela_fixo"
+        if (const std::string exercise = row.value("exercicio", std::string()); !exercise.empty()) {
+            // O portao de um exercicio da tarefa: a queda de verdade e o erro da velocidade.
+            TrainingEvaluationPoint3D point;
+            point.iteration = row.value("rodada", 0ull);
+            point.time = row.value("hora", 0.0);
+            point.drill = exercise;
+            point.solver = "rede";
+            point.falls = row.value("quedas_de_verdade", row.value("quedas", 1.0));
+            point.velocityError = row.value("erro_vel_cm", -1.0);
+            history.evaluations.push_back(point);
+        } else if (mode == "parado" || mode == "giro" || mode == "giro_rapido" || mode == "estrela" || mode == "estrela_fixo"
             || mode == "estrela_girando") {
             // Os exercicios parados: o portao inteiro e do exercicio (chegou ao fim ou nao).
             TrainingEvaluationPoint3D point;
@@ -152,8 +182,27 @@ float TrackingViewer3D::headingOf(const std::string& drill) {
     return static_cast<float>(drill[4] - '0') * (3.14159265358979f / 4.0f);
 }
 
+std::filesystem::path TrackingViewer3D::locomotionTaskOf(const std::filesystem::path& trackingTask,
+    const std::filesystem::path& assetsDirectory) {
+    std::ifstream file(trackingTask);
+    if (!file) return {};
+    const nlohmann::json task = nlohmann::json::parse(file, nullptr, false);
+    if (task.is_discarded() || !task.is_object()) return {};
+    const std::filesystem::path given = task.value("tarefaLocomocao", std::string());
+    if (given.empty()) return {};
+    const std::filesystem::path path = given.is_absolute() ? given : assetsDirectory / given;
+    return LocomotionViewer3D::isLocomotionTask(path) ? path : std::filesystem::path {};
+}
+
+float TrackingViewer3D::speedScaleOf(const std::filesystem::path& trackingTask) {
+    std::ifstream file(trackingTask);
+    if (!file) return 1.0f;
+    const nlohmann::json task = nlohmann::json::parse(file, nullptr, false);
+    return task.is_object() ? task.value("escalaVelocidade", 1.0f) : 1.0f;
+}
+
 TrackingViewer3D::TrackingViewer3D(const std::filesystem::path& assetsDirectory, std::uint64_t seed,
-    const std::string& drill)
+    const std::string& drill, const std::filesystem::path& locomotionTask, float speedScale)
     : m_impl(std::make_unique<Impl>()) {
     Impl& impl = *m_impl;
     impl.heading = headingOf(drill);
@@ -184,6 +233,19 @@ TrackingViewer3D::TrackingViewer3D(const std::filesystem::path& assetsDirectory,
     settings.leaderFollowSlack = 0.15f;
     settings.evaluationSpeed = DefaultSpeed;
     settings.evaluationMode = mode;
+    if (!locomotionTask.empty()) {
+        // O exercicio da tarefa (vazio ou de outra lista: o primeiro com peso), na escala do treino.
+        impl.task = true;
+        settings.taskPath = locomotionTask.string();
+        settings.speedScale = speedScale;
+        const auto drills = LocomotionViewer3D::drillsOf(locomotionTask);
+        const bool known = std::any_of(drills.begin(), drills.end(), [&](const auto& d) { return d.id == drill; });
+        for (const auto& d : drills)
+            if (known ? d.id == drill : d.weight > 0.0f && !d.getUp) {
+                settings.evaluationDrill = d.id;
+                break;
+            }
+    }
     // O visualizador nao recomeca pelo tempo (so pela queda ou o afastamento).
     settings.episodeSeconds = 1.0e6f;
     impl.batch = std::make_unique<TrackingTraining3D>(settings);

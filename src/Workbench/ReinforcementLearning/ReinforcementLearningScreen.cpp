@@ -484,6 +484,21 @@ void ReinforcementLearningScreen::loadDrills() {
         m_drillIds.assign(ids.begin(),ids.end());
         m_drillNames.assign(names.begin(),names.end());
         m_drillPhases.assign(ids.size(),1);
+    } else if (const auto exercises = TrackingViewer3D::isTrackingTask(path)
+                   ? TrackingViewer3D::locomotionTaskOf(path, m_options.sourceRoot / "assets")
+                   : std::filesystem::path {};
+               !exercises.empty()) {
+        // O rastreador com os exercicios de uma tarefa da locomocao (29/10): a lista dela,
+        // com as categorias e os pesos (o resto da tela do classico fica de fora).
+        for (const LocomotionViewer3D::Drill& drill : LocomotionViewer3D::drillsOf(exercises)) {
+            if (drill.getUp) continue;
+            m_drillIds.push_back(drill.id);
+            m_drillNames.push_back(drill.name);
+            m_drillPhases.push_back(drill.phase);
+            m_drillCategories.push_back(drill.category);
+            m_drillWeights.push_back(drill.weight);
+            m_drillInfo.push_back({ drill.id, drill.weight, drill.goalSpeed, drill.getUp });
+        }
     } else if (TrackingViewer3D::isTrackingTask(path)) {
         // O rastreador: o lider na velocidade da tela, num dos 8 rumos (os do portao).
         for (std::size_t i = 0; i < TrackingViewer3D::HeadingNames.size(); ++i) {
@@ -571,7 +586,8 @@ void ReinforcementLearningScreen::ensureViewer() {
             if (motor) m_locomotion = std::make_unique<MotorViewer3D>(m_options.sourceRoot / "assets", task,
                     m_viewerDrill, seed);
             else if (tracking) m_locomotion = std::make_unique<TrackingViewer3D>(m_options.sourceRoot / "assets", seed,
-                    m_viewerDrill);
+                    m_viewerDrill, TrackingViewer3D::locomotionTaskOf(task, m_options.sourceRoot / "assets"),
+                    TrackingViewer3D::speedScaleOf(task));
             else
                 m_locomotion = std::make_unique<LocomotionViewer3D>(task, m_options.sourceRoot / "assets", m_viewerDrill,
                     seed);
