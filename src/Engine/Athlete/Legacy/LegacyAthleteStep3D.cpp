@@ -198,8 +198,11 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
     // antes dele - sem pedido, a velocidade so se gasta pela resposta da capsula
     // do jogador, mais o quanto ela foi atras do corpo no tick anterior; o chao
     // embaixo. O rumo e o do corpo quando ela nasce.
-    const bool looseNavigation = !command.controlled && slot.command == nullptr && settings.looseDefaultLocomotion
-        && settings.defaultLocomotion && settings.adaptivePhysics;
+    // (O piloto, AthleteCommand3D::pilot, tambem: a capsula virtual dele anda no
+    // pedido, com a resposta da do jogador no padrao e a escala da volta.)
+    const bool piloted = !command.controlled && slot.command != nullptr && slot.command->pilot;
+    const bool looseNavigation = !command.controlled && (slot.command == nullptr || piloted)
+        && settings.looseDefaultLocomotion && settings.defaultLocomotion && settings.adaptivePhysics;
     if (looseNavigation) {
         PhysicsCharacterState3D& capsule = state.virtualCapsule;
         const float half = 0.5f * assets.avatarSettings.standingHeight;
@@ -214,8 +217,19 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         response.acceleration = assets.avatarSettings.groundAcceleration;
         response.deceleration = assets.avatarSettings.groundDeceleration;
         response.brake = assets.avatarSettings.groundBrakeDeceleration;
-        const Vec3 planar = bodyForecastCapsuleStep3D({ capsule.velocity.x, capsule.velocity.y, 0.0f }, {}, response,
-            deltaTime);
+        Vec3 wanted;
+        if (piloted) {
+            const AthleteCapsuleResponse3D lab =
+                athleteCapsuleResponse3D(settings.capsuleResponsePercent, settings.capsuleReversalPercent);
+            response.acceleration = lab.acceleration;
+            response.deceleration = lab.deceleration;
+            response.brake = lab.brake;
+            response.turnRate = lab.turnRate;
+            const Vec3 requested = slot.command->intent.requestedVelocityWorld;
+            wanted = Vec3 { requested.x, requested.y, 0.0f } * state.returnSpeedScale;
+        }
+        const Vec3 planar = bodyForecastCapsuleStep3D({ capsule.velocity.x, capsule.velocity.y, 0.0f }, wanted,
+            response, deltaTime);
         capsule.velocity = { planar.x, planar.y, 0.0f };
         capsule.position += (capsule.velocity + Vec3 { state.virtualFollowVelocity.x, state.virtualFollowVelocity.y, 0.0f })
             * deltaTime;
@@ -272,6 +286,9 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         command.facingYawRadians = slot.command->facingYawRadians;
         state.guideFacingYawRadians = slot.command->facingYawRadians;
         command.lookPitchRadians = slot.command->lookPitchRadians;
+        // (No padrao o sprint do piloto e o dele, como o do controlado; no
+        // fisico, abaixo, so andando.)
+        if (piloted) command.sprinting = slot.command->sprinting;
         // (O chao em qualquer ponto, como o controlado: o pe ve onde vai
         // pisar.)
         PhysicsScene3D* scenePointer = &scene;
@@ -293,6 +310,10 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             state.navigationAnchor = root.position;
             state.navigationAnchorVelocity = {};
             state.navigationAnchorValid = true;
+            // (O piloto entra no fisico com o embalo da capsula dele, como a
+            // do jogador, que segue com a velocidade que tinha.)
+            if (piloted)
+                athlete.commandPlanVelocity = { state.virtualCapsule.velocity.x, state.virtualCapsule.velocity.y, 0.0f };
         }
         command.rootPositionWorld.x = state.navigationAnchor.x;
         command.rootPositionWorld.y = state.navigationAnchor.y;
@@ -445,7 +466,8 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
     }
     command.balanceFootPlacement = e5 && settings.e5FootPlacement;
     command.walkingAssist = state.adaptivePhysics.settings().walkingAssistScale;
-    if (commanded && settings.adaptivePhysics) {
+    // (O piloto fora do fisico anda pela capsula virtual do padrao, acima.)
+    if (commanded && settings.adaptivePhysics && !(looseNavigation && state.bodyMode != LegacyBodyMode3D::Physical)) {
         // A capsula virtual anda no pedido como a do laboratorio no fisico: a
         // aceleracao do fisico pela ajuda andando e, com pouca ajuda, a
         // coleira (no maximo uma folga acima da velocidade do corpo). Caido ou
@@ -815,8 +837,9 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                         const auto& joint = body.joints[i].positionRadians;
                         state.returnCoordinates[i] = { joint[0], joint[1], joint[2] };
                     }
-                    // (O boneco solto volta olhando para onde o corpo esta.)
-                    if (looseNavigation) {
+                    // (O boneco solto volta olhando para onde o corpo esta; o
+                    // piloto, como o controlado, para onde ele olha.)
+                    if (looseNavigation && !piloted) {
                         state.guideFacingYawRadians = locomotionFrameYaw3D(profile, pelvis.orientation);
                         command.facingYawRadians = state.guideFacingYawRadians;
                     }
@@ -1215,7 +1238,18 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             }
         }
     }
-    if (command.controlled && !body.links.empty()) {
+    if ((command.controlled || piloted) && !body.links.empty()) {
+        // As maos: as do jogador (o input do laboratorio, consumido aqui) ou as
+        // do piloto (o comando dele, que so pede no tick do soltar).
+        AthleteControlInput3D pilotHands;
+        if (piloted) {
+            pilotHands.ballRequest = slot.command->ballRequest;
+            pilotHands.ballRequestPower = slot.command->ballRequestPower;
+            pilotHands.ballRequestAimYaw = slot.command->ballRequestAimYaw;
+            pilotHands.ballShotHeld = slot.command->ballShotHeld;
+            pilotHands.ballDribbleHeld = slot.command->ballDribbleHeld;
+        }
+        AthleteControlInput3D& hands = command.controlled ? control : pilotHands;
         const Vec3 pelvis = body.links.front().position;
         AthleteBall3D* nearest = nullptr;
         float best = 3.0f;
@@ -1224,11 +1258,11 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             const float distance = (ball.state->position - pelvis).length();
             if (distance < best) { best = distance; nearest = &ball; }
         }
-        const BallActionKind3D pressed = nearest != nullptr ? control.ballRequest : BallActionKind3D::None;
-        control.ballRequest = BallActionKind3D::None;
-        output.ballRequestConsumed = true;
+        const BallActionKind3D pressed = nearest != nullptr ? hands.ballRequest : BallActionKind3D::None;
+        hands.ballRequest = BallActionKind3D::None;
+        if (command.controlled) output.ballRequestConsumed = true;
         if (nearest != nullptr && nearest->ownership != nullptr
-            && (control.ballShotHeld || control.ballDribbleHeld || control.ballRaiseHeld || pressed != BallActionKind3D::None)) {
+            && (hands.ballShotHeld || hands.ballDribbleHeld || hands.ballRaiseHeld || pressed != BallActionKind3D::None)) {
             nearest->ownership->interact(slot.entityId);
             scene.setInflatedBallOwner(nearest->handle, slot.handle);
         }
@@ -1242,10 +1276,10 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                                                          : armed.raise ? BallActionKind3D::Raise
                                                                        : BallActionKind3D::Dribble)
                                                    : pressed;
-        const float requestPower = fromArmed ? armed.power : control.ballRequestPower;
-        const float requestLift = fromArmed ? armed.lift : control.ballRequestLift;
-        const float requestCurve = fromArmed ? armed.curve : control.ballRequestCurve;
-        const float requestAimYaw = fromArmed ? armed.aimYaw : control.ballRequestAimYaw;
+        const float requestPower = fromArmed ? armed.power : hands.ballRequestPower;
+        const float requestLift = fromArmed ? armed.lift : hands.ballRequestLift;
+        const float requestCurve = fromArmed ? armed.curve : hands.ballRequestCurve;
+        const float requestAimYaw = fromArmed ? armed.aimYaw : hands.ballRequestAimYaw;
         // O corpo: o rumo da pelve do padrao (o do fisico, fora dele) e a pelve
         // no chao - o referencial da escolha (e das areas que o laboratorio
         // desenha).
@@ -1264,10 +1298,12 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                         - (profile.standingRootHeightMeters + profile.links[i].modelPosition.z));
             if (lowest < std::numeric_limits<float>::max()) feetBase = lowest;
         }
-        output.reachValid = true;
-        output.reachOrigin = { pelvis.x, pelvis.y, feetBase };
-        output.reachYaw = bodyYaw;
-        output.reachPelvisHeight = pelvis.z - output.reachOrigin.z;
+        if (command.controlled) {
+            output.reachValid = true;
+            output.reachOrigin = { pelvis.x, pelvis.y, feetBase };
+            output.reachYaw = bodyYaw;
+            output.reachPelvisHeight = pelvis.z - output.reachOrigin.z;
+        }
         // O alcance deste corpo (os pes x s, o peito pelo tronco, a cabeca so na posicao).
         const GestureReach3D bodyReach = gestureReachForBody3D(settings.gestureReach, bodyScale3D(assets.body),
             bodyGirth3D(PhysiqueRegion3D::Chest, bodyTone3D(assets.body)) - 1.0f);
@@ -1324,7 +1360,7 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             const bool gentle = !raising && (kind == GestureKind3D::Touch || requestPower < 0.3f);
             // A velocidade do corpo: no padrao, a da capsula (a da pelve tem o
             // balanco da passada); no fisico, a da pelve.
-            const Vec3 capsule = scene.characterState().velocity;
+            const Vec3 capsule = nav().velocity;
             const Vec3 bodyVelocity = animated || active ? Vec3 { capsule.x, capsule.y, 0.0f }
                 : Vec3 { body.links.front().linearVelocity.x, body.links.front().linearVelocity.y, 0.0f };
             // A recepcao (24/10, pedido do usuario): a bola vindo para ele - mais
@@ -1534,7 +1570,7 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                 const float inertia = (2.0f / 3.0f) * mass * ballProfile.radiusMeters * ballProfile.radiusMeters;
                 scene.applyInflatedBallImpulses(nearest->handle, (outcome.velocity - nearest->state->linearVelocity) * mass,
                     (outcome.spin - nearest->state->angularVelocity) * inertia);
-                output.ballTouched = true;
+                if (command.controlled) output.ballTouched = true;
                 if (request == BallActionKind3D::Shot && part == BallBodyPart3D::Foot && !outcomeRequest.receive
                     && settings.ballForce.conduction) {
                     athlete.conduction.active = true;
@@ -2013,7 +2049,7 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                         state.returnCoordinates[i] = { joint[0], joint[1], joint[2] };
                         velocities[i] = { rate[0], rate[1], rate[2] };
                     }
-                    if (looseNavigation) {
+                    if (looseNavigation && !piloted) {
                         state.guideFacingYawRadians = locomotionFrameYaw3D(profile, pelvis.orientation);
                         command.facingYawRadians = state.guideFacingYawRadians;
                     }

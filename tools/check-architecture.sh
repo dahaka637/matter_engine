@@ -77,9 +77,9 @@ check_absent "O treino da locomocao nao fala com o treinador, o estilo nem a int
 check_absent "O treino da locomocao usa do RL so o piloto e o layout (nunca o lote, o corpo, a imitacao nem a politica do RL do zero: o ReferenceMotion3D deles e outro)" \
     '#include "Engine/RL/(Environment|Body|Imitation|Policy|Rewards|Brain|Calibration)/' src/Engine/Athlete/Training \
     bindings/python/MatterLocomotionNative.cpp
-check_absent "Atletas: planejamento, sintese e bola trabalham com dados (sem a cena fisica nem o Jolt; so os sentidos leem a fisica)" \
+check_absent "Atletas: planejamento, sintese, bola e o piloto trabalham com dados (sem a cena fisica nem o Jolt; so os sentidos leem a fisica)" \
     '#include "Engine/Physics/(PhysicsScene3D|PhysicsEngine3D)|Jolt' src/Engine/Athlete/Planning src/Engine/Athlete/Synthesis \
-    src/Engine/Athlete/Ball src/Engine/Athlete/Core
+    src/Engine/Athlete/Ball src/Engine/Athlete/Core src/Engine/Athlete/Pilot
 check_absent "Os gestos de bola (Engine/Gesture) sao so matematica: nada de fisica, atleta, personagem, animacao, RL nem interface" \
     '#include "Engine/(Physics|Athlete|Character|Control|Locomotion|Animation|Render|RHI|UI|Audio|Platform|Input|RL|Tracking|Modeling)/|Jolt|#include .imgui|#include <SDL' \
     src/Engine/Gesture

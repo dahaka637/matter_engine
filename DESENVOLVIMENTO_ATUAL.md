@@ -7,6 +7,33 @@
 
 **Última atualização:** 29 de outubro de 2026
 
+## A IA de captura, para o teste dos contatos (Claude, 29/10 madrugada)
+
+Pedido do usuário: uma aba de IA em que os bonecos, "limitados a usar as mesmas mecânicas que eu... como se fosse uma pessoa controlando", busquem a bola, tentem ficar com ela a 2–5 m dele e tentem roubá-la dele; "só para eu fazer um teste rápido, não vai ser a IA definitiva"; "meio humanizado... para não parecer um míssil teleguiado".
+
+- **O piloto no comando do atleta** (`AthleteCommand3D::pilot` e as mãos: o pedido de bola, a força, a mira e os botões).
+  - O pilotado roda o padrão com a cápsula virtual andando no pedido, com a resposta da do jogador (`athleteCapsuleResponse3D`) e a escala da volta.
+  - O manejo de bola é o bloco do controlado com as mãos dele. No físico, o caminho dos comandados.
+  - As saídas de tela ficam só do controlado. O comandado do RL fica igual: a prova e2 dá o mesmo hash.
+- **O cérebro** (`Engine/Athlete/Pilot/CapturePilot3D`, só dados): um jogador de teclado e mouse.
+  - As 8 teclas em relação ao olhar, o Shift, o Ctrl e o botão do drible com a barra (a força é o tempo segurado).
+  - O olhar gira como uma mão. A decisão vem a cada tempo de reação. Cada boneco tem um jeito pela semente.
+  - Os planos são buscar, espreitar e dar o bote, conduzir na faixa do jogador e respirar.
+- **No laboratório:** a aba "IA", com "Bonecos com IA", "Perto", "Longe" e "Carrinho".
+- **Na sonda:**
+  - `ia_bola_livre`, `ia_rouba` e `ia_rouba_sem_carrinho`, com `XIA=1` e `XIA_SEMENTE`;
+  - dois contratos novos;
+  - a bola dos cenários com boneco agora é a entidade 3.
+- **Medido:**
+  - pega a bola solta em ~1,5 s;
+  - com o jogador parado, 35–91% do tempo na faixa de 2–5 m (6 jeitos, média ~61%);
+  - rouba de quem conduz aos 1,5 s.
+- **Limites:**
+  - a posse por segurar o botão a até 3 m (a regra de hoje, igual para os dois);
+  - ela não desvia do jogador;
+  - o carrinho é raro;
+  - escapa até ~14 m às vezes.
+
 ## Os contatos inteligentes e os bonecos no padrão (Claude, 28/10 noite – 29/10)
 
 Pedidos do usuário (28/10): "qualquer encostão já leva ao modo de locomoção física... não perca velocidade... um modo físico parcial que pode evoluir para físico se houver perda de base"; "o carrinho deve ocorrer em locomoção default"; "faça os outros bonecos estarem na locomoção padrão, e sofrerem as mesmas transformações que eu".

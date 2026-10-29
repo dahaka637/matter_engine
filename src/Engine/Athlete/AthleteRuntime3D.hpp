@@ -45,6 +45,17 @@ struct AthleteCommand3D {
     float facingYawRadians = 0.0f;
     float lookPitchRadians = 0.0f;
     bool sprinting = false;
+    // O piloto (a IA de captura do laboratorio, 29/10): o atleta joga como o
+    // controlado - no padrao (com looseDefaultLocomotion), a capsula virtual
+    // andando no pedido como a do jogador, e o manejo de bola pelos mesmos
+    // botoes (o pedido so no tick do soltar, com a carga da barra; segurando,
+    // ele e o dono da bola).
+    bool pilot = false;
+    BallActionKind3D ballRequest = BallActionKind3D::None;
+    float ballRequestPower = 0.0f;
+    float ballRequestAimYaw = 0.0f;
+    bool ballShotHeld = false;
+    bool ballDribbleHeld = false;
 };
 
 struct AthleteSlot3D {

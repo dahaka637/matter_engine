@@ -7,6 +7,7 @@
 #include "Engine/Athlete/AthleteAssets3D.hpp"
 #include "Engine/Athlete/AthleteRuntime3D.hpp"
 #include "Engine/Athlete/AthleteState3D.hpp"
+#include "Engine/Athlete/Pilot/CapturePilot3D.hpp"
 #include "Engine/Character/BallOwnership3D.hpp"
 #include "Engine/Character/BiomechanicalBipedExperiment3D.hpp"
 #include "Engine/Character/CharacterLocomotion3D.hpp"
@@ -217,6 +218,9 @@ private:
         // Per-instance color multiply, neutral by default - see
         // MeshRender3D::tintColor for how it reaches the GPU.
         Vec3 tintColor { 1.0f, 1.0f, 1.0f };
+        // A IA de captura (aba IA, 29/10): o piloto e o comando dele neste tick.
+        CapturePilot3D pilot;
+        AthleteCommand3D pilotCommand;
     };
 
     // Ajuste persistente do viewmodel. A seção recolhível do depurador permite
@@ -425,6 +429,7 @@ private:
     bool m_showRagdollPanel = false;
     bool m_showCharacterPanel = false;
     bool m_showPhysicsBenchmarkPanel = false;
+    bool m_showAiPanel = false;
     SceneRenderMode3D m_laboratoryRenderMode =
         SceneRenderMode3D::Standard;
     PixelArtSettings3D m_laboratoryPixelArt;
@@ -723,6 +728,13 @@ private:
     bool m_looseDefaultLocomotion = true;
     // O impulso extra do carrinho (%, 29/10).
     float m_defaultTackleBoostPercent = 30.0f;
+    // A IA de captura (aba IA, 29/10, o teste dele dos contatos): os bonecos
+    // soltos jogam como alguem no teclado (CapturePilot3D) - a faixa de
+    // distancia que guardam do jogador com a bola (m) e o carrinho.
+    bool m_captureAi = false;
+    float m_captureAiNear = 2.0f;
+    float m_captureAiFar = 5.0f;
+    bool m_captureAiTackles = true;
     // O levantar pelo padrao (28/10, item 16): ligado no laboratorio.
     bool m_animatedGetUp = true;
     // A arrancada do padrao (0 desliga): o gesto do idle_to_sprint e a

@@ -2845,7 +2845,7 @@ void WorkbenchApp::drawLaboratoryUi() {
         const float benchmarkButtonWidth = ui(140.0f);
         const float regularButtonWidth = std::clamp(
             (ImGui::GetContentRegionAvail().x - benchmarkButtonWidth
-                - toolbarGap * 8.0f) / 8.0f,
+                - toolbarGap * 9.0f) / 9.0f,
             ui(82.0f), ui(110.0f));
         const ImVec2 toolbarButtonSize {
             regularButtonWidth, toolbarButtonHeight
@@ -2889,6 +2889,10 @@ void WorkbenchApp::drawLaboratoryUi() {
         ImGui::SameLine();
         if (tabButton("Vento", m_showWindPanel, toolbarButtonSize)) {
             m_showWindPanel = !m_showWindPanel;
+        }
+        ImGui::SameLine();
+        if (tabButton("IA", m_showAiPanel, toolbarButtonSize)) {
+            m_showAiPanel = !m_showAiPanel;
         }
         ImGui::End();
         ImGui::PopStyleVar();
@@ -4542,6 +4546,35 @@ void WorkbenchApp::drawLaboratoryUi() {
             growPanelToFitContent(io.DisplaySize, m_uiScale);
         }
         if (m_showWindPanel) ImGui::End();
+
+        // A IA de captura (29/10, o teste dele dos contatos; CapturePilot3D).
+        if (m_showAiPanel && beginDebugPanel("IA",
+                &m_showAiPanel,
+                { io.DisplaySize.x - panelWidth - ui(12.0f),
+                    panelTop + ui(108.0f) },
+                { panelWidth, ui(220.0f) }, io.DisplaySize, m_uiScale)) {
+            panelHeader("IA DE CAPTURA (teste)");
+            ImGui::Checkbox("Bonecos com IA", &m_captureAi);
+            ImGui::SetItemTooltip("Os bonecos soltos jogam como alguém no teclado e no mouse, com os mesmos comandos "
+                                  "que você: as teclas, o Shift, o Ctrl do carrinho e a barra do drible. Buscam a bola, "
+                                  "tentam roubá-la de você e, com ela, ficam na distância abaixo. Com \"Bonecos no "
+                                  "padrão\" desligado, eles andam no físico.");
+            ImGui::Dummy({ 1.0f, ui(6.0f) });
+            ImGui::TextColored({ 0.50f, 0.62f, 0.72f, 1.0f }, "Perto (m)");
+            ImGui::SetNextItemWidth(-1.0f);
+            ImGui::SliderFloat("##CaptureAiNear", &m_captureAiNear, 0.5f, 10.0f, "%.1f", ImGuiSliderFlags_AlwaysClamp);
+            ImGui::SetItemTooltip("Com a bola, ele foge quando você chega mais perto que isto.");
+            ImGui::TextColored({ 0.50f, 0.62f, 0.72f, 1.0f }, "Longe (m)");
+            ImGui::SetNextItemWidth(-1.0f);
+            ImGui::SliderFloat("##CaptureAiFar", &m_captureAiFar, 1.0f, 15.0f, "%.1f", ImGuiSliderFlags_AlwaysClamp);
+            ImGui::SetItemTooltip("Com a bola, ele volta para perto quando você fica mais longe que isto.");
+            ImGui::Dummy({ 1.0f, ui(6.0f) });
+            ImGui::Checkbox("Carrinho", &m_captureAiTackles);
+            ImGui::SetItemTooltip("A IA pode dar carrinho em quem está com a bola: só no bote, embalada e com a bola à "
+                                  "frente.");
+            growPanelToFitContent(io.DisplaySize, m_uiScale);
+        }
+        if (m_showAiPanel) ImGui::End();
     }
 
     if (m_spawnMenuOpen) {

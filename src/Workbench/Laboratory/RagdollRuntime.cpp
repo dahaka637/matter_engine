@@ -1012,11 +1012,62 @@ void WorkbenchApp::updateActiveRagdolls(float deltaTime) {
     }
     assets.avatarSettings = m_avatarCharacterSettings;
     assets.body = laboratoryBody();
+    const AthleteRuntimeSettings3D runtimeSettings = athleteRuntimeSettings();
+    // A IA de captura (aba IA): os bonecos soltos jogam pelo piloto, com o
+    // comando que o teclado daria (as maos na bola inclusive).
+    const SpawnedRagdollInstance* human = nullptr;
+    for (const SpawnedRagdollInstance& instance : m_spawnedRagdolls)
+        if (instance.entityId == m_controlledCharacterEntityId && !instance.physicsState.links.empty()) human = &instance;
+    CapturePilotSettings3D pilotSettings;
+    pilotSettings.nearMeters = m_captureAiNear;
+    pilotSettings.farMeters = m_captureAiFar;
+    pilotSettings.tackles = m_captureAiTackles;
+    pilotSettings.touchChargeSeconds = m_ballTouchChargeSeconds;
+    const PlayerBody3D body = laboratoryBody();
+    const GestureReach3D reach = gestureReachForBody3D(runtimeSettings.gestureReach, bodyScale3D(body),
+        bodyGirth3D(PhysiqueRegion3D::Chest, bodyTone3D(body)) - 1.0f);
     std::vector<AthleteSlot3D> athletes;
     athletes.reserve(m_spawnedRagdolls.size());
-    for (SpawnedRagdollInstance& instance : m_spawnedRagdolls)
+    for (SpawnedRagdollInstance& instance : m_spawnedRagdolls) {
         athletes.push_back({ instance.entityId, instance.physicsRagdoll, &instance.physicsState, instance.active,
             instance.frozen, &instance.athlete });
+        const bool piloted = m_captureAi && instance.kind == ArticulatedRigKind::Human && instance.active
+            && !instance.frozen && instance.entityId != m_controlledCharacterEntityId
+            && !instance.physicsState.links.empty();
+        if (!piloted) {
+            instance.pilot.reset();
+            continue;
+        }
+        CapturePilotView3D view;
+        view.self = instance.entityId;
+        capturePilotSelf3D(view, *m_humanRagdollProfile, instance.athlete, instance.physicsState);
+        const SpawnedInflatedBallInstance* ball = nullptr;
+        for (const SpawnedInflatedBallInstance& candidate : m_inflatedBalls)
+            if (ball == nullptr || (candidate.physicsState.position - view.pelvisGround).lengthSquared()
+                    < (ball->physicsState.position - view.pelvisGround).lengthSquared())
+                ball = &candidate;
+        if (ball != nullptr) {
+            view.ball = true;
+            view.ballPosition = ball->physicsState.position;
+            view.ballVelocity = ball->physicsState.linearVelocity;
+            view.ballOwner = ball->ownership.owner();
+            for (const SpawnedRagdollInstance& other : m_spawnedRagdolls)
+                if (other.entityId == view.ballOwner && other.entityId != instance.entityId
+                    && !other.physicsState.links.empty()) {
+                    view.ownerSeen = true;
+                    view.ownerPelvis = other.physicsState.links.front().position;
+                    view.ownerVelocity = other.physicsState.links.front().linearVelocity;
+                }
+        }
+        if (human != nullptr) {
+            view.player = true;
+            view.playerPelvis = human->physicsState.links.front().position;
+            view.playerVelocity = human->physicsState.links.front().linearVelocity;
+        }
+        instance.pilotCommand =
+            instance.pilot.update(view, pilotSettings, runtimeSettings, m_avatarGaitSpeeds, reach, deltaTime);
+        athletes.back().command = &instance.pilotCommand;
+    }
     std::vector<AthleteBall3D> balls;
     balls.reserve(m_inflatedBalls.size());
     for (SpawnedInflatedBallInstance& ball : m_inflatedBalls)
@@ -1043,8 +1094,7 @@ void WorkbenchApp::updateActiveRagdolls(float deltaTime) {
     control.ballRaiseHeld = m_ballRaiseHeld;
     control.biomechanicalRequestedVelocity = m_biomechanicalRequestedVelocity;
     AthleteRuntimeOutput3D output;
-    m_athleteRuntime.update(*m_physicsScene, assets, athletes, balls, athleteRuntimeSettings(), control, deltaTime,
-        output);
+    m_athleteRuntime.update(*m_physicsScene, assets, athletes, balls, runtimeSettings, control, deltaTime, output);
     if (output.followVelocitySet) m_characterFollowVelocity = output.followVelocityWorld;
     if (output.controlledAnimatedSet) {
         m_controlledAnimated = output.controlledAnimated;

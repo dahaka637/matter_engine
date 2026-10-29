@@ -111,6 +111,10 @@ struct Scenario {
     bool rival = false;
     Vec3 rivalStart;
     float rivalYaw = 0.0f;
+    // A IA de captura no boneco (29/10, CapturePilot3D): ele joga pelo piloto,
+    // com a faixa padrao do controlado; e se pode dar carrinho.
+    bool rivalPilot = false;
+    bool rivalTackles = true;
 };
 
 struct Metrics {
@@ -211,6 +215,17 @@ struct Metrics {
     bool rivalFell = false;
     float rivalPushed = 0.0f;
     BodyModeKind3D rivalFinalMode = BodyModeKind3D::Physical;
+    // A IA de captura (Scenario::rivalPilot): o tempo dela com a bola (s), a
+    // primeira vez (s; -1 nunca), as vezes que a tomou, os toques; com a bola,
+    // o tempo na faixa (2 a 5 m do controlado); e a menor distancia entre as
+    // pelves (m).
+    float pilotOwnedSeconds = 0.0f;
+    float pilotFirstOwn = -1.0f;
+    int pilotSteals = 0;
+    int pilotTouches = 0;
+    float pilotBandSeconds = 0.0f;
+    float pilotClosest = 1.0e9f;
+    float pilotFarthest = 0.0f;
     // Pegadas novas (plano v3): as pernas cruzadas (ticks com um tornozelo do
     // lado errado do outro, lado a lado, no rumo da pelve) e a maior
     // sobreposicao entre as pernas (m, as capsulas e as caixas dos pes, acima

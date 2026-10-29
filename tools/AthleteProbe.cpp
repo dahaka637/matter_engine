@@ -29,6 +29,7 @@
 #include "Engine/Athlete/AthleteAssets3D.hpp"
 #include "Engine/Athlete/AthleteRuntime3D.hpp"
 #include "Engine/Athlete/AthleteTelemetry3D.hpp"
+#include "Engine/Athlete/Pilot/CapturePilot3D.hpp"
 #include "Engine/Athlete/Contract/LocomotionContract3D.hpp"
 #include "Engine/Athlete/Training/LocomotionBatch3D.hpp"
 #include "Engine/Athlete/Training/LocomotionWorld3D.hpp"
@@ -817,6 +818,34 @@ std::vector<Scenario> scenarios() {
             s.rivalYaw = 0.0f;
             list.push_back(s);
         }
+        // (A IA de captura, 29/10: o boneco joga pelo piloto. A bola solta com o
+        // controlado parado - ela pega e fica na faixa dele -, e o controlado
+        // conduzindo para cima dela - ela tenta roubar; com e sem carrinho.)
+        {
+            Scenario s { "ia_bola_livre", 9.0f, [](float) { return Keys {}; } };
+            s.ball = true;
+            s.ballStart = { 3.5f, -2.5f, 0.11f };
+            s.rival = true;
+            s.rivalPilot = true;
+            s.rivalStart = { 8.0f, 2.0f, 0.0f };
+            s.rivalYaw = Pi;
+            list.push_back(s);
+            Scenario steal { "ia_rouba", 10.0f, [](float t) { Keys k; k.forward = t > 0.3f ? 1.0f : 0.0f; return k; } };
+            steal.ball = true;
+            steal.ballStart = { 0.55f, 0.0f, 0.11f };
+            steal.autoDistance = 0.8f;
+            steal.autoKind = BallActionKind3D::Dribble;
+            steal.autoCooldown = 0.45f;
+            steal.autoPower = 0.2f;
+            steal.rival = true;
+            steal.rivalPilot = true;
+            steal.rivalStart = { 12.0f, 3.0f, 0.0f };
+            steal.rivalYaw = Pi;
+            list.push_back(steal);
+            steal.name = "ia_rouba_sem_carrinho";
+            steal.rivalTackles = false;
+            list.push_back(steal);
+        }
     }
     // Pegadas novas (plano v3, etapa 2): os casos do teste do usuario. O pulo
     // que pousa numa plataforma curta e sai dela correndo, o pulo que raspa o
@@ -1270,6 +1299,9 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
         athleteStart3D(*scene, rivalHandle, profile, rivalState, rivalAthlete, AthleteStartMode3D::Physical);
     }
     BodyModeKind3D rivalPrevious = athleteTelemetry3D(rivalAthlete).mode;
+    // (A IA de captura no boneco: o piloto e a posse do tick anterior.)
+    CapturePilot3D rivalPilot;
+    std::uint64_t pilotLastOwner = 0;
     InflatedBallHandle3D ballHandle;
     InflatedBallState3D ballState;
     BallOwnership3D ownership;
@@ -1421,7 +1453,8 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
             InflatedBallDefinition3D definition;
             definition.position = scenario.ballStart;
             definition.linearVelocity = scenario.ballVelocity;
-            definition.entityId = 2;
+            // (Com o boneco, ele e o 2.)
+            definition.entityId = scenario.rival ? 3 : 2;
             ballHandle = scene->createInflatedBall(definition);
             ballState = scene->inflatedBallState(ballHandle);
         }
@@ -1730,8 +1763,66 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
         std::array<AthleteSlot3D, 2> slots { slot, AthleteSlot3D { 2, rivalHandle, &rivalState, true, false, &rivalAthlete } };
         AthleteRuntimeSettings3D tickSettings = step < 0 ? warmSettings : policySettings;
         if (scenario.rival) tickSettings.looseDefaultLocomotion = true;
+        // A IA de captura: o boneco joga pelo piloto (o controlado e o jogador).
+        AthleteCommand3D pilotCommand;
+        if (scenario.rivalPilot && step >= 0 && !rivalState.links.empty()) {
+            CapturePilotView3D view;
+            view.self = 2;
+            capturePilotSelf3D(view, profile, rivalAthlete, rivalState);
+            if (scenario.ball) {
+                view.ball = true;
+                view.ballPosition = ballState.position;
+                view.ballVelocity = ballState.linearVelocity;
+                view.ballOwner = ownership.owner();
+                if (view.ballOwner == 1 && !bodyState.links.empty()) {
+                    view.ownerSeen = true;
+                    view.ownerPelvis = bodyState.links.front().position;
+                    view.ownerVelocity = bodyState.links.front().linearVelocity;
+                }
+            }
+            if (!bodyState.links.empty()) {
+                view.player = true;
+                view.playerPelvis = bodyState.links.front().position;
+                view.playerVelocity = bodyState.links.front().linearVelocity;
+            }
+            CapturePilotSettings3D pilot;
+            pilot.tackles = scenario.rivalTackles;
+            // (XIA_SEMENTE: outro jeito de IA - a media de varios.)
+            if (const char* seed = std::getenv("XIA_SEMENTE")) pilot.seed = std::strtoull(seed, nullptr, 10);
+            const GestureReach3D reach = gestureReachForBody3D(tickSettings.gestureReach, bodyScale3D(runtimeAssets.body),
+                bodyGirth3D(PhysiqueRegion3D::Chest, bodyTone3D(runtimeAssets.body)) - 1.0f);
+            pilotCommand = rivalPilot.update(view, pilot, tickSettings, gaitSpeeds, reach, Dt);
+            if (pilotCommand.ballRequest != BallActionKind3D::None) ++metrics.pilotTouches;
+            slots[1].command = &pilotCommand;
+        }
         runtime.update(*scene, runtimeAssets, std::span<AthleteSlot3D>(slots.data(), scenario.rival ? 2 : 1), balls,
             tickSettings, control, Dt, output);
+        if (scenario.rivalPilot && scenario.ball && step >= 0 && !rivalState.links.empty() && !bodyState.links.empty()) {
+            const std::uint64_t owner = ownership.owner();
+            const Vec3 a = rivalState.links.front().position, b = bodyState.links.front().position;
+            const float apart = std::hypot(a.x - b.x, a.y - b.y);
+            metrics.pilotClosest = std::min(metrics.pilotClosest, apart);
+            if (owner == 2) {
+                metrics.pilotOwnedSeconds += Dt;
+                if (metrics.pilotFirstOwn < 0.0f) metrics.pilotFirstOwn = t;
+                if (apart >= 2.0f && apart <= 5.0f) metrics.pilotBandSeconds += Dt;
+                metrics.pilotFarthest = std::max(metrics.pilotFarthest, apart);
+                if (pilotLastOwner != 2) ++metrics.pilotSteals;
+            }
+            pilotLastOwner = owner;
+            // XIA=1: a cada 0,25 s, o dono, a IA (onde, a que distancia do
+            // controlado e da bola, a velocidade e o modo) e as teclas dela.
+            if (std::getenv("XIA") && step % 30 == 0) {
+                const Vec3 v = rivalState.links.front().linearVelocity;
+                std::printf("  IA t %.2f dono %llu  ia (%.1f, %.1f) do jogador %.2f m, da bola %.2f m (bola %.1f m/s), %.1f m/s, "
+                            "%s; pedido %.1f m/s%s%s\n", t, static_cast<unsigned long long>(owner), a.x, a.y, apart,
+                    std::hypot(ballState.position.x - a.x, ballState.position.y - a.y),
+                    std::hypot(ballState.linearVelocity.x, ballState.linearVelocity.y), std::hypot(v.x, v.y),
+                    bodyModeName3D(athleteTelemetry3D(rivalAthlete).mode),
+                    pilotCommand.intent.requestedVelocityWorld.length(), pilotCommand.sprinting ? " shift" : "",
+                    pilotCommand.ballDribbleHeld ? " segura" : "");
+            }
+        }
         // (XREACH: a base das areas de alcance dos pes e a altura da pelve sobre ela,
         // a cada 0,05 s - no pulo, a base sobe com ele.)
         if (output.reachValid && step >= 0) metrics.reachBaseMax = std::max(metrics.reachBaseMax, output.reachOrigin.z);
@@ -2926,6 +3017,12 @@ void printMetrics(const Scenario& scenario, const Metrics& metrics, bool footste
     if (scenario.rival)
         std::printf("%-18s   boneco: %s, %s, empurrado ate %.2f m, fim %s\n", "", metrics.rivalTrail.c_str(),
             metrics.rivalFell ? "CAIU" : "de pe", metrics.rivalPushed, bodyModeName3D(metrics.rivalFinalMode));
+    if (scenario.rivalPilot)
+        std::printf("%-18s   IA: com a bola %.1f s (a primeira em %.2f s), tomou %d vez(es), %d toques; com ela, %.0f%% "
+                    "na faixa de 2 a 5 m (o mais longe %.1f m); pelves a %.2f m no mais perto\n", "", metrics.pilotOwnedSeconds,
+            metrics.pilotFirstOwn, metrics.pilotSteals, metrics.pilotTouches,
+            metrics.pilotOwnedSeconds > 0.0f ? 100.0f * metrics.pilotBandSeconds / metrics.pilotOwnedSeconds : 0.0f,
+            metrics.pilotFarthest, metrics.pilotClosest);
     if (metrics.speedBefore >= 0.0f && metrics.speedAfter >= 0.0f)
         std::printf("%-18s   velocidade antes/depois do choque %.2f / %.2f m/s (%.0f%%), Dv da janela ate %.2f m/s, golpe"
                     " pendente ate %.2f m/s\n", "",
@@ -3161,6 +3258,15 @@ int runChecks(const ProbeContext& context) {
         expect(tackle.rivalFell && tackle.rivalTrail.find("animado>fisico") != std::string::npos
                 && (tackle.finalMode == BodyModeKind3D::Animated || tackle.finalMode == BodyModeKind3D::Returning),
             "boneco_carrinho: o boneco leva o carrinho e cai; quem deu levanta e volta ao padrao", tackle);
+        // (A IA de captura, 29/10: pelo piloto, no padrao, ela pega a bola solta e
+        // fica com ela; e rouba de quem conduz.)
+        const Metrics free = run("ia_bola_livre", settings, false);
+        expect(free.pilotFirstOwn >= 0.0f && free.pilotFirstOwn < 3.0f && free.pilotOwnedSeconds > 4.0f
+                && free.pilotTouches >= 4 && !free.rivalFell,
+            "ia_bola_livre: a IA pega a bola solta em menos de 3 s e conduz", free);
+        const Metrics steal = run("ia_rouba_sem_carrinho", settings, false);
+        expect(steal.pilotSteals >= 1 && !steal.fell && !steal.rivalFell,
+            "ia_rouba_sem_carrinho: a IA rouba de quem conduz, os dois de pe", steal);
     }
     {
         // (O carrinho fica no padrao, deslizando e levantando pelo clipe: a pelve
