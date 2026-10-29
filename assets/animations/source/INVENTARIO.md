@@ -93,6 +93,7 @@ ao último quadro (m); perto de 0 com "máx" pequeno = veio no lugar (In Place).
 | `trote/Jog Strafe Right.fbx` | 0.73 | 1.69 | 1.69 | 0 | 14 |
 | `trote/Run Backward.fbx` | 0.63 | 1.93 | 1.93 | -0 | 8 |
 | `trote/Running Backward(1).fbx` | 0.63 | 1.80 | 1.80 | -0 | 8 |
+| `trote/Running Backward(2).fbx` | 0.63 | 1.80 | 1.80 | -0 | 8 |
 | `trote/Running Backward.fbx` | 0.63 | 1.93 | 1.93 | 0 | 8 |
 | `trote/Running.fbx` | 0.83 | 2.06 | 2.06 | 0 | 22 |
 | `trote/Slow Run.fbx` | 0.73 | 2.20 | 2.20 | -0 | 5 |

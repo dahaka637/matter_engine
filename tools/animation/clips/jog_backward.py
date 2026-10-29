@@ -19,6 +19,15 @@ recuar pede:
   - o tronco quase ereto (no trote ele vai 6 graus a frente, no rumo);
   - a base um pouco mais larga.
 A corrida de costas fica para o sprint e para a sombra do RL.
+
+28/10 noite (pedido do usuario: "mudar o movimento de trote para tras, para algo
+estilo isso [Running Backward(2).fbx] menos exagerado"): o recuo atletico da
+referencia, medido com gait_metrics.py (a referencia | este | o de antes):
+cadencia 189 | 183 | 164 passos/min, passo 0,99 | 0,98 | 1,10 m, tronco 10,5 |
+7,6 | 2,6 graus a frente, base 14,9 | 12,4 | 8,4 cm, pelve sobe-desce 7,4 | 5 | 3
+cm, bracos atras do tronco com o cotovelo vivo. Menos exagerado que ela no que
+ele ja recusou: o joelho no toque 45 graus (ela 63; sem "sentar") e a cabeca
+quase reta (ela olha 21 graus para baixo).
 """
 
 from __future__ import annotations
@@ -42,13 +51,25 @@ JOG_BACKWARD = replace(
     swing_recovery=0.0,
     swing_ankle_follow=0.0,
     landing_dorsiflex=0.0,
-    lean_forward=1.0,
+    lean_forward=6.0,
     lean_travel=0.0,
-    stance_width=0.095,
+    stance_width=0.135,
     # Invertida no tempo, o apoio troca de lado (o centro vai ao longo do rumo):
-    # a ponta toca bem atras (onde a do trote sai) e o pe sai chato a frente
-    # (onde o do trote toca).
-    stance_center=-jog.JOG.stance_center,
+    # a ponta toca atras e o pe sai a frente. (Mais perto do quadril que 0,06 a
+    # perna nao alcanca o pe na passada curta.)
+    stance_center=0.06,
+    cadence=3.05,
+    pelvis_drop=0.045,
+    pelvis_bob=-0.05,
+    neck_upright=0.0,
+    # (A cabeca calma: com a cadencia e o sobe-desce maiores ela ia a 64 graus/s
+    # de p95 no jogo; travada um pouco mais, 48.)
+    head_bob=0.5,
+    head_steady=0.95,
+    arm_forward=-28.0,
+    arm_lowered=69.0,
+    elbow=80.0,
+    elbow_swing=22.0,
 )
 
 
