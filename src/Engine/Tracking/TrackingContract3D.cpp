@@ -47,6 +47,8 @@ TrackingContract3D::TrackingContract3D(const RagdollProfile3D& profile) : m_prof
         m_actionOfLink[entry.link] = static_cast<int>(m_actionLinks.size());
         m_actionLinks.push_back(std::move(entry));
     }
+    m_thighs = { findLink(profile, "LeftThigh"), findLink(profile, "RightThigh") };
+    m_feet = { findLink(profile, "LeftFoot"), findLink(profile, "RightFoot") };
     if (first != ActionSize)
         throw std::runtime_error("rastreador: a acao do perfil tem " + std::to_string(first) + " canais (esperava 21)");
 
@@ -79,6 +81,11 @@ void TrackingContract3D::driveTargets(const TrackingLeaderState3D& leader, const
     std::span<const float> filteredAction, std::vector<RagdollDriveTarget3D>& out) const {
     const RagdollProfile3D& profile = *m_profile;
     out.clear();
+    std::array<bool, 2> planted { false, false };
+    if (m_stanceTwistTorque > 0.0f)
+        for (const RagdollContactPoint3D& contact : body.contacts)
+            for (std::size_t side = 0; side < 2; ++side)
+                if (contact.linkIndex == m_feet[side] && contact.normal.z > 0.5f) planted[side] = true;
     for (std::size_t i = 1; i < profile.links.size(); ++i) {
         const RagdollJointDefinition3D& joint = profile.links[i].inboundJoint;
         Vec3 target = i < leader.coordinates.size() ? leader.coordinates[i] : Vec3 {};
@@ -111,6 +118,9 @@ void TrackingContract3D::driveTargets(const TrackingLeaderState3D& leader, const
             drive.velocityRadiansPerSecond = std::clamp(component(velocity, axis), -30.0f, 30.0f);
             drive.stiffnessScale = TrackingStiffnessScale;
             drive.dampingScale = TrackingDampingScale;
+            for (std::size_t side = 0; side < 2; ++side)
+                if (planted[side] && i == m_thighs[side] && axis == 0 && joint.axes[0].maximumTorque > 0.0f)
+                    drive.maximumTorqueScale = std::min(1.0f, m_stanceTwistTorque / joint.axes[0].maximumTorque);
             out.push_back(drive);
         }
     }

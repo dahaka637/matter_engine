@@ -53,6 +53,12 @@ public:
 
     [[nodiscard]] const std::array<std::uint32_t, KeyBodyCount>& keyBodies() const { return m_keyBodies; }
 
+    // O teto (N.m) do motor da torcao da coxa quando o pe daquele lado esta no
+    // chao (29/10: a sola aguenta ~28-54 N.m de giro e o tornozelo nao tem eixo de
+    // giro; com o teto cheio, 0,4-2 graus de erro na torcao ja soltam o pe ou giram
+    // a pelve). <= 0: o teto do perfil (o de sempre).
+    void setStanceTwistTorque(float newtonMeters) { m_stanceTwistTorque = newtonMeters; }
+
 private:
     struct ActionLink {
         std::uint32_t link = 0;
@@ -68,6 +74,10 @@ private:
     std::array<std::uint32_t, KeyBodyCount> m_keyBodies {};
     std::vector<std::string> m_actionNames;
     std::vector<std::string> m_observationNames;
+    float m_stanceTwistTorque = 0.0f;
+    // A coxa e o pe de cada lado (esquerdo, direito).
+    std::array<std::uint32_t, 2> m_thighs {};
+    std::array<std::uint32_t, 2> m_feet {};
 };
 
 } // namespace MatterEngine

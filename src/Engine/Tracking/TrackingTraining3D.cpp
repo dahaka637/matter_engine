@@ -58,6 +58,8 @@ struct TrackingTraining3D::Impl {
     std::shared_ptr<const AthleteBundle3D> bundle;
     const RagdollProfile3D* profile = nullptr;
     AthleteRuntimeSettings3D runtime;
+    // Os clipes do lider (os do padrao, sem os de lado com leaderSideFromForward).
+    CharacterLocomotionAnimations3D leaderClips;
     std::unique_ptr<TrackingContract3D> contract;
     // A tarefa (taskPath): os exercicios, a soma acumulada dos pesos (o
     // sorteio), o exercicio da avaliacao e os links dos empurroes (a divisao
@@ -689,6 +691,7 @@ TrackingTraining3D::TrackingTraining3D(const TrackingTrainingSettings3D& setting
     const AthleteRuntimeAssets3D& assets = impl.bundle->assets();
     if (assets.defaultClips == nullptr) throw std::runtime_error("rastreador: faltam os clipes do padrao");
     impl.contract = std::make_unique<TrackingContract3D>(*impl.profile);
+    impl.contract->setStanceTwistTorque(settings.stanceTwistTorque);
     if (!settings.taskPath.empty()) {
         impl.task = std::make_unique<LocomotionTask3D>(loadLocomotionTask3D(settings.taskPath));
         double sum = 0.0;
@@ -727,6 +730,12 @@ TrackingTraining3D::TrackingTraining3D(const TrackingTrainingSettings3D& setting
         r.defaultSprintBackwardSpeed = 6.0f;
         r.defaultMaxSprintSpeed = 10.0f;
     }
+    if (settings.leaderResponsePercent > 0.0f) impl.runtime.capsuleResponsePercent = settings.leaderResponsePercent;
+    impl.leaderClips = *assets.defaultClips;
+    if (settings.leaderSideFromForward) {
+        impl.leaderClips.strafeLeft = impl.leaderClips.strafeRight = nullptr;
+        impl.leaderClips.sprintStrafeLeft = impl.leaderClips.sprintStrafeRight = nullptr;
+    }
     for (std::size_t i = 0; i < impl.profile->links.size(); ++i) {
         if (impl.profile->links[i].id == "LeftFoot") impl.feet[0] = static_cast<std::uint32_t>(i);
         if (impl.profile->links[i].id == "RightFoot") impl.feet[1] = static_cast<std::uint32_t>(i);
@@ -744,7 +753,7 @@ TrackingTraining3D::TrackingTraining3D(const TrackingTrainingSettings3D& setting
         spawn.active = true;
         spawn.pelvisPosition = { 0.0f, 0.0f, impl.profile->standingRootHeightMeters };
         w.handle = w.scene->createRagdoll(*impl.profile, spawn);
-        w.leader = std::make_unique<TrackingLeader3D>(*impl.profile, *assets.defaultClips, impl.runtime);
+        w.leader = std::make_unique<TrackingLeader3D>(*impl.profile, impl.leaderClips, impl.runtime);
         w.reward = std::make_unique<TrackingReward3D>(*impl.profile);
         w.observation.assign(TrackingContract3D::ObservationSize, 0.0f);
         w.finalObservation.assign(TrackingContract3D::ObservationSize, 0.0f);

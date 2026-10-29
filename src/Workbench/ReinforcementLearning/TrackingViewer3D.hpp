@@ -15,6 +15,12 @@ namespace MatterEngine {
 struct TrackingViewerConditions3D {
     float followSlack = 0.15f;
     bool realFallOnly = true;
+    // O lider do treino ("liderLaboratorio"; sem a chave, o do laboratorio, como nos treinos de 29/10) e as condicoes
+    // dele e do corpo da noite de 29-30/10 ("torcaoApoio", "ladoDeFrente", "respostaLider").
+    bool labLeader = true;
+    float stanceTwistTorque = 0.0f;
+    bool leaderSideFromForward = false;
+    float leaderResponsePercent = 0.0f;
 };
 
 // O visualizador de um treino do rastreador fisico (DReCon; vault

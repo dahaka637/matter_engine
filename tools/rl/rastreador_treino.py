@@ -132,7 +132,8 @@ def task_path(name: str) -> str:
 
 
 def write_run_files(run: Path, cenario: str, tarefa: str = "", escala: float = 1.0, beta: float = 0.2,
-                    seguir: float = -1.0, so_queda: bool = False) -> None:
+                    seguir: float = -1.0, so_queda: bool = False, torcao: float = 0.0, lado_frente: bool = False,
+                    resposta: float = 0.0) -> None:
     """O treino como a tela de Aprendizado o reconhece: run.json (kind rastreador) e tarefa.json."""
     for name, data in (("run.json", {"kind": "rastreador", "task": f"rastreador_{cenario}"}),
                        ("tarefa.json", {"schema": "matter-tracking-1", "id": f"rastreador_{cenario}",
@@ -152,6 +153,10 @@ def write_run_files(run: Path, cenario: str, tarefa: str = "", escala: float = 1
     task["filtroBeta"] = beta
     task["seguirCorpo"] = seguir
     task["soQuedaReal"] = so_queda
+    task["torcaoApoio"] = torcao
+    task["ladoDeFrente"] = lado_frente
+    task["respostaLider"] = resposta
+    task["liderLaboratorio"] = "--lider-laboratorio" in sys.argv
     (run / "tarefa.json").write_text(json.dumps(task, ensure_ascii=False, indent=1))
     # O comando deste treinador: o "Continuar treino" da tela o reabre igual.
     config = json.loads((run / "run.json").read_text())
@@ -247,6 +252,12 @@ def main() -> int:
                              "entre 1e-5 e 1e-3), como no PPO do rsl_rl. 0: a taxa fixa (a receita de 19/10)")
     parser.add_argument("--lider-laboratorio", action="store_true",
                         help="o lider com os valores do laboratorio (molas, arrancada, resposta 150%%, reversao, corrida 8/6)")
+    parser.add_argument("--torcao-apoio", type=float, default=0.0,
+                        help="o teto (N.m) da torcao da coxa com o pe no chao (a sola aguenta ~28-54; <= 0: o do perfil)")
+    parser.add_argument("--lado-de-frente", action="store_true",
+                        help="o lado do lider como a corrida de frente com o quadril virado (sem o jog_strafe)")
+    parser.add_argument("--resposta-lider", type=float, default=0.0,
+                        help="a resposta da capsula do lider (%% da de fabrica; 0: a de fabrica)")
     parser.add_argument("--seguir-corpo", type=float, default=-1.0,
                         help="o lider vai atras do corpo alem desta folga (m), so na posicao (< 0: nao vai)")
     args = parser.parse_args()
@@ -257,7 +268,7 @@ def main() -> int:
     run = DATA / args.treino
     run.mkdir(parents=True, exist_ok=True)
     write_run_files(run, args.cenario, args.tarefa, args.escala_velocidade, args.filtro_beta, args.seguir_corpo,
-                    args.so_queda_real)
+                    args.so_queda_real, args.torcao_apoio, args.lado_de_frente, args.resposta_lider)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     torch.manual_seed(args.semente)
     batch = native.TrackingBatch(str(REPO / "assets"), environments=args.mundos, threads=args.threads,
@@ -272,7 +283,9 @@ def main() -> int:
                                  star_turning_share=args.estrela_girando, star_speed=args.estrela_velocidade,
                                  star_radius=args.estrela_raio, real_fall_only=args.so_queda_real,
                                  lab_leader=args.lider_laboratorio, follow_slack=args.seguir_corpo,
-                                 task_path=task_path(args.tarefa), action_filter_beta=args.filtro_beta)
+                                 task_path=task_path(args.tarefa), action_filter_beta=args.filtro_beta,
+                                 stance_twist_torque=args.torcao_apoio, leader_side_from_forward=args.lado_de_frente,
+                                 leader_response_percent=args.resposta_lider)
     drill_ids = list(batch.drill_ids())
     n, obs_size, act_size = batch.num_envs, batch.obs_size, batch.action_size
     model = Policy(obs_size, act_size).to(device)

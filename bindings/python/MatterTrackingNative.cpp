@@ -61,7 +61,8 @@ NB_MODULE(matter_tracking_native, m) {
                 float trunk_weight, float alive_bonus, float speed_scale, float star_share, float star_fixed_share,
                 float star_turning_share, float star_speed, float star_radius, bool real_fall_only, bool lab_leader,
                 float follow_slack, const std::string& task_path, const std::string& evaluation_drill,
-                float action_filter_beta) {
+                float action_filter_beta, float stance_twist_torque, bool leader_side_from_forward,
+                float leader_response_percent) {
                 TrackingTrainingSettings3D settings;
                 settings.assetsDirectory = assets;
                 settings.environments = environments;
@@ -96,6 +97,9 @@ NB_MODULE(matter_tracking_native, m) {
                 settings.taskPath = task_path;
                 settings.evaluationDrill = evaluation_drill;
                 settings.actionFilterBeta = action_filter_beta;
+                settings.stanceTwistTorque = stance_twist_torque;
+                settings.leaderSideFromForward = leader_side_from_forward;
+                settings.leaderResponsePercent = leader_response_percent;
                 settings.idleShare = idle_share;
                 settings.turnShare = turn_share;
                 settings.fastTurnShare = fast_turn_share;
@@ -124,7 +128,8 @@ NB_MODULE(matter_tracking_native, m) {
             "alive_bonus"_a = 0.0f, "speed_scale"_a = 1.0f, "star_share"_a = 0.0f, "star_fixed_share"_a = 0.0f,
             "star_turning_share"_a = 0.0f, "star_speed"_a = 3.0f, "star_radius"_a = 10.0f, "real_fall_only"_a = false,
             "lab_leader"_a = false, "follow_slack"_a = -1.0f,
-            "task_path"_a = "", "evaluation_drill"_a = "", "action_filter_beta"_a = 0.2f)
+            "task_path"_a = "", "evaluation_drill"_a = "", "action_filter_beta"_a = 0.2f,
+            "stance_twist_torque"_a = 0.0f, "leader_side_from_forward"_a = false, "leader_response_percent"_a = 0.0f)
         .def_prop_ro("num_envs", &TrackingTraining3D::environmentCount)
         .def_prop_ro("obs_size", &TrackingTraining3D::observationSize)
         .def_prop_ro("action_size", &TrackingTraining3D::actionSize)

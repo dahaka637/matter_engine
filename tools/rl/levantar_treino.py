@@ -9,6 +9,9 @@ GAE); corte 0,2; SGD com momento 0,9, passo 5e-5 no ator e 1e-2 no critico;
 normalizacao da entrada.
 Declarado (o artigo nao da): o desvio fixo de 0,1 rad; uma passada pelo lote por
 atualizacao (16 minilotes); o fim do clipe com o valor do estado final (bootstrap).
+29/10 (prazo de 12 h dele): o padrao passou a Adam (ator 1e-4, critico 5e-4), 32 passos
+por mundo e 4 epocas de 4 minilotes, com o corte do gradiente em 1 - o SGD a 5e-5 do
+artigo levaria dias nesta maquina. --otimizador sgd volta ao do artigo.
 
   .venv/bin/python levantar_treino.py --treino lev_frente --clipe frente
 """
@@ -91,12 +94,17 @@ def main() -> int:
     parser.add_argument("--treino", required=True)
     parser.add_argument("--clipe", default="frente", choices=["frente", "costas"])
     parser.add_argument("--mundos", type=int, default=512)
-    parser.add_argument("--passos", type=int, default=8)
+    parser.add_argument("--passos", type=int, default=32)
     parser.add_argument("--threads", type=int, default=12)
     parser.add_argument("--semente", type=int, default=1)
     parser.add_argument("--atualizacoes", type=int, default=0, help="0: ate parar")
     parser.add_argument("--salvar-cada", type=int, default=100)
+    parser.add_argument("--otimizador", default="adam", choices=["adam", "sgd"])
+    parser.add_argument("--epocas", type=int, default=4)
+    parser.add_argument("--minilotes", type=int, default=4, help="com adam: minilotes por epoca")
     args = parser.parse_args()
+    from matter_rl.system import require_watchdog
+    require_watchdog()
 
     run = DATA / args.treino
     run.mkdir(parents=True, exist_ok=True)
@@ -110,10 +118,15 @@ def main() -> int:
                               seed=args.semente)
     n, obs_size, act_size = batch.num_envs, batch.obs_size, batch.action_size
     model = GetUpPolicy(obs_size, act_size).to(device)
-    actor_opt = torch.optim.SGD(model.actor.parameters(), lr=5e-5, momentum=0.9)
-    critic_opt = torch.optim.SGD(model.critic.parameters(), lr=1e-2, momentum=0.9)
+    if args.otimizador == "adam":
+        actor_opt = torch.optim.Adam(model.actor.parameters(), lr=1e-4)
+        critic_opt = torch.optim.Adam(model.critic.parameters(), lr=5e-4)
+    else:
+        actor_opt = torch.optim.SGD(model.actor.parameters(), lr=5e-5, momentum=0.9)
+        critic_opt = torch.optim.SGD(model.critic.parameters(), lr=1e-2, momentum=0.9)
     counters = {"atualizacao": 0, "amostras": 0, "episodios": 0}
-    settings = {"clipe": args.clipe, "mundos": n, "passos": args.passos, "sigma": SIGMA,
+    settings = {"clipe": args.clipe, "mundos": n, "passos": args.passos, "sigma": SIGMA, "otimizador": args.otimizador,
+                "epocas": args.epocas,
                 "observacao": batch.observation_names(), "acao": batch.action_names()}
     checkpoint = run / "ultimo.pt"
     if checkpoint.exists():
@@ -123,7 +136,9 @@ def main() -> int:
         critic_opt.load_state_dict(state["critic_opt"])
         counters = state["counters"]
     log = open(run / "log.jsonl", "a")
-    gamma, lam, clip, minibatch, T = 0.95, 0.95, 0.2, 256, args.passos
+    gamma, lam, clip, T = 0.95, 0.95, 0.2, args.passos
+    minibatch = (T * n) // max(1, args.minilotes) if args.otimizador == "adam" else 256
+    epochs = args.epocas if args.otimizador == "adam" else 1
     obs = torch.as_tensor(batch.observations(), device=device)
     window = []
     while args.atualizacoes <= 0 or counters["atualizacao"] < args.atualizacoes:
@@ -161,21 +176,22 @@ def main() -> int:
         flat = lambda x: x.reshape(T * n, *x.shape[2:])  # noqa: E731
         f_obs, f_act, f_logp, f_adv, f_ret = flat(buf["obs"]), flat(buf["act"]), flat(buf["logp"]), flat(adv), flat(ret)
         f_adv = (f_adv - f_adv.mean()) / (f_adv.std() + 1e-8)
-        perm = torch.randperm(T * n, device=device)
         stats = {"pol": 0.0, "vf": 0.0, "clip": 0.0}
         steps = 0
-        for start in range(0, T * n, minibatch):
-            idx = perm[start:start + minibatch]
+        for idx in [p[s:s + minibatch] for p in (torch.randperm(T * n, device=device) for _ in range(epochs))
+                    for s in range(0, T * n, minibatch)]:
             obs_n = model.norm(f_obs[idx])
             vf_loss = (model.value(obs_n) - f_ret[idx]).pow(2).mean()
             critic_opt.zero_grad()
             vf_loss.backward()
+            nn.utils.clip_grad_norm_(model.critic.parameters(), 1.0)
             critic_opt.step()
             logp = model.distribution(obs_n).log_prob(f_act[idx]).sum(-1)
             ratio = torch.exp(logp - f_logp[idx])
             pol_loss = -torch.min(ratio * f_adv[idx], ratio.clamp(1 - clip, 1 + clip) * f_adv[idx]).mean()
             actor_opt.zero_grad()
             pol_loss.backward()
+            nn.utils.clip_grad_norm_(model.actor.parameters(), 1.0)
             actor_opt.step()
             stats["pol"] += pol_loss.item()
             stats["vf"] += vf_loss.item()

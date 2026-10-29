@@ -105,6 +105,15 @@ struct TrackingTrainingSettings3D {
     // resposta e a reversao da capsula e a corrida 8/6), e nao os de fabrica
     // do atleta. false: os de fabrica (o rastreador de 19/10).
     bool labLeader = false;
+    // O teto da torcao da coxa com o pe apoiado (N.m; TrackingContract3D::setStanceTwistTorque). <= 0: o do perfil.
+    float stanceTwistTorque = 0.0f;
+    // O lado do lider como a corrida de frente com o quadril virado para onde vai (o padrao sem o clipe de lado).
+    // 29/10, medido: o jog_strafe e um pulo num pe so - o pe da frente escorrega 0,4-0,9 m carregado e girando, o
+    // de tras nunca pousa e o centro de massa flutua no ar; o corpo fisico nao segue. false: o strafe (o de sempre).
+    bool leaderSideFromForward = false;
+    // A resposta da capsula do lider (% da de fabrica). 29/10, medido: a de fabrica chega a velocidade em 0,13-0,30 s
+    // (17-45 m/s2) e o atrito so deixa em >= 0,44 s. <= 0: a de fabrica (ou a do laboratorio).
+    float leaderResponsePercent = 0.0f;
     // O lider vai atras do corpo quando a pelve se afasta mais que isto (m) da
     // dele, pela regra da capsula do jogo (navigationFollowVelocity3D), so na
     // posicao: a velocidade do lider continua a pedida, entao ficar lento

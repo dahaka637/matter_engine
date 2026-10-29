@@ -221,6 +221,10 @@ TrackingViewer3D::Conditions TrackingViewer3D::conditionsOf(const std::filesyste
     if (!task.is_object()) return out;
     out.followSlack = task.value("seguirCorpo", out.followSlack);
     out.realFallOnly = task.value("soQuedaReal", out.realFallOnly);
+    out.labLeader = task.value("liderLaboratorio", out.labLeader);
+    out.stanceTwistTorque = task.value("torcaoApoio", out.stanceTwistTorque);
+    out.leaderSideFromForward = task.value("ladoDeFrente", out.leaderSideFromForward);
+    out.leaderResponsePercent = task.value("respostaLider", out.leaderResponsePercent);
     return out;
 }
 
@@ -253,7 +257,10 @@ TrackingViewer3D::TrackingViewer3D(const std::filesystem::path& assetsDirectory,
     settings.evaluation = true;
     // (As condicoes do treino: o lider do laboratorio, indo ou nao atras do corpo, e o fim.)
     settings.realFallOnly = conditions.realFallOnly;
-    settings.labLeader = true;
+    settings.labLeader = conditions.labLeader;
+    settings.stanceTwistTorque = conditions.stanceTwistTorque;
+    settings.leaderSideFromForward = conditions.leaderSideFromForward;
+    settings.leaderResponsePercent = conditions.leaderResponsePercent;
     settings.leaderFollowSlack = conditions.followSlack;
     settings.evaluationSpeed = DefaultSpeed;
     settings.evaluationMode = mode;
