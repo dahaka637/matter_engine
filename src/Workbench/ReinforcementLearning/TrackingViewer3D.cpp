@@ -284,7 +284,7 @@ void TrackingViewer3D::setPolicy(const std::filesystem::path& file, std::string&
     try {
         auto policy = std::make_unique<PolicyRuntime3D>(file);
         if (policy->observationSize() != impl.batch->observationSize() || policy->actionSize() != impl.batch->actionSize()
-            || policy->info().observationLayout != "rastreador-v1") {
+            || policy->info().observationLayout != "rastreador-v2") {
             impl.policy.reset();
             label = "politica de outro contrato";
             return;

@@ -22,7 +22,7 @@ import torch
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from rastreador_treino import DATA, REPO, Policy, native, task_path  # noqa: E402
+from rastreador_treino import DATA, REPO, Policy, native, task_path, widen_state  # noqa: E402
 
 
 def main() -> int:
@@ -64,7 +64,7 @@ def main() -> int:
     model = Policy(batch.obs_size, batch.action_size)
     rodada = 0
     if not args.zero:
-        state = torch.load(run / args.checkpoint, map_location="cpu", weights_only=False)
+        state = widen_state(torch.load(run / args.checkpoint, map_location="cpu", weights_only=False), batch.obs_size)
         model.load_state_dict(state["model"])
         rodada = state["counters"]["rodada"]
     model.eval()

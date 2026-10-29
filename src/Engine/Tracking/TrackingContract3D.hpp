@@ -25,12 +25,15 @@ namespace MatterEngine {
 // cada), s_sim e s_sim - s_kin (36 cada: posicao e velocidade do centro de
 // massa de 6 corpos - os pes, o abdomen, a cabeca e os antebracos) e a acao
 // filtrada anterior (21). Tudo no rumo do lider (F_kin; F_sim com a mesma
-// orientacao, na origem do corpo).
+// orientacao, na origem do corpo). Desvio declarado do DReCon (29/10, rastreador-v2):
+// por ultimo, o afastamento do centro de massa do corpo ate o do lider no plano
+// (2, no rumo do lider, ate 2 m) - sem ele a rede so evitava se afastar igualando
+// a velocidade, e o corpo de pe ficava 1 m para tras em ~4 s.
 class TrackingContract3D final {
 public:
     static constexpr std::size_t ActionSize = 21;
     static constexpr std::size_t KeyBodyCount = 6;
-    static constexpr std::size_t ObservationSize = 3 + 3 + 3 + 2 + 2 + 2 * KeyBodyCount * 6 + ActionSize;
+    static constexpr std::size_t ObservationSize = 3 + 3 + 3 + 2 + 2 + 2 * KeyBodyCount * 6 + ActionSize + 2;
 
     explicit TrackingContract3D(const RagdollProfile3D& profile);
 

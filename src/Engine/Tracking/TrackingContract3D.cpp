@@ -70,6 +70,8 @@ TrackingContract3D::TrackingContract3D(const RagdollProfile3D& profile) : m_prof
             vec(std::string(block) + "." + key + ".vel", 3);
         }
     for (const std::string& action : m_actionNames) m_observationNames.push_back("y_ant." + action);
+    m_observationNames.push_back("afastamento.x");
+    m_observationNames.push_back("afastamento.y");
     if (m_observationNames.size() != ObservationSize) throw std::logic_error("rastreador: observacao com tamanho errado");
 }
 
@@ -155,6 +157,10 @@ void TrackingContract3D::observe(const TrackingLeaderState3D& leader, std::span<
         put(simVelocity[k] - kinVelocity[k], 3);
     }
     for (std::size_t a = 0; a < ActionSize; ++a) out[n++] = a < previousAction.size() ? previousAction[a] : 0.0f;
+    // (rastreador-v2) O corpo ate o lider no plano, no rumo do lider, ate 2 m.
+    const Vec3 offset = kin.direction(bodyCenterOfMass - leader.centerOfMass);
+    out[n++] = std::clamp(offset.x, -2.0f, 2.0f);
+    out[n++] = std::clamp(offset.y, -2.0f, 2.0f);
 }
 
 } // namespace MatterEngine

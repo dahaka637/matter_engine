@@ -104,7 +104,7 @@ def export_policy(model: Policy, path: Path, meta: dict) -> None:
     header.update({"schema": "matter-rl-policy-1", "observationSize": layers[0]["inputs"],
                    "actionSize": layers[-1]["outputs"], "activation": "tanh",
                    "normalizer": {"mean": mean_at, "invStd": inv_at, "clip": 5.0}, "actionLimit": 3.14159,
-                   "layers": layers, "observationLayout": "rastreador-v1", "actionLayout": "rastreador-v1",
+                   "layers": layers, "observationLayout": "rastreador-v2", "actionLayout": "rastreador-v1",
                    "createdUtc": datetime.now(timezone.utc).isoformat(timespec="seconds")})
     text = json.dumps(header, ensure_ascii=False).encode("utf-8")
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -169,6 +169,26 @@ def write_status(run: Path, state: str, counters: dict, row: dict, args) -> None
     tmp = run / "status.tmp"
     tmp.write_text(json.dumps(status, ensure_ascii=False))
     tmp.replace(run / "status.json")
+
+
+def widen_state(state: dict, obs_size: int) -> dict:
+    """Uma rede de antes (rastreador-v1, menos entradas) no contrato de agora: as entradas novas
+    vao no fim com peso zero na primeira camada do ator e do critico, e o normalizador com media 0
+    e variancia 1 nelas. O comportamento fica identico ate a rede aprender a usa-las. (O otimizador
+    fica de fora: os tamanhos mudaram.)"""
+    model = state["model"]
+    old = model["norm.mean"].shape[0]
+    if old == obs_size:
+        return state
+    extra = obs_size - old
+    for key in ("actor.0.weight", "critic.0.weight"):
+        w = model[key]
+        model[key] = torch.cat([w, torch.zeros(w.shape[0], extra, dtype=w.dtype, device=w.device)], dim=1)
+    model["norm.mean"] = torch.cat([model["norm.mean"], torch.zeros(extra, dtype=model["norm.mean"].dtype, device=model["norm.mean"].device)])
+    model["norm.var"] = torch.cat([model["norm.var"], torch.ones(extra, dtype=model["norm.var"].dtype, device=model["norm.var"].device)])
+    state["optimizer"] = None
+    print(f"rede de {old} entradas alargada para {obs_size} (as novas com peso zero)", flush=True)
+    return state
 
 
 def save(path: Path, model: Policy, optimizer, counters: dict, settings: dict) -> None:
@@ -264,9 +284,10 @@ def main() -> int:
         checkpoint.write_bytes(source.read_bytes())
         print(f"comecando de {args.de}", flush=True)
     if checkpoint.exists():
-        state = torch.load(checkpoint, map_location=device, weights_only=False)
+        state = widen_state(torch.load(checkpoint, map_location=device, weights_only=False), obs_size)
         model.load_state_dict(state["model"])
-        optimizer.load_state_dict(state["optimizer"])
+        if state["optimizer"] is not None:
+            optimizer.load_state_dict(state["optimizer"])
         # (Com a taxa fixa, a da linha de comando; pelo KL, a guardada no otimizador segue de onde estava.)
         if args.kl_alvo <= 0:
             for group in optimizer.param_groups:

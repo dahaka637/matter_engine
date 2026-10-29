@@ -1,5 +1,5 @@
 // O rastreador fisico (vault 04_locomocao/referencia/pesquisas/12_especificacao_rastreador.md):
-// o contrato (21 saidas, 106 entradas, as 39 juntas, a composicao), a nota do DReCon
+// o contrato (21 saidas, 108 entradas (o rastreador-v2), as 39 juntas, a composicao), a nota do DReCon
 // e o lote (o comeco sobreposto ao lider, o fim pela cabeca a 1 m).
 #include "Engine/Athlete/AthleteAssets3D.hpp"
 #include "Engine/RL/Body/RLBody3D.hpp"
@@ -54,7 +54,7 @@ void contractTests(const AthleteBundle3D& bundle) {
     const RagdollProfile3D& profile = bundle.profile();
     const TrackingContract3D contract(profile);
     expect(contract.actionNames().size() == 21, "a acao tem 21 canais (DReCon 25, sem dedo e com o pe de 2 eixos)");
-    expect(contract.observationNames().size() == 106, "a observacao tem 106 entradas");
+    expect(contract.observationNames().size() == TrackingContract3D::ObservationSize && TrackingContract3D::ObservationSize == 108, "a observacao tem 108 entradas");
     std::size_t axes = 0;
     for (std::size_t i = 1; i < profile.links.size(); ++i)
         for (const RagdollAxisDefinition3D& axis : profile.links[i].inboundJoint.axes) axes += axis.enabled ? 1 : 0;
@@ -93,7 +93,7 @@ void contractTests(const AthleteBundle3D& bundle) {
             expect(std::abs(d.positionRadians - (s.coordinates[shin].x + 0.2f)) < 1e-5f, "a canela: somada");
     }
 
-    std::vector<float> observation(106, -9.0f);
+    std::vector<float> observation(TrackingContract3D::ObservationSize, -9.0f);
     contract.observe(s, s.links, s.centerOfMass, s.centerOfMassVelocity, std::vector<float>(21, 0.0f), observation);
     for (std::size_t k = 0; k < 3; ++k)
         expect(std::abs(observation[6 + k]) < 1e-6f, "o corpo sobre o lider: v_sim - v_kin = 0");
