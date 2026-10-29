@@ -42,6 +42,11 @@ Pedidos do usuário (28/10): "qualquer encostão já leva ao modo de locomoção
   - prova e2 igual ao ouro gravado do código de antes no mesmo build. O `ouro_e2_tensao` já diferia do HEAD antes;
   - ctest com as 5 falhas antigas mais Articulation (só o modelo dinâmico, fora desta frente);
   - `check-architecture`: só a falha anterior do `AnimatedGetUp3D` (`3061b5a`).
+- **O carrinho** (`61a93b1`).
+  - O impulso extra pela velocidade de entrada (`tackleBoost`, "Impulso do carrinho", 30%) acelera o mergulho de 7,8 para 11,6 m/s e alonga o deslize de 3,19 para 4,15 m.
+  - O contato leve no carrinho vai à ponte. A varrida em quem está de pé é pancada forte, e o físico continua o carrinho.
+  - O gesto de bola anima também a ponte de contato: a condução na disputa sai com os 4 toques.
+  - Restaurar a pose acaba a ponte.
 - **Não visto:** a janela do laboratório (pede o aval dele).
 - **Limites conhecidos:**
   - os braços se atravessam um pouco nos encostões leves;
