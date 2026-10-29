@@ -45,6 +45,7 @@ def main() -> int:
                         help="os exercicios de uma tarefa da locomocao (assets/rl/tasks/NOME.json ou um caminho)")
     parser.add_argument("--exercicio", default="", help="com a tarefa: o exercicio (id) de todos os mundos")
     parser.add_argument("--escala-velocidade", type=float, default=1.0, help="com a tarefa: a escala dos pedidos (a do treino)")
+    parser.add_argument("--filtro-beta", type=float, default=0.2, help="o filtro da acao (o do treino)")
     parser.add_argument("--lider-laboratorio", action="store_true",
                         help="o lider com os valores do laboratorio (molas, arrancada, resposta 150%%, reversao, corrida 8/6)")
     parser.add_argument("--seguir-corpo", type=float, default=-1.0,
@@ -59,7 +60,7 @@ def main() -> int:
                                  projectile_maximum_kg=max(args.cubo_kg, 0.01),
                                  lab_leader=args.lider_laboratorio, follow_slack=args.seguir_corpo,
                                  task_path=task_path(args.tarefa), evaluation_drill=args.exercicio,
-                                 speed_scale=args.escala_velocidade)
+                                 speed_scale=args.escala_velocidade, action_filter_beta=args.filtro_beta)
     model = Policy(batch.obs_size, batch.action_size)
     rodada = 0
     if not args.zero:

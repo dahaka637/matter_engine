@@ -206,8 +206,15 @@ float TrackingViewer3D::speedScaleOf(const std::filesystem::path& trackingTask) 
     return task.is_object() ? task.value("escalaVelocidade", 1.0f) : 1.0f;
 }
 
+float TrackingViewer3D::filterBetaOf(const std::filesystem::path& trackingTask) {
+    std::ifstream file(trackingTask);
+    if (!file) return 0.2f;
+    const nlohmann::json task = nlohmann::json::parse(file, nullptr, false);
+    return task.is_object() ? task.value("filtroBeta", 0.2f) : 0.2f;
+}
+
 TrackingViewer3D::TrackingViewer3D(const std::filesystem::path& assetsDirectory, std::uint64_t seed,
-    const std::string& drill, const std::filesystem::path& locomotionTask, float speedScale)
+    const std::string& drill, const std::filesystem::path& locomotionTask, float speedScale, float filterBeta)
     : m_impl(std::make_unique<Impl>()) {
     Impl& impl = *m_impl;
     impl.heading = headingOf(drill);
@@ -238,6 +245,7 @@ TrackingViewer3D::TrackingViewer3D(const std::filesystem::path& assetsDirectory,
     settings.leaderFollowSlack = 0.15f;
     settings.evaluationSpeed = DefaultSpeed;
     settings.evaluationMode = mode;
+    settings.actionFilterBeta = filterBeta;
     if (!locomotionTask.empty()) {
         // O exercicio da tarefa (vazio ou de outra lista: o primeiro com peso), na escala do treino.
         impl.task = true;

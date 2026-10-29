@@ -39,11 +39,13 @@ public:
     [[nodiscard]] static std::filesystem::path locomotionTaskOf(const std::filesystem::path& trackingTask,
         const std::filesystem::path& assetsDirectory);
     [[nodiscard]] static float speedScaleOf(const std::filesystem::path& trackingTask);
+    // O filtro da acao do treino ("filtroBeta"; 0,2, o do DReCon, sem ele).
+    [[nodiscard]] static float filterBetaOf(const std::filesystem::path& trackingTask);
 
     // drill: "rumoN" (andar no rumo N) ou um dos parados; com locomotionTask, o id de um
     // exercicio dela (vazio: o primeiro com peso), levado pelo piloto dele.
     TrackingViewer3D(const std::filesystem::path& assetsDirectory, std::uint64_t seed, const std::string& drill = {},
-        const std::filesystem::path& locomotionTask = {}, float speedScale = 1.0f);
+        const std::filesystem::path& locomotionTask = {}, float speedScale = 1.0f, float filterBeta = 0.2f);
     ~TrackingViewer3D() override;
     TrackingViewer3D(const TrackingViewer3D&) = delete;
     TrackingViewer3D& operator=(const TrackingViewer3D&) = delete;

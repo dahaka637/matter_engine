@@ -131,7 +131,7 @@ def task_path(name: str) -> str:
     return str(path)
 
 
-def write_run_files(run: Path, cenario: str, tarefa: str = "", escala: float = 1.0) -> None:
+def write_run_files(run: Path, cenario: str, tarefa: str = "", escala: float = 1.0, beta: float = 0.2) -> None:
     """O treino como a tela de Aprendizado o reconhece: run.json (kind rastreador) e tarefa.json."""
     for name, data in (("run.json", {"kind": "rastreador", "task": f"rastreador_{cenario}"}),
                        ("tarefa.json", {"schema": "matter-tracking-1", "id": f"rastreador_{cenario}",
@@ -148,6 +148,7 @@ def write_run_files(run: Path, cenario: str, tarefa: str = "", escala: float = 1
         task["tarefaLocomocao"] = str(path.relative_to(assets)) if path.is_relative_to(assets) else str(path)
         task["displayName"] = f"Rastreador com os exercicios de {path.stem}"
     task["escalaVelocidade"] = escala
+    task["filtroBeta"] = beta
     (run / "tarefa.json").write_text(json.dumps(task, ensure_ascii=False, indent=1))
     # O comando deste treinador: o "Continuar treino" da tela o reabre igual.
     config = json.loads((run / "run.json").read_text())
@@ -214,6 +215,8 @@ def main() -> int:
     parser.add_argument("--tarefa", default="",
                         help="os exercicios de uma tarefa da locomocao (assets/rl/tasks/NOME.json ou um caminho)")
     parser.add_argument("--taxa", type=float, default=3e-4, help="a taxa de aprendizado (Adam)")
+    parser.add_argument("--filtro-beta", type=float, default=0.2,
+                        help="o filtro da acao y = beta a + (1 - beta) y (0,2 = DReCon; maior responde mais rapido)")
     parser.add_argument("--kl-alvo", type=float, default=0.0,
                         help="> 0: a taxa se ajusta pelo KL de cada rodada (acima do dobro, /1,5; abaixo da metade, x1,5; "
                              "entre 1e-5 e 1e-3), como no PPO do rsl_rl. 0: a taxa fixa (a receita de 19/10)")
@@ -228,7 +231,7 @@ def main() -> int:
 
     run = DATA / args.treino
     run.mkdir(parents=True, exist_ok=True)
-    write_run_files(run, args.cenario, args.tarefa, args.escala_velocidade)
+    write_run_files(run, args.cenario, args.tarefa, args.escala_velocidade, args.filtro_beta)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     torch.manual_seed(args.semente)
     batch = native.TrackingBatch(str(REPO / "assets"), environments=args.mundos, threads=args.threads,
@@ -243,7 +246,7 @@ def main() -> int:
                                  star_turning_share=args.estrela_girando, star_speed=args.estrela_velocidade,
                                  star_radius=args.estrela_raio, real_fall_only=args.so_queda_real,
                                  lab_leader=args.lider_laboratorio, follow_slack=args.seguir_corpo,
-                                 task_path=task_path(args.tarefa))
+                                 task_path=task_path(args.tarefa), action_filter_beta=args.filtro_beta)
     drill_ids = list(batch.drill_ids())
     n, obs_size, act_size = batch.num_envs, batch.obs_size, batch.action_size
     model = Policy(obs_size, act_size).to(device)
@@ -292,7 +295,8 @@ def main() -> int:
         sim_seconds = 0.0
         with torch.no_grad():
             for t in range(T):
-                model.norm.update(obs)
+                # (O normalizador fica parado na rodada e anda depois da atualizacao: com ele andando
+                # a cada passo, a razao do PPO nao partia de 1 - a licao 14; o Codex, 29/10.)
                 obs_n = model.norm(obs)
                 dist = model.distribution(obs_n)
                 action = dist.sample()
@@ -351,6 +355,8 @@ def main() -> int:
                 updates += 1
         for k in stats:
             stats[k] /= max(1, updates)
+        with torch.no_grad():
+            model.norm.update(f_obs)
         if args.kl_alvo > 0:
             # 29/10 (vigilia): o KL de 0,10-0,13 por rodada com a taxa fixa (o desvio encolheu de 0,14 para 0,10).
             lr = optimizer.param_groups[0]["lr"]

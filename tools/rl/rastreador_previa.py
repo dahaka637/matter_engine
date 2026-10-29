@@ -36,6 +36,7 @@ def main() -> int:
                         help="os exercicios de uma tarefa da locomocao (assets/rl/tasks/NOME.json ou um caminho)")
     parser.add_argument("--exercicio", default="", help="com a tarefa: o exercicio (id)")
     parser.add_argument("--escala-velocidade", type=float, default=1.0)
+    parser.add_argument("--filtro-beta", type=float, default=0.2, help="o filtro da acao (o do treino)")
     parser.add_argument("--lider-laboratorio", action="store_true", help="o lider com os valores do laboratorio")
     parser.add_argument("--seguir-corpo", type=float, default=-1.0, help="o lider vai atras do corpo alem desta folga (m)")
     parser.add_argument("--so-queda-real", action="store_true", help="o episodio so acaba na queda de verdade")
@@ -47,7 +48,8 @@ def main() -> int:
                                  evaluation_mode="rumos" if args.rumo else "frente",
                                  lab_leader=args.lider_laboratorio, follow_slack=args.seguir_corpo,
                                  real_fall_only=args.so_queda_real, task_path=task_path(args.tarefa),
-                                 evaluation_drill=args.exercicio, speed_scale=args.escala_velocidade)
+                                 evaluation_drill=args.exercicio, speed_scale=args.escala_velocidade,
+                                 action_filter_beta=args.filtro_beta)
     w = args.rumo
     model = None
     who = "sem rede"
