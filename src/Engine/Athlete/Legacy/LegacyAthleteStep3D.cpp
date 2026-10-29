@@ -1713,9 +1713,9 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         const bool allowed = settings.animatedGetUp && defaultMode && state.bodyMode == BodyMode::Physical
             && body.links.size() == profile.links.size() && body.joints.size() == profile.links.size();
         // (A pose do tick no corpo guiado, com a capsula parada embaixo da pelve.)
-        const auto drive = [&]() {
+        const auto drive = [&](float pace) {
             RagdollAnimationPose3D pose;
-            getUp.step(profile, deltaTime * std::max(0.1f, settings.animatedGetUpSpeed), pose);
+            getUp.step(profile, deltaTime * std::max(0.1f, settings.animatedGetUpSpeed) * pace, pose);
             scene.setRagdollGuidePose(slot.handle, pose.linkPositions, pose.linkOrientations);
             const Vec3 pelvisNow = pose.linkPositions.front();
             scene.placeCharacter({ pelvisNow.x, pelvisNow.y, groundHeight(pelvisNow) }, assets.avatarSettings);
@@ -1754,8 +1754,22 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                 athlete.animatedGetUpCalm = -1.0f;
                 Log::info("corpo: levantar pelo padrao -> fisico (contato)");
             } else {
-                drive();
-                if (getUp.finished()) {
+                // Com pressa (28/10, pedido do usuario: o levantar rapido com
+                // arrancada pela locomocao padrao): com as teclas o clipe anda
+                // AnimatedGetUpHurry vezes mais rapido; com o Shift, quase de pe
+                // (alem de 3/4 do clipe e a pelve acima de 0,7 m), o padrao assume
+                // ja na arrancada agachada para onde elas pedem. Antes ele levantava o clipe
+                // inteiro e so entao andava. (Passando antes - a um terco e com a
+                // pelve a 0,5 m, o ponto do fisico - o tronco ia a 1.100 m/s2.)
+                constexpr float AnimatedGetUpHurry = 2.0f;
+                const Vec3 keys = command.intent.requestedVelocityWorld;
+                const bool hurried = keys.lengthSquared() > 0.25f;
+                drive(hurried ? AnimatedGetUpHurry : 1.0f);
+                const PhysicsBodyState3D& pelvisNow = body.links.front();
+                const bool sprintHandoff = hurried && command.intent.effort > 0.5f && settings.defaultGetUpHandoff
+                    && !getUp.finished() && getUp.timeSeconds() > 0.75f * getUp.durationSeconds()
+                    && pelvisNow.position.z - groundHeight(pelvisNow.position) > 0.70f;
+                if (getUp.finished() || sprintHandoff) {
                     // De pe: a volta de sempre ao padrao (a pose guiada indo a
                     // dele pela inercia, o padrao comecando do corpo).
                     getUp.stop();
@@ -1781,13 +1795,15 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                     constexpr float GetUpExitHalfLife = 0.25f;
                     constexpr float GetUpExitSeconds = 0.90f;
                     state.returnInertia.start(state.returnCoordinates, velocities, pelvis.position, pelvis.orientation,
-                        {}, {}, GetUpExitHalfLife, GetUpExitSeconds);
+                        {}, {}, sprintHandoff ? GetUpHandoffHalfLife : GetUpExitHalfLife,
+                        sprintHandoff ? GetUpHandoffSeconds : GetUpExitSeconds);
+                    if (sprintHandoff) state.defaultLocomotion.startCrouchSprint(std::atan2(keys.y, keys.x), true);
                     state.bodyMode = BodyMode::Returning;
                     state.bodyModeSeconds = 0.0f;
                     state.guidedExitLeft = 0.0f;
                     state.airSeconds = 0.0f;
                     athlete.animatedGetUpCalm = 0.0f;
-                    Log::info("corpo: levantar pelo padrao -> padrao");
+                    Log::info(sprintHandoff ? "corpo: levantar pelo padrao -> arrancada agachada" : "corpo: levantar pelo padrao -> padrao");
                 }
                 return;
             }
@@ -1874,7 +1890,7 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                     scene.setRagdollGuided(slot.handle, true);
                     state.guided = true;
                     Log::info(prone ? "corpo: levantar pelo padrao (de brucos)" : "corpo: levantar pelo padrao (de costas)");
-                    drive();
+                    drive(1.0f);
                     return;
                 }
                 // (Sem base: o fisico levanta; olha de novo daqui a 1 s.)

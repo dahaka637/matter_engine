@@ -585,6 +585,14 @@ std::vector<Scenario> scenarios() {
         Scenario corre { "queda_levanta_corre", 10.0f, [](float t) { Keys k; k.forward = t > 2.5f ? 1.0f : 0.0f; return k; } };
         corre.throws = parado.throws;
         list.push_back(corre);
+        // (28/10: o levantar com pressa e arrancada - frente e Shift desde o chao.)
+        Scenario arranca { "queda_levanta_arranca", 6.0f, [](float t) {
+            Keys k;
+            k.forward = t > 2.5f ? 1.0f : 0.0f;
+            k.sprint = t > 2.5f;
+            return k; } };
+        arranca.throws = parado.throws;
+        list.push_back(arranca);
         // O levantar de cada jeito de cair (plano v2, fase D): a caixa no
         // quadril de lado (cai de lado), nas costas (de frente, de brucos) e
         // no peito (de costas).
@@ -2958,6 +2966,21 @@ int runChecks(const ProbeContext& context) {
             expect(m.animatedGetUpStarts == 0
                     && (m.finalMode == BodyModeKind3D::Animated || m.finalMode == BodyModeKind3D::Returning),
                 "levantar pelo padrao: com a caixa no caminho levanta pelo fisico", m);
+        }
+        {
+            // O levantar com pressa e arrancada (28/10): pelo clipe, quase de pe
+            // ele passa a arrancada agachada do padrao e corre; pelo fisico, a
+            // ponte da arrancada nao cai mais no nocaute (corpo baixo, postura)
+            // em laco - antes ele nunca saia correndo.
+            const Metrics clip = run("queda_levanta_arranca", getUpOn, false);
+            char what[160];
+            std::snprintf(what, sizeof(what), "levantar com arrancada, pelo clipe: corre (andou %.1f m)", clip.travel);
+            expect(clip.animatedGetUpCompleted >= 1 && clip.finalMode == BodyModeKind3D::Animated && clip.travel > 15.0f,
+                what, clip);
+            const Metrics physical = run("queda_levanta_arranca", settings, false);
+            std::snprintf(what, sizeof(what), "levantar com arrancada, pelo fisico: corre sem o laco (andou %.1f m)",
+                physical.travel);
+            expect(physical.finalMode == BodyModeKind3D::Animated && physical.travel > 10.0f, what, physical);
         }
     }
     {

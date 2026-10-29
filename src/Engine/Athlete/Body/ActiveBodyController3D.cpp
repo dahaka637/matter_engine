@@ -194,8 +194,19 @@ void ActiveBodyController3D::update(const RagdollProfile3D& profile, const Ragdo
         output.linkError = std::max(output.linkError, (state.links[i].position - target.pose->linkPositions[i]).length());
 
     // Nocaute: postura perdida, corpo baixo demais, pancada forte.
-    const bool tilted = observation.pelvisUp.z < std::cos(settings.knockoutPelvisTilt)
-        || observation.chestUp.z < std::cos(settings.knockoutChestTilt);
+    // (A inclinacao contra a que a pose-alvo pede - 28/10: a arrancada
+    // agachada do levantar com pressa inclina o tronco de proposito, e o
+    // nocaute por postura a devolvia ao fisico.)
+    std::size_t chestLink = 0;
+    for (std::size_t i = 0; i < profile.links.size(); ++i)
+        if (profile.links[i].id == "Chest") chestLink = i;
+    const auto targetUp = [&](std::size_t link) {
+        return target.pose != nullptr && link < target.pose->linkOrientations.size() && link < profile.links.size()
+            ? (target.pose->linkOrientations[link] * profile.links[link].modelOrientation.conjugate()).rotate({ 0.0f, 0.0f, 1.0f })
+            : Vec3 { 0.0f, 0.0f, 1.0f };
+    };
+    const bool tilted = dot(observation.pelvisUp, targetUp(0)) < std::cos(settings.knockoutPelvisTilt)
+        || dot(observation.chestUp, targetUp(chestLink)) < std::cos(settings.knockoutChestTilt);
     m_tiltSeconds = tilted ? m_tiltSeconds + dt : 0.0f;
     float floor = observation.feet[0].soleHeight;
     for (const FootObservation3D& foot : observation.feet)
@@ -204,7 +215,11 @@ void ActiveBodyController3D::update(const RagdollProfile3D& profile, const Ragdo
     if (m_tiltSeconds > settings.knockoutSeconds) {
         output.knockout = true;
         output.knockoutReason = "postura";
-    } else if (height < settings.knockoutHeightShare * profile.standingRootHeightMeters) {
+    } else if (height < settings.knockoutHeightShare
+            * std::clamp(target.rootPosition.z - floor, 0.0f, profile.standingRootHeightMeters)) {
+        // (Contra a altura que a pose-alvo pede, nao a de pe - 28/10: a
+        // arrancada agachada do levantar com pressa pede o corpo baixo, e o
+        // nocaute o devolvia ao fisico em laco.)
         output.knockout = true;
         output.knockoutReason = "corpo baixo";
     } else if (observation.externalImpulse > settings.knockoutImpulse) {
