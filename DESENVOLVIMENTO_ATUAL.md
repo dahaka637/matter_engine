@@ -5,7 +5,49 @@
 > registrar não apenas *o que* mudou, mas também *por que*, como foi validado e
 > quais limitações ainda existem.
 
-**Última atualização:** 26 de outubro de 2026
+**Última atualização:** 29 de outubro de 2026
+
+## Os contatos inteligentes e os bonecos no padrão (Claude, 28/10 noite – 29/10)
+
+Pedidos do usuário (28/10): "qualquer encostão já leva ao modo de locomoção física... não perca velocidade... um modo físico parcial que pode evoluir para físico se houver perda de base"; "o carrinho deve ocorrer em locomoção default"; "faça os outros bonecos estarem na locomoção padrão, e sofrerem as mesmas transformações que eu".
+
+- **A ponte de contato** (`7416ec9`, `LegacyAthleteStep3D`; ajustes `contactBridge*` em `AthleteSettings3D`).
+  - O impacto de algo que se move leva o padrão à ponte, desde que seja no chão, fora do carrinho e sem o mundo parado. A ponte é o corpo físico seguindo o padrão, que segue rodando na mesma passada.
+  - Ela entra solta, só com os músculos, e decide em 25 ms:
+    - pancada forte (1,2 m/s, pela janela de impulsos ou pelo golpe pendente) vai ao físico;
+    - senão, a guia sobe na proporção do choque.
+  - O golpe pendente é o impulso no plano dos contatos com o que se move sobre a massa, gasto em 0,3 s. Ele empurra a cápsula junto com o corpo pelo seguir (fora da inércia do controlador).
+  - A guia não cai com a ajuda do impacto. A perda de base (as regras da ponte) leva ao físico.
+  - `ContactAssessment3D` ganhou `fromMoving`/`fromStatic`, e `ModeRules3D`, `noteImpact()`.
+- **O carrinho no padrão.**
+  - O contato com quem se move só vai ao físico na pancada forte.
+  - A "batida" que a cápsula mede quando o clipe a põe embaixo da pelve (7,55 m/s no começo de todo carrinho) deixou de contar como parede.
+- **Os bonecos no padrão** (`5d2b808`, `looseDefaultLocomotion`, ligado no laboratório e desligado no motor).
+  - O boneco solto roda o padrão com uma cápsula virtual de dados (`LegacyAthleteState3D::virtualCapsule`), que anda antes do passo pela resposta da cápsula do jogador (`bodyForecastCapsuleStep3D`).
+  - O passo usa a navegação pelos acessores (`nav`, `placeNav`, `setNavVelocity`, `setFollow`) e o olhar pelo comando: o controlado fica igual.
+  - Os comandados (o treino do RL) seguem no físico.
+- **No laboratório:** "Contato pela ponte", "Pancada forte" e "Bonecos no padrão".
+- **Na sonda:**
+  - a velocidade antes/depois do choque, o Dv da janela e o golpe pendente;
+  - os cenários `ombro_*`, `trombada_frente`, `duelo_ombro` e `boneco_*` (um segundo atleta, solto no padrão);
+  - o dump grava o segundo corpo (`D`), desenhado pelo `MatterModelInspector quadros`.
+- **Medido:**
+  - os encostões e as ombradas ficam na ponte (0,3–0,5 s) com 99–100% da velocidade;
+  - o empurrão sustentado fica de pé;
+  - as caixas que derrubam vão ao físico em 25 ms;
+  - o carrinho fica inteiro no padrão;
+  - com o boneco parado no caminho, os dois passam pela ponte e voltam ao padrão.
+- **Validação:**
+  - contratos com só as 3 falhas antigas. Os do levantar com a caixa que derruba rodam com a ponte desligada: a queda é caótica, e um tick muda onde o corpo cai. Com a ponte, há contratos do resultado;
+  - prova e2 igual ao ouro gravado do código de antes no mesmo build. O `ouro_e2_tensao` já diferia do HEAD antes;
+  - ctest com as 5 falhas antigas mais Articulation (só o modelo dinâmico, fora desta frente);
+  - `check-architecture`: só a falha anterior do `AnimatedGetUp3D` (`3061b5a`).
+- **Não visto:** a janela do laboratório (pede o aval dele).
+- **Limites conhecidos:**
+  - os braços se atravessam um pouco nos encostões leves;
+  - a disputa de ombro não inclina contra o empurrão;
+  - "o outro pula nele" não tem regra própria;
+  - os comandados ainda no físico.
 
 ## O corpo variável no treino da locomoção (Claude, 26/10 tarde)
 
