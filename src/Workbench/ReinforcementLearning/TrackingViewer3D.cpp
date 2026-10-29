@@ -45,6 +45,11 @@ struct TrackingViewer3D::Impl {
     std::uint32_t chest = 0;
     float pushSeconds = 0.0f;
     Vec3 pushForce;
+    // A seta da tela (como no classico): o empurrao de agora, o manual ou o do
+    // exercicio, e depois do fim ela some em 0,8 s.
+    Vec3 shownForce;
+    int shownLink = -1;
+    float shownAfter = 1.0e9f;
 };
 
 TrainingHistory3D TrackingViewer3D::readHistory(const std::filesystem::path& runDirectory, std::size_t maximumPoints,
@@ -296,6 +301,19 @@ void TrackingViewer3D::step() {
     impl.batch->step(impl.action, impl.rewards, impl.terminated, impl.truncated);
     (void)impl.batch->takeEpisodes();
     impl.pushSeconds = std::max(0.0f, impl.pushSeconds - policyStepSeconds());
+    Vec3 force;
+    std::uint32_t link = 0;
+    if (impl.pushSeconds > 0.0f) {
+        impl.shownForce = impl.pushForce;
+        impl.shownLink = static_cast<int>(impl.chest);
+        impl.shownAfter = 0.0f;
+    } else if (impl.batch->taskPush(0, force, link)) {
+        impl.shownForce = force;
+        impl.shownLink = static_cast<int>(link);
+        impl.shownAfter = 0.0f;
+    } else {
+        impl.shownAfter += policyStepSeconds();
+    }
     ++impl.steps;
 }
 
@@ -304,6 +322,8 @@ void TrackingViewer3D::reset(std::uint64_t seed) {
     impl.batch->reset(seed);
     impl.apply();
     impl.steps = 0;
+    impl.shownLink = -1;
+    impl.shownAfter = 1.0e9f;
 }
 
 void TrackingViewer3D::setManualSpeed(std::optional<float> metersPerSecond) {
@@ -344,9 +364,11 @@ BodyWorldView3D TrackingViewer3D::view() const {
         view.target = target;
         view.targetStop = waiting;
     }
-    if (impl.pushSeconds > 0.0f) {
-        view.pushLink = static_cast<int>(impl.chest);
-        view.pushForce = impl.pushForce;
+    // O empurrao de agora (ou o ultimo, sumindo em 0,8 s).
+    if (impl.shownLink >= 0 && static_cast<std::size_t>(impl.shownLink) < body.links.size() && impl.shownAfter < 0.8f) {
+        view.pushLink = impl.shownLink;
+        view.pushForce = impl.shownForce;
+        view.pushFade = 1.0f - impl.shownAfter / 0.8f;
     }
     return view;
 }

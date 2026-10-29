@@ -852,6 +852,14 @@ void TrackingTraining3D::push(std::size_t world, std::uint32_t link, Vec3 force,
     w.pushSeconds = std::max(0.0f, seconds);
 }
 
+bool TrackingTraining3D::taskPush(std::size_t world, Vec3& force, std::uint32_t& link) const {
+    const Impl::World& w = m_impl->worlds.at(world);
+    if (!m_impl->task || w.taskPushTicks <= 0) return false;
+    force = w.taskPushForce;
+    link = m_impl->pushLinks[1];
+    return true;
+}
+
 std::string TrackingTraining3D::frameLines(std::size_t world, bool leader) const {
     const Impl& impl = *m_impl;
     const Impl::World& w = impl.worlds.at(world);

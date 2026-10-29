@@ -201,6 +201,9 @@ public:
     [[nodiscard]] bool starView(std::size_t world, std::vector<Vec3>& points, Vec3& target, bool& waiting) const;
     // Um empurrao (N, no mundo) num link de um mundo durante `seconds`.
     void push(std::size_t world, std::uint32_t link, Vec3 force, float seconds);
+    // O empurrao do exercicio da tarefa em andamento num mundo (a forca inteira, no
+    // mundo, e o link onde a tela desenha a seta: o peito). Falso sem empurrao agora.
+    [[nodiscard]] bool taskPush(std::size_t world, Vec3& force, std::uint32_t& link) const;
 
     // As linhas de um quadro para as folhas (MatterModelInspector quadros: os
     // colisores no mundo, os contatos, o pedido e a velocidade), do corpo ou do
