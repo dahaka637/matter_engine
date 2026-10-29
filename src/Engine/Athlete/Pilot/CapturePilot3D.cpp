@@ -220,6 +220,19 @@ AthleteCommand3D CapturePilot3D::update(const CapturePilotView3D& view, const Ca
             }
         }
     }
+    // O carrinho decidido no bote: o Ctrl curto (como o do jogador correndo)
+    // quando ele esta embalado, com a bola a frente do olhar e do rumo.
+    if (m_lungeLeft <= 0.0f || m_plan != Plan::Press || view.down) m_tackleIntent = false;
+    if (m_tackleIntent && view.ball) {
+        const float speed = view.velocity.length();
+        const float offLook = std::abs(wrap(yawOf(ballOffset) - m_look));
+        const float offRun = speed > 0.5f ? std::abs(wrap(yawOf(view.velocity) - yawOf(ballOffset))) : Pi;
+        if (speed > 3.0f && ballDistance > 1.0f && ballDistance < 3.0f && offLook < 0.35f && offRun < 0.45f) {
+            m_ctrlLeft = 0.12f;
+            m_sinceTackle = 0.0f;
+            m_tackleIntent = false;
+        }
+    }
     // As teclas: a combinacao mais perto do rumo, com folga, e a troca dos
     // dedos (~0,06 s) - menos no toque, que ele ja aperta junto.
     {
@@ -361,23 +374,10 @@ void CapturePilot3D::press(const CapturePilotView3D& view, const CapturePilotSet
     const Vec3 ball = planar(view.ballPosition);
     const Vec3 toBall = ball - me;
     const float distance = toBall.length();
-    const float speed = planar(view.velocity).length();
     m_lookAt = Look::Ball;
-    // O carrinho: so no bote, embalado, com a bola a frente do olhar e do rumo
-    // (o Ctrl curto, como o do jogador correndo).
-    const auto tackle = [&]() {
-        const float offLook = std::abs(wrap(yawOf(toBall) - m_look));
-        const float offRun = speed > 0.5f ? std::abs(wrap(yawOf(view.velocity) - yawOf(toBall))) : Pi;
-        if (pilot.tackles && m_sinceTackle > 6.0f && speed > 4.0f && distance > 1.3f && distance < 3.0f
-            && offLook < 0.3f && offRun < 0.4f && random() < 0.4f * m_aggression) {
-            m_ctrlLeft = 0.12f;
-            m_sinceTackle = 0.0f;
-        }
-    };
     if (m_lungeLeft > 0.0f) {
         m_target = ball + planar(view.ballVelocity) * 0.2f;
         m_sprint = true;
-        tackle();
         return;
     }
     if (distance > 4.0f) {
@@ -393,7 +393,8 @@ void CapturePilot3D::press(const CapturePilotView3D& view, const CapturePilotSet
         m_lungeLeft = 0.45f + 0.35f * random();
         m_target = ball + planar(view.ballVelocity) * 0.2f;
         m_sprint = true;
-        tackle();
+        // (O carrinho se decide no comeco do bote e sai na hora certa dele.)
+        m_tackleIntent = pilot.tackles && m_sinceTackle > 6.0f && random() < 0.5f * m_aggression;
         return;
     }
     const float keep = 2.3f - 0.8f * m_aggression + 0.3f * random();

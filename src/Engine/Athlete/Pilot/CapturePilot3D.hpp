@@ -116,6 +116,7 @@ private:
     // bote e o respiro.
     float m_ctrlLeft = 0.0f;
     float m_sinceTackle = 10.0f;
+    bool m_tackleIntent = false;
     float m_side = 1.0f;
     float m_feintLeft = 2.0f;
     float m_lungeLeft = 0.0f;

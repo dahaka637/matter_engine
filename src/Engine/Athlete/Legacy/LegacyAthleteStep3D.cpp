@@ -228,11 +228,20 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             const Vec3 requested = slot.command->intent.requestedVelocityWorld;
             wanted = Vec3 { requested.x, requested.y, 0.0f } * state.returnSpeedScale;
         }
-        const Vec3 planar = bodyForecastCapsuleStep3D({ capsule.velocity.x, capsule.velocity.y, 0.0f }, wanted,
-            response, deltaTime);
-        capsule.velocity = { planar.x, planar.y, 0.0f };
-        capsule.position += (capsule.velocity + Vec3 { state.virtualFollowVelocity.x, state.virtualFollowVelocity.y, 0.0f })
-            * deltaTime;
+        if (piloted && state.bodyMode == LegacyBodyMode3D::Physical) {
+            // (No fisico o piloto anda pela ancora dos comandados; a capsula dele
+            // fica no corpo, com a velocidade dele - como a do jogador, que vai
+            // atras do corpo -, e a volta comeca dali, nao de onde as teclas a
+            // levariam.)
+            capsule.position = { root.position.x, root.position.y, 0.0f };
+            capsule.velocity = { root.linearVelocity.x, root.linearVelocity.y, 0.0f };
+        } else {
+            const Vec3 planar = bodyForecastCapsuleStep3D({ capsule.velocity.x, capsule.velocity.y, 0.0f }, wanted,
+                response, deltaTime);
+            capsule.velocity = { planar.x, planar.y, 0.0f };
+            capsule.position += (capsule.velocity
+                + Vec3 { state.virtualFollowVelocity.x, state.virtualFollowVelocity.y, 0.0f }) * deltaTime;
+        }
         capsule.position.z = groundHeight(capsule.position) + half;
         capsule.grounded = true;
         capsule.crouched = false;
