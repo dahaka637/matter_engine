@@ -50,6 +50,8 @@ def main() -> int:
     parser.add_argument("--lado-de-frente", action="store_true", help="o lado do lider pela corrida de frente (o do treino)")
     parser.add_argument("--resposta-lider", type=float, default=0.0, help="a resposta da capsula do lider (o do treino)")
     parser.add_argument("--distancia-fim", type=float, default=1.0, help="a distancia ao lider que encerra (o do treino)")
+    parser.add_argument("--cabeca-queda", type=float, default=0.0, help="o fim pela cabeca baixa (o do treino)")
+    parser.add_argument("--passo-captura", type=float, default=0.0, help="o passo de captura do lider (o do treino)")
     parser.add_argument("--lider-laboratorio", action="store_true",
                         help="o lider com os valores do laboratorio (molas, arrancada, resposta 150%%, reversao, corrida 8/6)")
     parser.add_argument("--seguir-corpo", type=float, default=-1.0,
@@ -66,7 +68,8 @@ def main() -> int:
                                  task_path=task_path(args.tarefa), evaluation_drill=args.exercicio,
                                  speed_scale=args.escala_velocidade, action_filter_beta=args.filtro_beta,
                                  stance_twist_torque=args.torcao_apoio, leader_side_from_forward=args.lado_de_frente,
-                                 leader_response_percent=args.resposta_lider, termination_distance=args.distancia_fim)
+                                 leader_response_percent=args.resposta_lider, termination_distance=args.distancia_fim,
+                                 fall_head_height=args.cabeca_queda, capture_step_seconds=args.passo_captura)
     model = Policy(batch.obs_size, batch.action_size)
     rodada = 0
     if not args.zero:

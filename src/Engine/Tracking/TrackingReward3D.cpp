@@ -45,7 +45,7 @@ TrackingReward3D::TrackingReward3D(const RagdollProfile3D& profile)
 TrackingRewardTerms3D TrackingReward3D::evaluate(const TrackingLeaderState3D& leader,
     std::span<const PhysicsBodyState3D> bodyLinks, Vec3 bodyCenterOfMass, Vec3 bodyCenterOfMassVelocity,
     float legWeight, float centerOfMassVelocityWeight, float armWeight, float trunkWeight, bool realFallOnly,
-    float terminationDistance) {
+    float terminationDistance, float fallHeadHeight) {
     // O peso de cada link na posicao, na velocidade e na pose (a liberdade de cada parte).
     const auto weightOf = [&](std::size_t link) {
         return m_leg[link] ? legWeight : m_arm[link] ? armWeight : m_trunk[link] ? trunkWeight : 1.0f;
@@ -90,7 +90,8 @@ TrackingRewardTerms3D TrackingReward3D::evaluate(const TrackingLeaderState3D& le
     terms.headDistance = realFallOnly
         ? ((kinHead - leader.centerOfMass) - (simHead - bodyCenterOfMass)).length() : (kinHead - simHead).length();
     terms.fallFactor = std::clamp(1.3f - 1.4f * terms.headDistance, 0.0f, 1.0f);
-    terms.terminate = realFallOnly ? simHead.z < RealFallHeadHeight : terms.headDistance > terminationDistance;
+    terms.terminate = realFallOnly ? simHead.z < RealFallHeadHeight
+                                   : terms.headDistance > terminationDistance || simHead.z < fallHeadHeight;
     terms.total = terms.terminate
         ? 0.0f
         : terms.fallFactor

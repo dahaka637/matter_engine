@@ -140,6 +140,8 @@ struct TrackingTraining3D::Impl {
         int taskPushTotalTicks = 0;
         float taskPushAt = -1.0f;
         float settleEnd = -1.0f;
+        // O comeco do ultimo empurrao (o da tarefa ou o manual; s do mundo), para o passo de captura.
+        float lastPushSeconds = -1.0e9f;
         // O episodio.
         float seconds = 0.0f;
         double rewardSum = 0.0, comErrorSum = 0.0, speedSum = 0.0, requestedSum = 0.0, headSum = 0.0;
@@ -353,7 +355,7 @@ struct TrackingTraining3D::Impl {
     void leaderTick(World& w) const {
         if (task) {
             taskTick(w);
-            w.leader->step(w.command, TickSeconds);
+            w.leader->step(captureCommand(w), TickSeconds);
             ++w.ticks;
             return;
         }
@@ -373,7 +375,7 @@ struct TrackingTraining3D::Impl {
             composeCommand(w);
         }
         starTick(w);
-        w.leader->step(w.command, TickSeconds);
+        w.leader->step(captureCommand(w), TickSeconds);
         ++w.ticks;
     }
 
@@ -458,6 +460,7 @@ struct TrackingTraining3D::Impl {
         w.taskPushForce = { std::cos(angle) * newtons, std::sin(angle) * newtons, 0.0f };
         w.taskPushTicks = std::max(1, static_cast<int>(std::lround(seconds / TickSeconds)));
         w.taskPushTotalTicks = w.taskPushTicks;
+        w.lastPushSeconds = w.seconds;
         if (drill.singlePush) w.settleEnd = w.seconds + seconds + drill.settleSeconds;
     }
 
@@ -473,6 +476,28 @@ struct TrackingTraining3D::Impl {
         for (std::size_t k = 0; k < pushLinks.size(); ++k)
             w.scene->applyRagdollLinkForce(w.handle, pushLinks[k], w.taskPushForce * (Share[k] * scale), {});
         --w.taskPushTicks;
+    }
+
+    // O passo de captura (29/10 noite, o pedido dele: o footplanner e o autoequilibrio dentro do RL): por
+    // captureStepSeconds depois de um empurrao, o lider caminha para o ponto de captura do corpo (o centro de
+    // massa mais a velocidade vezes sqrt(h/g)) quando ele sai da folga - o padrao da os passos com o planejador
+    // de pes dele e a rede os executa e corrige. So depois de um empurrao: um corpo atrasado nao puxa o lider.
+    TrackingCommand3D captureCommand(const World& w) const {
+        TrackingCommand3D command = w.command;
+        if (settings.captureStepSeconds <= 0.0f || w.seconds - w.lastPushSeconds > settings.captureStepSeconds
+            || !w.leader->state().valid || w.body->links.empty())
+            return command;
+        const Vec3 com = rlBodyCenterOfMass3D(*profile, w.body->links);
+        const Vec3 velocity = rlBodyCenterOfMassVelocity3D(*profile, w.body->links);
+        const float omega = std::sqrt(9.81f / std::max(0.3f, com.z));
+        Vec3 away { com.x + velocity.x / omega - w.leader->state().rootPosition.x,
+            com.y + velocity.y / omega - w.leader->state().rootPosition.y, 0.0f };
+        const float distance = away.length();
+        if (distance <= settings.captureStepSlack) return command;
+        // (Ate o ponto em ~0,5 s, no maximo 3 m/s alem do comando.)
+        const float extra = std::min(3.0f, (distance - settings.captureStepSlack) * 2.0f);
+        command.requestedVelocityWorld = command.requestedVelocityWorld + away * (extra / distance);
+        return command;
     }
 
     // O lider vai atras do corpo (leaderFollowSlack), so na posicao.
@@ -617,7 +642,7 @@ struct TrackingTraining3D::Impl {
         }
         const TrackingRewardTerms3D terms = w.reward->evaluate(leader, body.links, com, comVelocity, legWeight,
             settings.centerOfMassVelocityWeight, settings.armWeight, settings.trunkWeight, settings.realFallOnly,
-            settings.terminationDistance);
+            settings.terminationDistance, settings.fallHeadHeight);
         w.lastHeadDistance = terms.headDistance;
         reward = terms.total * smooth + (terms.terminate ? 0.0f : settings.aliveBonus);
         w.seconds += TicksPerDecision * TickSeconds;
@@ -860,6 +885,7 @@ void TrackingTraining3D::push(std::size_t world, std::uint32_t link, Vec3 force,
     w.pushLink = link;
     w.pushForce = force;
     w.pushSeconds = std::max(0.0f, seconds);
+    w.lastPushSeconds = w.seconds;
 }
 
 bool TrackingTraining3D::taskPush(std::size_t world, Vec3& force, std::uint32_t& link) const {

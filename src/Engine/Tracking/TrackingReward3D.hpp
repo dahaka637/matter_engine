@@ -46,7 +46,8 @@ public:
     [[nodiscard]] TrackingRewardTerms3D evaluate(const TrackingLeaderState3D& leader,
         std::span<const PhysicsBodyState3D> bodyLinks, Vec3 bodyCenterOfMass, Vec3 bodyCenterOfMassVelocity,
         float legWeight = 1.0f, float centerOfMassVelocityWeight = 1.0f, float armWeight = 1.0f,
-        float trunkWeight = 1.0f, bool realFallOnly = false, float terminationDistance = 1.0f);
+        float trunkWeight = 1.0f, bool realFallOnly = false, float terminationDistance = 1.0f,
+        float fallHeadHeight = 0.0f);
     [[nodiscard]] std::size_t headLink() const { return m_head; }
 
 private:

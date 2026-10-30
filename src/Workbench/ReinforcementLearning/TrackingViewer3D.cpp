@@ -249,6 +249,8 @@ TrackingViewer3D::Conditions TrackingViewer3D::conditionsOf(const std::filesyste
     out.leaderSideFromForward = task.value("ladoDeFrente", out.leaderSideFromForward);
     out.leaderResponsePercent = task.value("respostaLider", out.leaderResponsePercent);
     out.terminationDistance = task.value("distanciaFim", out.terminationDistance);
+    out.fallHeadHeight = task.value("cabecaQueda", out.fallHeadHeight);
+    out.captureStepSeconds = task.value("passoCaptura", out.captureStepSeconds);
     return out;
 }
 
@@ -286,6 +288,8 @@ TrackingViewer3D::TrackingViewer3D(const std::filesystem::path& assetsDirectory,
     settings.leaderSideFromForward = conditions.leaderSideFromForward;
     settings.leaderResponsePercent = conditions.leaderResponsePercent;
     settings.terminationDistance = conditions.terminationDistance;
+    settings.fallHeadHeight = conditions.fallHeadHeight;
+    settings.captureStepSeconds = conditions.captureStepSeconds;
     settings.leaderFollowSlack = conditions.followSlack;
     settings.evaluationSpeed = DefaultSpeed;
     settings.evaluationMode = mode;

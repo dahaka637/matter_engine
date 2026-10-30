@@ -104,6 +104,12 @@ struct TrackingTrainingSettings3D {
     // A distancia da cabeca ao lider que encerra o episodio (m; o DReCon, 1). 29/10 noite: de costas o corpo ficava 1 m
     // para tras ja na arrancada (1,3 s) e nunca treinava o cruzeiro; a nota ja vale zero a ~0,93 m (e_fall).
     float terminationDistance = 1.0f;
+    // O fim pela queda de verdade alem da distancia: a cabeca abaixo disto (m; <= 0: so a distancia). Com o fim a
+    // 2 m, um corpo caido perto do lider parado nao encerrava (a cabeca deitada fica a ~1,5 m da dele).
+    float fallHeadHeight = 0.0f;
+    // O passo de captura (s depois de um empurrao; 0: desligado) e a folga dele (m).
+    float captureStepSeconds = 0.0f;
+    float captureStepSlack = 0.25f;
     // O lider com os valores do laboratorio (29/10: as molas, a arrancada, a
     // resposta e a reversao da capsula e a corrida 8/6), e nao os de fabrica
     // do atleta. false: os de fabrica (o rastreador de 19/10).
