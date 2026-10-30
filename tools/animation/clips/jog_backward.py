@@ -28,6 +28,12 @@ cadencia 189 | 183 | 164 passos/min, passo 0,99 | 0,98 | 1,10 m, tronco 10,5 |
 cm, bracos atras do tronco com o cotovelo vivo. Menos exagerado que ela no que
 ele ja recusou: o joelho no toque 45 graus (ela 63; sem "sentar") e a cabeca
 quase reta (ela olha 21 graus para baixo).
+
+29/10 noite (o corpo fisico): o sobe-desce da pelve de 5 cm a 183 passos/min fazia o
+centro de massa cair a 1,6-2,5 g no voo (a auditoria da referencia do rastreador) - um
+corpo fisico nao cai mais rapido que a gravidade, pousa atrasado e tropeca. 3,1 cm (o
+do trote para a frente, 3 cm a 161 passos/min, cai a 1 g) leva o voo a ~1 g; o resto
+do recuo atletico fica igual.
 """
 
 from __future__ import annotations
@@ -60,7 +66,7 @@ JOG_BACKWARD = replace(
     stance_center=0.06,
     cadence=3.05,
     pelvis_drop=0.045,
-    pelvis_bob=-0.05,
+    pelvis_bob=-0.031,
     neck_upright=0.0,
     # (A cabeca calma: com a cadencia e o sobe-desce maiores ela ia a 64 graus/s
     # de p95 no jogo; travada um pouco mais, 48.)
