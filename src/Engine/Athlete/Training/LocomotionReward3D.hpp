@@ -10,11 +10,11 @@ namespace MatterEngine {
 
 // Os termos da nota do treino da locomocao, na ordem das parcelas.
 enum class LocomotionRewardTerm3D : std::size_t {
-    Velocity = 0, Facing, Style, Contact, GetUp, Slip, Work, Smooth, Assist, Posture, Residual, Still, Fall, Count
+    Velocity = 0, Facing, Style, Contact, GetUp, Slip, Work, Smooth, Assist, Posture, Residual, Still, Crossover, Fall, Count
 };
 inline constexpr std::size_t LocomotionRewardTermCount3D = static_cast<std::size_t>(LocomotionRewardTerm3D::Count);
 inline constexpr std::array<const char*, LocomotionRewardTermCount3D> LocomotionRewardTermNames3D {
-    "velocidade", "rumo", "estilo", "contato", "levantar", "escorregar", "trabalho", "trancos", "ajuda", "postura", "residuo", "quietude", "queda"
+    "velocidade", "rumo", "estilo", "contato", "levantar", "escorregar", "trabalho", "trancos", "ajuda", "postura", "residuo", "quietude", "cruzar", "queda"
 };
 // Os cinco primeiros somam; os outros (custos e a queda) subtraem.
 inline constexpr std::size_t LocomotionRewardPositiveTerms3D = 5;
@@ -49,6 +49,9 @@ struct LocomotionStepMeasure3D {
     // vezes o quanto o comando pede para ficar quieto (1 com o pedido ~0 e sem
     // frear; 0 andando ou freando). Zero quando nada pede quietude.
     float still = 0.0f;
+    // As pernas cruzadas (30/10, o trote lateral): o que falta para o pe esquerdo ficar CrossoverGap a esquerda do
+    // direito, no referencial da pelve, sobre o vao (0 com a base aberta; 1 alinhados; mais, cruzados).
+    float crossover = 0.0f;
     // O quanto esta de pe (0 deitado .. 1 em pe: a pelve e o peito); fora do
     // levantar fica 1 (nao muda nada). getUpDrill: o exercicio paga o levantar.
     float upright = 1.0f;

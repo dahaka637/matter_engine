@@ -1076,6 +1076,19 @@ struct LocomotionTraining3D::Impl {
             measure.styleError = static_cast<float>(std::sqrt(task.reward.styleWorstPart ? 0.5 * (mean + worst) : mean));
         }
         {
+            // As pernas cruzadas: no referencial da pelve, o pe esquerdo a pelo menos 8 cm a esquerda do direito.
+            constexpr float CrossoverGap = 0.08f;
+            const RagdollState3D& body = scene.body();
+            if (task.reward.crossover > 0.0f && !body.links.empty() && feet[0] >= 0 && feet[1] >= 0
+                && static_cast<std::size_t>(std::max(feet[0], feet[1])) < body.links.size()) {
+                const float yaw = locomotionFrameYaw3D(profile, body.links.front().orientation);
+                const Vec3 d = body.links[static_cast<std::size_t>(feet[0])].position
+                    - body.links[static_cast<std::size_t>(feet[1])].position;
+                const float gap = -std::sin(yaw) * d.x + std::cos(yaw) * d.y;
+                measure.crossover = std::max(0.0f, CrossoverGap - gap) / CrossoverGap;
+            }
+        }
+        {
             const RagdollState3D& body = scene.body();
             if (!body.links.empty()) {
                 const Frame frame = frameOf(locomotionFrameYaw3D(profile, body.links.front().orientation));

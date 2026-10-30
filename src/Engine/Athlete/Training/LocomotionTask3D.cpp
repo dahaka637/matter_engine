@@ -143,6 +143,7 @@ LocomotionTask3D loadLocomotionTask3D(const std::filesystem::path& path) {
         read(r, "posture", w.posture);
         read(r, "residual", w.residual);
         read(r, "still", w.still);
+        read(r, "crossover", w.crossover);
         read(r, "fall", w.fall);
         read(r, "getUp", w.getUp);
         read(r, "velocityTail", w.velocityTail);
