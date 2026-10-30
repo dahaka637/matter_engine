@@ -67,6 +67,10 @@ struct LocomotionCaps3D {
     float contactAcceleration = 1.0f;
     float jointRadians = 0.10f;
     float gainOctaves = 0.3f;
+    // O teto (N.m) do motor da torcao da coxa com o pe daquele lado plantado (30/10; o mesmo achado do rastreador:
+    // a sola aguenta ~28-54 N.m de giro, o tornozelo nao tem eixo de giro e o motor rigido da torcao solta o pe
+    // ou gira a pelve com menos de 1 grau de erro). <= 0: o teto do perfil (o de sempre).
+    float stanceTwistTorque = 0.0f;
 
     [[nodiscard]] static LocomotionCaps3D full();
 };

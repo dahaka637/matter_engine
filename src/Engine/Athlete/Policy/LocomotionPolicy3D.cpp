@@ -106,6 +106,7 @@ LocomotionPolicy3D::LocomotionPolicy3D(const RagdollProfile3D& profile, const st
         read("contactAcceleration", caps.contactAcceleration);
         read("jointRadians", caps.jointRadians);
         read("gainOctaves", caps.gainOctaves);
+        read("stanceTwistTorque", caps.stanceTwistTorque);
     }
     if (header.contains("turnMove") && header["turnMove"].is_object()) {
         impl.turnMove = header["turnMove"].value("enabled", false);

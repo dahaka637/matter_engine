@@ -120,6 +120,7 @@ LocomotionTask3D loadLocomotionTask3D(const std::filesystem::path& path) {
         read(c, "contactAcceleration", caps.contactAcceleration);
         read(c, "jointRadians", caps.jointRadians);
         read(c, "gainOctaves", caps.gainOctaves);
+        read(c, "stanceTwistTorque", caps.stanceTwistTorque);
         for (const float v : { caps.touchdownMeters, caps.swingUpMeters, caps.swingDownMeters, caps.phaseLeadCycles,
                  caps.recoveryUrgency, caps.cadenceOctaves, caps.strideOctaves, caps.leanRadians, caps.comMeters,
                  caps.pelvisUpMeters, caps.pelvisDownMeters, caps.contactAcceleration, caps.jointRadians, caps.gainOctaves })

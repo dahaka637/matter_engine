@@ -887,6 +887,7 @@ void LocomotionContract3D::follow(AthleteState3D& athlete, const LocomotionAutho
     const Quaternion frame = athlete.corrections.frame;
     athlete.corrections = corrections(athlete.policyApplied, authority);
     athlete.corrections.frame = frame;
+    athlete.corrections.stanceTwistTorque = authority.caps.stanceTwistTorque;
     if (athlete.corrections.pose) athlete.corrections.jointResidualVelocities = std::move(rates);
     ++athlete.policyTicks;
 }

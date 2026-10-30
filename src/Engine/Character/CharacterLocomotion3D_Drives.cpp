@@ -720,6 +720,21 @@ void CharacterLocomotion3D::stepDrives(Tick& t) {
 
     // Os ganchos da pose e da rigidez (o RL): o angulo e as escalas de cada
     // alvo dos motores (sem correcao, os mesmos).
+    // O teto da torcao da coxa com o pe plantado (o RL, 30/10): o motor rigido da torcao nao solta o pe nem gira a
+    // pelve alem do que a sola aguenta.
+    if (input.corrections != nullptr && input.corrections->stanceTwistTorque > 0.0f) {
+        for (std::size_t leg = 0; leg < m_feet.size(); ++leg) {
+            if (!m_feet[leg].valid || !m_feet[leg].planted) continue;
+            const int shin = profile.links[m_feet[leg].linkIndex].parentIndex;
+            const int thigh = shin > 0 ? profile.links[static_cast<std::size_t>(shin)].parentIndex : -1;
+            if (thigh <= 0) continue;
+            const float cap = profile.links[static_cast<std::size_t>(thigh)].inboundJoint.axes[0].maximumTorque;
+            if (!(cap > 0.0f)) continue;
+            for (RagdollDriveTarget3D& target : m_output.driveTargets)
+                if (static_cast<int>(target.linkIndex) == thigh && target.axis == RagdollAxis3D::Twist)
+                    target.maximumTorqueScale = std::min(target.maximumTorqueScale, input.corrections->stanceTwistTorque / cap);
+        }
+    }
     correctDriveTargets3D(m_output.driveTargets, profile, input.corrections);
 }
 

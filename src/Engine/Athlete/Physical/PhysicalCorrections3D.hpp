@@ -63,6 +63,8 @@ struct PhysicalCorrections3D {
     // A pose: a correcao de cada eixo atuado (rad), indice link * 3 + eixo
     // (twist 0, swing1 1, swing2 2). Vazio: nenhuma.
     std::vector<float> jointResiduals;
+    // O teto da torcao da coxa com o pe plantado (N.m; LocomotionCaps3D::stanceTwistTorque; <= 0: o do perfil).
+    float stanceTwistTorque = 0.0f;
     // A velocidade da correcao (rad/s, o mesmo indice; vazio: nenhuma): a
     // velocidade-alvo do motor segue o alvo corrigido (v4).
     std::vector<float> jointResidualVelocities;
