@@ -102,6 +102,8 @@ def main() -> int:
     parser.add_argument("--otimizador", default="adam", choices=["adam", "sgd"])
     parser.add_argument("--epocas", type=int, default=4)
     parser.add_argument("--minilotes", type=int, default=4, help="com adam: minilotes por epoca")
+    parser.add_argument("--taxa-ator", type=float, default=1e-4, help="com adam: a taxa do ator (vale tambem ao retomar)")
+    parser.add_argument("--taxa-critico", type=float, default=5e-4, help="com adam: a taxa do critico")
     args = parser.parse_args()
     from matter_rl.system import require_watchdog
     require_watchdog()
@@ -119,8 +121,8 @@ def main() -> int:
     n, obs_size, act_size = batch.num_envs, batch.obs_size, batch.action_size
     model = GetUpPolicy(obs_size, act_size).to(device)
     if args.otimizador == "adam":
-        actor_opt = torch.optim.Adam(model.actor.parameters(), lr=1e-4)
-        critic_opt = torch.optim.Adam(model.critic.parameters(), lr=5e-4)
+        actor_opt = torch.optim.Adam(model.actor.parameters(), lr=args.taxa_ator)
+        critic_opt = torch.optim.Adam(model.critic.parameters(), lr=args.taxa_critico)
     else:
         actor_opt = torch.optim.SGD(model.actor.parameters(), lr=5e-5, momentum=0.9)
         critic_opt = torch.optim.SGD(model.critic.parameters(), lr=1e-2, momentum=0.9)
@@ -135,6 +137,10 @@ def main() -> int:
         actor_opt.load_state_dict(state["actor_opt"])
         critic_opt.load_state_dict(state["critic_opt"])
         counters = state["counters"]
+        if args.otimizador == "adam":
+            # (O estado do otimizador guarda a taxa de antes; vale a da linha de comando.)
+            for group in actor_opt.param_groups: group["lr"] = args.taxa_ator
+            for group in critic_opt.param_groups: group["lr"] = args.taxa_critico
     log = open(run / "log.jsonl", "a")
     gamma, lam, clip, T = 0.95, 0.95, 0.2, args.passos
     minibatch = (T * n) // max(1, args.minilotes) if args.otimizador == "adam" else 256

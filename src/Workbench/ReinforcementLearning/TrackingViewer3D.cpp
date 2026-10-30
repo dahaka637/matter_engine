@@ -248,6 +248,7 @@ TrackingViewer3D::Conditions TrackingViewer3D::conditionsOf(const std::filesyste
     out.stanceTwistTorque = task.value("torcaoApoio", out.stanceTwistTorque);
     out.leaderSideFromForward = task.value("ladoDeFrente", out.leaderSideFromForward);
     out.leaderResponsePercent = task.value("respostaLider", out.leaderResponsePercent);
+    out.terminationDistance = task.value("distanciaFim", out.terminationDistance);
     return out;
 }
 
@@ -284,6 +285,7 @@ TrackingViewer3D::TrackingViewer3D(const std::filesystem::path& assetsDirectory,
     settings.stanceTwistTorque = conditions.stanceTwistTorque;
     settings.leaderSideFromForward = conditions.leaderSideFromForward;
     settings.leaderResponsePercent = conditions.leaderResponsePercent;
+    settings.terminationDistance = conditions.terminationDistance;
     settings.leaderFollowSlack = conditions.followSlack;
     settings.evaluationSpeed = DefaultSpeed;
     settings.evaluationMode = mode;

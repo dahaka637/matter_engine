@@ -207,7 +207,7 @@
    "id": "frente",
    "displayName": "Frente",
    "category": "basico",
-   "weight": 0.05,
+   "weight": 0.04,
    "minimum": {
     "fallFraction": 0.05,
     "velocityError": 0.45
@@ -247,7 +247,7 @@
    "id": "tras",
    "displayName": "Trás",
    "category": "basico",
-   "weight": 0.1,
+   "weight": 0.16,
    "minimum": {
     "fallFraction": 0.05,
     "velocityError": 0.45
@@ -287,7 +287,7 @@
    "id": "direita",
    "displayName": "Direita",
    "category": "basico",
-   "weight": 0.12,
+   "weight": 0.1,
    "minimum": {
     "fallFraction": 0.05,
     "velocityError": 0.45
@@ -328,7 +328,7 @@
    "id": "esquerda",
    "displayName": "Esquerda",
    "category": "basico",
-   "weight": 0.12,
+   "weight": 0.1,
    "minimum": {
     "fallFraction": 0.05,
     "velocityError": 0.45
@@ -369,7 +369,7 @@
    "id": "diagonal_frente",
    "displayName": "Diagonal frente (lado sorteado)",
    "category": "basico",
-   "weight": 0.09,
+   "weight": 0.07,
    "minimum": {
     "fallFraction": 0.05,
     "velocityError": 0.45
@@ -411,7 +411,7 @@
    "id": "diagonal_costas",
    "displayName": "Diagonal costas (lado sorteado)",
    "category": "basico",
-   "weight": 0.09,
+   "weight": 0.13,
    "minimum": {
     "fallFraction": 0.05,
     "velocityError": 0.45
@@ -1795,7 +1795,7 @@
  "movingHipTurn": {
   "enabled": true
  },
- "comment": "29/10 noite (prazo de 12 h dele: andar bem em todas as direcoes, velocidade, estabilidade, empurroes e pancadas, levantar, sem forca auxiliar). O rastreador do padrao (DReCon fiel: sem bonus de vida, lider sem seguir o corpo, fim a 1 m) com os exercicios desta tarefa; do arquivo o rastreador usa so os exercicios e o bloco pushes. Diagnostico: vault 04_locomocao/referencia/pesquisas/38_diagnostico_do_mes_29_10.md.",
+ "comment": "29/10 noite (prazo de 12 h dele: andar bem em todas as direcoes, velocidade, estabilidade, empurroes e pancadas, levantar, sem forca auxiliar). O rastreador do padrao (DReCon fiel: sem bonus de vida, lider sem seguir o corpo, fim a 1 m) com os exercicios desta tarefa; do arquivo o rastreador usa so os exercicios e o bloco pushes. Diagnostico: vault 04_locomocao/referencia/pesquisas/38_diagnostico_do_mes_29_10.md. 29/10 23h: tras 0,16 e diagonal costas 0,13 (frente e lados ja corriam limpos a 3,0 e 4,5 m/s; as costas caiam na arrancada).",
  "comment_caps": "A b16 ficou feia com a pose quase sem teto (3,2 rad) e a nota sem ancora: aqui a pose vai a 0,15 rad, a pelve a -3/+4 cm, o pe sobe 6 cm, a inclinacao 0,3 rad; o pouso, a recuperacao, o centro de massa e o contato ficam largos (o equilibrio e os movimentos novos saem deles).",
  "comment_reward": "A ancora e o proprio fisico: residuo 0,1 (o aplicado sobre o teto), postura funcional 0,2, quietude parada 0,15, rumo 0,15; velocidade 0,4 com o progresso; queda 3. Sem o estilo contra a sombra (o braco de 27/10 perdeu nos cortes e nao mudou o visual).",
  "comment_speeds": "Andares so de 3,0 a 4,5 m/s (ordem dele, 29/10): sem a faixa de andar e sem o curriculo de velocidade.",

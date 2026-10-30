@@ -616,7 +616,8 @@ struct TrackingTraining3D::Impl {
             legWeight = std::min(legWeight, 1.0f - 0.7f * risk);
         }
         const TrackingRewardTerms3D terms = w.reward->evaluate(leader, body.links, com, comVelocity, legWeight,
-            settings.centerOfMassVelocityWeight, settings.armWeight, settings.trunkWeight, settings.realFallOnly);
+            settings.centerOfMassVelocityWeight, settings.armWeight, settings.trunkWeight, settings.realFallOnly,
+            settings.terminationDistance);
         w.lastHeadDistance = terms.headDistance;
         reward = terms.total * smooth + (terms.terminate ? 0.0f : settings.aliveBonus);
         w.seconds += TicksPerDecision * TickSeconds;

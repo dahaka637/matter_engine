@@ -21,6 +21,7 @@ struct TrackingViewerConditions3D {
     float stanceTwistTorque = 0.0f;
     bool leaderSideFromForward = false;
     float leaderResponsePercent = 0.0f;
+    float terminationDistance = 1.0f;
 };
 
 // O visualizador de um treino do rastreador fisico (DReCon; vault
