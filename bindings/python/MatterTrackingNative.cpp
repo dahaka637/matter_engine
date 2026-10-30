@@ -63,7 +63,7 @@ NB_MODULE(matter_tracking_native, m) {
                 float follow_slack, const std::string& task_path, const std::string& evaluation_drill,
                 float action_filter_beta, float stance_twist_torque, bool leader_side_from_forward,
                 float leader_response_percent, float termination_distance, float fall_head_height,
-                float capture_step_seconds) {
+                float capture_step_seconds, float leader_side_amplitude) {
                 TrackingTrainingSettings3D settings;
                 settings.assetsDirectory = assets;
                 settings.environments = environments;
@@ -104,6 +104,7 @@ NB_MODULE(matter_tracking_native, m) {
                 settings.terminationDistance = termination_distance;
                 settings.fallHeadHeight = fall_head_height;
                 settings.captureStepSeconds = capture_step_seconds;
+                settings.leaderSideAmplitude = leader_side_amplitude;
                 settings.idleShare = idle_share;
                 settings.turnShare = turn_share;
                 settings.fastTurnShare = fast_turn_share;
@@ -134,7 +135,7 @@ NB_MODULE(matter_tracking_native, m) {
             "lab_leader"_a = false, "follow_slack"_a = -1.0f,
             "task_path"_a = "", "evaluation_drill"_a = "", "action_filter_beta"_a = 0.2f,
             "stance_twist_torque"_a = 0.0f, "leader_side_from_forward"_a = false, "leader_response_percent"_a = 0.0f, "termination_distance"_a = 1.0f, "fall_head_height"_a = 0.0f,
-            "capture_step_seconds"_a = 0.0f)
+            "capture_step_seconds"_a = 0.0f, "leader_side_amplitude"_a = 0.0f)
         .def_prop_ro("num_envs", &TrackingTraining3D::environmentCount)
         .def_prop_ro("obs_size", &TrackingTraining3D::observationSize)
         .def_prop_ro("action_size", &TrackingTraining3D::actionSize)

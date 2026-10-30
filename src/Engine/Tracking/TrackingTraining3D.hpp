@@ -110,6 +110,8 @@ struct TrackingTrainingSettings3D {
     // O passo de captura (s depois de um empurrao; 0: desligado) e a folga dele (m).
     float captureStepSeconds = 0.0f;
     float captureStepSlack = 0.25f;
+    // A adaptacao da passada de lado do lider (TrackingLeader3D::setSideAmplitude; <= 0: a do padrao).
+    float leaderSideAmplitude = 0.0f;
     // O lider com os valores do laboratorio (29/10: as molas, a arrancada, a
     // resposta e a reversao da capsula e a corrida 8/6), e nao os de fabrica
     // do atleta. false: os de fabrica (o rastreador de 19/10).

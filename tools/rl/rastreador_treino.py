@@ -133,7 +133,8 @@ def task_path(name: str) -> str:
 
 def write_run_files(run: Path, cenario: str, tarefa: str = "", escala: float = 1.0, beta: float = 0.2,
                     seguir: float = -1.0, so_queda: bool = False, torcao: float = 0.0, lado_frente: bool = False,
-                    resposta: float = 0.0, fim: float = 1.0, cabeca: float = 0.0, captura: float = 0.0) -> None:
+                    resposta: float = 0.0, fim: float = 1.0, cabeca: float = 0.0, captura: float = 0.0,
+                    amplitude_lado: float = 0.0) -> None:
     """O treino como a tela de Aprendizado o reconhece: run.json (kind rastreador) e tarefa.json."""
     for name, data in (("run.json", {"kind": "rastreador", "task": f"rastreador_{cenario}"}),
                        ("tarefa.json", {"schema": "matter-tracking-1", "id": f"rastreador_{cenario}",
@@ -159,6 +160,7 @@ def write_run_files(run: Path, cenario: str, tarefa: str = "", escala: float = 1
     task["distanciaFim"] = fim
     task["cabecaQueda"] = cabeca
     task["passoCaptura"] = captura
+    task["amplitudeLado"] = amplitude_lado
     task["liderLaboratorio"] = "--lider-laboratorio" in sys.argv
     (run / "tarefa.json").write_text(json.dumps(task, ensure_ascii=False, indent=1))
     # O comando deste treinador: o "Continuar treino" da tela o reabre igual.
@@ -267,6 +269,8 @@ def main() -> int:
                         help="tambem acaba com a cabeca abaixo disto (m; 0: so a distancia)")
     parser.add_argument("--passo-captura", type=float, default=0.0,
                         help="s depois de um empurrao em que o lider caminha para o ponto de captura do corpo (0: nao)")
+    parser.add_argument("--amplitude-lado", type=float, default=0.0,
+                        help="a adaptacao da passada de lado do lider (0: a do padrao, 0,5)")
     parser.add_argument("--seguir-corpo", type=float, default=-1.0,
                         help="o lider vai atras do corpo alem desta folga (m), so na posicao (< 0: nao vai)")
     args = parser.parse_args()
@@ -278,7 +282,8 @@ def main() -> int:
     run.mkdir(parents=True, exist_ok=True)
     write_run_files(run, args.cenario, args.tarefa, args.escala_velocidade, args.filtro_beta, args.seguir_corpo,
                     args.so_queda_real, args.torcao_apoio, args.lado_de_frente, args.resposta_lider,
-                    args.distancia_fim, args.cabeca_queda, args.passo_captura)
+                    args.distancia_fim, args.cabeca_queda, args.passo_captura,
+                    args.amplitude_lado)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     torch.manual_seed(args.semente)
     batch = native.TrackingBatch(str(REPO / "assets"), environments=args.mundos, threads=args.threads,
@@ -296,7 +301,8 @@ def main() -> int:
                                  task_path=task_path(args.tarefa), action_filter_beta=args.filtro_beta,
                                  stance_twist_torque=args.torcao_apoio, leader_side_from_forward=args.lado_de_frente,
                                  leader_response_percent=args.resposta_lider, termination_distance=args.distancia_fim,
-                                 fall_head_height=args.cabeca_queda, capture_step_seconds=args.passo_captura)
+                                 fall_head_height=args.cabeca_queda, capture_step_seconds=args.passo_captura,
+                                 leader_side_amplitude=args.amplitude_lado)
     drill_ids = list(batch.drill_ids())
     n, obs_size, act_size = batch.num_envs, batch.obs_size, batch.action_size
     model = Policy(obs_size, act_size).to(device)

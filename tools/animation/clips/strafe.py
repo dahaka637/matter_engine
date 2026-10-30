@@ -70,7 +70,12 @@ SIDES = ("Left", "Right")
 # Quadros do ciclo em cada retarget e se a emenda precisa ser extrapolada:
 # o da esquerda repete o primeiro quadro no fim; o da direita tem ainda um
 # quadro de pausa com a raiz fora do lugar antes dessa repeticao.
-CYCLES = {"Left": (21, False), "Right": (22, True)}
+CYCLES = {"Left": (20, False), "Right": (22, True)}
+# 30/10 (o corpo fisico): a fonte da esquerda passou do Jog Strafe do Mixamo para uma corrida de lado gerada
+# no Kimodo (corre_04, quadros 32-52; 3,7 m/s, os dois pes pousam, o corpo de frente o tempo todo). A auditoria
+# da referencia do rastreador mediu no strafe antigo um pulo num pe so: o pe da frente escorregava 0,4-0,9 m
+# carregado e o de tras nunca pousava; um corpo fisico nao segue isso. A direita segue espelhada.
+SOURCE_LEFT = "jog_strafe_left_kimodo.retarget.json"
 BLEND_FRAMES = 3              # volta do pe plantado para a referencia
 STANCE_PITCH = 20.0           # graus: mais inclinado que isto, o pe rola
 MAXIMUM_STANCE_PITCH = 15.0   # pe parado na ponta, no maximo
@@ -142,7 +147,7 @@ class Strafe:
 
     # --- referencia --------------------------------------------------------------
     def _load(self) -> None:
-        path = SOURCES / f"jog_strafe_{self.side.lower()}.retarget.json"
+        path = SOURCES / (SOURCE_LEFT if self.side == "Left" else f"jog_strafe_{self.side.lower()}.retarget.json")
         clip = load_clip(path, self.rig)
         displacement = np.array(json.loads(path.read_text(encoding="utf-8"))
                                 ["sourceRootDisplacementMeters"])

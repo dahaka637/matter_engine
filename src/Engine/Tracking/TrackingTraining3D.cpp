@@ -780,6 +780,7 @@ TrackingTraining3D::TrackingTraining3D(const TrackingTrainingSettings3D& setting
         spawn.pelvisPosition = { 0.0f, 0.0f, impl.profile->standingRootHeightMeters };
         w.handle = w.scene->createRagdoll(*impl.profile, spawn);
         w.leader = std::make_unique<TrackingLeader3D>(*impl.profile, impl.leaderClips, impl.runtime);
+        if (settings.leaderSideAmplitude > 0.0f) w.leader->setSideAmplitude(settings.leaderSideAmplitude);
         w.reward = std::make_unique<TrackingReward3D>(*impl.profile);
         w.observation.assign(TrackingContract3D::ObservationSize, 0.0f);
         w.finalObservation.assign(TrackingContract3D::ObservationSize, 0.0f);

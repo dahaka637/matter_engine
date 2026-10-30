@@ -60,6 +60,12 @@ public:
     [[nodiscard]] Vec3 capsulePosition() const { return m_capsulePosition; }
     [[nodiscard]] Vec3 capsuleVelocity() const { return m_capsuleVelocity; }
     [[nodiscard]] const DefaultLocomotion3D& locomotion() const { return m_locomotion; }
+    // A parte da adaptacao da passada a velocidade de lado (o padrao usa 0,5 no trote: o strafe de passo cruzado
+    // antigo abria e cruzava as pernas demais; 30/10, o strafe novo do Kimodo escorregava ~0,8 m/s a 3 m/s com ela).
+    void setSideAmplitude(float share) {
+        m_locomotion.settings().trotAmplitudeSide = share;
+        m_locomotion.settings().sprintAmplitudeSide = share;
+    }
 
 private:
     const RagdollProfile3D* m_profile = nullptr;

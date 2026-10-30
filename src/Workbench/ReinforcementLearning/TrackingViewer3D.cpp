@@ -251,6 +251,7 @@ TrackingViewer3D::Conditions TrackingViewer3D::conditionsOf(const std::filesyste
     out.terminationDistance = task.value("distanciaFim", out.terminationDistance);
     out.fallHeadHeight = task.value("cabecaQueda", out.fallHeadHeight);
     out.captureStepSeconds = task.value("passoCaptura", out.captureStepSeconds);
+    out.leaderSideAmplitude = task.value("amplitudeLado", out.leaderSideAmplitude);
     return out;
 }
 
@@ -290,6 +291,7 @@ TrackingViewer3D::TrackingViewer3D(const std::filesystem::path& assetsDirectory,
     settings.terminationDistance = conditions.terminationDistance;
     settings.fallHeadHeight = conditions.fallHeadHeight;
     settings.captureStepSeconds = conditions.captureStepSeconds;
+    settings.leaderSideAmplitude = conditions.leaderSideAmplitude;
     settings.leaderFollowSlack = conditions.followSlack;
     settings.evaluationSpeed = DefaultSpeed;
     settings.evaluationMode = mode;

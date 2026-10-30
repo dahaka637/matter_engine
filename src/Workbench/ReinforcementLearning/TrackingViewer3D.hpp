@@ -24,6 +24,7 @@ struct TrackingViewerConditions3D {
     float terminationDistance = 1.0f;
     float fallHeadHeight = 0.0f;
     float captureStepSeconds = 0.0f;
+    float leaderSideAmplitude = 0.0f;
 };
 
 // O visualizador de um treino do rastreador fisico (DReCon; vault
