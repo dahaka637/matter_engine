@@ -352,9 +352,9 @@
         0.75,
         0.75,
         1.5,
-        2.0,
+        2.25,
         1.5,
-        1.25,
+        1.75,
         0.75,
         0.75,
         0.75,
@@ -506,15 +506,15 @@
         1.5
       ],
       "andando_empurrao": [
-        3.0,
+        3.25,
         1.5,
-        2.25,
-        0.75,
         2.5,
         0.75,
-        2.5,
-        1.5,
         2.75,
+        0.75,
+        2.5,
+        1.5,
+        3.0,
         1.5,
         2.5,
         0.75,
@@ -670,19 +670,19 @@
       "troca_suave": [
         2.25,
         1.5,
+        1.75,
         0.75,
+        1.75,
         0.75,
-        0.75,
-        0.75,
-        0.75,
+        1.75,
+        1.5,
+        2.25,
         1.5,
         2.0,
+        0.75,
         1.5,
-        1.25,
         0.75,
-        0.75,
-        0.75,
-        0.75,
+        1.75,
         1.5
       ],
       "troca_media": [
@@ -694,9 +694,9 @@
         0.75,
         0.75,
         1.5,
-        2.0,
+        2.25,
         1.5,
-        1.25,
+        2.25,
         0.75,
         0.75,
         0.75,
@@ -712,9 +712,27 @@
         0.75,
         0.75,
         1.5,
-        2.0,
+        2.25,
         1.5,
-        1.25,
+        2.25,
+        0.75,
+        0.75,
+        0.75,
+        0.75,
+        1.5
+      ],
+      "troca_livre": [
+        2.25,
+        1.5,
+        0.75,
+        0.75,
+        0.75,
+        0.75,
+        0.75,
+        1.5,
+        2.25,
+        1.5,
+        1.75,
         0.75,
         0.75,
         0.75,
@@ -1008,7 +1026,7 @@
       "id": "direita",
       "displayName": "Direita",
       "category": "basico",
-      "weight": 0.08,
+      "weight": 0.07,
       "minimum": {
         "fallFraction": 0.05
       },
@@ -1110,7 +1128,7 @@
       "id": "esquerda",
       "displayName": "Esquerda",
       "category": "basico",
-      "weight": 0.08,
+      "weight": 0.07,
       "minimum": {
         "fallFraction": 0.05
       },
@@ -1316,7 +1334,7 @@
       "id": "diagonal_costas",
       "displayName": "Diagonal costas (lado sorteado)",
       "category": "basico",
-      "weight": 0.05,
+      "weight": 0.04,
       "minimum": {
         "fallFraction": 0.05
       },
@@ -1420,7 +1438,7 @@
       "id": "troca_direcao",
       "displayName": "Troca de direção em movimento",
       "category": "basico",
-      "weight": 0.04,
+      "weight": 0.02,
       "minimum": {
         "fallFraction": 0.05
       },
@@ -1433,13 +1451,13 @@
               0.8,
               1.4
             ],
-            "weight": 0.5
+            "weight": 1.0
           },
           {
             "name": "trote",
             "speed": [
-              3.0,
-              4.5
+              1.5,
+              2.25
             ],
             "weight": 1.0
           }
@@ -1465,6 +1483,55 @@
       "failureStartFraction": 0.3
     },
     {
+      "id": "troca_livre",
+      "displayName": "Troca livre (peito livre)",
+      "category": "basico",
+      "weight": 0.06,
+      "minimum": {
+        "fallFraction": 0.05
+      },
+      "pilot": {
+        "kind": "stick",
+        "bands": [
+          {
+            "name": "andar",
+            "speed": [
+              0.8,
+              1.4
+            ],
+            "weight": 1.0
+          },
+          {
+            "name": "trote",
+            "speed": [
+              1.5,
+              2.25
+            ],
+            "weight": 1.0
+          }
+        ],
+        "changeDegrees": [
+          20.0,
+          180.0
+        ],
+        "stickSeconds": [
+          1.5,
+          3.0
+        ],
+        "releaseFraction": 0.0,
+        "keysFraction": 1.0,
+        "syncFraction": 0.0,
+        "leashMeters": 1000.0,
+        "camera": {
+          "fixed": 0.0,
+          "follow": 1.0,
+          "turns": 0.0,
+          "followRate": 4.0
+        }
+      },
+      "failureStartFraction": 0.3
+    },
+    {
       "id": "troca_suave",
       "displayName": "Troca suave",
       "category": "basico",
@@ -1481,13 +1548,13 @@
               0.8,
               1.4
             ],
-            "weight": 0.5
+            "weight": 1.0
           },
           {
             "name": "trote",
             "speed": [
-              3.0,
-              4.5
+              1.5,
+              2.25
             ],
             "weight": 1.0
           }
@@ -1529,13 +1596,13 @@
               0.8,
               1.4
             ],
-            "weight": 0.5
+            "weight": 1.0
           },
           {
             "name": "trote",
             "speed": [
-              3.0,
-              4.5
+              1.5,
+              2.25
             ],
             "weight": 1.0
           }
@@ -1577,13 +1644,13 @@
               0.8,
               1.4
             ],
-            "weight": 0.5
+            "weight": 1.0
           },
           {
             "name": "trote",
             "speed": [
-              3.0,
-              4.5
+              1.5,
+              2.25
             ],
             "weight": 1.0
           }
@@ -1660,7 +1727,7 @@
     {
       "id": "curva",
       "displayName": "Trote em curva suave",
-      "weight": 0.03,
+      "weight": 0.02,
       "minimum": {
         "fallFraction": 0.05,
         "velocityError": 0.45
