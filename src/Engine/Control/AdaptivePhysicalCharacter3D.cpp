@@ -811,6 +811,19 @@ void AdaptivePhysicalCharacter3D::update(const RagdollProfile3D& profile,
             * LegWalkingVelocityGain, LegWalkingAcceleration)
                 * (balanceShare * walkingDriveRamp * physicalWalkingShare)
         : intentAcceleration * balanceShare;
+    // (TEMPTUNE 30/10) A rampa de arrancada (35% no primeiro apoio) e para sair do parado; freando
+    // (o pedido contra o movimento: uma troca de direcao), a parte que freia vai inteira.
+    static const float brakeDriveShare = tuneTempApc("T_BrakeDrive", 0.0f);  // TEMPTUNE
+    if (legsWalking && brakeDriveShare > 0.0f && walkingDriveRamp < 1.0f) {
+        const Vec3 body = planar(physical->centerOfMassVelocityWorld);
+        const float bodySpeed = body.length();
+        const Vec3 drive = limit(planar(requestedVelocity - physical->centerOfMassVelocityWorld)
+            * LegWalkingVelocityGain, LegWalkingAcceleration);
+        const float braking = bodySpeed > 0.05f ? dot(drive, body * (1.0f / bodySpeed)) : 0.0f;
+        if (braking < 0.0f)
+            legPlanarAcceleration += body * (braking / bodySpeed * (1.0f - walkingDriveRamp) * brakeDriveShare
+                * balanceShare * physicalWalkingShare);
+    }
     // O gancho do contato (o RL): na parte das pernas.
     if (intent.rlContact) legPlanarAcceleration += planar(intent.rlContactAccelerationWorld) * balanceShare;
     // O peso pelas pernas: a fracao delas vezes quanto do peso elas assumem.

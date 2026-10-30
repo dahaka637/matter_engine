@@ -431,7 +431,7 @@ const float LowAssistBrakeDeceleration = tuneTemp("T_LowBrakeDec", 12.0f);  // T
 const float LowAssistBrakeLeash = tuneTemp("T_LowBrakeLeash", 0.8f);  // TEMPTUNE
 const bool BrakeAnchorNoFeedforward = tuneTemp("T_BrakeNoFF", 1.0f) > 0.5f;  // TEMPTUNE
 const bool SectorHoldWhileBraking = tuneTemp("T_SectorHold", 1.0f) > 0.5f;  // TEMPTUNE
-const float StrafeBrakeEngageSpeed = tuneTemp("T_StrafeBrake", 2.0f);  // TEMPTUNE
+const float StrafeBrakeEngageSpeed = tuneTemp("T_StrafeBrake", 0.8f);  // TEMPTUNE (era 2,0; 30/10, a troca de direcao)
 const bool LockAtTouch = tuneTemp("T_LockTouch", 1.0f) > 0.5f;  // TEMPTUNE
 const float LockTouchWaitSeconds = tuneTemp("T_LockTouchWait", 0.10f);  // TEMPTUNE
 const float StanceRiseLimit = tuneTemp("T_StanceRise", 0.03f);  // TEMPTUNE
@@ -1077,15 +1077,18 @@ constexpr float LocomotionPushWindow = 0.67f;
 // e medida contra as referencias Run To Stop e Running To Stop.
 // Entra acima desta velocidade do corpo com tanto a mais que o pedido no
 // rumo dele (m/s); sai abaixo desta (ou quando o pedido alcanca o corpo).
-constexpr float BrakeEngageSpeed = 2.0f;
-constexpr float BrakeEngageExcessSpeed = 1.2f;
-constexpr float BrakeReleaseSpeed = 0.5f;
+// (30/10, a troca de direcao a 0%: a 1-2 m/s, abaixo de 2,0/1,2, a freada nao entrava; o setor virava na hora
+// para o lado pedido com o corpo ainda indo para o outro. A 0,8/0,5 (e a inversao soltando a 0,4), na rede do
+// B17 em 64 mundos: inversoes de 135-180 graus de 33% para 19% de quedas, o portao dos andares igual.)
+const float BrakeEngageSpeed = tuneTemp("T_BrakeEngage", 0.8f);  // TEMPTUNE
+const float BrakeEngageExcessSpeed = tuneTemp("T_BrakeExcess", 0.5f);  // TEMPTUNE
+const float BrakeReleaseSpeed = tuneTemp("T_BrakeRelease", 0.5f);  // TEMPTUNE
 // Pedindo o sentido contrario, a freada acaba com o corpo abaixo disto (m/s)
 // e a passada ja arranca para o outro lado. Inversao na varredura de marcha
 // (XGAITINVERT): 1,0 levava 0,76/0,44 s (sprint/trote, 1 queda em 8); 2,0,
 // 0,69/0,38 s sem queda; 2,5 e 3,0 mais lentos (a passada inverte mal
 // rapida).
-constexpr float BrakeReverseReleaseSpeed = 2.0f;
+const float BrakeReverseReleaseSpeed = tuneTemp("T_BrakeRevRelease", 0.4f);  // TEMPTUNE (era 2,0; 30/10)
 // Freando ha mais que isto (s), termina de qualquer jeito.
 constexpr float BrakeMaximumSeconds = 4.0f;
 // Depois da freada, tanto tempo (s) sem acomodar nem girar os pes.
