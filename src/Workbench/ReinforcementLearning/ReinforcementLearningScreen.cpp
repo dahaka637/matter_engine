@@ -1191,7 +1191,8 @@ void ReinforcementLearningScreen::drawTrainer() {
     if (status.known) {
         infoRow("Tarefa", status.taskName.empty() ? status.task : status.taskName);
         infoRow("Rodada", std::to_string(status.iteration));
-        infoRow("Decisões", decimal(static_cast<double>(status.steps) / 1e6, 1) + " M");
+        const double decisions = static_cast<double>(status.steps);
+        infoRow("Decisões", decisions >= 1e9 ? decimal(decisions / 1e9, 2) + " bi" : decimal(decisions / 1e6, 1) + " M");
         if (status.alive) infoRow("Velocidade", decimal(status.sps, 0) + " /s");
         infoRow("Treinado", duration(status.trainSeconds));
         if (status.lastFallFraction >= 0.0) infoRow("Quedas", decimal(status.lastFallFraction * 100.0, 0) + "%");
