@@ -1797,12 +1797,16 @@ void ReinforcementLearningScreen::drawLocomotionCharts(float height) {
         const float rowTop = ImGui::GetCursorPosY();
         ImGui::BeginGroup();
         ImGui::TextColored(InfoText, "%s", ("Sem cair (%)" + inDrill).c_str());
-        tooltip("Neste exercício: a fatia dos episódios do treino que terminou de pé (com o ruído do treino) e, "
-                "tracejado, o teste da rede sem ruído (as avaliações).");
-        std::vector<ChartSeries> standing { { &data.drillStanding, green, false, "treino" } };
-        if (anyFinite(data.drillTest)) standing.push_back({ &data.drillTest, green, true, "teste sem ruído" });
-        lineChart("##semcair", standing, 0.0f, 100.0f, size, lastText(data.drillStanding, "%.0f%%").c_str(), "%",
-            &data.times, false, empty);
+        tooltip("Neste exercício: tracejado, o teste da rede sem ruído na velocidade alvo (a faixa inteira, como aqui "
+                "no visualizador e no jogo); cheio, os episódios do treino, que pedem só até o teto do currículo.");
+        std::vector<ChartSeries> standing { { &data.drillStanding, green, false, "treino (até o teto)" } };
+        if (anyFinite(data.drillTest)) standing.push_back({ &data.drillTest, green, true, "teste na velocidade alvo" });
+        // (31/10, ele: o numero do treino - pedido so ate o teto - parecia bom e na corrida de verdade ele caia. O numero
+        // grande e o do teste na velocidade alvo; o do treino vem depois.)
+        const std::string standingText = anyFinite(data.drillTest)
+            ? "alvo " + text(lastFinite(data.drillTest), "%.0f%%") + " · treino " + text(lastFinite(data.drillStanding), "%.0f%%")
+            : lastText(data.drillStanding, "%.0f%%");
+        lineChart("##semcair", standing, 0.0f, 100.0f, size, standingText.c_str(), "%", &data.times, false, empty);
         ImGui::EndGroup();
         ImGui::SameLine();
         ImGui::SetCursorPosY(rowTop);
@@ -1845,9 +1849,12 @@ void ReinforcementLearningScreen::drawLocomotionCharts(float height) {
     {
         const auto [low, high] = indexRange({ &data.drillStanding, &data.drillTest });
         Chart chart { std::string(info.getUp ? "Levantou-se (%)" : "Sem cair (%)") + inDrill,
-            { { &data.drillStanding, green, false, "treino" } }, low, high,
-            text(lastFinite(data.drillStanding), "%.0f%%"), "%" };
-        if (anyFinite(data.drillTest)) chart.series.push_back({ &data.drillTest, green, true, "teste sem ruído" });
+            { { &data.drillStanding, green, false, "treino (até o teto)" } }, low, high,
+            anyFinite(data.drillTest)
+                ? "alvo " + text(lastFinite(data.drillTest), "%.0f%%") + " · treino " + text(lastFinite(data.drillStanding), "%.0f%%")
+                : text(lastFinite(data.drillStanding), "%.0f%%"),
+            "%" };
+        if (anyFinite(data.drillTest)) chart.series.push_back({ &data.drillTest, green, true, "teste na velocidade alvo" });
         list.push_back(std::move(chart));
     }
     // (A velocidade so nos exercicios que andam: parado, girando ou levando empurrao, ela nao diz nada.)
