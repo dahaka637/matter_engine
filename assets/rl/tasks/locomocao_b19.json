@@ -1965,10 +1965,10 @@
         "kind": "star",
         "bands": [
           {
-            "name": "andar",
+            "name": "trote_moderado",
             "speed": [
-              0.8,
-              1.4
+              2.0,
+              3.0
             ],
             "weight": 0.5,
             "distance": [
@@ -2015,7 +2015,7 @@
     {
       "id": "estrela_trote_fixo",
       "displayName": "Estrela de 8 pontas, trote, peito fixo",
-      "weight": 0.06,
+      "weight": 0.05,
       "minimum": {
         "fallFraction": 0.05,
         "velocityError": 0.5
@@ -2024,10 +2024,10 @@
         "kind": "star",
         "bands": [
           {
-            "name": "andar",
+            "name": "trote_moderado",
             "speed": [
-              0.8,
-              1.4
+              2.0,
+              3.0
             ],
             "weight": 0.5,
             "distance": [
@@ -2082,10 +2082,10 @@
         "kind": "star",
         "bands": [
           {
-            "name": "andar",
+            "name": "trote_moderado",
             "speed": [
-              0.8,
-              1.4
+              2.0,
+              3.0
             ],
             "weight": 0.5,
             "distance": [
@@ -2284,7 +2284,7 @@
     {
       "id": "curva_trote_fechada",
       "displayName": "Curva fechada e em S, trote",
-      "weight": 0.06,
+      "weight": 0.04,
       "minimum": {
         "fallFraction": 0.05,
         "velocityError": 0.7
@@ -2293,10 +2293,10 @@
         "kind": "arc",
         "bands": [
           {
-            "name": "andar",
+            "name": "trote_moderado",
             "speed": [
-              0.8,
-              1.4
+              2.0,
+              3.0
             ],
             "weight": 0.5
           },
@@ -2342,7 +2342,7 @@
     {
       "id": "curva_trote_fechada_fixo",
       "displayName": "Curva fechada e em S, trote, peito fixo",
-      "weight": 0.05,
+      "weight": 0.04,
       "minimum": {
         "fallFraction": 0.05,
         "velocityError": 0.7
@@ -2351,10 +2351,10 @@
         "kind": "arc",
         "bands": [
           {
-            "name": "andar",
+            "name": "trote_moderado",
             "speed": [
-              0.8,
-              1.4
+              2.0,
+              3.0
             ],
             "weight": 0.5
           },
@@ -2408,10 +2408,10 @@
         "kind": "arc",
         "bands": [
           {
-            "name": "andar",
+            "name": "trote_moderado",
             "speed": [
-              0.8,
-              1.4
+              2.0,
+              3.0
             ],
             "weight": 0.5
           },
@@ -2469,7 +2469,7 @@
     {
       "id": "curva_corrida_fechada",
       "displayName": "Curva fechada e em S, corrida",
-      "weight": 0.04,
+      "weight": 0.03,
       "minimum": {
         "fallFraction": 0.05,
         "velocityError": 0.7
@@ -2631,7 +2631,7 @@
       "id": "parado_empurrao_forte",
       "displayName": "Parado com empurrão forte",
       "category": "basico",
-      "weight": 0.08,
+      "weight": 0.1,
       "pilot": {
         "kind": "hold",
         "camera": {
@@ -2683,7 +2683,7 @@
       "id": "parado_empurrao_forte_girando",
       "displayName": "Parado girando com empurrão forte",
       "category": "compostos",
-      "weight": 0.06,
+      "weight": 0.09,
       "pilot": {
         "kind": "hold",
         "camera": {
@@ -2808,5 +2808,6 @@
   "comment_failureStarts": "28/10 (B14, o usuario: \"nao aceita menos que 0% de quedas\"; a analise das quedas: 85-96% delas ate 1,5 s depois de uma troca de direcao): o treino guarda o instante de cada mundo a cada 0,25 s e, quando ele cai, o de 0,4-1,0 s antes vai para o banco do exercicio; 30% dos episodios dos cortes, da troca de direcao e da meia-volta comecam dele - a rede treina o momento em que perde. Pede o build-rl-b8. B16 (28/10): a pelve so desce 5 cm (era 10, da B4): a rede ficava colada no teto (o \"sentado\") e isso segurava a velocidade - a rede media da B14 so com o teto em 5 cm, sem treinar: cruzeiro a 3 m/s frente 82 -> 93%, diagonal 80 -> 89%; o classico sozinho faz 97% a frente a 3 m/s.",
   "comment_speeds": "30/10 01h50 (ele: 'Apos ele conseguir se movimentar aceitavel com aparencia aceitavel comecaremos a trabalhar mais a velocidade'): o curriculo de velocidade da b16 de volta, comecando no que o corpo faz a 0% (0,75-1,5 m/s por celula) e abrindo 0,25 m/s quando acompanha sem cair; o andar e o trote ate 4,5.",
   "comment_lateral": "30/10 02h (ele: 'de um jeito dele conseguir se movimentar pela direita e esquerda (trote lateral), seja criativo, pense em como recompensar e calibrar isso'): o contato 0,1 (cada pouso perto do pouso da referencia, o lado novo do Kimodo com os dois pes pousando) e o custo de cruzar as pernas 0,2 (o pe esquerdo a 8 cm a esquerda do direito no referencial da pelve; a regra dele do giro: os pes nunca cruzam).",
-  "comment_pesos_b17": "30/10 02h38 (ordem dele: 'Os unicos treinos que devem estar ativos agora e o andar nas 8 direcoes (diagonais sorteadas), mas com foco total em lados, o restante treina menos so para nao deixar de treinar e desaprender'): direita e esquerda 0,3 cada; frente e tras 0,08; diagonais 0,12; o resto 0."
+  "comment_pesos_b17": "30/10 02h38 (ordem dele: 'Os unicos treinos que devem estar ativos agora e o andar nas 8 direcoes (diagonais sorteadas), mas com foco total em lados, o restante treina menos so para nao deixar de treinar e desaprender'): direita e esquerda 0,3 cada; frente e tras 0,08; diagonais 0,12; o resto 0.",
+  "comment_b19_trote": "31/10 07h45 (pedido dele: 'o minimo deveria ser uns 2 m/s', as trocas a meu criterio): nas estrelas e curvas de trote a faixa andar 0,8-1,4 virou trote moderado 2,0-3,0 (mesmo peso); o teto do curriculo segue limitando por cima. As trocas ficam como estao ate as quedas baixarem. 07h04: os parados 0,14 -> 0,19."
 }
