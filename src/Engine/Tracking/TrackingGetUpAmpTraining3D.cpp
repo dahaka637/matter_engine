@@ -72,6 +72,10 @@ struct TrackingGetUpAmpTraining3D::Impl {
         float stoodAt = -1.0f;
         double rewardSum = 0.0;
         std::uint32_t decisions = 0;
+        // O empurrao de pe (o jogo de pes de autoequilibrio): a forca, os passos de fisica que faltam e o proximo.
+        Vec3 pushForce;
+        int pushTicks = 0;
+        float nextPushAt = -1.0f;
     };
     std::vector<World> worlds;
     std::vector<TrackingGetUpAmpEpisode3D> episodes;
@@ -80,6 +84,13 @@ struct TrackingGetUpAmpTraining3D::Impl {
     void settle(World& w, int ticks) {
         for (int k = 0; k < ticks; ++k) {
             w.scene->setRagdollActiveDriveTargets(w.handle, w.drives, false);
+            if (w.pushTicks > 0) {
+                // (Repartido como o do B19: pelve, peito e peito alto.)
+                w.scene->applyRagdollLinkForce(w.handle, 0, w.pushForce * 0.20f, {});
+                w.scene->applyRagdollLinkForce(w.handle, 2, w.pushForce * 0.32f, {});
+                w.scene->applyRagdollLinkForce(w.handle, 3, w.pushForce * 0.48f, {});
+                --w.pushTicks;
+            }
             w.scene->simulate(TickSeconds);
         }
         w.body = w.scene->ragdollStateView(w.handle);
@@ -146,6 +157,26 @@ struct TrackingGetUpAmpTraining3D::Impl {
         w.stoodAt = -1.0f;
         w.rewardSum = 0.0;
         w.decisions = 0;
+        w.pushTicks = 0;
+        w.nextPushAt = -1.0f;
+    }
+
+    // O empurrao de pe (31/10 09h, ele: depois de levantar falta o "jogo de pes de auto-equilibrio"): so no treino,
+    // depois de ja ter ficado de pe e enquanto esta de pe, um empurrao curto a cada 1,5-3 s (o primeiro 1-2,5 s depois
+    // de ficar de pe), 150-450 N por 0,1-0,2 s (ate ~90 N.s), num rumo sorteado. Se cair, levanta de novo.
+    void maybePush(World& w, const TrackingGetUpPosture3D& posture) {
+        if (settings.evaluation || w.stoodAt < 0.0f || !posture.standing || w.pushTicks > 0) return;
+        std::uniform_real_distribution<float> u(0.0f, 1.0f);
+        if (w.nextPushAt < 0.0f) {
+            w.nextPushAt = w.time + 1.0f + 1.5f * u(w.rng);
+            return;
+        }
+        if (w.time < w.nextPushAt) return;
+        const float angle = 2.0f * Pi * u(w.rng);
+        const float newtons = 150.0f + 300.0f * u(w.rng);
+        w.pushForce = { std::cos(angle) * newtons, std::sin(angle) * newtons, 0.0f };
+        w.pushTicks = std::max(1, static_cast<int>(std::lround((0.1f + 0.1f * u(w.rng)) / TickSeconds)));
+        w.nextPushAt = w.time + 1.5f + 1.5f * u(w.rng);
     }
 
     void observe(World& w) const { contract->observeBody(w.body->links, w.observation); }
@@ -156,6 +187,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
         features->compute(w.body->links, std::span<float>(w.ampPair).first(a));
         const TrackingGetUpPosture3D was = posture->measure(w.body->links);
         const float before = posture->risePotential(was) + posture->turnPotential(was);
+        maybePush(w, was);
         contract->driveTargets(action, w.drives);
         settle(w, TicksPerDecision);
         w.time += TicksPerDecision * TickSeconds;
