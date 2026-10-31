@@ -336,8 +336,10 @@ struct TrackingGetUpAmpTraining3D::Impl {
         return 5.0f * rise * std::max(0.0f, std::cos(targetBearing(w).first));
     }
 
-    // A nota de estado com o pedido de ir ao alvo, so de pe: a velocidade rumo ao alvo perto da pedida 0,5, virado para
-    // ele 0,3 e sem andar de lado 0,2.
+    // A nota de estado com o pedido de ir ao alvo, so de pe: a velocidade rumo ao alvo 0,5, virado para ele 0,3 e sem
+    // andar de lado 0,2. (31/10 18h: a velocidade era exp(-(v - pedida)^2), que nao dava gradiente parado - pedindo
+    // 2,5-5 m/s, parado ou a 1 m/s dava ~0 - e em 250 atualizacoes ele ficou parado virado para o alvo. Agora uma rampa:
+    // 0 parado, 1 na pedida, caindo acima dela e negativa se afasta.)
     float moveReward(World& w, const TrackingGetUpPosture3D& posture) {
         if (!posture.standing) return 0.0f;
         const Vec3 v = rlBodyCenterOfMassVelocity3D(*profile, w.body->links);
@@ -349,8 +351,9 @@ struct TrackingGetUpAmpTraining3D::Impl {
         w.towardSum += along;
         ++w.towardSamples;
         (void)distance;
-        const float e = along - w.commandSpeed;
-        return 0.5f * std::exp(-e * e) + 0.3f * std::max(0.0f, std::cos(bearing)) + 0.2f * std::exp(-across * across);
+        const float ratio = along / w.commandSpeed;
+        const float speed = ratio <= 1.0f ? std::max(-1.0f, ratio) : std::max(0.0f, 2.0f - ratio);
+        return 0.5f * speed + 0.3f * std::max(0.0f, std::cos(bearing)) + 0.2f * std::exp(-across * across);
     }
 
     void decide(World& w, std::size_t index, std::span<const float> action, float& reward, std::uint8_t& terminated,
