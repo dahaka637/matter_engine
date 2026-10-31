@@ -163,7 +163,8 @@ struct TrackingGetUpAmpTraining3D::Impl {
 
     // O empurrao de pe (31/10 09h, ele: depois de levantar falta o "jogo de pes de auto-equilibrio"): so no treino,
     // depois de ja ter ficado de pe e enquanto esta de pe, um empurrao curto a cada 1,5-3 s (o primeiro 1-2,5 s depois
-    // de ficar de pe), 150-450 N por 0,1-0,2 s (ate ~90 N.s), num rumo sorteado. Se cair, levanta de novo.
+    // de ficar de pe), 250-650 N por 0,1-0,2 s (ate ~130 N.s; 150-450 ate 31/10 12h35, quando ele ja ficava de pe em 98-99% com eles), num
+    // rumo sorteado. Se cair, levanta de novo.
     void maybePush(World& w, const TrackingGetUpPosture3D& posture) {
         if (settings.evaluation || w.stoodAt < 0.0f || !posture.standing || w.pushTicks > 0) return;
         std::uniform_real_distribution<float> u(0.0f, 1.0f);
@@ -173,7 +174,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
         }
         if (w.time < w.nextPushAt) return;
         const float angle = 2.0f * Pi * u(w.rng);
-        const float newtons = 150.0f + 300.0f * u(w.rng);
+        const float newtons = 250.0f + 400.0f * u(w.rng);
         w.pushForce = { std::cos(angle) * newtons, std::sin(angle) * newtons, 0.0f };
         w.pushTicks = std::max(1, static_cast<int>(std::lround((0.1f + 0.1f * u(w.rng)) / TickSeconds)));
         w.nextPushAt = w.time + 1.5f + 1.5f * u(w.rng);
