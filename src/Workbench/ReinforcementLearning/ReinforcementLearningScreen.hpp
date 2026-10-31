@@ -20,6 +20,7 @@
 #include <filesystem>
 #include <functional>
 #include <future>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -291,6 +292,9 @@ private:
     std::optional<std::future<TrainingHistory3D>> m_historyPending;
     std::string m_historyRun;
     float m_historyWatch = 0.0f;
+    // Os historicos dos ramos anteriores da linhagem (nao mudam: lidos uma vez; so a tarefa da leitura mexe nele).
+    std::shared_ptr<std::map<std::string, TrainingHistory3D>> m_ancestorHistories
+        = std::make_shared<std::map<std::string, TrainingHistory3D>>();
     // Cada leitura nova do banco (os graficos refazem as series so quando muda).
     std::uint64_t m_historyVersion = 0;
     // As series dos graficos e o que as fez (a leitura, o exercicio, as fatias).

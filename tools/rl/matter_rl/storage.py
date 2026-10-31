@@ -266,21 +266,131 @@ class Database:
                                GROUP BY CAST((time - ?) / ? AS INTEGER) ORDER BY 1""",
                             (run, since, first, window)).fetchall()
 
-    def compact(self, run: str, keep_days: float = 3.0) -> int:
-        """Rodadas com mais de 3 dias viram uma a cada 10 min (a sanitizacao do
-        historico: ~100 MB por dia de treino viram ~0,1 MB)."""
-        limit = time.time() - keep_days * 86400.0
-        rows = self.execute("""SELECT iteration, time FROM iterations WHERE run=? AND time<? ORDER BY time""",
-                            (run, limit)).fetchall()
-        drop, last_kept = [], -1e18
-        for row in rows:
-            if row["time"] - last_kept >= 600.0:
-                last_kept = row["time"]
+    def condense(self, run: str, now: float | None = None) -> int:
+        """Condensa as rodadas antigas por idade (31/10, pedido dele: os dados antigos agrupados, nao apagados).
+        Cada grupo vira uma rodada so: os episodios, as quedas e os fins somados, as taxas medias pesadas pelos
+        episodios (por exercicio e por celula do curriculo) e o estado (curriculo, ppo) o do fim do grupo.
+        Volta quantas rodadas sumiram."""
+        now = time.time() if now is None else now
+        end = now - CONDENSE_TIERS[0][0]
+        first = self.execute("SELECT MIN(time) FROM iterations WHERE run=? AND time<?", (run, end)).fetchone()[0]
+        removed = 0
+        if first is None:
+            return 0
+        # (Por janelas de 6 h alinhadas na hora: um grupo nunca atravessa a janela e a memoria fica pequena.)
+        window = 6 * 3600.0
+        start = first - first % window
+        while start < end:
+            rows = self.execute("SELECT * FROM iterations WHERE run=? AND time>=? AND time<? ORDER BY time",
+                                (run, start, min(start + window, end))).fetchall()
+            start += window
+            groups: list[list[sqlite3.Row]] = []
+            last_key = None
+            for row in rows:
+                size = next(width for age, width in reversed(CONDENSE_TIERS) if now - row["time"] >= age)
+                key = (size, int(row["time"] // size))
+                if key != last_key:
+                    groups.append([])
+                    last_key = key
+                groups[-1].append(row)
+            for group in (g for g in groups if len(g) > 1):
+                merged = condense_rows(group)
+                self.connection.executemany("DELETE FROM iterations WHERE run=? AND iteration=?",
+                                            [(run, row["iteration"]) for row in group])
+                columns = list(merged)
+                self.connection.execute(f"INSERT INTO iterations ({', '.join(columns)}) VALUES "
+                                        f"({', '.join('?' for _ in columns)})", [merged[c] for c in columns])
+                removed += len(group) - 1
+            self.commit()
+        return removed
+
+
+# As faixas da condensacao (31/10, a regra dele: ~60 pontos por janela do grafico - 1 h a 1 min, 3 h a 3 min...):
+# (idade minima em s, tamanho do grupo em s). Os ultimos 10 min ficam rodada a rodada (as checagens leem).
+CONDENSE_TIERS = ((600.0, 60.0), (3600.0, 180.0), (3 * 3600.0, 360.0), (6 * 3600.0, 720.0), (12 * 3600.0, 1440.0),
+                  (86400.0, 3600.0), (7 * 86400.0, 21600.0))
+# O que fica de cada exercicio numa rodada condensada: o que os graficos leem (TrainingHistory3D).
+CHART_FIELDS = ("episodes", "falls", "return", "seconds", "stood_fraction", "velocity_error_window_median", "speed",
+                "requested", "facing_error", "slip", "posture")
+# As colunas que somam (o resto das numericas: media; as de estado: a da ultima rodada).
+SUMMED = {"episodes"}
+EPISODE_WEIGHTED = {"episode_return", "episode_seconds", "fall_fraction"}
+LAST = {"run", "iteration", "time", "steps"}
+
+
+def _weighted(values: list[tuple[float, float]]) -> float | None:
+    pairs = [(v, w) for v, w in values if isinstance(v, (int, float)) and not isinstance(v, bool) and w > 0]
+    total = sum(w for _, w in pairs)
+    return sum(v * w for v, w in pairs) / total if total > 0 else None
+
+
+def _merge_stats(items: list[dict], weight_key: str, counts: set[str]) -> dict:
+    """Junta dicionarios de medidas: as contagens somam, os numeros viram media pesada pela contagem `weight_key`,
+    os dicionarios dentro juntam do mesmo jeito (celulas pelas decisoes)."""
+    weights = [float(item.get(weight_key) or 0.0) for item in items]
+    if sum(weights) <= 0:
+        weights = [1.0] * len(items)
+    out: dict = {}
+    for key in dict.fromkeys(k for item in items for k in item):
+        values = [item.get(key) for item in items]
+        present = [v for v in values if v is not None]
+        if not present:
+            out[key] = None
+        elif key in counts:
+            out[key] = sum(v for v in present if isinstance(v, (int, float)))
+        elif all(isinstance(v, dict) for v in present):
+            if key == "cells":
+                cells: dict = {}
+                for cell in dict.fromkeys(c for v in present for c in v):
+                    cells[cell] = _merge_stats([v[cell] for v in present if cell in v], "decisions",
+                                               {"decisions", "cruise", "falls", "episodes"})
+                out[key] = cells
             else:
-                drop.append((run, row["iteration"]))
-        self.connection.executemany("DELETE FROM iterations WHERE run=? AND iteration=?", drop)
-        self.commit()
-        return len(drop)
+                out[key] = {k: _weighted([(v.get(k), w) for v, w in zip(values, weights) if isinstance(v, dict)])
+                            for k in dict.fromkeys(k for v in present for k in v)}
+        else:
+            out[key] = _weighted([(v, w) for v, w in zip(values, weights)])
+    return out
+
+
+def condense_rows(group: list[sqlite3.Row]) -> dict:
+    """Uma rodada que representa o grupo (em ordem de tempo)."""
+    last = group[-1]
+    episodes = [float(row["episodes"] or 0) for row in group]
+    merged: dict = {}
+    for column in last.keys():
+        values = [row[column] for row in group]
+        if column in LAST:
+            merged[column] = last[column]
+        elif column in SUMMED:
+            merged[column] = int(sum(v or 0 for v in values))
+        elif column in EPISODE_WEIGHTED:
+            merged[column] = _weighted(list(zip(values, episodes)))
+        elif column in ("components", "ends"):
+            parsed = [json.loads(v) for v in values if v]
+            keys = dict.fromkeys(k for d in parsed for k in d)
+            merged[column] = json.dumps({k: (sum(d.get(k, 0) for d in parsed) if column == "ends"
+                                             else _weighted([(d.get(k), 1.0) for d in parsed])) for k in keys}) \
+                if parsed else None
+        elif column == "details":
+            parsed = [json.loads(v) for v in values if v]
+            if not parsed:
+                merged[column] = None
+                continue
+            # (O estado - curriculo, ppo, diagnosticos - fica no checkpoint: a rodada condensada guarda so os
+            # exercicios, com o que os graficos leem, e a autoridade.)
+            details = {"authority": parsed[-1].get("authority")}
+            drills = [{name: {k: v for k, v in stats.items() if k in CHART_FIELDS}
+                       for name, stats in (d.get("drills") or {}).items()} for d in parsed]
+            details["drills"] = {name: _merge_stats([d[name] for d in drills if name in d], "episodes", {"episodes"})
+                                 for name in dict.fromkeys(n for d in drills for n in d)}
+            before = [d.get("condensado") or {"rodadas": 1, "primeira": row["iteration"]}
+                      for d, row in zip(parsed, [r for r in group if r["details"]])]
+            details["condensado"] = {"rodadas": sum(b["rodadas"] for b in before), "primeira": before[0]["primeira"]}
+            merged[column] = json.dumps(details)
+        else:
+            merged[column] = _weighted([(v, 1.0) for v in values])
+    return merged
 
 
 # --- trava de um escritor por treino -------------------------------------------

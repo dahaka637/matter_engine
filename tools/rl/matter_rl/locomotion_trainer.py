@@ -735,7 +735,7 @@ class LocomotionTrainer:
         self.db.log_checkpoint(self.run, self.counters["iteration"], self.counters["steps"], reference.path, kind, None)
         for iteration in storage.prune_checkpoints(self.directory, set()):
             self.db.forget_checkpoint(self.run, iteration)
-        self.db.compact(self.run)
+        self.db.condense(self.run)
         size = storage.directory_size_mb(paths.DATA) / 1024.0
         if size > self.config.disk_cap_gb:
             self.db.event(self.run, "disco", f"os treinos ocupam {size:.1f} GB (teto {self.config.disk_cap_gb} GB)")

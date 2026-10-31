@@ -310,7 +310,44 @@ def test_history_sampled_by_time_keeps_compacted_rows(tmp_path: Path):
     assert 150 <= len(rows) <= 201
     assert sum(1 for t in times if t < now - 2 * 86400) > 100  # o historico antigo continua la
     assert [row["iteration"] for row in rows] == sorted(row["iteration"] for row in rows)
-    assert db.compact("t") == 0  # o que tem mais de 3 dias ja esta em uma a cada 10 min
+    # Condensar: o que tem mais de 1 dia vira uma rodada por hora (as de 10 em 10 min se juntam de 6 em 6).
+    before = db.execute("SELECT COUNT(*) FROM iterations WHERE run='t'").fetchone()[0]
+    removed = db.condense("t", now)
+    assert removed > 0
+    assert db.execute("SELECT COUNT(*) FROM iterations WHERE run='t'").fetchone()[0] == before - removed
+
+
+def test_condense_keeps_totals_and_weighted_rates(tmp_path: Path):
+    """A condensacao agrupa sem perder o que os graficos leem: os episodios e os fins somam, as quedas e as medidas
+    por exercicio viram a media pesada pelos episodios; o estado (curriculo) sai da rodada condensada."""
+    db = storage.Database(tmp_path / "rl.db")
+    db.ensure_run("t", "h1", "abc", {})
+    now = time.time()
+    base = now - 2 * 86400.0  # faixa de 1 h
+    base -= base % 3600.0
+    rows = [(1, 4, 0.5, 2, {"queda": 2, "tempo": 2}), (2, 1, 1.0, 1, {"queda": 1}), (3, 5, 0.2, 3, {"tempo": 4})]
+    for k, (iteration, episodes, falls, decisions, ends) in enumerate(rows):
+        details = {"drills": {"a": {"episodes": episodes, "falls": falls, "speed": float(iteration),
+                                    "terms_per_second": {"x": float(iteration)},
+                                    "cells": {"1": {"decisions": decisions, "falls": 1, "episodes": episodes,
+                                                    "tracking": float(iteration)}}}},
+                   "curriculum": {"estado": iteration}}
+        db.log_iteration({"run": "t", "iteration": iteration, "time": base + 60.0 * k, "steps": 100 * iteration,
+                          "episodes": episodes, "fall_fraction": falls, "ends": json.dumps(ends),
+                          "details": json.dumps(details)})
+    db.commit()
+    assert db.condense("t", now) == 2
+    row = db.execute("SELECT * FROM iterations WHERE run='t'").fetchone()
+    assert row["iteration"] == 3 and row["steps"] == 300 and row["episodes"] == 10
+    assert abs(row["fall_fraction"] - (4 * 0.5 + 1 * 1.0 + 5 * 0.2) / 10) < 1e-9
+    assert json.loads(row["ends"]) == {"queda": 3, "tempo": 6}
+    details = json.loads(row["details"])
+    drill = details["drills"]["a"]
+    assert drill["episodes"] == 10 and abs(drill["falls"] - 0.4) < 1e-9
+    assert abs(drill["speed"] - (4 * 1 + 1 * 2 + 5 * 3) / 10) < 1e-9
+    assert "cells" not in drill and "terms_per_second" not in drill and "curriculum" not in details
+    assert details["condensado"] == {"rodadas": 3, "primeira": 1}
+    assert db.condense("t", now) == 0  # condensar de novo nao muda nada
 
 
 def test_control_roundtrip(tmp_path: Path):

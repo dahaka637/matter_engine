@@ -866,6 +866,7 @@ void ReinforcementLearningScreen::refreshHistory() {
     m_historyRun = activeRun();
     m_historyPending = std::async(std::launch::async,
         [database = m_paths.database, directory = m_paths.run(m_historyRun), run = m_historyRun,
+            ancestors = m_ancestorHistories,
             since = ChartWindows[static_cast<std::size_t>(m_chartWindow)].second,
             points = std::size_t { m_chartsExpanded ? 1200u : 400u }] {
             // O rastreador grava os seus arquivos, nao o rl.db.
@@ -885,8 +886,12 @@ void ReinforcementLearningScreen::refreshHistory() {
             for (int depth = 0; depth < 16; ++depth) {
                 const std::optional<TrainingLineageLink3D> link = readTrainingLineage3D(at);
                 if (!link) break;
-                prependTrainingAncestor3D(history, readTrainingHistory3D(database, link->run, 0.0, points),
-                    link->iteration, from);
+                // (Os ramos anteriores nao mudam mais: lidos uma vez so enquanto a tela esta aberta.)
+                const std::string key = link->run + "@" + std::to_string(points);
+                auto cached = ancestors->find(key);
+                if (cached == ancestors->end())
+                    cached = ancestors->emplace(key, readTrainingHistory3D(database, link->run, 0.0, points)).first;
+                prependTrainingAncestor3D(history, cached->second, link->iteration, from);
                 at = directory.parent_path() / link->run;
             }
             return history;
@@ -1793,8 +1798,11 @@ void ReinforcementLearningScreen::drawLocomotionCharts(float height) {
             tooltip(standingTip);
         }
         // (0 a 100 fixo nos dois: a meta e o teto, e as alturas se comparam.)
+        // (Abrindo, o historico leva alguns segundos: sem dado ainda, a tela diz que esta lendo.)
+        const char* empty = m_historyPending && m_history.iterations.empty() ? "carregando o histórico..."
+                                                                             : "sem avaliação no período";
         lineChart("##semcair", { { &real.standing, green, false, "média" }, { &real.worstStanding, amber, true, "pior" } },
-            0.0f, 100.0f, size, percent(real.standing).c_str(), "%", &real.times, false, "sem avaliação no período");
+            0.0f, 100.0f, size, percent(real.standing).c_str(), "%", &real.times, false, empty);
         ImGui::EndGroup();
         ImGui::SameLine();
         ImGui::SetCursorPosY(rowTop);
@@ -1802,7 +1810,7 @@ void ReinforcementLearningScreen::drawLocomotionCharts(float height) {
         ImGui::TextColored(InfoText, "%s", "Velocidade atendida (%)");
         tooltip("Na mesma avaliação, nos exercícios que andam: a velocidade feita sobre a pedida (até 100%), a média.");
         lineChart("##velocidade", { { &real.reach, cyan, false, "velocidade" } }, 0.0f, 100.0f, size,
-            percent(real.reach).c_str(), "%", &real.times, false, "sem avaliação no período");
+            percent(real.reach).c_str(), "%", &real.times, false, empty);
         ImGui::EndGroup();
         return;
     }
