@@ -588,6 +588,9 @@ void ReinforcementLearningScreen::ensureViewer() {
                     m_viewerDrill, TrackingViewer3D::locomotionTaskOf(task, m_options.sourceRoot / "assets"),
                     TrackingViewer3D::speedScaleOf(task), TrackingViewer3D::filterBetaOf(task),
                     TrackingViewer3D::conditionsOf(task));
+            else if (m_viewerDrill == TrackingViewer3D::GetUpDrill && TrackingViewer3D::getUpReady())
+                // (O levantar do chao e a rede propria dele, a do treino a parte, nao a deste.)
+                m_locomotion = std::make_unique<TrackingViewer3D>(m_options.sourceRoot / "assets", seed, m_viewerDrill);
             else
                 m_locomotion = std::make_unique<LocomotionViewer3D>(task, m_options.sourceRoot / "assets", m_viewerDrill,
                     seed);
@@ -895,6 +898,7 @@ void ReinforcementLearningScreen::update(float deltaSeconds) {
     if ((m_policyWatch -= deltaSeconds) <= 0.0f) {
         m_policyWatch = 2.0f;
         reloadPolicy(false);
+        m_getUpTraining = TrackingViewer3D::getUpTraining();
     }
     // (A leitura pedida chega no quadro seguinte em que ficar pronta.)
     if (m_historyPending || m_historyRun != activeRun() || (m_historyWatch -= deltaSeconds) <= 0.0f) {
@@ -1308,13 +1312,12 @@ void ReinforcementLearningScreen::drawDrills() {
         for (const bool active : { true, false }) {
             if (!ImGui::CollapsingHeader(active ? "Ativos" : "Inativos", active ? ImGuiTreeNodeFlags_DefaultOpen : 0)) continue;
             for (std::size_t i = 0; i < m_drillIds.size(); ++i) {
-                const bool training = i >= m_drillWeights.size() || m_drillWeights[i] > 0.0f;
+                // (O levantar e outra rede, o DeepMimic, num treino a parte: ativo enquanto aquele treino roda.)
+                const bool getUp = !motor && i < m_drillInfo.size() && m_drillInfo[i].getUp;
+                const bool training = getUp ? m_getUpTraining : (i >= m_drillWeights.size() || m_drillWeights[i] > 0.0f);
                 if (training != active) continue;
                 const std::string label = UI::FontAwesome::label(UI::FontAwesome::Crosshairs, m_drillNames[i].c_str())
                     + "##drill" + m_drillIds[i];
-                // (No rastreador o levantar e outra rede, o DeepMimic: fica na lista, desligado.)
-                const bool getUp = TrackingViewer3D::isTrackingTask(m_viewerTask) && i < m_drillInfo.size()
-                    && m_drillInfo[i].getUp;
                 const bool apart = getUp && !TrackingViewer3D::getUpReady();
                 ImGui::BeginDisabled(apart);
                 if (phaseButton(label.c_str(), m_drillIds[i] == m_viewerDrill, { -1.0f, ui(30.0f) }, training ? 1 : 0))

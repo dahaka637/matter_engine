@@ -225,6 +225,8 @@ private:
     std::filesystem::path m_policyPath;
     std::string m_policyText;
     float m_policyWatch = 0.0f;
+    // Se o treino a parte do levantar do chao esta rodando (o exercicio dele entre os ativos).
+    bool m_getUpTraining = false;
     float m_accumulator = 0.0f;
     // Onde a pelve aparece no ultimo quadro (0 a 1 na imagem; -1 fora dela).
     std::array<float, 2> m_pelvisOnScreen { -1.0f, -1.0f };

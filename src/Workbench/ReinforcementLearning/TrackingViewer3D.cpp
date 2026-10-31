@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
@@ -21,6 +22,13 @@ namespace {
 
 // A velocidade de quando a tela nao pede outra (a do prototipo, G1).
 constexpr float DefaultSpeed = 3.0f;
+
+// O treino do levantar de cada clipe (0: de brucos; 1: de costas, o do clipe que rola para brucos, 31/10).
+std::filesystem::path getUpRun(std::size_t clip) {
+    const char* home = std::getenv("HOME");
+    return std::filesystem::path(home != nullptr ? home : ".") / ".local/share/matter-engine/rl/runs"
+        / (clip == 0 ? "levantar_frente" : "levantar_costas_rola");
+}
 
 } // namespace
 
@@ -335,14 +343,22 @@ TrackingViewer3D::TrackingViewer3D(const std::filesystem::path& assetsDirectory,
 }
 
 std::filesystem::path TrackingViewer3D::getUpExport(std::size_t clip) {
-    const char* home = std::getenv("HOME");
-    return std::filesystem::path(home != nullptr ? home : ".") / ".local/share/matter-engine/rl/runs"
-        / (clip == 0 ? "levantar_frente" : "levantar_costas") / "exports/policy_latest.mrlpolicy";
+    return getUpRun(clip) / "exports/policy_latest.mrlpolicy";
 }
 
 bool TrackingViewer3D::getUpReady() {
     std::error_code error;
     return std::filesystem::exists(getUpExport(0), error) || std::filesystem::exists(getUpExport(1), error);
+}
+
+bool TrackingViewer3D::getUpTraining() {
+    // (O treino grava o log a cada ~2 min.)
+    std::error_code error;
+    for (std::size_t clip = 0; clip < 2; ++clip) {
+        const auto written = std::filesystem::last_write_time(getUpRun(clip) / "log.jsonl", error);
+        if (!error && std::filesystem::file_time_type::clock::now() - written < std::chrono::minutes(10)) return true;
+    }
+    return false;
 }
 
 TrackingViewer3D::~TrackingViewer3D() = default;

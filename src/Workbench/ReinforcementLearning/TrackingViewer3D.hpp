@@ -61,10 +61,12 @@ public:
     [[nodiscard]] static float filterBetaOf(const std::filesystem::path& trackingTask);
     using Conditions = TrackingViewerConditions3D;
     // O levantar do chao (o exercicio "levantar", 29/10): as redes de brucos e de costas, as ultimas exportadas
-    // pelos treinos levantar_frente e levantar_costas (vazio: sem a rede).
+    // pelos treinos levantar_frente e levantar_costas_rola (vazio: sem a rede). Treinando: um dos dois gravou
+    // o log nos ultimos 10 min (ele treina a parte, numa rede propria).
     static constexpr const char* GetUpDrill = "levantar";
     [[nodiscard]] static std::filesystem::path getUpExport(std::size_t clip);
     [[nodiscard]] static bool getUpReady();
+    [[nodiscard]] static bool getUpTraining();
     [[nodiscard]] static Conditions conditionsOf(const std::filesystem::path& trackingTask);
 
     // drill: "rumoN" (andar no rumo N) ou um dos parados; com locomotionTask, o id de um
