@@ -47,9 +47,16 @@ public:
     explicit TrackingGetUpPostureProbe3D(const RagdollProfile3D& profile);
 
     [[nodiscard]] TrackingGetUpPosture3D measure(std::span<const PhysicsBodyState3D> links) const;
-    // A nota de estado da tarefa: so de pe, 0,8 mais o centro de massa parado no chao 0,2 (exp(-2 v^2)).
+    // A nota de estado da tarefa: so de pe, 0,5 mais o centro de massa parado no chao 0,2 (exp(-2 v^2)) mais a pose do
+    // parado 0,3 (31/10 07h50, ele: de pe "nao tem referencia da pose do parado idle" - a cabeca ia para tras e o peito
+    // arqueava). Sem a pose do parado dada, a parte dela vale 1.
     [[nodiscard]] float standingReward(const TrackingGetUpPosture3D& posture,
         std::span<const PhysicsBodyState3D> links) const;
+    // A pose do parado (um quadro do clipe parado): a rotacao de cada junta no pai.
+    void setIdlePose(std::span<const PhysicsBodyState3D> links);
+    // A semelhanca com a pose do parado: exp(-0,5 soma dos angulos^2 de cada junta), 1 igual. (O -2 do DeepMimic dava
+    // 0,007 na pose em que ele ficava de pe - soma 2,5: braco 56 graus, coxa 40, cabeca 29 - e nenhum gradiente.)
+    [[nodiscard]] float idlePoseMatch(std::span<const PhysicsBodyState3D> links) const;
     // O potencial da subida (31/10 07h: como nota de estado - a cabeca subindo 0,6 e a pelve em pe 0,2 -, ele assentava
     // sentado ou ajoelhado em 1 s e colhia ~0,4 por passo ate o fim; como potencial, a subida paga ao subir, a descida
     // devolve e ficar parado no meio nao rende): 30 x (0,6 a cabeca subindo de 0,15 a 1,5 m + 0,2 a pelve em pe).
@@ -64,6 +71,7 @@ private:
     std::uint32_t m_root = 0;
     std::uint32_t m_head = 0;
     std::uint32_t m_chest = 0;
+    std::vector<Quaternion> m_idle;
 };
 
 } // namespace MatterEngine

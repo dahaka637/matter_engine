@@ -209,6 +209,11 @@ TrackingGetUpAmpTraining3D::TrackingGetUpAmpTraining3D(const TrackingGetUpAmpSet
     impl.contract = std::make_unique<TrackingGetUpContract3D>(*impl.profile);
     impl.features = std::make_unique<TrackingAmpFeatures3D>(*impl.profile);
     impl.posture = std::make_unique<TrackingGetUpPostureProbe3D>(*impl.profile);
+    {
+        TrackingClipFrame3D idle;
+        impl.references.back()->frame(0.0f, {}, 0.0f, idle);
+        impl.posture->setIdlePose(idle.links);
+    }
     // (Os nomes do corpo: os do levantar do DeepMimic sem a fase, a ultima.)
     impl.observationNames.assign(impl.contract->observationNames().begin(), impl.contract->observationNames().end() - 1);
     const std::uint32_t hardware = std::max(1u, std::thread::hardware_concurrency());
