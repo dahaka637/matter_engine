@@ -48,8 +48,10 @@ ARMS = g.ARMS
 VARIANTS = {
     "front": dict(source="kimodo_getup_front.retarget.json", id="stand_up_front_kimodo",
                   name="Levantar de bruços (Kimodo)", start=0.85),
+    # (31/10) De costas ele rola para brucos em ~0,7 s e levanta pelo levantar de brucos (a fonte e o rolamento
+    # do Kimodo emendado no levantar_frente a partir de 0,87 s): sem o deitado parado no comeco, o corte e zero.
     "back": dict(source="kimodo_getup_back.retarget.json", id="stand_up_back_kimodo",
-                 name="Levantar de costas (Kimodo)", start=0.85),
+                 name="Levantar de costas (Kimodo: rola e levanta)", start=0.0, full_root=True),
 }
 
 
@@ -112,6 +114,22 @@ def main() -> None:
     for i in range(1, len(rig.links)):
         coordinates[:, i, :] = g.gaussian(coordinates[:, i, :], sigma)
     rotations = [g.from_pitch_roll(p, r) for p, r in zip(pitches, rolls)]
+    if variant.get("full_root"):
+        # (31/10) Rolando, o rumo da raiz vira 180 graus (de costas aponta para os pes, de lado fica de traves, de
+        # brucos aponta para a cabeca): tirado quadro a quadro, a inclinacao que sobra punha o corpo de pe no meio
+        # do rolamento. Aqui a raiz fica inteira, so sem o rumo do primeiro quadro, e a pose de pe final no rumo
+        # do ultimo (o levantar do treino usa a rotacao inteira do clipe).
+        q0 = qfrom_axis_angle(np.array([0.0, 0.0, 1.0]), -yaw0)
+        full = []
+        for t in times:
+            _, rotation, _ = ref.sample(float(t), loop=False)
+            q = qnormalize(qmul(q0, rotation))
+            if full and np.dot(q, full[-1]) < 0.0:
+                q = -q
+            full.append(q)
+        rotations = [qnormalize(q) for q in g.gaussian(np.array(full), sigma)]
+        standing_rotation = qnormalize(qmul(qfrom_axis_angle(np.array([0.0, 0.0, 1.0]), heading_of(rotations[-1])),
+                                            standing_rotation))
 
     floor = float(rig.links[0].model_position[2]) - rig.standing_root_height
     body = [l.id for l in rig.links if not l.id.endswith("Foot") and not any(a in l.id for a in ARMS)]
