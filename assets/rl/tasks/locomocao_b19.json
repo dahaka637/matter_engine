@@ -1711,7 +1711,7 @@
       "id": "meia_volta",
       "displayName": "Meia-volta em movimento (o corpo vira junto)",
       "category": "basico",
-      "weight": 0.07,
+      "weight": 0.09,
       "minimum": {
         "fallFraction": 0.05
       },
@@ -2469,7 +2469,7 @@
     {
       "id": "curva_corrida_fechada",
       "displayName": "Curva fechada e em S, corrida",
-      "weight": 0.03,
+      "weight": 0.02,
       "minimum": {
         "fallFraction": 0.05,
         "velocityError": 0.7
@@ -2519,7 +2519,7 @@
     {
       "id": "curva_corrida_fechada_fixo",
       "displayName": "Curva fechada e em S, corrida, peito fixo",
-      "weight": 0.03,
+      "weight": 0.02,
       "minimum": {
         "fallFraction": 0.05,
         "velocityError": 0.7
@@ -2809,5 +2809,5 @@
   "comment_speeds": "30/10 01h50 (ele: 'Apos ele conseguir se movimentar aceitavel com aparencia aceitavel comecaremos a trabalhar mais a velocidade'): o curriculo de velocidade da b16 de volta, comecando no que o corpo faz a 0% (0,75-1,5 m/s por celula) e abrindo 0,25 m/s quando acompanha sem cair; o andar e o trote ate 4,5.",
   "comment_lateral": "30/10 02h (ele: 'de um jeito dele conseguir se movimentar pela direita e esquerda (trote lateral), seja criativo, pense em como recompensar e calibrar isso'): o contato 0,1 (cada pouso perto do pouso da referencia, o lado novo do Kimodo com os dois pes pousando) e o custo de cruzar as pernas 0,2 (o pe esquerdo a 8 cm a esquerda do direito no referencial da pelve; a regra dele do giro: os pes nunca cruzam).",
   "comment_pesos_b17": "30/10 02h38 (ordem dele: 'Os unicos treinos que devem estar ativos agora e o andar nas 8 direcoes (diagonais sorteadas), mas com foco total em lados, o restante treina menos so para nao deixar de treinar e desaprender'): direita e esquerda 0,3 cada; frente e tras 0,08; diagonais 0,12; o resto 0.",
-  "comment_b19_trote": "31/10 07h45 (pedido dele: 'o minimo deveria ser uns 2 m/s', as trocas a meu criterio): nas estrelas e curvas de trote a faixa andar 0,8-1,4 virou trote moderado 2,0-3,0 (mesmo peso); o teto do curriculo segue limitando por cima. As trocas ficam como estao ate as quedas baixarem. 07h04: os parados 0,14 -> 0,19."
+  "comment_b19_trote": "31/10 07h45 (pedido dele: 'o minimo deveria ser uns 2 m/s', as trocas a meu criterio): nas estrelas e curvas de trote a faixa andar 0,8-1,4 virou trote moderado 2,0-3,0 (mesmo peso); o teto do curriculo segue limitando por cima. As trocas ficam como estao ate as quedas baixarem. 07h04: os parados 0,14 -> 0,19. 09h03: a meia-volta 0,07 -> 0,09 (parada em ~36% de quedas desde o comeco do B19), paga pelas curvas de corrida livre e fixa em 0% (0,03 -> 0,02)."
 }
