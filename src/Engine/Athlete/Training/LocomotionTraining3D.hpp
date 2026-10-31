@@ -107,6 +107,8 @@ struct LocomotionEpisode3D {
     // O corpo do episodio (o corpo variavel; sem o bloco, o de hoje).
     float bodyHeight = BaseBodyHeightMeters;
     float bodyMass = BaseBodyMassKg;
+    // O episodio sem o teto do curriculo (1) ou com (0).
+    float uncapped = 0.0f;
     std::array<float, LocomotionCommandCells3D> cellDecisions {};
     std::array<float, LocomotionCommandCells3D> cellCruise {};
     std::array<float, LocomotionCommandCells3D> cellTracking {};

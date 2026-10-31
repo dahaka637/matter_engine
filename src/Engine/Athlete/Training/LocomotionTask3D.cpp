@@ -289,6 +289,9 @@ LocomotionTask3D loadLocomotionTask3D(const std::filesystem::path& path) {
         task.speedCurriculum.enabled = c.value("enabled", false);
         read(c, "frontier", task.speedCurriculum.frontier);
         if (!(task.speedCurriculum.frontier > 0.0f)) fail("speedCurriculum.frontier invalido");
+        read(c, "uncappedFraction", task.speedCurriculum.uncappedFraction);
+        if (!(task.speedCurriculum.uncappedFraction >= 0.0f && task.speedCurriculum.uncappedFraction <= 1.0f))
+            fail("speedCurriculum.uncappedFraction fora de 0..1");
         if (c.contains("caps")) {
             for (std::size_t d = 0; d < task.drills.size(); ++d) {
                 const auto found = c["caps"].find(task.drills[d].id);

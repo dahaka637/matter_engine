@@ -35,3 +35,10 @@ def test_change_drill_without_fall_counts_none():
     curriculum = SpeedCurriculum(_task(), ["frente", "troca"])
     curriculum.observe(np.array([_row(1, -1)], dtype=np.float32), COLUMNS)
     assert curriculum.records["troca"][0][-1][1] is False and curriculum.records["troca"][8][-1][1] is False
+
+
+def test_uncapped_episode_is_ignored():
+    curriculum = SpeedCurriculum(_task(), ["frente", "troca"])
+    columns = COLUMNS + ["sem_teto"]
+    curriculum.observe(np.array([_row(1, 8) + [1.0], _row(1, -1) + [0.0]], dtype=np.float32), columns)
+    assert len(curriculum.records["troca"][8]) == 1 and curriculum.records["troca"][8][-1][1] is False

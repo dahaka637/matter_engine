@@ -130,7 +130,7 @@ const std::vector<std::string>& locomotionEpisodeColumns3D() {
         for (const char* name : { "postura_tronco", "postura_pescoco", "pescoco_corpo", "pescoco_sombra",
                  "pescoco_relativo", "viavel_medio", "trancos_teto", "queda_desde_troca", "comeco_guardado",
                  "ajuda_nivel", "celula_queda", "levantou_s", "empurrao_tipo", "empurrao_newtons",
-                 "empurrao_segundos", "corpo_altura", "corpo_massa" })
+                 "empurrao_segundos", "corpo_altura", "corpo_massa", "sem_teto" })
             c.push_back(name);
         for (const char* field : { "decisoes", "cruzeiro", "rastreio", "erro2", "pedida", "feita", "fronteira",
                  "rastreio_fronteira" })
@@ -150,7 +150,7 @@ std::vector<float> locomotionEpisodeRow3D(const LocomotionEpisode3D& e) {
     row.insert(row.end(), e.terms.begin(), e.terms.end());
     for (float v : { e.postureTrunk, e.postureNeck, e.neckBody, e.neckShadow, e.neckRelative, e.meanFeasible, e.jerkCap,
              e.fallSinceChange, e.savedStart, e.assistLevel, e.fallCell, e.stoodSeconds, e.pushKind, e.pushNewtons,
-             e.pushSeconds, e.bodyHeight, e.bodyMass })
+             e.pushSeconds, e.bodyHeight, e.bodyMass, e.uncapped })
         row.push_back(v);
     for (const auto* cells : { &e.cellDecisions, &e.cellCruise, &e.cellTracking, &e.cellError2, &e.cellAsked, &e.cellMade,
              &e.cellFrontierCruise, &e.cellFrontierTracking })
@@ -300,6 +300,7 @@ struct LocomotionTraining3D::Impl {
         bool lastFacingValid = false;
         // O levantar: ja esteve deitado, ha quanto esta de pe e quando levantou.
         bool wasDown = false;
+        bool uncapped = false;
         float uprightSeconds = 0.0f;
         float stoodSeconds = -1.0f;
         // O instante candidato a comeco guardado (vira do banco se o corpo
@@ -444,7 +445,7 @@ struct LocomotionTraining3D::Impl {
                 const std::size_t cell = locomotionCommandCell3D(std::atan2(input.stickLeft, input.stickForward),
                     world.pilot.cameraMode != PilotCameraMode3D::Fixed);
                 const float cap = task.speedCurriculum.caps[world.drill][cell];
-                if (cap > 0.0f) wanted = std::min(wanted, cap);
+                if (cap > 0.0f && !world.uncapped) wanted = std::min(wanted, cap);
             }
             float table = tableSpeed();
             // Acima do trote da tabela, o sprint (o jogador segurando a tecla).
@@ -520,6 +521,9 @@ struct LocomotionTraining3D::Impl {
         }
         // A ajuda sorteada por episodio (so no treino; o levantar fica no da tarefa).
         world.assistLevel = task.standingAssistPercent;
+        // (Com a fatia em 0, nem sorteia: o treino de antes, bit a bit.)
+        world.uncapped = !settings.evaluation && task.speedCurriculum.enabled && task.speedCurriculum.uncappedFraction > 0.0f
+            && std::uniform_real_distribution<float>(0.0f, 1.0f)(world.rng) < task.speedCurriculum.uncappedFraction;
         scene.runtimeSettings().historicalAssistRuler = task.historicalAssistRuler;
         world.pushForce = {};
         world.pushTicks = 0;
@@ -1015,7 +1019,7 @@ struct LocomotionTraining3D::Impl {
                     world.cellTracking[cell] += kernelValue;
                     world.cellError2[cell] += static_cast<double>(e) * e;
                     // A fronteira (o curriculo): o pedido no teto da celula.
-                    if (task.speedCurriculum.enabled && world.drill < task.speedCurriculum.caps.size()) {
+                    if (task.speedCurriculum.enabled && !world.uncapped && world.drill < task.speedCurriculum.caps.size()) {
                         const float cap = task.speedCurriculum.caps[world.drill][cell];
                         if (cap > 0.0f && askedSpeed >= cap - task.speedCurriculum.frontier) {
                             // (O rastreio da fronteira pela velocidade suavizada em ~uma
@@ -1287,6 +1291,7 @@ struct LocomotionTraining3D::Impl {
             : -1.0f;
         e.savedStart = world.savedStart ? 1.0f : 0.0f;
         e.assistLevel = world.assistLevel;
+        e.uncapped = world.uncapped ? 1.0f : 0.0f;
         e.stoodSeconds = world.stoodSeconds;
         e.pushKind = static_cast<float>(world.pushKind);
         e.pushNewtons = world.pushNewtons;

@@ -123,10 +123,14 @@ class SpeedCurriculum:
             return
         col = {name: i for i, name in enumerate(columns)}
         aid = col.get("ajuda_nivel")
+        uncapped = col.get("sem_teto")
         for row in rows:
             # So os episodios na ajuda base da tarefa (a ajuda sorteada, S4, fica de fora): o
             # teto abre pelo que o corpo faz sem ajuda, nao ajudado (o A/B S4 abriu 15 tetos contra 8).
             if aid is not None and row[aid] > self.base_aid + 1e-3:
+                continue
+            # (O episodio sem o teto, 31/10: o pedido acima do teto nao diz nada da fronteira.)
+            if uncapped is not None and row[uncapped] > 0.5:
                 continue
             drill = self.drill_ids[int(row[col["exercicio"]])]
             fall_cell = int(row[col["celula_queda"]])

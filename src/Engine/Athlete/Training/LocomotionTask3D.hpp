@@ -115,6 +115,10 @@ struct LocomotionSpeedCurriculum3D {
     // Por exercicio (o indice do exercicio na tarefa), o teto de cada celula
     // (m/s; <= 0: sem teto).
     std::vector<std::array<float, LocomotionCommandCells3D>> caps;
+    // A fatia dos episodios do treino sem o teto (31/10, ele: na corrida de verdade ele cai logo depois de chegar;
+    // o treino so pedia ate o teto, ~3 m/s, e o jogo pede 6-8): o pedido inteiro do piloto, para aprender a correr no
+    // que consegue sem cair quando o pedido passa do que ele faz. Fora do rastreio da fronteira e das quedas do curriculo.
+    float uncappedFraction = 0.0f;
 };
 
 // Os comecos em estados guardados (RSI/STI): instantaneos do treino em
