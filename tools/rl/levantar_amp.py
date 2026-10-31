@@ -287,6 +287,12 @@ def main() -> int:
                        ("tarefa.json", {"schema": "matter-getup-amp-1", "id": "levantar_livre"})):
         if not (run / name).exists():
             (run / name).write_text(json.dumps(data, ensure_ascii=False))
+    # (A configuracao do v2 de agora no run.json, a cada abertura: o laboratorio mostra o levantar em movimento e o
+    # evitar a queda com as mesmas forcas e velocidades do treino.)
+    info = json.loads((run / "run.json").read_text())
+    info["v2"] = {"movimento": args.movimento, "evitar": args.evitar, "evitar_forca": list(args.evitar_forca),
+                  "empurrao_forca": list(args.empurrao_forca), "velocidade": list(args.velocidade)}
+    (run / "run.json").write_text(json.dumps(info, ensure_ascii=False))
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     torch.manual_seed(args.semente)
     v2 = dict(avoid_newtons=tuple(args.evitar_forca), push_newtons=tuple(args.empurrao_forca),

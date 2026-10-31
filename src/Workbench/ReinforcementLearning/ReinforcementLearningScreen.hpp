@@ -237,6 +237,10 @@ private:
     // quedas, por lado, e o de pe dos que comecam de pe) e o teste sem ruido (repetido ate o seguinte).
     struct GetUpCurve {
         std::vector<float> standing, test, kept, prone, supine, side, seconds;
+        // O levantar v2: o em movimento (chegou, de pe, velocidade rumo ao alvo) e o evitar a queda (evitou, recompos
+        // e o tempo), no treino e nas avaliacoes fixas.
+        std::vector<float> reached, reachedTest, movingStood, towardSpeed, towardSpeedTest;
+        std::vector<float> avoided, avoidedTest, recomposed, recomposeSeconds, recomposeSecondsTest;
         std::filesystem::file_time_type write {};
     } m_getUpCurve;
     float m_accumulator = 0.0f;

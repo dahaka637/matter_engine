@@ -73,6 +73,17 @@ struct TrackingGetUpAmpEpisode3D {
     float recomposedSeconds = -1.0f;
 };
 
+// O que o visualizador do laboratorio desenha de um mundo: como comecou, o alvo (o levantar em movimento, enquanto o
+// pedido dura) e o empurrao de agora.
+struct TrackingGetUpAmpWorldView3D {
+    std::uint32_t startKind = 0;
+    bool hasTarget = false;
+    Vec3 target;
+    float commandSpeed = 0.0f;
+    bool pushing = false;
+    Vec3 pushForce;
+};
+
 // O lote do levantar livre (vault 04_locomocao/plano_compostos_31_10.md, "O levantar livre"): o ragdoll do jogo a 0%
 // comecando de quedas sorteadas (uma pose de um clipe, o corpo inteiro num sentido sorteado, solto com os musculos
 // fracos ate assentar no chao) e, no treino, tambem de instantes dos clipes de levantar. A acao e a do levantar do
@@ -125,6 +136,7 @@ public:
     [[nodiscard]] const RagdollState3D& body(std::size_t world) const;
     [[nodiscard]] const RagdollProfile3D& profile() const;
     [[nodiscard]] std::string frameLines(std::size_t world) const;
+    [[nodiscard]] TrackingGetUpAmpWorldView3D worldView(std::size_t world) const;
 
 private:
     struct Impl;

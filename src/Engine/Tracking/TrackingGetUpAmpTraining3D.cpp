@@ -571,6 +571,18 @@ const RagdollState3D& TrackingGetUpAmpTraining3D::body(std::size_t world) const 
 
 const RagdollProfile3D& TrackingGetUpAmpTraining3D::profile() const { return *m_impl->profile; }
 
+TrackingGetUpAmpWorldView3D TrackingGetUpAmpTraining3D::worldView(std::size_t world) const {
+    const Impl::World& w = m_impl->worlds.at(world);
+    TrackingGetUpAmpWorldView3D view;
+    view.startKind = w.startKind;
+    view.hasTarget = w.startKind == 3;
+    view.target = w.target;
+    view.commandSpeed = w.commandSpeed;
+    view.pushing = w.pushTicks > 0;
+    view.pushForce = w.pushForce;
+    return view;
+}
+
 std::string TrackingGetUpAmpTraining3D::frameLines(std::size_t world) const {
     const Impl& impl = *m_impl;
     const Impl::World& w = impl.worlds.at(world);

@@ -65,11 +65,19 @@ public:
     // o treino levantar_livre, tools/rl/levantar_amp.py), a ultima exportada. Treinando: o log gravado nos ultimos
     // 10 min (ele treina a parte, numa rede propria).
     static constexpr const char* GetUpDrill = "levantar";
+    // O levantar v2 (31/10 17h, o treino levantar_v2): o levantar em movimento (cai e levanta ja indo para um alvo,
+    // em arrancada) e o evitar a queda (de pe, um empurrao forte), com a mesma rede, cada um pela avaliacao dele.
+    static constexpr const char* MovingGetUpDrill = "levantar_movimento";
+    static constexpr const char* AvoidFallDrill = "evitar_queda";
+    [[nodiscard]] static bool isGetUpDrill(const std::string& drill);
+    // Se o treino do levantar de agora e o v2 (os dois exercicios novos existem nele).
+    [[nodiscard]] static bool getUpVersion2();
     [[nodiscard]] static std::filesystem::path getUpExport();
     [[nodiscard]] static std::filesystem::path getUpLog();
     [[nodiscard]] static bool getUpReady();
     [[nodiscard]] static bool getUpTraining();
-    // No levantar: quantas quedas ele levantou (ficou de pe alguma vez) e quantas acabaram desde o comeco.
+    // No levantar: o que deu certo e quantos episodios acabaram desde o comeco - no levantar do chao, as quedas que
+    // ele levantou (ficou de pe alguma vez); no em movimento, as que chegaram ao alvo; no evitar, as que nao cairam.
     [[nodiscard]] std::pair<std::uint32_t, std::uint32_t> getUpTally() const;
     [[nodiscard]] static Conditions conditionsOf(const std::filesystem::path& trackingTask);
 

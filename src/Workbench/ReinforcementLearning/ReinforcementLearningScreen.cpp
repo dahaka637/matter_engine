@@ -543,6 +543,28 @@ void ReinforcementLearningScreen::loadDrills() {
     } catch (const std::exception& error) {
         m_viewerError = error.what();
     }
+    // O levantar v2 (31/10 17h): o levantar em movimento e o evitar a queda, da mesma rede do levantar (o treino a
+    // parte levantar_v2), logo depois do "Levantar do chao" (fora da tarefa da locomocao: ela nao muda).
+    if (const auto at = std::find(m_drillIds.begin(), m_drillIds.end(), std::string(TrackingViewer3D::GetUpDrill));
+        at != m_drillIds.end() && TrackingViewer3D::getUpVersion2()) {
+        const std::size_t i = static_cast<std::size_t>(at - m_drillIds.begin());
+        const std::string category = i < m_drillCategories.size() ? m_drillCategories[i] : std::string();
+        const int phase = i < m_drillPhases.size() ? m_drillPhases[i] : 1;
+        const std::array<std::array<const char*, 2>, 2> extra { { { TrackingViewer3D::MovingGetUpDrill, "Levantar em movimento" },
+            { TrackingViewer3D::AvoidFallDrill, "Evitar a queda" } } };
+        for (std::size_t k = 0; k < extra.size(); ++k) {
+            const std::size_t where = i + 1 + k;
+            m_drillIds.insert(m_drillIds.begin() + static_cast<std::ptrdiff_t>(where), extra[k][0]);
+            m_drillNames.insert(m_drillNames.begin() + static_cast<std::ptrdiff_t>(where), extra[k][1]);
+            if (m_drillPhases.size() >= where) m_drillPhases.insert(m_drillPhases.begin() + static_cast<std::ptrdiff_t>(where), phase);
+            if (m_drillCategories.size() >= where)
+                m_drillCategories.insert(m_drillCategories.begin() + static_cast<std::ptrdiff_t>(where), category);
+            if (m_drillWeights.size() >= where) m_drillWeights.insert(m_drillWeights.begin() + static_cast<std::ptrdiff_t>(where), 0.0f);
+            if (m_drillInfo.size() >= where)
+                m_drillInfo.insert(m_drillInfo.begin() + static_cast<std::ptrdiff_t>(where),
+                    { extra[k][0], 0.0, k == 0 ? 5.0 : 0.0, true });
+        }
+    }
     if (std::find(m_drillIds.begin(), m_drillIds.end(), m_viewerDrill) == m_drillIds.end())
         m_viewerDrill = m_drillIds.empty() ? std::string() : m_drillIds.front();
 }
@@ -554,7 +576,7 @@ void ReinforcementLearningScreen::showDrill(const std::string& drill) {
     m_viewerDrill = drill;
     resetViewer();
     // (O levantar: os graficos dele lidos na hora, sem esperar o ciclo.)
-    if (drill == TrackingViewer3D::GetUpDrill) refreshGetUpCurve();
+    if (TrackingViewer3D::isGetUpDrill(drill)) refreshGetUpCurve();
 }
 
 void ReinforcementLearningScreen::resetViewer() {
@@ -591,7 +613,7 @@ void ReinforcementLearningScreen::ensureViewer() {
                     m_viewerDrill, TrackingViewer3D::locomotionTaskOf(task, m_options.sourceRoot / "assets"),
                     TrackingViewer3D::speedScaleOf(task), TrackingViewer3D::filterBetaOf(task),
                     TrackingViewer3D::conditionsOf(task));
-            else if (m_viewerDrill == TrackingViewer3D::GetUpDrill
+            else if (TrackingViewer3D::isGetUpDrill(m_viewerDrill)
                 && (TrackingViewer3D::getUpReady() || TrackingViewer3D::getUpTraining()))
                 // (O levantar do chao e a rede propria dele, a do treino a parte, nao a deste.)
                 m_locomotion = std::make_unique<TrackingViewer3D>(m_options.sourceRoot / "assets", seed, m_viewerDrill);
@@ -908,7 +930,7 @@ void ReinforcementLearningScreen::update(float deltaSeconds) {
         m_policyWatch = 2.0f;
         reloadPolicy(false);
         m_getUpTraining = TrackingViewer3D::getUpTraining();
-        if (m_viewerDrill == TrackingViewer3D::GetUpDrill) refreshGetUpCurve();
+        if (TrackingViewer3D::isGetUpDrill(m_viewerDrill)) refreshGetUpCurve();
     }
     // (A leitura pedida chega no quadro seguinte em que ficar pronta.)
     if (m_historyPending || m_historyRun != activeRun() || (m_historyWatch -= deltaSeconds) <= 0.0f) {
@@ -1540,9 +1562,16 @@ void ReinforcementLearningScreen::drawViewport(CanvasTarget& canvas, float botto
     std::string label = m_policyText + "\npedido " + decimal(viewerRequestedSpeed(), 1) + " m/s · ele "
         + decimal(viewerSpeed(), 1) + " m/s";
     if (const auto* tracking = dynamic_cast<const TrackingViewer3D*>(m_locomotion.get());
-        tracking != nullptr && m_viewerDrill == TrackingViewer3D::GetUpDrill) {
-        const auto [stood, falls] = tracking->getUpTally();
-        label = m_policyText + "\nlevantou " + std::to_string(stood) + " de " + std::to_string(falls) + " quedas";
+        tracking != nullptr && TrackingViewer3D::isGetUpDrill(m_viewerDrill)) {
+        const auto [good, total] = tracking->getUpTally();
+        const std::string count = std::to_string(good) + " de " + std::to_string(total);
+        if (m_viewerDrill == TrackingViewer3D::MovingGetUpDrill)
+            label = m_policyText + "\nchegou ao alvo " + count + " · pedido " + decimal(viewerRequestedSpeed(), 1)
+                + " m/s · ele " + decimal(viewerSpeed(), 1) + " m/s";
+        else if (m_viewerDrill == TrackingViewer3D::AvoidFallDrill)
+            label = m_policyText + "\nevitou a queda " + count + " empurrões";
+        else
+            label = m_policyText + "\nlevantou " + count + " quedas";
     }
     drawList->AddText({ origin.x + ui(10.0f), origin.y + ui(8.0f) }, UiMuted, label.c_str());
 }
@@ -1681,7 +1710,7 @@ const TrainingEvaluationCharts3D& ReinforcementLearningScreen::evaluationCharts(
 }
 
 void ReinforcementLearningScreen::drawCharts(float height) {
-    if (m_viewerDrill == TrackingViewer3D::GetUpDrill) {
+    if (TrackingViewer3D::isGetUpDrill(m_viewerDrill)) {
         drawGetUpCharts(height);
         return;
     }
@@ -1703,13 +1732,21 @@ void ReinforcementLearningScreen::refreshGetUpCurve() {
         const auto it = row.find(key);
         return it == row.end() || !it->is_number() ? none : 100.0f * it->get<float>();
     };
-    float test = none, seconds = none;
+    const auto plain = [none](const nlohmann::json& row, const char* key) {
+        const auto it = row.find(key);
+        return it == row.end() || !it->is_number() ? none : it->get<float>();
+    };
+    float test = none, seconds = none, movingTest = none, movingSpeedTest = none, avoidTest = none, recomposeTest = none;
     for (std::string line; std::getline(file, line);) {
         const nlohmann::json row = nlohmann::json::parse(line, nullptr, false);
         if (row.is_discarded() || !row.is_object() || !row.contains("atualizacao")) continue;
         if (row.value("aval", false)) {
             test = percent(row, "de_pe");
             seconds = percent(row, "tempo") / 100.0f;
+            movingTest = percent(row, "mov_chegou");
+            movingSpeedTest = plain(row, "mov_vel_rumo");
+            avoidTest = percent(row, "evitar_evitou");
+            recomposeTest = plain(row, "evitar_recompos_s");
             continue;
         }
         if (!row.contains("tarefa")) continue;
@@ -1720,6 +1757,17 @@ void ReinforcementLearningScreen::refreshGetUpCurve() {
         curve.side.push_back(percent(row, "queda_lado"));
         curve.test.push_back(test);
         curve.seconds.push_back(seconds);
+        // (O levantar v2: o em movimento e o evitar a queda, no treino e, tracejado, nas avaliacoes fixas.)
+        curve.reached.push_back(percent(row, "mov_chegou"));
+        curve.reachedTest.push_back(movingTest);
+        curve.movingStood.push_back(percent(row, "mov_de_pe"));
+        curve.towardSpeed.push_back(plain(row, "mov_vel_rumo"));
+        curve.towardSpeedTest.push_back(movingSpeedTest);
+        curve.avoided.push_back(percent(row, "evitar_evitou"));
+        curve.avoidedTest.push_back(avoidTest);
+        curve.recomposed.push_back(percent(row, "evitar_recompos"));
+        curve.recomposeSeconds.push_back(plain(row, "evitar_recompos_s"));
+        curve.recomposeSecondsTest.push_back(recomposeTest);
     }
     m_getUpCurve = std::move(curve);
 }
@@ -1728,7 +1776,7 @@ void ReinforcementLearningScreen::drawGetUpCharts(float height) {
     ImGui::Dummy({ 1.0f, ui(4.0f) });
     const GetUpCurve& c = m_getUpCurve;
     const ImVec4 green { 0.30f, 0.82f, 0.56f, 1.0f }, amber { 0.96f, 0.70f, 0.28f, 1.0f },
-        violet { 0.70f, 0.56f, 0.96f, 1.0f }, blue { 0.47f, 0.62f, 0.98f, 1.0f };
+        violet { 0.70f, 0.56f, 0.96f, 1.0f }, blue { 0.47f, 0.62f, 0.98f, 1.0f }, cyan { 0.35f, 0.78f, 0.94f, 1.0f };
     const auto last = [](const std::vector<float>& values, const char* format) {
         const float v = lastFinite(values);
         if (!std::isfinite(v)) return std::string();
@@ -1740,6 +1788,53 @@ void ReinforcementLearningScreen::drawGetUpCharts(float height) {
     const ImVec2 size { (ImGui::GetContentRegionAvail().x - spacing) * 0.5f,
         std::max(height - ImGui::GetTextLineHeightWithSpacing(), ui(40.0f)) };
     const float rowTop = ImGui::GetCursorPosY();
+    // Os graficos com o valor da avaliacao fixa na frente (o numero grande) e o do treino depois.
+    const auto both = [&](const std::vector<float>& test, const std::vector<float>& train, const char* format) {
+        const std::string t = last(test, format), r = last(train, format);
+        return t.empty() ? r : "teste " + t + (r.empty() ? std::string() : " · treino " + r);
+    };
+    if (m_viewerDrill == TrackingViewer3D::MovingGetUpDrill) {
+        ImGui::BeginGroup();
+        ImGui::TextColored(InfoText, "%s", "Chegou ao alvo (%) · Levantar em movimento");
+        tooltip("Cai e levanta já indo para um alvo a 4–8 m, em arrancada, virado para ele: quantos chegam ao alvo nos "
+                "6 s. Tracejado, o teste da rede sem ruído em 32 quedas fixas com alvo; em laranja, quantos ficam de pé.");
+        lineChart("##chegou", { { &c.reached, green, false, "treino" }, { &c.reachedTest, green, true, "teste sem ruído" },
+                                  { &c.movingStood, amber, false, "de pé" } },
+            0.0f, 100.0f, size, both(c.reachedTest, c.reached, "%.0f%%").c_str(), "%", nullptr, false, "sem dados ainda");
+        ImGui::EndGroup();
+        ImGui::SameLine();
+        ImGui::SetCursorPosY(rowTop);
+        ImGui::BeginGroup();
+        ImGui::TextColored(InfoText, "%s", "Velocidade rumo ao alvo (m/s) · Levantar em movimento");
+        tooltip("A velocidade média rumo ao alvo enquanto de pé e com o pedido (2,5–5 m/s): o treino e, tracejado, o teste.");
+        lineChart("##rumo", { { &c.towardSpeed, cyan, false, "treino" }, { &c.towardSpeedTest, cyan, true, "teste sem ruído" } },
+            0.0f, 6.0f, size, both(c.towardSpeedTest, c.towardSpeed, "%.2f m/s").c_str(), "m/s", nullptr, false,
+            "sem dados ainda");
+        ImGui::EndGroup();
+        return;
+    }
+    if (m_viewerDrill == TrackingViewer3D::AvoidFallDrill) {
+        ImGui::BeginGroup();
+        ImGui::TextColored(InfoText, "%s", "Evitou a queda (%) · Evitar a queda");
+        tooltip("De pé, um empurrão forte (o curto ou o contínuo) que derrubava a rede de antes: quantos não caem "
+                "(cabeça abaixo de 0,9 m ou o chão tocado por algo que não os pés, as mãos e os antebraços). Tracejado, o "
+                "teste sem ruído em 32 empurrões fixos; em laranja, quantos se recompõem (de pé, na pose do parado e quase parado).");
+        lineChart("##evitou", { { &c.avoided, green, false, "treino" }, { &c.avoidedTest, green, true, "teste sem ruído" },
+                                  { &c.recomposed, amber, false, "recompôs-se" } },
+            0.0f, 100.0f, size, both(c.avoidedTest, c.avoided, "%.0f%%").c_str(), "%", nullptr, false, "sem dados ainda");
+        ImGui::EndGroup();
+        ImGui::SameLine();
+        ImGui::SetCursorPosY(rowTop);
+        ImGui::BeginGroup();
+        ImGui::TextColored(InfoText, "%s", "Tempo para se recompor (s) · Evitar a queda");
+        tooltip("Do fim do empurrão até estar de pé, na pose do parado e quase parado: o treino e, tracejado, o teste.");
+        lineChart("##recompos", { { &c.recomposeSeconds, violet, false, "treino" },
+                                    { &c.recomposeSecondsTest, violet, true, "teste sem ruído" } },
+            0.0f, 4.0f, size, both(c.recomposeSecondsTest, c.recomposeSeconds, "%.2f s").c_str(), "s", nullptr, false,
+            "sem dados ainda");
+        ImGui::EndGroup();
+        return;
+    }
     ImGui::BeginGroup();
     ImGui::TextColored(InfoText, "%s", "Levantou da queda (%) · Levantar do chão");
     tooltip("De pé no fim do episódio (6 s), começando de uma queda sorteada: o treino (com ruído) e, tracejado, o "

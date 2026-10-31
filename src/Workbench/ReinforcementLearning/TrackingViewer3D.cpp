@@ -62,6 +62,8 @@ struct TrackingViewer3D::Impl {
     std::filesystem::path assets;
     std::uint64_t seed = 1;
     std::vector<float> getUpObservation, getUpAction;
+    // Qual avaliacao do levantar: 0 as quedas, 1 o levantar em movimento, 2 o evitar a queda.
+    std::uint32_t getUpKind = 0;
     void startGetUp() {
         TrackingGetUpAmpSettings3D s;
         s.assetsDirectory = assets.string();
@@ -69,6 +71,22 @@ struct TrackingViewer3D::Impl {
         s.threads = 1;
         s.seed = seed;
         s.evaluation = true;
+        s.evaluationKind = getUpKind;
+        // (As forcas e as velocidades do treino de agora: o run.json do levantar v2, gravado a cada abertura.)
+        std::ifstream file(getUpRun() / "run.json");
+        const nlohmann::json run = nlohmann::json::parse(file, nullptr, false);
+        if (!run.is_discarded() && run.is_object() && run.contains("v2") && run["v2"].is_object()) {
+            const nlohmann::json& v2 = run["v2"];
+            const auto pair = [&](const char* key, float& low, float& high) {
+                if (v2.contains(key) && v2[key].is_array() && v2[key].size() == 2) {
+                    low = v2[key][0].get<float>();
+                    high = v2[key][1].get<float>();
+                }
+            };
+            pair("evitar_forca", s.avoidMinimumNewtons, s.avoidMaximumNewtons);
+            pair("empurrao_forca", s.pushMinimumNewtons, s.pushMaximumNewtons);
+            pair("velocidade", s.moveMinimumSpeed, s.moveMaximumSpeed);
+        }
         getUp = std::make_unique<TrackingGetUpAmpTraining3D>(s);
         getUpObservation.assign(getUp->observationSize(), 0.0f);
         getUpAction.assign(getUp->actionSize(), 0.0f);
@@ -341,13 +359,20 @@ TrackingViewer3D::TrackingViewer3D(const std::filesystem::path& assetsDirectory,
     for (std::size_t i = 0; i < p.links.size(); ++i)
         if (p.links[i].id == "UpperChest") impl.chest = static_cast<std::uint32_t>(i);
     impl.apply();
-    if (drill == GetUpDrill) {
+    if (isGetUpDrill(drill)) {
         impl.assets = assetsDirectory;
         impl.seed = seed;
+        impl.getUpKind = drill == MovingGetUpDrill ? 1u : drill == AvoidFallDrill ? 2u : 0u;
         impl.startGetUp();
         impl.loadGetUpPolicy();
     }
 }
+
+bool TrackingViewer3D::isGetUpDrill(const std::string& drill) {
+    return drill == GetUpDrill || drill == MovingGetUpDrill || drill == AvoidFallDrill;
+}
+
+bool TrackingViewer3D::getUpVersion2() { return getUpRun().filename() == "levantar_v2"; }
 
 std::filesystem::path TrackingViewer3D::getUpExport() { return getUpRun() / "exports/policy_latest.mrlpolicy"; }
 
@@ -379,7 +404,9 @@ void TrackingViewer3D::setPolicy(const std::filesystem::path& file, std::string&
     if (impl.getUp) {
         // (O levantar usa a rede propria, nao a do treino mostrado.)
         impl.loadGetUpPolicy();
-        label = impl.getUpPolicy ? "levantar livre r" + std::to_string(impl.getUpPolicy->info().iteration) : "sem rede";
+        label = impl.getUpPolicy
+            ? std::string(getUpVersion2() ? "levantar v2 r" : "levantar livre r") + std::to_string(impl.getUpPolicy->info().iteration)
+            : "sem rede";
         return;
     }
     try {
@@ -414,7 +441,10 @@ void TrackingViewer3D::step() {
         impl.getUp->step(impl.getUpAction, impl.rewards, impl.terminated, impl.truncated);
         for (const TrackingGetUpAmpEpisode3D& episode : impl.getUp->takeEpisodes()) {
             ++impl.getUpFalls;
-            if (episode.firstStandSeconds >= 0.0f) ++impl.getUpStood;
+            const bool good = impl.getUpKind == 1 ? episode.reachedSeconds >= 0.0f
+                : impl.getUpKind == 2             ? !episode.fellAfterStanding
+                                                  : episode.firstStandSeconds >= 0.0f;
+            if (good) ++impl.getUpStood;
         }
         ++impl.steps;
         return;
@@ -480,6 +510,26 @@ BodyWorldView3D TrackingViewer3D::view() const {
         view.steps = impl.steps;
         const Vec3 velocity = rlBodyCenterOfMassVelocity3D(impl.getUp->profile(), body.links);
         view.velocity = { velocity.x, velocity.y, 0.0f };
+        // O alvo do levantar em movimento (parado quando ele chega) e o empurrao de agora (o forte do evitar).
+        const TrackingGetUpAmpWorldView3D world = impl.getUp->worldView(0);
+        if (world.hasTarget) {
+            view.hasTarget = true;
+            view.target = world.target;
+            view.targetStop = world.commandSpeed <= 0.0f;
+            if (!body.links.empty() && world.commandSpeed > 0.0f) {
+                const Vec3 to { world.target.x - body.links.front().position.x,
+                    world.target.y - body.links.front().position.y, 0.0f };
+                const float distance = std::hypot(to.x, to.y);
+                if (distance > 1.0e-3f)
+                    view.command.moveVelocity = { to.x / distance * world.commandSpeed, to.y / distance * world.commandSpeed,
+                        0.0f };
+            }
+        }
+        if (world.pushing && impl.chest < body.links.size()) {
+            view.pushLink = static_cast<int>(impl.chest);
+            view.pushForce = world.pushForce;
+            view.pushFade = 1.0f;
+        }
         return view;
     }
     const RagdollState3D& body = impl.batch->body(0);

@@ -15,6 +15,7 @@
 #include "Engine/RL/Policy/PolicyRuntime3D.hpp"
 #include "Engine/RL/Motor/MotorTraining3D.hpp"
 #include "Workbench/ReinforcementLearning/MotorViewer3D.hpp"
+#include "Workbench/ReinforcementLearning/TrackingViewer3D.hpp"
 #include "Engine/RL/Supervisor/TrainerLink3D.hpp"
 #include "Support/HeadlessUi.hpp"
 #include "Workbench/ReinforcementLearning/ReinforcementLearningScreen.hpp"
@@ -141,8 +142,9 @@ void checkMotorExploration(const std::filesystem::path& folder) {
     MotorViewer3D first(assets,task,"parado",42),same(assets,task,"parado",42),quiet(assets,task,"parado",42);
     std::string label;
     first.setPolicy(path,label);
-    require(first.hasPolicy() && label.find("exploracao")!=std::string::npos && label.find("sustentacao")==std::string::npos,
-            "previa identifica exploracao, sem apoio");
+    // (Desde 26/10, 0f7ed2d, a previa do motor usa a media da politica, como no jogo: o ruido de exploracao do treino
+    // aparecia na tela como tremor. O rotulo e a rodada.)
+    require(first.hasPolicy() && label.find("rodada")!=std::string::npos, "previa carrega a rede do motor (a media)");
     same.setPolicy(path,label);
     meta.erase("explorationStd");
     writePolicy(folder/"quiet.mrlpolicy",7,batch.observationNames(),batch.actionSize(),meta);
@@ -158,7 +160,7 @@ void checkMotorExploration(const std::filesystem::path& folder) {
             difference+=(a[i].position-c[i].position).lengthSquared();
         }
     }
-    require(difference>1e-5f,"ruido altera as tentativas fisicas da previa");
+    require(difference<1e-9f,"a previa usa a media: o ruido de exploracao do treino nao entra");
     first.reset(42);same.reset(42);
     first.step();same.step();
     require((first.view().state->links[0].position-same.view().state->links[0].position).length()<1e-6f,"reset reproduz exploracao");
@@ -269,6 +271,9 @@ int realRun(const std::filesystem::path& out) {
               << screen.status().iteration << ", pid " << screen.status().pid << '\n';
     std::cout << "historico: " << screen.history().iterations.size() << " rodadas, "
               << screen.history().evaluations.size() << " avaliacoes, " << screen.drills().size() << " exercicios\n";
+    std::cout << "exercicios:";
+    for (const std::string& drill : screen.drills()) std::cout << ' ' << drill;
+    std::cout << '\n';
     if (screen.status().task == "motor_basico")
         require(screen.drills() == std::vector<std::string>(MotorTraining3D::drillIds().begin(),MotorTraining3D::drillIds().end()), "o motor mostra os dez exercicios do Basico");
     require(!screen.history().iterations.empty(), "os graficos deveriam ter as rodadas do treino");
@@ -424,6 +429,39 @@ void processTrainer(const std::filesystem::path& data) {
 // O empurrao unico no visualizador (23/10, como no treino): o exercicio leve
 // recomeca settleSeconds (o da tarefa; 5 s desde 24/10) depois do fim do
 // empurrao, que comeca na janela da tarefa (1,5 a 3 s) e dura 0,1 a 0,2 s.
+// O levantar v2 no visualizador (31/10 17h): o levantar em movimento mostra o alvo e o pedido, o evitar a queda mostra
+// o empurrao forte, e o levantar do chao segue sem alvo (a rede do treino, se houver; sem ela, os alvos zerados).
+void checkGetUpViewers() {
+    const auto assets = sourceRoot() / "assets";
+    {
+        TrackingViewer3D moving(assets, 3, TrackingViewer3D::MovingGetUpDrill);
+        bool target = false, asked = false;
+        for (int i = 0; i < 90; ++i) {
+            moving.step();
+            const BodyWorldView3D view = moving.view();
+            target = target || view.hasTarget;
+            asked = asked || std::hypot(view.command.moveVelocity.x, view.command.moveVelocity.y) > 1.0f;
+        }
+        require(target && asked, "o levantar em movimento mostra o alvo e o pedido");
+    }
+    {
+        TrackingViewer3D avoid(assets, 5, TrackingViewer3D::AvoidFallDrill);
+        bool pushed = false;
+        for (int i = 0; i < 60 && !pushed; ++i) {
+            avoid.step();
+            pushed = avoid.view().pushLink >= 0;
+        }
+        require(pushed, "o evitar a queda mostra o empurrao forte");
+    }
+    {
+        TrackingViewer3D still(assets, 7, TrackingViewer3D::GetUpDrill);
+        for (int i = 0; i < 10; ++i) still.step();
+        require(!still.view().hasTarget, "o levantar do chao nao tem alvo");
+    }
+    require(TrackingViewer3D::isGetUpDrill("levantar_movimento") && TrackingViewer3D::isGetUpDrill("evitar_queda")
+            && !TrackingViewer3D::isGetUpDrill("parado"), "os exercicios do levantar");
+}
+
 void checkSinglePushViewer() {
     const std::filesystem::path task = sourceRoot() / "assets" / "rl" / "tasks" / "locomocao_e1.json";
     float settle = 3.0f;
@@ -459,6 +497,7 @@ int main() {
         unsetenv("MATTER_RL_SOCKET");
         require(!LocomotionViewer3D::isLocomotionTask(sandbox / "ausente.json"), "tarefa ausente nao pode derrubar a tela");
         checkSinglePushViewer();
+        checkGetUpViewers();
         checkMotorExploration(sandbox / "motor");
         writeRuns(sandbox / "dados");
         processTrainer(sandbox / "dados_processo");

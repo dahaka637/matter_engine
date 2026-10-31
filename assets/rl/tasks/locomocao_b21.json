@@ -1,7 +1,7 @@
 {
   "schema": "matter-rl-locomocao-1",
   "id": "locomocao_b17",
-  "displayName": "B17: a B16 sem força auxiliar (0%), com teto de pose e estilo",
+  "displayName": "B21: empurrões e pancadas em todos os exercícios (o autoequilíbrio em movimento)",
   "comment": "30/10 madrugada (ordem dele: 'Volta a b16, aquele estilo de RL e tudo mais dela.. porem faca severas melhorias nela, incluindo a parada de pose (facil de desativar sem perder o treino).. treinar a 0% de forca auxiliar'). Ramo da b16_pelve r52201. Desativar o teto de pose: caps.jointRadians 3.2 no tarefa.json do treino e religar.",
   "episodeSeconds": 16.0,
   "assistRuler": "linear",
