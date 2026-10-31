@@ -47,9 +47,13 @@ public:
     explicit TrackingGetUpPostureProbe3D(const RagdollProfile3D& profile);
 
     [[nodiscard]] TrackingGetUpPosture3D measure(std::span<const PhysicsBodyState3D> links) const;
-    // A nota da tarefa (0 a 1): a cabeca subindo (0,15 m deitado a 1,5 m de pe) 0,6, a pelve em pe 0,2 e, de pe, o
-    // centro de massa parado no chao 0,2 (exp(-2 v^2)).
-    [[nodiscard]] float taskReward(const TrackingGetUpPosture3D& posture, std::span<const PhysicsBodyState3D> links) const;
+    // A nota de estado da tarefa: so de pe, 0,8 mais o centro de massa parado no chao 0,2 (exp(-2 v^2)).
+    [[nodiscard]] float standingReward(const TrackingGetUpPosture3D& posture,
+        std::span<const PhysicsBodyState3D> links) const;
+    // O potencial da subida (31/10 07h: como nota de estado - a cabeca subindo 0,6 e a pelve em pe 0,2 -, ele assentava
+    // sentado ou ajoelhado em 1 s e colhia ~0,4 por passo ate o fim; como potencial, a subida paga ao subir, a descida
+    // devolve e ficar parado no meio nao rende): 30 x (0,6 a cabeca subindo de 0,15 a 1,5 m + 0,2 a pelve em pe).
+    [[nodiscard]] float risePotential(const TrackingGetUpPosture3D& posture) const;
     // O potencial da virada (Ng, Harada e Russell 1999: a nota e gamma Phi(s') - Phi(s), que paga a virada e nao o
     // ficar parado, e nao muda o melhor jeito de levantar): no chao, o peito para baixo vale ate 0,15, sumindo
     // conforme a cabeca sobe. (31/10: como nota de estado, ele aprendeu a ficar ajoelhado de cabeca no chao.)

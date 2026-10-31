@@ -85,15 +85,16 @@ TrackingGetUpPosture3D TrackingGetUpPostureProbe3D::measure(std::span<const Phys
     return out;
 }
 
-float TrackingGetUpPostureProbe3D::taskReward(const TrackingGetUpPosture3D& posture,
+float TrackingGetUpPostureProbe3D::standingReward(const TrackingGetUpPosture3D& posture,
     std::span<const PhysicsBodyState3D> links) const {
+    if (!posture.standing) return 0.0f;
+    const Vec3 v = rlBodyCenterOfMassVelocity3D(*m_profile, links);
+    return 0.8f + 0.2f * std::exp(-2.0f * (v.x * v.x + v.y * v.y));
+}
+
+float TrackingGetUpPostureProbe3D::risePotential(const TrackingGetUpPosture3D& posture) const {
     const float rise = std::clamp((posture.headHeight - 0.15f) / 1.35f, 0.0f, 1.0f);
-    float still = 0.0f;
-    if (posture.standing) {
-        const Vec3 v = rlBodyCenterOfMassVelocity3D(*m_profile, links);
-        still = std::exp(-2.0f * (v.x * v.x + v.y * v.y));
-    }
-    return 0.6f * rise + 0.2f * std::max(0.0f, posture.upright) + 0.2f * still;
+    return 30.0f * (0.6f * rise + 0.2f * std::max(0.0f, posture.upright));
 }
 
 float TrackingGetUpPostureProbe3D::turnPotential(const TrackingGetUpPosture3D& posture) const {
