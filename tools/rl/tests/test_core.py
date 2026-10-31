@@ -394,3 +394,22 @@ def test_turn_noise_grows_with_the_view_off_the_body():
     assert std[:2, 0].tolist() == pytest.approx([base, base], rel=1e-4)
     assert float(std[2, 0]) == pytest.approx(base * 2.5, rel=1e-4)
     assert std[3:, 0].tolist() == pytest.approx([base * 4.0, base * 4.0], rel=1e-4)
+
+
+def test_condense_log_groups_old_lines(tmp_path: Path):
+    """O log.jsonl de um treino condensa como o banco: as linhas antigas viram uma por grupo (separando as "aval"),
+    as recentes e as sem "tempo" ficam."""
+    now = time.time()
+    base = now - 2 * 86400.0
+    base -= base % 3600.0
+    lines = [{"atualizacao": k, "tempo": base + 60 * k, "tarefa": float(k)} for k in range(1, 5)]
+    lines += [{"atualizacao": 5, "tempo": base + 300, "aval": True, "de_pe": 0.5}, {"atualizacao": 6, "tarefa": 9.0},
+              {"atualizacao": 7, "tempo": now - 10, "tarefa": 1.0}]
+    path = tmp_path / "log.jsonl"
+    path.write_text("".join(json.dumps(line) + "\n" for line in lines))
+    assert storage.condense_log(path, now) == 3
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    assert rows[0]["atualizacao"] == 4 and rows[0]["tarefa"] == 2.5 and rows[0]["linhas"] == 4
+    assert rows[1]["aval"] and rows[1]["de_pe"] == 0.5
+    assert [r["atualizacao"] for r in rows[2:]] == [6, 7]
+    assert storage.condense_log(path, now) == 0

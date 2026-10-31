@@ -305,6 +305,56 @@ class Database:
         return removed
 
 
+def condense_all(db: "Database", now: float | None = None) -> int:
+    """Condensa todos os treinos do banco (os parados tambem envelhecem: passam para grupos maiores)."""
+    return sum(db.condense(row[0], now) for row in db.execute("SELECT DISTINCT run FROM iterations").fetchall())
+
+
+def condense_log(path: Path, now: float | None = None) -> int:
+    """O mesmo para um log.jsonl de treino (as linhas com "tempo"): as linhas de cada grupo, separadas por tipo
+    (as de treino e as "aval"), viram uma com a media dos numeros e os contadores da ultima. Volta quantas sumiram."""
+    now = time.time() if now is None else now
+    if not path.exists():
+        return 0
+    rows = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+    out: list[dict] = []
+    groups: dict = {}
+    order: list = []
+    for row in rows:
+        stamp = row.get("tempo")
+        if stamp is None or now - stamp < CONDENSE_TIERS[0][0]:
+            order.append(("linha", len(out)))
+            out.append(row)
+            continue
+        size = next(width for age, width in reversed(CONDENSE_TIERS) if now - stamp >= age)
+        key = (bool(row.get("aval")), size, int(stamp // size))
+        if key not in groups:
+            groups[key] = []
+            order.append(("grupo", key))
+        groups[key].append(row)
+    merged: list[dict] = []
+    for kind, ref in order:
+        if kind == "linha":
+            merged.append(out[ref])
+            continue
+        group = groups[ref]
+        row = dict(group[-1])
+        for key in row:
+            if key in ("atualizacao", "amostras", "tempo", "aval") or key.startswith("n_") or "_n_" in key:
+                continue
+            values = [g.get(key) for g in group if isinstance(g.get(key), (int, float)) and not isinstance(g.get(key), bool)]
+            if values:
+                row[key] = sum(values) / len(values)
+        row["linhas"] = sum(g.get("linhas", 1) for g in group)
+        merged.append(row)
+    removed = len(rows) - len(merged)
+    if removed:
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text("".join(json.dumps(r) + "\n" for r in merged))
+        tmp.replace(path)
+    return removed
+
+
 # As faixas da condensacao (31/10, a regra dele: ~60 pontos por janela do grafico - 1 h a 1 min, 3 h a 3 min...):
 # (idade minima em s, tamanho do grupo em s). Os ultimos 10 min ficam rodada a rodada (as checagens leem).
 CONDENSE_TIERS = ((600.0, 60.0), (3600.0, 180.0), (3 * 3600.0, 360.0), (6 * 3600.0, 720.0), (12 * 3600.0, 1440.0),

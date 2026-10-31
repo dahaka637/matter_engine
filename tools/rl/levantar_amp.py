@@ -36,6 +36,7 @@ import torch.nn as nn
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
+from matter_rl import storage  # noqa: E402
 from rastreador_treino import DATA, REPO, RunningNorm, native  # noqa: E402
 
 LOG_STD_MIN, LOG_STD_MAX = math.log(0.05), math.log(0.5)
@@ -291,12 +292,18 @@ def main() -> int:
                 "observationNames": settings["observacao"]})
 
     def save() -> None:
+        nonlocal log
         tmp = run / "ultimo.tmp"
         torch.save({"model": model.state_dict(), "disc": disc.state_dict(), "actor_opt": actor_opt.state_dict(),
                     "critic_opt": critic_opt.state_dict(), "disc_opt": disc_opt.state_dict(), "counters": counters,
                     "settings": settings}, tmp)
         tmp.replace(checkpoint)
         export_policy()
+        # (As estatisticas do log condensadas por idade, como as do banco.)
+        log.flush()
+        if storage.condense_log(run / "log.jsonl"):
+            log.close()
+            log = open(run / "log.jsonl", "a")
 
     if args.desvio is not None:
         with torch.no_grad():
@@ -402,7 +409,7 @@ def main() -> int:
         counters["episodios"] += len(episodes)
         if counters["atualizacao"] % 20 == 0:
             recent = np.array(window) if window else np.zeros((0, 10))
-            row = {"atualizacao": counters["atualizacao"], "amostras": counters["amostras"],
+            row = {"atualizacao": counters["atualizacao"], "amostras": counters["amostras"], "tempo": time.time(),
                    "tarefa": float(buf["task"].mean()), "estilo": float(style.mean()),
                    "desvio": float(model.log_std.detach().clamp(LOG_STD_MIN, LOG_STD_MAX).exp().mean()),
                    "am_s": T * n / (time.time() - begin), **{k: v / max(1, steps) for k, v in stats.items()}}
@@ -417,6 +424,7 @@ def main() -> int:
         if counters["atualizacao"] % args.salvar_cada == 0:
             save()
             row = {"atualizacao": counters["atualizacao"], "amostras": counters["amostras"], "aval": True,
+                   "tempo": time.time(),
                    **evaluate(model, evaluation, device)}
             log.write(json.dumps(row) + "\n")
             log.flush()

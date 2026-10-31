@@ -601,7 +601,8 @@ class BodyTrainer:
         self.export("policy_latest")
         for iteration in storage.prune_checkpoints(self.directory, set()):
             self.db.forget_checkpoint(self.run, iteration)
-        self.db.condense(self.run)
+        # (Todos os treinos do banco, a cada salvamento: a condensacao e automatica, regra dele de 31/10.)
+        storage.condense_all(self.db)
         size = storage.directory_size_mb(paths.DATA) / 1024.0
         if size > self.config.disk_cap_gb:
             self.db.event(self.run, "disco", f"os treinos ocupam {size:.1f} GB (teto {self.config.disk_cap_gb} GB)")
