@@ -404,7 +404,8 @@ bool TrackingViewer3D::hasPolicy() const {
 void TrackingViewer3D::step() {
     Impl& impl = *m_impl;
     if (impl.getUp) {
-        // Sem a rede, os alvos zerados (o corpo largado).
+        // A rede nova do treino a cada ~2 s; sem rede, os alvos zerados (o corpo largado).
+        if (impl.steps % 60 == 0) impl.loadGetUpPolicy();
         impl.getUp->observations(impl.getUpObservation);
         if (impl.getUpPolicy) impl.getUpPolicy->evaluate(impl.getUpObservation, impl.getUpAction);
         else std::fill(impl.getUpAction.begin(), impl.getUpAction.end(), 0.0f);

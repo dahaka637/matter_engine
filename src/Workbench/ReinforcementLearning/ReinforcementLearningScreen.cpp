@@ -588,7 +588,8 @@ void ReinforcementLearningScreen::ensureViewer() {
                     m_viewerDrill, TrackingViewer3D::locomotionTaskOf(task, m_options.sourceRoot / "assets"),
                     TrackingViewer3D::speedScaleOf(task), TrackingViewer3D::filterBetaOf(task),
                     TrackingViewer3D::conditionsOf(task));
-            else if (m_viewerDrill == TrackingViewer3D::GetUpDrill && TrackingViewer3D::getUpReady())
+            else if (m_viewerDrill == TrackingViewer3D::GetUpDrill
+                && (TrackingViewer3D::getUpReady() || TrackingViewer3D::getUpTraining()))
                 // (O levantar do chao e a rede propria dele, a do treino a parte, nao a deste.)
                 m_locomotion = std::make_unique<TrackingViewer3D>(m_options.sourceRoot / "assets", seed, m_viewerDrill);
             else
@@ -1319,7 +1320,7 @@ void ReinforcementLearningScreen::drawDrills() {
                 if (training != active) continue;
                 const std::string label = UI::FontAwesome::label(UI::FontAwesome::Crosshairs, m_drillNames[i].c_str())
                     + "##drill" + m_drillIds[i];
-                const bool apart = getUp && !TrackingViewer3D::getUpReady();
+                const bool apart = getUp && !m_getUpTraining && !TrackingViewer3D::getUpReady();
                 ImGui::BeginDisabled(apart);
                 if (phaseButton(label.c_str(), m_drillIds[i] == m_viewerDrill, { -1.0f, ui(30.0f) }, training ? 1 : 0))
                     showDrill(m_drillIds[i]);

@@ -271,11 +271,6 @@ def main() -> int:
         disc_opt.load_state_dict(state["disc_opt"])
         counters = state["counters"]
     log = open(run / "log.jsonl", "a")
-    if not checkpoint.exists() and args.professor_passos > 0:
-        row = {"atualizacao": 0, **warm_start(model, args.threads, args.professor_passos, device)}
-        log.write(json.dumps(row) + "\n")
-        log.flush()
-        print("aprendeu com a rede de brucos: " + " ".join(f"{k}={v}" for k, v in row.items()), flush=True)
     gamma, lam, clip, T = 0.99, 0.95, 0.2, args.passos
     minibatch = (T * n) // max(1, args.minilotes)
     replay = torch.zeros(0, 2 * amp, device=device)
@@ -284,15 +279,25 @@ def main() -> int:
     with torch.no_grad():
         disc.norm.update(reference[:, :amp])
 
+    def export_policy() -> None:
+        export(model, run / "exports" / "policy_latest.mrlpolicy",
+               {"run": args.treino, "iteration": counters["atualizacao"], "steps": counters["amostras"],
+                "observationNames": settings["observacao"]})
+
     def save() -> None:
         tmp = run / "ultimo.tmp"
         torch.save({"model": model.state_dict(), "disc": disc.state_dict(), "actor_opt": actor_opt.state_dict(),
                     "critic_opt": critic_opt.state_dict(), "disc_opt": disc_opt.state_dict(), "counters": counters,
                     "settings": settings}, tmp)
         tmp.replace(checkpoint)
-        export(model, run / "exports" / "policy_latest.mrlpolicy",
-               {"run": args.treino, "iteration": counters["atualizacao"], "steps": counters["amostras"],
-                "observationNames": settings["observacao"]})
+        export_policy()
+
+    if not checkpoint.exists() and args.professor_passos > 0:
+        row = {"atualizacao": 0, **warm_start(model, args.threads, args.professor_passos, device)}
+        log.write(json.dumps(row) + "\n")
+        log.flush()
+        print("aprendeu com a rede de brucos: " + " ".join(f"{k}={v}" for k, v in row.items()), flush=True)
+        export_policy()
 
     while (args.atualizacoes <= 0 or counters["atualizacao"] < args.atualizacoes) and not stop["pedido"]:
         begin = time.time()
@@ -397,6 +402,8 @@ def main() -> int:
             log.write(json.dumps(row) + "\n")
             log.flush()
             print(" ".join(f"{k}={v:.4g}" if isinstance(v, float) else f"{k}={v}" for k, v in row.items()), flush=True)
+        if counters["atualizacao"] % 10 == 0:
+            export_policy()
         if counters["atualizacao"] % args.salvar_cada == 0:
             save()
             row = {"atualizacao": counters["atualizacao"], "amostras": counters["amostras"], "aval": True,
