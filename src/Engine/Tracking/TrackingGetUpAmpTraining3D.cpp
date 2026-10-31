@@ -66,6 +66,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
     std::vector<std::unique_ptr<AnimationClip3D>> clips;
     std::vector<std::unique_ptr<TrackingClipReference3D>> references;
     std::size_t standingIndex = 0;
+    std::size_t standingMirrorIndex = 0;
     // A arrancada agachada (crouched_to_sprint), quando carregada: o comeco do tipo 5 e o peso maior no estilo.
     std::size_t sprintStartIndex = std::numeric_limits<std::size_t>::max();
     // A velocidade de deslocamento que falta aos clipes no lugar (os pares do discriminador): constante (corrida) ou
@@ -196,7 +197,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
     // Um instante sorteado de um clipe de levantar (o RSI do DeepMimic) ou, de pe, do parado, num rumo sorteado.
     void beginFromClip(World& w, bool standing) {
         std::uniform_real_distribution<float> u(0.0f, 1.0f);
-        const auto& reference = standing ? *references[standingIndex]
+        const auto& reference = standing ? *references[u(w.rng) < 0.5f ? standingIndex : standingMirrorIndex]
             : *references[std::uniform_int_distribution<std::size_t>(0, std::size(GetUpClips) - 1)(w.rng)];
         const float last = std::max(0.0f, reference.durationSeconds() - 2.0f / 30.0f);
         reference.frame(u(w.rng) * last, {}, (2.0f * u(w.rng) - 1.0f) * Pi, w.frame);
@@ -431,6 +432,8 @@ TrackingGetUpAmpTraining3D::TrackingGetUpAmpTraining3D(const TrackingGetUpAmpSet
     std::vector<std::string> names(std::begin(GetUpClips), std::end(GetUpClips));
     names.emplace_back(StandingClip);
     impl.standingIndex = names.size() - 1;
+    names.emplace_back(StandingMirrorClip);
+    impl.standingMirrorIndex = names.size() - 1;
     // (O levantar v2: os clipes da arrancada e da corrida so entram com o levantar em movimento ligado - sem ele, o
     // estilo e as quedas de antes.)
     if (settings.movingFraction > 0.0f || settings.sprintStartFraction > 0.0f || settings.evaluationKind == 1)
@@ -456,6 +459,8 @@ TrackingGetUpAmpTraining3D::TrackingGetUpAmpTraining3D(const TrackingGetUpAmpSet
         TrackingClipFrame3D idle;
         impl.references[impl.standingIndex]->frame(0.0f, {}, 0.0f, idle);
         impl.posture->setIdlePose(idle.links);
+        impl.references[impl.standingMirrorIndex]->frame(0.0f, {}, 0.0f, idle);
+        impl.posture->addIdlePose(idle.links);
     }
     for (std::size_t i = 0; i < impl.profile->links.size(); ++i) {
         if (impl.profile->links[i].parentIndex < 0) impl.rootLink = static_cast<std::uint32_t>(i);

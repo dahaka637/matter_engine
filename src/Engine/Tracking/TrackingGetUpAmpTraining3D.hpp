@@ -99,7 +99,10 @@ public:
     // Os clipes do estilo: os de levantar (e os espelhados) tambem dao os comecos; o parado so o estilo.
     static constexpr const char* GetUpClips[4] { "stand_up_front_kimodo", "stand_up_back_kimodo",
         "stand_up_front_kimodo_espelho", "stand_up_back_kimodo_espelho" };
-    static constexpr const char* StandingClip = "natural_idle";
+    // (31/10 18h, ele: o padrao de ficar de pe parado e o parado em alerta, nao o natural; com o espelho, o apoio no
+    // outro pe.)
+    static constexpr const char* StandingClip = "alert_idle";
+    static constexpr const char* StandingMirrorClip = "alert_idle_espelho";
     // Os clipes do estilo do levantar em movimento (a arrancada e a corrida; no lugar, com a velocidade nominal somada
     // aos pares do discriminador): so o estilo e os comecos das quedas.
     static constexpr const char* MovingClips[5] { "idle_to_sprint", "crouched_to_sprint", "mixamo_running",

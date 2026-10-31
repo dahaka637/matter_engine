@@ -93,26 +93,36 @@ float TrackingGetUpPostureProbe3D::standingReward(const TrackingGetUpPosture3D& 
 }
 
 void TrackingGetUpPostureProbe3D::setIdlePose(std::span<const PhysicsBodyState3D> links) {
-    m_idle.assign(links.size(), Quaternion {});
+    m_idle.clear();
+    addIdlePose(links);
+}
+
+void TrackingGetUpPostureProbe3D::addIdlePose(std::span<const PhysicsBodyState3D> links) {
+    std::vector<Quaternion> pose(links.size(), Quaternion {});
     for (std::size_t i = 0; i < links.size(); ++i) {
         const int parent = m_profile->links[i].parentIndex;
         if (parent >= 0)
-            m_idle[i] = (links[static_cast<std::size_t>(parent)].orientation.conjugate() * links[i].orientation).normalized();
+            pose[i] = (links[static_cast<std::size_t>(parent)].orientation.conjugate() * links[i].orientation).normalized();
     }
+    m_idle.push_back(std::move(pose));
 }
 
 float TrackingGetUpPostureProbe3D::idlePoseMatch(std::span<const PhysicsBodyState3D> links) const {
     if (m_idle.empty()) return 1.0f;
-    float sum = 0.0f;
-    for (std::size_t i = 0; i < links.size(); ++i) {
-        const int parent = m_profile->links[i].parentIndex;
-        if (parent < 0) continue;
-        const Quaternion relative =
-            (links[static_cast<std::size_t>(parent)].orientation.conjugate() * links[i].orientation).normalized();
-        const Vec3 error = rlQuaternionLog3D((m_idle[i].conjugate() * relative).normalized());
-        sum += error.x * error.x + error.y * error.y + error.z * error.z;
+    float best = 0.0f;
+    for (const std::vector<Quaternion>& idle : m_idle) {
+        float sum = 0.0f;
+        for (std::size_t i = 0; i < links.size() && i < idle.size(); ++i) {
+            const int parent = m_profile->links[i].parentIndex;
+            if (parent < 0) continue;
+            const Quaternion relative =
+                (links[static_cast<std::size_t>(parent)].orientation.conjugate() * links[i].orientation).normalized();
+            const Vec3 error = rlQuaternionLog3D((idle[i].conjugate() * relative).normalized());
+            sum += error.x * error.x + error.y * error.y + error.z * error.z;
+        }
+        best = std::max(best, std::exp(-0.5f * sum));
     }
-    return std::exp(-0.5f * sum);
+    return best;
 }
 
 float TrackingGetUpPostureProbe3D::risePotential(const TrackingGetUpPosture3D& posture) const {

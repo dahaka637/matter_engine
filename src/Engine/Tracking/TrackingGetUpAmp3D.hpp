@@ -52,10 +52,13 @@ public:
     // arqueava). Sem a pose do parado dada, a parte dela vale 1.
     [[nodiscard]] float standingReward(const TrackingGetUpPosture3D& posture,
         std::span<const PhysicsBodyState3D> links) const;
-    // A pose do parado (um quadro do clipe parado): a rotacao de cada junta no pai.
+    // As poses do parado (um quadro de cada clipe parado; 31/10 18h, ele: o padrao de ficar de pe e o parado em alerta,
+    // com o espelho): a rotacao de cada junta no pai. setIdlePose troca todas por uma; addIdlePose junta outra.
     void setIdlePose(std::span<const PhysicsBodyState3D> links);
-    // A semelhanca com a pose do parado: exp(-0,5 soma dos angulos^2 de cada junta), 1 igual. (O -2 do DeepMimic dava
-    // 0,007 na pose em que ele ficava de pe - soma 2,5: braco 56 graus, coxa 40, cabeca 29 - e nenhum gradiente.)
+    void addIdlePose(std::span<const PhysicsBodyState3D> links);
+    // A semelhanca com a pose do parado mais proxima: exp(-0,5 soma dos angulos^2 de cada junta), 1 igual. (O -2 do
+    // DeepMimic dava 0,007 na pose em que ele ficava de pe - soma 2,5: braco 56 graus, coxa 40, cabeca 29 - e nenhum
+    // gradiente.)
     [[nodiscard]] float idlePoseMatch(std::span<const PhysicsBodyState3D> links) const;
     // O potencial da subida (31/10 07h: como nota de estado - a cabeca subindo 0,6 e a pelve em pe 0,2 -, ele assentava
     // sentado ou ajoelhado em 1 s e colhia ~0,4 por passo ate o fim; como potencial, a subida paga ao subir, a descida
@@ -71,7 +74,7 @@ private:
     std::uint32_t m_root = 0;
     std::uint32_t m_head = 0;
     std::uint32_t m_chest = 0;
-    std::vector<Quaternion> m_idle;
+    std::vector<std::vector<Quaternion>> m_idle;
 };
 
 } // namespace MatterEngine
