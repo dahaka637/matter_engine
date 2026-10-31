@@ -67,8 +67,10 @@ struct TrackingGetUpAmpTraining3D::Impl {
     std::vector<std::unique_ptr<TrackingClipReference3D>> references;
     std::size_t standingIndex = 0;
     std::size_t standingMirrorIndex = 0;
-    // A arrancada agachada (crouched_to_sprint), quando carregada: o comeco do tipo 5 e o peso maior no estilo.
+    // A arrancada agachada (crouched_to_sprint), quando carregada: o peso maior no estilo. E os clipes da arrancada e
+    // da corrida, os comecos do tipo 5 (o RSI do DeepMimic/AMP: ele vive os estados de corrida e aprende a seguir).
     std::size_t sprintStartIndex = std::numeric_limits<std::size_t>::max();
+    std::vector<std::size_t> runStartIndices;
     // A velocidade de deslocamento que falta aos clipes no lugar (os pares do discriminador): constante (corrida) ou
     // em rampa desde zero (a arrancada, com o deslocamento da fonte), para a frente do clipe.
     struct Travel {
@@ -183,13 +185,26 @@ struct TrackingGetUpAmpTraining3D::Impl {
         }
     }
 
-    // A arrancada agachada (o crouched_to_sprint): um instante da primeira metade, num rumo sorteado (o alvo vem perto
-    // dele), com a velocidade do clipe.
+    // A arrancada e a corrida (31/10 18h25: so a arrancada agachada, curta, nao bastou - em 300 atualizacoes ele saia do
+    // clipe e freava ate parar): um dos clipes da arrancada e da corrida, num instante sorteado (as arrancadas na
+    // primeira metade), num rumo sorteado (o alvo vem perto dele), com a velocidade do clipe (a dos no lugar somada).
     void beginSprintStart(World& w) {
         std::uniform_real_distribution<float> u(0.0f, 1.0f);
-        const auto& reference = *references[sprintStartIndex];
+        const std::size_t index = runStartIndices[std::uniform_int_distribution<std::size_t>(0, runStartIndices.size() - 1)(w.rng)];
+        const auto& reference = *references[index];
+        const Travel& run = travel[index];
+        const bool transition = !clips[index]->loops;
         w.sprintYaw = (2.0f * u(w.rng) - 1.0f) * Pi;
-        reference.frame(u(w.rng) * 0.5f * reference.durationSeconds(), {}, w.sprintYaw, w.frame);
+        const float t = u(w.rng) * (transition ? 0.5f : 1.0f) * reference.durationSeconds();
+        reference.frame(t, {}, w.sprintYaw, w.frame);
+        float speed = run.speed;
+        if (run.rampDisplacement > 0.0f && reference.durationSeconds() > 0.0f)
+            speed = 2.0f * run.rampDisplacement * t / (reference.durationSeconds() * reference.durationSeconds());
+        if (speed > 0.0f) {
+            const float heading = w.sprintYaw + run.direction;
+            const Vec3 v { std::cos(heading) * speed, std::sin(heading) * speed, 0.0f };
+            for (PhysicsBodyState3D& s : w.frame.links) s.linearVelocity = s.linearVelocity + v;
+        }
         w.scene->resetRagdollState(w.handle, w.frame.links);
         w.body = w.scene->ragdollStateView(w.handle);
     }
@@ -228,7 +243,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
             else if (draw < (edge += settings.movingFraction)) kind = 3;
             else if (draw < (edge += settings.sprintStartFraction)) kind = 5;
         }
-        if (kind == 5 && sprintStartIndex >= references.size()) kind = 3;
+        if (kind == 5 && runStartIndices.empty()) kind = 3;
         if (kind == 0 || kind == 3) beginFall(w);
         else if (kind == 5) beginSprintStart(w);
         else beginFromClip(w, kind != 1);
@@ -443,6 +458,8 @@ TrackingGetUpAmpTraining3D::TrackingGetUpAmpTraining3D(const TrackingGetUpAmpSet
             loadAnimationClip3D(settings.assetsDirectory + "/animations/clips/" + name + ".matteranim.json")));
         impl.references.push_back(std::make_unique<TrackingClipReference3D>(*impl.profile, *impl.clips.back()));
         if (name == "crouched_to_sprint") impl.sprintStartIndex = impl.references.size() - 1;
+        if (std::find(std::begin(MovingClips), std::end(MovingClips), name) != std::end(MovingClips))
+            impl.runStartIndices.push_back(impl.references.size() - 1);
         Impl::Travel travel;
         const AnimationClip3D& clip = *impl.clips.back();
         travel.direction = clip.travelDirectionRadians;
