@@ -353,6 +353,13 @@ NB_MODULE(matter_tracking_native, m) {
         .def_prop_ro("policy_dt", [](const TrackingGetUpAmpTraining3D&) {
             return TrackingGetUpAmpTraining3D::TicksPerDecision * TrackingGetUpAmpTraining3D::TickSeconds;
         })
+        .def("action_ranges",
+            [](const TrackingGetUpAmpTraining3D& b) {
+                const std::vector<float> ranges = b.actionRanges();
+                auto out = owned<float>({ ranges.size() / 2, 2 });
+                std::copy(ranges.begin(), ranges.end(), out.data());
+                return out;
+            })
         .def("observation_names", &TrackingGetUpAmpTraining3D::observationNames)
         .def("action_names", &TrackingGetUpAmpTraining3D::actionNames)
         .def(

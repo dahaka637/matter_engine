@@ -241,6 +241,7 @@ const std::vector<std::string>& TrackingGetUpAmpTraining3D::actionNames() const 
     return m_impl->contract->actionNames();
 }
 float TrackingGetUpAmpTraining3D::episodeSeconds() const { return m_impl->settings.episodeSeconds; }
+std::vector<float> TrackingGetUpAmpTraining3D::actionRanges() const { return m_impl->contract->actionRanges(); }
 
 void TrackingGetUpAmpTraining3D::reset(std::uint64_t seed) {
     Impl& impl = *m_impl;

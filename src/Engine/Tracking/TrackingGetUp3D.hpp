@@ -43,6 +43,8 @@ public:
     // So o corpo (sem a fase): a altura da raiz e os 13 numeros de cada link (o levantar livre, 31/10).
     [[nodiscard]] std::size_t bodyObservationSize() const { return 1 + 13 * m_profile->links.size(); }
     void observeBody(std::span<const PhysicsBodyState3D> links, std::span<float> out) const;
+    // O minimo e o maximo (rad) de cada eixo da acao, os da junta no perfil (o levantar livre normaliza a acao neles).
+    [[nodiscard]] std::vector<float> actionRanges() const;
     // As coordenadas de junta de uma pose na ordem da acao (o alvo que a reproduz).
     void actionOf(std::span<const Vec3> coordinates, std::span<float> out) const;
 

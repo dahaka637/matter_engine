@@ -66,6 +66,8 @@ public:
     [[nodiscard]] const std::vector<std::string>& observationNames() const;
     [[nodiscard]] const std::vector<std::string>& actionNames() const;
     [[nodiscard]] float episodeSeconds() const;
+    // O minimo e o maximo (rad) de cada eixo da acao (2 por eixo).
+    [[nodiscard]] std::vector<float> actionRanges() const;
 
     void reset(std::uint64_t seed);
     void observations(std::span<float> out) const;

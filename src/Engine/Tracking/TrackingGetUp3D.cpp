@@ -82,6 +82,16 @@ void TrackingGetUpContract3D::driveTargets(std::span<const float> action, std::v
     }
 }
 
+std::vector<float> TrackingGetUpContract3D::actionRanges() const {
+    std::vector<float> out;
+    for (const Axis& a : m_axes) {
+        const RagdollAxisDefinition3D& axis = m_profile->links[a.link].inboundJoint.axes[a.axis];
+        out.push_back(axis.minimumRadians);
+        out.push_back(axis.maximumRadians);
+    }
+    return out;
+}
+
 void TrackingGetUpContract3D::actionOf(std::span<const Vec3> coordinates, std::span<float> out) const {
     for (std::size_t k = 0; k < m_axes.size() && k < out.size(); ++k) {
         const Vec3 c = m_axes[k].link < coordinates.size() ? coordinates[m_axes[k].link] : Vec3 {};

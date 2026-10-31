@@ -8,9 +8,11 @@ com o rolamento -, os espelhados e o parado). Nada de seguir o clipe quadro a qu
 Do artigo (secao 6 e o material suplementar): discriminador 1024-512 ReLU por minimos quadrados (alvo +1 nos clipes,
 -1 no corpo), penalidade do gradiente nos clipes, nota do estilo max(0, 1 - 0,25 (d - 1)^2), nota total 0,5 tarefa +
 0,5 estilo, uma reserva de transicoes recentes do corpo para o discriminador; ator e critico 1024-512.
-Declarado: gamma 0,99 (o levantar leva segundos), lambda 0,95; o desvio da acao aprendido (comeca em 0,15 rad, preso
-entre 0,03 e 0,5); Adam (ator 5e-5, critico 2e-4, discriminador 1e-4); penalidade do gradiente 5 e regularizacao da
-ultima camada 0,01 (os do ASE).
+Declarado: gamma 0,99 (o levantar leva segundos), lambda 0,95; a acao normalizada na faixa de cada junta (o meio
+mais a metade vezes a saida, como no ASE), o desvio dela aprendido (comeca em 0,1, preso entre 0,03 e 0,5); Adam (ator
+5e-5, critico 2e-4, discriminador 1e-4); penalidade do gradiente 5 e regularizacao da ultima camada 0,01 (os do ASE).
+Num treino novo, a rede comeca imitando a de brucos do DeepMimic (levantar_frente, 100% de brucos; warm_start) e as
+primeiras 20 atualizacoes so ensinam o critico e o discriminador.
 
 A nota por passo entra vezes 1 - gamma (o retorno entre 0 e 1).
 A medida honesta (o log, linha "aval", e o laboratorio): a rede media em 64 quedas fixas, sem os comecos nos clipes -
@@ -45,12 +47,21 @@ def mlp(inputs: int, outputs: int) -> nn.Sequential:
 
 
 class Policy(nn.Module):
-    def __init__(self, obs: int, actions: int):
+    """A acao da rede e normalizada na faixa de cada junta (como no AMP/ASE): o alvo e o meio da faixa mais a metade
+    dela vezes a saida - a saida zero e o meio do movimento (nao a pose em T) e o ruido e proporcional a cada junta."""
+
+    def __init__(self, obs: int, actions: int, ranges: np.ndarray):
         super().__init__()
         self.norm = RunningNorm(obs)
         self.actor = mlp(obs, actions)
         self.critic = mlp(obs, 1)
-        self.log_std = nn.Parameter(torch.full((actions,), math.log(0.15)))
+        self.log_std = nn.Parameter(torch.full((actions,), math.log(0.1)))
+        low, high = torch.as_tensor(ranges[:, 0]), torch.as_tensor(ranges[:, 1])
+        self.register_buffer("action_mid", 0.5 * (low + high))
+        self.register_buffer("action_half", torch.clamp(0.5 * (high - low), min=0.05))
+
+    def env_action(self, a: torch.Tensor) -> torch.Tensor:
+        return self.action_mid + self.action_half * a
 
     def distribution(self, obs_n: torch.Tensor) -> torch.distributions.Normal:
         mean = self.actor(obs_n)
@@ -92,8 +103,15 @@ def export(model: Policy, path: Path, meta: dict) -> None:
 
     mean_at = push(model.norm.mean.float())
     inv_at = push(1.0 / torch.sqrt(model.norm.var.float() + 1e-8))
-    layers = [{"inputs": m.in_features, "outputs": m.out_features, "weights": push(m.weight), "bias": push(m.bias)}
-              for m in model.actor if isinstance(m, nn.Linear)]
+    # (A ultima camada ja sai em radianos: o meio e a metade da faixa de cada junta embutidos nela.)
+    linears = [m for m in model.actor if isinstance(m, nn.Linear)]
+    layers = []
+    for k, m in enumerate(linears):
+        weight, bias = m.weight, m.bias
+        if k == len(linears) - 1:
+            weight = model.action_half[:, None] * weight
+            bias = model.action_mid + model.action_half * bias
+        layers.append({"inputs": m.in_features, "outputs": m.out_features, "weights": push(weight), "bias": push(bias)})
     header = dict(meta)
     header.update({"schema": "matter-rl-policy-1", "observationSize": layers[0]["inputs"],
                    "actionSize": layers[-1]["outputs"], "activation": "relu",
@@ -137,13 +155,58 @@ def evaluate(model: Policy, batch, device: torch.device) -> dict:
     for _ in range(int(batch.episode_seconds / batch.policy_dt) + 2):
         with torch.no_grad():
             obs = torch.as_tensor(batch.observations(), device=device)
-            action = model.actor(model.norm(obs)).cpu().numpy().astype(np.float32)
+            action = model.env_action(model.actor(model.norm(obs))).cpu().numpy().astype(np.float32)
         batch.step(action)
         for row in batch.finished_episodes().tolist():
             done.setdefault(int(row[0]), row)
         if len(done) >= n:
             break
     return summarize(np.array(list(done.values())), "")
+
+
+def warm_start(model: Policy, threads: int, steps: int, device: torch.device) -> dict:
+    """O comeco pela rede de brucos do DeepMimic (levantar_frente, que levanta 100% de brucos): a rede nova (sem a fase
+    do clipe) aprende a acao dela nos estados dela, com o ruido do DART (Laskey et al. 2017: o professor age com um pouco
+    de ruido, a aluna ve estados um pouco fora do caminho dele). O treino parte sabendo levantar de brucos."""
+    from levantar_treino import GetUpPolicy as Teacher
+    state = torch.load(DATA / "levantar_frente" / "ultimo.pt", map_location=device, weights_only=False)
+    source = native.GetUpBatch(str(REPO / "assets"), clip="frente", environments=256, threads=threads, seed=7)
+    teacher = Teacher(source.obs_size, source.action_size).to(device)
+    teacher.load_state_dict(state["model"])
+    teacher.eval()
+    rows_x, rows_y = [], []
+    with torch.no_grad():
+        for _ in range(steps):
+            obs = torch.as_tensor(source.observations(), device=device)
+            act = teacher.actor(teacher.norm(obs))
+            rows_x.append(obs[:, :-1].clone())
+            rows_y.append((act - model.action_mid) / model.action_half)
+            source.step((act + 0.05 * torch.randn_like(act)).cpu().numpy().astype(np.float32))
+            source.finished_episodes()
+    x, y = torch.cat(rows_x), torch.cat(rows_y)
+    for chunk in x.split(16384):
+        model.norm.update(chunk)
+    optimizer = torch.optim.Adam(model.actor.parameters(), lr=3e-4)
+    loss = torch.zeros(())
+    for _ in range(30):
+        for idx in torch.randperm(len(x), device=device).split(4096):
+            loss = (model.actor(model.norm(x[idx])) - y[idx]).pow(2).mean()
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+    # A conferencia: a aluna no lote do professor, comecando deitada de brucos (o inicio do clipe).
+    check = native.GetUpBatch(str(REPO / "assets"), clip="frente", environments=64, threads=threads, seed=9,
+                              evaluation=True)
+    ended: dict[int, list] = {}
+    for _ in range(int(check.clip_seconds / check.policy_dt) + 2):
+        with torch.no_grad():
+            obs = torch.as_tensor(check.observations(), device=device)[:, :-1]
+            action = model.env_action(model.actor(model.norm(obs))).cpu().numpy().astype(np.float32)
+        check.step(action)
+        for row in check.finished_episodes().tolist():
+            ended.setdefault(int(row[0]), row)
+    standing = float(np.mean([row[6] for row in ended.values()])) if ended else 0.0
+    return {"aprendeu": True, "amostras_professor": int(len(x)), "perda": float(loss.item()), "de_pe_brucos": standing}
 
 
 def main() -> int:
@@ -163,6 +226,10 @@ def main() -> int:
     parser.add_argument("--peso-tarefa", type=float, default=0.5)
     parser.add_argument("--peso-estilo", type=float, default=0.5)
     parser.add_argument("--comeco-clipe", type=float, default=0.25, help="a fatia dos comecos nos clipes de levantar")
+    parser.add_argument("--professor-passos", type=int, default=800,
+                        help="num treino novo: os passos da rede de brucos (256 mundos cada) para a aluna aprender")
+    parser.add_argument("--aquecer-critico", type=int, default=20,
+                        help="as primeiras atualizacoes so do critico e do discriminador (a acao aprendida fica)")
     args = parser.parse_args()
 
     from matter_rl.system import require_watchdog
@@ -185,7 +252,7 @@ def main() -> int:
     evaluation = native.GetUpAmpBatch(str(REPO / "assets"), environments=64, threads=1, seed=12345, evaluation=True)
     n, obs_size, act_size, amp = batch.num_envs, batch.obs_size, batch.action_size, batch.amp_size
     reference = torch.as_tensor(batch.reference_pairs(), device=device)
-    model = Policy(obs_size, act_size).to(device)
+    model = Policy(obs_size, act_size, batch.action_ranges()).to(device)
     disc = Discriminator(amp).to(device)
     actor_opt = torch.optim.Adam(list(model.actor.parameters()) + [model.log_std], lr=args.taxa_ator)
     critic_opt = torch.optim.Adam(model.critic.parameters(), lr=args.taxa_critico)
@@ -204,6 +271,11 @@ def main() -> int:
         disc_opt.load_state_dict(state["disc_opt"])
         counters = state["counters"]
     log = open(run / "log.jsonl", "a")
+    if not checkpoint.exists() and args.professor_passos > 0:
+        row = {"atualizacao": 0, **warm_start(model, args.threads, args.professor_passos, device)}
+        log.write(json.dumps(row) + "\n")
+        log.flush()
+        print("aprendeu com a rede de brucos: " + " ".join(f"{k}={v}" for k, v in row.items()), flush=True)
     gamma, lam, clip, T = 0.99, 0.95, 0.2, args.passos
     minibatch = (T * n) // max(1, args.minilotes)
     replay = torch.zeros(0, 2 * amp, device=device)
@@ -236,7 +308,7 @@ def main() -> int:
                 buf["obs"][t], buf["act"][t] = obs, action
                 buf["logp"][t] = dist.log_prob(action).sum(-1)
                 buf["val"][t] = model.value(obs_n)
-                task, term, trunc = batch.step(action.cpu().numpy().astype(np.float32))
+                task, term, trunc = batch.step(model.env_action(action).cpu().numpy().astype(np.float32))
                 buf["task"][t] = torch.as_tensor(task, device=device)
                 buf["pairs"][t] = torch.as_tensor(batch.amp_pairs(), device=device)
                 trunc = torch.as_tensor(trunc, device=device).float()
@@ -279,10 +351,11 @@ def main() -> int:
                 logp = model.distribution(obs_n).log_prob(f_act[idx]).sum(-1)
                 ratio = torch.exp(logp - f_logp[idx])
                 pol_loss = -torch.min(ratio * f_adv[idx], ratio.clamp(1 - clip, 1 + clip) * f_adv[idx]).mean()
-                actor_opt.zero_grad()
-                pol_loss.backward()
-                nn.utils.clip_grad_norm_(list(model.actor.parameters()) + [model.log_std], 1.0)
-                actor_opt.step()
+                if counters["atualizacao"] >= args.aquecer_critico:
+                    actor_opt.zero_grad()
+                    pol_loss.backward()
+                    nn.utils.clip_grad_norm_(list(model.actor.parameters()) + [model.log_std], 1.0)
+                    actor_opt.step()
                 # O discriminador: metade do lote de agora e metade da reserva, contra os clipes (com reposicao).
                 half = len(idx) // 2
                 body = torch.cat([pairs[idx[:half]], replay[torch.randint(len(replay), (half,), device=device)]])
