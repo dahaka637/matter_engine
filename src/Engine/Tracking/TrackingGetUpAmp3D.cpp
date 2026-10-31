@@ -93,8 +93,12 @@ float TrackingGetUpPostureProbe3D::taskReward(const TrackingGetUpPosture3D& post
         const Vec3 v = rlBodyCenterOfMassVelocity3D(*m_profile, links);
         still = std::exp(-2.0f * (v.x * v.x + v.y * v.y));
     }
-    const float prone = std::max(0.0f, -posture.chestFacingUp) * (1.0f - rise);
-    return 0.6f * rise + 0.2f * std::max(0.0f, posture.upright) + 0.2f * still + 0.15f * prone;
+    return 0.6f * rise + 0.2f * std::max(0.0f, posture.upright) + 0.2f * still;
+}
+
+float TrackingGetUpPostureProbe3D::turnPotential(const TrackingGetUpPosture3D& posture) const {
+    const float rise = std::clamp((posture.headHeight - 0.15f) / 1.35f, 0.0f, 1.0f);
+    return 0.15f * std::max(0.0f, -posture.chestFacingUp) * (1.0f - rise);
 }
 
 } // namespace MatterEngine

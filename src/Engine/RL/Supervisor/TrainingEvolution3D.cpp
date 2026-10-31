@@ -330,7 +330,8 @@ TrainingEvaluationCharts3D trainingEvaluationCharts3D(const TrainingHistory3D& h
                 ++moving;
             }
         }
-        if (measured * 2 < weighted.size()) continue;
+        // (Os ramos anteriores mediram outros exercicios: valem com ao menos 3 dos de agora, ou metade se forem menos.)
+        if (measured < std::min<std::size_t>(3, (weighted.size() + 1) / 2)) continue;
         out.times.push_back(time);
         out.iterations.push_back(iteration);
         out.standing.push_back(static_cast<float>(100.0 * standing / static_cast<double>(measured)));

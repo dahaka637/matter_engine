@@ -152,12 +152,14 @@ struct TrackingGetUpAmpTraining3D::Impl {
         std::uint8_t& truncated) {
         const std::size_t a = features->size();
         features->compute(w.body->links, std::span<float>(w.ampPair).first(a));
+        const float before = posture->turnPotential(posture->measure(w.body->links));
         contract->driveTargets(action, w.drives);
         settle(w, TicksPerDecision);
         w.time += TicksPerDecision * TickSeconds;
         features->compute(w.body->links, std::span<float>(w.ampPair).subspan(a, a));
         const TrackingGetUpPosture3D now = posture->measure(w.body->links);
-        reward = posture->taskReward(now, w.body->links);
+        // (O gamma do treinador, 0,99, no potencial.)
+        reward = posture->taskReward(now, w.body->links) + 0.99f * posture->turnPotential(now) - before;
         w.rewardSum += reward;
         ++w.decisions;
         if (w.stoodAt < 0.0f && now.standing) w.stoodAt = w.time;

@@ -316,11 +316,12 @@ void lineChart(const char* id, const std::vector<ChartSeries>& series, float min
         for (const ChartSeries& item : series) {
             if (item.hidden || (pass == 1) != item.reference) continue;
             const std::vector<float>& v = *item.values;
-            if (v.size() < 2) continue;
+            if (v.empty()) continue;
             const auto has = [&v](std::size_t i) { return std::isfinite(v[i]); };
+            // (Um ponto so - a primeira avaliacao - fica na ponta direita.)
             const auto point = [&](std::size_t i) {
-                return ImVec2 { inner0.x + (inner1.x - inner0.x) * static_cast<float>(i) / static_cast<float>(v.size() - 1),
-                    yOf(v[i]) };
+                const float at = v.size() < 2 ? 1.0f : static_cast<float>(i) / static_cast<float>(v.size() - 1);
+                return ImVec2 { inner0.x + (inner1.x - inner0.x) * at, yOf(v[i]) };
             };
             if (pass == 0) {
                 ImVec4 fill = item.color;
