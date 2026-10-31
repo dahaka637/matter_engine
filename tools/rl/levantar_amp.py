@@ -7,9 +7,9 @@ com o rolamento -, os espelhados e o parado). Nada de seguir o clipe quadro a qu
 
 Do artigo (secao 6 e o material suplementar): discriminador 1024-512 ReLU por minimos quadrados (alvo +1 nos clipes,
 -1 no corpo), penalidade do gradiente nos clipes, nota do estilo max(0, 1 - 0,25 (d - 1)^2), nota total 0,5 tarefa +
-0,5 estilo, uma reserva de transicoes recentes do corpo para o discriminador; ator e critico 1024-512.
+0,5 estilo (aqui 0,7 tarefa + 0,3 estilo, 31/10), uma reserva de transicoes recentes do corpo para o discriminador; ator e critico 1024-512.
 Declarado: gamma 0,99 (o levantar leva segundos), lambda 0,95; a acao normalizada na faixa de cada junta (o meio
-mais a metade vezes a saida, como no ASE), o desvio dela aprendido (comeca em 0,1, preso entre 0,03 e 0,5); Adam (ator
+mais a metade vezes a saida, como no ASE), o desvio dela aprendido (comeca em 0,1, preso entre 0,05 e 0,5; --desvio troca); Adam (ator
 5e-5, critico 2e-4, discriminador 1e-4); penalidade do gradiente 5 e regularizacao da ultima camada 0,01 (os do ASE).
 Num treino novo, a rede comeca imitando a de brucos do DeepMimic (levantar_frente, 100% de brucos; warm_start) e as
 primeiras 20 atualizacoes so ensinam o critico e o discriminador.
@@ -38,7 +38,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from rastreador_treino import DATA, REPO, RunningNorm, native  # noqa: E402
 
-LOG_STD_MIN, LOG_STD_MAX = math.log(0.03), math.log(0.5)
+LOG_STD_MIN, LOG_STD_MAX = math.log(0.05), math.log(0.5)
 SIDES = ("brucos", "costas", "lado")
 
 
@@ -223,8 +223,12 @@ def main() -> int:
     parser.add_argument("--taxa-ator", type=float, default=5e-5)
     parser.add_argument("--taxa-critico", type=float, default=2e-4)
     parser.add_argument("--taxa-disc", type=float, default=1e-4)
-    parser.add_argument("--peso-tarefa", type=float, default=0.5)
-    parser.add_argument("--peso-estilo", type=float, default=0.5)
+    # (31/10, ordem dele: o RL com liberdade para criar os proprios movimentos de levantar - a tarefa pesa mais que o
+    # estilo, que so puxa para ficar parecido com os clipes.)
+    parser.add_argument("--peso-tarefa", type=float, default=0.7)
+    parser.add_argument("--peso-estilo", type=float, default=0.3)
+    parser.add_argument("--desvio", type=float, default=None,
+                        help="o desvio da acao (na faixa das juntas) a partir de agora, tambem ao retomar")
     parser.add_argument("--comeco-clipe", type=float, default=0.25, help="a fatia dos comecos nos clipes de levantar")
     parser.add_argument("--professor-passos", type=int, default=800,
                         help="num treino novo: os passos da rede de brucos (256 mundos cada) para a aluna aprender")
@@ -292,6 +296,9 @@ def main() -> int:
         tmp.replace(checkpoint)
         export_policy()
 
+    if args.desvio is not None:
+        with torch.no_grad():
+            model.log_std.fill_(math.log(args.desvio))
     if not checkpoint.exists() and args.professor_passos > 0:
         row = {"atualizacao": 0, **warm_start(model, args.threads, args.professor_passos, device)}
         log.write(json.dumps(row) + "\n")

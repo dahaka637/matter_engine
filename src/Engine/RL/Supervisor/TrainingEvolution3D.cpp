@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace MatterEngine {
 namespace {
@@ -136,10 +137,17 @@ TrainingScoreParts3D trainingScoreParts3D(const TrainingDrillMeasure3D& measure,
 TrainingCharts3D trainingCharts3D(const TrainingHistory3D& history, const std::vector<TrainingDrillInfo3D>& task,
     const std::string& drill, std::size_t slices) {
     TrainingCharts3D out;
-    // As rodadas do periodo (as que trazem exercicios), em ordem, com o horario de cada uma.
+    // As rodadas do periodo em que o exercicio escolhido aparece (sem ele, os da tarefa), em ordem, com o horario de
+    // cada uma: o exercicio novo de um ramo nao fica espremido no fim da linhagem inteira (31/10, pedido dele).
+    std::unordered_set<std::string> shown;
+    if (!drill.empty()) shown.insert(drill);
+    else
+        for (const TrainingDrillInfo3D& info : task)
+            if (info.weight > 0.0) shown.insert(info.id);
     std::vector<std::pair<std::uint64_t, double>> rounds;
     rounds.reserve(history.drills.size());
-    for (const TrainingDrillPoint3D& point : history.drills) rounds.push_back({ point.iteration, point.time });
+    for (const TrainingDrillPoint3D& point : history.drills)
+        if (shown.empty() || shown.contains(point.drill)) rounds.push_back({ point.iteration, point.time });
     std::sort(rounds.begin(), rounds.end());
     rounds.erase(std::unique(rounds.begin(), rounds.end(),
                      [](const auto& a, const auto& b) { return a.first == b.first; }),
@@ -182,7 +190,8 @@ TrainingCharts3D trainingCharts3D(const TrainingHistory3D& history, const std::v
     std::vector<std::vector<Sum>> sums(infos.size(), std::vector<Sum>(slices));
     for (const TrainingDrillPoint3D& point : history.drills) {
         const auto found = slot.find(point.drill);
-        if (found != slot.end()) sums[found->second][sliceOf[point.iteration]].add(point);
+        const auto at = sliceOf.find(point.iteration);
+        if (found != slot.end() && at != sliceOf.end()) sums[found->second][at->second].add(point);
     }
     // A medida de um exercicio na fatia, com as anteriores ate juntar episodios.
     const auto measured = [&](std::size_t drillSlot, std::size_t slice) {
@@ -268,7 +277,7 @@ TrainingCharts3D trainingCharts3D(const TrainingHistory3D& history, const std::v
     std::vector<double> decisionSum(slices, 0.0), decisionCount(slices, 0.0);
     for (const TrainingIterationPoint3D& point : history.iterations) {
         const auto at = std::lower_bound(out.iterations.begin(), out.iterations.end(), point.iteration);
-        if (at == out.iterations.end() || !(point.sps > 0.0)) continue;
+        if (at == out.iterations.end() || point.iteration < rounds.front().first || !(point.sps > 0.0)) continue;
         const std::size_t s = static_cast<std::size_t>(at - out.iterations.begin());
         decisionSum[s] += point.sps;
         decisionCount[s] += 1.0;

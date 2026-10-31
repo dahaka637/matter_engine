@@ -1195,7 +1195,11 @@ class LocomotionTrainer:
     def loop(self) -> int:
         self.last_save = time.time()
         last_status = 0.0
-        last_evaluation = time.time()
+        # O relogio da avaliacao continua do ultimo registro deste treino (31/10: religado a toda hora pelo vigia de
+        # temperatura, o B19 nunca chegava aos 30 min e os graficos da avaliacao ficavam vazios); sem nenhum, avalia
+        # depois da primeira rodada.
+        row = self.db.execute("SELECT MAX(time) FROM body_evaluations WHERE run=?", (self.run,)).fetchone()
+        last_evaluation = float(row[0]) if row is not None and row[0] is not None else 0.0
         code = 0
         try:
             self.save("inicio")
