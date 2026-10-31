@@ -28,6 +28,10 @@ const float PelvisCurveFeedForward = tuneTemp("T_PelvisFF", 1.0f);  // TEMPTUNE
 // Curva fechada: correndo para a frente, a pelve segue o caminho do corpo e
 // so se adianta para o pedido ate este angulo (rad), devagar e no sprint.
 const float PathLeadSlow = tuneTemp("T_PathLeadSlow", 1.2f);  // TEMPTUNE
+// A pelve a no maximo isto (rad) do olhar andando (o quadril contido, 30/10; 9 = desligado). A 0,45 (26 graus),
+// na rede do B18 r66945 em 64 mundos: a troca media de 52% para 31% de quedas; frente, costas, lados e curvas
+// iguais; a diagonal frente 1,63 -> 1,55 m/s (a 0,3, 27% mas a diagonal a 1,26).
+const float PelvisLookLimit = tuneTemp("T_PelvisLookLimit", 0.45f);  // TEMPTUNE
 // Levantar: escala das ajudas externas (pelve, peito, endireitar) e teto da
 // forca dos musculos (multiplo da nominal do perfil).
 const float GetUpAssistScale = tuneTemp("T_GetUpAssist", 1.0f);  // TEMPTUNE

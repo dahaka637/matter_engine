@@ -184,6 +184,14 @@ void CharacterLocomotion3D::stepHeading(Tick& t) {
                 targetPelvisYaw = wrapAngle(targetPelvisYaw + std::clamp(PelvisCurveLeadSeconds * pathTurnRate,
                     -PelvisCurveLeadMaximum, PelvisCurveLeadMaximum) * smoothStep((speed - 1.5f) / 1.5f));
             if (pathBound && PathLeadAfterCurve) targetPelvisYaw = boundToPath(targetPelvisYaw);
+            // (TEMPTUNE 30/10, a troca de direcao com o olhar parado) O quadril contido: dentro do setor a pelve
+            // gira para o movimento (a diagonal e um clipe puro girado ate 45 graus do olhar), e uma troca que
+            // cruza a fronteira de setores a virava ate 90 graus de uma vez - as pernas cruzavam e ele caia (nas
+            // trocas que derrubavam, a pelve a 56 graus do olhar; nas outras, 35). Com o limite, a pelve fica
+            // perto do olhar e o pe corrige o resto.
+            if (PelvisLookLimit < 3.0f && !pivoting)
+                targetPelvisYaw = wrapAngle(viewYaw + std::clamp(wrapAngle(targetPelvisYaw - viewYaw),
+                    -PelvisLookLimit, PelvisLookLimit));
         } else if (std::abs(viewErrorBeforeTurn) > 0.55f
             || (std::abs(m_turningRate) > 0.05f
                 && std::abs(viewErrorBeforeTurn) > 0.32f)) {
