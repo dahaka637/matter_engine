@@ -230,6 +230,7 @@ def main() -> int:
     parser.add_argument("--desvio", type=float, default=None,
                         help="o desvio da acao (na faixa das juntas) a partir de agora, tambem ao retomar")
     parser.add_argument("--comeco-clipe", type=float, default=0.25, help="a fatia dos comecos nos clipes de levantar")
+    parser.add_argument("--comeco-de-pe", type=float, default=0.15, help="a fatia que comeca de pe (o clipe parado)")
     parser.add_argument("--professor-passos", type=int, default=800,
                         help="num treino novo: os passos da rede de brucos (256 mundos cada) para a aluna aprender")
     parser.add_argument("--aquecer-critico", type=int, default=20,
@@ -252,7 +253,8 @@ def main() -> int:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     torch.manual_seed(args.semente)
     batch = native.GetUpAmpBatch(str(REPO / "assets"), environments=args.mundos, threads=args.threads,
-                                 seed=args.semente, clip_start_fraction=args.comeco_clipe)
+                                 seed=args.semente, clip_start_fraction=args.comeco_clipe,
+                                 standing_start_fraction=args.comeco_de_pe)
     evaluation = native.GetUpAmpBatch(str(REPO / "assets"), environments=64, threads=1, seed=12345, evaluation=True)
     n, obs_size, act_size, amp = batch.num_envs, batch.obs_size, batch.action_size, batch.amp_size
     reference = torch.as_tensor(batch.reference_pairs(), device=device)
@@ -406,6 +408,7 @@ def main() -> int:
                    "am_s": T * n / (time.time() - begin), **{k: v / max(1, steps) for k, v in stats.items()}}
             row.update(summarize(recent[recent[:, 1] == 0] if len(recent) else recent, "queda_"))
             row.update(summarize(recent[recent[:, 1] == 1] if len(recent) else recent, "clipe_"))
+            row.update(summarize(recent[recent[:, 1] == 2] if len(recent) else recent, "de_pe_"))
             log.write(json.dumps(row) + "\n")
             log.flush()
             print(" ".join(f"{k}={v:.4g}" if isinstance(v, float) else f"{k}={v}" for k, v in row.items()), flush=True)

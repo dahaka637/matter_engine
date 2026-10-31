@@ -121,10 +121,11 @@ struct TrackingGetUpAmpTraining3D::Impl {
         }
     }
 
-    // Um instante sorteado de um clipe de levantar (o RSI do DeepMimic), num rumo sorteado.
-    void beginFromClip(World& w) {
+    // Um instante sorteado de um clipe de levantar (o RSI do DeepMimic) ou, de pe, do parado, num rumo sorteado.
+    void beginFromClip(World& w, bool standing) {
         std::uniform_real_distribution<float> u(0.0f, 1.0f);
-        const auto& reference = *references[std::uniform_int_distribution<std::size_t>(0, std::size(GetUpClips) - 1)(w.rng)];
+        const auto& reference = standing ? *references.back()
+            : *references[std::uniform_int_distribution<std::size_t>(0, std::size(GetUpClips) - 1)(w.rng)];
         const float last = std::max(0.0f, reference.durationSeconds() - 2.0f / 30.0f);
         reference.frame(u(w.rng) * last, {}, (2.0f * u(w.rng) - 1.0f) * Pi, w.frame);
         w.scene->resetRagdollState(w.handle, w.frame.links);
@@ -132,12 +133,13 @@ struct TrackingGetUpAmpTraining3D::Impl {
     }
 
     void begin(World& w) {
-        const bool fall = settings.evaluation
-            || std::uniform_real_distribution<float>(0.0f, 1.0f)(w.rng) >= settings.clipStartFraction;
+        const float draw = std::uniform_real_distribution<float>(0.0f, 1.0f)(w.rng);
+        const bool standing = !settings.evaluation && draw < settings.standingStartFraction;
+        const bool fall = settings.evaluation || draw >= settings.standingStartFraction + settings.clipStartFraction;
         if (fall) beginFall(w);
-        else beginFromClip(w);
+        else beginFromClip(w, standing);
         const TrackingGetUpPosture3D start = posture->measure(w.body->links);
-        w.startKind = fall ? 0u : 1u;
+        w.startKind = fall ? 0u : standing ? 2u : 1u;
         w.startSide = start.chestFacingUp < -0.5f ? 0u : start.chestFacingUp > 0.5f ? 1u : 2u;
         w.startHead = start.headHeight;
         w.time = 0.0f;

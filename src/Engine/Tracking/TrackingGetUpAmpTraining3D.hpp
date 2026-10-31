@@ -21,12 +21,14 @@ struct TrackingGetUpAmpSettings3D {
     // O episodio (s) e, no treino, a fatia que comeca num instante sorteado de um clipe de levantar.
     float episodeSeconds = 6.0f;
     float clipStartFraction = 0.25f;
+    // A fatia que comeca de pe, num instante do clipe parado (31/10: ele nao se mantinha de pe depois de levantar).
+    float standingStartFraction = 0.15f;
 };
 
 // Um episodio do levantar livre que acabou (no fim do tempo).
 struct TrackingGetUpAmpEpisode3D {
     std::uint32_t world = 0;
-    // 0: uma queda; 1: um instante de um clipe de levantar.
+    // 0: uma queda; 1: um instante de um clipe de levantar; 2: de pe (o parado).
     std::uint32_t startKind = 0;
     // Como comecou: 0 de brucos, 1 de costas, 2 de lado (ou sentado, ajoelhado).
     std::uint32_t startSide = 0;

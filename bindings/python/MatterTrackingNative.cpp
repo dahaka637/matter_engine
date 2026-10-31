@@ -331,7 +331,7 @@ NB_MODULE(matter_tracking_native, m) {
             "__init__",
             [](TrackingGetUpAmpTraining3D* self, const std::string& assets, std::uint32_t environments,
                 std::uint32_t threads, std::uint64_t seed, bool evaluation, float episodeSeconds,
-                float clipStartFraction) {
+                float clipStartFraction, float standingStartFraction) {
                 TrackingGetUpAmpSettings3D settings;
                 settings.assetsDirectory = assets;
                 settings.environments = environments;
@@ -340,11 +340,12 @@ NB_MODULE(matter_tracking_native, m) {
                 settings.evaluation = evaluation;
                 settings.episodeSeconds = episodeSeconds;
                 settings.clipStartFraction = clipStartFraction;
+                settings.standingStartFraction = standingStartFraction;
                 nb::gil_scoped_release release;
                 new (self) TrackingGetUpAmpTraining3D(settings);
             },
             "assets"_a, "environments"_a = 512, "threads"_a = 0, "seed"_a = 1, "evaluation"_a = false,
-            "episode_seconds"_a = 6.0f, "clip_start_fraction"_a = 0.25f)
+            "episode_seconds"_a = 6.0f, "clip_start_fraction"_a = 0.25f, "standing_start_fraction"_a = 0.15f)
         .def_prop_ro("num_envs", &TrackingGetUpAmpTraining3D::environmentCount)
         .def_prop_ro("obs_size", &TrackingGetUpAmpTraining3D::observationSize)
         .def_prop_ro("action_size", &TrackingGetUpAmpTraining3D::actionSize)
