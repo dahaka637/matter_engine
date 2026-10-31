@@ -6,6 +6,7 @@
 #include <array>
 #include <filesystem>
 #include <memory>
+#include <utility>
 
 namespace MatterEngine {
 
@@ -60,13 +61,16 @@ public:
     // O filtro da acao do treino ("filtroBeta"; 0,2, o do DReCon, sem ele).
     [[nodiscard]] static float filterBetaOf(const std::filesystem::path& trackingTask);
     using Conditions = TrackingViewerConditions3D;
-    // O levantar do chao (o exercicio "levantar", 29/10): as redes de brucos e de costas, as ultimas exportadas
-    // pelos treinos levantar_frente e levantar_costas_rola (vazio: sem a rede). Treinando: um dos dois gravou
-    // o log nos ultimos 10 min (ele treina a parte, numa rede propria).
+    // O levantar do chao (o exercicio "levantar"): desde 31/10 a rede do levantar livre (uma so, de qualquer queda;
+    // o treino levantar_livre, tools/rl/levantar_amp.py), a ultima exportada. Treinando: o log gravado nos ultimos
+    // 10 min (ele treina a parte, numa rede propria).
     static constexpr const char* GetUpDrill = "levantar";
-    [[nodiscard]] static std::filesystem::path getUpExport(std::size_t clip);
+    [[nodiscard]] static std::filesystem::path getUpExport();
+    [[nodiscard]] static std::filesystem::path getUpLog();
     [[nodiscard]] static bool getUpReady();
     [[nodiscard]] static bool getUpTraining();
+    // No levantar: quantas quedas ele levantou (ficou de pe alguma vez) e quantas acabaram desde o comeco.
+    [[nodiscard]] std::pair<std::uint32_t, std::uint32_t> getUpTally() const;
     [[nodiscard]] static Conditions conditionsOf(const std::filesystem::path& trackingTask);
 
     // drill: "rumoN" (andar no rumo N) ou um dos parados; com locomotionTask, o id de um

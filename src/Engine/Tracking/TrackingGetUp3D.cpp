@@ -90,6 +90,11 @@ void TrackingGetUpContract3D::actionOf(std::span<const Vec3> coordinates, std::s
 }
 
 void TrackingGetUpContract3D::observe(std::span<const PhysicsBodyState3D> links, float phase, std::span<float> out) const {
+    observeBody(links, out);
+    out[bodyObservationSize()] = phase;
+}
+
+void TrackingGetUpContract3D::observeBody(std::span<const PhysicsBodyState3D> links, std::span<float> out) const {
     const RagdollProfile3D& profile = *m_profile;
     const PhysicsBodyState3D& root = links[m_root];
     const float yaw = trackingBodyYaw3D(profile.links[m_root], root);
@@ -106,7 +111,6 @@ void TrackingGetUpContract3D::observe(std::span<const PhysicsBodyState3D> links,
         const Vec3 w = frame.direction(s.angularVelocity);
         for (float value : { p.x, p.y, p.z, q.x, q.y, q.z, q.w, v.x, v.y, v.z, w.x, w.y, w.z }) out[n++] = value;
     }
-    out[n++] = phase;
 }
 
 TrackingGetUpContract3D::Terms TrackingGetUpContract3D::reward(std::span<const PhysicsBodyState3D> body,

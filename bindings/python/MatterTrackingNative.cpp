@@ -7,6 +7,7 @@
 #include <nanobind/stl/tuple.h>
 #include <nanobind/stl/vector.h>
 
+#include "Engine/Tracking/TrackingGetUpAmpTraining3D.hpp"
 #include "Engine/Tracking/TrackingGetUpTraining3D.hpp"
 #include "Engine/Tracking/TrackingTraining3D.hpp"
 
@@ -323,4 +324,111 @@ NB_MODULE(matter_tracking_native, m) {
                 return out;
             })
         .def("frame_lines", &TrackingGetUpTraining3D::frameLines, "world"_a, "reference"_a = false);
+
+    // O levantar livre (31/10, AMP): quedas sorteadas, a nota da tarefa daqui e o estilo pelo discriminador do treinador.
+    nb::class_<TrackingGetUpAmpTraining3D>(m, "GetUpAmpBatch")
+        .def(
+            "__init__",
+            [](TrackingGetUpAmpTraining3D* self, const std::string& assets, std::uint32_t environments,
+                std::uint32_t threads, std::uint64_t seed, bool evaluation, float episodeSeconds,
+                float clipStartFraction) {
+                TrackingGetUpAmpSettings3D settings;
+                settings.assetsDirectory = assets;
+                settings.environments = environments;
+                settings.threads = threads;
+                settings.seed = seed;
+                settings.evaluation = evaluation;
+                settings.episodeSeconds = episodeSeconds;
+                settings.clipStartFraction = clipStartFraction;
+                nb::gil_scoped_release release;
+                new (self) TrackingGetUpAmpTraining3D(settings);
+            },
+            "assets"_a, "environments"_a = 512, "threads"_a = 0, "seed"_a = 1, "evaluation"_a = false,
+            "episode_seconds"_a = 6.0f, "clip_start_fraction"_a = 0.25f)
+        .def_prop_ro("num_envs", &TrackingGetUpAmpTraining3D::environmentCount)
+        .def_prop_ro("obs_size", &TrackingGetUpAmpTraining3D::observationSize)
+        .def_prop_ro("action_size", &TrackingGetUpAmpTraining3D::actionSize)
+        .def_prop_ro("amp_size", &TrackingGetUpAmpTraining3D::ampSize)
+        .def_prop_ro("episode_seconds", &TrackingGetUpAmpTraining3D::episodeSeconds)
+        .def_prop_ro("policy_dt", [](const TrackingGetUpAmpTraining3D&) {
+            return TrackingGetUpAmpTraining3D::TicksPerDecision * TrackingGetUpAmpTraining3D::TickSeconds;
+        })
+        .def("observation_names", &TrackingGetUpAmpTraining3D::observationNames)
+        .def("action_names", &TrackingGetUpAmpTraining3D::actionNames)
+        .def(
+            "reset",
+            [](TrackingGetUpAmpTraining3D& b, std::uint64_t seed) {
+                nb::gil_scoped_release release;
+                b.reset(seed);
+            },
+            "seed"_a)
+        .def("observations",
+            [](const TrackingGetUpAmpTraining3D& b) {
+                auto out = owned<float>({ b.environmentCount(), b.observationSize() });
+                b.observations(std::span<float>(out.data(), out.size()));
+                return out;
+            })
+        .def("final_observations",
+            [](const TrackingGetUpAmpTraining3D& b) {
+                auto out = owned<float>({ b.environmentCount(), b.observationSize() });
+                b.finalObservations(std::span<float>(out.data(), out.size()));
+                return out;
+            })
+        .def("amp_pairs",
+            [](const TrackingGetUpAmpTraining3D& b) {
+                auto out = owned<float>({ b.environmentCount(), 2 * b.ampSize() });
+                b.ampPairs(std::span<float>(out.data(), out.size()));
+                return out;
+            })
+        .def("reference_pairs",
+            [](const TrackingGetUpAmpTraining3D& b) {
+                std::vector<float> pairs;
+                {
+                    nb::gil_scoped_release release;
+                    pairs = b.referencePairs();
+                }
+                const std::size_t width = 2 * b.ampSize();
+                auto out = owned<float>({ pairs.size() / width, width });
+                std::copy(pairs.begin(), pairs.end(), out.data());
+                return out;
+            })
+        .def(
+            "step",
+            [](TrackingGetUpAmpTraining3D& b,
+                nb::ndarray<const float, nb::ndim<2>, nb::c_contig, nb::device::cpu> actions) {
+                const std::size_t n = b.environmentCount();
+                if (actions.shape(0) != n || actions.shape(1) != b.actionSize())
+                    throw nb::value_error("acoes com forma errada");
+                auto rewards = owned<float>({ n });
+                auto terminated = owned<std::uint8_t>({ n });
+                auto truncated = owned<std::uint8_t>({ n });
+                {
+                    const std::span<const float> a(actions.data(), actions.size());
+                    nb::gil_scoped_release release;
+                    b.step(a, std::span<float>(rewards.data(), n), std::span<std::uint8_t>(terminated.data(), n),
+                        std::span<std::uint8_t>(truncated.data(), n));
+                }
+                return std::make_tuple(rewards, terminated, truncated);
+            },
+            "actions"_a)
+        .def("episode_columns",
+            [](const TrackingGetUpAmpTraining3D&) {
+                return std::vector<std::string> { "mundo", "comeco", "lado", "cabeca_inicio", "segundos", "de_pe_aos",
+                    "nota_tarefa", "altura_cabeca", "altura_pelve", "de_pe" };
+            })
+        .def("finished_episodes",
+            [](TrackingGetUpAmpTraining3D& b) {
+                const std::vector<TrackingGetUpAmpEpisode3D> episodes = b.takeEpisodes();
+                auto out = owned<float>({ episodes.size(), 10 });
+                float* d = out.data();
+                for (std::size_t i = 0; i < episodes.size(); ++i) {
+                    const TrackingGetUpAmpEpisode3D& e = episodes[i];
+                    const float row[10] = { static_cast<float>(e.world), static_cast<float>(e.startKind),
+                        static_cast<float>(e.startSide), e.startHeadHeight, e.seconds, e.firstStandSeconds,
+                        e.meanTaskReward, e.headHeight, e.pelvisHeight, e.standing ? 1.0f : 0.0f };
+                    std::copy(row, row + 10, d + i * 10);
+                }
+                return out;
+            })
+        .def("frame_lines", &TrackingGetUpAmpTraining3D::frameLines, "world"_a);
 }

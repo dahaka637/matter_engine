@@ -899,6 +899,7 @@ void ReinforcementLearningScreen::update(float deltaSeconds) {
         m_policyWatch = 2.0f;
         reloadPolicy(false);
         m_getUpTraining = TrackingViewer3D::getUpTraining();
+        if (m_viewerDrill == TrackingViewer3D::GetUpDrill) refreshGetUpCurve();
     }
     // (A leitura pedida chega no quadro seguinte em que ficar pronta.)
     if (m_historyPending || m_historyRun != activeRun() || (m_historyWatch -= deltaSeconds) <= 0.0f) {
@@ -1526,9 +1527,14 @@ void ReinforcementLearningScreen::drawViewport(CanvasTarget& canvas, float botto
         drawList->AddText(ImGui::GetFont(), textSize, { at.x + 1.0f, at.y + 1.0f }, IM_COL32(0, 0, 0, alpha), text.c_str());
         drawList->AddText(ImGui::GetFont(), textSize, at, color, text.c_str());
     }
-    // A politica que esta no corpo (canto de cima), o pedido e a velocidade dele.
-    const std::string label = m_policyText + "\npedido " + decimal(viewerRequestedSpeed(), 1) + " m/s · ele "
+    // A politica que esta no corpo (canto de cima), o pedido e a velocidade dele; no levantar, as quedas levantadas.
+    std::string label = m_policyText + "\npedido " + decimal(viewerRequestedSpeed(), 1) + " m/s · ele "
         + decimal(viewerSpeed(), 1) + " m/s";
+    if (const auto* tracking = dynamic_cast<const TrackingViewer3D*>(m_locomotion.get());
+        tracking != nullptr && m_viewerDrill == TrackingViewer3D::GetUpDrill) {
+        const auto [stood, falls] = tracking->getUpTally();
+        label = m_policyText + "\nlevantou " + std::to_string(stood) + " de " + std::to_string(falls) + " quedas";
+    }
     drawList->AddText({ origin.x + ui(10.0f), origin.y + ui(8.0f) }, UiMuted, label.c_str());
 }
 
@@ -1666,10 +1672,74 @@ const TrainingEvaluationCharts3D& ReinforcementLearningScreen::evaluationCharts(
 }
 
 void ReinforcementLearningScreen::drawCharts(float height) {
+    if (m_viewerDrill == TrackingViewer3D::GetUpDrill) {
+        drawGetUpCharts(height);
+        return;
+    }
     if (m_locomotionTask && !MotorViewer3D::isMotorTask(m_viewerTask) && !TrackingViewer3D::isTrackingTask(m_viewerTask))
         drawLocomotionCharts(height);
     else
         drawLegacyCharts(height);
+}
+
+void ReinforcementLearningScreen::refreshGetUpCurve() {
+    std::error_code error;
+    const auto write = std::filesystem::last_write_time(TrackingViewer3D::getUpLog(), error);
+    if (error || write == m_getUpCurve.write) return;
+    GetUpCurve curve;
+    curve.write = write;
+    std::ifstream file(TrackingViewer3D::getUpLog());
+    const auto percent = [](const nlohmann::json& row, const char* key) {
+        const auto it = row.find(key);
+        return it == row.end() || !it->is_number() ? std::numeric_limits<float>::quiet_NaN() : 100.0f * it->get<float>();
+    };
+    for (std::string line; std::getline(file, line);) {
+        const nlohmann::json row = nlohmann::json::parse(line, nullptr, false);
+        if (row.is_discarded() || !row.value("aval", false)) continue;
+        curve.samples.push_back(row.value("amostras", 0.0));
+        curve.standing.push_back(percent(row, "de_pe"));
+        curve.prone.push_back(percent(row, "brucos"));
+        curve.supine.push_back(percent(row, "costas"));
+        curve.side.push_back(percent(row, "lado"));
+        curve.stood.push_back(percent(row, "levantou"));
+        curve.seconds.push_back(percent(row, "tempo") / 100.0f);
+    }
+    m_getUpCurve = std::move(curve);
+}
+
+void ReinforcementLearningScreen::drawGetUpCharts(float height) {
+    ImGui::Dummy({ 1.0f, ui(4.0f) });
+    const GetUpCurve& c = m_getUpCurve;
+    const ImVec4 green { 0.30f, 0.82f, 0.56f, 1.0f }, amber { 0.96f, 0.70f, 0.28f, 1.0f },
+        cyan { 0.35f, 0.78f, 0.94f, 1.0f }, violet { 0.70f, 0.56f, 0.96f, 1.0f }, blue { 0.47f, 0.62f, 0.98f, 1.0f };
+    const auto last = [](const std::vector<float>& values, const char* format) {
+        const float v = lastFinite(values);
+        if (!std::isfinite(v)) return std::string();
+        char buffer[48];
+        std::snprintf(buffer, sizeof buffer, format, v);
+        return std::string(buffer);
+    };
+    const float spacing = ImGui::GetStyle().ItemSpacing.x;
+    const ImVec2 size { (ImGui::GetContentRegionAvail().x - spacing) * 0.5f,
+        std::max(height - ImGui::GetTextLineHeightWithSpacing(), ui(40.0f)) };
+    const float rowTop = ImGui::GetCursorPosY();
+    ImGui::BeginGroup();
+    ImGui::TextColored(InfoText, "%s", "Levantou da queda (%)");
+    tooltip("A rede sem ruído nas mesmas 64 quedas sorteadas, a cada exportação: de pé no fim do episódio (6 s), no "
+            "total e por como caiu (de bruços, de costas, de lado); tracejado, os que ficaram de pé alguma vez.");
+    lineChart("##levantou", { { &c.standing, green, false, "de pé no fim" }, { &c.prone, blue, false, "de bruços" },
+                                { &c.supine, violet, false, "de costas" }, { &c.side, amber, false, "de lado" },
+                                { &c.stood, green, true, "levantou alguma vez" } },
+        0.0f, 100.0f, size, last(c.standing, "%.0f%%").c_str(), "%", nullptr, false, "sem avaliação ainda");
+    ImGui::EndGroup();
+    ImGui::SameLine();
+    ImGui::SetCursorPosY(rowTop);
+    ImGui::BeginGroup();
+    ImGui::TextColored(InfoText, "%s", "Tempo para levantar (s)");
+    tooltip("Nas mesmas quedas: quanto tempo, dos que levantaram, até ficar de pé pela primeira vez.");
+    lineChart("##tempo", { { &c.seconds, cyan, false, "tempo" } }, 0.0f, 6.0f, size, last(c.seconds, "%.1f s").c_str(),
+        "s", nullptr, false, "sem avaliação ainda");
+    ImGui::EndGroup();
 }
 
 void ReinforcementLearningScreen::drawLocomotionCharts(float height) {

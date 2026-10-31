@@ -40,6 +40,9 @@ public:
     // Os alvos absolutos dos 39 eixos (velocidade alvo zero).
     void driveTargets(std::span<const float> action, std::vector<RagdollDriveTarget3D>& out) const;
     void observe(std::span<const PhysicsBodyState3D> links, float phase, std::span<float> out) const;
+    // So o corpo (sem a fase): a altura da raiz e os 13 numeros de cada link (o levantar livre, 31/10).
+    [[nodiscard]] std::size_t bodyObservationSize() const { return 1 + 13 * m_profile->links.size(); }
+    void observeBody(std::span<const PhysicsBodyState3D> links, std::span<float> out) const;
     // As coordenadas de junta de uma pose na ordem da acao (o alvo que a reproduz).
     void actionOf(std::span<const Vec3> coordinates, std::span<float> out) const;
 

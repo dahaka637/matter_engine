@@ -15,6 +15,7 @@ CASOS = {
     ("/r/build-profile/MatterRLTrainingTests",): "pesado",
     (".venv/bin/python", "/tmp/s/avaliar.py", "b4", "frente"): "pesado",
     (".venv/bin/python", "previa_locomocao.py", "--treino", "b4"): "pesado",
+    (".venv/bin/python", "levantar_amp.py", "--treino", "levantar_amp"): "pesado",
     ("/usr/bin/bash", "/tmp/s/checagem_b1.sh", "b4", "4"): "pesado",
     ("/usr/bin/code",): "",
     ("ninja", "-C", "build"): "pesado",

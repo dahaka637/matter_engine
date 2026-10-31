@@ -53,7 +53,7 @@ LOG = Path.home() / ".local" / "share" / "matter-engine" / "vigia_temperatura.lo
 # (um terminal com "matter_rl treinar" escrito no meio do comando nao e um treino).
 HEAVY_EXE = re.compile(r"^(Matter\w+|ninja|cc1plus|cc1|ld|lto1|lto-wrapper)$")
 HEAVY_SCRIPT = re.compile(r"^(avaliar|previa_\w+|hash_locomocao|vazao|rastreador_\w+|prova|checagem\w*|ciclo\w*"
-                          r"|troca\w*|folhas\w*)\.(py|sh)$")
+                          r"|troca\w*|folhas\w*|levantar_\w+)\.(py|sh)$")
 TEST_MARK = "vigia-teste-alvo"
 
 

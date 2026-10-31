@@ -152,6 +152,9 @@ private:
     void drawLocomotionCharts(float height);
     // Os treinos antigos (o Corpo, o motor, o rastreador): os graficos de antes.
     void drawLegacyCharts(float height);
+    // O levantar do chao (o treino a parte, 31/10): as avaliacoes dele nas 64 quedas fixas, relidas quando o log muda.
+    void drawGetUpCharts(float height);
+    void refreshGetUpCurve();
     // O seletor do periodo dos graficos (o mesmo no recolhido e no expandido).
     void drawChartWindow(float width);
     [[nodiscard]] const TrainingCharts3D& charts(std::size_t slices);
@@ -227,6 +230,13 @@ private:
     float m_policyWatch = 0.0f;
     // Se o treino a parte do levantar do chao esta rodando (o exercicio dele entre os ativos).
     bool m_getUpTraining = false;
+    // As avaliacoes do levantar (de pe no fim, em %: no total e por lado; se levantou alguma vez; o tempo ate ficar
+    // de pe, s) e as amostras de treino de cada uma.
+    struct GetUpCurve {
+        std::vector<float> standing, prone, supine, side, stood, seconds;
+        std::vector<double> samples;
+        std::filesystem::file_time_type write {};
+    } m_getUpCurve;
     float m_accumulator = 0.0f;
     // Onde a pelve aparece no ultimo quadro (0 a 1 na imagem; -1 fora dela).
     std::array<float, 2> m_pelvisOnScreen { -1.0f, -1.0f };

@@ -2,7 +2,7 @@
 
 #include "Engine/RL/Body/RLBody3D.hpp"
 #include "Engine/RL/Policy/PolicyRuntime3D.hpp"
-#include "Engine/Tracking/TrackingGetUpTraining3D.hpp"
+#include "Engine/Tracking/TrackingGetUpAmpTraining3D.hpp"
 #include "Engine/Tracking/TrackingTraining3D.hpp"
 #include "Workbench/ReinforcementLearning/LocomotionViewer3D.hpp"
 
@@ -23,11 +23,10 @@ namespace {
 // A velocidade de quando a tela nao pede outra (a do prototipo, G1).
 constexpr float DefaultSpeed = 3.0f;
 
-// O treino do levantar de cada clipe (0: de brucos; 1: de costas, o do clipe que rola para brucos, 31/10).
-std::filesystem::path getUpRun(std::size_t clip) {
+// O treino do levantar livre (31/10: uma rede para qualquer queda, tools/rl/levantar_amp.py).
+std::filesystem::path getUpRun() {
     const char* home = std::getenv("HOME");
-    return std::filesystem::path(home != nullptr ? home : ".") / ".local/share/matter-engine/rl/runs"
-        / (clip == 0 ? "levantar_frente" : "levantar_costas_rola");
+    return std::filesystem::path(home != nullptr ? home : ".") / ".local/share/matter-engine/rl/runs/levantar_livre";
 }
 
 } // namespace
@@ -51,26 +50,40 @@ struct TrackingViewer3D::Impl {
         if (drill == TrackingDrill3D::Move) batch->setCommand(0, speed, heading);
         else batch->setDrill(0, drill);
     }
-    // O levantar: o lote do DeepMimic com um mundo, comecando deitado, e as redes de brucos (0) e de costas (1),
-    // alternando a cada levantada (o fim do clipe).
-    std::unique_ptr<TrackingGetUpTraining3D> getUp;
-    std::array<std::unique_ptr<PolicyRuntime3D>, 2> getUpPolicies;
-    std::size_t getUpClip = 0;
+    // O levantar: o lote do levantar livre com um mundo, como a avaliacao do treino (so quedas sorteadas: o corpo cai,
+    // a rede levanta e fica de pe ate o fim do episodio, e cai de novo), com a ultima rede exportada (relida quando o
+    // treino exporta outra) e a conta de quantas quedas ele levantou.
+    std::unique_ptr<TrackingGetUpAmpTraining3D> getUp;
+    std::unique_ptr<PolicyRuntime3D> getUpPolicy;
+    std::filesystem::file_time_type getUpPolicyWrite {};
+    std::uint32_t getUpFalls = 0, getUpStood = 0;
     std::filesystem::path assets;
     std::uint64_t seed = 1;
     std::vector<float> getUpObservation, getUpAction;
     void startGetUp() {
-        TrackingGetUpSettings3D s;
+        TrackingGetUpAmpSettings3D s;
         s.assetsDirectory = assets.string();
-        s.clip = getUpClip == 0 ? "frente" : "costas";
         s.environments = 1;
         s.threads = 1;
         s.seed = seed;
         s.evaluation = true;
-        getUp = std::make_unique<TrackingGetUpTraining3D>(s);
-        getUp->reset(seed);
+        getUp = std::make_unique<TrackingGetUpAmpTraining3D>(s);
         getUpObservation.assign(getUp->observationSize(), 0.0f);
         getUpAction.assign(getUp->actionSize(), 0.0f);
+        getUpFalls = getUpStood = 0;
+    }
+    void loadGetUpPolicy() {
+        std::error_code error;
+        const auto write = std::filesystem::last_write_time(getUpExport(), error);
+        if (error || (getUpPolicy && write == getUpPolicyWrite)) return;
+        try {
+            auto policy = std::make_unique<PolicyRuntime3D>(getUpExport());
+            if (policy->observationSize() == getUp->observationSize() && policy->actionSize() == getUp->actionSize()) {
+                getUpPolicy = std::move(policy);
+                getUpPolicyWrite = write;
+            }
+        } catch (const std::exception&) {
+        }
     }
     std::uint32_t steps = 0;
     std::uint32_t chest = 0;
@@ -330,35 +343,24 @@ TrackingViewer3D::TrackingViewer3D(const std::filesystem::path& assetsDirectory,
         impl.assets = assetsDirectory;
         impl.seed = seed;
         impl.startGetUp();
-        for (std::size_t clip = 0; clip < 2; ++clip) {
-            try {
-                auto policy = std::make_unique<PolicyRuntime3D>(getUpExport(clip));
-                if (policy->observationSize() == impl.getUp->observationSize()
-                    && policy->actionSize() == impl.getUp->actionSize())
-                    impl.getUpPolicies[clip] = std::move(policy);
-            } catch (const std::exception&) {
-            }
-        }
+        impl.loadGetUpPolicy();
     }
 }
 
-std::filesystem::path TrackingViewer3D::getUpExport(std::size_t clip) {
-    return getUpRun(clip) / "exports/policy_latest.mrlpolicy";
-}
+std::filesystem::path TrackingViewer3D::getUpExport() { return getUpRun() / "exports/policy_latest.mrlpolicy"; }
+
+std::filesystem::path TrackingViewer3D::getUpLog() { return getUpRun() / "log.jsonl"; }
 
 bool TrackingViewer3D::getUpReady() {
     std::error_code error;
-    return std::filesystem::exists(getUpExport(0), error) || std::filesystem::exists(getUpExport(1), error);
+    return std::filesystem::exists(getUpExport(), error);
 }
 
 bool TrackingViewer3D::getUpTraining() {
     // (O treino grava o log a cada ~2 min.)
     std::error_code error;
-    for (std::size_t clip = 0; clip < 2; ++clip) {
-        const auto written = std::filesystem::last_write_time(getUpRun(clip) / "log.jsonl", error);
-        if (!error && std::filesystem::file_time_type::clock::now() - written < std::chrono::minutes(10)) return true;
-    }
-    return false;
+    const auto written = std::filesystem::last_write_time(getUpLog(), error);
+    return !error && std::filesystem::file_time_type::clock::now() - written < std::chrono::minutes(10);
 }
 
 TrackingViewer3D::~TrackingViewer3D() = default;
@@ -373,11 +375,9 @@ bool TrackingViewer3D::isTrackingTask(const std::filesystem::path& taskPath) {
 void TrackingViewer3D::setPolicy(const std::filesystem::path& file, std::string& label) {
     Impl& impl = *m_impl;
     if (impl.getUp) {
-        // (O levantar usa as redes proprias, nao a do rastreador.)
-        label.clear();
-        for (std::size_t clip = 0; clip < 2; ++clip)
-            label += std::string(clip == 0 ? "de bruços " : " · de costas ")
-                + (impl.getUpPolicies[clip] ? "r" + std::to_string(impl.getUpPolicies[clip]->info().iteration) : "sem rede");
+        // (O levantar usa a rede propria, nao a do treino mostrado.)
+        impl.loadGetUpPolicy();
+        label = impl.getUpPolicy ? "levantar livre r" + std::to_string(impl.getUpPolicy->info().iteration) : "sem rede";
         return;
     }
     try {
@@ -398,22 +398,20 @@ void TrackingViewer3D::setPolicy(const std::filesystem::path& file, std::string&
 
 void TrackingViewer3D::clearPolicy() { m_impl->policy.reset(); }
 bool TrackingViewer3D::hasPolicy() const {
-    return m_impl->getUp ? m_impl->getUpPolicies[0] || m_impl->getUpPolicies[1] : m_impl->policy != nullptr;
+    return m_impl->getUp ? m_impl->getUpPolicy != nullptr : m_impl->policy != nullptr;
 }
 
 void TrackingViewer3D::step() {
     Impl& impl = *m_impl;
     if (impl.getUp) {
-        // Sem a rede do lado: o clipe nos motores (malha aberta).
+        // Sem a rede, os alvos zerados (o corpo largado).
         impl.getUp->observations(impl.getUpObservation);
-        if (PolicyRuntime3D* policy = impl.getUpPolicies[impl.getUpClip].get())
-            policy->evaluate(impl.getUpObservation, impl.getUpAction);
-        else
-            impl.getUp->referenceActions(impl.getUpAction);
+        if (impl.getUpPolicy) impl.getUpPolicy->evaluate(impl.getUpObservation, impl.getUpAction);
+        else std::fill(impl.getUpAction.begin(), impl.getUpAction.end(), 0.0f);
         impl.getUp->step(impl.getUpAction, impl.rewards, impl.terminated, impl.truncated);
-        if (!impl.getUp->takeEpisodes().empty()) {
-            impl.getUpClip = 1 - impl.getUpClip;
-            impl.startGetUp();
+        for (const TrackingGetUpAmpEpisode3D& episode : impl.getUp->takeEpisodes()) {
+            ++impl.getUpFalls;
+            if (episode.firstStandSeconds >= 0.0f) ++impl.getUpStood;
         }
         ++impl.steps;
         return;
@@ -513,6 +511,12 @@ BodyWorldView3D TrackingViewer3D::view() const {
     return view;
 }
 
-const RagdollProfile3D& TrackingViewer3D::profile() const { return m_impl->batch->profile(); }
+const RagdollProfile3D& TrackingViewer3D::profile() const {
+    return m_impl->getUp ? m_impl->getUp->profile() : m_impl->batch->profile();
+}
+
+std::pair<std::uint32_t, std::uint32_t> TrackingViewer3D::getUpTally() const {
+    return { m_impl->getUpStood, m_impl->getUpFalls };
+}
 
 } // namespace MatterEngine
