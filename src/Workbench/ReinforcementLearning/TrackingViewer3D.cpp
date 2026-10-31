@@ -26,7 +26,9 @@ constexpr float DefaultSpeed = 3.0f;
 // O treino do levantar livre (31/10: uma rede para qualquer queda, tools/rl/levantar_amp.py).
 std::filesystem::path getUpRun() {
     const char* home = std::getenv("HOME");
-    return std::filesystem::path(home != nullptr ? home : ".") / ".local/share/matter-engine/rl/runs/levantar_livre";
+    const auto runs = std::filesystem::path(home != nullptr ? home : ".") / ".local/share/matter-engine/rl/runs";
+    // (31/10 17h: o levantar v2 - com o levantar em movimento e o evitar a queda -, quando existe.)
+    return std::filesystem::exists(runs / "levantar_v2") ? runs / "levantar_v2" : runs / "levantar_livre";
 }
 
 } // namespace

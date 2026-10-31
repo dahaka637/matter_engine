@@ -1,8 +1,10 @@
 // A ponte Python do rastreador fisico (DReCon + DeepMimic, vault
 // 04_locomocao/referencia/pesquisas/12_especificacao_rastreador.md): o lote de
 // treino (o ragdoll do jogo a 0% seguindo o lider, o modo padrao do jogo).
+#include <array>
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
+#include <nanobind/stl/array.h>
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/tuple.h>
 #include <nanobind/stl/vector.h>
@@ -331,7 +333,9 @@ NB_MODULE(matter_tracking_native, m) {
             "__init__",
             [](TrackingGetUpAmpTraining3D* self, const std::string& assets, std::uint32_t environments,
                 std::uint32_t threads, std::uint64_t seed, bool evaluation, float episodeSeconds,
-                float clipStartFraction, float standingStartFraction) {
+                float clipStartFraction, float standingStartFraction, float movingFraction, float avoidFraction,
+                std::uint32_t evaluationKind, std::array<float, 2> avoidNewtons, std::array<float, 2> pushNewtons,
+                std::array<float, 2> moveSpeed) {
                 TrackingGetUpAmpSettings3D settings;
                 settings.assetsDirectory = assets;
                 settings.environments = environments;
@@ -341,11 +345,24 @@ NB_MODULE(matter_tracking_native, m) {
                 settings.episodeSeconds = episodeSeconds;
                 settings.clipStartFraction = clipStartFraction;
                 settings.standingStartFraction = standingStartFraction;
+                settings.movingFraction = movingFraction;
+                settings.avoidFraction = avoidFraction;
+                settings.evaluationKind = evaluationKind;
+                settings.avoidMinimumNewtons = avoidNewtons[0];
+                settings.avoidMaximumNewtons = avoidNewtons[1];
+                settings.pushMinimumNewtons = pushNewtons[0];
+                settings.pushMaximumNewtons = pushNewtons[1];
+                settings.moveMinimumSpeed = moveSpeed[0];
+                settings.moveMaximumSpeed = moveSpeed[1];
                 nb::gil_scoped_release release;
                 new (self) TrackingGetUpAmpTraining3D(settings);
             },
             "assets"_a, "environments"_a = 512, "threads"_a = 0, "seed"_a = 1, "evaluation"_a = false,
-            "episode_seconds"_a = 6.0f, "clip_start_fraction"_a = 0.25f, "standing_start_fraction"_a = 0.15f)
+            "episode_seconds"_a = 6.0f, "clip_start_fraction"_a = 0.25f, "standing_start_fraction"_a = 0.15f,
+            "moving_fraction"_a = 0.0f, "avoid_fraction"_a = 0.0f, "evaluation_kind"_a = 0,
+            "avoid_newtons"_a = std::array<float, 2> { 1200.0f, 1800.0f },
+            "push_newtons"_a = std::array<float, 2> { 400.0f, 900.0f },
+            "move_speed"_a = std::array<float, 2> { 2.5f, 5.0f })
         .def_prop_ro("num_envs", &TrackingGetUpAmpTraining3D::environmentCount)
         .def_prop_ro("obs_size", &TrackingGetUpAmpTraining3D::observationSize)
         .def_prop_ro("action_size", &TrackingGetUpAmpTraining3D::actionSize)
@@ -422,19 +439,22 @@ NB_MODULE(matter_tracking_native, m) {
         .def("episode_columns",
             [](const TrackingGetUpAmpTraining3D&) {
                 return std::vector<std::string> { "mundo", "comeco", "lado", "cabeca_inicio", "segundos", "de_pe_aos",
-                    "nota_tarefa", "altura_cabeca", "altura_pelve", "de_pe" };
+                    "nota_tarefa", "altura_cabeca", "altura_pelve", "de_pe", "velocidade_pedida", "chegou_aos",
+                    "velocidade_rumo_alvo", "caiu_depois_de_pe", "recompos_aos" };
             })
         .def("finished_episodes",
             [](TrackingGetUpAmpTraining3D& b) {
                 const std::vector<TrackingGetUpAmpEpisode3D> episodes = b.takeEpisodes();
-                auto out = owned<float>({ episodes.size(), 10 });
+                constexpr std::size_t width = 15;
+                auto out = owned<float>({ episodes.size(), width });
                 float* d = out.data();
                 for (std::size_t i = 0; i < episodes.size(); ++i) {
                     const TrackingGetUpAmpEpisode3D& e = episodes[i];
-                    const float row[10] = { static_cast<float>(e.world), static_cast<float>(e.startKind),
+                    const float row[width] = { static_cast<float>(e.world), static_cast<float>(e.startKind),
                         static_cast<float>(e.startSide), e.startHeadHeight, e.seconds, e.firstStandSeconds,
-                        e.meanTaskReward, e.headHeight, e.pelvisHeight, e.standing ? 1.0f : 0.0f };
-                    std::copy(row, row + 10, d + i * 10);
+                        e.meanTaskReward, e.headHeight, e.pelvisHeight, e.standing ? 1.0f : 0.0f, e.commandSpeed,
+                        e.reachedSeconds, e.meanTowardSpeed, e.fellAfterStanding ? 1.0f : 0.0f, e.recomposedSeconds };
+                    std::copy(row, row + width, d + i * width);
                 }
                 return out;
             })

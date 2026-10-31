@@ -117,7 +117,7 @@ def export(model: Policy, path: Path, meta: dict) -> None:
     header.update({"schema": "matter-rl-policy-1", "observationSize": layers[0]["inputs"],
                    "actionSize": layers[-1]["outputs"], "activation": "relu",
                    "normalizer": {"mean": mean_at, "invStd": inv_at, "clip": 5.0}, "actionLimit": 3.14159,
-                   "layers": layers, "observationLayout": "levantar-livre-v1", "actionLayout": "levantar-v1",
+                   "layers": layers, "observationLayout": "levantar-v2", "actionLayout": "levantar-v1",
                    "createdUtc": datetime.now(timezone.utc).isoformat(timespec="seconds")})
     text = json.dumps(header, ensure_ascii=False).encode("utf-8")
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -145,11 +145,25 @@ def summarize(rows: np.ndarray, prefix: str) -> dict:
         sel = rows[:, 2] == k
         out[f"{prefix}{side}"] = float(rows[sel, 9].mean()) if sel.any() else None
         out[f"{prefix}n_{side}"] = int(sel.sum())
+    if rows.shape[1] > 10:
+        # O levantar v2: chegou ao alvo e a velocidade rumo a ele (os com pedido), caiu depois de ja ter ficado de pe
+        # e, no evitar a queda, evitou (nao caiu), se recompos e em quanto tempo.
+        moving = rows[:, 10] > 0
+        if moving.any():
+            out[f"{prefix}chegou"] = float((rows[moving, 11] >= 0).mean())
+            out[f"{prefix}vel_rumo"] = float(rows[moving, 12].mean())
+        out[f"{prefix}caiu_de_pe"] = float(rows[:, 13].mean())
+        avoid = rows[:, 1] == 4
+        if avoid.any():
+            ok = avoid & (rows[:, 14] >= 0)
+            out[f"{prefix}evitou"] = float((rows[avoid, 13] == 0).mean())
+            out[f"{prefix}recompos"] = float(ok.sum() / avoid.sum())
+            out[f"{prefix}recompos_s"] = float(rows[ok, 14].mean()) if ok.any() else None
     return out
 
 
-def evaluate(model: Policy, batch, device: torch.device) -> dict:
-    """A rede media nas 64 quedas fixas (a semente nao muda): um episodio de cada mundo."""
+def evaluate(model: Policy, batch, device: torch.device, prefix: str = "") -> dict:
+    """A rede media nos comecos fixos da avaliacao (a semente nao muda): um episodio de cada mundo."""
     batch.reset(12345)
     n = batch.num_envs
     done: dict[int, list] = {}
@@ -162,7 +176,22 @@ def evaluate(model: Policy, batch, device: torch.device) -> dict:
             done.setdefault(int(row[0]), row)
         if len(done) >= n:
             break
-    return summarize(np.array(list(done.values())), "")
+    return summarize(np.array(list(done.values())), prefix)
+
+
+def expand_inputs(state: dict, observations: int) -> dict:
+    """A rede de outro treino do levantar numa entrada maior (o v2: o comando depois do corpo): as colunas novas da
+    primeira camada do ator e do critico em zero (a rede faz o mesmo de antes) e a normalizacao delas neutra."""
+    out = dict(state)
+    for key in ("actor.0.weight", "critic.0.weight"):
+        w = out[key]
+        if observations > w.shape[1]:
+            out[key] = torch.cat([w, torch.zeros(w.shape[0], observations - w.shape[1], dtype=w.dtype)], 1)
+    for key, fill in (("norm.mean", 0.0), ("norm.var", 1.0)):
+        v = out[key]
+        if observations > v.shape[0]:
+            out[key] = torch.cat([v, torch.full((observations - v.shape[0],), fill, dtype=v.dtype)])
+    return out
 
 
 def warm_start(model: Policy, threads: int, steps: int, device: torch.device) -> dict:
@@ -236,6 +265,13 @@ def main() -> int:
                         help="num treino novo: os passos da rede de brucos (256 mundos cada) para a aluna aprender")
     parser.add_argument("--aquecer-critico", type=int, default=20,
                         help="as primeiras atualizacoes so do critico e do discriminador (a acao aprendida fica)")
+    # O levantar v2 (31/10 17h, ele): levantar ja indo para um alvo e evitar a queda depois de um empurrao forte.
+    parser.add_argument("--de", default="", help="num treino novo: comecar da rede de outro treino do levantar")
+    parser.add_argument("--movimento", type=float, default=0.0, help="a fatia que levanta ja indo para um alvo")
+    parser.add_argument("--evitar", type=float, default=0.0, help="a fatia do evitar a queda (de pe, o empurrao forte)")
+    parser.add_argument("--evitar-forca", type=float, nargs=2, default=[1200.0, 1800.0], help="o empurrao curto (N)")
+    parser.add_argument("--empurrao-forca", type=float, nargs=2, default=[400.0, 900.0], help="o de pe (N)")
+    parser.add_argument("--velocidade", type=float, nargs=2, default=[2.5, 5.0], help="a pedida no movimento (m/s)")
     args = parser.parse_args()
 
     from matter_rl.system import require_watchdog
@@ -247,16 +283,25 @@ def main() -> int:
 
     run = DATA / args.treino
     run.mkdir(parents=True, exist_ok=True)
-    for name, data in (("run.json", {"kind": "levantar", "task": "levantar_livre"}),
+    for name, data in (("run.json", {"kind": "levantar", "task": "levantar_livre", "de": args.de}),
                        ("tarefa.json", {"schema": "matter-getup-amp-1", "id": "levantar_livre"})):
         if not (run / name).exists():
             (run / name).write_text(json.dumps(data, ensure_ascii=False))
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     torch.manual_seed(args.semente)
+    v2 = dict(avoid_newtons=tuple(args.evitar_forca), push_newtons=tuple(args.empurrao_forca),
+              move_speed=tuple(args.velocidade))
     batch = native.GetUpAmpBatch(str(REPO / "assets"), environments=args.mundos, threads=args.threads,
                                  seed=args.semente, clip_start_fraction=args.comeco_clipe,
-                                 standing_start_fraction=args.comeco_de_pe)
+                                 standing_start_fraction=args.comeco_de_pe, moving_fraction=args.movimento,
+                                 avoid_fraction=args.evitar, **v2)
     evaluation = native.GetUpAmpBatch(str(REPO / "assets"), environments=64, threads=1, seed=12345, evaluation=True)
+    # (O v2: 32 quedas fixas com alvo e 32 empurroes fortes fixos.)
+    evaluations = {"mov_": native.GetUpAmpBatch(str(REPO / "assets"), environments=32, threads=1, seed=777,
+                                                evaluation=True, evaluation_kind=1, **v2)} if args.movimento > 0 else {}
+    if args.evitar > 0:
+        evaluations["evitar_"] = native.GetUpAmpBatch(str(REPO / "assets"), environments=32, threads=1, seed=999,
+                                                      evaluation=True, evaluation_kind=2, **v2)
     n, obs_size, act_size, amp = batch.num_envs, batch.obs_size, batch.action_size, batch.amp_size
     reference = torch.as_tensor(batch.reference_pairs(), device=device)
     model = Policy(obs_size, act_size, batch.action_ranges()).to(device)
@@ -308,7 +353,16 @@ def main() -> int:
     if args.desvio is not None:
         with torch.no_grad():
             model.log_std.fill_(math.log(args.desvio))
-    if not checkpoint.exists() and args.professor_passos > 0:
+    if not checkpoint.exists() and args.de:
+        source = torch.load(DATA / args.de / "ultimo.pt", map_location=device, weights_only=False)
+        model.load_state_dict(expand_inputs(source["model"], obs_size))
+        disc.load_state_dict(source["disc"])
+        row = {"atualizacao": 0, "de": args.de, "de_atualizacao": source["counters"]["atualizacao"]}
+        log.write(json.dumps(row) + "\n")
+        log.flush()
+        print(f"comeca da rede de {args.de} (atualizacao {row['de_atualizacao']})", flush=True)
+        export_policy()
+    elif not checkpoint.exists() and args.professor_passos > 0:
         row = {"atualizacao": 0, **warm_start(model, args.threads, args.professor_passos, device)}
         log.write(json.dumps(row) + "\n")
         log.flush()
@@ -408,7 +462,7 @@ def main() -> int:
         counters["amostras"] += T * n
         counters["episodios"] += len(episodes)
         if counters["atualizacao"] % 20 == 0:
-            recent = np.array(window) if window else np.zeros((0, 10))
+            recent = np.array(window) if window else np.zeros((0, 15))
             row = {"atualizacao": counters["atualizacao"], "amostras": counters["amostras"], "hora": time.time(),
                    "tarefa": float(buf["task"].mean()), "estilo": float(style.mean()),
                    "desvio": float(model.log_std.detach().clamp(LOG_STD_MIN, LOG_STD_MAX).exp().mean()),
@@ -416,6 +470,8 @@ def main() -> int:
             row.update(summarize(recent[recent[:, 1] == 0] if len(recent) else recent, "queda_"))
             row.update(summarize(recent[recent[:, 1] == 1] if len(recent) else recent, "clipe_"))
             row.update(summarize(recent[recent[:, 1] == 2] if len(recent) else recent, "de_pe_"))
+            row.update(summarize(recent[recent[:, 1] == 3] if len(recent) else recent, "mov_"))
+            row.update(summarize(recent[recent[:, 1] == 4] if len(recent) else recent, "evitar_"))
             log.write(json.dumps(row) + "\n")
             log.flush()
             print(" ".join(f"{k}={v:.4g}" if isinstance(v, float) else f"{k}={v}" for k, v in row.items()), flush=True)
@@ -426,6 +482,8 @@ def main() -> int:
             row = {"atualizacao": counters["atualizacao"], "amostras": counters["amostras"], "aval": True,
                    "hora": time.time(),
                    **evaluate(model, evaluation, device)}
+            for prefix, other in evaluations.items():
+                row.update(evaluate(model, other, device, prefix))
             log.write(json.dumps(row) + "\n")
             log.flush()
             print("aval " + " ".join(f"{k}={v:.3g}" if isinstance(v, float) else f"{k}={v}" for k, v in row.items()),

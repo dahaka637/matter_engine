@@ -23,12 +23,35 @@ struct TrackingGetUpAmpSettings3D {
     float clipStartFraction = 0.25f;
     // A fatia que comeca de pe, num instante do clipe parado (31/10: ele nao se mantinha de pe depois de levantar).
     float standingStartFraction = 0.15f;
+    // O levantar v2 (31/10 17h, ele): a fatia que comeca caida e levanta ja indo para um alvo (em arrancada, virado
+    // para ele) e a do evitar a queda (de pe, um empurrao que o derrubaria: evitar o chao e se recompor rapido).
+    float movingFraction = 0.0f;
+    float avoidFraction = 0.0f;
+    // O alvo do levantar em movimento: a distancia (m) e a velocidade pedida (m/s).
+    float targetMinimumMeters = 4.0f;
+    float targetMaximumMeters = 8.0f;
+    float moveMinimumSpeed = 2.5f;
+    float moveMaximumSpeed = 5.0f;
+    // O empurrao do evitar a queda: o curto (N, 0,1-0,2 s) e, numa fatia, o continuo (N, s).
+    float avoidMinimumNewtons = 1200.0f;
+    float avoidMaximumNewtons = 1800.0f;
+    float avoidHoldFraction = 0.3f;
+    float avoidHoldMinimumNewtons = 350.0f;
+    float avoidHoldMaximumNewtons = 550.0f;
+    float avoidHoldMinimumSeconds = 0.5f;
+    float avoidHoldMaximumSeconds = 1.2f;
+    // O empurrao de pe do jogo de pes (N, 0,1-0,2 s).
+    float pushMinimumNewtons = 400.0f;
+    float pushMaximumNewtons = 900.0f;
+    // Na avaliacao, o que se mede: 0 as quedas (o levantar), 1 o levantar em movimento, 2 o evitar a queda.
+    std::uint32_t evaluationKind = 0;
 };
 
 // Um episodio do levantar livre que acabou (no fim do tempo).
 struct TrackingGetUpAmpEpisode3D {
     std::uint32_t world = 0;
-    // 0: uma queda; 1: um instante de um clipe de levantar; 2: de pe (o parado).
+    // 0: uma queda; 1: um instante de um clipe de levantar; 2: de pe (o parado); 3: uma queda com alvo (o levantar em
+    // movimento); 4: de pe com o empurrao forte (o evitar a queda).
     std::uint32_t startKind = 0;
     // Como comecou: 0 de brucos, 1 de costas, 2 de lado (ou sentado, ajoelhado).
     std::uint32_t startSide = 0;
@@ -40,6 +63,14 @@ struct TrackingGetUpAmpEpisode3D {
     float headHeight = 0.0f;
     float pelvisHeight = 0.0f;
     bool standing = false;
+    // O levantar v2: a velocidade pedida no comeco (0: ficar), quando chegou ao alvo (s; < 0: nao chegou), a
+    // velocidade media rumo ao alvo enquanto de pe com o pedido (m/s), se caiu depois de ja ter ficado de pe e, no
+    // evitar a queda, quando se recompos (s desde o fim do empurrao; < 0: nao se recompos).
+    float commandSpeed = 0.0f;
+    float reachedSeconds = -1.0f;
+    float meanTowardSpeed = 0.0f;
+    bool fellAfterStanding = false;
+    float recomposedSeconds = -1.0f;
 };
 
 // O lote do levantar livre (vault 04_locomocao/plano_compostos_31_10.md, "O levantar livre"): o ragdoll do jogo a 0%
@@ -55,6 +86,13 @@ public:
     static constexpr const char* GetUpClips[4] { "stand_up_front_kimodo", "stand_up_back_kimodo",
         "stand_up_front_kimodo_espelho", "stand_up_back_kimodo_espelho" };
     static constexpr const char* StandingClip = "natural_idle";
+    // Os clipes do estilo do levantar em movimento (a arrancada e a corrida; no lugar, com a velocidade nominal somada
+    // aos pares do discriminador): so o estilo e os comecos das quedas.
+    static constexpr const char* MovingClips[5] { "idle_to_sprint", "crouched_to_sprint", "mixamo_running",
+        "run_forward_medium", "sprint_forward" };
+    // As entradas do comando, depois das do corpo: o rumo do alvo em relacao ao corpo (cos, sen), a distancia
+    // (/10 m, ate 1) e a velocidade pedida (/5 m/s; 0: ficar onde esta).
+    static constexpr std::size_t CommandSize = 4;
 
     explicit TrackingGetUpAmpTraining3D(const TrackingGetUpAmpSettings3D& settings);
     ~TrackingGetUpAmpTraining3D();
