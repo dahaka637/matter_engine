@@ -233,9 +233,10 @@ private:
     bool m_getUpTraining = false;
     // As avaliacoes do levantar (de pe no fim, em %: no total e por lado; se levantou alguma vez; o tempo ate ficar
     // de pe, s) e as amostras de treino de cada uma.
+    // Cada linha do log (as do treino, a cada ~70 s, e as "aval"), em ordem: o treino com ruido (de pe no fim das
+    // quedas, por lado, e o de pe dos que comecam de pe) e o teste sem ruido (repetido ate o seguinte).
     struct GetUpCurve {
-        std::vector<float> standing, prone, supine, side, stood, seconds;
-        std::vector<double> samples;
+        std::vector<float> standing, test, kept, prone, supine, side, seconds;
         std::filesystem::file_time_type write {};
     } m_getUpCurve;
     float m_accumulator = 0.0f;

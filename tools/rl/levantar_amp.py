@@ -409,7 +409,7 @@ def main() -> int:
         counters["episodios"] += len(episodes)
         if counters["atualizacao"] % 20 == 0:
             recent = np.array(window) if window else np.zeros((0, 10))
-            row = {"atualizacao": counters["atualizacao"], "amostras": counters["amostras"], "tempo": time.time(),
+            row = {"atualizacao": counters["atualizacao"], "amostras": counters["amostras"], "hora": time.time(),
                    "tarefa": float(buf["task"].mean()), "estilo": float(style.mean()),
                    "desvio": float(model.log_std.detach().clamp(LOG_STD_MIN, LOG_STD_MAX).exp().mean()),
                    "am_s": T * n / (time.time() - begin), **{k: v / max(1, steps) for k, v in stats.items()}}
@@ -424,7 +424,7 @@ def main() -> int:
         if counters["atualizacao"] % args.salvar_cada == 0:
             save()
             row = {"atualizacao": counters["atualizacao"], "amostras": counters["amostras"], "aval": True,
-                   "tempo": time.time(),
+                   "hora": time.time(),
                    **evaluate(model, evaluation, device)}
             log.write(json.dumps(row) + "\n")
             log.flush()

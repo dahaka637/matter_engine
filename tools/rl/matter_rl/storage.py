@@ -312,7 +312,8 @@ def condense_all(db: "Database", now: float | None = None) -> int:
 
 def condense_log(path: Path, now: float | None = None) -> int:
     """O mesmo para um log.jsonl de treino (as linhas com "tempo"): as linhas de cada grupo, separadas por tipo
-    (as de treino e as "aval"), viram uma com a media dos numeros e os contadores da ultima. Volta quantas sumiram."""
+    (as de treino e as "aval"), viram uma com a media dos numeros e os contadores da ultima; o horario e "hora"
+    ("tempo" e o tempo para levantar). Volta quantas sumiram."""
     now = time.time() if now is None else now
     if not path.exists():
         return 0
@@ -321,7 +322,7 @@ def condense_log(path: Path, now: float | None = None) -> int:
     groups: dict = {}
     order: list = []
     for row in rows:
-        stamp = row.get("tempo")
+        stamp = row.get("hora")
         if stamp is None or now - stamp < CONDENSE_TIERS[0][0]:
             order.append(("linha", len(out)))
             out.append(row)
@@ -340,7 +341,7 @@ def condense_log(path: Path, now: float | None = None) -> int:
         group = groups[ref]
         row = dict(group[-1])
         for key in row:
-            if key in ("atualizacao", "amostras", "tempo", "aval") or key.startswith("n_") or "_n_" in key:
+            if key in ("atualizacao", "amostras", "hora", "aval") or key.startswith("n_") or "_n_" in key:
                 continue
             values = [g.get(key) for g in group if isinstance(g.get(key), (int, float)) and not isinstance(g.get(key), bool)]
             if values:

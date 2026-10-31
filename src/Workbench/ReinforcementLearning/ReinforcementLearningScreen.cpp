@@ -553,6 +553,8 @@ void ReinforcementLearningScreen::showDrill(const std::string& drill) {
     if (drill == m_viewerDrill && hasViewer()) return;
     m_viewerDrill = drill;
     resetViewer();
+    // (O levantar: os graficos dele lidos na hora, sem esperar o ciclo.)
+    if (drill == TrackingViewer3D::GetUpDrill) refreshGetUpCurve();
 }
 
 void ReinforcementLearningScreen::resetViewer() {
@@ -1696,20 +1698,28 @@ void ReinforcementLearningScreen::refreshGetUpCurve() {
     GetUpCurve curve;
     curve.write = write;
     std::ifstream file(TrackingViewer3D::getUpLog());
-    const auto percent = [](const nlohmann::json& row, const char* key) {
+    const float none = std::numeric_limits<float>::quiet_NaN();
+    const auto percent = [none](const nlohmann::json& row, const char* key) {
         const auto it = row.find(key);
-        return it == row.end() || !it->is_number() ? std::numeric_limits<float>::quiet_NaN() : 100.0f * it->get<float>();
+        return it == row.end() || !it->is_number() ? none : 100.0f * it->get<float>();
     };
+    float test = none, seconds = none;
     for (std::string line; std::getline(file, line);) {
         const nlohmann::json row = nlohmann::json::parse(line, nullptr, false);
-        if (row.is_discarded() || !row.value("aval", false)) continue;
-        curve.samples.push_back(row.value("amostras", 0.0));
-        curve.standing.push_back(percent(row, "de_pe"));
-        curve.prone.push_back(percent(row, "brucos"));
-        curve.supine.push_back(percent(row, "costas"));
-        curve.side.push_back(percent(row, "lado"));
-        curve.stood.push_back(percent(row, "levantou"));
-        curve.seconds.push_back(percent(row, "tempo") / 100.0f);
+        if (row.is_discarded() || !row.is_object() || !row.contains("atualizacao")) continue;
+        if (row.value("aval", false)) {
+            test = percent(row, "de_pe");
+            seconds = percent(row, "tempo") / 100.0f;
+            continue;
+        }
+        if (!row.contains("tarefa")) continue;
+        curve.standing.push_back(percent(row, "queda_de_pe"));
+        curve.kept.push_back(percent(row, "de_pe_de_pe"));
+        curve.prone.push_back(percent(row, "queda_brucos"));
+        curve.supine.push_back(percent(row, "queda_costas"));
+        curve.side.push_back(percent(row, "queda_lado"));
+        curve.test.push_back(test);
+        curve.seconds.push_back(seconds);
     }
     m_getUpCurve = std::move(curve);
 }
@@ -1718,7 +1728,7 @@ void ReinforcementLearningScreen::drawGetUpCharts(float height) {
     ImGui::Dummy({ 1.0f, ui(4.0f) });
     const GetUpCurve& c = m_getUpCurve;
     const ImVec4 green { 0.30f, 0.82f, 0.56f, 1.0f }, amber { 0.96f, 0.70f, 0.28f, 1.0f },
-        cyan { 0.35f, 0.78f, 0.94f, 1.0f }, violet { 0.70f, 0.56f, 0.96f, 1.0f }, blue { 0.47f, 0.62f, 0.98f, 1.0f };
+        violet { 0.70f, 0.56f, 0.96f, 1.0f }, blue { 0.47f, 0.62f, 0.98f, 1.0f };
     const auto last = [](const std::vector<float>& values, const char* format) {
         const float v = lastFinite(values);
         if (!std::isfinite(v)) return std::string();
@@ -1731,21 +1741,22 @@ void ReinforcementLearningScreen::drawGetUpCharts(float height) {
         std::max(height - ImGui::GetTextLineHeightWithSpacing(), ui(40.0f)) };
     const float rowTop = ImGui::GetCursorPosY();
     ImGui::BeginGroup();
-    ImGui::TextColored(InfoText, "%s", "Levantou da queda (%)");
-    tooltip("A rede sem ruído nas mesmas 64 quedas sorteadas, a cada exportação: de pé no fim do episódio (6 s), no "
-            "total e por como caiu (de bruços, de costas, de lado); tracejado, os que ficaram de pé alguma vez.");
-    lineChart("##levantou", { { &c.standing, green, false, "de pé no fim" }, { &c.prone, blue, false, "de bruços" },
-                                { &c.supine, violet, false, "de costas" }, { &c.side, amber, false, "de lado" },
-                                { &c.stood, green, true, "levantou alguma vez" } },
-        0.0f, 100.0f, size, last(c.standing, "%.0f%%").c_str(), "%", nullptr, false, "sem avaliação ainda");
+    ImGui::TextColored(InfoText, "%s", "Levantou da queda (%) · Levantar do chão");
+    tooltip("De pé no fim do episódio (6 s), começando de uma queda sorteada: o treino (com ruído) e, tracejado, o "
+            "teste da rede sem ruído nas mesmas 64 quedas. Em laranja, os episódios que já começam de pé: quantos "
+            "continuam de pé até o fim (o equilíbrio).");
+    lineChart("##levantou", { { &c.standing, green, false, "treino" }, { &c.test, green, true, "teste sem ruído" },
+                                { &c.kept, amber, false, "começando de pé" } },
+        0.0f, 100.0f, size, last(c.standing, "%.0f%%").c_str(), "%", nullptr, false, "sem dados ainda");
     ImGui::EndGroup();
     ImGui::SameLine();
     ImGui::SetCursorPosY(rowTop);
     ImGui::BeginGroup();
-    ImGui::TextColored(InfoText, "%s", "Tempo para levantar (s)");
-    tooltip("Nas mesmas quedas: quanto tempo, dos que levantaram, até ficar de pé pela primeira vez.");
-    lineChart("##tempo", { { &c.seconds, cyan, false, "tempo" } }, 0.0f, 6.0f, size, last(c.seconds, "%.1f s").c_str(),
-        "s", nullptr, false, "sem avaliação ainda");
+    ImGui::TextColored(InfoText, "%s", "Por lado (%) · Levantar do chão");
+    tooltip("No treino: de pé no fim, pelo jeito que caiu (de bruços, de costas, de lado).");
+    lineChart("##lados", { { &c.prone, blue, false, "de bruços" }, { &c.supine, violet, false, "de costas" },
+                             { &c.side, amber, false, "de lado" } },
+        0.0f, 100.0f, size, last(c.prone, "%.0f%%").c_str(), "%", nullptr, false, "sem dados ainda");
     ImGui::EndGroup();
 }
 

@@ -398,13 +398,13 @@ def test_turn_noise_grows_with_the_view_off_the_body():
 
 def test_condense_log_groups_old_lines(tmp_path: Path):
     """O log.jsonl de um treino condensa como o banco: as linhas antigas viram uma por grupo (separando as "aval"),
-    as recentes e as sem "tempo" ficam."""
+    as recentes e as sem "hora" ficam."""
     now = time.time()
     base = now - 2 * 86400.0
     base -= base % 3600.0
-    lines = [{"atualizacao": k, "tempo": base + 60 * k, "tarefa": float(k)} for k in range(1, 5)]
-    lines += [{"atualizacao": 5, "tempo": base + 300, "aval": True, "de_pe": 0.5}, {"atualizacao": 6, "tarefa": 9.0},
-              {"atualizacao": 7, "tempo": now - 10, "tarefa": 1.0}]
+    lines = [{"atualizacao": k, "hora": base + 60 * k, "tarefa": float(k)} for k in range(1, 5)]
+    lines += [{"atualizacao": 5, "hora": base + 300, "aval": True, "de_pe": 0.5, "tempo": 2.0},
+              {"atualizacao": 6, "tarefa": 9.0}, {"atualizacao": 7, "hora": now - 10, "tarefa": 1.0}]
     path = tmp_path / "log.jsonl"
     path.write_text("".join(json.dumps(line) + "\n" for line in lines))
     assert storage.condense_log(path, now) == 3
