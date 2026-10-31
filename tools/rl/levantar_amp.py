@@ -186,11 +186,11 @@ def expand_inputs(state: dict, observations: int) -> dict:
     for key in ("actor.0.weight", "critic.0.weight"):
         w = out[key]
         if observations > w.shape[1]:
-            out[key] = torch.cat([w, torch.zeros(w.shape[0], observations - w.shape[1], dtype=w.dtype)], 1)
+            out[key] = torch.cat([w, torch.zeros(w.shape[0], observations - w.shape[1], dtype=w.dtype, device=w.device)], 1)
     for key, fill in (("norm.mean", 0.0), ("norm.var", 1.0)):
         v = out[key]
         if observations > v.shape[0]:
-            out[key] = torch.cat([v, torch.full((observations - v.shape[0],), fill, dtype=v.dtype)])
+            out[key] = torch.cat([v, torch.full((observations - v.shape[0],), fill, dtype=v.dtype, device=v.device)])
     return out
 
 
