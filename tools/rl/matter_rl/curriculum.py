@@ -91,6 +91,12 @@ class SpeedCurriculum:
         self.records = {d: [deque(maxlen=self.rule.window) for _ in range(CELLS)] for d in self.drill_ids}
         self.since = {d: [0] * CELLS for d in self.drill_ids}
         self.base_aid = float((task.get("assist") or {}).get("standing", 0.0))
+        # Os exercicios que trocam de direcao (troca, corte, estrela): a queda vem depois da troca, em outra
+        # celula, e a celula de antes parecia limpa - os tetos da troca abriram de 2,25 para 3 m/s em 40 min
+        # com 54-75% de quedas (30/10). Neles a queda do episodio conta em todas as celulas por onde ele passou.
+        self.whole_episode = {d["id"] for d in task.get("drills", [])
+                              if (d.get("pilot") or {}).get("changeDegrees") or (d.get("pilot") or {}).get("cutOffsets")
+                              or (d.get("pilot") or {}).get("kind") == "star"}
 
     def initial_caps(self, task: dict) -> dict:
         """Os tetos de partida dos exercicios que se movem (os que ja estao na tarefa ficam).
@@ -124,6 +130,7 @@ class SpeedCurriculum:
                 continue
             drill = self.drill_ids[int(row[col["exercicio"]])]
             fall_cell = int(row[col["celula_queda"]])
+            episode_fell = drill in self.whole_episode and fall_cell >= 0
             for k in range(CELLS):
                 # So a fronteira conta (o pedido no teto da celula): os pedidos baixos
                 # rastreados nao podem abrir o teto alto (revisao de 18/10).
@@ -131,7 +138,7 @@ class SpeedCurriculum:
                 if cruise < self.rule.min_cruise:
                     continue
                 tracking = float(row[col[f"cel{k:02d}.rastreio_fronteira"]] / cruise)
-                self.records[drill][k].append((tracking, fall_cell == k))
+                self.records[drill][k].append((tracking, episode_fell or fall_cell == k))
                 self.since[drill][k] += 1
 
     def threshold(self, cap: float) -> float:

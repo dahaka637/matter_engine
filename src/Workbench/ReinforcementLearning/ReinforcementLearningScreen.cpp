@@ -1303,17 +1303,15 @@ void ReinforcementLearningScreen::drawDrills() {
     const bool categorized = std::any_of(m_drillCategories.begin(), m_drillCategories.end(),
         [](const std::string& c) { return !c.empty(); });
     if (categorized) {
-        // As categorias (o pedido do usuario, 21/10): Basico e Compostos com os
-        // exercicios; Avancados e Manejo ainda em elaboracao (apagados).
-        static const std::array<std::pair<const char*, const char*>, 2> groups {
-            std::pair { "basico", "Básico" }, std::pair { "compostos", "Compostos" } };
-        for (const auto& [id, title] : groups) {
-            if (!ImGui::CollapsingHeader(title, id == std::string("basico") ? ImGuiTreeNodeFlags_DefaultOpen : 0)) continue;
+        // Os ativos (no treino agora) juntos e os inativos a parte (pedido do usuario, 31/10; eram as
+        // categorias Basico e Compostos).
+        for (const bool active : { true, false }) {
+            if (!ImGui::CollapsingHeader(active ? "Ativos" : "Inativos", active ? ImGuiTreeNodeFlags_DefaultOpen : 0)) continue;
             for (std::size_t i = 0; i < m_drillIds.size(); ++i) {
-                if (i >= m_drillCategories.size() || m_drillCategories[i] != id) continue;
+                const bool training = i >= m_drillWeights.size() || m_drillWeights[i] > 0.0f;
+                if (training != active) continue;
                 const std::string label = UI::FontAwesome::label(UI::FontAwesome::Crosshairs, m_drillNames[i].c_str())
                     + "##drill" + m_drillIds[i];
-                const bool training = i >= m_drillWeights.size() || m_drillWeights[i] > 0.0f;
                 // (No rastreador o levantar e outra rede, o DeepMimic: fica na lista, desligado.)
                 const bool getUp = TrackingViewer3D::isTrackingTask(m_viewerTask) && i < m_drillInfo.size()
                     && m_drillInfo[i].getUp;
@@ -1328,11 +1326,6 @@ void ReinforcementLearningScreen::drawDrills() {
                                : "Pronto, mas ainda fora do treino. Mostra este exercício no mundo.");
             }
         }
-        ImGui::BeginDisabled();
-        ImGui::CollapsingHeader("Avançados", ImGuiTreeNodeFlags_Leaf);
-        ImGui::CollapsingHeader("Manejo", ImGuiTreeNodeFlags_Leaf);
-        ImGui::EndDisabled();
-        tooltip("Em elaboração.");
         return;
     }
     const bool basicOpen = !motor || ImGui::CollapsingHeader("Básico", ImGuiTreeNodeFlags_DefaultOpen);
