@@ -27,6 +27,9 @@ struct TrackingGetUpAmpSettings3D {
     // para ele) e a do evitar a queda (de pe, um empurrao que o derrubaria: evitar o chao e se recompor rapido).
     float movingFraction = 0.0f;
     float avoidFraction = 0.0f;
+    // A fatia que comeca na arrancada agachada (o clipe crouched_to_sprint, virado para um alvo, com o pedido de ir a
+    // ele; 31/10, ele: "nao e apenas um levantar e entao ir, mas sim um levantar preparado ja indo").
+    float sprintStartFraction = 0.0f;
     // O alvo do levantar em movimento: a distancia (m) e a velocidade pedida (m/s).
     float targetMinimumMeters = 4.0f;
     float targetMaximumMeters = 8.0f;
@@ -51,7 +54,7 @@ struct TrackingGetUpAmpSettings3D {
 struct TrackingGetUpAmpEpisode3D {
     std::uint32_t world = 0;
     // 0: uma queda; 1: um instante de um clipe de levantar; 2: de pe (o parado); 3: uma queda com alvo (o levantar em
-    // movimento); 4: de pe com o empurrao forte (o evitar a queda).
+    // movimento); 4: de pe com o empurrao forte (o evitar a queda); 5: a arrancada agachada com alvo.
     std::uint32_t startKind = 0;
     // Como comecou: 0 de brucos, 1 de costas, 2 de lado (ou sentado, ajoelhado).
     std::uint32_t startSide = 0;

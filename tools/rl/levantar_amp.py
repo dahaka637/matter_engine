@@ -272,6 +272,8 @@ def main() -> int:
     parser.add_argument("--evitar-forca", type=float, nargs=2, default=[1200.0, 1800.0], help="o empurrao curto (N)")
     parser.add_argument("--empurrao-forca", type=float, nargs=2, default=[400.0, 900.0], help="o de pe (N)")
     parser.add_argument("--velocidade", type=float, nargs=2, default=[2.5, 5.0], help="a pedida no movimento (m/s)")
+    parser.add_argument("--arrancada", type=float, default=0.0,
+                        help="a fatia que comeca na arrancada agachada (crouched_to_sprint) virado para um alvo")
     args = parser.parse_args()
 
     from matter_rl.system import require_watchdog
@@ -290,7 +292,8 @@ def main() -> int:
     # (A configuracao do v2 de agora no run.json, a cada abertura: o laboratorio mostra o levantar em movimento e o
     # evitar a queda com as mesmas forcas e velocidades do treino.)
     info = json.loads((run / "run.json").read_text())
-    info["v2"] = {"movimento": args.movimento, "evitar": args.evitar, "evitar_forca": list(args.evitar_forca),
+    info["v2"] = {"movimento": args.movimento, "evitar": args.evitar, "arrancada": args.arrancada,
+                  "evitar_forca": list(args.evitar_forca),
                   "empurrao_forca": list(args.empurrao_forca), "velocidade": list(args.velocidade)}
     (run / "run.json").write_text(json.dumps(info, ensure_ascii=False))
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -300,7 +303,7 @@ def main() -> int:
     batch = native.GetUpAmpBatch(str(REPO / "assets"), environments=args.mundos, threads=args.threads,
                                  seed=args.semente, clip_start_fraction=args.comeco_clipe,
                                  standing_start_fraction=args.comeco_de_pe, moving_fraction=args.movimento,
-                                 avoid_fraction=args.evitar, **v2)
+                                 avoid_fraction=args.evitar, sprint_start_fraction=args.arrancada, **v2)
     evaluation = native.GetUpAmpBatch(str(REPO / "assets"), environments=64, threads=1, seed=12345, evaluation=True)
     # (O v2: 32 quedas fixas com alvo e 32 empurroes fortes fixos.)
     evaluations = {"mov_": native.GetUpAmpBatch(str(REPO / "assets"), environments=32, threads=1, seed=777,
@@ -478,6 +481,7 @@ def main() -> int:
             row.update(summarize(recent[recent[:, 1] == 2] if len(recent) else recent, "de_pe_"))
             row.update(summarize(recent[recent[:, 1] == 3] if len(recent) else recent, "mov_"))
             row.update(summarize(recent[recent[:, 1] == 4] if len(recent) else recent, "evitar_"))
+            row.update(summarize(recent[recent[:, 1] == 5] if len(recent) else recent, "arrancada_"))
             log.write(json.dumps(row) + "\n")
             log.flush()
             print(" ".join(f"{k}={v:.4g}" if isinstance(v, float) else f"{k}={v}" for k, v in row.items()), flush=True)

@@ -27,10 +27,13 @@ constexpr float Pi = 3.14159265358979f;
 // 0,9 a 1,5 s; a pose comeca com o ponto mais baixo de 0,35 a 0,85 m do chao.
 constexpr float FallStiffness = 0.15f;
 constexpr float FallPoseNoise = 0.35f;
-// Caido (31/10, o evitar a queda): a cabeca abaixo disto ou o chao tocado por qualquer parte que nao os pes, as maos e
-// os antebracos. Cair depois de ja ter ficado de pe custa isto, uma vez por queda (alem do potencial que desce).
-constexpr float FallenHeadHeight = 0.9f;
+// Caido (31/10, o evitar a queda; ele: "nao deixar o peito ou costas ou cabeca tocar o chao... que ele use os joelhos,
+// bracos enfim para evitar a queda e se recobrar"): o chao tocado pelo tronco (pelve, abdomen, peito), pelo pescoco ou
+// pela cabeca; os pes, as pernas e os bracos podem apoiar. Cair depois de ja ter ficado de pe custa isto, uma vez por
+// queda (alem do potencial que desce).
 constexpr float FallPenalty = 10.0f;
+// Os pares da arrancada agachada pesam isto no discriminador (a referencia do levantar em movimento).
+constexpr int SprintStartPairWeight = 6;
 // O levantar em movimento: chegou ao alvo neste raio (m), e dai o pedido vira ficar parado.
 constexpr float ArriveRadius = 1.0f;
 // Recomposto depois do empurrao do evitar: de pe, parecido com o parado e quase parado.
@@ -63,6 +66,8 @@ struct TrackingGetUpAmpTraining3D::Impl {
     std::vector<std::unique_ptr<AnimationClip3D>> clips;
     std::vector<std::unique_ptr<TrackingClipReference3D>> references;
     std::size_t standingIndex = 0;
+    // A arrancada agachada (crouched_to_sprint), quando carregada: o comeco do tipo 5 e o peso maior no estilo.
+    std::size_t sprintStartIndex = std::numeric_limits<std::size_t>::max();
     // A velocidade de deslocamento que falta aos clipes no lugar (os pares do discriminador): constante (corrida) ou
     // em rampa desde zero (a arrancada, com o deslocamento da fonte), para a frente do clipe.
     struct Travel {
@@ -76,7 +81,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
     std::unique_ptr<TrackingGetUpPostureProbe3D> posture;
     std::vector<std::string> observationNames;
     std::uint32_t rootLink = 0;
-    // As partes que podem tocar o chao sem contar como caido: os pes, as maos e os antebracos.
+    // As partes que podem tocar o chao sem contar como caido: as pernas e os bracos (nao o tronco, o pescoco e a cabeca).
     std::vector<bool> allowedContact;
     std::uint32_t workers = 1;
     std::shared_ptr<TaskScheduler> scheduler;
@@ -119,6 +124,8 @@ struct TrackingGetUpAmpTraining3D::Impl {
         // Caido agora, e se ja caiu depois de ter ficado de pe.
         bool down = false;
         bool fellAfterStanding = false;
+        // O rumo da arrancada agachada (rad).
+        float sprintYaw = 0.0f;
     };
     std::vector<World> worlds;
     std::vector<TrackingGetUpAmpEpisode3D> episodes;
@@ -175,6 +182,17 @@ struct TrackingGetUpAmpTraining3D::Impl {
         }
     }
 
+    // A arrancada agachada (o crouched_to_sprint): um instante da primeira metade, num rumo sorteado (o alvo vem perto
+    // dele), com a velocidade do clipe.
+    void beginSprintStart(World& w) {
+        std::uniform_real_distribution<float> u(0.0f, 1.0f);
+        const auto& reference = *references[sprintStartIndex];
+        w.sprintYaw = (2.0f * u(w.rng) - 1.0f) * Pi;
+        reference.frame(u(w.rng) * 0.5f * reference.durationSeconds(), {}, w.sprintYaw, w.frame);
+        w.scene->resetRagdollState(w.handle, w.frame.links);
+        w.body = w.scene->ragdollStateView(w.handle);
+    }
+
     // Um instante sorteado de um clipe de levantar (o RSI do DeepMimic) ou, de pe, do parado, num rumo sorteado.
     void beginFromClip(World& w, bool standing) {
         std::uniform_real_distribution<float> u(0.0f, 1.0f);
@@ -187,7 +205,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
     }
 
     bool fallen(const TrackingGetUpPosture3D& posture, const RagdollState3D& body) const {
-        if (posture.headHeight < FallenHeadHeight) return true;
+        (void)posture;
         for (const RagdollContactPoint3D& contact : body.contacts)
             if (contact.linkIndex < allowedContact.size() && !allowedContact[contact.linkIndex]) return true;
         return false;
@@ -207,8 +225,11 @@ struct TrackingGetUpAmpTraining3D::Impl {
             else if (draw < (edge += settings.clipStartFraction)) kind = 1;
             else if (draw < (edge += settings.avoidFraction)) kind = 4;
             else if (draw < (edge += settings.movingFraction)) kind = 3;
+            else if (draw < (edge += settings.sprintStartFraction)) kind = 5;
         }
+        if (kind == 5 && sprintStartIndex >= references.size()) kind = 3;
         if (kind == 0 || kind == 3) beginFall(w);
+        else if (kind == 5) beginSprintStart(w);
         else beginFromClip(w, kind != 1);
         const TrackingGetUpPosture3D start = posture->measure(w.body->links);
         w.startKind = kind;
@@ -229,8 +250,9 @@ struct TrackingGetUpAmpTraining3D::Impl {
         w.recomposedAt = -1.0f;
         w.down = fallen(start, *w.body);
         w.fellAfterStanding = false;
-        if (kind == 3) {
-            const float angle = 2.0f * Pi * u(w.rng);
+        if (kind == 3 || kind == 5) {
+            // (Na arrancada, o alvo a ate 30 graus da frente do clipe: ele ja sai virado para o alvo.)
+            const float angle = kind == 5 ? w.sprintYaw + (2.0f * u(w.rng) - 1.0f) * (Pi / 6.0f) : 2.0f * Pi * u(w.rng);
             const float distance =
                 settings.targetMinimumMeters + (settings.targetMaximumMeters - settings.targetMinimumMeters) * u(w.rng);
             const Vec3 root = w.body->links[rootLink].position;
@@ -408,12 +430,13 @@ TrackingGetUpAmpTraining3D::TrackingGetUpAmpTraining3D(const TrackingGetUpAmpSet
     impl.standingIndex = names.size() - 1;
     // (O levantar v2: os clipes da arrancada e da corrida so entram com o levantar em movimento ligado - sem ele, o
     // estilo e as quedas de antes.)
-    if (settings.movingFraction > 0.0f || settings.evaluationKind == 1)
+    if (settings.movingFraction > 0.0f || settings.sprintStartFraction > 0.0f || settings.evaluationKind == 1)
         names.insert(names.end(), std::begin(MovingClips), std::end(MovingClips));
     for (const std::string& name : names) {
         impl.clips.push_back(std::make_unique<AnimationClip3D>(
             loadAnimationClip3D(settings.assetsDirectory + "/animations/clips/" + name + ".matteranim.json")));
         impl.references.push_back(std::make_unique<TrackingClipReference3D>(*impl.profile, *impl.clips.back()));
+        if (name == "crouched_to_sprint") impl.sprintStartIndex = impl.references.size() - 1;
         Impl::Travel travel;
         const AnimationClip3D& clip = *impl.clips.back();
         travel.direction = clip.travelDirectionRadians;
@@ -434,8 +457,8 @@ TrackingGetUpAmpTraining3D::TrackingGetUpAmpTraining3D(const TrackingGetUpAmpSet
     for (std::size_t i = 0; i < impl.profile->links.size(); ++i) {
         if (impl.profile->links[i].parentIndex < 0) impl.rootLink = static_cast<std::uint32_t>(i);
         const std::string& id = impl.profile->links[i].id;
-        impl.allowedContact.push_back(id.find("Foot") != std::string::npos || id.find("Toe") != std::string::npos
-            || id.find("Hand") != std::string::npos || id.find("Forearm") != std::string::npos);
+        impl.allowedContact.push_back(id != "Pelvis" && id != "Abdomen" && id != "Chest" && id != "UpperChest"
+            && id != "Neck" && id != "Head");
     }
     // (Os nomes do corpo: os do levantar do DeepMimic sem a fase, a ultima; depois os do comando.)
     impl.observationNames.assign(impl.contract->observationNames().begin(), impl.contract->observationNames().end() - 1);
@@ -544,6 +567,8 @@ std::vector<float> TrackingGetUpAmpTraining3D::referencePairs() const {
             const Vec3 v { std::cos(travel.direction) * speed, std::sin(travel.direction) * speed, 0.0f };
             for (PhysicsBodyState3D& s : frame.links) s.linearVelocity = s.linearVelocity + v;
         };
+        // (A arrancada agachada pesa mais: a referencia do levantar em movimento, "um levantar preparado ja indo".)
+        const int copies = r == impl.sprintStartIndex ? SprintStartPairWeight : 1;
         for (float t = 0.0f; t + step <= duration + 1e-5f; t += 1.0f / 120.0f) {
             reference->frame(t, {}, 0.0f, first);
             reference->frame(t + step, {}, 0.0f, second);
@@ -551,8 +576,10 @@ std::vector<float> TrackingGetUpAmpTraining3D::referencePairs() const {
             moving(t + step, second);
             impl.features->compute(first.links, now);
             impl.features->compute(second.links, next);
-            out.insert(out.end(), now.begin(), now.end());
-            out.insert(out.end(), next.begin(), next.end());
+            for (int c = 0; c < copies; ++c) {
+                out.insert(out.end(), now.begin(), now.end());
+                out.insert(out.end(), next.begin(), next.end());
+            }
         }
     }
     return out;
@@ -575,7 +602,7 @@ TrackingGetUpAmpWorldView3D TrackingGetUpAmpTraining3D::worldView(std::size_t wo
     const Impl::World& w = m_impl->worlds.at(world);
     TrackingGetUpAmpWorldView3D view;
     view.startKind = w.startKind;
-    view.hasTarget = w.startKind == 3;
+    view.hasTarget = w.startKind == 3 || w.startKind == 5;
     view.target = w.target;
     view.commandSpeed = w.commandSpeed;
     view.pushing = w.pushTicks > 0;
@@ -602,7 +629,8 @@ std::string TrackingGetUpAmpTraining3D::frameLines(std::size_t world) const {
             << contact.linkIndex << ' ' << contact.normal.x << ' ' << contact.normal.y << ' ' << contact.normal.z << ' '
             << contact.normalImpulseNewtonSeconds << '\n';
     // (O alvo do levantar em movimento, como o "A" das folhas da locomocao.)
-    if (w.startKind == 3) out << "A " << w.target.x << ' ' << w.target.y << " 0 " << ArriveRadius << '\n';
+    if (w.startKind == 3 || w.startKind == 5)
+        out << "A " << w.target.x << ' ' << w.target.y << " 0 " << ArriveRadius << '\n';
     return out.str();
 }
 
