@@ -882,7 +882,10 @@ struct LocomotionTraining3D::Impl {
                 facingError2 += facing * facing;
                 // O tremor (a quietude): a pelve no plano, o giro horizontal do peito
                 // (o balanco e o cabeceio; o giro em torno do eixo de cima fica de fora:
-                // virar no lugar nao e tremer) e a aceleracao dele neste tick.
+                // virar no lugar nao e tremer) e a aceleracao dele neste tick. (01/11,
+                // ele: "ele fica com os pes meio nervosos": e o pe mais rapido no plano -
+                // medido no parado sem empurrao, acima de 0,10 m/s em 48% das decisoes e
+                // 0,76 passo por segundo; a pelve quieta nao via os pes.)
                 {
                     const Vec3 omega = planar(body.links[static_cast<std::size_t>(chest)].angularVelocity);
                     const Vec3 pelvisVelocity = planar(body.links.front().linearVelocity);
@@ -893,9 +896,16 @@ struct LocomotionTraining3D::Impl {
                     }
                     world.lastChestOmega = omega;
                     world.lastChestOmegaValid = true;
+                    float feetSpeed = 0.0f;
+                    for (const int foot : feet)
+                        if (foot >= 0 && static_cast<std::size_t>(foot) < body.links.size()) {
+                            const Vec3 v = planar(body.links[static_cast<std::size_t>(foot)].linearVelocity);
+                            feetSpeed = std::max(feetSpeed, std::hypot(v.x, v.y));
+                        }
                     shake += 0.5 * std::clamp(std::hypot(pelvisVelocity.x, pelvisVelocity.y) / 0.10f, 0.0f, 3.0f)
                         + 0.3 * std::clamp(std::hypot(omega.x, omega.y) / 0.5f, 0.0f, 3.0f)
-                        + 0.2 * std::clamp(alpha / 20.0f, 0.0f, 3.0f);
+                        + 0.2 * std::clamp(alpha / 20.0f, 0.0f, 3.0f)
+                        + 0.4 * std::clamp(feetSpeed / 0.10f, 0.0f, 3.0f);
                 }
                 LocomotionPostureInput3D input;
                 input.chestUp = frame.in(r.rotate({ 0.0f, 0.0f, 1.0f }));

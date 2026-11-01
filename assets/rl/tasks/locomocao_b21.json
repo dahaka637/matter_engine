@@ -748,7 +748,7 @@
       "id": "parado",
       "displayName": "Parado",
       "category": "basico",
-      "weight": 0.0,
+      "weight": 0.06,
       "minimum": {
         "fallFraction": 0.02
       },
