@@ -262,6 +262,10 @@ def main() -> int:
     # estilo, que so puxa para ficar parecido com os clipes.)
     parser.add_argument("--peso-tarefa", type=float, default=0.7)
     parser.add_argument("--peso-estilo", type=float, default=0.3)
+    # (31/10 21h35, ele: "humanizar e suavizar um pouco os movimentos do levantar-se... bem funcionais, mas nitidamente
+    # artificiais e recontorcidos": o custo do tranco - a diferenca da acao (na faixa das juntas) de uma decisao para a
+    # seguinte, ao quadrado, media nos eixos - vezes este peso, na mesma escala da tarefa.)
+    parser.add_argument("--suave", type=float, default=0.0, help="o peso do custo do tranco da acao")
     parser.add_argument("--desvio", type=float, default=None,
                         help="o desvio da acao (na faixa das juntas) a partir de agora, tambem ao retomar")
     parser.add_argument("--comeco-clipe", type=float, default=0.25, help="a fatia dos comecos nos clipes de levantar")
@@ -301,6 +305,7 @@ def main() -> int:
     # evitar a queda com as mesmas forcas e velocidades do treino.)
     info = json.loads((run / "run.json").read_text())
     info["v2"] = {"movimento": args.movimento, "evitar": args.evitar, "arrancada": args.arrancada,
+                  "peso_tarefa": args.peso_tarefa, "peso_estilo": args.peso_estilo, "suave": args.suave,
                   "empurrao_continuo": args.empurrao_continuo, "empurrao_continuo_forca": list(args.empurrao_continuo_forca),
                   "evitar_forca": list(args.evitar_forca),
                   "empurrao_forca": list(args.empurrao_forca), "velocidade": list(args.velocidade)}
@@ -350,6 +355,9 @@ def main() -> int:
     replay = torch.zeros(0, 2 * amp, device=device)
     obs = torch.as_tensor(batch.observations(), device=device)
     window: list = []
+    # A acao anterior de cada mundo (o tranco) e se ela vale (nao no primeiro passo de um episodio).
+    previous_action = torch.zeros(n, act_size, device=device)
+    previous_valid = torch.zeros(n, dtype=torch.bool, device=device)
     with torch.no_grad():
         disc.norm.update(reference[:, :amp])
 
@@ -395,7 +403,7 @@ def main() -> int:
         begin = time.time()
         buf = {k: torch.zeros(T, n, *s, device=device) for k, s in
                (("obs", (obs_size,)), ("act", (act_size,)), ("logp", ()), ("val", ()), ("task", ()), ("boot", ()),
-                ("done", ()), ("pairs", (2 * amp,)))}
+                ("done", ()), ("pairs", (2 * amp,)), ("jerk", ()))}
         with torch.no_grad():
             for t in range(T):
                 model.norm.update(obs)
@@ -403,6 +411,8 @@ def main() -> int:
                 dist = model.distribution(obs_n)
                 action = dist.sample()
                 buf["obs"][t], buf["act"][t] = obs, action
+                buf["jerk"][t] = torch.where(previous_valid, (action - previous_action).pow(2).mean(-1),
+                                             torch.zeros_like(previous_valid, dtype=torch.float32))
                 buf["logp"][t] = dist.log_prob(action).sum(-1)
                 buf["val"][t] = model.value(obs_n)
                 task, term, trunc = batch.step(model.env_action(action).cpu().numpy().astype(np.float32))
@@ -413,6 +423,8 @@ def main() -> int:
                     final = torch.as_tensor(batch.final_observations(), device=device)
                     buf["boot"][t] = trunc * model.value(model.norm(final))
                 buf["done"][t] = torch.maximum(torch.as_tensor(term, device=device).float(), trunc)
+                previous_action = action
+                previous_valid = buf["done"][t] < 0.5
                 obs = torch.as_tensor(batch.observations(), device=device)
             last_value = model.value(model.norm(obs))
             pairs = buf["pairs"].reshape(T * n, 2 * amp)
@@ -421,7 +433,8 @@ def main() -> int:
             style = torch.clamp(1.0 - 0.25 * (d - 1.0).pow(2), min=0.0)
             # (A nota por passo vezes 1 - gamma: o retorno fica entre 0 e 1 e o critico nao precisa correr atras da
             # escala de ~100 de um gamma 0,99.)
-            rew = (1.0 - gamma) * (args.peso_tarefa * buf["task"] + args.peso_estilo * style) + gamma * buf["boot"]
+            rew = (1.0 - gamma) * (args.peso_tarefa * buf["task"] + args.peso_estilo * style - args.suave * buf["jerk"]) \
+                + gamma * buf["boot"]
         adv = torch.zeros(T, n, device=device)
         gae = torch.zeros(n, device=device)
         for t in reversed(range(T)):
@@ -486,7 +499,7 @@ def main() -> int:
         if counters["atualizacao"] % 20 == 0:
             recent = np.array(window) if window else np.zeros((0, 16))
             row = {"atualizacao": counters["atualizacao"], "amostras": counters["amostras"], "hora": time.time(),
-                   "tarefa": float(buf["task"].mean()), "estilo": float(style.mean()),
+                   "tarefa": float(buf["task"].mean()), "estilo": float(style.mean()), "tranco": float(buf["jerk"].mean()),
                    "desvio": float(model.log_std.detach().clamp(LOG_STD_MIN, LOG_STD_MAX).exp().mean()),
                    "am_s": T * n / (time.time() - begin), **{k: v / max(1, steps) for k, v in stats.items()}}
             row.update(summarize(recent[recent[:, 1] == 0] if len(recent) else recent, "queda_"))
