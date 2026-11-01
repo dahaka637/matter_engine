@@ -25,6 +25,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import signal
 import sys
 import time
@@ -323,12 +324,14 @@ def main() -> int:
                         help="a fatia que comeca na arrancada agachada (crouched_to_sprint) virado para um alvo")
     args = parser.parse_args()
 
-    from matter_rl.system import require_watchdog
+    from matter_rl.system import cpu_temperature, require_watchdog
     require_watchdog()
     torch.set_num_threads(1)
 
-    stop = {"pedido": False}
+    stop = {"pedido": False, "salvar": False}
     signal.signal(signal.SIGTERM, lambda *_: stop.update(pedido=True))
+    # (O "Salvar" do laboratorio: SIGUSR1, que sem isto fecharia o processo sem salvar.)
+    signal.signal(signal.SIGUSR1, lambda *_: stop.update(salvar=True))
 
     run = DATA / args.treino
     run.mkdir(parents=True, exist_ok=True)
@@ -410,6 +413,30 @@ def main() -> int:
             critic_opt.load_state_dict(state["critic_opt"])
         disc_opt.load_state_dict(state["disc_opt"])
         counters = state["counters"]
+    # (31/10 23h, ele: "nao consigo saber se ele esta ou nao treinando... agora essa passa a ser a nossa rede PRINCIPAL":
+    # o status.json que o laboratorio le dos treinadores de processo proprio - vivo pelo pid, parar por sinal. O tempo
+    # treinado vem dos contadores; sem ele, a soma dos intervalos curtos entre as linhas do log.)
+    if "segundos" not in counters:
+        horas = [json.loads(line).get("hora") for line in open(run / "log.jsonl")] if (run / "log.jsonl").exists() else []
+        horas = [h for h in horas if isinstance(h, (int, float))]
+        counters["segundos"] = float(sum(b - a for a, b in zip(horas, horas[1:]) if 0 < b - a < 600))
+    opened = time.time()
+    trained_before = counters["segundos"]
+    last_status = {"sps": 0.0, "last": {}}
+
+    def write_status(state: str) -> None:
+        counters["segundos"] = trained_before + (time.time() - opened)
+        data = {"run": args.treino, "task": args.treino, "state": state, "pid": os.getpid(),
+                "taskName": "Rede do levantar: levantar, equilíbrio e locomoção",
+                "iteration": counters["atualizacao"], "steps": counters["amostras"], "episodes": counters["episodios"],
+                "trainSeconds": counters["segundos"], "sps": last_status["sps"], "threads": args.threads,
+                "environments": n, "device": device.type, "cpuTemperature": cpu_temperature() or 0.0,
+                "last": last_status["last"]}
+        tmp = run / "status.tmp"
+        tmp.write_text(json.dumps(data, ensure_ascii=False))
+        tmp.replace(run / "status.json")
+
+    write_status("treinando")
     log = open(run / "log.jsonl", "a")
     gamma, lam, clip, T = 0.99, 0.95, 0.2, args.passos
     minibatch = (T * n) // max(1, args.minilotes)
@@ -574,8 +601,16 @@ def main() -> int:
             log.write(json.dumps(row) + "\n")
             log.flush()
             print(" ".join(f"{k}={v:.4g}" if isinstance(v, float) else f"{k}={v}" for k, v in row.items()), flush=True)
+            # (As quedas: os episodios da janela que cairam depois de ja ter ficado de pe.)
+            last_status["sps"] = row["am_s"]
+            last_status["last"] = {"fall_fraction": float(recent[:, 13].mean()) if len(recent) else -1.0,
+                                   "reward": row["tarefa"], "style": row["estilo"]}
+            write_status("treinando")
         if counters["atualizacao"] % 10 == 0:
             export_policy()
+        if stop["salvar"]:
+            stop["salvar"] = False
+            save()
         if counters["atualizacao"] % args.salvar_cada == 0:
             save()
             row = {"atualizacao": counters["atualizacao"], "amostras": counters["amostras"], "aval": True,
@@ -588,6 +623,7 @@ def main() -> int:
             print("aval " + " ".join(f"{k}={v:.3g}" if isinstance(v, float) else f"{k}={v}" for k, v in row.items()),
                   flush=True)
     save()
+    write_status("parado")
     print(f"salvo na atualizacao {counters['atualizacao']}" + (" (sinal de parar)" if stop["pedido"] else ""), flush=True)
     return 0
 

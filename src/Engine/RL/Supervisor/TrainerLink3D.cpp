@@ -82,6 +82,18 @@ bool trainerProcessAlive(int pid, const std::string& run) {
         || line.find("--treino=" + run) != std::string::npos;
 }
 
+// O arquivo que manda o guarda de um treinador de processo proprio parar de religar ("arquivoParar" do run.json; o
+// levantar, 31/10 23h: o guarda religa o treino depois dos cortes do vigia de temperatura, e um "Parar" da tela tem que
+// parar de vez). Vazio sem guarda.
+std::filesystem::path stopFileOf(const std::filesystem::path& directory) {
+    std::ifstream file(directory / "run.json");
+    const nlohmann::json config = nlohmann::json::parse(file, nullptr, false);
+    if (config.is_discarded() || !config.is_object() || !config.contains("arquivoParar")
+        || !config["arquivoParar"].is_string())
+        return {};
+    return config["arquivoParar"].get<std::string>();
+}
+
 } // namespace
 
 void TrainerLink3D::send(const std::string& command, const std::string& argumentsJson) {
@@ -89,7 +101,11 @@ void TrainerLink3D::send(const std::string& command, const std::string& argument
         // O treinador de processo proprio: parar (e pausar, que ele nao tem) e salvar por sinal.
         const TrainerStatus3D now = status();
         if (now.alive && now.pid > 0 && now.task != "motor_basico") {
-            if (command == "parar" || command == "pausar") ::kill(now.pid, SIGTERM);
+            if (command == "parar" || command == "pausar") {
+                if (const std::filesystem::path stop = stopFileOf(m_paths.run(m_run)); !stop.empty())
+                    std::ofstream(stop).put('\n');
+                ::kill(now.pid, SIGTERM);
+            }
             else if (command == "salvar") ::kill(now.pid, SIGUSR1);
             std::lock_guard lock(m_mutex);
             m_lastReply = R"({"ok":true})";
@@ -186,6 +202,10 @@ bool TrainerLink3D::start(const std::string& task, const std::string& mode, std:
             launcher = arguments.front();
             folder = config.value("pasta", std::string());
             log = (directory / "treino.out").string();
+            if (const std::filesystem::path stop = stopFileOf(directory); !stop.empty()) {
+                std::error_code removed;
+                std::filesystem::remove(stop, removed);
+            }
         }
     }
     if (!std::filesystem::exists(launcher)) {

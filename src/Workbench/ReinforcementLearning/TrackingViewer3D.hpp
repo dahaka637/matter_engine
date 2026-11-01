@@ -81,6 +81,9 @@ public:
     [[nodiscard]] static int locomotionHeadingOf(const std::string& drill, std::uint64_t seed = 0);
     [[nodiscard]] static bool isLocomotionDrill(const std::string& drill);
     [[nodiscard]] static bool isGetUpDrill(const std::string& drill);
+    // Se o tarefa.json e o de um treino do levantar (esquema matter-getup-amp-1; o levantar_v2, a rede principal desde
+    // 31/10 22h35).
+    [[nodiscard]] static bool isGetUpTask(const std::filesystem::path& taskPath);
     // Se o treino do levantar de agora e o v2 (os dois exercicios novos existem nele).
     [[nodiscard]] static bool getUpVersion2();
     [[nodiscard]] static std::filesystem::path getUpExport();

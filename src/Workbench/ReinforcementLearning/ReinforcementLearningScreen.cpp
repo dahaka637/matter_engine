@@ -123,6 +123,22 @@ constexpr std::array<const char*, 8> LocomotionNames { "Parado (levantar)", "Par
     "Frente (levantar)", "Trás (levantar)", "Direita (levantar)", "Esquerda (levantar)", "Diagonal frente (levantar)",
     "Diagonal costas (levantar)" };
 
+// Os exercicios do levantar v2 depois do "Levantar do chao", na ordem da lista: os do levantar e os da locomocao nele.
+std::vector<std::array<const char*, 2>> getUpDrillList() {
+    std::vector<std::array<const char*, 2>> all { { TrackingViewer3D::MovingGetUpDrill, "Levantar em movimento" },
+        { TrackingViewer3D::AvoidFallDrill, "Evitar a queda" },
+        { TrackingViewer3D::BalanceDrill, "Equilíbrio parado (empurrões)" } };
+    for (std::size_t k = 0; k < LocomotionNames.size(); ++k)
+        all.push_back({ TrackingViewer3D::LocomotionDrills[k], LocomotionNames[k] });
+    return all;
+}
+
+// A velocidade-alvo de um exercicio do levantar: o em movimento 5, os rumos 2,5 (o teste), os outros parados.
+double getUpGoalSpeed(const std::string& drill) {
+    if (drill == TrackingViewer3D::MovingGetUpDrill) return 5.0;
+    return TrackingViewer3D::locomotionHeadingOf(drill) >= 0 ? 2.5 : 0.0;
+}
+
 std::size_t locomotionIndex(const std::string& drill) {
     const auto& drills = TrackingViewer3D::LocomotionDrills;
     return static_cast<std::size_t>(std::find(drills.begin(), drills.end(), drill) - drills.begin());
@@ -204,7 +220,8 @@ bool isTrainingRun(const std::filesystem::path& directory) {
     if (!file) return false;
     const nlohmann::json config = nlohmann::json::parse(file, nullptr, false);
     if (config.is_discarded() || !config.is_object()) return false;
-    if (config.value("kind", std::string()) == "motor" || config.value("kind", std::string()) == "locomocao" || config.value("kind", std::string()) == "rastreador") return true;
+    const std::string kind = config.value("kind", std::string());
+    if (kind == "motor" || kind == "locomocao" || kind == "rastreador" || kind == "levantar") return true;
     const auto contract = config.find("contract");
     return contract != config.end() && contract->is_number() && contract->get<int>() == 2;
 }
@@ -459,6 +476,13 @@ void ReinforcementLearningScreen::scanRuns() {
         found.emplace_back(std::filesystem::last_write_time(stamp, timeCode), entry.path().filename().string());
     }
     std::sort(found.begin(), found.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+    // (O treino principal primeiro - o "principal" do run.json; 31/10 23h, ele: a rede do levantar "passa a ser a nossa
+    // rede PRINCIPAL de treinamento".)
+    std::stable_partition(found.begin(), found.end(), [&](const auto& item) {
+        std::ifstream file(m_paths.run(item.second) / "run.json");
+        const nlohmann::json config = nlohmann::json::parse(file, nullptr, false);
+        return !config.is_discarded() && config.is_object() && config.value("principal", false);
+    });
     const bool hasMotor = std::any_of(found.begin(), found.end(), [&](const auto& item) {
         return MotorViewer3D::isMotorTask(m_paths.run(item.second) / "tarefa.json");
     });
@@ -509,7 +533,20 @@ void ReinforcementLearningScreen::loadDrills() {
     m_futurePhases.clear();
     const std::filesystem::path path = taskPath();
     if (path.empty() || !std::filesystem::exists(path)) return;
-    if (MotorViewer3D::isMotorTask(path)) {
+    if (TrackingViewer3D::isGetUpTask(path)) {
+        // A rede do levantar, a principal: os exercicios dela, ativos (em roxo) enquanto ela treina.
+        std::vector<std::array<const char*, 2>> all { { TrackingViewer3D::GetUpDrill, "Levantar do chão" } };
+        const auto rest = getUpDrillList();
+        all.insert(all.end(), rest.begin(), rest.end());
+        for (const auto& [id, name] : all) {
+            m_drillIds.push_back(id);
+            m_drillNames.push_back(name);
+            m_drillPhases.push_back(3);
+            m_drillCategories.push_back("levantar");
+            m_drillWeights.push_back(0.0f);
+            m_drillInfo.push_back({ id, 0.0, getUpGoalSpeed(id), true });
+        }
+    } else if (MotorViewer3D::isMotorTask(path)) {
         const auto& ids = MotorTraining3D::drillIds();
         const auto& names = MotorTraining3D::drillNames();
         m_drillIds.assign(ids.begin(),ids.end());
@@ -576,17 +613,12 @@ void ReinforcementLearningScreen::loadDrills() {
     // O levantar v2 (31/10 17h): o levantar em movimento e o evitar a queda, da mesma rede do levantar (o treino a
     // parte levantar_v2), logo depois do "Levantar do chao" (fora da tarefa da locomocao: ela nao muda).
     if (const auto at = std::find(m_drillIds.begin(), m_drillIds.end(), std::string(TrackingViewer3D::GetUpDrill));
-        at != m_drillIds.end() && TrackingViewer3D::getUpVersion2()) {
+        at != m_drillIds.end() && TrackingViewer3D::getUpVersion2() && !TrackingViewer3D::isGetUpTask(path)) {
         const std::size_t i = static_cast<std::size_t>(at - m_drillIds.begin());
         const std::string category = i < m_drillCategories.size() ? m_drillCategories[i] : std::string();
         const int phase = i < m_drillPhases.size() ? m_drillPhases[i] : 1;
-        const std::array<std::array<const char*, 2>, 3> extra { { { TrackingViewer3D::MovingGetUpDrill, "Levantar em movimento" },
-            { TrackingViewer3D::AvoidFallDrill, "Evitar a queda" },
-            { TrackingViewer3D::BalanceDrill, "Equilíbrio parado (empurrões)" } } };
         // (A locomocao na rede do levantar, 31/10 22h35: os basicos do B21, depois dos outros.)
-        std::vector<std::array<const char*, 2>> all(extra.begin(), extra.end());
-        for (std::size_t k = 0; k < LocomotionNames.size(); ++k)
-            all.push_back({ TrackingViewer3D::LocomotionDrills[k], LocomotionNames[k] });
+        const std::vector<std::array<const char*, 2>> all = getUpDrillList();
         for (std::size_t k = 0; k < all.size(); ++k) {
             const std::size_t where = i + 1 + k;
             m_drillIds.insert(m_drillIds.begin() + static_cast<std::ptrdiff_t>(where), all[k][0]);
@@ -597,7 +629,7 @@ void ReinforcementLearningScreen::loadDrills() {
             if (m_drillWeights.size() >= where) m_drillWeights.insert(m_drillWeights.begin() + static_cast<std::ptrdiff_t>(where), 0.0f);
             if (m_drillInfo.size() >= where)
                 m_drillInfo.insert(m_drillInfo.begin() + static_cast<std::ptrdiff_t>(where),
-                    { all[k][0], 0.0, k == 0 ? 5.0 : k >= extra.size() + 2 ? 2.5 : 0.0, true });
+                    { all[k][0], 0.0, getUpGoalSpeed(all[k][0]), true });
         }
     }
     if (std::find(m_drillIds.begin(), m_drillIds.end(), m_viewerDrill) == m_drillIds.end())
@@ -638,7 +670,8 @@ void ReinforcementLearningScreen::ensureViewer() {
     const std::filesystem::path task = taskPath();
     const bool motor = !task.empty() && MotorViewer3D::isMotorTask(task);
     const bool tracking = !task.empty() && TrackingViewer3D::isTrackingTask(task);
-    if (motor || tracking || (!task.empty() && LocomotionViewer3D::isLocomotionTask(task))) {
+    const bool getUpTask = !task.empty() && TrackingViewer3D::isGetUpTask(task);
+    if (motor || tracking || getUpTask || (!task.empty() && LocomotionViewer3D::isLocomotionTask(task))) {
         try {
             m_viewerTask = task;
             const auto seed = static_cast<std::uint64_t>(std::time(nullptr));
@@ -648,8 +681,9 @@ void ReinforcementLearningScreen::ensureViewer() {
                     m_viewerDrill, TrackingViewer3D::locomotionTaskOf(task, m_options.sourceRoot / "assets"),
                     TrackingViewer3D::speedScaleOf(task), TrackingViewer3D::filterBetaOf(task),
                     TrackingViewer3D::conditionsOf(task));
-            else if (TrackingViewer3D::isGetUpDrill(m_viewerDrill)
-                && (TrackingViewer3D::getUpReady() || TrackingViewer3D::getUpTraining()))
+            else if (getUpTask
+                || (TrackingViewer3D::isGetUpDrill(m_viewerDrill)
+                    && (TrackingViewer3D::getUpReady() || TrackingViewer3D::getUpTraining())))
                 // (O levantar do chao e a rede propria dele, a do treino a parte, nao a deste.)
                 m_locomotion = std::make_unique<TrackingViewer3D>(m_options.sourceRoot / "assets", seed, m_viewerDrill);
             else
@@ -1331,6 +1365,8 @@ void ReinforcementLearningScreen::drawControls(const TrainerStatus3D& status) {
 }
 
 void ReinforcementLearningScreen::drawModes(const TrainerStatus3D& status) {
+    // (A rede do levantar: as threads e a volta depois dos cortes de temperatura sao do guarda dela.)
+    if (TrackingViewer3D::isGetUpTask(taskPath())) return;
     ImGui::Dummy({ 1.0f, ui(4.0f) });
     sectionLabel("DESEMPENHO");
     const std::string current = status.alive && !status.mode.empty() ? status.mode : m_mode;
@@ -1376,6 +1412,7 @@ void ReinforcementLearningScreen::drawDrills() {
     if (categorized) {
         // Os ativos (no treino agora) juntos e os inativos a parte (pedido do usuario, 31/10; eram as
         // categorias Basico e Compostos).
+        const bool getUpMain = TrackingViewer3D::isGetUpTask(m_viewerTask);
         for (const bool active : { true, false }) {
             if (!ImGui::CollapsingHeader(active ? "Ativos" : "Inativos", active ? ImGuiTreeNodeFlags_DefaultOpen : 0)) continue;
             for (std::size_t i = 0; i < m_drillIds.size(); ++i) {
@@ -1393,6 +1430,7 @@ void ReinforcementLearningScreen::drawDrills() {
                     showDrill(m_drillIds[i]);
                 ImGui::EndDisabled();
                 tooltip(apart ? "Desligado: a rede do levantar treina à parte e ainda não tem rede exportada."
+                    : getUp && getUpMain ? "Mostra este exercício no mundo, com a rede do levantar (a principal)."
                     : getUp ? "Outra rede (roxo): a do levantar, que treina à parte. Mostra este exercício com ela."
                     : training ? "Mostra este exercício no mundo (o treino sorteia todos pelos pesos)."
                                : "Pronto, mas ainda fora do treino. Mostra este exercício no mundo.");

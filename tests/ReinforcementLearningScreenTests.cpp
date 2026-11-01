@@ -400,9 +400,12 @@ void processTrainer(const std::filesystem::path& data) {
         "signal.signal(signal.SIGTERM, lambda *a: (w('parado'), sys.exit(0)))\n"
         "w('treinando')\n"
         "while True: time.sleep(0.05)\n";
+    // (Com guarda, como o levantar: abrir apaga o arquivo de parar dele e parar o cria, para o guarda nao religar.)
+    const std::filesystem::path stop = run / "parar_guarda";
+    std::ofstream(stop).put('\n');
     nlohmann::json config { { "kind", "rastreador" }, { "task", "rastreador_frente" },
         { "comando", { "/usr/bin/python3", "-c", script, run.string(), "--treino", "rast_teste" } },
-        { "pasta", run.string() } };
+        { "pasta", run.string() }, { "arquivoParar", stop.string() } };
     std::ofstream(run / "run.json") << config.dump();
     TrainerPaths3D paths = defaultTrainerPaths3D(sourceRoot());
     paths.data = data;
@@ -417,12 +420,14 @@ void processTrainer(const std::filesystem::path& data) {
         }
         return false;
     };
+    require(!std::filesystem::exists(stop), "abrir apaga o arquivo de parar do guarda");
     require(waitFor(true), "o treinador aberto aparece vivo pelo pid do status.json");
     require(link.status().pid > 0 && link.status().iteration == 7 && link.status().state == "treinando",
         "o status do treinador de processo proprio chega a tela");
     link.send("parar");
     require(waitFor(false), "o parar fecha o treinador pelo sinal");
     require(link.status().state == "parado", "parado depois do sinal");
+    require(std::filesystem::exists(stop), "parar cria o arquivo de parar do guarda");
     std::cout << "treinador de processo proprio: abre, aparece vivo, para pelo sinal\n";
 }
 

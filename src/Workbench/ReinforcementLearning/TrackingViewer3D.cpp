@@ -391,6 +391,13 @@ bool TrackingViewer3D::isGetUpDrill(const std::string& drill) {
         || isLocomotionDrill(drill);
 }
 
+bool TrackingViewer3D::isGetUpTask(const std::filesystem::path& taskPath) {
+    std::ifstream file(taskPath);
+    if (!file) return false;
+    const nlohmann::json task = nlohmann::json::parse(file, nullptr, false);
+    return !task.is_discarded() && task.is_object() && task.value("schema", std::string()) == "matter-getup-amp-1";
+}
+
 bool TrackingViewer3D::isLocomotionDrill(const std::string& drill) {
     return std::find(LocomotionDrills.begin(), LocomotionDrills.end(), drill) != LocomotionDrills.end();
 }
