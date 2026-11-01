@@ -272,6 +272,8 @@ struct TrackingViewer3D::Impl {
             // (A rl_final: o tempo dos rumos e a queda encerrando, como no treino.)
             s.locomotionSeconds = v2.value("locomocao_segundos", 0.0f);
             s.locomotionTermination = v2.value("queda_encerra", false);
+            // (O clipe nos motores, como no treino: 01/11 18h45.)
+            s.clipBlend = v2.value("mistura_clipe", 1.0f);
             // (Os rumos e o giro com a regua fixa da avaliacao do treino: 2,5 m/s e, se o treino tem empurroes em
             // movimento, os do comeco do B21 - os padroes daqui; sem eles no treino, sem eles aqui.)
             s.trotMinimumSpeed = s.trotMaximumSpeed = 2.5f;

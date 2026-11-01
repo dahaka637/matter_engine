@@ -470,7 +470,8 @@ def main() -> int:
                   "corrida": args.corrida, "sprint": args.sprint, "locomocao_clipe": args.locomocao_clipe,
                   "locomocao_segundos": args.locomocao_segundos, "queda_encerra": args.queda_encerra,
                   "troca_pedido": list(args.troca_pedido), "peso_tarefa_loco": args.peso_tarefa_loco,
-                  "peso_estilo_loco": args.peso_estilo_loco, "suave_loco": args.suave_loco, "passo": args.passo}
+                  "peso_estilo_loco": args.peso_estilo_loco, "suave_loco": args.suave_loco, "passo": args.passo,
+                  "mistura_clipe": args.mistura_clipe}
     (run / "run.json").write_text(json.dumps(info, ensure_ascii=False))
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     torch.manual_seed(args.semente)
@@ -480,7 +481,8 @@ def main() -> int:
               walk_speed=tuple(args.andar_velocidade), trot_speed=tuple(args.trote_velocidade),
               moving_push_newtons=tuple(args.empurrao_mov_forca), moving_push_hold_fraction=args.empurrao_mov_continuo,
               moving_push_hold_newtons=tuple(args.empurrao_mov_continuo_forca),
-              locomotion_seconds=args.locomocao_segundos, locomotion_termination=args.queda_encerra)
+              locomotion_seconds=args.locomocao_segundos, locomotion_termination=args.queda_encerra,
+              **({"clip_blend": args.mistura_clipe} if args.mistura_clipe < 1.0 else {}))
     batch = native.GetUpAmpBatch(str(REPO / "assets"), environments=args.mundos, threads=args.threads,
                                  seed=args.semente, clip_start_fraction=args.comeco_clipe,
                                  standing_start_fraction=args.comeco_de_pe, moving_fraction=args.movimento,
@@ -497,7 +499,6 @@ def main() -> int:
                                  **({"speed_ramp_power": args.rampa_velocidade} if args.rampa_velocidade != 0.5 else {}),
                                  **({"imitation_weight": args.imitacao} if args.imitacao > 0 else {}),
                                  **({"only_clip": args.so_clipe} if args.so_clipe else {}),
-                                 **({"clip_blend": args.mistura_clipe} if args.mistura_clipe < 1.0 else {}),
                                  **v2)
     # (31/10 23h40, ele: "verifica se... nao conseguimos mais decisoes por segundo": as avaliacoes numa thread so paravam
     # o treino ~21 s a cada 50 atualizacoes, 13% do tempo; com as threads do treino, as que esperam ficam paradas.)
