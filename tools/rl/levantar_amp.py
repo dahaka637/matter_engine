@@ -41,6 +41,10 @@ from rastreador_treino import DATA, REPO, RunningNorm, native  # noqa: E402
 
 LOG_STD_MIN, LOG_STD_MAX = math.log(0.05), math.log(0.5)
 SIDES = ("brucos", "costas", "lado")
+# Os rumos da locomocao (31/10 22h35, os basicos do B21) por exercicio: o rumo pedido (0 a frente, de 45 em 45 graus
+# para a esquerda) - as diagonais com os dois lados, como no B21.
+HEADINGS = {"frente": (0,), "diagonal_frente": (1, 7), "esquerda": (2,), "diagonal_costas": (3, 5), "tras": (4,),
+            "direita": (6,)}
 
 
 def mlp(inputs: int, outputs: int) -> nn.Sequential:
@@ -154,6 +158,20 @@ def summarize(rows: np.ndarray, prefix: str) -> dict:
             out[f"{prefix}vel_rumo"] = float(rows[moving, 12].mean())
         out[f"{prefix}caiu_de_pe"] = float(rows[:, 13].mean())
         out[f"{prefix}sem_cair"] = 1.0 - out[f"{prefix}caiu_de_pe"]
+        # Os rumos: por exercicio (o rumo pedido no lado da linha), a velocidade no rumo, ela sobre a pedida (os que
+        # comecaram pedindo), o sem cair e o erro do rumo do corpo; e o giro, o sem cair e o erro do rumo.
+        loco = rows[:, 1] == 6
+        for name, headings in HEADINGS.items():
+            sel = loco & np.isin(rows[:, 2], headings)
+            if sel.any():
+                out[f"{prefix}{name}_vel"] = float(rows[sel, 12].mean())
+                out[f"{prefix}{name}_razao"] = float((rows[sel, 12] / np.maximum(rows[sel, 10], 0.1)).mean())
+                out[f"{prefix}{name}_sem_cair"] = float(1.0 - rows[sel, 13].mean())
+                if rows.shape[1] > 16:
+                    out[f"{prefix}{name}_rumo"] = float(rows[sel, 16].mean())
+        turn = rows[:, 1] == 7
+        if turn.any() and rows.shape[1] > 16:
+            out[f"{prefix}rumo"] = float(rows[turn, 16].mean())
         if rows.shape[1] > 15:
             # (A pose de pe no fim, perto do parado em alerta: os que terminaram de pe.)
             up = rows[:, 9] > 0.5
@@ -284,6 +302,19 @@ def main() -> int:
     parser.add_argument("--empurrao-continuo", type=float, default=0.0,
                         help="a fatia continua dos empurroes de pe (o autoequilibrio parado)")
     parser.add_argument("--empurrao-continuo-forca", type=float, nargs=2, default=[150.0, 350.0], help="(N, por 1-3 s)")
+    # (31/10 22h35, ele: so esta rede daqui em diante, com os basicos do B21 - os rumos e o giro parado suave -, o
+    # autoequilibrio o principal: "se locomover resistindo a impactos e adversidades".)
+    parser.add_argument("--locomocao", type=float, default=0.0,
+                        help="a fatia dos rumos (andar ou trotar num dos 8 rumos, mantendo o rumo do corpo)")
+    parser.add_argument("--giro", type=float, default=0.0, help="a fatia do giro parado suave")
+    parser.add_argument("--andar", type=float, default=1.0 / 3.0, help="nos rumos, a fatia do andar (o resto trota)")
+    parser.add_argument("--andar-velocidade", type=float, nargs=2, default=[0.8, 1.4], help="(m/s)")
+    parser.add_argument("--trote-velocidade", type=float, nargs=2, default=[2.0, 3.0], help="(m/s)")
+    parser.add_argument("--empurrao-mov-forca", type=float, nargs=2, default=[300.0, 600.0],
+                        help="os empurroes curtos em movimento (N; os rumos e o giro)")
+    parser.add_argument("--empurrao-mov-continuo", type=float, default=0.3, help="a fatia continua deles")
+    parser.add_argument("--empurrao-mov-continuo-forca", type=float, nargs=2, default=[100.0, 180.0],
+                        help="(N, por 1-2 s)")
     parser.add_argument("--arrancada", type=float, default=0.0,
                         help="a fatia que comeca na arrancada agachada (crouched_to_sprint) virado para um alvo")
     args = parser.parse_args()
@@ -306,6 +337,10 @@ def main() -> int:
     info = json.loads((run / "run.json").read_text())
     info["v2"] = {"movimento": args.movimento, "evitar": args.evitar, "arrancada": args.arrancada,
                   "peso_tarefa": args.peso_tarefa, "peso_estilo": args.peso_estilo, "suave": args.suave,
+                  "locomocao": args.locomocao, "giro": args.giro, "andar": args.andar,
+                  "andar_velocidade": list(args.andar_velocidade), "trote_velocidade": list(args.trote_velocidade),
+                  "empurrao_mov_forca": list(args.empurrao_mov_forca), "empurrao_mov_continuo": args.empurrao_mov_continuo,
+                  "empurrao_mov_continuo_forca": list(args.empurrao_mov_continuo_forca),
                   "empurrao_continuo": args.empurrao_continuo, "empurrao_continuo_forca": list(args.empurrao_continuo_forca),
                   "evitar_forca": list(args.evitar_forca),
                   "empurrao_forca": list(args.empurrao_forca), "velocidade": list(args.velocidade)}
@@ -314,11 +349,15 @@ def main() -> int:
     torch.manual_seed(args.semente)
     v2 = dict(avoid_newtons=tuple(args.evitar_forca), push_newtons=tuple(args.empurrao_forca),
               move_speed=tuple(args.velocidade), push_hold_fraction=args.empurrao_continuo,
-              push_hold_newtons=tuple(args.empurrao_continuo_forca))
+              push_hold_newtons=tuple(args.empurrao_continuo_forca), walk_fraction=args.andar,
+              walk_speed=tuple(args.andar_velocidade), trot_speed=tuple(args.trote_velocidade),
+              moving_push_newtons=tuple(args.empurrao_mov_forca), moving_push_hold_fraction=args.empurrao_mov_continuo,
+              moving_push_hold_newtons=tuple(args.empurrao_mov_continuo_forca))
     batch = native.GetUpAmpBatch(str(REPO / "assets"), environments=args.mundos, threads=args.threads,
                                  seed=args.semente, clip_start_fraction=args.comeco_clipe,
                                  standing_start_fraction=args.comeco_de_pe, moving_fraction=args.movimento,
-                                 avoid_fraction=args.evitar, sprint_start_fraction=args.arrancada, **v2)
+                                 avoid_fraction=args.evitar, sprint_start_fraction=args.arrancada,
+                                 locomotion_fraction=args.locomocao, turn_fraction=args.giro, **v2)
     evaluation = native.GetUpAmpBatch(str(REPO / "assets"), environments=64, threads=1, seed=12345, evaluation=True)
     # (O v2: 32 quedas fixas com alvo e 32 empurroes fortes fixos.)
     evaluations = {"mov_": native.GetUpAmpBatch(str(REPO / "assets"), environments=32, threads=1, seed=777,
@@ -329,6 +368,18 @@ def main() -> int:
     # (O equilibrio parado: 32 de pe, um empurrao cada com a regua do parado com empurrao forte do B21.)
     evaluations["equil_"] = native.GetUpAmpBatch(str(REPO / "assets"), environments=32, threads=1, seed=555,
                                                  evaluation=True, evaluation_kind=3, **v2)
+    # (A locomocao, com a regua fixa - nao a do treino, que sobe: os rumos a 2,5 m/s e os empurroes em movimento do
+    # comeco do B21, um por episodio. 32 nos rumos, 4 por rumo; 8 no giro, metade para cada lado; 8 parados, sem
+    # empurrao.)
+    if args.locomocao > 0 or args.giro > 0:
+        ruler = dict(v2, trot_speed=(2.5, 2.5), moving_push_newtons=(300.0, 600.0), moving_push_hold_fraction=0.3,
+                     moving_push_hold_newtons=(100.0, 180.0))
+        evaluations["loco_"] = native.GetUpAmpBatch(str(REPO / "assets"), environments=32, threads=1, seed=444,
+                                                    evaluation=True, evaluation_kind=4, **ruler)
+        evaluations["giro_"] = native.GetUpAmpBatch(str(REPO / "assets"), environments=8, threads=1, seed=333,
+                                                    evaluation=True, evaluation_kind=6, **ruler)
+        evaluations["parado_"] = native.GetUpAmpBatch(str(REPO / "assets"), environments=8, threads=1, seed=222,
+                                                      evaluation=True, evaluation_kind=5, **ruler)
     n, obs_size, act_size, amp = batch.num_envs, batch.obs_size, batch.action_size, batch.amp_size
     reference = torch.as_tensor(batch.reference_pairs(), device=device)
     model = Policy(obs_size, act_size, batch.action_ranges()).to(device)
@@ -343,10 +394,14 @@ def main() -> int:
     checkpoint = run / "ultimo.pt"
     if checkpoint.exists():
         state = torch.load(checkpoint, map_location=device, weights_only=False)
-        model.load_state_dict(state["model"])
+        grown = state["model"]["actor.0.weight"].shape[1] < obs_size
+        # (Uma entrada nova no contrato - 31/10 22h15, o rumo pedido do corpo: as colunas novas em zero e o Adam do ator e
+        # do critico do zero, as formas mudaram.)
+        model.load_state_dict(expand_inputs(state["model"], obs_size) if grown else state["model"])
         disc.load_state_dict(state["disc"])
-        actor_opt.load_state_dict(state["actor_opt"])
-        critic_opt.load_state_dict(state["critic_opt"])
+        if not grown:
+            actor_opt.load_state_dict(state["actor_opt"])
+            critic_opt.load_state_dict(state["critic_opt"])
         disc_opt.load_state_dict(state["disc_opt"])
         counters = state["counters"]
     log = open(run / "log.jsonl", "a")
@@ -497,7 +552,7 @@ def main() -> int:
         counters["amostras"] += T * n
         counters["episodios"] += len(episodes)
         if counters["atualizacao"] % 20 == 0:
-            recent = np.array(window) if window else np.zeros((0, 16))
+            recent = np.array(window) if window else np.zeros((0, 17))
             row = {"atualizacao": counters["atualizacao"], "amostras": counters["amostras"], "hora": time.time(),
                    "tarefa": float(buf["task"].mean()), "estilo": float(style.mean()), "tranco": float(buf["jerk"].mean()),
                    "desvio": float(model.log_std.detach().clamp(LOG_STD_MIN, LOG_STD_MAX).exp().mean()),
@@ -508,6 +563,8 @@ def main() -> int:
             row.update(summarize(recent[recent[:, 1] == 3] if len(recent) else recent, "mov_"))
             row.update(summarize(recent[recent[:, 1] == 4] if len(recent) else recent, "evitar_"))
             row.update(summarize(recent[recent[:, 1] == 5] if len(recent) else recent, "arrancada_"))
+            row.update(summarize(recent[recent[:, 1] == 6] if len(recent) else recent, "loco_"))
+            row.update(summarize(recent[recent[:, 1] == 7] if len(recent) else recent, "giro_"))
             log.write(json.dumps(row) + "\n")
             log.flush()
             print(" ".join(f"{k}={v:.4g}" if isinstance(v, float) else f"{k}={v}" for k, v in row.items()), flush=True)

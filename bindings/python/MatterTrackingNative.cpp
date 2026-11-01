@@ -336,7 +336,10 @@ NB_MODULE(matter_tracking_native, m) {
                 float clipStartFraction, float standingStartFraction, float movingFraction, float avoidFraction,
                 std::uint32_t evaluationKind, std::array<float, 2> avoidNewtons, std::array<float, 2> pushNewtons,
                 std::array<float, 2> moveSpeed, float sprintStartFraction, float pushHoldFraction,
-                std::array<float, 2> pushHoldNewtons) {
+                std::array<float, 2> pushHoldNewtons, float locomotionFraction, float turnFraction, float walkFraction,
+                std::array<float, 2> walkSpeed, std::array<float, 2> trotSpeed, int heading,
+                std::array<float, 2> movingPushNewtons, float movingPushHoldFraction,
+                std::array<float, 2> movingPushHoldNewtons) {
                 TrackingGetUpAmpSettings3D settings;
                 settings.assetsDirectory = assets;
                 settings.environments = environments;
@@ -359,6 +362,19 @@ NB_MODULE(matter_tracking_native, m) {
                 settings.pushHoldFraction = pushHoldFraction;
                 settings.pushHoldMinimumNewtons = pushHoldNewtons[0];
                 settings.pushHoldMaximumNewtons = pushHoldNewtons[1];
+                settings.locomotionFraction = locomotionFraction;
+                settings.turnFraction = turnFraction;
+                settings.walkFraction = walkFraction;
+                settings.walkMinimumSpeed = walkSpeed[0];
+                settings.walkMaximumSpeed = walkSpeed[1];
+                settings.trotMinimumSpeed = trotSpeed[0];
+                settings.trotMaximumSpeed = trotSpeed[1];
+                settings.heading = heading;
+                settings.movingPushMinimumNewtons = movingPushNewtons[0];
+                settings.movingPushMaximumNewtons = movingPushNewtons[1];
+                settings.movingPushHoldFraction = movingPushHoldFraction;
+                settings.movingPushHoldMinimumNewtons = movingPushHoldNewtons[0];
+                settings.movingPushHoldMaximumNewtons = movingPushHoldNewtons[1];
                 nb::gil_scoped_release release;
                 new (self) TrackingGetUpAmpTraining3D(settings);
             },
@@ -368,7 +384,11 @@ NB_MODULE(matter_tracking_native, m) {
             "avoid_newtons"_a = std::array<float, 2> { 1200.0f, 1800.0f },
             "push_newtons"_a = std::array<float, 2> { 400.0f, 900.0f },
             "move_speed"_a = std::array<float, 2> { 2.5f, 5.0f }, "sprint_start_fraction"_a = 0.0f,
-            "push_hold_fraction"_a = 0.0f, "push_hold_newtons"_a = std::array<float, 2> { 150.0f, 350.0f })
+            "push_hold_fraction"_a = 0.0f, "push_hold_newtons"_a = std::array<float, 2> { 150.0f, 350.0f },
+            "locomotion_fraction"_a = 0.0f, "turn_fraction"_a = 0.0f, "walk_fraction"_a = 1.0f / 3.0f,
+            "walk_speed"_a = std::array<float, 2> { 0.8f, 1.4f }, "trot_speed"_a = std::array<float, 2> { 2.0f, 3.0f },
+            "heading"_a = -1, "moving_push_newtons"_a = std::array<float, 2> { 300.0f, 600.0f },
+            "moving_push_hold_fraction"_a = 0.3f, "moving_push_hold_newtons"_a = std::array<float, 2> { 100.0f, 180.0f })
         .def_prop_ro("num_envs", &TrackingGetUpAmpTraining3D::environmentCount)
         .def_prop_ro("obs_size", &TrackingGetUpAmpTraining3D::observationSize)
         .def_prop_ro("action_size", &TrackingGetUpAmpTraining3D::actionSize)
@@ -446,12 +466,12 @@ NB_MODULE(matter_tracking_native, m) {
             [](const TrackingGetUpAmpTraining3D&) {
                 return std::vector<std::string> { "mundo", "comeco", "lado", "cabeca_inicio", "segundos", "de_pe_aos",
                     "nota_tarefa", "altura_cabeca", "altura_pelve", "de_pe", "velocidade_pedida", "chegou_aos",
-                    "velocidade_rumo_alvo", "caiu_depois_de_pe", "recompos_aos", "pose_fim" };
+                    "velocidade_rumo_alvo", "caiu_depois_de_pe", "recompos_aos", "pose_fim", "erro_rumo_graus" };
             })
         .def("finished_episodes",
             [](TrackingGetUpAmpTraining3D& b) {
                 const std::vector<TrackingGetUpAmpEpisode3D> episodes = b.takeEpisodes();
-                constexpr std::size_t width = 16;
+                constexpr std::size_t width = 17;
                 auto out = owned<float>({ episodes.size(), width });
                 float* d = out.data();
                 for (std::size_t i = 0; i < episodes.size(); ++i) {
@@ -460,7 +480,7 @@ NB_MODULE(matter_tracking_native, m) {
                         static_cast<float>(e.startSide), e.startHeadHeight, e.seconds, e.firstStandSeconds,
                         e.meanTaskReward, e.headHeight, e.pelvisHeight, e.standing ? 1.0f : 0.0f, e.commandSpeed,
                         e.reachedSeconds, e.meanTowardSpeed, e.fellAfterStanding ? 1.0f : 0.0f, e.recomposedSeconds,
-                        e.endPoseMatch };
+                        e.endPoseMatch, e.meanFaceError };
                     std::copy(row, row + width, d + i * width);
                 }
                 return out;

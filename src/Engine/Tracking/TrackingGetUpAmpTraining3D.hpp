@@ -51,9 +51,34 @@ struct TrackingGetUpAmpSettings3D {
     float pushHoldMaximumNewtons = 350.0f;
     float pushHoldMinimumSeconds = 1.0f;
     float pushHoldMaximumSeconds = 3.0f;
+    // A locomocao (31/10 22h35, ele: so esta rede daqui em diante, com "os treinos de parado, tras, direita, esquerda,
+    // diagonais frente e diagonais costas e o parado girando suave"; o autoequilibrio segue o principal: "se locomover
+    // resistindo a impactos e adversidades"): os exercicios basicos do B21. A fatia dos rumos (andar ou trotar num dos 8
+    // rumos em relacao ao rumo do corpo, mantendo-o) e a do giro parado suave.
+    float locomotionFraction = 0.0f;
+    float turnFraction = 0.0f;
+    // As faixas do B21: andar (nesta fatia) e trotar (m/s; o minimo de 2 do trote, o pedido dele de 31/10 07h45). A
+    // avaliacao pede o meio do trote.
+    float walkFraction = 1.0f / 3.0f;
+    float walkMinimumSpeed = 0.8f;
+    float walkMaximumSpeed = 1.4f;
+    float trotMinimumSpeed = 2.0f;
+    float trotMaximumSpeed = 3.0f;
+    // O rumo pedido (0 a frente, de 45 em 45 graus para a esquerda, ate 7; < 0: sorteado no treino e, na avaliacao, o
+    // do mundo, de 8 em 8).
+    int heading = -1;
+    // Os empurroes em movimento (a regua do comeco do B21: curtos de 300-600 N por 0,1-0,2 s e, numa fatia, continuos de
+    // 100-180 N por 1-2 s), nos rumos e no giro; na avaliacao, um so, de 2 a 3 s depois do comeco.
+    float movingPushMinimumNewtons = 300.0f;
+    float movingPushMaximumNewtons = 600.0f;
+    float movingPushHoldFraction = 0.3f;
+    float movingPushHoldMinimumNewtons = 100.0f;
+    float movingPushHoldMaximumNewtons = 180.0f;
     // Na avaliacao, o que se mede: 0 as quedas (o levantar), 1 o levantar em movimento, 2 o evitar a queda, 3 o
     // equilibrio parado (de pe, um empurrao com a regua do parado com empurrao forte do B21: o curto de 900-1200 N ou,
-    // em 30%, o continuo de 205-275 N por 1-3 s).
+    // em 30%, o continuo de 205-275 N por 1-3 s), 4 os rumos (de pe, no meio do trote, mantendo o rumo do corpo, um
+    // empurrao em movimento), 5 o parado (de pe, sem empurrao), 6 o giro parado suave (0,6 rad/s, metade para cada lado,
+    // um empurrao em movimento).
     std::uint32_t evaluationKind = 0;
 };
 
@@ -61,7 +86,8 @@ struct TrackingGetUpAmpSettings3D {
 struct TrackingGetUpAmpEpisode3D {
     std::uint32_t world = 0;
     // 0: uma queda; 1: um instante de um clipe de levantar; 2: de pe (o parado); 3: uma queda com alvo (o levantar em
-    // movimento); 4: de pe com o empurrao forte (o evitar a queda); 5: a arrancada agachada com alvo.
+    // movimento); 4: de pe com o empurrao forte (o evitar a queda); 5: a arrancada agachada com alvo; 6: um rumo (o rumo
+    // pedido, 0 a 7, vem em startSide); 7: o giro parado suave.
     std::uint32_t startKind = 0;
     // Como comecou: 0 de brucos, 1 de costas, 2 de lado (ou sentado, ajoelhado).
     std::uint32_t startSide = 0;
@@ -83,6 +109,8 @@ struct TrackingGetUpAmpEpisode3D {
     float recomposedSeconds = -1.0f;
     // A semelhanca com a pose do parado em alerta no fim (0 se nao esta de pe).
     float endPoseMatch = 0.0f;
+    // Nos rumos e no giro: o erro medio do rumo do corpo (graus), de pe.
+    float meanFaceError = 0.0f;
 };
 
 // O que o visualizador do laboratorio desenha de um mundo: como comecou, o alvo (o levantar em movimento, enquanto o
@@ -92,6 +120,10 @@ struct TrackingGetUpAmpWorldView3D {
     bool hasTarget = false;
     Vec3 target;
     float commandSpeed = 0.0f;
+    // O pedido de deslocamento (m/s, no chao; zero sem pedido) e, nos rumos e no giro, o rumo pedido do corpo (rad).
+    Vec3 moveVelocity;
+    bool hasFace = false;
+    float faceYaw = 0.0f;
     bool pushing = false;
     Vec3 pushForce;
 };
@@ -116,9 +148,16 @@ public:
     // aos pares do discriminador): so o estilo e os comecos das quedas.
     static constexpr const char* MovingClips[5] { "idle_to_sprint", "crouched_to_sprint", "mixamo_running",
         "run_forward_medium", "sprint_forward" };
-    // As entradas do comando, depois das do corpo: o rumo do alvo em relacao ao corpo (cos, sen), a distancia
-    // (/10 m, ate 1) e a velocidade pedida (/5 m/s; 0: ficar onde esta).
-    static constexpr std::size_t CommandSize = 4;
+    // Os clipes do trote, na ordem dos rumos (de 45 em 45 graus para a esquerda): o estilo e os comecos do tipo 6. E os
+    // do andar e do giro parado, so o estilo.
+    static constexpr const char* HeadingClips[8] { "trot_forward", "trot_forward_left", "jog_strafe_left",
+        "trot_backward_left", "trot_backward", "trot_backward_right", "jog_strafe_right", "trot_forward_right" };
+    static constexpr const char* LocomotionStyleClips[6] { "ual_walk", "walk_backward", "walk_strafe_left",
+        "walk_strafe_right", "turn_left", "turn_right" };
+    // As entradas do comando, depois das do corpo: o rumo do deslocamento pedido em relacao ao corpo (cos, sen), a
+    // distancia (/10 m, ate 1; nos rumos, 1), a velocidade pedida (/5 m/s; 0: ficar onde esta) e o rumo pedido do corpo
+    // em relacao a ele (cos, sen: no levantar em movimento, o alvo; nos rumos, o do comeco; no giro, o que gira).
+    static constexpr std::size_t CommandSize = 6;
 
     explicit TrackingGetUpAmpTraining3D(const TrackingGetUpAmpSettings3D& settings);
     ~TrackingGetUpAmpTraining3D();

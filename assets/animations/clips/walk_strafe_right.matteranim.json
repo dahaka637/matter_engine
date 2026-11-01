@@ -12,7 +12,7 @@
     -0.9256312,
     0.0007781
   ],
-  "nominalSpeedMetersPerSecond": 0.63125,
+  "nominalSpeedMetersPerSecond": 0.63125, "travelDirectionDegrees": -90.0,
   "contacts": {
     "leftFoot": [
       {

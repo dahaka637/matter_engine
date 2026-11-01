@@ -98,6 +98,36 @@ std::string duration(double seconds) {
     return text;
 }
 
+// As chaves do log da locomocao na rede do levantar, na ordem de TrackingViewer3D::LocomotionDrills: o primeiro grafico
+// (no treino e no teste; em %, menos o erro do rumo do giro, em graus) e o sem cair (no treino e no teste). O parado
+// treina de pe com empurroes e testa sem.
+struct LocomotionLogKeys3D {
+    const char* main;
+    const char* mainTest;
+    const char* up;
+    const char* upTest;
+    bool percent;
+};
+constexpr std::array<LocomotionLogKeys3D, 8> LocomotionLogKeys { {
+    { "de_pe_pose", "parado_pose", "de_pe_sem_cair", "parado_sem_cair", true },
+    { "giro_rumo", "giro_rumo", "giro_sem_cair", "giro_sem_cair", false },
+    { "loco_frente_razao", "loco_frente_razao", "loco_frente_sem_cair", "loco_frente_sem_cair", true },
+    { "loco_tras_razao", "loco_tras_razao", "loco_tras_sem_cair", "loco_tras_sem_cair", true },
+    { "loco_direita_razao", "loco_direita_razao", "loco_direita_sem_cair", "loco_direita_sem_cair", true },
+    { "loco_esquerda_razao", "loco_esquerda_razao", "loco_esquerda_sem_cair", "loco_esquerda_sem_cair", true },
+    { "loco_diagonal_frente_razao", "loco_diagonal_frente_razao", "loco_diagonal_frente_sem_cair",
+        "loco_diagonal_frente_sem_cair", true },
+    { "loco_diagonal_costas_razao", "loco_diagonal_costas_razao", "loco_diagonal_costas_sem_cair",
+        "loco_diagonal_costas_sem_cair", true } } };
+constexpr std::array<const char*, 8> LocomotionNames { "Parado (levantar)", "Parado girando suave (levantar)",
+    "Frente (levantar)", "Trás (levantar)", "Direita (levantar)", "Esquerda (levantar)", "Diagonal frente (levantar)",
+    "Diagonal costas (levantar)" };
+
+std::size_t locomotionIndex(const std::string& drill) {
+    const auto& drills = TrackingViewer3D::LocomotionDrills;
+    return static_cast<std::size_t>(std::find(drills.begin(), drills.end(), drill) - drills.begin());
+}
+
 std::string decimal(double value, int digits) {
     char text[48];
     std::snprintf(text, sizeof text, "%.*f", digits, value);
@@ -553,17 +583,21 @@ void ReinforcementLearningScreen::loadDrills() {
         const std::array<std::array<const char*, 2>, 3> extra { { { TrackingViewer3D::MovingGetUpDrill, "Levantar em movimento" },
             { TrackingViewer3D::AvoidFallDrill, "Evitar a queda" },
             { TrackingViewer3D::BalanceDrill, "Equilíbrio parado (empurrões)" } } };
-        for (std::size_t k = 0; k < extra.size(); ++k) {
+        // (A locomocao na rede do levantar, 31/10 22h35: os basicos do B21, depois dos outros.)
+        std::vector<std::array<const char*, 2>> all(extra.begin(), extra.end());
+        for (std::size_t k = 0; k < LocomotionNames.size(); ++k)
+            all.push_back({ TrackingViewer3D::LocomotionDrills[k], LocomotionNames[k] });
+        for (std::size_t k = 0; k < all.size(); ++k) {
             const std::size_t where = i + 1 + k;
-            m_drillIds.insert(m_drillIds.begin() + static_cast<std::ptrdiff_t>(where), extra[k][0]);
-            m_drillNames.insert(m_drillNames.begin() + static_cast<std::ptrdiff_t>(where), extra[k][1]);
+            m_drillIds.insert(m_drillIds.begin() + static_cast<std::ptrdiff_t>(where), all[k][0]);
+            m_drillNames.insert(m_drillNames.begin() + static_cast<std::ptrdiff_t>(where), all[k][1]);
             if (m_drillPhases.size() >= where) m_drillPhases.insert(m_drillPhases.begin() + static_cast<std::ptrdiff_t>(where), phase);
             if (m_drillCategories.size() >= where)
                 m_drillCategories.insert(m_drillCategories.begin() + static_cast<std::ptrdiff_t>(where), category);
             if (m_drillWeights.size() >= where) m_drillWeights.insert(m_drillWeights.begin() + static_cast<std::ptrdiff_t>(where), 0.0f);
             if (m_drillInfo.size() >= where)
                 m_drillInfo.insert(m_drillInfo.begin() + static_cast<std::ptrdiff_t>(where),
-                    { extra[k][0], 0.0, k == 0 ? 5.0 : 0.0, true });
+                    { all[k][0], 0.0, k == 0 ? 5.0 : k >= extra.size() + 2 ? 2.5 : 0.0, true });
         }
     }
     if (std::find(m_drillIds.begin(), m_drillIds.end(), m_viewerDrill) == m_drillIds.end())
@@ -1575,6 +1609,11 @@ void ReinforcementLearningScreen::drawViewport(CanvasTarget& canvas, float botto
             label = m_policyText + "\nevitou a queda " + count + " empurrões";
         else if (m_viewerDrill == TrackingViewer3D::BalanceDrill)
             label = m_policyText + "\nnão caiu " + count + " empurrões";
+        else if (TrackingViewer3D::locomotionHeadingOf(m_viewerDrill) >= 0)
+            label = m_policyText + "\npedido " + decimal(viewerRequestedSpeed(), 1) + " m/s · ele "
+                + decimal(viewerSpeed(), 1) + " m/s · não caiu " + count;
+        else if (TrackingViewer3D::isLocomotionDrill(m_viewerDrill))
+            label = m_policyText + "\nnão caiu " + count;
         else
             label = m_policyText + "\nlevantou " + count + " quedas";
     }
@@ -1743,6 +1782,9 @@ void ReinforcementLearningScreen::refreshGetUpCurve() {
     };
     float test = none, seconds = none, movingTest = none, movingSpeedTest = none, avoidTest = none, recomposeTest = none,
           balanceTest = none, poseTest = none;
+    std::array<float, LocomotionLogKeys.size()> locoMainTest, locoUpTest;
+    locoMainTest.fill(none);
+    locoUpTest.fill(none);
     for (std::string line; std::getline(file, line);) {
         const nlohmann::json row = nlohmann::json::parse(line, nullptr, false);
         if (row.is_discarded() || !row.is_object() || !row.contains("atualizacao")) continue;
@@ -1755,6 +1797,11 @@ void ReinforcementLearningScreen::refreshGetUpCurve() {
             recomposeTest = plain(row, "evitar_recompos_s");
             balanceTest = percent(row, "equil_sem_cair");
             poseTest = percent(row, "pose");
+            for (std::size_t k = 0; k < LocomotionLogKeys.size(); ++k) {
+                const LocomotionLogKeys3D& keys = LocomotionLogKeys[k];
+                locoMainTest[k] = keys.percent ? percent(row, keys.mainTest) : plain(row, keys.mainTest);
+                locoUpTest[k] = percent(row, keys.upTest);
+            }
             continue;
         }
         if (!row.contains("tarefa")) continue;
@@ -1782,6 +1829,13 @@ void ReinforcementLearningScreen::refreshGetUpCurve() {
         curve.pose.push_back(percent(row, "queda_pose"));
         curve.poseStanding.push_back(percent(row, "de_pe_pose"));
         curve.poseTest.push_back(poseTest);
+        for (std::size_t k = 0; k < LocomotionLogKeys.size(); ++k) {
+            const LocomotionLogKeys3D& keys = LocomotionLogKeys[k];
+            curve.locoMain[k].push_back(keys.percent ? percent(row, keys.main) : plain(row, keys.main));
+            curve.locoMainTest[k].push_back(locoMainTest[k]);
+            curve.locoUp[k].push_back(percent(row, keys.up));
+            curve.locoUpTest[k].push_back(locoUpTest[k]);
+        }
     }
     m_getUpCurve = std::move(curve);
 }
@@ -1823,6 +1877,39 @@ void ReinforcementLearningScreen::drawGetUpCharts(float height) {
         tooltip("A velocidade média rumo ao alvo enquanto de pé e com o pedido (2,5–5 m/s): o treino e, tracejado, o teste.");
         lineChart("##rumo", { { &c.towardSpeed, cyan, false, "treino" }, { &c.towardSpeedTest, cyan, true, "teste sem ruído" } },
             0.0f, 6.0f, size, both(c.towardSpeedTest, c.towardSpeed, "%.2f m/s").c_str(), "m/s", nullptr, false,
+            "sem dados ainda");
+        ImGui::EndGroup();
+        return;
+    }
+    if (const std::size_t k = locomotionIndex(m_viewerDrill); k < LocomotionLogKeys.size()) {
+        const std::string name = LocomotionNames[k];
+        const bool still = k == 0, turn = k == 1;
+        ImGui::BeginGroup();
+        const std::string title = still ? "Pose do parado em alerta (%) · " + name
+            : turn                      ? "Erro do rumo (graus) · " + name
+                                        : "Velocidade no rumo (% da pedida) · " + name;
+        ImGui::TextColored(InfoText, "%s", title.c_str());
+        tooltip(still ? "De pé, a semelhança da pose com o parado em alerta no fim: o treino (de pé, com empurrões) e, "
+                        "tracejado, o teste sem ruído em 8 começos fixos de pé, sem empurrão."
+                : turn ? "O rumo pedido do corpo gira (0,4–0,8 rad/s, giros de 30–450° com pausas de 1–3 s, empurrões em "
+                         "movimento): o erro médio entre o rumo do corpo e o pedido, de pé. Tracejado, o teste sem ruído: "
+                         "0,6 rad/s o episódio todo, 4 para cada lado, um empurrão do começo do B21."
+                       : "A velocidade média no rumo pedido sobre a pedida, de pé, mantendo o rumo do corpo: o treino (andar "
+                         "0,8–1,4 ou trotar 2,0–3,0 m/s, com empurrões em movimento) e, tracejado, o teste sem ruído a "
+                         "2,5 m/s com um empurrão do começo do B21 (300–600 N, ou contínuo de 100–180 N por 1–2 s).");
+        lineChart("##loco_principal", { { &c.locoMain[k], turn ? amber : cyan, false, "treino" },
+                                          { &c.locoMainTest[k], turn ? amber : cyan, true, "teste sem ruído" } },
+            0.0f, turn ? 90.0f : still ? 100.0f : 150.0f, size,
+            both(c.locoMainTest[k], c.locoMain[k], turn ? "%.0f°" : "%.0f%%").c_str(), turn ? "°" : "%", nullptr, false,
+            "sem dados ainda");
+        ImGui::EndGroup();
+        ImGui::SameLine();
+        ImGui::SetCursorPosY(rowTop);
+        ImGui::BeginGroup();
+        ImGui::TextColored(InfoText, "%s", ("Sem cair (%) · " + name).c_str());
+        tooltip("Quantos episódios terminam sem cair (o chão tocado pelo tronco, o pescoço ou a cabeça).");
+        lineChart("##loco_cair", { { &c.locoUp[k], green, false, "treino" }, { &c.locoUpTest[k], green, true, "teste sem ruído" } },
+            0.0f, 100.0f, size, both(c.locoUpTest[k], c.locoUp[k], "%.0f%%").c_str(), "%", nullptr, false,
             "sem dados ainda");
         ImGui::EndGroup();
         return;

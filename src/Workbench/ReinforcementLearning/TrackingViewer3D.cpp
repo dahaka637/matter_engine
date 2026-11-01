@@ -62,8 +62,10 @@ struct TrackingViewer3D::Impl {
     std::filesystem::path assets;
     std::uint64_t seed = 1;
     std::vector<float> getUpObservation, getUpAction;
-    // Qual avaliacao do levantar: 0 as quedas, 1 o levantar em movimento, 2 o evitar a queda.
+    // Qual avaliacao do levantar: 0 as quedas, 1 o levantar em movimento, 2 o evitar a queda, 3 o equilibrio parado,
+    // 4 um rumo (o do exercicio), 5 o parado, 6 o giro parado suave.
     std::uint32_t getUpKind = 0;
+    std::string getUpDrill;
     void startGetUp() {
         TrackingGetUpAmpSettings3D s;
         s.assetsDirectory = assets.string();
@@ -72,6 +74,7 @@ struct TrackingViewer3D::Impl {
         s.seed = seed;
         s.evaluation = true;
         s.evaluationKind = getUpKind;
+        s.heading = locomotionHeadingOf(getUpDrill, seed);
         // (As forcas e as velocidades do treino de agora: o run.json do levantar v2, gravado a cada abertura.)
         std::ifstream file(getUpRun() / "run.json");
         const nlohmann::json run = nlohmann::json::parse(file, nullptr, false);
@@ -87,6 +90,8 @@ struct TrackingViewer3D::Impl {
             pair("empurrao_forca", s.pushMinimumNewtons, s.pushMaximumNewtons);
             pair("velocidade", s.moveMinimumSpeed, s.moveMaximumSpeed);
             pair("empurrao_continuo_forca", s.pushHoldMinimumNewtons, s.pushHoldMaximumNewtons);
+            // (Os rumos e o giro com a regua fixa da avaliacao do treino: 2,5 m/s e os empurroes do comeco do B21.)
+            s.trotMinimumSpeed = s.trotMaximumSpeed = 2.5f;
         }
         getUp = std::make_unique<TrackingGetUpAmpTraining3D>(s);
         getUpObservation.assign(getUp->observationSize(), 0.0f);
@@ -363,14 +368,35 @@ TrackingViewer3D::TrackingViewer3D(const std::filesystem::path& assetsDirectory,
     if (isGetUpDrill(drill)) {
         impl.assets = assetsDirectory;
         impl.seed = seed;
-        impl.getUpKind = drill == MovingGetUpDrill ? 1u : drill == AvoidFallDrill ? 2u : drill == BalanceDrill ? 3u : 0u;
+        impl.getUpDrill = drill;
+        impl.getUpKind = drill == MovingGetUpDrill ? 1u : drill == AvoidFallDrill ? 2u : drill == BalanceDrill ? 3u
+            : drill == LocomotionDrills[0]                                                                      ? 5u
+            : drill == LocomotionDrills[1]                                                                      ? 6u
+            : isLocomotionDrill(drill)                                                                          ? 4u
+                                                                                                                : 0u;
         impl.startGetUp();
         impl.loadGetUpPolicy();
     }
 }
 
 bool TrackingViewer3D::isGetUpDrill(const std::string& drill) {
-    return drill == GetUpDrill || drill == MovingGetUpDrill || drill == AvoidFallDrill || drill == BalanceDrill;
+    return drill == GetUpDrill || drill == MovingGetUpDrill || drill == AvoidFallDrill || drill == BalanceDrill
+        || isLocomotionDrill(drill);
+}
+
+bool TrackingViewer3D::isLocomotionDrill(const std::string& drill) {
+    return std::find(LocomotionDrills.begin(), LocomotionDrills.end(), drill) != LocomotionDrills.end();
+}
+
+int TrackingViewer3D::locomotionHeadingOf(const std::string& drill, std::uint64_t seed) {
+    const bool right = seed % 2 == 1;
+    if (drill == "lev_frente") return 0;
+    if (drill == "lev_diagonal_frente") return right ? 7 : 1;
+    if (drill == "lev_esquerda") return 2;
+    if (drill == "lev_diagonal_costas") return right ? 5 : 3;
+    if (drill == "lev_tras") return 4;
+    if (drill == "lev_direita") return 6;
+    return -1;
 }
 
 bool TrackingViewer3D::getUpVersion2() { return getUpRun().filename() == "levantar_v2"; }
@@ -517,15 +543,11 @@ BodyWorldView3D TrackingViewer3D::view() const {
             view.hasTarget = true;
             view.target = world.target;
             view.targetStop = world.commandSpeed <= 0.0f;
-            if (!body.links.empty() && world.commandSpeed > 0.0f) {
-                const Vec3 to { world.target.x - body.links.front().position.x,
-                    world.target.y - body.links.front().position.y, 0.0f };
-                const float distance = std::hypot(to.x, to.y);
-                if (distance > 1.0e-3f)
-                    view.command.moveVelocity = { to.x / distance * world.commandSpeed, to.y / distance * world.commandSpeed,
-                        0.0f };
-            }
         }
+        // (O pedido de deslocamento - rumo ao alvo no levantar em movimento, o rumo pedido na locomocao - e, na
+        // locomocao, o rumo pedido do corpo: a camera e o olho seguem ele, como nos exercicios do B21.)
+        view.command.moveVelocity = world.moveVelocity;
+        if (world.hasFace) view.command.faceHeading = world.faceYaw;
         if (world.pushing && impl.chest < body.links.size()) {
             view.pushLink = static_cast<int>(impl.chest);
             view.pushForce = world.pushForce;

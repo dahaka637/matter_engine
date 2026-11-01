@@ -71,6 +71,15 @@ public:
     static constexpr const char* AvoidFallDrill = "evitar_queda";
     // O equilibrio parado (31/10 21h25): de pe, um empurrao com a regua do parado com empurrao forte do B21.
     static constexpr const char* BalanceDrill = "equilibrio_parado";
+    // A locomocao na rede do levantar (31/10 22h35, os basicos do B21; ele: so esta rede daqui em diante): o parado (sem
+    // empurrao), o giro parado suave e os rumos (as diagonais com o lado sorteado pela semente), cada um pela avaliacao
+    // dele.
+    static constexpr std::array<const char*, 8> LocomotionDrills { "lev_parado", "lev_giro", "lev_frente", "lev_tras",
+        "lev_direita", "lev_esquerda", "lev_diagonal_frente", "lev_diagonal_costas" };
+    // O rumo pedido de um exercicio de rumo (0 a frente, de 45 em 45 graus para a esquerda; a diagonal da direita com a
+    // semente impar; -1 se nao e um rumo).
+    [[nodiscard]] static int locomotionHeadingOf(const std::string& drill, std::uint64_t seed = 0);
+    [[nodiscard]] static bool isLocomotionDrill(const std::string& drill);
     [[nodiscard]] static bool isGetUpDrill(const std::string& drill);
     // Se o treino do levantar de agora e o v2 (os dois exercicios novos existem nele).
     [[nodiscard]] static bool getUpVersion2();

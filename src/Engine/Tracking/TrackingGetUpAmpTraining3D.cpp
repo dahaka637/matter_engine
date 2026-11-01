@@ -72,6 +72,8 @@ struct TrackingGetUpAmpTraining3D::Impl {
     // da corrida, os comecos do tipo 5 (o RSI do DeepMimic/AMP: ele vive os estados de corrida e aprende a seguir).
     std::size_t sprintStartIndex = std::numeric_limits<std::size_t>::max();
     std::vector<std::size_t> runStartIndices;
+    // Os clipes do trote por rumo (os 8), quando carregados.
+    std::vector<std::size_t> headingIndices;
     // A velocidade de deslocamento que falta aos clipes no lugar (os pares do discriminador): constante (corrida) ou
     // em rampa desde zero (a arrancada, com o deslocamento da fonte), para a frente do clipe.
     struct Travel {
@@ -130,6 +132,20 @@ struct TrackingGetUpAmpTraining3D::Impl {
         bool fellAfterStanding = false;
         // O rumo da arrancada agachada (rad).
         float sprintYaw = 0.0f;
+        // A locomocao (os rumos e o giro): o rumo pedido (0 a 7), o do deslocamento e o do corpo (rad), quando o pedido
+        // para (s; < 0: nao para), no giro a velocidade (rad/s, com o sinal), quanto falta do giro (rad) e o fim da pausa
+        // (s; < 0: girando), e o erro do rumo do corpo de pe (a soma, rad).
+        bool locomotion = false;
+        std::uint32_t heading = 0;
+        float moveYaw = 0.0f;
+        float faceYaw = 0.0f;
+        float stopAt = -1.0f;
+        float turnRate = 0.0f;
+        float turnLeft = 0.0f;
+        float pauseUntil = -1.0f;
+        double faceErrorSum = 0.0;
+        std::uint32_t faceErrorSamples = 0;
+        std::uint32_t index = 0;
     };
     std::vector<World> worlds;
     std::vector<TrackingGetUpAmpEpisode3D> episodes;
@@ -221,6 +237,66 @@ struct TrackingGetUpAmpTraining3D::Impl {
         w.body = w.scene->ragdollStateView(w.handle);
     }
 
+    // Um rumo (os basicos do B21 nesta rede, 31/10 22h35): andar ou trotar no rumo pedido (em relacao ao rumo do comeco)
+    // mantendo o rumo do corpo, de pe no parado em alerta ou, em metade dos trotes do treino, ja no clipe de trote do
+    // rumo, na velocidade dele (o RSI). Em 20% do treino o pedido para no meio, de 2 a 5 s (o soltar do direcional do
+    // B21: frear e ficar parado no rumo).
+    void beginHeading(World& w) {
+        std::uniform_real_distribution<float> u(0.0f, 1.0f);
+        w.heading = settings.heading >= 0 ? static_cast<std::uint32_t>(settings.heading) % 8u
+            : settings.evaluation ? w.index % 8u
+                                  : std::min(7u, static_cast<std::uint32_t>(8.0f * u(w.rng)));
+        const bool walk = !settings.evaluation && u(w.rng) < settings.walkFraction;
+        w.commandSpeed = settings.evaluation ? 0.5f * (settings.trotMinimumSpeed + settings.trotMaximumSpeed)
+            : walk ? settings.walkMinimumSpeed + (settings.walkMaximumSpeed - settings.walkMinimumSpeed) * u(w.rng)
+                   : settings.trotMinimumSpeed + (settings.trotMaximumSpeed - settings.trotMinimumSpeed) * u(w.rng);
+        if (!settings.evaluation && !walk && headingIndices.size() == 8 && u(w.rng) < 0.5f) {
+            const std::size_t clip = headingIndices[w.heading];
+            const float yaw = (2.0f * u(w.rng) - 1.0f) * Pi;
+            references[clip]->frame(u(w.rng) * references[clip]->durationSeconds(), {}, yaw, w.frame);
+            const Travel& run = travel[clip];
+            const Vec3 v { std::cos(yaw + run.direction) * run.speed, std::sin(yaw + run.direction) * run.speed, 0.0f };
+            for (PhysicsBodyState3D& s : w.frame.links) s.linearVelocity = s.linearVelocity + v;
+            w.scene->resetRagdollState(w.handle, w.frame.links);
+            w.body = w.scene->ragdollStateView(w.handle);
+        } else {
+            beginFromClip(w, true);
+        }
+        w.faceYaw = bodyYaw(w);
+        w.moveYaw = w.faceYaw + 0.25f * Pi * static_cast<float>(w.heading);
+        w.stopAt = !settings.evaluation && u(w.rng) < 0.2f ? 2.0f + 3.0f * u(w.rng) : -1.0f;
+    }
+
+    // O giro parado suave (o "giro" do B21: giros de 30-450 graus a 0,4-0,8 rad/s, para um lado sorteado, com pausas de
+    // 1-3 s; na avaliacao, 0,6 rad/s o episodio todo, metade dos mundos para cada lado): de pe, o rumo pedido do corpo
+    // gira e o deslocamento pedido e zero.
+    void beginTurn(World& w) {
+        beginFromClip(w, true);
+        w.faceYaw = bodyYaw(w);
+        w.moveYaw = w.faceYaw;
+        nextTurn(w);
+    }
+    void nextTurn(World& w) {
+        std::uniform_real_distribution<float> u(0.0f, 1.0f);
+        const bool left = settings.evaluation ? w.index % 2u == 0u : u(w.rng) < 0.5f;
+        const float rate = settings.evaluation ? 0.6f : 0.4f + 0.4f * u(w.rng);
+        w.turnRate = left ? rate : -rate;
+        w.turnLeft = settings.evaluation ? 1.0e9f : (30.0f + 420.0f * u(w.rng)) * Pi / 180.0f;
+        w.pauseUntil = -1.0f;
+    }
+    // O rumo pedido do giro, uma decisao adiante.
+    void advanceTurn(World& w) {
+        if (w.startKind != 7) return;
+        if (w.pauseUntil >= 0.0f) {
+            if (w.time >= w.pauseUntil) nextTurn(w);
+            return;
+        }
+        const float step = std::min(std::abs(w.turnRate) * TicksPerDecision * TickSeconds, w.turnLeft);
+        w.faceYaw = wrapAngle(w.faceYaw + std::copysign(step, w.turnRate));
+        w.turnLeft -= step;
+        if (w.turnLeft <= 0.0f) w.pauseUntil = w.time + 1.0f + 2.0f * std::uniform_real_distribution<float>(0.0f, 1.0f)(w.rng);
+    }
+
     bool fallen(const TrackingGetUpPosture3D& posture, const RagdollState3D& body) const {
         (void)posture;
         for (const RagdollContactPoint3D& contact : body.contacts)
@@ -235,7 +311,8 @@ struct TrackingGetUpAmpTraining3D::Impl {
         const float draw = u(w.rng);
         std::uint32_t kind = 0;
         if (settings.evaluation) {
-            kind = settings.evaluationKind == 1 ? 3u : settings.evaluationKind == 2 ? 4u : settings.evaluationKind == 3 ? 2u : 0u;
+            constexpr std::uint32_t Kinds[7] { 0u, 3u, 4u, 2u, 6u, 2u, 7u };
+            kind = settings.evaluationKind < 7 ? Kinds[settings.evaluationKind] : 0u;
         } else {
             float edge = settings.standingStartFraction;
             if (draw < edge) kind = 2;
@@ -243,22 +320,32 @@ struct TrackingGetUpAmpTraining3D::Impl {
             else if (draw < (edge += settings.avoidFraction)) kind = 4;
             else if (draw < (edge += settings.movingFraction)) kind = 3;
             else if (draw < (edge += settings.sprintStartFraction)) kind = 5;
+            else if (draw < (edge += settings.locomotionFraction)) kind = 6;
+            else if (draw < (edge += settings.turnFraction)) kind = 7;
         }
         if (kind == 5 && runStartIndices.empty()) kind = 3;
+        // (O que vem do episodio anterior zerado antes do comeco: a queda assenta sem o resto de um empurrao.)
+        w.pushTicks = 0;
+        w.commandSpeed = 0.0f;
+        w.locomotion = kind == 6 || kind == 7;
+        w.stopAt = -1.0f;
+        w.pauseUntil = -1.0f;
+        w.faceErrorSum = 0.0;
+        w.faceErrorSamples = 0;
+        w.startKind = kind;
         if (kind == 0 || kind == 3) beginFall(w);
         else if (kind == 5) beginSprintStart(w);
+        else if (kind == 6) beginHeading(w);
+        else if (kind == 7) beginTurn(w);
         else beginFromClip(w, kind != 1);
         const TrackingGetUpPosture3D start = posture->measure(w.body->links);
-        w.startKind = kind;
-        w.startSide = start.chestFacingUp < -0.5f ? 0u : start.chestFacingUp > 0.5f ? 1u : 2u;
+        w.startSide = kind == 6 ? w.heading : start.chestFacingUp < -0.5f ? 0u : start.chestFacingUp > 0.5f ? 1u : 2u;
         w.startHead = start.headHeight;
         w.time = 0.0f;
         w.stoodAt = -1.0f;
         w.rewardSum = 0.0;
         w.decisions = 0;
-        w.pushTicks = 0;
         w.nextPushAt = -1.0f;
-        w.commandSpeed = 0.0f;
         w.reachedAt = -1.0f;
         w.towardSum = 0.0;
         w.towardSamples = 0;
@@ -288,14 +375,17 @@ struct TrackingGetUpAmpTraining3D::Impl {
     // (31/10 21h25, ele: "botar um treino nele, para parado e aguentar empurroes medianos e fortes e ver como ele se sai
     // com auto-equilibrio": a faixa e o continuo da configuracao; na avaliacao do equilibrio parado, um so empurrao com a
     // regua do parado com empurrao forte do B21, para comparar as duas redes.)
+    // (31/10 22h35, a locomocao: nos rumos e no giro, os empurroes em movimento, o primeiro de 1 a 3 s depois do comeco
+    // e os outros a cada 2-4 s; na avaliacao, um so, de 2 a 3 s depois do comeco, com a velocidade ja pega.)
     void maybePush(World& w, const TrackingGetUpPosture3D& posture) {
         const bool balanceTest = settings.evaluation && settings.evaluationKind == 3;
-        if ((settings.evaluation && !balanceTest) || w.startKind >= 3 || w.stoodAt < 0.0f || !posture.standing
-            || w.pushTicks > 0)
+        const bool movingTest = settings.evaluation && w.locomotion;
+        if ((settings.evaluation && !balanceTest && !movingTest) || (w.startKind >= 3 && !w.locomotion)
+            || w.stoodAt < 0.0f || !posture.standing || w.pushTicks > 0)
             return;
         std::uniform_real_distribution<float> u(0.0f, 1.0f);
         if (w.nextPushAt < 0.0f) {
-            w.nextPushAt = w.time + 1.0f + 1.5f * u(w.rng);
+            w.nextPushAt = w.time + (movingTest ? 2.0f + u(w.rng) : w.locomotion ? 1.0f + 2.0f * u(w.rng) : 1.0f + 1.5f * u(w.rng));
             return;
         }
         if (w.time < w.nextPushAt) return;
@@ -304,6 +394,16 @@ struct TrackingGetUpAmpTraining3D::Impl {
         if (balanceTest) {
             if (u(w.rng) < 0.3f) newtons = 205.0f + 70.0f * u(w.rng), seconds = 1.0f + 2.0f * u(w.rng);
             else newtons = 900.0f + 300.0f * u(w.rng), seconds = 0.1f + 0.1f * u(w.rng);
+        } else if (w.locomotion) {
+            if (u(w.rng) < settings.movingPushHoldFraction) {
+                newtons = settings.movingPushHoldMinimumNewtons
+                    + (settings.movingPushHoldMaximumNewtons - settings.movingPushHoldMinimumNewtons) * u(w.rng);
+                seconds = 1.0f + u(w.rng);
+            } else {
+                newtons = settings.movingPushMinimumNewtons
+                    + (settings.movingPushMaximumNewtons - settings.movingPushMinimumNewtons) * u(w.rng);
+                seconds = 0.1f + 0.1f * u(w.rng);
+            }
         } else if (u(w.rng) < settings.pushHoldFraction) {
             newtons = settings.pushHoldMinimumNewtons
                 + (settings.pushHoldMaximumNewtons - settings.pushHoldMinimumNewtons) * u(w.rng);
@@ -315,7 +415,8 @@ struct TrackingGetUpAmpTraining3D::Impl {
         }
         w.pushForce = { std::cos(angle) * newtons, std::sin(angle) * newtons, 0.0f };
         w.pushTicks = std::max(1, static_cast<int>(std::lround(seconds / TickSeconds)));
-        w.nextPushAt = balanceTest ? 1.0e9f : w.time + seconds + 1.5f + 1.5f * u(w.rng);
+        w.nextPushAt = balanceTest || movingTest ? 1.0e9f
+            : w.time + seconds + (w.locomotion ? 2.0f + 2.0f * u(w.rng) : 1.5f + 1.5f * u(w.rng));
     }
 
     // O empurrao forte do evitar a queda (31/10 17h, ele: "comeca de pe, leva um empurrao que com certeza vai leva-lo ao
@@ -349,46 +450,60 @@ struct TrackingGetUpAmpTraining3D::Impl {
         return { wrapAngle(planarAngle(to) - yaw), std::hypot(to.x, to.y) };
     }
 
+    // O rumo do deslocamento pedido e o do corpo (rad, no mundo): no levantar em movimento, os dois para o alvo; nos
+    // rumos, o pedido e o do comeco; no giro, o que gira.
+    float moveDirection(const World& w) const {
+        if (w.locomotion) return w.moveYaw;
+        const PhysicsBodyState3D& root = w.body->links[rootLink];
+        return planarAngle({ w.target.x - root.position.x, w.target.y - root.position.y, 0.0f });
+    }
+    float faceDirection(const World& w) const { return w.locomotion ? w.faceYaw : moveDirection(w); }
+    float bodyYaw(const World& w) const { return trackingBodyYaw3D(profile->links[rootLink], w.body->links[rootLink]); }
+    float facing(const World& w) const { return std::max(0.0f, std::cos(wrapAngle(faceDirection(w) - bodyYaw(w)))); }
+
     void observe(World& w) const {
         const std::size_t b = contract->bodyObservationSize();
         contract->observeBody(w.body->links, std::span<float>(w.observation).first(b));
         float* c = w.observation.data() + b;
-        if (w.commandSpeed <= 0.0f) {
-            c[0] = 1.0f, c[1] = 0.0f, c[2] = 0.0f, c[3] = 0.0f;
+        const bool moving = w.commandSpeed > 0.0f;
+        if (!moving && !w.locomotion) {
+            c[0] = 1.0f, c[1] = 0.0f, c[2] = 0.0f, c[3] = 0.0f, c[4] = 1.0f, c[5] = 0.0f;
             return;
         }
-        const auto [bearing, distance] = targetBearing(w);
-        c[0] = std::cos(bearing);
-        c[1] = std::sin(bearing);
-        c[2] = std::min(distance, 10.0f) / 10.0f;
+        // (Parado com rumo pedido - o giro, o rumo depois de parar: o deslocamento como sem pedido, o rumo do corpo sim.)
+        const float yaw = bodyYaw(w);
+        const float move = moving ? wrapAngle(moveDirection(w) - yaw) : 0.0f, face = wrapAngle(faceDirection(w) - yaw);
+        c[0] = std::cos(move);
+        c[1] = std::sin(move);
+        c[2] = !moving ? 0.0f : w.locomotion ? 1.0f : std::min(targetBearing(w).second, 10.0f) / 10.0f;
         c[3] = w.commandSpeed / 5.0f;
+        c[4] = std::cos(face);
+        c[5] = std::sin(face);
     }
 
-    // O potencial do rumo no levantar em movimento: virar para o alvo enquanto sobe (a altura vezes o alinhamento).
+    // O potencial do rumo com pedido: virar para o rumo pedido enquanto sobe (a altura vezes o alinhamento).
     float facePotential(const World& w, const TrackingGetUpPosture3D& posture) const {
-        if (w.commandSpeed <= 0.0f) return 0.0f;
+        if (w.commandSpeed <= 0.0f && !w.locomotion) return 0.0f;
         const float rise = std::clamp((posture.headHeight - 0.15f) / 1.35f, 0.0f, 1.0f);
-        return 5.0f * rise * std::max(0.0f, std::cos(targetBearing(w).first));
+        return 5.0f * rise * facing(w);
     }
 
     // A nota de estado com o pedido de ir ao alvo, so de pe: a velocidade rumo ao alvo 0,5, virado para ele 0,3 e sem
     // andar de lado 0,2. (31/10 18h: a velocidade era exp(-(v - pedida)^2), que nao dava gradiente parado - pedindo
     // 2,5-5 m/s, parado ou a 1 m/s dava ~0 - e em 250 atualizacoes ele ficou parado virado para o alvo. Agora uma rampa:
     // 0 parado, 1 na pedida, caindo acima dela e negativa se afasta.)
+    // (Nos rumos, o rumo do corpo e o do comeco: andar e trotar de costas e de lado sem virar para a direcao.)
     float moveReward(World& w, const TrackingGetUpPosture3D& posture) {
         if (!posture.standing) return 0.0f;
         const Vec3 v = rlBodyCenterOfMassVelocity3D(*profile, w.body->links);
-        const auto [bearing, distance] = targetBearing(w);
-        const PhysicsBodyState3D& root = w.body->links[rootLink];
-        const float toward = planarAngle({ w.target.x - root.position.x, w.target.y - root.position.y, 0.0f });
+        const float toward = moveDirection(w);
         const float along = v.x * std::cos(toward) + v.y * std::sin(toward);
         const float across = -v.x * std::sin(toward) + v.y * std::cos(toward);
         w.towardSum += along;
         ++w.towardSamples;
-        (void)distance;
         const float ratio = along / w.commandSpeed;
         const float speed = ratio <= 1.0f ? std::max(-1.0f, ratio) : std::max(0.0f, 2.0f - ratio);
-        return 0.5f * speed + 0.3f * std::max(0.0f, std::cos(bearing)) + 0.2f * std::exp(-across * across);
+        return 0.5f * speed + 0.3f * facing(w) + 0.2f * std::exp(-across * across);
     }
 
     void decide(World& w, std::size_t index, std::span<const float> action, float& reward, std::uint8_t& terminated,
@@ -405,11 +520,23 @@ struct TrackingGetUpAmpTraining3D::Impl {
         features->compute(w.body->links, std::span<float>(w.ampPair).subspan(a, a));
         const TrackingGetUpPosture3D now = posture->measure(w.body->links);
         // O alvo alcancado: dai o pedido e ficar parado (a nota do parado, com a pose).
-        if (w.commandSpeed > 0.0f && targetBearing(w).second < ArriveRadius) {
+        if (!w.locomotion && w.commandSpeed > 0.0f && targetBearing(w).second < ArriveRadius) {
             w.commandSpeed = 0.0f;
             w.reachedAt = w.time;
         }
-        const float state = w.commandSpeed > 0.0f ? moveReward(w, now) : posture->standingReward(now, w.body->links);
+        if (w.stopAt >= 0.0f && w.time >= w.stopAt) {
+            w.commandSpeed = 0.0f;
+            w.stopAt = -1.0f;
+        }
+        advanceTurn(w);
+        // (Parado com rumo pedido: a nota do parado 0,7 e o rumo do corpo 0,3, de pe.)
+        const float state = w.commandSpeed > 0.0f ? moveReward(w, now)
+            : w.locomotion ? 0.7f * posture->standingReward(now, w.body->links) + (now.standing ? 0.3f * facing(w) : 0.0f)
+                           : posture->standingReward(now, w.body->links);
+        if (w.locomotion && now.standing) {
+            w.faceErrorSum += std::abs(wrapAngle(faceDirection(w) - bodyYaw(w)));
+            ++w.faceErrorSamples;
+        }
         // (O gamma do treinador, 0,99, no potencial.)
         reward = state + 0.99f * (posture->risePotential(now) + posture->turnPotential(now) + facePotential(w, now)) - before;
         const bool down = fallen(now, *w.body);
@@ -448,6 +575,8 @@ struct TrackingGetUpAmpTraining3D::Impl {
             episode.fellAfterStanding = w.fellAfterStanding;
             episode.recomposedSeconds = w.recomposedAt >= 0.0f ? w.recomposedAt - w.avoidEnd : -1.0f;
             episode.endPoseMatch = now.standing ? posture->idlePoseMatch(w.body->links) : 0.0f;
+            episode.meanFaceError = w.faceErrorSamples
+                ? static_cast<float>(w.faceErrorSum / w.faceErrorSamples) * 180.0f / Pi : 0.0f;
             {
                 std::lock_guard lock(episodeMutex);
                 episodes.push_back(episode);
@@ -473,6 +602,11 @@ TrackingGetUpAmpTraining3D::TrackingGetUpAmpTraining3D(const TrackingGetUpAmpSet
     // estilo e as quedas de antes.)
     if (settings.movingFraction > 0.0f || settings.sprintStartFraction > 0.0f || settings.evaluationKind == 1)
         names.insert(names.end(), std::begin(MovingClips), std::end(MovingClips));
+    if (settings.locomotionFraction > 0.0f || settings.turnFraction > 0.0f || settings.evaluationKind == 4
+        || settings.evaluationKind == 6) {
+        names.insert(names.end(), std::begin(HeadingClips), std::end(HeadingClips));
+        names.insert(names.end(), std::begin(LocomotionStyleClips), std::end(LocomotionStyleClips));
+    }
     for (const std::string& name : names) {
         impl.clips.push_back(std::make_unique<AnimationClip3D>(
             loadAnimationClip3D(settings.assetsDirectory + "/animations/clips/" + name + ".matteranim.json")));
@@ -480,13 +614,17 @@ TrackingGetUpAmpTraining3D::TrackingGetUpAmpTraining3D(const TrackingGetUpAmpSet
         if (name == "crouched_to_sprint") impl.sprintStartIndex = impl.references.size() - 1;
         if (std::find(std::begin(MovingClips), std::end(MovingClips), name) != std::end(MovingClips))
             impl.runStartIndices.push_back(impl.references.size() - 1);
+        const bool heading = std::find(std::begin(HeadingClips), std::end(HeadingClips), name) != std::end(HeadingClips);
+        if (heading) impl.headingIndices.push_back(impl.references.size() - 1);
         Impl::Travel travel;
         const AnimationClip3D& clip = *impl.clips.back();
         travel.direction = clip.travelDirectionRadians;
         if (name == "idle_to_sprint") travel.rampDisplacement = std::hypot(clip.sourceRootDisplacementMeters.x,
             clip.sourceRootDisplacementMeters.y);
-        else if (name == "mixamo_running" || name == "run_forward_medium" || name == "sprint_forward")
-            travel.speed = clip.nominalSpeedMetersPerSecond;
+        else if (name == "mixamo_running" || name == "run_forward_medium" || name == "sprint_forward" || heading
+            || std::find(std::begin(LocomotionStyleClips), std::end(LocomotionStyleClips), name)
+                != std::end(LocomotionStyleClips))
+            travel.speed = clip.loops ? clip.nominalSpeedMetersPerSecond : 0.0f;
         impl.travel.push_back(travel);
     }
     impl.contract = std::make_unique<TrackingGetUpContract3D>(*impl.profile);
@@ -507,13 +645,15 @@ TrackingGetUpAmpTraining3D::TrackingGetUpAmpTraining3D(const TrackingGetUpAmpSet
     }
     // (Os nomes do corpo: os do levantar do DeepMimic sem a fase, a ultima; depois os do comando.)
     impl.observationNames.assign(impl.contract->observationNames().begin(), impl.contract->observationNames().end() - 1);
-    for (const char* name : { "comando.alvo_cos", "comando.alvo_sen", "comando.distancia", "comando.velocidade" })
+    for (const char* name : { "comando.alvo_cos", "comando.alvo_sen", "comando.distancia", "comando.velocidade",
+             "comando.rumo_cos", "comando.rumo_sen" })
         impl.observationNames.emplace_back(name);
     const std::uint32_t hardware = std::max(1u, std::thread::hardware_concurrency());
     impl.workers = settings.threads > 0 ? settings.threads : std::max(1u, hardware > 2 ? hardware - 2 : 1u);
     impl.scheduler = std::make_shared<TaskScheduler>(TaskSchedulerSettings { std::max(1u, impl.workers - 1) });
     impl.engine = std::make_unique<PhysicsEngine3D>(impl.scheduler);
     impl.worlds.resize(std::max(1u, settings.environments));
+    for (std::size_t i = 0; i < impl.worlds.size(); ++i) impl.worlds[i].index = static_cast<std::uint32_t>(i);
     for (Impl::World& w : impl.worlds) {
         w.scene = impl.engine->createScene(trackingSceneSettings3D(), impl.materials);
         createTrackingGround3D(*w.scene, 20.0f);
@@ -650,6 +790,12 @@ TrackingGetUpAmpWorldView3D TrackingGetUpAmpTraining3D::worldView(std::size_t wo
     view.hasTarget = w.startKind == 3 || w.startKind == 5;
     view.target = w.target;
     view.commandSpeed = w.commandSpeed;
+    if (w.commandSpeed > 0.0f) {
+        const float move = m_impl->moveDirection(w);
+        view.moveVelocity = { std::cos(move) * w.commandSpeed, std::sin(move) * w.commandSpeed, 0.0f };
+    }
+    view.hasFace = w.locomotion;
+    view.faceYaw = w.faceYaw;
     view.pushing = w.pushTicks > 0;
     view.pushForce = w.pushForce;
     return view;

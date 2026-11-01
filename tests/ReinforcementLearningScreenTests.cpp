@@ -468,6 +468,39 @@ void checkGetUpViewers() {
         for (int i = 0; i < 10; ++i) still.step();
         require(!still.view().hasTarget, "o levantar do chao nao tem alvo");
     }
+    {
+        // A locomocao na rede do levantar (31/10 22h35): o rumo pede 2,5 m/s de costas com o rumo do corpo pedido, o giro
+        // gira o rumo pedido a 0,6 rad/s sem pedir deslocamento, o parado nao pede nada nem empurra.
+        TrackingViewer3D back(assets, 4, "lev_tras");
+        back.step();
+        const BodyWorldView3D asked = back.view();
+        const Vec3 move = asked.command.moveVelocity;
+        require(std::abs(std::hypot(move.x, move.y) - 2.5f) < 0.01f
+                && std::cos(std::atan2(move.y, move.x) - asked.command.faceHeading) < -0.99f,
+            "o rumo para tras pede 2,5 m/s de costas");
+        TrackingViewer3D turn(assets, 5, "lev_giro");
+        turn.step();
+        const float start = turn.view().command.faceHeading;
+        for (int i = 0; i < 30; ++i) turn.step();
+        const BodyWorldView3D turned = turn.view();
+        const float angle = std::abs(std::remainder(turned.command.faceHeading - start, 6.2831853f));
+        require(angle > 0.55f && angle < 0.65f && std::hypot(turned.command.moveVelocity.x, turned.command.moveVelocity.y) < 1e-6f,
+            "o giro gira o rumo pedido a 0,6 rad/s, sem deslocamento (girou " + std::to_string(angle) + " rad em 1 s)");
+        TrackingViewer3D still(assets, 6, "lev_parado");
+        bool pushed = false;
+        for (int i = 0; i < 120 && !pushed; ++i) {
+            still.step();
+            pushed = still.view().pushLink >= 0;
+        }
+        const Vec3 none = still.view().command.moveVelocity;
+        require(!pushed && !still.view().hasTarget && std::hypot(none.x, none.y) < 1e-6f, "o parado nao pede nem empurra");
+    }
+    for (const char* drill : TrackingViewer3D::LocomotionDrills)
+        require(TrackingViewer3D::isGetUpDrill(drill), std::string("o exercicio do levantar ") + drill);
+    require(TrackingViewer3D::locomotionHeadingOf("lev_diagonal_frente", 0) == 1
+            && TrackingViewer3D::locomotionHeadingOf("lev_diagonal_frente", 1) == 7
+            && TrackingViewer3D::locomotionHeadingOf("lev_giro") < 0,
+        "os rumos das diagonais pelo lado da semente");
     require(TrackingViewer3D::isGetUpDrill("levantar_movimento") && TrackingViewer3D::isGetUpDrill("evitar_queda")
             && TrackingViewer3D::isGetUpDrill("equilibrio_parado") && !TrackingViewer3D::isGetUpDrill("parado"),
         "os exercicios do levantar");

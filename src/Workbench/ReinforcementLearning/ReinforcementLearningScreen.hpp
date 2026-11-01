@@ -243,6 +243,9 @@ private:
         std::vector<float> avoided, avoidedTest, recomposed, recomposeSeconds, recomposeSecondsTest;
         // O equilibrio parado e a pose de pe (perto do parado em alerta).
         std::vector<float> balance, balanceTest, pose, poseStanding, poseTest;
+        // A locomocao na rede do levantar (na ordem de TrackingViewer3D::LocomotionDrills): o primeiro grafico e o sem
+        // cair, no treino e no teste.
+        std::array<std::vector<float>, 8> locoMain, locoMainTest, locoUp, locoUpTest;
         std::filesystem::file_time_type write {};
     } m_getUpCurve;
     float m_accumulator = 0.0f;
