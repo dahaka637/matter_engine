@@ -565,7 +565,6 @@ if(MATTERENGINE_BUILD_RL)
         src/Engine/Tracking/TrackingGetUpTraining3D.cpp
         src/Engine/Tracking/TrackingGetUpAmp3D.cpp
         src/Engine/Tracking/TrackingGetUpAmpTraining3D.cpp
-        src/Engine/Tracking/TrackingGetUpPolicy3D.cpp
     )
     target_include_directories(MatterTracking PUBLIC src)
     target_link_libraries(MatterTracking PUBLIC MatterAthlete MatterRLContract MatterAthleteTraining)
@@ -1301,9 +1300,6 @@ endif()
 add_executable(MatterAthleteProbe tools/AthleteProbe.cpp tools/athlete_probe/ProbeL0.cpp)
 target_include_directories(MatterAthleteProbe PRIVATE tools)
 target_link_libraries(MatterAthleteProbe PRIVATE MatterEngine MatterObjects)
-if(MATTERENGINE_BUILD_RL)
-    target_link_libraries(MatterAthleteProbe PRIVATE MatterTracking)
-endif()
 target_compile_definitions(MatterAthleteProbe PRIVATE
     MATTERENGINE_ASSETS_DIR="${CMAKE_SOURCE_DIR}/assets"
 )

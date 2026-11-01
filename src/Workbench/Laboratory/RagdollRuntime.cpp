@@ -4,7 +4,6 @@
 
 #include "Engine/Athlete/AthleteAssets3D.hpp"
 #include "Engine/Athlete/Policy/LocomotionPolicy3D.hpp"
-#include "Engine/Tracking/TrackingGetUpPolicy3D.hpp"
 #include "Engine/Character/CharacterControlApplication3D.hpp"
 #include "Engine/Core/Log.hpp"
 #include "Engine/Geometry/MeshData3D.hpp"
@@ -874,45 +873,27 @@ void WorkbenchApp::reloadLocomotionPolicy() {
         m_locomotionPolicyLabel = label;
         Log::info("rede da locomocao: " + m_locomotionPolicyLabel + " (" + file.string() + ")");
         m_athleteRuntime.setLocomotionPolicy(std::move(policy));
-        // As condicoes com que ela treinou (a tarefa do treino, ao lado da exportacao): a regua e as viradas, com a
-        // rede. (01/11: a ajuda do treino nao entra mais nos controles - ela ficava por cima da escolha dele.)
+        // As condicoes com que ela treinou (a tarefa do treino, ao lado da exportacao): a ajuda
+        // entra na regua do personagem (ele muda depois); a regua e as viradas, com a rede.
         m_locomotionPolicyConditions.reset();
         std::ifstream taskFile(file.parent_path().parent_path() / "tarefa.json");
         const nlohmann::json task = nlohmann::json::parse(taskFile, nullptr, false);
         if (task.is_object()) {
             LocomotionPolicyConditions conditions;
+            conditions.historicalAssistRuler = task.value("assistRuler", std::string("historical")) != "linear";
             if (task.contains("movingHipTurn")) conditions.movingHipTurn = task["movingHipTurn"].value("enabled", false);
             if (task.contains("runningTurn")) conditions.runningTurnClip = task["runningTurn"].value("enabled", false);
+            if (task.contains("assist")) {
+                const nlohmann::json& assist = task["assist"];
+                m_e5StandingAssistPercent = assist.value("standing", m_e5StandingAssistPercent);
+                m_e5WalkingAssistPercent = assist.value("walking", m_e5WalkingAssistPercent);
+                m_physicalFeetAssistPercent = assist.value("feet", m_physicalFeetAssistPercent);
+            }
             m_locomotionPolicyConditions = conditions;
         }
     } catch (const std::exception& error) {
         m_locomotionPolicyLabel = "nao carregou";
         Log::warn(std::string("rede da locomocao: ") + error.what());
-    }
-}
-
-void WorkbenchApp::reloadGetUpPolicy() {
-    namespace fs = std::filesystem;
-    fs::path file;
-    if (const char* given = std::getenv("MATTER_GETUP_POLICY"); given != nullptr && *given != '\0') {
-        file = given;
-    } else {
-        fs::path data;
-        if (const char* root = std::getenv("MATTER_RL_DATA"); root != nullptr && *root != '\0') data = root;
-        else if (const char* home = std::getenv("HOME"); home != nullptr) data = fs::path(home) / ".local/share/matter-engine/rl";
-        file = data / "runs" / "levantar_v2" / "exports" / "policy_latest.mrlpolicy";
-    }
-    try {
-        auto policy = std::make_shared<TrackingGetUpPolicy3D>(file);
-        char label[96];
-        std::snprintf(label, sizeof label, "levantar v2, rodada %llu", static_cast<unsigned long long>(policy->iteration()));
-        m_getUpPolicyLabel = label;
-        m_athleteRuntime.setGetUpPolicy(std::move(policy));
-        Log::info("rede do levantar: " + m_getUpPolicyLabel);
-    } catch (const std::exception& error) {
-        m_getUpPolicyLabel = "nao carregou";
-        m_athleteRuntime.setGetUpPolicy(nullptr);
-        Log::warn(std::string("rede do levantar: ") + error.what());
     }
 }
 
@@ -928,18 +909,13 @@ AthleteRuntimeSettings3D WorkbenchApp::athleteRuntimeSettings() const {
     settings.legsOnlyStanding = m_legsOnlyStanding;
     settings.legsPostureStanding = m_legsPostureStanding;
     settings.physicalLocomotionV2 = m_physicalLocomotionV2;
-    // A regua da ajuda do laboratorio (01/11, ele: "o 30% vai ser o nosso 100% e vai ser mais linear, onde 0 e
-    // realmente sem nenhuma forca auxiliar"): a linear (0% zera todo canal) e os controles em LaboratoryAssistScale da
-    // ajuda de antes; nas transicoes (a volta ao padrao e a ponte), o controle escala a ajuda cheia de antes.
-    settings.historicalAssistRuler = false;
-    settings.transitionAssistFraction = std::clamp(m_e5WalkingAssistPercent * 0.01f, 0.0f, 1.0f);
-    settings.e5StandingAssistPercent = m_e5StandingAssistPercent * LaboratoryAssistScale;
-    settings.e5WalkingAssistPercent = m_e5WalkingAssistPercent * LaboratoryAssistScale;
+    settings.e5StandingAssistPercent = m_e5StandingAssistPercent;
+    settings.e5WalkingAssistPercent = m_e5WalkingAssistPercent;
     settings.e5FootPlacement = m_e5FootPlacement;
     settings.staggerRecovery = m_staggerRecovery;
     settings.biomechanicalExperiment = m_biomechanicalExperiment;
     settings.biomechanicalBalanceAssistPercent = m_biomechanicalBalanceAssistPercent;
-    settings.getUpAssistPercent = m_getUpAssistPercent * LaboratoryAssistScale;
+    settings.getUpAssistPercent = m_getUpAssistPercent;
     settings.getUpHitWeakens = m_getUpHitWeakens;
     settings.getUpHitAssistPercent = m_getUpHitAssistPercent;
     settings.getUpHitRecoverSeconds = m_getUpHitRecoverSeconds;
@@ -988,13 +964,11 @@ AthleteRuntimeSettings3D WorkbenchApp::athleteRuntimeSettings() const {
     settings.defaultTackleBoostPercent = m_defaultTackleBoostPercent;
     settings.modeTable = m_modeTable;
     settings.physicalUsesDefaultSpeeds = m_physicalDefaultSpeeds;
-    settings.physicalFeetAssistPercent = m_physicalFeetAssistPercent * LaboratoryAssistScale;
-    // (01/11, ele: no Padrao, a pancada vai ao fisico por RL - o runtime so a liga na fase fisica.)
-    settings.locomotionPolicy = (m_locomotionPolicyOn || (m_defaultLocomotion && m_defaultPhysicalPolicy))
-        && m_athleteRuntime.locomotionPolicy() != nullptr;
-    settings.getUpPolicy = m_getUpPolicyOn && m_athleteRuntime.getUpPolicy() != nullptr;
-    // Com a rede, as viradas do treino dela (a regua e a linear em todo o laboratorio: a dela, desde 22/10).
+    settings.physicalFeetAssistPercent = m_physicalFeetAssistPercent;
+    settings.locomotionPolicy = m_locomotionPolicyOn && m_athleteRuntime.locomotionPolicy() != nullptr;
+    // Com a rede, a regua e as viradas do treino dela.
     if (settings.locomotionPolicy && m_locomotionPolicyConditions) {
+        settings.historicalAssistRuler = m_locomotionPolicyConditions->historicalAssistRuler;
         settings.movingHipTurn = m_locomotionPolicyConditions->movingHipTurn;
         settings.runningTurnClip = m_locomotionPolicyConditions->runningTurnClip;
     }
@@ -1011,8 +985,7 @@ AthleteRuntimeSettings3D WorkbenchApp::athleteRuntimeSettings() const {
         settings.dynamicTurnMoveSettings.amount = m_athleteRuntime.locomotionPolicy()->turnMoveAmount();
     }
     settings.fullPhysicalImpulse = m_fullPhysicalImpulse;
-    settings.activeBodySettings.gameplayAssistAcceleration = m_activeAssistAcceleration * settings.transitionAssistFraction;
-    settings.activeBodySettings.handoverAssistAcceleration *= settings.transitionAssistFraction;
+    settings.activeBodySettings.gameplayAssistAcceleration = m_activeAssistAcceleration;
     settings.capsuleResponsePercent = m_capsuleResponsePercent * LabResponseScale;
     settings.capsuleReversalPercent = m_capsuleReversalPercent;
     return settings;
@@ -1020,12 +993,6 @@ AthleteRuntimeSettings3D WorkbenchApp::athleteRuntimeSettings() const {
 
 void WorkbenchApp::updateActiveRagdolls(float deltaTime) {
     if(!m_physicsScene||!m_humanRagdollProfile)return;
-    // As duas redes ao abrir (01/11): a da locomocao (as pancadas do Padrao) e a do levantar.
-    if (!m_policiesLoaded) {
-        m_policiesLoaded = true;
-        if (m_athleteRuntime.locomotionPolicy() == nullptr) reloadLocomotionPolicy();
-        if (m_athleteRuntime.getUpPolicy() == nullptr) reloadGetUpPolicy();
-    }
     const auto clips=characterLocomotionAnimations();
     // O modo padrao com os clipes dele (o trote e o sprint das referencias e
     // as diagonais) por cima dos da locomocao fisica.

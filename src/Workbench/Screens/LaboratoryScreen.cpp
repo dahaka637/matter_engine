@@ -723,8 +723,7 @@ void WorkbenchApp::updateLaboratory(float deltaTime) {
         activeSettings.groundReverseAccelerationScale = response.reverseAccelerationScale;
     } else if (controllingCharacter && m_adaptivePhysics) {
         activeSettings = adaptiveCharacterMotorSettings3D(activeSettings, stateBefore, command,
-            m_physicalLocomotionV2
-                ? physicalNavigationAcceleration3D(m_e5WalkingAssistPercent * 0.01f * LaboratoryAssistScale) : 0.0f);
+            m_physicalLocomotionV2 ? physicalNavigationAcceleration3D(m_e5WalkingAssistPercent * 0.01f) : 0.0f);
     }
     // Carga do pulo: o agachar de preparacao enquanto segura e, no pulo, a
     // carga que o corpo usa para o impulso.
@@ -2979,17 +2978,6 @@ void WorkbenchApp::drawLaboratoryUi() {
                                 if (m_locomotionPolicyOn) reloadLocomotionPolicy();
                             }
                             hint("Padrão: o corpo segue a animação (com massa) e vai ao físico numa pancada, parede ou queda, voltando quando assenta. Físico total: sempre pelos músculos e pelas ajudas. Físico com RL: o físico com a rede treinada corrigindo os pés, o equilíbrio, a pose e a rigidez.");
-                            // As redes de RL no jogo (01/11, ele): no Padrao, a pancada vai ao fisico por RL; e o levantar
-                            // e o da rede do levantar, em todos os modos.
-                            if (mode == 0) {
-                                ImGui::Checkbox("Físico por RL nas pancadas", &m_defaultPhysicalPolicy);
-                                hint("Numa pancada, parede ou queda, o físico corrigido pela rede da locomoção (a mais nova dos treinos) no lugar do físico de sempre; de volta ao padrão quando assenta.");
-                            }
-                            ImGui::Checkbox("Levantar pela rede do levantar", &m_getUpPolicyOn);
-                            hint("No chão, a rede do levantar dirige o corpo pelos músculos, sem ajuda, como no treino dela; de pé e firme, entrega ao físico (e daí ao padrão).");
-                            if (ImGui::Button("Recarregar a rede do levantar", { -1.0f, 0.0f })) reloadGetUpPolicy();
-                            hint("Carrega a rede mais recente do treino do levantar.");
-                            if (!m_getUpPolicyLabel.empty()) ImGui::TextDisabled("%s", m_getUpPolicyLabel.c_str());
                             // (A locomocao fisica v2 e o "tentar se manter em pe no
                             // impacto" viraram o padrao - as caixas sairam, pedido do
                             // usuario, 06/10.)
@@ -3051,9 +3039,9 @@ void WorkbenchApp::drawLaboratoryUi() {
                             hint("Ligado: pula ao apertar o espaço, na altura média. Desligado: segurar carrega e pula ao soltar (mais alto quanto mais segura).");
                             ImGui::Checkbox("Áreas de alcance", &m_showReachAreas);
                             hint("Desenha onde a bola precisa estar para cada parte: verde os pés (o amarelo mais claro é a bola alta, pé na altura do joelho), azul o peito, laranja a cabeça. É o centro da bola que conta.");
-                            if (mode == 2 || (mode == 0 && m_defaultPhysicalPolicy)) {
+                            if (mode == 2) {
                                 if (ImGui::Button("Recarregar a rede", { -1.0f, 0.0f })) reloadLocomotionPolicy();
-                                hint("Carrega a rede mais recente dos treinos da locomoção, com as viradas com que ela treinou.");
+                                hint("Carrega a rede mais recente dos treinos, com a ajuda, a régua e as viradas com que ela treinou.");
                                 if (!m_locomotionPolicyLabel.empty()) ImGui::TextDisabled("%s", m_locomotionPolicyLabel.c_str());
                             }
                         }
@@ -3070,7 +3058,7 @@ void WorkbenchApp::drawLaboratoryUi() {
                                 if (ImGui::SliderFloat("##AssistAll", &all, 0.0f, 100.0f, "%.0f%%", ImGuiSliderFlags_AlwaysClamp))
                                     m_e5StandingAssistPercent = m_e5WalkingAssistPercent = m_physicalFeetAssistPercent
                                         = m_getUpAssistPercent = all;
-                                hint("Forças de fora no corpo físico (parado, andando, nos pés e ao levantar), linear. 0%: nenhuma, só os músculos, também na volta ao padrão; 100%: o 30% da régua de antes.");
+                                hint("Forças de fora no corpo físico (parado, andando, nos pés e ao levantar). 0%: nenhuma, só os músculos; 100%: a ajuda cheia.");
                             } else {
                                 percent("Ajuda parado", "##AssistStanding", &m_e5StandingAssistPercent, 0.0f, 100.0f,
                                     "Força de fora na pelve parado (no físico). 0%: nenhuma.");

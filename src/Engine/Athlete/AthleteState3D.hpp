@@ -118,17 +118,6 @@ struct AthleteState3D {
     // ele esta deitado e assentado (s; < 0 espera depois de uma base ruim).
     AnimatedGetUp3D animatedGetUp;
     float animatedGetUpCalm = 0.0f;
-    // O levantar pela rede do levantar (01/11; Athlete/Policy/GetUpPolicy3D): se ela dirige o corpo, os passos desde o
-    // comeco, os alvos de agora, ha quanto tempo ele esta de pe e firme (s) e, na entrega ao fisico, quanto falta da
-    // passagem dos alvos dela aos do classico (s) e os ultimos dela.
-    struct GetUpPolicyState {
-        bool active = false;
-        std::uint32_t ticks = 0;
-        std::vector<RagdollDriveTarget3D> drives;
-        float standingSeconds = 0.0f;
-        float blendLeft = 0.0f;
-        std::vector<RagdollDriveTarget3D> lastDrives;
-    } getUpPolicy;
     // A reescrita (R3): o corpo da classificacao de contatos, as regras de
     // troca de modo e o ultimo tick delas (a telemetria neutra: o que bateu,
     // a ultima troca e o motivo).
