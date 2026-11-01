@@ -219,3 +219,16 @@ clipes giro_esquerda_180 e giro_direita_180. Quick 180 Turn (rifle).fbx e Turn
 90 Right (rifle).fbx: giros com um rifle nas maos (o que vale e o movimento dos
 pes), ainda nao importados.
 ```
+
+### Tropeços para o estilo do levantar (01/11)
+
+```text
+tropecos_e_reacoes/Jogging Stumble.fbx (1,17 s): correndo, tropeca, o tronco desce
+~45 graus com os bracos abertos e volta a correr, sem nada alem dos pes no chao: o
+clipe queda_protecao_tropeco_corrida. tropecos_e_reacoes/Tripping.fbx (2,77 s): anda,
+tropeca e cai para a frente, as maos primeiro, depois o joelho, o quadril e o tronco:
+queda_protecao_tropeco_queda. Retargeteados com --source-rig mixamo --root-motion
+preserve --reference-only (assets/animations/source/retargeted/queda_protecao_*) e
+limpos por tools/animation/clips/queda_protecao.py; os espelhados por
+tools/animation/espelhar.py. Ainda fora da lista de treino (o usuario aprova antes).
+```

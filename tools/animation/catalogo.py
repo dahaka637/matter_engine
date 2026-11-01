@@ -25,6 +25,7 @@ TYPES = [
     ("Corrida e sprint", lambda i: "sprint" in i or i.startswith(("run_backward", "run_forward"))),
     ("Pulos", lambda i: i.startswith("jump")),
     ("Chão e levantar", lambda i: i.startswith("stand_up") or "getting_up" in i),
+    ("Quedas e tropeços", lambda i: i.startswith("queda_")),
     ("Futebol", lambda i: i.startswith("tackle")),
 ]
 

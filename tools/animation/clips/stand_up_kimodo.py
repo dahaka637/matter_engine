@@ -85,7 +85,7 @@ def main() -> None:
     standing_height = old.root_offsets[-1][2]
 
     start = variant["start"]
-    count = int(math.floor((ref.duration - start) * RATE)) + 1
+    count = int(math.floor((min(variant.get("stop", ref.duration), ref.duration) - start) * RATE)) + 1
     times = np.array([start + f / RATE for f in range(count)])
     heights = np.zeros(count)
     planar = np.zeros((count, 2))
@@ -98,6 +98,13 @@ def main() -> None:
         planar[f] = offset[:2]
         pitches[f], rolls[f] = g.pitch_roll(tilt_only(rotation))
         coordinates[f] = c
+    if variant.get("head_fix"):
+        # (01/11, as quedas que comecam de pe) O retarget do SOMA deixa o pescoco e a cabeca ~30 graus para tras (a
+        # flexao, eixo 1) no quadro de pe: o desvio do primeiro quadro para o parado do jogo entra em todos.
+        idle = load_clip(CLIPS / "alert_idle.matteranim.json", rig).coordinates[0]
+        for name in ("Neck", "Head"):
+            i = rig.index(name)
+            coordinates[:, i, 1] += idle[i][1] - coordinates[0, i, 1]
     pitches = np.unwrap(pitches)
     rolls = np.unwrap(rolls)
     _, first_rotation, _ = ref.sample(float(times[0]), loop=False)
@@ -166,6 +173,31 @@ def main() -> None:
         lift[f] = floor - lowest_point(rig, p, o, no_arms)
     heights = heights + g.gaussian(lift[:, None], GROUND_SIGMA * RATE)[:, 0]
 
+    # (01/11, as quedas: hand_snap em m) A raiz sobe para o joelho do Kimodo nao atravessar o chao e a mao que
+    # apoiava fica no ar: a mao a menos de hand_snap do chao por 3+ quadros desce (IK no braco) ate encostar,
+    # com rampa curta nas pontas (o "apoiando" do stand_up_getup, HAND_DOWN).
+    snap = variant.get("hand_snap", 0.0)
+    for side in ("Left", "Right") if snap else ():
+        gaps = np.zeros(count)
+        for f in range(count):
+            p, o = rig.forward_kinematics(offset_of(f), rotations[f], coordinates[f])
+            gaps[f] = lowest_point(rig, p, o, [f"{side}Hand"]) - floor
+        near = (gaps > 0.0) & (gaps < snap)
+        drop = np.zeros(count)
+        f = 0
+        while f < count:
+            e = f
+            while e < count and near[e]:
+                e += 1
+            if e - f >= 3:
+                drop[f:e] = gaps[f:e]
+            f = max(e, f + 1)
+        drop = g.gaussian(drop[:, None], 0.04 * RATE)[:, 0]
+        for f in np.flatnonzero(drop > 0.002):
+            p, o = rig.forward_kinematics(offset_of(f), rotations[f], coordinates[f])
+            target = g.wrist_world(rig, p, o, side) - np.array([0.0, 0.0, drop[f]])
+            coordinates[f] = g.solve_arm(rig, offset_of(f), rotations[f], coordinates[f], side, target)
+
     # Maos: os bracos do nosso corpo tem outra proporcao - apoiando, a mao
     # atravessava o chao (ate ~9 cm). O punho sobe (IK no braco) ate a mao
     # encostar.
@@ -183,8 +215,8 @@ def main() -> None:
             i = rig.index(f"{side}{name}")
             coordinates[:, i, :] = g.gaussian(coordinates[:, i, :], 0.03 * RATE)
 
-    # Fim: a pose de pe limpa.
-    blend = int(round(END_BLEND * RATE))
+    # Fim: a pose de pe limpa (as quedas terminam no chao: end_blend False).
+    blend = int(round(END_BLEND * RATE)) if variant.get("end_blend", True) else -1
     for k in range(blend + 1):
         f = count - 1 - blend + k
         w = g.smooth(k / blend)
@@ -236,7 +268,7 @@ def main() -> None:
         "id": variant["id"],
         "displayName": variant["name"],
         "targetRigId": template["targetRigId"],
-        "sourceAssetPath": "Kimodo-SOMA-RP-v1.1 (texto + poses-chave), BVH retargeteado",
+        "sourceAssetPath": variant.get("source_note", "Kimodo-SOMA-RP-v1.1 (texto + poses-chave), BVH retargeteado"),
         "durationSeconds": round(duration, 7),
         "sourceSampleRateHz": RATE,
         "loops": False,

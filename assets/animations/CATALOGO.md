@@ -30,9 +30,9 @@ tarefas do RL e o personagem do jogo que citam o arquivo.
 | Clipe | Nome | s | Ciclo | Vel. | Dir. | Fonte | Usado em |
 |---|---|---:|---|---:|---:|---|---|
 | `ual_walk` | Andar (UAL1 CC0) | 1.33 | sim | 1.1 | 0° | `UAL1_Standard_RM.glb` | — |
-| `walk_backward` | Andar de costas (Mixamo) | 1.20 | sim | 1.2 | -179° | `Walking Backwards.fbx` | — |
-| `walk_strafe_left` | Andar de lado para a esquerda (Mixamo, espelhado) | 1.47 | sim | 0.6 | 89° | `Walk Strafe Right.fbx` | — |
-| `walk_strafe_right` | Andar de lado para a direita (Mixamo) | 1.47 | sim | 0.6 | -89° | `Walk Strafe Right.fbx` | — |
+| `walk_backward` | Andar de costas (Mixamo) | 1.20 | sim | 1.2 | 180° | `Walking Backwards.fbx` | — |
+| `walk_strafe_left` | Andar de lado para a esquerda (Mixamo, espelhado) | 1.47 | sim | 0.6 | 90° | `Walk Strafe Right.fbx` | — |
+| `walk_strafe_right` | Andar de lado para a direita (Mixamo) | 1.47 | sim | 0.6 | -90° | `Walk Strafe Right.fbx` | — |
 
 ## Arrancar e frear
 
@@ -105,12 +105,35 @@ tarefas do RL e o personagem do jogo que citam o arquivo.
 |---|---|---:|---|---:|---:|---|---|
 | `stand_up_back` | Levantar de costas | 2.67 | não | 0.0 | — | `Getting Up.fbx` | — |
 | `stand_up_back_guided` | Levantar de costas (Kimodo) | 2.30 | não | — | — | autoral (`Kimodo-SOMA-RP-v1.1`) | — |
-| `stand_up_back_kimodo` | Levantar de costas (Kimodo) | 2.30 | não | — | — | autoral (`Kimodo-SOMA-RP-v1.1`) | personagem (football_player) |
+| `stand_up_back_kimodo` | Levantar de costas (Kimodo: rola e levanta) | 3.00 | não | — | — | autoral (`Kimodo-SOMA-RP-v1.1`) | personagem (football_player) |
+| `stand_up_back_kimodo_espelho` | Levantar de costas (Kimodo: rola e levanta, espelhado) | 3.00 | não | — | — | autoral (`Kimodo-SOMA-RP-v1.1`) | — |
 | `stand_up_front` | Levantar de bruços | 2.97 | não | 0.0 | — | `Standing Up.fbx` | — |
 | `stand_up_front_crouch` | Levantar de bruços pelo agachado | 4.83 | não | — | — | autoral (`Prone`) | — |
 | `stand_up_front_getup` | Levantar de bruços (Getting Up limpo) | 4.30 | não | — | — | autoral (`Getting`) | — |
 | `stand_up_front_guided` | Levantar de bruços (Kimodo) | 2.10 | não | — | — | autoral (`Kimodo-SOMA-RP-v1.1`) | — |
 | `stand_up_front_kimodo` | Levantar de bruços (Kimodo) | 2.10 | não | — | — | autoral (`Kimodo-SOMA-RP-v1.1`) | personagem (football_player) |
+| `stand_up_front_kimodo_espelho` | Levantar de bruços (Kimodo, espelhado) | 2.10 | não | — | — | autoral (`Kimodo-SOMA-RP-v1.1`) | — |
+
+## Quedas e tropeços
+
+| Clipe | Nome | s | Ciclo | Vel. | Dir. | Fonte | Usado em |
+|---|---|---:|---|---:|---:|---|---|
+| `queda_protecao_empurrao_lado` | Desequilibra de lado e recupera com passo cruzado (Kimodo) | 2.67 | não | — | — | autoral (`Kimodo-SOMA-RP-v1.1`) | — |
+| `queda_protecao_empurrao_lado_espelho` | Desequilibra de lado e recupera com passo cruzado (Kimodo, espelhado) | 2.67 | não | — | — | autoral (`Kimodo-SOMA-RP-v1.1`) | — |
+| `queda_protecao_empurrao_tras` | Desequilibra para tras e recupera com passos para tras (Kimodo) | 2.37 | não | — | — | autoral (`Kimodo-SOMA-RP-v1.1`) | — |
+| `queda_protecao_empurrao_tras_espelho` | Desequilibra para tras e recupera com passos para tras (Kimodo, espelhado) | 2.37 | não | — | — | autoral (`Kimodo-SOMA-RP-v1.1`) | — |
+| `queda_protecao_frente` | Queda para a frente amortecida nos joelhos, maos e antebracos (Kimodo) | 2.30 | não | — | — | autoral (`Kimodo-SOMA-RP-v1.1`) | — |
+| `queda_protecao_frente_espelho` | Queda para a frente amortecida nos joelhos, maos e antebracos (Kimodo, espelhado) | 2.30 | não | — | — | autoral (`Kimodo-SOMA-RP-v1.1`) | — |
+| `queda_protecao_lado` | Queda de lado no joelho, antebraco e quadril, com rolamento (Kimodo) | 2.50 | não | — | — | autoral (`Kimodo-SOMA-RP-v1.1`) | — |
+| `queda_protecao_lado_espelho` | Queda de lado no joelho, antebraco e quadril, com rolamento (Kimodo, espelhado) | 2.50 | não | — | — | autoral (`Kimodo-SOMA-RP-v1.1`) | — |
+| `queda_protecao_tras` | Queda para tras: senta, maos atras e rola nas costas (Kimodo) | 2.50 | não | — | — | autoral (`Kimodo-SOMA-RP-v1.1`) | — |
+| `queda_protecao_tras_espelho` | Queda para tras: senta, maos atras e rola nas costas (Kimodo, espelhado) | 2.50 | não | — | — | autoral (`Kimodo-SOMA-RP-v1.1`) | — |
+| `queda_protecao_tropeco` | Tropeca andando e recupera com passos rapidos (Kimodo) | 2.67 | não | — | — | autoral (`Kimodo-SOMA-RP-v1.1`) | — |
+| `queda_protecao_tropeco_corrida` | Tropeco correndo e recupera (Mixamo Jogging Stumble) | 1.17 | não | — | — | autoral (`Mixamo`) | — |
+| `queda_protecao_tropeco_corrida_espelho` | Tropeco correndo e recupera (Mixamo Jogging Stumble, espelhado) | 1.17 | não | — | — | autoral (`Mixamo`) | — |
+| `queda_protecao_tropeco_espelho` | Tropeca andando e recupera com passos rapidos (Kimodo, espelhado) | 2.67 | não | — | — | autoral (`Kimodo-SOMA-RP-v1.1`) | — |
+| `queda_protecao_tropeco_queda` | Tropeca e cai para a frente (Mixamo Tripping) | 2.77 | não | — | — | autoral (`Mixamo`) | — |
+| `queda_protecao_tropeco_queda_espelho` | Tropeca e cai para a frente (Mixamo Tripping, espelhado) | 2.77 | não | — | — | autoral (`Mixamo`) | — |
 
 ## Futebol
 

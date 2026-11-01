@@ -1,11 +1,13 @@
 """Poses-chave para o Kimodo a partir de quadros de geracoes anteriores.
 
-uso: chave.py saida.json fonte.npz:quadro:alvo[:dx,dz] [...] [--tipo fullbody]
+uso: chave.py saida.json fonte.npz:quadro:alvo[:dx,dz[,giro]] [...] [--tipo fullbody]
   fonte.npz:quadro  - o quadro de uma geracao (rotacoes locais e raiz)
   alvo              - o quadro do clipe novo onde a pose entra (-1 = ultimo,
                       precisa de --total)
   dx,dz             - onde a raiz fica no chao (relativo a origem do clipe
                       novo); sem isso, a do quadro fonte relativa ao quadro 0
+  giro              - graus em volta do eixo Y (vertical): a pose inteira gira
+                      (+90 leva a cabeca de +Z para +X)
 """
 import json, sys, numpy as np
 
@@ -43,14 +45,19 @@ for spec in args[1:]:
     if target < 0:
         target = total + target
     d = np.load(src)
-    rot = axis_angle(d['local_rot_mats'][frame])
+    local = d['local_rot_mats'][frame].astype(float).copy()
     root = d['root_positions'][frame].astype(float).copy()
     if len(parts) > 3:
-        dx, dz = map(float, parts[3].split(','))
-        root[0], root[2] = dx, dz
+        values = list(map(float, parts[3].split(',')))
+        root[0], root[2] = values[0], values[1]
+        if len(values) > 2:  # o giro so na raiz (junta 0, a pelve): o resto e relativo a ela
+            a = np.radians(values[2])
+            yaw = np.array([[np.cos(a), 0, np.sin(a)], [0, 1, 0], [-np.sin(a), 0, np.cos(a)]])
+            local[0] = yaw @ local[0]
     else:
         root[0] -= d['root_positions'][0][0]
         root[2] -= d['root_positions'][0][2]
+    rot = axis_angle(local)
     g = groups.setdefault(kind, {'type': kind, 'frame_indices': [], 'local_joints_rot': [], 'root_positions': [], 'smooth_root_2d': []})
     g['frame_indices'].append(target)
     g['local_joints_rot'].append(rot.tolist())
