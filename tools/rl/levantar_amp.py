@@ -448,7 +448,7 @@ def main() -> int:
     replay = torch.zeros(0, 2 * amp, device=device)
     obs = torch.as_tensor(batch.observations(), device=device)
     window: list = []
-    # A acao anterior de cada mundo (o tranco) e se ela vale (nao no primeiro passo de um episodio).
+    # A acao media anterior de cada mundo (o tranco) e se ela vale (nao no primeiro passo de um episodio).
     previous_action = torch.zeros(n, act_size, device=device)
     previous_valid = torch.zeros(n, dtype=torch.bool, device=device)
     with torch.no_grad():
@@ -594,7 +594,10 @@ def main() -> int:
                 dist = collector.distribution(obs_n)
                 action = dist.sample()
                 roll["obs"][t], roll["act"][t] = obs, action
-                roll["jerk"][t] = torch.where(previous_valid, (action - previous_action).pow(2).mean(-1),
+                # (01/11 00h17: o tranco na acao media da rede, nao na sorteada - nas sorteadas ele tambem punia o ruido
+                # da exploracao, 2 sigma^2 em media, e o PPO encolhia o desvio para fugir do custo; o Codex concordou.)
+                mean = dist.mean
+                roll["jerk"][t] = torch.where(previous_valid, (mean - previous_action).pow(2).mean(-1),
                                               torch.zeros_like(previous_valid, dtype=torch.float32))
                 roll["logp"][t] = dist.log_prob(action).sum(-1)
                 roll["val"][t] = collector.value(obs_n)
@@ -609,7 +612,7 @@ def main() -> int:
                     final = torch.as_tensor(batch.final_observations(), device=device)
                     roll["boot"][t] = trunc * collector.value(collector.norm(final))
                 roll["done"][t] = torch.maximum(torch.as_tensor(term, device=device).float(), trunc)
-                previous_action = action
+                previous_action = mean
                 previous_valid = roll["done"][t] < 0.5
                 obs = torch.as_tensor(batch.observations(), device=device)
             roll["last_value"] = collector.value(collector.norm(obs))

@@ -470,7 +470,12 @@ struct TrackingGetUpAmpTraining3D::Impl {
     }
     float faceDirection(const World& w) const { return w.locomotion ? w.faceYaw : moveDirection(w); }
     float bodyYaw(const World& w) const { return trackingBodyYaw3D(profile->links[rootLink], w.body->links[rootLink]); }
-    float facing(const World& w) const { return std::max(0.0f, std::cos(wrapAngle(faceDirection(w) - bodyYaw(w)))); }
+    // (01/11 00h, o Codex: no giro, max(0, cos) fica plano alem de 90 graus - o alvo gira e foge, e dai ele nao tinha
+    // sinal nenhum para virar; o erro ficou em ~95 graus por 1,5 h. No giro, o alinhamento continuo (1 + cos) / 2.)
+    float facing(const World& w) const {
+        const float c = std::cos(wrapAngle(faceDirection(w) - bodyYaw(w)));
+        return w.startKind == 7 ? 0.5f * (1.0f + c) : std::max(0.0f, c);
+    }
 
     void observe(World& w) const {
         const std::size_t b = contract->bodyObservationSize();
@@ -513,7 +518,10 @@ struct TrackingGetUpAmpTraining3D::Impl {
         w.towardSum += along;
         ++w.towardSamples;
         const float ratio = along / w.commandSpeed;
-        const float speed = ratio <= 1.0f ? std::max(-1.0f, ratio) : std::max(0.0f, 2.0f - ratio);
+        // (01/11 00h05, ele: "nenhum passo ate agora": a rampa concava ate a pedida - a raiz -, para um passo pequeno ja
+        // compensar o estilo e o tranco de um andar ainda desajeitado; para tras e acima da pedida, como antes.)
+        const float speed = ratio < 0.0f ? std::max(-1.0f, ratio) : ratio <= 1.0f ? std::sqrt(ratio)
+                                                                                  : std::max(0.0f, 2.0f - ratio);
         // (22h55, ele: "garantir que ele consiga ter o estimulo para se mover, e nao ficar apenas parado": parado com o
         // pedido, o rumo e o sem andar de lado davam 0,5 de 1 - nos rumos a velocidade caia, 0,136 -> 0,098 m/s em 160
         // atualizacoes, e no levantar em movimento ficou ~0 por horas. Agora a velocidade 0,6 e os outros dois na
