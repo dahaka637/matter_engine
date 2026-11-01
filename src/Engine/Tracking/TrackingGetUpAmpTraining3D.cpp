@@ -36,8 +36,9 @@ constexpr float FallPenalty = 10.0f;
 constexpr int SprintStartPairWeight = 6;
 // O levantar em movimento: chegou ao alvo neste raio (m), e dai o pedido vira ficar parado.
 constexpr float ArriveRadius = 1.0f;
-// Recomposto depois do empurrao do evitar: de pe, parecido com o parado e quase parado.
-constexpr float RecomposedPose = 0.6f;
+// Recomposto depois do empurrao do evitar: de pe, parecido com o parado e quase parado. (0,5 na pose de 21h25, o largo
+// mais o estreito: a soma dos angulos^2 ~0,55; era 0,6 so no largo, a soma ~1,0.)
+constexpr float RecomposedPose = 0.5f;
 constexpr float RecomposedSpeed = 0.3f;
 
 // Uma rotacao uniforme (Shoemake, "Uniform random rotations", 1992).
@@ -234,7 +235,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
         const float draw = u(w.rng);
         std::uint32_t kind = 0;
         if (settings.evaluation) {
-            kind = settings.evaluationKind == 1 ? 3u : settings.evaluationKind == 2 ? 4u : 0u;
+            kind = settings.evaluationKind == 1 ? 3u : settings.evaluationKind == 2 ? 4u : settings.evaluationKind == 3 ? 2u : 0u;
         } else {
             float edge = settings.standingStartFraction;
             if (draw < edge) kind = 2;
@@ -284,8 +285,14 @@ struct TrackingGetUpAmpTraining3D::Impl {
     // cada 1,5-3 s (o primeiro 1-2,5 s depois de ficar de pe), na faixa da configuracao por 0,1-0,2 s, num rumo
     // sorteado (150-450 N ate 12h35, 250-650 ate 15h05, 400-900 depois; cada degrau quando ele ja ficava de pe em ~100%).
     // Se cair, levanta de novo.
+    // (31/10 21h25, ele: "botar um treino nele, para parado e aguentar empurroes medianos e fortes e ver como ele se sai
+    // com auto-equilibrio": a faixa e o continuo da configuracao; na avaliacao do equilibrio parado, um so empurrao com a
+    // regua do parado com empurrao forte do B21, para comparar as duas redes.)
     void maybePush(World& w, const TrackingGetUpPosture3D& posture) {
-        if (settings.evaluation || w.startKind >= 3 || w.stoodAt < 0.0f || !posture.standing || w.pushTicks > 0) return;
+        const bool balanceTest = settings.evaluation && settings.evaluationKind == 3;
+        if ((settings.evaluation && !balanceTest) || w.startKind >= 3 || w.stoodAt < 0.0f || !posture.standing
+            || w.pushTicks > 0)
+            return;
         std::uniform_real_distribution<float> u(0.0f, 1.0f);
         if (w.nextPushAt < 0.0f) {
             w.nextPushAt = w.time + 1.0f + 1.5f * u(w.rng);
@@ -293,10 +300,22 @@ struct TrackingGetUpAmpTraining3D::Impl {
         }
         if (w.time < w.nextPushAt) return;
         const float angle = 2.0f * Pi * u(w.rng);
-        const float newtons = settings.pushMinimumNewtons + (settings.pushMaximumNewtons - settings.pushMinimumNewtons) * u(w.rng);
+        float newtons = 0.0f, seconds = 0.0f;
+        if (balanceTest) {
+            if (u(w.rng) < 0.3f) newtons = 205.0f + 70.0f * u(w.rng), seconds = 1.0f + 2.0f * u(w.rng);
+            else newtons = 900.0f + 300.0f * u(w.rng), seconds = 0.1f + 0.1f * u(w.rng);
+        } else if (u(w.rng) < settings.pushHoldFraction) {
+            newtons = settings.pushHoldMinimumNewtons
+                + (settings.pushHoldMaximumNewtons - settings.pushHoldMinimumNewtons) * u(w.rng);
+            seconds = settings.pushHoldMinimumSeconds
+                + (settings.pushHoldMaximumSeconds - settings.pushHoldMinimumSeconds) * u(w.rng);
+        } else {
+            newtons = settings.pushMinimumNewtons + (settings.pushMaximumNewtons - settings.pushMinimumNewtons) * u(w.rng);
+            seconds = 0.1f + 0.1f * u(w.rng);
+        }
         w.pushForce = { std::cos(angle) * newtons, std::sin(angle) * newtons, 0.0f };
-        w.pushTicks = std::max(1, static_cast<int>(std::lround((0.1f + 0.1f * u(w.rng)) / TickSeconds)));
-        w.nextPushAt = w.time + 1.5f + 1.5f * u(w.rng);
+        w.pushTicks = std::max(1, static_cast<int>(std::lround(seconds / TickSeconds)));
+        w.nextPushAt = balanceTest ? 1.0e9f : w.time + seconds + 1.5f + 1.5f * u(w.rng);
     }
 
     // O empurrao forte do evitar a queda (31/10 17h, ele: "comeca de pe, leva um empurrao que com certeza vai leva-lo ao
@@ -428,6 +447,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
             episode.meanTowardSpeed = w.towardSamples ? static_cast<float>(w.towardSum / w.towardSamples) : 0.0f;
             episode.fellAfterStanding = w.fellAfterStanding;
             episode.recomposedSeconds = w.recomposedAt >= 0.0f ? w.recomposedAt - w.avoidEnd : -1.0f;
+            episode.endPoseMatch = now.standing ? posture->idlePoseMatch(w.body->links) : 0.0f;
             {
                 std::lock_guard lock(episodeMutex);
                 episodes.push_back(episode);

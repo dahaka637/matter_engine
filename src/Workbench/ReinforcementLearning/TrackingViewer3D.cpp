@@ -86,6 +86,7 @@ struct TrackingViewer3D::Impl {
             pair("evitar_forca", s.avoidMinimumNewtons, s.avoidMaximumNewtons);
             pair("empurrao_forca", s.pushMinimumNewtons, s.pushMaximumNewtons);
             pair("velocidade", s.moveMinimumSpeed, s.moveMaximumSpeed);
+            pair("empurrao_continuo_forca", s.pushHoldMinimumNewtons, s.pushHoldMaximumNewtons);
         }
         getUp = std::make_unique<TrackingGetUpAmpTraining3D>(s);
         getUpObservation.assign(getUp->observationSize(), 0.0f);
@@ -362,14 +363,14 @@ TrackingViewer3D::TrackingViewer3D(const std::filesystem::path& assetsDirectory,
     if (isGetUpDrill(drill)) {
         impl.assets = assetsDirectory;
         impl.seed = seed;
-        impl.getUpKind = drill == MovingGetUpDrill ? 1u : drill == AvoidFallDrill ? 2u : 0u;
+        impl.getUpKind = drill == MovingGetUpDrill ? 1u : drill == AvoidFallDrill ? 2u : drill == BalanceDrill ? 3u : 0u;
         impl.startGetUp();
         impl.loadGetUpPolicy();
     }
 }
 
 bool TrackingViewer3D::isGetUpDrill(const std::string& drill) {
-    return drill == GetUpDrill || drill == MovingGetUpDrill || drill == AvoidFallDrill;
+    return drill == GetUpDrill || drill == MovingGetUpDrill || drill == AvoidFallDrill || drill == BalanceDrill;
 }
 
 bool TrackingViewer3D::getUpVersion2() { return getUpRun().filename() == "levantar_v2"; }
@@ -442,7 +443,7 @@ void TrackingViewer3D::step() {
         for (const TrackingGetUpAmpEpisode3D& episode : impl.getUp->takeEpisodes()) {
             ++impl.getUpFalls;
             const bool good = impl.getUpKind == 1 ? episode.reachedSeconds >= 0.0f
-                : impl.getUpKind == 2             ? !episode.fellAfterStanding
+                : impl.getUpKind >= 2             ? !episode.fellAfterStanding
                                                   : episode.firstStandSeconds >= 0.0f;
             if (good) ++impl.getUpStood;
         }

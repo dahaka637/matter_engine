@@ -550,8 +550,9 @@ void ReinforcementLearningScreen::loadDrills() {
         const std::size_t i = static_cast<std::size_t>(at - m_drillIds.begin());
         const std::string category = i < m_drillCategories.size() ? m_drillCategories[i] : std::string();
         const int phase = i < m_drillPhases.size() ? m_drillPhases[i] : 1;
-        const std::array<std::array<const char*, 2>, 2> extra { { { TrackingViewer3D::MovingGetUpDrill, "Levantar em movimento" },
-            { TrackingViewer3D::AvoidFallDrill, "Evitar a queda" } } };
+        const std::array<std::array<const char*, 2>, 3> extra { { { TrackingViewer3D::MovingGetUpDrill, "Levantar em movimento" },
+            { TrackingViewer3D::AvoidFallDrill, "Evitar a queda" },
+            { TrackingViewer3D::BalanceDrill, "Equilíbrio parado (empurrões)" } } };
         for (std::size_t k = 0; k < extra.size(); ++k) {
             const std::size_t where = i + 1 + k;
             m_drillIds.insert(m_drillIds.begin() + static_cast<std::ptrdiff_t>(where), extra[k][0]);
@@ -1570,6 +1571,8 @@ void ReinforcementLearningScreen::drawViewport(CanvasTarget& canvas, float botto
                 + " m/s · ele " + decimal(viewerSpeed(), 1) + " m/s";
         else if (m_viewerDrill == TrackingViewer3D::AvoidFallDrill)
             label = m_policyText + "\nevitou a queda " + count + " empurrões";
+        else if (m_viewerDrill == TrackingViewer3D::BalanceDrill)
+            label = m_policyText + "\nnão caiu " + count + " empurrões";
         else
             label = m_policyText + "\nlevantou " + count + " quedas";
     }
@@ -1736,7 +1739,8 @@ void ReinforcementLearningScreen::refreshGetUpCurve() {
         const auto it = row.find(key);
         return it == row.end() || !it->is_number() ? none : it->get<float>();
     };
-    float test = none, seconds = none, movingTest = none, movingSpeedTest = none, avoidTest = none, recomposeTest = none;
+    float test = none, seconds = none, movingTest = none, movingSpeedTest = none, avoidTest = none, recomposeTest = none,
+          balanceTest = none, poseTest = none;
     for (std::string line; std::getline(file, line);) {
         const nlohmann::json row = nlohmann::json::parse(line, nullptr, false);
         if (row.is_discarded() || !row.is_object() || !row.contains("atualizacao")) continue;
@@ -1747,6 +1751,8 @@ void ReinforcementLearningScreen::refreshGetUpCurve() {
             movingSpeedTest = plain(row, "mov_vel_rumo");
             avoidTest = percent(row, "evitar_evitou");
             recomposeTest = plain(row, "evitar_recompos_s");
+            balanceTest = percent(row, "equil_sem_cair");
+            poseTest = percent(row, "pose");
             continue;
         }
         if (!row.contains("tarefa")) continue;
@@ -1768,6 +1774,12 @@ void ReinforcementLearningScreen::refreshGetUpCurve() {
         curve.recomposed.push_back(percent(row, "evitar_recompos"));
         curve.recomposeSeconds.push_back(plain(row, "evitar_recompos_s"));
         curve.recomposeSecondsTest.push_back(recomposeTest);
+        // (O equilibrio parado e a pose de pe perto do parado em alerta.)
+        curve.balance.push_back(percent(row, "de_pe_sem_cair"));
+        curve.balanceTest.push_back(balanceTest);
+        curve.pose.push_back(percent(row, "queda_pose"));
+        curve.poseStanding.push_back(percent(row, "de_pe_pose"));
+        curve.poseTest.push_back(poseTest);
     }
     m_getUpCurve = std::move(curve);
 }
@@ -1813,6 +1825,26 @@ void ReinforcementLearningScreen::drawGetUpCharts(float height) {
         ImGui::EndGroup();
         return;
     }
+    if (m_viewerDrill == TrackingViewer3D::BalanceDrill) {
+        ImGui::BeginGroup();
+        ImGui::TextColored(InfoText, "%s", "Sem cair com empurrões (%) · Equilíbrio parado");
+        tooltip("De pé, com empurrões curtos e contínuos: quantos não caem (o chão tocado pelo tronco, o pescoço ou a "
+                "cabeça). Tracejado, o teste sem ruído em 32 empurrões fixos com a régua do parado com empurrão forte do "
+                "B21 (curto de 900–1200 N ou contínuo de 205–275 N por 1–3 s): a comparação com a outra rede.");
+        lineChart("##equilibrio", { { &c.balance, green, false, "treino" }, { &c.balanceTest, green, true, "teste sem ruído" } },
+            0.0f, 100.0f, size, both(c.balanceTest, c.balance, "%.0f%%").c_str(), "%", nullptr, false, "sem dados ainda");
+        ImGui::EndGroup();
+        ImGui::SameLine();
+        ImGui::SetCursorPosY(rowTop);
+        ImGui::BeginGroup();
+        ImGui::TextColored(InfoText, "%s", "Pose de pé (%) · perto do parado em alerta");
+        tooltip("A semelhança com o parado em alerta (ou o espelho) dos que terminam de pé, de 0 a 100: começando de pé "
+                "com empurrões e, em laranja, depois de levantar de uma queda.");
+        lineChart("##pose_equilibrio", { { &c.poseStanding, violet, false, "começando de pé" }, { &c.pose, amber, false, "depois de levantar" } },
+            0.0f, 100.0f, size, last(c.poseStanding, "%.0f%%").c_str(), "%", nullptr, false, "sem dados ainda");
+        ImGui::EndGroup();
+        return;
+    }
     if (m_viewerDrill == TrackingViewer3D::AvoidFallDrill) {
         ImGui::BeginGroup();
         ImGui::TextColored(InfoText, "%s", "Evitou a queda (%) · Evitar a queda");
@@ -1847,11 +1879,12 @@ void ReinforcementLearningScreen::drawGetUpCharts(float height) {
     ImGui::SameLine();
     ImGui::SetCursorPosY(rowTop);
     ImGui::BeginGroup();
-    ImGui::TextColored(InfoText, "%s", "Por lado (%) · Levantar do chão");
-    tooltip("No treino: de pé no fim, pelo jeito que caiu (de bruços, de costas, de lado).");
-    lineChart("##lados", { { &c.prone, blue, false, "de bruços" }, { &c.supine, violet, false, "de costas" },
-                             { &c.side, amber, false, "de lado" } },
-        0.0f, 100.0f, size, last(c.prone, "%.0f%%").c_str(), "%", nullptr, false, "sem dados ainda");
+    ImGui::TextColored(InfoText, "%s", "Pose de pé (%) · Levantar do chão");
+    tooltip("Depois de levantar, a semelhança com o parado em alerta (ou o espelho), de 0 a 100: o treino e, tracejado, o "
+            "teste nas 64 quedas fixas.");
+    lineChart("##pose_levantar", { { &c.pose, violet, false, "treino" }, { &c.poseTest, violet, true, "teste sem ruído" } },
+        0.0f, 100.0f, size, both(c.poseTest, c.pose, "%.0f%%").c_str(), "%", nullptr, false, "sem dados ainda");
+    (void)blue;
     ImGui::EndGroup();
 }
 

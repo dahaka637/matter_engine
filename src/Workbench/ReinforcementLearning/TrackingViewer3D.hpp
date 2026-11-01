@@ -69,6 +69,8 @@ public:
     // em arrancada) e o evitar a queda (de pe, um empurrao forte), com a mesma rede, cada um pela avaliacao dele.
     static constexpr const char* MovingGetUpDrill = "levantar_movimento";
     static constexpr const char* AvoidFallDrill = "evitar_queda";
+    // O equilibrio parado (31/10 21h25): de pe, um empurrao com a regua do parado com empurrao forte do B21.
+    static constexpr const char* BalanceDrill = "equilibrio_parado";
     [[nodiscard]] static bool isGetUpDrill(const std::string& drill);
     // Se o treino do levantar de agora e o v2 (os dois exercicios novos existem nele).
     [[nodiscard]] static bool getUpVersion2();
@@ -77,7 +79,8 @@ public:
     [[nodiscard]] static bool getUpReady();
     [[nodiscard]] static bool getUpTraining();
     // No levantar: o que deu certo e quantos episodios acabaram desde o comeco - no levantar do chao, as quedas que
-    // ele levantou (ficou de pe alguma vez); no em movimento, as que chegaram ao alvo; no evitar, as que nao cairam.
+    // ele levantou (ficou de pe alguma vez); no em movimento, as que chegaram ao alvo; no evitar e no equilibrio parado,
+    // as que nao cairam.
     [[nodiscard]] std::pair<std::uint32_t, std::uint32_t> getUpTally() const;
     [[nodiscard]] static Conditions conditionsOf(const std::filesystem::path& trackingTask);
 

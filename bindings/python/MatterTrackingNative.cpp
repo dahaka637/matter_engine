@@ -335,7 +335,8 @@ NB_MODULE(matter_tracking_native, m) {
                 std::uint32_t threads, std::uint64_t seed, bool evaluation, float episodeSeconds,
                 float clipStartFraction, float standingStartFraction, float movingFraction, float avoidFraction,
                 std::uint32_t evaluationKind, std::array<float, 2> avoidNewtons, std::array<float, 2> pushNewtons,
-                std::array<float, 2> moveSpeed, float sprintStartFraction) {
+                std::array<float, 2> moveSpeed, float sprintStartFraction, float pushHoldFraction,
+                std::array<float, 2> pushHoldNewtons) {
                 TrackingGetUpAmpSettings3D settings;
                 settings.assetsDirectory = assets;
                 settings.environments = environments;
@@ -355,6 +356,9 @@ NB_MODULE(matter_tracking_native, m) {
                 settings.moveMinimumSpeed = moveSpeed[0];
                 settings.moveMaximumSpeed = moveSpeed[1];
                 settings.sprintStartFraction = sprintStartFraction;
+                settings.pushHoldFraction = pushHoldFraction;
+                settings.pushHoldMinimumNewtons = pushHoldNewtons[0];
+                settings.pushHoldMaximumNewtons = pushHoldNewtons[1];
                 nb::gil_scoped_release release;
                 new (self) TrackingGetUpAmpTraining3D(settings);
             },
@@ -363,7 +367,8 @@ NB_MODULE(matter_tracking_native, m) {
             "moving_fraction"_a = 0.0f, "avoid_fraction"_a = 0.0f, "evaluation_kind"_a = 0,
             "avoid_newtons"_a = std::array<float, 2> { 1200.0f, 1800.0f },
             "push_newtons"_a = std::array<float, 2> { 400.0f, 900.0f },
-            "move_speed"_a = std::array<float, 2> { 2.5f, 5.0f }, "sprint_start_fraction"_a = 0.0f)
+            "move_speed"_a = std::array<float, 2> { 2.5f, 5.0f }, "sprint_start_fraction"_a = 0.0f,
+            "push_hold_fraction"_a = 0.0f, "push_hold_newtons"_a = std::array<float, 2> { 150.0f, 350.0f })
         .def_prop_ro("num_envs", &TrackingGetUpAmpTraining3D::environmentCount)
         .def_prop_ro("obs_size", &TrackingGetUpAmpTraining3D::observationSize)
         .def_prop_ro("action_size", &TrackingGetUpAmpTraining3D::actionSize)
@@ -441,12 +446,12 @@ NB_MODULE(matter_tracking_native, m) {
             [](const TrackingGetUpAmpTraining3D&) {
                 return std::vector<std::string> { "mundo", "comeco", "lado", "cabeca_inicio", "segundos", "de_pe_aos",
                     "nota_tarefa", "altura_cabeca", "altura_pelve", "de_pe", "velocidade_pedida", "chegou_aos",
-                    "velocidade_rumo_alvo", "caiu_depois_de_pe", "recompos_aos" };
+                    "velocidade_rumo_alvo", "caiu_depois_de_pe", "recompos_aos", "pose_fim" };
             })
         .def("finished_episodes",
             [](TrackingGetUpAmpTraining3D& b) {
                 const std::vector<TrackingGetUpAmpEpisode3D> episodes = b.takeEpisodes();
-                constexpr std::size_t width = 15;
+                constexpr std::size_t width = 16;
                 auto out = owned<float>({ episodes.size(), width });
                 float* d = out.data();
                 for (std::size_t i = 0; i < episodes.size(); ++i) {
@@ -454,7 +459,8 @@ NB_MODULE(matter_tracking_native, m) {
                     const float row[width] = { static_cast<float>(e.world), static_cast<float>(e.startKind),
                         static_cast<float>(e.startSide), e.startHeadHeight, e.seconds, e.firstStandSeconds,
                         e.meanTaskReward, e.headHeight, e.pelvisHeight, e.standing ? 1.0f : 0.0f, e.commandSpeed,
-                        e.reachedSeconds, e.meanTowardSpeed, e.fellAfterStanding ? 1.0f : 0.0f, e.recomposedSeconds };
+                        e.reachedSeconds, e.meanTowardSpeed, e.fellAfterStanding ? 1.0f : 0.0f, e.recomposedSeconds,
+                        e.endPoseMatch };
                     std::copy(row, row + width, d + i * width);
                 }
                 return out;

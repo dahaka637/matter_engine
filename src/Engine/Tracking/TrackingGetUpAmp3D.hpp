@@ -47,18 +47,19 @@ public:
     explicit TrackingGetUpPostureProbe3D(const RagdollProfile3D& profile);
 
     [[nodiscard]] TrackingGetUpPosture3D measure(std::span<const PhysicsBodyState3D> links) const;
-    // A nota de estado da tarefa: so de pe, 0,5 mais o centro de massa parado no chao 0,2 (exp(-2 v^2)) mais a pose do
-    // parado 0,3 (31/10 07h50, ele: de pe "nao tem referencia da pose do parado idle" - a cabeca ia para tras e o peito
-    // arqueava). Sem a pose do parado dada, a parte dela vale 1.
+    // A nota de estado da tarefa: so de pe, 0,3 mais o centro de massa parado no chao 0,1 (exp(-2 v^2)) mais a pose do
+    // parado 0,6 (31/10 07h50, ele: de pe "nao tem referencia da pose do parado idle" - a cabeca ia para tras e o peito
+    // arqueava; 21h25: "reforcar... que quando de pe fique o mais proximo possivel do nosso idle alerta"; era 0,5 + 0,2
+    // + 0,3). Sem a pose do parado dada, a parte dela vale 1.
     [[nodiscard]] float standingReward(const TrackingGetUpPosture3D& posture,
         std::span<const PhysicsBodyState3D> links) const;
     // As poses do parado (um quadro de cada clipe parado; 31/10 18h, ele: o padrao de ficar de pe e o parado em alerta,
     // com o espelho): a rotacao de cada junta no pai. setIdlePose troca todas por uma; addIdlePose junta outra.
     void setIdlePose(std::span<const PhysicsBodyState3D> links);
     void addIdlePose(std::span<const PhysicsBodyState3D> links);
-    // A semelhanca com a pose do parado mais proxima: exp(-0,5 soma dos angulos^2 de cada junta), 1 igual. (O -2 do
-    // DeepMimic dava 0,007 na pose em que ele ficava de pe - soma 2,5: braco 56 graus, coxa 40, cabeca 29 - e nenhum
-    // gradiente.)
+    // A semelhanca com a pose do parado mais proxima: metade exp(-0,5 soma dos angulos^2 de cada junta) - o largo, que
+    // da gradiente longe (o -2 do DeepMimic sozinho dava 0,007 na pose de 07h50, soma 2,5) - e metade exp(-2 soma), o
+    // estreito, que segue puxando perto (21h25: a soma media 1,26, o largo ja dava 0,57). 1 igual.
     [[nodiscard]] float idlePoseMatch(std::span<const PhysicsBodyState3D> links) const;
     // O potencial da subida (31/10 07h: como nota de estado - a cabeca subindo 0,6 e a pelve em pe 0,2 -, ele assentava
     // sentado ou ajoelhado em 1 s e colhia ~0,4 por passo ate o fim; como potencial, a subida paga ao subir, a descida

@@ -454,12 +454,23 @@ void checkGetUpViewers() {
         require(pushed, "o evitar a queda mostra o empurrao forte");
     }
     {
+        TrackingViewer3D balance(assets, 9, TrackingViewer3D::BalanceDrill);
+        bool pushed = false, target = false;
+        for (int i = 0; i < 100 && !pushed; ++i) {
+            balance.step();
+            pushed = balance.view().pushLink >= 0;
+            target = target || balance.view().hasTarget;
+        }
+        require(pushed && !target, "o equilibrio parado mostra o empurrao, sem alvo");
+    }
+    {
         TrackingViewer3D still(assets, 7, TrackingViewer3D::GetUpDrill);
         for (int i = 0; i < 10; ++i) still.step();
         require(!still.view().hasTarget, "o levantar do chao nao tem alvo");
     }
     require(TrackingViewer3D::isGetUpDrill("levantar_movimento") && TrackingViewer3D::isGetUpDrill("evitar_queda")
-            && !TrackingViewer3D::isGetUpDrill("parado"), "os exercicios do levantar");
+            && TrackingViewer3D::isGetUpDrill("equilibrio_parado") && !TrackingViewer3D::isGetUpDrill("parado"),
+        "os exercicios do levantar");
 }
 
 void checkSinglePushViewer() {

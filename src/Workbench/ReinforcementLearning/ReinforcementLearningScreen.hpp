@@ -241,6 +241,8 @@ private:
         // e o tempo), no treino e nas avaliacoes fixas.
         std::vector<float> reached, reachedTest, movingStood, towardSpeed, towardSpeedTest;
         std::vector<float> avoided, avoidedTest, recomposed, recomposeSeconds, recomposeSecondsTest;
+        // O equilibrio parado e a pose de pe (perto do parado em alerta).
+        std::vector<float> balance, balanceTest, pose, poseStanding, poseTest;
         std::filesystem::file_time_type write {};
     } m_getUpCurve;
     float m_accumulator = 0.0f;

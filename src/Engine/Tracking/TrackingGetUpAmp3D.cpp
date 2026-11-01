@@ -89,7 +89,7 @@ float TrackingGetUpPostureProbe3D::standingReward(const TrackingGetUpPosture3D& 
     std::span<const PhysicsBodyState3D> links) const {
     if (!posture.standing) return 0.0f;
     const Vec3 v = rlBodyCenterOfMassVelocity3D(*m_profile, links);
-    return 0.5f + 0.2f * std::exp(-2.0f * (v.x * v.x + v.y * v.y)) + 0.3f * idlePoseMatch(links);
+    return 0.3f + 0.1f * std::exp(-2.0f * (v.x * v.x + v.y * v.y)) + 0.6f * idlePoseMatch(links);
 }
 
 void TrackingGetUpPostureProbe3D::setIdlePose(std::span<const PhysicsBodyState3D> links) {
@@ -120,7 +120,7 @@ float TrackingGetUpPostureProbe3D::idlePoseMatch(std::span<const PhysicsBodyStat
             const Vec3 error = rlQuaternionLog3D((idle[i].conjugate() * relative).normalized());
             sum += error.x * error.x + error.y * error.y + error.z * error.z;
         }
-        best = std::max(best, std::exp(-0.5f * sum));
+        best = std::max(best, 0.5f * std::exp(-0.5f * sum) + 0.5f * std::exp(-2.0f * sum));
     }
     return best;
 }

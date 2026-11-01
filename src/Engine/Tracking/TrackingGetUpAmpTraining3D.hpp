@@ -43,10 +43,17 @@ struct TrackingGetUpAmpSettings3D {
     float avoidHoldMaximumNewtons = 550.0f;
     float avoidHoldMinimumSeconds = 0.5f;
     float avoidHoldMaximumSeconds = 1.2f;
-    // O empurrao de pe do jogo de pes (N, 0,1-0,2 s).
+    // O empurrao de pe do jogo de pes e do autoequilibrio parado (N, 0,1-0,2 s) e, numa fatia, o continuo (N, s).
     float pushMinimumNewtons = 400.0f;
     float pushMaximumNewtons = 900.0f;
-    // Na avaliacao, o que se mede: 0 as quedas (o levantar), 1 o levantar em movimento, 2 o evitar a queda.
+    float pushHoldFraction = 0.0f;
+    float pushHoldMinimumNewtons = 150.0f;
+    float pushHoldMaximumNewtons = 350.0f;
+    float pushHoldMinimumSeconds = 1.0f;
+    float pushHoldMaximumSeconds = 3.0f;
+    // Na avaliacao, o que se mede: 0 as quedas (o levantar), 1 o levantar em movimento, 2 o evitar a queda, 3 o
+    // equilibrio parado (de pe, um empurrao com a regua do parado com empurrao forte do B21: o curto de 900-1200 N ou,
+    // em 30%, o continuo de 205-275 N por 1-3 s).
     std::uint32_t evaluationKind = 0;
 };
 
@@ -74,6 +81,8 @@ struct TrackingGetUpAmpEpisode3D {
     float meanTowardSpeed = 0.0f;
     bool fellAfterStanding = false;
     float recomposedSeconds = -1.0f;
+    // A semelhanca com a pose do parado em alerta no fim (0 se nao esta de pe).
+    float endPoseMatch = 0.0f;
 };
 
 // O que o visualizador do laboratorio desenha de um mundo: como comecou, o alvo (o levantar em movimento, enquanto o
