@@ -135,9 +135,10 @@ constexpr std::array<double, 4> BandTestSpeeds { 1.11, 2.62, 4.33, 6.0 };
 // o equilibrio parado tambem, de pe quem fica e a rede da locomocao, a do levantar so assume na queda iminente.)
 std::vector<std::array<const char*, 2>> getUpDrillList() {
     std::vector<std::array<const char*, 2>> list { { TrackingViewer3D::MovingGetUpDrill, "Levantar em movimento" },
-        { TrackingViewer3D::AvoidFallDrill, "Evitar a queda" },
-        { TrackingViewer3D::LocomotionFallDrill, "Quedas da locomoção" } };
-    // (01/11, a rl_final: a locomocao volta - as faixas primeiro, depois o parado, o giro e os rumos no trote.)
+        { TrackingViewer3D::AvoidFallDrill, "Evitar a queda" } };
+    // (01/11, a rl_final: a locomocao volta - as faixas primeiro, depois o parado, o giro e os rumos no trote. As quedas
+    // da locomocao eram as do B21, fora de uso; ele: "parece meio cagado... acho dispensavel": so fora da rl_final.)
+    if (!TrackingViewer3D::getUpLocomotion()) list.push_back({ TrackingViewer3D::LocomotionFallDrill, "Quedas da locomoção" });
     if (TrackingViewer3D::getUpLocomotion()) {
         constexpr std::size_t Order[12] { 8, 9, 10, 11, 0, 1, 2, 3, 4, 5, 6, 7 };
         for (std::size_t k : Order) list.push_back({ TrackingViewer3D::LocomotionDrills[k], LocomotionNames[k] });

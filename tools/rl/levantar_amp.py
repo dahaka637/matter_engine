@@ -183,6 +183,9 @@ def summarize(rows: np.ndarray, prefix: str) -> dict:
                     out[f"{prefix}{name}_razao"] = float((rows[sel, 12] / np.maximum(rows[sel, 10], 0.1)).mean())
                     out[f"{prefix}{name}_sem_cair"] = float(1.0 - rows[sel, 13].mean())
                     out[f"{prefix}{name}_n"] = int(sel.sum())
+                    # (01/11, ele: "cuidar para ele nao trapacear" - o erro do rumo do corpo, de pe: virar para ir de frente
+                    # quando o pedido e de costas ou de lado aparece aqui.)
+                    out[f"{prefix}{name}_rumo"] = float(rows[sel, 16].mean())
         turn = rows[:, 1] == 7
         if turn.any() and rows.shape[1] > 16:
             out[f"{prefix}rumo"] = float(rows[turn, 16].mean())

@@ -107,6 +107,8 @@ struct TrackingGetUpAmpTraining3D::Impl {
         std::uint32_t heading = 0;
     };
     std::array<std::vector<Gait>, 4> gaits;
+    // As quedas com protecao carregadas (os indices).
+    std::vector<std::size_t> protectionIndices;
     // A velocidade de deslocamento que falta aos clipes no lugar (os pares do discriminador): constante (corrida) ou
     // em rampa desde zero (a arrancada, com o deslocamento da fonte), para a frente do clipe.
     struct Travel {
@@ -190,6 +192,8 @@ struct TrackingGetUpAmpTraining3D::Impl {
         // A rl_final: a faixa do passo de agora e a do comeco, e a proxima troca do pedido (s; < 0: sem troca).
         std::uint32_t band = 1;
         std::uint32_t startBand = 1;
+        // O comeco num instante de uma queda com protecao (a protecao vale, como no evitar a queda).
+        bool protectiveStart = false;
         float nextCommandAt = -1.0f;
         // A troca de rede ao ficar de pe: ha quanto tempo ele esta de pe e firme (s) e quando trocou (s; < 0: nao).
         float firmSeconds = 0.0f;
@@ -350,12 +354,17 @@ struct TrackingGetUpAmpTraining3D::Impl {
         w.body = w.scene->ragdollStateView(w.handle);
     }
 
-    // Um instante sorteado de um clipe de levantar (o RSI do DeepMimic) ou, de pe, do parado, num rumo sorteado.
+    // Um instante sorteado de um clipe de levantar (o RSI do DeepMimic) ou, de pe, do parado, num rumo sorteado. (01/11,
+    // a rl_final: com as quedas com protecao carregadas, metade dos comecos sao delas, nos primeiros 70% - a queda.)
     void beginFromClip(World& w, bool standing) {
         std::uniform_real_distribution<float> u(0.0f, 1.0f);
+        const bool protective = !standing && !protectionIndices.empty() && u(w.rng) < 0.5f;
         const auto& reference = standing ? *references[u(w.rng) < 0.5f ? standingIndex : standingMirrorIndex]
+            : protective
+            ? *references[protectionIndices[std::uniform_int_distribution<std::size_t>(0, protectionIndices.size() - 1)(w.rng)]]
             : *references[std::uniform_int_distribution<std::size_t>(0, std::size(GetUpClips) - 1)(w.rng)];
-        const float last = std::max(0.0f, reference.durationSeconds() - 2.0f / 30.0f);
+        const float last = std::max(0.0f, reference.durationSeconds() * (protective ? 0.7f : 1.0f) - 2.0f / 30.0f);
+        w.protectiveStart = protective;
         reference.frame(u(w.rng) * last, {}, (2.0f * u(w.rng) - 1.0f) * Pi, w.frame);
         w.scene->resetRagdollState(w.handle, w.frame.links);
         w.body = w.scene->ragdollStateView(w.handle);
@@ -600,6 +609,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
         w.flexSamples = 0;
         w.footAir[0] = w.footAir[1] = 0.0f;
         w.footDown[0] = w.footDown[1] = true;
+        w.protectiveStart = false;
         w.startKind = kind;
         if (kind == 0 || kind == 3) beginFall(w);
         else if (kind == 5) beginSprintStart(w);
@@ -801,8 +811,14 @@ struct TrackingGetUpAmpTraining3D::Impl {
         // pedido, o rumo e o sem andar de lado davam 0,5 de 1 - nos rumos a velocidade caia, 0,136 -> 0,098 m/s em 160
         // atualizacoes, e no levantar em movimento ficou ~0 por horas. Agora a velocidade 0,6 e os outros dois na
         // proporcao dela: parado com o pedido vale 0, na pedida 1.)
+        // (01/11, a rl_final - ele: "cuidar para ele nao trapacear, tipo andar de costas, ele dar meia volta e ir de
+        // frente": com o rumo valendo 0,25 contra 0,6 da velocidade, dar meia volta e correr de frente pagava ~0,75 e
+        // andar de costas devagar ~0,45. Agora o rumo do corpo e o portao de tudo: de costas para o rumo pedido, zero; a
+        // 45 graus, 71%; ir para tras do pedido continua custando.)
         const float progress = std::clamp(ratio, 0.0f, 1.0f);
-        return 0.6f * speed + progress * (0.25f * facing(w) + 0.15f * std::exp(-across * across));
+        const float gate = facing(w);
+        return gate * (0.6f * std::max(0.0f, speed) + progress * (0.25f + 0.15f * std::exp(-across * across)))
+            + 0.6f * std::min(0.0f, speed);
     }
 
     void decide(World& w, std::size_t index, std::span<const float> action, float& reward, std::uint8_t& terminated,
@@ -850,7 +866,8 @@ struct TrackingGetUpAmpTraining3D::Impl {
                 w.footAir[f] = down ? 0.0f : w.footAir[f] + TicksPerDecision * TickSeconds;
                 w.footDown[f] = down;
             }
-            state += settings.stepReward * steps;
+            // (Com o mesmo portao do rumo: passo virado para o lado errado nao vale.)
+            state += settings.stepReward * steps * (steps > 0.0f ? facing(w) : 1.0f);
         }
         // (O gamma do treinador, 0,99, no potencial.)
         reward = state + 0.99f * (posture->risePotential(now) + posture->turnPotential(now) + facePotential(w, now)) - before;
@@ -859,13 +876,16 @@ struct TrackingGetUpAmpTraining3D::Impl {
             reward -= FallPenalty;
             w.fellAfterStanding = true;
         }
-        // (O evitar a queda de verdade nos comecos da queda iminente: a primeira vez do tronco no chao, antes de ficar de
-        // pe - depois, a FallPenalty.)
-        if (down && !w.touchedDown && w.stoodAt < 0.0f && (w.startKind == 4 || w.startKind == 8))
-            reward -= settings.touchDownPenalty;
+        // (A janela da protecao: nos comecos que ja vem caindo - as quedas da locomocao e as quedas com protecao -, antes
+        // de ficar de pe; no evitar a queda, do empurrao ate se recompor. 01/11, a rl_final: sem a parceira o evitar comeca
+        // de pe, e o "antes de ficar de pe" nunca valia - a protecao, o apoio, a flexao e o toque no chao ficavam de fora.)
+        const bool window = w.startKind == 4 ? w.avoidEnd >= 0.0f && w.recomposedAt < 0.0f
+                                             : (w.startKind == 8 || w.protectiveStart) && w.stoodAt < 0.0f;
+        // (O evitar a queda de verdade: a primeira vez do tronco no chao na janela.)
+        if (down && !w.touchedDown && window) reward -= settings.touchDownPenalty;
         // (A protecao: nesses comecos, antes do tronco no chao e de ficar de pe, o primeiro apoio das maos, dos bracos ou
         // dos joelhos vale uma vez.)
-        const bool protecting = (w.startKind == 4 || w.startKind == 8) && !w.touchedDown && !down && w.stoodAt < 0.0f;
+        const bool protecting = window && !w.touchedDown && !down;
         if (protecting && !w.supported) {
             for (const RagdollContactPoint3D& contact : w.body->contacts)
                 if (contact.linkIndex < supportContact.size() && supportContact[contact.linkIndex]) w.supported = true;
@@ -873,8 +893,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
         }
         w.protecting = protecting;
         // (A flexao: na protecao e ate FlexAfterTouchSeconds depois do primeiro toque do tronco.)
-        if (down && !w.touchedDown && w.stoodAt < 0.0f && (w.startKind == 4 || w.startKind == 8))
-            w.flexUntil = w.time + FlexAfterTouchSeconds;
+        if (down && !w.touchedDown && window) w.flexUntil = w.time + FlexAfterTouchSeconds;
         if (protecting || (w.flexUntil >= 0.0f && w.time <= w.flexUntil)) {
             const float flex = flexion(*w.body);
             reward += settings.flexReward * flex;
@@ -999,6 +1018,9 @@ TrackingGetUpAmpTraining3D::TrackingGetUpAmpTraining3D(const TrackingGetUpAmpSet
         names.insert(names.end(), std::begin(HeadingClips), std::end(HeadingClips));
         names.insert(names.end(), std::begin(LocomotionStyleClips), std::end(LocomotionStyleClips));
     }
+    // (A rl_final: as quedas com protecao com o evitar a queda ou as quedas da locomocao ligados, no treino.)
+    if (!settings.evaluation && (settings.avoidFraction > 0.0f || settings.locomotionFallFraction > 0.0f))
+        names.insert(names.end(), std::begin(ProtectionClips), std::end(ProtectionClips));
     // (A rl_final: a corrida e o sprint so com as fatias deles - ou a avaliacao dessas faixas -, cada clipe uma vez.)
     if (settings.runFraction > 0.0f || settings.sprintFraction > 0.0f || settings.evaluationBand >= 2) {
         names.insert(names.end(), std::begin(RunClips), std::end(RunClips));
@@ -1013,6 +1035,8 @@ TrackingGetUpAmpTraining3D::TrackingGetUpAmpTraining3D(const TrackingGetUpAmpSet
             loadAnimationClip3D(settings.assetsDirectory + "/animations/clips/" + name + ".matteranim.json")));
         impl.references.push_back(std::make_unique<TrackingClipReference3D>(*impl.profile, *impl.clips.back()));
         if (name == "crouched_to_sprint") impl.sprintStartIndex = impl.references.size() - 1;
+        if (std::find(std::begin(ProtectionClips), std::end(ProtectionClips), name) != std::end(ProtectionClips))
+            impl.protectionIndices.push_back(impl.references.size() - 1);
         if (std::find(std::begin(MovingClips), std::end(MovingClips), name) != std::end(MovingClips))
             impl.runStartIndices.push_back(impl.references.size() - 1);
         const bool heading = std::find(std::begin(HeadingClips), std::end(HeadingClips), name) != std::end(HeadingClips);

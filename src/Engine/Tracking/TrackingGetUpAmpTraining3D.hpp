@@ -229,6 +229,15 @@ public:
         "trot_backward_left", "trot_backward", "trot_backward_right", "jog_strafe_right", "trot_forward_right" };
     static constexpr const char* LocomotionStyleClips[6] { "ual_walk", "walk_backward", "walk_strafe_left",
         "walk_strafe_right", "turn_left", "turn_right" };
+    // A rl_final: as quedas com protecao (01/11; ele: "quando ele via cair no chao tentasse se proteger... levando as
+    // maos, joelhos, girando quadril, coluna"; o Kimodo e os tropecos da Mixamo, com os espelhos) - o estilo e, com o
+    // evitar a queda ligado, metade dos comecos no clipe, num instante da queda, com a protecao valendo (como no evitar).
+    static constexpr const char* ProtectionClips[16] { "queda_protecao_frente", "queda_protecao_frente_espelho",
+        "queda_protecao_tras", "queda_protecao_tras_espelho", "queda_protecao_lado", "queda_protecao_lado_espelho",
+        "queda_protecao_tropeco", "queda_protecao_tropeco_espelho", "queda_protecao_tropeco_corrida",
+        "queda_protecao_tropeco_corrida_espelho", "queda_protecao_tropeco_queda", "queda_protecao_tropeco_queda_espelho",
+        "queda_protecao_empurrao_lado", "queda_protecao_empurrao_lado_espelho", "queda_protecao_empurrao_tras",
+        "queda_protecao_empurrao_tras_espelho" };
     // A rl_final: os clipes da corrida e do sprint (o estilo e os comecos dessas faixas).
     static constexpr const char* RunClips[5] { "jog", "jog_backward", "run_forward_medium", "mixamo_running",
         "run_backward" };
