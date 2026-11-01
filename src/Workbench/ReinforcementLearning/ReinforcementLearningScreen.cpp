@@ -1782,6 +1782,7 @@ void ReinforcementLearningScreen::refreshGetUpCurve() {
     };
     float test = none, seconds = none, movingTest = none, movingSpeedTest = none, avoidTest = none, recomposeTest = none,
           balanceTest = none, poseTest = none;
+    float spineTest = none;
     std::array<float, LocomotionLogKeys.size()> locoMainTest, locoUpTest;
     locoMainTest.fill(none);
     locoUpTest.fill(none);
@@ -1797,6 +1798,7 @@ void ReinforcementLearningScreen::refreshGetUpCurve() {
             recomposeTest = plain(row, "evitar_recompos_s");
             balanceTest = percent(row, "equil_sem_cair");
             poseTest = percent(row, "pose");
+            spineTest = percent(row, "parado_coluna");
             for (std::size_t k = 0; k < LocomotionLogKeys.size(); ++k) {
                 const LocomotionLogKeys3D& keys = LocomotionLogKeys[k];
                 locoMainTest[k] = keys.percent ? percent(row, keys.mainTest) : plain(row, keys.mainTest);
@@ -1829,6 +1831,8 @@ void ReinforcementLearningScreen::refreshGetUpCurve() {
         curve.pose.push_back(percent(row, "queda_pose"));
         curve.poseStanding.push_back(percent(row, "de_pe_pose"));
         curve.poseTest.push_back(poseTest);
+        curve.spine.push_back(percent(row, "de_pe_coluna"));
+        curve.spineTest.push_back(spineTest);
         for (std::size_t k = 0; k < LocomotionLogKeys.size(); ++k) {
             const LocomotionLogKeys3D& keys = LocomotionLogKeys[k];
             curve.locoMain[k].push_back(keys.percent ? percent(row, keys.main) : plain(row, keys.main));
@@ -1889,16 +1893,22 @@ void ReinforcementLearningScreen::drawGetUpCharts(float height) {
             : turn                      ? "Erro do rumo (graus) · " + name
                                         : "Velocidade no rumo (% da pedida) · " + name;
         ImGui::TextColored(InfoText, "%s", title.c_str());
-        tooltip(still ? "De pé, a semelhança da pose com o parado em alerta no fim: o treino (de pé, com empurrões) e, "
+        tooltip(still ? "De pé, no fim: a semelhança da pose com o parado em alerta e, em violeta, a da coluna (a pelve, o "
+                        "tronco, o pescoço e a cabeça como no clipe, reto de lado). O treino (de pé, com empurrões) e, "
                         "tracejado, o teste sem ruído em 8 começos fixos de pé, sem empurrão."
-                : turn ? "O rumo pedido do corpo gira (0,4–0,8 rad/s, giros de 30–450° com pausas de 1–3 s, empurrões em "
-                         "movimento): o erro médio entre o rumo do corpo e o pedido, de pé. Tracejado, o teste sem ruído: "
-                         "0,6 rad/s o episódio todo, 4 para cada lado, um empurrão do começo do B21."
+                : turn ? "O rumo pedido do corpo gira (0,4–0,8 rad/s, giros de 30–450° com pausas de 1–3 s): o erro médio "
+                         "entre o rumo do corpo e o pedido, de pé. Tracejado, o teste sem ruído: 0,6 rad/s o episódio todo, 4 "
+                         "para cada lado. Os empurrões em movimento entram quando ele estiver se locomovendo bem."
                        : "A velocidade média no rumo pedido sobre a pedida, de pé, mantendo o rumo do corpo: o treino (andar "
-                         "0,8–1,4 ou trotar 2,0–3,0 m/s, com empurrões em movimento) e, tracejado, o teste sem ruído a "
-                         "2,5 m/s com um empurrão do começo do B21 (300–600 N, ou contínuo de 100–180 N por 1–2 s).");
-        lineChart("##loco_principal", { { &c.locoMain[k], turn ? amber : cyan, false, "treino" },
-                                          { &c.locoMainTest[k], turn ? amber : cyan, true, "teste sem ruído" } },
+                         "0,8–1,4 ou trotar 2,0–3,0 m/s) e, tracejado, o teste sem ruído a 2,5 m/s. Os empurrões em "
+                         "movimento entram quando ele estiver se locomovendo bem.");
+        std::vector<ChartSeries> series { { &c.locoMain[k], turn ? amber : cyan, false, "treino" },
+            { &c.locoMainTest[k], turn ? amber : cyan, true, "teste sem ruído" } };
+        if (still) {
+            series.push_back({ &c.spine, violet, false, "coluna, treino" });
+            series.push_back({ &c.spineTest, violet, true, "coluna, teste" });
+        }
+        lineChart("##loco_principal", series,
             0.0f, turn ? 90.0f : still ? 100.0f : 150.0f, size,
             both(c.locoMainTest[k], c.locoMain[k], turn ? "%.0f°" : "%.0f%%").c_str(), turn ? "°" : "%", nullptr, false,
             "sem dados ainda");

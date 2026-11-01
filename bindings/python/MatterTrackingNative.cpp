@@ -466,12 +466,12 @@ NB_MODULE(matter_tracking_native, m) {
             [](const TrackingGetUpAmpTraining3D&) {
                 return std::vector<std::string> { "mundo", "comeco", "lado", "cabeca_inicio", "segundos", "de_pe_aos",
                     "nota_tarefa", "altura_cabeca", "altura_pelve", "de_pe", "velocidade_pedida", "chegou_aos",
-                    "velocidade_rumo_alvo", "caiu_depois_de_pe", "recompos_aos", "pose_fim", "erro_rumo_graus" };
+                    "velocidade_rumo_alvo", "caiu_depois_de_pe", "recompos_aos", "pose_fim", "erro_rumo_graus", "coluna_fim" };
             })
         .def("finished_episodes",
             [](TrackingGetUpAmpTraining3D& b) {
                 const std::vector<TrackingGetUpAmpEpisode3D> episodes = b.takeEpisodes();
-                constexpr std::size_t width = 17;
+                constexpr std::size_t width = 18;
                 auto out = owned<float>({ episodes.size(), width });
                 float* d = out.data();
                 for (std::size_t i = 0; i < episodes.size(); ++i) {
@@ -480,7 +480,7 @@ NB_MODULE(matter_tracking_native, m) {
                         static_cast<float>(e.startSide), e.startHeadHeight, e.seconds, e.firstStandSeconds,
                         e.meanTaskReward, e.headHeight, e.pelvisHeight, e.standing ? 1.0f : 0.0f, e.commandSpeed,
                         e.reachedSeconds, e.meanTowardSpeed, e.fellAfterStanding ? 1.0f : 0.0f, e.recomposedSeconds,
-                        e.endPoseMatch, e.meanFaceError };
+                        e.endPoseMatch, e.meanFaceError, e.endSpineMatch };
                     std::copy(row, row + width, d + i * width);
                 }
                 return out;

@@ -246,6 +246,8 @@ private:
         // A locomocao na rede do levantar (na ordem de TrackingViewer3D::LocomotionDrills): o primeiro grafico e o sem
         // cair, no treino e no teste.
         std::array<std::vector<float>, 8> locoMain, locoMainTest, locoUp, locoUpTest;
+        // A coluna como a do parado em alerta, de pe no fim (o treino de pe e o teste do parado).
+        std::vector<float> spine, spineTest;
         std::filesystem::file_time_type write {};
     } m_getUpCurve;
     float m_accumulator = 0.0f;

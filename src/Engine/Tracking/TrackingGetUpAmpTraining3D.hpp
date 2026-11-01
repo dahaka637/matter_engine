@@ -68,7 +68,9 @@ struct TrackingGetUpAmpSettings3D {
     // do mundo, de 8 em 8).
     int heading = -1;
     // Os empurroes em movimento (a regua do comeco do B21: curtos de 300-600 N por 0,1-0,2 s e, numa fatia, continuos de
-    // 100-180 N por 1-2 s), nos rumos e no giro; na avaliacao, um so, de 2 a 3 s depois do comeco.
+    // 100-180 N por 1-2 s), nos rumos e no giro; na avaliacao, um so, de 2 a 3 s depois do comeco. Sem forca (as duas
+    // faixas em 0), sem empurrao (31/10 22h45, ele: "por hora tira os empurroes - so vai entrar depois que ele estiver se
+    // locomovendo bem").
     float movingPushMinimumNewtons = 300.0f;
     float movingPushMaximumNewtons = 600.0f;
     float movingPushHoldFraction = 0.3f;
@@ -111,6 +113,8 @@ struct TrackingGetUpAmpEpisode3D {
     float endPoseMatch = 0.0f;
     // Nos rumos e no giro: o erro medio do rumo do corpo (graus), de pe.
     float meanFaceError = 0.0f;
+    // A coluna como a do parado em alerta no fim (TrackingGetUpPostureProbe3D::idleSpineMatch; 0 se nao esta de pe).
+    float endSpineMatch = 0.0f;
 };
 
 // O que o visualizador do laboratorio desenha de um mundo: como comecou, o alvo (o levantar em movimento, enquanto o

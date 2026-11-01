@@ -90,8 +90,15 @@ struct TrackingViewer3D::Impl {
             pair("empurrao_forca", s.pushMinimumNewtons, s.pushMaximumNewtons);
             pair("velocidade", s.moveMinimumSpeed, s.moveMaximumSpeed);
             pair("empurrao_continuo_forca", s.pushHoldMinimumNewtons, s.pushHoldMaximumNewtons);
-            // (Os rumos e o giro com a regua fixa da avaliacao do treino: 2,5 m/s e os empurroes do comeco do B21.)
+            // (Os rumos e o giro com a regua fixa da avaliacao do treino: 2,5 m/s e, se o treino tem empurroes em
+            // movimento, os do comeco do B21 - os padroes daqui; sem eles no treino, sem eles aqui.)
             s.trotMinimumSpeed = s.trotMaximumSpeed = 2.5f;
+            float low = 0.0f, high = 0.0f, holdLow = 0.0f, holdHigh = 0.0f;
+            pair("empurrao_mov_forca", low, high);
+            pair("empurrao_mov_continuo_forca", holdLow, holdHigh);
+            if (high <= 0.0f && holdHigh <= 0.0f)
+                s.movingPushMaximumNewtons = s.movingPushMinimumNewtons = s.movingPushHoldMinimumNewtons =
+                    s.movingPushHoldMaximumNewtons = 0.0f;
         }
         getUp = std::make_unique<TrackingGetUpAmpTraining3D>(s);
         getUpObservation.assign(getUp->observationSize(), 0.0f);

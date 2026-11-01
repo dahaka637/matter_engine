@@ -72,7 +72,10 @@ void TrackingAmpFeatures3D::compute(std::span<const PhysicsBodyState3D> links, s
 
 TrackingGetUpPostureProbe3D::TrackingGetUpPostureProbe3D(const RagdollProfile3D& profile)
     : m_profile(&profile), m_root(rootIndex(profile)), m_head(linkIndex(profile, "Head")),
-      m_chest(linkIndex(profile, "UpperChest")) {}
+      m_chest(linkIndex(profile, "UpperChest")) {
+    for (const char* id : { "Pelvis", "Abdomen", "Chest", "UpperChest", "Neck", "Head" })
+        m_spine.push_back(linkIndex(profile, id));
+}
 
 TrackingGetUpPosture3D TrackingGetUpPostureProbe3D::measure(std::span<const PhysicsBodyState3D> links) const {
     const RagdollProfile3D& profile = *m_profile;
@@ -89,11 +92,38 @@ float TrackingGetUpPostureProbe3D::standingReward(const TrackingGetUpPosture3D& 
     std::span<const PhysicsBodyState3D> links) const {
     if (!posture.standing) return 0.0f;
     const Vec3 v = rlBodyCenterOfMassVelocity3D(*m_profile, links);
-    return 0.3f + 0.1f * std::exp(-2.0f * (v.x * v.x + v.y * v.y)) + 0.6f * idlePoseMatch(links);
+    return 0.3f + 0.1f * std::exp(-2.0f * (v.x * v.x + v.y * v.y)) + 0.35f * idlePoseMatch(links)
+        + 0.25f * idleSpineMatch(links);
+}
+
+void TrackingGetUpPostureProbe3D::spineAxes(std::span<const PhysicsBodyState3D> links, std::vector<Vec3>& out) const {
+    const RagdollProfile3D& profile = *m_profile;
+    const Quaternion heading =
+        Quaternion::fromAxisAngle({ 0.0f, 0.0f, 1.0f }, trackingBodyYaw3D(profile.links[m_root], links[m_root])).conjugate();
+    out.clear();
+    for (std::uint32_t k : m_spine)
+        out.push_back(heading.rotate(bodyOrientation(profile.links[k], links[k]).rotate({ 0.0f, 0.0f, 1.0f })));
+}
+
+float TrackingGetUpPostureProbe3D::idleSpineMatch(std::span<const PhysicsBodyState3D> links) const {
+    if (m_idleSpine.empty()) return 1.0f;
+    std::vector<Vec3> axes;
+    spineAxes(links, axes);
+    float best = 0.0f;
+    for (const std::vector<Vec3>& idle : m_idleSpine) {
+        float sum = 0.0f;
+        for (std::size_t i = 0; i < axes.size(); ++i) {
+            const float angle = std::acos(std::clamp(dot(axes[i], idle[i]), -1.0f, 1.0f));
+            sum += angle * angle;
+        }
+        best = std::max(best, std::exp(-sum / 0.1f));
+    }
+    return best;
 }
 
 void TrackingGetUpPostureProbe3D::setIdlePose(std::span<const PhysicsBodyState3D> links) {
     m_idle.clear();
+    m_idleSpine.clear();
     addIdlePose(links);
 }
 
@@ -105,6 +135,8 @@ void TrackingGetUpPostureProbe3D::addIdlePose(std::span<const PhysicsBodyState3D
             pose[i] = (links[static_cast<std::size_t>(parent)].orientation.conjugate() * links[i].orientation).normalized();
     }
     m_idle.push_back(std::move(pose));
+    m_idleSpine.emplace_back();
+    spineAxes(links, m_idleSpine.back());
 }
 
 float TrackingGetUpPostureProbe3D::idlePoseMatch(std::span<const PhysicsBodyState3D> links) const {

@@ -48,9 +48,11 @@ public:
 
     [[nodiscard]] TrackingGetUpPosture3D measure(std::span<const PhysicsBodyState3D> links) const;
     // A nota de estado da tarefa: so de pe, 0,3 mais o centro de massa parado no chao 0,1 (exp(-2 v^2)) mais a pose do
-    // parado 0,6 (31/10 07h50, ele: de pe "nao tem referencia da pose do parado idle" - a cabeca ia para tras e o peito
-    // arqueava; 21h25: "reforcar... que quando de pe fique o mais proximo possivel do nosso idle alerta"; era 0,5 + 0,2
-    // + 0,3). Sem a pose do parado dada, a parte dela vale 1.
+    // parado 0,35 e a coluna reta 0,25 (31/10 07h50, ele: de pe "nao tem referencia da pose do parado idle" - a cabeca
+    // ia para tras e o peito arqueava; 21h25: "reforcar... que quando de pe fique o mais proximo possivel do nosso idle
+    // alerta", 0,6 so na pose; 22h45: "ficar com a coluna reta, a postura mais correta do IDLE alerta... o clipe
+    // original e torto" - a pose das juntas nao ve a pelve, e de pe o tronco inteiro inclinava ~7 graus de lado, o alto
+    // do peito, o pescoco e a cabeca ~10). Sem a pose do parado dada, as partes dela valem 1.
     [[nodiscard]] float standingReward(const TrackingGetUpPosture3D& posture,
         std::span<const PhysicsBodyState3D> links) const;
     // As poses do parado (um quadro de cada clipe parado; 31/10 18h, ele: o padrao de ficar de pe e o parado em alerta,
@@ -61,6 +63,10 @@ public:
     // da gradiente longe (o -2 do DeepMimic sozinho dava 0,007 na pose de 07h50, soma 2,5) - e metade exp(-2 soma), o
     // estreito, que segue puxando perto (21h25: a soma media 1,26, o largo ja dava 0,57). 1 igual.
     [[nodiscard]] float idlePoseMatch(std::span<const PhysicsBodyState3D> links) const;
+    // A coluna como a do parado mais proximo (o parado em alerta do clipe, reto de lado desde 23/10): o eixo de cima da
+    // pelve, do abdomen, do peito, do alto do peito, do pescoco e da cabeca no referencial do rumo da pelve, exp(-soma
+    // dos angulos^2 / 0,1) (~10 graus em cada elo da 0,18; 5, 0,63; 2, 0,93). 1 igual.
+    [[nodiscard]] float idleSpineMatch(std::span<const PhysicsBodyState3D> links) const;
     // O potencial da subida (31/10 07h: como nota de estado - a cabeca subindo 0,6 e a pelve em pe 0,2 -, ele assentava
     // sentado ou ajoelhado em 1 s e colhia ~0,4 por passo ate o fim; como potencial, a subida paga ao subir, a descida
     // devolve e ficar parado no meio nao rende): 30 x (0,6 a cabeca subindo de 0,15 a 1,5 m + 0,2 a pelve em pe).
@@ -76,6 +82,9 @@ private:
     std::uint32_t m_head = 0;
     std::uint32_t m_chest = 0;
     std::vector<std::vector<Quaternion>> m_idle;
+    std::vector<std::uint32_t> m_spine;
+    std::vector<std::vector<Vec3>> m_idleSpine;
+    void spineAxes(std::span<const PhysicsBodyState3D> links, std::vector<Vec3>& out) const;
 };
 
 } // namespace MatterEngine

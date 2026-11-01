@@ -173,9 +173,11 @@ def summarize(rows: np.ndarray, prefix: str) -> dict:
         if turn.any() and rows.shape[1] > 16:
             out[f"{prefix}rumo"] = float(rows[turn, 16].mean())
         if rows.shape[1] > 15:
-            # (A pose de pe no fim, perto do parado em alerta: os que terminaram de pe.)
+            # (A pose de pe no fim, perto do parado em alerta, e a coluna como a dele: os que terminaram de pe.)
             up = rows[:, 9] > 0.5
             out[f"{prefix}pose"] = float(rows[up, 15].mean()) if up.any() else None
+            if rows.shape[1] > 17:
+                out[f"{prefix}coluna"] = float(rows[up, 17].mean()) if up.any() else None
         avoid = rows[:, 1] == 4
         if avoid.any():
             ok = avoid & (rows[:, 14] >= 0)
@@ -310,11 +312,13 @@ def main() -> int:
     parser.add_argument("--andar", type=float, default=1.0 / 3.0, help="nos rumos, a fatia do andar (o resto trota)")
     parser.add_argument("--andar-velocidade", type=float, nargs=2, default=[0.8, 1.4], help="(m/s)")
     parser.add_argument("--trote-velocidade", type=float, nargs=2, default=[2.0, 3.0], help="(m/s)")
-    parser.add_argument("--empurrao-mov-forca", type=float, nargs=2, default=[300.0, 600.0],
-                        help="os empurroes curtos em movimento (N; os rumos e o giro)")
+    # (22h45, ele: "por hora tira os empurroes - so vai entrar depois que ele estiver se locomovendo bem": 0 0 nas duas
+    # faixas, sem empurrao; a regua do comeco do B21 e 300 600 e 100 180.)
+    parser.add_argument("--empurrao-mov-forca", type=float, nargs=2, default=[0.0, 0.0],
+                        help="os empurroes curtos em movimento (N; os rumos e o giro; 0 0: sem)")
     parser.add_argument("--empurrao-mov-continuo", type=float, default=0.3, help="a fatia continua deles")
-    parser.add_argument("--empurrao-mov-continuo-forca", type=float, nargs=2, default=[100.0, 180.0],
-                        help="(N, por 1-2 s)")
+    parser.add_argument("--empurrao-mov-continuo-forca", type=float, nargs=2, default=[0.0, 0.0],
+                        help="(N, por 1-2 s; 0 0: sem)")
     parser.add_argument("--arrancada", type=float, default=0.0,
                         help="a fatia que comeca na arrancada agachada (crouched_to_sprint) virado para um alvo")
     args = parser.parse_args()
@@ -368,12 +372,14 @@ def main() -> int:
     # (O equilibrio parado: 32 de pe, um empurrao cada com a regua do parado com empurrao forte do B21.)
     evaluations["equil_"] = native.GetUpAmpBatch(str(REPO / "assets"), environments=32, threads=1, seed=555,
                                                  evaluation=True, evaluation_kind=3, **v2)
-    # (A locomocao, com a regua fixa - nao a do treino, que sobe: os rumos a 2,5 m/s e os empurroes em movimento do
-    # comeco do B21, um por episodio. 32 nos rumos, 4 por rumo; 8 no giro, metade para cada lado; 8 parados, sem
-    # empurrao.)
+    # (A locomocao, com a regua fixa - nao a do treino, que sobe: os rumos a 2,5 m/s e, quando o treino tem empurroes em
+    # movimento, os do comeco do B21, um por episodio. 32 nos rumos, 4 por rumo; 8 no giro, metade para cada lado; 8
+    # parados, sem empurrao.)
     if args.locomocao > 0 or args.giro > 0:
-        ruler = dict(v2, trot_speed=(2.5, 2.5), moving_push_newtons=(300.0, 600.0), moving_push_hold_fraction=0.3,
-                     moving_push_hold_newtons=(100.0, 180.0))
+        moving = max(args.empurrao_mov_forca) > 0 or max(args.empurrao_mov_continuo_forca) > 0
+        ruler = dict(v2, trot_speed=(2.5, 2.5), moving_push_newtons=(300.0, 600.0) if moving else (0.0, 0.0),
+                     moving_push_hold_fraction=0.3,
+                     moving_push_hold_newtons=(100.0, 180.0) if moving else (0.0, 0.0))
         evaluations["loco_"] = native.GetUpAmpBatch(str(REPO / "assets"), environments=32, threads=1, seed=444,
                                                     evaluation=True, evaluation_kind=4, **ruler)
         evaluations["giro_"] = native.GetUpAmpBatch(str(REPO / "assets"), environments=8, threads=1, seed=333,
@@ -552,7 +558,7 @@ def main() -> int:
         counters["amostras"] += T * n
         counters["episodios"] += len(episodes)
         if counters["atualizacao"] % 20 == 0:
-            recent = np.array(window) if window else np.zeros((0, 17))
+            recent = np.array(window) if window else np.zeros((0, 18))
             row = {"atualizacao": counters["atualizacao"], "amostras": counters["amostras"], "hora": time.time(),
                    "tarefa": float(buf["task"].mean()), "estilo": float(style.mean()), "tranco": float(buf["jerk"].mean()),
                    "desvio": float(model.log_std.detach().clamp(LOG_STD_MIN, LOG_STD_MAX).exp().mean()),

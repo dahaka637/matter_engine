@@ -380,8 +380,9 @@ struct TrackingGetUpAmpTraining3D::Impl {
     void maybePush(World& w, const TrackingGetUpPosture3D& posture) {
         const bool balanceTest = settings.evaluation && settings.evaluationKind == 3;
         const bool movingTest = settings.evaluation && w.locomotion;
+        const bool movingPushes = settings.movingPushMaximumNewtons > 0.0f || settings.movingPushHoldMaximumNewtons > 0.0f;
         if ((settings.evaluation && !balanceTest && !movingTest) || (w.startKind >= 3 && !w.locomotion)
-            || w.stoodAt < 0.0f || !posture.standing || w.pushTicks > 0)
+            || (w.locomotion && !movingPushes) || w.stoodAt < 0.0f || !posture.standing || w.pushTicks > 0)
             return;
         std::uniform_real_distribution<float> u(0.0f, 1.0f);
         if (w.nextPushAt < 0.0f) {
@@ -575,6 +576,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
             episode.fellAfterStanding = w.fellAfterStanding;
             episode.recomposedSeconds = w.recomposedAt >= 0.0f ? w.recomposedAt - w.avoidEnd : -1.0f;
             episode.endPoseMatch = now.standing ? posture->idlePoseMatch(w.body->links) : 0.0f;
+            episode.endSpineMatch = now.standing ? posture->idleSpineMatch(w.body->links) : 0.0f;
             episode.meanFaceError = w.faceErrorSamples
                 ? static_cast<float>(w.faceErrorSum / w.faceErrorSamples) * 180.0f / Pi : 0.0f;
             {
