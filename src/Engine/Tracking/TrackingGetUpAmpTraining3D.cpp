@@ -900,7 +900,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
             if (t < 0.0f) t += duration;
             const Vec3 root = w.body->links[rootLink].position;
             reference.frame(t, { root.x, root.y, 0.0f }, w.trackYaw, w.frame);
-            state += settings.imitationWeight * contract->reward(w.body->links, w.frame).total;
+            state += settings.imitationWeight * contract->reward(w.body->links, w.frame, 4.0f).total;
         }
         // (O gamma do treinador, 0,99, no potencial.)
         reward = state + 0.99f * (posture->risePotential(now) + posture->turnPotential(now) + facePotential(w, now)) - before;

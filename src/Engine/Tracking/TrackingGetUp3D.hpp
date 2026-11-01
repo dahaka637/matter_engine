@@ -65,7 +65,13 @@ public:
     struct Terms {
         float pose = 0.0f, velocity = 0.0f, endEffector = 0.0f, centerOfMass = 0.0f, total = 0.0f;
     };
-    [[nodiscard]] Terms reward(std::span<const PhysicsBodyState3D> body, const TrackingClipFrame3D& reference) const;
+    [[nodiscard]] Terms reward(std::span<const PhysicsBodyState3D> body, const TrackingClipFrame3D& reference) const {
+        return reward(body, reference, 1.0f);
+    }
+    // Com os nucleos divididos por softness (01/11, a imitacao da locomocao da rl_final: longe do clipe a nota do
+    // DeepMimic quase zera e nao da direcao; softness 4 deixa as quatro parcelas 4 vezes mais largas).
+    [[nodiscard]] Terms reward(std::span<const PhysicsBodyState3D> body, const TrackingClipFrame3D& reference,
+        float softness) const;
 
     [[nodiscard]] std::uint32_t headLink() const { return m_head; }
     [[nodiscard]] std::uint32_t rootLink() const { return m_root; }

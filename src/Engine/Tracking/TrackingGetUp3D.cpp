@@ -177,7 +177,8 @@ std::vector<std::string> TrackingGetUpContract3D::groundObservationNames() {
 }
 
 TrackingGetUpContract3D::Terms TrackingGetUpContract3D::reward(std::span<const PhysicsBodyState3D> body,
-    const TrackingClipFrame3D& reference) const {
+    const TrackingClipFrame3D& reference, float softness) const {
+    const double k = 1.0 / std::max(1.0e-3f, softness);
     const RagdollProfile3D& profile = *m_profile;
     const std::span<const PhysicsBodyState3D> ref(reference.links);
     Terms terms;
@@ -190,10 +191,10 @@ TrackingGetUpContract3D::Terms TrackingGetUpContract3D::reward(std::span<const P
     for (std::uint32_t e : m_endEffectors)
         end += (rlLinkCenterOfMass3D(profile.links[e], ref[e]) - rlLinkCenterOfMass3D(profile.links[e], body[e])).lengthSquared();
     const Vec3 com = rlBodyCenterOfMass3D(profile, body);
-    terms.pose = static_cast<float>(std::exp(-2.0 * pose));
-    terms.velocity = static_cast<float>(std::exp(-0.1 * velocity));
-    terms.endEffector = static_cast<float>(std::exp(-40.0 * end));
-    terms.centerOfMass = std::exp(-10.0f * (reference.centerOfMass - com).lengthSquared());
+    terms.pose = static_cast<float>(std::exp(-2.0 * k * pose));
+    terms.velocity = static_cast<float>(std::exp(-0.1 * k * velocity));
+    terms.endEffector = static_cast<float>(std::exp(-40.0 * k * end));
+    terms.centerOfMass = static_cast<float>(std::exp(-10.0 * k * (reference.centerOfMass - com).lengthSquared()));
     terms.total = 0.65f * terms.pose + 0.1f * terms.velocity + 0.15f * terms.endEffector + 0.1f * terms.centerOfMass;
     return terms;
 }
