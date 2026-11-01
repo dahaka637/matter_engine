@@ -100,6 +100,14 @@ struct TrackingGetUpAmpSettings3D {
     // Na avaliacao dos rumos, a faixa (-1: o meio do trote nos 8 rumos, como antes; 0 andar, 1 trote, 2 corrida, 3
     // sprint: para a frente, de pe no parado em alerta, na velocidade do primeiro clipe da faixa).
     int evaluationBand = -1;
+    // A rampa da velocidade com pedido ate a pedida: (feita/pedida) elevado a isto (0,5, a raiz: um passo pequeno ja
+    // vale; 1, linear: mais ganho de 2 para 4 m/s num pedido de 6 - a rl_final, 01/11 09h30, o plato das faixas altas).
+    float speedRampPower = 0.5f;
+    // A imitacao do clipe do passo na locomocao (01/11 14h50, ele: "o movimento dele no andar/trote e bem diferente do
+    // clipe... so passinhos curtinhos e ele torto... uma solucao rapida que corrija isso, depois voltamos a soltar"): a
+    // nota do DeepMimic (TrackingGetUpContract3D::reward) contra o quadro do clipe do passo pedido, no tempo dele desde o
+    // comeco (em ciclo), alinhado a posicao e ao rumo do corpo, vezes este peso, somada a nota de estado. 0: desligada.
+    float imitationWeight = 0.0f;
     // A troca de rede ao ficar de pe (01/11, ele: o levantar volta a ser so levantar e evitar quedas, "fazendo a troca
     // de RL no momento que recem fica de pe"): o episodio acaba (truncado, como o fim do tempo) quando ele fica de pe e
     // firme por 0,5 s - o mesmo da entrega no jogo - depois de ter estado no chao ou, no evitar a queda, do empurrao.

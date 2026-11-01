@@ -419,6 +419,10 @@ def main() -> int:
     parser.add_argument("--suave-loco", type=float, default=None, help="o peso do custo do tranco na locomocao")
     parser.add_argument("--passo", type=float, default=0.0,
                         help="o premio do passo (o tempo no ar de cada pe que pousa, com o pedido de deslocamento)")
+    parser.add_argument("--imitacao", type=float, default=0.0,
+                        help="na locomocao, o peso da imitacao do clipe do passo pedido (DeepMimic; 0: sem)")
+    parser.add_argument("--rampa-velocidade", type=float, default=0.5,
+                        help="a rampa da velocidade ate a pedida: (feita/pedida)^isto (0,5 a raiz; 1 linear)")
     args = parser.parse_args()
     if args.peso_tarefa_loco is None:
         args.peso_tarefa_loco = args.peso_tarefa
@@ -486,7 +490,10 @@ def main() -> int:
                                  obstacle_fraction=args.obstaculo, weight_fraction=args.peso_em_cima,
                                  run_fraction=args.corrida, sprint_fraction=args.sprint,
                                  locomotion_clip_fraction=args.locomocao_clipe,
-                                 command_change=tuple(args.troca_pedido), step_reward=args.passo, **v2)
+                                 command_change=tuple(args.troca_pedido), step_reward=args.passo,
+                                 **({"speed_ramp_power": args.rampa_velocidade} if args.rampa_velocidade != 0.5 else {}),
+                                 **({"imitation_weight": args.imitacao} if args.imitacao > 0 else {}),
+                                 **v2)
     # (31/10 23h40, ele: "verifica se... nao conseguimos mais decisoes por segundo": as avaliacoes numa thread so paravam
     # o treino ~21 s a cada 50 atualizacoes, 13% do tempo; com as threads do treino, as que esperam ficam paradas.)
     eval_threads = args.threads
