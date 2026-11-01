@@ -339,7 +339,7 @@ NB_MODULE(matter_tracking_native, m) {
                 std::array<float, 2> pushHoldNewtons, float locomotionFraction, float turnFraction, float walkFraction,
                 std::array<float, 2> walkSpeed, std::array<float, 2> trotSpeed, int heading,
                 std::array<float, 2> movingPushNewtons, float movingPushHoldFraction,
-                std::array<float, 2> movingPushHoldNewtons) {
+                std::array<float, 2> movingPushHoldNewtons, float stepReward) {
                 TrackingGetUpAmpSettings3D settings;
                 settings.assetsDirectory = assets;
                 settings.environments = environments;
@@ -375,6 +375,7 @@ NB_MODULE(matter_tracking_native, m) {
                 settings.movingPushHoldFraction = movingPushHoldFraction;
                 settings.movingPushHoldMinimumNewtons = movingPushHoldNewtons[0];
                 settings.movingPushHoldMaximumNewtons = movingPushHoldNewtons[1];
+                settings.stepReward = stepReward;
                 nb::gil_scoped_release release;
                 new (self) TrackingGetUpAmpTraining3D(settings);
             },
@@ -388,7 +389,8 @@ NB_MODULE(matter_tracking_native, m) {
             "locomotion_fraction"_a = 0.0f, "turn_fraction"_a = 0.0f, "walk_fraction"_a = 1.0f / 3.0f,
             "walk_speed"_a = std::array<float, 2> { 0.8f, 1.4f }, "trot_speed"_a = std::array<float, 2> { 2.0f, 3.0f },
             "heading"_a = -1, "moving_push_newtons"_a = std::array<float, 2> { 300.0f, 600.0f },
-            "moving_push_hold_fraction"_a = 0.3f, "moving_push_hold_newtons"_a = std::array<float, 2> { 100.0f, 180.0f })
+            "moving_push_hold_fraction"_a = 0.3f, "moving_push_hold_newtons"_a = std::array<float, 2> { 100.0f, 180.0f },
+            "step_reward"_a = 0.0f)
         .def_prop_ro("num_envs", &TrackingGetUpAmpTraining3D::environmentCount)
         .def_prop_ro("obs_size", &TrackingGetUpAmpTraining3D::observationSize)
         .def_prop_ro("action_size", &TrackingGetUpAmpTraining3D::actionSize)

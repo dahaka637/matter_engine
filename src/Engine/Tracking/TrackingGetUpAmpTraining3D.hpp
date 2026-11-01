@@ -76,6 +76,10 @@ struct TrackingGetUpAmpSettings3D {
     float movingPushHoldFraction = 0.3f;
     float movingPushHoldMinimumNewtons = 100.0f;
     float movingPushHoldMaximumNewtons = 180.0f;
+    // O premio do passo (01/11, ele: "nenhum passo ate agora"; o feet air time de Rudin et al. 2021, "Learning to Walk
+    // in Minutes"): com o pedido de deslocamento, de pe, a cada pe que pousa, este peso vezes o tempo no ar (ate 0,5 s)
+    // menos 0,15 s - passo de verdade ganha, arrastar perde. 0: desligado.
+    float stepReward = 0.0f;
     // Na avaliacao, o que se mede: 0 as quedas (o levantar), 1 o levantar em movimento, 2 o evitar a queda, 3 o
     // equilibrio parado (de pe, um empurrao com a regua do parado com empurrao forte do B21: o curto de 900-1200 N ou,
     // em 30%, o continuo de 205-275 N por 1-3 s), 4 os rumos (de pe, no meio do trote, mantendo o rumo do corpo, um

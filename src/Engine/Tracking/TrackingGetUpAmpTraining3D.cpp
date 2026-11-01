@@ -90,6 +90,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
     std::unique_ptr<TrackingGetUpPostureProbe3D> posture;
     std::vector<std::string> observationNames;
     std::uint32_t rootLink = 0;
+    std::uint32_t footLinks[2] { 0, 0 };
     // As partes que podem tocar o chao sem contar como caido: as pernas e os bracos (nao o tronco, o pescoco e a cabeca).
     std::vector<bool> allowedContact;
     std::uint32_t workers = 1;
@@ -150,6 +151,9 @@ struct TrackingGetUpAmpTraining3D::Impl {
         float pauseUntil = -1.0f;
         double faceErrorSum = 0.0;
         std::uint32_t faceErrorSamples = 0;
+        // O premio do passo: o tempo no ar de cada pe (s) e se ele estava no chao.
+        float footAir[2] { 0.0f, 0.0f };
+        bool footDown[2] { true, true };
         std::uint32_t index = 0;
     };
     std::vector<World> worlds;
@@ -339,6 +343,8 @@ struct TrackingGetUpAmpTraining3D::Impl {
         w.pauseUntil = -1.0f;
         w.faceErrorSum = 0.0;
         w.faceErrorSamples = 0;
+        w.footAir[0] = w.footAir[1] = 0.0f;
+        w.footDown[0] = w.footDown[1] = true;
         w.startKind = kind;
         if (kind == 0 || kind == 3) beginFall(w);
         else if (kind == 5) beginSprintStart(w);
@@ -556,12 +562,25 @@ struct TrackingGetUpAmpTraining3D::Impl {
         // (Parado com rumo pedido: a nota do parado 0,7 e o rumo do corpo 0,3, de pe. A coluna so quieto: sem empurrao e
         // 1 s depois do ultimo.)
         const bool quiet = w.pushTicks == 0 && w.time >= w.lastPushEnd + 1.0f;
-        const float state = w.commandSpeed > 0.0f ? moveReward(w, now)
+        float state = w.commandSpeed > 0.0f ? moveReward(w, now)
             : w.locomotion ? 0.7f * posture->standingReward(now, w.body->links, quiet) + (now.standing ? 0.3f * facing(w) : 0.0f)
                            : posture->standingReward(now, w.body->links, quiet);
         if (w.locomotion && now.standing) {
             w.faceErrorSum += std::abs(wrapAngle(faceDirection(w) - bodyYaw(w)));
             ++w.faceErrorSamples;
+        }
+        // O premio do passo (com o pedido de deslocamento, de pe): cada pe que pousa depois de um tempo no ar.
+        if (settings.stepReward > 0.0f) {
+            float steps = 0.0f;
+            for (int f = 0; f < 2; ++f) {
+                const bool down = std::any_of(w.body->contacts.begin(), w.body->contacts.end(),
+                    [&](const RagdollContactPoint3D& c) { return c.linkIndex == footLinks[f]; });
+                if (down && !w.footDown[f] && w.commandSpeed > 0.0f && now.standing)
+                    steps += std::min(w.footAir[f], 0.5f) - 0.15f;
+                w.footAir[f] = down ? 0.0f : w.footAir[f] + TicksPerDecision * TickSeconds;
+                w.footDown[f] = down;
+            }
+            state += settings.stepReward * steps;
         }
         // (O gamma do treinador, 0,99, no potencial.)
         reward = state + 0.99f * (posture->risePotential(now) + posture->turnPotential(now) + facePotential(w, now)) - before;
@@ -672,6 +691,8 @@ TrackingGetUpAmpTraining3D::TrackingGetUpAmpTraining3D(const TrackingGetUpAmpSet
     for (std::size_t i = 0; i < impl.profile->links.size(); ++i) {
         if (impl.profile->links[i].parentIndex < 0) impl.rootLink = static_cast<std::uint32_t>(i);
         const std::string& id = impl.profile->links[i].id;
+        if (id == "LeftFoot") impl.footLinks[0] = static_cast<std::uint32_t>(i);
+        if (id == "RightFoot") impl.footLinks[1] = static_cast<std::uint32_t>(i);
         impl.allowedContact.push_back(id != "Pelvis" && id != "Abdomen" && id != "Chest" && id != "UpperChest"
             && id != "Neck" && id != "Head");
     }
