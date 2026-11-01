@@ -999,7 +999,10 @@ struct TrackingGetUpAmpTraining3D::Impl {
                 // quietas: a estabilidade, o equilibrio e a quietude que ele pediu.)
                 double spin = 0.0;
                 for (const PhysicsBodyState3D& link : w.body->links) spin += link.angularVelocity.lengthSquared();
-                const float still = std::exp(-25.0f * (v.x * v.x + v.y * v.y))
+                // (01/11 20h20: no parado ele girava devagar sobre os pes - meia volta em 10 s; a quietude tambem
+                // exige o rumo do idle.)
+                const float turn = wrapAngle(bodyYaw(w) - w.trackYaw);
+                const float still = std::exp(-25.0f * (v.x * v.x + v.y * v.y)) * std::exp(-4.0f * turn * turn)
                     * static_cast<float>(std::exp(-0.02 * spin / std::max<std::size_t>(1, w.body->links.size())));
                 state += settings.imitationWeight * (contract->reward(w.body->links, w.frame, 4.0f).total + 0.5f * still);
             } else {
