@@ -11,6 +11,7 @@
 #include "Engine/Tracking/TrackingScene3D.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 #include <mutex>
@@ -72,8 +73,10 @@ struct TrackingGetUpAmpTraining3D::Impl {
     // da corrida, os comecos do tipo 5 (o RSI do DeepMimic/AMP: ele vive os estados de corrida e aprende a seguir).
     std::size_t sprintStartIndex = std::numeric_limits<std::size_t>::max();
     std::vector<std::size_t> runStartIndices;
-    // Os clipes do trote por rumo (os 8), quando carregados.
+    // Os clipes do trote por rumo (os 8) e os do andar (a frente, a esquerda, de costas e a direita; as diagonais nao
+    // tem), quando carregados.
     std::vector<std::size_t> headingIndices;
+    std::array<std::size_t, 8> walkIndices;
     // A velocidade de deslocamento que falta aos clipes no lugar (os pares do discriminador): constante (corrida) ou
     // em rampa desde zero (a arrancada, com o deslocamento da fonte), para a frente do clipe.
     struct Travel {
@@ -239,8 +242,9 @@ struct TrackingGetUpAmpTraining3D::Impl {
 
     // Um rumo (os basicos do B21 nesta rede, 31/10 22h35): andar ou trotar no rumo pedido (em relacao ao rumo do comeco)
     // mantendo o rumo do corpo, de pe no parado em alerta ou, em metade dos trotes do treino, ja no clipe de trote do
-    // rumo, na velocidade dele (o RSI). Em 20% do treino o pedido para no meio, de 2 a 5 s (o soltar do direcional do
-    // B21: frear e ficar parado no rumo).
+    // rumo, na velocidade dele (o RSI; 22h55, tambem metade dos andares, nos rumos com clipe de andar: ele freava os
+    // comecos em movimento e ficava parado). Em 20% do treino o pedido para no meio, de 2 a 5 s (o soltar do direcional
+    // do B21: frear e ficar parado no rumo).
     void beginHeading(World& w) {
         std::uniform_real_distribution<float> u(0.0f, 1.0f);
         w.heading = settings.heading >= 0 ? static_cast<std::uint32_t>(settings.heading) % 8u
@@ -250,8 +254,9 @@ struct TrackingGetUpAmpTraining3D::Impl {
         w.commandSpeed = settings.evaluation ? 0.5f * (settings.trotMinimumSpeed + settings.trotMaximumSpeed)
             : walk ? settings.walkMinimumSpeed + (settings.walkMaximumSpeed - settings.walkMinimumSpeed) * u(w.rng)
                    : settings.trotMinimumSpeed + (settings.trotMaximumSpeed - settings.trotMinimumSpeed) * u(w.rng);
-        if (!settings.evaluation && !walk && headingIndices.size() == 8 && u(w.rng) < 0.5f) {
-            const std::size_t clip = headingIndices[w.heading];
+        const std::size_t clip = walk ? walkIndices[w.heading]
+            : headingIndices.size() == 8 ? headingIndices[w.heading] : std::numeric_limits<std::size_t>::max();
+        if (!settings.evaluation && clip < references.size() && u(w.rng) < 0.5f) {
             const float yaw = (2.0f * u(w.rng) - 1.0f) * Pi;
             references[clip]->frame(u(w.rng) * references[clip]->durationSeconds(), {}, yaw, w.frame);
             const Travel& run = travel[clip];
@@ -489,8 +494,8 @@ struct TrackingGetUpAmpTraining3D::Impl {
         return 5.0f * rise * facing(w);
     }
 
-    // A nota de estado com o pedido de ir ao alvo, so de pe: a velocidade rumo ao alvo 0,5, virado para ele 0,3 e sem
-    // andar de lado 0,2. (31/10 18h: a velocidade era exp(-(v - pedida)^2), que nao dava gradiente parado - pedindo
+    // A nota de estado com o pedido de ir ao alvo, so de pe: a velocidade rumo ao alvo 0,6 e, na proporcao dela, virado
+    // para ele 0,25 e sem andar de lado 0,15 (eram 0,5, 0,3 e 0,2 inteiros). (31/10 18h: a velocidade era exp(-(v - pedida)^2), que nao dava gradiente parado - pedindo
     // 2,5-5 m/s, parado ou a 1 m/s dava ~0 - e em 250 atualizacoes ele ficou parado virado para o alvo. Agora uma rampa:
     // 0 parado, 1 na pedida, caindo acima dela e negativa se afasta.)
     // (Nos rumos, o rumo do corpo e o do comeco: andar e trotar de costas e de lado sem virar para a direcao.)
@@ -504,7 +509,12 @@ struct TrackingGetUpAmpTraining3D::Impl {
         ++w.towardSamples;
         const float ratio = along / w.commandSpeed;
         const float speed = ratio <= 1.0f ? std::max(-1.0f, ratio) : std::max(0.0f, 2.0f - ratio);
-        return 0.5f * speed + 0.3f * facing(w) + 0.2f * std::exp(-across * across);
+        // (22h55, ele: "garantir que ele consiga ter o estimulo para se mover, e nao ficar apenas parado": parado com o
+        // pedido, o rumo e o sem andar de lado davam 0,5 de 1 - nos rumos a velocidade caia, 0,136 -> 0,098 m/s em 160
+        // atualizacoes, e no levantar em movimento ficou ~0 por horas. Agora a velocidade 0,6 e os outros dois na
+        // proporcao dela: parado com o pedido vale 0, na pedida 1.)
+        const float progress = std::clamp(ratio, 0.0f, 1.0f);
+        return 0.6f * speed + progress * (0.25f * facing(w) + 0.15f * std::exp(-across * across));
     }
 
     void decide(World& w, std::size_t index, std::span<const float> action, float& reward, std::uint8_t& terminated,
@@ -593,6 +603,7 @@ TrackingGetUpAmpTraining3D::TrackingGetUpAmpTraining3D(const TrackingGetUpAmpSet
     : m_impl(std::make_unique<Impl>()) {
     Impl& impl = *m_impl;
     impl.settings = settings;
+    impl.walkIndices.fill(std::numeric_limits<std::size_t>::max());
     impl.bundle = AthleteBundle3D::shared(settings.assetsDirectory);
     impl.profile = &impl.bundle->profile();
     std::vector<std::string> names(std::begin(GetUpClips), std::end(GetUpClips));
@@ -618,6 +629,10 @@ TrackingGetUpAmpTraining3D::TrackingGetUpAmpTraining3D(const TrackingGetUpAmpSet
             impl.runStartIndices.push_back(impl.references.size() - 1);
         const bool heading = std::find(std::begin(HeadingClips), std::end(HeadingClips), name) != std::end(HeadingClips);
         if (heading) impl.headingIndices.push_back(impl.references.size() - 1);
+        constexpr std::pair<const char*, std::size_t> Walks[4] { { "ual_walk", 0 }, { "walk_strafe_left", 2 },
+            { "walk_backward", 4 }, { "walk_strafe_right", 6 } };
+        for (const auto& [walkName, walkHeading] : Walks)
+            if (name == walkName) impl.walkIndices[walkHeading] = impl.references.size() - 1;
         Impl::Travel travel;
         const AnimationClip3D& clip = *impl.clips.back();
         travel.direction = clip.travelDirectionRadians;
