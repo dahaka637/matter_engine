@@ -900,7 +900,12 @@ struct TrackingGetUpAmpTraining3D::Impl {
             if (t < 0.0f) t += duration;
             const Vec3 root = w.body->links[rootLink].position;
             reference.frame(t, { root.x, root.y, 0.0f }, w.trackYaw, w.frame);
-            state += settings.imitationWeight * contract->reward(w.body->links, w.frame, 4.0f).total;
+            // (01/11 17h: o quadro vem na posicao do corpo, entao imitar parado pagava - o sprint caiu de 2,0 para
+            // 0,3 m/s. A imitacao vale na proporcao da velocidade feita sobre a pedida, no rumo pedido.)
+            const Vec3 v = rlBodyCenterOfMassVelocity3D(*profile, w.body->links);
+            const float toward = moveDirection(w);
+            const float progress = std::clamp((v.x * std::cos(toward) + v.y * std::sin(toward)) / w.commandSpeed, 0.0f, 1.0f);
+            state += settings.imitationWeight * progress * contract->reward(w.body->links, w.frame, 4.0f).total;
         }
         // (O gamma do treinador, 0,99, no potencial.)
         reward = state + 0.99f * (posture->risePotential(now) + posture->turnPotential(now) + facePotential(w, now)) - before;
