@@ -140,7 +140,8 @@ std::vector<std::array<const char*, 2>> getUpDrillList() {
     // da locomocao eram as do B21, fora de uso; ele: "parece meio cagado... acho dispensavel": so fora da rl_final.)
     if (!TrackingViewer3D::getUpLocomotion()) list.push_back({ TrackingViewer3D::LocomotionFallDrill, "Quedas da locomoção" });
     if (TrackingViewer3D::getUpLocomotion()) {
-        constexpr std::size_t Order[12] { 8, 9, 10, 11, 0, 1, 2, 3, 4, 5, 6, 7 };
+        // (Sem o andar: o jogo so usa trote, corrida e sprint - ele, 01/11 19h.)
+        constexpr std::size_t Order[11] { 9, 10, 11, 0, 1, 2, 3, 4, 5, 6, 7 };
         for (std::size_t k : Order) list.push_back({ TrackingViewer3D::LocomotionDrills[k], LocomotionNames[k] });
     }
     return list;

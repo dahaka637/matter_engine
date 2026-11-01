@@ -242,8 +242,9 @@ public:
     // do andar e do giro parado, so o estilo.
     static constexpr const char* HeadingClips[8] { "trot_forward", "trot_forward_left", "jog_strafe_left",
         "trot_backward_left", "trot_backward", "trot_backward_right", "jog_strafe_right", "trot_forward_right" };
-    static constexpr const char* LocomotionStyleClips[6] { "ual_walk", "walk_backward", "walk_strafe_left",
-        "walk_strafe_right", "turn_left", "turn_right" };
+    // (01/11 19h, ele: "por que temos um exercicio de andar, sendo que nao usamos andar no jogo? apenas trote, corrida e
+    // sprint": os clipes de andar sairam do estilo e dos passos; ficam os giros parados.)
+    static constexpr const char* LocomotionStyleClips[2] { "turn_left", "turn_right" };
     // A rl_final: as quedas com protecao (01/11; ele: "quando ele via cair no chao tentasse se proteger... levando as
     // maos, joelhos, girando quadril, coluna"; o Kimodo e os tropecos da Mixamo, com os espelhos) - o estilo e, com o
     // evitar a queda ligado, metade dos comecos no clipe, num instante da queda, com a protecao valendo (como no evitar).

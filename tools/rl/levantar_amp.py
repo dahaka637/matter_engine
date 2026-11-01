@@ -530,7 +530,7 @@ def main() -> int:
                                                       evaluation=True, evaluation_kind=5, **ruler)
         # (A rl_final: cada faixa para a frente, de pe, na velocidade do clipe dela - andar 1,1, trote 2,6, corrida
         # 4,3 e sprint 6,0 m/s -, 16 mundos cada, sem empurrao.)
-        bands = [("andar_", 0), ("trote_", 1)] + ([("corrida_", 2)] if args.corrida > 0 else []) \
+        bands = ([("andar_", 0)] if args.andar > 0 else []) + [("trote_", 1)] + ([("corrida_", 2)] if args.corrida > 0 else []) \
             + ([("sprint_", 3)] if args.sprint > 0 else [])
         for prefix, band in bands:
             evaluations[prefix] = native.GetUpAmpBatch(
