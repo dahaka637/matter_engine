@@ -63,7 +63,7 @@ struct TrackingViewer3D::Impl {
     std::uint64_t seed = 1;
     std::vector<float> getUpObservation, getUpAction;
     // Qual avaliacao do levantar: 0 as quedas, 1 o levantar em movimento, 2 o evitar a queda, 3 o equilibrio parado,
-    // 4 um rumo (o do exercicio), 5 o parado, 6 o giro parado suave.
+    // 4 um rumo (o do exercicio), 5 o parado, 6 o giro parado suave, 7 as quedas da locomocao.
     std::uint32_t getUpKind = 0;
     std::string getUpDrill;
     void startGetUp() {
@@ -101,6 +101,27 @@ struct TrackingViewer3D::Impl {
                     s.movingPushHoldMaximumNewtons = 0.0f;
         }
         getUp = std::make_unique<TrackingGetUpAmpTraining3D>(s);
+        // (As quedas da locomocao: as 32 fixas da avaliacao do treino, que ele grava cruas - a posicao, a orientacao e
+        // as velocidades de cada link; sem o arquivo, as quedas sorteadas.)
+        if (getUpKind == 7) {
+            std::ifstream raw(getUpRun() / "quedas_locomocao_aval.f32", std::ios::binary);
+            std::vector<float> values;
+            for (float value; raw.read(reinterpret_cast<char*>(&value), sizeof value);) values.push_back(value);
+            const std::size_t links = getUp->profile().links.size();
+            std::vector<std::vector<PhysicsBodyState3D>> states(values.size() / (links * 13));
+            for (std::size_t i = 0; i < states.size(); ++i) {
+                states[i].resize(links);
+                for (std::size_t k = 0; k < links; ++k) {
+                    const float* d = values.data() + (i * links + k) * 13;
+                    states[i][k].position = { d[0], d[1], d[2] };
+                    states[i][k].orientation = Quaternion { d[3], d[4], d[5], d[6] };
+                    states[i][k].linearVelocity = { d[7], d[8], d[9] };
+                    states[i][k].angularVelocity = { d[10], d[11], d[12] };
+                }
+            }
+            getUp->setFallStarts(std::move(states));
+            getUp->reset(seed);
+        }
         getUpObservation.assign(getUp->observationSize(), 0.0f);
         getUpAction.assign(getUp->actionSize(), 0.0f);
         getUpFalls = getUpStood = 0;
@@ -377,6 +398,7 @@ TrackingViewer3D::TrackingViewer3D(const std::filesystem::path& assetsDirectory,
         impl.seed = seed;
         impl.getUpDrill = drill;
         impl.getUpKind = drill == MovingGetUpDrill ? 1u : drill == AvoidFallDrill ? 2u : drill == BalanceDrill ? 3u
+            : drill == LocomotionFallDrill                                                                      ? 7u
             : drill == LocomotionDrills[0]                                                                      ? 5u
             : drill == LocomotionDrills[1]                                                                      ? 6u
             : isLocomotionDrill(drill)                                                                          ? 4u
@@ -388,7 +410,7 @@ TrackingViewer3D::TrackingViewer3D(const std::filesystem::path& assetsDirectory,
 
 bool TrackingViewer3D::isGetUpDrill(const std::string& drill) {
     return drill == GetUpDrill || drill == MovingGetUpDrill || drill == AvoidFallDrill || drill == BalanceDrill
-        || isLocomotionDrill(drill);
+        || drill == LocomotionFallDrill || isLocomotionDrill(drill);
 }
 
 bool TrackingViewer3D::isGetUpTask(const std::filesystem::path& taskPath) {

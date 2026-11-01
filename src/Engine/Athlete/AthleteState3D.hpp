@@ -118,6 +118,12 @@ struct AthleteState3D {
     // ele esta deitado e assentado (s; < 0 espera depois de uma base ruim).
     AnimatedGetUp3D animatedGetUp;
     float animatedGetUpCalm = 0.0f;
+    // A entrega da rede do levantar ao classico (01/11; Athlete/Body/GetUpPolicy3D): quanto falta da passagem dos alvos
+    // dela aos do classico (s) e os ultimos dela.
+    struct GetUpHandoff {
+        float blendLeft = 0.0f;
+        std::vector<RagdollDriveTarget3D> drives;
+    } getUpHandoff;
     // A reescrita (R3): o corpo da classificacao de contatos, as regras de
     // troca de modo e o ultimo tick delas (a telemetria neutra: o que bateu,
     // a ultima troca e o motivo).

@@ -3,6 +3,7 @@
 #include "Engine/Athlete/AthleteAssets3D.hpp"
 #include "Engine/Athlete/AthleteRuntime3D.hpp"
 #include "Engine/Athlete/AthleteTelemetry3D.hpp"
+#include "Engine/Athlete/Body/GetUpPolicy3D.hpp"
 #include "Engine/Athlete/Training/LocomotionBatch3D.hpp"
 #include "Engine/RL/Commands/CommandPilot3D.hpp"
 
@@ -10,6 +11,7 @@
 #include <chrono>
 #include <cmath>
 #include <deque>
+#include <mutex>
 #include <random>
 #include <sstream>
 #include <stdexcept>
@@ -25,6 +27,10 @@ constexpr int TicksPerDecision = LocomotionContract3D::TicksPerDecision;
 // Um pouso conta depois de o pe ficar no ar ao menos isto (s); o pe apoiado
 // escorrega depois de 0,05 s no chao (sem o impacto do pouso).
 constexpr float TouchdownAirSeconds = 0.10f;
+// A interligacao das redes nas quedas (01/11): o tempo maximo da rede do levantar antes do recomeco de sempre (s).
+constexpr float GetUpRecoverySeconds = 8.0f;
+// As quedas guardadas para o treino do levantar entre duas leituras (takeFallStates).
+constexpr std::size_t MaximumFallStates = 512;
 constexpr int SlipAfterTicks = 6;
 // A meta de pouso da referencia vale para o pe no ar com o pouso ate isto a
 // frente (s).
@@ -136,6 +142,8 @@ const std::vector<std::string>& locomotionEpisodeColumns3D() {
                  "rastreio_fronteira" })
             for (std::size_t k = 0; k < LocomotionCommandCells3D; ++k)
                 c.push_back("cel" + std::string(k < 10 ? "0" : "") + std::to_string(k) + "." + field);
+        // (01/11: no fim, para nao mudar o lugar das outras.)
+        c.push_back("levantar_rede_s");
         return c;
     }();
     return columns;
@@ -155,6 +163,7 @@ std::vector<float> locomotionEpisodeRow3D(const LocomotionEpisode3D& e) {
     for (const auto* cells : { &e.cellDecisions, &e.cellCruise, &e.cellTracking, &e.cellError2, &e.cellAsked, &e.cellMade,
              &e.cellFrontierCruise, &e.cellFrontierTracking })
         row.insert(row.end(), cells->begin(), cells->end());
+    row.push_back(e.getUpSeconds);
     return row;
 }
 
@@ -173,6 +182,13 @@ struct LocomotionTraining3D::Impl {
     std::vector<std::vector<float>> bodyCapMax;
     std::vector<std::size_t> evaluationBodies;
     std::unique_ptr<LocomotionBatch3D> batch;
+    // A rede do levantar da interligacao nas quedas (vazia: o recomeco de sempre).
+    std::shared_ptr<const GetUpPolicy3D> getUpPolicy;
+    // As quedas da locomocao para o treino do levantar (01/11: a rede do levantar nao sabia levantar das quedas que
+    // esta rede faz - nos mundos daqui ela ficava de costas com uma perna no alto -; o corpo no instante de cada queda
+    // do treino, ate MaximumFallStates entre duas leituras).
+    std::mutex fallMutex;
+    std::vector<std::vector<PhysicsBodyState3D>> fallStates;
     LocomotionAuthority3D authority;
     // A virada brusca nos episodios novos (setTurnMoveMode).
     int turnMoveMode = 0;
@@ -303,6 +319,8 @@ struct LocomotionTraining3D::Impl {
         bool uncapped = false;
         float uprightSeconds = 0.0f;
         float stoodSeconds = -1.0f;
+        // A interligacao das redes (01/11): quantos segundos a rede do levantar levou antes deste episodio (-1: nao).
+        float getUpSeconds = -1.0f;
         // O instante candidato a comeco guardado (vira do banco se o corpo
         // sobreviver surviveSeconds) e o aceito nesta decisao (o lote junta).
         bool hasPending = false;
@@ -458,7 +476,9 @@ struct LocomotionTraining3D::Impl {
         return athleteStickCommand3D(stick, runtime, gaitSpeeds, scene.telemetry().terrainSpeedLimit);
     }
 
-    void startEpisode(std::size_t index) {
+    // (live: o corpo de agora, entregue de pe pela rede do levantar - sem sortear o corpo nem o comeco guardado e sem
+    // recomecar a fisica.)
+    void startEpisode(std::size_t index, bool live = false) {
         World& world = worlds[index];
         LocomotionWorld3D& scene = batch->world(index);
         world.drill = pickDrill(world);
@@ -468,8 +488,8 @@ struct LocomotionTraining3D::Impl {
         // O corpo do episodio (so com o bloco: sem ele, nem o sorteio). Um sorteio
         // por episodio no gerador so dele (os outros sorteios do mundo seguem os
         // mesmos); na avaliacao com a grade, o fixo do mundo.
-        std::size_t drawn = 0;
-        if (!bodyBundles.empty())
+        std::size_t drawn = world.body;
+        if (!bodyBundles.empty() && !live)
             drawn = evaluationBodies.empty()
                 ? std::uniform_int_distribution<std::size_t>(0, bodyBundles.size() - 1)(world.bodyRng)
                 : evaluationBodies[index % evaluationBodies.size()];
@@ -486,21 +506,23 @@ struct LocomotionTraining3D::Impl {
         };
         const SavedStart* saved = nullptr;
         // (Primeiro o de antes da queda; desligado, nem sorteia: o mundo e o de antes.)
-        if (!settings.evaluation && task.drills[world.drill].failureStartFraction > 0.0f
+        if (!live && !settings.evaluation && task.drills[world.drill].failureStartFraction > 0.0f
             && world.drill < failureBank.size() && !failureBank[world.drill].empty()
             && std::uniform_real_distribution<float>(0.0f, 1.0f)(world.rng) < task.drills[world.drill].failureStartFraction)
             saved = pick(failureBank[world.drill]);
-        if (saved == nullptr && !settings.evaluation && task.drills[world.drill].savedStartFraction > 0.0f
+        if (saved == nullptr && !live && !settings.evaluation && task.drills[world.drill].savedStartFraction > 0.0f
             && world.drill < savedBank.size() && !savedBank[world.drill].empty()
             && std::uniform_real_distribution<float>(0.0f, 1.0f)(world.rng) < task.drills[world.drill].savedStartFraction)
             saved = pick(savedBank[world.drill]);
         world.recent.clear();
         world.sinceRecent = 0.0f;
-        if (!bodyBundles.empty()) {
+        if (!bodyBundles.empty() && !live) {
             world.body = drawn;
             scene.setAssets(bodyBundles[world.body]->assets());
         }
-        if (saved != nullptr) {
+        if (live) {
+            LocomotionContract3D::clear(scene.athlete());
+        } else if (saved != nullptr) {
             scene.restore(saved->snapshot);
         } else {
             scene.reset(AthleteStartMode3D::Physical);
@@ -577,12 +599,16 @@ struct LocomotionTraining3D::Impl {
         // tambem, pelo sorteio do mundo - reproduzivel pela semente: com a
         // camera exata em 0, os mundos parados eram copias bit a bit de um so.
         // No comeco guardado, a camera do instante.)
-        const float camera = saved != nullptr ? saved->camera
-                                              : std::uniform_real_distribution<float>(-0.25f, 0.25f)(world.rng);
+        // (Ao vivo, a camera no rumo do corpo que acabou de levantar.)
+        const float camera = live && !body.links.empty()
+            ? locomotionFrameYaw3D(bundleOf(world).profile(), body.links.front().orientation)
+            : saved != nullptr ? saved->camera
+                               : std::uniform_real_distribution<float>(-0.25f, 0.25f)(world.rng);
         world.pilot = {};
         CommandPilot3D::start(task.drills[world.drill].pilot, world.pilot, world.start, camera, world.rng);
-        const Vec3 startVelocity = saved != nullptr ? planar(centerOfMassVelocity(bundleOf(world).profile(), body)) : Vec3 {};
-        if (saved != nullptr) CommandPilot3D::follow(task.drills[world.drill].pilot, world.pilot, startVelocity, world.rng);
+        const bool moving = saved != nullptr || live;
+        const Vec3 startVelocity = moving ? planar(centerOfMassVelocity(bundleOf(world).profile(), body)) : Vec3 {};
+        if (moving) CommandPilot3D::follow(task.drills[world.drill].pilot, world.pilot, startVelocity, world.rng);
         world.command = {};
         world.command.facingYawRadians = camera;
         world.command.intent.requestedFacingYawRadians = camera;
@@ -590,7 +616,7 @@ struct LocomotionTraining3D::Impl {
         // (No comeco guardado, a viavel e a velocidade de agora: o corpo ja anda.)
         world.feasible = startVelocity;
         world.comVelocity = startVelocity;
-        world.comValid = saved != nullptr;
+        world.comValid = moving;
         world.comSmooth = world.feasibleSmooth = {};
         world.windowError2 = world.cruiseError2 = 0.0;
         world.windowTicks = world.cruiseTicks = 0;
@@ -628,13 +654,14 @@ struct LocomotionTraining3D::Impl {
         world.cellDecisions = world.cellCruise = world.cellTracking = world.cellError2 = world.cellAsked = world.cellMade = {};
         world.cellFrontierCruise = world.cellFrontierTracking = {};
         world.savedStart = saved != nullptr;
+        if (!live) world.getUpSeconds = -1.0f;
         world.hasPending = false;
         world.pendingAge = 0.0f;
         for (std::size_t side = 0; side < 2; ++side) {
             const bool down = touching(body, side);
             world.contactTicks[side] = down ? SlipAfterTicks : 0;
             // (No comeco guardado, o pe no ar ja conta o proximo pouso.)
-            if (saved != nullptr && !down) world.airSeconds[side] = TouchdownAirSeconds;
+            if (moving && !down) world.airSeconds[side] = TouchdownAirSeconds;
         }
         // O comando da primeira decisao (a rede o ve na primeira entrada).
         world.command = pilotCommand(index, world, TickSeconds * TicksPerDecision);
@@ -1233,10 +1260,48 @@ struct LocomotionTraining3D::Impl {
         if (end == LocomotionEnd3D::None) return;
         if (end == LocomotionEnd3D::Fall || end == LocomotionEnd3D::Numeric) terminated[index] = 1;
         else truncated[index] = 1;
+        if (end == LocomotionEnd3D::Fall && !settings.evaluation) {
+            std::lock_guard lock(fallMutex);
+            if (fallStates.size() < MaximumFallStates) fallStates.push_back(body.links);
+        }
         finishEpisode(index, end);
         std::copy(criticRow.begin(), criticRow.end(), terminalCritic.begin() + static_cast<std::ptrdiff_t>(index * criticSize));
-        startEpisode(index);
+        const bool live = end == LocomotionEnd3D::Fall && getUpPolicy != nullptr && !settings.evaluation
+            && recoverFromFall(index);
+        startEpisode(index, live);
         (void)observe(index, obs, criticRow);
+    }
+
+    // A rede do levantar depois da queda (a interligacao das redes, 01/11): ela dirige o corpo ali mesmo como no treino
+    // dela, sem o classico nem as correcoes desta rede, ate ficar de pe e firme por GetUpPolicy3D::FirmSeconds (o mesmo
+    // criterio do fim do episodio no treino dela); ai o atleta recomeca no corpo e os alvos do classico saem dos dela
+    // (LegacyAthleteStep3D). Sem isso em GetUpRecoverySeconds, o recomeco de sempre.
+    bool recoverFromFall(std::size_t index) {
+        World& world = worlds[index];
+        LocomotionWorld3D& scene = batch->world(index);
+        const RagdollProfile3D& profile = bundleOf(world).profile();
+        std::vector<RagdollDriveTarget3D> drives;
+        world.getUpSeconds = -1.0f;
+        float firm = 0.0f;
+        const int limit = static_cast<int>(GetUpRecoverySeconds / TickSeconds);
+        for (int tick = 0; tick < limit; ++tick) {
+            if (scene.body().links.empty() || !finite(scene.body().links.front().position)) return false;
+            if (tick % GetUpPolicy3D::TicksPerDecision == 0) getUpPolicy->decide(profile, scene.body().links, drives);
+            scene.stepDrives(drives);
+            const RagdollState3D& body = scene.body();
+            const PhysicsBodyState3D& pelvis = body.links.front();
+            const float upright =
+                (pelvis.orientation * profile.links.front().modelOrientation.conjugate()).rotate({ 0.0f, 0.0f, 1.0f }).z;
+            const bool standing = pelvis.position.z > 0.85f * profile.standingRootHeightMeters && upright > 0.85f
+                && planar(centerOfMassVelocity(profile, body)).length() < 0.5f;
+            firm = standing ? firm + TickSeconds : 0.0f;
+            if (firm < GetUpPolicy3D::FirmSeconds) continue;
+            scene.resume();
+            scene.athlete().getUpHandoff = { GetUpPolicy3D::BlendSeconds, drives };
+            world.getUpSeconds = static_cast<float>(tick + 1) * TickSeconds;
+            return true;
+        }
+        return false;
     }
 
     void finishEpisode(std::size_t index, LocomotionEnd3D reason) {
@@ -1293,6 +1358,7 @@ struct LocomotionTraining3D::Impl {
         e.assistLevel = world.assistLevel;
         e.uncapped = world.uncapped ? 1.0f : 0.0f;
         e.stoodSeconds = world.stoodSeconds;
+        e.getUpSeconds = world.getUpSeconds;
         e.pushKind = static_cast<float>(world.pushKind);
         e.pushNewtons = world.pushNewtons;
         e.pushSeconds = world.pushSeconds;
@@ -1494,6 +1560,17 @@ void LocomotionTraining3D::setAuthority(float footwork, float balance, float pos
 }
 
 void LocomotionTraining3D::setTurnMoveMode(int mode) { m_impl->turnMoveMode = std::clamp(mode, 0, 2); }
+
+std::vector<std::vector<PhysicsBodyState3D>> LocomotionTraining3D::takeFallStates() {
+    std::lock_guard lock(m_impl->fallMutex);
+    std::vector<std::vector<PhysicsBodyState3D>> out;
+    out.swap(m_impl->fallStates);
+    return out;
+}
+
+void LocomotionTraining3D::setGetUpPolicy(std::shared_ptr<const GetUpPolicy3D> policy) {
+    m_impl->getUpPolicy = std::move(policy);
+}
 
 std::size_t LocomotionTraining3D::savedStartCount(std::size_t drill) const {
     return drill < m_impl->savedBank.size() ? m_impl->savedBank[drill].size() : 0;

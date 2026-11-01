@@ -71,6 +71,9 @@ public:
     static constexpr const char* AvoidFallDrill = "evitar_queda";
     // O equilibrio parado (31/10 21h25): de pe, um empurrao com a regua do parado com empurrao forte do B21.
     static constexpr const char* BalanceDrill = "equilibrio_parado";
+    // As quedas da locomocao (01/11, a interligacao das redes): o levantar do instante em que a rede da locomocao caiu
+    // no treino dela - as 32 fixas da avaliacao do treino.
+    static constexpr const char* LocomotionFallDrill = "quedas_locomocao";
     // A locomocao na rede do levantar (31/10 22h35, os basicos do B21; ele: so esta rede daqui em diante): o parado (sem
     // empurrao), o giro parado suave e os rumos (as diagonais com o lado sorteado pela semente), cada um pela avaliacao
     // dele.

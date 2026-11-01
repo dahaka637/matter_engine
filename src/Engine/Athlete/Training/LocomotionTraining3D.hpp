@@ -16,6 +16,8 @@
 
 namespace MatterEngine {
 
+class GetUpPolicy3D;
+
 class AthleteBundle3D;
 
 struct LocomotionTrainingSettings3D {
@@ -109,6 +111,9 @@ struct LocomotionEpisode3D {
     float bodyMass = BaseBodyMassKg;
     // O episodio sem o teto do curriculo (1) ou com (0).
     float uncapped = 0.0f;
+    // A interligacao das redes nas quedas (01/11): o episodio comecou de onde a rede do levantar devolveu, depois de
+    // quantos segundos com ela (-1: o comeco de sempre).
+    float getUpSeconds = -1.0f;
     std::array<float, LocomotionCommandCells3D> cellDecisions {};
     std::array<float, LocomotionCommandCells3D> cellCruise {};
     std::array<float, LocomotionCommandCells3D> cellTracking {};
@@ -191,6 +196,15 @@ public:
     [[nodiscard]] std::span<const std::uint32_t> worldDrills() const;
     // Quantos estados guardados (os comecos em movimento) um exercicio tem.
     [[nodiscard]] std::size_t savedStartCount(std::size_t drill) const;
+    // A interligacao das duas redes nas quedas (01/11, ele: "fazer no proprio treino do b21 a interligacao entre os
+    // dois RL's para os momentos de QUEDAS... para que justamente um consiga aprender com o outro e consigam operar em
+    // harmonia"): com a rede do levantar (fora da avaliacao), a queda acaba o episodio como sempre, mas o mundo nao
+    // recomeca do zero - a rede do levantar assume ali mesmo (evita ou amortece a queda e levanta) e, de pe e firme,
+    // devolve; o episodio novo comeca dai. Vazio: o recomeco de sempre. Troca so entre os steps.
+    void setGetUpPolicy(std::shared_ptr<const GetUpPolicy3D> policy);
+    // O corpo no instante de cada queda do treino desde a ultima leitura (as quedas desta rede para o treino do
+    // levantar aprender a levantar delas; 01/11). Fora da avaliacao.
+    [[nodiscard]] std::vector<std::vector<PhysicsBodyState3D>> takeFallStates();
 
     void reset(std::uint64_t seed);
     void step(std::span<const float> actions);

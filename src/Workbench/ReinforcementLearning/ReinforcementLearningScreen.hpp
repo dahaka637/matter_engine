@@ -248,6 +248,8 @@ private:
         std::array<std::vector<float>, 8> locoMain, locoMainTest, locoUp, locoUpTest;
         // A coluna como a do parado em alerta, de pe no fim (o treino de pe e o teste do parado).
         std::vector<float> spine, spineTest;
+        // As quedas da locomocao (01/11, a interligacao): levantou e o tempo, no treino e no teste, e o tempo ate a troca.
+        std::vector<float> locoFall, locoFallTest, locoFallSeconds, locoFallSecondsTest, handoffSeconds;
         std::filesystem::file_time_type write {};
     } m_getUpCurve;
     float m_accumulator = 0.0f;

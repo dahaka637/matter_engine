@@ -10,6 +10,7 @@
 
 #include "Engine/Athlete/AthleteAssets3D.hpp"
 #include "Engine/Athlete/Training/LocomotionTraining3D.hpp"
+#include "Engine/Tracking/TrackingGetUpPolicy3D.hpp"
 
 #include <cstdio>
 #include <span>
@@ -163,6 +164,33 @@ NB_MODULE(matter_locomotion_native, m) {
             "footwork"_a, "balance"_a, "pose"_a, "gain"_a)
         .def(
             "set_turn_move", [](LocomotionTraining3D& b, int mode) { b.setTurnMoveMode(mode); }, "mode"_a)
+        // As quedas desde a ultima leitura (01/11, para o treino do levantar): [n, links, 13] - a posicao, a orientacao
+        // (xyzw) e as velocidades linear e angular de cada link no instante da queda.
+        .def("take_fall_states",
+            [](LocomotionTraining3D& b) {
+                const std::vector<std::vector<PhysicsBodyState3D>> states = b.takeFallStates();
+                const std::size_t links = states.empty() ? 0 : states.front().size();
+                float* data = new float[std::max<std::size_t>(1, states.size() * links * 13)]();
+                nb::capsule owner(data, [](void* p) noexcept { delete[] static_cast<float*>(p); });
+                float* d = data;
+                for (const auto& body : states)
+                    for (std::size_t k = 0; k < links; ++k, d += 13) {
+                        const PhysicsBodyState3D& s = k < body.size() ? body[k] : PhysicsBodyState3D {};
+                        const float row[13] { s.position.x, s.position.y, s.position.z, s.orientation.x, s.orientation.y,
+                            s.orientation.z, s.orientation.w, s.linearVelocity.x, s.linearVelocity.y, s.linearVelocity.z,
+                            s.angularVelocity.x, s.angularVelocity.y, s.angularVelocity.z };
+                        std::copy(row, row + 13, d);
+                    }
+                const std::size_t shape[3] { states.size(), links, 13 };
+                return nb::ndarray<nb::numpy, float>(data, 3, shape, owner);
+            })
+        // A interligacao das redes nas quedas (01/11): a rede do levantar exportada (vazio: o recomeco de sempre).
+        .def(
+            "set_get_up_policy",
+            [](LocomotionTraining3D& b, const std::string& path) {
+                b.setGetUpPolicy(path.empty() ? nullptr : std::make_shared<TrackingGetUpPolicy3D>(path));
+            },
+            "path"_a)
         .def(
             "set_drill_weights",
             [](LocomotionTraining3D& b, const std::vector<float>& weights) { b.setDrillWeights(weights); }, "weights"_a)

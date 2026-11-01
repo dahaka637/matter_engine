@@ -3,6 +3,7 @@
 #include "Engine/Gesture/GestureCatalog3D.hpp"
 #include "Engine/Gesture/GestureChoice3D.hpp"
 #include "Engine/Athlete/Planning/MotionPlanner3D.hpp"
+#include "Engine/Athlete/Body/GetUpPolicy3D.hpp"
 #include "Engine/Athlete/Reference/BodyForecast3D.hpp"
 #include "Engine/Athlete/Synthesis/LegSynthesis3D.hpp"
 
@@ -2400,7 +2401,29 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             scene.setRagdollGuidePose(slot.handle, out.pose.linkPositions, out.pose.linkOrientations, authority);
         }
     }
-    applyCharacterControl3D(scene, slot.handle, locomotionOutput, adaptive ? &state.adaptivePhysics.output() : nullptr,
+    // A entrega da rede do levantar (01/11, a interligacao das redes no treino da locomocao): por
+    // GetUpPolicy3D::BlendSeconds os alvos do classico saem dos dela - a posicao, a rigidez, o amortecimento e a
+    // compensacao da gravidade.
+    const CharacterLocomotionOutput3D* applied = &locomotionOutput;
+    CharacterLocomotionOutput3D blended;
+    auto& handoff = athlete.getUpHandoff;
+    if (handoff.blendLeft > 0.0f) {
+        blended = locomotionOutput;
+        const float w = std::clamp(handoff.blendLeft / GetUpPolicy3D::BlendSeconds, 0.0f, 1.0f);
+        for (RagdollDriveTarget3D& drive : blended.driveTargets)
+            for (const RagdollDriveTarget3D& from : handoff.drives)
+                if (from.linkIndex == drive.linkIndex && from.axis == drive.axis) {
+                    drive.positionRadians += (from.positionRadians - drive.positionRadians) * w;
+                    drive.velocityRadiansPerSecond *= 1.0f - w;
+                    drive.stiffnessScale += (from.stiffnessScale - drive.stiffnessScale) * w;
+                    drive.dampingScale += (from.dampingScale - drive.dampingScale) * w;
+                    drive.gravityCompensationScale *= 1.0f - w;
+                    break;
+                }
+        handoff.blendLeft = std::max(0.0f, handoff.blendLeft - deltaTime);
+        applied = &blended;
+    }
+    applyCharacterControl3D(scene, slot.handle, *applied, adaptive ? &state.adaptivePhysics.output() : nullptr,
         down);
     {
         // A medida da ajuda auxiliar (as mesmas condicoes da aplicacao acima).

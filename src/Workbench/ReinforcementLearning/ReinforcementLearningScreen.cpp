@@ -123,14 +123,13 @@ constexpr std::array<const char*, 8> LocomotionNames { "Parado (levantar)", "Par
     "Frente (levantar)", "Trás (levantar)", "Direita (levantar)", "Esquerda (levantar)", "Diagonal frente (levantar)",
     "Diagonal costas (levantar)" };
 
-// Os exercicios do levantar v2 depois do "Levantar do chao", na ordem da lista: os do levantar e os da locomocao nele.
+// Os exercicios do levantar v2 depois do "Levantar do chao", na ordem da lista. (01/11, ele: o levantar volta a ser so
+// levantar e evitar quedas - "dele tiramos o de locomocao": os da locomocao nele sairam da lista; o codigo deles fica.)
 std::vector<std::array<const char*, 2>> getUpDrillList() {
-    std::vector<std::array<const char*, 2>> all { { TrackingViewer3D::MovingGetUpDrill, "Levantar em movimento" },
+    return { { TrackingViewer3D::MovingGetUpDrill, "Levantar em movimento" },
         { TrackingViewer3D::AvoidFallDrill, "Evitar a queda" },
-        { TrackingViewer3D::BalanceDrill, "Equilíbrio parado (empurrões)" } };
-    for (std::size_t k = 0; k < LocomotionNames.size(); ++k)
-        all.push_back({ TrackingViewer3D::LocomotionDrills[k], LocomotionNames[k] });
-    return all;
+        { TrackingViewer3D::BalanceDrill, "Equilíbrio parado (empurrões)" },
+        { TrackingViewer3D::LocomotionFallDrill, "Quedas da locomoção" } };
 }
 
 // A velocidade-alvo de um exercicio do levantar: o em movimento 5, os rumos 2,5 (o teste), os outros parados.
@@ -1820,7 +1819,7 @@ void ReinforcementLearningScreen::refreshGetUpCurve() {
     };
     float test = none, seconds = none, movingTest = none, movingSpeedTest = none, avoidTest = none, recomposeTest = none,
           balanceTest = none, poseTest = none;
-    float spineTest = none;
+    float spineTest = none, locoFallTest = none, locoFallSecondsTest = none;
     std::array<float, LocomotionLogKeys.size()> locoMainTest, locoUpTest;
     locoMainTest.fill(none);
     locoUpTest.fill(none);
@@ -1837,6 +1836,8 @@ void ReinforcementLearningScreen::refreshGetUpCurve() {
             balanceTest = percent(row, "equil_sem_cair");
             poseTest = percent(row, "pose");
             spineTest = percent(row, "parado_coluna");
+            locoFallTest = percent(row, "quedas_loco_levantou");
+            locoFallSecondsTest = plain(row, "quedas_loco_tempo");
             for (std::size_t k = 0; k < LocomotionLogKeys.size(); ++k) {
                 const LocomotionLogKeys3D& keys = LocomotionLogKeys[k];
                 locoMainTest[k] = keys.percent ? percent(row, keys.mainTest) : plain(row, keys.mainTest);
@@ -1871,6 +1872,11 @@ void ReinforcementLearningScreen::refreshGetUpCurve() {
         curve.poseTest.push_back(poseTest);
         curve.spine.push_back(percent(row, "de_pe_coluna"));
         curve.spineTest.push_back(spineTest);
+        curve.locoFall.push_back(percent(row, "quedas_loco_levantou"));
+        curve.locoFallTest.push_back(locoFallTest);
+        curve.locoFallSeconds.push_back(plain(row, "quedas_loco_tempo"));
+        curve.locoFallSecondsTest.push_back(locoFallSecondsTest);
+        curve.handoffSeconds.push_back(plain(row, "quedas_loco_troca_s"));
         for (std::size_t k = 0; k < LocomotionLogKeys.size(); ++k) {
             const LocomotionLogKeys3D& keys = LocomotionLogKeys[k];
             curve.locoMain[k].push_back(keys.percent ? percent(row, keys.main) : plain(row, keys.main));
@@ -1979,6 +1985,28 @@ void ReinforcementLearningScreen::drawGetUpCharts(float height) {
                 "com empurrões e, em laranja, depois de levantar de uma queda.");
         lineChart("##pose_equilibrio", { { &c.poseStanding, violet, false, "começando de pé" }, { &c.pose, amber, false, "depois de levantar" } },
             0.0f, 100.0f, size, last(c.poseStanding, "%.0f%%").c_str(), "%", nullptr, false, "sem dados ainda");
+        ImGui::EndGroup();
+        return;
+    }
+    if (m_viewerDrill == TrackingViewer3D::LocomotionFallDrill) {
+        ImGui::BeginGroup();
+        ImGui::TextColored(InfoText, "%s", "Levantou (%) · Quedas da locomoção");
+        tooltip("Começando do instante em que a rede da locomoção (B21) caiu no treino dela: quantos ficam de pé. "
+                "Tracejado, o teste sem ruído nas 32 primeiras quedas que chegaram (fixas).");
+        lineChart("##quedas_loco", { { &c.locoFall, green, false, "treino" }, { &c.locoFallTest, green, true, "teste sem ruído" } },
+            0.0f, 100.0f, size, both(c.locoFallTest, c.locoFall, "%.0f%%").c_str(), "%", nullptr, false, "sem dados ainda");
+        ImGui::EndGroup();
+        ImGui::SameLine();
+        ImGui::SetCursorPosY(rowTop);
+        ImGui::BeginGroup();
+        ImGui::TextColored(InfoText, "%s", "Tempo para levantar (s) · Quedas da locomoção");
+        tooltip("Da queda até ficar de pé: o treino e, tracejado, o teste. Em laranja, até a troca de rede (de pé e "
+                "firme por 0,5 s; dali a rede da locomoção assume).");
+        lineChart("##quedas_loco_tempo", { { &c.locoFallSeconds, violet, false, "treino" },
+                                             { &c.locoFallSecondsTest, violet, true, "teste sem ruído" },
+                                             { &c.handoffSeconds, amber, false, "troca" } },
+            0.0f, 6.0f, size, both(c.locoFallSecondsTest, c.locoFallSeconds, "%.2f s").c_str(), "s", nullptr, false,
+            "sem dados ainda");
         ImGui::EndGroup();
         return;
     }

@@ -565,6 +565,7 @@ if(MATTERENGINE_BUILD_RL)
         src/Engine/Tracking/TrackingGetUpTraining3D.cpp
         src/Engine/Tracking/TrackingGetUpAmp3D.cpp
         src/Engine/Tracking/TrackingGetUpAmpTraining3D.cpp
+        src/Engine/Tracking/TrackingGetUpPolicy3D.cpp
     )
     target_include_directories(MatterTracking PUBLIC src)
     target_link_libraries(MatterTracking PUBLIC MatterAthlete MatterRLContract MatterAthleteTraining)
@@ -611,7 +612,7 @@ if(MATTERENGINE_BUILD_RL)
         # O treino da locomocao (o atleta do jogo, contrato v2): um modulo a
         # parte (o RL do zero tem outro ReferenceMotion3D).
         nanobind_add_module(matter_locomotion_native NB_STATIC bindings/python/MatterLocomotionNative.cpp)
-        target_link_libraries(matter_locomotion_native PRIVATE MatterAthleteTraining)
+        target_link_libraries(matter_locomotion_native PRIVATE MatterAthleteTraining MatterTracking)
         set_target_properties(matter_locomotion_native PROPERTIES
             LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/python")
         # O lote do motor autonomo (motor-v4).

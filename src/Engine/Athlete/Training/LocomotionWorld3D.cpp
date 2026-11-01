@@ -122,6 +122,15 @@ void LocomotionWorld3D::restore(const AthleteSnapshot3D& snapshot) {
     athleteRestore3D(*w.scene, w.handle, snapshot, w.athlete, w.body);
 }
 
+void LocomotionWorld3D::resume() {
+    Impl& w = *m_impl;
+    w.athlete = AthleteState3D {};
+    w.runtime = AthleteRuntime3D {};
+    w.pushes.clear();
+    w.throws.clear();
+    athleteStart3D(*w.scene, w.handle, *w.assets.profile, w.body, w.athlete, AthleteStartMode3D::Physical);
+}
+
 AthleteSnapshot3D LocomotionWorld3D::snapshot() const { return athleteSnapshot3D(m_impl->athlete, m_impl->body); }
 
 void LocomotionWorld3D::push(std::uint32_t link, Vec3 force) { m_impl->pushes.push_back({ link, force }); }
@@ -157,6 +166,15 @@ void LocomotionWorld3D::step(const AthleteCommand3D& command) {
     const auto end = Clock::now();
     w.athleteSeconds = std::chrono::duration<double>(stepped - start).count();
     w.physicsSeconds = std::chrono::duration<double>(end - stepped).count();
+    ++w.ticks;
+}
+
+void LocomotionWorld3D::stepDrives(std::span<const RagdollDriveTarget3D> drives) {
+    Impl& w = *m_impl;
+    w.scene->setRagdollActiveDriveTargets(w.handle, drives, false);
+    w.scene->setRagdollFrictionScale(w.handle, 1.0f);
+    w.scene->simulate(w.settings.tickSeconds);
+    w.body = w.scene->ragdollState(w.handle);
     ++w.ticks;
 }
 

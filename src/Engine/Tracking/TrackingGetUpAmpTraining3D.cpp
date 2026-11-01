@@ -151,12 +151,17 @@ struct TrackingGetUpAmpTraining3D::Impl {
         float pauseUntil = -1.0f;
         double faceErrorSum = 0.0;
         std::uint32_t faceErrorSamples = 0;
+        // A troca de rede ao ficar de pe: ha quanto tempo ele esta de pe e firme (s) e quando trocou (s; < 0: nao).
+        float firmSeconds = 0.0f;
+        float handoffAt = -1.0f;
         // O premio do passo: o tempo no ar de cada pe (s) e se ele estava no chao.
         float footAir[2] { 0.0f, 0.0f };
         bool footDown[2] { true, true };
         std::uint32_t index = 0;
     };
     std::vector<World> worlds;
+    // As quedas da locomocao (setFallStarts).
+    std::vector<std::vector<PhysicsBodyState3D>> fallStarts;
     std::vector<TrackingGetUpAmpEpisode3D> episodes;
     std::mutex episodeMutex;
 
@@ -209,6 +214,27 @@ struct TrackingGetUpAmpTraining3D::Impl {
             settle(w, static_cast<int>((0.9f + 0.6f * u(w.rng)) / TickSeconds));
             if (posture->measure(w.body->links).headHeight < 1.0f) return;
         }
+    }
+
+    // A queda da locomocao (01/11, a interligacao das redes): o corpo no instante em que a rede da locomocao caiu, com as
+    // velocidades, trazido para a origem e, no treino, girado num rumo sorteado (na avaliacao, a do mundo, sem giro).
+    void beginLocomotionFall(World& w) {
+        const std::size_t pick = settings.evaluation
+            ? w.index % fallStarts.size()
+            : std::uniform_int_distribution<std::size_t>(0, fallStarts.size() - 1)(w.rng);
+        const std::vector<PhysicsBodyState3D>& source = fallStarts[pick];
+        const Vec3 root { source[rootLink].position.x, source[rootLink].position.y, 0.0f };
+        const Quaternion turn = Quaternion::fromAxisAngle({ 0.0f, 0.0f, 1.0f },
+            settings.evaluation ? 0.0f : std::uniform_real_distribution<float>(-Pi, Pi)(w.rng));
+        w.frame.links = source;
+        for (PhysicsBodyState3D& s : w.frame.links) {
+            s.position = turn.rotate(s.position - root);
+            s.orientation = (turn * s.orientation).normalized();
+            s.linearVelocity = turn.rotate(s.linearVelocity);
+            s.angularVelocity = turn.rotate(s.angularVelocity);
+        }
+        w.scene->resetRagdollState(w.handle, w.frame.links);
+        w.body = w.scene->ragdollStateView(w.handle);
     }
 
     // A arrancada e a corrida (31/10 18h25: so a arrancada agachada, curta, nao bastou - em 300 atualizacoes ele saia do
@@ -322,8 +348,8 @@ struct TrackingGetUpAmpTraining3D::Impl {
         const float draw = u(w.rng);
         std::uint32_t kind = 0;
         if (settings.evaluation) {
-            constexpr std::uint32_t Kinds[7] { 0u, 3u, 4u, 2u, 6u, 2u, 7u };
-            kind = settings.evaluationKind < 7 ? Kinds[settings.evaluationKind] : 0u;
+            constexpr std::uint32_t Kinds[8] { 0u, 3u, 4u, 2u, 6u, 2u, 7u, 8u };
+            kind = settings.evaluationKind < 8 ? Kinds[settings.evaluationKind] : 0u;
         } else {
             float edge = settings.standingStartFraction;
             if (draw < edge) kind = 2;
@@ -333,8 +359,10 @@ struct TrackingGetUpAmpTraining3D::Impl {
             else if (draw < (edge += settings.sprintStartFraction)) kind = 5;
             else if (draw < (edge += settings.locomotionFraction)) kind = 6;
             else if (draw < (edge += settings.turnFraction)) kind = 7;
+            else if (draw < (edge += settings.locomotionFallFraction)) kind = 8;
         }
         if (kind == 5 && runStartIndices.empty()) kind = 3;
+        if (kind == 8 && fallStarts.empty()) kind = 0;
         // (O que vem do episodio anterior zerado antes do comeco: a queda assenta sem o resto de um empurrao.)
         w.pushTicks = 0;
         w.commandSpeed = 0.0f;
@@ -343,6 +371,8 @@ struct TrackingGetUpAmpTraining3D::Impl {
         w.pauseUntil = -1.0f;
         w.faceErrorSum = 0.0;
         w.faceErrorSamples = 0;
+        w.firmSeconds = 0.0f;
+        w.handoffAt = -1.0f;
         w.footAir[0] = w.footAir[1] = 0.0f;
         w.footDown[0] = w.footDown[1] = true;
         w.startKind = kind;
@@ -350,6 +380,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
         else if (kind == 5) beginSprintStart(w);
         else if (kind == 6) beginHeading(w);
         else if (kind == 7) beginTurn(w);
+        else if (kind == 8) beginLocomotionFall(w);
         else beginFromClip(w, kind != 1);
         const TrackingGetUpPosture3D start = posture->measure(w.body->links);
         w.startSide = kind == 6 ? w.heading : start.chestFacingUp < -0.5f ? 0u : start.chestFacingUp > 0.5f ? 1u : 2u;
@@ -599,7 +630,17 @@ struct TrackingGetUpAmpTraining3D::Impl {
         ++w.decisions;
         if (w.stoodAt < 0.0f && now.standing) w.stoodAt = w.time;
         terminated = 0;
-        truncated = w.time >= settings.episodeSeconds - 1e-4f ? 1 : 0;
+        // A troca de rede ao ficar de pe (so no treino): de pe e firme - a pelve perto da altura de pe do perfil, a
+        // pelve em pe e quase parado, como a entrega no jogo - por 0,5 s, depois do chao ou do empurrao do evitar.
+        if (settings.handoffOnStand && !settings.evaluation) {
+            const bool eligible = w.startKind == 4 ? w.avoidEnd >= 0.0f && w.time >= w.avoidEnd : w.stoodAt >= 0.0f;
+            const Vec3 v = rlBodyCenterOfMassVelocity3D(*profile, w.body->links);
+            const bool firm = now.pelvisHeight > 0.85f * profile->standingRootHeightMeters && now.upright > 0.85f
+                && std::hypot(v.x, v.y) < 0.5f && !w.fellAfterStanding;
+            w.firmSeconds = eligible && firm ? w.firmSeconds + TicksPerDecision * TickSeconds : 0.0f;
+            if (w.firmSeconds >= 0.5f) w.handoffAt = w.time;
+        }
+        truncated = w.time >= settings.episodeSeconds - 1e-4f || w.handoffAt >= 0.0f ? 1 : 0;
         if (truncated) {
             observe(w);
             w.finalObservation = w.observation;
@@ -621,6 +662,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
             episode.recomposedSeconds = w.recomposedAt >= 0.0f ? w.recomposedAt - w.avoidEnd : -1.0f;
             episode.endPoseMatch = now.standing ? posture->idlePoseMatch(w.body->links) : 0.0f;
             episode.endSpineMatch = now.standing ? posture->idleSpineMatch(w.body->links) : 0.0f;
+            episode.handoffSeconds = w.handoffAt;
             episode.meanFaceError = w.faceErrorSamples
                 ? static_cast<float>(w.faceErrorSum / w.faceErrorSamples) * 180.0f / Pi : 0.0f;
             {
@@ -741,6 +783,14 @@ const std::vector<std::string>& TrackingGetUpAmpTraining3D::actionNames() const 
 }
 float TrackingGetUpAmpTraining3D::episodeSeconds() const { return m_impl->settings.episodeSeconds; }
 std::vector<float> TrackingGetUpAmpTraining3D::actionRanges() const { return m_impl->contract->actionRanges(); }
+
+void TrackingGetUpAmpTraining3D::setFallStarts(std::vector<std::vector<PhysicsBodyState3D>> states) {
+    const std::size_t links = m_impl->profile->links.size();
+    std::erase_if(states, [links](const std::vector<PhysicsBodyState3D>& s) { return s.size() != links; });
+    m_impl->fallStarts = std::move(states);
+}
+
+std::size_t TrackingGetUpAmpTraining3D::fallStartCount() const { return m_impl->fallStarts.size(); }
 
 void TrackingGetUpAmpTraining3D::reset(std::uint64_t seed) {
     Impl& impl = *m_impl;

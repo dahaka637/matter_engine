@@ -181,6 +181,11 @@ def summarize(rows: np.ndarray, prefix: str) -> dict:
             out[f"{prefix}pose"] = float(rows[up, 15].mean()) if up.any() else None
             if rows.shape[1] > 17:
                 out[f"{prefix}coluna"] = float(rows[up, 17].mean()) if up.any() else None
+            if rows.shape[1] > 18:
+                # (A troca de rede ao ficar de pe: quantos trocaram e em quanto tempo.)
+                handed = rows[:, 18] >= 0
+                out[f"{prefix}troca"] = float(handed.mean())
+                out[f"{prefix}troca_s"] = float(rows[handed, 18].mean()) if handed.any() else None
         avoid = rows[:, 1] == 4
         if avoid.any():
             ok = avoid & (rows[:, 14] >= 0)
@@ -322,6 +327,13 @@ def main() -> int:
     parser.add_argument("--empurrao-mov-continuo", type=float, default=0.3, help="a fatia continua deles")
     parser.add_argument("--empurrao-mov-continuo-forca", type=float, nargs=2, default=[0.0, 0.0],
                         help="(N, por 1-2 s; 0 0: sem)")
+    # (01/11, ele: o levantar volta a ser so levantar e evitar quedas, "fazendo a troca de RL no momento que recem fica
+    # de pe": o episodio acaba na troca, de pe e firme por 0,5 s - a rede da locomocao assume dai.)
+    parser.add_argument("--troca-de-pe", action="store_true", help="o episodio acaba ao ficar de pe e firme (a troca)")
+    # (01/11, a interligacao das redes: "para que justamente um consiga aprender com o outro" - as quedas da rede da
+    # locomocao, que o treino dela escreve em quedas_locomocao.npy neste treino.)
+    parser.add_argument("--quedas-locomocao", type=float, default=0.0,
+                        help="a fatia que comeca das quedas da rede da locomocao (quedas_locomocao.npy)")
     parser.add_argument("--arrancada", type=float, default=0.0,
                         help="a fatia que comeca na arrancada agachada (crouched_to_sprint) virado para um alvo")
     args = parser.parse_args()
@@ -346,7 +358,8 @@ def main() -> int:
     info = json.loads((run / "run.json").read_text())
     info["v2"] = {"movimento": args.movimento, "evitar": args.evitar, "arrancada": args.arrancada,
                   "peso_tarefa": args.peso_tarefa, "peso_estilo": args.peso_estilo, "suave": args.suave,
-                  "locomocao": args.locomocao, "giro": args.giro, "andar": args.andar,
+                  "locomocao": args.locomocao, "giro": args.giro, "andar": args.andar, "troca_de_pe": args.troca_de_pe,
+                  "quedas_locomocao": args.quedas_locomocao,
                   "andar_velocidade": list(args.andar_velocidade), "trote_velocidade": list(args.trote_velocidade),
                   "empurrao_mov_forca": list(args.empurrao_mov_forca), "empurrao_mov_continuo": args.empurrao_mov_continuo,
                   "empurrao_mov_continuo_forca": list(args.empurrao_mov_continuo_forca),
@@ -366,7 +379,8 @@ def main() -> int:
                                  seed=args.semente, clip_start_fraction=args.comeco_clipe,
                                  standing_start_fraction=args.comeco_de_pe, moving_fraction=args.movimento,
                                  avoid_fraction=args.evitar, sprint_start_fraction=args.arrancada,
-                                 locomotion_fraction=args.locomocao, turn_fraction=args.giro, **v2)
+                                 locomotion_fraction=args.locomocao, turn_fraction=args.giro,
+                                 handoff_on_stand=args.troca_de_pe, locomotion_fall_fraction=args.quedas_locomocao, **v2)
     # (31/10 23h40, ele: "verifica se... nao conseguimos mais decisoes por segundo": as avaliacoes numa thread so paravam
     # o treino ~21 s a cada 50 atualizacoes, 13% do tempo; com as threads do treino, as que esperam ficam paradas.)
     eval_threads = args.threads
@@ -394,6 +408,29 @@ def main() -> int:
                                                     evaluation=True, evaluation_kind=6, **ruler)
         evaluations["parado_"] = native.GetUpAmpBatch(str(REPO / "assets"), environments=8, threads=eval_threads, seed=222,
                                                       evaluation=True, evaluation_kind=5, **ruler)
+    falls = {"mtime": 0.0}
+
+    def load_falls() -> None:
+        """As quedas da rede da locomocao (o arquivo do treino dela, quando muda) e, das primeiras 32, para sempre, a
+        avaliacao quedas_loco_ (tambem em .f32 cru, para o laboratorio)."""
+        file = run / "quedas_locomocao.npy"
+        if args.quedas_locomocao <= 0 or not file.exists() or file.stat().st_mtime <= falls["mtime"]:
+            return
+        falls["mtime"] = file.stat().st_mtime
+        states = np.ascontiguousarray(np.load(file), dtype=np.float32)
+        batch.set_fall_starts(states)
+        fixed = run / "quedas_locomocao_aval.npy"
+        if not fixed.exists() and len(states) >= 32:
+            np.save(fixed, states[:32])
+            states[:32].tofile(run / "quedas_locomocao_aval.f32")
+        if fixed.exists() and "quedas_loco_" not in evaluations:
+            other = native.GetUpAmpBatch(str(REPO / "assets"), environments=32, threads=eval_threads, seed=111,
+                                         evaluation=True, evaluation_kind=7, **v2)
+            other.set_fall_starts(np.ascontiguousarray(np.load(fixed), dtype=np.float32))
+            evaluations["quedas_loco_"] = other
+        print(f"quedas da locomocao: {batch.fall_start_count}", flush=True)
+
+    load_falls()
     n, obs_size, act_size, amp = batch.num_envs, batch.obs_size, batch.action_size, batch.amp_size
     reference = torch.as_tensor(batch.reference_pairs(), device=device)
     model = Policy(obs_size, act_size, batch.action_ranges()).to(device)
@@ -633,7 +670,7 @@ def main() -> int:
         counters["amostras"] += T * n
         counters["episodios"] += len(episodes)
         if counters["atualizacao"] % 20 == 0:
-            recent = np.array(window) if window else np.zeros((0, 18))
+            recent = np.array(window) if window else np.zeros((0, 19))
             row = {"atualizacao": counters["atualizacao"], "amostras": counters["amostras"], "hora": time.time(),
                    "tarefa": float(roll["task"].mean()), "estilo": last.get("estilo", float("nan")),
                    "tranco": float(roll["jerk"].mean()),
@@ -648,6 +685,7 @@ def main() -> int:
             row.update(summarize(recent[recent[:, 1] == 5] if len(recent) else recent, "arrancada_"))
             row.update(summarize(recent[recent[:, 1] == 6] if len(recent) else recent, "loco_"))
             row.update(summarize(recent[recent[:, 1] == 7] if len(recent) else recent, "giro_"))
+            row.update(summarize(recent[recent[:, 1] == 8] if len(recent) else recent, "quedas_loco_"))
             log.write(json.dumps(row) + "\n")
             log.flush()
             print(" ".join(f"{k}={v:.4g}" if isinstance(v, float) else f"{k}={v}" for k, v in row.items()), flush=True)
@@ -658,6 +696,7 @@ def main() -> int:
             write_status("treinando")
         if counters["atualizacao"] % 10 == 0:
             export_policy()
+            load_falls()
         judge = counters["atualizacao"] % args.salvar_cada == 0
         if stop["salvar"] or judge:
             stop["salvar"] = False

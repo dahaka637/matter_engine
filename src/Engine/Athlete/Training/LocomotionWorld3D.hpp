@@ -6,6 +6,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <vector>
 
 namespace MatterEngine {
@@ -100,10 +101,15 @@ public:
     // Os recursos do proximo comeco (o corpo variavel: o perfil, os clipes e a
     // capsula de outro corpo); valem do reset ou restore seguinte em diante.
     void setAssets(const AthleteRuntimeAssets3D& assets);
+    // O atleta do zero no corpo de agora, sem recomecar a cena (o comeco ao vivo depois da rede do levantar, 01/11).
+    void resume();
 
     // Um tick: o comando, o passo do atleta pelo runtime, os empurroes e a
     // fisica.
     void step(const AthleteCommand3D& command);
+    // Um tick so com os alvos dados, sem o atleta (a rede do levantar dirigindo o corpo como no treino dela, 01/11):
+    // sem a compensacao da gravidade, com o atrito do corpo inteiro e sem empurroes.
+    void stepDrives(std::span<const RagdollDriveTarget3D> drives);
 
     // O atleta (as correcoes do RL moram nele) e o corpo publicado.
     [[nodiscard]] AthleteState3D& athlete();

@@ -474,6 +474,12 @@ void checkGetUpViewers() {
         require(!still.view().hasTarget, "o levantar do chao nao tem alvo");
     }
     {
+        // As quedas da locomocao (01/11): as do arquivo do treino ou, sem ele, as sorteadas; sem alvo.
+        TrackingViewer3D falls(assets, 3, TrackingViewer3D::LocomotionFallDrill);
+        for (int i = 0; i < 10; ++i) falls.step();
+        require(!falls.view().hasTarget, "as quedas da locomocao nao tem alvo");
+    }
+    {
         // A locomocao na rede do levantar (31/10 22h35): o rumo pede 2,5 m/s de costas com o rumo do corpo pedido, o giro
         // gira o rumo pedido a 0,6 rad/s sem pedir deslocamento, o parado nao pede nada nem empurra.
         TrackingViewer3D back(assets, 4, "lev_tras");
@@ -507,7 +513,8 @@ void checkGetUpViewers() {
             && TrackingViewer3D::locomotionHeadingOf("lev_giro") < 0,
         "os rumos das diagonais pelo lado da semente");
     require(TrackingViewer3D::isGetUpDrill("levantar_movimento") && TrackingViewer3D::isGetUpDrill("evitar_queda")
-            && TrackingViewer3D::isGetUpDrill("equilibrio_parado") && !TrackingViewer3D::isGetUpDrill("parado"),
+            && TrackingViewer3D::isGetUpDrill("equilibrio_parado") && TrackingViewer3D::isGetUpDrill("quedas_locomocao")
+            && !TrackingViewer3D::isGetUpDrill("parado"),
         "os exercicios do levantar");
 }
 

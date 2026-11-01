@@ -391,6 +391,13 @@ class LocomotionTrainer:
         self.assets = str(paths.ASSETS)
         self.batch = self.native.LocomotionBatch(str(self.live_task), self.assets, environments=self.config.environments,
                                                  threads=self.threads, seed=self.config.seed, drill=self.config.drill)
+        # A interligacao das redes nas quedas (01/11, ele: "no proprio treino do b21 a interligacao entre os dois RL's
+        # para os momentos de QUEDAS"): com "getUpHandoff" na tarefa, a rede do levantar exportada por ultimo assume
+        # nas quedas e devolve de pe; recarregada quando o treino dela exporta outra (refresh_get_up_policy).
+        self.get_up_handoff = json.loads(self.live_task.read_text()).get("getUpHandoff", {})
+        self.get_up_policy_mtime = 0.0
+        self.refresh_get_up_policy()
+        self.fall_states: np.ndarray | None = None
         self.obs_names = self.batch.observation_names()
         self.critic_names = self.batch.critic_names()
         self.action_names = self.batch.action_names()
@@ -1085,6 +1092,15 @@ class LocomotionTrainer:
         bodies = body_strata(rows, self.episode_columns, self.end_reasons)
         if bodies:
             details["bodies"] = bodies
+        # A interligacao das redes (01/11): os episodios que comecaram de onde a rede do levantar devolveu, quanto ela
+        # levou e quantos deles cairam nos primeiros 2 s (a harmonia da troca).
+        if "levantar_rede_s" in col and len(rows):
+            live = rows[:, col["levantar_rede_s"]] >= 0.0
+            if live.any():
+                early = (reasons[live] == self.end_reasons.index("queda")) & (rows[live, col["segundos"]] < 2.0)
+                details["levantar_rede"] = {"comecos": int(live.sum()),
+                                            "segundos": float(rows[live, col["levantar_rede_s"]].mean()),
+                                            "queda_2s": float(early.mean())}
         # O diagnostico de 18/10 (vault .../pesquisas/08_plano_consenso.md, Q0).
         std = self.model.log_std.detach().exp().cpu().numpy()
         kl_channels = stats.get("kl_per_channel") or []
@@ -1158,10 +1174,44 @@ class LocomotionTrainer:
             self.pending = None
             self.finish(future.result(), info)
 
+    def refresh_get_up_policy(self) -> None:
+        """A rede do levantar da interligacao nas quedas, a exportada por ultimo (entre as coletas: o lote parado)."""
+        if not self.get_up_handoff.get("enabled", False):
+            return
+        file = paths.RUNS / self.get_up_handoff.get("run", "levantar_v2") / "exports" / "policy_latest.mrlpolicy"
+        try:
+            mtime = file.stat().st_mtime
+            if mtime <= self.get_up_policy_mtime:
+                return
+            self.batch.set_get_up_policy(str(file))
+            self.get_up_policy_mtime = mtime
+            print(f"interligacao: a rede do levantar de {file}", flush=True)
+        except (OSError, RuntimeError, ValueError) as error:
+            print(f"interligacao: a rede do levantar nao carregou ({error})", flush=True)
+
+    def export_fall_states(self) -> None:
+        """As quedas desta rede para o treino da rede do levantar (01/11, "para que justamente um consiga aprender com o
+        outro"): as 2048 mais novas no quedas_locomocao.npy do treino dela, trocado inteiro a cada 50 iteracoes (ela le
+        quando muda)."""
+        if not self.get_up_handoff.get("enabled", False):
+            return
+        states = self.batch.take_fall_states()
+        if len(states):
+            self.fall_states = states if self.fall_states is None else np.concatenate([self.fall_states, states])[-2048:]
+        if self.fall_states is None or self.counters["iteration"] % 50 != 0:
+            return
+        file = paths.RUNS / self.get_up_handoff.get("run", "levantar_v2") / "quedas_locomocao.npy"
+        temporary = file.with_name("quedas_locomocao.tmp.npy")
+        np.save(temporary, self.fall_states)
+        os.replace(temporary, file)
+
     def round(self) -> None:
         """Coleta uma rodada e atualiza (com a sobreposicao, a atualizacao desta
         rodada roda enquanto a proxima coleta)."""
+        if self.counters["iteration"] % 50 == 0:
+            self.refresh_get_up_policy()
         rollout, info = self.collect()
+        self.export_fall_states()
         if self.executor is None:
             self.finish(self.update(rollout), info)
             return

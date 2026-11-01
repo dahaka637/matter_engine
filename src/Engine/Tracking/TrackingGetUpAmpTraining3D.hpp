@@ -80,11 +80,18 @@ struct TrackingGetUpAmpSettings3D {
     // in Minutes"): com o pedido de deslocamento, de pe, a cada pe que pousa, este peso vezes o tempo no ar (ate 0,5 s)
     // menos 0,15 s - passo de verdade ganha, arrastar perde. 0: desligado.
     float stepReward = 0.0f;
+    // A troca de rede ao ficar de pe (01/11, ele: o levantar volta a ser so levantar e evitar quedas, "fazendo a troca
+    // de RL no momento que recem fica de pe"): o episodio acaba (truncado, como o fim do tempo) quando ele fica de pe e
+    // firme por 0,5 s - o mesmo da entrega no jogo - depois de ter estado no chao ou, no evitar a queda, do empurrao.
+    bool handoffOnStand = false;
+    // As quedas da locomocao (01/11, a interligacao das redes: "para que justamente um consiga aprender com o outro"): a
+    // fatia que comeca no instante em que a rede da locomocao caiu no treino dela (setFallStarts; sem elas, uma queda).
+    float locomotionFallFraction = 0.0f;
     // Na avaliacao, o que se mede: 0 as quedas (o levantar), 1 o levantar em movimento, 2 o evitar a queda, 3 o
     // equilibrio parado (de pe, um empurrao com a regua do parado com empurrao forte do B21: o curto de 900-1200 N ou,
     // em 30%, o continuo de 205-275 N por 1-3 s), 4 os rumos (de pe, no meio do trote, mantendo o rumo do corpo, um
     // empurrao em movimento), 5 o parado (de pe, sem empurrao), 6 o giro parado suave (0,6 rad/s, metade para cada lado,
-    // um empurrao em movimento).
+    // um empurrao em movimento), 7 as quedas da locomocao (a do mundo entre as de setFallStarts).
     std::uint32_t evaluationKind = 0;
 };
 
@@ -93,7 +100,7 @@ struct TrackingGetUpAmpEpisode3D {
     std::uint32_t world = 0;
     // 0: uma queda; 1: um instante de um clipe de levantar; 2: de pe (o parado); 3: uma queda com alvo (o levantar em
     // movimento); 4: de pe com o empurrao forte (o evitar a queda); 5: a arrancada agachada com alvo; 6: um rumo (o rumo
-    // pedido, 0 a 7, vem em startSide); 7: o giro parado suave.
+    // pedido, 0 a 7, vem em startSide); 7: o giro parado suave; 8: uma queda da locomocao.
     std::uint32_t startKind = 0;
     // Como comecou: 0 de brucos, 1 de costas, 2 de lado (ou sentado, ajoelhado).
     std::uint32_t startSide = 0;
@@ -119,6 +126,8 @@ struct TrackingGetUpAmpEpisode3D {
     float meanFaceError = 0.0f;
     // A coluna como a do parado em alerta no fim (TrackingGetUpPostureProbe3D::idleSpineMatch; 0 se nao esta de pe).
     float endSpineMatch = 0.0f;
+    // A troca de rede (s desde o comeco; < 0: o episodio acabou sem ela).
+    float handoffSeconds = -1.0f;
 };
 
 // O que o visualizador do laboratorio desenha de um mundo: como comecou, o alvo (o levantar em movimento, enquanto o
@@ -181,6 +190,11 @@ public:
     [[nodiscard]] float episodeSeconds() const;
     // O minimo e o maximo (rad) de cada eixo da acao (2 por eixo).
     [[nodiscard]] std::vector<float> actionRanges() const;
+
+    // As quedas da locomocao para os comecos do tipo 8: o corpo inteiro no instante da queda, com as velocidades (os de
+    // outro numero de links ficam de fora). Troca so entre os steps.
+    void setFallStarts(std::vector<std::vector<PhysicsBodyState3D>> states);
+    [[nodiscard]] std::size_t fallStartCount() const;
 
     void reset(std::uint64_t seed);
     void observations(std::span<float> out) const;
