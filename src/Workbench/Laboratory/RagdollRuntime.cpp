@@ -837,7 +837,7 @@ void WorkbenchApp::toggleControlledCharacterFrozen() {
     };
 }
 
-void WorkbenchApp::reloadLocomotionPolicy() {
+void WorkbenchApp::reloadLocomotionPolicy(bool applyTaskAssist) {
     namespace fs = std::filesystem;
     fs::path file;
     if (const char* given = std::getenv("MATTER_LOCOMOTION_POLICY"); given != nullptr && *given != '\0') {
@@ -887,7 +887,7 @@ void WorkbenchApp::reloadLocomotionPolicy() {
             conditions.historicalAssistRuler = task.value("assistRuler", std::string("historical")) != "linear";
             if (task.contains("movingHipTurn")) conditions.movingHipTurn = task["movingHipTurn"].value("enabled", false);
             if (task.contains("runningTurn")) conditions.runningTurnClip = task["runningTurn"].value("enabled", false);
-            if (task.contains("assist")) {
+            if (applyTaskAssist && task.contains("assist")) {
                 const nlohmann::json& assist = task["assist"];
                 m_e5StandingAssistPercent = assist.value("standing", m_e5StandingAssistPercent);
                 m_e5WalkingAssistPercent = assist.value("walking", m_e5WalkingAssistPercent);
@@ -931,9 +931,14 @@ void WorkbenchApp::reloadGetUpPolicy() {
 
 void WorkbenchApp::watchRlPolicies(float deltaTime) {
     namespace fs = std::filesystem;
-    if (!m_locomotionPolicyOn || (m_rlPolicyWatch += deltaTime) < 2.0f) return;
+    const bool rlPhysical = m_locomotionPolicyOn || (m_defaultLocomotion && m_defaultPhysicalPolicy);
+    if (!rlPhysical || (m_rlPolicyWatch += deltaTime) < 2.0f) return;
     m_rlPolicyWatch = 0.0f;
     std::error_code error;
+    // (Ainda sem as redes - o Padrao com o Fisico com RL nas transicoes, ao abrir -: as duas, sem mexer nos controles;
+    // uma tentativa, o erro fica no rotulo.)
+    if (m_locomotionPolicyFile.empty() && m_locomotionPolicyLabel.empty()) reloadLocomotionPolicy(false);
+    if (m_getUpPolicyFile.empty() && m_getUpPolicyLabel.empty()) reloadGetUpPolicy();
     // (A da locomocao nova do mesmo treino troca so a rede: os controles de ajuda ficam os dele.)
     if (!m_locomotionPolicyFile.empty() && m_humanRagdollProfile) {
         const auto write = fs::last_write_time(m_locomotionPolicyFile, error);
@@ -951,8 +956,9 @@ void WorkbenchApp::watchRlPolicies(float deltaTime) {
             }
         }
     }
+    if (m_getUpPolicyFile.empty()) return;
     const auto write = fs::last_write_time(m_getUpPolicyFile, error);
-    if (m_getUpPolicyFile.empty() || (!error && write != m_getUpPolicyWrite)) reloadGetUpPolicy();
+    if (!error && write != m_getUpPolicyWrite) reloadGetUpPolicy();
 }
 
 AthleteRuntimeSettings3D WorkbenchApp::athleteRuntimeSettings() const {
@@ -1023,11 +1029,14 @@ AthleteRuntimeSettings3D WorkbenchApp::athleteRuntimeSettings() const {
     settings.modeTable = m_modeTable;
     settings.physicalUsesDefaultSpeeds = m_physicalDefaultSpeeds;
     settings.physicalFeetAssistPercent = m_physicalFeetAssistPercent;
-    settings.locomotionPolicy = m_locomotionPolicyOn && m_athleteRuntime.locomotionPolicy() != nullptr;
-    // (01/11, ele: no Fisico com RL, a rede do levantar com a da locomocao e as trocas entre as duas.)
-    settings.getUpPolicy = settings.locomotionPolicy && m_athleteRuntime.getUpPolicy() != nullptr;
-    // Com a rede, a regua e as viradas do treino dela.
-    if (settings.locomotionPolicy && m_locomotionPolicyConditions) {
+    // (01/11, ele: no Fisico com RL e, no Padrao com o Fisico com RL nas transicoes, na fase fisica - o runtime so liga a
+    // da locomocao no fisico -, a rede do levantar com ela e as trocas entre as duas; com o levantar pelo padrao ligado,
+    // o levantar continua o do padrao.)
+    settings.locomotionPolicy = (m_locomotionPolicyOn || (m_defaultLocomotion && m_defaultPhysicalPolicy))
+        && m_athleteRuntime.locomotionPolicy() != nullptr;
+    settings.getUpPolicy = settings.locomotionPolicy && m_athleteRuntime.getUpPolicy() != nullptr && !m_animatedGetUp;
+    // Com a rede, a regua e as viradas do treino dela (no Fisico com RL; no Padrao, a regua dele).
+    if (m_locomotionPolicyOn && settings.locomotionPolicy && m_locomotionPolicyConditions) {
         settings.historicalAssistRuler = m_locomotionPolicyConditions->historicalAssistRuler;
         settings.movingHipTurn = m_locomotionPolicyConditions->movingHipTurn;
         settings.runningTurnClip = m_locomotionPolicyConditions->runningTurnClip;

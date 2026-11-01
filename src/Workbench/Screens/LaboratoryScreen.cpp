@@ -3017,8 +3017,14 @@ void WorkbenchApp::drawLaboratoryUi() {
                                 }
                             }
                             if (mode == 0) {
+                                ImGui::Checkbox("Físico com RL nas transições", &m_defaultPhysicalPolicy);
+                                hint("Na troca do padrão para o físico (pancada, parede, queda) e na volta, o físico pelas redes de RL - a da locomoção e a do levantar, as mais novas dos treinos, com a troca entre elas na queda iminente - no lugar da locomoção física.");
+                                if (m_defaultPhysicalPolicy) {
+                                    if (!m_locomotionPolicyLabel.empty()) ImGui::TextDisabled("%s", m_locomotionPolicyLabel.c_str());
+                                    if (!m_getUpPolicyLabel.empty()) ImGui::TextDisabled("%s", m_getUpPolicyLabel.c_str());
+                                }
                                 ImGui::Checkbox("Levantar pelo padrão", &m_animatedGetUp);
-                                hint("Caído de bruços ou de costas, com o chão plano e nada no caminho, levanta pelo clipe com a postura certa; um contato no meio volta ao físico. Sem base, o levantar físico.");
+                                hint("Caído de bruços ou de costas, com o chão plano e nada no caminho, levanta pelo clipe com a postura certa; um contato no meio volta ao físico. Sem base, o levantar físico. Ligado, o levantar é este também com as redes de RL.");
                                 // (28/10, pedido do usuario: calibrar na pratica.)
                                 percent("Volta ao padrão", "##DefaultReturnRate", &m_defaultReturnRatePercent, 50.0f, 300.0f,
                                     "A rapidez da volta do físico ao padrão depois de um impacto, quando o corpo já se aprumou. 100% é a calibrada; 200%, as esperas pela metade.");

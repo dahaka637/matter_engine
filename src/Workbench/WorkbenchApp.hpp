@@ -361,7 +361,8 @@ private:
     // A rede da locomocao (o RL, contrato v2): carrega a ultima politica
     // exportada pelo treino (MATTER_LOCOMOTION_POLICY, ou a do treino
     // loco_f1f2 em MATTER_RL_DATA / ~/.local/share/matter-engine/rl).
-    void reloadLocomotionPolicy();
+    // (applyTaskAssist: os controles de ajuda vao aos da tarefa do treino - so ao escolher o Fisico com RL.)
+    void reloadLocomotionPolicy(bool applyTaskAssist = true);
     // A rede do levantar do Fisico com RL (01/11): a ultima exportada do treino levantar_v2 (MATTER_GETUP_POLICY para
     // outra) e, a cada ~2 s, as duas redes de novo quando os treinos exportam outras (sem mexer nos controles).
     void reloadGetUpPolicy();
@@ -746,8 +747,13 @@ private:
     float m_captureAiNear = 2.0f;
     float m_captureAiFar = 5.0f;
     bool m_captureAiTackles = true;
-    // O levantar pelo padrao (28/10, item 16): ligado no laboratorio.
-    bool m_animatedGetUp = true;
+    // O levantar pelo padrao (28/10, item 16). (01/11, ele: desligado por padrao - o levantar e o da rede do levantar;
+    // ligado, ele continua sendo o do padrao.)
+    bool m_animatedGetUp = false;
+    // O Fisico com RL nas transicoes do Padrao (01/11, ele: "para ele passar a usar o Fisico com RL ao inves da Locomocao
+    // fisica quando ha a transicao entre o default -> fisico e vice versa... por default ativo"): a fase fisica pelas
+    // redes de RL (a da locomocao e a do levantar, com a troca entre elas).
+    bool m_defaultPhysicalPolicy = true;
     // A arrancada do padrao (0 desliga): o gesto do idle_to_sprint e a
     // inclinacao do corpo com a aceleracao (e com a freada). 100% no laboratorio.
     static constexpr float LabDefaultStartGesturePercent = 100.0f;
