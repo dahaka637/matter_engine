@@ -591,7 +591,9 @@ TrackingViewer3D::TrackingViewer3D(const std::filesystem::path& assetsDirectory,
                                                                                                                 : 0u;
         impl.startGetUp();
         impl.loadGetUpPolicy();
-        impl.partnerDirectory = partnerRun();
+        // (01/11, a rl_final: ela faz tudo - sem a troca para a rede da locomocao ao ficar de pe; ele: "no levantar em
+        // movimento ele ainda faz a troca de rede quando ele se levanta".)
+        if (!getUpLocomotion()) impl.partnerDirectory = partnerRun();
         if (impl.getUpKind == 2) impl.startAvoid();
     }
 }
