@@ -96,6 +96,11 @@ struct AthleteRuntimeSettings3D {
     // fisico. Desligado no runtime (o levantar e o treino dele); o
     // laboratorio liga.
     bool animatedGetUp = false;
+    // A rede do levantar junto da rede da locomocao (01/11, ele: no "Fisico com RL" do laboratorio, "a troca harmonica
+    // entre os modelos de RL de locomocao e levantar-se"): com as duas (AthleteRuntime3D::setGetUpPolicy e
+    // locomotionPolicy), no fisico, na queda iminente - o criterio do fim do episodio do treino da locomocao e o tronco
+    // tombando (GetUpPolicy3D) - ela dirige o corpo como no treino dela e, de pe e firme, devolve a rede da locomocao.
+    bool getUpPolicy = false;
     // O ritmo do clipe dele (28/10, pedido do usuario: "levantar-se rapido no
     // geral"; era 1).
     float animatedGetUpSpeed = 1.3f;

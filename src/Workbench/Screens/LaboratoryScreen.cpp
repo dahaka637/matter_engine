@@ -337,6 +337,7 @@ void WorkbenchApp::syncLaboratoryMouseCapture() {
 
 void WorkbenchApp::updateLaboratory(float deltaTime) {
     m_laboratoryElapsedTime += deltaTime;
+    watchRlPolicies(deltaTime);
     if (m_laboratoryClockRunning) {
         m_laboratoryEnvironment.solarTimeHours += deltaTime
             * m_laboratoryClockTimeScale / 3600.0f;
@@ -2975,7 +2976,10 @@ void WorkbenchApp::drawLaboratoryUi() {
                                 m_defaultLocomotion = mode == 0;
                                 m_locomotionPolicyOn = mode == 2;
                                 // (A cada escolha, a rede mais nova e as condicoes do treino dela.)
-                                if (m_locomotionPolicyOn) reloadLocomotionPolicy();
+                                if (m_locomotionPolicyOn) {
+                                    reloadLocomotionPolicy();
+                                    reloadGetUpPolicy();
+                                }
                             }
                             hint("Padrão: o corpo segue a animação (com massa) e vai ao físico numa pancada, parede ou queda, voltando quando assenta. Físico total: sempre pelos músculos e pelas ajudas. Físico com RL: o físico com a rede treinada corrigindo os pés, o equilíbrio, a pose e a rigidez.");
                             // (A locomocao fisica v2 e o "tentar se manter em pe no
@@ -3040,9 +3044,13 @@ void WorkbenchApp::drawLaboratoryUi() {
                             ImGui::Checkbox("Áreas de alcance", &m_showReachAreas);
                             hint("Desenha onde a bola precisa estar para cada parte: verde os pés (o amarelo mais claro é a bola alta, pé na altura do joelho), azul o peito, laranja a cabeça. É o centro da bola que conta.");
                             if (mode == 2) {
-                                if (ImGui::Button("Recarregar a rede", { -1.0f, 0.0f })) reloadLocomotionPolicy();
-                                hint("Carrega a rede mais recente dos treinos, com a ajuda, a régua e as viradas com que ela treinou.");
+                                if (ImGui::Button("Recarregar as redes", { -1.0f, 0.0f })) {
+                                    reloadLocomotionPolicy();
+                                    reloadGetUpPolicy();
+                                }
+                                hint("Carrega as redes mais recentes dos treinos - a da locomoção, com a ajuda, a régua e as viradas com que ela treinou, e a do levantar. Elas também se atualizam sozinhas quando os treinos exportam outras; na queda iminente a do levantar assume e, de pé e firme, devolve à da locomoção.");
                                 if (!m_locomotionPolicyLabel.empty()) ImGui::TextDisabled("%s", m_locomotionPolicyLabel.c_str());
+                                if (!m_getUpPolicyLabel.empty()) ImGui::TextDisabled("%s", m_getUpPolicyLabel.c_str());
                             }
                         }
                         panelHeader("AJUDAS");

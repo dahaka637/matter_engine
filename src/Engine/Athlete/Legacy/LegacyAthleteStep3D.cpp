@@ -4,6 +4,7 @@
 #include "Engine/Gesture/GestureChoice3D.hpp"
 #include "Engine/Athlete/Planning/MotionPlanner3D.hpp"
 #include "Engine/Athlete/Body/GetUpPolicy3D.hpp"
+#include "Engine/Physique/PlayerPhysique3D.hpp"
 #include "Engine/Athlete/Reference/BodyForecast3D.hpp"
 #include "Engine/Athlete/Synthesis/LegSynthesis3D.hpp"
 
@@ -33,6 +34,10 @@ constexpr float ActiveExitSeconds = 0.60f;
 // tronco ia da postura do fisico a do clipe em ~0,15 s).
 constexpr float ReturnHalfLife = 0.14f;
 constexpr float ReturnSeconds = 0.60f;
+// A rede do levantar junto da rede da locomocao (01/11): a pelve abaixo disto (m, na escala do corpo) e a queda do fim do
+// episodio do treino da locomocao (a tarefa do B21) e, sem ficar de pe e firme neste tanto (s), o classico de volta.
+constexpr float GetUpFallPelvisHeight = 0.45f;
+constexpr float GetUpRecoveryLimitSeconds = 10.0f;
 
 // No Ativo, o ponto de captura alem disto (m) fora da base leva ao fisico
 // pleno: sem os passos de equilibrio, a pancada que pede passo; com eles, so
@@ -1992,6 +1997,99 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         // A capsula manda: nada de ir atras do corpo.
         setFollow({});
         return;
+    }
+    // A rede do levantar junto da rede da locomocao (01/11, ele: no "Fisico com RL" do laboratorio, "a troca harmonica
+    // entre os modelos de RL de locomocao e levantar-se"; vault 04_locomocao/plano_interligacao_b21_levantar_01_11.md):
+    // com as duas, no fisico, na queda iminente - o fim do episodio do treino da locomocao (a pelve baixa, algo que nao
+    // os pes no chao, o classico caido) ou o tronco tombando (GetUpPolicy3D) - ela dirige o corpo como no treino dela: os
+    // alvos a cada GetUpPolicy3D::TicksPerDecision passos, sem a compensacao da gravidade e sem forcas de fora, a capsula
+    // embaixo da pelve. De pe e firme por GetUpPolicy3D::FirmSeconds, o classico recomeca no corpo, os alvos dele saem
+    // dos dela (getUpHandoff, abaixo) e a rede da locomocao volta do zero.
+    {
+        auto& rl = athlete.getUpRecovery;
+        const GetUpPolicy3D* policy = assets.getUpPolicy;
+        const bool allowed = policy != nullptr && settings.getUpPolicy && settings.locomotionPolicy
+            && state.bodyMode == BodyMode::Physical && body.links.size() == profile.links.size();
+        const auto release = [&](const char* why) {
+            rl.active = false;
+            rl.trunkTiltValid = false;
+            state.locomotion.reset(profile, body);
+            state.adaptivePhysics.reset(profile);
+            Log::info(std::string("corpo: rede do levantar -> rede da locomocao (") + why + ")");
+        };
+        if (!allowed) {
+            if (rl.active) release("desligada");
+            rl.trunkTiltValid = false;
+        } else if (!rl.active && !athlete.animatedGetUp.active()) {
+            const PhysicsBodyState3D& pelvis = body.links.front();
+            bool imminent = pelvis.position.z - groundHeight(pelvis.position) < GetUpFallPelvisHeight * bodyScale3D(assets.body);
+            for (const RagdollInteraction3D& contact : body.interactions) {
+                if (contact.linkIndex >= profile.links.size() || contact.otherMotion != RagdollContactMotion3D::Static
+                    || contact.normalWorld.z <= 0.5f)
+                    continue;
+                const std::string& id = profile.links[contact.linkIndex].id;
+                if (id.find("Foot") == std::string::npos && id.find("Toe") == std::string::npos) imminent = true;
+            }
+            if (++rl.tiltTicks % GetUpPolicy3D::TicksPerDecision == 0) {
+                if (state.locomotion.telemetry().state == CharacterLocomotionState3D::Fallen) imminent = true;
+                const float tilt = GetUpPolicy3D::trunkTilt(profile, body.links);
+                const float decision = static_cast<float>(GetUpPolicy3D::TicksPerDecision) * deltaTime;
+                if (rl.trunkTiltValid && tilt > GetUpPolicy3D::ImminentTiltDegrees
+                    && (tilt - rl.trunkTilt) / decision > GetUpPolicy3D::ImminentTiltRate)
+                    imminent = true;
+                rl.trunkTilt = tilt;
+                rl.trunkTiltValid = true;
+            }
+            if (imminent) {
+                rl.active = true;
+                rl.ticks = 0;
+                rl.firmSeconds = 0.0f;
+                rl.seconds = 0.0f;
+                if (state.guided) {
+                    scene.setRagdollGuided(slot.handle, false);
+                    state.guided = false;
+                }
+                Log::info("corpo: queda iminente -> rede do levantar");
+            }
+        }
+        if (rl.active) {
+            try {
+                if (rl.ticks % GetUpPolicy3D::TicksPerDecision == 0) policy->decide(profile, body.links, rl.drives);
+            } catch (const std::exception& error) {
+                Log::warn(std::string("rede do levantar: ") + error.what());
+                rl.drives.clear();
+            }
+            if (rl.drives.empty()) {
+                release("erro");
+            } else {
+                ++rl.ticks;
+                rl.seconds += deltaTime;
+                scene.setRagdollActiveDriveTargets(slot.handle, rl.drives, false);
+                scene.setRagdollFrictionScale(slot.handle, 1.0f);
+                const PhysicsBodyState3D& pelvis = body.links.front();
+                placeNav({ pelvis.position.x, pelvis.position.y, groundHeight(pelvis.position) });
+                setNavVelocity({});
+                setFollow({});
+                // De pe e firme (o criterio do treino dela): a pelve perto da altura de pe, em pe, e o centro de massa
+                // quase parado.
+                Vec3 momentum;
+                float mass = 0.0f;
+                for (std::size_t i = 0; i < profile.links.size(); ++i) {
+                    momentum += body.links[i].linearVelocity * profile.links[i].massFraction;
+                    mass += profile.links[i].massFraction;
+                }
+                const Vec3 com = mass > 0.0f ? momentum * (1.0f / mass) : Vec3 {};
+                const float upright = (pelvis.orientation * profile.links.front().modelOrientation.conjugate())
+                    .rotate({ 0.0f, 0.0f, 1.0f }).z;
+                const bool firm = pelvis.position.z - groundHeight(pelvis.position) > 0.85f * profile.standingRootHeightMeters
+                    && upright > 0.85f && std::hypot(com.x, com.y) < 0.5f;
+                rl.firmSeconds = firm ? rl.firmSeconds + deltaTime : 0.0f;
+                if (rl.firmSeconds < GetUpPolicy3D::FirmSeconds && rl.seconds < GetUpRecoveryLimitSeconds) return;
+                athlete.getUpHandoff = { GetUpPolicy3D::BlendSeconds, rl.drives };
+                state.getUpSeen = true;
+                release(rl.firmSeconds >= GetUpPolicy3D::FirmSeconds ? "de pe" : "tempo");
+            }
+        }
     }
     // O levantar pelo padrao (28/10, item 16; Athlete/Body/AnimatedGetUp3D):
     // caido e assentado no fisico, de brucos ou de costas, com base solida - o

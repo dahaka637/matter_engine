@@ -23,6 +23,7 @@
 //      [--ajuda-parado %] [--ajuda-andando %]
 //      [--contato-ms ms] [--forca-ms ms] [--gesto-ms ms] (os tempos do toque: 350, 400 e 700 padrao)
 // Sem --cenario roda todos.
+#include "Engine/Tracking/TrackingGetUpPolicy3D.hpp"
 #include "athlete_probe/ProbeShared.hpp"
 #include "Engine/Athlete/Policy/LocomotionPolicy3D.hpp"
 
@@ -1376,6 +1377,12 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
             policySettings.historicalAssistRuler = false;
             policySettings.movingHipTurn = policySettings.runningTurnClip = true;
         }
+    }
+    // XREDE_LEVANTAR=<.mrlpolicy>: com a XREDE, a rede do levantar e as trocas entre as duas (01/11; como o Fisico com
+    // RL do laboratorio).
+    if (const char* rede = std::getenv("XREDE_LEVANTAR"); rede != nullptr && *rede != '\0') {
+        runtime.setGetUpPolicy(std::make_shared<TrackingGetUpPolicy3D>(rede));
+        policySettings.getUpPolicy = true;
     }
     Vec3 followVelocity {};
     bool controlledAnimated = !startPhysical;

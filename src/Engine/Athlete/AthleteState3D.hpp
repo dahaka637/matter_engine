@@ -124,6 +124,19 @@ struct AthleteState3D {
         float blendLeft = 0.0f;
         std::vector<RagdollDriveTarget3D> drives;
     } getUpHandoff;
+    // A rede do levantar dirigindo (01/11, AthleteRuntimeSettings3D::getUpPolicy): se esta, os passos desde que assumiu,
+    // os alvos de agora, ha quanto tempo ele esta de pe e firme (s) e a inclinacao do tronco na decisao anterior (a queda
+    // iminente pelo tronco, medida a cada GetUpPolicy3D::TicksPerDecision passos).
+    struct GetUpRecovery {
+        bool active = false;
+        std::uint32_t ticks = 0;
+        std::vector<RagdollDriveTarget3D> drives;
+        float firmSeconds = 0.0f;
+        float seconds = 0.0f;
+        float trunkTilt = 0.0f;
+        bool trunkTiltValid = false;
+        std::uint32_t tiltTicks = 0;
+    } getUpRecovery;
     // A reescrita (R3): o corpo da classificacao de contatos, as regras de
     // troca de modo e o ultimo tick delas (a telemetria neutra: o que bateu,
     // a ultima troca e o motivo).

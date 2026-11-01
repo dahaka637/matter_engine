@@ -17,6 +17,8 @@
 
 namespace MatterEngine {
 
+class GetUpPolicy3D;
+
 // O que o runtime dos atletas precisa do personagem: o perfil, os clipes (os
 // da locomocao fisica e os do modo padrao), as poses de referencia do
 // experimento biomecanico e as medidas da capsula do jogador.
@@ -30,6 +32,8 @@ struct AthleteRuntimeAssets3D {
     // O corpo (altura e peso) do perfil e dos clipes acima: o alcance da bola e
     // as medidas do passo seguem ele.
     PlayerBody3D body;
+    // A rede do levantar (01/11; o runtime poe a dele, setGetUpPolicy): sem ela, o levantar de sempre.
+    const GetUpPolicy3D* getUpPolicy = nullptr;
 };
 
 // Um atleta na cena (um ragdoll humano): a identidade, o corpo publicado no
@@ -158,9 +162,14 @@ public:
     // esta politica (nula: nenhuma). Sem ela, ou desligada, o classico exato.
     void setLocomotionPolicy(std::shared_ptr<LocomotionPolicy3D> policy) { m_locomotionPolicy = std::move(policy); }
     [[nodiscard]] const LocomotionPolicy3D* locomotionPolicy() const { return m_locomotionPolicy.get(); }
+    // A rede do levantar (01/11): com settings.getUpPolicy e a da locomocao, na queda iminente ela assume
+    // (LegacyAthleteStep3D) e devolve de pe e firme.
+    void setGetUpPolicy(std::shared_ptr<const GetUpPolicy3D> policy) { m_getUpPolicy = std::move(policy); }
+    [[nodiscard]] const GetUpPolicy3D* getUpPolicy() const { return m_getUpPolicy.get(); }
 
 private:
     std::shared_ptr<LocomotionPolicy3D> m_locomotionPolicy;
+    std::shared_ptr<const GetUpPolicy3D> m_getUpPolicy;
 };
 
 // O analogico e a camera de quem comanda um atleta: o rumo no mundo (o

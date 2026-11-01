@@ -4,6 +4,7 @@
 
 #include "Engine/Athlete/AthleteAssets3D.hpp"
 #include "Engine/Athlete/Policy/LocomotionPolicy3D.hpp"
+#include "Engine/Tracking/TrackingGetUpPolicy3D.hpp"
 #include "Engine/Character/CharacterControlApplication3D.hpp"
 #include "Engine/Core/Log.hpp"
 #include "Engine/Geometry/MeshData3D.hpp"
@@ -873,6 +874,9 @@ void WorkbenchApp::reloadLocomotionPolicy() {
         m_locomotionPolicyLabel = label;
         Log::info("rede da locomocao: " + m_locomotionPolicyLabel + " (" + file.string() + ")");
         m_athleteRuntime.setLocomotionPolicy(std::move(policy));
+        std::error_code stamp;
+        m_locomotionPolicyFile = file;
+        m_locomotionPolicyWrite = fs::last_write_time(file, stamp);
         // As condicoes com que ela treinou (a tarefa do treino, ao lado da exportacao): a ajuda
         // entra na regua do personagem (ele muda depois); a regua e as viradas, com a rede.
         m_locomotionPolicyConditions.reset();
@@ -895,6 +899,60 @@ void WorkbenchApp::reloadLocomotionPolicy() {
         m_locomotionPolicyLabel = "nao carregou";
         Log::warn(std::string("rede da locomocao: ") + error.what());
     }
+}
+
+void WorkbenchApp::reloadGetUpPolicy() {
+    namespace fs = std::filesystem;
+    fs::path file;
+    if (const char* given = std::getenv("MATTER_GETUP_POLICY"); given != nullptr && *given != '\0') {
+        file = given;
+    } else {
+        fs::path data;
+        if (const char* root = std::getenv("MATTER_RL_DATA"); root != nullptr && *root != '\0') data = root;
+        else if (const char* home = std::getenv("HOME"); home != nullptr) data = fs::path(home) / ".local/share/matter-engine/rl";
+        file = data / "runs" / "levantar_v2" / "exports" / "policy_latest.mrlpolicy";
+    }
+    try {
+        auto policy = std::make_shared<TrackingGetUpPolicy3D>(file);
+        char label[96];
+        std::snprintf(label, sizeof label, "levantar v2, atualização %llu", static_cast<unsigned long long>(policy->iteration()));
+        m_getUpPolicyLabel = label;
+        m_athleteRuntime.setGetUpPolicy(std::move(policy));
+        std::error_code stamp;
+        m_getUpPolicyFile = file;
+        m_getUpPolicyWrite = fs::last_write_time(file, stamp);
+        Log::info("rede do levantar: " + m_getUpPolicyLabel);
+    } catch (const std::exception& error) {
+        m_getUpPolicyLabel = "nao carregou";
+        m_athleteRuntime.setGetUpPolicy(nullptr);
+        Log::warn(std::string("rede do levantar: ") + error.what());
+    }
+}
+
+void WorkbenchApp::watchRlPolicies(float deltaTime) {
+    namespace fs = std::filesystem;
+    if (!m_locomotionPolicyOn || (m_rlPolicyWatch += deltaTime) < 2.0f) return;
+    m_rlPolicyWatch = 0.0f;
+    std::error_code error;
+    // (A da locomocao nova do mesmo treino troca so a rede: os controles de ajuda ficam os dele.)
+    if (!m_locomotionPolicyFile.empty() && m_humanRagdollProfile) {
+        const auto write = fs::last_write_time(m_locomotionPolicyFile, error);
+        if (!error && write != m_locomotionPolicyWrite) {
+            try {
+                auto policy = std::make_shared<LocomotionPolicy3D>(*m_humanRagdollProfile, m_locomotionPolicyFile);
+                char label[96];
+                std::snprintf(label, sizeof label, "%s, rodada %llu", policy->run().c_str(),
+                    static_cast<unsigned long long>(policy->iteration()));
+                m_locomotionPolicyLabel = label;
+                m_athleteRuntime.setLocomotionPolicy(std::move(policy));
+                m_locomotionPolicyWrite = write;
+                Log::info("rede da locomocao nova: " + m_locomotionPolicyLabel);
+            } catch (const std::exception&) {
+            }
+        }
+    }
+    const auto write = fs::last_write_time(m_getUpPolicyFile, error);
+    if (m_getUpPolicyFile.empty() || (!error && write != m_getUpPolicyWrite)) reloadGetUpPolicy();
 }
 
 AthleteRuntimeSettings3D WorkbenchApp::athleteRuntimeSettings() const {
@@ -966,6 +1024,8 @@ AthleteRuntimeSettings3D WorkbenchApp::athleteRuntimeSettings() const {
     settings.physicalUsesDefaultSpeeds = m_physicalDefaultSpeeds;
     settings.physicalFeetAssistPercent = m_physicalFeetAssistPercent;
     settings.locomotionPolicy = m_locomotionPolicyOn && m_athleteRuntime.locomotionPolicy() != nullptr;
+    // (01/11, ele: no Fisico com RL, a rede do levantar com a da locomocao e as trocas entre as duas.)
+    settings.getUpPolicy = settings.locomotionPolicy && m_athleteRuntime.getUpPolicy() != nullptr;
     // Com a rede, a regua e as viradas do treino dela.
     if (settings.locomotionPolicy && m_locomotionPolicyConditions) {
         settings.historicalAssistRuler = m_locomotionPolicyConditions->historicalAssistRuler;

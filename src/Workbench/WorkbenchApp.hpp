@@ -35,6 +35,7 @@
 
 #include <array>
 #include <atomic>
+#include <filesystem>
 #include <chrono>
 #include <cstdint>
 #include <future>
@@ -361,6 +362,10 @@ private:
     // exportada pelo treino (MATTER_LOCOMOTION_POLICY, ou a do treino
     // loco_f1f2 em MATTER_RL_DATA / ~/.local/share/matter-engine/rl).
     void reloadLocomotionPolicy();
+    // A rede do levantar do Fisico com RL (01/11): a ultima exportada do treino levantar_v2 (MATTER_GETUP_POLICY para
+    // outra) e, a cada ~2 s, as duas redes de novo quando os treinos exportam outras (sem mexer nos controles).
+    void reloadGetUpPolicy();
+    void watchRlPolicies(float deltaTime);
     void resetControlledCharacterPose();
     void toggleControlledCharacterFrozen();
     void updateRagdollImpactLab(float deltaTime);
@@ -541,6 +546,12 @@ private:
     bool m_dynamicTurnMove = false;
     float m_dynamicTurnMovePercent = 100.0f;
     std::string m_locomotionPolicyLabel;
+    std::filesystem::path m_locomotionPolicyFile;
+    std::filesystem::file_time_type m_locomotionPolicyWrite {};
+    std::string m_getUpPolicyLabel;
+    std::filesystem::path m_getUpPolicyFile;
+    std::filesystem::file_time_type m_getUpPolicyWrite {};
+    float m_rlPolicyWatch = 0.0f;
     bool m_ragdollAssetsLoadFailed = false;
     bool m_ragdollActive = true;
     // A tensao nos limites das juntas nos bonecos humanos (27/10; desligada: o de antes).
