@@ -1345,7 +1345,8 @@ void ReinforcementLearningScreen::drawDrills() {
         for (const bool active : { true, false }) {
             if (!ImGui::CollapsingHeader(active ? "Ativos" : "Inativos", active ? ImGuiTreeNodeFlags_DefaultOpen : 0)) continue;
             for (std::size_t i = 0; i < m_drillIds.size(); ++i) {
-                // (O levantar e outra rede, o DeepMimic, num treino a parte: ativo enquanto aquele treino roda.)
+                // (O levantar e outra rede, a do treino a parte levantar_v2: ativo enquanto aquele treino roda, em roxo -
+                // 31/10, ele: "os exercicios que fazem parte da outra rede neural... cor roxa ao inves de verde".)
                 const bool getUp = !motor && i < m_drillInfo.size() && m_drillInfo[i].getUp;
                 const bool training = getUp ? m_getUpTraining : (i >= m_drillWeights.size() || m_drillWeights[i] > 0.0f);
                 if (training != active) continue;
@@ -1353,11 +1354,12 @@ void ReinforcementLearningScreen::drawDrills() {
                     + "##drill" + m_drillIds[i];
                 const bool apart = getUp && !m_getUpTraining && !TrackingViewer3D::getUpReady();
                 ImGui::BeginDisabled(apart);
-                if (phaseButton(label.c_str(), m_drillIds[i] == m_viewerDrill, { -1.0f, ui(30.0f) }, training ? 1 : 0))
+                if (phaseButton(label.c_str(), m_drillIds[i] == m_viewerDrill, { -1.0f, ui(30.0f) },
+                        training ? (getUp ? 3 : 1) : 0))
                     showDrill(m_drillIds[i]);
                 ImGui::EndDisabled();
-                tooltip(apart ? "Desligado: o levantar treina à parte, numa rede própria (de bruços e de costas)."
-                    : getUp ? "Mostra o levantar do chão, com as redes próprias (de bruços e de costas), alternando."
+                tooltip(apart ? "Desligado: a rede do levantar treina à parte e ainda não tem rede exportada."
+                    : getUp ? "Outra rede (roxo): a do levantar, que treina à parte. Mostra este exercício com ela."
                     : training ? "Mostra este exercício no mundo (o treino sorteia todos pelos pesos)."
                                : "Pronto, mas ainda fora do treino. Mostra este exercício no mundo.");
             }
