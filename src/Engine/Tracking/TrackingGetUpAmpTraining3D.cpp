@@ -195,6 +195,10 @@ struct TrackingGetUpAmpTraining3D::Impl {
         std::uint32_t startBand = 1;
         // O comeco num instante de uma queda com protecao (a protecao vale, como no evitar a queda).
         bool protectiveStart = false;
+        // O ultimo comeco de pe no parado em alerta (o clipe, o instante e o rumo; max: outro).
+        std::size_t lastClip = std::numeric_limits<std::size_t>::max();
+        float lastClipTime = 0.0f;
+        float lastClipYaw = 0.0f;
         // O alvo misturado com o do clipe (clipBlend).
         std::vector<float> blendAction;
         // A imitacao: o clipe do passo pedido (max: sem), o tempo dele no comeco do episodio e o rumo.
@@ -372,7 +376,12 @@ struct TrackingGetUpAmpTraining3D::Impl {
             : *references[std::uniform_int_distribution<std::size_t>(0, std::size(GetUpClips) - 1)(w.rng)];
         const float last = std::max(0.0f, reference.durationSeconds() * (protective ? 0.7f : 1.0f) - 2.0f / 30.0f);
         w.protectiveStart = protective;
-        reference.frame(u(w.rng) * last, {}, (2.0f * u(w.rng) - 1.0f) * Pi, w.frame);
+        const float t = u(w.rng) * last, yaw = (2.0f * u(w.rng) - 1.0f) * Pi;
+        w.lastClip = static_cast<std::size_t>(&reference == references[standingIndex].get() ? standingIndex
+            : &reference == references[standingMirrorIndex].get() ? standingMirrorIndex : std::numeric_limits<std::size_t>::max());
+        w.lastClipTime = t;
+        w.lastClipYaw = yaw;
+        reference.frame(t, {}, yaw, w.frame);
         w.scene->resetRagdollState(w.handle, w.frame.links);
         w.body = w.scene->ragdollStateView(w.handle);
     }
@@ -411,6 +420,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
         }
         w.faceYaw = bodyYaw(w);
         // (De pe, a imitacao comeca no inicio do clipe do passo, no rumo do corpo.)
+        if (w.trackClip == standingIndex || w.trackClip == standingMirrorIndex) w.trackClip = std::numeric_limits<std::size_t>::max();
         if (w.trackClip >= references.size() && w.commandSpeed > 0.0f) {
             for (const Gait& g : gaits[w.band])
                 if (g.heading == w.heading) {
@@ -473,6 +483,9 @@ struct TrackingGetUpAmpTraining3D::Impl {
         w.trackClip = std::numeric_limits<std::size_t>::max();
         if (u(w.rng) < CommandStopChance) {
             w.commandSpeed = 0.0f;
+            w.trackClip = standingIndex;
+            w.trackStart = -w.time;
+            w.trackYaw = w.faceYaw;
         } else {
             const Gait& gait = pickGait(w);
             w.heading = gait.heading;
@@ -650,6 +663,14 @@ struct TrackingGetUpAmpTraining3D::Impl {
         else if (kind == 7) beginTurn(w);
         else if (kind == 8) beginLocomotionFall(w);
         else if (partnerPushLeft < 0.0f) beginFromClip(w, kind != 1);
+        // (01/11 19h10, ele: "no exercicio do parado, faca ele se assemelhar ao maximo possivel com o IDLE parado, e
+        // recompensar ele pela estabilidade e equilibrio e quietude": no parado o clipe seguido e o parado em alerta, do
+        // instante e do rumo do comeco.)
+        if (kind == 2 && w.lastClip < references.size()) {
+            w.trackClip = w.lastClip;
+            w.trackStart = w.lastClipTime;
+            w.trackYaw = w.lastClipYaw;
+        }
         const TrackingGetUpPosture3D start = posture->measure(w.body->links);
         w.startSide = kind == 6 ? w.heading : start.chestFacingUp < -0.5f ? 0u : start.chestFacingUp > 0.5f ? 1u : 2u;
         w.startHead = start.headHeight;
@@ -801,7 +822,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
         {
             float* phase = w.observation.data() + b + CommandSize + GroundObservationSize;
             phase[0] = phase[1] = 0.0f;
-            if (w.locomotion && w.commandSpeed > 0.0f && w.trackClip < references.size()) {
+            if (clipTracked(w)) {
                 const float duration = std::max(1.0e-3f, references[w.trackClip]->durationSeconds());
                 float t = std::fmod(w.trackStart + w.time, duration);
                 if (t < 0.0f) t += duration;
@@ -865,6 +886,16 @@ struct TrackingGetUpAmpTraining3D::Impl {
             + 0.6f * std::min(0.0f, speed);
     }
 
+    // O idle seguido agora: no parado ou num rumo parado, com o parado em alerta como clipe.
+    bool idleTracked(const World& w) const {
+        return (w.trackClip == standingIndex || w.trackClip == standingMirrorIndex) && w.commandSpeed <= 0.0f
+            && (w.startKind == 2 || w.locomotion);
+    }
+    // O clipe seguido agora (o do passo com o pedido de deslocamento, ou o idle parado).
+    bool clipTracked(const World& w) const {
+        return w.trackClip < references.size() && ((w.locomotion && w.commandSpeed > 0.0f) || idleTracked(w));
+    }
+
     void decide(World& w, std::size_t index, std::span<const float> action, float& reward, std::uint8_t& terminated,
         std::uint8_t& truncated) {
         const std::size_t a = features->size();
@@ -873,7 +904,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
         const float before = posture->risePotential(was) + posture->turnPotential(was) + facePotential(w, was);
         maybePush(w, was);
         maybeAvoidPush(w);
-        if (settings.clipBlend < 1.0f && w.locomotion && w.commandSpeed > 0.0f && w.trackClip < references.size()) {
+        if (settings.clipBlend < 1.0f && clipTracked(w)) {
             const TrackingClipReference3D& reference = *references[w.trackClip];
             const float duration = std::max(1.0e-3f, reference.durationSeconds());
             float t = std::fmod(w.trackStart + w.time + TicksPerDecision * TickSeconds, duration);
@@ -900,6 +931,10 @@ struct TrackingGetUpAmpTraining3D::Impl {
         if (w.stopAt >= 0.0f && w.time >= w.stopAt) {
             w.commandSpeed = 0.0f;
             w.stopAt = -1.0f;
+            // (Parado no rumo: o idle, no rumo do corpo pedido.)
+            w.trackClip = standingIndex;
+            w.trackStart = -w.time;
+            w.trackYaw = w.faceYaw;
         }
         if (w.startKind == 6 && w.nextCommandAt >= 0.0f && w.time >= w.nextCommandAt) changeCommand(w);
         advanceTurn(w);
@@ -928,7 +963,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
             state += settings.stepReward * steps * (steps > 0.0f ? facing(w) : 1.0f);
         }
         // A imitacao do clipe do passo (com o pedido, de pe ou nao: cair sai caro pela pose).
-        if (settings.imitationWeight > 0.0f && w.locomotion && w.commandSpeed > 0.0f && w.trackClip < references.size()) {
+        if (settings.imitationWeight > 0.0f && clipTracked(w)) {
             const TrackingClipReference3D& reference = *references[w.trackClip];
             const float duration = std::max(1.0e-3f, reference.durationSeconds());
             float t = std::fmod(w.trackStart + w.time, duration);
@@ -938,9 +973,20 @@ struct TrackingGetUpAmpTraining3D::Impl {
             // (01/11 17h: o quadro vem na posicao do corpo, entao imitar parado pagava - o sprint caiu de 2,0 para
             // 0,3 m/s. A imitacao vale na proporcao da velocidade feita sobre a pedida, no rumo pedido.)
             const Vec3 v = rlBodyCenterOfMassVelocity3D(*profile, w.body->links);
-            const float toward = moveDirection(w);
-            const float progress = std::clamp((v.x * std::cos(toward) + v.y * std::sin(toward)) / w.commandSpeed, 0.0f, 1.0f);
-            state += settings.imitationWeight * progress * contract->reward(w.body->links, w.frame, 4.0f).total;
+            if (idleTracked(w)) {
+                // (Parado: a imitacao do idle inteira e a quietude - o centro de massa parado no chao e as juntas
+                // quietas: a estabilidade, o equilibrio e a quietude que ele pediu.)
+                double spin = 0.0;
+                for (const PhysicsBodyState3D& link : w.body->links) spin += link.angularVelocity.lengthSquared();
+                const float still = std::exp(-25.0f * (v.x * v.x + v.y * v.y))
+                    * static_cast<float>(std::exp(-0.02 * spin / std::max<std::size_t>(1, w.body->links.size())));
+                state += settings.imitationWeight * (contract->reward(w.body->links, w.frame, 4.0f).total + 0.5f * still);
+            } else {
+                const float toward = moveDirection(w);
+                const float progress =
+                    std::clamp((v.x * std::cos(toward) + v.y * std::sin(toward)) / w.commandSpeed, 0.0f, 1.0f);
+                state += settings.imitationWeight * progress * contract->reward(w.body->links, w.frame, 4.0f).total;
+            }
         }
         // (O gamma do treinador, 0,99, no potencial.)
         reward = state + 0.99f * (posture->risePotential(now) + posture->turnPotential(now) + facePotential(w, now)) - before;
