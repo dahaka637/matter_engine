@@ -76,7 +76,13 @@ check_absent "O treino da locomocao nao entra no jogo: o motor e o laboratorio n
     '#include "Engine/Athlete/Training/' src/Engine src/Workbench -g '!src/Engine/Athlete/Training/**' \
     -g '!src/Engine/Tracking/TrackingTraining3D.cpp'
 check_absent "Do treino da locomocao, o rastreador le so a tarefa (os exercicios)" \
-    -P '#include "Engine/Athlete/Training/(?!LocomotionTask3D\.hpp)' src/Engine/Tracking bindings/python/MatterTrackingNative.cpp
+    -P '#include "Engine/Athlete/Training/(?!LocomotionTask3D\.hpp)' src/Engine/Tracking
+# (01/11, a interligacao das redes - ele: "ambas as redes aprendendo em conjunto em todos os treinos": o treino do
+# levantar ve a rede da locomocao so pela interface Athlete/Body/LocomotionPartner3D; quem monta a de verdade - a rede
+# exportada com o atleta da tarefa - e a ponte Python, a raiz da composicao.)
+check_absent "Do treino da locomocao, a ponte do rastreador le so a tarefa e monta a parceira da interligacao" \
+    -P '#include "Engine/Athlete/Training/(?!LocomotionTask3D\.hpp|LocomotionPartnerRunner3D\.hpp)' \
+    bindings/python/MatterTrackingNative.cpp
 check_absent "O treino da locomocao nao fala com o treinador, o estilo nem a interface" \
     '#include "(Workbench|Engine/RL/(Supervisor|Style))/' src/Engine/Athlete/Training
 check_absent "O treino da locomocao usa do RL so o piloto e o layout (nunca o lote, o corpo, a imitacao nem a politica do RL do zero: o ReferenceMotion3D deles e outro)" \

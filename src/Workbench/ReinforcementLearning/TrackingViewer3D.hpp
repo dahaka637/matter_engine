@@ -97,6 +97,10 @@ public:
     // ele levantou (ficou de pe alguma vez); no em movimento, as que chegaram ao alvo; no evitar e no equilibrio parado,
     // as que nao cairam.
     [[nodiscard]] std::pair<std::uint32_t, std::uint32_t> getUpTally() const;
+    // A troca para a rede da locomocao (01/11): se quem dirige agora e ela (o mundo do treino com o "getUpHandoff",
+    // depois de a rede do levantar ficar de pe e firme; no evitar a queda, desde o comeco) e o texto da rede dela.
+    [[nodiscard]] bool drivingLocomotion() const;
+    [[nodiscard]] const std::string& partnerText() const;
     [[nodiscard]] static Conditions conditionsOf(const std::filesystem::path& trackingTask);
 
     // drill: "rumoN" (andar no rumo N) ou um dos parados; com locomotionTask, o id de um

@@ -124,11 +124,11 @@ constexpr std::array<const char*, 8> LocomotionNames { "Parado (levantar)", "Par
     "Diagonal costas (levantar)" };
 
 // Os exercicios do levantar v2 depois do "Levantar do chao", na ordem da lista. (01/11, ele: o levantar volta a ser so
-// levantar e evitar quedas - "dele tiramos o de locomocao": os da locomocao nele sairam da lista; o codigo deles fica.)
+// levantar e evitar quedas - "dele tiramos o de locomocao": os da locomocao nele sairam da lista, o codigo deles fica; e
+// o equilibrio parado tambem, de pe quem fica e a rede da locomocao, a do levantar so assume na queda iminente.)
 std::vector<std::array<const char*, 2>> getUpDrillList() {
     return { { TrackingViewer3D::MovingGetUpDrill, "Levantar em movimento" },
         { TrackingViewer3D::AvoidFallDrill, "Evitar a queda" },
-        { TrackingViewer3D::BalanceDrill, "Equilíbrio parado (empurrões)" },
         { TrackingViewer3D::LocomotionFallDrill, "Quedas da locomoção" } };
 }
 
@@ -1653,11 +1653,16 @@ void ReinforcementLearningScreen::drawViewport(CanvasTarget& canvas, float botto
             label = m_policyText + "\nnão caiu " + count;
         else
             label = m_policyText + "\nlevantou " + count + " quedas";
+        // (A troca, 01/11: quem dirige agora - a rede do levantar ou, de pe e firme, a da locomocao.)
+        const std::size_t cut = label.find('\n');
+        const std::string who = tracking->drivingLocomotion() ? "rede da locomoção · " + tracking->partnerText()
+                                                              : "rede do levantar · " + m_policyText;
+        label = who + (cut == std::string::npos ? std::string() : label.substr(cut));
     }
     // (A interligacao das redes, 01/11: na queda do B21, quem dirige ate a troca.)
     if (const auto* locomotion = dynamic_cast<const LocomotionViewer3D*>(m_locomotion.get());
         locomotion != nullptr && locomotion->gettingUp())
-        label = m_policyText + "\nna queda: a rede do levantar";
+        label = "rede do levantar · na queda\n" + m_policyText;
     drawList->AddText({ origin.x + ui(10.0f), origin.y + ui(8.0f) }, UiMuted, label.c_str());
 }
 

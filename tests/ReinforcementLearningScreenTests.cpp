@@ -518,6 +518,43 @@ void checkGetUpViewers() {
         "os exercicios do levantar");
 }
 
+// A folha de um exercicio do levantar com as redes de verdade (MATTER_RL_TEST_FOLHA=<pasta>, MATTER_RL_TEST_DRILL): o
+// dump dos quadros do visualizador para o MatterModelInspector quadros e a linha do tempo de quem dirige.
+int dumpGetUpViewer(const std::filesystem::path& out, const std::string& drill) {
+    const std::filesystem::path assets = sourceRoot() / "assets";
+    TrackingViewer3D viewer(assets, 21, drill);
+    std::string label;
+    viewer.setPolicy({}, label);
+    const RagdollProfile3D& profile = viewer.profile();
+    std::filesystem::create_directories(out);
+    std::ofstream dump(out / (drill + ".dump"));
+    dump << "S " << drill << '\n';
+    std::string who;
+    const int decisions = std::atoi(std::getenv("MATTER_RL_TEST_DECISOES") ? std::getenv("MATTER_RL_TEST_DECISOES") : "300");
+    for (int i = 0; i < decisions; ++i) {
+        viewer.step();
+        const std::string now = viewer.drivingLocomotion() ? "locomocao" : "levantar";
+        if (now != who) {
+            std::cout << "t " << static_cast<float>(i + 1) / 30.0f << " s: rede da " << now << '\n';
+            who = now;
+        }
+        if (i % 2 != 0) continue;
+        const RagdollState3D& body = *viewer.view().state;
+        dump << "F " << static_cast<float>(i + 1) / 30.0f << " 0\n";
+        for (std::size_t k = 0; k < profile.links.size() && k < body.links.size(); ++k) {
+            const RagdollLinkDefinition3D& link = profile.links[k];
+            const PhysicsBodyState3D& state = body.links[k];
+            const Vec3 center = state.position + state.orientation.rotate(link.collider.localPosition);
+            const Quaternion q = (state.orientation * link.collider.localOrientation).normalized();
+            dump << (link.collider.shape == RagdollColliderShape3D::Box ? "B " : "C ") << link.id << ' ' << center.x << ' '
+                 << center.y << ' ' << center.z << ' ' << q.x << ' ' << q.y << ' ' << q.z << ' ' << q.w << '\n';
+        }
+    }
+    const auto [good, total] = viewer.getUpTally();
+    std::cout << drill << ": " << good << " de " << total << " (" << label << ")\n";
+    return 0;
+}
+
 void checkGetUpHandoffViewer() {
     // A interligacao das redes no visualizador do B21 (01/11): na queda, a rede do levantar exportada assume e devolve
     // de pe e firme antes do recomeco de 8 s (sem ela exportada nesta maquina, sem o teste).
@@ -568,6 +605,8 @@ void checkSinglePushViewer() {
 int main() {
     try {
         if (const char* real = std::getenv("MATTER_RL_TEST_REAL")) return realRun(real);
+        if (const char* sheet = std::getenv("MATTER_RL_TEST_FOLHA"))
+            return dumpGetUpViewer(sheet, std::getenv("MATTER_RL_TEST_DRILL") ? std::getenv("MATTER_RL_TEST_DRILL") : "levantar");
         const std::filesystem::path sandbox = std::filesystem::temp_directory_path() / "matter_rl_tela";
         std::filesystem::remove_all(sandbox);
         std::filesystem::create_directories(sandbox / "runtime");

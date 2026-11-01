@@ -186,10 +186,16 @@ def summarize(rows: np.ndarray, prefix: str) -> dict:
                 handed = rows[:, 18] >= 0
                 out[f"{prefix}troca"] = float(handed.mean())
                 out[f"{prefix}troca_s"] = float(rows[handed, 18].mean()) if handed.any() else None
+                if rows.shape[1] > 21:
+                    # (A parceira depois da troca: quantas cairam no tempo dela; e o tronco no chao em algum momento.)
+                    partnered = rows[:, 20] >= 0
+                    out[f"{prefix}parceiro_caiu"] = float(rows[partnered, 19].mean()) if partnered.any() else None
+                    out[f"{prefix}sem_tocar_chao"] = float((rows[:, 21] == 0).mean())
         avoid = rows[:, 1] == 4
         if avoid.any():
             ok = avoid & (rows[:, 14] >= 0)
-            out[f"{prefix}evitou"] = float((rows[avoid, 13] == 0).mean())
+            # (Com a parceira, ele pode comecar ja caindo, sem ter ficado de pe: evitou e o tronco nunca no chao.)
+            out[f"{prefix}evitou"] = float((rows[avoid, 21 if rows.shape[1] > 21 else 13] == 0).mean())
             out[f"{prefix}recompos"] = float(ok.sum() / avoid.sum())
             out[f"{prefix}recompos_s"] = float(rows[ok, 14].mean()) if ok.any() else None
     return out
@@ -334,6 +340,24 @@ def main() -> int:
     # locomocao, que o treino dela escreve em quedas_locomocao.npy neste treino.)
     parser.add_argument("--quedas-locomocao", type=float, default=0.0,
                         help="a fatia que comeca das quedas da rede da locomocao (quedas_locomocao.npy)")
+    # (01/11, ele: "ambas as redes aprendendo em conjunto em todos os treinos... o evitar queda precisa saber operar em
+    # conjunto com a outra rede nos momentos de queda iminente": a rede da locomocao exportada do treino dela como
+    # parceira - depois da troca ela dirige parada por --parceiro-segundos, e se cair a troca foi ruim; e o evitar a
+    # queda com ela de pe levando o empurrao, a rede do levantar assumindo na queda iminente dela.)
+    parser.add_argument("--parceiro", default="", help="o treino da rede da locomocao parceira (vazio: sem)")
+    parser.add_argument("--parceiro-segundos", type=float, default=2.0)
+    parser.add_argument("--parceiro-punicao", type=float, default=10.0)
+    parser.add_argument("--evitar-com-parceiro", action="store_true",
+                        help="o evitar a queda comeca com a parceira de pe levando o empurrao")
+    parser.add_argument("--toque-punicao", type=float, default=0.0,
+                        help="nos comecos da queda iminente, a punicao do primeiro toque do tronco no chao")
+    # (01/11, ele: o levantar do chao "com gestos mais sutis e suaves, menos exagerados, sem o boneco ficar distorcido ou
+    # fazer coisas inumanas"; a velocidade deixa de ser o foco. O discriminador separava tudo - clipes +0,90, a rede
+    # -0,90 - e a nota de estilo ficava em ~0,08 para qualquer movimento: o gp maior o suaviza. E o custo dos alvos perto
+    # do limite das juntas - a media de max(0, |a| - 0,8)^2 na acao media, na faixa de cada junta: 7% dos alvos estavam
+    # alem de 90% da faixa.)
+    parser.add_argument("--disc-gp", type=float, default=5.0, help="o peso do gradient penalty do discriminador")
+    parser.add_argument("--limite", type=float, default=0.0, help="o peso do custo dos alvos perto do limite das juntas")
     parser.add_argument("--arrancada", type=float, default=0.0,
                         help="a fatia que comeca na arrancada agachada (crouched_to_sprint) virado para um alvo")
     args = parser.parse_args()
@@ -359,7 +383,10 @@ def main() -> int:
     info["v2"] = {"movimento": args.movimento, "evitar": args.evitar, "arrancada": args.arrancada,
                   "peso_tarefa": args.peso_tarefa, "peso_estilo": args.peso_estilo, "suave": args.suave,
                   "locomocao": args.locomocao, "giro": args.giro, "andar": args.andar, "troca_de_pe": args.troca_de_pe,
-                  "quedas_locomocao": args.quedas_locomocao,
+                  "quedas_locomocao": args.quedas_locomocao, "parceiro": args.parceiro,
+                  "parceiro_segundos": args.parceiro_segundos, "parceiro_punicao": args.parceiro_punicao,
+                  "evitar_com_parceiro": args.evitar_com_parceiro, "toque_punicao": args.toque_punicao,
+                  "disc_gp": args.disc_gp, "limite": args.limite,
                   "andar_velocidade": list(args.andar_velocidade), "trote_velocidade": list(args.trote_velocidade),
                   "empurrao_mov_forca": list(args.empurrao_mov_forca), "empurrao_mov_continuo": args.empurrao_mov_continuo,
                   "empurrao_mov_continuo_forca": list(args.empurrao_mov_continuo_forca),
@@ -380,7 +407,9 @@ def main() -> int:
                                  standing_start_fraction=args.comeco_de_pe, moving_fraction=args.movimento,
                                  avoid_fraction=args.evitar, sprint_start_fraction=args.arrancada,
                                  locomotion_fraction=args.locomocao, turn_fraction=args.giro,
-                                 handoff_on_stand=args.troca_de_pe, locomotion_fall_fraction=args.quedas_locomocao, **v2)
+                                 handoff_on_stand=args.troca_de_pe, locomotion_fall_fraction=args.quedas_locomocao,
+                                 partner_seconds=args.parceiro_segundos, partner_fall_penalty=args.parceiro_punicao,
+                                 partner_avoid=args.evitar_com_parceiro, touch_down_penalty=args.toque_punicao, **v2)
     # (31/10 23h40, ele: "verifica se... nao conseguimos mais decisoes por segundo": as avaliacoes numa thread so paravam
     # o treino ~21 s a cada 50 atualizacoes, 13% do tempo; com as threads do treino, as que esperam ficam paradas.)
     eval_threads = args.threads
@@ -390,7 +419,8 @@ def main() -> int:
                                                 evaluation=True, evaluation_kind=1, **v2)} if args.movimento > 0 else {}
     if args.evitar > 0:
         evaluations["evitar_"] = native.GetUpAmpBatch(str(REPO / "assets"), environments=32, threads=eval_threads, seed=999,
-                                                      evaluation=True, evaluation_kind=2, **v2)
+                                                      evaluation=True, evaluation_kind=2,
+                                                      partner_avoid=args.evitar_com_parceiro, **v2)
     # (O equilibrio parado: 32 de pe, um empurrao cada com a regua do parado com empurrao forte do B21.)
     evaluations["equil_"] = native.GetUpAmpBatch(str(REPO / "assets"), environments=32, threads=eval_threads, seed=555,
                                                  evaluation=True, evaluation_kind=3, **v2)
@@ -431,6 +461,28 @@ def main() -> int:
         print(f"quedas da locomocao: {batch.fall_start_count}", flush=True)
 
     load_falls()
+    partner = {"mtime": 0.0}
+
+    def load_partner() -> None:
+        """A rede da locomocao parceira, a exportada por ultimo do treino dela (de novo quando ele exporta outra), no
+        treino e na avaliacao do evitar a queda."""
+        if not args.parceiro:
+            return
+        source = run.parent / args.parceiro
+        policy, task = source / "exports" / "policy_latest.mrlpolicy", source / "tarefa.json"
+        try:
+            mtime = policy.stat().st_mtime
+            if mtime <= partner["mtime"]:
+                return
+            iteration = batch.set_locomotion_partner(str(REPO / "assets"), str(task), str(policy))
+            if "evitar_" in evaluations:
+                evaluations["evitar_"].set_locomotion_partner(str(REPO / "assets"), str(task), str(policy))
+            partner["mtime"] = mtime
+            print(f"parceira: {args.parceiro} rodada {iteration}", flush=True)
+        except (OSError, RuntimeError, ValueError) as error:
+            print(f"parceira: nao carregou ({error})", flush=True)
+
+    load_partner()
     n, obs_size, act_size, amp = batch.num_envs, batch.obs_size, batch.action_size, batch.amp_size
     reference = torch.as_tensor(batch.reference_pairs(), device=device)
     model = Policy(obs_size, act_size, batch.action_ranges()).to(device)
@@ -510,6 +562,10 @@ def main() -> int:
             log.close()
             log = open(run / "log.jsonl", "a")
 
+    # (A taxa do discriminador da linha de comando tambem ao retomar - o estado do Adam guardado trazia a de antes; 01/11,
+    # o estilo: o discriminador mais lento, junto com o gp maior.)
+    for group in disc_opt.param_groups:
+        group["lr"] = args.taxa_disc
     if args.desvio is not None:
         with torch.no_grad():
             model.log_std.fill_(math.log(args.desvio))
@@ -553,7 +609,7 @@ def main() -> int:
             # (A nota por passo vezes 1 - gamma: o retorno fica entre 0 e 1 e o critico nao precisa correr atras da
             # escala de ~100 de um gamma 0,99.)
             rew = (1.0 - gamma) * (args.peso_tarefa * roll["task"] + args.peso_estilo * style
-                                   - args.suave * roll["jerk"]) + gamma * roll["boot"]
+                                   - args.suave * roll["jerk"] - args.limite * roll["limit"]) + gamma * roll["boot"]
             adv = torch.zeros(T, n, device=device)
             gae = torch.zeros(n, device=device)
             for t in reversed(range(T)):
@@ -599,7 +655,7 @@ def main() -> int:
                 grad = torch.autograd.grad(d_clip.sum(), x_clip, create_graph=True)[0]
                 gp = grad.pow(2).sum(-1).mean()
                 last_layer = disc.net[-1].weight
-                disc_loss = 0.5 * ((d_clip - 1.0).pow(2).mean() + (d_body + 1.0).pow(2).mean()) + 5.0 * gp \
+                disc_loss = 0.5 * ((d_clip - 1.0).pow(2).mean() + (d_body + 1.0).pow(2).mean()) + args.disc_gp * gp \
                     + 0.01 * last_layer.pow(2).sum()
                 disc_opt.zero_grad()
                 disc_loss.backward()
@@ -623,7 +679,7 @@ def main() -> int:
         physics = 0.0
         roll = {k: torch.zeros(T, n, *s, device=device) for k, s in
                 (("obs", (obs_size,)), ("act", (act_size,)), ("logp", ()), ("val", ()), ("task", ()), ("boot", ()),
-                 ("done", ()), ("pairs", (2 * amp,)), ("jerk", ()))}
+                 ("done", ()), ("pairs", (2 * amp,)), ("jerk", ()), ("limit", ()))}
         with torch.no_grad():
             for t in range(T):
                 collector.norm.update(obs)
@@ -634,6 +690,7 @@ def main() -> int:
                 # (01/11 00h17: o tranco na acao media da rede, nao na sorteada - nas sorteadas ele tambem punia o ruido
                 # da exploracao, 2 sigma^2 em media, e o PPO encolhia o desvio para fugir do custo; o Codex concordou.)
                 mean = dist.mean
+                roll["limit"][t] = torch.clamp(mean.abs() - 0.8, min=0.0).pow(2).mean(-1)
                 roll["jerk"][t] = torch.where(previous_valid, (mean - previous_action).pow(2).mean(-1),
                                               torch.zeros_like(previous_valid, dtype=torch.float32))
                 roll["logp"][t] = dist.log_prob(action).sum(-1)
@@ -670,10 +727,10 @@ def main() -> int:
         counters["amostras"] += T * n
         counters["episodios"] += len(episodes)
         if counters["atualizacao"] % 20 == 0:
-            recent = np.array(window) if window else np.zeros((0, 19))
+            recent = np.array(window) if window else np.zeros((0, 22))
             row = {"atualizacao": counters["atualizacao"], "amostras": counters["amostras"], "hora": time.time(),
                    "tarefa": float(roll["task"].mean()), "estilo": last.get("estilo", float("nan")),
-                   "tranco": float(roll["jerk"].mean()),
+                   "tranco": float(roll["jerk"].mean()), "limite": float(roll["limit"].mean()),
                    "desvio": float(model.log_std.detach().clamp(LOG_STD_MIN, LOG_STD_MAX).exp().mean()),
                    "am_s": T * n / (time.time() - begin), "t_coleta": collected - begin, "t_fisica": physics,
                    "t_espera": waited, **{k: v for k, v in last.items() if k != "estilo"}}
@@ -697,6 +754,7 @@ def main() -> int:
         if counters["atualizacao"] % 10 == 0:
             export_policy()
             load_falls()
+            load_partner()
         judge = counters["atualizacao"] % args.salvar_cada == 0
         if stop["salvar"] or judge:
             stop["salvar"] = False

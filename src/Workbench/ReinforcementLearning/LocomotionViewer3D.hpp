@@ -11,6 +11,7 @@
 #include "Workbench/ReinforcementLearning/ViewerWorld3D.hpp"
 
 #include <cstdint>
+#include <span>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -61,8 +62,14 @@ public:
     void setPolicy(const std::filesystem::path& file, std::string& label) override;
     void clearPolicy() override;
     [[nodiscard]] bool hasPolicy() const override;
-    // A interligacao das redes nas quedas (01/11, o "getUpHandoff" da tarefa): se agora quem dirige e a rede do levantar.
+    // A interligacao das redes nas quedas (01/11, o "getUpHandoff" da tarefa): se agora quem dirige e a rede do levantar,
+    // quantas vezes ela assumiu e se, na ultima, ela evitou a queda (nada do tronco, do pescoco ou da cabeca no chao).
     [[nodiscard]] bool gettingUp() const;
+    [[nodiscard]] std::uint32_t recoveries() const;
+    [[nodiscard]] bool lastRecoveryAvoided() const;
+    // A troca vinda da rede do levantar de outro mundo (o visualizador do levantar): o corpo dado nesta cena, o atleta do
+    // zero nele, os alvos do classico saindo dos dela e o exercicio recomecando dali.
+    void resumeFrom(std::span<const PhysicsBodyState3D> links, std::span<const RagdollDriveTarget3D> drives);
 
     // Uma decisao (30 Hz: 4 ticks de fisica).
     void step() override;

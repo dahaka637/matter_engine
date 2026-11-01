@@ -2,6 +2,7 @@
 
 #include "Engine/Athlete/AthleteTelemetry3D.hpp"
 #include "Engine/Athlete/Physical/PhysicalCorrections3D.hpp"
+#include "Engine/Physique/PlayerPhysique3D.hpp"
 #include "Engine/Tracking/TrackingGetUpPolicy3D.hpp"
 #include "Workbench/ReinforcementLearning/TrackingViewer3D.hpp"
 #include "Engine/Core/TaskScheduler.hpp"
@@ -89,6 +90,18 @@ struct LocomotionViewer3D::Impl {
     std::uint32_t getUpTicks = 0;
     float firmSeconds = 0.0f, recoverSeconds = 0.0f;
     std::vector<RagdollDriveTarget3D> getUpDrives;
+    std::uint32_t recoveryCount = 0;
+    bool recoveryTouched = false;
+    // A queda como o fim do episodio do treino, tick a tick (01/11: a cada decisao e sem os contatos, a troca saia
+    // depois da do treino): a pelve abaixo de fallPelvisHeight (na escala do corpo) ou, com forbiddenContact, algo que
+    // nao os pes no chao; e o classico caido no fim da decisao.
+    float fallPelvisHeight = 0.45f;
+    bool forbiddenContact = false;
+    std::vector<bool> footLink;
+    std::vector<bool> trunkLink;
+    // A inclinacao do tronco na decisao anterior (a queda iminente pelo tronco, GetUpPolicy3D).
+    float trunkTilt = 0.0f;
+    bool trunkTiltValid = false;
 
     void build(std::uint64_t seed) {
         scene.reset();
@@ -131,6 +144,7 @@ struct LocomotionViewer3D::Impl {
         drillSeconds = 0.0f;
         standingSeconds = 0.0f;
         recovering = false;
+        trunkTiltValid = false;
         shownLink = -1;
         shownAfter = 99.0f;
         if (getUp) {
@@ -161,10 +175,46 @@ struct LocomotionViewer3D::Impl {
         loadGetUpPolicy();
         if (!getUpPolicy) return false;
         recovering = true;
+        trunkTiltValid = false;
         getUpTicks = 0;
         firmSeconds = recoverSeconds = 0.0f;
         command = {};
+        ++recoveryCount;
+        recoveryTouched = false;
         return true;
+    }
+
+    [[nodiscard]] bool fallTick() const {
+        if (body.links.empty()) return true;
+        if (body.links.front().position.z - athlete.groundHeight < fallPelvisHeight * bodyScale3D(bundle->body())) return true;
+        if (!forbiddenContact) return false;
+        for (const RagdollInteraction3D& contact : body.interactions)
+            if (contact.linkIndex < footLink.size() && !footLink[contact.linkIndex]
+                && contact.otherMotion == RagdollContactMotion3D::Static && contact.normalWorld.z > 0.5f)
+                return true;
+        return false;
+    }
+
+    // A volta a esta rede: o atleta do zero no corpo de agora, os alvos do classico saindo dos dados e o exercicio
+    // recomecando dali (o comeco ao vivo do treino).
+    void handBack(std::span<const RagdollDriveTarget3D> drives) {
+        const RagdollProfile3D& profile = bundle->profile();
+        const PhysicsBodyState3D& pelvis = body.links.front();
+        athlete = AthleteState3D {};
+        runtime = AthleteRuntime3D {};
+        runtime.setLocomotionPolicy(policy);
+        athleteStart3D(*scene, handle, profile, body, athlete, AthleteStartMode3D::Physical);
+        athlete.getUpHandoff = { drives.empty() ? 0.0f : GetUpPolicy3D::BlendSeconds,
+            std::vector<RagdollDriveTarget3D>(drives.begin(), drives.end()) };
+        origin = planar(pelvis.position);
+        pilotState = PilotState3D {};
+        CommandPilot3D::start(pilot, pilotState, origin, locomotionFrameYaw3D(profile, pelvis.orientation), rng);
+        steps = 0;
+        fallenSeconds = drillSeconds = pushSeconds = 0.0f;
+        settleEnd = -1.0f;
+        pushAt = singlePush ? drillPushStart + pushWindow * std::uniform_real_distribution<float>(0.0f, 1.0f)(rng) : -1.0f;
+        recovering = false;
+        trunkTiltValid = false;
     }
 
     // Uma decisao da rede do levantar e, de pe e firme (o criterio do treino), a troca.
@@ -177,6 +227,10 @@ struct LocomotionViewer3D::Impl {
             scene->simulate(TickSeconds);
             body = scene->ragdollState(handle);
             shownAfter += TickSeconds;
+            for (const RagdollInteraction3D& contact : body.interactions)
+                if (contact.linkIndex < trunkLink.size() && trunkLink[contact.linkIndex]
+                    && contact.otherMotion == RagdollContactMotion3D::Static)
+                    recoveryTouched = true;
         }
         ++steps;
         const float decision = policyStepSecondsValue();
@@ -191,19 +245,7 @@ struct LocomotionViewer3D::Impl {
             if (recoverSeconds > 8.0f) build(rng());
             return;
         }
-        athlete = AthleteState3D {};
-        runtime = AthleteRuntime3D {};
-        runtime.setLocomotionPolicy(policy);
-        athleteStart3D(*scene, handle, profile, body, athlete, AthleteStartMode3D::Physical);
-        athlete.getUpHandoff = { GetUpPolicy3D::BlendSeconds, getUpDrives };
-        origin = planar(pelvis.position);
-        pilotState = PilotState3D {};
-        CommandPilot3D::start(pilot, pilotState, origin, locomotionFrameYaw3D(profile, pelvis.orientation), rng);
-        steps = 0;
-        fallenSeconds = drillSeconds = pushSeconds = 0.0f;
-        settleEnd = -1.0f;
-        pushAt = singlePush ? drillPushStart + pushWindow * std::uniform_real_distribution<float>(0.0f, 1.0f)(rng) : -1.0f;
-        recovering = false;
+        handBack(getUpDrives);
     }
 
     [[nodiscard]] Vec3 centerOfMassVelocity() const {
@@ -334,6 +376,8 @@ LocomotionViewer3D::LocomotionViewer3D(const std::filesystem::path& taskPath,
     impl.knockdownLow = chosen.value("knockdownMinimumNewtons", impl.knockdownLow);
     impl.knockdownHigh = chosen.value("knockdownMaximumNewtons", impl.knockdownHigh);
     impl.handoff = task.contains("getUpHandoff") && task["getUpHandoff"].value("enabled", false);
+    if (task.contains("termination")) impl.fallPelvisHeight = task["termination"].value("pelvisHeight", impl.fallPelvisHeight);
+    if (task.contains("reward")) impl.forbiddenContact = task["reward"].value("forbiddenContact", false);
     // As ajudas da tarefa e o fisico total com a referencia a sombra (como no treino).
     impl.settings.defaultLocomotion = false;
     impl.settings.physicalReference = true;
@@ -367,8 +411,13 @@ LocomotionViewer3D::LocomotionViewer3D(const std::filesystem::path& taskPath,
     impl.scheduler = std::make_shared<TaskScheduler>(TaskSchedulerSettings { 1u });
     impl.engine = std::make_unique<PhysicsEngine3D>(impl.scheduler);
     const RagdollProfile3D& profile = impl.bundle->profile();
-    for (std::size_t i = 0; i < profile.links.size(); ++i)
-        if (profile.links[i].id == "Chest") impl.chest = i;
+    for (std::size_t i = 0; i < profile.links.size(); ++i) {
+        const std::string& id = profile.links[i].id;
+        if (id == "Chest") impl.chest = i;
+        impl.footLink.push_back(id.find("Foot") != std::string::npos || id.find("Toe") != std::string::npos);
+        impl.trunkLink.push_back(id == "Pelvis" || id == "Abdomen" || id == "Chest" || id == "UpperChest" || id == "Neck"
+            || id == "Head");
+    }
     impl.build(seed);
 }
 
@@ -425,6 +474,18 @@ void LocomotionViewer3D::clearPolicy() {
 bool LocomotionViewer3D::hasPolicy() const { return m_impl->policy != nullptr; }
 
 bool LocomotionViewer3D::gettingUp() const { return m_impl->recovering; }
+std::uint32_t LocomotionViewer3D::recoveries() const { return m_impl->recoveryCount; }
+bool LocomotionViewer3D::lastRecoveryAvoided() const { return !m_impl->recoveryTouched; }
+
+void LocomotionViewer3D::resumeFrom(std::span<const PhysicsBodyState3D> links, std::span<const RagdollDriveTarget3D> drives) {
+    Impl& impl = *m_impl;
+    if (links.size() != impl.body.links.size()) return;
+    impl.scene->resetRagdollState(impl.handle, links);
+    impl.body = impl.scene->ragdollState(impl.handle);
+    impl.shownLink = -1;
+    impl.shownAfter = 99.0f;
+    impl.handBack(drives);
+}
 
 void LocomotionViewer3D::step() {
     Impl& impl = *m_impl;
@@ -462,7 +523,11 @@ void LocomotionViewer3D::step() {
         impl.drillTotal = impl.drillSeconds;
         if (impl.singlePush) impl.settleEnd = now + impl.drillSeconds + impl.settleSeconds;
     }
-    for (int k = 0; k < TicksPerDecision; ++k) impl.tick();
+    bool fell = false;
+    for (int k = 0; k < TicksPerDecision && !fell; ++k) {
+        impl.tick();
+        fell = !impl.getUp && impl.fallTick();
+    }
     ++impl.steps;
     if (impl.getUp) {
         // O levantar: recomeca 2 s depois de ficar de pe (ou em 16 s).
@@ -475,9 +540,16 @@ void LocomotionViewer3D::step() {
     // A queda como no treino (a pelve a menos de 0,45 m do chao ou o atleta
     // "caido"): o episodio acaba. Fica meio segundo no chao para se ver a
     // queda e recomeca - o levantar do classico (com a ajuda) nao esconde a queda.
-    const bool down = impl.body.links.empty() || impl.body.links.front().position.z < 0.45f
-        || athleteTelemetry3D(impl.athlete).fallen;
-    if (down && !impl.body.links.empty() && impl.startRecovery()) return;
+    bool imminent = false;
+    if (impl.handoff && !impl.getUp && !impl.body.links.empty()) {
+        const float tilt = GetUpPolicy3D::trunkTilt(impl.bundle->profile(), impl.body.links);
+        imminent = impl.trunkTiltValid && tilt > GetUpPolicy3D::ImminentTiltDegrees
+            && (tilt - impl.trunkTilt) / decision > GetUpPolicy3D::ImminentTiltRate;
+        impl.trunkTilt = tilt;
+        impl.trunkTiltValid = true;
+    }
+    const bool down = fell || athleteTelemetry3D(impl.athlete).fallen;
+    if ((down || imminent) && !impl.body.links.empty() && impl.startRecovery()) return;
     impl.fallenSeconds = down ? impl.fallenSeconds + impl.policyStepSecondsValue() : 0.0f;
     // (O empurrao unico aguentado: recomeca settleSeconds depois dele, como o fim do episodio no treino.)
     const bool settled = !down && impl.settleEnd >= 0.0f && static_cast<float>(impl.steps) * decision >= impl.settleEnd - 1.0e-4f;

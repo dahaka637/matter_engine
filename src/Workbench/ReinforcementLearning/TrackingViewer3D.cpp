@@ -1,5 +1,6 @@
 #include "Workbench/ReinforcementLearning/TrackingViewer3D.hpp"
 
+#include "Engine/Athlete/Body/GetUpPolicy3D.hpp"
 #include "Engine/RL/Body/RLBody3D.hpp"
 #include "Engine/RL/Policy/PolicyRuntime3D.hpp"
 #include "Engine/Tracking/TrackingGetUpAmpTraining3D.hpp"
@@ -15,6 +16,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
+#include <random>
 #include <vector>
 
 namespace MatterEngine {
@@ -30,6 +32,31 @@ std::filesystem::path getUpRun() {
     // (31/10 17h: o levantar v2 - com o levantar em movimento e o evitar a queda -, quando existe.)
     return std::filesystem::exists(runs / "levantar_v2") ? runs / "levantar_v2" : runs / "levantar_livre";
 }
+
+// O treino da rede da locomocao ligado ao do levantar (o "getUpHandoff" na tarefa; o de tarefa mais nova).
+std::filesystem::path partnerRun() {
+    std::filesystem::path best;
+    std::filesystem::file_time_type bestTime {};
+    std::error_code code;
+    for (const auto& entry : std::filesystem::directory_iterator(getUpRun().parent_path(), code)) {
+        std::ifstream file(entry.path() / "tarefa.json");
+        if (!file) continue;
+        const nlohmann::json task = nlohmann::json::parse(file, nullptr, false);
+        if (task.is_discarded() || !task.is_object() || !task.contains("getUpHandoff") || !task["getUpHandoff"].is_object()
+            || !task["getUpHandoff"].value("enabled", false))
+            continue;
+        std::error_code timeCode;
+        const auto stamp = std::filesystem::last_write_time(entry.path() / "tarefa.json", timeCode);
+        if (best.empty() || stamp > bestTime) {
+            best = entry.path();
+            bestTime = stamp;
+        }
+    }
+    return best;
+}
+
+// A rede da locomocao depois da troca, parada no lugar, antes de o exercicio recomecar (s).
+constexpr float PartnerSeconds = 3.0f;
 
 } // namespace
 
@@ -66,6 +93,111 @@ struct TrackingViewer3D::Impl {
     // 4 um rumo (o do exercicio), 5 o parado, 6 o giro parado suave, 7 as quedas da locomocao.
     std::uint32_t getUpKind = 0;
     std::string getUpDrill;
+    // A troca para a rede da locomocao (01/11, ele: "nao observo a mudanca de rede no momento apos ele estar de pe"):
+    // de pe e firme por GetUpPolicy3D::FirmSeconds (o criterio do treino), o corpo vai para o mundo do treino da rede
+    // da locomocao (LocomotionViewer3D, a rede exportada dele, parado no lugar) por PartnerSeconds - se ele cair, a rede
+    // do levantar assume de novo na queda iminente, como no treino - e o exercicio recomeca. No evitar a queda ele comeca
+    // ali, de pe, e leva o empurrao forte (ele: "o evitar queda precisa saber operar em conjunto com a outra rede nos
+    // momentos de queda iminente").
+    std::filesystem::path partnerDirectory;
+    std::unique_ptr<LocomotionViewer3D> partner;
+    std::filesystem::file_time_type partnerWrite {};
+    std::string partnerLabel;
+    bool partnerActive = false;
+    float partnerTime = 0.0f;
+    float firmSeconds = 0.0f;
+    // (A troca so depois de levantar do chao, como no treino: a cabeca abaixo de 1 m em algum momento do episodio.)
+    bool wasDown = false;
+    std::uint32_t restarts = 0;
+    bool avoidPushed = false;
+    std::uint32_t avoidRecoveries = 0;
+    float avoidBackAt = -1.0f;
+    bool ensurePartner() {
+        if (partnerDirectory.empty()) return false;
+        if (!partner) {
+            try {
+                partner = std::make_unique<LocomotionViewer3D>(partnerDirectory / "tarefa.json", assets, "parado", seed);
+            } catch (const std::exception&) {
+                partnerDirectory.clear();
+                return false;
+            }
+        }
+        // (A rede nova do treino dela, quando ele exporta outra.)
+        const std::filesystem::path file = partnerDirectory / "exports" / "policy_latest.mrlpolicy";
+        std::error_code error;
+        const auto write = std::filesystem::last_write_time(file, error);
+        if (!error && (!partner->hasPolicy() || write != partnerWrite)) {
+            partner->setPolicy(file, partnerLabel);
+            partnerWrite = write;
+        }
+        return partner->hasPolicy();
+    }
+    // O evitar a queda: a rede da locomocao de pe na origem e, em 1 s, o empurrao forte do treino.
+    void startAvoid() {
+        if (!ensurePartner()) return;
+        partner->reset(seed + ++restarts);
+        partnerActive = true;
+        partnerTime = 0.0f;
+        avoidPushed = false;
+        avoidBackAt = -1.0f;
+    }
+    // De pe e firme no mundo do levantar: a troca.
+    void checkHandoff() {
+        const RagdollProfile3D& profile = getUp->profile();
+        const RagdollState3D& body = getUp->body(0);
+        if (body.links.empty()) return;
+        const PhysicsBodyState3D& pelvis = body.links.front();
+        for (std::size_t i = 0; i < profile.links.size() && i < body.links.size(); ++i)
+            if (profile.links[i].id == "Head" && body.links[i].position.z < 1.0f) wasDown = true;
+        const float upright =
+            (pelvis.orientation * profile.links.front().modelOrientation.conjugate()).rotate({ 0.0f, 0.0f, 1.0f }).z;
+        const Vec3 v = rlBodyCenterOfMassVelocity3D(profile, body.links);
+        const bool firm = wasDown && pelvis.position.z > 0.85f * profile.standingRootHeightMeters && upright > 0.85f
+            && std::hypot(v.x, v.y) < 0.5f;
+        firmSeconds = firm ? firmSeconds + TrackingGetUpAmpTraining3D::TicksPerDecision * TrackingGetUpAmpTraining3D::TickSeconds
+                           : 0.0f;
+        if (firmSeconds < GetUpPolicy3D::FirmSeconds || !ensurePartner()) return;
+        ++getUpFalls;
+        ++getUpStood;
+        partner->resumeFrom(body.links, getUp->driveTargets(0));
+        partnerActive = true;
+        partnerTime = 0.0f;
+        firmSeconds = 0.0f;
+    }
+    // Uma decisao no mundo da rede da locomocao.
+    void stepPartner() {
+        partner->step();
+        partnerTime += partner->policyStepSeconds();
+        if (getUpKind == 2) {
+            if (!avoidPushed && partnerTime >= 1.0f) {
+                std::mt19937 rng(static_cast<std::uint32_t>(seed * 7919u + restarts));
+                std::uniform_real_distribution<float> u(0.0f, 1.0f);
+                const float angle = 6.2831853f * u(rng);
+                const float newtons = avoidLow + (avoidHigh - avoidLow) * u(rng);
+                partner->push({ std::cos(angle) * newtons, std::sin(angle) * newtons, 0.0f }, 0.1f + 0.1f * u(rng));
+                avoidPushed = true;
+                avoidRecoveries = partner->recoveries();
+            }
+            const bool took = avoidPushed && partner->recoveries() > avoidRecoveries;
+            if (took && !partner->gettingUp() && avoidBackAt < 0.0f) {
+                avoidBackAt = partnerTime;
+                ++getUpFalls;
+                if (partner->lastRecoveryAvoided()) ++getUpStood;
+            }
+            // (Recomeca 2 s depois da volta, 3 s depois do empurrao sem a troca - ele aguentou sozinho - ou em 12 s.)
+            if ((avoidBackAt >= 0.0f && partnerTime >= avoidBackAt + 2.0f) || (!took && partnerTime >= 4.0f)
+                || partnerTime >= 12.0f)
+                startAvoid();
+            return;
+        }
+        if (partnerTime >= PartnerSeconds && !partner->gettingUp()) {
+            partnerActive = false;
+            getUp->reset(seed + ++restarts);
+            firmSeconds = 0.0f;
+            wasDown = false;
+        }
+    }
+    float avoidLow = 1800.0f, avoidHigh = 2600.0f;
     void startGetUp() {
         TrackingGetUpAmpSettings3D s;
         s.assetsDirectory = assets.string();
@@ -87,6 +219,8 @@ struct TrackingViewer3D::Impl {
                 }
             };
             pair("evitar_forca", s.avoidMinimumNewtons, s.avoidMaximumNewtons);
+            avoidLow = s.avoidMinimumNewtons;
+            avoidHigh = s.avoidMaximumNewtons;
             pair("empurrao_forca", s.pushMinimumNewtons, s.pushMaximumNewtons);
             pair("velocidade", s.moveMinimumSpeed, s.moveMaximumSpeed);
             pair("empurrao_continuo_forca", s.pushHoldMinimumNewtons, s.pushHoldMaximumNewtons);
@@ -405,6 +539,8 @@ TrackingViewer3D::TrackingViewer3D(const std::filesystem::path& assetsDirectory,
                                                                                                                 : 0u;
         impl.startGetUp();
         impl.loadGetUpPolicy();
+        impl.partnerDirectory = partnerRun();
+        if (impl.getUpKind == 2) impl.startAvoid();
     }
 }
 
@@ -496,6 +632,11 @@ bool TrackingViewer3D::hasPolicy() const {
 void TrackingViewer3D::step() {
     Impl& impl = *m_impl;
     if (impl.getUp) {
+        if (impl.partnerActive) {
+            impl.stepPartner();
+            ++impl.steps;
+            return;
+        }
         // A rede nova do treino a cada ~2 s; sem rede, os alvos zerados (o corpo largado).
         if (impl.steps % 60 == 0) impl.loadGetUpPolicy();
         impl.getUp->observations(impl.getUpObservation);
@@ -508,7 +649,11 @@ void TrackingViewer3D::step() {
                 : impl.getUpKind >= 2             ? !episode.fellAfterStanding
                                                   : episode.firstStandSeconds >= 0.0f;
             if (good) ++impl.getUpStood;
+            // (O episodio novo do mundo do levantar.)
+            impl.wasDown = false;
+            impl.firmSeconds = 0.0f;
         }
+        impl.checkHandoff();
         ++impl.steps;
         return;
     }
@@ -541,6 +686,10 @@ void TrackingViewer3D::reset(std::uint64_t seed) {
         impl.seed = seed;
         impl.startGetUp();
         impl.steps = 0;
+        impl.partnerActive = false;
+        impl.firmSeconds = 0.0f;
+        impl.wasDown = false;
+        if (impl.getUpKind == 2) impl.startAvoid();
         return;
     }
     impl.batch->reset(seed);
@@ -558,6 +707,7 @@ void TrackingViewer3D::setManualSpeed(std::optional<float> metersPerSecond) {
 
 void TrackingViewer3D::push(Vec3 force, float seconds) {
     Impl& impl = *m_impl;
+    if (impl.getUp && impl.partnerActive) impl.partner->push(force, seconds);
     if (impl.getUp) return;
     impl.batch->push(0, impl.chest, force, seconds);
     impl.pushForce = force;
@@ -566,6 +716,7 @@ void TrackingViewer3D::push(Vec3 force, float seconds) {
 
 BodyWorldView3D TrackingViewer3D::view() const {
     const Impl& impl = *m_impl;
+    if (impl.getUp && impl.partnerActive) return impl.partner->view();
     if (impl.getUp) {
         const RagdollState3D& body = impl.getUp->body(0);
         BodyWorldView3D view;
@@ -630,5 +781,11 @@ const RagdollProfile3D& TrackingViewer3D::profile() const {
 std::pair<std::uint32_t, std::uint32_t> TrackingViewer3D::getUpTally() const {
     return { m_impl->getUpStood, m_impl->getUpFalls };
 }
+
+bool TrackingViewer3D::drivingLocomotion() const {
+    return m_impl->getUp && m_impl->partnerActive && !m_impl->partner->gettingUp();
+}
+
+const std::string& TrackingViewer3D::partnerText() const { return m_impl->partnerLabel; }
 
 } // namespace MatterEngine

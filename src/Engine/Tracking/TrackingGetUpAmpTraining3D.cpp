@@ -154,14 +154,19 @@ struct TrackingGetUpAmpTraining3D::Impl {
         // A troca de rede ao ficar de pe: ha quanto tempo ele esta de pe e firme (s) e quando trocou (s; < 0: nao).
         float firmSeconds = 0.0f;
         float handoffAt = -1.0f;
+        // A parceira depois da troca (quanto dirigiu, s; < 0: sem) e se o tronco ja tocou o chao.
+        float partnerDrove = -1.0f;
+        bool partnerFell = false;
+        bool touchedDown = false;
         // O premio do passo: o tempo no ar de cada pe (s) e se ele estava no chao.
         float footAir[2] { 0.0f, 0.0f };
         bool footDown[2] { true, true };
         std::uint32_t index = 0;
     };
     std::vector<World> worlds;
-    // As quedas da locomocao (setFallStarts).
+    // As quedas da locomocao (setFallStarts) e a rede da locomocao parceira (setLocomotionPartner).
     std::vector<std::vector<PhysicsBodyState3D>> fallStarts;
+    std::shared_ptr<const LocomotionPartner3D> partner;
     std::vector<TrackingGetUpAmpEpisode3D> episodes;
     std::mutex episodeMutex;
 
@@ -214,6 +219,40 @@ struct TrackingGetUpAmpTraining3D::Impl {
             settle(w, static_cast<int>((0.9f + 0.6f * u(w.rng)) / TickSeconds));
             if (posture->measure(w.body->links).headHeight < 1.0f) return;
         }
+    }
+
+    // O evitar a queda com a parceira (01/11, ele: "o evitar queda precisa saber operar em conjunto com a outra rede nos
+    // momentos de queda iminente"): de pe, ela leva o empurrao forte (o do evitar, de 0,3 a 1,0 s depois do comeco) e a
+    // rede do levantar assume na queda iminente dela, com o resto do empurrao (pushLeft, s; a forca em pushForce). Se ela
+    // aguenta sozinha ate 1,5 s depois do empurrao, outro (ate 3 vezes); sem a queda iminente, false.
+    bool beginPartnerAvoid(World& w, float& pushLeft, Vec3& pushForce) {
+        std::uniform_real_distribution<float> u(0.0f, 1.0f);
+        for (int attempt = 0; attempt < 3; ++attempt) {
+            if (attempt > 0) beginFromClip(w, true);
+            LocomotionPartner3D::Push push;
+            push.startSeconds = 0.3f + 0.7f * u(w.rng);
+            const float angle = 2.0f * Pi * u(w.rng);
+            float newtons = 0.0f;
+            if (u(w.rng) < settings.avoidHoldFraction) {
+                newtons = settings.avoidHoldMinimumNewtons
+                    + (settings.avoidHoldMaximumNewtons - settings.avoidHoldMinimumNewtons) * u(w.rng);
+                push.seconds = settings.avoidHoldMinimumSeconds
+                    + (settings.avoidHoldMaximumSeconds - settings.avoidHoldMinimumSeconds) * u(w.rng);
+            } else {
+                newtons = settings.avoidMinimumNewtons + (settings.avoidMaximumNewtons - settings.avoidMinimumNewtons) * u(w.rng);
+                push.seconds = 0.1f + 0.1f * u(w.rng);
+            }
+            push.force = { std::cos(angle) * newtons, std::sin(angle) * newtons, 0.0f };
+            const LocomotionPartner3D::Result result =
+                partner->drive(*w.scene, w.handle, {}, push.startSeconds + push.seconds + 1.5f, &push);
+            w.body = w.scene->ragdollStateView(w.handle);
+            if (result.fell) {
+                pushLeft = result.pushLeft;
+                pushForce = push.force;
+                return true;
+            }
+        }
+        return false;
     }
 
     // A queda da locomocao (01/11, a interligacao das redes): o corpo no instante em que a rede da locomocao caiu, com as
@@ -363,6 +402,17 @@ struct TrackingGetUpAmpTraining3D::Impl {
         }
         if (kind == 5 && runStartIndices.empty()) kind = 3;
         if (kind == 8 && fallStarts.empty()) kind = 0;
+        // (O evitar a queda com a parceira: ela de pe primeiro; sem a queda iminente dela, uma queda sorteada.)
+        float partnerPushLeft = -1.0f;
+        Vec3 partnerPushForce;
+        if (kind == 4 && partner && settings.partnerAvoid) {
+            w.pushTicks = 0;
+            beginFromClip(w, true);
+            if (!beginPartnerAvoid(w, partnerPushLeft, partnerPushForce)) {
+                kind = 0;
+                partnerPushLeft = -1.0f;
+            }
+        }
         // (O que vem do episodio anterior zerado antes do comeco: a queda assenta sem o resto de um empurrao.)
         w.pushTicks = 0;
         w.commandSpeed = 0.0f;
@@ -373,6 +423,9 @@ struct TrackingGetUpAmpTraining3D::Impl {
         w.faceErrorSamples = 0;
         w.firmSeconds = 0.0f;
         w.handoffAt = -1.0f;
+        w.partnerDrove = -1.0f;
+        w.partnerFell = false;
+        w.touchedDown = false;
         w.footAir[0] = w.footAir[1] = 0.0f;
         w.footDown[0] = w.footDown[1] = true;
         w.startKind = kind;
@@ -381,7 +434,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
         else if (kind == 6) beginHeading(w);
         else if (kind == 7) beginTurn(w);
         else if (kind == 8) beginLocomotionFall(w);
-        else beginFromClip(w, kind != 1);
+        else if (partnerPushLeft < 0.0f) beginFromClip(w, kind != 1);
         const TrackingGetUpPosture3D start = posture->measure(w.body->links);
         w.startSide = kind == 6 ? w.heading : start.chestFacingUp < -0.5f ? 0u : start.chestFacingUp > 0.5f ? 1u : 2u;
         w.startHead = start.headHeight;
@@ -410,6 +463,14 @@ struct TrackingGetUpAmpTraining3D::Impl {
         }
         w.startCommandSpeed = w.commandSpeed;
         if (kind == 4) w.avoidAt = 0.3f + 0.7f * u(w.rng);
+        if (partnerPushLeft >= 0.0f) {
+            w.avoidAt = -1.0f;
+            w.avoidEnd = w.lastPushEnd = partnerPushLeft;
+            if (partnerPushLeft > 0.0f) {
+                w.pushForce = partnerPushForce;
+                w.pushTicks = std::max(1, static_cast<int>(std::lround(partnerPushLeft / TickSeconds)));
+            }
+        }
     }
 
     // O empurrao de pe (31/10 09h, ele: depois de levantar falta o "jogo de pes de auto-equilibrio"): so no treino, nos
@@ -620,6 +681,11 @@ struct TrackingGetUpAmpTraining3D::Impl {
             reward -= FallPenalty;
             w.fellAfterStanding = true;
         }
+        // (O evitar a queda de verdade nos comecos da queda iminente: a primeira vez do tronco no chao, antes de ficar de
+        // pe - depois, a FallPenalty.)
+        if (down && !w.touchedDown && w.stoodAt < 0.0f && (w.startKind == 4 || w.startKind == 8))
+            reward -= settings.touchDownPenalty;
+        w.touchedDown = w.touchedDown || down;
         w.down = down;
         if (w.startKind == 4 && w.avoidEnd >= 0.0f && w.time >= w.avoidEnd && w.recomposedAt < 0.0f && now.standing
             && !w.fellAfterStanding && posture->idlePoseMatch(w.body->links) > RecomposedPose) {
@@ -640,10 +706,25 @@ struct TrackingGetUpAmpTraining3D::Impl {
             w.firmSeconds = eligible && firm ? w.firmSeconds + TicksPerDecision * TickSeconds : 0.0f;
             if (w.firmSeconds >= 0.5f) w.handoffAt = w.time;
         }
-        truncated = w.time >= settings.episodeSeconds - 1e-4f || w.handoffAt >= 0.0f ? 1 : 0;
-        if (truncated) {
+        // Depois da troca, a parceira dirige parada (01/11): se ela cair no tempo dela, a troca foi ruim - a punicao e o
+        // fim do episodio -; senao, o corte de sempre, com o valor do estado da troca.
+        const bool partnered = w.handoffAt >= 0.0f && partner && !settings.evaluation;
+        if (partnered) {
             observe(w);
             w.finalObservation = w.observation;
+            const LocomotionPartner3D::Result result = partner->drive(*w.scene, w.handle, w.drives, settings.partnerSeconds);
+            w.body = w.scene->ragdollStateView(w.handle);
+            w.partnerDrove = result.seconds;
+            w.partnerFell = result.fell;
+            if (result.fell) reward -= settings.partnerFallPenalty;
+        }
+        terminated = w.partnerFell ? 1 : 0;
+        truncated = !w.partnerFell && (w.time >= settings.episodeSeconds - 1e-4f || w.handoffAt >= 0.0f) ? 1 : 0;
+        if (truncated || terminated) {
+            if (!partnered) {
+                observe(w);
+                w.finalObservation = w.observation;
+            }
             TrackingGetUpAmpEpisode3D episode;
             episode.world = static_cast<std::uint32_t>(index);
             episode.startKind = w.startKind;
@@ -663,6 +744,9 @@ struct TrackingGetUpAmpTraining3D::Impl {
             episode.endPoseMatch = now.standing ? posture->idlePoseMatch(w.body->links) : 0.0f;
             episode.endSpineMatch = now.standing ? posture->idleSpineMatch(w.body->links) : 0.0f;
             episode.handoffSeconds = w.handoffAt;
+            episode.partnerFell = w.partnerFell;
+            episode.partnerSeconds = w.partnerDrove;
+            episode.touchedDown = w.touchedDown;
             episode.meanFaceError = w.faceErrorSamples
                 ? static_cast<float>(w.faceErrorSum / w.faceErrorSamples) * 180.0f / Pi : 0.0f;
             {
@@ -792,6 +876,10 @@ void TrackingGetUpAmpTraining3D::setFallStarts(std::vector<std::vector<PhysicsBo
 
 std::size_t TrackingGetUpAmpTraining3D::fallStartCount() const { return m_impl->fallStarts.size(); }
 
+void TrackingGetUpAmpTraining3D::setLocomotionPartner(std::shared_ptr<const LocomotionPartner3D> partner) {
+    m_impl->partner = std::move(partner);
+}
+
 void TrackingGetUpAmpTraining3D::reset(std::uint64_t seed) {
     Impl& impl = *m_impl;
     trackingPullWorlds3D(*impl.scheduler, impl.workers, impl.worlds.size(), [&impl, seed](std::size_t i) {
@@ -882,6 +970,9 @@ std::vector<TrackingGetUpAmpEpisode3D> TrackingGetUpAmpTraining3D::takeEpisodes(
 
 const RagdollState3D& TrackingGetUpAmpTraining3D::body(std::size_t world) const {
     return *m_impl->worlds.at(world).body;
+}
+std::span<const RagdollDriveTarget3D> TrackingGetUpAmpTraining3D::driveTargets(std::size_t world) const {
+    return m_impl->worlds.at(world).drives;
 }
 
 const RagdollProfile3D& TrackingGetUpAmpTraining3D::profile() const { return *m_impl->profile; }

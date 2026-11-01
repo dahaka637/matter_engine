@@ -37,6 +37,9 @@ struct LocomotionTrainingSettings3D {
 };
 
 enum class LocomotionEnd3D : std::uint8_t { None = 0, Fall, Numeric, TimeLimit, Boundary, Failure };
+// As configuracoes do atleta de uma tarefa da locomocao (o fisico total, a referencia a sombra, as ajudas, as viradas e
+// a tabela de velocidades), as dos mundos do treino (sem a regua da ajuda, que vem de historicalAssistRuler).
+[[nodiscard]] AthleteRuntimeSettings3D locomotionRuntimeSettings3D(const LocomotionTask3D& task);
 [[nodiscard]] const char* locomotionEndName3D(LocomotionEnd3D end);
 
 // O resumo de um episodio que acabou no ultimo step().

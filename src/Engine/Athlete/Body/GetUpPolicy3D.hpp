@@ -3,6 +3,8 @@
 #include "Engine/Physics/PhysicsScene3D.hpp"
 #include "Engine/Physics/RagdollProfile3D.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <span>
 #include <vector>
@@ -20,6 +22,27 @@ public:
     // dele saindo dos dela em BlendSeconds (s).
     static constexpr float FirmSeconds = 0.5f;
     static constexpr float BlendSeconds = 0.3f;
+    // A queda iminente pelo tronco, alem do fim do episodio da rede da locomocao (01/11, ele: "o evitar queda precisa
+    // saber operar em conjunto com a outra rede nos momentos de queda iminente"; medido com a rede do B21 em 32 mundos e
+    // 38 quedas): inclinado alem de ImminentTiltDegrees e tombando mais rapido que ImminentTiltRate (graus/s) de uma
+    // decisao para a outra - pega 87% das quedas, em media 0,31 s antes, com um disparo a toa a cada ~72 s por mundo
+    // (correndo inclinado o tronco nao tomba). So a pelve baixa ou a mao no chao avisavam tarde demais para evitar.
+    static constexpr float ImminentTiltDegrees = 25.0f;
+    static constexpr float ImminentTiltRate = 90.0f;
+
+    // A inclinacao do tronco (graus): o centro da pelve ao do peito alto em relacao a vertical.
+    [[nodiscard]] static float trunkTilt(const RagdollProfile3D& profile, std::span<const PhysicsBodyState3D> links) {
+        std::size_t chest = 0;
+        for (std::size_t i = 0; i < profile.links.size(); ++i)
+            if (profile.links[i].id == "UpperChest") chest = i;
+        if (chest == 0 || chest >= links.size() || links.empty()) return 0.0f;
+        const auto center = [&](std::size_t i) {
+            return links[i].position + links[i].orientation.rotate(profile.links[i].collider.localPosition);
+        };
+        const Vec3 trunk = center(chest) - center(0);
+        const float length = trunk.length();
+        return length > 1.0e-6f ? std::acos(std::clamp(trunk.z / length, -1.0f, 1.0f)) * 57.2957795f : 0.0f;
+    }
 
     virtual ~GetUpPolicy3D() = default;
     [[nodiscard]] virtual std::uint64_t iteration() const = 0;

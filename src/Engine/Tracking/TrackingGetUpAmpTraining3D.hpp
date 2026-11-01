@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Engine/Athlete/Body/LocomotionPartner3D.hpp"
 #include "Engine/Physics/PhysicsScene3D.hpp"
 #include "Engine/Physics/RagdollProfile3D.hpp"
 
@@ -87,6 +88,16 @@ struct TrackingGetUpAmpSettings3D {
     // As quedas da locomocao (01/11, a interligacao das redes: "para que justamente um consiga aprender com o outro"): a
     // fatia que comeca no instante em que a rede da locomocao caiu no treino dela (setFallStarts; sem elas, uma queda).
     float locomotionFallFraction = 0.0f;
+    // A rede da locomocao como parceira (01/11, ele: "ambas as redes aprendendo em conjunto em todos os treinos";
+    // setLocomotionPartner): depois da troca ela dirige parada por partnerSeconds - se ela cair nesse tempo, a troca foi
+    // ruim: partnerFallPenalty e o fim do episodio (so no treino) -; e, com partnerAvoid, o evitar a queda comeca com ela
+    // de pe levando o empurrao forte, a rede do levantar assumindo na queda iminente dela (no treino e na avaliacao).
+    float partnerSeconds = 2.0f;
+    float partnerFallPenalty = 10.0f;
+    bool partnerAvoid = false;
+    // Nos comecos da queda iminente (o evitar a queda com a parceira e as quedas da locomocao), a punicao da primeira vez
+    // que o tronco, o pescoco ou a cabeca tocam o chao (o evitar a queda de verdade; 0: so a do potencial).
+    float touchDownPenalty = 0.0f;
     // Na avaliacao, o que se mede: 0 as quedas (o levantar), 1 o levantar em movimento, 2 o evitar a queda, 3 o
     // equilibrio parado (de pe, um empurrao com a regua do parado com empurrao forte do B21: o curto de 900-1200 N ou,
     // em 30%, o continuo de 205-275 N por 1-3 s), 4 os rumos (de pe, no meio do trote, mantendo o rumo do corpo, um
@@ -128,6 +139,11 @@ struct TrackingGetUpAmpEpisode3D {
     float endSpineMatch = 0.0f;
     // A troca de rede (s desde o comeco; < 0: o episodio acabou sem ela).
     float handoffSeconds = -1.0f;
+    // Depois da troca, se a rede da locomocao caiu no tempo dela e quanto ela dirigiu (s; < 0: sem a parceira).
+    bool partnerFell = false;
+    float partnerSeconds = -1.0f;
+    // Se o tronco, o pescoco ou a cabeca tocaram o chao em algum momento (o evitar a queda: nao).
+    bool touchedDown = false;
 };
 
 // O que o visualizador do laboratorio desenha de um mundo: como comecou, o alvo (o levantar em movimento, enquanto o
@@ -194,6 +210,8 @@ public:
     // As quedas da locomocao para os comecos do tipo 8: o corpo inteiro no instante da queda, com as velocidades (os de
     // outro numero de links ficam de fora). Troca so entre os steps.
     void setFallStarts(std::vector<std::vector<PhysicsBodyState3D>> states);
+    // A rede da locomocao parceira (vazia: sem). Troca so entre os steps.
+    void setLocomotionPartner(std::shared_ptr<const LocomotionPartner3D> partner);
     [[nodiscard]] std::size_t fallStartCount() const;
 
     void reset(std::uint64_t seed);
@@ -210,6 +228,8 @@ public:
     [[nodiscard]] std::vector<TrackingGetUpAmpEpisode3D> takeEpisodes();
 
     [[nodiscard]] const RagdollState3D& body(std::size_t world) const;
+    // Os alvos de junta de agora de um mundo (os da ultima acao).
+    [[nodiscard]] std::span<const RagdollDriveTarget3D> driveTargets(std::size_t world) const;
     [[nodiscard]] const RagdollProfile3D& profile() const;
     [[nodiscard]] std::string frameLines(std::size_t world) const;
     [[nodiscard]] TrackingGetUpAmpWorldView3D worldView(std::size_t world) const;

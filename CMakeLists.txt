@@ -538,6 +538,7 @@ if(MATTERENGINE_BUILD_RL)
         src/Engine/Athlete/Training/LocomotionTask3D.cpp
         src/Engine/Athlete/Training/LocomotionReward3D.cpp
         src/Engine/Athlete/Training/LocomotionTraining3D.cpp
+        src/Engine/Athlete/Training/LocomotionPartnerRunner3D.cpp
     )
     target_include_directories(MatterAthleteTraining PUBLIC src)
     target_link_libraries(MatterAthleteTraining

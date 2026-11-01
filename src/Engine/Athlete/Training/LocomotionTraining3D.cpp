@@ -114,6 +114,8 @@ AthleteRuntimeSettings3D runtimeFor(const LocomotionTask3D& task) {
 
 } // namespace
 
+AthleteRuntimeSettings3D locomotionRuntimeSettings3D(const LocomotionTask3D& task) { return runtimeFor(task); }
+
 const char* locomotionEndName3D(LocomotionEnd3D end) {
     switch (end) {
     case LocomotionEnd3D::None: return "nenhum";
@@ -319,8 +321,11 @@ struct LocomotionTraining3D::Impl {
         bool uncapped = false;
         float uprightSeconds = 0.0f;
         float stoodSeconds = -1.0f;
-        // A interligacao das redes (01/11): quantos segundos a rede do levantar levou antes deste episodio (-1: nao).
+        // A interligacao das redes (01/11): quantos segundos a rede do levantar levou antes deste episodio (-1: nao) e a
+        // inclinacao do tronco na decisao anterior (a queda iminente).
         float getUpSeconds = -1.0f;
+        float trunkTilt = 0.0f;
+        bool trunkTiltValid = false;
         // O instante candidato a comeco guardado (vira do banco se o corpo
         // sobreviver surviveSeconds) e o aceito nesta decisao (o lote junta).
         bool hasPending = false;
@@ -655,6 +660,7 @@ struct LocomotionTraining3D::Impl {
         world.cellFrontierCruise = world.cellFrontierTracking = {};
         world.savedStart = saved != nullptr;
         if (!live) world.getUpSeconds = -1.0f;
+        world.trunkTiltValid = false;
         world.hasPending = false;
         world.pendingAge = 0.0f;
         for (std::size_t side = 0; side < 2; ++side) {
@@ -1003,6 +1009,16 @@ struct LocomotionTraining3D::Impl {
             }
         }
         if (!numeric && !fell && !getUpDrill && scene.telemetry().fallen) fell = true;
+        // (Com a interligacao, a queda iminente pelo tronco tambem: a rede do levantar assume a tempo de evitar.)
+        if (getUpPolicy != nullptr && !settings.evaluation && !getUpDrill && !scene.body().links.empty()) {
+            const float tilt = GetUpPolicy3D::trunkTilt(bundleOf(world).profile(), scene.body().links);
+            const float decision = static_cast<float>(std::max(1, ticks)) * TickSeconds;
+            if (!numeric && !fell && world.trunkTiltValid && tilt > GetUpPolicy3D::ImminentTiltDegrees
+                && (tilt - world.trunkTilt) / decision > GetUpPolicy3D::ImminentTiltRate)
+                fell = true;
+            world.trunkTilt = tilt;
+            world.trunkTiltValid = true;
+        }
         const float tickCount = static_cast<float>(std::max(1, ticks));
         const float smoothedError = static_cast<float>(std::sqrt(smoothError2 / tickCount));
         measure.velocityError = task.reward.velocitySmoothed ? smoothedError
