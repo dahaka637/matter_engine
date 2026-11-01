@@ -23,6 +23,8 @@ de pe no fim, se ficou de pe alguma vez e quando, por lado.
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
+import copy
 import json
 import math
 import os
@@ -365,15 +367,18 @@ def main() -> int:
                                  standing_start_fraction=args.comeco_de_pe, moving_fraction=args.movimento,
                                  avoid_fraction=args.evitar, sprint_start_fraction=args.arrancada,
                                  locomotion_fraction=args.locomocao, turn_fraction=args.giro, **v2)
-    evaluation = native.GetUpAmpBatch(str(REPO / "assets"), environments=64, threads=1, seed=12345, evaluation=True)
+    # (31/10 23h40, ele: "verifica se... nao conseguimos mais decisoes por segundo": as avaliacoes numa thread so paravam
+    # o treino ~21 s a cada 50 atualizacoes, 13% do tempo; com as threads do treino, as que esperam ficam paradas.)
+    eval_threads = args.threads
+    evaluation = native.GetUpAmpBatch(str(REPO / "assets"), environments=64, threads=eval_threads, seed=12345, evaluation=True)
     # (O v2: 32 quedas fixas com alvo e 32 empurroes fortes fixos.)
-    evaluations = {"mov_": native.GetUpAmpBatch(str(REPO / "assets"), environments=32, threads=1, seed=777,
+    evaluations = {"mov_": native.GetUpAmpBatch(str(REPO / "assets"), environments=32, threads=eval_threads, seed=777,
                                                 evaluation=True, evaluation_kind=1, **v2)} if args.movimento > 0 else {}
     if args.evitar > 0:
-        evaluations["evitar_"] = native.GetUpAmpBatch(str(REPO / "assets"), environments=32, threads=1, seed=999,
+        evaluations["evitar_"] = native.GetUpAmpBatch(str(REPO / "assets"), environments=32, threads=eval_threads, seed=999,
                                                       evaluation=True, evaluation_kind=2, **v2)
     # (O equilibrio parado: 32 de pe, um empurrao cada com a regua do parado com empurrao forte do B21.)
-    evaluations["equil_"] = native.GetUpAmpBatch(str(REPO / "assets"), environments=32, threads=1, seed=555,
+    evaluations["equil_"] = native.GetUpAmpBatch(str(REPO / "assets"), environments=32, threads=eval_threads, seed=555,
                                                  evaluation=True, evaluation_kind=3, **v2)
     # (A locomocao, com a regua fixa - nao a do treino, que sobe: os rumos a 2,5 m/s e, quando o treino tem empurroes em
     # movimento, os do comeco do B21, um por episodio. 32 nos rumos, 4 por rumo; 8 no giro, metade para cada lado; 8
@@ -383,11 +388,11 @@ def main() -> int:
         ruler = dict(v2, trot_speed=(2.5, 2.5), moving_push_newtons=(300.0, 600.0) if moving else (0.0, 0.0),
                      moving_push_hold_fraction=0.3,
                      moving_push_hold_newtons=(100.0, 180.0) if moving else (0.0, 0.0))
-        evaluations["loco_"] = native.GetUpAmpBatch(str(REPO / "assets"), environments=32, threads=1, seed=444,
+        evaluations["loco_"] = native.GetUpAmpBatch(str(REPO / "assets"), environments=32, threads=eval_threads, seed=444,
                                                     evaluation=True, evaluation_kind=4, **ruler)
-        evaluations["giro_"] = native.GetUpAmpBatch(str(REPO / "assets"), environments=8, threads=1, seed=333,
+        evaluations["giro_"] = native.GetUpAmpBatch(str(REPO / "assets"), environments=8, threads=eval_threads, seed=333,
                                                     evaluation=True, evaluation_kind=6, **ruler)
-        evaluations["parado_"] = native.GetUpAmpBatch(str(REPO / "assets"), environments=8, threads=1, seed=222,
+        evaluations["parado_"] = native.GetUpAmpBatch(str(REPO / "assets"), environments=8, threads=eval_threads, seed=222,
                                                       evaluation=True, evaluation_kind=5, **ruler)
     n, obs_size, act_size, amp = batch.num_envs, batch.obs_size, batch.action_size, batch.amp_size
     reference = torch.as_tensor(batch.reference_pairs(), device=device)
@@ -487,59 +492,50 @@ def main() -> int:
         print("aprendeu com a rede de brucos: " + " ".join(f"{k}={v}" for k, v in row.items()), flush=True)
         export_policy()
 
-    while (args.atualizacoes <= 0 or counters["atualizacao"] < args.atualizacoes) and not stop["pedido"]:
-        begin = time.time()
-        buf = {k: torch.zeros(T, n, *s, device=device) for k, s in
-               (("obs", (obs_size,)), ("act", (act_size,)), ("logp", ()), ("val", ()), ("task", ()), ("boot", ()),
-                ("done", ()), ("pairs", (2 * amp,)), ("jerk", ()))}
+    # (31/10 23h50, ele: "aquelas paradas de sobreposicao... fazer melhor uso da gpu": a atualizacao do PPO e do
+    # discriminador numa thread propria, sobreposta a coleta seguinte, como a do B21. Medido antes: a fisica e 97% da
+    # coleta - 2,41 de 2,48 s - e a atualizacao 0,41 s, 14% da rodada; a GPU ficava em 1-20%. A coleta usa a rede de uma
+    # atualizacao atras; o PPO e o desacoplado (Hilton et al. 2021, como o do B21): o corte contra a rede do comeco da
+    # atualizacao e o peso de importancia da coleta, cortado em 2.)
+    collector = copy.deepcopy(model)
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    update_generator = torch.Generator(device=device)
+    update_generator.manual_seed(args.semente * 7919 + counters["atualizacao"])
+    pending = None
+    last: dict = {}
+
+    def update(roll: dict) -> dict:
+        """A atualizacao de uma rodada (na thread da atualizacao, com a coleta seguinte rodando)."""
+        nonlocal replay
+        start = time.time()
         with torch.no_grad():
-            for t in range(T):
-                model.norm.update(obs)
-                obs_n = model.norm(obs)
-                dist = model.distribution(obs_n)
-                action = dist.sample()
-                buf["obs"][t], buf["act"][t] = obs, action
-                buf["jerk"][t] = torch.where(previous_valid, (action - previous_action).pow(2).mean(-1),
-                                             torch.zeros_like(previous_valid, dtype=torch.float32))
-                buf["logp"][t] = dist.log_prob(action).sum(-1)
-                buf["val"][t] = model.value(obs_n)
-                task, term, trunc = batch.step(model.env_action(action).cpu().numpy().astype(np.float32))
-                buf["task"][t] = torch.as_tensor(task, device=device)
-                buf["pairs"][t] = torch.as_tensor(batch.amp_pairs(), device=device)
-                trunc = torch.as_tensor(trunc, device=device).float()
-                if trunc.any():
-                    final = torch.as_tensor(batch.final_observations(), device=device)
-                    buf["boot"][t] = trunc * model.value(model.norm(final))
-                buf["done"][t] = torch.maximum(torch.as_tensor(term, device=device).float(), trunc)
-                previous_action = action
-                previous_valid = buf["done"][t] < 0.5
-                obs = torch.as_tensor(batch.observations(), device=device)
-            last_value = model.value(model.norm(obs))
-            pairs = buf["pairs"].reshape(T * n, 2 * amp)
+            pairs = roll["pairs"].reshape(T * n, 2 * amp)
             disc.norm.update(torch.cat([pairs[:, :amp], reference[:, :amp]]))
             d = disc(pairs).reshape(T, n)
             style = torch.clamp(1.0 - 0.25 * (d - 1.0).pow(2), min=0.0)
             # (A nota por passo vezes 1 - gamma: o retorno fica entre 0 e 1 e o critico nao precisa correr atras da
             # escala de ~100 de um gamma 0,99.)
-            rew = (1.0 - gamma) * (args.peso_tarefa * buf["task"] + args.peso_estilo * style - args.suave * buf["jerk"]) \
-                + gamma * buf["boot"]
-        adv = torch.zeros(T, n, device=device)
-        gae = torch.zeros(n, device=device)
-        for t in reversed(range(T)):
-            next_value = last_value if t == T - 1 else buf["val"][t + 1]
-            nonterminal = 1.0 - buf["done"][t]
-            delta = rew[t] + gamma * next_value * nonterminal - buf["val"][t]
-            gae = delta + gamma * lam * nonterminal * gae
-            adv[t] = gae
-        ret = adv + buf["val"]
-        flat = lambda x: x.reshape(T * n, *x.shape[2:])  # noqa: E731
-        f_obs, f_act, f_logp, f_adv, f_ret = flat(buf["obs"]), flat(buf["act"]), flat(buf["logp"]), flat(adv), flat(ret)
-        f_adv = (f_adv - f_adv.mean()) / (f_adv.std() + 1e-8)
+            rew = (1.0 - gamma) * (args.peso_tarefa * roll["task"] + args.peso_estilo * style
+                                   - args.suave * roll["jerk"]) + gamma * roll["boot"]
+            adv = torch.zeros(T, n, device=device)
+            gae = torch.zeros(n, device=device)
+            for t in reversed(range(T)):
+                next_value = roll["last_value"] if t == T - 1 else roll["val"][t + 1]
+                nonterminal = 1.0 - roll["done"][t]
+                delta = rew[t] + gamma * next_value * nonterminal - roll["val"][t]
+                gae = delta + gamma * lam * nonterminal * gae
+                adv[t] = gae
+            ret = adv + roll["val"]
+            flat = lambda x: x.reshape(T * n, *x.shape[2:])  # noqa: E731
+            f_obs, f_act, f_adv, f_ret = flat(roll["obs"]), flat(roll["act"]), flat(adv), flat(ret)
+            f_adv = (f_adv - f_adv.mean()) / (f_adv.std() + 1e-8)
+            anchor = model.distribution(model.norm(f_obs)).log_prob(f_act).sum(-1)
+            weight = torch.exp(anchor - flat(roll["logp"])).clamp(max=2.0)
         replay = torch.cat([replay, pairs])[-100_000:]
         stats = {"pol": 0.0, "vf": 0.0, "clip": 0.0, "disc": 0.0, "d_clipe": 0.0, "d_corpo": 0.0, "gp": 0.0}
         steps = 0
         for _ in range(args.epocas):
-            for idx in torch.randperm(T * n, device=device).split(minibatch):
+            for idx in torch.randperm(T * n, device=device, generator=update_generator).split(minibatch):
                 obs_n = model.norm(f_obs[idx])
                 vf_loss = (model.value(obs_n) - f_ret[idx]).pow(2).mean()
                 critic_opt.zero_grad()
@@ -547,8 +543,9 @@ def main() -> int:
                 nn.utils.clip_grad_norm_(model.critic.parameters(), 1.0)
                 critic_opt.step()
                 logp = model.distribution(obs_n).log_prob(f_act[idx]).sum(-1)
-                ratio = torch.exp(logp - f_logp[idx])
-                pol_loss = -torch.min(ratio * f_adv[idx], ratio.clamp(1 - clip, 1 + clip) * f_adv[idx]).mean()
+                ratio = torch.exp(logp - anchor[idx])
+                w = weight[idx]
+                pol_loss = -torch.min(ratio * w * f_adv[idx], ratio.clamp(1 - clip, 1 + clip) * w * f_adv[idx]).mean()
                 if counters["atualizacao"] >= args.aquecer_critico:
                     actor_opt.zero_grad()
                     pol_loss.backward()
@@ -556,16 +553,17 @@ def main() -> int:
                     actor_opt.step()
                 # O discriminador: metade do lote de agora e metade da reserva, contra os clipes (com reposicao).
                 half = len(idx) // 2
-                body = torch.cat([pairs[idx[:half]], replay[torch.randint(len(replay), (half,), device=device)]])
-                clips = reference[torch.randint(len(reference), (len(body),), device=device)]
+                body = torch.cat([pairs[idx[:half]],
+                                  replay[torch.randint(len(replay), (half,), device=device, generator=update_generator)]])
+                clips = reference[torch.randint(len(reference), (len(body),), device=device, generator=update_generator)]
                 x_clip = disc.inputs(clips).detach().requires_grad_(True)
                 d_clip = disc.net(x_clip).squeeze(-1)
                 d_body = disc.net(disc.inputs(body)).squeeze(-1)
                 grad = torch.autograd.grad(d_clip.sum(), x_clip, create_graph=True)[0]
                 gp = grad.pow(2).sum(-1).mean()
-                last = disc.net[-1].weight
+                last_layer = disc.net[-1].weight
                 disc_loss = 0.5 * ((d_clip - 1.0).pow(2).mean() + (d_body + 1.0).pow(2).mean()) + 5.0 * gp \
-                    + 0.01 * last.pow(2).sum()
+                    + 0.01 * last_layer.pow(2).sum()
                 disc_opt.zero_grad()
                 disc_loss.backward()
                 disc_opt.step()
@@ -577,6 +575,53 @@ def main() -> int:
                 stats["d_corpo"] += d_body.mean().item()
                 stats["gp"] += gp.item()
                 steps += 1
+        if device.type == "cuda":
+            torch.cuda.synchronize()
+        out = {k: v / max(1, steps) for k, v in stats.items()}
+        out.update({"estilo": float(style.mean()), "peso_coleta": float(weight.mean()), "t_ppo": time.time() - start})
+        return out
+
+    while (args.atualizacoes <= 0 or counters["atualizacao"] < args.atualizacoes) and not stop["pedido"]:
+        begin = time.time()
+        physics = 0.0
+        roll = {k: torch.zeros(T, n, *s, device=device) for k, s in
+                (("obs", (obs_size,)), ("act", (act_size,)), ("logp", ()), ("val", ()), ("task", ()), ("boot", ()),
+                 ("done", ()), ("pairs", (2 * amp,)), ("jerk", ()))}
+        with torch.no_grad():
+            for t in range(T):
+                collector.norm.update(obs)
+                obs_n = collector.norm(obs)
+                dist = collector.distribution(obs_n)
+                action = dist.sample()
+                roll["obs"][t], roll["act"][t] = obs, action
+                roll["jerk"][t] = torch.where(previous_valid, (action - previous_action).pow(2).mean(-1),
+                                              torch.zeros_like(previous_valid, dtype=torch.float32))
+                roll["logp"][t] = dist.log_prob(action).sum(-1)
+                roll["val"][t] = collector.value(obs_n)
+                env_action = collector.env_action(action).cpu().numpy().astype(np.float32)
+                tick = time.time()
+                task, term, trunc = batch.step(env_action)
+                physics += time.time() - tick
+                roll["task"][t] = torch.as_tensor(task, device=device)
+                roll["pairs"][t] = torch.as_tensor(batch.amp_pairs(), device=device)
+                trunc = torch.as_tensor(trunc, device=device).float()
+                if trunc.any():
+                    final = torch.as_tensor(batch.final_observations(), device=device)
+                    roll["boot"][t] = trunc * collector.value(collector.norm(final))
+                roll["done"][t] = torch.maximum(torch.as_tensor(term, device=device).float(), trunc)
+                previous_action = action
+                previous_valid = roll["done"][t] < 0.5
+                obs = torch.as_tensor(batch.observations(), device=device)
+            roll["last_value"] = collector.value(collector.norm(obs))
+        collected = time.time()
+        # A atualizacao da rodada anterior acaba; a rede dela vai para a coleta (com a normalizacao desta coleta) e esta
+        # rodada vai para a atualizacao, depois da escrita (o modelo so muda na thread da atualizacao).
+        if pending is not None:
+            last = pending.result()
+        waited = time.time() - collected
+        with torch.no_grad():
+            model.norm.load_state_dict(collector.norm.state_dict())
+            collector.load_state_dict(model.state_dict())
         episodes = batch.finished_episodes()
         if len(episodes):
             window.extend(episodes.tolist())
@@ -587,9 +632,11 @@ def main() -> int:
         if counters["atualizacao"] % 20 == 0:
             recent = np.array(window) if window else np.zeros((0, 18))
             row = {"atualizacao": counters["atualizacao"], "amostras": counters["amostras"], "hora": time.time(),
-                   "tarefa": float(buf["task"].mean()), "estilo": float(style.mean()), "tranco": float(buf["jerk"].mean()),
+                   "tarefa": float(roll["task"].mean()), "estilo": last.get("estilo", float("nan")),
+                   "tranco": float(roll["jerk"].mean()),
                    "desvio": float(model.log_std.detach().clamp(LOG_STD_MIN, LOG_STD_MAX).exp().mean()),
-                   "am_s": T * n / (time.time() - begin), **{k: v / max(1, steps) for k, v in stats.items()}}
+                   "am_s": T * n / (time.time() - begin), "t_coleta": collected - begin, "t_fisica": physics,
+                   "t_espera": waited, **{k: v for k, v in last.items() if k != "estilo"}}
             row.update(summarize(recent[recent[:, 1] == 0] if len(recent) else recent, "queda_"))
             row.update(summarize(recent[recent[:, 1] == 1] if len(recent) else recent, "clipe_"))
             row.update(summarize(recent[recent[:, 1] == 2] if len(recent) else recent, "de_pe_"))
@@ -608,20 +655,27 @@ def main() -> int:
             write_status("treinando")
         if counters["atualizacao"] % 10 == 0:
             export_policy()
-        if stop["salvar"]:
+        judge = counters["atualizacao"] % args.salvar_cada == 0
+        if stop["salvar"] or judge:
             stop["salvar"] = False
             save()
-        if counters["atualizacao"] % args.salvar_cada == 0:
-            save()
+        pending = executor.submit(update, roll)
+        if judge:
+            # (A avaliacao com a copia da coleta - a rede que acabou de ser salva -, enquanto a atualizacao roda.)
+            judged = time.time()
             row = {"atualizacao": counters["atualizacao"], "amostras": counters["amostras"], "aval": True,
                    "hora": time.time(),
-                   **evaluate(model, evaluation, device)}
+                   **evaluate(collector, evaluation, device)}
             for prefix, other in evaluations.items():
-                row.update(evaluate(model, other, device, prefix))
+                row.update(evaluate(collector, other, device, prefix))
+            row["t_aval"] = time.time() - judged
             log.write(json.dumps(row) + "\n")
             log.flush()
             print("aval " + " ".join(f"{k}={v:.3g}" if isinstance(v, float) else f"{k}={v}" for k, v in row.items()),
                   flush=True)
+    if pending is not None:
+        pending.result()
+    executor.shutdown()
     save()
     write_status("parado")
     print(f"salvo na atualizacao {counters['atualizacao']}" + (" (sinal de parar)" if stop["pedido"] else ""), flush=True)
