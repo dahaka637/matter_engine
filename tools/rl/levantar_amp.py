@@ -48,6 +48,8 @@ SIDES = ("brucos", "costas", "lado")
 # para a esquerda) - as diagonais com os dois lados, como no B21.
 HEADINGS = {"frente": (0,), "diagonal_frente": (1, 7), "esquerda": (2,), "diagonal_costas": (3, 5), "tras": (4,),
             "direita": (6,)}
+# As faixas dos rumos da rl_final (a coluna 25 dos episodios).
+BANDS = ("andar", "trote", "corrida", "sprint")
 
 
 def mlp(inputs: int, outputs: int) -> nn.Sequential:
@@ -124,7 +126,7 @@ def export(model: Policy, path: Path, meta: dict) -> None:
     header.update({"schema": "matter-rl-policy-1", "observationSize": layers[0]["inputs"],
                    "actionSize": layers[-1]["outputs"], "activation": "relu",
                    "normalizer": {"mean": mean_at, "invStd": inv_at, "clip": 5.0}, "actionLimit": 3.14159,
-                   "layers": layers, "observationLayout": "levantar-v2", "actionLayout": "levantar-v1",
+                   "layers": layers, "observationLayout": "levantar-v3", "actionLayout": "levantar-v1",
                    "createdUtc": datetime.now(timezone.utc).isoformat(timespec="seconds")})
     text = json.dumps(header, ensure_ascii=False).encode("utf-8")
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -172,6 +174,15 @@ def summarize(rows: np.ndarray, prefix: str) -> dict:
                 out[f"{prefix}{name}_sem_cair"] = float(1.0 - rows[sel, 13].mean())
                 if rows.shape[1] > 16:
                     out[f"{prefix}{name}_rumo"] = float(rows[sel, 16].mean())
+        if rows.shape[1] > 25:
+            # (A rl_final, por faixa do comeco: a velocidade no rumo pedido, ela sobre a pedida, o sem cair e quantos.)
+            for band, name in enumerate(BANDS):
+                sel = loco & (rows[:, 25] == band)
+                if sel.any():
+                    out[f"{prefix}{name}_vel"] = float(rows[sel, 12].mean())
+                    out[f"{prefix}{name}_razao"] = float((rows[sel, 12] / np.maximum(rows[sel, 10], 0.1)).mean())
+                    out[f"{prefix}{name}_sem_cair"] = float(1.0 - rows[sel, 13].mean())
+                    out[f"{prefix}{name}_n"] = int(sel.sum())
         turn = rows[:, 1] == 7
         if turn.any() and rows.shape[1] > 16:
             out[f"{prefix}rumo"] = float(rows[turn, 16].mean())
@@ -387,7 +398,31 @@ def main() -> int:
     parser.add_argument("--limite", type=float, default=0.0, help="o peso do custo dos alvos perto do limite das juntas")
     parser.add_argument("--arrancada", type=float, default=0.0,
                         help="a fatia que comeca na arrancada agachada (crouched_to_sprint) virado para um alvo")
+    # (01/11, a rl_final - ele: "precisamos achar uma abordagem que consigamos fazer ela se locomover! e BEM, com
+    # estabilidade e velocidade e excelente auto-equilibrio"; vault 04_locomocao/plano_rl_final_01_11.md. Em 31/10 ela
+    # nao deu um passo: estilo 0,7 - ficar parado em alerta ja agradava o juiz -, o custo do tranco punindo o balanco
+    # rapido da perna, comecos parados e cair sem fim de episodio. Agora, nos rumos: as faixas da corrida e do sprint,
+    # os comecos ja no clipe, a queda encerrando, o pedido trocando no meio e os pesos proprios da locomocao.)
+    parser.add_argument("--corrida", type=float, default=0.0, help="nos rumos, a fatia da corrida")
+    parser.add_argument("--sprint", type=float, default=0.0, help="nos rumos, a fatia do sprint")
+    parser.add_argument("--locomocao-clipe", type=float, default=0.5,
+                        help="nos rumos, a fatia que comeca ja no clipe do passo, na velocidade dele (o RSI)")
+    parser.add_argument("--locomocao-segundos", type=float, default=0.0, help="o tempo dos rumos e do giro (s; 0: 6)")
+    parser.add_argument("--queda-encerra", action="store_true", help="nos rumos e no giro, cair encerra o episodio")
+    parser.add_argument("--troca-pedido", type=float, nargs=2, default=[0.0, 0.0],
+                        help="nos rumos, a troca do pedido a cada um tempo nesta faixa (s; 0 0: sem)")
+    parser.add_argument("--peso-tarefa-loco", type=float, default=None, help="o peso da tarefa na locomocao")
+    parser.add_argument("--peso-estilo-loco", type=float, default=None, help="o peso do estilo na locomocao")
+    parser.add_argument("--suave-loco", type=float, default=None, help="o peso do custo do tranco na locomocao")
+    parser.add_argument("--passo", type=float, default=0.0,
+                        help="o premio do passo (o tempo no ar de cada pe que pousa, com o pedido de deslocamento)")
     args = parser.parse_args()
+    if args.peso_tarefa_loco is None:
+        args.peso_tarefa_loco = args.peso_tarefa
+    if args.peso_estilo_loco is None:
+        args.peso_estilo_loco = args.peso_estilo
+    if args.suave_loco is None:
+        args.suave_loco = args.suave
 
     from matter_rl.system import cpu_temperature, require_watchdog
     require_watchdog()
@@ -421,7 +456,11 @@ def main() -> int:
                   "empurrao_mov_continuo_forca": list(args.empurrao_mov_continuo_forca),
                   "empurrao_continuo": args.empurrao_continuo, "empurrao_continuo_forca": list(args.empurrao_continuo_forca),
                   "evitar_forca": list(args.evitar_forca),
-                  "empurrao_forca": list(args.empurrao_forca), "velocidade": list(args.velocidade)}
+                  "empurrao_forca": list(args.empurrao_forca), "velocidade": list(args.velocidade),
+                  "corrida": args.corrida, "sprint": args.sprint, "locomocao_clipe": args.locomocao_clipe,
+                  "locomocao_segundos": args.locomocao_segundos, "queda_encerra": args.queda_encerra,
+                  "troca_pedido": list(args.troca_pedido), "peso_tarefa_loco": args.peso_tarefa_loco,
+                  "peso_estilo_loco": args.peso_estilo_loco, "suave_loco": args.suave_loco, "passo": args.passo}
     (run / "run.json").write_text(json.dumps(info, ensure_ascii=False))
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     torch.manual_seed(args.semente)
@@ -430,7 +469,8 @@ def main() -> int:
               push_hold_newtons=tuple(args.empurrao_continuo_forca), walk_fraction=args.andar,
               walk_speed=tuple(args.andar_velocidade), trot_speed=tuple(args.trote_velocidade),
               moving_push_newtons=tuple(args.empurrao_mov_forca), moving_push_hold_fraction=args.empurrao_mov_continuo,
-              moving_push_hold_newtons=tuple(args.empurrao_mov_continuo_forca))
+              moving_push_hold_newtons=tuple(args.empurrao_mov_continuo_forca),
+              locomotion_seconds=args.locomocao_segundos, locomotion_termination=args.queda_encerra)
     batch = native.GetUpAmpBatch(str(REPO / "assets"), environments=args.mundos, threads=args.threads,
                                  seed=args.semente, clip_start_fraction=args.comeco_clipe,
                                  standing_start_fraction=args.comeco_de_pe, moving_fraction=args.movimento,
@@ -440,7 +480,10 @@ def main() -> int:
                                  partner_seconds=args.parceiro_segundos, partner_fall_penalty=args.parceiro_punicao,
                                  partner_avoid=args.evitar_com_parceiro, touch_down_penalty=args.toque_punicao,
                                  support_bonus=args.apoio_premio, flex_reward=args.flexao,
-                                 obstacle_fraction=args.obstaculo, weight_fraction=args.peso_em_cima, **v2)
+                                 obstacle_fraction=args.obstaculo, weight_fraction=args.peso_em_cima,
+                                 run_fraction=args.corrida, sprint_fraction=args.sprint,
+                                 locomotion_clip_fraction=args.locomocao_clipe,
+                                 command_change=tuple(args.troca_pedido), step_reward=args.passo, **v2)
     # (31/10 23h40, ele: "verifica se... nao conseguimos mais decisoes por segundo": as avaliacoes numa thread so paravam
     # o treino ~21 s a cada 50 atualizacoes, 13% do tempo; com as threads do treino, as que esperam ficam paradas.)
     eval_threads = args.threads
@@ -469,6 +512,15 @@ def main() -> int:
                                                     evaluation=True, evaluation_kind=6, **ruler)
         evaluations["parado_"] = native.GetUpAmpBatch(str(REPO / "assets"), environments=8, threads=eval_threads, seed=222,
                                                       evaluation=True, evaluation_kind=5, **ruler)
+        # (A rl_final: cada faixa para a frente, de pe, na velocidade do clipe dela - andar 1,1, trote 2,6, corrida
+        # 4,3 e sprint 6,0 m/s -, 16 mundos cada, sem empurrao.)
+        bands = [("andar_", 0), ("trote_", 1)] + ([("corrida_", 2)] if args.corrida > 0 else []) \
+            + ([("sprint_", 3)] if args.sprint > 0 else [])
+        for prefix, band in bands:
+            evaluations[prefix] = native.GetUpAmpBatch(
+                str(REPO / "assets"), environments=16, threads=eval_threads, seed=600 + band, evaluation=True,
+                evaluation_kind=4, evaluation_band=band, **dict(v2, moving_push_newtons=(0.0, 0.0),
+                                                                moving_push_hold_newtons=(0.0, 0.0)))
     falls = {"mtime": 0.0}
 
     def load_falls() -> None:
@@ -529,8 +581,8 @@ def main() -> int:
     if checkpoint.exists():
         state = torch.load(checkpoint, map_location=device, weights_only=False)
         grown = state["model"]["actor.0.weight"].shape[1] < obs_size
-        # (Uma entrada nova no contrato - 31/10 22h15, o rumo pedido do corpo: as colunas novas em zero e o Adam do ator e
-        # do critico do zero, as formas mudaram.)
+        # (Uma entrada nova no contrato - 31/10 22h15, o rumo pedido do corpo; 01/11, o v3, o corpo contra o chao: as
+        # colunas novas em zero e o Adam do ator e do critico do zero, as formas mudaram.)
         model.load_state_dict(expand_inputs(state["model"], obs_size) if grown else state["model"])
         disc.load_state_dict(state["disc"])
         if not grown:
@@ -552,7 +604,8 @@ def main() -> int:
     def write_status(state: str) -> None:
         counters["segundos"] = trained_before + (time.time() - opened)
         data = {"run": args.treino, "task": args.treino, "state": state, "pid": os.getpid(),
-                "taskName": "Rede do levantar: levantar, equilíbrio e locomoção",
+                "taskName": "rl_final: levantar, proteger-se e se locomover" if args.locomocao > 0
+                else "Rede do levantar: levantar, equilíbrio e locomoção",
                 "iteration": counters["atualizacao"], "steps": counters["amostras"], "episodes": counters["episodios"],
                 "trainSeconds": counters["segundos"], "sps": last_status["sps"], "threads": args.threads,
                 "environments": n, "device": device.type, "cpuTemperature": cpu_temperature() or 0.0,
@@ -639,9 +692,14 @@ def main() -> int:
             style = torch.clamp(1.0 - 0.25 * (d - 1.0).pow(2), min=0.0)
             # (A nota por passo vezes 1 - gamma: o retorno fica entre 0 e 1 e o critico nao precisa correr atras da
             # escala de ~100 de um gamma 0,99.)
-            rew = (1.0 - gamma) * (args.peso_tarefa * roll["task"] + args.peso_estilo * style
+            # (A rl_final: na locomocao, os pesos dela - a tarefa pesando mais e o tranco menos, o passo e rapido.)
+            loco = roll["loco"]
+            task_w = args.peso_tarefa + (args.peso_tarefa_loco - args.peso_tarefa) * loco
+            style_w = args.peso_estilo + (args.peso_estilo_loco - args.peso_estilo) * loco
+            jerk_w = args.suave + (args.suave_loco - args.suave) * loco
+            rew = (1.0 - gamma) * (task_w * roll["task"] + style_w * style
                                    - (1.0 - args.protecao_alivio * roll["prot"])
-                                   * (args.suave * roll["jerk"] + args.limite * roll["limit"])) + gamma * roll["boot"]
+                                   * (jerk_w * roll["jerk"] + args.limite * roll["limit"])) + gamma * roll["boot"]
             adv = torch.zeros(T, n, device=device)
             gae = torch.zeros(n, device=device)
             for t in reversed(range(T)):
@@ -711,7 +769,7 @@ def main() -> int:
         physics = 0.0
         roll = {k: torch.zeros(T, n, *s, device=device) for k, s in
                 (("obs", (obs_size,)), ("act", (act_size,)), ("logp", ()), ("val", ()), ("task", ()), ("boot", ()),
-                 ("done", ()), ("pairs", (2 * amp,)), ("jerk", ()), ("limit", ()), ("prot", ()))}
+                 ("done", ()), ("pairs", (2 * amp,)), ("jerk", ()), ("limit", ()), ("prot", ()), ("loco", ()))}
         with torch.no_grad():
             for t in range(T):
                 collector.norm.update(obs)
@@ -729,6 +787,7 @@ def main() -> int:
                 roll["val"][t] = collector.value(obs_n)
                 env_action = collector.env_action(action).cpu().numpy().astype(np.float32)
                 roll["prot"][t] = torch.as_tensor(batch.protecting(), device=device).float()
+                roll["loco"][t] = torch.as_tensor(batch.locomoting(), device=device).float()
                 tick = time.time()
                 task, term, trunc = batch.step(env_action)
                 physics += time.time() - tick
@@ -760,11 +819,11 @@ def main() -> int:
         counters["amostras"] += T * n
         counters["episodios"] += len(episodes)
         if counters["atualizacao"] % 20 == 0:
-            recent = np.array(window) if window else np.zeros((0, 25))
+            recent = np.array(window) if window else np.zeros((0, 26))
             row = {"atualizacao": counters["atualizacao"], "amostras": counters["amostras"], "hora": time.time(),
                    "tarefa": float(roll["task"].mean()), "estilo": last.get("estilo", float("nan")),
                    "tranco": float(roll["jerk"].mean()), "limite": float(roll["limit"].mean()),
-                   "protegendo": float(roll["prot"].mean()),
+                   "protegendo": float(roll["prot"].mean()), "locomovendo": float(roll["loco"].mean()),
                    "desvio": float(model.log_std.detach().clamp(LOG_STD_MIN, LOG_STD_MAX).exp().mean()),
                    "am_s": T * n / (time.time() - begin), "t_coleta": collected - begin, "t_fisica": physics,
                    "t_espera": waited, **{k: v for k, v in last.items() if k != "estilo"}}

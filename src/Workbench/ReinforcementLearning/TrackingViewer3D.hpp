@@ -77,8 +77,15 @@ public:
     // A locomocao na rede do levantar (31/10 22h35, os basicos do B21; ele: so esta rede daqui em diante): o parado (sem
     // empurrao), o giro parado suave e os rumos (as diagonais com o lado sorteado pela semente), cada um pela avaliacao
     // dele.
-    static constexpr std::array<const char*, 8> LocomotionDrills { "lev_parado", "lev_giro", "lev_frente", "lev_tras",
-        "lev_direita", "lev_esquerda", "lev_diagonal_frente", "lev_diagonal_costas" };
+    // (01/11, a rl_final: depois deles, as faixas - andar, trote, corrida e sprint -, para a frente na velocidade do
+    // clipe da faixa, cada uma pela avaliacao dela.)
+    static constexpr std::array<const char*, 12> LocomotionDrills { "lev_parado", "lev_giro", "lev_frente", "lev_tras",
+        "lev_direita", "lev_esquerda", "lev_diagonal_frente", "lev_diagonal_costas", "lev_andar", "lev_trote",
+        "lev_corrida", "lev_sprint" };
+    // A faixa de um exercicio de faixa (0 andar a 3 sprint; -1 se nao e uma).
+    [[nodiscard]] static int locomotionBandOf(const std::string& drill);
+    // Se o treino do levantar de agora treina a locomocao (a rl_final: os exercicios dela na lista).
+    [[nodiscard]] static bool getUpLocomotion();
     // O rumo pedido de um exercicio de rumo (0 a frente, de 45 em 45 graus para a esquerda; a diagonal da direita com a
     // semente impar; -1 se nao e um rumo).
     [[nodiscard]] static int locomotionHeadingOf(const std::string& drill, std::uint64_t seed = 0);
@@ -87,7 +94,7 @@ public:
     // Se o tarefa.json e o de um treino do levantar (esquema matter-getup-amp-1; o levantar_v2, a rede principal desde
     // 31/10 22h35).
     [[nodiscard]] static bool isGetUpTask(const std::filesystem::path& taskPath);
-    // Se o treino do levantar de agora e o v2 (os dois exercicios novos existem nele).
+    // Se o treino do levantar de agora e o v2 ou a rl_final (os dois exercicios novos existem neles).
     [[nodiscard]] static bool getUpVersion2();
     [[nodiscard]] static std::filesystem::path getUpExport();
     [[nodiscard]] static std::filesystem::path getUpLog();

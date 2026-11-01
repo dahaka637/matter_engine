@@ -343,7 +343,9 @@ NB_MODULE(matter_tracking_native, m) {
                 std::array<float, 2> movingPushHoldNewtons, float stepReward, bool handoffOnStand,
                 float locomotionFallFraction, float partnerSeconds, float partnerFallPenalty, bool partnerAvoid,
                 float touchDownPenalty, float supportBonus, float flexReward, float obstacleFraction,
-                float weightFraction) {
+                float weightFraction, float runFraction, float sprintFraction, float locomotionClipFraction,
+                float locomotionSeconds, bool locomotionTermination, std::array<float, 2> commandChange,
+                int evaluationBand) {
                 TrackingGetUpAmpSettings3D settings;
                 settings.assetsDirectory = assets;
                 settings.environments = environments;
@@ -390,6 +392,14 @@ NB_MODULE(matter_tracking_native, m) {
                 settings.flexReward = flexReward;
                 settings.obstacleFraction = obstacleFraction;
                 settings.weightFraction = weightFraction;
+                settings.runFraction = runFraction;
+                settings.sprintFraction = sprintFraction;
+                settings.locomotionClipFraction = locomotionClipFraction;
+                settings.locomotionSeconds = locomotionSeconds;
+                settings.locomotionTermination = locomotionTermination;
+                settings.commandChangeMinimumSeconds = commandChange[0];
+                settings.commandChangeMaximumSeconds = commandChange[1];
+                settings.evaluationBand = evaluationBand;
                 nb::gil_scoped_release release;
                 new (self) TrackingGetUpAmpTraining3D(settings);
             },
@@ -407,7 +417,10 @@ NB_MODULE(matter_tracking_native, m) {
             "step_reward"_a = 0.0f, "handoff_on_stand"_a = false, "locomotion_fall_fraction"_a = 0.0f,
             "partner_seconds"_a = 2.0f, "partner_fall_penalty"_a = 10.0f, "partner_avoid"_a = false,
             "touch_down_penalty"_a = 0.0f, "support_bonus"_a = 0.0f, "flex_reward"_a = 0.0f,
-            "obstacle_fraction"_a = 0.0f, "weight_fraction"_a = 0.0f)
+            "obstacle_fraction"_a = 0.0f, "weight_fraction"_a = 0.0f, "run_fraction"_a = 0.0f,
+            "sprint_fraction"_a = 0.0f, "locomotion_clip_fraction"_a = 0.5f, "locomotion_seconds"_a = 0.0f,
+            "locomotion_termination"_a = false, "command_change"_a = std::array<float, 2> { 0.0f, 0.0f },
+            "evaluation_band"_a = -1)
         .def_prop_ro("num_envs", &TrackingGetUpAmpTraining3D::environmentCount)
         // As quedas da locomocao (01/11): [n, links, 13] - a posicao, a orientacao (xyzw) e as velocidades linear e
         // angular de cada link no instante da queda (take_fall_states do lote da locomocao).
@@ -435,6 +448,13 @@ NB_MODULE(matter_tracking_native, m) {
             [](const TrackingGetUpAmpTraining3D& b) {
                 auto out = owned<std::uint8_t>({ b.environmentCount() });
                 b.protecting(std::span<std::uint8_t>(out.data(), b.environmentCount()));
+                return out;
+            })
+        // Os mundos num episodio de locomocao (1 ou 0; os pesos da locomocao no treinador, a rl_final).
+        .def("locomoting",
+            [](const TrackingGetUpAmpTraining3D& b) {
+                auto out = owned<std::uint8_t>({ b.environmentCount() });
+                b.locomoting(std::span<std::uint8_t>(out.data(), b.environmentCount()));
                 return out;
             })
         // A rede da locomocao parceira (01/11): a tarefa e a rede exportada do treino dela (vazio: sem). Devolve a rodada
@@ -535,7 +555,7 @@ NB_MODULE(matter_tracking_native, m) {
         .def("finished_episodes",
             [](TrackingGetUpAmpTraining3D& b) {
                 const std::vector<TrackingGetUpAmpEpisode3D> episodes = b.takeEpisodes();
-                constexpr std::size_t width = 25;
+                constexpr std::size_t width = 26;
                 auto out = owned<float>({ episodes.size(), width });
                 float* d = out.data();
                 for (std::size_t i = 0; i < episodes.size(); ++i) {
@@ -546,7 +566,7 @@ NB_MODULE(matter_tracking_native, m) {
                         e.reachedSeconds, e.meanTowardSpeed, e.fellAfterStanding ? 1.0f : 0.0f, e.recomposedSeconds,
                         e.endPoseMatch, e.meanFaceError, e.endSpineMatch, e.handoffSeconds, e.partnerFell ? 1.0f : 0.0f,
                         e.partnerSeconds, e.touchedDown ? 1.0f : 0.0f, e.supported ? 1.0f : 0.0f, e.meanFlex,
-                        e.obstructed ? 1.0f : 0.0f };
+                        e.obstructed ? 1.0f : 0.0f, static_cast<float>(e.band) };
                     std::copy(row, row + width, d + i * width);
                 }
                 return out;

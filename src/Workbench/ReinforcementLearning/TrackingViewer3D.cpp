@@ -29,7 +29,9 @@ constexpr float DefaultSpeed = 3.0f;
 std::filesystem::path getUpRun() {
     const char* home = std::getenv("HOME");
     const auto runs = std::filesystem::path(home != nullptr ? home : ".") / ".local/share/matter-engine/rl/runs";
-    // (31/10 17h: o levantar v2 - com o levantar em movimento e o evitar a queda -, quando existe.)
+    // (31/10 17h: o levantar v2 - com o levantar em movimento e o evitar a queda -, quando existe; 01/11, a rl_final, a
+    // rede que levanta, se protege e se locomove, quando existe.)
+    if (std::filesystem::exists(runs / "rl_final")) return runs / "rl_final";
     return std::filesystem::exists(runs / "levantar_v2") ? runs / "levantar_v2" : runs / "levantar_livre";
 }
 
@@ -249,6 +251,7 @@ struct TrackingViewer3D::Impl {
         s.evaluation = true;
         s.evaluationKind = getUpKind;
         s.heading = locomotionHeadingOf(getUpDrill, seed);
+        s.evaluationBand = locomotionBandOf(getUpDrill);
         // (As forcas e as velocidades do treino de agora: o run.json do levantar v2, gravado a cada abertura.)
         std::ifstream file(getUpRun() / "run.json");
         const nlohmann::json run = nlohmann::json::parse(file, nullptr, false);
@@ -266,6 +269,9 @@ struct TrackingViewer3D::Impl {
             pair("empurrao_forca", s.pushMinimumNewtons, s.pushMaximumNewtons);
             pair("velocidade", s.moveMinimumSpeed, s.moveMaximumSpeed);
             pair("empurrao_continuo_forca", s.pushHoldMinimumNewtons, s.pushHoldMaximumNewtons);
+            // (A rl_final: o tempo dos rumos e a queda encerrando, como no treino.)
+            s.locomotionSeconds = v2.value("locomocao_segundos", 0.0f);
+            s.locomotionTermination = v2.value("queda_encerra", false);
             // (Os rumos e o giro com a regua fixa da avaliacao do treino: 2,5 m/s e, se o treino tem empurroes em
             // movimento, os do comeco do B21 - os padroes daqui; sem eles no treino, sem eles aqui.)
             s.trotMinimumSpeed = s.trotMaximumSpeed = 2.5f;
@@ -308,7 +314,11 @@ struct TrackingViewer3D::Impl {
         if (error || (getUpPolicy && write == getUpPolicyWrite)) return;
         try {
             auto policy = std::make_unique<PolicyRuntime3D>(getUpExport());
-            if (policy->observationSize() == getUp->observationSize() && policy->actionSize() == getUp->actionSize()) {
+            // (A rede do contrato v2, sem as entradas do chao do v3 no fim, le so o comeco da observacao.)
+            const std::size_t size = policy->observationSize();
+            if ((size == getUp->observationSize()
+                    || size + TrackingGetUpAmpTraining3D::GroundObservationSize == getUp->observationSize())
+                && policy->actionSize() == getUp->actionSize()) {
                 getUpPolicy = std::move(policy);
                 getUpPolicyWrite = write;
             }
@@ -613,7 +623,23 @@ int TrackingViewer3D::locomotionHeadingOf(const std::string& drill, std::uint64_
     return -1;
 }
 
-bool TrackingViewer3D::getUpVersion2() { return getUpRun().filename() == "levantar_v2"; }
+bool TrackingViewer3D::getUpVersion2() {
+    const std::string name = getUpRun().filename().string();
+    return name == "levantar_v2" || name == "rl_final";
+}
+
+int TrackingViewer3D::locomotionBandOf(const std::string& drill) {
+    for (int band = 0; band < 4; ++band)
+        if (drill == LocomotionDrills[8 + static_cast<std::size_t>(band)]) return band;
+    return -1;
+}
+
+bool TrackingViewer3D::getUpLocomotion() {
+    std::ifstream file(getUpRun() / "run.json");
+    const nlohmann::json run = nlohmann::json::parse(file, nullptr, false);
+    return !run.is_discarded() && run.is_object() && run.contains("v2") && run["v2"].is_object()
+        && run["v2"].value("locomocao", 0.0) > 0.0;
+}
 
 std::filesystem::path TrackingViewer3D::getUpExport() { return getUpRun() / "exports/policy_latest.mrlpolicy"; }
 
@@ -646,7 +672,7 @@ void TrackingViewer3D::setPolicy(const std::filesystem::path& file, std::string&
         // (O levantar usa a rede propria, nao a do treino mostrado.)
         impl.loadGetUpPolicy();
         label = impl.getUpPolicy
-            ? std::string(getUpVersion2() ? "levantar v2 r" : "levantar livre r") + std::to_string(impl.getUpPolicy->info().iteration)
+            ? getUpRun().filename().string() + " r" + std::to_string(impl.getUpPolicy->info().iteration)
             : "sem rede";
         return;
     }
@@ -682,7 +708,9 @@ void TrackingViewer3D::step() {
         // A rede nova do treino a cada ~2 s; sem rede, os alvos zerados (o corpo largado).
         if (impl.steps % 60 == 0) impl.loadGetUpPolicy();
         impl.getUp->observations(impl.getUpObservation);
-        if (impl.getUpPolicy) impl.getUpPolicy->evaluate(impl.getUpObservation, impl.getUpAction);
+        if (impl.getUpPolicy)
+            impl.getUpPolicy->evaluate(std::span<const float>(impl.getUpObservation).first(impl.getUpPolicy->observationSize()),
+                impl.getUpAction);
         else std::fill(impl.getUpAction.begin(), impl.getUpAction.end(), 0.0f);
         impl.getUp->step(impl.getUpAction, impl.rewards, impl.terminated, impl.truncated);
         for (const TrackingGetUpAmpEpisode3D& episode : impl.getUp->takeEpisodes()) {

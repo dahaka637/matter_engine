@@ -108,7 +108,7 @@ struct LocomotionLogKeys3D {
     const char* upTest;
     bool percent;
 };
-constexpr std::array<LocomotionLogKeys3D, 8> LocomotionLogKeys { {
+constexpr std::array<LocomotionLogKeys3D, 12> LocomotionLogKeys { {
     { "de_pe_pose", "parado_pose", "de_pe_sem_cair", "parado_sem_cair", true },
     { "giro_rumo", "giro_rumo", "giro_sem_cair", "giro_sem_cair", false },
     { "loco_frente_razao", "loco_frente_razao", "loco_frente_sem_cair", "loco_frente_sem_cair", true },
@@ -118,23 +118,37 @@ constexpr std::array<LocomotionLogKeys3D, 8> LocomotionLogKeys { {
     { "loco_diagonal_frente_razao", "loco_diagonal_frente_razao", "loco_diagonal_frente_sem_cair",
         "loco_diagonal_frente_sem_cair", true },
     { "loco_diagonal_costas_razao", "loco_diagonal_costas_razao", "loco_diagonal_costas_sem_cair",
-        "loco_diagonal_costas_sem_cair", true } } };
-constexpr std::array<const char*, 8> LocomotionNames { "Parado (levantar)", "Parado girando suave (levantar)",
-    "Frente (levantar)", "Trás (levantar)", "Direita (levantar)", "Esquerda (levantar)", "Diagonal frente (levantar)",
-    "Diagonal costas (levantar)" };
+        "loco_diagonal_costas_sem_cair", true },
+    // (01/11, a rl_final: as faixas - no treino, os episodios que comecaram na faixa; no teste, para a frente.)
+    { "loco_andar_razao", "andar_frente_razao", "loco_andar_sem_cair", "andar_frente_sem_cair", true },
+    { "loco_trote_razao", "trote_frente_razao", "loco_trote_sem_cair", "trote_frente_sem_cair", true },
+    { "loco_corrida_razao", "corrida_frente_razao", "loco_corrida_sem_cair", "corrida_frente_sem_cair", true },
+    { "loco_sprint_razao", "sprint_frente_razao", "loco_sprint_sem_cair", "sprint_frente_sem_cair", true } } };
+constexpr std::array<const char*, 12> LocomotionNames { "Parado", "Parado girando suave", "Frente (trote)",
+    "Trás (trote)", "Direita (trote)", "Esquerda (trote)", "Diagonal frente (trote)", "Diagonal costas (trote)", "Andar",
+    "Trote", "Corrida", "Sprint" };
+// A velocidade do teste de cada faixa (m/s): a do primeiro clipe dela, para a frente (TrackingGetUpAmpTraining3D).
+constexpr std::array<double, 4> BandTestSpeeds { 1.11, 2.62, 4.33, 6.0 };
 
 // Os exercicios do levantar v2 depois do "Levantar do chao", na ordem da lista. (01/11, ele: o levantar volta a ser so
 // levantar e evitar quedas - "dele tiramos o de locomocao": os da locomocao nele sairam da lista, o codigo deles fica; e
 // o equilibrio parado tambem, de pe quem fica e a rede da locomocao, a do levantar so assume na queda iminente.)
 std::vector<std::array<const char*, 2>> getUpDrillList() {
-    return { { TrackingViewer3D::MovingGetUpDrill, "Levantar em movimento" },
+    std::vector<std::array<const char*, 2>> list { { TrackingViewer3D::MovingGetUpDrill, "Levantar em movimento" },
         { TrackingViewer3D::AvoidFallDrill, "Evitar a queda" },
         { TrackingViewer3D::LocomotionFallDrill, "Quedas da locomoção" } };
+    // (01/11, a rl_final: a locomocao volta - as faixas primeiro, depois o parado, o giro e os rumos no trote.)
+    if (TrackingViewer3D::getUpLocomotion()) {
+        constexpr std::size_t Order[12] { 8, 9, 10, 11, 0, 1, 2, 3, 4, 5, 6, 7 };
+        for (std::size_t k : Order) list.push_back({ TrackingViewer3D::LocomotionDrills[k], LocomotionNames[k] });
+    }
+    return list;
 }
 
 // A velocidade-alvo de um exercicio do levantar: o em movimento 5, os rumos 2,5 (o teste), os outros parados.
 double getUpGoalSpeed(const std::string& drill) {
     if (drill == TrackingViewer3D::MovingGetUpDrill) return 5.0;
+    if (const int band = TrackingViewer3D::locomotionBandOf(drill); band >= 0) return BandTestSpeeds[static_cast<std::size_t>(band)];
     return TrackingViewer3D::locomotionHeadingOf(drill) >= 0 ? 2.5 : 0.0;
 }
 
@@ -1964,6 +1978,10 @@ void ReinforcementLearningScreen::drawGetUpCharts(float height) {
                 : turn ? "O rumo pedido do corpo gira (0,4–0,8 rad/s, giros de 30–450° com pausas de 1–3 s): o erro médio "
                          "entre o rumo do corpo e o pedido, de pé. Tracejado, o teste sem ruído: 0,6 rad/s o episódio todo, 4 "
                          "para cada lado. Os empurrões em movimento entram quando ele estiver se locomovendo bem."
+                : k >= 8
+                ? "A velocidade média no rumo pedido sobre a pedida, de pé: no treino, os episódios que começaram nesta "
+                  "faixa (parte já no clipe, na velocidade dele); tracejado, o teste sem ruído para a frente, de pé no "
+                  "começo, na velocidade do clipe da faixa."
                        : "A velocidade média no rumo pedido sobre a pedida, de pé, mantendo o rumo do corpo: o treino (andar "
                          "0,8–1,4 ou trotar 2,0–3,0 m/s) e, tracejado, o teste sem ruído a 2,5 m/s. Os empurrões em "
                          "movimento entram quando ele estiver se locomovendo bem.");

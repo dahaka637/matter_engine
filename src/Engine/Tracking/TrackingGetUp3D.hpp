@@ -4,6 +4,8 @@
 #include "Engine/Physics/RagdollProfile3D.hpp"
 #include "Engine/Tracking/TrackingClipReference3D.hpp"
 
+#include <array>
+#include <iterator>
 #include <span>
 #include <string>
 #include <vector>
@@ -43,6 +45,17 @@ public:
     // So o corpo (sem a fase): a altura da raiz e os 13 numeros de cada link (o levantar livre, 31/10).
     [[nodiscard]] std::size_t bodyObservationSize() const { return 1 + 13 * m_profile->links.size(); }
     void observeBody(std::span<const PhysicsBodyState3D> links, std::span<float> out) const;
+    // O corpo contra o chao (01/11, o contrato v3 - ele: "precisamos trazer novas informacoes a ele... a velocidade e
+    // direcao, e relacao com o solo e direcao do solo"; o rumo de observeBody vira 180 graus com a pelve alem de 45 graus
+    // para tras, no meio da queda de costas, e estas nao viram): o baixo (a gravidade) no quadro da pelve e no do peito
+    // alto, a velocidade do centro de massa no do peito alto, a altura dele e a das GroundLinks ate o chao, o tempo ate o
+    // chao da cabeca e do peito alto, os contatos das GroundLinks e se algo que nao o chao encosta (parede, outro corpo).
+    static constexpr const char* GroundLinks[11] { "Head", "UpperChest", "Pelvis", "LeftHand", "RightHand",
+        "LeftForearm", "RightForearm", "LeftShin", "RightShin", "LeftFoot", "RightFoot" };
+    static constexpr std::size_t GroundObservationSize = 3 + 3 + 3 + 1 + 11 + 2 + 11 + 1;
+    void observeGround(std::span<const PhysicsBodyState3D> links, std::span<const RagdollInteraction3D> contacts,
+        float groundHeight, std::span<float> out) const;
+    [[nodiscard]] static std::vector<std::string> groundObservationNames();
     // O minimo e o maximo (rad) de cada eixo da acao, os da junta no perfil (o levantar livre normaliza a acao neles).
     [[nodiscard]] std::vector<float> actionRanges() const;
     // As coordenadas de junta de uma pose na ordem da acao (o alvo que a reproduz).
@@ -67,6 +80,8 @@ private:
     std::vector<std::uint32_t> m_endEffectors;
     std::uint32_t m_root = 0;
     std::uint32_t m_head = 0;
+    std::uint32_t m_chest = 0;
+    std::array<std::uint32_t, std::size(GroundLinks)> m_groundLinks {};
     std::vector<std::string> m_observationNames;
     std::vector<std::string> m_actionNames;
 };

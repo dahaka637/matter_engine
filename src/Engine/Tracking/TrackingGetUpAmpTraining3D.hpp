@@ -3,6 +3,7 @@
 #include "Engine/Athlete/Body/LocomotionPartner3D.hpp"
 #include "Engine/Physics/PhysicsScene3D.hpp"
 #include "Engine/Physics/RagdollProfile3D.hpp"
+#include "Engine/Tracking/TrackingGetUp3D.hpp"
 
 #include <cstdint>
 #include <memory>
@@ -81,6 +82,24 @@ struct TrackingGetUpAmpSettings3D {
     // in Minutes"): com o pedido de deslocamento, de pe, a cada pe que pousa, este peso vezes o tempo no ar (ate 0,5 s)
     // menos 0,15 s - passo de verdade ganha, arrastar perde. 0: desligado.
     float stepReward = 0.0f;
+    // A rl_final (01/11, ele: "precisamos achar uma abordagem que consigamos fazer ela se locomover! e BEM, com
+    // estabilidade e velocidade e excelente auto-equilibrio"; vault 04_locomocao/plano_rl_final_01_11.md). Nos rumos, as
+    // faixas pelos clipes (GaitTable): a fatia da corrida e a do sprint (andar em walkFraction, o resto trota), a
+    // velocidade pedida a do clipe do passo sorteado +-15%; a fatia dos comecos ja no clipe, num instante sorteado e na
+    // velocidade dele (o RSI do DeepMimic e do AMP, o que ensina a correr); o tempo do episodio dos rumos e do giro (s; 0:
+    // episodeSeconds); a queda encerrando esses episodios (o early termination do DeepMimic); e a troca do pedido no meio
+    // deles a cada um tempo sorteado nesta faixa (s; 0 0: so a parada no meio de antes) - parar, mudar de faixa e de rumo,
+    // virar correndo.
+    float runFraction = 0.0f;
+    float sprintFraction = 0.0f;
+    float locomotionClipFraction = 0.5f;
+    float locomotionSeconds = 0.0f;
+    bool locomotionTermination = false;
+    float commandChangeMinimumSeconds = 0.0f;
+    float commandChangeMaximumSeconds = 0.0f;
+    // Na avaliacao dos rumos, a faixa (-1: o meio do trote nos 8 rumos, como antes; 0 andar, 1 trote, 2 corrida, 3
+    // sprint: para a frente, de pe no parado em alerta, na velocidade do primeiro clipe da faixa).
+    int evaluationBand = -1;
     // A troca de rede ao ficar de pe (01/11, ele: o levantar volta a ser so levantar e evitar quedas, "fazendo a troca
     // de RL no momento que recem fica de pe"): o episodio acaba (truncado, como o fim do tempo) quando ele fica de pe e
     // firme por 0,5 s - o mesmo da entrega no jogo - depois de ter estado no chao ou, no evitar a queda, do empurrao.
@@ -165,6 +184,8 @@ struct TrackingGetUpAmpEpisode3D {
     float meanFlex = 0.0f;
     // Se o episodio teve a parede ou o peso (o cenario sujo).
     bool obstructed = false;
+    // Nos rumos, a faixa do passo do comeco (0 andar, 1 trote, 2 corrida, 3 sprint; a rl_final).
+    std::uint32_t band = 0;
 };
 
 // O que o visualizador do laboratorio desenha de um mundo: como comecou, o alvo (o levantar em movimento, enquanto o
@@ -208,10 +229,17 @@ public:
         "trot_backward_left", "trot_backward", "trot_backward_right", "jog_strafe_right", "trot_forward_right" };
     static constexpr const char* LocomotionStyleClips[6] { "ual_walk", "walk_backward", "walk_strafe_left",
         "walk_strafe_right", "turn_left", "turn_right" };
+    // A rl_final: os clipes da corrida e do sprint (o estilo e os comecos dessas faixas).
+    static constexpr const char* RunClips[5] { "jog", "jog_backward", "run_forward_medium", "mixamo_running",
+        "run_backward" };
+    static constexpr const char* SprintClips[7] { "sprint_forward", "mixamo_sprint", "sprint", "sprint_maximo",
+        "sprint_backward", "sprint_strafe_left", "sprint_strafe_right" };
     // As entradas do comando, depois das do corpo: o rumo do deslocamento pedido em relacao ao corpo (cos, sen), a
     // distancia (/10 m, ate 1; nos rumos, 1), a velocidade pedida (/5 m/s; 0: ficar onde esta) e o rumo pedido do corpo
     // em relacao a ele (cos, sen: no levantar em movimento, o alvo; nos rumos, o do comeco; no giro, o que gira).
     static constexpr std::size_t CommandSize = 6;
+    // Depois do comando, o corpo contra o chao (o contrato v3, TrackingGetUpContract3D::observeGround).
+    static constexpr std::size_t GroundObservationSize = TrackingGetUpContract3D::GroundObservationSize;
 
     explicit TrackingGetUpAmpTraining3D(const TrackingGetUpAmpSettings3D& settings);
     ~TrackingGetUpAmpTraining3D();
@@ -234,6 +262,9 @@ public:
     // Quais mundos estao protegendo-se na queda agora (os comecos da queda iminente, ate o tronco tocar o chao ou ficar de
     // pe; 1 ou 0): o treinador alivia ai os custos de suavidade - o reflexo de protecao e rapido.
     void protecting(std::span<std::uint8_t> out) const;
+    // Quais mundos estao num episodio de locomocao (os rumos e o giro; 1 ou 0): o treinador pesa ai a tarefa, o estilo e
+    // a suavidade da locomocao (a rl_final).
+    void locomoting(std::span<std::uint8_t> out) const;
     // A rede da locomocao parceira (vazia: sem). Troca so entre os steps.
     void setLocomotionPartner(std::shared_ptr<const LocomotionPartner3D> partner);
     [[nodiscard]] std::size_t fallStartCount() const;

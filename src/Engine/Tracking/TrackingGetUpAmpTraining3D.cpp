@@ -47,6 +47,24 @@ constexpr float ArriveRadius = 1.0f;
 // mais o estreito: a soma dos angulos^2 ~0,55; era 0,6 so no largo, a soma ~1,0.)
 constexpr float RecomposedPose = 0.5f;
 constexpr float RecomposedSpeed = 0.3f;
+// A rl_final: os passos de cada faixa (0 andar, 1 trote, 2 corrida, 3 sprint) - o clipe em ciclo e o rumo do
+// deslocamento dele em relacao ao corpo (0 a frente, de 45 em 45 graus para a esquerda). O primeiro de cada faixa e o da
+// avaliacao. Na troca do pedido, parar tem esta chance.
+struct GaitEntry {
+    const char* clip;
+    std::uint32_t band;
+    std::uint32_t heading;
+};
+constexpr GaitEntry GaitTable[] {
+    { "ual_walk", 0, 0 }, { "walk_strafe_left", 0, 2 }, { "walk_backward", 0, 4 }, { "walk_strafe_right", 0, 6 },
+    { "trot_forward", 1, 0 }, { "trot_forward_left", 1, 1 }, { "jog_strafe_left", 1, 2 }, { "trot_backward_left", 1, 3 },
+    { "trot_backward", 1, 4 }, { "trot_backward_right", 1, 5 }, { "jog_strafe_right", 1, 6 }, { "trot_forward_right", 1, 7 },
+    { "mixamo_running", 1, 0 },
+    { "run_forward_medium", 2, 0 }, { "jog", 2, 0 }, { "jog_backward", 2, 4 }, { "run_backward", 2, 4 },
+    { "sprint_forward", 3, 0 }, { "mixamo_sprint", 3, 0 }, { "sprint", 3, 0 }, { "sprint_maximo", 3, 0 },
+    { "sprint_strafe_left", 3, 2 }, { "sprint_backward", 3, 4 }, { "sprint_strafe_right", 3, 6 },
+};
+constexpr float CommandStopChance = 0.15f;
 
 // Uma rotacao uniforme (Shoemake, "Uniform random rotations", 1992).
 Quaternion uniformRotation(std::mt19937& rng) {
@@ -83,6 +101,12 @@ struct TrackingGetUpAmpTraining3D::Impl {
     // tem), quando carregados.
     std::vector<std::size_t> headingIndices;
     std::array<std::size_t, 8> walkIndices;
+    // A rl_final: os passos carregados de cada faixa (o indice do clipe e o rumo do deslocamento, GaitTable).
+    struct Gait {
+        std::size_t clip = 0;
+        std::uint32_t heading = 0;
+    };
+    std::array<std::vector<Gait>, 4> gaits;
     // A velocidade de deslocamento que falta aos clipes no lugar (os pares do discriminador): constante (corrida) ou
     // em rampa desde zero (a arrancada, com o deslocamento da fonte), para a frente do clipe.
     struct Travel {
@@ -163,6 +187,10 @@ struct TrackingGetUpAmpTraining3D::Impl {
         float pauseUntil = -1.0f;
         double faceErrorSum = 0.0;
         std::uint32_t faceErrorSamples = 0;
+        // A rl_final: a faixa do passo de agora e a do comeco, e a proxima troca do pedido (s; < 0: sem troca).
+        std::uint32_t band = 1;
+        std::uint32_t startBand = 1;
+        float nextCommandAt = -1.0f;
         // A troca de rede ao ficar de pe: ha quanto tempo ele esta de pe e firme (s) e quando trocou (s; < 0: nao).
         float firmSeconds = 0.0f;
         float handoffAt = -1.0f;
@@ -338,31 +366,84 @@ struct TrackingGetUpAmpTraining3D::Impl {
     // rumo, na velocidade dele (o RSI; 22h55, tambem metade dos andares, nos rumos com clipe de andar: ele freava os
     // comecos em movimento e ficava parado). Em 20% do treino o pedido para no meio, de 2 a 5 s (o soltar do direcional
     // do B21: frear e ficar parado no rumo).
+    // (01/11, a rl_final: as faixas. Um passo da faixa sorteada - o clipe e o rumo do deslocamento -, a velocidade pedida
+    // a do clipe +-15%; em locomotionClipFraction ja no clipe, num instante sorteado e na velocidade dele, senao de pe no
+    // parado em alerta. Na avaliacao com a faixa, para a frente, na velocidade do primeiro clipe dela, de pe; sem a faixa,
+    // o meio do trote no rumo do mundo, como antes. Com a troca do pedido ligada, sem a parada do meio.)
     void beginHeading(World& w) {
         std::uniform_real_distribution<float> u(0.0f, 1.0f);
-        w.heading = settings.heading >= 0 ? static_cast<std::uint32_t>(settings.heading) % 8u
-            : settings.evaluation ? w.index % 8u
-                                  : std::min(7u, static_cast<std::uint32_t>(8.0f * u(w.rng)));
-        const bool walk = !settings.evaluation && u(w.rng) < settings.walkFraction;
-        w.commandSpeed = settings.evaluation ? 0.5f * (settings.trotMinimumSpeed + settings.trotMaximumSpeed)
-            : walk ? settings.walkMinimumSpeed + (settings.walkMaximumSpeed - settings.walkMinimumSpeed) * u(w.rng)
-                   : settings.trotMinimumSpeed + (settings.trotMaximumSpeed - settings.trotMinimumSpeed) * u(w.rng);
-        const std::size_t clip = walk ? walkIndices[w.heading]
-            : headingIndices.size() == 8 ? headingIndices[w.heading] : std::numeric_limits<std::size_t>::max();
-        if (!settings.evaluation && clip < references.size() && u(w.rng) < 0.5f) {
-            const float yaw = (2.0f * u(w.rng) - 1.0f) * Pi;
-            references[clip]->frame(u(w.rng) * references[clip]->durationSeconds(), {}, yaw, w.frame);
-            const Travel& run = travel[clip];
-            const Vec3 v { std::cos(yaw + run.direction) * run.speed, std::sin(yaw + run.direction) * run.speed, 0.0f };
-            for (PhysicsBodyState3D& s : w.frame.links) s.linearVelocity = s.linearVelocity + v;
-            w.scene->resetRagdollState(w.handle, w.frame.links);
-            w.body = w.scene->ragdollStateView(w.handle);
-        } else {
+        const bool changes = !settings.evaluation && settings.commandChangeMaximumSeconds > 0.0f;
+        if (settings.evaluation) {
+            const int band = settings.evaluationBand;
+            if (band >= 0 && band < 4 && !gaits[static_cast<std::size_t>(band)].empty()) {
+                const Gait& gait = gaits[static_cast<std::size_t>(band)].front();
+                w.band = static_cast<std::uint32_t>(band);
+                w.heading = gait.heading;
+                w.commandSpeed = travel[gait.clip].speed;
+            } else {
+                w.band = 1;
+                w.heading = settings.heading >= 0 ? static_cast<std::uint32_t>(settings.heading) % 8u : w.index % 8u;
+                w.commandSpeed = 0.5f * (settings.trotMinimumSpeed + settings.trotMaximumSpeed);
+            }
             beginFromClip(w, true);
+        } else {
+            const Gait& gait = pickGait(w);
+            w.heading = gait.heading;
+            w.commandSpeed = travel[gait.clip].speed * (0.85f + 0.3f * u(w.rng));
+            if (u(w.rng) < settings.locomotionClipFraction) startInClip(w, gait.clip);
+            else beginFromClip(w, true);
         }
         w.faceYaw = bodyYaw(w);
         w.moveYaw = w.faceYaw + 0.25f * Pi * static_cast<float>(w.heading);
-        w.stopAt = !settings.evaluation && u(w.rng) < 0.2f ? 2.0f + 3.0f * u(w.rng) : -1.0f;
+        w.stopAt = !settings.evaluation && !changes && u(w.rng) < 0.2f ? 2.0f + 3.0f * u(w.rng) : -1.0f;
+        w.startBand = w.band;
+        w.nextCommandAt = changes ? settings.commandChangeMinimumSeconds
+                + (settings.commandChangeMaximumSeconds - settings.commandChangeMinimumSeconds) * u(w.rng)
+                                  : -1.0f;
+    }
+
+    // Um passo pelas fatias das faixas (andar, corrida, sprint; o resto trota), uniforme entre os carregados da faixa.
+    const Gait& pickGait(World& w) {
+        std::uniform_real_distribution<float> u(0.0f, 1.0f);
+        const float draw = u(w.rng);
+        std::uint32_t band = 1;
+        if (draw < settings.walkFraction) band = 0;
+        else if (draw < settings.walkFraction + settings.runFraction) band = 2;
+        else if (draw < settings.walkFraction + settings.runFraction + settings.sprintFraction) band = 3;
+        if (gaits[band].empty()) band = 1;
+        w.band = band;
+        const std::vector<Gait>& list = gaits[band];
+        return list[std::uniform_int_distribution<std::size_t>(0, list.size() - 1)(w.rng)];
+    }
+
+    // O corpo num instante sorteado de um clipe de locomocao, num rumo sorteado, na velocidade dele (o RSI).
+    void startInClip(World& w, std::size_t clip) {
+        std::uniform_real_distribution<float> u(0.0f, 1.0f);
+        const float yaw = (2.0f * u(w.rng) - 1.0f) * Pi;
+        references[clip]->frame(u(w.rng) * references[clip]->durationSeconds(), {}, yaw, w.frame);
+        const Travel& run = travel[clip];
+        const Vec3 v { std::cos(yaw + run.direction) * run.speed, std::sin(yaw + run.direction) * run.speed, 0.0f };
+        for (PhysicsBodyState3D& s : w.frame.links) s.linearVelocity = s.linearVelocity + v;
+        w.scene->resetRagdollState(w.handle, w.frame.links);
+        w.body = w.scene->ragdollStateView(w.handle);
+    }
+
+    // A troca do pedido no meio de um rumo (a rl_final: as transicoes): CommandStopChance para e fica no rumo do corpo,
+    // senao um passo novo pelas fatias; nos passos para a frente o rumo pedido do corpo vira para um lado sorteado (ate
+    // 180 graus, virar correndo), nos outros fica (o deslocamento muda em relacao a ele).
+    void changeCommand(World& w) {
+        std::uniform_real_distribution<float> u(0.0f, 1.0f);
+        if (u(w.rng) < CommandStopChance) {
+            w.commandSpeed = 0.0f;
+        } else {
+            const Gait& gait = pickGait(w);
+            w.heading = gait.heading;
+            w.commandSpeed = travel[gait.clip].speed * (0.85f + 0.3f * u(w.rng));
+            if (gait.heading == 0) w.faceYaw = wrapAngle(w.faceYaw + (2.0f * u(w.rng) - 1.0f) * Pi);
+            w.moveYaw = w.faceYaw + 0.25f * Pi * static_cast<float>(w.heading);
+        }
+        w.nextCommandAt = w.time + settings.commandChangeMinimumSeconds
+            + (settings.commandChangeMaximumSeconds - settings.commandChangeMinimumSeconds) * u(w.rng);
     }
 
     // O giro parado suave (o "giro" do B21: giros de 30-450 graus a 0,4-0,8 rad/s, para um lado sorteado, com pausas de
@@ -671,6 +752,9 @@ struct TrackingGetUpAmpTraining3D::Impl {
     void observe(World& w) const {
         const std::size_t b = contract->bodyObservationSize();
         contract->observeBody(w.body->links, std::span<float>(w.observation).first(b));
+        // (O contrato v3: o corpo contra o chao, depois do comando; o chao do treino e o plano z = 0.)
+        contract->observeGround(w.body->links, w.body->interactions, 0.0f,
+            std::span<float>(w.observation).subspan(b + CommandSize, TrackingGetUpContract3D::GroundObservationSize));
         float* c = w.observation.data() + b;
         const bool moving = w.commandSpeed > 0.0f;
         if (!moving && !w.locomotion) {
@@ -743,6 +827,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
             w.commandSpeed = 0.0f;
             w.stopAt = -1.0f;
         }
+        if (w.startKind == 6 && w.nextCommandAt >= 0.0f && w.time >= w.nextCommandAt) changeCommand(w);
         advanceTurn(w);
         // (Parado com rumo pedido: a nota do parado 0,7 e o rumo do corpo 0,3, de pe. A coluna so quieto: sem empurrao e
         // 1 s depois do ultimo.)
@@ -843,8 +928,13 @@ struct TrackingGetUpAmpTraining3D::Impl {
             w.partnerFell = result.fell;
             if (result.fell) reward -= settings.partnerFallPenalty;
         }
-        terminated = w.partnerFell ? 1 : 0;
-        truncated = !w.partnerFell && (w.time >= settings.episodeSeconds - 1e-4f || w.handoffAt >= 0.0f) ? 1 : 0;
+        // (A rl_final: nos rumos e no giro, o tronco no chao encerra o episodio - o early termination do DeepMimic: cair
+        // custa o resto do episodio - e o tempo deles e o locomotionSeconds.)
+        const bool fellMoving = settings.locomotionTermination && w.locomotion && down;
+        const float limit = w.locomotion && settings.locomotionSeconds > 0.0f ? settings.locomotionSeconds
+                                                                              : settings.episodeSeconds;
+        terminated = w.partnerFell || fellMoving ? 1 : 0;
+        truncated = !terminated && (w.time >= limit - 1e-4f || w.handoffAt >= 0.0f) ? 1 : 0;
         if (truncated || terminated) {
             if (!partnered) {
                 observe(w);
@@ -875,6 +965,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
             episode.supported = w.supported;
             episode.meanFlex = w.flexSamples ? static_cast<float>(w.flexSum / w.flexSamples) : 0.0f;
             episode.obstructed = w.obstructed;
+            episode.band = w.startBand;
             episode.meanFaceError = w.faceErrorSamples
                 ? static_cast<float>(w.faceErrorSum / w.faceErrorSamples) * 180.0f / Pi : 0.0f;
             {
@@ -908,6 +999,15 @@ TrackingGetUpAmpTraining3D::TrackingGetUpAmpTraining3D(const TrackingGetUpAmpSet
         names.insert(names.end(), std::begin(HeadingClips), std::end(HeadingClips));
         names.insert(names.end(), std::begin(LocomotionStyleClips), std::end(LocomotionStyleClips));
     }
+    // (A rl_final: a corrida e o sprint so com as fatias deles - ou a avaliacao dessas faixas -, cada clipe uma vez.)
+    if (settings.runFraction > 0.0f || settings.sprintFraction > 0.0f || settings.evaluationBand >= 2) {
+        names.insert(names.end(), std::begin(RunClips), std::end(RunClips));
+        names.insert(names.end(), std::begin(SprintClips), std::end(SprintClips));
+    }
+    for (std::size_t i = 0; i < names.size(); ++i)
+        if (std::find(names.begin(), names.begin() + static_cast<std::ptrdiff_t>(i), names[i])
+            != names.begin() + static_cast<std::ptrdiff_t>(i))
+            names.erase(names.begin() + static_cast<std::ptrdiff_t>(i--));
     for (const std::string& name : names) {
         impl.clips.push_back(std::make_unique<AnimationClip3D>(
             loadAnimationClip3D(settings.assetsDirectory + "/animations/clips/" + name + ".matteranim.json")));
@@ -928,9 +1028,26 @@ TrackingGetUpAmpTraining3D::TrackingGetUpAmpTraining3D(const TrackingGetUpAmpSet
             clip.sourceRootDisplacementMeters.y);
         else if (name == "mixamo_running" || name == "run_forward_medium" || name == "sprint_forward" || heading
             || std::find(std::begin(LocomotionStyleClips), std::end(LocomotionStyleClips), name)
-                != std::end(LocomotionStyleClips))
+                != std::end(LocomotionStyleClips)
+            || std::find(std::begin(RunClips), std::end(RunClips), name) != std::end(RunClips)
+            || std::find(std::begin(SprintClips), std::end(SprintClips), name) != std::end(SprintClips))
             travel.speed = clip.loops ? clip.nominalSpeedMetersPerSecond : 0.0f;
         impl.travel.push_back(travel);
+        for (const GaitEntry& entry : GaitTable)
+            if (name == entry.clip && travel.speed > 0.0f)
+                impl.gaits[entry.band].push_back({ impl.references.size() - 1, entry.heading });
+    }
+    // (Os passos de cada faixa na ordem da GaitTable: o primeiro e o da avaliacao, para a frente.)
+    for (std::vector<Impl::Gait>& band : impl.gaits) {
+        std::stable_sort(band.begin(), band.end(), [&](const Impl::Gait& a, const Impl::Gait& b) {
+            const auto rank = [&](const Impl::Gait& g) {
+                const std::string& clip = names[g.clip];
+                for (std::size_t k = 0; k < std::size(GaitTable); ++k)
+                    if (clip == GaitTable[k].clip) return k;
+                return std::size(GaitTable);
+            };
+            return rank(a) < rank(b);
+        });
     }
     impl.contract = std::make_unique<TrackingGetUpContract3D>(*impl.profile);
     impl.features = std::make_unique<TrackingAmpFeatures3D>(*impl.profile);
@@ -962,6 +1079,7 @@ TrackingGetUpAmpTraining3D::TrackingGetUpAmpTraining3D(const TrackingGetUpAmpSet
     for (const char* name : { "comando.alvo_cos", "comando.alvo_sen", "comando.distancia", "comando.velocidade",
              "comando.rumo_cos", "comando.rumo_sen" })
         impl.observationNames.emplace_back(name);
+    for (const std::string& name : TrackingGetUpContract3D::groundObservationNames()) impl.observationNames.push_back(name);
     const std::uint32_t hardware = std::max(1u, std::thread::hardware_concurrency());
     impl.workers = settings.threads > 0 ? settings.threads : std::max(1u, hardware > 2 ? hardware - 2 : 1u);
     impl.scheduler = std::make_shared<TaskScheduler>(TaskSchedulerSettings { std::max(1u, impl.workers - 1) });
@@ -976,8 +1094,8 @@ TrackingGetUpAmpTraining3D::TrackingGetUpAmpTraining3D(const TrackingGetUpAmpSet
         spawn.active = true;
         spawn.pelvisPosition = { 0.0f, 0.0f, impl.profile->standingRootHeightMeters };
         w.handle = w.scene->createRagdoll(*impl.profile, spawn);
-        w.observation.assign(impl.contract->bodyObservationSize() + CommandSize, 0.0f);
-        w.finalObservation.assign(impl.contract->bodyObservationSize() + CommandSize, 0.0f);
+        w.observation.assign(impl.contract->bodyObservationSize() + CommandSize + GroundObservationSize, 0.0f);
+        w.finalObservation.assign(w.observation.size(), 0.0f);
         w.ampPair.assign(2 * impl.features->size(), 0.0f);
         w.pose.assign(impl.contract->actionSize(), 0.0f);
     }
@@ -990,7 +1108,7 @@ TrackingGetUpAmpTraining3D::~TrackingGetUpAmpTraining3D() {
 
 std::size_t TrackingGetUpAmpTraining3D::environmentCount() const { return m_impl->worlds.size(); }
 std::size_t TrackingGetUpAmpTraining3D::observationSize() const {
-    return m_impl->contract->bodyObservationSize() + CommandSize;
+    return m_impl->contract->bodyObservationSize() + CommandSize + GroundObservationSize;
 }
 std::size_t TrackingGetUpAmpTraining3D::actionSize() const { return m_impl->contract->actionSize(); }
 std::size_t TrackingGetUpAmpTraining3D::ampSize() const { return m_impl->features->size(); }
@@ -1000,7 +1118,9 @@ const std::vector<std::string>& TrackingGetUpAmpTraining3D::observationNames() c
 const std::vector<std::string>& TrackingGetUpAmpTraining3D::actionNames() const {
     return m_impl->contract->actionNames();
 }
-float TrackingGetUpAmpTraining3D::episodeSeconds() const { return m_impl->settings.episodeSeconds; }
+float TrackingGetUpAmpTraining3D::episodeSeconds() const {
+    return std::max(m_impl->settings.episodeSeconds, m_impl->settings.locomotionSeconds);
+}
 std::vector<float> TrackingGetUpAmpTraining3D::actionRanges() const { return m_impl->contract->actionRanges(); }
 
 void TrackingGetUpAmpTraining3D::setFallStarts(std::vector<std::vector<PhysicsBodyState3D>> states) {
@@ -1013,6 +1133,10 @@ std::size_t TrackingGetUpAmpTraining3D::fallStartCount() const { return m_impl->
 
 void TrackingGetUpAmpTraining3D::protecting(std::span<std::uint8_t> out) const {
     for (std::size_t i = 0; i < m_impl->worlds.size() && i < out.size(); ++i) out[i] = m_impl->worlds[i].protecting ? 1 : 0;
+}
+
+void TrackingGetUpAmpTraining3D::locomoting(std::span<std::uint8_t> out) const {
+    for (std::size_t i = 0; i < m_impl->worlds.size() && i < out.size(); ++i) out[i] = m_impl->worlds[i].locomotion ? 1 : 0;
 }
 
 void TrackingGetUpAmpTraining3D::setLocomotionPartner(std::shared_ptr<const LocomotionPartner3D> partner) {

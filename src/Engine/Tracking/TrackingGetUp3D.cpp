@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 
 namespace MatterEngine {
@@ -59,6 +60,12 @@ TrackingGetUpContract3D::TrackingGetUpContract3D(const RagdollProfile3D& profile
             }
     }
     if (!head || m_endEffectors.size() != 4) throw std::runtime_error("levantar: o perfil nao tem cabeca, maos e pes");
+    for (std::size_t k = 0; k < std::size(GroundLinks); ++k) {
+        m_groundLinks[k] = std::numeric_limits<std::uint32_t>::max();
+        for (std::size_t i = 0; i < profile.links.size(); ++i)
+            if (profile.links[i].id == GroundLinks[k]) m_groundLinks[k] = static_cast<std::uint32_t>(i);
+    }
+    m_chest = m_groundLinks[1] < profile.links.size() ? m_groundLinks[1] : m_root;
     m_observationNames.push_back("raiz.altura");
     for (const RagdollLinkDefinition3D& link : profile.links) {
         for (const char* part : { ".pos.x", ".pos.y", ".pos.z", ".rot.x", ".rot.y", ".rot.z", ".rot.w", ".vel.x",
@@ -121,6 +128,52 @@ void TrackingGetUpContract3D::observeBody(std::span<const PhysicsBodyState3D> li
         const Vec3 w = frame.direction(s.angularVelocity);
         for (float value : { p.x, p.y, p.z, q.x, q.y, q.z, q.w, v.x, v.y, v.z, w.x, w.y, w.z }) out[n++] = value;
     }
+}
+
+void TrackingGetUpContract3D::observeGround(std::span<const PhysicsBodyState3D> links,
+    std::span<const RagdollInteraction3D> contacts, float groundHeight, std::span<float> out) const {
+    const RagdollProfile3D& profile = *m_profile;
+    const auto frame = [&](std::uint32_t i) { return (links[i].orientation * profile.links[i].modelOrientation.conjugate()).normalized(); };
+    const auto height = [&](std::uint32_t i) {
+        return i < links.size() ? rlLinkCenterOfMass3D(profile.links[i], links[i]).z - groundHeight : 0.0f;
+    };
+    std::size_t n = 0;
+    const auto put = [&](Vec3 v) {
+        out[n++] = v.x;
+        out[n++] = v.y;
+        out[n++] = v.z;
+    };
+    const Quaternion chest = frame(m_chest);
+    put(frame(m_root).conjugate().rotate({ 0.0f, 0.0f, -1.0f }));
+    put(chest.conjugate().rotate({ 0.0f, 0.0f, -1.0f }));
+    put(chest.conjugate().rotate(rlBodyCenterOfMassVelocity3D(profile, links)));
+    out[n++] = rlBodyCenterOfMass3D(profile, links).z - groundHeight;
+    for (std::uint32_t i : m_groundLinks) out[n++] = height(i);
+    // (O tempo ate o chao na queda de agora, ate 2 s; parado ou subindo, 2.)
+    for (std::uint32_t i : { m_head, m_chest })
+        out[n++] = std::clamp(height(i) / std::max(0.25f, -links[i].linearVelocity.z), 0.0f, 2.0f);
+    bool other = false;
+    for (std::uint32_t i : m_groundLinks) {
+        bool touching = false;
+        for (const RagdollInteraction3D& contact : contacts) touching = touching || contact.linkIndex == i;
+        out[n++] = touching ? 1.0f : 0.0f;
+    }
+    for (const RagdollInteraction3D& contact : contacts)
+        other = other || contact.otherMotion != RagdollContactMotion3D::Static || contact.normalWorld.z <= 0.5f;
+    out[n++] = other ? 1.0f : 0.0f;
+}
+
+std::vector<std::string> TrackingGetUpContract3D::groundObservationNames() {
+    std::vector<std::string> names;
+    for (const char* frame : { "chao.baixo_pelve", "chao.baixo_peito", "chao.vel_cm_peito" })
+        for (const char* axis : { ".x", ".y", ".z" }) names.push_back(std::string(frame) + axis);
+    names.emplace_back("chao.altura_cm");
+    for (const char* link : GroundLinks) names.push_back(std::string("chao.altura.") + link);
+    names.emplace_back("chao.tempo.Head");
+    names.emplace_back("chao.tempo.UpperChest");
+    for (const char* link : GroundLinks) names.push_back(std::string("chao.contato.") + link);
+    names.emplace_back("chao.contato_outro");
+    return names;
 }
 
 TrackingGetUpContract3D::Terms TrackingGetUpContract3D::reward(std::span<const PhysicsBodyState3D> body,

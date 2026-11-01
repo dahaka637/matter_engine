@@ -910,12 +910,15 @@ void WorkbenchApp::reloadGetUpPolicy() {
         fs::path data;
         if (const char* root = std::getenv("MATTER_RL_DATA"); root != nullptr && *root != '\0') data = root;
         else if (const char* home = std::getenv("HOME"); home != nullptr) data = fs::path(home) / ".local/share/matter-engine/rl";
-        file = data / "runs" / "levantar_v2" / "exports" / "policy_latest.mrlpolicy";
+        // (01/11: a rl_final, quando existe - a rede que levanta, se protege e se locomove.)
+        const fs::path run = fs::exists(data / "runs" / "rl_final") ? data / "runs" / "rl_final" : data / "runs" / "levantar_v2";
+        file = run / "exports" / "policy_latest.mrlpolicy";
     }
     try {
         auto policy = std::make_shared<TrackingGetUpPolicy3D>(file);
         char label[96];
-        std::snprintf(label, sizeof label, "levantar v2, atualização %llu", static_cast<unsigned long long>(policy->iteration()));
+        std::snprintf(label, sizeof label, "%s, atualização %llu", file.parent_path().parent_path().filename().string().c_str(),
+            static_cast<unsigned long long>(policy->iteration()));
         m_getUpPolicyLabel = label;
         m_athleteRuntime.setGetUpPolicy(std::move(policy));
         std::error_code stamp;

@@ -1332,7 +1332,7 @@ struct LocomotionTraining3D::Impl {
             if (scene.body().links.empty() || !finite(scene.body().links.front().position)) return false;
             const bool moving = wanted && down;
             if (tick % GetUpPolicy3D::TicksPerDecision == 0)
-                getUpPolicy->decide(profile, scene.body().links, drives, moving ? world.getUpVelocity : Vec3 {});
+                getUpPolicy->decide(profile, scene.body(), drives, moving ? world.getUpVelocity : Vec3 {});
             scene.stepDrives(drives);
             const RagdollState3D& body = scene.body();
             const PhysicsBodyState3D& pelvis = body.links.front();

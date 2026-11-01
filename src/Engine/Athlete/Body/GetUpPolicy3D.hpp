@@ -52,9 +52,10 @@ public:
 
     virtual ~GetUpPolicy3D() = default;
     [[nodiscard]] virtual std::uint64_t iteration() const = 0;
-    // velocity: o pedido de deslocamento no chao (m/s, no mundo; zero, de pe no lugar): ela levanta virando para la.
-    virtual void decide(const RagdollProfile3D& profile, std::span<const PhysicsBodyState3D> links,
-        std::vector<RagdollDriveTarget3D>& drives, Vec3 velocity = {}) const = 0;
+    // body: os links e os contatos de agora; velocity: o pedido de deslocamento no chao (m/s, no mundo; zero, de pe no
+    // lugar): ela levanta virando para la; groundHeight: a altura do chao embaixo dele (m).
+    virtual void decide(const RagdollProfile3D& profile, const RagdollState3D& body,
+        std::vector<RagdollDriveTarget3D>& drives, Vec3 velocity = {}, float groundHeight = 0.0f) const = 0;
 };
 
 } // namespace MatterEngine

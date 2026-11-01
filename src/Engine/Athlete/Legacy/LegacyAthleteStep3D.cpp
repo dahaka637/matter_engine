@@ -2072,7 +2072,7 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             const bool moving = rl.down && std::hypot(wanted.x, wanted.y) > GetUpPolicy3D::MovingRequestSpeed;
             try {
                 if (rl.ticks % GetUpPolicy3D::TicksPerDecision == 0)
-                    policy->decide(profile, body.links, rl.drives, moving ? wanted : Vec3 {});
+                    policy->decide(profile, body, rl.drives, moving ? wanted : Vec3 {}, groundHeight(body.links.front().position));
             } catch (const std::exception& error) {
                 Log::warn(std::string("rede do levantar: ") + error.what());
                 rl.drives.clear();
