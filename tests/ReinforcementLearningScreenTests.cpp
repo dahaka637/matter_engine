@@ -518,6 +518,29 @@ void checkGetUpViewers() {
         "os exercicios do levantar");
 }
 
+void checkGetUpHandoffViewer() {
+    // A interligacao das redes no visualizador do B21 (01/11): na queda, a rede do levantar exportada assume e devolve
+    // de pe e firme antes do recomeco de 8 s (sem ela exportada nesta maquina, sem o teste).
+    if (!std::filesystem::exists(TrackingViewer3D::getUpExport())) {
+        std::cout << "visualizador: sem a rede do levantar exportada, a interligacao fica sem teste\n";
+        return;
+    }
+    const std::filesystem::path task = sourceRoot() / "assets" / "rl" / "tasks" / "locomocao_b21.json";
+    LocomotionViewer3D viewer(task, sourceRoot() / "assets", "parado", 3);
+    viewer.push({ 2500.0f, 0.0f, 0.0f }, 0.3f);
+    int took = -1, back = -1;
+    for (int i = 0; i < 30 * 14 && back < 0; ++i) {
+        viewer.step();
+        if (took < 0 && viewer.gettingUp()) took = i;
+        if (took >= 0 && !viewer.gettingUp()) back = i;
+    }
+    require(took >= 0 && back > took && back - took < 30 * 8,
+        "na queda a rede do levantar assume e devolve antes de 8 s (assumiu " + std::to_string(took) + ", devolveu "
+            + std::to_string(back) + ")");
+    std::cout << "visualizador: a rede do levantar assumiu na decisao " << took << " e devolveu em "
+              << static_cast<float>(back - took) / 30.0f << " s\n";
+}
+
 void checkSinglePushViewer() {
     const std::filesystem::path task = sourceRoot() / "assets" / "rl" / "tasks" / "locomocao_e1.json";
     float settle = 3.0f;
@@ -553,6 +576,7 @@ int main() {
         unsetenv("MATTER_RL_SOCKET");
         require(!LocomotionViewer3D::isLocomotionTask(sandbox / "ausente.json"), "tarefa ausente nao pode derrubar a tela");
         checkSinglePushViewer();
+        checkGetUpHandoffViewer();
         checkGetUpViewers();
         checkMotorExploration(sandbox / "motor");
         writeRuns(sandbox / "dados");

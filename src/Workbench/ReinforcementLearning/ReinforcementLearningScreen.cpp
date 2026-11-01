@@ -1654,6 +1654,10 @@ void ReinforcementLearningScreen::drawViewport(CanvasTarget& canvas, float botto
         else
             label = m_policyText + "\nlevantou " + count + " quedas";
     }
+    // (A interligacao das redes, 01/11: na queda do B21, quem dirige ate a troca.)
+    if (const auto* locomotion = dynamic_cast<const LocomotionViewer3D*>(m_locomotion.get());
+        locomotion != nullptr && locomotion->gettingUp())
+        label = m_policyText + "\nna queda: a rede do levantar";
     drawList->AddText({ origin.x + ui(10.0f), origin.y + ui(8.0f) }, UiMuted, label.c_str());
 }
 

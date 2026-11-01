@@ -61,6 +61,8 @@ public:
     void setPolicy(const std::filesystem::path& file, std::string& label) override;
     void clearPolicy() override;
     [[nodiscard]] bool hasPolicy() const override;
+    // A interligacao das redes nas quedas (01/11, o "getUpHandoff" da tarefa): se agora quem dirige e a rede do levantar.
+    [[nodiscard]] bool gettingUp() const;
 
     // Uma decisao (30 Hz: 4 ticks de fisica).
     void step() override;

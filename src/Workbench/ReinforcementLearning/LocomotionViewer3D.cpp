@@ -1,6 +1,9 @@
 #include "Workbench/ReinforcementLearning/LocomotionViewer3D.hpp"
 
 #include "Engine/Athlete/AthleteTelemetry3D.hpp"
+#include "Engine/Athlete/Physical/PhysicalCorrections3D.hpp"
+#include "Engine/Tracking/TrackingGetUpPolicy3D.hpp"
+#include "Workbench/ReinforcementLearning/TrackingViewer3D.hpp"
 #include "Engine/Core/TaskScheduler.hpp"
 #include "Engine/RL/Commands/PilotScriptJson3D.hpp"
 
@@ -76,6 +79,16 @@ struct LocomotionViewer3D::Impl {
     float shownAfter = 99.0f;
     std::size_t chest = 0;
     float groundHalfExtent = 60.0f;
+    // A interligacao das redes nas quedas (01/11, o "getUpHandoff" da tarefa; como o treino): na queda, a rede do
+    // levantar exportada por ultimo dirige o corpo como no treino dela ate ficar de pe e firme, e devolve a esta - os
+    // alvos do classico saindo dos dela - com o exercicio recomecando dali; sem levantar em 8 s, o recomeco de sempre.
+    bool handoff = false;
+    std::shared_ptr<const GetUpPolicy3D> getUpPolicy;
+    std::filesystem::file_time_type getUpWrite {};
+    bool recovering = false;
+    std::uint32_t getUpTicks = 0;
+    float firmSeconds = 0.0f, recoverSeconds = 0.0f;
+    std::vector<RagdollDriveTarget3D> getUpDrives;
 
     void build(std::uint64_t seed) {
         scene.reset();
@@ -117,6 +130,7 @@ struct LocomotionViewer3D::Impl {
         pushSeconds = 0.0f;
         drillSeconds = 0.0f;
         standingSeconds = 0.0f;
+        recovering = false;
         shownLink = -1;
         shownAfter = 99.0f;
         if (getUp) {
@@ -128,6 +142,68 @@ struct LocomotionViewer3D::Impl {
         }
         settleEnd = -1.0f;
         pushAt = singlePush ? drillPushStart + pushWindow * std::uniform_real_distribution<float>(0.0f, 1.0f)(rng) : -1.0f;
+    }
+
+    // A rede do levantar exportada por ultimo (de novo quando o treino dela exporta outra).
+    void loadGetUpPolicy() {
+        std::error_code error;
+        const auto write = std::filesystem::last_write_time(TrackingViewer3D::getUpExport(), error);
+        if (error || (getUpPolicy && write == getUpWrite)) return;
+        try {
+            getUpPolicy = std::make_shared<TrackingGetUpPolicy3D>(TrackingViewer3D::getUpExport());
+            getUpWrite = write;
+        } catch (const std::exception&) {
+        }
+    }
+
+    bool startRecovery() {
+        if (!handoff || getUp) return false;
+        loadGetUpPolicy();
+        if (!getUpPolicy) return false;
+        recovering = true;
+        getUpTicks = 0;
+        firmSeconds = recoverSeconds = 0.0f;
+        command = {};
+        return true;
+    }
+
+    // Uma decisao da rede do levantar e, de pe e firme (o criterio do treino), a troca.
+    void recover() {
+        const RagdollProfile3D& profile = bundle->profile();
+        for (int k = 0; k < TicksPerDecision; ++k) {
+            if (getUpTicks++ % GetUpPolicy3D::TicksPerDecision == 0) getUpPolicy->decide(profile, body.links, getUpDrives);
+            scene->setRagdollActiveDriveTargets(handle, getUpDrives, false);
+            scene->setRagdollFrictionScale(handle, 1.0f);
+            scene->simulate(TickSeconds);
+            body = scene->ragdollState(handle);
+            shownAfter += TickSeconds;
+        }
+        ++steps;
+        const float decision = policyStepSecondsValue();
+        recoverSeconds += decision;
+        const PhysicsBodyState3D& pelvis = body.links.front();
+        const float upright =
+            (pelvis.orientation * profile.links.front().modelOrientation.conjugate()).rotate({ 0.0f, 0.0f, 1.0f }).z;
+        const bool standing = pelvis.position.z > 0.85f * profile.standingRootHeightMeters && upright > 0.85f
+            && planar(centerOfMassVelocity()).length() < 0.5f;
+        firmSeconds = standing ? firmSeconds + decision : 0.0f;
+        if (firmSeconds < GetUpPolicy3D::FirmSeconds) {
+            if (recoverSeconds > 8.0f) build(rng());
+            return;
+        }
+        athlete = AthleteState3D {};
+        runtime = AthleteRuntime3D {};
+        runtime.setLocomotionPolicy(policy);
+        athleteStart3D(*scene, handle, profile, body, athlete, AthleteStartMode3D::Physical);
+        athlete.getUpHandoff = { GetUpPolicy3D::BlendSeconds, getUpDrives };
+        origin = planar(pelvis.position);
+        pilotState = PilotState3D {};
+        CommandPilot3D::start(pilot, pilotState, origin, locomotionFrameYaw3D(profile, pelvis.orientation), rng);
+        steps = 0;
+        fallenSeconds = drillSeconds = pushSeconds = 0.0f;
+        settleEnd = -1.0f;
+        pushAt = singlePush ? drillPushStart + pushWindow * std::uniform_real_distribution<float>(0.0f, 1.0f)(rng) : -1.0f;
+        recovering = false;
     }
 
     [[nodiscard]] Vec3 centerOfMassVelocity() const {
@@ -257,6 +333,7 @@ LocomotionViewer3D::LocomotionViewer3D(const std::filesystem::path& taskPath,
     impl.settleSeconds = chosen.value("settleSeconds", impl.settleSeconds);
     impl.knockdownLow = chosen.value("knockdownMinimumNewtons", impl.knockdownLow);
     impl.knockdownHigh = chosen.value("knockdownMaximumNewtons", impl.knockdownHigh);
+    impl.handoff = task.contains("getUpHandoff") && task["getUpHandoff"].value("enabled", false);
     // As ajudas da tarefa e o fisico total com a referencia a sombra (como no treino).
     impl.settings.defaultLocomotion = false;
     impl.settings.physicalReference = true;
@@ -347,8 +424,14 @@ void LocomotionViewer3D::clearPolicy() {
 
 bool LocomotionViewer3D::hasPolicy() const { return m_impl->policy != nullptr; }
 
+bool LocomotionViewer3D::gettingUp() const { return m_impl->recovering; }
+
 void LocomotionViewer3D::step() {
     Impl& impl = *m_impl;
+    if (impl.recovering) {
+        impl.recover();
+        return;
+    }
     impl.command = impl.pilotCommand();
     const float decision = impl.policyStepSecondsValue();
     const float now = static_cast<float>(impl.steps) * decision;
@@ -394,6 +477,7 @@ void LocomotionViewer3D::step() {
     // queda e recomeca - o levantar do classico (com a ajuda) nao esconde a queda.
     const bool down = impl.body.links.empty() || impl.body.links.front().position.z < 0.45f
         || athleteTelemetry3D(impl.athlete).fallen;
+    if (down && !impl.body.links.empty() && impl.startRecovery()) return;
     impl.fallenSeconds = down ? impl.fallenSeconds + impl.policyStepSecondsValue() : 0.0f;
     // (O empurrao unico aguentado: recomeca settleSeconds depois dele, como o fim do episodio no treino.)
     const bool settled = !down && impl.settleEnd >= 0.0f && static_cast<float>(impl.steps) * decision >= impl.settleEnd - 1.0e-4f;
