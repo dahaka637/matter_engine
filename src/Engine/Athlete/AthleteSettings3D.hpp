@@ -58,6 +58,9 @@ struct AthleteRuntimeSettings3D {
     // desde 21/10, plano 04_locomocao/plano_rl_sobre_classico.md B); false = a
     // linear de 17/10 (0% = zero de verdade). O levantar e normalizado nas duas.
     bool historicalAssistRuler = true;
+    // A ajuda nas transicoes (01/11, ele: "0 e realmente sem nenhuma forca auxiliar"): a fracao da ajuda cheia de antes
+    // que a volta ao padrao (o returnBoost) pode usar - 1 como antes, 0 nenhuma (a ponte escala as dela por fora).
+    float transitionAssistFraction = 1.0f;
     // A virada brusca em movimento (experimento do laboratorio, 17/10; so no
     // Fisico total; vault 04_locomocao/virada_brusca.md). Desligada, o atleta
     // e identico bit a bit. A intensidade (0..1) e dos testes.
@@ -96,6 +99,10 @@ struct AthleteRuntimeSettings3D {
     // fisico. Desligado no runtime (o levantar e o treino dele); o
     // laboratorio liga.
     bool animatedGetUp = false;
+    // O levantar pela rede do levantar (01/11, ele: "o levantar agora ocorra com esse RL do levantar"): com a rede
+    // carregada (AthleteRuntimeAssets3D::getUpPolicy), no chao no fisico ela dirige o corpo no lugar do levantar do
+    // padrao e do classico, em todos os modos; de pe e firme, entrega ao fisico.
+    bool getUpPolicy = false;
     // O ritmo do clipe dele (28/10, pedido do usuario: "levantar-se rapido no
     // geral"; era 1).
     float animatedGetUpSpeed = 1.3f;

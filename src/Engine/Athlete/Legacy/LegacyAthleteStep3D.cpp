@@ -3,6 +3,7 @@
 #include "Engine/Gesture/GestureCatalog3D.hpp"
 #include "Engine/Gesture/GestureChoice3D.hpp"
 #include "Engine/Athlete/Planning/MotionPlanner3D.hpp"
+#include "Engine/Athlete/Body/GetUpPolicy3D.hpp"
 #include "Engine/Athlete/Reference/BodyForecast3D.hpp"
 #include "Engine/Athlete/Synthesis/LegSynthesis3D.hpp"
 
@@ -32,6 +33,10 @@ constexpr float ActiveExitSeconds = 0.60f;
 // tronco ia da postura do fisico a do clipe em ~0,15 s).
 constexpr float ReturnHalfLife = 0.14f;
 constexpr float ReturnSeconds = 0.60f;
+// A rede do levantar (01/11): de pe e firme por este tanto (s), ela entrega ao fisico; e os alvos do classico saem dos
+// dela neste tanto (s) - a posicao, a rigidez, o amortecimento e a compensacao da gravidade.
+constexpr float GetUpPolicyStandSeconds = 0.5f;
+constexpr float GetUpPolicyBlendSeconds = 0.3f;
 
 // No Ativo, o ponto de captura alem disto (m) fora da base leva ao fisico
 // pleno: sem os passos de equilibrio, a pancada que pede passo; com eles, so
@@ -436,10 +441,13 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         athlete.externalAssist.handover = true;
         const float boost = state.returnBoost * state.returnBoost * (3.0f - 2.0f * state.returnBoost);
         auto& physical = state.adaptivePhysics.settings();
-        physical.legsAssistRetained += (1.0f - physical.legsAssistRetained) * boost;
-        physical.walkingAssistScale += (1.0f - physical.walkingAssistScale) * boost;
-        physical.walkingWeightAssistScale += (1.0f - physical.walkingWeightAssistScale) * boost;
-        physical.standingWeightAssistScale += (1.0f - physical.standingWeightAssistScale) * boost;
+        // (01/11: ate a fracao das transicoes - a cheia de antes no 100%, nada no 0% -, nunca abaixo da escolhida.)
+        const float full = std::clamp(settings.transitionAssistFraction, 0.0f, 1.0f);
+        const auto lift = [&](float& value) { value += (std::max(value, full) - value) * boost; };
+        lift(physical.legsAssistRetained);
+        lift(physical.walkingAssistScale);
+        lift(physical.walkingWeightAssistScale);
+        lift(physical.standingWeightAssistScale);
     }
     // Cambaleio (do tick anterior): a ajuda cai com o tonus e volta com
     // ele; amolecido, ele nao segue o comando de andar (volta junto).
@@ -1992,6 +2000,78 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         setFollow({});
         return;
     }
+    // O levantar pela rede do levantar (01/11, ele: "o levantar agora ocorra com esse RL do levantar"; vault
+    // 04_locomocao/plano_rl_in_game_01_11.md): no chao, no fisico e em qualquer modo, ela dirige o corpo como no treino
+    // - os alvos dela a cada GetUpPolicy3D::TicksPerDecision passos, sem a compensacao da gravidade e sem forcas de fora
+    // (o atrito do corpo inteiro), a capsula embaixo da pelve - no lugar do levantar do padrao e do classico. De pe e
+    // firme por GetUpPolicyStandSeconds, ela entrega ao fisico: o classico recomeca no corpo (e a rede da locomocao,
+    // parada enquanto ela dirige, comeca do zero) e os alvos dele saem dos dela; no Padrao, dai a volta de sempre.
+    {
+        auto& rl = athlete.getUpPolicy;
+        const GetUpPolicy3D* policy = assets.getUpPolicy;
+        const bool allowed = policy != nullptr && settings.getUpPolicy && state.bodyMode == BodyMode::Physical
+            && body.links.size() == profile.links.size();
+        const auto release = [&](const char* why) {
+            rl.active = false;
+            state.locomotion.reset(profile, body);
+            state.adaptivePhysics.reset(profile);
+            Log::info(std::string("corpo: rede do levantar -> fisico (") + why + ")");
+        };
+        if (rl.active && !allowed) {
+            release("desligada");
+        } else if (allowed) {
+            if (!rl.active) {
+                // (No chao como o levantar do padrao ve: caido, ou levantando ainda assentando ou com a pelve baixa.)
+                const CharacterLocomotionTelemetry3D& telemetry = state.locomotion.telemetry();
+                const bool low = body.links.front().position.z - groundHeight(body.links.front().position) < 0.30f;
+                const bool fallen = telemetry.state == CharacterLocomotionState3D::Fallen
+                    || (telemetry.state == CharacterLocomotionState3D::GettingUp
+                        && (telemetry.getUpPhase == CharacterGetUpPhase3D::Settling || low));
+                if (fallen && !athlete.animatedGetUp.active()) {
+                    rl.active = true;
+                    rl.ticks = 0;
+                    rl.standingSeconds = 0.0f;
+                    rl.blendLeft = 0.0f;
+                    if (state.guided) {
+                        scene.setRagdollGuided(slot.handle, false);
+                        state.guided = false;
+                    }
+                    Log::info("corpo: no chao -> rede do levantar");
+                }
+            }
+            if (rl.active) {
+                try {
+                    if (rl.ticks % GetUpPolicy3D::TicksPerDecision == 0) policy->decide(profile, body.links, rl.drives);
+                } catch (const std::exception& error) {
+                    Log::warn(std::string("rede do levantar: ") + error.what());
+                    rl.drives.clear();
+                }
+                if (rl.drives.empty()) {
+                    release("erro");
+                } else {
+                    ++rl.ticks;
+                    scene.setRagdollActiveDriveTargets(slot.handle, rl.drives, false);
+                    scene.setRagdollFrictionScale(slot.handle, 1.0f);
+                    const PhysicsBodyState3D& pelvis = body.links.front();
+                    placeNav({ pelvis.position.x, pelvis.position.y, groundHeight(pelvis.position) });
+                    setNavVelocity({});
+                    setFollow({});
+                    // De pe e firme: a pelve perto da altura de pe do perfil, de pe (a pelve em pe) e quase parado.
+                    const float pelvisHeight = pelvis.position.z - groundHeight(pelvis.position);
+                    const float upright = (pelvis.orientation * profile.links.front().modelOrientation.conjugate())
+                        .rotate({ 0.0f, 0.0f, 1.0f }).z;
+                    const bool standing = pelvisHeight > 0.85f * profile.standingRootHeightMeters && upright > 0.85f
+                        && std::hypot(pelvis.linearVelocity.x, pelvis.linearVelocity.y) < 0.5f;
+                    rl.standingSeconds = standing ? rl.standingSeconds + deltaTime : 0.0f;
+                    if (rl.standingSeconds < GetUpPolicyStandSeconds) return;
+                    rl.lastDrives = rl.drives;
+                    rl.blendLeft = GetUpPolicyBlendSeconds;
+                    state.getUpSeen = true;
+                    release("de pe");
+                }
+            }
+        }
+    }
     // O levantar pelo padrao (28/10, item 16; Athlete/Body/AnimatedGetUp3D):
     // caido e assentado no fisico, de brucos ou de costas, com base solida - o
     // chao plano embaixo do caminho do clipe inteiro, nada estatico no caminho
@@ -2400,7 +2480,26 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             scene.setRagdollGuidePose(slot.handle, out.pose.linkPositions, out.pose.linkOrientations, authority);
         }
     }
-    applyCharacterControl3D(scene, slot.handle, locomotionOutput, adaptive ? &state.adaptivePhysics.output() : nullptr,
+    // A entrega da rede do levantar (01/11): por GetUpPolicyBlendSeconds os alvos do classico saem dos dela.
+    const CharacterLocomotionOutput3D* applied = &locomotionOutput;
+    CharacterLocomotionOutput3D blended;
+    if (athlete.getUpPolicy.blendLeft > 0.0f) {
+        blended = locomotionOutput;
+        const float w = std::clamp(athlete.getUpPolicy.blendLeft / GetUpPolicyBlendSeconds, 0.0f, 1.0f);
+        for (RagdollDriveTarget3D& drive : blended.driveTargets)
+            for (const RagdollDriveTarget3D& from : athlete.getUpPolicy.lastDrives)
+                if (from.linkIndex == drive.linkIndex && from.axis == drive.axis) {
+                    drive.positionRadians += (from.positionRadians - drive.positionRadians) * w;
+                    drive.velocityRadiansPerSecond *= 1.0f - w;
+                    drive.stiffnessScale += (from.stiffnessScale - drive.stiffnessScale) * w;
+                    drive.dampingScale += (from.dampingScale - drive.dampingScale) * w;
+                    drive.gravityCompensationScale *= 1.0f - w;
+                    break;
+                }
+        athlete.getUpPolicy.blendLeft = std::max(0.0f, athlete.getUpPolicy.blendLeft - deltaTime);
+        applied = &blended;
+    }
+    applyCharacterControl3D(scene, slot.handle, *applied, adaptive ? &state.adaptivePhysics.output() : nullptr,
         down);
     {
         // A medida da ajuda auxiliar (as mesmas condicoes da aplicacao acima).
@@ -2459,7 +2558,7 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
         float share = std::clamp(settings.physicalFeetAssistPercent * 0.01f, 0.0f, 1.0f) * state.impactAssist.level();
         if (state.returnBoost > 0.0f) {
             const float boost = state.returnBoost * state.returnBoost * (3.0f - 2.0f * state.returnBoost);
-            share += (1.0f - share) * boost;
+            share += (std::max(share, std::clamp(settings.transitionAssistFraction, 0.0f, 1.0f)) - share) * boost;
         }
         feet.share = share * std::clamp(assist.assistEnvelope, 0.0f, 1.0f);
         feet.referencePosition = reference.rootPositionWorld;

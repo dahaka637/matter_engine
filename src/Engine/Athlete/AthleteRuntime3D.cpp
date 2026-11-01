@@ -115,6 +115,9 @@ void AthleteRuntime3D::update(PhysicsScene3D& scene, const AthleteRuntimeAssets3
         }
     }
     AthleteControlInput3D tickControl = control;
+    // (Os recursos do passo com a rede do levantar deste runtime, quando quem chama nao poe outra.)
+    AthleteRuntimeAssets3D stepAssets = assets;
+    if (stepAssets.getUpPolicy == nullptr) stepAssets.getUpPolicy = m_getUpPolicy.get();
     for (AthleteSlot3D& slot : athletes) {
         if (!slot.active || slot.frozen || slot.state == nullptr || slot.athlete == nullptr || slot.state->frozen
             || !scene.contains(slot.handle) || slot.state->links.empty())
@@ -125,8 +128,11 @@ void AthleteRuntime3D::update(PhysicsScene3D& scene, const AthleteRuntimeAssets3
         // treino, a sonda - ficam).
         AthleteState3D& athlete = *slot.athlete;
         const bool controlled = slot.entityId == tickControl.controlledEntityId;
+        // (01/11: parada enquanto a rede do levantar dirige - nela ficavam as observacoes do corpo deitado e as
+        // correcoes iam a alvos que ninguem aplicava; na entrega ela comeca do zero.)
         const bool driven = m_locomotionPolicy != nullptr && settings.locomotionPolicy
-            && (controlled || slot.command != nullptr) && athleteTelemetry3D(athlete).mode == BodyModeKind3D::Physical;
+            && (controlled || slot.command != nullptr) && athleteTelemetry3D(athlete).mode == BodyModeKind3D::Physical
+            && !athlete.getUpPolicy.active;
         if (driven) {
             AthleteCommand3D command;
             if (controlled) {
@@ -143,7 +149,7 @@ void AthleteRuntime3D::update(PhysicsScene3D& scene, const AthleteRuntimeAssets3
             LocomotionContract3D::clear(athlete);
             athlete.policyFromRuntime = false;
         }
-        stepLegacyAthlete3D(scene, assets, settings, tickControl, slot, balls, tacklerLegs, deltaTime, output);
+        stepLegacyAthlete3D(scene, stepAssets, settings, tickControl, slot, balls, tacklerLegs, deltaTime, output);
     }
 }
 

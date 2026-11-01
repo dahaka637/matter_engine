@@ -361,6 +361,8 @@ private:
     // exportada pelo treino (MATTER_LOCOMOTION_POLICY, ou a do treino
     // loco_f1f2 em MATTER_RL_DATA / ~/.local/share/matter-engine/rl).
     void reloadLocomotionPolicy();
+    // A rede do levantar (01/11): a ultima exportada do treino levantar_v2 (MATTER_GETUP_POLICY para outra).
+    void reloadGetUpPolicy();
     void resetControlledCharacterPose();
     void toggleControlledCharacterFrozen();
     void updateRagdollImpactLab(float deltaTime);
@@ -530,7 +532,6 @@ private:
     bool m_locomotionPolicyOn = false;
     // As condicoes do treino da rede carregada (a tarefa dele): so valem com a rede.
     struct LocomotionPolicyConditions {
-        bool historicalAssistRuler = true;
         bool movingHipTurn = false;
         bool runningTurnClip = false;
     };
@@ -541,6 +542,12 @@ private:
     bool m_dynamicTurnMove = false;
     float m_dynamicTurnMovePercent = 100.0f;
     std::string m_locomotionPolicyLabel;
+    // 01/11 (ele): no Padrao, as pancadas vao ao fisico por RL (a rede da locomocao, carregada ao abrir); e o levantar
+    // e o da rede do levantar, em todos os modos. As duas caixas comecam ligadas; a rodada carregada (ou o erro).
+    bool m_defaultPhysicalPolicy = true;
+    bool m_getUpPolicyOn = true;
+    std::string m_getUpPolicyLabel;
+    bool m_policiesLoaded = false;
     bool m_ragdollAssetsLoadFailed = false;
     bool m_ragdollActive = true;
     // A tensao nos limites das juntas nos bonecos humanos (27/10; desligada: o de antes).
@@ -642,6 +649,8 @@ private:
     // que o motor chama de 150% (24 / 33 / 45 m/s2 e 15 rad/s); o motor recebe o
     // valor vezes LabResponseScale.
     static constexpr float LabResponseScale = 1.5f;
+    // O 100% da ajuda auxiliar do laboratorio e o 30% da regua de antes (01/11, ele: "o 30% vai ser o nosso 100%").
+    static constexpr float LaboratoryAssistScale = 0.30f;
     static constexpr float LabDefaultCapsuleResponsePercent = 100.0f;
     static constexpr float LabDefaultCapsuleReversalPercent = 100.0f;
     float m_capsuleResponsePercent = LabDefaultCapsuleResponsePercent;

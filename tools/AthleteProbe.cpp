@@ -24,6 +24,7 @@
 //      [--contato-ms ms] [--forca-ms ms] [--gesto-ms ms] (os tempos do toque: 350, 400 e 700 padrao)
 // Sem --cenario roda todos.
 #include "athlete_probe/ProbeShared.hpp"
+#include "Engine/Tracking/TrackingGetUpPolicy3D.hpp"
 #include "Engine/Athlete/Policy/LocomotionPolicy3D.hpp"
 
 #include "Engine/Athlete/AthleteAssets3D.hpp"
@@ -1376,6 +1377,12 @@ Metrics runScenario(const ProbeContext& context, const Scenario& scenario, const
             policySettings.historicalAssistRuler = false;
             policySettings.movingHipTurn = policySettings.runningTurnClip = true;
         }
+    }
+    // XREDE_LEVANTAR=<.mrlpolicy>: a rede do levantar pelo runtime do jogo (01/11; como a caixa "Levantar pela rede do
+    // levantar" do laboratorio).
+    if (const char* rede = std::getenv("XREDE_LEVANTAR"); rede != nullptr && *rede != '\0') {
+        runtime.setGetUpPolicy(std::make_shared<TrackingGetUpPolicy3D>(rede));
+        policySettings.getUpPolicy = true;
     }
     Vec3 followVelocity {};
     bool controlledAnimated = !startPhysical;
@@ -3786,6 +3793,9 @@ int main(int argc, char** argv) {
     float walkingAssist = AthleteRuntimeSettings3D {}.e5WalkingAssistPercent;
     float getUpAssist = AthleteRuntimeSettings3D {}.getUpAssistPercent;
     int zeroProof = -1;
+    // --ajuda-lab N: a regua do laboratorio de 01/11 (WorkbenchApp::athleteRuntimeSettings): linear, o 100% e o 30% de
+    // antes e, nas transicoes (a volta ao padrao e a ponte), o controle escala a ajuda cheia de antes.
+    float labAssist = -1.0f;
     bool postureCouple = AthleteRuntimeSettings3D {}.postureCoupleFollowsAssist;
     float turnMove = 0.0f;
     PlayerBody3D body;
@@ -3830,6 +3840,7 @@ int main(int argc, char** argv) {
             }
             body = *parsed;
         }
+        else if (arg == "--ajuda-lab") labAssist = static_cast<float>(std::atof(need()));
         else if (arg == "--ajuda") {
             // A regua unica do laboratorio (Ajuda auxiliar): as quatro juntas.
             const float all = static_cast<float>(std::atof(need()));
@@ -3904,6 +3915,14 @@ int main(int argc, char** argv) {
     settings.e5WalkingAssistPercent = walkingAssist;
     settings.getUpAssistPercent = getUpAssist;
     settings.postureCoupleFollowsAssist = postureCouple;
+    if (labAssist >= 0.0f) {
+        settings.historicalAssistRuler = false;
+        settings.transitionAssistFraction = std::clamp(labAssist * 0.01f, 0.0f, 1.0f);
+        settings.e5StandingAssistPercent = settings.e5WalkingAssistPercent = settings.physicalFeetAssistPercent =
+            settings.getUpAssistPercent = labAssist * 0.30f;
+        settings.activeBodySettings.gameplayAssistAcceleration *= settings.transitionAssistFraction;
+        settings.activeBodySettings.handoverAssistAcceleration *= settings.transitionAssistFraction;
+    }
     settings.dynamicTurnMove = turnMove > 0.0f;
     settings.dynamicTurnMoveSettings.amount = turnMove;
     // XTM="campo=valor,campo=valor": os ajustes da manobra (nomes do TurnMoveSettings3D).
