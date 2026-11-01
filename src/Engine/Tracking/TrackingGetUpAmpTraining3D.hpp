@@ -111,6 +111,10 @@ struct TrackingGetUpAmpSettings3D {
     // O imitador de um clipe so (01/11 18h, ele: "essa locomocao e INACEITAVEL"): nos rumos, so os passos deste clipe
     // (vazio: todos pelas fatias).
     std::string onlyClip;
+    // O clipe nos motores (01/11 18h45, ele: "toda vez voce da a mesma desculpa para ela nao seguir nada do clipe"): na
+    // locomocao, o alvo de cada junta e o do clipe do passo (no quadro do fim da decisao) vezes (1 - clipBlend) mais o da
+    // rede vezes clipBlend - o clipe comanda as juntas e a rede so corrige. 1: a rede livre (como antes); soltar = subir.
+    float clipBlend = 1.0f;
     // A troca de rede ao ficar de pe (01/11, ele: o levantar volta a ser so levantar e evitar quedas, "fazendo a troca
     // de RL no momento que recem fica de pe"): o episodio acaba (truncado, como o fim do tempo) quando ele fica de pe e
     // firme por 0,5 s - o mesmo da entrega no jogo - depois de ter estado no chao ou, no evitar a queda, do empurrao.

@@ -195,6 +195,8 @@ struct TrackingGetUpAmpTraining3D::Impl {
         std::uint32_t startBand = 1;
         // O comeco num instante de uma queda com protecao (a protecao vale, como no evitar a queda).
         bool protectiveStart = false;
+        // O alvo misturado com o do clipe (clipBlend).
+        std::vector<float> blendAction;
         // A imitacao: o clipe do passo pedido (max: sem), o tempo dele no comeco do episodio e o rumo.
         std::size_t trackClip = std::numeric_limits<std::size_t>::max();
         float trackStart = 0.0f;
@@ -871,7 +873,21 @@ struct TrackingGetUpAmpTraining3D::Impl {
         const float before = posture->risePotential(was) + posture->turnPotential(was) + facePotential(w, was);
         maybePush(w, was);
         maybeAvoidPush(w);
-        contract->driveTargets(action, w.drives);
+        if (settings.clipBlend < 1.0f && w.locomotion && w.commandSpeed > 0.0f && w.trackClip < references.size()) {
+            const TrackingClipReference3D& reference = *references[w.trackClip];
+            const float duration = std::max(1.0e-3f, reference.durationSeconds());
+            float t = std::fmod(w.trackStart + w.time + TicksPerDecision * TickSeconds, duration);
+            if (t < 0.0f) t += duration;
+            reference.frame(t, {}, 0.0f, w.frame);
+            w.blendAction.assign(action.size(), 0.0f);
+            contract->actionOf(w.frame.coordinates, w.blendAction);
+            const float s = std::clamp(settings.clipBlend, 0.0f, 1.0f);
+            for (std::size_t k = 0; k < action.size(); ++k)
+                w.blendAction[k] = (1.0f - s) * w.blendAction[k] + s * (std::isfinite(action[k]) ? action[k] : w.blendAction[k]);
+            contract->driveTargets(w.blendAction, w.drives);
+        } else {
+            contract->driveTargets(action, w.drives);
+        }
         settle(w, TicksPerDecision);
         w.time += TicksPerDecision * TickSeconds;
         features->compute(w.body->links, std::span<float>(w.ampPair).subspan(a, a));

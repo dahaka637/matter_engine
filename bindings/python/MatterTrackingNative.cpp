@@ -345,7 +345,7 @@ NB_MODULE(matter_tracking_native, m) {
                 float touchDownPenalty, float supportBonus, float flexReward, float obstacleFraction,
                 float weightFraction, float runFraction, float sprintFraction, float locomotionClipFraction,
                 float locomotionSeconds, bool locomotionTermination, std::array<float, 2> commandChange,
-                int evaluationBand, float speedRampPower, float imitationWeight, const std::string& onlyClip) {
+                int evaluationBand, float speedRampPower, float imitationWeight, const std::string& onlyClip, float clipBlend) {
                 TrackingGetUpAmpSettings3D settings;
                 settings.assetsDirectory = assets;
                 settings.environments = environments;
@@ -403,6 +403,7 @@ NB_MODULE(matter_tracking_native, m) {
                 settings.speedRampPower = speedRampPower;
                 settings.imitationWeight = imitationWeight;
                 settings.onlyClip = onlyClip;
+                settings.clipBlend = clipBlend;
                 nb::gil_scoped_release release;
                 new (self) TrackingGetUpAmpTraining3D(settings);
             },
@@ -423,7 +424,7 @@ NB_MODULE(matter_tracking_native, m) {
             "obstacle_fraction"_a = 0.0f, "weight_fraction"_a = 0.0f, "run_fraction"_a = 0.0f,
             "sprint_fraction"_a = 0.0f, "locomotion_clip_fraction"_a = 0.5f, "locomotion_seconds"_a = 0.0f,
             "locomotion_termination"_a = false, "command_change"_a = std::array<float, 2> { 0.0f, 0.0f },
-            "evaluation_band"_a = -1, "speed_ramp_power"_a = 0.5f, "imitation_weight"_a = 0.0f, "only_clip"_a = std::string())
+            "evaluation_band"_a = -1, "speed_ramp_power"_a = 0.5f, "imitation_weight"_a = 0.0f, "only_clip"_a = std::string(), "clip_blend"_a = 1.0f)
         .def_prop_ro("num_envs", &TrackingGetUpAmpTraining3D::environmentCount)
         // As quedas da locomocao (01/11): [n, links, 13] - a posicao, a orientacao (xyzw) e as velocidades linear e
         // angular de cada link no instante da queda (take_fall_states do lote da locomocao).

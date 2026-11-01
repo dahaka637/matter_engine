@@ -419,6 +419,8 @@ def main() -> int:
     parser.add_argument("--suave-loco", type=float, default=None, help="o peso do custo do tranco na locomocao")
     parser.add_argument("--passo", type=float, default=0.0,
                         help="o premio do passo (o tempo no ar de cada pe que pousa, com o pedido de deslocamento)")
+    parser.add_argument("--mistura-clipe", type=float, default=1.0,
+                        help="na locomocao, o alvo = clipe x (1 - isto) + rede x isto (1: a rede livre)")
     parser.add_argument("--so-clipe", default="", help="nos rumos, so os passos deste clipe (o imitador de um clipe)")
     parser.add_argument("--imitacao", type=float, default=0.0,
                         help="na locomocao, o peso da imitacao do clipe do passo pedido (DeepMimic; 0: sem)")
@@ -495,6 +497,7 @@ def main() -> int:
                                  **({"speed_ramp_power": args.rampa_velocidade} if args.rampa_velocidade != 0.5 else {}),
                                  **({"imitation_weight": args.imitacao} if args.imitacao > 0 else {}),
                                  **({"only_clip": args.so_clipe} if args.so_clipe else {}),
+                                 **({"clip_blend": args.mistura_clipe} if args.mistura_clipe < 1.0 else {}),
                                  **v2)
     # (31/10 23h40, ele: "verifica se... nao conseguimos mais decisoes por segundo": as avaliacoes numa thread so paravam
     # o treino ~21 s a cada 50 atualizacoes, 13% do tempo; com as threads do treino, as que esperam ficam paradas.)
