@@ -245,7 +245,11 @@ private:
         std::vector<float> balance, balanceTest, pose, poseStanding, poseTest;
         // A locomocao na rede do levantar (na ordem de TrackingViewer3D::LocomotionDrills): o primeiro grafico e o sem
         // cair, no treino e no teste.
-        std::array<std::vector<float>, 8> locoMain, locoMainTest, locoUp, locoUpTest;
+        // (12: os rumos e, desde 01/11, as faixas da rl_final - era 8 e as faixas escreviam fora do array.)
+        std::array<std::vector<float>, 12> locoMain, locoMainTest, locoUp, locoUpTest;
+        // A hora de cada ponto (s, unix) e a janela de tempo com que foi lido (ChartWindows).
+        std::vector<double> times;
+        int window = -1;
         // A coluna como a do parado em alerta, de pe no fim (o treino de pe e o teste do parado).
         std::vector<float> spine, spineTest;
         // As quedas da locomocao (01/11, a interligacao): levantou e o tempo, no treino e no teste, e o tempo ate a troca.

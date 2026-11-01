@@ -19,6 +19,7 @@
 #include <optional>
 #include <ctime>
 #include <fstream>
+#include <sstream>
 #include <thread>
 #include <string_view>
 #include <utility>
@@ -1841,10 +1842,37 @@ void ReinforcementLearningScreen::drawCharts(float height) {
 void ReinforcementLearningScreen::refreshGetUpCurve() {
     std::error_code error;
     const auto write = std::filesystem::last_write_time(TrackingViewer3D::getUpLog(), error);
-    if (error || write == m_getUpCurve.write) return;
+    if (error || (write == m_getUpCurve.write && m_getUpCurve.window == m_chartWindow)) return;
     GetUpCurve curve;
     curve.write = write;
-    std::ifstream file(TrackingViewer3D::getUpLog());
+    curve.window = m_chartWindow;
+    // (01/11, ele: "nao consigo filtrar por temporalidade, nem mostra a hora do dado": a janela do periodo, contada da
+    // linha mais nova, e no maximo maxPoints pontos - um a cada passo; as avaliacoes de antes da janela seguem valendo.)
+    std::vector<std::string> lines;
+    {
+        std::ifstream all(TrackingViewer3D::getUpLog());
+        for (std::string line; std::getline(all, line);) lines.push_back(std::move(line));
+    }
+    double newest = 0.0;
+    std::vector<double> hours(lines.size(), -1.0);
+    for (std::size_t i = 0; i < lines.size(); ++i) {
+        if (lines[i].find("\"tarefa\"") == std::string::npos) continue;
+        const nlohmann::json row = nlohmann::json::parse(lines[i], nullptr, false);
+        if (!row.is_discarded() && row.is_object() && row.contains("hora") && row["hora"].is_number())
+            newest = std::max(newest, hours[i] = row["hora"].get<double>());
+    }
+    const double span = ChartWindows[static_cast<std::size_t>(std::clamp(m_chartWindow, 0, 5))].second;
+    const double from = span > 0.0 && newest > 0.0 ? newest - span : -1.0;
+    std::size_t inside = 0;
+    for (double hour : hours) inside += hour >= 0.0 && hour >= from ? 1 : 0;
+    const std::size_t maxPoints = m_chartsExpanded ? 1200 : 400;
+    const std::size_t stride = std::max<std::size_t>(1, (inside + maxPoints - 1) / maxPoints);
+    std::size_t seen = 0;
+    std::istringstream file([&] {
+        std::string joined;
+        for (const std::string& line : lines) joined += line + '\n';
+        return joined;
+    }());
     const float none = std::numeric_limits<float>::quiet_NaN();
     const auto percent = [none](const nlohmann::json& row, const char* key) {
         const auto it = row.find(key);
@@ -1883,6 +1911,13 @@ void ReinforcementLearningScreen::refreshGetUpCurve() {
             continue;
         }
         if (!row.contains("tarefa")) continue;
+        {
+            const double hour = row.contains("hora") && row["hora"].is_number() ? row["hora"].get<double>() : -1.0;
+            if (hour < from) continue;
+            const bool lastInside = ++seen == inside;
+            if ((seen - 1) % stride != 0 && !lastInside) continue;
+            curve.times.push_back(hour);
+        }
         curve.standing.push_back(percent(row, "queda_de_pe"));
         curve.kept.push_back(percent(row, "de_pe_de_pe"));
         curve.prone.push_back(percent(row, "queda_brucos"));
@@ -1953,7 +1988,7 @@ void ReinforcementLearningScreen::drawGetUpCharts(float height) {
                 "6 s. Tracejado, o teste da rede sem ruído em 32 quedas fixas com alvo; em laranja, quantos ficam de pé.");
         lineChart("##chegou", { { &c.reached, green, false, "treino" }, { &c.reachedTest, green, true, "teste sem ruído" },
                                   { &c.movingStood, amber, false, "de pé" } },
-            0.0f, 100.0f, size, both(c.reachedTest, c.reached, "%.0f%%").c_str(), "%", nullptr, false, "sem dados ainda");
+            0.0f, 100.0f, size, both(c.reachedTest, c.reached, "%.0f%%").c_str(), "%", &c.times, true, "sem dados ainda");
         ImGui::EndGroup();
         ImGui::SameLine();
         ImGui::SetCursorPosY(rowTop);
@@ -1961,7 +1996,7 @@ void ReinforcementLearningScreen::drawGetUpCharts(float height) {
         ImGui::TextColored(InfoText, "%s", "Velocidade rumo ao alvo (m/s) · Levantar em movimento");
         tooltip("A velocidade média rumo ao alvo enquanto de pé e com o pedido (2,5–5 m/s): o treino e, tracejado, o teste.");
         lineChart("##rumo", { { &c.towardSpeed, cyan, false, "treino" }, { &c.towardSpeedTest, cyan, true, "teste sem ruído" } },
-            0.0f, 6.0f, size, both(c.towardSpeedTest, c.towardSpeed, "%.2f m/s").c_str(), "m/s", nullptr, false,
+            0.0f, 6.0f, size, both(c.towardSpeedTest, c.towardSpeed, "%.2f m/s").c_str(), "m/s", &c.times, true,
             "sem dados ainda");
         ImGui::EndGroup();
         return;
@@ -1995,7 +2030,7 @@ void ReinforcementLearningScreen::drawGetUpCharts(float height) {
         }
         lineChart("##loco_principal", series,
             0.0f, turn ? 90.0f : still ? 100.0f : 150.0f, size,
-            both(c.locoMainTest[k], c.locoMain[k], turn ? "%.0f°" : "%.0f%%").c_str(), turn ? "°" : "%", nullptr, false,
+            both(c.locoMainTest[k], c.locoMain[k], turn ? "%.0f°" : "%.0f%%").c_str(), turn ? "°" : "%", &c.times, true,
             "sem dados ainda");
         ImGui::EndGroup();
         ImGui::SameLine();
@@ -2004,7 +2039,7 @@ void ReinforcementLearningScreen::drawGetUpCharts(float height) {
         ImGui::TextColored(InfoText, "%s", ("Sem cair (%) · " + name).c_str());
         tooltip("Quantos episódios terminam sem cair (o chão tocado pelo tronco, o pescoço ou a cabeça).");
         lineChart("##loco_cair", { { &c.locoUp[k], green, false, "treino" }, { &c.locoUpTest[k], green, true, "teste sem ruído" } },
-            0.0f, 100.0f, size, both(c.locoUpTest[k], c.locoUp[k], "%.0f%%").c_str(), "%", nullptr, false,
+            0.0f, 100.0f, size, both(c.locoUpTest[k], c.locoUp[k], "%.0f%%").c_str(), "%", &c.times, true,
             "sem dados ainda");
         ImGui::EndGroup();
         return;
@@ -2016,7 +2051,7 @@ void ReinforcementLearningScreen::drawGetUpCharts(float height) {
                 "cabeça). Tracejado, o teste sem ruído em 32 empurrões fixos com a régua do parado com empurrão forte do "
                 "B21 (curto de 900–1200 N ou contínuo de 205–275 N por 1–3 s): a comparação com a outra rede.");
         lineChart("##equilibrio", { { &c.balance, green, false, "treino" }, { &c.balanceTest, green, true, "teste sem ruído" } },
-            0.0f, 100.0f, size, both(c.balanceTest, c.balance, "%.0f%%").c_str(), "%", nullptr, false, "sem dados ainda");
+            0.0f, 100.0f, size, both(c.balanceTest, c.balance, "%.0f%%").c_str(), "%", &c.times, true, "sem dados ainda");
         ImGui::EndGroup();
         ImGui::SameLine();
         ImGui::SetCursorPosY(rowTop);
@@ -2025,7 +2060,7 @@ void ReinforcementLearningScreen::drawGetUpCharts(float height) {
         tooltip("A semelhança com o parado em alerta (ou o espelho) dos que terminam de pé, de 0 a 100: começando de pé "
                 "com empurrões e, em laranja, depois de levantar de uma queda.");
         lineChart("##pose_equilibrio", { { &c.poseStanding, violet, false, "começando de pé" }, { &c.pose, amber, false, "depois de levantar" } },
-            0.0f, 100.0f, size, last(c.poseStanding, "%.0f%%").c_str(), "%", nullptr, false, "sem dados ainda");
+            0.0f, 100.0f, size, last(c.poseStanding, "%.0f%%").c_str(), "%", &c.times, true, "sem dados ainda");
         ImGui::EndGroup();
         return;
     }
@@ -2035,7 +2070,7 @@ void ReinforcementLearningScreen::drawGetUpCharts(float height) {
         tooltip("Começando do instante em que a rede da locomoção (B21) caiu no treino dela: quantos ficam de pé. "
                 "Tracejado, o teste sem ruído nas 32 primeiras quedas que chegaram (fixas).");
         lineChart("##quedas_loco", { { &c.locoFall, green, false, "treino" }, { &c.locoFallTest, green, true, "teste sem ruído" } },
-            0.0f, 100.0f, size, both(c.locoFallTest, c.locoFall, "%.0f%%").c_str(), "%", nullptr, false, "sem dados ainda");
+            0.0f, 100.0f, size, both(c.locoFallTest, c.locoFall, "%.0f%%").c_str(), "%", &c.times, true, "sem dados ainda");
         ImGui::EndGroup();
         ImGui::SameLine();
         ImGui::SetCursorPosY(rowTop);
@@ -2046,7 +2081,7 @@ void ReinforcementLearningScreen::drawGetUpCharts(float height) {
         lineChart("##quedas_loco_tempo", { { &c.locoFallSeconds, violet, false, "treino" },
                                              { &c.locoFallSecondsTest, violet, true, "teste sem ruído" },
                                              { &c.handoffSeconds, amber, false, "troca" } },
-            0.0f, 6.0f, size, both(c.locoFallSecondsTest, c.locoFallSeconds, "%.2f s").c_str(), "s", nullptr, false,
+            0.0f, 6.0f, size, both(c.locoFallSecondsTest, c.locoFallSeconds, "%.2f s").c_str(), "s", &c.times, true,
             "sem dados ainda");
         ImGui::EndGroup();
         return;
@@ -2059,7 +2094,7 @@ void ReinforcementLearningScreen::drawGetUpCharts(float height) {
                 "teste sem ruído em 32 empurrões fixos; em laranja, quantos se recompõem (de pé, na pose do parado e quase parado).");
         lineChart("##evitou", { { &c.avoided, green, false, "treino" }, { &c.avoidedTest, green, true, "teste sem ruído" },
                                   { &c.recomposed, amber, false, "recompôs-se" } },
-            0.0f, 100.0f, size, both(c.avoidedTest, c.avoided, "%.0f%%").c_str(), "%", nullptr, false, "sem dados ainda");
+            0.0f, 100.0f, size, both(c.avoidedTest, c.avoided, "%.0f%%").c_str(), "%", &c.times, true, "sem dados ainda");
         ImGui::EndGroup();
         ImGui::SameLine();
         ImGui::SetCursorPosY(rowTop);
@@ -2068,7 +2103,7 @@ void ReinforcementLearningScreen::drawGetUpCharts(float height) {
         tooltip("Do fim do empurrão até estar de pé, na pose do parado e quase parado: o treino e, tracejado, o teste.");
         lineChart("##recompos", { { &c.recomposeSeconds, violet, false, "treino" },
                                     { &c.recomposeSecondsTest, violet, true, "teste sem ruído" } },
-            0.0f, 4.0f, size, both(c.recomposeSecondsTest, c.recomposeSeconds, "%.2f s").c_str(), "s", nullptr, false,
+            0.0f, 4.0f, size, both(c.recomposeSecondsTest, c.recomposeSeconds, "%.2f s").c_str(), "s", &c.times, true,
             "sem dados ainda");
         ImGui::EndGroup();
         return;
@@ -2080,7 +2115,7 @@ void ReinforcementLearningScreen::drawGetUpCharts(float height) {
             "continuam de pé até o fim (o equilíbrio).");
     lineChart("##levantou", { { &c.standing, green, false, "treino" }, { &c.test, green, true, "teste sem ruído" },
                                 { &c.kept, amber, false, "começando de pé" } },
-        0.0f, 100.0f, size, last(c.standing, "%.0f%%").c_str(), "%", nullptr, false, "sem dados ainda");
+        0.0f, 100.0f, size, last(c.standing, "%.0f%%").c_str(), "%", &c.times, true, "sem dados ainda");
     ImGui::EndGroup();
     ImGui::SameLine();
     ImGui::SetCursorPosY(rowTop);
@@ -2089,7 +2124,7 @@ void ReinforcementLearningScreen::drawGetUpCharts(float height) {
     tooltip("Depois de levantar, a semelhança com o parado em alerta (ou o espelho), de 0 a 100: o treino e, tracejado, o "
             "teste nas 64 quedas fixas.");
     lineChart("##pose_levantar", { { &c.pose, violet, false, "treino" }, { &c.poseTest, violet, true, "teste sem ruído" } },
-        0.0f, 100.0f, size, both(c.poseTest, c.pose, "%.0f%%").c_str(), "%", nullptr, false, "sem dados ainda");
+        0.0f, 100.0f, size, both(c.poseTest, c.pose, "%.0f%%").c_str(), "%", &c.times, true, "sem dados ainda");
     (void)blue;
     ImGui::EndGroup();
 }
