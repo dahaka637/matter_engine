@@ -52,9 +52,11 @@ public:
     // ia para tras e o peito arqueava; 21h25: "reforcar... que quando de pe fique o mais proximo possivel do nosso idle
     // alerta", 0,6 so na pose; 22h45: "ficar com a coluna reta, a postura mais correta do IDLE alerta... o clipe
     // original e torto" - a pose das juntas nao ve a pelve, e de pe o tronco inteiro inclinava ~7 graus de lado, o alto
-    // do peito, o pescoco e a cabeca ~10). Sem a pose do parado dada, as partes dela valem 1.
+    // do peito, o pescoco e a cabeca ~10). Sem a pose do parado dada, as partes dela valem 1. A coluna so conta quieto
+    // (quiet; 23h12: com ela tambem logo depois dos empurroes, o equilibrio parado caiu de 0,81 para 0,53 no teste - a
+    // postura nunca pode bloquear o uso funcional do tronco).
     [[nodiscard]] float standingReward(const TrackingGetUpPosture3D& posture,
-        std::span<const PhysicsBodyState3D> links) const;
+        std::span<const PhysicsBodyState3D> links, bool quiet = true) const;
     // As poses do parado (um quadro de cada clipe parado; 31/10 18h, ele: o padrao de ficar de pe e o parado em alerta,
     // com o espelho): a rotacao de cada junta no pai. setIdlePose troca todas por uma; addIdlePose junta outra.
     void setIdlePose(std::span<const PhysicsBodyState3D> links);

@@ -115,10 +115,12 @@ struct TrackingGetUpAmpTraining3D::Impl {
         float stoodAt = -1.0f;
         double rewardSum = 0.0;
         std::uint32_t decisions = 0;
-        // O empurrao (o de pe do jogo de pes ou o forte do evitar): a forca, os passos de fisica que faltam e o proximo.
+        // O empurrao (o de pe do jogo de pes ou o forte do evitar): a forca, os passos de fisica que faltam, o proximo e
+        // quando o ultimo acaba (s).
         Vec3 pushForce;
         int pushTicks = 0;
         float nextPushAt = -1.0f;
+        float lastPushEnd = -1.0e9f;
         // O comando (o levantar em movimento): o alvo no chao e a velocidade pedida (0: ficar onde esta).
         Vec3 target;
         float commandSpeed = 0.0f;
@@ -351,6 +353,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
         w.rewardSum = 0.0;
         w.decisions = 0;
         w.nextPushAt = -1.0f;
+        w.lastPushEnd = -1.0e9f;
         w.reachedAt = -1.0f;
         w.towardSum = 0.0;
         w.towardSamples = 0;
@@ -421,6 +424,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
         }
         w.pushForce = { std::cos(angle) * newtons, std::sin(angle) * newtons, 0.0f };
         w.pushTicks = std::max(1, static_cast<int>(std::lround(seconds / TickSeconds)));
+        w.lastPushEnd = w.time + seconds;
         w.nextPushAt = balanceTest || movingTest ? 1.0e9f
             : w.time + seconds + (w.locomotion ? 2.0f + 2.0f * u(w.rng) : 1.5f + 1.5f * u(w.rng));
     }
@@ -445,6 +449,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
         w.pushForce = { std::cos(angle) * newtons, std::sin(angle) * newtons, 0.0f };
         w.pushTicks = std::max(1, static_cast<int>(std::lround(seconds / TickSeconds)));
         w.avoidEnd = w.time + seconds;
+        w.lastPushEnd = w.avoidEnd;
         w.avoidAt = -1.0f;
     }
 
@@ -540,10 +545,12 @@ struct TrackingGetUpAmpTraining3D::Impl {
             w.stopAt = -1.0f;
         }
         advanceTurn(w);
-        // (Parado com rumo pedido: a nota do parado 0,7 e o rumo do corpo 0,3, de pe.)
+        // (Parado com rumo pedido: a nota do parado 0,7 e o rumo do corpo 0,3, de pe. A coluna so quieto: sem empurrao e
+        // 1 s depois do ultimo.)
+        const bool quiet = w.pushTicks == 0 && w.time >= w.lastPushEnd + 1.0f;
         const float state = w.commandSpeed > 0.0f ? moveReward(w, now)
-            : w.locomotion ? 0.7f * posture->standingReward(now, w.body->links) + (now.standing ? 0.3f * facing(w) : 0.0f)
-                           : posture->standingReward(now, w.body->links);
+            : w.locomotion ? 0.7f * posture->standingReward(now, w.body->links, quiet) + (now.standing ? 0.3f * facing(w) : 0.0f)
+                           : posture->standingReward(now, w.body->links, quiet);
         if (w.locomotion && now.standing) {
             w.faceErrorSum += std::abs(wrapAngle(faceDirection(w) - bodyYaw(w)));
             ++w.faceErrorSamples;
