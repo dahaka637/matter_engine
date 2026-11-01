@@ -193,6 +193,10 @@ def summarize(rows: np.ndarray, prefix: str) -> dict:
                     out[f"{prefix}sem_tocar_chao"] = float((rows[:, 21] == 0).mean())
                     if rows.shape[1] > 22:
                         out[f"{prefix}apoio"] = float(rows[:, 22].mean())
+                    if rows.shape[1] > 23:
+                        # (A flexao na queda: so os episodios com a queda iminente, os que tem o trecho medido.)
+                        measured = rows[:, 23] != 0
+                        out[f"{prefix}flexao"] = float(rows[measured, 23].mean()) if measured.any() else None
         avoid = rows[:, 1] == 4
         if avoid.any():
             ok = avoid & (rows[:, 14] >= 0)
@@ -362,6 +366,10 @@ def main() -> int:
                         help="na protecao na queda, o premio do primeiro apoio das maos, bracos ou joelhos (uma vez)")
     parser.add_argument("--protecao-alivio", type=float, default=0.0,
                         help="a fracao dos custos do tranco e do limite tirada enquanto ele se protege na queda")
+    # (01/11 04h40, ele, com a imagem do corpo arqueado no chao: "assim que ele cai, ele puxa os bracos e pernas dele
+    # para tras... o correto seria ao contrario, para frente": na queda e ao chegar ao chao, a flexao - maos a frente do
+    # peito, joelhos a frente da pelve, sem arquear a coluna para tras.)
+    parser.add_argument("--flexao", type=float, default=0.0, help="o peso da flexao na queda (bracos e joelhos a frente)")
     # (01/11, ele: o levantar do chao "com gestos mais sutis e suaves, menos exagerados, sem o boneco ficar distorcido ou
     # fazer coisas inumanas"; a velocidade deixa de ser o foco. O discriminador separava tudo - clipes +0,90, a rede
     # -0,90 - e a nota de estilo ficava em ~0,08 para qualquer movimento: o gp maior o suaviza. E o custo dos alvos perto
@@ -398,7 +406,7 @@ def main() -> int:
                   "parceiro_segundos": args.parceiro_segundos, "parceiro_punicao": args.parceiro_punicao,
                   "evitar_com_parceiro": args.evitar_com_parceiro, "toque_punicao": args.toque_punicao,
                   "disc_gp": args.disc_gp, "limite": args.limite, "apoio_premio": args.apoio_premio,
-                  "protecao_alivio": args.protecao_alivio,
+                  "protecao_alivio": args.protecao_alivio, "flexao": args.flexao,
                   "andar_velocidade": list(args.andar_velocidade), "trote_velocidade": list(args.trote_velocidade),
                   "empurrao_mov_forca": list(args.empurrao_mov_forca), "empurrao_mov_continuo": args.empurrao_mov_continuo,
                   "empurrao_mov_continuo_forca": list(args.empurrao_mov_continuo_forca),
@@ -422,7 +430,7 @@ def main() -> int:
                                  handoff_on_stand=args.troca_de_pe, locomotion_fall_fraction=args.quedas_locomocao,
                                  partner_seconds=args.parceiro_segundos, partner_fall_penalty=args.parceiro_punicao,
                                  partner_avoid=args.evitar_com_parceiro, touch_down_penalty=args.toque_punicao,
-                                 support_bonus=args.apoio_premio, **v2)
+                                 support_bonus=args.apoio_premio, flex_reward=args.flexao, **v2)
     # (31/10 23h40, ele: "verifica se... nao conseguimos mais decisoes por segundo": as avaliacoes numa thread so paravam
     # o treino ~21 s a cada 50 atualizacoes, 13% do tempo; com as threads do treino, as que esperam ficam paradas.)
     eval_threads = args.threads
@@ -742,7 +750,7 @@ def main() -> int:
         counters["amostras"] += T * n
         counters["episodios"] += len(episodes)
         if counters["atualizacao"] % 20 == 0:
-            recent = np.array(window) if window else np.zeros((0, 23))
+            recent = np.array(window) if window else np.zeros((0, 24))
             row = {"atualizacao": counters["atualizacao"], "amostras": counters["amostras"], "hora": time.time(),
                    "tarefa": float(roll["task"].mean()), "estilo": last.get("estilo", float("nan")),
                    "tranco": float(roll["jerk"].mean()), "limite": float(roll["limit"].mean()),

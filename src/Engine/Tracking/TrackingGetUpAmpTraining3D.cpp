@@ -33,6 +33,8 @@ constexpr float FallPoseNoise = 0.35f;
 // pela cabeca; os pes, as pernas e os bracos podem apoiar. Cair depois de ja ter ficado de pe custa isto, uma vez por
 // queda (alem do potencial que desce).
 constexpr float FallPenalty = 10.0f;
+// A flexao na queda vale ate este tanto depois do primeiro toque do tronco no chao (s): o chegar ao chao.
+constexpr float FlexAfterTouchSeconds = 0.75f;
 // Os pares da arrancada agachada pesam isto no discriminador (a referencia do levantar em movimento).
 constexpr int SprintStartPairWeight = 6;
 // O levantar em movimento: chegou ao alvo neste raio (m), e dai o pedido vira ficar parado.
@@ -91,6 +93,10 @@ struct TrackingGetUpAmpTraining3D::Impl {
     std::vector<std::string> observationNames;
     std::uint32_t rootLink = 0;
     std::uint32_t footLinks[2] { 0, 0 };
+    // A flexao na queda: o peito alto, as maos e as canelas (a origem delas e o joelho).
+    std::uint32_t upperChestLink = 0;
+    std::uint32_t handLinks[2] { 0, 0 };
+    std::uint32_t shinLinks[2] { 0, 0 };
     // As partes que podem tocar o chao sem contar como caido: as pernas e os bracos (nao o tronco, o pescoco e a cabeca).
     std::vector<bool> allowedContact;
     // O apoio de protecao: as maos, os bracos e as pernas (os joelhos), sem os pes.
@@ -163,6 +169,10 @@ struct TrackingGetUpAmpTraining3D::Impl {
         // A protecao na queda: se esta protegendo-se agora e se ja se apoiou.
         bool protecting = false;
         bool supported = false;
+        // A flexao na queda: ate quando vale depois do toque (s; < 0: sem toque ainda), a soma e as amostras.
+        float flexUntil = -1.0f;
+        double flexSum = 0.0;
+        std::uint32_t flexSamples = 0;
         // O premio do passo: o tempo no ar de cada pe (s) e se ele estava no chao.
         float footAir[2] { 0.0f, 0.0f };
         bool footDown[2] { true, true };
@@ -378,6 +388,25 @@ struct TrackingGetUpAmpTraining3D::Impl {
         if (w.turnLeft <= 0.0f) w.pauseUntil = w.time + 1.0f + 2.0f * std::uniform_real_distribution<float>(0.0f, 1.0f)(w.rng);
     }
 
+    // A flexao do corpo agora (de -2 a 1): as maos a frente do peito e os joelhos a frente da pelve, cada um ate 0,25 m
+    // (+1; atras, -1), na media, menos a coluna arqueada para tras (o peito inclinado para tras em relacao a pelve, ate
+    // 30 graus: -1).
+    float flexion(const RagdollState3D& body) const {
+        const auto frame = [&](std::uint32_t i) {
+            return (body.links[i].orientation * profile->links[i].modelOrientation.conjugate()).normalized();
+        };
+        const Quaternion pelvis = frame(rootLink), chest = frame(upperChestLink);
+        const Vec3 pelvisForward = pelvis.rotate({ 1.0f, 0.0f, 0.0f }), chestForward = chest.rotate({ 1.0f, 0.0f, 0.0f });
+        const auto ahead = [](float meters) { return std::clamp(meters / 0.25f, -1.0f, 1.0f); };
+        float limbs = 0.0f;
+        for (int side = 0; side < 2; ++side) {
+            limbs += ahead(dot(body.links[handLinks[side]].position - body.links[upperChestLink].position, chestForward));
+            limbs += ahead(dot(body.links[shinLinks[side]].position - body.links[rootLink].position, pelvisForward));
+        }
+        const float back = std::asin(std::clamp(-dot(chest.rotate({ 0.0f, 0.0f, 1.0f }), pelvisForward), -1.0f, 1.0f));
+        return 0.25f * limbs - std::clamp(back / (30.0f * Pi / 180.0f), 0.0f, 1.0f);
+    }
+
     bool fallen(const TrackingGetUpPosture3D& posture, const RagdollState3D& body) const {
         (void)posture;
         for (const RagdollContactPoint3D& contact : body.contacts)
@@ -433,6 +462,9 @@ struct TrackingGetUpAmpTraining3D::Impl {
         w.touchedDown = false;
         w.protecting = false;
         w.supported = false;
+        w.flexUntil = -1.0f;
+        w.flexSum = 0.0;
+        w.flexSamples = 0;
         w.footAir[0] = w.footAir[1] = 0.0f;
         w.footDown[0] = w.footDown[1] = true;
         w.startKind = kind;
@@ -701,6 +733,15 @@ struct TrackingGetUpAmpTraining3D::Impl {
             if (w.supported) reward += settings.supportBonus;
         }
         w.protecting = protecting;
+        // (A flexao: na protecao e ate FlexAfterTouchSeconds depois do primeiro toque do tronco.)
+        if (down && !w.touchedDown && w.stoodAt < 0.0f && (w.startKind == 4 || w.startKind == 8))
+            w.flexUntil = w.time + FlexAfterTouchSeconds;
+        if (protecting || (w.flexUntil >= 0.0f && w.time <= w.flexUntil)) {
+            const float flex = flexion(*w.body);
+            reward += settings.flexReward * flex;
+            w.flexSum += flex;
+            ++w.flexSamples;
+        }
         w.touchedDown = w.touchedDown || down;
         w.down = down;
         if (w.startKind == 4 && w.avoidEnd >= 0.0f && w.time >= w.avoidEnd && w.recomposedAt < 0.0f && now.standing
@@ -764,6 +805,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
             episode.partnerSeconds = w.partnerDrove;
             episode.touchedDown = w.touchedDown;
             episode.supported = w.supported;
+            episode.meanFlex = w.flexSamples ? static_cast<float>(w.flexSum / w.flexSamples) : 0.0f;
             episode.meanFaceError = w.faceErrorSamples
                 ? static_cast<float>(w.faceErrorSum / w.faceErrorSamples) * 180.0f / Pi : 0.0f;
             {
@@ -836,6 +878,11 @@ TrackingGetUpAmpTraining3D::TrackingGetUpAmpTraining3D(const TrackingGetUpAmpSet
         const std::string& id = impl.profile->links[i].id;
         if (id == "LeftFoot") impl.footLinks[0] = static_cast<std::uint32_t>(i);
         if (id == "RightFoot") impl.footLinks[1] = static_cast<std::uint32_t>(i);
+        if (id == "UpperChest") impl.upperChestLink = static_cast<std::uint32_t>(i);
+        if (id == "LeftHand") impl.handLinks[0] = static_cast<std::uint32_t>(i);
+        if (id == "RightHand") impl.handLinks[1] = static_cast<std::uint32_t>(i);
+        if (id == "LeftShin") impl.shinLinks[0] = static_cast<std::uint32_t>(i);
+        if (id == "RightShin") impl.shinLinks[1] = static_cast<std::uint32_t>(i);
         impl.allowedContact.push_back(id != "Pelvis" && id != "Abdomen" && id != "Chest" && id != "UpperChest"
             && id != "Neck" && id != "Head");
         impl.supportContact.push_back(impl.allowedContact.back() && id.find("Foot") == std::string::npos

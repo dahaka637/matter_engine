@@ -102,6 +102,11 @@ struct TrackingGetUpAmpSettings3D {
     // maos, joelhos, girando quadril, coluna... para conseguir se recobrar antes de cair"): nesses comecos, ate o tronco
     // tocar o chao ou ficar de pe, o premio do primeiro apoio das maos, dos bracos ou dos joelhos no chao (uma vez).
     float supportBonus = 0.0f;
+    // A flexao na queda (01/11, ele: "assim que ele cai, ele puxa os bracos e pernas dele para tras... o correto seria
+    // ao contrario, para frente"): na protecao e por FlexAfterTouchSeconds depois do primeiro toque do tronco, este peso
+    // vezes a flexao do passo - as maos a frente do peito e os joelhos a frente da pelve (ate 0,25 m: +1) menos a coluna
+    // arqueada para tras (30 graus: -1).
+    float flexReward = 0.0f;
     // Na avaliacao, o que se mede: 0 as quedas (o levantar), 1 o levantar em movimento, 2 o evitar a queda, 3 o
     // equilibrio parado (de pe, um empurrao com a regua do parado com empurrao forte do B21: o curto de 900-1200 N ou,
     // em 30%, o continuo de 205-275 N por 1-3 s), 4 os rumos (de pe, no meio do trote, mantendo o rumo do corpo, um
@@ -150,6 +155,8 @@ struct TrackingGetUpAmpEpisode3D {
     // ele se apoiou nas maos, nos bracos ou nos joelhos antes.
     bool touchedDown = false;
     bool supported = false;
+    // A flexao media na queda (a de flexReward, sem o peso; 0 sem a queda iminente).
+    float meanFlex = 0.0f;
 };
 
 // O que o visualizador do laboratorio desenha de um mundo: como comecou, o alvo (o levantar em movimento, enquanto o
