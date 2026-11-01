@@ -136,6 +136,11 @@ struct AthleteState3D {
         float trunkTilt = 0.0f;
         bool trunkTiltValid = false;
         std::uint32_t tiltTicks = 0;
+        // (01/11, ele: "o boneco fica congelado em uma pose se ao tentar levantar ha contato": ha quanto tempo ela esta
+        // parada sem subir (s) e, depois de soltar por isso ou pelo tempo, a espera de ele ficar de pe pelo classico
+        // antes de assumir de novo - no chao, a queda iminente disparava de novo no passo seguinte, sem fim.)
+        float stuckSeconds = 0.0f;
+        bool waitStand = false;
     } getUpRecovery;
     // A reescrita (R3): o corpo da classificacao de contatos, as regras de
     // troca de modo e o ultimo tick delas (a telemetria neutra: o que bateu,

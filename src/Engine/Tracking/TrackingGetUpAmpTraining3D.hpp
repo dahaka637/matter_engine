@@ -107,6 +107,12 @@ struct TrackingGetUpAmpSettings3D {
     // vezes a flexao do passo - as maos a frente do peito e os joelhos a frente da pelve (ate 0,25 m: +1) menos a coluna
     // arqueada para tras (30 graus: -1).
     float flexReward = 0.0f;
+    // O cenario sujo (01/11, ele: "nossa rede tem dificuldade de levantar-se se o cenario nao e limpo - tem algo
+    // esbarrando nele, ou um boneco por cima"): no treino, a fatia dos episodios com uma parede ou caixa fixa encostada
+    // no corpo (a 4-44 cm dele, de 0,4 a 1,5 m de altura, num lado sorteado) e a com um peso comprido solto caindo de
+    // atravessado em cima dele (20-60 kg, como um boneco por cima).
+    float obstacleFraction = 0.0f;
+    float weightFraction = 0.0f;
     // Na avaliacao, o que se mede: 0 as quedas (o levantar), 1 o levantar em movimento, 2 o evitar a queda, 3 o
     // equilibrio parado (de pe, um empurrao com a regua do parado com empurrao forte do B21: o curto de 900-1200 N ou,
     // em 30%, o continuo de 205-275 N por 1-3 s), 4 os rumos (de pe, no meio do trote, mantendo o rumo do corpo, um
@@ -157,6 +163,8 @@ struct TrackingGetUpAmpEpisode3D {
     bool supported = false;
     // A flexao media na queda (a de flexReward, sem o peso; 0 sem a queda iminente).
     float meanFlex = 0.0f;
+    // Se o episodio teve a parede ou o peso (o cenario sujo).
+    bool obstructed = false;
 };
 
 // O que o visualizador do laboratorio desenha de um mundo: como comecou, o alvo (o levantar em movimento, enquanto o

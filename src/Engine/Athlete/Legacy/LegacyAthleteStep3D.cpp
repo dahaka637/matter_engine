@@ -38,6 +38,8 @@ constexpr float ReturnSeconds = 0.60f;
 // episodio do treino da locomocao (a tarefa do B21) e, sem ficar de pe e firme neste tanto (s), o classico de volta.
 constexpr float GetUpFallPelvisHeight = 0.45f;
 constexpr float GetUpRecoveryLimitSeconds = 10.0f;
+// Parada sem subir (o centro de massa abaixo de 0,15 m/s, sem ficar de pe) por este tanto (s), ela solta ao classico.
+constexpr float GetUpStuckSeconds = 2.5f;
 
 // No Ativo, o ponto de captura alem disto (m) fora da base leva ao fisico
 // pleno: sem os passos de equilibrio, a pancada que pede passo; com eles, so
@@ -2022,15 +2024,24 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             rl.trunkTiltValid = false;
         } else if (!rl.active && !athlete.animatedGetUp.active()) {
             const PhysicsBodyState3D& pelvis = body.links.front();
-            bool imminent = pelvis.position.z - groundHeight(pelvis.position) < GetUpFallPelvisHeight * bodyScale3D(assets.body);
+            // (Depois de soltar travada ou pelo tempo, so de novo com ele de pe.)
+            if (rl.waitStand) {
+                const float up = (pelvis.orientation * profile.links.front().modelOrientation.conjugate())
+                    .rotate({ 0.0f, 0.0f, 1.0f }).z;
+                if (pelvis.position.z - groundHeight(pelvis.position) > 0.85f * profile.standingRootHeightMeters && up > 0.85f)
+                    rl.waitStand = false;
+            }
+            bool imminent = !rl.waitStand
+                && pelvis.position.z - groundHeight(pelvis.position) < GetUpFallPelvisHeight * bodyScale3D(assets.body);
             for (const RagdollInteraction3D& contact : body.interactions) {
                 if (contact.linkIndex >= profile.links.size() || contact.otherMotion != RagdollContactMotion3D::Static
                     || contact.normalWorld.z <= 0.5f)
                     continue;
                 const std::string& id = profile.links[contact.linkIndex].id;
-                if (id.find("Foot") == std::string::npos && id.find("Toe") == std::string::npos) imminent = true;
+                if (!rl.waitStand && id.find("Foot") == std::string::npos && id.find("Toe") == std::string::npos)
+                    imminent = true;
             }
-            if (++rl.tiltTicks % GetUpPolicy3D::TicksPerDecision == 0) {
+            if (++rl.tiltTicks % GetUpPolicy3D::TicksPerDecision == 0 && !rl.waitStand) {
                 if (state.locomotion.telemetry().state == CharacterLocomotionState3D::Fallen) imminent = true;
                 const float tilt = GetUpPolicy3D::trunkTilt(profile, body.links);
                 const float decision = static_cast<float>(GetUpPolicy3D::TicksPerDecision) * deltaTime;
@@ -2045,6 +2056,7 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                 rl.ticks = 0;
                 rl.firmSeconds = 0.0f;
                 rl.seconds = 0.0f;
+                rl.stuckSeconds = 0.0f;
                 if (state.guided) {
                     scene.setRagdollGuided(slot.handle, false);
                     state.guided = false;
@@ -2084,10 +2096,17 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                 const bool firm = pelvis.position.z - groundHeight(pelvis.position) > 0.85f * profile.standingRootHeightMeters
                     && upright > 0.85f && std::hypot(com.x, com.y) < 0.5f;
                 rl.firmSeconds = firm ? rl.firmSeconds + deltaTime : 0.0f;
-                if (rl.firmSeconds < GetUpPolicy3D::FirmSeconds && rl.seconds < GetUpRecoveryLimitSeconds) return;
+                // (Travada - presa num contato, sem subir -: o classico tenta.)
+                const bool rising = pelvis.position.z - groundHeight(pelvis.position) > 0.85f * profile.standingRootHeightMeters;
+                rl.stuckSeconds = !rising && std::hypot(com.x, com.y) < 0.15f && std::abs(com.z) < 0.15f
+                    ? rl.stuckSeconds + deltaTime : 0.0f;
+                const bool stuck = rl.stuckSeconds >= GetUpStuckSeconds;
+                if (rl.firmSeconds < GetUpPolicy3D::FirmSeconds && rl.seconds < GetUpRecoveryLimitSeconds && !stuck) return;
+                const bool stood = rl.firmSeconds >= GetUpPolicy3D::FirmSeconds;
                 athlete.getUpHandoff = { GetUpPolicy3D::BlendSeconds, rl.drives };
                 state.getUpSeen = true;
-                release(rl.firmSeconds >= GetUpPolicy3D::FirmSeconds ? "de pe" : "tempo");
+                rl.waitStand = !stood;
+                release(stood ? "de pe" : stuck ? "travada" : "tempo");
             }
         }
     }

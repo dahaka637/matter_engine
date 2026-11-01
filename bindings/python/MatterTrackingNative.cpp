@@ -342,7 +342,8 @@ NB_MODULE(matter_tracking_native, m) {
                 std::array<float, 2> movingPushNewtons, float movingPushHoldFraction,
                 std::array<float, 2> movingPushHoldNewtons, float stepReward, bool handoffOnStand,
                 float locomotionFallFraction, float partnerSeconds, float partnerFallPenalty, bool partnerAvoid,
-                float touchDownPenalty, float supportBonus, float flexReward) {
+                float touchDownPenalty, float supportBonus, float flexReward, float obstacleFraction,
+                float weightFraction) {
                 TrackingGetUpAmpSettings3D settings;
                 settings.assetsDirectory = assets;
                 settings.environments = environments;
@@ -387,6 +388,8 @@ NB_MODULE(matter_tracking_native, m) {
                 settings.touchDownPenalty = touchDownPenalty;
                 settings.supportBonus = supportBonus;
                 settings.flexReward = flexReward;
+                settings.obstacleFraction = obstacleFraction;
+                settings.weightFraction = weightFraction;
                 nb::gil_scoped_release release;
                 new (self) TrackingGetUpAmpTraining3D(settings);
             },
@@ -403,7 +406,8 @@ NB_MODULE(matter_tracking_native, m) {
             "moving_push_hold_fraction"_a = 0.3f, "moving_push_hold_newtons"_a = std::array<float, 2> { 100.0f, 180.0f },
             "step_reward"_a = 0.0f, "handoff_on_stand"_a = false, "locomotion_fall_fraction"_a = 0.0f,
             "partner_seconds"_a = 2.0f, "partner_fall_penalty"_a = 10.0f, "partner_avoid"_a = false,
-            "touch_down_penalty"_a = 0.0f, "support_bonus"_a = 0.0f, "flex_reward"_a = 0.0f)
+            "touch_down_penalty"_a = 0.0f, "support_bonus"_a = 0.0f, "flex_reward"_a = 0.0f,
+            "obstacle_fraction"_a = 0.0f, "weight_fraction"_a = 0.0f)
         .def_prop_ro("num_envs", &TrackingGetUpAmpTraining3D::environmentCount)
         // As quedas da locomocao (01/11): [n, links, 13] - a posicao, a orientacao (xyzw) e as velocidades linear e
         // angular de cada link no instante da queda (take_fall_states do lote da locomocao).
@@ -526,12 +530,12 @@ NB_MODULE(matter_tracking_native, m) {
                 return std::vector<std::string> { "mundo", "comeco", "lado", "cabeca_inicio", "segundos", "de_pe_aos",
                     "nota_tarefa", "altura_cabeca", "altura_pelve", "de_pe", "velocidade_pedida", "chegou_aos",
                     "velocidade_rumo_alvo", "caiu_depois_de_pe", "recompos_aos", "pose_fim", "erro_rumo_graus", "coluna_fim", "troca_aos",
-                    "parceiro_caiu", "parceiro_s", "tocou_chao", "apoio", "flexao" };
+                    "parceiro_caiu", "parceiro_s", "tocou_chao", "apoio", "flexao", "obstaculo" };
             })
         .def("finished_episodes",
             [](TrackingGetUpAmpTraining3D& b) {
                 const std::vector<TrackingGetUpAmpEpisode3D> episodes = b.takeEpisodes();
-                constexpr std::size_t width = 24;
+                constexpr std::size_t width = 25;
                 auto out = owned<float>({ episodes.size(), width });
                 float* d = out.data();
                 for (std::size_t i = 0; i < episodes.size(); ++i) {
@@ -541,7 +545,8 @@ NB_MODULE(matter_tracking_native, m) {
                         e.meanTaskReward, e.headHeight, e.pelvisHeight, e.standing ? 1.0f : 0.0f, e.commandSpeed,
                         e.reachedSeconds, e.meanTowardSpeed, e.fellAfterStanding ? 1.0f : 0.0f, e.recomposedSeconds,
                         e.endPoseMatch, e.meanFaceError, e.endSpineMatch, e.handoffSeconds, e.partnerFell ? 1.0f : 0.0f,
-                        e.partnerSeconds, e.touchedDown ? 1.0f : 0.0f, e.supported ? 1.0f : 0.0f, e.meanFlex };
+                        e.partnerSeconds, e.touchedDown ? 1.0f : 0.0f, e.supported ? 1.0f : 0.0f, e.meanFlex,
+                        e.obstructed ? 1.0f : 0.0f };
                     std::copy(row, row + width, d + i * width);
                 }
                 return out;

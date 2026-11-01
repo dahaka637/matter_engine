@@ -587,6 +587,18 @@ std::vector<Scenario> scenarios() {
         Scenario parado { "queda_levanta", 10.0f, [](float) { return Keys {}; } };
         parado.throws.push_back({ 1.0f, 140.0f, { 0.3f, 0.3f, 0.3f }, { 0.0f, 1.5f, 0.9f }, { 0.0f, -9.0f, 0.0f } });
         list.push_back(parado);
+        // (01/11, ele: "nossa rede tem dificuldade de levantar-se se o cenario nao e limpo... o boneco fica congelado em
+        // uma pose, se ao tentar levantar ha contato": a mesma queda contra uma parede logo atras e com um peso de 40 kg
+        // caindo em cima dele no chao.)
+        Scenario parede { "queda_parede", 10.0f, [](float) { return Keys {}; } };
+        parede.throws = parado.throws;
+        parede.wallCenter = { 0.0f, -1.05f, 0.75f };
+        parede.wallHalf = { 2.0f, 0.15f, 0.75f };
+        list.push_back(parede);
+        Scenario peso { "queda_peso", 10.0f, [](float) { return Keys {}; } };
+        peso.throws = parado.throws;
+        peso.throws.push_back({ 2.0f, 40.0f, { 0.15f, 0.5f, 0.12f }, { 0.0f, -0.7f, 1.6f }, { 0.0f, 0.0f, -2.0f } });
+        list.push_back(peso);
         Scenario anda { "queda_levanta_anda", 10.0f, [](float t) { Keys k; k.forward = t > 2.5f ? 0.5f : 0.0f; return k; } };
         anda.throws = parado.throws;
         list.push_back(anda);

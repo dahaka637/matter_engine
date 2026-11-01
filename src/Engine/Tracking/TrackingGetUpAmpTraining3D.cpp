@@ -173,6 +173,9 @@ struct TrackingGetUpAmpTraining3D::Impl {
         float flexUntil = -1.0f;
         double flexSum = 0.0;
         std::uint32_t flexSamples = 0;
+        // O cenario sujo do episodio: a parede e o peso (desfeitos no comeco seguinte).
+        std::vector<PhysicsBodyHandle3D> obstacles;
+        bool obstructed = false;
         // O premio do passo: o tempo no ar de cada pe (s) e se ele estava no chao.
         float footAir[2] { 0.0f, 0.0f };
         bool footDown[2] { true, true };
@@ -407,11 +410,56 @@ struct TrackingGetUpAmpTraining3D::Impl {
         return 0.25f * limbs - std::clamp(back / (30.0f * Pi / 180.0f), 0.0f, 1.0f);
     }
 
+    // (01/11, o cenario sujo: so o que toca uma superficie de chao - o ombro na parede, ou o peso em cima, nao e caido.)
     bool fallen(const TrackingGetUpPosture3D& posture, const RagdollState3D& body) const {
         (void)posture;
         for (const RagdollContactPoint3D& contact : body.contacts)
-            if (contact.linkIndex < allowedContact.size() && !allowedContact[contact.linkIndex]) return true;
+            if (contact.linkIndex < allowedContact.size() && !allowedContact[contact.linkIndex] && contact.normal.z > 0.5f)
+                return true;
         return false;
+    }
+
+    // O cenario sujo do comeco (so no treino): a parede ou caixa fixa encostada no corpo e o peso caindo em cima.
+    void placeObstacles(World& w) {
+        for (const PhysicsBodyHandle3D handle : w.obstacles)
+            if (w.scene->contains(handle)) w.scene->destroyBody(handle);
+        w.obstacles.clear();
+        if (settings.evaluation || w.body->links.empty()) return;
+        std::uniform_real_distribution<float> u(0.0f, 1.0f);
+        const Vec3 root = w.body->links[rootLink].position;
+        if (u(w.rng) < settings.obstacleFraction) {
+            const float angle = 2.0f * Pi * u(w.rng);
+            const Vec3 direction { std::cos(angle), std::sin(angle), 0.0f };
+            // (Do link mais longe nesse lado, para comecar encostada sem atravessar o corpo.)
+            float reach = 0.0f;
+            for (const PhysicsBodyState3D& link : w.body->links) reach = std::max(reach, dot(link.position - root, direction));
+            PhysicsShape3D shape;
+            shape.type = PhysicsShapeType3D::Box;
+            shape.halfExtents = { 0.15f + 0.25f * u(w.rng), 0.5f + 1.0f * u(w.rng), 0.2f + 0.55f * u(w.rng) };
+            shape.materialId = "concrete";
+            PhysicsBodyDefinition3D wall;
+            wall.motionType = PhysicsMotionType3D::Static;
+            wall.position = root + direction * (reach + 0.04f + 0.4f * u(w.rng) + shape.halfExtents.x);
+            wall.position.z = shape.halfExtents.z;
+            wall.orientation = Quaternion::fromAxisAngle({ 0.0f, 0.0f, 1.0f }, angle);
+            wall.materialId = "concrete";
+            w.obstacles.push_back(w.scene->createBody(wall, std::span<const PhysicsShape3D>(&shape, 1)));
+        }
+        if (u(w.rng) < settings.weightFraction) {
+            const std::size_t link = std::uniform_int_distribution<std::size_t>(0, w.body->links.size() - 1)(w.rng);
+            PhysicsShape3D shape;
+            shape.type = PhysicsShapeType3D::Box;
+            shape.halfExtents = { 0.12f + 0.06f * u(w.rng), 0.4f + 0.3f * u(w.rng), 0.1f + 0.05f * u(w.rng) };
+            shape.materialId = "wood";
+            PhysicsBodyDefinition3D weight;
+            weight.motionType = PhysicsMotionType3D::Dynamic;
+            weight.position = w.body->links[link].position + Vec3 { 0.0f, 0.0f, 0.3f + 0.3f * u(w.rng) };
+            weight.orientation = Quaternion::fromAxisAngle({ 0.0f, 0.0f, 1.0f }, 2.0f * Pi * u(w.rng));
+            weight.massKg = 20.0f + 40.0f * u(w.rng);
+            weight.materialId = "wood";
+            w.obstacles.push_back(w.scene->createBody(weight, std::span<const PhysicsShape3D>(&shape, 1)));
+        }
+        w.obstructed = !w.obstacles.empty();
     }
 
     void begin(World& w) {
@@ -502,6 +550,8 @@ struct TrackingGetUpAmpTraining3D::Impl {
         }
         w.startCommandSpeed = w.commandSpeed;
         if (kind == 4) w.avoidAt = 0.3f + 0.7f * u(w.rng);
+        w.obstructed = false;
+        placeObstacles(w);
         if (partnerPushLeft >= 0.0f) {
             w.avoidAt = -1.0f;
             w.avoidEnd = w.lastPushEnd = partnerPushLeft;
@@ -806,6 +856,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
             episode.touchedDown = w.touchedDown;
             episode.supported = w.supported;
             episode.meanFlex = w.flexSamples ? static_cast<float>(w.flexSum / w.flexSamples) : 0.0f;
+            episode.obstructed = w.obstructed;
             episode.meanFaceError = w.faceErrorSamples
                 ? static_cast<float>(w.faceErrorSum / w.faceErrorSamples) * 180.0f / Pi : 0.0f;
             {
