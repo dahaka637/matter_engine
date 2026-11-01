@@ -126,7 +126,7 @@ def export(model: Policy, path: Path, meta: dict) -> None:
     header.update({"schema": "matter-rl-policy-1", "observationSize": layers[0]["inputs"],
                    "actionSize": layers[-1]["outputs"], "activation": "relu",
                    "normalizer": {"mean": mean_at, "invStd": inv_at, "clip": 5.0}, "actionLimit": 3.14159,
-                   "layers": layers, "observationLayout": "levantar-v3", "actionLayout": "levantar-v1",
+                   "layers": layers, "observationLayout": "levantar-v4", "actionLayout": "levantar-v1",
                    "createdUtc": datetime.now(timezone.utc).isoformat(timespec="seconds")})
     text = json.dumps(header, ensure_ascii=False).encode("utf-8")
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -419,6 +419,7 @@ def main() -> int:
     parser.add_argument("--suave-loco", type=float, default=None, help="o peso do custo do tranco na locomocao")
     parser.add_argument("--passo", type=float, default=0.0,
                         help="o premio do passo (o tempo no ar de cada pe que pousa, com o pedido de deslocamento)")
+    parser.add_argument("--so-clipe", default="", help="nos rumos, so os passos deste clipe (o imitador de um clipe)")
     parser.add_argument("--imitacao", type=float, default=0.0,
                         help="na locomocao, o peso da imitacao do clipe do passo pedido (DeepMimic; 0: sem)")
     parser.add_argument("--rampa-velocidade", type=float, default=0.5,
@@ -493,6 +494,7 @@ def main() -> int:
                                  command_change=tuple(args.troca_pedido), step_reward=args.passo,
                                  **({"speed_ramp_power": args.rampa_velocidade} if args.rampa_velocidade != 0.5 else {}),
                                  **({"imitation_weight": args.imitacao} if args.imitacao > 0 else {}),
+                                 **({"only_clip": args.so_clipe} if args.so_clipe else {}),
                                  **v2)
     # (31/10 23h40, ele: "verifica se... nao conseguimos mais decisoes por segundo": as avaliacoes numa thread so paravam
     # o treino ~21 s a cada 50 atualizacoes, 13% do tempo; com as threads do treino, as que esperam ficam paradas.)

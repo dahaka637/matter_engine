@@ -108,6 +108,9 @@ struct TrackingGetUpAmpSettings3D {
     // nota do DeepMimic (TrackingGetUpContract3D::reward) contra o quadro do clipe do passo pedido, no tempo dele desde o
     // comeco (em ciclo), alinhado a posicao e ao rumo do corpo, vezes este peso, somada a nota de estado. 0: desligada.
     float imitationWeight = 0.0f;
+    // O imitador de um clipe so (01/11 18h, ele: "essa locomocao e INACEITAVEL"): nos rumos, so os passos deste clipe
+    // (vazio: todos pelas fatias).
+    std::string onlyClip;
     // A troca de rede ao ficar de pe (01/11, ele: o levantar volta a ser so levantar e evitar quedas, "fazendo a troca
     // de RL no momento que recem fica de pe"): o episodio acaba (truncado, como o fim do tempo) quando ele fica de pe e
     // firme por 0,5 s - o mesmo da entrega no jogo - depois de ter estado no chao ou, no evitar a queda, do empurrao.
@@ -257,6 +260,9 @@ public:
     static constexpr std::size_t CommandSize = 6;
     // Depois do comando, o corpo contra o chao (o contrato v3, TrackingGetUpContract3D::observeGround).
     static constexpr std::size_t GroundObservationSize = TrackingGetUpContract3D::GroundObservationSize;
+    // Depois do chao, a fase do clipe do passo (sen, cos de 2 pi t/T; zeros sem clipe): a entrada de fase do DeepMimic,
+    // sem a qual a imitacao no tempo do clipe nao tem como sincronizar (01/11 18h, o layout levantar-v4).
+    static constexpr std::size_t PhaseSize = 2;
 
     explicit TrackingGetUpAmpTraining3D(const TrackingGetUpAmpSettings3D& settings);
     ~TrackingGetUpAmpTraining3D();

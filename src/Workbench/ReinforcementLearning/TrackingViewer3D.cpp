@@ -316,8 +316,10 @@ struct TrackingViewer3D::Impl {
             auto policy = std::make_unique<PolicyRuntime3D>(getUpExport());
             // (A rede do contrato v2, sem as entradas do chao do v3 no fim, le so o comeco da observacao.)
             const std::size_t size = policy->observationSize();
-            if ((size == getUp->observationSize()
-                    || size + TrackingGetUpAmpTraining3D::GroundObservationSize == getUp->observationSize())
+            constexpr std::size_t phase = TrackingGetUpAmpTraining3D::PhaseSize;
+            const std::size_t full = getUp->observationSize();
+            if ((size == full || size + phase == full
+                    || size + phase + TrackingGetUpAmpTraining3D::GroundObservationSize == full)
                 && policy->actionSize() == getUp->actionSize()) {
                 getUpPolicy = std::move(policy);
                 getUpPolicyWrite = write;

@@ -36,6 +36,7 @@ private:
 
     std::unique_ptr<PolicyRuntime3D> m_policy;
     bool m_ground = false;
+    std::size_t m_phase = 0;
     mutable std::mutex m_mutex;
     mutable std::vector<std::pair<const RagdollProfile3D*, std::unique_ptr<TrackingGetUpContract3D>>> m_contracts;
 };

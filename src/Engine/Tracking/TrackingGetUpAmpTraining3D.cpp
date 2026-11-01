@@ -107,6 +107,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
         std::uint32_t heading = 0;
     };
     std::array<std::vector<Gait>, 4> gaits;
+    std::vector<std::string> clipNames;
     // As quedas com protecao carregadas (os indices).
     std::vector<std::size_t> protectionIndices;
     // A velocidade de deslocamento que falta aos clipes no lugar (os pares do discriminador): constante (corrida) ou
@@ -408,7 +409,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
         }
         w.faceYaw = bodyYaw(w);
         // (De pe, a imitacao comeca no inicio do clipe do passo, no rumo do corpo.)
-        if (!settings.evaluation && w.trackClip >= references.size() && w.commandSpeed > 0.0f) {
+        if (w.trackClip >= references.size() && w.commandSpeed > 0.0f) {
             for (const Gait& g : gaits[w.band])
                 if (g.heading == w.heading) {
                     w.trackClip = g.clip;
@@ -428,6 +429,13 @@ struct TrackingGetUpAmpTraining3D::Impl {
     // Um passo pelas fatias das faixas (andar, corrida, sprint; o resto trota), uniforme entre os carregados da faixa.
     const Gait& pickGait(World& w) {
         std::uniform_real_distribution<float> u(0.0f, 1.0f);
+        if (!settings.onlyClip.empty())
+            for (std::uint32_t b = 0; b < 4; ++b)
+                for (const Gait& g : gaits[b])
+                    if (clipNames[g.clip] == settings.onlyClip) {
+                        w.band = b;
+                        return g;
+                    }
         const float draw = u(w.rng);
         std::uint32_t band = 1;
         if (draw < settings.walkFraction) band = 0;
@@ -788,6 +796,17 @@ struct TrackingGetUpAmpTraining3D::Impl {
         // (O contrato v3: o corpo contra o chao, depois do comando; o chao do treino e o plano z = 0.)
         contract->observeGround(w.body->links, w.body->interactions, 0.0f,
             std::span<float>(w.observation).subspan(b + CommandSize, TrackingGetUpContract3D::GroundObservationSize));
+        {
+            float* phase = w.observation.data() + b + CommandSize + GroundObservationSize;
+            phase[0] = phase[1] = 0.0f;
+            if (w.locomotion && w.commandSpeed > 0.0f && w.trackClip < references.size()) {
+                const float duration = std::max(1.0e-3f, references[w.trackClip]->durationSeconds());
+                float t = std::fmod(w.trackStart + w.time, duration);
+                if (t < 0.0f) t += duration;
+                phase[0] = std::sin(2.0f * Pi * t / duration);
+                phase[1] = std::cos(2.0f * Pi * t / duration);
+            }
+        }
         float* c = w.observation.data() + b;
         const bool moving = w.commandSpeed > 0.0f;
         if (!moving && !w.locomotion) {
@@ -1072,6 +1091,7 @@ TrackingGetUpAmpTraining3D::TrackingGetUpAmpTraining3D(const TrackingGetUpAmpSet
         impl.clips.push_back(std::make_unique<AnimationClip3D>(
             loadAnimationClip3D(settings.assetsDirectory + "/animations/clips/" + name + ".matteranim.json")));
         impl.references.push_back(std::make_unique<TrackingClipReference3D>(*impl.profile, *impl.clips.back()));
+        impl.clipNames.push_back(name);
         if (name == "crouched_to_sprint") impl.sprintStartIndex = impl.references.size() - 1;
         if (std::find(std::begin(ProtectionClips), std::end(ProtectionClips), name) != std::end(ProtectionClips))
             impl.protectionIndices.push_back(impl.references.size() - 1);
@@ -1142,6 +1162,8 @@ TrackingGetUpAmpTraining3D::TrackingGetUpAmpTraining3D(const TrackingGetUpAmpSet
              "comando.rumo_cos", "comando.rumo_sen" })
         impl.observationNames.emplace_back(name);
     for (const std::string& name : TrackingGetUpContract3D::groundObservationNames()) impl.observationNames.push_back(name);
+    impl.observationNames.emplace_back("fase.sen");
+    impl.observationNames.emplace_back("fase.cos");
     const std::uint32_t hardware = std::max(1u, std::thread::hardware_concurrency());
     impl.workers = settings.threads > 0 ? settings.threads : std::max(1u, hardware > 2 ? hardware - 2 : 1u);
     impl.scheduler = std::make_shared<TaskScheduler>(TaskSchedulerSettings { std::max(1u, impl.workers - 1) });
@@ -1156,7 +1178,7 @@ TrackingGetUpAmpTraining3D::TrackingGetUpAmpTraining3D(const TrackingGetUpAmpSet
         spawn.active = true;
         spawn.pelvisPosition = { 0.0f, 0.0f, impl.profile->standingRootHeightMeters };
         w.handle = w.scene->createRagdoll(*impl.profile, spawn);
-        w.observation.assign(impl.contract->bodyObservationSize() + CommandSize + GroundObservationSize, 0.0f);
+        w.observation.assign(impl.contract->bodyObservationSize() + CommandSize + GroundObservationSize + PhaseSize, 0.0f);
         w.finalObservation.assign(w.observation.size(), 0.0f);
         w.ampPair.assign(2 * impl.features->size(), 0.0f);
         w.pose.assign(impl.contract->actionSize(), 0.0f);
@@ -1170,7 +1192,7 @@ TrackingGetUpAmpTraining3D::~TrackingGetUpAmpTraining3D() {
 
 std::size_t TrackingGetUpAmpTraining3D::environmentCount() const { return m_impl->worlds.size(); }
 std::size_t TrackingGetUpAmpTraining3D::observationSize() const {
-    return m_impl->contract->bodyObservationSize() + CommandSize + GroundObservationSize;
+    return m_impl->contract->bodyObservationSize() + CommandSize + GroundObservationSize + PhaseSize;
 }
 std::size_t TrackingGetUpAmpTraining3D::actionSize() const { return m_impl->contract->actionSize(); }
 std::size_t TrackingGetUpAmpTraining3D::ampSize() const { return m_impl->features->size(); }
