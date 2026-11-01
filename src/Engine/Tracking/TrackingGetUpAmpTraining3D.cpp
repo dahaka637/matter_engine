@@ -108,6 +108,8 @@ struct TrackingGetUpAmpTraining3D::Impl {
     };
     std::array<std::vector<Gait>, 4> gaits;
     std::vector<std::string> clipNames;
+    // O clipe da arrancada de pe (idle_to_sprint), quando carregado.
+    std::size_t startClipIndex = std::numeric_limits<std::size_t>::max();
     // As quedas com protecao carregadas (os indices).
     std::vector<std::size_t> protectionIndices;
     // A velocidade de deslocamento que falta aos clipes no lugar (os pares do discriminador): constante (corrida) ou
@@ -195,6 +197,9 @@ struct TrackingGetUpAmpTraining3D::Impl {
         std::uint32_t startBand = 1;
         // O comeco num instante de uma queda com protecao (a protecao vale, como no evitar a queda).
         bool protectiveStart = false;
+        // A arrancada (idle_to_sprint) antes do ciclo da corrida ou do sprint saindo de pe: o ciclo que vem depois (max:
+        // nenhum).
+        std::size_t pendingClip = std::numeric_limits<std::size_t>::max();
         // O ultimo comeco de pe no parado em alerta (o clipe, o instante e o rumo; max: outro).
         std::size_t lastClip = std::numeric_limits<std::size_t>::max();
         float lastClipTime = 0.0f;
@@ -429,6 +434,12 @@ struct TrackingGetUpAmpTraining3D::Impl {
                 }
             w.trackStart = 0.0f;
             w.trackYaw = w.faceYaw;
+            // (01/11 20h: de pe direto no ciclo do sprint ele caia na largada; na corrida e no sprint para a frente, a
+            // arrancada do clipe idle_to_sprint primeiro, e no fim dela o ciclo.)
+            if (w.band >= 2 && w.heading == 0 && startClipIndex < references.size()) {
+                w.pendingClip = w.trackClip;
+                w.trackClip = startClipIndex;
+            }
         }
         w.moveYaw = w.faceYaw + 0.25f * Pi * static_cast<float>(w.heading);
         w.stopAt = !settings.evaluation && !changes && u(w.rng) < 0.2f ? 2.0f + 3.0f * u(w.rng) : -1.0f;
@@ -481,6 +492,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
     void changeCommand(World& w) {
         std::uniform_real_distribution<float> u(0.0f, 1.0f);
         w.trackClip = std::numeric_limits<std::size_t>::max();
+        w.pendingClip = std::numeric_limits<std::size_t>::max();
         if (u(w.rng) < CommandStopChance) {
             w.commandSpeed = 0.0f;
             w.trackClip = standingIndex;
@@ -656,6 +668,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
         w.footDown[0] = w.footDown[1] = true;
         w.protectiveStart = false;
         w.trackClip = std::numeric_limits<std::size_t>::max();
+        w.pendingClip = std::numeric_limits<std::size_t>::max();
         w.startKind = kind;
         if (kind == 0 || kind == 3) beginFall(w);
         else if (kind == 5) beginSprintStart(w);
@@ -887,9 +900,11 @@ struct TrackingGetUpAmpTraining3D::Impl {
     }
 
     // O idle seguido agora: no parado ou num rumo parado, com o parado em alerta como clipe.
+    // (01/11 20h: com o idle nos motores durante o empurrao ele nao dava o passo de recuperar - o sem cair de pe com
+    // empurrao caiu de 91% para ~40%. O idle so quieto: sem empurrao e 1,5 s depois do ultimo; dai a rede livre.)
     bool idleTracked(const World& w) const {
         return (w.trackClip == standingIndex || w.trackClip == standingMirrorIndex) && w.commandSpeed <= 0.0f
-            && (w.startKind == 2 || w.locomotion);
+            && (w.startKind == 2 || w.locomotion) && w.pushTicks == 0 && w.time >= w.lastPushEnd + 1.5f;
     }
     // O clipe seguido agora (o do passo com o pedido de deslocamento, ou o idle parado).
     bool clipTracked(const World& w) const {
@@ -904,6 +919,12 @@ struct TrackingGetUpAmpTraining3D::Impl {
         const float before = posture->risePotential(was) + posture->turnPotential(was) + facePotential(w, was);
         maybePush(w, was);
         maybeAvoidPush(w);
+        if (w.pendingClip < references.size() && w.trackClip < references.size()
+            && w.trackStart + w.time + TicksPerDecision * TickSeconds >= references[w.trackClip]->durationSeconds()) {
+            w.trackClip = w.pendingClip;
+            w.trackStart = -w.time;
+            w.pendingClip = std::numeric_limits<std::size_t>::max();
+        }
         if (settings.clipBlend < 1.0f && clipTracked(w)) {
             const TrackingClipReference3D& reference = *references[w.trackClip];
             const float duration = std::max(1.0e-3f, reference.durationSeconds());
@@ -1144,6 +1165,7 @@ TrackingGetUpAmpTraining3D::TrackingGetUpAmpTraining3D(const TrackingGetUpAmpSet
     if (settings.runFraction > 0.0f || settings.sprintFraction > 0.0f || settings.evaluationBand >= 2) {
         names.insert(names.end(), std::begin(RunClips), std::end(RunClips));
         names.insert(names.end(), std::begin(SprintClips), std::end(SprintClips));
+        names.emplace_back("idle_to_sprint");
     }
     for (std::size_t i = 0; i < names.size(); ++i)
         if (std::find(names.begin(), names.begin() + static_cast<std::ptrdiff_t>(i), names[i])
@@ -1154,6 +1176,7 @@ TrackingGetUpAmpTraining3D::TrackingGetUpAmpTraining3D(const TrackingGetUpAmpSet
             loadAnimationClip3D(settings.assetsDirectory + "/animations/clips/" + name + ".matteranim.json")));
         impl.references.push_back(std::make_unique<TrackingClipReference3D>(*impl.profile, *impl.clips.back()));
         impl.clipNames.push_back(name);
+        if (name == "idle_to_sprint") impl.startClipIndex = impl.references.size() - 1;
         if (name == "crouched_to_sprint") impl.sprintStartIndex = impl.references.size() - 1;
         if (std::find(std::begin(ProtectionClips), std::end(ProtectionClips), name) != std::end(ProtectionClips))
             impl.protectionIndices.push_back(impl.references.size() - 1);
