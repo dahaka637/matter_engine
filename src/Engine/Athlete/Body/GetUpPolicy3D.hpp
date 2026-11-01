@@ -22,6 +22,12 @@ public:
     // dele saindo dos dela em BlendSeconds (s).
     static constexpr float FirmSeconds = 0.5f;
     static constexpr float BlendSeconds = 0.3f;
+    // A troca andando (01/11, ele: "trocar assim que ele comeca a ficar em pe" para correr ao alvo; o levantar em
+    // movimento do treino dela): com o pedido de deslocamento acima de MovingRequestSpeed (m/s) e depois do chao (a pelve
+    // abaixo de DownRootFraction da altura de pe), de pe por MovingHandoffSeconds (s), mesmo se mexendo.
+    static constexpr float MovingRequestSpeed = 0.5f;
+    static constexpr float MovingHandoffSeconds = 0.2f;
+    static constexpr float DownRootFraction = 0.5f;
     // A queda iminente pelo tronco, alem do fim do episodio da rede da locomocao (01/11, ele: "o evitar queda precisa
     // saber operar em conjunto com a outra rede nos momentos de queda iminente"; medido com a rede do B21 em 32 mundos e
     // 38 quedas): inclinado alem de ImminentTiltDegrees e tombando mais rapido que ImminentTiltRate (graus/s) de uma
@@ -46,8 +52,9 @@ public:
 
     virtual ~GetUpPolicy3D() = default;
     [[nodiscard]] virtual std::uint64_t iteration() const = 0;
+    // velocity: o pedido de deslocamento no chao (m/s, no mundo; zero, de pe no lugar): ela levanta virando para la.
     virtual void decide(const RagdollProfile3D& profile, std::span<const PhysicsBodyState3D> links,
-        std::vector<RagdollDriveTarget3D>& drives) const = 0;
+        std::vector<RagdollDriveTarget3D>& drives, Vec3 velocity = {}) const = 0;
 };
 
 } // namespace MatterEngine

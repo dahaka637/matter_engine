@@ -2057,6 +2057,7 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                 rl.firmSeconds = 0.0f;
                 rl.seconds = 0.0f;
                 rl.stuckSeconds = 0.0f;
+                rl.down = false;
                 if (state.guided) {
                     scene.setRagdollGuided(slot.handle, false);
                     state.guided = false;
@@ -2065,8 +2066,13 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
             }
         }
         if (rl.active) {
+            // (Com o pedido de deslocamento - o analogico apertado -, depois do chao ela levanta virando para la e a troca
+            // vem de pe por GetUpPolicy3D::MovingHandoffSeconds, mesmo se mexendo: a rede da locomocao ja sai correndo.)
+            const Vec3 wanted { command.intent.requestedVelocityWorld.x, command.intent.requestedVelocityWorld.y, 0.0f };
+            const bool moving = rl.down && std::hypot(wanted.x, wanted.y) > GetUpPolicy3D::MovingRequestSpeed;
             try {
-                if (rl.ticks % GetUpPolicy3D::TicksPerDecision == 0) policy->decide(profile, body.links, rl.drives);
+                if (rl.ticks % GetUpPolicy3D::TicksPerDecision == 0)
+                    policy->decide(profile, body.links, rl.drives, moving ? wanted : Vec3 {});
             } catch (const std::exception& error) {
                 Log::warn(std::string("rede do levantar: ") + error.what());
                 rl.drives.clear();
@@ -2093,16 +2099,19 @@ void stepLegacyAthlete3D(PhysicsScene3D& scene, const AthleteRuntimeAssets3D& as
                 const Vec3 com = mass > 0.0f ? momentum * (1.0f / mass) : Vec3 {};
                 const float upright = (pelvis.orientation * profile.links.front().modelOrientation.conjugate())
                     .rotate({ 0.0f, 0.0f, 1.0f }).z;
-                const bool firm = pelvis.position.z - groundHeight(pelvis.position) > 0.85f * profile.standingRootHeightMeters
-                    && upright > 0.85f && std::hypot(com.x, com.y) < 0.5f;
+                const float height = pelvis.position.z - groundHeight(pelvis.position);
+                rl.down = rl.down || height < GetUpPolicy3D::DownRootFraction * profile.standingRootHeightMeters;
+                const bool firm = height > 0.85f * profile.standingRootHeightMeters && upright > 0.85f
+                    && (moving || std::hypot(com.x, com.y) < 0.5f);
                 rl.firmSeconds = firm ? rl.firmSeconds + deltaTime : 0.0f;
                 // (Travada - presa num contato, sem subir -: o classico tenta.)
-                const bool rising = pelvis.position.z - groundHeight(pelvis.position) > 0.85f * profile.standingRootHeightMeters;
+                const bool rising = height > 0.85f * profile.standingRootHeightMeters;
                 rl.stuckSeconds = !rising && std::hypot(com.x, com.y) < 0.15f && std::abs(com.z) < 0.15f
                     ? rl.stuckSeconds + deltaTime : 0.0f;
                 const bool stuck = rl.stuckSeconds >= GetUpStuckSeconds;
-                if (rl.firmSeconds < GetUpPolicy3D::FirmSeconds && rl.seconds < GetUpRecoveryLimitSeconds && !stuck) return;
-                const bool stood = rl.firmSeconds >= GetUpPolicy3D::FirmSeconds;
+                const float needed = moving ? GetUpPolicy3D::MovingHandoffSeconds : GetUpPolicy3D::FirmSeconds;
+                if (rl.firmSeconds < needed && rl.seconds < GetUpRecoveryLimitSeconds && !stuck) return;
+                const bool stood = rl.firmSeconds >= needed;
                 athlete.getUpHandoff = { GetUpPolicy3D::BlendSeconds, rl.drives };
                 state.getUpSeen = true;
                 rl.waitStand = !stood;

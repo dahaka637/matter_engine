@@ -141,6 +141,8 @@ struct AthleteState3D {
         // antes de assumir de novo - no chao, a queda iminente disparava de novo no passo seguinte, sem fim.)
         float stuckSeconds = 0.0f;
         bool waitStand = false;
+        // Ja no chao desde que assumiu (a troca andando, GetUpPolicy3D::MovingHandoffSeconds, so depois do chao).
+        bool down = false;
     } getUpRecovery;
     // A reescrita (R3): o corpo da classificacao de contatos, as regras de
     // troca de modo e o ultimo tick delas (a telemetria neutra: o que bateu,

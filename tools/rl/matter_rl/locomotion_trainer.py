@@ -1101,6 +1101,12 @@ class LocomotionTrainer:
                 details["levantar_rede"] = {"comecos": int(live.sum()),
                                             "segundos": float(rows[live, col["levantar_rede_s"]].mean()),
                                             "queda_2s": float(early.mean())}
+                # (A troca andando, com o pedido de correr: a parte delas e as quedas nos 2 s depois delas.)
+                if "levantar_rede_andando" in col:
+                    moving = rows[live, col["levantar_rede_andando"]] > 0.5
+                    details["levantar_rede"]["andando"] = float(moving.mean())
+                    if moving.any():
+                        details["levantar_rede"]["queda_2s_andando"] = float(early[moving].mean())
         # O diagnostico de 18/10 (vault .../pesquisas/08_plano_consenso.md, Q0).
         std = self.model.log_std.detach().exp().cpu().numpy()
         kl_channels = stats.get("kl_per_channel") or []

@@ -14,8 +14,9 @@ class TrackingGetUpContract3D;
 
 // A rede do levantar do treino levantar_v2 (tools/rl/levantar_amp.py, layout "levantar-v2") fora do treino dela (01/11,
 // a interligacao das redes nas quedas do treino da locomocao): a
-// observacao do corpo do contrato do levantar mais as 6 entradas do comando (sem pedido: {1, 0, 0, 0, 1, 0}) e os alvos
-// absolutos dos 39 eixos com a rigidez e o amortecimento do treino (velocidade alvo zero).
+// observacao do corpo do contrato do levantar mais as 6 entradas do comando (sem pedido: {1, 0, 0, 0, 1, 0}; com o pedido
+// de deslocamento, as do levantar em movimento do treino) e os alvos absolutos dos 39 eixos com a rigidez e o
+// amortecimento do treino (velocidade alvo zero).
 class TrackingGetUpPolicy3D final : public GetUpPolicy3D {
 public:
     explicit TrackingGetUpPolicy3D(const std::filesystem::path& file);
@@ -27,7 +28,7 @@ public:
     // (Um contrato por perfil, feito na primeira vez: os corpos do treino da locomocao tem perfis proprios. Varias
     // threads podem decidir ao mesmo tempo, cada mundo o seu corpo.)
     void decide(const RagdollProfile3D& profile, std::span<const PhysicsBodyState3D> links,
-        std::vector<RagdollDriveTarget3D>& drives) const override;
+        std::vector<RagdollDriveTarget3D>& drives, Vec3 velocity) const override;
 
 private:
     [[nodiscard]] const TrackingGetUpContract3D& contractOf(const RagdollProfile3D& profile) const;

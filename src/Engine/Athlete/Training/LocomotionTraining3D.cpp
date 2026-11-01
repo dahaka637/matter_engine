@@ -146,6 +146,7 @@ const std::vector<std::string>& locomotionEpisodeColumns3D() {
                 c.push_back("cel" + std::string(k < 10 ? "0" : "") + std::to_string(k) + "." + field);
         // (01/11: no fim, para nao mudar o lugar das outras.)
         c.push_back("levantar_rede_s");
+        c.push_back("levantar_rede_andando");
         return c;
     }();
     return columns;
@@ -166,6 +167,7 @@ std::vector<float> locomotionEpisodeRow3D(const LocomotionEpisode3D& e) {
              &e.cellFrontierCruise, &e.cellFrontierTracking })
         row.insert(row.end(), cells->begin(), cells->end());
     row.push_back(e.getUpSeconds);
+    row.push_back(e.getUpMoving);
     return row;
 }
 
@@ -322,8 +324,11 @@ struct LocomotionTraining3D::Impl {
         float uprightSeconds = 0.0f;
         float stoodSeconds = -1.0f;
         // A interligacao das redes (01/11): quantos segundos a rede do levantar levou antes deste episodio (-1: nao) e a
-        // inclinacao do tronco na decisao anterior (a queda iminente).
+        // inclinacao do tronco na decisao anterior (a queda iminente); o pedido de correr na volta (zero: de pe no lugar)
+        // e se a troca foi andando.
         float getUpSeconds = -1.0f;
+        Vec3 getUpVelocity;
+        bool getUpMoving = false;
         float trunkTilt = 0.0f;
         bool trunkTiltValid = false;
         // O instante candidato a comeco guardado (vira do banco se o corpo
@@ -613,7 +618,10 @@ struct LocomotionTraining3D::Impl {
         CommandPilot3D::start(task.drills[world.drill].pilot, world.pilot, world.start, camera, world.rng);
         const bool moving = saved != nullptr || live;
         const Vec3 startVelocity = moving ? planar(centerOfMassVelocity(bundleOf(world).profile(), body)) : Vec3 {};
-        if (moving) CommandPilot3D::follow(task.drills[world.drill].pilot, world.pilot, startVelocity, world.rng);
+        // (Ao vivo depois da troca andando, o primeiro pedido segue o de correr da volta: o analogico do jogo.)
+        if (moving)
+            CommandPilot3D::follow(task.drills[world.drill].pilot, world.pilot,
+                live && world.getUpMoving ? world.getUpVelocity : startVelocity, world.rng);
         world.command = {};
         world.command.facingYawRadians = camera;
         world.command.intent.requestedFacingYawRadians = camera;
@@ -659,7 +667,10 @@ struct LocomotionTraining3D::Impl {
         world.cellDecisions = world.cellCruise = world.cellTracking = world.cellError2 = world.cellAsked = world.cellMade = {};
         world.cellFrontierCruise = world.cellFrontierTracking = {};
         world.savedStart = saved != nullptr;
-        if (!live) world.getUpSeconds = -1.0f;
+        if (!live) {
+            world.getUpSeconds = -1.0f;
+            world.getUpMoving = false;
+        }
         world.trunkTiltValid = false;
         world.hasPending = false;
         world.pendingAge = 0.0f;
@@ -1302,29 +1313,40 @@ struct LocomotionTraining3D::Impl {
     // dela, sem o classico nem as correcoes desta rede, ate ficar de pe e firme por GetUpPolicy3D::FirmSeconds (o mesmo
     // criterio do fim do episodio no treino dela); ai o atleta recomeca no corpo e os alvos do classico saem dos dela
     // (LegacyAthleteStep3D). Sem isso em GetUpRecoverySeconds, o recomeco de sempre.
+    // (Com o pedido de deslocamento da queda - o do exercicio, como o analogico apertado no jogo -, depois do chao ela
+    // levanta virando para la e a troca vem de pe por GetUpPolicy3D::MovingHandoffSeconds, mesmo se mexendo: esta rede
+    // aprende a pegar o corpo ainda subindo e o primeiro pedido dela segue o mesmo.)
     bool recoverFromFall(std::size_t index) {
         World& world = worlds[index];
         LocomotionWorld3D& scene = batch->world(index);
         const RagdollProfile3D& profile = bundleOf(world).profile();
         std::vector<RagdollDriveTarget3D> drives;
         world.getUpSeconds = -1.0f;
+        world.getUpMoving = false;
+        world.getUpVelocity = planar(world.command.intent.requestedVelocityWorld);
+        const bool wanted = world.getUpVelocity.length() > GetUpPolicy3D::MovingRequestSpeed;
+        bool down = false;
         float firm = 0.0f;
         const int limit = static_cast<int>(GetUpRecoverySeconds / TickSeconds);
         for (int tick = 0; tick < limit; ++tick) {
             if (scene.body().links.empty() || !finite(scene.body().links.front().position)) return false;
-            if (tick % GetUpPolicy3D::TicksPerDecision == 0) getUpPolicy->decide(profile, scene.body().links, drives);
+            const bool moving = wanted && down;
+            if (tick % GetUpPolicy3D::TicksPerDecision == 0)
+                getUpPolicy->decide(profile, scene.body().links, drives, moving ? world.getUpVelocity : Vec3 {});
             scene.stepDrives(drives);
             const RagdollState3D& body = scene.body();
             const PhysicsBodyState3D& pelvis = body.links.front();
             const float upright =
                 (pelvis.orientation * profile.links.front().modelOrientation.conjugate()).rotate({ 0.0f, 0.0f, 1.0f }).z;
+            down = down || pelvis.position.z < GetUpPolicy3D::DownRootFraction * profile.standingRootHeightMeters;
             const bool standing = pelvis.position.z > 0.85f * profile.standingRootHeightMeters && upright > 0.85f
-                && planar(centerOfMassVelocity(profile, body)).length() < 0.5f;
+                && (moving || planar(centerOfMassVelocity(profile, body)).length() < 0.5f);
             firm = standing ? firm + TickSeconds : 0.0f;
-            if (firm < GetUpPolicy3D::FirmSeconds) continue;
+            if (firm < (moving ? GetUpPolicy3D::MovingHandoffSeconds : GetUpPolicy3D::FirmSeconds)) continue;
             scene.resume();
             scene.athlete().getUpHandoff = { GetUpPolicy3D::BlendSeconds, drives };
             world.getUpSeconds = static_cast<float>(tick + 1) * TickSeconds;
+            world.getUpMoving = moving;
             return true;
         }
         return false;
@@ -1385,6 +1407,7 @@ struct LocomotionTraining3D::Impl {
         e.uncapped = world.uncapped ? 1.0f : 0.0f;
         e.stoodSeconds = world.stoodSeconds;
         e.getUpSeconds = world.getUpSeconds;
+        e.getUpMoving = world.getUpMoving ? 1.0f : 0.0f;
         e.pushKind = static_cast<float>(world.pushKind);
         e.pushNewtons = world.pushNewtons;
         e.pushSeconds = world.pushSeconds;

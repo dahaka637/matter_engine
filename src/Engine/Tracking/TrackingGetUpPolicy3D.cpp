@@ -10,6 +10,11 @@ namespace {
 
 // As entradas do comando depois das do corpo (TrackingGetUpAmpTraining3D::CommandSize); sem pedido de deslocamento.
 constexpr float NoCommand[6] { 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f };
+// Com o pedido, as do levantar em movimento do treino (TrackingGetUpAmpTraining3D::observe): o alvo no meio da faixa
+// dele (4-8 m, em 10 m) e a velocidade na faixa dele (2,5-5 m/s, em 5 m/s), de frente para o rumo.
+constexpr float CommandTargetDistance = 0.6f;
+constexpr float CommandMinimumSpeed = 2.5f;
+constexpr float CommandMaximumSpeed = 5.0f;
 
 } // namespace
 
@@ -35,7 +40,7 @@ const TrackingGetUpContract3D& TrackingGetUpPolicy3D::contractOf(const RagdollPr
 }
 
 void TrackingGetUpPolicy3D::decide(const RagdollProfile3D& profile, std::span<const PhysicsBodyState3D> links,
-    std::vector<RagdollDriveTarget3D>& drives) const {
+    std::vector<RagdollDriveTarget3D>& drives, Vec3 velocity) const {
     const TrackingGetUpContract3D& contract = contractOf(profile);
     // (Por thread: os mundos do lote decidem em paralelo; a rede ja tem o rascunho dela por thread.)
     thread_local std::vector<float> observation, action;
@@ -43,7 +48,17 @@ void TrackingGetUpPolicy3D::decide(const RagdollProfile3D& profile, std::span<co
     action.assign(m_policy->actionSize(), 0.0f);
     const std::size_t body = contract.bodyObservationSize();
     contract.observeBody(links, std::span<float>(observation).first(body));
-    std::copy(std::begin(NoCommand), std::end(NoCommand), observation.begin() + static_cast<std::ptrdiff_t>(body));
+    float* command = observation.data() + body;
+    const float speed = std::hypot(velocity.x, velocity.y);
+    if (speed > GetUpPolicy3D::MovingRequestSpeed && !links.empty()) {
+        const float move = std::atan2(velocity.y, velocity.x) - trackingBodyYaw3D(profile.links.front(), links.front());
+        command[0] = command[4] = std::cos(move);
+        command[1] = command[5] = std::sin(move);
+        command[2] = CommandTargetDistance;
+        command[3] = std::clamp(speed, CommandMinimumSpeed, CommandMaximumSpeed) / CommandMaximumSpeed;
+    } else {
+        std::copy(std::begin(NoCommand), std::end(NoCommand), command);
+    }
     m_policy->evaluate(observation, action);
     contract.driveTargets(action, drives);
 }

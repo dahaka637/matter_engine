@@ -115,8 +115,9 @@ struct LocomotionEpisode3D {
     // O episodio sem o teto do curriculo (1) ou com (0).
     float uncapped = 0.0f;
     // A interligacao das redes nas quedas (01/11): o episodio comecou de onde a rede do levantar devolveu, depois de
-    // quantos segundos com ela (-1: o comeco de sempre).
+    // quantos segundos com ela (-1: o comeco de sempre) e se a troca foi andando, com o pedido de correr (1) ou nao (0).
     float getUpSeconds = -1.0f;
+    float getUpMoving = 0.0f;
     std::array<float, LocomotionCommandCells3D> cellDecisions {};
     std::array<float, LocomotionCommandCells3D> cellCruise {};
     std::array<float, LocomotionCommandCells3D> cellTracking {};

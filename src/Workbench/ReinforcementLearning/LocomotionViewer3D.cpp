@@ -94,6 +94,9 @@ struct LocomotionViewer3D::Impl {
     std::vector<RagdollDriveTarget3D> getUpDrives;
     std::uint32_t recoveryCount = 0;
     bool recoveryTouched = false;
+    // O pedido de deslocamento da queda (o do exercicio, como no treino) e se ja foi ao chao: a troca andando.
+    Vec3 getUpVelocity;
+    bool getUpDown = false;
     // A queda como o fim do episodio do treino, tick a tick (01/11: a cada decisao e sem os contatos, a troca saia
     // depois da do treino): a pelve abaixo de fallPelvisHeight (na escala do corpo) ou, com forbiddenContact, algo que
     // nao os pes no chao; e o classico caido no fim da decisao.
@@ -180,6 +183,8 @@ struct LocomotionViewer3D::Impl {
         trunkTiltValid = false;
         getUpTicks = 0;
         firmSeconds = recoverSeconds = 0.0f;
+        getUpVelocity = planar(command.intent.requestedVelocityWorld);
+        getUpDown = false;
         command = {};
         ++recoveryCount;
         recoveryTouched = false;
@@ -198,8 +203,8 @@ struct LocomotionViewer3D::Impl {
     }
 
     // A volta a esta rede: o atleta do zero no corpo de agora, os alvos do classico saindo dos dados e o exercicio
-    // recomecando dali (o comeco ao vivo do treino).
-    void handBack(std::span<const RagdollDriveTarget3D> drives) {
+    // recomecando dali (o comeco ao vivo do treino; depois da troca andando, o primeiro pedido segue follow).
+    void handBack(std::span<const RagdollDriveTarget3D> drives, Vec3 follow = {}) {
         const RagdollProfile3D& profile = bundle->profile();
         const PhysicsBodyState3D& pelvis = body.links.front();
         athlete = AthleteState3D {};
@@ -211,6 +216,7 @@ struct LocomotionViewer3D::Impl {
         origin = planar(pelvis.position);
         pilotState = PilotState3D {};
         CommandPilot3D::start(pilot, pilotState, origin, locomotionFrameYaw3D(profile, pelvis.orientation), rng);
+        CommandPilot3D::follow(pilot, pilotState, follow, rng);
         steps = 0;
         fallenSeconds = drillSeconds = pushSeconds = 0.0f;
         settleEnd = -1.0f;
@@ -219,11 +225,14 @@ struct LocomotionViewer3D::Impl {
         trunkTiltValid = false;
     }
 
-    // Uma decisao da rede do levantar e, de pe e firme (o criterio do treino), a troca.
+    // Uma decisao da rede do levantar e, de pe e firme (o criterio do treino; com o pedido, depois do chao, de pe por
+    // GetUpPolicy3D::MovingHandoffSeconds), a troca.
     void recover() {
         const RagdollProfile3D& profile = bundle->profile();
+        const bool moving = getUpDown && getUpVelocity.length() > GetUpPolicy3D::MovingRequestSpeed;
         for (int k = 0; k < TicksPerDecision; ++k) {
-            if (getUpTicks++ % GetUpPolicy3D::TicksPerDecision == 0) getUpPolicy->decide(profile, body.links, getUpDrives);
+            if (getUpTicks++ % GetUpPolicy3D::TicksPerDecision == 0)
+                getUpPolicy->decide(profile, body.links, getUpDrives, moving ? getUpVelocity : Vec3 {});
             scene->setRagdollActiveDriveTargets(handle, getUpDrives, false);
             scene->setRagdollFrictionScale(handle, 1.0f);
             scene->simulate(TickSeconds);
@@ -240,14 +249,16 @@ struct LocomotionViewer3D::Impl {
         const PhysicsBodyState3D& pelvis = body.links.front();
         const float upright =
             (pelvis.orientation * profile.links.front().modelOrientation.conjugate()).rotate({ 0.0f, 0.0f, 1.0f }).z;
+        getUpDown = getUpDown
+            || pelvis.position.z - athlete.groundHeight < GetUpPolicy3D::DownRootFraction * profile.standingRootHeightMeters;
         const bool standing = pelvis.position.z > 0.85f * profile.standingRootHeightMeters && upright > 0.85f
-            && planar(centerOfMassVelocity()).length() < 0.5f;
+            && (moving || planar(centerOfMassVelocity()).length() < 0.5f);
         firmSeconds = standing ? firmSeconds + decision : 0.0f;
-        if (firmSeconds < GetUpPolicy3D::FirmSeconds) {
+        if (firmSeconds < (moving ? GetUpPolicy3D::MovingHandoffSeconds : GetUpPolicy3D::FirmSeconds)) {
             if (recoverSeconds > 8.0f) build(rng());
             return;
         }
-        handBack(getUpDrives);
+        handBack(getUpDrives, moving ? getUpVelocity : Vec3 {});
     }
 
     [[nodiscard]] Vec3 centerOfMassVelocity() const {
