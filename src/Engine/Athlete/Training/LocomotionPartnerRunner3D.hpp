@@ -21,7 +21,7 @@ public:
 
     [[nodiscard]] std::uint64_t iteration() const;
     Result drive(PhysicsScene3D& scene, RagdollHandle3D handle, std::span<const RagdollDriveTarget3D> handoff,
-        float maximumSeconds, const Push* push = nullptr) const override;
+        float maximumSeconds, const Push* push = nullptr, Vec3 velocity = {}) const override;
 
 private:
     struct Impl;

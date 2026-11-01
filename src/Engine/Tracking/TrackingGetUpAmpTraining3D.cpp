@@ -33,6 +33,10 @@ constexpr float FallPoseNoise = 0.35f;
 // pela cabeca; os pes, as pernas e os bracos podem apoiar. Cair depois de ja ter ficado de pe custa isto, uma vez por
 // queda (alem do potencial que desce).
 constexpr float FallPenalty = 10.0f;
+// O levantar em movimento: a troca de pe por este tanto (s), mesmo andando, e a parceira correndo ate o alvo ate esta
+// velocidade (m/s; a do treino dela).
+constexpr float MovingHandoffSeconds = 0.2f;
+constexpr float PartnerRunSpeed = 3.5f;
 // A flexao na queda vale ate este tanto depois do primeiro toque do tronco no chao (s): o chegar ao chao.
 constexpr float FlexAfterTouchSeconds = 0.75f;
 // Os pares da arrancada agachada pesam isto no discriminador (a referencia do levantar em movimento).
@@ -808,10 +812,14 @@ struct TrackingGetUpAmpTraining3D::Impl {
         if (settings.handoffOnStand && !settings.evaluation) {
             const bool eligible = w.startKind == 4 ? w.avoidEnd >= 0.0f && w.time >= w.avoidEnd : w.stoodAt >= 0.0f;
             const Vec3 v = rlBodyCenterOfMassVelocity3D(*profile, w.body->links);
-            const bool firm = now.pelvisHeight > 0.85f * profile->standingRootHeightMeters && now.upright > 0.85f
-                && std::hypot(v.x, v.y) < 0.5f && !w.fellAfterStanding;
+            // (01/11, ele: no levantar em movimento, "a troca do modelo de RL assim que ele comeca a ficar em pe" e a da
+            // locomocao corre para o alvo: de pe por MovingHandoffSeconds, mesmo andando; nos outros, de pe e firme.)
+            const bool moving = w.startKind == 3 || w.startKind == 5;
+            const bool firm = moving ? now.standing && !w.fellAfterStanding
+                : now.pelvisHeight > 0.85f * profile->standingRootHeightMeters && now.upright > 0.85f
+                    && std::hypot(v.x, v.y) < 0.5f && !w.fellAfterStanding;
             w.firmSeconds = eligible && firm ? w.firmSeconds + TicksPerDecision * TickSeconds : 0.0f;
-            if (w.firmSeconds >= 0.5f) w.handoffAt = w.time;
+            if (w.firmSeconds >= (moving ? MovingHandoffSeconds : 0.5f)) w.handoffAt = w.time;
         }
         // Depois da troca, a parceira dirige parada (01/11): se ela cair no tempo dela, a troca foi ruim - a punicao e o
         // fim do episodio -; senao, o corte de sempre, com o valor do estado da troca.
@@ -819,7 +827,17 @@ struct TrackingGetUpAmpTraining3D::Impl {
         if (partnered) {
             observe(w);
             w.finalObservation = w.observation;
-            const LocomotionPartner3D::Result result = partner->drive(*w.scene, w.handle, w.drives, settings.partnerSeconds);
+            // (No levantar em movimento, ela corre ate o alvo na velocidade pedida - ate PartnerRunSpeed, a do treino dela.)
+            Vec3 velocity;
+            if (w.startKind == 3 || w.startKind == 5) {
+                const Vec3 root = w.body->links[rootLink].position;
+                const Vec3 to { w.target.x - root.x, w.target.y - root.y, 0.0f };
+                const float distance = std::hypot(to.x, to.y);
+                if (distance > ArriveRadius)
+                    velocity = to * (std::min(w.startCommandSpeed, PartnerRunSpeed) / distance);
+            }
+            const LocomotionPartner3D::Result result =
+                partner->drive(*w.scene, w.handle, w.drives, settings.partnerSeconds, nullptr, velocity);
             w.body = w.scene->ragdollStateView(w.handle);
             w.partnerDrove = result.seconds;
             w.partnerFell = result.fell;

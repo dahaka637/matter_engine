@@ -75,7 +75,7 @@ LocomotionPartnerRunner3D::~LocomotionPartnerRunner3D() = default;
 std::uint64_t LocomotionPartnerRunner3D::iteration() const { return m_impl->iteration; }
 
 LocomotionPartner3D::Result LocomotionPartnerRunner3D::drive(PhysicsScene3D& scene, RagdollHandle3D handle,
-    std::span<const RagdollDriveTarget3D> handoff, float maximumSeconds, const Push* push) const {
+    std::span<const RagdollDriveTarget3D> handoff, float maximumSeconds, const Push* push, Vec3 velocity) const {
     Impl& impl = *m_impl;
     const RagdollProfile3D& profile = impl.bundle->profile();
     Result result;
@@ -88,11 +88,31 @@ LocomotionPartner3D::Result LocomotionPartnerRunner3D::drive(PhysicsScene3D& sce
     athleteStart3D(scene, handle, profile, body, athlete, AthleteStartMode3D::Physical);
     athlete.getUpHandoff = { handoff.empty() ? 0.0f : GetUpPolicy3D::BlendSeconds,
         std::vector<RagdollDriveTarget3D>(handoff.begin(), handoff.end()) };
-    // (Parada no lugar, olhando para onde o corpo olha.)
+    AthleteRuntimeSettings3D settings = impl.settings;
+    // (Parada no lugar, olhando para onde o corpo olha; com o pedido de deslocamento, pelo analogico do jogo - o mesmo
+    // do treino dela -, na direcao dele, com o sprint acima do trote da tabela.)
     AthleteCommand3D command;
     command.facingYawRadians = locomotionFrameYaw3D(profile, body.links.front().orientation);
     command.intent.requestedFacingYawRadians = command.facingYawRadians;
-    AthleteRuntimeSettings3D settings = impl.settings;
+    const float wanted = std::hypot(velocity.x, velocity.y);
+    if (wanted > 0.05f) {
+        AthleteStickInput3D stick;
+        const Vec3 direction { velocity.x / wanted, velocity.y / wanted, 0.0f };
+        stick.cameraYawRadians = std::atan2(direction.y, direction.x);
+        stick.lookPitchRadians = -0.2f;
+        stick.moveWorld = direction;
+        const auto tableSpeed = [&]() {
+            const Vec3 v = athleteStickCommand3D(stick, settings, impl.bundle->gaitSpeeds(), 1.0e9f).intent.requestedVelocityWorld;
+            return std::hypot(v.x, v.y);
+        };
+        float table = tableSpeed();
+        if (wanted > table + 1.0e-3f) {
+            stick.sprint = true;
+            table = tableSpeed();
+        }
+        stick.moveWorld = direction * (table > 1.0e-3f ? std::min(1.0f, wanted / table) : 0.0f);
+        command = athleteStickCommand3D(stick, settings, impl.bundle->gaitSpeeds(), 1.0e9f);
+    }
     settings.locomotionPolicy = true;
     settings.dynamicTurnMove = policy->usesTurnMove();
     if (settings.dynamicTurnMove) settings.dynamicTurnMoveSettings.amount = policy->turnMoveAmount();

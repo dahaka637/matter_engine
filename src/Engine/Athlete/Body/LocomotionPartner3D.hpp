@@ -30,9 +30,10 @@ public:
 
     virtual ~LocomotionPartner3D() = default;
     // handoff: os alvos da rede do levantar na troca (os do classico saem deles em GetUpPolicy3D::BlendSeconds; vazio,
-    // sem a passagem). Varias threads podem chamar ao mesmo tempo, cada uma com a sua cena.
+    // sem a passagem). velocity: o pedido de deslocamento no chao (m/s; zero, parada no lugar - 01/11, o levantar em
+    // movimento: ela corre ate o alvo). Varias threads podem chamar ao mesmo tempo, cada uma com a sua cena.
     virtual Result drive(PhysicsScene3D& scene, RagdollHandle3D handle, std::span<const RagdollDriveTarget3D> handoff,
-        float maximumSeconds, const Push* push = nullptr) const = 0;
+        float maximumSeconds, const Push* push = nullptr, Vec3 velocity = {}) const = 0;
 };
 
 } // namespace MatterEngine

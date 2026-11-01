@@ -52,6 +52,8 @@ struct LocomotionViewer3D::Impl {
     std::mt19937_64 rng;
     std::uint32_t drillIndex = 0;
     std::optional<float> manual;
+    std::optional<Vec3> manualTarget;
+    float manualTargetSpeed = 0.0f;
     AthleteCommand3D command;
     Vec3 origin;
     std::uint32_t steps = 0;
@@ -269,6 +271,15 @@ struct LocomotionViewer3D::Impl {
             input.stickForward = *manual > 0.0f ? 1.0f : 0.0f;
             input.stickLeft = 0.0f;
             input.speed = *manual;
+        }
+        // (Ate o ponto dado: a camera para ele e a frente do analogico; perto dele, parado.)
+        if (manualTarget && !body.links.empty()) {
+            const Vec3 to = planar(*manualTarget - body.links.front().position);
+            const float distance = std::hypot(to.x, to.y);
+            input.cameraHeading = distance > 1.0e-3f ? std::atan2(to.y, to.x) : input.cameraHeading;
+            input.stickForward = distance > 0.6f ? 1.0f : 0.0f;
+            input.stickLeft = 0.0f;
+            input.speed = distance > 0.6f ? manualTargetSpeed : 0.0f;
         }
         const float yaw = input.cameraHeading;
         Vec3 direction { std::cos(yaw) * input.stickForward - std::sin(yaw) * input.stickLeft,
@@ -569,6 +580,11 @@ float LocomotionViewer3D::assist() const { return m_impl->settings.e5WalkingAssi
 
 void LocomotionViewer3D::setManualSpeed(std::optional<float> metersPerSecond) { m_impl->manual = metersPerSecond; }
 
+void LocomotionViewer3D::setManualTarget(std::optional<Vec3> target, float metersPerSecond) {
+    m_impl->manualTarget = target;
+    m_impl->manualTargetSpeed = metersPerSecond;
+}
+
 void LocomotionViewer3D::push(Vec3 force, float seconds) {
     m_impl->pushForce = force;
     m_impl->pushSeconds = seconds;
@@ -583,9 +599,9 @@ BodyWorldView3D LocomotionViewer3D::view() const {
     view.steps = impl.steps;
     view.command.moveVelocity = planar(impl.command.intent.requestedVelocityWorld);
     view.command.faceHeading = impl.command.facingYawRadians;
-    view.hasTarget = impl.pilotState.hasTarget;
-    view.target = impl.pilotState.target;
-    view.targetStop = impl.pilotState.stopAtTarget;
+    view.hasTarget = impl.pilotState.hasTarget || impl.manualTarget.has_value();
+    view.target = impl.manualTarget ? *impl.manualTarget : impl.pilotState.target;
+    view.targetStop = impl.manualTarget ? true : impl.pilotState.stopAtTarget;
     view.velocity = planar(impl.centerOfMassVelocity());
     if (impl.chest < impl.body.links.size() && impl.chest < impl.bundle->profile().links.size()) {
         const Quaternion r = (impl.body.links[impl.chest].orientation

@@ -293,6 +293,11 @@ private:
 
     // O desenho.
     Modeling::OrbitCamera m_camera;
+    // O rumo pedido da ultima imagem (o termo da camera), o passo e o exercicio: os pulos dele a camera compensa.
+    float m_headingTerm = 0.0f;
+    bool m_headingValid = false;
+    std::uint32_t m_headingSteps = 0;
+    std::string m_headingDrill;
     Modeling::Image m_image;
     bool m_dirty = true;
     Display m_display = Display::Full;

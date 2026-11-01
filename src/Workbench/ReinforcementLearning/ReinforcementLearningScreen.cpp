@@ -1166,7 +1166,19 @@ bool ReinforcementLearningScreen::render(int width, int height) {
         const Vec3 base { positions.front().x, positions.front().y, 0.0f };
         const Vec3 aim = m_skeleton->toSkeleton(base);
         const Vec3 ahead = m_skeleton->toSkeleton(base + Vec3 { std::cos(heading), std::sin(heading), 0.0f });
-        camera.yaw = std::atan2(ahead.y - aim.y, ahead.x - aim.x) + m_camera.yaw;
+        // (01/11, ele: "a camera do laboratorio de RL nao resetar a posicao a cada troca de treino ou reinicio": o rumo
+        // pedido pula no recomeco, na troca de exercicio e na troca de rede - a camera compensa o pulo e fica onde ele a
+        // deixou; os giros do pedido ela segue.)
+        const float headingTerm = std::atan2(ahead.y - aim.y, ahead.x - aim.x);
+        if (m_headingValid) {
+            const float jump = std::remainder(headingTerm - m_headingTerm, 6.28318531f);
+            if (std::abs(jump) > 0.6f || view.steps < m_headingSteps || m_viewerDrill != m_headingDrill) m_camera.yaw -= jump;
+        }
+        m_headingTerm = headingTerm;
+        m_headingSteps = view.steps;
+        m_headingDrill = m_viewerDrill;
+        m_headingValid = true;
+        camera.yaw = headingTerm + m_camera.yaw;
     }
     if (m_pushLabel.newtons > 0.0f) {
         const ScreenPoint label = Projector(camera, width, height).project(pushLabelPoint);

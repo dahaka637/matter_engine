@@ -57,6 +57,10 @@ std::filesystem::path partnerRun() {
 
 // A rede da locomocao depois da troca, parada no lugar, antes de o exercicio recomecar (s).
 constexpr float PartnerSeconds = 3.0f;
+// O levantar em movimento: a troca de pe por este tanto (s), mesmo andando, e a corrida ate o alvo ate esta velocidade
+// (m/s; as do treino do levantar).
+constexpr float MovingHandoffSeconds = 0.2f;
+constexpr float PartnerRunSpeed = 3.5f;
 
 } // namespace
 
@@ -112,6 +116,11 @@ struct TrackingViewer3D::Impl {
     bool avoidPushed = false;
     std::uint32_t avoidRecoveries = 0;
     float avoidBackAt = -1.0f;
+    // O levantar em movimento (01/11, ele: "levantar-se virando para o alvo, fazer a troca do modelo de RL e correr para
+    // o alvo com rapidez"): a troca de pe por MovingHandoffSeconds, mesmo andando, e a rede da locomocao correndo ate o
+    // alvo; o exercicio recomeca 1 s depois de ela chegar (ou em 6 s).
+    std::optional<Vec3> runTarget;
+    float arrivedAt = -1.0f;
     bool ensurePartner() {
         if (partnerDirectory.empty()) return false;
         if (!partner) {
@@ -152,14 +161,27 @@ struct TrackingViewer3D::Impl {
         const float upright =
             (pelvis.orientation * profile.links.front().modelOrientation.conjugate()).rotate({ 0.0f, 0.0f, 1.0f }).z;
         const Vec3 v = rlBodyCenterOfMassVelocity3D(profile, body.links);
-        const bool firm = wasDown && pelvis.position.z > 0.85f * profile.standingRootHeightMeters && upright > 0.85f
-            && std::hypot(v.x, v.y) < 0.5f;
+        // (No levantar em movimento, de pe - a cabeca acima de 1,4 m, a pelve de 0,75 m e em pe -, mesmo andando.)
+        const bool moving = getUpKind == 1;
+        float head = 0.0f;
+        for (std::size_t i = 0; i < profile.links.size() && i < body.links.size(); ++i)
+            if (profile.links[i].id == "Head") head = body.links[i].position.z;
+        const bool firm = wasDown
+            && (moving ? head > 1.4f && pelvis.position.z > 0.75f && upright > 0.8f
+                       : pelvis.position.z > 0.85f * profile.standingRootHeightMeters && upright > 0.85f
+                           && std::hypot(v.x, v.y) < 0.5f);
         firmSeconds = firm ? firmSeconds + TrackingGetUpAmpTraining3D::TicksPerDecision * TrackingGetUpAmpTraining3D::TickSeconds
                            : 0.0f;
-        if (firmSeconds < GetUpPolicy3D::FirmSeconds || !ensurePartner()) return;
+        if (firmSeconds < (moving ? MovingHandoffSeconds : GetUpPolicy3D::FirmSeconds) || !ensurePartner()) return;
         ++getUpFalls;
-        ++getUpStood;
+        if (!moving) ++getUpStood;
+        // (O alvo do levantar em movimento: a rede da locomocao corre ate ele.)
+        const TrackingGetUpAmpWorldView3D world = getUp->worldView(0);
+        runTarget = moving && world.hasTarget ? std::optional<Vec3>(world.target) : std::nullopt;
+        arrivedAt = -1.0f;
         partner->resumeFrom(body.links, getUp->driveTargets(0));
+        partner->setManualTarget(runTarget,
+            runTarget ? std::min(std::max(world.commandSpeed, 2.5f), PartnerRunSpeed) : 0.0f);
         partnerActive = true;
         partnerTime = 0.0f;
         firmSeconds = 0.0f;
@@ -188,6 +210,26 @@ struct TrackingViewer3D::Impl {
             if ((avoidBackAt >= 0.0f && partnerTime >= avoidBackAt + 2.0f) || (!took && partnerTime >= 4.0f)
                 || partnerTime >= 12.0f)
                 startAvoid();
+            return;
+        }
+        // (O levantar em movimento: chegou ao alvo - conta - e recomeca 1 s depois, ou em 6 s.)
+        if (runTarget) {
+            const RagdollState3D* body = partner->view().state;
+            if (arrivedAt < 0.0f && body != nullptr && !body->links.empty()) {
+                const Vec3 p = body->links.front().position;
+                if (std::hypot(runTarget->x - p.x, runTarget->y - p.y) < 0.8f) {
+                    arrivedAt = partnerTime;
+                    ++getUpStood;
+                }
+            }
+            if ((arrivedAt >= 0.0f && partnerTime >= arrivedAt + 1.0f) || partnerTime >= 6.0f) {
+                partner->setManualTarget(std::nullopt, 0.0f);
+                runTarget.reset();
+                partnerActive = false;
+                getUp->reset(seed + ++restarts);
+                firmSeconds = 0.0f;
+                wasDown = false;
+            }
             return;
         }
         if (partnerTime >= PartnerSeconds && !partner->gettingUp()) {

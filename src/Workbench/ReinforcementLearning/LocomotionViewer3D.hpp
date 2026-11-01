@@ -77,6 +77,9 @@ public:
     void reset(std::uint64_t seed) override;
     // Velocidade manual para a frente (no lugar do piloto); nulo devolve o piloto.
     void setManualSpeed(std::optional<float> metersPerSecond) override;
+    // Correr ate um ponto (01/11, o levantar em movimento do visualizador do levantar: depois da troca, ate o alvo) na
+    // velocidade dada, parando nele; nulo devolve o piloto do exercicio.
+    void setManualTarget(std::optional<Vec3> target, float metersPerSecond);
     // Um empurrao no peito (N), por alguns decimos de segundo.
     void push(Vec3 force, float seconds) override;
     // A ajuda auxiliar do mundo (0..100%, as quatro como a regua do laboratorio).
