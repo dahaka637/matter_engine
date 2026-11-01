@@ -93,6 +93,8 @@ struct TrackingGetUpAmpTraining3D::Impl {
     std::uint32_t footLinks[2] { 0, 0 };
     // As partes que podem tocar o chao sem contar como caido: as pernas e os bracos (nao o tronco, o pescoco e a cabeca).
     std::vector<bool> allowedContact;
+    // O apoio de protecao: as maos, os bracos e as pernas (os joelhos), sem os pes.
+    std::vector<bool> supportContact;
     std::uint32_t workers = 1;
     std::shared_ptr<TaskScheduler> scheduler;
     std::unique_ptr<PhysicsEngine3D> engine;
@@ -158,6 +160,9 @@ struct TrackingGetUpAmpTraining3D::Impl {
         float partnerDrove = -1.0f;
         bool partnerFell = false;
         bool touchedDown = false;
+        // A protecao na queda: se esta protegendo-se agora e se ja se apoiou.
+        bool protecting = false;
+        bool supported = false;
         // O premio do passo: o tempo no ar de cada pe (s) e se ele estava no chao.
         float footAir[2] { 0.0f, 0.0f };
         bool footDown[2] { true, true };
@@ -426,6 +431,8 @@ struct TrackingGetUpAmpTraining3D::Impl {
         w.partnerDrove = -1.0f;
         w.partnerFell = false;
         w.touchedDown = false;
+        w.protecting = false;
+        w.supported = false;
         w.footAir[0] = w.footAir[1] = 0.0f;
         w.footDown[0] = w.footDown[1] = true;
         w.startKind = kind;
@@ -685,6 +692,15 @@ struct TrackingGetUpAmpTraining3D::Impl {
         // pe - depois, a FallPenalty.)
         if (down && !w.touchedDown && w.stoodAt < 0.0f && (w.startKind == 4 || w.startKind == 8))
             reward -= settings.touchDownPenalty;
+        // (A protecao: nesses comecos, antes do tronco no chao e de ficar de pe, o primeiro apoio das maos, dos bracos ou
+        // dos joelhos vale uma vez.)
+        const bool protecting = (w.startKind == 4 || w.startKind == 8) && !w.touchedDown && !down && w.stoodAt < 0.0f;
+        if (protecting && !w.supported) {
+            for (const RagdollContactPoint3D& contact : w.body->contacts)
+                if (contact.linkIndex < supportContact.size() && supportContact[contact.linkIndex]) w.supported = true;
+            if (w.supported) reward += settings.supportBonus;
+        }
+        w.protecting = protecting;
         w.touchedDown = w.touchedDown || down;
         w.down = down;
         if (w.startKind == 4 && w.avoidEnd >= 0.0f && w.time >= w.avoidEnd && w.recomposedAt < 0.0f && now.standing
@@ -747,6 +763,7 @@ struct TrackingGetUpAmpTraining3D::Impl {
             episode.partnerFell = w.partnerFell;
             episode.partnerSeconds = w.partnerDrove;
             episode.touchedDown = w.touchedDown;
+            episode.supported = w.supported;
             episode.meanFaceError = w.faceErrorSamples
                 ? static_cast<float>(w.faceErrorSum / w.faceErrorSamples) * 180.0f / Pi : 0.0f;
             {
@@ -821,6 +838,8 @@ TrackingGetUpAmpTraining3D::TrackingGetUpAmpTraining3D(const TrackingGetUpAmpSet
         if (id == "RightFoot") impl.footLinks[1] = static_cast<std::uint32_t>(i);
         impl.allowedContact.push_back(id != "Pelvis" && id != "Abdomen" && id != "Chest" && id != "UpperChest"
             && id != "Neck" && id != "Head");
+        impl.supportContact.push_back(impl.allowedContact.back() && id.find("Foot") == std::string::npos
+            && id.find("Toe") == std::string::npos);
     }
     // (Os nomes do corpo: os do levantar do DeepMimic sem a fase, a ultima; depois os do comando.)
     impl.observationNames.assign(impl.contract->observationNames().begin(), impl.contract->observationNames().end() - 1);
@@ -875,6 +894,10 @@ void TrackingGetUpAmpTraining3D::setFallStarts(std::vector<std::vector<PhysicsBo
 }
 
 std::size_t TrackingGetUpAmpTraining3D::fallStartCount() const { return m_impl->fallStarts.size(); }
+
+void TrackingGetUpAmpTraining3D::protecting(std::span<std::uint8_t> out) const {
+    for (std::size_t i = 0; i < m_impl->worlds.size() && i < out.size(); ++i) out[i] = m_impl->worlds[i].protecting ? 1 : 0;
+}
 
 void TrackingGetUpAmpTraining3D::setLocomotionPartner(std::shared_ptr<const LocomotionPartner3D> partner) {
     m_impl->partner = std::move(partner);

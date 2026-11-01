@@ -98,6 +98,10 @@ struct TrackingGetUpAmpSettings3D {
     // Nos comecos da queda iminente (o evitar a queda com a parceira e as quedas da locomocao), a punicao da primeira vez
     // que o tronco, o pescoco ou a cabeca tocam o chao (o evitar a queda de verdade; 0: so a do potencial).
     float touchDownPenalty = 0.0f;
+    // A protecao na queda (01/11, ele: "quando ele via cair no chao tentasse se proteger e evitar de cair, levando as
+    // maos, joelhos, girando quadril, coluna... para conseguir se recobrar antes de cair"): nesses comecos, ate o tronco
+    // tocar o chao ou ficar de pe, o premio do primeiro apoio das maos, dos bracos ou dos joelhos no chao (uma vez).
+    float supportBonus = 0.0f;
     // Na avaliacao, o que se mede: 0 as quedas (o levantar), 1 o levantar em movimento, 2 o evitar a queda, 3 o
     // equilibrio parado (de pe, um empurrao com a regua do parado com empurrao forte do B21: o curto de 900-1200 N ou,
     // em 30%, o continuo de 205-275 N por 1-3 s), 4 os rumos (de pe, no meio do trote, mantendo o rumo do corpo, um
@@ -142,8 +146,10 @@ struct TrackingGetUpAmpEpisode3D {
     // Depois da troca, se a rede da locomocao caiu no tempo dela e quanto ela dirigiu (s; < 0: sem a parceira).
     bool partnerFell = false;
     float partnerSeconds = -1.0f;
-    // Se o tronco, o pescoco ou a cabeca tocaram o chao em algum momento (o evitar a queda: nao).
+    // Se o tronco, o pescoco ou a cabeca tocaram o chao em algum momento (o evitar a queda: nao) e se, protegendo-se,
+    // ele se apoiou nas maos, nos bracos ou nos joelhos antes.
     bool touchedDown = false;
+    bool supported = false;
 };
 
 // O que o visualizador do laboratorio desenha de um mundo: como comecou, o alvo (o levantar em movimento, enquanto o
@@ -210,6 +216,9 @@ public:
     // As quedas da locomocao para os comecos do tipo 8: o corpo inteiro no instante da queda, com as velocidades (os de
     // outro numero de links ficam de fora). Troca so entre os steps.
     void setFallStarts(std::vector<std::vector<PhysicsBodyState3D>> states);
+    // Quais mundos estao protegendo-se na queda agora (os comecos da queda iminente, ate o tronco tocar o chao ou ficar de
+    // pe; 1 ou 0): o treinador alivia ai os custos de suavidade - o reflexo de protecao e rapido.
+    void protecting(std::span<std::uint8_t> out) const;
     // A rede da locomocao parceira (vazia: sem). Troca so entre os steps.
     void setLocomotionPartner(std::shared_ptr<const LocomotionPartner3D> partner);
     [[nodiscard]] std::size_t fallStartCount() const;

@@ -342,7 +342,7 @@ NB_MODULE(matter_tracking_native, m) {
                 std::array<float, 2> movingPushNewtons, float movingPushHoldFraction,
                 std::array<float, 2> movingPushHoldNewtons, float stepReward, bool handoffOnStand,
                 float locomotionFallFraction, float partnerSeconds, float partnerFallPenalty, bool partnerAvoid,
-                float touchDownPenalty) {
+                float touchDownPenalty, float supportBonus) {
                 TrackingGetUpAmpSettings3D settings;
                 settings.assetsDirectory = assets;
                 settings.environments = environments;
@@ -385,6 +385,7 @@ NB_MODULE(matter_tracking_native, m) {
                 settings.partnerFallPenalty = partnerFallPenalty;
                 settings.partnerAvoid = partnerAvoid;
                 settings.touchDownPenalty = touchDownPenalty;
+                settings.supportBonus = supportBonus;
                 nb::gil_scoped_release release;
                 new (self) TrackingGetUpAmpTraining3D(settings);
             },
@@ -401,7 +402,7 @@ NB_MODULE(matter_tracking_native, m) {
             "moving_push_hold_fraction"_a = 0.3f, "moving_push_hold_newtons"_a = std::array<float, 2> { 100.0f, 180.0f },
             "step_reward"_a = 0.0f, "handoff_on_stand"_a = false, "locomotion_fall_fraction"_a = 0.0f,
             "partner_seconds"_a = 2.0f, "partner_fall_penalty"_a = 10.0f, "partner_avoid"_a = false,
-            "touch_down_penalty"_a = 0.0f)
+            "touch_down_penalty"_a = 0.0f, "support_bonus"_a = 0.0f)
         .def_prop_ro("num_envs", &TrackingGetUpAmpTraining3D::environmentCount)
         // As quedas da locomocao (01/11): [n, links, 13] - a posicao, a orientacao (xyzw) e as velocidades linear e
         // angular de cada link no instante da queda (take_fall_states do lote da locomocao).
@@ -424,6 +425,13 @@ NB_MODULE(matter_tracking_native, m) {
             },
             "states"_a)
         .def_prop_ro("fall_start_count", &TrackingGetUpAmpTraining3D::fallStartCount)
+        // Os mundos protegendo-se na queda agora (1 ou 0; o alivio dos custos de suavidade no treinador).
+        .def("protecting",
+            [](const TrackingGetUpAmpTraining3D& b) {
+                auto out = owned<std::uint8_t>({ b.environmentCount() });
+                b.protecting(std::span<std::uint8_t>(out.data(), b.environmentCount()));
+                return out;
+            })
         // A rede da locomocao parceira (01/11): a tarefa e a rede exportada do treino dela (vazio: sem). Devolve a rodada
         // da rede.
         .def(
@@ -517,12 +525,12 @@ NB_MODULE(matter_tracking_native, m) {
                 return std::vector<std::string> { "mundo", "comeco", "lado", "cabeca_inicio", "segundos", "de_pe_aos",
                     "nota_tarefa", "altura_cabeca", "altura_pelve", "de_pe", "velocidade_pedida", "chegou_aos",
                     "velocidade_rumo_alvo", "caiu_depois_de_pe", "recompos_aos", "pose_fim", "erro_rumo_graus", "coluna_fim", "troca_aos",
-                    "parceiro_caiu", "parceiro_s", "tocou_chao" };
+                    "parceiro_caiu", "parceiro_s", "tocou_chao", "apoio" };
             })
         .def("finished_episodes",
             [](TrackingGetUpAmpTraining3D& b) {
                 const std::vector<TrackingGetUpAmpEpisode3D> episodes = b.takeEpisodes();
-                constexpr std::size_t width = 22;
+                constexpr std::size_t width = 23;
                 auto out = owned<float>({ episodes.size(), width });
                 float* d = out.data();
                 for (std::size_t i = 0; i < episodes.size(); ++i) {
@@ -532,7 +540,7 @@ NB_MODULE(matter_tracking_native, m) {
                         e.meanTaskReward, e.headHeight, e.pelvisHeight, e.standing ? 1.0f : 0.0f, e.commandSpeed,
                         e.reachedSeconds, e.meanTowardSpeed, e.fellAfterStanding ? 1.0f : 0.0f, e.recomposedSeconds,
                         e.endPoseMatch, e.meanFaceError, e.endSpineMatch, e.handoffSeconds, e.partnerFell ? 1.0f : 0.0f,
-                        e.partnerSeconds, e.touchedDown ? 1.0f : 0.0f };
+                        e.partnerSeconds, e.touchedDown ? 1.0f : 0.0f, e.supported ? 1.0f : 0.0f };
                     std::copy(row, row + width, d + i * width);
                 }
                 return out;

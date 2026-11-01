@@ -191,6 +191,8 @@ def summarize(rows: np.ndarray, prefix: str) -> dict:
                     partnered = rows[:, 20] >= 0
                     out[f"{prefix}parceiro_caiu"] = float(rows[partnered, 19].mean()) if partnered.any() else None
                     out[f"{prefix}sem_tocar_chao"] = float((rows[:, 21] == 0).mean())
+                    if rows.shape[1] > 22:
+                        out[f"{prefix}apoio"] = float(rows[:, 22].mean())
         avoid = rows[:, 1] == 4
         if avoid.any():
             ok = avoid & (rows[:, 14] >= 0)
@@ -351,6 +353,15 @@ def main() -> int:
                         help="o evitar a queda comeca com a parceira de pe levando o empurrao")
     parser.add_argument("--toque-punicao", type=float, default=0.0,
                         help="nos comecos da queda iminente, a punicao do primeiro toque do tronco no chao")
+    # (01/11 03h25, ele: "nao vi nenhum sinal do tentar evitar queda... imaginava que quando ele visse cair no chao
+    # tentasse se proteger, levando as maos, joelhos, girando quadril, coluna... para se recobrar antes de cair". Medido:
+    # por episodio, o custo do limite das juntas somava ~16 e o do tranco ~7, contra 1,5 da punicao do toque no chao -
+    # proteger-se nao valia nada e o reflexo rapido ainda era punido como tranco. Agora, protegendo-se na queda, os custos
+    # de suavidade quase somem e o primeiro apoio das maos, bracos ou joelhos vale.)
+    parser.add_argument("--apoio-premio", type=float, default=0.0,
+                        help="na protecao na queda, o premio do primeiro apoio das maos, bracos ou joelhos (uma vez)")
+    parser.add_argument("--protecao-alivio", type=float, default=0.0,
+                        help="a fracao dos custos do tranco e do limite tirada enquanto ele se protege na queda")
     # (01/11, ele: o levantar do chao "com gestos mais sutis e suaves, menos exagerados, sem o boneco ficar distorcido ou
     # fazer coisas inumanas"; a velocidade deixa de ser o foco. O discriminador separava tudo - clipes +0,90, a rede
     # -0,90 - e a nota de estilo ficava em ~0,08 para qualquer movimento: o gp maior o suaviza. E o custo dos alvos perto
@@ -386,7 +397,8 @@ def main() -> int:
                   "quedas_locomocao": args.quedas_locomocao, "parceiro": args.parceiro,
                   "parceiro_segundos": args.parceiro_segundos, "parceiro_punicao": args.parceiro_punicao,
                   "evitar_com_parceiro": args.evitar_com_parceiro, "toque_punicao": args.toque_punicao,
-                  "disc_gp": args.disc_gp, "limite": args.limite,
+                  "disc_gp": args.disc_gp, "limite": args.limite, "apoio_premio": args.apoio_premio,
+                  "protecao_alivio": args.protecao_alivio,
                   "andar_velocidade": list(args.andar_velocidade), "trote_velocidade": list(args.trote_velocidade),
                   "empurrao_mov_forca": list(args.empurrao_mov_forca), "empurrao_mov_continuo": args.empurrao_mov_continuo,
                   "empurrao_mov_continuo_forca": list(args.empurrao_mov_continuo_forca),
@@ -409,7 +421,8 @@ def main() -> int:
                                  locomotion_fraction=args.locomocao, turn_fraction=args.giro,
                                  handoff_on_stand=args.troca_de_pe, locomotion_fall_fraction=args.quedas_locomocao,
                                  partner_seconds=args.parceiro_segundos, partner_fall_penalty=args.parceiro_punicao,
-                                 partner_avoid=args.evitar_com_parceiro, touch_down_penalty=args.toque_punicao, **v2)
+                                 partner_avoid=args.evitar_com_parceiro, touch_down_penalty=args.toque_punicao,
+                                 support_bonus=args.apoio_premio, **v2)
     # (31/10 23h40, ele: "verifica se... nao conseguimos mais decisoes por segundo": as avaliacoes numa thread so paravam
     # o treino ~21 s a cada 50 atualizacoes, 13% do tempo; com as threads do treino, as que esperam ficam paradas.)
     eval_threads = args.threads
@@ -609,7 +622,8 @@ def main() -> int:
             # (A nota por passo vezes 1 - gamma: o retorno fica entre 0 e 1 e o critico nao precisa correr atras da
             # escala de ~100 de um gamma 0,99.)
             rew = (1.0 - gamma) * (args.peso_tarefa * roll["task"] + args.peso_estilo * style
-                                   - args.suave * roll["jerk"] - args.limite * roll["limit"]) + gamma * roll["boot"]
+                                   - (1.0 - args.protecao_alivio * roll["prot"])
+                                   * (args.suave * roll["jerk"] + args.limite * roll["limit"])) + gamma * roll["boot"]
             adv = torch.zeros(T, n, device=device)
             gae = torch.zeros(n, device=device)
             for t in reversed(range(T)):
@@ -679,7 +693,7 @@ def main() -> int:
         physics = 0.0
         roll = {k: torch.zeros(T, n, *s, device=device) for k, s in
                 (("obs", (obs_size,)), ("act", (act_size,)), ("logp", ()), ("val", ()), ("task", ()), ("boot", ()),
-                 ("done", ()), ("pairs", (2 * amp,)), ("jerk", ()), ("limit", ()))}
+                 ("done", ()), ("pairs", (2 * amp,)), ("jerk", ()), ("limit", ()), ("prot", ()))}
         with torch.no_grad():
             for t in range(T):
                 collector.norm.update(obs)
@@ -696,6 +710,7 @@ def main() -> int:
                 roll["logp"][t] = dist.log_prob(action).sum(-1)
                 roll["val"][t] = collector.value(obs_n)
                 env_action = collector.env_action(action).cpu().numpy().astype(np.float32)
+                roll["prot"][t] = torch.as_tensor(batch.protecting(), device=device).float()
                 tick = time.time()
                 task, term, trunc = batch.step(env_action)
                 physics += time.time() - tick
@@ -727,10 +742,11 @@ def main() -> int:
         counters["amostras"] += T * n
         counters["episodios"] += len(episodes)
         if counters["atualizacao"] % 20 == 0:
-            recent = np.array(window) if window else np.zeros((0, 22))
+            recent = np.array(window) if window else np.zeros((0, 23))
             row = {"atualizacao": counters["atualizacao"], "amostras": counters["amostras"], "hora": time.time(),
                    "tarefa": float(roll["task"].mean()), "estilo": last.get("estilo", float("nan")),
                    "tranco": float(roll["jerk"].mean()), "limite": float(roll["limit"].mean()),
+                   "protegendo": float(roll["prot"].mean()),
                    "desvio": float(model.log_std.detach().clamp(LOG_STD_MIN, LOG_STD_MAX).exp().mean()),
                    "am_s": T * n / (time.time() - begin), "t_coleta": collected - begin, "t_fisica": physics,
                    "t_espera": waited, **{k: v for k, v in last.items() if k != "estilo"}}
